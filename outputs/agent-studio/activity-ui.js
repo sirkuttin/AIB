@@ -4,16 +4,19 @@
   const KEY = 'studio-activity-hidden',
     NARROW = 1100;
   const isNarrow = (width) => Number(width) < NARROW;
+  /* Per window (multi-window, store-merge.js winKey): the main window the plain key, window n KEY + ':w<n>'. */
+  const key = () => (root.AibStore ? root.AibStore.winKey(KEY) : KEY);
   function readHidden(store) {
     try {
-      return (store || localStorage).getItem(KEY) === '1';
+      return (store || localStorage).getItem(key()) === '1';
     } catch (e) {
       return false;
     }
   }
   function writeHidden(value, store) {
+    if (root.AibStore && !root.AibStore.layoutWritable()) return; // a pop-out writes no layout
     try {
-      (store || localStorage).setItem(KEY, value ? '1' : '0');
+      (store || localStorage).setItem(key(), value ? '1' : '0');
     } catch (e) {}
   }
   const plural = (n, one, many) => n + ' ' + (n === 1 ? one : many);
@@ -212,7 +215,63 @@
     writeHidden(false);
     live.open();
   }
+  /* ---- split view: the right panel lists both panes' chats (owner, 2026-11-15, mockup v2) ----
+     Every tab starts each chat's section with the same header: status dot, chat name, a short line ("2 working · 2 running",
+     "3 files", "2 artifacts"). It is not focus-aware and not clickable: focus changes nothing in the panel. */
+  function splitCounts(c) {
+    const w = Math.max(0, Number(c && c.working) || 0),
+      f = Math.max(0, Number(c && c.failed) || 0),
+      p = Math.max(0, Number(c && c.processes) || 0);
+    const parts = [];
+    if (w) parts.push({ text: w + ' working' });
+    if (f) parts.push({ text: f + ' failed', bad: true });
+    if (p) parts.push({ text: p + ' running' });
+    return parts.length ? parts : [{ text: 'idle' }];
+  }
+  /* sub: a string or [{text, bad}] (splitCounts). info: {key, title, dot()} (AgentSplitUI.chatInfo). Reuses `head` when given. */
+  function splitHead(doc, info, sub, head) {
+    head = head || doc.createElement('div');
+    head.className = 'sp-head';
+    head.dataset.key = (info && info.key) || '';
+    const dot = info && info.dot ? info.dot() : null,
+      d = dot || doc.createElement('i');
+    if (!dot) d.className = 'status-dot';
+    d.classList.add('sp-dot');
+    const name = doc.createElement('b');
+    name.className = 'sp-name';
+    name.textContent = (info && info.title) || 'Conversation';
+    name.title = name.textContent;
+    const line = doc.createElement('span');
+    line.className = 'sp-sub';
+    const parts = Array.isArray(sub) ? sub : [{ text: String(sub || '') }];
+    parts.forEach((p, i) => {
+      if (i) line.append(' · ');
+      if (p.bad) {
+        const b = doc.createElement('span');
+        b.className = 'sp-bad';
+        b.textContent = p.text;
+        line.append(b);
+      } else line.append(p.text);
+    });
+    head.replaceChildren(d, name, line);
+    return head;
+  }
+  /* A section label inside a chat's section: "SUBAGENTS 4", "PROCESSES 2 running". */
+  function splitLabel(doc, label, count) {
+    const h = doc.createElement('div');
+    h.className = 'sp-label';
+    h.append(label);
+    const n = doc.createElement('span');
+    n.textContent = count;
+    h.append(n);
+    return h;
+  }
+  const isSplit = (doc) => !!(doc || document).body && (doc || document).body.classList.contains('split-on');
   const api = {
+    splitCounts,
+    splitHead,
+    splitLabel,
+    isSplit,
     isNarrow,
     readHidden,
     writeHidden,

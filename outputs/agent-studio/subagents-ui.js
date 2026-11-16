@@ -532,6 +532,13 @@
   }
   let lastSignature = '',
     lastBox = null;
+  const splitSigs = new WeakMap();
+  /* The × that hides Activity, held from page load: opening a chat empties the list it sits in, and a detached button cannot be
+     found by id again (it was lost after the first chat switch). */
+  let hideRef = null;
+  const hideButton = () =>
+    (hideRef = (typeof document !== 'undefined' && document.getElementById('activityHide')) || hideRef);
+  if (typeof document !== 'undefined') hideButton();
   function el(tag, cls, txt) {
     const n = document.createElement(tag);
     if (cls) n.className = cls;
@@ -583,10 +590,12 @@
   }
   function render(ctx) {
     const m = model(ctx.rows, ctx.now, ctx.chatModel),
-      open = expanded(ctx.convKey);
+      split = !!ctx.split, // split view: both chats' sections, every finished one listed, no heading of its own (activity-ui splitLabel)
+      open = split || expanded(ctx.convKey);
     if (ctx.countEl) ctx.countEl.textContent = ctx.rows.length ? sectionHeading(m) : '0';
     if (ctx.onModel) ctx.onModel(m);
     const sig = JSON.stringify([
+      split,
       ctx.convKey,
       ctx.empty,
       ctx.selectedKey,
@@ -610,30 +619,41 @@
         i.outcome,
       ]),
     ]);
-    if (sig === lastSignature && ctx.box === lastBox && ctx.box.firstChild) return;
-    lastSignature = sig;
-    lastBox = ctx.box;
+    if (split) {
+      if (splitSigs.get(ctx.box) === sig && ctx.box.firstChild) return;
+      splitSigs.set(ctx.box, sig);
+    } else {
+      if (sig === lastSignature && ctx.box === lastBox && ctx.box.firstChild) return;
+      lastSignature = sig;
+      lastBox = ctx.box;
+    }
     const box = ctx.box,
       focus = document.activeElement && box.contains(document.activeElement) ? document.activeElement : null,
       focusKey = focus?.dataset?.key,
       focusToggle = focus?.classList?.contains('sa-toggle');
     const tops = [...box.querySelectorAll('.sa-scroll')].map((n) => n.scrollTop);
     const frag = document.createDocumentFragment();
-    const h = el('h4', 'sa-heading', 'Subagents');
-    if (ctx.rows.length) {
-      const q = el('span', 'sa-qualifier', m.working.length + ' working · ');
-      q.append(el('span', m.failed ? 'sa-failed-count' : '', m.failed + ' failed'));
-      h.append(q);
+    if (!split) {
+      const h = el('h4', 'sa-heading', 'Subagents');
+      if (ctx.rows.length) {
+        const q = el('span', 'sa-qualifier', m.working.length + ' working · ');
+        q.append(el('span', m.failed ? 'sa-failed-count' : '', m.failed + ' failed'));
+        h.append(q);
+      }
+      // split view keeps the × at the panel's top right (chat.js renderSplitActivity): the hidden list must not take it back
+      const hideBtn = hideButton();
+      if (hideBtn && !document.body.classList.contains('split-on')) h.append(hideBtn);
+      frag.append(h);
     }
-    const hideBtn = document.getElementById('activityHide');
-    if (hideBtn) h.append(hideBtn);
-    frag.append(h);
-    if (!ctx.rows.length) frag.append(el('p', 'empty-state sa-empty', ctx.empty));
+    if (!ctx.rows.length) {
+      if (ctx.empty) frag.append(el('p', 'empty-state sa-empty', ctx.empty));
+    }
     else {
       const list = el('div', 'sa-scroll');
       for (const i of m.top) list.append(card(i, ctx));
       if (!m.top.length && !m.done.length) list.append(el('p', 'sa-none', 'Nothing running right now.'));
-      if (m.done.length) {
+      if (split) for (const i of m.done) list.append(card(i, ctx));
+      else if (m.done.length) {
         const t = el('button', 'sa-toggle sa-card');
         t.type = 'button';
         t.setAttribute('aria-expanded', open ? 'true' : 'false');

@@ -9,8 +9,9 @@ import { startWindowsTray, userNotificationState, type WindowsTray } from './tra
 import { applyAppIcon, applyIconPair, attentionIconPair, type IconPair } from './window_icon_win.ts';
 import { withAttentionDot } from './png_badge.ts';
 import { trayIconBytes } from './tray_icon.ts';
-import { bringToFront } from './foreground_win.ts';
+import { bringToFront, findOwnWindow, isWindowHandle, maximizeWindow, ownWindows, rectOnScreen, windowState } from './foreground_win.ts';
 import { writeTrayState } from './host_tray.ts';
+import { canPlaceWindows } from './windows.ts';
 import { getLogger } from '../core/log.ts';
 
 const log = getLogger('desktop');
@@ -20,13 +21,55 @@ type Any = any;
 const D = Deno as Any;
 const G = globalThis as Any;
 
-function wrapWindow(win: Any): WindowHandle {
+/** The HWNDs app windows found as theirs (B1), so two windows never take the same one. */
+const claimed = new Set<bigint>();
+
+function wrapWindow(win: Any, firstTitle = 'AIB'): WindowHandle {
+  let title = firstTitle;
+  let hwnd: bigint | null = null;
+  /**
+   * Windows: this window's own HWND (B1). getNativeWindow() is no HWND in Deno 2.9.8 (a WebGPU surface call that throws), so it is
+   * found among this process's unclaimed AIB windows by its title (findOwnWindow), once, and kept while it is a window.
+   */
+  const nativeHandle = (): bigint | null => {
+    if (Deno.build.os !== 'windows') return null;
+    if (hwnd !== null && isWindowHandle(hwnd)) return hwnd;
+    if (hwnd !== null) claimed.delete(hwnd);
+    hwnd = null;
+    try {
+      if (win.isClosed() === true) return null;
+    } catch {
+      return null;
+    }
+    const found = findOwnWindow(ownWindows(), title, claimed);
+    if (found !== null) {
+      hwnd = found;
+      claimed.add(found);
+    }
+    return hwnd;
+  };
   return {
     navigate: (url) => win.navigate(url),
     show: () => win.show(),
     hide: () => win.hide(),
     focus: () => win.focus(),
-    setTitle: (title) => win.setTitle(title),
+    setTitle: (t) => {
+      title = t;
+      win.setTitle(t);
+    },
+    close: () => {
+      if (hwnd !== null) claimed.delete(hwnd);
+      win.close();
+    },
+    nativeHandle,
+    state: () => {
+      const h = nativeHandle();
+      return h === null ? null : windowState(h);
+    },
+    maximize: () => {
+      const h = nativeHandle();
+      if (h !== null) maximizeWindow(h);
+    },
     isVisible: () => {
       try {
         return win.isVisible() !== false;
@@ -142,6 +185,10 @@ function giveWindowsAppIcon(): void {
 }
 
 export function nativeShell(): Shell {
+  let positions = true;
+  try {
+    positions = canPlaceWindows();
+  } catch { /* no env access: assume it can */ }
   const ask = (Deno.build.os === 'windows' ? windowsAsk() : null) ??
     ((message: string) => Promise.resolve(G.confirm(message) === true));
   let keeper: WindowHandle | null = null;
@@ -178,7 +225,12 @@ export function nativeShell(): Shell {
   };
   return {
     createWindow: (o) => {
-      const win = wrapWindow(new D.BrowserWindow({ title: o.title, width: o.width, height: o.height }));
+      const opts: Record<string, unknown> = { title: o.title, width: o.width, height: o.height };
+      if (o.x !== undefined && o.y !== undefined && positions) {
+        opts.x = o.x;
+        opts.y = o.y;
+      }
+      const win = wrapWindow(new D.BrowserWindow(opts), o.title);
       giveWindowsAppIcon();
       return win;
     },
@@ -280,6 +332,8 @@ export function nativeShell(): Shell {
     ask,
     openExternal,
     notifier,
-    bringToFront: Deno.build.os === 'windows' ? () => bringToFront() : undefined,
+    bringToFront: Deno.build.os === 'windows' ? (hwnd?: bigint | null) => bringToFront(hwnd ?? null) : undefined,
+    onScreen: Deno.build.os === 'windows' ? (r) => rectOnScreen(r) : undefined,
+    canPosition: positions,
   };
 }

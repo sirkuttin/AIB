@@ -256,3 +256,43 @@ Deno.test('speed: after a keystroke in a 2,000-block doc, the Markdown copy is w
     await dirs.done();
   }
 });
+
+Deno.test('one file, one live doc: opens that overlap (a page and an agent at once) get the same doc, and its comment is saved', async () => {
+  const dirs = await tempDirs();
+  try {
+    const first = new DocStore(dirs.state, { idleMs: 20 });
+    await first.open(dirs.project, 'cm', 'Saved cards move over unchanged.\n');
+    await first.close();
+    // a fresh run: the doc is on disk only. A page and an agent open it at once; the second is still checking that the doc
+    // exists when the first one's load finishes (held here until it has): it must get that doc, never load a second copy
+    const store = new DocStore(dirs.state, { idleMs: 20 });
+    const exists = store.exists.bind(store);
+    let calls = 0, firstLoad: Promise<unknown> = Promise.resolve();
+    store.exists = async (root: string, name: unknown) => {
+      const n = ++calls, found = await exists(root, name);
+      if (n > 1) await firstLoad.catch(() => {});
+      return found;
+    };
+    const a = store.open(dirs.project, 'cm');
+    firstLoad = a;
+    const opens = [a, store.open(dirs.project, 'aib-docs/cm'), store.open(dirs.project, 'cm')];
+    const docs = await Promise.all(opens);
+    const doc = store.docs.get(docs[0].id)!;
+    assertEquals(new Set(docs).size, 1);
+    assert(docs[0] === doc, 'the doc every open got is the one the store holds');
+    assertEquals(doc.epoch, `${store.epoch}.1`); // loaded once
+    // the page socket is on that doc: the comment made on it is what AIB saves
+    const page = new UserClient(doc.live);
+    assertEquals(doc.live.socketCount, 1);
+    const block = top(doc)[0].id;
+    doc.live.comments.add('user', 'Make this three short bullets.', { el: doc.live.elementOf(block)!, from: 0, to: 11 }, doc.live.user);
+    assertEquals(page.doc.getMap('comments').size, 1);
+    await store.close();
+    const again = new DocStore(dirs.state, { idleMs: 20 });
+    const back = await again.open(dirs.project, 'cm');
+    assertEquals(back.live.comments.list().threads.map((t) => [t.quote, t.replies[0].text]), [['Saved cards', 'Make this three short bullets.']]);
+    await again.close();
+  } finally {
+    await dirs.done();
+  }
+});

@@ -372,15 +372,22 @@
   const STORE_KEY = 'studio-chat-views',
     STORE_CAP = 500;
   const usable = (v) => VIEWS.includes(v) && AVAILABLE[v];
-  function viewStore(storage, fallback) {
+  /* merge (multi-window, store-merge.js AibStore): a save reads the stored choices again and changes only this chat's, so a choice
+     made in another AIB window is kept; another window's choices come in through its storage event. */
+  function viewStore(storage, fallback, merge) {
     const dflt = () => (typeof fallback === 'function' ? fallback() : fallback);
     let data = null;
+    const m = merge && merge.map ? merge.map(STORE_KEY, { cap: STORE_CAP }) : null;
+    const clean = (parsed) => {
+      const d = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? { ...parsed } : {};
+      for (const k of Object.keys(d)) if (d[k] === 'outcomes') d[k] = 'chat'; // the Outcomes view is gone: Chat is its successor
+      return d;
+    };
+    if (m) m.onChange((obj) => (data = clean(obj)));
     const load = () => {
       if (data) return data;
       try {
-        const parsed = JSON.parse(storage.getItem(STORE_KEY));
-        data = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
-        for (const k of Object.keys(data)) if (data[k] === 'outcomes') data[k] = 'chat'; // the Outcomes view is gone: Chat is its successor
+        data = m ? clean(m.load()) : clean(JSON.parse(storage.getItem(STORE_KEY)));
       } catch {
         data = {};
       }
@@ -393,6 +400,10 @@
     };
     const put = (key, view) => {
       load();
+      if (m) {
+        data = clean(m.set(key, view));
+        return;
+      }
       delete data[key]; // re-inserting moves it to the newest end
       data[key] = view;
       const keys = Object.keys(data);
@@ -416,6 +427,7 @@
         if (from && to && from !== to && usable(data[from])) {
           const v = data[from];
           delete data[from];
+          if (m) m.del(from);
           put(to, v);
         }
       },

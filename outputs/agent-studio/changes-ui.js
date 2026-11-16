@@ -677,8 +677,16 @@
       refresh.classList.toggle('spin', loading);
     }
     function paintBadges() {
-      const t = data && data.git ? totalsOf(data) : null,
-        n = t ? shownCount(data) : 0;
+      const t = data && data.git ? totalsOf(data) : null;
+      // split view: the files of both panes' chats (the same whichever has focus)
+      const n = splitOn()
+        ? SP.keys.reduce((m, k) => {
+            const x = SP.secs.get(k);
+            return m + (x && x.data && x.data.git ? shownCount(x.data) : 0);
+          }, 0)
+        : t
+          ? shownCount(data)
+          : 0;
       badgeEl.textContent = badge(n);
       badgeEl.hidden = !n;
       tabChanges.setAttribute('aria-label', 'Changes' + (n ? ', ' + plural(n, 'file', 'files') + ' changed' : ''));
@@ -957,6 +965,7 @@
       body.classList.toggle('rc-other-tab', wide); // resize-ui.js: an open subagent history no longer widens the column here
       if (AR()) AR().setVisible(art && paneVisible());
       schedule();
+      if (SP) spSchedule();
     }
     function show(tab) {
       const was = state.tab;
@@ -1099,8 +1108,12 @@
         lastFetch = 0;
         if (prevId) tabOf.set(prevId, state.tab);
         const back = id ? tabOf.get(id) : '';
-        state = tabState(state, { type: 'reset' });
-        if (back && back !== 'activity') state = tabState(state, { type: 'show', tab: back });
+        // Split view: moving focus between the panes opens the other chat here, and changes nothing in the panel (owner,
+        // 2026-11-15): the tab stays as it is.
+        if (!SUI()) {
+          state = tabState(state, { type: 'reset' });
+          if (back && back !== 'activity') state = tabState(state, { type: 'show', tab: back });
+        }
         apply();
         paintAll();
         if (id) load(true);
@@ -1108,6 +1121,254 @@
       } else if (ended && id) load(true);
       schedule();
     }
+    /* -- split view: both panes' chats, in pane order, each with its header, its files and its own Discard / Merge row (option B
+       of the approved mockup, owner 2026-11-15). Nothing here follows focus: each section reads its own chat's changes. -- */
+    var SP = { keys: [], secs: new Map(), timer: 0 }; // var: paintBadges / apply may run before this line
+    const spBox = el('div', 'sp-changes');
+    spBox.id = 'splitChanges';
+    view.append(spBox);
+    function SUI() {
+      return win.AgentSplitUI && win.AgentSplitUI.active && win.AgentSplitUI.active() ? win.AgentSplitUI : null;
+    }
+    function splitOn() {
+      return !!SP && SP.keys.length > 0;
+    }
+    function spSection(key) {
+      let s = SP.secs.get(key);
+      if (s) return s;
+      const rootEl = el('section', 'sp-grp sp-cg');
+      rootEl.dataset.key = key;
+      const head = el('div', 'sp-head'),
+        lst = el('div', 'cg-files sp-files'),
+        none = el('p', 'sp-none', 'No changes in this chat yet');
+      lst.setAttribute('role', 'list');
+      const fp = footer(doc);
+      fp.foot.classList.add('sp-foot');
+      rootEl.append(head, lst, none, fp.foot);
+      s = { key, root: rootEl, head, list: lst, none, fp, data: null, err: '', open: [], cache: new Map(), seq: 0, id: '' };
+      s.mergeUi = win.AgentMergeUI
+        ? win.AgentMergeUI.init({ win, line: fp.mergeLine, button: fp.merge, reload: () => spLoad(s, true), onPaint: () => spFoot(s) })
+        : null;
+      fp.discard.addEventListener('click', () => spDiscard(s));
+      SP.secs.set(key, s);
+      return s;
+    }
+    const spFiles = (s) => (s.data && s.data.git ? splitDocFiles(s.data).files : []);
+    function spSumLine(s) {
+      const fs = spFiles(s);
+      let a = 0,
+        d = 0;
+      for (const f of fs) {
+        a += num(f.added);
+        d += num(f.removed);
+      }
+      const base = (s.data && s.data.worktree && s.data.worktree.base) || '';
+      return plural(fs.length, 'file', 'files') + ' · +' + a + ' ' + MINUS + d + (base ? ' vs ' + base : '');
+    }
+    function spFoot(s) {
+      const fs = spFiles(s),
+        fp = s.fp;
+      fp.discard.hidden = !canDiscard(s.data);
+      fp.discard.disabled = !!s.discarding;
+      if (!fp.note.dataset.msg) fp.note.textContent = fs.length ? spSumLine(s) : '';
+      // No Discard / Merge row for a chat with nothing changed (there is nothing to merge).
+      fp.foot.hidden = !fs.length && !s.asking && !fp.note.dataset.msg;
+    }
+    function spRow(s, f) {
+      const info = statusInfo(f.status),
+        p = splitPath(f.path),
+        isOpen = s.open.includes(f.path);
+      const item = el('div', 'cg-item' + (isOpen ? ' open' : ''));
+      item.setAttribute('role', 'listitem');
+      item.dataset.path = f.path;
+      const b = el('button', 'cg-file' + (isOpen ? ' open' : ''));
+      b.type = 'button';
+      b.dataset.path = f.path;
+      b.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+      b.title = f.path + (f.oldPath ? '\n(was ' + f.oldPath + ')' : '') + '\n' + info.label;
+      const path = el('span', 'cg-path'),
+        inner = el('span', 'cg-path-in');
+      inner.append(el('span', 'cg-path-dir', p.dir), el('b', '', p.base));
+      path.append(inner);
+      b.append(el('span', 'cg-st ' + info.cls, info.letter), path);
+      if (f.binary) b.append(el('span', 'cg-bin', 'binary'));
+      else b.append(el('span', 'cg-add', addText(f)), el('span', 'cg-del', delText(f)));
+      b.onclick = () => {
+        s.open = toggleOpen(s.open, f.path);
+        if (s.open.includes(f.path)) spDetail(s, f);
+        spPaint(s);
+      };
+      item.append(b);
+      if (isOpen) {
+        const box = el('div', 'cg-diff'),
+          c = s.cache.get(f.path);
+        if (!c || (c.loading && !c.d)) box.append(el('p', 'cg-msg', 'Loading…'));
+        else if (c.err && !c.d) box.append(el('p', 'cg-msg cg-err', 'Could not read this diff: ' + c.err));
+        else {
+          for (const n of diffNotes(c.d)) box.append(el('p', 'cg-msg', n));
+          const sc = el('div', 'cg-lines');
+          for (const h of c.d.hunks || []) sc.append(diffRows(h, f, c.d));
+          if ((c.d.hunks || []).length) box.append(sc);
+        }
+        item.append(box);
+      }
+      return item;
+    }
+    async function spDetail(s, f) {
+      const sig = fileSignature(f),
+        id = s.id;
+      s.cache.set(f.path, { sig, loading: true, d: null, err: '' });
+      let d = null,
+        err = '';
+      try {
+        d = await api('/api/live/changes/file?' + q({ id, path: f.path, scope: 'uncommitted' }));
+      } catch (e) {
+        err = e.message || 'Request failed';
+      }
+      if (id !== s.id) return;
+      s.cache.set(f.path, { sig, loading: false, d, err });
+      spPaint(s);
+    }
+    function spPaint(s) {
+      const fs = spFiles(s),
+        S = SUI();
+      const info = S ? S.chatInfo(s.key) : { key: s.key, title: 'Conversation' };
+      const A = win.ActivityUI;
+      if (A && A.splitHead) A.splitHead(doc, info, plural(fs.length, 'file', 'files'), s.head);
+      s.open = pruneOpen(s.open, fs);
+      const sig = JSON.stringify([
+        s.open,
+        fs.map(fileSignature),
+        fs.map((f) => {
+          const c = s.cache.get(f.path);
+          return c ? [c.loading ? 1 : 0, c.err, c.d ? 1 : 0] : 0;
+        }),
+      ]);
+      if (sig !== s.listSig) {
+        s.listSig = sig;
+        const ae = doc.activeElement,
+          focus = ae && s.list.contains(ae) ? ae.dataset.path : null;
+        s.list.replaceChildren(...fs.map((f) => spRow(s, f)));
+        if (focus) {
+          const n = [...s.list.querySelectorAll('.cg-file')].find((c) => c.dataset.path === focus);
+          if (n) n.focus({ preventScroll: true });
+        }
+      }
+      s.list.hidden = !fs.length;
+      s.none.hidden = !!fs.length;
+      if (s.mergeUi)
+        s.mergeUi.update({
+          id: s.id,
+          busy: !!s.busy,
+          files: s.data && s.data.git ? shownCount(s.data) : 0,
+          branchView: !!(s.data && s.data.scope === 'branch'),
+          worktree: canMerge(s.data),
+          blocked: '',
+        });
+      spFoot(s);
+    }
+    async function spLoad(s, force) {
+      const S = SUI(),
+        info = S ? S.chatInfo(s.key) : null,
+        id = info ? info.id : '';
+      if (id !== s.id) {
+        s.id = id;
+        s.data = null;
+        s.open = [];
+        s.cache = new Map();
+        s.listSig = '';
+      }
+      s.busy = !!(info && info.conv && info.conv.live && info.conv.live.busy);
+      if (!id) {
+        s.data = null;
+        spPaint(s);
+        return;
+      }
+      const now = Date.now();
+      if (!force && s.at && now - s.at < MIN_GAP) return;
+      s.at = now;
+      const mine = ++s.seq;
+      try {
+        const next = await api('/api/live/changes?' + q({ id, scope: 'uncommitted' }));
+        if (mine !== s.seq || id !== s.id) return;
+        s.data = next;
+        s.err = '';
+      } catch (e) {
+        if (mine !== s.seq || id !== s.id) return;
+        s.data = null;
+        s.err = e.status === 404 ? '' : e.message;
+      }
+      spPaint(s);
+      paintBadges();
+    }
+    async function spDiscard(s) {
+      const branch = s.data && s.data.worktree && s.data.worktree.branch;
+      if (!branch || !s.id || s.discarding || s.asking) return;
+      s.asking = true;
+      spFoot(s);
+      let sure = false;
+      try {
+        sure = await askInPage(doc, s.fp.foot, { text: discardQuestion(branch), ok: 'Discard', danger: true, label: 'Discard this chat' });
+      } finally {
+        s.asking = false;
+      }
+      if (!sure) {
+        spFoot(s);
+        return;
+      }
+      s.discarding = true;
+      spFoot(s);
+      const id = s.id;
+      try {
+        const t = await getToken(false);
+        const r = await win.fetch('/api/live/worktree-discard', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Studio-Token': t },
+          body: JSON.stringify({ id, confirm: true }),
+        });
+        let b = {};
+        try {
+          b = await r.json();
+        } catch (e) {}
+        if (!r.ok) throw new Error(b.error || 'Request failed (' + r.status + ')');
+        s.fp.note.textContent = s.fp.note.dataset.msg = discardNote(b);
+        try {
+          win.dispatchEvent(new win.CustomEvent('agent-studio:worktree-discarded', { detail: { id } }));
+        } catch (e) {}
+      } catch (e) {
+        s.fp.note.textContent = s.fp.note.dataset.msg = 'Could not discard: ' + (e.message || 'Request failed');
+      } finally {
+        s.discarding = false;
+      }
+      spLoad(s, true);
+    }
+    function splitSync(keys) {
+      SP.keys = keys.slice();
+      for (const k of [...SP.secs.keys()]) if (!SP.keys.includes(k)) SP.secs.delete(k);
+      const want = SP.keys.map((k) => spSection(k).root);
+      want.forEach((n, i) => {
+        if (spBox.children[i] !== n) spBox.insertBefore(n, spBox.children[i] || null);
+      });
+      while (spBox.children.length > want.length) spBox.lastChild.remove();
+      for (const k of SP.keys) spLoad(spSection(k), true);
+      paintBadges();
+      spSchedule();
+    }
+    function spSchedule() {
+      const want = splitOn() && paneVisible();
+      if (want && !SP.timer)
+        SP.timer = win.setInterval(() => {
+          if (!splitOn() || !paneVisible()) return spSchedule();
+          // the Changes tab polls often; the badge (other tabs) every few polls is enough
+          if (state.tab !== 'changes' && (SP.tick = (SP.tick || 0) + 1) % 3) return;
+          for (const k of SP.keys) spLoad(spSection(k), false);
+        }, POLL_MS / 2);
+      else if (!want && SP.timer) {
+        win.clearInterval(SP.timer);
+        SP.timer = 0;
+      }
+    }
+    win.addEventListener('aib-split-chats', (e) => splitSync((e && e.detail && e.detail.keys) || []));
     /* The Files view's change badge: show the Changes tab with this file's diff open and in view. path is repository-relative. */
     function focusFile(path) {
       const f = files().find((x) => x.path === path);

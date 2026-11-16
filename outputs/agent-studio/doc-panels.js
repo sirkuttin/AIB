@@ -120,6 +120,14 @@
 
   function renderComments() {
     const rail = $('rail');
+    // a re-render (any change to the doc or who is in it) rebuilds the rail: the box being typed in keeps its focus and caret
+    // (the new comment's words are kept in composing.draft, a reply's in drafts)
+    const typing = rail.contains(document.activeElement) && document.activeElement.tagName === 'TEXTAREA' ? document.activeElement : null;
+    const was = typing && {
+      thread: typing.closest('.composer') ? null : typing.closest('.thr') && typing.closest('.thr').dataset.thread,
+      from: typing.selectionStart,
+      to: typing.selectionEnd,
+    };
     rail.replaceChildren();
     const open = D.threads.filter((t) => !t.resolved);
     // this page's threads and the whole-doc notes (they belong to every page): the header count, the list and the empty line agree
@@ -193,6 +201,15 @@
     if (D.activeThread) {
       const c = rail.querySelector(`.thr[data-thread="${CSS.escape(D.activeThread)}"]`);
       if (c) c.scrollIntoView({ block: 'nearest' });
+    }
+    if (was) {
+      const box = was.thread
+        ? rail.querySelector(`.thr[data-thread="${CSS.escape(was.thread)}"] textarea`)
+        : rail.querySelector('.composer textarea');
+      if (box) {
+        box.focus();
+        box.setSelectionRange(was.from, was.to);
+      }
     }
   }
 
@@ -372,6 +389,9 @@
     box.rows = 2;
     box.placeholder = 'Comment… (Ctrl+Enter)';
     box.setAttribute('aria-label', 'Comment');
+    box.value = composing.draft || '';
+    const draftOf = composing;
+    box.addEventListener('input', () => (draftOf.draft = box.value));
     const add = async () => {
       const text = box.value.trim();
       if (!text) return null;
@@ -408,7 +428,14 @@
       }),
     );
     c.append(acts);
-    requestAnimationFrame(() => box.focus());
+    // focus once, when the composer first shows (a re-render keeps the focus where the user has it)
+    if (!composing.shown) {
+      composing.shown = true;
+      requestAnimationFrame(() => {
+        const now = $('rail').querySelector('.composer textarea');
+        if (now && document.activeElement !== now) now.focus();
+      });
+    }
     return c;
   }
 
@@ -855,12 +882,15 @@
           run: () => exportMd('all'),
         },
         { sep: true },
+        // a doc tab or the Artifacts viewer: move the doc into its own small window (multi-window 2.5B; chat.html does it)
+        ...(D.framed
+          ? [{ label: 'Pop out', small: 'Into its own window', data: { act: 'popout' }, run: () => D.tell({ type: 'aib-doc:popout' }) }]
+          : []),
         { label: 'Duplicate doc', data: { act: 'duplicate' }, run: () => duplicateDoc() },
-        {
-          label: 'Show in Files',
-          data: { act: 'files' },
-          run: () => D.tell({ type: 'aib-doc:show-in-files', dir: D.info && D.info.dir }),
-        },
+        // no Files panel in a pop-out
+        ...(D.popout
+          ? []
+          : [{ label: 'Show in Files', data: { act: 'files' }, run: () => D.tell({ type: 'aib-doc:show-in-files', dir: D.info && D.info.dir }) }]),
         { sep: true },
         { label: 'Move doc to trash…', danger: true, data: { act: 'trash' }, run: () => askTrash(more) },
       ],

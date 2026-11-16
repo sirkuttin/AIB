@@ -51,8 +51,21 @@ export function safeParts(rel: unknown): string[] {
     if (p === '..') throw new FilesError('Use a path inside the folder', 'bad_path');
     if (p.includes(':')) throw new FilesError('Invalid path', 'bad_path'); // a drive or an alternate data stream on Windows
     if (NEVER_LISTED.has(p.toLowerCase())) throw new FilesError('Not shown', 'hidden');
+    // Windows drops a trailing dot or space and maps 8.3 short names to the long name, so '.git.', '.git ' and 'GIT~1' open the
+    // real .git. Refuse those spellings up front; resolveInside also checks the resolved path.
+    if (/[. ]$/.test(p) || SHORT_NAME.test(p)) throw new FilesError('Invalid path', 'bad_path');
   }
   return parts;
+}
+
+/** A Windows 8.3 short name ('GIT~1', 'PROGRA~2.TXT'): up to 6 characters, '~', digits, an optional extension of up to 3. */
+const SHORT_NAME = /^[^.~]{0,6}~\d{1,6}(\.[^.]{0,3})?$/;
+
+/** True when a part of `real` below `base` (both resolved) is a never-listed name (.git), compared case-insensitively. */
+export function hiddenBelow(real: string, base: string): boolean {
+  const a = osp.normpath(real), b = osp.normpath(base);
+  const rest = a.length > b.length ? a.slice(b.length) : '';
+  return rest.split(/[\\/]/).some((p) => p !== '' && NEVER_LISTED.has(p.toLowerCase()));
 }
 
 /** POSIX (the WSL helper, macOS, Linux): '\' and ':' are name characters and there are no drives; only '/' separates. */
@@ -99,6 +112,8 @@ export function resolveInside(root: string, rel: unknown): [string, string] {
   }
   if (real.startsWith('\\\\?\\')) real = real.slice(4);
   if (isNetworkPath(real) || isForeignPath(real) || !within(real, base)) throw new FilesError('Not found', 'outside', 404);
+  // After links, junctions, short names and trailing dots are resolved: nothing inside .git, however it was spelled or reached.
+  if (hiddenBelow(real, base)) throw new FilesError('Not shown', 'hidden');
   return [real, parts.join('/')];
 }
 
@@ -223,7 +238,8 @@ export async function listDir(root: string, rel: unknown): Promise<Listing> {
       // A link is shown only when it resolves inside the root (a link out of it is left out, like a missing file).
       try {
         const real = Deno.realPathSync(full);
-        if (!within(real.startsWith('\\\\?\\') ? real.slice(4) : real, base)) continue;
+        const resolved = real.startsWith('\\\\?\\') ? real.slice(4) : real;
+        if (!within(resolved, base) || hiddenBelow(resolved, base)) continue; // out of the root, or into .git
         const st = Deno.statSync(real);
         isDir = st.isDirectory;
         size = st.size;

@@ -134,9 +134,8 @@ body.split-resizing-y {
   min-height: 0;
   position: relative;
 }
-.pane:not(.foc) .ws-tab.on {
-  background: var(--bubble-bg);
-}
+/* Nothing else differs between the focused pane and the other one: no dimmed bar, no other tab colour (owner, 2026-11-15:
+   "stop changing what is displayed when switching chat focus"). */
 
 /* ---- A pane that is not focused: a live copy of its chat. Clicking it focuses it. ---- */
 .mirror {
@@ -256,7 +255,6 @@ body.split-resizing-y {
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
-  opacity: 0.72;
   padding-bottom: 8px;
 }
 .mirror-foot .mirror-turn {
@@ -283,6 +281,25 @@ body.split-resizing-y {
 }
 .mirror-comp.has-draft {
   color: var(--text-7);
+}
+
+/* The copy of the real view (split-ui.js drawMirror with a snapshot): laid out exactly like the pane body that holds the real
+   view, so its header, bars, message box and chip row sit where the real ones do. */
+.mirror.mirror-copy {
+  cursor: default;
+}
+.mirror-copy :is(button, textarea, input, select, summary, a, [role='button'], .chip) {
+  cursor: pointer;
+}
+.mirror-copy textarea {
+  cursor: text;
+}
+/* The copy held over the real view for a moment after its pane took focus (split-ui.js hold): drawn on top, clicks pass through. */
+.mirror.mirror-hold {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
 }
 
 /* ---- Dragging a tab or a chat card ---- */
@@ -352,4 +369,10 @@ body.split-dragging {
   .split-hint {
     transition: none;
   }
+}
+
+/* Ctx and the usage limits in the unfocused pane's copy are as of when that chat last had focus (owner 2026-11-15: blur them
+   while the chat has no focus). The chip keeps its size and place; only its text is blurred. Not on the moment-long hold copy. */
+.mirror-copy:not(.mirror-hold) :is(.chip-ctx, .chip-limits) {
+  filter: blur(3px);
 }

@@ -1522,8 +1522,11 @@
   /* -- painting: tab badge, toolbar, banner -- */
   function paintCount() {
     if (!ui) return;
-    const a = liveOf(S.list).length, // archived and deleted ones are not counted
-      dn = myDocs().length,
+    // split view: both panes' chats' artifacts (the same whichever has focus)
+    const a = splitOn()
+        ? SPL.keys.reduce((t, k) => t + (SPL.secs.has(k) ? splLive(SPL.secs.get(k)).length : 0), 0)
+        : liveOf(S.list).length, // archived and deleted ones are not counted
+      dn = splitOn() ? 0 : myDocs().length,
       n = a + dn;
     ui.badge.textContent = n > 99 ? '99+' : String(n);
     ui.badge.hidden = !n;
@@ -1826,6 +1829,7 @@
   function paintAll() {
     paintCount();
     paintBar();
+    if (splitOn()) splPaint();
   }
 
   /* -- stage -- */
@@ -2059,6 +2063,7 @@
     ui.pop.hidden = true;
     ui.pop.replaceChildren();
     for (const b of [ui.pick, ui.ver, ui.more]) b.setAttribute('aria-expanded', 'false');
+    for (const x of SPL.secs.values()) x.pick.setAttribute('aria-expanded', 'false');
     ui.popFor = '';
   }
   function placePop(anchor, right) {
@@ -2872,6 +2877,245 @@
   }
 
   /* -- mounting (called by changes-ui.js, which owns the tab row) -- */
+  /* -- split view (owner, 2026-11-15, mockup v2): one artifact dropdown per pane's chat, side by side when the panel has room
+     (stacked when it is too narrow), and the one viewer below. The viewer shows the chat whose artifact you last picked; moving
+     focus between the panes changes nothing here. The dropdown whose artifact is showing has the accent border. -- */
+  const SPL = { keys: [], secs: new Map(), showing: '', box: null, timer: 0, pageCtx: null };
+  const splitUI = () => (root.AgentSplitUI && root.AgentSplitUI.active && root.AgentSplitUI.active() ? root.AgentSplitUI : null);
+  const splitOn = () => SPL.keys.length > 0;
+  /* chat.js / changes-ui.js report the focused chat here. In split view the viewer keeps its own chat. */
+  function syncFromPage(ctx) {
+    SPL.pageCtx = ctx || null;
+    if (!splitOn()) return sync(ctx);
+    if (ctx && ctx.id && ctx.id === S.chat.id) sync(Object.assign({}, ctx));
+  }
+  function splSection(key) {
+    let s = SPL.secs.get(key);
+    if (s) return s;
+    const rootEl = el('div', 'ar-sgrp sp-grp');
+    rootEl.dataset.key = key;
+    const head = el('div', 'sp-head'),
+      sbar = el('div', 'ar-bar ar-sbar'),
+      pick = el('button', 'ar-pick ar-spick');
+    pick.type = 'button';
+    pick.setAttribute('aria-haspopup', 'menu');
+    pick.setAttribute('aria-expanded', 'false');
+    sbar.append(pick);
+    rootEl.append(head, sbar);
+    s = { key, root: rootEl, head, sbar, pick, list: [], id: '', seq: 0 };
+    pick.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      splOpenPicker(s);
+    });
+    SPL.secs.set(key, s);
+    return s;
+  }
+  const splLive = (s) => orderArtifacts(liveOf(s.list).filter((a) => !isDocHistory(a)));
+  /* A pane's chat's "Docs this chat wrote" (as myDocs, for that chat): {docs, keys}. */
+  function splDocs(s) {
+    const D = DL(),
+      U = splitUI(),
+      c = U && U.chatInfo ? U.chatInfo(s.key).conv : null,
+      keys = [s.id, c && c.key, c && c.id].filter(Boolean);
+    if (!D || !s.id) return { docs: [], keys };
+    if (!docsHooked && D.onList) {
+      docsHooked = true;
+      D.onList(() => paintAll());
+    }
+    const now = D.cached(s.id, 'main');
+    if (!now && s.docsAsked !== s.id) {
+      s.docsAsked = s.id;
+      D.listFor(s.id, 'main').then(() => paintAll());
+    }
+    const all = (now || []).concat(s.id === S.chat.id ? S.docExtras : []),
+      docs = [];
+    for (const d of linkedDocs(all, keys)) if (!docs.some((o) => o.name === d.name)) docs.push(d);
+    return { docs, keys };
+  }
+  function splPaint() {
+    if (!ui || !SPL.box) return;
+    const U = splitUI(),
+      A = root.ActivityUI;
+    for (const k of SPL.keys) {
+      const s = splSection(k),
+        info = U ? U.chatInfo(k) : { key: k, title: 'Conversation' },
+        items = splLive(s),
+        n = items.length,
+        dn = splDocs(s).docs.length;
+      const line = [n + (n === 1 ? ' artifact' : ' artifacts')];
+      if (dn) line.push(dn + (dn === 1 ? ' doc' : ' docs'));
+      if (A && A.splitHead) A.splitHead(doc, info, line.join(' · '), s.head);
+      const on = SPL.showing === k && !!S.chat.id && S.chat.id === s.id;
+      const a = on ? current() : null,
+        shownDoc = on && S.doc ? S.doc : null,
+        shownA = a && items.some((x) => x.id === a.id) ? a : items[0];
+      s.pick.classList.toggle('showing', on && !!(a || shownDoc));
+      if (shownDoc || (!n && dn)) {
+        // a doc on screen (or only docs in this chat): the bar names it; the dropdown lists the docs under "Docs this chat wrote"
+        const t = shownDoc ? shownDoc.title || shownDoc.name : dn + (dn === 1 ? ' doc' : ' docs') + ' this chat wrote';
+        s.pick.replaceChildren(el('span', 'ar-k', 'doc'), el('span', 'ar-pick-title', t), el('span', 'ar-caret', '▾'));
+        s.pick.disabled = false;
+        s.pick.classList.remove('plain');
+        s.pick.title = t;
+        s.pick.setAttribute('aria-haspopup', 'menu');
+      } else if (!n) {
+        s.pick.replaceChildren(el('span', 'ar-pick-title', 'No artifacts in this chat yet'));
+        s.pick.disabled = true;
+        s.pick.classList.add('plain');
+        s.pick.title = '';
+        s.pick.setAttribute('aria-haspopup', 'false');
+      } else {
+        s.pick.replaceChildren(
+          el('span', 'ar-k', kindInfo(shownA.kind).badge),
+          el('span', 'ar-pick-title', shownA.title || 'Untitled'),
+          el('span', 'ar-caret', '▾'),
+        );
+        s.pick.disabled = false;
+        s.pick.classList.remove('plain');
+        // the full title on hover: the bar is narrow when two sit side by side (the title ends in …)
+        s.pick.title = (shownA.title || 'Untitled') + (on && a ? ' (showing below)' : '');
+        s.pick.setAttribute('aria-haspopup', 'menu');
+      }
+    }
+    const want = SPL.keys.map((k) => splSection(k).root);
+    want.forEach((nd, i) => {
+      if (SPL.box.children[i] !== nd) SPL.box.insertBefore(nd, SPL.box.children[i] || null);
+    });
+    while (SPL.box.children.length > want.length) SPL.box.lastChild.remove();
+    const t = ui.empty && ui.empty.querySelector('.ar-empty-t');
+    if (t) t.textContent = splitOn() ? 'Pick an artifact from either chat above.' : 'No artifacts in this chat yet';
+    ui.view.classList.toggle('ar-split-on', splitOn());
+    paintCount();
+  }
+  function splOpenPicker(s) {
+    if (!ui) return;
+    if (ui.popFor === 'split:' + s.key) {
+      closePop();
+      return;
+    }
+    closePop();
+    const here = SPL.showing === s.key && S.chat.id === s.id,
+      on = here ? (S.doc ? 'doc:' + S.doc.name : S.selId) : '',
+      dk = splDocs(s);
+    const groups = pickerGroups(s.list, on, Date.now(), dk.docs, dk.keys, '', {}).filter((g) => !g.foot);
+    const out = [];
+    for (const g of groups) {
+      out.push(...groupHead(g));
+      for (const it of g.items) {
+        if (it.doc) {
+          // "Docs this chat wrote": opens in the viewer below, in the full doc editor, as with one chat
+          const row = popItem('ar-doc' + (it.on ? ' on' : ''));
+          row.dataset.doc = it.name;
+          row.setAttribute('data-key', 'doc:' + it.name);
+          row.append(el('span', 'ar-k', it.badge), el('span', 'ar-it-title', it.title), el('span', 'ar-it-meta', it.meta));
+          row.title = 'Open ' + it.title + ' here';
+          row.addEventListener('click', () => {
+            closePop();
+            splShowDoc(s.key, it);
+          });
+          out.push(row);
+          continue;
+        }
+        const row = popItem(it.on ? 'on' : '');
+        row.dataset.id = it.id;
+        row.setAttribute('data-key', 'row:' + it.id);
+        row.append(el('span', 'ar-k', it.badge), el('span', 'ar-it-title', it.title), el('span', 'ar-it-meta', it.meta));
+        row.addEventListener('click', () => {
+          closePop();
+          splShow(s.key, it.id);
+        });
+        out.push(row);
+      }
+    }
+    ui.pop.replaceChildren(...out);
+    ui.pop.setAttribute('aria-label', 'Artifacts and docs in this chat');
+    ui.popFor = 'split:' + s.key;
+    ui.popAnchor = s.pick;
+    s.pick.setAttribute('aria-expanded', 'true');
+    placePop(s.pick);
+    const first = ui.pop.querySelector('.ar-it.on') || ui.pop.querySelector('.ar-it');
+    if (first) first.focus({ preventScroll: true });
+  }
+  /* Show a chat's artifact in the viewer (artifactId: the one picked; none: the chat's latest). */
+  function splShow(key, artifactId) {
+    const U = splitUI(),
+      info = U ? U.chatInfo(key) : null;
+    if (!info || !info.id) return;
+    SPL.showing = key;
+    if (S.chat.id !== info.id) {
+      if (artifactId) S.lastSel.set(info.id, { selId: artifactId, userPicked: true });
+      const pc = SPL.pageCtx && SPL.pageCtx.id === info.id ? SPL.pageCtx : null;
+      sync({ id: info.id, busy: !!(pc && pc.busy), cwd: (pc && pc.cwd) || '' });
+    } else if (artifactId) selectArtifact(artifactId);
+    splPaint();
+  }
+  /* Show a chat's doc in the viewer (the viewer takes that chat first). */
+  function splShowDoc(key, it) {
+    splShow(key);
+    const U = splitUI(),
+      info = U ? U.chatInfo(key) : null;
+    if (info && info.id && S.chat.id === info.id) openDoc({ name: it.name, title: it.title });
+    splPaint();
+  }
+  async function splLoad(s) {
+    const U = splitUI(),
+      info = U ? U.chatInfo(s.key) : null,
+      id = info ? info.id : '';
+    if (id !== s.id) {
+      s.id = id;
+      s.list = [];
+    }
+    if (!id) return;
+    const mine = ++s.seq;
+    try {
+      const d = await api('/api/live/artifacts?' + q({ conversationId: id }));
+      if (mine !== s.seq || id !== s.id) return;
+      s.list = Array.isArray(d.artifacts) ? d.artifacts : [];
+    } catch (e) {}
+  }
+  async function splLoadAll() {
+    await Promise.all(SPL.keys.map((k) => splLoad(splSection(k))));
+    if (!splitOn()) return;
+    // nothing showing yet: the first chat (pane order) that has an artifact
+    if (!SPL.showing || !SPL.keys.includes(SPL.showing)) {
+      const k = SPL.keys.find((x) => splLive(splSection(x)).length);
+      if (k) splShow(k);
+    }
+    splPaint();
+  }
+  function splitSync(keys) {
+    if (!S.mounted || !ui) return;
+    const was = splitOn();
+    SPL.keys = keys.slice();
+    for (const k of [...SPL.secs.keys()]) if (!SPL.keys.includes(k)) SPL.secs.delete(k);
+    if (!splitOn()) {
+      SPL.showing = '';
+      splPaint();
+      if (SPL.timer) {
+        win.clearInterval(SPL.timer);
+        SPL.timer = 0;
+      }
+      if (was) sync(SPL.pageCtx); // one chat again: the viewer follows the open chat, as always
+      return;
+    }
+    if (!SPL.box) {
+      SPL.box = el('div', 'ar-split');
+      ui.view.insertBefore(SPL.box, ui.view.firstChild);
+    }
+    const U = splitUI();
+    if (SPL.showing && !SPL.keys.includes(SPL.showing)) SPL.showing = '';
+    // the chat the viewer already shows stays on screen when it is one of the panes
+    if (!SPL.showing && S.chat.id)
+      SPL.showing = SPL.keys.find((k) => U && U.chatInfo(k).id === S.chat.id) || '';
+    if (!SPL.showing && S.chat.id) sync(null);
+    splPaint();
+    splLoadAll();
+    if (!SPL.timer)
+      SPL.timer = win.setInterval(() => {
+        if (splitOn() && S.visible) splLoadAll();
+      }, 10000);
+  }
+  root.addEventListener && root.addEventListener('aib-split-chats', (e) => splitSync((e && e.detail && e.detail.keys) || []));
   function mount(o) {
     if (S.mounted || !o || !o.view) return;
     win = o.win || root;
@@ -3197,7 +3441,7 @@
   const api2 = Object.assign({}, pure, {
     registerFile,
     mount,
-    sync,
+    sync: syncFromPage,
     setVisible,
     shown,
     onEvents,

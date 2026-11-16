@@ -36,6 +36,21 @@ import {
   trayOnlyView,
   type WindowHandle,
 } from '../../outputs/agent-studio/server/desktop/window.ts';
+import {
+  canPlaceWindows,
+  chooseOrder,
+  cleanSavedList,
+  launchKeyOf,
+  loadSavedList,
+  openAnswer,
+  restorePlan,
+  WINDOWS_FILE,
+} from '../../outputs/agent-studio/server/desktop/windows.ts';
+import { withPopFrom } from '../../outputs/agent-studio/server/web/server.ts';
+
+type Json = Record<string, unknown>;
+import { findOwnWindow } from '../../outputs/agent-studio/server/desktop/foreground_win.ts';
+import { presence as folderPresence } from '../../outputs/agent-studio/server/desktop/folder_presence.ts';
 import { orphanCommand } from '../../outputs/agent-studio/server/host/studio.ts';
 import { PageAccess } from '../../outputs/agent-studio/server/web/page_access.ts';
 import { UpdateService } from '../../outputs/agent-studio/server/desktop/updater.ts';
@@ -70,6 +85,15 @@ import { pidAlive, readInfo, stopHost } from '../../outputs/agent-studio/server/
 import { DENO, FAKE_HOST, Fixture, TEST_OPTIONS, until } from './_host_fixture.ts';
 
 const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
+/** Every write of the window list has landed (a test's temp folder is removed only after). */
+async function settled(app: DesktopApp): Promise<void> {
+  for (let i = 0; i < 50; i++) {
+    const w = app.windows.writing;
+    await w;
+    await tick(5);
+    if (w === app.windows.writing) return;
+  }
+}
 /** Until `ready()` holds (10 s at most). For steps that do real I/O first: a new window reads its saved geometry from disk, which a
  * busy machine can take longer than one tick() for. */
 async function waitFor(ready: () => boolean, what: string, ms = 10_000): Promise<void> {
@@ -154,6 +178,7 @@ Deno.test('link rule and rate limit', () => {
 
 // ---------- DesktopApp with a fake shell ----------
 
+let fakeHwnds = 100;
 class FakeWindow implements WindowHandle {
   closed = false;
   visible = true;
@@ -165,8 +190,29 @@ class FakeWindow implements WindowHandle {
   title = '';
   href = '';
   log: string[] = [];
-  constructor(readonly options: { title: string; width: number; height: number }) {
+  /** Its own native handle (B1), a distinct number per window. */
+  hwnd = BigInt(++fakeHwnds);
+  minimized = false;
+  maximized = false;
+  /** What openFromDesktop answers (K6), and the targets it was asked to open. */
+  openAnswer: unknown = 'mine';
+  opened: unknown[] = [];
+  constructor(readonly options: { title: string; width: number; height: number; x?: number; y?: number }) {
     this.size = [options.width, options.height];
+  }
+  close() {
+    this.closed = true; // from code: no close event (S4)
+    this.log.push('close');
+  }
+  nativeHandle() {
+    return this.closed ? null : this.hwnd;
+  }
+  state() {
+    return { minimized: this.minimized, maximized: this.maximized };
+  }
+  maximize() {
+    this.maximized = true;
+    this.log.push('maximize');
   }
   /** What the page holds (page-auth.js storage): a navigation to /#aib-key=K leaves the key in sessionStorage, like the page. */
   held = { key: '', session: '' };
@@ -221,6 +267,12 @@ class FakeWindow implements WindowHandle {
   evaluate(code: string) {
     if (code === PAGE_PROBE) return Promise.resolve(this.href ? JSON.stringify({ href: this.href, title: this.title }) : undefined);
     if (code === PAGE_AUTH_PROBE) return Promise.resolve(JSON.stringify(this.held));
+    const open = /openFromDesktop\((.*)\);return r===/.exec(code);
+    if (open) {
+      this.opened.push(JSON.parse(open[1]));
+      const a = this.openAnswer;
+      return Promise.resolve(a === true || a === 'mine' ? 'mine' : a === 'no' ? 'no' : false);
+    }
     return Promise.resolve(code === 'location.href' ? this.href : undefined);
   }
 }
@@ -242,6 +294,8 @@ function fakeShell(answer = false) {
     external: [] as string[],
     notes: [] as [string, string][],
     trayRemoved: 0,
+    /** bringToFront calls: the handle each was given (B1). */
+    fronts: [] as (bigint | null)[],
   };
   const shell: Shell = {
     createWindow: (o) => {
@@ -259,6 +313,7 @@ function fakeShell(answer = false) {
     removeTray: () => void s.trayRemoved++,
     ask: (m) => (s.questions.push(m), Promise.resolve(s.answer)),
     openExternal: (u) => void s.external.push(u),
+    bringToFront: (hwnd) => (s.fronts.push(hwnd ?? null), { found: true, restored: false, foreground: true }),
     notifier: {
       mechanism: 'fake',
       show: (t, b) => (s.notes.push([t, b]), Promise.resolve({ shown: true, code: 1 })),
@@ -300,7 +355,7 @@ async function makeApp(
   shell.removeTray = () => (order.push('tray removed'), removeTray());
   const app = new DesktopApp(shell, options);
   await app.start();
-  return { app, s, updates, quits, leaves, stops, order, dir, done: () => (app.stop(), Deno.remove(dir, { recursive: true })) };
+  return { app, s, updates, quits, leaves, stops, order, dir, done: () => (app.stop(), settled(app).then(() => Deno.remove(dir, { recursive: true }))) };
 }
 
 Deno.test('start: one window titled AIB on the page, a keeper, a tray, one binding only', async () => {
@@ -309,7 +364,7 @@ Deno.test('start: one window titled AIB on the page, a keeper, a tray, one bindi
     assertEquals(s.windows.length, 1);
     const w = s.windows[0];
     assertEquals(w.options.title, 'AIB');
-    assertEquals(w.urls, ['http://127.0.0.1:8890/']);
+    assertEquals(w.urls, ['http://127.0.0.1:8890/?w=m']);
     assertEquals([...w.bound.keys()], ['aibDesktop'], 'it only says "the app"; notifications go through the server');
     assertEquals(await w.bound.get('aibDesktop')!(), true);
     assertEquals(s.keepers, 1);
@@ -348,7 +403,7 @@ Deno.test('closing with chats working: no question, nothing stopped; AIB stays i
     s.tray!.onClick();
     await waitFor(() => s.windows.length > 1 && s.windows[1].urls.length > 0, 'the new window on the page');
     assertEquals(s.windows.length, 2, 'the closed window is gone: a new one');
-    assertEquals(s.windows[1].urls, ['http://127.0.0.1:8890/']);
+    assertEquals(s.windows[1].urls, ['http://127.0.0.1:8890/?w=m']);
     assert(!app.background, 'the person is back');
     s.tray!.onMenu('open'); // already open: show and focus, no third window
     await waitFor(() => s.windows[1].log.slice(-2).join() === 'show,focus', 'show and focus');
@@ -663,11 +718,16 @@ Deno.test('the window remembers its size and position in the data folder', async
   try {
     const w = a.s.windows[0];
     assertEquals(w.size, [DEFAULT_SIZE.width, DEFAULT_SIZE.height]);
+    w.href = 'http://127.0.0.1:8890/?w=m';
+    w.emit('load'); // S7: geometry is read only after the first load
+    await tick();
     w.size = [1000, 700];
     w.pos = [30, 40];
     w.emit('move');
     await tick(20);
-    assertEquals(JSON.parse(await Deno.readTextFile(`${a.dir}/${GEOMETRY_FILE}`)), { width: 1000, height: 700, x: 30, y: 40 });
+    await settled(a.app);
+    const saved = JSON.parse(await Deno.readTextFile(`${a.dir}/${WINDOWS_FILE}`));
+    assertEquals(saved.windows, [{ id: 'm', kind: 'main', width: 1000, height: 700, x: 30, y: 40, maximized: false }]);
     const again = new DesktopApp(fakeShell().shell, { ...a.app.options });
     await again.openWindow();
     const w2 = again.window as FakeWindow;
@@ -689,7 +749,7 @@ Deno.test('a page that left the app origin opens outside and the window goes bac
     w.emit('load');
     await tick();
     assertEquals(a.s.external, ['https://example.com/docs']);
-    assertEquals(w.urls.at(-1), 'http://127.0.0.1:8890/');
+    assertEquals(w.urls.at(-1), 'http://127.0.0.1:8890/?w=m');
   } finally {
     await a.done();
   }
@@ -915,14 +975,14 @@ Deno.test('a load on another local port or an error page goes back to our page a
       w.href = href;
       w.emit('load');
       await tick();
-      assertEquals(w.href, 'http://127.0.0.1:8890/', href);
+      assertEquals(w.href, 'http://127.0.0.1:8890/?w=m', href);
     }
     assertEquals(a.s.external, [], 'nothing local is ever handed to the system browser');
     w.href = 'https://example.com/x';
     w.emit('load');
     await tick();
     assertEquals(a.s.external, ['https://example.com/x']);
-    assertEquals(w.href, 'http://127.0.0.1:8890/');
+    assertEquals(w.href, 'http://127.0.0.1:8890/?w=m');
   } finally {
     await a.done();
   }
@@ -931,19 +991,19 @@ Deno.test('a load on another local port or an error page goes back to our page a
 Deno.test('the runtime key-less redirect lands after the keyed navigation: the window opens the page again with the key', async () => {
   const access = new PageAccess(null, 'L'.repeat(43));
   const base = 'http://127.0.0.1:8890';
-  const keyed = access.pageUrl(base);
-  const a = await makeApp(() => Promise.resolve(0), null, { url: keyed, pageConnected: (held) => access.holds(held) });
+  const keyed = `${base}/?w=m#aib-key=${access.launchKey}`; // K0: the main window's own keyed URL
+  const a = await makeApp(() => Promise.resolve(0), null, { url: access.pageUrl(base), pageConnected: (held) => access.holds(held) });
   try {
     const w = a.s.windows[0];
     assertEquals(w.urls, [keyed], 'the window opens on the keyed page');
-    // Fresh profile: the runtime's startup navigation to its serve port wins; the 302 to `${url}/` carries no key.
+    // Fresh profile: the runtime's startup navigation to its serve port wins; the 302 to `${url}/` carries no key (and no ?w=, S6).
     w.href = `${base}/`;
     w.held = { key: '', session: '' };
     w.emit('load');
     await tick();
     assertEquals(w.urls, [keyed, keyed], 'not connected: sent to the keyed page once more');
     assert(access.holds(w.held), 'the page now holds the launch key: bootstrap gives it the token');
-    w.href = `${base}/`; // page-auth.js took the key out of the address bar
+    w.href = `${base}/?w=m`; // page-auth.js took the key out of the address bar
     w.emit('load');
     await a.app.watchdogTick();
     assertEquals(w.urls.length, 2, 'connected: left alone');
@@ -967,7 +1027,7 @@ Deno.test('no pageConnected check (other tests): our page is never navigated for
   const a = await makeApp(() => Promise.resolve(0));
   try {
     const w = a.s.windows[0];
-    w.href = 'http://127.0.0.1:8890/';
+    w.href = 'http://127.0.0.1:8890/?w=m';
     w.emit('load');
     await tick();
     assertEquals(w.urls.length, 1);
@@ -995,7 +1055,7 @@ Deno.test('watchdog: a visible window off our page goes back; a hidden one is le
   const a = await makeApp(() => Promise.resolve(0));
   try {
     const w = a.s.windows[0];
-    w.href = 'http://127.0.0.1:8890/';
+    w.href = 'http://127.0.0.1:8890/?w=m';
     await a.app.watchdogTick();
     assertEquals(w.urls.length, 1, 'on our page: nothing to do');
     w.href = 'http://127.0.0.1:40000/';
@@ -1004,7 +1064,7 @@ Deno.test('watchdog: a visible window off our page goes back; a hidden one is le
     assertEquals(w.urls.length, 1, 'hidden (in the tray): left alone');
     w.visible = true;
     await a.app.watchdogTick();
-    assertEquals(w.urls.at(-1), 'http://127.0.0.1:8890/');
+    assertEquals(w.urls.at(-1), 'http://127.0.0.1:8890/?w=m');
     a.s.keeper!.visible = true;
     await a.app.watchdogTick();
     assertEquals(a.s.keeper!.visible, false);
@@ -1030,7 +1090,7 @@ Deno.test('watchdog runs on its own timer and stops with the app', async () => {
     const w = s.windows[0];
     w.href = 'http://127.0.0.1:40000/';
     await tick(120);
-    assertEquals(w.href, 'http://127.0.0.1:8890/');
+    assertEquals(w.href, 'http://127.0.0.1:8890/?w=m');
   } finally {
     app.stop();
     await tick(30); // let a pending save timer run out
@@ -1080,7 +1140,7 @@ Deno.test('the first load of our page calls onPageLoaded once (the update health
     w.emit('load');
     await tick();
     assertEquals(loaded, 0, 'not our page yet');
-    w.href = 'http://127.0.0.1:8890/';
+    w.href = 'http://127.0.0.1:8890/?w=m';
     w.emit('load');
     w.emit('load');
     await tick();
@@ -1144,7 +1204,7 @@ Deno.test('tray-only start (--start-in-tray): no window, a keeper, the tray menu
     // A left click or Open AIB makes the window as usual.
     s.tray!.onMenu('open');
     await until(() => s.windows.length === 1, 'the window opens');
-    assertEquals(s.windows[0].urls, ['http://127.0.0.1:8890/']);
+    assertEquals(s.windows[0].urls, ['http://127.0.0.1:8890/?w=m']);
     assertEquals(quits, []);
   } finally {
     await done();
@@ -1258,7 +1318,7 @@ Deno.test('phone access on: closing the window with nothing working keeps AIB in
     assertEquals(a.quits, [], 'no idle self-quit while phone access is on (an hour of nothing working)');
     a.s.tray!.onClick();
     await waitFor(() => a.s.windows.length === 2, 'a new window');
-    assertEquals(a.s.windows[1].urls, ['http://127.0.0.1:8890/']);
+    assertEquals(a.s.windows[1].urls, ['http://127.0.0.1:8890/?w=m']);
     assert(!a.app.background);
   } finally {
     await a.done();
@@ -1468,4 +1528,575 @@ Deno.test('tray chat slots: up to 5 blocked chats in the menu, "+N more" past th
   } finally {
     await a.done();
   }
+});
+
+// ---------- multi-window Phase 2A (design private/designs/multi-window, T8/T9): fake Shell, no window is shown ----------
+
+const KEY = 'K'.repeat(43);
+const BASE = 'http://127.0.0.1:8890';
+const PROJ = { key: 'p:budget', name: 'budget-app', path: 'C:\\work\\budget-app' };
+const PROJ2 = { key: 'p:recipe', name: 'recipe-site', path: 'C:\\work\\recipe-site' };
+const CHAT = { key: 'claude:csv', project: 'p:budget', title: 'CSV import' };
+
+/** The app with a keyed URL; `saved`: a desktop-windows.json written before it starts. */
+async function makeMulti(extra: Partial<DesktopOptions> = {}, saved?: unknown, shellExtra: Partial<Shell> = {}, busy = 0) {
+  const dir = await Deno.makeTempDir();
+  if (saved !== undefined) await Deno.writeTextFile(`${dir}/${WINDOWS_FILE}`, typeof saved === 'string' ? saved : JSON.stringify(saved));
+  const { s, shell } = fakeShell();
+  Object.assign(shell, shellExtra);
+  const quits: boolean[] = [];
+  const gone: string[] = [];
+  const app = new DesktopApp(shell, {
+    url: `${BASE}/#aib-key=${KEY}`,
+    stateDir: dir,
+    trayIcon: trayIconPng(),
+    busyCount: () => Promise.resolve(busy),
+    quit: (stop) => (quits.push(stop), Promise.resolve()),
+    saveDelayMs: 0,
+    watchdogMs: 0,
+    trayPollMs: 0,
+    onWindowGone: (w) => void gone.push(w),
+    ...extra,
+  });
+  await app.start();
+  const win = (id: string) => app.windows.get(id)!.handle as FakeWindow;
+  /** The window's page finished loading on its own URL (the fragment taken out, as page-auth.js does). */
+  const load = async (id: string, href = app.windows.get(id)!.url.replace(/#.*$/, '')) => {
+    const w = win(id);
+    w.href = href;
+    w.emit('load');
+    await tick();
+  };
+  const savedNow = async () => {
+    await settled(app);
+    return JSON.parse(await Deno.readTextFile(`${dir}/${WINDOWS_FILE}`));
+  };
+  return {
+    app,
+    s,
+    dir,
+    quits,
+    gone,
+    win,
+    load,
+    savedNow,
+    done: async () => {
+      app.stop();
+      await settled(app);
+      await Deno.remove(dir, { recursive: true });
+    },
+  };
+}
+
+Deno.test('multi-window K0: each window gets its own keyed URL and title; one project opens one window (D1a); cap 8', async () => {
+  const m = await makeMulti();
+  try {
+    assertEquals(m.s.windows.length, 1);
+    assertEquals(m.win('m').urls, [`${BASE}/?w=m#aib-key=${KEY}`]);
+    await m.load('m');
+    assertEquals(m.win('m').title, 'AIB');
+    const dw = m.app.desktopWindows;
+    assertEquals(await dw.open({ project: PROJ }, 'm'), { w: 'w2', existed: false });
+    const w2 = m.win('w2');
+    assertEquals(w2.urls, [`${BASE}/?w=w2&kind=project&project=p%3Abudget#aib-key=${KEY}`]);
+    assertEquals(w2.options.title, 'AIB · budget-app');
+    assertEquals(m.s.fronts.at(-1), w2.hwnd, 'the new window comes forward with its own handle');
+    assertEquals(await dw.open({ project: PROJ }, 'm'), { w: 'w2', existed: true });
+    assertEquals(m.s.windows.length, 2, 'the same project again: focused, no second window');
+    assertEquals(await dw.open({ chat: CHAT }, 'w2'), { w: 'w3', existed: false });
+    const w3 = m.win('w3');
+    assertEquals([w3.options.width, w3.options.height], [480, 720], 'a pop-out is small');
+    assertEquals(w3.options.title, 'CSV import · AIB');
+    assert(w3.urls[0].startsWith(`${BASE}/?w=w3&kind=chat&mode=chat&chat=claude%3Acsv&project=p%3Abudget#aib-key=`));
+    assertEquals(await dw.open({ doc: { project: 'p:budget', name: 'Release plan' } }, 'w2'), { w: 'w4', existed: false });
+    assert(m.win('w4').urls[0].startsWith(`${BASE}/doc.html?w=w4&kind=doc&project=p%3Abudget&name=Release+plan#aib-key=`));
+    assertEquals(dw.list().map((i) => [i.w, i.kind, i.project, i.chat]), [
+      ['m', 'main', null, null],
+      ['w2', 'project', 'p:budget', null],
+      ['w3', 'chat', 'p:budget', 'claude:csv'],
+      ['w4', 'doc', 'p:budget', null],
+    ]);
+    assert(dw.othersAlive('m') && dw.othersAlive('w2'));
+    for (let i = 0; i < 4; i++) await dw.open({ project: { ...PROJ, key: `p:${i}`, name: `p${i}` } }, 'm');
+    assertEquals(dw.list().length, 8);
+    let cap = false;
+    try {
+      await dw.open({ project: { ...PROJ, key: 'p:over', name: 'over' } }, 'm');
+    } catch (error) {
+      cap = (error as Error).name === 'WindowCapError';
+    }
+    assert(cap, 'the ninth window is refused (409 at the route)');
+  } finally {
+    await m.done();
+  }
+});
+
+Deno.test('multi-window B2/B3/S6: every window is checked against its own URL, with its own rate limits; the watchdog checks all', async () => {
+  const access = new PageAccess(null, KEY);
+  const m = await makeMulti({ pageConnected: (held) => access.holds(held) });
+  try {
+    await m.load('m');
+    await m.app.desktopWindows.open({ project: PROJ }, 'm');
+    const w2 = m.win('w2');
+    const own = m.app.windows.get('w2')!.url;
+    // S6: the window lands on our page without its own id (the runtime's redirect, a lost query): its own URL again
+    await m.load('w2', `${BASE}/`);
+    assertEquals(w2.urls, [own, own]);
+    await m.load('w2', `${BASE}/?w=m`);
+    assertEquals(w2.urls.at(-1), own, "another window's id: its own URL, never the main window's");
+    // an outside site: opened in the browser, the window goes back to its own URL
+    await m.load('w2', 'https://example.com/x');
+    assertEquals(m.s.external, ['https://example.com/x']);
+    assertEquals(w2.urls.at(-1), own);
+    // our page with its id but no key or session: its own keyed URL (N4)
+    w2.held = { key: '', session: '' };
+    await m.load('w2', own.replace(/#.*$/, ''));
+    assertEquals(w2.urls.at(-1), own);
+    const n = w2.urls.length;
+    w2.held = { key: KEY, session: '' };
+    await m.load('w2', own.replace(/#.*$/, ''));
+    assertEquals(w2.urls.length, n, 'connected on its own page: left alone');
+    // per-window limits: w2 used up its 4 "back" sends; the main window still has its own
+    for (let i = 0; i < 6; i++) await m.load('w2', 'chrome-error://chromewebdata/');
+    const stuck = w2.urls.length;
+    await m.load('w2', 'chrome-error://chromewebdata/');
+    assertEquals(w2.urls.length, stuck, "w2's limit is used up");
+    const mainBefore = m.win('m').urls.length;
+    await m.load('m', 'chrome-error://chromewebdata/');
+    assertEquals(m.win('m').urls.length, mainBefore + 1, 'the main window is sent back: its limit is its own');
+    // the watchdog looks at every visible window; a hidden one is left
+    const wd = await makeMulti();
+    try {
+      await wd.load('m');
+      await wd.app.desktopWindows.open({ project: PROJ }, 'm');
+      await wd.load('w2');
+      const x = wd.win('w2');
+      x.href = 'http://127.0.0.1:40000/';
+      x.visible = false;
+      await wd.app.watchdogTick();
+      assertEquals(x.urls.length, 1, 'hidden: left alone');
+      x.visible = true;
+      await wd.app.watchdogTick();
+      assertEquals(x.urls.at(-1), wd.app.windows.get('w2')!.url);
+      assertEquals(wd.win('m').urls.length, 1, 'the main window on its page: nothing done');
+    } finally {
+      await wd.done();
+    }
+  } finally {
+    await m.done();
+  }
+});
+
+Deno.test('multi-window B5: closing a window that is not the last just closes it; the last one runs the quit rule and stays saved', async () => {
+  const m = await makeMulti();
+  try {
+    await m.load('m');
+    await m.app.desktopWindows.open({ project: PROJ }, 'm');
+    await m.load('w2');
+    m.win('m').emit('close'); // the person closed the main window while w2 is open
+    await tick();
+    assertEquals(m.quits, [], 'no quit');
+    assertEquals(m.gone, ['m'], 'its presence slot goes at once (B8)');
+    assertEquals((await m.savedNow()).windows.map((w: { id: string }) => w.id), ['w2'], 'it left the saved list');
+    m.win('w2').emit('close'); // the last window, nothing working
+    await tick();
+    await tick();
+    assertEquals(m.quits, [false], 'the last window: the quit rule (nothing works: quit)');
+    assertEquals((await m.savedNow()).windows.map((w: { id: string }) => w.id), ['w2'], 'the last window stays in the list (G8)');
+  } finally {
+    await m.done();
+  }
+});
+
+Deno.test('multi-window B5: Quit AIB with work running hides every window; Open AIB shows them again, the last-used in front', async () => {
+  const m = await makeMulti({}, undefined, {}, 2);
+  try {
+    await m.load('m');
+    await m.app.desktopWindows.open({ project: PROJ }, 'm');
+    await m.app.desktopWindows.open({ chat: CHAT }, 'w2');
+    m.win('w2').emit('focus');
+    await m.app.requestQuit();
+    assertEquals(m.quits, [], 'work runs and no keeper: AIB stays in the tray');
+    assertEquals(['m', 'w2', 'w3'].map((id) => m.win(id).visible), [false, false, false], 'all three hidden');
+    assert(m.app.background);
+    m.s.fronts.length = 0;
+    m.s.tray!.onMenu('open');
+    await tick();
+    assertEquals(['m', 'w2', 'w3'].map((id) => m.win(id).visible), [true, true, true]);
+    assertEquals(m.s.fronts[0], m.win('w2').hwnd, 'the window used last comes forward (B12)');
+    assertEquals(m.s.windows.length, 3, 'no window made twice');
+  } finally {
+    await m.done();
+  }
+});
+
+Deno.test('multi-window S4: closing from code (K4 close) drops the window from the list at once; no close event is needed', async () => {
+  const m = await makeMulti();
+  try {
+    await m.load('m');
+    await m.app.desktopWindows.open({ project: PROJ }, 'm');
+    const w2 = m.win('w2');
+    assertEquals(m.app.desktopWindows.close('w2'), true);
+    assertEquals([w2.closed, w2.log.at(-1)], [true, 'close'], 'closed from code');
+    assertEquals(m.app.desktopWindows.list().map((i) => i.w), ['m']);
+    assertEquals(m.gone, ['w2']);
+    assertEquals((await m.savedNow()).windows.map((w: { id: string }) => w.id), ['m']);
+    assertEquals(m.app.desktopWindows.close('w2'), false, 'gone already');
+    assertEquals(m.quits, []);
+    // a pinned window closing itself as the last visible one (its project was removed, G4) leaves a main window behind
+    m.win('m').emit('close');
+    await tick();
+    assertEquals(m.quits, [false]);
+  } finally {
+    await m.done();
+  }
+});
+
+Deno.test('multi-window G4: a pinned window that closes itself as the last one opens the main window instead of leaving none', async () => {
+  const m = await makeMulti({}, { v: 1, lastFocused: 'w2', windows: [{ id: 'w2', kind: 'project', project: PROJ, width: 900, height: 700 }] });
+  try {
+    assertEquals(m.app.desktopWindows.list().map((i) => i.w), ['w2'], 'only the project window was saved');
+    assert(m.app.desktopWindows.close('w2'));
+    assertEquals(m.app.desktopWindows.list().map((i) => i.w), ['m'], 'a main window took its place');
+    assertEquals(m.quits, []);
+  } finally {
+    await m.done();
+  }
+});
+
+Deno.test('multi-window B1/B6/K6: a notification goes to the pop-out, then the project window, then main; the window comes forward with its own handle', async () => {
+  const m = await makeMulti();
+  try {
+    await m.load('m');
+    await m.app.desktopWindows.open({ project: PROJ }, 'm');
+    await m.app.desktopWindows.open({ project: PROJ2 }, 'm');
+    await m.load('w2');
+    await m.load('w3');
+    // the chat's project (budget-app) has window w2: recipe-site's window and main answer 'no' (K6)
+    m.win('m').openAnswer = 'no';
+    m.win('w3').openAnswer = 'no';
+    m.win('w2').openAnswer = 'mine';
+    m.win('m').size = [3000, 2000]; // the biggest window is not the one that comes forward
+    m.s.fronts.length = 0;
+    assert(await m.app.openFromNotification({ type: 'chat', key: 'claude:x' }, 3, 0));
+    assertEquals(m.s.fronts[0], m.win('w2').hwnd, "bringToFront got window 2's own handle (B1)");
+    assertEquals(m.win('w2').opened.at(-1), { type: 'chat', key: 'claude:x' });
+    // the chat popped out: the pop-out is asked first and wins
+    await m.app.desktopWindows.open({ chat: { ...CHAT, key: 'claude:x' } }, 'w2');
+    const pop = m.app.windows.get('w4')!.handle as FakeWindow;
+    pop.openAnswer = 'mine';
+    m.win('w2').opened.length = 0;
+    m.s.fronts.length = 0;
+    assert(await m.app.openFromNotification({ type: 'chat', key: 'claude:x' }, 3, 0));
+    assertEquals(m.s.fronts[0], pop.hwnd);
+    assertEquals(m.win('w2').opened, [], 'the project window was not asked');
+    // nobody takes it and there is no main window: one is made (B6)
+    const n = await makeMulti({}, { v: 1, lastFocused: 'w2', windows: [{ id: 'w2', kind: 'project', project: PROJ, width: 900, height: 700 }] });
+    try {
+      n.win('w2').openAnswer = 'no';
+      const p = n.app.openFromNotification({ type: 'chat', key: 'claude:other' }, 3, 0);
+      await tick();
+      assert(await p);
+      assertEquals(n.app.desktopWindows.list().map((i) => i.w), ['m', 'w2'], 'the main window was made');
+      assertEquals((n.win('m')).opened, [{ type: 'chat', key: 'claude:other' }]);
+    } finally {
+      await n.done();
+    }
+  } finally {
+    await m.done();
+  }
+});
+
+Deno.test('multi-window Phase 3: a pop-out keeps the window it was moved out of (from) across a restart; bad values dropped', async () => {
+  const m = await makeMulti();
+  try {
+    await m.load('m');
+    const dw = m.app.desktopWindows;
+    await dw.open({ project: PROJ }, 'm');
+    assertEquals(await dw.open({ chat: CHAT }, 'w2'), { w: 'w3', existed: false });
+    assertEquals(await dw.open({ doc: { project: 'p:budget', name: 'Plan' } }, 'm'), { w: 'w4', existed: false });
+    assertEquals(dw.list().map((i) => [i.w, i.from]), [['m', null], ['w2', null], ['w3', 'w2'], ['w4', 'm']], 'project windows have none');
+    const saved = await m.savedNow();
+    assertEquals(saved.windows.map((w: Json) => [w.id, w.from ?? null]), [['m', null], ['w2', null], ['w3', 'w2'], ['w4', 'm']]);
+    // the presence answer carries it for the pop-outs (the page that moved it takes it back after a restart)
+    const ans = withPopFrom({ ok: true, windows: [{ w: 'm', kind: 'main' }, { w: 'w3', kind: 'chat' }, { w: 'w4', kind: 'doc' }] }, dw);
+    assertEquals((ans.windows as Json[]).map((v) => v.from ?? null), [null, 'w2', 'm']);
+    assertEquals(withPopFrom({ ok: true, windows: [{ w: 'w3', kind: 'chat' }] }, null).windows, [{ w: 'w3', kind: 'chat' }], 'serve mode');
+    // restart: the restored pop-out still knows where it came from
+    const n = await makeMulti({}, saved);
+    try {
+      assertEquals(n.app.desktopWindows.list().map((i) => [i.w, i.kind, i.from]), [['m', 'main', null], ['w2', 'project', null], ['w3', 'chat', 'w2'], ['w4', 'doc', 'm']]);
+    } finally {
+      await n.done();
+    }
+  } finally {
+    await m.done();
+  }
+  // K1 read: only a valid other window id, only on a pop-out
+  const list = cleanSavedList({
+    v: 1,
+    windows: [
+      { id: 'm', kind: 'main', width: 900, height: 700, from: 'w2' },
+      { id: 'w2', kind: 'project', project: PROJ, width: 900, height: 700, from: 'm' },
+      { id: 'w3', kind: 'chat', chat: CHAT, width: 480, height: 720, from: 'w3' },
+      { id: 'w4', kind: 'chat', chat: { ...CHAT, key: 'claude:b' }, width: 480, height: 720, from: '../x' },
+      { id: 'w5', kind: 'chat', chat: { ...CHAT, key: 'claude:c' }, width: 480, height: 720, from: 'w2' },
+    ],
+  });
+  assertEquals(list.windows.map((w) => [w.id, w.from ?? null]), [['m', null], ['w2', null], ['w3', null], ['w4', null], ['w5', 'w2']]);
+});
+
+Deno.test('multi-window K4 route: the pop-out, then the project window, then main (made if needed); the caller itself gets "self"', async () => {
+  const m = await makeMulti();
+  try {
+    await m.load('m');
+    const dw = m.app.desktopWindows;
+    await dw.open({ project: PROJ }, 'm');
+    assertEquals(await dw.route({ project: 'p:budget', chat: 'claude:1' }, 'm'), { to: 'w2' });
+    await tick();
+    assertEquals(m.win('w2').opened, [{ type: 'chat', key: 'claude:1' }], 'delivered through its openFromDesktop');
+    assertEquals(await dw.route({ project: 'p:budget', chat: 'claude:1' }, 'w2'), { to: 'self' });
+    assertEquals(await dw.route({ project: 'p:other' }, 'w2'), { to: 'm' }, 'another project from a project window: the main window');
+    await tick();
+    assertEquals(m.win('m').opened, [{ type: 'project', key: 'p:other' }]);
+    await dw.open({ chat: CHAT }, 'w2');
+    assertEquals(await dw.route({ project: 'p:budget', chat: CHAT.key }, 'm'), { to: 'w3' }, 'popped out: the pop-out');
+    assertEquals(await dw.route({ project: 'p:budget', doc: { project: 'p:budget', name: 'Plan' } }, 'm'), { to: 'w2' });
+    // no main window: made
+    m.win('m').emit('close');
+    await tick();
+    assertEquals(dw.list().some((i) => i.w === 'm'), false);
+    assertEquals(await dw.route({ project: 'p:other' }, 'w2'), { to: 'm' });
+    assert(dw.list().some((i) => i.w === 'm'), 'the main window was made');
+  } finally {
+    await m.done();
+  }
+});
+
+Deno.test('multi-window B10/B11/S5/S7/G3: one save timer per window, atomic writes, no save before load, at 0x0 or minimised; maximised keeps its normal size', async () => {
+  const m = await makeMulti({ saveDelayMs: 30 });
+  try {
+    await m.load('m');
+    await m.app.desktopWindows.open({ project: PROJ }, 'm');
+    const main = m.win('m'), w2 = m.win('w2');
+    w2.size = [700, 500];
+    w2.emit('resize');
+    await tick(50);
+    assertEquals((await m.savedNow()).windows[1].width, 1280, 'before its first load nothing is read (S7)');
+    await m.load('w2');
+    main.size = [1000, 700];
+    main.pos = [10, 20];
+    main.emit('move');
+    w2.pos = [2000, 80];
+    w2.emit('move'); // within the first one's delay: both are kept (one timer per window)
+    await tick(80);
+    let saved = await m.savedNow();
+    assertEquals(saved.windows.map((w: SavedWindowJson) => [w.id, w.width, w.height, w.x, w.y]), [
+      ['m', 1000, 700, 10, 20],
+      ['w2', 700, 500, 2000, 80],
+    ]);
+    assertEquals([...Deno.readDirSync(m.dir)].filter((f) => f.name.endsWith('.tmp')), [], 'written to a temp file, then renamed');
+    // minimised: 0x0 or IsIconic, never saved
+    w2.size = [0, 0];
+    w2.emit('resize');
+    await tick(50);
+    w2.size = [700, 500];
+    w2.minimized = true;
+    w2.pos = [-32000, -32000];
+    w2.emit('move');
+    await tick(50);
+    saved = await m.savedNow();
+    assertEquals([saved.windows[1].width, saved.windows[1].x], [700, 2000]);
+    // maximised: the flag, with the normal size and position kept
+    w2.minimized = false;
+    w2.maximized = true;
+    w2.size = [2560, 1400];
+    w2.pos = [1920, 0];
+    w2.emit('resize');
+    await tick(50);
+    saved = await m.savedNow();
+    assertEquals([saved.windows[1].width, saved.windows[1].x, saved.windows[1].maximized], [700, 2000, true]);
+  } finally {
+    await m.done();
+  }
+});
+
+interface SavedWindowJson {
+  id: string;
+  width: number;
+  height: number;
+  x?: number;
+  y?: number;
+}
+
+Deno.test('multi-window D3a: every saved window comes back at start, main first, at its size and position; maximised is maximised after load', async () => {
+  const saved = {
+    v: 1,
+    lastFocused: 'w3',
+    windows: [
+      { id: 'w2', kind: 'project', project: PROJ, x: 2000, y: 80, width: 1280, height: 1000, maximized: true },
+      { id: 'm', kind: 'main', x: 80, y: 60, width: 1400, height: 900 },
+      { id: 'w3', kind: 'chat', chat: CHAT, x: 3300, y: 100, width: 480, height: 720 },
+      { id: 'w4', kind: 'doc', doc: { project: 'p:budget', name: 'Release plan' }, width: 720, height: 900 },
+      { id: 'w5', kind: 'bogus' },
+    ],
+  };
+  const m = await makeMulti({}, saved);
+  try {
+    assertEquals(m.s.windows.map((w) => w.urls[0].replace(BASE, '').replace(/#.*$/, '')), [
+      '/?w=m',
+      '/?w=w2&kind=project&project=p%3Abudget',
+      '/?w=w3&kind=chat&mode=chat&chat=claude%3Acsv&project=p%3Abudget',
+      '/doc.html?w=w4&kind=doc&project=p%3Abudget&name=Release+plan',
+    ], 'main first (B4), then the saved order; a bad entry dropped');
+    assertEquals([m.win('m').size, m.win('m').pos], [[1400, 900], [80, 60]]);
+    assertEquals([m.win('w3').size, m.win('w3').pos], [[480, 720], [3300, 100]]);
+    assertEquals(m.win('w2').log.includes('maximize'), false, 'not before its first load');
+    await m.load('w2');
+    assert(m.win('w2').log.includes('maximize'), 'G3: maximised after its normal size and position');
+    // G2: the doc window had no position: cascaded from the first window once loaded
+    await m.load('m');
+    await m.load('w4');
+    assertEquals(m.win('w4').pos, [80 + 30 * 1, 60 + 30 * 1]);
+    m.s.fronts.length = 0;
+    await m.app.showWindow('second launch');
+    assertEquals(m.s.fronts[0], m.win('w3').hwnd, 'the saved last-focused window comes forward (B12)');
+  } finally {
+    await m.done();
+  }
+});
+
+Deno.test('multi-window restore plan: monitor gone (G1), cascade (G2), folder gone (G4), WSL paths kept (G5), Wayland sizes only (S8)', () => {
+  const list = cleanSavedList({
+    v: 1,
+    windows: [
+      { id: 'm', kind: 'main', x: 80, y: 60, width: 1400, height: 900 },
+      { id: 'w2', kind: 'project', project: PROJ, x: 9000, y: 9000, width: 1280, height: 1000 },
+      { id: 'w3', kind: 'project', project: { key: 'p:gone', name: 'gone', path: 'C:\\gone' }, width: 900, height: 700 },
+      { id: 'w4', kind: 'project', project: { key: 'p:wsl', name: 'wsl', path: '\\\\wsl.localhost\\Ubuntu\\home\\me\\x' }, width: 900, height: 700 },
+      { id: 'w5', kind: 'chat', chat: CHAT, width: 480, height: 720 },
+    ],
+  });
+  const onScreen = (r: { x: number }) => r.x < 5000;
+  // the real FolderPresence for the WSL path (a network path: present, never stat'ed, no wsl.exe); the others are test folders
+  const folderGone = (p: string) => (p.startsWith('\\\\') ? folderPresence.isGone(p) : p === 'C:\\gone');
+  const plan = restorePlan(list, { folderGone, onScreen });
+  assertEquals(plan.map((p) => [p.id, p.x ?? null, p.cascade]), [
+    ['m', 80, 0],
+    ['w2', null, 1], // off every screen: placed by the cascade
+    ['w4', null, 2], // a WSL path counts as present: nothing waits for the distro
+    ['w5', null, 3],
+  ]);
+  const wayland = restorePlan(list, { positions: false });
+  assert(wayland.every((p) => p.x === undefined && p.cascade === 0), 'Wayland: sizes only, the window manager places them');
+  assertEquals(wayland[0].width, 1400);
+  assertEquals(restorePlan(null).map((p) => [p.id, p.kind]), [['m', 'main']], 'nothing saved: one main window');
+  assertEquals(canPlaceWindows('linux', (k) => ({ WAYLAND_DISPLAY: 'wayland-0' } as Record<string, string>)[k]), false);
+  assertEquals(canPlaceWindows('linux', (k) => ({ WAYLAND_DISPLAY: 'wayland-0', GDK_BACKEND: 'x11' } as Record<string, string>)[k]), true);
+  assertEquals(canPlaceWindows('windows', () => 'wayland'), true);
+});
+
+Deno.test('multi-window G4 at start: a project window whose folder is gone is skipped and dropped at the next save; the old single-window file is migrated', async () => {
+  const m = await makeMulti({ folderGone: (p) => p === 'C:\\gone' }, {
+    v: 1,
+    windows: [
+      { id: 'm', kind: 'main', width: 1400, height: 900 },
+      { id: 'w2', kind: 'project', project: { key: 'p:gone', name: 'gone', path: 'C:\\gone' }, width: 900, height: 700 },
+    ],
+  });
+  try {
+    assertEquals(m.s.windows.length, 1);
+    assertEquals((await m.savedNow()).windows.map((w: { id: string }) => w.id), ['m']);
+  } finally {
+    await m.done();
+  }
+  const dir = await Deno.makeTempDir();
+  try {
+    await Deno.writeTextFile(`${dir}/${GEOMETRY_FILE}`, JSON.stringify({ width: 1111, height: 777, x: 5, y: 6 }));
+    assertEquals(await loadSavedList(dir), { v: 1, lastFocused: 'm', windows: [{ id: 'm', kind: 'main', width: 1111, height: 777, x: 5, y: 6 }] });
+    await Deno.writeTextFile(`${dir}/${WINDOWS_FILE}`, '{broken');
+    assertEquals((await loadSavedList(dir))!.windows[0].width, 1111, 'an unreadable new file falls back to the old one');
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test('multi-window G7/G9: --start-in-tray makes no window until Open AIB, then all; phone on + last closed keeps it for Open AIB', async () => {
+  const saved = { v: 1, windows: [{ id: 'm', kind: 'main', width: 1400, height: 900 }, { id: 'w2', kind: 'project', project: PROJ, width: 900, height: 700 }] };
+  const t = await makeMulti({ startInTray: true }, saved);
+  try {
+    assertEquals(t.s.windows.length, 0, 'no window over the person\'s work');
+    t.s.tray!.onMenu('open');
+    await waitFor(() => t.s.windows.length === 2, 'both windows');
+    assertEquals(t.app.desktopWindows.list().map((i) => i.w), ['m', 'w2']);
+  } finally {
+    await t.done();
+  }
+  let phone = true;
+  const p = await makeMulti({ phoneOn: () => phone }, saved);
+  try {
+    await p.load('m');
+    await p.load('w2');
+    p.win('w2').emit('close');
+    await tick();
+    p.win('m').emit('close');
+    await tick();
+    assertEquals(p.quits, [], 'phone access on: AIB stays in the tray');
+    assertEquals((await p.savedNow()).windows.map((w: { id: string }) => w.id), ['m'], 'the last window stays in the list (G9)');
+    p.s.tray!.onMenu('open');
+    await waitFor(() => p.s.windows.length === 3, 'the main window back');
+    assertEquals(p.app.desktopWindows.list().map((i) => i.w), ['m']);
+    phone = false;
+  } finally {
+    await p.done();
+  }
+});
+
+Deno.test('multi-window E7/G8: only pop-outs open → Open AIB makes a main window; nothing is written while quitting', async () => {
+  const m = await makeMulti({}, { v: 1, windows: [{ id: 'w3', kind: 'chat', chat: CHAT, width: 480, height: 720 }] });
+  try {
+    assertEquals(m.app.desktopWindows.list().map((i) => i.w), ['w3']);
+    await m.app.showWindow('Open AIB');
+    assertEquals(m.app.desktopWindows.list().map((i) => i.w).sort(), ['m', 'w3']);
+    await m.load('m');
+    // The list as it is at quit: the new main window's own save (asked for when it opened) must have landed first (3a: all windows
+    // come back); reading the file before it lands made this test race itself.
+    assertEquals((await m.savedNow()).windows.map((w: { id: string }) => w.id), ['m', 'w3']);
+    const before = await Deno.readTextFile(`${m.dir}/${WINDOWS_FILE}`);
+    await m.app.quit(false);
+    m.win('m').size = [999, 999];
+    m.win('m').emit('resize');
+    await m.app.desktopWindows.open({ project: PROJ }, 'm').catch(() => {});
+    await tick(20);
+    await settled(m.app);
+    assertEquals(await Deno.readTextFile(`${m.dir}/${WINDOWS_FILE}`), before, 'G8: the list on disk is the one to restore');
+  } finally {
+    await m.done();
+  }
+});
+
+Deno.test('multi-window chooser order and K6 answers (pure)', () => {
+  const w = (id: string, kind: 'main' | 'project' | 'chat' | 'doc', project: string | null, chat: string | null, focusedAt = 0) => ({
+    w: id,
+    kind,
+    project,
+    chat,
+    doc: null,
+    focusedAt,
+  });
+  const wins = [w('m', 'main', null, null, 1), w('w2', 'project', 'p:a', null, 3), w('w3', 'project', 'p:b', null, 2), w('w4', 'chat', null, 'c:1', 4)];
+  assertEquals(chooseOrder({ chat: 'c:1' }, wins), { order: ['w4', 'w2', 'w3', 'm'], needsMain: false });
+  assertEquals(chooseOrder({ chat: 'c:9', project: 'p:b' }, wins).order, ['w3', 'm', 'w2']);
+  assertEquals(chooseOrder({}, wins).order, ['m', 'w4', 'w2', 'w3'], 'the inbox: main, then the last used');
+  assertEquals(chooseOrder({ chat: 'c:9' }, wins.slice(1)).needsMain, true);
+  assertEquals([openAnswer('mine'), openAnswer(true), openAnswer('no'), openAnswer(false), openAnswer(undefined)], ['mine', 'mine', 'no', null, null]);
+  assertEquals(launchKeyOf(`${BASE}/#aib-key=${KEY}`), KEY);
+  assertEquals(launchKeyOf(`${BASE}/`), '');
+  assertEquals(findOwnWindow([
+    { hwnd: 1n, width: 1, height: 1, title: 'AIB' },
+    { hwnd: 2n, width: 1200, height: 800, title: 'AIB' },
+    { hwnd: 3n, width: 480, height: 720, title: 'CSV import · AIB' },
+  ], 'CSV import · AIB', new Set([2n])), 3n);
+  assertEquals(findOwnWindow([{ hwnd: 2n, width: 1200, height: 800, title: 'AIB' }, { hwnd: 4n, width: 900, height: 800, title: 'AIB' }], 'AIB', new Set()), null, 'two unclaimed with one title: none, not a wrong one');
+  assertEquals(findOwnWindow([{ hwnd: 2n, width: 1200, height: 800, title: 'AIB' }, { hwnd: 4n, width: 900, height: 800, title: 'x' }], 'AIB', new Set([2n])), 4n, 'the one unclaimed window, before its title is applied');
 });

@@ -45,6 +45,8 @@ import { Presence } from '../attention/presence.ts';
 import type { DeviceStore } from '../remote/devices.ts';
 import { devicesRoutes } from './devices_routes.ts';
 import { PageAccess } from './page_access.ts';
+import { type DesktopWindows, MAX_WINDOWS_BODY, WINDOW_ID } from '../desktop/windows_contract.ts';
+import { WindowsRoute } from './windows_route.ts';
 
 /** web_handler.WEB_STARTED: when this web server started (seconds since the epoch). */
 const WEB_STARTED = Date.now() / 1000;
@@ -52,6 +54,8 @@ const sep = Deno.build.os === 'windows' ? '\\' : '/';
 const ASSET_NAME = /^\/([a-z0-9][a-z0-9-]*\.(?:js|css))$/;
 const MAX_BODY = 1_000_000;
 const PROMPT_ROUTES = new Set(['/api/live/prompt', '/api/live/steer', '/api/live/queue']);
+/** Routes with a smaller body limit than MAX_BODY (bytes; counted as read, not only as declared). */
+const SMALL_BODY = new Map([['/api/live/desktop/windows', MAX_WINDOWS_BODY]]);
 
 /** Vendored libraries (Deno only; the Python reference server has none): vendor/xterm/<name>.js|css. */
 const VENDOR_ASSET = /^\/vendor\/(xterm|docs)\/([a-z0-9][a-z0-9-]*\.(?:js|css))$/;
@@ -98,12 +102,13 @@ export function studioAsset(path: string): string | null {
 /**
  * chat.html with the saved view preferences in a JSON data block (`<script type="application/json" id="aibViewPrefs">`) before
  * </head>, for view-prefs.js to put into localStorage before any other page script reads it. A data block is not run, so the
- * page's CSP (script-src 'self') is unchanged; '<' is escaped so no value can close the block.
+ * page's CSP (script-src 'self') is unchanged; '<' is escaped so no value can close the block. seed 'missing-only' (N1: another
+ * AIB window is open) tells view-prefs.js to fill in only the keys localStorage does not have.
  */
-export function withViewPrefs(html: string, prefs: Record<string, string>): string {
+export function withViewPrefs(html: string, prefs: Record<string, string>, seed?: 'missing-only'): string {
   const at = html.indexOf('</head>');
   if (at < 0) return html;
-  const data = JSON.stringify({ prefs }).replace(/</g, '\\u003c');
+  const data = JSON.stringify(seed ? { prefs, seed } : { prefs }).replace(/</g, '\\u003c');
   return withThemePref(
     html.slice(0, at) + '<script type="application/json" id="aibViewPrefs">' + data + '</script>' + html.slice(at),
     prefs['aib-theme'],
@@ -121,6 +126,31 @@ export function withThemePref(html: string, pref: string | undefined, symbols?: 
   if (symbols === 'on' || symbols === 'off') attrs += ` data-status-glyphs-pref="${symbols}"`;
   if (!attrs) return html;
   return html.replace(/^(<!doctype html>)?<html\b/i, (m) => m + attrs);
+}
+
+/**
+ * The presence answer with each pop-out's `from` (the window it was moved out of, from the desktop app's list, kept across a
+ * restart): that window takes the tab back when the pop-out closes, also after a restart (workspace-ui.js checkPops).
+ */
+export function withPopFrom<T extends { windows?: unknown }>(answer: T, dw: DesktopWindows | null): T {
+  const views = (answer as { windows?: unknown }).windows;
+  if (!dw || !Array.isArray(views)) return { ...answer };
+  let list: ReturnType<DesktopWindows['list']> = [];
+  try {
+    list = dw.list();
+  } catch {
+    return { ...answer };
+  }
+  const fromOf = new Map(list.filter((i) => i.from).map((i) => [i.w, i.from as string]));
+  if (!fromOf.size) return { ...answer };
+  return {
+    ...answer,
+    windows: views.map((v) => {
+      const w = v && typeof v === 'object' ? (v as { w?: unknown; kind?: unknown }) : null;
+      const from = w && typeof w.w === 'string' && (w.kind === 'chat' || w.kind === 'doc') ? fromOf.get(w.w) : undefined;
+      return from ? { ...(v as Record<string, unknown>), from } : v;
+    }),
+  };
 }
 
 /** Added projects whose folder is gone from the disk (folder_presence.ts, cached): the page leaves them out until it is back. */
@@ -208,6 +238,9 @@ export interface WebContext {
   phone: PhoneAccess;
   /** The paired phones (<state>/devices.json; remote/devices.ts), the same store phone.devices holds. */
   devices: DeviceStore;
+  /** K4: the desktop app's windows (desktop/windows_contract.ts), set by main.ts in the app; null in serve mode (and until Phase
+   * 2A wires the real one). POST /api/live/desktop/windows answers 501 without it. */
+  desktopWindows: DesktopWindows | null;
   /** Whether the owner is at the PC (the page reports it: POST /api/live/presence): no desktop notification while an AIB window
    * has focus, no phone push while the owner is working in it (attention/presence.ts). */
   presence: Presence;
@@ -221,6 +254,8 @@ export class WebServer {
   gate!: Gate;
   #server: HttpServer | null = null;
   readonly native = new Map<string, Handler>();
+  /** K3's rate limit and open queue (one per server). */
+  readonly windows = new WindowsRoute();
 
   constructor(readonly ctx: WebContext) {
     this.native.set('GET /api/live/list', async (c, url) => {
@@ -291,9 +326,13 @@ export class WebServer {
       return this.json(200, { ok: true, shown: result.shown, reason: result.reason ?? '', mechanism: n.mechanism });
     });
     // The page: its window has focus or not, how long since the last input in it, the chats it shows (attention/presence.ts).
-    this.native.set('POST /api/live/presence', (c, _url, body) => {
-      c.presence.report(body?.focused, body?.idleMs, body?.open);
-      return this.json(200, { ok: true });
+    // K2: one slot per window id (w; none: slot "_"), and the answer names the sound owner, the chats open in any window and the
+    // windows (multi-window design section 4).
+    this.native.set('POST /api/live/presence', (c, _url, body) => this.json(200, withPopFrom(c.presence.reportWindow(body), c.desktopWindows)));
+    // K3: open, pop out, route to, focus or close an AIB window (windows_route.ts); 501 without the desktop app (serve).
+    this.native.set('POST /api/live/desktop/windows', async (c, _url, body) => {
+      const [status, payload] = await this.windows.call(c, body);
+      return this.json(status, payload);
     });
     this.native.set('GET /api/live/project-prefs', (c) => this.json(200, projectsView(c)));
     this.native.set('POST /api/live/project-prefs', async (c, _url, body) => {
@@ -510,7 +549,15 @@ export class WebServer {
         }
         const asset = studioAsset(path);
         if (asset === 'chat.html') {
-          const page = withViewPrefs(await Deno.readTextFile(APP_ROOT + sep + asset), this.ctx.viewPrefs.public().prefs);
+          // N1: with another app window open, the page seeds only the keys its (shared) localStorage lacks: the other window's
+          // newer value may still be on its way to the server. ?w= missing or bad counts as the main window (K0, S6).
+          const w = url.searchParams.get('w') ?? '';
+          const others = this.ctx.desktopWindows?.othersAlive(WINDOW_ID.test(w) ? w : 'm') ?? false;
+          const page = withViewPrefs(
+            await Deno.readTextFile(APP_ROOT + sep + asset),
+            this.ctx.viewPrefs.public().prefs,
+            others ? 'missing-only' : undefined,
+          );
           return this.bytes(200, new TextEncoder().encode(page), contentType(asset));
         }
         if (asset) return this.bytes(200, await Deno.readFile(APP_ROOT + sep + asset), contentType(asset));
@@ -539,8 +586,11 @@ export class WebServer {
       if (method === 'POST') {
         const handler = this.native.get(`POST ${path}`);
         // a message with attachments goes by prompt, steer (while the agent works) or queue (after the turn): the same 30 MB each
-        const raw = await readBody(request, PROMPT_ROUTES.has(path) ? MAX_PROMPT_BODY_BYTES : MAX_BODY);
-        if (raw === null || raw.byteLength === 0) return this.json(400, { error: 'Invalid request size' });
+        const small = SMALL_BODY.get(path);
+        const raw = await readBody(request, PROMPT_ROUTES.has(path) ? MAX_PROMPT_BODY_BYTES : small ?? MAX_BODY);
+        if (raw === null || raw.byteLength === 0 || (small !== undefined && raw.byteLength > small)) {
+          return this.json(400, { error: 'Invalid request size' });
+        }
         let body: unknown;
         try {
           body = JSON.parse(new TextDecoder().decode(raw));
@@ -658,6 +708,7 @@ export function makeContext(
     phone: null as unknown as PhoneAccess,
     devices: null as unknown as DeviceStore,
     presence: new Presence(),
+    desktopWindows: null,
     keepAwake: new KeepAwake(options.keepAwakeBackend === undefined ? realBackend() : options.keepAwakeBackend),
   };
   ctx.phone = new PhoneAccess(ctx, options.stateDir, {

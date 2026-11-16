@@ -62,14 +62,28 @@
     const fp = typeof s.fp === 'string' ? s.fp.slice(0, 60) : '';
     return { mode: 'anchor', rid: s.rid, off: num(s.off), h: num(s.h), w: num(s.w), ...(fp ? { fp } : {}), ...(Number.isFinite(s.at) && s.at > 0 ? { at: s.at } : {}) };
   }
+  /* Multi-window (store-merge.js, opts.merge = AibStore): several AIB windows share the saved places. A save reads the stored
+     value again and writes only the places this window changed (the newest 200 kept); a place another window saved is taken for
+     every chat this window has not read itself since it loaded. */
+  let touched = new Set();
   function configure(opts) {
-    saving = { storage: opts.storage, storageKey: opts.storageKey || 'studio-scroll-v1', max: opts.max || 200, timer: 0 };
-    try {
-      const raw = JSON.parse(saving.storage.getItem(saving.storageKey) || '{}');
+    saving = { storage: opts.storage, storageKey: opts.storageKey || 'studio-scroll-v1', max: opts.max || 200, timer: 0, merged: null };
+    touched = new Set();
+    const take = (raw, all) => {
       for (const k of Object.keys(raw || {})) {
         const s = cleanState(raw[k]);
-        if (s && persisted(k) && !store.has(k)) store.set(k, s);
+        if (s && persisted(k) && (all ? !touched.has(k) : !store.has(k))) store.set(k, s);
       }
+    };
+    try {
+      if (opts.merge && opts.merge.map) {
+        const m = (saving.merged = opts.merge.map(saving.storageKey, { cap: saving.max }));
+        take(m.load(), false);
+        m.onChange((obj) => {
+          take(obj, true);
+          m.adopt(saved());
+        });
+      } else take(JSON.parse(saving.storage.getItem(saving.storageKey) || '{}'), false);
     } catch (e) {}
     const now = () => saveNow();
     if (root.addEventListener) root.addEventListener('pagehide', now);
@@ -79,13 +93,21 @@
         if (d.visibilityState === 'hidden') now();
       });
   }
+  function saved() {
+    const keys = [...store.keys()].filter(persisted);
+    const out = {};
+    for (const k of keys.slice(-saving.max)) out[k] = store.get(k);
+    return out;
+  }
   function saveNow() {
     if (!saving) return;
     if (saving.timer) (root.clearTimeout || clearTimeout)(saving.timer);
     saving.timer = 0;
-    const keys = [...store.keys()].filter(persisted);
-    const out = {};
-    for (const k of keys.slice(-saving.max)) out[k] = store.get(k);
+    const out = saved();
+    if (saving.merged) {
+      saving.merged.write(out);
+      return;
+    }
     try {
       const text = JSON.stringify(out);
       if (saving.storage.getItem(saving.storageKey) !== text) saving.storage.setItem(saving.storageKey, text);
@@ -103,6 +125,7 @@
     const prev = store.get(k);
     store.delete(k); // the newest at the end: the oldest go first when the saved list is full
     store.set(k, state);
+    touched.add(k);
     while (store.size > 1000) store.delete(store.keys().next().value);
     if (persisted(k) && (!prev || prev.mode !== state.mode || prev.rid !== state.rid)) saveSoon();
   }
@@ -543,7 +566,7 @@
   function reattachAll() {
     for (const c of Array.from(live)) if (c.box.isConnected !== false) c.reattached();
   }
-  const api = { attach, store, configure, saveNow, orderOf, kindOf, FOLLOW, live, reattachAll };
+  const api = { attach, store, configure, saveNow, remember, orderOf, kindOf, FOLLOW, live, reattachAll };
   root.ScrollController = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -12,6 +12,7 @@
   //   * os(): 'windows', 'macos' or 'linux' (the notifications label is "Desktop notifications" everywhere).
   //   * Links: in the app, a plain click on an http(s) link to another origin would load that site in the app window. The click is
   //     turned into window.open, which the app hands to the system browser (as it does for target=_blank).
+  //   * pageToken() / cachedToken(): the page token, fetched once ahead, so a pagehide request (window-context.js leave) has it.
   // Tests replace the detection with setInvoke(fn) (any function: "in the app") and the network with setFetch(fn).
   let override = null,
     fetchOverride = null,
@@ -106,6 +107,9 @@
     os,
     isExternal,
     onLinkClick,
+    // The page token (bootstrap), for a request that cannot wait for it: the pagehide presence "left" (window-context.js).
+    pageToken: (fresh) => getToken(fresh),
+    cachedToken: () => token,
     setInvoke(fn) {
       override = typeof fn === 'function' ? fn : null;
     },

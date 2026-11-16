@@ -411,6 +411,10 @@
     const c = o.chat || openChat();
     if (!c || !c.id) return false;
     const d = { name: o.name, title: o.title || o.name, page: o.page || '', block: o.block || '', thread: o.thread || '' };
+    // popped out into its own window: bring that window forward (a chip, a card, Ctrl+K), never a second copy here
+    const WS = root.AgentWorkspaceUI;
+    const pk = WS && WS.currentProject ? WS.currentProject() : '';
+    if (!o.background && pk && focusPopout(pk, o.name)) return true;
     const A = AU();
     if (o.from === 'chat' && o.where !== 'tab' && A && A.openDoc && A.openDoc(d, { chat: c.id, background: !!o.background })) return true;
     if (o.background) return false;
@@ -780,8 +784,173 @@
     });
   }
 
+  // ---- doc pop-outs (multi-window Phase 2.5B; owner decision 4: popping out MOVES the doc) ------------------------------------
+  // "Pop out" on a doc (its ⋯ menu, in a tab or the Artifacts viewer) asks the app for a doc window (K3 op 'popout', by project
+  // key and doc name), and the doc's tab closes here (files-ui.js). This window remembers what it moved (sessionStorage: per
+  // window, so a reload keeps it): the doc's row in Files shows ↗, and opening the doc from anywhere brings the pop-out forward
+  // instead of opening a second copy. When the pop-out goes (its pagehide 'bye', or it is gone from the presence answer), the
+  // doc comes back here as a background tab, if it still exists. In a browser (serve: no desktop app, the route answers 501) the
+  // pop-out is a window.open popup; this page watches it close.
+  const POP_KEY = 'aib-doc-popouts',
+    POP_MAX = 8;
+  const popKey = (project, name) => String(project || '') + '\n' + String(name || '');
+  const AW = () => root.AibWindow || null;
+  const session = () => {
+    try {
+      return root.sessionStorage || null;
+    } catch (e) {
+      return null;
+    }
+  };
+  let pops = null; // [{project, name, title, scope, w, seen, at}]
+  const popups = new Map(); // popKey -> a window.open handle (serve mode)
+  function popList() {
+    if (pops) return pops;
+    try {
+      const v = JSON.parse((session() && session().getItem(POP_KEY)) || '[]');
+      pops = Array.isArray(v) ? v.filter((p) => p && typeof p.project === 'string' && typeof p.name === 'string') : [];
+    } catch (e) {
+      pops = [];
+    }
+    return pops;
+  }
+  function savePops() {
+    try {
+      if (session()) session().setItem(POP_KEY, JSON.stringify(popList().slice(-POP_MAX)));
+    } catch (e) {
+      /* private window */
+    }
+    for (const fn of popListeners) fn();
+  }
+  const popListeners = new Set();
+  // The window (not this one) that shows this doc now, from the presence answer: its id, or ''.
+  function windowOfDoc(project, name) {
+    const W = AW();
+    const list = W && W.others ? W.others() : [];
+    const hit = list.find((x) => x && x.kind === 'doc' && x.doc && x.doc.project === project && x.doc.name === name);
+    return hit ? hit.w : '';
+  }
+  // Is this doc popped out (from this window, or shown by another window)? {w, mine} or null.
+  function poppedOut(project, name) {
+    if (!project || !name) return null;
+    const mine = popList().find((p) => p.project === project && p.name === name);
+    const w = windowOfDoc(project, name);
+    if (mine) return { w: w || mine.w || '', mine: true };
+    return w ? { w, mine: false } : null;
+  }
+  // Bring the pop-out forward. A window that is gone (404) puts the doc back here instead.
+  function focusPopout(project, name) {
+    const hit = poppedOut(project, name);
+    if (!hit) return false;
+    const k = popKey(project, name);
+    const popup = popups.get(k);
+    if (popup && !popup.closed) {
+      try {
+        popup.focus();
+      } catch (e) {
+        /* gone */
+      }
+      return true;
+    }
+    if (!hit.w || !host || !host.post) {
+      if (hit.mine) restorePop(k);
+      return !hit.mine;
+    }
+    Promise.resolve(host.post('desktop/windows', { op: 'focus', w: hit.w })).catch((e) => {
+      if (e && e.status === 404 && hit.mine) restorePop(k);
+    });
+    return true;
+  }
+  /**
+   * Pop a doc out. o: {project (key), name, title, scope (the tab's), closeHere()}. Resolves true when it opened (or focused) the
+   * doc's window; closeHere then runs (the tab leaves this window).
+   */
+  async function popOut(o) {
+    if (!o || !o.project || !o.name || !host || !host.post) return false;
+    const W = AW();
+    const k = popKey(o.project, o.name);
+    const entry = { project: o.project, name: o.name, title: o.title || o.name, scope: o.scope || null, w: '', seen: false, at: Date.now() };
+    try {
+      const r = await host.post('desktop/windows', { op: 'popout', from: W && W.id ? W.id() : 'm', doc: { project: o.project, name: o.name } });
+      entry.w = (r && typeof r.w === 'string' && r.w) || '';
+    } catch (e) {
+      if (!(e && e.status === 501)) {
+        if (host.notice) host.notice(e && e.status === 409 ? 'At most 8 AIB windows can be open. Close one first.' : 'The doc could not be popped out. Try again in a moment.');
+        return false;
+      }
+      // a browser (serve): a popup window of its own
+      const q = new URLSearchParams({ kind: 'doc', project: o.project, name: o.name });
+      const win = root.open ? root.open('/doc.html?' + q.toString(), 'aib-doc-' + o.name.replace(/[^A-Za-z0-9]+/g, '-').slice(0, 40), 'popup,width=720,height=900') : null;
+      if (!win) {
+        if (host.notice) host.notice('The browser blocked the pop-out window. Allow pop-ups for AIB and try again.');
+        return false;
+      }
+      popups.set(k, win);
+      watchPopup(k);
+    }
+    pops = popList().filter((p) => popKey(p.project, p.name) !== k);
+    pops.push(entry);
+    savePops();
+    if (typeof o.closeHere === 'function') o.closeHere();
+    return true;
+  }
+  function watchPopup(k) {
+    const timer = (root.setInterval || setInterval)(() => {
+      const win = popups.get(k);
+      if (win && !win.closed) return;
+      (root.clearInterval || clearInterval)(timer);
+      popups.delete(k);
+      restorePop(k);
+    }, 1000);
+  }
+  // The pop-out closed: the doc's tab comes back here in the background, if the doc still exists (not moved to the trash).
+  const restoring = new Set();
+  function restorePop(k) {
+    const p = popList().find((x) => popKey(x.project, x.name) === k);
+    if (!p || restoring.has(k)) return;
+    restoring.add(k);
+    pops = popList().filter((x) => x !== p);
+    savePops();
+    const scope = p.scope;
+    const put = (exists) => {
+      restoring.delete(k);
+      if (!exists || !scope || !FU() || !FU().restoreDocTab) return;
+      FU().restoreDocTab(scope, { name: p.name, title: p.title || p.name, project: p.project });
+    };
+    if (!scope || !scope.id) return put(false);
+    listFor(scope.id, 'main', true).then(
+      (docs) => put((docs || []).some((d) => d.name === p.name)),
+      () => put(false),
+    );
+  }
+  // Look at the windows the presence answer lists: a moved doc whose window was there and is gone now comes back.
+  function checkPops() {
+    const W = AW();
+    if (!W || !W.known || !W.known()) return;
+    let changed = false;
+    for (const p of popList().slice()) {
+      const k = popKey(p.project, p.name);
+      if (popups.has(k)) continue; // a browser popup: watched by its handle
+      const w = windowOfDoc(p.project, p.name);
+      if (w) {
+        if (!p.seen || p.w !== w) {
+          p.seen = true;
+          p.w = w;
+          changed = true;
+        }
+      } else if (p.seen) restorePop(k);
+    }
+    if (changed) savePops();
+  }
+  // window-context.js calls onChange for a new answer and at once for another window's pagehide ('bye').
+  function watchWindows() {
+    const W = AW();
+    if (W && W.onChange) W.onChange(() => checkPops());
+  }
+
   function init(h) {
     host = h;
+    watchWindows();
     const D = doc();
     D.addEventListener('click', (e) => {
       const a = e.target && e.target.closest ? e.target.closest('a.doc-chip') : null;
@@ -810,6 +979,12 @@
     refreshPopup,
     closePopup,
     pickChat,
+    popOut,
+    poppedOut,
+    focusPopout,
+    checkPops,
+    onPops: (fn) => popListeners.add(fn),
+    _pops: () => popList().slice(),
     _popup: () => ({ state: popState, index: popIndex }),
     _reset: () => {
       lists.clear();
@@ -817,6 +992,9 @@
       running.clear();
       announced.clear();
       host = null;
+      pops = null;
+      popups.clear();
+      popListeners.clear();
       pop = null;
       popState = null;
       popIndex = 0;

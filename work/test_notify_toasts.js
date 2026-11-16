@@ -165,6 +165,6 @@ test('answered anywhere else (inbox, chat, phone): the next list refresh clears 
 
 test('a desktop notification click opens the inbox on that request without switching the chat', () => {
   const t = setup({});
-  assert.equal(t.N.openFromDesktop({ type: 'inbox', key: 'claude:x' }), true);
+  assert.equal(t.N.openFromDesktop({ type: 'inbox', key: 'claude:x' }), 'mine');
   assert.deepEqual(t.calls, [['inbox', 'claude:x']]);
 });

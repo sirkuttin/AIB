@@ -40,6 +40,7 @@ import { startWslLocalBackups } from './wsl/local_only.ts';
 import { choosePortPair, DesktopApp, lastPortPair, portFree, portGiven, saveLastPort } from './desktop/window.ts';
 import { startedMarker } from './desktop/updater.ts';
 import { guardDataFolder, nativeNotice, watchSignal } from './desktop/single_instance.ts';
+import { presence as folderPresence } from './desktop/folder_presence.ts';
 import { ensureStartMenuShortcut } from './desktop/shortcut.ts';
 import { trayIconPng } from './desktop/tray_icon.ts';
 import { servePort, startBlank, startRedirect } from './desktop/serve_address.ts';
@@ -466,6 +467,10 @@ export async function main(argv: string[]): Promise<void> {
         }
         : undefined,
       onPageLoaded: () => writeStartedMarker(stateDir), // the update helper waits for it
+      // Multi-window restore (G4): a project window whose folder is gone is not restored (network and WSL paths count as present,
+      // and nothing waits for a WSL distro, G5). A closed window's presence slot goes at once (B8).
+      folderGone: (path) => folderPresence.isGone(path),
+      onWindowGone: (w) => ctx.presence.leave(w),
       // The keeper's orphan restart (rule V1) starts AIB with --start-in-tray: no window over the person's work, only the tray.
       startInTray: options.startInTray,
       // Phone access on (Settings > Remote control): closing the window keeps AIB in the tray, so the phone port, the attention watcher,
@@ -488,6 +493,7 @@ export async function main(argv: string[]): Promise<void> {
         : undefined,
     });
     ctx.desktopNotify = app.notifications; // POST /api/live/desktop/notify: the page's notifications, shown by this process
+    ctx.desktopWindows = app.desktopWindows; // K4: POST /api/live/desktop/windows opens, routes, focuses and closes app windows
     await app.start(); // the window navigates now: the server already listens
     startup.mark('window opened');
     await watchSignal(stateDir, () => void app.showWindow());

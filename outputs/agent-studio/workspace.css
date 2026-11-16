@@ -862,6 +862,19 @@ body > main {
 .ws-prow.cur .ws-prow-name {
   font-weight: 600;
 }
+/* A project with its own AIB window (multi-window 2B, workspace-ui.js projectRow): one small glyph in the muted row-icon colour. */
+.ws-prow-win {
+  flex: none;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--muted);
+}
+.ws-window-note {
+  max-width: 280px;
+}
+.ws-window-note .ws-menu-head {
+  white-space: normal;
+}
 /* A WSL project's distro after its name (workspace-ui.js projectRow): the header's branch chip size (.vend.hd-branch). */
 .vend.ws-distro {
   height: 18px;
@@ -2641,4 +2654,34 @@ aside .conversation-row:focus-within .connection.age-low .row-age {
   margin-left: 6px;
   letter-spacing: 0.3px;
   text-transform: none;
+}
+
+/* Multi-window 2.5A: a chat popped out into its own small window (body.aib-mode-chat, workspace-ui.js initPopout). One chat:
+   its header, transcript and composer. No sidebar, tab strip, split, Activity column, right panel or start page. */
+body.aib-mode-chat {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+body.aib-mode-chat > aside,
+body.aib-mode-chat #chatTabs,
+body.aib-mode-chat #subagentsPane,
+body.aib-mode-chat #activityReveal,
+body.aib-mode-chat #startPage,
+body.aib-mode-chat .ws-scrim,
+body.aib-mode-chat .split-root,
+body.aib-mode-chat .side-resize,
+body.aib-mode-chat .panel-resize {
+  display: none !important;
+}
+body.aib-mode-chat > main {
+  grid-column: 1 / -1 !important;
+  padding-left: 0 !important;
+  width: auto !important;
+  max-width: none !important;
+}
+/* a chat row whose chat is popped out: a quiet arrow; a click brings that window forward */
+.ws-chatpop {
+  margin-left: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
 }

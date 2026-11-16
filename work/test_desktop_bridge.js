@@ -427,9 +427,9 @@ test('a click on the app\'s notification opens its chat (openFromDesktop)', () =
   const opened = [];
   S.host = { openChat: (k) => opened.push(['chat', k]), openInbox: () => opened.push(['inbox']) };
   withGlobals({ focus() {} }, () => {
-    assert.equal(N.openFromDesktop({ type: 'chat', key: 'claude:1' }), true);
-    assert.equal(N.openFromDesktop({ type: 'inbox' }), true);
-    assert.equal(N.openFromDesktop(null), true, 'nothing to open: the window is already in front');
+    assert.equal(N.openFromDesktop({ type: 'chat', key: 'claude:1' }), 'mine'); // K6
+    assert.equal(N.openFromDesktop({ type: 'inbox' }), 'mine');
+    assert.equal(N.openFromDesktop(null), 'mine', 'nothing to open: the window is already in front');
   });
   assert.deepEqual(opened, [['chat', 'claude:1'], ['inbox']]);
   S.host = null;

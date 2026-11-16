@@ -15,6 +15,12 @@
   let sw = null;
   const COMPACT = 820,
     NARROW = 680;
+  // The header's compact and narrow looks by its own width (split-ui.js uses it for the other pane's copy of the header too).
+  function fitHeader(head, width) {
+    if (!head || !head.classList) return;
+    head.classList.toggle('vs-compact', width <= COMPACT);
+    head.classList.toggle('vs-narrow', width <= NARROW);
+  }
   function mount(host, api) {
     if (!host || !V()) return null;
     const { VIEWS, LABELS, AVAILABLE } = V();
@@ -75,11 +81,7 @@
     }
     /* collapse by the header's own width (a split pane is narrow in a wide window), not the window's */
     const head = host.closest ? host.closest('header') : null;
-    const fit = (width) => {
-      if (!head || !head.classList) return;
-      head.classList.toggle('vs-compact', width <= COMPACT);
-      head.classList.toggle('vs-narrow', width <= NARROW);
-    };
+    const fit = (width) => fitHeader(head, width);
     if (head && typeof root.ResizeObserver === 'function') {
       new root.ResizeObserver((entries) => {
         const e = entries && entries[0];
@@ -427,6 +429,7 @@
   }
 
   root.ChatViewsUI = {
+    fitHeader,
     mount,
     sync,
     listNodes,
