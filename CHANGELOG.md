@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Always allow works in WSL chats: in a WSL chat every edit and every command used to ask, every time. "Always allow" was greyed
+  out ("path could not be resolved", "the command runs outside the chat folder"), the agent's own Always button was hidden too, and
+  even `git status` or `ls` asked. Now AIB checks a WSL chat's files with Linux rules inside the distro: "Always allow" on an edit
+  makes a rule, and the next edits in that folder go through without a card; Safe reads such as `git status`, `ls` and `grep`
+  answer by themselves; command rules work as in Windows projects. A link inside the project that points outside it is treated as
+  outside and still asks. Project rules made in a WSL chat now stay with the project after AIB starts from another folder, and
+  `/home/u/App` and `/home/u/app` are two projects. Your Claude settings in the distro (ask rules) are respected, not the Windows
+  ones. When AIB cannot check something in the distro, the card says so and keeps the agent's own Always button.
 - Continue asks only on real evidence: a Claude Code or OMP process that merely runs in the chat's folder (for example VS Code's
   Claude Code panel) no longer brings up "Another app may be using this conversation" when the transcript has been quiet for 30
   minutes; the chat continues and gets one note naming the process. A process naming the session, holding its transcript open, a
