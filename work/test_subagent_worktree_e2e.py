@@ -385,7 +385,7 @@ class AdapterFailClosedTest(unittest.TestCase):
     def test_aib_hanging_refuses_within_deadline(self):
         sock = socket.socket()
         sock.bind(('127.0.0.1', 0))
-        sock.listen(16)  # port-guard: bound to port 0 (16 is the backlog)
+        sock.listen(16)  # port-guard: not bound (16 is the backlog; the socket is bound to port 0 above)
         held = []
         stop = threading.Event()
 
