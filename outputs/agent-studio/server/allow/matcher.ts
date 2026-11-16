@@ -7,6 +7,7 @@ import { basename, isAbsolute, relative, resolve } from 'node:path';
 import {
   batArgProblem,
   downloadAndRun,
+  linuxOf,
   looksDownloadAndRun,
   neverPart,
   type PartContext,
@@ -17,7 +18,9 @@ import {
   scratchWrite,
   syntaxCheck,
 } from './catalogue.ts';
-import { checkPath, fromGitBash, inside, realish } from './paths.ts';
+import { checkPath, fromGitBash, inside, type PathOps, realish, WIN_OPS } from './paths.ts';
+import type { LinuxView } from './linux.ts';
+import { isWslRef, locKey, wslLocOf } from '../platform/location.ts';
 import { pinHash } from './pin.ts';
 import { parseBash, parsePwsh, type Part, unwrapCodexPowershell } from './shell.ts';
 
@@ -75,7 +78,16 @@ export interface MatchContext {
   limitMs?: number;
   /** What the agent's own settings say (agent_config.ts): its ask rules and a risky env block. */
   facts?: { askPrograms: Set<string>; askTools?: Set<string>; riskyEnv: string } | null;
+  /**
+   * A WSL chat (allow/linux.ts): its paths are checked with Linux rules over facts from its distro. `cwd` is then the chat's Linux
+   * folder and `project` the project's `wsl://` ref (rules and pins are keyed by it).
+   */
+  linux?: LinuxView | null;
 }
+
+const opsOf = (ctx: MatchContext): PathOps => ctx.linux ?? WIN_OPS;
+/** A WSL Claude chat whose Claude settings AIB could not read in the distro (audit F9): rules don't answer, the agent's own Always stays. */
+const LINUX_NO_FACTS = 'AIB could not read the Claude settings in the distro';
 
 export type Request =
   | { kind: 'shell'; shell: 'bash' | 'pwsh'; command: string; cwd: string; escalation: string }
@@ -117,6 +129,7 @@ export function readRequest(params: unknown, ctx: MatchContext): Request {
   if (ctx.provider === 'claude' || tool) {
     if (tool === 'Bash' || tool === 'PowerShell') {
       if (!isStr(raw.command)) return { kind: 'unknown', reason: 'no command' };
+      if (tool === 'PowerShell' && ctx.linux) return { kind: 'unknown', reason: 'PowerShell in a WSL chat has no rules' };
       return {
         kind: 'shell',
         shell: tool === 'Bash' ? 'bash' : 'pwsh',
@@ -171,10 +184,11 @@ export function readRequest(params: unknown, ctx: MatchContext): Request {
       else return { kind: 'unknown', reason: 'command list' };
     } else return { kind: 'unknown', reason: 'no command' };
     const inner = unwrapCodexPowershell(command);
+    if (inner !== null && ctx.linux) return { kind: 'unknown', reason: 'PowerShell in a WSL chat has no rules' };
     if (inner !== null) return { kind: 'shell', shell: 'pwsh', command: inner, cwd, escalation };
     if (/^\s*"?[^\s"]*(powershell|pwsh|cmd)(\.exe)?"?\s/i.test(command)) return { kind: 'unknown', reason: 'a shell inside a shell' };
     // On Windows Codex runs commands through PowerShell: a string without its wrapper can't be read as bash (review H10).
-    if (Deno.build.os === 'windows' && !Array.isArray(raw.command)) return { kind: 'unknown', reason: 'Codex command without its shell' };
+    if (Deno.build.os === 'windows' && !ctx.linux && !Array.isArray(raw.command)) return { kind: 'unknown', reason: 'Codex command without its shell' };
     return { kind: 'shell', shell: 'bash', command, cwd, escalation };
   }
   return { kind: 'unknown', reason: `AIB can't read ${ctx.provider || 'this agent'}'s requests yet` };
@@ -190,7 +204,37 @@ function fetchOf(url: string): Request {
   }
 }
 
+/**
+ * A project rule's folder as beta10 saved it in a WSL chat (`<AIB's working folder>\wsl:\ubuntu\home\u\app`, audit F3) as the
+ * project's ref; '' for anything else.
+ */
+function legacyWslRef(p: string): string {
+  const m = /[\\/]wsl:[\\/]+([A-Za-z0-9._-]{1,64})((?:[\\/][^\\/]+)*)[\\/]*$/i.exec(p);
+  if (!m || isWslRef(p)) return '';
+  const ref = `wsl://${m[1].toLowerCase()}${m[2].replaceAll('\\', '/') || '/'}`;
+  return wslLocOf(ref) ? ref : '';
+}
+
+/** The key a project rule and a pin are saved under: a WSL project's ref (never resolved against AIB's folder), else the full path. */
+export function projectKey(p: string): string {
+  return isWslRef(p) ? locKey(p) : resolve(p);
+}
+
+/** Two project folders are one: WSL refs exactly (Linux paths are case-sensitive), Windows paths case-folded (Studio's sweep). */
+export function sameProject(a: string, b: string): boolean {
+  if (isWslRef(a) || isWslRef(b)) return isWslRef(a) && isWslRef(b) && locKey(a) === locKey(b);
+  return a.toLowerCase() === b.toLowerCase();
+}
+
 const sameFolder = (a: string, b: string) =>
+  isWslRef(a) || isWslRef(b) ? wslSameFolder(a, b) : winSameFolder(a, b);
+
+const wslSameFolder = (a: string, b: string) => {
+  const ka = isWslRef(a) ? locKey(a) : legacyWslRef(a), kb = isWslRef(b) ? locKey(b) : legacyWslRef(b);
+  return !!ka && ka === kb;
+};
+
+const winSameFolder = (a: string, b: string) =>
   (Deno.build.os === 'windows' ? (x: string) => x.toLowerCase() : (x: string) => x)(resolve(a)).replace(/[\\/]+$/, '') ===
     (Deno.build.os === 'windows' ? (x: string) => x.toLowerCase() : (x: string) => x)(resolve(b)).replace(/[\\/]+$/, '');
 
@@ -232,11 +276,13 @@ export function match(params: unknown, ctx: MatchContext, rules: AllowRule[], bu
 }
 
 function partContext(ctx: MatchContext, cwd: string, shell: 'bash' | 'pwsh'): PartContext {
-  return { cwd, root: ctx.cwd, shell, scratch: ctx.scratch, stateDir: ctx.stateDir };
+  return { cwd, root: ctx.cwd, shell, scratch: ctx.scratch, stateDir: ctx.stateDir, ...(ctx.linux ? { ops: ctx.linux } : {}) };
 }
 
 function matchInner(params: unknown, ctx: MatchContext, rules: AllowRule[], builtins: Builtins, tick: () => void): MatchResult {
   if (ctx.facts?.riskyEnv) return { allow: false, reason: `rules are off for this chat: ${ctx.facts.riskyEnv}` };
+  if (ctx.linux && ctx.provider === 'claude' && !ctx.facts) return { allow: false, reason: LINUX_NO_FACTS };
+  const ops = opsOf(ctx);
   const req = readRequest(params, ctx);
   const here = rulesHere(rules, ctx.project);
   const flagged = ctx.provider === 'claude' && BYPASS.has(ctx.mode ?? '');
@@ -258,10 +304,11 @@ function matchInner(params: unknown, ctx: MatchContext, rules: AllowRule[], buil
   if (req.kind === 'edit') {
     if (flagged) return { allow: false, reason: 'Claude flagged it in bypass mode' };
     for (const r of here.filter((x) => x.kind === 'edit')) {
-      const folder = resolve(ctx.cwd, r.folder ?? '');
+      const folder = ctx.linux ? ctx.linux.folderIn(ctx.cwd, r.folder ?? '') : resolve(ctx.cwd, r.folder ?? '');
       const ok = req.paths.every((p) => {
-        const v = checkPath(p, ctx.cwd, ctx.cwd, { write: true });
-        return v.ok && inside(v.real, realish(folder, ctx.cwd) ?? folder);
+        const v = checkPath(p, ctx.cwd, ctx.cwd, { write: true }, ops);
+        const real = ops.realish(folder, ctx.cwd) ?? (ctx.linux ? null : folder); // a WSL chat: an unknown folder never matches
+        return v.ok && real !== null && ops.inside(v.real, real);
       });
       tick();
       if (ok) return { allow: true, ruleId: r.id, label: r.label, flagged };
@@ -270,7 +317,7 @@ function matchInner(params: unknown, ctx: MatchContext, rules: AllowRule[], buil
   }
   // shell
   if (req.escalation) return { allow: false, reason: req.escalation };
-  const cwdOk = checkPath(req.cwd, ctx.cwd, ctx.cwd);
+  const cwdOk = checkPath(req.cwd, ctx.cwd, ctx.cwd, {}, ops);
   if (!cwdOk.ok) return { allow: false, reason: 'runs outside the chat folder' };
   const parsed = req.shell === 'bash' ? parseBash(req.command) : parsePwsh(req.command);
   if (!parsed.ok) return { allow: false, reason: parsed.reason };
@@ -331,14 +378,15 @@ export function commandRuleProblem(r: AllowRule, part: Part, pctx: PartContext, 
   if (words.length < 2) return 'a one-word rule covers too much';
   const name = programName(words[0]);
   if (CODE_ARGS.has(name)) return `${name} runs its arguments as code`;
-  const program = programProblem(part.words[0], pctx) || batArgProblem(part.words[0], part.words.slice(1));
+  const program = programProblem(part.words[0], pctx) || batArgProblem(part.words[0], part.words.slice(1), !!linuxOf(pctx));
   if (program) return program;
+  const lx = linuxOf(pctx);
   const script = projectScript(words);
   if (!script && (PACKAGE_MANAGERS.has(name) || name === 'git' || name === 'deno')) return 'only project scripts';
   if (script) {
-    const key = resolve(ctx.project);
+    const key = projectKey(ctx.project);
     const pin = Object.entries(r.pins ?? {}).find(([k]) => sameFolder(k, key))?.[1];
-    if (!pin || pin !== pinHash(words, pctx.cwd)) return 'the script changed since the rule was made';
+    if (!pin || pin !== (lx ? lx.pin(words, pctx.cwd) : pinHash(words, pctx.cwd))) return 'the script changed since the rule was made';
   }
   let afterDashDash = false;
   for (let i = words.length; i < part.words.length; i++) {
@@ -355,17 +403,17 @@ export function commandRuleProblem(r: AllowRule, part: Part, pctx: PartContext, 
       const value = m[2] ?? (/^-[A-Za-z]./.test(a) && !a.startsWith('--') ? a.slice(2) : '');
       // a value that could name a folder or file is path-checked, `.` and `..` included (re-review R2)
       if (value && (/[\\/:~]/.test(value) || /^\.{1,2}$/.test(value) || /(^|[\\/])\.\.([\\/]|$)/.test(value))) {
-        const v = checkPath(value, pctx.cwd, pctx.root);
+        const v = checkPath(value, pctx.cwd, pctx.root, {}, pctx.ops);
         if (!v.ok) return `${a}: ${v.reason}`;
       }
       // a rule that isn't a known project script: a joined value (--x=v, -X:v) may only be a number or an existing path, never a
       // command name (re-review R1: rg --pre=calc, sort --compress-program=calc)
-      if (m[2] !== undefined && !script && !/^\d+$/.test(m[2]) && !existingPath(m[2], pctx.cwd)) return `flag ${a}`;
+      if (m[2] !== undefined && !script && !/^\d+$/.test(m[2]) && !existingPath(m[2], pctx.cwd, lx)) return `flag ${a}`;
       if ((MESSAGE_FLAGS[words.join(' ')] ?? []).includes(m[1]) && m[2] === undefined && i + 1 < part.words.length) i++; // its text
       continue;
     }
-    if (!looksLikePath(a, pctx.cwd)) return `"${a}" is not a file in the project`;
-    const v = checkPath(a, pctx.cwd, pctx.root, { glob: part.globs[i] });
+    if (!looksLikePath(a, pctx.cwd, lx)) return `"${a}" is not a file in the project`;
+    const v = checkPath(a, pctx.cwd, pctx.root, { glob: part.globs[i] }, pctx.ops);
     if (!v.ok) return v.reason;
   }
   return '';
@@ -429,8 +477,9 @@ const PACKAGE_MANAGERS = new Set(['npm', 'pnpm', 'yarn', 'bun']);
 /** Flags whose next word is free text, per rule (git commit -m "message"). */
 const MESSAGE_FLAGS: Record<string, string[]> = { 'git commit': ['-m', '--message'] };
 
-function existingPath(word: string, cwd: string): boolean {
+function existingPath(word: string, cwd: string, lx: LinuxView | null = null): boolean {
   if (!word) return false;
+  if (lx) return lx.stat(word, cwd)?.exists === true;
   try {
     Deno.statSync(resolve(cwd, fromGitBash(word)));
     return true;
@@ -440,7 +489,15 @@ function existingPath(word: string, cwd: string): boolean {
 }
 
 /** A word counts as a path only when it exists, or its folder exists and it looks like a file name (review H3). */
-function looksLikePath(word: string, cwd: string): boolean {
+function looksLikePath(word: string, cwd: string, lx: LinuxView | null = null): boolean {
+  if (lx) {
+    const st = lx.stat(word, cwd);
+    if (st?.exists) return true;
+    if (!st || !/^[^\s]*\.[A-Za-z0-9]{1,8}$/.test(word.replace(/\/+$/, ''))) return false;
+    const abs = lx.abs(word, cwd).replace(/\/+$/, '');
+    const parent = abs.slice(0, abs.lastIndexOf('/')) || '/';
+    return lx.stat(parent, cwd)?.isDir === true;
+  }
   const full = resolve(cwd, fromGitBash(word));
   try {
     Deno.statSync(full);
@@ -469,7 +526,11 @@ export interface Draft {
   preview: string;
 }
 
-const projectName = (p: string) => basename(resolve(p)) || p;
+const projectName = (p: string) => {
+  const wsl = isWslRef(p) ? wslLocOf(p) : null;
+  if (wsl) return wsl.linuxPath.split('/').filter(Boolean).pop() || p;
+  return basename(resolve(p)) || p;
+};
 
 /** What "Always allow" would save for this request in this scope. */
 export function ruleFor(params: unknown, ctx: MatchContext, scope: 'project' | 'global', builtins: Builtins): Draft {
@@ -489,8 +550,11 @@ export function ruleFor(params: unknown, ctx: MatchContext, scope: 'project' | '
     return no("AIB can't read this request.", true, false);
   }
   const where = scope === 'project' ? `in ${projectName(ctx.project)}` : 'everywhere';
-  const base = { scope, ...(scope === 'project' ? { project: resolve(ctx.project) } : {}) } as const;
+  const base = { scope, ...(scope === 'project' ? { project: projectKey(ctx.project) } : {}) } as const;
   if (req.kind === 'special') return { ...no(''), offer: false, hideAgentAlways: false };
+  // a WSL chat whose distro facts AIB could not read: AIB can't match, so the agent's own Always stays (audit F1, F9)
+  if (ctx.linux && ctx.provider === 'claude' && !ctx.facts) return no(`Not available: ${LINUX_NO_FACTS}.`, false, false);
+  const ops = opsOf(ctx);
   if (ctx.facts?.riskyEnv) return no(`Not available: allow rules are off for this chat because ${ctx.facts.riskyEnv}.`);
   const askedTool = toolAsked(req, ctx);
   if (askedTool) return no(`Not available: ${askedTool}.`);
@@ -530,10 +594,10 @@ export function ruleFor(params: unknown, ctx: MatchContext, scope: 'project' | '
   if (req.kind === 'edit') {
     const rels: string[] = [];
     for (const p of req.paths) {
-      const v = checkPath(p, ctx.cwd, ctx.cwd, { write: true });
+      const v = checkPath(p, ctx.cwd, ctx.cwd, { write: true }, ops);
       if (!v.ok) return no(`Not available: AIB never auto-allows ${v.outside ? 'files outside the project' : v.reason}.`, false);
-      const root = realish(ctx.cwd, ctx.cwd) ?? ctx.cwd;
-      rels.push(relative(root, v.real));
+      const root = ops.realish(ctx.cwd, ctx.cwd) ?? ctx.cwd;
+      rels.push(ctx.linux ? ctx.linux.relative(root, v.real) : relative(root, v.real));
     }
     const dirs = rels.map((r) => r.split(/[\\/]/).slice(0, -1));
     let common = dirs[0] ?? [];
@@ -568,7 +632,7 @@ export function ruleFor(params: unknown, ctx: MatchContext, scope: 'project' | '
   if (downloadAndRun(parsed.parts, req.shell)) {
     return no('Not available: AIB never auto-allows running code downloaded from the internet.', true);
   }
-  const cwdOk = checkPath(req.cwd, ctx.cwd, ctx.cwd);
+  const cwdOk = checkPath(req.cwd, ctx.cwd, ctx.cwd, {}, ops);
   if (!cwdOk.ok) return no('Not available: the command runs outside the chat folder.', true);
   const pctx = partContext(ctx, cwdOk.real, req.shell);
   const rules: Draft['rules'] = [];
@@ -602,13 +666,15 @@ export function ruleFor(params: unknown, ctx: MatchContext, scope: 'project' | '
     }
     const words = script ?? [program, second];
     if (rules.some((r) => JSON.stringify(r.words) === JSON.stringify(words))) continue;
+    const pin = script ? (ctx.linux ? ctx.linux.pin(words, pctx.cwd) : pinHash(words, pctx.cwd)) : null;
+    if (script && pin === null) return no('Not available: AIB could not read the project script in the distro.', false, false);
     const label = `${words.join(' ')}${script ? '' : ' + paths, flags'}`;
     rules.push({
       ...base,
       kind: 'command',
       words,
       label,
-      ...(script ? { pins: { [resolve(ctx.project)]: pinHash(words, pctx.cwd) } } : {}),
+      ...(script ? { pins: { [projectKey(ctx.project)]: pin! } } : {}),
     });
     previews.push(
       script

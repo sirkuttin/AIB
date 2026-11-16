@@ -259,6 +259,34 @@ export interface HelperMethods {
   'localOnly.exclude': { params: { root: string; main: string; action: string; path?: string; undo?: string }; result: { status: number; body: Record<string, unknown> } };
   'localOnly.moveStrays': { params: { root: string; main: string }; result: { moved: [string, string][]; failed: string[] } };
   'localOnly.backup': { params: { projects?: string[] }; result: { results: Record<string, { status: string; files?: number }> } };
+  /**
+   * Allow rules in a WSL chat (helper/allow_facts.ts, allow/linux.ts; addition): what the matcher needs to know of the distro, read
+   * only. `paths` (at most 64 absolute Linux paths, taken as given: never normalised first): each resolved as the kernel walks it
+   * (links followed, `..` after a link physically, the missing tail kept; `real` null for a dangling or looping link, `..` in the
+   * missing tail, or any error), `exists`/`isDir` with links followed. `scans` (at most 16 folders): true when the folder holds a link
+   * among its entries, has over 5000 entries or can't be read. `pins` (at most 8): allow/pin.ts pinHash of project-script words in a
+   * folder. `base`: the folders on PATH (`pathEnv` when given, else the login PATH) each with its resolved path, AIB's own folders in
+   * the distro, and, with `claude`, Claude Code's settings facts (allow/agent_config.ts claudeFacts) read from `claude.dir` (else
+   * CLAUDE_CONFIG_DIR or ~/.claude of the login environment) and the project's .claude folder.
+   */
+  'allow.facts': {
+    params: {
+      paths?: string[];
+      scans?: string[];
+      pins?: { words: string[]; cwd: string }[];
+      base?: { pathEnv?: string; claude?: { cwd: string; dir?: string } };
+    };
+    result: {
+      paths: { real: string | null; exists: boolean; isDir: boolean }[];
+      scans: boolean[];
+      pins: (string | null)[];
+      base?: {
+        pathDirs: { dir: string; real: string | null }[];
+        own: string[];
+        claude: { askPrograms: string[]; askTools: string[]; riskyEnv: string } | null;
+      };
+    };
+  };
   'mcp.accept': { params: { rid: string }; result: { ok: boolean } };
   'mcp.reply': { params: { rid: string; status: number; body?: string; error?: string }; result: { ok: boolean } };
   'mcp.closed': { params: { closed: boolean }; result: { ok: boolean } };

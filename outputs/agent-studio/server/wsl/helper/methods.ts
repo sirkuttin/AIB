@@ -35,6 +35,7 @@ import { type EnvMode, envPrereqs, type PrereqDeps } from './prereqs.ts';
 import { signinStatus } from './signin_status.ts';
 import { aibMethods, type RemoveDeps } from './aib_remove.ts';
 import { localOnlyMethods, rawRead } from './local_only.ts';
+import { allowFactsMethods } from './allow_facts.ts';
 
 export const LIST_DIRS_DEFAULT = 500, LIST_DIRS_MAX = 2000;
 export const SESSIONS_DEFAULT = 500, SESSIONS_MAX = 5000;
@@ -197,6 +198,8 @@ export function makeMethods(ctx: HelperContext): Handlers {
     // background tasks, the ownership check and the agents' process trees (helper/bgtasks.ts)
     ...bgtaskMethods({ env: ctx.env, store: (p) => sessionStore(ctx, p) }),
     ...linkingMethods(ctx), // Linking (WSL) phase 2: env.prereqs, agents.signinStatus (agents.uninstall is in installMethods)
+    // allow rules of WSL chats: what the matcher needs to know of the distro (helper/allow_facts.ts, read only)
+    ...allowFactsMethods({ env: ctx.env, own: async () => [...await ownFolders(ctx), ...(data ? [data] : [])] }),
     ...localOnlyMethods(data), // local-only files from the main folder (helper/local_only.ts); chat copies only under <data>/worktrees
     ...(data ? { ...worktreeMethods(data), ...mergeMethods(data), ...syncMethods(ctx.sync ?? new HelperSync(data)) } : {}),
     ...(ctx.root ? installMethods({ root: ctx.root, notify: ctx.notify ?? (() => {}), refreshPath: ctx.refreshPath }) : {}),

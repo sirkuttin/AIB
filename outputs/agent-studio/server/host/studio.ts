@@ -106,6 +106,7 @@ import { configureWslHosts, wslHostsInUse } from '../wsl/hosts.ts';
 import { WslSync, wslSyncChat } from '../wsl/sync.ts';
 import { blockedCount } from '../attention/inbox_rules.ts';
 import { AllowGate } from '../allow/gate.ts';
+import { sameProject } from '../allow/matcher.ts';
 
 const log = getLogger('studio');
 
@@ -1241,7 +1242,10 @@ export class Studio {
           if (plan) await this.#makeWorktree(c, plan, workspace);
           // a WSL chat: the main folder's local-only paths as Linux paths, from its distro's helper
           c.localOnly = wsl ? await wslChatLocalOnly(c.worktree ? c.projectRoot : c.cwd, !!c.worktree) : this.#localOnlyFor(c, local);
+          // allow rules of a WSL chat: its folder and the distro's base facts, read while the agent starts (allow/wsl_facts.ts)
+          const warming = wsl && this.allow ? c.allowWarm() : null;
           await c.setup(resume || null);
+          if (warming) await warming; // bounded by the helper call's own time limit; never throws
           if (plan instanceof WslPlan) {
             if (c.worktree) await wslSetSession(plan, provider, c.sessionId!);
           } else if (plan && this.worktrees!.registry.get(plan.key)) await this.worktrees!.setSession(plan.key, provider, c.sessionId!);
@@ -1653,6 +1657,7 @@ export class Studio {
     if (isDict(note.worktree)) c.worktree = { branch: String(note.worktree.branch ?? ''), base: String(note.worktree.base ?? '') };
     c.projectRoot = isStr(note.projectRoot) && note.projectRoot ? note.projectRoot : cwd;
     this.#wire(c);
+    if (wsl && this.allow) void c.allowWarm(); // allow rules: the rebuilt WSL chat's distro facts (allow/wsl_facts.ts; never throws)
     const helper = this.hasStateDir
       ? helperOf(readHelpers(this.stateDir), { lasting: isStr(note.resume) && note.resume ? `${provider}:${note.resume}` : null, path: cwd })
       : null;
@@ -2172,7 +2177,7 @@ export class Studio {
    *   allow-rules   the list for Settings; allow-remove / allow-restore {ruleId}; allow-review; allow-enable {on};
    *   allow-builtin {name, on}.
    */
-  #allowCall(name: string, body: Json): [number, unknown] {
+  async #allowCall(name: string, body: Json): Promise<[number, unknown]> {
     const gate = this.allow;
     if (!gate) return [404, { error: 'Allow rules need a state folder' }];
     const store = gate.store;
@@ -2221,10 +2226,11 @@ export class Studio {
     const saved = (draft.rules as Json[]).map((r) => store.add({ ...r, from: 'card' } as never));
     let also = 0;
     const project = c.projectRoot || c.cwd;
-    for (const other of this.connections.values()) {
-      if (scope === 'project' && (other.projectRoot || other.cwd).toLowerCase() !== project.toLowerCase()) continue;
+    for (const other of [...this.connections.values()]) {
+      // a WSL project's ref compares exactly: Linux paths are case-sensitive (audit F6)
+      if (scope === 'project' && !sameProject(other.projectRoot || other.cwd, project)) continue;
       try {
-        also += other.allowSweep();
+        also += other.wsl ? await other.allowSweepWsl() : other.allowSweep(); // a WSL chat reads its distro facts again first
       } catch (error) {
         log.exception(error, 'Allow rules: answering waiting cards failed');
       }
