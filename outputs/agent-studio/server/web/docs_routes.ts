@@ -69,7 +69,7 @@
 import * as Y from 'yjs';
 import { authorize, type Principal, Refusal, REMOTE_PC, TOKEN_HEADER } from './security.ts';
 import { ROUTES } from './routes.ts';
-import { upgradeWebSocket, wantsWebSocket } from '../platform/websocket.ts';
+import { upgradeWebSocket, wantsWebSocket, type WsLink } from '../platform/websocket.ts';
 import { rootFor } from './files_routes.ts';
 import { runDocTool } from '../docs/tools.ts';
 import { DocRefusal } from '../docs/live_doc.ts';
@@ -649,6 +649,8 @@ export function docsSocket(
   request: Request,
   url: URL,
   principal: Principal | null = null,
+  /** A remote computer's socket registry (remote/pc_sockets.ts): the link the doc gets, checked per message and closed on Remove. */
+  wrap: ((link: WsLink) => WsLink) | null = null,
 ): { refused: Reply } | { response: Response } {
   const protocols = offered(request);
   // A remote computer: the bridge checked it and passes its principal in (remote/pc_bridge.ts pcSocket); no page token involved.
@@ -666,7 +668,9 @@ export function docsSocket(
   }
   const doc = ctx.docs.get(url.searchParams.get('doc') ?? '');
   const epoch = url.searchParams.get('epoch');
-  const { link, response } = upgradeWebSocket(request, DOCS_PROTOCOL);
+  const upgraded = upgradeWebSocket(request, DOCS_PROTOCOL);
+  const { response } = upgraded;
+  const link = wrap ? wrap(upgraded.link) : upgraded.link;
   if (!doc || (epoch && epoch !== doc.epoch)) {
     link.onmessage = () => {};
     link.send(JSON.stringify(doc ? { type: 'reopen', reason: 'epoch', epoch: doc.epoch } : { type: 'reopen', reason: 'doc_not_open' }));

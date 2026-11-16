@@ -14,6 +14,9 @@ export interface WsLink {
   onmessage: ((data: string | Uint8Array) => void) | null;
   onclose: (() => void) | null;
   readonly isOpen: boolean;
+  /** A protocol-level ping (keeps an idle socket open through a proxy such as Tailscale Serve). Optional: a Deno WebSocket has no
+   * ping of its own to call (Deno pings idle sockets itself), and test fakes need none. */
+  ping?(): void;
 }
 
 /** Largest message accepted from a client (terminal input and control messages are small). */
@@ -108,6 +111,12 @@ export function nodeLink(socket: Duplex, head: Uint8Array): WsLink {
       if (!open) return;
       const text = typeof data === 'string';
       socket.write(encodeFrame(text ? 0x1 : 0x2, text ? new TextEncoder().encode(data) : data));
+    },
+    ping() {
+      if (!open) return;
+      try {
+        socket.write(encodeFrame(0x9, new Uint8Array()));
+      } catch { /* gone */ }
     },
     close(code = 1000, reason = '') {
       if (!open) return;
@@ -278,6 +287,7 @@ export function upgradeWebSocket(request: Request, protocol: string | null = nul
       return holder.link?.isOpen ?? false;
     },
     send: (data) => (holder.link ? holder.link.send(data) : early.push(data)),
+    ping: () => holder.link?.ping?.(),
     close: (code, reason) => (holder.link ? holder.link.close(code, reason) : (closeEarly = [code, reason])),
   };
   const response = new Response(null, { status: 200 });

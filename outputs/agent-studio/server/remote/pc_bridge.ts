@@ -14,18 +14,30 @@
  * to artifactPost with the principal. The sockets come in through pcSocket (the device token as a subprotocol) with their own rules.
  * Nothing here is reachable from, or forwards to, the loopback MCP / hook listener (artifacts/mcp_http.ts) or the agent host.
  *
- * Phase 1c adds the terminal socket registry keyed by device (Remove closes them within 1 s) and the Device activity lines.
+ * Phase 1c: the socket registry keyed by device (remote/pc_sockets.ts: Remove closes them within 1 s, each message is checked against
+ * the device, a 25 s ping), Files download (GET /api/pc/files/download, a computer-only route: see and download, never a save), and
+ * the Device activity lines: terminal opened and closed, file downloaded and file outside the project read (by path, never the
+ * content), project added and removed. Message text, terminal input and file contents are never logged.
  */
 import { Principal, REMOTE_PC } from '../web/security.ts';
 import type { WebContext } from '../web/server.ts';
 import { artifactPost } from '../web/studio_routes.ts';
 import { TERMINAL_SOCKET, terminalSocket } from '../web/terminal_routes.ts';
+import type { WsLink } from '../platform/websocket.ts';
 import { DOCS_SOCKET, docsSocket } from '../web/docs_routes.ts';
 import { MAX_PROMPT_BODY_BYTES } from '../acp/attachments.ts';
 import type { Device, DeviceStore } from './devices.ts';
 import { chatKeys, decide, entryFor, systemTerminalKey } from './pc_routes.ts';
 import { guardPath, insideProjects } from './path_guard.ts';
 import { LOGIN_HEADER } from './gate.ts';
+import type { DeviceSockets, SocketKind } from './pc_sockets.ts';
+import type { Audit } from './audit.ts';
+import { parseQs } from '../artifacts/origin.ts';
+import { scopeFor } from '../web/files_routes.ts';
+import * as files from '../worktrees/files.ts';
+import { wslLoc } from '../wsl/access.ts';
+import { isBlocked } from './path_guard.ts';
+import { MAX_TOTAL_ATTACHMENT_BYTES } from '../acp/attachments.ts';
 
 export const DEVICE_HEADER = 'X-AIB-Device';
 /** A socket cannot send a header: the device token comes as the subprotocol `aib-device.<token>`. */
@@ -67,6 +79,12 @@ export class RateLimit {
 }
 
 const MAX_BODY = 1_000_000;
+
+/** Files download for a computer ("Files: see and download"; Download replaces Open in editor). The attachments' 20 MiB cap. */
+export const DOWNLOAD_ROUTE = '/api/pc/files/download';
+export const MAX_DOWNLOAD_BYTES = MAX_TOTAL_ATTACHMENT_BYTES;
+/** The bridge's own routes (not page routes, so not in ROUTE_LIST): what each needs. */
+export const PC_OWN_ROUTES: ReadonlyMap<string, readonly string[]> = new Map([[`GET ${DOWNLOAD_ROUTE}`, ['phone.read', 'pc.files']]]);
 /** The routes whose body may carry attachments (the PC composer's limits), read only once Send is checked. */
 const PROMPT_ROUTES = new Set(['/api/live/prompt', '/api/live/steer', '/api/live/queue']);
 
@@ -75,6 +93,10 @@ type Json = Record<string, unknown>;
 export interface BridgeHost {
   ctx: WebContext;
   devices: DeviceStore;
+  /** The open sockets by device (Remove closes them); missing in unit setups without Phone access. */
+  sockets?: DeviceSockets;
+  /** Device activity (remote/audit.ts). */
+  audit?: Audit;
   /** The answer with the phone port's headers. */
   json(status: number, body: unknown, extra?: Record<string, string>): Response;
 }
@@ -139,6 +161,20 @@ export class PcBridge {
       await drain(request);
       return device;
     }
+    const own = PC_OWN_ROUTES.get(`${method} ${path}`);
+    if (own) {
+      await drain(request);
+      const missing = this.#missing(device, own);
+      if (missing.length) {
+        return this.host.json(403, {
+          error: 'This computer may not do that. Turn it on for this computer in AIB on the PC: Settings → Remote control.',
+          code: 'scope',
+          missing,
+        }, { 'X-AIB-Refused': 'scope' });
+      }
+      this.host.devices.touch(device.id);
+      return await this.#download(device, url);
+    }
     const entry = entryFor(method, path);
     if (!entry || (method !== 'GET' && method !== 'POST')) {
       await drain(request);
@@ -183,7 +219,95 @@ export class PcBridge {
     if (!ctx.dispatchAs) return this.host.json(503, { error: 'AIB is starting. Try again in a moment.', code: 'busy' });
     const answer = await ctx.dispatchAs(principal, method as 'GET' | 'POST', url, request, body);
     if (path === '/api/live/terminal/list' && answer.status === 200) return await this.#terminalList(answer);
+    if (answer.status === 200) this.#logDone(device, path, url, body);
     return answer;
+  }
+
+  /** A Device activity line (never message text, terminal input or file contents). */
+  #log(device: Device, action: string, result: string, more: { chat?: string; path?: string } = {}): void {
+    this.host.audit?.write({ device: device.id, name: device.name, action, result, ...more });
+  }
+
+  /** The Device activity lines of a bridged request that went through: an outside file read, a project added or removed. */
+  #logDone(device: Device, path: string, url: URL, body: Json | null): void {
+    const text = (v: unknown) => (typeof v === 'string' ? v : '');
+    if (path === '/api/live/files/outside') {
+      const q = url.searchParams;
+      const peek = q.get('peek') === '1';
+      this.#log(device, 'file outside the project', peek ? 'looked up' : 'read', { chat: q.get('id') ?? '', path: q.get('path') ?? '' });
+    } else if (path === '/api/live/project-add') {
+      const paths = [text(body?.path), ...(Array.isArray(body?.paths) ? (body!.paths as unknown[]).map(text) : [])].filter(Boolean);
+      for (const p of paths) this.#log(device, 'project added', 'done', { path: p });
+    } else if (path === '/api/live/project-remove' && body?.check !== true) {
+      this.#log(device, 'project removed', 'done (the folder stays on disk)', { path: text(body?.path) });
+    }
+  }
+
+  /**
+   * GET /api/pc/files/download?id|project&root&path: one file of a chat's folder or an added project, as a download (at most 20 MiB).
+   * The same folder rules as the Files view (files_routes.ts scopeFor: never a folder from the request), the blocked folders after
+   * links are resolved, and a Device activity line with the path (never the content).
+   */
+  async #download(device: Device, url: URL): Promise<Response> {
+    const { ctx } = this.host;
+    const args = parseQs(url.search.slice(1));
+    const scope = await scopeFor(ctx, args);
+    if (Array.isArray(scope)) return this.host.json(scope[0] as number, scope[1]);
+    if (wslLoc(scope.root)) {
+      return this.host.json(409, { error: 'Downloading from a WSL project is not available yet.', code: 'wsl_unsupported' });
+    }
+    const stateDir = ctx.stateDir ?? null;
+    const blocked = () =>
+      this.host.json(403, { error: 'This folder holds sign-ins or AIB data. Open it on the PC itself.', code: 'blocked_folder' });
+    const rel = args.path?.[0] ?? '';
+    let abs: string, name: string;
+    try {
+      if (isBlocked(scope.root, stateDir)) return blocked();
+      let found: [string, string];
+      try {
+        found = files.resolveInside(scope.root, rel);
+      } catch (error) {
+        // a local-only file lives in the main folder (files/read lays it over a chat's copy the same way)
+        if (!(error instanceof files.FilesError) || error.status !== 404 || scope.main === scope.root) throw error;
+        found = files.resolveInside(scope.main, rel);
+      }
+      abs = found[0];
+      if (!found[1]) throw new files.FilesError('Choose a file', 'not_file');
+      if (isBlocked(abs, stateDir)) return blocked();
+      name = found[1].slice(found[1].lastIndexOf('/') + 1);
+      const st = await Deno.stat(abs);
+      if (!st.isFile) throw new files.FilesError('Not a file', 'not_file');
+      if (st.size > MAX_DOWNLOAD_BYTES) {
+        return this.host.json(413, {
+          error: `This file is larger than ${MAX_DOWNLOAD_BYTES / 1048576} MiB. Download it on the PC itself.`,
+          code: 'too_big',
+        });
+      }
+    } catch (error) {
+      if (error instanceof files.FilesError) return this.host.json(error.status, { error: error.message, code: error.code });
+      if (error instanceof Deno.errors.NotFound) return this.host.json(404, { error: 'Not found', code: 'not_found' });
+      throw error;
+    }
+    const bytes = await Deno.readFile(abs);
+    if (bytes.byteLength > MAX_DOWNLOAD_BYTES) return this.host.json(413, { error: 'This file is too large.', code: 'too_big' });
+    this.#log(device, 'file downloaded', 'done', { chat: args.id?.[0] ?? '', path: abs });
+    const headers = new Headers(this.host.json(200, null).headers);
+    headers.set('Content-Type', 'application/octet-stream');
+    headers.set('Content-Disposition', `attachment; filename="${asciiName(name)}"; filename*=UTF-8''${encodeURIComponent(name)}`);
+    headers.set('Content-Length', String(bytes.byteLength));
+    headers.set('Cache-Control', 'no-store');
+    headers.set('X-Content-Type-Options', 'nosniff');
+    return new Response(bytes, { status: 200, headers });
+  }
+
+  /** The link a socket's session gets: in the device's registry (Remove closes it; checked per message), with its log lines. */
+  #registered(device: Device, kind: SocketKind, chat: string): ((link: WsLink) => WsLink) | null {
+    const sockets = this.host.sockets;
+    if (!sockets) return null;
+    return (link) => {
+      if (kind === 'terminal') this.#log(device, 'terminal', 'opened', { chat });
+      return sockets.wrap(device.id, kind, link, kind === 'terminal' ? () => this.#log(device, 'terminal', 'closed', { chat }) : null);
+    };
   }
 
   /** GET /api/live/terminal/list for a computer: only the chat terminals of added projects (never a sign-in or setup one). */
@@ -243,7 +367,10 @@ export class PcBridge {
         return this.host.json(403, { error: "A chat's terminal starts in the chat's folder.", code: 'pc_only' });
       }
       this.host.devices.touch(device.id);
-      const answer = terminalSocket(ctx, request, url, principal);
+      // the shell starts where it was checked: with no cwd given, the chat's folder (never the session's own default)
+      const started = new URL(url);
+      started.searchParams.set('cwd', cwd);
+      const answer = terminalSocket(ctx, request, started, principal, this.#registered(device, 'terminal', key!));
       return 'response' in answer ? answer.response : this.host.json(answer.refused[0], answer.refused[1]);
     }
     if (url.pathname === DOCS_SOCKET) {
@@ -251,11 +378,16 @@ export class PcBridge {
       const need = ['phone.read', 'phone.prompt'].filter((s) => !(device.scopes as string[]).includes(s));
       if (need.length) return this.host.json(403, { error: 'This computer may not edit docs.', code: 'scope', missing: need });
       this.host.devices.touch(device.id);
-      const answer = docsSocket(ctx, request, url, principal);
+      const answer = docsSocket(ctx, request, url, principal, this.#registered(device, 'docs', ''));
       return 'response' in answer ? answer.response : this.host.json(answer.refused[0], answer.refused[1]);
     }
     return this.host.json(404, { error: 'Not found' });
   }
+}
+
+/** A file name for the plain filename= part of Content-Disposition: printable ASCII, no quotes or backslashes. */
+function asciiName(name: string): string {
+  return name.replace(/[^\x20-\x7e]|["\\]/g, '_') || 'download';
 }
 
 async function drain(request: Request): Promise<void> {

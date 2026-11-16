@@ -79,7 +79,26 @@ const publicOf = (d: Device): PublicDevice => {
   };
 };
 
-/** A subscription from a phone, checked: an https push service address and the two keys (base64url). Null when it is not one. */
+/**
+ * The push services a subscription may point at (review should-fix, design v2 section 7): Chrome / Edge on Android and Chrome on
+ * desktop (FCM), Firefox (Mozilla autopush), Edge on Windows (WNS) and Safari (Apple). Any other address is refused, so a paired
+ * device cannot make the PC send requests to a LAN or tailnet address.
+ */
+export const PUSH_HOSTS: readonly string[] = ['fcm.googleapis.com', 'web.push.apple.com'];
+export const PUSH_HOST_SUFFIXES: readonly string[] = ['.push.services.mozilla.com', '.notify.windows.com'];
+
+/** May a subscription's endpoint be sent to? https on the default port, at a known push service. Tests only: with AGENT_STUDIO_TEST=1
+ * and AIB_TEST_PUSH_LOOPBACK=1, a fake push service on 127.0.0.1 (remote_push_test.ts). */
+export function pushEndpointAllowed(url: URL): boolean {
+  if (url.protocol !== 'https:' || url.username || url.password) return false;
+  const host = url.hostname.toLowerCase();
+  if (host === '127.0.0.1' && Deno.env.get('AGENT_STUDIO_TEST') === '1' && Deno.env.get('AIB_TEST_PUSH_LOOPBACK') === '1') return true;
+  if (url.port !== '') return false;
+  return PUSH_HOSTS.includes(host) || PUSH_HOST_SUFFIXES.some((s) => host.endsWith(s) && host.length > s.length);
+}
+
+/** A subscription from a phone, checked: an https address at a known push service (pushEndpointAllowed) and the two keys
+ * (base64url). Null when it is not one. */
 export function cleanPushSub(value: unknown, at: number): PushSub | null {
   const v = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   const keys = v.keys && typeof v.keys === 'object' ? v.keys as Record<string, unknown> : {};
@@ -92,7 +111,7 @@ export function cleanPushSub(value: unknown, at: number): PushSub | null {
   } catch {
     return null;
   }
-  if (endpoint.length > 1000 || url.protocol !== 'https:' || url.username || url.password) return null;
+  if (endpoint.length > 1000 || !pushEndpointAllowed(url)) return null;
   if (!b64(keys.p256dh, 80, 100) || !b64(keys.auth, 16, 30)) return null;
   return { endpoint, p256dh: keys.p256dh as string, auth: keys.auth as string, at };
 }

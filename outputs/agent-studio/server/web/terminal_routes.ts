@@ -80,6 +80,8 @@ export function terminalSocket(
   request: Request,
   url: URL,
   principal: Principal | null = null,
+  /** A remote computer's socket registry (remote/pc_sockets.ts): the link the shell gets, checked per message and closed on Remove. */
+  wrap: ((link: WsLink) => WsLink) | null = null,
 ): { refused: Reply } | { response: Response } {
   const protocols = offered(request);
   // A remote computer: the bridge (remote/pc_bridge.ts pcSocket) checked the device and the terminal rules and passes its principal
@@ -100,7 +102,9 @@ export function terminalSocket(
   if (!wantsWebSocket(request) || !protocols.includes(TERMINAL_PROTOCOL)) {
     return { refused: [400, { error: 'This address only takes a terminal WebSocket.' }] };
   }
-  const { link, response } = upgradeWebSocket(request, TERMINAL_PROTOCOL);
+  const upgraded = upgradeWebSocket(request, TERMINAL_PROTOCOL);
+  const { response } = upgraded;
+  const link = wrap ? wrap(upgraded.link) : upgraded.link;
   const q = url.searchParams;
   const signin = q.get('signin');
   const setup = q.get('setup');
