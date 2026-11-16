@@ -1582,7 +1582,8 @@
         box.append(swarmButton(a, box, result));
         continue;
       }
-      if (!a || !['keep-mine', 'leave'].includes(a.id)) continue;
+      // another computer (remote-auth.js): resolving a merge clash is the PC's (worktree/clash is never remote)
+      if (!a || !['keep-mine', 'leave'].includes(a.id) || window.AIBRemote) continue;
       const button = text('button', a.label || a.id, 'note-action');
       button.type = 'button';
       button.addEventListener('click', async () => {

@@ -184,6 +184,8 @@
     function drawCleanup(items) {
       work.textContent = '';
       ticks = [];
+      // another computer (remote-auth.js): deleting the folder or AIB's copies in it is the PC's; Remove takes it off the list only
+      if (root.AIBRemote && root.AIBRemote.kind === 'pc') items = [];
       work.hidden = !items.length;
       if (!items.length) return;
       work.append(el('p', cleanupText(items), 'dp-warn dp-cleanup-text'));

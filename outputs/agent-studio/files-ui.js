@@ -1238,7 +1238,8 @@
       };
       items.push(b);
     }
-    if (row && scope && (row.kind === 'file' || row.kind === 'dir')) {
+    // Git exclude writes into the repo: not from another computer (Files there is see and download)
+    if (!REMOTE() && row && scope && (row.kind === 'file' || row.kind === 'dir')) {
       const it = F().excludeItem(row, scope);
       const b = btn(null, 'ws-menu-item fx-menu-it fx-menu-excl');
       b.setAttribute('role', 'menuitem');
@@ -1253,6 +1254,10 @@
           gitExclude(scope, row.path);
         };
       items.push(b);
+    }
+    if (!items.length) {
+      m.remove();
+      return;
     }
     m.append(...items);
     doc().body.append(m);

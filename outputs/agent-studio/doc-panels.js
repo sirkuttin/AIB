@@ -865,23 +865,29 @@
   $('btnMore').addEventListener('click', () => {
     const more = $('btnMore');
     const page = D.pages.find((p) => p.id === D.page);
+    // another computer (remote-auth.js): Export saves into the PC's own Downloads folder, so it is the PC's
+    const remote = !!(window.AIBRemote && window.AIBRemote.kind === 'pc');
     D.menu(
       more,
       [
-        { head: 'Export Markdown' },
-        {
-          label: 'This page',
-          small: page ? `${page.title}: plain text. Colours drop out, columns stack, charts become a table.` : '',
-          data: { export: 'page' },
-          run: () => exportMd('page'),
-        },
-        {
-          label: 'All pages',
-          small: 'Each page under its name as a heading',
-          data: { export: 'all' },
-          run: () => exportMd('all'),
-        },
-        { sep: true },
+        ...(remote
+          ? []
+          : [
+              { head: 'Export Markdown' },
+              {
+                label: 'This page',
+                small: page ? `${page.title}: plain text. Colours drop out, columns stack, charts become a table.` : '',
+                data: { export: 'page' },
+                run: () => exportMd('page'),
+              },
+              {
+                label: 'All pages',
+                small: 'Each page under its name as a heading',
+                data: { export: 'all' },
+                run: () => exportMd('all'),
+              },
+              { sep: true },
+            ]),
         // a doc tab or the Artifacts viewer: move the doc into its own small window (multi-window 2.5B; chat.html does it)
         ...(D.framed
           ? [{ label: 'Pop out', small: 'Into its own window', data: { act: 'popout' }, run: () => D.tell({ type: 'aib-doc:popout' }) }]

@@ -35,3 +35,18 @@ html[data-remote='pc']:not([data-can-projects]) #wsNewProject {
 .st-note.st-elsewhere {
   margin-top: 4px;
 }
+/* Files is "see and download" on a computer (v1): no Git exclude, no moving a chat's files; the live-sync Resume is the PC's. */
+html[data-remote='pc'] .fx-menu-excl,
+html[data-remote='pc'] .fx-stray-btn,
+html[data-remote='pc'] .clash-resume {
+  display: none !important;
+}
+/* Remove project on a computer: off the list only; "Delete from disk as well" is the PC's. */
+html[data-remote='pc'] .dp-disk {
+  display: none !important;
+}
+/* Without "Files: see and download": no Files panel and no Changes view (both are under that switch). */
+html[data-remote='pc']:not([data-can-files]) .sf-mode,
+html[data-remote='pc']:not([data-can-files]) #paneTab-changes {
+  display: none !important;
+}
