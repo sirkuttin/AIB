@@ -53,7 +53,9 @@ def owner_state():
     out = {}
     gem = home / '.gemini'
     out['gemini'] = sorted((p.name, p.stat().st_mtime) for p in gem.iterdir()) if gem.is_dir() else None
-    for f in (home / '.claude' / 'settings.json', home / '.claude.json', home / '.codex' / 'config.toml'):
+    # not ~/.claude.json: the owner's own running Claude Code sessions rewrite it all the time
+    for f in (home / '.claude' / 'settings.json', home / '.claude' / 'settings.local.json', home / '.codex' / 'config.toml',
+              home / '.codex' / 'hooks.json'):
         out[str(f)] = f.stat().st_mtime if f.exists() else None
     projects = home / '.claude' / 'projects'
     out['claude_projects'] = sorted(p.name for p in projects.iterdir()) if projects.is_dir() else []
@@ -137,12 +139,18 @@ class GeminiSubagentCase(unittest.TestCase):
         project = make_repo(temp / f'srg{run}')
         run_git(project, 'config', 'core.autocrlf', 'false')
         before = owner_state()
-        self.addCleanup(lambda: self.assertEqual(owner_state(), before, "the owner's ~/.gemini, ~/.claude or ~/.codex changed"))
+        def owner_untouched():
+            after = owner_state()
+            changed = sorted(k for k in set(before) | set(after) if before.get(k) != after.get(k))
+            self.assertEqual(changed, [], "the owner's ~/.gemini, ~/.claude or ~/.codex changed")
+        self.addCleanup(owner_untouched)
         user_home = temp / 'user-gemini-home'  # "the user's" Gemini home (GEMINI_CLI_HOME): never the owner's
         (user_home / '.gemini' / 'tmp').mkdir(parents=True)
         user_settings = {'general': {'checkpointing': {'enabled': False}}}
         if self.hooks_off:
             user_settings['hooksConfig'] = {'enabled': False}
+        # the user trusted this folder (Gemini allows yolo only in a trusted folder): their trustedFolders.json
+        (user_home / '.gemini' / 'trustedFolders.json').write_text(json.dumps({str(project): 'TRUST_FOLDER'}), encoding='utf-8')
         settings_file = user_home / '.gemini' / 'settings.json'
         settings_file.write_text(json.dumps(user_settings), encoding='utf-8')
         settings_before = settings_file.read_bytes()
@@ -175,6 +183,10 @@ class GeminiSubagentCase(unittest.TestCase):
         self.assertEqual(status, 200, connection)
         chat = Chat(None, connection['id'], web)
         wait_for(lambda: chat.state().get('ready') or (chat.state().get('error') and self.fail(chat.state()['error'])), 'chat ready', seconds=120)
+        # Gemini 0.68 itself refuses invoke_agent in its default ACP mode, with or without AIB ("Tool execution for "Generalist
+        # Agent" denied by policy": checked with no --admin-policy); in yolo it runs subagents. The fence must hold there too.
+        code, changed = web.post('mode', {'id': chat.id, 'modeId': 'yolo'})
+        self.assertEqual(code, 200, changed)
         code, _ = web.post('prompt', {'id': chat.id, 'text': f'GX-PARENT-{run} go', 'clientMessageId': uuid.uuid4().hex})
         self.assertEqual(code, 200)
 
@@ -216,8 +228,21 @@ class GeminiRedirectTest(GeminiSubagentCase):
         self.assertIn('?? parent-made.txt', run_git(project, 'status', '--porcelain'))
         # the record goes and its worktree with it, once landed
         records = fx.state / 'subagent-worktrees.json'
-        wait_for(lambda: not json.loads(records.read_text(encoding='utf-8'))['subagents'], 'the record to be released', seconds=60)
-        self.assertNotIn('sub-', run_git(project, 'worktree', 'list'))
+        landed = lambda: [r for r in json.loads(records.read_text(encoding='utf-8'))['subagents'].values() if r['state'] != 'spare']  # noqa: E731
+        wait_for(lambda: not landed(), 'the landed record to be released', seconds=60)
+        spares = [r for r in json.loads(records.read_text(encoding='utf-8'))['subagents'].values()]
+        self.assertLessEqual(len(spares), 1, 'at most the chat spare stays while the chat is open')
+        listing = run_git(project, 'worktree', 'list')
+        self.assertEqual(sum(1 for line in listing.splitlines() if '.gem-' in line), len(spares), listing)
+        # Activity: a card for the subagent, from its invoke_agent call (running, then completed), with P3's worktree line
+        state = chat.state()
+        self.assertEqual(state.get('subagentIsolation', {}).get('on'), True, state.get('subagentIsolation'))
+        cards = [e['data']['update'] for e in state['events'] if e.get('kind') == 'update'
+                 and (e.get('data') or {}).get('update', {}).get('sessionUpdate') == 'subagent_update']
+        self.assertEqual([c['state'] for c in cards], ['running', 'completed'], cards)
+        self.assertEqual(cards[0]['agentType'], 'generalist')
+        info = (state.get('subagentWorktrees') or {}).get(cards[0]['sessionId'])
+        self.assertTrue(info and info.get('where'), state.get('subagentWorktrees'))
         # the chat's home is AIB's own: its settings carry AIB's hook; the user's folder has no AIB file
         homes = list((fx.state / 'gemini').glob('*/home/.gemini/settings.json'))
         self.assertEqual(len(homes), 1, homes)

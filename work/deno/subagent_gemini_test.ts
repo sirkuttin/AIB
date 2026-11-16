@@ -151,3 +151,40 @@ Deno.test('a Gemini chat’s worktree is AIB’s own path; other nestings are no
     Deno.removeSync(temp, { recursive: true });
   }
 });
+
+Deno.test('a taken-over chat gets its setup back; the start sweep removes only folders no chat uses', async () => {
+  const { restore, sweep, idsInArgs, policyToml: _p } = await import('../../outputs/agent-studio/server/subagents/gemini.ts');
+  const temp = Deno.makeTempDirSync({ prefix: 'aib-gem-sweep-', dir: Deno.env.get('TEMP') ?? undefined });
+  try {
+    const state = join(temp, 'state'), root = join(state, 'worktrees'), project = join(temp, 'proj');
+    Deno.mkdirSync(project, { recursive: true });
+    const { repoHash } = await import('../../outputs/agent-studio/server/worktrees/worktrees.ts');
+    const make = (id: string, redirect: boolean) => {
+      Deno.mkdirSync(join(state, 'gemini', id, 'policy'), { recursive: true });
+      Deno.writeTextFileSync(join(state, 'gemini', id, 'policy', 'aib-subagents.toml'), '');
+      if (redirect) {
+        Deno.mkdirSync(join(state, 'gemini', id, 'home', '.gemini'), { recursive: true });
+        Deno.writeTextFileSync(join(state, 'gemini', id, 'home', '.gemini', 'settings.json'), '{}');
+        Deno.mkdirSync(join(root, repoHash(project), `.gem-${id}`), { recursive: true });
+      }
+    };
+    const a = 'a'.repeat(32), b = 'b'.repeat(32), c = 'c'.repeat(32);
+    make(a, true);
+    make(b, false);
+    make(c, true);
+    const ra = restore(state, root, a, project)!;
+    assert(ra.subFolder.endsWith(`.gem-${a}`) && !ra.off);
+    const rb = restore(state, root, b, project)!;
+    assertEquals(rb.subFolder, '');
+    assert(rb.off);
+    assertEquals(restore(state, root, 'd'.repeat(32), project), null);
+    assertEquals(restore(state, root, '../x', project), null);
+    assertEquals(idsInArgs(['node', 'g.js', '--acp', '--admin-policy', join(state, 'gemini', c, 'policy')]), [c]);
+    assertEquals(sweep(state, root, new Set([a]), 3600), 0, 'young folders stay');
+    assertEquals(sweep(state, root, new Set([a, c]), 0), 1);
+    assert(restore(state, root, a, project) && restore(state, root, c, project), 'kept: open or running');
+    assertEquals(restore(state, root, b, project), null, 'the unused one went');
+  } finally {
+    Deno.removeSync(temp, { recursive: true });
+  }
+});

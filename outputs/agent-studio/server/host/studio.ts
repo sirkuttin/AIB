@@ -465,6 +465,8 @@ export class Studio {
         await manager.cleanupIncomplete(); // a half-made worktree of a process that died
         await manager.retryPending(); // removals that were pending (a file in use) + git worktree prune
         await subagents?.sweep(); // spare / unused subagent worktrees of chats that are gone
+        // no keeper: no Gemini chat can still be running, so their folders go (with a keeper: after its take-over, #takeOver...)
+        this.#sweepGeminiWithoutKeeper(manager.registry.root);
       } catch (error) {
         log.exception(error, 'Cleaning up half-made worktrees failed');
       }
@@ -1429,7 +1431,13 @@ export class Studio {
         gem.turnOver(conn.id);
         await subagents.turnCancelled(conn.id);
       };
-      c.onGeminiTool = (conn, callId, title, status) => gem.toolUpdate(conn.id, callId, title, status);
+      const told = new Map<string, { state: string; agent: string }>();
+      c.onGeminiTool = (conn, callId, title, status) => {
+        gem.toolUpdate(conn.id, callId, title, status);
+        // its Activity card (with P3's worktree line), from the call: Gemini's stream has no child session for it
+        const update = gemini.cardUpdate(callId, title, status, told);
+        if (update) conn.recordedEvent('update', { sessionId: conn.sessionId, update });
+      };
       c.subagentActivity = () => subagents.activity(c.id); // P3's {where, landing} per subagent (keyed by its call id)
     }
     c.onLimits = (conn, kind, raw, at) => this.limits.fromAgent(conn, kind, raw, at);
@@ -1657,6 +1665,15 @@ export class Studio {
     const started = performance.now();
     const listed = await client.list();
     if (distro) this.#wslAsked.add(distro);
+    if (!distro && !check && this.hasStateDir && this.worktrees) { // Gemini chat folders no running or open chat uses any more
+      const keep = new Set([...this.connections.keys()]);
+      for (const info of listed) if (info.live) for (const id of gemini.idsInArgs([info.command, ...(info.args ?? [])])) keep.add(id);
+      try {
+        gemini.sweep(this.stateDir, this.worktrees.registry.root, keep);
+      } catch (error) {
+        log.exception(error, 'Sweeping Gemini chat folders failed');
+      }
+    }
     let rebuilt = 0;
     for (const info of listed) {
       try {
@@ -1793,6 +1810,9 @@ export class Studio {
     if (isDict(note.worktree)) c.worktree = { branch: String(note.worktree.branch ?? ''), base: String(note.worktree.base ?? '') };
     c.projectRoot = isStr(note.projectRoot) && note.projectRoot ? note.projectRoot : cwd;
     if (provider === 'claude') c.subagentHooks = hooksFromNote(note.subagentHooks); // on or off as the chat started (should-fix 6)
+    if (provider === 'gemini' && this.hasStateDir && this.worktrees) { // its fence and redirect as launched (subagents/gemini.ts)
+      c.geminiSubagents = gemini.restore(this.stateDir, this.worktrees.registry.root, c.id, c.projectRoot || cwd);
+    }
     this.#wire(c);
     const helper = this.hasStateDir
       ? helperOf(readHelpers(this.stateDir), { lasting: isStr(note.resume) && note.resume ? `${provider}:${note.resume}` : null, path: cwd })
@@ -1914,6 +1934,10 @@ export class Studio {
       log.exception(error, 'Could not set up subagent hooks; the chat runs without them');
       return { hooks: offHooks(`AIB could not set up its hooks (${errorText(error)})`) };
     }
+  }
+
+  #sweepGeminiWithoutKeeper(root: string): void {
+    if (!this.keeper && this.hasStateDir) gemini.sweep(this.stateDir, root, new Set(this.connections.keys()));
   }
 
   /** The open Gemini chat with the redirect on (its folder and subagent folder), or null. */

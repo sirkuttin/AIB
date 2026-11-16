@@ -368,6 +368,26 @@ export interface HookAnswer {
 const json = (payload: unknown): HookAnswer => ({ status: 200, body: JSON.stringify(payload), type: 'application/json' });
 const deny = (reason: string) => json({ decision: 'deny', reason });
 
+/** A subagent's key: its invoke_agent call id as the record's agentId (service.ts startExternal) and its Activity card's id. */
+export function agentKey(callId: string): string {
+  return callId.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 64);
+}
+
+/**
+ * What its Activity card says, from the parent's invoke_agent call (Gemini's ACP stream has no child session of its own): a
+ * subagent_update keyed by agentKey, so the card's fixed line reads P3's {where, landing} for that agentId. null: no change to tell.
+ */
+export function cardUpdate(callId: string, title: string, status: string, told: Map<string, { state: string; agent: string }>): Record<string, unknown> | null {
+  const key = agentKey(callId);
+  const state = status === 'completed' ? 'completed' : status === 'failed' ? 'failed' : status === 'cancelled' ? 'cancelled' : 'running';
+  const was = told.get(key);
+  if (was && was.state === state) return null;
+  const agent = was?.agent || agentOfTitle(title) || 'subagent';
+  told.set(key, { state, agent });
+  while (told.size > 200) told.delete(told.keys().next().value!);
+  return { sessionUpdate: 'subagent_update', sessionId: key, title: agent, description: title.slice(0, 300), agentType: agent, state };
+}
+
 /** The subagent name in Gemini's invoke_agent call title ("Delegating to agent 'generalist'"), else ''. */
 export function agentOfTitle(title: string): string {
   const m = /agent\s+['"‘“]([^'"’”]{1,100})['"’”]/.exec(title);
@@ -477,4 +497,81 @@ export function relativeInside(given: string, folder: string, worktree: string):
     }
   }
   return null;
+}
+
+// ---- after a restart --------------------------------------------------------------------------------------------------------
+
+const CHAT_ID = /^[0-9a-f]{32}$/;
+
+/**
+ * A Gemini chat taken over from the keeper after an AIB restart: its setup as it was launched, read back from AIB's own folders
+ * (the agent process still runs with them). Null when AIB made none for it.
+ */
+export function restore(stateDir: string, root: string, chatId: string, project: string): GeminiSetup | null {
+  if (!CHAT_ID.test(chatId)) return null;
+  const dir = pathOf(stateDir, 'gemini', chatId);
+  const policyDir = pathOf(dir, 'policy');
+  const there = (p: string) => {
+    try {
+      Deno.statSync(p);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  if (!there(pathOf(policyDir, 'aib-subagents.toml'))) return null;
+  const home = pathOf(dir, 'home');
+  const subFolder = pathOf(root, wt.repoHash(project), `.gem-${chatId}`);
+  if (there(pathOf(home, '.gemini', 'settings.json')) && there(subFolder)) return { policyDir, home, subFolder, off: '', dir };
+  return { policyDir, home: '', subFolder: '', off: 'it started with the fence only', dir };
+}
+
+/** The chat ids in running agents' command lines (`--admin-policy <state>/gemini/<id>/policy`): their folders stay. */
+export function idsInArgs(args: string[]): string[] {
+  const out: string[] = [];
+  for (const a of args) {
+    const m = /[\\/]gemini[\\/]([0-9a-f]{32})[\\/]policy$/.exec(a);
+    if (m) out.push(m[1]);
+  }
+  return out;
+}
+
+/**
+ * At start, after the keeper's running chats are known: every <state>/gemini/<id> folder (this install's only) whose chat is not
+ * open here and not running in the keeper, and older than `minAgeS`, goes, junctions unlinked first; its empty .gem-<id> subagent
+ * folder too (one holding a worktree is landing's or cleanup's). Never throws.
+ */
+export function sweep(stateDir: string, root: string, keep: Set<string>, minAgeS = 3600): number {
+  let removed = 0;
+  let entries: Deno.DirEntry[] = [];
+  try {
+    entries = [...Deno.readDirSync(pathOf(stateDir, 'gemini'))];
+  } catch {
+    return 0;
+  }
+  for (const e of entries) {
+    if (!e.isDirectory || !CHAT_ID.test(e.name) || keep.has(e.name)) continue;
+    const dir = pathOf(stateDir, 'gemini', e.name);
+    try {
+      const st = Deno.lstatSync(dir);
+      if (st.isSymlink || (st.mtime && Date.now() - st.mtime.getTime() < minAgeS * 1000)) continue;
+      removeHome(dir);
+      removed++;
+    } catch (error) {
+      log.warning('Gemini sweep: %s stays (%s)', dir, error instanceof Error ? error.message : error);
+    }
+  }
+  try {
+    for (const repo of Deno.readDirSync(root)) {
+      if (!repo.isDirectory) continue;
+      for (const g of Deno.readDirSync(pathOf(root, repo.name))) {
+        const m = /^\.gem-([0-9a-f]{32})$/.exec(g.name);
+        if (!m || keep.has(m[1])) continue;
+        try {
+          Deno.removeSync(pathOf(root, repo.name, g.name)); // empty only
+        } catch { /* holds a worktree, or gone */ }
+      }
+    }
+  } catch { /* no worktrees folder */ }
+  return removed;
 }
