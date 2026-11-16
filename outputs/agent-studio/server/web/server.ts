@@ -32,6 +32,7 @@ import { TerminalSessions } from '../terminal/sessions.ts';
 import type { KeeperLink } from '../keeper/link.ts';
 import { TERMINAL_SOCKET, terminalRoutes, terminalSocket } from './terminal_routes.ts';
 import { RemovedProjects } from '../desktop/project_delete.ts';
+import { allRoute, cardRoute } from './cleanup_routes.ts';
 import { filterSessions, folderOfSession, projectAdd, projectRemove } from './project_routes.ts';
 import { FolderPresence, presence } from '../desktop/folder_presence.ts';
 import { AddedProjects } from '../desktop/added_projects.ts';
@@ -345,6 +346,18 @@ export class WebServer {
     });
     this.native.set('POST /api/live/project-remove', async (c, _url, body) => {
       const [status, payload] = await projectRemove(c, body);
+      return this.json(status, payload);
+    });
+    this.native.set('GET /api/live/cleanup/card', async (c) => {
+      const [status, payload] = await cardRoute(c, undefined);
+      return this.json(status, payload);
+    });
+    this.native.set('POST /api/live/cleanup/card', async (c, _url, body) => {
+      const [status, payload] = await cardRoute(c, body);
+      return this.json(status, payload);
+    });
+    this.native.set('POST /api/live/cleanup/all', async (c, _url, body) => {
+      const [status, payload] = await allRoute(c, body);
       return this.json(status, payload);
     });
     for (const [key, handler] of liveRoutes()) {

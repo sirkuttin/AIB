@@ -7,6 +7,13 @@
  *                                   project's running chats and moves its chats to Recently deleted itself.
  * `projects` are the other project folders the page knows (a disk delete never touches a folder holding or inside one of them).
  *
+ * Decision 6 (build plan 1b, 5.4; worktrees/cleanup.ts): the check also answers `cleanup` {items, silent, skipped}: the chat copies
+ * with work that was never merged (this install's, ticked by default in the dialog) and what another AIB install made in the repo
+ * (unticked). Removing the project then removes everything this install made there (branches, refs, copies, records, stash entries
+ * already in the working tree) plus the ids in `cleanup.remove` (`titles` {provider:sessionId: title} name the chats); never the
+ * project's private folder, never a transcript. It runs before a disk delete. An older page sends no `cleanup`: nothing with unmerged
+ * work is removed then.
+ *
  * POST /api/live/project-add (Deno only): {path} or {paths: [...]}: add projects to AIB (the New project dialog; a page's projects
  * made with that dialog before this version, kept in its own storage). Answers the project preferences view. A git project gets AIB's
  * default local-only `/private` in its .git/info/exclude (worktrees/local_only.ts ensureDefault; skipped when it commits private/).
@@ -32,6 +39,8 @@ import { distroName, hostWhenReady, wslTestHomeEnv } from '../wsl/access.ts';
 import { WslHelperError } from '../wsl/contract.ts';
 import { ensureDefault } from '../worktrees/local_only.ts';
 import { defaultsAllowed } from '../worktrees/local_strays.ts';
+import { cleanupApply, cleanupScan, liveOf, titlesOf } from './cleanup_routes.ts';
+import { confirmView } from '../worktrees/cleanup.ts';
 
 type Json = Record<string, unknown>;
 
@@ -44,6 +53,8 @@ export interface ProjectRemoveContext {
   /** Tests pass a mocked trash layer and guard. */
   trashLayer?: TrashLayer;
   guard?: (projects: string[]) => Guard;
+  /** The running chats (their copies are never removed); absent in older tests. */
+  host?: { liveList(): Promise<Record<string, unknown>> | Record<string, unknown> };
 }
 
 function otherProjects(ctx: ProjectRemoveContext, body: Json, path: string): string[] {
@@ -63,9 +74,21 @@ export async function projectRemove(ctx: ProjectRemoveContext, body: unknown): P
   const projects = otherProjects(ctx, body, path);
   const wsl = wslLocOf(path);
   const guard = ctx.guard ? ctx.guard(projects) : defaultGuard(ctx.stateDir, projects);
+  const live = await liveOf(ctx.host);
+  const titles = titlesOf(body.titles);
   if (body.check === true) {
-    if (wsl) return [200, { ok: true, ...await wslCheck(wsl, projects) }];
-    return [200, { ok: true, ...(await inspect(path, guard, ctx.trashLayer)) }];
+    const scan = await cleanupScan(ctx.stateDir, path, live, titles);
+    const cleanup = scan ? confirmView(scan) : { items: [], silent: 0, skipped: '' };
+    if (wsl) return [200, { ok: true, ...await wslCheck(wsl, projects), cleanup }];
+    return [200, { ok: true, ...(await inspect(path, guard, ctx.trashLayer)), cleanup }];
+  }
+  // what AIB made in the repo goes first (a disk delete would leave the copies' links pointing at nothing)
+  const ticked = isDict(body.cleanup) && Array.isArray(body.cleanup.remove) ? body.cleanup.remove.filter(isStr).slice(0, 5000) : [];
+  let cleaned: { removed: string[]; left: Record<string, string> } = { removed: [], left: {} };
+  try {
+    cleaned = (await cleanupApply(ctx.stateDir, path, ticked, live, titles)) ?? cleaned;
+  } catch (error) {
+    console.error('Cleaning up what AIB made in the project failed', error);
   }
   let disk: string = 'kept';
   if (body.disk === true) {
@@ -78,7 +101,7 @@ export async function projectRemove(ctx: ProjectRemoveContext, body: unknown): P
   }
   await ctx.removedProjects.remove(path);
   if (ctx.addedProjects) await ctx.addedProjects.remove(path);
-  return [200, { ok: true, disk, removed: ctx.removedProjects.public().removed }];
+  return [200, { ok: true, disk, removed: ctx.removedProjects.public().removed, cleanup: cleaned }];
 }
 
 type WslRef = { distro: string; linuxPath: string };

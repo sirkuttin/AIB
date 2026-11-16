@@ -2575,6 +2575,18 @@ aside #archivedScroll {
 .dp-row {
   margin-top: 4px;
 }
+/* Decision 6: chat copies with unmerged work, listed in the Delete project question (delete-project-ui.js drawCleanup) */
+.dp-cleanup-list {
+  margin: 0 0 10px;
+}
+.dp-dialog .dp-cleanup-item {
+  margin: 0 0 4px;
+  align-items: flex-start;
+  overflow-wrap: anywhere;
+}
+.dp-dialog .dp-cleanup-item input {
+  margin-top: 2px;
+}
 
 /* A title the age would cut (sidebar-ui.js fitTitles measures each card): line 1 is all title, from the status dot to the
    card's right edge, and the age sits at the right end of line 2, after the status phrase. */

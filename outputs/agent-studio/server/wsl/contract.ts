@@ -47,8 +47,19 @@ export class WslHelperError extends Error {
   }
 }
 
-/** Helper protocol version, the first line on the helper channel is `helper.ready {helper, protocol, methods}`. Additions only. */
-export const HELPER_PROTOCOL = 1;
+/**
+ * Helper protocol version, the first line on the helper channel is `helper.ready {helper, protocol, methods}`. Additions only.
+ * 2: worktree.cleanupScan / worktree.cleanupApply (decision 6 cleanup, build plan 1b section 5). The helper ships with AIB (install.ts
+ * puts each version's programs in their own folder), so an update brings a helper of the same protocol.
+ */
+export const HELPER_PROTOCOL = 2;
+
+/** worktrees/cleanup.ts Scan as the channel carries it (items are CleanupItem; paths are Linux paths). */
+export interface WslCleanupScan {
+  project: string;
+  skipped: string;
+  items: Record<string, unknown>[];
+}
 
 /** Phase 1 helper methods. JSON-RPC 2.0 lines; bytes are base64. Result shapes of changes.*, files.* are exactly what worktrees/changes.ts and files.ts return today. */
 export interface HelperMethods {
@@ -154,6 +165,17 @@ export interface HelperMethods {
   'worktree.ensure': { params: { key: string }; result: { path: string } };
   'worktree.remove': { params: { key: string; confirmed?: boolean }; result: { outcome: 'removed' | 'pending' | 'gone' } };
   'worktree.hasChanges': { params: { key: string }; result: { changes: boolean } };
+  /**
+   * Decision 6 cleanup in the distro (worktrees/cleanup.ts run natively over the same `<data>`): `cleanupScan` lists what this AIB
+   * made in the repo (and what another AIB install made there, own: false) and changes nothing; `cleanupApply` removes this AIB's
+   * items without unmerged work plus the ids in `ticked` (`silentOnly`: none of those), never a copy of a running chat (`live`:
+   * Linux worktree paths and provider:sessionId). Linux paths. Protocol 2.
+   */
+  'worktree.cleanupScan': { params: { project: string; live?: string[] }; result: { scan: WslCleanupScan } };
+  'worktree.cleanupApply': {
+    params: { project: string; ticked?: string[]; only?: string[]; live?: string[] };
+    result: { scan: WslCleanupScan; removed: string[]; left: Record<string, string> };
+  };
   /**
    * Merge of a WSL chat's worktree (helper/merge.ts: worktrees/merge.ts run natively over the same `<data>` as worktree.*; its repo
    * lock, worktree lock and clash records live there). Offered with worktree.*. AIB sends the chat's public state (`state`, its `cwd`

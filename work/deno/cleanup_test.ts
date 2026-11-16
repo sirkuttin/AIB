@@ -192,3 +192,69 @@ Deno.test('18: the card\'s Remove removes exactly its items', async () => {
   assertEquals(cleanup.cardOf(box.state), null);
   assert(new wt.Manager(box.state).isRemoved(busy.plan.path), 'the chat reads as "workspace removed"');
 });
+
+Deno.test('16: project removal: one confirm lists the unmerged copy; the clean one goes silently; ticked ids go; private/ stays', async () => {
+  const { projectRemove } = await import('../../outputs/agent-studio/server/web/project_routes.ts');
+  const { RemovedProjects } = await import('../../outputs/agent-studio/server/desktop/project_delete.ts');
+  const { ConversationState } = await import('../../outputs/agent-studio/server/state/store.ts');
+  using box = new Sandbox();
+  write(box.project, 'private/notes.md', 'mine\n'); // the local-only folder (excluded by AIB's default line)
+  Deno.writeTextFileSync(pathOf(box.project, '.git', 'info', 'exclude'), '/private\n');
+  const clean = await copy(box.state, box.project, '3'.repeat(32), 'claude:s3');
+  const busy = await copy(box.state, box.project, '4'.repeat(32), 'claude:s4');
+  write(busy.plan.path, 'w.txt', 'work\n');
+  const ctx = {
+    stateDir: box.state,
+    conversations: new ConversationState(box.state),
+    removedProjects: new RemovedProjects(box.state),
+    host: { liveList: () => ({ connections: [] }) },
+  };
+  const [, check] = await projectRemove(ctx, { check: true, path: box.project, titles: { 'claude:s4': 'Fix login' } });
+  const view = check.cleanup as { items: Record<string, unknown>[]; silent: number };
+  assertEquals(view.items.map((i) => [i.id, i.title, i.files, i.own]), [[`copy:${'4'.repeat(32)}`, 'Fix login', 1, true]]);
+  assertEquals(view.silent, 1);
+  assert(exists(clean.plan.path), 'the check changes nothing');
+
+  // an older page (no cleanup field): only the silent items go, never unmerged work
+  const [status, done] = await projectRemove(ctx, { path: box.project });
+  assertEquals(status, 200);
+  assertEquals((done.cleanup as { removed: string[] }).removed, [`copy:${'3'.repeat(32)}`]);
+  assert(!exists(clean.plan.path) && exists(busy.plan.path));
+  // the confirm with the tick
+  await projectRemove(ctx, { path: box.project, cleanup: { remove: [`copy:${'4'.repeat(32)}`] } });
+  assert(!exists(busy.plan.path) && !branchExists(box.project, busy.plan.branch));
+  assertEquals(Deno.readTextFileSync(pathOf(box.project, 'private', 'notes.md')), 'mine\n', 'the private folder stays');
+  assertEquals(Deno.readTextFileSync(pathOf(box.project, '.git', 'info', 'exclude')), '/private\n', 'and its exclude line');
+});
+
+Deno.test('18b: "Remove AIB\'s data from my repos" runs project removal\'s cleanup for every added project and leaves private/', async () => {
+  const { allRoute } = await import('../../outputs/agent-studio/server/web/cleanup_routes.ts');
+  using box = new Sandbox();
+  const second = pathOf(box.base, 'proj2');
+  makeRepoAt(second);
+  write(box.project, 'private/a.md', 'a\n');
+  const one = await copy(box.state, box.project, '5'.repeat(32));
+  const two = await copy(box.state, second, '6'.repeat(32), 'claude:s6');
+  write(two.plan.path, 'w.txt', 'work\n');
+  const ctx = {
+    stateDir: box.state,
+    host: { liveList: () => ({ connections: [] }) },
+    addedProjects: { public: () => ({ added: { a: { path: box.project }, b: { path: second } } }) },
+  };
+  const [, check] = await allRoute(ctx, { mode: 'check', titles: { 'claude:s6': 'Refactor api' } });
+  const projects = check.projects as { project: string; items: Record<string, unknown>[]; silent: number }[];
+  assertEquals(projects.map((p) => [p.project, p.items.map((i) => i.title), p.silent]), [[box.project, [], 1], [second, ['Refactor api'], 0]]);
+  assert(exists(one.plan.path), 'check changes nothing');
+  await allRoute(ctx, { mode: 'apply', remove: { [second]: [`copy:${'6'.repeat(32)}`] } });
+  assert(!exists(one.plan.path) && !exists(two.plan.path));
+  assert(!branchExists(box.project, one.plan.branch) && !branchExists(second, two.plan.branch));
+  assertEquals(Deno.readTextFileSync(pathOf(box.project, 'private', 'a.md')), 'a\n');
+});
+
+function makeRepoAt(folder: string): void {
+  Deno.mkdirSync(folder, { recursive: true });
+  runGit(folder, 'init', '-q', '-b', 'main');
+  write(folder, 'a.txt', 'a\n');
+  runGit(folder, 'add', '-A');
+  runGit(folder, 'commit', '-q', '-m', 'first');
+}

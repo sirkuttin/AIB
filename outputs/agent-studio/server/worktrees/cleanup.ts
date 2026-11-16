@@ -732,6 +732,16 @@ export async function answerCard(
 }
 
 // ---- every project (uninstall, 5.7) ---------------------------------------------------------------------------------------
+/** The repos this install keeps copies of (its registry), whether or not they are still added projects. */
+export function recordedProjects(stateDir: string): string[] {
+  const out = new Map<string, string>();
+  for (const r of Object.values(new wt.Manager(stateDir).registry.all())) {
+    const p = str(r.project);
+    if (p && !p.startsWith('wsl://')) out.set(normcase(p), p);
+  }
+  return [...out.values()];
+}
+
 /** Scan every project (the uninstall confirm lists unmerged copies across all projects, once). */
 export async function scanAll(stateDir: string, projects: string[], options: ScanOptions = {}): Promise<Scan[]> {
   const manager = new wt.Manager(stateDir);

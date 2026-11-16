@@ -2209,8 +2209,14 @@
       .filter(Boolean);
     const running = chats.filter((c) => c.live && !c.live.closed).length;
     const others = projects.filter((q) => q.key !== pk && q.path).map((q) => q.path);
+    // the chats' titles name their copies in the "never merged" list (decision 6)
+    const titles = {};
+    for (const c of chats) {
+      const sid = c.id || (c.live && c.live.sessionId);
+      if (c.provider && sid) titles[c.provider + ':' + sid] = host.titleOf(c);
+    }
     const post = (body) =>
-      Promise.resolve(host.postJson('project-remove', Object.assign({ path: p.path, projects: others }, body)));
+      Promise.resolve(host.postJson('project-remove', Object.assign({ path: p.path, projects: others, titles }, body)));
     return D.show({
       name: p.name,
       path: p.path,
@@ -2219,7 +2225,7 @@
       returnTo,
       check: () => post({ check: true }),
       confirm: async (choice) => {
-        const remove = () => post({ disk: !!choice.disk, expect: choice.expect || '' });
+        const remove = () => post({ disk: !!choice.disk, expect: choice.expect || '', cleanup: choice.cleanup || { remove: [] } });
         if (O && O.deleteMany) await O.deleteMany(chats, remove);
         else await remove();
         removedKeys.add(pk);
