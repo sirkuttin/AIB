@@ -104,7 +104,6 @@ export const TEXTS = {
 
 /** Read-only types the chat listed, plus isolation "remote": no worktree (the forwarder decides these too, AIB up or not). */
 function passesUnchanged(input: Record<string, unknown>, readOnly: Set<string>): boolean {
-  if (input.isolation === 'remote') return true;
   return typeof input.subagent_type === 'string' && readOnly.has(input.subagent_type);
 }
 

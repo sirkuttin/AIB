@@ -907,10 +907,25 @@ export class Connection {
   /**
    * Subagent worktrees (subagents/): the hooks this Claude chat got (settings sent in session/new and load; read-only types and
    * whether the user's own WorktreeCreate hook makes the worktrees), or why it got none (`off`: "hooks are off", "not a git
-   * project", "WSL", ...). Null: not a Claude chat, or not decided (a chat taken over from the keeper).
+   * project", "WSL", "Git Bash not found", ...). `settings` without `hooks` (no Git Bash): only the deny rules that turn its
+   * subagents off. `off` set while hooks were given: they turned off mid-chat (re-read at each turn start). `configDir`: the Claude
+   * config folder its agent reads. Null: not a Claude chat, or not decided (a chat taken over from a keeper note without it).
    */
-  subagentHooks: { settings: Json | null; readOnly: string[]; userWorktreeHook: string; off: string; detail?: string; adopted?: boolean } | null =
-    null;
+  subagentHooks: {
+    settings: Json | null;
+    readOnly: string[];
+    userWorktreeHook: string;
+    off: string;
+    detail?: string;
+    adopted?: boolean;
+    configDir?: string;
+  } | null = null;
+
+  /** Isolation is on: AIB's hooks run in this chat (given at the start, or a taken-over chat that had them) and are not off now. */
+  subagentIsolationOn(): boolean {
+    const h = this.subagentHooks;
+    return !!h && !h.off && (isDict(h.settings?.hooks) || h.adopted === true);
+  }
   /** The worktree a subagent works in, by its Agent call's tool_use_id (allow-rule parity); set by the Studio. */
   subagentWorktree: ((toolUseId: string) => string | null) | null = null;
   sessionId: string | null = null;
@@ -1339,6 +1354,18 @@ export class Connection {
     this.#errorTask = Promise.resolve();
   }
 
+  #hooksNote(): Json {
+    const h = this.subagentHooks!;
+    return {
+      given: isDict(h.settings?.hooks) || h.adopted === true,
+      off: h.off,
+      ...(h.detail ? { detail: h.detail } : {}),
+      readOnly: h.readOnly,
+      userWorktreeHook: h.userWorktreeHook,
+      ...(h.configDir ? { configDir: h.configDir } : {}),
+    };
+  }
+
   /** The `chat` note: written right after the spawn, so a later AIB knows what this channel is. */
   #chatNote(): Json {
     return {
@@ -1354,6 +1381,8 @@ export class Connection {
       command: this.command,
       mcpServers: this.mcpServers,
       app: APP_VERSION,
+      // subagent worktrees: whether its agent runs AIB's hooks, or why not, so a take-over shows the same (should-fix 6). No key.
+      ...(this.subagentHooks ? { subagentHooks: this.#hooksNote() } : {}),
       // Every event of this chat is rebuilt from this record (Studio's own events go in as `event` notes), so a rebuild numbers
       // them exactly as now and an open page keeps its cursor.
       ev: 1,
@@ -5288,7 +5317,8 @@ export class Connection {
     const own = (servers ?? []).some(isOwnArtifactEntry);
     const local = this.localOnlyText();
     const brief = this.scratchDir ? houseRules(this.scratchDir) : ''; // allow rules: the house rules with the literal scratch path
-    const subagents = this.subagentHooks?.settings ? SUBAGENT_PROMPT : ''; // hooks on: subagents that edit get their own worktree
+    // hooks given: subagents that edit get their own worktree (the same text on every reopen, whatever a later re-read says)
+    const subagents = isDict(this.subagentHooks?.settings?.hooks) ? SUBAGENT_PROMPT : '';
     if (!own && !local && !brief && !subagents) return {};
     const out: Json = {};
     // Presence is support (ACP capability objects): codex-acp advertises `systemPrompt: {}`, which a truthiness test missed.
@@ -5961,7 +5991,7 @@ export class Connection {
       steerLane: this.queue.steerPublic(light),
       toolBackground: this.toolBackground(),
       // Subagent worktrees (P1; Activity's chips are P3): on, or why not ("hooks are off", "not a git project", "WSL, coming", ...)
-      ...(this.subagentHooks ? { subagentIsolation: { on: !!this.subagentHooks.settings || !!this.subagentHooks.adopted, reason: this.subagentHooks.off } } : {}),
+      ...(this.subagentHooks ? { subagentIsolation: { on: this.subagentIsolationOn(), reason: this.subagentHooks.off } } : {}),
       pendingChanges: [...this.pendingChanges.values()].map((v) => ({ ...v })),
       changeFailures: this.changeFailures.map((v) => ({ ...v })),
       state: this.closed
