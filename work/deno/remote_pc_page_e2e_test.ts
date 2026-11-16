@@ -137,7 +137,7 @@ Deno.test('computer page: the static list is explicit and covers every file chat
     ).matchAll(/'(\/[^']+)'/g),
   ]
     .map((m) => m[1]);
-  const precached = ['/remote-loader.js', '/remote-auth.js', '/remote-windows.js', '/remote.css'];
+  const precached = ['/remote-loader.js', '/remote-auth.js', '/push-enable.js', '/remote-windows.js', '/remote.css'];
   const expected = [
     ...Object.keys(PC_STATIC).filter((p) => !precached.includes(p)),
     '/doc.html',

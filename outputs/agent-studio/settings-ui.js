@@ -2469,13 +2469,15 @@
       (on ? R.push.on() : R.push.off()).then(
         () => renderAll(false),
         (e) => {
+          // a failure stays on the page, in the note's own place, with the fix in it (push-enable.js has the lines)
+          status.classList.add('bad');
           line(e && e.message ? e.message : 'That did not work. Try again.');
         },
       );
     };
-    if (!push.supported) line('This browser cannot show notifications from AIB.');
+    if (!push.supported) line("This browser can't receive push notifications here.");
     else if (!push.allowed) line(pcName() + ' has notifications turned off for this computer. Turn them on there: Settings → Remote control.');
-    else if (push.blocked) line('Notifications are blocked for this site in the browser. Allow them in the address bar, then come back.');
+    else if (push.blocked) line("Notifications are blocked for this site. Allow them in the browser's site settings, then try again.");
     else {
       // phase 2: news goes to the device you used in the last 2 minutes (server/attention/presence.ts where())
       line(
@@ -2488,6 +2490,20 @@
     box.append(status);
     if (push.supported && push.allowed && !push.blocked) {
       box.append(button(push.on ? 'Turn off' : 'Turn on notifications', () => turn(!push.on), push.on ? '' : 'primary'));
+    }
+    if (push.on && R.push.test) {
+      box.append(
+        button('Send a test notification', () => {
+          status.classList.remove('bad');
+          R.push.test().then(
+            () => line('Test notification sent from this browser. If you do not see it, check this computer’s notification settings.'),
+            (e) => {
+              status.classList.add('bad');
+              line(e && e.message ? e.message : 'The test notification did not show. Try again.');
+            },
+          );
+        }),
+      );
     }
     box.append(
       note(

@@ -1206,6 +1206,7 @@
     setupSteps,
     openTarget,
     keyBytes,
+    guessKind,
     bannerFrom,
     BANNER_TURN_MS,
     artifactFrom,
@@ -2100,12 +2101,31 @@
     saveCopy();
   }
 
-  /* What this device suggests it is (a fine pointer and a width of 900 px or more: a computer). Only pre-sets the Phone / Computer
-     control on the PC's approve box: the approver decides (MF13). */
+  /* What this device is, from the browser's own facts, never the window's width (a narrow app window on a desktop is still a
+     computer): a mobile user agent (Android, iPhone, iPad, Mobile) is a phone; a fine pointer is a computer; a device with only a
+     coarse pointer is a phone; otherwise a desktop user agent decides. */
+  function guessKind(facts) {
+    const ua = String((facts && facts.ua) || '');
+    const mobile = /Android|iPhone|iPad|iPod|Mobile/i.test(ua) || (facts && facts.iPadOS === true);
+    if (mobile) return 'phone';
+    if (facts && facts.fine) return 'computer';
+    if (facts && facts.coarse) return 'phone';
+    return 'computer';
+  }
+  function deviceFacts() {
+    const mq = (q) => !!(root.matchMedia && root.matchMedia(q).matches);
+    const nav = root.navigator || {};
+    return {
+      ua: nav.userAgent,
+      fine: mq('(any-pointer: fine)') || mq('(pointer: fine)'),
+      coarse: mq('(pointer: coarse)'),
+      iPadOS: /Macintosh/.test(nav.userAgent || '') && (nav.maxTouchPoints || 0) > 1, // iPad asking for the desktop site
+    };
+  }
+  /* Only pre-sets the Phone / Computer control on the PC's approve box: the approver decides (MF13). */
   function kindHint() {
     try {
-      const fine = root.matchMedia && root.matchMedia('(pointer: fine)').matches;
-      return fine && (root.innerWidth || 0) >= 900 ? 'computer' : 'phone';
+      return guessKind(deviceFacts());
     } catch {
       return 'phone';
     }
@@ -4539,11 +4559,10 @@
     return parts;
   }
 
-  /* A computer's browser (a fine pointer and a wide window): the pairing page says "computer" (the approver on the PC still picks
-     the kind; remote control from other PCs, phase 1b). */
+  /* A computer's browser (guessKind): the pairing page says "computer" (the approver on the PC still picks the kind). */
   function computerLike() {
     try {
-      return !!(root.matchMedia && root.matchMedia('(pointer: fine)').matches && root.innerWidth >= 900);
+      return guessKind(deviceFacts()) === 'computer';
     } catch {
       return false;
     }
@@ -5201,10 +5220,17 @@
       await sub.unsubscribe().catch(() => {}); // the PC made new keys (Remove all phones): the old subscription is dead
       sub = null;
     }
-    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: want });
-    const r = await call('POST', '/api/remote/push/subscribe', { subscription: sub.toJSON() });
+    const PE = root.AIBPushEnable;
+    try {
+      if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: want });
+    } catch (err) {
+      S.push.error = PE.subscribeMessage(err, { navigator: root.navigator });
+      return false;
+    }
+    const json = sub.toJSON();
+    const r = await call('POST', '/api/remote/push/subscribe', { subscription: json });
     S.push.on = r.status === 200;
-    if (r.status !== 200) S.push.error = r.data.error || 'Your PC did not take the notification address. Try again.';
+    if (r.status !== 200) S.push.error = PE.refusedMessage(r.status, r.data, json.endpoint);
     return S.push.on;
   }
 
@@ -5225,12 +5251,15 @@
     S.push.error = '';
     draw();
     try {
+      if (!pushSupported()) throw Object.assign(new Error(root.AIBPushEnable.MESSAGES.unsupported), { unsupported: true });
       let perm = permissionNow();
       if (perm !== 'granted') perm = await root.Notification.requestPermission();
       S.push.permission = perm;
+      if (perm !== 'granted') S.push.error = root.AIBPushEnable.MESSAGES.blocked;
       if (perm === 'granted' && !(await subscribe()) && !S.push.error) S.push.error = 'Notifications could not be turned on. Try again.';
     } catch (error) {
-      if (!(error instanceof Offline)) S.push.error = 'Notifications could not be turned on here. Try again.';
+      if (error && error.unsupported) S.push.error = error.message;
+      else if (!(error instanceof Offline)) S.push.error = 'Notifications could not be turned on here. Try again.';
       else S.push.error = "Can't reach " + S.pcName + '. Try again.';
     }
     S.push.busy = false;
