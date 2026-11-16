@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -33,10 +34,12 @@ func TestCodexMainAgentToolsPassWithoutAIB(t *testing.T) {
 	if code != 0 || out != "" {
 		t.Fatalf("main agent's Bash: %d %q", code, out)
 	}
-	// spawn_agent and every subagent call need AIB: down -> blocked
+	// spawn_agent and every subagent call need AIB: down -> refused with a JSON deny, exit 0 (Codex runs a call whose hook exits 2:
+	// work/cx_codex_subagent_probe.py spawn-exit2)
 	for _, in := range []string{codexCall("spawn_agent", "", ""), codexCall("Bash", "a-1", "ls"), codexCall("view_image", "a-1", "")} {
-		if code, _, errb := runHook(t, "codex-pre-tool", file, in, 600*time.Millisecond); code != 2 || !strings.Contains(errb, "restarting") {
-			t.Fatalf("%s with AIB down: %d %q", in, code, errb)
+		code, out, errb := runHook(t, "codex-pre-tool", file, in, 600*time.Millisecond)
+		if code != 0 || !jsonSame(out, string(codexDeny(hookRestarting))) || !strings.Contains(errb, "restarting") {
+			t.Fatalf("%s with AIB down: %d %q %q", in, code, out, errb)
 		}
 	}
 }
@@ -65,6 +68,12 @@ func TestCodexPreToolAnswerShape(t *testing.T) {
 	})
 	wt := worktreeFolder(t, file, "sub-abc-1")
 	fwd := filepath.ToSlash(wt)
+	cx := worktreeFolder(t, file, filepath.Join(".cx-chat1", "sub-chat1-1")) // a Codex chat's own folder (codex.ts subagentFolder)
+	cxFwd := filepath.ToSlash(cx)
+	if err := os.MkdirAll(filepath.Join(filepath.Dir(file), "worktrees", "0123456789", "cx-nodot", "sub-x-1"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	nodot := filepath.ToSlash(filepath.Join(filepath.Dir(file), "worktrees", "0123456789", "cx-nodot", "sub-x-1"))
 	other := filepath.Join(t.TempDir(), "sub-x")
 	sep := string(filepath.Separator)
 	cases := []struct {
@@ -88,12 +97,21 @@ func TestCodexPreToolAnswerShape(t *testing.T) {
 		{"patch move out", codexCall("apply_patch", "a", "*** Begin Patch\n*** Update File: "+filepath.Join(wt, "f.txt")+"\n*** Move to: "+filepath.Join(other, "f.txt")+"\n*** End Patch"), `{}`, 2, ""},
 		{"patch dotdot", codexCall("apply_patch", "a", "*** Begin Patch\n*** Add File: "+wt+sep+".."+sep+"f.txt\n*** End Patch"), `{}`, 2, ""},
 		{"sub other tool {}", codexCall("view_image", "a", ""), `{}`, 0, ""},
+		{"sub bash in .cx folder", codexCall("Bash", "a", "echo hi"), allowCommand("cd '" + cxFwd + "'; echo hi"), 0, allowCommand("cd '" + cxFwd + "'; echo hi")},
+		{"sub bash other chat folder name", codexCall("Bash", "a", "echo hi"), allowCommand("cd '" + nodot + "'; echo hi"), 2, ""},
+		{"sub bash the .cx folder itself", codexCall("Bash", "a", "echo hi"), allowCommand("cd '" + filepath.ToSlash(filepath.Dir(cx)) + "'; echo hi"), 2, ""},
+		{"patch in .cx folder", codexCall("apply_patch", "a", "*** Begin Patch\n*** Add File: "+filepath.Join(cx, "f.txt")+"\n+x\n*** End Patch"), `{}`, 0, ""},
 	}
 	for _, c := range cases {
 		answer = c.answer
+		// code 2 below: refused. The forwarder never exits 2 for Codex (it would run the call): it prints the JSON deny, exit 0
+		want, wantOut := c.code, c.out
+		if want == 2 {
+			want, wantOut = 0, string(codexDeny(hookUnconfirmed))
+		}
 		code, out, _ := runHook(t, "codex-pre-tool", file, c.input, 2*time.Second)
-		if code != c.code || (c.code == 0 && !jsonSame(out, c.out)) {
-			t.Errorf("%s: code %d out %q, want %d %q", c.name, code, out, c.code, c.out)
+		if code != want || !jsonSame(out, wantOut) {
+			t.Errorf("%s: code %d out %q, want %d %q", c.name, code, out, want, wantOut)
 		}
 	}
 }

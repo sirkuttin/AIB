@@ -9,6 +9,10 @@ its own git worktree and lands like a helper's work; hooks off -> Codex subagent
                                          "cd '<worktree>'; " prefix through the keeper's forwarder); the main folder has no
                                          sub-a.txt while the turn runs (the parent checks); at the turn end one commit
                                          "AIB: subagent <message>" lands it; the worktree, branch and record go
+    test_workspace_mode_worktree_writes_do_not_ask
+                                         Workspace mode (Codex's unelevated Windows sandbox): the parent's write in the folder
+                                         and the subagent's in its worktree raise no permission card; the sandbox still refuses
+                                         the subagent's write outside both
     test_absolute_path_into_main_denied  the subagent writes to <project>\\escape.txt by absolute path: denied with the worktree
                                          named; nothing in the main folder; nothing lands
     test_hooks_off_turns_subagents_off   features.hooks = false in the user's CODEX_CONFIG: no hooks; features.multi_agent = false
@@ -112,6 +116,7 @@ class AibCodex:
         if ' ' in str(temp):
             test.skipTest('the temp folder has a space: Codex hooks cannot name the keeper there (TEMP=a scratch folder)')
         self.test, self.temp = test, temp
+        self.cards, self.seen = [], set()
         self.mark = f'srcx{uuid.uuid4().hex[:6]}'
         self.project = make_repo(temp / self.mark)
         run_git(self.project, 'config', 'core.autocrlf', 'false')
@@ -148,27 +153,42 @@ class AibCodex:
         wait_for(lambda: self.chat.state().get('ready') or (self.chat.state().get('error') and test.fail(self.chat.state()['error'])),
                  'chat ready', seconds=120)
 
+    def approve(self):
+        """Answer every permission card with allow-once, keeping what each asked (self.cards: title and rawInput)."""
+        for item in self.chat.state()['permissions']:
+            call = (item.get('params') or {}).get('toolCall') or {}
+            if item['key'] not in self.seen:
+                self.seen.add(item['key'])
+                self.cards.append({'title': str(call.get('title')), 'raw': json.dumps(call.get('rawInput'))[:600]})
+        approve_all(self.chat)
+
     def turn(self, text, seconds=300):
         before = sum(1 for e in self.chat.state()['events'] if e['kind'] == 'turn_end')
         code, _ = self.web.post('prompt', {'id': self.chat.id, 'text': f'{text} {self.mark}', 'clientMessageId': uuid.uuid4().hex})
         self.test.assertEqual(code, 200)
 
         def ended():
-            approve_all(self.chat)
+            self.approve()
             state = self.chat.state()
             return not state['busy'] and sum(1 for e in state['events'] if e['kind'] == 'turn_end') > before
         wait_for(ended, f'the turn {text!r} to end', seconds=seconds)
 
     def wait(self, what, check, seconds=90):
         def ok():
-            approve_all(self.chat)
+            self.approve()
             return check()
         wait_for(ok, what, seconds=seconds)
 
     def report(self):
         calls = [json.loads(x) for x in stub_text(self.stub).splitlines() if x.strip()]
         steps = [(c.get('rule'), (c.get('last') or '')[-300:]) for c in calls if c.get('path', '').endswith('/responses')]
-        return json.dumps({'records': records(self.fx.state), 'notes': notes(self.chat), 'steps': steps}, indent=1)[-9000:]
+        logs = []
+        for f in [*pathlib.Path(self.fx.root).glob('*.log'), *pathlib.Path(self.fx.state).rglob('*.log')]:
+            try:
+                logs += [x for x in f.read_text(encoding='utf-8', errors='replace').splitlines() if 'ubagent' in x or 'land' in x.lower()][-15:]
+            except OSError:
+                pass
+        return json.dumps({'records': records(self.fx.state), 'notes': notes(self.chat), 'steps': steps, 'logs': logs}, indent=1)[-12000:]
 
 
 SKIP_REASON = 'needs node, codex-acp (AIB_CODEX_ACP or a global npm install) and Go or AIB_TEST_KEEPER_BIN, against AIB_SERVER=deno-split'
@@ -212,6 +232,42 @@ class AibCodexSubagentTest(unittest.TestCase):
         spares = {r['branch'] for r in records(aib.fx.state).values() if r['state'] == 'spare'}
         left = {b.strip(' +*') for b in run_git(p, 'branch', '--list', 'studio/sub-*').splitlines() if b.strip()}
         self.assertEqual(left - spares, set(), 'the landed subagent branch must go')
+
+    def test_workspace_mode_worktree_writes_do_not_ask(self):
+        """Workspace mode with Codex's Windows sandbox (unelevated: no admin, nothing shown): the folder is writable without a card, and
+        so is the subagent's own worktree (its chat's <state>/worktrees/<repo hash>/.cx-<chat> is a writable root of that chat only, an
+        ACP additionalDirectories entry). A write outside both is still refused by the sandbox."""
+        def rules_for(project):
+            outside = str(project.parent / 'outside-w.txt')
+            return [
+                {'when': 'CX-WS go', 'reply': {'tools': [exec_('call_pOwnW', 'Set-Content -Path parent-w.txt -Value from-parent')]}},
+                {'when': 'call_pOwnW', 'reply': {'tools': [spawn('call_pSpawnW', 'CX-SUB-W write the file')]}},
+                {'when': 'CX-SUB-W write', 'reply': {'tools': [exec_('call_sExecW', 'Set-Content -Path sub-w.txt -Value from-sub')]}},
+                {'when': 'call_sExecW', 'reply': {'tools': [exec_('call_sOutW', f"Set-Content -Path '{outside}' -Value outside")]}},
+                {'when': 'call_sOutW', 'reply': {'text': 'SUB-W-DONE'}},
+                {'when': 'call_pSpawnW', 'capture': CAPTURE, 'reply': {'tools': [wait('call_pWaitW')]}},
+                {'when': 'call_pWaitW', 'reply': {'text': 'PARENT-W-DONE'}},
+                {'when': 'subagent_notification', 'once': True, 'reply': {'text': 'PARENT-W-DONE'}},
+            ]
+        aib = AibCodex(self, rules_for, json.loads(os.environ.get('AIB_TEST_CODEX_WS_CONFIG') or '{"windows": {"sandbox": "unelevated"}}'))
+        p = aib.project
+        aib.turn('CX-WS go')
+        try:
+            self.assertIn('SUB-W-DONE', stub_text(aib.stub) + dumped(aib.stub), 'the subagent ran')
+            aib.wait('the subagent to land', lambda: 'AIB: subagent CX-SUB-W write the file' in run_git(p, 'log', '--format=%s', '-n', '10'))
+        except AssertionError:
+            print(aib.report(), json.dumps(aib.cards, indent=1), file=sys.stderr)
+            raise
+        self.assertEqual((p / 'sub-w.txt').read_text(encoding='utf-8-sig').strip(), 'from-sub')
+        self.assertEqual((p / 'parent-w.txt').read_text(encoding='utf-8-sig').strip(), 'from-parent')
+        asked = json.dumps(aib.cards)
+        self.assertNotIn('parent-w.txt', asked, f'the folder write asked: {aib.cards}')
+        self.assertNotIn('sub-w.txt', asked, f"the subagent's write in its worktree asked: {aib.cards}")
+        # outside the folder and the worktree the sandbox still refuses the write (the agent must ask to run it unsandboxed)
+        self.assertFalse((p.parent / 'outside-w.txt').exists(), 'a write outside the folder and the worktree went through')
+        self.assertIn('outside-w.txt', dumped(aib.stub))
+        sent = stub_text(aib.stub) + dumped(aib.stub)
+        self.assertRegex(sent, r'Access to the path .{0,300}?outside-w\.txt.{0,10}? is denied', 'the sandbox refused it')
 
     def test_absolute_path_into_main_denied(self):
         def rules_for(project):

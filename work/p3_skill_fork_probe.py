@@ -8,7 +8,7 @@ and the Skill tool's schema as offered to the model.
     python work/p3_skill_fork_probe.py <scratch-dir> <variant> [<variant> ...]
 
 Variants: fork-gp (skill, agent: general-purpose, HTTP recorder on every tool), fork-editor (agent: editor, a custom agent),
-fork-cmd (a .claude/commands file with context: fork), fork-forced (AIB's planned command hooks: PreToolUse(Agent|Task) forces
+fork-cmd (a .claude/commands file with context: fork), typed-gp / typed-cmd / typed-forced (the same, but the user types `/forker` as the prompt), fork-forced (AIB's planned command hooks: PreToolUse(Agent|Task) forces
 isolation, WorktreeCreate makes <b>/wt/sub1; plus a Skill matcher and SubagentStart recorder).
 Run with TEMP/TMP/TMPDIR pointed into the scratch folder (_isolation's temp state folder uses TEMP).
 """
@@ -118,12 +118,12 @@ def fork_requests(dump):
     return out
 
 
-def run(b, name, kind, agent, settings_fn, recorder=()):
+def run(b, name, kind, agent, settings_fn, recorder=(), prompt='P0-PARENT go', mode=None):
     original, make = setup(kind, agent)
     p0.make_repo = make
     try:
         settings = settings_fn(b)
-        report = p0.claude_scenario(b, name, rules('forkcmd' if kind == 'command' else 'forker'), settings, recorder=list(recorder))
+        report = p0.claude_scenario(b, name, rules('forkcmd' if kind == 'command' else 'forker'), settings, recorder=list(recorder), prompt=prompt, mode=mode)
     finally:
         p0.make_repo = original
     report['skill_tool'] = skill_schema(b / 'dump')
@@ -139,6 +139,12 @@ VARIANTS = {
     'fork-editor': lambda b: run(b, 'fork-editor', 'skill', 'editor', lambda _b: record_hooks(), ['--worktree-root', str(b / 'wt')]),
     'fork-cmd': lambda b: run(b, 'fork-cmd', 'command', 'general-purpose', lambda _b: record_hooks(), ['--worktree-root', str(b / 'wt')]),
     'fork-forced': lambda b: run(b, 'fork-forced', 'skill', 'general-purpose', forced_hooks),
+    # typed by the user: the prompt itself is `/forker` (or `/forkcmd`), no Skill tool call by the model
+    'typed-gp': lambda b: run(b, 'typed-gp', 'skill', 'general-purpose', lambda _b: record_hooks(), ['--worktree-root', str(b / 'wt')], prompt='/forker'),
+    'typed-cmd': lambda b: run(b, 'typed-cmd', 'command', 'general-purpose', lambda _b: record_hooks(), ['--worktree-root', str(b / 'wt')], prompt='/forkcmd'),
+    'typed-bypass': lambda b: run(b, 'typed-bypass', 'skill', 'general-purpose', forced_hooks, prompt='/forker', mode='bypassPermissions'),
+    'typed-accept': lambda b: run(b, 'typed-accept', 'skill', 'general-purpose', forced_hooks, prompt='/forker', mode='acceptEdits'),
+    'typed-forced': lambda b: run(b, 'typed-forced', 'skill', 'general-purpose', forced_hooks, prompt='/forker'),
 }
 
 

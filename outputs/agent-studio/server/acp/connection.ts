@@ -68,7 +68,7 @@ import { distroName, guardRealWslAgent, peekWslHost, wslTestHomeEnv } from '../w
 import { APP_VERSION, TESTS_DIR } from '../core/app.ts';
 import { getLogger } from '../core/log.ts';
 import { DOCS_RULE } from '../docs/tool_defs.ts';
-import { SUBAGENT_PROMPT, SUBAGENTS_OFF_NO_BASH_PROMPT, SUBAGENTS_OFF_PROMPT } from '../subagents/claude_config.ts';
+import { claudeConfigDir, isForkSkill, SUBAGENT_PROMPT, SUBAGENTS_OFF_NO_BASH_PROMPT, SUBAGENTS_OFF_PROMPT, typedForkSkillText } from '../subagents/claude_config.ts';
 import {
   clip,
   isDict,
@@ -952,6 +952,11 @@ export class Connection {
     deny?: Json;
     /** Codex (subagents/codex.ts): the system prompt line about its subagents (worktrees, or off). */
     prompt?: string;
+    /**
+     * Codex with hooks on: this chat's own folder for its subagents' worktrees (<state>/worktrees/<repo hash>/.cx-<chat>), sent as an
+     * ACP additionalDirectories entry so its sandbox (Workspace mode) may write there as in the chat's folder, without a prompt.
+     */
+    subFolder?: string;
   } | null = null;
 
   /** Isolation is on: AIB's hooks run in this chat (given at the start, or a taken-over chat that had them) and are not off now. */
@@ -4264,6 +4269,8 @@ export class Connection {
         'Wait for the current turn, or interrupt it before sending another prompt',
       );
     }
+    const forkRefusal = this.forkSkillRefusal(text);
+    if (forkRefusal) return this.#refuseTyped(text, clientMessageId, fingerprint, imageBlocks, fileSummaries, forkRefusal);
     const seq = this.#startTurn(clientMessageId, fingerprint);
     if (this.onUserPrompt) {
       try {
@@ -4296,6 +4303,43 @@ export class Connection {
       clientMessageId,
       turnState: 'working',
     };
+  }
+
+  /**
+   * Subagent worktrees (work/p3_skill_fork_probe.py typed-*, Claude Code 2.1.310): a skill or command with `context: fork` that the
+   * user starts by typing `/name` runs as a forked subagent with no Skill or Agent tool call, so none of AIB's hooks sees it, and it
+   * edits this folder (verified in acceptEdits and bypass mode). In a Claude chat under the subagent rule (hooks on, or editing
+   * subagents off), AIB doesn't send it: the chat line saying why, else null. Reads the skill files only; never throws.
+   */
+  forkSkillRefusal(text: unknown): string | null {
+    if (this.provider !== 'claude' || !isStr(text)) return null;
+    const h = this.subagentHooks;
+    if (!h || !(isDict(h.settings?.hooks) || isDict(h.deny) || h.adopted === true)) return null;
+    const m = /^\/(\S+)/.exec(pyStrip(text));
+    if (!m) return null;
+    try {
+      const configDir = h.configDir ?? claudeConfigDir(Deno.env.toObject());
+      const project = this.projectRoot || this.cwd;
+      const fork = isForkSkill(m[1], this.cwd, configDir) || (project !== this.cwd && isForkSkill(m[1], project, configDir));
+      return fork ? typedForkSkillText(m[1].slice(0, 120)) : null;
+    } catch (error) {
+      log.warning('Could not check /%s for a fork skill: %s', m[1].slice(0, 120), errorText(error));
+      return null;
+    }
+  }
+
+  /** A typed prompt AIB doesn't send (forkSkillRefusal): it shows as sent, then AIB's line says why; no turn starts. */
+  #refuseTyped(text: unknown, clientMessageId: string | null, fingerprint: string, attachments: ImageBlock[], files: unknown[], message: string): Json {
+    if (clientMessageId) {
+      this.promptReceipts.set(clientMessageId, { fingerprint, state: 'finished' });
+      this.#receiptChanged(clientMessageId);
+    }
+    const userEvent: Json = { text, attachments, sessionId: this.sessionId, clientMessageId };
+    if (files.length) userEvent.files = files;
+    this.event('user', userEvent);
+    this.recordedEvent('studio_note', { message, sessionId: this.sessionId });
+    setTimeout(() => void this.#queuePump(), 0); // a queued message behind it goes now (the pump stops after a non-duplicate send)
+    return { accepted: true, duplicate: false, clientMessageId, turnState: 'finished', refused: message };
   }
 
   /** The turn begins: busy, and the receipt is "working". Shared by prompt() and a turn rebuilt from the keeper's record. */
@@ -4886,7 +4930,7 @@ export class Connection {
       return this.#steerAnswer(id, true);
     }
     const working = this.busy && !this.autonomous;
-    if (working && (this.#isAgentCommand(text) || !this.steeringSupported())) {
+    if (working && (this.#isAgentCommand(text) || this.forkSkillRefusal(text) || !this.steeringSupported())) {
       await this.queueAdd(text, id, attachments);
       return this.#steerAnswer(id, false);
     }
@@ -5508,11 +5552,15 @@ export class Connection {
   /**
    * {additionalDirectories: [...]} for a worktree chat whose project has local-only folders, when the agent advertises the ACP
    * session capability (Claude Code's and Codex's adapters do): those folders of the main folder become writable for it. Never the
-   * main folder itself. {} otherwise.
+   * main folder itself. Also the chat's scratch folder, and a Codex chat's own subagent-worktree folder (codex-acp adds each to the
+   * sandbox's writable roots: Workspace mode then lets its subagents write in their worktrees as the chat writes in its folder).
+   * {} otherwise.
    */
   extraFolders(): Json {
     const own = this.worktree ? [...(this.localOnly?.dirs ?? []), ...(this.localOnly?.ignored?.dirs ?? [])] : [];
-    const dirs = [...own, ...(this.scratchDir ? [this.scratchDir] : [])];
+    // a Codex chat's subagent folder: only its own subagents' worktrees go there (never the folder's parent or other chats' copies)
+    const sub = this.provider === 'codex' && this.subagentHooks?.subFolder ? [this.subagentHooks.subFolder] : [];
+    const dirs = [...own, ...(this.scratchDir ? [this.scratchDir] : []), ...sub];
     if (!dirs.length || !isDict(this.#sessionCaps()?.additionalDirectories)) return {};
     return { additionalDirectories: [...dirs] };
   }

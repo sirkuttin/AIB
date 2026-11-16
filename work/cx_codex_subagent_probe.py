@@ -16,6 +16,10 @@ Scenarios
   spawn-redirect  The same, the hook rewrites the subagent's exec_command into a worktree AIB made (updatedInput) and tells
                it about the worktree at SubagentStart (additionalContext). Does the file land in the worktree?
   spawn-deny   The same, the hook denies the subagent's exec_command. Does anything land in the main folder?
+  spawn-exit2  The same, the hook exits 2 with a reason on stderr for the subagent's exec_command (AIB's forwarder when AIB is
+               down or its answer is unconfirmed). Is the call blocked?
+  spawn-console  No-popups: every hook runs work/hook_console_check.py in AIB's cmd.exe command form (plus the real keeper
+               forwarder, AIB_TEST_KEEPER_BIN, on SubagentStart/Stop): console window handle and visible windows of the chain.
 Owner guard: before and after, the owner's ~/.codex sessions and config files, ~/.claude/projects and ~/.gemini mtimes are checked.
 """
 import json
@@ -96,6 +100,22 @@ def trusted_hooks(base, env, project, hooks):
     return {**hooks, 'state': state}, listing
 
 
+def console_block(base):
+    """No-popups check: AIB's hook command form (server/subagents/codex.ts codexHookCommand: cmd.exe /C, the program first and bare)
+    runs work/hook_console_check.py on every event; SubagentStart/Stop also run the real keeper forwarder (AIB_TEST_KEEPER_BIN,
+    GUI-subsystem; no address file, so it answers nothing: on PreToolUse it would refuse the spawn)."""
+    check = f'python "{HERE / "hook_console_check.py"}" "{base / "console.log"}" codex'
+    keeper = os.environ.get('AIB_TEST_KEEPER_BIN')
+
+    def entry(event, matcher=None):
+        cmds = [{'type': 'command', 'command': check, 'timeout': 30}]
+        if keeper and event != 'PreToolUse':
+            fwd = 'codex-subagent-start' if event == 'SubagentStart' else 'codex-subagent-stop'
+            cmds.append({'type': 'command', 'command': f'{keeper} hook {fwd} "{base / "no-address.json"}" || exit 2', 'timeout': 30})
+        return [{**({'matcher': matcher} if matcher else {}), 'hooks': cmds}]
+    return {'PreToolUse': entry('PreToolUse', '.*'), 'SubagentStart': entry('SubagentStart'), 'SubagentStop': entry('SubagentStop')}
+
+
 def spawn_rules(cmd):
     return [
         {'when': 'CX-PARENT go', 'reply': {'tools': [{'id': 'call_pSpawn01', 'name': 'multi_agent_v1.spawn_agent',
@@ -122,8 +142,10 @@ def spawn_scenario(base, name, mode):
                     '--script', str(script), '--dump', str(base / 'dump')], 'STUB_PORT')
     env = p0.temp_env(base, f'http://127.0.0.1:{stub.port}')
     write_config(base, stub.port)
-    flags = {'log': (), 'redirect': ('--worktree', str(wt)), 'deny': ('--deny-subagent',)}[mode]
-    hooks, listing = trusted_hooks(base, env, project, hooks_block(base, *flags))
+    flags = {'log': (), 'redirect': ('--worktree', str(wt)), 'deny': ('--deny-subagent',), 'exit2': ('--exit2-subagent',),
+             'console': ()}[mode]
+    block = console_block(base) if mode == 'console' else hooks_block(base, *flags)
+    hooks, listing = trusted_hooks(base, env, project, block)
     env['CODEX_CONFIG'] = json.dumps({'hooks': hooks})
     try:
         out = subprocess.run([p0.NODE, str(HERE / 'acp_probe.js'), '--events', str(base / 'events.log'), '--allow', '--mode', 'agent-full-access', str(p0.CODEX_ACP),
@@ -142,6 +164,7 @@ def spawn_scenario(base, name, mode):
         'file_in_main': (project / 'sub-made.txt').is_file(),
         'file_in_worktree': (wt / 'sub-made.txt').is_file(),
         'main_status': p0.git(project, 'status', '--porcelain'),
+        'console_log': p0.lines(base / 'console.log'),
     }
 
 
@@ -163,6 +186,8 @@ SCENARIOS = {
     'spawn-log': lambda b: spawn_scenario(b, 'spawn-log', 'log'),
     'spawn-redirect': lambda b: spawn_scenario(b, 'spawn-redirect', 'redirect'),
     'spawn-deny': lambda b: spawn_scenario(b, 'spawn-deny', 'deny'),
+    'spawn-exit2': lambda b: spawn_scenario(b, 'spawn-exit2', 'exit2'),
+    'spawn-console': lambda b: spawn_scenario(b, 'spawn-console', 'console'),
 }
 
 

@@ -1,7 +1,8 @@
 /**
  * Subagent worktrees, Codex (server/subagents/codex.ts), without an agent. The real codex-acp end to end is
  * work/test_subagent_codex_e2e.py.
- *   the hook commands: a bare program first (cmd.exe /C), the address file quoted, `|| exit 2`; null for a path they can't hold
+ *   the hook commands: a bare program first, the address file quoted (cmd.exe, pwsh and PowerShell 5.1 read it alike: no `||` on
+ *        Windows); null for a path they can't hold
  *   the trust hashes match what a real codex app-server 0.166 listed for the same hooks (hooks/list currentHash)
  *   CODEX_CONFIG: the user's own hooks and settings kept, AIB's hooks after theirs with state keys at their group index;
  *        hooks off -> features.multi_agent = false merged into the user's features
@@ -9,6 +10,7 @@
  *   the routes: spawn_agent prepares a worktree; SubagentStart binds it and names it; a subagent's Bash runs there (cd prefix), is
  *        denied when it names the main folder; apply_patch only with absolute paths inside; other MCP tools denied; a subagent AIB
  *        has no worktree for is denied; SubagentStop makes it done (P2 lands it)
+ *   the chat's own subagent folder (.cx-<chat>, a writable root of its sandbox): its worktrees there are AIB's own paths
  */
 import { assert, assertEquals } from './_assert.ts';
 import {
@@ -19,12 +21,14 @@ import {
   namesFolder,
   patchInside,
   readCodexSetup,
+  removeSubagentFolder,
   requirementsManagedOnly,
+  subagentFolder,
   tomlTurnsHooksOff,
   withCodexHooks,
   withSubagentsOff,
 } from '../../outputs/agent-studio/server/subagents/codex.ts';
-import { readSubagents, type SubagentChat, SubagentWorktrees } from '../../outputs/agent-studio/server/subagents/service.ts';
+import { ownSubagentPath, readSubagents, type SubagentChat, SubagentWorktrees } from '../../outputs/agent-studio/server/subagents/service.ts';
 import { join } from '../../outputs/agent-studio/server/platform/path.ts';
 
 const WIN = Deno.build.os === 'windows';
@@ -58,7 +62,7 @@ Deno.test('Codex hook commands: bare program first, quoted address file, fail cl
       'codex-pre-tool',
       'windows',
     ),
-    'C:\\Users\\x\\AgentStudio\\keeper-bin\\ab\\AIB-keeper.exe hook codex-pre-tool "C:\\Users\\x\\AgentStudio\\artifact-mcp.json" || exit 2',
+    'C:\\Users\\x\\AgentStudio\\keeper-bin\\ab\\AIB-keeper.exe hook codex-pre-tool "C:\\Users\\x\\AgentStudio\\artifact-mcp.json"',
   );
   assertEquals(
     codexHookCommand('C:\\Users\\John Smith\\k.exe', 'C:\\a.json', 'codex-pre-tool', 'windows'),
@@ -67,6 +71,8 @@ Deno.test('Codex hook commands: bare program first, quoted address file, fail cl
   );
   assertEquals(codexHookCommand('C:\\a&b\\k.exe', 'C:\\a.json', 'codex-pre-tool', 'windows'), null);
   assertEquals(codexHookCommand('C:\\k.exe', 'C:\\%TEMP%\\a.json', 'codex-pre-tool', 'windows'), null, '% expands even in quotes');
+  assertEquals(codexHookCommand('C:\\k.exe', 'C:\\$x\\a.json', 'codex-pre-tool', 'windows'), null, '$ expands in PowerShell quotes');
+  assertEquals(codexHookCommand('C:\\$x\\k.exe', 'C:\\a.json', 'codex-pre-tool', 'windows'), null, '$ in a bare PowerShell word');
   assertEquals(
     codexHookCommand('/home/u/k', '/home/u/a.json', 'codex-subagent-stop', 'linux'),
     "'/home/u/k' hook codex-subagent-stop '/home/u/a.json' || exit 2",
@@ -104,7 +110,7 @@ Deno.test("CODEX_CONFIG: the user's hooks and settings are kept; AIB's hooks fol
   assertEquals(merged.hooks.PreToolUse[0].hooks[0].command, 'mine');
   assertEquals(
     merged.hooks.PreToolUse[1].hooks[0].command,
-    'C:\\k\\AIB-keeper.exe hook codex-pre-tool "C:\\s\\artifact-mcp.json" || exit 2',
+    'C:\\k\\AIB-keeper.exe hook codex-pre-tool "C:\\s\\artifact-mcp.json"',
   );
   assertEquals(merged.hooks.state['mine-key'], { trusted_hash: 'h' });
   const pre = codexHookHash('pre_tool_use', null, merged.hooks.PreToolUse[1].hooks[0]);
@@ -270,5 +276,33 @@ Deno.test('Codex routes: spawn prepares, start binds and names it, Bash runs the
       } catch { /* not locked */ }
     }
     Deno.removeSync(dir, { recursive: true });
+  }
+});
+
+Deno.test("a Codex chat's own subagent folder: <root>/<repo hash>/.cx-<chat>; its worktrees are AIB's own paths; removed only empty", async () => {
+  const { repoHash } = await import('../../outputs/agent-studio/server/worktrees/worktrees.ts');
+  const temp = Deno.makeTempDirSync({ prefix: 'aib-cx-own-', dir: Deno.env.get('TEMP') ?? undefined });
+  try {
+    const root = join(temp, 'worktrees'), project = join(temp, 'proj');
+    const folder = subagentFolder(root, project, 'c1');
+    assertEquals(folder, join(root, repoHash(project), '.cx-c1'));
+    const sub = join(folder, 'sub-c1-1');
+    Deno.mkdirSync(sub, { recursive: true });
+    assert(ownSubagentPath(root, { path: sub, project }));
+    assert(!ownSubagentPath(root, { path: folder, project }), 'the chat folder itself is no worktree');
+    assert(!ownSubagentPath(root, { path: join(root, repoHash(project), 'cx-c1', 'sub-c1-1'), project }), 'any other middle folder');
+    removeSubagentFolder(folder);
+    assert(Deno.statSync(sub).isDirectory, 'a folder with a worktree in it stays');
+    Deno.removeSync(sub);
+    removeSubagentFolder(folder);
+    let gone = false;
+    try {
+      Deno.statSync(folder);
+    } catch {
+      gone = true;
+    }
+    assert(gone, 'an empty chat folder goes');
+  } finally {
+    Deno.removeSync(temp, { recursive: true });
   }
 });
