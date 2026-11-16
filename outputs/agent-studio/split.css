@@ -370,3 +370,9 @@ body.split-dragging {
     transition: none;
   }
 }
+
+/* Ctx and the usage limits in the unfocused pane's copy are as of when that chat last had focus (owner 2026-11-15: blur them
+   while the chat has no focus). The chip keeps its size and place; only its text is blurred. Not on the moment-long hold copy. */
+.mirror-copy:not(.mirror-hold) :is(.chip-ctx, .chip-limits) {
+  filter: blur(3px);
+}
