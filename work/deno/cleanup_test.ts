@@ -16,7 +16,6 @@ async function copy(state: string, project: string, key: string, session = ''): 
   if (session) await manager.setSession(key, session.split(':')[0], session.split(':')[1]);
   return { manager, plan };
 }
-const ids = (scan: cleanup.Scan) => scan.items.map((i) => i.id).sort();
 const item = (scan: cleanup.Scan, id: string) => scan.items.find((i) => i.id === id)!;
 const branchExists = (project: string, branch: string) => {
   try {
@@ -27,7 +26,7 @@ const branchExists = (project: string, branch: string) => {
   }
 };
 
-Deno.test('16b: two state folders on one repo: each removes only its own; the other install\'s items are listed, unticked, never removed', async () => {
+Deno.test("16b: two state folders on one repo: each removes only its own; the other install's items are listed, unticked, never removed", async () => {
   using box = new Sandbox();
   const stateB = pathOf(box.base, 'stateB');
   const a = await copy(box.state, box.project, 'a'.repeat(32), 'claude:sa');
@@ -39,7 +38,9 @@ Deno.test('16b: two state folders on one repo: each removes only its own; the ot
   runGit(box.project, 'update-ref', 'refs/studio/chat-oldbbbbb/user', 'main');
   await a.manager.registry.locked(() => {
     const raw = JSON.parse(Deno.readTextFileSync(a.manager.registry.path));
-    raw.removed = { [wt.norm(pathOf(box.state, 'worktrees', 'x', 'chat-oldaaaaa'))]: { project: box.project, branch: 'studio/chat-oldaaaaa' } };
+    raw.removed = {
+      [wt.norm(pathOf(box.state, 'worktrees', 'x', 'chat-oldaaaaa'))]: { project: box.project, branch: 'studio/chat-oldaaaaa' },
+    };
     Deno.writeTextFileSync(a.manager.registry.path, JSON.stringify(raw));
   });
 
@@ -55,7 +56,7 @@ Deno.test('16b: two state folders on one repo: each removes only its own; the ot
   assertEquals(
     view.items.map((i) => i.id).sort(),
     [`wt:${b.plan.path}`, 'branch:studio/chat-oldbbbbb'].sort(),
-    'the confirm lists only the other install\'s items (A has no unmerged work)',
+    "the confirm lists only the other install's items (A has no unmerged work)",
   );
   assertEquals(view.silent, 2);
 
@@ -65,14 +66,17 @@ Deno.test('16b: two state folders on one repo: each removes only its own; the ot
   assert(!branchExists(box.project, 'studio/chat-oldaaaaa'));
   assert(exists(b.plan.path) && branchExists(box.project, b.plan.branch), "B's copy and branch stay");
   assert(branchExists(box.project, 'studio/chat-oldbbbbb'), "B's orphan branch stays");
-  assertEquals(runGit(box.project, 'for-each-ref', '--format=%(refname)', `refs/studio/${b.plan.slug}/`).trim(), `refs/studio/${b.plan.slug}/user`);
+  assertEquals(
+    runGit(box.project, 'for-each-ref', '--format=%(refname)', `refs/studio/${b.plan.slug}/`).trim(),
+    `refs/studio/${b.plan.slug}/user`,
+  );
   assertEquals(wt.userRef({ branch: a.plan.branch }) && runGit(box.project, 'for-each-ref', `refs/studio/${a.plan.slug}/`).trim(), '');
 
   // B, seen from B: its copy is its own (with work), A's items are gone; B never touches anything without a tick
   const scanB = await cleanup.scanProject(stateB, box.project);
   assertEquals(item(scanB, `copy:${'b'.repeat(32)}`).own, true);
   assertEquals(item(scanB, `copy:${'b'.repeat(32)}`).unmerged, true);
-  assertEquals(item(scanB, 'branch:studio/chat-oldbbbbb').own, false, 'not in B\'s records either: listed, never silent');
+  assertEquals(item(scanB, 'branch:studio/chat-oldbbbbb').own, false, "not in B's records either: listed, never silent");
   // ticking another install's item removes it (the project-removal confirm)
   const ticked = await cleanup.applyProject(box.state, box.project, ['branch:studio/chat-oldbbbbb']);
   assert(ticked.removed.includes('branch:studio/chat-oldbbbbb'));
@@ -107,7 +111,11 @@ Deno.test('17: a kept clash stash is never dropped silently; a stash already in 
 
   const scan = await cleanup.scanProject(box.state, box.project);
   assertEquals([item(scan, `stash:${applied}`).unmerged, item(scan, `stash:${applied}`).own], [false, true]);
-  assertEquals([item(scan, `stash:${kept}`).unmerged, item(scan, `stash:${kept}`).clash], [true, true], 'a kept clash stash counts as unmerged');
+  assertEquals(
+    [item(scan, `stash:${kept}`).unmerged, item(scan, `stash:${kept}`).clash],
+    [true, true],
+    'a kept clash stash counts as unmerged',
+  );
   assertEquals(item(scan, `stash:${undo}`).unmerged, true);
   const done = await cleanup.applyProject(box.state, box.project);
   assert(done.removed.includes(`stash:${applied}`));
@@ -124,7 +132,7 @@ Deno.test('17b: the unmerged-work test: live-synced edits alone do not count; a 
   const record = { ...a.manager.registry.get('d'.repeat(32))!, key: 'd'.repeat(32) };
   await wt.advanceUserBase(record, ['tracked.txt'], a.manager.registry);
   let scan = await cleanup.scanProject(box.state, box.project);
-  assertEquals(item(scan, `copy:${'d'.repeat(32)}`).unmerged, false, 'carried-in edits are not the chat\'s work');
+  assertEquals(item(scan, `copy:${'d'.repeat(32)}`).unmerged, false, "carried-in edits are not the chat's work");
 
   // the chat commits its own work, then its folder disappears: compared with the U ref, the branch is ahead
   commit(a.plan.path, 'chat.txt', 'chat work\n');
@@ -146,7 +154,7 @@ Deno.test('17b: the unmerged-work test: live-synced edits alone do not count; a 
   assertEquals(await cleanup.branchUnmerged(box.project, 'studio/chat-squashed', 'main'), 0);
 });
 
-Deno.test('a running chat\'s copy is never touched; a subfolder or busy repo is skipped', async () => {
+Deno.test("a running chat's copy is never touched; a subfolder or busy repo is skipped", async () => {
   using box = new Sandbox();
   const a = await copy(box.state, box.project, 'e'.repeat(32), 'claude:se');
   const scan = await cleanup.scanProject(box.state, box.project, { live: ['claude:se'] });
@@ -181,7 +189,7 @@ Deno.test('18: one-time cleanup: orphans without work go silently; with work, on
   assertEquals(cleanup.confirmView(await cleanup.scanProject(box.state, box.project)).items.map((i) => i.id), [`copy:${'1'.repeat(32)}`]);
 });
 
-Deno.test('18: the card\'s Remove removes exactly its items', async () => {
+Deno.test("18: the card's Remove removes exactly its items", async () => {
   using box = new Sandbox();
   const busy = await copy(box.state, box.project, '2'.repeat(32));
   write(busy.plan.path, 'w.txt', 'work\n');
@@ -243,7 +251,11 @@ Deno.test('18b: "Remove AIB\'s data from my repos" runs project removal\'s clean
   };
   const [, check] = await allRoute(ctx, { mode: 'check', titles: { 'claude:s6': 'Refactor api' } });
   const projects = check.projects as { project: string; items: Record<string, unknown>[]; silent: number }[];
-  assertEquals(projects.map((p) => [p.project, p.items.map((i) => i.title), p.silent]), [[box.project, [], 1], [second, ['Refactor api'], 0]]);
+  assertEquals(projects.map((p) => [p.project, p.items.map((i) => i.title), p.silent]), [[box.project, [], 1], [
+    second,
+    ['Refactor api'],
+    0,
+  ]]);
   assert(exists(one.plan.path), 'check changes nothing');
   await allRoute(ctx, { mode: 'apply', remove: { [second]: [`copy:${'6'.repeat(32)}`] } });
   assert(!exists(one.plan.path) && !exists(two.plan.path));
@@ -258,3 +270,25 @@ function makeRepoAt(folder: string): void {
   runGit(folder, 'add', '-A');
   runGit(folder, 'commit', '-q', '-m', 'first');
 }
+
+Deno.test('WSL helper (protocol 2): worktree.cleanupScan changes nothing; worktree.cleanupApply removes the silent items and the ticked ones', async () => {
+  const { worktreeMethods } = await import('../../outputs/agent-studio/server/wsl/helper/worktrees.ts');
+  const { HELPER_PROTOCOL } = await import('../../outputs/agent-studio/server/wsl/contract.ts');
+  assertEquals(HELPER_PROTOCOL, 2);
+  using box = new Sandbox();
+  const m = worktreeMethods(box.state);
+  const clean = await copy(box.state, box.project, '7'.repeat(32));
+  const busy = await copy(box.state, box.project, '8'.repeat(32));
+  write(busy.plan.path, 'w.txt', 'work\n');
+  const scanned = (await m['worktree.cleanupScan']({ project: box.project, live: [] })) as { scan: cleanup.Scan };
+  assertEquals(scanned.scan.items.map((i) => [i.id, i.unmerged]).sort(), [[`copy:${'7'.repeat(32)}`, false], [
+    `copy:${'8'.repeat(32)}`,
+    true,
+  ]]);
+  assert(exists(clean.plan.path));
+  const done = (await m['worktree.cleanupApply']({ project: box.project, ticked: [] })) as { removed: string[] };
+  assertEquals(done.removed, [`copy:${'7'.repeat(32)}`]);
+  const ticked = (await m['worktree.cleanupApply']({ project: box.project, ticked: [`copy:${'8'.repeat(32)}`] })) as { removed: string[] };
+  assertEquals(ticked.removed, [`copy:${'8'.repeat(32)}`]);
+  assert(!exists(busy.plan.path));
+});

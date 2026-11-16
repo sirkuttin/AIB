@@ -294,6 +294,12 @@
       ],
     },
     {
+      id: 'repo-cleanup',
+      section: 'server',
+      label: "Remove AIB's data from my repos",
+      keywords: ['uninstall', 'remove', 'cleanup', 'clean up', 'branches', 'worktrees', 'copies', 'git', 'leftovers', 'stash'],
+    },
+    {
       id: 'server-restart',
       section: 'server',
       label: 'Restart the web server',
@@ -2286,6 +2292,75 @@
     if (sv.keeperProblem)
       box.append(note('Chats run without the keeper, so a restart or update stops them: ' + sv.keeperProblem));
   }
+  // Decision 6 (build plan 1b 5.7): what an uninstall runs. For every added project, project removal's cleanup: the chat copies,
+  // studio/ branches, refs and stash entries this AIB made; private folders, transcripts and the projects themselves stay. Check
+  // first (nothing changes), then one list of the copies with work that was never merged (ticked) and what another AIB install made
+  // (unticked), then Remove. An uninstaller calls the same route (POST /api/live/cleanup/all).
+  function renderRepoCleanup(box) {
+    const c = S.repoCleanup || (S.repoCleanup = { state: 'idle', projects: [], ticks: {}, message: '' });
+    const DP = root.AgentDeleteProjectUI;
+    box.append(
+      note(
+        "Removes the chat copies, studio/ branches and other git leftovers AIB made in your projects' repositories. Your project folders, their private folders and your chats stay. Do this before you delete AIB.",
+      ),
+    );
+    const run = (mode) => {
+      c.state = mode === 'check' ? 'checking' : 'removing';
+      c.message = '';
+      renderContent();
+      const remove = {};
+      for (const p of c.projects) remove[p.project] = (p.items || []).filter((i) => c.ticks[p.project + '|' + i.id]).map((i) => i.id);
+      Promise.resolve(S.host.post('cleanup/all', mode === 'check' ? { mode } : { mode, remove })).then(
+        (r) => {
+          if (mode === 'check') {
+            c.projects = (r && r.projects) || [];
+            c.ticks = {};
+            for (const p of c.projects)
+              for (const i of p.items || []) c.ticks[p.project + '|' + i.id] = DP ? DP.tickedByDefault(i) : false;
+            c.state = 'checked';
+          } else {
+            const n = ((r && r.projects) || []).reduce((t, p) => t + (p.removed || []).length, 0);
+            c.state = 'idle';
+            c.projects = [];
+            c.message = n ? 'Removed ' + n + (n === 1 ? ' item.' : ' items.') : 'Nothing was left to remove.';
+          }
+          renderContent();
+        },
+        (e) => {
+          c.state = 'idle';
+          c.message = (e && e.message) || String(e);
+          renderContent();
+        },
+      );
+    };
+    if (c.state === 'checked') {
+      const silent = c.projects.reduce((t, p) => t + (p.silent || 0), 0);
+      const listed = c.projects.filter((p) => (p.items || []).length);
+      box.append(
+        note(
+          silent || listed.length
+            ? (silent ? silent + (silent === 1 ? ' item goes' : ' items go') + ' without asking.' : '') +
+                (listed.length ? (silent ? ' ' : '') + 'These need your say:' : '')
+            : 'AIB has left nothing in your repositories.',
+        ),
+      );
+      for (const p of listed) {
+        box.append(el('p', p.project, 'st-note st-repo'));
+        if (DP && DP.cleanupText) box.append(note(DP.cleanupText(p.items), 'bad'));
+        for (const i of p.items) {
+          const k = p.project + '|' + i.id;
+          box.append(toggle(DP ? DP.itemLabel(i) : i.title, c.ticks[k], (on) => (c.ticks[k] = on)));
+        }
+      }
+      if (silent || listed.length) box.append(button('Remove', () => run('apply'), 'st-danger'));
+      box.append(button('Cancel', () => ((c.state = 'idle'), (c.projects = []), renderContent())));
+    } else {
+      const b = button(c.state === 'checking' ? 'Checking…' : c.state === 'removing' ? 'Removing…' : "Check what AIB left in my repos", () => run('check'));
+      b.disabled = c.state !== 'idle';
+      box.append(b);
+    }
+    if (c.message) box.append(note(c.message));
+  }
   function renderServerRestart(box) {
     box.append(note(serverRestartText(!!(root.AibDesktop && root.AibDesktop.available()))));
   }
@@ -2330,6 +2405,7 @@
     'keep-awake': renderKeepAwake,
     'server-info': renderServerInfo,
     updates: renderUpdates,
+    'repo-cleanup': renderRepoCleanup,
     'server-restart': renderServerRestart,
   };
   const TITLES = {
@@ -2352,6 +2428,7 @@
     'keep-awake': 'Keep the PC awake',
     'server-info': 'About AIB',
     updates: 'Updates',
+    'repo-cleanup': "Remove AIB's data from my repos",
     'server-restart': 'Restart the web server',
   };
 

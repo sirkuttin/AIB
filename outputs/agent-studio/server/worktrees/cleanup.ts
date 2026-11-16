@@ -269,8 +269,7 @@ export async function scanProject(stateDir: string, projectIn: string, options: 
   }
   const gitWts = await gitWorktrees(project);
   for (const w of gitWts) if (underRoot(w.path) && slugOf(w.branch)) ownSlugs.add(slugOf(w.branch));
-  const titleOf = (session: string, branch: string) =>
-    titles[session] || helperBranches.get(branch) || branch || '';
+  const titleOf = (session: string, branch: string) => titles[session] || helperBranches.get(branch) || branch || '';
   const isLive = (path: string, session: string) => (!!path && live.has(norm(path))) || (!!session && live.has(session));
 
   // 2. Recorded copies (this install's).
@@ -464,7 +463,9 @@ export async function applyProject(
     const result: ApplyResult = { removed: [], left: {} };
     if (scan.skipped) return { ...result, scan };
     const manager = new wt.Manager(stateDir);
-    const chosen = scan.items.filter((i) => !i.live && (only ? only.has(i.id) && (silent(i) || want.has(i.id)) : silent(i) || want.has(i.id)));
+    const chosen = scan.items.filter((i) =>
+      !i.live && (only ? only.has(i.id) && (silent(i) || want.has(i.id)) : silent(i) || want.has(i.id))
+    );
     // copies before branches before refs (a branch checked out in a copy cannot be deleted first); stashes last
     const order: Record<ItemKind, number> = { copy: 0, folder: 1, branch: 2, ref: 3, stash: 4 };
     chosen.sort((a, b) => order[a.kind] - order[b.kind]);
@@ -694,7 +695,9 @@ export function cardOf(stateDir: string): { items: CardItem[]; text: string } | 
 /** "AIB found 2 old chat copies with work that was never merged: "Fix login" (4 files), helper "Add tests"." */
 export function cardText(items: { title: string; files: number; helper: boolean }[]): string {
   const n = items.length;
-  const shown = items.slice(0, 5).map((i) => (i.helper ? 'helper ' : '') + `"${i.title}"` + (i.files ? ` (${i.files} file${i.files === 1 ? '' : 's'})` : ''));
+  const shown = items.slice(0, 5).map((i) =>
+    (i.helper ? 'helper ' : '') + `"${i.title}"` + (i.files ? ` (${i.files} file${i.files === 1 ? '' : 's'})` : '')
+  );
   const more = n > 5 ? ` and ${n - 5} more` : '';
   return `AIB found ${n === 1 ? '1 old chat copy' : `${n} old chat copies`} with work that was never merged: ${shown.join(', ')}${more}.`;
 }

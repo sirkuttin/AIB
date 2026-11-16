@@ -860,8 +860,31 @@
     pop.style.left = Math.max(8, Math.min(vw - width - 8, Math.round(r.left))) + 'px';
     if (root.AgentTextSize) root.AgentTextSize.fitPopup(pop);
   }
+  // Decision 6: the one-time cleanup's card (old chat copies with unmerged work), asked for once at start and when the Inbox opens.
+  let cleanupCard = null;
+  function loadCleanupCard() {
+    if (!host || !host.getJson) return;
+    Promise.resolve(host.getJson('/api/live/cleanup/card')).then(
+      (r) => {
+        const next = r && r.card && Array.isArray(r.card.items) && r.card.items.length ? r.card : null;
+        if (JSON.stringify(next) === JSON.stringify(cleanupCard)) return;
+        cleanupCard = next;
+        if (inboxOpen) drawInbox();
+        if (host.rerender) host.rerender();
+      },
+      () => {},
+    );
+  }
+  function answerCleanupCard(action) {
+    return Promise.resolve(host.postJson('cleanup/card', { action })).then(() => {
+      cleanupCard = null;
+      drawInbox();
+      if (host.rerender) host.rerender();
+    });
+  }
   function toggleInbox(open) {
     inboxOpen = open === undefined ? !inboxOpen : !!open;
+    if (inboxOpen) loadCleanupCard();
     if (inboxOpen) closeProjMenu(false);
     drawInbox();
     inboxPop.hidden = !inboxOpen;
@@ -1073,7 +1096,7 @@
       const b = el('span', n > 99 ? '99+' : n, 'ws-badge');
       b.setAttribute('aria-hidden', 'true');
       env.append(b);
-    } else if (finished) env.append(el('span', null, 'ws-inbox-dot'));
+    } else if (finished || cleanupCard) env.append(el('span', null, 'ws-inbox-dot'));
     env.onclick = () => toggleInbox();
     return env;
   }
@@ -1817,6 +1840,8 @@
     for (const k of Array.from(quick.keys())) if (!rows.some((r) => r.key === k)) quick.delete(k);
     const NEEDS = (IR && IR.NEEDS_LABEL) || 'Needs you',
       REVIEW = (IR && IR.REVIEW_LABEL) || 'To review';
+    const DP = root.AgentDeleteProjectUI;
+    if (cleanupCard && DP && DP.cleanupCard) frag.append(DP.cleanupCard(cleanupCard, answerCleanupCard));
     frag.append(el('div', NEEDS, 'ws-inbox-section'));
     if (!blockedN) frag.append(el('div', (IR && IR.NOTHING_BLOCKED) || 'Nothing blocked', 'ws-inbox-none'));
     let reviewHead = false;
@@ -3213,6 +3238,10 @@
     inboxPop.setAttribute('role', 'dialog');
     inboxPop.setAttribute('aria-label', 'Needs you across projects');
     inboxPop.hidden = true;
+    // the one-time cleanup runs once the keeper take-over is done, which can be after this page opened: asked now and once later
+    loadCleanupCard();
+    const later = root.setTimeout ? root.setTimeout(loadCleanupCard, 90000) : null;
+    if (later && later.unref) later.unref(); // tests under node: never holds the process open
     projPop = el('div', null, 'ws-pmenu');
     projPop.id = 'wsProjMenu';
     projPop.setAttribute('role', 'dialog');

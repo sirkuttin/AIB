@@ -344,3 +344,18 @@
   background: none;
   color: inherit;
 }
+
+/* Decision 6: the one-time cleanup's card at the top of the Inbox (delete-project-ui.js cleanupCard): a row's look, its text wraps */
+.ws-cleanup-card .ws-cleanup-text {
+  display: block;
+  white-space: normal;
+  overflow: visible;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.ws-cleanup-card .ws-cleanup-error {
+  margin-top: 6px;
+  color: var(--danger-text);
+}

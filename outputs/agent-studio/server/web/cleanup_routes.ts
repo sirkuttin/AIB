@@ -56,7 +56,12 @@ function named(scan: cleanup.Scan, titles: Record<string, string>): cleanup.Scan
 }
 
 /** One project's scan (WSL: in its distro; null when the distro cannot be asked). */
-export async function cleanupScan(stateDir: string, project: string, live: string[], titles: Record<string, string> = {}): Promise<cleanup.Scan | null> {
+export async function cleanupScan(
+  stateDir: string,
+  project: string,
+  live: string[],
+  titles: Record<string, string> = {},
+): Promise<cleanup.Scan | null> {
   if (project.startsWith('wsl://')) {
     const scan = await wslCleanupScan(project, live);
     return scan ? named(scan as unknown as cleanup.Scan, titles) : null;

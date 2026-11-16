@@ -263,7 +263,44 @@
     return open;
   }
 
-  const api = { show, mainText, runningText, warningText, cleanupText, itemLabel, tickedByDefault, isOpen: () => !!open };
+  // The one-time cleanup's card (decision 6, build plan 1b 5.6), drawn at the top of the Inbox like its rows (workspace-ui.js
+  // drawInbox): old chat copies with work that was never merged, found at the first start after the update. "Keep them" is the
+  // default and never brings the card back; "Remove them" deletes exactly those copies. card: {items, text} from
+  // GET /api/live/cleanup/card; answer(action) posts it and resolves when done.
+  function cleanupCard(card, answer) {
+    const box = el('div', null, 'ws-inbox-item ws-cleanup-card');
+    box.setAttribute('role', 'group');
+    box.setAttribute('aria-label', 'Old chat copies');
+    const what = el('div', card.text, 'ws-inbox-what ws-cleanup-text');
+    const acts = el('div', null, 'ws-inbox-acts');
+    const remove = el('button', 'Remove them', 'ws-qa ws-qa-choice ws-cleanup-remove');
+    const keep = el('button', 'Keep them', 'ws-qa ws-qa-choice def ws-cleanup-keep');
+    remove.type = keep.type = 'button';
+    remove.title = 'Delete these copies and their branches. Their chats stay readable.';
+    keep.title = 'Leave them. AIB asks again only if you delete their project.';
+    const error = el('div', null, 'ws-qa-note ws-cleanup-error');
+    error.setAttribute('role', 'alert');
+    error.hidden = true;
+    const go = (action, b) => (e) => {
+      if (e && e.stopPropagation) e.stopPropagation();
+      remove.disabled = keep.disabled = true;
+      if (action === 'remove') b.textContent = 'Removing…';
+      error.hidden = true;
+      Promise.resolve(answer(action)).catch((err) => {
+        remove.disabled = keep.disabled = false;
+        remove.textContent = 'Remove them';
+        error.textContent = (err && err.message) || String(err);
+        error.hidden = false;
+      });
+    };
+    remove.addEventListener('click', go('remove', remove));
+    keep.addEventListener('click', go('keep', keep));
+    acts.append(remove, keep);
+    box.append(what, acts, error);
+    return box;
+  }
+
+  const api = { show, mainText, runningText, warningText, cleanupText, itemLabel, tickedByDefault, cleanupCard, isOpen: () => !!open };
   root.AgentDeleteProjectUI = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
