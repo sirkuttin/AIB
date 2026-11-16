@@ -130,6 +130,32 @@
   for (const k of ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED']) RemoteSocket[k] = RealSocket[k];
   root.WebSocket = RemoteSocket;
 
+  /* Pictures the page shows from an API address (a saved chat's pictures: /api/transcript/image): an <img> cannot send the device
+     key, so each one is fetched with it and shown from memory (blob:, which the page's CSP allows). */
+  const IMG_API = /^\/api\//;
+  function keyedImage(img) {
+    const src = img.getAttribute('src') || '';
+    if (!IMG_API.test(src) || img.dataset.remoteSrc === src) return;
+    img.dataset.remoteSrc = src;
+    img.removeAttribute('src');
+    remoteFetch(src)
+      .then((r) => (r.ok ? r.blob() : null))
+      .then((blob) => {
+        if (blob && img.dataset.remoteSrc === src) img.src = URL.createObjectURL(blob);
+      })
+      .catch(() => {});
+  }
+  new root.MutationObserver((list) => {
+    for (const m of list) {
+      if (m.type === 'attributes' && m.target.tagName === 'IMG') keyedImage(m.target);
+      for (const n of m.addedNodes || []) {
+        if (n.nodeType !== 1) continue;
+        if (n.tagName === 'IMG') keyedImage(n);
+        else if (n.querySelectorAll) for (const img of n.querySelectorAll('img[src^="/api/"]')) keyedImage(img);
+      }
+    }
+  }).observe(doc.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['src'] });
+
   /* Removed on the PC (401 not_paired): the phone page says so and forgets the key (one place for both kinds). */
   let leaving = false;
   function removed(response) {

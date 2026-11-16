@@ -3753,8 +3753,16 @@
     const frag = doc.createDocumentFragment();
     frag.append(header('AIB', { sub: S.pcName }));
     const body = el('main');
-    body.append(el('p', 'ph-error', 'This phone is no longer paired with ' + S.pcName + '.'));
-    body.append(el('p', '', 'To use it again, open Settings → Remote control in AIB on the PC and click Add a phone.'));
+    body.append(el('p', 'ph-error', 'This ' + deviceWord() + ' is no longer paired with ' + S.pcName + '.'));
+    body.append(
+      el(
+        'p',
+        '',
+        computerLike()
+          ? 'To use it again, open Settings → Remote control in AIB on ' + S.pcName + ' and click Add a phone or computer.'
+          : 'To use it again, open Settings → Remote control in AIB on the PC and click Add a phone.',
+      ),
+    );
     body.append(
       button('ph-btn', 'Pair again', () => {
         S.screen = 'pair';

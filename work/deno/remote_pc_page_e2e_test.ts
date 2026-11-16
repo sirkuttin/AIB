@@ -760,6 +760,11 @@ Deno.test({
         ),
         'none',
       );
+      // a picture from an API address (a saved chat's pictures) is fetched with the device key and shown from memory
+      await page.eval(
+        `(() => { const i = document.createElement('img'); i.id = 'keyedImg'; i.src = '/api/live/read-state'; document.body.append(i); })()`,
+      );
+      await page.waitFor(`document.getElementById('keyedImg').src.startsWith('blob:')`, 5000, 'the keyed picture');
       // a computer's notification click opens /pc.html#chat=<live id> (the service worker, from the push): that chat opens
       await page.goto(`https://${NAME}/remote.css`);
       await page.send('Page.navigate', { url: `https://${NAME}/pc.html#chat=c2` });
