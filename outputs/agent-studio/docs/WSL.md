@@ -112,6 +112,109 @@ WSL worktree on Windows; `wsl/worktrees.ts` turns the helper's Linux paths into 
 - Saved chats of a worktree are filed under their project (the helper's transcript store resolves the worktree). Changes shows
   Discard and Merge, as on Windows. A helper without the methods (older, or no `--data`) leaves chats in the project folder.
 
+## Moving existing chats into their own copies (one-off)
+
+Chats a WSL project had before worktree copies existed work in its main checkout. `tools/wsl-import.ts` (a one-off tool, not a
+product feature) moves them into their own copies, so they behave like new chats: own branch, Changes, Merge, live sync. It runs
+the helper's `import` subcommand (`server/wsl/helper/import.ts`) inside the distro:
+
+```
+deno run -A tools/wsl-import.ts --distro Ubuntu --project /home/<you>/<repo>                       # dry run: changes nothing
+deno run -A tools/wsl-import.ts --distro Ubuntu --project /home/<you>/<repo> --apply --confirm-project /home/<you>/<repo>
+deno run -A tools/wsl-import.ts --distro Ubuntu --project /home/<you>/<repo> --undo <stamp> --confirm-project /home/<you>/<repo>
+  --sessions id,id     only these chats (full ids or 8+ character prefixes), for a first try with one chat
+  --json               the raw report     --state-dir / --data / --root / --helper-bin   override what the tool finds
+```
+
+**What it finds.** AIB's folder in the distro (`AIB_WSL_ROOT`, else `$HOME/.aib-server`), and the Linux data folder of the AIB in use:
+`data-<hash>` of its Windows data folder (`--state-dir`, else `AGENT_STUDIO_STATE_DIR`, else `%LOCALAPPDATA%\AgentStudio`). The
+helper is the first of these: `--helper-bin` (a Linux build on Windows, run through `/mnt/c`); an installed `<root>/<ver>/AIB-wsl-helper`
+that contains the `import` marker (a read-only `grep`; newest first); this checkout's `dist/wsl/linux-x64/AIB-wsl-helper-linux`
+(`deno run -A tools/build.ts --wsl-only`). An AIB build without this code has a helper without `import`, so the tool then runs the
+checkout's build from `/mnt/c`. Every wsl.exe is hidden, with `WSL_UTF8=1` and a minimal environment.
+
+**Dry run (the default).** It reads and never writes: no file, no registry, no git index refresh (git runs with
+`GIT_OPTIONAL_LOCKS=0`, and `status` with `--no-optional-locks`). It lists every saved session of the project:
+- Claude Code: `~/.claude/projects/<folder>/<id>.jsonl` (`CLAUDE_CONFIG_DIR` is respected). The folder is named after the cwd the
+  chat started in (`/` and `.` become `-`). Folders of the project and its subfolders are read, plus any other folder whose first
+  chat ran in a worktree of this repository or in AIB's copies of it. A chat's start folder is the recorded `cwd` whose encoding
+  names its folder. A chat that later `cd`s into subfolders or `.claude/worktrees/*` still counts as started in the project.
+- Codex: `~/.codex/sessions/**/rollout-*-<id>.jsonl`, the start folder from its first line (`session_meta`).
+
+Each chat is **eligible**, or **skipped** with its reason:
+- already imported, or already has its own AIB copy (a registry record with its `provider:id`);
+- its AIB copy was discarded (AIB keeps it read-only);
+- it works in another worktree, not an AIB copy. Examples: Claude Code's own `.claude/worktrees/agent-*`, or another tool's worktree
+  of the repository elsewhere (such as `~/orca/workspaces/...`). These are left alone;
+- running now: a process's command line names its id, a process has its history open, or its history was written in the last 2
+  minutes;
+- no working folder recorded.
+
+For each eligible chat the report shows: the branch `studio/chat-<first 8 of the session id>`, the copy
+`<data>/worktrees/<repo hash>/<slug>`, the history that would move and where to, and its size.
+
+Project-level checks (any blocker refuses `--apply`):
+- the main checkout is clean: no tracked edits, no untracked non-ignored files. The offending entries are listed. Commit or merge
+  them yourself; the tool never commits, stashes or touches the main checkout;
+- the folder can get copies at all (the same reasons a new chat works in place: not a repo root, a merge or rebase in progress,
+  detached HEAD, no commits, submodules);
+- the HEAD branch and the base (main, else master), and the repository's `.git` is writable;
+- disk space for the backups plus one checkout per copy;
+- AIB's data folder exists and its registry can be read;
+- no agent process (claude, codex or their ACP adapters) works in the project folder. AIB cannot tell which chat such a process
+  holds, so they must all be stopped first;
+- stale entries that `git worktree prune` would drop are only reported, never pruned.
+
+Git-ignored and excluded folders (`.gitignore`, `.git/info/exclude`, e.g. `private/`) are never copied or touched: they stay in the
+main folder, as for any new chat's copy. A chat in its copy reaches them through AIB's local-only folders, a separate feature.
+
+**Apply.** It runs the plan again and refuses on any blocker. In a normal run it needs `--confirm-project <the same path>`. Under test
+(`AGENT_STUDIO_TEST=1` or `AIB_WSL_TEST=1`; the wrapper passes `AIB_WSL_TEST=1` into the distro) everything is refused unless the project,
+data, root and the Claude and Codex folders are under `/tmp/aib-wsl-test-*`, the dry run included. Then, per chat, independently (one
+failure is reported and the rest go on):
+1. It checks again that the chat is still where it was, not running, and has no record.
+2. It writes a backup copy of each file it will move to `<root>/import-backup/<stamp>/claude/<folder>/` (never under `~/.claude`) and
+   checks its size.
+3. It makes the copy, branch and record with the helper's own `Manager`. That means the same naming, the same snapshot of main, the
+   same registry lock (`studio-worktrees.json.lock`) and atomic write as AIB's running helper, so it is safe while AIB runs. It then
+   sets the record's `session: "<provider>:<id>"` (what `Studio.connect`'s `wslRecord` finds) and `imported: {at, from, backup}`.
+4. For Claude Code it **moves** `<id>.jsonl` and its `<id>/` folder (subagents, tool results) into
+   `~/.claude/projects/<encoded copy path>/`. If the move fails, the copy is removed again.
+
+`<root>/import-backup/<stamp>/manifest.json` records every step. AIB picks the result up without a restart: the helper reads the
+registry on every lookup, and the saved-chat list reads the folders on every poll.
+
+Why move and not copy: Claude Code resumes a session from the folder named after the agent's cwd. The ACP adapter's own
+`session/status` notes that a resume with another cwd can fail with -32002, although its history replay searches every folder. Once
+resumed, the chat's cwd is the copy. A copy would also show the chat twice in the saved list. The saved row keeps showing under the
+project (its records still name the project folder), and opening it resumes in the copy.
+
+Codex history is not moved: AIB resumes Codex with the session id and the copy as cwd, and Codex looks a rollout up by its id under
+`~/.codex/sessions`, wherever it ran. This was checked with the fake agent only; see below.
+
+A chat that started in a subfolder (e.g. `<repo>/rea`) opens at the copy's root. The record has no subfolder field, and `connect()`
+starts the agent in the record's folder. Local files that are not in git, such as `.claude/settings.local.json`, stay in the main
+folder; only `.env*` files are copied, as for any new copy.
+
+**Undo** (`--undo <stamp>`, the same confirmation; `--sessions` works). Per chat of that run, it is refused while the chat runs (a
+process names it or works in its copy, or its history was written in the last 2 minutes) or has work of its own in its copy (commits
+beyond its start, or changed or new files): merge or discard that one in AIB. Otherwise:
+- `git worktree remove` (never `--force`), prune;
+- the branch is deleted only when it still points at its start, and the user-base ref is unpinned;
+- the record is removed without a "removed" note, so the chat goes on in the project folder;
+- the history moves back: the moved file, so nothing said since is lost; the backup copy if that file is gone. It refuses if a file
+  is back at the original place.
+
+Backups are kept until you delete `<root>/import-backup/<stamp>/`.
+
+**Not verified with the real adapters.** The tests use the fake agent. The real Claude adapter's resume of a moved session from the
+copy's folder, and the real Codex adapter's resume by id in another cwd, follow from their code and docs but were not run.
+
+**Follow-up idea (not built):** do this automatically when a project is added from an existing folder that already has chats.
+
+Tests: `wsl_import_test` (Windows temp folders: classification, the dry run leaves every file and the index as they were, blockers,
+apply, one row per chat in the store, a re-run, undo refusing a chat with a commit, the test guard) and `wsl_import_e2e` (below).
+
 ## AIB tools (MCP tunnel)
 
 An agent in the distro cannot reach AIB's tool endpoint on Windows `127.0.0.1` (WSL2 NAT), and AIB never opens a port for it. So a
@@ -701,6 +804,7 @@ keeps one failure from hiding the others' results.
 | `wsl_browser_shim_e2e` | asked first, opened in a sign-in window, `file:` refused |
 | `wsl_sessions_e2e` | an ended chat listed after a restart, its history read in the distro, continued there |
 | `wsl_worktrees_e2e` | a chat's worktree and branch in the distro, its Changes branch view, restart re-adoption, Discard, a refused out-of-root plan, a non-git folder in place |
+| `wsl_import_e2e` | the one-off import over a temp repo: chats started in the project, in a subfolder, running (a process naming the id), in another tool's worktree, already imported, and a Codex one; a dirty main refuses apply and writes nothing; the dry run leaves every file as it was; the test guard; apply of one, then all, then a no-op re-run; one row per chat; Continue resumes in the copy (the agent's edit lands there), Changes shows the branch, Merge lands, Codex resumes in its copy; the same dry run through `--helper-bin` from `/mnt/c`; undo refuses the merged chat and restores the others (history back, no copy, no branch) |
 | `wsl_sync_e2e` | live sync with the helper's poll stretched to 5 minutes, so only inotify wakes a scan: events counted, a user edit and a new file in the copy within seconds, the prompt's note naming them, the helper killed and a new one catching up, Merge after sync landing only the chat's change, an edit both made merged at the next turn, a clash kept with its markers and the clash line until the chat resolves it |
 | `wsl_tunnel_e2e` | the tunnel entry run inside the distro: a tools/list reaches AIB and the WSL tool list comes back, also with interop off for the forwarder (`unshare -rm`, `/run/WSL` hidden); a wrong key refused; a helper without the tunnel falls back to the interop entry, which cannot start with interop off |
 | `wsl_merge_e2e` | through AIB's merge routes: a clean merge with its note, a conflict sent back and then resolved, a merge in progress in the main checkout refused, a merge after an AIB restart, a clash kept in the stash with the clash line and Keep my version, uncommitted main edits put back, the Merge button |

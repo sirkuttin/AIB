@@ -139,7 +139,11 @@ async function main(argv: string[], run: WslRunner = runWsl): Promise<number> {
     }
     root = `${h}/${WSL_ROOT_DIR}`;
   }
-  const data = args.data || `${root}/${dataDirName(stateDirOf(args, env))}`;
+  if (testing) { // the agents' homes of a test (wsl/access.ts wslTestHomeEnv), never the distro user's own
+    args.claudeDir ||= `${root}/home/.claude`;
+    args.codexDir ||= `${root}/home/.codex`;
+  }
+  const data = args.data ||`${root}/${dataDirName(stateDirOf(args, env))}`;
   let helper = '';
   if (args.helperBin) helper = mntPath(args.helperBin);
   else {

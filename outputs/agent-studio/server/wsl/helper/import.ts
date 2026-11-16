@@ -629,6 +629,12 @@ export async function planImport(o: ImportOptions): Promise<Report> {
     chats: [],
     applied: [],
   };
+  // under test even the dry run reads nothing outside the test root (never the owner's ~/.claude or ~/.codex)
+  const guard = testGuard([o.project, o.data, root, o.claudeDir, o.codexDir], d.env);
+  if (guard) {
+    report.refused = guard;
+    return report;
+  }
   if (!osp.isabs(o.project) || !stat(o.project)?.isDirectory) {
     report.blockers.push(`${o.project} is not a folder`);
     return report;
@@ -718,6 +724,10 @@ export async function planImport(o: ImportOptions): Promise<Report> {
     if (f.provider === 'claude') line.moves = movesFor(o.claudeDir, f, line.worktree);
   }
   const eligible = report.chats.filter((c) => c.status === 'eligible');
+  report.notes.push(
+    'Git-ignored and excluded folders (.gitignore, .git/info/exclude, e.g. private/) are not copied or touched: they stay in the main ' +
+      "folder, as for any new chat's copy (a chat reaches them through AIB's local-only folders)",
+  );
   checks.backupBytes = eligible.filter((c) => c.provider === 'claude').reduce((n, c) => n + c.bytes, 0);
   checks.worktreeBytes = checks.baseCommit ? await headBytes(project) : 0;
   checks.needBytes = checks.backupBytes + checks.worktreeBytes * eligible.length;
