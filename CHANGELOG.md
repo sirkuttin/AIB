@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Phone saved copies: read your recent chats with no connection. On a train or in a dead zone the phone used to show only
+  "Can't reach your PC" and nothing to read. Now it keeps copies of up to 5 chats you opened recently (about 2 MB each, the
+  oldest whole turns go first). A chat opens from its copy at once, then fills in from the PC. While the PC can't be reached,
+  those chats still open from the chat list, or from the list under "Can't reach <PC>" when the page opens offline, read only,
+  with "Showing saved copy from 14:05"; **Load earlier messages** pages back through the copy. The copies sit in the browser
+  storage of the AIB page on the phone, not encrypted, like the key that pairs the phone. They go with **⋯ → Saved copies →
+  Forget cached chats**, and when you remove the phone or untick **Keep saved copies of recent chats** for it in
+  **Settings → Remote control** (on by default), once the phone reaches the PC again.
 - Phone chat history: long replies show whole, and older messages load on the phone. A chat used to open with its last 300
   events, so a long reply (sent in hundreds of small pieces) lost its beginning, and a reply still being written could lose its
   start as new text came in. Above that the phone only said "Earlier messages are on your PC." Now a chat opens with its newest
