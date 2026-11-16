@@ -2059,6 +2059,9 @@ Deno.test('multi-window E7/G8: only pop-outs open → Open AIB makes a main wind
     await m.app.showWindow('Open AIB');
     assertEquals(m.app.desktopWindows.list().map((i) => i.w).sort(), ['m', 'w3']);
     await m.load('m');
+    // The list as it is at quit: the new main window's own save (asked for when it opened) must have landed first (3a: all windows
+    // come back); reading the file before it lands made this test race itself.
+    assertEquals((await m.savedNow()).windows.map((w: { id: string }) => w.id), ['m', 'w3']);
     const before = await Deno.readTextFile(`${m.dir}/${WINDOWS_FILE}`);
     await m.app.quit(false);
     m.win('m').size = [999, 999];

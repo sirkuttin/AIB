@@ -1443,6 +1443,8 @@ export class DesktopApp implements WindowsHost {
       this.shell.removeTray?.();
     } catch { /* quitting anyway */ }
     this.trayState('removed');
+    // G8: a write asked for before the quit (the list as it was then) lands before AIB exits; frozen, no new one starts.
+    await this.windows.writing;
     await this.options.quit(stopAgents, leave);
   }
 }
