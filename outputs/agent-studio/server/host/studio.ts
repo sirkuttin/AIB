@@ -42,7 +42,9 @@ import { artifactToolCommand } from '../artifacts/mcp.ts';
 import { ArtifactMcpHttp, FORWARD_FILE, forwardEntry, httpEntry, ownForwardFile, ownTunnelEntry, tunnelEntry } from '../artifacts/mcp_http.ts';
 import { WSL_TOOL_GROUPS } from '../artifacts/mcp.ts';
 import { mcpTunnelGate, type TunnelAnswer } from '../wsl/mcp_tunnel.ts';
-import { forwarderOf, keeperBinary, programVersion } from '../keeper/client.ts';
+import { forwarderOf, hookForwarderOf, keeperBinary, programVersion } from '../keeper/client.ts';
+import { SubagentWorktrees, type SubagentChat } from '../subagents/service.ts';
+import { hookSettings, readClaudeSetup } from '../subagents/claude_config.ts';
 import { isCompiled, isDesktopApp, selfCommand, TESTS_DIR } from '../core/app.ts';
 import { type ChannelInfo, type KeeperClient, KeeperError, missingFeatures, type OrphanCommand, readKeeperInfo } from '../keeper/client.ts';
 import { pidAlive } from './host_client.ts';
@@ -57,7 +59,7 @@ import {
 import { CLIENT_TERMINAL_PREFIX } from '../acp/keeper_terminal.ts';
 import { announce, getLogger, registerSecret } from '../core/log.ts';
 import { PhaseTimer, rebuildPhases } from '../core/timing.ts';
-import { isDict, isStr, pyLen, pyRepr, ValueError } from '../core/py.ts';
+import { isDict, isStr, pyLen, pyRepr, pyStrip, ValueError } from '../core/py.ts';
 import { findExternalOwner, OwnershipConflict, probeExternalOwner, SessionLease } from '../ownership/ownership.ts';
 import { ACTIVE_WINDOW_SECONDS, type Assessment, HEARTBEAT_SECONDS, OwnerRegistry, OwnershipEvidence, OwnershipProbe } from '../ownership/probe.ts';
 import { mergeAssessment, wslOwnerCheck, wslOwnerHints, wslOwnPids } from '../wsl/ownership.ts';
@@ -76,7 +78,7 @@ import { DEFAULT_ENTRY, ensureDefault, type LocalOnly } from '../worktrees/local
 import { helperOf, readHelpers, Registry as HelperRegistry } from '../swarm/registry.ts';
 import { swarmEnabled } from '../swarm/settings.ts';
 import { defaultsAllowed } from '../worktrees/local_strays.ts';
-import type { WslSpawn } from '../acp/connection.ts';
+import { isFixture, testHomeEnv, type WslSpawn } from '../acp/connection.ts';
 import { refOf } from '../platform/location.ts';
 import { heldDistro, isAibInternalLabel } from '../keeper/link.ts';
 import {
@@ -361,6 +363,8 @@ export class Studio {
   readonly readState: ReadState;
   readonly settings: SettingsStore;
   readonly worktrees: wt.Manager | null;
+  /** Subagent worktrees (subagents/service.ts): AIB's side of Claude chats' hooks; null without a state folder. */
+  readonly subagents: SubagentWorktrees | null;
   readonly liveSync: LiveSync | null;
   /** Live sync of WSL chats' worktrees: the engine runs in each distro's helper (wsl/sync.ts); null without worktrees. */
   readonly wslSync: WslSync | null;
@@ -449,11 +453,14 @@ export class Studio {
     Deno.unrefTimer(this.#limitsTimer);
     const manager = this.hasStateDir ? new wt.Manager(this.stateDir) : null; // worktree per chat (hidden flag)
     this.worktrees = manager;
+    const subagents = manager ? new SubagentWorktrees(this.stateDir, manager.registry.root, (id) => this.#subagentChat(id)) : null;
+    this.subagents = subagents;
     this.ready = (async () => {
       if (!manager) return;
       try {
         await manager.cleanupIncomplete(); // a half-made worktree of a process that died
         await manager.retryPending(); // removals that were pending (a file in use) + git worktree prune
+        await subagents?.sweep(); // spare / unused subagent worktrees of chats that are gone
       } catch (error) {
         log.exception(error, 'Cleaning up half-made worktrees failed');
       }
@@ -517,6 +524,8 @@ export class Studio {
         log.exception(error, 'Merging the user edits at the end of the turn failed');
       }
     }
+    // a prepared subagent worktree no Agent call took becomes the spare, or goes (bound ones stay for landing: P2)
+    if (this.subagents) await this.subagents.turnEnded(connection.id).catch((error) => log.exception(error, 'Subagent turn end failed'));
     if (connection.provider && connection.sessionId) await this.#mark('your_turn', connection);
     void this.limits.refresh(connection); // Codex / Vibe: at most once a minute per account
   }
@@ -845,7 +854,10 @@ export class Studio {
         },
         baseUrl: () => this.artifactBaseUrl(),
         urlFile: join(this.stateDir, ARTIFACT_URL_FILE),
-        addressFile: this.keeper ? join(this.stateDir, FORWARD_FILE) : undefined, // the keeper's MCP forwarder reads it
+        // the keeper's MCP forwarder reads it, and every Claude chat's hook forwarder (subagent worktrees), in the keeper or not
+        addressFile: join(this.stateDir, FORWARD_FILE),
+        hook: (event, conversation, body) =>
+          this.subagents ? this.subagents.hook(event, conversation, body) : Promise.resolve({ status: 503, body: 'No state folder', type: 'text/plain' }),
       });
     }
     this.#mcpHttp.start();
@@ -1236,8 +1248,15 @@ export class Studio {
         }
         this.checkOwnership(provider, resume, workspace, continueAnyway);
       }
+      // Subagent worktrees (subagents/): a Claude chat in a git project gets command hooks through the keeper's forwarder; its key and
+      // id go in the agent's environment (never in settings, a command line or a URL). A WSL chat gets none yet (they'd fail open).
+      const subagent = provider === 'claude'
+        ? wsl ? { hooks: offHooks('WSL, coming') } : await this.#subagentHooks(command, plan ? plan.path : workspace, workspace, !!plan, env)
+        : null;
       const connectionOptions: ConnectionOptions = {};
-      if (Object.keys(env).length) connectionOptions.env = env;
+      const agentEnv = subagent?.env ? { ...env, ...subagent.env } : env;
+      if (Object.keys(agentEnv).length) connectionOptions.env = agentEnv;
+      if (subagent?.id) connectionOptions.id = subagent.id;
       if (launch) {
         connectionOptions.keeper = launch.link; // the distro's Linux keeper, whatever the Windows keeper's state
         // a new worktree chat's agent works in the worktree's Linux folder (cwd: its ref)
@@ -1249,6 +1268,8 @@ export class Studio {
         ? this.connectionFactory(command, plan ? plan.path : workspace, provider, connectionOptions)
         : this.connectionFactory(command, plan ? plan.path : workspace, provider);
       const c = connection;
+      // a factory that gave the chat another id: its hooks' key would not check, so it gets none (it would fail closed otherwise)
+      if (subagent) c.subagentHooks = !subagent.id || c.id === subagent.id ? subagent.hooks : offHooks('not set up');
       if (plan || record) {
         c.worktree = plan ? { branch: plan.branch, base: plan.base } : { branch: String(record!.branch), base: String(record!.base ?? '') };
         c.projectRoot = plan ? workspace : String(record!.project); // cwd is the worktree, projectRoot the project
@@ -1286,6 +1307,12 @@ export class Studio {
           }
           c.localOnly = this.#localOnlyFor(c, local);
           await c.setup(resume || null);
+          if (c.subagentHooks?.off === HOOKS_OFF) { // design 2.6: said up front, before a subagent edits the folder (P0 A7)
+            c.recordedEvent('studio_note', {
+              message: `Subagents aren't isolated: hooks are off in your Claude Code settings (${c.subagentHooks.detail}).`,
+              sessionId: c.sessionId,
+            });
+          }
           if (plan instanceof WslPlan) {
             if (c.worktree) await wslSetSession(plan, provider, c.sessionId!);
           } else if (plan && this.worktrees!.registry.get(plan.key)) await this.worktrees!.setSession(plan.key, provider, c.sessionId!);
@@ -1351,9 +1378,11 @@ export class Studio {
     }
     c.onRelease = (conn) => {
       this.withdraw(conn);
+      void this.subagents?.chatClosed(conn.id).catch((error) => log.exception(error, 'Removing spare subagent worktrees failed'));
       if (conn.channel) this.#keeperNoLongerNeeded();
     };
     c.onTurnEnd = (conn) => this.turnEnded(conn);
+    c.subagentWorktree = (toolUseId) => this.subagents?.worktreeOf(c.id, toolUseId) ?? null; // allow-rule parity (design 2.4)
     c.onLimits = (conn, kind, raw, at) => this.limits.fromAgent(conn, kind, raw, at);
     const sync = this.liveSync;
     const wsl = this.wslSync; // a WSL chat in its own copy: its distro's helper runs the hooks (wsl/sync.ts)
@@ -1770,6 +1799,72 @@ export class Studio {
     } finally {
       c.openDone.set();
     }
+  }
+
+  /**
+   * The hooks a new Claude chat gets (subagent worktrees, design v2 2.1): command hooks running the keeper's forwarder, which reads
+   * AIB's address file and sends the chat's hook key. `folder`: where the agent works (a helper's worktree is made later, so it
+   * counts as a git project); `project`: whose .claude settings and agents apply. Off, with the reason, when it can't hold.
+   */
+  async #subagentHooks(
+    command: string[],
+    folder: string,
+    project: string,
+    aibWorktree: boolean,
+    env: Record<string, string>,
+  ): Promise<{ id?: string; env?: Record<string, string>; hooks: NonNullable<Connection['subagentHooks']> }> {
+    if (!this.subagents || !this.hasStateDir) return { hooks: offHooks('AIB has no state folder') };
+    if (Deno.env.get('AGENT_STUDIO_TEST') === '1' && isFixture(command)) return { hooks: offHooks('a test fixture') };
+    try {
+      if (!aibWorktree) {
+        const top = await wt.git(['rev-parse', '--show-toplevel'], folder, { check: false });
+        if (top.returncode !== 0 || !wt.same(pyStrip(top.stdout), folder)) return { hooks: offHooks('not a git project') };
+        if ((await wt.git(['rev-parse', '--verify', '-q', 'HEAD'], folder, { check: false })).returncode !== 0) {
+          return { hooks: offHooks('the repository has no commits yet') };
+        }
+      }
+      const forwarder = await hookForwarderOf(this.keeper?.options.binary ?? null, this.stateDir).catch(() => null);
+      if (!forwarder) return { hooks: offHooks("AIB's keeper program can't run hooks") };
+      const setup = readClaudeSetup(project, { ...Deno.env.toObject(), ...testHomeEnv(command), ...env });
+      if (setup.hooksOff) return { hooks: offHooks(HOOKS_OFF, setup.hooksOff) };
+      const settings = hookSettings(forwarder, join(this.stateDir, FORWARD_FILE), { worktreeCreate: !setup.userWorktreeHook });
+      if (!settings) return { hooks: offHooks("AIB's folder can't be named in a hook command") };
+      this.artifactMcpHttp(); // listening, with its address published, before the agent's first hook
+      const id = crypto.randomUUID().replaceAll('-', '');
+      const key = artifactKeys.issueHookKey(id);
+      if (!key) return { hooks: offHooks('AIB has no key secret') };
+      return {
+        id,
+        env: { AIB_HOOK_KEY: key, AIB_HOOK_CHAT: id, AIB_HOOK_READONLY: setup.readOnly.join(',') },
+        hooks: { settings, readOnly: setup.readOnly, userWorktreeHook: setup.userWorktreeHook, off: '' },
+      };
+    } catch (error) {
+      log.exception(error, 'Could not set up subagent hooks; the chat runs without them');
+      return { hooks: offHooks(`AIB could not set up its hooks (${errorText(error)})`) };
+    }
+  }
+
+  /**
+   * What subagents/service.ts may know of an open chat (by its live id). A chat taken over from the keeper after a restart has no
+   * hooks record in this process: its hooks still run with its key (only AIB set AIB_HOOK_KEY), so its setup is read again here.
+   */
+  #subagentChat(id: string): SubagentChat | null {
+    const c = this.connections.get(id);
+    if (!c || c.closed || c.provider !== 'claude' || c.wsl) return null;
+    if (!c.subagentHooks) {
+      const setup = readClaudeSetup(c.projectRoot || c.cwd, Deno.env.toObject());
+      c.subagentHooks = { settings: null, readOnly: setup.readOnly, userWorktreeHook: setup.userWorktreeHook, off: '', adopted: true };
+    }
+    const h = c.subagentHooks!;
+    const on = !!h.settings || h.adopted === true;
+    return {
+      id: c.id,
+      provider: c.provider,
+      lasting: c.sessionId ? `${c.provider}:${c.sessionId}` : '',
+      folder: c.cwd,
+      project: c.projectRoot || c.cwd,
+      hooks: on ? { readOnly: new Set(h.readOnly), userWorktreeHook: !!h.userWorktreeHook } : null,
+    };
   }
 
   /** The keeper program as the MCP forwarder for a new chat in the keeper (null: not available, the usual entries are used). */
@@ -2932,6 +3027,14 @@ export async function holdKeeper(link: KeeperLink | null | undefined): Promise<b
     log.warning('keeper: hold failed: %s', errorText(error));
     return false;
   }
+}
+
+/** Subagent worktrees: the reason a chat whose Claude settings turn hooks off gets none (its chat line and Activity say so). */
+const HOOKS_OFF = 'hooks are off';
+
+/** A chat's subagent hooks record when it gets none, and why. */
+function offHooks(why: string, detail = ''): NonNullable<Connection['subagentHooks']> {
+  return { settings: null, readOnly: [], userWorktreeHook: '', off: why, ...(detail ? { detail } : {}) };
 }
 
 /** A `<keeper program> mcp-forward <file>` entry (design 3.7). */

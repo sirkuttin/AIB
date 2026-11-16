@@ -78,6 +78,35 @@ function mac(conversationId: unknown): string {
   return createHmac('sha256', state.secret!).update(PREFIX).update(new TextEncoder().encode(String(conversationId))).digest('hex');
 }
 
+/**
+ * Subagent worktrees (design v2 2.1): the key a Claude chat's command hooks send to AIB's hook routes, HMAC with its own label
+ * ('studio-hook-key/v1') over the same secret, so it never works as an artifact key and the other way round. It goes in the agent
+ * process's environment (AIB_HOOK_KEY), never in settings, a command line or a URL.
+ */
+const HOOK_PREFIX = new TextEncoder().encode('studio-hook-key/v1\0');
+
+function hookMac(conversationId: unknown): string {
+  return createHmac('sha256', state.secret!).update(HOOK_PREFIX).update(new TextEncoder().encode(String(conversationId))).digest('hex');
+}
+
+/** The hook key for this conversation, or null when no state folder is configured. */
+export function issueHookKey(conversationId: unknown): string | null {
+  if (!conversationId || state.secret === null) return null;
+  const key = hookMac(conversationId);
+  registerSecret(key);
+  return key;
+}
+
+/** True only when key is the hook key of exactly this conversation. Never throws. */
+export function checkHookKey(key: unknown, conversationId: unknown): boolean {
+  try {
+    if (!key || !conversationId || state.secret === null) return false;
+    return tokenMatches(String(key), hookMac(conversationId));
+  } catch {
+    return false;
+  }
+}
+
 /** The key for this conversation, or null when no state folder is configured. */
 export function issue(conversationId: unknown): string | null {
   if (!conversationId || state.secret === null) return null;

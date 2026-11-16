@@ -23,6 +23,7 @@
 import * as wt from './worktrees.ts';
 import { CLASH_FILE, folderState, repoLock } from './merge.ts';
 import { readHelpers } from '../swarm/registry.ts';
+import { readSubagents } from '../subagents/service.ts';
 import { entriesOf, readJsonFile } from '../state/json.ts';
 import { pathOf } from '../state/paths.ts';
 import { isdir, normcase, normpath, SEP } from '../platform/ospath.ts';
@@ -276,6 +277,12 @@ export async function scanProject(stateDir: string, projectIn: string, options: 
   // 2. Recorded copies (this install's).
   const handledBranches = new Set<string>();
   const handledPaths = new Set<string>();
+  // Subagent worktrees (subagents/service.ts, architect review MF 6): AIB's own, but their chat and landing (P2) own them; a running
+  // subagent's has no changes yet, so it would look like an empty orphan. Cleanup never lists or removes one.
+  for (const r of Object.values(readSubagents(stateDir))) {
+    if (r?.path) handledPaths.add(norm(String(r.path)));
+    if (r?.branch) handledBranches.add(String(r.branch));
+  }
   for (const [key, r] of records) {
     const path = str(r.path), branch = str(r.branch), session = str(r.session);
     if (r.status === 'creating') continue; // being made (cleanupIncomplete owns these)
