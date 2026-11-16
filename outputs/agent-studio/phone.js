@@ -1600,9 +1600,26 @@
   }
 
   /* A chat just opened: its copy shows at once (read only) while the PC is asked; the PC's answer replaces it or joins it. */
+  /* A copy's lastActive becomes at least `at` (this phone opened its chat), in the list now and in the store in turn. Without it, a
+     chat opened from its copy and left before the PC answered kept its old place and could be the one that goes. */
+  function touchCopy(key, at) {
+    const m = S.copies.get(key);
+    if (!m || !(at > m.lastActive)) return;
+    m.lastActive = at;
+    const gen = S.copyGen;
+    copyRun(async () => {
+      if (gen !== S.copyGen) return;
+      const rec = await idb('chats', 'readonly', (s) => s.get(key));
+      if (!rec || gen !== S.copyGen || !(at > (Number(rec.lastActive) || 0))) return;
+      rec.lastActive = at;
+      await idb('chats', 'readwrite', (s) => s.put(rec));
+    });
+  }
+
   async function showCopy(screen, id) {
     const meta = copyFor(screen, id);
     if (!meta) return;
+    touchCopy(meta.key, S.openedAt); // opened again: it counts as fresh even if you leave before the PC answers
     const rec = await idb('chats', 'readonly', (s) => s.get(meta.key));
     if (!rec || rec.src !== meta.src || rec.device !== deviceId() || !Array.isArray(rec.events)) return;
     if (S.screen !== screen || (screen === 'chat' ? S.chatId !== id || S.chat : S.savedKey !== id || S.saved)) return;

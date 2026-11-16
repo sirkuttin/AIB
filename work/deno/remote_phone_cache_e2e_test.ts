@@ -213,7 +213,7 @@ Deno.test({
       for (let i = 1; i <= 6; i++) await visit(`c-${i}`);
       const keys = async () => (await copies(page)).map((r) => r.key);
       assertEquals(await keys(), [2, 3, 4, 5, 6].map((i) => keyOf(`c-${i}`)), 'the oldest went');
-      await visit('c-2'); // read again: the most recent now
+      await visit('c-2'); // read again (left while its copy is still on screen): the most recent now
       await visit('c-7');
       assertEquals(await keys(), [2, 4, 5, 6, 7].map((i) => keyOf(`c-${i}`)), 'c-3 was the least recently active');
 
