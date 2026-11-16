@@ -11,7 +11,7 @@ import { agentNamed, bgtaskMethods } from '../../outputs/agent-studio/server/wsl
 import { Store } from '../../outputs/agent-studio/server/transcripts/store.ts';
 import type { ProcInfo } from '../../outputs/agent-studio/server/ownership/probe.ts';
 import { OwnershipConflict } from '../../outputs/agent-studio/server/ownership/ownership.ts';
-import { OwnershipEvidence } from '../../outputs/agent-studio/server/ownership/probe.ts';
+import { folderOnlyNote, OwnershipEvidence } from '../../outputs/agent-studio/server/ownership/probe.ts';
 import { wslTranscriptGet } from '../../outputs/agent-studio/server/wsl/transcripts.ts';
 import { parseQs } from '../../outputs/agent-studio/server/transcripts/pycompat.ts';
 import { FRESH_MS, refreshWslDescendants, resetWslProcs, wslDescendants } from '../../outputs/agent-studio/server/wsl/procs.ts';
@@ -116,6 +116,21 @@ Deno.test('helper ownership.check: a claude process naming the session owns it; 
     assertEquals((await check('sess-1')).assessment.verdict, 'possibly_active');
     assertEquals((await check('sess-1', { releasedAgo: 0 })).assessment.verdict, 'no_evidence');
     assertEquals((await check('sess-1', { releasedAgo: 0 })).assessment.certainty, 'checked');
+    // a Claude Code panel (no session id) in the chat's folder: folder-only evidence once the transcript is quiet for 30 minutes
+    // (sess-4: a chat AIB never released here, so every write counts as another app's)
+    fixture(dir, 'sess-4');
+    procs = [{ pid: 70, ppid: 1, name: 'claude', cmdline: 'claude --output-format stream-json --verbose', cwd: '/home/u/app' }];
+    const back = (minutes: number) => {
+      const when = new Date(Date.now() - minutes * 60_000);
+      Deno.utimeSync(join(projects, 'proj', 'sess-4.jsonl'), when, when);
+    };
+    back(31);
+    const quiet = await check('sess-4', { cwd: '/home/u/app' });
+    assertEquals([quiet.owner, quiet.assessment.verdict, quiet.assessment.transcriptQuiet], [null, 'possibly_active', true]);
+    assertEquals(folderOnlyNote(quiet.assessment), 'Claude Code is also running in this folder (PID 70). AIB found nothing that says it holds this conversation.');
+    back(29);
+    const recent = await check('sess-4', { cwd: '/home/u/app' });
+    assertEquals([recent.assessment.verdict, recent.assessment.transcriptQuiet, folderOnlyNote(recent.assessment)], ['possibly_active', false, null]);
     await assertRejects(() => Promise.resolve(m['ownership.check']({ provider: 'claude', sessionId: 's', exclude: ['x'] })));
   } finally {
     Deno.removeSync(dir, { recursive: true });
@@ -324,6 +339,29 @@ Deno.test({
     assert(going.ready && !going.closed);
     await going.close();
     studio.evictClosed();
+    // folder-only evidence (a Claude Code panel in the folder, transcript quiet 30 minutes): continues with one note, as on Windows
+    const panelReason = {
+      signal: 'process-folder',
+      strength: 'weak',
+      pid: 777,
+      label: 'Claude Code',
+      startedBy: 'VS Code',
+      text: 'Claude Code (PID 777, started by VS Code) is running in this project folder. Agent processes do not reveal which conversation they hold, so AIB cannot tell whether it is this one.',
+    };
+    answer = { owner: null, assessment: { ...assessment(sessionId, 'possibly_active', [panelReason]), transcriptQuiet: true } };
+    const noted = await studio.connect('claude', REF, sessionId);
+    assert(noted.ready && !noted.closed);
+    assertEquals(
+      (noted.public().events as Json[]).filter((e) => e.kind === 'studio_note').map((e) => (e.data as Json).message),
+      ['Claude Code is also running in this folder (PID 777, started by VS Code). AIB found nothing that says it holds this conversation.'],
+    );
+    await noted.close();
+    studio.evictClosed();
+    // the same reason without a quiet transcript (or from an older helper without the field): asks
+    answer = { owner: null, assessment: assessment(sessionId, 'possibly_active', [panelReason]) };
+    const unsure = await assertRejects(() => studio.connect('claude', REF, sessionId), OwnershipEvidence) as OwnershipEvidence;
+    assertEquals(unsure.code, 'possibly_active');
+
     answer = { owner: null, assessment: assessment(sessionId, 'no_evidence') };
     const again = await studio.connect('claude', REF, sessionId);
     assertEquals(typeof asked.at(-1)!.releasedAgo, 'number', 'AIB just released it: its own transcript writes are not evidence');
