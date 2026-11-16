@@ -1,0 +1,231 @@
+/**
+ * Split view, the right panel (owner, 2026-11-15, mockup v2): with two chats side by side, Activity, Changes and Artifacts list
+ * BOTH chats in pane order, each under its own header, and look the same whichever pane has focus. Nothing in the panel moves
+ * pane focus. Artifacts: one dropdown per chat, side by side when the panel has room, stacked when it is narrow. Changes: each
+ * chat's own Discard / Merge row; Merge asks that chat. One chat (no split): none of it shows.
+ *
+ * A real Studio (the scroll lab: temp state folder, free port; never the live ports), two scripted live chats, headless Chrome or
+ * Edge. Changes, the worktree status and the artifact lists are answered in the page (a fetch stub keyed by chat id), so the test
+ * needs no git worktrees; the helpers are real (scripted subagent_update events).
+ *
+ * Run (from outputs/agent-studio): deno test -A ../../work/deno/split_panel_e2e_test.ts   (ignored without Chrome or Edge)
+ */
+import { assert } from './_assert.ts';
+import { browserPath, type Chat, Lab, ownerProblems, type Page, settle, shown } from './_scroll_lab.ts';
+
+function panelTest(name: string, fn: (lab: Lab) => Promise<void>) {
+  Deno.test({
+    name,
+    ignore: !browserPath,
+    sanitizeResources: false,
+    sanitizeOps: false,
+    async fn() {
+      const lab = await Lab.open(1600, 900);
+      try {
+        await fn(lab);
+        assert(lab.page.errors.length === 0, `console errors: ${lab.page.errors.join(' | ')}`);
+        const owner = await ownerProblems(lab.page);
+        assert(!owner, owner);
+      } finally {
+        await lab.close();
+      }
+    },
+  });
+}
+
+/** Changes, worktree status and artifact lists per chat id, answered in the page; merge requests are recorded. */
+function stub(page: Page, a: Chat, b: Chat) {
+  const files = {
+    [a.id]: [
+      { path: 'src/cart/totals.ts', status: 'M', added: 42, removed: 9 },
+      { path: 'src/cart/tax.ts', status: 'M', added: 11, removed: 6 },
+    ],
+    [b.id]: [{ path: 'src/feed/rss.ts', status: 'A', added: 37, removed: 0 }],
+  };
+  const arts = {
+    [a.id]: [
+      { id: 'art-a1', kind: 'html', title: 'Checkout bug root cause', version: 2, updatedAt: Date.now() / 1000 - 240 },
+      { id: 'art-a2', kind: 'svg', title: 'Totals before and after', version: 1, updatedAt: Date.now() / 1000 - 540 },
+    ],
+    [b.id]: [{ id: 'art-b1', kind: 'md', title: 'RSS feed plan', version: 1, updatedAt: Date.now() / 1000 - 720 }],
+  };
+  return page.eval(`(() => {
+    const files = ${JSON.stringify(files)}, arts = ${JSON.stringify(arts)};
+    const merges = (window.__merges = []), real = window.fetch.bind(window);
+    const json = (o) => Promise.resolve(new Response(JSON.stringify(o), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    window.fetch = (url, init) => {
+      const u = new URL(String(url), location.href), id = u.searchParams.get('id') || u.searchParams.get('conversationId') || '';
+      if (u.pathname === '/api/live/changes' && files[id])
+        return json({ git: true, scope: 'branch', files: files[id], worktree: { branch: 'aib/' + id.slice(0, 6), base: 'main' } });
+      if (u.pathname === '/api/live/worktree' && files[id])
+        return json({ worktree: true, enabled: true, state: 'ready', base: 'main', label: 'Merge' });
+      if (u.pathname === '/api/live/worktree/merge-request') {
+        merges.push(JSON.parse(init.body).id);
+        return json({ message: 'Merge requested' });
+      }
+      if (u.pathname === '/api/live/artifacts' && arts[id]) return json({ artifacts: arts[id] });
+      return real(url, init);
+    };
+  })()`);
+}
+
+function helpers(chat: Chat, tag: string, list: [string, string][]) {
+  list.forEach(([desc, state], i) =>
+    chat.step({ u: { sessionUpdate: 'subagent_update', subagent: { sessionId: `${tag}-helper-${i}`, description: desc, state } } })
+  );
+}
+
+/** Two live chats, A in the left pane (focused) and B in the right pane. */
+async function openSplit(lab: Lab) {
+  const page = lab.page;
+  const a = await lab.chat();
+  await a.start();
+  a.say('Alpha here ALPHAEND');
+  helpers(a, 'a', [['Find rounding bug', 'running'], ['Map tax rules', 'completed']]);
+  const b = await lab.chat();
+  await b.start();
+  b.say('Beta here BETAEND');
+  helpers(b, 'b', [['Check feed spec', 'running']]);
+  await stub(page, a, b);
+  await lab.select(b);
+  await shown(page, 'BETAEND');
+  await lab.select(a);
+  await shown(page, 'ALPHAEND');
+  await settle(800);
+  return { a, b };
+}
+async function split(lab: Lab, a: Chat, b: Chat) {
+  const page = lab.page;
+  await page.eval(`AgentSplitUI.splitTab(${JSON.stringify(b.key)}, 'row')`);
+  await page.waitFor(`AgentSplitUI.panes().length === 2 && !!document.querySelector('.mirror-msgs')`, 15000, 'two panes');
+  await page.eval(`(() => { const p = AgentSplitUI.panes().find((p) => p.group.active === ${JSON.stringify(a.key)}); if (p && !p.focused) AgentSplitUI.focusPane(p.id); })()`);
+  await page.waitFor(`AgentSplitUI.panes().find((p) => p.focused)?.group.active === ${JSON.stringify(a.key)}`, 15000, 'A focused');
+  const order = await page.eval<string[]>(`AgentSplitUI.paneChats()`);
+  assert(JSON.stringify(order) === JSON.stringify([a.key, b.key]), `pane order ${JSON.stringify(order)}`);
+}
+
+const focusedKey = (page: Page) => page.eval<string>(`AgentSplitUI.panes().find((p) => p.focused)?.group.active || ''`);
+const keysOf = (page: Page, sel: string) =>
+  page.eval<string[]>(`[...document.querySelectorAll(${JSON.stringify(sel)})].filter((n) => n.offsetParent).map((n) => n.dataset.key)`);
+
+/** Everything visible in the right panel: element, classes, box (px) and text (digits out: the run clocks tick). */
+const PANEL = `(() => {
+  const pane = document.getElementById('subagentsPane'), out = [];
+  for (const n of pane.querySelectorAll('*')) {
+    if (!n.offsetParent && getComputedStyle(n).position !== 'fixed') continue;
+    const r = n.getBoundingClientRect();
+    if (!r.width || !r.height) continue;
+    const own = [...n.childNodes].filter((c) => c.nodeType === 3).map((c) => c.textContent).join('').replace(/\\d+/g, '#').trim();
+    out.push([n.tagName, n.className, Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height), own].join('|'));
+  }
+  return out;
+})()`;
+function diff(a: string[], b: string[]) {
+  const out: string[] = [];
+  for (let i = 0; i < Math.max(a.length, b.length); i++) if (a[i] !== b[i]) out.push(`${a[i]}  ->  ${b[i]}`);
+  return out.slice(0, 8).join('\n');
+}
+async function clickOther(page: Page, want: string) {
+  await page.click('#splitStage .pane:not(.foc) .mirror-head');
+  await page.waitFor(`AgentSplitUI.panes().find((p) => p.focused)?.group.active === ${JSON.stringify(want)}`, 15000, 'focus moved');
+  await settle(2500);
+}
+
+panelTest('split panel: one chat shows none of the split sections and keeps its own header row', async (lab) => {
+  const page = lab.page;
+  await openSplit(lab);
+  const st = await page.eval<Record<string, unknown>>(`(() => {
+    const vis = (sel) => { const n = document.querySelector(sel); return !!n && !!n.offsetParent; };
+    return { splitOn: document.body.classList.contains('split-on'), splitActivity: vis('#splitActivity .sp-grp'),
+      subagentList: vis('#subagentList'), commands: vis('#commandSection'), heads: document.querySelectorAll('#subagentsPane .sp-head').length };
+  })()`);
+  assert(!st.splitOn && !st.splitActivity && st.subagentList && st.commands && st.heads === 0, `single view: ${JSON.stringify(st)}`);
+  await page.click('#paneTab-changes');
+  await settle(600);
+  assert(await page.eval<boolean>(`!document.querySelector('#splitChanges')?.offsetParent && !!document.querySelector('#changesPane .cg-bar')?.offsetParent`), 'single Changes view');
+  await page.click('#paneTab-artifacts');
+  await settle(600);
+  assert(await page.eval<boolean>(`!document.querySelector('.ar-split')?.offsetParent`), 'no split dropdowns with one chat');
+});
+
+panelTest('split panel: both chats in pane order on every tab, focus changes nothing, panel clicks keep focus', async (lab) => {
+  const page = lab.page;
+  const { a, b } = await openSplit(lab);
+  await split(lab, a, b);
+  // Activity: both chats, pane order, each with header, SUBAGENTS label and its helpers
+  await page.waitFor(
+    `(() => { const s = [...document.querySelectorAll('#splitActivity .sp-grp')]; return s.length === 2 && s.every((g) => g.querySelectorAll('.subagent-card').length > 0); })()`,
+    20000,
+    'Activity lists both chats with their helpers',
+  ).catch(async (e) => {
+    throw new Error(`${e.message}: ${await page.eval(`document.getElementById('subagentsPane').innerText.slice(0, 600)`)}`);
+  });
+  assert(JSON.stringify(await keysOf(page, '#splitActivity .sp-grp')) === JSON.stringify([a.key, b.key]), 'Activity in pane order');
+  const act = await page.eval<{ heads: string[]; labels: string[]; headRow: boolean }>(`({
+    heads: [...document.querySelectorAll('#splitActivity .sp-head')].map((h) => h.innerText.replace(/\\s+/g, ' ')),
+    labels: [...document.querySelectorAll('#splitActivity .sp-label')].filter((n) => n.offsetParent).map((n) => n.innerText.replace(/\\s+/g, ' ')),
+    headRow: !!document.getElementById('activityHead')?.offsetParent,
+  })`);
+  assert(!act.headRow, 'the header row above the tabs is gone in split view');
+  assert(/1 working/.test(act.heads[0]) && /1 working/.test(act.heads[1]), `headers: ${JSON.stringify(act.heads)}`);
+  assert(act.labels.filter((l) => /^subagents/i.test(l)).length === 2, `labels: ${JSON.stringify(act.labels)}`);
+
+  // focus changes nothing in the panel, on each tab
+  for (const tab of ['activity', 'changes', 'artifacts']) {
+    await page.click(`#paneTab-${tab}`);
+    if (tab === 'changes')
+      await page.waitFor(`document.querySelectorAll('#splitChanges .sp-grp .cg-file').length === 3`, 15000, 'both chats\\' files');
+    if (tab === 'artifacts')
+      await page.waitFor(`document.querySelectorAll('.ar-split .ar-spick:not(.plain)').length === 2`, 15000, 'both dropdowns');
+    await settle(1500);
+    const before = await page.eval<string[]>(PANEL);
+    const other = (await focusedKey(page)) === a.key ? b.key : a.key;
+    await clickOther(page, other);
+    const after = await page.eval<string[]>(PANEL);
+    assert(before.join('\n') === after.join('\n'), `${tab}: the panel changed when focus moved:\n${diff(before, after)}`);
+    assert((await page.eval<string>(`document.querySelector('#paneTabs [aria-selected="true"]').dataset.tab`)) === tab, `${tab} stays selected`);
+  }
+
+  // Changes: pane order, per-chat headers and Merge rows; Merge asks its own chat
+  await page.click('#paneTab-changes');
+  assert(JSON.stringify(await keysOf(page, '#splitChanges .sp-grp')) === JSON.stringify([a.key, b.key]), 'Changes in pane order');
+  await page.waitFor(`[...document.querySelectorAll('#splitChanges .cg-merge-btn')].filter((n) => n.offsetParent && !n.disabled).length === 2`, 15000, 'two Merge buttons');
+  const focusNow = await focusedKey(page);
+  await page.click('#splitChanges .sp-grp:nth-child(2) .cg-merge-btn');
+  await page.waitFor(`window.__merges.length === 1`, 10000, 'merge request sent');
+  assert((await page.eval<string>(`window.__merges[0]`)) === b.id, 'Merge in the second section asks the second chat');
+  assert((await focusedKey(page)) === focusNow, 'Merge did not move focus');
+
+  // clicks anywhere in the panel never move focus
+  for (const sel of ['#paneTab-activity', '#splitActivity .sp-grp:nth-child(2) .sp-head', '#splitActivity .sp-grp:nth-child(2) .subagent-card', '#paneTab-changes', '#splitChanges .sp-grp:nth-child(2) .sp-head', '#splitChanges .sp-grp:nth-child(2) .cg-file', '#paneTab-artifacts', '.ar-split .ar-sgrp:nth-child(2) .ar-spick']) {
+    const was = await focusedKey(page);
+    await page.waitFor(`!!document.querySelector(${JSON.stringify(sel)})?.offsetParent`, 10000, sel);
+    await page.click(sel);
+    await settle(400);
+    assert((await focusedKey(page)) === was, `clicking ${sel} moved focus`);
+  }
+  // the second chat's dropdown lists its artifact; picking it shows it and gives that bar the accent border
+  await page.waitFor(`!!document.querySelector('.ar-pop:not([hidden]) .ar-it[data-id="art-b1"]')`, 5000, 'B dropdown open');
+  await page.click('.ar-pop .ar-it[data-id="art-b1"]');
+  await page.waitFor(`document.querySelector('.ar-split .ar-sgrp:nth-child(2) .ar-spick')?.classList.contains('showing')`, 10000, 'B showing');
+  assert(!(await page.eval<boolean>(`document.querySelector('.ar-split .ar-sgrp:nth-child(1) .ar-spick').classList.contains('showing')`)), 'only one bar has the accent');
+  assert(JSON.stringify(await keysOf(page, '.ar-split .ar-sgrp')) === JSON.stringify([a.key, b.key]), 'Artifacts in pane order');
+});
+
+panelTest('split panel: artifact dropdowns side by side when the panel is wide, stacked when narrow', async (lab) => {
+  const page = lab.page;
+  const { a, b } = await openSplit(lab);
+  await split(lab, a, b);
+  await page.click('#paneTab-artifacts');
+  await page.waitFor(`document.querySelectorAll('.ar-split .ar-sgrp').length === 2`, 15000, 'two dropdowns');
+  const tops = async (w: number) => {
+    await page.eval(`ResizeUI.setActivityWidth ? ResizeUI.setActivityWidth(${w}) : document.documentElement.style.setProperty('--activity-w', '${w}px')`);
+    await settle(400);
+    return page.eval<{ w: number; t: number[] }>(`({ w: Math.round(document.getElementById('subagentsPane').getBoundingClientRect().width),
+      t: [...document.querySelectorAll('.ar-split .ar-sgrp')].map((n) => Math.round(n.getBoundingClientRect().top)) })`);
+  };
+  const wide = await tops(440);
+  assert(wide.t[0] === wide.t[1], `wide panel (${wide.w}px): side by side, tops ${wide.t}`);
+  const narrow = await tops(250);
+  assert(narrow.t[1] > narrow.t[0], `narrow panel (${narrow.w}px): stacked, tops ${narrow.t}`);
+});

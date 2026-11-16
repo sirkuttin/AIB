@@ -705,3 +705,106 @@ body.subchat-open #commandSection {
     grid-auto-columns: auto;
   }
 }
+
+/* ---- Split view (two chats side by side): the right panel lists both chats, in pane order, the same whatever has focus
+   (owner, 2026-11-15, mockup v2). The header row naming the focused chat is gone; each chat's section starts with its own header
+   (status dot, name, a short line). Shared by Activity, Changes and Artifacts (activity-ui.js splitHead). ---- */
+body.split-on #activityHead {
+  display: none !important;
+}
+body:not(.split-on) #splitActivity,
+body:not(.split-on) .sp-changes,
+body:not(.split-on) .ar-split {
+  display: none !important;
+}
+body.split-on #activityBody > :not(#splitActivity) {
+  display: none !important;
+}
+body.split-on.subchat-open #splitActivity {
+  display: none;
+}
+#splitActivity {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-width: thin;
+  padding-bottom: 10px;
+}
+.sp-grp {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 4px;
+}
+.sp-grp:last-child {
+  border-bottom: 0;
+}
+.sp-head {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
+  column-gap: 6px;
+  align-items: center;
+  padding: 7px 10px 5px 10px;
+  font-size: 12.5px;
+  white-space: nowrap;
+  cursor: default;
+}
+.sp-head > .sp-dot {
+  justify-self: center;
+}
+.sp-head .sp-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+  line-height: 18px;
+  color: var(--text);
+}
+.sp-head .sp-sub {
+  grid-column: 2;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--text-muted);
+}
+.sp-head .sp-bad {
+  color: var(--danger);
+}
+.sp-label {
+  display: flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 12px 0 28px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+.sp-label > span {
+  margin-left: 6px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-muted);
+}
+.sp-label[hidden],
+.sp-subs[hidden],
+.sp-procs[hidden],
+.sp-none[hidden] {
+  display: none;
+}
+.sp-none {
+  margin: 0;
+  padding: 2px 12px 8px 28px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.sp-subs > .sa-scroll {
+  overflow: visible;
+  padding: 0;
+}
+.sp-procs {
+  display: flex;
+  flex-direction: column;
+}

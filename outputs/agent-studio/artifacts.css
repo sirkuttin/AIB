@@ -797,3 +797,37 @@ a.artifact-link.artifact-link-deleted {
 .ar-zoom-pct:hover {
   color: var(--text);
 }
+
+/* ---- Split view: one dropdown per pane's chat (artifacts-ui.js splitSync), side by side while each gets 160 px, stacked when
+   the panel is narrower; the viewer below shows the one picked. The bar of the artifact on screen has the accent border. ---- */
+.ar-split {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--line);
+}
+.ar-split > .ar-sgrp {
+  flex: 1 1 160px;
+  min-width: 0;
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+.ar-split .ar-sbar {
+  padding: 0 10px 8px 10px;
+  border-bottom: 0;
+}
+.ar-split .ar-spick {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
+}
+.ar-split .ar-spick.showing {
+  border-color: var(--accent);
+}
+.ar-split .ar-spick.plain {
+  padding-left: 0;
+}
+/* the viewer's own row keeps the version, open-in-browser and More of the artifact on screen; its picker is the dropdowns above */
+.artifacts-pane.ar-split-on > .ar-bar:not(.ar-sbar) > .ar-pick {
+  display: none;
+}

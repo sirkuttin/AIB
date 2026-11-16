@@ -636,3 +636,24 @@
 .clash-resume[hidden] {
   display: none;
 }
+
+/* ---- Split view: both panes' chats, each with its header, its files and its own Discard / Merge row (changes-ui.js
+   splitSync; option B of the approved mockup). The single-chat bar, list and footer step aside. ---- */
+body.split-on #changesPane > :not(.sp-changes) {
+  display: none !important;
+}
+.sp-changes {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-width: thin;
+  padding-bottom: 10px;
+}
+.sp-cg .cg-file {
+  padding-left: 12px;
+}
+.sp-cg .sp-files[hidden],
+.sp-cg .sp-none[hidden],
+.sp-cg .sp-foot[hidden] {
+  display: none;
+}
