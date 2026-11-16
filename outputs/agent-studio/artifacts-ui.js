@@ -352,6 +352,9 @@
       out = [];
     // A deleted artifact shows no page: its menu only brings it back.
     if (o.deleted) return [{ id: 'undelete', label: 'Restore' }];
+    // the title bar's word action comes first (lead decision 2026-11-16: at the default 280 px panel it is not a button)
+    if (o.action === 'request') out.push({ id: 'request', label: 'Request a change' }, { sep: true });
+    if (o.action === 'edit') out.push({ id: 'edit', label: 'Edit as a doc' }, { sep: true });
     if (hasSource(kind) && viewMode(kind) === 'page')
       out.push({ id: 'source', label: mode === 'source' ? 'View page' : 'View source' });
     if (shown >= 2 && hasSource(kind))
@@ -2364,6 +2367,7 @@
       archived: isArchived(a),
       deleted: isDeleted(a),
       sourceCopy: a.sourceMissing && a.sourceCopy ? a.sourceCopy : '',
+      action: barAction(a) === 'edit' && !S.chat.id ? '' : barAction(a),
     });
     ui.popFor = 'menu';
     ui.more.setAttribute('aria-expanded', 'true');
@@ -2409,7 +2413,9 @@
     const a = current();
     if (!a) return;
     const ver = shownVersion(num(a.version) || 1, S.picked);
-    if (id === 'source') {
+    if (id === 'request') requestChange();
+    else if (id === 'edit') editAsDoc();
+    else if (id === 'source') {
       S.mode = S.mode === 'source' ? 'page' : 'source';
       S.cmp = null;
       S.dirty = true;
@@ -3129,11 +3135,11 @@
     ver.type = 'button';
     ver.setAttribute('aria-expanded', 'false');
     const spacer = el('span', 'ar-spacer');
-    const ext = el('button', 'ar-ico', '↗');
+    const ext = el('button', 'ar-ico ar-ext', '↗');
     ext.type = 'button';
     ext.title = 'Open in your browser';
     ext.setAttribute('aria-label', 'Open in your browser');
-    const more = el('button', 'ar-ico', '⋯');
+    const more = el('button', 'ar-ico ar-more', '⋯');
     more.type = 'button';
     more.title = 'More';
     more.setAttribute('aria-label', 'More');
@@ -3147,7 +3153,8 @@
     request.type = 'button';
     request.title = 'Puts this artifact in the message box, ready for you to say what to change';
     request.hidden = true;
-    /* Zoom: scales the page frame (−, the percentage resets to 100%, +); kept for every artifact in this browser. */
+    /* Zoom: scales the page frame (−, the percentage resets to 100%, +); kept for every artifact in this browser. The three sit
+       together in one compact group so the bar stays one row at the default 280 px panel. */
     const ZOOMS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
     const zoomOut = el('button', 'ar-ico ar-zoom-btn', '−');
     zoomOut.type = 'button';
@@ -3183,7 +3190,11 @@
     zoomOut.addEventListener('click', () => stepZoom(-1));
     zoomIn.addEventListener('click', () => stepZoom(1));
     zoomLabel.addEventListener('click', () => applyZoom(1));
-    bar.append(pick, ver, spacer, edit, request, zoomOut, zoomLabel, zoomIn, ext, more);
+    const zoomBox = el('span', 'ar-zoom');
+    zoomBox.setAttribute('role', 'group');
+    zoomBox.setAttribute('aria-label', 'Zoom');
+    zoomBox.append(zoomOut, zoomLabel, zoomIn);
+    bar.append(pick, ver, spacer, edit, request, zoomBox, ext, more);
     const avail = el('div', 'ar-avail');
     avail.hidden = true;
     avail.setAttribute('role', 'status');
