@@ -71,18 +71,30 @@ export function within(child: string, root: string): boolean {
   return child.startsWith(root.endsWith('/') ? root : root + '/');
 }
 
-/** The blocked folders and files of this PC, normal(). `stateDir`: AIB's state folder. */
-export function blockedRoots(stateDir: string | null, home = homeDir()): { dirs: string[]; files: string[] } {
+/**
+ * The blocked places of this PC, normal(): AIB's state folders (`states`), the home folders' sign-in folders (`dirs`) and files
+ * (`files`). In a state folder, <state>/worktrees is the one open part: the chats' own copies of the projects (a worktree chat works
+ * there; worktrees/worktrees.ts), not AIB's data.
+ */
+export function blockedRoots(stateDir: string | null, home = homeDir()): { states: string[]; dirs: string[]; files: string[] } {
+  const states: string[] = [];
   const dirs: string[] = [];
   const files: string[] = [];
-  if (stateDir) dirs.push(normal(stateDir));
+  if (stateDir) states.push(normal(stateDir));
   const local = WIN ? Deno.env.get('LOCALAPPDATA') : '';
-  if (local) dirs.push(normal(`${local}/AgentStudio`));
+  if (local) states.push(normal(`${local}/AgentStudio`));
   if (home) {
     for (const d of BLOCKED_HOME_DIRS) dirs.push(normal(`${home}/${d}`));
     for (const f of BLOCKED_HOME_FILES) files.push(normal(`${home}/${f}`));
   }
-  return { dirs, files };
+  return { states, dirs, files };
+}
+
+/** In a state folder and not inside one of its chat worktrees (<state>/worktrees/<name>/…). */
+function inState(n: string, state: string): boolean {
+  if (!within(n, state)) return false;
+  const copies = `${state}/worktrees`;
+  return !(within(n, copies) && n !== copies);
 }
 
 /** A Linux path inside a WSL distro: blocked when it is in a home folder's blocked names (/root/… or /home/<user>/…). */
@@ -117,10 +129,10 @@ export function isBlocked(path: unknown, stateDir: string | null, home = homeDir
   const wsl = wslLocOf(path);
   if (wsl) return linuxBlocked(wsl.linuxPath);
   if (isForeignPath(path)) return linuxBlocked(path); // a bare Linux path on Windows: judge it by Linux rules
-  const { dirs, files } = blockedRoots(stateDir, home);
+  const { states, dirs, files } = blockedRoots(stateDir, home);
   const check = (p: string) => {
     const n = normal(p);
-    return dirs.some((d) => within(n, d)) || files.includes(n);
+    return files.includes(n) || dirs.some((d) => within(n, d)) || states.some((st) => inState(n, st));
   };
   if (check(path)) return true;
   const real = realOf(path);

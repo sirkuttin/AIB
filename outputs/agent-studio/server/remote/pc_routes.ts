@@ -18,6 +18,7 @@
 import type { WebContext } from '../web/server.ts';
 import type { DeviceScope } from './devices.ts';
 import { isMergeRequest, phoneOption } from './actions.ts';
+import { Registry } from '../worktrees/worktrees.ts';
 import { BlockedPath, guardNewProject, guardPath, guardProjectPath, insideProjects } from './path_guard.ts';
 
 type Json = Record<string, unknown>;
@@ -39,7 +40,7 @@ export type PathRule = 'blocked' | 'project' | 'newProject';
 export type RemoteEntry =
   | { kind: 'never'; why: string }
   | { kind: 'scope'; need: DeviceScope[]; paths?: { in: 'query' | 'body'; field: string; rule: PathRule; list?: boolean }[] }
-  | { kind: 'rule'; fields: string[]; decide: (ask: Ask) => Verdict | Promise<Verdict> }
+  | { kind: 'rule'; fields: string[] | null; decide: (ask: Ask) => Verdict | Promise<Verdict> }
   | { kind: 'socket'; socket: 'terminal' | 'docs' };
 
 const R: DeviceScope = 'phone.read';
@@ -59,7 +60,8 @@ const withPaths = (need: DeviceScope[], paths: NonNullable<Extract<RemoteEntry, 
   need,
   paths,
 });
-const rule = (fields: string[], decide: (ask: Ask) => Verdict | Promise<Verdict>): RemoteEntry => ({ kind: 'rule', fields, decide });
+/** `fields`: the body / query keys a computer may send (null: any; the route does one job, only a path in it is checked). */
+const rule = (fields: string[] | null, decide: (ask: Ask) => Verdict | Promise<Verdict>): RemoteEntry => ({ kind: 'rule', fields, decide });
 
 export const pcOnly = (message: string): Verdict => ({ refuse: 'pc_only', message });
 const isStr = (v: unknown): v is string => typeof v === 'string';
@@ -77,10 +79,22 @@ export function modeNeeds(modeId: unknown): DeviceScope[] {
 
 // ---- added projects and chats ----------------------------------------------------------------------------------------------------
 
-/** The folders the owner added to AIB (never one that is gone from the list). */
+/**
+ * The folders a computer's paths must be in (the project-root rule): the folders the owner added to AIB, and the chats' own worktree
+ * copies of them (<state>/worktrees/…, registered in worktrees/worktrees.ts: a worktree chat works there, outside its project).
+ */
 export function projectFolders(ctx: WebContext): string[] {
   const added = ctx.addedProjects?.public().added ?? {};
-  return Object.values(added).map((item) => item.path).filter(isStr);
+  const roots = Object.values(added).map((item) => item.path).filter(isStr);
+  try {
+    if (ctx.stateDir) {
+      for (const record of Object.values(new Registry(ctx.stateDir).all())) {
+        const r = record as { status?: unknown; path?: unknown; project?: unknown };
+        if (r.status === 'ready' && isStr(r.path) && isStr(r.project) && insideProjects(r.project, roots)) roots.push(r.path);
+      }
+    }
+  } catch { /* no registry: the added folders only */ }
+  return roots;
 }
 
 /**
@@ -206,6 +220,17 @@ function projectAddVerdict(ask: Ask): Verdict {
   return { need: [P] };
 }
 
+/** POST /api/live/agent-options: the lists a new chat offers; with probe it starts the agent in `cwd`: a project folder, or a new one
+ * with pc.projects (never a blocked one, a home folder or a drive root). */
+function agentOptionsVerdict(ask: Ask): Verdict {
+  const cwd = obj(ask.body).cwd;
+  if (!isStr(cwd) || !cwd) return { need: [ST] };
+  guardPath(cwd, ask.ctx.stateDir);
+  if (insideProjects(cwd, projectFolders(ask.ctx))) return { need: [ST] };
+  guardNewProject(cwd, ask.ctx.stateDir);
+  return { need: [ST, P] };
+}
+
 /** POST /api/live/terminal/end: a chat's own terminal only (v2 fix 4). */
 async function terminalEndVerdict(ask: Ask): Promise<Verdict> {
   const key = obj(ask.body).key;
@@ -255,7 +280,7 @@ export const PC_ROUTES: Readonly<Record<string, RemoteEntry>> = {
   'POST /api/live/agents/signin/cancel': SETTINGS,
   'POST /api/live/agents/signin/check': SETTINGS,
   'POST /api/live/authenticate': never('Signing an agent in is done on the PC only'),
-  'POST /api/live/agent-options': scope(ST),
+  'POST /api/live/agent-options': rule(null, agentOptionsVerdict),
   // ---- artifacts ----
   'GET /api/live/artifacts': AGENT_KEY, // scope artifacts.tool
   'GET /api/live/artifacts/diff': scope(R),
@@ -297,7 +322,7 @@ export const PC_ROUTES: Readonly<Record<string, RemoteEntry>> = {
     ['provider', 'cwd', 'resume', 'background', 'continueAnyway', 'picks', 'helperOf', 'ownCopy'],
     connectVerdict,
   ),
-  'POST /api/live/discover': scope(R),
+  'POST /api/live/discover': withPaths([R], [{ in: 'body', field: 'cwd', rule: 'project' }]),
   'POST /api/live/forget': scope(S),
   'POST /api/live/disconnect': scope(S),
   'POST /api/live/prompt': scope(S),
@@ -330,7 +355,7 @@ export const PC_ROUTES: Readonly<Record<string, RemoteEntry>> = {
     }
     return { need };
   }),
-  'POST /api/live/worktree-archive': scope(S),
+  'POST /api/live/worktree-archive': withPaths([S], [{ in: 'body', field: 'cwd', rule: 'project' }]),
   // ---- allow rules: all of them are "Allow always" (v2 fix 1) ----
   'POST /api/live/allow/answer': scope(AL),
   'POST /api/live/allow/rules': scope(AL),
@@ -498,7 +523,8 @@ export async function decide(entry: RemoteEntry, ask: Ask): Promise<Verdict> {
       return { need: entry.need };
     }
     const keys = ask.method === 'POST' ? Object.keys(obj(ask.body)) : [...new Set(ask.query.keys())];
-    const extra = keys.filter((k) => !entry.fields.includes(k));
+    const fields = entry.fields;
+    const extra = fields ? keys.filter((k) => !fields.includes(k)) : [];
     if (extra.length) return pcOnly(`Not accepted from another computer: ${extra.slice(0, 5).join(', ')}.`);
     return await entry.decide(ask);
   } catch (error) {

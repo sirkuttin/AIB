@@ -191,6 +191,9 @@ Deno.test('path guard: blocked folders by any spelling, WSL homes, home and driv
   assert(isBlocked(inHome('.npmrc'), state) && isBlocked(inHome('.git-credentials'), state));
   assert(!isBlocked(inHome('.npmrc-notes'), state) && !isBlocked(inHome('.sshx'), state) && !isBlocked(inHome('code', 'app'), state));
   assert(isBlocked(state + sep + 'devices.json', state), 'the state folder');
+  assert(isBlocked(state + sep + 'worktrees', state) && isBlocked(state + sep + 'studio-worktrees.json', state), 'the worktree registry');
+  assert(!isBlocked([state, 'worktrees', 'abc', 'chat-1', 'src'].join(sep), state), "a chat's worktree copy is a project folder");
+  assert(isBlocked([state, 'worktrees', 'abc', '..', '..', 'devices.json'].join(sep), state), "'..' out of a worktree");
   assert(isBlocked(inHome('code', '..', '.ssh'), state), "'..' is resolved");
   if (WIN) {
     assert(isBlocked(inHome('.SSH').toUpperCase(), state), 'case-folded on Windows');
@@ -445,6 +448,10 @@ Deno.test({
         ['POST', '/api/live/project-add', { paths: [s.project, inHome('.docker')] }],
         ['POST', '/api/live/docs/open', { id: `project:${s.state}`, name: 'x' }],
         ['POST', '/api/live/conversation-state', { action: 'restore', provider: 'claude', sessionId: 'x', cwd: inHome('.claude') }],
+        ['POST', '/api/live/agent-options', { agent: 'claude', cwd: inHome('.codex'), probe: true }],
+        ['POST', '/api/live/agent-options', { agent: 'claude', cwd: HOME, probe: true }],
+        ['POST', '/api/live/discover', { provider: 'claude', cwd: inHome('.claude') }],
+        ['POST', '/api/live/worktree-archive', { provider: 'claude', sessionId: 'x', cwd: s.state }],
       ];
       for (const [method, path, body] of cases) {
         const r = await call(s, A, method, path, body);
@@ -454,9 +461,28 @@ Deno.test({
         );
       }
       // the project-root rule: branch and ownership only for added projects
-      const other = await call(s, A, 'GET', `/api/live/branch?cwd=${q(s.root)}`);
+      const other = await call(s, A, 'GET', `/api/live/branch?cwd=${q(inHome('aib-not-a-project'))}`);
       refusedBy(other, 'outside_projects', 'branch outside the projects');
       passed(await call(s, A, 'GET', `/api/live/branch?cwd=${q(s.project)}`), 'branch of an added project');
+      // a project that holds a blocked folder (here: the state folder in the test's root): its row is left out, opening it is refused
+      assertEquals((await pc(s, 'POST', '/api/live/project-add', { path: s.root }))[0], 200);
+      const listed = await call(s, A, 'GET', `/api/live/files/list?root=project&project=${q(s.root)}`);
+      assertEquals(listed.status, 200, listed.text);
+      const names = (listed.json.entries as Json[]).map((e) => e.name);
+      assert(names.includes('projects') && !names.includes('state'), `rows: ${names.join(', ')}`);
+      refusedBy(await call(s, A, 'GET', `/api/live/files/list?root=project&project=${q(s.root)}&dir=state`), 'blocked_folder', 'dir=state');
+      const found = await call(s, A, 'GET', `/api/live/files/search?root=project&project=${q(s.root)}&q=devices`);
+      assertEquals(found.status, 200, found.text);
+      assert(!(found.json.matches as Json[]).some((m) => String(m.path).startsWith('state')), 'no match inside the state folder');
+      // a chat's worktree copy (<state>/worktrees/...) counts as its project's folder; the rest of the state folder does not
+      const wt = [s.state, 'worktrees', 'abc', 'chat-1'].join(sep);
+      await Deno.mkdir(wt, { recursive: true });
+      await Deno.writeTextFile(
+        s.state + sep + 'studio-worktrees.json',
+        JSON.stringify({ version: 1, worktrees: { k1: { path: wt, project: s.project, status: 'ready', branch: 'studio/chat-1' } } }),
+      );
+      passed(await call(s, A, 'GET', `/api/live/branch?cwd=${q(wt)}`), "a chat's worktree copy");
+      refusedBy(await call(s, A, 'GET', `/api/live/branch?cwd=${q(s.state)}`), 'blocked_folder', 'the state folder itself');
       // the terminal's cwd: a chat key of an added project, starting in a blocked folder, is refused
       const term = await socket(
         s,

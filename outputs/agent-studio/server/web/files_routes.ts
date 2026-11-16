@@ -146,6 +146,21 @@ function remoteBlocked(ctx: WebContext, root: string, rel: string): boolean {
   return isBlocked(joined, ctx.stateDir ?? null);
 }
 
+/** A list or search answer for a remote computer without the rows inside blocked folders (a project that is a home folder). */
+function withoutBlocked(ctx: WebContext, root: string, reply: Reply): Reply {
+  const [status, payload] = reply;
+  if (status !== 200 || !payload || typeof payload !== 'object') return reply;
+  const out = { ...(payload as Record<string, unknown>) };
+  for (const field of ['entries', 'matches']) {
+    const rows = out[field];
+    if (Array.isArray(rows)) {
+      const pathOf = (r: unknown) => String(r && typeof r === 'object' ? (r as { path?: unknown }).path ?? '' : '');
+      out[field] = rows.filter((r) => !remoteBlocked(ctx, root, pathOf(r)));
+    }
+  }
+  return [status, out];
+}
+
 async function guarded(work: () => Promise<unknown> | unknown): Promise<Reply> {
   try {
     return [200, await work()];
@@ -164,13 +179,17 @@ export function filesRoutes(): Map<string, Handler> {
       const args = parseQs(url.search.slice(1));
       const scope = await scopeFor(ctx, args);
       if (Array.isArray(scope)) return scope;
-      if (principal?.kind === REMOTE_PC && remoteBlocked(ctx, scope.root, one(args, 'path'))) return BLOCKED_REPLY;
+      const remote = principal?.kind === REMOTE_PC;
+      if (remote && (remoteBlocked(ctx, scope.root, one(args, 'path')) || remoteBlocked(ctx, scope.root, one(args, 'dir')))) {
+        return BLOCKED_REPLY;
+      }
       const wsl = wslLoc(scope.root);
+      let reply: Reply;
       if (wsl) {
         const kind = path.slice(path.lastIndexOf('/') + 1) as 'list' | 'search' | 'read';
-        return await wslFiles(kind, scope.root, wsl, args, ctx.artifacts?.store.origin ?? '');
-      }
-      return guarded(() => work(ctx, scope.root, args, scope.main));
+        reply = await wslFiles(kind, scope.root, wsl, args, ctx.artifacts?.store.origin ?? '');
+      } else reply = await guarded(() => work(ctx, scope.root, args, scope.main));
+      return remote ? withoutBlocked(ctx, scope.root, reply) : reply;
     });
   };
   const post = (path: string, work: (ctx: WebContext, body: Record<string, unknown>) => Promise<Reply>) => {
