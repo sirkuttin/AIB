@@ -44,6 +44,12 @@ const STUB = `(() => {
         go();
       });
     }
+    // the chat list is held while localStorage 'test-hold-list' is set (the pre-set must wait for it)
+    if (u.pathname === '/api/live/list' && localStorage.getItem('test-hold-list'))
+      return new Promise((resolve) => {
+        const go = () => (localStorage.getItem('test-hold-list') ? setTimeout(go, 50) : resolve(real(url, init)));
+        go();
+      });
     const id = u.searchParams.get('id') || '';
     const ch = window.__changes && window.__changes[id];
     if (u.pathname === '/api/live/changes' && ch) return Promise.resolve(json(ch));
@@ -52,6 +58,15 @@ const STUB = `(() => {
     if (u.pathname === '/api/live/connect' && init && init.body) window.__connects.push(JSON.parse(init.body));
     return real(url, init);
   };
+  // every state the Works in chip shows, in order: [greyed, value]
+  window.__chipLog = [];
+  setInterval(() => {
+    const b = document.getElementById('chip-worksin');
+    if (!b) return;
+    const s = [b.classList.contains('chip-locked'), (b.querySelector('.chip-v') || {}).textContent || ''];
+    const last = window.__chipLog[window.__chipLog.length - 1];
+    if (!last || last[0] !== s[0] || last[1] !== s[1]) window.__chipLog.push(s);
+  }, 20);
 })()`;
 
 async function shot(page: Page, name: string) {
@@ -258,12 +273,21 @@ worksInTest('24: a folder chat\'s Changes tab: fixed header, no Merge or Discard
       merge: !p.querySelector('.cg-merge-btn').hidden, discard: !p.querySelector('.cg-discard').hidden };
   })()`);
   assertEquals(f, {
-    scope: "Uncommitted in the project folder (this chat's and anyone else's)",
-    foot: 'Works in the project folder · nothing to merge. Ask the agent to commit or undo changes.',
+    scope: 'Project folder · uncommitted',
+    foot: "Works in the project folder · nothing to merge. The list holds this chat's and anyone else's uncommitted changes. Ask the agent to commit or undo them.",
     footShown: true,
     merge: false,
     discard: false,
   });
+  // the header fits the column at its default width: nothing cut
+  const fit = await page.eval<{ sw: number; cw: number; panel: number; sum: string }>(`(() => {
+    const s = document.querySelector('#changesPane .cg-scope'), sum = document.querySelector('#changesPane .cg-sum');
+    return { sw: s.scrollWidth, cw: s.clientWidth, panel: Math.round(document.getElementById('subagentsPane').getBoundingClientRect().width),
+      sum: sum.scrollWidth <= sum.clientWidth ? 'whole' : 'cut' };
+  })()`);
+  assert(fit.panel <= 290, `the default panel width: ${fit.panel}`);
+  assert(fit.sw <= fit.cw, `the header is cut at ${fit.panel} px: ${fit.sw} > ${fit.cw}`);
+  assertEquals(fit.sum, 'whole', 'the file count is not cut either');
   await shot(page, '24-folder-changes');
   const panelW = await page.eval<number>(`Math.round(document.getElementById('subagentsPane').getBoundingClientRect().width)`);
 
@@ -284,3 +308,31 @@ worksInTest('24: a folder chat\'s Changes tab: fixed header, no Merge or Discard
     'the right panel keeps its width when the chat changes',
   );
 }, () => ({}));
+
+worksInTest('21: the choice waits for the first chat list: greyed until then, then Own copy once, never Project folder first', async (lab) => {
+  const page = lab.page;
+  const busy: Chat = await lab.chat();
+  await busy.start();
+  busy.say('Working on it BUSYCHAT');
+  // a fresh page whose first chat list is held: the branch reply is already there
+  await page.eval(`localStorage.setItem('test-hold-list', '1')`);
+  await page.goto(`http://127.0.0.1:${lab.web.port}/chat.html`);
+  await page.waitFor(`!!document.getElementById('new')`, 15000, 'page');
+  await page.eval(`document.getElementById('new').click()`);
+  await page.waitFor(`!!document.getElementById('chip-worksin')`, 15000, 'the chip');
+  await settle(800);
+  const held = await chipState(page);
+  assertEquals([held.locked, held.value], [true, 'Project folder'], 'greyed while the list is on its way');
+  assert(held.title.includes('Checking…'), held.title);
+  assertEquals(held.note, '', 'no note before the decision');
+  await page.eval(`localStorage.removeItem('test-hold-list')`);
+  await page.waitFor(`!document.getElementById('chip-worksin').classList.contains('chip-locked')`, 15000, 'decided');
+  await settle(1500);
+  const s = await chipState(page);
+  assertEquals(s.value, 'Own copy');
+  assert(/is working in this folder\.$/.test(s.note), s.note);
+  const log = await page.eval<[boolean, string][]>(`window.__chipLog`);
+  assert(!log.some(([locked, v]) => !locked && v === 'Project folder'), `never a pickable Project folder first: ${JSON.stringify(log)}`);
+  assertEquals(log.filter(([locked]) => !locked).map(([, v]) => v), ['Own copy'], `decided once: ${JSON.stringify(log)}`);
+  busy.end();
+}, git);

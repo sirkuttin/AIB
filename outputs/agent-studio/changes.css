@@ -179,10 +179,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* A project-folder chat's long fixed heading gives way before the file count does. */
-.cg-scope.cg-folder ~ .cg-sum {
-  flex: 0 0 auto;
-}
 .cg-refresh {
   flex: 0 0 auto;
   width: 26px;

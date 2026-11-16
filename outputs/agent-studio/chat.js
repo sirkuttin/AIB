@@ -961,6 +961,8 @@
       return !!(lv && ((lv.elicitations && lv.elicitations.length) || lv.auth));
     });
   }
+  // The first chat list has arrived: the New chat screen's Works in choice waits for it (the pre-set reads the list).
+  let listedOnce = false;
   async function listConversations() {
     listedAt = Date.now();
     const [live, saved, ownership] = await Promise.all([
@@ -1101,6 +1103,9 @@
       if (conversations === built) conversations = kept;
     }
     annotateElsewhere();
+    const firstList = !listedOnce;
+    listedOnce = true;
+    if (firstList && newDraft && !selected) renderNewChat();
     if (selected) {
       const updated = conversations.find((c) => aliasKey(c) === aliasKey(selected));
       if (updated) selected = updated;
@@ -3555,7 +3560,8 @@
   const projectKeyOf = (path) =>
     window.AgentSidebarUI?.pathKey ? window.AgentSidebarUI.pathKey(path) : String(path || '').replace(/[\\/]+$/, '').toLowerCase();
   function worksInFor(cwd) {
-    if (!newDraft || !cwd) return null;
+    // Decided once, when the first chat list is in: until then the chip stays greyed with "Checking…" (no late flip).
+    if (!newDraft || !cwd || !listedOnce) return null;
     const w = newDraft.worksIn;
     if (w && w.cwd === cwd) return w;
     const preset = window.AgentComposerChips?.workingFolderChat(conversations, cwd, projectKeyOf, titleOf) || '';
@@ -3566,8 +3572,12 @@
   }
   // The chip's and the notes' view: the decision plus what the server said about the folder.
   function worksInView(cwd) {
+    // no folder yet: before the first chat list the project may still be on its way, so the slot is kept (greyed); after it, a
+    // screen with no folder at all has no chip (the first-run start page covers it)
+    if (!newDraft || (!cwd && listedOnce)) return null;
     const w = worksInFor(cwd);
-    if (!w || !cwd) return null;
+    // not decided yet (the chat list is still on its way): the same greyed "Checking…" slot as while the folder is checked
+    if (!w) return { ownCopy: false, preset: '', amber: false, copyable: null, whyNot: '', hidden: false };
     const known = newBranch.cwd === cwd ? newBranch : { copyable: null, whyNot: '' };
     return {
       ownCopy: w.ownCopy,
@@ -4054,8 +4064,10 @@
       picks = { model: newDraft.model, mode: newDraft.mode, effort: newDraft.effort },
       pickLists = newChatLists(f.cwd),
       wv = worksInView(f.cwd),
-      // the user's (or the pre-set) choice; never a copy for a folder the server said can't have one
-      ownCopy = !!(wv && wv.ownCopy && wv.copyable !== false);
+      decided = !!worksInFor(f.cwd),
+      // the user's (or the pre-set) choice; never a copy for a folder the server said can't have one. Not decided yet (sent
+      // before the first chat list came): left out, so the server applies the same pre-set rule itself.
+      ownCopy = decided ? !!(wv && wv.ownCopy && wv.copyable !== false) : undefined;
     if (!f.cwd || (!draft.trim() && !selectedAttachments('new-chat').length)) return;
     startingNew = true;
     clearError();

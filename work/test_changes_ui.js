@@ -503,7 +503,7 @@ test('a project-folder chat: the fixed header, no Merge or Discard, and the foot
   const pane = t.ids.subagentsPane;
   // before the changes are read: the header and the footer are already there (nothing pops in when the list arrives)
   assert.equal(pane.querySelector('.cg-scope').textContent, C.FOLDER_SCOPE);
-  assert.equal(C.FOLDER_SCOPE, "Uncommitted in the project folder (this chat's and anyone else's)");
+  assert.equal(C.FOLDER_SCOPE, 'Project folder · uncommitted', 'short enough for the 280 px column');
   t.ui().show('changes');
   await flush();
   assert.equal(pane.querySelector('.cg-scope').textContent, C.FOLDER_SCOPE, 'one fixed line, also with files listed');
@@ -512,7 +512,8 @@ test('a project-folder chat: the fixed header, no Merge or Discard, and the foot
     line = pane.querySelector('.cg-foot-folder');
   assert.equal(foot.hidden, false);
   assert.equal(line.hidden, false);
-  assert.equal(line.textContent, 'Works in the project folder · nothing to merge. Ask the agent to commit or undo changes.');
+  assert.equal(line.textContent, C.FOLDER_FOOT);
+  assert.ok(/this chat's and anyone else's/.test(C.FOLDER_FOOT), 'whose changes they are: in the footer, not the header');
   assert.equal(pane.querySelector('.cg-discard').hidden, true, 'no Discard');
   assert.equal(pane.querySelector('.cg-merge-btn').hidden, true, 'no Merge');
 });

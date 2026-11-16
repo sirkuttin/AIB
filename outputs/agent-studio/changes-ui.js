@@ -211,8 +211,9 @@
      toggles [SF 8]), no Merge and no Discard, and a status line that points at the chat (chat-first: no git buttons). Own-copy
      chats and helpers (the server sends data.worktree) keep the branch view, Merge and Discard. chat.folder comes from chat.js
      (an open chat without live.worktree that is not a helper). */
-  const FOLDER_SCOPE = "Uncommitted in the project folder (this chat's and anyone else's)";
-  const FOLDER_FOOT = 'Works in the project folder · nothing to merge. Ask the agent to commit or undo changes.';
+  const FOLDER_SCOPE = 'Project folder · uncommitted';
+  const FOLDER_FOOT =
+    "Works in the project folder · nothing to merge. The list holds this chat's and anyone else's uncommitted changes. Ask the agent to commit or undo them.";
   const isFolderView = (chat, data) =>
     !!(chat && chat.folder && !chat.discarded && !(data && (data.worktree || data.git === false || data.unknown)));
   /* The footer of the Changes tab, one row: status line (left), Discard…, then Merge (right). Returns the parts; merge-ui.js drives the line and the button. */
@@ -677,8 +678,7 @@
         : data && data.scope === 'branch'
           ? "This chat's changes"
           : 'Uncommitted';
-      scopeEl.title = scopeEl.textContent; // the folder line is long: the whole of it on hover when the column cuts it
-      scopeEl.classList.toggle('cg-folder', isFolderView(chat, data));
+      scopeEl.title = scopeEl.textContent;
       const t = data && data.git ? totalsOf(data) : null;
       sum.replaceChildren();
       if (t && t.files) {
