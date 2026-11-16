@@ -37,6 +37,7 @@ import {
   type RemoteStudio,
   remoteStudio,
   serveStatus,
+  writeSavedChat,
 } from './_remote_fixture.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
@@ -534,6 +535,21 @@ Deno.test({
         permissions: [],
         elicitations: [],
       });
+      // a saved chat with a picture (its address is /api/transcript/image?key=..., the one API address the page keys pictures for)
+      const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==';
+      const shotStamp = new Date(Date.now() - 3600_000).toISOString();
+      writeSavedChat(s.claudeDir, s.project, {
+        sessionId: 'pictured-1',
+        rows: [
+          {
+            type: 'user',
+            sessionId: 'pictured-1',
+            cwd: s.project,
+            timestamp: shotStamp,
+            message: { role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: PNG } }] },
+          },
+        ],
+      });
       const computer = await pairPhone(s, 'Laptop (Edge)', undefined, 'computer');
       Deno.writeTextFileSync(`${s.project}/notes.txt`, 'Menu fix notes');
       await s.ctx.viewPrefs.update({
@@ -760,11 +776,32 @@ Deno.test({
         ),
         'none',
       );
-      // a picture from an API address (a saved chat's pictures) is fetched with the device key and shown from memory
+      // a saved chat's picture (/api/transcript/image) is fetched with the device key and shown from memory; any other API address
+      // in an <img> (agent-written content can put one there) is never fetched with the key (security review SF7)
+      const sessions = await get(s, '/api/sessions', computer.token);
+      assertEquals(sessions.status, 200, sessions.text);
+      const shotKey = String(
+        (sessions.json.sessions as Json[]).map((x) => x.key).find((k) => String(k).endsWith('pictured-1.jsonl')),
+      );
+      const shown = await get(s, `/api/transcript?key=${encodeURIComponent(shotKey)}`, computer.token);
+      assertEquals(shown.status, 200, shown.text);
+      const im = (JSON.stringify(shown.json).match(/"images":\[\{"n":(\d+),"i":(\d+)/) ?? []).slice(1);
+      assertEquals(im.length, 2, 'the saved chat has a picture');
+      const shotSrc = `/api/transcript/image?key=${encodeURIComponent(shotKey)}&n=${im[0]}&i=${im[1]}`;
       await page.eval(
-        `(() => { const i = document.createElement('img'); i.id = 'keyedImg'; i.src = '/api/live/read-state'; document.body.append(i); })()`,
+        `(() => { const i = document.createElement('img'); i.id = 'keyedImg'; i.src = ${JSON.stringify(shotSrc)}; document.body.append(i);
+          const o = document.createElement('img'); o.id = 'otherImg'; o.src = '/api/live/read-state'; document.body.append(o); })()`,
       );
       await page.waitFor(`document.getElementById('keyedImg').src.startsWith('blob:')`, 5000, 'the keyed picture');
+      assertEquals(
+        await page.eval(`[document.getElementById('otherImg').getAttribute('src'), document.getElementById('otherImg').dataset.remoteSrc ?? null]`),
+        ['/api/live/read-state', null],
+        'another API address is not fetched with the key',
+      );
+      // that keyless picture request is refused (no device key), as it should be: not a request the page itself makes
+      await page.waitFor(`document.getElementById('otherImg').complete`, 5000, 'the keyless picture answered');
+      await page.eval(`document.getElementById('otherImg').remove()`);
+      seen.refused = seen.refused.filter((r) => !r.includes(' GET /api/live/read-state '));
       // a computer's notification click opens /pc.html#chat=<live id> (the service worker, from the push): that chat opens
       await page.goto(`https://${NAME}/remote.css`);
       await page.send('Page.navigate', { url: `https://${NAME}/pc.html#chat=c2` });
