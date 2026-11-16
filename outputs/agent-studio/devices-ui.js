@@ -1068,7 +1068,7 @@
     if (v.devicesWarning) frag.append(el('p', v.devicesWarning, 'st-note bad'));
     const devices = v.devices || [];
     if (D.kindAsk && !devices.some((d) => d.id === D.kindAsk.id)) D.kindAsk = null;
-    if (!devices.length) frag.append(el('p', 'No phones are paired. A house with no phones cannot stand… on the couch and answer chats.', 'st-note'));
+    if (!devices.length) frag.append(el('p', 'No phones or computers are paired yet. Add one to answer chats from the couch or another desk.', 'st-note'));
     const list = el('div', null, 'dv-list');
     for (const d of devices) {
       const row = el('div', null, 'st-agent dv-device');
