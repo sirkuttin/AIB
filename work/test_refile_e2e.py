@@ -7,14 +7,21 @@ adapters, the local stub model API (work/stub_model_api.js), temp CLAUDE_CONFIG_
                load in P with a question gets "STUB codeword=TEAL-42" (the history reached the model). Empty copy-named folders go.
   Codex        what AIB's refileCodex does after the backup: open the chat once in P (session/load cwd=P, no prompt); the listing for
                P then has it and W's does not. AIB never writes Codex's files.
+  Codex/AIB    the same through AIB itself (work/refile_cli.ts codex-studio): a real Studio makes the Codex chat in W, then its
+               moveChatToFolder (what Discard runs) maps it, backs the rollout up and opens it once in P through connect; Continue
+               from a page that still sends W opens it in P with its history. The agent's own listing for P has it.
 
-Guard: no entry for the temp folders may appear in the owner's ~/.claude/projects or ~/.codex/sessions.
+Guard: no entry for the temp folders may appear in the owner's ~/.claude/projects or ~/.codex/sessions, and none of the test's
+Codex session ids may appear there (file names, or the thread index state_5.sqlite, opened read-only and immutable).
+Adapters: AIB_CLAUDE_ACP / AIB_CODEX_ACP (dist/index.js of the adapter), else the global npm install. For Codex, a copy of AIB's
+pinned codex-acp 2.6.0 inside the worktree works (AIB_CODEX_ACP=<copy>/node_modules/@agentclientprotocol/codex-acp/dist/index.js).
 """
 import _isolation  # noqa: F401
 import json
 import os
 import pathlib
 import shutil
+import sqlite3
 import subprocess
 import tempfile
 import unittest
@@ -27,13 +34,32 @@ DENO = shutil.which('deno')
 CLI = _isolation.TESTS / 'refile_cli.ts'
 
 
-def refile_cli(*args):
-    out = subprocess.run([DENO, 'run', '-A', '--quiet', str(CLI), *map(str, args)], capture_output=True, text=True, timeout=120,
-                         creationflags=NO_WINDOW, stdin=subprocess.DEVNULL, cwd=str(_isolation.APP))
+def refile_cli(*args, env=None, timeout=120):
+    out = subprocess.run([DENO, 'run', '-A', '--quiet', str(CLI), *map(str, args)], capture_output=True, text=True, timeout=timeout,
+                         creationflags=NO_WINDOW, stdin=subprocess.DEVNULL, cwd=str(_isolation.APP), env=env)
     lines = [line for line in out.stdout.splitlines() if line.strip().startswith('{')]
     if not lines:
         raise AssertionError(f'refile_cli printed nothing: {out.stdout!r} {out.stderr[-2000:]!r}')
     return json.loads(lines[-1])
+
+
+def assert_not_in_owner_codex(test, session):
+    """The owner's ~/.codex has no trace of this test's session id: no rollout file names it, the thread index has no such id."""
+    codex = pathlib.Path(os.path.expanduser('~')) / '.codex'
+    sessions = codex / 'sessions'
+    if sessions.is_dir():
+        test.assertEqual(list(sessions.rglob(f'*{session}*')), [], "the test's Codex session reached the owner's ~/.codex/sessions")
+    index = codex / 'state_5.sqlite'
+    if index.is_file():
+        try:  # read-only and immutable: SQLite writes nothing next to the owner's file
+            db = sqlite3.connect(f'{index.as_uri()}?mode=ro&immutable=1', uri=True)
+            try:
+                found = db.execute('SELECT COUNT(*) FROM threads WHERE id = ?', (session,)).fetchone()[0]
+            finally:
+                db.close()
+        except sqlite3.Error:
+            return  # another schema or locked: the file-name check above stands
+        test.assertEqual(found, 0, "the test's Codex session reached the owner's thread index")
 
 
 @unittest.skipUnless(NODE and DENO, 'needs node and deno')
@@ -110,6 +136,30 @@ class RefileE2ETest(unittest.TestCase):
         probe(CODEX_ACP, self.env, 'load', str(self.project), session)  # what refileCodex's load does: no prompt
         self.assertIn(session, self.listed(CODEX_ACP, self.project))
         self.assertNotIn(session, self.listed(CODEX_ACP, self.copy))
+        assert_not_in_owner_codex(self, session)
+
+    @unittest.skipUnless(CODEX_ACP, 'needs the Codex ACP adapter')
+    def test_codex_refiled_through_aib_connect(self):
+        env = dict(self.env, STUDIO_REAL_ADAPTER_TESTS='1')
+        done = refile_cli('codex-studio', self.state, self.temp / 'codex', NODE, CODEX_ACP, self.copy, self.project, env=env, timeout=420)
+        self.assertNotIn('error', done, done)
+        session = done['sessionId']
+        self.assertIn('STUB codeword=TEAL-42', done['first'], 'the chat AIB started reached the stub')
+        moved = done['moved']
+        self.assertEqual([os.path.normcase(moved['project']), os.path.normcase(moved['from']), moved['why']],
+                         [os.path.normcase(str(self.project)), os.path.normcase(str(self.copy)), 'discarded'])
+        backup = pathlib.Path(moved['backup'])
+        self.assertTrue(backup.is_file() and backup.is_relative_to(self.state / 'refiled' / 'codex'), done)
+        self.assertTrue(moved['refiled'], f'the rollout was re-filed: {done["log"]}')
+        self.assertEqual(os.path.normcase(done['loadCwd']), os.path.normcase(os.path.realpath(self.project)),
+                         'opened once in the project folder')
+        # Codex re-indexed it itself: its own listing for P has it, W's does not
+        self.assertIn(session, self.listed(CODEX_ACP, self.project))
+        self.assertNotIn(session, self.listed(CODEX_ACP, self.copy))
+        # Continue from a page that still sends W: opened in P, the history reached the model
+        self.assertEqual(os.path.normcase(done['continuedIn']), os.path.normcase(os.path.realpath(self.project)))
+        self.assertIn('STUB codeword=TEAL-42', done['reply'], 'the history reached the model after the move')
+        assert_not_in_owner_codex(self, session)
 
 
 if __name__ == '__main__':
