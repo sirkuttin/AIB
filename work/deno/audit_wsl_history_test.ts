@@ -44,7 +44,7 @@ class WslLab {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
     const studio = new Studio({ ompCommand: 'unused', stateDir: this.state, port: 0, ownersDir: null }, { keeper });
     studio.ownerProbe = () => null;
-    studio.connectionFactory = (command, cwd, provider, options) => {
+    studio.connectionFactory = (_command, cwd, provider, options) => {
       const wsl = options?.wsl ? { ...options.wsl, program: undefined } : options?.wsl;
       return new Connection(fake('--cancel-aware', '--breadth'), cwd, provider, { ...options, wsl });
     };
@@ -223,7 +223,7 @@ Deno.test({
     await keeperBinary();
     await using lab = new WslLab();
     const a = lab.studio();
-    a.connectionFactory = (command, cwd, provider, options) => { // the fake agent's session/list answers Linux cwds (/fixture/project)
+    a.connectionFactory = (_command, cwd, provider, options) => { // the fake agent's session/list answers Linux cwds (/fixture/project)
       const wsl = options?.wsl ? { ...options.wsl, program: undefined } : options?.wsl;
       return new Connection(fake('--cancel-aware', '--list-sessions'), cwd, provider, { ...options, wsl });
     };
