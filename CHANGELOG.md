@@ -18,6 +18,9 @@
   colour; .gitignore ones stay dimmed. The chat's agent can read and edit them in the main folder by their full Linux path. AIB never
   writes a .gitignore.
 
+
+- WSL: a one-off tool, `deno run -A tools/wsl-import.ts`, moves the chats a WSL project had before worktree copies into their own
+  copies (own branch, Changes, Merge). It starts with a dry run, keeps a backup of each moved history file, and can undo.
 - WSL screens: spacing, contrast and wording fixes.
 - WSL chats survive AIB being away: the Linux keeper keeps a distro's agents running for 2 hours without AIB, not 35 seconds. An
   AIB restart, crash, update or test-build swap, or an older AIB build that stopped the keep-alive, no longer stops claude or codex
