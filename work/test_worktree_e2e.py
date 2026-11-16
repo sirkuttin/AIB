@@ -240,11 +240,13 @@ class Env:
             return None
 
     # ---- chats ----
-    def open_chat(self, project, resume=None, web=None, expect=200):
+    def open_chat(self, project, resume=None, web=None, expect=200, own_copy=True):
         web = web or self.web
         body = {'provider': 'claude', 'cwd': str(project), 'background': True}
         if resume:
             body['resume'] = resume
+        elif own_copy is not None:
+            body['ownCopy'] = own_copy   # build plan 1b: a new chat works in the project folder unless it asks for its own copy
         status, connection = web.post('connect', body)
         if expect != 200:
             assert status == expect, (status, connection)
@@ -868,7 +870,7 @@ class TakeoverTests(unittest.TestCase):
         self.assertTrue(host_client.pid_alive(web.boot['hostPid']))
         status, payload = web.post('settings', {'server': {'worktreePerChat': True}})
         project = make_repo(fx.root.resolve() / 'proj-takeover')
-        status, connection = web.post('connect', {'provider': 'claude', 'cwd': str(project), 'background': True})
+        status, connection = web.post('connect', {'provider': 'claude', 'cwd': str(project), 'background': True, 'ownCopy': True})
         self.assertEqual(status, 200, connection)
         chat = Chat(types.SimpleNamespace(), connection['id'], web)
         wait_for(lambda: chat.state().get('ready'), 'chat ready on the new host')

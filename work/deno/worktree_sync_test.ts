@@ -327,10 +327,12 @@ Deno.test('the note lists the synced files once, then context_sent clears it', a
   assert(note(ctx).endsWith('p?48?.txt, p?49?.txt and 3 more</studio-context>'), note(ctx));
 });
 
-Deno.test('the flag off means no watcher and no note', async () => {
+Deno.test('the old worktreePerChat flag no longer turns live sync off (build plan 1b); a closed live sync is off', async () => {
   using box = new Sandbox();
   const ctx = await setup(box);
   ctx.studio.flag.on = false;
+  assertEquals(ctx.live.enabled(), true, 'Own-copy chats and helpers keep live sync whatever the hidden flag says');
+  ctx.live.closed = true;
   assertEquals(ctx.live.enabled(), false);
   await ctx.live.refresh();
   assertEquals(ctx.live.projects.size, 0);

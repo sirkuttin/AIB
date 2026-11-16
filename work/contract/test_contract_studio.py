@@ -214,7 +214,9 @@ class StudioContract(unittest.TestCase):
         self.compare(a, b, 'changes without a token')
         for query in ('cwd=' + urllib.parse.quote(repo), 'cwd=' + urllib.parse.quote(repo + '\\sub'), 'cwd=', 'cwd=%5C%5Cserver%5Cshare',
                       'cwd=' + urllib.parse.quote(str(self.root))):
-            self.same_get('/api/live/branch?' + query)
+            # copyable / whyNot (build plan 1b, SF 10) are Deno-only: the Python reference has no such keys
+            self.same_get('/api/live/branch?' + query, normalize=lambda data, server: (
+                {k: v for k, v in data.items() if k not in ('copyable', 'whyNot')} if server is self.subject and isinstance(data, dict) else data))
 
     @unittest.skipUnless(HAVE_GIT, 'needs git')
     def test_worktree_routes(self):

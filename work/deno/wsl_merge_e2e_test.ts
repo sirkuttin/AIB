@@ -80,7 +80,7 @@ Deno.test({
       await sh('git -C "$1" branch -M main', repo); // the distro's git may default to master; the temp repo uses main
       const a = studioIn(state);
       studios.push(a);
-      const c = await a.connect('claude', ref);
+      const c = await a.connect('claude', ref, null, { ownCopy: true });
       const linux = c.agentCwd;
       assert(c.worktree?.branch.startsWith('studio/chat-'), 'the chat works in its own copy');
       const api = routesOf(a);

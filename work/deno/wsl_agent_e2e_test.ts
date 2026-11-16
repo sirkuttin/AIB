@@ -46,7 +46,7 @@ Deno.test({
       const ref = refOf({ kind: 'wsl', distro: KEY, linuxPath: `${ROOT}/repo` });
       const a = studioIn(state);
       studios.push(a);
-      const c = await a.connect('claude', ref);
+      const c = await a.connect('claude', ref, null, { ownCopy: true });
       // the repo is git: the chat works in its own worktree in the distro (wsl_worktrees_e2e checks it in detail)
       assert(c.agentCwd.startsWith(`${ROOT}/data-`) && c.agentCwd.includes('/worktrees/'), c.agentCwd);
       assertEquals(c.projectRoot, ref);

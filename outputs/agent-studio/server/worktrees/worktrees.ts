@@ -716,9 +716,10 @@ export async function mainBranch(project: string, fallback: string): Promise<str
 
 /** The start note of a chat that works in place because of `reason` ('' when that is not worth a note in the chat). */
 export function inPlaceNote(reason: string): string {
-  return reason === 'the repository has no commits yet'
-    ? 'This chat works in the project folder itself, not in its own copy: the repository has no commits yet, so there is no main branch to start from.'
-    : '';
+  // Build plan 1b: only a chat that asked for its own copy (or got one pre-set) is told; every reason, said plainly.
+  if (!reason) return '';
+  const why = reason === 'the repository has no commits yet' ? `${reason}, so there is no branch to start from` : reason;
+  return `Couldn't make an own copy for this chat, so it works in the project folder: ${why}.`;
 }
 
 /** hashlib.sha1(normcase(realpath(project))).hexdigest()[:10] */

@@ -11,7 +11,16 @@
  * Python `with self.lock:` block does no blocking work, so it is a stretch of synchronous code here.
  */
 import { AddedProjects } from '../desktop/added_projects.ts';
-import { Connection, type ConnectionOptions, errorText, historyV2, NotStoppable, ThreadEvent } from '../acp/connection.ts';
+import {
+  Connection,
+  type ConnectionOptions,
+  errorText,
+  historyV2,
+  NotStoppable,
+  SHARED_FOLDER_CONTEXT,
+  sharedFolderNote,
+  ThreadEvent,
+} from '../acp/connection.ts';
 import { HistoryClient } from '../history/client.ts';
 import { sessionOp } from '../acp/breadth.ts';
 import type { McpServer } from '../acp/breadth.ts';
@@ -53,7 +62,7 @@ import { findExternalOwner, OwnershipConflict, probeExternalOwner, SessionLease 
 import { ACTIVE_WINDOW_SECONDS, type Assessment, HEARTBEAT_SECONDS, OwnerRegistry, OwnershipEvidence, OwnershipProbe } from '../ownership/probe.ts';
 import { mergeAssessment, wslOwnerCheck, wslOwnerHints, wslOwnPids } from '../wsl/ownership.ts';
 import { expandUser } from '../platform/pypath.ts';
-import { home, isdir, join, realpath } from '../platform/ospath.ts';
+import { home, isdir, join, normcase, realpath } from '../platform/ospath.ts';
 import { Recovery, StateStore } from '../state/recovery.ts';
 import { ConversationState, ProjectPrefs, ReadState, SettingsStore } from '../state/store.ts';
 import { builtinLaunch } from '../web/shared.ts';
@@ -245,6 +254,22 @@ export interface ConnectOptions {
   helperOf?: { helperId: string; parent: string } | null;
   /** The automatic reconnect at start (reconnectOne), not the person's Continue: a WSL agent turned off for its distro is not refused then. */
   auto?: boolean;
+  /**
+   * Where a new chat works (build plan 1b): true its own copy (a worktree on its own branch), false the project folder itself;
+   * null or missing (the phone, older pages, agent-started chats) the pre-set rule: its own copy when another folder chat in the
+   * project is working (folderChatWorking), else the folder. A saved chat (resume) and a helper ignore it.
+   */
+  ownCopy?: boolean | null;
+}
+
+/** Marks the token of the combined prompt note (Studio #wire), so a token from elsewhere is never taken for one. */
+const OWN_CONTEXT = '__aibOwnContext';
+
+/** body.ownCopy of a connect request: true, false, or null when missing. */
+export function readOwnCopy(value: unknown): boolean | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'boolean') throw new ValueError('ownCopy must be true, false or null');
+  return value;
 }
 
 /** Swarm: body.helperOf of a connect request ({helperId, parent}), else null. */
@@ -368,6 +393,8 @@ export class Studio {
    */
   readonly keeperForNew: boolean;
   #mcpHttp: ArtifactMcpHttp | null = null;
+  /** One-time <studio-context> lines per live chat id (addPromptContext), sent with its next prompt. */
+  readonly #ownContext = new Map<string, string[]>();
   /** Stops this Studio answering WSL agents' tool calls (wsl/mcp_tunnel.ts); null when it never did. */
   #untunnel: (() => void) | null = null;
 
@@ -1155,9 +1182,13 @@ export class Studio {
       : null;
     if (asHelper && resume) throw new ValueError('A helper is a new chat');
     if (asHelper && !this.worktrees) throw new ValueError('Helpers need a worktree: this AIB has no state folder');
-    if (resume === null && this.worktrees && (this.settings.worktreePerChat() || asHelper)) {
+    // Build plan 1b: a new chat works in the project folder unless it asks for its own copy (or the pre-set rule gives it one because
+    // another folder chat in the project is working, decided now and never changed later); a helper always gets its own copy.
+    const working = resume === null && !asHelper ? this.folderChatWorking(workspace) : null;
+    const wantsCopy = resume === null && !!this.worktrees && (!!asHelper || (options.ownCopy ?? !!working));
+    if (wantsCopy) {
       const kind = asHelper ? 'helper' : 'chat';
-      const planned = wsl ? await wslPlanWithReason(workspace, kind) : await this.worktrees.planWithReason(workspace, null, kind); // no plan: works in place
+      const planned = wsl ? await wslPlanWithReason(workspace, kind) : await this.worktrees!.planWithReason(workspace, null, kind); // no plan: works in place
       plan = planned.plan;
       startNote = wt.inPlaceNote(planned.reason);
       // a helper never works in the project folder (review break 5)
@@ -1200,7 +1231,8 @@ export class Studio {
       c.sessionLease = lease;
       if (asHelper) c.swarm = { role: 'helper', helperId: asHelper.helperId, parent: asHelper.parent };
       else if (known) c.swarm = { role: 'helper', helperId: known.id, parent: known.parent.live };
-      else if (c.worktree && (!wsl || WSL_TOOL_GROUPS.swarm)) c.swarm = { role: 'main' }; // WSL: only once its swarm tools are on
+      // every other chat can lead helpers, in its own copy or in the project folder (MF 1); WSL: only once its swarm tools are on
+      else if (!wsl || WSL_TOOL_GROUPS.swarm) c.swarm = { role: 'main' };
       let toolsNotice = '';
       if (launch) {
         const tools = await this.wslMcpServers(c.id, wsl!.distro); // the tunnel, else interop, else a notice (WSL_TOOL_GROUPS)
@@ -1222,7 +1254,10 @@ export class Studio {
         try {
           // before the snapshot: the default /private exclude is in force, so a new copy never takes the main folder's private/
           const local = wsl ? null : await this.#localOnlyDefault(c.worktree ? c.projectRoot : workspace);
-          if (plan) await this.#makeWorktree(c, plan, workspace);
+          if (plan) {
+            const fellBack = await this.#makeWorktree(c, plan, workspace);
+            if (fellBack) startNote = wt.inPlaceNote(fellBack);
+          }
           c.localOnly = this.#localOnlyFor(c, local);
           await c.setup(resume || null);
           if (plan instanceof WslPlan) {
@@ -1230,6 +1265,7 @@ export class Studio {
           } else if (plan && this.worktrees!.registry.get(plan.key)) await this.worktrees!.setSession(plan.key, provider, c.sessionId!);
           const note = plan && c.worktree ? plan.note : startNote;
           if (note) c.recordedEvent('studio_note', { message: note, sessionId: c.sessionId });
+          if (!c.worktree && c.swarm?.role !== 'helper' && working && !working.closed && working !== c) this.#sharedFolderStart(c, working);
           if (toolsNotice) c.recordedEvent('studio_note', { message: toolsNotice, sessionId: c.sessionId }); // a WSL chat's tools
 
           if (!lease) {
@@ -1293,13 +1329,28 @@ export class Studio {
     };
     c.onTurnEnd = (conn) => this.turnEnded(conn);
     c.onLimits = (conn, kind, raw, at) => this.limits.fromAgent(conn, kind, raw, at);
-    if (this.liveSync) {
-      const sync = this.liveSync;
-      const wsl = this.wslSync!; // a WSL chat in its own copy: its distro's helper runs the hooks (wsl/sync.ts)
-      c.onTurnStart = (conn) => wslSyncChat(conn) ? wsl.turnStarted(conn) : sync.turnStarted(conn);
-      c.contextForPrompt = (conn) => wslSyncChat(conn) ? wsl.contextFor(conn) : sync.contextFor(conn);
-      c.contextSent = (conn, token) => wslSyncChat(conn) ? wsl.contextSent(conn, token) : sync.contextSent(conn, token);
-    }
+    const sync = this.liveSync;
+    const wsl = this.wslSync; // a WSL chat in its own copy: its distro's helper runs the hooks (wsl/sync.ts)
+    if (sync) c.onTurnStart = (conn) => wslSyncChat(conn) && wsl ? wsl.turnStarted(conn) : sync.turnStarted(conn);
+    // Every chat (build plan SF 11): live sync's note for a copy, then AIB's own one-time lines (#ownContext), in one prompt.
+    c.contextForPrompt = async (conn) => {
+      const synced = sync ? await (wslSyncChat(conn) && wsl ? wsl.contextFor(conn) : sync.contextFor(conn)) as [string, unknown] | null : null;
+      const own = this.#ownContext.get(conn.id) ?? [];
+      if (!synced && !own.length) return null;
+      const ownText = own.length ? `<studio-context>${own.join('\n')}</studio-context>` : '';
+      const text = [synced ? synced[0] : '', ownText].filter(Boolean).join('\n');
+      return [text, { [OWN_CONTEXT]: true, sync: synced ? synced[1] : null, synced: !!synced, own: own.length }];
+    };
+    c.contextSent = async (conn, token) => {
+      const t = isDict(token) && token[OWN_CONTEXT] ? token : null;
+      if (!t) return;
+      if (t.synced && sync) await (wslSyncChat(conn) && wsl ? wsl.contextSent(conn, t.sync) : sync.contextSent(conn, t.sync));
+      const own = this.#ownContext.get(conn.id);
+      if (own && Number(t.own) > 0) {
+        own.splice(0, Number(t.own));
+        if (!own.length) this.#ownContext.delete(conn.id);
+      }
+    };
     const caps = c.caps as { configure?: (terminal: boolean, fs: 'read' | 'readwrite' | null) => void };
     caps.configure?.(!!this.options.enableClientTerminal, this.options.enableClientFs ?? null);
   }
@@ -1800,7 +1851,9 @@ export class Studio {
     return { entries: told.map(abs), dirs: told.map(abs).filter((p) => isdir(p)), private: privateDir };
   }
 
-  async #makeWorktree(connection: Connection, plan: wt.Plan, project: string): Promise<void> {
+  /** Make the plan's worktree and start the agent; '' when made, else why the chat works in the project folder instead (wt.Fallback). */
+  async #makeWorktree(connection: Connection, plan: wt.Plan, project: string): Promise<string> {
+    let fellBack = '';
     try {
       if (plan instanceof WslPlan) await wslCreate(plan); // made in the distro by its helper
       else await this.worktrees!.create(plan);
@@ -1812,12 +1865,14 @@ export class Studio {
       else connection.retarget(project);
       connection.projectRoot = project;
       connection.worktree = null;
+      fellBack = error.message || 'the copy could not be made';
     }
     if (connection.closed) {
       await this.#discardPlan(plan);
       throw new Error('The chat was closed while it was starting');
     }
     connection.startProcess();
+    return fellBack;
   }
 
   /** Forget a plan's worktree: the Windows registry's, or (a WSL plan) the distro's. */
@@ -1826,9 +1881,64 @@ export class Studio {
     else await this.worktrees!.discard(plan.key);
   }
 
-  /** Swarm: a main chat is any open chat in its own worktree that the helper registry does not list (review option C). */
+  /** Put a one-time line in front of this chat's next prompt (in a <studio-context> block); said once, then dropped. */
+  addPromptContext(c: Connection, line: string): void {
+    const lines = this.#ownContext.get(c.id) ?? [];
+    if (!lines.includes(line)) lines.push(line);
+    this.#ownContext.set(c.id, lines);
+  }
+
+  /**
+   * Build plan 1.3: the open folder chat of this project that is working (a turn running, or messages queued), else null. A chat in
+   * its own copy and a helper do not count: they don't write the project folder. Read when a new chat is made, never watched.
+   */
+  folderChatWorking(project: string): Connection | null {
+    const key = (p: string) => (wslLoc(p) ? p : normcase(realpath(p)));
+    let want: string;
+    try {
+      want = key(project);
+    } catch {
+      return null;
+    }
+    for (const c of this.connections.values()) {
+      if (c.closed || c.worktree || c.swarm?.role === 'helper') continue;
+      const queued = c.queue.items.length > 0 || c.queue.steer.length > 0;
+      if (!c.busy && !queued) continue;
+      try {
+        if (key(c.cwd) === want) return c;
+      } catch { /* its folder is gone */ }
+    }
+    return null;
+  }
+
+  /** A chat's name for a note: the agent's title for it, else AIB's saved one, else its first message, else "another chat". */
+  chatTitle(c: Connection): string {
+    const clip = (t: string) => {
+      const one = t.replace(/\s+/g, ' ').trim();
+      return one.length > 60 ? `${one.slice(0, 59)}…` : one;
+    };
+    const info = c.breadth?.sessionInfo?.title;
+    if (isStr(info) && info.trim()) return clip(info);
+    const mark = c.sessionId ? this.conversations.entries.get(ConversationState.sessionKey(c.provider, c.sessionId)) : null;
+    if (mark && isStr(mark.title) && mark.title.trim()) return clip(mark.title);
+    const first = c.events.find((e) => e.kind === 'user' && isDict(e.data) && isStr(e.data.text) && e.data.text.trim());
+    if (first) return clip(String((first.data as Record<string, unknown>).text));
+    return 'another chat';
+  }
+
+  /** Build plan 1.1 (4): a new folder chat starts while another folder chat works there: one grey line, and both agents are told. */
+  #sharedFolderStart(c: Connection, working: Connection): void {
+    c.recordedEvent('studio_note', { message: sharedFolderNote(this.chatTitle(working)), sessionId: c.sessionId });
+    this.addPromptContext(c, SHARED_FOLDER_CONTEXT);
+    this.addPromptContext(working, SHARED_FOLDER_CONTEXT);
+  }
+
+  /**
+   * Swarm: a main chat is any open chat, in its own worktree or in the project folder (build plan 1b, MF 1), that the helper registry
+   * does not list (review option C).
+   */
   #isMain(c: Connection): boolean {
-    if (c.swarm?.role !== 'main' || !c.worktree) return false;
+    if (c.swarm?.role !== 'main') return false;
     if (!this.hasStateDir) return true;
     if (!swarmEnabled(this.stateDir)) return false; // swarm phase 1 is opt-in (swarm/settings.ts): no helper tools while it is off
     return !helperOf(readHelpers(this.stateDir), { live: c.id, lasting: c.sessionId ? `${c.provider}:${c.sessionId}` : null, path: c.cwd });
@@ -2366,6 +2476,7 @@ export class Studio {
         continueAnyway,
         picks: readPicks(body.picks),
         helperOf: readHelperOf(body.helperOf),
+        ownCopy: readOwnCopy(body.ownCopy),
       });
       return [200, connection.public()];
     }

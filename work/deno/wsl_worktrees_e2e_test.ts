@@ -51,7 +51,7 @@ Deno.test({
       const ref = refOf({ kind: 'wsl', distro: KEY, linuxPath: repo });
       const a = studioIn(state);
       studios.push(a);
-      const c = await a.connect('claude', ref);
+      const c = await a.connect('claude', ref, null, { ownCopy: true });
       const linux = c.agentCwd;
       assert(new RegExp(`^${ROOT}/data-[0-9a-f]{12}/worktrees/[0-9a-f]{10}/chat-[0-9a-f]{8}$`).test(linux), linux);
       assertEquals([c.cwd, c.projectRoot, c.wsl?.linuxPath], [refOf({ kind: 'wsl', distro: KEY, linuxPath: linux }), ref, linux]);
@@ -130,7 +130,7 @@ Deno.test({
       const ref = refOf({ kind: 'wsl', distro: KEY, linuxPath: `${ROOT}/plain` });
       const a = studioIn(state);
       studios.push(a);
-      const c = await a.connect('claude', ref);
+      const c = await a.connect('claude', ref, null, { ownCopy: true });
       assertEquals([c.cwd, c.agentCwd, c.projectRoot, c.worktree], [ref, `${ROOT}/plain`, ref, null]);
       assertEquals(await sh('ls -A "$1"/data-*/worktrees 2>/dev/null | wc -l', ROOT), '0');
     } finally {

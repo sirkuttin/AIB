@@ -1002,8 +1002,9 @@ export class LiveSync {
     return this.studio.worktrees!.registry;
   }
 
+  /** Build plan 1b: on for every Own-copy chat and helper; no longer gated on the hidden worktreePerChat flag. */
   enabled(): boolean {
-    return !!(this.studio.worktrees && this.studio.settings.worktreePerChat() && !this.closed);
+    return !!(this.studio.worktrees && !this.closed);
   }
 
   /** [key, record] of the open, Studio-owned worktree chats (of one project). */

@@ -138,7 +138,7 @@ Deno.test({
     const p = host.box.project;
     write(p, 'private/old.md', 'notes made before AIB\n'); // must not reach the copy's snapshot: the exclude comes first
     const studio = host.studio(['--extra-dirs']);
-    const c = await studio.connect('omp', p);
+    const c = await studio.connect('omp', p, null, { ownCopy: true });
     await until(() => c.ready, 'the chat is ready', 30);
     assert(c.worktree, 'a worktree chat');
     assert(host.exclude().includes(BLOCK_START) && host.exclude().includes('/private'), host.exclude());

@@ -344,15 +344,13 @@ Deno.test({
     const mode = await box.swarm.tool(main.id, 'start_helper', { ...BRIEF, mode: 'bypassPermissions' });
     assertEquals((mode[1] as Json).code, 'bad_field');
 
-    // a plain folder: the chat works in place, so it is no main chat; a helper can't be made there at all
+    // a plain folder: the chat works in the folder and is a main chat (build plan 1b, MF 1), but a helper can't be made there
     const plain = pathOf(box.dir, 'plain');
     Deno.mkdirSync(plain);
     const inPlace = await box.studio.connect('claude', plain);
-    assertEquals(
-      (await box.swarm.tool(inPlace.id, 'helper_providers', {}))[1] &&
-        ((await box.swarm.tool(inPlace.id, 'helper_providers', {}))[1] as Json).code,
-      'no_worktree',
-    );
+    assertEquals((await box.swarm.tool(inPlace.id, 'helper_providers', {}))[0], 200);
+    const noCopy = await box.swarm.tool(inPlace.id, 'start_helper', BRIEF);
+    assertEquals((noCopy[1] as Json).code, 'no_worktree', JSON.stringify(noCopy[1]));
     let refused = '';
     try {
       await box.studio.connect('codex', plain, null, { helperOf: { helperId: 'h_0000000a', parent: main.id } });
