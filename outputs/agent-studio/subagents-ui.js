@@ -622,8 +622,10 @@
   }
   function render(ctx) {
     const m = model(ctx.rows, ctx.now, ctx.chatModel),
-      split = !!ctx.split, // split view: both chats' sections, every finished one listed, no heading of its own (activity-ui splitLabel)
-      open = split || expanded(ctx.convKey);
+      /* split view: one section per chat, no heading of its own (activity-ui splitLabel). Finished helpers fold into "N finished"
+         exactly as with one chat, remembered per chat (the same key), so a section never changes when pane focus moves. */
+      split = !!ctx.split,
+      open = expanded(ctx.convKey);
     if (ctx.countEl) ctx.countEl.textContent = ctx.rows.length ? sectionHeading(m) : '0';
     if (ctx.onModel) ctx.onModel(m);
     const sig = JSON.stringify([
@@ -685,8 +687,7 @@
       const list = el('div', 'sa-scroll');
       for (const i of m.top) list.append(card(i, ctx));
       if (!m.top.length && !m.done.length) list.append(el('p', 'sa-none', 'Nothing running right now.'));
-      if (split) for (const i of m.done) list.append(card(i, ctx));
-      else if (m.done.length) {
+      if (m.done.length) {
         const t = el('button', 'sa-toggle sa-card');
         t.type = 'button';
         t.setAttribute('aria-expanded', open ? 'true' : 'false');
@@ -695,6 +696,7 @@
         t.onclick = () => {
           remember(ctx.convKey, !open);
           lastSignature = '';
+          splitSigs.delete(box);
           ctx.rerender();
         };
         list.append(t);

@@ -5746,7 +5746,7 @@
         a = paneAct.get(key) || { rows: [], commands: [] },
         info = S.chatInfo(key);
       let counts = { working: 0, failed: 0, subagents: a.rows.length };
-      // The same cards as the single-chat Activity, every finished helper listed (no folding: owner, 2026-11-15).
+      // The same cards as the single-chat Activity, finished helpers folded into "N finished" the same way (remembered per chat).
       window.SubagentsUI?.render({
         box: sec.subBox,
         rows: a.rows,
