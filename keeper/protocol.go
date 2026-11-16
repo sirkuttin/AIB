@@ -41,10 +41,12 @@ const (
 // AIB is closed.
 // 1.4.0: the `bridge` subcommand (WSL: stdio to this data folder's keeper, `--hold` keep-alive) and `serve --unix-only`.
 // 1.5.0: WSL MCP tunnel: `mcp-forward --helper-socket <socket>` and the `mcp-relay --socket <socket>` subcommand (no protocol change).
-var keeperVersion = "1.5.0"
+// 1.6.0: `serve --orphan-grace` (feature `orphan-grace`): live channels without a client wait that long before they stop; the
+// bridge starts the Linux keeper with 2h. `orphanGrace` in status and keeper.json, `orphanSince`/`orphanStopAt` in keeper.json.
+var keeperVersion = "1.6.0"
 
 // features are advertised in hello. Additions only.
-var features = []string{"pty", "notes", "truncate", "orphan", "signal", "once", "channel-ids", "scrollback", "labels", "hold"}
+var features = []string{"pty", "notes", "truncate", "orphan", "signal", "once", "channel-ids", "scrollback", "labels", "hold", "orphan-grace"}
 
 var errFrame = errors.New("bad frame")
 

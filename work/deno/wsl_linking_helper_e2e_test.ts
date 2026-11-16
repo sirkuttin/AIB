@@ -53,6 +53,13 @@ Deno.test({
         'number',
       ]);
       assert(got.loginShell.startsWith('/'), got.loginShell);
+      // the package manager family from the distro's own /etc/os-release (Ubuntu, Debian: apt)
+      const osRelease = await sh('cat /etc/os-release 2>/dev/null || cat /usr/lib/os-release', []);
+      if (/^ID(_LIKE)?=.*\b(ubuntu|debian)\b/m.test(osRelease)) assertEquals(got.pkgManager, 'apt');
+      else assert(['apt', 'dnf', 'yum', 'zypper', 'pacman', 'apk', 'unknown'].includes(String(got.pkgManager)), String(got.pkgManager));
+      if (got.node.manager === 'asdf' || got.node.manager === 'mise') {
+        assert(/^\d+\.\d+\.\d+$/.test(String(got.node.managerVersion)), `the manager's version: ${got.node.managerVersion}`);
+      }
       if (got.node.state === 'ok') {
         assertEquals(
           got.npm.state,

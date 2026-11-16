@@ -24,7 +24,7 @@ import { heldDistro, isAibInternalLabel } from '../../outputs/agent-studio/serve
 import { WslHelperError } from '../../outputs/agent-studio/server/wsl/contract.ts';
 import { insideLinux } from '../../outputs/agent-studio/server/acp/wsl_caps.ts';
 import { fileReadOf, wslFiles, wslStatus } from '../../outputs/agent-studio/server/web/wsl_routes.ts';
-import { handle } from '../../outputs/agent-studio/server/artifacts/mcp.ts';
+import { handle, TOOLS, WSL_PATH_NOTE } from '../../outputs/agent-studio/server/artifacts/mcp.ts';
 import { DOC_TOOL_NAMES } from '../../outputs/agent-studio/server/docs/tool_defs.ts';
 import { DRAWING_TOOL_NAMES } from '../../outputs/agent-studio/server/docs/drawing/tool_defs.ts';
 import { branchOf, changesFolder, changesResponse, repoBranch } from '../../outputs/agent-studio/server/worktrees/chat_folders.ts';
@@ -267,17 +267,56 @@ Deno.test('wsl saved sessions: a helper with transcripts.sessions lists them wit
   assertEquals([items[0].key, items[0].cwd, items[0].provider], [wslSessionKey('ubuntu', 'claude', 'p/abc'), 'wsl://ubuntu/home/u/app', 'claude']);
 });
 
-Deno.test('mcp restricted (a WSL chat): the artifact tools (publish by content only) and the doc and drawing tools', async () => {
+Deno.test('mcp restricted (a WSL chat): the artifact tools (publish by content or Linux path) and the doc and drawing tools', async () => {
   const ctx = { key: 'k', conversation: 'c', worktree: false, restricted: true, cwd: null, roots: () => [] };
   const listed = await handle({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, ctx) as Json;
   assertEquals(((listed.result as Json).tools as Json[]).map((t) => t.name), ['publish', 'update', 'list', 'archive', ...DOC_TOOL_NAMES, ...DRAWING_TOOL_NAMES]);
   const doc = await handle({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'doc_create', arguments: {} } }, ctx) as Json;
   assert(doc.result && !doc.error, 'the doc tool is there (it fails here only because no AIB answers)');
-  const byPath = await handle({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'publish', arguments: { title: 'x', path: 'outputs/a.html' } } }, ctx) as Json;
-  const result = byPath.result as Json;
-  assert(result.isError === true && String(((result.content as Json[])[0]).text).includes('publish by `content`'));
   const full = await handle({ jsonrpc: '2.0', id: 4, method: 'tools/list' }, { ...ctx, restricted: false }) as Json;
   assert(((full.result as Json).tools as Json[]).some((t) => t.name === 'doc_create'), 'a Windows chat keeps every tool');
+});
+
+Deno.test('mcp restricted: publish and update describe `path` as a Linux path inside the project (a snapshot); a Windows chat sees them unchanged', async () => {
+  const ctx = { key: 'k', conversation: 'c', worktree: false, restricted: true, cwd: null, roots: () => [] };
+  const tools = (((await handle({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, ctx) as Json).result as Json).tools as Json[]);
+  const windows = (((await handle({ jsonrpc: '2.0', id: 2, method: 'tools/list' }, { ...ctx, restricted: false }) as Json).result as Json).tools as Json[]);
+  for (const name of ['publish', 'update']) {
+    const t = tools.find((x) => x.name === name) as Json;
+    const schema = t.inputSchema as Json;
+    const props = schema.properties as Json;
+    assert('path' in props && String((props.path as Json).description).startsWith('Linux path'), `${name}: path is a Linux path`);
+    assert(!(schema.required as string[]).includes('content'), `${name}: content is not required`);
+    const words = String(t.description);
+    assert(words.includes(WSL_PATH_NOTE), words);
+    assert(!/only `content` works|not supported|inline base64/.test(words), `${name}: no content-only wording: ${words}`);
+    const win = windows.find((x) => x.name === name) as Json;
+    assertEquals(win, TOOLS.find((x) => x.name === name), `${name}: a Windows chat's tool is the shared definition`);
+    assert(!String(win.description).includes(WSL_PATH_NOTE));
+  }
+  assert(WSL_PATH_NOTE.includes('snapshot') && WSL_PATH_NOTE.includes('25 MB') && WSL_PATH_NOTE.includes('png'), WSL_PATH_NOTE);
+});
+
+Deno.test('mcp restricted: a WSL chat path goes to AIB as given (never resolved on Windows); content still works', async () => {
+  const seen: Json[] = [];
+  const server = Deno.serve({ hostname: '127.0.0.1', port: 0, onListen() {} }, async (request) => {
+    const body = await request.json() as Json;
+    seen.push(body);
+    return Response.json({ id: 'a1', version: 1, link: 'studio-artifact://a1', url: 'http://x/a', title: body.title ?? 'T' });
+  });
+  try {
+    const ctx = { key: 'k', conversation: 'c', worktree: false, restricted: true, cwd: null, roots: () => [`http://127.0.0.1:${server.addr.port}`] };
+    const call = (id: number, name: string, args: Json) => handle({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } }, ctx);
+    const published = (await call(1, 'publish', { title: 'Map', path: ' private/review/x.png ' }) as Json).result as Json;
+    assert(!published.isError, JSON.stringify(published));
+    await call(2, 'update', { id: 'a1', path: '/home/u/app/x.png' });
+    await call(3, 'publish', { title: 'Page', content: '<p>hi</p>', filename: 'p.html' });
+    assertEquals(seen.map((b) => [b.path ?? null, b.content ?? null]), [['private/review/x.png', null], ['/home/u/app/x.png', null], [null, '<p>hi</p>']]);
+    const empty = (await call(4, 'publish', { title: 'x', path: '   ' }) as Json).result as Json;
+    assert(empty.isError === true && String(((empty.content as Json[])[0]).text).includes('non-empty'), JSON.stringify(empty));
+  } finally {
+    await server.shutdown();
+  }
 });
 
 Deno.test('mcp restricted: a WSL chat in its own worktree also gets the merge tools (the merge runs in the distro)', async () => {

@@ -9,6 +9,11 @@
  *                    agent process in the same project folder, an expired or unverifiable announcement
  *   no_evidence      nothing was found; this is NOT proof the conversation is free
  *
+ * Folder-only evidence (folderOnlyEvidence): when the ONLY reasons are agent processes of that provider in the chat's folder and the
+ * transcript has been quiet (nothing but AIB wrote it) for QUIET_TRANSCRIPT_SECONDS, the verdict stays possibly_active but Studio does
+ * not ask: it continues and leaves one note in the chat (folderOnlyNote). A VS Code panel or a terminal session in the same folder is
+ * that common case; it names no session and says nothing about this conversation.
+ *
  * Every signal is read-only. Nothing here writes to transcripts, kills processes or opens a file for writing outside Studio's own
  * announcement files. See docs/ownership-design.md. Everything is synchronous, as in Python (the Windows facts come from FFI in
  * platform/process_info.ts, POSIX from `ps` and /proc), so assess() can be called from a request handler without awaiting.
@@ -35,6 +40,8 @@ export const DEFAULT_TTL_SECONDS = 30;
 export const HEARTBEAT_SECONDS = 10;
 export const ACTIVE_WINDOW_SECONDS = 120; // a transcript written this recently counts as weak evidence
 export const RECENT_WINDOW_SECONDS = 900; // hint scans look only at transcripts this fresh
+/** Agent processes in the chat's folder are only noted, never asked about, once nobody but AIB wrote the transcript for this long. */
+export const QUIET_TRANSCRIPT_SECONDS = 30 * 60;
 export const RELEASE_GRACE_SECONDS = 3.0; // writes this soon after Studio released it are Studio's own
 export const SNAPSHOT_TTL_SECONDS = 4.0;
 export const HINT_TTL_SECONDS = 3.0;
@@ -719,6 +726,11 @@ export interface Reason {
   strength: 'strong' | 'weak';
   text: string;
   pid?: number;
+  /** process-folder: what the process is ('Claude Code', 'OMP', ...) and what started it, for folderOnlyNote */
+  label?: string;
+  startedBy?: string;
+  /** process-folder summary row: how many more processes were not listed */
+  more?: number;
 }
 
 export interface Assessment {
@@ -732,6 +744,8 @@ export interface Assessment {
   summary: string;
   elapsedMs?: number;
   certainty?: 'unknown' | 'checked' | 'evidence';
+  /** The transcript was found and nobody but AIB wrote it (subagent transcripts included) for QUIET_TRANSCRIPT_SECONDS. */
+  transcriptQuiet?: boolean;
 }
 
 export interface Hint {
@@ -766,6 +780,37 @@ export const SUMMARIES: Record<Exclude<Verdict, 'owned_by_studio'>, string> = {
   possibly_active: 'Another app may be using this conversation. AIB cannot be sure either way.',
   no_evidence: NO_EVIDENCE_NOTE,
 };
+
+/**
+ * The reasons of an assessment whose only evidence is agent processes in the chat's folder, with a transcript nobody but AIB wrote for
+ * QUIET_TRANSCRIPT_SECONDS; null for anything else. Studio continues such a chat without asking (and notes it: folderOnlyNote). Every
+ * other sign still asks or refuses: a process naming the session, a process holding the transcript open, a transcript another app
+ * wrote in the last QUIET_TRANSCRIPT_SECONDS (or none found), any owner announcement. Takes any value (a WSL helper's answer).
+ */
+export function folderOnlyEvidence(assessment: unknown): Reason[] | null {
+  if (!isDict(assessment) || assessment.verdict !== 'possibly_active' || assessment.transcriptQuiet !== true) return null;
+  const reasons = assessment.reasons;
+  if (!Array.isArray(reasons) || !reasons.length) return null;
+  return reasons.every((r) => isDict(r) && r.signal === 'process-folder' && r.strength === 'weak') ? reasons as Reason[] : null;
+}
+
+/** "Claude Code is also running in this folder (PID 4242, started by VS Code). AIB found nothing ..." for folderOnlyEvidence; else null. */
+export function folderOnlyNote(assessment: unknown): string | null {
+  const reasons = folderOnlyEvidence(assessment);
+  if (!reasons) return null;
+  const listed = reasons.filter((r) => isInt(r.pid));
+  const more = reasons.reduce((n, r) => n + (isInt(r.more) && r.more > 0 ? r.more : 0), 0);
+  const labels = [...new Set(listed.map((r) => cleanText(r.label || '', 40)).filter(Boolean))];
+  const who = labels.length ? labels.join(' and ') : 'Another agent';
+  const pids = listed.slice(0, 3).map((r) => String(r.pid));
+  const rest = more + Math.max(0, listed.length - 3);
+  let ids = pids.length === 1 ? `PID ${pids[0]}` : pids.length ? `PIDs ${pids.join(', ')}` : '';
+  if (rest) ids += `${ids ? ' ' : ''}and ${rest} more`;
+  const parents = [...new Set(listed.map((r) => cleanText(r.startedBy || '', 60)))];
+  if (parents.length === 1 && parents[0]) ids += `, started by ${parents[0]}`;
+  return `${who} ${labels.length > 1 ? 'are' : 'is'} also running in this folder${ids ? ` (${ids})` : ''}. ` +
+    `AIB found nothing that says ${listed.length + rest > 1 ? 'any of them holds' : 'it holds'} this conversation.`;
+}
 
 const AGENT_NAMES = new Set(['omp.exe', 'claude.exe', 'omp', 'claude']);
 
@@ -878,13 +923,16 @@ export class OwnershipProbe {
     return provider === 'omp' ? stem.slice(stem.lastIndexOf('_') + 1) : stem;
   }
 
-  /** Weak reason when the transcript was written moments ago by someone other than Studio. */
-  #transcriptSignal(provider: string, sessionId: string, path: string, deep: boolean): [Reason | null, string | null] {
+  /**
+   * Weak reason when the transcript was written moments ago by someone other than Studio; a note otherwise. The third value: nobody
+   * but Studio wrote it for QUIET_TRANSCRIPT_SECONDS (Assessment.transcriptQuiet).
+   */
+  #transcriptSignal(provider: string, sessionId: string, path: string, deep: boolean): [Reason | null, string | null, boolean] {
     let stat: Deno.FileInfo;
     try {
       stat = Deno.statSync(path);
     } catch {
-      return [null, null];
+      return [null, null, false];
     }
     const now = this.clock();
     const modified = mtimeOf(stat);
@@ -899,7 +947,7 @@ export class OwnershipProbe {
     }
     const info = `Transcript last written ${humanizeAge(age)} ago`;
     if (released !== undefined && modified <= released + RELEASE_GRACE_SECONDS) {
-      return [null, info + ' (by AIB itself, before it released the conversation)'];
+      return [null, info + ' (by AIB itself, before it released the conversation)', true];
     }
     let newest = age;
     let label = 'Transcript';
@@ -920,10 +968,11 @@ export class OwnershipProbe {
         }
       } catch { /* OSError: stop looking */ }
     }
-    if (newest > ACTIVE_WINDOW_SECONDS) return [null, info + ' (an idle session open in another app would not write anything)'];
+    const quiet = newest >= QUIET_TRANSCRIPT_SECONDS;
+    if (newest > ACTIVE_WINDOW_SECONDS) return [null, info + ' (an idle session open in another app would not write anything)', quiet];
     let text = `${label} was written ${humanizeAge(newest)} ago, and AIB is not the app writing it`;
     if (before && stat.size > before[0]) text += ` (it grew by ${thousands(stat.size - before[0])} bytes since AIB last looked)`;
-    return [{ signal: 'transcript', strength: 'weak', text: text + '.' }, null];
+    return [{ signal: 'transcript', strength: 'weak', text: text + '.' }, null, false];
   }
 
   // -- processes ---------------------------------------------------------------------------
@@ -1011,6 +1060,8 @@ export class OwnershipProbe {
         pid: proc.pid,
         text: `${kind.label} (PID ${proc.pid}${parent ? ', started by ' + parent : ''}) is running in this project folder. ` +
           'Agent processes do not reveal which conversation they hold, so AIB cannot tell whether it is this one.',
+        label: kind.label,
+        ...(parent ? { startedBy: parent } : {}),
       });
     }
     if (shown.length > 3) {
@@ -1018,6 +1069,7 @@ export class OwnershipProbe {
         signal: 'process-folder',
         strength: 'weak',
         text: `${shown.length - 3} more agent processes are running in this folder.`,
+        more: shown.length - 3,
       });
     }
     return reasons;
@@ -1084,12 +1136,14 @@ export class OwnershipProbe {
     notes.push(...info);
     if (problems) notes.push(`${problems} unreadable owner announcement file(s) were ignored.`);
     const path = this.findTranscript(provider, sessionId);
+    let quiet = false; // no transcript: how long it has been quiet is unknown
     if (path === null) {
       if (this.roots[provider]) notes.push('No local transcript was found for this conversation.');
     } else {
-      const [reason, note] = this.#transcriptSignal(provider, sessionId, path, deep);
+      const [reason, note, isQuiet] = this.#transcriptSignal(provider, sessionId, path, deep);
       if (reason) reasons.push(reason);
       if (note) notes.push(note);
+      quiet = isQuiet;
     }
     let [snapshot, error]: [ProcInfo[] | null, string] = [null, 'process inspection is off'];
     if (this.inspectProcesses) [snapshot, error] = this.processes.get(fresh ? 0 : null);
@@ -1131,6 +1185,7 @@ export class OwnershipProbe {
       summary: SUMMARIES[verdict],
       elapsedMs: pyRound((this.clock() - started) * 1000),
       certainty: verdict === 'no_evidence' && unavailable.length ? 'unknown' : verdict === 'no_evidence' ? 'checked' : 'evidence',
+      transcriptQuiet: quiet,
     };
   }
 

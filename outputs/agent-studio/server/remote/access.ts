@@ -424,6 +424,13 @@ export class PhoneAccess implements SetupHost {
     return device;
   }
 
+  async setOfflineCache(id: unknown, on: unknown): Promise<PublicDevice | null> {
+    if (typeof id !== 'string' || typeof on !== 'boolean') return null;
+    const device = await this.devices.setOfflineCache(id, on);
+    if (device) this.audit.write({ device: id, name: device.name, action: 'saved copies of chats', result: on ? 'on' : 'off' });
+    return device;
+  }
+
   /** Every phone goes, and the push keys are made new: a subscription that survived anywhere can no longer be sent to. */
   async removeAll(): Promise<number> {
     const ids = [...this.devices.devices.keys()];

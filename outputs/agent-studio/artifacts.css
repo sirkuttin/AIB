@@ -530,6 +530,25 @@
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+.art-card-err {
+  color: var(--muted);
+  font-size: 11px;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3; /* the full text stays in the title attribute */
+  line-clamp: 3;
+}
+/* a failed publish: the red of a failed tool row (chat.css .tool-status.status-failed) on the border and the icon */
+.art-card.art-card-failed:not(.doc-card) {
+  border-color: var(--danger-line);
+}
+.art-card-failed .art-card-ic {
+  border-color: var(--danger-line);
+  background: var(--tool-failed-bg);
+  color: var(--danger-bright);
+}
 .art-card-actions {
   flex: 0 0 auto;
   display: flex;

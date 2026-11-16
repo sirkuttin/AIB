@@ -16,11 +16,15 @@
    notification brought you to it. After you act, the card is a one-line record ("You allowed once from this phone: …"). While a
    waiting card is scrolled out of view, a "Needs you · Show ↑" bar sits above the message box. The bottom: what waits to be sent
    (Edit, Remove, Send now; Resume after Stop), the message box with Send, and Stop (■) while the agent works.
+   History: a chat opens with its newest page by size (never starting inside a reply); "Load earlier messages" at the top (and
+   scrolling near the top) puts the page before it in front, keeping your place; polls drop only older whole turns. A finished step
+   in an open fold has Show output (its output whole, from the PC).
    Each control shows only when this phone's switch for it is on (Settings → Remote control on the PC); the server checks the same
    switches. While the PC can't be reached, nothing can be sent or answered. The layout is chosen by the server (remote bootstrap
    says layout 'phone'), never by the window width.
    The device token lives in IndexedDB on this origin and goes in the X-AIB-Device header; images load by the HttpOnly cookie.
-   Polls every 4 s (home) or 3 s (a chat) while the page is visible, and stops while it is hidden.
+   Polls every 4 s (home) or 3 s (a chat) while the page is visible, and stops while it is hidden. A poll's draw changes only what
+   changed on screen (patch, keyed rows): it never resets the scroll position, a selection, an open fold, the focus or a draft.
    Phase C: a service worker (/sw.js, pwa/sw.js) keeps the page's own files, so the page still opens when AIB is closed; it then
    says "Reconnecting…" for about 20 s (the keeper starts a crashed AIB again in 5 s), then that AIB is closed on the PC (Tailscale
    Serve answers 502) or that the PC can't be reached (no answer at all), with Try again. It never claims the chats still run.
@@ -55,6 +59,13 @@
    chips (a thumbnail for pictures, ×), and go with the message by the same routes (prompt, steer, queue, New chat's first
    message). The PC composer's limits; a photo over 2000 px on its long edge is scaled and sent as JPEG; the chat says what its
    agent takes (no pictures without image input, text files only without embedded context), and the server checks it all again.
+   Saved copies (owner decision Q6, 2026-11-16; cacheMerge): the phone keeps copies of up to 5 chats it opened (the most recently
+   active; about 2 MB each, older whole turns go first) in IndexedDB, not encrypted (like the device token), while the PC's "Keep
+   saved copies" switch for this phone is on (phone.cache in its scopes; on by default). A chat that opens shows its copy at once,
+   then the PC's answer patches in (joining the copy where they meet); Load earlier takes the copy's older pages first, then the
+   PC's. While the PC can't be reached a copy still opens (from the chat list, or from the list under "Can't reach <PC>" when the
+   page opened offline), read only, with "Showing saved copy from <time>". The copies go on Forget cached chats (⋯ → Saved
+   copies), when the PC removes this phone (401) and when the PC turns the switch off.
    Pure helpers (rowsFrom, stateWords, orderHome, reqOpen, elapsed, checkWords' input, offlineView, setupSteps, artifactFrom,
    artifactRef...) are exported for node tests. */
 (function (root) {
@@ -64,9 +75,12 @@
   const TIMEOUT_MS = 10000;
   const OPTIONS_MS = 30000; // New chat's projects and agents: the PC looks for every agent's program first (seconds when busy)
   const UPLOAD_MS = 180000; // a message with attachments: up to 20 MB on mobile data
-  const TAIL = 300;
+  const TAIL = 300; // a delta (and a saved chat's page) asks for at most this many events
+  const KEEP = 2000; // events a live chat keeps while new ones come in (older whole turns go; Load earlier brings them back)
+  const OLDER_BYTES = 256 * 1024; // one Load earlier page
   const DB = 'aib-phone';
   const READ_MS = 5000; // a chat's read position goes to the PC at most this often
+  const COPY_MS = 5000; // a chat's saved copy is written at most this often while it changes
   const RECONNECT_MS = 20000; // "Reconnecting…" this long before saying AIB is closed (the keeper restarts a crashed AIB in 5 s)
   const BANNER_TURN_MS = 10000; // a "Chat finished" banner goes by itself after this; a "Needs you" one stays until tapped or closed
 
@@ -259,6 +273,7 @@
           images: imagesOf(data.attachments),
           files: (Array.isArray(data.files) ? data.files : []).map((f) => str(obj(f).name)).filter(Boolean),
           steered: data.steered === true,
+          clipped: e.clipped === true,
         });
       } else if (e.kind === 'update') {
         const u = obj(data.update);
@@ -266,8 +281,10 @@
         if (kind === 'agent_message_chunk') {
           const c = obj(u.content);
           const image = c.url ? [c.url] : [];
-          if (last && last.kind === 'agent' && !image.length && !last.images.length) last.text += str(c.text);
-          else rows.push({ kind: 'agent', key, text: str(c.text), images: image });
+          if (last && last.kind === 'agent' && !image.length && !last.images.length) {
+            last.text += str(c.text);
+            if (e.clipped) last.clipped = true;
+          } else rows.push({ kind: 'agent', key, text: str(c.text), images: image, clipped: e.clipped === true });
         } else if (kind === 'user_message_chunk') {
           const c = obj(u.content);
           if (last && last.kind === 'you') last.text += str(c.text);
@@ -285,6 +302,7 @@
             if (u.status) step.status = str(u.status);
           }
           step.done = step.status === 'completed' || step.status === 'failed';
+          if (u.rawOutput !== undefined || (Array.isArray(u.content) && u.content.length)) step.outSeq = Number(e.seq) || 0; // Show output
           if (kind === 'tool_call' || isArtifactTool(u)) step.artifactTool = step.artifactTool || isArtifactTool(u);
           card(artifactFrom(e, step.artifactTool), key);
         }
@@ -307,7 +325,7 @@
         if (title) rows.push({ kind: 'notice', key, text: (e.kind === 'permission' ? 'Asked to: ' : 'Asked: ') + title });
       } else if (e.kind === 'error' || e.kind === 'disconnected' || e.kind === 'studio_note') {
         const text = str(data.message);
-        if (text) rows.push({ kind: 'notice', key, text });
+        if (text) rows.push({ kind: 'notice', key, text: e.clipped ? text + ' …' : text });
       }
     }
     const out = rows.filter((r) => r.kind !== 'agent' || r.text.trim() || r.images.length);
@@ -317,6 +335,185 @@
       out.push(has(k) ? { kind: 'record', key: k, text: recordText(acted[k]) } : { kind: 'req', key: k });
     }
     return out;
+  }
+
+  /* History (Load earlier, polls). A chat's events as the phone keeps them: {seq, kind, time?, data, clipped?, bytes?}, oldest first,
+     one per seq. A later offline cache keeps these same objects (an IndexedDB store keyed by chat and seq). */
+
+  /* Two lists of events -> one, by seq (oldest first); a seq in both keeps the newer list's copy. */
+  function mergeEvents(older, newer) {
+    const by = new Map();
+    for (const e of Array.isArray(older) ? older : []) if (e && Number(e.seq) > 0) by.set(Number(e.seq), e);
+    for (const e of Array.isArray(newer) ? newer : []) if (e && Number(e.seq) > 0) by.set(Number(e.seq), e);
+    return [...by.keys()].sort((a, b) => a - b).map((k) => by.get(k));
+  }
+
+  /* At most about `max` events: older ones go, but only whole turns (the cut is at one of your messages), so a reply or a run of
+     steps is never cut in two; one turn longer than `max` stays whole. {events, cut: whether any went}. */
+  function trimEvents(events, max) {
+    const list = Array.isArray(events) ? events : [];
+    if (list.length <= max) return { events: list, cut: false };
+    let i = list.length - max;
+    while (i > 0 && obj(list[i]).kind !== 'user') i--;
+    return i > 0 ? { events: list.slice(i), cut: true } : { events: list, cut: false };
+  }
+
+  /* ---- saved copies: chats this phone opened, kept for reading while the PC can't be reached (owner decision Q6, 2026-11-16) ----
+     One record per chat key (provider:sessionId) in the IndexedDB store `chats` of `aib-phone`:
+     {key, v, device, src, title, agent, project, events, firstSeq, truncated, cursor, lastActive, savedAt, size}. `src` says where
+     the seqs come from ('live:<connection id>' or 'saved', a transcript): a copy only joins a page of the same src, and only where
+     they meet (no hole between them); otherwise the newer page replaces it. At most CACHE_CHATS records stay (the most recently
+     active: lastActive is the chat's newest event or when this phone opened it, whichever is later), each about CACHE_BYTES at most
+     (the oldest whole turns go first; the newest turn stays whole). Not encrypted: the device token sits in the same database. */
+  const CACHE_V = 1;
+  const CACHE_CHATS = 5;
+  const CACHE_BYTES = 2 * 1024 * 1024;
+  const CACHE_FLAG = 'phone.cache'; // in this phone's scopes while the PC lets it keep copies (off: the phone wipes them)
+
+  /* About how many bytes an event takes in the copy (its JSON's length). */
+  function eventSize(e) {
+    try {
+      return JSON.stringify(e).length;
+    } catch {
+      return 0;
+    }
+  }
+  const sizeOfEvents = (list) => (Array.isArray(list) ? list : []).reduce((n, e) => n + eventSize(e), 0);
+
+  /* The newest events of `events` (oldest first) that fit in `bytes`, cut only at one of your messages (a whole turn), so a reply or
+     a run of steps is never cut in two; the newest turn stays whole even when it alone is larger. {events, cut: whether any went} */
+  function newestTurns(events, bytes) {
+    const list = Array.isArray(events) ? events : [];
+    let total = 0;
+    let cut = list.length;
+    for (let i = list.length - 1; i >= 0; i--) {
+      total += eventSize(list[i]);
+      if (i > 0 && obj(list[i]).kind !== 'user') continue;
+      if (total > bytes && cut < list.length) break;
+      cut = i;
+      if (total > bytes) break;
+    }
+    return cut > 0 ? { events: list.slice(cut), cut: true } : { events: list, cut: false };
+  }
+
+  /* The copy after the screen showed `view` ({key, src, device, title, agent, project, events, firstSeq, truncated, cursor,
+     lastActive}): the screen's events, joined to the older events of `rec` (the copy so far) when both come from the same src and
+     meet, then cut to CACHE_BYTES by whole turns. */
+  function cacheMerge(rec, view, now, maxBytes) {
+    const v = obj(view);
+    const mine = Array.isArray(v.events) ? v.events : [];
+    let events = mine;
+    let firstSeq = mine.length ? Number(mine[0].seq) || 0 : Number(v.firstSeq) || 0;
+    let truncated = !!v.truncated;
+    const r = rec && rec.v === CACHE_V && rec.src === v.src && rec.device === v.device && Array.isArray(rec.events) ? rec : null;
+    if (r && r.events.length && mine.length) {
+      const rFirst = Number(r.events[0].seq);
+      const rLast = Number(r.events[r.events.length - 1].seq);
+      const vFirst = Number(mine[0].seq);
+      if (rFirst < vFirst && vFirst <= rLast + 1) {
+        events = mergeEvents(r.events.filter((e) => Number(e.seq) < vFirst), mine);
+        firstSeq = rFirst;
+        truncated = !!r.truncated;
+      }
+    }
+    const kept = newestTurns(events, maxBytes || CACHE_BYTES);
+    if (kept.cut) {
+      events = kept.events;
+      firstSeq = Number(events[0].seq) || firstSeq;
+      truncated = true;
+    }
+    return {
+      key: str(v.key),
+      v: CACHE_V,
+      device: str(v.device),
+      src: str(v.src),
+      title: str(v.title),
+      agent: str(v.agent),
+      project: v.project && typeof v.project === 'object' ? { id: str(v.project.id), name: str(v.project.name), color: str(v.project.color) } : null,
+      events,
+      firstSeq,
+      truncated,
+      cursor: Number(v.cursor) || 0,
+      lastActive: Math.max(Number(r && r.lastActive) || 0, Number(v.lastActive) || 0),
+      savedAt: now,
+      size: sizeOfEvents(events),
+    };
+  }
+
+  /* What the list of copies keeps in memory of a record (no events): {key, src, title, agent, project, firstSeq, lastSeq, truncated,
+     lastActive, savedAt, size, device, v}. */
+  function cacheMeta(rec) {
+    const r = obj(rec);
+    const ev = Array.isArray(r.events) ? r.events : [];
+    return {
+      key: str(r.key),
+      v: r.v,
+      device: str(r.device),
+      src: str(r.src),
+      title: str(r.title),
+      agent: str(r.agent),
+      project: r.project || null,
+      firstSeq: ev.length ? Number(ev[0].seq) || 0 : 0,
+      lastSeq: ev.length ? Number(ev[ev.length - 1].seq) || 0 : 0,
+      truncated: !!r.truncated,
+      lastActive: Number(r.lastActive) || 0,
+      savedAt: Number(r.savedAt) || 0,
+      size: Number(r.size) || 0,
+    };
+  }
+
+  /* The keys of the copies that go: another phone's (or pairing's), an old format, and past the `max` most recently active. */
+  function cacheDrop(records, device, max) {
+    const list = Array.isArray(records) ? records : [];
+    const mine = list.filter((r) => r && r.device === device && device && r.v === CACHE_V);
+    mine.sort((a, b) => (Number(b.lastActive) || 0) - (Number(a.lastActive) || 0));
+    const keep = new Set(mine.slice(0, max).map((r) => r.key));
+    return list.filter((r) => r && !keep.has(r.key)).map((r) => r.key);
+  }
+
+  /* A chat opened from its copy: the newest page of it (by bytes, whole turns). {events, firstSeq, truncated} */
+  function cacheOpen(rec, bytes) {
+    const ev = Array.isArray(obj(rec).events) ? rec.events : [];
+    const page = newestTurns(ev, bytes);
+    return { events: page.events, firstSeq: page.events.length ? Number(page.events[0].seq) || 0 : 0, truncated: page.cut || !!rec.truncated };
+  }
+
+  /* Load earlier from the copy: the page of it just before seq `first` (by bytes, whole turns), when the copy reaches `first` (so
+     nothing is missing between them), else null. {events, firstSeq, truncated} */
+  function cacheEarlier(rec, first, bytes) {
+    const ev = Array.isArray(obj(rec).events) ? rec.events : [];
+    const at = ev.findIndex((e) => Number(e.seq) >= first);
+    if (at <= 0) return null;
+    const page = newestTurns(ev.slice(0, at), bytes);
+    return { events: page.events, firstSeq: Number(page.events[0].seq) || 0, truncated: page.cut || !!rec.truncated };
+  }
+
+  /* When a copy was saved, in plain words: "14:05" today, else "14 Nov, 14:05". */
+  function copyTime(ms, now) {
+    const t = new Date(Number(ms) || 0);
+    const n = new Date(now || Date.now());
+    const hhmm = String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0');
+    if (t.toDateString() === n.toDateString()) return hhmm;
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return t.getDate() + ' ' + months[t.getMonth()] + ', ' + hhmm;
+  }
+
+  /* A step's output as text, from its event (Show output): the content's text, else its raw output. */
+  function outputText(event) {
+    const u = obj(obj(obj(event).data).update);
+    let texts = textsOf(u.content).filter((t) => t.trim());
+    if (!texts.length && typeof u.rawOutput === 'string') texts = [u.rawOutput];
+    if (!texts.length && u.rawOutput !== undefined && u.rawOutput !== null) {
+      texts = textsOf(u.rawOutput).filter((t) => t.trim());
+      if (!texts.length) {
+        try {
+          texts = [JSON.stringify(u.rawOutput, null, 2)];
+        } catch {
+          texts = [];
+        }
+      }
+    }
+    return texts.join('\n');
   }
 
   /* The live line of a working chat: the step running now, or "Working". */
@@ -794,6 +991,12 @@
     if (x.latest) parts.push('latest');
     return parts.join(' · ');
   }
+  /* The agents New chat offers for a picked project: a WSL project brings its own list (its distro's On/Off switches, never the
+     Windows ones: GET /api/remote/new/options projects[].agents); any other project, or none picked, the PC's list (`all`). */
+  function projectAgents(project, all) {
+    const p = obj(project);
+    return Array.isArray(p.agents) ? p.agents : Array.isArray(all) ? all : [];
+  }
   /* New chat can start: a project and an agent that can start a chat are picked, and the message is typed (or something is
      attached: `attached`, how many). */
   function newChatReady(nc, text, attached) {
@@ -958,12 +1161,30 @@
     newChatReady,
     firstMessageProblem,
     rowsFrom,
+    mergeEvents,
+    trimEvents,
+    eventSize,
+    sizeOfEvents,
+    newestTurns,
+    cacheMerge,
+    cacheMeta,
+    cacheDrop,
+    cacheOpen,
+    cacheEarlier,
+    copyTime,
+    CACHE_V,
+    CACHE_CHATS,
+    CACHE_BYTES,
+    CACHE_FLAG,
+    outputText,
+    KEEP,
     stateWords,
     ago,
     projectColor,
     orderHome,
     homeProjects,
     reqOpen,
+    projectAgents,
     recordText,
     answerWords,
     subsWords,
@@ -1013,6 +1234,9 @@
     chatMeta: null, // {project, agent} from the card that opened the chat (its header before the chat loads; a saved chat's always)
     chat: null,
     chatEvents: [],
+    keepMin: 0, // events Load earlier brought in: polls keep at least this many (what you scrolled back to stays)
+    older: { busy: false, error: false }, // Load earlier (a live chat or a saved one): a page is on its way / the last one failed
+    outputs: {}, // Show output: event seq -> {state: 'loading' | 'open' | 'error', text}
     open: new Set(), // folds the reader opened
     lastOk: 0,
     offline: false,
@@ -1052,6 +1276,16 @@
     saved: null, // its saved messages (GET /api/remote/saved), or {gone: true}
     continuing: false, // Continue this chat was tapped and the PC has not answered yet
     readSent: { id: '', seq: 0, at: 0 }, // the read position last sent to the PC
+    copies: new Map(), // saved copies on this phone: chat key -> cacheMeta (no events); read at start, kept up to date by every write
+    copyGen: 0, // a wipe makes it new: a write that started before it is dropped
+    copyQ: Promise.resolve(), // the copy store's work, one step after another (tests wait on it)
+    copySig: '', // what the last write of the chat on screen saved
+    copyWait: null, // {view, timer}: the newest view waiting to be written (at most one write every COPY_MS)
+    copyAt: 0, // when the last write started
+    copyLast: '', // the chat it was for
+    copyBytes: CACHE_BYTES, // the most one chat's copy keeps (tests shorten it)
+    fromCopy: 0, // the chat on screen shows its saved copy (its savedAt) until the PC answers
+    openedAt: 0, // when this phone opened the chat on screen (a copy's lastActive is at least this)
     banner: null, // {chat, kind, title, text, at}: news about another chat while this phone is in hand (bannerFrom)
     toast: '', // a short confirmation ("Allowed once"), for TOAST_MS
     menu: null, // the sheet open over the page: {kind: 'card', item, step, name, error} or {kind: 'phone', step}
@@ -1082,18 +1316,156 @@
   function button(cls, text, onClick) {
     const b = el('button', cls, text);
     b.type = 'button';
-    b.addEventListener('click', onClick);
+    on(b, 'click', onClick);
     return b;
   }
+  /* A handler on a node in #app. The page patches what is on screen from a fresh drawing (patch below), so a node on screen can
+     stay while its fresh twin goes: the handler is kept on the node (__on) and patch hands the fresh one over. A handler reads its
+     own node as e.currentTarget, never as a variable of the drawing (that would be the fresh twin, off screen). */
+  function onEvent(e) {
+    const f = this.__on && this.__on[e.type];
+    if (f) return f.call(this, e);
+  }
+  function on(n, type, fn) {
+    if (!n.__on) n.__on = {};
+    if (!n.__on[type]) n.addEventListener(type, onEvent);
+    n.__on[type] = fn;
+  }
 
-  // ---- storage (IndexedDB; only the device token) ----
+  /* Incremental drawing. draw() describes the whole screen as fresh, detached nodes; patch() then changes only what differs on the
+     page: a node that matches its fresh twin stays (its attributes and text are brought in line, its handlers handed over), so a
+     poll that changed nothing touches nothing, a new event adds its row, the reply streaming in grows in place, and what the reader
+     holds (the scroll position, a text selection, an open fold or Show output box, the focus and caret, an IME composition) is
+     never taken away. Prior art: morphdom / idiomorph (patch a live tree from a new one, keyed by id). Matching: a node with a key
+     (data-rk: a chat row, a card; or an id) meets the old node with that key wherever it is; others meet the next old node of the
+     same tag. A row that did not change is not drawn again at all: its drawing is a stub (keep()) that stands for the node on screen
+     (rows remember what they were drawn from in __sig; rowCache finds them by data-rk). */
+  const rowCache = new Map(); // data-rk -> the node on screen (refilled after each draw)
+  function keep(node) {
+    const stub = doc.createComment('');
+    stub.__keep = node;
+    return stub;
+  }
+  function keyOf(n) {
+    if (n.__keep) return keyOf(n.__keep);
+    if (n.nodeType !== 1) return '';
+    const k = n.getAttribute('data-rk');
+    return k ? 'k' + k : n.id ? '#' + n.id : '';
+  }
+  /* A fresh node about to go on the page: its stubs become the nodes they stand for. */
+  function live(n) {
+    if (n.__keep) return n.__keep;
+    if (n.nodeType === 1 && n.firstChild) {
+      const walk = doc.createTreeWalker(n, 128); // NodeFilter.SHOW_COMMENT
+      const stubs = [];
+      for (let c = walk.nextNode(); c; c = walk.nextNode()) if (c.__keep) stubs.push(c);
+      for (const s of stubs) s.replaceWith(s.__keep);
+    }
+    return n;
+  }
+  function patchChildren(parent, next) {
+    const keyed = new Map();
+    const loose = [];
+    for (let c = parent.firstChild; c; c = c.nextSibling) {
+      const k = keyOf(c);
+      if (k && !keyed.has(k)) keyed.set(k, c);
+      else if (!k) loose.push(c);
+    }
+    let li = 0;
+    const used = new Set();
+    const pairs = next.map((n) => {
+      if (n.parentNode === parent) return n; // a node that is on the page as it is (the composer)
+      if (n.__keep) return n.__keep;
+      const k = keyOf(n);
+      let old = null;
+      if (k) {
+        old = keyed.get(k) || null;
+        if (old && (old.nodeName !== n.nodeName || used.has(old))) old = null;
+      } else {
+        for (let i = li; i < loose.length; i++) {
+          if (loose[i].nodeName === n.nodeName) {
+            old = loose[i];
+            li = i + 1;
+            break;
+          }
+        }
+      }
+      if (old) used.add(old);
+      return old;
+    });
+    const stay = new Set(pairs.filter(Boolean));
+    // what is not wanted goes first, so a node that stays is never moved for it (moving a node drops its focus and selection)
+    for (let c = parent.firstChild; c; ) {
+      const n = c.nextSibling;
+      if (!stay.has(c)) c.remove();
+      c = n;
+    }
+    let at = parent.firstChild;
+    next.forEach((n, i) => {
+      const old = pairs[i];
+      if (old && old !== n && !n.__keep) patchNode(old, n);
+      const node = old || live(n);
+      if (node === at) at = at.nextSibling;
+      else parent.insertBefore(node, at);
+    });
+  }
+  function patchNode(old, n) {
+    if (old.nodeType !== 1) {
+      if (old.nodeValue !== n.nodeValue) old.nodeValue = n.nodeValue;
+      return;
+    }
+    const oa = old.attributes;
+    for (let i = oa.length - 1; i >= 0; i--) if (!n.hasAttribute(oa[i].name)) old.removeAttribute(oa[i].name);
+    for (const a of n.attributes) if (old.getAttribute(a.name) !== a.value) old.setAttribute(a.name, a.value);
+    if (n.__on) for (const t of Object.keys(n.__on)) on(old, t, n.__on[t]);
+    if (old.__on) for (const t of Object.keys(old.__on)) if (!n.__on || !n.__on[t]) old.__on[t] = null;
+    old.__sig = n.__sig;
+    if ((old.nodeName === 'TEXTAREA' || old.nodeName === 'INPUT') && old.type !== 'file' && old.value !== n.value && old !== doc.activeElement)
+      old.value = n.value;
+    patchChildren(old, [...n.childNodes]);
+  }
+
+  // ---- storage (IndexedDB `aib-phone`: `kv` holds the device token, `chats` the saved copies of chats) ----
+  let dbOpen = null;
   function db() {
-    return new Promise((resolve, reject) => {
-      const req = root.indexedDB.open(DB, 1);
-      req.onupgradeneeded = () => req.result.createObjectStore('kv');
-      req.onsuccess = () => resolve(req.result);
+    if (dbOpen) return dbOpen;
+    dbOpen = new Promise((resolve, reject) => {
+      const req = root.indexedDB.open(DB, 2);
+      req.onupgradeneeded = () => {
+        const d = req.result;
+        if (!d.objectStoreNames.contains('kv')) d.createObjectStore('kv');
+        if (!d.objectStoreNames.contains('chats')) d.createObjectStore('chats', { keyPath: 'key' });
+      };
+      req.onsuccess = () => {
+        const d = req.result;
+        d.onversionchange = () => {
+          d.close();
+          dbOpen = null;
+        };
+        resolve(d);
+      };
       req.onerror = () => reject(req.error);
     });
+    dbOpen.catch(() => (dbOpen = null));
+    return dbOpen;
+  }
+  /* One transaction on `store`: fn(objectStore) may return a request, whose result this resolves to once the transaction is done
+     (undefined when storage fails: no copy is then the same as no saved copy). */
+  async function idb(store, mode, fn) {
+    try {
+      const d = await db();
+      return await new Promise((resolve, reject) => {
+        const tx = d.transaction(store, mode);
+        let out;
+        const req = fn(tx.objectStore(store));
+        if (req) req.onsuccess = () => (out = req.result);
+        tx.oncomplete = () => resolve(out);
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error);
+      });
+    } catch {
+      return undefined;
+    }
   }
   async function stored(key, value) {
     try {
@@ -1108,6 +1480,195 @@
     } catch {
       return undefined;
     }
+  }
+
+  // ---- saved copies of chats (cacheMerge above): written while a chat is on screen, read when one opens and while offline ----
+  const deviceId = () => str(obj(S.device).id);
+  const copyAllowed = () => !!deviceId() && S.scopes.includes(CACHE_FLAG);
+  function copyRun(fn) {
+    S.copyQ = S.copyQ.then(fn).catch(() => {});
+    return S.copyQ;
+  }
+
+  /* At start: the list of copies; another phone's (an earlier pairing's) and any past CACHE_CHATS go. */
+  function loadCopies() {
+    return copyRun(async () => {
+      const all = await idb('chats', 'readonly', (s) => s.getAll());
+      const list = Array.isArray(all) ? all : [];
+      const drop = cacheDrop(list, deviceId(), CACHE_CHATS);
+      if (drop.length) await idb('chats', 'readwrite', (s) => drop.forEach((k) => s.delete(k)));
+      S.copies = new Map(list.filter((r) => r && !drop.includes(r.key)).map((r) => [r.key, cacheMeta(r)]));
+    });
+  }
+
+  /* Every copy goes: Forget cached chats, this phone removed on the PC (401), or the PC turned its switch off. */
+  function wipeCopies() {
+    S.copyGen++;
+    if (S.copyWait) clearTimeout(S.copyWait.timer);
+    S.copyWait = null;
+    S.copySig = '';
+    S.copies = new Map();
+    return copyRun(() => idb('chats', 'readwrite', (s) => s.clear()));
+  }
+
+  /* This phone's switches from a PC answer. Without CACHE_FLAG the PC turned saved copies off for this phone: they go. */
+  function takeScopes(list) {
+    if (!Array.isArray(list)) return;
+    S.scopes = list;
+    if (list.includes(CACHE_FLAG)) S.copyWiped = false;
+    else if (S.copies.size || !S.copyWiped) {
+      S.copyWiped = true;
+      wipeCopies();
+    }
+  }
+
+  /* What the chat on screen would save now (cacheMerge's view), or null: nothing to save (a copy on screen, a chat with no key). */
+  function copyView() {
+    const meta = S.chatMeta || {};
+    let v = null;
+    if (S.screen === 'chat') {
+      const c = S.chat;
+      if (!c || c.cached || c.gone || !c.savedKey || !S.chatEvents.length) return null;
+      const last = S.chatEvents[S.chatEvents.length - 1];
+      v = { key: c.savedKey, src: 'live:' + S.chatId, title: c.title || S.chatTitle, agent: c.agent || meta.agent, project: c.project || meta.project };
+      Object.assign(v, { events: S.chatEvents, firstSeq: c.firstSeq, truncated: c.truncated, cursor: c.cursor });
+      v.lastActive = Math.max(S.openedAt, (Number(last.time) || 0) * 1000);
+    } else if (S.screen === 'saved') {
+      const c = S.saved;
+      if (!c || c.cached || c.gone || !S.savedKey || !Array.isArray(c.events) || !c.events.length) return null;
+      v = { key: S.savedKey, src: 'saved', title: c.title || S.chatTitle, agent: c.agent || meta.agent, project: meta.project };
+      Object.assign(v, { events: c.events, firstSeq: c.firstSeq, truncated: c.truncated, cursor: 0 });
+      v.lastActive = Math.max(S.openedAt, Date.parse(c.lastActive || '') || 0);
+    }
+    if (v) v.device = deviceId();
+    return v;
+  }
+
+  /* The chat on screen changed: save its copy (at once, or within COPY_MS while it keeps changing). */
+  function saveCopy() {
+    if (!copyAllowed()) return;
+    const view = copyView();
+    if (!view) return;
+    const sig = [view.src, view.firstSeq, view.events.length, view.events[view.events.length - 1].seq, view.title, view.truncated].join('|');
+    if (sig === S.copySig) return;
+    S.copySig = sig;
+    if (S.copyWait) {
+      S.copyWait.view = view;
+      return;
+    }
+    const wait = view.key === S.copyLast ? S.copyAt + COPY_MS - Date.now() : 0; // another chat's first write: at once
+    if (wait <= 0) {
+      writeCopy(view);
+      return;
+    }
+    S.copyWait = { view, timer: setTimeout(flushCopy, wait) };
+  }
+  /* A held-back write goes now (leaving the chat, the page hidden, its time came). */
+  function flushCopy() {
+    const w = S.copyWait;
+    if (!w) return;
+    clearTimeout(w.timer);
+    S.copyWait = null;
+    writeCopy(w.view);
+  }
+  function writeCopy(view) {
+    S.copyAt = Date.now();
+    S.copyLast = view.key;
+    const gen = S.copyGen;
+    return copyRun(async () => {
+      if (gen !== S.copyGen || !copyAllowed() || view.device !== deviceId()) return;
+      const rec = await idb('chats', 'readonly', (s) => s.get(view.key));
+      if (gen !== S.copyGen) return;
+      const next = cacheMerge(rec, view, Date.now(), S.copyBytes);
+      await idb('chats', 'readwrite', (s) => s.put(next));
+      if (gen !== S.copyGen) return;
+      S.copies.set(next.key, cacheMeta(next));
+      const drop = cacheDrop([...S.copies.values()], deviceId(), CACHE_CHATS);
+      if (drop.length) {
+        await idb('chats', 'readwrite', (s) => drop.forEach((k) => s.delete(k)));
+        for (const k of drop) S.copies.delete(k);
+      }
+      if (S.menu && S.menu.kind === 'phone' && S.menu.step === 'copies') drawMenu(); // its size
+    });
+  }
+
+  /* The copy a screen can use: a live chat's (same connection) or a saved chat's (same transcript), else null. */
+  function copyFor(screen, id) {
+    if (screen === 'chat') return [...S.copies.values()].find((m) => m.src === 'live:' + id) || null;
+    const m = S.copies.get(id);
+    return m && m.src === 'saved' ? m : null;
+  }
+
+  /* A chat just opened: its copy shows at once (read only) while the PC is asked; the PC's answer replaces it or joins it. */
+  /* A copy's lastActive becomes at least `at` (this phone opened its chat), in the list now and in the store in turn. Without it, a
+     chat opened from its copy and left before the PC answered kept its old place and could be the one that goes. */
+  function touchCopy(key, at) {
+    const m = S.copies.get(key);
+    if (!m || !(at > m.lastActive)) return;
+    m.lastActive = at;
+    const gen = S.copyGen;
+    copyRun(async () => {
+      if (gen !== S.copyGen) return;
+      const rec = await idb('chats', 'readonly', (s) => s.get(key));
+      if (!rec || gen !== S.copyGen || !(at > (Number(rec.lastActive) || 0))) return;
+      rec.lastActive = at;
+      await idb('chats', 'readwrite', (s) => s.put(rec));
+    });
+  }
+
+  async function showCopy(screen, id) {
+    const meta = copyFor(screen, id);
+    if (!meta) return;
+    touchCopy(meta.key, S.openedAt); // opened again: it counts as fresh even if you leave before the PC answers
+    const rec = await idb('chats', 'readonly', (s) => s.get(meta.key));
+    if (!rec || rec.src !== meta.src || rec.device !== deviceId() || !Array.isArray(rec.events)) return;
+    if (S.screen !== screen || (screen === 'chat' ? S.chatId !== id || S.chat : S.savedKey !== id || S.saved)) return;
+    const page = cacheOpen(rec, OLDER_BYTES);
+    S.fromCopy = Number(rec.savedAt) || 0;
+    if (screen === 'chat') {
+      S.chat = {
+        cached: true,
+        copyKey: rec.key,
+        id,
+        title: rec.title,
+        agent: rec.agent,
+        project: rec.project,
+        savedKey: '',
+        cursor: rec.cursor,
+        firstSeq: page.firstSeq,
+        truncated: page.truncated,
+        waiting: [],
+        helpers: [],
+        queue: { items: [] },
+        unknown: [],
+        busy: false,
+        ready: false,
+      };
+      S.chatEvents = page.events;
+      S.keepMin = page.events.length;
+    } else {
+      S.saved = { cached: true, key: rec.key, title: rec.title, agent: rec.agent, history: true, events: page.events, firstSeq: page.firstSeq, truncated: page.truncated };
+    }
+    if (!S.chatMeta && rec.project) S.chatMeta = { project: rec.project, agent: rec.agent };
+    S.scrollTo = 'end';
+    draw();
+  }
+
+  /* A copy opened from the list (the PC can't be reached): its live chat, or its saved one, as it was saved. */
+  function openCopy(meta) {
+    const item = { project: meta.project, agent: meta.agent };
+    if (meta.src.startsWith('live:')) openChat(meta.src.slice(5), meta.title, false, item);
+    else openSaved(meta.key, meta.title, item);
+  }
+
+  /* Load earlier on screen can come from the copy (it reaches the first event shown, and has older ones). */
+  function copyServes() {
+    const live = S.screen === 'chat';
+    const c = live ? S.chat : S.saved;
+    if (!c || c.gone || !c.truncated) return false;
+    const meta = copyFor(S.screen, live ? S.chatId : S.savedKey);
+    const first = Number(c.firstSeq) || 0;
+    return !!meta && meta.firstSeq > 0 && meta.firstSeq < first && meta.lastSeq >= first;
   }
 
   // ---- network ----
@@ -1159,6 +1720,7 @@
       draw();
     }
     try {
+      if (!S.booted && S.device && inChat() && !(await bootQuiet())) return;
       if (S.screen === 'chat') await loadChat(false);
       else if (S.screen === 'saved') await loadSaved();
       else if (S.screen === 'home' || (S.offline && S.device)) await loadHome();
@@ -1179,7 +1741,7 @@
 
   /* The chat on screen is read up to its newest event: tell the PC (its unread dot clears). Needs See chats. */
   function markRead() {
-    if (S.screen !== 'chat' || !S.chat || S.offline || !S.scopes.includes('phone.read')) return;
+    if (S.screen !== 'chat' || !S.chat || S.chat.cached || S.offline || !S.scopes.includes('phone.read')) return;
     const d = doc.documentElement;
     const view = {
       visible: doc.visibilityState !== 'hidden',
@@ -1205,14 +1767,134 @@
       return;
     }
     if (r.status !== 200) throw new Offline('refused');
-    const sig = (x, scopes) => JSON.stringify([x && x.events && x.events.length, x && x.lastActive, x && x.title, scopes]);
+    const sig = (x, scopes) => JSON.stringify([x && x.events && x.events.length, x && x.lastActive, x && x.title, x && x.cached, scopes]);
     const before = sig(S.saved, S.scopes);
-    if (Array.isArray(r.data.scopes)) S.scopes = r.data.scopes;
+    takeScopes(r.data.scopes);
     if (r.data.live) return openChat(r.data.live, (S.saved && S.saved.title) || S.chatTitle);
-    const changed = before !== sig(r.data, S.scopes);
+    const next = r.data;
+    const had = S.saved && !S.saved.gone && Array.isArray(S.saved.events) && S.saved.events.length ? S.saved : null;
+    const hadLast = had ? Number(had.events[had.events.length - 1].seq) || 0 : 0;
+    // what Load earlier (or the saved copy) brought in stays when it meets the new page (a saved chat only grows at its end)
+    if (had && had.firstSeq && next.firstSeq && had.firstSeq < next.firstSeq && hadLast + 1 >= next.firstSeq) {
+      next.events = mergeEvents(had.events.filter((e) => e.seq < next.firstSeq), next.events);
+      next.firstSeq = had.firstSeq;
+      next.truncated = had.truncated;
+    }
+    const changed = before !== sig(next, S.scopes);
     if (!S.saved || S.saved.gone) S.scrollTo = 'end';
-    S.saved = r.data;
+    S.saved = next;
+    S.fromCopy = 0;
     if (changed) draw();
+    saveCopy();
+  }
+
+  /* Load earlier: the page before the first event shown (a live chat: by bytes from the PC's events; a saved chat: from its saved
+     transcript), put in front by seq. The screen stays on what you were reading (the next draw keeps the distance to the end). */
+  async function loadEarlier() {
+    const live = S.screen === 'chat';
+    const c = live ? S.chat : S.saved;
+    if (S.older.busy || !c || c.gone || !c.truncated || !(Number(c.firstSeq) > 0)) return;
+    const fromCopy = copyServes();
+    if (S.offline && !fromCopy) return;
+    const id = live ? S.chatId : S.savedKey;
+    const first = Number(c.firstSeq);
+    S.older = { busy: true, error: false };
+    draw();
+    // the saved copy first (it reaches the first event shown, so nothing is missing between them), then the PC
+    const meta = fromCopy ? copyFor(S.screen, id) : null;
+    const rec = meta ? await idb('chats', 'readonly', (s) => s.get(meta.key)) : null;
+    const page = rec && rec.src === meta.src && rec.device === deviceId() ? cacheEarlier(rec, first, OLDER_BYTES) : null;
+    let r = null;
+    if (page) r = { status: 200, copy: true, data: { events: page.events, firstSeq: page.firstSeq, more: page.truncated, truncated: page.truncated } };
+    else if (!S.offline) {
+      try {
+        r = live
+          ? await call('GET', '/api/remote/chat?id=' + encodeURIComponent(id) + '&before=' + first + '&bytes=' + OLDER_BYTES)
+          : await call('GET', '/api/remote/saved?key=' + encodeURIComponent(id) + '&tail=' + TAIL + '&before=' + first);
+      } catch {
+        r = null;
+      }
+    }
+    const now = live ? S.chat : S.saved;
+    if (S.screen !== (live ? 'chat' : 'saved') || (live ? S.chatId : S.savedKey) !== id || !now || now.gone || Number(now.firstSeq) !== first) {
+      S.older = { busy: false, error: false }; // another chat, or it started again meanwhile: this page is not wanted
+      return;
+    }
+    if (r && r.status === 401) return removed();
+    if (!r || r.status !== 200 || !Array.isArray(r.data.events)) {
+      S.older = { busy: false, error: true };
+      draw();
+      return;
+    }
+    const events = r.data.events.filter((e) => Number(e.seq) < first);
+    const more = live ? !!r.data.more : !!r.data.truncated;
+    if (!events.length && more) {
+      S.older = { busy: false, error: true }; // the PC is still opening this chat: try again shortly
+      draw();
+      return;
+    }
+    const d = doc.documentElement;
+    S.scrollTo = 'keep:' + Math.max(0, d.scrollHeight - root.scrollY);
+    if (live) {
+      S.chatEvents = mergeEvents(events, S.chatEvents);
+      S.keepMin = S.chatEvents.length;
+    } else S.saved.events = mergeEvents(events, S.saved.events);
+    now.firstSeq = Number(r.data.firstSeq) || (events.length ? Number(events[0].seq) : first);
+    now.truncated = more && now.firstSeq < first;
+    S.older = { busy: false, error: false };
+    draw();
+    if (!r.copy) saveCopy();
+  }
+
+  /* Load earlier, in the chat above the first message: a button, "Loading…" while a page comes, or why it did not. */
+  function earlierEl() {
+    const p = el('p', 'ph-earlier');
+    p.id = 'phEarlier';
+    // one line whatever its state (the button stays, disabled while a page comes): the rows below never move
+    if (S.older.error) p.append(el('span', '', "Couldn't load earlier messages. "));
+    const words = S.older.busy ? 'Loading earlier messages…' : S.older.error ? 'Try again' : 'Load earlier messages';
+    const b = button('ph-btn sm quiet', words, () => loadEarlier());
+    b.id = 'phEarlierGo';
+    b.disabled = S.older.busy || (S.offline && !copyServes());
+    if (S.offline && !b.disabled) p.classList.add('ph-copy-ok'); // the saved copy has them: it works while the PC can't be reached
+    p.append(b);
+    return p;
+  }
+
+  /* Scrolled near the top of a chat with earlier messages: the next page comes by itself. */
+  function nearTop() {
+    if (S.screen !== 'chat' && S.screen !== 'saved') return;
+    const c = S.screen === 'chat' ? S.chat : S.saved;
+    if (!c || !c.truncated || S.older.busy || S.older.error || (S.offline && !copyServes())) return;
+    if (root.scrollY > 300) return;
+    const d = doc.documentElement;
+    if (d.scrollHeight <= root.innerHeight) return; // nothing to scroll: the button is right there
+    loadEarlier();
+  }
+
+  /* Show output: a step's output whole, from the PC (one event; a big one was clipped in the chat's events). */
+  async function showOutput(seq) {
+    const now = S.outputs[seq];
+    if (now && now.state === 'open') {
+      delete S.outputs[seq];
+      draw();
+      return;
+    }
+    if (now && now.state === 'loading') return;
+    const id = S.chatId;
+    S.outputs[seq] = { state: 'loading', text: '' };
+    draw();
+    let r = null;
+    try {
+      r = await call('GET', '/api/remote/event?id=' + encodeURIComponent(id) + '&seq=' + seq, undefined, UPLOAD_MS);
+    } catch {
+      r = null;
+    }
+    if (S.chatId !== id) return;
+    if (r && r.status === 401) return removed();
+    const text = r && r.status === 200 ? outputText(r.data.event) : null;
+    S.outputs[seq] = text === null ? { state: 'error', text: '' } : { state: 'open', text: text || '(No output.)' };
+    draw();
   }
 
   /* AIB stopped answering (or still does not): "Reconnecting…" first, then closed / can't reach (offlineView). */
@@ -1340,17 +2022,19 @@
     S.home = r.data;
     S.homeRev = r.data.revision || '';
     takeTheme(r.data);
-    if (Array.isArray(r.data.scopes)) S.scopes = r.data.scopes;
+    takeScopes(r.data.scopes);
     if (r.data.pcName) S.pcName = r.data.pcName;
     if (S.screen === 'home') draw();
   }
 
   async function loadChat(fresh) {
-    const after = !fresh && S.chat ? S.chat.cursor : 0;
+    const after = !fresh && S.chat && !S.chat.cached ? S.chat.cursor : 0;
     const r = await call('GET', '/api/remote/chat?id=' + encodeURIComponent(S.chatId) + '&tail=' + TAIL + (after ? '&after=' + after : ''));
     if (r.status === 401) return removed();
     const noticed = takeNotices(r.data);
     if (r.status === 404) {
+      // the saved copy of a connection that ended: the chat as saved on the PC (Continue this chat is there)
+      if (S.chat && S.chat.cached && S.chat.copyKey) return openSaved(S.chat.copyKey, S.chat.title, S.chatMeta);
       S.chat = { gone: true, title: S.chat ? S.chat.title : '' };
       S.chatEvents = [];
       draw();
@@ -1358,14 +2042,41 @@
     }
     if (r.status !== 200) throw new Offline('refused');
     const c = r.data;
-    if (!after || c.reset) S.chatEvents = c.events;
-    else if (c.events.length) S.chatEvents = S.chatEvents.concat(c.events).slice(-TAIL * 2);
+    let truncated = after ? S.chat.truncated : c.truncated;
+    let firstSeq = after ? S.chat.firstSeq : c.firstSeq;
+    const copy = S.chat && S.chat.cached && !c.reset ? S.chatEvents : null; // the saved copy on screen
+    if (!after || c.reset || c.gap) {
+      // opened, renumbered, or more new events than a delta carries (gap): start again from these
+      S.chatEvents = c.events;
+      truncated = c.truncated;
+      firstSeq = c.firstSeq;
+      S.keepMin = 0;
+      const vFirst = c.events.length ? Number(c.events[0].seq) : 0;
+      const cLast = copy && copy.length ? Number(copy[copy.length - 1].seq) : 0;
+      if (vFirst && cLast && Number(copy[0].seq) < vFirst && vFirst <= cLast + 1) {
+        // the saved copy's older events meet this page: they stay in front (what you were reading does not go)
+        S.chatEvents = mergeEvents(copy.filter((e) => Number(e.seq) < vFirst), c.events);
+        truncated = S.chat.truncated;
+        firstSeq = S.chat.firstSeq;
+        S.keepMin = S.chatEvents.length;
+      }
+    } else if (c.events.length) {
+      // new events join by seq; older whole turns go past KEEP (never a reply or a run of steps cut in two)
+      const kept = trimEvents(mergeEvents(S.chatEvents, c.events), Math.max(KEEP, S.keepMin));
+      S.chatEvents = kept.events;
+      if (kept.cut) {
+        truncated = true;
+        firstSeq = Number(kept.events[0].seq) || firstSeq;
+      }
+    }
     const sig = (x) =>
       JSON.stringify([x.state, x.needs, x.busy, x.steerable, x.ready, x.waiting, x.queue, x.unknown, x.scopes, x.helpers, x.project]);
     const first = !S.chat || !after;
     const changed = first || c.events.length || sig(c) !== sig(S.chat);
-    S.chat = { ...c, truncated: after ? S.chat.truncated : c.truncated };
-    if (Array.isArray(c.scopes)) S.scopes = c.scopes;
+    const wasCopy = !!(S.chat && S.chat.cached);
+    S.chat = { ...c, truncated, firstSeq };
+    S.fromCopy = 0;
+    takeScopes(c.scopes);
     const keys = new Set((c.waiting || []).map((w) => w.key || 'sign-in'));
     // A record of what you did stays once the request is gone; a card you opened or closed that is gone is forgotten.
     for (const k of Object.keys(S.reqOpened)) if (!keys.has(k)) delete S.reqOpened[k];
@@ -1380,17 +2091,19 @@
         S.scrollTo = 'req:' + S.landKey;
       }
     }
-    if (first && !S.scrollTo) S.scrollTo = 'end';
+    if (first && !S.scrollTo && !wasCopy) S.scrollTo = 'end'; // a copy on screen: the reader's place stays
     if (S.editing && !((c.queue && c.queue.items) || []).some((i) => i.id === S.editing.messageId)) S.editing = null;
     if (S.editing && Date.now() - S.editing.renewed > 60000) renewEdit();
     if (first && c.savedKey) countArts(c.savedKey, c.id);
     if (S.newJob && S.newJob.id === S.chatId && S.newJob.state === 'opening') checkNewJob();
     if (S.screen === 'chat' && (changed || noticed)) draw();
+    saveCopy();
   }
 
   async function removed() {
     S.token = '';
     S.device = null;
+    wipeCopies(); // removed on the PC: its saved copies of chats go too
     await stored('device', null);
     S.screen = 'removed';
     draw();
@@ -1491,6 +2204,10 @@
       sheet.append(head, p, menuItem('cancel', '', 'Close', closeMenu));
       return;
     }
+    if (m.step === 'copies') {
+      copiesMenu(sheet);
+      return;
+    }
     if (m.step !== 'theme') {
       const head = el('div', 'ph-mh');
       head.append(el('b', '', 'This phone'), el('span', '', 'Saved on this phone only'));
@@ -1500,6 +2217,12 @@
           S.menu = { kind: 'phone', step: 'theme' };
           drawMenu();
         }, themeName(pick) + ' ›'),
+      );
+      sheet.append(
+        menuItem('copies', '▤', 'Saved copies', () => {
+          S.menu = { kind: 'phone', step: 'copies' };
+          drawMenu();
+        }, copiesWords() + ' ›'),
       );
       // Install AIB: hidden once it runs installed (or was just installed)
       if (installKind(installFacts()) !== 'installed') sheet.append(menuItem('install', '⤓', 'Install AIB', () => installNow()));
@@ -1532,6 +2255,42 @@
       }
       sheet.append(row(t.id, t.label));
     }
+  }
+  /* "2 chats · 340 KB", or "None": the saved copies on this phone. */
+  function copiesWords() {
+    const n = S.copies.size;
+    if (!n) return 'None';
+    const bytes = [...S.copies.values()].reduce((t, m) => t + m.size, 0);
+    return n + (n === 1 ? ' chat' : ' chats') + ' · ' + sizeWords(bytes);
+  }
+  /* This phone's menu → Saved copies: what is kept, where, how it goes; Forget cached chats. */
+  function copiesMenu(sheet) {
+    const head = el('div', 'ph-mh');
+    head.append(el('b', '', 'Saved copies'), el('span', '', 'Now: ' + copiesWords()));
+    sheet.append(head);
+    const p = el('p', 'ph-mtext');
+    p.id = 'phCopiesText';
+    p.textContent =
+      'This phone keeps copies of up to ' + CACHE_CHATS + ' chats you opened recently (about 2 MB each), so you can read them when ' +
+      S.pcName + " can't be reached. They are stored in this browser's storage for the AIB page, not encrypted (the key that pairs " +
+      'this phone is stored the same way). They are deleted when you tap Forget cached chats, when this phone is removed on ' + S.pcName +
+      ', or when Keep saved copies is turned off for this phone there (once the phone reaches it again).';
+    sheet.append(p);
+    if (S.booted && !S.scopes.includes(CACHE_FLAG)) {
+      const off = el('p', 'ph-mtext', 'Off for this phone. To turn it on: AIB on ' + S.pcName + ' → Settings → Remote control → this phone → Keep saved copies of recent chats.');
+      off.id = 'phCopiesOff';
+      sheet.append(off);
+    }
+    const forget = menuItem('forget', '×', 'Forget cached chats', () => {
+      wipeCopies();
+      S.menu = null;
+      drawMenu();
+      if (S.screen === 'offline') draw(); // its list of copies goes
+      toast('Saved copies deleted');
+    });
+    forget.classList.add('danger');
+    forget.disabled = !S.copies.size;
+    sheet.append(forget, menuItem('cancel', '', 'Close', closeMenu));
   }
   const matchLight = () => {
     try {
@@ -1807,12 +2566,14 @@
       return;
     }
     nc.projects = Array.isArray(r.data.projects) ? r.data.projects : [];
-    nc.agents = Array.isArray(r.data.agents) ? r.data.agents : [];
+    nc.allAgents = Array.isArray(r.data.agents) ? r.data.agents : [];
+    nc.agents = nc.allAgents;
     draw();
   }
   function pickProject(p) {
     const nc = S.nc;
     nc.project = p.id;
+    nc.agents = projectAgents(p, nc.allAgents || nc.agents); // a WSL project: its distro's switches
     const def = nc.agents.find((a) => a.id === p.agent && a.ok) || nc.agents.find((a) => a.ok);
     nc.agent = def ? def.id : '';
     nc.error = '';
@@ -1919,6 +2680,7 @@
         nc.project = '';
         nc.agent = '';
         nc.lists = null;
+        nc.agents = nc.allAgents || nc.agents;
         draw();
       });
       change.id = 'phNcChange';
@@ -1971,8 +2733,8 @@
     ta.placeholder = ready ? 'What should ' + (nc.agents.find((a) => a.id === nc.agent) || {}).name + ' do?' : 'Pick a project and an agent first';
     ta.setAttribute('aria-label', 'First message');
     ta.value = S.ncText || '';
-    ta.addEventListener('input', () => {
-      S.ncText = ta.value;
+    on(ta, 'input', (e) => {
+      S.ncText = e.currentTarget.value;
       const go = doc.getElementById('phNewStart');
       if (go) go.disabled = !newChatReady(S.nc, S.ncText, S.attach.new.length) || S.nc.starting || S.offline || S.attachBusy.new > 0;
     });
@@ -1993,7 +2755,7 @@
     go.id = 'phNewStart';
     go.disabled = !newChatReady(nc, S.ncText, S.attach.new.length) || nc.starting || S.offline || S.attachBusy.new > 0;
     bottom.append(go);
-    bottom.addEventListener('submit', (e) => {
+    on(bottom, 'submit', (e) => {
       e.preventDefault();
       startNew();
     });
@@ -2305,8 +3067,55 @@
 
   /* Try again: the start screen when the page opened offline (no bootstrap yet), else the normal poll. */
   function retry() {
-    if (!S.booted) return start();
+    if (!S.booted && !inChat()) return start();
     tick();
+  }
+
+  /* Over a saved copy while the PC can't be reached: when it was saved. */
+  function copyNote() {
+    const p = el('p', 'ph-copy-note', 'Showing saved copy from ' + copyTime(S.fromCopy || Date.now()) + '.');
+    p.id = 'phCopyNote';
+    p.setAttribute('role', 'status');
+    return p;
+  }
+
+  /* The saved copies on this phone, newest first, under "Can't reach <PC>" when the page opened without the PC (read only). */
+  function copiesEl() {
+    const list = [...S.copies.values()].sort((a, b) => b.lastActive - a.lastActive);
+    const box = el('section', 'ph-copies');
+    box.id = 'phCopies';
+    if (!list.length) return null;
+    box.append(el('h2', 'ph-ih', 'Saved on this phone'));
+    box.append(el('p', 'ph-note', 'Read only, as they were when saved.'));
+    const cards = el('div', 'ph-cards');
+    for (const m of list) {
+      const card = button('ph-card nr', '', () => openCopy(m));
+      card.dataset.copy = m.key;
+      const r1 = el('span', 'ph-r1');
+      r1.append(el('b', 'ph-title', m.title || 'Chat'));
+      const r2 = el('span', 'ph-r2');
+      if (m.project) r2.append(projectLine(m.project, [m.agent]));
+      else r2.append(el('span', 'ph-pw', m.agent));
+      card.append(r1, r2, el('span', 'ph-r3', 'Saved copy from ' + copyTime(m.savedAt)));
+      const wrap = el('div', 'ph-cw');
+      wrap.setAttribute('data-rk', 'c:' + m.key);
+      wrap.append(card);
+      cards.append(wrap);
+    }
+    box.append(cards);
+    return box;
+  }
+
+  /* ⋯ at the top right of home: this phone's own menu (Theme, Saved copies, Install AIB). */
+  function phoneMenuBtn() {
+    const b = button('ph-ic', '⋯', () => {
+      S.menu = { kind: 'phone', step: 'phone' };
+      drawMenu();
+    });
+    b.id = 'phPhoneMenu';
+    b.setAttribute('aria-label', 'This phone: theme and saved copies');
+    b.setAttribute('aria-haspopup', 'menu');
+    return b;
   }
 
   /* One chat card (a live chat, or one that is not running: lighter, "Ready"). */
@@ -2314,8 +3123,10 @@
     const c = item.chat;
     const live = item.kind === 'live';
     const w = live ? stateWords(c, now) : stateWords({ notRunning: true });
+    // while the PC can't be reached, a chat saved on this phone still opens (its saved copy, read only)
+    const copy = S.offline ? S.copies.get(str(c.key)) : null;
     const card = button('ph-card' + (live ? '' : ' nr') + (w.tone === 'need' ? ' need' : ''), '', () =>
-      live ? openChat(c.id, c.title, false, item) : openSaved(c.key, c.title, item),
+      copy ? openCopy(copy) : live ? openChat(c.id, c.title, false, item) : openSaved(c.key, c.title, item),
     );
     if (live) card.dataset.chat = c.id;
     else card.dataset.saved = c.key;
@@ -2332,7 +3143,8 @@
     r2.append(projectLine(item.project, [str(item.agent), el('span', 'ph-state ' + w.tone, w.text)]));
     card.append(r1, r2);
     const line = str(c.line); // a chat that is not running has one once the PC sends it
-    if (line) card.append(el('span', 'ph-r3', line));
+    if (copy) card.append(el('span', 'ph-r3 ph-copytag', 'Saved copy from ' + copyTime(copy.savedAt)));
+    else if (line) card.append(el('span', 'ph-r3', line));
     // ⋯ (and a long press on the card) opens its menu
     const key = (live ? 'l:' : 's:') + (live ? c.id : c.key);
     const opening = live && (c.state === 'opening' || !/:.+/.test(str(c.key))); // still starting: no menu until it is a chat
@@ -2340,7 +3152,8 @@
       card.dataset.menuKey = key;
       cardItems.set(key, item);
     }
-    const wrap = el('div', 'ph-cw');
+    const wrap = el('div', 'ph-cw' + (copy ? ' ph-copy-ok' : ''));
+    wrap.setAttribute('data-rk', key);
     const more = button('ph-more-btn', '⋯', () => openCardMenu(item));
     more.disabled = opening;
     more.setAttribute('aria-label', 'More for ' + item.title);
@@ -2400,6 +3213,7 @@
     for (const g of inboxGroups(home, picked ? picked.id : '', picked ? picked.name : '')) {
       const sec = el('section', 'ph-isec');
       sec.dataset.group = g.id;
+      sec.setAttribute('data-rk', 'g:' + g.id);
       sec.append(el('h2', 'ph-ih', g.title));
       if (!g.chats.length) sec.append(el('p', 'ph-inone', 'Nothing needs you'));
       for (const c of g.chats) sec.append(inboxCard(c, now, can));
@@ -2415,15 +3229,16 @@
     const ask = obj(c.ask);
     const card = el('div', 'ph-icard' + (inboxNeeds(c) ? '' : ' rev'));
     card.dataset.chat = c.id;
+    card.setAttribute('data-rk', 'i:' + c.id);
     card.tabIndex = 0;
     card.setAttribute('role', 'button');
     const open = () => openChat(c.id, c.title, !!ask.key, item);
-    card.addEventListener('click', (e) => {
+    on(card, 'click', (e) => {
       if (e.target.closest && e.target.closest('button')) return;
       open();
     });
-    card.addEventListener('keydown', (e) => {
-      if (e.target === card && (e.key === 'Enter' || e.key === ' ')) {
+    on(card, 'keydown', (e) => {
+      if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
         e.preventDefault();
         open();
       }
@@ -2493,13 +3308,7 @@
     // a remembered project that has no chats any more: All projects
     const picked = S.filter && projects.find((p) => p.id === S.filter);
     const list = picked ? all.filter((i) => i.project.id === S.filter) : all;
-    const phoneBtn = button('ph-ic', '⋯', () => {
-      S.menu = { kind: 'phone', step: 'phone' };
-      drawMenu();
-    });
-    phoneBtn.id = 'phPhoneMenu';
-    phoneBtn.setAttribute('aria-label', 'This phone: theme');
-    phoneBtn.setAttribute('aria-haspopup', 'menu');
+    const phoneBtn = phoneMenuBtn();
     parts.push(
       header('AIB', {
         sub: S.pcName + (home ? ' · ' + all.length + (all.length === 1 ? ' chat' : ' chats') : ''),
@@ -2640,8 +3449,9 @@
     if (!c) body.append(el('p', 'ph-empty', 'Loading…'));
     else if (c.gone) body.append(el('p', 'ph-empty', 'This chat is no longer in the list on ' + S.pcName + '.'));
     else {
+      if (c.cached && S.offline) body.append(copyNote());
       body.append(el('p', 'ph-earlier', 'Not open on ' + S.pcName + ': these are its saved messages.'));
-      if (c.truncated) body.append(el('p', 'ph-earlier', 'Earlier messages are on your PC.'));
+      if (c.truncated) body.append(earlierEl());
       const rows = rowsFrom(c.events);
       const list = el('div', 'ph-list');
       drawRows(list, rows, null);
@@ -2666,85 +3476,137 @@
     }
     rows.forEach((r, i) => {
       if (i === subsAt) box.append(subsCard(c));
-      if (r.kind === 'steps') {
-        const open = S.open.has(r.key);
-        const n = r.steps.length;
-        const running = c && c.busy ? r.steps.filter((s) => !s.done).length : 0;
-        const fold = button('ph-fold', '', () => {
-          if (S.open.has(r.key)) S.open.delete(r.key);
-          else S.open.add(r.key);
-          draw();
-        });
-        fold.append(
-          running ? el('span', 'ph-spin') : el('span', 'ph-check', '✓'),
-          doc.createTextNode(n + (n === 1 ? ' step' : ' steps') + (running ? ' · ' + running + ' running' : '')),
-          el('span', 'ph-chev2', '›'),
-        );
-        fold.setAttribute('aria-expanded', open ? 'true' : 'false');
-        const wrap = el('div', 'ph-steps-fold' + (open ? ' open' : ''));
-        wrap.append(fold);
-        if (open) {
-          const ul = el('ol', 'ph-fold-list');
-          for (const s of r.steps) {
-            const li = el('li', s.done ? '' : 'run', s.title + (s.done ? '' : ' · ' + (s.status === 'pending' ? 'waiting' : 'running')));
-            ul.append(li);
-          }
-          wrap.append(ul);
-        }
-        box.append(wrap);
+      // a row drawn from the same things as the one on screen is not drawn again (a waiting card always is: it has a form)
+      const rk = r.kind + ':' + r.key;
+      const sig = r.kind === 'req' ? '' : rowSig(r, c, agent);
+      const had = sig && rowCache.get(rk);
+      if (had && had.__sig === sig && had.isConnected) {
+        box.append(keep(had));
         return;
       }
-      if (r.kind === 'artifact') {
-        box.append(artifactCard(r.artifact));
-        return;
+      const at = box.lastChild;
+      drawRow(box, rows, r, c, agent);
+      const node = box.lastChild;
+      if (node && node !== at) {
+        node.setAttribute('data-rk', rk);
+        if (sig) node.__sig = sig;
       }
-      if (r.kind === 'req') {
-        box.append(reqCard(c, r.key, reqOpen(rows, r.key, S.reqOpened, S.landKey)));
-        return;
-      }
-      if (r.kind === 'record') {
-        const rec = el('div', 'ph-req done');
-        rec.dataset.req = r.key;
-        rec.dataset.record = '1';
-        const line = el('p', 'ph-rec');
-        line.append(el('span', 'ph-check', '✓'), doc.createTextNode(r.text));
-        rec.append(line);
-        box.append(rec);
-        return;
-      }
-      if (r.kind === 'notice') {
-        box.append(el('p', 'ph-notice' + (r.mine ? ' mine' : ''), r.text));
-        return;
-      }
-      const m = el('div', 'ph-msg ' + r.kind);
-      if (r.kind === 'agent') {
-        if (agent) m.append(el('div', 'ph-who', agent));
-        const text = el('div', 'ph-text');
-        if (root.AgentMarkdown) root.AgentMarkdown.render(text, r.text);
-        else text.textContent = r.text;
-        m.append(text);
-      } else if (r.text) {
-        const bub = el('div', 'ph-bub', r.text);
-        m.append(bub);
-      }
-      if (r.steered) m.append(el('span', 'ph-steered', 'Sent while working'));
-      const imgBox = r.kind === 'you' ? m.querySelector('.ph-bub') || m : m;
-      for (const url of r.images || []) {
-        const img = el('img', 'ph-img');
-        img.loading = 'lazy';
-        img.alt = 'Picture';
-        img.src = url;
-        imgBox.append(img);
-      }
-      if ((r.files || []).length) {
-        const files = el('ul', 'ph-sent-files');
-        files.setAttribute('aria-label', 'Attached files');
-        for (const name of r.files) files.append(el('li', '', name));
-        imgBox.append(files);
-      }
-      box.append(m);
     });
     if (subsAt >= rows.length) box.append(subsCard(c));
+  }
+
+  /* What a row is drawn from, as a string: the same string draws the same row. */
+  function rowSig(r, c, agent) {
+    let out = '';
+    if (r.kind === 'steps')
+      out = JSON.stringify([
+        S.open.has(r.key),
+        !!c,
+        !!(c && c.busy),
+        S.pcName,
+        r.steps.map((s) => [s.title, s.status, s.done, s.outSeq || 0, s.outSeq && S.outputs[s.outSeq] ? S.outputs[s.outSeq] : 0]),
+      ]);
+    else if (r.kind === 'artifact') out = JSON.stringify([r.artifact, S.artifacts]);
+    else out = JSON.stringify([r, agent]);
+    return out;
+  }
+
+  /* One row of a chat into `box`. */
+  function drawRow(box, rows, r, c, agent) {
+    if (r.kind === 'steps') {
+      const open = S.open.has(r.key);
+      const n = r.steps.length;
+      const running = c && c.busy ? r.steps.filter((s) => !s.done).length : 0;
+      const fold = button('ph-fold', '', () => {
+        if (S.open.has(r.key)) S.open.delete(r.key);
+        else S.open.add(r.key);
+        draw();
+      });
+      fold.append(
+        running ? el('span', 'ph-spin') : el('span', 'ph-check', '✓'),
+        doc.createTextNode(n + (n === 1 ? ' step' : ' steps') + (running ? ' · ' + running + ' running' : '')),
+        el('span', 'ph-chev2', '›'),
+      );
+      fold.setAttribute('aria-expanded', open ? 'true' : 'false');
+      const wrap = el('div', 'ph-steps-fold' + (open ? ' open' : ''));
+      wrap.append(fold);
+      if (open) {
+        const ul = el('ol', 'ph-fold-list');
+        for (const s of r.steps) {
+          const li = el('li', s.done ? '' : 'run', s.title + (s.done ? '' : ' · ' + (s.status === 'pending' ? 'waiting' : 'running')));
+          if (c && s.done && s.outSeq) {
+            // Show output: the step's output whole, from the PC
+            const out = S.outputs[s.outSeq];
+            const b = button('ph-btn sm quiet', out && out.state === 'open' ? 'Hide output' : out && out.state === 'loading' ? 'Loading output…' : 'Show output', () => showOutput(s.outSeq));
+            b.dataset.out = String(s.outSeq);
+            b.setAttribute('aria-expanded', out && out.state === 'open' ? 'true' : 'false');
+            const line = el('div');
+            line.append(b);
+            li.append(line);
+            if (out && out.state === 'error') li.append(el('p', 'ph-more', "Couldn't load the output. It may no longer be kept on " + S.pcName + '.'));
+            if (out && out.state === 'open') {
+              const pre = el('pre', 'ph-cmd ph-out', out.text);
+              pre.dataset.out = String(s.outSeq);
+              li.append(pre);
+            }
+          }
+          ul.append(li);
+        }
+        wrap.append(ul);
+      }
+      box.append(wrap);
+      return;
+    }
+    if (r.kind === 'artifact') {
+      box.append(artifactCard(r.artifact));
+      return;
+    }
+    if (r.kind === 'req') {
+      box.append(reqCard(c, r.key, reqOpen(rows, r.key, S.reqOpened, S.landKey)));
+      return;
+    }
+    if (r.kind === 'record') {
+      const rec = el('div', 'ph-req done');
+      rec.dataset.req = r.key;
+      rec.dataset.record = '1';
+      const line = el('p', 'ph-rec');
+      line.append(el('span', 'ph-check', '✓'), doc.createTextNode(r.text));
+      rec.append(line);
+      box.append(rec);
+      return;
+    }
+    if (r.kind === 'notice') {
+      box.append(el('p', 'ph-notice' + (r.mine ? ' mine' : ''), r.text));
+      return;
+    }
+    const m = el('div', 'ph-msg ' + r.kind);
+    if (r.kind === 'agent') {
+      if (agent) m.append(el('div', 'ph-who', agent));
+      const text = el('div', 'ph-text');
+      if (root.AgentMarkdown) root.AgentMarkdown.render(text, r.text);
+      else text.textContent = r.text;
+      m.append(text);
+    } else if (r.text) {
+      const bub = el('div', 'ph-bub', r.text);
+      m.append(bub);
+    }
+    if (r.steered) m.append(el('span', 'ph-steered', 'Sent while working'));
+    if (r.clipped) m.append(el('span', 'ph-steered ph-clipped', 'Message shortened here. The whole message is on your PC.'));
+    const imgBox = r.kind === 'you' ? m.querySelector('.ph-bub') || m : m;
+    for (const url of r.images || []) {
+      const img = el('img', 'ph-img');
+      img.loading = 'lazy';
+      img.alt = 'Picture';
+      img.src = url;
+      imgBox.append(img);
+    }
+    if ((r.files || []).length) {
+      const files = el('ul', 'ph-sent-files');
+      files.setAttribute('aria-label', 'Attached files');
+      for (const name of r.files) files.append(el('li', '', name));
+      imgBox.append(files);
+    }
+    box.append(m);
   }
 
   /* The Subagents card in the stream: each subagent's title and state (its own steps are on the PC). */
@@ -3126,6 +3988,7 @@
     for (const item of items) {
       const row = el('div', 'ph-queued');
       row.dataset.queued = item.id;
+      row.setAttribute('data-rk', 'q:' + item.id);
       const mine = S.editing && S.editing.messageId === item.id;
       if (mine) {
         const ta = el('textarea', 'ph-input');
@@ -3133,7 +3996,7 @@
         ta.rows = 3;
         ta.value = S.editing.text;
         ta.setAttribute('aria-label', 'Edit the queued message');
-        ta.addEventListener('input', () => (S.editing.text = ta.value));
+        on(ta, 'input', (e) => (S.editing.text = e.currentTarget.value));
         row.append(ta);
         const acts = el('div', 'ph-qa');
         const save = button('ph-btn sm', 'Save', () => queueEdit(item.id, 'save'));
@@ -3225,9 +4088,9 @@
     if (ta.value !== S.draft) ta.value = S.draft;
     ta.placeholder = 'Message ' + (c.agent || 'the agent');
     bar.querySelector('#phSend').disabled = S.sending || S.attachBusy.chat > 0;
-    bar.querySelector('#phChipsSlot').replaceChildren(chipsEl('chat'));
+    patchChildren(bar.querySelector('#phChipsSlot'), [chipsEl('chat')]);
     bar.querySelector('#phStop').hidden = !c.busy;
-    bar.querySelector('#phBottomExtra').replaceChildren(bottomExtra(c, abilities(S.scopes)));
+    patchChildren(bar.querySelector('#phBottomExtra'), [...bottomExtra(c, abilities(S.scopes)).childNodes]);
     const err = bar.querySelector('#phActError');
     err.textContent = S.actKey ? '' : S.actError;
     err.hidden = !err.textContent;
@@ -3458,6 +4321,7 @@
       for (const item of items) {
         const chip = el('li', 'ph-chip ' + (item.kind === 'image' ? 'pic' : 'file'));
         chip.dataset.chip = item.id;
+        chip.setAttribute('data-rk', 'chip:' + item.id);
         if (item.kind === 'image' && item.thumb) {
           const img = el('img', 'ph-chip-thumb');
           img.src = item.thumb;
@@ -3544,7 +4408,7 @@
       } else input.rows = 2;
       input.value = values[f.key] == null ? '' : String(values[f.key]);
       input.setAttribute('aria-label', f.title);
-      input.addEventListener('input', () => (values[f.key] = input.value));
+      on(input, 'input', (e) => (values[f.key] = e.currentTarget.value));
       wrap.append(input);
     }
     return wrap;
@@ -3562,7 +4426,8 @@
       return body;
     }
     const can = abilities(S.scopes);
-    if (c.truncated) body.append(el('p', 'ph-earlier', 'Earlier messages are on your PC.'));
+    if (c.cached && S.offline) body.append(copyNote());
+    if (c.truncated) body.append(earlierEl());
     const rows = rowsFrom(S.chatEvents, { waiting: c.waiting, acted: S.acted });
     const list = el('div', 'ph-list');
     drawRows(list, rows, c);
@@ -3615,7 +4480,7 @@
         sub: project ? projectLine(project, [agent]) : agent,
         extra,
         tools: [arts],
-        chip: S.offline ? ['Offline', 'off'] : w ? [w.text.split(' · ')[0], w.tone] : null,
+        chip: S.offline ? ['Offline', 'off'] : w && !c.cached ? [w.text.split(' · ')[0], w.tone] : null,
       }),
     ];
     if (S.offline) parts.push(offlineBox());
@@ -3630,6 +4495,10 @@
     }
     parts.push(main);
     if (!c || c.gone) return parts;
+    if (c.cached) {
+      parts.push(bottomNote(c, '')); // a saved copy: read only until the PC answers
+      return parts;
+    }
     const can = abilities(S.scopes);
     if (job && job.state === 'opening' && !c.closed) {
       parts.push(bottomNote(c, 'Starting this chat on ' + S.pcName + '… Your first message goes as soon as it is ready.'));
@@ -3714,10 +4583,10 @@
     go.id = 'pairGo';
     go.disabled = !!p.busy;
     form.append(go);
-    form.addEventListener('submit', (event) => {
+    on(form, 'submit', (event) => {
       event.preventDefault();
       const codeInput = doc.getElementById('pairCode');
-      claim(codeInput ? codeInput.value : '', name.value);
+      claim(codeInput ? codeInput.value : '', doc.getElementById('pairName').value);
     });
     body.append(form);
     frag.append(body);
@@ -3741,23 +4610,37 @@
     return frag;
   }
 
-  /* Put the screen's parts in #app. The composer, when it is already there, is never taken out (the keyboard stays up). */
-  function place(parts) {
-    const keep = composerEl && parts.includes(composerEl) && composerEl.parentNode === app ? composerEl : null;
-    if (!keep) return app.replaceChildren(...parts);
-    for (const n of [...app.childNodes]) if (n !== keep) n.remove();
-    const at = parts.indexOf(keep);
-    keep.before(...parts.slice(0, at));
-    keep.after(...parts.slice(at + 1));
+  /* Put the screen's parts in #app: the same screen (and chat) as before is patched (only what changed); another screen replaces
+     it. The composer, when it is already there, is never taken out (the keyboard stays up). */
+  let shown = '';
+  const shownKey = () => S.screen + ':' + (S.screen === 'chat' ? S.chatId : S.screen === 'saved' ? S.savedKey : '');
+  function place(parts, same) {
+    if (same) patchChildren(app, parts);
+    else {
+      const keepNode = composerEl && parts.includes(composerEl) && composerEl.parentNode === app ? composerEl : null;
+      if (!keepNode) app.replaceChildren(...parts.map(live));
+      else {
+        for (const n of [...app.childNodes]) if (n !== keepNode) n.remove();
+        const at = parts.indexOf(keepNode);
+        keepNode.before(...parts.slice(0, at).map(live));
+        keepNode.after(...parts.slice(at + 1).map(live));
+      }
+    }
+    rowCache.clear();
+    for (const n of app.querySelectorAll('[data-rk]')) if (n.__sig) rowCache.set(n.getAttribute('data-rk'), n);
   }
 
   function draw() {
     const y = root.scrollY;
     const d = doc.documentElement;
-    const atEnd = root.innerHeight + y >= d.scrollHeight - 40;
+    const height = d.scrollHeight;
+    const atEnd = root.innerHeight + y >= height - 40;
     const active = doc.activeElement;
     const focusId = active && active.id;
     const range = active && typeof active.selectionStart === 'number' ? [active.selectionStart, active.selectionEnd] : null;
+    const same = shown === shownKey();
+    if (!same) rowCache.clear(); // another screen or chat: nothing on screen is kept
+    shown = shownKey();
     const parts =
       S.screen === 'home'
         ? drawHome()
@@ -3778,10 +4661,10 @@
                   : S.screen === 'offline'
                     ? drawOfflineStart()
                     : el('p', 'ph-loading', 'Connecting…');
-    const list = Array.isArray(parts) ? parts : [parts];
+    const list = (Array.isArray(parts) ? parts : [parts]).flatMap((n) => (n.nodeType === 11 ? [...n.childNodes] : [n]));
     // the banner: only inside a chat, about another chat (never on the chat list)
     if (S.banner && inChat() && !S.offline) list.splice(1, 0, bannerEl());
-    place(list);
+    place(list, same);
     if (S.viewer && (S.screen === 'removed' || S.screen === 'pair')) closeArtifact(); // this phone may not see it any more
     app.dataset.screen = S.screen;
     if (focusId) {
@@ -3809,6 +4692,12 @@
     if (to && (S.screen === 'chat' || S.screen === 'saved') && (S.chat || S.saved)) {
       S.scrollTo = '';
       let target = null;
+      if (to.startsWith('keep:')) {
+        // Load earlier put rows in front: the same distance to the end as before, so what you read stays where it was
+        root.scrollTo(0, Math.max(0, d.scrollHeight - Number(to.slice(5))));
+        checkAbove();
+        return;
+      }
       if (to.startsWith('req:')) target = doc.querySelector('.ph-req[data-req="' + CSS.escape(to.slice(4)) + '"]');
       else if (to === 'subs') target = doc.getElementById('phSubs');
       if (target) {
@@ -3816,20 +4705,31 @@
         const top = target.getBoundingClientRect().top + root.scrollY - (head ? head.getBoundingClientRect().height : 0) - 12;
         root.scrollTo(0, Math.max(0, top));
       } else root.scrollTo(0, d.scrollHeight);
-    } else if ((S.screen === 'chat' || S.screen === 'saved') && atEnd && y > 0) root.scrollTo(0, d.scrollHeight); // keep up with new rows
+    } else if (same) {
+      if (inChat() && atEnd && d.scrollHeight > height) root.scrollTo(0, d.scrollHeight); // at the end: keep up with new rows
+    } else if (inChat() && atEnd && y > 0) root.scrollTo(0, d.scrollHeight);
     else root.scrollTo(0, y);
+    // else nothing: the rows were patched in place, and the browser's scroll anchoring keeps what you read where it is when rows
+    // above it change (a fling is never stopped by a scrollTo)
     checkAbove();
   }
 
   /* Leaving a chat: what belongs to it goes. */
   function leaveChat() {
     if (S.editing) queueEdit(S.editing.messageId, 'cancel');
+    flushCopy(); // the chat's newest copy is written now (a held-back write)
+    S.copySig = '';
+    S.fromCopy = 0;
+    S.openedAt = 0;
     S.chat = null;
     S.chatId = '';
     S.chatEvents = [];
     S.chatMeta = null;
     S.savedKey = '';
     S.saved = null;
+    S.keepMin = 0;
+    S.older = { busy: false, error: false };
+    S.outputs = {};
     S.continuing = false;
     S.actError = '';
     S.actKey = '';
@@ -3848,10 +4748,18 @@
   function goHome() {
     leaveChat();
     S.focusPrompt = false;
+    clearTimeout(S.timer);
+    if (!S.booted) {
+      // a saved copy opened while the page had never reached the PC: back to that screen (its list of copies), trying again
+      S.screen = 'offline';
+      draw();
+      root.scrollTo(0, 0);
+      retry();
+      return;
+    }
     S.screen = 'home';
     draw();
     root.scrollTo(0, 0);
-    clearTimeout(S.timer);
     tick();
   }
 
@@ -3863,10 +4771,12 @@
     S.chatTitle = title || '';
     S.chatMeta = item ? { project: item.project, agent: item.agent } : null;
     S.scrollTo = 'end';
+    S.openedAt = Date.now();
     draw();
     root.scrollTo(0, 0);
     clearTimeout(S.timer);
-    loadSaved()
+    showCopy('saved', key) // its saved copy at once, if this phone has one
+      .then(() => (S.screen === 'saved' && S.savedKey === key ? loadSaved() : null))
       .then(() => schedule(HOME_MS))
       .catch((error) => {
         if (!(error instanceof Offline)) throw error;
@@ -3916,10 +4826,12 @@
     S.attach.chat = [];
     S.attachNote.chat = '';
     S.editing = null;
+    S.openedAt = Date.now();
     draw();
     root.scrollTo(0, 0);
     clearTimeout(S.timer);
-    loadChat(true)
+    showCopy('chat', id) // its saved copy at once, if this phone has one
+      .then(() => (S.screen === 'chat' && S.chatId === id ? loadChat(true) : null))
       .then(() => schedule(CHAT_MS))
       .catch((error) => {
         if (!(error instanceof Offline)) throw error;
@@ -4102,7 +5014,8 @@
       await stored('device', { token: r.data.token, device: r.data.device });
       S.pairing = null;
       S.pairSecret = '';
-      S.scopes = (r.data.device && r.data.device.scopes) || [];
+      await loadCopies(); // an earlier pairing's copies go (they belong to another device)
+      takeScopes((r.data.device && r.data.device.scopes) || []);
       try {
         const boot = await call('GET', '/api/remote/bootstrap'); // now paired: the push key
         const push = (boot.status === 200 && boot.data.push) || {};
@@ -4322,12 +5235,41 @@
   /* The page opened while AIB does not answer (the worker's copy): no chats to show, only what is wrong. */
   function drawOfflineStart() {
     const frag = doc.createDocumentFragment();
-    frag.append(header('AIB', { sub: S.pcName, chip: ['Offline', 'off'] }));
+    frag.append(header('AIB', { sub: S.pcName, chip: ['Offline', 'off'], after: [S.device ? phoneMenuBtn() : null] }));
     frag.append(offlineBox());
+    const copies = S.device ? copiesEl() : null; // the chats saved on this phone can be read meanwhile
+    if (copies) frag.append(copies);
     return frag;
   }
 
   // ---- start ----
+  /* A paired phone's bootstrap answer: its record and switches, the push key, the artifact origin. */
+  function takeBoot(data) {
+    S.device = data.device;
+    S.artifacts = typeof data.artifacts === 'string' ? data.artifacts : '';
+    takeScopes((data.device && data.device.scopes) || []);
+    const push = data.push || {};
+    S.push.key = typeof push.key === 'string' ? push.key : '';
+    S.push.on = push.on === true;
+  }
+
+  /* A saved copy was opened before the PC ever answered (the page opened offline): the bootstrap, without leaving the chat.
+     False when the phone is no longer paired (removed() shows it). Throws Offline while the PC still can't be reached. */
+  async function bootQuiet() {
+    const boot = await call('GET', '/api/remote/bootstrap');
+    if (boot.status === 401) {
+      await removed();
+      return false;
+    }
+    if (boot.status !== 200 || !boot.data.paired) throw new Offline('refused');
+    if (boot.data.pcName) S.pcName = boot.data.pcName;
+    takeTheme(boot.data);
+    takeBoot(boot.data);
+    S.booted = true;
+    bootPush();
+    return true;
+  }
+
   async function start() {
     const m = /^#p=([0-9a-f]{12})$/i.exec(root.location.hash || '');
     if (m) S.pairSecret = m[1].toLowerCase();
@@ -4339,10 +5281,12 @@
       S.token = saved.token;
       S.device = saved.device || null;
     }
+    if (!S.booted) await loadCopies(); // this phone's saved copies of chats (another pairing's go)
     let boot;
     try {
       boot = await call('GET', '/api/remote/bootstrap');
     } catch (error) {
+      if (inChat()) return; // a saved copy was opened meanwhile: its own polls try again
       // AIB is closed or the PC can't be reached: the service worker opened the page from its copy.
       S.screen = 'offline';
       goneOffline(error && error.message);
@@ -4351,6 +5295,7 @@
       S.timer = setTimeout(() => retry(), S.offline && Date.now() - S.offlineSince < S.reconnectMs ? 2000 : HOME_MS);
       return;
     }
+    if (inChat()) return; // a saved copy was opened meanwhile: its own poll boots (bootQuiet) and loads it
     S.booted = true;
     if (S.offline) {
       S.offline = false;
@@ -4366,12 +5311,7 @@
     if (boot.data.layout !== 'phone') return;
     takeTheme(boot.data);
     if (boot.data.paired) {
-      S.device = boot.data.device;
-      S.artifacts = typeof boot.data.artifacts === 'string' ? boot.data.artifacts : '';
-      S.scopes = (boot.data.device && boot.data.device.scopes) || [];
-      const push = boot.data.push || {};
-      S.push.key = typeof push.key === 'string' ? push.key : '';
-      S.push.on = push.on === true;
+      takeBoot(boot.data);
       bootPush(); // subscribe again on every page open (a new key after Remove all, a subscription the browser renewed)
       const open = S.openOnStart;
       S.openOnStart = null;
@@ -4392,6 +5332,7 @@
     if (doc.visibilityState === 'hidden') {
       clearTimeout(S.timer);
       left();
+      flushCopy(); // the page may not come back: the chat's newest copy is written now
     }
     else if (S.screen === 'home' || S.screen === 'chat' || S.screen === 'saved') {
       clearTimeout(S.timer);
@@ -4431,6 +5372,7 @@
     () => {
       markRead();
       checkAbove();
+      nearTop();
     },
     { passive: true },
   );

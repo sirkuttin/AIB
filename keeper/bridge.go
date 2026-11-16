@@ -1,6 +1,7 @@
 package main
 
-// AIB-keeper bridge --data D [--hold] [-- serve flags]: the stdio end of a keeper in a WSL distro (PROTOCOL.md section 10).
+// AIB-keeper bridge --data D [--hold] [-- serve flags]: the stdio end of a keeper in a WSL distro (PROTOCOL.md section 10). A keeper it
+// starts gets --orphan-grace 2h (bridgeOrphanGrace) before the extra serve flags.
 //
 // AIB runs `wsl.exe --distribution D --cd ~ --exec <ver>/AIB-keeper bridge --data <linuxData>` and talks keeper frames over that
 // process's stdin and stdout. The bridge finds the distro's keeper (keeper.json, then a dial of its unix socket), starts one if there
@@ -33,6 +34,10 @@ const (
 	bridgeStartWait  = 10 * time.Second
 	holdClient       = "AIB WSL hold"
 	maxUnixSocketLen = 100
+	// bridgeOrphanGrace: how long the keeper a bridge starts keeps live channels with no client at all. It outlasts any AIB restart,
+	// crash and tray relaunch, update, test-build swap or an older AIB that dropped the keep-alive, yet a distro whose AIB never comes
+	// back does not keep agents (and the WSL VM's memory) up overnight.
+	bridgeOrphanGrace = 2 * time.Hour
 )
 
 type bridgeOptions struct {
@@ -50,6 +55,9 @@ type keeperInfo struct {
 	Transport string `json:"transport"`
 	Address   string `json:"address"`
 	Token     string `json:"token"`
+	// OrphanStopAt: keeper 1.6.0, while live channels have had no client: when they stop (Unix ms; 0 otherwise). The bridge reads
+	// keeper.json before its own client says hello, so the preamble can tell AIB how close the channels came.
+	OrphanStopAt int64 `json:"orphanStopAt"`
 }
 
 func bridgeMain(args []string) int {
@@ -104,7 +112,10 @@ func bridgeConnect(o bridgeOptions) (net.Conn, keeperInfo, error) {
 	if err != nil {
 		return nil, keeperInfo{}, err
 	}
-	args := append([]string{"serve", "--data", data, "--unix-only"}, o.serveArgs...)
+	// The Linux keeper cannot start AIB again, so its channels wait bridgeOrphanGrace for a client (PROTOCOL.md section 6); the
+	// environment (tests) or an --orphan-grace among the extra serve flags (the last one wins) says otherwise.
+	grace := envDuration(orphanGraceEnv, bridgeOrphanGrace)
+	args := append([]string{"serve", "--data", data, "--unix-only", "--orphan-grace", grace.String()}, o.serveArgs...)
 	cmd, err := startDetached(func() *exec.Cmd { return exec.Command(exe, args...) })
 	if err != nil {
 		return nil, keeperInfo{}, fmt.Errorf("start the keeper: %w", err)
@@ -156,8 +167,12 @@ func writePreamble(w io.Writer, info keeperInfo) error {
 	if home == "" {
 		home, _ = os.UserHomeDir()
 	}
-	pre, _ := json.Marshal(map[string]any{"ev": "bridge", "bridge": 1, "keeper": info.Keeper, "pid": info.Pid, "token": info.Token,
-		"home": home, "uid": os.Getuid(), "arch": runtime.GOARCH})
+	m := map[string]any{"ev": "bridge", "bridge": 1, "keeper": info.Keeper, "pid": info.Pid, "token": info.Token,
+		"home": home, "uid": os.Getuid(), "arch": runtime.GOARCH}
+	if info.OrphanStopAt > 0 {
+		m["orphanStopAt"] = info.OrphanStopAt
+	}
+	pre, _ := json.Marshal(m)
 	_, err := w.Write([]byte(bridgeMagic + "\n" + string(pre) + "\n"))
 	return err
 }

@@ -5,8 +5,9 @@ import { LOGIN, NAME, raw, type Raw, type RemoteStudio } from './_remote_fixture
 
 type Json = Record<string, unknown>;
 
-/** This test is Tailscale Serve: every request to https://<name>/ goes to the phone port with the headers Serve adds. */
-export async function serveFor(page: Page, s: RemoteStudio): Promise<void> {
+/** This test is Tailscale Serve: every request to https://<name>/ goes to the phone port with the headers Serve adds.
+ * `gate.down`: the PC can't be reached now (Serve answers 502 to the API; the page's own files still come, as from the service worker). */
+export async function serveFor(page: Page, s: RemoteStudio, gate?: { down: boolean }): Promise<void> {
   await page.send('Network.enable');
   await page.send('Fetch.enable', { patterns: [{ urlPattern: `https://${NAME}/*`, requestStage: 'Request' }] });
   page.listeners.set('Fetch.requestPaused', (p) => {
@@ -29,9 +30,11 @@ export async function serveFor(page: Page, s: RemoteStudio): Promise<void> {
       const cookies = (jar.cookies as Json[]).map((c) => `${c.name}=${c.value}`).join('; ');
       if (cookies) headers.Cookie = cookies;
       let answer: Raw | null = null;
-      try {
-        answer = await raw(s.phonePort(), method, url.pathname + url.search, headers, request.postData as string | undefined);
-      } catch { /* Serve answers 502 */ }
+      if (!(gate?.down && url.pathname.startsWith('/api/'))) {
+        try {
+          answer = await raw(s.phonePort(), method, url.pathname + url.search, headers, request.postData as string | undefined);
+        } catch { /* Serve answers 502 */ }
+      }
       if (!answer) {
         await page.send('Fetch.fulfillRequest', { requestId: p.requestId, responseCode: 502, responseHeaders: [], body: '' });
         return;
@@ -47,20 +50,20 @@ export async function serveFor(page: Page, s: RemoteStudio): Promise<void> {
   });
 }
 
-export async function phonePage(browser: Browser, s: RemoteStudio, phone: { token: string; id: string }, ua?: string, width = 375, cards = true): Promise<Page> {
+export async function phonePage(browser: Browser, s: RemoteStudio, phone: { token: string; id: string }, ua?: string, width = 375, cards = true, gate?: { down: boolean }): Promise<Page> {
   const page = await browser.open('about:blank', width, 812);
   await page.send('Emulation.setDeviceMetricsOverride', { width, height: 812, deviceScaleFactor: 2, mobile: true });
   if (ua) await page.send('Emulation.setUserAgentOverride', { userAgent: ua });
-  await serveFor(page, s);
+  await serveFor(page, s, gate);
   await page.goto(`https://${NAME}/phone.html`);
   await page.waitFor('!!document.getElementById("app").dataset.screen', 15000, 'the phone page');
   await page.eval(`new Promise((resolve, reject) => {
-    const req = indexedDB.open('aib-phone', 1);
+    const req = indexedDB.open('aib-phone');
     req.onupgradeneeded = () => req.result.createObjectStore('kv');
     req.onsuccess = () => {
       const tx = req.result.transaction('kv', 'readwrite');
       tx.objectStore('kv').put({ token: ${JSON.stringify(phone.token)}, device: { id: ${JSON.stringify(phone.id)} } }, 'device');
-      tx.oncomplete = () => resolve(true);
+      tx.oncomplete = () => { req.result.close(); resolve(true); };
       tx.onerror = () => reject(tx.error);
     };
     req.onerror = () => reject(req.error);

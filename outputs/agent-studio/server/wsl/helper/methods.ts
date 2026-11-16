@@ -17,7 +17,7 @@ import { checkPath, checkProject, createFolder, createProject, GIT_TIMEOUT, gitP
 import { repoBranch } from '../../worktrees/chat_folders.ts';
 import { defaultOmpCommand, type LaunchRow, resolveClaude, resolveCodex, resolveOmp } from '../../agents/adapters.ts';
 import { latestRolloutLimits } from '../../agents/codex_limits.ts';
-import { Store } from '../../transcripts/store.ts';
+import { findSessionFile, Store } from '../../transcripts/store.ts';
 import { handleGet } from '../../transcripts/monitor.ts';
 import { distroTrash, inspectInDistro, trashInDistro } from './trash.ts';
 import { Refused } from '../../desktop/project_delete.ts';
@@ -34,12 +34,17 @@ import { bgtaskMethods } from './bgtasks.ts';
 import { type EnvMode, envPrereqs, type PrereqDeps } from './prereqs.ts';
 import { signinStatus } from './signin_status.ts';
 import { aibMethods, type RemoveDeps } from './aib_remove.ts';
+import { localOnlyMethods, rawRead } from './local_only.ts';
+import { allowFactsMethods } from './allow_facts.ts';
 
 export const LIST_DIRS_DEFAULT = 500, LIST_DIRS_MAX = 2000;
 export const SESSIONS_DEFAULT = 500, SESSIONS_MAX = 5000;
 /** The /api/transcript arguments transcripts.read passes on (the page's paging; nothing else reaches handleGet). */
 const TRANSCRIPT_ARGS = ['limit', 'after', 'before', 'thinking', 'q', 'kind'];
 export const DEFAULT_AGENTS = ['claude', 'codex', 'omp'];
+/** files.readBytes: the largest piece per call (base64 keeps each answer line near 1.4 MB) and the default whole-file cap. */
+export const READ_BYTES_CHUNK = 1024 * 1024;
+export const READ_BYTES_MAX = 25 * 1024 * 1024;
 
 export interface HelperContext {
   /** The login environment (env.get), once captured. */
@@ -196,6 +201,9 @@ export function makeMethods(ctx: HelperContext): Handlers {
     // background tasks, the ownership check and the agents' process trees (helper/bgtasks.ts)
     ...bgtaskMethods({ env: ctx.env, store: (p) => sessionStore(ctx, p) }),
     ...linkingMethods(ctx), // Linking (WSL) phase 2: env.prereqs, agents.signinStatus (agents.uninstall is in installMethods)
+    // allow rules of WSL chats: what the matcher needs to know of the distro (helper/allow_facts.ts, read only)
+    ...allowFactsMethods({ env: ctx.env, own: async () => [...await ownFolders(ctx), ...(data ? [data] : [])] }),
+    ...localOnlyMethods(data), // local-only files from the main folder (helper/local_only.ts); chat copies only under <data>/worktrees
     ...(data ? { ...worktreeMethods(data), ...mergeMethods(data), ...syncMethods(ctx.sync ?? new HelperSync(data)) } : {}),
     ...(ctx.root ? installMethods({ root: ctx.root, notify: ctx.notify ?? (() => {}), refreshPath: ctx.refreshPath }) : {}),
     // Linking (WSL) phase 3: disk use and Remove AIB from this distro (helper/aib_remove.ts), only with both folders known
@@ -351,17 +359,36 @@ function phaseOne(ctx: HelperContext): Handlers {
       return { ...found, matches: found.matches.slice(0, limit), truncated: true };
     },
 
-    'files.read': (p) => {
-      const [abs, path] = files.resolveInside(absPath(p, 'root'), str(p, 'rel'));
+    'files.read': (p) => rawRead(absPath(p, 'root'), str(p, 'rel'), Math.min(int(p, 'maxBytes', files.LIMITS.readBytes), files.LIMITS.readBytes)),
+
+    // A whole file's bytes for an artifact published by path (wsl/artifact_read.ts), in pieces of at most READ_BYTES_CHUNK: the
+    // same realpath check as files.read (no link or .. out of root), then size, mtime and the piece at `offset`. A file over
+    // `maxBytes` is refused before anything is read.
+    'files.readBytes': (p) => {
+      const rel = str(p, 'rel');
+      const [abs, path] = files.resolveInside(absPath(p, 'root'), rel);
       if (!path) throw new files.FilesError('Choose a file', 'not_file');
       const st = stat(abs);
       if (!st) throw new files.FilesError('Not found', 'not_found', 404);
       if (!st.isFile) throw new files.FilesError('Not a file', 'not_file');
-      const cap = Math.min(int(p, 'maxBytes', files.LIMITS.readBytes), files.LIMITS.readBytes);
-      const file = Deno.openSync(abs, { read: true });
-      const buf = new Uint8Array(Math.min(cap, st.size));
+      const maxBytes = int(p, 'maxBytes', READ_BYTES_MAX);
+      if (st.size > maxBytes) throw new RpcError(`Too large: ${st.size} bytes`, undefined, { code: 'too_large', size: st.size, abs });
+      const offset = int(p, 'offset', 0);
+      const length = Math.min(int(p, 'length', READ_BYTES_CHUNK), READ_BYTES_CHUNK);
+      let file: Deno.FsFile;
+      try {
+        file = Deno.openSync(abs, { read: true });
+      } catch (error) {
+        const denied = error instanceof Deno.errors.PermissionDenied;
+        throw new RpcError(denied ? 'Permission denied' : error instanceof Error ? error.message : String(error), undefined, {
+          code: denied ? 'unreadable' : 'read_failed',
+          abs,
+        });
+      }
+      const buf = new Uint8Array(Math.max(0, Math.min(length, st.size - offset)));
       let got = 0;
       try {
+        if (offset) file.seekSync(offset, Deno.SeekMode.Start);
         while (got < buf.length) {
           const n = file.readSync(buf.subarray(got));
           if (n === null) break;
@@ -370,14 +397,7 @@ function phaseOne(ctx: HelperContext): Handlers {
       } finally {
         file.close();
       }
-      return {
-        bytesB64: encodeBase64(buf.subarray(0, got)),
-        size: st.size,
-        truncated: st.size > got,
-        mtimeMs: st.mtime?.getTime() ?? 0,
-        path,
-        abs,
-      };
+      return { bytesB64: encodeBase64(buf.subarray(0, got)), size: st.size, mtimeMs: st.mtime?.getTime() ?? 0, offset, path, abs };
     },
 
     'files.outside': async (p) => {
@@ -459,6 +479,18 @@ function phaseOne(ctx: HelperContext): Handlers {
       for (const name of TRANSCRIPT_ARGS) if (typeof given[name] === 'string') args.set(name, given[name] as string);
       const reply = await handleGet(store, '/api/transcript', args.toString());
       return { status: reply.status, body: reply.body };
+    },
+
+    // A saved chat's outside-file guard (Windows: files_routes.ts mentionedBy): does its own transcript (and its subagents') name
+    // `path`, by Linux rules? Only the session file and the files below its folder are read, never the path itself.
+    'transcripts.mentions': async (p) => {
+      const path = str(p, 'path');
+      if (!path.startsWith('/') || path.length > 4096 || path.includes('\0')) throw new RpcError('path must be an absolute Linux path', BAD_PARAMS);
+      const provider = str(p, 'provider'), sessionId = str(p, 'sessionId');
+      const store = await sessionStore(ctx, p);
+      if (!store) return { mentioned: false };
+      const texts = await outside.chatTexts({ sessionFile: (prov, sid) => findSessionFile(prov, store.root, sid) }, `${provider}:${sessionId}`);
+      return { mentioned: outside.mentions(texts, path, true) };
     },
 
     'chat.repoBranch': async (p) => {

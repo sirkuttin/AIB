@@ -1,0 +1,180 @@
+{
+ "summary": "Measuring QA of the new WSL screens. Real page code (outputs/agent-studio) against fake routes of the contract shapes, headless Chrome, 1280 x 860, teal-dark (AIB's default and the mockup's theme) and teal-light. Nothing is broken. The Settings page matches the mockup closely: 31 to 37 elements per state have identical computed styles. The differences are listed below with both values. The biggest issues are the new-chat WSL box, which does not line up with the form above it; raw wsl:// refs in the New project dialog; three chat states that all read 'Ready'; low contrast in teal-light; and parts of the mockup that were never built.",
+ "findings": [
+  {
+   "sev": "wrong vs reference",
+   "title": "New-chat WSL box is not aligned with the centred form above it",
+   "where": "chat.js:3651 (box.className = 'nc-wsl'); no .nc-wsl rule in chat.css / header.css",
+   "detail": "The box starts at x=256 and is 728 px wide. The Agent/Model/Mode grid (.nc-grid) and the folder line (#ncFolder) start at x=430 and are 380 px wide. So the 'not installed' line, Install button, copy line and links hang 174 px left of the form. In the Node.js-missing state, 'Check again' sits 4 px from the Install button (x=376 vs 380). The Install button is 38 px tall, while the selects above it are 30 px."
+  },
+  {
+   "sev": "wrong vs reference",
+   "title": "New project shows the raw ref: 'Uses wsl://ubuntu/home/u/ (already there)'",
+   "where": "workspace-state.js:794 (also :785 'Opens …', :806 'Creates …'); server/web/wsl_routes.ts:99-101 returns path as a wsl:// ref",
+   "detail": "The preview line under Project name prints check.path verbatim. For a WSL folder the server answers with the ref, so the user sees 'wsl://ubuntu/home/u/'. Elsewhere the app's rule is 'Ubuntu: /home/u/app', never a raw ref (files-ui.js:822, AIBWsl.displayPath / tooltip)."
+  },
+  {
+   "sev": "wrong vs reference",
+   "title": "Three different chat states read the same word 'Ready' in the chat list",
+   "where": "status-words.js:111 (idle: 'Ready'), :137 (not-running: 'Ready'); chat.js:4752-4790 rowStatus; workspace.css:114 hides .connection-state in the sidebar",
+   "detail": "Side by side in the sidebar, three rows all show the phrase 'Ready' (600 weight, #a9a497 in teal-dark): a live idle chat, a saved chat that is not running, and a chat recovered after a restart. Only the dot tells them apart: d-idle is a solid ring, d-off is dotted. The '● Ready · Live in AIB' badge (badge-live) is built for live chats but is display:none in the aside, so it never shows there. The header chip also reads 'Ready'. Couldn't reopen reads \"Couldn't reopen\" with the same dotted d-off dot as a saved chat."
+  },
+  {
+   "sev": "wrong vs reference",
+   "title": "Ubuntu card: the mockup's Linux, AIB folder and actions are missing",
+   "where": "wsl-settings-ui.js:432 (facts: State, AIB helper, Home)",
+   "detail": "The mockup has 5 facts: State; Linux 'Ubuntu 24.04.4 LTS · x86_64'; AIB helper '… · checked'; AIB folder '~/.aib-server · 1.4 GB'; Home. It also has the buttons 'Open Ubuntu terminal' and 'Repair AIB helper' (design section 4). The page shows 3 facts and no buttons. The test asserts this on purpose (no buttons that would do nothing). The overview tag also drops the Linux version: the mockup reads 'WSL 2 · Ubuntu 24.04.4 · WSL default', the page reads 'WSL 2 · WSL default'. docker-desktop has no 'WSL 2' tag in the page (the mockup has one)."
+  },
+  {
+   "sev": "wrong vs reference",
+   "title": "Node.js missing: the mockup's copyable nvm command and 'Open Ubuntu terminal' are not shown before Install",
+   "where": "wsl-settings-ui.js:649 (Install Node.js button) and the node row around it",
+   "detail": "The mockup row shows a copy row with the pinned command (curl -fsSLo \"$t\" … sha256sum -c && bash \"$t\" … nvm install --lts) and three buttons: 'Install Node.js 24 (LTS) in Ubuntu', 'Open Ubuntu terminal', 'Check again'. The page shows two buttons, 'Install Node.js in Ubuntu' and 'Check again'. The command appears only in the terminal panel title once Install runs. Design decision 6 says the command is shown before it starts. Agent rows: the mockup has a 'Needs first:' list (st-beta-needs) with an 'Install Node.js 24 (LTS)' link; the page has the plain line 'Needs Node.js first: see What Ubuntu needs above.'"
+  },
+  {
+   "sev": "wrong vs reference",
+   "title": "Usage list sizes are left-aligned and the list spacing differs from the mockup",
+   "where": "wsl-settings-ui.js:1194 (dl 'st-facts wl-usage'); settings.css:1130-1138 has no .wl-usage / .wl-usage dd rule",
+   "detail": "Mockup .wl-usage dd {text-align: right}; the page computes text-align: start, so '12 MB' and '96 MB' start under '190 MB' instead of lining up on the right. Mockup .wl-usage margin-top 4px and gap 4px 18px; the page has 0px and 6px 18px (inherited from .st-facts, settings.css:430-436)."
+  },
+  {
+   "sev": "wrong vs reference",
+   "title": "Teal-light: links and muted lines inside .st-note.dim are below 4.5:1",
+   "where": "settings.css:210-212 (.st-note.dim {opacity: 0.8}); wsl-settings-ui.js .wl-checked / .wl-path; chat.js:3725 dim copy line",
+   "detail": "Teal-light values: 'Check again' link in 'Checked with' is #3e9089 on #faf9f6 = 3.59:1. New-chat 'Copy' link is #3e8f88 on #f7f4ee = 3.48:1. New-chat 'Or install it yourself in Ubuntu' line is #7c7569 on #f7f4ee = 4.15:1. 'Checked with: …' line and node path are #7c766a on #faf9f6 = 4.28:1. All need 4.5. The 0.8 opacity causes it: without it the same tokens pass. In teal-dark the same elements are 4.71-5.12:1 (pass)."
+  },
+  {
+   "sev": "polish",
+   "title": "Partial-failure dialog keeps the question title and shows paths in the text font",
+   "where": "wsl-settings-ui.js:1263 (title never changes), :1369-1372 (Left in / Removed lists), :1133-1134 (card's left list)",
+   "detail": "After a partial failure the title still reads 'Remove AIB from Ubuntu?' above 'AIB could not remove everything from Ubuntu.'. The 'Left in Ubuntu:' and 'Removed:' paths are 13px Segoe UI in --text. In the check view the same kind of paths are .wl-rm-path: 12px Consolas, --muted (settings.css:1174-1180). After Close, the card repeats the left list in the text font too."
+  },
+  {
+   "sev": "polish",
+   "title": "Blocked Remove: the reasons run straight into the list below, and the off button is faint",
+   "where": "settings.css:1189-1191 (.wl-reason margin 0 0 4px), :1186 (.wl-rm-head)",
+   "detail": "The last reason line ends 4 px above 'Remove would delete (203 MB in all):', with no separation between the refusal and the inventory. The disabled 'Remove AIB from Ubuntu' (opacity 0.5) measures 3.03:1 in teal-dark (#87606c on #1f2028) and 2.34:1 in teal-light. WCAG exempts disabled controls, but it is the dialog's main button. The 'This stops AIB's helper … Nothing is deleted before you confirm.' line stays while removal is blocked."
+  },
+  {
+   "sev": "polish",
+   "title": "Failed publish card carries no failure colour; the reason line is brighter than its subtitle and cut to one line",
+   "where": "artifacts.css:533-539 (.art-card-err color var(--text-6), nowrap + ellipsis); artifacts-ui.js:2648-2651; reason text server/artifacts/mcp.ts:763",
+   "detail": "The card keeps the teal dashed border (#2a7c72) and the teal html badge of a good card. 'The publish did not finish' is 11px #a9a497, and the reason under it is 11px #edeae2 (brighter than the line above). The reason is cut at 560.8 px with '…'; the full text is only on hover. The visible part reads 'In a WSL project, publish by `content`: AIB cannot open files inside the distro. In this WSL project only `content` w…'. That is agent-facing wording, backticks included."
+  },
+  {
+   "sev": "polish",
+   "title": "The switch label carries the global label margin (18 px above and below)",
+   "where": "chat.css:156-163 (label {margin: 18px 0; color: var(--label-text)}) applied to .st-toggle (settings.css:303)",
+   "detail": "Mockup .st-toggle: margin 0, colour #edeae2. Page: margin 18px 0, colour #cac6bb. Each agent row's actions line grows by 36 px (visible gap above 'Use in Ubuntu'). The Windows AIB Linking cards measure the same (identical computed styles), so this is shared with the reference app page, not new in WSL."
+  },
+  {
+   "sev": "polish",
+   "title": "'Other AIB data folders' title is larger than everything around it; 'in use' uses the warning colour",
+   "where": "wsl-settings-ui.js:1227 ('st-label wl-others-title'), :1232 ('in use' as st-status warn); settings.css:1148",
+   "detail": "The title computes to 14px, while the card's notes and lines are 12-13px. The 'in use' chip is the warn tone: #b8381c on #ffe4dc in teal-light, the red of 'Not installed'. It is informational (another build's keeper runs), not a problem. The chip sits at the far right, 900+ px from its folder name."
+  },
+  {
+   "sev": "polish",
+   "title": "Distro drop-down options repeat the name, and long names are cut",
+   "where": "wsl-settings-ui.js:346; settings.css:1085-1088 (.wl-pick max-width 360px)",
+   "detail": "The option reads \"docker-desktop (not supported: docker-desktop is Docker's own distro; AIB cannot run there)\", naming the distro twice. As a list box it overflows the 360 px select by 189 px. A long distro name ('Ubuntu-24.04-Developer-Workstation-With-A-Very-Long-Distro-Name') is cut in the closed select at every width (700, 900, 1280, 1400). The greyed option is #6d6d6d on #ffffff = 5.17:1 (passes)."
+  },
+  {
+   "sev": "polish",
+   "title": "WSL 1 row says 'AIB needs WSL 2' twice",
+   "where": "wsl-settings-ui.js:398 plus the skipped reason from the status route",
+   "detail": "'Ubuntu-20.04 runs on WSL 1. AIB needs WSL 2.' is followed by 'AIB needs WSL 2. Convert it in PowerShell (takes a few minutes; back it up first):'. The row is 110.9 px tall against the mockup's 92 px."
+  },
+  {
+   "sev": "polish",
+   "title": "After Remove: 'State: AIB not set up' repeats the next line",
+   "where": "wsl-settings-ui.js:1120",
+   "detail": "The facts list shows State 'AIB not set up' (12px Consolas), and the next line is 'AIB is not set up in Ubuntu.'. No line says what was removed or how much space came back; the dialog just closes."
+  },
+  {
+   "sev": "polish",
+   "title": "a11y: switches are plain checkboxes, chips are silent, the drop-down's name differs from its label, and the dialog has no description",
+   "where": "settings-ui.js agentRow toggle (shared with Windows); wsl-settings-ui.js:338 (aria-label), :1260-1265 (no aria-describedby)",
+   "detail": "'Use in Ubuntu' is <input type=checkbox> with no role=switch, the same as the Windows 'On' switch. Status chips (.st-status) have no role or aria-live, so 'Installing… / Install failed' changes are not announced; the progress bar is correct (role=progressbar, 0/46/100, aria-label). The drop-down's visible label is 'Distro' but its aria-label is 'The distro this page shows', so it fails label-in-name (WCAG 2.5.3). The Remove alertdialog has aria-labelledby but no aria-describedby. Cancel gets focus on open, but programmatic focus draws no ring (no :focus-visible); the delete-project dialog behaves the same."
+  },
+  {
+   "sev": "polish",
+   "title": "Uninstall asks with the native window.confirm",
+   "where": "wsl-settings-ui.js:808 (same as Windows settings-ui.js:715)",
+   "detail": "It cannot be styled or measured: an OS dialog over the app, unlike the in-page Remove and delete-project dialogs. Text: 'Uninstall Claude Code from Ubuntu? This deletes only the copy AIB installed there (~/.aib-server/agents/claude). Your own installs of Claude Code and your sign-in in ~/.claude in Ubuntu stay. To use Claude Code in Ubuntu again, install it again here.'"
+  },
+  {
+   "sev": "polish",
+   "title": "An agent the page does not know is shown by its raw id",
+   "where": "wsl-settings-ui.js:35 (NAMES), :742 (NAMES[row.id] || [row.id, …]), :1096",
+   "detail": "With 30 rows from the distro route, all 30 are drawn, and none clip or overflow at 700-1400 px. The 27 unknown ones show 'agent1', 'agent2', …: the row's own name ('Agent number 1') is ignored, and 'Install in Ubuntu' plus the 'One click: AIB installs agent3 1.2.0 …' pitch are offered for them. Today the route sends only claude/codex/omp, so this matters when Beta agents in distros (phase 4) arrive."
+  },
+  {
+   "sev": "polish",
+   "title": "Page heading weight differs from the mockup",
+   "where": "chat.css h2 rules (the mockup does not load chat.css)",
+   "detail": "'AIB Linking (WSL)' h2: mockup font-weight 700, page 550. The Windows 'AIB Linking' heading is the same 550, so this comes from the mockup frame, not the WSL code."
+  }
+ ],
+ "matched": [
+  "Every distro, checklist, agent and AIB card: .st-card (padding, 8px radius, border, background) and .st-card-title are identical to the mockup in all 8 states.",
+  "Overview rows: .wl-distro row, letter, name, tag and the Ready / Not running / Stopped / Not supported chips (font, colours, padding, radius, height 20/22) are identical.",
+  "Checklist: .dv-checks list, rows, heads, the ✓ and ! marks and the right-hand state (.wl-state 12px, ok/bad colours) are identical.",
+  "Agent rows: .st-agent, head, letter, name, tag, Install (st-primary, on and off), Uninstall / Remove (st-danger), Cancel, progress bar and fill, command code, copy row, hint and footer are identical wherever both documents have them.",
+  "Codex usage line (.wl-limits 12px muted, values 600 --text) is identical.",
+  "Stopped and No-WSL states: every measured element is identical; the only difference is the page heading weight.",
+  "Agents card vs Windows AIB Linking, both themes: identical except the switch label's width ('Use in Ubuntu' vs 'On').",
+  "Remove dialog vs delete-project dialog, both themes: dialog box (460 px, 16/18px padding, 10px radius), title (15px 600), main text (13px, 1.45), Cancel, tick row and warning line are identical.",
+  "Keyboard: the drop-down, switches, link buttons and both danger buttons show the 2px solid #2bb3a3 focus outline. The Remove dialog traps Tab (Cancel ↔ Remove), Escape closes it with Settings still open, and focus returns to 'Remove AIB from Ubuntu'.",
+  "Narrow widths: no element sticks out of the window or scrolls sideways at 700, 900, 1280 or 1400 px, including the long-name, 30-agent and long-path states. Long paths and reasons wrap (overflow-wrap: anywhere). At 700-1100 px the nav becomes a tab row and Settings covers the sidebar, as designed. The Remove dialog stays 460 x 602 and scrolls inside at 70vh.",
+  "No console errors and no exceptions in any of the rendered states.",
+  "Settings > About shows the per-distro line 'WSL: Ubuntu · AIB helper 0.1.0-ab12cd34' and 'WSL distros: details and agent installs in AIB Linking (WSL).' with its link, in the About card's own look."
+ ],
+ "copy": [
+  {
+   "title": "No puns in any of the new copy",
+   "where": "wsl-settings-ui.js, wsl-ui.js, new-project-ui.js, delete-project-ui.js, status-words.js",
+   "detail": "No Lincoln or other wordplay found in any rendered string or in the source strings. The cross-agent and local pitch appears where it fits: the lead reads 'Run Claude Code, Codex and the other ACP agents inside your WSL distros, next to your Windows agents, all on this PC.' Only the 'ACP' in that line is jargon."
+  },
+  {
+   "title": "'unsaved changes' vs 'not committed'",
+   "where": "wsl-settings-ui.js:1219 vs the blocked reason text",
+   "detail": "The card says 'Chat copies: 3, 1 with unsaved changes', but the Remove refusal and the design say 'changes that are not committed'. These are the same thing in two terms, and 'unsaved' suggests the editor."
+  },
+  {
+   "title": "Internal names shown to the user",
+   "where": "wsl-settings-ui.js:1194-1232 (AIB in Ubuntu card), Remove dialog",
+   "detail": "The user sees 'AIB programs (keeper, helper)', 'This AIB's data folder', 'data-9f8e7d6c', 'Other AIB data folders … belong to another AIB build or data folder', 'Checked with: zsh login shell (interactive)' and 'plain shell, without your login profile'. These are accurate but are build internals. 'Chat copies' (card) and 'worktrees' (paths) describe the same thing."
+  },
+  {
+   "title": "Raw ref and agent wording in two places",
+   "where": "workspace-state.js:794; server/artifacts/mcp.ts:763 via artifacts-ui.js:2649",
+   "detail": "New project prints 'Uses wsl://ubuntu/home/u/ (already there)'. The failed publish card prints the agent instruction 'In a WSL project, publish by `content`: …' with backticks."
+  },
+  {
+   "title": "Verbs that do not match their buttons",
+   "where": "delete-project-ui.js (title 'Delete project app?' with default button 'Remove from AIB'); wsl-settings-ui.js:1263 (question title after the result)",
+   "detail": "For a WSL project the dialog title says Delete while the default action only removes the project from AIB. The Remove dialog keeps its question title after it has failed."
+  },
+  {
+   "title": "'Ready' collision",
+   "where": "status-words.js:111, :137; chat.js:4758",
+   "detail": "A live idle chat, a saved chat and a recovered chat all read 'Ready' in the list. The live badge '● Ready · Live in AIB' is in the DOM but hidden in the sidebar, so it cannot tell them apart. Proposal for the owner: keep 'Ready' for live chats only, and give saved chats their age or 'Not running'."
+  },
+  {
+   "title": "Small wording issues",
+   "where": "wsl-settings-ui.js:346, :398, :1120; sign-in note",
+   "detail": "The option text names the distro twice. The WSL 1 row says 'AIB needs WSL 2' twice. 'State: AIB not set up' duplicates the next line. 'Sign-in in Ubuntu: unknown (AIB has no sign-in check for OMP).' would be clearer as 'AIB cannot check OMP's sign-in.'"
+  }
+ ],
+ "notRendered": [
+  "The native drop-down list: Windows draws an open <select>, not the page, so headless Chrome cannot capture it. The 'two distros' state shows the same element as an open list box (size = number of options); its option colours and overflow are measured on that list box.",
+  "The Uninstall question is a native window.confirm. Its text was captured; it has no layout or styles to measure.",
+  "Terminal panels (Node.js install, sign-in): the frame and title are real; the terminal content is a stand-in. xterm loads from the server in the app, and file: pages cannot load it, so the terminal text area itself was not measured.",
+  "The new-chat WSL box and the chat-list rows come from chat.js, which cannot run outside the full app. They were rebuilt here from chat.js's own markup (renderWslAgentNote 3664-3760, rowStatus 4752-4790), with the real AIBWsl.installBox and AgentStatusWords.statusOf inside. A later change to chat.js would not show here.",
+  "The Files tab of a WSL project (scope pill, Docs row, image/binary notices) was not rendered. files-ui.js needs workspace-ui, files-state, doc-links and the server's tree routes. Its WSL changes are the scope tooltip text 'Ubuntu: /home/u/app' (files-ui.js:822-825) and the binary note 'This is a binary file: it cannot be shown as text.' without an editor button (files-ui.js:2021-2025); both are listed in the copy table, not measured.",
+  "The mockup has no light theme: its embedded theme.css has only the teal-dark block. So the mockup comparison is teal-dark only, and teal-light is compared with the app's Windows AIB Linking cards and the delete-project dialog.",
+  "The task brief calls the default theme light; AIB's default is teal-dark (THEMES.md). Both teal-dark and teal-light were captured.",
+  "Full-page shots grow the window until the content box stops scrolling. A blank band under the content in some tall shots comes from the capture, not from the app."
+ ]
+}

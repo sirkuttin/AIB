@@ -98,8 +98,16 @@ Deno.test({
       assertEquals(s.liveCalls.length, 0);
       const page = await raw(s.phonePort(), 'GET', '/api/remote/chat?id=c1', phoneHeaders({ [DEVICE_HEADER]: phone.token }));
       assertEquals((page.json.waiting as Json[]).map((w) => [w.kind, w.pcOnly]), [['sign-in', true]]);
-      // the phone's own switches go with each answer
-      assertEquals(page.json.scopes, ['phone.read', 'phone.answer', 'phone.prompt', 'phone.start', 'phone.approve', 'phone.push']);
+      // the phone's own switches go with each answer (and phone.cache: it may keep saved copies of chats, on by default)
+      assertEquals(page.json.scopes, [
+        'phone.read',
+        'phone.answer',
+        'phone.prompt',
+        'phone.start',
+        'phone.approve',
+        'phone.push',
+        'phone.cache',
+      ]);
     } finally {
       await s.close();
     }
@@ -385,7 +393,7 @@ Deno.test({
       }
       assertEquals(s.liveCalls.length, 0);
       const home = await raw(s.phonePort(), 'GET', '/api/remote/home', phoneHeaders({ [DEVICE_HEADER]: phone.token }));
-      assertEquals(home.json.scopes, ['phone.read']);
+      assertEquals(home.json.scopes, ['phone.read', 'phone.cache']);
       const [st, changed] = await pc(s, 'POST', '/api/live/devices/scopes', { id: phone.id, scopes: ['phone.answer', 'phone.approve'] });
       assertEquals([st, (changed.device as Json).scopes], [200, ['phone.read', 'phone.answer', 'phone.approve']]);
       // the home revision changes with the switches (a phone holding the old revision gets the new answer, not 304)
@@ -395,7 +403,7 @@ Deno.test({
         `/api/remote/home?rev=${home.json.revision}`,
         phoneHeaders({ [DEVICE_HEADER]: phone.token }),
       );
-      assertEquals([again.status, again.json.scopes], [200, ['phone.read', 'phone.answer', 'phone.approve']]);
+      assertEquals([again.status, again.json.scopes], [200, ['phone.read', 'phone.answer', 'phone.approve', 'phone.cache']]);
       assertEquals((await post(s, phone.token, ...tries[0])).status, 200);
       assertEquals((await post(s, phone.token, ...tries[1])).status, 200);
       assertEquals((await post(s, phone.token, ...tries[2])).json.code, 'scope');

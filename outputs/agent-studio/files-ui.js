@@ -2376,6 +2376,17 @@
   // missing stays plain text; outside it links too when the chat named the file (GET /api/live/files/outside, peeked and cached).
   // The same file twice in one paragraph is linked once. Never registers an artifact.
   const exists = new Map(); // scope id + dir -> {at, names: Set|null, promise}
+  // A WSL folder (its ref, wsl://<distro>/<linux path>, wsl-ui.js) -> {key, linuxPath}, else null.
+  const wslOf = (folder) => (root.AIBWsl && root.AIBWsl.parse ? root.AIBWsl.parse(folder) : null);
+  // The folder a chat's agent names its files by: a WSL chat's agent works in the Linux path of its ref (absolute paths in its
+  // replies and Edit/Write rows are /home/u/app/...), any other chat in its folder as is.
+  const agentFolder = (folder) => {
+    const w = wslOf(folder);
+    return w ? w.linuxPath : folder;
+  };
+  // Names compare case-insensitively on Windows folders only: Linux names are case-sensitive (README.md is not readme.md).
+  const foldFor = (folder) => (wslOf(folder) ? (x) => x : (x) => x.toLowerCase());
+  const entryIn = (d, name) => d.names.get(d.fold ? name.toLowerCase() : name);
   function dirNames(scope, dir) {
     const k = F().scopeId(scope) + '|' + dir,
       hit = exists.get(k);
@@ -2383,12 +2394,13 @@
     const rec = { at: Date.now(), promise: null };
     rec.promise = host.getJson('/api/live/files/list', Object.assign(F().scopeArgs(scope), { dir })).then(
       (r) => {
-        const names = new Map();
-        for (const e of (r && r.entries) || []) names.set(e.name.toLowerCase(), e);
+        const names = new Map(),
+          fold = !(r && (r.wsl || wslOf(r.root)));
+        for (const e of (r && r.entries) || []) names.set(fold ? e.name.toLowerCase() : e.name, e);
         noteLocal(scope, r);
-        return { names, root: (r && r.root) || '' };
+        return { names, root: (r && r.root) || '', fold };
       },
-      () => ({ names: new Map(), root: '' }),
+      () => ({ names: new Map(), root: '', fold: true }),
     );
     exists.set(k, rec);
     while (exists.size > 300) exists.delete(exists.keys().next().value);
@@ -2413,7 +2425,8 @@
     const c = ctx || chat;
     if (!container || !c || !c.id || !host) return Promise.resolve(0);
     const scope = F().followScope(c, c.projectPath),
-      folder = c.cwd || c.projectPath;
+      folder = agentFolder(c.cwd || c.projectPath),
+      fold = foldFor(c.cwd || c.projectPath);
     if (!scope || !folder) return Promise.resolve(0);
     // a chat's own copy: its top listing first tells where the main folder's local-only paths are (full paths into them link too)
     if (scope.root === 'chat' && !asked && !loOf(scope)) return dirNames(scope, '').then(() => linkPaths(container, ctx, true));
@@ -2427,13 +2440,13 @@
       const seen = seenIn.get(block);
       const cands = F()
         .dedupe(F().pathCandidates(t.nodeValue), folder, loOf(scope))
-        .filter((x) => !seen.has(x.rel.toLowerCase()));
-      for (const x of cands) seen.add(x.rel.toLowerCase());
+        .filter((x) => !seen.has(fold(x.rel)));
+      for (const x of cands) seen.add(fold(x.rel));
       // absolute paths outside the folder: asked of the server, once each per paragraph, at most MAX_OUTSIDE_PEEKS per call
       const outs = [];
       for (const x of outsideCands(t, folder, scope)) {
         if (outLeft <= 0) break;
-        const k = 'out|' + x.path.toLowerCase();
+        const k = 'out|' + fold(x.path);
         if (seen.has(k)) continue;
         seen.add(k);
         outLeft--;
@@ -2443,7 +2456,7 @@
       jobs.push(
         Promise.all(
           cands
-            .map((x) => dirNames(scope, F().dirOf(x.rel)).then((d) => ({ x, e: d.names.get(F().nameOf(x.rel).toLowerCase()), root: d.root })))
+            .map((x) => dirNames(scope, F().dirOf(x.rel)).then((d) => ({ x, e: entryIn(d, F().nameOf(x.rel)), root: d.root })))
             .concat(outs.map((x) => outsidePeek(c, x.path).then((r) => ({ x, out: r ? outsideInfo(c, x.path, r) : null })))),
         ).then(
           (found) => {
@@ -2492,8 +2505,10 @@
     return list.filter((x) => !inside(x.path));
   }
   function outsideInfo(c, path, r) {
-    const where = (r.outside && r.outside.text) || '';
+    const where = (r.outside && r.outside.text) || '',
+      w = wslOf(c.cwd || c.projectPath);
     const scope = { id: c.id, root: 'outside', label: 'Outside', branch: '', chatKey: c.key, title: c.title, abs: path, where };
+    if (w) scope.wsl = w.key; // a WSL chat's outside file is a Linux path in that distro (editorPath)
     return { scope, rel: F().slash(path), root: '', line: 0, abs: path, outside: true, where };
   }
   function outsideLink(x, info, parent) {
@@ -2538,15 +2553,22 @@
     }
     return out;
   }
-  // The artifact a path link names (matched by its source file, case and slashes aside on Windows): the open chat's first, else
+  // The artifact a path link names (matched by its source file, or for a WSL file by the wsl:// ref it was published from (wslSource), case and slashes aside on Windows): the open chat's first, else
   // the newest of any chat of the project. Deleted ones never count (projectArtifactList leaves them out).
   function artifactForLink(t) {
     const paths = linkAbsPaths(t);
     if (!paths.length) return null;
-    const hits = projectArtifactList().filter((a) => a.sourcePath && paths.some((p) => samePath(a.sourcePath, p)));
+    const hits = projectArtifactList().filter((a) => (a.sourcePath || a.wslSource) && paths.some((p) => (a.sourcePath && samePath(a.sourcePath, p)) || (a.wslSource && samePath(a.wslSource, p))));
     if (!hits.length) return null;
     const mine = chat ? hits.find((a) => a.conversationId === chat.key || a.ownerKey === chat.key) : null;
     return mine || hits.slice().sort((a, b) => (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0))[0];
+  }
+  // The path the editor routes are sent: a WSL chat's outside file goes as its ref (wsl://<distro>/<linux path>), so the server
+  // answers as for any outside file (editors.ts resolveWslInside) instead of refusing a bare /home/... path as "not of this PC".
+  function editorPath(scope, abs) {
+    if (scope && scope.root === 'outside' && scope.wsl && /^\//.test(String(abs || '')) && root.AIBWsl)
+      return root.AIBWsl.refOf(scope.wsl, abs);
+    return abs;
   }
   // Files a path link shows as a page rather than as text, when it opens in the file view (a :line link stays on the text).
   const pageWanted = new Set(); // tab id
@@ -2559,7 +2581,8 @@
       line = (t && t.line) || 0;
     if (!scope || !rel) return Promise.resolve(false);
     if (how === 'editor') {
-      if (ED() && t.abs) ED().openFile(t.abs, line, dirAbs(t.abs));
+      const abs = editorPath(scope, t.abs);
+      if (ED() && abs) ED().openFile(abs, line, dirAbs(abs));
       return Promise.resolve(false);
     }
     const asFile = () => {
@@ -2603,7 +2626,7 @@
     const sc = scopeOfLink(a);
     if (!(sc && sc.root === 'outside')) add('Show in Files', () => showInFiles(sc, a.dataset.filePath));
     add('Copy path', () => copyText(a.dataset.abs || a.dataset.filePath));
-    if (ED() && ED().showInExplorer && a.dataset.abs) add('Show in Explorer', () => ED().showInExplorer(dirAbs(a.dataset.abs)));
+    if (ED() && ED().showInExplorer && a.dataset.abs) add('Show in Explorer', () => ED().showInExplorer(dirAbs(editorPath(sc, a.dataset.abs))));
     doc().body.append(m);
     menu = m;
     m.style.left = Math.max(8, Math.round(x)) + 'px';
@@ -2642,11 +2665,11 @@
   const isAbs = (p) => /^([A-Za-z]:[\\/]|\/)/.test(String(p || ''));
   function toolFileInfo(c, path) {
     const scope = F().followScope(c, c.projectPath),
-      folder = c.cwd || c.projectPath,
+      folder = agentFolder(c.cwd || c.projectPath),
       rel = scope && folder ? F().relTo(path, folder) ?? F().localRel(path, loOf(scope)) : null;
     if (rel !== null) {
       return dirNames(scope, F().dirOf(rel)).then((d) => {
-        const e = d.names.get(F().nameOf(rel).toLowerCase());
+        const e = entryIn(d, F().nameOf(rel));
         if (!e || e.dir) return null;
         return { scope, rel, root: d.root, line: 0, abs: '' };
       });

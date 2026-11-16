@@ -581,12 +581,13 @@ test('drop-down: every distro at the top (WSL default marked, the unusable ones 
   assert.deepEqual(sel.querySelectorAll('option').map((o) => o.textContent), [
     'Debian',
     'Ubuntu (WSL default)',
-    "docker-desktop (not supported: docker-desktop is Docker's own distro; AIB cannot run there)",
-    'Ubuntu-20.04 (not supported: Ubuntu-20.04 runs on WSL 1. AIB needs WSL 2)',
+    'docker-desktop (not supported)',
+    'Ubuntu-20.04 (not supported)',
   ]);
+  assert.deepEqual(sel.querySelectorAll('option').slice(2).map((o) => o.title), [DOCKER.why, WSL1.why], 'the full reason is the option title');
   assert.deepEqual(sel.querySelectorAll('option').map((o) => o.disabled), [false, false, true, true]);
   assert.equal(sel.value, 'ubuntu');
-  assert.equal(sel.getAttribute('aria-label'), 'The distro this page shows');
+  assert.equal(sel.getAttribute('aria-label'), 'Distro', 'the accessible name is the visible label');
   assert.deepEqual(t.groups(), ['Ubuntu'], 'one distro\'s cards at a time');
   assert.deepEqual(t.agentCalls(), [{ distro: 'ubuntu', peek: '1' }], 'nothing asked of the distro not shown');
   await t.choose('debian');
@@ -749,7 +750,12 @@ test('Node.js from asdf or mise with no version set: says so with the manager\'s
   const card = t.cardOf('What Ubuntu needs');
   assert.deepEqual(heads(card)[0], ['Node.js 22.19 or newer', 'asdf has no Node.js version set']);
   assert.ok(card.textContent.includes('Node.js in Ubuntu comes from asdf, and asdf has no Node.js version set, so node does not run.'));
-  assert.equal(card.querySelector('code').textContent, 'asdf install nodejs latest && asdf set -u nodejs "$(asdf latest nodejs)"');
+  // no asdf version from the helper: both generations' commands, each labelled
+  assert.deepEqual(card.querySelectorAll('code').map((c) => c.textContent), [
+    'asdf install nodejs latest && asdf set -u nodejs latest',
+    'asdf install nodejs latest && asdf global nodejs latest',
+  ]);
+  assert.ok(card.textContent.includes('asdf 0.16 or newer:') && card.textContent.includes('asdf 0.15 or older:'));
   assert.ok(card.textContent.includes(blocked));
   assert.ok(!buttons(card).some((b) => /Install/.test(b)), 'no Install button');
   assert.ok(!/nvm/.test(card.textContent), 'nvm is never offered');
@@ -761,6 +767,42 @@ test('Node.js from asdf or mise with no version set: says so with the manager\'s
   assert.deepEqual(heads(mc)[0], ['Node.js 22.19 or newer', 'mise has no Node.js version set']);
   assert.equal(mc.querySelector('code').textContent, 'mise use -g node@lts');
   assert.ok(!buttons(mc).some((b) => /Install/.test(b)) && !/nvm/.test(mc.textContent));
+});
+
+test('asdf with no Node.js version set: the command of the asdf generation the helper reports (0.16+ asdf set -u, older asdf global)', async () => {
+  for (const [version, want] of [
+    ['0.18.0', 'asdf install nodejs latest && asdf set -u nodejs latest'],
+    ['0.16.0', 'asdf install nodejs latest && asdf set -u nodejs latest'],
+    ['0.15.0', 'asdf install nodejs latest && asdf global nodejs latest'],
+  ]) {
+    const t = setup({ prereqs: (q) => needsOf(withNode({ state: 'shim_unset', manager: 'asdf', managerVersion: version }, { canInstallNode: false }), q.distro) });
+    await openWsl(t);
+    const card = t.cardOf('What Ubuntu needs');
+    assert.deepEqual(card.querySelectorAll('code').map((c) => c.textContent), [want], version);
+    assert.ok(!card.textContent.includes('or newer:') && !card.textContent.includes('or older:'), 'one command, no labels');
+  }
+});
+
+test('git and curl missing: the install line follows the distro\'s package manager; unknown says so with nothing to copy', async () => {
+  const lines = async (pkgManager) => {
+    const t = setup({ prereqs: (q) => needsOf(Object.assign({}, P_OK, { git: { state: 'missing' }, curl: { state: 'missing' }, pkgManager }), q.distro) });
+    await openWsl(t);
+    const card = t.cardOf('What Ubuntu needs');
+    return { codes: card.querySelectorAll('code').map((c) => c.textContent), card, t };
+  };
+  assert.deepEqual((await lines('dnf')).codes, ['sudo dnf install git', 'sudo dnf install curl']);
+  assert.deepEqual((await lines('yum')).codes, ['sudo yum install git', 'sudo yum install curl']);
+  assert.deepEqual((await lines('zypper')).codes, ['sudo zypper install git', 'sudo zypper install curl']);
+  assert.deepEqual((await lines('pacman')).codes, ['sudo pacman -S git', 'sudo pacman -S curl']);
+  assert.deepEqual((await lines('apk')).codes, ['sudo apk add git', 'sudo apk add curl']);
+  assert.deepEqual((await lines('apt')).codes, ['sudo apt install git', 'sudo apt install curl']);
+  assert.deepEqual((await lines(undefined)).codes, ['sudo apt install git', 'sudo apt install curl'], 'an older helper: apt, as before');
+  const u = await lines('unknown');
+  assert.deepEqual(u.codes, []);
+  assert.ok(u.card.textContent.includes("Install git with your distro's package manager in Ubuntu (AIB does not run it)."));
+  assert.ok(u.card.textContent.includes("Install curl with your distro's package manager in Ubuntu (AIB does not run it)."));
+  assert.ok(!buttons(u.card).some((b) => /^Install/.test(b)), 'nothing runs a package manager');
+  assert.equal(u.t.calls.posts.length, 0);
 });
 
 test('canInstallNode false: the reason verbatim, Open Ubuntu terminal (a shell in the distro\'s home, in the card) and Check again', async () => {
@@ -861,6 +903,36 @@ test('Sign in: the distro sign-in terminal on the card (signin=codex&distro=ubun
   assert.equal(t.terms[0].closed, true);
   assert.equal(t.rowOf('wsl:ubuntu:codex').querySelector('.st-beta-term'), null);
   assert.ok(noStart(t));
+});
+
+test('Close on the Node.js and sign-in panels also ends that terminal on the server (terminal/end with its distro key)', async () => {
+  const ends = (t) => t.calls.posts.filter(([n]) => n === 'terminal/end').map(([, b]) => b.key);
+  const t = setup({
+    prereqs: (q) => needsOf(withNode({ state: 'missing' }), q.distro),
+    agents: () => ({ distro: 'ubuntu', name: 'Ubuntu', agents: [Object.assign({}, CODEX, { signin: { state: 'signed_out' } })] }),
+  });
+  await openWsl(t);
+  t.cardOf('What Ubuntu needs').querySelectorAll('button').find((b) => b.textContent === 'Install Node.js in Ubuntu').click();
+  await settle();
+  assert.deepEqual(ends(t), [], 'opening the panel ends nothing');
+  t.cardOf('What Ubuntu needs').querySelector('.st-beta-term').querySelectorAll('button').find((b) => b.textContent === 'Close').click();
+  await settle();
+  assert.equal(t.terms[0].closed, true);
+  assert.equal(t.cardOf('What Ubuntu needs').querySelector('.st-beta-term'), null);
+  assert.deepEqual(ends(t), ['setup:wsl-node@ubuntu']);
+  t.rowOf('wsl:ubuntu:codex').querySelectorAll('button').find((b) => b.textContent === 'Sign in').click();
+  await settle();
+  t.rowOf('wsl:ubuntu:codex').querySelector('.st-beta-term').querySelectorAll('button').find((b) => b.textContent === 'Close').click();
+  await settle();
+  assert.deepEqual(ends(t), ['setup:wsl-node@ubuntu', 'signin:codex@ubuntu']);
+  // "Open Ubuntu terminal" (the shared wsl-shell terminal) is not ended by its panel's Close
+  const s = setup({ prereqs: (q) => needsOf(withNode({ state: 'missing' }, { canInstallNode: false, nodeInstallBlocked: 'x' }), q.distro) });
+  await openWsl(s);
+  s.cardOf('What Ubuntu needs').querySelectorAll('button').find((b) => b.textContent === 'Open Ubuntu terminal').click();
+  await settle();
+  s.cardOf('What Ubuntu needs').querySelector('.st-beta-term').querySelectorAll('button').find((b) => b.textContent === 'Close').click();
+  await settle();
+  assert.deepEqual(ends(s), []);
 });
 
 test('Sign in for a distro that stopped running since the page was drawn: start=1, only on that click', async () => {
@@ -1028,15 +1100,15 @@ test('AIB in Ubuntu: at the bottom of the group; disk use by part with the agent
   assert.equal(dl.querySelectorAll('dt')[0].title, ROOT + '/0.1.0-ab12cd34', 'the part\'s folder on hover');
   assert.equal(dl.querySelectorAll('dt.wl-sub').length, 2, 'the agents sit under their part');
   const lines = card.querySelectorAll('.wl-line').map((n) => n.textContent);
-  assert.deepEqual(lines, ['AIB versions installed: 0.1.0-ab12cd34 (current), 0.0.9-ffee0011', 'Chat copies: 3, 1 with unsaved changes', 'Chats working now: 0']);
+  assert.deepEqual(lines, ['AIB versions installed: 0.1.0-ab12cd34 (current), 0.0.9-ffee0011', 'Chat copies: 3, 1 with uncommitted changes', 'Chats working now: 0']);
   const others = card.querySelector('.wl-others');
-  assert.equal(others.querySelector('.wl-others-title').textContent, 'Other AIB data folders in Ubuntu');
+  assert.equal(others.querySelector('.wl-others-title').textContent, 'Other AIB folders in Ubuntu');
   const rows = others.querySelectorAll('li');
   assert.deepEqual(rows.map((r) => r.querySelector('code').textContent), ['data-9f8e7d6c', 'data-55aa66bb'], 'never this AIB\'s own');
   assert.deepEqual(rows.map((r) => r.querySelector('.wl-size').textContent), ['40 MB', '3 MB']);
   assert.equal(rows[0].querySelector('.st-status').textContent, 'in use', 'its keeper is alive');
   assert.equal(rows[1].querySelector('.st-status'), null);
-  assert.ok(others.textContent.includes('These belong to another AIB build or data folder. Remove here never touches them.'));
+  assert.ok(others.textContent.includes('These belong to another AIB build or folder. Remove here never touches them.'));
   assert.ok(!buttons(others).length, 'read-only');
   assert.deepEqual(buttons(card), ['Remove AIB from Ubuntu', 'Refresh']);
   assert.equal(aibButton(t, 'Remove AIB from Ubuntu').className, 'st-danger');
@@ -1048,7 +1120,7 @@ test('AIB in Ubuntu: no other data folders, no dirty copies, no copies: said pla
   await openWsl(t);
   const card = t.cardOf('AIB in Ubuntu');
   assert.equal(card.querySelector('.wl-others'), null);
-  assert.deepEqual(card.querySelectorAll('.wl-line').map((n) => n.textContent), ['AIB versions installed: 0.1.0-ab12cd34 (current)', 'Chat copies: 2, none with unsaved changes', 'Chats working now: 2']);
+  assert.deepEqual(card.querySelectorAll('.wl-line').map((n) => n.textContent), ['AIB versions installed: 0.1.0-ab12cd34 (current)', 'Chat copies: 2, none with uncommitted changes', 'Chats working now: 2']);
   const n = setup({ aib: () => aibOf(Object.assign({}, USAGE, { worktrees: { count: 0, dirty: 0 } })) });
   await openWsl(n);
   assert.ok(n.cardOf('AIB in Ubuntu').querySelectorAll('.wl-line').some((x) => x.textContent === 'Chat copies: none'));
@@ -1243,7 +1315,10 @@ test('Remove partly fails: the dialog says the message and the left list verbati
   await settle();
   const box = dlg(t);
   assert.ok(box, 'stays open to say what happened');
-  assert.equal(box.querySelector('.dp-main').textContent, 'AIB could not remove everything from Ubuntu.');
+  assert.equal(box.querySelector('.dp-title').textContent, 'AIB could not remove everything from Ubuntu', 'the title states the outcome');
+  assert.equal(box.getAttribute('aria-describedby'), 'wlRemoveMain');
+  assert.equal(box.querySelector('.dp-main').id, 'wlRemoveMain');
+  assert.ok(box.querySelector('.wl-rm-left').querySelectorAll('.wl-rm-path').length === left.length, 'paths in the path font');
   assert.equal(box.querySelector('.wl-rm-message').textContent, message);
   assert.deepEqual(box.querySelector('.wl-rm-left').querySelectorAll('li').map((li) => li.textContent), left);
   assert.deepEqual(box.querySelector('.wl-rm-done').querySelectorAll('li').map((li) => li.textContent), [ROOT + '/data-1a2b3c4d']);
@@ -1322,4 +1397,42 @@ test('bytesText and groupRemove', () => {
     ['Chat copies of this AIB', 96, 2],
     ['Old AIB programs', 95, 1],
   ]);
+});
+
+test('WSL 1 row says "AIB needs WSL 2" once; docker-desktop keeps its reason', async () => {
+  const t = setup({ status: status([UBUNTU], { skipped: [DOCKER, WSL1] }), agents: listOf });
+  await openWsl(t);
+  const row = t.cardOf('WSL on this PC').querySelectorAll('.wl-distro')[2];
+  assert.equal(row.textContent.split('AIB needs WSL 2').length - 1, 1);
+  assert.ok(row.textContent.includes('Convert it in PowerShell'));
+});
+
+test('removed card says AIB is not set up once', async () => {
+  const t = setup({ status: status([REMOVED]) });
+  await openWsl(t);
+  const st = t.cardOf('Ubuntu');
+  assert.equal(st.textContent.split('not set up').length - 1, 1);
+});
+
+test('unknown agent ids: the row own name, and no Install for ids the install routes do not know', async () => {
+  const t = setup({
+    status: status([UBUNTU]),
+    agents: () => ({ distro: 'ubuntu', name: 'Ubuntu', agents: [CLAUDE, { id: 'agent3', name: 'Agent number 3', found: false, installable: true, canInstall: true, pinned: '1.2.0' }] }),
+  });
+  await openWsl(t);
+  const row = t.rowOf('wsl:ubuntu:agent3');
+  assert.equal(row.querySelector('strong').textContent, 'Agent number 3');
+  assert.ok(!row.querySelectorAll('button').some((b) => /^Install/.test(b.textContent)));
+  assert.ok(!row.textContent.includes('One click'));
+});
+
+test('status chips on the page are announced politely', async () => {
+  const t = setup({ status: status([UBUNTU], { skipped: [DOCKER] }), agents: listOf });
+  await openWsl(t);
+  const chips = [t.cardOf('WSL on this PC').querySelectorAll('.wl-distro')[0].querySelector('.st-status'), t.rowOf('wsl:ubuntu:claude').querySelector('.st-status'), t.rowOf('wsl:ubuntu:omp').querySelector('.st-status')];
+  assert.equal(chips.filter(Boolean).length, 3);
+  for (const c of chips) {
+    assert.equal(c.getAttribute('role'), 'status');
+    assert.equal(c.getAttribute('aria-live'), 'polite');
+  }
 });

@@ -522,6 +522,7 @@ export class ArtifactStore {
       link: 'studio-artifact://' + manifest.id,
     };
     if (manifest.kind === 'md') out.viewUrl = out.url + '?view=1';
+    if (isStr(manifest.wslSource) && manifest.wslSource) out.wslSource = manifest.wslSource; // AIB's own field (Deno only): the wsl:// ref a WSL file was published from
     if (pyTruthy(manifest.sourceMissing)) out.sourceMissing = true;
     if (isDict(manifest.fromDoc)) out.fromDoc = manifest.fromDoc; // AIB's own field (Deno only): "Built from <doc › page>"
     if (isStr(manifest.becameDoc) && manifest.becameDoc) out.becameDoc = manifest.becameDoc; // Edit made it a doc (Deno only)
@@ -609,6 +610,14 @@ export class ArtifactStore {
       if (manifest.conversationId === conversationId && pyTruthy(manifest.sourcePath) && pathKey(manifest.sourcePath) === key) {
         return manifest;
       }
+    }
+    return null;
+  }
+
+  /** The chat's (non-deleted) artifact published by path from this file in a WSL distro (its wsl:// ref, manifest.wslSource). */
+  findByWslSource(conversationId: unknown, ref: string): Manifest | null {
+    for (const manifest of this.all()) {
+      if (!isDeleted(manifest) && manifest.conversationId === conversationId && manifest.wslSource === ref) return manifest;
     }
     return null;
   }
@@ -1775,7 +1784,34 @@ export class Service {
     }
     let manifest: Manifest;
     let changed: boolean;
-    if (hasPath) {
+    const wslFile = hasPath ? wslFileOf(body[WSL_FILE_RESOLVED]) : null;
+    if (wslFile) {
+      // A WSL chat's file, read through the distro's helper by the route (wsl/artifact_read.ts): published as a Windows file is
+      // (kind and name by its file name), but as a snapshot: no sourcePath, so no watcher and Delete never touches the Linux file.
+      const entry = safeEntryName(wslFile.name);
+      const fileKind = kindFor(entry);
+      if (!fileKind) throw new ArtifactError('That kind of file cannot be previewed.', 400, 'unsupported_kind');
+      if (wslFile.data.length > MAX_FILE_BYTES) throw new ArtifactError('That file is too large to publish (limit 25 MB)', 413, 'too_large');
+      const same = existing ?? this.store.findByWslSource(conversationId, wslFile.ref); // the same file in the same chat: one artifact
+      if (same) {
+        [manifest, changed] = this.store.addVersion(same.id, wslFile.data, { entry, by: 'tool', toolCallId, note, title: titleText });
+        if (manifest.wslSource !== wslFile.ref) {
+          manifest.wslSource = wslFile.ref;
+          this.store.save(manifest);
+          changed = true;
+        }
+      } else {
+        manifest = this.store.create(conversationId, titleText || guessTitle(entry, fileKind, wslFile.data), fileKind, entry, wslFile.data, {
+          project: this.projectRootFor(conversationId),
+          by: 'tool',
+          toolCallId,
+          note,
+        });
+        manifest.wslSource = wslFile.ref;
+        this.store.save(manifest);
+        changed = true;
+      }
+    } else if (hasPath) {
       const [cwd, real] = this.resolvePath(conversationId, body.path);
       if (existing) {
         [manifest, changed] = this.store.addVersion(existing.id, readCapped(real), {
@@ -1836,6 +1872,16 @@ export class Service {
 
 /** The body key the web route puts the resolved "built from" doc page under (whatever the caller sent there is dropped first). */
 export const FROM_DOC_RESOLVED = '\u0000fromDoc';
+/**
+ * The body key the web route puts a WSL chat's file under once its distro's helper has read it (wsl/artifact_read.ts
+ * WslPublishFile: {data, name, ref}); whatever the caller sent there is dropped first, and only real bytes count.
+ */
+export const WSL_FILE_RESOLVED = '\u0000wslFile';
+
+function wslFileOf(value: unknown): { data: Uint8Array; name: string; ref: string } | null {
+  if (!isDict(value) || !(value.data instanceof Uint8Array) || !isStr(value.name) || !value.name || !isStr(value.ref)) return null;
+  return { data: value.data, name: value.name, ref: value.ref };
+}
 
 function errorReply(error: unknown): Reply {
   if (error instanceof ArtifactError) return [error.status, { error: error.message, code: error.code }];

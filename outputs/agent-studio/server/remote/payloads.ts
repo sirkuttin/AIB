@@ -5,8 +5,8 @@
  *          turn, unread, when it last changed state (the list's order: newest change first) and its card's last line. One plain
  *          list: no main chat, no sections (owner, phone prototypes round 2). Under HOME_BUDGET bytes. A revision lets the phone
  *          poll cheaply (304 when nothing changed).
- *   chat   the last N events of one live chat, images replaced by URLs (/api/remote/image, cookie only) and other file bytes
- *          dropped; no model-in-use lookup, no settings, no permission bodies beyond a title. Artifact links (absolute loopback
+ *   chat   the newest page of one live chat's events (by bytes, never starting inside a message or a run of steps; before=<seq>
+ *          pages back), images replaced by URLs (/api/remote/image, cookie only) and other file bytes dropped; no model-in-use lookup, no settings, no permission bodies beyond a title. Artifact links (absolute loopback
  *          URLs of the PC's artifact origin, in live events and in the history a chat replays) point at the phone's artifact
  *          origin https://<name>:8443 instead (Phase D); what is stored is never changed.
  */
@@ -15,7 +15,7 @@ import type { WebContext } from '../web/server.ts';
 import { permissionDetail, type PhoneOption, phoneOptions } from './actions.ts';
 import { type PhoneProject, projectsFor } from './projects.ts';
 import { INBOX } from '../attention/inbox_rules.ts';
-import { clipEvent, type Ev, sessionOf } from '../acp/event_pages.ts';
+import { clipEvent, type Ev, rowStarts, sessionOf } from '../acp/event_pages.ts';
 
 type Json = Record<string, unknown>;
 const obj = (v: unknown): Json => (v && typeof v === 'object' && !Array.isArray(v) ? v as Json : {});
@@ -25,6 +25,11 @@ export const DEFAULT_TAIL = 200;
 /** The phone's open page budget (history loading: the tail is sized by bytes). */
 export const PHONE_PAGE_BYTES = 256 * 1024;
 export const MAX_TAIL = 1000;
+/** Load earlier (before=<seq>): the most one older page may weigh, and the least. */
+export const PHONE_OLDER_MAX = 512 * 1024;
+export const PHONE_OLDER_MIN = 16 * 1024;
+/** Show output: one event whole, but never more text per string than this (a phone on mobile data). */
+export const PHONE_EVENT_CHARS = 1_000_000;
 /** Image types the phone may load (never SVG: it can carry script). */
 export const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 
@@ -496,9 +501,13 @@ export interface ChatPayload {
   busySince: string | null;
   cursor: number;
   reset: boolean;
-  /** The first event sent (the phone shows "earlier messages are on your PC" when it is not the chat's first). */
+  /** The first event sent: Load earlier asks for the page before it (before=firstSeq) while `truncated`. */
   firstSeq: number;
+  /** Older events of this chat exist before firstSeq. */
   truncated: boolean;
+  /** A delta (after=) that had more new events than the phone asked for: `events` is the newest whole runs only, the phone starts
+   * again from them (its older events no longer join up). */
+  gap?: boolean;
   helpers: Helper[];
   /** What waits for you: what the sheets need (permission: only the options a phone may pick; question: the form). */
   waiting: Waiting[];
@@ -563,7 +572,10 @@ export async function chatPayload(
   const fresh = (Array.isArray(state.events) ? state.events : []).filter(own).map((e) => clipEvent(e as Ev));
   const all = paged && !state.reset ? [...(opened!.events as unknown[]), ...fresh] : fresh; // reset: another numbering, all again
   const n = Math.max(1, Math.min(MAX_TAIL, Math.trunc(tail) || DEFAULT_TAIL));
-  const events = all.slice(-n);
+  // The open page is sized by bytes and starts at a run (event_pages.page): no count cuts it. Otherwise (a delta, or a host with no
+  // pages) at most n events, and never from inside a run: a long streamed reply is many chunk events, and the phone glues them.
+  const events = paged && !state.reset ? all : wholeRuns(all as Ev[], n, main);
+  const gap = after > 0 && events.length < all.length;
   const attention = obj(state.attention);
   const waiting: Waiting[] = [];
   for (const p of Array.isArray(state.permissions) ? state.permissions : []) {
@@ -637,6 +649,7 @@ export async function chatPayload(
     reset: !!state.reset,
     firstSeq: Number(obj(events[0]).seq) || 0,
     truncated: all.length > events.length || (paged && !!opened!.more),
+    ...(gap ? { gap: true } : {}),
     helpers: helpersOf(state.subagents),
     waiting,
     ready: !!state.ready && !state.readOnly && !state.rebuilding && !state.closed,
@@ -645,10 +658,65 @@ export async function chatPayload(
     error: state.closed ? str(state.error, 400) : '',
     queue: { items: queued, paused: !!queue.paused, message: str(queue.message, 120) },
     unknown,
-    events: events.map((e) => {
-      const seq = Number(obj(e).seq) || 0;
-      const light = withoutBytes(e, (k) => `/api/remote/image?id=${encodeURIComponent(id)}&seq=${seq}&n=${k}`);
-      return withArtifactOrigin(light, artifactOrigin);
-    }),
+    events: events.map((e) => phoneEvent(id, e, artifactOrigin)),
   };
+}
+
+/** One event as the phone gets it: picture bytes replaced by URLs (other file bytes dropped), artifact links on its origin. This is
+ * also the shape a later offline cache on the phone keeps, keyed by seq: {seq, kind, time?, data, clipped?, bytes?}. */
+function phoneEvent(id: string, e: unknown, artifactOrigin: string): unknown {
+  const seq = Number(obj(e).seq) || 0;
+  const light = withoutBytes(e, (k) => `/api/remote/image?id=${encodeURIComponent(id)}&seq=${seq}&n=${k}`);
+  return withArtifactOrigin(light, artifactOrigin);
+}
+
+/** The newest events of `all` (the chat's own, oldest first), at most `n`, except that the first one kept is the start of its run
+ * (event_pages.rowStarts): a run longer than n is kept whole. */
+export function wholeRuns(all: Ev[], n: number, main: string): Ev[] {
+  if (all.length <= n) return all;
+  const starts = rowStarts(all, main, main);
+  let i = all.length - n;
+  const start = starts.get(all[i].seq) ?? all[i].seq;
+  while (i > 0 && all[i].seq > start) i--;
+  return all.slice(i);
+}
+
+/** Load earlier: the page of a live chat's own events before `before` (by bytes, starting at a run, tool output clipped). */
+export interface OlderPage {
+  id: string;
+  events: unknown[];
+  /** The page's first seq (the next Load earlier asks before it); `before` when the page is empty. */
+  firstSeq: number;
+  /** Still older events exist. */
+  more: boolean;
+}
+
+export async function olderPage(
+  ctx: WebContext,
+  id: string,
+  before: number,
+  bytes: number,
+  artifactOrigin = '',
+): Promise<OlderPage | null> {
+  if (typeof ctx.host.liveEvents !== 'function') return null;
+  const budget = Math.max(PHONE_OLDER_MIN, Math.min(PHONE_OLDER_MAX, Math.trunc(bytes) || PHONE_PAGE_BYTES));
+  const found = await ctx.host.liveEvents(id, { before: Math.max(0, Math.trunc(before)), bytes: budget }) as Json | null;
+  if (!found) return null;
+  if (found.rebuilding || !Array.isArray(found.events)) return { id, events: [], firstSeq: before, more: true };
+  // the page holds the chat's own events only (session main); its tool events are clipped already (clipping twice adds a 2nd note)
+  const events = found.events as Ev[];
+  return {
+    id,
+    events: events.map((e) => phoneEvent(id, e, artifactOrigin)),
+    firstSeq: events.length ? Number(events[0].seq) || before : before,
+    more: !!found.more,
+  };
+}
+
+/** Show output: one event of a live chat whole (strings over PHONE_EVENT_CHARS still clipped), or null when it is not kept. */
+export async function wholeEvent(ctx: WebContext, id: string, seq: number, artifactOrigin = ''): Promise<unknown | null> {
+  if (typeof ctx.host.liveEvent !== 'function') return null;
+  const found = await ctx.host.liveEvent(id, Math.trunc(seq)) as Ev | null;
+  if (!found || typeof found !== 'object') return null;
+  return phoneEvent(id, clipEvent(found, PHONE_EVENT_CHARS), artifactOrigin);
 }

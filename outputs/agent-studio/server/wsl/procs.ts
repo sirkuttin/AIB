@@ -5,14 +5,17 @@
  * second), so this keeps the last answer per distro and fetches a new one in the background: a call answers from a snapshot at most
  * FRESH_MS old and otherwise asks for a new one and answers null, which Connection already reads as "cannot be listed" (a shell
  * then keeps counting as running). So a helper that is away, slow or too old never makes a chat look idle while its command runs.
- * A distro that is not running is never started for this.
+ * A distro that is not running is never started for this. Stop on a background row goes to the same helper (wslKillVerified).
  */
 import type { Descendant } from '../platform/descendants.ts';
+import type { KillResult, ProcId } from '../platform/kill_verified.ts';
 import { peekWslHost } from './access.ts';
 
 /** How old a snapshot may be and still answer (ms); a fetch takes one helper round trip. */
 export const FRESH_MS = 3000;
 const TIMEOUT_MS = 5000;
+/** A stop waits 2 s in the helper before its KILL, plus two process listings. */
+const STOP_TIMEOUT_MS = 15_000;
 
 interface Snapshot {
   /** Date.now() when the helper answered. */
@@ -102,6 +105,31 @@ export async function refreshWslDescendants(distro: string, root: number): Promi
   const d = of(distro);
   d.roots.set(root, Date.now());
   await d.fetch().catch(() => {});
+}
+
+/**
+ * Stop on a WSL chat's background row (acp/connection.ts stopBackgroundTool): the distro's helper runs platform/kill_verified.ts on
+ * `targets` below the agent `root` (`proc.stop`: each still `root`'s descendant with the same start time, then what they started, TERM
+ * and KILL after a grace). Start times go as ages (seconds before now), so a Windows clock that differs from the distro's never makes a
+ * process look like another one. Null when the processes cannot be listed (the helper is away, too old, or `ps` failed); never
+ * starts a distro.
+ */
+export async function wslKillVerified(distro: string, root: number, targets: ProcId[]): Promise<KillResult | null> {
+  const host = peekWslHost(distro);
+  if (!host || host.state !== 'ready') return null;
+  try {
+    const now = Date.now() / 1000;
+    const answer = await host.call('proc.stop', { root, targets: targets.map((t) => [t.pid, Math.max(0, now - t.started)]) }, {
+      timeoutMs: STOP_TIMEOUT_MS,
+    });
+    if (!answer.listed) return null;
+    const at = Date.now() / 1000;
+    return { killed: answer.killed.map(([pid, age]) => ({ pid, started: at - age })), skipped: answer.skipped };
+  } catch {
+    return null;
+  } finally {
+    void refreshWslDescendants(distro, root); // the busy list sees the processes gone at the next snapshot, not FRESH_MS later
+  }
 }
 
 /** Tests: forget every snapshot. */

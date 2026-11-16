@@ -2,6 +2,96 @@
 
 ## Unreleased
 
+- Phone saved copies: read your recent chats with no connection. On a train or in a dead zone the phone used to show only
+  "Can't reach your PC" and nothing to read. Now it keeps copies of up to 5 chats you opened recently (about 2 MB each, the
+  oldest whole turns go first). A chat opens from its copy at once, then fills in from the PC. While the PC can't be reached,
+  those chats still open from the chat list, or from the list under "Can't reach <PC>" when the page opens offline, read only,
+  with "Showing saved copy from 14:05"; **Load earlier messages** pages back through the copy. The copies sit in the browser
+  storage of the AIB page on the phone, not encrypted, like the key that pairs the phone. They go with **⋯ → Saved copies →
+  Forget cached chats**, and when you remove the phone or untick **Keep saved copies of recent chats** for it in
+  **Settings → Remote control** (on by default), once the phone reaches the PC again.
+- Phone chat history: long replies show whole, and older messages load on the phone. A chat used to open with its last 300
+  events, so a long reply (sent in hundreds of small pieces) lost its beginning, and a reply still being written could lose its
+  start as new text came in. Above that the phone only said "Earlier messages are on your PC." Now a chat opens with its newest
+  messages by size, never starting inside a reply or a run of steps. Tap **Load earlier messages** at the top, or just scroll up:
+  older messages come in above without moving what you are reading. Chats that are not running page back the same way.
+- Phone chats: updates no longer redraw the screen. Every 3 seconds a working chat used to rebuild every message and set the
+  scroll position back by hand, so a scroll in progress could stop, selected text was unselected and spinners started over. Now an
+  update changes only what is new: the reply being written grows where it is, a new message is added at the end, and everything
+  else stays untouched. Your scroll position, selected text, open steps and Show output stay as they are; at the end of the chat
+  you keep following new messages. The chat list updates only the cards that changed.
+- Phone steps: Show output. Open a run of steps and tap **Show output** under a finished step to read its whole output, also
+  when the chat clipped it.
+- Phone saved chats: long messages keep their text. A chat that is not running used to cut every message at 8,000 characters
+  without saying so. Now a message keeps up to 32,000 characters; a longer one says "Message shortened here. The whole message is
+  on your PC."
+- WSL path links: full Linux paths open as project files. Clicking /home/u/app/src/main.ts in a WSL chat's reply, or the open-file
+  icon on an Edit/Write row, used to open it as "Outside this project", read-only. Now it opens in the Files tab like any project
+  file, with its Changes badge and Show in Files, also in a chat's own copy.
+- WSL path links: Linux names match exactly. In a WSL chat, readme.md no longer links to README.md (a click asked for a file that
+  is not there); Windows projects still ignore case.
+- WSL outside files: Ctrl+click on a Linux path outside the project now gets the same answer as an outside Windows file, instead of
+  "That path is not a folder of this PC".
+- WSL saved chats: outside-file links work when the chat is not running. A file outside the project that the saved chat's own
+  transcript names opens read-only, as for Windows chats; if Ubuntu is not running, AIB says so and does not start it.
+- Find more chats via agent: lists your Windows chats even with a WSL chat open. It used to ask the WSL chat's Linux agent and list
+  nothing.
+- Helpers stay off in WSL projects: AIB itself now refuses to start a helper for a WSL chat, not only the tool list.
+
+
+- Always allow works in WSL chats: in a WSL chat every edit and every command used to ask, every time. "Always allow" was greyed
+  out ("path could not be resolved", "the command runs outside the chat folder"), the agent's own Always button was hidden too, and
+  even `git status` or `ls` asked. Now AIB checks a WSL chat's files with Linux rules inside the distro: "Always allow" on an edit
+  makes a rule, and the next edits in that folder go through without a card; Safe reads such as `git status`, `ls` and `grep`
+  answer by themselves; command rules work as in Windows projects. A link inside the project that points outside it is treated as
+  outside and still asks. Project rules made in a WSL chat now stay with the project after AIB starts from another folder, and
+  `/home/u/App` and `/home/u/app` are two projects. Your Claude settings in the distro (ask rules) are respected, not the Windows
+  ones. When AIB cannot check something in the distro, the card says so and keeps the agent's own Always button.
+- Continue asks only on real evidence: a Claude Code or OMP process that merely runs in the chat's folder (for example VS Code's
+  Claude Code panel) no longer brings up "Another app may be using this conversation" when the transcript has been quiet for 30
+  minutes; the chat continues and gets one note naming the process. A process naming the session, holding its transcript open, a
+  recent transcript write by another app or another app's announcement still asks or refuses as before. Windows and WSL chats.
+
+- Local-only folders in WSL projects: a chat in its own copy reaches the main folder's private/ again. Folders git never commits
+  (private/ by default) live only in the project's main folder, so a WSL chat in its own copy could not see them. Now its agent
+  can read and write them by their Linux path (for example /home/u/app/private), and is told where they are. Files shows them in
+  every chat's copy, Git exclude and Undo work in WSL projects, and AIB backs them up once a day inside the distro. Live sync and
+  Merge leave them out, as on Windows.
+- WSL chats in their own copy see everything git ignores in the main folder: folders and files listed in .gitignore or
+  .git/info/exclude (game/review/, .env, node_modules) used to be missing from a chat's copy. Now the Files tab lists them in the
+  copy, opens their folders at any depth and shows their files and pictures. Excluded folders such as private/ are shown in normal
+  colour; .gitignore ones stay dimmed. The chat's agent can read and edit them in the main folder by their full Linux path. AIB never
+  writes a .gitignore.
+
+
+- WSL: a one-off tool, `deno run -A tools/wsl-import.ts`, moves the chats a WSL project had before worktree copies into their own
+  copies (own branch, Changes, Merge). It starts with a dry run, keeps a backup of each moved history file, and can undo.
+- Path links in WSL chats: a file the agent published as an artifact opens that artifact. Clicking `out/chart.png` or `report.html` in a reply
+  now opens the published page in the Artifacts tab, as in a Windows chat, instead of the plain file.
+- WSL screens: spacing, contrast and wording fixes.
+- WSL chats survive AIB being away: the Linux keeper keeps a distro's agents running for 2 hours without AIB, not 35 seconds. An
+  AIB restart, crash, update or test-build swap, or an older AIB build that stopped the keep-alive, no longer stops claude or codex
+  chats working in WSL; the next AIB within those 2 hours takes every one of them over. Each time an AIB (or the keep-alive)
+  connects, the 2 hours start again. After 2 hours with nothing connected, the agents stop and the keeper's log says so.
+
+
+- Artifacts: a failed publish or update card now shows the tool's own reason on a line under "The publish did not finish" (for
+  example "File not found in Ubuntu: /home/u/app/chart.png ..."), in every chat, as plain text.
+- WSL chats: the agent can publish a file from the distro by its path, a PNG, PDF or HTML page included (up to 25 MB), as in a
+  Windows project. Paths are relative to the chat's folder, or absolute inside the chat's or the project's folder; AIB reads the
+  file through its helper in the distro and keeps a copy as it was then (after changing the file, the agent publishes it again
+  with update). A refusal names the Linux path and the reason (not found, a folder, too large, outside the project, unreadable,
+  changed while reading). Windows chats' tools are unchanged.
+- AIB Linking (WSL): when asdf has no Node.js version set, the command to copy now matches the distro's asdf: `asdf set -u nodejs
+  latest` for asdf 0.16 or newer, `asdf global nodejs latest` for older asdf (both, labelled, when AIB could not read asdf's version).
+- AIB Linking (WSL): the git and curl install lines follow the distro's package manager (apt, dnf, yum, zypper, pacman or apk);
+  for a distro AIB does not recognise it says to install them with the distro's package manager. Still text to copy only.
+- AIB Linking (WSL): Close on the Node.js install panel or an agent's sign-in panel now also stops that program in the distro, as
+  on Windows; before, it kept running unseen (and Remove AIB from Ubuntu refused because of it).
+- Phone: New chat in a WSL project offers the agents by that distro's own On/Off switch (Settings > AIB Linking (WSL)), not the
+  Windows one, and says "Turned off for Ubuntu" for the ones switched off there. Windows projects are unchanged.
+- WSL: checking an agent install's progress no longer starts a distro that is not running; it answers "no install running" with
+  the distro's state instead.
 - AIB Linking (WSL): "AIB in Ubuntu" shows how much disk AIB takes in a distro, by part (helper and keeper versions, installed
   agents, npm cache, this AIB's data, chat copies, chat records and logs), the other AIB data folders found there and whether
   another AIB build still uses them. Reading it never starts the distro.
@@ -58,8 +148,12 @@
   the distro (a long test run, a dev server) and its subagents, with how many are still running and each command's latest output, as
   for a Windows chat. While such a command runs, the chat counts as still working in the background, so quitting or updating AIB
   warns you instead of cutting it off. If Ubuntu is not running, the pane says "Command updates unavailable: Ubuntu stopped.
-  Reconnect" instead of "No commands running". AIB cannot stop a WSL background command itself yet (no Stop button there; ask the
-  agent).
+  Reconnect" instead of "No commands running".
+- WSL projects: Stop a background command from AIB. A command a WSL chat left running in the background (a dev server, a long
+  test run) now has the same Stop button on its "Still running in the background" row as in a Windows chat, so you no longer have
+  to ask the agent to end it. Stop ends that command and whatever it started inside the distro, and the row then reads "Stopped by
+  you". It only ever touches processes AIB saw that command start: another chat's commands, the agent itself and anything else in
+  Ubuntu keep running. The button appears a moment after the row does, once AIB has checked the command's processes in the distro.
 - WSL projects: no second agent on one conversation. Before continuing a saved WSL chat, AIB now checks inside the distro whether
   another program already has that conversation open (for example `claude --resume` in a VS Code terminal in Ubuntu) and refuses with
   "This claude conversation is already open in another agent process (PID …)", exactly as for Windows chats. A chat written to

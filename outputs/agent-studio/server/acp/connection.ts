@@ -11,6 +11,8 @@
 import type { AllowGate } from '../allow/gate.ts';
 import { houseRules } from '../allow/brief.ts';
 import type { MatchContext } from '../allow/matcher.ts';
+import { factsNow, LinuxFacts, type LinuxNeeds, LinuxView } from '../allow/linux.ts';
+import { COLLECT_FACTS, prefetch as prefetchWslFacts, warm as warmWslFacts, type WslFactsSource } from '../allow/wsl_facts.ts';
 import { createHash } from 'node:crypto';
 import { screen } from './acp_schema.ts';
 import { CapError, ClientCaps, type FsMode, type TerminalBackend, type TerminalBase, type TerminalPlan } from './client_caps.ts';
@@ -56,13 +58,13 @@ import { artifactToolCommand } from '../artifacts/mcp.ts';
 import { isOwnForwardEntry, isOwnMcpUrl } from '../artifacts/mcp_http.ts';
 import { type Killable, ProcessTree, treeSpawnOptions } from '../platform/process_tree.ts';
 import { type Descendant, descendants, refreshDescendants } from '../platform/descendants.ts';
-import { refreshWslDescendants, wslDescendants } from '../wsl/procs.ts';
+import { refreshWslDescendants, wslDescendants, wslKillVerified } from '../wsl/procs.ts';
 import { INBOX } from '../attention/inbox_rules.ts';
 import type { ChannelInfo, KeeperRecord } from '../keeper/client.ts';
 import { type KeeperChannel, type KeeperChannelListener, type KeeperLink, parseNote } from '../keeper/link.ts';
 import { projectOfWorktree } from '../worktrees/worktrees.ts';
 import { WslClientCaps } from './wsl_caps.ts';
-import { distroName, guardRealWslAgent, wslTestHomeEnv } from '../wsl/access.ts';
+import { distroName, guardRealWslAgent, peekWslHost, wslTestHomeEnv } from '../wsl/access.ts';
 import { APP_VERSION, TESTS_DIR } from '../core/app.ts';
 import { getLogger } from '../core/log.ts';
 import { DOCS_RULE } from '../docs/tool_defs.ts';
@@ -636,17 +638,18 @@ export const ARTIFACT_PROMPT =
   'artifact or sharing service) when the user explicitly asks for a claude.ai page or a shareable link. ' + TOOLS_LOADING;
 
 /**
- * The same for a chat in a WSL project (design section 11: the artifact tools that need no project file). AIB runs on Windows and
- * cannot read files inside the distro, so publish takes the content; there are no doc or helper tools. A chat in its own copy also
+ * The same for a chat in a WSL project (design section 11). publish takes the content or a Linux `path` inside the project (AIB
+ * reads the file through the distro's helper, as a snapshot: wsl/artifact_read.ts); no helper tools. A chat in its own copy also
  * gets the merge tools (WORKTREE_PROMPT says so; the merge runs in the distro).
  */
 export const WSL_ARTIFACT_PROMPT =
   'You are running inside AIB, which shows artifacts beside the chat; when the user says "artifact" they ' +
-  'mean this viewer and its studio_artifact tool. This project is in WSL: AIB runs on Windows and cannot open files inside the ' +
-  'distro, so when you make something the user should look at rather than source code (an HTML page, one-off report, chart, ' +
-  'diagram or SVG), publish it with the studio_artifact publish tool by passing its content (never a file path) and mention it ' +
-  'in your reply as the Markdown link the tool returns; use update with the new content to change it. AIB docs and helper tools ' +
-  'are not available in WSL projects. ' + TOOLS_LOADING;
+  'mean this viewer and its studio_artifact tool. This project is in WSL. When you make something the user should look at rather ' +
+  'than source code (an HTML page, one-off report, chart, diagram, SVG, image or PDF), publish it with the studio_artifact publish ' +
+  'tool, by its content or by its Linux `path` (relative to the chat folder, or absolute inside the chat or project folder; any ' +
+  'kind up to 25 MB, PNG and other images included), and mention it in your reply as the Markdown link the tool returns. AIB copies ' +
+  'a file when you publish it: after changing the file, call update with the same path (or the new content) to publish the new ' +
+  'version. AIB helper tools are not available in WSL projects. ' + TOOLS_LOADING;
 
 export const WORKTREE_PROMPT =
   'In this chat you work in your own copy of the project, on the git branch {branch} (it started from {base}). ' +
@@ -663,6 +666,13 @@ export const LOCAL_ONLY_WORKTREE_PROMPT = 'Local-only files (git never commits t
   'copy: {paths}. Read and write them there by their full path. Never create those paths in this copy: ' +
   'files there are not shared with other chats.';
 export const LOCAL_ONLY_PRIVATE_WORKTREE = 'You may create and use {private} for local-only notes.';
+/**
+ * A WSL chat in its own copy (wsl/local_only.ts): the main folder's other git-ignored folders and files, granted like the local-only
+ * folders. Windows chats never get it (Connection.localOnly.ignored is only set for WSL chats).
+ */
+export const IGNORED_SHARED_WORKTREE = 'These folders and files git ignores are in the main project folder too, not in this copy: ' +
+  '{paths}. Read and edit them there by their full path: they are shared with the main folder, so an edit there is live at once ' +
+  "and is not part of this copy or its branch.";
 /** The same for a chat that works in the project folder itself. */
 export const LOCAL_ONLY_PROMPT = 'You may create and use the private/ folder of this project for local-only notes: git never commits it.';
 
@@ -875,7 +885,8 @@ export class Connection {
    * folders among them (`dirs`, granted to a worktree chat as extra writable folders) and the main folder's private/ when git
    * really ignores it (`private`, '' otherwise). null: nothing to tell (not git, or nothing is local only).
    */
-  localOnly: { entries: string[]; dirs: string[]; private: string } | null = null;
+  /** `ignored`: a WSL chat in its own copy also gets the main folder's other ignored folders and files (wsl/local_only.ts). */
+  localOnly: { entries: string[]; dirs: string[]; private: string; ignored?: { dirs: string[]; files: string[] } } | null = null;
   /** Allow rules (server/allow): the host's gate and this chat's scratch folder (outside its worktree). */
   allowGate: AllowGate | null = null;
   scratchDir: string | null = null;
@@ -2636,11 +2647,14 @@ export class Connection {
     if (now) this.#turnProcesses = new Set(now.map((d) => d.pid));
     else if (this.wsl) {
       // the snapshot comes a moment later: only processes that were already running when the turn began count as the turn's
-      const seq = this.promptSeq;
+      const seq = this.promptSeq + 1; // #startTurn counts the turn just after this
       const began = Date.now() / 1000;
       this.#afterWslTree((later) => {
         if (!later || this.promptSeq !== seq || this.#turnProcesses !== null) return;
-        this.#turnProcesses = new Set(later.filter((d) => d.started !== null && d.started < began).map((d) => d.pid));
+        // No shell call of this turn yet when the answer came: the distro listed them before any command ran, so all are the
+        // turn's (start times are whole seconds there: one started a moment before the turn could look newer). Else by start time.
+        const before = ![...this.#tools.values()].some((t) => t.shell && t.turn === seq);
+        this.#turnProcesses = new Set(later.filter((d) => before || (d.started !== null && d.started < began)).map((d) => d.pid));
       });
     }
   }
@@ -2714,16 +2728,28 @@ export class Connection {
     };
     const pids = commandOf(now);
     const at = this.#now();
+    const shell = this.#tools.get(id)?.shell ?? this.#shellCalls.has(id);
+    const others = () =>
+      [...this.#tools].some(([other, t]) =>
+        other !== id && t.shell &&
+        (t.since >= since - 2 || !['completed', 'failed'].includes(t.status) || this.#bgTools.get(other)?.state === 'running')
+      );
     if (this.wsl && pids === null) {
-      // A WSL chat's snapshot comes a moment later from its distro: until then the command counts as running (pids unknown); then
-      // its processes are noted, or, with none, it is done (as when a Windows snapshot finds none). Stop is not offered (no Stop in WSL).
+      // A WSL chat's snapshot comes a moment later from its distro: until then the command counts as running (pids unknown) and has
+      // no Stop; then its processes are noted (Stop offered on the same terms as on Windows, `others` asked again: a shell call
+      // started meanwhile would share the snapshot), or, with none, it is done (as when a Windows snapshot finds none).
       this.#afterWslTree((later) => {
         const found = commandOf(later);
-        if (found === null || this.#bgShells.get(task) !== null || this.#bgTools.get(id)?.state !== 'running') return;
-        if (found.length) {
-          this.#bgShells.set(task, found.map((d) => d.pid));
-          log.info('chat %s: background tool %s runs as processes %s', this.id, id, found.map((d) => d.pid).join(', '));
-        } else this.#backgroundEnded(id, this.#bgTools.get(id)!, 'done');
+        const t = this.#bgTools.get(id);
+        if (found === null || this.#bgShells.get(task) !== null || t?.state !== 'running') return;
+        if (!found.length) return this.#backgroundEnded(id, t, 'done');
+        this.#bgShells.set(task, found.map((d) => d.pid));
+        if (shell && this.#turnProcesses !== null && found.every((d) => d.started !== null) && !others()) {
+          t.procs = found.map((d) => ({ pid: d.pid, started: d.started as number }));
+          t.stoppable = true;
+          this.#announceBackground(id);
+        }
+        log.info('chat %s: background tool %s runs as processes %s%s', this.id, id, found.map((d) => d.pid).join(', '), t.stoppable ? '' : ', no Stop');
       });
     }
     if (pids && !pids.length) {
@@ -2737,14 +2763,8 @@ export class Connection {
     this.#shellSince.set(task, at);
     this.#shellsSeen = null;
     while (this.#bgShells.size > 100) this.#bgShells.delete(this.#bgShells.keys().next().value!);
-    const shell = this.#tools.get(id)?.shell ?? this.#shellCalls.has(id);
-    const others = [...this.#tools].some(([other, t]) =>
-      other !== id && t.shell &&
-      (t.since >= since - 2 || !['completed', 'failed'].includes(t.status) || this.#bgTools.get(other)?.state === 'running')
-    );
     const known = pids !== null && before !== null && pids.every((d) => d.started !== null);
-    // A WSL chat's processes are the distro's: AIB does not stop them (stopBackgroundTool refuses), so it never offers Stop there
-    const stoppable = shell && known && !others && !this.wsl;
+    const stoppable = shell && known && !others();
     const procs = stoppable ? pids!.map((d) => ({ pid: d.pid, started: d.started as number })) : null;
     this.#bgTools.set(id, { task, state: 'running', procs, stoppable, since, at, endedAt: null });
     this.#trimBackground();
@@ -2866,8 +2886,9 @@ export class Connection {
   /**
    * Stop a command running in the background (POST /api/live/tool-stop): AIB kills the processes it noted when the command moved
    * there, re-verified now (still the agent's, same start time) together with what they started since, leaf first
-   * (platform/kill_verified.ts). Refused (NotStoppable, HTTP 409) for anything else: an MCP tool, a command whose processes could
-   * not be told apart, one that already ended. The agent learns of it on its own (Claude Code's task notification).
+   * (platform/kill_verified.ts; a WSL chat's in its distro: helper `proc.stop`). Refused (NotStoppable, HTTP 409) for anything else:
+   * an MCP tool, a command whose processes could not be told apart, one that already ended. The agent learns of it on its own (Claude
+   * Code's task notification).
    */
   async stopBackgroundTool(toolCallId: unknown): Promise<Json> {
     this.#refuseReadOnly();
@@ -2878,14 +2899,13 @@ export class Connection {
       throw new NotStoppable("AIB can't stop a helper by itself: it runs inside the agent's own process. Ask the agent to stop it.");
     }
     if (background.state !== 'running') throw new NotStoppable('That command is no longer running.');
-    // its pids are the distro's; never killVerified here, which reads and kills Windows processes
-    if (this.wsl) throw new NotStoppable("AIB can't stop a command in a WSL chat yet. Ask the agent to stop it.");
     if (!background.stoppable || !background.procs?.length) {
       throw new NotStoppable('AIB cannot tell which processes belong to this command, so it cannot stop it.');
     }
     const pid = this.process?.pid;
     if (this.closed || !pid) throw new NotStoppable('The agent is not running.');
-    const result = await killVerified(pid, background.procs);
+    // a WSL chat's pids are the distro's: its helper runs the same verified kill there (never killVerified here, on Windows processes)
+    const result = this.wsl ? await wslKillVerified(this.wsl.distro, pid, background.procs) : await killVerified(pid, background.procs);
     if (!result) throw new NotStoppable('AIB cannot list the processes right now. Try again.');
     if (!result.killed.length) {
       this.#backgroundEnded(toolCallId as string, background, 'done');
@@ -3280,11 +3300,13 @@ export class Connection {
           return;
         }
       }
+      // a WSL chat: the distro facts the matcher needs are fetched first (allow/wsl_facts.ts); the next line waits for it
+      if (method === 'session/request_permission' && this.allowGate && this.wsl && !this.#replaying) {
+        return this.#allowByRuleWsl(message, params, seenKey);
+      }
       if (method === 'session/request_permission' && this.allowGate && this.#allowByRule(message, params, seenKey)) return;
       if (method === 'session/request_permission') {
-        const key = hex(12);
-        this.permissions.set(key, { rpcId: message.id, params });
-        this.event('permission', { key, params });
+        this.#permissionCard(message, params);
       } else if (this.caps.handles(method)) {
         if (this.#replaying) { // answered once live, unless the record shows the old AIB answered it
           this.#deferred.push(message);
@@ -5190,9 +5212,12 @@ export class Connection {
     const lo = this.localOnly;
     if (!lo) return '';
     if (!this.worktree) return lo.private ? LOCAL_ONLY_PROMPT : '';
-    if (!lo.entries.length) return '';
+    const shared = lo.ignored ? [...lo.ignored.dirs, ...lo.ignored.files] : [];
+    const sharedText = shared.length ? IGNORED_SHARED_WORKTREE.replace('{paths}', shared.join(', ')) : '';
+    if (!lo.entries.length) return sharedText;
     const text = LOCAL_ONLY_WORKTREE_PROMPT.replace('{paths}', lo.entries.join(', '));
-    return lo.private ? `${text} ${LOCAL_ONLY_PRIVATE_WORKTREE.replace('{private}', lo.private)}` : text;
+    const own = lo.private ? `${text} ${LOCAL_ONLY_PRIVATE_WORKTREE.replace('{private}', lo.private)}` : text;
+    return sharedText ? `${own} ${sharedText}` : own;
   }
 
   /**
@@ -5201,16 +5226,36 @@ export class Connection {
    * main folder itself. {} otherwise.
    */
   extraFolders(): Json {
-    const dirs = [...(this.worktree ? this.localOnly?.dirs ?? [] : []), ...(this.scratchDir ? [this.scratchDir] : [])];
+    const own = this.worktree ? [...(this.localOnly?.dirs ?? []), ...(this.localOnly?.ignored?.dirs ?? [])] : [];
+    const dirs = [...own, ...(this.scratchDir ? [this.scratchDir] : [])];
     if (!dirs.length || !isDict(this.#sessionCaps()?.additionalDirectories)) return {};
     return { additionalDirectories: [...dirs] };
   }
 
-  /** What the allow-rules matcher knows of this chat and request (tool name from the earlier tool_call, the current mode). */
-  allowContext(params: unknown): MatchContext {
+  /**
+   * What the allow-rules matcher knows of this chat and request (tool name from the earlier tool_call, the current mode). A WSL chat
+   * (allow/linux.ts): its Linux folder as `cwd`, the project's ref as `project`, no scratch folder, and a LinuxView over the distro
+   * facts AIB has (`linux.since`: older facts count as unknown; `linux.needs`: a recording view that collects what to ask).
+   */
+  allowContext(params: unknown, linux: { since?: number; needs?: LinuxNeeds } = {}): MatchContext {
     const call = isDict(params) ? get(params, 'toolCall') : null;
     const id = isDict(call) ? get(call, 'toolCallId') : null;
     const mode = get(this.#modes(), 'currentModeId');
+    if (this.wsl) {
+      const view = new LinuxView(this.#linuxFacts, { since: linux.since ?? 0, needs: linux.needs ?? null, distro: this.wsl.distro });
+      const claude = this.provider === 'claude' ? view.base()?.claude ?? (view.recording ? COLLECT_FACTS : null) : undefined;
+      return {
+        provider: this.provider,
+        toolName: isStr(id) ? this.#tools.get(id)?.toolName ?? null : null,
+        mode: isStr(mode) ? mode : null,
+        cwd: this.agentCwd,
+        project: this.projectRoot || this.cwd,
+        scratch: null,
+        stateDir: null,
+        ...(claude !== undefined ? { facts: claude } : {}),
+        linux: view,
+      };
+    }
     return {
       provider: this.provider,
       toolName: isStr(id) ? this.#tools.get(id)?.toolName ?? null : null,
@@ -5227,7 +5272,7 @@ export class Connection {
    * answer), record a `permission_auto` event, then answer. Keeper replay: never match again; the decision log says whether the
    * live AIB answered it (its event note and its answer are in the record and replay on their own).
    */
-  #allowByRule(message: Json, params: Json, seenKey: string): boolean {
+  #allowByRule(message: Json, params: Json, seenKey: string, since?: number): boolean {
     const gate = this.allowGate!;
     const options = get(params, 'options', []);
     const allow = (Array.isArray(options) ? options : []).find((o) => isDict(o) && o.kind === 'allow_once') as Json | undefined;
@@ -5239,7 +5284,7 @@ export class Connection {
     }
     let result;
     try {
-      result = gate.decide(params, this.allowContext(params));
+      result = gate.decide(params, since === undefined ? this.allowContext(params) : this.allowContext(params, { since }));
     } catch (error) {
       log.exception(error, 'Allow rules: the matcher failed; the request asks');
       return false;
@@ -5262,6 +5307,77 @@ export class Connection {
     });
     this.write({ jsonrpc: '2.0', id: message.id, result: { outcome: { outcome: 'selected', optionId: allow.optionId } } });
     return true;
+  }
+
+  /** A permission request becomes a card the user answers. */
+  #permissionCard(message: Json, params: Json): void {
+    const key = hex(12);
+    this.permissions.set(key, { rpcId: message.id, params });
+    this.event('permission', { key, params });
+  }
+
+  // ---- allow rules in a WSL chat (allow/linux.ts, allow/wsl_facts.ts) ---------------------------------------------------------
+  /** What AIB has learnt of this WSL chat's distro for the matcher. */
+  #linuxFacts = new LinuxFacts();
+  /** The start's fetch of the chat folder and the base facts (Studio waits for it briefly). */
+  allowWarming: Promise<void> | null = null;
+
+  #wslFactsSource(): WslFactsSource {
+    const wsl = this.wsl!;
+    const agentEnv = (): Record<string, string> => {
+      let test: Record<string, string> = {};
+      try {
+        test = wslTestHomeEnv();
+      } catch { /* no test home: the helper's own */ }
+      return { ...(wsl.env ?? {}), ...test, ...(this.env ?? {}) };
+    };
+    return {
+      host: () => {
+        const host = peekWslHost(wsl.distro); // never starts the distro
+        return host && host.state === 'ready' ? host : null;
+      },
+      cwd: () => this.agentCwd,
+      claude: this.provider === 'claude',
+      claudeDir: () => {
+        const env = agentEnv();
+        return env.CLAUDE_CONFIG_DIR || (env.HOME?.startsWith('/') ? `${env.HOME.replace(/\/+$/, '')}/.claude` : undefined);
+      },
+      pathEnv: () => (wsl.env ? agentEnv().PATH : undefined),
+    };
+  }
+
+  /** Fetch the distro facts deciding `params` needs (facts read before `since`, a factsNow() value, count as unknown). */
+  async allowPrefetch(params: Json, since: number): Promise<void> {
+    if (!this.allowGate || !this.wsl) return;
+    await prefetchWslFacts(
+      this.allowGate,
+      this.#linuxFacts,
+      this.#wslFactsSource(),
+      params,
+      since,
+      (view) => this.allowContext(params, { since, needs: view.opts.needs ?? undefined }),
+    );
+  }
+
+  /** Once at start: the chat folder and the base facts (PATH folders, AIB's folders, Claude settings). */
+  allowWarm(): Promise<void> {
+    if (!this.allowGate || !this.wsl) return Promise.resolve();
+    return this.allowWarming ??= warmWslFacts(this.#linuxFacts, this.#wslFactsSource()).catch((error) => {
+      log.exception(error, 'Allow rules: could not read the distro facts');
+    });
+  }
+
+  /** A WSL chat's live request: the facts first, then the same decision as #allowByRule, else a card. */
+  async #allowByRuleWsl(message: Json, params: Json, seenKey: string): Promise<void> {
+    const since = factsNow();
+    try {
+      await this.allowPrefetch(params, since);
+    } catch (error) {
+      log.exception(error, 'Allow rules: could not read the distro facts; the request asks');
+    }
+    if (this.closed) return;
+    if (this.#allowByRule(message, params, seenKey, since)) return;
+    this.#permissionCard(message, params);
   }
 
   /** Drafts of cards shown lately, by key: "Save the rule anyway?" after another device answered first. */
@@ -5311,34 +5427,54 @@ export class Connection {
   allowSweep(): number {
     if (!this.allowGate || this.#replaying) return 0;
     let n = 0;
+    for (const [key, pending] of [...this.permissions]) if (this.#sweepOne(key, pending)) n++;
+    return n;
+  }
+
+  /** allowSweep for a WSL chat: each waiting card's distro facts are fetched again first. */
+  async allowSweepWsl(): Promise<number> {
+    if (!this.allowGate || this.#replaying || !this.wsl) return 0;
+    let n = 0;
     for (const [key, pending] of [...this.permissions]) {
-      const options = get(pending.params, 'options', []);
-      const allow = (Array.isArray(options) ? options : []).find((o) => isDict(o) && o.kind === 'allow_once') as Json | undefined;
-      if (!allow || !isStr(allow.optionId)) continue;
-      const result = this.allowGate.decide(pending.params, this.allowContext(pending.params));
-      if (!result.allow) continue;
-      const seenKey = JSON.stringify(pending.rpcId);
-      this.allowGate.log.record(this.id, {
-        key: `${seenKey}:${this.#requestsSeen.get(seenKey) ?? 0}`,
-        optionId: allow.optionId,
-        ruleId: result.ruleId,
-        label: result.label,
-        flagged: result.flagged,
-        time: Date.now(),
-        swept: true,
-      });
-      this.recordedEvent('permission_auto', {
-        sessionId: get(pending.params, 'sessionId'),
-        params: { sessionId: get(pending.params, 'sessionId'), toolCall: get(pending.params, 'toolCall') },
-        ruleId: result.ruleId,
-        label: result.label,
-        flagged: result.flagged,
-        key,
-      });
-      this.permission(key, allow.optionId);
-      n++;
+      const since = factsNow();
+      try {
+        await this.allowPrefetch(pending.params, since);
+      } catch { /* unknown facts: it keeps asking */ }
+      if (this.closed || this.permissions.get(key) !== pending) continue;
+      if (this.#sweepOne(key, pending, since)) n++;
     }
     return n;
+  }
+
+  /** One waiting card answered by the rules (logged as swept), or false. */
+  #sweepOne(key: string, pending: AgentRequest, since?: number): boolean {
+    const gate = this.allowGate!;
+    const options = get(pending.params, 'options', []);
+    const allow = (Array.isArray(options) ? options : []).find((o) => isDict(o) && o.kind === 'allow_once') as Json | undefined;
+    if (!allow || !isStr(allow.optionId)) return false;
+    const ctx = since === undefined ? this.allowContext(pending.params) : this.allowContext(pending.params, { since });
+    const result = gate.decide(pending.params, ctx);
+    if (!result.allow) return false;
+    const seenKey = JSON.stringify(pending.rpcId);
+    gate.log.record(this.id, {
+      key: `${seenKey}:${this.#requestsSeen.get(seenKey) ?? 0}`,
+      optionId: allow.optionId,
+      ruleId: result.ruleId,
+      label: result.label,
+      flagged: result.flagged,
+      time: Date.now(),
+      swept: true,
+    });
+    this.recordedEvent('permission_auto', {
+      sessionId: get(pending.params, 'sessionId'),
+      params: { sessionId: get(pending.params, 'sessionId'), toolCall: get(pending.params, 'toolCall') },
+      ruleId: result.ruleId,
+      label: result.label,
+      flagged: result.flagged,
+      key,
+    });
+    this.permission(key, allow.optionId);
+    return true;
   }
 
   /** True when a permission request is for Studio's studio_artifact tool on a chat Studio gave that tool to. */

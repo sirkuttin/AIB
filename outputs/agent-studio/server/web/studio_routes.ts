@@ -11,9 +11,11 @@ import * as folders from '../desktop/folders.ts';
 import { presence } from '../desktop/folder_presence.ts';
 import { pyInt } from '../transcripts/pycompat.ts';
 import { findPrompts } from '../transcripts/prompts.ts';
-import { changesResponse, type ChatStudio, branchOf } from '../worktrees/chat_folders.ts';
+import { changesFolder, changesResponse, type ChatStudio, branchOf } from '../worktrees/chat_folders.ts';
 import * as merge from '../worktrees/merge.ts';
-import { FROM_DOC_RESOLVED, MAX_BODY_BYTES } from '../artifacts/artifacts.ts';
+import { FROM_DOC_RESOLVED, MAX_BODY_BYTES, WSL_FILE_RESOLVED } from '../artifacts/artifacts.ts';
+import { wslPublishFile, WslReadError } from '../wsl/artifact_read.ts';
+import { wslRecord } from '../wsl/worktrees.ts';
 import { getUpdate, getUpdateNotes, postUpdateCheck, postUpdateInstall, postUpdateNotes } from '../desktop/updater.ts';
 import { parseQs } from '../artifacts/origin.ts';
 import { authorize, Refusal, SCOPE_ARTIFACTS_TOOL } from './security.ts';
@@ -522,6 +524,7 @@ export async function ownGatePost(ctx: WebContext, request: Request, url: URL): 
   }
   await ctx.artifacts.prepare(publishing, publishing ? body.conversationId : owner);
   delete body[FROM_DOC_RESOLVED];
+  delete body[WSL_FILE_RESOLVED];
   if (path === '/api/live/artifacts/publish') {
     // "Built from <doc › page>": the tool's fromDoc, or (an update without one) the link the artifact has, at the page's rev now
     let from: unknown = body.fromDoc;
@@ -541,6 +544,42 @@ export async function ownGatePost(ctx: WebContext, request: Request, url: URL): 
       }
     }
     delete body.fromDoc;
+    // a WSL chat's `path`: its distro's helper reads the file (wsl/artifact_read.ts); artifacts.ts publishes the bytes
+    if (body.path !== null && body.path !== undefined) {
+      const refused = await attachWslFile(ctx, body);
+      if (refused) return refused;
+    }
   }
   return artifactCall(() => ctx.artifacts.service.handlePost(request, path, body));
+}
+
+/**
+ * Publish by `path` from a WSL chat: its folder is a wsl:// ref, so the file is read through its distro's helper (with the realpath
+ * checks done there) and put on the body under WSL_FILE_RESOLVED for artifacts.ts; null when done or not a WSL chat (a Windows chat's
+ * path is resolved by artifacts.ts as before). A refusal is the reply: one line naming the Linux path.
+ */
+export async function attachWslFile(ctx: WebContext, body: Json): Promise<Reply | null> {
+  const id = body.conversationId;
+  if (typeof id !== 'string' || !id || id.length > 600) return null;
+  const artifacts = ctx.artifacts;
+  const chat = artifacts.service.chat(id);
+  if (artifacts.service.cwdFor(chat)) return null; // a Windows folder (prepare() found it): artifacts.ts resolves the path
+  let folder: string | null;
+  try {
+    folder = await changesFolder(await artifacts.chatStudio(chat), artifacts.connectionOf(chat) || chat);
+  } catch (error) {
+    if (error instanceof ValueError) return null;
+    throw error;
+  }
+  if (!folder || !wslLocOf(folder)) return null;
+  // the project's main folder for a chat in its own worktree (its local-only files live there); else the chat's own folder
+  const record = await wslRecord(folder).catch(() => null);
+  const project = record?.project ?? artifacts.projectRootOf(chat);
+  try {
+    body[WSL_FILE_RESOLVED] = await wslPublishFile(folder, project, body.path);
+  } catch (error) {
+    if (error instanceof WslReadError) return [error.status, { error: error.message, code: error.code }];
+    throw error;
+  }
+  return null;
 }

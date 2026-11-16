@@ -273,8 +273,8 @@ export interface ToolContext {
   /** Offer the worktree merge tools. */
   worktree: boolean;
   /**
-   * A chat in a WSL project (docs/wsl/design.md sections 4 and 11): only the tool groups WSL_TOOL_GROUPS switches on, and publish only
-   * by content (AIB on Windows cannot read the distro's files). Today: the artifact tools, the doc and drawing tools (the docs' files
+   * A chat in a WSL project (docs/wsl/design.md sections 4 and 11): only the tool groups WSL_TOOL_GROUPS switches on, and a publish
+   * `path` is passed on as given (a Linux path: the route reads it through the distro's helper, wsl/artifact_read.ts). Today: the artifact tools, the doc and drawing tools (the docs' files
    * are read and written by the distro's helper), and the merge tools when it works in its own worktree (the merge runs in the
    * distro's helper); no swarm tools.
    */
@@ -567,7 +567,10 @@ function sourceArgs(ctx: ToolContext, args: Json): Json {
   const hasPath = path !== null && path !== '', hasContent = content !== null;
   if (hasPath && hasContent) throw new ToolError('Give either `path` or `content`, not both');
   if (!(hasPath || hasContent)) throw new ToolError('Give either `path` (a file) or `content` (the text to publish)');
-  if (hasPath && ctx.restricted) throw new ToolError('In a WSL project, publish by `content`: AIB cannot open files inside the distro');
+  if (hasPath && ctx.restricted) { // a WSL chat: the path is a Linux one, read and checked in the distro (wsl/artifact_read.ts)
+    if (typeof path !== 'string' || !pyStrip(path)) throw new ToolError('`path` must be a non-empty string');
+    return { path: pyStrip(path) };
+  }
   if (hasPath) return { path: resolvePath(ctx, path) };
   if (typeof content !== 'string') throw new ToolError('`content` must be a string');
   return { content };
@@ -735,7 +738,8 @@ const DOC_HANDLERS: Record<string, Handler> = Object.fromEntries(
  * The AIB tools of a chat in a WSL project, by group: the one place to switch a group on once its feature works for WSL projects
  * (wsl/access.ts wslToolsNotice words the chat's note from it too). Both ways in reach the same list: the phase 2 tunnel
  * (wsl/mcp_tunnel.ts) and the phase 1 interop entry.
- *   - artifacts: publish (by `content` only), update, list, archive; nothing in them reads or writes the project folder.
+ *   - artifacts: publish, update, list, archive. A `path` is a Linux path inside the chat's or project's folder, read (never
+ *     written) through the distro's helper as a snapshot (wsl/artifact_read.ts).
  *   - merge: merge_into_project and resolve_edit_clash, for a chat in its own worktree (run in the distro's helper: wsl/merge.ts).
  *   - swarm: the helper tools (start_helper, ...). Off: helper chats are not made in WSL projects yet (Studio gives a WSL chat no
  *     main role while this is off).
@@ -751,6 +755,34 @@ export const WSL_TOOL_GROUPS: Readonly<Record<'artifacts' | 'merge' | 'swarm' | 
 
 /** The artifact tools a WSL chat gets with the `artifacts` group on. */
 export const RESTRICTED_TOOLS: ReadonlySet<string> = new Set(WSL_TOOL_GROUPS.artifacts ? ['publish', 'update', 'list', 'archive'] : []);
+
+/**
+ * What a WSL chat's publish and update say about `path` (wsl/artifact_read.ts): a Linux path inside the project, read through the
+ * distro's helper as a snapshot, with its limits.
+ */
+export const WSL_PATH_NOTE = 'In this WSL project `path` is a Linux path: relative to the chat folder, or absolute inside the chat ' +
+  "folder or its project folder (links or `..` that lead outside are refused). Any file kind works, images and PDFs included " +
+  '(png, jpg, gif, webp, svg, pdf, html, md, csv, json, txt), up to 25 MB. AIB copies the file when you publish: the artifact is ' +
+  'a snapshot, so after changing the file call `update` with the same `path` to publish the new version.';
+
+/** publish and update as a WSL chat sees them: `path` described as a Linux path inside the project, the snapshot note added. */
+function wslPathTool(tool: Json): Json {
+  const schema = tool.inputSchema as Json;
+  const properties = { ...(schema.properties as Json) };
+  properties.path = {
+    ...(properties.path as Json),
+    description: tool.name === 'publish'
+      ? 'Linux path of an existing file to publish (relative to the chat folder, or absolute inside the chat or project folder). ' +
+        'Give this or `content`, not both.'
+      : 'Linux path of the file with the new version (relative to the chat folder, or absolute inside the chat or project folder). ' +
+        'Give this or `content`, not both.',
+  };
+  const description = String(tool.description).replace(
+    'Give either `path` (an existing file; relative paths are resolved against the session folder)',
+    'Give either `path` (an existing file in the distro; relative paths are resolved against the chat folder)',
+  );
+  return { ...tool, description: `${description} ${WSL_PATH_NOTE}`, inputSchema: { ...schema, properties } };
+}
 
 const SWARM_HANDLERS: Record<string, Handler> = Object.fromEntries(
   SWARM_TOOLS.map((t) => [String(t.name), (ctx: ToolContext, args: Json) => swarmTool(ctx, String(t.name), args)]),
@@ -773,7 +805,7 @@ function handlers(ctx: ToolContext): Record<string, Handler> {
 function restrictedTools(ctx: ToolContext): Json[] {
   const g = WSL_TOOL_GROUPS;
   return [
-    ...TOOLS.filter((t) => RESTRICTED_TOOLS.has(String(t.name))),
+    ...TOOLS.filter((t) => RESTRICTED_TOOLS.has(String(t.name))).map((t) => t.name === 'publish' || t.name === 'update' ? wslPathTool(t) : t),
     ...(ctx.worktree && g.merge ? WORKTREE_TOOLS : []),
     ...(ctx.main && g.swarm ? SWARM_TOOLS : []),
     ...(g.docs ? [...DOC_TOOLS, ...DRAWING_TOOLS] : []),

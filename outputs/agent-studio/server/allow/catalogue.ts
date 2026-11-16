@@ -3,7 +3,8 @@
  * flag asks, architect review 2.2). The never list (rules never cover these) and the floor (always the owner, never a rule and
  * later never the main agent) are read from AIB's own parse, never from the agent's words.
  */
-import { checkPath, fromGitBash, inside, looksSecret, pathFormProblem, realish } from './paths.ts';
+import { checkPath, fromGitBash, inside, looksSecret, pathFormProblem, type PathOps, realish, WIN_OPS } from './paths.ts';
+import { LinuxView } from './linux.ts';
 import type { Part } from './shell.ts';
 
 export interface PartContext {
@@ -15,7 +16,15 @@ export interface PartContext {
   scratch: string | null;
   /** AIB's state folder: never touched by a rule. */
   stateDir: string | null;
+  /** The path rules (absent: this PC's own, WIN_OPS; a WSL chat: its LinuxView). */
+  ops?: PathOps;
 }
+
+const opsOf = (ctx: PartContext): PathOps => ctx.ops ?? WIN_OPS;
+/** The LinuxView of a WSL chat, or null. */
+export const linuxOf = (ctx: { ops?: PathOps }): LinuxView | null => (ctx.ops instanceof LinuxView ? ctx.ops : null);
+/** AIB's own folders in a distro (its root ~/.aib-server, or AIB_WSL_ROOT under test). */
+const LINUX_OWN = /(^|\/)\.aib-server(\/|$)/;
 
 /** The program a word names: base name, lower case, without .exe/.cmd/.bat/.ps1. */
 export function programName(word: string): string {
@@ -55,6 +64,8 @@ export function resolveProgram(name: string): string | null {
 /** Why the program word itself can't be trusted ('' when fine): a path, inside the worktree, or the Store python stub. */
 export function programProblem(word: string, ctx: PartContext): string {
   if (/[\\/]/.test(word) || word.startsWith('.')) return 'program given by path';
+  const lx = linuxOf(ctx);
+  if (lx) return lx.programProblem(ctx.root); // a WSL chat: the program is found on the agent's PATH in the distro
   if (ctx.shell === 'pwsh' && /^[A-Za-z]+-[A-Za-z]+$/.test(word)) return ''; // a cmdlet name
   const full = resolveProgram(word);
   if (!full) return '';
@@ -65,7 +76,8 @@ export function programProblem(word: string, ctx: PartContext): string {
 }
 
 /** .cmd/.bat shims: cmd.exe re-parses the arguments (BatBadBut). */
-export function batArgProblem(word: string, args: string[]): string {
+export function batArgProblem(word: string, args: string[], linux = false): string {
+  if (linux) return ''; // no cmd.exe in a distro
   const full = resolveProgram(word);
   if (!full || !/\.(cmd|bat)$/i.test(full)) return '';
   return args.some((a) => /[&|<>^%!"]/.test(a)) ? 'special characters passed to a .cmd program' : '';
@@ -331,7 +343,7 @@ function checkSpec(spec: Spec, args: string[], globs: boolean[], ctx: PartContex
   if (spec.args === 'pattern+paths' && !sawPattern) positional = positional.slice(1);
   if (spec.maxPaths !== undefined && positional.length > spec.maxPaths) return 'too many files (one may be written)';
   for (const p of positional) {
-    const v = checkPath(p.word, ctx.cwd, ctx.root, { glob: p.glob });
+    const v = checkPath(p.word, ctx.cwd, ctx.root, { glob: p.glob }, opsOf(ctx));
     if (!v.ok) return `${p.word}: ${v.reason}`;
   }
   return '';
@@ -364,7 +376,7 @@ export function safeRead(part: Part, ctx: PartContext): string {
   if (name === 'jq' && args.some((a) => /env|\$__|input_filename|import|include|getpath|\$ENV|halt|debug|stderr|input/i.test(a))) {
     return 'jq filter that reads the environment or other files';
   }
-  const bat = batArgProblem(first, args);
+  const bat = batArgProblem(first, args, !!linuxOf(ctx));
   if (bat) return bat;
   return checkSpec(spec, args, part.globs.slice(1), ctx);
 }
@@ -375,7 +387,7 @@ const FIND_BARE = new Set(['-print', '-not', '!', '-o', '-a', '-empty', '-or', '
 function safeFind(args: string[], globs: boolean[], ctx: PartContext): string {
   let i = 0;
   for (; i < args.length && !args[i].startsWith('-') && args[i] !== '!'; i++) {
-    const v = checkPath(args[i], ctx.cwd, ctx.root, { glob: globs[i] });
+    const v = checkPath(args[i], ctx.cwd, ctx.root, { glob: globs[i] }, opsOf(ctx));
     if (!v.ok) return `${args[i]}: ${v.reason}`;
   }
   for (; i < args.length; i++) {
@@ -384,7 +396,7 @@ function safeFind(args: string[], globs: boolean[], ctx: PartContext): string {
     if (FIND_TESTS.has(a)) {
       if (i + 1 >= args.length) return `${a} needs a value`;
       if (a === '-newer') {
-        const v = checkPath(args[i + 1], ctx.cwd, ctx.root);
+        const v = checkPath(args[i + 1], ctx.cwd, ctx.root, {}, opsOf(ctx));
         if (!v.ok) return v.reason;
       }
       i++;
@@ -410,7 +422,7 @@ function safePwsh(part: Part, ctx: PartContext): string {
         if (i + 1 >= args.length) return `${a} needs a value`;
         const value = args[++i];
         if (spec.pathParams.includes(p)) {
-          const v = checkPath(value, ctx.cwd, ctx.root, { glob: part.globs[i + 1] });
+          const v = checkPath(value, ctx.cwd, ctx.root, { glob: part.globs[i + 1] }, opsOf(ctx));
           if (!v.ok) return `${value}: ${v.reason}`;
         } else if (/[\\/]/.test(value) && pathFormProblem(value)) return `${value}: ${pathFormProblem(value)}`;
         continue;
@@ -425,7 +437,7 @@ function safePwsh(part: Part, ctx: PartContext): string {
   }
   const paths = spec.positional === 'pattern+paths' && !args.some((a) => /^-pattern$/i.test(a)) ? positional.slice(1) : positional;
   for (const p of paths) {
-    const v = checkPath(p.word, ctx.cwd, ctx.root, { glob: p.glob });
+    const v = checkPath(p.word, ctx.cwd, ctx.root, { glob: p.glob }, opsOf(ctx));
     if (!v.ok) return `${p.word}: ${v.reason}`;
   }
   return '';
@@ -436,22 +448,22 @@ export function syntaxCheck(part: Part, ctx: PartContext): string {
   const [first, ...args] = part.words;
   if (part.globs.some(Boolean)) return 'glob';
   const name = programName(first);
-  const prob = programProblem(first, ctx) || batArgProblem(first, args);
+  const prob = programProblem(first, ctx) || batArgProblem(first, args, !!linuxOf(ctx));
   if (prob) return prob;
   const file = (p: string | undefined) => {
     if (!p) return 'no file';
-    const v = checkPath(p, ctx.cwd, ctx.root);
+    const v = checkPath(p, ctx.cwd, ctx.root, {}, opsOf(ctx));
     return v.ok ? '' : `${p}: ${v.reason}`;
   };
   if (name === 'node') return args.length === 2 && (args[0] === '--check' || args[0] === '-c') ? file(args[1]) : 'only node --check <file>';
   if (name === 'tsc') {
-    if (!resolveProgram('tsc')) return 'tsc is not installed outside the project';
+    if (!linuxOf(ctx) && !resolveProgram('tsc')) return 'tsc is not installed outside the project';
     if (args.length === 1 && args[0] === '--noEmit') return '';
     if (args.length === 3 && args[0] === '--noEmit' && args[1] === '-p') return file(args[2]);
     return 'only tsc --noEmit [-p <path>]';
   }
   if (name === 'python' || name === 'python3' || name === 'py') {
-    if (!resolveProgram(name)) return 'python is not on PATH';
+    if (!linuxOf(ctx) && !resolveProgram(name)) return 'python is not on PATH';
     if (args.length === 4 && args[0] === '-I' && args[1] === '-m' && args[2] === 'py_compile') return file(args[3]);
     return 'only python -I -m py_compile <file>';
   }
@@ -674,8 +686,19 @@ export function neverPart(part: Part, ctx: PartContext): Never | null {
   const name = programName(first);
   const floor = (reason: string): Never => ({ floor: true, reason });
   const never = (reason: string): Never => ({ floor: false, reason });
+  const ops = opsOf(ctx);
+  const lx = linuxOf(ctx);
+  // a WSL chat: paths compare with the chat folder resolved in the distro ('' when unknown: nothing is inside it)
+  const root = lx ? lx.realish(ctx.root, ctx.root) ?? '' : ctx.root;
   for (const a of part.words) {
     if (PROTECTED_PATH.test(a)) return floor("AIB's data folder or an agent's config");
+    if (lx) {
+      if (LINUX_OWN.test(a)) return floor("AIB's data folder");
+      if (a.includes('/')) {
+        const real = lx.realish(a, ctx.cwd);
+        if (real && lx.own().some((own) => lx.inside(real, own))) return floor("AIB's data folder");
+      }
+    }
     if (ctx.stateDir && /[\\/]/.test(a)) {
       const real = realish(a, ctx.cwd);
       if (real && inside(real, ctx.stateDir) && !inside(real, ctx.root) && !(ctx.scratch && inside(real, ctx.scratch))) {
@@ -714,9 +737,9 @@ export function neverPart(part: Part, ctx: PartContext): Never | null {
   if (DELETES.has(name)) {
     const targets = args.filter((a) => !a.startsWith('-'));
     for (const t of targets) {
-      const real = pathFormProblem(t) ? null : realish(t, ctx.cwd);
+      const real = ops.formProblem(t) ? null : ops.realish(t, ctx.cwd);
       if (!real) return floor('deleting where AIB cannot resolve the path');
-      if (!inside(real, ctx.root) && !(ctx.scratch && inside(real, ctx.scratch))) {
+      if (!ops.inside(real, root) && !(ctx.scratch && ops.inside(real, ctx.scratch))) {
         return floor('deleting outside the project and its scratch folder');
       }
     }
@@ -741,9 +764,9 @@ export function neverPart(part: Part, ctx: PartContext): Never | null {
   }
   if (INTERPRETERS.has(name)) return never('inline code or interpreters');
   for (const a of args) {
-    if (pathFormProblem(a) === '' && looksSecret(a)) {
-      const real = realish(a, ctx.cwd);
-      if (!real || !inside(real, ctx.root)) return floor('reading secret files outside the project');
+    if (ops.formProblem(a) === '' && looksSecret(a)) {
+      const real = ops.realish(a, ctx.cwd);
+      if (!real || !ops.inside(real, root)) return floor('reading secret files outside the project');
     }
   }
   return null;

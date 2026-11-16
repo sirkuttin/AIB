@@ -11,6 +11,8 @@ import type { AibUsage, HelperMethods, WslHost } from '../../outputs/agent-studi
 import { WslHelperError } from '../../outputs/agent-studio/server/wsl/contract.ts';
 import { readKeeperInfo, KeeperClient } from '../../outputs/agent-studio/server/keeper/client.ts';
 import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
+import { type LinkFs, physicalRealish } from '../../outputs/agent-studio/server/allow/linux.ts';
+import { pinHash } from '../../outputs/agent-studio/server/allow/pin.ts';
 
 type Json = Record<string, unknown>;
 const SEP = Deno.build.os === 'windows' ? '\\' : '/';
@@ -183,6 +185,7 @@ export class FakeWslHost implements WslHost {
       } catch { /* missing */ }
       return { exists: !!info, isDir: !!info?.isDirectory, isFile: !!info?.isFile, size: info?.size ?? 0, mtimeMs: info?.mtime?.getTime() ?? 0 };
     }
+    if (method === 'allow.facts') return this.#allowFacts(params);
     // Linking (WSL) phase 3: a small AIB folder and a Remove with nothing in the way (tests set handlers for other answers)
     if (method === 'aib.usage') return fakeAibUsage();
     if (method === 'aib.remove') {
@@ -200,6 +203,82 @@ export class FakeWslHost implements WslHost {
       };
     }
     throw new WslHelperError(`the fake helper has no ${method}`, 'no_method');
+  }
+
+  /** `allow.facts`' Claude settings facts (null: unreadable) and PATH folders; tests change them. */
+  claudeFacts: { askPrograms: string[]; askTools: string[]; riskyEnv: string } | null = { askPrograms: [], askTools: [], riskyEnv: '' };
+  pathDirs: { dir: string; real: string | null }[] = [{ dir: '/usr/local/bin', real: '/usr/local/bin' }, { dir: '/usr/bin', real: '/usr/bin' }];
+
+  /** A Linux path the mapped folders stand in for: a parent of a mapped folder is a folder too. */
+  #mapped(linux: string): { win: string | null; virtualDir: boolean } {
+    const win = this.windowsFor(linux);
+    if (win !== linux) return { win, virtualDir: false };
+    const isParent = [...this.folders.keys()].some((k) => k.startsWith(linux === '/' ? '/' : linux + '/'));
+    return { win: null, virtualDir: isParent || linux === '/' };
+  }
+
+  /** A Windows path back as the Linux path of the mapped folder that holds it, else as a path outside every project. */
+  #linuxFor(win: string): string {
+    const fold = (p: string) => p.replaceAll('/', '\\').replace(/\\+$/, '').toLowerCase();
+    let best: [string, string] | null = null;
+    for (const [linux, w] of this.folders) {
+      let real = w;
+      try {
+        real = Deno.realPathSync(w);
+      } catch { /* missing */ }
+      const f = fold(real);
+      if ((fold(win) === f || fold(win).startsWith(f + '\\')) && (!best || f.length > fold(best[1]).length)) best = [linux, real];
+    }
+    if (!best) return '/mnt/outside/' + win.replace(/^[A-Za-z]:/, '').split(/[\\/]+/).filter(Boolean).join('/');
+    const rest = win.slice(best[1].replace(/[\\/]+$/, '').length).split(/[\\/]+/).filter(Boolean);
+    return [best[0] === '/' ? '' : best[0], ...rest].join('/') || '/';
+  }
+
+  /** The fake helper's allow.facts: Linux paths resolved over the mapped Windows folders (helper/allow_facts.ts semantics). */
+  #allowFacts(params: Json): unknown {
+    const fs: LinkFs = {
+      lstat: (linux) => {
+        const m = this.#mapped(linux);
+        if (!m.win) return m.virtualDir ? { link: false } : 'missing';
+        try {
+          return { link: Deno.lstatSync(m.win).isSymlink };
+        } catch (error) {
+          return error instanceof Deno.errors.NotFound ? 'missing' : 'error';
+        }
+      },
+      realpath: (linux) => {
+        const m = this.#mapped(linux);
+        if (!m.win) return m.virtualDir ? linux : null;
+        try {
+          return this.#linuxFor(Deno.realPathSync(m.win));
+        } catch {
+          return null;
+        }
+      },
+    };
+    const stat = (linux: string) => {
+      const m = this.#mapped(linux);
+      if (!m.win) return { exists: m.virtualDir, isDir: m.virtualDir };
+      try {
+        const st = Deno.statSync(m.win);
+        return { exists: true, isDir: st.isDirectory };
+      } catch {
+        return { exists: false, isDir: false };
+      }
+    };
+    const paths = (params.paths as string[] | undefined ?? []).map((p) => ({ real: physicalRealish(p, fs), ...stat(p) }));
+    const scans = (params.scans as string[] | undefined ?? []).map((d) => {
+      const m = this.#mapped(d);
+      if (!m.win) return !m.virtualDir;
+      try {
+        return [...Deno.readDirSync(m.win)].some((e) => e.isSymlink);
+      } catch {
+        return true;
+      }
+    });
+    const pins = (params.pins as { words: string[]; cwd: string }[] | undefined ?? []).map((x) => pinHash(x.words, this.windowsFor(x.cwd)));
+    const base = params.base ? { pathDirs: this.pathDirs, own: [FAKE_AIB_ROOT], claude: this.claudeFacts } : undefined;
+    return { paths, scans, pins, ...(base ? { base } : {}) };
   }
 
   /** Stop the keeper this fake's links started (tests clean up). */
