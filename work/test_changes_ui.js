@@ -140,6 +140,10 @@ test('polling only while Changes is visible and the agent works; refresh when a 
   assert.equal(C.shouldPoll({ tab: 'activity', visible: true, busy: true }), false);
   assert.equal(C.shouldPoll({ tab: 'changes', visible: false, busy: true }), false);
   assert.equal(C.shouldPoll({ tab: 'changes', visible: true, busy: false }), false);
+  // a chat in the project folder: other chats' edits show up while you look, busy or not
+  assert.equal(C.shouldPoll({ tab: 'changes', visible: true, busy: false, shared: true }), true);
+  assert.equal(C.shouldPoll({ tab: 'activity', visible: true, busy: false, shared: true }), false);
+  assert.equal(C.shouldPoll({ tab: 'changes', visible: false, busy: false, shared: true }), false);
   assert.equal(C.turnEnded(true, false), true);
   assert.equal(C.turnEnded(false, false), false);
   assert.equal(C.turnEnded(false, true), false);
