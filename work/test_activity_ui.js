@@ -127,3 +127,8 @@ test('hidden flag round-trips and survives a broken store', () => {
   assert.equal(A.readHidden(broken), false);
   A.writeHidden(true, broken);
 });
+
+test('split Activity: a chat with nothing running says "Ready", never "idle"', () => {
+  assert.deepEqual(A.splitCounts({}), [{ text: 'Ready' }]);
+  assert.deepEqual(A.splitCounts({ working: 2, processes: 1 }), [{ text: '2 working' }, { text: '1 running' }]);
+});

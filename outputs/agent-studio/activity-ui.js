@@ -226,7 +226,7 @@
     if (w) parts.push({ text: w + ' working' });
     if (f) parts.push({ text: f + ' failed', bad: true });
     if (p) parts.push({ text: p + ' running' });
-    return parts.length ? parts : [{ text: 'idle' }];
+    return parts.length ? parts : [{ text: 'Ready' }];
   }
   /* sub: a string or [{text, bad}] (splitCounts). info: {key, title, dot()} (AgentSplitUI.chatInfo). Reuses `head` when given. */
   function splitHead(doc, info, sub, head) {

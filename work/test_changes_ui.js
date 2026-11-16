@@ -503,7 +503,7 @@ test('a project-folder chat: the fixed header and the footer line that points at
   const pane = t.ids.subagentsPane;
   // before the changes are read: the header and the footer are already there (nothing pops in when the list arrives)
   assert.equal(pane.querySelector('.cg-scope').textContent, C.FOLDER_SCOPE);
-  assert.equal(C.FOLDER_SCOPE, 'Project folder · uncommitted', 'short enough for the 280 px column');
+  assert.equal(C.FOLDER_SCOPE, 'Project folder', 'short enough for the 280 px column, no "uncommitted" (the footer says it)');
   t.ui().show('changes');
   await flush();
   assert.equal(pane.querySelector('.cg-scope').textContent, C.FOLDER_SCOPE, 'one fixed line, also with files listed');
