@@ -207,6 +207,74 @@
     return { value, tone: blocked ? 'blocked' : high ? 'high' : '', details };
   }
 
+  // ---- the Works in chip (New chat page only) ----------------------------------------------------------------------
+  // Where a new chat works: in the project folder (the default) or in its own copy. The slot is always there [MF 9]: until the
+  // server says whether this folder can have a copy (GET /api/live/branch: copyable / whyNot) the chip is greyed with "Checking…"
+  // as the Own copy row's second line; a folder that can't have one keeps it greyed with the reason. Hidden only when the user
+  // changed the folder to one that can't (the caller says so with hidden). Pure.
+  const WORKS_IN = {
+    folder: { name: 'Project folder', description: 'Edits your files directly, like the agent in a terminal.' },
+    copy: { name: 'Own copy', description: "Works on its own branch in a separate copy. You merge it when it's done." },
+  };
+  // w: {ownCopy, copyable: true | false | null (still checking), whyNot, hidden}. -> chip or null.
+  function worksInChip(w) {
+    if (!w || typeof w !== 'object' || w.hidden) return null;
+    const checking = w.copyable !== true && w.copyable !== false;
+    const copyable = w.copyable === true;
+    const why = checking ? 'Checking…' : copyable ? '' : String(w.whyNot || "This folder can't have a copy");
+    const value = w.ownCopy && w.copyable !== false ? 'copy' : 'folder';
+    return {
+      id: 'worksin',
+      label: 'Works in',
+      value: WORKS_IN[value].name,
+      current: value,
+      locked: !copyable,
+      line: why,
+      title: 'Works in: ' + WORKS_IN[value].name + (why ? ' (' + why + ')' : ''),
+      items: [
+        { value: 'folder', name: WORKS_IN.folder.name, description: WORKS_IN.folder.description, disabled: checking },
+        { value: 'copy', name: WORKS_IN.copy.name, description: why || WORKS_IN.copy.description, disabled: !copyable },
+      ],
+    };
+  }
+  // The pre-set rule (build plan 1.3): the title of an open chat working in this project's folder (not a copy chat or a
+  // helper: those don't write the folder) that is busy or has queued messages; '' when there is none. The caller evaluates it
+  // only when the New chat screen opens and when the user changes the folder, never while the screen is open. keyOf(path) is
+  // the page's project key; titleOf(c) the chat's name.
+  function workingFolderChat(conversations, cwd, keyOf, titleOf) {
+    if (!cwd || !Array.isArray(conversations)) return '';
+    const key = keyOf(cwd);
+    for (const c of conversations) {
+      const live = c && c.live;
+      if (!live || live.closed || live.worktree || (live.swarm && live.swarm.role === 'helper')) continue;
+      if (keyOf(live.projectRoot || live.cwd || c.cwd || '') !== key) continue;
+      const queued = !!(live.queue && Array.isArray(live.queue.items) && live.queue.items.length);
+      if (!live.busy && !queued) continue;
+      return String((titleOf && titleOf(c)) || 'Another chat');
+    }
+    return '';
+  }
+  // The New chat page's note under the folder line for the Works in choice: {text, amber}. Pure.
+  //   preset: the working chat's title when the screen opened on Own copy because of it; amber: the user picked the project
+  //   folder while another folder chat was working (stays until the chat is started).
+  function worksInNote(w) {
+    if (!w) return { text: '', amber: false };
+    if (w.amber)
+      return {
+        text: 'Both chats will edit the same files. If one runs tests or git while the other is mid-edit, things can break.',
+        amber: true,
+      };
+    if (w.ownCopy && w.preset && w.copyable !== false)
+      return { text: 'Own copy is on because “' + w.preset + '” is working in this folder.', amber: false };
+    return { text: '', amber: false };
+  }
+  // The folder line: "C:\REPOS\shop · main", or "C:\REPOS\shop · own copy from main" when the chat will get its own copy.
+  function folderLine(path, branch, w) {
+    if (!branch) return path;
+    const copy = !!(w && !w.hidden && w.ownCopy && w.copyable === true);
+    return path + ' · ' + (copy ? 'own copy from ' + branch : branch);
+  }
+
   // Which chips exist and what they say. Pure, so it can be tested without a DOM.
   function describe(model) {
     const settings = model.settings || null,
@@ -313,6 +381,9 @@
           value: String(x.value || ''),
           title: String(x.title || ''),
         });
+    // The New chat page's Works in chip: after Effort (and the Model stand-in), always in the same slot.
+    const worksIn = worksInChip(model.worksIn);
+    if (worksIn) chips.push(worksIn);
     // No Project chip: the project dropdown above the chat list already names it (owner decision).
     const branch = typeof model.branch === 'string' ? model.branch.trim() : '';
     if (branch && model.cwd) chips.push({ id: 'branch', label: 'Branch', value: branch, title: 'Branch: ' + branch });
@@ -659,6 +730,42 @@
     return wrap;
   }
 
+  // The Works in chip on the New chat page: the same chip and menu as Mode. Greyed (chip-locked) while the folder is checked or
+  // can't have a copy; its menu still opens and says why on the Own copy row.
+  function worksInPicker(doc, chip, o, after) {
+    const wrap = el(doc, 'span', null, 'chip-wrap');
+    const button = el(doc, 'button', null, 'chip chip-worksin');
+    button.type = 'button';
+    button.id = 'chip-worksin';
+    button.setAttribute('aria-haspopup', 'menu');
+    button.setAttribute('aria-expanded', 'false');
+    button.title = chip.title;
+    button.append(el(doc, 'span', chip.label, 'chip-k'), el(doc, 'span', chip.value, 'chip-v'), el(doc, 'span', '▾', 'chip-caret'));
+    if (chip.locked || o.disabled) {
+      button.classList.add('chip-locked');
+      button.setAttribute('aria-disabled', 'true');
+    }
+    button.addEventListener('click', () => {
+      if (menu.node && menu.trigger === button) return closeMenu(true);
+      openMenu(doc, button, {
+        label: chip.label,
+        items: chip.items,
+        current: chip.current,
+        disabled: !!o.disabled,
+        notes: [],
+        onPick: (value) => {
+          if (value === chip.current || !o.onWorksIn) return;
+          Promise.resolve()
+            .then(() => o.onWorksIn(value))
+            .then(after)
+            .catch((e) => o.onError && o.onError(e));
+        },
+      });
+    });
+    wrap.append(button);
+    return wrap;
+  }
+
   // "Set up in Settings ›" at the end of the agent menu when some agents are listed greyed.
   function setupLink(doc, chip, o) {
     if (!o.onSetup || !chip.agents.some((a) => a.disabled)) return null;
@@ -688,7 +795,7 @@
     const staticSig = JSON.stringify(d.chips.filter(isStatic).map((c) => [c.id, c.value, c.title, c.tone, c.details]));
     const signature = JSON.stringify([
       d.chips.map((c) =>
-        isStatic(c) ? [c.id] : [c.id, c.kind, c.agentId, c.value, c.title, c.warn, c.pending && c.pending.value],
+        isStatic(c) ? [c.id] : [c.id, c.kind, c.agentId, c.value, c.title, c.warn, c.pending && c.pending.value, c.locked],
       ),
       d.hasPanel,
       !!o.disabled,
@@ -742,6 +849,10 @@
       }
       if (chip.kind) {
         box.append(agentChip(doc, chip));
+        continue;
+      }
+      if (chip.id === 'worksin') {
+        box.append(worksInPicker(doc, chip, o, after));
         continue;
       }
       const wrap = el(doc, 'span', null, 'chip-wrap');
@@ -903,6 +1014,10 @@
     sameModel,
     describe,
     describeLimits,
+    worksInChip,
+    workingFolderChat,
+    worksInNote,
+    folderLine,
     render,
     menuItems,
     place,

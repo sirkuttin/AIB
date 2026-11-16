@@ -207,6 +207,15 @@
     !!(data && data.git && data.worktree && data.worktree.branch && (data.files || []).length);
   /* Merge is offered for a chat's own branch (a WSL chat's too); a server that sends worktree.merge: false keeps it away. */
   const canMerge = (data) => !!(data && data.worktree && data.worktree.branch && data.worktree.merge !== false);
+  /* A chat that works in the project folder (build plan 1.4): one fixed header line for every such chat (no condition, so nothing
+     toggles [SF 8]), no Merge and no Discard, and a status line that points at the chat (chat-first: no git buttons). Own-copy
+     chats and helpers (the server sends data.worktree) keep the branch view, Merge and Discard. chat.folder comes from chat.js
+     (an open chat without live.worktree that is not a helper). */
+  const FOLDER_SCOPE = 'Project folder · uncommitted';
+  const FOLDER_FOOT =
+    "Works in the project folder · nothing to merge. The list holds this chat's and anyone else's uncommitted changes. Ask the agent to commit or undo them.";
+  const isFolderView = (chat, data) =>
+    !!(chat && chat.folder && !chat.discarded && !(data && (data.worktree || data.git === false || data.unknown)));
   /* The footer of the Changes tab, one row: status line (left), Discard…, then Merge (right). Returns the parts; merge-ui.js drives the line and the button. */
   function footer(doc) {
     const make = (tag, cls, txt) => {
@@ -218,19 +227,21 @@
     const foot = make('div', 'cg-foot'),
       status = make('div', 'cg-foot-status'),
       note = make('span', 'cg-foot-note'),
+      folder = make('span', 'cg-foot-folder'),
       mergeLine = make('span', 'cg-merge-line'),
       discard = make('button', 'cg-discard', 'Discard…'),
       merge = make('button', 'primary cg-merge-btn');
     foot.hidden = true;
     status.setAttribute('role', 'status');
     mergeLine.hidden = true;
+    folder.hidden = true;
     discard.type = 'button';
     discard.title = 'Delete this chat’s worktree and branch';
     merge.type = 'button';
     merge.hidden = true;
-    status.append(note, mergeLine);
+    status.append(note, folder, mergeLine);
     foot.append(status, discard, merge);
-    return { foot, status, note, mergeLine, discard, merge };
+    return { foot, status, note, folder, mergeLine, discard, merge };
   }
   const discardNote = (result) =>
     result && result.pending
@@ -662,7 +673,12 @@
 
     /* -- painting -- */
     function paintBar() {
-      scopeEl.textContent = data && data.scope === 'branch' ? "This chat's changes" : 'Uncommitted';
+      scopeEl.textContent = isFolderView(chat, data)
+        ? FOLDER_SCOPE
+        : data && data.scope === 'branch'
+          ? "This chat's changes"
+          : 'Uncommitted';
+      scopeEl.title = scopeEl.textContent;
       const t = data && data.git ? totalsOf(data) : null;
       sum.replaceChildren();
       if (t && t.files) {
@@ -706,11 +722,19 @@
     }
     function paintFoot() {
       foot.classList.toggle('asking', asking);
+      const folderText = isFolderView(chat, data) ? FOLDER_FOOT : '';
+      parts.folder.textContent = folderText;
+      parts.folder.hidden = !folderText;
       foot.hidden =
-        !asking && !canDiscard(data) && !footNote.textContent && parts.merge.hidden && !parts.mergeLine.textContent;
+        !asking &&
+        !canDiscard(data) &&
+        !footNote.textContent &&
+        !folderText &&
+        parts.merge.hidden &&
+        !parts.mergeLine.textContent;
       discardBtn.hidden = !canDiscard(data);
       discardBtn.disabled = discarding;
-      parts.status.hidden = !footNote.textContent && !parts.mergeLine.textContent; // its own row only when it says something
+      parts.status.hidden = !footNote.textContent && !folderText && !parts.mergeLine.textContent; // its own row only when it says something
     }
     function paintNote() {
       let msg = '';
@@ -1081,12 +1105,15 @@
       const id = ctx && typeof ctx.id === 'string' ? ctx.id : '',
         busy = !!(ctx && ctx.busy),
         discarded = !!(ctx && ctx.discarded),
-        mergeBlocked = ctx && typeof ctx.mergeBlocked === 'string' ? ctx.mergeBlocked : '';
+        mergeBlocked = ctx && typeof ctx.mergeBlocked === 'string' ? ctx.mergeBlocked : '',
+        folder = !!(ctx && ctx.folder);
       const prevId = chat.id,
         changed = id !== chat.id,
         ended = turnEnded(chat.busy, busy),
-        gone = discarded && !chat.discarded && !changed;
-      chat = { id, busy, discarded, mergeBlocked };
+        gone = discarded && !chat.discarded && !changed,
+        refiled = folder !== !!chat.folder && !changed;
+      chat = { id, busy, discarded, mergeBlocked, folder };
+      if (refiled && !gone) paintAll();
       if (gone) {
         data = null; // the branch is gone: the Changes view says so instead of "not available yet"
         paintAll();
@@ -1406,6 +1433,9 @@
     askInPage,
     canDiscard,
     canMerge,
+    isFolderView,
+    FOLDER_SCOPE,
+    FOLDER_FOOT,
     footer,
     discardNote,
     init,
