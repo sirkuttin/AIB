@@ -210,8 +210,14 @@ test('the split menu offers split right and split down, and "move to next pane" 
     t.S.menuItems('a')
       .map((i) => i.id)
       .join(),
-    'split-right,split-down,move-next',
+    'move-next',
+    'with two panes there is no split item: only move to next pane',
   );
+  const before = t.S.layout();
+  t.S.splitTab('a', 'row');
+  t.S.splitFocused('row');
+  assert.equal(t.S.layout().tree.ch.length, 2, 'Ctrl+backslash and the menu add no third pane');
+  assert.equal(JSON.stringify(t.S.layout()), JSON.stringify(before));
 });
 
 test('a corrupt saved layout is ignored', () => {

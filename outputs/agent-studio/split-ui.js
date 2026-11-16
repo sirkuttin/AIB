@@ -441,10 +441,12 @@
       index: i,
     }));
   }
+  // Two panes are the most: every way to add a third is off.
+  const full = () => !!L && T().countGroups(L) >= T().MAX_GROUPS;
   function menuItems(key) {
     const items = [];
-    items.push({ id: 'split-right', label: 'Split right', run: () => splitTab(key, 'row') });
-    items.push({ id: 'split-down', label: 'Split down', run: () => splitTab(key, 'col') });
+    if (!full()) items.push({ id: 'split-right', label: 'Split right', run: () => splitTab(key, 'row') });
+    if (!full()) items.push({ id: 'split-down', label: 'Split down', run: () => splitTab(key, 'col') });
     if (active() && order.length > 1)
       items.push({ id: 'move-next', label: 'Move to next pane', run: () => moveTab(key, 1) });
     return items;
@@ -505,6 +507,7 @@
   }
   // Ctrl+\ and "Split right" / "Split down": the tab moves to a new pane; a pane with only that tab gets a New chat.
   function splitTab(key, dir) {
+    if (full()) return;
     const base = baseLayout(),
       g = T().holder(base.tree, key) || T().focused(base);
     if (!g) return;
@@ -526,6 +529,7 @@
   }
   function splitFocused(dir) {
     if (!host) return false;
+    if (full()) return true; // Ctrl+\ with two panes: nothing
     const base = baseLayout(),
       fg = T().focused(base);
     if (!fg) return false;
@@ -657,7 +661,13 @@
       }
       const br = bodyRect(id);
       if (x >= br.left && x <= br.right && y >= br.top && y <= br.bottom) {
-        const zone = T().zoneAt({ left: br.left, top: br.top, width: br.width, height: br.height }, x, y);
+        const zone = T().zoneAt(
+          { left: br.left, top: br.top, width: br.width, height: br.height },
+          x,
+          y,
+          undefined,
+          T().countGroups(base) >= T().MAX_GROUPS,
+        );
         const group = T()
           .groups(base.tree)
           .find((g) => g.id === id);
