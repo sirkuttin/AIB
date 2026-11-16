@@ -15,6 +15,8 @@ lands exactly like helpers' work (swarm/service.ts helper landing).
                             B17  protected path (.husky/pre-commit by Bash): nothing lands, told; the worktree is kept
                             B10  hooks off in the user's Claude settings: the editing subagent is refused, the chat line says so
                             B21  the user's own WorktreeCreate hook: AIB sends none, adopts the worktree, lands it, never removes it
+                                 (P3: the Agent call shows in the RFD form as a session_message, not a tool call)
+                            P3   a `context: fork` skill is refused (PreToolUse(Skill)); an ordinary skill runs
   Crash recovery (B8) and the junction-safe removal are pinned by work/deno/subagent_landing_test.ts.
 
 Needs node, the Claude Code ACP adapter (AIB_CLAUDE_ACP or a global npm install) and Go (keeper program; AIB_TEST_KEEPER_BIN names a
@@ -210,7 +212,7 @@ class AibSubagentLandingTest(unittest.TestCase):
             (aib.project / 'dirty.txt').write_text('main-edit\n', encoding='utf-8')  # the main agent's uncommitted edit
         aib = Aib(self, rules, dirty)
         p, fx, chat = aib.project, aib.fx, aib.chat
-        self.assertEqual(chat.state().get('subagentIsolation'), {'on': True, 'reason': ''})
+        self.assertEqual({k: chat.state().get('subagentIsolation', {}).get(k) for k in ('on', 'reason')}, {'on': True, 'reason': ''})
 
         # ---- B1: foreground lands at the turn end, as one commit; the main agent's edit stays uncommitted
         aib.turn('SR-FG go')
@@ -283,8 +285,34 @@ class AibSubagentLandingTest(unittest.TestCase):
         self.assertFalse((aib.project / 'sub-a.txt').exists())
         self.assertIn('subagents that edit files are turned off', sent)
 
-    @unittest.skip('P2 left: the hook side verifies the user worktree, but the ACP gate (security review MF 5: the parent stream '
-                   'must show the Agent call) did not match on 2.1.310; the line says "AIB did not see its Agent call end". To finish.')
+    def test_fork_skill_is_refused(self):
+        """P3 probe (work/p3_skill_fork_probe.py): a `context: fork` skill starts a subagent with no Agent call, in the folder. AIB's
+        PreToolUse(Skill) refuses it; an ordinary skill still runs."""
+        rules = [
+            {'when': 'SR-SKILL', 'reply': {'tools': [{'id': 'toolu_pS1', 'name': 'Skill', 'input': {'skill': 'forker'}}]}},
+            {'when': 'FORKBODY-7', 'reply': {'tools': [bash('toolu_fS1', 'echo from-fork > fork.txt')]}},
+            {'when': 'toolu_fS1', 'reply': {'text': 'FORK-RAN'}},
+            {'when': 'toolu_pS1', 'reply': {'tools': [{'id': 'toolu_pS2', 'name': 'Skill', 'input': {'skill': 'plain'}}]}},
+            {'when': 'toolu_pS2', 'reply': {'text': 'PARENT-SKILL-DONE'}},
+        ]
+
+        def skills(aib):
+            for name, front, body in (('forker', 'context: fork\nagent: general-purpose\n', 'FORKBODY-7: write fork.txt'),
+                                      ('plain', '', 'PLAINBODY-7: just say hi')):
+                d = aib.project / '.claude' / 'skills' / name
+                d.mkdir(parents=True)
+                (d / 'SKILL.md').write_text(f'---\nname: {name}\ndescription: {name} skill\n{front}---\n{body}\n', encoding='utf-8')
+            run_git(aib.project, 'add', '-A')
+            run_git(aib.project, 'commit', '-q', '-m', 'skills')
+        aib = Aib(self, rules, skills)
+        aib.turn('SR-SKILL go')
+        sent = dumped(aib.stub)
+        self.assertIn('skills that run as a forked subagent (context: fork) are off', sent)
+        self.assertNotIn('FORK-RAN', sent + stub_text(aib.stub), 'the fork skill ran')
+        self.assertFalse((aib.project / 'fork.txt').exists())
+        self.assertIn('PARENT-SKILL-DONE', stub_text(aib.stub) + sent)
+        self.assertIn('PLAINBODY-7', sent, 'an ordinary skill still runs')
+
     def test_user_worktree_hook_is_adopted_landed_and_kept(self):
         rules = [
             {'when': 'SR-PARENT', 'reply': {'tools': [agent_call('toolu_pA1', 'sr user', 'SUBTASK-U: do the work')]}},

@@ -97,6 +97,10 @@ export interface SubagentLanding {
   userHook: boolean;
   /** The parent's turn end at the last refusal: a touched-dirty landing is tried again at the parent's next turn end (design 3.5). */
   turn: string;
+  /** P3, Activity's line per subagent: its agentId (the adapter's child session id), files it landed, and "nothing to land". */
+  agentId?: string;
+  files?: number;
+  empty?: boolean;
 }
 
 /**

@@ -339,6 +339,24 @@ body.subchat-open .rs-split {
   text-overflow: ellipsis;
   color: var(--text-dim);
 }
+/* Subagent worktrees (P3): where it works and how its work lands ("Own worktree · Lands when the turn ends"). Read-only text in a
+   fixed 16 px slot: a card in a chat with the rule always has it (empty until known), so nothing moves when it fills or changes. A
+   finished card with it is two lines (its usual 28 px line, then this). */
+.sa-wt {
+  display: block;
+  height: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sa-card.sa-two {
+  gap: 0;
+  padding-top: 5px;
+  padding-bottom: 6px;
+}
+.sa-two .sa-l1 {
+  height: 18px;
+}
 /* A helper that went on in the background after a steer: the same words and working colour as a command row's pill. */
 .sa-bg {
   display: block;

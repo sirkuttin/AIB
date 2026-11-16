@@ -28,8 +28,12 @@ export const READ_ONLY_TOOLS = new Set([
   'Read', 'Grep', 'Glob', 'LS', 'WebFetch', 'WebSearch', 'TodoWrite', 'ToolSearch', 'ListAgents', 'ReportFindings',
 ]);
 
-/** The PreToolUse matcher: the spawning tool (and its old name), plus the two AIB refuses (P0b R8). */
-export const PRE_TOOL_MATCHER = 'Agent|Task|EnterWorktree|Workflow';
+/**
+ * The PreToolUse matcher: the spawning tool (and its old name), the two AIB refuses (P0b R8), and Skill (P3 probe, work/
+ * p3_skill_fork_probe.py on 2.1.310: a skill or command with `context: fork` starts a subagent with no Agent call, so neither
+ * PreToolUse(Agent) nor WorktreeCreate runs and its edits land in the folder; AIB refuses those skills).
+ */
+export const PRE_TOOL_MATCHER = 'Agent|Task|EnterWorktree|Workflow|Skill';
 /** Claude Code's timeout for each hook, seconds: well above the forwarder's own 10 s deadline (P0b R2c: a timed-out hook fails open). */
 export const HOOK_TIMEOUT_S = 30;
 
@@ -213,6 +217,63 @@ function customAgents(dir: string, into: Map<string, boolean>): void {
   }
 }
 
+/** The front matter of a skill or command file says it runs as a forked subagent (`context: fork`). */
+function forkFile(path: string): boolean {
+  let text: string;
+  try {
+    text = Deno.readTextFileSync(path).slice(0, 20000);
+  } catch {
+    return false;
+  }
+  const front = /^﻿?---\r?\n([\s\S]*?)\r?\n---/.exec(text);
+  return !!front && /^context:[ \t]*["']?fork["']?[ \t]*$/m.test(front[1]);
+}
+
+/** Base names (as the Skill tool names them, without any `plugin:` or folder prefix) of the fork skills and commands under `root`. */
+function forkNamesIn(root: string, into: Set<string>): void {
+  for (const e of listDir(join(root, 'skills'))) {
+    if (e.isDirectory && forkFile(join(root, 'skills', e.name, 'SKILL.md'))) into.add(e.name);
+  }
+  const commands = (dir: string, depth: number) => {
+    for (const e of listDir(dir)) {
+      if (e.isDirectory && depth < 3) commands(join(dir, e.name), depth + 1);
+      else if (e.isFile && e.name.endsWith('.md') && forkFile(join(dir, e.name))) into.add(e.name.replace(/\.md$/, ''));
+    }
+  };
+  commands(join(root, 'commands'), 0);
+}
+
+/**
+ * The fork skills and commands a chat in `cwd` can call (P3 probe): the project's .claude, the user's config folder and every
+ * installed plugin. Base names only: a `plugin:name` or `apps/web:name` call is refused when ANY fork skill has that base name
+ * (refusing too much is safe; running a fork in the folder is not). Reads only; never throws.
+ */
+export function forkSkillNames(cwd: string, configDir: string): Set<string> {
+  const out = new Set<string>();
+  for (const root of [join(cwd, '.claude'), configDir, ...pluginDirs(configDir)]) forkNamesIn(root, out);
+  return out;
+}
+
+/**
+ * The Skill tool's `skill` names a skill or command that runs as a forked subagent (`context: fork`): its base name is a fork skill
+ * of the project, the user or a plugin, or a directory-scoped name (`apps/web:deploy`) whose folder's .claude has it as one.
+ */
+export function isForkSkill(name: string, cwd: string, configDir: string): boolean {
+  if (!name || name.length > 300) return false;
+  const cut = name.lastIndexOf(':');
+  const base = (cut >= 0 ? name.slice(cut + 1) : name).replace(/^\//, '');
+  if (!base) return false;
+  if (forkSkillNames(cwd, configDir).has(base)) return true;
+  const scope = cut >= 0 ? name.slice(0, cut) : '';
+  // a directory-scoped skill: <cwd>/<scope>/.claude (a plain relative folder only: no drive, no .., no leading slash)
+  if (scope && /^[\w.-]+(\/[\w.-]+)*$/.test(scope) && !scope.split('/').includes('..')) {
+    const nested = new Set<string>();
+    forkNamesIn(join(cwd, ...scope.split('/'), '.claude'), nested);
+    return nested.has(base);
+  }
+  return false;
+}
+
 function definesWorktreeCreate(settings: Json | null): boolean {
   const hooks = settings && isDict(settings.hooks) ? settings.hooks as Json : null;
   return !!hooks && Array.isArray(hooks.WorktreeCreate) && hooks.WorktreeCreate.length > 0;
@@ -296,7 +357,12 @@ export function subagentsOffSettings(cwd: string, env: Record<string, string | u
   customAgents(join(cwd, '.claude', 'agents'), agents);
   const ro = new Set(readOnly);
   const editing = [...new Set([...BUILTIN_EDITING, ...[...agents.keys()].filter((n) => !ro.has(n) && /^[\w.:-]+$/.test(n))])].sort();
-  return { permissions: { deny: [...editing.flatMap((n) => [`Agent(${n})`, `Task(${n})`]), 'Workflow', 'EnterWorktree'] } };
+  const forks = [...forkSkillNames(cwd, configDir)].filter((n) => /^[\w.:-]+$/.test(n)).sort(); // P3: fork skills run as subagents too
+  return {
+    permissions: {
+      deny: [...editing.flatMap((n) => [`Agent(${n})`, `Task(${n})`]), 'Workflow', 'EnterWorktree', ...forks.map((n) => `Skill(${n})`)],
+    },
+  };
 }
 
 /** The system prompt line for a chat whose editing subagents are off (hooks off in the user's Claude Code settings). */
