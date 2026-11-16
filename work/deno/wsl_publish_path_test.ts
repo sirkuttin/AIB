@@ -258,6 +258,7 @@ Deno.test('publish by path (WSL): the PNG arrives byte-identical as an image; id
   const [status, a] = post({ conversationId: 'c1', title: 'Family', path: 'out/dw26-family.png', [WSL_FILE_RESOLVED]: file });
   assertEquals(status, 200, JSON.stringify(a));
   assertEquals([a.kind, a.version, a.title, a.sourcePath], ['image', 1, 'Family', null]);
+  assertEquals(a.wslSource, file.ref, 'the list entry carries the wsl:// ref, which the path links match (files-ui artifactForLink)');
   assertEquals(bytes(String(a.id)), data);
   const m = store.get(a.id);
   assertEquals([m.entry, m.wslSource, m.project], ['dw26-family.png', file.ref, 'wsl://ubuntu/home/u/app']);

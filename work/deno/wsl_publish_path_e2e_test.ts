@@ -169,6 +169,7 @@ Deno.test({
       const manifest = store.get(id);
       assertEquals([manifest.kind, manifest.entry, manifest.versions.length, manifest.sourcePath], ['image', 'dw26-family.png', 1, null]);
       assertEquals(manifest.wslSource, refOf({ kind: 'wsl', distro: KEY, linuxPath: `${PROJECT}/${rel}` }));
+      assertEquals(store.summary(manifest).wslSource, manifest.wslSource, 'the list entry carries the ref path links match');
       const got = Deno.readFileSync(store.versionFile(manifest, 1));
       assertEquals(got.length, data.length);
       assert(got.every((b, i) => b === data[i]), 'byte-identical');

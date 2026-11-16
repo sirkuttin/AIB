@@ -324,6 +324,8 @@ An agent in a WSL chat publishes a file (a PNG, a PDF, an HTML page, any kind a 
 - **Snapshot.** The artifact holds the bytes as they were when published (it keeps the file's `wsl://` ref as `wslSource`, no
   `sourcePath`): no watcher follows the Linux file, and Delete never touches it. After changing the file, the agent calls
   `update` with the same path.
+- **Path links.** The artifact keeps the file's `wsl://` ref as `wslSource` (no `sourcePath`, so no watcher); the artifact list returns it
+  and a path link in a WSL chat reply opens that artifact (`files-ui.js artifactForLink`), matching the ref case-sensitively.
 - **Refusals.** One line with the Linux path: file not found, a folder, too large (with its size and the limit), outside the
   chat's folders, a kind AIB cannot show, permission denied, changed while AIB read it, the distro not reachable, or an older
   helper without `files.readBytes` (reconnect the distro).

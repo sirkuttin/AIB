@@ -79,7 +79,7 @@ Nothing found that breaks START, CONTINUE, rebuild after a crash, or the automat
 | 33 | Path links: Ctrl+click on an outside Linux path | **BROKEN** (minor) | F5; `KNOWN-BROKEN: Ctrl+click on a Linux path outside ...`; `editors: Ctrl+click on a bare Linux path ...` |
 | 34 | Path links: names that differ only in case | **BROKEN** (minor) | F5; `KNOWN-BROKEN: Linux names are case-sensitive ...` |
 | 35 | Outside-file links for a WSL chat not live in this process | SUSPECT (minor) | F10; `files/outside for a WSL chat that is not live ...` pins today's refusal |
-| 36 | Path link opens a published artifact (`fix/path-links-open-artifacts`) | SUSPECT (depends on PNG publishing builder) | F11 |
+| 36 | Path link opens a published artifact (`fix/path-links-open-artifacts`) | FIXED (`wsl/artifact-links`) | F11 |
 | 37 | Files tab: list/read/search, git-ignored folders open, file tabs per project (`fix/file-tab-layout`, `fix/open-ignored`, `fix/empty-project-view`) | OK (read) | `rootFor`/`scopeFor` handle refs; tabs keyed by project key; `wsl_files_changes_e2e_test.ts` |
 | 38 | Docs routes / doc store for WSL projects | OK (read) | refs go to `wsl/docs.ts`; `wsl_docs_test.ts`, `wsl_docs_e2e_test.ts` |
 | 39 | Artifacts: watcher, archive/delete bin (`feat/artifact-bin-*`), zoom | OK / N/A | `NoWrites` for WSL chats; bin is keyed by chat |
@@ -209,6 +209,8 @@ Counts (49 rows): BROKEN 10 (3 minor, 1 latent; findings F1-F7), SUSPECT 5 (F8-F
 
 - `files-ui.js:2442` (`artifactForLink`) matches `sourcePath` against ref-form paths; a WSL artifact stored with a bare Linux path never
   matches. Fix: store WSL `sourcePath` as the ref (or compare both). Effort S.
+- **FIXED (branch `wsl/artifact-links`).** A WSL artifact has no `sourcePath`; it carries `wslSource` (the ref). The artifact list now returns
+  `wslSource` and `artifactForLink` also compares it (case-sensitive). Tests: `test_files_ui.js`, `wsl_publish_path_test.ts`, `wsl_publish_path_e2e_test.ts`.
 
 ### F12 SUSPECT (low; local-only builder): local-only backups skip WSL projects silently
 
