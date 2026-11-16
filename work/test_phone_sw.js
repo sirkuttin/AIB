@@ -19,7 +19,13 @@ const ORIGIN = 'https://studio-pc.tail-a1b2.ts.net';
 
 test('worker: only the phone page files are cached, never the API or another origin', () => {
   assert.equal(SW.shellPath(ORIGIN + '/phone.html', 'navigate', ORIGIN), '/phone.html');
-  assert.equal(SW.shellPath(ORIGIN + '/', 'navigate', ORIGIN), '/phone.html');
+  // phase 1b: / is the loader (it picks the phone or the computer page); the computer page's files are cached too
+  assert.equal(SW.shellPath(ORIGIN + '/', 'navigate', ORIGIN), '/');
+  assert.equal(SW.shellPath(ORIGIN + '/pc.html', 'navigate', ORIGIN), '/pc.html');
+  assert.equal(SW.shellPath(ORIGIN + '/chat.js', 'no-cors', ORIGIN), '/chat.js');
+  assert.equal(SW.shellPath(ORIGIN + '/remote-auth.js', 'no-cors', ORIGIN), '/remote-auth.js');
+  assert.ok(SW.SHELL_FILES.includes('/pc.html') && SW.SHELL_FILES.includes('/'));
+  assert.ok(!SW.SHELL_FILES.includes('/page-auth.js') && !SW.PC_FILES.includes('/page-auth.js'));
   assert.equal(SW.shellPath(ORIGIN + '/phone.js', 'no-cors', ORIGIN), '/phone.js');
   assert.equal(SW.shellPath(ORIGIN + '/icons/icon-256.png', 'no-cors', ORIGIN), '/icons/icon-256.png');
   for (const url of ['/api/remote/home', '/api/remote/chat?id=c1', '/api/remote/image?id=c&seq=1&n=0', '/sw.js', '/chat.html'])
@@ -40,7 +46,7 @@ test('worker: a push shows only its words, with one tag; a tap opens the chat wi
       silent: false,
       icon: '/icons/icon-256.png',
       badge: '/icons/badge-96.png',
-      data: { chat: 'c1', sheet: true },
+      data: { chat: 'c1', sheet: true, open: '' },
     },
   });
   // a Finished-only push: no sound or vibration, and no re-alert
@@ -51,6 +57,10 @@ test('worker: a push shows only its words, with one tag; a tap opens the chat wi
   assert.equal(SW.openUrl({ chat: 'c 1', sheet: true }), '/phone.html#chat=c%201&sheet=1');
   assert.equal(SW.openUrl({ chat: 'c1', sheet: false }), '/phone.html#chat=c1');
   assert.equal(SW.openUrl({}), '/phone.html');
+  // phase 1b: the server names the page (a computer's push opens the computer page); only this origin's two pages
+  assert.equal(SW.openUrl({ chat: 'c1', open: '/pc.html#chat=c1' }), '/pc.html#chat=c1');
+  assert.equal(SW.openUrl({ chat: 'c1', open: 'https://evil.example/pc.html' }), '/phone.html#chat=c1');
+  assert.equal(SW.openUrl({ chat: 'c1', open: '/api/remote/home' }), '/phone.html#chat=c1');
 });
 
 /* The worker as a browser runs it: a fake service-worker global with caches, clients and registration. */

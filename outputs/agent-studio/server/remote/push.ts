@@ -152,6 +152,13 @@ export interface SendResult {
   dropped: boolean;
 }
 
+/** The page a notification click opens: the computer page or the phone page, on the chat (a phone's sheet up for Needs you). */
+export function openTarget(kind: 'phone' | 'computer', chat: unknown, sheet: unknown): string {
+  const id = typeof chat === 'string' ? chat.slice(0, 100) : '';
+  if (kind === 'computer') return id ? '/pc.html#chat=' + encodeURIComponent(id) : '/pc.html';
+  return id ? '/phone.html#chat=' + encodeURIComponent(id) + (sheet ? '&sheet=1' : '') : '/phone.html';
+}
+
 /** Sends one message to every phone that may get pushes; drops subscriptions the push service calls gone. */
 export class PushSender {
   constructor(readonly devices: DeviceStore, readonly keys: VapidKeys, readonly fetcher: typeof fetch = fetch) {}
@@ -165,17 +172,21 @@ export class PushSender {
     const targets = this.devices.pushTargets();
     if (!targets.length) return [];
     const pair = await this.keys.pair();
-    const payload = JSON.stringify({
-      title: message.title,
-      body: message.body,
-      tag: message.tag,
-      chat: message.chat,
-      sheet: message.sheet,
-      ...(message.silent ? { silent: true } : {}),
-    });
     const urgent = message.sheet || /need/i.test(message.title);
     const out: SendResult[] = [];
-    for (const t of targets) out.push(await this.#one(t.id, t.push, payload, urgent, pair));
+    for (const t of targets) {
+      // where a click opens it (phase 1b, v2 fix 7): the service worker cannot ask a page for the device kind, the server knows it
+      const payload = JSON.stringify({
+        title: message.title,
+        body: message.body,
+        tag: message.tag,
+        chat: message.chat,
+        sheet: message.sheet,
+        open: openTarget(t.kind, message.chat, message.sheet),
+        ...(message.silent ? { silent: true } : {}),
+      });
+      out.push(await this.#one(t.id, t.push, payload, urgent, pair));
+    }
     return out;
   }
 

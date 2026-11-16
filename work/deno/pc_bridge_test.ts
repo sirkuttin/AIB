@@ -153,7 +153,6 @@ Deno.test('contract 1: every ROUTE_LIST entry has exactly one remote entry, and 
     'POST /api/live/swarm/tool',
     'POST /api/live/docs/tool',
     'POST /api/live/artifacts/publish',
-    'GET /api/live/artifacts',
     'GET /api/live/bootstrap',
     'GET /api/live/idle',
     'GET /',
@@ -171,6 +170,9 @@ Deno.test('contract 1: every ROUTE_LIST entry has exactly one remote entry, and 
     assertEquals(PC_ROUTES[`POST /api/live/${key}`].kind, 'rule', key);
   }
   assertEquals(entryFor('HEAD', '/api/live/list')?.kind, 'scope');
+  // phase 1b: the Artifacts tab's list is the page's own (no agent key ever passes the bridge), under See chats
+  const list = PC_ROUTES['GET /api/live/artifacts'];
+  assert(list.kind === 'scope' && list.need.join() === 'phone.read', 'GET /api/live/artifacts: See chats');
   assertEquals(entryFor('GET', '/api/remote/home'), null);
 });
 
@@ -268,8 +270,9 @@ Deno.test({
         if (entry.kind !== 'never') continue;
         const [method, path] = key.split(' ');
         const r = await call(s, computer.token, method, path);
-        // GET / is not an API path: the phone port never bridges it (404); every API one is refused by the table
-        if (path === '/') assertEquals(r.status, 404, key);
+        // GET / is not an API path: the phone port never bridges it; it answers its own loader (phase 1b), never the PC page shell.
+        // Every API one is refused by the table
+        if (path === '/') assert(r.text.includes('/remote-loader.js') && !r.text.includes('/page-auth.js'), key);
         else refusedBy(r, 'pc_only', key);
         assert(!r.text.includes(s.token), `${key} leaks the page token`);
       }
@@ -537,7 +540,13 @@ Deno.test({
       for (const path of ['/api/live/worktree/tool', '/api/live/swarm/tool', '/api/live/docs/tool', '/api/live/artifacts/publish']) {
         refusedBy(await call(s, all.token, 'POST', path, { conversationId: 't1' }), 'pc_only', path);
       }
-      refusedBy(await call(s, all.token, 'GET', '/api/live/artifacts?conversationId=t1'), 'pc_only', 'GET artifacts (agent key)');
+      // phase 1b: the Artifacts tab's list is the page's (See chats); with an agent key it is refused like every agent credential
+      passed(await call(s, all.token, 'GET', '/api/live/artifacts?conversationId=t1'), 'GET artifacts (the page list)');
+      refusedBy(
+        await call(s, all.token, 'GET', '/api/live/artifacts?conversationId=t1', undefined, { 'X-Studio-Artifact-Key': 'k' }),
+        'page_credential',
+        'GET artifacts (agent key)',
+      );
       const keyed = await call(s, all.token, 'POST', '/api/live/artifacts/archive', { ids: ['a'] }, { 'X-Studio-Artifact-Key': 'k' });
       refusedBy(keyed, 'page_credential', 'archive with an agent key');
       passed(await call(s, all.token, 'POST', '/api/live/artifacts/archive', { ids: ['a'] }), 'the page-side archive');

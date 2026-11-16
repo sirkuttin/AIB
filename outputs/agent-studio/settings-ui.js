@@ -23,6 +23,7 @@
     { id: 'keyboard', label: 'Keyboard' },
     { id: 'appearance', label: 'Appearance' },
     { id: 'server', label: 'AIB server' },
+    { id: 'computer', label: 'This computer', remoteOnly: true }, // only on another computer (remote-auth.js): this device's own
   ];
   // Every searchable setting. label + keywords are what the search box matches; `title` is the heading drawn on its card.
   const INDEX = [
@@ -305,6 +306,13 @@
       label: 'Restart the web server',
       keywords: ['deploy', 'restart', 'update', 'reload', 'stop host'],
     },
+    // another computer only (remote-auth.js)
+    {
+      id: 'this-computer',
+      section: 'computer',
+      label: 'Notifications on this computer',
+      keywords: ['notifications', 'push', 'install', 'app', 'remote', 'lost', 'extensions', 'this computer', 'device'],
+    },
   ];
   const sectionLabel = (id) => (SECTIONS.find((s) => s.id === id) || { label: id }).label;
   // Does AIB itself run on Windows? Its state folder says so (C:\... or a \\server share); before bootstrap has answered, the
@@ -316,17 +324,26 @@
     const p = (n && ((n.userAgentData && n.userAgentData.platform) || n.platform || n.userAgent)) || '';
     return /win/i.test(String(p));
   }
+  // Another computer (remote control from other PCs, phase 1b; remote-auth.js): Settings has two sections of its own, Appearance
+  // (this computer's theme and text size) and This computer; every other section belongs to the PC and says so.
+  const remote = () => !!(root.AIBRemote && root.AIBRemote.kind === 'pc');
+  const pcName = () => (root.AIBRemote && root.AIBRemote.pcName()) || 'the PC';
+  const REMOTE_SECTIONS = new Set(['appearance', 'computer']);
+  const REMOTE_ENTRIES = new Set(['theme', 'text-size', 'this-computer']);
   // The section drawn: the chosen one, or AIB Linking while the chosen one is not shown here (AIB Linking (WSL) on a Mac or Linux AIB).
-  const shownSection = () => (sectionShown(S.section) ? S.section : 'agents');
+  const shownSection = () => (sectionShown(S.section) ? S.section : remote() ? 'appearance' : 'agents');
   const sectionShown = (id) => {
     const s = SECTIONS.find((x) => x.id === id);
-    return !!s && (!s.windowsOnly || windowsHost());
+    if (!s || (s.remoteOnly && !remote())) return false;
+    if (remote() && s.windowsOnly) return false; // the PC's WSL linking is the PC's
+    return !s.windowsOnly || windowsHost();
   };
   // Entries that draw their own cards (several, with group headings) instead of going into one card with a title.
-  const OWN_CARDS = new Set(['wsl-linking']);
+  const OWN_CARDS = new Set(['wsl-linking', 'this-computer']);
   // Page headings that differ from the short name in the section list.
   const PAGE_HEADINGS = {};
-  const pageHeading = (id) => PAGE_HEADINGS[id] || sectionLabel(id);
+  const pageHeadingRemote = (id) => (remote() && id === 'appearance' ? 'Appearance on this computer' : '');
+  const pageHeading = (id) => pageHeadingRemote(id) || PAGE_HEADINGS[id] || sectionLabel(id);
 
   // ---- search ----------------------------------------------------------------------------------------------------
   // entries matching `query` (every word must match the label, a keyword or the section name), best first. No query: all, in order.
@@ -368,7 +385,7 @@
     boot: null,
     rev: '',
     open: false,
-    section: 'agents',
+    section: remote() ? 'appearance' : 'agents', // another computer opens on its own Appearance
     query: '',
     form: null,
     busy: false,
@@ -838,7 +855,7 @@
   }
   // Refresh the cached status of the installed agents: once when Settings opens, and on "Check again" (force). Never on a settings poll.
   function checkSignins(force) {
-    if (!agents().some((a) => a.found && a.signin)) return Promise.resolve();
+    if (remote() || !agents().some((a) => a.found && a.signin)) return Promise.resolve(); // sign-ins are the PC's
     return Promise.resolve()
       .then(() => S.host.post('agents/signin/check', { force: !!force }))
       .then(
@@ -2407,6 +2424,7 @@
     updates: renderUpdates,
     'repo-cleanup': renderRepoCleanup,
     'server-restart': renderServerRestart,
+    'this-computer': renderThisComputer,
   };
   const TITLES = {
     'agents-list': 'Agents',
@@ -2430,7 +2448,61 @@
     updates: 'Updates',
     'repo-cleanup': "Remove AIB's data from my repos",
     'server-restart': 'Restart the web server',
+    'this-computer': 'Notifications',
   };
+
+  // ---- This computer (another computer only: remote-auth.js) ---------------------------------------------------------------
+  // Notifications on this computer (Web Push through this browser), Install AIB as an app, and the two help lines of the design
+  // (a lost computer; browser extensions). Nothing here changes anything on the PC except this device's own subscription.
+  function renderThisComputer(cards) {
+    const R = root.AIBRemote;
+    if (!R) return;
+    const box = card('Notifications');
+    const push = R.push.state();
+    const status = el('p', null, 'st-note');
+    status.setAttribute('role', 'status');
+    const line = (t) => {
+      status.textContent = t;
+    };
+    const turn = (on) => {
+      line(on ? 'Turning notifications on…' : 'Turning notifications off…');
+      (on ? R.push.on() : R.push.off()).then(
+        () => renderAll(false),
+        (e) => {
+          line(e && e.message ? e.message : 'That did not work. Try again.');
+        },
+      );
+    };
+    if (!push.supported) line('This browser cannot show notifications from AIB.');
+    else if (!push.allowed) line(pcName() + ' has notifications turned off for this computer. Turn them on there: Settings → Remote control.');
+    else if (push.blocked) line('Notifications are blocked for this site in the browser. Allow them in the address bar, then come back.');
+    else line(push.on ? 'On. A chat that needs you or finishes shows a notification here when you are not looking at AIB.' : 'Off.');
+    box.append(status);
+    if (push.supported && push.allowed && !push.blocked) {
+      box.append(button(push.on ? 'Turn off' : 'Turn on notifications', () => turn(!push.on), push.on ? '' : 'primary'));
+    }
+    box.append(
+      note(
+        'With Edge or Chrome on Windows, notifications arrive while the browser runs (an open window, or running in the background).',
+      ),
+    );
+    const install = card('Install AIB');
+    if (R.install.can()) {
+      install.append(note('Open AIB in its own window, with its own icon.'));
+      install.append(button('Install AIB', () => R.install.run().then(() => renderAll(false)), 'primary'));
+    } else install.append(note(R.install.installed() ? 'Installed.' : 'Use your browser’s Install button in the address bar, if it shows one.'));
+    const help = card('If this computer is lost');
+    help.append(note('Lost a computer? Remove it, then sign the agents out and in again.'));
+    help.append(
+      note(
+        'Removing it in AIB on ' + pcName() + ' (Settings → Remote control) stops AIB access at once, but agent sign-ins it could reach stay valid until you sign out. Away from ' +
+          pcName() +
+          '? Remove the device in Tailscale’s admin page.',
+      ),
+    );
+    help.append(note('Browser extensions can see AIB pages. Use a browser profile without extensions for AIB.'));
+    cards.append(box, install, help);
+  }
 
   // ---- the page --------------------------------------------------------------------------------------------------
   function build() {
@@ -2506,9 +2578,11 @@
   function renderContent() {
     if (!S.content) return;
     const searching = !!S.query.trim();
-    const shown = INDEX.filter((e) => sectionShown(e.section));
+    const shown = INDEX.filter((e) => sectionShown(e.section) && (!remote() || REMOTE_ENTRIES.has(e.id)));
     const current = shownSection();
     const entries = searching ? filterIndex(shown, S.query) : shown.filter((e) => e.section === current);
+    // another computer: the PC's own sections say where they are changed, in the same place their settings would be
+    const elsewhere = remote() && !searching && !REMOTE_SECTIONS.has(current);
     S.title.textContent = searching ? 'Search results' : pageHeading(current);
     const frag = doc().createDocumentFragment();
     if (S.loadError && !S.data) {
@@ -2525,7 +2599,8 @@
       frag.append(n);
     }
     if (S.data && S.data.warning) frag.append(note(S.data.warning, 'bad'));
-    if (!entries.length) frag.append(note('No settings match "' + S.query.trim() + '".'));
+    if (elsewhere) frag.append(note('Change this on ' + pcName() + '.', 'st-elsewhere'));
+    else if (!entries.length) frag.append(note('No settings match "' + S.query.trim() + '".'));
     S.drawn = entries.map((e) => e.id);
     let lastSection = '';
     for (const e of entries) {

@@ -41,7 +41,7 @@ import type { Manifest } from '../artifacts/artifacts.ts';
 import { bindWithRetry } from './port.ts';
 import { agentsNow, folderOfProject, newChatOptions, NewChats, pickLists } from './newchat.ts';
 import { reasonWords } from '../agents/eligibility.ts';
-import { conversationAction } from '../web/shared.ts';
+import { conversationAction, settingsView } from '../web/shared.ts';
 import { studioOf } from '../web/studio_routes.ts';
 import { bringBack, restoreFolders } from '../web/project_routes.ts';
 import { isDeleted, isDocHistory } from '../artifacts/artifacts.ts';
@@ -53,6 +53,23 @@ import { PcBridge } from './pc_bridge.ts';
 import { entryFor } from './pc_routes.ts';
 import { TERMINAL_SOCKET } from '../web/terminal_routes.ts';
 import { DOCS_SOCKET } from '../web/docs_routes.ts';
+import {
+  DeviceViewPrefs,
+  LOADER,
+  PC_DOC,
+  PC_MANIFEST,
+  PC_PAGE,
+  PC_STATIC,
+  pcBootstrap,
+  pcManifestOf,
+  pcShell,
+  remoteArtifactLinks,
+  remoteSettingsView,
+  remoteWslStatus,
+  securityHeadersPc,
+} from './pc_page.ts';
+import { wslStatus } from '../web/wsl_routes.ts';
+import { ViewPrefsBusy } from '../state/view_prefs.ts';
 
 /** Phone-side failures go to studio.log (console output only reaches stderr, which the desktop app does not keep). */
 const plog = getLogger('phone_server');
@@ -111,7 +128,8 @@ export type RemoteAuth =
   | 'continue'
   | 'read'
   | 'left'
-  | 'phone';
+  | 'phone'
+  | 'pc';
 /** A chat's read position is written at most this often for one phone (the phone sends it at most every 5 s anyway). */
 export const READ_GAP_MS = 2000;
 /** At most one "read" line per phone and chat in the activity log in this time. */
@@ -121,6 +139,17 @@ const READ_AUDIT_MS = 10 * 60 * 1000;
 export const REMOTE_ROUTES: readonly [string, string, RemoteAuth][] = [
   ...Object.keys(REMOTE_STATIC).map((p) => ['GET', p, 'static'] as [string, string, RemoteAuth]),
   ['GET', MANIFEST_PATH, 'static'],
+  // Phase 1b (remote/pc_page.ts): the loader at /, the computer page, its doc page, its manifest and its explicit file list
+  ['GET', LOADER, 'static'],
+  ['GET', PC_PAGE, 'static'],
+  ['GET', PC_DOC, 'static'],
+  ['GET', PC_MANIFEST, 'static'],
+  ...Object.keys(PC_STATIC).map((p) => ['GET', p, 'static'] as [string, string, RemoteAuth]),
+  ['GET', '/api/remote/pc/bootstrap', 'pc'],
+  ['GET', '/api/remote/pc/view-prefs', 'pc'],
+  ['POST', '/api/remote/pc/view-prefs', 'pc'],
+  ['GET', '/api/remote/pc/settings', 'pc'],
+  ['GET', '/api/remote/pc/wsl-status', 'pc'],
   ['GET', '/api/remote/bootstrap', 'bootstrap'],
   ['POST', '/api/remote/pair/claim', 'pair'],
   ['POST', '/api/remote/pair/status', 'pair'],
@@ -213,6 +242,12 @@ export const ROUTE_SCOPE: Readonly<Record<string, PhoneScope>> = {
   'POST /api/remote/authenticate': 'phone.read',
   'POST /api/remote/push/subscribe': 'phone.push',
   'POST /api/remote/push/unsubscribe': 'phone.read',
+  // phase 1b: the computer page's own routes (a computer only: remote/pc_page.ts)
+  'GET /api/remote/pc/bootstrap': 'phone.read',
+  'GET /api/remote/pc/view-prefs': 'phone.read',
+  'POST /api/remote/pc/view-prefs': 'phone.read',
+  'GET /api/remote/pc/settings': 'phone.read',
+  'GET /api/remote/pc/wsl-status': 'phone.read',
 };
 /** The words a refused scope is reported with (what the phone shows; the switch is in Settings > Remote control on the PC). */
 const SCOPE_WORDS: Record<string, string> = {
@@ -352,10 +387,19 @@ export class RemoteServer {
   port = 0;
   /** A paired computer's way into the normal routes (phase 1a; remote/pc_bridge.ts). */
   readonly bridge: PcBridge;
+  /** Each computer's own layout (remote/pc_page.ts; phase 1b, MF4): never the PC's studio-view.json. */
+  readonly pcPrefs: DeviceViewPrefs;
 
   constructor(readonly host: RemoteHost) {
     this.gate = new RemoteGate(() => host.name());
-    this.bridge = new PcBridge({ ctx: host.ctx, devices: host.devices, json: (s, b, e) => this.json(s, b, e) });
+    this.bridge = new PcBridge({
+      ctx: host.ctx,
+      devices: host.devices,
+      json: (s, b, e) => this.json(s, b, e),
+      artifactLinks: (text, deviceId) =>
+        remoteArtifactLinks(text, host.ctx.artifacts?.store.origin ?? '', host.artifactOrigin(), (id) => host.tickets.mint(deviceId, id)),
+    });
+    this.pcPrefs = new DeviceViewPrefs(host.ctx.stateDir || null, () => host.ctx.viewPrefs);
   }
 
   /** A request for the bridge: a page route (ROUTE_LIST) the phone API does not have, from a client naming a device. */
@@ -514,6 +558,8 @@ export class RemoteServer {
           return await this.#left(request);
         case 'phone':
           return await this.#phone(request, path);
+        case 'pc':
+          return await this.#pcRoute(request, url, path);
       }
     } catch (error) {
       if (error instanceof HostUnavailable) {
@@ -550,6 +596,28 @@ export class RemoteServer {
         status: 200,
         headers: { ...securityHeadersRemote(), 'Content-Type': 'application/manifest+json; charset=utf-8' },
       });
+    }
+    if (path === PC_MANIFEST) {
+      return new Response(JSON.stringify(pcManifestOf(this.host.pcName())), {
+        status: 200,
+        headers: { ...securityHeadersRemote(), 'Content-Type': 'application/manifest+json; charset=utf-8' },
+      });
+    }
+    if (path === PC_PAGE || path === PC_DOC) {
+      // the computer page: chat.html (or doc.html) with no view preferences inside (remote/pc_page.ts pcShell); static files hold
+      // no secrets, every API call still needs the device token
+      const file = path === PC_PAGE ? 'chat.html' : 'doc.html';
+      const page = pcShell(await Deno.readTextFile(APP_ROOT + sep + file), path === PC_PAGE);
+      return new Response(page, {
+        status: 200,
+        headers: { 'Content-Type': 'text/html; charset=utf-8', ...securityHeadersPc(this.host.artifactOrigin()) },
+      });
+    }
+    if (path === LOADER || Object.hasOwn(PC_STATIC, path)) {
+      const file = path === LOADER ? 'remote-loader.html' : PC_STATIC[path];
+      const body = await Deno.readFile(APP_ROOT + sep + file);
+      const headers = { 'Content-Type': contentType(file), ...securityHeadersPc(this.host.artifactOrigin()) };
+      return new Response(body, { status: 200, headers });
     }
     const name = REMOTE_STATIC[path];
     let body: Uint8Array<ArrayBuffer> = await Deno.readFile(APP_ROOT + sep + name);
@@ -594,13 +662,54 @@ export class RemoteServer {
     }
     return this.json(200, {
       ...base,
+      // a computer gets the computer page (the loader and phone.js go there: /pc.html); everything else here is the same
+      layout: device.kind === 'computer' ? 'pc' : 'phone',
       paired: true,
-      device: { id: device.id, name: device.name, scopes: [...device.scopes] },
+      device: { id: device.id, name: device.name, kind: device.kind === 'computer' ? 'computer' : 'phone', scopes: [...device.scopes] },
       push: { key: pushKey, on: !!device.push },
       // where this PC's artifacts open on the phone ('' while the artifact port is not up: "Open on your PC")
       artifacts: this.host.artifactOrigin(),
       ...this.#pcTheme(),
     });
+  }
+
+  /**
+   * Phase 1b: the computer page's own routes (remote/pc_page.ts): the allowlisted bootstrap, this device's layout, the Settings view
+   * without commands, keys or paths, the WSL status without URLs. A computer only (a phone gets 403 not_computer).
+   */
+  async #pcRoute(request: Request, url: URL, path: string): Promise<Response> {
+    const post = request.method.toUpperCase() === 'POST';
+    const body = post ? await this.#body(request, 1_000_000) : null;
+    const device = this.#device(request, ROUTE_SCOPE[`${post ? 'POST' : 'GET'} ${path}`]);
+    if (device instanceof Response) return device;
+    if (device.kind !== 'computer') {
+      return this.json(403, { error: 'A phone uses the phone page. This needs a device paired as a computer.', code: 'not_computer' });
+    }
+    const ctx = this.host.ctx;
+    if (path === '/api/remote/pc/bootstrap') {
+      let instanceId: unknown = '';
+      try {
+        instanceId = (await ctx.host.liveInfo()).instanceId;
+      } catch { /* the agent host is starting: the page asks again */ }
+      return this.json(200, pcBootstrap({ pcName: this.host.pcName(), device, instanceId, artifactOrigin: this.host.artifactOrigin() }));
+    }
+    if (path === '/api/remote/pc/view-prefs') {
+      if (!post) return this.json(200, this.pcPrefs.view(device.id));
+      if (!body) return this.json(400, { error: 'Invalid request' });
+      try {
+        const result = await this.pcPrefs.update(device.id, body);
+        return this.json(200, { revision: this.pcPrefs.view(device.id).revision, refused: result.refused, ok: true });
+      } catch (error) {
+        if (error instanceof ViewPrefsBusy) return this.json(503, { error: error.message, code: 'busy' });
+        if (error instanceof Error && error.name === 'ValueError') return this.json(400, { error: error.message });
+        throw error;
+      }
+    }
+    if (path === '/api/remote/pc/settings') {
+      return this.json(200, remoteSettingsView(await settingsView(studioOf(ctx), url.searchParams.get('recheck') === '1')));
+    }
+    if (path === '/api/remote/pc/wsl-status') return this.json(200, remoteWslStatus(await wslStatus(ctx)));
+    return this.json(404, { error: 'Not found' });
   }
 
   /** This phone turns notifications on (its subscription) or off. */
@@ -789,7 +898,10 @@ export class RemoteServer {
     const chatOf = (value: unknown) => (typeof value === 'string' ? value.slice(0, 100) : '');
     // the phone's key and switch first: a message with attachments is only read for a phone that may send it
     const device = this.#device(request, ROUTE_SCOPE[`POST ${path}`]);
-    const { body, tooBig } = await this.#bodyOf(request, device instanceof Response || !ATTACH_ROUTES.has(path) ? MAX_BODY : MAX_ATTACH_BODY);
+    const { body, tooBig } = await this.#bodyOf(
+      request,
+      device instanceof Response || !ATTACH_ROUTES.has(path) ? MAX_BODY : MAX_ATTACH_BODY,
+    );
     if (device instanceof Response) {
       const known = device.status === 403 && this.host.devices.byToken(request.headers.get(DEVICE_HEADER));
       if (known && device.headers.get('X-AIB-Refused') === 'scope') {
@@ -921,7 +1033,10 @@ export class RemoteServer {
     const audit = PHONE_AUDIT[path];
     const chatOf = (v: unknown) => (typeof v === 'string' ? v.slice(0, 100) : '');
     const device = this.#device(request, ROUTE_SCOPE[`POST ${path}`]);
-    const { body, tooBig } = await this.#bodyOf(request, device instanceof Response || !ATTACH_ROUTES.has(path) ? MAX_BODY : MAX_ATTACH_BODY);
+    const { body, tooBig } = await this.#bodyOf(
+      request,
+      device instanceof Response || !ATTACH_ROUTES.has(path) ? MAX_BODY : MAX_ATTACH_BODY,
+    );
     if (device instanceof Response) {
       const known = device.status === 403 && this.host.devices.byToken(request.headers.get(DEVICE_HEADER));
       if (known && device.headers.get('X-AIB-Refused') === 'scope') {
@@ -1059,7 +1174,8 @@ export class RemoteServer {
         const [status, answer] = await mark('handled');
         log(liveId, status === 200 ? 'marked handled' : `failed (${status})`);
         if (status !== 200) {
-          plog.error('%s', 
+          plog.error(
+            '%s',
             `Mark handled from a phone was refused (${status}): ${String((answer as Record<string, unknown>).error ?? '').slice(0, 400)}`,
           );
         }
@@ -1140,7 +1256,10 @@ export class RemoteServer {
         const folders = op === 'restore' ? restoreFolders(ctx.conversations, { action: 'restore', provider, sessionId }) : [];
         const [status, answer] = await conversationAction(studioOf(ctx), { action: op, provider, sessionId });
         if (status !== 200) {
-          plog.error('%s', `A phone's Undo was refused (${status}): ${String((answer as Record<string, unknown>).error ?? '').slice(0, 400)}`);
+          plog.error(
+            '%s',
+            `A phone's Undo was refused (${status}): ${String((answer as Record<string, unknown>).error ?? '').slice(0, 400)}`,
+          );
           return this.json(status, { error: 'It could not be undone from here. Do it on your PC.', code: 'failed' });
         }
         if (folders.length) await bringBack(ctx.removedProjects, folders, ctx.addedProjects);

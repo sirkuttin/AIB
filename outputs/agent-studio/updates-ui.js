@@ -369,6 +369,8 @@
 
   // host: {get(path), post(name, body)}.
   function init(host) {
+    // another computer (remote-auth.js): AIB's updates are the PC's (its Update button, What's new); nothing to poll here
+    if (root.AIBRemote && root.AIBRemote.kind === 'pc') return;
     S.host = host;
     const d = doc();
     paintButton();

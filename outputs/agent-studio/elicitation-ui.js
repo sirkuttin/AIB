@@ -398,6 +398,18 @@
       if (slot.run) slot.run.close();
       slot.card.remove();
     }
+    const R = root.AIBRemote && root.AIBRemote.kind === 'pc' ? root.AIBRemote : null;
+    if (R) {
+      // another computer (remote-auth.js): signing an agent in is done on the PC itself, never from here
+      const card = el('section', 'elicitation-card auth-card');
+      card.appendChild(el('h3', 'elicitation-heading', (context.providerName || 'The agent') + ' needs you to sign in'));
+      if (auth.message) card.appendChild(el('p', 'elicitation-message', auth.message));
+      card.appendChild(el('p', 'elicitation-description', 'Sign it in in AIB on ' + R.pcName() + '. This chat goes on from there.'));
+      slot = { card, signature: sig, context };
+      authCards.set(container, slot);
+      container.appendChild(card);
+      return;
+    }
     if (auth.during === 'prompt' || typeof context.runTerminal === 'function') {
       slot = signinCard(container, auth, context, sig);
       authCards.set(container, slot);

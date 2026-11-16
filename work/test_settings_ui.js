@@ -45,7 +45,8 @@ test('every entry belongs to a real section and has a label', () => {
   const ids = new Set(S.SECTIONS.map((s) => s.id));
   assert.deepEqual(
     S.SECTIONS.map((s) => s.label),
-    ['AIB Linking', 'AIB Linking (WSL)', 'Defaults', 'Notifications', 'Remote control', 'Allow rules', 'Editors', 'Keyboard', 'Appearance', 'AIB server'],
+    // This computer: on another computer only (remote control from other PCs, phase 1b)
+    ['AIB Linking', 'AIB Linking (WSL)', 'Defaults', 'Notifications', 'Remote control', 'Allow rules', 'Editors', 'Keyboard', 'Appearance', 'AIB server', 'This computer'],
   );
   for (const e of S.INDEX) {
     assert.ok(ids.has(e.section), e.id);
