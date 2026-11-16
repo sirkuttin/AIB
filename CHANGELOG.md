@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Phone chat history: long replies show whole, and older messages load on the phone. A chat used to open with its last 300
+  events, so a long reply (sent in hundreds of small pieces) lost its beginning, and a reply still being written could lose its
+  start as new text came in. Above that the phone only said "Earlier messages are on your PC." Now a chat opens with its newest
+  messages by size, never starting inside a reply or a run of steps. Tap **Load earlier messages** at the top, or just scroll up:
+  older messages come in above without moving what you are reading. Chats that are not running page back the same way.
+- Phone steps: Show output. Open a run of steps and tap **Show output** under a finished step to read its whole output, also
+  when the chat clipped it.
+- Phone saved chats: long messages keep their text. A chat that is not running used to cut every message at 8,000 characters
+  without saying so. Now a message keeps up to 32,000 characters; a longer one says "Message shortened here. The whole message is
+  on your PC."
 - WSL path links: full Linux paths open as project files. Clicking /home/u/app/src/main.ts in a WSL chat's reply, or the open-file
   icon on an Edit/Write row, used to open it as "Outside this project", read-only. Now it opens in the Files tab like any project
   file, with its Changes badge and Show in Files, also in a chat's own copy.

@@ -476,6 +476,15 @@ button {
   color: var(--muted);
   font-size: 13px;
 }
+/* Load earlier messages (centred in its line) */
+.ph-earlier .ph-btn {
+  display: inline-block;
+}
+/* Show output: a step's output under it (the approval card's command box) */
+.ph-fold-list .ph-out {
+  margin: 6px 0;
+  color: var(--text);
+}
 .ph-msg {
   margin: 10px 0;
 }
