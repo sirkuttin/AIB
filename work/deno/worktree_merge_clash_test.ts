@@ -618,7 +618,7 @@ Deno.test("parity: merges, conflicts, tree landing and clashes give the same res
         "same main",
       );
       const strip = (r: Record<string, unknown>) => {
-        const { path: _p, project: _q, pid: _i, created: _c, editsFrom: _e, ...rest } = r; // editsFrom: Deno only
+        const { path: _p, project: _q, pid: _i, created: _c, editsFrom: _e, mergedAt: _m, ...rest } = r; // editsFrom, mergedAt (copy retirement, folder chats P4b): Deno only
         return rest;
       };
       const pyRecord = await py.call("worktrees_shim", "registry", [

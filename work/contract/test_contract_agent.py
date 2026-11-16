@@ -32,7 +32,18 @@ def masked(value, server):
             # reconnectFailed (chats never stuck Not running: the chats whose reconnect failed, and why) is Deno-only too.
             value = {k: v for k, v in value.items() if k not in ('chatNamesRevision', 'chatNames', 'allowRulesTampered', 'reconnectFailed')}
         value = drop_allow(value)
+        value = drop_swarm(value)
     return strip(value)
+
+
+def drop_swarm(value):
+    """Deno only (folder chats P1): a chat in the project folder can lead helpers, so its connection carries swarm: {role}; the
+    reference has no swarm."""
+    if isinstance(value, dict):
+        return {k: drop_swarm(v) for k, v in value.items() if k != 'swarm'}
+    if isinstance(value, list):
+        return [drop_swarm(v) for v in value]
+    return value
 
 
 def drop_allow(value):
@@ -136,6 +147,7 @@ class AgentContract(unittest.TestCase):
         for key in STEER_KEYS:
             self.assertIn(key, state, f'{what}: {key}')
             state.pop(key)
+        state.pop('swarm', None)  # Deno only: a folder chat can lead helpers (folder chats P1); the reference has no swarm
 
     def compare_states(self, states, what):
         """Same state, same events. The agent's notifications and Studio's own events race (even Python against Python), so the
@@ -146,6 +158,8 @@ class AgentContract(unittest.TestCase):
             # fixture never sends a rate limit, so it must be there and empty; the reference has no such key.
             self.assertIn('limits', a, f'{what}: limits')
             self.assertIsNone(a.pop('limits'), f'{what}: the fixture sends no usage limits')
+        if self.servers[0].effective_kind() in ('deno', 'deno-split'):
+            a.pop('swarm', None)  # Deno only: folder chats lead helpers (folder chats P1)
         self.assertEqual(sorted(self.kinds(a)), sorted(self.kinds(b)), f'{what}: event kinds')
         for state in (a, b):
             state['events'] = sorted((json.dumps({k: v for k, v in e.items() if k != 'seq'}, sort_keys=True) for e in state['events']))
