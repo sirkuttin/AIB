@@ -10,10 +10,12 @@
 
 
 - Artifacts: a failed publish or update card now shows the tool's own reason on a line under "The publish did not finish" (for
-  example "In a WSL project, publish by `content` ..."), in every chat, as plain text.
-- WSL chats: the agent is told up front that publish and update take only `content` there (no file `path`), and that a PNG or other
-  binary file has to be embedded in an HTML page as an inline base64 image or opened by the user; a `path` refusal says the same.
-  Windows chats' tools are unchanged.
+  example "File not found in Ubuntu: /home/u/app/chart.png ..."), in every chat, as plain text.
+- WSL chats: the agent can publish a file from the distro by its path, a PNG, PDF or HTML page included (up to 25 MB), as in a
+  Windows project. Paths are relative to the chat's folder, or absolute inside the chat's or the project's folder; AIB reads the
+  file through its helper in the distro and keeps a copy as it was then (after changing the file, the agent publishes it again
+  with update). A refusal names the Linux path and the reason (not found, a folder, too large, outside the project, unreadable,
+  changed while reading). Windows chats' tools are unchanged.
 - AIB Linking (WSL): when asdf has no Node.js version set, the command to copy now matches the distro's asdf: `asdf set -u nodejs
   latest` for asdf 0.16 or newer, `asdf global nodejs latest` for older asdf (both, labelled, when AIB could not read asdf's version).
 - AIB Linking (WSL): the git and curl install lines follow the distro's package manager (apt, dnf, yum, zypper, pacman or apk);

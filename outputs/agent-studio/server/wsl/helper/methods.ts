@@ -40,6 +40,9 @@ export const SESSIONS_DEFAULT = 500, SESSIONS_MAX = 5000;
 /** The /api/transcript arguments transcripts.read passes on (the page's paging; nothing else reaches handleGet). */
 const TRANSCRIPT_ARGS = ['limit', 'after', 'before', 'thinking', 'q', 'kind'];
 export const DEFAULT_AGENTS = ['claude', 'codex', 'omp'];
+/** files.readBytes: the largest piece per call (base64 keeps each answer line near 1.4 MB) and the default whole-file cap. */
+export const READ_BYTES_CHUNK = 1024 * 1024;
+export const READ_BYTES_MAX = 25 * 1024 * 1024;
 
 export interface HelperContext {
   /** The login environment (env.get), once captured. */
@@ -378,6 +381,45 @@ function phaseOne(ctx: HelperContext): Handlers {
         path,
         abs,
       };
+    },
+
+    // A whole file's bytes for an artifact published by path (wsl/artifact_read.ts), in pieces of at most READ_BYTES_CHUNK: the
+    // same realpath check as files.read (no link or .. out of root), then size, mtime and the piece at `offset`. A file over
+    // `maxBytes` is refused before anything is read.
+    'files.readBytes': (p) => {
+      const rel = str(p, 'rel');
+      const [abs, path] = files.resolveInside(absPath(p, 'root'), rel);
+      if (!path) throw new files.FilesError('Choose a file', 'not_file');
+      const st = stat(abs);
+      if (!st) throw new files.FilesError('Not found', 'not_found', 404);
+      if (!st.isFile) throw new files.FilesError('Not a file', 'not_file');
+      const maxBytes = int(p, 'maxBytes', READ_BYTES_MAX);
+      if (st.size > maxBytes) throw new RpcError(`Too large: ${st.size} bytes`, undefined, { code: 'too_large', size: st.size, abs });
+      const offset = int(p, 'offset', 0);
+      const length = Math.min(int(p, 'length', READ_BYTES_CHUNK), READ_BYTES_CHUNK);
+      let file: Deno.FsFile;
+      try {
+        file = Deno.openSync(abs, { read: true });
+      } catch (error) {
+        const denied = error instanceof Deno.errors.PermissionDenied;
+        throw new RpcError(denied ? 'Permission denied' : error instanceof Error ? error.message : String(error), undefined, {
+          code: denied ? 'unreadable' : 'read_failed',
+          abs,
+        });
+      }
+      const buf = new Uint8Array(Math.max(0, Math.min(length, st.size - offset)));
+      let got = 0;
+      try {
+        if (offset) file.seekSync(offset, Deno.SeekMode.Start);
+        while (got < buf.length) {
+          const n = file.readSync(buf.subarray(got));
+          if (n === null) break;
+          got += n;
+        }
+      } finally {
+        file.close();
+      }
+      return { bytesB64: encodeBase64(buf.subarray(0, got)), size: st.size, mtimeMs: st.mtime?.getTime() ?? 0, offset, path, abs };
     },
 
     'files.outside': async (p) => {
