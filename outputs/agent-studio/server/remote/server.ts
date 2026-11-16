@@ -50,6 +50,7 @@ import { cleanPushSub } from './devices.ts';
 import type { VapidKeys } from './push.ts';
 import { getLogger } from '../core/log.ts';
 import { PC_OWN_ROUTES, PcBridge } from './pc_bridge.ts';
+import { answeredElsewhere, answerOf, answersOf } from '../attention/answers.ts';
 import type { DeviceSockets } from './pc_sockets.ts';
 import { entryFor } from './pc_routes.ts';
 import { TERMINAL_SOCKET } from '../web/terminal_routes.ts';
@@ -151,6 +152,8 @@ export const REMOTE_ROUTES: readonly [string, string, RemoteAuth][] = [
   ['POST', '/api/remote/pc/view-prefs', 'pc'],
   ['GET', '/api/remote/pc/settings', 'pc'],
   ['GET', '/api/remote/pc/wsl-status', 'pc'],
+  // Phase 2: where this computer's AIB tabs are (attention/presence.ts reportDevice: the server makes the slot ids)
+  ['POST', '/api/remote/pc/presence', 'pc'],
   ['GET', '/api/remote/bootstrap', 'bootstrap'],
   ['POST', '/api/remote/pair/claim', 'pair'],
   ['POST', '/api/remote/pair/status', 'pair'],
@@ -249,6 +252,7 @@ export const ROUTE_SCOPE: Readonly<Record<string, PhoneScope>> = {
   'POST /api/remote/pc/view-prefs': 'phone.read',
   'GET /api/remote/pc/settings': 'phone.read',
   'GET /api/remote/pc/wsl-status': 'phone.read',
+  'POST /api/remote/pc/presence': 'phone.read',
 };
 /** The words a refused scope is reported with (what the phone shows; the switch is in Settings > Remote control on the PC). */
 const SCOPE_WORDS: Record<string, string> = {
@@ -714,6 +718,16 @@ export class RemoteServer {
       return this.json(200, remoteSettingsView(await settingsView(studioOf(ctx), url.searchParams.get('recheck') === '1')));
     }
     if (path === '/api/remote/pc/wsl-status') return this.json(200, remoteWslStatus(await wslStatus(ctx)));
+    if (path === '/api/remote/pc/presence') {
+      // phase 2: the slot ids come from this device (never from the page); the answer names only this computer's own tabs
+      if (!body) return this.json(400, { error: 'Invalid request' });
+      try {
+        return this.json(200, ctx.presence.reportDevice(device.id, body));
+      } catch (error) {
+        if (error instanceof Error && error.name === 'ValueError') return this.json(400, { error: error.message });
+        throw error;
+      }
+    }
     return this.json(404, { error: 'Not found' });
   }
 
@@ -936,9 +950,18 @@ export class RemoteServer {
     } catch (error) {
       if (!(error instanceof Refusal)) throw error;
       log(body.id, `refused: ${error.code}`);
-      return this.json(error.status, { error: error.message, code: error.code });
+      // phase 2: two devices on one card, the first answer wins; the second is told who was first
+      const first = error.code === 'gone' ? answeredElsewhere(this.host.ctx, body.id, body.key) : null;
+      return this.json(error.status, { error: first ?? error.message, code: error.code });
     }
     const [status, payload] = await this.host.ctx.host.liveCall(op, checked);
+    if (status === 200) {
+      // phase 2: a phone that acts is in hand and used now ("where you are"); who answered a card (attention/answers.ts)
+      if (device.kind !== 'computer') this.host.ctx.presence.phoneInput(device.id);
+      if (op === 'permission' || op === 'elicitation') {
+        answersOf(this.host.ctx).note(checked.id, checked.key, { by: device.id, name: device.name, ...answerOf(op, checked) });
+      }
+    }
     const files = attachedWords(checked.attachments);
     log(checked.id, (status === 200 ? 'done' : `failed (${status})`) + (files ? ', ' + files : ''));
     const answer = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload as Record<string, unknown> : {};

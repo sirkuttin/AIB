@@ -111,8 +111,15 @@
 
   // ---- the last presence answer (K2) ----
   let last = null; // {at, soundOwner, openAll, windows, sent}
+  /* Remote control from other PCs, phase 2: the answer says `quiet` while you are at another device (the PC while you work on a
+     laptop, the laptop while you work at the PC): this window does not chime or show a notification of its own until a later
+     answer says otherwise. Kept for QUIET_MS (a page reports at least every 20 s, focused or not), so a page that stopped hearing
+     back goes back to today's behaviour. */
+  const QUIET_MS = 45000;
+  let quietAt = 0;
   function noteAnswer(ans, sentOpen) {
     if (!ans || typeof ans !== 'object' || ans.ok !== true) return false;
+    quietAt = ans.quiet === true ? Date.now() : 0;
     const before = othersOpen().join('\n') + '|' + others().map((w) => w.w + ':' + w.kind + ':' + w.project + ':' + w.chat).join(',');
     last = {
       at: Date.now(),
@@ -142,7 +149,9 @@
   }
   /* D1: may this window chime (and, in a browser, show the desktop notification)? Unknown (no fresh answer) or alone: yes. Else
      only the sound owner; with none named (no window was ever focused), the main window, else the first one listed. */
+  const quiet = () => !!quietAt && Date.now() - quietAt < QUIET_MS;
   function soundMine() {
+    if (quiet()) return false; // you are at another device now (phase 2)
     const a = answer();
     if (!a || !others().length) return true;
     const self = me();
@@ -305,6 +314,7 @@
     others,
     othersOpen,
     soundMine,
+    quiet,
     background,
     pollMs,
     ownerOf,
@@ -319,6 +329,7 @@
     _reset() {
       ctx = null;
       last = null;
+      quietAt = 0;
       tabId = '';
       leftSent = false;
     },

@@ -8,6 +8,7 @@ import { modelInUse } from '../transcripts/store.ts';
 import { refuseNetworkPath } from './security.ts';
 import { assertWindowsLocal, locOf } from '../platform/location.ts';
 import type { WebContext } from './server.ts';
+import { answeredElsewhere, answerOf, answersOf } from '../attention/answers.ts';
 
 /** True while the take-over from the keeper at start runs (an in-process Studio; a split agent host never says so). */
 function takingOver(ctx: WebContext): boolean {
@@ -45,6 +46,27 @@ async function inUse(ctx: WebContext, state: Json): Promise<Json | null> {
   return found;
 }
 
+/**
+ * Phase 2 (attention/answers.ts): an answer that went through is the PC's own (a paired computer's bridge names itself right after);
+ * one that came too late, after another device answered the same card first, says who did ("Already answered on Laptop (Edge).").
+ */
+function noteAnswer(ctx: WebContext, op: 'permission' | 'elicitation' | 'allow-answer', body: Json | null, reply: Reply): Reply {
+  const [status] = reply;
+  if (status === 200) {
+    const name = (() => {
+      try {
+        return ctx.phone?.pcName?.() || 'the PC';
+      } catch {
+        return 'the PC';
+      }
+    })();
+    answersOf(ctx).note(body?.id, body?.key, { by: 'pc', name, ...answerOf(op, body) });
+    return reply;
+  }
+  const first = status >= 400 && status < 500 ? answeredElsewhere(ctx, body?.id, body?.key) : null;
+  return first ? [409, { error: first, code: 'answered' }] : reply;
+}
+
 function installAgent(body: Json | null): string {
   const agent = body?.agent;
   if (typeof agent !== 'string') throw new ValueError('agent must be text');
@@ -66,7 +88,9 @@ export function liveRoutes(): Map<string, LiveHandler> {
         code: 'connection_not_found',
       }];
     }
-    return [200, { ...state, inUse: await inUse(ctx, state) }];
+    // phase 2 (attention/answers.ts): who answered this chat's approvals and questions, so a line can say "on Laptop (Edge)"
+    const answers = answersOf(ctx).forChat(arg(url, 'id'));
+    return [200, { ...state, inUse: await inUse(ctx, state), ...(answers ? { answers } : {}) }];
   });
   // History loading (event_pages.ts): one page of a chat's events. Open: no before/after/around (the tail by bytes, plus turn and
   // helper facts); before=<seq> pages back; after=<seq> deltas; around=<seq> a saved place; session=<helper id> a helper's events;
@@ -119,7 +143,10 @@ export function liveRoutes(): Map<string, LiveHandler> {
   routes.set('POST /api/live/agent-options', (ctx, _url, body) => ctx.host.liveCall('agent-options', body ?? {}));
   // Allow rules (routes.ts DENO_ONLY): the page's Always choice and Settings; the host's #allowCall.
   for (const op of ['answer', 'rules', 'remove', 'restore', 'review', 'enable', 'builtin']) {
-    routes.set(`POST /api/live/allow/${op}`, (ctx, _url, body) => ctx.host.liveCall(`allow-${op}`, body ?? {}));
+    routes.set(`POST /api/live/allow/${op}`, async (ctx, _url, body) => {
+      const reply = await ctx.host.liveCall(`allow-${op}`, body ?? {});
+      return op === 'answer' ? noteAnswer(ctx, 'allow-answer', body, reply) : reply;
+    });
   }
   for (const name of LIVE_POST_OPS) {
     routes.set(`POST /api/live/${name}`, async (ctx, _url, body) => {
@@ -127,6 +154,7 @@ export function liveRoutes(): Map<string, LiveHandler> {
       const [status, payload] = name === 'discover'
         ? await discoverAdded((b) => ctx.host.liveCall(name, b), ctx.addedProjects, body)
         : await ctx.host.liveCall(name, body);
+      if (name === 'permission' || name === 'elicitation') return noteAnswer(ctx, name, body, [status, payload]);
       // A new chat adds its folder as a project (and brings a removed one back).
       if (name === 'connect') await afterConnect(ctx.removedProjects, body, status, ctx.addedProjects, payload);
       if (name === 'session-op' && payload && typeof payload === 'object' && !Array.isArray(payload)) {

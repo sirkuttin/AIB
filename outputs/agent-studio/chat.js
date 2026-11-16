@@ -2278,7 +2278,7 @@
         const r = rows[i];
         if (r.role !== 'answered') continue;
         if (open.has(r.key) || r.withdrawn) rows.splice(i, 1);
-        else r.value = answeredText(r);
+        else r.value = answeredText(r, snap);
       }
     }
     /* In-progress steps spin while work is going on for this chat: its own reply, or helpers still running after the reply ended. */
@@ -2290,10 +2290,10 @@
   }
   /* What you chose on an approval or a question card, by request key (this page only; another window's answer reads "Answered"). */
   const answerChoice = new Map();
-  function answeredText(r) {
+  function answeredText(r, snap) {
     if (r.ask === 'auto') return r.autoText;
     const p = r.params || {},
-      chose = answerChoice.get(r.key);
+      chose = answerChoice.get(r.key) || answeredBy(r, snap);
     if (r.ask === 'permission') {
       const call = p.toolCall || {},
         what = String(call.title || call.kind || 'a tool')
@@ -2305,6 +2305,24 @@
       .replace(/\s+/g, ' ')
       .slice(0, 120);
     return 'Question · ' + what + ' · ' + (chose || 'Answered');
+  }
+  /* Remote control from other PCs, phase 2: what was chosen on another window or device, from the PC's record of who answered
+     (state `answers`, server/attention/answers.ts): "Allowed once", and " on Laptop (Edge)" when another device answered it.
+     '' when nobody is known to have answered (an AIB restart since). */
+  const ANSWER_WORDS = { allow_once: 'Allowed once', allow_always: 'Allowed always', reject_once: 'Denied', reject_always: 'Denied always' };
+  function answeredBy(r, snap) {
+    const a = snap && snap.answers && typeof snap.answers === 'object' ? snap.answers[r.key] : null;
+    if (!a || typeof a !== 'object') return '';
+    let choice = '';
+    if (r.ask === 'permission') {
+      const o = ((r.params && r.params.options) || []).find((x) => x && x.optionId === a.option);
+      if (a.option === null || a.option === undefined) choice = 'Cancelled';
+      else if (a.always) choice = 'Allowed always';
+      else choice = (o && (ANSWER_WORDS[o.kind] || o.name)) || 'Answered';
+    } else choice = { accept: 'Submitted', decline: 'Declined', cancel: 'Cancelled' }[a.action] || 'Answered';
+    const R = window.AIBRemote,
+      self = (R && typeof R.device === 'function' && R.device() && R.device().id) || 'pc';
+    return a.by === self || typeof a.name !== 'string' || !a.name ? choice : choice + ' on ' + a.name;
   }
   function answeredLine(row) {
     const line = text('div', '', 'answered-line' + (row.ask === 'auto' ? ' answered-auto' : ''));

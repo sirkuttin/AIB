@@ -28,7 +28,7 @@ import type { ReadState } from '../state/read_state.ts';
 import { FiredStore } from './fired.ts';
 import { type ChatFacts, type Flags, type Group, type GroupEntry, type Kind, type Reason, RULES } from './rules.ts';
 import { INBOX } from './inbox_rules.ts';
-import type { Presence } from './presence.ts';
+import type { Presence, Where } from './presence.ts';
 
 const log = getLogger('attention');
 
@@ -410,8 +410,9 @@ export type DesktopShow = (
 export interface NotifierOptions {
   /** The desktop app's notifications; null in a server run (a browser shows its own). */
   desktop: () => DesktopShow | null;
-  /** Sends one push to every phone that may get it (remote/push.ts); null while there is nothing to send to. */
-  push: () => ((text: ReturnType<typeof RULES.pushText>) => Promise<unknown>) | null;
+  /** Sends one push to every device that may get it (remote/push.ts), or only to those `to` picks; null while there is nothing to
+   * send to. */
+  push: () => ((text: ReturnType<typeof RULES.pushText>, to?: PushPick) => Promise<unknown>) | null;
   presence: Presence;
   /** The saved view preferences (the desktop app's notification choices live there). */
   viewPrefs: Pick<ViewPrefs, 'public'>;
@@ -419,7 +420,7 @@ export interface NotifierOptions {
   markRead?: (key: string) => void;
   clock?: () => number;
   /** Tests: everything sent, in order. */
-  record?: (what: { to: 'desktop' | 'push' | 'banner' | 'read'; text: unknown; fires: Fire[] }) => void;
+  record?: (what: { to: 'desktop' | 'push' | 'banner' | 'read'; text: unknown; fires: Fire[]; device?: string }) => void;
 }
 
 const bare = ({ key, chat, kind, title, reason, project, what }: Fire): Fire => ({
@@ -431,6 +432,40 @@ const bare = ({ key, chat, kind, title, reason, project, what }: Fire): Fire => 
   ...(project ? { project } : {}),
   ...(what ? { what } : {}),
 });
+
+/** Which push targets get a push (remote/push.ts PushSender.send `to`). */
+export type PushPick = (target: { id: string; kind: 'phone' | 'computer' }) => boolean;
+
+/**
+ * Phase 2 (remote control from other PCs, design v2 section 8): where a piece of news goes, by "where you are" (Presence.where).
+ * The phone rules of today (notify-rules.js route) stay as they are; a paired computer adds:
+ *   at a computer   no desktop notification on the PC, no phone push or banner; a push to that computer only while its AIB page is
+ *                   not in front (in front, its page toasts and chimes itself)
+ *   nobody anywhere today's push goes to the computers too, except one whose AIB page is in front (it shows the news itself)
+ *   the PC or a phone  computers get nothing (today's rules for the PC and the phones)
+ * Pure: work/deno/presence_where_test.ts checks the four rows of the design's table.
+ */
+export function routeWhere(
+  kind: Kind,
+  chat: string,
+  view: { pcFocused: boolean; pcActive: boolean; phones: (string | null)[] },
+  where: Where,
+  computerInFront: (device: string) => boolean,
+): { desktop: boolean; push: boolean; banner: boolean; read: boolean; to: PushPick } {
+  const to = pushPick(where, computerInFront);
+  if (where?.who === 'computer') return { desktop: false, push: !computerInFront(where.device), banner: false, read: false, to };
+  return { ...RULES.route(kind, chat, view), to };
+}
+
+/** The push targets for where you are: at a computer, that computer only; nobody anywhere, every target but a computer whose AIB
+ * page is in front; else (the PC, a phone) the phones only (today's rules decide whether they get one). */
+export function pushPick(where: Where, computerInFront: (device: string) => boolean): PushPick {
+  if (where?.who === 'computer') {
+    const device = where.device;
+    return (t) => t.id === device;
+  }
+  return (t) => t.kind !== 'computer' || (where === null && !computerInFront(t.id));
+}
 
 /**
  * The 60 s groups and where news goes, by where the owner is looking (notify-rules.js route, attention/presence.ts):
@@ -473,10 +508,12 @@ export class Notifier {
   async fire(fires: Fire[]): Promise<void> {
     const presence = this.options.presence;
     const view = { pcFocused: presence.focused(), pcActive: presence.active(), phones: presence.phones().map((p) => p.chat) };
+    const where = presence.where();
+    const inFront = (device: string) => presence.deviceFocused(device);
     const desktop: Fire[] = [];
     const push: Fire[] = [];
     for (const f of fires) {
-      const r = RULES.route(f.kind, f.chat, view);
+      const r = routeWhere(f.kind, f.chat, view, where, inFront);
       if (r.desktop) desktop.push(f);
       if (r.push) push.push(f);
       if (r.banner) {
@@ -508,8 +545,11 @@ export class Notifier {
       }));
     const prefs = RULES.appPrefs(this.options.viewPrefs.public().prefs['studio-notifications-app']);
     const show = this.options.desktop();
-    if (this.options.presence.focused()) this.#desktop = null; // AIB in front: the group has done its job (the page's comeBack)
-    else if (show) {
+    const presence = this.options.presence;
+    const where = presence.where();
+    const inFront = (device: string) => presence.deviceFocused(device);
+    if (presence.focused()) this.#desktop = null; // AIB in front: the group has done its job (the page's comeBack)
+    else if (show && where?.who !== 'computer') { // at another computer: the PC stays quiet (phase 2)
       const open = this.options.presence.openOnPc(); // chats open in any visible window are in front of the owner already
       const wanted = desktopEntries(desktopFires.filter((f) => !INBOX.isOpen(f.key, open))).filter((i) =>
         RULES.desktopWants(i.kind, prefs)
@@ -528,16 +568,18 @@ export class Notifier {
     }
     const push = this.options.push();
     if (!push) return;
-    if (this.options.presence.active()) {
+    // at a computer whose page is in front, or working at the PC: the news is in front of you already
+    if (where?.who === 'computer' ? inFront(where.device) : presence.active()) {
       this.#push = null;
       return;
     }
     if (!pushFires.length) return;
     this.#push = RULES.addToGroup(this.#push, entries(pushFires), now).group;
     const text = RULES.pushText(this.#push);
-    this.options.record?.({ to: 'push', text, fires });
+    const to = pushPick(where, inFront);
+    this.options.record?.({ to: 'push', text, fires, ...(where?.who === 'computer' ? { device: where.device } : {}) });
     try {
-      await push(text);
+      await push(text, to);
     } catch (error) {
       log.info('attention: push failed (%s)', error instanceof Error ? error.message : error);
     }
@@ -555,7 +597,7 @@ export interface AttentionContext extends WatchSources {
   phone: {
     on: boolean;
     titles: { titles: Map<string, string>; seeList?: (listing: unknown) => void };
-    push: { any(): boolean; send(m: ReturnType<typeof RULES.pushText>): Promise<unknown> };
+    push: { any(): boolean; send(m: ReturnType<typeof RULES.pushText>, to?: PushPick): Promise<unknown> };
   };
 }
 
@@ -568,7 +610,7 @@ export function startAttention(ctx: AttentionContext, options: { pollMs?: number
   const logFile = Deno.env.get('AGENT_STUDIO_TEST') === '1' ? Deno.env.get('AIB_TEST_ATTENTION_LOG') ?? '' : '';
   const notifier = new Notifier({
     desktop: () => (ctx.desktopNotify ? (req) => ctx.desktopNotify!.show(req) : null),
-    push: () => (ctx.phone.on && ctx.phone.push.any() ? (text) => ctx.phone.push.send(text) : null),
+    push: () => (ctx.phone.on && ctx.phone.push.any() ? (text, to) => ctx.phone.push.send(text, to) : null),
     presence: ctx.presence,
     viewPrefs: ctx.viewPrefs,
     // read now: a phone showed the chat when its turn ended (the PC's unread dot and the watcher agree)

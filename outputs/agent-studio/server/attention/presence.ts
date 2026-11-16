@@ -32,6 +32,18 @@
  * desktop notification, not in the tray count, the tray's chat slots or the taskbar dot): they are already in front of the
  * owner. Pushes ignore it on purpose: holding back pushes for a chat on a focused but idle PC would swallow the push the owner
  * walked away from the PC to get, so pushes still go by active() alone.
+ *
+ * Paired computers (remote control from other PCs, phase 2; design v2 section 8, review MF12): a computer's page reports through
+ * POST /api/remote/pc/presence (reportDevice). The SERVER builds the slot id from the device, `r-<device>-<n>` with n 1..DEVICE_SLOTS;
+ * the page's own tab id is only a lookup key for its n, never part of the id, so a page can never name or overwrite another slot.
+ * Each device holds at most DEVICE_SLOTS of the MAX_SLOTS (its oldest tab gives its slot up), and when the slots are full a
+ * computer's slot goes before any of the PC's own, so a laptop with many tabs never pushes the PC's windows out. A computer's slots
+ * never count for the PC's own focused() / active() / openOnPc() / soundOwner(): those stay about the PC's screen.
+ *
+ *   where()   "where you are" (a new rule, review WC9): the device with the latest input in the last 2 minutes. The PC counts while
+ *             active() (focus and input); a computer while its last input in AIB is under ACTIVE_MS old (its tab may have lost focus
+ *             since: you are still at that computer); a phone while it is on screen, from when it came on screen or last acted
+ *             (phoneInput). Null: nobody is anywhere. The Notifier (watcher.ts) sends the news there.
  */
 import { ValueError } from '../core/py.ts';
 
@@ -113,7 +125,15 @@ export interface PresenceAnswer {
   /** The chats on screen in any fresh, visible window. */
   openAll: string[];
   windows: WindowView[];
+  /** Phase 2: you are at another device now (where()): this one's pages do not chime or show notifications of their own. */
+  quiet: boolean;
 }
+
+/** Phase 2: at most this many of the MAX_SLOTS per paired computer. */
+export const DEVICE_SLOTS = 4;
+/** "Where you are" (where()). */
+export type Where = { who: 'pc' } | { who: 'computer'; device: string } | { who: 'phone'; device: string } | null;
+const REMOTE_SLOT = 'r-';
 
 interface Slot {
   kind: PresenceKind;
@@ -140,6 +160,51 @@ function key(v: unknown, what: string): string {
 const cleanName = (v: unknown) => String(v ?? '').replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
 const openList = (open: unknown) => (Array.isArray(open) ? open : []).filter((k): k is string => isKey(k)).slice(0, MAX_OPEN);
 
+/** One window's report body as a slot (a bad kind or key is a ValueError: 400; a long name is cut to 80 characters). */
+function slotOf(b: Record<string, unknown>): Omit<Slot, 'at' | 'focusedAt'> {
+  const kind = b.kind === undefined ? 'main' : b.kind;
+  if (!PRESENCE_KINDS.includes(kind as PresenceKind)) throw new ValueError('Invalid kind');
+  let project: Slot['project'] = null;
+  if (b.project !== undefined && b.project !== null) {
+    if (typeof b.project !== 'object' || Array.isArray(b.project)) throw new ValueError('Invalid project');
+    const p = b.project as Record<string, unknown>;
+    project = { key: key(p.key, 'project.key'), name: cleanName(p.name) };
+  }
+  const chat = b.chat === undefined || b.chat === null ? null : key(b.chat, 'chat');
+  let doc: Slot['doc'] = null;
+  if (b.doc !== undefined && b.doc !== null) {
+    if (typeof b.doc !== 'object' || Array.isArray(b.doc)) throw new ValueError('Invalid doc');
+    const d = b.doc as Record<string, unknown>;
+    doc = { project: key(d.project, 'doc.project'), name: key(d.name, 'doc.name') };
+  }
+  return { kind: kind as PresenceKind, project, chat, doc, focused: b.focused === true, visible: b.visible !== false, open: openList(b.open) };
+}
+
+/** The open chats of these slots' visible windows. */
+function openOf(slots: [string, Slot][]): string[] {
+  const out = new Set<string>();
+  for (const [, s] of slots) if (s.visible) for (const k of s.open) out.add(k);
+  return [...out];
+}
+
+/** D1 over these slots: the focused one (the latest to say so), else the one focused last; null when none. */
+function ownerOf(slots: [string, Slot][]): string | null {
+  const pool = slots.some(([, s]) => s.focused) ? slots.filter(([, s]) => s.focused) : slots.filter(([, s]) => s.focusedAt > 0);
+  let best: [string, number] | null = null;
+  for (const [w, s] of pool) if (!best || s.focusedAt >= best[1]) best = [w, s.focusedAt];
+  return best ? best[0] : null;
+}
+
+const viewOf = (w: string, s: Slot): WindowView => ({
+  w,
+  kind: s.kind,
+  project: s.project?.key ?? null,
+  chat: s.chat,
+  doc: s.doc ? { ...s.doc } : null,
+  focused: s.focused,
+  visible: s.visible,
+});
+
 export class Presence {
   /** One slot per window id (K2, B7): a report from one window never overwrites another's. */
   #slots = new Map<string, Slot>();
@@ -149,6 +214,12 @@ export class Presence {
   #pending = new Map<number, Pending>();
   #nextId = 1;
   #ended = new Set<(e: PhoneEnded) => void>();
+  /** Phase 2: a computer's slot id -> its device and the page's tab id (the lookup key only). */
+  #remote = new Map<string, { device: string; tab: string }>();
+  /** Phase 2: a computer's last input in AIB (ms), kept when its slots go stale (a tab in the background stops focusing). */
+  #deviceInput = new Map<string, number>();
+  /** Phase 2: a phone's last action (a send, an answer): it is in hand and used now. */
+  #phoneInput = new Map<string, number>();
 
   constructor(readonly clock: () => number = Date.now) {}
 
@@ -174,89 +245,192 @@ export class Presence {
       this.leave(w);
       return this.answer();
     }
-    const kind = b.kind === undefined ? 'main' : b.kind;
-    if (!PRESENCE_KINDS.includes(kind as PresenceKind)) throw new ValueError('Invalid kind');
-    let project: Slot['project'] = null;
-    if (b.project !== undefined && b.project !== null) {
-      if (typeof b.project !== 'object' || Array.isArray(b.project)) throw new ValueError('Invalid project');
-      const p = b.project as Record<string, unknown>;
-      project = { key: key(p.key, 'project.key'), name: cleanName(p.name) };
-    }
-    const chat = b.chat === undefined || b.chat === null ? null : key(b.chat, 'chat');
-    let doc: Slot['doc'] = null;
-    if (b.doc !== undefined && b.doc !== null) {
-      if (typeof b.doc !== 'object' || Array.isArray(b.doc)) throw new ValueError('Invalid doc');
-      const d = b.doc as Record<string, unknown>;
-      doc = { project: key(d.project, 'doc.project'), name: key(d.name, 'doc.name') };
-    }
-    const slot = { kind: kind as PresenceKind, project, chat, doc, focused: b.focused === true, visible: b.visible !== false, open: openList(b.open) };
-    this.#put(w, slot, b.idleMs);
+    this.#put(w, slotOf(b), b.idleMs);
     return this.answer();
   }
 
-  #put(w: string, slot: Omit<Slot, 'at' | 'focusedAt'>, idleMs: unknown): void {
+  /**
+   * Phase 2: a paired computer's report (POST /api/remote/pc/presence). `w` is the page's own tab id (window-context.js), used only
+   * to find this tab's slot; the slot id is r-<device>-<n>. A fifth tab of one device takes the slot of its tab reported longest
+   * ago. `left: true` drops the tab's slot. Returns the answer in the page's own terms (its tabs' ids, only its own windows).
+   */
+  reportDevice(device: string, body: unknown): PresenceAnswer {
+    if (!/^[A-Za-z0-9_-]{4,64}$/.test(device)) throw new ValueError('Invalid device');
+    const b = (body && typeof body === 'object' && !Array.isArray(body) ? body : {}) as Record<string, unknown>;
+    const tab = b.w;
+    if (typeof tab !== 'string' || !PRESENCE_ID.test(tab) || tab === '_') throw new ValueError('Invalid window');
+    const have = this.#slotOfTab(device, tab);
+    if (b.left === true) {
+      if (have) this.#drop(have);
+      return this.deviceAnswer(device);
+    }
+    const slot = slotOf(b); // a bad body is refused before a slot is taken
+    let id = have;
+    if (!id) {
+      const mine = [...this.#slots.keys()].filter((k) => this.#remote.get(k)?.device === device);
+      const used = new Set(mine.map((k) => k.slice(k.lastIndexOf('-') + 1)));
+      let n = 0;
+      for (let i = 1; i <= DEVICE_SLOTS && !n; i++) if (!used.has(String(i))) n = i;
+      if (!n) {
+        const oldest = mine[0]; // the map's order is the report order
+        n = Number(oldest.slice(oldest.lastIndexOf('-') + 1));
+        this.#drop(oldest);
+      }
+      id = `${REMOTE_SLOT}${device}-${n}`;
+      this.#remote.set(id, { device, tab });
+    }
+    this.#put(id, slot, b.idleMs, device);
+    return this.deviceAnswer(device);
+  }
+
+  #slotOfTab(device: string, tab: string): string | null {
+    for (const [id, r] of this.#remote) if (r.device === device && r.tab === tab && this.#slots.has(id)) return id;
+    return null;
+  }
+
+  /** A slot goes (and a computer's tab mapping with it). */
+  #drop(id: string): void {
+    this.#slots.delete(id);
+    this.#remote.delete(id);
+  }
+
+  #put(w: string, slot: Omit<Slot, 'at' | 'focusedAt'>, idleMs: unknown, device?: string): void {
     const now = this.clock();
     const idle = Number(idleMs);
     const old = this.#slots.get(w);
     this.#slots.delete(w); // re-inserted last: the map's order is the report order (the cap drops the first)
     this.#slots.set(w, { ...slot, at: now, focusedAt: slot.focused ? now : old?.focusedAt ?? 0 });
-    while (this.#slots.size > MAX_SLOTS) this.#slots.delete(this.#slots.keys().next().value!);
-    if (Number.isFinite(idle) && idle >= 0) this.#inputAt = Math.max(this.#inputAt, now - Math.min(idle, 7 * 86400_000));
+    while (this.#slots.size > MAX_SLOTS) {
+      // a computer's slot (the one reported longest ago) goes before any of the PC's own windows
+      const ids = [...this.#slots.keys()];
+      this.#drop(ids.find((k) => k !== w && k.startsWith(REMOTE_SLOT)) ?? ids.find((k) => k !== w) ?? ids[0]);
+    }
+    if (!(Number.isFinite(idle) && idle >= 0)) return;
+    const input = now - Math.min(idle, 7 * 86400_000);
+    if (device) this.#deviceInput.set(device, Math.max(this.#deviceInput.get(device) ?? 0, input));
+    else this.#inputAt = Math.max(this.#inputAt, input);
   }
 
   /** A window closed or its page went away (left: true, or the desktop app closed it): its slot goes at once (B8). */
   leave(w: string): void {
-    this.#slots.delete(w);
+    if (!w.startsWith(REMOTE_SLOT)) this.#drop(w);
+  }
+
+  /** Phase 2: a computer was removed: its slots and its "where you are" go at once. */
+  leaveDevice(device: string): void {
+    for (const [id, r] of [...this.#remote]) if (r.device === device) this.#drop(id);
+    this.#deviceInput.delete(device);
   }
 
   /** The fresh slots (reported in the last STALE_MS), in report order; stale ones are dropped. */
   #fresh(): [string, Slot][] {
     const now = this.clock();
-    for (const [w, s] of [...this.#slots]) if (now - s.at >= STALE_MS) this.#slots.delete(w);
+    for (const [w, s] of [...this.#slots]) if (now - s.at >= STALE_MS) this.#drop(w);
     return [...this.#slots];
   }
 
-  /** An AIB window has focus now: any fresh report says so. */
+  /** The PC's own fresh slots (never a computer's). */
+  #local(): [string, Slot][] {
+    return this.#fresh().filter(([w]) => !w.startsWith(REMOTE_SLOT));
+  }
+
+  /** One computer's fresh slots. */
+  #ofDevice(device: string): [string, Slot][] {
+    return this.#fresh().filter(([w]) => this.#remote.get(w)?.device === device);
+  }
+
+  /** An AIB window on the PC has focus now: any fresh report of the PC's own says so. */
   focused(): boolean {
-    return this.#fresh().some(([, s]) => s.focused);
+    return this.#local().some(([, s]) => s.focused);
   }
 
   active(): boolean {
     return this.focused() && this.clock() - this.#inputAt < ACTIVE_MS;
   }
 
+  /** Phase 2: a computer's AIB page has focus now (it shows news itself: no push to it). */
+  deviceFocused(device: string): boolean {
+    return this.#ofDevice(device).some(([, s]) => s.focused);
+  }
+
+  /** Phase 2: a phone acted (sent, answered, stopped): it is in hand and used now (where()). */
+  phoneInput(device: string): void {
+    if (!device) return;
+    this.#phoneInput.set(device, this.clock());
+    while (this.#phoneInput.size > MAX_PHONES) this.#phoneInput.delete(this.#phoneInput.keys().next().value!);
+  }
+
+  /**
+   * Phase 2, "where you are": the device with the latest input in the last ACTIVE_MS (the PC while active(); a computer by its last
+   * input in AIB; a phone on screen by when it came on screen or last acted). The PC wins a tie. Null: nobody is anywhere.
+   */
+  where(): Where {
+    const now = this.clock();
+    let best: Where = null;
+    let at = -Infinity;
+    if (this.active()) {
+      best = { who: 'pc' };
+      at = this.#inputAt;
+    }
+    for (const [device, t] of [...this.#deviceInput]) {
+      if (now - t >= ACTIVE_MS) {
+        this.#deviceInput.delete(device);
+        continue;
+      }
+      if (t > at) {
+        best = { who: 'computer', device };
+        at = t;
+      }
+    }
+    for (const p of this.phones()) {
+      const t = Math.max(p.since, this.#phoneInput.get(p.device) ?? 0);
+      if (t > at) {
+        best = { who: 'phone', device: p.device };
+        at = t;
+      }
+    }
+    return best;
+  }
+
   /** The chats on screen in AIB now (page keys): the union of every fresh, visible window's open chats; none once all stopped. */
   openOnPc(): string[] {
-    const out = new Set<string>();
-    for (const [, s] of this.#fresh()) if (s.visible) for (const k of s.open) out.add(k);
-    return [...out];
+    return openOf(this.#local());
   }
 
   /** D1: the focused window (the latest to say so when several do), else the one focused last; null when none is known. */
   soundOwner(): string | null {
-    const fresh = this.#fresh();
-    const pool = fresh.some(([, s]) => s.focused) ? fresh.filter(([, s]) => s.focused) : fresh.filter(([, s]) => s.focusedAt > 0);
-    let best: [string, number] | null = null;
-    for (const [w, s] of pool) if (!best || s.focusedAt >= best[1]) best = [w, s.focusedAt];
-    return best ? best[0] : null;
+    return ownerOf(this.#local());
   }
 
   /** The fresh windows (K2 answer `windows`), in report order. */
   windows(): WindowView[] {
-    return this.#fresh().map(([w, s]) => ({
-      w,
-      kind: s.kind,
-      project: s.project?.key ?? null,
-      chat: s.chat,
-      doc: s.doc ? { ...s.doc } : null,
-      focused: s.focused,
-      visible: s.visible,
-    }));
+    return this.#local().map(([w, s]) => viewOf(w, s));
   }
 
-  /** K2: the presence answer. */
+  /** K2: the presence answer. quiet: you are at a computer now (the PC's pages do not chime). */
   answer(): PresenceAnswer {
-    return { ok: true, soundOwner: this.soundOwner(), openAll: this.openOnPc(), windows: this.windows() };
+    return {
+      ok: true,
+      soundOwner: this.soundOwner(),
+      openAll: this.openOnPc(),
+      windows: this.windows(),
+      quiet: this.where()?.who === 'computer',
+    };
+  }
+
+  /** Phase 2: a computer's answer, in its page's terms: its own windows by its tabs' ids, its sound owner, its open chats; quiet
+   * while you are at another device (the PC, another computer or a phone). */
+  deviceAnswer(device: string): PresenceAnswer {
+    const mine = this.#ofDevice(device);
+    const tabOf = (id: string | null) => (id ? this.#remote.get(id)?.tab ?? null : null);
+    const where = this.where();
+    return {
+      ok: true,
+      soundOwner: tabOf(ownerOf(mine)),
+      openAll: openOf(mine),
+      windows: mine.map(([w, s]) => viewOf(tabOf(w)!, s)),
+      quiet: where !== null && !(where.who === 'computer' && where.device === device),
+    };
   }
 
   // ---- phones -------------------------------------------------------------------------------------------------------------------
@@ -279,6 +453,10 @@ export class Presence {
   /** The phone's page was hidden (POST /api/remote/left), or the phone was removed. */
   leavePhone(device: string, why: 'left' | 'removed' = 'left'): void {
     if (this.#phones.has(device)) this.#end(device, why);
+    if (why === 'removed') {
+      this.#phoneInput.delete(device);
+      this.leaveDevice(device); // a removed computer's slots go too (remote/access.ts calls this for every device)
+    }
   }
 
   /** The phones on screen now. */

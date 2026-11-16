@@ -9,8 +9,9 @@
      remote bootstrap (GET /api/remote/pc/bootstrap: no token, launch key, state folder, process ids or loopback addresses) and
      this computer's own layout (GET /api/remote/pc/view-prefs), puts the layout where view-prefs.js reads it, then runs the
      scripts in order. The PC's layout is never read or written from here: panel widths, text size, tabs are this computer's.
-   * A few page routes have a remote form (the bootstrap, the layout, Settings, WSL status) and a few are the PC's alone (its
-     editors, desktop notifications, window presence, Settings changes): those are answered here without asking the PC.
+   * A few page routes have a remote form (the bootstrap, the layout, Settings, WSL status, and phase 2's presence: this
+     computer's tabs, slot ids made by the PC from the device) and a few are the PC's alone (its editors, desktop notifications,
+     Settings changes): those are answered here without asking the PC.
    * window.AIBRemote: what the page scripts check (caps.remote) to hide what a computer cannot do (Open in editor becomes
      Download; Browse… goes, the folder is typed; Settings shows Appearance and This computer only). The server decides anyway. */
 (function (root) {
@@ -85,7 +86,9 @@
     if (path === '/api/live/wsl/status' && method === 'GET') return '/api/remote/pc/wsl-status';
     // the PC's programs and screen: no editors here (Files offers Download), no desktop notifications or window lists
     if (path === '/api/live/editors') return () => answer(200, { editors: [], default: '', workspaces: [] });
-    if (path === '/api/live/presence') return () => answer(200, { ok: true, windows: [], openAll: [] });
+    // phase 2: this computer's own presence (the PC makes the slot ids from the device; the answer lists only this computer's tabs
+    // and says `quiet` while you are at another device: no chime or notification of this page's own then)
+    if (path === '/api/live/presence' && method === 'POST') return '/api/remote/pc/presence';
     if (path.startsWith('/api/live/desktop/') || path.startsWith('/api/live/devices') || path === '/api/live/open') return pcOnly;
     return null;
   }
@@ -321,6 +324,22 @@
     } catch {}
     openChat(decodeURIComponent(m[1]));
   }
+  /* Phase 2: the tab is closing: its presence slot goes at once (window-context.js sends this with the page token on the PC). */
+  root.addEventListener('pagehide', () => {
+    const W = root.AibWindow;
+    if (!S.token || !W || typeof W.id !== 'function') return;
+    try {
+      realFetch('/api/remote/pc/presence', {
+        method: 'POST',
+        keepalive: true,
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'X-AIB-Device': S.token },
+        body: JSON.stringify({ w: W.id(), left: true }),
+      }).catch(() => {});
+    } catch {
+      /* the page is going */
+    }
+  });
   if (root.navigator.serviceWorker) {
     root.navigator.serviceWorker.addEventListener('message', (e) => {
       if (e.data && e.data.type === 'aib-open') openChat(e.data.chat);
