@@ -6,16 +6,43 @@
  * fast-forward in the folder that has it checked out, with the user's uncommitted edits set aside by SHA and put back.
  */
 import * as wt from '../worktrees/worktrees.ts';
-import { baseCheckout, folderState, gitc, porcelainPaths, repoLock, rev, settings } from '../worktrees/merge.ts';
+import {
+  baseCheckout,
+  folderState,
+  gitc,
+  holdFolderChats,
+  type MergeStudio,
+  porcelainPaths,
+  Refused,
+  repoLock,
+  rev,
+  settings,
+  touchedDirty,
+} from '../worktrees/merge.ts';
+import type { Held } from '../worktrees/landing_lock.ts';
 import { pyStrip } from '../core/py.ts';
 import { getLogger } from '../core/log.ts';
 
 const log = getLogger('swarm_undo');
 
-export type Outcome = { state: 'done'; commit: string; tip: string; kept: string } | { state: 'conflicts'; files: string[] } | {
-  state: 'refused';
-  message: string;
-};
+export type Outcome =
+  | { state: 'done'; commit: string; tip: string; kept: string; files: string[] }
+  | { state: 'conflicts'; files: string[] }
+  | { state: 'refused'; message: string; code?: string }
+  | { state: 'dirty'; files: string[] };
+
+/**
+ * Build plan 2.3 / 2.5 (MF 8):
+ * - noStash: the helper's parent works in the project folder: never stash its files. Refused ('dirty') when the change touches a file
+ *   the folder has uncommitted; otherwise git keeps the dirty files the fast-forward doesn't touch.
+ * - host / held: the chats that work in the folder are held (the landing lock) while the branch moves; refused when one works.
+ */
+export interface ApplyOptions {
+  noStash?: boolean;
+  host?: MergeStudio;
+  held?: string[];
+  title?: string;
+}
 
 const nul = (t: string) => t.split('\0').filter(Boolean);
 
@@ -30,8 +57,38 @@ export async function applyChange(
   from: string,
   to: string,
   message: string,
+  options: ApplyOptions = {},
 ): Promise<Outcome> {
   return await repoLock(project).run(async (): Promise<Outcome> => {
+    const folder = await baseCheckout(project, branch);
+    let holds: Held | null = null;
+    if (folder && options.host) {
+      try {
+        holds = await holdFolderChats(options.host, folder, options.title ?? '', options.held ?? [], `undo:${project}`);
+      } catch (error) {
+        if (error instanceof Refused) return { state: 'refused', message: error.message, code: error.code };
+        throw error;
+      }
+    }
+    try {
+      return await applyHeld(stateDir, project, branch, from, to, message, folder, options);
+    } finally {
+      await holds?.release();
+    }
+  });
+}
+
+async function applyHeld(
+  stateDir: string,
+  project: string,
+  branch: string,
+  from: string,
+  to: string,
+  message: string,
+  folder: string | null,
+  options: ApplyOptions,
+): Promise<Outcome> {
+  {
     const tip = await rev(project, `refs/heads/${branch}`);
     if (!tip) return { state: 'refused', message: `The branch ${branch} no longer exists` };
     const built = await wt.git(
@@ -47,15 +104,34 @@ export async function applyChange(
     if (built.returncode !== 0) return { state: 'refused', message: 'git merge-tree failed: ' + pyStrip(built.stderr).slice(-300) };
     const tree = pyStrip(lines[0]);
     const commit = pyStrip((await gitc(['commit-tree', tree, '-p', tip, '-m', message], project)).stdout);
-    const folder = await baseCheckout(project, branch);
+    const files = await changedFiles(project, tip, commit);
     if (!folder) {
       const done = await wt.git(['update-ref', `refs/heads/${branch}`, commit, tip], project, { check: false });
       return done.returncode === 0
-        ? { state: 'done', commit, tip, kept: '' }
+        ? { state: 'done', commit, tip, kept: '', files }
         : { state: 'refused', message: `${branch} changed meanwhile` };
     }
     const busy = await folderState(folder);
-    if (busy) return { state: 'refused', message: busy[0].toUpperCase() + busy.slice(1) };
+    if (busy) return { state: 'refused', message: busy[0].toUpperCase() + busy.slice(1), code: 'locked' };
+    if (options.noStash) {
+      const hit = await touchedDirty(folder, tip, commit);
+      if (hit.length) return { state: 'dirty', files: hit };
+      const pause = wt.pauseLock(stateDir, project, settings.LOCK_WAIT);
+      try {
+        await pause.acquire();
+      } catch {
+        return { state: 'refused', message: 'AIB is still copying edits for this project; try again', code: 'busy' };
+      }
+      try {
+        const ff = await wt.git(['merge', '--ff-only', commit], folder, { check: false });
+        if (ff.returncode !== 0) {
+          return { state: 'refused', message: `Could not move ${branch}: a local edit is in the way. Nothing changed`, code: 'ff_failed' };
+        }
+        return { state: 'done', commit, tip, kept: '', files };
+      } finally {
+        pause.release();
+      }
+    }
     const pause = wt.pauseLock(stateDir, project, settings.LOCK_WAIT);
     try {
       await pause.acquire();
@@ -86,11 +162,11 @@ export async function applyChange(
       if (ff.returncode !== 0) {
         return { state: 'refused', message: `Could not move ${branch}: a local edit is in the way. Nothing changed` };
       }
-      return { state: 'done', commit, tip, kept };
+      return { state: 'done', commit, tip, kept, files };
     } finally {
       pause.release();
     }
-  });
+  }
 }
 
 async function dropStash(folder: string, sha: string): Promise<void> {

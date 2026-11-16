@@ -264,6 +264,8 @@ export interface ConnectOptions {
 
 /** Marks the token of the combined prompt note (Studio #wire), so a token from elsewhere is never taken for one. */
 const OWN_CONTEXT = '__aibOwnContext';
+/** How long a landing lock lasts without a renewal (build plan 2.3: the web process renews it every 10 s while the merge runs). */
+export const LANDING_TTL_MS = 60_000;
 
 /** body.ownCopy of a connect request: true, false, or null when missing. */
 export function readOwnCopy(value: unknown): boolean | null {
@@ -1188,7 +1190,13 @@ export class Studio {
     const wantsCopy = resume === null && !!this.worktrees && (!!asHelper || (options.ownCopy ?? !!working));
     if (wantsCopy) {
       const kind = asHelper ? 'helper' : 'chat';
-      const planned = wsl ? await wslPlanWithReason(workspace, kind) : await this.worktrees!.planWithReason(workspace, null, kind); // no plan: works in place
+      // Build plan 2.4 (MF 7): a helper of a chat that works in the project folder starts from the folder's branch, with the folder's
+      // uncommitted edits (the main agent's too), and lands there (landOn in its worktree record). No WSL part: WSL has no swarm.
+      const parentChat = asHelper ? this.connections.get(asHelper.parent) : undefined;
+      const folderParent = !!parentChat && !parentChat.closed && !parentChat.worktree && parentChat.swarm?.role !== 'helper';
+      const planned = wsl
+        ? await wslPlanWithReason(workspace, kind)
+        : await this.worktrees!.planWithReason(workspace, null, kind, folderParent ? { onFolderBranch: true } : {}); // no plan: works in place
       plan = planned.plan;
       startNote = wt.inPlaceNote(planned.reason);
       // a helper never works in the project folder (review break 5)
@@ -1892,6 +1900,25 @@ export class Studio {
    * Build plan 1.3: the open folder chat of this project that is working (a turn running, or messages queued), else null. A chat in
    * its own copy and a helper do not count: they don't write the project folder. Read when a new chat is made, never watched.
    */
+  /** The open chats that work in `folder` itself: not a chat in its own copy, not a helper (build plan 2.3). */
+  folderChats(folder: string): Connection[] {
+    const key = (p: string) => (wslLoc(p) ? p : normcase(realpath(p)));
+    let want: string;
+    try {
+      want = key(folder);
+    } catch {
+      return [];
+    }
+    return [...this.connections.values()].filter((c) => {
+      if (c.closed || c.worktree || c.swarm?.role === 'helper') return false;
+      try {
+        return key(c.cwd) === want;
+      } catch {
+        return false;
+      }
+    });
+  }
+
   folderChatWorking(project: string): Connection | null {
     const key = (p: string) => (wslLoc(p) ? p : normcase(realpath(p)));
     let want: string;
@@ -2509,6 +2536,33 @@ export class Studio {
       if (actions.length) data.actions = actions;
       connection.recordedEvent('studio_note', data);
       return [200, { ok: true }];
+    }
+    // Build plan 1b, 2.3 (MF 2): the landing lock and its friends. Internal (swarm/service.ts, worktrees/merge.ts): not in LIVE_POST_OPS,
+    // so no page route reaches them.
+    if (name === 'landing-lock' || name === 'landing-renew' || name === 'landing-release') {
+      const connection = this.#connection(body);
+      const lock = String(need(body, 'lock'));
+      const ttl = Math.min(Math.max(Number(body.ttlMs) || LANDING_TTL_MS, 50), 10 * 60_000);
+      if (name === 'landing-lock') {
+        const why = connection.landingLock(lock, String(body.owner ?? ''), String(body.title ?? '').slice(0, 120), ttl);
+        return [200, { ok: !why, reason: why }];
+      }
+      if (name === 'landing-renew') return [200, { ok: connection.landingRenew(lock, ttl) }];
+      return [200, { ok: connection.landingRelease(lock) }];
+    }
+    if (name === 'prompt-context') { // a one-time line in front of this chat's next prompt (a landing told it what changed)
+      const connection = this.#connection(body);
+      this.addPromptContext(connection, [...String(need(body, 'line'))].slice(0, 2000).join(''));
+      return [200, { ok: true }];
+    }
+    if (name === 'folder-chats') { // the open chats that work in this folder itself (not copies, not helpers)
+      const chats = this.folderChats(String(need(body, 'folder'))).map((c) => ({
+        id: c.id,
+        title: this.chatTitle(c),
+        idle: c.landingIdleReason(),
+        landing: c.landing ? c.landing.title : '',
+      }));
+      return [200, { chats }];
     }
     if (!LIVE_POST_OPS.has(name)) return [404, { error: 'Not found' }];
     if (name === 'worktree-discard') return [200, await this.worktreeDiscard(body)];

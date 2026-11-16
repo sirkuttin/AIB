@@ -131,11 +131,7 @@ export function shared<T>(runs: Map<string, Promise<T>>, key: string, run: () =>
 }
 
 function mergeStudio(ctx: WebContext): merge.MergeStudio {
-  return {
-    stateDir: ctx.stateDir,
-    liveState: (chatId) => ctx.host.liveState(chatId, 0),
-    liveCall: (op, payload) => ctx.host.liveCall(op, payload),
-  };
+  return merge.liveMergeStudio(ctx.stateDir, ctx.host); // with the folder chats: a merge holds their landing lock (build plan 2.3)
 }
 
 /** '' or why the Merge button may not ask this chat: archived, or running in another app (the page shows the same reasons). */

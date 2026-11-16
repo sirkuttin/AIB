@@ -1625,7 +1625,15 @@
       for (const b of box.querySelectorAll('button')) b.disabled = true;
       try {
         const done = await post(a.id === 'swarm-undo' ? 'swarm/undo' : 'swarm/merge-again', { helper: a.helper });
-        result.textContent = done?.state === 'cannot_undo' ? "Can't undo cleanly: nothing changed" : '';
+        // build plan 2.2: a folder chat's helper waits for this chat to pause; it never touches files with uncommitted edits
+        result.textContent = done?.state === 'cannot_undo'
+          ? "Can't undo cleanly: nothing changed"
+          : done?.state === 'queued'
+          ? 'Waits for this chat to pause'
+          : done?.state === 'dirty'
+          ? 'Nothing changed: it touches files with uncommitted edits'
+          : '';
+        if (done?.state === 'dirty') for (const b of box.querySelectorAll('button')) b.disabled = false;
       } catch (error) {
         result.textContent = error.message || 'Failed';
         for (const b of box.querySelectorAll('button')) b.disabled = false;

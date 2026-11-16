@@ -4051,6 +4051,12 @@ export class Connection {
     if (this.closed || !this.ready || !this.sessionId) {
       throw new ValueError('This connection is not ready');
     }
+    // Build plan 1b, 2.3: a landing holds this chat's folder. Every route that starts a turn comes through here (the page, a steer while
+    // idle, the phone, a helper's report, a merge prompt): it waits in the queue instead, and goes when the landing lets go.
+    if (this.landing) {
+      if (clientMessageId && receipt?.state === 'steering') this.promptReceipts.delete(clientMessageId); // a steer the agent did not take
+      return await this.#queueForLanding(text, clientMessageId, attachments);
+    }
     // A cycle Claude Code started on its own does not refuse a prompt: the prompt's turn takes the cycle over, as the adapter does.
     if (this.busy && !this.autonomous) {
       throw new ValueError(
@@ -4483,6 +4489,75 @@ export class Connection {
     return this.queue.public(light);
   }
 
+  // ---- the landing lock (build plan 1b, 2.3, MF 2) ---------------------------------------------------------------------------
+  /** The lock a landing in this chat's folder holds: while set, every prompt source queues instead of starting a turn. */
+  landing: { id: string; owner: string; title: string; at: number } | null = null;
+  #landingTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** '' when nothing runs in this chat (no turn, nothing queued or being sent, no running subagent), else why not. */
+  landingIdleReason(): string {
+    if (this.closed || !this.ready) return 'the chat is not open';
+    if (this.busy) return 'a turn is running';
+    const q = this.queue;
+    if (q.inflight || q.items.length || q.steer.length) return 'messages are queued';
+    if (this.#helpersRunning()) return 'a subagent is running';
+    for (const entry of this.subagents.values()) {
+      if (entry.state === 'running' || entry.state === 'requires_action') return 'a subagent is running';
+    }
+    return '';
+  }
+
+  /**
+   * One step: if the chat is idle, set the lock and answer ''; else the reason, and nothing changes. The same id may take it again
+   * (a renewal). It ends by itself after `ttlMs` without a renewal (the web process died mid-landing; its journal finishes the rest).
+   */
+  landingLock(id: string, owner: string, title: string, ttlMs: number): string {
+    if (this.landing && this.landing.id !== id) return `“${this.landing.title}” is landing`;
+    if (!this.landing) {
+      const why = this.landingIdleReason();
+      if (why) return why;
+      this.landing = { id, owner, title, at: Date.now() / 1000 };
+      this.queue.landing = title || 'a helper';
+      this.#queueChanged();
+    }
+    this.#armLanding(id, ttlMs);
+    return '';
+  }
+
+  landingRenew(id: string, ttlMs: number): boolean {
+    if (!this.landing || this.landing.id !== id) return false;
+    this.#armLanding(id, ttlMs);
+    return true;
+  }
+
+  /** Let go: what queued meanwhile goes out now, in order (the steer lane first). False when this id did not hold it. */
+  landingRelease(id: string): boolean {
+    if (!this.landing || (id && this.landing.id !== id)) return false;
+    this.landing = null;
+    this.queue.landing = '';
+    if (this.#landingTimer !== null) clearTimeout(this.#landingTimer);
+    this.#landingTimer = null;
+    this.#queueChanged();
+    void this.#steerPump().then(() => this.#queuePump()).catch((error) => log.exception(error, 'Sending after a landing failed'));
+    return true;
+  }
+
+  #armLanding(id: string, ttlMs: number): void {
+    if (this.#landingTimer !== null) clearTimeout(this.#landingTimer);
+    this.#landingTimer = setTimeout(() => {
+      this.#landingTimer = null;
+      if (this.landing?.id !== id) return;
+      log.warning('chat %s: the landing lock of “%s” was not renewed; letting it go', this.id, this.landing.title);
+      this.landingRelease(id);
+    }, Math.max(1, ttlMs));
+  }
+
+  /** A prompt that arrives while a landing holds the chat: it waits in the queue and goes when the landing ends. */
+  async #queueForLanding(text: unknown, clientMessageId: string | null, attachments: unknown): Promise<Json> {
+    const answer = await this.queueAdd(text, clientMessageId, attachments);
+    return { ...answer, accepted: true, landing: this.landing?.title ?? '' };
+  }
+
   /**
    * A chat rebuilt from the keeper: its saved queue goes on as it was (the turn never stopped), so it is not paused; messages sent
    * while it worked go back into the steer lane (a steer the old AIB sent takes its answer from the record, B4).
@@ -4680,6 +4755,7 @@ export class Connection {
       if (this.#replaying || this.rebuildError || this.closed || !this.ready || !this.sessionId) return;
       const head = q.steer[0];
       if (!head) return;
+      if ((!this.busy || this.autonomous) && this.landing) return; // a landing holds the folder: it goes when that lets go
       if (!this.busy || this.autonomous) {
         // Idle (or Claude Code's own cycle, which a prompt takes over): the first goes as an ordinary prompt and the rest are steered
         // into its turn (B9). A helper's open card does not hold it: the main agent is idle (owner, 2026-11-12).
@@ -5075,7 +5151,7 @@ export class Connection {
       if (this.#replaying || this.rebuildError) return;
       const q = this.queue;
       if (
-        this.closed || !this.ready || this.busy || !this.sessionId ||
+        this.closed || !this.ready || this.busy || !this.sessionId || this.landing ||
         q.inflight || !q.items.length || q.pauseReason() || q.steer.length // the steer lane goes first
       ) return;
       if (this.permissions.size || this.elicitations.size || this.auth) return;

@@ -73,6 +73,11 @@ export interface SteerItem {
 /** The saved form of an item (as read back from a store file it may be any JSON). */
 export type SavedItem = Record<string, unknown>;
 
+/** The queue box line while a helper's (or copy chat's) work lands in this chat's folder (build plan 1b, 2.3). */
+export function landingMessage(title: string): string {
+  return `Sends after “${title}” lands (a few seconds).`;
+}
+
 /** The note a steered message gets when it lands in the after-turn queue because AIB restarted while it was being sent. */
 export const STEER_RESTART_NOTE = 'AIB restarted while this was being sent, so it may already have reached the agent. Remove it, or ' +
   'press Resume to send it again.';
@@ -96,6 +101,11 @@ export class MessageQueue {
   sendNow = false;
   /** Messages sent while the agent works (steer lane): first in first out, ahead of `items`. See SteerItem. */
   steer: SteerItem[] = [];
+  /**
+   * Build plan 1b, 2.3: the title of the helper (or copy chat) whose work is landing in this chat's folder right now, '' otherwise.
+   * While it is set nothing is sent; the queue box says what it waits for. Not saved: the landing lock lives only in the host.
+   */
+  landing = '';
 
   constructor(leaseSeconds?: number | null, clock?: Clock | null) {
     this.clock = clock || wallClock;
@@ -238,7 +248,18 @@ export class MessageQueue {
       editing: 'Paused while you edit',
       abandoned: 'Paused - a queued message was being edited',
     };
-    return { items, paused: !!reason, reason, message: reason ? (messages[reason] ?? '') : '', leaseSeconds: this.leaseSeconds };
+    const out: Record<string, unknown> = {
+      items,
+      paused: !!reason,
+      reason,
+      message: reason ? (messages[reason] ?? '') : '',
+      leaseSeconds: this.leaseSeconds,
+    };
+    if (this.landing) { // only while a landing holds the chat, so every other answer stays as it was
+      out.landing = this.landing;
+      if (!reason) out.message = landingMessage(this.landing);
+    }
+    return out;
   }
 
   /** The steer lane as the page sees it (snapshot `steerLane`). */
