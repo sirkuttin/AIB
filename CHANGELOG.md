@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- WSL screens: spacing, contrast and wording fixes.
 - WSL chats survive AIB being away: the Linux keeper keeps a distro's agents running for 2 hours without AIB, not 35 seconds. An
   AIB restart, crash, update or test-build swap, or an older AIB build that stopped the keep-alive, no longer stops claude or codex
   chats working in WSL; the next AIB within those 2 hours takes every one of them over. Each time an AIB (or the keep-alive)

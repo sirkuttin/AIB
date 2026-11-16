@@ -2637,6 +2637,7 @@
     card.hidden = false;
     card.dataset.sig = sig;
     card.dataset.artId = m.id;
+    card.classList.toggle('art-card-failed', !!m.error); // the app's failure colours (a failed tool row's red), not a good card's teal
     card.replaceChildren();
     const ic = el('span', 'art-card-ic art-card-win'),
       body = el('div', 'art-card-body');

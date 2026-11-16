@@ -644,9 +644,9 @@ arguments), `wsl_linking_remove_e2e` (real distro, below).
   `start`).
 - The card: "Everything AIB keeps in Ubuntu, in <root> on this PC", the disk use by part (`usage.parts`: label and size, the
   part's folder on hover; the agents of `usage.agents` with their versions under the agents part; "In all" = `totalBytes`).
-- Then the lines "AIB versions installed: <current> (current), <older>", "Chat copies: 3, 1 with unsaved changes" (none / none with
-  unsaved changes), "Chats working now: N".
-- **Other AIB data folders in Ubuntu** (`dataFolders` where not `mine`): name, size, an "in use" chip when `keeperAlive`; read-only,
+- Then the lines "AIB versions installed: <current> (current), <older>", "Chat copies: 3, 1 with uncommitted changes" (none / none with
+  uncommitted changes), "Chats working now: N".
+- **Other AIB folders in Ubuntu** (`dataFolders` where not `mine`): name, size, an "in use" chip when `keeperAlive`; read-only,
   with "These belong to another AIB build or data folder. Remove here never touches them."
 - `usage: null` (not ready): the answer's line, no buttons. A read error: the reason, Remove and Refresh.
 - **Remove AIB from Ubuntu** opens an in-page dialog in delete-project-ui.js's look (`.dp-dialog`, role alertdialog, Cancel
