@@ -44,7 +44,7 @@ class WslLab {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
     const studio = new Studio({ ompCommand: 'unused', stateDir: this.state, port: 0, ownersDir: null }, { keeper });
     studio.ownerProbe = () => null;
-    studio.connectionFactory = (command, cwd, provider, options) => {
+    studio.connectionFactory = (_command, cwd, provider, options) => {
       const wsl = options?.wsl ? { ...options.wsl, program: undefined } : options?.wsl;
       return new Connection(fake('--cancel-aware', '--breadth'), cwd, provider, { ...options, wsl });
     };
@@ -202,7 +202,6 @@ Deno.test({
 Deno.test({
   name: 'KNOWN-BROKEN: audit wsl discover: "Find more chats via agent" is never answered by a WSL chat\'s Linux agent',
   ...T,
-  ignore: !Deno.env.get('AUDIT_WSL'),
   async fn() {
     // Studio.listAgentSessions picks ANY live chat of the provider (studio.ts:991). With a WSL Claude chat open, the Windows
     // "Find more chats via agent" button asks the agent inside the distro: it lists the distro's sessions (Linux cwds, filtered
@@ -214,5 +213,82 @@ Deno.test({
     const [status, payload] = await a.liveCall('discover', { provider: 'claude' });
     const asked = lab.received().filter((m) => m.method === 'session/list');
     assertEquals(asked.length, 0, `the Linux agent was asked for the Windows list (${status} ${JSON.stringify(payload)})`);
+  },
+});
+
+Deno.test({
+  name: 'F4: "Find more chats via agent" for a WSL project asks the running agent in its distro (Linux folder) and lists refs',
+  ...T,
+  async fn() {
+    await keeperBinary();
+    await using lab = new WslLab();
+    const a = lab.studio();
+    a.connectionFactory = (_command, cwd, provider, options) => { // the fake agent's session/list answers Linux cwds (/fixture/project)
+      const wsl = options?.wsl ? { ...options.wsl, program: undefined } : options?.wsl;
+      return new Connection(fake('--cancel-aware', '--list-sessions'), cwd, provider, { ...options, wsl });
+    };
+    await a.connect('claude', REF);
+    const [status, payload] = await a.liveCall('discover', { provider: 'claude', cwd: REF });
+    assertEquals(status, 200);
+    const asked = lab.received().filter((m) => m.method === 'session/list');
+    assertEquals(asked.length, 1, 'the Linux agent was asked once');
+    assertEquals((asked[0].params as Json).cwd, '/home/u/app', 'with the Linux folder, never the ref');
+    const p = payload as Json;
+    assertEquals(p.via, 'studio-connection');
+    assertEquals((p.sessions as Json[]).map((s) => s.cwd), ['wsl://ubuntu/fixture/project', 'wsl://ubuntu/fixture/project']);
+    assertEquals(p.nextCursor, 'offset:2');
+  },
+});
+
+Deno.test({
+  name: 'F4: "Find more chats via agent" for a WSL project with no running agent there answers empty with a one-line reason (nothing started)',
+  ...T,
+  async fn() {
+    await keeperBinary();
+    await using lab = new WslLab();
+    const a = lab.studio();
+    const spawned = lab.host.link.spawned.length;
+    const [status, payload] = await a.liveCall('discover', { provider: 'claude', cwd: 'wsl://debian/home/u/app' });
+    assertEquals(status, 200);
+    const p = payload as Json;
+    assertEquals([p.supported, p.sessions, p.via], [true, [], 'none']);
+    assert(/Open a Claude Code chat in .+ first/.test(String(p.note)), String(p.note));
+    assertEquals(lab.host.link.spawned.length, spawned, 'nothing started in a distro');
+    assertEquals(lab.received().filter((m) => m.method === 'session/list').length, 0);
+  },
+});
+
+Deno.test({
+  name: "F8 (not reproduced): a WSL worktree chat's keeper note carries projectRoot = the project ref (what a rebuild files it under)",
+  ...T,
+  async fn() {
+    // Studio.connect sets worktree/projectRoot right after the factory (studio.ts; the `record` path starts the agent at once).
+    // The keeper writes the chat note only after its spawn answers (keeper/link.ts spawn: `first` runs after awaits), so the note
+    // has the project ref, and a rebuild (studio.ts #rebuildChat: c.projectRoot = note.projectRoot) files the chat under its project.
+    await keeperBinary();
+    await using lab = new WslLab();
+    const WT = '/home/u/.aib-server/data-x/worktrees/app-abc';
+    const wtDir = lab.dir + SEP + 'wt';
+    Deno.mkdirSync(wtDir);
+    lab.host.folders.set(WT, wtDir);
+    const a = lab.studio();
+    const c = a.connectionFactory(['unused'], 'wsl://ubuntu' + WT, 'claude', {
+      keeper: lab.host.link,
+      wsl: { distro: 'ubuntu', linuxPath: WT },
+      history: a.historyClient(),
+    });
+    c.worktree = { branch: 'aib/chat-1', base: 'main' };
+    c.projectRoot = REF;
+    a.connections.set(c.id, c);
+    const client = await lab.host.link.check();
+    let note: Json | null = null;
+    await until(async () => {
+      const listed = await client.list();
+      const ch = listed.find((x) => x.channel === `chat-${c.id}`);
+      note = ch ? await lab.host.link.firstNote(client, ch.channel) as Json | null : null;
+      return note;
+    }, 'the chat note in the distro keeper', 20);
+    const n = note as unknown as Json;
+    assertEquals([n.cwd, n.projectRoot, (n.worktree as Json).branch], ['wsl://ubuntu' + WT, REF, 'aib/chat-1']);
   },
 });

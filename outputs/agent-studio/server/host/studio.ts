@@ -76,7 +76,7 @@ import { helperOf, readHelpers } from '../swarm/registry.ts';
 import { swarmEnabled } from '../swarm/settings.ts';
 import { defaultsAllowed } from '../worktrees/local_strays.ts';
 import type { WslSpawn } from '../acp/connection.ts';
-import { refOf } from '../platform/location.ts';
+import { normLinuxPath, refOf, type WslLoc, wslLocOf } from '../platform/location.ts';
 import { heldDistro, isAibInternalLabel } from '../keeper/link.ts';
 import {
   distroName,
@@ -1002,7 +1002,11 @@ export class Studio {
       throw new ValueError('Invalid session list cursor');
     }
     if (cwd !== null && cwd !== undefined && (!isStr(cwd) || pyLen(cwd) > 1024)) throw new ValueError('Invalid workspace filter');
-    const live = [...this.connections.values()].find((c) => c.provider === provider && c.ready && !c.closed);
+    // A WSL chat's agent lives in its distro and knows only that distro's sessions (Linux cwds): it never answers for Windows
+    // projects, and a WSL project is asked only of a running agent in its own distro (its sessions' cwds become refs again).
+    const wslLoc = wslLocOf(cwd);
+    if (wslLoc) return await this.#listWslSessions(provider, wslLoc, (cursor as string) || null);
+    const live = [...this.connections.values()].find((c) => c.provider === provider && c.ready && !c.closed && !c.wsl);
     if (live) return { ...(await live.listSessions((cwd as string) || null, (cursor as string) || null)), via: 'studio-connection' };
     const probe = this.connectionFactory(command, home(), provider);
     try {
@@ -1011,6 +1015,26 @@ export class Studio {
     } finally {
       await probe.close();
     }
+  }
+
+  /** "Find more chats via agent" for a WSL project: a running chat of the agent in that distro, else a clean empty answer. */
+  async #listWslSessions(provider: string, loc: WslLoc, cursor: string | null): Promise<Json> {
+    const live = [...this.connections.values()].find((c) =>
+      c.provider === provider && c.ready && !c.closed && c.wsl?.distro.toLowerCase() === loc.distro
+    );
+    if (!live) {
+      const note = `Open a ${provider === 'claude' ? 'Claude Code' : 'OMP'} chat in ${distroName(loc.distro)} first: ` +
+        'AIB asks a running agent there and never starts one to list chats.';
+      return { supported: true, sessions: [], nextCursor: null, via: 'none', note };
+    }
+    const answer = await live.listSessions(loc.linuxPath, cursor);
+    const sessions = Array.isArray(answer.sessions) ? answer.sessions : [];
+    for (const s of sessions as Json[]) {
+      const path = normLinuxPath(s.cwd);
+      s.cwd = path ? refOf({ kind: 'wsl', distro: loc.distro, linuxPath: path }) : '';
+    }
+    answer.sessions = (sessions as Json[]).filter((s) => s.cwd);
+    return { ...answer, via: 'studio-connection' };
   }
 
   // ---- model / mode / effort lists for new chats ---------------------------------------------------------------------------

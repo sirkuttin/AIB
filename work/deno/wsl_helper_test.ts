@@ -487,6 +487,7 @@ Deno.test('the ready line can list every method of the contract', () => {
     'chat.repoBranch',
     'transcripts.sessions',
     'transcripts.read',
+    'transcripts.mentions',
     'docs.fs',
     'transcripts.query',
     'ownership.check',

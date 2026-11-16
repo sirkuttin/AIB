@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- WSL path links: full Linux paths open as project files. Clicking /home/u/app/src/main.ts in a WSL chat's reply, or the open-file
+  icon on an Edit/Write row, used to open it as "Outside this project", read-only. Now it opens in the Files tab like any project
+  file, with its Changes badge and Show in Files, also in a chat's own copy.
+- WSL path links: Linux names match exactly. In a WSL chat, readme.md no longer links to README.md (a click asked for a file that
+  is not there); Windows projects still ignore case.
+- WSL outside files: Ctrl+click on a Linux path outside the project now gets the same answer as an outside Windows file, instead of
+  "That path is not a folder of this PC".
+- WSL saved chats: outside-file links work when the chat is not running. A file outside the project that the saved chat's own
+  transcript names opens read-only, as for Windows chats; if Ubuntu is not running, AIB says so and does not start it.
+- Find more chats via agent: lists your Windows chats even with a WSL chat open. It used to ask the WSL chat's Linux agent and list
+  nothing.
+- Helpers stay off in WSL projects: AIB itself now refuses to start a helper for a WSL chat, not only the tool list.
+
 - Continue asks only on real evidence: a Claude Code or OMP process that merely runs in the chat's folder (for example VS Code's
   Claude Code panel) no longer brings up "Another app may be using this conversation" when the transcript has been quiet for 30
   minutes; the chat continues and gets one note naming the process. A process naming the session, holding its transcript open, a
