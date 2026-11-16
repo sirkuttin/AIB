@@ -303,10 +303,10 @@ Deno.test('publish by path (WSL): without the route\'s read the path is refused 
 
 // ---- the route step ---------------------------------------------------------------------------------------------------------
 
-function routeCtx(cwd: string | null, projectRoot: string | null = null): WebContext {
+function routeCtx(cwd: string | null, projectRoot: string | null = null, windowsFolder: string | null = null): WebContext {
   return {
     artifacts: {
-      service: { chat: (id: string) => id },
+      service: { chat: (id: string) => id, cwdFor: () => windowsFolder },
       chatStudio: () => ({ liveState: () => Promise.resolve(cwd ? { cwd } : null), conversations: { entries: {} }, store: { conversations: {} } }),
       connectionOf: (id: string) => id,
       projectRootOf: () => projectRoot,
@@ -334,6 +334,7 @@ Deno.test('route: a WSL chat\'s path is read through its distro\'s helper (workt
     // a Windows chat (or no chat): nothing done here, artifacts.ts resolves the path as before
     const win: Json = { conversationId: 'c1', title: 'X', path: 'a.png' };
     assertEquals(await attachWslFile(routeCtx(null), win), null);
+    assertEquals(await attachWslFile(routeCtx(`wsl://ubuntu${APP}`, null, 'C:/p'), win), null, 'a known Windows folder wins');
     assert(!(WSL_FILE_RESOLVED in win));
 
     // the distro is not there: one line, 503

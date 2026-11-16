@@ -563,6 +563,7 @@ export async function attachWslFile(ctx: WebContext, body: Json): Promise<Reply 
   if (typeof id !== 'string' || !id || id.length > 600) return null;
   const artifacts = ctx.artifacts;
   const chat = artifacts.service.chat(id);
+  if (artifacts.service.cwdFor(chat)) return null; // a Windows folder (prepare() found it): artifacts.ts resolves the path
   let folder: string | null;
   try {
     folder = await changesFolder(await artifacts.chatStudio(chat), artifacts.connectionOf(chat) || chat);
