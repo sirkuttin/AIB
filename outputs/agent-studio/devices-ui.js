@@ -856,7 +856,19 @@
   /* The approve box's Phone / Computer control: the approver on this PC decides (the device's own screen only suggests it), because
      the kind picks between the phone page and the full page. */
   function drawKind(claim) {
-    const kind = kindOf(claim);
+    return kindControl(claim.id, kindOf(claim), (value) => {
+      D.kinds[claim.id] = value;
+      draw();
+    });
+  }
+  /* The same control on a paired device's row: changing it saves at once (devices/kind), keeps the device paired, and the device's
+     page is the other one on its next load. */
+  function drawRowKind(d) {
+    return kindControl(d.id, d.kind === 'computer' ? 'computer' : 'phone', (value) => {
+      if (value !== (d.kind === 'computer' ? 'computer' : 'phone')) act('devices/kind', { id: d.id, kind: value }, 'kind');
+    });
+  }
+  function kindControl(id, kind, pick) {
     const group = el('div', null, 'dv-kind');
     group.setAttribute('role', 'radiogroup');
     group.setAttribute('aria-label', 'Kind of device');
@@ -864,15 +876,13 @@
       const l = el('label', null, 'dv-kind-option' + (kind === value ? ' on' : '')),
         r = el('input');
       r.type = 'radio';
-      r.name = 'dv-kind-' + claim.id;
+      r.name = 'dv-kind-' + id;
       r.value = value;
       r.checked = kind === value;
       r.disabled = !!D.busy;
       r.dataset.kind = value;
       r.addEventListener('change', () => {
-        if (!r.checked) return;
-        D.kinds[claim.id] = value;
-        draw();
+        if (r.checked) pick(value);
       });
       l.append(r, el('span', label));
       group.append(l);
@@ -931,8 +941,8 @@
       el(
         'p',
         kind === 'computer'
-          ? 'A computer opens the full AIB page. You can change these later on its row. To change Phone or Computer later, remove it and pair it again.'
-          : "You can change these later on the phone's row. To change Phone or Computer later, remove it and pair it again.",
+          ? 'A computer opens the full AIB page. You can change these, and Phone or Computer, later on its row.'
+          : "You can change these, and Phone or Computer, later on the phone's row.",
         'st-note',
       ),
     );
@@ -1027,8 +1037,18 @@
         el('span', d.active ? 'Active now' : 'Last seen ' + ago(d.lastSeen), 'st-tag'),
       );
       row.append(head);
+      row.append(drawRowKind(d));
+      row.append(
+        el(
+          'p',
+          d.kind === 'computer'
+            ? 'This computer opens the full AIB page the next time it loads AIB. Switching it to Phone removes its computer switches.'
+            : 'This phone opens the phone page. Switching it to Computer turns every switch on; its page changes the next time it loads AIB.',
+          'st-note dv-kind-note',
+        ),
+      );
       row.append(drawSwitches(d));
-      row.append(drawRemind(d));
+      if (d.kind !== 'computer') row.append(drawRemind(d)); // Silent reminders are a phone thing
       const actions = el('div', null, 'st-actions');
       if (D.confirm === d.id) {
         actions.append(

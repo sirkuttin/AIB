@@ -473,6 +473,22 @@ export class PhoneAccess implements SetupHost {
     return device;
   }
 
+  /** Phone / Computer on a paired device's row. Open sockets are re-checked now; the device's page loads the other page next time. */
+  async setKind(id: unknown, kindValue: unknown): Promise<PublicDevice | null> {
+    if (typeof id !== 'string' || (kindValue !== 'phone' && kindValue !== 'computer')) return null;
+    const device = await this.devices.setKind(id, kindValue);
+    if (device) {
+      this.sockets.recheck(); // a phone may not hold a terminal: the 1 s check would close it anyway
+      this.audit.write({
+        device: id,
+        name: device.name,
+        action: 'kind',
+        result: `${device.name} is now a ${kindValue}`,
+      });
+    }
+    return device;
+  }
+
   async setRemind(id: unknown, remind: unknown): Promise<PublicDevice | null> {
     if (typeof id !== 'string' || typeof remind !== 'boolean') return null;
     const device = await this.devices.setRemind(id, remind);

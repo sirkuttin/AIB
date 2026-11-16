@@ -826,6 +826,60 @@ Deno.test({
   },
 });
 
+Deno.test({
+  ...OPTS,
+  name:
+    "device kind: the row's Phone / Computer sets the kind and switches, logs a line, closes what a phone may not hold; a device cannot call it",
+  async fn() {
+    const s = await remoteOn();
+    try {
+      const dev = await pairPhone(s, "Laptop", undefined, "phone");
+      const row = async () => {
+        const [, view] = await pc(s, "GET", "/api/live/devices");
+        return (view.devices as Json[]).find((d) => d.id === dev.id)!;
+      };
+      assertEquals((await row()).kind, "phone");
+      // a bad kind or an unknown device changes nothing
+      assertEquals(
+        (await pc(s, "POST", "/api/live/devices/kind", { id: dev.id, kind: "tablet" }))[0],
+        400,
+      );
+      assertEquals(
+        (await pc(s, "POST", "/api/live/devices/kind", { id: "nope", kind: "computer" }))[0],
+        404,
+      );
+      // to Computer: all four pc.* switches on, with every phone switch
+      const [st, up] = await pc(s, "POST", "/api/live/devices/kind", { id: dev.id, kind: "computer" });
+      assertEquals(st, 200);
+      assertEquals((up.device as Json).kind, "computer");
+      let r = await row();
+      assertEquals(r.kind, "computer");
+      assertEquals([...(r.scopes as string[])].sort(), [...COMPUTER_SCOPES].sort());
+      // the device itself (a computer, even with every switch) never reaches it: the bridge says "on the PC only"
+      const viaBridge = await call(s, dev.token, "POST", "/api/live/devices/kind", { id: dev.id, kind: "phone" });
+      assert(viaBridge.status >= 400, "bridge refuses: " + viaBridge.status);
+      assertEquals((await row()).kind, "computer");
+      // back to Phone: every pc.* switch is gone, the phone ones stay
+      await pc(s, "POST", "/api/live/devices/kind", { id: dev.id, kind: "phone" });
+      r = await row();
+      assertEquals(r.kind, "phone");
+      assert(!(r.scopes as string[]).some((x) => x.startsWith("pc.")), "no pc.* left");
+      assert((r.scopes as string[]).includes("phone.answer"));
+      const lines = await activity(s);
+      assert(
+        lines.some((e) => e.action === "kind" && e.result === "Laptop is now a computer"),
+        "computer line",
+      );
+      assert(
+        lines.some((e) => e.action === "kind" && e.result === "Laptop is now a phone"),
+        "phone line",
+      );
+    } finally {
+      await s.close();
+    }
+  },
+});
+
 // ---- the approve box on the PC (headless browser) -------------------------------------------------------------------------------
 
 Deno.test({

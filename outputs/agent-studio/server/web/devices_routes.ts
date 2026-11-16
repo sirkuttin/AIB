@@ -52,6 +52,12 @@ export function devicesRoutes(): Map<string, Handler> {
     if (!device) return [404, { error: 'That phone is no longer paired.', code: 'no_device' }];
     return [200, { ok: true, device }];
   });
+  routes.set('POST /api/live/devices/kind', async (ctx, _url, body) => {
+    if (body?.kind !== 'phone' && body?.kind !== 'computer') throw new ValueError('kind must be phone or computer');
+    const device = await ctx.phone.setKind(body?.id, body.kind);
+    if (!device) return [404, { error: 'That device is no longer paired.', code: 'no_device' }];
+    return [200, { ok: true, device }];
+  });
   routes.set('POST /api/live/devices/remove-all', async (ctx) => [200, { ok: true, removed: await ctx.phone.removeAll() }]);
   routes.set('GET /api/live/devices/activity', async (ctx) => [200, { entries: await ctx.phone.activity() }]);
   routes.set('POST /api/live/devices/prefs', async (ctx, _url, body) => {

@@ -492,6 +492,7 @@ export const PC_ROUTES: Readonly<Record<string, RemoteEntry>> = {
   'POST /api/live/devices/remove': DEVICES,
   'POST /api/live/devices/remove-all': DEVICES,
   'POST /api/live/devices/scopes': DEVICES,
+  'POST /api/live/devices/kind': DEVICES,
   'GET /api/live/devices/activity': DEVICES,
   'POST /api/live/devices/prefs': DEVICES,
   'POST /api/live/devices/tailscale/refresh': DEVICES,

@@ -230,3 +230,30 @@ test('Silent reminders: a switch under each phone, on unless the phone says off,
   await flush();
   assert.equal(JSON.stringify(posts.find((p) => p[0] === 'devices/prefs')), JSON.stringify(['devices/prefs', { id: 'p1', remind: false }]));
 });
+
+test('device row: Phone / Computer control saves at once; Silent reminders only for phones; wording follows the kind', async () => {
+  const pc = ['phone.read', 'phone.answer', 'phone.prompt', 'phone.start', 'phone.approve', 'pc.always', 'pc.files', 'pc.terminal', 'pc.projects', 'phone.push'];
+  const view = base(Object.assign({}, SIGNED_IN, { serving: true }), {}, { devices: [{ id: 'p1', name: 'Pixel 9', kind: 'phone', scopes: ['phone.read'], lastSeen: 0 }, { id: 'c1', name: 'Laptop', kind: 'computer', scopes: pc, lastSeen: 0 }], pairing: {} });
+  const posts = [];
+  const { sh, UI, host } = shell(view, posts);
+  const box = sh.make('div', '', sh.body);
+  Object.defineProperty(box, 'isConnected', { get: () => true });
+  UI.render('phones', box, host);
+  await flush();
+  const radios = box.querySelectorAll('input').filter((i) => i.dataset && i.dataset.kind);
+  assert.equal(radios.length, 4);
+  assert.equal(JSON.stringify(radios.map((i) => [i.name, i.dataset.kind, i.checked])), JSON.stringify([['dv-kind-p1', 'phone', true], ['dv-kind-p1', 'computer', false], ['dv-kind-c1', 'phone', false], ['dv-kind-c1', 'computer', true]]));
+  assert.equal(box.querySelectorAll('input').filter((i) => i.dataset && i.dataset.remind).map((i) => i.dataset.remind).join(), 'p1');
+  assert.ok(box.textContent.includes('This phone opens the phone page'));
+  assert.ok(box.textContent.includes('This computer opens the full AIB page'));
+  radios[1].checked = true;
+  radios[1].dispatch ? radios[1].dispatch('change') : radios[1].dispatchEvent({ type: 'change' });
+  await flush();
+  assert.equal(JSON.stringify(posts.find((p) => p[0] === 'devices/kind')), JSON.stringify(['devices/kind', { id: 'p1', kind: 'computer' }]));
+  // choosing the kind it already has posts nothing
+  posts.length = 0;
+  radios[3].checked = true;
+  radios[3].dispatch ? radios[3].dispatch('change') : radios[3].dispatchEvent({ type: 'change' });
+  await flush();
+  assert.ok(!posts.some((p) => p[0] === 'devices/kind'));
+});

@@ -287,6 +287,29 @@ export class DeviceStore extends JsonFileStore {
     });
   }
 
+  /** The owner changed a device's kind on the PC (Settings > Devices, the row's Phone / Computer control). A computer gets every
+   * switch on (lead call: computers default to full work); a phone loses every pc.* switch. */
+  setKind(id: string, kindValue: unknown): Promise<PublicDevice | null> {
+    return this.locked(() => {
+      this.sync();
+      this.requireReadable();
+      const d = this.devices.get(id);
+      if (!d) return null;
+      const kind = cleanKind(kindValue);
+      if (kind === 'computer') {
+        d.kind = 'computer';
+        delete d.startOff;
+        d.scopes = cleanScopes(COMPUTER_SCOPES, 'computer');
+      } else {
+        delete d.kind;
+        d.scopes = cleanScopes(d.scopes, 'phone');
+      }
+      this.counter++;
+      this.#save();
+      return publicOf(d);
+    });
+  }
+
   /** Silent reminders on or off for one phone (Settings > Remote control, the phone's row). */
   setRemind(id: string, remind: boolean): Promise<PublicDevice | null> {
     return this.locked(() => {
