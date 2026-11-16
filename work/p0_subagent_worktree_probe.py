@@ -7,6 +7,10 @@ config only: CLAUDE_CONFIG_DIR, CODEX_HOME, HOME, USERPROFILE, APPDATA, LOCALAPP
     python work/p0_subagent_worktree_probe.py <scratch-dir> <scenario> [<scenario> ...]
 
 Scenarios: aib-hooks, claude-own, user-hook, user-hook-slow, aib-hooks-bypass, wt-fail, hooks-off, background, codex-tools, codex-off, codex-agents-off.
+P0b: http-refused, http-refused-wt, http-5xx-pre, http-timeout-pre, cmd-exit2-pre, cmd-exit2-wt, cmd-ok, perm-default, perm-accept,
+perm-accept-mode, bypass-mode, deny-tools, workflow-agents, continue, fwd-ok, fwd-down, hook-cost, wt-timing, junction, junction-safe.
+fwd-ok / fwd-down / hook-cost need <worktree>/.p0b-scratch/fwd.exe, built from work/p0b_forwarder.go. Run with TEMP/TMP/TMPDIR pointed
+into the scratch folder too (Claude Code writes task output under %TEMP%/claude; _isolation's temp state folder uses TEMP).
 Owner guard: before and after, the owner's ~/.claude/projects and ~/.codex/sessions are listed; the report names any new entry
 that mentions this run's id or scratch path (there must be none).
 """
@@ -156,10 +160,10 @@ def temp_env(base, stub_url):
     return env
 
 
-def hooks_settings(url, events=('PreToolUse', 'PostToolUse', 'SubagentStart', 'SubagentStop', 'WorktreeCreate', 'WorktreeRemove')):
+def hooks_settings(url, events=('PreToolUse', 'PostToolUse', 'SubagentStart', 'SubagentStop', 'WorktreeCreate', 'WorktreeRemove'), timeout=60):
     out = {}
     for ev in events:
-        entry = {'hooks': [{'type': 'http', 'url': f'{url}/hooks/{ev}', 'timeout': 60}]}
+        entry = {'hooks': [{'type': 'http', 'url': f'{url}/hooks/{ev}', 'timeout': timeout}]}
         if ev in ('PreToolUse', 'PostToolUse'):
             entry['matcher'] = 'Agent|Task'
         out[ev] = [entry]
@@ -183,30 +187,42 @@ def summarize_events(events):
     return calls
 
 
-def claude_scenario(base, name, rules, meta_settings=None, user_settings=None, recorder=(), prompt='P0-PARENT go'):
-    base.mkdir(parents=True)
+def claude_scenario(base, name, rules, meta_settings=None, user_settings=None, recorder=(), prompt='P0-PARENT go', turn2=None, between=None, mode=None, address_file=None):
+    base.mkdir(parents=True, exist_ok=True)
     script = base / 'script.json'
     (base / 'dump').mkdir()
     project = make_repo(base / 'proj')
     # fill paths into the rules
-    text = json.dumps({'rules': rules}).replace('@MAINF@', project.as_posix()).replace('@MAIN@', str(project).replace('\\', '\\\\'))
+    wt1 = base / 'wt' / 'sub1'  # the fixed worktree path that P0b's command hook (--worktree) and the recorder (--fixed-name) make
+    text = (json.dumps({'rules': rules}).replace('@MAINF@', project.as_posix()).replace('@MAIN@', str(project).replace('\\', '\\\\'))
+            .replace('@WT@', str(wt1).replace('\\', '\\\\')))
     script.write_text(text, encoding='utf-8')
     stub = Proc([NODE, str(HERE / 'stub_model_api.js'), '--port', '0', '--log', str(base / 'stub.log'), '--stdin', '--script', str(script), '--dump', str(base / 'dump')], 'STUB_PORT')
     hooks = Proc([NODE, str(HERE / 'hook_recorder.js'), '--log', str(base / 'hooks.log'), '--stdin', *recorder], 'HOOKS_PORT')
     env = temp_env(base, f'http://127.0.0.1:{stub.port}')
     hook_url = f'http://127.0.0.1:{hooks.port}'
+    if address_file is not None:
+        address_file.write_text(hook_url + '\n', encoding='utf-8')
     if user_settings is not None:
         s = json.dumps(user_settings).replace('@HOOKS@', hook_url).replace('@BASE@', str(base).replace('\\', '/'))
         (base / 'claude' / 'settings.json').write_text(s, encoding='utf-8')
-    probe_args = ['--allow', '--events', str(base / 'events.log')]
+    probe_args = ['--allow', '--events', str(base / 'events.log')] + (['--mode', mode] if mode else [])
     if meta_settings is not None:
-        settings = json.loads(json.dumps(meta_settings).replace('@HOOKS@', hook_url))
+        settings = json.loads(json.dumps(meta_settings).replace('@HOOKS@', hook_url).replace('@BASE@', base.as_posix()))
         (base / 'meta.json').write_text(json.dumps({'claudeCode': {'options': {'settings': settings}}}), encoding='utf-8')
         probe_args += ['--meta', str(base / 'meta.json')]
     try:
         out = subprocess.run([NODE, str(HERE / 'acp_probe.js'), *probe_args, str(CLAUDE_ACP), 'new', str(project), f'{prompt} {RUN_MARK}'],
                              capture_output=True, text=True, timeout=300, env=env, creationflags=NO_WINDOW, stdin=subprocess.DEVNULL)
         probe = out.stdout.strip().splitlines()[-1:] or [out.stderr[-1500:]]
+        t1 = time.time()
+        if turn2 is not None:
+            session = json.loads(probe[0]).get('sessionId')
+            if between:
+                probe.append({'between': between(base, project)})
+            out = subprocess.run([NODE, str(HERE / 'acp_probe.js'), *probe_args, str(CLAUDE_ACP), 'load', str(project), session, f'{turn2} {RUN_MARK}'],
+                                 capture_output=True, text=True, timeout=300, env=env, creationflags=NO_WINDOW, stdin=subprocess.DEVNULL)
+            probe += out.stdout.strip().splitlines()[-1:] or [out.stderr[-1500:]]
     except subprocess.TimeoutExpired:
         probe = ['timeout']
     time.sleep(1)
@@ -218,7 +234,22 @@ def claude_scenario(base, name, rules, meta_settings=None, user_settings=None, r
                    'via': h.get('via'), 'reply': h.get('reply'), 'error': h.get('error'), 'keys': sorted(h['body'].keys())}
                   for h in lines(base / 'hooks.log')]
     claude_wt = project / '.claude' / 'worktrees'
+    events = lines(base / 'events.log')
     return {
+        'permission_requests': [{'title': (e['params'].get('toolCall') or {}).get('title'), 'kind': (e['params'].get('toolCall') or {}).get('kind'),
+                                 'options': [o.get('kind') for o in e['params'].get('options', [])],
+                                 'rawInput': (e['params'].get('toolCall') or {}).get('rawInput')}
+                                for e in events if e.get('request') == 'session/request_permission'],
+        'cmd_hooks': [{k: h.get(k) for k in ('label', 'exit', 'reply', 'stderr', 'at', 'startedAt')} | {
+                       'event': h['body'].get('hook_event_name'), 'tool': h['body'].get('tool_name'), 'agent_id': h['body'].get('agent_id'),
+                       'name': h['body'].get('name'), 'cwd': h['body'].get('cwd'), 'input': h['body'].get('tool_input'),
+                       'resp': h['body'].get('tool_response')} for h in lines(base / 'cmd-hooks.log')],
+        'console_checks': lines(base / 'console.log'),
+        'footprint': {'config_projects': sorted(p.name for p in (base / 'claude' / 'projects').iterdir()) if (base / 'claude' / 'projects').is_dir() else [],
+                      'temp_claude': sorted(p.name for p in (base / 'tmp' / 'claude').iterdir()) if (base / 'tmp' / 'claude').is_dir() else [],
+                      'subagent_transcripts': sorted(str(p.relative_to(base / 'claude')) for p in (base / 'claude' / 'projects').rglob('*.jsonl'))
+                      if (base / 'claude' / 'projects').is_dir() else []},
+        'wt1_files': sorted(str(p.relative_to(wt1)) for p in wt1.rglob('*') if p.is_file() and '.git' not in p.parts) if wt1.is_dir() else None,
         'scenario': name,
         'probe': probe,
         'stub': [x for x in lines(base / 'stub.log') if x['path'].endswith('/messages')],
@@ -284,7 +315,292 @@ def codex_scenario(base, name, codex_config=None):
             'tools_offered': calls[0]['tools'] if calls else None}
 
 
+# ---- P0b ---------------------------------------------------------------------------------------------------------------------
+RESTARTING = "AIB is restarting; try the subagent again in a moment."
+
+
+def dead_url():
+    """A local URL nothing listens on (a port that was free a moment ago)."""
+    import socket
+    s = socket.socket()
+    s.bind(('127.0.0.1', 0))
+    port = s.getsockname()[1]
+    s.close()
+    return f'http://127.0.0.1:{port}'
+
+
+def cmd(b, label, *flags):
+    """A command-hook entry running work/hook_cmd_p0b.js (shaped like AIB's planned forwarder: a console program, stdin JSON)."""
+    quoted = ' '.join('"' + f.replace('"', '\\"') + '"' for f in flags)
+    return {'type': 'command', 'command': f'node "{(HERE / "hook_cmd_p0b.js").as_posix()}" "{(b / "cmd-hooks.log").as_posix()}" {label} {quoted}'.rstrip(),
+            'timeout': 30}
+
+
+def console(b, label):
+    return {'type': 'command', 'command': f'"{pathlib.Path(sys.executable).as_posix()}" "{(HERE / "hook_console_check.py").as_posix()}" "{(b / "console.log").as_posix()}" {label}',
+            'timeout': 30}
+
+
+def cmd_hooks(b, with_console=False, pre_flags=('--force-isolation',), extra=None):
+    """AIB's planned hook set, as command hooks: PreToolUse(Agent|Task) forces isolation, WorktreeCreate makes <b>/wt/sub1."""
+    pre = [cmd(b, 'pre', *pre_flags)] + ([console(b, 'pre')] if with_console else [])
+    wt = [cmd(b, 'wt', '--worktree', str(b / 'wt' / 'sub1'))] + ([console(b, 'wt')] if with_console else [])
+    stop = [cmd(b, 'stop')] + ([console(b, 'stop')] if with_console else [])
+    hooks = {'PreToolUse': [{'matcher': 'Agent|Task', 'hooks': pre}], 'WorktreeCreate': [{'hooks': wt}],
+             'PostToolUse': [{'matcher': 'Agent|Task', 'hooks': [cmd(b, 'post')]}], 'SubagentStop': [{'hooks': stop}]}
+    hooks.update(extra or {})
+    return {'hooks': hooks}
+
+
+def perm_rules():
+    """The isolated subagent writes inside its own worktree three ways (Write, Read+Edit, Bash); the parent writes in the folder."""
+    return [
+        {'when': 'P0-PARENT', 'reply': {'tools': [{'id': 'toolu_pWrite00', 'name': 'Write', 'input': {
+            'file_path': '@MAIN@\\parent-write.txt', 'content': 'parent\n'}}]}},
+        {'when': 'toolu_pWrite00', 'reply': {'tools': [{'id': 'toolu_pAgent01', 'name': 'Agent', 'input': {
+            'description': 'p0b perm', 'prompt': 'SUBTASK-P: edit', 'subagent_type': 'general-purpose', 'run_in_background': False}}]}},
+        {'when': 'SUBTASK-P', 'reply': {'tools': [{'id': 'toolu_sWrite01', 'name': 'Write', 'input': {
+            'file_path': '@WT@\\perm-write.txt', 'content': 'w\n'}}]}},
+        {'when': 'toolu_sWrite01', 'reply': {'tools': [{'id': 'toolu_sRead02', 'name': 'Read', 'input': {'file_path': '@WT@\\tracked.txt'}}]}},
+        {'when': 'toolu_sRead02', 'reply': {'tools': [{'id': 'toolu_sEdit03', 'name': 'Edit', 'input': {
+            'file_path': '@WT@\\tracked.txt', 'old_string': 'one', 'new_string': 'one-edited'}}]}},
+        {'when': 'toolu_sEdit03', 'reply': {'tools': [{'id': 'toolu_sBash04', 'name': 'Bash', 'input': {
+            'command': 'echo b > perm-bash.txt && pwd', 'description': 'bash in worktree'}}]}},
+        {'when': 'toolu_sBash04', 'reply': {'text': 'SUB-DONE'}},
+        {'when': 'toolu_pAgent01', 'reply': {'text': 'PARENT-DONE'}},
+    ]
+
+
+WF_SCRIPT = ("export const meta = { name: 'p0b', description: 'p0b probe', phases: [{ title: 'one' }] }\n"
+             "phase('one')\nconst r = await agent('WF-AGENT do the work', { label: 'wf1' })\nreturn r\n")
+
+
+def deny_rules():
+    """The parent loads EnterWorktree, calls it, then calls Workflow; AIB's PreToolUse denies both."""
+    return [
+        {'when': 'P0-PARENT', 'reply': {'tools': [{'id': 'toolu_pTS01', 'name': 'ToolSearch', 'input': {'query': 'select:EnterWorktree', 'max_results': 5}}]}},
+        {'when': 'toolu_pTS01', 'reply': {'tools': [{'id': 'toolu_pEW02', 'name': 'EnterWorktree', 'input': {}}]}},
+        {'when': 'toolu_pEW02', 'reply': {'tools': [{'id': 'toolu_pWF03', 'name': 'Workflow', 'input': {'script': WF_SCRIPT}}]}},
+        {'when': 'toolu_pWF03', 'reply': {'text': 'PARENT-DONE'}},
+    ]
+
+
+def workflow_rules():
+    """The parent runs a Workflow whose script starts one agent; that agent writes a file. Do Agent hooks / worktrees see it?"""
+    return [
+        {'when': 'P0-PARENT', 'reply': {'tools': [{'id': 'toolu_pWF01', 'name': 'Workflow', 'input': {'script': WF_SCRIPT}}]}},
+        {'when': 'WF-AGENT', 'reply': {'tools': [{'id': 'toolu_wBash01', 'name': 'Bash', 'input': {
+            'command': 'echo from-wf > wf-agent.txt && pwd', 'description': 'wf agent writes'}}]}},
+        {'when': 'toolu_wBash01', 'reply': {'text': 'WF-AGENT-DONE'}},
+        {'when': 'toolu_pWF01', 'reply': {'text': 'PARENT-WAITS'}},
+        {'when': 'task-notification', 'reply': {'text': 'PARENT-DONE'}},
+    ]
+
+
+AGENT_ID = r'agentId\W{1,4}([A-Za-z0-9_-]{6,})'
+
+
+def continue_rules():
+    """Turn 1: an isolated subagent runs and finishes; the parent continues it with SendMessage (worktree still there).
+    Turn 2 (after the driver removed the worktree): the parent continues it again."""
+    sub_bash = lambda tag, i: {'tools': [{'id': f'toolu_cBash{i}', 'name': 'Bash', 'input': {
+        'command': f'echo {tag} > {tag}.txt && pwd && git rev-parse --abbrev-ref HEAD', 'description': f'{tag} write'}}]}
+    return [
+        {'when': 'P0-PARENT', 'reply': {'tools': [{'id': 'toolu_pAgent01', 'name': 'Agent', 'input': {
+            'description': 'p0b cont', 'prompt': 'SUBTASK-C: first', 'subagent_type': 'general-purpose', 'run_in_background': False}}]}},
+        {'when': 'SUBTASK-C', 'reply': sub_bash('first', 1)},
+        {'when': 'toolu_cBash1', 'reply': {'text': 'SUB-FIRST-DONE'}},
+        {'when': 'toolu_pAgent01', 'reply': {'tools': [{'id': 'toolu_pTS02', 'name': 'ToolSearch', 'input': {'query': 'select:SendMessage', 'max_results': 5}}]}},
+        {'when': 'toolu_pTS02', 'capture': AGENT_ID, 'reply': {'tools': [{'id': 'toolu_pSM03', 'name': 'SendMessage', 'input': {
+            'to': '@CAP@', 'message': 'CONT-ONE go on'}}]}},
+        {'when': 'CONT-ONE', 'reply': sub_bash('cont1', 2)},
+        {'when': 'toolu_cBash2', 'reply': {'text': 'SUB-CONT1-DONE'}},
+        {'when': 'toolu_pSM03', 'reply': {'text': 'PARENT-TURN1-DONE'}},
+        # turn 2
+        {'when': 'P0B-TURN2', 'reply': {'tools': [{'id': 'toolu_pTS04', 'name': 'ToolSearch', 'input': {'query': 'select:SendMessage', 'max_results': 5}}]}},
+        {'when': 'toolu_pTS04', 'capture': AGENT_ID, 'reply': {'tools': [{'id': 'toolu_pSM05', 'name': 'SendMessage', 'input': {
+            'to': '@CAP@', 'message': 'CONT-TWO go on'}}]}},
+        {'when': 'CONT-TWO', 'reply': sub_bash('cont2', 3)},
+        {'when': 'toolu_cBash3', 'reply': {'text': 'SUB-CONT2-DONE'}},
+        {'when': 'toolu_pSM05', 'reply': {'text': 'PARENT-TURN2-DONE'}},
+        {'when': 'task-notification', 'once': False, 'reply': {'text': 'PARENT-NOTED'}},
+    ]
+
+
+def remove_wt1(base, project):
+    """Between turns: remove the subagent's worktree the way AIB would at turn end (worktree only, branch kept)."""
+    out = subprocess.run(['git', 'worktree', 'remove', '--force', str(base / 'wt' / 'sub1')], cwd=project, capture_output=True, text=True,
+                         creationflags=NO_WINDOW)
+    return {'rc': out.returncode, 'err': out.stderr.strip(), 'exists_after': (base / 'wt' / 'sub1').exists()}
+
+
+def worktree_timing(base):
+    """P0b 9: an empty worktree of the AIB repo itself (this worktree's HEAD), timed; detached so no branch is left; then removed."""
+    base.mkdir(parents=True)
+    repo = HERE.parent
+    where = base / 'aib-wt'
+    t0 = time.perf_counter()
+    add = subprocess.run(['git', 'worktree', 'add', '--detach', str(where), 'HEAD'], cwd=repo, capture_output=True, text=True, creationflags=NO_WINDOW)
+    t1 = time.perf_counter()
+    files = int(git(where, 'ls-files', '--', '.').count('\n') + 1) if where.is_dir() else 0
+    t2 = time.perf_counter()
+    # snapshot S the way snapshotCommit does it: a temp index, add -A, write-tree, commit-tree (no ref changes, no stash)
+    env = dict(os.environ, GIT_INDEX_FILE=str(base / 'snap.index'))
+    subprocess.run(['git', 'read-tree', 'HEAD'], cwd=repo, env=env, capture_output=True, creationflags=NO_WINDOW)
+    subprocess.run(['git', 'add', '-A'], cwd=repo, env=env, capture_output=True, creationflags=NO_WINDOW)
+    tree = subprocess.run(['git', 'write-tree'], cwd=repo, env=env, capture_output=True, text=True, creationflags=NO_WINDOW).stdout.strip()
+    snap = subprocess.run(['git', 'commit-tree', tree, '-p', 'HEAD', '-m', 'p0b snapshot'], cwd=repo, capture_output=True, text=True, creationflags=NO_WINDOW)
+    t3 = time.perf_counter()
+    rm = subprocess.run(['git', 'worktree', 'remove', '--force', str(where)], cwd=repo, capture_output=True, text=True, creationflags=NO_WINDOW)
+    t4 = time.perf_counter()
+    return {'scenario': 'wt-timing', 'add_rc': add.returncode, 'add_err': add.stderr.strip()[-300:], 'tracked_files': files,
+            'add_seconds': round(t1 - t0, 2), 'snapshot_seconds': round(t3 - t2, 2), 'snapshot_rc': snap.returncode,
+            'remove_seconds': round(t4 - t3, 2), 'remove_rc': rm.returncode, 'exists_after': where.exists()}
+
+
+def junction(base):
+    """P0b 10: a worktree with a node_modules directory junction to the folder's node_modules; removing it keeps the target."""
+    project = make_repo(base / 'proj')
+    (project / '.gitignore').write_text('node_modules/\n', encoding='utf-8')
+    git(project, 'add', '.gitignore')
+    git(project, 'commit', '-m', 'ignore')
+    target = project / 'node_modules' / 'pkg'
+    target.mkdir(parents=True)
+    (target / 'index.js').write_text('module.exports = 1\n', encoding='utf-8')
+    where = base / 'wt' / 'j1'
+    git(project, 'worktree', 'add', '-b', 'j1', str(where), 'HEAD')
+    mk = subprocess.run(['cmd', '/c', 'mklink', '/J', str(where / 'node_modules'), str(project / 'node_modules')], capture_output=True, text=True,
+                        creationflags=NO_WINDOW)
+    status = git(where, 'status', '--porcelain', '--ignored')
+    seen = (where / 'node_modules' / 'pkg' / 'index.js').is_file()
+    rm = subprocess.run(['git', 'worktree', 'remove', str(where)], cwd=project, capture_output=True, text=True, creationflags=NO_WINDOW)
+    rm_force = None
+    if where.exists():
+        rm_force = subprocess.run(['git', 'worktree', 'remove', '--force', str(where)], cwd=project, capture_output=True, text=True, creationflags=NO_WINDOW)
+    return {'scenario': 'junction', 'mklink_rc': mk.returncode, 'status_in_wt': status, 'target_seen_through_junction': seen,
+            'remove_rc': rm.returncode, 'remove_err': rm.stderr.strip(), 'force_rc': rm_force.returncode if rm_force else None,
+            'force_err': rm_force.stderr.strip() if rm_force else None, 'wt_exists_after': where.exists(),
+            'target_file_kept': (target / 'index.js').is_file()}
+
+
+def junction_safe(base):
+    """P0b 10b: the same, but the junction itself is removed first with Deno.remove (non-recursive), as AIB (Deno) would."""
+    project = make_repo(base / 'proj')
+    (project / '.gitignore').write_text('node_modules/\n', encoding='utf-8')
+    git(project, 'add', '.gitignore')
+    git(project, 'commit', '-m', 'ignore')
+    target = project / 'node_modules' / 'pkg'
+    target.mkdir(parents=True)
+    (target / 'index.js').write_text('module.exports = 1\n', encoding='utf-8')
+    where = base / 'wt' / 'j1'
+    git(project, 'worktree', 'add', '-b', 'j1', str(where), 'HEAD')
+    subprocess.run(['cmd', '/c', 'mklink', '/J', str(where / 'node_modules'), str(project / 'node_modules')], capture_output=True, creationflags=NO_WINDOW)
+    script = base / 'rm_junction.ts'
+    script.write_text('const p = Deno.args[0];\nconst st = Deno.lstatSync(p);\nconsole.log(JSON.stringify({ isSymlink: st.isSymlink, isDirectory: st.isDirectory }));\n'
+                      'Deno.removeSync(p);\n', encoding='utf-8')
+    env = dict(os.environ, DENO_DIR=str(base / 'deno-dir'), DENO_NO_UPDATE_CHECK='1')
+    rm_j = subprocess.run([shutil.which('deno'), 'run', '--allow-read', '--allow-write', str(script), str(where / 'node_modules')], capture_output=True, text=True,
+                          env=env, creationflags=NO_WINDOW)
+    kept_after_junction_rm = (target / 'index.js').is_file()
+    rm = subprocess.run(['git', 'worktree', 'remove', str(where)], cwd=project, capture_output=True, text=True, creationflags=NO_WINDOW)
+    return {'scenario': 'junction-safe', 'deno_rc': rm_j.returncode, 'deno_out': rm_j.stdout.strip(), 'deno_err': rm_j.stderr.strip()[-300:],
+            'target_kept_after_junction_removed': kept_after_junction_rm, 'remove_rc': rm.returncode, 'remove_err': rm.stderr.strip(),
+            'wt_exists_after': where.exists(), 'target_file_kept': (target / 'index.js').is_file()}
+
+
+FWD = HERE.parent / '.p0b-scratch' / 'fwd.exe'  # built from work/p0b_forwarder.go (see p0b-results.md)
+
+
+def fwd_hooks(b, address_file):
+    """AIB's planned hook set through the Go forwarder prototype: `fwd.exe <address-file> <event>`."""
+    c = lambda ev: {'type': 'command', 'command': f'"{FWD.as_posix()}" "{address_file.as_posix()}" {ev}', 'timeout': 30}
+    return {'hooks': {'PreToolUse': [{'matcher': 'Agent|Task', 'hooks': [c('pre-tool')]}], 'WorktreeCreate': [{'hooks': [c('worktree-create')]}],
+                      'PostToolUse': [{'matcher': 'Agent|Task', 'hooks': [c('post-agent')]}], 'SubagentStop': [{'hooks': [c('subagent-stop')]}]}}
+
+
+def fwd_scenario(b, name, up):
+    """The forwarder reads the AIB address from a file: `up` = the recorder's address (AIB running), else a dead port (AIB down)."""
+    b.mkdir(parents=True)
+    addr = b / 'aib-address.txt'
+    rules = sub_rules()
+    if up:
+        # the recorder's port is only known once it runs: claude_scenario writes @HOOKS@ into meta, so point the file at it there
+        return claude_scenario(b, name, rules, fwd_hooks(b, addr), recorder=['--force-isolation', '--worktree-root', str(b / 'wt'), '--fixed-name', 'sub1', '--plain-worktree'],
+                               address_file=addr)
+    addr.write_text(dead_url() + '\n', encoding='utf-8')
+    return claude_scenario(b, name, rules, fwd_hooks(b, addr))
+
+
+def hook_cost(base, n=10):
+    """P0b 3: what one command-hook call costs, the way Claude Code runs it (Git Bash: bash.exe -> bash.exe -> the command).
+    Median of n runs each: the Go forwarder prototype to a live recorder, the same to a dead address (fail closed), and a node hook."""
+    import statistics
+    base.mkdir(parents=True)
+    bash = pathlib.Path(r'C:\Program Files\Git\bin\bash.exe')
+    hooks = Proc([NODE, str(HERE / 'hook_recorder.js'), '--log', str(base / 'hooks.log'), '--stdin'], 'HOOKS_PORT')
+    (base / 'up.txt').write_text(f'http://127.0.0.1:{hooks.port}\n', encoding='utf-8')
+    (base / 'down.txt').write_text(dead_url() + '\n', encoding='utf-8')
+    body = json.dumps({'hook_event_name': 'PreToolUse', 'tool_name': 'Agent', 'tool_input': {'subagent_type': 'general-purpose'}, 'cwd': str(base)})
+    cases = {
+        'go_forwarder_up': f'"{FWD.as_posix()}" "{(base / "up.txt").as_posix()}" pre-tool',
+        'go_forwarder_down': f'"{FWD.as_posix()}" "{(base / "down.txt").as_posix()}" pre-tool',
+        'node_hook': f'node "{(HERE / "hook_cmd_p0b.js").as_posix()}" "{(base / "cmd-hooks.log").as_posix()}" pre',
+        'bash_only': 'true',
+    }
+    out = {}
+    for name, command in cases.items():
+        times, codes = [], set()
+        for _ in range(n):
+            t0 = time.perf_counter()
+            r = subprocess.run([str(bash), '-c', command], input=body, capture_output=True, text=True, creationflags=NO_WINDOW)
+            times.append((time.perf_counter() - t0) * 1000)
+            codes.add(r.returncode)
+        out[name] = {'median_ms': round(statistics.median(times)), 'max_ms': round(max(times)), 'exit_codes': sorted(codes)}
+    hooks.stop()
+    return {'scenario': 'hook-cost', 'runs_each': n, 'bash': str(bash), 'results': out}
+
+
 SCENARIOS = {
+    # ---- P0b ----
+    'fwd-ok': lambda b: fwd_scenario(b, 'fwd-ok', True),
+    'fwd-down': lambda b: fwd_scenario(b, 'fwd-down', False),
+    'junction-safe': junction_safe,
+    'hook-cost': hook_cost,
+    # 1. fail-open: HTTP hooks whose server is gone (AIB quit): does the editing subagent run unisolated?
+    'http-refused': lambda b: claude_scenario(b, 'http-refused', sub_rules(), {'hooks': hooks_settings(dead_url())}),
+    # ... and with isolation in the model's own call: does Claude Code fall back to its own worktree, or fail the call?
+    'http-refused-wt': lambda b: claude_scenario(b, 'http-refused-wt', sub_rules(isolation='worktree'), {'hooks': hooks_settings(dead_url())}),
+    'http-5xx-pre': lambda b: claude_scenario(b, 'http-5xx-pre', sub_rules(), {'hooks': hooks_settings('@HOOKS@')},
+                                              recorder=['--fail-pre', '--worktree-root', str(b / 'wt')]),
+    'http-timeout-pre': lambda b: claude_scenario(b, 'http-timeout-pre', sub_rules(), {'hooks': hooks_settings('@HOOKS@', timeout=3)},
+                                                  recorder=['--delay-pre', '8000', '--force-isolation', '--worktree-root', str(b / 'wt')]),
+    # 1b. command hooks exiting 2 (the forwarder's fail-closed answer)
+    'cmd-exit2-pre': lambda b: claude_scenario(b, 'cmd-exit2-pre', sub_rules(), cmd_hooks(b, pre_flags=('--exit2', RESTARTING))),
+    'cmd-exit2-wt': lambda b: claude_scenario(b, 'cmd-exit2-wt', sub_rules(), {'hooks': {
+        'PreToolUse': [{'matcher': 'Agent|Task', 'hooks': [cmd(b, 'pre', '--force-isolation')]}],
+        'WorktreeCreate': [{'hooks': [cmd(b, 'wt', '--exit2', "AIB didn't expect this worktree")]}]}}),
+    # 2, 3, 8. the whole planned command-hook set: works? console window? time per call? footprint?
+    'cmd-ok': lambda b: claude_scenario(b, 'cmd-ok', sub_rules(), cmd_hooks(b, with_console=True)),
+    # 4. permission prompts for the isolated subagent's edits inside its worktree
+    'perm-default': lambda b: claude_scenario(b, 'perm-default', perm_rules(), {**cmd_hooks(b), 'permissions': {'defaultMode': 'default'}}),
+    'perm-accept': lambda b: claude_scenario(b, 'perm-accept', perm_rules(), {**cmd_hooks(b), 'permissions': {'defaultMode': 'acceptEdits'}}),
+    # the same with the mode set the way AIB sets it (ACP session/set_mode), and the P0 A4d bypass re-check
+    'perm-accept-mode': lambda b: claude_scenario(b, 'perm-accept-mode', perm_rules(), cmd_hooks(b), mode='acceptEdits'),
+    'bypass-mode': lambda b: claude_scenario(b, 'bypass-mode', sub_rules(), cmd_hooks(b), mode='bypassPermissions'),
+    # 6. EnterWorktree and Workflow denied by PreToolUse: real tool names, and the reason reaches the parent
+    'deny-tools': lambda b: claude_scenario(b, 'deny-tools', deny_rules(), cmd_hooks(b, extra={'PreToolUse': [{
+        'matcher': 'Agent|Task|EnterWorktree|Workflow', 'hooks': [cmd(b, 'pre', '--force-isolation',
+            '--deny', 'EnterWorktree=In AIB, chats work in the project folder. Use a subagent instead; AIB gives it its own worktree.',
+            '--deny', "Workflow=Workflows aren't available in AIB chats yet, because their agents can't get their own worktree.")]}]})),
+    # 6b. a Workflow's own agents: do PreToolUse(Agent) / WorktreeCreate see them? where do they write?
+    'workflow-agents': lambda b: claude_scenario(b, 'workflow-agents', workflow_rules(), cmd_hooks(b, extra={'PreToolUse': [{
+        'matcher': '.*', 'hooks': [cmd(b, 'pre', '--force-isolation')]}]})),
+    # 5. continuing a finished subagent: same turn (worktree there), next turn after the worktree was removed
+    'continue': lambda b: claude_scenario(b, 'continue', continue_rules(), cmd_hooks(b), turn2='P0B-TURN2', between=remove_wt1),
+    # 9, 10. git only
+    'wt-timing': worktree_timing,
+    'junction': lambda b: junction(b),
+    # ---- P0 ----
     # A1 A2 A3 A4 A5 A9: AIB's per-session settings carry HTTP hooks; PreToolUse forces isolation; WorktreeCreate makes the copy.
     'aib-hooks': lambda b: claude_scenario(b, 'aib-hooks', sub_rules(), {'hooks': hooks_settings('@HOOKS@')},
                                            recorder=['--force-isolation', '--worktree-root', str(b / 'wt')]),
