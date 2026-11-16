@@ -50,7 +50,16 @@ import { announce, getLogger, registerSecret } from '../core/log.ts';
 import { PhaseTimer, rebuildPhases } from '../core/timing.ts';
 import { isDict, isStr, pyLen, pyRepr, ValueError } from '../core/py.ts';
 import { findExternalOwner, OwnershipConflict, probeExternalOwner, SessionLease } from '../ownership/ownership.ts';
-import { ACTIVE_WINDOW_SECONDS, type Assessment, HEARTBEAT_SECONDS, OwnerRegistry, OwnershipEvidence, OwnershipProbe } from '../ownership/probe.ts';
+import {
+  ACTIVE_WINDOW_SECONDS,
+  type Assessment,
+  folderOnlyEvidence,
+  folderOnlyNote,
+  HEARTBEAT_SECONDS,
+  OwnerRegistry,
+  OwnershipEvidence,
+  OwnershipProbe,
+} from '../ownership/probe.ts';
 import { mergeAssessment, wslOwnerCheck, wslOwnerHints, wslOwnPids } from '../wsl/ownership.ts';
 import { expandUser } from '../platform/pypath.ts';
 import { home, isdir, join, realpath } from '../platform/ospath.ts';
@@ -535,14 +544,14 @@ export class Studio {
   }
 
   /** Throw OwnershipConflict / OwnershipEvidence unless a WSL chat may be continued: the same rules and words as for a Windows chat. */
-  async #wslCheckOwnership(provider: string, sessionId: string, wsl: { distro: string; linuxPath: string }, projectRoot: string | null, continueAnyway: boolean): Promise<void> {
+  async #wslCheckOwnership(provider: string, sessionId: string, wsl: { distro: string; linuxPath: string }, projectRoot: string | null, continueAnyway: boolean): Promise<Assessment> {
     const { owner, assessment } = await this.#wslAssess(provider, sessionId, wsl, projectRoot);
     if (owner !== null) {
       throw new OwnershipConflict(
         `This ${provider} conversation is already open in another agent process (PID ${owner}). Stop it in its current client before continuing here.`,
       );
     }
-    this.#refuseByVerdict(assessment, continueAnyway);
+    return this.#refuseByVerdict(assessment, continueAnyway);
   }
 
   /** Strong, read-only check: a native agent process whose command line names this session. */
@@ -592,7 +601,10 @@ export class Studio {
     }
   }
 
-  /** Throw OwnershipEvidence unless the conversation may be opened. The command-line probe has run already. */
+  /**
+   * Throw OwnershipEvidence unless the conversation may be opened; the assessment otherwise. The command-line probe has run already.
+   * Folder-only evidence (probe.ts folderOnlyEvidence) does not ask: connect() continues and notes it in the chat.
+   */
   checkOwnership(provider: string, sessionId: string, cwd: string, continueAnyway = false, fresh = true): unknown {
     return this.#refuseByVerdict(this.probe.assess(provider, sessionId, { cwd, skipCmdline: true, fresh }), continueAnyway);
   }
@@ -602,7 +614,7 @@ export class Studio {
       const strong = verdict.reasons.find((r) => r.strength === 'strong')!.text;
       throw new OwnershipEvidence(`${strong} Stop it in its current client before continuing here.`, 'session_in_use', verdict);
     }
-    if (verdict.verdict === 'possibly_active' && !continueAnyway) {
+    if (verdict.verdict === 'possibly_active' && !continueAnyway && !folderOnlyEvidence(verdict)) {
       throw new OwnershipEvidence(
         'Another app may be using this conversation: ' + verdict.reasons.slice(0, 2).map((r) => r.text).join(' '),
         'possibly_active',
@@ -1164,11 +1176,12 @@ export class Studio {
     }
     const lease = resume ? await new SessionLease(this.stateDir, provider, resume).acquire() : null;
     let connection: Connection | null = null;
+    let ownerNote: string | null = null; // folder-only evidence: continued without asking, said in the chat
     try {
       // The ownership check reads Windows processes and transcripts; a WSL agent's are inside the distro, so its helper checks there.
       if (resume && wsl) {
         const project = record ? wslLoc(String(record.project ?? ''))?.linuxPath ?? null : null;
-        await this.#wslCheckOwnership(provider, resume, wsl, project, continueAnyway);
+        ownerNote = folderOnlyNote(await this.#wslCheckOwnership(provider, resume, wsl, project, continueAnyway));
       } else if (resume) {
         const owner = await this.ownerProbe(provider, resume, [Deno.pid]);
         if (owner !== null && owner !== undefined) {
@@ -1176,8 +1189,9 @@ export class Studio {
             `This ${provider} conversation is already open in another agent process (PID ${owner}). Stop it in its current client before continuing here.`,
           );
         }
-        this.checkOwnership(provider, resume, workspace, continueAnyway);
+        ownerNote = folderOnlyNote(this.checkOwnership(provider, resume, workspace, continueAnyway));
       }
+      if (ownerNote) log.info('ownership: %s %s continued with folder-only evidence: %s', provider, resume, ownerNote);
       const connectionOptions: ConnectionOptions = {};
       if (Object.keys(env).length) connectionOptions.env = env;
       if (launch) {
@@ -1230,6 +1244,7 @@ export class Studio {
           const note = plan && c.worktree ? plan.note : startNote;
           if (note) c.recordedEvent('studio_note', { message: note, sessionId: c.sessionId });
           if (toolsNotice) c.recordedEvent('studio_note', { message: toolsNotice, sessionId: c.sessionId }); // a WSL chat's tools
+          if (ownerNote) c.recordedEvent('studio_note', { message: ownerNote, sessionId: c.sessionId }); // another agent in its folder
 
           if (!lease) {
             const newLease = await new SessionLease(this.stateDir, provider, c.sessionId!).acquire();

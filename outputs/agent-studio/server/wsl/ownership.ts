@@ -7,7 +7,10 @@
  * - strong (refused, the Windows message): a `claude` or `omp` process in the distro whose command line names the session id
  *   (`--resume <id>` / `--session-id <id>`), as ownership.ts findExternalOwner reads Windows command lines; or a live announcement.
  * - weak (asks first, "Another app may be using this conversation"): the transcript in the distro was written in the last two minutes by
- *   someone other than AIB, a process has it open, or a Claude Code process runs in the chat's folder.
+ *   someone other than AIB, a process has it open, or a Claude Code process runs in the chat's folder while the transcript was written
+ *   by someone other than AIB in the last 30 minutes (probe.ts QUIET_TRANSCRIPT_SECONDS).
+ * - folder only (continues, with a note in the chat): a Claude Code process in the chat's folder is the only sign and the transcript has
+ *   been quiet for 30 minutes (probe.ts folderOnlyEvidence; the same rule as for a Windows chat).
  * - never: AIB's own agents in that distro (every live pipe channel of this AIB's Linux keeper, and an agent's client terminals, with
  *   all their descendants) and the distro's AIB helper. A Claude Code of another AIB (another Windows data folder) does count.
  *
@@ -111,5 +114,6 @@ export function mergeAssessment(distro: Assessment | null, registry: Assessment,
     summary: SUMMARIES[verdict],
     elapsedMs: (distro?.elapsedMs ?? 0) + (registry.elapsedMs ?? 0),
     certainty: verdict === 'no_evidence' && unavailable.length ? 'unknown' : verdict === 'no_evidence' ? 'checked' : 'evidence',
+    transcriptQuiet: distro?.transcriptQuiet === true, // the transcript is the distro's (an older helper: unknown, so asks as before)
   };
 }
