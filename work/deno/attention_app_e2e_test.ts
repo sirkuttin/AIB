@@ -37,9 +37,9 @@ Deno.test({
     );
     let pagePosts = 0;
     const route = s.web.native.get('POST /api/live/desktop/notify')!;
-    s.web.native.set('POST /api/live/desktop/notify', (c, url, body, request) => {
+    s.web.native.set('POST /api/live/desktop/notify', (c, url, body, request, principal) => {
       pagePosts++;
-      return route(c, url, body, request);
+      return route(c, url, body, request, principal);
     });
     const presence: Json[] = [];
     // every report, with or without a window id (K2: the page now says which window it is)
