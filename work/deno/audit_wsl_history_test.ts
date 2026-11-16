@@ -257,3 +257,38 @@ Deno.test({
     assertEquals(lab.received().filter((m) => m.method === 'session/list').length, 0);
   },
 });
+
+Deno.test({
+  name: "F8 (not reproduced): a WSL worktree chat's keeper note carries projectRoot = the project ref (what a rebuild files it under)",
+  ...T,
+  async fn() {
+    // Studio.connect sets worktree/projectRoot right after the factory (studio.ts; the `record` path starts the agent at once).
+    // The keeper writes the chat note only after its spawn answers (keeper/link.ts spawn: `first` runs after awaits), so the note
+    // has the project ref, and a rebuild (studio.ts #rebuildChat: c.projectRoot = note.projectRoot) files the chat under its project.
+    await keeperBinary();
+    await using lab = new WslLab();
+    const WT = '/home/u/.aib-server/data-x/worktrees/app-abc';
+    const wtDir = lab.dir + SEP + 'wt';
+    Deno.mkdirSync(wtDir);
+    lab.host.folders.set(WT, wtDir);
+    const a = lab.studio();
+    const c = a.connectionFactory(['unused'], 'wsl://ubuntu' + WT, 'claude', {
+      keeper: lab.host.link,
+      wsl: { distro: 'ubuntu', linuxPath: WT },
+      history: a.historyClient(),
+    });
+    c.worktree = { branch: 'aib/chat-1', base: 'main' };
+    c.projectRoot = REF;
+    a.connections.set(c.id, c);
+    const client = await lab.host.link.check();
+    let note: Json | null = null;
+    await until(async () => {
+      const listed = await client.list();
+      const ch = listed.find((x) => x.channel === `chat-${c.id}`);
+      note = ch ? await lab.host.link.firstNote(client, ch.channel) as Json | null : null;
+      return note;
+    }, 'the chat note in the distro keeper', 20);
+    const n = note as unknown as Json;
+    assertEquals([n.cwd, n.projectRoot, (n.worktree as Json).branch], ['wsl://ubuntu' + WT, REF, 'aib/chat-1']);
+  },
+});
