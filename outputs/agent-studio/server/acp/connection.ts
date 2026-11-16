@@ -66,7 +66,7 @@ import { distroName, guardRealWslAgent, wslTestHomeEnv } from '../wsl/access.ts'
 import { APP_VERSION, TESTS_DIR } from '../core/app.ts';
 import { getLogger } from '../core/log.ts';
 import { DOCS_RULE } from '../docs/tool_defs.ts';
-import { SUBAGENT_PROMPT } from '../subagents/claude_config.ts';
+import { SUBAGENT_PROMPT, SUBAGENTS_OFF_PROMPT } from '../subagents/claude_config.ts';
 import {
   clip,
   isDict,
@@ -785,6 +785,9 @@ function rawOutputText(raw: unknown): string {
  * backgroundedToDeliverMessage for a steer) or its result text; any other agent: OMP's details.async {state: running, jobId} or its
  * "Backgrounded as job" text. (A Codex command that outlives its turn is found at the turn's end instead.)
  */
+/** The main agent's tools whose calls say a subagent started, continued or was stopped (subagent worktrees P2). */
+const CLAUDE_SUBAGENT_TOOLS = new Set(['Agent', 'Task', 'SendMessage', 'TaskStop', 'KillShell']);
+
 export function backgroundTask(update: Json, claude: boolean): string | null {
   const raw = get(update, 'rawOutput');
   if (claude) {
@@ -909,7 +912,16 @@ export class Connection {
    * whether the user's own WorktreeCreate hook makes the worktrees), or why it got none (`off`: "hooks are off", "not a git
    * project", "WSL", ...). Null: not a Claude chat, or not decided (a chat taken over from the keeper).
    */
-  subagentHooks: { settings: Json | null; readOnly: string[]; userWorktreeHook: string; off: string; detail?: string; adopted?: boolean } | null =
+  subagentHooks: {
+    settings: Json | null;
+    readOnly: string[];
+    userWorktreeHook: string;
+    off: string;
+    detail?: string;
+    adopted?: boolean;
+    /** Hooks off in the user's settings: the permission deny rules that turn the chat's editing subagents off (P2). */
+    deny?: Json;
+  } | null =
     null;
   /** The worktree a subagent works in, by its Agent call's tool_use_id (allow-rule parity); set by the Studio. */
   subagentWorktree: ((toolUseId: string) => string | null) | null = null;
@@ -1040,6 +1052,10 @@ export class Connection {
   sessionLease: SessionLease | null = null;
   /** Studio hook: the agent finished a turn, so it is the user's turn. */
   onTurnEnd: Hook | null = null;
+  /** The user stopped a turn (stopReason cancelled; onTurnEnd does not run for it). */
+  onTurnCancelled: Hook | null = null;
+  /** Claude Code: one of the main agent's Agent / Task / SendMessage / TaskStop calls was seen or updated (subagent worktrees P2). */
+  onClaudeTool: ((c: Connection, tool: string, toolUseId: string, input: Json, status: string, agentId: string) => void) | null = null;
   /**
    * Studio hook: the agent sent subscription limit data on its own (server/host/usage_limits_feed.ts). kind 'claude-rate-limit'
    * (usage_update._meta._claude/rateLimit) or 'qwen-quota' (a prompt error's data.subscriptionQuota); at = when, in seconds.
@@ -2726,6 +2742,18 @@ export class Connection {
     }
     const status = get(update, 'status');
     if (seen && isStr(status)) seen.status = status;
+    // Subagent worktrees (P2): the main agent's Agent / SendMessage / TaskStop calls, from the stream the agent can't forge
+    const named = seen?.toolName ?? (isStr(toolName) ? toolName : null);
+    if (main && this.onClaudeTool && named && CLAUDE_SUBAGENT_TOOLS.has(named) && !seen?.parent) {
+      const raw = get(update, 'rawInput');
+      try {
+        const response = isDict(claude) ? get(claude, 'toolResponse') : null;
+        const agentId = isDict(response) ? get(response, 'agentId') : null;
+        this.onClaudeTool(this, named, id, isDict(raw) ? raw : {}, isStr(status) ? status : '', isStr(agentId) ? agentId : '');
+      } catch (error) {
+        log.exception(error, 'onClaudeTool failed');
+      }
+    }
     if (kind !== 'tool_call_update') return;
     const background = this.#bgTools.get(id);
     if (background) {
@@ -3064,6 +3092,9 @@ export class Connection {
         } catch (error) {
           log.exception(error, 'on_turn_end hook failed');
         }
+      }
+      if (this.onTurnCancelled && !this.#replaying && stopReason === 'cancelled') {
+        await Promise.resolve(this.onTurnCancelled(this)).catch((error) => log.exception(error, 'on_turn_cancelled hook failed'));
       }
       await this.#finishTurn();
       await this.#queueAfterTurn();
@@ -4218,6 +4249,9 @@ export class Connection {
           log.exception(error, 'on_turn_end hook failed');
         }
       }
+      if (this.onTurnCancelled && !this.#replaying && isDict(result) && result.stopReason === 'cancelled') {
+        await Promise.resolve(this.onTurnCancelled(this)).catch((error) => log.exception(error, 'on_turn_cancelled hook failed'));
+      }
       if (clientMessageId) {
         const receipt = this.promptReceipts.get(clientMessageId);
         if (receipt) receipt.state = 'finished';
@@ -5280,7 +5314,7 @@ export class Connection {
    * hookSettings: the command hooks; never written to ~/.claude), or {}. The same object on every session/new and session/load.
    */
   claudeMeta(): Json {
-    const settings = this.subagentHooks?.settings;
+    const settings = this.subagentHooks?.settings ?? this.subagentHooks?.deny;
     return settings ? { _meta: { claudeCode: { options: { settings: structuredClone(settings) } } } } : {};
   }
 
@@ -5288,7 +5322,8 @@ export class Connection {
     const own = (servers ?? []).some(isOwnArtifactEntry);
     const local = this.localOnlyText();
     const brief = this.scratchDir ? houseRules(this.scratchDir) : ''; // allow rules: the house rules with the literal scratch path
-    const subagents = this.subagentHooks?.settings ? SUBAGENT_PROMPT : ''; // hooks on: subagents that edit get their own worktree
+    // hooks on: subagents that edit get their own worktree; hooks off: they are turned off (P2)
+    const subagents = this.subagentHooks?.settings ? SUBAGENT_PROMPT : this.subagentHooks?.deny ? SUBAGENTS_OFF_PROMPT : '';
     if (!own && !local && !brief && !subagents) return {};
     const out: Json = {};
     // Presence is support (ACP capability objects): codex-acp advertises `systemPrompt: {}`, which a truthiness test missed.

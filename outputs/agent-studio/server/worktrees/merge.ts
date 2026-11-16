@@ -261,6 +261,12 @@ export function commitMessage(title: unknown): string {
   return text ? `AIB: work from chat ${text}` : 'AIB: work from chat';
 }
 
+/** A subagent's landing commit (subagent worktrees P2, design 3.6): "AIB: subagent <description>". */
+export function subagentMessage(title: unknown): string {
+  const text = clip(pyStrip(pyStr(title || '').replace(new RegExp(`[${PY_SPACE}]+`, 'g'), ' ')), 80);
+  return text ? `AIB: subagent ${text}` : 'AIB: subagent';
+}
+
 const RUNNING_STATE = /^(running|working|in[-_ ]progress|active|starting|queued|busy|streaming)$/i;
 
 /** The folder a subagent says it works in ('' when it did not say). */
@@ -354,6 +360,13 @@ export class Chat {
   options: MergeOptions = {};
   snapshot = '';
   user = '';
+  /**
+   * Subagent worktrees (P2): a worktree that is no chat's own (a Claude subagent's, landed through its parent's helper landing). It has
+   * no worktree record: no worktree lock, no conflict record, no reset after landing and no lines in a chat of its own (the swarm posts
+   * them in the parent). `head` is the commit to land (a snapshot of the subagent's worktree, its uncommitted work included).
+   */
+  detached = false;
+  head = '';
 
   private constructor(readonly studio: MergeStudio, readonly id: string, readonly fromTool: boolean) {}
 
@@ -381,6 +394,29 @@ export class Chat {
     chat.reload();
     chat.target = await targetBranch(chat.project, chat.startBase, chat.record);
     chat.base = chat.target;
+    return chat;
+  }
+
+  /**
+   * A subagent's worktree as a folder chat's helper (subagent worktrees P2): lands by tree against `start` (S) on `landOn`, the
+   * folder's branch, with no stash; `id` is the parent chat (its landing lock is already held by the caller).
+   */
+  static detachedOf(
+    studio: MergeStudio,
+    spec: { id: string; key: string; worktree: string; project: string; start: string; head: string; landOn: string },
+  ): Chat {
+    const chat = new Chat(studio, spec.id, true);
+    chat.detached = true;
+    chat.key = spec.key;
+    chat.wt = spec.worktree;
+    chat.project = spec.project;
+    chat.startBase = spec.landOn;
+    chat.base = spec.landOn;
+    chat.target = spec.landOn;
+    chat.landOn = spec.landOn;
+    chat.snapshot = spec.start;
+    chat.user = spec.start;
+    chat.head = spec.head;
     return chat;
   }
 
@@ -762,6 +798,45 @@ async function mergeRounds(chat: Chat, title: unknown): Promise<MergeResult> {
   throw new Refused(`${chat.base} keeps changing; try Merge again`, 'moving');
 }
 
+/**
+ * Subagent worktrees (P2; owner 2026-11-16: "lands exactly like helpers' work today"): land a subagent's work on the folder's branch
+ * through the folder-chat helper landing (land / landHeld: by tree against S, line-ending fix, local-only paths kept out, the other
+ * folder chats' landing lock, the touched-dirty refusal, no stash, the journal, the per-repo lock), as one AIB commit. The caller
+ * (swarm/service.ts) holds the parent's landing lock and passes it in `options.held`. Throws Refused like merge().
+ */
+export async function landWorktree(
+  studio: MergeStudio,
+  spec: { parent: string; key: string; worktree: string; project: string; start: string; head: string; landOn: string },
+  title: unknown,
+  options: MergeOptions = {},
+): Promise<MergeResult> {
+  const chat = Chat.detachedOf(studio, { id: spec.parent, ...spec });
+  chat.options = options;
+  if (RUNNING.has(chat.key)) throw new Refused('A landing of this subagent is already running', 'running');
+  RUNNING.add(chat.key);
+  try {
+    for (let round = 0; round < MAX_ROUNDS; round++) {
+      const tip = await rev(chat.project, `refs/heads/${chat.base}`);
+      if (!tip) throw new Refused(`The branch ${chat.base} no longer exists`, 'no_base');
+      await hook('before_lock');
+      const outcome = await repoLock(chat.project).run(async (): Promise<MergeResult | null> => {
+        if ((await rev(chat.project, `refs/heads/${chat.base}`)) !== tip) return null; // moved since: look again
+        return await land(chat, tip, title);
+      });
+      if (outcome) return outcome;
+    }
+    throw new Refused(`${chat.base} keeps changing; it lands at the next try`, 'moving');
+  } catch (error) {
+    if (error instanceof GitError) {
+      log.exception(error, 'Landing subagent %s failed', spec.key);
+      throw new Refused(clip(error.message, 200), 'git_failed');
+    }
+    throw error;
+  } finally {
+    RUNNING.delete(chat.key);
+  }
+}
+
 export interface StashRef {
   sha: string;
   name: string;
@@ -847,7 +922,7 @@ async function treeLanding(chat: Chat, tip: string, head: string, title: unknown
     ? 'Chat commits:\n' +
       own.slice(0, 30).map((subject) => '- ' + clip(subject, 120)).join('\n')
     : '';
-  const message = [commitMessage(title), ...(body ? [body] : [])];
+  const message = [chat.detached ? subagentMessage(title) : commitMessage(title), ...(body ? [body] : [])];
   const sha = strip((await gitc(['commit-tree', tree, '-p', tip, ...message.flatMap((m) => ['-m', m])], chat.wt)).stdout);
   return ['landed', sha, Math.max(1, own.length)];
 }
@@ -992,7 +1067,7 @@ async function land(chat: Chat, tip: string, title: unknown): Promise<MergeResul
     const why = await folderState(folder);
     if (why) throw new Refused(why[0].toUpperCase() + why.slice(1), 'locked');
   }
-  const own = await rev(chat.wt, 'HEAD');
+  const own = chat.head || await rev(chat.wt, 'HEAD');
   // Line endings: commits made in the copy by a git with other settings (a WSL agent's git, an IDE, core.autocrlf=false) carry CRLF
   // churn of every file they re-read. Only real changes land: those files keep U's line endings, landed by tree against U.
   const [head, eolFixed] = await wt.withoutLineEndingOnly(chat.wt, chat.user, own, await gitDir(chat.wt));
@@ -1004,10 +1079,11 @@ async function land(chat: Chat, tip: string, title: unknown): Promise<MergeResul
   let landed = '';
   let count = 0;
   if (byTree) {
-    const built = await treeLanding(chat, tip, head, title, own);
+    // a subagent's head is a snapshot commit of its worktree: its message is not the subagent's, so its log starts below it
+    const built = await treeLanding(chat, tip, head, title, chat.detached ? `${own}^` : own);
     if (built[0] === 'conflicts') {
       const line = treeConflictLine(chat, built[1]);
-      await chat.registry.update(chat.key, { mergeConflicts: built[1] }); // as the base-merge path: live sync waits for the fix
+      if (!chat.detached) await chat.registry.update(chat.key, { mergeConflicts: built[1] }); // as the base-merge path: live sync waits for the fix
       if (chat.fromTool) {
         return { ok: true, state: 'conflicts', message: line, files: built[1] };
       }
@@ -1168,7 +1244,7 @@ async function landHeld(
       throw error;
     }
     clash = stash && folder ? await unstash(folder, stash) : [];
-    await resetTo(chat, landed, folder, clash.length > 0);
+    if (!chat.detached) await resetTo(chat, landed, folder, clash.length > 0); // a subagent's worktree goes after landing
   } finally {
     pause.release();
   }
@@ -1198,7 +1274,7 @@ async function landHeld(
     notes.push({ message: clashNote(clash, stash!.name), actions: clashActions() });
     out.guidance = clashGuidance(chat, clash, stash!.name, canEdit);
   }
-  for (const item of notes) {
+  for (const item of chat.detached ? [] : notes) { // a subagent's lines are the swarm's, in its parent chat
     try {
       await chat.studio.liveCall(NOTE_OP, { ...item, id: chat.id });
     } catch (error) {

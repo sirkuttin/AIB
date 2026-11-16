@@ -130,8 +130,12 @@ Deno.test('the hook routes: deny, pass, bind, cap, closed chats, hints; never al
 
     // a UNC hint is never touched; a forged stop counts as a hint only
     await call('post-agent', { tool_use_id: 'toolu_9', tool_response: { agentId: 'zz', worktreePath: '\\\\203.0.113.9\\share' } });
-    await call('subagent-stop', { agent_id: 'a1', agent_type: 'general-purpose' });
+    // an internal fork's stop (agent_type "") changes nothing; a stop with its agentId makes it done (P2: it then lands only once
+    // the parent is idle, under the parent's landing lock; nothing is removed here)
+    await call('subagent-stop', { agent_id: 'a1', agent_type: '' });
     assertEquals(Object.values(readSubagents(state)).find((r) => r.agentId === 'a1')!.state, 'running');
+    await call('subagent-stop', { agent_id: 'a1', agent_type: 'general-purpose' });
+    assertEquals(Object.values(readSubagents(state)).find((r) => r.agentId === 'a1')!.state, 'done');
 
     // the cap: the chat holds at most MAX_PER_CHAT worktrees (the bound one counts)
     let denied = '';
@@ -157,7 +161,7 @@ Deno.test('the hook routes: deny, pass, bind, cap, closed chats, hints; never al
     await new Promise((r) => setTimeout(r, 300)); // let a background spare finish
     await service.chatClosed(chat.id);
     const kept = Object.values(readSubagents(state));
-    assertEquals(kept.map((r) => r.state).sort(), ['running', 'running']);
+    assertEquals(kept.map((r) => r.state).sort(), ['done', 'running']);
     assert(kept.every((r) => { try { return Deno.statSync(r.path).isDirectory; } catch { return false; } }));
     open = false;
     assertEquals((await call('pre-tool', { tool_name: 'Agent', tool_input: {} })).status, 503);

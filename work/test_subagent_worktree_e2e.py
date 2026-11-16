@@ -174,7 +174,9 @@ def parent_rules(main):
         {'when': 'SR-PARENT', 'reply': {'tools': [{'id': 'toolu_pAgent01', 'name': 'Agent', 'input': {
             'description': 'sr edit', 'prompt': 'SUBTASK-A: do the work', 'subagent_type': 'general-purpose', 'run_in_background': False}}]}},
         {'when': 'SUBTASK-A', 'reply': {'tools': [{'id': 'toolu_sBash01', 'name': 'Bash', 'input': {
-            'command': 'echo from-sub > sub-a.txt && pwd && cat dirty.txt', 'description': 'write in cwd'}}]}},
+            # P2: .husky makes the landing refuse (protected path), so the worktree and record stay for these P1 checks
+            'command': 'echo from-sub > sub-a.txt && mkdir -p .husky && echo x > .husky/pre-commit && pwd && cat dirty.txt',
+            'description': 'write in cwd'}}]}},
         {'when': 'toolu_sBash01', 'reply': {'tools': [{'id': 'toolu_sWrite02', 'name': 'Write', 'input': {
             'file_path': str(pathlib.Path(main) / 'escape-write.txt'), 'content': 'escaped\n'}}]}},
         {'when': 'toolu_sWrite02', 'reply': {'text': 'SUB-DONE'}},
@@ -239,7 +241,7 @@ class AibSubagentHooksTest(unittest.TestCase):
 
         # B2: the record, its worktree (S had the uncommitted edit), the folder untouched
         records = json.loads((fx.state / 'subagent-worktrees.json').read_text(encoding='utf-8'))['subagents']
-        bound = [r for r in records.values() if r['state'] == 'running']
+        bound = [r for r in records.values() if r['state'] in ('running', 'done')]  # done: its SubagentStop came (P2)
         self.assertEqual(len(bound), 1, records)
         rec = bound[0]
         self.assertTrue(rec['agentId'])
@@ -275,10 +277,10 @@ class AibSubagentHooksTest(unittest.TestCase):
         status, text = hook_post(fx.state, 'pre-tool', chat.id, key, {'tool_name': 'EnterWorktree', 'tool_input': {}})
         self.assertEqual(json.loads(text)['hookSpecificOutput']['permissionDecision'], 'deny')
         # a forged stop and a UNC adoption hint change nothing that matters
-        hook_post(fx.state, 'subagent-stop', chat.id, key, {'agent_id': rec['agentId'], 'agent_type': 'general-purpose'})
+        hook_post(fx.state, 'subagent-stop', chat.id, key, {'agent_id': rec['agentId'], 'agent_type': ''})  # an internal fork's: ignored (P2: a typed stop makes it done)
         hook_post(fx.state, 'post-agent', chat.id, key, {'tool_use_id': 'toolu_x', 'tool_response': {'agentId': 'zzz', 'worktreePath': r'\\203.0.113.9\share'}})
         after = json.loads((fx.state / 'subagent-worktrees.json').read_text(encoding='utf-8'))['subagents']
-        self.assertEqual(after[rec['id']]['state'], 'running')
+        self.assertEqual(after[rec['id']]['state'], rec['state'])
         self.assertEqual(after[rec['id']]['path'], rec['path'])
         # the cap: forged editing Agent calls are prepared until the chat holds 8, then refused
         answers = [hook_post(fx.state, 'pre-tool', chat.id, key, {'tool_name': 'Agent', 'tool_use_id': f'toolu_f{i}',
@@ -288,7 +290,7 @@ class AibSubagentHooksTest(unittest.TestCase):
         self.assertTrue(denied and 'already has 8 subagents' in denied[-1], answers[-3:])
         self.assertFalse([a for a in answers if '"allow"' in a], 'a hook route answered allow')
         held = [r for r in json.loads((fx.state / 'subagent-worktrees.json').read_text(encoding='utf-8'))['subagents'].values()
-                if r['chat'] == chat.id and r['state'] in ('preparing', 'prepared', 'running')]
+                if r['chat'] == chat.id and r['state'] in ('preparing', 'prepared', 'running', 'done', 'stopped')]
         self.assertEqual(len(held), 8)
 
         # B15: not on the web server (the page and the phone use it)
