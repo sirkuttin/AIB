@@ -483,6 +483,14 @@ export async function applyProject(
   });
 }
 
+/**
+ * Every refs/studio/<slug>/* of a studio/ branch (the U pin and anything later added under the slug). Hook for P4b (build plan 1b
+ * 5.3, "Discard: add the refs/studio/<slug>/* wildcard"): Manager.remove / merge.ts call it after removing a chat's branch.
+ */
+export async function dropChatRefs(project: string, branch: string): Promise<void> {
+  await dropRefs(project, branch);
+}
+
 async function dropRefs(project: string, branch: string): Promise<void> {
   const slug = slugOf(branch);
   if (!slug) return;
@@ -625,18 +633,37 @@ export function logLine(stateDir: string, text: string): void {
 }
 
 export interface OnceOptions {
-  /** Every added project (Windows paths; WSL refs are handled by `wsl`). */
+  /** Every added project (Windows paths and WSL refs). */
   projects: string[];
   /** Running chats' folders and provider:sessionId (after the keeper take-over). */
   live?: Iterable<string>;
   titles?: Record<string, string>;
+  /**
+   * The saved chats (provider:sessionId) marked deleted. Every other chat's copy is not an orphan: existing chats keep their copies
+   * until merged or discarded (owner decision 1b), so the one-time cleanup never touches them.
+   */
+  deleted?: Iterable<string>;
   /** WSL projects: scan and remove inside the distro (wsl/worktrees.ts). Absent: WSL refs are skipped. */
-  wsl?: (ref: string, ticked: string[], silentOnly: boolean, live: string[]) => Promise<{ scan: Scan; removed: string[] } | null>;
+  wsl?: WslOnce;
+}
+
+/** The distro side of the one-time cleanup and the card: `ids` are removed (null: scan only). */
+export type WslOnce = (ref: string, ids: string[] | null, live: string[]) => Promise<{ scan: Scan; removed: string[] } | null>;
+
+/**
+ * An orphan for the one-time cleanup (5.6): this install's, not running, and not the copy of a chat that still exists. A recorded
+ * copy is an orphan only when its chat has no session yet or was deleted; branches, refs, folders, unrecorded copies and stash
+ * entries are always (they belong to no chat AIB lists).
+ */
+export function orphan(i: CleanupItem, deleted: Set<string>): boolean {
+  if (!i.own || i.live) return false;
+  if (i.kind === 'copy' && i.id.startsWith('copy:') && i.session && !deleted.has(i.session)) return false;
+  return true;
 }
 
 /**
  * The one-time cleanup: at the first start after the update (ONCE_VERSION), after the keeper take-over. Removes this install's
- * leftovers without unmerged work silently, and keeps a card for the ones with work (one card for all; "Keep" never brings it back).
+ * orphans without unmerged work silently, and keeps a card for the ones with work (one card for all; "Keep" never brings it back).
  * Returns the state written, or null when it already ran.
  */
 export async function runOnce(stateDir: string, options: OnceOptions): Promise<OnceState | null> {
@@ -648,27 +675,33 @@ export async function runOnce(stateDir: string, options: OnceOptions): Promise<O
     if (p) projects.set(p.startsWith('wsl://') ? p : normcase(p), p);
   }
   const live = [...(options.live ?? [])];
+  const deleted = new Set(options.deleted ?? []);
   const card: CardItem[] = [];
   for (const project of projects.values()) {
     try {
-      let scan: Scan, removed: string[];
-      if (project.startsWith('wsl://')) {
-        const done = options.wsl ? await options.wsl(project, [], true, live) : null;
-        if (!done) continue;
-        ({ scan, removed } = done);
-      } else {
-        const done = await applyProject(stateDir, project, [], { live, titles: options.titles });
-        scan = done.scan;
-        removed = done.removed;
-        for (const [id, why] of Object.entries(done.left)) logLine(stateDir, `one-time cleanup: ${project}: left ${id}: ${why}`);
-      }
-      if (scan.skipped) {
-        logLine(stateDir, `one-time cleanup: skipped ${project}: ${scan.skipped}`);
+      const wsl = project.startsWith('wsl://');
+      if (wsl && !options.wsl) continue;
+      const first = wsl
+        ? (await options.wsl!(project, null, live))?.scan
+        : await scanProject(stateDir, project, { live, titles: options.titles });
+      if (!first) continue;
+      if (first.skipped) {
+        logLine(stateDir, `one-time cleanup: skipped ${project}: ${first.skipped}`);
         continue;
       }
+      const ids = first.items.filter((i) => orphan(i, deleted) && !i.unmerged).map((i) => i.id);
+      let removed: string[] = [];
+      if (ids.length) {
+        if (wsl) removed = (await options.wsl!(project, ids, live))?.removed ?? [];
+        else {
+          const done = await applyProject(stateDir, project, [], { live, only: ids });
+          removed = done.removed;
+          for (const [id, why] of Object.entries(done.left)) logLine(stateDir, `one-time cleanup: ${project}: left ${id}: ${why}`);
+        }
+      }
       for (const id of removed) logLine(stateDir, `one-time cleanup: ${project}: removed ${id}`);
-      for (const i of scan.items) {
-        if (i.own && i.unmerged && !i.live) card.push({ id: i.id, project, title: i.title, files: i.files, helper: i.helper });
+      for (const i of first.items) {
+        if (orphan(i, deleted) && i.unmerged) card.push({ id: i.id, project, title: i.title, files: i.files, helper: i.helper });
       }
     } catch (error) {
       logLine(stateDir, `one-time cleanup: ${project} failed: ${error instanceof Error ? error.message : error}`);
@@ -720,7 +753,7 @@ export async function answerCard(
     const live = [...(options.live ?? [])];
     for (const [project, ids] of byProject) {
       if (project.startsWith('wsl://')) {
-        const done = options.wsl ? await options.wsl(project, ids, false, live) : null;
+        const done = options.wsl ? await options.wsl(project, ids, live) : null;
         if (done) out.removed.push(...done.removed);
         continue;
       }

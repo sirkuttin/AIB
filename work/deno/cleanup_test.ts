@@ -173,9 +173,15 @@ Deno.test('18: one-time cleanup: orphans without work go silently; with work, on
   const clean = await copy(box.state, box.project, 'f'.repeat(32));
   const busy = await copy(box.state, box.project, '1'.repeat(32), 'claude:s1');
   write(busy.plan.path, 'w.txt', 'work\n');
-  const first = await cleanup.runOnce(box.state, { projects: [box.project], titles: { 'claude:s1': 'Refactor api' } });
+  const existing = await copy(box.state, box.project, '9'.repeat(32), 'claude:s9'); // a chat that still exists, no work
+  const first = await cleanup.runOnce(box.state, {
+    projects: [box.project],
+    titles: { 'claude:s1': 'Refactor api' },
+    deleted: ['claude:s1'], // its chat is in Recently deleted: its copy is an orphan
+  });
   assert(first && first.card);
-  assert(!exists(clean.plan.path), 'the clean orphan went silently');
+  assert(!exists(clean.plan.path), 'the clean orphan (no chat) went silently');
+  assert(exists(existing.plan.path), 'an existing chat keeps its copy until merged or discarded (1b)');
   assert(exists(busy.plan.path), 'the one with work stays');
   const card = cleanup.cardOf(box.state)!;
   assertEquals(card.items.map((i) => i.id), [`copy:${'1'.repeat(32)}`]);

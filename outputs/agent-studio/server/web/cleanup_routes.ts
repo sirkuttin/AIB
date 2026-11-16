@@ -88,15 +88,21 @@ export async function cleanupApply(
   return done;
 }
 
-/** The distros' part of the one-time cleanup and the card (cleanup.ts OnceOptions.wsl). */
-export const wslOnce: NonNullable<cleanup.OnceOptions['wsl']> = async (ref, ticked, silentOnly, live) => {
-  const done = await wslCleanupApply(ref, ticked, silentOnly, live, silentOnly ? undefined : ticked);
+/** The distros' part of the one-time cleanup and the card (cleanup.ts OnceOptions.wsl): ids null = scan only; else only those ids. */
+export const wslOnce: cleanup.WslOnce = async (ref, ids, live) => {
+  if (ids === null) {
+    const scan = await wslCleanupScan(ref, live);
+    return scan ? { scan: scan as unknown as cleanup.Scan, removed: [] } : null;
+  }
+  const done = await wslCleanupApply(ref, ids, false, live, ids);
   return done ? { scan: done.scan as unknown as cleanup.Scan, removed: done.removed } : null;
 };
 
 export interface CleanupContext {
   stateDir: string;
   host: Lister;
+  /** The saved chats AIB lists (deleted ones are marked): their copies are never orphans. Absent in tests of the card only. */
+  conversations?: { public(): { entries: Record<string, { deletedAt?: number }> } };
   addedProjects: { public(): { added: Record<string, unknown> } };
 }
 
@@ -113,10 +119,21 @@ export function addedPaths(ctx: CleanupContext): string[] {
  */
 export async function runOneTimeCleanup(ctx: CleanupContext): Promise<void> {
   try {
-    await cleanup.runOnce(ctx.stateDir, { projects: addedPaths(ctx), live: await liveOf(ctx.host), wsl: wslOnce });
+    await cleanup.runOnce(ctx.stateDir, {
+      projects: addedPaths(ctx),
+      live: await liveOf(ctx.host),
+      deleted: deletedSessions(ctx),
+      wsl: wslOnce,
+    });
   } catch (error) {
     cleanup.logLine(ctx.stateDir, `one-time cleanup failed: ${error instanceof Error ? error.message : error}`);
   }
+}
+
+/** The saved chats marked deleted (Recently deleted, or deleted by the agent): their copies may be orphans. */
+function deletedSessions(ctx: CleanupContext): string[] {
+  const entries = ctx.conversations ? ctx.conversations.public().entries : {};
+  return Object.entries(entries).filter(([, e]) => !!e?.deletedAt).map(([k]) => k);
 }
 
 export async function cardRoute(ctx: CleanupContext, body: unknown): Promise<[number, Json]> {
