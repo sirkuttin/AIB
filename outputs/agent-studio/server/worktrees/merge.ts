@@ -34,7 +34,6 @@ import { entriesOf, readJsonFile, saveJson } from '../state/json.ts';
 import { clip, isDict, PY_SPACE, pyStr, pyStrip, pyTruthy } from '../core/py.ts';
 import { getLogger } from '../core/log.ts';
 import { clashLine, openClashes, pausedStatus, settleConflicts } from './sync.ts';
-import * as mr from './merge_request.ts';
 import { clashName, isLocalPath, type LocalOnly, localOnlyOf, slugOf } from './local_only.ts';
 import { type FolderChat, folderChats, type Held, lockChats } from './landing_lock.ts';
 
@@ -1520,51 +1519,12 @@ export async function status(studio: MergeStudio, chatId: unknown): Promise<Reco
   }
 }
 
-// ---- the button asks the agent (merge_request.ts) -------------------------------------------------------------------
-/** '' or why the button cannot ask this chat now (closed, read only). Archived and Elsewhere chats are checked by the route. */
+// ---- why a chat cannot merge now --------------------------------------------------------------------------------
+/** '' or why this chat cannot merge now (closed, read only): part of status(). */
 export function requestBlocked(state: Record<string, unknown>): string {
   if (pyTruthy(state.closed)) return 'This chat is closed. Continue it to merge its work';
   if (pyTruthy(state.readOnly)) return "This chat is read only, so it can't merge";
   return '';
-}
-
-export interface RequestOptions {
-  /** The route's own checks (archived, open in another app): '' or the reason. */
-  blocked?: (state: Record<string, unknown>) => string;
-}
-
-/**
- * The Merge button: a shortcut that sends the chat the fixed merge message as from the user (queued while the agent works). The
- * agent then merges with its tool, as it does after a "yes" typed in the chat. Returns {ok, state: 'requested', queued, message};
- * throws Refused with the line to show.
- */
-export async function requestMerge(studio: MergeStudio, chatId: unknown, options: RequestOptions = {}): Promise<MergeResult> {
-  const chat = await Chat.open(studio, chatId);
-  const blocked = requestBlocked(chat.state) || (options.blocked ? options.blocked(chat.state) : '');
-  if (blocked) throw new Refused(blocked, 'unavailable');
-  if (RUNNING.has(chat.key)) throw new Refused('A merge of this chat is already running', 'running');
-  if (!(await wt.touchedPaths(chat.wt, chat.user)).length) throw new Refused('Nothing to merge yet', 'nochanges');
-  const text = mr.mergeRequestText(chat.base);
-  let status: number, payload: unknown;
-  try {
-    [status, payload] = await studio.liveCall('queue', { id: chat.id, text, clientMessageId: mr.REQUEST_ID_PREFIX + newId() });
-  } catch (error) {
-    [status, payload] = [500, { error: error instanceof Error ? error.message : String(error) }];
-  }
-  if (status !== 200) {
-    throw new Refused('Could not ask the chat to merge: ' + payloadError(payload, 'it did not accept the message'), 'prompt_failed');
-  }
-  return requestedResult(isDict(payload) && payload.queued === true);
-}
-
-/** The Merge button's answer once the chat took the message (`queued`: it waits for the turn to end). */
-export function requestedResult(queued: boolean): MergeResult {
-  return {
-    ok: true,
-    state: 'requested',
-    queued,
-    message: queued ? 'Merge requested. The chat merges when it finishes its turn' : 'Merge requested. The chat is merging',
-  };
 }
 
 /**

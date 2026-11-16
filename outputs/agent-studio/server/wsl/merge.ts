@@ -100,7 +100,7 @@ async function mustCall<M extends keyof HelperMethods>(
 /** Makes the helper's recorded live calls in order (each for this chat only); a `must` call that is not accepted is a refusal. */
 async function post(studio: merge.MergeStudio, chat: WslMergeChat, answer: WslMergeAnswer): Promise<void> {
   for (const action of Array.isArray(answer.actions) ? answer.actions : []) {
-    if (!isDict(action) || !OPS.has(String(action.op)) || action.op === 'queue') continue; // the button's message: wslRequestMerge
+    if (!isDict(action) || !OPS.has(String(action.op)) || action.op === 'queue') continue; // AIB queues no message for a merge
     const payload = { ...(isDict(action.payload) ? action.payload : {}), id: chat.id };
     if (action.must) {
       const [status, reply] = await studio.liveCall(String(action.op), payload);
@@ -125,7 +125,7 @@ async function settle(studio: merge.MergeStudio, chat: WslMergeChat, answer: Wsl
   return isDict(answer.result) ? answer.result : {};
 }
 
-/** GET /api/live/worktree for a WSL chat: the Merge button's state, from the helper. Never starts a distro; never throws for one. */
+/** A WSL chat's merge status, from the helper (merge.ts status()). Never starts a distro; never throws for one. */
 export async function wslMergeStatus(chat: WslMergeChat): Promise<Record<string, unknown>> {
   const host = wslHost(chat.distro);
   const why = notReady(host, chat.distro);
@@ -148,25 +148,6 @@ export async function wslMerge(studio: merge.MergeStudio, chat: WslMergeChat, ti
   } finally {
     running--;
   }
-}
-
-/** The Merge button for a WSL chat: the helper checks (as requestMerge), then AIB queues the fixed merge message in the chat. */
-export async function wslRequestMerge(studio: merge.MergeStudio, chat: WslMergeChat, blocked = ''): Promise<merge.MergeResult> {
-  const answer = await mustCall(chat, 'merge.request', { chat: chat.id, state: helperState(chat), blocked });
-  await settle(studio, chat, answer);
-  const queue = answer.actions.find((a) => isDict(a) && a.op === 'queue' && isDict(a.payload));
-  if (!queue) throw new merge.Refused('Could not ask the chat to merge: it did not accept the message', 'prompt_failed');
-  const payload = { text: queue.payload.text, clientMessageId: queue.payload.clientMessageId, id: chat.id };
-  let status: number, reply: unknown;
-  try {
-    [status, reply] = await studio.liveCall('queue', payload);
-  } catch (error) {
-    [status, reply] = [500, { error: text(error) }];
-  }
-  if (status !== 200) {
-    throw new merge.Refused('Could not ask the chat to merge: ' + merge.payloadError(reply, 'it did not accept the message'), 'prompt_failed');
-  }
-  return merge.requestedResult(isDict(reply) && reply.queued === true);
 }
 
 /** A clash action (Keep my version, I'll sort it myself, check) for a WSL chat's project. */

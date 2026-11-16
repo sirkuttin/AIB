@@ -20,7 +20,7 @@ export const LIVE_POST_OPS = [
   'connect', 'discover', 'forget', 'prompt', 'cancel', 'permission', 'authenticate', 'elicitation', 'config', 'mode', 'cancel-pending',
   'session-op', 'disconnect', 'queue', 'queue-edit', 'queue-remove', 'queue-move', 'queue-resume', 'queue-send-now', 'steer', 'tool-stop',
   'dismiss-unknown',
-  'worktree-discard', 'worktree-archive',
+  'worktree-archive',
 ] as const;
 
 type Json = Record<string, unknown>;

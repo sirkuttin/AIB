@@ -79,16 +79,16 @@ export async function savedFolders(ctx: WebContext, ident: string): Promise<Map<
   return saved;
 }
 
-/** How long the Merge/Changes poll waits for a chat's worktree status before it answers "still checking" (the page gives up at 30 s). */
+/** How long GET /api/live/worktree waits for a chat's worktree status before it answers "still checking". */
 export const WORKTREE_STATUS_WAIT_MS = 20_000;
 const statusRuns = new Map<string, Promise<Record<string, unknown>>>();
 
 /**
- * One chat's worktree status for GET /api/live/worktree: concurrent requests for the same chat share one run, and a run that takes
- * longer than WORKTREE_STATUS_WAIT_MS is answered as "still checking" while it goes on (the next poll joins it and gets its result),
- * so a slow git can never hold the page past its own time-out.
- * A finished answer is never reused: the Merge button asks again only when something changed (a turn ended, files changed, a merge
- * ran), so an answer from before that change would stay on the button ("Nothing to merge" after the chat committed its work).
+ * One chat's worktree status for GET /api/live/worktree (read only: the page has no Merge button any more, owner 2026-11-16; the
+ * status stays for the e2e suites and tools that watch a copy chat's merge state): concurrent requests for the same chat share one
+ * run, and a run that takes longer than WORKTREE_STATUS_WAIT_MS is answered as "still checking" while it goes on (the next request
+ * joins it and gets its result), so a slow git never holds a caller. A finished answer is never reused: an answer from before a
+ * merge would be stale.
  */
 export async function worktreeStatus(
   id: string,
@@ -114,7 +114,7 @@ export async function worktreeStatus(
   }
 }
 
-/** A merge, merge request or clash action changed this chat's worktree: the next status starts a fresh run (a run already going may predate it). */
+/** A merge or clash action changed this chat's worktree: the next status starts a fresh run (a run already going may predate it). */
 export function forgetWorktreeStatus(id: unknown): void {
   if (typeof id === 'string') statusRuns.delete(id);
 }
@@ -133,19 +133,6 @@ export function shared<T>(runs: Map<string, Promise<T>>, key: string, run: () =>
 
 function mergeStudio(ctx: WebContext): merge.MergeStudio {
   return merge.liveMergeStudio(ctx.stateDir, ctx.host); // with the folder chats: a merge holds their landing lock (build plan 2.3)
-}
-
-/** '' or why the Merge button may not ask this chat: archived, or running in another app (the page shows the same reasons). */
-function requestBlockedHere(ctx: WebContext, state: Record<string, unknown>): string {
-  const provider = typeof state.provider === 'string' ? state.provider : '';
-  const sessionId = typeof state.sessionId === 'string' ? state.sessionId : '';
-  if (provider && sessionId) {
-    try {
-      const entry = ctx.conversations.public().entries[`${provider}:${sessionId}`];
-      if (entry && entry.archivedAt) return 'This chat is archived. Unarchive it to merge its work';
-    } catch { /* the marks could not be read: the page's own check still holds */ }
-  }
-  return '';
 }
 
 /** The editor launcher, as studio.create_server builds it: roots are the folders Studio knows, preferred the Settings default. */
@@ -318,16 +305,6 @@ export function studioRoutes(): Map<string, StudioHandler> {
     const studio = mergeStudio(ctx), wsl = await wslMerge.wslMergeChat(studio, body?.id);
     try {
       return await refusedReply(() => wsl ? wslMerge.wslMerge(studio, wsl, title) : merge.merge(studio, body?.id, title));
-    } finally {
-      forgetWorktreeStatus(body?.id);
-    }
-  });
-  // The Changes tab's Merge button: a one-shot merge permission for this chat, then the chat is asked to merge (merge_request.ts).
-  routes.set('POST /api/live/worktree/merge-request', async (ctx, _url, body) => {
-    const studio = mergeStudio(ctx), wsl = await wslMerge.wslMergeChat(studio, body?.id);
-    try {
-      if (wsl) return await refusedReply(() => wslMerge.wslRequestMerge(studio, wsl, requestBlockedHere(ctx, wsl.state)));
-      return await refusedReply(() => merge.requestMerge(studio, body?.id, { blocked: (state) => requestBlockedHere(ctx, state) }));
     } finally {
       forgetWorktreeStatus(body?.id);
     }

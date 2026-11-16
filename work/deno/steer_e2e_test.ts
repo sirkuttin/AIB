@@ -774,8 +774,8 @@ Deno.test({
   name: "S14 [A] T25: AIB's own sends (the Merge button's message, a doc comment sent to the chat) wait for the turn to end on a chat that can steer",
   ...TEST_OPTIONS,
   async fn() {
-    // merge.ts requestMerge and docs_routes.ts sendComment call the live op `queue` (their unit tests, worktree_merge_request_test.ts
-    // and docs_comments_test.ts, pin that op); here: that op, with their message ids, never steers a working, steerable chat.
+    // docs_routes.ts sendComment (and, before 2026-11-16, the Merge button's request) call the live op `queue` (docs_comments_test.ts
+    // pins that op); here: that op, with such message ids, never steers a working, steerable chat.
     await using lab = await started();
     const chat = await lab.chat('claude');
     const gate = lab.gate();

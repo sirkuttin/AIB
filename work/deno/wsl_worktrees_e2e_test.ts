@@ -98,14 +98,12 @@ Deno.test({
       assert(refused instanceof WslHelperError, String(refused));
       assertEquals(await sh('git -C "$1" status --porcelain', repo), '');
 
-      // Discard: the agent stops, the worktree and its branch go (in the distro), the project folder stays
-      const [code, body] = await b.liveCall('worktree-discard', { id: r.id, confirm: true });
-      assertEquals([code, (body as Json).removed], [200, true]);
-      assert(r.closed);
-      assertEquals(await sh('test -e "$1" && echo there || echo gone', linux), 'gone');
-      assertEquals(await sh('git -C "$1" branch --list "studio/*"', repo), '');
+      // the app has no Discard any more (owner, 2026-11-16): closing the chat leaves its copy (the migration script's), and the
+      // project folder stays as it was
+      const [code] = await b.liveCall('disconnect', { id: r.id });
+      assertEquals(code, 200);
+      assertEquals(await sh('test -e "$1" && echo there || echo gone', linux), 'there');
       assertEquals(await sh('cat "$1/a.txt"', repo), 'one');
-      assertEquals(await wslRecord(c.cwd), null);
       const client = (await linkOf(await readyHost()).client(false))!;
       assertEquals(liveUserChannels(await client.list()).length, 0);
       void host;

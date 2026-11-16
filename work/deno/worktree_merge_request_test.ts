@@ -1,6 +1,6 @@
 /**
- * Chat-first merging (merge_request.ts, merge.ts requestMerge / mergeFromTool): the agent merges whenever the owner says yes in the
- * chat, without a button press; the Changes tab's Merge button only sends the chat the merge message. The target is the project's
+ * Chat-first merging (merge.ts mergeFromTool): the agent merges whenever the owner says yes in the chat, without a button press
+ * (there is no Merge button any more: owner, 2026-11-16). The target is the project's
  * main branch even when the chat started from another branch; main moving with a conflict is brought into the worktree first; the
  * user's uncommitted edits in the main checkout survive; only helpers inside the chat's own worktree (and its running terminals) hold
  * a merge. Over the fake studio of the merge tests; only temp folders.
@@ -10,12 +10,8 @@ import { commit, read, runGit, Sandbox, write } from './_worktree_fixtures.ts';
 import { chat, type Ctx, main, record, show } from './_merge_fixtures.ts';
 import * as wt from '../../outputs/agent-studio/server/worktrees/worktrees.ts';
 import * as m from '../../outputs/agent-studio/server/worktrees/merge.ts';
-import * as mr from '../../outputs/agent-studio/server/worktrees/merge_request.ts';
 import { pathOf } from '../../outputs/agent-studio/server/state/paths.ts';
 import { LiveSync } from '../../outputs/agent-studio/server/worktrees/sync.ts';
-
-const TEXT = "Merge this chat's work into main with AIB's merge tool (merge_into_project). If main has moved and there are conflicts, " +
-  'resolve them in this worktree and call it again. Then say in one line what landed.';
 
 async function toolRefused(ctx: Ctx, code: string): Promise<m.Refused> {
   const error = await assertRejects(() => m.mergeFromTool(ctx.studio, ctx.id), m.Refused) as m.Refused;
@@ -31,14 +27,6 @@ function setState(ctx: Ctx, extra: Record<string, unknown>): void {
   ctx.studio.states.set(ctx.id, { ...ctx.studio.states.get(ctx.id)!, ...extra });
 }
 
-Deno.test('the fixed message and its marker', () => {
-  assertEquals(mr.mergeRequestText('main'), TEXT);
-  assert(mr.isMergeRequest(TEXT) && mr.isMergeRequest('  ' + TEXT + '\n'));
-  assert(mr.isMergeRequest(mr.mergeRequestText('feature/x')));
-  assert(!mr.isMergeRequest(TEXT + ' And also delete the tests.'), 'only the whole message is the chip');
-  assert(!mr.isMergeRequest('yes, merge it'));
-});
-
 Deno.test('the agent merges without a button press; every merge posts the Merged line and names the target', async () => {
   using box = new Sandbox();
   const ctx = await chat(box);
@@ -47,32 +35,11 @@ Deno.test('the agent merges without a button press; every merge posts the Merged
   assertEquals([result.state, result.target, result.started], ['merged', 'main', 'main']);
   assertEquals(show(ctx, 'main:work.txt'), 'a\n');
   assertEquals(ctx.studio.notes(), ['Merged into main (1 commit)']);
-  assertEquals(queued(ctx), [], 'no button involved');
+  assertEquals(queued(ctx), [], 'nothing is queued in the chat');
   commit(ctx.wt, 'more.txt', 'b\n', 'more work'); // no one-shot permission: the next "yes" merges again
   assertEquals((await m.mergeFromTool(ctx.studio, ctx.id)).state, 'merged');
   assertEquals(show(ctx, 'main:more.txt'), 'b\n');
   assertEquals(ctx.studio.notes(), ['Merged into main (1 commit)', 'Merged into main (1 commit)']);
-});
-
-Deno.test('the button only queues the merge message; the agent then merges with its tool', async () => {
-  using box = new Sandbox();
-  const ctx = await chat(box);
-  commit(ctx.wt, 'work.txt', 'a\n', 'agent work');
-  ctx.studio.answer = [200, { ok: true, queued: true }];
-  const asked = await m.requestMerge(ctx.studio, ctx.id);
-  assertEquals([asked.state, asked.queued, asked.message], [
-    'requested',
-    true,
-    'Merge requested. The chat merges when it finishes its turn',
-  ]);
-  const [sent] = queued(ctx);
-  assertEquals([sent.id, sent.text], [ctx.id, TEXT]);
-  assert((sent.clientMessageId as string).startsWith(mr.REQUEST_ID_PREFIX));
-  assertEquals(ctx.studio.prompts(), [], 'never sent as a prompt that a busy chat would refuse');
-  write(ctx.wt, 'later.txt', 'edited after the click\n'); // an edit after the click is no reason to refuse any more
-  ctx.studio.answer = [200, {}];
-  assertEquals((await m.mergeFromTool(ctx.studio, ctx.id)).state, 'merged');
-  assertEquals(show(ctx, 'main:later.txt'), 'edited after the click\n');
 });
 
 Deno.test('a chat made while the folder is on another branch starts from main and merges into main, not into that branch', async () => {
@@ -234,54 +201,19 @@ Deno.test('a tree-landing conflict records mergeConflicts (live sync pauses) unt
   assertEquals(record(ctx).mergeConflicts, []);
 });
 
-Deno.test('a closed, read-only, archived or elsewhere chat is refused by the button: no message', async () => {
+Deno.test('the merge status of a closed or read-only chat says why it cannot merge now; a busy one can', async () => {
   using box = new Sandbox();
   const ctx = await chat(box);
   commit(ctx.wt, 'work.txt', 'a\n', 'agent work');
-  const refuse = async (options: m.RequestOptions = {}) => {
-    const error = await assertRejects(() => m.requestMerge(ctx.studio, ctx.id, options), m.Refused) as m.Refused;
-    assertEquals(error.code, 'unavailable');
-    return error.message;
-  };
   setState(ctx, { closed: true });
-  assertEquals(await refuse(), 'This chat is closed. Continue it to merge its work');
-  setState(ctx, { closed: false, readOnly: true });
-  assertEquals(await refuse(), "This chat is read only, so it can't merge");
-  setState(ctx, { readOnly: false });
-  assertEquals(
-    await refuse({ blocked: () => 'This chat is archived. Unarchive it to merge its work' }),
-    'This chat is archived. Unarchive it to merge its work',
-  );
-  const gone = await assertRejects(() => m.requestMerge(ctx.studio, 'not-live'), m.Refused) as m.Refused;
-  assertEquals(gone.code, 'unknown_chat', 'a chat that is not running (open elsewhere, or not resumed) is never resumed for this');
-  assertEquals(queued(ctx), []);
-  setState(ctx, { closed: true });
-  const state = await m.status(ctx.studio, ctx.id);
+  let state = await m.status(ctx.studio, ctx.id);
   assertEquals([state.enabled, state.message], [false, 'This chat is closed. Continue it to merge its work']);
+  setState(ctx, { closed: false, readOnly: true });
+  state = await m.status(ctx.studio, ctx.id);
+  assertEquals([state.enabled, state.message], [false, "This chat is read only, so it can't merge"]);
+  setState(ctx, { readOnly: false, state: 'prompting', busy: true });
+  state = await m.status(ctx.studio, ctx.id);
+  assertEquals([state.enabled, state.state], [true, 'ready']);
+  assertEquals(queued(ctx), []);
 });
 
-Deno.test('a busy chat may be asked; nothing to merge or a refused message is reported', async () => {
-  using box = new Sandbox();
-  const ctx = await chat(box);
-  const none = await assertRejects(() => m.requestMerge(ctx.studio, ctx.id), m.Refused) as m.Refused;
-  assertEquals([none.code, none.message], ['nochanges', 'Nothing to merge yet']);
-  commit(ctx.wt, 'work.txt', 'a\n', 'agent work');
-  setState(ctx, { state: 'prompting', busy: true });
-  const state = await m.status(ctx.studio, ctx.id);
-  assertEquals([state.enabled, state.state], [true, 'ready'], 'the message is queued, so a busy chat is no reason to wait');
-  ctx.studio.answer = [409, { error: 'This connection is not ready' }];
-  const failed = await assertRejects(() => m.requestMerge(ctx.studio, ctx.id), m.Refused) as m.Refused;
-  assertEquals([failed.code, failed.message], ['prompt_failed', 'Could not ask the chat to merge: This connection is not ready']);
-});
-
-Deno.test('T25: on a working chat that can steer, the button still queues its message for the turn end (never the steer route)', async () => {
-  using box = new Sandbox();
-  const ctx = await chat(box);
-  commit(ctx.wt, 'work.txt', 'a\n', 'agent work');
-  setState(ctx, { state: 'prompting', busy: true, steerable: true, steerAgent: 'claude' });
-  ctx.studio.answer = [200, { ok: true, queued: true }];
-  const asked = await m.requestMerge(ctx.studio, ctx.id);
-  assertEquals([asked.queued, asked.message], [true, 'Merge requested. The chat merges when it finishes its turn']);
-  assertEquals(queued(ctx).map((p) => p.text), [TEXT]);
-  assertEquals(ctx.studio.calls.filter(([op]) => op === 'steer' || op === 'prompt'), [], "AIB's own sends wait for the turn end");
-});

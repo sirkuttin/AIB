@@ -26,13 +26,6 @@ try {
     await sleep(900);
     await shot(p, `artifacts-menu-archive-delete-${tag}`);
   });
-  if (only === 'merge') await eachTheme(b, URL, async (p, _t, tag) => {
-    await project(p, 'storefront');
-    await clickText(p, 'button.connection', 'Add CSV export'); await sleep(2500);
-    await clickText(p, 'button', 'Changes'); await sleep(2000);
-    await clickText(p, 'button', 'Merge into main'); await sleep(2500);
-    await shot(p, `worktrees-merge-requested-${tag}`);
-  });
   if (!only || only === 'private') await eachTheme(b, URL, async (p, _t, tag) => {
     await project(p, 'storefront');
     await clickText(p, 'button.connection', 'Add CSV export'); await sleep(2000);

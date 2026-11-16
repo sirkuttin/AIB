@@ -232,14 +232,11 @@ Deno.test({ name: 'wsl studio: a WSL chat in its own worktree made by the helper
   assert(r && r.ready && !r.closed);
   assertEquals([r.cwd, r.agentCwd, r.projectRoot], [WT_REF, WT_LINUX, REF]);
   assertEquals(r.worktree, { branch: 'studio/chat-abcd1234', base: 'main' });
-  // Discard: the agent stops, the helper removes the worktree (confirmed: --force)
-  const [status, body] = await b.liveCall('worktree-discard', { id: r.id, confirm: true });
+  // the app has no Discard any more (owner, 2026-11-16): the chat closes; its copy is the migration script's (inside the distro)
+  const [status] = await b.liveCall('disconnect', { id: r.id });
   assertEquals(status, 200);
-  assertEquals((body as Json).removed, true);
-  assertEquals(lab.called('worktree.remove'), [{ key: 'abcd1234abcd1234', confirmed: true }]);
-  assert(r.closed);
+  assertEquals(lab.called('worktree.remove'), [], 'the app removes no copy');
   // no re-filing in the app (the owner's one-off migration script does that inside the distro)
-  assertEquals((body as Json).movedToFolder, undefined);
   assertEquals(lab.called('transcripts.refile'), []);
   // once the script mapped the chat to the project (studio-moved-chats.json, read only in the app), Continue from a page that
   // still sends the copy's ref opens it in the project folder, with no worktree lookups in the distro

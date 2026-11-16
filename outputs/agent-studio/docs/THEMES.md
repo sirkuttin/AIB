@@ -284,8 +284,8 @@ where the theme pins it). The designer's themes pin many of these; theme.css has
 | `--cg-file-open-line` | `color-mix(in srgb, var(--bg-field) 81%, var(--line-strong))` | .cg-file.open {border-bottom-color}; .cg-hunk {border-top}; .cg-hunk {border-bottom} | `#25262f` | `#f5f3f1` |
 | `--git-modified-text` | `color-mix(in srgb, var(--warn) 83%, var(--text))` | .st-M {color} | `#efbc5a` | `#764e05` |
 | `--git-renamed-text` | `color-mix(in srgb, var(--info) 65%, var(--text))` | .st-R {color} | `#8fb8ff` | `#1c4586` |
-| `--git-conflict-text` | `var(--danger)` | .st-C {color}; .cg-conflict {color} | `#ff9f6e` | `#a82424` |
-| `--git-conflict-bg` | `color-mix(in srgb, var(--danger) 13%, transparent)` | .cg-conflict {background} | `#ff9f6e22` | `#a8242421` |
+| `--git-conflict-text` | `var(--danger)` | .st-C {color} | `#ff9f6e` | `#a82424` |
+| `--git-conflict-bg` | `color-mix(in srgb, var(--danger) 13%, transparent)` | the conflict surface of the theme contrast pairs | `#ff9f6e22` | `#a8242421` |
 | `--cg-hunk-bg` | `color-mix(in srgb, var(--bg-field) 87%, var(--code-bg))` | .cg-hunk {background} | `#1e1f27` | `#fdfdfc` |
 | `--cg-no-text` | `var(--text-faint)` | .cg-no {color} | `#918d80` | `#6b6455` |
 | `--cg-sign-text` | `var(--text-faint)` | .cg-sign {color} | `#918d80` | `#6b6455` |
@@ -296,7 +296,7 @@ where the theme pins it). The designer's themes pin many of these; theme.css has
 | `--cg-del-bg` | `color-mix(in srgb, var(--danger) 13%, var(--bg))` | .cg-row.cg-del {background} | `#35191d` | `#edd9d4` |
 | `--cg-del-no-bg` | `color-mix(in srgb, var(--danger) 20%, var(--bg))` | .cg-row.cg-del .cg-no {background} | `#3e2b2f` | `#e7cac6` |
 | `--cg-del-no-text` | `color-mix(in srgb, var(--danger) 70%, var(--text))` | .cg-row.cg-del .cg-no {color} | `#efa7a4` | `#7c2021` |
-| `--cg-discard-text` | `color-mix(in srgb, var(--danger-bright) 90%, var(--bg))` | .cg-discard {color}; .cg-foot-note.err {color} | `#f0a0b0` | `#b0352f` |
+| `--cg-discard-text` | `color-mix(in srgb, var(--danger-bright) 90%, var(--bg))` | .cg-discard {color} | `#f0a0b0` | `#b0352f` |
 | `--cg-discard-bg` | `color-mix(in srgb, var(--danger) 11%, var(--bg))` | .cg-discard:hover:not(:disabled) {background} | `#2a2025` | `#eeddd8` |
 | `--ar-pick-bg` | `color-mix(in srgb, var(--panel-2) 41%, var(--bg-field))` | .ar-pick,.ar-ver,.ar-ico {background}; .ar-pop {background}; .split-ghost {background} | `#21222a` | `#ffffff` |
 | `--ar-ver-old-text` | `color-mix(in srgb, var(--warn) 74%, var(--text))` | .ar-ver.old {color}; .ar-avail {color} | `#efc169` | `#6c4807` |

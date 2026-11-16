@@ -86,18 +86,11 @@ export function mergeMethods(data: string): Handlers {
       return { result: await merge.status(studio(p), id) };
     },
 
-    /** The Merge itself: the agent's merge_into_project (fromTool), or the page's direct merge route. */
+    /** The Merge itself: the agent's merge_into_project (fromTool), or the direct merge route. */
     'merge.run': async (p) => {
       const id = chatId(p), s = studio(p);
       const title = str(p, 'title', true).slice(0, 500);
       return await answer(s, () => p.fromTool === true ? merge.mergeFromTool(s, id) : merge.merge(s, id, title, false));
-    },
-
-    /** The Merge button: the checks of requestMerge here; the queued message is AIB's to send (`actions`). */
-    'merge.request': async (p) => {
-      const id = chatId(p), s = studio(p);
-      const blocked = str(p, 'blocked', true).slice(0, 500);
-      return await answer(s, () => merge.requestMerge(s, id, { blocked: () => blocked }));
     },
 
     'merge.resolveClash': async (p) => {

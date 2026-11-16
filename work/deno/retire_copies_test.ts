@@ -163,7 +163,8 @@ Deno.test({
 
 Deno.test({
   ...T,
-  name: 'Discard of an old copy chat removes copy, branch and refs and leaves the transcript alone: readable, not continuable; ' +
+  name: 'An old copy chat whose copy was discarded (before 2026-11-16 by the Discard button, now only by the migration script): ' +
+    'the transcript is left alone; readable, not continuable; ' +
     "once the migration script mapped it (studio-moved-chats.json), Continue with the copy path opens the project folder",
   async fn() {
     await using box = new Box();
@@ -172,11 +173,9 @@ Deno.test({
     const before = Deno.readTextFileSync(original);
     const c = await box.studio.connect('claude', made.path, 'sess-discard');
     write(c.cwd, 'unwanted.txt', 'thrown away\n');
-    const [status, out] = await box.studio.liveCall('worktree-discard', { id: c.id, confirm: true });
-    assertEquals(status, 200, JSON.stringify(out));
-    const answer = out as Json;
-    assertEquals(answer.removed, true);
-    assertEquals(answer.movedToFolder, undefined, 'no re-filing in the app');
+    // the app has no Discard any more (owner, 2026-11-16): the copy goes the way the migration script's --discard removes it
+    await box.studio.liveCall('disconnect', { id: c.id });
+    assertEquals(await new wt.Manager(box.state).remove(made.key, true), 'removed');
     assert(!exists(made.path));
     assertEquals(studioRefs(box.project, made.branch), '');
     assert(!exists(pathOf(box.project, 'unwanted.txt')), 'discarded work does not land');

@@ -136,17 +136,16 @@ worksInTest('24: a folder chat\'s Changes tab: fixed header, no Merge or Discard
   await lab.select(folder);
   await page.eval(`document.getElementById('paneTab-changes').click()`);
   await page.waitFor(`document.querySelectorAll('#changesPane .cg-file').length === 1`, 15000, 'folder chat files');
-  const f = await page.eval<{ scope: string; foot: string; footShown: boolean; merge: boolean; discard: boolean }>(`(() => {
+  const f = await page.eval<{ scope: string; foot: string; footShown: boolean; buttons: number }>(`(() => {
     const p = document.getElementById('changesPane'), line = p.querySelector('.cg-foot-folder');
     return { scope: p.querySelector('.cg-scope').textContent, foot: line.hidden ? '' : line.textContent, footShown: !p.querySelector('.cg-foot').hidden,
-      merge: !p.querySelector('.cg-merge-btn').hidden, discard: !p.querySelector('.cg-discard').hidden };
+      buttons: p.querySelectorAll('.cg-foot button, .cg-merge-btn, .cg-discard').length };
   })()`);
   assertEquals(f, {
     scope: 'Project folder · uncommitted',
     foot: "Nothing to merge: edits go straight into the project folder, from any chat. Ask the agent to commit or undo.",
     footShown: true,
-    merge: false,
-    discard: false,
+    buttons: 0,
   });
   // the header fits the column at its default width: nothing cut
   const fit = await page.eval<{ sw: number; cw: number; panel: number; sum: string }>(`(() => {
@@ -162,14 +161,13 @@ worksInTest('24: a folder chat\'s Changes tab: fixed header, no Merge or Discard
 
   await lab.select(copy);
   await page.waitFor(`document.querySelector('#changesPane .cg-scope').textContent === "This chat's changes"`, 15000, 'copy chat header');
-  await page.waitFor(`!document.querySelector('#changesPane .cg-discard').hidden`, 15000, 'Discard as today');
-  const c = await page.eval<{ foot: boolean; merge: boolean }>(`(() => {
-    const p = document.getElementById('changesPane');
-    return { foot: !p.querySelector('.cg-foot-folder').hidden, merge: !p.querySelector('.cg-merge-btn').hidden };
+  // an old copy chat: read only, no Merge or Discard (owner, 2026-11-16); its footer line points at its agent
+  await page.waitFor(`/ask its agent to merge it/.test(document.querySelector('#changesPane .cg-foot-folder').textContent)`, 15000, 'the copy line');
+  const c = await page.eval<{ foot: string; buttons: number }>(`(() => {
+    const p = document.getElementById('changesPane'), line = p.querySelector('.cg-foot-folder');
+    return { foot: line.hidden ? '' : line.textContent, buttons: p.querySelectorAll('.cg-foot button, .cg-merge-btn, .cg-discard').length };
   })()`);
-  assertEquals(c.foot, false, 'no folder line on a copy chat');
-  await page.waitFor(`!document.querySelector('#changesPane .cg-merge-btn').hidden`, 15000, 'Merge as today').catch(() => 0);
-  assertEquals(await page.eval<boolean>(`!document.querySelector('#changesPane .cg-merge-btn').hidden`), true, 'Merge as today');
+  assertEquals(c, { foot: 'This chat works in its own copy. To bring its work into the project, ask its agent to merge it.', buttons: 0 });
   await shot(page, '24-copy-changes');
   assertEquals(
     await page.eval<number>(`Math.round(document.getElementById('subagentsPane').getBoundingClientRect().width)`),

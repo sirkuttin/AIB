@@ -187,7 +187,6 @@ export interface HelperMethods {
    */
   'merge.status': { params: { chat: string; state: Record<string, unknown> }; result: { result: Record<string, unknown> } };
   'merge.run': { params: { chat: string; state: Record<string, unknown>; title?: string; fromTool?: boolean }; result: WslMergeAnswer };
-  'merge.request': { params: { chat: string; state: Record<string, unknown>; blocked?: string }; result: WslMergeAnswer };
   'merge.resolveClash': { params: { chat: string; state: Record<string, unknown>; action: string; fromTool?: boolean }; result: WslMergeAnswer };
   'merge.clashStatus': { params: { project: string }; result: { result: Record<string, unknown> } };
   /**

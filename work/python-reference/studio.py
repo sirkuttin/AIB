@@ -651,7 +651,7 @@ class Studio:
             return 400, {'error': str(error)}
 
     LIVE_POST_OPS = frozenset({'connect', 'discover', 'forget', 'prompt', 'cancel', 'permission', 'authenticate', 'elicitation', 'config', 'mode', 'cancel-pending', 'session-op', 'disconnect',
-                           'queue', 'queue-edit', 'queue-remove', 'queue-move', 'queue-resume', 'queue-send-now', 'dismiss-unknown', 'worktree-discard', 'worktree-archive'})
+                           'queue', 'queue-edit', 'queue-remove', 'queue-move', 'queue-resume', 'queue-send-now', 'dismiss-unknown', 'worktree-archive'})
 
     def live_call(self, name, body):
         """One POST /api/live/<name> request. Returns (HTTP status, JSON payload); never raises for request errors."""
@@ -690,8 +690,6 @@ class Studio:
             return 200, {'ok': True}
         if name not in self.LIVE_POST_OPS:
             return 404, {'error': 'Not found'}
-        if name == 'worktree-discard':
-            return 200, self.worktree_discard(body)
         if name == 'worktree-archive':
             return 200, self.worktree_archive(body)
         if name == 'dismiss-unknown':
