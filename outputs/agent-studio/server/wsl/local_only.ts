@@ -39,16 +39,28 @@ export async function wslEnsureLocalOnly(ref: string): Promise<void> {
   }
 }
 
+/** Connection.localOnly of a WSL chat: AIB's local-only paths, plus (a chat in its own copy) the main folder's other ignored ones. */
+export interface WslChatLocalOnly {
+  entries: string[];
+  dirs: string[];
+  private: string;
+  ignored?: { dirs: string[]; files: string[] };
+}
+
 /** Connection.localOnly of a WSL chat whose main folder is `mainRef`; null when there is nothing to tell. Never throws. */
-export async function wslChatLocalOnly(mainRef: string, worktree: boolean): Promise<{ entries: string[]; dirs: string[]; private: string } | null> {
+export async function wslChatLocalOnly(mainRef: string, worktree: boolean): Promise<WslChatLocalOnly | null> {
   const wsl = wslLoc(mainRef);
   if (!wsl) return null;
   try {
-    const answer = await (await hostWhenReady(wsl.distro)).call('localOnly.chat', { project: wsl.linuxPath, worktree });
+    // a chat in its own copy also gets the main folder's other ignored folders and files (owner: agents read and edit them)
+    const answer = await (await hostWhenReady(wsl.distro)).call('localOnly.chat', { project: wsl.linuxPath, worktree, ...(worktree ? { ignored: true } : {}) });
     const lo = answer?.localOnly;
     if (!lo || !Array.isArray(lo.entries) || !Array.isArray(lo.dirs)) return null;
     const linux = (p: unknown): p is string => typeof p === 'string' && p.startsWith('/');
-    return { entries: lo.entries.filter(linux), dirs: lo.dirs.filter(linux), private: linux(lo.private) ? lo.private : '' };
+    const out: WslChatLocalOnly = { entries: lo.entries.filter(linux), dirs: lo.dirs.filter(linux), private: linux(lo.private) ? lo.private : '' };
+    const ig = lo.ignored;
+    if (worktree && ig && Array.isArray(ig.dirs) && Array.isArray(ig.files)) out.ignored = { dirs: ig.dirs.filter(linux), files: ig.files.filter(linux) };
+    return out;
   } catch (error) {
     if (!noMethod(error)) log.warning('Looking up the local-only files of %s failed: %s', mainRef, text(error));
     return null;

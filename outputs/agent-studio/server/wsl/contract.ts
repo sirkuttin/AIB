@@ -242,7 +242,14 @@ export interface HelperMethods {
    * projects with chat copies (only with `--data`).
    */
   'localOnly.ensure': { params: { project: string }; result: { state: string } };
-  'localOnly.chat': { params: { project: string; worktree: boolean }; result: { localOnly: { entries: string[]; dirs: string[]; private: string } | null } };
+  /**
+   * `ignored` (a chat in its own copy): also every other top-level folder and file git ignores in the main folder (worktrees/
+   * ignored_overlay.ts ignoredTops: never .git, another worktree of the repo, or AIB's data folder), as `localOnly.ignored`.
+   */
+  'localOnly.chat': {
+    params: { project: string; worktree: boolean; ignored?: boolean };
+    result: { localOnly: { entries: string[]; dirs: string[]; private: string; ignored?: { dirs: string[]; files: string[] } } | null };
+  };
   'localOnly.list': { params: { root: string; main: string; dir?: string }; result: Record<string, unknown> };
   'localOnly.search': { params: { root: string; main: string; query: string }; result: Record<string, unknown> };
   'localOnly.read': {

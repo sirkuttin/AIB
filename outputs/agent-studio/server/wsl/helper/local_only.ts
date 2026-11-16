@@ -20,7 +20,16 @@ import * as files from '../../worktrees/files.ts';
 import * as local from '../../worktrees/local_only.ts';
 import { backupProject, type BackupResult } from '../../worktrees/local_backup.ts';
 import { Registry } from '../../worktrees/worktrees.ts';
+import { ignoredInMain, ignoredTops, overlayIgnored } from '../../worktrees/ignored_overlay.ts';
 import { BAD_PARAMS, type Handlers, int, RpcError, str } from './rpc.ts';
+
+/** AIB's own folders in the distro (never granted to an agent): the folder above this AIB's data folder, and AIB_WSL_ROOT. */
+function ownFolders(data: string | undefined): string[] {
+  const out = data ? [osp.dirname(data)] : [];
+  const root = Deno.env.get('AIB_WSL_ROOT');
+  if (root && osp.isabs(root)) out.push(root);
+  return out;
+}
 import { encodeBase64 } from './methods.ts';
 
 function absPath(params: Record<string, unknown>, key: string): string {
@@ -92,19 +101,40 @@ export function localOnlyMethods(data?: string): Handlers {
     },
 
     'localOnly.chat': async (p) => {
-      const lo = await local.localOnlyOf(absPath(p, 'project'));
-      return { localOnly: lo ? local.chatLocalOnly(lo, p.worktree === true) : null };
+      const project = absPath(p, 'project');
+      const lo = await local.localOnlyOf(project);
+      const told = lo ? local.chatLocalOnly(lo, p.worktree === true) : null;
+      if (p.ignored !== true) return { localOnly: told };
+      // a chat in its own copy: every other top-level folder and file git ignores in the main folder too (owner), never .git,
+      // another worktree of the repo, or AIB's own folders in the distro
+      // (a root that holds the project itself, as a test's /tmp/aib-wsl-test-* does, only keeps its data folder out)
+      const own = [...(data ? [data] : []), ...ownFolders(data)].filter((r) => !files.within(real(project), real(r)));
+      const tops = await ignoredTops(project, own);
+      const given = new Set(told?.dirs ?? []);
+      const ignored = { dirs: tops.dirs.filter((d) => !given.has(d)), files: tops.files };
+      if (!told && !ignored.dirs.length && !ignored.files.length) return { localOnly: null };
+      return { localOnly: { ...(told ?? { entries: [], dirs: [], private: '' }), ignored } };
     },
 
     'localOnly.list': async (p) => {
       const { root, main, same } = scopeOf(p, data);
       const base = files.realRoot(root);
       const lo = await local.localOnlyOf(main);
+      const dir = files.safeParts(str(p, 'dir', true)).join('/');
       const strays = lo && !same ? await local.findStrays(base, lo) : [];
-      const listing = await files.listLocal(base, main, lo, str(p, 'dir', true), strays);
-      await files.excludeHints(main, lo, listing, same);
-      const { sig, ...rest } = listing;
-      return { root: base, ...rest, localOnly: localPart(main, lo, sig) };
+      let listing: (files.Listing & { sig: string }) | null = null;
+      try {
+        listing = await files.listLocal(base, main, lo, dir, strays);
+      } catch (error) {
+        // a folder the copy lacks: overlayIgnored lists it from main when main ignores it
+        if (same || !(error instanceof files.FilesError) || error.code !== 'not_found') throw error;
+      }
+      const sig = listing?.sig ?? '';
+      const { sig: _sig, ...shown } = listing ?? { sig };
+      // every ignored or excluded entry of main stays visible from a chat copy (from: 'main'); excluded ones in normal colour
+      const out = await overlayIgnored(listing ? shown as files.Listing : null, base, main, dir, same);
+      await files.excludeHints(main, lo, out, same);
+      return { root: base, ...out, localOnly: localPart(main, lo, sig) };
     },
 
     'localOnly.search': async (p) => {
@@ -129,7 +159,13 @@ export function localOnlyMethods(data?: string): Handlers {
           if (!(error instanceof files.FilesError) || error.status !== 404) throw error;
         }
       }
-      return { ...rawRead(root, rel, cap), readRoot: files.realRoot(root), ...(isLocal ? { local: true } : {}) };
+      try {
+        return { ...rawRead(root, rel, cap), readRoot: files.realRoot(root), ...(isLocal ? { local: true } : {}) };
+      } catch (error) {
+        // a file git ignores in the main folder (its copy never has it): read there
+        if (same || !(error instanceof files.FilesError) || error.status !== 404 || !(await ignoredInMain(main, rel))) throw error;
+        return { ...rawRead(main, rel, cap), readRoot: files.realRoot(main), from: 'main' };
+      }
     },
 
     'localOnly.exclude': async (p) => {
