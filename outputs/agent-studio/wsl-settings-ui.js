@@ -34,6 +34,7 @@
   const WSL_DOCS = 'https://learn.microsoft.com/windows/wsl/install';
   const NAMES = { claude: ['Claude Code', 'C'], codex: ['Codex', 'X'], omp: ['OMP', 'O'] };
   const ORDER = ['claude', 'codex', 'omp'];
+  const INSTALL_IDS = ['claude', 'codex']; // the ids POST /api/live/wsl/agents/install accepts
   // The vendors' own terminal commands (owner decision 3a): shown to copy with their docs, never installed by AIB.
   const CLI = {
     claude: { cmd: 'claude', install: 'curl -fsSL https://claude.ai/install.sh | bash', docs: 'https://code.claude.com/docs/en/setup' },
@@ -50,10 +51,32 @@
   const MIN_NODE = '22.19';
   const MANAGERS = { asdf: 'asdf', mise: 'mise', nvm: 'nvm', system: 'the system', aib: 'AIB' };
   // A version manager's shim with no Node.js version set (owner rule: never offer nvm then): the manager's own commands, to copy.
-  const SHIM_FIX = {
-    asdf: 'asdf install nodejs latest && asdf set -u nodejs "$(asdf latest nodejs)"',
-    mise: 'mise use -g node@lts',
-  };
+  // asdf 0.16 (its Go rewrite) replaced `asdf global` with `asdf set -u` (asdf-vm.com/guide/upgrading-to-v0-16.html): the helper
+  // reports asdf's version (node.managerVersion) and the page shows that generation's command; without it, both, each labelled.
+  const ASDF_MODERN = 'asdf install nodejs latest && asdf set -u nodejs latest';
+  const ASDF_LEGACY = 'asdf install nodejs latest && asdf global nodejs latest';
+  const MISE_FIX = 'mise use -g node@lts';
+  // [label, command] rows; label '' when only one generation's command applies.
+  function shimFix(n) {
+    if (n.manager === 'mise') return [['', MISE_FIX]];
+    if (n.manager !== 'asdf') return [];
+    const m = /^(\d+)\.(\d+)/.exec(String(n.managerVersion || ''));
+    if (!m) return [
+      ['asdf 0.16 or newer:', ASDF_MODERN],
+      ['asdf 0.15 or older:', ASDF_LEGACY],
+    ];
+    const modern = Number(m[1]) > 0 || Number(m[2]) >= 16;
+    return [['', modern ? ASDF_MODERN : ASDF_LEGACY]];
+  }
+  // git and curl are system packages: the copy-only install line for the distro's package manager family (env.prereqs pkgManager;
+  // an older helper leaves it out: apt, as before). '' for 'unknown'.
+  function pkgLine(pm, pkg) {
+    const p = pm || 'apt';
+    if (p === 'apt' || p === 'dnf' || p === 'yum' || p === 'zypper') return 'sudo ' + p + ' install ' + pkg;
+    if (p === 'pacman') return 'sudo pacman -S ' + pkg;
+    if (p === 'apk') return 'sudo apk add ' + pkg;
+    return '';
+  }
   // Where each agent keeps its sign-in in the distro: Uninstall never touches these.
   const SIGNIN_FILES = { claude: '~/.claude', codex: '~/.codex' };
   const ENV_MODES = {
@@ -81,9 +104,15 @@
     projectSeen = null; // the open project's distro when the pick was last made from it
 
   // ---- small parts -----------------------------------------------------------------------------------------------------
+  // a status chip whose words change (Ready / Starting / Installing…) is read out politely
+  const live = (chip) => {
+    chip.setAttribute('role', 'status');
+    chip.setAttribute('aria-live', 'polite');
+    return chip;
+  };
   const note = (text, cls) => el('p', text, 'st-note' + (cls ? ' ' + cls : ''));
   function card(title) {
-    const c = el('section', null, 'st-card');
+    const c = el('section', null, 'st-card wl-card');
     c.append(el('h3', title, 'st-card-title'));
     return c;
   }
@@ -313,7 +342,7 @@
   function picker(st, key) {
     const wrap = el('label', null, 'st-field wl-pick');
     const sel = el('select');
-    sel.setAttribute('aria-label', 'The distro this page shows');
+    sel.setAttribute('aria-label', 'Distro');
     for (const d of st.distros || []) {
       const o = el('option', d.name + (d.isDefault ? ' (WSL default)' : ''));
       o.value = d.key;
@@ -321,12 +350,15 @@
     }
     // the ones AIB cannot use: listed, off, with the reason (the overview card says the same, with the WSL 1 command)
     for (const s of st.skipped || []) {
-      const o = el('option', s.name + ' (not supported' + (s.why ? ': ' + String(s.why).replace(/\.$/, '') : '') + ')');
+      const o = el('option', s.name + ' (not supported)');
+      if (s.why) o.title = String(s.why); // the full reason; the overview card says it too
       o.value = '';
       o.disabled = true;
       sel.append(o);
     }
     sel.value = key;
+    const cur = (st.distros || []).find((d) => d.key === key);
+    if (cur) sel.title = cur.name; // a long name is cut in the closed field: the whole name on hover
     sel.addEventListener('change', () => choose(sel.value));
     wrap.append(el('span', 'Distro', 'st-label'), sel);
     return wrap;
@@ -357,7 +389,7 @@
         el('span', letterOf(d.name), 'st-letter'),
         el('strong', d.name),
         el('span', 'WSL 2' + (d.isDefault ? ' · WSL default' : ''), 'st-tag'),
-        el('span', chip, 'st-status ' + cls),
+        live(el('span', chip, 'st-status ' + cls)),
       );
       row.append(head);
       c.append(row);
@@ -373,7 +405,12 @@
       if (isWsl1(s)) {
         const how = el('div', null, 'st-beta-install');
         how.append(
-          el('span', 'AIB needs WSL 2. Convert it in PowerShell (takes a few minutes; back it up first):', 'st-hint'),
+          el(
+            'span',
+            (/needs WSL 2/i.test(String(s.why || '')) ? '' : 'AIB needs WSL 2. ') +
+              'Convert it in PowerShell (takes a few minutes; back it up first):',
+            'st-hint',
+          ),
           copyRow('wsl --set-version ' + s.name + ' 2', 'Copy the command that converts ' + s.name + ' to WSL 2'),
         );
         row.append(how);
@@ -454,7 +491,10 @@
   }
 
   // ---- terminal panels on the cards (the Windows card's setup panel: settings-ui.js startSetup) ----------------------------
-  function closePanel(key, paint) {
+  // paint: draw the page again. A panel with an `endKey` (the server's terminal key: setup:wsl-node@<d>, signin:<agent>@<d>) also
+  // ends that program on the server when it closes, as the Windows card's Close does (settings-ui.js closeTerminal): the server
+  // keeps a terminal running after its socket closes. `keep`: only the panel goes (openPanel replacing it: the next run resumes it).
+  function closePanel(key, paint, keep) {
     const entry = terms.get(key);
     if (!entry) return;
     terms.delete(key);
@@ -464,11 +504,13 @@
       /* already closed */
     }
     if (entry.node && entry.node.remove) entry.node.remove();
+    const Wsl = W();
+    if (entry.endKey && !keep && Wsl && Wsl.endTerminal) Promise.resolve().then(() => Wsl.endTerminal(entry.endKey)).catch(() => {});
     if (paint) redraw();
   }
-  /** A panel (title, Close, the terminal, a status line) under `key`; replaces the one there. */
-  function openPanel(key, title) {
-    closePanel(key);
+  /** A panel (title, Close, the terminal, a status line) under `key`; replaces the one there. `endKey`: see closePanel. */
+  function openPanel(key, title, endKey) {
+    closePanel(key, false, true);
     const node = el('div', null, 'st-beta-term');
     const head = el('div', null, 'st-beta-term-head');
     head.append(el('span', title, 'st-beta-term-title'), button('Close', () => closePanel(key, true), 'st-link'));
@@ -476,7 +518,7 @@
     const status = el('p', 'Starting…', 'st-note');
     status.setAttribute('role', 'status');
     node.append(head, view, status);
-    const entry = { node, view, status, run: null, running: true };
+    const entry = { node, view, status, run: null, running: true, endKey: endKey || '' };
     terms.set(key, entry);
     redraw();
     return entry;
@@ -521,7 +563,11 @@
       return redraw();
     }
     rowNotes.delete(key);
-    const entry = openPanel(key, 'Installing Node.js in ' + d.name + ': nvm\'s official installer, then nvm install --lts');
+    const entry = openPanel(
+      key,
+      'Installing Node.js in ' + d.name + ': nvm\'s official installer, then nvm install --lts',
+      'setup:wsl-node@' + d.key,
+    );
     entry.run = T.runSetup(entry.view, 'wsl-node', 'node', {
       distro: d.key,
       onReady: () => say(entry, 'Installing. Answer here if the installer asks something.'),
@@ -586,7 +632,10 @@
             'Set one in ' + name + ' (no password needed), then choose Check again:',
         ),
       );
-      if (SHIM_FIX[n.manager]) extra.push(copyRow(SHIM_FIX[n.manager], 'Copy the command that sets a Node.js version in ' + mgr));
+      for (const [label, cmd] of shimFix(n)) {
+        if (label) extra.push(note(label, 'dim'));
+        extra.push(copyRow(cmd, 'Copy the command that sets a Node.js version in ' + mgr));
+      }
       if (n.note) extra.push(note(n.note, 'dim'));
       if (p.nodeInstallBlocked) extra.push(note(p.nodeInstallBlocked, 'dim'));
       extra.push(actions(shellButton(d), againButton(d)));
@@ -622,12 +671,18 @@
     return check(false, title, state, extra);
   }
   // git and curl are system packages: the command to copy, never run by AIB (it would need the person's password).
-  function aptCheck(d, title, what, pkg, version) {
+  function pkgCheck(d, title, what, pkg, version, pm) {
     const ok = what.state === 'ok';
     if (ok) return check(true, title, 'found' + (what.version ? ' ' + what.version : ''));
+    const line = pkgLine(pm, pkg);
+    if (!line)
+      return check(false, title, 'missing', [
+        note(version + ' Install ' + pkg + ' with your distro\'s package manager in ' + d.name + ' (AIB does not run it).'),
+        actions(shellButton(d), againButton(d)),
+      ]);
     return check(false, title, 'missing', [
       note(version + ' It needs your password, so AIB does not run it. Run it yourself in ' + d.name + ':'),
-      copyRow('sudo apt install ' + pkg, 'Copy the command that installs ' + pkg),
+      copyRow(line, 'Copy the command that installs ' + pkg),
       actions(shellButton(d), againButton(d)),
     ]);
   }
@@ -664,8 +719,8 @@
             ]),
       );
       ul.append(
-        aptCheck(d, 'git', p.git || { state: 'missing' }, 'git', 'Needed for the Changes tab, and to merge older chats that still work in their own copy.'),
-        aptCheck(d, 'curl', p.curl || { state: 'missing' }, 'curl', 'Needed by nvm\'s installer and the vendors\' install scripts.'),
+        pkgCheck(d, 'git', p.git || { state: 'missing' }, 'git', 'Needed for the Changes tab, and to merge older chats that still work in their own copy.', p.pkgManager),
+        pkgCheck(d, 'curl', p.curl || { state: 'missing' }, 'curl', 'Needed by nvm\'s installer and the vendors\' install scripts.', p.pkgManager),
       );
       const mb = p.diskFreeMB;
       if (typeof mb !== 'number') ul.append(check(true, 'Free space in your home folder', 'not known'));
@@ -703,14 +758,15 @@
     const k = 'wsl:' + d.key + ':' + row.id;
     return {
       id: row.id,
-      name: (win && win.name) || known[0],
+      name: (win && win.name) || (!NAMES[row.id] && row.name) || known[0],
       letter: (win && win.letter) || known[1],
       builtin: true,
       beta: false,
       enabled: enabledWant.has(k) ? enabledWant.get(k) : row.enabled !== false,
       found: !!row.found,
       version: row.version || '',
-      installable: !!(row.installable || row.canInstall),
+      // only what the server marks installable, and only the ids its install routes know (Claude Code and Codex)
+      installable: !!(row.installable || row.canInstall) && INSTALL_IDS.includes(row.id),
       update: !!row.update,
       pinned: row.pinned || '',
       managed: !!(row.managed || row.source === 'studio'),
@@ -795,7 +851,7 @@
     rowNotes.delete(k);
     const now = W() && W().distro ? W().distro(d.key) : null;
     const start = !now || now.state !== 'ready';
-    const entry = openPanel(k, 'Signing in to ' + a.name + ' in ' + d.name);
+    const entry = openPanel(k, 'Signing in to ' + a.name + ' in ' + d.name, 'signin:' + a.id + '@' + d.key);
     entry.run = T.runSignin(entry.view, a.id, {
       distro: d.key,
       start,
@@ -1032,7 +1088,11 @@
         .map((r, i) => ({ r, i, o: ORDER.includes(r.id) ? ORDER.indexOf(r.id) : ORDER.length }))
         .sort((x, y) => x.o - y.o || x.i - y.i)
         .map((x) => x.r);
-      for (const r of rows) c.append(S.agentRow(toAgent(d, r), { uninstall: true }, env));
+      for (const r of rows) {
+        const agent = S.agentRow(toAgent(d, r), { uninstall: true }, env);
+        if (agent && agent.querySelectorAll) agent.querySelectorAll('.st-status').forEach(live);
+        c.append(agent);
+      }
     }
     const foot = note(
       'Sign-in is checked in ' + d.name + ' each time this page reads its agents. "Use in ' + d.name + '" is ' + d.name +
@@ -1077,7 +1137,6 @@
     const c = card(d.name);
     c.dataset.distro = d.key;
     c.dataset.removed = '1';
-    c.append(facts([['State', 'AIB not set up']]));
     c.append(note('AIB is not set up in ' + d.name + '.', 'wl-removed'));
     c.append(
       note(
@@ -1092,7 +1151,11 @@
       if (left.left.length) {
         c.append(note('Left in ' + d.name + ':', 'bad'));
         const ul = el('ul', null, 'wl-rm-list wl-left');
-        for (const x of left.left) ul.append(el('li', x));
+        for (const x of left.left) {
+          const li = el('li');
+          li.append(el('code', String(x), 'wl-rm-path'));
+          ul.append(li);
+        }
         c.append(ul);
       }
     }
@@ -1176,7 +1239,7 @@
       dirty = Number(wt.dirty) || 0;
     c.append(
       note(
-        'Chat copies: ' + (count ? count + ', ' + (dirty ? dirty + ' with unsaved changes' : 'none with unsaved changes') : 'none'),
+        'Chat copies: ' + (count ? count + ', ' + (dirty ? dirty + ' with uncommitted changes' : 'none with uncommitted changes') : 'none'),
         'wl-line' + (dirty ? ' warn' : ''),
       ),
     );
@@ -1184,7 +1247,7 @@
     const others = (u.dataFolders || []).filter((f) => f && !f.mine);
     if (others.length) {
       const box = el('div', null, 'wl-others');
-      box.append(el('p', 'Other AIB data folders in ' + name, 'st-label wl-others-title'));
+      box.append(el('p', 'Other AIB folders in ' + name, 'st-label wl-others-title'));
       const ul = el('ul', null, 'wl-rm-list');
       for (const f of others) {
         const li = el('li', null, 'wl-other');
@@ -1192,7 +1255,7 @@
         if (f.keeperAlive) li.append(el('span', 'in use', 'st-status warn'));
         ul.append(li);
       }
-      box.append(ul, note('These belong to another AIB build or data folder. Remove here never touches them.', 'dim'));
+      box.append(ul, note('These belong to another AIB build or folder. Remove here never touches them.', 'dim'));
       c.append(box);
     }
     const state = removing.get(d.key);
@@ -1220,9 +1283,11 @@
     box.setAttribute('role', 'alertdialog');
     box.setAttribute('aria-modal', 'true');
     box.setAttribute('aria-labelledby', 'wlRemoveTitle');
+    box.setAttribute('aria-describedby', 'wlRemoveMain');
     const title = el('h2', 'Remove AIB from ' + name + '?', 'dp-title');
     title.id = 'wlRemoveTitle';
     const main = el('p', 'This stops AIB\'s helper in ' + name + ' and deletes what is listed here. Nothing is deleted before you confirm.', 'dp-main');
+    main.id = 'wlRemoveMain';
     const status = el('p', 'Checking what would be deleted…', 'dp-note');
     status.setAttribute('role', 'status');
     const body = el('div', null, 'wl-rm-body');
@@ -1326,10 +1391,17 @@
     const showFailure = (r) => {
       body.replaceChildren();
       status.hidden = true;
-      main.textContent = 'AIB could not remove everything from ' + name + '.';
+      // the title states the outcome now, not the question
+      title.textContent = 'AIB could not remove everything from ' + name;
+      main.textContent = 'What AIB removed and what it left in ' + name + ' is listed here.';
+      const path = (x) => {
+        const li = el('li');
+        li.append(el('code', String(x), 'wl-rm-path'));
+        return li;
+      };
       if (r.message) body.append(el('p', r.message, 'dp-error wl-rm-message'));
-      if (r.left.length) body.append(list('Left in ' + name + ':', r.left.map((x) => el('li', String(x))), 'wl-rm-left'));
-      if (r.removed.length) body.append(list('Removed:', r.removed.map((x) => el('li', String(x))), 'wl-rm-done'));
+      if (r.left.length) body.append(list('Left in ' + name + ':', r.left.map(path), 'wl-rm-left'));
+      if (r.removed.length) body.append(list('Removed:', r.removed.map(path), 'wl-rm-done'));
     };
     const fail = (e) => {
       removing.delete(key);
@@ -1554,7 +1626,7 @@
       enabledWant.clear();
       rowNotes.clear();
       uninstalling.clear();
-      for (const k of Array.from(terms.keys())) closePanel(k);
+      for (const k of Array.from(terms.keys())) closePanel(k, false, true);
       if (removeBox) removeBox.close(false);
       aibs.clear();
       removing.clear();

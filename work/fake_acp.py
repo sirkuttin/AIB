@@ -237,14 +237,21 @@ def allow_prompt(key, params):
     """Allow rules: 'allow:<command>' asks like claude-agent-acp's Bash (a tool_call naming the tool, then request_permission with
     Yes / Always / No); 'allowcodex:<command>' asks like codex-acp (kind execute, rawInput.command, no tool name)."""
     text = next((b.get('text', '') for b in params.get('prompt', []) if b.get('type') == 'text'), '')
-    if not (text.startswith('allow:') or text.startswith('allowcodex:')):
+    if not (text.startswith('allow:') or text.startswith('allowcodex:') or text.startswith('allowedit:')):
         return False
-    claude = text.startswith('allow:')
+    claude = text.startswith('allow:') or text.startswith('allowedit:')
     command = text.split(':', 1)[1]
     allow_count[0] += 1
     tool = 'allow-tool-%d' % allow_count[0]
     rid = 'allow-%d' % allow_count[0]
     waiting[rid] = key
+    if text.startswith('allowedit:'):
+        # 'allowedit:<path>' asks like claude-agent-acp's Edit (the file path as the agent gave it)
+        call = {'toolCallId': tool, 'kind': 'edit', 'title': 'Edit ' + command, 'rawInput': {'file_path': command, 'old_string': 'a', 'new_string': 'b'}, 'status': 'pending'}
+        update({'sessionUpdate': 'tool_call', **call, '_meta': {'claudeCode': {'toolName': 'Edit'}}})
+        options = [{'optionId': 'yes', 'name': 'Yes', 'kind': 'allow_once'}, {'optionId': 'always', 'name': 'Yes, always', 'kind': 'allow_always'}, {'optionId': 'no', 'name': 'No', 'kind': 'reject_once'}]
+        emit({'id': rid, 'method': 'session/request_permission', 'params': {'sessionId': SID(), 'toolCall': call, 'options': options}})
+        return True
     call = {'toolCallId': tool, 'kind': 'execute', 'title': command, 'rawInput': {'command': command}, 'status': 'pending'}
     if claude:
         update({'sessionUpdate': 'tool_call', **call, '_meta': {'claudeCode': {'toolName': 'Bash'}}})

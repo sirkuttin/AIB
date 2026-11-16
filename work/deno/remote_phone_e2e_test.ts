@@ -1203,14 +1203,14 @@ async function signInPage(
     "the phone page",
   );
   await page.eval(`new Promise((resolve, reject) => {
-    const req = indexedDB.open('aib-phone', 1);
+    const req = indexedDB.open('aib-phone');
     req.onupgradeneeded = () => req.result.createObjectStore('kv');
     req.onsuccess = () => {
       const tx = req.result.transaction('kv', 'readwrite');
       tx.objectStore('kv').put({ token: ${
     JSON.stringify(token)
   }, device: { id: ${JSON.stringify(id)} } }, 'device');
-      tx.oncomplete = () => resolve(true);
+      tx.oncomplete = () => { req.result.close(); resolve(true); };
       tx.onerror = () => reject(tx.error);
     };
     req.onerror = () => reject(req.error);

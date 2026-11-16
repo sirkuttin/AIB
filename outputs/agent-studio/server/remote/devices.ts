@@ -56,19 +56,24 @@ export interface Device {
   /** "Start new chats" turned off (owner decision: a child of Send, on by default, also for phones paired before it: missing = on).
    * `scopes` holds phone.start only while Send is on and this is not set. */
   startOff?: boolean;
+  /** Saved copies of recent chats on the phone for reading offline (owner decision Q6, 2026-11-16: per phone, on by default;
+   * missing = on). The phone learns it from the CACHE_FLAG in the scopes it gets and wipes its copies when it is off. */
+  offlineCache?: boolean;
 }
 
 /** What Settings > Remote control gets: no hashes and no subscription, only whether the phone has one. */
-export type PublicDevice = Omit<Device, 'tokenHash' | 'cookieHash' | 'push' | 'remind' | 'startOff' | 'kind'> & {
+export type PublicDevice = Omit<Device, 'tokenHash' | 'cookieHash' | 'push' | 'remind' | 'startOff' | 'kind' | 'offlineCache'> & {
   kind: DeviceKind;
   pushOn: boolean;
   remind: boolean;
+  /** "Keep saved copies of recent chats" on this phone (Settings > Remote control, the phone's row). */
+  offlineCache: boolean;
   /** The "Start new chats" switch itself (it only counts while Send is on: `scopes` has phone.start then). */
   start: boolean;
 };
 
 const publicOf = (d: Device): PublicDevice => {
-  const { tokenHash: _t, cookieHash: _c, push, remind, startOff, kind, ...rest } = d;
+  const { tokenHash: _t, cookieHash: _c, push, remind, startOff, kind, offlineCache, ...rest } = d;
   return {
     ...rest,
     kind: cleanKind(kind),
@@ -76,8 +81,19 @@ const publicOf = (d: Device): PublicDevice => {
     pushOn: !!push,
     remind: remind !== false,
     start: startOff !== true,
+    // Saved copies of chats are phone-only: a computer keeps chats in memory only (security review SF6)
+    offlineCache: kind !== 'computer' && offlineCache !== false,
   };
 };
+
+/** The flag the phone finds in its scopes while it may keep saved copies of chats (not a switch the server checks a route by). */
+export const CACHE_FLAG = 'phone.cache';
+
+/** The scopes a phone is told (bootstrap and every home / chat / saved answer): its switches, plus CACHE_FLAG while it may keep saved
+ * copies of chats. Without the flag the phone wipes its copies. Never for a computer: it keeps chats in memory only (SF6). */
+export function scopesForPhone(d: Device): string[] {
+  return d.offlineCache === false || d.kind === 'computer' ? [...d.scopes] : [...d.scopes, CACHE_FLAG];
+}
 
 /**
  * The push services a subscription may point at (review should-fix, design v2 section 7): Chrome / Edge on Android and Chrome on
@@ -205,6 +221,7 @@ export class DeviceStore extends JsonFileStore {
         ...(push ? { push } : {}),
         ...(d.remind === false ? { remind: false } : {}),
         ...(startOff ? { startOff: true } : {}),
+        ...(d.offlineCache === false ? { offlineCache: false } : {}),
       });
     }
     this.unreadable = false;
@@ -319,6 +336,22 @@ export class DeviceStore extends JsonFileStore {
       if (!d) return null;
       if (remind) delete d.remind;
       else d.remind = false;
+      this.counter++;
+      this.#save();
+      return publicOf(d);
+    });
+  }
+
+  /** Saved copies of recent chats on the phone on or off (Settings > Remote control, the phone's row). Off: the phone wipes them
+   * when it next reaches the PC. */
+  setOfflineCache(id: string, on: boolean): Promise<PublicDevice | null> {
+    return this.locked(() => {
+      this.sync();
+      this.requireReadable();
+      const d = this.devices.get(id);
+      if (!d) return null;
+      if (on) delete d.offlineCache;
+      else d.offlineCache = false;
       this.counter++;
       this.#save();
       return publicOf(d);

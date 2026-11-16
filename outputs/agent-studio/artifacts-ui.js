@@ -539,7 +539,38 @@
     }
     return null;
   }
-  /* A studio_artifact tool row -> {op:'publish'|'update'|'list', input, result|null, status}; null for any other row. */
+  /* A failed call's own reason, as one plain line: the first non-empty line of its result text, with the wrappers agents put around
+     it taken off (Claude Code's <tool_use_error> tags, a ``` fence, "MCP error -32603:"; a JSON {error|message} answer gives its
+     text). '' when the call carries no text. At most 300 characters. */
+  function errorLine(texts) {
+    for (const t of texts || []) {
+      let s = String(t == null ? '' : t).trim();
+      if (!s) continue;
+      if (s[0] === '{') {
+        try {
+          const o = JSON.parse(s);
+          const v = o && (o.error || o.message);
+          if (typeof v === 'string') s = v;
+          else if (v && typeof v.message === 'string') s = v.message;
+          else continue; // structured data, not a reason
+        } catch (e) {
+          /* plain text that starts with a brace */
+        }
+      }
+      s = s
+        .replace(/<\/?tool_use_error>/gi, '')
+        .replace(/```[\w-]*/g, '')
+        .replace(/^\s*MCP error -?\d+:\s*/i, '');
+      const line = s
+        .split(/\r?\n/)
+        .map((x) => x.trim())
+        .find(Boolean);
+      if (line) return line.length > 300 ? line.slice(0, 299) + '…' : line;
+    }
+    return '';
+  }
+  /* A studio_artifact tool row -> {op:'publish'|'update'|'list', input, result|null, status, error}; null for any other row.
+     `error` is the failed call's own reason (errorLine), '' otherwise. */
   function artifactCall(row) {
     const names = toolNames(row),
       hit = names.find(isArtifactTool);
@@ -558,7 +589,8 @@
     }
     if (!op) return null;
     let result = null;
-    for (const t of resultTexts(row)) {
+    const texts = resultTexts(row);
+    for (const t of texts) {
       result = parseResult(t);
       if (result) break;
     }
@@ -570,7 +602,7 @@
             ? 'failed'
             : 'completed'
           : '';
-    return { op, input: inputOf(row), result, status };
+    return { op, input: inputOf(row), result, status, error: status === 'failed' ? errorLine(texts) : '' };
   }
   /* The card for a publish or update call, resolved against the known artifacts (live data wins over the call's own words). */
   function cardModel(call, artifacts, nowMs) {
@@ -593,6 +625,7 @@
       title: (art && art.title) || res.title || input.title || (failed ? 'Publish failed' : 'Artifact'),
       version,
       sub: failed ? 'The publish did not finish' : id ? parts.join(' · ') : 'Publishing…',
+      error: failed ? String(call.error || '') : '', // the tool's own reason, a line of its own under the fixed words
       diffFrom: id && version >= 2 ? version - 1 : null,
       canOpen: !!id && !failed,
       builtFrom: art && art.fromDoc ? docPageName(art.fromDoc) : '',
@@ -2559,7 +2592,8 @@
   }
 
   /* -- cards in the chat stream -- */
-  const cardSig = (m) => (m ? [m.id, m.title, m.version, m.sub, m.canOpen, m.builtFrom || '', m.state || ''].join('|') : '');
+  const cardSig = (m) =>
+    m ? [m.id, m.title, m.version, m.sub, m.canOpen, m.builtFrom || '', m.state || '', m.error || ''].join('|') : '';
   /* QA m3: an old card shows the version its turn wrote, not the newest. Needs the version times (one item read per artifact). */
   const itemAsked = new Set();
   function cardVersion(card) {
@@ -2593,6 +2627,7 @@
           input: { id: d.id || '', title: d.title || '', kind: d.kind || '' },
           result: d.rid ? { id: d.rid, version: Number(d.ver) || undefined } : null,
           status: d.status,
+          error: d.err || '',
         },
         S.list,
       );
@@ -2607,6 +2642,7 @@
     card.hidden = false;
     card.dataset.sig = sig;
     card.dataset.artId = m.id;
+    card.classList.toggle('art-card-failed', !!m.error); // the app's failure colours (a failed tool row's red), not a good card's teal
     card.replaceChildren();
     const ic = el('span', 'art-card-ic art-card-win'),
       body = el('div', 'art-card-body');
@@ -2615,6 +2651,11 @@
     const title = el('div', 'art-card-title', m.title);
     if (m.state) title.append(el('span', 'artifact-state', ' · ' + m.state)); // decision 8a: the card stays and says so
     body.append(title, el('div', 'art-card-sub', cardLine(m)));
+    if (m.error) {
+      const err = el('div', 'art-card-err', m.error); // plain text (textContent), the whole line on hover
+      err.title = m.error;
+      body.append(err);
+    }
     const acts = el('div', 'art-card-actions');
     const openBtn = el('button', 'art-btn', 'View');
     openBtn.type = 'button';
@@ -2661,6 +2702,7 @@
       d.rid = data.rid || '';
       d.ver = data.ver || '';
       d.status = data.status || '';
+      d.err = data.err || '';
     }
     paintCard(card);
     return card;
@@ -2689,6 +2731,7 @@
             rid: String(res.id || ''),
             ver: res.version ? String(res.version) : '',
             status: call.status,
+            err: call.error || '',
           }),
         );
         return wrap;

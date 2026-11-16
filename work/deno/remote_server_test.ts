@@ -450,7 +450,7 @@ Deno.test({
 
 Deno.test({
   ...OPTS,
-  name: 'chat: the tail is respected, images are URLs (no inline bytes), the image loads by cookie only',
+  name: 'chat: the open page is by bytes, never cut inside a run; images are URLs (no inline bytes), the image loads by cookie only',
   async fn() {
     const s = await phoneOn();
     try {
@@ -497,17 +497,10 @@ Deno.test({
       assertEquals(r.status, 200);
       const body = r.json;
       const seqs = (body.events as Json[]).map((e) => e.seq);
-      assertEquals(seqs, [43, 44, 45, 46, 47, 48, 49, 50, 51, 52]);
-      assertEquals([body.truncated, body.firstSeq, body.cursor], [true, 43, 52]);
-      assertEquals(body.waiting, [{
-        kind: 'permission',
-        key: 'p1',
-        title: 'Run npm test',
-        detail: '',
-        options: [],
-        hidden: 0,
-        pcOnly: true,
-      }]);
+      // the open page is sized by bytes and never starts inside a run: a tail count does not cut the 50-chunk reply (phone history)
+      assertEquals(seqs, Array.from({ length: 52 }, (_, i) => i + 1));
+      assertEquals([body.truncated, body.firstSeq, body.cursor], [false, 1, 52]);
+      assertEquals(body.waiting, [{ kind: 'permission', key: 'p1', title: 'Run npm test', detail: '', options: [], hidden: 0, pcOnly: true }]);
       assert(!r.text.includes(PNG) && !r.text.includes('JVBERi0x'), 'no inline file bytes');
       assert(!('inUse' in body) && !('settings' in body) && !('permissions' in body), 'no model lookup, settings or permission bodies');
       const att = ((body.events as Json[]).find((e) => e.seq === 51)!.data as Json).attachments as Json[];

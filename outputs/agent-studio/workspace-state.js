@@ -765,6 +765,8 @@
       });
     const named = isStr(check.folder) && !!check.folder;
     const path = String(check.path || '');
+    // A WSL folder comes back as a wsl:// ref; the person reads "Ubuntu: /home/u/app" (the ref is still what is sent)
+    const shown = root.AIBWsl && typeof root.AIBWsl.tooltip === 'function' ? String(root.AIBWsl.tooltip(path)) : path;
     // ctx.prefilled: Folder still holds the untouched starting value (a parent with a trailing separator) and Name is empty.
     // Enter must not turn that parent into a project by accident, so Create waits for a name or a folder choice.
     if (c.prefilled && check.valid && !named)
@@ -782,7 +784,7 @@
               kind: 'project',
               text: named ? 'Folder found' : 'Already a project',
               tone: 'ok',
-              preview: 'Opens ' + path + ' (already a project)',
+              preview: 'Opens ' + shown + ' (already a project)',
               previewTone: 'ok',
               primary: 'Open project',
               canSubmit: true,
@@ -791,7 +793,7 @@
               kind: 'existing',
               text: named ? 'Folder found' : 'Existing folder',
               tone: 'ok',
-              preview: 'Uses ' + path + ' (already there)',
+              preview: 'Uses ' + shown + ' (already there)',
               previewTone: 'ok',
               primary: 'Open project',
               canSubmit: true,
@@ -804,7 +806,7 @@
         kind: 'new',
         text: named ? 'Folder found' : 'New folder',
         tone: 'ok',
-        preview: 'Creates ' + path,
+        preview: 'Creates ' + shown,
         previewTone: 'ok',
         primary: 'Create project',
         canSubmit: true,

@@ -60,8 +60,8 @@ try {
       await serveFor(page, s);
       await page.goto(`https://${NAME}/phone.html`);
       await page.waitFor('!!document.getElementById("app").dataset.screen', 15000, 'the phone page');
-      await page.eval(`new Promise((resolve, reject) => { const req = indexedDB.open('aib-phone', 1); req.onupgradeneeded = () => req.result.createObjectStore('kv');
-        req.onsuccess = () => { const tx = req.result.transaction('kv', 'readwrite'); tx.objectStore('kv').put({ token: ${JSON.stringify(phone.token)}, device: { id: ${JSON.stringify(phone.id)} } }, 'device'); tx.oncomplete = () => resolve(true); tx.onerror = () => reject(tx.error); }; req.onerror = () => reject(req.error); })`);
+      await page.eval(`new Promise((resolve, reject) => { const req = indexedDB.open('aib-phone'); req.onupgradeneeded = () => req.result.createObjectStore('kv');
+        req.onsuccess = () => { const tx = req.result.transaction('kv', 'readwrite'); tx.objectStore('kv').put({ token: ${JSON.stringify(phone.token)}, device: { id: ${JSON.stringify(phone.id)} } }, 'device'); tx.oncomplete = () => { req.result.close(); resolve(true); }; tx.onerror = () => reject(tx.error); }; req.onerror = () => reject(req.error); })`);
       await page.goto(`https://${NAME}/phone.html`);
       await page.waitFor('document.getElementById("app").dataset.screen === "home" && !!document.querySelector(".ph-card")', 15000, 'home');
       await sleep(1500);

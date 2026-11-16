@@ -42,6 +42,7 @@ import { defaultsAllowed } from '../worktrees/local_strays.ts';
 import { cleanupApply, cleanupScan, liveOf, titlesOf } from './cleanup_routes.ts';
 import { confirmView } from '../worktrees/cleanup.ts';
 import { Registry as SwarmRegistry } from '../swarm/registry.ts';
+import { wslDefaultsAllowed, wslEnsureLocalOnly } from '../wsl/local_only.ts';
 
 type Json = Record<string, unknown>;
 
@@ -203,6 +204,8 @@ export async function projectAdd(
   // the default local-only /private (idempotent, never throws; not a git folder: nothing). A test Studio (temp or no state folder)
   // writes it only for projects in the temp folder, never into a real repo's .git/info/exclude (local_strays.defaultsAllowed).
   await Promise.all(paths.filter((p) => defaultsAllowed(stateDir, String(p))).map((p) => ensureDefault(String(p))));
+  // a WSL project: the same in its distro, by the helper (wsl/local_only.ts; never throws), without holding the reply up
+  for (const p of paths) if (wslLocOf(String(p)) && wslDefaultsAllowed(stateDir, String(p))) void wslEnsureLocalOnly(String(p));
   if (removed) await bringBack(removed, paths); // adding a removed project again brings its chats back too
 }
 

@@ -4,8 +4,8 @@
   // default) and the four setup steps (Tailscale on this PC, HTTPS for your tailnet, Share AIB on your tailnet, Add a phone), each
   // with one button that runs the step for you (server/remote/setup.ts) and turns green by itself; "What AIB changed on this PC";
   // how the phone connects (Tailscale; a no-account relay comes later); Add a phone (QR, six words, countdown), approving a phone
-  // that claimed the code (two check words, per-phone switches), the paired phones with Silent reminders, Remove and Remove all
-  // phones, and Phone activity. The server side is /api/live/devices* (server/web/devices_routes.ts).
+  // that claimed the code (two check words, per-phone switches), the paired phones with Silent reminders, Keep saved copies, Remove and
+  // Remove all phones, and Phone activity. The server side is /api/live/devices* (server/web/devices_routes.ts).
   // settings-ui.js draws the two cards and calls render(kind, box, host). This file keeps its own state: it reads the view every
   // 2 s while a card is on screen (a phone's claim shows up without a click; no Tailscale command runs for that), and asks the
   // server to re-read Tailscale every 3 s while a step waits and every 30 s otherwise (30 s after 10 minutes), only while the page
@@ -845,6 +845,25 @@
     return box;
   }
 
+  const CACHE_NOTE =
+    'The phone keeps copies of up to 5 chats you opened there recently (about 2 MB each), so you can read them without a connection. ' +
+    'They sit in the browser storage of the AIB page on the phone, not encrypted, like the key that pairs the phone. Turning this off ' +
+    'or removing the phone deletes them the next time the phone reaches this PC.';
+  /* A paired phone's saved copies of chats switch (owner decision Q6: per phone, on by default); saved at once. */
+  function drawCache(d) {
+    const box = el('div', null, 'dv-remind dv-cache');
+    const l = el('label', null, 'st-toggle'),
+      cb = el('input');
+    cb.type = 'checkbox';
+    cb.checked = d.offlineCache !== false;
+    cb.disabled = !!D.busy;
+    cb.dataset.offlineCache = d.id;
+    cb.addEventListener('change', () => act('devices/prefs', { id: d.id, offlineCache: cb.checked }, 'prefs'));
+    l.append(cb, el('span', 'Keep saved copies of recent chats'));
+    box.append(l, el('p', CACHE_NOTE, 'st-note'));
+    return box;
+  }
+
   function scopeSet(id) {
     if (!D.scopes[id]) D.scopes[id] = new Set(scopesFor('computer').map(([s]) => s));
     return D.scopes[id];
@@ -1048,13 +1067,17 @@
         ),
       );
       row.append(drawSwitches(d));
-      if (d.kind !== 'computer') row.append(drawRemind(d)); // Silent reminders are a phone thing
+      if (d.kind !== 'computer') {
+        row.append(drawRemind(d)); // Silent reminders are a phone thing
+        row.append(drawCache(d)); // Saved copies of chats are phone-only; computers keep chats in memory only
+      }
       const actions = el('div', null, 'st-actions');
       if (D.confirm === d.id) {
         actions.append(
           el(
             'span',
-            'Remove "' + d.name + '"? Its next request fails' + (d.kind === 'computer' ? ' and its open terminals close.' : '.'),
+            'Remove "' + d.name + '"? Its next request fails' +
+              (d.kind === 'computer' ? ' and its open terminals close.' : ', and it then deletes its saved copies of chats.'),
             'st-note',
           ),
           btn('Remove', () => {
@@ -1200,6 +1223,7 @@
     LOST_COMPUTER,
     TRAY_NOTE,
     REMIND_NOTE,
+    CACHE_NOTE,
     _state: D,
   };
   root.AIBDevicesUI = api;

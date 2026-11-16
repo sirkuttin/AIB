@@ -84,13 +84,18 @@
     return new Promise((resolve) => {
       let req;
       try {
-        req = root.indexedDB.open('aib-phone', 1);
+        // no version: the phone page's own (2 since saved copies of chats); a version lower than the stored one would fail
+        req = root.indexedDB.open('aib-phone');
       } catch {
         return resolve(null);
       }
       req.onupgradeneeded = () => req.result.createObjectStore('kv');
       req.onerror = () => resolve(null);
       req.onsuccess = () => {
+        // saved copies of chats are phone-only (a device switched from Phone to Computer): a computer keeps chats in memory only (SF6)
+        try {
+          if (req.result.objectStoreNames.contains('chats')) req.result.transaction('chats', 'readwrite').objectStore('chats').clear();
+        } catch { /* not available */ }
         try {
           const get = req.result.transaction('kv', 'readonly').objectStore('kv').get('device');
           get.onsuccess = () => resolve(get.result || null);

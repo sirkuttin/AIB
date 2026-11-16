@@ -12,7 +12,8 @@
     return new Promise((resolve) => {
       let req;
       try {
-        req = root.indexedDB.open('aib-phone', 1);
+        // no version: the phone page's own (2 since saved copies of chats); a version lower than the stored one would fail
+        req = root.indexedDB.open('aib-phone');
       } catch {
         return resolve(null);
       }

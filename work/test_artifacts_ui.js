@@ -839,6 +839,56 @@ test('tool cards keep showing archived and deleted artifacts with the state word
   assert.equal(A.outputsCardModel(src, list, NOW).id, 'new');
   assert.equal(A.outputsCardModel(src, [list[0]], NOW).state, 'deleted');
 });
+test("a failed publish card keeps its fixed words and shows the tool's own reason (any chat: ACP row, saved row, wrappers)", () => {
+  const why = 'In a WSL project, publish by `content`: AIB cannot open files inside the distro';
+  const acp = A.artifactCall(
+    rawRow({ status: 'failed', content: [{ type: 'content', content: { type: 'text', text: '```\n' + why + '\n```' } }] }),
+  );
+  assert.equal(acp.error, why);
+  const m = A.cardModel(acp, [], NOW);
+  assert.equal(m.sub, 'The publish did not finish');
+  assert.equal(A.cardLine(m), 'The publish did not finish');
+  assert.equal(m.error, why);
+  const saved = A.artifactCall({
+    role: 'tool',
+    call: {
+      name: 'mcp__studio_artifact__publish',
+      input: { title: 'x', path: 'C:\\p\\a.html' },
+      result: { text: '<tool_use_error>MCP error -32603: Give either `path` or `content`, not both\nmore</tool_use_error>', isError: true },
+    },
+  });
+  assert.equal(saved.status, 'failed');
+  assert.equal(A.cardModel(saved, [], NOW).error, 'Give either `path` or `content`, not both');
+  const wrapped = A.artifactCall(rawRow({ status: 'failed', content: undefined, rawOutput: '{"error":"AIB returned 413: too big"}' }));
+  assert.equal(wrapped.error, 'AIB returned 413: too big');
+  assert.equal(A.artifactCall(rawRow({ status: 'failed', content: undefined })).error, '', 'no text: no reason line');
+  assert.equal(A.cardModel(A.artifactCall(rawRow()), [art()], NOW).error, '', 'a finished publish has none');
+  assert.equal(A.artifactCall(rawRow({ status: 'failed', rawOutput: 'x'.repeat(400), content: undefined })).error.length, 300);
+});
+test('panel: the failed card renders the reason as plain text on a line of its own under "The publish did not finish"', () => {
+  const p = panel({});
+  p.UI.sync({ id: 'c1', busy: false, cwd: '' });
+  const box = p.shell.document.createElement('div');
+  const why = '<b>In a WSL project</b>, publish by `content`';
+  const out = p.UI.decorateToolRow(
+    box,
+    rawRow({ status: 'failed', content: [{ type: 'content', content: { type: 'text', text: why } }] }),
+  );
+  const card = out.querySelector('.art-card');
+  assert.equal(card.querySelector('.art-card-title').textContent, 'Drop rates by tier');
+  assert.equal(card.querySelector('.art-card-sub').textContent, 'The publish did not finish');
+  const err = card.querySelector('.art-card-err');
+  assert.ok(err, 'the reason line is there');
+  assert.equal(err.textContent, why, 'as text, never as markup');
+  assert.equal(err.querySelector('b'), null);
+  assert.equal(err.title, why, 'the full text stays in the title attribute');
+  assert.ok(card.className.includes('art-card-failed'), 'the failure colours');
+  const css = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'outputs', 'agent-studio', 'artifacts.css'), 'utf8');
+  assert.match(css, /\.art-card-err \{\s*color: var\(--muted\);[^}]*-webkit-line-clamp: 3;/, 'dimmer than the title, up to 3 lines');
+  const ok = p.UI.decorateToolRow(p.shell.document.createElement('div'), rawRow());
+  assert.equal(ok.querySelector('.art-card-err'), null, 'a finished publish has no reason line');
+  assert.ok(!ok.querySelector('.art-card').className.includes('art-card-failed'));
+});
 
 /* ---- archive and Recently deleted: the panel itself, on the fake DOM ---- */
 function panel(answers) {

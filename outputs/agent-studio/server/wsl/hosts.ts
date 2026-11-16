@@ -106,11 +106,24 @@ export const spawnWslTransport: TransportSpawner = (distro, argv) => {
   };
 };
 
+/**
+ * Extra `serve` flags for the Linux keeper a bridge starts (keeper/PROTOCOL.md section 10), after `--`. The bridge itself gives that
+ * keeper `--orphan-grace 2h`: live agents with no client of any kind (no AIB transport, no keep-alive) wait 2 hours before they stop,
+ * so an AIB restart, crash, update or an older build that dropped the keep-alive never costs a WSL chat. AIB_WSL_ORPHAN_GRACE (a Go
+ * duration such as "20s"; tests) sets another grace; anything else in it is ignored.
+ */
+export function bridgeServeArgs(grace = Deno.env.get('AIB_WSL_ORPHAN_GRACE') ?? ''): string[] {
+  return /^[1-9]\d{0,6}(ms|s|m|h)$/.test(grace) ? ['--', '--orphan-grace', grace] : [];
+}
+
 /** The keep-alive's argv for the Windows keeper (wsl.exe and its arguments). */
 export function holdCommand(wslExe: string, distro: string, install: WslInstall): { command: string; args: string[] } {
   return {
     command: wslExe,
-    args: ['--distribution', distro, '--cd', '~', '--exec', install.keeper, 'bridge', '--data', install.data, '--hold'],
+    args: [
+      ...['--distribution', distro, '--cd', '~', '--exec', install.keeper, 'bridge', '--data', install.data, '--hold'],
+      ...bridgeServeArgs(),
+    ],
   };
 }
 
@@ -150,7 +163,10 @@ export interface WslHostOptions {
   distro: string;
   /** AIB's Windows state folder (the Linux keeper data folder is named after it). */
   stateDir: string;
-  /** The Windows keeper link (for the keep-alive); null: none (keeper off), WSL agents then stop ~35 s after AIB quits. */
+  /**
+   * The Windows keeper link (for the keep-alive); null: none (keeper off). Without a keep-alive (or once it is gone) the Linux keeper
+   * keeps WSL agents for its orphan grace (2 h, bridgeServeArgs) after the last client left, while the distro runs.
+   */
   windowsLink?: () => KeeperLink | null;
   install?: (distro: string) => Promise<WslInstall>;
   spawnTransport?: TransportSpawner;
@@ -316,7 +332,7 @@ export class WslHostImpl implements WslHost {
     if (!install) throw new WslHelperError(`AIB is not set up in ${this.distro} yet`, 'not_installed');
     this.#transport?.kill();
     const spawn = this.options.spawnTransport ?? spawnWslTransport;
-    const child = spawn(this.distro, [install.keeper, 'bridge', '--data', install.data]);
+    const child = spawn(this.distro, [install.keeper, 'bridge', '--data', install.data, ...bridgeServeArgs()]);
     this.#transport = child;
     this.#drainStderr(child);
     const stream = pipeStream(child.stdout, child.stdin, () => child.kill());
@@ -332,6 +348,11 @@ export class WslHostImpl implements WslHost {
       const { preamble, rest, notices } = await Promise.race([readBridgePreamble(stream), timeout]);
       if (notices.trim()) log.info('wsl: %s said before the bridge: %s', this.distro, notices.trim().slice(0, 500));
       this.#preamble = preamble;
+      if (typeof preamble.orphanStopAt === 'number') {
+        // keeper 1.6.0: no AIB and no keep-alive was connected; this connection ends that (the grace starts again next time)
+        const left = Math.max(0, Math.round((preamble.orphanStopAt - Date.now()) / 60_000));
+        log.info('wsl: %s: its keeper had no AIB connected; its agents would have stopped in about %d min', this.distro, left);
+      }
       const hello = KeeperClient.overStream(stream, preamble.token, {
         initial: rest,
         pid: preamble.pid,

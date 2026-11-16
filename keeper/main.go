@@ -26,6 +26,7 @@ type options struct {
 	orphanAfter     time.Duration
 	orphanRetry     time.Duration
 	orphanTries     int
+	orphanGrace     time.Duration // > 0: live channels without a client stop only after this long (the Linux keeper: 2h from the bridge)
 	exitAfter       time.Duration
 	flushEvery      time.Duration
 	segBytes        int64
@@ -46,8 +47,11 @@ type keeper struct {
 	conns    map[*conn]struct{}
 	orphan   *orphanCommand
 	held     bool // the last AIB left on purpose (hold op): no orphan restart, no orphan give-up, until a client claims or spawns
-	stopping bool
-	changed  chan struct{}
+	// orphanSince: --orphan-grace only: when the current stretch with live work and no client began (zero: none). In keeper.json.
+	orphanSince time.Time
+	clientLeft  time.Time // when an authenticated client last left (a client that came and went between two monitor looks)
+	stopping    bool
+	changed     chan struct{}
 
 	spawnMu  sync.Mutex
 	indexMu  sync.Mutex
@@ -89,6 +93,8 @@ func main() {
 	fs.DurationVar(&o.orphanAfter, "orphan-after", 5*time.Second, "run the orphan command after this long with live channels and no client")
 	fs.DurationVar(&o.orphanRetry, "orphan-retry", 10*time.Second, "time between orphan command attempts")
 	fs.IntVar(&o.orphanTries, "orphan-tries", 3, "attempts before the keeper stops its channels and exits")
+	fs.DurationVar(&o.orphanGrace, "orphan-grace", envDuration(orphanGraceEnv, 0),
+		"> 0: live channels with no client stop only after this long without one (0: after the orphan attempts; env "+orphanGraceEnv+")")
 	fs.DurationVar(&o.exitAfter, "exit-after", 10*time.Second, "exit after this long with no live channel and no client")
 	fs.DurationVar(&o.flushEvery, "flush", 200*time.Millisecond, "journal flush and fsync interval")
 	fs.Int64Var(&o.segBytes, "segment-bytes", 16<<20, "journal segment size")
@@ -134,6 +140,17 @@ func main() {
 }
 
 var errLocked = errors.New("another keeper holds this data folder")
+
+// orphanGraceEnv overrides --orphan-grace's default (serve) and the grace the bridge gives a keeper it starts (tests, manual runs).
+const orphanGraceEnv = "AIB_KEEPER_ORPHAN_GRACE"
+
+// envDuration: the environment variable as a Go duration ("90s", "2h"), else def (unset, unparsable or negative).
+func envDuration(name string, def time.Duration) time.Duration {
+	if d, err := time.ParseDuration(os.Getenv(name)); err == nil && d >= 0 {
+		return d
+	}
+	return def
+}
 
 func newKeeper(o options) (*keeper, error) {
 	if o.segBytes < 1024 {
@@ -222,6 +239,13 @@ func (k *keeper) writeInfo() {
 	k.mu.Lock()
 	info := map[string]any{"pid": k.pid, "protocol": protocolVersion, "keeper": keeperVersion, "token": k.token,
 		"started": k.started.UnixMilli(), "orphanCommand": k.orphan, "held": k.held}
+	if g := k.opts.orphanGrace; g > 0 { // only with --orphan-grace: a keeper without it writes exactly what it always did
+		info["orphanGrace"] = int64(g / time.Second)
+		if !k.orphanSince.IsZero() {
+			info["orphanSince"] = k.orphanSince.UnixMilli()
+			info["orphanStopAt"] = k.orphanSince.Add(g).UnixMilli()
+		}
+	}
 	for key, v := range k.info {
 		info[key] = v
 	}
@@ -380,6 +404,9 @@ func (k *keeper) addConn(c *conn) bool {
 
 func (k *keeper) dropConn(c *conn) {
 	k.mu.Lock()
+	if _, ok := k.conns[c]; ok {
+		k.clientLeft = time.Now()
+	}
 	delete(k.conns, c)
 	k.mu.Unlock()
 	for _, ch := range k.channelList() {
@@ -450,9 +477,27 @@ func (k *keeper) status() map[string]any {
 	addr := k.info["address"]
 	k.mu.Unlock()
 	sort.Strings(clients)
-	return map[string]any{"keeper": keeperVersion, "protocol": protocolVersion, "pid": k.pid, "started": k.started.UnixMilli(),
+	st := map[string]any{"keeper": keeperVersion, "protocol": protocolVersion, "pid": k.pid, "started": k.started.UnixMilli(),
 		"dir": k.dir, "address": addr, "live": k.liveCount(), "channels": len(k.channelList()), "clients": clients,
 		"orphanCommand": orphan, "held": held}
+	if g := k.opts.orphanGrace; g > 0 {
+		st["orphanGrace"] = int64(g / time.Second)
+	}
+	return st
+}
+
+// setOrphanSince records (or with the zero time clears) the start of a stretch with live work and no client, in keeper.json.
+func (k *keeper) setOrphanSince(t time.Time) {
+	k.mu.Lock()
+	k.orphanSince = t
+	k.mu.Unlock()
+	k.writeInfo()
+}
+
+func (k *keeper) hasOrphanCommand() bool {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return k.orphan != nil
 }
 
 // ---- timers: journal flush, orphan restart (rule V1), idle exit (rule V2) ---------------------------------------------------
@@ -463,6 +508,7 @@ func (k *keeper) monitor() {
 	lastFlush := time.Now()
 	var noClientSince, quietSince, lastAttempt time.Time
 	attempts := 0
+	announced := false // --orphan-grace: the start of the current stretch without a client was logged
 	for {
 		select {
 		case <-tick.C:
@@ -483,6 +529,11 @@ func (k *keeper) monitor() {
 		live, holds := k.liveWork()
 		clients := k.clientCount()
 		if clients > 0 {
+			if announced { // --orphan-grace: the story in keeper.log
+				announced = false
+				k.logf("a client is back after %v without one; every channel kept running", now.Sub(noClientSince).Round(time.Second))
+				k.setOrphanSince(time.Time{})
+			}
 			noClientSince, attempts = time.Time{}, 0
 		} else if noClientSince.IsZero() {
 			noClientSince = now
@@ -501,6 +552,44 @@ func (k *keeper) monitor() {
 		}
 		if k.isHeld() {
 			attempts, lastAttempt = 0, time.Time{} // held: the channels wait for the next AIB, however long
+			continue
+		}
+		if grace := k.opts.orphanGrace; grace > 0 {
+			// The Linux keeper (the bridge starts it with --orphan-grace): nothing can start AIB again from in here, so the channels
+			// wait for a client for the whole grace, counted from the moment the last one left (a hold counts as one); a client
+			// coming back ends the stretch, and the next one starts the grace from zero. An orphan command, if one was set, still
+			// runs at most --orphan-tries times meanwhile.
+			k.mu.Lock()
+			left := k.clientLeft
+			k.mu.Unlock()
+			if clients == 0 && left.After(noClientSince) {
+				// a client came and went between two looks (a status probe, a reconnect that failed): the grace starts again
+				if announced {
+					announced = false
+					k.logf("a client came and went after %v without one; every channel kept running", left.Sub(noClientSince).Round(time.Second))
+					k.setOrphanSince(time.Time{})
+				}
+				noClientSince, attempts = left, 0
+			}
+			if live == 0 || clients > 0 {
+				continue
+			}
+			away := now.Sub(noClientSince)
+			if !announced {
+				announced = true
+				k.logf("no client: keeping %d live channels; they stop after %v without a client", live, grace)
+				k.setOrphanSince(noClientSince)
+			}
+			if away >= grace {
+				k.logf("no client for %v: stopping %d channels and exiting", grace, live)
+				go k.stop("orphaned")
+				continue
+			}
+			if attempts < k.opts.orphanTries && k.hasOrphanCommand() && away >= k.opts.orphanAfter && now.Sub(lastAttempt) >= k.opts.orphanRetry {
+				attempts++
+				lastAttempt = now
+				k.runOrphan(attempts)
+			}
 			continue
 		}
 		if live > 0 && clients == 0 && now.Sub(noClientSince) >= k.opts.orphanAfter && now.Sub(lastAttempt) >= k.opts.orphanRetry {

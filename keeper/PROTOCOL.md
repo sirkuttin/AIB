@@ -20,8 +20,8 @@ Clients must also ignore unknown events, unknown response fields and unknown rec
 ## 1. Starting the keeper and finding it
 
 ```
-AIB-keeper serve --data <AIB data folder> [--orphan-command <json>] [--port N] [--unix-only]
-AIB-keeper bridge --data <data folder> [--hold]      (section 10)
+AIB-keeper serve --data <AIB data folder> [--orphan-command <json>] [--orphan-grace <duration>] [--port N] [--unix-only]
+AIB-keeper bridge --data <data folder> [--hold] [-- <extra serve flags>]      (section 10)
 AIB-keeper version
 ```
 
@@ -33,6 +33,7 @@ AIB-keeper version
 | `--orphan-after` | `5s` | No client this long while a channel is live: run the orphan command. |
 | `--orphan-retry` | `10s` | Time between orphan command attempts. |
 | `--orphan-tries` | `3` | Attempts before the keeper stops its channels and exits. |
+| `--orphan-grace` | `0` (off), or env `AIB_KEEPER_ORPHAN_GRACE` | Keeper 1.6.0: above 0, live channels with no client stop only after this long without one, not after the orphan attempts (section 6). The bridge (section 10) starts the Linux keeper with `2h`. |
 | `--exit-after` | `10s` | No live channel and no client this long: exit. |
 | `--flush` | `200ms` | Journal flush and fsync interval. |
 | `--segment-bytes` | 16 MiB | Journal segment size. |
@@ -74,6 +75,10 @@ inside); elsewhere mode 0700, files 0600.
  "orphanCommand": null
 }
 ```
+
+With `--orphan-grace` (keeper 1.6.0) it also has `"orphanGrace": <seconds>`, and while live channels have no client
+`"orphanSince"` and `"orphanStopAt"` (Unix ms: when that stretch began, and when the channels stop unless a client comes). A
+client that reads them must do so before its hello: an authenticated connection ends the stretch.
 
 To connect: read `keeper.json`; check that `pid` is alive; dial `transport`/`address`; send hello with `token`. If the file is
 missing, or the dial fails, start a keeper and poll for the file (it normally appears within ~100 ms). If the new keeper exits
@@ -127,7 +132,7 @@ Must be the first frame, within 10 s.
 ```json
 → {"op":"hello","id":1,"token":"9c1f…","min":1,"max":1,"client":"AIB 0.2.3"}
 ← {"ok":true,"re":1,"protocol":1,"keeper":"1.0.0","pid":4242,
-   "features":["pty","notes","truncate","orphan","signal","once","channel-ids","scrollback","labels","hold"]}
+   "features":["pty","notes","truncate","orphan","signal","once","channel-ids","scrollback","labels","hold","orphan-grace"]}
 ```
 
 `min`/`max` is the protocol range the client speaks (`max` 0 = same as `min`). Errors (each closes the connection):
@@ -159,6 +164,9 @@ Channels from earlier keepers stay listed (ended) until removed with `truncate`.
 ← {"ok":true,"re":3,"keeper":"1.0.0","protocol":1,"pid":4242,"started":1794312000000,"dir":"C:\\…\\keeper",
    "address":"127.0.0.1:53017","live":2,"channels":5,"clients":["AIB 0.2.3"],"orphanCommand":{"command":"…"}}
 ```
+
+`orphanGrace` (seconds) is there only when the keeper runs with `--orphan-grace` (keeper 1.6.0). The time left of a grace is not:
+asking for it makes a client, which ends the stretch; it is in `keeper.json` (and the bridge preamble, section 10) instead.
 
 ### spawn
 
@@ -382,7 +390,14 @@ torn or corrupt tail and drops anything after it. The newest ~4 MiB of each chan
   hidden, outside the keeper's jobs). If still no client 10 s later, again; at most 3 times. If no client has come 10 s after
   the third attempt (or there is no orphan command), it kills every channel (reason `orphaned`) and exits. Any authenticated
   connection counts as a client; one connecting resets the count.
-- **Hold:** after `hold` (section 4) neither of the two rules above runs until a client claims or spawns a channel; the exit rule
+- **Orphan grace** (keeper 1.6.0, `--orphan-grace G` above 0; the Linux keeper, which cannot start AIB again, gets `2h` from the
+  bridge): instead of giving up after the attempts, the keeper keeps every live channel until there has been **no client of any
+  kind** (an AIB, a hold bridge, a probe) for G, then kills them (reason `orphaned`) and exits. The count starts when the last
+  client leaves and starts from zero after any client came, even one that came and went within a moment. An orphan command, if
+  set, still runs at most `--orphan-tries` times; without one nothing runs. `keeper.log` tells the story: `no client: keeping N live
+  channels; they stop after G without a client`, `a client is back after …`, `no client for G: stopping N channels and exiting`.
+  Without the flag (the Windows keeper) V1 is exactly as above.
+- **Hold:** after `hold` (section 4) neither V1 nor the orphan grace runs until a client claims or spawns a channel; the exit rule
   (V2) still does once no channel is live.
 - **AIB's own channels** (keeper 1.4.0; spawn labels whose JSON has `"aib":"wsl-hold"` or `"aib":"wsl-helper"`, section 10) are not
   work: a live channel in V1 means one that is neither, so a keep-alive or a WSL helper alone never runs the orphan command and is
@@ -424,6 +439,11 @@ torn or corrupt tail and drops anything after it. The newest ~4 MiB of each chan
   lifetime rules (section 6).
 - keeper 1.5.0 (protocol still 1, no new feature names): the WSL MCP tunnel (section 11): `mcp-forward --helper-socket <socket>` and
   the `AIB-keeper mcp-relay --socket <socket>` subcommand. Neither runs inside a serving keeper or adds to the wire protocol.
+- keeper 1.6.0 (protocol still 1): `serve --orphan-grace <duration>` (feature `orphan-grace`; env `AIB_KEEPER_ORPHAN_GRACE`) and the
+  orphan grace rule (section 6); the bridge starts the keeper with `--orphan-grace 2h` before its extra serve flags, and its preamble
+  carries `orphanStopAt` while the keeper's channels have no client. `orphanGrace` in `status` and `keeper.json`; `orphanSince` and
+  `orphanStopAt` in `keeper.json`. AIB needs none of it (an older Linux keeper is replaced only once it holds no live channel, by
+  the version rule).
 
 ## 10. Bridge
 
@@ -436,8 +456,9 @@ For a keeper AIB cannot dial: one inside a WSL distro. AIB runs
 so the path is relative to `--cd ~`, or absolute from `$HOME`) and speaks this protocol over that process's stdin and stdout.
 
 1. The bridge reads `<data>/keeper/keeper.json` and dials its unix socket. If the file is missing or the dial fails, it starts
-   `AIB-keeper serve --data <data> --unix-only [extra serve flags]` detached (`setsid`, so the keeper outlives the bridge and the
-   `wsl.exe` that started it) and polls for the file for up to 10 s. A keeper that exits with code 3 lost the start race to another
+   `AIB-keeper serve --data <data> --unix-only --orphan-grace 2h [extra serve flags]` detached (`setsid`, so the keeper outlives
+   the bridge and the `wsl.exe` that started it; the grace is `AIB_KEEPER_ORPHAN_GRACE` when that is set, and an `--orphan-grace`
+   among the extra flags wins) and polls for the file for up to 10 s. A keeper that exits with code 3 lost the start race to another
    one: the bridge keeps polling for the winner's file.
 2. Before any frame it writes two lines to stdout:
 
@@ -449,6 +470,8 @@ so the path is relative to `--cd ~`, or absolute from `$HOME`) and speaks this p
    Anything before the `AIB-BRIDGE-1` line (a `wsl.exe` notice) is not from the bridge; AIB skips it. `keeper` and `pid` are those
    of the running keeper (from its `keeper.json`, so possibly an older version than the bridge's own), `token` is its hello token
    (it reaches AIB only over this pipe, never in argv or env), `home` is `$HOME`, `uid` the Linux user id, `arch` Go's GOARCH.
+   Keeper 1.6.0: `orphanStopAt` (Unix ms, from `keeper.json`) is there when the keeper's live channels have had no client: when
+   they would stop. The bridge's own client has not said hello yet, so it is accurate; the hello that follows ends the stretch.
 3. From then on the bytes are copied both ways unchanged: AIB sends `hello` with the token and so on, as over the socket. EOF on
    either side ends the bridge (exit 0); the keeper and its channels stay.
 4. With `--hold` the bridge is a keep-alive, not a transport: after the two lines it sends `hello` itself (client `AIB WSL hold`) and

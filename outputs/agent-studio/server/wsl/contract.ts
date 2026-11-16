@@ -125,6 +125,16 @@ export interface HelperMethods {
   'files.search': { params: { root: string; query: string; limit?: number }; result: unknown };
   'files.read': { params: { root: string; rel: string; maxBytes?: number }; result: { bytesB64: string; size: number; truncated: boolean; mtimeMs: number; path?: string; abs?: string } };
   /**
+   * A whole file's bytes for an artifact published by path from a WSL chat (helper/methods.ts, wsl/artifact_read.ts): `rel` inside
+   * `root`, checked after links are resolved (code 'outside'); one piece of at most 1 MB at `offset` (`length`, default and cap 1 MB)
+   * with the file's `size` and `mtimeMs`, so AIB reads a big file in pieces and notices a change between them. Refusals by code:
+   * 'not_found', 'not_file' (a folder), 'too_large' (size over `maxBytes`, default 25 MB; nothing read), 'unreadable' (permission).
+   */
+  'files.readBytes': {
+    params: { root: string; rel: string; offset?: number; length?: number; maxBytes?: number };
+    result: { bytesB64: string; size: number; mtimeMs: number; offset: number; path: string; abs: string };
+  };
+  /**
    * A file outside the project folder (worktrees/outside_files.ts, run natively: checkShape, resolveOutside, readOutside, folderLabel).
    * AIB has already checked that the chat named the path; the helper adds the shape rules and refuses its own data folder
    * (~/.aib-server). `bytesB64` is there for a picture or page that fits the 1 MB read cap and is not a peek.
@@ -216,6 +226,15 @@ export interface HelperMethods {
     result: { status: number; body: unknown };
   };
   /**
+   * Does one saved session's own transcript (and its subagents' files) name `path` (an absolute Linux path, matched by Linux rules,
+   * worktrees/outside_files.ts mentions)? The outside-file guard of a saved WSL chat that is not running in AIB. Reads only the
+   * transcripts, never `path`.
+   */
+  'transcripts.mentions': {
+    params: { provider: 'claude' | 'codex'; sessionId: string; path: string; claudeDir?: string };
+    result: { mentioned: boolean };
+  };
+  /**
    * The viewer's background-task reads of one saved session, answered by the helper's transcripts/monitor.ts handleGet (helper/
    * bgtasks.ts): `path` is '/api/agents' (the chat and its subagents, each with runningCommands), '/api/commands' (args.running '1':
    * only running ones) or '/api/command' (args.id; with the task's output, read only from Claude Code's own task folder under
@@ -248,12 +267,78 @@ export interface HelperMethods {
    */
   'proc.tree': { params: { roots: number[] }; result: { trees: Record<string, [number, number, number, number | null][] | null> } };
   /**
+   * Stop on a WSL chat's background command (platform/kill_verified.ts run natively): `targets` are [pid, age in seconds] of the
+   * processes AIB noted from `proc.tree` below the agent `root`. Each must still be `root`'s descendant with that start time (a reused
+   * pid is not); those and what they started since get TERM, then KILL after 2 s, leaf first. Nothing else is signalled. `listed`
+   * false: the processes could not be listed, nothing was sent. `killed`: [pid, age] of each process a TERM was sent to.
+   */
+  'proc.stop': {
+    params: { root: number; targets: [number, number][] };
+    result: { listed: boolean; killed: [number, number][]; skipped: number[] };
+  };
+  /**
    * The MCP tunnel (phase 2; helper/mcp_tunnel.ts, wsl/mcp_tunnel.ts). A forwarder's message arrives as the notification
    * HelperMcpRequest; AIB first takes it with `mcp.accept` (ok false: the helper already gave up on it, so AIB must not run it), runs it
    * on its HTTP tool endpoint's checks, and answers with `mcp.reply` (status as HTTP: 200 with body, 202 none, else an error; 503 with
    * `error`: AIB cannot take it, the forwarder says so at once). `mcp.closed` true: AIB was quit on purpose, so new messages are
    * answered "AIB is closed" at once; any other call from AIB clears it. Offered only when helper.ready carries `mcp: {socket}`.
    */
+  /**
+   * Local-only files of WSL projects (helper/local_only.ts: worktrees/local_only.ts, files.ts and local_backup.ts run natively). Linux
+   * paths only. `main` is the project's main folder; `root` the folder Files shows (main itself, or a chat's copy, which must then be
+   * inside the helper's `<data>/worktrees`). Answers are what files_routes.ts answers for a Windows project, with `localOnly.main`
+   * the Linux main folder. `localOnly.ensure` sets the default `/private` up (ensureDefault); `localOnly.chat` is what a chat is told
+   * (local_only.ts chatLocalOnly: entries, dirs, private; it makes the main folder's private/ for a worktree chat). `localOnly.read`
+   * reads like files.read, from `readRoot` (the main folder for a local-only path of a chat's copy). `localOnly.exclude` is POST
+   * files/exclude ({status, body}); `localOnly.backup` the daily zip into `<data>/local-only-backups` of the given projects and of the
+   * projects with chat copies (only with `--data`).
+   */
+  'localOnly.ensure': { params: { project: string }; result: { state: string } };
+  /**
+   * `ignored` (a chat in its own copy): also every other top-level folder and file git ignores in the main folder (worktrees/
+   * ignored_overlay.ts ignoredTops: never .git, another worktree of the repo, or AIB's data folder), as `localOnly.ignored`.
+   */
+  'localOnly.chat': {
+    params: { project: string; worktree: boolean; ignored?: boolean };
+    result: { localOnly: { entries: string[]; dirs: string[]; private: string; ignored?: { dirs: string[]; files: string[] } } | null };
+  };
+  'localOnly.list': { params: { root: string; main: string; dir?: string }; result: Record<string, unknown> };
+  'localOnly.search': { params: { root: string; main: string; query: string }; result: Record<string, unknown> };
+  'localOnly.read': {
+    params: { root: string; main: string; rel: string; maxBytes?: number };
+    result: { bytesB64: string; size: number; truncated: boolean; mtimeMs: number; readRoot: string; local?: boolean; from?: 'main' };
+  };
+  'localOnly.exclude': { params: { root: string; main: string; action: string; path?: string; undo?: string }; result: { status: number; body: Record<string, unknown> } };
+  'localOnly.moveStrays': { params: { root: string; main: string }; result: { moved: [string, string][]; failed: string[] } };
+  'localOnly.backup': { params: { projects?: string[] }; result: { results: Record<string, { status: string; files?: number }> } };
+  /**
+   * Allow rules in a WSL chat (helper/allow_facts.ts, allow/linux.ts; addition): what the matcher needs to know of the distro, read
+   * only. `paths` (at most 64 absolute Linux paths, taken as given: never normalised first): each resolved as the kernel walks it
+   * (links followed, `..` after a link physically, the missing tail kept; `real` null for a dangling or looping link, `..` in the
+   * missing tail, or any error), `exists`/`isDir` with links followed. `scans` (at most 16 folders): true when the folder holds a link
+   * among its entries, has over 5000 entries or can't be read. `pins` (at most 8): allow/pin.ts pinHash of project-script words in a
+   * folder. `base`: the folders on PATH (`pathEnv` when given, else the login PATH) each with its resolved path, AIB's own folders in
+   * the distro, and, with `claude`, Claude Code's settings facts (allow/agent_config.ts claudeFacts) read from `claude.dir` (else
+   * CLAUDE_CONFIG_DIR or ~/.claude of the login environment) and the project's .claude folder.
+   */
+  'allow.facts': {
+    params: {
+      paths?: string[];
+      scans?: string[];
+      pins?: { words: string[]; cwd: string }[];
+      base?: { pathEnv?: string; claude?: { cwd: string; dir?: string } };
+    };
+    result: {
+      paths: { real: string | null; exists: boolean; isDir: boolean }[];
+      scans: boolean[];
+      pins: (string | null)[];
+      base?: {
+        pathDirs: { dir: string; real: string | null }[];
+        own: string[];
+        claude: { askPrograms: string[]; askTools: string[]; riskyEnv: string } | null;
+      };
+    };
+  };
   'mcp.accept': { params: { rid: string }; result: { ok: boolean } };
   'mcp.reply': { params: { rid: string; status: number; body?: string; error?: string }; result: { ok: boolean } };
   'mcp.closed': { params: { closed: boolean }; result: { ok: boolean } };
@@ -354,6 +439,8 @@ export interface BridgePreamble {
   home: string;
   uid: number;
   arch: string;
+  /** Keeper 1.6.0: its live channels had no client and stop at this time (Unix ms) unless one comes; absent otherwise. */
+  orphanStopAt?: number;
 }
 
 /** Linux-side layout, relative to $HOME (never passed with `~`). */
@@ -399,7 +486,15 @@ export interface AibRemoveResult {
 /** The distro's prerequisites for AIB-managed agents (design section 12). */
 export interface EnvPrereqs {
   /** Node.js >= 22.19 with npm is the one hard prerequisite. 'shim_unset': a version manager's shim (asdf/mise) with no version set. */
-  node: { state: 'ok' | 'missing' | 'old' | 'shim_unset' | 'broken'; version?: string; path?: string; manager?: 'asdf' | 'mise' | 'nvm' | 'system' | 'aib' | ''; note?: string };
+  node: {
+    state: 'ok' | 'missing' | 'old' | 'shim_unset' | 'broken';
+    version?: string;
+    path?: string;
+    manager?: 'asdf' | 'mise' | 'nvm' | 'system' | 'aib' | '';
+    note?: string;
+    /** Added after the freeze (optional): the asdf/mise version ('0.18.0'), so the page shows that generation's commands. */
+    managerVersion?: string;
+  };
   npm: { state: 'ok' | 'missing'; version?: string };
   git: { state: 'ok' | 'missing'; version?: string };
   curl: { state: 'ok' | 'missing' };
@@ -409,6 +504,11 @@ export interface EnvPrereqs {
   loginShell: string;
   /** How the login environment was captured: -lic, -lc, or not at all (a version manager in an interactive-only profile is then missed). */
   envMode: 'login-interactive' | 'login' | 'plain';
+  /**
+   * Added after the freeze (optional; older helpers leave it out, read as 'apt'): the distro's package manager family, from
+   * /etc/os-release ID / ID_LIKE and the programs found, for the copy-only git and curl commands.
+   */
+  pkgManager?: 'apt' | 'dnf' | 'yum' | 'zypper' | 'pacman' | 'apk' | 'unknown';
   /** nvm is present in the user's home (so the Node install button can say it will use it). */
   nvm: { present: boolean };
   /** Whether AIB may offer the nvm install button (never when the node found is a shim, or nvm is blocked); the reason otherwise. */

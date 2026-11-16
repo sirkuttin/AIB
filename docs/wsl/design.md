@@ -12,7 +12,7 @@ Each distro in use gets a **Linux keeper** (the same Go program, built for linux
 
 Two `wsl.exe` processes per distro:
 - **Transport** (owned by AIB, lives while AIB runs): `wsl.exe --distribution D --cd ~ --exec ~/.aib-server/<ver>/AIB-keeper bridge --data <linuxData>`. AIB's `KeeperClient` talks keeper frames over its stdin/stdout.
-- **Keep-alive** (a pipe channel in the Windows keeper, label `{"aib":"wsl-hold","distro":D}`): the same command with `--hold`. It keeps the distro from idling out and keeps WSL agents alive after AIB quits. If the Windows keeper dies, the hold drops, and the Linux keeper's orphan rule stops its channels after about 35 s, which mirrors what happens to Windows children.
+- **Keep-alive** (a pipe channel in the Windows keeper, label `{"aib":"wsl-hold","distro":D}`): the same command with `--hold`. It keeps the distro from idling out and keeps WSL agents alive after AIB quits. If the Windows keeper dies (or an older AIB build stops the keep-alive), the hold drops, and the Linux keeper keeps its channels for its orphan grace: 2 hours with no client of any kind, then stops them (keeper 1.6.0 `--orphan-grace`, given by the bridge; it was about 35 s before, which lost the chats of an AIB that was only away for a restart or a build swap).
 
 ```mermaid
 flowchart LR
@@ -233,7 +233,7 @@ Required before building (from the Opus architect review):
 8. **Refs are never URL-parsed** (`new URL` lowercases hosts and encodes spaces); add a lint. Fold the distro when the ref is built (`projectKey` is case-sensitive, `project_delete.ts:21-32`), page `pathKey` agrees.
 9. Put the transport `wsl.exe` in the `ProcessTree` job (`platform/process_tree.ts:14,32`); spawn the helper with a fixed minimal Linux env; magic string before the preamble to skip `wsl.exe` notices; refuse musl distros; relax `safeParts`/`safeRelpath` rules on Linux (`files.ts:40-46`, `changes.ts:134`).
 
-Corrected claims: "mirrors Windows children" (WSL channels outlive AIB until no client, no orphan command and no hold, then stop at ~35 s); "older builds see a missing folder" (probably shown as present); "distro part case-folded" (must be folded at build time).
+Corrected claims: "mirrors Windows children" (WSL channels outlive AIB until no client, no orphan command and no hold, then stop at ~35 s; since keeper 1.6.0 after a 2 h orphan grace); "older builds see a missing folder" (probably shown as present); "distro part case-folded" (must be folded at build time).
 
 **Decisions on the open questions:** Deno helper (refuse musl, ~90 MB); MCP in phase 1 via WSL interop with restricted tools (publish-by-content, list, update; doc tools excluded), full tunnel in phase 2, fallback to a notice if the interop spike fails (+2 days); URLs from WSL always ask with a per-distro "always allow"; refuse WSL1; agents user-installed in phase 1, phase 2 installs into `~/.aib-server/agents/<id>/<ver>` (never `npm i -g`).
 

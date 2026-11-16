@@ -27,6 +27,8 @@ import { applyChange, changedFiles } from './undo.ts';
 import { claudeHelpers, swarmEnabled } from './settings.ts';
 import { readSubagents, type SubagentRecord } from '../subagents/service.ts';
 import { canonicalName } from '../allow/paths.ts';
+import { WSL_TOOL_GROUPS } from '../artifacts/mcp.ts';
+import { isWslRef } from '../platform/location.ts';
 
 const log = getLogger('swarm');
 
@@ -155,6 +157,11 @@ export class Swarm {
     const helpers = readHelpers(this.ctx.stateDir);
     if (helperOf(helpers, { live: conversationId, lasting: lasting(state), path: s(state.cwd) })) {
       throw new Refusal('nested', 'Helpers cannot start or manage helpers: only the main chat can');
+    }
+    // A WSL chat gets no helper tools (mcp.ts WSL_TOOL_GROUPS.swarm off); its own key must not start one either (helpers are
+    // Windows worktrees: a helper in the distro would start and then fail at the worktree registry).
+    if (!WSL_TOOL_GROUPS.swarm && (isDict(state.wsl) || isWslRef(state.cwd) || isWslRef(state.projectRoot))) {
+      throw new Refusal('wsl', 'Helpers are not available in WSL projects yet');
     }
     if (!isDict(state.worktree)) state.projectRoot = s(state.cwd); // a folder chat: its project is the folder it works in
     if (!s(state.projectRoot)) throw new Refusal('not_main', 'This chat has no project folder');

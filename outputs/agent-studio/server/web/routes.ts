@@ -76,7 +76,7 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   POST /api/live/devices/scopes             Settings > Remote control: a paired phone's switches (Answer, Send, Approve once, Push)
  *   POST /api/live/devices/kind               Settings > Devices: a paired device's Phone / Computer {id, kind}
  *   GET  /api/live/devices/activity           Settings > Remote control: Phone activity
- *   POST /api/live/devices/prefs              Settings > Remote control: a phone's Silent reminders {id, remind}
+ *   POST /api/live/devices/prefs              Settings > Remote control: a phone's Silent reminders {id, remind} or {id, offlineCache}
  *   POST /api/live/devices/tailscale/refresh  Settings > Remote control: re-read Tailscale (3 s while a step waits, 30 s otherwise)
  *   POST /api/live/devices/tailscale/run      Settings > Remote control: a setup button {action, replace?, confirm?} (202 + job)
  *   GET  /api/live/devices/tailscale/job      Settings > Remote control: the running or last setup job

@@ -33,7 +33,7 @@ import type { Audit } from './audit.ts';
 import { cleanName, type Device, type DeviceStore, type PhoneScope } from './devices.ts';
 import { LOGIN_HEADER, REMOTE_REASONS, RemoteGate } from './gate.ts';
 import { type Pairing, PairingError } from './pairing.ts';
-import { chatPayload, DEFAULT_TAIL, homePayload, imageOf, revisionOf, type TitleCache } from './payloads.ts';
+import { chatPayload, DEFAULT_TAIL, homePayload, imageOf, olderPage, revisionOf, type TitleCache, wholeEvent } from './payloads.ts';
 import { projectsFor } from './projects.ts';
 import { CONTINUE_FIELDS, continueSaved, publicSaved, SAVED_TAIL, type SavedChats, savedHistory } from './saved.ts';
 import { type ArtifactTickets, remoteArtifactOrigin } from './artifact_server.ts';
@@ -46,7 +46,7 @@ import { studioOf } from '../web/studio_routes.ts';
 import { bringBack, restoreFolders } from '../web/project_routes.ts';
 import { isDeleted, isDocHistory } from '../artifacts/artifacts.ts';
 import { SAVED_KEY } from './saved.ts';
-import { cleanPushSub } from './devices.ts';
+import { cleanPushSub, scopesForPhone } from './devices.ts';
 import type { VapidKeys } from './push.ts';
 import { getLogger } from '../core/log.ts';
 import { PC_OWN_ROUTES, PcBridge } from './pc_bridge.ts';
@@ -132,6 +132,12 @@ export type RemoteAuth =
   | 'left'
   | 'phone'
   | 'pc';
+/** A whole non-negative number from the query (a seq), or null when it is missing or not one. */
+function seqParam(url: URL, name: string): number | null {
+  const v = url.searchParams.get(name);
+  if (v === null || v.trim() === '' || !/^\d{1,15}$/.test(v.trim())) return null;
+  return Number(v.trim());
+}
 /** A chat's read position is written at most this often for one phone (the phone sends it at most every 5 s anyway). */
 export const READ_GAP_MS = 2000;
 /** At most one "read" line per phone and chat in the activity log in this time. */
@@ -159,6 +165,8 @@ export const REMOTE_ROUTES: readonly [string, string, RemoteAuth][] = [
   ['POST', '/api/remote/pair/status', 'pair'],
   ['GET', '/api/remote/home', 'device'],
   ['GET', '/api/remote/chat', 'device'],
+  // Show output: one event of a live chat whole (a step's output the chat page clipped).
+  ['GET', '/api/remote/event', 'device'],
   ['GET', '/api/remote/image', 'image'],
   // Phase D: a signed link to one artifact on the phone's artifact port.
   ['GET', '/api/remote/artifact', 'device'],
@@ -227,6 +235,7 @@ export const ROUTE_SCOPE: Readonly<Record<string, PhoneScope>> = {
   'POST /api/remote/left': 'phone.read',
   'GET /api/remote/home': 'phone.read',
   'GET /api/remote/chat': 'phone.read',
+  'GET /api/remote/event': 'phone.read',
   'GET /api/remote/image': 'phone.read',
   'GET /api/remote/artifact': 'phone.read',
   'GET /api/remote/saved': 'phone.read',
@@ -674,7 +683,7 @@ export class RemoteServer {
       // a computer gets the computer page (the loader and phone.js go there: /pc.html); everything else here is the same
       layout: device.kind === 'computer' ? 'pc' : 'phone',
       paired: true,
-      device: { id: device.id, name: device.name, kind: device.kind === 'computer' ? 'computer' : 'phone', scopes: [...device.scopes] },
+      device: { id: device.id, name: device.name, kind: device.kind === 'computer' ? 'computer' : 'phone', scopes: scopesForPhone(device) },
       push: { key: pushKey, on: !!device.push },
       // where this PC's artifacts open on the phone ('' while the artifact port is not up: "Open on your PC")
       artifacts: this.host.artifactOrigin(),
@@ -824,7 +833,7 @@ export class RemoteServer {
       const project = projectsFor(this.host.ctx, savedList.map((c) => c.cwd));
       const saved = savedList.map((c) => ({ ...publicSaved(c), project: project(c.cwd) }));
       // The phone's switches go with every answer (turned off on the PC: its buttons go away on the next poll).
-      const scopes = [...device.scopes];
+      const scopes = scopesForPhone(device);
       const theme = this.#pcTheme();
       const revision = home.revision + '.' + revisionOf(saved).slice(0, 8) + '.' + scopes.map((x) => x.slice(6, 8)).join('') + '.' +
         revisionOf(theme).slice(0, 6);
@@ -841,14 +850,29 @@ export class RemoteServer {
       if (!chat) {
         // running again (here or on the PC): the phone opens the live chat instead
         const live = await this.#liveByKey(key);
-        if (live) return this.json(200, { key, live, scopes: [...device.scopes], notices });
+        if (live) return this.json(200, { key, live, scopes: scopesForPhone(device), notices });
         return this.json(404, { error: 'This chat is no longer in the list on your PC.', code: 'not_found' });
       }
       const tail = Number(url.searchParams.get('tail') ?? SAVED_TAIL);
-      const history = await savedHistory(this.host.ctx, chat, tail, remoteArtifactOrigin(this.host.name()));
-      return this.json(200, { ...history, live: null, scopes: [...device.scopes], notices });
+      const before = seqParam(url, 'before');
+      const history = await savedHistory(this.host.ctx, chat, tail, remoteArtifactOrigin(this.host.name()), before);
+      return this.json(200, { ...history, live: null, scopes: scopesForPhone(device), notices });
     }
     const id = url.searchParams.get('id') ?? '';
+    if (path === '/api/remote/event') {
+      const seq = seqParam(url, 'seq');
+      const event = id && seq !== null ? await wholeEvent(this.host.ctx, id, seq, remoteArtifactOrigin(this.host.name())) : null;
+      if (!event) return this.json(404, { error: 'That step is no longer kept on your PC.', code: 'event_not_found' });
+      return this.json(200, { id, event });
+    }
+    // Load earlier: the page before a seq (no chat state: the phone has it from its polls; no notices taken)
+    const before = seqParam(url, 'before');
+    if (before !== null) {
+      const links = remoteArtifactOrigin(this.host.name());
+      const older = id ? await olderPage(this.host.ctx, id, before, Number(url.searchParams.get('bytes') ?? 0), links) : null;
+      if (!older) return this.json(404, { error: 'This chat is not running on the PC any more.', code: 'connection_not_found' });
+      return this.json(200, older);
+    }
     const tail = Number(url.searchParams.get('tail') ?? DEFAULT_TAIL);
     const after = Math.max(0, Math.trunc(Number(url.searchParams.get('after') ?? 0)) || 0);
     const links = remoteArtifactOrigin(this.host.name());
@@ -857,7 +881,7 @@ export class RemoteServer {
     if (!chat) {
       return this.json(404, { error: 'This chat is not running on the PC any more.', code: 'connection_not_found', notices });
     }
-    return this.json(200, { ...chat, scopes: [...device.scopes], notices });
+    return this.json(200, { ...chat, scopes: scopesForPhone(device), notices });
   }
 
   /**

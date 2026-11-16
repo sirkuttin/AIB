@@ -11,6 +11,8 @@ import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
 import { refOf } from '../../outputs/agent-studio/server/platform/location.ts';
 import { wslSavedSessions, wslTranscriptGet } from '../../outputs/agent-studio/server/wsl/transcripts.ts';
 import { parseQs } from '../../outputs/agent-studio/server/transcripts/pycompat.ts';
+import { _mentioned, filesRoutes } from '../../outputs/agent-studio/server/web/files_routes.ts';
+import type { WebContext } from '../../outputs/agent-studio/server/web/server.ts';
 
 type Json = Record<string, unknown>;
 
@@ -76,6 +78,65 @@ Deno.test({
       await studio?.close().catch(() => {});
       await cleanRoot();
       Deno.removeSync(state, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: 'wsl e2e (audit F10): a saved WSL chat that is not running opens an outside file its transcript names, and only that one',
+  ...T,
+  async fn() {
+    await prepareRoot();
+    const OUT = `${ROOT}-out`; // outside the project and outside AIB's own folder (the helper never shows AIB_WSL_ROOT)
+    try {
+      const repo = `${ROOT}/repo`;
+      const id = crypto.randomUUID();
+      const rows = [
+        { type: 'user', sessionId: id, cwd: repo, timestamp: '2026-11-14T10:00:00Z', message: { role: 'user', content: 'where is the log?' } },
+        {
+          type: 'assistant',
+          sessionId: id,
+          cwd: repo,
+          timestamp: '2026-11-14T10:00:05Z',
+          message: { role: 'assistant', model: 'claude-test', content: [{ type: 'text', text: `The log is at ${OUT}/run.log` }] },
+        },
+      ];
+      const made = await inDistro(
+        'mkdir -p "$1/home/.claude/projects/$2" "$4" && cat > "$1/home/.claude/projects/$2/$3.jsonl" && printf "log\\n" > "$4/run.log" && printf "no\\n" > "$4/secret.txt"',
+        [ROOT, repo.replaceAll('/', '-'), id, OUT],
+        new TextEncoder().encode(rows.map((r) => JSON.stringify(r)).join('\n') + '\n'),
+      );
+      assertEquals(made.code, 0, made.err);
+      newAib();
+      const host = await readyHost();
+      const claudeDir = `${ROOT}/home/.claude`;
+      assertEquals(await host.call('transcripts.mentions', { provider: 'claude', sessionId: id, path: `${OUT}/run.log`, claudeDir }), { mentioned: true });
+      assertEquals(await host.call('transcripts.mentions', { provider: 'claude', sessionId: id, path: `${OUT}/secret.txt`, claudeDir }), { mentioned: false });
+      assertEquals(await host.call('transcripts.mentions', { provider: 'claude', sessionId: id, path: `${OUT}/Run.log`, claudeDir }), { mentioned: false });
+
+      const ctx = {
+        token: 'tok',
+        stateDir: null,
+        host: { connections: new Map(), liveState: () => Promise.resolve(null) },
+        conversations: { entries: {} },
+        transcripts: { stores: new Map() },
+        artifacts: { store: { origin: 'http://127.0.0.1:9' }, conversations: () => [] },
+      } as unknown as WebContext;
+      const ask = async (path: string) => {
+        _mentioned.clear();
+        const url = new URL('http://127.0.0.1/api/live/files/outside?' + new URLSearchParams({ id: `claude:${id}`, path }));
+        return await filesRoutes().get('GET /api/live/files/outside')!(ctx, url, null, new Request(url, { headers: { 'X-Studio-Token': 'tok' } })) as [
+          number,
+          Json,
+        ];
+      };
+      const [s, read] = await ask(`${OUT}/run.log`);
+      assertEquals([s, read.name, read.text, read.wsl], [200, 'run.log', 'log\n', true], JSON.stringify(read));
+      const [s2, no] = await ask(`${OUT}/secret.txt`);
+      assertEquals([s2, no.code], [403, 'not_mentioned']);
+    } finally {
+      await inDistro('case "$1" in /tmp/aib-wsl-test-*-out) rm -rf -- "$1";; esac', [OUT]);
+      await cleanRoot();
     }
   },
 });

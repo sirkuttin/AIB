@@ -234,6 +234,7 @@ test('Delete project of a WSL project: "Remove from AIB" by default; the tick bo
   );
   const yes = ui.box.querySelector('.dp-ok');
   assert.equal(yes.textContent, 'Remove from AIB');
+  assert.equal(ui.box.querySelector('.dp-title').textContent, 'Remove project app from AIB?', 'the title names the default button action');
   disk.checked = true;
   disk.dispatch('change');
   assert.equal(yes.textContent, 'Remove and move folder to trash');
@@ -494,4 +495,28 @@ test('Update in Ubuntu: AIB\'s own install older than the pinned version; a job 
   t.shell.window.runTimers();
   await settle();
   assert.equal(box2.querySelector('.st-progress').getAttribute('aria-valuenow'), '50');
+});
+
+test('New project preview shows a WSL folder as "Ubuntu: /home/u/app", never the raw ref', async () => {
+  const t = wslPage(STATUS, ['workspace-state.js']);
+  await settle();
+  const H = t.ctx.AgentWorkspaceState.hintState;
+  const ref = 'wsl://ubuntu/home/u/app';
+  const exist = H({ valid: true, exists: true, path: ref }, {});
+  assert.equal(exist.preview, 'Uses Ubuntu: /home/u/app (already there)');
+  assert.equal(H({ valid: true, exists: true, path: ref }, { isProject: true }).preview, 'Opens Ubuntu: /home/u/app (already a project)');
+  assert.equal(H({ valid: true, exists: false, path: ref }, {}).preview, 'Creates Ubuntu: /home/u/app');
+  assert.equal(H({ valid: true, exists: false, path: 'C:\work\app' }, {}).preview, 'Creates C:\work\app', 'a Windows path as it is');
+});
+
+test('WSL CSS: the focus ring on the Remove dialog buttons, right-aligned usage sizes, wrapped failed-publish reason', () => {
+  const fs = require('node:fs'),
+    path = require('node:path');
+  const dir = path.join(__dirname, '..', 'outputs', 'agent-studio');
+  const settings = fs.readFileSync(path.join(dir, 'settings.css'), 'utf8');
+  assert.match(settings, /\.wl-remove button:focus \{\s*outline: 2px solid var\(--focus-ring\);/);
+  assert.match(settings, /\.wl-usage dd \{\s*text-align: right;/);
+  assert.match(settings, /\.wl-card \.st-note\.dim,\s*\.nc-wsl \.st-note\.dim \{\s*opacity: 1;/);
+  assert.match(fs.readFileSync(path.join(dir, 'header.css'), 'utf8'), /\.nc-wsl \{\s*width: 100%;\s*max-width: 380px;/);
+  assert.ok(!fs.readFileSync(path.join(dir, 'delete-project-ui.js'), 'utf8').includes('focus-ring'), 'the delete-project dialog is not touched');
 });

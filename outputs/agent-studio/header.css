@@ -663,6 +663,20 @@ body.new-chat header .hd-line h1:hover {
   border: 1px solid var(--line-field);
   border-radius: 6px;
 }
+.nc-wsl {
+  width: 100%;
+  max-width: 380px;
+  margin: 10px auto 0;
+  text-align: left;
+}
+.nc-wsl .nc-wsl-go + .st-link {
+  margin-left: 12px;
+}
+.nc-wsl .nc-wsl-go {
+  height: 30px;
+  padding: 0 14px;
+  font-size: 12px;
+}
 .nc-folder-input[hidden] {
   display: none;
 }

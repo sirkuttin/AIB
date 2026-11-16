@@ -70,7 +70,8 @@ Deno.test({
       await a.liveCall('permission', { id: c.id, key: [...c.permissions.keys()][0], option: 'yes' });
       await until(() => !c.busy, 'turn end', 30);
       await sh('printf "chat\\n" > "$1/new.txt"', linux);
-      assertEquals(await sh('ls "$1"', repo), 'a.txt', 'the project folder itself is untouched');
+      // the main folder's private/ is made (empty) for the chat's grant, as for a Windows worktree chat (local-only default)
+      assertEquals(await sh('ls "$1"', repo), 'a.txt\nprivate', 'the project folder itself is untouched');
       const view = { token: 't', liveState: (id: string) => (id === c.id ? { cwd: c.cwd } : {}) };
       const [status, changes] = await changesResponse(view, '/api/live/changes', { id: [c.id] }, { 'X-Studio-Token': 't' }) as [number, Json];
       assertEquals(status, 200);

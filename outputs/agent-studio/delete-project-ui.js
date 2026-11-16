@@ -124,7 +124,8 @@
     box.setAttribute('aria-modal', 'true');
     box.setAttribute('aria-labelledby', 'dpTitle');
     box.setAttribute('aria-describedby', 'dpMain');
-    const title = el('h2', 'Delete project ' + o.name + '?', 'dp-title');
+    // a WSL project is removed from AIB (its folder stays unless the tick box says so): the title names the default button's action
+    const title = el('h2', wslOf(o.path) ? 'Remove project ' + o.name + ' from AIB?' : 'Delete project ' + o.name + '?', 'dp-title');
     title.id = 'dpTitle';
     const main = el('p', mainText(o.name, o.chats, o.path, false), 'dp-main');
     main.id = 'dpMain';
