@@ -35,9 +35,7 @@ Deno.test('the route table is exactly the Python web server\'s (paths, scopes an
     'POST /api/live/update/notes',
     'POST /api/live/project-remove',
     'POST /api/live/project-add',
-    'GET /api/live/cleanup/card', // folder chats P4a: the one-time cleanup card and Settings "Remove AIB's data from my repos"
-    'POST /api/live/cleanup/card',
-    'POST /api/live/cleanup/all',
+    'POST /api/live/cleanup/all', // folder chats P4a: Settings "Remove AIB's data from my repos"
     'GET /api/live/folders/gone',
     'GET /api/live/files/list',
     'GET /api/live/files/search',

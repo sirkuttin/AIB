@@ -1,40 +1,34 @@
 /**
- * Re-filing a copy chat's transcript under the project folder (build plan 1b, 4.3, 4.5, 4.6; owner decision 2026-11-16 "YES: move
- * old copy chats' transcripts so they show in VS Code / claude --resume"). Every chat now works in the project folder; a chat that
- * worked in its own copy (a worktree AIB made) carries on in the project folder once that copy is gone (merged, discarded), and its
- * transcript is filed where the agent's own resume listing for the project looks.
+ * The re-file core of the one-off folder-chats migration (folder_chats_migrate.ts). It lived in the app as worktrees/refile.ts until
+ * the owner asked for no migration code in the app (2026-11-16); only the script uses it now.
  *
  * What the P0 experiment proved (private/designs/worktree-model/refile-experiment.md):
  *   - Claude Code: move `projects/<enc W>/<id>.jsonl` (and the `<id>/` side folder) to `projects/<enc P>/` AND rewrite every
  *     `"cwd"` W -> P, so the listing for P has it with cwd P (the listing's cwd is read from the transcript lines).
- *   - Codex: open the chat once in the project folder (`session/load` with cwd = P, no prompt): Codex re-indexes it itself. AIB never
- *     writes Codex's files or its SQLite index.
+ *   - Codex: open the chat once in the project folder (`session/load` with cwd = P, no prompt): Codex re-indexes it itself. Nothing
+ *     here writes Codex's files or its SQLite index.
  *
- * Safety (owner rules: never lose a transcript):
- *   - every original is first copied to `<AIB data>\refiled\<provider>\<id>.jsonl` and that backup is never deleted;
+ * Safety (never lose a transcript):
+ *   - every original is first copied to `<AIB data>
+efiled\<provider>\<id>.jsonl` and that backup is never deleted;
  *   - all or nothing: the new file is written beside the target as `.tmp` and renamed in; if any later step fails, the new file goes
  *     and the original stays where it was;
- *   - only chats not open anywhere (the caller checks this host's chats, the keeper's and the ownership probe);
- *   - helper transcripts are never moved (the caller's rule);
  *   - empty copy-named folders in `projects/` are removed only with a plain (non-recursive) rmdir, which fails on any content: a
- *     folder that still holds `memory/` or any file is kept and logged. No `.jsonl` is ever deleted by that sweep.
+ *     folder that still holds `memory/` or any file is kept. No `.jsonl` is ever deleted by that sweep.
  *
- * The durable mapping `studio-moved-chats.json` (provider:sessionId -> project folder) is what lets Continue open the chat in the
- * project folder even when the page still sends the copy path (connect reads it before the "workspace removed" test). It is not
- * capped (the removed-notes list is: MAX_REMOVED_NOTES).
+ * The mapping `studio-moved-chats.json` (provider:sessionId -> project folder) is written here and only read by the app
+ * (server/state/moved_chats.ts): Continue opens the chat in the project folder even when a page still sends the copy path.
  */
-import { FileLock } from '../platform/lock.ts';
-import { readJsonFile, saveJson } from '../state/json.ts';
-import { pathOf } from '../state/paths.ts';
-import { isDict } from '../core/py.ts';
-import { basename, isdir, isfile, join, normcase, normpath, SEP } from '../platform/ospath.ts';
-import { getLogger } from '../core/log.ts';
+import { FileLock } from '../../outputs/agent-studio/server/platform/lock.ts';
+import { readJsonFile, saveJson } from '../../outputs/agent-studio/server/state/json.ts';
+import { pathOf } from '../../outputs/agent-studio/server/state/paths.ts';
+import { isDict } from '../../outputs/agent-studio/server/core/py.ts';
+import { basename, isdir, isfile, join, normcase, normpath, SEP } from '../../outputs/agent-studio/server/platform/ospath.ts';
+import { MOVED_FILE } from '../../outputs/agent-studio/server/state/moved_chats.ts';
 
-const log = getLogger('refile');
+export { MOVED_FILE };
 
-export const MOVED_FILE = 'studio-moved-chats.json';
 export const REFILED_DIR = 'refiled';
-export const LOG_FILE = 'refile.log';
 const SESSION_ID = /^[A-Za-z0-9._-]{1,128}$/;
 
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
@@ -46,21 +40,13 @@ export function claudeEncode(folder: string): string {
   return String(folder).replace(/[^A-Za-z0-9]/g, '-');
 }
 
-/** One line in <AIB data>\refile.log (never throws). */
-export function logLine(stateDir: string, text: string): void {
-  try {
-    Deno.writeTextFileSync(pathOf(stateDir, LOG_FILE), `${new Date().toISOString()} ${text}\n`, { append: true });
-  } catch { /* the log is a nicety */ }
-  log.info(text);
-}
-
 // ---- the moved-chats mapping ---------------------------------------------------------------------------------------------
 export interface MovedChat {
   /** The project folder the chat now works in. */
   project: string;
   /** The copy folder it worked in before. */
   from: string;
-  /** Why: 'merged', 'discarded', 'deleted', 'orphan'. */
+  /** Why: 'migrated' (this script); older entries: 'merged', 'discarded', 'deleted', 'orphan'. */
   why: string;
   at: number;
   /** Where the transcript was re-filed ('' = not re-filed: the agent still finds it by id). */
@@ -170,7 +156,7 @@ export function rewriteCwd(text: string, from: string, to: string): [string, num
 }
 
 /** The one `<id>.jsonl` under `root` (a direct child folder), searching the copy's encoded folder first. */
-function findClaudeFile(root: string, sessionId: string, from: string): string | null {
+export function findClaudeFile(root: string, sessionId: string, from: string): string | null {
   const first = join(root, claudeEncode(from), `${sessionId}.jsonl`);
   if (isfile(first)) return first;
   if (!isdir(root)) return null;
@@ -335,34 +321,4 @@ export function cleanEmptyCopyFolders(projectsRoot: string, worktreesRoot: strin
 export function isCopyNamed(folderName: string, worktreesRoot: string): boolean {
   const prefix = claudeEncode(normpath(worktreesRoot).replace(/[\\/]+$/, '')) + '-';
   return folderName.toLowerCase().startsWith(prefix.toLowerCase()) && folderName.length > prefix.length;
-}
-
-/**
- * Claude Code's `projects` folder for the agents AIB starts: under test the throwaway home real agents get (CLAUDE_CONFIG_DIR of
- * testHomeEnv), else CLAUDE_CONFIG_DIR, else the server's --claude-projects (~/.claude/projects). Under test the owner's real
- * ~/.claude/projects is refused (null).
- */
-export function claudeProjectsRoot(agentEnv: Record<string, string>, configured: string | null | undefined): string | null {
-  const dir = agentEnv.CLAUDE_CONFIG_DIR || Deno.env.get('CLAUDE_CONFIG_DIR') || '';
-  const root = dir ? join(dir, 'projects') : str(configured);
-  if (!root) return null;
-  return underTestOwnerFolder(root, '.claude') ? null : root;
-}
-
-/** CODEX_HOME for the agents AIB starts (under test: the throwaway home; the owner's ~/.codex is refused). */
-export function codexHome(agentEnv: Record<string, string>, home: string): string | null {
-  const dir = agentEnv.CODEX_HOME || Deno.env.get('CODEX_HOME') || (home ? join(home, '.codex') : '');
-  if (!dir) return null;
-  return underTestOwnerFolder(dir, '.codex') ? null : dir;
-}
-
-/** Under AGENT_STUDIO_TEST=1: true when `path` is inside the real user's ~/<name> (tests never write there). */
-function underTestOwnerFolder(path: string, name: string): boolean {
-  if (Deno.env.get('AGENT_STUDIO_TEST') !== '1') return false;
-  const homes = [Deno.env.get('USERPROFILE'), Deno.env.get('HOME')].filter((h): h is string => !!h);
-  const p = folded(path);
-  return homes.some((h) => {
-    const owner = folded(join(h, name));
-    return p === owner || p.startsWith(owner + SEP);
-  });
 }

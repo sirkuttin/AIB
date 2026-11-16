@@ -280,26 +280,3 @@ test('26: a kept clash stash is listed unticked, in plain words', async () => {
   assert.equal(row.querySelector('span').textContent, 'Your edits kept in the stash studio-merge-chat-ab-1');
   assert.equal(row.querySelector('input').checked, false);
 });
-
-test('18: the one-time cleanup card: the server text, Keep is the default, an answer disables both buttons', async () => {
-  const shell = D.page({});
-  const ctx = D.load(shell, ['delete-project-ui.js']);
-  const asked = [];
-  const card = ctx.AgentDeleteProjectUI.cleanupCard(
-    { text: 'AIB found 2 old chat copies with work that was never merged: "Fix login" (4 files), helper "Add tests".', items: [{}, {}] },
-    (action) => {
-      asked.push(action);
-      return Promise.resolve();
-    },
-  );
-  assert.equal(card.querySelector('.ws-cleanup-text').textContent, 'AIB found 2 old chat copies with work that was never merged: "Fix login" (4 files), helper "Add tests".');
-  const keep = card.querySelector('.ws-cleanup-keep'), remove = card.querySelector('.ws-cleanup-remove');
-  assert.equal(keep.textContent, 'Keep them');
-  assert.equal(remove.textContent, 'Remove them');
-  assert.ok(keep.className.includes('def'), 'Keep is the default');
-  remove.click();
-  await flush();
-  assert.deepEqual(asked, ['remove']);
-  assert.equal(remove.disabled && keep.disabled, true);
-  assert.equal(remove.textContent, 'Removing…');
-});

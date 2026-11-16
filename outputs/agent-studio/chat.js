@@ -27,8 +27,8 @@
      (this browser) so the chat does not vanish when the agent has no saved transcript Studio can list. */
   const DISCARDED_KEY = 'studio-discarded-chats-v1';
   const discardedChats = new Map(Object.entries(stored(DISCARDED_KEY, {}) || {}));
-  /* Build plan 1b 4.4: the server's truth wins. A chat whose copy was removed and that carries on in the project folder
-     (movedToFolder, from the saved-chat list or the Discard answer) is continuable in every window, whatever this browser kept. */
+  /* Build plan 1b 4.4: the server's truth wins. An old copy chat that the owner's migration script moved to its project folder
+     (movedToFolder in the saved-chat list) is continuable in every window, whatever this browser kept. */
   const isDiscarded = (c) => !!c && !c.movedToFolder && (c.discarded || discardedChats.has(aliasKeyOf(c)));
   function forgetDiscarded(key) {
     if (!discardedChats.delete(key)) return;
@@ -5235,12 +5235,8 @@
   // A chat's worktree was discarded from the Changes tab: its connection is closed now, so show the list and the chat as they are.
   window.addEventListener('agent-studio:worktree-discarded', (e) => {
     const id = e?.detail?.id || '';
-    const moved = e?.detail?.movedToFolder || '';
     if (selected && (id === current || id === aliasKey(selected) || !id)) {
-      // carries on in the project folder (its copy is gone): continuable, its folder is the project's
-      selected = moved
-        ? { ...selected, cwd: moved, projectRoot: moved, worktree: null, movedToFolder: moved, live: selected.live ? { ...selected.live, closed: true, worktree: null } : selected.live }
-        : rememberDiscarded(selected);
+      selected = rememberDiscarded(selected);
       renderHeader();
     }
     sidebarSignature = '';

@@ -246,9 +246,7 @@
   const discardNote = (result) =>
     result && result.pending
       ? 'The branch is marked for removal. A file is in use, so AIB finishes it the next time it starts.'
-      : result && result.movedToFolder
-        ? 'Removed. Continue the chat to carry on in the project folder.'
-        : 'Removed. The chat stays in the list; you can read it but not continue it.';
+      : 'Removed. The chat stays in the list; you can read it but not continue it.';
   /* Narrow strip chip. */
   const stripText = (n) => (num(n) ? num(n) + ' changed' : '');
   /* Notes shown above a diff when the picture is not the whole story. */
@@ -544,9 +542,9 @@
         if (!r.ok) throw new Error(body.error || 'Request failed (' + r.status + ')');
         footNote.textContent = discardNote(body);
         footNote.classList.remove('err');
-        if (id === chat.id) chat = Object.assign({}, chat, { discarded: !body.movedToFolder, busy: false });
+        if (id === chat.id) chat = Object.assign({}, chat, { discarded: true, busy: false });
         try {
-          win.dispatchEvent(new win.CustomEvent('agent-studio:worktree-discarded', { detail: { id, movedToFolder: body.movedToFolder || '' } }));
+          win.dispatchEvent(new win.CustomEvent('agent-studio:worktree-discarded', { detail: { id } }));
         } catch (e) {}
       } catch (e) {
         footNote.textContent = 'Could not discard: ' + (e.message || 'Request failed');
@@ -1362,7 +1360,7 @@
         if (!r.ok) throw new Error(b.error || 'Request failed (' + r.status + ')');
         s.fp.note.textContent = s.fp.note.dataset.msg = discardNote(b);
         try {
-          win.dispatchEvent(new win.CustomEvent('agent-studio:worktree-discarded', { detail: { id, movedToFolder: b.movedToFolder || '' } }));
+          win.dispatchEvent(new win.CustomEvent('agent-studio:worktree-discarded', { detail: { id } }));
         } catch (e) {}
       } catch (e) {
         s.fp.note.textContent = s.fp.note.dataset.msg = 'Could not discard: ' + (e.message || 'Request failed');

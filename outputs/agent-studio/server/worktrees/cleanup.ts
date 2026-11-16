@@ -1,7 +1,8 @@
 /**
  * Decision 6: AIB cleans up its own git leftovers (build plan 1b, section 5). Used by project removal (web/project_routes.ts),
- * the one-time cleanup at the first start after the update (runOnce, after the keeper take-over), "Remove AIB's data from my repos"
- * (Settings; what an uninstaller calls) and, natively inside a distro, the WSL helper (helper/worktrees.ts worktree.cleanup*).
+ * "Remove AIB's data from my repos" (Settings; what an uninstaller calls), the stopped-helper removal (host/studio.ts), natively
+ * inside a distro by the WSL helper (helper/worktrees.ts worktree.cleanup*), and by the owner's one-off migration script
+ * (work/migrate/folder_chats_migrate.ts; old copy chats are migrated there, not in the app).
  *
  * Scope, only what THIS install made (5.1): a branch, ref, copy or stash entry is this install's when it is recorded in this state
  * folder (studio-worktrees.json, its removed-notes, swarm-helpers.json, worktree-clashes.json) or its worktree path is under this
@@ -22,7 +23,7 @@
 import * as wt from './worktrees.ts';
 import { CLASH_FILE, folderState, repoLock } from './merge.ts';
 import { readHelpers } from '../swarm/registry.ts';
-import { entriesOf, readJsonFile, saveJson } from '../state/json.ts';
+import { entriesOf, readJsonFile } from '../state/json.ts';
 import { pathOf } from '../state/paths.ts';
 import { isdir, normcase, normpath, SEP } from '../platform/ospath.ts';
 import { isDict, pyStrip } from '../core/py.ts';
@@ -585,44 +586,8 @@ export function confirmView(scan: Scan): { items: Record<string, unknown>[]; sil
   };
 }
 
-// ---- the one-time cleanup (5.6) -------------------------------------------------------------------------------------------
-export const ONCE_FILE = 'cleanup-once.json';
+// ---- the log -----------------------------------------------------------------------------------------------------------------
 export const LOG_FILE = 'cleanup.log';
-/** Bump to run the one-time cleanup once more on the next start (a later release with more to tidy). */
-export const ONCE_VERSION = 1;
-
-export interface CardItem extends Record<string, unknown> {
-  id: string;
-  project: string;
-  title: string;
-  files: number;
-  helper: boolean;
-}
-export interface OnceState {
-  version: number;
-  doneAt: number;
-  /** The card: orphans with unmerged work found by the one-time cleanup; null once answered (or none found). */
-  card: { items: CardItem[]; at: number } | null;
-  answered: '' | 'removed' | 'kept';
-}
-
-export function readOnce(stateDir: string): OnceState | null {
-  const [status, raw] = readJsonFile(pathOf(stateDir, ONCE_FILE));
-  if (status !== 'ok' || !isDict(raw) || typeof raw.version !== 'number') return null;
-  const card = isDict(raw.card) && Array.isArray(raw.card.items)
-    ? { items: (raw.card.items as unknown[]).filter(isDict) as CardItem[], at: Number(raw.card.at) || 0 }
-    : null;
-  return {
-    version: raw.version,
-    doneAt: Number(raw.doneAt) || 0,
-    card,
-    answered: raw.answered === 'removed' || raw.answered === 'kept' ? raw.answered : '',
-  };
-}
-
-function writeOnce(stateDir: string, state: OnceState): void {
-  saveJson(pathOf(stateDir, ONCE_FILE), state, '.cleanup-once-');
-}
 
 /** One line in <AIB data>\cleanup.log (never throws). */
 export function logLine(stateDir: string, text: string): void {
@@ -630,141 +595,6 @@ export function logLine(stateDir: string, text: string): void {
     Deno.writeTextFileSync(pathOf(stateDir, LOG_FILE), `${new Date().toISOString()} ${text}\n`, { append: true });
   } catch { /* the log is a nicety */ }
   log.info(text);
-}
-
-export interface OnceOptions {
-  /** Every added project (Windows paths and WSL refs). */
-  projects: string[];
-  /** Running chats' folders and provider:sessionId (after the keeper take-over). */
-  live?: Iterable<string>;
-  titles?: Record<string, string>;
-  /**
-   * The saved chats (provider:sessionId) marked deleted. Every other chat's copy is not an orphan: existing chats keep their copies
-   * until merged or discarded (owner decision 1b), so the one-time cleanup never touches them.
-   */
-  deleted?: Iterable<string>;
-  /** WSL projects: scan and remove inside the distro (wsl/worktrees.ts). Absent: WSL refs are skipped. */
-  wsl?: WslOnce;
-}
-
-/** The distro side of the one-time cleanup and the card: `ids` are removed (null: scan only). */
-export type WslOnce = (ref: string, ids: string[] | null, live: string[]) => Promise<{ scan: Scan; removed: string[] } | null>;
-
-/**
- * An orphan for the one-time cleanup (5.6): this install's, not running, and not the copy of a chat that still exists. A recorded
- * copy is an orphan only when its chat has no session yet or was deleted; branches, refs, folders, unrecorded copies and stash
- * entries are always (they belong to no chat AIB lists).
- */
-export function orphan(i: CleanupItem, deleted: Set<string>): boolean {
-  if (!i.own || i.live) return false;
-  if (i.kind === 'copy' && i.id.startsWith('copy:') && i.session && !deleted.has(i.session)) return false;
-  return true;
-}
-
-/**
- * The one-time cleanup: at the first start after the update (ONCE_VERSION), after the keeper take-over. Removes this install's
- * orphans without unmerged work silently, and keeps a card for the ones with work (one card for all; "Keep" never brings it back).
- * Returns the state written, or null when it already ran.
- */
-export async function runOnce(stateDir: string, options: OnceOptions): Promise<OnceState | null> {
-  const before = readOnce(stateDir);
-  if (before && before.version >= ONCE_VERSION) return null;
-  const manager = new wt.Manager(stateDir);
-  const projects = new Map<string, string>();
-  for (const p of [...options.projects, ...Object.values(manager.registry.all()).map((r) => str(r.project))]) {
-    if (p) projects.set(p.startsWith('wsl://') ? p : normcase(p), p);
-  }
-  const live = [...(options.live ?? [])];
-  const deleted = new Set(options.deleted ?? []);
-  const card: CardItem[] = [];
-  for (const project of projects.values()) {
-    try {
-      const wsl = project.startsWith('wsl://');
-      if (wsl && !options.wsl) continue;
-      const first = wsl
-        ? (await options.wsl!(project, null, live))?.scan
-        : await scanProject(stateDir, project, { live, titles: options.titles });
-      if (!first) continue;
-      if (first.skipped) {
-        logLine(stateDir, `one-time cleanup: skipped ${project}: ${first.skipped}`);
-        continue;
-      }
-      const ids = first.items.filter((i) => orphan(i, deleted) && !i.unmerged).map((i) => i.id);
-      let removed: string[] = [];
-      if (ids.length) {
-        if (wsl) removed = (await options.wsl!(project, ids, live))?.removed ?? [];
-        else {
-          const done = await applyProject(stateDir, project, [], { live, only: ids });
-          removed = done.removed;
-          for (const [id, why] of Object.entries(done.left)) logLine(stateDir, `one-time cleanup: ${project}: left ${id}: ${why}`);
-        }
-      }
-      for (const id of removed) logLine(stateDir, `one-time cleanup: ${project}: removed ${id}`);
-      for (const i of first.items) {
-        if (orphan(i, deleted) && i.unmerged) card.push({ id: i.id, project, title: i.title, files: i.files, helper: i.helper });
-      }
-    } catch (error) {
-      logLine(stateDir, `one-time cleanup: ${project} failed: ${error instanceof Error ? error.message : error}`);
-    }
-  }
-  const state: OnceState = {
-    version: ONCE_VERSION,
-    doneAt: Date.now() / 1000,
-    card: card.length ? { items: card, at: Date.now() / 1000 } : null,
-    answered: '',
-  };
-  writeOnce(stateDir, state);
-  logLine(stateDir, `one-time cleanup done: ${projects.size} repo(s), ${card.length} old copy(ies) with unmerged work kept for the card`);
-  return state;
-}
-
-/** The card the page shows (start page / Inbox), or null. */
-export function cardOf(stateDir: string): { items: CardItem[]; text: string } | null {
-  const state = readOnce(stateDir);
-  if (!state || !state.card || state.answered) return null;
-  return { items: state.card.items, text: cardText(state.card.items) };
-}
-
-/** "AIB found 2 old chat copies with work that was never merged: "Fix login" (4 files), helper "Add tests"." */
-export function cardText(items: { title: string; files: number; helper: boolean }[]): string {
-  const n = items.length;
-  const shown = items.slice(0, 5).map((i) =>
-    (i.helper ? 'helper ' : '') + `"${i.title}"` + (i.files ? ` (${i.files} file${i.files === 1 ? '' : 's'})` : '')
-  );
-  const more = n > 5 ? ` and ${n - 5} more` : '';
-  return `AIB found ${n === 1 ? '1 old chat copy' : `${n} old chat copies`} with work that was never merged: ${shown.join(', ')}${more}.`;
-}
-
-/**
- * The card's answer. 'keep': nothing is removed and the card never comes back (they come up again only on project removal).
- * 'remove': those items are removed (scanned again first: only this install's, not running).
- */
-export async function answerCard(
-  stateDir: string,
-  action: 'remove' | 'keep',
-  options: Pick<OnceOptions, 'live' | 'wsl'> = {},
-): Promise<{ removed: string[]; left: Record<string, string> }> {
-  const state = readOnce(stateDir);
-  const out = { removed: [] as string[], left: {} as Record<string, string> };
-  if (!state || !state.card || state.answered) return out;
-  if (action === 'remove') {
-    const byProject = new Map<string, string[]>();
-    for (const i of state.card.items) byProject.set(i.project, [...(byProject.get(i.project) ?? []), i.id]);
-    const live = [...(options.live ?? [])];
-    for (const [project, ids] of byProject) {
-      if (project.startsWith('wsl://')) {
-        const done = options.wsl ? await options.wsl(project, ids, live) : null;
-        if (done) out.removed.push(...done.removed);
-        continue;
-      }
-      const done = await applyProject(stateDir, project, ids, { live, only: ids });
-      out.removed.push(...done.removed.filter((id) => ids.includes(id)));
-      Object.assign(out.left, done.left);
-    }
-    for (const id of out.removed) logLine(stateDir, `cleanup card: removed ${id}`);
-  } else logLine(stateDir, 'cleanup card: kept');
-  writeOnce(stateDir, { ...state, answered: action === 'remove' ? 'removed' : 'kept' });
-  return out;
 }
 
 // ---- every project (uninstall, 5.7) ---------------------------------------------------------------------------------------

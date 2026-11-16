@@ -22,11 +22,9 @@ Design and decisions: `docs/wsl/design.md` (section 11 overrides the rest). Code
 - A new chat works in the project folder, as for a Windows project (owner decision 2026-11-16: no per-chat own copy). A WSL
   chat made before then in its own copy (a git worktree on branch `studio/chat-…`, made inside the distro) keeps it. The Files tab
   shows the chat's copy or the main folder; Changes shows the chat's branch, Discard removes the copy and its branch, and Merge
-  lands the chat's own commits on main as for a Windows project (see Merge below). Once its copy is discarded or deleted, the chat
-  carries on in the project folder as a Windows one does: the distro's helper (protocol 3, `transcripts.refile`) moves its Claude
-  Code transcript under the project's folder in the distro's `~/.claude/projects` (cwd lines rewritten, the original kept in
-  `<data>/refiled/claude`), or backs up its Codex rollout before AIB opens the chat once in the project folder; the one-time pass
-  removes the empty copy-named folders there (`transcripts.cleanEmpty`). Live sync works
+  lands the chat's own commits on main as for a Windows project (see Merge below). Moving such old chats to the project folder is
+  done once, outside AIB, by a migration script run inside the distro with AIB quit (`work/migrate/folder_chats_migrate.ts`).
+  Live sync works
   as for a Windows project: a file the user saves in the main folder reaches the chat's copy within a second or two, the chat's
   next prompt names it, an edit both made is merged into the copy, a clash shows its line under the header and in Changes, and a
   storm of changes pauses with "Resume" (see Live sync below). Docs work as in a Windows project (see Docs below). The Files tab previews

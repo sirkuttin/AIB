@@ -1,6 +1,7 @@
 /**
  * Decision 6 cleanup (server/worktrees/cleanup.ts): build plan 1b e2e 16b (two installs on one repo), 17 (stash rule), 17b (the
- * unmerged-work test) and the one-time cleanup with its card (18). Real git in temp repos and temp state folders only.
+ * unmerged-work test), project removal (16) and "Remove AIB's data from my repos" (18b). The one-time cleanup of old copies is the
+ * owner's one-off migration script now (folder_chats_migrate_test.ts). Real git in temp repos and temp state folders only.
  */
 import { assert, assertEquals } from './_assert.ts';
 import { commit, exists, runGit, Sandbox, write } from './_worktree_fixtures.ts';
@@ -166,45 +167,6 @@ Deno.test("a running chat's copy is never touched; a subfolder or busy repo is s
   Deno.writeTextFileSync(pathOf(box.project, '.git', 'index.lock'), '');
   assert((await cleanup.scanProject(box.state, box.project)).skipped.includes('index.lock'));
   Deno.removeSync(pathOf(box.project, '.git', 'index.lock'));
-});
-
-Deno.test('18: one-time cleanup: orphans without work go silently; with work, one card; "Keep" never brings it back', async () => {
-  using box = new Sandbox();
-  const clean = await copy(box.state, box.project, 'f'.repeat(32));
-  const busy = await copy(box.state, box.project, '1'.repeat(32), 'claude:s1');
-  write(busy.plan.path, 'w.txt', 'work\n');
-  const existing = await copy(box.state, box.project, '9'.repeat(32), 'claude:s9'); // a chat that still exists, no work
-  const first = await cleanup.runOnce(box.state, {
-    projects: [box.project],
-    titles: { 'claude:s1': 'Refactor api' },
-    deleted: ['claude:s1'], // its chat is in Recently deleted: its copy is an orphan
-  });
-  assert(first && first.card);
-  assert(!exists(clean.plan.path), 'the clean orphan (no chat) went silently');
-  assert(exists(existing.plan.path), 'an existing chat keeps its copy until merged or discarded (1b)');
-  assert(exists(busy.plan.path), 'the one with work stays');
-  const card = cleanup.cardOf(box.state)!;
-  assertEquals(card.items.map((i) => i.id), [`copy:${'1'.repeat(32)}`]);
-  assertEquals(card.text, 'AIB found 1 old chat copy with work that was never merged: "Refactor api" (1 file).');
-  assertEquals(await cleanup.runOnce(box.state, { projects: [box.project] }), null, 'it runs once');
-  await cleanup.answerCard(box.state, 'keep');
-  assertEquals(cleanup.cardOf(box.state), null, 'Keep: the card is gone for good');
-  assert(exists(busy.plan.path), 'Keep removes nothing');
-  assert(Deno.readTextFileSync(pathOf(box.state, cleanup.LOG_FILE)).includes('one-time cleanup done'));
-  // project removal still lists it
-  assertEquals(cleanup.confirmView(await cleanup.scanProject(box.state, box.project)).items.map((i) => i.id), [`copy:${'1'.repeat(32)}`]);
-});
-
-Deno.test("18: the card's Remove removes exactly its items", async () => {
-  using box = new Sandbox();
-  const busy = await copy(box.state, box.project, '2'.repeat(32));
-  write(busy.plan.path, 'w.txt', 'work\n');
-  await cleanup.runOnce(box.state, { projects: [box.project] });
-  const out = await cleanup.answerCard(box.state, 'remove');
-  assertEquals(out.removed, [`copy:${'2'.repeat(32)}`]);
-  assert(!exists(busy.plan.path) && !branchExists(box.project, busy.plan.branch));
-  assertEquals(cleanup.cardOf(box.state), null);
-  assert(new wt.Manager(box.state).isRemoved(busy.plan.path), 'the chat reads as "workspace removed"');
 });
 
 Deno.test('16: project removal: one confirm lists the unmerged copy; the clean one goes silently; ticked ids go; private/ stays', async () => {

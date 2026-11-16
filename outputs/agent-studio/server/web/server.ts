@@ -22,7 +22,7 @@ import { Artifacts } from './artifact_wiring.ts';
 import type { Launcher } from '../desktop/editors.ts';
 import { FolderMemory } from '../desktop/folders.ts';
 import { Refused } from '../worktrees/merge.ts';
-import { readMoved } from '../worktrees/refile.ts';
+import { readMoved } from '../state/moved_chats.ts';
 import { EditorError } from '../desktop/editors.ts';
 import type { UpdateService } from '../desktop/updater.ts';
 import { cleanNotifyRequest, type DesktopNotifications } from '../desktop/notify.ts';
@@ -33,7 +33,7 @@ import { TerminalSessions } from '../terminal/sessions.ts';
 import type { KeeperLink } from '../keeper/link.ts';
 import { TERMINAL_SOCKET, terminalRoutes, terminalSocket } from './terminal_routes.ts';
 import { RemovedProjects } from '../desktop/project_delete.ts';
-import { allRoute, cardRoute } from './cleanup_routes.ts';
+import { allRoute } from './cleanup_routes.ts';
 import { filterSessions, folderOfSession, projectAdd, projectRemove } from './project_routes.ts';
 import { FolderPresence, presence } from '../desktop/folder_presence.ts';
 import { AddedProjects } from '../desktop/added_projects.ts';
@@ -349,14 +349,6 @@ export class WebServer {
       const [status, payload] = await projectRemove(c, body);
       return this.json(status, payload);
     });
-    this.native.set('GET /api/live/cleanup/card', async (c) => {
-      const [status, payload] = await cardRoute(c, undefined);
-      return this.json(status, payload);
-    });
-    this.native.set('POST /api/live/cleanup/card', async (c, _url, body) => {
-      const [status, payload] = await cardRoute(c, body);
-      return this.json(status, payload);
-    });
     this.native.set('POST /api/live/cleanup/all', async (c, _url, body) => {
       const [status, payload] = await allRoute(c, body);
       return this.json(status, payload);
@@ -582,7 +574,8 @@ export class WebServer {
             const listed = reply.body as { sessions?: unknown };
             if (Array.isArray(listed.sessions)) {
               listed.sessions = filterSessions(this.ctx.addedProjects, listed.sessions, this.ctx.conversations);
-              // build plan 4.4: a chat whose copy is gone carries on in the project folder (the server's truth, for every window)
+              // build plan 4.4: an old copy chat the migration script moved carries on in the project folder (the server's truth,
+              // for every window; state/moved_chats.ts)
               const moved = readMoved(pathStr(this.ctx.stateDir));
               for (const item of listed.sessions as Record<string, unknown>[]) {
                 const id = item && typeof item === 'object' ? String(item.sessionId ?? item.id ?? '') : '';
