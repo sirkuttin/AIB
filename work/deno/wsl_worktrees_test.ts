@@ -199,11 +199,13 @@ class WorktreeLab {
 const WT_LINUX = `${DATA}/worktrees/h1/chat-abcd1234`;
 const WT_REF = `wsl://ubuntu${WT_LINUX}`;
 
-Deno.test({ name: 'wsl studio: a new WSL chat works in its own worktree made by the helper; a restarted AIB rebuilds it there; Discard removes it', ...T, async fn() {
+// Owner decision 2026-11-16: new chats work in the project folder; a WSL chat in its own copy is one made before that (it keeps
+// its copy until merged or discarded). The test-only ownCopy makes one.
+Deno.test({ name: 'wsl studio: a WSL chat in its own worktree made by the helper; a restarted AIB rebuilds it there; Discard removes it', ...T, async fn() {
   await keeperBinary();
   await using lab = new WorktreeLab();
   const a = lab.studio();
-  const c = await a.connect('claude', REF);
+  const c = await a.connect('claude', REF, null, { ownCopy: true });
   assertEquals([c.cwd, c.agentCwd, c.projectRoot], [WT_REF, WT_LINUX, REF]);
   assertEquals(c.worktree, { branch: 'studio/chat-abcd1234', base: 'main' });
   assertEquals(c.wsl?.linuxPath, WT_LINUX);

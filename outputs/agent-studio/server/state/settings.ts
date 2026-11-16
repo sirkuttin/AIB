@@ -191,7 +191,8 @@ export class SettingsStore extends JsonFileStore {
     return {
       agents: { builtin: { omp: true, claude: true, codex: true }, custom: [] },
       defaults: { agent: '', byAgent: {}, projects: {}, migrated: false },
-      // worktreePerChat: on by default; hidden, never shown by public(). The keeper has no setting (it is always on): an old saved
+      // worktreePerChat: on by default; hidden, never shown by public(), and no longer read: every new chat works in the project
+      // folder (owner decision 2026-11-16, no per-chat Own copy; only helpers get copies). Kept so old settings files load. The keeper has no setting (it is always on): an old saved
       // `server.keeper` is dropped on read.
       server: { autoReconnect: true, worktreePerChat: true, autoUpdateCheck: true, keepAwake: false },
       editors: { default: '' },
@@ -473,7 +474,10 @@ export class SettingsStore extends JsonFileStore {
     return this.snapshot().server.keepAwake;
   }
 
-  /** Hidden flag (on by default): a new chat in a git project gets its own git worktree. No page control sets it. */
+  /**
+   * Hidden flag (on by default), no longer read when a chat is made: every new chat works in the project folder (owner decision
+   * 2026-11-16, no per-chat Own copy; only helpers get copies). No page control sets it; kept so old settings files still load.
+   */
   worktreePerChat(): boolean {
     return this.snapshot().server.worktreePerChat;
   }

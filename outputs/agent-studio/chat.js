@@ -969,8 +969,6 @@
       return !!(lv && ((lv.elicitations && lv.elicitations.length) || lv.auth));
     });
   }
-  // The first chat list has arrived: the New chat screen's Works in choice waits for it (the pre-set reads the list).
-  let listedOnce = false;
   async function listConversations() {
     listedAt = Date.now();
     const [live, saved, ownership] = await Promise.all([
@@ -1112,9 +1110,6 @@
       if (conversations === built) conversations = kept;
     }
     annotateElsewhere();
-    const firstList = !listedOnce;
-    listedOnce = true;
-    if (firstList && newDraft && !selected) renderNewChat();
     if (selected) {
       const updated = conversations.find((c) => aliasKey(c) === aliasKey(selected));
       if (updated) selected = updated;
@@ -3537,7 +3532,6 @@
       model: '',
       mode: '',
       effort: '',
-      worksIn: null, // the Works in choice for this folder (worksInFor); decided when the screen opens or the folder changes
     };
     newOptions.clear(); // asked again each time: an open chat may have reported newer lists since
     applyDefaultPicks(folder);
@@ -3568,53 +3562,9 @@
     renderCommands();
     $('prompt').focus();
   }
-  // The new chat's folder as GET /api/live/branch answered: its branch, and whether it can have its own copy (copyable null = still
-  // checking; whyNot says why not).
-  let newBranch = { cwd: '', branch: '', copyable: null, whyNot: '' };
-  // ---- the Works in choice (build plan 1.2 / 1.3): Project folder or Own copy ----
-  // Decided when the New chat screen opens and when the user changes the folder: Own copy when another chat is working in this
-  // project's folder, else the folder. It never changes by itself while the screen is open [MF 9]; only the user's pick does.
-  const projectKeyOf = (path) =>
-    window.AgentSidebarUI?.pathKey ? window.AgentSidebarUI.pathKey(path) : String(path || '').replace(/[\\/]+$/, '').toLowerCase();
-  function worksInFor(cwd) {
-    // Decided once, when the first chat list is in: until then the chip stays greyed with "Checking…" (no late flip).
-    if (!newDraft || !cwd || !listedOnce) return null;
-    const w = newDraft.worksIn;
-    if (w && w.cwd === cwd) return w;
-    const preset = window.AgentComposerChips?.workingFolderChat(conversations, cwd, projectKeyOf, titleOf) || '';
-    // a second decision on this screen means the user changed the folder: a folder that can't have a copy hides the chip then
-    // (the first folder, also one that arrives after an empty start, is not a change)
-    newDraft.worksIn = { cwd, ownCopy: !!preset, preset, amber: false, changed: !!(w && w.cwd) };
-    return newDraft.worksIn;
-  }
-  // The chip's and the notes' view: the decision plus what the server said about the folder.
-  function worksInView(cwd) {
-    // no folder yet: before the first chat list the project may still be on its way, so the slot is kept (greyed); after it, a
-    // screen with no folder at all has no chip (the first-run start page covers it)
-    if (!newDraft || (!cwd && listedOnce)) return null;
-    const w = worksInFor(cwd);
-    // not decided yet (the chat list is still on its way): the same greyed "Checking…" slot as while the folder is checked
-    if (!w) return { ownCopy: false, preset: '', amber: false, copyable: null, whyNot: '', hidden: false };
-    const known = newBranch.cwd === cwd ? newBranch : { copyable: null, whyNot: '' };
-    return {
-      ownCopy: w.ownCopy,
-      preset: w.preset,
-      amber: w.amber,
-      copyable: known.copyable,
-      whyNot: known.whyNot,
-      hidden: w.changed && known.copyable === false,
-    };
-  }
-  // The user's pick in the Works in menu. Project folder while another folder chat works there: the amber note, no dialog.
-  function pickWorksIn(value) {
-    const cwd = newChatFolder().cwd,
-      w = worksInFor(cwd);
-    if (!w) return;
-    w.ownCopy = value === 'copy';
-    w.amber =
-      !w.ownCopy &&
-      !!(w.preset || window.AgentComposerChips?.workingFolderChat(conversations, cwd, projectKeyOf, titleOf));
-  }
+  // The new chat's folder and its branch as GET /api/live/branch answered. Every new chat works in the project folder (owner
+  // decision 2026-11-16: no per-chat Own copy; only AIB helpers get copies), so there is no choice to make here.
+  let newBranch = { cwd: '', branch: '' };
   // ---- what a new chat can offer before its session exists ----
   // The host remembers the model / mode / effort lists each agent reported (in the data folder, per agent and per folder) and,
   // when it has none, asks the agent once with a quiet probe. agent|cwd -> {loading, options, problem}.
@@ -3706,22 +3656,15 @@
   }
   function ensureNewBranch(cwd) {
     if (!cwd || newBranch.cwd === cwd) return;
-    newBranch = { cwd, branch: '', copyable: null, whyNot: '' };
+    newBranch = { cwd, branch: '' };
     get('/api/live/branch', { cwd })
       .then((r) => {
-        if (newBranch.cwd !== cwd) return;
-        newBranch.branch = (r && r.branch) || '';
-        // copyable / whyNot (build plan 1.1 item 7); a server without them: a folder on a branch can have a copy
-        newBranch.copyable = r && typeof r.copyable === 'boolean' ? r.copyable : !!newBranch.branch;
-        newBranch.whyNot = newBranch.copyable ? '' : String((r && r.whyNot) || 'Not a git repository');
-        if (newDraft && !selected) renderNewChat();
+        if (newBranch.cwd === cwd && (r.branch || '')) {
+          newBranch.branch = r.branch;
+          if (newDraft && !selected) renderNewChat();
+        }
       })
-      .catch(() => {
-        if (newBranch.cwd !== cwd) return;
-        newBranch.copyable = false;
-        newBranch.whyNot = 'Could not check this folder';
-        if (newDraft && !selected) renderNewChat();
-      });
+      .catch(() => {});
   }
   // The New chat form: Agent (every agent in the registry), then Model and Mode from the lists that agent reported last time.
   function fillSelect(select, items, value) {
@@ -3769,25 +3712,9 @@
     fillSelect($('ncModel'), models, newDraft.model);
     fillSelect($('ncMode'), modes, newDraft.mode);
     for (const id of ['ncAgent', 'ncModel', 'ncMode']) $(id).disabled = startingNew;
-    // "C:\REPOS\shop · main" or "… · own copy from main", then the Works in note on its own line (pre-set reason or amber warning)
-    const CC = window.AgentComposerChips,
-      wv = worksInView(f.cwd),
-      branch = newBranch.cwd === f.cwd ? newBranch.branch : '',
-      shownPath = f.cwd ? (window.AIBWsl ? AIBWsl.displayPath(f.cwd) : f.cwd) : '';
     $('ncFolder').textContent = f.cwd
-      ? CC
-        ? CC.folderLine(shownPath, branch, wv)
-        : shownPath + (branch ? ' · ' + branch : '')
+      ? (window.AIBWsl ? AIBWsl.displayPath(f.cwd) : f.cwd) + (newBranch.cwd === f.cwd && newBranch.branch ? ' · ' + newBranch.branch : '')
       : 'Add a project folder to start: type one below, or use New project (+ above the chat list).';
-    const note = CC && f.cwd ? CC.worksInNote(wv) : { text: '', amber: false };
-    if (note.text) {
-      const line = document.createElement('span');
-      line.id = 'ncWorksNote';
-      line.className = 'nc-works-note' + (note.amber ? ' amber' : '');
-      line.setAttribute('role', 'status');
-      line.textContent = note.text;
-      $('ncFolder').append(line);
-    }
     const typing = f.source === 'none' || f.source === 'input';
     $('ncFolderInput').hidden = !typing;
     $('ncFolderInput').disabled = startingNew;
@@ -4007,12 +3934,10 @@
           reason: a.reason || '',
         })),
         extraChips,
-        worksIn: worksInView(f.cwd),
       },
       {
         disabled: startingNew,
         onAgent: pickNewAgent,
-        onWorksIn: pickWorksIn,
         onSetup: openAgentSetup,
         onMode: (value) => {
           if (newDraft) newDraft.mode = value;
@@ -4079,19 +4004,14 @@
       draft = $('prompt').value,
       provider0 = newDraft.provider,
       picks = { model: newDraft.model, mode: newDraft.mode, effort: newDraft.effort },
-      pickLists = newChatLists(f.cwd),
-      wv = worksInView(f.cwd),
-      decided = !!worksInFor(f.cwd),
-      // the user's (or the pre-set) choice; never a copy for a folder the server said can't have one. Not decided yet (sent
-      // before the first chat list came): left out, so the server applies the same pre-set rule itself.
-      ownCopy = decided ? !!(wv && wv.ownCopy && wv.copyable !== false) : undefined;
+      pickLists = newChatLists(f.cwd);
     if (!f.cwd || (!draft.trim() && !selectedAttachments('new-chat').length)) return;
     startingNew = true;
     clearError();
     renderNewChat();
     try {
       // The host applies the picks right after the session starts and before it is ready, so the first prompt runs with them.
-      const result = await connectAndWait({ provider: provider0, cwd: f.cwd, resume: '', picks, ownCopy });
+      const result = await connectAndWait({ provider: provider0, cwd: f.cwd, resume: '', picks });
       if (f.source === 'input')
         try {
           localStorage.setItem('studio-cwd', f.cwd);

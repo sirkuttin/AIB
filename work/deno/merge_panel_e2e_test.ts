@@ -1,6 +1,7 @@
 /**
  * The Changes tab's merge line after a merge, end to end: a real Studio (Deno web server + in-process agent host, temp state folder,
- * free port; never the live ports), the scripted agent in its own git worktree of a temp repo, and a headless Chrome/Edge on
+ * free port; never the live ports), the scripted agent in its own git worktree of a temp repo (a copy chat as AIB made them
+ * before 2026-11-16), and a headless Chrome/Edge on
  * chat.html (no window).
  *
  * The owner clicks "Merge into main" (the real merge-request route: the line says "Merge requested. The chat is merging"), then the
@@ -20,7 +21,9 @@ Deno.test({
   sanitizeResources: false,
   sanitizeOps: false,
   async fn() {
-    const lab = await Lab.open(1400, 900);
+    // Owner decision 2026-11-16: new chats work in the project folder; a chat in its own copy (with Merge) is one made before that.
+    // The test server takes the test-only ownCopy to make one.
+    const lab = await Lab.open(1400, 900, { AIB_TEST_COPY_CHATS: '1' });
     try {
       const page = lab.page;
       const proj = lab.fx.workspace; // the project the sidebar shows
@@ -32,7 +35,7 @@ Deno.test({
       git(proj, 'add', '-A');
       git(proj, 'commit', '-q', '-m', 'base');
 
-      const chat = await lab.chat();
+      const chat = await lab.chat('', { ownCopy: true });
       const [ws, info] = await lab.web.get(`/api/live/worktree?id=${encodeURIComponent(chat.id)}`);
       assertEquals(ws, 200);
       assert(info.worktree === true, 'the chat works in its own worktree: ' + JSON.stringify(info));
