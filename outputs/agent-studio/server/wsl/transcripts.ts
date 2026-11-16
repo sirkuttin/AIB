@@ -8,7 +8,7 @@
  * whose project is none of them is left out (a chat that ran in a WSL worktree is filed under its project, as the helper's store says). Under test the helper is told the Claude folder inside AIB_WSL_ROOT (wslTestHomeEnv), so
  * a test never lists the owner's own sessions.
  */
-import type { WslHost } from './contract.ts';
+import type { WslHost, WslRefileResult } from './contract.ts';
 import { distroName, hostWhenReady, notReady, peekWslHost, wsl2Distros, wslTestHomeEnv } from './access.ts';
 import { refOf } from '../platform/location.ts';
 
@@ -221,5 +221,41 @@ export async function wslTranscriptGet(path: string, args: Map<string, string[]>
     }, { timeoutMs: 30_000 });
   } catch (error) {
     return { status: 400, body: { error: error instanceof Error ? error.message : String(error) } };
+  }
+}
+
+// ---- re-filing old copy chats (build plan 1b 4.5 SF 9, 4.6; helper protocol 3: helper/refile.ts) -------------------------------
+/** Under test, the agents' folders inside AIB_WSL_ROOT the helper must use (never the distro user's own ~/.claude, ~/.codex). */
+function testAgentDirs(): { claudeDir?: string; codexDir?: string } {
+  const test = wslTestHomeEnv();
+  return {
+    ...(test.CLAUDE_CONFIG_DIR ? { claudeDir: test.CLAUDE_CONFIG_DIR } : {}),
+    ...(test.CODEX_HOME ? { codexDir: test.CODEX_HOME } : test.HOME ? { codexDir: test.HOME + '/.codex' } : {}),
+  };
+}
+
+/**
+ * Re-file one old copy chat of a WSL project in its distro: Claude Code's transcript moves under the project's folder (backup kept in
+ * the distro); Codex's rollout is backed up (outcome 'saved': the caller then opens it once in the project folder). `from` and `to`
+ * are Linux paths. Throws when the distro is not ready or its helper predates protocol 3.
+ */
+export async function wslRefile(distro: string, provider: string, sessionId: string, from: string, to: string): Promise<WslRefileResult> {
+  const host = await hostWhenReady(distro, 60_000);
+  return await host.call('transcripts.refile', {
+    provider: provider as 'claude' | 'codex',
+    sessionId,
+    from,
+    to,
+    ...testAgentDirs(),
+  }, { timeoutMs: 60_000 });
+}
+
+/** Remove this AIB's empty copy-named folders in a distro's ~/.claude/projects (null: the distro is not ready or cannot). */
+export async function wslCleanEmpty(host: WslHost): Promise<{ removed: string[]; kept: string[] } | null> {
+  try {
+    const dirs = testAgentDirs();
+    return await host.call('transcripts.cleanEmpty', dirs.claudeDir ? { claudeDir: dirs.claudeDir } : {}, { timeoutMs: 30_000 });
+  } catch {
+    return null;
   }
 }

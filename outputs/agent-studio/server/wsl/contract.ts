@@ -51,8 +51,18 @@ export class WslHelperError extends Error {
  * Helper protocol version, the first line on the helper channel is `helper.ready {helper, protocol, methods}`. Additions only.
  * 2: worktree.cleanupScan / worktree.cleanupApply (decision 6 cleanup, build plan 1b section 5). The helper ships with AIB (install.ts
  * puts each version's programs in their own folder), so an update brings a helper of the same protocol.
+ * 3: transcripts.refile / transcripts.cleanEmpty (old copy chats re-filed under the project folder, build plan 1b 4.5 SF 9, 4.6).
  */
-export const HELPER_PROTOCOL = 2;
+export const HELPER_PROTOCOL = 3;
+
+/** transcripts.refile's answer: worktrees/refile.ts RefileResult; for Codex only the backup is made here ('saved'). */
+export interface WslRefileResult {
+  outcome: 'moved' | 'already' | 'missing' | 'exists' | 'failed' | 'refused' | 'saved';
+  message: string;
+  path: string;
+  backup: string;
+  fromFolder: string;
+}
 
 /** worktrees/cleanup.ts Scan as the channel carries it (items are CleanupItem; paths are Linux paths). */
 export interface WslCleanupScan {
@@ -210,6 +220,17 @@ export interface HelperMethods {
    */
   'transcripts.sessions': { params: { provider: 'claude' | 'codex'; limit?: number; claudeDir?: string }; result: { sessions: Record<string, unknown>[] } };
   /** A page of one saved session (key from transcripts.sessions; args: the page's limit, after, before, thinking, q, kind): the helper's /api/transcript answer. */
+  /**
+   * Re-file one old copy chat (helper/refile.ts, protocol 3): Claude Code's transcript moves from the copy's projects/ folder to the
+   * project's, cwd rewritten, the original backed up in <data>/refiled/claude; Codex's rollout is only backed up (outcome 'saved':
+   * AIB then opens the chat once in the project folder). `from` must be under <data>/worktrees. claudeDir / codexDir: tests only.
+   */
+  'transcripts.refile': {
+    params: { provider: 'claude' | 'codex'; sessionId: string; from: string; to: string; claudeDir?: string; codexDir?: string };
+    result: WslRefileResult;
+  };
+  /** Remove the empty copy-named folders of this AIB in the distro's ~/.claude/projects (plain rmdir; protocol 3). */
+  'transcripts.cleanEmpty': { params: { claudeDir?: string }; result: { removed: string[]; kept: string[] } };
   'transcripts.read': {
     params: { provider: 'claude' | 'codex'; key: string; args?: Record<string, string>; claudeDir?: string };
     result: { status: number; body: unknown };
