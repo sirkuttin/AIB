@@ -26,6 +26,7 @@ import { Swarm } from '../../outputs/agent-studio/server/swarm/service.ts';
 import { setSwarmEnabled } from '../../outputs/agent-studio/server/swarm/settings.ts';
 import { pathOf } from '../../outputs/agent-studio/server/state/paths.ts';
 import * as merge from '../../outputs/agent-studio/server/worktrees/merge.ts';
+import { timing as landingTiming } from '../../outputs/agent-studio/server/worktrees/landing_lock.ts';
 import * as wt from '../../outputs/agent-studio/server/worktrees/worktrees.ts';
 import '../../outputs/agent-studio/queue-ui.js';
 
@@ -574,3 +575,34 @@ function exists(path: string): boolean {
     return false;
   }
 }
+
+Deno.test({
+  ...T,
+  name: 'e2e 8 (renewal): a landing that runs longer than the lock lifetime keeps it (renewed), so nothing starts mid-landing',
+  async fn() {
+    await using box = new Box();
+    const folderChat = await box.connect(box.project);
+    const copyChat = await box.connect(box.project, { ownCopy: true });
+    write(copyChat.cwd, 'slow.txt', 'from the copy\n');
+    runGit(copyChat.cwd, 'add', '--', 'slow.txt');
+    runGit(copyChat.cwd, 'commit', '-q', '-m', 'slow');
+    const saved = { ...landingTiming };
+    Object.assign(landingTiming, { renewMs: 40, ttlMs: 150 });
+    let during: Json = {};
+    merge.HOOKS.before_ff = async () => {
+      await box.studio.liveCall('prompt', { id: folderChat.id, text: 'sent mid-landing', clientMessageId: 'mid' });
+      await pause(600); // four lifetimes
+      during = { held: !!folderChat.landing, busy: folderChat.busy, queued: folderChat.queue.items.length };
+    };
+    try {
+      const out = await merge.merge(box.mergeStudio(), copyChat.id, 'Slow work');
+      assertEquals(out.state, 'merged');
+    } finally {
+      delete merge.HOOKS.before_ff;
+      Object.assign(landingTiming, saved);
+    }
+    assertEquals(during, { held: true, busy: false, queued: 1 }, 'still held, nothing started');
+    await until(() => userTexts(folderChat).includes('sent mid-landing'), 'it went after the landing', 10);
+    await settle(folderChat);
+  },
+});

@@ -4532,7 +4532,7 @@ export class Connection {
 
   /** Let go: what queued meanwhile goes out now, in order (the steer lane first). False when this id did not hold it. */
   landingRelease(id: string): boolean {
-    if (!this.landing || (id && this.landing.id !== id)) return false;
+    if (!this.landing || this.landing.id !== id) return false;
     this.landing = null;
     this.queue.landing = '';
     if (this.#landingTimer !== null) clearTimeout(this.#landingTimer);
