@@ -255,9 +255,10 @@ export interface ConnectOptions {
   /** The automatic reconnect at start (reconnectOne), not the person's Continue: a WSL agent turned off for its distro is not refused then. */
   auto?: boolean;
   /**
-   * Where a new chat works (build plan 1b): true its own copy (a worktree on its own branch), false the project folder itself;
-   * null or missing (the phone, older pages, agent-started chats) the pre-set rule: its own copy when another folder chat in the
-   * project is working (folderChatWorking), else the folder. A saved chat (resume) and a helper ignore it.
+   * Owner decision 2026-11-16: there is no per-chat Own copy. Every new chat works in the project folder; only helpers get a copy.
+   * Tests only: true makes a new chat in its own copy, as AIB did before, so they can stand in for a chat made then (those keep
+   * their copy, Merge and Discard). The web connect route never passes it (it ignores body.ownCopy, see readOwnCopy) unless the
+   * server runs with AIB_TEST_COPY_CHATS=1. A saved chat (resume) and a helper ignore it.
    */
   ownCopy?: boolean | null;
 }
@@ -267,11 +268,16 @@ const OWN_CONTEXT = '__aibOwnContext';
 /** How long a landing lock lasts without a renewal (build plan 2.3: the web process renews it every 10 s while the merge runs). */
 export const LANDING_TTL_MS = 60_000;
 
-/** body.ownCopy of a connect request: true, false, or null when missing. */
-export function readOwnCopy(value: unknown): boolean | null {
+/**
+ * body.ownCopy of a connect request. Owner decision 2026-11-16: no per-chat Own copy, so it is ignored (null) with a log line, and
+ * a page from before the change that still sends it is not refused. Only a test server (AIB_TEST_COPY_CHATS=1) takes true, to
+ * make a copy chat like the ones made before the change.
+ */
+export function readOwnCopy(value: unknown, testCopies = Deno.env.get('AIB_TEST_COPY_CHATS') === '1'): boolean | null {
   if (value === undefined || value === null) return null;
-  if (typeof value !== 'boolean') throw new ValueError('ownCopy must be true, false or null');
-  return value;
+  if (testCopies && typeof value === 'boolean') return value;
+  console.error(`Connect: ownCopy ${JSON.stringify(value)} ignored (every new chat works in the project folder)`);
+  return null;
 }
 
 /** Swarm: body.helperOf of a connect request ({helperId, parent}), else null. */
@@ -1184,10 +1190,11 @@ export class Studio {
       : null;
     if (asHelper && resume) throw new ValueError('A helper is a new chat');
     if (asHelper && !this.worktrees) throw new ValueError('Helpers need a worktree: this AIB has no state folder');
-    // Build plan 1b: a new chat works in the project folder unless it asks for its own copy (or the pre-set rule gives it one because
-    // another folder chat in the project is working, decided now and never changed later); a helper always gets its own copy.
+    // Owner decision 2026-11-16: every new chat works in the project folder (no per-chat Own copy, no pre-set; the hidden
+    // worktreePerChat setting no longer decides either); a helper always gets its own copy. ownCopy: tests only (ConnectOptions).
+    // `working`: another folder chat working here now, for the shared-folder start note and context line (#sharedFolderStart).
     const working = resume === null && !asHelper ? this.folderChatWorking(workspace) : null;
-    const wantsCopy = resume === null && !!this.worktrees && (!!asHelper || (options.ownCopy ?? !!working));
+    const wantsCopy = resume === null && !!this.worktrees && (!!asHelper || options.ownCopy === true);
     if (wantsCopy) {
       const kind = asHelper ? 'helper' : 'chat';
       // Build plan 2.4 (MF 7): a helper of a chat that works in the project folder starts from the folder's branch, with the folder's
@@ -1896,10 +1903,6 @@ export class Studio {
     this.#ownContext.set(c.id, lines);
   }
 
-  /**
-   * Build plan 1.3: the open folder chat of this project that is working (a turn running, or messages queued), else null. A chat in
-   * its own copy and a helper do not count: they don't write the project folder. Read when a new chat is made, never watched.
-   */
   /** The open chats that work in `folder` itself: not a chat in its own copy, not a helper (build plan 2.3). */
   folderChats(folder: string): Connection[] {
     const key = (p: string) => (wslLoc(p) ? p : normcase(realpath(p)));
@@ -1919,6 +1922,10 @@ export class Studio {
     });
   }
 
+  /**
+   * The open folder chat of this project that is working (a turn running, or messages queued), else null. A chat in its own copy
+   * and a helper do not count: they don't write the project folder. Read when a new chat is made (the shared-folder start note).
+   */
   folderChatWorking(project: string): Connection | null {
     const key = (p: string) => (wslLoc(p) ? p : normcase(realpath(p)));
     let want: string;

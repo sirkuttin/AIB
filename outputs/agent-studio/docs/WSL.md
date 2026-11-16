@@ -19,10 +19,10 @@ Design and decisions: `docs/wsl/design.md` (section 11 overrides the rest). Code
 - AIB tools in a WSL chat are the artifact tools (publish by content, list, update, archive), the doc and drawing tools and, for a
   chat in its own copy, the merge tools (merge_into_project, resolve_edit_clash), reached through AIB's own tunnel inside the distro
   (see AIB tools below; WSL interop is only the fallback); the swarm helper tools are not available yet, and the chat says so.
-- A new chat in a git project works in its own copy (a git worktree on branch `studio/chat-…`), made inside the distro, as for a
-  Windows project; a folder that is not git, has no commits yet, or cannot get a copy keeps the chat in the project folder, with the
-  same start note. The Files tab shows the chat's copy or the main folder; Changes shows the chat's branch, Discard removes the
-  copy and its branch, and Merge lands the chat's own commits on main as for a Windows project (see Merge below). Live sync works
+- A new chat works in the project folder, as for a Windows project (owner decision 2026-11-16: no per-chat own copy). A WSL
+  chat made before then in its own copy (a git worktree on branch `studio/chat-…`, made inside the distro) keeps it. The Files tab
+  shows the chat's copy or the main folder; Changes shows the chat's branch, Discard removes the copy and its branch, and Merge
+  lands the chat's own commits on main as for a Windows project (see Merge below). Live sync works
   as for a Windows project: a file the user saves in the main folder reaches the chat's copy within a second or two, the chat's
   next prompt names it, an edit both made is merged into the copy, a clash shows its line under the header and in Changes, and a
   storm of changes pauses with "Resume" (see Live sync below). Docs work as in a Windows project (see Docs below). The Files tab previews

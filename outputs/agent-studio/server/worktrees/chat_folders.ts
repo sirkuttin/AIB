@@ -9,7 +9,6 @@ import * as worktrees from './worktrees.ts';
 import { WslHelperError } from '../wsl/contract.ts';
 import { notReady, wslHost, wslLoc } from '../wsl/access.ts';
 import { parseWslSessionKey, wslSessionCwd } from '../wsl/transcripts.ts';
-import { wslPlanWithReason } from '../wsl/worktrees.ts';
 
 /** Name of the checked-out branch of the repository holding cwd, read from HEAD (no subprocess); '' when unknown. Detached: short id. */
 export function repoBranch(cwd: unknown): string {
@@ -59,37 +58,6 @@ export async function branchOf(cwd: unknown): Promise<string> {
   } catch {
     return '';
   }
-}
-
-/**
- * Build plan 1b (SF 10): can a new chat in `cwd` get its own copy? `whyNot` is '' when it can, else the reason in a few words with a
- * capital first letter ("Not a git repository"), shown as the Works-in chip's second line. Read-only: a few git calls (a WSL ref: its
- * distro's helper plans without making anything; a distro not ready yet is not asked and counts as copyable, connect decides then).
- */
-export async function copyableOf(cwd: unknown): Promise<{ copyable: boolean; whyNot: string }> {
-  const no = (why: string) => ({ copyable: false, whyNot: why ? why[0].toUpperCase() + why.slice(1) : 'Not possible here' });
-  if (!cwd || !isStr(cwd)) return no('no folder chosen');
-  const wsl = wslLoc(cwd);
-  if (wsl) {
-    if (notReady(wslHost(wsl.distro), wsl.distro)) return { copyable: true, whyNot: '' };
-    const { plan, reason } = await wslPlanWithReason(cwd, 'chat');
-    return plan ? { copyable: true, whyNot: '' } : no(reason);
-  }
-  if (isNetworkPath(cwd) || isForeignPath(cwd)) return no('not a folder on this PC');
-  let folder: string;
-  try {
-    folder = osp.realpath(cwd);
-  } catch {
-    return no('the folder does not exist');
-  }
-  if (!osp.isdir(folder)) return no('the folder does not exist');
-  let reason: string;
-  try {
-    reason = await worktrees.whyInPlace(folder);
-  } catch (error) {
-    reason = `git could not be read: ${error instanceof Error ? error.message : error}`;
-  }
-  return reason ? no(reason) : { copyable: true, whyNot: '' };
 }
 
 function readText(path: string): string {

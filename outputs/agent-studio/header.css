@@ -651,15 +651,6 @@ body.new-chat header .hd-line h1:hover {
   text-align: center;
   overflow-wrap: anywhere;
 }
-/* The Works in note under the folder line: why Own copy is pre-set, or (amber, the hold-note colour) the warning after the user
-   picked the project folder while another chat works there. */
-.nc-works-note {
-  display: block;
-  margin-top: 4px;
-}
-.nc-works-note.amber {
-  color: var(--warn-text);
-}
 .nc-folder-input {
   width: 100%;
   max-width: 380px;
