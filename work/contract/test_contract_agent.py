@@ -160,6 +160,9 @@ class AgentContract(unittest.TestCase):
             self.assertIsNone(a.pop('limits'), f'{what}: the fixture sends no usage limits')
         if self.servers[0].effective_kind() in ('deno', 'deno-split'):
             a.pop('swarm', None)  # Deno only: folder chats lead helpers (folder chats P1)
+            # Deno only (remote PC phase 2): who answered each card ({id: {by, name, option}}); here only the PC answers.
+            for answer in (a.pop('answers', None) or {}).values():
+                self.assertEqual(answer.get('by'), 'pc', f'{what}: answers')
         self.assertEqual(sorted(self.kinds(a)), sorted(self.kinds(b)), f'{what}: event kinds')
         for state in (a, b):
             state['events'] = sorted((json.dumps({k: v for k, v in e.items() if k != 'seq'}, sort_keys=True) for e in state['events']))

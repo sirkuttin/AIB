@@ -6,6 +6,7 @@ import { studioAsset } from '../../outputs/agent-studio/server/web/server.ts';
 import { parseOptions, UsageError } from '../../outputs/agent-studio/server/core/options.ts';
 import { LIVE_POST_OPS } from '../../outputs/agent-studio/server/web/live_routes.ts';
 import { REMOTE_ROUTES, REMOTE_STATIC } from '../../outputs/agent-studio/server/remote/server.ts';
+import { LOADER } from '../../outputs/agent-studio/server/remote/pc_page.ts';
 
 Deno.test('the route table is exactly the Python web server\'s (paths, scopes and kinds)', async () => {
   await using py = new PyParity();
@@ -151,7 +152,9 @@ Deno.test('LIVE_POST_OPS equals Studio.LIVE_POST_OPS', async () => {
 
 Deno.test('the phone port routes are not page routes, and the page port does not serve them', () => {
   const page = new Set(ROUTE_LIST.map(([m, p]) => `${m} ${p}`));
-  for (const [m, p] of REMOTE_ROUTES) assertEquals(page.has(`${m} ${p}`), false, `${m} ${p}`);
+  // Remote PC phase 1b: the phone port answers / with its own loader (remote-loader.html, remote/pc_page.ts), not the page port's
+  // monitor page; it is the one address both ports answer, each with its own file.
+  for (const [m, p] of REMOTE_ROUTES) assertEquals(page.has(`${m} ${p}`), m === 'GET' && p === LOADER, `${m} ${p}`);
   for (const [, p] of REMOTE_ROUTES) if (p.startsWith('/api/')) assertEquals(p.startsWith('/api/remote/'), true, p);
   // the phone page's scripts and styles are plain page files the page port also has (no secrets in them); phone.html and the
   // phone API are only on the phone port

@@ -299,7 +299,12 @@ class PhonePortContract(unittest.TestCase):
         for method, path in routes:
             status, _, body = self.phone(method, path, {} if method == 'POST' else None, X_AIB_Device=token, Cookie='__Host-aib-phone=' + cookie)
             answers.append(body)
-            if not path.startswith(('/api/remote/', '/phone', '/manifest.webmanifest', '/sw.js', '/icons/')):
+            if method == 'GET' and path == '/':
+                # remote PC phase 1b: the phone port answers / with its own loader (remote-loader.html), never the page port's page
+                self.assertEqual(status, 200, body)
+                self.assertIn(b'/remote-loader.js', body)
+                self.assertNotIn(b'/chat.js', body)
+            elif not path.startswith(('/api/remote/', '/phone', '/manifest.webmanifest', '/sw.js', '/icons/')):
                 self.assertIn(status, (403, 404), f'{method} {path}')
         # phase D: the artifact port (https 8443) answers no page or phone route, and refuses links it did not sign
         artifact_paths = [(m, p) for m, p in routes if not p.startswith('/api/remote/artifact')]
