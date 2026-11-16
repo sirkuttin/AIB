@@ -128,18 +128,39 @@ modules natively (`wsl/helper/local_only.ts`, the `localOnly.*` methods), with L
   `session/new` and on `session/load`. The start note (the system prompt line, Windows wording) says where they are and that they
   must not be made in the copy. The main folder's `private/` is made (empty) so it can be granted from the first message. The copy
   itself never holds them. A chat working in the project folder gets the `private/` line only. No Windows scratch folder is added.
+- **Everything else git ignores** (owner, WSL only; `worktrees/ignored_overlay.ts`). A chat in its own copy is also granted every
+  other top-level folder git ignores in the main folder (`git status --ignored`: git collapses nested ones to the highest ignored
+  folder, so `game/review/`, `importer/node_modules/`, a user-excluded `scratch/`), and the start note names those folders and the
+  top-level ignored files (`.env`, `.claude/settings.local.json`: additionalDirectories takes folders only) by their Linux paths, saying
+  they are shared with the main folder: an edit there is live at once and is not part of the copy or its branch. Left out, always:
+  `.git`; any ignored folder holding or inside another worktree of the repository (`git worktree list`, for example
+  `.claude/worktrees/`); AIB's own folders in the distro (the data folder with its chat copies, and the AIB root unless the project
+  is inside it, as tests are). At most 60 folders and 60 files. Windows chats are unchanged (a few lines in `files_routes.ts` and
+  `studio.ts`: one call for the list, a read fallback, one for the grant, would turn the same on for them).
+- **Permissions.** ACP `additionalDirectories` is what the Claude Code and Codex adapters take to widen where the agent may read
+  and write (assumed from the adapters' documented session capability, which the Windows flow already uses; not re-verified against
+  each adapter's sandbox here). An absolute path outside both the copy and the granted folders (an ignored file) goes through the
+  agent's normal permission prompt. AIB adds no guard of its own: WSL chats have no write tracker, the backup only reads, and Merge
+  and sync never touch ignored files.
 - **Files.** List, search and read of a chat's copy lay the main folder's local-only paths over it (`localOnly.list`, `.search`,
   `.read`; `files.listLocal`, `excludeHints`, `findStrays`, `localFiles`); a local-only file is read from the main folder.
   `localOnly.main` in the replies is the main folder's Linux path, so rows' tooltips show the path the agent uses. "Git exclude"
   and its Undo (`localOnly.exclude`: `addEntry`, which moves the copy's file into the main folder first, and `undoEntry`) and the
   stray row's Move (`localOnly.moveStrays`) work as on Windows. The helper only writes the exclude file of the main folder's own
   repository, refuses paths out of the folder (`..`), `.git`, `node_modules`, `aib-docs` and tracked files, and refuses a root that
-  is neither the main folder nor one of its own chat copies (under `<data>/worktrees`).
+  is neither the main folder nor one of its own chat copies (under `<data>/worktrees`). It never writes a `.gitignore`.
+  Beyond Windows: in a chat's copy every ignored entry of the main folder the copy lacks is listed too (`from: 'main'`), a folder
+  the copy lacks is listed from the main folder when the main folder ignores it, and a file the copy lacks is read there, so
+  `game/review/` and `.env` are visible, traversable and openable from a copy. Rows excluded through `.git/info/exclude` (AIB's
+  block or the user's own lines) read in normal colour (`excluded`); `.gitignore` ones stay dimmed. Search still leaves ignored
+  files out, as on Windows.
 - **Live sync and merge** run `worktrees/sync.ts` and `merge.ts` in the helper, which read the same local-only list natively: sync
   never copies the main folder's local-only files into a copy, and Merge never lands a local-only file from a copy.
 - **Backup.** Once an hour AIB asks each running distro's helper (`localOnly.backup`; a distro that is not running is never
   started for it) to zip its WSL projects' local-only files into `<data>/local-only-backups/<repo hash>.zip`, once a day when they
-  changed, as `local_backup.ts` does on Windows (the projects AIB names, plus the projects it keeps chat copies of).
+  changed, as `local_backup.ts` does on Windows (the projects AIB names, plus the projects it keeps chat copies of). Only AIB's
+  local-only folders are backed up, as on Windows; other ignored folders are not. There is no restore button (Windows has none
+  either): the zip is unpacked by hand.
 - An older helper without `localOnly.*` leaves WSL projects as before: no local-only part, and Git exclude says the helper is too old.
 
 ## AIB tools (MCP tunnel)

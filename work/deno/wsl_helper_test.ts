@@ -493,6 +493,14 @@ Deno.test('the ready line can list every method of the contract', () => {
     'proc.tree',
     'env.prereqs',
     'agents.signinStatus',
+    'localOnly.ensure',
+    'localOnly.chat',
+    'localOnly.list',
+    'localOnly.search',
+    'localOnly.read',
+    'localOnly.exclude',
+    'localOnly.moveStrays',
+    'localOnly.backup',
   ];
   assertEquals(Object.keys(methods).sort(), [...names].sort());
 });

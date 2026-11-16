@@ -1,12 +1,12 @@
 /**
  * Real WSL (AIB_WSL_E2E=<distro>; see _wsl_e2e.ts): local-only folders of a WSL project, run by the distro's helper
  * (wsl/helper/local_only.ts). The temp repo has the owner's shape: `/private/` in its own .git/info/exclude and a file
- * private/review/x.png that git never copies into a chat's copy.
+ * private/review/x.png, and game/review/ in a committed .gitignore with a nested picture: git copies neither into a chat's copy.
  *   - a new chat in its own copy: AIB's block gets `/private` before the copy is made, the copy holds no private/, and the agent's
- *     session/new carries additionalDirectories = [the main folder's private/] (a Linux path) and the note naming it; the agent writes
- *     a file there by that path;
+ *     session/new carries additionalDirectories = [the main folder's private/ and game/review/] (Linux paths) and the note naming them; the agent edits
+ *     a file in each by those paths, which lands in the main folder only (not in the copy, not in its branch);
  *   - the Files tab of the chat's copy: the list's localOnly part names private (main = the Linux main folder), and a read of
- *     private/review/x.png comes from the main folder;
+ *     private/review/x.png comes from the main folder; game/review/ is listed dimmed in the copy's game/, traversed and its picture read;
  *   - "Git exclude" on a new folder writes the repo's .git/info/exclude in the distro, Undo takes it back; a path out of the repo and
  *     a root outside AIB's chat copies are refused;
  *   - live sync never brings the main folder's private/ files into the copy, and Merge lands the chat's own commit but never a
@@ -68,10 +68,13 @@ Deno.test({
       const repo = `${ROOT}/repo`;
       const ref = refOf({ kind: 'wsl', distro: KEY, linuxPath: repo });
       await sh(
-        'cd "$1" && git branch -M main && printf "\\n# Owner-only files\\n/private/\\n" >> .git/info/exclude && mkdir -p private/review && printf PNG > private/review/x.png',
+        'cd "$1" && git branch -M main && printf "\\n# Owner-only files\\n/private/\\n" >> .git/info/exclude && mkdir -p private/review && printf PNG > private/review/x.png' +
+          ' && printf "game/review/\\n" > .gitignore && mkdir -p game/review/level1 && printf tracked > game/a.txt && git add .gitignore game/a.txt && git commit -qm game' +
+          ' && printf GAMEPNG > game/review/level1/shot.png',
         repo,
       );
-      assertEquals(await sh('git -C "$1" status --porcelain', repo), '', 'private/ is ignored by the user line');
+      assertEquals(await sh('git -C "$1" status --porcelain', repo), '', 'private/ and game/review/ are ignored');
+      const gitignore = await sh('cat "$1/.gitignore"', repo);
       studio = studioIn(state);
       const c = await studio.connect('claude', ref);
       await until(() => c.ready, 'ready', 60);
@@ -85,14 +88,24 @@ Deno.test({
       const log = (await sh('cat "$1/acp.log"', ROOT)).split('\n').filter(Boolean).map((l) => JSON.parse(l));
       const made = log.filter((m) => m.method === 'session/new').map((m) => m.params as Json);
       assertEquals(made.length, 1);
-      assertEquals(made[0].additionalDirectories, [`${repo}/private`]);
+      assertEquals(made[0].additionalDirectories, [`${repo}/private`, `${repo}/game/review`]);
       assertEquals(made[0].cwd, linux);
       const texts = (((made[0].systemPrompt as Json)?.content as Json[]) ?? []).map((x) => String(x.text));
-      assert(texts.some((t) => t.includes('Local-only files') && t.includes(`${repo}/private`)), JSON.stringify(texts));
-      assertEquals(c.localOnly, { entries: [`${repo}/private`], dirs: [`${repo}/private`], private: `${repo}/private` });
-      // the agent writes into the main folder's private/ by its full path
+      assert(texts.some((t) => t.includes('Local-only files') && t.includes(`${repo}/private`) && t.includes(`${repo}/game/review`)), JSON.stringify(texts));
+      assertEquals(c.localOnly, {
+        entries: [`${repo}/private`],
+        dirs: [`${repo}/private`],
+        private: `${repo}/private`,
+        ignored: { dirs: [`${repo}/game/review`], files: [] },
+      });
+      assert(!JSON.stringify(made[0].additionalDirectories).includes('/data-'), "AIB's data folder (the copies) is never granted");
+      // the agent edits files in the main folder's private/ and game/review/ by the granted full paths: they land there only
       await turn(studio, c, `edit:${repo}/private/review/notes.md|from the chat${NL}`);
+      await turn(studio, c, `edit:${repo}/game/review/level1/notes.md|game notes${NL}`);
       assertEquals(await sh('cat "$1/private/review/notes.md"', repo), 'from the chat');
+      assertEquals(await sh('cat "$1/game/review/level1/notes.md"', repo), 'game notes');
+      assertEquals(await sh('test -e "$1/game/review" && echo there || echo absent', linux), 'absent', 'nothing leaks into the copy');
+      assertEquals(await sh('git -C "$1" status --porcelain', linux), '', 'nor into its branch');
 
       // ---- the Files tab of the chat's copy
       const routes = filesRoutes();
@@ -114,16 +127,27 @@ Deno.test({
       assertEquals([rs, read.local, read.from, read.abs, read.size], [200, true, 'main', `${repo}/private/review/x.png`, 3]);
       const [, found] = await get('/api/live/files/search', 'q=notes.md');
       assertEquals((found.matches as Json[]).map((m) => m.path), ['private/review/notes.md']);
+      // the .gitignore'd game/review/ of the main folder: listed (dimmed) in the copy's game/, traversed, its picture opened
+      const [, game] = await get('/api/live/files/list', 'dir=game');
+      assertEquals((game.entries as Json[]).map((e) => [e.name, e.from ?? '', e.ignored]), [['review', 'main', true], ['a.txt', '', false]]);
+      const [, level] = await get('/api/live/files/list', 'dir=game/review/level1');
+      assertEquals((level.entries as Json[]).map((e) => [e.name, e.from, e.ignored]).sort(), [['notes.md', 'main', true], ['shot.png', 'main', true]]);
+      const [gs, shot] = await get('/api/live/files/read', 'path=game/review/level1/shot.png');
+      assertEquals([gs, shot.from, shot.abs, shot.size, shot.image], [200, 'main', `${repo}/game/review/level1/shot.png`, 7, true]);
+      const [, privList] = await get('/api/live/files/list', 'dir=private/review');
+      assert((privList.entries as Json[]).every((e) => e.ignored === false), 'excluded folders read in normal colour');
 
       // ---- Git exclude on a new folder (from the copy: it moves into the main folder first), Undo, refusals
-      await sh('mkdir -p "$1/game/review" && printf shot > "$1/game/review/a.png"', linux);
-      const [ex, added] = await post('/api/live/files/exclude', { action: 'add', path: 'game/review' });
+      await sh('mkdir -p "$1/drafts" && printf shot > "$1/drafts/a.png"', linux);
+      const [ex, added] = await post('/api/live/files/exclude', { action: 'add', path: 'drafts' });
       assertEquals([ex, added.ok], [200, true], JSON.stringify(added));
-      assert((await sh('cat "$1/.git/info/exclude"', repo)).includes('\n/game/review\n'));
-      assertEquals(await sh('cat "$1/game/review/a.png"', repo), 'shot', 'moved into the main folder');
+      assert((await sh('cat "$1/.git/info/exclude"', repo)).includes('\n/drafts\n'));
+      assertEquals(await sh('cat "$1/drafts/a.png"', repo), 'shot', 'moved into the main folder');
       const [un, undone] = await post('/api/live/files/exclude', { action: 'undo', undo: added.undo });
       assertEquals([un, undone.ok], [200, true]);
-      assert(!(await sh('cat "$1/.git/info/exclude"', repo)).includes('/game/review'));
+      assert(!(await sh('cat "$1/.git/info/exclude"', repo)).includes('/drafts'));
+      assertEquals(await sh('cat "$1/.gitignore"', repo), gitignore, 'no .gitignore is ever written');
+      assertEquals(await sh('find "$1" "$2" -name .gitignore -not -path "*/.git/*" | sort', repo, linux), `${linux}/.gitignore\n${repo}/.gitignore`);
       const [bad] = await post('/api/live/files/exclude', { action: 'add', path: '../../etc' });
       assertEquals(bad, 400);
       const outside = await host.call('localOnly.exclude', { root: ROOT, main: repo, action: 'add', path: 'x' }).catch((e) => e);
@@ -134,6 +158,7 @@ Deno.test({
       await sh('echo user > "$1/u.txt" && echo secret > "$1/private/new.md"', repo);
       await waitFor(async () => (await sh('cat "$1/u.txt" 2>/dev/null || true', linux)) === 'user', 'u.txt reaches the copy', 45);
       assertEquals(await sh('test -e "$1/private" && echo there || echo absent', linux), 'absent', 'private/ is never synced');
+      assertEquals(await sh('test -e "$1/game/review" && echo there || echo absent', linux), 'absent', 'nor game/review/');
 
       // ---- merge: the chat's own commit lands, a private/ file the chat made in its copy never does
       await turn(studio, c, `edit:chat.txt|from the chat${NL}`);
@@ -144,7 +169,7 @@ Deno.test({
       const [code, merged] = await studioRoutes().get('POST /api/live/worktree/merge')!(ctx2, new URL('http://127.0.0.1/api/live/worktree/merge'), { id: c.id }, new Request('http://127.0.0.1/')) as [number, Json];
       assertEquals([code, merged.state], [200, 'merged'], JSON.stringify(merged));
       assertEquals(await sh('git -C "$1" show main:chat.txt', repo), 'from the chat');
-      assertEquals(await sh('git -C "$1" ls-tree -r --name-only main -- private', repo), '', 'nothing under private/ landed');
+      assertEquals(await sh('git -C "$1" ls-tree -r --name-only main -- private game/review', repo), '', 'nothing under private/ or game/review/ landed');
       assertEquals(await sh('cat "$1/private/review/x.png"', repo), 'PNG', "the main folder's private/ is untouched");
     } finally {
       await studio?.close().catch(() => {});

@@ -7,6 +7,11 @@
   can read and write them by their Linux path (for example /home/u/app/private), and is told where they are. Files shows them in
   every chat's copy, Git exclude and Undo work in WSL projects, and AIB backs them up once a day inside the distro. Live sync and
   Merge leave them out, as on Windows.
+- WSL chats in their own copy see everything git ignores in the main folder: folders and files listed in .gitignore or
+  .git/info/exclude (game/review/, .env, node_modules) used to be missing from a chat's copy. Now the Files tab lists them in the
+  copy, opens their folders at any depth and shows their files and pictures. Excluded folders such as private/ are shown in normal
+  colour; .gitignore ones stay dimmed. The chat's agent can read and edit them in the main folder by their full Linux path. AIB never
+  writes a .gitignore.
 
 - WSL screens: spacing, contrast and wording fixes.
 - WSL chats survive AIB being away: the Linux keeper keeps a distro's agents running for 2 hours without AIB, not 35 seconds. An
