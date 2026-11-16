@@ -44,7 +44,7 @@ import { WSL_TOOL_GROUPS } from '../artifacts/mcp.ts';
 import { mcpTunnelGate, type TunnelAnswer } from '../wsl/mcp_tunnel.ts';
 import { forwarderOf, hookForwarderOf, keeperBinary, programVersion } from '../keeper/client.ts';
 import { deny as denyHook, type HookAnswer, SubagentWorktrees, type SubagentChat } from '../subagents/service.ts';
-import { claudeConfigDir, gitBashPath, hookSettings, readClaudeSetup, SUBAGENTS_OFF_SETTINGS } from '../subagents/claude_config.ts';
+import { claudeConfigDir, gitBashPath, hookSettings, readClaudeSetup, subagentsOffSettings } from '../subagents/claude_config.ts';
 import { isCompiled, isDesktopApp, selfCommand, TESTS_DIR } from '../core/app.ts';
 import { type ChannelInfo, type KeeperClient, KeeperError, missingFeatures, type OrphanCommand, readKeeperInfo } from '../keeper/client.ts';
 import { pidAlive } from './host_client.ts';
@@ -1308,7 +1308,8 @@ export class Studio {
           await c.setup(resume || null);
           if (c.subagentHooks?.off === HOOKS_OFF) { // design 2.6: said up front, before a subagent edits the folder (P0 A7)
             c.recordedEvent('studio_note', {
-              message: `Subagents aren't isolated: hooks are off in your Claude Code settings (${c.subagentHooks.detail}).`,
+              message: `Subagents that edit files are off in this chat: hooks are off in your Claude Code settings ` +
+                `(${c.subagentHooks.detail}), so AIB can't give them their own worktree. Read-only subagents (Explore, Plan) still work.`,
               sessionId: c.sessionId,
             });
           } else if (c.subagentHooks?.off === NO_GIT_BASH) {
@@ -1383,6 +1384,13 @@ export class Studio {
       if (conn.channel) this.#keeperNoLongerNeeded();
     };
     c.onTurnEnd = (conn) => this.turnEnded(conn);
+    if (c.provider === 'claude' && this.subagents) { // subagent worktrees P2: what the parent's stream says of its subagents
+      const subagents = this.subagents;
+      c.onTurnCancelled = (conn) => subagents.turnCancelled(conn.id);
+      c.onClaudeTool = (conn, tool, toolUseId, input, status, agentId) => {
+        void subagents.claudeTool(conn.id, tool, toolUseId, input, status, agentId).catch((error) => log.exception(error, 'Subagent tool update failed'));
+      };
+    }
     c.subagentWorktree = (toolUseId) => this.subagents?.worktreeOf(c.id, toolUseId) ?? null; // allow-rule parity (design 2.4)
     c.onLimits = (conn, kind, raw, at) => this.limits.fromAgent(conn, kind, raw, at);
     const sync = this.liveSync;
@@ -1834,13 +1842,18 @@ export class Studio {
       }
       const agentEnv = { ...Deno.env.toObject(), ...testHomeEnv(command), ...env };
       // Claude Code runs command hooks with Git Bash; under another shell AIB's hook command fails open (security review P1, MF 7).
-      // Without it: no hooks, and the chat's subagents are denied by its own per-session permissions (never unisolated).
-      if (!gitBashPath(agentEnv)) return { hooks: { ...offHooks(NO_GIT_BASH), settings: structuredClone(SUBAGENTS_OFF_SETTINGS) } };
+      // Without it: no hooks, and the chat's editing subagents are turned off by the same per-session deny rules as hooks off (P2).
+      if (!gitBashPath(agentEnv)) {
+        const readOnly = readClaudeSetup(project, agentEnv).readOnly;
+        return { hooks: { ...offHooks(NO_GIT_BASH), readOnly, deny: subagentsOffSettings(project, agentEnv, readOnly) } };
+      }
       const forwarder = await hookForwarderOf(this.keeper?.options.binary ?? null, this.stateDir).catch(() => null);
       if (!forwarder) return { hooks: offHooks("AIB's keeper program can't run hooks") };
       const configDir = claudeConfigDir(agentEnv);
       const setup = readClaudeSetup(project, agentEnv);
-      if (setup.hooksOff) return { hooks: { ...offHooks(HOOKS_OFF, setup.hooksOff), configDir } };
+      if (setup.hooksOff) { // owner rule: its editing subagents are turned off instead (per-session permission deny, not hooks)
+        return { hooks: { ...offHooks(HOOKS_OFF, setup.hooksOff), configDir, deny: subagentsOffSettings(project, agentEnv, setup.readOnly) } };
+      }
       const settings = hookSettings(forwarder, join(this.stateDir, FORWARD_FILE), { worktreeCreate: !setup.userWorktreeHook });
       if (!settings) return { hooks: offHooks("AIB's folder can't be named in a hook command") };
       this.artifactMcpHttp(); // listening, with its address published, before the agent's first hook
@@ -2803,6 +2816,10 @@ export class Studio {
       const stopped = await this.retireStoppedHelpers().catch((error) => (log.exception(error, 'Stopped helpers failed'), [] as string[]));
       return [200, { ok: true, removed, stopped }];
     }
+    if (name === 'subagent-release') { // internal (swarm/service.ts): a landed / empty / discarded subagent's worktree goes (P2)
+      if (!this.subagents) return [404, { error: 'No subagent worktrees here' }];
+      return [200, { ok: true, result: await this.subagents.release(String(need(body, 'subagent'))) }];
+    }
     if (name === 'prompt-context') { // a one-time line in front of this chat's next prompt (a landing told it what changed)
       const connection = this.#connection(body);
       this.addPromptContext(connection, [...String(need(body, 'line'))].slice(0, 2000).join(''));
@@ -3068,7 +3085,7 @@ const HOOKS_OFF = 'hooks are off';
 
 /** Subagent worktrees: the reason a Windows chat without Git Bash gets no hooks; its subagents are denied instead (MF 7). */
 const NO_GIT_BASH = 'Git Bash not found';
-const SUBAGENTS_OFF_NO_BASH = "Subagents are off: Git Bash is needed for AIB's subagent rule";
+const SUBAGENTS_OFF_NO_BASH = "Subagents that edit files are off: Git Bash is needed for AIB's subagent rule. Read-only subagents (Explore, Plan) still work.";
 /**
  * Subagent calls of one chat AIB prepares at once; more are denied at once (should-fix 3). Above the parallel subagents a turn
  * usually starts, well under the cap of worktrees per chat.
@@ -3125,6 +3142,7 @@ function hooksFromNote(raw: unknown): Connection['subagentHooks'] {
     ...(text(raw.detail) ? { detail: text(raw.detail) } : {}),
     ...(text(raw.configDir, 1024) ? { configDir: text(raw.configDir, 1024) } : {}),
     adopted: raw.given === true, // its agent runs AIB's hooks
+    ...(isDict(raw.deny) ? { deny: raw.deny as Json } : {}),
   };
 }
 

@@ -16,7 +16,7 @@ import {
   managedSettings,
   readClaudeSetup,
   setPolicyReader,
-  SUBAGENTS_OFF_SETTINGS,
+  subagentsOffSettings,
 } from '../../outputs/agent-studio/server/subagents/claude_config.ts';
 import { ArtifactMcpHttp, CONVERSATION_HEADER, HOOK_KEY_HEADER, HOOK_NONCE_HEADER, HOOK_PROOF_HEADER } from '../../outputs/agent-studio/server/artifacts/mcp_http.ts';
 import { MAX_PER_CHAT, readSubagents, type SubagentChat, SubagentWorktrees, TEXTS } from '../../outputs/agent-studio/server/subagents/service.ts';
@@ -173,9 +173,11 @@ Deno.test('MF 7: Git Bash is found the way Claude Code finds it, or the chat get
   assertEquals(gitBashPath({ CLAUDE_CODE_GIT_BASH_PATH: 'E:\\bash\\bash.exe' }, exists), 'E:\\bash\\bash.exe');
   assertEquals(gitBashPath({ CLAUDE_CODE_GIT_BASH_PATH: 'E:\\bash\\pwsh.exe' }, exists), 'C:\\Program Files\\Git\\bin\\bash.exe',
     'not a bash: auto-detection, as Claude Code');
-  // the settings a chat without Git Bash gets: no hooks, its subagents denied in every mode
-  assertEquals(SUBAGENTS_OFF_SETTINGS, { permissions: { deny: ['Agent', 'Task', 'EnterWorktree', 'Workflow'] } });
-  assert(!('hooks' in SUBAGENTS_OFF_SETTINGS));
+  // what a chat without Git Bash gets instead of hooks: P2's hooks-off deny rules (editing types off, read-only ones still run)
+  const off = subagentsOffSettings('C:/nowhere', { CLAUDE_CONFIG_DIR: 'C:/nowhere/cfg' }, ['Explore', 'Plan']);
+  const deny = (off.permissions as { deny: string[] }).deny;
+  assert(deny.includes('Agent(general-purpose)') && deny.includes('Workflow') && deny.includes('EnterWorktree'), deny.join(','));
+  assert(!deny.includes('Agent(Explore)') && !('hooks' in off));
 });
 
 Deno.test('MF 1: every hook answer is signed over the nonce, the status and the body (the same proof as keeper/hookforward.go)', async () => {
@@ -260,8 +262,12 @@ Deno.test('the hook routes: deny, pass, bind, cap, closed chats, hints; never al
 
     // a UNC hint is never touched; a forged stop counts as a hint only
     await call('post-agent', { tool_use_id: 'toolu_9', tool_response: { agentId: 'zz', worktreePath: '\\\\203.0.113.9\\share' } });
-    await call('subagent-stop', { agent_id: 'a1', agent_type: 'general-purpose' });
+    // an internal fork's stop (agent_type "") changes nothing; a stop with its agentId makes it done (P2: it then lands only once
+    // the parent is idle, under the parent's landing lock; nothing is removed here)
+    await call('subagent-stop', { agent_id: 'a1', agent_type: '' });
     assertEquals(Object.values(readSubagents(state)).find((r) => r.agentId === 'a1')!.state, 'running');
+    await call('subagent-stop', { agent_id: 'a1', agent_type: 'general-purpose' });
+    assertEquals(Object.values(readSubagents(state)).find((r) => r.agentId === 'a1')!.state, 'done');
 
     // the cap: the chat holds at most MAX_PER_CHAT worktrees (the bound one counts)
     let denied = '';
@@ -287,7 +293,7 @@ Deno.test('the hook routes: deny, pass, bind, cap, closed chats, hints; never al
     await new Promise((r) => setTimeout(r, 300)); // let a background spare finish
     await service.chatClosed(chat.id);
     const kept = Object.values(readSubagents(state));
-    assertEquals(kept.map((r) => r.state).sort(), ['running', 'running']);
+    assertEquals(kept.map((r) => r.state).sort(), ['done', 'running']);
     assert(kept.every((r) => { try { return Deno.statSync(r.path).isDirectory; } catch { return false; } }));
     open = false;
     assertEquals((await call('pre-tool', { tool_name: 'Agent', tool_input: {} })).status, 503);

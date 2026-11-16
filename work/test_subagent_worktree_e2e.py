@@ -18,7 +18,7 @@
                            B13  dead address: the editing Agent call is refused with "AIB is restarting"; nothing written; Explore runs
                            B13b AIB accepts the connection but never answers: refused within the forwarder's deadline, never unisolated
                            B13c another program on the port answers 200 {} or HTML, unsigned: refused (security review P1, MF 1)
-                           MF 7 no Git Bash: the deny-rule settings AIB gives instead of hooks; no subagent tool is offered at all
+                           MF 7 no Git Bash: P2's hooks-off deny rules instead of hooks; the editing subagent never runs, Explore does
   B12 (settings byte-identical on reopen) and the route rules are pinned by work/deno/subagent_hooks_test.ts.
 
 Needs node, the Claude Code ACP adapter (AIB_CLAUDE_ACP or a global npm install) and Go (to build the keeper program from keeper/,
@@ -177,7 +177,9 @@ def parent_rules(main):
         {'when': 'SR-PARENT', 'reply': {'tools': [{'id': 'toolu_pAgent01', 'name': 'Agent', 'input': {
             'description': 'sr edit', 'prompt': 'SUBTASK-A: do the work', 'subagent_type': 'general-purpose', 'run_in_background': False}}]}},
         {'when': 'SUBTASK-A', 'reply': {'tools': [{'id': 'toolu_sBash01', 'name': 'Bash', 'input': {
-            'command': 'echo from-sub > sub-a.txt && pwd && cat dirty.txt', 'description': 'write in cwd'}}]}},
+            # P2: .husky makes the landing refuse (protected path), so the worktree and record stay for these P1 checks
+            'command': 'echo from-sub > sub-a.txt && mkdir -p .husky && echo x > .husky/pre-commit && pwd && cat dirty.txt',
+            'description': 'write in cwd'}}]}},
         {'when': 'toolu_sBash01', 'reply': {'tools': [{'id': 'toolu_sWrite02', 'name': 'Write', 'input': {
             'file_path': str(pathlib.Path(main) / 'escape-write.txt'), 'content': 'escaped\n'}}]}},
         {'when': 'toolu_sWrite02', 'reply': {'text': 'SUB-DONE'}},
@@ -242,7 +244,7 @@ class AibSubagentHooksTest(unittest.TestCase):
 
         # B2: the record, its worktree (S had the uncommitted edit), the folder untouched
         records = json.loads((fx.state / 'subagent-worktrees.json').read_text(encoding='utf-8'))['subagents']
-        bound = [r for r in records.values() if r['state'] == 'running']
+        bound = [r for r in records.values() if r['state'] in ('running', 'done')]  # done: its SubagentStop came (P2)
         self.assertEqual(len(bound), 1, records)
         rec = bound[0]
         self.assertTrue(rec['agentId'])
@@ -278,10 +280,10 @@ class AibSubagentHooksTest(unittest.TestCase):
         status, text = hook_post(fx.state, 'pre-tool', chat.id, key, {'tool_name': 'EnterWorktree', 'tool_input': {}})
         self.assertEqual(json.loads(text)['hookSpecificOutput']['permissionDecision'], 'deny')
         # a forged stop and a UNC adoption hint change nothing that matters
-        hook_post(fx.state, 'subagent-stop', chat.id, key, {'agent_id': rec['agentId'], 'agent_type': 'general-purpose'})
+        hook_post(fx.state, 'subagent-stop', chat.id, key, {'agent_id': rec['agentId'], 'agent_type': ''})  # an internal fork's: ignored (P2: a typed stop makes it done)
         hook_post(fx.state, 'post-agent', chat.id, key, {'tool_use_id': 'toolu_x', 'tool_response': {'agentId': 'zzz', 'worktreePath': r'\\203.0.113.9\share'}})
         after = json.loads((fx.state / 'subagent-worktrees.json').read_text(encoding='utf-8'))['subagents']
-        self.assertEqual(after[rec['id']]['state'], 'running')
+        self.assertEqual(after[rec['id']]['state'], rec['state'])
         self.assertEqual(after[rec['id']]['path'], rec['path'])
         # the cap: forged editing Agent calls are prepared until the chat holds 8, then refused
         answers = [hook_post(fx.state, 'pre-tool', chat.id, key, {'tool_name': 'Agent', 'tool_use_id': f'toolu_f{i}',
@@ -291,7 +293,7 @@ class AibSubagentHooksTest(unittest.TestCase):
         self.assertTrue(denied and 'already has 8 subagents' in denied[-1], answers[-3:])
         self.assertFalse([a for a in answers if '"allow"' in a], 'a hook route answered allow')
         held = [r for r in json.loads((fx.state / 'subagent-worktrees.json').read_text(encoding='utf-8'))['subagents'].values()
-                if r['chat'] == chat.id and r['state'] in ('preparing', 'prepared', 'running')]
+                if r['chat'] == chat.id and r['state'] in ('preparing', 'prepared', 'running', 'done', 'stopped')]
         self.assertEqual(len(held), 8)
 
         # B15: not on the web server (the page and the phone use it)
@@ -362,14 +364,6 @@ class AdapterFailClosedTest(unittest.TestCase):
         out = subprocess.run([NODE, str(PROBE), '--allow', '--meta', str(meta), str(CLAUDE_ACP), 'new', str(project), 'SR-PARENT go'],
                              capture_output=True, text=True, timeout=300, env=env, creationflags=NO_WINDOW, stdin=subprocess.DEVNULL)
         took = time.time() - started
-        if not settings.get('hooks'):  # the deny rules: Claude Code never even offers the model a subagent tool
-            offered = [json.loads(line).get('tools') or [] for line in stub_text(stub).splitlines() if line.startswith('{"at"')]
-            self.assertTrue(any(offered), out.stderr[-1500:])
-            for tools in offered:
-                self.assertFalse({'Agent', 'Task', 'EnterWorktree', 'Workflow'} & set(tools), tools)
-            self.assertFalse((project / 'sub-a.txt').exists())
-            self.assertEqual(run_git(project, 'status', '--porcelain'), '', 'the folder changed')
-            return took
         self.assertIn('PARENT-DONE', out.stdout + stub_text(stub), out.stderr[-1500:])
         sent = dumped(stub)
         if refused is not False:
@@ -435,9 +429,11 @@ class AdapterFailClosedTest(unittest.TestCase):
         self.run_probe(self.squatter(b'{}', 'application/json'), refused=UNCONFIRMED)
 
     def test_no_git_bash_deny_rules_turn_subagents_off(self):
-        """MF 7: a chat without Git Bash gets no hooks but subagents_off settings (claude_config.ts SUBAGENTS_OFF_SETTINGS): the deny
-        rules hold even with every permission prompt allowed: the model is never offered a subagent tool, nothing runs in the folder."""
-        off = {'permissions': {'deny': ['Agent', 'Task', 'EnterWorktree', 'Workflow']}}
+        """MF 7: a chat without Git Bash gets no hooks but P2's hooks-off deny rules (claude_config.ts subagentsOffSettings, the shape
+        it gives a chat with no custom agents): with every permission prompt allowed, the editing subagent is refused and never runs in
+        the folder; Explore still runs."""
+        editing = ['claude', 'fork', 'general-purpose']
+        off = {'permissions': {'deny': [r for n in editing for r in (f'Agent({n})', f'Task({n})')] + ['Workflow', 'EnterWorktree']}}
         self.run_probe({'closed': True, 'pid': os.getpid()}, refused=False, settings=off)
 
     def test_squatter_200_html_never_runs_the_subagent(self):

@@ -2555,9 +2555,9 @@
       note.id = 'subagentIsolationNote';
       heading.after(note);
     }
-    note.textContent = noBash ? 'Subagents are off: Git Bash not found' : 'Not isolated: hooks are off';
+    note.textContent = noBash ? 'Editing subagents are off: Git Bash not found' : 'Not isolated: hooks are off';
     note.title = noBash
-      ? "Claude Code runs AIB's hooks with Git Bash. Without it AIB can't give subagents their own worktree, so it turns them off for this chat."
+      ? "Claude Code runs AIB's hooks with Git Bash. Without it AIB can't give subagents their own worktree, so it turns subagents that edit off for this chat. Read-only ones (Explore, Plan) still work."
       : "Subagents aren't isolated: hooks are off in your Claude Code settings, so AIB can't give them their own worktree.";
     note.hidden = !show;
   }

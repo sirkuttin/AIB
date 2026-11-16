@@ -7,7 +7,7 @@
  *                              (disableAllHooks / allowManagedHooksOnly). Sources: user (CLAUDE_CONFIG_DIR or ~/.claude), project
  *                              (.claude/settings.json, settings.local.json, agents/), installed plugins (agents/, hooks/hooks.json),
  *                              managed settings (the file, managed-settings.d/, the HKLM/HKCU policy keys).
- *   gitBashPath(env)           Git Bash as Claude Code finds it (it runs the hooks); none: the chat gets SUBAGENTS_OFF_SETTINGS.
+ *   gitBashPath(env)           Git Bash as Claude Code finds it (it runs the hooks); none: its editing subagents are denied (subagentsOffSettings).
  *   hookSettings(...)          the `_meta.claudeCode.options.settings` object: command hooks that run the keeper's forwarder
  *                              (`<keeper> hook <event> <address file>`). It holds no port and no key, so it is byte-identical on every
  *                              reopen (the adapter rebuilds the session when settings change).
@@ -166,13 +166,6 @@ function isFile(path: string): boolean {
   }
 }
 
-/**
- * The per-session settings of a chat whose subagents can't be isolated by AIB's hooks (no Git Bash): Claude Code's subagents and
- * the two tools AIB refuses are denied (owner's rule: a subagent never edits the folder unisolated). Deny rules hold in every
- * permission mode. All subagent types: AIB can't name every type a chat may have, so read-only ones go too.
- */
-export const SUBAGENTS_OFF_SETTINGS: Json = { permissions: { deny: ['Agent', 'Task', 'EnterWorktree', 'Workflow'] } };
-
 /** Installed plugin folders: installed_plugins.json's install paths, else every version folder under plugins/cache (depth 3). */
 function pluginDirs(configDir: string): string[] {
   const out = new Set<string>();
@@ -284,3 +277,32 @@ export function hookSettings(forwarder: string, addressFile: string, options: { 
 /** The system prompt line for a chat whose subagents get their own worktree (design 2.5). */
 export const SUBAGENT_PROMPT = 'Subagents that edit files work in their own git worktree. AIB merges their changes into this folder when ' +
   'your turn ends; do not merge, cherry-pick or copy files from a subagent\'s worktree yourself.';
+
+/** Built-in agent types that can edit (P0b R8: `claude` has every tool; `fork` copies the parent). */
+export const BUILTIN_EDITING = ['general-purpose', 'claude', 'fork'];
+
+/**
+ * Hooks off in the user's Claude Code settings (P0 A7: AIB's hooks don't run, and `disableAllHooks` can't be overridden): owner rule
+ * 2026-11-16, AIB turns that chat's editing subagents off rather than let them edit the folder. Per-session permission deny rules
+ * (`_meta.claudeCode.options.settings.permissions.deny`, the --settings tier; verified on 2.1.310 with hooks off, bypass mode
+ * included: "Agent type 'general-purpose' has been denied by permission rule"). Built-in editing types, every custom agent that can
+ * edit (an Agent call with no type runs general-purpose), Workflow and EnterWorktree. Read-only types (Explore, Plan, ...) still run.
+ */
+export function subagentsOffSettings(cwd: string, env: Record<string, string | undefined>, readOnly: string[]): Json {
+  const configDir = claudeConfigDir(env);
+  const agents = new Map<string, boolean>();
+  for (const dir of pluginDirs(configDir)) customAgents(join(dir, 'agents'), agents);
+  customAgents(join(configDir, 'agents'), agents);
+  customAgents(join(cwd, '.claude', 'agents'), agents);
+  const ro = new Set(readOnly);
+  const editing = [...new Set([...BUILTIN_EDITING, ...[...agents.keys()].filter((n) => !ro.has(n) && /^[\w.:-]+$/.test(n))])].sort();
+  return { permissions: { deny: [...editing.flatMap((n) => [`Agent(${n})`, `Task(${n})`]), 'Workflow', 'EnterWorktree'] } };
+}
+
+/** The system prompt line for a chat whose editing subagents are off (hooks off in the user's Claude Code settings). */
+export const SUBAGENTS_OFF_PROMPT = 'In this chat, subagents that edit files are turned off, because hooks are off in the user\'s Claude ' +
+  'Code settings and AIB could not give them their own worktree. Read-only subagents (Explore, Plan) still work; do edits yourself.';
+
+/** The system prompt line for a Windows chat without Git Bash: its editing subagents are off (security review P1, MF 7). */
+export const SUBAGENTS_OFF_NO_BASH_PROMPT = 'In this chat, subagents that edit files are turned off, because Git Bash is not installed and ' +
+  "AIB's subagent rule needs it to give them their own worktree. Read-only subagents (Explore, Plan) still work; do edits yourself.";
