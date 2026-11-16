@@ -159,7 +159,12 @@ Deno.test({
       assertEquals(svc.got.map((g) => g.path).sort(), ['/fcm/a', '/fcm/b']);
       for (const g of svc.got) {
         const keys = g.path === '/fcm/a' ? ka : kb;
-        assertEquals(JSON.parse(await decrypt(g.body, keys)), NEEDS, 'only the generic words and the title');
+        // phase 1b: and the page a click opens (a phone's: the phone page on the chat, its sheet up)
+        assertEquals(
+          JSON.parse(await decrypt(g.body, keys)),
+          { ...NEEDS, open: '/phone.html#chat=c1&sheet=1' },
+          'only the generic words and the title',
+        );
         assertEquals(g.headers.get('content-encoding'), 'aes128gcm');
         assertEquals(g.headers.get('urgency'), 'high');
         assertEquals(g.headers.get('ttl'), String(TTL_NEEDS));
@@ -174,7 +179,7 @@ Deno.test({
       svc.answer.set('/fcm/b', 410); // the phone unsubscribed or the browser was reset
       await s.ctx.phone.push.send(DONE);
       const done = svc.got.find((g) => g.path === '/fcm/a')!;
-      assertEquals(JSON.parse(await decrypt(done.body, ka)), DONE);
+      assertEquals(JSON.parse(await decrypt(done.body, ka)), { ...DONE, open: '/phone.html#chat=c2' });
       assertEquals([done.headers.get('urgency'), done.headers.get('ttl')], ['normal', String(TTL_FINISHED)]);
       const [, after] = await pc(s, 'GET', '/api/live/devices');
       assertEquals((after.devices as Json[]).map((d) => [d.name, d.pushOn]), [['Pixel 9', true], ['Pixel 8', false]], '410 deleted it');
@@ -306,6 +311,7 @@ Deno.test({
         tag: 'aib-attention',
         chat: 'c1',
         sheet: true,
+        open: '/phone.html#chat=c1&sheet=1',
       });
     } finally {
       await watcher.stop();
@@ -357,7 +363,15 @@ Deno.test({
       // a wrong Host (not through Serve) is refused for these too
       assertEquals((await get('/sw.js', { Host: `127.0.0.1:${s.phonePort()}` })).status, 403);
       // the page port: none of them
-      for (const path of ['/sw.js', '/manifest.webmanifest', '/pwa/sw.js', ...icons.map((i) => String(i.src)), ...extra.map((i) => i.src)]) {
+      for (
+        const path of [
+          '/sw.js',
+          '/manifest.webmanifest',
+          '/pwa/sw.js',
+          ...icons.map((i) => String(i.src)),
+          ...extra.map((i) => i.src),
+        ]
+      ) {
         const r = await fetch(`http://127.0.0.1:${s.port}${path}`);
         await r.body?.cancel();
         assertEquals(r.status, 404, path);

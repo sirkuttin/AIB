@@ -3645,8 +3645,23 @@
     return parts;
   }
 
+  /* A computer's browser (a fine pointer and a wide window): the pairing page says "computer" (the approver on the PC still picks
+     the kind; remote control from other PCs, phase 1b). */
+  function computerLike() {
+    try {
+      return !!(root.matchMedia && root.matchMedia('(pointer: fine)').matches && root.innerWidth >= 900);
+    } catch {
+      return false;
+    }
+  }
+  const deviceWord = () => (computerLike() ? 'computer' : 'phone');
   function guessName() {
     const ua = String(root.navigator.userAgent || '');
+    if (computerLike()) {
+      const browser = /Edg\//.test(ua) ? 'Edge' : /Firefox\//.test(ua) ? 'Firefox' : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : '';
+      const what = /Macintosh/.test(ua) ? 'Mac' : /Linux/.test(ua) && !/Android/.test(ua) ? 'Linux PC' : 'Laptop';
+      return browser ? what + ' (' + browser + ')' : what;
+    }
     if (/iPhone/.test(ua)) return 'iPhone';
     if (/iPad/.test(ua)) return 'iPad';
     const m = ua.match(/Android [\d.]+; ([^;)]+?)(?: Build|\))/);
@@ -3681,7 +3696,7 @@
       frag.append(body);
       return frag;
     }
-    body.append(el('p', '', 'Connect this phone to ' + S.pcName + '.'));
+    body.append(el('p', '', 'Connect this ' + deviceWord() + ' to ' + S.pcName + '.'));
     const form = el('form', 'ph-form');
     form.noValidate = true;
     if (!S.pairSecret) {
@@ -3694,9 +3709,19 @@
       code.spellcheck = false;
       code.placeholder = 'six words';
       code.value = p.code || '';
-      form.append(l, code, el('p', 'ph-note', 'On your PC: Settings → Remote control → Add a phone shows the six words.'));
+      form.append(
+        l,
+        code,
+        el(
+          'p',
+          'ph-note',
+          computerLike()
+            ? 'In AIB on ' + S.pcName + ': Settings → Remote control → Add a phone or computer shows the six words.'
+            : 'On your PC: Settings → Remote control → Add a phone shows the six words.',
+        ),
+      );
     }
-    const nl = el('label', '', 'Name this phone');
+    const nl = el('label', '', 'Name this ' + deviceWord());
     nl.htmlFor = 'pairName';
     const name = el('input');
     name.id = 'pairName';
@@ -3709,7 +3734,7 @@
       e.setAttribute('role', 'alert');
       form.append(e);
     }
-    const go = el('button', 'ph-btn', p.busy ? 'Pairing…' : 'Pair this phone');
+    const go = el('button', 'ph-btn', p.busy ? 'Pairing…' : 'Pair this ' + deviceWord());
     go.type = 'submit';
     go.id = 'pairGo';
     go.disabled = !!p.busy;
@@ -4105,6 +4130,12 @@
       S.scopes = (r.data.device && r.data.device.scopes) || [];
       try {
         const boot = await call('GET', '/api/remote/bootstrap'); // now paired: the push key
+        if (boot.status === 200 && boot.data.layout === 'pc') {
+          // approved as a computer on the PC: the computer page (it reads the same record)
+          await stored('device', { token: r.data.token, device: Object.assign({}, r.data.device, { kind: 'computer' }) });
+          root.location.replace('/pc.html');
+          return;
+        }
         const push = (boot.status === 200 && boot.data.push) || {};
         S.push.key = typeof push.key === 'string' ? push.key : '';
         S.push.on = push.on === true;
@@ -4362,6 +4393,14 @@
       S.screen = 'pair';
       S.pairing = { error: boot.data.error || 'This page only works through Tailscale on your phone.' };
       return draw();
+    }
+    if (boot.data.layout === 'pc') {
+      // a device paired as a computer has the computer page (remote control from other PCs, phase 1b)
+      if (saved && saved.device && saved.device.kind !== 'computer') {
+        await stored('device', { token: saved.token, device: Object.assign({}, saved.device, { kind: 'computer' }) });
+      }
+      root.location.replace('/pc.html');
+      return;
     }
     if (boot.data.layout !== 'phone') return;
     takeTheme(boot.data);

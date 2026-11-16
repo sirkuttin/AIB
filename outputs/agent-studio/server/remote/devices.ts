@@ -321,11 +321,11 @@ export class DeviceStore extends JsonFileStore {
   }
 
   /** The phones a push goes to now: a subscription and the Push switch on. */
-  pushTargets(): { id: string; name: string; push: PushSub }[] {
+  pushTargets(): { id: string; name: string; push: PushSub; kind: DeviceKind }[] {
     this.sync();
     return [...this.devices.values()]
       .filter((d) => d.push && d.scopes.includes('phone.push'))
-      .map((d) => ({ id: d.id, name: d.name, push: { ...d.push! } }));
+      .map((d) => ({ id: d.id, name: d.name, push: { ...d.push! }, kind: cleanKind(d.kind) }));
   }
 
   removeAll(): Promise<number> {

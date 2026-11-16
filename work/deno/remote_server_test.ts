@@ -73,7 +73,13 @@ Deno.test({
       const phone = await pairPhone(s);
       const port = s.phonePort();
       const remote = new Set(REMOTE_ROUTES.map(([m, p]) => `${m} ${p}`));
-      for (const [m, p] of REMOTE_ROUTES) assert(!ROUTE_LIST.some(([lm, lp]) => lm === m && lp === p), `${m} ${p} is not a page route`);
+      // phase 1b: GET / on the phone port is the neutral loader (remote-loader.html), never the PC page (chat.html)
+      for (const [m, p] of REMOTE_ROUTES) {
+        if (m === 'GET' && p === '/') continue;
+        assert(!ROUTE_LIST.some(([lm, lp]) => lm === m && lp === p), `${m} ${p} is not a page route`);
+      }
+      const loader = await raw(port, 'GET', '/', phoneHeaders());
+      assert(loader.text.includes('/remote-loader.js') && !loader.text.includes('/page-auth.js'), 'GET / is the loader');
       const extra: [string, string][] = [['GET', '/chat.html'], ['GET', '/doc.html'], ['GET', '/chat.js'], ['GET', '/theme.css'], [
         'GET',
         '/doc-drawing.html',
@@ -355,12 +361,23 @@ Deno.test('state times: a change of state moves a chat (working from its start, 
 });
 
 Deno.test('card line: what it asks, the step it works on, else the last message', () => {
-  const say = (seq: number, text: string) => ({ seq, kind: 'update', data: { update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } } } });
-  assertEquals(lineOf({ permissions: [{ params: { toolCall: { title: 'Run', rawInput: { command: 'npm test' } } } }] }), 'Wants to run: npm test');
+  const say = (seq: number, text: string) => ({
+    seq,
+    kind: 'update',
+    data: { update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } } },
+  });
+  assertEquals(
+    lineOf({ permissions: [{ params: { toolCall: { title: 'Run', rawInput: { command: 'npm test' } } } }] }),
+    'Wants to run: npm test',
+  );
   assertEquals(lineOf({ elicitations: [{ params: { message: 'Which layout?' } }] }), 'Asks: Which layout?');
   assertEquals(lineOf({ events: [{ seq: 1, kind: 'user', data: { text: 'Do it' } }] }), 'You: Do it');
   assertEquals(lineOf({ events: [say(1, 'Hel'), say(2, 'lo there')] }), 'Hello there');
-  const running = { seq: 3, kind: 'update', data: { update: { sessionUpdate: 'tool_call', toolCallId: 't', title: 'Edit a.ts', status: 'in_progress' } } };
+  const running = {
+    seq: 3,
+    kind: 'update',
+    data: { update: { sessionUpdate: 'tool_call', toolCallId: 't', title: 'Edit a.ts', status: 'in_progress' } },
+  };
   assertEquals(lineOf({ busy: true, events: [say(1, 'Ok'), running] }), 'Working on: Edit a.ts');
   assertEquals(lineOf({ events: [say(1, 'x'.repeat(400))] }).length, 140);
 });
@@ -482,7 +499,15 @@ Deno.test({
       const seqs = (body.events as Json[]).map((e) => e.seq);
       assertEquals(seqs, [43, 44, 45, 46, 47, 48, 49, 50, 51, 52]);
       assertEquals([body.truncated, body.firstSeq, body.cursor], [true, 43, 52]);
-      assertEquals(body.waiting, [{ kind: 'permission', key: 'p1', title: 'Run npm test', detail: '', options: [], hidden: 0, pcOnly: true }]);
+      assertEquals(body.waiting, [{
+        kind: 'permission',
+        key: 'p1',
+        title: 'Run npm test',
+        detail: '',
+        options: [],
+        hidden: 0,
+        pcOnly: true,
+      }]);
       assert(!r.text.includes(PNG) && !r.text.includes('JVBERi0x'), 'no inline file bytes');
       assert(!('inUse' in body) && !('settings' in body) && !('permissions' in body), 'no model lookup, settings or permission bodies');
       const att = ((body.events as Json[]).find((e) => e.seq === 51)!.data as Json).attachments as Json[];

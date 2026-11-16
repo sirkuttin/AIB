@@ -1,0 +1,37 @@
+/* The computer page (remote control from other PCs, phase 1b; /pc.html, remote-auth.js). The server writes data-remote="pc" into
+   the shell, so these apply from the first paint; remote-auth.js sets data-can-<switch> for each switch of this computer before any
+   page script draws, so nothing appears and then goes. Only looks: the PC refuses these actions anyway. */
+
+/* The PC's own screen and programs: the system folder picker (the folder is typed), the PC's update button. */
+html[data-remote='pc'] .np-browse:not(.np-browse-wsl),
+html[data-remote='pc'] .upd-btn {
+  display: none !important;
+}
+/* Switches turned off for this computer on the PC (Settings > Remote control). */
+html[data-remote='pc']:not([data-can-terminal]) .aib-term-toggle-wrap,
+html[data-remote='pc']:not([data-can-terminal]) .aib-term-toggle,
+html[data-remote='pc']:not([data-can-projects]) #wsNewProject {
+  display: none !important;
+}
+/* "Can't reach the PC. Trying again… Try now": the page's own notice bar, before the page has drawn anything. */
+.remote-offline {
+  position: fixed;
+  top: 10px;
+  left: 50%;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  transform: translateX(-50%);
+  padding: 8px 12px;
+  border: 1px solid var(--studio-notice-line);
+  border-radius: 8px;
+  background: var(--studio-notice-bg);
+  color: var(--studio-notice-text);
+  font-size: 13px;
+  line-height: 1.45;
+}
+/* Settings on another computer: the PC's sections say where they are changed. */
+.st-note.st-elsewhere {
+  margin-top: 4px;
+}
