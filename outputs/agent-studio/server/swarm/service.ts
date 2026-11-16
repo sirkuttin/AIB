@@ -25,6 +25,8 @@ import { BriefError, briefPrompt, overlaps, owned, readBrief, wrapReport } from 
 import { DEFAULT_RULES, pickProvider, WORKSPACE_MODE } from './rules.ts';
 import { applyChange, changedFiles } from './undo.ts';
 import { claudeHelpers, swarmEnabled } from './settings.ts';
+import { readSubagents, type SubagentRecord } from '../subagents/service.ts';
+import { canonicalName } from '../allow/paths.ts';
 
 const log = getLogger('swarm');
 
@@ -68,6 +70,9 @@ export const folderParent = (h: Helper) => !!h.worktree?.landOn;
 
 /** The tool's answer when merge_helper queues (build plan 2.2). */
 export function queuedLine(h: Helper): string {
+  if (h.kind === 'subagent') {
+    return `Subagent “${h.title}” lands in the project folder when your turn ends. Finish your turn; the result is in your next message.`;
+  }
   return `“${h.title}” (${providerName(h.chat.provider)}) lands in the project folder when your turn ends. Finish your turn; the result is ` +
     'in your next message.';
 }
@@ -95,6 +100,23 @@ export function newLanding(what: Landing['what'], by: Landing['by'], nowMs: numb
 const shown = (files: string[], limit = 6) => files.slice(0, limit).join(', ') + (files.length > limit ? ' and more' : '');
 const baseName = (p: string) => p.slice(Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\')) + 1);
 const lower = (t: string) => (t ? t[0].toLowerCase() + t.slice(1) : t).replace(/[.\s]+$/, '');
+
+/** How a line names a helper or a subagent entry. */
+export const label = (h: Helper) => (h.kind === 'subagent' ? `subagent “${h.title}”` : `“${h.title}” (${providerName(h.chat.provider)})`);
+
+/**
+ * Design 2.4: paths a subagent's landing never carries by itself (git hooks, agent and editor configs; a Bash redirect could plant
+ * one): any folder segment named so, or a git attributes / modules / config file at any depth.
+ */
+const PROTECTED_DIRS = new Set(['.git', '.claude', '.husky', '.githooks', '.vscode', '.codex', '.gemini', '.cursor', '.idea']);
+const PROTECTED_FILES = new Set(['.gitattributes', '.gitmodules', '.gitconfig']);
+export function protectedPath(path: string): boolean {
+  const parts = path.split(/[\\/]/).map(canonicalName);
+  const last = parts[parts.length - 1];
+  return parts.slice(0, -1).some((p) => PROTECTED_DIRS.has(p)) || PROTECTED_DIRS.has(last) || PROTECTED_FILES.has(last);
+}
+
+const NO_BRIEF = { goal: '', owns: [], avoid: [], done_when: '', reply_with: '', test_cmd: '', read_only: false, context_files: [] };
 
 export class Refusal extends Error {
   constructor(readonly code: string, message: string, readonly status = 409) {
@@ -153,7 +175,8 @@ export class Swarm {
   /** POST /api/live/swarm/tool {conversationId, action, args}: [status, payload]. The key was checked by the route. */
   async tool(conversationId: unknown, action: unknown, args: unknown): Promise<Reply> {
     try {
-      if (!swarmEnabled(this.ctx.stateDir)) {
+      const subagentMerge = action === 'merge_helper' && s(obj(args).helper).startsWith('sa_'); // a subagent's: not a swarm tool
+      if (!swarmEnabled(this.ctx.stateDir) && !subagentMerge) {
         return [403, { ok: false, code: 'swarm-off', error: 'Helpers from other agents are turned off. Turn them on in Settings (Helpers from other agents, experimental), then start a new chat.' }];
       }
       const caller = await this.mainChat(conversationId);
@@ -425,6 +448,17 @@ export class Swarm {
   async mergeHelper(caller: Json, id: string): Promise<Json> {
     const h = this.#mine(caller, id);
     if (h.merge && !h.merge.undo) throw new Refusal('merged', `“${h.title}” is already merged`);
+    if (h.kind === 'subagent') { // design 3.5: a retry after a refusal, or a stopped subagent's work the main agent wants landed
+      if (h.reason === 'protected') {
+        throw new Refusal('protected', `Subagent “${h.title}” changed protected files; only the user can land its work`);
+      }
+      const rec = readSubagents(this.ctx.stateDir)[h.sub?.record ?? ''];
+      if (!rec) throw new Refusal('gone', `Subagent “${h.title}” has no worktree any more; nothing to land`);
+      if (rec.state !== 'done' && rec.state !== 'stopped') throw new Refusal('busy', `Subagent “${h.title}” is still running`);
+      await this.registry.update(id, (cur) => (cur ? { ...cur, state: 'done', reason: '' } : null));
+      await this.#queue(this.registry.get(id)!, 'merge', 'tool');
+      return { ok: true, state: 'queued', message: queuedLine(this.registry.get(id)!) };
+    }
     if (!['done', 'waiting', 'stopped'].includes(h.state)) {
       throw new Refusal('busy', `“${h.title}” is ${h.state}; merge it once its report is in`);
     }
@@ -451,6 +485,7 @@ export class Swarm {
 
   /** The merge itself: the tool's answer ({state: merged | conflicts | refused, ...}); posts the merge line when it landed. */
   async #landMerge(h: Helper, held: string[]): Promise<Json> {
+    if (h.kind === 'subagent') return await this.#landSubagent(h, held);
     const id = h.id;
     const target = await this.#target(h);
     const tipBefore = await merge.rev(h.project, `refs/heads/${target}`);
@@ -533,6 +568,10 @@ export class Swarm {
       await this.note(h.id, 'swarm-merge', `Still waiting for this chat to pause to land “${h.title}”.`);
     }
     if (L.waitsFor) return;
+    if (h.kind === 'subagent') { // a subagent continued in a later turn runs again: it lands at its next end
+      const rec = readSubagents(this.ctx.stateDir)[h.sub?.record ?? ''];
+      if (rec && rec.state !== 'done' && rec.state !== 'stopped') return;
+    }
     await this.#runLanding(h, parentId);
   }
 
@@ -564,7 +603,8 @@ export class Swarm {
   async #afterLanding(id: string, what: Landing['what'], out: Json, parentId: string): Promise<void> {
     const h = this.registry.get(id);
     if (!h) return;
-    const name = `“${h.title}” (${providerName(h.chat.provider)})`;
+    if (h.kind === 'subagent' && what === 'merge') return await this.#afterSubagent(h, out, parentId);
+    const name = label(h);
     const files = Array.isArray(out.files) ? out.files.map(String) : [];
     const state = s(out.state);
     const context = (line: string) => this.ctx.host.liveCall('prompt-context', { id: parentId, line }).catch(() => [500, null]);
@@ -636,20 +676,23 @@ export class Swarm {
             ? { ...cur, state: 'merged', landing: null, merge: { tipBefore: L.tipBefore, landed: L.landed, commits, at: this.clock() / 1000, undo: null, again: null } }
             : null
         );
+        const files = await changedFiles(h.project, L.tipBefore, L.landed);
         await this.note(
           h.id,
           'swarm-merge',
-          `Merged “${h.title}” (${providerName(h.chat.provider)}) into ${target} · ${commits} commit${commits === 1 ? '' : 's'} · finished after a restart`,
+          h.kind === 'subagent'
+            ? `Merged subagent “${h.title}” into ${target} · ${files.length} file${files.length === 1 ? '' : 's'} · finished after a restart`
+            : `Merged “${h.title}” (${providerName(h.chat.provider)}) into ${target} · ${commits} commit${commits === 1 ? '' : 's'} · finished after a restart`,
           ['swarm-undo'],
         );
         if (folderParent(h) && parentLive) {
-          const files = await changedFiles(h.project, L.tipBefore, L.landed);
           await this.ctx.host.liveCall('prompt-context', {
             id: parentLive,
-            line: `While you were idle, helper “${h.title}” (${providerName(h.chat.provider)}) landed ${commits} commit${commits === 1 ? '' : 's'} ` +
+            line: `While you were idle, ${h.kind === 'subagent' ? 'your ' : 'helper '}${label(h)} landed ${commits} commit${commits === 1 ? '' : 's'} ` +
               `in this folder (files: ${shown(files) || 'none'}). Re-read those files before editing them.`,
           }).catch(() => {});
         }
+        if (h.kind === 'subagent') await this.#release(h);
         return;
       }
       if (folderParent(h)) {
@@ -735,7 +778,7 @@ export class Swarm {
         target,
         h.merge.again ? h.merge.again.commit : h.merge.landed,
         h.merge.again ? `${h.merge.again.commit}^` : h.merge.tipBefore,
-        `AIB: undo the merge of helper “${h.title}” (${providerName(h.chat.provider)})`,
+        `AIB: undo the merge of ${h.kind === 'subagent' ? '' : 'helper '}${label(h)}`,
         options,
       );
       if (done.state === 'conflicts') {
@@ -756,7 +799,7 @@ export class Swarm {
       await this.note(
         h.id,
         'swarm-undo',
-        `Undid the merge of “${h.title}” (${providerName(h.chat.provider)}) · ${target} is back to before it · the helper's branch is kept` +
+        `Undid the merge of ${label(h)} · ${target} is back to before it` + (h.kind === 'subagent' ? '' : ` · the helper's branch is kept`) +
           (done.kept ? ` · your edits clash with it and are kept in a stash` : ''),
         ['swarm-merge-again'],
       );
@@ -764,7 +807,7 @@ export class Swarm {
     }
     if (!h.merge.undo) return { state: 'refused', code: 'done', message: 'That helper has no undone merge' };
     const revert = h.merge.undo.revert;
-    const done = await applyChange(this.ctx.stateDir, h.project, target, revert, `${revert}^`, `AIB: merge helper “${h.title}” again`, options);
+    const done = await applyChange(this.ctx.stateDir, h.project, target, revert, `${revert}^`, `AIB: merge ${h.kind === 'subagent' ? label(h) : `helper “${h.title}”`} again`, options);
     if (done.state === 'conflicts') return { state: 'cannot_merge', files: done.files };
     if (done.state === 'refused') return { state: 'refused', code: done.code ?? 'refused', message: done.message };
     if (done.state === 'dirty') return { state: 'dirty', files: done.files };
@@ -772,8 +815,241 @@ export class Swarm {
       state: 'merged',
       merge: { ...h.merge, undo: null, again: { commit: done.commit, at: this.clock() / 1000 } },
     });
-    await this.note(h.id, 'swarm-merge', `Merged “${h.title}” (${providerName(h.chat.provider)}) into ${target} again`, ['swarm-undo']);
+    await this.note(h.id, 'swarm-merge', `Merged ${label(h)} into ${target} again`, ['swarm-undo']);
     return { state: 'merged', commit: done.commit, files: done.files };
+  }
+
+  // ---- subagent landings (subagent worktrees P2) -----------------------------------------------------------------------------
+  /**
+   * The Studio's subagent records (subagent-worktrees.json, its file: this side only reads it) joined to the landing queue. An ended
+   * record (done: its SubagentStop came; stopped: the user stopped the turn, the main agent stopped it, its Agent call failed) of an
+   * open parent gets one entry here, keyed by the record's id, the first time it is seen: a done one queued to land (it lands when the
+   * parent is idle, under its landing lock), a stopped one only told (never landed by itself). Runs at every poll, so at start too,
+   * and it is idempotent. A landing refused for touched-dirty files is tried again at the parent's next turn end (design 3.5).
+   */
+  async #reconcileSubagents(subs: SubagentRecord[], chats: Json[], byLasting: Map<string, Json>): Promise<void> {
+    for (const rec of subs) {
+      const parent = chats.find((c) => c.id === rec.chat) ?? (rec.lasting ? byLasting.get(rec.lasting) : undefined);
+      if (!parent) continue; // its chat is not open here: it waits (keeper-held chats are listed once taken over)
+      const ended = s(obj(parent.attention).turnEndedAt);
+      const h = this.registry.get(rec.id);
+      if (h) {
+        if (h.landing?.waitsFor === 'touched-dirty' && h.landing.stage === 'queued' && ended && ended !== h.sub?.turn) {
+          await this.registry.update(h.id, (cur) =>
+            cur?.landing ? { ...cur, landing: { ...cur.landing, waitsFor: '' }, sub: { ...cur.sub!, turn: ended } } : cur
+          );
+        }
+        // landed, but its worktree could not go then (the agent host was busy or restarting): again now
+        if (h.state === 'merged' && !h.landing && (rec.state === 'done' || rec.state === 'stopped')) await this.#release(h);
+        continue;
+      }
+      if (rec.state !== 'done' && rec.state !== 'stopped') continue;
+      try {
+        await this.#adoptSubagent(rec, parent, ended);
+      } catch (error) {
+        log.exception(error, 'Taking up subagent %s for landing failed', rec.id);
+      }
+    }
+  }
+
+  async #adoptSubagent(rec: SubagentRecord, parent: Json, ended: string): Promise<void> {
+    const title = (rec.description || rec.agentType || 'subagent').replace(/\s+/g, ' ').trim().slice(0, 120);
+    const userHook = !!rec.userHook;
+    const path = userHook ? rec.adopted?.path ?? '' : rec.path;
+    const folder = rec.folder;
+    const branch = pyStr((await wt.git(['symbolic-ref', '--short', '-q', 'HEAD'], folder, { check: false })).stdout).trim();
+    // a user-hook worktree started at the folder's HEAD (Claude Code's own worktrees have no uncommitted edits: P0): its branch point
+    let start = rec.snapshot;
+    if (userHook && path && rec.state === 'done') {
+      start = pyStr((await wt.git(['merge-base', 'HEAD', pyStr((await wt.git(['rev-parse', 'HEAD'], path, { check: false })).stdout).trim()], folder, {
+        check: false,
+      })).stdout).trim();
+    }
+    const fresh: Helper = {
+      id: rec.id,
+      kind: 'subagent',
+      sub: { record: rec.id, agentType: rec.agentType, folder, userHook, turn: ended },
+      title,
+      project: folder,
+      parent: { live: s(parent.id), lasting: rec.lasting || lasting(parent) },
+      chat: { live: '', lasting: '', provider: 'claude', model: '', mode: '' },
+      brief: NO_BRIEF,
+      picked_by: 'main agent',
+      rule: '',
+      why: '',
+      worktree: { path, branch: rec.branch, base: branch, start, ...(branch ? { landOn: branch } : {}) },
+      landing: null,
+      state: rec.state === 'done' ? 'done' : 'stopped',
+      reason: rec.stoppedWhy ?? '',
+      createdAt: rec.createdAt,
+      turnEndedAt: '',
+      cursor: 0,
+      reports: [],
+      merge: null,
+      notes: [],
+    };
+    const context = (line: string) => this.ctx.host.liveCall('prompt-context', { id: s(parent.id), line }).catch(() => [500, null]);
+    const adoptable = !userHook || (rec.adopted?.verified === true && rec.acpSeen === true && (!rec.acpAgentId || rec.acpAgentId === rec.agentId));
+    if (rec.state === 'done' && adoptable && branch && start && path) fresh.landing = newLanding('merge', 'tool', this.clock());
+    let made = false;
+    await this.registry.update(rec.id, (cur) => {
+      if (cur) return cur;
+      made = true;
+      return fresh;
+    });
+    if (!made || fresh.landing) return;
+    if (userHook && !adoptable) {
+      await this.note(rec.id, 'swarm-fail', `Your WorktreeCreate hook made the worktree of subagent “${title}”; AIB doesn't merge it (${rec.stoppedWhy || 'AIB did not see its Agent call end'}).`);
+      await this.#release(fresh);
+      return;
+    }
+    if (rec.state === 'stopped') {
+      await this.note(rec.id, 'swarm-stop', `Subagent “${title}” was stopped before it finished (${rec.stoppedWhy || 'stopped'}). AIB didn't land its work.`);
+      await context(
+        `Subagent “${title}” was stopped before it finished, so AIB did not merge its work into this folder. If you want what it ` +
+          `did, call merge_helper with id ${rec.id}; AIB then lands it when your turn ends.`,
+      );
+      return;
+    }
+    await this.registry.patch(rec.id, { state: 'failed', reason: 'no branch' });
+    await this.note(rec.id, 'swarm-fail', `Couldn't land subagent “${title}”: the folder isn't on a branch.`);
+    await context(`Subagent “${title}” did not land: this folder isn't on a branch. Its work is kept in ${path}.`);
+  }
+
+  /**
+   * One subagent landing (the parent's landing lock is held: `held`): a snapshot of its worktree (its uncommitted work included; the
+   * worktree is not touched), the protected-path check (design 2.4), then merge.ts landWorktree, the folder chats' helper landing.
+   */
+  async #landSubagent(h: Helper, held: string[]): Promise<Json> {
+    const rec = readSubagents(this.ctx.stateDir)[h.sub?.record ?? ''];
+    const path = h.worktree.path;
+    if (!rec || !path || !wt.lexists(path)) return { state: 'refused', code: 'gone', message: 'its worktree is gone' };
+    const folder = h.sub!.folder;
+    const target = h.worktree.landOn!;
+    const scratch = Deno.makeTempDirSync({ prefix: '.subagent-land-', dir: this.ctx.stateDir });
+    let head: string;
+    try {
+      head = await wt.snapshotCommit(path, scratch);
+    } finally {
+      try {
+        Deno.removeSync(scratch, { recursive: true });
+      } catch { /* gone */ }
+    }
+    const changed = (await wt.git(['diff', '--name-only', '-z', '--no-renames', h.worktree.start, head], path)).stdout.split('\0').filter((n) => n);
+    const hit = changed.filter(protectedPath);
+    if (hit.length) return { state: 'refused', code: 'protected', message: 'it changed protected files', files: hit };
+    // design 3.5: it changed a file the folder has uncommitted (changed, staged or untracked): nothing lands, nothing is stashed. Checked
+    // on its own changes (S to its head) before the tree merge, which would call an untracked file's change a conflict.
+    const fold = (p: string) => (Deno.build.os === 'windows' ? p.toLowerCase() : p);
+    const dirty = new Set([...(await merge.porcelainPaths(folder))].map(fold));
+    const touched = changed.filter((f) => dirty.has(fold(f)));
+    if (touched.length) return { state: 'refused', code: 'touched_dirty', message: 'it changed files with uncommitted edits', files: touched };
+    const tipBefore = await merge.rev(folder, `refs/heads/${target}`);
+    let result: Json;
+    try {
+      result = await merge.landWorktree(
+        this.#mergeStudio(),
+        { parent: held[0] ?? h.parent.live, key: `subagent:${h.id}`, worktree: path, project: folder, start: h.worktree.start, head, landOn: target },
+        h.title,
+        {
+          held,
+          journal: (stage, data) =>
+            this.#patchLanding(h.id, {
+              stage: stage as 'built' | 'moved',
+              ...(typeof data.landed === 'string' ? { landed: data.landed, tipBefore: s(data.tipBefore) } : {}),
+            }),
+        },
+      );
+    } catch (error) {
+      if (error instanceof merge.Refused) {
+        if (error.code === 'empty') return { state: 'empty' };
+        const files = error instanceof merge.TouchedDirty ? error.files : undefined;
+        return { state: 'refused', code: error.code, message: error.message, ...(files ? { files } : {}) };
+      }
+      throw error;
+    }
+    if (result.state === 'conflicts') return { state: 'conflicts', files: result.files, target };
+    const landed = s(result.tip);
+    const files = tipBefore && landed ? await changedFiles(folder, tipBefore, landed) : [];
+    await this.registry.patch(h.id, {
+      state: 'merged',
+      merge: { tipBefore, landed, commits: 1, at: this.clock() / 1000, undo: null, again: null },
+    });
+    return { state: 'merged', commits: 1, range: [tipBefore, landed], target, files };
+  }
+
+  /** A subagent landing's outcome: the line in the parent chat, the parent's next-prompt line, and its worktree removed when done. */
+  async #afterSubagent(h: Helper, out: Json, parentId: string): Promise<void> {
+    const files = Array.isArray(out.files) ? out.files.map(String) : [];
+    const state = s(out.state);
+    const context = (line: string) => this.ctx.host.liveCall('prompt-context', { id: parentId, line }).catch(() => [500, null]);
+    const clear = () => this.registry.update(h.id, (cur) => (cur ? { ...cur, landing: null } : null));
+    const target = h.worktree.landOn || 'the folder branch';
+    const retry = swarmEnabled(this.ctx.stateDir)
+      ? `then call merge_helper with id ${h.id}; AIB also tries again when your next turn ends.`
+      : 'AIB tries again when your next turn ends.';
+    if (state === 'merged') {
+      await clear();
+      await this.note(h.id, 'swarm-merge', `Merged subagent “${h.title}” into ${target} · ${files.length} file${files.length === 1 ? '' : 's'}`, [
+        'swarm-undo',
+      ]);
+      await context(
+        `While you were idle, your subagent “${h.title}” landed in this folder as one commit on ${target} (files: ${shown(files) || 'none'}). ` +
+          'Re-read those files before editing them.',
+      );
+      await this.#release(h);
+      return;
+    }
+    if (state === 'empty') { // no changes (line-ending churn included): its worktree goes, no line (design B4)
+      await this.registry.update(h.id, () => null);
+      await this.#release(h);
+      return;
+    }
+    if (out.code === 'touched_dirty') {
+      await this.#patchLanding(h.id, { stage: 'queued', lockId: '', waitsFor: 'touched-dirty', lastRefusal: 'touched-dirty' });
+      await this.note(h.id, 'swarm-merge', `Didn't land subagent “${h.title}”: it changed files with uncommitted edits (${shown(files.map(baseName))}).`);
+      await context(
+        `Subagent “${h.title}” changed files with uncommitted edits in this folder (${shown(files)}). Nothing landed and nothing was ` +
+          `stashed. Commit those edits or set them aside, ${retry}`,
+      );
+      return;
+    }
+    if (out.code === 'protected') {
+      await clear();
+      await this.registry.patch(h.id, { state: 'failed', reason: 'protected' });
+      await this.note(h.id, 'swarm-fail', `Didn't land subagent “${h.title}”: it changed protected files (${shown(files)}). AIB doesn't merge those by itself.`);
+      await context(
+        `Subagent “${h.title}” changed protected files (${shown(files)}). AIB did not merge any of its work into this folder; only the ` +
+          'user can land it. Tell the user.',
+      );
+      return;
+    }
+    if (state === 'refused' && RETRY_CODES.has(s(out.code))) {
+      const tries = (h.landing?.tries ?? 0) + 1;
+      const tell = tries >= LANDING_TRIES_NOTE && !h.landing?.toldTries;
+      await this.#patchLanding(h.id, { stage: 'queued', lockId: '', tries, lastRefusal: s(out.message), ...(tell ? { toldTries: true } : {}) });
+      if (tell) await this.note(h.id, 'swarm-merge', `Couldn't land subagent “${h.title}” yet: ${lower(s(out.message))}. It will try again when the chat is next idle.`);
+      return;
+    }
+    await clear();
+    if (state === 'conflicts') {
+      await this.registry.patch(h.id, { state: 'failed', reason: 'conflicts' });
+      await this.note(h.id, 'swarm-merge', `Didn't land subagent “${h.title}”: it conflicts with ${target} in ${shown(files.map(baseName))}.`);
+      await context(
+        `Subagent “${h.title}” did not land: its changes conflict with ${target} in ${shown(files)}. Its work is kept on branch ` +
+          `${h.worktree.branch || '(the user hook\'s branch)'} in ${h.worktree.path}. Redo the change in this folder yourself, then tell the user.`,
+      );
+      return;
+    }
+    await this.registry.patch(h.id, { state: 'failed', reason: s(out.code) });
+    await this.note(h.id, 'swarm-fail', `Couldn't land subagent “${h.title}”: ${lower(s(out.message))}.`);
+    await context(`Subagent “${h.title}” did not land: ${lower(s(out.message))}.`);
+  }
+
+  /** Its worktree, branch and record go (the Studio owns subagent-worktrees.json); tried again at the next poll when it can't now. */
+  async #release(h: Helper): Promise<void> {
+    const [code, payload] = await this.ctx.host.liveCall('subagent-release', { subagent: h.sub?.record ?? h.id }).catch(() => [500, null] as [number, unknown]);
+    if (code !== 200) log.info('swarm: the worktree of subagent %s stays for now (%s)', h.id, pyStr(obj(payload).error ?? code));
   }
 
   // ---- lines in the main chat ------------------------------------------------------------------------------------------------
@@ -838,14 +1114,18 @@ export class Swarm {
   }
 
   async #poll(): Promise<void> {
-    const helpers = this.registry.all().filter((h) =>
-      h.state !== 'failed' || h.notes.some((n) => !n.delivered) || h.reports.some((r) => !r.delivered) || !!h.landing
-    );
-    if (!helpers.length) return;
+    const pending = (h: Helper) =>
+      h.kind === 'subagent'
+        ? !!h.landing || h.notes.some((n) => !n.delivered)
+        : h.state !== 'failed' || h.notes.some((n) => !n.delivered) || h.reports.some((r) => !r.delivered) || !!h.landing;
+    const subs = Object.values(readSubagents(this.ctx.stateDir));
+    if (!subs.length && !this.registry.all().some(pending)) return;
     const listing = obj(await this.ctx.host.liveList());
     if (listing.instanceId === 'host-unavailable') return;
     const chats = (Array.isArray(listing.connections) ? listing.connections : []).map(obj).filter((c) => !c.closed);
     const byLasting = new Map(chats.filter((c) => lasting(c)).map((c) => [lasting(c), c]));
+    if (subs.length) await this.#reconcileSubagents(subs, chats, byLasting);
+    const helpers = this.registry.all().filter(pending);
     for (const h0 of helpers) {
       let h = h0;
       // live ids change across restarts: find both chats again by their lasting names

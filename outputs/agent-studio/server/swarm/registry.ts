@@ -78,6 +78,25 @@ export interface Helper {
     again: null | { commit: string; at: number };
   };
   notes: Note[];
+  /**
+   * Subagent worktrees P2: this entry is a Claude subagent's work, not a helper chat (no chat of its own: `chat` is empty). It lands
+   * through the same queue, journal, recovery, Undo and Merge again as a folder chat's helper (owner 2026-11-16).
+   */
+  kind?: 'subagent';
+  sub?: SubagentLanding;
+}
+
+/** What the swarm knows of a subagent entry (the Studio's subagent-worktrees.json record is the source; this side only reads it). */
+export interface SubagentLanding {
+  /** Its record id in subagent-worktrees.json (also this entry's id). */
+  record: string;
+  agentType: string;
+  /** The parent's folder: where it lands (the project folder, or a helper's worktree). */
+  folder: string;
+  /** Made by the user's own WorktreeCreate hook: landed only, never removed. */
+  userHook: boolean;
+  /** The parent's turn end at the last refusal: a touched-dirty landing is tried again at the parent's next turn end (design 3.5). */
+  turn: string;
 }
 
 /**
