@@ -339,6 +339,15 @@ export function hookSettings(forwarder: string, addressFile: string, options: { 
 export const SUBAGENT_PROMPT = 'Subagents that edit files work in their own git worktree. AIB merges their changes into this folder when ' +
   'your turn ends; do not merge, cherry-pick or copy files from a subagent\'s worktree yourself.';
 
+/**
+ * The chat line for a typed `/name` that runs as a forked subagent (connection.ts forkSkillRefusal): typed by the user, a fork skill
+ * starts with no tool call, so AIB's hooks never see it and it would edit the folder (work/p3_skill_fork_probe.py typed-*).
+ */
+export const typedForkSkillText = (name: string) =>
+  `AIB didn't send /${name}: it runs as a forked subagent (context: fork), and started by typing it, it would skip AIB's subagent ` +
+  `rule and change this folder directly instead of working in its own worktree. Ask the agent to do its steps instead, or remove ` +
+  `"context: fork" from the skill so it runs in this chat.`;
+
 /** Built-in agent types that can edit (P0b R8: `claude` has every tool; `fork` copies the parent). */
 export const BUILTIN_EDITING = ['general-purpose', 'claude', 'fork'];
 

@@ -1968,7 +1968,8 @@ export class Studio {
       // Without it: no hooks, and the chat's editing subagents are turned off by the same per-session deny rules as hooks off (P2).
       if (!gitBashPath(agentEnv)) {
         const readOnly = readClaudeSetup(project, agentEnv).readOnly;
-        return { hooks: { ...offHooks(NO_GIT_BASH), readOnly, deny: subagentsOffSettings(project, agentEnv, readOnly) } };
+        const configDir = claudeConfigDir(agentEnv);
+        return { hooks: { ...offHooks(NO_GIT_BASH), readOnly, configDir, deny: subagentsOffSettings(project, agentEnv, readOnly) } };
       }
       const forwarder = await hookForwarderOf(this.keeper?.options.binary ?? null, this.stateDir).catch(() => null);
       if (!forwarder) return { hooks: offHooks("AIB's keeper program can't run hooks") };

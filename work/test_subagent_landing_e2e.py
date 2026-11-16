@@ -16,7 +16,8 @@ lands exactly like helpers' work (swarm/service.ts helper landing).
                             B10  hooks off in the user's Claude settings: the editing subagent is refused, the chat line says so
                             B21  the user's own WorktreeCreate hook: AIB sends none, adopts the worktree, lands it, never removes it
                                  (P3: the Agent call shows in the RFD form as a session_message, not a tool call)
-                            P3   a `context: fork` skill is refused (PreToolUse(Skill)); an ordinary skill runs
+                            P3   a `context: fork` skill is refused (PreToolUse(Skill)); an ordinary skill runs. Typed by the
+                                 user as `/forker` (no Skill call, no hook), AIB doesn't send it and says why; a typed `/plain` goes
   Crash recovery (B8) and the junction-safe removal are pinned by work/deno/subagent_landing_test.ts.
 
 Needs node, the Claude Code ACP adapter (AIB_CLAUDE_ACP or a global npm install) and Go (keeper program; AIB_TEST_KEEPER_BIN names a
@@ -312,6 +313,23 @@ class AibSubagentLandingTest(unittest.TestCase):
         self.assertFalse((aib.project / 'fork.txt').exists())
         self.assertIn('PARENT-SKILL-DONE', stub_text(aib.stub) + sent)
         self.assertIn('PLAINBODY-7', sent, 'an ordinary skill still runs')
+        # typed by the user (`/forker`): Claude Code runs it as a forked subagent with no Skill call, so no hook sees it and it edits
+        # the folder (p3_skill_fork_probe.py typed-*). AIB doesn't send it: the chat says why, no turn starts, the model is not called.
+        requests = len(list(aib.stub.dump.glob('*.json')))
+        code, body = aib.web.post('prompt', {'id': aib.chat.id, 'text': '/forker go', 'clientMessageId': uuid.uuid4().hex})
+        self.assertEqual(code, 200)
+        self.assertIn("AIB didn't send /forker", str(body.get('refused')), body)
+        self.assertEqual(body.get('turnState'), 'finished')
+        aib.wait('the refusal line', lambda: any(n.startswith("AIB didn't send /forker: it runs as a forked subagent") for n in notes(aib.chat)))
+        state = aib.chat.state()
+        self.assertFalse(state['busy'])
+        self.assertTrue(any(e['kind'] == 'user' and (e.get('data') or {}).get('text') == '/forker go' for e in state['events']))
+        time.sleep(2)
+        self.assertEqual(len(list(aib.stub.dump.glob('*.json'))), requests, 'the typed fork skill reached the model')
+        self.assertFalse((aib.project / 'fork.txt').exists())
+        # a typed ordinary skill still goes to the agent
+        aib.turn('/plain go')
+        self.assertGreater(len(list(aib.stub.dump.glob('*.json'))), requests)
 
     def test_user_worktree_hook_is_adopted_landed_and_kept(self):
         rules = [
