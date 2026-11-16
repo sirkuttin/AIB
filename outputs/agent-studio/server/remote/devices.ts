@@ -18,6 +18,19 @@ export type PhoneScope = typeof PHONE_SCOPES[number];
 /** Owner decision 2c: a new phone may see chats, answer, send and approve once (no passkey), and get pushes. */
 export const DEFAULT_SCOPES: readonly PhoneScope[] = PHONE_SCOPES;
 
+/** Remote control from other PCs (design v2 section 6): a computer's extra switches. A computer has the phone switches too (they
+ * cover the shared actions) plus these: Allow always and modes that skip approvals, Files: see and download, Terminal, Add and
+ * remove projects. Lead call 2a: a new computer gets all of them (each can be turned off per computer). There is no pc.changes. */
+export const PC_SCOPES = ['pc.always', 'pc.files', 'pc.terminal', 'pc.projects'] as const;
+export type PcScope = typeof PC_SCOPES[number];
+export type DeviceScope = PhoneScope | PcScope;
+export const COMPUTER_SCOPES: readonly DeviceScope[] = [...PHONE_SCOPES, ...PC_SCOPES];
+/** What the approver on the PC set (MF13): the claimant's screen only proposes it. A record without one is a phone. */
+export type DeviceKind = 'phone' | 'computer';
+export function cleanKind(value: unknown): DeviceKind {
+  return value === 'computer' ? 'computer' : 'phone';
+}
+
 /** A phone's Web Push subscription (PushSubscription.toJSON() on the phone). */
 export interface PushSub {
   endpoint: string;
@@ -31,7 +44,9 @@ export interface Device {
   name: string;
   tokenHash: string;
   cookieHash: string;
-  scopes: PhoneScope[];
+  scopes: DeviceScope[];
+  /** 'computer' when the approver chose Computer; missing means phone (every device paired before computers existed). */
+  kind?: 'computer';
   login: string;
   created: number;
   lastSeen: number;
@@ -44,7 +59,8 @@ export interface Device {
 }
 
 /** What Settings > Remote control gets: no hashes and no subscription, only whether the phone has one. */
-export type PublicDevice = Omit<Device, 'tokenHash' | 'cookieHash' | 'push' | 'remind' | 'startOff'> & {
+export type PublicDevice = Omit<Device, 'tokenHash' | 'cookieHash' | 'push' | 'remind' | 'startOff' | 'kind'> & {
+  kind: DeviceKind;
   pushOn: boolean;
   remind: boolean;
   /** The "Start new chats" switch itself (it only counts while Send is on: `scopes` has phone.start then). */
@@ -52,8 +68,15 @@ export type PublicDevice = Omit<Device, 'tokenHash' | 'cookieHash' | 'push' | 'r
 };
 
 const publicOf = (d: Device): PublicDevice => {
-  const { tokenHash: _t, cookieHash: _c, push, remind, startOff, ...rest } = d;
-  return { ...rest, scopes: [...rest.scopes], pushOn: !!push, remind: remind !== false, start: startOff !== true };
+  const { tokenHash: _t, cookieHash: _c, push, remind, startOff, kind, ...rest } = d;
+  return {
+    ...rest,
+    kind: cleanKind(kind),
+    scopes: [...rest.scopes],
+    pushOn: !!push,
+    remind: remind !== false,
+    start: startOff !== true,
+  };
 };
 
 /** A subscription from a phone, checked: an https push service address and the two keys (base64url). Null when it is not one. */
@@ -77,18 +100,20 @@ export function cleanPushSub(value: unknown, at: number): PushSub | null {
 const SEEN_WRITE_SECONDS = 300;
 const MAX_DEVICES = 50;
 
-export function cleanScopes(value: unknown): PhoneScope[] {
+/** A device's switches, cleaned: only the names its kind has (a phone never holds a pc.* scope, whatever was sent or saved). */
+export function cleanScopes(value: unknown, kind: DeviceKind = 'phone'): DeviceScope[] {
   const list = Array.isArray(value) ? value : [];
+  const known: readonly DeviceScope[] = kind === 'computer' ? COMPUTER_SCOPES : PHONE_SCOPES;
   // Start new chats only counts while Send is on (owner decision E: a child of Send)
-  const out = PHONE_SCOPES.filter((s) => list.includes(s) && (s !== 'phone.start' || list.includes('phone.prompt')));
+  const out = known.filter((s) => list.includes(s) && (s !== 'phone.start' || list.includes('phone.prompt')));
   return out.includes('phone.read') ? out : ['phone.read', ...out]; // a paired phone can always see chats
 }
 
 /** A phone's scopes from its saved switches: Start new chats is on while Send is on, unless it was turned off (missing = on). */
-export function effectiveScopes(value: unknown, startOff: boolean): PhoneScope[] {
+export function effectiveScopes(value: unknown, startOff: boolean, kind: DeviceKind = 'phone'): DeviceScope[] {
   const list = (Array.isArray(value) ? value : []).filter((s) => s !== 'phone.start');
   if (!startOff && list.includes('phone.prompt')) list.push('phone.start');
-  return cleanScopes(list);
+  return cleanScopes(list, kind);
 }
 
 /** The Start new chats switch after the PC sent a whole list of switches: the list says it only while Send is in it (Start is
@@ -147,12 +172,14 @@ export class DeviceStore extends JsonFileStore {
       const p = d.push && typeof d.push === 'object' ? d.push as Record<string, unknown> : null;
       const push = p ? cleanPushSub({ endpoint: p.endpoint, keys: { p256dh: p.p256dh, auth: p.auth } }, Number(p.at) || 0) : null;
       const startOff = d.startOff === true;
+      const kind = cleanKind(d.kind);
       this.devices.set(d.id, {
         id: d.id,
         name: cleanName(d.name),
         tokenHash: d.tokenHash,
         cookieHash: d.cookieHash,
-        scopes: effectiveScopes(d.scopes, startOff),
+        scopes: effectiveScopes(d.scopes, startOff, kind),
+        ...(kind === 'computer' ? { kind } : {}),
         login: typeof d.login === 'string' ? d.login : '',
         created: Number(d.created) || 0,
         lastSeen,
@@ -179,7 +206,9 @@ export class DeviceStore extends JsonFileStore {
   }
 
   /** Add a phone; returns its record and the raw token and cookie (shown to the phone once, never stored). */
-  add(options: { name: string; login: string; scopes: PhoneScope[] }): Promise<{ device: PublicDevice; token: string; cookie: string }> {
+  add(
+    options: { name: string; login: string; scopes: DeviceScope[]; kind?: DeviceKind },
+  ): Promise<{ device: PublicDevice; token: string; cookie: string }> {
     return this.locked(() => {
       this.sync();
       this.requireReadable();
@@ -189,12 +218,14 @@ export class DeviceStore extends JsonFileStore {
       const id = randomToken(9);
       const at = this.clock();
       const startOff = startOffAfter(options.scopes, false);
+      const kind = cleanKind(options.kind);
       const device: Device = {
         id,
         name: cleanName(options.name),
         tokenHash: sha256Hex(token),
         cookieHash: sha256Hex(cookie),
-        scopes: effectiveScopes(options.scopes, startOff),
+        scopes: effectiveScopes(options.scopes, startOff, kind),
+        ...(kind === 'computer' ? { kind } : {}),
         login: options.login,
         created: at,
         lastSeen: at,
@@ -230,7 +261,7 @@ export class DeviceStore extends JsonFileStore {
       const startOff = startOffAfter(scopes, d.startOff === true);
       if (startOff) d.startOff = true;
       else delete d.startOff;
-      d.scopes = effectiveScopes(scopes, startOff);
+      d.scopes = effectiveScopes(scopes, startOff, cleanKind(d.kind));
       this.counter++;
       this.#save();
       return publicOf(d);

@@ -33,7 +33,8 @@ import * as files from '../worktrees/files.ts';
 import * as local from '../worktrees/local_only.ts';
 import { mainCheckoutOf, recordForPath } from '../worktrees/worktrees.ts';
 import * as osp from '../platform/ospath.ts';
-import { isNetworkPath, tokenMatches } from './security.ts';
+import { isNetworkPath, pageAllowed, type Principal, REMOTE_PC } from './security.ts';
+import { isBlocked } from '../remote/path_guard.ts';
 import { isForeignPath } from '../platform/location.ts';
 import { issue } from './file_tickets.ts';
 import { chatStudioOf, savedFolders } from './studio_routes.ts';
@@ -47,7 +48,7 @@ import { wslFiles, wslRoutes, wslViewUrl } from './wsl_routes.ts';
 import { wslRecord } from '../wsl/worktrees.ts';
 
 type Reply = [number, unknown];
-type Handler = (ctx: WebContext, url: URL, body: unknown, request: Request) => Promise<Reply>;
+type Handler = (ctx: WebContext, url: URL, body: unknown, request: Request, principal?: Principal) => Promise<Reply>;
 
 const one = (args: Record<string, string[]>, name: string, fallback = '') => (Object.hasOwn(args, name) ? args[name][0] : fallback);
 
@@ -134,6 +135,32 @@ function writesSig(ctx: WebContext, root: string): string {
   }
 }
 
+/** A remote computer (the bridge's principal): the blocked folders (remote/path_guard.ts) also inside a project, for the folder a
+ * Files request works in and the path it names in it. */
+const BLOCKED_REPLY: Reply = [403, { error: 'This folder holds sign-ins or AIB data. Open it on the PC itself.', code: 'blocked_folder' }];
+function remoteBlocked(ctx: WebContext, root: string, rel: string): boolean {
+  if (isBlocked(root, ctx.stateDir ?? null)) return true;
+  if (!rel) return false;
+  const wsl = wslLoc(root);
+  const joined = wsl ? `${root.replace(/\/+$/, '')}/${rel.replace(/^[\/]+/, '')}` : osp.join(root, rel);
+  return isBlocked(joined, ctx.stateDir ?? null);
+}
+
+/** A list or search answer for a remote computer without the rows inside blocked folders (a project that is a home folder). */
+function withoutBlocked(ctx: WebContext, root: string, reply: Reply): Reply {
+  const [status, payload] = reply;
+  if (status !== 200 || !payload || typeof payload !== 'object') return reply;
+  const out = { ...(payload as Record<string, unknown>) };
+  for (const field of ['entries', 'matches']) {
+    const rows = out[field];
+    if (Array.isArray(rows)) {
+      const pathOf = (r: unknown) => String(r && typeof r === 'object' ? (r as { path?: unknown }).path ?? '' : '');
+      out[field] = rows.filter((r) => !remoteBlocked(ctx, root, pathOf(r)));
+    }
+  }
+  return [status, out];
+}
+
 async function guarded(work: () => Promise<unknown> | unknown): Promise<Reply> {
   try {
     return [200, await work()];
@@ -147,22 +174,27 @@ export function filesRoutes(): Map<string, Handler> {
   const routes = new Map<string, Handler>();
   type Work = (ctx: WebContext, root: string, args: Record<string, string[]>, main: string) => Promise<unknown> | unknown;
   const route = (path: string, work: Work) => {
-    routes.set(`GET ${path}`, async (ctx, url, _body, request) => {
-      if (!tokenMatches(request.headers.get('X-Studio-Token') ?? '', ctx.token)) return [403, { error: 'Invalid local session token' }];
+    routes.set(`GET ${path}`, async (ctx, url, _body, request, principal) => {
+      if (!pageAllowed(principal, request.headers, ctx.token)) return [403, { error: 'Invalid local session token' }];
       const args = parseQs(url.search.slice(1));
       const scope = await scopeFor(ctx, args);
       if (Array.isArray(scope)) return scope;
+      const remote = principal?.kind === REMOTE_PC;
+      if (remote && (remoteBlocked(ctx, scope.root, one(args, 'path')) || remoteBlocked(ctx, scope.root, one(args, 'dir')))) {
+        return BLOCKED_REPLY;
+      }
       const wsl = wslLoc(scope.root);
+      let reply: Reply;
       if (wsl) {
         const kind = path.slice(path.lastIndexOf('/') + 1) as 'list' | 'search' | 'read';
-        return await wslFiles(kind, scope.root, wsl, args, ctx.artifacts?.store.origin ?? '');
-      }
-      return guarded(() => work(ctx, scope.root, args, scope.main));
+        reply = await wslFiles(kind, scope.root, wsl, args, ctx.artifacts?.store.origin ?? '');
+      } else reply = await guarded(() => work(ctx, scope.root, args, scope.main));
+      return remote ? withoutBlocked(ctx, scope.root, reply) : reply;
     });
   };
   const post = (path: string, work: (ctx: WebContext, body: Record<string, unknown>) => Promise<Reply>) => {
-    routes.set(`POST ${path}`, async (ctx, _url, body, request) => {
-      if (!tokenMatches(request.headers.get('X-Studio-Token') ?? '', ctx.token)) return [403, { error: 'Invalid local session token' }];
+    routes.set(`POST ${path}`, async (ctx, _url, body, request, principal) => {
+      if (!pageAllowed(principal, request.headers, ctx.token)) return [403, { error: 'Invalid local session token' }];
       if (!body || typeof body !== 'object' || Array.isArray(body)) return [400, { error: 'Invalid request' }];
       try {
         const scope = await scopeFor(ctx, bodyArgs(body as Record<string, unknown>));
@@ -251,8 +283,8 @@ export function filesRoutes(): Map<string, Handler> {
     if (!lo) return [200, { moved: [], failed: [] }];
     return [200, await local.moveStrays(scope.root, lo, local.slugOf(scope.root))];
   });
-  routes.set('GET /api/live/files/outside', (ctx, url, _body, request) => {
-    if (!tokenMatches(request.headers.get('X-Studio-Token') ?? '', ctx.token)) {
+  routes.set('GET /api/live/files/outside', (ctx, url, _body, request, principal) => {
+    if (!pageAllowed(principal, request.headers, ctx.token)) {
       return Promise.resolve([403, { error: 'Invalid local session token' }]);
     }
     const args = parseQs(url.search.slice(1));

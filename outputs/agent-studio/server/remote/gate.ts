@@ -10,7 +10,7 @@
  * The login header is defence in depth only (a local process can forge it by calling the port directly); the device token is the
  * real check, and the login must also equal the one the phone was paired with.
  */
-export type RemoteKind = 'static' | 'api';
+export type RemoteKind = 'static' | 'api' | 'socket';
 
 export const LOGIN_HEADER = 'Tailscale-User-Login';
 
@@ -24,6 +24,17 @@ export const REMOTE_REASONS: Record<RemoteReason, [number, string]> = {
   no_login: [403, 'Phone access works through Tailscale only'],
 };
 
+/** Credential headers of the loopback ports, refused on the phone port (the bridge's REFUSED_HEADERS, remote/pc_bridge.ts). */
+export const PAGE_CREDENTIALS: readonly string[] = [
+  'X-Studio-Token',
+  'X-AIB-Page-Key',
+  'X-AIB-Page-Session',
+  'X-Studio-Artifact-Key',
+  'X-Studio-Hook-Key',
+  'X-Studio-Hook-Nonce',
+  'X-Agent-Host-Token',
+];
+
 export class RemoteGate {
   constructor(readonly name: () => string) {}
 
@@ -32,14 +43,22 @@ export class RemoteGate {
     const method = request.method.toUpperCase();
     const name = this.name();
     if (!name) return 'bad_host';
-    if (headers.get('Upgrade') !== null || headers.has('Sec-WebSocket-Key')) return 'websocket';
-    if (headers.has('X-Studio-Token') || headers.has('X-Studio-Artifact-Key')) return 'page_credential';
+    // Sockets only for a paired computer's terminal and docs (remote/pc_bridge.ts); the phone page never opens one.
+    if (kind !== 'socket' && (headers.get('Upgrade') !== null || headers.has('Sec-WebSocket-Key'))) return 'websocket';
+    // the page's, the agents' and the agent host's credentials belong to the loopback ports (MF2: the page key and session, and the
+    // hook key, too)
+    for (const name of PAGE_CREDENTIALS) if (headers.has(name)) return 'page_credential';
     if ((headers.get('Host') ?? '').toLowerCase() !== name) return 'bad_host';
     const login = headers.get(LOGIN_HEADER);
     if (!login || !login.trim()) return 'no_login';
     const origin = headers.get('Origin');
     if (origin !== null && origin !== `https://${name}`) return 'bad_origin';
     const site = headers.get('Sec-Fetch-Site');
+    if (kind === 'socket') {
+      // a WebSocket from the computer page: its exact Origin is required (today's page terminal accepts any Origin; MF6)
+      if (origin === null || (site !== null && site !== 'same-origin')) return 'bad_origin';
+      return null;
+    }
     if (kind === 'api') {
       // A browser that sends Fetch Metadata must say same-origin. Some in-app browsers (a camera app's QR result view) send none
       // at all: allowed, since every API call still needs the phone's own key in a custom header (no other site can add it

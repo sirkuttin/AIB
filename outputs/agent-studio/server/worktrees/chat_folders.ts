@@ -1,7 +1,7 @@
 /** Folder and branch lookups for a chat: the Changes view's folder, the artifact folder, the repository branch (chat_folders.py). */
 import { docRows } from '../docs/rows.ts';
 import { clip, isDict, isStr, ValueError } from '../core/py.ts';
-import { isNetworkPath, tokenMatches } from '../web/security.ts';
+import { isNetworkPath, pageAllowed, type Principal } from '../web/security.ts';
 import { isForeignPath } from '../platform/location.ts';
 import * as osp from '../platform/ospath.ts';
 import * as changes from './changes.ts';
@@ -149,8 +149,11 @@ export async function changesResponse(
   path: string,
   args: Record<string, string[] | undefined>,
   headers: HeaderSource,
+  principal: Principal | null = null,
 ): Promise<[number, unknown]> {
-  if (!tokenMatches(header(headers, 'X-Studio-Token'), studio.token)) return [403, { error: 'Invalid local session token' }];
+  if (!pageAllowed(principal, { get: (name: string) => header(headers, name) }, studio.token ?? '')) {
+    return [403, { error: 'Invalid local session token' }];
+  }
   const cwd = await changesFolder(studio, first(args, 'id', ''));
   if (cwd === null) return [404, { error: 'This chat has no known project folder.', code: 'unknown_folder' }];
   const scope = first(args, 'scope', 'uncommitted');

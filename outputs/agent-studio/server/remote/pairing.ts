@@ -7,7 +7,7 @@
  * and only then does the phone get its device token (once, through the claim's own secret).
  */
 import { checkWords, hex, parseCode, randomToken, sameBytes, SECRET_BYTES, secretWords, sha256Hex } from './words.ts';
-import type { PhoneScope } from './devices.ts';
+import type { DeviceScope } from './devices.ts';
 
 export const CODE_SECONDS = 5 * 60;
 export const MAX_WRONG = 3;
@@ -38,7 +38,7 @@ export interface Claim {
   state: 'pending' | 'approved' | 'rejected';
   createdAt: number;
   /** Set on approval and handed to the phone once. */
-  handover?: { token: string; cookie: string; device: { id: string; name: string; scopes: PhoneScope[] } };
+  handover?: { token: string; cookie: string; device: { id: string; name: string; scopes: DeviceScope[] } };
 }
 
 export class PairingError extends Error {

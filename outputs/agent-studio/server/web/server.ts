@@ -248,9 +248,18 @@ export interface WebContext {
   presence: Presence;
   /** "Keep this PC awake while AIB runs" (platform/keep_awake.ts): applied from Settings and at start, released on close. */
   keepAwake: KeepAwake;
+  /** The remote computer bridge's entry into the API handlers (WebServer.dispatchAs; remote/pc_bridge.ts): set once a WebServer is
+   * made for this context. Only the bridge calls it, with a REMOTE_PC principal it made itself. */
+  dispatchAs?: WebServer['dispatchAs'];
 }
 
-type Handler = (ctx: WebContext, url: URL, body: Record<string, unknown> | null, request: Request) => Promise<Response> | Response;
+type Handler = (
+  ctx: WebContext,
+  url: URL,
+  body: Record<string, unknown> | null,
+  request: Request,
+  principal: Principal,
+) => Promise<Response> | Response;
 
 export class WebServer {
   gate!: Gate;
@@ -260,6 +269,7 @@ export class WebServer {
   readonly windows = new WindowsRoute();
 
   constructor(readonly ctx: WebContext) {
+    ctx.dispatchAs = (principal, method, url, request, body) => this.dispatchAs(principal, method, url, request, body);
     this.native.set('GET /api/live/list', async (c, url) => {
       const listing = await c.host.liveList();
       // Recovered chats (open before a restart) of folders that are not added projects are not listed either.
@@ -360,14 +370,14 @@ export class WebServer {
       });
     }
     for (const [key, handler] of studioRoutes()) {
-      this.native.set(key, async (c, url, body, request) => {
-        const [status, payload] = await (handler as StudioHandler)(c, url, body, request);
+      this.native.set(key, async (c, url, body, request, principal) => {
+        const [status, payload] = await (handler as StudioHandler)(c, url, body, request, principal);
         return this.json(status, payload);
       });
     }
     for (const [key, handler] of filesRoutes()) {
-      this.native.set(key, async (c, url, body, request) => {
-        const [status, payload] = await handler(c, url, body, request);
+      this.native.set(key, async (c, url, body, request, principal) => {
+        const [status, payload] = await handler(c, url, body, request, principal);
         return this.json(status, payload);
       });
     }
@@ -541,10 +551,10 @@ export class WebServer {
         await drain(request);
         return this.json(allowed.status, { error: allowed.message(path) });
       }
-      void (allowed as Principal);
+      const principal = allowed as Principal;
       if (method === 'GET') {
         const handler = this.native.get(`GET ${path}`);
-        if (handler) return await handler(this.ctx, url, null, request);
+        if (handler) return await handler(this.ctx, url, null, request, principal);
         const drawing = DRAWING_PAGE[path];
         if (drawing) {
           const body = await Deno.readFile(`${APP_ROOT}${sep}server${sep}docs${sep}drawing${sep}page${sep}${drawing}`);
@@ -567,29 +577,7 @@ export class WebServer {
           return this.bytes(200, new TextEncoder().encode(page), contentType(asset));
         }
         if (asset) return this.bytes(200, await Deno.readFile(APP_ROOT + sep + asset), contentType(asset));
-        if (routeKind('GET', path) === 'monitor') {
-          const reply = await monitorGet(this.ctx.transcripts, path, url.search.slice(1));
-          // Saved chats of folders that are not added projects are not shown anywhere in AIB (nothing on disk changes).
-          if (path === '/api/sessions' && reply.status === 200 && reply.body && typeof reply.body === 'object') {
-            const listed = reply.body as { sessions?: unknown };
-            if (Array.isArray(listed.sessions)) {
-              listed.sessions = filterSessions(this.ctx.addedProjects, listed.sessions, this.ctx.conversations);
-              // build plan 4.4: an old copy chat the migration script moved carries on in the project folder (the server's truth,
-              // for every window; state/moved_chats.ts)
-              const moved = readMoved(pathStr(this.ctx.stateDir));
-              for (const item of listed.sessions as Record<string, unknown>[]) {
-                const id = item && typeof item === 'object' ? String(item.sessionId ?? item.id ?? '') : '';
-                const hit = id ? moved[`${item.provider}:${id}`] : undefined;
-                if (hit) item.movedToFolder = hit.project;
-              }
-            }
-          }
-          if (reply.body instanceof Uint8Array) return this.bytes(reply.status, reply.body as Uint8Array<ArrayBuffer>, reply.contentType);
-          return new Response(JSON.stringify(reply.body), {
-            status: reply.status,
-            headers: { 'Content-Type': reply.contentType, ...securityHeaders(this.artifactOrigin) },
-          });
-        }
+        if (routeKind('GET', path) === 'monitor') return await this.#monitor(path, url);
         return this.json(404, { error: 'Not found' });
       }
       if (method === 'POST' && path === '/api/live/shutdown') {
@@ -613,24 +601,85 @@ export class WebServer {
         }
         if (typeof body !== 'object' || body === null || Array.isArray(body)) return this.json(400, { error: 'Invalid request' });
         if (!handler) return this.json(404, { error: 'Not found' });
-        return await handler(this.ctx, url, body as Record<string, unknown>, request);
+        return await handler(this.ctx, url, body as Record<string, unknown>, request, principal);
       }
       await drain(request); // the gate refuses every other method (no route has one)
       return this.json(404, { error: 'Not found' });
     } catch (error) {
-      if (error instanceof HostUnavailable) return this.json(503, { error: error.message, code: error.code });
-      if (error instanceof Refused || error instanceof EditorError) {
-        return this.json(error.status, { error: error.message, code: error.code });
+      return this.failed(path, error);
+    }
+  }
+
+  /** How a handler's error is answered (shared by handle and dispatchAs). */
+  failed(path: string, error: unknown): Response {
+    if (error instanceof HostUnavailable) return this.json(503, { error: error.message, code: error.code });
+    if (error instanceof Refused || error instanceof EditorError) {
+      return this.json(error.status, { error: error.message, code: error.code });
+    }
+    if (error instanceof Error && ['FolderError', 'EditorError', 'RuntimeError', 'TimeoutError'].includes(error.name)) {
+      return this.json(400, { error: error.message });
+    }
+    if (error instanceof Error && ['ValueError', 'TypeError', 'KeyError', 'OSError', 'RangeError'].includes(error.name)) {
+      return this.json(400, { error: error.message });
+    }
+    if (error instanceof Error && error.constructor.name.endsWith('ValueError')) return this.json(400, { error: error.message });
+    console.error('Request failed', path, error);
+    return this.json(500, { error: 'Internal error' });
+  }
+
+  /** A transcript viewer route (monitor.py): /api/sessions, /api/transcript, /api/transcript/image, /api/agents, /api/command(s). */
+  async #monitor(path: string, url: URL): Promise<Response> {
+    const reply = await monitorGet(this.ctx.transcripts, path, url.search.slice(1));
+    // Saved chats of folders that are not added projects are not shown anywhere in AIB (nothing on disk changes).
+    if (path === '/api/sessions' && reply.status === 200 && reply.body && typeof reply.body === 'object') {
+      const listed = reply.body as { sessions?: unknown };
+      if (Array.isArray(listed.sessions)) {
+        listed.sessions = filterSessions(this.ctx.addedProjects, listed.sessions, this.ctx.conversations);
+        // build plan 4.4: an old copy chat the migration script moved carries on in the project folder (the server's truth,
+        // for every window; state/moved_chats.ts)
+        const moved = readMoved(pathStr(this.ctx.stateDir));
+        for (const item of listed.sessions as Record<string, unknown>[]) {
+          const id = item && typeof item === 'object' ? String(item.sessionId ?? item.id ?? '') : '';
+          const hit = id ? moved[`${item.provider}:${id}`] : undefined;
+          if (hit) item.movedToFolder = hit.project;
+        }
       }
-      if (error instanceof Error && ['FolderError', 'EditorError', 'RuntimeError', 'TimeoutError'].includes(error.name)) {
-        return this.json(400, { error: error.message });
+    }
+    if (reply.body instanceof Uint8Array) return this.bytes(reply.status, reply.body as Uint8Array<ArrayBuffer>, reply.contentType);
+    return new Response(JSON.stringify(reply.body), {
+      status: reply.status,
+      headers: { 'Content-Type': reply.contentType, ...securityHeaders(this.artifactOrigin) },
+    });
+  }
+
+  /**
+   * The remote computer bridge's way in (remote/pc_bridge.ts; design v2 section 11, a deliberate and stated reversal of the phone
+   * server's "never falls back to WebServer.handle"). The bridge has already checked the device, classified the action
+   * (remote/pc_routes.ts) and read and checked the body; `principal` is its REMOTE_PC principal, passed in, never derived from a
+   * header. Only the API handlers in `native` and the transcript viewer's API routes are reachable: never a page file, chat.html,
+   * the drawing page, the sockets, the own-gate POSTs or shutdown.
+   */
+  async dispatchAs(
+    principal: Principal,
+    method: 'GET' | 'POST',
+    url: URL,
+    request: Request,
+    body: Record<string, unknown> | null,
+  ): Promise<Response> {
+    const path = url.pathname;
+    try {
+      if (method === 'GET') {
+        const handler = this.native.get(`GET ${path}`);
+        if (handler) return await handler(this.ctx, url, null, request, principal);
+        if (routeKind('GET', path) === 'monitor' && path.startsWith('/api/')) return await this.#monitor(path, url);
+        return this.json(404, { error: 'Not found' });
       }
-      if (error instanceof Error && ['ValueError', 'TypeError', 'KeyError', 'OSError', 'RangeError'].includes(error.name)) {
-        return this.json(400, { error: error.message });
-      }
-      if (error instanceof Error && error.constructor.name.endsWith('ValueError')) return this.json(400, { error: error.message });
-      console.error('Request failed', path, error);
-      return this.json(500, { error: 'Internal error' });
+      const handler = this.native.get(`POST ${path}`);
+      if (!handler || path === '/api/live/shutdown') return this.json(404, { error: 'Not found' });
+      if (!body) return this.json(400, { error: 'Invalid request' });
+      return await handler(this.ctx, url, body, request, principal);
+    } catch (error) {
+      return this.failed(path, error);
     }
   }
 

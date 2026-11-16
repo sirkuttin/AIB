@@ -392,6 +392,7 @@ export async function pairPhone(
   s: RemoteStudio,
   name = 'Pixel 9',
   scopes?: string[],
+  kind?: 'phone' | 'computer',
 ): Promise<{ token: string; cookie: string; id: string }> {
   const port = s.phonePort();
   const [pairStatus, code] = await pc(s, 'POST', '/api/live/devices/pair', {});
@@ -408,7 +409,7 @@ export async function pairPhone(
   if (claim.status !== 200) throw new Error(`claim: ${claim.status} ${claim.text}`);
   const [, view] = await pc(s, 'GET', '/api/live/devices');
   const pending = ((view.pairing as Json).pending as Json[]).find((p) => p.id === claim.json.claim)!;
-  const [status] = await pc(s, 'POST', '/api/live/devices/approve', { claim: pending.id, ...(scopes ? { scopes } : {}) });
+  const [status] = await pc(s, 'POST', '/api/live/devices/approve', { claim: pending.id, ...(scopes ? { scopes } : {}), ...(kind ? { kind } : {}) });
   if (status !== 200) throw new Error('approve');
   const done = await raw(
     port,
