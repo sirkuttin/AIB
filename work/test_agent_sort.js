@@ -51,5 +51,5 @@ test('live state objects sort as active or inactive and display readable labels'
   assert.equal(evaluate("agentIsActive({live:true,state:{status:'running'}})"), true);
   assert.equal(evaluate("agentIsActive({live:true,state:{state:'idle'}})"), false);
   assert.equal(evaluate("agentStateLabel({live:true,state:{state:'running'}})"), 'Working');
-  assert.equal(evaluate("agentStateLabel({live:true,state:{state:'idle'}})"), 'Idle');
+  assert.equal(evaluate("agentStateLabel({live:true,state:{state:'idle'}})"), 'Ready'); // owner 2026-11-15: Ready, not Idle
 });
