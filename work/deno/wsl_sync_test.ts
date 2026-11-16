@@ -284,9 +284,9 @@ Deno.test({ name: 'wsl sync: a WSL chat\'s open, turn hooks and close go to its 
   await lab.win.refresh();
   assertEquals(lab.calls('sync.chats').at(-1), { chats: [] });
   await until(() => lab.sync.live.projects.size === 0, 'the helper stops watching');
-  // worktree per chat turned off: no sync, as on Windows
+  // the old worktree-per-chat flag no longer turns sync off (build plan 1b): still on, as on Windows
   lab.on = false;
-  assertEquals(await lab.win.contextFor(new Conn('c2', lab.ref(c.wt))), null);
+  assert(lab.win.enabled(), 'Own-copy chats keep live sync whatever the hidden flag says');
 } });
 
 Deno.test({ name: 'wsl sync: the periodic set brings a restarted helper back; a distro not ready or a helper without sync.* is skipped', ...T, async fn() {

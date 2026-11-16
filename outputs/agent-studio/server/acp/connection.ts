@@ -666,6 +666,17 @@ export const LOCAL_ONLY_PRIVATE_WORKTREE = 'You may create and use {private} for
 /** The same for a chat that works in the project folder itself. */
 export const LOCAL_ONLY_PROMPT = 'You may create and use the private/ folder of this project for local-only notes: git never commits it.';
 
+/**
+ * Build plan 1.1 (4): two chats work in the same project folder. The agents get this line once, on their next prompt (the new chat's
+ * first, the working chat's next); the person sees sharedFolderNote in the new chat.
+ */
+export const SHARED_FOLDER_CONTEXT = 'Another agent works in this folder at the same time. Do not run git stash, git reset --hard, ' +
+  'git checkout -- / git switch, git clean or git rebase here. Commit only files you changed yourself (git add <paths>, never git add -A).';
+/** The grey line in a new folder chat that starts while another folder chat (titled `title`) is working there. */
+export function sharedFolderNote(title: string): string {
+  return `Another chat (“${title}”) is working in this same folder. Its edits show up here as it makes them.`;
+}
+
 /** Python's re.match with `$`: also matches before one trailing newline. */
 export const OWN_ARTIFACT_TOOL = /^mcp__studio_artifact__(?:publish|update|list|merge_into_project|resolve_edit_clash)\n?$/;
 /** Swarm: AIB's helper tools (artifacts/mcp.ts SWARM_TOOLS); auto-approved like the artifact tools. */

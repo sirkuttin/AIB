@@ -77,7 +77,10 @@ export class Swarm {
   }
 
   // ---- who is calling ------------------------------------------------------------------------------------------------------
-  /** The caller's live state if it is a main chat; else a Refusal (a helper, a closed chat, a chat with no worktree of its own). */
+  /**
+   * The caller's live state if it is a main chat; else a Refusal (a helper, a closed chat). A chat in the project folder leads helpers
+   * too (build plan 1b, MF 1): its `projectRoot` is set to the folder it works in, which is where its helpers' copies come from.
+   */
   async mainChat(conversationId: unknown): Promise<Json> {
     if (typeof conversationId !== 'string' || !conversationId) throw new Refusal('bad_request', 'No conversation', 400);
     const state = obj(await this.ctx.host.liveState(conversationId, 0).catch(() => null));
@@ -86,9 +89,8 @@ export class Swarm {
     if (helperOf(helpers, { live: conversationId, lasting: lasting(state), path: s(state.cwd) })) {
       throw new Refusal('nested', 'Helpers cannot start or manage helpers: only the main chat can');
     }
-    if (!isDict(state.worktree) || !s(state.projectRoot)) {
-      throw new Refusal('no_worktree', 'Helpers need a project that can make worktrees, and this chat works in the project folder itself');
-    }
+    if (!isDict(state.worktree)) state.projectRoot = s(state.cwd); // a folder chat: its project is the folder it works in
+    if (!s(state.projectRoot)) throw new Refusal('not_main', 'This chat has no project folder');
     return state;
   }
 

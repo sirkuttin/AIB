@@ -11,7 +11,7 @@ import * as folders from '../desktop/folders.ts';
 import { presence } from '../desktop/folder_presence.ts';
 import { pyInt } from '../transcripts/pycompat.ts';
 import { findPrompts } from '../transcripts/prompts.ts';
-import { changesResponse, type ChatStudio, branchOf } from '../worktrees/chat_folders.ts';
+import { branchOf, changesResponse, type ChatStudio, copyableOf } from '../worktrees/chat_folders.ts';
 import * as merge from '../worktrees/merge.ts';
 import { FROM_DOC_RESOLVED, MAX_BODY_BYTES } from '../artifacts/artifacts.ts';
 import { getUpdate, getUpdateNotes, postUpdateCheck, postUpdateInstall, postUpdateNotes } from '../desktop/updater.ts';
@@ -303,7 +303,12 @@ export function studioRoutes(): Map<string, StudioHandler> {
       });
     });
   }
-  routes.set('GET /api/live/branch', async (_ctx, url) => [200, { branch: await branchOf(one(argsOf(url), 'cwd')) }]); // a WSL ref: its helper
+  // a WSL ref: its helper. copyable / whyNot (build plan 1b, SF 10): whether a new chat there can get its own copy, and if not why.
+  routes.set('GET /api/live/branch', async (_ctx, url) => {
+    const cwd = one(argsOf(url), 'cwd');
+    const [branch, copy] = await Promise.all([branchOf(cwd), copyableOf(cwd)]);
+    return [200, { branch, copyable: copy.copyable, whyNot: copy.whyNot }];
+  });
   // A WSL chat's merge runs in its distro's helper (wsl/merge.ts); every other chat's here (merge.ts).
   routes.set('GET /api/live/worktree', async (ctx, url) => {
     const studio = mergeStudio(ctx), id = one(argsOf(url), 'id');
