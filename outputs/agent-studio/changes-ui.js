@@ -179,6 +179,11 @@
     foot.append(status);
     return { foot, status, note, folder };
   }
+  /* Which folder a Changes reply is about: two chats with the same key see the same files (two chats in the project folder). A reply
+     without a root (an older server) is its own. */
+  let anon = 0;
+  const folderKey = (data) =>
+    data && data.root ? [data.scope || '', String(data.root), data.prefix || ''].join('|') : 'anon:' + ++anon;
   /* Narrow strip chip. */
   const stripText = (n) => (num(n) ? num(n) + ' changed' : '');
   /* Notes shown above a diff when the picture is not the whole story. */
@@ -229,6 +234,7 @@
     return (open || []).filter((p) => have.has(p));
   };
   const pure = {
+    folderKey,
     moreLeft,
     moreText,
     docPagesText,
@@ -566,12 +572,19 @@
     }
     function paintBadges() {
       const t = data && data.git ? totalsOf(data) : null;
-      // split view: the files of both panes' chats (the same whichever has focus)
+      // split view: the files of both panes' chats (the same whichever has focus). Two chats in the project folder see the same
+      // files: those count once (folderKey).
       const n = splitOn()
-        ? SP.keys.reduce((m, k) => {
-            const x = SP.secs.get(k);
-            return m + (x && x.data && x.data.git ? shownCount(x.data) : 0);
-          }, 0)
+        ? (() => {
+            const seen = new Set();
+            return SP.keys.reduce((m, k) => {
+              const x = SP.secs.get(k),
+                key = x && x.data && x.data.git ? folderKey(x.data) : '';
+              if (!key || seen.has(key)) return m;
+              seen.add(key);
+              return m + shownCount(x.data);
+            }, 0);
+          })()
         : t
           ? shownCount(data)
           : 0;
@@ -999,16 +1012,23 @@
       return s;
     }
     const spFiles = (s) => (s.data && s.data.git ? splitDocFiles(s.data).files : []);
+    /* A section's count: every changed file, also those past the first page of 300 the section lists (the tab badge's count). */
+    const spCount = (s) => (s.data && s.data.git ? shownCount(s.data) : 0);
     function spSumLine(s) {
-      const fs = spFiles(s);
+      const fs = spFiles(s),
+        t = totalsOf(s.data);
       let a = 0,
         d = 0;
       for (const f of fs) {
         a += num(f.added);
         d += num(f.removed);
       }
+      if (t.files > ((s.data && s.data.files) || []).length) {
+        a = num(t.added);
+        d = num(t.removed);
+      }
       const base = (s.data && s.data.worktree && s.data.worktree.base) || '';
-      return plural(fs.length, 'file', 'files') + ' · +' + a + ' ' + MINUS + d + (base ? ' vs ' + base : '');
+      return plural(spCount(s), 'file', 'files') + ' · +' + a + (t.partial ? '+' : '') + ' ' + MINUS + d + (base ? ' vs ' + base : '');
     }
     function spFoot(s) {
       const fs = spFiles(s),
@@ -1082,7 +1102,7 @@
         S = SUI();
       const info = S ? S.chatInfo(s.key) : { key: s.key, title: 'Conversation' };
       const A = win.ActivityUI;
-      if (A && A.splitHead) A.splitHead(doc, info, plural(fs.length, 'file', 'files'), s.head);
+      if (A && A.splitHead) A.splitHead(doc, info, plural(spCount(s), 'file', 'files'), s.head);
       s.open = pruneOpen(s.open, fs);
       for (const p of [...s.cache.keys()]) if (!fs.some((f) => f.path === p)) s.cache.delete(p);
       for (const f of fs) {

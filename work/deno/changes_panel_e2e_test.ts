@@ -7,6 +7,8 @@
  * 2. A folder chat that is not working, on its Changes tab: an edit another chat makes in the project folder shows up by itself.
  *    (Before: the tab polled only while its own agent worked, so the list stayed stale until you switched chats.)
  * 3. Split view: an open diff follows its file when the file changes. (Before: the row's numbers changed, the diff stayed old.)
+ * 4. Split view: a section counts every changed file (also past the 300 it lists), and two chats in the project folder, which see
+ *    the same files, count them once in the tab badge. (Before: the head said "300 files" and the badge doubled to 640.)
  *
  * A real Studio (the scroll lab: temp state folder, free port; never the live ports), scripted live chats, headless Chrome or
  * Edge, Git.
@@ -141,4 +143,32 @@ changesTest('Changes, split view: an open diff follows its file when the file ch
       throw new Error(`${e.message}: ${await diff()}`);
     });
   assert(!(await page.eval<boolean>(`[...document.querySelectorAll('${SEC} .cg-msg')].some((m) => /Loading/.test(m.textContent))`)), 'no Loading left');
+});
+
+changesTest('Changes, split view: a section counts every changed file, also past the first 300 it lists', async (lab) => {
+  const page = lab.page,
+    ws = lab.fx.workspace;
+  repo(ws);
+  for (let i = 0; i < 320; i++) write(`${ws}\\big\\f${String(i).padStart(3, '0')}.txt`, 'x\n');
+  const a = await folderChat(lab, 'BIGA');
+  await page.waitFor(`/^320$/.test(document.querySelector('#paneTab-changes .pane-badge')?.textContent || '')`, 20000, 'badge 320');
+  const b = await lab.chat();
+  await b.start();
+  b.say('Second chat BIGB');
+  b.end();
+  await lab.select(b);
+  await shown(page, 'BIGB');
+  await lab.select(a);
+  await shown(page, 'BIGA');
+  await page.eval(`AgentSplitUI.splitTab(${JSON.stringify(b.key)}, 'row')`);
+  await page.waitFor(`AgentSplitUI.panes().length === 2 && document.querySelectorAll('#splitChanges .sp-grp').length === 2`, 15000, 'two sections');
+  await page.eval(`document.getElementById('paneTab-changes').click()`);
+  const SEC = '#splitChanges .sp-grp:nth-child(1)';
+  await page.waitFor(`document.querySelectorAll('${SEC} .cg-file').length === 300`, 20000, 'the first 300 listed');
+  const s = await page.eval<{ head: string; foot: string; badge: string }>(`(() => ({
+    head: document.querySelector('${SEC} .sp-head .sp-sub').textContent,
+    foot: document.querySelector('${SEC} .sp-foot').innerText.replace(/\\s+/g, ' ').trim(),
+    badge: document.querySelector('#paneTab-changes .pane-badge').textContent,
+  }))()`);
+  assertEquals(s, { head: '320 files', foot: '320 files · +300+ −0', badge: '320' });
 });

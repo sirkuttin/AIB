@@ -659,3 +659,12 @@ test('each chat keeps its right-column tab: back on a chat, the tab you left it 
   await flush();
   assert.ok(pane.classList.contains('tab-artifacts'), 'chat2 is back on Artifacts');
 });
+
+test('folderKey: two chats in the project folder (same root, scope, prefix) are one folder; other replies are their own', () => {
+  const a = { git: true, scope: 'uncommitted', root: 'C:/p', prefix: '' };
+  assert.equal(C.folderKey(a), C.folderKey({ ...a, files: [] }));
+  assert.notEqual(C.folderKey(a), C.folderKey({ ...a, root: 'C:/q' }));
+  assert.notEqual(C.folderKey(a), C.folderKey({ ...a, scope: 'branch' }));
+  assert.notEqual(C.folderKey(a), C.folderKey({ ...a, prefix: 'sub/' }));
+  assert.notEqual(C.folderKey({ git: true }), C.folderKey({ git: true }), 'no root: never merged with another');
+});
