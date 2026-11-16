@@ -1,15 +1,14 @@
-"""e2e 19 (real-CLI form) of the "chats work in the project folder" plan (build-plan-1b 4.5, 8): AIB's re-file core makes an old copy
-chat's transcript show in the agent's OWN listing for the project folder, and the resumed chat still has its history. Real agent
-adapters, the local stub model API (work/stub_model_api.js), temp CLAUDE_CONFIG_DIR / CODEX_HOME / HOME, no key, no network.
+"""e2e 19 (real-CLI form) of the "chats work in the project folder" plan (build-plan-1b 4.5, 8): the one-off folder-chats migration
+(work/migrate: its re-file core and its Codex opener) makes an old copy chat's transcript show in the agent's OWN listing for the
+project folder, and the resumed chat still has its history. Real agent adapters, the local stub model API (work/stub_model_api.js),
+temp CLAUDE_CONFIG_DIR / CODEX_HOME / HOME, no key, no network.
 
-  Claude Code  a chat made in a copy folder W (the codeword told to the stub), then AIB's refileClaude (work/refile_cli.ts) moves it to
+  Claude Code  a chat made in a copy folder W (the codeword told to the stub), then refileClaude (work/refile_cli.ts) moves it to
                P with every cwd rewritten: the listing for P has it with cwd P, W's listing no longer does, a backup exists, and a
                load in P with a question gets "STUB codeword=TEAL-42" (the history reached the model). Empty copy-named folders go.
-  Codex        what AIB's refileCodex does after the backup: open the chat once in P (session/load cwd=P, no prompt); the listing for
-               P then has it and W's does not. AIB never writes Codex's files.
-  Codex/AIB    the same through AIB itself (work/refile_cli.ts codex-studio): a real Studio makes the Codex chat in W, then its
-               moveChatToFolder (what Discard runs) maps it, backs the rollout up and opens it once in P through connect; Continue
-               from a page that still sends W opens it in P with its history. The agent's own listing for P has it.
+  Codex        what the migration does after the backup: open the chat once in P (session/load cwd=P, no prompt); the listing for
+               P then has it and W's does not, and a load in P still has the history. Nothing writes Codex's files but Codex.
+               Done twice: with the test's ACP probe, and with the migration script's own ACP client (refile_cli.ts codex-script).
 
 Guard: no entry for the temp folders may appear in the owner's ~/.claude/projects or ~/.codex/sessions, and none of the test's
 Codex session ids may appear there (file names, or the thread index state_5.sqlite, opened read-only and immutable).
@@ -139,28 +138,18 @@ class RefileE2ETest(unittest.TestCase):
         assert_not_in_owner_codex(self, session)
 
     @unittest.skipUnless(CODEX_ACP, 'needs the Codex ACP adapter')
-    def test_codex_refiled_through_aib_connect(self):
-        env = dict(self.env, STUDIO_REAL_ADAPTER_TESTS='1')
-        done = refile_cli('codex-studio', self.state, self.temp / 'codex', NODE, CODEX_ACP, self.copy, self.project, env=env, timeout=420)
-        self.assertNotIn('error', done, done)
-        session = done['sessionId']
-        self.assertIn('STUB codeword=TEAL-42', done['first'], 'the chat AIB started reached the stub')
-        moved = done['moved']
-        self.assertEqual([os.path.normcase(moved['project']), os.path.normcase(moved['from']), moved['why']],
-                         [os.path.normcase(str(self.project)), os.path.normcase(str(self.copy)), 'discarded'])
-        backup = pathlib.Path(moved['backup'])
-        self.assertTrue(backup.is_file() and backup.is_relative_to(self.state / 'refiled' / 'codex'), done)
-        self.assertTrue(moved['refiled'], f'the rollout was re-filed: {done["log"]}')
-        self.assertEqual(os.path.normcase(done['loadCwd']), os.path.normcase(os.path.realpath(self.project)),
-                         'opened once in the project folder')
-        # Codex re-indexed it itself: its own listing for P has it, W's does not
+    def test_codex_opened_by_the_migration_script(self):
+        made = probe(CODEX_ACP, self.env, 'new', str(self.copy), 'the codeword is TEAL-42')
+        session = made['sessionId']
+        self.assertIn(session, self.listed(CODEX_ACP, self.copy))
+        done = refile_cli('codex-script', self.temp / 'codex', NODE, CODEX_ACP, session, self.project, env=self.env, timeout=240)
+        self.assertEqual(done, {'ok': True})
+        # Codex re-indexed it itself: its own listing for P has it, W's does not; the history is still there
         self.assertIn(session, self.listed(CODEX_ACP, self.project))
         self.assertNotIn(session, self.listed(CODEX_ACP, self.copy))
-        # Continue from a page that still sends W: opened in P, the history reached the model
-        self.assertEqual(os.path.normcase(done['continuedIn']), os.path.normcase(os.path.realpath(self.project)))
-        self.assertIn('STUB codeword=TEAL-42', done['reply'], 'the history reached the model after the move')
+        loaded = probe(CODEX_ACP, self.env, 'load', str(self.project), session, 'what is the codeword?')
+        self.assertIn('STUB codeword=TEAL-42', loaded['reply'] or '', 'the history reached the model after the move')
         assert_not_in_owner_codex(self, session)
-
 
 if __name__ == '__main__':
     unittest.main()

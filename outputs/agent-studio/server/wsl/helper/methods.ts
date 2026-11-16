@@ -34,7 +34,6 @@ import { bgtaskMethods } from './bgtasks.ts';
 import { type EnvMode, envPrereqs, type PrereqDeps } from './prereqs.ts';
 import { signinStatus } from './signin_status.ts';
 import { aibMethods, type RemoveDeps } from './aib_remove.ts';
-import { refileMethods } from './refile.ts';
 
 export const LIST_DIRS_DEFAULT = 500, LIST_DIRS_MAX = 2000;
 export const SESSIONS_DEFAULT = 500, SESSIONS_MAX = 5000;
@@ -197,7 +196,7 @@ export function makeMethods(ctx: HelperContext): Handlers {
     // background tasks, the ownership check and the agents' process trees (helper/bgtasks.ts)
     ...bgtaskMethods({ env: ctx.env, store: (p) => sessionStore(ctx, p) }),
     ...linkingMethods(ctx), // Linking (WSL) phase 2: env.prereqs, agents.signinStatus (agents.uninstall is in installMethods)
-    ...(data ? { ...worktreeMethods(data), ...mergeMethods(data), ...syncMethods(ctx.sync ?? new HelperSync(data)), ...refileMethods(ctx, data) } : {}),
+    ...(data ? { ...worktreeMethods(data), ...mergeMethods(data), ...syncMethods(ctx.sync ?? new HelperSync(data)) } : {}),
     ...(ctx.root ? installMethods({ root: ctx.root, notify: ctx.notify ?? (() => {}), refreshPath: ctx.refreshPath }) : {}),
     // Linking (WSL) phase 3: disk use and Remove AIB from this distro (helper/aib_remove.ts), only with both folders known
     ...(ctx.root && data

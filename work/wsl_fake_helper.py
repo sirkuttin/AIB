@@ -6,15 +6,12 @@ env.get, which and fs.stat; `which` of the name "open-url" also sends a `browser
 With argv[2] == "mcp" it also has the MCP tunnel: `mcp: {socket}` in helper.ready, the mcp.* methods (always ok), and `which` of the
 name "mcp-request" sends an `mcp.request` notification with params.rid. `which` of the name "flood" first sends about 4 MB of
 notifications AIB ignores (its ready line then leaves the keeper's 1 MiB record).
-Protocol 3: transcripts.refile answers 'moved' for Claude (the path the transcript would have under the project's encoded folder)
-and 'saved' for Codex; transcripts.cleanEmpty answers nothing removed. Neither touches any file.
 """
 import json
 import os
-import re
 import sys
 
-METHODS = ['env.get', 'which', 'fs.stat', 'transcripts.refile', 'transcripts.cleanEmpty']
+METHODS = ['env.get', 'which', 'fs.stat']
 
 
 def send(message):
@@ -53,18 +50,6 @@ def main():
             send({'jsonrpc': '2.0', 'id': rid, 'result': {'path': '/usr/bin/' + name}})
         elif mcp and method in ('mcp.accept', 'mcp.reply', 'mcp.closed'):
             send({'jsonrpc': '2.0', 'id': rid, 'result': {'ok': True}})
-        elif method == 'transcripts.refile':
-            sid, to = str(params.get('sessionId', '')), str(params.get('to', ''))
-            if params.get('provider') == 'codex':
-                result = {'outcome': 'saved', 'message': '', 'path': '/home/t/.codex/sessions/rollout-' + sid + '.jsonl',
-                          'backup': '/home/t/data/refiled/codex/' + sid + '.jsonl', 'fromFolder': ''}
-            else:
-                enc = re.sub('[^A-Za-z0-9]', '-', to)
-                result = {'outcome': 'moved', 'message': '', 'path': '/home/t/.claude/projects/' + enc + '/' + sid + '.jsonl',
-                          'backup': '/home/t/data/refiled/claude/' + sid + '.jsonl', 'fromFolder': ''}
-            send({'jsonrpc': '2.0', 'id': rid, 'result': result})
-        elif method == 'transcripts.cleanEmpty':
-            send({'jsonrpc': '2.0', 'id': rid, 'result': {'removed': [], 'kept': []}})
         elif method == 'fs.stat':
             send({'jsonrpc': '2.0', 'id': rid, 'error': {'code': -32000, 'message': 'No such file', 'data': {'code': 'not_found'}}})
         else:

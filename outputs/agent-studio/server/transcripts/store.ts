@@ -416,8 +416,9 @@ export class Store {
   }
 
   /**
-   * Build plan 1b SF 7: a transcript re-filed under the project folder (worktrees/refile.ts) has a new key (its path); the old key's
-   * card and project memo go, so nothing keeps answering for a file that is no longer there. Only chat cards (folder/file.jsonl;
+   * Build plan 1b SF 7: a transcript that moved or went (e.g. re-filed under the project folder by `claude` itself or the folder-chats
+   * migration script) has a new key (its path) or none; the old key's card and project memo go, so nothing keeps answering for a
+   * file that is no longer there. Only chat cards (folder/file.jsonl;
    * subagent transcripts sit deeper and are not listed here); pinned (in use) ones are kept.
    */
   #forgetGone(listed: Set<string>): void {

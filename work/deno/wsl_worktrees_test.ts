@@ -24,7 +24,7 @@ import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts'
 import { setWslHostResolver } from '../../outputs/agent-studio/server/wsl/access.ts';
 import { WslHelperError } from '../../outputs/agent-studio/server/wsl/contract.ts';
 import { changesResponse } from '../../outputs/agent-studio/server/worktrees/chat_folders.ts';
-import * as refile from '../../outputs/agent-studio/server/worktrees/refile.ts';
+import { MOVED_FILE } from '../../outputs/agent-studio/server/state/moved_chats.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -233,27 +233,17 @@ Deno.test({ name: 'wsl studio: a WSL chat in its own worktree made by the helper
   assertEquals([r.cwd, r.agentCwd, r.projectRoot], [WT_REF, WT_LINUX, REF]);
   assertEquals(r.worktree, { branch: 'studio/chat-abcd1234', base: 'main' });
   // Discard: the agent stops, the helper removes the worktree (confirmed: --force)
-  lab.host.handlers['transcripts.refile'] = (p) => ({
-    outcome: 'moved',
-    message: '',
-    path: `/home/t/.claude/projects/-home-u-app/${p.sessionId}.jsonl`,
-    backup: `${DATA}/refiled/claude/${p.sessionId}.jsonl`,
-    fromFolder: '',
-  });
   const [status, body] = await b.liveCall('worktree-discard', { id: r.id, confirm: true });
   assertEquals(status, 200);
   assertEquals((body as Json).removed, true);
   assertEquals(lab.called('worktree.remove'), [{ key: 'abcd1234abcd1234', confirmed: true }]);
   assert(r.closed);
-  // build plan 1b 4.5 SF 9 (helper protocol 3): the discarded chat carries on in the project folder; its distro re-files the
-  // transcript (Linux paths; under test the Claude folder inside AIB_WSL_ROOT, never the distro user's own)
-  assertEquals((body as Json).movedToFolder, REF);
-  const refiled = lab.called('transcripts.refile');
-  assertEquals(refiled.map((p) => [p.provider, p.sessionId, p.from, p.to]), [['claude', r.sessionId, WT_LINUX, '/home/u/app']]);
-  assertEquals([refiled[0].claudeDir, refiled[0].codexDir], ['/tmp/aib-wsl-test-fake/home/.claude', '/tmp/aib-wsl-test-fake/home/.codex']);
-  const moved = refile.readMoved(lab.state)[`claude:${r.sessionId}`];
-  assertEquals([moved.project, moved.from, moved.why, moved.refiled], [REF, WT_REF, 'discarded', `/home/t/.claude/projects/-home-u-app/${r.sessionId}.jsonl`]);
-  // Continue from a page that still sends the copy's ref: it opens in the project folder, no worktree lookups in the distro
+  // no re-filing in the app (the owner's one-off migration script does that inside the distro)
+  assertEquals((body as Json).movedToFolder, undefined);
+  assertEquals(lab.called('transcripts.refile'), []);
+  // once the script mapped the chat to the project (studio-moved-chats.json, read only in the app), Continue from a page that
+  // still sends the copy's ref opens it in the project folder, with no worktree lookups in the distro
+  Deno.writeTextFileSync(`${lab.state}/${MOVED_FILE}`, JSON.stringify({ version: 1, chats: { [`claude:${r.sessionId}`]: { project: REF, from: WT_REF } } }));
   const finds = lab.called('worktree.find').length;
   const again = await b.connect('claude', WT_REF, r.sessionId);
   assertEquals([again.cwd, again.agentCwd, again.worktree], [REF, '/home/u/app', null]);

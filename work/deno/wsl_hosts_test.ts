@@ -274,13 +274,7 @@ Deno.test({
     assertEquals(await host.call('which', { name: 'git' }), {
       path: '/usr/bin/git',
     });
-    assertEquals(host.methods, ['env.get', 'which', 'fs.stat', 'transcripts.refile', 'transcripts.cleanEmpty']);
-    // protocol 3: the re-file methods answer over the wire (the fake touches no file)
-    assertEquals(
-      ((await host.call('transcripts.refile', { provider: 'claude', sessionId: 's1', from: '/d/worktrees/h/chat-1', to: '/home/t/shop' })) as { path: string }).path,
-      '/home/t/.claude/projects/-home-t-shop/s1.jsonl',
-    );
-    assertEquals(await host.call('transcripts.cleanEmpty', {}), { removed: [], kept: [] });
+    assertEquals(host.methods, ['env.get', 'which', 'fs.stat']);
     const failure = (work: Promise<unknown>) =>
       work.then(() => 'resolved', (e) => (e instanceof WslHelperError ? `${e.code}: ${e.message}` : `other: ${e}`));
     assert((await failure(host.call('agents.detect', {}))).startsWith('unknown_method:'));

@@ -2,9 +2,6 @@
  * Decision 6 cleanup, the web side (worktrees/cleanup.ts does the git work; a WSL project's runs in its distro's helper through
  * wsl/worktrees.ts). Build plan 1b, sections 5.4, 5.6 and 5.7.
  *
- *   GET  /api/live/cleanup/card                     the one-time cleanup's card {card: {items, text} | null}: old chat copies with
- *                                                   work that was never merged, found at the first start after the update
- *   POST /api/live/cleanup/card {action}            'remove' (those items go) or 'keep' (nothing goes; the card never comes back)
  *   POST /api/live/cleanup/all {mode: 'check'}      "Remove AIB's data from my repos" (Settings; what an uninstaller calls): for every
  *                                                   added project, what would go silently and what has unmerged work. Changes nothing.
  *   POST /api/live/cleanup/all {mode: 'apply', remove: {<project>: [ids]}}
@@ -12,7 +9,8 @@
  *                                                   without unmerged work plus the ticked ids. Private folders stay; the projects
  *                                                   stay in AIB.
  *
- * Running chats' copies are never touched (the live list); the one-time cleanup runs after the keeper take-over (main.ts).
+ * Running chats' copies are never touched (the live list). Old copy chats and the leftovers from before folder chats are tidied by
+ * the owner's one-off migration script (work/migrate/folder_chats_migrate.ts), not by the app.
  */
 import { isDict, isStr, ValueError } from '../core/py.ts';
 import * as cleanup from '../worktrees/cleanup.ts';
@@ -91,21 +89,9 @@ export async function cleanupApply(
   return done;
 }
 
-/** The distros' part of the one-time cleanup and the card (cleanup.ts OnceOptions.wsl): ids null = scan only; else only those ids. */
-export const wslOnce: cleanup.WslOnce = async (ref, ids, live) => {
-  if (ids === null) {
-    const scan = await wslCleanupScan(ref, live);
-    return scan ? { scan: scan as unknown as cleanup.Scan, removed: [] } : null;
-  }
-  const done = await wslCleanupApply(ref, ids, false, live, ids);
-  return done ? { scan: done.scan as unknown as cleanup.Scan, removed: done.removed } : null;
-};
-
 export interface CleanupContext {
   stateDir: string;
   host: Lister;
-  /** The saved chats AIB lists (deleted ones are marked): their copies are never orphans. Absent in tests of the card only. */
-  conversations?: { public(): { entries: Record<string, { deletedAt?: number }> } };
   addedProjects: { public(): { added: Record<string, unknown> } };
 }
 
@@ -117,40 +103,15 @@ export function addedPaths(ctx: CleanupContext): string[] {
 }
 
 /**
- * The one-time cleanup (5.6), called once the keeper take-over is done (main.ts). Runs only at the first start after the update
- * (cleanup.ONCE_VERSION); never throws.
+ * Once the keeper take-over at start is done (main.ts): merged helpers' copies of closed chats go, and stopped helpers' copies after
+ * 7 days (the agent host does it: it knows which chats run anywhere). Never throws.
  */
-export async function runOneTimeCleanup(ctx: CleanupContext): Promise<void> {
-  try {
-    await cleanup.runOnce(ctx.stateDir, {
-      projects: addedPaths(ctx),
-      live: await liveOf(ctx.host),
-      deleted: deletedSessions(ctx),
-      wsl: wslOnce,
-    });
-  } catch (error) {
-    cleanup.logLine(ctx.stateDir, `one-time cleanup failed: ${error instanceof Error ? error.message : error}`);
-  }
-  // P4b + P5-refile, after the take-over too: merged copies of closed chats go, and old copy chats move to their project folder
-  // (the agent host does it: it knows which chats run anywhere). Every start; the orphan part runs once.
+export async function retireAtStart(ctx: CleanupContext): Promise<void> {
   try {
     if (ctx.host.liveCall) await ctx.host.liveCall('worktree-retire', {});
   } catch (error) {
-    cleanup.logLine(ctx.stateDir, `re-file pass failed: ${error instanceof Error ? error.message : error}`);
+    cleanup.logLine(ctx.stateDir, `retiring helper copies failed: ${error instanceof Error ? error.message : error}`);
   }
-}
-
-/** The saved chats marked deleted (Recently deleted, or deleted by the agent): their copies may be orphans. */
-function deletedSessions(ctx: CleanupContext): string[] {
-  const entries = ctx.conversations ? ctx.conversations.public().entries : {};
-  return Object.entries(entries).filter(([, e]) => !!e?.deletedAt).map(([k]) => k);
-}
-
-export async function cardRoute(ctx: CleanupContext, body: unknown): Promise<[number, Json]> {
-  if (body === undefined) return [200, { card: cleanup.cardOf(ctx.stateDir) }];
-  if (!isDict(body) || (body.action !== 'remove' && body.action !== 'keep')) throw new ValueError('The action must be remove or keep');
-  const done = await cleanup.answerCard(ctx.stateDir, body.action, { live: await liveOf(ctx.host), wsl: wslOnce });
-  return [200, { ok: true, ...done, card: cleanup.cardOf(ctx.stateDir) }];
 }
 
 /** "Remove AIB's data from my repos" (5.7). */
