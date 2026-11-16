@@ -23,7 +23,8 @@
  *   reply  text, tool calls, or both. A rule that calls tools only matches a request that OFFERS every one of those tools, so
  *          side requests the CLI makes without tools (titles, summaries) never use up a rule.
  * Tool calls go out as Anthropic `tool_use` blocks (stop_reason "tool_use") on /v1/messages and as Responses API
- * `function_call` items on /v1/responses (Codex). The parent agent and a subagent are told apart by their own markers: a
+ * `function_call` items on /v1/responses (Codex). A Responses namespace tool's inner tool is named "<namespace>.<tool>" in a rule
+ * (e.g. "multi_agent_v1.spawn_agent") and goes out with a `namespace` field. The parent agent and a subagent are told apart by their own markers: a
  * subagent's first request has its prompt as the newest message; the parent's next request has the subagent's result there.
  *
  * Start:  node work/stub_model_api.js [--port N] [--log FILE] [--stdin] [--script FILE] [--dump DIR]
@@ -61,9 +62,15 @@ function replyText(raw) {
 
 /** The names of the tools a request offers the model (Anthropic `tools[].name`; Responses `tools[].name` or `.function.name`). */
 function toolNames(body) {
-  return (Array.isArray(body.tools) ? body.tools : [])
-    .map((t) => t && (t.name || (t.function && t.function.name) || t.type))
-    .filter(Boolean);
+  const names = [];
+  for (const t of Array.isArray(body.tools) ? body.tools : []) {
+    if (!t) continue;
+    const name = t.name || (t.function && t.function.name) || t.type;
+    if (name) names.push(name);
+    // a Responses `namespace` tool (Codex's multi_agent_v1) offers its inner tools as "<namespace>.<tool>"
+    if (t.type === 'namespace' && Array.isArray(t.tools)) for (const inner of t.tools) if (inner && inner.name) names.push(`${t.name}.${inner.name}`);
+  }
+  return names;
 }
 
 function part(body, raw, where) {
@@ -223,6 +230,9 @@ function responsesCalls(res, body, said) {
     const item = {
       type: 'function_call', id: newId('fc'), call_id: call.id || newId('call'), name: call.name, arguments: argText, status: 'completed',
     };
+    // "<namespace>.<tool>" (a namespaced tool, see toolNames) goes out as {namespace, name}
+    const dot = call.name.indexOf('.');
+    if (dot > 0) Object.assign(item, { namespace: call.name.slice(0, dot), name: call.name.slice(dot + 1) });
     const index = output.length;
     events.push(['response.output_item.added', {
       type: 'response.output_item.added', output_index: index, item: { ...item, arguments: '', status: 'in_progress' },
