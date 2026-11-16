@@ -57,6 +57,8 @@
     conversations = [],
     agents = [],
     subSelection = null,
+    /* the chat (alias key) whose subagent or process history is open. Split view: either pane's chat, whichever has focus. */
+    subOwner = '',
     provider = 'all',
     polling = false,
     historyLimit = 120,
@@ -301,6 +303,7 @@
   const chatCache = window.ChatCache.create();
   // split view's Activity sections (renderSplitActivity, by the split-view code further down)
   const splitAct = { box: null, secs: new Map(), busy: false };
+  const activityHideBtn = $('activityHide'); // held: opening a chat empties #subagentList, where it sits with one chat
   const liveCache = (id = current) => chatCache.entry(id || '');
   const liveLoaded = () => liveCache().loaded();
   const SCROLL_V2 = (() => {
@@ -1265,6 +1268,13 @@
   function beginConversation(c) {
     // split view: the chat leaving the real view keeps its header, bars and chip row for its pane's copy (split-ui.js)
     if (selected && aliasKey(selected) !== aliasKey(c)) window.AgentSplitUI?.snapshot?.();
+    // Split view: focus moving to the other pane changes nothing in the right panel, so an open history (of either pane's chat)
+    // stays open, on the same item.
+    const S = window.AgentSplitUI,
+      keepHist =
+        !!(S?.active?.() && subOwner && (subSelection || selectedCommand) && !$('subchatPane').hidden) &&
+        S.paneChats().includes(subOwner) &&
+        S.paneChats().includes(aliasKey(c));
     const incoming = splitSwap(c),
       opening = () =>
         incoming
@@ -1275,7 +1285,7 @@
     window.AgentOwnershipUI?.clear($('ownershipPrompt'));
     if (selected) keepDraft();
     $('prompt').value = drafts.get(aliasKey(c)) || '';
-    document.body.classList.remove('subchat-open');
+    if (!keepHist) document.body.classList.remove('subchat-open');
     $('subagentCount').textContent = '0';
     newDraft = null;
     window.ToolViews?.setScope?.(aliasKey(c)); // open tool rows and step groups belong to this chat
@@ -1297,8 +1307,12 @@
     syncJump();
     selected = c;
     renderAttachments();
-    subSelection = null;
-    selectedCommand = null;
+    if (!keepHist) {
+      subSelection = null;
+      selectedCommand = null;
+      subOwner = '';
+      subTrail = [];
+    }
     commands = [];
     showCommandHistory = false;
     commandSignature = '';
@@ -1312,17 +1326,17 @@
     for (const id of chatCache.ids()) chatCache.peek(id).reopened = true;
     historyLimit = 120;
     rowExtra.main = 0;
-    rowExtra.sub = 0;
+    if (!keepHist) rowExtra.sub = 0;
     historyNoticeOn = false;
     actCounts = { subagents: 0, working: 0, failed: 0 };
     renderActivityStrip();
     mainSignature = '';
-    subSignature = '';
+    if (!keepHist) subSignature = '';
     settingsSignature = '';
     approvalSignature = '';
     $('setup').hidden = true;
     $('chat').hidden = false;
-    $('subchatPane').hidden = true;
+    if (!keepHist) $('subchatPane').hidden = true;
     $('messages').hidden = false;
     $('renameCurrent').hidden = false;
     opening();
@@ -2622,17 +2636,29 @@
   function allAgentRows() {
     return current ? [...children.values()] : agents.filter((a) => !a.main);
   }
+  /* The chat the open history belongs to: the focused chat's own state, or (split view) the other pane's chat as the right panel
+     reads it (paneAct). Opening or reading a history never moves pane focus. */
+  function subCtx() {
+    const selKey = selected ? aliasKey(selected) : '';
+    if (!subOwner || subOwner === selKey)
+      return { own: true, key: selKey, id: current, entry: liveCache(), snap: snapshot, rows: allAgentRows(), cmds: commands, session: selected?.key || '' };
+    const c = conversations.find((x) => aliasKey(x) === subOwner),
+      a = paneAct.get(subOwner) || null,
+      id = c?.live && !c.live.closed ? c.live.id : '';
+    return { own: false, key: subOwner, id, entry: id ? chatCache.entry(id) : null, snap: a?.snap || null, rows: a ? a.rows : [], cmds: a?.commands || [], session: c?.key || '', pane: a };
+  }
   function pushTrail() {
     if (subSelection) subTrail.push({ agent: subSelection });
     else if (selectedCommand) subTrail.push({ command: selectedCommand.id });
   }
-  async function openSubagent(agent, keepTrail) {
+  async function openSubagent(agent, keepTrail, owner) {
     if (!current && !selected) {
       closeInspector();
       return;
     }
     if (keepTrail === true) pushTrail();
     else subTrail = [];
+    subOwner = owner || (selected ? aliasKey(selected) : '');
     selectedCommand = null;
     $('commandDetails').hidden = true;
     $('submessages').hidden = false;
@@ -2652,6 +2678,7 @@
     renderSubHead();
     renderAgents();
     renderCommands();
+    renderSplitActivity();
     await refreshSubagent();
   }
   async function subBack() {
@@ -2660,9 +2687,10 @@
       closeAndRefocus();
       return;
     }
-    const keep = subTrail;
-    if (prev.agent) await openSubagent(allAgentRows().find((r) => r.key === prev.agent.key) || prev.agent);
-    else await openCommand(prev.command);
+    const keep = subTrail,
+      owner = subOwner;
+    if (prev.agent) await openSubagent(subCtx().rows.find((r) => r.key === prev.agent.key) || prev.agent, false, owner);
+    else await openCommand(prev.command, false, owner);
     subTrail = keep;
     renderSubHead();
   }
@@ -2672,7 +2700,8 @@
       box.hidden = true;
       return;
     }
-    const rows = allAgentRows(),
+    const x = subCtx(),
+      rows = x.rows,
       row = rows.find((r) => r.key === subSelection.key) || subSelection;
     subSelection = row;
     const h = window.SubagentsUI?.header(row, Date.now() / 1000, chatModel());
@@ -2681,7 +2710,7 @@
       $('subchatStatus').textContent = window.SubagentsUI.subtitle(h, row.live);
     }
     const kids = window.SubagentsUI?.childrenOf(rows, row) || [],
-      mine = commands.filter((t) => t.agentKey === row.key).slice(0, 6);
+      mine = x.cmds.filter((t) => t.agentKey === row.key).slice(0, 6);
     const signature = JSON.stringify([
       kids.map((k) => [k.key, k.name, k.runningCommands]),
       mine.map((t) => [t.id, t.title, t.status]),
@@ -2699,7 +2728,7 @@
       for (const k of kids) {
         const b = text('button', window.SubagentsUI?.names(k).title || k.name, 'sub-link');
         b.type = 'button';
-        b.onclick = () => openSubagent(k, true);
+        b.onclick = () => openSubagent(k, true, subOwner);
         frag.append(b);
       }
     }
@@ -2716,7 +2745,7 @@
             'sub-link-state' + (isRunningCommand(t) ? ' running' : ''),
           ),
         );
-        b.onclick = () => openCommand(t.id, true);
+        b.onclick = () => openCommand(t.id, true, subOwner);
         frag.append(b);
       }
     }
@@ -2772,16 +2801,18 @@
       }
       return;
     }
-    if (subSelection.live && !snapshot) {
-      closeInspector();
+    const x = subCtx();
+    if (subSelection.live && !x.snap) {
+      if (x.own) closeInspector(); // the other pane's chat: its state comes with the panel's next read
       return;
     }
     renderSubagentControls();
     renderSubHead();
     if (subSelection.live) {
       /* a helper's events are not in the opening page (design 4.4): fetched when it is opened, then its deltas ride the poll */
-      const entry = liveCache(),
-        id = current;
+      const entry = x.entry,
+        id = x.id;
+      if (!entry || !id) return;
       if (HISTORY_V2 && hostPages === true && !entry.helperLoaded(target)) {
         let pg = { events: [] };
         try {
@@ -2789,13 +2820,14 @@
         } catch (error) {
           if (error?.code === 'connection_not_found') throw error;
         }
-        if (current !== id || subSelection?.key !== target) return;
+        if (subCtx().id !== id || subSelection?.key !== target) return;
         entry.helperPage(target, pg);
-        collectChildren();
+        if (x.own) collectChildren();
+        else if (x.pane) collectChildrenFor(x.pane.kids, x.snap, entry);
       }
       showRows(
         $('submessages'),
-        liveRows(target, entry.loaded(), snapshot, false, readingSeq(managed($('submessages'))), entry.helperEdge(target)),
+        liveRows(target, entry.loaded(), x.snap, false, readingSeq(managed($('submessages'))), entry.helperEdge(target)),
         'sub',
       );
       return;
@@ -4684,13 +4716,18 @@
       if (selected?.key === key) noteCommands('Command updates unavailable: ' + error.message, true);
     }
   }
-  async function openCommand(id, keepTrail) {
+  async function openCommand(id, keepTrail, owner) {
     if (!current && !selected) {
       closeInspector();
       return;
     }
-    const task = commands.find((t) => t.id === id);
-    if (!task) return;
+    const was = subOwner;
+    subOwner = owner || (selected ? aliasKey(selected) : '');
+    const task = subCtx().cmds.find((t) => t.id === id);
+    if (!task) {
+      subOwner = was;
+      return;
+    }
     if (keepTrail === true) pushTrail();
     else subTrail = [];
     selectedCommand = task;
@@ -4710,15 +4747,17 @@
     renderSubHead();
     renderAgents();
     renderCommands();
+    renderSplitActivity();
     await refreshCommandDetails();
   }
   async function refreshCommandDetails() {
     if (!selectedCommand || !selected) return;
     const id = selectedCommand.id,
-      key = selected.key;
+      key = subCtx().session;
+    if (!key) return;
     try {
       const task = await get('/api/command', { session: key, id });
-      if (selected?.key !== key || selectedCommand?.id !== id) return;
+      if (subCtx().session !== key || selectedCommand?.id !== id) return;
       selectedCommand = task;
       $('subchatTitle').textContent = $('subchatTitle').title = task.title;
       $('subchatStatus').textContent = commandState(task) + ' · ' + commandDuration(task);
@@ -4765,19 +4804,21 @@
     const pane = $('subagentsPane');
     return inspectorOpen() && !pane.classList.contains('tab-changes') && !pane.classList.contains('tab-artifacts');
   }
-  function toggleSubagent(agent) {
-    if (inspectorOpen() && subSelection?.key === agent?.key) {
+  function toggleSubagent(agent, owner) {
+    const who = owner || (selected ? aliasKey(selected) : '');
+    if (inspectorOpen() && subSelection?.key === agent?.key && subOwner === who) {
       closeInspector();
       return Promise.resolve();
     }
-    return openSubagent(agent).catch(fail);
+    return openSubagent(agent, false, who).catch(fail);
   }
-  function toggleCommand(id) {
-    if (inspectorOpen() && selectedCommand?.id === id) {
+  function toggleCommand(id, owner) {
+    const who = owner || (selected ? aliasKey(selected) : '');
+    if (inspectorOpen() && selectedCommand?.id === id && subOwner === who) {
       closeInspector();
       return Promise.resolve();
     }
-    return openCommand(id).catch(fail);
+    return openCommand(id, false, who).catch(fail);
   }
   window.addEventListener(
     'pointerdown',
@@ -4785,6 +4826,10 @@
       const t = e.target;
       if (!inspectorShown() || !t?.closest) return;
       if (t.closest('#subchatPane,#subagentsPane,dialog,[role="menu"]')) return;
+      // Split view: a press in the other pane only moves focus, and focus changes nothing in the right panel; a click in the pane
+      // showing the history's own chat closes it, as with one chat.
+      const pane = window.AgentSplitUI?.active?.() ? t.closest('#splitStage .pane') : null;
+      if (pane && (!pane.classList.contains('foc') || subOwner !== (selected ? aliasKey(selected) : ''))) return;
       if (t.closest('main')) closeInspector();
     },
     true,
@@ -4809,6 +4854,7 @@
   }
   function closeInspector() {
     subTrail = [];
+    subOwner = '';
     subSelection = null;
     selectedCommand = null;
     $('subchatPane').hidden = true;
@@ -5105,7 +5151,8 @@
   function renderSubagentControls() {
     const button = $('stopSubagent');
     if (!button) return;
-    const info = subSelection?.live && current && snapshot?.subagents ? snapshot.subagents[subSelection.key] : null;
+    const x = subSelection?.live ? subCtx() : null,
+      info = x && x.id && x.snap?.subagents ? x.snap.subagents[subSelection.key] : null;
     const ended = !/^(running|working|in[-_ ]progress|active|starting|queued|busy|streaming)$/i.test(
       String(info?.state || ''),
     );
@@ -5147,7 +5194,7 @@
     stoppingSubagent = true;
     renderSubagentControls();
     try {
-      await post('cancel', { id: current, subagentSessionId: subSelection.key });
+      await post('cancel', { id: subCtx().id || current, subagentSessionId: subSelection.key });
       await refresh();
     } catch (error) {
       fail(error);
@@ -5588,7 +5635,10 @@
     if (c.live && !c.live.closed) {
       const next = (await pullLive(c.live.id)).state,
         entry = chatCache.entry(c.live.id);
-      if (next) collectChildrenFor(a.kids, next, entry);
+      if (next) {
+        a.snap = next;
+        collectChildrenFor(a.kids, next, entry);
+      }
       a.rows = sortAgents([...a.kids.values()]);
     } else if (isPseudoKey(c.key)) a.rows = [];
     else if (!a.histAt || now - a.histAt > 5000) {
@@ -5636,16 +5686,21 @@
     const S = window.AgentSplitUI,
       A = window.ActivityUI;
     const keys = S?.active?.() && S.paneChats ? S.paneChats() : [];
+    const hide = activityHideBtn;
     if (!keys.length || !A?.splitHead) {
       if (splitAct.box) splitAct.box.replaceChildren();
       splitAct.secs.clear();
+      // one chat again: the × goes back to the end of the Subagents heading row
+      if (hide && hide.parentNode === $('activityBody'))
+        (document.querySelector('#subagentList .sa-heading') || $('subagentList')).append(hide);
       paintActivityTabBadge();
       return;
     }
     const box = splitActBox();
     if (!box) return;
-    const nowS = Date.now() / 1000,
-      selKey = selected ? aliasKey(selected) : '';
+    // split view: the × that hides Activity stays at the panel's top right, the same spot as with one chat (activity.css)
+    if (hide && hide.parentNode !== $('activityBody')) $('activityBody').append(hide);
+    const nowS = Date.now() / 1000;
     for (const k of [...splitAct.secs.keys()]) if (!keys.includes(k)) splitAct.secs.delete(k);
     const want = [];
     for (const key of keys) {
@@ -5659,18 +5714,15 @@
         rows: a.rows,
         now: nowS,
         convKey: key,
-        selectedKey: key === selKey ? subSelection?.key : undefined,
+        selectedKey: key === subOwner ? subSelection?.key : undefined,
         chatModel: '',
         empty: '',
         split: true,
         onModel: (m) => {
           counts = { working: m.working.length, failed: m.failed, subagents: m.top.length + m.done.length };
         },
-        // A row opens its history in this panel; it never moves pane focus. The history reads the focused chat's live stream,
-        // so only that chat's rows open one.
-        onOpen: (agent) => {
-          if (key === (selected ? aliasKey(selected) : '')) toggleSubagent(agent);
-        },
+        // A row opens its history in this panel, for either pane's chat; it never moves pane focus.
+        onOpen: (agent) => toggleSubagent(agent, key),
         rerender: renderSplitActivity,
       });
       const running = a.commands.filter(isRunningCommand);
@@ -5688,13 +5740,11 @@
           b = text('button', '', 'command-card');
           b.type = 'button';
           b.dataset.key = task.id;
-          b.onclick = () => {
-            if (key === (selected ? aliasKey(selected) : '')) toggleCommand(task.id);
-          };
+          b.onclick = () => toggleCommand(task.id, key);
           sec.cards.set(task.id, b);
         }
         seen.add(task.id);
-        paintCommandCard(b, task, key === selKey && selectedCommand?.id === task.id);
+        paintCommandCard(b, task, key === subOwner && selectedCommand?.id === task.id);
         if (sec.procBox.children[i] !== b) sec.procBox.insertBefore(b, sec.procBox.children[i] || null);
       });
       for (const [id, b] of sec.cards)

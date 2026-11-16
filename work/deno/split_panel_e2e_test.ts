@@ -8,6 +8,10 @@
  * Edge. Changes, the worktree status and the artifact lists are answered in the page (a fetch stub keyed by chat id), so the test
  * needs no git worktrees; the helpers are real (scripted subagent_update events).
  *
+ * Gaps closed (owner, 2026-11-15): a subagent or process row of the UNFOCUSED chat opens its history here without moving focus;
+ * an open history stays open when focus moves; the × that hides Activity is where it is with one chat and never moves; each chat's
+ * dropdown also lists "Docs this chat wrote"; the two dropdowns sit side by side at the default 280 px panel.
+ *
  * Run (from outputs/agent-studio): deno test -A ../../work/deno/split_panel_e2e_test.ts   (ignored without Chrome or Edge)
  */
 import { assert } from './_assert.ts';
@@ -33,7 +37,7 @@ function panelTest(name: string, fn: (lab: Lab) => Promise<void>) {
   });
 }
 
-/** Changes, worktree status and artifact lists per chat id, answered in the page; merge requests are recorded. */
+/** Changes, worktree status, artifact and doc lists per chat id, B's processes, answered in the page; merge requests are recorded. */
 function stub(page: Page, a: Chat, b: Chat) {
   const files = {
     [a.id]: [
@@ -49,8 +53,16 @@ function stub(page: Page, a: Chat, b: Chat) {
     ],
     [b.id]: [{ id: 'art-b1', conversationId: b.id, kind: 'md', title: 'RSS feed plan', version: 1, updatedAt: Date.now() / 1000 - 720 }],
   };
+  const docs = {
+    [a.id]: [],
+    [b.id]: [{ name: 'feed-notes', title: 'Feed notes', pages: 2, chat: b.id }, { name: 'other-notes', title: 'Not this chat', pages: 1, chat: 'someone-else' }],
+  };
+  const started = new Date(Date.now() - 90_000).toISOString();
+  const cmds = {
+    [b.key]: [{ id: 'cmd-b1', title: 'npm run feed-watch', status: 'running', started, agent: 'Main conversation', tool: 'Bash', command: 'npm run feed-watch' }],
+  };
   return page.eval(`(() => {
-    const files = ${JSON.stringify(files)}, arts = ${JSON.stringify(arts)};
+    const files = ${JSON.stringify(files)}, arts = ${JSON.stringify(arts)}, docs = ${JSON.stringify(docs)}, cmds = ${JSON.stringify(cmds)};
     const merges = (window.__merges = []), real = window.fetch.bind(window);
     const json = (o) => Promise.resolve(new Response(JSON.stringify(o), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     window.fetch = (url, init) => {
@@ -64,6 +76,13 @@ function stub(page: Page, a: Chat, b: Chat) {
         return json({ message: 'Merge requested' });
       }
       if (u.pathname === '/api/live/artifacts' && arts[id]) return json({ artifacts: arts[id] });
+      if (u.pathname === '/api/live/docs/list' && docs[id]) return json({ docs: docs[id] });
+      // a saved chat's session is its transcript path (".../feedsaved.jsonl"), the key "claude:feedsaved"
+      const sess = u.searchParams.get('session') || '',
+        session = Object.keys(cmds).find((k) => sess === k || sess.endsWith('/' + k.split(':').pop() + '.jsonl')) || sess;
+      if (u.pathname === '/api/commands' && cmds[session]) return json({ commands: cmds[session] });
+      if (u.pathname === '/api/command' && cmds[session])
+        return json(Object.assign({}, cmds[session].find((t) => t.id === u.searchParams.get('id')), { output: 'FEEDWATCHOUT' }));
       return real(url, init);
     };
   })()`);
@@ -214,20 +233,152 @@ panelTest('split panel: both chats in pane order on every tab, focus changes not
   assert(JSON.stringify(await keysOf(page, '.ar-split .ar-sgrp')) === JSON.stringify([a.key, b.key]), 'Artifacts in pane order');
 });
 
-panelTest('split panel: artifact dropdowns side by side when the panel is wide, stacked when narrow', async (lab) => {
+panelTest('split panel: artifact dropdowns side by side at the default 280 px panel (titles end in …), stacked only when narrower', async (lab) => {
   const page = lab.page;
   const { a, b } = await openSplit(lab);
   await split(lab, a, b);
   await page.click('#paneTab-artifacts');
-  await page.waitFor(`document.querySelectorAll('.ar-split .ar-sgrp').length === 2`, 15000, 'two dropdowns');
-  const tops = async (w: number) => {
-    await page.eval(`ResizeUI.setActivityWidth ? ResizeUI.setActivityWidth(${w}) : document.documentElement.style.setProperty('--activity-w', '${w}px')`);
+  await page.waitFor(`document.querySelectorAll('.ar-split .ar-spick:not(.plain)').length === 2`, 15000, 'two dropdowns');
+  const at = async (w: number) => {
+    await page.eval(`document.documentElement.style.setProperty('--activity-w', '${w}px')`);
     await settle(400);
-    return page.eval<{ w: number; t: number[] }>(`({ w: Math.round(document.getElementById('subagentsPane').getBoundingClientRect().width),
-      t: [...document.querySelectorAll('.ar-split .ar-sgrp')].map((n) => Math.round(n.getBoundingClientRect().top)) })`);
+    return page.eval<{ w: number; t: number[]; l: number[]; titleW: number[]; full: string[]; over: boolean[] }>(`(() => {
+      const g = [...document.querySelectorAll('.ar-split .ar-sgrp')], picks = g.map((n) => n.querySelector('.ar-spick'));
+      const titles = picks.map((p) => p.querySelector('.ar-pick-title'));
+      return { w: Math.round(document.getElementById('subagentsPane').getBoundingClientRect().width),
+        t: g.map((n) => Math.round(n.getBoundingClientRect().top)), l: g.map((n) => Math.round(n.getBoundingClientRect().left)),
+        titleW: titles.map((n) => Math.round(n.getBoundingClientRect().width)), full: picks.map((p) => p.title),
+        over: titles.map((n) => getComputedStyle(n).textOverflow === 'ellipsis' && getComputedStyle(n).whiteSpace === 'nowrap') };
+    })()`);
   };
-  const wide = await tops(440);
+  const dflt = await at(280);
+  assert(dflt.w === 280, `panel width ${dflt.w}`);
+  assert(dflt.t[0] === dflt.t[1] && dflt.l[1] > dflt.l[0], `default 280 px panel: side by side, tops ${dflt.t} lefts ${dflt.l}`);
+  assert(dflt.titleW.every((x) => x >= 75), `titles readable (>= 75 px each): ${dflt.titleW}`);
+  assert(dflt.over.every(Boolean), 'a long title ends in an ellipsis');
+  assert(/^Checkout bug root cause/.test(dflt.full[0]) && /^RSS feed plan/.test(dflt.full[1]), `full titles on hover: ${JSON.stringify(dflt.full)}`);
+  const wide = await at(440);
   assert(wide.t[0] === wide.t[1], `wide panel (${wide.w}px): side by side, tops ${wide.t}`);
-  const narrow = await tops(250);
+  const narrow = await at(250);
   assert(narrow.t[1] > narrow.t[0], `narrow panel (${narrow.w}px): stacked, tops ${narrow.t}`);
+});
+
+panelTest('split panel: each chat\'s dropdown also lists "Docs this chat wrote"', async (lab) => {
+  const page = lab.page;
+  const { a, b } = await openSplit(lab);
+  await split(lab, a, b);
+  await page.click('#paneTab-artifacts');
+  await page.waitFor(`document.querySelectorAll('.ar-split .ar-spick:not(.plain)').length === 2`, 15000, 'two dropdowns');
+  await page.waitFor(`/1 doc/.test(document.querySelector('.ar-split .ar-sgrp:nth-child(2) .sp-sub')?.textContent || '')`, 15000, 'B header counts its doc');
+  const was = await focusedKey(page);
+  await page.click('.ar-split .ar-sgrp:nth-child(2) .ar-spick');
+  await page.waitFor(`!!document.querySelector('.ar-pop:not([hidden]) .ar-it[data-doc="feed-notes"]')`, 5000, "B's doc listed");
+  const pop = await page.eval<{ text: string; docs: string[] }>(`({ text: document.querySelector('.ar-pop').innerText,
+    docs: [...document.querySelectorAll('.ar-pop [data-doc]')].map((n) => n.dataset.doc) })`);
+  assert(/Docs this chat wrote/i.test(pop.text), `group label: ${pop.text}`);
+  assert(JSON.stringify(pop.docs) === JSON.stringify(['feed-notes']), `only B's own docs: ${JSON.stringify(pop.docs)}`);
+  assert(/RSS feed plan/.test(pop.text), "B's artifact is still listed");
+  assert((await focusedKey(page)) === was, 'opening the dropdown did not move focus');
+  await page.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
+  await settle(300);
+  // A's dropdown: A wrote no docs, so no docs group
+  await page.click('.ar-split .ar-sgrp:nth-child(1) .ar-spick');
+  await page.waitFor(`!!document.querySelector('.ar-pop:not([hidden]) .ar-it[data-id="art-a1"]')`, 5000, 'A dropdown open');
+  assert(!(await page.eval<boolean>(`/Docs this chat wrote/i.test(document.querySelector('.ar-pop').innerText)`)), 'A lists no docs group');
+});
+
+panelTest('split panel: the other chat\'s subagent and process rows open their history without moving focus; it stays open when focus moves', async (lab) => {
+  const page = lab.page;
+  const { a, b } = await openSplit(lab);
+  await split(lab, a, b);
+  await page.waitFor(`!!document.querySelector('#splitActivity .sp-grp:nth-child(2) .subagent-card')?.offsetParent`, 20000, "B's helper row");
+  const hist = () =>
+    page.eval<{ open: boolean; eyebrow: string; title: string; cmd: string }>(`({ open: !document.getElementById('subchatPane').hidden && !!document.getElementById('subchatPane').offsetParent,
+      eyebrow: document.getElementById('inspectorEyebrow').textContent, title: document.getElementById('subchatTitle').textContent,
+      cmd: document.getElementById('commandDetails').hidden ? '' : document.getElementById('commandDetails').innerText })`);
+  // B (unfocused): its subagent row opens B's helper history; A keeps focus
+  await page.click('#splitActivity .sp-grp:nth-child(2) .subagent-card');
+  await page.waitFor(`!document.getElementById('subchatPane').hidden`, 10000, 'history opened');
+  await settle(800);
+  let h = await hist();
+  assert(h.open && /SUBAGENT/.test(h.eyebrow) && /Check feed spec/.test(h.title), `B's helper history: ${JSON.stringify(h)}`);
+  assert((await focusedKey(page)) === a.key, 'opening the other chat\'s history did not move focus');
+  // focus moves to B, then back to A: the history stays open on the same helper
+  await clickOther(page, b.key);
+  h = await hist();
+  assert(h.open && /Check feed spec/.test(h.title), `after focus moved to B: ${JSON.stringify(h)}`);
+  await clickOther(page, a.key);
+  h = await hist();
+  assert(h.open && /Check feed spec/.test(h.title), `after focus moved back to A: ${JSON.stringify(h)}`);
+  // the focused chat's own history stays open too when focus moves away
+  await page.click('#closeSubchat');
+  await page.waitFor(`document.getElementById('subchatPane').hidden`, 10000, 'history closed');
+  await page.click('#splitActivity .sp-grp:nth-child(1) .subagent-card');
+  await page.waitFor(`!document.getElementById('subchatPane').hidden`, 10000, "A's history opened");
+  const aTitle = (await hist()).title;
+  assert(/Find rounding bug|Map tax rules/.test(aTitle), `A's helper history: ${aTitle}`);
+  await clickOther(page, b.key);
+  h = await hist();
+  assert(h.open && h.title === aTitle, `A's history after focus moved to B: ${JSON.stringify(h)}`);
+});
+
+panelTest('split panel: the other chat’s process row opens its details without moving focus; they stay open when focus moves', async (lab) => {
+  // processes are read from a saved transcript's chat (a live chat lists them once saved): B is a saved chat here
+  const page = lab.page;
+  const a = await lab.chat();
+  await a.start();
+  a.say('Alpha here ALPHAEND');
+  const saved = lab.savedChat('feedsaved');
+  saved.user('Watch the feed');
+  saved.say('Watching SAVEDEND');
+  const b = { id: 'none', key: saved.key } as unknown as Chat;
+  await stub(page, a, b);
+  await lab.select(saved);
+  await shown(page, 'SAVEDEND');
+  await lab.select(a);
+  await shown(page, 'ALPHAEND');
+  await settle(800);
+  await split(lab, a, b);
+  await page.waitFor(`!!document.querySelector('#splitActivity .sp-grp:nth-child(2) .command-card')?.offsetParent`, 20000, "B's process row").catch(async (e) => {
+    throw new Error(`${e.message}: ${await page.eval(`JSON.stringify({ t: document.getElementById('splitActivity')?.innerText, chats: AgentSplitUI.paneChats(),  })`)}`);
+  });
+  await page.click('#splitActivity .sp-grp:nth-child(2) .command-card');
+  await page.waitFor(`/FEEDWATCHOUT/.test(document.getElementById('commandDetails').innerText)`, 10000, "B's process details");
+  const hist = () =>
+    page.eval<{ open: boolean; eyebrow: string; title: string }>(`({ open: !document.getElementById('subchatPane').hidden,
+      eyebrow: document.getElementById('inspectorEyebrow').textContent, title: document.getElementById('subchatTitle').textContent })`);
+  let h = await hist();
+  assert(h.open && /COMMAND/.test(h.eyebrow) && /npm run feed-watch/.test(h.title), `B's process: ${JSON.stringify(h)}`);
+  assert((await focusedKey(page)) === a.key, 'opening the other chat’s process did not move focus');
+  await clickOther(page, b.key);
+  h = await hist();
+  assert(h.open && /npm run feed-watch/.test(h.title), `B's process after focus moved to B: ${JSON.stringify(h)}`);
+  assert(/FEEDWATCHOUT/.test(await page.eval<string>(`document.getElementById('commandDetails').innerText`)), 'details still shown');
+});
+
+panelTest('split panel: the × that hides Activity is where it is with one chat, and focus does not move it', async (lab) => {
+  const page = lab.page;
+  const { a, b } = await openSplit(lab);
+  const box = `(() => { const n = document.getElementById('activityHide'); if (!n || !n.offsetParent) return null;
+    // where it sits in the Activity body, under the tab row (split view has no chat tab strip above the panel: the body starts higher)
+    const r = n.getBoundingClientRect(), b = document.getElementById('subagentsPane').getBoundingClientRect(), t = document.getElementById('paneTabs').getBoundingClientRect();
+    return [Math.round(b.right - r.right), Math.round(r.top - t.bottom), Math.round(r.width), Math.round(r.height)]; })()`;
+  const single = await page.eval<number[] | null>(box);
+  assert(single, 'the × shows with one chat');
+  await split(lab, a, b);
+  await page.waitFor(`document.querySelectorAll('#splitActivity .sp-grp').length === 2`, 20000, 'split Activity');
+  await settle(1600);
+  const inSplit = await page.eval<number[] | null>(box);
+  assert(inSplit && JSON.stringify(inSplit) === JSON.stringify(single), `split × ${JSON.stringify(inSplit)} vs one chat ${JSON.stringify(single)}`);
+  // nothing under it: the first header's text stops before it
+  const clear = await page.eval<boolean>(`(() => { const x = document.getElementById('activityHide').getBoundingClientRect();
+    return [...document.querySelectorAll('#splitActivity .sp-grp:first-child .sp-head > *')].every((n) => n.getBoundingClientRect().right <= x.left + 1); })()`);
+  assert(clear, 'the first chat header does not run under the ×');
+  await clickOther(page, b.key);
+  assert(JSON.stringify(await page.eval(box)) === JSON.stringify(single), 'focus on B: the × did not move');
+  await clickOther(page, a.key);
+  assert(JSON.stringify(await page.eval(box)) === JSON.stringify(single), 'focus back on A: the × did not move');
+  // it still hides Activity
+  await page.click('#activityHide');
+  await page.waitFor(`!document.getElementById('subagentsPane').offsetParent || document.getElementById('subagentsPane').getBoundingClientRect().width < 2`, 5000, 'Activity hidden');
 });
