@@ -46,7 +46,7 @@ import { studioOf } from '../web/studio_routes.ts';
 import { bringBack, restoreFolders } from '../web/project_routes.ts';
 import { isDeleted, isDocHistory } from '../artifacts/artifacts.ts';
 import { SAVED_KEY } from './saved.ts';
-import { cleanPushSub, scopesForPhone } from './devices.ts';
+import { cleanPushSub, PUSH_HOSTS, PUSH_HOST_SUFFIXES, pushSubProblem, scopesForPhone } from './devices.ts';
 import type { VapidKeys } from './push.ts';
 import { getLogger } from '../core/log.ts';
 import { PC_OWN_ROUTES, PcBridge } from './pc_bridge.ts';
@@ -104,6 +104,7 @@ export const REMOTE_STATIC: Readonly<Record<string, string>> = {
   '/phone.css': 'phone.css',
   '/phone.js': 'phone.js',
   '/phone-words.js': 'phone-words.js',
+  '/push-enable.js': 'push-enable.js',
   '/markdown.js': 'markdown.js',
   '/sw.js': `pwa${sep}sw.js`,
   '/icons/icon-128.png': `icons${sep}128x128.png`,
@@ -759,7 +760,21 @@ export class RemoteServer {
       return this.json(200, { ok: true, on: false });
     }
     const sub = cleanPushSub(body?.subscription, Date.now() / 1000);
-    if (!sub) return this.json(400, { error: 'This phone sent no usable notification address. Try again.', code: 'invalid' });
+    if (!sub) {
+      const why = pushSubProblem(body?.subscription);
+      if (why?.code === 'push_service') {
+        const allowed = [...PUSH_HOSTS, ...PUSH_HOST_SUFFIXES.map((s) => '*' + s)].join(', ');
+        return this.json(400, {
+          error: `${why.host || 'This push service'} is not a push service AIB can send to (${why.reason}). Allowed: ${allowed}.`,
+          code: 'push_service',
+          host: why.host,
+        });
+      }
+      return this.json(400, {
+        error: why ? `This device sent no usable notification address: ${why.reason}. Try again.` : 'This device sent no usable notification address. Try again.',
+        code: why?.code ?? 'invalid',
+      });
+    }
     const had = device.push?.endpoint === sub.endpoint;
     await this.host.devices.setPush(device.id, sub);
     if (!had) this.host.audit.write({ device: device.id, name: device.name, action: 'notifications', result: 'turned on on the phone' });

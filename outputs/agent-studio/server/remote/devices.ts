@@ -113,9 +113,9 @@ export function pushEndpointAllowed(url: URL): boolean {
   return PUSH_HOSTS.includes(host) || PUSH_HOST_SUFFIXES.some((s) => host.endsWith(s) && host.length > s.length);
 }
 
-/** A subscription from a phone, checked: an https address at a known push service (pushEndpointAllowed) and the two keys
- * (base64url). Null when it is not one. */
-export function cleanPushSub(value: unknown, at: number): PushSub | null {
+/** Why a subscription from a browser cannot be kept (null when it can): the endpoint is not an https address, is at a push service
+ * AIB does not send to (host says which), or the keys are not the two base64url values. */
+export function pushSubProblem(value: unknown): { code: 'bad_endpoint' | 'push_service' | 'bad_keys'; host: string; reason: string } | null {
   const v = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   const keys = v.keys && typeof v.keys === 'object' ? v.keys as Record<string, unknown> : {};
   const endpoint = typeof v.endpoint === 'string' ? v.endpoint : '';
@@ -125,11 +125,27 @@ export function cleanPushSub(value: unknown, at: number): PushSub | null {
   try {
     url = new URL(endpoint);
   } catch {
-    return null;
+    return { code: 'bad_endpoint', host: '', reason: 'the notification address is missing or not a web address' };
   }
-  if (endpoint.length > 1000 || !pushEndpointAllowed(url)) return null;
-  if (!b64(keys.p256dh, 80, 100) || !b64(keys.auth, 16, 30)) return null;
-  return { endpoint, p256dh: keys.p256dh as string, auth: keys.auth as string, at };
+  if (endpoint.length > 1000) return { code: 'bad_endpoint', host: url.hostname, reason: 'the notification address is too long' };
+  if (!pushEndpointAllowed(url)) {
+    const host = url.hostname;
+    const reason = url.protocol !== 'https:' ? 'it is not an https address' : 'that is not a push service AIB sends to';
+    return { code: 'push_service', host, reason };
+  }
+  if (!b64(keys.p256dh, 80, 100) || !b64(keys.auth, 16, 30)) {
+    return { code: 'bad_keys', host: url.hostname, reason: 'the notification keys are missing or malformed' };
+  }
+  return null;
+}
+
+/** A subscription from a phone or computer, checked (pushSubProblem): an https address at a known push service and the two keys
+ * (base64url). Null when it is not one. */
+export function cleanPushSub(value: unknown, at: number): PushSub | null {
+  if (pushSubProblem(value)) return null;
+  const v = value as Record<string, unknown>;
+  const keys = v.keys as Record<string, unknown>;
+  return { endpoint: v.endpoint as string, p256dh: keys.p256dh as string, auth: keys.auth as string, at };
 }
 
 const SEEN_WRITE_SECONDS = 300;

@@ -37,6 +37,7 @@ export const PC_STATIC: Readonly<Record<string, string>> = (() => {
     // the loader and the computer page's own script
     'remote-loader.html',
     'remote-loader.js',
+    'push-enable.js',
     'remote-auth.js',
     'remote-windows.js',
     'remote.css',
@@ -158,7 +159,7 @@ export function pcShell(html: string, manifest = true): string {
   // remote-windows.js (phase 4): this browser's own AIB windows, before any page script asks for one
   let out = html.replace(
     '<script src="/page-auth.js"></script>',
-    '<script src="/remote-auth.js"></script><script src="/remote-windows.js"></script>',
+    '<script src="/push-enable.js"></script><script src="/remote-auth.js"></script><script src="/remote-windows.js"></script>',
   );
   out = out.replace(/<script src="\/desktop-bridge\.js" defer><\/script>\s*/g, '');
   out = out.replace(

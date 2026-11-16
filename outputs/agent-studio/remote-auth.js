@@ -546,26 +546,45 @@
       throw new Error(b.error || 'That did not work. Try again.');
     }
   }
+  const pushEnv = () => ({
+    navigator: root.navigator,
+    Notification: root.Notification,
+    PushManager: root.PushManager,
+    keyBytes,
+    pcName: pcName(),
+    async getKey() {
+      if (!S.pushKey) await bootPush();
+      return S.pushKey;
+    },
+    async register() {
+      const reg = await root.navigator.serviceWorker.register('/sw.js', { scope: '/' });
+      await root.navigator.serviceWorker.ready;
+      return reg;
+    },
+    async send(subscription) {
+      const r = await remoteFetch('/api/remote/push/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subscription }),
+      });
+      const data = await r.json().catch(() => ({}));
+      return { ok: r.ok, status: r.status, data };
+    },
+  });
   const push = {
     state: () => ({
       supported: pushSupported(),
       allowed: can('phone.push'),
       blocked: typeof root.Notification === 'function' && root.Notification.permission === 'denied',
       on: S.pushOn,
+      brave: !!root.navigator.brave,
     }),
     async on() {
-      if (!pushSupported()) throw new Error('This browser cannot show notifications from AIB.');
-      const permission = await root.Notification.requestPermission();
-      if (permission !== 'granted') throw new Error('Notifications were not allowed in this browser.');
-      if (!S.pushKey) await bootPush();
-      if (!S.pushKey) throw new Error("Can't reach " + pcName() + '. Try again.');
-      const reg = await root.navigator.serviceWorker.register('/sw.js', { scope: '/' });
-      await root.navigator.serviceWorker.ready;
-      let sub = await reg.pushManager.getSubscription();
-      if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(S.pushKey) });
-      await post('/api/remote/push/subscribe', { subscription: sub.toJSON() });
+      await root.AIBPushEnable.enable(pushEnv()); // throws Error(one line with the fix in it) for every failure
       S.pushOn = true;
     },
+    /** A notification from this browser itself, to see that it works. */
+    test: () => root.AIBPushEnable.showTest(pushEnv()),
     async off() {
       try {
         const reg = await root.navigator.serviceWorker.getRegistration('/');

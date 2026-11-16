@@ -10,12 +10,13 @@
      and says "Reconnecting…", then that AIB is closed on the PC or the PC cannot be reached, with Try again (phone.js).
    Pure helpers are exported for node tests (work/test_phone_sw.js). */
 (function (self) {
-  const SHELL = 'aib-shell-v3';
+  const SHELL = 'aib-shell-v4';
   const SHELL_FILES = [
     '/phone.html',
     '/phone.js',
     '/phone.css',
     '/phone-words.js',
+    '/push-enable.js',
     '/markdown.js',
     '/themes.js',
     '/theme.css',
