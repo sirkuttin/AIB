@@ -640,9 +640,10 @@
       const end = compoundEnd(s),
         head = s.slice(0, end),
         rest = s.slice(end);
-      // the real view: as before, never the copy
+      // the real view: as before, never the copy. :where() keeps the rule's specificity exactly as it was: a bare :not(.mirror-copy *)
+      // adds a class, so "body > main" would start beating "html body > main" (activity.css) and the right panel's room was taken twice.
       const pe = lastPseudoElement(s),
-        guard = ':not(.mirror-copy *)';
+        guard = ':where(:not(.mirror-copy *))';
       out.push(pe >= 0 ? s.slice(0, pe) + guard + s.slice(pe) : s + guard);
       if (!rest.trim()) continue; // a rule for the body itself
       const state = head
@@ -722,7 +723,9 @@
   function viewSig(find) {
     return HOLD_IDS.map((id) => {
       const n = find(id);
-      return n ? id + (n.hidden ? ':h:' : ':s:') + n.textContent.trim() : id + ':-';
+      // a hidden part counts as hidden, whatever its text: the copy (cloneView) leaves out a hidden node's children, so its text
+      // there is empty while the real one keeps it ("Mark handled"), and the hold never matched and always ran the full 2 s
+      return n ? id + (n.hidden ? ':h' : ':s:' + n.textContent.trim()) : id + ':-';
     }).join('|');
   }
   function hold(p) {

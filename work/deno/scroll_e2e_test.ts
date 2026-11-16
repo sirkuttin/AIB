@@ -979,6 +979,10 @@ scrollTest('9b saved chat being written, scrolled up: new rows do not move what 
 // Every check here looks at every animation frame, not once after a second: a jump that a timer puts right 60 ms later is a jump.
 
 const MIRROR = '.mirror-msgs';
+// The other pane's header, to click into it: since fix/focus-no-hide (owner 2026-11-15, "stop changing what is displayed when
+// switching chat focus") the pane shows a copy of the real view, whose header is .mirror-copy > header; the plain stand-in
+// (.mirror-head) only shows until the chat has been in the real view once. Same selector as split_focus_e2e_test.ts.
+const OTHER_HEAD = '#splitStage .pane:not(.foc) :is(.mirror-copy > header [data-mid="title"], .mirror-head)';
 
 /** Two chats side by side: the focused pane shows one in #messages, the other pane a live copy of the other (.mirror-msgs). */
 async function openSplit(lab: Lab) {
@@ -1066,7 +1070,7 @@ scrollTest("B2 split view: clicking into the other pane keeps both panes' places
   await settle(600);
   const mainBefore = await anchor(page, 'messages'), sideBefore = await anchor(page, MIRROR);
   assert(mainBefore && sideBefore, 'a row at the top of each pane');
-  await clickHere(page, '#splitStage .pane:not(.foc) .mirror-head');
+  await clickHere(page, OTHER_HEAD);
   await page.waitFor(`!!document.querySelector('.mirror-msgs') && document.getElementById('messages').textContent.includes(${JSON.stringify(sideBefore!.text.slice(0, 30))})`, 15000, 'the panes swapped');
   await settle(2000);
   const nowMain = await whereIs(page, sideBefore!.text, 'messages');
@@ -1567,9 +1571,11 @@ scrollTest('R7 split view: click into the other pane three times, both keep thei
   let mainA = await anchor(page, 'messages'), sideA = await anchor(page, MIRROR);
   const problems: string[] = [];
   for (let k = 0; k < 3; k++) {
-    await clickHere(page, '#splitStage .pane:not(.foc) .mirror-head');
+    await clickHere(page, OTHER_HEAD);
     await page.waitFor(`document.getElementById('messages').textContent.includes(${JSON.stringify(sideA!.text.slice(0, 30))})`, 15000, 'the panes swapped');
     await settle(1500);
+    // the copy held over the pane that took focus goes as soon as the real view shows the same (split-ui.js hold), not after 2 s
+    if (await page.eval<boolean>(`!!document.querySelector('.mirror-hold')`)) problems.push(`switch ${k + 1}: the held copy still lies over the real view`);
     const nowMain = await whereIs(page, sideA!.text, 'messages'), nowSide = await whereIs(page, mainA!.text, MIRROR);
     if (nowMain === null || Math.abs(nowMain - sideA!.off) > 2) problems.push(`switch ${k + 1}: the pane you entered at ${nowMain}, was ${sideA!.off}`);
     if (nowSide === null || Math.abs(nowSide - mainA!.off) > 2) problems.push(`switch ${k + 1}: the pane you left at ${nowSide}, was ${mainA!.off}`);
