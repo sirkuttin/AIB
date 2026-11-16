@@ -45,10 +45,17 @@ function folderName(cwd: unknown): string {
   return parts.at(-1) ?? '';
 }
 
+/** One subagent as the phone gets it: the facts the PC's Activity names and sorts it by (subagents-ui.js classify / names /
+ * worktreeWords run on the phone): its title (often its type, "general-purpose"), the task's description, the agent's state and
+ * stop reason, and where it works and how its work lands ({where, landing} from subagent worktrees P3) when AIB knows. */
 export interface Helper {
   id: string;
   title: string;
+  description?: string;
   state: string;
+  stopReason?: string;
+  where?: string;
+  landing?: string;
 }
 
 export interface HomeChat {
@@ -167,7 +174,7 @@ export class StateTimes {
 }
 
 /** The card line of a chat from its newest events and what waits: what it asks, the step it works on, the last message. */
-export function lineOf(state: Json): string {
+export function lineOf(state: Json, after = 0): string {
   const cut = (t: string) => {
     const s = t.replace(/\s+/g, ' ').trim();
     return s.length > LINE_MAX ? s.slice(0, LINE_MAX - 1) + '…' : s;
@@ -185,11 +192,19 @@ export function lineOf(state: Json): string {
   let message = '';
   let who = '';
   let step = '';
+  // the card reads only the newest events: an agent message already going when they start is cut at its front (`partial`)
+  let partial = false;
   const running = new Map<string, string>();
-  for (const raw of Array.isArray(state.events) ? state.events : []) {
+  const events = Array.isArray(state.events) ? state.events : [];
+  // `after`: the events start after this seq (the card reads the newest ones); 1 counts as the start (seq 1 opens a chat, not a reply)
+  const cutFront = after > 1 && (Number(obj(events[0]).seq) || 0) > 1;
+  const main = str(state.sessionId, 200);
+  for (const raw of events) {
     const e = obj(raw);
     const data = obj(e.data);
+    if (main && typeof data.sessionId === 'string' && data.sessionId && data.sessionId !== main) continue; // a subagent's own
     if (e.kind === 'user') {
+      partial = false;
       who = 'you';
       message = typeof data.text === 'string' ? data.text : '';
       continue;
@@ -200,6 +215,7 @@ export function lineOf(state: Json): string {
       const t = typeof obj(u.content).text === 'string' ? obj(u.content).text as string : '';
       if (who === 'agent') message += t;
       else {
+        partial = who === '' && cutFront;
         who = 'agent';
         message = t;
       }
@@ -214,8 +230,9 @@ export function lineOf(state: Json): string {
   }
   if (state.busy && running.size) step = [...running.values()].at(-1)!;
   if (step) return cut('Working on: ' + step);
-  if (!message.trim()) return '';
-  return cut((who === 'you' ? 'You: ' : '') + message);
+  const line = plainLine(message, who !== 'you' && partial);
+  if (!line) return '';
+  return cut((who === 'you' ? 'You: ' : '') + line);
 }
 
 /** The first request a chat's state waits on (an approval, else a question), or null: the phone inbox card's line 1 and buttons. */
@@ -300,9 +317,10 @@ export class TitleCache {
         let line = this.lines.get(id)?.[1] ?? '';
         try {
           // the newest events only; never cursor 0 (that read also refreshes the account's usage limits)
-          const state = obj(await ctx.host.liveState(id, Math.max(1, cursor - 80)));
+          const from = Math.max(1, cursor - 80);
+          const state = obj(await ctx.host.liveState(id, from));
           if (state.id || Array.isArray(state.events)) {
-            line = lineOf(state);
+            line = lineOf(state, from);
             this.asks.set(id, askOf(state));
           }
         } catch { /* gone */ }
@@ -338,13 +356,79 @@ export class TitleCache {
   }
 }
 
-function helpersOf(subagents: unknown): Helper[] {
-  const out: Helper[] = [];
+/** The most subagents a chat answer lists: every one still running first, then the newest ended ones (`helpersMore` counts the rest). */
+export const HELPERS_MAX = 100;
+const ENDED = /^(idle|completed?|failed|error|cancell?ed|canceled|stopped|killed|interrupted|unknown)$/i;
+
+export function helpersOf(subagents: unknown, worktrees?: unknown): { helpers: Helper[]; more: number } {
+  const wt = obj(worktrees);
+  const all: Helper[] = [];
   for (const [id, raw] of Object.entries(obj(subagents))) {
     const a = obj(raw);
-    out.push({ id, title: str(a.title, 120) || str(a.description, 120) || 'Subagent', state: str(a.state, 40) || 'unknown' });
+    const h: Helper = { id, title: str(a.title, 120), state: str(a.state, 40) || 'unknown' };
+    const d = str(a.description, 200);
+    if (d) h.description = d;
+    const why = str(a.stopReason, 40);
+    if (why) h.stopReason = why;
+    const w = obj(wt[id]);
+    if (str(w.where, 200)) {
+      h.where = str(w.where, 200);
+      const landing = str(w.landing, 200);
+      if (landing) h.landing = landing;
+    }
+    all.push(h);
   }
-  return out.slice(-30);
+  if (all.length <= HELPERS_MAX) return { helpers: all, more: 0 };
+  const running = all.filter((h) => !ENDED.test(h.state)).slice(-HELPERS_MAX);
+  const room = HELPERS_MAX - running.length;
+  const ended = room > 0 ? all.filter((h) => ENDED.test(h.state)).slice(-room) : [];
+  const keep = new Set([...running, ...ended]);
+  return { helpers: all.filter((h) => keep.has(h)), more: all.length - keep.size };
+}
+
+/** A card's last line in plain words: the first line of a message as the PC's sidebar shows it (headings, quotes, list markers,
+ * emphasis and code marks gone; a link as its text, never its URL), spaces collapsed. `partial`: the text starts somewhere inside
+ * the message (the card reads only the newest events), so it starts at the next whole paragraph or sentence, never mid-word. */
+export function plainLine(text: string, partial = false): string {
+  let t = String(text || '').replace(/\r\n?/g, '\n');
+  if (partial) {
+    // the next sentence in the cut paragraph, else the next paragraph, else the next word (after "…")
+    const para = t.search(/\n\s*\S/);
+    const end = /[.!?]["')\]]?[ \t]+(?=\S)/.exec(t);
+    if (end && (para < 0 || end.index < para)) t = t.slice(end.index + end[0].length);
+    else if (para >= 0) t = t.slice(para + 1);
+    else {
+      const space = t.search(/\s\S/);
+      t = space >= 0 ? '…' + t.slice(space + 1) : t;
+    }
+  }
+  let fence = false;
+  for (const line of t.split('\n')) {
+    if (/^\s*(```|~~~)/.test(line)) {
+      fence = !fence;
+      continue;
+    }
+    if (/^\s*\|?[\s:|-]*-{3,}[\s:|-]*$/.test(line) || /^\s*([-*_]\s*){3,}$/.test(line)) continue; // table rule, horizontal rule
+    const s = plainInline(line.replace(/^\s*(?:>\s*)*(?:#{1,6}\s+|[-*+]\s+(?:\[[ xX]\]\s+)?|\d+[.)]\s+)?/, ''));
+    if (s) return s;
+  }
+  return '';
+}
+
+/** Markdown marks out of one line: images and links as their text, emphasis, strike and code marks gone, spaces collapsed. */
+export function plainInline(line: string): string {
+  return String(line || '')
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\[([^\]]+)\]\((?:[^()]|\([^)]*\))*\)/g, '$1')
+    .replace(/\[([^\]]+)\]\[[^\]]*\]/g, '$1')
+    .replace(/<(https?:\/\/[^>\s]+)>/g, '$1')
+    .replace(/`+([^`]*)`+/g, '$1')
+    .replace(/(\*\*|__)(?=\S)([\s\S]*?\S)\1/g, '$2')
+    .replace(/~~(?=\S)([\s\S]*?\S)~~/g, '$1')
+    .replace(/(^|[^\w*])\*(?=\S)([^*]*?\S)\*(?![\w*])/g, '$1$2')
+    .replace(/(^|[^\w])_(?=\S)([^_]*?\S)_(?![\w])/g, '$1$2')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 export function revisionOf(value: unknown): string {
@@ -509,6 +593,16 @@ export interface ChatPayload {
    * again from them (its older events no longer join up). */
   gap?: boolean;
   helpers: Helper[];
+  /** Ended subagents left out of `helpers` (HELPERS_MAX); the phone says they are on the PC. */
+  helpersMore?: number;
+  /** The inbox's phase (inbox-rules.js phaseOf), as on a home card: the header's status follows it. */
+  phase: string;
+  /** The reply ended but this many of its subagents still run (attention.helpers): the header says Working · N subagents. */
+  helpersRunning: number;
+  /** The reply ended but a command it started still runs (attention.shells). */
+  background: boolean;
+  /** Subagent worktrees: on, or why not, and the read-only types (the phone's subagent lines use it as the PC's Activity does). */
+  subagentIsolation?: unknown;
   /** What waits for you: what the sheets need (permission: only the options a phone may pick; question: the form). */
   waiting: Waiting[];
   /** Can take a message now (ready, not read only). */
@@ -633,6 +727,7 @@ export async function chatPayload(
   const title = str(name, 170) || str(mark.title, 170) || str(obj(obj(state.breadth).sessionInfo).title, 170) || titles.titles.get(id) ||
     `${agent}${folder ? ' in ' + folder : ''}`;
   const root = str(state.projectRoot, 2000) || str(state.cwd, 2000);
+  const helpersMade = helpersOf(state.subagents, state.subagentWorktrees);
   return {
     id,
     title,
@@ -650,7 +745,12 @@ export async function chatPayload(
     firstSeq: Number(obj(events[0]).seq) || 0,
     truncated: all.length > events.length || (paged && !!opened!.more),
     ...(gap ? { gap: true } : {}),
-    helpers: helpersOf(state.subagents),
+    helpers: helpersMade.helpers,
+    ...(helpersMade.more ? { helpersMore: helpersMade.more } : {}),
+    phase: INBOX.phaseOf(attention, mark, Date.now() / 1000),
+    helpersRunning: Number(attention.helpers) || 0,
+    background: !!attention.shells,
+    ...(state.subagentIsolation ? { subagentIsolation: state.subagentIsolation } : {}),
     waiting,
     ready: !!state.ready && !state.readOnly && !state.rebuilding && !state.closed,
     closed: !!state.closed,

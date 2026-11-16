@@ -279,6 +279,7 @@ Deno.test({
     assertEquals(chat.json.helpers, [{
       id: "child-1",
       title: "Review the fixture",
+      description: "Reads the fixture and reports",
       state: "running",
     }]);
     answers.push(chat);
@@ -1083,7 +1084,7 @@ Deno.test({
           await page.eval('document.querySelector(".ph-live").textContent'),
         ).startsWith("Step 7 · RUN npm run lint · 4 min"),
       );
-      // one agent per chat: its subagents are a card in the stream (title and state only) and a shortcut under the title
+      // one agent per chat: its subagents are a card in the stream (name and state, finished ones folded) and a shortcut under the title
       assertEquals(
         await page.eval('document.getElementById("phSubsGo").textContent'),
         "2 subagents working ›",
@@ -1096,11 +1097,11 @@ Deno.test({
       await page.waitFor('document.querySelectorAll("#phSubs li").length === 3', 15000, "the Subagents card");
       assertEquals(
         await page.eval<string[]>('[...document.querySelectorAll("#phSubs li")].map((li) => li.textContent)'),
-        ["Codex · testsworking", "Gemini · docsworking", "Claude · apidone"],
+        ["Gemini · docsWorking", "Codex · testsWorking", "▸1 finished"], // newest first, as the PC
       );
       assertEquals(
         await page.eval('document.querySelector("#phSubs .ph-fold").textContent'),
-        "⑂Subagents · 3 · 2 working›",
+        "⑂Subagents · 2 working›",
       );
       await page.waitFor(
         '(() => { const i = document.querySelector(".ph-img"); return i && i.complete && i.naturalWidth > 0; })()',
