@@ -66,6 +66,7 @@ import { distroName, guardRealWslAgent, wslTestHomeEnv } from '../wsl/access.ts'
 import { APP_VERSION, TESTS_DIR } from '../core/app.ts';
 import { getLogger } from '../core/log.ts';
 import { DOCS_RULE } from '../docs/tool_defs.ts';
+import { SUBAGENT_PROMPT } from '../subagents/claude_config.ts';
 import {
   clip,
   isDict,
@@ -528,7 +529,7 @@ function normcase(path: string): string {
   return Deno.build.os === 'windows' ? path.replaceAll('/', '\\').toLowerCase() : path;
 }
 
-function isFixture(command: unknown): boolean {
+export function isFixture(command: unknown): boolean {
   let fixtures: string;
   try {
     fixtures = normcase(resolvePath(TESTS_DIR)).replace(/[\\/]+$/, '');
@@ -577,6 +578,12 @@ export const HOME_VARS = [
   'LOCALAPPDATA',
 ];
 
+/**
+ * The temp-folder variables a real agent under test gets, pointing at <test home>/tmp (architect review MF 12): Claude Code writes
+ * task output under %TEMP%\claude\<project>. A list of its own: HOME_VARS is reused elsewhere.
+ */
+export const TEMP_VARS = ['TEMP', 'TMP', 'TMPDIR'];
+
 /** Under test, a real (non-fixture) agent gets a throwaway home so it can never write into the owner's ~/.claude. {} otherwise. */
 export function testHomeEnv(command: string[]): Record<string, string> {
   if (Deno.env.get('AGENT_STUDIO_TEST') !== '1' || isFixture(command)) {
@@ -591,7 +598,11 @@ export function testHomeEnv(command: string[]): Record<string, string> {
       } catch { /* best effort, as shutil.rmtree(ignore_errors=True) */ }
     });
   }
-  return Object.fromEntries(HOME_VARS.map((name) => [name, testHome!]));
+  const tmp = `${testHome}${SEP}tmp`;
+  try {
+    Deno.mkdirSync(tmp, { recursive: true });
+  } catch { /* made */ }
+  return Object.fromEntries([...HOME_VARS.map((name) => [name, testHome!]), ...TEMP_VARS.map((name) => [name, tmp])]);
 }
 
 /**
@@ -816,6 +827,8 @@ interface ToolSeen {
   since: number;
   main: boolean;
   turn: number;
+  /** Claude Code: the Agent call this one runs under (_meta.claudeCode.parentToolUseId), or null for the main agent's own. */
+  parent?: string | null;
 }
 
 /** A tool call that moved to the background (any of the three signals): what the page shows and what Stop may kill. */
@@ -891,6 +904,15 @@ export class Connection {
   /** Allow rules (server/allow): the host's gate and this chat's scratch folder (outside its worktree). */
   allowGate: AllowGate | null = null;
   scratchDir: string | null = null;
+  /**
+   * Subagent worktrees (subagents/): the hooks this Claude chat got (settings sent in session/new and load; read-only types and
+   * whether the user's own WorktreeCreate hook makes the worktrees), or why it got none (`off`: "hooks are off", "not a git
+   * project", "WSL", ...). Null: not a Claude chat, or not decided (a chat taken over from the keeper).
+   */
+  subagentHooks: { settings: Json | null; readOnly: string[]; userWorktreeHook: string; off: string; detail?: string; adopted?: boolean } | null =
+    null;
+  /** The worktree a subagent works in, by its Agent call's tool_use_id (allow-rule parity); set by the Studio. */
+  subagentWorktree: ((toolUseId: string) => string | null) | null = null;
   sessionId: string | null = null;
   events: Json[] = [];
   eventImageBytes = 0;
@@ -2685,7 +2707,16 @@ export class Connection {
       // A shell command: Claude Code's Bash or PowerShell; for the other agents an `execute` tool (Codex exec_command, OMP bash).
       // Never an MCP tool or WebFetch, whatever kind it reports.
       const shell = isStr(toolName) ? toolName === 'Bash' || toolName === 'PowerShell' : get(update, 'kind') === 'execute';
-      seen = { shell, toolName: isStr(toolName) ? toolName : null, status: '', since: this.#now(), main, turn: this.promptSeq };
+      const parent = isDict(claude) ? get(claude, 'parentToolUseId') : null;
+      seen = {
+        shell,
+        toolName: isStr(toolName) ? toolName : null,
+        status: '',
+        since: this.#now(),
+        main,
+        turn: this.promptSeq,
+        parent: isStr(parent) ? parent : null,
+      };
       this.#tools.set(id, seen);
       while (this.#tools.size > 300) this.#tools.delete(this.#tools.keys().next().value!);
       if (shell) {
@@ -3747,6 +3778,7 @@ export class Connection {
           mcpServers,
           ...this.artifactPrompt(mcpServers),
           ...this.extraFolders(),
+          ...this.claudeMeta(),
         },
       );
     } else {
@@ -3755,6 +3787,7 @@ export class Connection {
         mcpServers,
         ...this.artifactPrompt(mcpServers),
         ...this.extraFolders(),
+        ...this.claudeMeta(),
       });
     }
     this.#takeSession(result, resume);
@@ -5242,11 +5275,21 @@ export class Connection {
    * {systemPrompt: ...} that tells the agent about Studio's artifact tool, or {} when this chat has no such tool or the agent does
    * not advertise client system prompts (ACP unstable `systemPrompt`; appended after the agent's own).
    */
+  /**
+   * {_meta: {claudeCode: {options: {settings}}}} for a Claude chat whose subagents get their own worktree (subagents/claude_config.ts
+   * hookSettings: the command hooks; never written to ~/.claude), or {}. The same object on every session/new and session/load.
+   */
+  claudeMeta(): Json {
+    const settings = this.subagentHooks?.settings;
+    return settings ? { _meta: { claudeCode: { options: { settings: structuredClone(settings) } } } } : {};
+  }
+
   artifactPrompt(servers: unknown[] | null): Json {
     const own = (servers ?? []).some(isOwnArtifactEntry);
     const local = this.localOnlyText();
     const brief = this.scratchDir ? houseRules(this.scratchDir) : ''; // allow rules: the house rules with the literal scratch path
-    if (!own && !local && !brief) return {};
+    const subagents = this.subagentHooks?.settings ? SUBAGENT_PROMPT : ''; // hooks on: subagents that edit get their own worktree
+    if (!own && !local && !brief && !subagents) return {};
     const out: Json = {};
     // Presence is support (ACP capability objects): codex-acp advertises `systemPrompt: {}`, which a truthiness test missed.
     if (isDict(this.#sessionCaps()?.systemPrompt)) {
@@ -5261,6 +5304,7 @@ export class Connection {
       }
       if (brief) content.push({ type: 'text', text: brief });
       if (local) content.push({ type: 'text', text: local });
+      if (subagents) content.push({ type: 'text', text: subagents });
       out.systemPrompt = { mode: 'append', content };
     }
     return out;
@@ -5299,11 +5343,15 @@ export class Connection {
     const call = isDict(params) ? get(params, 'toolCall') : null;
     const id = isDict(call) ? get(call, 'toolCallId') : null;
     const mode = get(this.#modes(), 'currentModeId');
+    const seen = isStr(id) ? this.#tools.get(id) : undefined;
+    // Approval parity (subagent worktrees, design 2.4): a subagent's call in the worktree AIB recorded for it is checked against that
+    // worktree exactly as the main agent's is against the folder (same rules, same protected names); never its parent folder.
+    const worktree = seen?.parent && this.subagentWorktree ? this.subagentWorktree(seen.parent) : null;
     return {
       provider: this.provider,
-      toolName: isStr(id) ? this.#tools.get(id)?.toolName ?? null : null,
+      toolName: seen?.toolName ?? null,
       mode: isStr(mode) ? mode : null,
-      cwd: this.cwd,
+      cwd: worktree ?? this.cwd,
       project: this.projectRoot || this.cwd,
       scratch: this.scratchDir,
       stateDir: this.allowGate?.stateDir ?? null,
@@ -5912,6 +5960,8 @@ export class Connection {
       steerAgent: STEER_AGENTS.has(this.provider) ? this.provider : null,
       steerLane: this.queue.steerPublic(light),
       toolBackground: this.toolBackground(),
+      // Subagent worktrees (P1; Activity's chips are P3): on, or why not ("hooks are off", "not a git project", "WSL, coming", ...)
+      ...(this.subagentHooks ? { subagentIsolation: { on: !!this.subagentHooks.settings || !!this.subagentHooks.adopted, reason: this.subagentHooks.off } } : {}),
       pendingChanges: [...this.pendingChanges.values()].map((v) => ({ ...v })),
       changeFailures: this.changeFailures.map((v) => ({ ...v })),
       state: this.closed

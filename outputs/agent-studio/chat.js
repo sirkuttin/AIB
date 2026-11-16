@@ -2540,7 +2540,26 @@
     const main = agents.find((a) => a.main);
     return typeof main?.model === 'string' ? main.model : '';
   }
+  /* Subagent worktrees (P1): a Claude chat whose Claude Code settings turn hooks off can't give its subagents their own worktree;
+     Activity says so under the Subagents heading (the chips per subagent come in P3). */
+  function paintIsolationNote() {
+    const iso = current && snapshot ? snapshot.subagentIsolation : null,
+      show = !!iso && !iso.on && iso.reason === 'hooks are off';
+    let note = $('subagentIsolationNote');
+    if (!note && !show) return;
+    if (!note) {
+      const heading = document.querySelector('#activityBody > .subagent-section-heading');
+      if (!heading) return;
+      note = text('p', '', 'command-status-note subagent-isolation-note');
+      note.id = 'subagentIsolationNote';
+      heading.after(note);
+    }
+    note.textContent = 'Not isolated: hooks are off';
+    note.title = "Subagents aren't isolated: hooks are off in your Claude Code settings, so AIB can't give them their own worktree.";
+    note.hidden = !show;
+  }
   function renderAgents() {
+    paintIsolationNote();
     const rows = sortAgents(current ? [...children.values()] : agents.filter((a) => !a.main));
     if (window.SubagentsUI) {
       window.SubagentsUI.render({

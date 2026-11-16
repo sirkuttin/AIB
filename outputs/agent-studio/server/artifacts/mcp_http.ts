@@ -33,6 +33,10 @@ export const CONVERSATION_HEADER = 'X-Studio-Conversation-Id';
 export const MCP_PATH = '/mcp';
 /** Largest request body: a publish can carry a whole page as `content`. */
 export const MAX_BODY_BYTES = 64 * 1024 * 1024;
+/** Claude Code command hooks (subagent worktrees): POST /hooks/claude/<event>, the chat's hook key in this header. */
+export const HOOK_KEY_HEADER = 'X-Studio-Hook-Key';
+const HOOK_PATH = /^\/hooks\/claude\/(pre-tool|worktree-create|post-agent|subagent-stop)$/;
+const MAX_HOOK_BYTES = 4 * 1024 * 1024;
 
 type Json = Record<string, unknown>;
 
@@ -52,6 +56,8 @@ export interface McpHttpStudio {
    * whichever AIB runs now (after a restart or an update, on another port).
    */
   addressFile?: string;
+  /** A Claude chat's command hook (key already checked for `conversation`); absent: the hook routes answer 503. */
+  hook?(event: string, conversation: string, body: unknown): Promise<{ status: number; body: string; type: string }>;
 }
 
 /** The address file's name in the state folder (FORWARD_FILE): {"url": ..., "pid": ...}. */
@@ -233,6 +239,8 @@ export class ArtifactMcpHttp {
       await drain(request);
       return refused(403, 'Forbidden');
     }
+    const hook = HOOK_PATH.exec(new URL(request.url).pathname);
+    if (hook) return await this.#hook(request, hook[1]);
     if (new URL(request.url).pathname !== MCP_PATH) {
       await drain(request);
       return refused(404, 'Not found');
@@ -259,6 +267,40 @@ export class ArtifactMcpHttp {
     const raw = await readLimited(request, MAX_BODY_BYTES);
     if (raw === null) return refused(413, 'Request too large');
     return await this.#answer(key, conversation, raw);
+  }
+
+  /**
+   * A Claude chat's command hook, through the keeper's forwarder (`AIB-keeper hook <event> <address file>`; subagents/service.ts).
+   * Same listener checks as /mcp (loopback, Host, no Origin, no Sec-Fetch-Site: done by handle), plus the chat's hook key (its own
+   * HMAC label, not the artifact key) in X-Studio-Hook-Key, checked before the body is read. Never served by the page's or the phone
+   * server: this listener is AIB's loopback-only MCP endpoint.
+   */
+  async #hook(request: Request, event: string): Promise<Response> {
+    const plain = (status: number, body: string) =>
+      new Response(body, { status, headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' } });
+    if (request.method !== 'POST') {
+      await drain(request);
+      return plain(405, 'Method not allowed');
+    }
+    const conversation = request.headers.get(CONVERSATION_HEADER) ?? '';
+    if (!artifactKeys.checkHookKey(request.headers.get(HOOK_KEY_HEADER) ?? '', conversation)) {
+      await drain(request);
+      return plain(401, 'AIB refused the hook key for this conversation');
+    }
+    if (!this.studio.hook) {
+      await drain(request);
+      return plain(503, 'AIB has no subagent hooks');
+    }
+    const raw = await readLimited(request, MAX_HOOK_BYTES);
+    if (raw === null) return plain(413, 'Request too large');
+    let body: unknown;
+    try {
+      body = JSON.parse(new TextDecoder().decode(raw));
+    } catch {
+      return plain(400, 'The hook input is not JSON');
+    }
+    const answer = await this.studio.hook(event, conversation, body);
+    return new Response(answer.body, { status: answer.status, headers: { 'Content-Type': answer.type, 'Cache-Control': 'no-store' } });
   }
 
   #keyOk(key: string, conversation: string): boolean {

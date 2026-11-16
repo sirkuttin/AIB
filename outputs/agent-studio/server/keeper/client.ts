@@ -776,6 +776,28 @@ export async function forwarderOf(binary: string | null, dataDir: string): Promi
   return await ok ? program : null;
 }
 
+const hookForwarders = new Map<string, Promise<boolean>>();
+
+/**
+ * The keeper program to run a Claude chat's command hooks (`AIB-keeper hook <event> <address file>`, subagent worktrees): `binary`
+ * (a test's), else keeperBinary(dataDir), outside every AIB version folder. It must answer `hook --check`; null when it does not
+ * (an older program: the chat gets no hooks and shows "not isolated").
+ */
+export async function hookForwarderOf(binary: string | null, dataDir: string): Promise<string | null> {
+  const program = binary ?? await keeperBinary(dataDir);
+  let ok = hookForwarders.get(program);
+  if (!ok) {
+    ok = Promise.resolve().then(() =>
+      new Deno.Command(program, { args: ['hook', '--check'], stdin: 'null', stdout: 'piped', stderr: 'null' }).output()
+    ).then(
+      (out) => out.success && DEC.decode(out.stdout).startsWith('hook 1'),
+      () => false,
+    );
+    hookForwarders.set(program, ok);
+  }
+  return await ok ? program : null;
+}
+
 /**
  * Copy the keeper program shipped with the app to `<data>/keeper-bin/<first 16 hex of its SHA-256>/` and return that path. The keeper
  * outlives the app (it holds the chats through an update), so it must not run from the app's folder: the update helper renames the
