@@ -903,7 +903,9 @@
       restorePop(k);
     }, 1000);
   }
-  // The pop-out closed: the doc's tab comes back here in the background, if the doc still exists (not moved to the trash).
+  // The pop-out closed: the doc's tab comes back here in the background, if the doc still exists (not moved to the trash). The
+  // tab is keyed by what lasts, the project and the doc's name: its scope is worked out now (files-ui docScopeFor), so a chat id
+  // that changed at an AIB restart (or a pop-out this window took back after one, with no scope at all) still finds its way home.
   const restoring = new Set();
   function restorePop(k) {
     const p = popList().find((x) => popKey(x.project, x.name) === k);
@@ -911,16 +913,16 @@
     restoring.add(k);
     pops = popList().filter((x) => x !== p);
     savePops();
-    const scope = p.scope;
-    const put = (exists) => {
+    const scope = (FU() && FU().docScopeFor ? FU().docScopeFor(p.project, p.scope) : null) || p.scope;
+    const put = (d) => {
       restoring.delete(k);
-      if (!exists || !scope || !FU() || !FU().restoreDocTab) return;
-      FU().restoreDocTab(scope, { name: p.name, title: p.title || p.name, project: p.project });
+      if (!d || !scope || !FU() || !FU().restoreDocTab) return;
+      FU().restoreDocTab(scope, { name: p.name, title: p.title || d.title || p.name, project: p.project });
     };
-    if (!scope || !scope.id) return put(false);
+    if (!scope || !scope.id) return put(null);
     listFor(scope.id, 'main', true).then(
-      (docs) => put((docs || []).some((d) => d.name === p.name)),
-      () => put(false),
+      (docs) => put((docs || []).find((d) => d.name === p.name) || null),
+      () => put(null),
     );
   }
   // Look at the windows the presence answer lists: a moved doc whose window was there and is gone now comes back.
@@ -928,6 +930,17 @@
     const W = AW();
     if (!W || !W.known || !W.known()) return;
     let changed = false;
+    /* After a restart this window's own record of the move is gone (sessionStorage is per window and per run), but the app
+       restores the doc pop-out with the window it was moved out of (desktop-windows.json `from`, in the presence answer): this
+       window takes it back as its own, so closing the pop-out still puts the tab back here (as workspace-ui.js does for chats). */
+    const self = W.id ? W.id() : '';
+    for (const o of self && W.others ? W.others() : []) {
+      const d = o && o.kind === 'doc' && o.from === self ? o.doc : null;
+      if (!d || typeof d.project !== 'string' || !d.project || typeof d.name !== 'string' || !d.name) continue;
+      if (popList().some((p) => p.project === d.project && p.name === d.name)) continue;
+      popList().push({ project: d.project, name: d.name, title: '', scope: null, w: o.w, seen: true, at: Date.now(), adopted: true });
+      changed = true;
+    }
     for (const p of popList().slice()) {
       const k = popKey(p.project, p.name);
       if (popups.has(k)) continue; // a browser popup: watched by its handle

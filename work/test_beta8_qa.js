@@ -39,11 +39,12 @@ test('the doc card (class doc-card, no data-src or data-op) stays when the Artif
   assert.equal(card.children.length, 1, 'its content is not wiped');
 });
 
-test('Artifacts bar: the picker keeps at least 140 px and its row wraps, so the word buttons drop below at 280 px', () => {
+test('Artifacts bar: one row (lead decision 2026-11-16); the picker gives way, the word buttons never squeeze it', () => {
+  // superseded beta.8 rule: the picker kept 140 px and the row wrapped (three rows, 109 px, at 280 px). The browser check of the
+  // one row at every width is work/deno/artifact_toolbar_e2e_test.ts.
   const rules = css('artifacts.css');
-  const pick = declarationsFor(rules, '.ar-pick');
-  assert.ok(px(pick['min-width']) >= 140, 'picker min-width ' + pick['min-width']);
-  assert.equal(declarationsFor(rules, '.ar-bar')['flex-wrap'], 'wrap');
+  assert.equal(declarationsFor(rules, '.ar-bar')['flex-wrap'], 'nowrap');
+  assert.equal(px(declarationsFor(rules, '.ar-pick')['min-width']), 0);
   assert.equal(declarationsFor(rules, '.ar-word')['flex'], '0 0 auto', 'the word buttons never squeeze the picker');
 });
 

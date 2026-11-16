@@ -1083,6 +1083,23 @@
     if (W() && W().refresh) W().refresh();
     paint();
   }
+  /* The scope a doc's tab comes back with in project pk (a closed doc pop-out). The saved scope names a chat by its live id, which
+     changes at an AIB restart: the tab is tied to something lasting instead, the project and its main folder, through one of the
+     project's chats now (the saved chat by its lasting key first), else the project's own folder. null when neither is known. */
+  function docScopeFor(pk, saved) {
+    const S = SB();
+    const all =
+      host && S && pk
+        ? (host.conversations() || [])
+            .filter((c) => c && c.provider && S.projectOf(c).key === pk)
+            .map(chatInfo)
+            .filter((c) => c && c.id)
+        : [];
+    const c = (saved && saved.chatKey && all.find((x) => x.key === saved.chatKey)) || all[0];
+    if (c) return F().followScope(Object.assign({}, c, { branch: '' }), c.projectPath);
+    const path = (W() && W().projectPathOf ? W().projectPathOf(pk) : '') || (saved && saved.path) || '';
+    return path ? F().projectScope(path) : null;
+  }
   function openDocRow(scope, d, keep) {
     openDoc(scope, { name: d.name, title: d.title || d.name, dir: d.dir, where: 'tab', preview: !keep });
   }
@@ -2931,6 +2948,7 @@
     search: searchFiles,
     openDoc,
     restoreDocTab,
+    docScopeFor,
     shownDocTab,
     popOutShownDoc,
     openNotes,

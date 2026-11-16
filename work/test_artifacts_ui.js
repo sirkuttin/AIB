@@ -141,6 +141,15 @@ test('menu on the latest version of a page with a source file', () => {
   );
   assert.equal(A.menuItems({ kind: 'html', shown: 2, latest: 2 })[1].label, 'Compare with v1');
 });
+test('the title bar word action is the first item of ⋯ (the bar is one row at 280 px), then a divider', () => {
+  const html = A.menuItems({ kind: 'html', shown: 2, latest: 2, action: 'request' });
+  assert.deepEqual(ids(html).slice(0, 3), ['request', '|', 'source']);
+  assert.equal(html[0].label, 'Request a change');
+  const md = A.menuItems({ kind: 'md', shown: 1, latest: 1, action: 'edit' });
+  assert.deepEqual(ids(md).slice(0, 2), ['edit', '|']);
+  assert.equal(md[0].label, 'Edit as a doc');
+  assert.deepEqual(ids(A.menuItems({ kind: 'html', shown: 1, latest: 1, action: 'request', deleted: true })), ['undelete']);
+});
 test('restore appears only on an old version, and compare needs a previous one', () => {
   assert.deepEqual(ids(A.menuItems({ kind: 'html', shown: 1, latest: 3 })), [
     'source',
