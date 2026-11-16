@@ -13,19 +13,19 @@
  *     none is rate limited on the first load; the laptop's panel resize leaves the PC's width alone; Settings shows Appearance and
  *     This computer (help lines), the PC's sections say "Change this on <PC>"; Browse… is hidden in New project.
  */
-import { assert, assertEquals } from "./_assert.ts";
-import { Browser, browserPath, type Page } from "./_doc_browser.ts";
-import { readRemotePort } from "../../outputs/agent-studio/server/remote/port.ts";
-import { REMOTE_STATIC } from "../../outputs/agent-studio/server/remote/server.ts";
-import { openTarget } from "../../outputs/agent-studio/server/remote/push.ts";
+import { assert, assertEquals } from './_assert.ts';
+import { Browser, browserPath, type Page } from './_doc_browser.ts';
+import { readRemoteArtifactPort, readRemotePort } from '../../outputs/agent-studio/server/remote/port.ts';
+import { REMOTE_STATIC } from '../../outputs/agent-studio/server/remote/server.ts';
+import { openTarget } from '../../outputs/agent-studio/server/remote/push.ts';
 import {
   PC_BOOTSTRAP_KEYS,
   PC_STATIC,
   pcShell,
   remoteArtifactLinks,
   shellAssets,
-} from "../../outputs/agent-studio/server/remote/pc_page.ts";
-import { DEVICE_HEADER } from "../../outputs/agent-studio/server/remote/pc_bridge.ts";
+} from '../../outputs/agent-studio/server/remote/pc_page.ts';
+import { DEVICE_HEADER } from '../../outputs/agent-studio/server/remote/pc_bridge.ts';
 import {
   fakeTailscale,
   LOGIN,
@@ -37,11 +37,11 @@ import {
   type RemoteStudio,
   remoteStudio,
   serveStatus,
-} from "./_remote_fixture.ts";
+} from './_remote_fixture.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
 type Json = Record<string, unknown>;
-const APP = new URL("../../outputs/agent-studio/", import.meta.url);
+const APP = new URL('../../outputs/agent-studio/', import.meta.url);
 const read = (name: string) => Deno.readTextFileSync(new URL(name, APP));
 
 async function remoteOn(): Promise<RemoteStudio> {
@@ -50,7 +50,7 @@ async function remoteOn(): Promise<RemoteStudio> {
     saved: true,
   });
   fake.state.serve = serveStatus(readRemotePort(s.state)!);
-  const [status] = await pc(s, "POST", "/api/live/devices/access", {
+  const [status] = await pc(s, 'POST', '/api/live/devices/access', {
     on: true,
   });
   assertEquals(status, 200);
@@ -63,39 +63,39 @@ function get(
   token?: string,
   extra: Record<string, string> = {},
 ) {
-  return raw(s.phonePort(), "GET", path, {
-    ...phoneHeaders({}, "GET"),
+  return raw(s.phonePort(), 'GET', path, {
+    ...phoneHeaders({}, 'GET'),
     ...(token ? { [DEVICE_HEADER]: token } : {}),
     ...extra,
   });
 }
 function post(s: RemoteStudio, path: string, token: string, body: Json) {
-  return raw(s.phonePort(), "POST", path, {
-    ...phoneHeaders({}, "POST"),
+  return raw(s.phonePort(), 'POST', path, {
+    ...phoneHeaders({}, 'POST'),
     [DEVICE_HEADER]: token,
   }, JSON.stringify(body));
 }
 
 // ---- the static list, the shell, the service worker (no AIB running) ------------------------------------------------------------
 
-Deno.test("computer page: the static list is explicit and covers every file chat.html and doc.html ask for", () => {
+Deno.test('computer page: the static list is explicit and covers every file chat.html and doc.html ask for', () => {
   const served = new Set([
     ...Object.keys(PC_STATIC),
     ...Object.keys(REMOTE_STATIC),
-    "/pc.webmanifest",
-    "/",
+    '/pc.webmanifest',
+    '/',
   ]);
-  for (const file of ["chat.html", "doc.html"]) {
-    const shell = pcShell(read(file), file === "chat.html");
+  for (const file of ['chat.html', 'doc.html']) {
+    const shell = pcShell(read(file), file === 'chat.html');
     for (const asset of shellAssets(shell)) {
       assert(served.has(asset), `${file} asks for ${asset}, not on the list`);
     }
     assert(
-      !shell.includes("/page-auth.js") && !shell.includes("/desktop-bridge.js"),
+      !shell.includes('/page-auth.js') && !shell.includes('/desktop-bridge.js'),
       `${file}: no page credentials or desktop bridge`,
     );
     assert(
-      !shell.includes("aibViewPrefs") && !shell.includes("data-theme-pref"),
+      !shell.includes('aibViewPrefs') && !shell.includes('data-theme-pref'),
       `${file}: no view preferences inside`,
     );
     assert(
@@ -110,10 +110,10 @@ Deno.test("computer page: the static list is explicit and covers every file chat
   // the scripts the page loads later
   for (
     const later of [
-      "/elicitation-ui.js",
-      "/vendor/xterm/xterm.js",
-      "/vendor/xterm/addon-fit.js",
-      "/vendor/xterm/addon-canvas.js",
+      '/elicitation-ui.js',
+      '/vendor/xterm/xterm.js',
+      '/vendor/xterm/addon-fit.js',
+      '/vendor/xterm/addon-canvas.js',
     ]
   ) {
     assert(served.has(later), later);
@@ -121,34 +121,34 @@ Deno.test("computer page: the static list is explicit and covers every file chat
   // every listed file exists, none is a credential script, none is outside the app's page files
   for (const [path, file] of Object.entries(PC_STATIC)) {
     assert(
-      Deno.statSync(new URL(file.replaceAll("\\", "/"), APP)).isFile,
+      Deno.statSync(new URL(file.replaceAll('\\', '/'), APP)).isFile,
       `${path} exists`,
     );
-    assert(!["/page-auth.js", "/desktop-bridge.js"].includes(path), path);
+    assert(!['/page-auth.js', '/desktop-bridge.js'].includes(path), path);
     assert(!/\.\.|^\/server\//.test(path), path);
   }
   // the service worker's computer file list is the same list (minus what it precaches)
-  const sw = read("pwa/sw.js");
+  const sw = read('pwa/sw.js');
   const pcFiles = [
     ...sw.slice(
-      sw.indexOf("const PC_FILES = ["),
-      sw.indexOf("];", sw.indexOf("const PC_FILES = [")),
+      sw.indexOf('const PC_FILES = ['),
+      sw.indexOf('];', sw.indexOf('const PC_FILES = [')),
     ).matchAll(/'(\/[^']+)'/g),
   ]
     .map((m) => m[1]);
-  const precached = ["/remote-loader.js", "/remote-auth.js", "/remote.css"];
+  const precached = ['/remote-loader.js', '/remote-auth.js', '/remote.css'];
   const expected = [
     ...Object.keys(PC_STATIC).filter((p) => !precached.includes(p)),
-    "/doc.html",
+    '/doc.html',
   ].sort();
-  assertEquals([...pcFiles].sort(), expected, "sw.js PC_FILES = PC_STATIC");
+  assertEquals([...pcFiles].sort(), expected, 'sw.js PC_FILES = PC_STATIC');
 });
 
-Deno.test("computer page: a push for a computer opens /pc.html, a phone /phone.html; artifact links leave the loopback origin", () => {
-  assertEquals(openTarget("computer", "c1", true), "/pc.html#chat=c1");
-  assertEquals(openTarget("phone", "c1", true), "/phone.html#chat=c1&sheet=1");
-  assertEquals(openTarget("computer", "", false), "/pc.html");
-  const loop = "http://127.0.0.1:5123";
+Deno.test('computer page: a push for a computer opens /pc.html, a phone /phone.html; artifact links leave the loopback origin', () => {
+  assertEquals(openTarget('computer', 'c1', true), '/pc.html#chat=c1');
+  assertEquals(openTarget('phone', 'c1', true), '/phone.html#chat=c1&sheet=1');
+  assertEquals(openTarget('computer', '', false), '/pc.html');
+  const loop = 'http://127.0.0.1:5123';
   const text = JSON.stringify({
     url: `${loop}/a/0123456789abcdef/v2/index.html`,
     file: `${loop}/f/xyz/a.png`,
@@ -157,7 +157,7 @@ Deno.test("computer page: a push for a computer opens /pc.html, a phone /phone.h
     text,
     loop,
     `https://${NAME}:8443`,
-    (id) => "T" + id.slice(0, 4),
+    (id) => 'T' + id.slice(0, 4),
   );
   assert(
     out.includes(
@@ -166,10 +166,10 @@ Deno.test("computer page: a push for a computer opens /pc.html, a phone /phone.h
     out,
   );
   assert(
-    !remoteArtifactLinks(text, loop, "", () => "x").includes(
-      "/a/0123456789abcdef/v2",
+    !remoteArtifactLinks(text, loop, '', () => 'x').includes(
+      '/a/0123456789abcdef/v2',
     ),
-    "no artifact port: no link",
+    'no artifact port: no link',
   );
 });
 
@@ -177,93 +177,92 @@ Deno.test("computer page: a push for a computer opens /pc.html, a phone /phone.h
 
 Deno.test({
   ...OPTS,
-  name:
-    "computer page: allowlisted bootstrap, per-device layout, Settings without programs or keys, static refusals",
+  name: 'computer page: allowlisted bootstrap, per-device layout, Settings without programs or keys, static refusals',
   async fn() {
     const s = await remoteOn();
     try {
       const computer = await pairPhone(
         s,
-        "Laptop (Edge)",
+        'Laptop (Edge)',
         undefined,
-        "computer",
+        'computer',
       );
-      const phone = await pairPhone(s, "Pixel 9");
+      const phone = await pairPhone(s, 'Pixel 9');
       // bootstrap: exactly the allowlist, nothing of the page's
-      const boot = await get(s, "/api/remote/pc/bootstrap", computer.token);
+      const boot = await get(s, '/api/remote/pc/bootstrap', computer.token);
       assertEquals(boot.status, 200, boot.text);
       assertEquals(
         Object.keys(boot.json).sort(),
         [...PC_BOOTSTRAP_KEYS].sort(),
       );
-      assertEquals((boot.json.device as Json).kind, "computer");
+      assertEquals((boot.json.device as Json).kind, 'computer');
       for (
         const secret of [
           s.token,
           s.state,
-          "127.0.0.1",
-          "launchNonce",
-          "stateDir",
-          "hostPid",
+          '127.0.0.1',
+          'launchNonce',
+          'stateDir',
+          'hostPid',
           String(Deno.pid),
         ]
       ) {
         assert(!boot.text.includes(secret), `bootstrap carries ${secret}`);
       }
       assertEquals(
-        (await get(s, "/api/remote/pc/bootstrap", phone.token)).json.code,
-        "not_computer",
+        (await get(s, '/api/remote/pc/bootstrap', phone.token)).json.code,
+        'not_computer',
       );
-      assertEquals((await get(s, "/api/remote/pc/bootstrap")).status, 401);
+      assertEquals((await get(s, '/api/remote/pc/bootstrap')).status, 401);
       // the phone bootstrap sends a computer to its page
       assertEquals(
-        (await get(s, "/api/remote/bootstrap", computer.token)).json.layout,
-        "pc",
+        (await get(s, '/api/remote/bootstrap', computer.token)).json.layout,
+        'pc',
       );
       assertEquals(
-        (await get(s, "/api/remote/bootstrap", phone.token)).json.layout,
-        "phone",
+        (await get(s, '/api/remote/bootstrap', phone.token)).json.layout,
+        'phone',
       );
 
       // layout per device: the PC's file never changes; chat names stay the PC's and are shared
       await s.ctx.viewPrefs.update({
         set: {
-          "studio-layout-v1:<1400": '{"activity":300}',
-          "studio-conversation-names": '{"claude:s1":"Menu fix"}',
+          'studio-layout-v1:<1400': '{"activity":300}',
+          'studio-conversation-names': '{"claude:s1":"Menu fix"}',
         },
       });
       const before = JSON.stringify(s.ctx.viewPrefs.public().prefs);
-      const saved = await post(s, "/api/remote/pc/view-prefs", computer.token, {
+      const saved = await post(s, '/api/remote/pc/view-prefs', computer.token, {
         set: {
-          "studio-layout-v1:<1400": '{"activity":520}',
-          "aib-theme": "nord",
-          "studio-conversation-names": "{}",
+          'studio-layout-v1:<1400': '{"activity":520}',
+          'aib-theme': 'nord',
+          'studio-conversation-names': '{}',
         },
       });
       assertEquals(saved.status, 200, saved.text);
-      assertEquals(saved.json.refused, ["studio-conversation-names"]);
+      assertEquals(saved.json.refused, ['studio-conversation-names']);
       assertEquals(
         JSON.stringify(s.ctx.viewPrefs.public().prefs),
         before,
         "the PC's layout is untouched",
       );
-      const mine = (await get(s, "/api/remote/pc/view-prefs", computer.token))
+      const mine = (await get(s, '/api/remote/pc/view-prefs', computer.token))
         .json.prefs as Record<string, string>;
-      assertEquals(mine["studio-layout-v1:<1400"], '{"activity":520}');
-      assertEquals(mine["aib-theme"], "nord");
+      assertEquals(mine['studio-layout-v1:<1400'], '{"activity":520}');
+      assertEquals(mine['aib-theme'], 'nord');
       assertEquals(
-        mine["studio-conversation-names"],
+        mine['studio-conversation-names'],
         '{"claude:s1":"Menu fix"}',
-        "chat names are the shared ones",
+        'chat names are the shared ones',
       );
       assertEquals(
-        (await post(s, "/api/remote/pc/view-prefs", phone.token, { set: {} }))
+        (await post(s, '/api/remote/pc/view-prefs', phone.token, { set: {} }))
           .json.code,
-        "not_computer",
+        'not_computer',
       );
 
       // Settings: what New chat needs, never a command, path, key or server switch
-      const settings = await get(s, "/api/remote/pc/settings", computer.token);
+      const settings = await get(s, '/api/remote/pc/settings', computer.token);
       assertEquals(settings.status, 200, settings.text);
       for (
         const word of [
@@ -272,8 +271,8 @@ Deno.test({
           '"resolved"',
           '"args"',
           '"env"',
-          "betaKey",
-          "keepAwake",
+          'betaKey',
+          'keepAwake',
           '"editors"',
           '"launchers"',
         ]
@@ -283,48 +282,86 @@ Deno.test({
       assert(
         Array.isArray(settings.json.agents) &&
           (settings.json.agents as Json[]).length > 0,
-        "agents listed",
+        'agents listed',
       );
-      const wsl = await get(s, "/api/remote/pc/wsl-status", computer.token);
+      const wsl = await get(s, '/api/remote/pc/wsl-status', computer.token);
       assertEquals(wsl.status, 200, wsl.text);
       assertEquals(wsl.json.openRequests, []);
 
       // the page files: the loader, the shell (no prefs, frames the artifact port), the list; nothing else
-      const loader = await get(s, "/");
+      const loader = await get(s, '/');
       assertEquals(loader.status, 200);
-      assert(loader.text.includes("/remote-loader.js"));
-      const shell = await get(s, "/pc.html");
+      assert(loader.text.includes('/remote-loader.js'));
+      const shell = await get(s, '/pc.html');
       assertEquals(shell.status, 200);
       assert(
-        !shell.text.includes("aibViewPrefs") &&
+        !shell.text.includes('aibViewPrefs') &&
           !shell.text.includes('"activity":300'),
-        "no prefs in the shell",
+        'no prefs in the shell',
       );
-      assert(!shell.text.includes(s.token), "no page token in the shell");
-      const csp = shell.headers.get("content-security-policy") ?? "";
-      assert(!csp.includes("127.0.0.1"), csp);
+      assert(!shell.text.includes(s.token), 'no page token in the shell');
+      const csp = shell.headers.get('content-security-policy') ?? '';
+      assert(!csp.includes('127.0.0.1'), csp);
       assertEquals(
-        (await get(s, "/pc.webmanifest")).json.start_url,
-        "/pc.html",
+        (await get(s, '/pc.webmanifest')).json.start_url,
+        '/pc.html',
       );
       assertEquals(
-        (await get(s, "/manifest.webmanifest")).json.start_url,
-        "/phone.html",
+        (await get(s, '/manifest.webmanifest')).json.start_url,
+        '/phone.html',
       );
       for (
         const path of [
-          "/page-auth.js",
-          "/desktop-bridge.js",
-          "/chat.html",
-          "/vendor/xterm/LICENSE",
-          "/server/main.ts",
-          "/doc-drawing.html",
+          '/page-auth.js',
+          '/desktop-bridge.js',
+          '/chat.html',
+          '/vendor/xterm/LICENSE',
+          '/server/main.ts',
+          '/doc-drawing.html',
         ]
       ) {
         assertEquals((await get(s, path)).status, 404, path);
       }
-      assertEquals((await get(s, "/chat.js")).status, 200);
-      assertEquals((await get(s, "/vendor/xterm/xterm.js")).status, 200);
+      assertEquals((await get(s, '/chat.js')).status, 200);
+      assertEquals((await get(s, '/vendor/xterm/xterm.js')).status, 200);
+    } finally {
+      await s.close();
+    }
+  },
+});
+
+Deno.test({
+  ...OPTS,
+  name: 'computer page: artifacts open from the artifact port (signed links, its CSP frames :8443), never the loopback origin',
+  async fn() {
+    const fake = fakeTailscale();
+    const s = await remoteStudio({ runner: fake.runner });
+    try {
+      s.ctx.artifacts.start(s.port);
+      fake.state.serve = serveStatus(readRemotePort(s.state)!, false, readRemoteArtifactPort(s.state)!);
+      assertEquals((await pc(s, 'POST', '/api/live/devices/access', { on: true }))[0], 200);
+      const loop = s.ctx.artifacts.store.origin;
+      const a = s.ctx.artifacts.store.create('claude:sess-c', 'Sales report', 'html', 'report.html', new TextEncoder().encode('<p>Hi</p>'));
+      const computer = await pairPhone(s, 'Laptop (Edge)', undefined, 'computer');
+      const item = await get(s, `/api/live/artifacts/item?id=${a.id}`, computer.token);
+      assertEquals(item.status, 200, item.text);
+      assert(!item.text.includes(loop), `the loopback artifact origin leaks: ${item.text.slice(0, 300)}`);
+      const url = String(item.json.url ?? '');
+      assert(url.startsWith(`https://${NAME}:8443/r/`) && url.endsWith(`/a/${a.id}/v1/report.html`), url);
+      // the link loads on the artifact port, as the computer page's frame asks for it
+      const frame = await raw(s.artifactPort(), 'GET', url.slice(`https://${NAME}:8443`.length), {
+        Host: `${NAME}:8443`,
+        'Tailscale-User-Login': LOGIN,
+        'X-Forwarded-For': '100.64.0.7',
+        'Sec-Fetch-Site': 'same-site',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Dest': 'iframe',
+      });
+      assertEquals(frame.status, 200, frame.text);
+      // the computer page may frame that origin (and only it, besides its own)
+      const csp = (await get(s, '/pc.html')).headers.get('content-security-policy') ?? '';
+      assert(csp.includes(`frame-src 'self' https://${NAME}:8443;`), csp);
+      assert(!csp.includes(loop), csp);
     } finally {
       await s.close();
     }
@@ -346,11 +383,11 @@ async function serveAll(
     bridged: number[];
   },
 ) {
-  await page.send("Network.enable");
-  await page.send("Fetch.enable", {
-    patterns: [{ urlPattern: `https://${NAME}/*`, requestStage: "Request" }],
+  await page.send('Network.enable');
+  await page.send('Fetch.enable', {
+    patterns: [{ urlPattern: `https://${NAME}/*`, requestStage: 'Request' }],
   });
-  page.listeners.set("Fetch.requestPaused", (p) => {
+  page.listeners.set('Fetch.requestPaused', (p) => {
     void (async () => {
       const request = p.request as Json;
       const url = new URL(request.url as string);
@@ -358,8 +395,8 @@ async function serveAll(
       const kind = p.resourceType as string;
       const headers: Record<string, string> = {
         Host: NAME,
-        "Tailscale-User-Login": LOGIN,
-        "X-Forwarded-For": "100.64.0.7",
+        'Tailscale-User-Login': LOGIN,
+        'X-Forwarded-For': '100.64.0.7',
       };
       for (
         const [k, v] of Object.entries(
@@ -378,31 +415,31 @@ async function serveAll(
         }
       }
       if (
-        method === "POST" &&
-        !Object.keys(headers).some((k) => k.toLowerCase() === "origin")
+        method === 'POST' &&
+        !Object.keys(headers).some((k) => k.toLowerCase() === 'origin')
       ) headers.Origin = `https://${NAME}`;
-      if (kind === "Document") {
+      if (kind === 'Document') {
         Object.assign(headers, {
-          "Sec-Fetch-Site": "none",
-          "Sec-Fetch-Mode": "navigate",
-          "Sec-Fetch-Dest": "document",
+          'Sec-Fetch-Site': 'none',
+          'Sec-Fetch-Mode': 'navigate',
+          'Sec-Fetch-Dest': 'document',
         });
-      } else if (kind === "Fetch" || kind === "XHR") {
+      } else if (kind === 'Fetch' || kind === 'XHR') {
         Object.assign(headers, {
-          "Sec-Fetch-Site": "same-origin",
-          "Sec-Fetch-Mode": "cors",
-          "Sec-Fetch-Dest": "empty",
+          'Sec-Fetch-Site': 'same-origin',
+          'Sec-Fetch-Mode': 'cors',
+          'Sec-Fetch-Dest': 'empty',
         });
       } else {Object.assign(headers, {
-          "Sec-Fetch-Site": "same-origin",
-          "Sec-Fetch-Mode": "no-cors",
-          "Sec-Fetch-Dest": kind.toLowerCase(),
+          'Sec-Fetch-Site': 'same-origin',
+          'Sec-Fetch-Mode': 'no-cors',
+          'Sec-Fetch-Dest': kind.toLowerCase(),
         });}
-      if (url.pathname.startsWith("/api/")) seen.requests++;
+      if (url.pathname.startsWith('/api/')) seen.requests++;
       if (
-        url.pathname.startsWith("/api/live/") ||
-        !url.pathname.startsWith("/api/remote/") &&
-          url.pathname.startsWith("/api/")
+        url.pathname.startsWith('/api/live/') ||
+        !url.pathname.startsWith('/api/remote/') &&
+          url.pathname.startsWith('/api/')
       ) {
         seen.bridged.push(performance.now());
       }
@@ -417,20 +454,18 @@ async function serveAll(
         );
       } catch { /* Serve answers 502 */ }
       if (!answer) {
-        await page.send("Fetch.fulfillRequest", {
+        await page.send('Fetch.fulfillRequest', {
           requestId: p.requestId,
           responseCode: 502,
           responseHeaders: [],
-          body: "",
+          body: '',
         });
         return;
       }
       if (answer.status === 429) seen.limited.push(url.pathname);
       if (answer.status === 401 || answer.status === 403) {
         seen.refused.push(
-          `${answer.status} ${method} ${url.pathname} ${
-            answer.text.slice(0, 160)
-          }`,
+          `${answer.status} ${method} ${url.pathname} ${answer.text.slice(0, 160)}`,
         );
       }
       const responseHeaders: Json[] = [];
@@ -441,11 +476,11 @@ async function serveAll(
           )
         ) responseHeaders.push({ name, value });
       });
-      let bin = "";
+      let bin = '';
       for (let i = 0; i < answer.bytes.length; i += 0x8000) {
         bin += String.fromCharCode(...answer.bytes.subarray(i, i + 0x8000));
       }
-      await page.send("Fetch.fulfillRequest", {
+      await page.send('Fetch.fulfillRequest', {
         requestId: p.requestId,
         responseCode: answer.status,
         responseHeaders,
@@ -457,22 +492,21 @@ async function serveAll(
 
 Deno.test({
   ...OPTS,
-  name:
-    "computer page in a browser: loader -> /pc.html, the real page draws, no page credential, own layout, limited Settings",
+  name: 'computer page in a browser: loader -> /pc.html, the real page draws, no page credential, own layout, limited Settings',
   ignore: !browserPath,
   async fn() {
     const s = await remoteOn();
     const browser = await Browser.launch();
     try {
       s.chats.push({
-        id: "c1",
-        provider: "claude",
-        sessionId: "s1",
+        id: 'c1',
+        provider: 'claude',
+        sessionId: 's1',
         cwd: s.project,
         busy: false,
         closed: false,
         attention: {
-          state: "idle",
+          state: 'idle',
           needs: 0,
           turnEndedAt: null,
           busySince: null,
@@ -480,22 +514,30 @@ Deno.test({
         subagents: {},
         events: [{
           seq: 1,
-          kind: "user",
+          kind: 'user',
           time: Date.now() / 1000 - 60,
-          data: { text: "Fix the menu" },
+          data: { text: 'Fix the menu' },
         }],
         permissions: [],
         elicitations: [],
       });
-      const computer = await pairPhone(
-        s,
-        "Laptop (Edge)",
-        undefined,
-        "computer",
-      );
-      Deno.writeTextFileSync(`${s.project}/notes.txt`, "Menu fix notes");
+      s.chats.push({
+        id: 'c2',
+        provider: 'claude',
+        sessionId: 's2',
+        cwd: s.project,
+        busy: false,
+        closed: false,
+        attention: { state: 'idle', needs: 0, turnEndedAt: null, busySince: null },
+        subagents: {},
+        events: [{ seq: 1, kind: 'user', time: Date.now() / 1000 - 30, data: { text: 'Second chat here' } }],
+        permissions: [],
+        elicitations: [],
+      });
+      const computer = await pairPhone(s, 'Laptop (Edge)', undefined, 'computer');
+      Deno.writeTextFileSync(`${s.project}/notes.txt`, 'Menu fix notes');
       await s.ctx.viewPrefs.update({
-        set: { "studio-layout-v1:<1400": '{"side":240,"activity":300}' },
+        set: { 'studio-layout-v1:<1400': '{"side":240,"activity":300}' },
       });
       const deskBefore = JSON.stringify(s.ctx.viewPrefs.public().prefs);
       const seen = {
@@ -505,25 +547,25 @@ Deno.test({
         requests: 0,
         bridged: [] as number[],
       };
-      const page = await browser.open("about:blank", 1280, 860);
+      const page = await browser.open('about:blank', 1280, 860);
       await serveAll(page, s, seen);
       // not paired yet: the loader opens the pairing page, which says "computer" in a computer's browser
       await page.goto(`https://${NAME}/`);
       await page.waitFor(
         'location.pathname === "/phone.html" && !!document.getElementById("pairGo")',
         15000,
-        "the pairing page",
+        'the pairing page',
       );
       assertEquals(
         await page.eval('document.getElementById("pairGo").textContent'),
-        "Pair this computer",
+        'Pair this computer',
       );
       assert(
         String(await page.eval('document.getElementById("pairName").value'))
-          .startsWith("Laptop"),
-        "a computer name",
+          .startsWith('Laptop'),
+        'a computer name',
       );
-      await page.shot("pc-pair");
+      await page.shot('pc-pair');
       // the device record where phones keep it (what pairing leaves behind)
       await page.goto(`https://${NAME}/remote.css`); // any page of this origin that runs nothing
       await page.eval(`new Promise((resolve, reject) => {
@@ -531,9 +573,7 @@ Deno.test({
         req.onupgradeneeded = () => req.result.createObjectStore('kv');
         req.onsuccess = () => {
           const tx = req.result.transaction('kv', 'readwrite');
-          tx.objectStore('kv').put({ token: ${
-        JSON.stringify(computer.token)
-      }, device: { id: ${JSON.stringify(computer.id)} } }, 'device');
+          tx.objectStore('kv').put({ token: ${JSON.stringify(computer.token)}, device: { id: ${JSON.stringify(computer.id)} } }, 'device');
           tx.oncomplete = () => resolve(true);
           tx.onerror = () => reject(tx.error);
         };
@@ -545,24 +585,24 @@ Deno.test({
       await page.waitFor(
         'location.pathname === "/pc.html"',
         15000,
-        "the loader opens the computer page",
+        'the loader opens the computer page',
       );
       await page.waitFor(
         '!!document.querySelector("#connections [data-key]")',
         20000,
-        "the chat list",
+        'the chat list',
       );
       await page.waitFor(
         'document.getElementById("appVersion") && document.getElementById("appVersion").textContent.length > 0',
         10000,
-        "version",
+        'version',
       );
       assertEquals(
-        await page.eval("document.documentElement.dataset.remote"),
-        "pc",
+        await page.eval('document.documentElement.dataset.remote'),
+        'pc',
       );
-      await page.shot("pc-page");
-      assertEquals(seen.credential, [], "no page credential on any request");
+      await page.shot('pc-page');
+      assertEquals(seen.credential, [], 'no page credential on any request');
       // open the chat too (its state, events, files, artifacts), then look at the busiest second of the first load
       await page.eval(
         `document.querySelector('#connections [data-key]').click()`,
@@ -570,7 +610,7 @@ Deno.test({
       await page.waitFor(
         `document.getElementById('messages').textContent.includes('Fix the menu')`,
         10000,
-        "the chat opens",
+        'the chat opens',
       );
       await new Promise((r) => setTimeout(r, 2000));
       const t = seen.bridged;
@@ -591,11 +631,9 @@ Deno.test({
       );
       // (the fake agent host has no ownership or update service: those answer 400; the service worker cannot be fetched through
       // this test's interception)
-      const errors = page.errors.filter((e) =>
-        !/Failed to load resource|fetching the script/.test(e)
-      );
-      assertEquals(errors, [], "no page errors");
-      assertEquals(await page.violations(), [], "no CSP violations");
+      const errors = page.errors.filter((e) => !/Failed to load resource|fetching the script/.test(e));
+      assertEquals(errors, [], 'no page errors');
+      assertEquals(await page.violations(), [], 'no CSP violations');
 
       // the laptop's own layout: resizing the Activity column saves to this computer's prefs, never the PC's
       await page.eval(
@@ -603,7 +641,7 @@ Deno.test({
       );
       assert(
         await page.eval(`!!document.getElementById('rs-activity')`),
-        "the Activity handle",
+        'the Activity handle',
       );
       for (let i = 0; i < 4; i++) {
         await page.eval(
@@ -613,19 +651,19 @@ Deno.test({
       await page.waitFor(
         `(() => { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k.startsWith('studio-layout-v1:')) return true; } return false; })()`,
         5000,
-        "a layout key",
+        'a layout key',
       );
       let mine: Record<string, string> = {};
       for (let i = 0; i < 40; i++) {
-        mine = (await get(s, "/api/remote/pc/view-prefs", computer.token)).json
+        mine = (await get(s, '/api/remote/pc/view-prefs', computer.token)).json
           .prefs as Record<string, string>;
-        if (Object.keys(mine).some((k) => k.startsWith("studio-layout-v1:"))) {
+        if (Object.keys(mine).some((k) => k.startsWith('studio-layout-v1:'))) {
           break;
         }
         await new Promise((r) => setTimeout(r, 150));
       }
       assert(
-        Object.keys(mine).some((k) => k.startsWith("studio-layout-v1:")),
+        Object.keys(mine).some((k) => k.startsWith('studio-layout-v1:')),
         `the laptop's layout saved: ${JSON.stringify(mine)}`,
       );
       assertEquals(
@@ -635,23 +673,23 @@ Deno.test({
       );
 
       // Settings: Appearance and This computer; the PC's sections say where they are changed
-      await page.click("#openSettings");
+      await page.click('#openSettings');
       await page.waitFor(
         '!!document.querySelector(".st-page .st-section")',
         8000,
-        "Settings",
+        'Settings',
       );
       const sections = await page.eval<string[]>(
         `[...document.querySelectorAll('.st-section')].map((b) => b.textContent)`,
       );
       assert(
-        sections.includes("This computer") && sections.includes("Appearance"),
-        sections.join(", "),
+        sections.includes('This computer') && sections.includes('Appearance'),
+        sections.join(', '),
       );
-      assert(!sections.includes("AIB Linking (WSL)"), "no WSL linking");
+      assert(!sections.includes('AIB Linking (WSL)'), 'no WSL linking');
       assertEquals(
         await page.eval('document.querySelector(".st-head h2").textContent'),
-        "Appearance on this computer",
+        'Appearance on this computer',
       );
       await page.eval(
         `[...document.querySelectorAll('.st-section')].find((b) => b.textContent === 'AIB Linking').click()`,
@@ -659,7 +697,7 @@ Deno.test({
       await page.waitFor(
         `document.querySelector('.st-content').textContent.includes('Change this on ')`,
         5000,
-        "the PC says",
+        'the PC says',
       );
       await page.eval(
         `[...document.querySelectorAll('.st-section')].find((b) => b.textContent === 'This computer').click()`,
@@ -667,30 +705,30 @@ Deno.test({
       await page.waitFor(
         `document.querySelector('.st-content').textContent.includes('Lost a computer?')`,
         5000,
-        "help lines",
+        'help lines',
       );
       const text = await page.eval<string>(
         `document.querySelector('.st-content').textContent`,
       );
       assert(
         text.includes(
-          "Lost a computer? Remove it, then sign the agents out and in again.",
+          'Lost a computer? Remove it, then sign the agents out and in again.',
         ),
         text,
       );
       assert(
-        text.includes("Use a browser profile without extensions for AIB."),
+        text.includes('Use a browser profile without extensions for AIB.'),
         text,
       );
-      await page.shot("pc-settings-this-computer");
+      await page.shot('pc-settings-this-computer');
 
-      await page.key("Escape");
+      await page.key('Escape');
       // Files: see and download. A file opens read only, with Download instead of "Open in <editor>" (the PC's programs)
-      await page.click(".sf-mode-files");
+      await page.click('.sf-mode-files');
       await page.waitFor(
         `[...document.querySelectorAll('.fx-row')].some((r) => r.textContent.includes('notes.txt'))`,
         10000,
-        "the file tree",
+        'the file tree',
       );
       await page.eval(
         `[...document.querySelectorAll('.fx-row')].find((r) => r.textContent.includes('notes.txt')).click()`,
@@ -698,21 +736,21 @@ Deno.test({
       await page.waitFor(
         `[...document.querySelectorAll('button')].some((b) => b.textContent === 'Download')`,
         10000,
-        "Download",
+        'Download',
       );
       assert(
         !(await page.eval<boolean>(
           `[...document.querySelectorAll('button')].some((b) => /^Open in /.test(b.textContent))`,
         )),
-        "no Open in editor",
+        'no Open in editor',
       );
       assert(
         await page.eval<boolean>(
           `document.body.textContent.includes('Menu fix notes')`,
         ),
-        "the file is shown",
+        'the file is shown',
       );
-      await page.click(".sf-mode-chats");
+      await page.click('.sf-mode-chats');
 
       // Browse… (the PC's system folder picker) is not on a computer
       assertEquals(
@@ -720,15 +758,23 @@ Deno.test({
           `(() => { const b = document.createElement('button'); b.className = 'np-browse'; document.body.append(b);
           const d = getComputedStyle(b).display; b.remove(); return d; })()`,
         ),
-        "none",
+        'none',
       );
-      assertEquals(seen.credential, [], "still no page credential");
+      // a computer's notification click opens /pc.html#chat=<live id> (the service worker, from the push): that chat opens
+      await page.goto(`https://${NAME}/remote.css`);
+      await page.send('Page.navigate', { url: `https://${NAME}/pc.html#chat=c2` });
+      await page.waitFor(
+        `document.getElementById('messages') && document.getElementById('messages').textContent.includes('Second chat here')`,
+        15000,
+        'the pushed chat opens',
+      );
+      assertEquals(seen.credential, [], 'still no page credential');
       assertEquals(
         seen.refused,
         [],
-        "the page never asks for what a computer may not do (no 401 / 403)",
+        'the page never asks for what a computer may not do (no 401 / 403)',
       );
-      assertEquals(seen.limited, [], "still nothing rate limited");
+      assertEquals(seen.limited, [], 'still nothing rate limited');
     } finally {
       await browser.close().catch(() => {});
       await s.close();

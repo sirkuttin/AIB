@@ -253,9 +253,26 @@
   }
 
   // ---- a notification click: /pc.html#chat=<id>, or a message from the service worker while this page is open ----
-  function openChat(chat) {
+  /* The push names the live chat (its id); the page opens chats by their lasting key (<agent>:<session>). */
+  async function openChat(chat) {
     const N = root.AgentNotifyUI;
-    if (chat && N && typeof N.openFromDesktop === 'function') N.openFromDesktop({ type: 'chat', key: String(chat) });
+    if (!chat || !N || typeof N.openFromDesktop !== 'function') return;
+    let key = String(chat);
+    try {
+      const r = await remoteFetch('/api/live/list');
+      const list = r.ok ? await r.json() : {};
+      const c = (Array.isArray(list.connections) ? list.connections : []).find((x) => x && x.id === chat);
+      if (c && c.provider && c.sessionId) key = c.provider + ':' + c.sessionId;
+    } catch {
+      /* the key as it came */
+    }
+    // the page may still be starting: wait (a few seconds at most) until its chat list has the chat
+    const sel = '#connections [data-key="' + (root.CSS && root.CSS.escape ? root.CSS.escape(key) : key) + '"]';
+    for (let i = 0; i < 40 && !doc.querySelector(sel); i++) await new Promise((resolve) => root.setTimeout(resolve, 250));
+    for (let i = 0; i < 20; i++) {
+      if (N.openFromDesktop({ type: 'chat', key }) !== false) return;
+      await new Promise((resolve) => root.setTimeout(resolve, 250));
+    }
   }
   function openFromAddress() {
     const m = /^#chat=([^&]+)/.exec(root.location.hash || '');
