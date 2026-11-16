@@ -17,7 +17,7 @@ import { clip, isDict, isInt, isStr, PY_SPACE, pyLen, pyOr, pyRepr, pyStrip, pyT
 import { writeJsonAtomic } from '../core/fs.ts';
 import { isOSError, OSError } from '../state/base.ts';
 import { abspath, pathOf, realpath } from '../state/paths.ts';
-import { tokenMatches } from '../web/security.ts';
+import { pageAllowed, type Principal } from '../web/security.ts';
 import { check as checkArtifactKey } from './keys.ts';
 
 const log = getLogger('artifacts');
@@ -1097,6 +1097,8 @@ export interface HeaderBag {
 }
 export interface RequestLike {
   headers: HeaderBag;
+  /** The principal the web server passed in (a remote computer through the bridge); never read from a header. */
+  principal?: Principal | null;
 }
 
 /**
@@ -1304,7 +1306,7 @@ export class Service {
   }
 
   #tokenOk(handler: RequestLike): boolean {
-    return tokenMatches(handler.headers.get('X-Studio-Token') ?? '', this.tokenGetter());
+    return pageAllowed(handler.principal, handler.headers, this.tokenGetter());
   }
 
   /** The 403 when neither token nor key passed: name the key when one was sent. */

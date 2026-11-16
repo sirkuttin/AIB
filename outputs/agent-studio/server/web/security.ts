@@ -16,6 +16,12 @@ export const ARTIFACT_KEY_HEADER = 'X-Studio-Artifact-Key';
 export const IMAGE_PATH = '/api/transcript/image';
 
 export const PAGE = 'page', AGENT_TOOL = 'agent_tool', HOST_RPC = 'host_rpc';
+/**
+ * A paired computer through the phone port's bridge (remote/pc_bridge.ts). Only the bridge makes one, after its own classification
+ * of the action (remote/pc_routes.ts), and passes it to the handler as an argument: it is never derived from a header, and it never
+ * carries PAGE_SCOPES (its scopes are the device's switches).
+ */
+export const REMOTE_PC = 'remote_pc';
 
 export const SCOPE_STATIC = 'static';
 export const SCOPE_BOOTSTRAP = 'bootstrap';
@@ -58,7 +64,31 @@ export function tokenMatches(supplied: unknown, expected: unknown): boolean {
 }
 
 export class Principal {
-  constructor(readonly kind: string, readonly scopes: ReadonlySet<Scope>, readonly conversation: string | null = null) {}
+  constructor(
+    readonly kind: string,
+    readonly scopes: ReadonlySet<Scope>,
+    readonly conversation: string | null = null,
+    /** REMOTE_PC only: the paired computer's device id. */
+    readonly device: string | null = null,
+  ) {}
+
+  /** The page, or a computer the bridge let through: a handler that checks the page token itself accepts these two. */
+  get pageLike(): boolean {
+    return this.kind === PAGE || this.kind === REMOTE_PC;
+  }
+}
+
+/**
+ * The in-handler page check (files, WSL, Changes, artifacts): a REMOTE_PC principal the bridge passed in, or the page token. The
+ * principal is an argument, never read from the request, so no header can make a request remote.
+ */
+export function pageAllowed(
+  principal: Principal | null | undefined,
+  headers: { get(name: string): string | null | undefined },
+  token: string,
+): boolean {
+  if (principal && principal.kind === REMOTE_PC) return true;
+  return tokenMatches(headers.get(TOKEN_HEADER) ?? '', token);
 }
 
 /** (METHOD, path) -> scope. Paths outside /api/ are page files (scope 'static') unless listed. Unknown /api/ routes are refused. */

@@ -9,7 +9,7 @@ import { inDir } from '../state/base.ts';
 import { readJsonFile, saveJson } from '../state/json.ts';
 import type { WebContext } from '../web/server.ts';
 import { Audit, type AuditEntry } from './audit.ts';
-import { cleanScopes, DEFAULT_SCOPES, DeviceStore, type PublicDevice } from './devices.ts';
+import { cleanKind, cleanScopes, COMPUTER_SCOPES, DEFAULT_SCOPES, DeviceStore, type PublicDevice } from './devices.ts';
 import { Pairing, PairingError } from './pairing.ts';
 import { homePayload, TitleCache } from './payloads.ts';
 import { SavedChats } from './saved.ts';
@@ -373,7 +373,10 @@ export class PhoneAccess implements SetupHost {
     return { words: code.words, url, qr: qrSvg(url), expiresAt: code.expiresAt };
   }
 
-  async approve(id: unknown, scopes: unknown): Promise<PublicDevice> {
+  /** `kind` is the approver's choice on the PC (MF13: never the claimant's own word); a computer starts with every switch on
+   * (lead call 2a) unless the approver sent its switches. */
+  async approve(id: unknown, scopes: unknown, kindValue: unknown = 'phone'): Promise<PublicDevice> {
+    const kind = cleanKind(kindValue);
     const claim = this.pairing.get(id);
     if (!claim || claim.state !== 'pending') {
       throw new PairingError(404, 'no_claim', 'That phone is no longer waiting. Ask it to scan the code again.');
@@ -381,14 +384,20 @@ export class PhoneAccess implements SetupHost {
     const added = await this.devices.add({
       name: claim.name,
       login: claim.login,
-      scopes: cleanScopes(scopes === undefined ? DEFAULT_SCOPES : scopes),
+      scopes: cleanScopes(scopes === undefined ? (kind === 'computer' ? COMPUTER_SCOPES : DEFAULT_SCOPES) : scopes, kind),
+      kind,
     });
     this.pairing.approve(id, {
       token: added.token,
       cookie: added.cookie,
       device: { id: added.device.id, name: added.device.name, scopes: added.device.scopes },
     });
-    this.audit.write({ device: added.device.id, name: added.device.name, action: 'pair', result: 'approved on the PC' });
+    this.audit.write({
+      device: added.device.id,
+      name: added.device.name,
+      action: 'pair',
+      result: kind === 'computer' ? 'approved on the PC as a computer' : 'approved on the PC',
+    });
     return added.device;
   }
 

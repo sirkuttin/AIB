@@ -49,6 +49,10 @@ import { SAVED_KEY } from './saved.ts';
 import { cleanPushSub } from './devices.ts';
 import type { VapidKeys } from './push.ts';
 import { getLogger } from '../core/log.ts';
+import { PcBridge } from './pc_bridge.ts';
+import { entryFor } from './pc_routes.ts';
+import { TERMINAL_SOCKET } from '../web/terminal_routes.ts';
+import { DOCS_SOCKET } from '../web/docs_routes.ts';
 
 /** Phone-side failures go to studio.log (console output only reaches stderr, which the desktop app does not keep). */
 const plog = getLogger('phone_server');
@@ -346,9 +350,20 @@ export class RemoteServer {
   #readAt = new Map<string, number>();
   #readLogged = new Map<string, number>();
   port = 0;
+  /** A paired computer's way into the normal routes (phase 1a; remote/pc_bridge.ts). */
+  readonly bridge: PcBridge;
 
   constructor(readonly host: RemoteHost) {
     this.gate = new RemoteGate(() => host.name());
+    this.bridge = new PcBridge({ ctx: host.ctx, devices: host.devices, json: (s, b, e) => this.json(s, b, e) });
+  }
+
+  /** A request for the bridge: a page route (ROUTE_LIST) the phone API does not have, from a client naming a device. */
+  #forBridge(method: string, path: string, headers: Headers): 'api' | 'socket' | null {
+    const upgrade = headers.get('Upgrade') !== null || headers.has('Sec-WebSocket-Key');
+    if (upgrade) return method === 'GET' && (path === TERMINAL_SOCKET || path === DOCS_SOCKET) ? 'socket' : null;
+    if (!headers.has(DEVICE_HEADER) || !entryFor(method, path)) return null;
+    return path.startsWith('/api/') ? 'api' : null;
   }
 
   json(status: number, body: unknown, extra: Record<string, string> = {}): Response {
@@ -451,6 +466,8 @@ export class RemoteServer {
     const path = url.pathname;
     const method = request.method.toUpperCase() === 'HEAD' ? 'GET' : request.method.toUpperCase();
     const auth = ROUTE_AUTH.get(`${method} ${path}`);
+    const bridged = auth ? null : this.#forBridge(method, path, request.headers);
+    if (bridged) return await this.#bridge(request, url, method, path, bridged);
     if (request.headers.get('Upgrade') !== null) {
       await drain(request);
       return this.json(403, { error: REMOTE_REASONS.websocket[1] });
@@ -506,6 +523,25 @@ export class RemoteServer {
       return this.json(500, { error: 'Internal error' });
     }
     return this.json(404, { error: 'Not found' });
+  }
+
+  /** Phase 1a: a computer's page-route request or socket, after this port's gate (PcBridge does the rest). */
+  async #bridge(request: Request, url: URL, method: string, path: string, kind: 'api' | 'socket'): Promise<Response> {
+    const refused = this.gate.check({ method, path, headers: request.headers }, kind);
+    if (refused) {
+      await drain(request);
+      const [status, message] = REMOTE_REASONS[refused];
+      return this.json(status, { error: message, code: refused });
+    }
+    try {
+      return kind === 'socket' ? await this.bridge.socket(request, url) : await this.bridge.handle(request, url);
+    } catch (error) {
+      if (error instanceof HostUnavailable) {
+        return this.json(503, { error: 'AIB is starting its agents. Try again in a moment.', code: 'busy' });
+      }
+      plog.exception(error, 'Computer request failed: %s', path);
+      return this.json(500, { error: 'Internal error' });
+    }
   }
 
   async #static(request: Request, path: string): Promise<Response> {

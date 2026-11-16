@@ -44,7 +44,7 @@
  *   POST /api/live/wsl/open-url {id, action}       the page's answer to "Ubuntu wants to open <url>": open, always (for that distro), dismiss
  * Plus the Files view of a WSL project (wslFiles, called by files_routes.ts): list, search and read through the distro's helper.
  */
-import { tokenMatches } from './security.ts';
+import { pageAllowed, type Principal } from './security.ts';
 import { issueBytes } from './file_tickets.ts';
 import type { WebContext } from './server.ts';
 import { parseQs } from '../artifacts/origin.ts';
@@ -62,7 +62,7 @@ import { removeAib, realSteps } from '../wsl/remove.ts';
 import { clearDistroRemoved, isDistroRemoved } from '../wsl/removed.ts';
 
 type Reply = [number, unknown];
-type Handler = (ctx: WebContext, url: URL, body: unknown, request: Request) => Promise<Reply>;
+type Handler = (ctx: WebContext, url: URL, body: unknown, request: Request, principal?: Principal) => Promise<Reply>;
 
 const one = (args: Record<string, string[]>, name: string, fallback = '') => (Object.hasOwn(args, name) ? args[name][0] : fallback);
 const DISTRO = /^[A-Za-z0-9._-]{1,64}$/;
@@ -225,8 +225,8 @@ export async function wslStatus(ctx: { stateDir?: string | null }): Promise<Reco
 export function wslRoutes(): Map<string, Handler> {
   const routes = new Map<string, Handler>();
   const guarded = (method: 'GET' | 'POST', path: string, work: (ctx: WebContext, args: Record<string, string[]>, body: Record<string, unknown>) => Promise<Reply>) => {
-    routes.set(`${method} ${path}`, async (ctx, url, body, request) => {
-      if (!tokenMatches(request.headers.get('X-Studio-Token') ?? '', ctx.token)) return [403, { error: 'Invalid local session token' }];
+    routes.set(`${method} ${path}`, async (ctx, url, body, request, principal) => {
+      if (!pageAllowed(principal, request.headers, ctx.token)) return [403, { error: 'Invalid local session token' }];
       const args = parseQs(url.search.slice(1));
       const fields = body && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : {};
       try {

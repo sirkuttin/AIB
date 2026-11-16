@@ -43,7 +43,7 @@ export function devicesRoutes(): Map<string, Handler> {
   });
   routes.set(
     'POST /api/live/devices/approve',
-    async (ctx, _url, body) => [200, { ok: true, device: await ctx.phone.approve(body?.claim, body?.scopes) }],
+    async (ctx, _url, body) => [200, { ok: true, device: await ctx.phone.approve(body?.claim, body?.scopes, body?.kind) }],
   );
   routes.set('POST /api/live/devices/reject', (ctx, _url, body) => [200, { ok: true, rejected: ctx.phone.reject(body?.claim) }]);
   routes.set('POST /api/live/devices/remove', async (ctx, _url, body) => [200, { ok: true, removed: await ctx.phone.remove(body?.id) }]);

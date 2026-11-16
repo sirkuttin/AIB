@@ -26,7 +26,7 @@
  *   POST /api/live/terminal/end {key}               ends that conversation's shell: {ok, ended}
  */
 import { ValueError } from '../core/py.ts';
-import { authorize, Refusal, TOKEN_HEADER } from './security.ts';
+import { authorize, type Principal, Refusal, REMOTE_PC, TOKEN_HEADER } from './security.ts';
 import { ROUTES } from './routes.ts';
 import { upgradeWebSocket, wantsWebSocket } from '../platform/websocket.ts';
 import type { WebContext } from './server.ts';
@@ -75,18 +75,27 @@ function offered(request: Request): string[] {
  * GET /api/live/terminal. Returns the refusal (as [status, body]) or the 101 response. Refusals happen before the upgrade, so a page
  * that is not ours never gets a socket.
  */
-export function terminalSocket(ctx: WebContext, request: Request, url: URL): { refused: Reply } | { response: Response } {
+export function terminalSocket(
+  ctx: WebContext,
+  request: Request,
+  url: URL,
+  principal: Principal | null = null,
+): { refused: Reply } | { response: Response } {
   const protocols = offered(request);
-  const token = protocols.find((p) => p.startsWith(TOKEN_PROTOCOL_PREFIX))?.slice(TOKEN_PROTOCOL_PREFIX.length) ?? '';
-  const headers = new Headers(request.headers);
-  headers.delete(TOKEN_HEADER);
-  if (token) headers.set(TOKEN_HEADER, token);
-  const allowed = authorize(
-    { method: 'GET', path: TERMINAL_SOCKET, headers },
-    ctx.gate,
-    ROUTES.scopeFor('GET', TERMINAL_SOCKET),
-  );
-  if (allowed instanceof Refusal) return { refused: [allowed.status, { error: allowed.message(TERMINAL_SOCKET) }] };
+  // A remote computer: the bridge (remote/pc_bridge.ts pcSocket) checked the device and the terminal rules and passes its principal
+  // in; it never offers the page token. Anyone else goes through the page gate with the token in the subprotocol.
+  if (principal?.kind !== REMOTE_PC) {
+    const token = protocols.find((p) => p.startsWith(TOKEN_PROTOCOL_PREFIX))?.slice(TOKEN_PROTOCOL_PREFIX.length) ?? '';
+    const headers = new Headers(request.headers);
+    headers.delete(TOKEN_HEADER);
+    if (token) headers.set(TOKEN_HEADER, token);
+    const allowed = authorize(
+      { method: 'GET', path: TERMINAL_SOCKET, headers },
+      ctx.gate,
+      ROUTES.scopeFor('GET', TERMINAL_SOCKET),
+    );
+    if (allowed instanceof Refusal) return { refused: [allowed.status, { error: allowed.message(TERMINAL_SOCKET) }] };
+  }
   if (request.headers.get('Origin') === null) return { refused: [403, { error: 'Request must come from the AIB page' }] };
   if (!wantsWebSocket(request) || !protocols.includes(TERMINAL_PROTOCOL)) {
     return { refused: [400, { error: 'This address only takes a terminal WebSocket.' }] };

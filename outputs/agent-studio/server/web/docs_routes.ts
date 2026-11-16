@@ -67,7 +67,7 @@
  *                                                   200 {ok, result}: a refusal is ok=false with Claude Docs' code.
  */
 import * as Y from 'yjs';
-import { authorize, Refusal, TOKEN_HEADER } from './security.ts';
+import { authorize, type Principal, Refusal, REMOTE_PC, TOKEN_HEADER } from './security.ts';
 import { ROUTES } from './routes.ts';
 import { upgradeWebSocket, wantsWebSocket } from '../platform/websocket.ts';
 import { rootFor } from './files_routes.ts';
@@ -644,14 +644,22 @@ function offered(request: Request): string[] {
  * that is not open (AIB restarted) or another epoch than the page synced with is told on the socket ({type: "reopen"}), so the page
  * calls /open again and drops its old copy instead of looping on a 404 or merging it in as duplicate blocks.
  */
-export function docsSocket(ctx: WebContext, request: Request, url: URL): { refused: Reply } | { response: Response } {
+export function docsSocket(
+  ctx: WebContext,
+  request: Request,
+  url: URL,
+  principal: Principal | null = null,
+): { refused: Reply } | { response: Response } {
   const protocols = offered(request);
-  const token = protocols.find((p) => p.startsWith(TOKEN_PROTOCOL_PREFIX))?.slice(TOKEN_PROTOCOL_PREFIX.length) ?? '';
-  const headers = new Headers(request.headers);
-  headers.delete(TOKEN_HEADER);
-  if (token) headers.set(TOKEN_HEADER, token);
-  const allowed = authorize({ method: 'GET', path: DOCS_SOCKET, headers }, ctx.gate, ROUTES.scopeFor('GET', DOCS_SOCKET));
-  if (allowed instanceof Refusal) return { refused: [allowed.status, { error: allowed.message(DOCS_SOCKET) }] };
+  // A remote computer: the bridge checked it and passes its principal in (remote/pc_bridge.ts pcSocket); no page token involved.
+  if (principal?.kind !== REMOTE_PC) {
+    const token = protocols.find((p) => p.startsWith(TOKEN_PROTOCOL_PREFIX))?.slice(TOKEN_PROTOCOL_PREFIX.length) ?? '';
+    const headers = new Headers(request.headers);
+    headers.delete(TOKEN_HEADER);
+    if (token) headers.set(TOKEN_HEADER, token);
+    const allowed = authorize({ method: 'GET', path: DOCS_SOCKET, headers }, ctx.gate, ROUTES.scopeFor('GET', DOCS_SOCKET));
+    if (allowed instanceof Refusal) return { refused: [allowed.status, { error: allowed.message(DOCS_SOCKET) }] };
+  }
   if (request.headers.get('Origin') === null) return { refused: [403, { error: 'Request must come from the AIB page' }] };
   if (!wantsWebSocket(request) || !protocols.includes(DOCS_PROTOCOL)) {
     return { refused: [400, { error: 'This address only takes a doc WebSocket.' }] };

@@ -14,10 +14,10 @@ import { findPrompts } from '../transcripts/prompts.ts';
 import { branchOf, changesResponse, type ChatStudio } from '../worktrees/chat_folders.ts';
 import * as merge from '../worktrees/merge.ts';
 import * as mergeQueue from '../worktrees/merge_queue.ts';
-import { FROM_DOC_RESOLVED, MAX_BODY_BYTES } from '../artifacts/artifacts.ts';
+import { FROM_DOC_RESOLVED, MAX_BODY_BYTES, type RequestLike } from '../artifacts/artifacts.ts';
 import { getUpdate, getUpdateNotes, postUpdateCheck, postUpdateInstall, postUpdateNotes } from '../desktop/updater.ts';
 import { parseQs } from '../artifacts/origin.ts';
-import { authorize, Refusal, SCOPE_ARTIFACTS_TOOL } from './security.ts';
+import { authorize, type Principal, Refusal, REMOTE_PC, SCOPE_ARTIFACTS_TOOL } from './security.ts';
 import { check as checkArtifactKey } from '../artifacts/keys.ts';
 import { ROUTES } from './routes.ts';
 import type { WebContext } from './server.ts';
@@ -34,7 +34,7 @@ import { wslResumeSync } from '../wsl/sync.ts';
 type Json = Record<string, unknown>;
 export type Reply = [number, unknown];
 /** A native route: [status, payload]. */
-export type StudioHandler = (ctx: WebContext, url: URL, body: Json | null, request: Request) => Promise<Reply>;
+export type StudioHandler = (ctx: WebContext, url: URL, body: Json | null, request: Request, principal?: Principal) => Promise<Reply>;
 
 /** parse_qs(query) and args.get(name, [fallback])[0]. */
 function argsOf(url: URL): Record<string, string[]> {
@@ -278,12 +278,20 @@ export function studioRoutes(): Map<string, StudioHandler> {
   });
   // ---- Changes view, branch, worktree Merge and clashes ----
   for (const path of ['/api/live/changes', '/api/live/changes/file']) {
-    routes.set(`GET ${path}`, (ctx, url, _body, request) => {
-      // identical requests at once (several views of one chat poll it) share one run of git; the token is part of the key
-      const key = `${request.headers.get('X-Studio-Token') ?? ''}|${path}|${url.search}`;
+    routes.set(`GET ${path}`, (ctx, url, _body, request, principal) => {
+      // identical requests at once (several views of one chat poll it) share one run of git; who asks is part of the key: the
+      // page token, or a remote computer's principal (never a token it sent)
+      const who = principal?.kind === REMOTE_PC ? `pc:${principal.device}` : request.headers.get('X-Studio-Token') ?? '';
+      const key = `${who}|${path}|${url.search}`;
       return shared(changesRuns, key, async () => {
         const args = argsOf(url);
-        return await changesResponse(chatStudioOf(ctx, await savedFolders(ctx, one(args, 'id'))), path, args, request.headers);
+        return await changesResponse(
+          chatStudioOf(ctx, await savedFolders(ctx, one(args, 'id'))),
+          path,
+          args,
+          request.headers,
+          principal ?? null,
+        );
       });
     });
   }
@@ -360,10 +368,10 @@ export function studioRoutes(): Map<string, StudioHandler> {
     '/api/live/artifacts/states',
   ];
   for (const path of artifactGets) {
-    routes.set(`GET ${path}`, async (ctx, url, _body, request) => {
+    routes.set(`GET ${path}`, async (ctx, url, _body, request, principal) => {
       const args = argsOf(url);
       await ctx.artifacts.prepare(path === '/api/live/artifacts', null);
-      return artifactCall(() => ctx.artifacts.service.handleGet(request, path, args));
+      return artifactCall(() => ctx.artifacts.service.handleGet(asked(request, principal), path, args));
     });
   }
   return routes;
@@ -485,6 +493,19 @@ export async function ownGatePost(ctx: WebContext, request: Request, url: URL): 
     const allowed = gateFor(ctx, request, path, body.conversationId);
     if (allowed instanceof Refusal) return [allowed.status, { error: allowed.message(path) }];
   }
+  return await artifactPost(ctx, request, path, body);
+}
+
+/** What an artifact route reads of the request: its headers and the principal the server passed in (never from a header). */
+export function asked(request: Request, principal?: Principal | null): RequestLike {
+  return { headers: request.headers, principal: principal ?? null };
+}
+
+/**
+ * An /api/live/artifacts/* POST once its caller is known: ownGatePost after its gate, or the remote computer bridge
+ * (remote/pc_bridge.ts) for the page-side actions it allows, with its principal in `who` (it never reaches the agent-key routes).
+ */
+export async function artifactPost(ctx: WebContext, who: RequestLike, path: string, body: Json): Promise<Reply> {
   const publishing = path === '/api/live/artifacts/publish' || path === '/api/live/artifacts/preview';
   // Delete and Restore move the source file: they need the OWNER chat's folder (an artifact opened from another chat's link too),
   // resolved from the manifest, never the requesting chat's and never manifest.project (the main checkout of a worktree chat).
@@ -516,5 +537,5 @@ export async function ownGatePost(ctx: WebContext, request: Request, url: URL): 
     }
     delete body.fromDoc;
   }
-  return artifactCall(() => ctx.artifacts.service.handlePost(request, path, body));
+  return artifactCall(() => ctx.artifacts.service.handlePost(who, path, body));
 }
