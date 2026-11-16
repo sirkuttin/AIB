@@ -3554,6 +3554,11 @@
       const p = ws && ws.active !== St().ALL ? projectOfKey(ws.active) : null;
       return p ? p.path || '' : '';
     },
+    // For doc-links.js: a project's folder by its key (a restored doc pop-out's tab comes back in it), '' when not known.
+    projectPathOf: (pk) => {
+      const p = pk ? projectOfKey(pk) : null;
+      return p ? p.path || '' : '';
+    },
     currentProjectName: () => {
       const p = ws && ws.active !== St().ALL ? projectOfKey(ws.active) : null;
       return p ? p.name : '';

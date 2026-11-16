@@ -277,3 +277,69 @@ Deno.test({
     }
   },
 });
+
+Deno.test({
+  ...OPTS,
+  name: 'doc pop-out after a restart: the restored pop-out names the window it came from; closing it puts the tab back there',
+  ignore: !browserPath,
+  async fn() {
+    const t = await lab();
+    try {
+      await t.s.ctx.docs.open(t.s.project, 'Notes', '# Notes\n\nNot this window.\n', 'user');
+      // as restored from desktop-windows.json: the doc pop-out w2 was moved out of the main window before the restart (the chat
+      // ids of that run are gone); w3 was moved out of another window, so it is not this window's to take back
+      t.dw.restore({ w: 'w2', kind: 'doc', project: t.pk, name: 'release-plan' }, 'Release plan · AIB', 'm');
+      t.dw.restore({ w: 'w3', kind: 'doc', project: t.pk, name: 'notes' }, 'Notes · AIB', 'w5');
+      const a = await t.browser.open('about:blank', 1400, 900);
+      await a.send('Page.addScriptToEvaluateOnNewDocument', { source: APP_PAGE });
+      await a.goto(`${t.base}/?w=m`); // a fresh page: no sessionStorage record of the move
+      await a.waitFor('!!window.AibWindow && !!window.AgentFilesUI && window.AibDesktop.available()', 15000, 'the app page');
+      await a.waitFor('!!document.querySelector(\'button.connection[data-key="claude:sess-1"]\')', 20000, 'the chat in the list');
+      await a.click('button.connection[data-key="claude:sess-1"]');
+      await a.waitFor('JSON.stringify(window.AgentWorkspaceUI.openKeys()) === \'["claude:sess-1"]\'', 10000, 'the chat open');
+      // the restored pop-outs load and report themselves (presence)
+      const pop = await t.browser.open('about:blank', 720, 900);
+      await pop.goto(t.popUrl('w2', 'release-plan'));
+      await editorReady(pop);
+      const other = await t.browser.open('about:blank', 720, 900);
+      await other.goto(t.popUrl('w3', 'notes'));
+      await editorReady(other);
+      await a.eval('window.AgentNotifyUI.reportPresence(true), true');
+      await a.waitFor(
+        `(() => { const p = AgentDocLinks._pops(); return p.length === 1 && p[0].name === 'release-plan' && p[0].seen && p[0].w === 'w2'; })()`,
+        10000,
+        'taken back as its own',
+      ).catch(async (e) => {
+        console.log(await a.eval(`JSON.stringify({ pops: AgentDocLinks._pops(), ans: AibWindow.answer() })`));
+        throw e;
+      });
+      assert(await a.eval<boolean>(`!!AgentDocLinks.poppedOut(${JSON.stringify(t.pk)}, 'release-plan')`), 'remembered as popped out');
+      assert(!(await a.eval<boolean>(`AgentFilesUI._state().tabs.tabs.some((x) => x.kind === 'doc')`)), 'no doc tab yet');
+      // closing the pop-out: its tab comes back here in the background, with this run's chat (never the old run's id)
+      const activeBefore = await a.eval<string>('AgentFilesUI._state().tabs.active');
+      await pop.goto('about:blank');
+      t.dw.close('w2');
+      await a.eval('window.AgentNotifyUI.reportPresence(true), true');
+      await a.waitFor(`AgentFilesUI._state().tabs.tabs.some((x) => x.kind === 'doc')`, 10000, 'the doc tab is back');
+      const tab = await a.eval<Json>(`AgentFilesUI._state().tabs.tabs.find((x) => x.kind === 'doc')`);
+      assertEquals((tab.doc as Json).name, 'release-plan');
+      assertEquals((tab.doc as Json).title, 'Release plan', 'its title, from the doc list');
+      assertEquals((tab.scope as Json).id, 'c1', 'the live chat of the project now');
+      assertEquals(await a.eval('AgentFilesUI._state().tabs.active'), activeBefore, 'in the background');
+      assertEquals(await a.eval('AgentDocLinks._pops().length'), 0, 'no longer popped out');
+      // the other window's pop-out was never taken: closing it brings nothing here
+      await other.goto('about:blank');
+      t.dw.close('w3');
+      await a.eval('window.AgentNotifyUI.reportPresence(true), true');
+      await sleep(800);
+      assertEquals(await a.eval<number>(`AgentFilesUI._state().tabs.tabs.filter((x) => x.kind === 'doc').length`), 1, 'only its own doc came back');
+      assertEquals(a.errors, [], 'console errors (project window)');
+      assertEquals(pop.errors, [], 'console errors (pop-out)');
+      await pop.close();
+      await other.close();
+      await a.close();
+    } finally {
+      await t.close();
+    }
+  },
+});
