@@ -74,7 +74,7 @@
   --button-bg: var(--bg-field); /* button {background}; .ws-qa {background}; .st-close:hover {background} */
   --label-text: color-mix(in srgb, var(--text) 48%, var(--muted)); /* label {color} */
   --error-bg: color-mix(in srgb, var(--danger) 18%, var(--code-bg)); /* #error {background} */
-  --bubble-bg: color-mix(in srgb, var(--bg) 32%, var(--bg-field)); /* .bubble {background}; .pane:not(.foc) .ws-tab.on {background} */
+  --bubble-bg: color-mix(in srgb, var(--bg) 32%, var(--bg-field)); /* .bubble {background} */
   --bubble-head-line: color-mix(in srgb, var(--panel-2) 89%, var(--text-faint)); /* .bubble-head {border-bottom}; .msg-note-body {border-top} */
   --bubble-head-text: color-mix(in srgb, var(--text) 33%, var(--muted)); /* .bubble-head {color}; .tool-toggle {color}; .msg-note-toggle {color} */
   --card-line: color-mix(in srgb, var(--bg) 43%, var(--line-strong)); /* .connection {border} */

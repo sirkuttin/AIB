@@ -356,7 +356,8 @@
       p.el.dataset.n = String(i + 1);
       if (foc) {
         if (p.mirror) {
-          dropMirror(p);
+          if (p.mirror.copy && liveNodes[0].parentNode !== p.body) hold(p);
+          else dropMirror(p);
           p.mirror = null;
           p.mirrorKey = null;
         }
@@ -364,7 +365,10 @@
           p.body.append(...liveNodes);
           move = true;
         }
-      } else drawMirror(p, g);
+      } else {
+        unhold(p);
+        drawMirror(p, g);
+      }
     });
     restoreScroll(keep);
     if (move) moved();
@@ -373,6 +377,43 @@
   // ---- mirrors: the live copy of a chat in a pane that is not focused ---------------------------------------------------
   function drawMirror(p, g) {
     const key = g.active && g.active !== T().DRAFT ? g.active : '';
+    const snap = key ? snapOf(key) : null;
+    if (snap && p.mirror && p.mirrorKey === key && !p.mirror.copy) {
+      // the chat's look arrived (it was in the real view once): the copy takes over from the plain stand-in, keeping its rows
+      const msgs = p.mirror.msgs;
+      p.mirror.root.remove();
+      p.mirror = drawCopy(p, key, snap, msgs);
+    }
+    if (snap && (!p.mirror || p.mirrorKey !== key)) {
+      dropMirror(p);
+      const msgs = el('div', 'mirror-msgs');
+      msgs.dataset.mirror = key;
+      p.mirror = drawCopy(p, key, snap, msgs);
+      p.mirrorKey = key;
+      const left = host.mirror && host.mirror.take ? host.mirror.take(key) : null;
+      if (left && left.length) msgs.append(...left);
+      const rows = host.mirror ? host.mirror.rows(key) : null;
+      if (rows) host.mirror.paint(msgs, rows);
+      else if (host.mirror && host.mirror.wake) host.mirror.wake();
+    }
+    if (p.mirror && p.mirror.copy) {
+      const c = host.convOf(key),
+        m = p.mirror;
+      const bc = copyState(snap ? snap.bc : '');
+      if (m.root.getAttribute('data-bc') !== bc) m.root.setAttribute('data-bc', bc);
+      if (m.title) m.title.textContent = c ? host.titleOf(c) : 'Conversation';
+      const st = c && host.statusText ? host.statusText(c) : null;
+      if (st && m.status) {
+        m.status.textContent = st.text;
+        m.status.dataset.tone = st.tone;
+      }
+      if (st && m.turn) m.turn.textContent = st.text;
+      if (m.comp) {
+        const draft = host.draftOf(key) || '';
+        if (m.comp.value !== draft) m.comp.value = draft;
+      }
+      return;
+    }
     if (!p.mirror || p.mirrorKey !== key) {
       dropMirror(p);
       // Same markup and classes as the real header, so it looks the same (header.css styles the <header> element).
@@ -420,6 +461,342 @@
     m.comp.textContent = draft || (c ? 'Message ' + host.agentName(c) + '… click to reply' : '');
     m.comp.classList.toggle('has-draft', !!draft);
   }
+  // ---- the copy of the real view: everything the chat showed in the focused pane ------------------------------------------
+  /* Owner, 2026-11-15: "stop changing what is displayed when switching chat focus". The other pane shows the real view's own
+     header, bars, message box and chip row as that chat last had them (a snapshot taken when it left the real view, chat.js
+     beginConversation -> snapshot), with the live list, title, status and draft filled in. Nothing hides, dims or moves when
+     focus moves: only the thin accent line on top of the focused pane changes.
+     The copy has no ids (each id becomes data-mid) so the page's getElementById never finds it; the page's id rules are taught to
+     style data-mid the same (mirrorCss), and rules that depend on the page's state (body.new-chat ...) follow the state the chat
+     had when the snapshot was taken (data-bc on the copy), not the focused chat's. */
+  const snaps = new Map(); // chat key -> { nodes: [detached clones of the live view], bc: body classes then }
+  const SNAP_KEY = 'aib-split-snap-v1';
+  const SNAP_MAX = 6;
+  let snapsLoaded = false;
+  const FOCUSABLE = 'button, textarea, input, select, summary, a[href], [tabindex]';
+  // what a click in the copy passes on to the real view (the title, which renames on click, and plain text only focus the pane)
+  const CONTROLS = 'button, textarea, input, select, summary, a[href], .chip, [role="button"]';
+  function cloneView(n) {
+    if (n.nodeType !== 1) return n.cloneNode(false);
+    if (n.id === 'messages') return el('div', 'mirror-slot');
+    const c = n.cloneNode(false);
+    if (!n.hidden) for (const ch of Array.from(n.childNodes)) c.append(cloneView(ch));
+    if (n.tagName === 'TEXTAREA') c.textContent = '';
+    if (c.id) {
+      c.setAttribute('data-mid', c.id);
+      c.removeAttribute('id');
+    }
+    c.removeAttribute('for');
+    if (c.matches && c.matches(FOCUSABLE)) c.setAttribute('tabindex', '-1');
+    return c;
+  }
+  function loadSnaps() {
+    if (snapsLoaded) return;
+    snapsLoaded = true;
+    let raw = null;
+    try {
+      raw = JSON.parse((root.localStorage && root.localStorage.getItem(SNAP_KEY)) || 'null');
+    } catch (e) {
+      raw = null;
+    }
+    if (!raw || typeof raw !== 'object') return;
+    for (const k of Object.keys(raw)) {
+      const v = raw[k];
+      if (!v || typeof v.html !== 'string' || snaps.has(k)) continue;
+      const t = doc().createElement('template');
+      t.innerHTML = v.html;
+      for (const s of Array.from(t.content.querySelectorAll('script, iframe, object, embed'))) s.remove();
+      for (const e of Array.from(t.content.querySelectorAll('*')))
+        for (const a of Array.from(e.attributes)) if (/^on/i.test(a.name)) e.removeAttribute(a.name);
+      snaps.set(k, { nodes: Array.from(t.content.childNodes), bc: String(v.bc || '') });
+    }
+  }
+  function saveSnaps() {
+    if (!L) return; // only split view needs them after a restart
+    const keep = new Set(T().tabsFlat(L));
+    const out = {};
+    let size = 0;
+    for (const [k, v] of snaps) {
+      if (!keep.has(k)) continue;
+      const box = doc().createElement('div');
+      box.append(...v.nodes.map((n) => n.cloneNode(true)));
+      const html = box.innerHTML;
+      size += html.length;
+      if (size > 600000) break;
+      out[k] = { html, bc: v.bc };
+    }
+    try {
+      if (root.localStorage) root.localStorage.setItem(SNAP_KEY, JSON.stringify(out));
+    } catch (e) {
+      /* full: the copies are drawn again after the next focus visit */
+    }
+  }
+  // chat.js calls this just before the real view switches to another chat: the chat leaving keeps its look for its pane's copy.
+  function snapshot() {
+    if (!host || !liveNodes.length) return;
+    const k = selectedKey();
+    if (!k) return;
+    const b = doc().body;
+    if (b.classList.contains('new-chat')) return;
+    loadSnaps();
+    snaps.delete(k);
+    snaps.set(k, { nodes: liveNodes.map(cloneView), bc: b.className });
+    while (snaps.size > SNAP_MAX) snaps.delete(snaps.keys().next().value);
+    saveSnaps();
+  }
+  function snapOf(key) {
+    loadSnaps();
+    return snaps.get(key) || null;
+  }
+
+  /* The page's style rules, taught to style the copy: "#prompt" also matches [data-mid="prompt"] (same specificity, through
+     :is), and a rule that starts with the page's state ("body.new-chat #promptForm") styles the real view by the page's state
+     and the copy by the state its chat had (".mirror-copy[data-bc~='new-chat'] [data-mid='promptForm']"). Done once per sheet. */
+  const cssDone = typeof WeakSet === 'function' ? new WeakSet() : null;
+  function splitTop(s, ch) {
+    const out = [];
+    let depth = 0,
+      q = '',
+      cur = '';
+    for (let i = 0; i < s.length; i++) {
+      const c = s[i];
+      if (q) {
+        if (c === '\\') {
+          cur += c + (s[i + 1] || '');
+          i++;
+          continue;
+        }
+        if (c === q) q = '';
+      } else if (c === '"' || c === "'") q = c;
+      else if (c === '(' || c === '[') depth++;
+      else if (c === ')' || c === ']') depth--;
+      else if (c === ch && depth === 0) {
+        out.push(cur);
+        cur = '';
+        continue;
+      }
+      cur += c;
+    }
+    out.push(cur);
+    return out;
+  }
+  // Apply fn to the parts of a selector outside quotes.
+  function outsideQuotes(s, fn) {
+    return s.replace(/("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|([^"']+)/g, (m, quoted, plain) => (quoted ? quoted : fn(plain)));
+  }
+  const ID_RE = /#(-?[A-Za-z_][\w-]*)/g;
+  // The end of the leading compound ("body.new-chat.start-page" in "body.new-chat.start-page #x").
+  function compoundEnd(s) {
+    let depth = 0,
+      q = '';
+    for (let i = 0; i < s.length; i++) {
+      const c = s[i];
+      if (q) {
+        if (c === q) q = '';
+        continue;
+      }
+      if (c === '"' || c === "'") q = c;
+      else if (c === '(' || c === '[') depth++;
+      else if (c === ')' || c === ']') depth--;
+      else if (depth === 0 && /[\s>+~]/.test(c)) return i;
+    }
+    return s.length;
+  }
+  function lastPseudoElement(s) {
+    let depth = 0,
+      q = '',
+      at = -1;
+    for (let i = 0; i < s.length; i++) {
+      const c = s[i];
+      if (q) {
+        if (c === q) q = '';
+        continue;
+      }
+      if (c === '"' || c === "'") q = c;
+      else if (c === '(' || c === '[') depth++;
+      else if (c === ')' || c === ']') depth--;
+      else if (depth === 0 && c === ':' && s[i + 1] === ':') at = i;
+    }
+    return at;
+  }
+  function rewriteSelector(list) {
+    const out = [];
+    let changed = false;
+    for (const raw of splitTop(list, ',')) {
+      const s = raw.trim();
+      const hasId = outsideQuotes(s, (p) => (ID_RE.test(p) ? ((ID_RE.lastIndex = 0), '\u0000') : p)).includes('\u0000');
+      ID_RE.lastIndex = 0;
+      const isBody = /^body(?![\w-])/.test(s);
+      if (!isBody) {
+        if (hasId) {
+          changed = true;
+          out.push(outsideQuotes(s, (p) => p.replace(ID_RE, (m, id) => ':is(#' + id + ',[data-mid="' + id + '"])')));
+        } else out.push(s);
+        continue;
+      }
+      changed = true;
+      const end = compoundEnd(s),
+        head = s.slice(0, end),
+        rest = s.slice(end);
+      // the real view: as before, never the copy
+      const pe = lastPseudoElement(s),
+        guard = ':not(.mirror-copy *)';
+      out.push(pe >= 0 ? s.slice(0, pe) + guard + s.slice(pe) : s + guard);
+      if (!rest.trim()) continue; // a rule for the body itself
+      const state = head
+        .slice(4)
+        .replace(/\.(-?[A-Za-z_][\w-]*)/g, (m, c) => '[data-bc~="' + c + '"]');
+      const copy = '.mirror-copy' + state + outsideQuotes(rest, (p) => p.replace(ID_RE, (m, id) => '[data-mid="' + id + '"]'));
+      out.push(copy);
+    }
+    return changed ? out.join(', ') : null;
+  }
+  function rewriteRules(rules) {
+    for (const r of Array.from(rules || [])) {
+      if (typeof r.selectorText === 'string') {
+        const next = rewriteSelector(r.selectorText);
+        if (next)
+          try {
+            r.selectorText = next;
+          } catch (e) {
+            /* a selector the browser would not take: the rule keeps styling the real view only */
+          }
+      } else if (r.cssRules) rewriteRules(r.cssRules); // @media, @supports
+    }
+  }
+  function mirrorCss() {
+    for (const sh of Array.from(doc().styleSheets || [])) {
+      if (cssDone && cssDone.has(sh)) continue;
+      let rules = null;
+      try {
+        rules = sh.cssRules;
+      } catch (e) {
+        rules = null;
+      }
+      if (!rules) continue;
+      if (cssDone) cssDone.add(sh);
+      rewriteRules(rules);
+    }
+  }
+  /* The page state the copy is styled by: the chat's own state from its snapshot (a New chat, a subagent open), the window's
+     state as it is now (split on, the chat-only mode, a drag in progress). */
+  const CHAT_STATE = ['new-chat', 'start-page', 'subchat-open'];
+  function copyState(bc) {
+    const then = String(bc || '').split(/\s+/).filter((c) => CHAT_STATE.includes(c));
+    const now = Array.from(doc().body.classList).filter((c) => !CHAT_STATE.includes(c));
+    return now.concat(then).join(' ');
+  }
+  function drawCopy(p, key, snap, msgs) {
+    mirrorCss();
+    const rootEl = el('div', 'mirror mirror-copy');
+    rootEl.setAttribute('data-bc', copyState(snap.bc));
+    rootEl.append(...snap.nodes.map((n) => n.cloneNode(true)));
+    const slot = rootEl.querySelector('.mirror-slot');
+    msgs.setAttribute('data-mid', 'messages'); // styled exactly as the real list
+    if (slot) slot.replaceWith(msgs);
+    else rootEl.append(msgs);
+    // the copy is a picture: it never submits, never takes the caret (a click focuses the pane, then works on the real one)
+    rootEl.addEventListener('submit', (e) => e.preventDefault(), true);
+    rootEl.addEventListener('click', (e) => {
+      if (e.target && e.target.closest && !e.target.closest('.mirror-msgs')) e.preventDefault();
+    });
+    const q = (id) => rootEl.querySelector('[data-mid="' + id + '"]');
+    p.body.replaceChildren(rootEl);
+    // the header's compact / narrow look follows the copy's own width, as the real header's does (views-ui.js)
+    const head = rootEl.querySelector(':scope > header'),
+      V = root.ChatViewsUI;
+    if (head && V && V.fitHeader) {
+      V.fitHeader(head, head.clientWidth);
+      if (typeof root.ResizeObserver === 'function')
+        new root.ResizeObserver((en) => V.fitHeader(head, en[0] && en[0].contentRect ? en[0].contentRect.width : head.clientWidth)).observe(head);
+    }
+    return { root: rootEl, copy: true, msgs, title: q('title'), status: q('status'), turn: q('turnStatus'), comp: q('prompt') };
+  }
+  /* The pane just took focus: the real view opens its chat and draws its header and bars again over the next moments (the title,
+     the busy state and the buttons arrive with the chat's state). Until the real view shows what the copy showed (or 2 s pass),
+     the copy's header and bars stay on top of it, so nothing blinks; the list area is cut out, the real list shows through, and
+     every click goes to the real view underneath. */
+  const HOLD_IDS = ['title', 'status', 'turnStatus', 'cancel', 'send', 'attachImages', 'markHandled', 'queueBox', 'planDock'];
+  function viewSig(find) {
+    return HOLD_IDS.map((id) => {
+      const n = find(id);
+      return n ? id + (n.hidden ? ':h:' : ':s:') + n.textContent.trim() : id + ':-';
+    }).join('|');
+  }
+  function hold(p) {
+    const m = p.mirror,
+      rootEl = m.root,
+      msgs = m.msgs;
+    if (host.mirror && host.mirror.release) host.mirror.release(msgs);
+    const br = p.body.getBoundingClientRect(),
+      lr = msgs.getBoundingClientRect();
+    const want = viewSig((id) => rootEl.querySelector('[data-mid="' + id + '"]'));
+    msgs.style.visibility = 'hidden';
+    rootEl.classList.add('mirror-hold');
+    if (br.width && lr.height) {
+      const x0 = Math.max(0, lr.left - br.left),
+        y0 = Math.max(0, lr.top - br.top),
+        x1 = x0 + lr.width,
+        y1 = y0 + lr.height;
+      rootEl.style.clipPath =
+        'polygon(evenodd, 0 0, 100% 0, 100% 100%, 0 100%, 0 0, ' +
+        [x0 + 'px ' + y0 + 'px', x1 + 'px ' + y0 + 'px', x1 + 'px ' + y1 + 'px', x0 + 'px ' + y1 + 'px', x0 + 'px ' + y0 + 'px'].join(', ') +
+        ')';
+    }
+    p.hold = rootEl;
+    const t0 = Date.now(),
+      raf = root.requestAnimationFrame || ((f) => (root.setTimeout || setTimeout)(f, 16));
+    const check = () => {
+      if (p.hold !== rootEl) return;
+      const real = viewSig((id) => doc().getElementById(id));
+      if (real === want || Date.now() - t0 > 2000) unhold(p);
+      else raf(check);
+    };
+    raf(check);
+  }
+  function unhold(p) {
+    if (!p.hold) return;
+    p.hold.remove();
+    p.hold = null;
+  }
+
+  // A click on a control in the copy: after its pane is focused, the same control in the real view (one click does both).
+  function pathIn(rootEl, node) {
+    const path = [];
+    for (let n = node; n && n !== rootEl; n = n.parentElement) {
+      const par = n.parentElement;
+      if (!par) return null;
+      path.unshift(Array.prototype.indexOf.call(par.children, n));
+    }
+    return path;
+  }
+  const firstClass = (c) => String(c || '').trim().split(/\s+/)[0] || '';
+  function realFor(want) {
+    const d = doc();
+    if (want.mid) {
+      const byId = d.getElementById(want.mid);
+      if (byId) return byId;
+    }
+    if (!want.path || !want.path.length) return null;
+    let n = liveNodes[want.path[0]] || null;
+    for (let i = 1; n && i < want.path.length; i++) n = n.children[want.path[i]] || null;
+    return n && n.tagName === want.tag && firstClass(n.className) === want.cls ? n : null;
+  }
+  function forward(want) {
+    let tries = 0;
+    const go = () => {
+      const n = realFor(want);
+      if (n && !n.hidden && (n.offsetParent !== null || n.tagName === 'TEXTAREA')) {
+        if (n.tagName === 'TEXTAREA' || n.tagName === 'INPUT') {
+          if (!n.disabled) n.focus();
+        } else if (typeof n.click === 'function') n.click();
+        return;
+      }
+      if (++tries < 40) (root.setTimeout || setTimeout)(go, 50); // the chat's chips are drawn again when it opens
+    };
+    go();
+  }
+
   // For chat.js: the boxes to keep filled, one per pane that shows a chat.
   function mirrorTargets() {
     if (!active()) return [];
@@ -852,7 +1229,37 @@
       p = t && t.closest ? t.closest('#splitStage .pane') : null;
     if (!p || p.classList.contains('foc')) return;
     if (t.closest('.pane-strip') && t.closest('.ws-tab, button')) return; // tabs and buttons on a strip do their own work
+    // This press only focuses the pane (and passes a control's use on, below): its click must not land on the real view that is
+    // now under the pointer (it would start renaming the title, or open and at once close a chip's menu).
+    const eat = (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+    };
+    doc().addEventListener('click', eat, true);
+    const done = () => {
+      doc().removeEventListener('pointerup', done, true);
+      (root.setTimeout || setTimeout)(() => doc().removeEventListener('click', eat, true), 0);
+    };
+    doc().addEventListener('pointerup', done, true);
     const inComposer = !!t.closest('.mirror-comp');
+    const copy = t.closest('.mirror-copy'),
+      ctl = copy && !t.closest('.mirror-msgs') ? t.closest(CONTROLS) : null;
+    if (copy && ctl && copy.contains(ctl) && ctl.getAttribute('data-mid') !== 'title') {
+      // a control in the copy: focus the pane now, use the real control once the press ends (after this gesture's own click)
+      e.preventDefault();
+      const path = pathIn(copy, ctl);
+      if (path) {
+        // the copy's top-level children line up with the live view's (the list stands in for #messages)
+        const want = { mid: ctl.getAttribute('data-mid') || '', path, tag: ctl.tagName, cls: firstClass(ctl.className) };
+        const run = () => {
+          doc().removeEventListener('pointerup', run, true);
+          (root.setTimeout || setTimeout)(() => forward(want), 0);
+        };
+        doc().addEventListener('pointerup', run, true);
+      }
+      focusPane(p.dataset.g);
+      return;
+    }
     focusPane(p.dataset.g);
     if (inComposer)
       (root.setTimeout || setTimeout)(() => {
@@ -863,6 +1270,7 @@
   // The "+" on a pane's strip: focus that pane, then start a New chat in it.
   function newChatIn(gid) {
     if (!active() || L.focus === gid) return;
+    snapshot();
     if (host.mirror && host.mirror.stash) host.mirror.stash(selectedKey());
     L = T().focusGroup(L, gid);
     persist();
@@ -935,6 +1343,7 @@
     handleKey,
     splitTab,
     splitFocused,
+    snapshot,
     moveTab,
     focusPane,
     newChatIn,
