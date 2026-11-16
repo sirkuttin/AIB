@@ -2868,6 +2868,27 @@
     return s;
   }
   const splLive = (s) => orderArtifacts(liveOf(s.list).filter((a) => !isDocHistory(a)));
+  /* A pane's chat's "Docs this chat wrote" (as myDocs, for that chat): {docs, keys}. */
+  function splDocs(s) {
+    const D = DL(),
+      U = splitUI(),
+      c = U && U.chatInfo ? U.chatInfo(s.key).conv : null,
+      keys = [s.id, c && c.key, c && c.id].filter(Boolean);
+    if (!D || !s.id) return { docs: [], keys };
+    if (!docsHooked && D.onList) {
+      docsHooked = true;
+      D.onList(() => paintAll());
+    }
+    const now = D.cached(s.id, 'main');
+    if (!now && s.docsAsked !== s.id) {
+      s.docsAsked = s.id;
+      D.listFor(s.id, 'main').then(() => paintAll());
+    }
+    const all = (now || []).concat(s.id === S.chat.id ? S.docExtras : []),
+      docs = [];
+    for (const d of linkedDocs(all, keys)) if (!docs.some((o) => o.name === d.name)) docs.push(d);
+    return { docs, keys };
+  }
   function splPaint() {
     if (!ui || !SPL.box) return;
     const U = splitUI(),
@@ -2876,13 +2897,25 @@
       const s = splSection(k),
         info = U ? U.chatInfo(k) : { key: k, title: 'Conversation' },
         items = splLive(s),
-        n = items.length;
-      if (A && A.splitHead) A.splitHead(doc, info, n + (n === 1 ? ' artifact' : ' artifacts'), s.head);
+        n = items.length,
+        dn = splDocs(s).docs.length;
+      const line = [n + (n === 1 ? ' artifact' : ' artifacts')];
+      if (dn) line.push(dn + (dn === 1 ? ' doc' : ' docs'));
+      if (A && A.splitHead) A.splitHead(doc, info, line.join(' · '), s.head);
       const on = SPL.showing === k && !!S.chat.id && S.chat.id === s.id;
       const a = on ? current() : null,
+        shownDoc = on && S.doc ? S.doc : null,
         shownA = a && items.some((x) => x.id === a.id) ? a : items[0];
-      s.pick.classList.toggle('showing', on && !!a);
-      if (!n) {
+      s.pick.classList.toggle('showing', on && !!(a || shownDoc));
+      if (shownDoc || (!n && dn)) {
+        // a doc on screen (or only docs in this chat): the bar names it; the dropdown lists the docs under "Docs this chat wrote"
+        const t = shownDoc ? shownDoc.title || shownDoc.name : dn + (dn === 1 ? ' doc' : ' docs') + ' this chat wrote';
+        s.pick.replaceChildren(el('span', 'ar-k', 'doc'), el('span', 'ar-pick-title', t), el('span', 'ar-caret', '▾'));
+        s.pick.disabled = false;
+        s.pick.classList.remove('plain');
+        s.pick.title = t;
+        s.pick.setAttribute('aria-haspopup', 'menu');
+      } else if (!n) {
         s.pick.replaceChildren(el('span', 'ar-pick-title', 'No artifacts in this chat yet'));
         s.pick.disabled = true;
         s.pick.classList.add('plain');
@@ -2896,7 +2929,8 @@
         );
         s.pick.disabled = false;
         s.pick.classList.remove('plain');
-        s.pick.title = on && a ? 'Showing below' : 'Pick to show below';
+        // the full title on hover: the bar is narrow when two sit side by side (the title ends in …)
+        s.pick.title = (shownA.title || 'Untitled') + (on && a ? ' (showing below)' : '');
         s.pick.setAttribute('aria-haspopup', 'menu');
       }
     }
@@ -2917,12 +2951,28 @@
       return;
     }
     closePop();
-    const on = SPL.showing === s.key && S.chat.id === s.id ? S.selId : '';
-    const groups = pickerGroups(s.list, on, Date.now(), [], [], '', {}).filter((g) => !g.foot && g.key !== 'docs');
+    const here = SPL.showing === s.key && S.chat.id === s.id,
+      on = here ? (S.doc ? 'doc:' + S.doc.name : S.selId) : '',
+      dk = splDocs(s);
+    const groups = pickerGroups(s.list, on, Date.now(), dk.docs, dk.keys, '', {}).filter((g) => !g.foot);
     const out = [];
     for (const g of groups) {
       out.push(...groupHead(g));
       for (const it of g.items) {
+        if (it.doc) {
+          // "Docs this chat wrote": opens in the viewer below, in the full doc editor, as with one chat
+          const row = popItem('ar-doc' + (it.on ? ' on' : ''));
+          row.dataset.doc = it.name;
+          row.setAttribute('data-key', 'doc:' + it.name);
+          row.append(el('span', 'ar-k', it.badge), el('span', 'ar-it-title', it.title), el('span', 'ar-it-meta', it.meta));
+          row.title = 'Open ' + it.title + ' here';
+          row.addEventListener('click', () => {
+            closePop();
+            splShowDoc(s.key, it);
+          });
+          out.push(row);
+          continue;
+        }
         const row = popItem(it.on ? 'on' : '');
         row.dataset.id = it.id;
         row.setAttribute('data-key', 'row:' + it.id);
@@ -2935,7 +2985,7 @@
       }
     }
     ui.pop.replaceChildren(...out);
-    ui.pop.setAttribute('aria-label', 'Artifacts in this chat');
+    ui.pop.setAttribute('aria-label', 'Artifacts and docs in this chat');
     ui.popFor = 'split:' + s.key;
     ui.popAnchor = s.pick;
     s.pick.setAttribute('aria-expanded', 'true');
@@ -2954,6 +3004,14 @@
       const pc = SPL.pageCtx && SPL.pageCtx.id === info.id ? SPL.pageCtx : null;
       sync({ id: info.id, busy: !!(pc && pc.busy), cwd: (pc && pc.cwd) || '' });
     } else if (artifactId) selectArtifact(artifactId);
+    splPaint();
+  }
+  /* Show a chat's doc in the viewer (the viewer takes that chat first). */
+  function splShowDoc(key, it) {
+    splShow(key);
+    const U = splitUI(),
+      info = U ? U.chatInfo(key) : null;
+    if (info && info.id && S.chat.id === info.id) openDoc({ name: it.name, title: it.title });
     splPaint();
   }
   async function splLoad(s) {

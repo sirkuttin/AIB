@@ -533,6 +533,12 @@
   let lastSignature = '',
     lastBox = null;
   const splitSigs = new WeakMap();
+  /* The × that hides Activity, held from page load: opening a chat empties the list it sits in, and a detached button cannot be
+     found by id again (it was lost after the first chat switch). */
+  let hideRef = null;
+  const hideButton = () =>
+    (hideRef = (typeof document !== 'undefined' && document.getElementById('activityHide')) || hideRef);
+  if (typeof document !== 'undefined') hideButton();
   function el(tag, cls, txt) {
     const n = document.createElement(tag);
     if (cls) n.className = cls;
@@ -634,8 +640,9 @@
         q.append(el('span', m.failed ? 'sa-failed-count' : '', m.failed + ' failed'));
         h.append(q);
       }
-      const hideBtn = document.getElementById('activityHide');
-      if (hideBtn) h.append(hideBtn);
+      // split view keeps the × at the panel's top right (chat.js renderSplitActivity): the hidden list must not take it back
+      const hideBtn = hideButton();
+      if (hideBtn && !document.body.classList.contains('split-on')) h.append(hideBtn);
       frag.append(h);
     }
     if (!ctx.rows.length) {

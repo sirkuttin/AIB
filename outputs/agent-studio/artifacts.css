@@ -798,8 +798,9 @@ a.artifact-link.artifact-link-deleted {
   color: var(--text);
 }
 
-/* ---- Split view: one dropdown per pane's chat (artifacts-ui.js splitSync), side by side while each gets 160 px, stacked when
-   the panel is narrower; the viewer below shows the one picked. The bar of the artifact on screen has the accent border. ---- */
+/* ---- Split view: one dropdown per pane's chat (artifacts-ui.js splitSync), side by side whenever each gets 128 px (the default
+   280 px panel fits both; a long title ends in …, the full title on hover), stacked only below about 256 px; the viewer below shows
+   the one picked. The bar of the artifact on screen has the accent border. ---- */
 .ar-split {
   flex: 0 0 auto;
   display: flex;
@@ -807,7 +808,7 @@ a.artifact-link.artifact-link-deleted {
   border-bottom: 1px solid var(--line);
 }
 .ar-split > .ar-sgrp {
-  flex: 1 1 160px;
+  flex: 1 1 128px;
   min-width: 0;
   border-bottom: 0;
   padding-bottom: 0;
@@ -815,6 +816,27 @@ a.artifact-link.artifact-link-deleted {
 .ar-split .ar-sbar {
   padding: 0 10px 8px 10px;
   border-bottom: 0;
+}
+/* side by side (2 x 128 px fit): 8 px between the two bars instead of 20, more room for the titles */
+.ar-split {
+  container-type: inline-size;
+}
+@container (min-width: 256px) {
+  .ar-split > .ar-sgrp:first-child:not(:last-child) .ar-sbar {
+    padding-right: 4px;
+  }
+  .ar-split > .ar-sgrp:nth-child(2) .ar-sbar {
+    padding-left: 4px;
+  }
+  .ar-split > .ar-sgrp:nth-child(2) > .sp-head {
+    padding-left: 4px;
+  }
+}
+/* side by side in a narrow panel (under 360 px): the kind badge gives its room to the title (the list still shows each kind) */
+@container (min-width: 256px) and (max-width: 359px) {
+  .ar-split > .ar-sgrp:not(:only-child) .ar-spick:not(.plain) > .ar-k {
+    display: none;
+  }
 }
 .ar-split .ar-spick {
   flex: 1 1 auto;

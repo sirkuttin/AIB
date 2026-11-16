@@ -808,3 +808,26 @@ body.split-on.subchat-open #splitActivity {
   display: flex;
   flex-direction: column;
 }
+/* The × that hides Activity: with one chat it ends the Subagents heading row; in split view (no heading row) it keeps that spot,
+   the panel's top right, over the first chat's header (chat.js renderSplitActivity moves it). Not focus-aware: it never moves. */
+body.split-on #activityBody {
+  position: relative;
+}
+body.split-on #activityBody > #activityHide {
+  display: block !important;
+  position: absolute;
+  top: 4px; /* the 28 px Subagents heading's place under the tab row (changes.css), its 4 px top margin */
+  right: 6px;
+  z-index: 2;
+}
+body.split-on.subchat-open #activityBody > #activityHide {
+  display: none !important;
+}
+body.split-on #splitActivity > .sp-grp:first-child > .sp-head {
+  padding-right: 40px;
+}
+@media (max-width: 1099px) {
+  body.split-on #activityBody > #activityHide {
+    display: none !important;
+  }
+}
