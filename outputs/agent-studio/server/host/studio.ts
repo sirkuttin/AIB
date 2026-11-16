@@ -45,6 +45,7 @@ import { mcpTunnelGate, type TunnelAnswer } from '../wsl/mcp_tunnel.ts';
 import { forwarderOf, hookForwarderOf, keeperBinary, programVersion } from '../keeper/client.ts';
 import { deny as denyHook, type HookAnswer, SubagentWorktrees, type SubagentChat } from '../subagents/service.ts';
 import { claudeConfigDir, gitBashPath, hookSettings, readClaudeSetup, subagentsOffSettings } from '../subagents/claude_config.ts';
+import * as gemini from '../subagents/gemini.ts';
 import { isCompiled, isDesktopApp, selfCommand, TESTS_DIR } from '../core/app.ts';
 import { type ChannelInfo, type KeeperClient, KeeperError, missingFeatures, type OrphanCommand, readKeeperInfo } from '../keeper/client.ts';
 import { pidAlive } from './host_client.ts';
@@ -365,6 +366,8 @@ export class Studio {
   readonly worktrees: wt.Manager | null;
   /** Subagent worktrees (subagents/service.ts): AIB's side of Claude chats' hooks; null without a state folder. */
   readonly subagents: SubagentWorktrees | null;
+  /** Subagent worktrees, Gemini (subagents/gemini.ts): who is calling (from the ACP stream) and the BeforeTool hook route. */
+  readonly geminiSubagents: gemini.GeminiSubagents | null;
   readonly liveSync: LiveSync | null;
   /** Live sync of WSL chats' worktrees: the engine runs in each distro's helper (wsl/sync.ts); null without worktrees. */
   readonly wslSync: WslSync | null;
@@ -455,6 +458,7 @@ export class Studio {
     this.worktrees = manager;
     const subagents = manager ? new SubagentWorktrees(this.stateDir, manager.registry.root, (id) => this.#subagentChat(id)) : null;
     this.subagents = subagents;
+    this.geminiSubagents = subagents ? new gemini.GeminiSubagents(subagents, (id) => this.#geminiChat(id)) : null;
     this.ready = (async () => {
       if (!manager) return;
       try {
@@ -525,6 +529,7 @@ export class Studio {
       }
     }
     // a prepared subagent worktree no Agent call took becomes the spare, or goes (bound ones stay for landing: P2)
+    this.geminiSubagents?.turnOver(connection.id); // a Gemini subagent call whose end never came is stopped
     if (this.subagents) await this.subagents.turnEnded(connection.id).catch((error) => log.exception(error, 'Subagent turn end failed'));
     if (connection.provider && connection.sessionId) await this.#mark('your_turn', connection);
     void this.limits.refresh(connection); // Codex / Vibe: at most once a minute per account
@@ -1252,10 +1257,14 @@ export class Studio {
       const subagent = provider === 'claude'
         ? await this.#subagentHooks(command, plan ? plan.path : workspace, workspace, !!plan, env, !!wsl)
         : null;
+      // Gemini (subagents/gemini.ts): every chat gets the fence (an admin policy); an API-key chat in a git project also the redirect
+      const gem = provider === 'gemini' ? await this.#geminiSubagents(plan ? plan.path : workspace, workspace, !!plan, env, !!wsl) : null;
       const connectionOptions: ConnectionOptions = {};
-      const agentEnv = subagent?.env ? { ...env, ...subagent.env } : env;
+      const agentEnv = { ...env, ...subagent?.env, ...gem?.env };
       if (Object.keys(agentEnv).length) connectionOptions.env = agentEnv;
       if (subagent?.id) connectionOptions.id = subagent.id;
+      if (gem?.id) connectionOptions.id = gem.id;
+      const launchCommand = gem ? [...command, ...gem.args] : command;
       if (launch) {
         connectionOptions.keeper = launch.link; // the distro's Linux keeper, whatever the Windows keeper's state
         // a new worktree chat's agent works in the worktree's Linux folder (cwd: its ref)
@@ -1264,9 +1273,14 @@ export class Studio {
       if (connectionOptions.keeper) connectionOptions.history = this.historyClient();
       if (plan) connectionOptions.start = false; // the agent starts in finishSetup, once its worktree exists
       connection = Object.keys(connectionOptions).length
-        ? this.connectionFactory(command, plan ? plan.path : workspace, provider, connectionOptions)
-        : this.connectionFactory(command, plan ? plan.path : workspace, provider);
+        ? this.connectionFactory(launchCommand, plan ? plan.path : workspace, provider, connectionOptions)
+        : this.connectionFactory(launchCommand, plan ? plan.path : workspace, provider);
       const c = connection;
+      if (gem) {
+        if (gem.id && c.id !== gem.id) { // another id: its hook key would not check; the fence alone holds
+          c.geminiSubagents = { ...gem.setup, home: '', subFolder: '', off: 'it was not set up' };
+        } else c.geminiSubagents = gem.setup;
+      }
       // a factory that gave the chat another id: its hooks' key would not check, so it gets none (it would fail closed otherwise)
       if (subagent) c.subagentHooks = !subagent.id || c.id === subagent.id ? subagent.hooks : offHooks('not set up');
       if (plan || record) {
@@ -1314,6 +1328,9 @@ export class Studio {
             });
           } else if (c.subagentHooks?.off === NO_GIT_BASH) {
             c.recordedEvent('studio_note', { message: SUBAGENTS_OFF_NO_BASH, sessionId: c.sessionId });
+          }
+          if (c.geminiSubagents?.off) { // the fence only: said up front (owner rule: refused, never in the folder)
+            c.recordedEvent('studio_note', { message: gemini.GEMINI_TEXTS.off(c.geminiSubagents.off), sessionId: c.sessionId });
           }
           if (plan instanceof WslPlan) {
             if (c.worktree) await wslSetSession(plan, provider, c.sessionId!);
@@ -1380,7 +1397,11 @@ export class Studio {
     }
     c.onRelease = (conn) => {
       this.withdraw(conn);
-      void this.subagents?.chatClosed(conn.id).catch((error) => log.exception(error, 'Removing spare subagent worktrees failed'));
+      void this.subagents?.chatClosed(conn.id).catch((error) => log.exception(error, 'Removing spare subagent worktrees failed'))
+        .then(() => { // after its spare went: the Gemini chat's home (junctions unlinked first), policy and empty subagent folder
+          this.geminiSubagents?.chatClosed(conn.id);
+          if (conn.geminiSubagents) gemini.tearDown(conn.geminiSubagents);
+        });
       if (conn.channel) this.#keeperNoLongerNeeded();
     };
     c.onTurnEnd = (conn) => this.turnEnded(conn);
@@ -1392,6 +1413,14 @@ export class Studio {
       };
     }
     c.subagentWorktree = (toolUseId) => this.subagents?.worktreeOf(c.id, toolUseId) ?? null; // allow-rule parity (design 2.4)
+    if (c.provider === 'gemini' && this.subagents && this.geminiSubagents) { // Gemini subagents start and end in the parent's stream
+      const subagents = this.subagents, gem = this.geminiSubagents;
+      c.onTurnCancelled = async (conn) => {
+        gem.turnOver(conn.id);
+        await subagents.turnCancelled(conn.id);
+      };
+      c.onGeminiTool = (conn, callId, title, status) => gem.toolUpdate(conn.id, callId, title, status);
+    }
     c.onLimits = (conn, kind, raw, at) => this.limits.fromAgent(conn, kind, raw, at);
     const sync = this.liveSync;
     const wsl = this.wslSync; // a WSL chat in its own copy: its distro's helper runs the hooks (wsl/sync.ts)
@@ -1871,12 +1900,76 @@ export class Studio {
     }
   }
 
+  /** The open Gemini chat with the redirect on (its folder and subagent folder), or null. */
+  #geminiChat(id: string): { folder: string; subFolder: string } | null {
+    const c = this.connections.get(id);
+    return c && !c.closed && c.provider === 'gemini' && c.geminiSubagents?.subFolder ? { folder: c.cwd, subFolder: c.geminiSubagents.subFolder } : null;
+  }
+
+  /**
+   * A new Gemini chat's subagent rule (subagents/gemini.ts): always the fence (`--admin-policy`); with an API-key sign-in in a git
+   * project, also the redirect (its own GEMINI_CLI_HOME with AIB's BeforeTool hook, the subagent folder in --include-directories),
+   * with a fixed chat id (its hook key is bound to it). Null under test unless a real agent was allowed, or with no state folder.
+   */
+  async #geminiSubagents(
+    folder: string,
+    project: string,
+    aibWorktree: boolean,
+    env: Record<string, string>,
+    wsl: boolean,
+  ): Promise<{ id: string; args: string[]; env: Record<string, string>; setup: gemini.GeminiSetup } | null> {
+    if (!this.subagents || !this.hasStateDir || !this.worktrees) return null;
+    const realAllowed = Deno.env.get('STUDIO_REAL_ADAPTER_TESTS') === '1' || Deno.env.get('AGENT_STUDIO_ALLOW_REAL_AGENT') === '1';
+    if (Deno.env.get('AGENT_STUDIO_TEST') === '1' && !realAllowed) return null;
+    const id = crypto.randomUUID().replaceAll('-', '');
+    let gitProject: '' | 'not a git project' | 'the repository has no commits yet' = '';
+    if (!aibWorktree && !wsl) {
+      const top = await wt.git(['rev-parse', '--show-toplevel'], folder, { check: false });
+      if (top.returncode !== 0 || !wt.same(pyStrip(top.stdout), folder)) gitProject = 'not a git project';
+      else if ((await wt.git(['rev-parse', '--verify', '-q', 'HEAD'], folder, { check: false })).returncode !== 0) {
+        gitProject = 'the repository has no commits yet';
+      }
+    }
+    const agentEnv = { ...Deno.env.toObject(), ...testHomeEnv(['gemini']), ...env };
+    const forwarder = wsl || gitProject ? null : await hookForwarderOf(this.keeper?.options.binary ?? null, this.stateDir).catch(() => null);
+    const dir = join(this.stateDir, 'gemini', id);
+    try {
+      if (forwarder) this.artifactMcpHttp(); // listening, with its address published, before the agent's first hook
+      const made = gemini.setUp({
+        stateDir: this.stateDir,
+        root: this.worktrees.registry.root,
+        chatId: id,
+        project,
+        folder,
+        env: agentEnv,
+        gitProject,
+        forwarder,
+        addressFile: join(this.stateDir, FORWARD_FILE),
+        hookKey: forwarder ? artifactKeys.issueHookKey(id) : null,
+        wsl,
+      });
+      return { id, ...made };
+    } catch (error) {
+      log.exception(error, 'Could not set up the Gemini subagent rule; the chat runs with the fence only');
+      const policyDir = join(dir, 'policy');
+      try { // the fence alone: every subagent edit denied
+        Deno.mkdirSync(policyDir, { recursive: true });
+        Deno.writeTextFileSync(join(policyDir, 'aib-subagents.toml'), gemini.policyToml(gemini.BUILTIN_AGENTS, null));
+      } catch { /* the chat still opens; logged above */ }
+      const setup = { policyDir, home: '', subFolder: '', off: `AIB could not set it up (${errorText(error)})`, dir };
+      return { id, args: ['--admin-policy', policyDir], env: {}, setup };
+    }
+  }
+
   /** pre-tool calls of each chat waiting for an answer (security review P1, should-fix 3: a forged flood is refused at once). */
   readonly #preToolWaiting = new Map<string, number>();
 
   /** One key-checked hook call. More than MAX_PRE_TOOL_WAITING pre-tool calls of one chat at once: the next is denied at once. */
   async #hookCall(event: string, conversation: string, body: unknown): Promise<HookAnswer> {
     if (!this.subagents) return { status: 503, body: 'No state folder', type: 'text/plain' };
+    if (event === 'gemini-before-tool') {
+      return this.geminiSubagents ? await this.geminiSubagents.beforeTool(conversation, body) : { status: 503, body: 'No state folder', type: 'text/plain' };
+    }
     if (event !== 'pre-tool') return await this.subagents.hook(event, conversation, body);
     const waiting = this.#preToolWaiting.get(conversation) ?? 0;
     if (waiting >= MAX_PRE_TOOL_WAITING) return denyHook(SUBAGENT_BUSY);
@@ -1896,6 +1989,10 @@ export class Studio {
    */
   #subagentChat(id: string): SubagentChat | null {
     const c = this.connections.get(id);
+    if (c && !c.closed && c.provider === 'gemini' && c.geminiSubagents?.subFolder) { // its subagents' worktrees: in its own folder
+      const lasting = c.sessionId ? `${c.provider}:${c.sessionId}` : '';
+      return { id: c.id, provider: c.provider, lasting, folder: c.cwd, project: c.projectRoot || c.cwd, hooks: null, subFolder: c.geminiSubagents.subFolder };
+    }
     if (!c || c.closed || c.provider !== 'claude' || c.wsl) return null;
     if (!c.subagentHooks) {
       // a chat taken over from a keeper note older than the hooks record (newer notes carry it: hooksFromNote)

@@ -103,6 +103,11 @@ export interface SubagentChat {
   project: string;
   /** Hooks were given to this chat: on, its read-only types, and whether the user's WorktreeCreate hook makes the worktrees. */
   hooks: { readOnly: Set<string>; userWorktreeHook: boolean } | null;
+  /**
+   * Where this chat's subagent worktrees go when not <root>/<repo hash>/: a Gemini chat's own <root>/<repo hash>/.gem-<chat> folder,
+   * the one folder its agent was given with --include-directories (subagents/gemini.ts).
+   */
+  subFolder?: string;
 }
 
 export interface HookAnswer {
@@ -318,7 +323,7 @@ export class SubagentWorktrees {
 
   /** A free slug, branch and path for the chat's next subagent worktree. */
   async #place(chat: SubagentChat): Promise<{ slug: string; branch: string; path: string }> {
-    const folder = pathOf(this.root, wt.repoHash(chat.project));
+    const folder = chat.subFolder || pathOf(this.root, wt.repoHash(chat.project));
     const taken = new Set(this.all().map((r) => r.slug));
     for (let n = 1;; n++) {
       const slug = `sub-${chat.id.slice(0, 8)}-${n}`;
@@ -370,7 +375,7 @@ export class SubagentWorktrees {
     const rec = this.#record(id, chat, { ...place, snapshot: s.commit, tree: s.tree, ...(meta ?? {}) });
     await this.#update(id, () => rec);
     try {
-      Deno.mkdirSync(pathOf(this.root, wt.repoHash(chat.project)), { recursive: true });
+      Deno.mkdirSync(chat.subFolder || pathOf(this.root, wt.repoHash(chat.project)), { recursive: true });
       await wt.git(['worktree', 'add', '-q', '-b', place.branch, place.path, s.commit], chat.folder);
       // a running subagent's worktree is never removed by `git worktree remove` or prune (as Claude Code does with its own)
       await wt.git(['worktree', 'lock', '--reason', 'AIB subagent', place.path], chat.folder, { check: false });
@@ -558,6 +563,39 @@ export class SubagentWorktrees {
     });
   }
 
+  // ---- subagents AIB sees start and end in the parent's ACP stream (Gemini: subagents/gemini.ts) ---------------------------------
+
+  /**
+   * A worktree for a subagent the parent's ACP stream showed starting (its call id: `callId`), bound to it at once (no WorktreeCreate:
+   * the agent never moves; AIB's hook moves its writes). Record first, as for Claude; capped the same. The record, or a reason.
+   */
+  async startExternal(chatId: string, meta: { callId: string; agentType: string; description: string }): Promise<SubagentRecord | string> {
+    const chat = this.chat(chatId);
+    if (!chat) return 'this chat is not open in AIB';
+    const callId = meta.callId.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 64);
+    return await this.#lockOf(chatId).run(async () => {
+      const mine = this.ofChat(chatId);
+      const again = mine.find((r) => r.toolUseId === callId && r.state === 'running');
+      if (again) return again;
+      if (mine.filter((r) => SLOT_STATES.has(r.state)).length >= MAX_PER_CHAT) return TEXTS.cap;
+      const meta2 = { toolUseId: callId, agentType: meta.agentType.slice(0, 200), description: meta.description.slice(0, 300) };
+      const rec = await this.#prepare(chat, meta2, () => false);
+      if (typeof rec === 'string') return rec;
+      return (await this.#patch(rec.id, { state: 'running', agentId: callId, acpSeen: true, acpAgentId: callId, boundAt: now() }))!;
+    });
+  }
+
+  /** Its call ended in the parent's ACP stream: done (it lands when the parent is idle) or, when the call failed, stopped. */
+  async endExternal(chatId: string, callId: string, ok: boolean): Promise<void> {
+    const id = callId.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 64);
+    await this.#lockOf(chatId).run(async () => {
+      const rec = this.ofChat(chatId).find((r) => r.toolUseId === id && r.state === 'running');
+      if (!rec) return;
+      if (ok) await this.#patch(rec.id, { state: 'done', doneAt: now() });
+      else await this.#stop(rec, 'its call failed');
+    });
+  }
+
   // ---- what the rest of AIB asks ---------------------------------------------------------------------------------------------
 
   /** The worktree a subagent of this chat works in, by the Agent call's tool_use_id (allow-rule parity, design 2.4). */
@@ -634,6 +672,8 @@ export function ownSubagentPath(root: string, rec: { path: string; project?: str
   const path = rec.path;
   if (!path || pathFormProblem(path)) return false;
   const parts = path.replace(/[\\/]+$/, '').split(/[\\/]/);
+  // a Gemini chat's: <root>\<repo hash>\.gem-<chat>\sub-<...> (subagents/gemini.ts)
+  const chatFolder = /^\.gem-[A-Za-z0-9_-]{1,64}$/.test(parts[parts.length - 2] ?? '') ? parts.splice(parts.length - 2, 1)[0] : '';
   const name = parts[parts.length - 1], hash = parts[parts.length - 2];
   if (!/^sub-[\w.-]+$/.test(name) || !hash) return false;
   if (rec.project && hash !== wt.repoHash(rec.project)) return false;
@@ -641,7 +681,8 @@ export function ownSubagentPath(root: string, rec: { path: string; project?: str
   if (normcase(parts.slice(0, -2).join(SEP)) !== top) return false;
   if (!wt.lexists(path)) return true; // gone already: only its record and branch are left
   try {
-    return normcase(realpath(path)) === normcase(pathOf(realpath(root), hash, name));
+    const own = chatFolder ? pathOf(realpath(root), hash, chatFolder, name) : pathOf(realpath(root), hash, name);
+    return normcase(realpath(path)) === normcase(own);
   } catch {
     return false;
   }

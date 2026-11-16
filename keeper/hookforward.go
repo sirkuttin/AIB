@@ -70,7 +70,8 @@ const (
 	hookProofLabel  = "studio-hook-proof/v1\x00"
 )
 
-var hookEvents = map[string]bool{"pre-tool": true, "worktree-create": true, "post-agent": true, "subagent-stop": true}
+var hookEvents = map[string]bool{"pre-tool": true, "worktree-create": true, "post-agent": true, "subagent-stop": true,
+	"gemini-before-tool": true} // Gemini CLI's BeforeTool (hookgemini.go)
 
 // blocking: the events whose failure must block the call (exit 2).
 func hookBlocking(event string) bool { return event == "pre-tool" || event == "worktree-create" }
@@ -84,7 +85,7 @@ func hookMain(args []string) int {
 		return 0
 	}
 	if len(args) != 2 || !hookEvents[args[0]] || args[1] == "" {
-		fmt.Fprintln(os.Stderr, "usage: AIB-keeper hook pre-tool|worktree-create|post-agent|subagent-stop <address file>")
+		fmt.Fprintln(os.Stderr, "usage: AIB-keeper hook pre-tool|worktree-create|post-agent|subagent-stop|gemini-before-tool <address file>")
 		return 2
 	}
 	h := &hookForwarder{
@@ -147,6 +148,15 @@ func (h *hookForwarder) run(in io.Reader, stdout, stderr io.Writer) int {
 	}
 	if !hmac.Equal([]byte(strings.ToLower(proof)), []byte(hookProof(h.key, nonce, status, body))) {
 		return fail(hookUnconfirmed) // not AIB's answer (another program on the port), or changed on the way
+	}
+	if h.event == "gemini-before-tool" {
+		if status != http.StatusOK {
+			return 0 // the policy fence decides (hookgemini.go)
+		}
+		if out, ok := checkGeminiAnswer(input, body, h.worktreesRoot()); ok && len(out) > 0 {
+			stdout.Write(out)
+		}
+		return 0
 	}
 	if !hookBlocking(h.event) {
 		return 0 // post-agent, subagent-stop: hints for AIB; nothing goes back to Claude Code
@@ -384,6 +394,9 @@ func (h *hookForwarder) endpoint() (string, error) {
 		return "", fmt.Errorf("not a loopback http URL: %q", doc.URL)
 	}
 	u.Path = "/hooks/claude/" + h.event
+	if h.event == "gemini-before-tool" {
+		u.Path = "/hooks/gemini/before-tool"
+	}
 	u.RawQuery, u.Fragment = "", ""
 	return u.String(), nil
 }
