@@ -13,7 +13,8 @@
  *      while it swaps the files, starts B and waits for B's start confirmation.
  *   4. B takes the chat over from the keeper's record under the same connection id: every chunk once and in order, the question once,
  *      the answer reaches the agent once, the prompt reached it once, the same agent process, the same keeper process. B is on A's
- *      port, so a localStorage key A's page wrote (through the WebView2 DevTools port) is still there.
+ *      port, so a localStorage key A's page wrote (through the WebView2 DevTools port) is still there, and the page session A's
+ *      window keeps there gets the page token from B (B has a launch key of its own: the test's AIB_PAGE_KEY reaches only A).
  *   5. The agent's artifact tool is the keeper's MCP forwarder (`AIB-keeper mcp-forward`, run from the data folder's keeper-bin),
  *      never A's AIB.exe, so B removes the update's .old-* files at its start while the chat still runs.
  *   6. B is killed hard mid-turn: the keeper starts AIB again with --start-in-tray (rule V1): no window, only the tray icon (Open AIB,
@@ -104,6 +105,21 @@ function fakeReleases(dist: string): Deno.HttpServer<Deno.NetAddr> {
   });
   box.port = server.addr.port;
   return server;
+}
+
+/**
+ * GET /api/live/bootstrap as AIB's page asks after a restart: with the page session its origin keeps (page-auth.js), not the launch
+ * key. Only A was started with the test's AIB_PAGE_KEY; outside a test run AIB drops that variable at start, so the update helper,
+ * B and the keeper's restart never inherit it, and each has a launch key of its own (page_access.ts). The page session is what
+ * carries the page across an update.
+ */
+async function bootstrapWithSession(session: string): Promise<[number, Json]> {
+  const response = await fetch(`http://127.0.0.1:${PORT}/api/live/bootstrap`, {
+    headers: { 'X-AIB-Page-Session': session },
+    signal: AbortSignal.timeout(3000),
+  });
+  const text = await response.text();
+  return [response.status, text ? JSON.parse(text) : {}];
 }
 
 function said(state: Json): string {
@@ -199,6 +215,10 @@ Deno.test({
       assertEquals(bootA.hostMode, 'keeper', 'one AIB process; agents in the keeper');
       assertEquals(await readInfo(fx.state), null, 'no separate agent host');
       await until(() => cdpEval(`localStorage.setItem('aib-e2e-draft', 'kept across the update'), 'ok'`), 'localStorage write', 60);
+      // The page session A's window made with its launch key (page-auth.js): B and the keeper's restart give the token for it.
+      const pageSession = String(
+        await until(() => cdpEval(`localStorage.getItem('aib-page-session')`), "the page session of A's window", 60),
+      );
       const post = (token: string, name: string, body: unknown) => httpJson('POST', PORT, '/api/live/' + name, token, body);
       const [cs, conn] = await post(tokenA, 'connect', { provider: 'claude', cwd: fx.workspace, background: true });
       assertEquals(cs, 200, JSON.stringify(conn));
@@ -235,10 +255,10 @@ Deno.test({
       // ---- B takes the chat over
       const bootB = await until(
         async () => {
-          const [s, b] = await httpJson('GET', PORT, '/api/live/bootstrap', null, undefined, 3000);
-          return s === 200 && b.token !== tokenA ? b : null;
+          const [s, b] = await bootstrapWithSession(pageSession);
+          return s === 200 && b.token && b.token !== tokenA ? b : null;
         },
-        'B on the same port',
+        'B on the same port, giving the page the token for its page session',
         180,
       );
       const tokenB = String(bootB.token);
@@ -318,10 +338,10 @@ Deno.test({
       await until(() => !pidAlive(bPid), 'B gone', 10);
       const bootC = await until(
         async () => {
-          const [s, b] = await httpJson('GET', PORT, '/api/live/bootstrap', null, undefined, 3000);
-          return s === 200 && b.token !== tokenB ? b : null;
+          const [s, b] = await bootstrapWithSession(pageSession);
+          return s === 200 && b.token && b.token !== tokenB ? b : null;
         },
-        'AIB started again by the keeper',
+        'AIB started again by the keeper, giving the page the token for its page session',
         60,
       );
       const tokenC = String(bootC.token);
