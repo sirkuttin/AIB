@@ -19,6 +19,7 @@
  *   signin     terminal: the agent's own login command runs in an AIB terminal panel (ACP auth type "terminal");
  *              agent: ACP `authenticate` on a short-lived agent process (the agent opens the browser itself);
  *              key: an API key the person types in Settings, passed to the agent as an environment variable
+ *   signinDirs where it keeps its sign-in under the home folder (signinEnv: the variables that move it); blocked for paired computers
  */
 
 export type SigninKind = 'terminal' | 'agent' | 'key';
@@ -114,11 +115,20 @@ export interface BetaAgent {
   readonly vscodeShim?: boolean;
   /** A PATH program by this name counts only when its folder path contains this text (the name is too generic). */
   readonly pathMustContain?: Readonly<Record<string, string>>;
+  /**
+   * Where the agent keeps its sign-in, relative to the home folder ('/'-separated): a paired computer never reaches these
+   * (remote/path_guard.ts). From the vendors' docs; blocking a config folder too is harmless, missing a token folder is not.
+   */
+  readonly signinDirs?: readonly string[];
+  /** Environment variables that move that folder: each one that is set is blocked as a whole. */
+  readonly signinEnv?: readonly string[];
 }
 
 export const BETA_AGENTS: readonly BetaAgent[] = [
   {
     id: 'copilot',
+    signinDirs: ['.copilot'], // its sign-in and config (COPILOT_HOME moves it)
+    signinEnv: ['COPILOT_HOME'],
     name: 'GitHub Copilot CLI',
     letter: 'G',
     license: 'Proprietary',
@@ -149,6 +159,7 @@ export const BETA_AGENTS: readonly BetaAgent[] = [
   },
   {
     id: 'opencode',
+    signinDirs: ['.local/share/opencode', '.config/opencode'], // auth.json lives in its data folder
     name: 'OpenCode',
     letter: 'O',
     license: 'MIT',
@@ -182,6 +193,7 @@ export const BETA_AGENTS: readonly BetaAgent[] = [
   },
   {
     id: 'gemini',
+    signinDirs: ['.gemini'],
     name: 'Gemini CLI',
     letter: 'G',
     license: 'Apache-2.0',
@@ -214,6 +226,7 @@ export const BETA_AGENTS: readonly BetaAgent[] = [
   },
   {
     id: 'qwen',
+    signinDirs: ['.qwen'],
     name: 'Qwen Code',
     letter: 'Q',
     license: 'Apache-2.0',
@@ -251,6 +264,7 @@ export const BETA_AGENTS: readonly BetaAgent[] = [
   },
   {
     id: 'cursor',
+    signinDirs: ['.cursor', '.config/cursor'],
     name: 'Cursor CLI',
     letter: 'C',
     license: 'Proprietary',
@@ -277,6 +291,7 @@ export const BETA_AGENTS: readonly BetaAgent[] = [
   },
   {
     id: 'goose',
+    signinDirs: ['.config/goose', 'AppData/Roaming/Block/goose'],
     name: 'Goose',
     letter: 'G',
     license: 'Apache-2.0',
@@ -313,6 +328,8 @@ export const BETA_AGENTS: readonly BetaAgent[] = [
   },
   {
     id: 'vibe',
+    signinDirs: ['.vibe'],
+    signinEnv: ['VIBE_HOME'],
     name: 'Mistral Vibe',
     letter: 'M',
     license: 'Apache-2.0',
@@ -340,6 +357,7 @@ export const BETA_AGENTS: readonly BetaAgent[] = [
   },
   {
     id: 'cline',
+    signinDirs: ['.cline'],
     name: 'Cline CLI',
     letter: 'C',
     license: 'Apache-2.0',
@@ -355,6 +373,7 @@ export const BETA_AGENTS: readonly BetaAgent[] = [
   },
   {
     id: 'kimi',
+    signinDirs: ['.kimi'],
     name: 'Kimi Code',
     letter: 'K',
     license: 'MIT',
@@ -371,6 +390,7 @@ export const BETA_AGENTS: readonly BetaAgent[] = [
   },
   {
     id: 'kilo',
+    signinDirs: ['.local/share/kilo', '.config/kilo', '.kilocode'],
     name: 'Kilo Code CLI',
     letter: 'K',
     license: 'MIT',

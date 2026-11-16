@@ -384,5 +384,7 @@ export function remoteArtifactLinks(text: string, loopback: string, remote: stri
   return text.replace(
     new RegExp(esc + '/a/([0-9a-f]{16})/', 'g'),
     (_m, id: string) => remote ? `${remote}/r/${ticket(id)}/a/${id}/` : 'about:blank#',
-  );
+  ) // any other link of the loopback origin (the Files view's /f/<ticket>/ preview links): left out, never the PC's loopback port
+    // (security review SF10; the computer's Files view shows Download for them)
+    .replace(new RegExp(esc + '[^"\\s\\\\]*', 'g'), '');
 }

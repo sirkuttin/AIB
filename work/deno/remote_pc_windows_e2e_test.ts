@@ -873,6 +873,14 @@ Deno.test({
         `Object.keys(localStorage).filter((k) => /Written while you were away/.test(localStorage.getItem(k)))`,
       );
       assertEquals(local, [], "no agent text in localStorage");
+      // security review SF6: drafts, sends and chat names are memory only on a computer (the draft above is in the box, not on disk)
+      const onDisk = await t.evalIn<string[]>(
+        page,
+        `(() => { const out = []; for (let i = 0; i < localStorage.length; i++) out.push(localStorage.key(i)); return out; })()
+          .filter((k) => /^studio-(drafts-v1|pending-sends-v1|prompt-attempts-v1|conversation-names)$/.test(k))
+          .concat(Object.values(localStorage).some((v) => /Typed while offline/.test(String(v))) ? ['draft text'] : [])`,
+      );
+      assertEquals(onDisk, [], "nothing typed or sent on this computer's disk");
       const errors = t.wins.flatMap((w) => w.errors).filter((e) =>
         !/Failed to load resource|fetching the script/.test(e)
       );

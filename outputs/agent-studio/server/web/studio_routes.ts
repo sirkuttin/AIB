@@ -14,7 +14,8 @@ import { findPrompts } from '../transcripts/prompts.ts';
 import { branchOf, changesResponse, type ChatStudio } from '../worktrees/chat_folders.ts';
 import * as merge from '../worktrees/merge.ts';
 import * as mergeQueue from '../worktrees/merge_queue.ts';
-import { FROM_DOC_RESOLVED, MAX_BODY_BYTES, type RequestLike } from '../artifacts/artifacts.ts';
+import { ArtifactError, FROM_DOC_RESOLVED, MAX_BODY_BYTES, type RequestLike } from '../artifacts/artifacts.ts';
+import { BLOCKED_MESSAGE, isBlocked } from '../remote/path_guard.ts';
 import { getUpdate, getUpdateNotes, postUpdateCheck, postUpdateInstall, postUpdateNotes } from '../desktop/updater.ts';
 import { parseQs } from '../artifacts/origin.ts';
 import { authorize, type Principal, Refusal, REMOTE_PC, SCOPE_ARTIFACTS_TOOL } from './security.ts';
@@ -285,13 +286,14 @@ export function studioRoutes(): Map<string, StudioHandler> {
       const key = `${who}|${path}|${url.search}`;
       return shared(changesRuns, key, async () => {
         const args = argsOf(url);
-        return await changesResponse(
+        const reply = await changesResponse(
           chatStudioOf(ctx, await savedFolders(ctx, one(args, 'id'))),
           path,
           args,
           request.headers,
           principal ?? null,
         );
+        return principal?.kind === REMOTE_PC ? remoteChanges(ctx, path, reply) : reply;
       });
     });
   }
@@ -391,6 +393,25 @@ export function swarmOf(ctx: WebContext): Swarm {
 }
 
 /** artifact_route's error mapping: Python answers KeyError/ValueError/TypeError/OSError/RuntimeError with 400 (the Service already maps its own). */
+/**
+ * The Changes view for a remote computer (security review MF1 audit): the chat's folder can hold a blocked folder (a project that
+ * is a home folder), so a diff is refused by the file it RESOLVES to (its `abs`, real path checked too), and the list leaves out the
+ * rows inside blocked folders.
+ */
+function remoteChanges(ctx: WebContext, path: string, reply: [number, unknown]): [number, unknown] {
+  const [status, payload] = reply;
+  if (status !== 200 || !isDict(payload)) return reply;
+  const blocked = (p: unknown) => typeof p === 'string' && !!p && isBlocked(p, ctx.stateDir ?? null);
+  if (path === '/api/live/changes/file') {
+    if (payload.git && typeof payload.abs !== 'string') return [403, { error: BLOCKED_MESSAGE, code: 'blocked_folder' }];
+    return blocked(payload.abs) ? [403, { error: BLOCKED_MESSAGE, code: 'blocked_folder' }] : reply;
+  }
+  const root = typeof payload.root === 'string' ? payload.root.replace(/[\\/]+$/, '') : '';
+  if (!root || !Array.isArray(payload.files)) return reply;
+  const files = (payload.files as unknown[]).filter((f) => !(isDict(f) && typeof f.path === 'string' && blocked(`${root}/${f.path}`)));
+  return [status, { ...payload, files }];
+}
+
 function artifactCall(work: () => Reply): Reply {
   try {
     return work();
@@ -506,6 +527,15 @@ export function asked(request: Request, principal?: Principal | null): RequestLi
  * (remote/pc_bridge.ts) for the page-side actions it allows, with its principal in `who` (it never reaches the agent-key routes).
  */
 export async function artifactPost(ctx: WebContext, who: RequestLike, path: string, body: Json): Promise<Reply> {
+  if (who.principal?.kind === REMOTE_PC) {
+    // a computer's preview path resolves against the chat's folder: the RESOLVED file must not be in a blocked folder (review MF1)
+    who = {
+      ...who,
+      pathGuard: (real) => {
+        if (isBlocked(real, ctx.stateDir ?? null)) throw new ArtifactError(BLOCKED_MESSAGE, 403, 'blocked_folder');
+      },
+    };
+  }
   const publishing = path === '/api/live/artifacts/publish' || path === '/api/live/artifacts/preview';
   // Delete and Restore move the source file: they need the OWNER chat's folder (an artifact opened from another chat's link too),
   // resolved from the manifest, never the requesting chat's and never manifest.project (the main checkout of a worktree chat).

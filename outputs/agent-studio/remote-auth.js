@@ -17,11 +17,55 @@
   'use strict';
   const doc = root.document;
   const html = doc.documentElement;
-  const REFUSED = ['X-Studio-Token', 'X-AIB-Page-Key', 'X-AIB-Page-Session', 'X-Studio-Artifact-Key', 'X-Studio-Hook-Key'];
+  const REFUSED = [
+    'X-Studio-Token',
+    'X-AIB-Page-Key',
+    'X-AIB-Page-Session',
+    'X-Studio-Artifact-Key',
+    'X-Studio-Hook-Key',
+    'X-Studio-Hook-Nonce',
+    'X-Agent-Host-Token',
+  ]; // the bridge's REFUSED_HEADERS (server/remote/pc_bridge.ts): never sent from here
   const NAME_KEY = 'aib-remote-pc-name'; // the PC's name, for the "Can't reach" line before the PC answers (not a secret)
   const S = { token: '', boot: null, pushOn: false, pushKey: '', install: null, installed: false, started: false };
   const realFetch = root.fetch.bind(root);
   const RealSocket = root.WebSocket;
+
+  /* Memory only on another computer (security review SF6): what was typed or sent and the chats' names never go to its disk, so a
+     laptop that is lost and kept offline holds none of it (the 401 wipe needs the PC). The page's scripts keep these in
+     localStorage on the PC; here those keys live in this window's memory. Copies an older page left on disk go now. */
+  const MEMORY_KEYS = new Set([
+    'studio-drafts-v1', // drafts
+    'studio-pending-sends-v1', // messages mid-send (chat.js rememberSend), with their attachments
+    'studio-prompt-attempts-v1', // send attempts
+    'studio-conversation-names', // chat names
+  ]);
+  (function memoryOnly() {
+    let ls = null;
+    try {
+      ls = root.localStorage;
+    } catch {}
+    if (!ls || !root.Storage) return;
+    const P = root.Storage.prototype;
+    const get = P.getItem, set = P.setItem, drop = P.removeItem;
+    const mem = new Map();
+    for (const k of MEMORY_KEYS)
+      try {
+        drop.call(ls, k);
+      } catch {}
+    const ours = (store, k) => store === ls && MEMORY_KEYS.has(String(k));
+    P.getItem = function (k) {
+      return ours(this, k) ? (mem.has(String(k)) ? mem.get(String(k)) : null) : get.call(this, k);
+    };
+    P.setItem = function (k, v) {
+      if (ours(this, k)) mem.set(String(k), String(v));
+      else set.call(this, k, v);
+    };
+    P.removeItem = function (k) {
+      if (ours(this, k)) mem.delete(String(k));
+      else drop.call(this, k);
+    };
+  })();
 
   const kept = () => {
     try {
@@ -163,8 +207,9 @@
   root.WebSocket = RemoteSocket;
 
   /* Pictures the page shows from an API address (a saved chat's pictures: /api/transcript/image): an <img> cannot send the device
-     key, so each one is fetched with it and shown from memory (blob:, which the page's CSP allows). */
-  const IMG_API = /^\/api\//;
+     key, so each one is fetched with it and shown from memory (blob:, which the page's CSP allows). Only that route: an address
+     agent-written content puts in the page is never fetched with the key (security review SF7). */
+  const IMG_API = /^\/api\/transcript\/image\?/;
   function keyedImage(img) {
     const src = img.getAttribute('src') || '';
     if (!IMG_API.test(src) || img.dataset.remoteSrc === src) return;
@@ -183,7 +228,7 @@
       for (const n of m.addedNodes || []) {
         if (n.nodeType !== 1) continue;
         if (n.tagName === 'IMG') keyedImage(n);
-        else if (n.querySelectorAll) for (const img of n.querySelectorAll('img[src^="/api/"]')) keyedImage(img);
+        else if (n.querySelectorAll) for (const img of n.querySelectorAll('img[src^="/api/transcript/image?"]')) keyedImage(img);
       }
     }
   }).observe(doc.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['src'] });

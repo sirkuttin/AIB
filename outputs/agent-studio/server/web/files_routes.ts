@@ -34,7 +34,7 @@ import * as local from '../worktrees/local_only.ts';
 import { mainCheckoutOf, recordForPath } from '../worktrees/worktrees.ts';
 import * as osp from '../platform/ospath.ts';
 import { isNetworkPath, pageAllowed, type Principal, REMOTE_PC } from './security.ts';
-import { isBlocked } from '../remote/path_guard.ts';
+import { BLOCKED_MESSAGE, isBlocked, linuxBlocked } from '../remote/path_guard.ts';
 import { isForeignPath } from '../platform/location.ts';
 import { issue } from './file_tickets.ts';
 import { chatStudioOf, savedFolders } from './studio_routes.ts';
@@ -147,7 +147,7 @@ function remoteBlocked(ctx: WebContext, root: string, rel: string): boolean {
 }
 
 /** A list or search answer for a remote computer without the rows inside blocked folders (a project that is a home folder). */
-function withoutBlocked(ctx: WebContext, root: string, reply: Reply): Reply {
+function withoutBlocked(ctx: WebContext, root: string, reply: Reply, main = root): Reply {
   const [status, payload] = reply;
   if (status !== 200 || !payload || typeof payload !== 'object') return reply;
   const out = { ...(payload as Record<string, unknown>) };
@@ -155,7 +155,10 @@ function withoutBlocked(ctx: WebContext, root: string, reply: Reply): Reply {
     const rows = out[field];
     if (Array.isArray(rows)) {
       const pathOf = (r: unknown) => String(r && typeof r === 'object' ? (r as { path?: unknown }).path ?? '' : '');
-      out[field] = rows.filter((r) => !remoteBlocked(ctx, root, pathOf(r)));
+      // local-only rows come from the main folder: a row is checked in both
+      out[field] = rows.filter((r) =>
+        !remoteBlocked(ctx, root, pathOf(r)) && (main === root || !pathOf(r) || !remoteBlocked(ctx, main, pathOf(r)))
+      );
     }
   }
   return [status, out];
@@ -187,9 +190,16 @@ export function filesRoutes(): Map<string, Handler> {
       let reply: Reply;
       if (wsl) {
         const kind = path.slice(path.lastIndexOf('/') + 1) as 'list' | 'search' | 'read';
-        reply = await wslFiles(kind, scope.root, wsl, args, ctx.artifacts?.store.origin ?? '');
+        // a computer: the file the helper really read (its real path in the distro, links followed) is checked too (review SF5)
+        const refuse = remote ? linuxBlocked : null;
+        reply = await wslFiles(kind, scope.root, wsl, args, ctx.artifacts?.store.origin ?? '', refuse);
       } else reply = await guarded(() => work(ctx, scope.root, args, scope.main));
-      return remote ? withoutBlocked(ctx, scope.root, reply) : reply;
+      if (!remote) return reply;
+      // the file a read RESOLVED to (a local-only file comes from the main folder; links followed): never in a blocked folder
+      // (review SF4 and the MF1 audit)
+      const abs = reply[0] === 200 && reply[1] && typeof reply[1] === 'object' ? (reply[1] as { abs?: unknown }).abs : undefined;
+      if (typeof abs === 'string' && abs && !wsl && isBlocked(abs, ctx.stateDir ?? null)) return BLOCKED_REPLY;
+      return withoutBlocked(ctx, scope.root, reply, scope.main);
     });
   };
   const post = (path: string, work: (ctx: WebContext, body: Record<string, unknown>) => Promise<Reply>) => {
@@ -291,12 +301,15 @@ export function filesRoutes(): Map<string, Handler> {
     const id = one(args, 'id');
     if (!id || id.length > 600) return Promise.resolve([400, { error: 'Choose a chat', code: 'bad_chat' }]);
     const wsl = ctx.host ? wslChatLoc(ctx, id) : null;
-    if (wsl) return wslOutside(ctx, id, wsl.distro, one(args, 'path'), one(args, 'peek') === '1');
+    const remote = principal?.kind === REMOTE_PC;
+    if (wsl) return wslOutside(ctx, id, wsl.distro, one(args, 'path'), one(args, 'peek') === '1', remote);
     return guarded(async () => {
       const given = outside.checkShape(one(args, 'path'));
       // The guard first, so an unnamed path never tells whether it exists.
       if (!(await mentionedBy(ctx, id, given))) throw new files.FilesError('This chat never named that file', 'not_mentioned', 403);
       const real = outside.resolveOutside(given, dataDirs(ctx));
+      // a computer: the file the path resolved to (links followed), never only the path as sent (review MF1 audit)
+      if (remote && isBlocked(real, ctx.stateDir ?? null)) throw new files.FilesError(BLOCKED_MESSAGE, 'blocked_folder', 403);
       const read = outside.readOutside(real, one(args, 'peek') === '1');
       const origin = ctx.artifacts?.store.origin ?? '';
       const viewable = !read.tooBig && (read.image || (read.page && !read.binary)) && one(args, 'peek') !== '1';
@@ -321,7 +334,7 @@ function wslChatLoc(ctx: WebContext, id: string): { distro: string; linuxPath: s
  * distro's helper runs outside_files.ts natively (its shape rules, its own data folder refused) and sends the bytes of a picture or
  * page for the preview ticket.
  */
-async function wslOutside(ctx: WebContext, id: string, distro: string, path: string, peek: boolean): Promise<Reply> {
+async function wslOutside(ctx: WebContext, id: string, distro: string, path: string, peek: boolean, remote = false): Promise<Reply> {
   if (!path || path.length > 1024 || path.includes('\0') || !path.startsWith('/')) return [400, { error: 'Use a full path', code: 'bad_path' }];
   if (!(await mentionedBy(ctx, id, path, true))) return [403, { error: 'This chat never named that file', code: 'not_mentioned' }];
   let host;
@@ -333,6 +346,8 @@ async function wslOutside(ctx: WebContext, id: string, distro: string, path: str
   try {
     const got = await host.call('files.outside', { path, peek });
     const read = got.read as unknown as files.FileRead;
+    // a computer: the real path the helper read (links followed in the distro), by Linux rules (review SF5)
+    if (remote && (typeof read.abs !== 'string' || linuxBlocked(read.abs))) return BLOCKED_REPLY;
     const ref = refOf({ kind: 'wsl', distro, linuxPath: read.abs });
     const viewUrl = peek ? '' : wslViewUrl(ctx.artifacts?.store.origin ?? '', ref, read, got.bytesB64);
     return [200, { root: '', ...read, viewUrl, outside: got.outside, wsl: true }];
