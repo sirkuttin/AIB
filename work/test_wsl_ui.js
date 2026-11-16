@@ -244,7 +244,7 @@ test('Delete project of a WSL project: "Remove from AIB" by default; the tick bo
   assert.ok(!/permanent/.test(ui.box.querySelector('.dp-warn').textContent));
   yes.click();
   await settle();
-  assert.deepEqual(choices, [{ disk: true, expect: 'gio' }]);
+  assert.deepEqual(choices, [{ disk: true, expect: 'gio', cleanup: { remove: [] } }]);
 });
 
 test('Delete project of a WSL project: a refusal from the distro disables the tick box and says why; Remove from AIB still works', async () => {
@@ -271,7 +271,7 @@ test('Delete project of a WSL project: a refusal from the distro disables the ti
   );
   ui.box.querySelector('.dp-ok').click();
   await settle();
-  assert.deepEqual(choices, [{ disk: false, expect: '' }]);
+  assert.deepEqual(choices, [{ disk: false, expect: '', cleanup: { remove: [] } }]);
 });
 
 test('Open in editor for a WSL project: VS Code and Cursor (Remote-WSL) and Reveal only; no workspace files are read', async () => {
