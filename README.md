@@ -35,13 +35,15 @@ AIB allows you to run Claude Code, Codex, OMP (local) and ten more agents provid
 - The Prompts view lists each prompt you sent with the work it caused. Saved Claude Code and OMP chats from outside AIB are
   listed too, marked "In use elsewhere" when another app has them open.
 
-**4. Agents don't overwrite each other.** *A chat divided against itself cannot stand.*
-- In a git project, each chat works in its own worktree and branch, started from main (your uncommitted work comes along when your folder is on main).
-- Your saved edits are synced into the chats' worktrees.
-- **Merge** lands only that chat's changes and puts your unsaved edits back; conflicts go to the chat to resolve.
-  **Discard** deletes the branch after one confirmation.
+**4. Chats work in your folder; helpers get their own worktree.** *A chat divided against itself cannot stand.*
+- Every chat works in your project folder, so it also shows up in `claude --resume`, the VS Code extension and the agent's other tools.
+- Helpers (agents a chat starts through AIB, from any provider) each work in their own worktree and branch, started from your folder's branch.
+  Your saved edits are synced into the helpers' worktrees.
+- A helper's work lands in your folder when the main chat's turn ends, with **Undo** on the line that says so.
+  Conflicts go to the helper to resolve.
+- AIB cleans up the worktrees, branches and stashes it made. Work that was never merged is never deleted without asking.
 
-![A chat working in its own copy: the Changes tab with Discard and Merge](docs/screenshots/06-worktree-changes-merge.png)
+![A helper working in its own worktree: the Changes tab with Discard and Merge](docs/screenshots/06-worktree-changes-merge.png)
 
 **5. Nothing stops when AIB does.**
 - Chats and chat terminals run in a separate program, the keeper. They keep running when you quit AIB, and when it restarts, updates or crashes.
@@ -181,7 +183,7 @@ serves the page. Releases are built this way and uploaded by hand; no CI.
 
 | Path | What's there |
 | --- | --- |
-| `outputs/agent-studio/server/` | The app. `main.ts` is the entry point; `web/` routes and security, `host/` the agent host, `acp/` the ACP connection, `keeper/` the keeper client, `state/` the data files, `transcripts/` saved chats, `worktrees/` one copy per chat, `artifacts/`, `agents/`, `ownership/`, `terminal/`, `desktop/` (window, tray, updater), `platform/` all OS-specific code. |
+| `outputs/agent-studio/server/` | The app. `main.ts` is the entry point; `web/` routes and security, `host/` the agent host, `acp/` the ACP connection, `keeper/` the keeper client, `state/` the data files, `transcripts/` saved chats, `worktrees/` helpers' worktrees, Changes and Merge, `artifacts/`, `agents/`, `ownership/`, `terminal/`, `desktop/` (window, tray, updater), `platform/` all OS-specific code. |
 | `outputs/agent-studio/*.js, *.css, *.html` | The page. |
 | `outputs/agent-studio/docs/` | Design notes: desktop app, agent host and keeper, themes, ACP capabilities. |
 | `outputs/agent-studio/icons/` | The app icon in every size the packages need, made by `tools/make_icons.ts` from the masters in `icons/src/` (hand-drawn pixel grids for 16-32 px, an SVG for the rest). |

@@ -70,11 +70,11 @@ import { isNetworkPath } from '../web/security.ts';
 import { isForeignPath } from '../platform/location.ts';
 import * as wt from '../worktrees/worktrees.ts';
 import * as refile from '../worktrees/refile.ts';
-import { dropChatRefs } from '../worktrees/cleanup.ts';
+import { applyProject as cleanupApply, dropChatRefs, logLine as cleanupLog } from '../worktrees/cleanup.ts';
 import { testHomeEnv } from '../acp/connection.ts';
 import { LiveSync, Mutex } from '../worktrees/sync.ts';
 import { DEFAULT_ENTRY, ensureDefault, type LocalOnly } from '../worktrees/local_only.ts';
-import { helperOf, readHelpers } from '../swarm/registry.ts';
+import { helperOf, readHelpers, Registry as HelperRegistry } from '../swarm/registry.ts';
 import { swarmEnabled } from '../swarm/settings.ts';
 import { defaultsAllowed } from '../worktrees/local_strays.ts';
 import type { WslSpawn } from '../acp/connection.ts';
@@ -84,8 +84,10 @@ import {
   distroName,
   hostWhenReady,
   linkOf,
+  peekWslHost,
   readyHost,
   windowsPathInWsl,
+  wsl2Distros,
   WSL_TOOLS_NOTICE,
   wslHost,
   wslToolsNotice,
@@ -106,6 +108,7 @@ import {
   wslSetSession,
 } from '../wsl/worktrees.ts';
 import { configureWslHosts, wslHostsInUse } from '../wsl/hosts.ts';
+import { wslCleanEmpty, wslRefile } from '../wsl/transcripts.ts';
 import { WslSync, wslSyncChat } from '../wsl/sync.ts';
 import { blockedCount } from '../attention/inbox_rules.ts';
 import { AllowGate } from '../allow/gate.ts';
@@ -117,6 +120,7 @@ type Json = Record<string, unknown>;
 export const ARTIFACT_URL_FILE = 'artifact-web.json'; // the web server writes its URL here so agents find it after a restart
 export const CLOSED_GRACE_SECONDS = 10 * 60; // a closed connection stays listed this long so the page can still show "disconnected"
 export const MAX_CLOSED_CONNECTIONS = 20; // ...and never more than this many closed ones are kept (oldest go first)
+export const STOPPED_HELPER_DAYS = 7; // a stopped or failed helper's copy goes this long after it stopped (nothing unmerged; build plan 1b 5.3)
 export const RECONNECT_TRIES = 3;
 /** The longest a page's request for a chat waits while chats are taken over from the keeper (chat.js GET_TIMEOUT_MS is longer). */
 export const ADOPT_WAIT_MS = 20_000;
@@ -1145,8 +1149,13 @@ export class Studio {
     let workspace = wsl ? refOf({ kind: 'wsl', ...wsl }) : realpath(expandUser(cwd));
     // Build plan 1b, 4.4 (MF 4): a chat whose copy is gone (merged and closed, discarded, deleted) carries on in the project folder.
     // The durable mapping is read first, so a page that still sends the copy path (the transcript's old cwd) lands there too.
-    const movedTo = !wsl && resume && this.hasStateDir ? refile.movedTo(this.stateDir, provider, resume) : null;
-    if (movedTo && isdir(movedTo)) workspace = realpath(movedTo);
+    // A WSL chat's mapping is a ref of its distro's project folder (moveChatToFolder of a WSL record).
+    const movedTo = resume && this.hasStateDir ? refile.movedTo(this.stateDir, provider, resume) : null;
+    const movedWsl = movedTo ? wslLoc(movedTo) : null;
+    if (movedWsl) {
+      wsl = movedWsl;
+      workspace = refOf({ kind: 'wsl', ...movedWsl });
+    } else if (movedTo && !wsl && isdir(movedTo)) workspace = realpath(movedTo);
     else if (!wsl && this.worktrees && this.worktrees.isRemoved(workspace, resume ? `${provider}:${resume}` : null)) {
       throw new wt.WorktreeGone(wt.GONE_MESSAGE); // discarded (or being removed): readable, not continuable
     }
@@ -1155,7 +1164,7 @@ export class Studio {
     if (!wsl && !isdir(workspace)) throw new ValueError('Choose an existing workspace folder');
     if (!agentRegistry.isProvider(provider)) throw new ValueError('Choose an agent');
     const launch = wsl ? await this.wslLaunch(provider, wsl, !resume, !!resume && !options.auto) : null;
-    if (launch && this.worktrees) {
+    if (launch && this.worktrees && !movedWsl) {
       // the same two lookups in the distro: a discarded worktree is not continued; a chat that has one keeps it (made again if deleted)
       const session = resume ? `${provider}:${resume}` : null;
       if (await wslIsRemoved(workspace, session)) throw new wt.WorktreeGone(wt.GONE_MESSAGE);
@@ -2348,10 +2357,10 @@ export class Studio {
    * transcript so the agent's own resume listing for the project has it. Helpers: nothing. Never throws; logged in refile.log.
    */
   async moveChatToFolder(record: wt.WorktreeRecord, why: string): Promise<void> {
-    if (!this.hasStateDir || isWslRecord(record as never)) return;
+    if (!this.hasStateDir) return;
     const session = String(record.session ?? '');
     const at = session.indexOf(':');
-    const project = String(record.project ?? '');
+    const project = String(record.project ?? ''); // a WSL record's project and path are refs (wsl/worktrees.ts recordOf)
     const from = String(record.path ?? '');
     if (at < 1 || !project || this.#isHelperCopy(record)) return;
     const provider = session.slice(0, at), sessionId = session.slice(at + 1);
@@ -2372,6 +2381,8 @@ export class Studio {
 
   /** Re-file one closed chat's transcript (Claude: move + cwd rewrite; Codex: open once in the project folder). null: not this agent. */
   async #refileTranscript(provider: string, sessionId: string, from: string, project: string): Promise<refile.RefileResult | null> {
+    const wslFrom = wslLoc(from), wslTo = wslLoc(project);
+    if (wslFrom || wslTo) return await this.#refileWsl(provider, sessionId, from, project);
     const homes = this.agentHomes();
     const refused: refile.RefileResult = { outcome: 'refused', message: 'open somewhere', path: '', backup: '', fromFolder: '' };
     if (provider === 'claude') {
@@ -2402,7 +2413,99 @@ export class Studio {
     return null;
   }
 
+  /**
+   * #refileTranscript for a WSL project (helper protocol 3, wsl/helper/refile.ts): the distro's helper moves Claude Code's transcript
+   * under the project's folder in the distro's ~/.claude/projects (backup kept in the distro); for Codex it backs the rollout up and
+   * the chat is then opened once in the project folder in the distro (connect reads the mapping: session/load, no prompt). null: not
+   * re-filable here (another agent, the distro not ready, a helper before protocol 3); the next start tries again.
+   */
+  async #refileWsl(provider: string, sessionId: string, from: string, project: string): Promise<refile.RefileResult | null> {
+    const wslFrom = wslLoc(from), wslTo = wslLoc(project);
+    if (provider !== 'claude' && provider !== 'codex') return null;
+    if (!wslFrom || !wslTo || wslFrom.distro !== wslTo.distro) return null;
+    const refused: refile.RefileResult = { outcome: 'refused', message: 'open somewhere', path: '', backup: '', fromFolder: '' };
+    if (await this.#openAnywhereWsl(provider, sessionId, from, wslFrom)) return refused;
+    let done;
+    try {
+      done = await wslRefile(wslTo.distro, provider, sessionId, wslFrom.linuxPath, wslTo.linuxPath);
+    } catch (error) {
+      refile.logLine(this.stateDir, `wsl: ${provider}:${sessionId} not re-filed now: ${errorText(error)}`);
+      return null;
+    }
+    if (done.outcome !== 'saved') return { ...done, outcome: done.outcome };
+    try {
+      const c = await this.connect(provider, project, sessionId, { background: false });
+      await c.close();
+    } catch (error) {
+      return { ...done, outcome: 'failed', message: `could not open it in the project folder: ${errorText(error)}` };
+    }
+    return { ...done, outcome: 'moved' };
+  }
+
+  /** #openAnywhere for a WSL chat: a chat of this host, the take-over at start, or an agent process in the distro holding the session. */
+  async #openAnywhereWsl(provider: string, sessionId: string, path: string, wsl: { distro: string; linuxPath: string }): Promise<boolean> {
+    for (const c of this.connections.values()) {
+      if (c.closed) continue;
+      if (c.provider === provider && c.sessionId === sessionId) return true;
+      if (c.cwd === path) return true;
+    }
+    if (this.takingOver()) return true;
+    try {
+      const { owner } = await this.#wslAssess(provider, sessionId, wsl, null);
+      return owner !== null;
+    } catch {
+      return true; // cannot tell: not now
+    }
+  }
+
   #retiring: Promise<string[]> | null = null;
+
+  /**
+   * Build plan 1b 5.3 (MF 5): the copies of helpers that stopped or failed go 7 days after they stopped, when their chat is closed (not
+   * open anywhere), their main chat is not open here and nothing in the copy is unmerged. The removal is cleanup.ts applyProject for
+   * that one copy: this install's records only (per-install scope), a fresh scan under the repo lock, silent only without unmerged
+   * work (5.2: files against the user base, commits on the branch count), never a running chat's copy. A helper that stopped before
+   * this build has no stop time: its 7 days count from the first time this runs. WSL has no helpers. Returns the helper ids done.
+   */
+  async retireStoppedHelpers(now = Date.now() / 1000): Promise<string[]> {
+    const done: string[] = [];
+    if (!this.worktrees || !this.hasStateDir || this.takingOver()) return done;
+    const helpers = new HelperRegistry(this.stateDir);
+    for (const h of Object.values(readHelpers(this.stateDir))) {
+      if (h.state !== 'stopped' && h.state !== 'failed') continue;
+      const path = String(h.worktree?.path ?? '');
+      if (!path || wslLoc(path)) continue;
+      if (!(Number(h.endedAt) > 0)) {
+        await helpers.patch(h.id, { endedAt: now });
+        continue;
+      }
+      if (now - Number(h.endedAt) < STOPPED_HELPER_DAYS * 86_400) continue;
+      const record = this.worktrees.registry.find(path, null);
+      if (!record || record.status !== 'ready' || !record.project) continue;
+      if (this.#connectionsIn(path).length) continue;
+      const lasting = String(h.chat?.lasting ?? '');
+      const at = lasting.indexOf(':');
+      if (at > 0 && (await this.#openAnywhere(lasting.slice(0, at), lasting.slice(at + 1), path))) continue;
+      const open = [...this.connections.values()].filter((c) => !c.closed);
+      if (open.some((c) => c.id === h.parent?.live || (!!c.sessionId && `${c.provider}:${c.sessionId}` === h.parent?.lasting))) continue;
+      const live = open.flatMap((c) => [c.cwd, ...(c.sessionId ? [`${c.provider}:${c.sessionId}`] : [])]);
+      const id = `copy:${record.key}`;
+      try {
+        const result = await cleanupApply(this.stateDir, String(record.project), [], { live, only: [id] });
+        if (result.removed.includes(id)) {
+          done.push(h.id);
+          cleanupLog(this.stateDir, `stopped helper ${h.id} (${h.state} ${Math.floor((now - Number(h.endedAt)) / 86_400)} days ago): removed its copy ${path}`);
+        } else {
+          const item = result.scan.items.find((i) => i.id === id);
+          const why = result.left[id] || result.scan.skipped || (item?.unmerged ? 'unmerged work' : item?.live ? 'in use' : 'not found');
+          log.info('Kept the copy of stopped helper %s: %s', h.id, why);
+        }
+      } catch (error) {
+        log.exception(error, 'Removing the copy of stopped helper %s failed', h.id);
+      }
+    }
+    return done;
+  }
 
   /**
    * P4b (decision 6, 5.3; MF 5): the copies of merged chats and helpers whose chat is closed (not open anywhere) and that hold
@@ -2455,7 +2558,7 @@ export class Studio {
     for (const [session, entry] of Object.entries(moved)) {
       if (entry.refiled || entry.why === 'helper') continue;
       const at = session.indexOf(':');
-      if (at < 1 || !isdir(entry.project)) continue;
+      if (at < 1 || (!wslLoc(entry.project) && !isdir(entry.project))) continue;
       const done = await this.#refileTranscript(session.slice(0, at), session.slice(at + 1), entry.from, entry.project).catch(() => null);
       if (!done || (done.outcome !== 'moved' && done.outcome !== 'already')) continue;
       await refile.recordMoved(this.stateDir, session.slice(0, at), session.slice(at + 1), { ...entry, refiled: done.path, backup: done.backup || entry.backup });
@@ -2490,6 +2593,18 @@ export class Studio {
       out.folders = removed;
       for (const dir of kept) refile.logLine(this.stateDir, `one-time pass: kept ${dir} (it still holds files, e.g. memory/)`);
     }
+    // the distro equivalent (4.6): each ready distro's helper removes this AIB's empty copy-named folders there (a distro that is not
+    // running is not started for it)
+    try {
+      for (const d of await wsl2Distros()) {
+        const host = peekWslHost(d.name);
+        if (!host || host.state !== 'ready') continue;
+        const swept = await wslCleanEmpty(host);
+        if (!swept) continue;
+        out.folders.push(...swept.removed.map((p) => refOf({ kind: 'wsl', distro: d.name.toLowerCase(), linuxPath: p })));
+        for (const dir of swept.kept) refile.logLine(this.stateDir, `one-time pass: kept ${d.name}:${dir} (it still holds files, e.g. memory/)`);
+      }
+    } catch { /* no distros */ }
     refile.logLine(this.stateDir, `one-time pass: ${out.moved.length} moved, ${out.skipped.length} skipped, ${out.folders.length} empty folder(s) removed`);
     if (!open) {
       try {
@@ -2591,7 +2706,7 @@ export class Studio {
     if (connection.scratchDir && this.allow) this.allow.removeScratch(connection.scratchDir); // allow rules: the scratch folder goes with it
     const out: Json = { ok: true, result: outcome, branch: record.branch ?? '', removed: outcome === 'removed', pending: outcome === 'pending' };
     // owner 2026-11-16: the chat carries on in the project folder (its transcript re-filed there); a helper's does not
-    if (outcome === 'removed' && !isWslRecord(record) && !this.#isHelperCopy(record)) {
+    if (outcome === 'removed' && !this.#isHelperCopy(record)) {
       await this.moveChatToFolder(record, 'discarded');
       const moved = connection.sessionId ? refile.movedTo(this.stateDir, connection.provider, connection.sessionId) : null;
       if (moved) out.movedToFolder = moved;
@@ -2614,7 +2729,7 @@ export class Studio {
     const changed = isWslRecord(record) ? await wslHasChanges(record) : await this.worktrees!.hasChanges(record);
     if (changed) return { ok: true, worktree: { branch, removed: false, keptChanges: true } };
     const outcome = await this.#removeWorktree(record, false);
-    if (outcome === 'removed' && !isWslRecord(record)) await this.moveChatToFolder(record, 'deleted'); // restored later: the folder
+    if (outcome === 'removed') await this.moveChatToFolder(record, 'deleted'); // restored later: the folder
     return { ok: true, worktree: { branch, removed: outcome === 'removed', pending: outcome === 'pending' } };
   }
 
@@ -2773,8 +2888,9 @@ export class Studio {
     }
     if (name === 'worktree-retire') { // P4b: merged copies of closed chats; then the re-file pass (web: after the take-over at start)
       const removed = await this.retireMerged();
+      const stopped = await this.retireStoppedHelpers().catch((error) => (log.exception(error, 'Stopped helpers failed'), [] as string[]));
       const pass = body.refile === false ? null : await this.refilePass();
-      return [200, { ok: true, removed, refile: pass }];
+      return [200, { ok: true, removed, stopped, refile: pass }];
     }
     if (name === 'prompt-context') { // a one-time line in front of this chat's next prompt (a landing told it what changed)
       const connection = this.#connection(body);
@@ -2869,7 +2985,9 @@ export class Studio {
       return [200, payload];
     } else if (name === 'disconnect') {
       await connection.close();
-      if (connection.worktree) void this.retireMerged().catch((error) => log.exception(error, 'Removing merged copies failed'));
+      if (connection.worktree) {
+        void this.retireMerged().then(() => this.retireStoppedHelpers()).catch((error) => log.exception(error, 'Removing merged copies failed'));
+      }
     }
     return [200, { ok: true }];
   }

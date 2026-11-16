@@ -399,7 +399,7 @@ Deno.test({
             protocol: number;
             methods: string[];
           };
-          assertEquals(params.protocol, 1);
+          assertEquals(params.protocol, 3);
           assert(
             params.methods.includes('changes.get') &&
               params.methods.includes('files.read'),

@@ -177,6 +177,59 @@ Deno.test('e2e 19b: only completely empty copy-named folders go (plain rmdir); m
   }
 });
 
+Deno.test('WSL helper (protocol 3): transcripts.refile moves a copy chat under the project in the distro; cleanEmpty sweeps; outside the root refused', async () => {
+  const { refileMethods } = await import('../../outputs/agent-studio/server/wsl/helper/refile.ts');
+  const { HELPER_PROTOCOL } = await import('../../outputs/agent-studio/server/wsl/contract.ts');
+  assertEquals(HELPER_PROTOCOL, 3);
+  const dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-refile-wsl-' }));
+  try {
+    // the distro stand-in: <data> (backups, worktrees root), the user's ~/.claude and ~/.codex (named, as AIB names them under test)
+    const data = pathOf(dir, 'data'), claudeDir = pathOf(dir, 'home', '.claude'), codexDir = pathOf(dir, 'home', '.codex');
+    const root = pathOf(claudeDir, 'projects');
+    const w = pathOf(data, 'worktrees', 'h1', 'chat-abcd1234'), p = pathOf(dir, 'proj');
+    const ctx = { env: () => Promise.resolve({ env: {}, shell: '/bin/bash', home: pathOf(dir, 'nobody'), arch: 'x86_64' }) };
+    const m = refileMethods(ctx, data);
+    const from = pathOf(root, refile.claudeEncode(w));
+    Deno.mkdirSync(from, { recursive: true });
+    const original = JSON.stringify({ cwd: w, sessionId: 's1' }) + '\n';
+    Deno.writeTextFileSync(pathOf(from, 's1.jsonl'), original);
+    const done = (await m['transcripts.refile']({ provider: 'claude', sessionId: 's1', from: w, to: p, claudeDir })) as refile.RefileResult;
+    assertEquals(done.outcome, 'moved', done.message);
+    const dest = pathOf(root, refile.claudeEncode(p), 's1.jsonl');
+    assertEquals(JSON.parse(Deno.readTextFileSync(dest)).cwd, p);
+    assertEquals(Deno.readTextFileSync(done.backup), original, 'backed up in <data>/refiled/claude');
+    assert(done.backup.startsWith(pathOf(data, 'refiled', 'claude')));
+    assert(!exists(from), 'the emptied copy-named folder went (plain rmdir)');
+    // a copy-named folder holding memory/ is kept by the sweep; an empty one goes
+    const keptDir = pathOf(root, refile.claudeEncode(pathOf(data, 'worktrees', 'h1', 'chat-2')));
+    const emptyDir = pathOf(root, refile.claudeEncode(pathOf(data, 'worktrees', 'h1', 'chat-3')));
+    Deno.mkdirSync(pathOf(keptDir, 'memory'), { recursive: true });
+    Deno.mkdirSync(emptyDir, { recursive: true });
+    const swept = (await m['transcripts.cleanEmpty']({ claudeDir })) as { removed: string[]; kept: string[] };
+    assertEquals([swept.removed, swept.kept], [[emptyDir], [keptDir]]);
+    // Codex: only the backup here ('saved'); the rollout itself is never written
+    const day = pathOf(codexDir, 'sessions', '2026', '11', '16');
+    Deno.mkdirSync(day, { recursive: true });
+    Deno.writeTextFileSync(pathOf(day, 'rollout-2026-11-16T00-00-00-c1.jsonl'), '{"x":1}\n');
+    const saved = (await m['transcripts.refile']({ provider: 'codex', sessionId: 'c1', from: w, to: p, codexDir })) as refile.RefileResult;
+    assertEquals(saved.outcome, 'saved');
+    assertEquals(Deno.readTextFileSync(saved.backup), '{"x":1}\n');
+    assertEquals(Deno.readTextFileSync(pathOf(day, 'rollout-2026-11-16T00-00-00-c1.jsonl')), '{"x":1}\n');
+    // nothing on the channel can move another folder's transcript, or file one into the worktrees root
+    for (const bad of [{ from: p, to: w }, { from: w, to: pathOf(data, 'worktrees', 'x') }, { from: 'relative', to: p }]) {
+      let refused = false;
+      try {
+        await m['transcripts.refile']({ provider: 'claude', sessionId: 's1', claudeDir, ...bad });
+      } catch {
+        refused = true;
+      }
+      assert(refused, JSON.stringify(bad));
+    }
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+  }
+});
+
 // ---- through Studio --------------------------------------------------------------------------------------------------------
 Deno.test({
   ...T,
@@ -332,5 +385,64 @@ Deno.test({
     assert(exists(pathOf(box.state, 'refile-once.json')));
     assert(exists(helperFile), 'still never moved');
     assertEquals((await box.studio.refilePass())?.moved, [], 'once done, the orphan part does not run again');
+  },
+});
+
+Deno.test({
+  ...T,
+  name: "MF 5: a stopped or failed helper's copy goes 7 days after it stopped, only when closed and with nothing unmerged",
+  async fn() {
+    const { Registry } = await import('../../outputs/agent-studio/server/swarm/registry.ts');
+    const { STOPPED_HELPER_DAYS } = await import('../../outputs/agent-studio/server/host/studio.ts');
+    assertEquals(STOPPED_HELPER_DAYS, 7);
+    await using box = new Box();
+    const registry = new Registry(box.state);
+    const now = Date.now() / 1000, day = 86_400;
+    const helper = async (id: string, sessionId: string, state: 'stopped' | 'failed' | 'done', endedAt?: number) => {
+      const made = await box.existing(sessionId, 'helper');
+      await registry.update(id, () => ({
+        id,
+        title: id,
+        project: box.project,
+        parent: { live: 'parent-live', lasting: 'claude:parent' },
+        chat: { live: '', lasting: `claude:${sessionId}`, provider: 'claude', model: '', mode: '' },
+        worktree: { path: made.path, branch: made.branch, base: 'main', start: '' },
+        state,
+        reason: '',
+        createdAt: now - 30 * day,
+        ...(endedAt ? { endedAt } : {}),
+      } as never));
+      return made;
+    };
+    const old = await helper('h_old', 'sess-old', 'stopped', now - 8 * day); // clean, 8 days: goes
+    const failed = await helper('h_fail', 'sess-fail', 'failed', now - 9 * day); // clean, failed 9 days ago: goes
+    const recent = await helper('h_new', 'sess-new', 'stopped', now - 2 * day); // 2 days: kept
+    const busy = await helper('h_work', 'sess-work', 'stopped', now - 8 * day); // committed work kept by the stop: kept
+    write(busy.path, 'kept.txt', 'work\n');
+    runGit(busy.path, 'add', '-A');
+    runGit(busy.path, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'AIB: helper stopped, work kept');
+    const legacy = await helper('h_legacy', 'sess-legacy', 'stopped'); // stopped before this build: no stop time yet
+    const done = await helper('h_done', 'sess-done', 'done', now - 20 * day); // not stopped: never by this rule
+    const open = await helper('h_open', 'sess-open', 'stopped', now - 8 * day); // its chat is open: kept
+    const c = await box.studio.connect('claude', open.path, 'sess-open');
+
+    const removed = await box.studio.retireStoppedHelpers(now);
+    assertEquals(removed.sort(), ['h_fail', 'h_old']);
+    assert(!exists(old.path) && !exists(failed.path));
+    assertEquals(runGit(box.project, 'branch', '--list', old.branch).trim(), '', 'its branch went with it');
+    for (const kept of [recent, busy, legacy, done, open]) assert(exists(kept.path), kept.path);
+    assertEquals(read(busy.path, 'kept.txt'), 'work\n');
+    const stamped = Number((await registry.get('h_legacy'))?.endedAt);
+    assert(Math.abs(stamped - now) < 1, 'a helper stopped before this build is counted from now');
+    assert(exists(pathOf(box.state, 'cleanup.log')));
+
+    // closing its chat runs the rule: the copy goes
+    await box.studio.liveCall('disconnect', { id: c.id });
+    for (let i = 0; i < 50 && exists(open.path); i++) await pause(200);
+    assert(!exists(open.path), 'removed once its chat closed');
+    // 8 days on: the legacy one goes too; the one with commits never does silently
+    const later = await box.studio.retireStoppedHelpers(now + 8 * day);
+    assertEquals(later.sort(), ['h_legacy', 'h_new']);
+    assert(exists(busy.path) && exists(done.path));
   },
 });

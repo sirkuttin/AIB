@@ -298,7 +298,7 @@ function makeRepoAt(folder: string): void {
 Deno.test('WSL helper (protocol 2): worktree.cleanupScan changes nothing; worktree.cleanupApply removes the silent items and the ticked ones', async () => {
   const { worktreeMethods } = await import('../../outputs/agent-studio/server/wsl/helper/worktrees.ts');
   const { HELPER_PROTOCOL } = await import('../../outputs/agent-studio/server/wsl/contract.ts');
-  assertEquals(HELPER_PROTOCOL, 2);
+  assertEquals(HELPER_PROTOCOL, 3);
   using box = new Sandbox();
   const m = worktreeMethods(box.state);
   const clean = await copy(box.state, box.project, '7'.repeat(32));
