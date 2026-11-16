@@ -25,6 +25,7 @@ import { TerminalSessions } from '../../outputs/agent-studio/server/terminal/ses
 import type { WsLink } from '../../outputs/agent-studio/server/platform/websocket.ts';
 import { terminalRoutes } from '../../outputs/agent-studio/server/web/terminal_routes.ts';
 import type { WebContext } from '../../outputs/agent-studio/server/web/server.ts';
+import { INBOX } from '../../outputs/agent-studio/server/attention/inbox_rules.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -675,5 +676,34 @@ Deno.test({
     assert(!b.takingOver());
     assert(b.connections.get(c.id)?.ready, 'the WSL chat is live');
     assertEquals(b.recovered().find((r) => (r as Json).sessionId === c.sessionId), undefined);
+  },
+});
+
+/** A reply that ends asking the user something (inbox-rules.js asksOf: a blocking question after a real answer). */
+const ASKS = 'say:I went through the branch, ran the targeted tests and read the logs. The build passes, the two flaky tests are ' +
+  'fixed, and the notes are updated in the docs folder.\n\nShould I fix the first one?';
+
+Deno.test({
+  name: 'wsl chat: Mark handled clears a reply that asks something, live and after the chat is rebuilt from the distro keeper',
+  ...T,
+  async fn() {
+    await keeperBinary();
+    await using lab = new WslLab();
+    const a = lab.studio();
+    const c = await a.connect('claude', REF);
+    const phase = (s: Studio, conn: Connection) =>
+      INBOX.phaseOf(conn.attention(), s.conversations.public().entries[`claude:${conn.sessionId}`] ?? null, Date.now() / 1000);
+    assertEquals((await a.liveCall('prompt', { id: c.id, text: ASKS, clientMessageId: 'm1' }))[0], 200);
+    await until(() => !c.busy && c.turnEndedAt !== null, 'the turn end', 15);
+    assertEquals(phase(a, c), 'asks', JSON.stringify(c.attention()));
+    await a.conversations.apply('handled', 'claude', c.sessionId); // what POST /api/live/conversation-state does
+    assertEquals(phase(a, c), 'idle', 'handled live');
+    // the chat rebuilt from the distro keeper's record (its times are the keeper's) stays handled
+    lab.crash(a);
+    const b = lab.studio();
+    assertEquals(await b.adoptKeeper(), 1);
+    const r = b.connections.get(c.id)!;
+    assert(INBOX.secondsOf(r.attention().asksAt) > 0, 'the question is rebuilt too');
+    assertEquals(phase(b, r), 'idle', `still handled after the rebuild: ${JSON.stringify(r.attention())}`);
   },
 });
