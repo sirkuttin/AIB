@@ -881,8 +881,13 @@ test('panel: the failed card renders the reason as plain text on a line of its o
   assert.ok(err, 'the reason line is there');
   assert.equal(err.textContent, why, 'as text, never as markup');
   assert.equal(err.querySelector('b'), null);
+  assert.equal(err.title, why, 'the full text stays in the title attribute');
+  assert.ok(card.className.includes('art-card-failed'), 'the failure colours');
+  const css = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'outputs', 'agent-studio', 'artifacts.css'), 'utf8');
+  assert.match(css, /\.art-card-err \{\s*color: var\(--muted\);[^}]*-webkit-line-clamp: 3;/, 'dimmer than the title, up to 3 lines');
   const ok = p.UI.decorateToolRow(p.shell.document.createElement('div'), rawRow());
   assert.equal(ok.querySelector('.art-card-err'), null, 'a finished publish has no reason line');
+  assert.ok(!ok.querySelector('.art-card').className.includes('art-card-failed'));
 });
 
 /* ---- archive and Recently deleted: the panel itself, on the fake DOM ---- */
