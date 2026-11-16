@@ -882,12 +882,17 @@ Deno.test({
   },
 });
 
+/** quit() waits for the window list's last write (G8, a real file write) before it calls the app's quit: wait for that (≤ 2 s). */
+async function quitDone(order: string[]): Promise<void> {
+  for (let i = 0; i < 200 && !order.includes('quit'); i++) await tick(10);
+}
+
 Deno.test('a separate agent host: quitting never asks and asks it to stop unforced; Stop all chats and quit forces it', async () => {
   const stopHost = () => Promise.resolve({ stopped: true });
   const a = await makeApp(() => Promise.resolve(0), stopHost);
   try {
     a.s.windows[0].emit('close');
-    await tick();
+    await quitDone(a.order);
     assertEquals(a.order, ['stop:false', 'tray removed', 'quit'], 'nothing left running invisibly once the window is gone');
   } finally {
     await a.done();
@@ -897,7 +902,7 @@ Deno.test('a separate agent host: quitting never asks and asks it to stop unforc
     try {
       if (close) b.s.windows[0].emit('close');
       else b.s.tray!.onMenu('quit');
-      await tick();
+      await quitDone(b.order);
       assertEquals(b.s.questions, []);
       assertEquals(b.order, ['stop:false', 'tray removed', 'quit'], 'the chats keep running in the agent host, under its own icon');
     } finally {
