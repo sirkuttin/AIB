@@ -249,12 +249,6 @@
       keywords: ['view', 'full', 'chat', 'condensed', 'prompts', 'new chat', 'compact', 'summary'],
     },
     {
-      id: 'this-computer',
-      section: 'computer',
-      label: 'Notifications on this computer',
-      keywords: ['notifications', 'push', 'install', 'app', 'remote', 'lost', 'extensions', 'this computer', 'device'],
-    },
-    {
       id: 'auto-reconnect',
       section: 'server',
       label: 'Reconnect chats after a restart',
@@ -311,6 +305,13 @@
       section: 'server',
       label: 'Restart the web server',
       keywords: ['deploy', 'restart', 'update', 'reload', 'stop host'],
+    },
+    // another computer only (remote-auth.js)
+    {
+      id: 'this-computer',
+      section: 'computer',
+      label: 'Notifications on this computer',
+      keywords: ['notifications', 'push', 'install', 'app', 'remote', 'lost', 'extensions', 'this computer', 'device'],
     },
   ];
   const sectionLabel = (id) => (SECTIONS.find((s) => s.id === id) || { label: id }).label;
