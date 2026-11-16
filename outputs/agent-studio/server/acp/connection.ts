@@ -924,6 +924,8 @@ export class Connection {
     configDir?: string;
     /** Hooks off (in the user's settings, or no Git Bash): the permission deny rules that turn the chat's editing subagents off (P2). */
     deny?: Json;
+    /** Codex (subagents/codex.ts): the system prompt line about its subagents (worktrees, or off). */
+    prompt?: string;
   } | null = null;
 
   /** Isolation is on: AIB's hooks run in this chat (given at the start, or a taken-over chat that had them) and are not off now. */
@@ -1373,6 +1375,7 @@ export class Connection {
       userWorktreeHook: h.userWorktreeHook,
       ...(h.configDir ? { configDir: h.configDir } : {}),
       ...(h.deny ? { deny: h.deny } : {}), // the editing-subagent deny rules a reopen must send again
+      ...(h.prompt ? { prompt: h.prompt } : {}),
     };
   }
 
@@ -5347,7 +5350,7 @@ export class Connection {
     const brief = this.scratchDir ? houseRules(this.scratchDir) : ''; // allow rules: the house rules with the literal scratch path
     // hooks given: subagents that edit get their own worktree (the same text on every reopen, whatever a later re-read says);
     // hooks off at the start (settings, or no Git Bash): they are turned off (P2)
-    const subagents = isDict(this.subagentHooks?.settings?.hooks) ? SUBAGENT_PROMPT : this.subagentHooks?.deny
+    const subagents = this.subagentHooks?.prompt ? this.subagentHooks.prompt : isDict(this.subagentHooks?.settings?.hooks) ? SUBAGENT_PROMPT : this.subagentHooks?.deny
       ? (this.subagentHooks.off === 'Git Bash not found' ? SUBAGENTS_OFF_NO_BASH_PROMPT : SUBAGENTS_OFF_PROMPT)
       : '';
     if (!own && !local && !brief && !subagents) return {};

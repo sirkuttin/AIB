@@ -39,6 +39,8 @@ export const HOOK_KEY_HEADER = 'X-Studio-Hook-Key';
 export const HOOK_NONCE_HEADER = 'X-Studio-Hook-Nonce';
 export const HOOK_PROOF_HEADER = 'X-Studio-Hook-Proof';
 const HOOK_PATH = /^\/hooks\/claude\/(pre-tool|worktree-create|post-agent|subagent-stop)$/;
+/** Codex command hooks (subagents/codex.ts): POST /hooks/codex/<event>, handed on as event `codex-<event>`. */
+const CODEX_HOOK_PATH = /^\/hooks\/codex\/(pre-tool|subagent-start|subagent-stop)$/;
 const MAX_HOOK_BYTES = 4 * 1024 * 1024;
 
 type Json = Record<string, unknown>;
@@ -244,6 +246,8 @@ export class ArtifactMcpHttp {
     }
     const hook = HOOK_PATH.exec(new URL(request.url).pathname);
     if (hook) return await this.#hook(request, hook[1]);
+    const codexHook = CODEX_HOOK_PATH.exec(new URL(request.url).pathname);
+    if (codexHook) return await this.#hook(request, `codex-${codexHook[1]}`);
     if (new URL(request.url).pathname !== MCP_PATH) {
       await drain(request);
       return refused(404, 'Not found');

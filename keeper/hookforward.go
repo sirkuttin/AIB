@@ -70,10 +70,13 @@ const (
 	hookProofLabel  = "studio-hook-proof/v1\x00"
 )
 
-var hookEvents = map[string]bool{"pre-tool": true, "worktree-create": true, "post-agent": true, "subagent-stop": true}
+var hookEvents = map[string]bool{"pre-tool": true, "worktree-create": true, "post-agent": true, "subagent-stop": true,
+	"codex-pre-tool": true, "codex-subagent-start": true, "codex-subagent-stop": true} // codex-*: hookforward_codex.go
 
 // blocking: the events whose failure must block the call (exit 2).
-func hookBlocking(event string) bool { return event == "pre-tool" || event == "worktree-create" }
+func hookBlocking(event string) bool {
+	return event == "pre-tool" || event == "worktree-create" || event == "codex-pre-tool"
+}
 
 // errAIBGone: the address file names a process that no longer runs (AIB crashed; its port may be anyone's now).
 var errAIBGone = errors.New("the AIB named in the address file is not running")
@@ -84,7 +87,7 @@ func hookMain(args []string) int {
 		return 0
 	}
 	if len(args) != 2 || !hookEvents[args[0]] || args[1] == "" {
-		fmt.Fprintln(os.Stderr, "usage: AIB-keeper hook pre-tool|worktree-create|post-agent|subagent-stop <address file>")
+		fmt.Fprintln(os.Stderr, "usage: AIB-keeper hook pre-tool|worktree-create|post-agent|subagent-stop|codex-pre-tool|codex-subagent-start|codex-subagent-stop <address file>")
 		return 2
 	}
 	h := &hookForwarder{
@@ -134,6 +137,9 @@ func (h *hookForwarder) run(in io.Reader, stdout, stderr io.Writer) int {
 	if h.event == "pre-tool" && h.passesLocally(input) {
 		return 0
 	}
+	if h.event == "codex-pre-tool" && codexPassesLocally(input) {
+		return 0 // the main Codex agent's own tool call (not spawn_agent): nothing to ask AIB
+	}
 	if h.key == "" || h.chat == "" {
 		return fail(hookRestarting)
 	}
@@ -147,6 +153,9 @@ func (h *hookForwarder) run(in io.Reader, stdout, stderr io.Writer) int {
 	}
 	if !hmac.Equal([]byte(strings.ToLower(proof)), []byte(hookProof(h.key, nonce, status, body))) {
 		return fail(hookUnconfirmed) // not AIB's answer (another program on the port), or changed on the way
+	}
+	if strings.HasPrefix(h.event, "codex-") {
+		return h.codexAnswer(input, status, body, stdout, stderr)
 	}
 	if !hookBlocking(h.event) {
 		return 0 // post-agent, subagent-stop: hints for AIB; nothing goes back to Claude Code
@@ -384,6 +393,9 @@ func (h *hookForwarder) endpoint() (string, error) {
 		return "", fmt.Errorf("not a loopback http URL: %q", doc.URL)
 	}
 	u.Path = "/hooks/claude/" + h.event
+	if rest, ok := strings.CutPrefix(h.event, "codex-"); ok {
+		u.Path = "/hooks/codex/" + rest
+	}
 	u.RawQuery, u.Fragment = "", ""
 	return u.String(), nil
 }
