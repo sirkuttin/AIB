@@ -18,16 +18,22 @@
  *     install's items). Helpers' copies are left to the app.
  *   - Empty copy-named folders in ~/.claude/projects are removed with a plain, non-recursive rmdir (a folder with anything in it,
  *     e.g. memory/, stays).
- *   - Old copy chats WITH unmerged work are only listed: Merge or Discard them in AIB, then run this again.
+ *   - Old copy chats WITH unmerged work are only listed, each with two ways on: ask the chat's agent to merge it (AIB has no Merge
+ *     button any more: chat-first), or name it with `--discard "<chat title or id>"` to throw its unmerged work away here. A
+ *     discarded chat's copy goes with its branch and refs (its work is gone for good), and the chat itself is re-filed under its
+ *     project folder like the others (transcript backed up first), so it carries on there.
  *
  * Usage (from the repo folder; AIB and its keeper must be quit):
  *   deno run -A --config outputs/agent-studio/deno.json work/migrate/folder_chats_migrate.ts           dry run: prints the plan
  *   deno run -A --config outputs/agent-studio/deno.json work/migrate/folder_chats_migrate.ts --apply   does it
+ *   ... --discard "Fix the login page" --discard claude:1234abcd [--apply]   also discards those chats' unmerged work
  * Safe to run again: whatever is done is skipped.
  *
  * Options: --data <AIB data folder> (default %LOCALAPPDATA%\AgentStudio; inside a WSL distro: required, the path the Windows run
  * prints), --claude-dir <dir> (default CLAUDE_CONFIG_DIR, else ~/.claude), --codex-home <dir> (default CODEX_HOME, else ~/.codex),
- * --codex-adapter <command as a JSON array> (default: the adapter AIB itself would start).
+ * --codex-adapter <command as a JSON array> (default: the adapter AIB itself would start), --discard "<chat title or id>" (repeatable:
+ * an old copy chat with unmerged work, by the title the dry run prints, or its id as provider:sessionId or just the sessionId; a title
+ * two such chats share is refused, use the id).
  *
  * WSL projects: their copies, registry and transcripts live in the distro. The Windows run prints the command to run inside each
  * distro (it needs deno there); the script then does the same work natively in the distro.
@@ -60,6 +66,8 @@ interface Options {
   claudeProjects: string;
   codexHome: string;
   codexAdapter: string[] | null;
+  /** --discard names: old copy chats whose unmerged work the owner throws away. */
+  discard: string[];
 }
 
 function parseArgs(args: string[]): Options {
@@ -70,7 +78,7 @@ function parseArgs(args: string[]): Options {
     if (!v || v.startsWith('--')) throw new Error(`${name} needs a value`);
     return v;
   };
-  const known = new Set(['--apply', '--data', '--claude-dir', '--codex-home', '--codex-adapter']);
+  const known = new Set(['--apply', '--data', '--claude-dir', '--codex-home', '--codex-adapter', '--discard']);
   for (let i = 0; i < args.length; i++) {
     if (!known.has(args[i])) throw new Error(`unknown option ${args[i]}`);
     if (args[i] !== '--apply') i++;
@@ -80,12 +88,20 @@ function parseArgs(args: string[]): Options {
   const claudeDir = value('--claude-dir') || Deno.env.get('CLAUDE_CONFIG_DIR') || join(home(), '.claude');
   const codexHome = value('--codex-home') || Deno.env.get('CODEX_HOME') || join(home(), '.codex');
   const adapter = value('--codex-adapter');
+  const discard: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] !== '--discard') continue;
+    const v = (args[i + 1] ?? '').trim();
+    if (!v || args[i + 1].startsWith('--')) throw new Error('--discard needs a chat title or id');
+    discard.push(v);
+  }
   return {
     apply: args.includes('--apply'),
     data,
     claudeProjects: join(claudeDir, 'projects'),
     codexHome,
     codexAdapter: adapter ? JSON.parse(adapter) : null,
+    discard,
   };
 }
 
@@ -295,15 +311,69 @@ async function refileChat(opts: Options, chat: Chat, codexArgv: () => Promise<st
   return { ok: true, text: `${chat.provider}: AIB will open it in the project folder (its agent's files are not changed)` };
 }
 
+// ---- --discard -----------------------------------------------------------------------------------------------------------------
+/** An old copy chat with unmerged work (not a helper's copy, not another install's). */
+const unmergedChat = (i: cleanup.CleanupItem) => i.own && i.unmerged && i.kind === 'copy' && i.id.startsWith('copy:') && !!i.session && !i.helper;
+
+/** Does a --discard name pick this chat: its title (any case), its provider:sessionId, or its sessionId. */
+export function names(name: string, item: { title: string; session: string }): boolean {
+  const n = name.trim();
+  if (!n) return false;
+  const parts = splitSession(item.session);
+  return n === item.session || (!!parts && n === parts[1]) || (!!item.title && n.toLowerCase() === item.title.trim().toLowerCase());
+}
+
+/** What the dry run tells the owner to type for this chat: its title when that alone names it, else its id. */
+function discardOption(item: cleanup.CleanupItem, all: cleanup.CleanupItem[]): string {
+  const byTitle = item.title && !item.title.includes('"') && all.filter((o) => names(item.title, o)).length === 1;
+  return `--discard "${byTitle ? item.title : item.session}"`;
+}
+
+interface Discards {
+  /** Copy ids (copy:<key>) the owner named: their unmerged work goes. */
+  ids: Set<string>;
+  /** Every old copy chat with unmerged work, in every project (for the option text). */
+  all: cleanup.CleanupItem[];
+}
+
+/** Matches the --discard names against every project's old copy chats with unmerged work; a name that matches none or several is said. */
+async function resolveDiscards(opts: Options, projects: string[]): Promise<Discards> {
+  const all: cleanup.CleanupItem[] = [];
+  for (const project of projects) {
+    if (!isdir(project)) continue;
+    const scan = await cleanup.scanProject(opts.data, project, { live: [] });
+    if (!scan.skipped) all.push(...scan.items.filter(unmergedChat));
+  }
+  const ids = new Set<string>();
+  for (const name of opts.discard) {
+    const hits = all.filter((i) => names(name, i));
+    if (hits.length === 1) ids.add(hits[0].id);
+    else if (!hits.length) say(`--discard "${name}": no old copy chat with unmerged work has that title or id (already done?): nothing to discard`);
+    else {
+      say(`--discard "${name}": ${hits.length} chats have that title, so none is discarded. Name one by its id:`);
+      for (const h of hits) say(`   --discard "${h.session}"   (${h.path})`);
+    }
+  }
+  return { ids, all };
+}
+
 // ---- one project ---------------------------------------------------------------------------------------------------------------
 interface Totals {
   moved: number;
   removed: number;
   unmerged: number;
+  discarded: number;
   failed: number;
 }
 
-async function migrateProject(opts: Options, manager: wt.Manager, project: string, totals: Totals, codexArgv: () => Promise<string[] | null>) {
+async function migrateProject(
+  opts: Options,
+  manager: wt.Manager,
+  project: string,
+  totals: Totals,
+  codexArgv: () => Promise<string[] | null>,
+  discards: Discards,
+) {
   say(`\n== ${project}`);
   if (!isdir(project)) {
     say('   the folder is gone: skipped');
@@ -316,6 +386,7 @@ async function migrateProject(opts: Options, manager: wt.Manager, project: strin
   }
   const chats: Chat[] = [];
   const unmergedChats: cleanup.CleanupItem[] = [];
+  const discardChats: cleanup.CleanupItem[] = [];
   const leftovers: cleanup.CleanupItem[] = [];
   const keptWork: cleanup.CleanupItem[] = [];
   const others: cleanup.CleanupItem[] = [];
@@ -325,7 +396,7 @@ async function migrateProject(opts: Options, manager: wt.Manager, project: strin
     if (!i.own) others.push(i);
     else if (chatCopy) {
       seen.add(i.session);
-      if (i.unmerged) unmergedChats.push(i);
+      if (i.unmerged) (discards.ids.has(i.id) && unmergedChat(i) ? discardChats : unmergedChats).push(i);
       else {
         const parts = splitSession(i.session);
         if (parts) chats.push({ session: i.session, provider: parts[0], sessionId: parts[1], from: i.path, project, copyId: i.id, title: i.title });
@@ -357,14 +428,34 @@ async function migrateProject(opts: Options, manager: wt.Manager, project: strin
       say(`         ${opts.apply ? 'and its copy goes' : 'then remove its copy'}: ${chat.from}`);
     }
   }
+  // the chats the owner named with --discard: re-filed like the others, then their copy goes WITH its unmerged work (ticked)
+  const discardIds: string[] = [];
+  for (const i of discardChats) {
+    const parts = splitSession(i.session)!;
+    const chat: Chat = { session: i.session, provider: parts[0], sessionId: parts[1], from: i.path, project, copyId: i.id, title: i.title };
+    const lost = `its unmerged work${i.files > 0 ? ` (${i.files} file${i.files === 1 ? '' : 's'})` : ''} in ${i.path}`;
+    const done = await refileChat(opts, chat, codexArgv);
+    say(`   ${opts.apply ? (done.ok ? 'done' : 'LEFT') : 'plan'}: discard chat "${i.title}" (${i.session}): ${done.text}`);
+    if (!done.ok) {
+      totals.failed++;
+      say(`         its copy is kept (nothing discarded) until the chat can be moved`);
+      continue;
+    }
+    if (done.text !== 'already moved') totals.moved++;
+    removeIds.push(i.id);
+    discardIds.push(i.id);
+    say(`         ${opts.apply ? 'and its copy goes with' : 'then delete its copy with'} ${lost}, its branch ${i.branch} and refs`);
+  }
   for (const i of leftovers) {
     removeIds.push(i.id);
     say(`   ${opts.apply ? 'remove' : 'plan: remove'} ${i.kind} ${i.title || i.path || i.branch} (nothing unmerged)`);
   }
   for (const i of unmergedChats) {
     totals.unmerged++;
-    say(`   NOT TOUCHED: chat "${i.title}" (${i.session}) has unmerged work${i.files ? ` (${i.files} file${i.files === 1 ? '' : 's'})` : ''}` +
-      ` in ${i.path}. Merge or Discard it in AIB, then run this again.`);
+    say(`   NOT TOUCHED: chat "${i.title}" (${i.session}) has unmerged work${i.files > 0 ? ` (${i.files} file${i.files === 1 ? '' : 's'})` : ''}` +
+      ` in ${i.path}.`);
+    say(`         to discard that work, run this again with: ${discardOption(i, discards.all)}`);
+    say(`         or ask the chat's agent to merge it (open the chat in AIB), then run this again`);
   }
   for (const i of keptWork) {
     totals.unmerged++;
@@ -374,10 +465,12 @@ async function migrateProject(opts: Options, manager: wt.Manager, project: strin
   if (!removeIds.length) return;
   if (!opts.apply) {
     totals.removed += removeIds.length;
+    totals.discarded += discardIds.length;
     return;
   }
-  const done = await cleanup.applyProject(opts.data, project, [], { live: [], only: removeIds });
+  const done = await cleanup.applyProject(opts.data, project, discardIds, { live: [], only: removeIds });
   totals.removed += done.removed.length;
+  totals.discarded += discardIds.filter((id) => done.removed.includes(id)).length;
   for (const id of done.removed) cleanup.logLine(opts.data, `folder-chats migration: ${project}: removed ${id}`);
   for (const [id, why] of Object.entries(done.left)) {
     totals.failed++;
@@ -436,17 +529,21 @@ export async function main(args: string[]): Promise<number> {
     say(`Codex home: ${opts.codexHome}`);
     const manager = new wt.Manager(opts.data);
     const { local, wsl } = projectsOf(opts.data, manager);
-    const totals: Totals = { moved: 0, removed: 0, unmerged: 0, failed: 0 };
+    const totals: Totals = { moved: 0, removed: 0, unmerged: 0, discarded: 0, failed: 0 };
     let argv: Promise<string[] | null> | null = null;
     const codexArgv = () => (argv ??= codexCommand(opts));
-    for (const project of local) await migrateProject(opts, manager, project, totals, codexArgv);
+    const discards = await resolveDiscards(opts, local);
+    for (const project of local) await migrateProject(opts, manager, project, totals, codexArgv, discards);
     say('\n== empty copy-named folders in Claude Code\'s projects folder');
     emptyFolders(opts, manager.registry.root, totals);
     say('\n== summary');
     const verb = opts.apply ? '' : 'to be ';
     say(`   chats ${verb}moved to their project folder: ${totals.moved}`);
     say(`   copies, branches, refs, stashes and folders ${verb}removed: ${totals.removed}`);
-    say(`   with unmerged work, not touched: ${totals.unmerged}${totals.unmerged ? ' (Merge or Discard them in AIB, then run this again)' : ''}`);
+    if (opts.discard.length) say(`   chats whose unmerged work is ${opts.apply ? '' : 'to be '}discarded (--discard): ${totals.discarded}`);
+    say(`   with unmerged work, not touched: ${totals.unmerged}${
+      totals.unmerged ? " (ask each chat's agent to merge it, or discard it with the --discard shown above; then run this again)" : ''
+    }`);
     if (totals.failed) say(`   left for the next run (see LEFT above): ${totals.failed}`);
     if (wsl.size && WIN) {
       const script = linuxPathOf(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
@@ -455,6 +552,7 @@ export async function main(args: string[]): Promise<number> {
       for (const [distro, paths] of wsl) {
         say(`   ${distro}: ${paths.join(', ')}`);
         say(`     wsl -d ${distro} -- bash -lc 'deno run -A --config ${config} ${script} --data "$HOME/${WSL_ROOT_DIR}/${dataDirName(opts.data)}"${opts.apply ? ' --apply' : ''}'`);
+        if (opts.discard.length) say('     (add the same --discard options there; mind the quotes inside the bash -lc string)');
       }
     }
     if (!opts.apply) say('\nThis was a dry run. Run again with --apply to do it.');
