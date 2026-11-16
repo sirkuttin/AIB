@@ -844,15 +844,7 @@
   }
   // What this browser sent, kept so a message that was mid-send at a Studio restart can be shown and sent again (the server keeps only a fingerprint).
   const pendingKey = 'studio-pending-sends-v1';
-  /* On another computer (data-remote="pc") message text never goes to its disk: memory only (security review SF6). */
-  const pendingInMemory = document.documentElement.dataset.remote === 'pc';
-  let pendingMemory = {};
-  if (pendingInMemory)
-    try {
-      localStorage.removeItem(pendingKey);
-    } catch {}
   function pendingRecords() {
-    if (pendingInMemory) return pendingMemory;
     const v = stored(pendingKey, {});
     return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
   }
@@ -866,8 +858,7 @@
       if (data.attachments?.length && JSON.stringify(data.attachments).length < 1500000)
         all[data.clientMessageId].attachments = data.attachments;
       for (const id of ids.slice(0, Math.max(0, ids.length - 19))) delete all[id];
-      if (pendingInMemory) pendingMemory = all;
-      else localStorage.setItem(pendingKey, JSON.stringify(all));
+      localStorage.setItem(pendingKey, JSON.stringify(all));
     } catch {}
   }
   async function post(path, data) {
