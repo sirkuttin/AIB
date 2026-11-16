@@ -11,7 +11,8 @@
  *     that odd path;
  *   - the project-rule sweep (studio.ts allowAnswer) and rulesHere fold case, so /home/u/App and /home/u/app share project rules.
  * The context comes from a real WSL Connection (FakeWslHost lab): no assumption about what allowContext gives.
- * KNOWN-BROKEN tests fail today; run them with AUDIT_WSL=1.
+ * Fixed on wsl/fix-allow (allow/linux.ts): a WSL chat's context is its Linux folder, the project's ref and a LinuxView over facts from
+ * its distro's helper (`allow.facts`); the probes below that were KNOWN-BROKEN pass now and run always (names kept).
  */
 import { assert, assertEquals } from './_assert.ts';
 import { fake, pause, until } from './_connection.ts';
@@ -22,13 +23,13 @@ import { KeeperLink } from '../../outputs/agent-studio/server/keeper/link.ts';
 import { KeeperClient, keeperBinary, readKeeperInfo } from '../../outputs/agent-studio/server/keeper/client.ts';
 import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
 import { setWslHostResolver } from '../../outputs/agent-studio/server/wsl/access.ts';
+import { factsNow } from '../../outputs/agent-studio/server/allow/linux.ts';
 import { type AllowRule, match, type MatchContext, rulesHere } from '../../outputs/agent-studio/server/allow/matcher.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
 const SEP = Deno.build.os === 'windows' ? '\\' : '/';
 const REF = 'wsl://ubuntu/home/u/app';
-const BROKEN = { ignore: !Deno.env.get('AUDIT_WSL') };
 Deno.env.set('AIB_WSL_ROOT', '/tmp/aib-wsl-test-audit');
 
 class WslLab {
@@ -50,7 +51,7 @@ class WslLab {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
     const studio = new Studio({ ompCommand: 'unused', stateDir: this.state, port: 0, ownersDir: null }, { keeper });
     studio.ownerProbe = () => null;
-    studio.connectionFactory = (command, cwd, provider, options) => {
+    studio.connectionFactory = (_command, cwd, provider, options) => {
       const wsl = options?.wsl ? { ...options.wsl, program: undefined } : options?.wsl;
       return new Connection(fake('--cancel-aware', '--breadth'), cwd, provider, { ...options, wsl });
     };
@@ -117,29 +118,24 @@ Deno.test({
   async fn() {
     await withWslChat((_s, _c, ctx) => {
       const x = ctx(EDIT_ABS);
-      assertEquals([x.cwd, x.project, x.scratch], [REF, REF, null]);
+      // fixed: the Linux folder is what paths are checked against; rules stay keyed by the ref; still no scratch folder
+      assertEquals([x.cwd, x.project, x.scratch, x.stateDir, !!x.linux], ['/home/u/app', REF, null, null, true]);
     });
   },
 });
 
 Deno.test({
-  name: 'audit wsl allow (pins today): an edit inside the WSL project gets no Always allow and the agent\'s own Always is hidden',
+  name: 'audit wsl allow (after the fix): with the distro facts an edit inside the WSL project offers Always allow (an edit rule)',
   ...T,
   async fn() {
-    await withWslChat((studio, _c, ctx) => {
+    await withWslChat(async (studio, c, ctx) => {
       for (const p of [EDIT_ABS, EDIT_REL]) {
+        await c.allowPrefetch(p, factsNow());
         const d = studio.allow!.drafts(p, ctx(p)) as unknown as Drafts;
-        assertEquals(d.project.available, false);
-        assertEquals(d.project.reason, 'Not available: AIB never auto-allows path could not be resolved.');
-        assertEquals(d.project.hideAgentAlways, true); // chat.js:3263 drops the agent's own allow_always button
+        assertEquals([d.project.available, d.project.hideAgentAlways], [true, true], JSON.stringify(d.project));
+        assertEquals((d.project.rules as Json[])[0], { scope: 'project', project: REF, kind: 'edit', folder: 'src', label: 'Edits in src/' });
       }
-      const d = studio.allow!.drafts(SAFE_READ, ctx(SAFE_READ)) as unknown as Drafts;
-      assertEquals([d.project.available, d.project.reason, d.project.hideAgentAlways], [
-        false,
-        'Not available: the command runs outside the chat folder.',
-        true,
-      ]);
-      assertEquals(studio.allow!.decide(SAFE_READ, ctx(SAFE_READ)), { allow: false, reason: 'runs outside the chat folder' });
+      assertEquals(studio.allow!.decide(SAFE_READ, ctx(SAFE_READ)).allow, true);
     });
   },
 });
@@ -147,7 +143,6 @@ Deno.test({
 Deno.test({
   name: 'KNOWN-BROKEN: audit wsl allow: an edit inside the WSL project offers Always allow (or keeps the agent\'s own Always)',
   ...T,
-  ...BROKEN,
   async fn() {
     await withWslChat((studio, _c, ctx) => {
       const d = studio.allow!.drafts(EDIT_ABS, ctx(EDIT_ABS)) as unknown as Drafts;
@@ -159,7 +154,6 @@ Deno.test({
 Deno.test({
   name: 'KNOWN-BROKEN: audit wsl allow: the built-in Safe reads answer `git status` in a WSL chat as they do in a Windows chat',
   ...T,
-  ...BROKEN,
   async fn() {
     await withWslChat((studio, _c, ctx) => {
       const r = studio.allow!.decide(SAFE_READ, ctx(SAFE_READ));
@@ -171,7 +165,6 @@ Deno.test({
 Deno.test({
   name: 'KNOWN-BROKEN: audit wsl allow: a project MCP rule from a WSL chat is keyed by the ref, not by AIB\'s working folder',
   ...T,
-  ...BROKEN,
   async fn() {
     await withWslChat((studio, _c, ctx) => {
       const d = studio.allow!.drafts(MCP, ctx(MCP)) as unknown as Drafts;
@@ -186,7 +179,6 @@ Deno.test({
 Deno.test({
   name: 'KNOWN-BROKEN: audit wsl allow: a WSL project rule still applies after AIB starts from another working folder',
   ...T,
-  ...BROKEN,
   async fn() {
     await withWslChat((studio, _c, ctx) => {
       const d = studio.allow!.drafts(MCP, ctx(MCP)) as unknown as Drafts;
@@ -208,7 +200,6 @@ Deno.test({
 Deno.test({
   name: 'KNOWN-BROKEN: audit wsl allow: project rules of /home/u/App do not apply in /home/u/app (Linux paths are case-sensitive)',
   ...T,
-  ...BROKEN,
   fn() {
     const rule = { id: 'r1', kind: 'mcp', scope: 'project', project: 'wsl://ubuntu/home/u/App', server: 's', tool: 't', label: 'x', added: 1 };
     assertEquals(rulesHere([rule as unknown as AllowRule], REF).length, 0);

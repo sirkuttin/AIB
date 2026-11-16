@@ -11,6 +11,8 @@
 import type { AllowGate } from '../allow/gate.ts';
 import { houseRules } from '../allow/brief.ts';
 import type { MatchContext } from '../allow/matcher.ts';
+import { factsNow, LinuxFacts, type LinuxNeeds, LinuxView } from '../allow/linux.ts';
+import { COLLECT_FACTS, prefetch as prefetchWslFacts, warm as warmWslFacts, type WslFactsSource } from '../allow/wsl_facts.ts';
 import { createHash } from 'node:crypto';
 import { screen } from './acp_schema.ts';
 import { CapError, ClientCaps, type FsMode, type TerminalBackend, type TerminalBase, type TerminalPlan } from './client_caps.ts';
@@ -62,7 +64,7 @@ import type { ChannelInfo, KeeperRecord } from '../keeper/client.ts';
 import { type KeeperChannel, type KeeperChannelListener, type KeeperLink, parseNote } from '../keeper/link.ts';
 import { projectOfWorktree } from '../worktrees/worktrees.ts';
 import { WslClientCaps } from './wsl_caps.ts';
-import { distroName, guardRealWslAgent, wslTestHomeEnv } from '../wsl/access.ts';
+import { distroName, guardRealWslAgent, peekWslHost, wslTestHomeEnv } from '../wsl/access.ts';
 import { APP_VERSION, TESTS_DIR } from '../core/app.ts';
 import { getLogger } from '../core/log.ts';
 import { DOCS_RULE } from '../docs/tool_defs.ts';
@@ -3289,11 +3291,13 @@ export class Connection {
           return;
         }
       }
+      // a WSL chat: the distro facts the matcher needs are fetched first (allow/wsl_facts.ts); the next line waits for it
+      if (method === 'session/request_permission' && this.allowGate && this.wsl && !this.#replaying) {
+        return this.#allowByRuleWsl(message, params, seenKey);
+      }
       if (method === 'session/request_permission' && this.allowGate && this.#allowByRule(message, params, seenKey)) return;
       if (method === 'session/request_permission') {
-        const key = hex(12);
-        this.permissions.set(key, { rpcId: message.id, params });
-        this.event('permission', { key, params });
+        this.#permissionCard(message, params);
       } else if (this.caps.handles(method)) {
         if (this.#replaying) { // answered once live, unless the record shows the old AIB answered it
           this.#deferred.push(message);
@@ -5219,11 +5223,30 @@ export class Connection {
     return { additionalDirectories: [...dirs] };
   }
 
-  /** What the allow-rules matcher knows of this chat and request (tool name from the earlier tool_call, the current mode). */
-  allowContext(params: unknown): MatchContext {
+  /**
+   * What the allow-rules matcher knows of this chat and request (tool name from the earlier tool_call, the current mode). A WSL chat
+   * (allow/linux.ts): its Linux folder as `cwd`, the project's ref as `project`, no scratch folder, and a LinuxView over the distro
+   * facts AIB has (`linux.since`: older facts count as unknown; `linux.needs`: a recording view that collects what to ask).
+   */
+  allowContext(params: unknown, linux: { since?: number; needs?: LinuxNeeds } = {}): MatchContext {
     const call = isDict(params) ? get(params, 'toolCall') : null;
     const id = isDict(call) ? get(call, 'toolCallId') : null;
     const mode = get(this.#modes(), 'currentModeId');
+    if (this.wsl) {
+      const view = new LinuxView(this.#linuxFacts, { since: linux.since ?? 0, needs: linux.needs ?? null, distro: this.wsl.distro });
+      const claude = this.provider === 'claude' ? view.base()?.claude ?? (view.recording ? COLLECT_FACTS : null) : undefined;
+      return {
+        provider: this.provider,
+        toolName: isStr(id) ? this.#tools.get(id)?.toolName ?? null : null,
+        mode: isStr(mode) ? mode : null,
+        cwd: this.agentCwd,
+        project: this.projectRoot || this.cwd,
+        scratch: null,
+        stateDir: null,
+        ...(claude !== undefined ? { facts: claude } : {}),
+        linux: view,
+      };
+    }
     return {
       provider: this.provider,
       toolName: isStr(id) ? this.#tools.get(id)?.toolName ?? null : null,
@@ -5240,7 +5263,7 @@ export class Connection {
    * answer), record a `permission_auto` event, then answer. Keeper replay: never match again; the decision log says whether the
    * live AIB answered it (its event note and its answer are in the record and replay on their own).
    */
-  #allowByRule(message: Json, params: Json, seenKey: string): boolean {
+  #allowByRule(message: Json, params: Json, seenKey: string, since?: number): boolean {
     const gate = this.allowGate!;
     const options = get(params, 'options', []);
     const allow = (Array.isArray(options) ? options : []).find((o) => isDict(o) && o.kind === 'allow_once') as Json | undefined;
@@ -5252,7 +5275,7 @@ export class Connection {
     }
     let result;
     try {
-      result = gate.decide(params, this.allowContext(params));
+      result = gate.decide(params, since === undefined ? this.allowContext(params) : this.allowContext(params, { since }));
     } catch (error) {
       log.exception(error, 'Allow rules: the matcher failed; the request asks');
       return false;
@@ -5275,6 +5298,77 @@ export class Connection {
     });
     this.write({ jsonrpc: '2.0', id: message.id, result: { outcome: { outcome: 'selected', optionId: allow.optionId } } });
     return true;
+  }
+
+  /** A permission request becomes a card the user answers. */
+  #permissionCard(message: Json, params: Json): void {
+    const key = hex(12);
+    this.permissions.set(key, { rpcId: message.id, params });
+    this.event('permission', { key, params });
+  }
+
+  // ---- allow rules in a WSL chat (allow/linux.ts, allow/wsl_facts.ts) ---------------------------------------------------------
+  /** What AIB has learnt of this WSL chat's distro for the matcher. */
+  #linuxFacts = new LinuxFacts();
+  /** The start's fetch of the chat folder and the base facts (Studio waits for it briefly). */
+  allowWarming: Promise<void> | null = null;
+
+  #wslFactsSource(): WslFactsSource {
+    const wsl = this.wsl!;
+    const agentEnv = (): Record<string, string> => {
+      let test: Record<string, string> = {};
+      try {
+        test = wslTestHomeEnv();
+      } catch { /* no test home: the helper's own */ }
+      return { ...(wsl.env ?? {}), ...test, ...(this.env ?? {}) };
+    };
+    return {
+      host: () => {
+        const host = peekWslHost(wsl.distro); // never starts the distro
+        return host && host.state === 'ready' ? host : null;
+      },
+      cwd: () => this.agentCwd,
+      claude: this.provider === 'claude',
+      claudeDir: () => {
+        const env = agentEnv();
+        return env.CLAUDE_CONFIG_DIR || (env.HOME?.startsWith('/') ? `${env.HOME.replace(/\/+$/, '')}/.claude` : undefined);
+      },
+      pathEnv: () => (wsl.env ? agentEnv().PATH : undefined),
+    };
+  }
+
+  /** Fetch the distro facts deciding `params` needs (facts read before `since`, a factsNow() value, count as unknown). */
+  async allowPrefetch(params: Json, since: number): Promise<void> {
+    if (!this.allowGate || !this.wsl) return;
+    await prefetchWslFacts(
+      this.allowGate,
+      this.#linuxFacts,
+      this.#wslFactsSource(),
+      params,
+      since,
+      (view) => this.allowContext(params, { since, needs: view.opts.needs ?? undefined }),
+    );
+  }
+
+  /** Once at start: the chat folder and the base facts (PATH folders, AIB's folders, Claude settings). */
+  allowWarm(): Promise<void> {
+    if (!this.allowGate || !this.wsl) return Promise.resolve();
+    return this.allowWarming ??= warmWslFacts(this.#linuxFacts, this.#wslFactsSource()).catch((error) => {
+      log.exception(error, 'Allow rules: could not read the distro facts');
+    });
+  }
+
+  /** A WSL chat's live request: the facts first, then the same decision as #allowByRule, else a card. */
+  async #allowByRuleWsl(message: Json, params: Json, seenKey: string): Promise<void> {
+    const since = factsNow();
+    try {
+      await this.allowPrefetch(params, since);
+    } catch (error) {
+      log.exception(error, 'Allow rules: could not read the distro facts; the request asks');
+    }
+    if (this.closed) return;
+    if (this.#allowByRule(message, params, seenKey, since)) return;
+    this.#permissionCard(message, params);
   }
 
   /** Drafts of cards shown lately, by key: "Save the rule anyway?" after another device answered first. */
@@ -5324,34 +5418,54 @@ export class Connection {
   allowSweep(): number {
     if (!this.allowGate || this.#replaying) return 0;
     let n = 0;
+    for (const [key, pending] of [...this.permissions]) if (this.#sweepOne(key, pending)) n++;
+    return n;
+  }
+
+  /** allowSweep for a WSL chat: each waiting card's distro facts are fetched again first. */
+  async allowSweepWsl(): Promise<number> {
+    if (!this.allowGate || this.#replaying || !this.wsl) return 0;
+    let n = 0;
     for (const [key, pending] of [...this.permissions]) {
-      const options = get(pending.params, 'options', []);
-      const allow = (Array.isArray(options) ? options : []).find((o) => isDict(o) && o.kind === 'allow_once') as Json | undefined;
-      if (!allow || !isStr(allow.optionId)) continue;
-      const result = this.allowGate.decide(pending.params, this.allowContext(pending.params));
-      if (!result.allow) continue;
-      const seenKey = JSON.stringify(pending.rpcId);
-      this.allowGate.log.record(this.id, {
-        key: `${seenKey}:${this.#requestsSeen.get(seenKey) ?? 0}`,
-        optionId: allow.optionId,
-        ruleId: result.ruleId,
-        label: result.label,
-        flagged: result.flagged,
-        time: Date.now(),
-        swept: true,
-      });
-      this.recordedEvent('permission_auto', {
-        sessionId: get(pending.params, 'sessionId'),
-        params: { sessionId: get(pending.params, 'sessionId'), toolCall: get(pending.params, 'toolCall') },
-        ruleId: result.ruleId,
-        label: result.label,
-        flagged: result.flagged,
-        key,
-      });
-      this.permission(key, allow.optionId);
-      n++;
+      const since = factsNow();
+      try {
+        await this.allowPrefetch(pending.params, since);
+      } catch { /* unknown facts: it keeps asking */ }
+      if (this.closed || this.permissions.get(key) !== pending) continue;
+      if (this.#sweepOne(key, pending, since)) n++;
     }
     return n;
+  }
+
+  /** One waiting card answered by the rules (logged as swept), or false. */
+  #sweepOne(key: string, pending: AgentRequest, since?: number): boolean {
+    const gate = this.allowGate!;
+    const options = get(pending.params, 'options', []);
+    const allow = (Array.isArray(options) ? options : []).find((o) => isDict(o) && o.kind === 'allow_once') as Json | undefined;
+    if (!allow || !isStr(allow.optionId)) return false;
+    const ctx = since === undefined ? this.allowContext(pending.params) : this.allowContext(pending.params, { since });
+    const result = gate.decide(pending.params, ctx);
+    if (!result.allow) return false;
+    const seenKey = JSON.stringify(pending.rpcId);
+    gate.log.record(this.id, {
+      key: `${seenKey}:${this.#requestsSeen.get(seenKey) ?? 0}`,
+      optionId: allow.optionId,
+      ruleId: result.ruleId,
+      label: result.label,
+      flagged: result.flagged,
+      time: Date.now(),
+      swept: true,
+    });
+    this.recordedEvent('permission_auto', {
+      sessionId: get(pending.params, 'sessionId'),
+      params: { sessionId: get(pending.params, 'sessionId'), toolCall: get(pending.params, 'toolCall') },
+      ruleId: result.ruleId,
+      label: result.label,
+      flagged: result.flagged,
+      key,
+    });
+    this.permission(key, allow.optionId);
+    return true;
   }
 
   /** True when a permission request is for Studio's studio_artifact tool on a chat Studio gave that tool to. */
