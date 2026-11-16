@@ -473,6 +473,7 @@ export async function commitPending(chat: Chat, title: unknown): Promise<boolean
   if (!strip((await git(['status', '--porcelain=v1', '-uall'], chat.wt)).stdout)) return false;
   if (!(await wt.touchedPaths(chat.wt, 'HEAD')).length) return false; // only line-ending noise: the chat touched nothing
   await git(['add', '-A'], chat.wt);
+  await wt.unstageLineEndingOnly(chat.wt, 'HEAD'); // line-ending churn of checked-out files is not the chat's work
   if (!strip((await git(['diff', '--cached', '--name-only'], chat.wt)).stdout)) return false;
   await gitc(['commit', '-m', commitMessage(title)], chat.wt);
   return true;
@@ -814,7 +815,7 @@ export function treeConflictLine(chat: { base: string; startBase?: string } | nu
 type TreeLanding = ['landed', string, number] | ['empty'] | ['conflicts', string[]];
 
 /** U is past S: land exactly what the chat changed since U, by a three-way merge of the trees (U as the base). */
-async function treeLanding(chat: Chat, tip: string, head: string, title: unknown): Promise<TreeLanding> {
+async function treeLanding(chat: Chat, tip: string, head: string, title: unknown, logHead = head): Promise<TreeLanding> {
   const done = await git(
     ['merge-tree', '--write-tree', '--name-only', '--no-messages', `--merge-base=${chat.user}`, tip, head],
     chat.wt,
@@ -837,7 +838,7 @@ async function treeLanding(chat: Chat, tip: string, head: string, title: unknown
   const tree = strip(lines[0]);
   if (tree === strip((await git(['rev-parse', tip + '^{tree}'], chat.wt)).stdout)) return ['empty'];
   const own = splitlines(
-    (await git(['log', '--no-merges', '--reverse', '--format=%s', `${chat.user}..${head}`, `^${tip}`], chat.wt)).stdout,
+    (await git(['log', '--no-merges', '--reverse', '--format=%s', `${chat.user}..${logHead}`, `^${tip}`], chat.wt)).stdout,
   );
   const body = own.length
     ? 'Chat commits:\n' +
@@ -988,15 +989,19 @@ async function land(chat: Chat, tip: string, title: unknown): Promise<MergeResul
     const why = await folderState(folder);
     if (why) throw new Refused(why[0].toUpperCase() + why.slice(1), 'locked');
   }
-  const head = await rev(chat.wt, 'HEAD');
+  const own = await rev(chat.wt, 'HEAD');
+  // Line endings: commits made in the copy by a git with other settings (a WSL agent's git, an IDE, core.autocrlf=false) carry CRLF
+  // churn of every file they re-read. Only real changes land: those files keep U's line endings, landed by tree against U.
+  const [head, eolFixed] = await wt.withoutLineEndingOnly(chat.wt, chat.user, own, await gitDir(chat.wt));
+  if (eolFixed.length) log.info('Merge of %s: line endings of %d file(s) left as they were', chat.key, eolFixed.length);
   // A folder chat's helper (SF 2): always by tree against U (S while live sync has not moved it), so only the helper's own change lands,
   // never the main agent's uncommitted edits that were in S, and never by the whole-file squash fallback.
-  const byTree = chat.user !== chat.snapshot || !!chat.landOn;
+  const byTree = chat.user !== chat.snapshot || !!chat.landOn || eolFixed.length > 0;
   let files: Map<string, RawEntry> | null = null;
   let landed = '';
   let count = 0;
   if (byTree) {
-    const built = await treeLanding(chat, tip, head, title);
+    const built = await treeLanding(chat, tip, head, title, own);
     if (built[0] === 'conflicts') {
       const line = treeConflictLine(chat, built[1]);
       await chat.registry.update(chat.key, { mergeConflicts: built[1] }); // as the base-merge path: live sync waits for the fix

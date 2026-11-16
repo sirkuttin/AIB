@@ -148,7 +148,13 @@ async function holdTurn(box: Box, c: Connection, name: string): Promise<() => Pr
  * A folder chat starts a helper; the helper commits `file` in its copy and its turn ends; its report reaches the (idle) main chat,
  * whose turn then ends too. Returns the helper id and its copy.
  */
-async function helperWithWork(box: Box, main: Connection, file = 'test/login/a.test.txt', body = 'fixed\n'): Promise<[string, string]> {
+async function helperWithWork(
+  box: Box,
+  main: Connection,
+  file = 'test/login/a.test.txt',
+  body = 'fixed\n',
+  more: (copy: string) => void = () => {},
+): Promise<[string, string]> {
   const started = await box.swarm.tool(main.id, 'start_helper', BRIEF);
   assertEquals(started[0], 200, JSON.stringify(started[1]));
   const id = String((started[1] as Json).helper);
@@ -156,10 +162,10 @@ async function helperWithWork(box: Box, main: Connection, file = 'test/login/a.t
   const h = box.swarm.registry.get(id)!;
   const helper = box.studio.connections.get(h.chat.live)!;
   await settle(helper);
-  // the helper commits only its own file: `git add -A` in a copy on this Windows box (core.autocrlf) also commits line-ending churn of
-  // every checked-out file, which then clashes with the main agent's uncommitted edits (a safe "conflicts", but not this test)
+  // the helper commits its own file; `more` may change and stage more (the line-ending test stages everything, as `git add -A`)
   write(h.worktree.path, file, body);
   runGit(h.worktree.path, 'add', '--', file);
+  more(h.worktree.path);
   runGit(h.worktree.path, 'commit', '-q', '-m', 'fix the login tests');
   await box.swarm.poll();
   await until(
@@ -288,6 +294,67 @@ Deno.test({
     assertEquals(read(box.project, 'test/login/a.test.txt'), 'fixed\n');
     assertEquals(read(box.project, 'other.txt'), 'untouched by the helper\n');
     assertEquals(stashes(box.project), '');
+  },
+});
+
+/** The size of a blob as it is stored (runGit turns CRLF output into LF, so the bytes are counted by git). */
+const blobSize = (project: string, spec: string) => Number(runGit(project, 'cat-file', '-s', spec).trim());
+
+Deno.test({
+  ...T,
+  name: 'line endings: core.autocrlf=true and a helper committing every checked-out file with CRLF: the landing works, only real changes land',
+  async fn() {
+    await using box = new Box();
+    runGit(box.project, 'config', 'core.autocrlf', 'true'); // as on the owner's machine: AIB's own git reads this; copies check out CRLF
+    write(box.project, 'notes.txt', 'a\nb\nc\n');
+    runGit(box.project, 'add', 'notes.txt');
+    runGit(box.project, 'commit', '-q', '-m', 'notes');
+    const main = await box.connect(box.project);
+    write(box.project, 'tracked.txt', 'half-done edit by the main agent\n'); // uncommitted in the folder (the old churn hit it)
+    const [id, copy] = await helperWithWork(box, main, 'test/login/a.test.txt', 'fixed\n', (copy) => {
+      assert(Deno.readTextFileSync(pathOf(copy, '.gitignore')).includes('\r\n'), 'the copy is checked out with CRLF');
+      write(copy, 'notes.txt', 'a\r\nB\r\nc\r\n'); // a real edit, saved with the checkout's CRLFs
+      runGit(copy, 'add', '-A'); // a git with core.autocrlf=false (runGit's): every checked-out file is committed with its CRLFs
+    });
+    const churn = runGit(copy, 'diff', '--name-only', box.swarm.registry.get(id)!.worktree.start, 'HEAD').trim().split('\n').sort();
+    assertEquals(churn, ['.gitignore', 'notes.txt', 'test/login/a.test.txt', 'tracked.txt'], 'the helper committed line-ending churn');
+    const tip = runGit(box.project, 'rev-parse', 'main').trim();
+
+    const q = await box.swarm.tool(main.id, 'merge_helper', { helper: id });
+    assertEquals((q[1] as Json).state, 'queued');
+    await box.swarm.poll();
+    assertEquals(box.swarm.registry.get(id)!.state, 'merged', JSON.stringify(box.swarm.registry.get(id)!.landing ?? null));
+    const landed = runGit(box.project, 'diff', '--name-only', tip, 'main').trim().split('\n').sort();
+    assertEquals(landed, ['notes.txt', 'test/login/a.test.txt'], 'only the real changes landed');
+    assertEquals(blobSize(box.project, 'main:notes.txt'), 'a\nB\nc\n'.length, 'the real edit landed with the LF line endings of the repo');
+    assertEquals(blobSize(box.project, 'main:.gitignore'), blobSize(box.project, `${tip}:.gitignore`));
+    assertEquals(read(box.project, 'tracked.txt'), 'half-done edit by the main agent\n', "the main agent's edit is untouched");
+    assertEquals(read(box.project, 'notes.txt'), 'a\nB\nc\n');
+    assertEquals(stashes(box.project), '');
+  },
+});
+
+Deno.test({
+  ...T,
+  name: 'line endings: the snapshot S of a folder with CRLF commits under `text` attributes has no line-ending-only changes',
+  async fn() {
+    const dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-eol-snapshot-' }));
+    try {
+      const project = makeRepo(pathOf(dir, 'proj'));
+      write(project, 'crlf.txt', 'one\r\ntwo\r\n');
+      runGit(project, 'add', 'crlf.txt'); // committed with its CRLFs (core.autocrlf=false)
+      runGit(project, 'commit', '-q', '-m', 'crlf');
+      write(project, '.gitattributes', '*.txt text\n');
+      runGit(project, 'add', '.gitattributes');
+      runGit(project, 'commit', '-q', '-m', 'attributes');
+      write(project, 'real.txt', 'a real edit\n');
+      const scratch = pathOf(dir, 'scratch');
+      Deno.mkdirSync(scratch);
+      const s = await wt.snapshotCommit(project, scratch); // a fresh index re-reads crlf.txt: `text` would store it with LF
+      assertEquals(runGit(project, 'diff', '--name-only', 'HEAD', s).trim(), 'real.txt', 'only the real change is in S');
+    } finally {
+      Deno.removeSync(dir, { recursive: true });
+    }
   },
 });
 

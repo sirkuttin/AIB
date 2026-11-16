@@ -400,7 +400,9 @@ export class Swarm {
       await new Promise((r) => setTimeout(r, 300)); // the cancelled turn's last writes
       if ((await merge.porcelainPaths(h.worktree.path)).size) {
         await wt.git(['add', '-A'], h.worktree.path);
-        await merge.gitc(['commit', '-q', '-m', message], h.worktree.path, { check: false });
+        await wt.unstageLineEndingOnly(h.worktree.path, 'HEAD'); // line-ending churn is not the helper's work
+        const staged = await wt.git(['diff', '--cached', '--name-only'], h.worktree.path, { check: false });
+        if (staged.stdout.trim()) await merge.gitc(['commit', '-q', '-m', message], h.worktree.path, { check: false });
       }
       const count = await wt.git(['rev-list', '--count', `${h.worktree.start}..HEAD`], h.worktree.path, { check: false });
       return Number(count.stdout.trim()) || 0;

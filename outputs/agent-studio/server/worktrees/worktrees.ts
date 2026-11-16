@@ -792,6 +792,8 @@ export async function snapshotCommit(project: string, scratch: string): Promise<
   const env = { GIT_INDEX_FILE: pathOf(scratch, 'snapshot-index') };
   await git(['read-tree', 'HEAD'], project, { env });
   await git(['add', '-A'], project, { env });
+  // a fresh index re-reads every file: with core.autocrlf / `text` attributes over CRLF commits, that is a change to every file
+  await unstageLineEndingOnly(project, 'HEAD', env);
   const tree = pyStrip((await git(['write-tree'], project, { env })).stdout);
   return pyStrip((await git(['commit-tree', tree, '-p', 'HEAD', '-m', 'AIB snapshot'], project, { env, identity: true })).stdout);
 }
@@ -1042,6 +1044,112 @@ export function parseBatch(data: Uint8Array, count: number): (Uint8Array | null)
     } else found.push(null); // '<object> missing' / 'ambiguous'
   }
   return found;
+}
+
+// ---- line-ending-only changes never count ------------------------------------------------------------------------
+// With core.autocrlf (or .gitattributes `text`) a checked-out copy holds CRLF files while the commits hold LF. A git that reads the
+// copy with other settings (a WSL agent's Linux git, an IDE, a fresh temporary index re-reading every file) commits every file it
+// re-reads with its CRLFs: a change to every file that is only line endings. Landed, that touches files the user has open or edits,
+// and a folder chat's helper then always "conflicts". AIB stages and lands only real changes: a file whose text differs only in
+// CRLF against LF keeps its base version.
+
+/** Text with every CRLF read as LF (null for binary content: a NUL in the first 8000 bytes, as git decides). */
+function eolNormal(bytes: Uint8Array): Uint8Array | null {
+  if (bytes.subarray(0, 8000).includes(0)) return null;
+  const out = new Uint8Array(bytes.length);
+  let n = 0;
+  for (let i = 0; i < bytes.length; i++) {
+    if (bytes[i] === 13 && bytes[i + 1] === 10) continue;
+    out[n++] = bytes[i];
+  }
+  return out.subarray(0, n);
+}
+
+/** True when two blobs' contents differ only in line endings (CRLF against LF); binary never. */
+export function sameButLineEndings(a: Uint8Array, b: Uint8Array): boolean {
+  if (sameBytes(a, b)) return false;
+  const [x, y] = [eolNormal(a), eolNormal(b)];
+  return x !== null && y !== null && sameBytes(x, y);
+}
+
+/**
+ * The paths changed between `base` and the other side (a commit `b`, or the index when `b` is null; `env` picks the index) whose line
+ * endings are not the base's, each with the "mode sha" to use instead: base's own version when the text differs only in line endings,
+ * else (a real edit in a file base has with LF only, saved with CRLF) the new text with CRLF read as LF, so only the edited lines
+ * differ. Same mode, regular files, text only: anything else is left as it is.
+ */
+export async function lineEndingOnly(cwd: string, base: string, b: string | null, env?: Record<string, string>): Promise<Map<string, string>> {
+  const args = b === null
+    ? ['diff-index', '--cached', '--raw', '--no-abbrev', '-z', '--no-renames', base, '--']
+    : ['diff-tree', '-r', '--raw', '--no-abbrev', '-z', '--no-renames', base, b, '--'];
+  const done = await git(args, cwd, { env, check: false });
+  const out = new Map<string, string>();
+  if (done.returncode !== 0) return out;
+  const parts = done.stdout.split('\0');
+  const pairs: [string, string, string, string][] = []; // path, mode, old sha, new sha
+  for (let i = 0; i + 1 < parts.length; i++) {
+    const meta = parts[i];
+    if (!meta.startsWith(':')) continue;
+    const [oldMode, newMode, oldSha, newSha, status] = meta.slice(1).split(' ');
+    const path = parts[++i];
+    if (status?.startsWith('M') && oldMode === newMode && oldMode.startsWith('100')) pairs.push([path, oldMode, oldSha, newSha]);
+  }
+  if (!pairs.length) return out;
+  const cat = await git(['cat-file', '--batch'], cwd, {
+    binary: true,
+    check: false,
+    input: pairs.map(([, , x, y]) => `${x}\n${y}\n`).join(''),
+  });
+  const blobs = cat.returncode === 0 ? parseBatch(cat.out, pairs.length * 2) : null;
+  if (!blobs) return out;
+  for (let i = 0; i < pairs.length; i++) {
+    const [path, mode, oldSha] = pairs[i];
+    const [x, y] = [blobs[2 * i], blobs[2 * i + 1]];
+    if (!x || !y) continue;
+    const [nx, ny] = [eolNormal(x), eolNormal(y)];
+    if (nx === null || ny === null) continue; // binary
+    if (sameBytes(nx, ny)) {
+      out.set(path, `${mode} ${oldSha}`);
+    } else if (!x.includes(13) && ny.length !== y.length) { // base is LF only, the new text has CRLFs: keep LF, keep the edit
+      const made = await git(['hash-object', '-w', '--no-filters', '--stdin'], cwd, { binary: true, check: false, input: ny });
+      const sha = made.returncode === 0 ? made.stdout.trim() : '';
+      if (/^[0-9a-f]{40,64}$/.test(sha)) out.set(path, `${mode} ${sha}`);
+    }
+  }
+  return out;
+}
+
+/** Line endings as base has them, in the index (`env` picks it), for each staged path lineEndingOnly finds. Returns those paths. */
+export async function unstageLineEndingOnly(cwd: string, base: string, env: Record<string, string> = {}): Promise<string[]> {
+  const found = await lineEndingOnly(cwd, base, null, Object.keys(env).length ? env : undefined);
+  if (!found.size) return [];
+  const lines = [...found].map(([path, entry]) => `${entry}\t${path}\n`).join('');
+  const done = await rawGit(['update-index', '--index-info'], cwd, env, new TextEncoder().encode(lines));
+  if (done.returncode !== 0) throw new GitError('git update-index failed: ' + pyStrip(done.stderr + done.stdout).slice(-600));
+  return [...found.keys()];
+}
+
+/**
+ * `head`, or a commit on top of it whose tree has base's line endings in every file lineEndingOnly finds (so only real changes
+ * land). [commit, the paths fixed].
+ */
+export async function withoutLineEndingOnly(cwd: string, base: string, head: string, scratchDir: string): Promise<[string, string[]]> {
+  const found = await lineEndingOnly(cwd, base, head);
+  if (!found.size) return [head, []];
+  const scratch = Deno.makeTempDirSync({ prefix: '.studio-eol-', dir: scratchDir });
+  const env = { GIT_INDEX_FILE: join(scratch, 'index') };
+  try {
+    await git(['read-tree', head], cwd, { env });
+    const lines = [...found].map(([path, entry]) => `${entry}\t${path}\n`).join('');
+    const done = await rawGit(['update-index', '--index-info'], cwd, env, new TextEncoder().encode(lines));
+    if (done.returncode !== 0) throw new GitError('git update-index failed: ' + pyStrip(done.stderr + done.stdout).slice(-600));
+    const tree = pyStrip((await git(['write-tree'], cwd, { env })).stdout);
+    const message = `AIB: line-ending changes left out (${found.size} file${found.size === 1 ? '' : 's'})`;
+    const sha = pyStrip((await git(['commit-tree', tree, '-p', head, '-m', message], cwd, { env, identity: true })).stdout);
+    return [sha, [...found.keys()]];
+  } finally {
+    removeQuietly(scratch);
+  }
 }
 
 /**
