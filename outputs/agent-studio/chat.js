@@ -1263,6 +1263,8 @@
     return l.nodes;
   }
   function beginConversation(c) {
+    // split view: the chat leaving the real view keeps its header, bars and chip row for its pane's copy (split-ui.js)
+    if (selected && aliasKey(selected) !== aliasKey(c)) window.AgentSplitUI?.snapshot?.();
     const incoming = splitSwap(c),
       opening = () =>
         incoming
