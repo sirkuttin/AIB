@@ -126,6 +126,8 @@ deno run -A tools/wsl-import.ts --distro Ubuntu --project /home/<you>/<repo> --u
   --json               the raw report     --state-dir / --data / --root / --helper-bin   override what the tool finds
 ```
 
+Run it from PowerShell or cmd. From Git Bash, set `MSYS_NO_PATHCONV=1` first, or Git Bash turns `/home/...` into a Windows path.
+
 **What it finds.** AIB's folder in the distro (`AIB_WSL_ROOT`, else `$HOME/.aib-server`), and the Linux data folder of the AIB in use:
 `data-<hash>` of its Windows data folder (`--state-dir`, else `AGENT_STUDIO_STATE_DIR`, else `%LOCALAPPDATA%\AgentStudio`). The
 helper is the first of these: `--helper-bin` (a Linux build on Windows, run through `/mnt/c`); an installed `<root>/<ver>/AIB-wsl-helper`
