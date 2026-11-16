@@ -1,17 +1,16 @@
 /**
  * Build plan 1b, phase P1 (private/designs/worktree-model/build-plan-1b.md section 8, e2e 0-6 and 12): new chats work in the project
- * folder by default. Through a real Studio with fake agents and real git in temp folders:
+ * folder. Owner decision 2026-11-16: always (no per-chat Own copy, no pre-set); only helpers get copies, and a chat made in its own
+ * copy before then keeps it. Through a real Studio with fake agents and real git in temp folders:
  * - 0 (fake-agent form): a new chat's agent is started in the project folder itself (session/new cwd = P), so the agent files it under P.
  *   The real-CLI form (temp CLAUDE_CONFIG_DIR / CODEX_HOME, the P0 stub API) comes with P0's harness.
- * - 1 no ownCopy, nothing working: the folder, no worktree record, no studio/* branch.
- * - 2 ownCopy true: its own copy, and Merge lands it on main as today.
- * - 3 ownCopy missing while another folder chat is working (a turn, or a queued message): its own copy; not working: the folder.
- *     A copy chat or a helper that works does not count.
- * - 4 ownCopy true on a non-git folder: the folder, with the "couldn't make an own copy" note.
+ * - 1 nothing working: the folder, no worktree record, no studio/* branch.
+ * - 2 a copy chat (the test-only ownCopy stands in for one made before 2026-11-16): Merge lands it on main as before.
+ * - 3 another folder chat working (a turn, or a queued message), or worktreePerChat on: still the folder, no copy.
  * - 5 live sync runs for a copy chat with worktreePerChat off.
  * - 6 a folder chat is a swarm main chat: start_helper succeeds, and the helper's copy has the folder's uncommitted edits.
  * - 12 two folder chats: the second gets the grey start note naming the first, and both agents get the context line once.
- * Also: the branch route's copyable / whyNot (copyableOf) and readOwnCopy.
+ * Also: readOwnCopy (connect's ownCopy ignored, with a log line).
  */
 import { assert, assertEquals } from './_assert.ts';
 import { PYTHON, pause, until } from './_connection.ts';
@@ -22,7 +21,6 @@ import { readOwnCopy, Studio } from '../../outputs/agent-studio/server/host/stud
 import { Swarm } from '../../outputs/agent-studio/server/swarm/service.ts';
 import { setSwarmEnabled } from '../../outputs/agent-studio/server/swarm/settings.ts';
 import { pathOf } from '../../outputs/agent-studio/server/state/paths.ts';
-import { copyableOf } from '../../outputs/agent-studio/server/worktrees/chat_folders.ts';
 import * as merge from '../../outputs/agent-studio/server/worktrees/merge.ts';
 
 type Json = Record<string, unknown>;
@@ -122,44 +120,16 @@ async function holdTurn(box: Box, c: Connection, name: string): Promise<() => vo
   return () => Deno.writeTextFileSync(gate, '');
 }
 
-Deno.test('readOwnCopy: true, false, missing; anything else refused', () => {
-  assertEquals(readOwnCopy(true), true);
-  assertEquals(readOwnCopy(false), false);
-  assertEquals(readOwnCopy(undefined), null);
-  assertEquals(readOwnCopy(null), null);
-  let refused = '';
-  try {
-    readOwnCopy('yes');
-  } catch (error) {
-    refused = String((error as Error).message);
-  }
-  assert(refused.includes('ownCopy'), refused);
-});
-
-Deno.test('branch route: copyable for a git project root, whyNot with a capital for the rest', async () => {
-  const dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-copyable-' }));
-  try {
-    const repo = makeRepo(pathOf(dir, 'repo'));
-    assertEquals(await copyableOf(repo), { copyable: true, whyNot: '' });
-    const plain = pathOf(dir, 'plain');
-    Deno.mkdirSync(plain);
-    assertEquals(await copyableOf(plain), { copyable: false, whyNot: 'Not a git repository' });
-    Deno.mkdirSync(pathOf(repo, 'sub'));
-    assertEquals(await copyableOf(pathOf(repo, 'sub')), { copyable: false, whyNot: 'The folder is not the root of its git repository' });
-    const empty = pathOf(dir, 'empty');
-    Deno.mkdirSync(empty);
-    runGit(empty, 'init', '-q', '-b', 'main');
-    assertEquals((await copyableOf(empty)).whyNot, 'The repository has no commits yet');
-    assertEquals((await copyableOf(pathOf(dir, 'missing'))).copyable, false);
-    assertEquals((await copyableOf('')).copyable, false);
-  } finally {
-    Deno.removeSync(dir, { recursive: true });
-  }
+Deno.test("readOwnCopy: connect's ownCopy is ignored (null) whatever it says, never refused; a test server takes a boolean", () => {
+  for (const value of [true, false, undefined, null, 'yes', 1]) assertEquals(readOwnCopy(value, false), null, String(value));
+  assertEquals(readOwnCopy(true, true), true);
+  assertEquals(readOwnCopy(false, true), false);
+  assertEquals(readOwnCopy('yes', true), null);
 });
 
 Deno.test({
   ...T,
-  name: 'e2e 0+1: a new chat with no ownCopy works in the project folder: agent cwd P, no record, no branch, a main chat',
+  name: 'e2e 0+1: a new chat works in the project folder: agent cwd P, no record, no branch, a main chat',
   async fn() {
     await using box = new Box();
     const c = await box.connect(box.project);
@@ -176,7 +146,7 @@ Deno.test({
 
 Deno.test({
   ...T,
-  name: 'e2e 2: ownCopy true gets its own copy (live.worktree {branch, base}) and Merge lands it on main as today',
+  name: 'e2e 2: a copy chat (as made before 2026-11-16) has live.worktree {branch, base} and Merge lands it on main as before',
   async fn() {
     await using box = new Box();
     const c = await box.connect(box.project, { ownCopy: true });
@@ -198,57 +168,30 @@ Deno.test({
 
 Deno.test({
   ...T,
-  name: 'e2e 3: ownCopy missing while another folder chat works (turn or queue): own copy; idle: the folder; copy chats never count',
+  name: 'e2e 3: no pre-set: while another folder chat works (turn or queue), or with worktreePerChat on, a new chat works in the folder',
   async fn() {
     await using box = new Box();
+    box.studio.settings.worktreePerChat = () => true; // the hidden flag no longer decides
     const first = await box.connect(box.project);
     assertEquals(first.worktree, null);
 
-    // idle: the next chat goes to the folder too
-    const idleNext = await box.connect(box.project);
-    assertEquals(idleNext.worktree, null, 'nothing working: the folder');
-    await idleNext.close();
-
-    // a turn running in a folder chat: the pre-set gives the new chat its own copy
+    // a turn running in a folder chat: the new chat still works in the folder, and gets the shared-folder note
     const release = await holdTurn(box, first, 'first');
     const busyNext = await box.connect(box.project);
-    assert(busyNext.worktree, 'another folder chat works: own copy');
-    assertEquals(notes(busyNext).filter((n) => n.includes('same folder')), [], 'no shared-folder note: it has its own copy');
-    // an explicit false is kept: the folder (the person turned it off anyway)
-    const forced = await box.connect(box.project, { ownCopy: false });
-    assertEquals(forced.worktree, null, 'ownCopy false: the folder, even now');
-    await forced.close();
+    assertEquals(busyNext.worktree, null, 'another folder chat works: still the folder');
+    assert(same(busyNext.cwd, box.project), busyNext.cwd);
+    assertEquals(notes(busyNext).filter((n) => n.includes('same folder')).length, 1, 'the shared-folder note');
+    assertEquals(notes(busyNext).filter((n) => /own copy/i.test(n)), [], 'nothing about an own copy');
     release();
     await until(() => !first.busy, 'the turn ended', 15);
 
-    // a queued message counts as working too
+    // a queued message: the folder too
     first.queue.add('q1', 'later', null, 'fp');
     const queuedNext = await box.connect(box.project);
-    assert(queuedNext.worktree, 'a folder chat with a queued message: own copy');
+    assertEquals(queuedNext.worktree, null, 'a folder chat with a queued message: still the folder');
     first.queue.remove('q1');
-
-    // only a copy chat works: it does not write the folder, so the next chat goes to the folder
-    await first.close();
-    const releaseCopy = await holdTurn(box, busyNext, 'copy');
-    const afterCopy = await box.connect(box.project);
-    assertEquals(afterCopy.worktree, null, 'a working copy chat does not count');
-    releaseCopy();
-  },
-});
-
-Deno.test({
-  ...T,
-  name: 'e2e 4: ownCopy true on a non-git folder works in the folder with the "couldn\'t make an own copy" note',
-  async fn() {
-    await using box = new Box();
-    const plain = pathOf(box.dir, 'plain');
-    Deno.mkdirSync(plain);
-    const c = await box.connect(plain, { ownCopy: true });
-    assertEquals(c.worktree, null);
-    assert(same(c.cwd, plain));
-    assertEquals(notes(c), ["Couldn't make an own copy for this chat, so it works in the project folder: not a git repository."]);
-    const quiet = await box.connect(plain);
-    assertEquals(notes(quiet), [], 'no copy asked: no note');
+    assertEquals(box.studio.worktrees!.registry.read()[0].size, 0, 'no worktree record');
+    assertEquals(branches(box.project), '', 'no studio/* branch');
   },
 });
 
@@ -318,7 +261,7 @@ Deno.test({
     assertEquals(box.studio.chatTitle(first), 'Fix login', 'no agent title: the first message');
     first.breadth.sessionInfo.title = agentTitle;
     const release = await holdTurn(box, first, 'first');
-    const second = await box.connect(box.project, { ownCopy: false }); // turned Own copy off anyway
+    const second = await box.connect(box.project);
     assertEquals(second.worktree, null);
     assertEquals(notes(second), [sharedFolderNote(agentTitle)]);
     assertEquals(

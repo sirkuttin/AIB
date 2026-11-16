@@ -1002,7 +1002,7 @@ export class LiveSync {
     return this.studio.worktrees!.registry;
   }
 
-  /** Build plan 1b: on for every Own-copy chat and helper; no longer gated on the hidden worktreePerChat flag. */
+  /** On for every chat in its own copy (a helper, or a chat made before 2026-11-16); not gated on the hidden worktreePerChat flag. */
   enabled(): boolean {
     return !!(this.studio.worktrees && !this.closed);
   }

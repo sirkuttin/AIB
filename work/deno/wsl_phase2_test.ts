@@ -374,10 +374,11 @@ Deno.test({
       assertEquals([asked[1].path, asked[1].projects], ['/home/u/app', ['/home/u/other']]);
       assertEquals(typeof asked[1].dataHome, 'string', 'under test the trash is inside AIB_WSL_ROOT');
       assert(String(asked[1].dataHome).startsWith(TEST_ROOT + '/home'));
-      // only Remove from AIB: the distro is not asked at all
+      // only Remove from AIB: the distro is asked once, to clean up what AIB made in the repo (owner decision 6, folder chats P4a),
+      // and never to trash or inspect the folder
       const n = host.calls.length;
       const [s2, plain] = await projectRemove(ctx, { path: REF, disk: false });
-      assertEquals([s2, plain.disk, host.calls.length], [200, 'kept', n]);
+      assertEquals([s2, plain.disk, host.calls.slice(n).map((c) => c[0])], [200, 'kept', ['worktree.cleanupApply']]);
       assert(!removed.has(REF) === false, 'remembered as removed');
       removed.removed.clear();
       const [s3, moved] = await projectRemove(ctx, { path: REF, disk: true, expect: 'gio' });

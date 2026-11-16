@@ -21,7 +21,7 @@ def send(message):
 
 def main():
     mcp = len(sys.argv) > 2 and sys.argv[2] == 'mcp'
-    ready = {'helper': sys.argv[1] if len(sys.argv) > 1 else 'fake', 'protocol': 1,
+    ready = {'helper': sys.argv[1] if len(sys.argv) > 1 else 'fake', 'protocol': 2,
              'methods': METHODS + (['mcp.accept', 'mcp.reply', 'mcp.closed'] if mcp else [])}
     if mcp:
         ready['mcp'] = {'socket': '/tmp/aib-wsl-test/data-000000000000/helper/mcp.sock'}

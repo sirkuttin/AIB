@@ -75,7 +75,7 @@ export class WslSync {
 
   constructor(readonly studio: WslSyncStudio) {}
 
-  /** Build plan 1b: on for every WSL chat in its own copy; no longer gated on the hidden worktreePerChat flag. */
+  /** On for every WSL chat in its own copy (one made before 2026-11-16); not gated on the hidden worktreePerChat flag. */
   enabled(): boolean {
     return !this.#closed;
   }

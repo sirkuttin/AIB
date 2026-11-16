@@ -100,10 +100,11 @@ export class Lab {
   page!: Page;
   #scripts = 0;
 
-  static async open(width = 1600, height = 900): Promise<Lab> {
+  /** env: extra for the web server (AIB_TEST_COPY_CHATS=1 lets chat(..., {ownCopy: true}) make a chat in its own copy). */
+  static async open(width = 1600, height = 900, env?: Record<string, string>): Promise<Lab> {
     const lab = new Lab();
     try {
-      lab.web = await lab.fx.startWeb(['--in-process', '--no-auto-reconnect', '--no-owner-announcements']);
+      lab.web = await lab.fx.startWeb(['--in-process', '--no-auto-reconnect', '--no-owner-announcements'], env ? { env } : {});
       lab.#ownBrowser = FRESH;
       lab.browser = FRESH ? await Browser.launch() : await sharedBrowser();
       lab.page = await lab.browser.open('about:blank', width, height);
@@ -124,10 +125,12 @@ export class Lab {
   }
 
   /** A new live chat with the scripted agent (its own sub-folder of the workspace, so two chats can share or not). */
-  async chat(folder = ''): Promise<Chat> {
+  /** ownCopy: a chat in its own copy, as AIB made them before 2026-11-16 (needs open(..., {AIB_TEST_COPY_CHATS: '1'})). */
+  async chat(folder = '', options: { ownCopy?: boolean } = {}): Promise<Chat> {
     const cwd = folder ? `${this.fx.workspace}\\${folder}` : this.fx.workspace;
     if (folder) Deno.mkdirSync(cwd, { recursive: true });
-    const [status, connection] = await this.web.post('connect', { provider: 'claude', cwd, background: true });
+    const body = { provider: 'claude', cwd, background: true, ...(options.ownCopy ? { ownCopy: true } : {}) };
+    const [status, connection] = await this.web.post('connect', body);
     if (status !== 200) throw new Error(`connect: ${status} ${JSON.stringify(connection)}`);
     const id = connection.id as string;
     const st = await until(async () => {

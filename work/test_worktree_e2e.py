@@ -74,7 +74,9 @@ class E2EFixture(Fixture):
     def env(self):
         """deno-split: AIB_KEEPER=0 (the split host is the fallback for a keeper that cannot run); deno: the keeper, always on,
         unless AIB_KEEPER=0 is set where the tests run."""
-        env = dict(os.environ, AGENT_STUDIO_TEST='1')
+        # AIB_TEST_COPY_CHATS: connect's ownCopy makes a chat in its own copy, as AIB did before 2026-11-16 (owner decision: new chats
+        # always work in the project folder; a copy chat made before keeps its copy, Merge and Discard, which is what these tests cover)
+        env = dict(os.environ, AGENT_STUDIO_TEST='1', AIB_TEST_COPY_CHATS='1')
         if SERVER_KIND == 'deno-split':
             env.setdefault('AIB_KEEPER', '0')
         return env
@@ -246,7 +248,7 @@ class Env:
         if resume:
             body['resume'] = resume
         elif own_copy is not None:
-            body['ownCopy'] = own_copy   # build plan 1b: a new chat works in the project folder unless it asks for its own copy
+            body['ownCopy'] = own_copy   # a copy chat as made before 2026-11-16 (the test server takes ownCopy: AIB_TEST_COPY_CHATS)
         status, connection = web.post('connect', body)
         if expect != 200:
             assert status == expect, (status, connection)
