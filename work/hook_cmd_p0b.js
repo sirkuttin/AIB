@@ -10,6 +10,7 @@
  *     --exit2 TEXT          exit 2 with TEXT on stderr (the forwarder's fail-closed answer); for PreToolUse only when the tool
  *                           is Agent/Task unless --exit2-any
  *     --exit2-any           with --exit2: block every event/tool this hook is attached to
+ *     --sleep MS            wait MS before answering (P0b: what a command-hook timeout does)
  *
  * `startedAt` is this process's start (performance.timeOrigin), so the driver can measure the spawn cost per hook call.
  */
@@ -20,7 +21,7 @@ const { execFileSync } = require('node:child_process');
 
 const startedAt = Math.round(performance.timeOrigin);
 const [LOG, label, ...rest] = process.argv.slice(2);
-const opts = { force: false, worktree: null, deny: {}, exit2: null, exit2Any: false };
+const opts = { force: false, worktree: null, deny: {}, exit2: null, exit2Any: false, sleep: 0 };
 for (let i = 0; i < rest.length; i++) {
   const a = rest[i];
   if (a === '--force-isolation') opts.force = true;
@@ -30,11 +31,14 @@ for (let i = 0; i < rest.length; i++) {
     opts.deny[tool] = text.join('=');
   } else if (a === '--exit2') opts.exit2 = rest[++i];
   else if (a === '--exit2-any') opts.exit2Any = true;
+  else if (a === '--sleep') opts.sleep = Number(rest[++i]);
 }
 
 const chunks = [];
 process.stdin.on('data', (c) => chunks.push(c));
-process.stdin.on('end', () => {
+process.stdin.on('end', () => setTimeout(answer, opts.sleep));
+
+function answer() {
   const raw = Buffer.concat(chunks).toString('utf8');
   let body = {};
   try {
@@ -68,4 +72,4 @@ process.stdin.on('end', () => {
   if (out) process.stdout.write(out);
   if (err) process.stderr.write(err);
   process.exitCode = code;
-});
+}

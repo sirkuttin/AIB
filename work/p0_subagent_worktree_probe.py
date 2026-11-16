@@ -576,6 +576,9 @@ SCENARIOS = {
                                                   recorder=['--delay-pre', '8000', '--force-isolation', '--worktree-root', str(b / 'wt')]),
     # 1b. command hooks exiting 2 (the forwarder's fail-closed answer)
     'cmd-exit2-pre': lambda b: claude_scenario(b, 'cmd-exit2-pre', sub_rules(), cmd_hooks(b, pre_flags=('--exit2', RESTARTING))),
+    # a command hook that answers after its `timeout` (AIB slow, e.g. a big snapshot): does the tool run unisolated?
+    'cmd-timeout-pre': lambda b: claude_scenario(b, 'cmd-timeout-pre', sub_rules(), cmd_hooks(b, extra={'PreToolUse': [{'matcher': 'Agent|Task', 'hooks': [
+        {**cmd(b, 'pre', '--sleep', '6000', '--exit2', RESTARTING), 'timeout': 2}]}]})),
     'cmd-exit2-wt': lambda b: claude_scenario(b, 'cmd-exit2-wt', sub_rules(), {'hooks': {
         'PreToolUse': [{'matcher': 'Agent|Task', 'hooks': [cmd(b, 'pre', '--force-isolation')]}],
         'WorktreeCreate': [{'hooks': [cmd(b, 'wt', '--exit2', "AIB didn't expect this worktree")]}]}}),
