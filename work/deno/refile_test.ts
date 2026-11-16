@@ -269,7 +269,7 @@ Deno.test({
 Deno.test({
   ...T,
   name: 'e2e 19: Discard of an existing worktree chat removes copy, branch and refs, re-files the transcript, keeps a backup, ' +
-    'and answers movedToFolder; the session list marks it so every window can continue it',
+    'and answers movedToFolder; Continue then opens it in the project folder',
   async fn() {
     await using box = new Box();
     const made = await box.existing('sess-discard');
