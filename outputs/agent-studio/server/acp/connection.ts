@@ -5961,7 +5961,7 @@ export class Connection {
       steerLane: this.queue.steerPublic(light),
       toolBackground: this.toolBackground(),
       // Subagent worktrees (P1; Activity's chips are P3): on, or why not ("hooks are off", "not a git project", "WSL, coming", ...)
-      ...(this.subagentHooks ? { subagentIsolation: { on: !!this.subagentHooks.settings, reason: this.subagentHooks.off } } : {}),
+      ...(this.subagentHooks ? { subagentIsolation: { on: !!this.subagentHooks.settings || !!this.subagentHooks.adopted, reason: this.subagentHooks.off } } : {}),
       pendingChanges: [...this.pendingChanges.values()].map((v) => ({ ...v })),
       changeFailures: this.changeFailures.map((v) => ({ ...v })),
       state: this.closed

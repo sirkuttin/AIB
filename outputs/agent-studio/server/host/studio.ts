@@ -1251,7 +1251,7 @@ export class Studio {
       // Subagent worktrees (subagents/): a Claude chat in a git project gets command hooks through the keeper's forwarder; its key and
       // id go in the agent's environment (never in settings, a command line or a URL). A WSL chat gets none yet (they'd fail open).
       const subagent = provider === 'claude'
-        ? wsl ? { hooks: offHooks('WSL, coming') } : await this.#subagentHooks(command, plan ? plan.path : workspace, workspace, !!plan, env)
+        ? await this.#subagentHooks(command, plan ? plan.path : workspace, workspace, !!plan, env, !!wsl)
         : null;
       const connectionOptions: ConnectionOptions = {};
       const agentEnv = subagent?.env ? { ...env, ...subagent.env } : env;
@@ -1812,9 +1812,13 @@ export class Studio {
     project: string,
     aibWorktree: boolean,
     env: Record<string, string>,
-  ): Promise<{ id?: string; env?: Record<string, string>; hooks: NonNullable<Connection['subagentHooks']> }> {
+    wsl = false,
+  ): Promise<{ id?: string; env?: Record<string, string>; hooks: NonNullable<Connection['subagentHooks']> } | null> {
     if (!this.subagents || !this.hasStateDir) return { hooks: offHooks('AIB has no state folder') };
-    if (Deno.env.get('AGENT_STUDIO_TEST') === '1' && isFixture(command)) return { hooks: offHooks('a test fixture') };
+    // under test only a real agent the run allowed gets hooks (a fixture or a test's own factory runs none, and must not pay for them)
+    const realAllowed = Deno.env.get('STUDIO_REAL_ADAPTER_TESTS') === '1' || Deno.env.get('AGENT_STUDIO_ALLOW_REAL_AGENT') === '1';
+    if (Deno.env.get('AGENT_STUDIO_TEST') === '1' && (isFixture(command) || !realAllowed)) return null;
+    if (wsl) return { hooks: offHooks('WSL, coming') }; // through an unreachable host they would fail open (design 2.8)
     try {
       if (!aibWorktree) {
         const top = await wt.git(['rev-parse', '--show-toplevel'], folder, { check: false });
