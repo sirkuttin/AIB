@@ -1086,6 +1086,11 @@ html[data-ui-scaled] .st-page {
   margin: 0 0 14px;
   max-width: 360px;
 }
+.wl-pick select {
+  width: 100%;
+  max-width: 100%;
+  text-overflow: ellipsis;
+}
 /* "What Ubuntu needs": Remote control's check list, with each row's state at the right */
 .wl-checks {
   margin: 4px 0 0;
@@ -1129,6 +1134,13 @@ html[data-ui-scaled] .st-page {
 }
 /* "AIB in Ubuntu": the disk use by part (the card's facts list), the other AIB data folders, and the Remove dialog's lists
    (delete-project-ui.js's .dp-dialog look, workspace.css) */
+.wl-usage {
+  margin-top: 4px;
+  gap: 4px 18px;
+}
+.wl-usage dd {
+  text-align: right;
+}
 .wl-usage dt.wl-sub {
   padding-left: 14px;
 }
@@ -1188,4 +1200,23 @@ html[data-ui-scaled] .st-page {
 }
 .wl-reason {
   margin: 0 0 4px;
+}
+.wl-rm-blocked {
+  margin-bottom: 12px;
+}
+/* the default-focused Cancel shows the app's ring although the focus came from code (:focus-visible does not match then) */
+.wl-remove button:focus {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+/* the blocked Remove button: the app's own disabled look for a plain button (chat.css .upd-btn:disabled, 0.75), not the faint 0.5 */
+.wl-remove .dp-ok:disabled {
+  opacity: 0.75;
+}
+
+/* WSL screens only: a dim note keeps its muted colour at full strength (the 0.8 opacity took links and muted lines under 4.5:1 in
+   teal-light). The Windows cards keep their look. */
+.wl-card .st-note.dim,
+.nc-wsl .st-note.dim {
+  opacity: 1;
 }
