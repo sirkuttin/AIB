@@ -14,7 +14,7 @@
  * Run (from outputs/agent-studio): deno test -A ../../work/deno/split_focus_e2e_test.ts   (ignored without Chrome or Edge)
  */
 import { assert } from './_assert.ts';
-import { browserPath, type Chat, Lab, ownerProblems, type Page, settle, shown, wheel } from './_scroll_lab.ts';
+import { browserPath, type Chat, clickHere, Lab, ownerProblems, type Page, settle, shown, wheel } from './_scroll_lab.ts';
 
 function splitTest(name: string, fn: (lab: Lab) => Promise<void>) {
   Deno.test({
@@ -88,6 +88,9 @@ async function openSplit(lab: Lab) {
   return { a, b };
 }
 
+/** The other pane's header (its title: a click there only focuses the pane): the copy of the real header, or the plain stand-in. */
+const OTHER_HEAD = '#splitStage .pane:not(.foc) :is(.mirror-copy > header [data-mid="title"], .mirror-head)';
+
 /** Watch every frame and every DOM change in the panes until stopWatch: both panes must always hold rows. */
 function startWatch(page: Page) {
   return page.eval(`(() => {
@@ -123,7 +126,7 @@ function stopWatch(page: Page) {
 async function switchFocus(page: Page, want: string) {
   await startWatch(page);
   await settle(300);
-  await page.click('#splitStage .pane:not(.foc) .mirror-head');
+  await page.click(OTHER_HEAD);
   await page.waitFor(
     `document.getElementById('messages').textContent.includes(${JSON.stringify(want)}) && !!document.querySelector('#splitStage .pane.foc #messages')`,
     15000,
@@ -250,18 +253,159 @@ splitTest('SF3 split view: switching focus never moves either pane (the bottom b
   await settle(900);
   // the other pane shows its bar too: the turn line with the chat's status and the quiet message box
   const bar = await page.eval<{ turn: string; comp: boolean }>(`(() => { const p = document.querySelector('#splitStage .pane:not(.foc)');
-    return { turn: p.querySelector('.mirror-turn')?.textContent || '', comp: !!p.querySelector('.mirror-foot .mirror-comp') }; })()`);
+    return { turn: p.querySelector('[data-mid="turnStatus"], .mirror-turn')?.textContent || '', comp: !!p.querySelector('[data-mid="promptForm"] textarea, .mirror-foot .mirror-comp') }; })()`);
   assert(bar.turn && bar.comp, `the other pane's bottom bar: ${JSON.stringify(bar)}`);
   for (const want of ['BETAEND', 'ALPHA', 'BETAEND']) {
     await startGeom(page);
     await settle(300);
-    await page.click('#splitStage .pane:not(.foc) .mirror-head');
+    await page.click(OTHER_HEAD);
     await page.waitFor(`document.getElementById('messages').textContent.includes(${JSON.stringify(want)})`, 15000, 'focused');
     await settle(2500);
     const w = await page.eval<{ frames: number; bad: string[] }>(`(() => { const w = window.__geom; w.on = false; return w; })()`);
     assert(w.frames > 20, `frames watched: ${w.frames}`);
     assert(!w.bad.length, `a pane moved during the focus switch (${w.bad.length} of ${w.frames} frames):\n${w.bad.slice(0, 6).join('\n')}`);
   }
+  a.end();
+  b.end();
+});
+
+/* SF4 (owner, 2026-11-15: "stop changing what is displayed when switching chat focus"): the other pane shows everything the
+   focused one does (header, status, turn line, message box and its buttons, the chip row under it) at the same size and place,
+   undimmed, with the same tab colour; a focus switch moves, hides or resizes none of it in either pane; one click on a chip in
+   the other pane focuses it and opens that chip's menu; hovering or clicking around the right panel never moves pane focus. */
+const BAR_IDS = ['title', 'status', 'turnRow', 'turnStatus', 'promptForm', 'prompt', 'send', 'attachImages', 'composerChips'];
+const PANE_KEY = `(p) => p.classList.contains('foc') ? AgentSplitUI.panes().find((x) => x.focused).group.active : p.querySelector('.mirror-msgs').dataset.mirror`;
+/** Per pane (by the chat it shows): the box of every bar item and every chip against its pane, what is hidden or dimmed, and the
+ *  active tab's background. */
+const barGeom = (page: Page) =>
+  page.eval<Record<string, { items: Record<string, string>; chips: string[]; hidden: string[]; tab: string }>>(`(() => {
+    const out = {}, keyOf = ${PANE_KEY};
+    for (const p of document.querySelectorAll('#splitStage .pane')) {
+      const pr = p.getBoundingClientRect(), items = {}, hidden = [];
+      const shown = (e) => {
+        if (!e) return false;
+        const r = e.getBoundingClientRect();
+        if (!r.width || !r.height) return false;
+        for (let n = e; n && n !== document.body; n = n.parentElement) {
+          const cs = getComputedStyle(n);
+          if (cs.display === 'none' || cs.visibility === 'hidden' || Number(cs.opacity) < 1) return false;
+        }
+        return true;
+      };
+      const box = (e) => { const r = e.getBoundingClientRect(); return [r.left - pr.left, r.top - pr.top, r.width, r.height].map(Math.round).join(','); };
+      for (const id of ${JSON.stringify(BAR_IDS)}) {
+        let e = p.querySelector('#' + id + ', [data-mid="' + id + '"]');
+        if (id === 'composerChips' && e) e = e.parentElement; // the chip box is display: contents; its row holds the chips
+        if (!shown(e)) hidden.push(id);
+        else items[id] = box(e);
+      }
+      const chipsBox = p.querySelector('#composerChips, [data-mid="composerChips"]');
+      const chips = chipsBox ? [...chipsBox.querySelectorAll('.chip')].map((c) => (shown(c) ? '' : 'HIDDEN ') + c.textContent.trim() + '@' + box(c)) : [];
+      const tab = p.querySelector('.pane-strip .ws-tab.on');
+      out[keyOf(p)] = { items, chips, hidden, tab: tab ? getComputedStyle(tab).backgroundColor : 'none' };
+    }
+    return out;
+  })()`);
+
+/** Every frame until stopped: each bar item's box in each pane must stay exactly as in the first frame. */
+function startBarWatch(page: Page) {
+  return page.eval(`(() => {
+    const w = (window.__bars = { frames: 0, bad: [], first: null, on: true });
+    const snap = () => {
+      const out = {};
+      for (const p of document.querySelectorAll('#splitStage .pane')) {
+        const pr = p.getBoundingClientRect(), s = [];
+        for (const id of ${JSON.stringify(BAR_IDS)}) {
+          let e = p.querySelector('#' + id + ', [data-mid="' + id + '"]');
+          if (id === 'composerChips' && e) e = e.parentElement;
+          const r = e ? e.getBoundingClientRect() : null;
+          s.push(id + ':' + (r && r.height ? [r.left - pr.left, r.top - pr.top, r.width, r.height].map(Math.round).join(',') : 'none'));
+        }
+        out[p.dataset.g] = s.join(' ');
+      }
+      return out;
+    };
+    const tick = () => {
+      if (!w.on) return;
+      w.frames++;
+      const s = snap();
+      if (!w.first) w.first = s;
+      else for (const g of Object.keys(w.first)) if (w.first[g] !== s[g]) w.bad.push('frame ' + w.frames + ' pane ' + g + ':\\n  ' + w.first[g] + '\\n  ' + s[g]);
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  })()`);
+}
+
+splitTest('SF4 split view: focus changes nothing in the panes but the accent line; a chip works in one click; the right panel never moves focus', async (lab) => {
+  const page = lab.page;
+  const { a, b } = await openSplit(lab);
+  // B was in the real view once (openSplit opened it first): its pane shows the copy of the real view
+  assert(await page.eval<boolean>(`!!document.querySelector('#splitStage .pane:not(.foc) .mirror-copy')`), 'the other pane shows the copy of the real view');
+  assert(await page.eval<boolean>(`!document.querySelector('#splitStage .pane:not(.foc) .mirror-copy [id]')`), 'the copy holds no ids (the page never finds it by id)');
+  const before = await barGeom(page);
+  for (const [key, g] of Object.entries(before)) {
+    assert(!g.hidden.length, `pane of ${key}: hidden or dimmed: ${g.hidden.join(', ')}: ${JSON.stringify(before)}`);
+    assert(g.chips.length >= 1 && !g.chips.some((c) => c.startsWith('HIDDEN')), `pane of ${key}: chip row ${JSON.stringify(g.chips)}`);
+  }
+  assert(before[a.key].tab === before[b.key].tab, `active tab colour differs: focused ${before[a.key].tab}, other ${before[b.key].tab}`);
+  // the panes are the same width: the bars sit at the same height in both
+  for (const id of ['promptForm', 'composerChips', 'turnRow'])
+    assert(
+      before[a.key].items[id].split(',').slice(1).join() === before[b.key].items[id].split(',').slice(1).join(),
+      `${id}: focused ${before[a.key].items[id]} vs other ${before[b.key].items[id]}`,
+    );
+
+  for (const want of ['BETAEND', 'ALPHAEND', 'BETAEND']) {
+    await startBarWatch(page);
+    await settle(300);
+    await page.click(OTHER_HEAD);
+    await page.waitFor(`document.getElementById('messages').textContent.includes(${JSON.stringify(want)})`, 15000, 'focused');
+    await settle(2500);
+    const w = await page.eval<{ frames: number; bad: string[] }>(`(() => { const w = window.__bars; w.on = false; return w; })()`);
+    assert(w.frames > 20, `frames watched: ${w.frames}`);
+    assert(!w.bad.length, `a bar item moved, resized or hid during the focus switch (${w.bad.length} of ${w.frames} frames):\n${w.bad.slice(0, 4).join('\n')}`);
+    assert(await page.eval<boolean>(`!document.querySelector('.mirror-hold')`), 'the copy held over the real view is gone once it settled');
+    const now = await barGeom(page);
+    for (const key of [a.key, b.key]) {
+      assert(JSON.stringify(now[key].items) === JSON.stringify(before[key].items), `pane of ${key} after the switch:\n${JSON.stringify(before[key].items)}\n${JSON.stringify(now[key].items)}`);
+      assert(JSON.stringify(now[key].chips) === JSON.stringify(before[key].chips), `chips of ${key}:\n${before[key].chips.join(' | ')}\n${now[key].chips.join(' | ')}`);
+      assert(now[key].tab === before[key].tab && !now[key].hidden.length, `pane of ${key}: tab ${now[key].tab}, hidden ${now[key].hidden}`);
+    }
+  }
+
+  // one click on a chip with a menu (else the message box) in the other pane: the pane takes focus and the real control works
+  const chip = await page.eval<string>(`(() => { const c = document.querySelector('#splitStage .pane:not(.foc) button[data-mid^="chip-"]'); return c ? c.getAttribute('data-mid') : ''; })()`);
+  if (chip) {
+    await clickHere(page, `#splitStage .pane:not(.foc) [data-mid="${chip}"]`);
+    await page.waitFor(
+      `document.getElementById('messages').textContent.includes('ALPHAEND') && document.getElementById(${JSON.stringify(chip)})?.getAttribute('aria-expanded') === 'true'`,
+      8000,
+      `one click on ${chip} in the other pane focuses it and opens the menu`,
+    );
+    await page.eval(`AgentComposerChips.closeMenu(false)`);
+    await settle(300);
+  } else {
+    await clickHere(page, '#splitStage .pane:not(.foc) [data-mid="prompt"]');
+    await page.waitFor(`document.getElementById('messages').textContent.includes('ALPHAEND') && document.activeElement?.id === 'prompt'`, 8000, 'one click on the other message box focuses the pane and the box');
+  }
+
+  // the right panel: hovering or clicking its tabs, the Activity header, strip and lists never moves pane focus
+  const focusNow = await page.eval<string>(`AgentSplitUI.layout().focus`);
+  let tried = 0;
+  for (const sel of ['#paneTab-changes', '#paneTab-artifacts', '#paneTab-activity', '#activityHead', '#activityStrip', '#subagentList', '#runningCommandList']) {
+    const at = await page.eval<[number, number] | null>(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (!e) return null; const r = e.getBoundingClientRect();
+      return r.width > 0 && r.height > 0 ? [r.left + Math.min(20, r.width / 2), r.top + Math.min(10, r.height / 2)] : null; })()`);
+    if (!at) continue;
+    tried++;
+    await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at[0], y: at[1] });
+    await settle(150);
+    assert((await page.eval<string>(`AgentSplitUI.layout().focus`)) === focusNow, `hovering ${sel} moved pane focus`);
+    for (const type of ['mousePressed', 'mouseReleased']) await page.send('Input.dispatchMouseEvent', { type, x: at[0], y: at[1], button: 'left', clickCount: 1 });
+    await settle(400);
+    assert((await page.eval<string>(`AgentSplitUI.layout().focus`)) === focusNow, `clicking ${sel} in the right panel moved pane focus`);
+  }
+  assert(tried >= 2, `right panel targets found: ${tried}`);
   a.end();
   b.end();
 });
