@@ -31,6 +31,26 @@ html[data-remote='pc']:not([data-can-projects]) #wsNewProject {
   font-size: 13px;
   line-height: 1.45;
 }
+/* Try now: a text button at the notice's own size (the WSL lines' look). */
+.remote-offline .remote-offline-try {
+  flex: none;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+/* Offline (phase 4): the bar says it, so the page's own "Connection lost" line stays out of the way; Send waits for the PC (the
+   page refuses to send anyway, nothing is queued). What the page shows stays as it was. */
+html[data-remote='pc'][data-remote-offline] #error {
+  display: none !important;
+}
+html[data-remote='pc'][data-remote-offline] #send {
+  opacity: 0.5;
+  pointer-events: none;
+}
 /* Settings on another computer: the PC's sections say where they are changed. */
 .st-note.st-elsewhere {
   margin-top: 4px;

@@ -38,6 +38,7 @@ export const PC_STATIC: Readonly<Record<string, string>> = (() => {
     'remote-loader.html',
     'remote-loader.js',
     'remote-auth.js',
+    'remote-windows.js',
     'remote.css',
     // chat.html's stylesheets
     'chat.css',
@@ -154,7 +155,11 @@ export const LATER_TYPE = 'text/x-aib-later';
  */
 export function pcShell(html: string, manifest = true): string {
   if (!html.includes('<script src="/page-auth.js"></script>')) throw new Error('pcShell: page-auth.js is not where it was');
-  let out = html.replace('<script src="/page-auth.js"></script>', '<script src="/remote-auth.js"></script>');
+  // remote-windows.js (phase 4): this browser's own AIB windows, before any page script asks for one
+  let out = html.replace(
+    '<script src="/page-auth.js"></script>',
+    '<script src="/remote-auth.js"></script><script src="/remote-windows.js"></script>',
+  );
   out = out.replace(/<script src="\/desktop-bridge\.js" defer><\/script>\s*/g, '');
   out = out.replace(
     /<script src="([^"]+)" defer><\/script>/g,
