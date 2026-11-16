@@ -5,7 +5,8 @@
  *
  *   pre-tool         Agent/Task of an editing type: record first, then build (or take the spare), then answer
  *                    updatedInput {...input, isolation: "worktree"} (never "allow": the chat's own permission flow still applies).
- *                    Read-only types and isolation "remote": unchanged. EnterWorktree and Workflow: deny. Over the cap (8 per chat),
+ *                    Read-only types: unchanged (no isolation value is exempt, "remote" neither: security review P1, MF 2).
+ *                    EnterWorktree and Workflow: deny. Over the cap (8 per chat),
  *                    a failed build or a build that would outlast the forwarder's deadline: deny with a plain reason.
  *   worktree-create  name agent-<agentId>: the chat's oldest prepared worktree is bound to that agentId; its bare path is the answer.
  *                    Anything else is refused (409, the reason reaches the parent through the forwarder's stderr).
@@ -130,7 +131,7 @@ export const TEXTS = {
     `Do the steps of "${name}" yourself, or start a subagent (Agent tool) for them; AIB gives that one its own worktree.`,
 };
 
-/** Read-only types the chat listed, plus isolation "remote": no worktree (the forwarder decides these too, AIB up or not). */
+/** Read-only types the chat listed: no worktree (the forwarder decides these too, AIB up or not). No isolation value is exempt. */
 function passesUnchanged(input: Record<string, unknown>, readOnly: Set<string>): boolean {
   return typeof input.subagent_type === 'string' && readOnly.has(input.subagent_type);
 }
@@ -263,6 +264,18 @@ export class SubagentWorktrees {
       });
       return capped ? deny(TEXTS.cap) : isolated;
     }
+    const outcome = await this.prepareFor(chat, meta);
+    return 'deny' in outcome ? deny(outcome.deny) : isolated;
+  }
+
+  /**
+   * A worktree for a subagent the chat is about to start (Claude's editing Agent call; Codex's spawn_agent: subagents/codex.ts):
+   * capped, answered within PREPARE_BUDGET_MS (a later build becomes the chat's spare). The record (state prepared), or why not.
+   */
+  async prepareFor(
+    chat: SubagentChat,
+    meta: { toolUseId: string; agentType: string; description: string },
+  ): Promise<SubagentRecord | { deny: string }> {
     let timedOut = false;
     const work = this.#lockOf(chat.id).run(async () => {
       if (this.ofChat(chat.id).filter((r) => SLOT_STATES.has(r.state)).length >= MAX_PER_CHAT) return 'cap';
@@ -273,11 +286,54 @@ export class SubagentWorktrees {
     const outcome = await Promise.race([work, budget]).finally(() => clearTimeout(timer));
     if (outcome === 'slow') {
       timedOut = true; // the build goes on and becomes the chat's spare
-      return deny(TEXTS.slow);
+      return { deny: TEXTS.slow };
     }
-    if (outcome === 'cap') return deny(TEXTS.cap);
-    if (typeof outcome === 'string') return deny(`AIB couldn't make a worktree for this subagent: ${outcome}.`);
-    return isolated;
+    if (outcome === 'cap') return { deny: TEXTS.cap };
+    if (typeof outcome === 'string') return { deny: `AIB couldn't make a worktree for this subagent: ${outcome}.` };
+    return outcome;
+  }
+
+  /**
+   * A subagent of the chat started with this agentId (Codex SubagentStart, or its first call): its own record when it has one (a
+   * done one runs again: it was continued, and lands at its next end), else the chat's oldest prepared worktree is bound to it.
+   * Null: AIB prepared none (its calls are refused).
+   */
+  async bindAgent(chatId: string, agentId: string, agentType = ''): Promise<SubagentRecord | null> {
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(agentId)) return null;
+    return await this.#lockOf(chatId).run(async () => {
+      const mine = this.ofChat(chatId);
+      const own = mine.find((r) => r.agentId === agentId && wt.lexists(r.path));
+      if (own) {
+        if (own.state === 'running') return own;
+        if (own.state !== 'done') return null; // stopped (kept for the user), or anything else: no more edits there
+        return await this.#patch(own.id, { state: 'running', continuedAt: now() });
+      }
+      const ready = mine.filter((r) => r.state === 'prepared' && wt.lexists(r.path)).sort((a, b) => a.createdAt - b.createdAt)[0];
+      if (!ready) return null;
+      return await this.#patch(ready.id, {
+        agentId,
+        state: 'running',
+        boundAt: now(),
+        ...(agentType && !ready.agentType ? { agentType: agentType.slice(0, 200) } : {}),
+      });
+    });
+  }
+
+  /** The record of the chat's subagent with this agentId while it runs, or null. */
+  runningAgent(chatId: string, agentId: string): SubagentRecord | null {
+    if (!agentId) return null;
+    return this.ofChat(chatId).find((r) => r.agentId === agentId && r.state === 'running' && !!r.path) ?? null;
+  }
+
+  /** It ended (Codex SubagentStop): done, so it lands when the parent is idle (P2). */
+  async agentEnded(chatId: string, agentId: string): Promise<void> {
+    if (!agentId) return;
+    await this.#lockOf(chatId).run(async () => {
+      const rec = this.ofChat(chatId).find((r) => r.agentId === agentId);
+      if (!rec) return;
+      const hints = { ...rec.hints, stops: (rec.hints?.stops ?? 0) + 1, lastStopAt: now() };
+      await this.#patch(rec.id, { hints, ...(rec.state === 'running' ? { state: 'done' as const, doneAt: now() } : {}) });
+    });
   }
 
   #newId(): string {
