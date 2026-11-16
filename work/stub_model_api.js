@@ -6,13 +6,29 @@
  *   Codex        a model provider in <CODEX_HOME>/config.toml, base_url = "http://127.0.0.1:<port>/v1", wire_api = "responses"
  *                                                                                           POST /v1/responses (SSE)
  *
- * Every reply is one text message. It echoes the history it was sent so a resume can be checked: when any message in the
- * request says "the codeword is X", the reply is "STUB codeword=X"; otherwise "STUB no codeword". Nothing calls a tool.
+ * Plain mode (the default): every reply is one text message. It echoes the history it was sent so a resume can be checked: when
+ * any message in the request says "the codeword is X", the reply is "STUB codeword=X"; otherwise "STUB no codeword".
  *
- * Start:  node work/stub_model_api.js [--port N] [--log FILE] [--stdin]
+ * Script mode (--script FILE.json): the model can call tools. The file is
+ *   {"rules": [{"when": "<substring>", "in": "last" | "any" | "system", "once": true,
+ *               "reply": {"text": "...", "tools": [{"id": "toolu_x1", "name": "Agent", "input": {...}}]}}, ...]}
+ * For each model request the first unused rule that matches wins; no match falls back to the plain reply.
+ *   when   a substring that must appear in the request part named by `in` (no `when` = always matches)
+ *   in     "last" (default): the newest message / input item that is not a system/developer one, JSON-encoded, so a
+ *          tool_result's text (and its tool_use_id: give each scripted call an `id` and chain on it) counts; "any": the
+ *          whole request body; "system": the system prompt / instructions only
+ *   once   (default true) the rule is used up after it matches once
+ *   reply  text, tool calls, or both. A rule that calls tools only matches a request that OFFERS every one of those tools, so
+ *          side requests the CLI makes without tools (titles, summaries) never use up a rule.
+ * Tool calls go out as Anthropic `tool_use` blocks (stop_reason "tool_use") on /v1/messages and as Responses API
+ * `function_call` items on /v1/responses (Codex). The parent agent and a subagent are told apart by their own markers: a
+ * subagent's first request has its prompt as the newest message; the parent's next request has the subagent's result there.
+ *
+ * Start:  node work/stub_model_api.js [--port N] [--log FILE] [--stdin] [--script FILE] [--dump DIR]
  * The first stdout line is `STUB_PORT=<port>` (port 0 = any free port). Stops on SIGTERM / SIGINT, and with --stdin also when stdin closes
  * (so a test that dies never leaves it running).
- * Every request is appended to --log as one JSON line ({method, path, codeword}) so a test can see which API was hit.
+ * Every request is appended to --log as one JSON line ({method, path, codeword, tools, rule, last}) so a test can see which API was
+ * hit, which tools the CLI offered the model, and which script rule (its index) answered (null = the plain reply), and the end of the newest message.
  */
 'use strict';
 const http = require('node:http');
@@ -25,6 +41,10 @@ const opt = (name, dflt) => {
 };
 const PORT = Number(opt('--port', '0'));
 const LOG = opt('--log', null);
+const SCRIPT = opt('--script', null);
+const DUMP = opt('--dump', null); // a folder: every request body is also written there as <n>.json
+const rules = SCRIPT ? (JSON.parse(fs.readFileSync(SCRIPT, 'utf8')).rules || []) : [];
+const used = new Set();
 
 /** The newest "the codeword is X" anywhere in the request (system, history, tool results). */
 function codewordIn(text) {
@@ -35,6 +55,48 @@ function codewordIn(text) {
 function replyText(raw) {
   const word = codewordIn(raw);
   return word ? `STUB codeword=${word}` : 'STUB no codeword';
+}
+
+/** The names of the tools a request offers the model (Anthropic `tools[].name`; Responses `tools[].name` or `.function.name`). */
+function toolNames(body) {
+  return (Array.isArray(body.tools) ? body.tools : [])
+    .map((t) => t && (t.name || (t.function && t.function.name) || t.type))
+    .filter(Boolean);
+}
+
+function part(body, raw, where) {
+  if (where === 'any') return raw;
+  if (where === 'system') {
+    const sys = body.system !== undefined ? body.system : body.instructions;
+    return typeof sys === 'string' ? sys : JSON.stringify(sys || '');
+  }
+  const list = Array.isArray(body.messages) ? body.messages : Array.isArray(body.input) ? body.input : null;
+  if (!list) return typeof body.input === 'string' ? body.input : '';
+  // The newest turn item. Claude Code appends a trailing role "system" message (environment) after the user's turn: skip those.
+  const turns = list.filter((m) => !m || (m.role !== 'system' && m.role !== 'developer'));
+  return JSON.stringify(turns.length ? turns[turns.length - 1] : '');
+}
+
+/** The script rule that answers this request: {index, reply} or null (plain reply). */
+function pick(body, raw) {
+  const offered = new Set(toolNames(body));
+  for (let i = 0; i < rules.length; i++) {
+    const r = rules[i];
+    if (used.has(i)) continue;
+    const calls = (r.reply && r.reply.tools) || [];
+    if (calls.some((c) => !offered.has(c.name))) continue;
+    if (r.when !== undefined && !part(body, raw, r.in || 'last').includes(r.when)) continue;
+    if (r.once !== false) used.add(i);
+    return { index: i, reply: r.reply || {} };
+  }
+  return null;
+}
+
+/** What to send: {rule, text, tools} from the matched rule, else the plain codeword reply. */
+function answer(body, raw) {
+  const hit = pick(body, raw);
+  if (!hit) return { rule: null, text: replyText(raw), tools: [] };
+  return { rule: hit.index, text: hit.reply.text || '', tools: hit.reply.tools || [] };
 }
 
 function log(entry) {
@@ -54,42 +116,55 @@ let seq = 0;
 const newId = (prefix) => `${prefix}_stub${Date.now().toString(36)}${(seq++).toString(36)}`;
 
 // ---- Anthropic Messages API --------------------------------------------------------------------------------------------------
-function anthropic(res, body, raw) {
-  const text = replyText(raw);
+function anthropic(res, body, said) {
   const model = body.model || 'stub-model';
   const id = newId('msg');
   const usage = { input_tokens: 10, output_tokens: 5, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
+  const blocks = [];
+  if (said.text || !said.tools.length) blocks.push({ type: 'text', text: said.text });
+  for (const call of said.tools) blocks.push({ type: 'tool_use', id: call.id || newId('toolu'), name: call.name, input: call.input || {} });
+  const stop = said.tools.length ? 'tool_use' : 'end_turn';
   if (!body.stream) {
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({
-      id, type: 'message', role: 'assistant', model, content: [{ type: 'text', text }],
-      stop_reason: 'end_turn', stop_sequence: null, usage,
-    }));
+    res.end(JSON.stringify({ id, type: 'message', role: 'assistant', model, content: blocks, stop_reason: stop, stop_sequence: null, usage }));
     return;
   }
-  sse(res, [
-    ['message_start', {
-      type: 'message_start',
-      message: { id, type: 'message', role: 'assistant', model, content: [], stop_reason: null, stop_sequence: null, usage },
-    }],
-    ['content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }],
-    ['content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } }],
-    ['content_block_stop', { type: 'content_block_stop', index: 0 }],
-    ['message_delta', { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 5 } }],
-    ['message_stop', { type: 'message_stop' }],
-  ]);
+  const events = [['message_start', {
+    type: 'message_start',
+    message: { id, type: 'message', role: 'assistant', model, content: [], stop_reason: null, stop_sequence: null, usage },
+  }]];
+  blocks.forEach((b, index) => {
+    if (b.type === 'text') {
+      events.push(['content_block_start', { type: 'content_block_start', index, content_block: { type: 'text', text: '' } }]);
+      events.push(['content_block_delta', { type: 'content_block_delta', index, delta: { type: 'text_delta', text: b.text } }]);
+    } else {
+      events.push(['content_block_start', {
+        type: 'content_block_start', index, content_block: { type: 'tool_use', id: b.id, name: b.name, input: {} },
+      }]);
+      events.push(['content_block_delta', {
+        type: 'content_block_delta', index, delta: { type: 'input_json_delta', partial_json: JSON.stringify(b.input) },
+      }]);
+    }
+    events.push(['content_block_stop', { type: 'content_block_stop', index }]);
+  });
+  events.push(['message_delta', { type: 'message_delta', delta: { stop_reason: stop, stop_sequence: null }, usage: { output_tokens: 5 } }]);
+  events.push(['message_stop', { type: 'message_stop' }]);
+  sse(res, events);
 }
 
 // ---- OpenAI Responses API (Codex) -----------------------------------------------------------------------------------------------
-function responses(res, body, raw) {
-  const text = replyText(raw);
+const responsesUsage = () => ({
+  input_tokens: 10, input_tokens_details: { cached_tokens: 0 },
+  output_tokens: 5, output_tokens_details: { reasoning_tokens: 0 }, total_tokens: 15,
+});
+
+function responses(res, body, said) {
+  if (said.tools.length) return responsesCalls(res, body, said);
+  const text = said.text;
   const id = newId('resp');
   const itemId = newId('msg');
   const model = body.model || 'stub-model';
-  const usage = {
-    input_tokens: 10, input_tokens_details: { cached_tokens: 0 },
-    output_tokens: 5, output_tokens_details: { reasoning_tokens: 0 }, total_tokens: 15,
-  };
+  const usage = responsesUsage();
   const base = { id, object: 'response', created_at: Math.floor(Date.now() / 1000), model };
   const done = { type: 'message', id: itemId, role: 'assistant', status: 'completed', content: [{ type: 'output_text', text, annotations: [] }] };
   sse(res, [
@@ -112,6 +187,49 @@ function responses(res, body, raw) {
     ['response.output_item.done', { type: 'response.output_item.done', output_index: 0, item: done }],
     ['response.completed', { type: 'response.completed', response: { ...base, status: 'completed', output: [done], usage } }],
   ]);
+}
+
+/** A Responses API turn that calls tools: an optional message item, then one `function_call` item per call. */
+function responsesCalls(res, body, said) {
+  const id = newId('resp');
+  const model = body.model || 'stub-model';
+  const base = { id, object: 'response', created_at: Math.floor(Date.now() / 1000), model };
+  const events = [
+    ['response.created', { type: 'response.created', response: { ...base, status: 'in_progress', output: [] } }],
+    ['response.in_progress', { type: 'response.in_progress', response: { ...base, status: 'in_progress', output: [] } }],
+  ];
+  const output = [];
+  if (said.text) {
+    const item = {
+      type: 'message', id: newId('msg'), role: 'assistant', status: 'completed',
+      content: [{ type: 'output_text', text: said.text, annotations: [] }],
+    };
+    events.push(['response.output_item.added', {
+      type: 'response.output_item.added', output_index: 0, item: { ...item, status: 'in_progress', content: [] },
+    }]);
+    events.push(['response.output_item.done', { type: 'response.output_item.done', output_index: 0, item }]);
+    output.push(item);
+  }
+  for (const call of said.tools) {
+    const argText = typeof call.input === 'string' ? call.input : JSON.stringify(call.input || {});
+    const item = {
+      type: 'function_call', id: newId('fc'), call_id: call.id || newId('call'), name: call.name, arguments: argText, status: 'completed',
+    };
+    const index = output.length;
+    events.push(['response.output_item.added', {
+      type: 'response.output_item.added', output_index: index, item: { ...item, arguments: '', status: 'in_progress' },
+    }]);
+    events.push(['response.function_call_arguments.delta', {
+      type: 'response.function_call_arguments.delta', item_id: item.id, output_index: index, delta: argText,
+    }]);
+    events.push(['response.function_call_arguments.done', {
+      type: 'response.function_call_arguments.done', item_id: item.id, output_index: index, arguments: argText,
+    }]);
+    events.push(['response.output_item.done', { type: 'response.output_item.done', output_index: index, item }]);
+    output.push(item);
+  }
+  events.push(['response.completed', { type: 'response.completed', response: { ...base, status: 'completed', output, usage: responsesUsage() } }]);
+  sse(res, events);
 }
 
 // ---- OpenAI Chat Completions (other OpenAI-compatible clients) ----------------------------------------------------------------
@@ -141,19 +259,22 @@ const server = http.createServer((req, res) => {
   req.on('data', (c) => chunks.push(c));
   req.on('end', () => {
     const raw = Buffer.concat(chunks).toString('utf8');
+    if (DUMP) try { fs.writeFileSync(require('node:path').join(DUMP, `${String(seq++).padStart(3, '0')}.json`), raw); } catch { /* best effort */ }
     let body = {};
     try {
       body = raw ? JSON.parse(raw) : {};
     } catch { /* not JSON: treat as empty */ }
     const path = (req.url || '/').split('?')[0];
-    log({ method: req.method, path, codeword: codewordIn(raw) });
+    const modelCall = req.method === 'POST' && (/\/messages$/.test(path) || /\/responses$/.test(path));
+    const said = modelCall ? answer(body, raw) : null;
+    log({ method: req.method, path, codeword: codewordIn(raw), tools: toolNames(body), rule: said ? said.rule : null, last: part(body, raw, 'last').slice(-400) });
     if (req.method === 'POST' && /\/messages\/count_tokens$/.test(path)) {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ input_tokens: 10 }));
     } else if (req.method === 'POST' && /\/messages$/.test(path)) {
-      anthropic(res, body, raw);
+      anthropic(res, body, said);
     } else if (req.method === 'POST' && /\/responses$/.test(path)) {
-      responses(res, body, raw);
+      responses(res, body, said);
     } else if (req.method === 'POST' && /\/chat\/completions$/.test(path)) {
       chat(res, body, raw);
     } else if (req.method === 'GET' && /\/models$/.test(path)) {
