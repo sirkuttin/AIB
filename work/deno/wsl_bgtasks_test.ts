@@ -243,6 +243,8 @@ class Lab {
         })),
       };
     };
+    // and its proc.stop the helper's own method (platform/kill_verified.ts, which on Windows terminates through a verified handle)
+    this.host.handlers['proc.stop'] = (p) => helper(this.dir)['proc.stop'](p);
     setWslHostResolver((d) => (d === 'ubuntu' ? this.host : null));
     resetWslProcs();
   }
@@ -340,7 +342,7 @@ Deno.test({
 });
 
 Deno.test({
-  name: 'wsl chat: a background shell keeps the chat out of idle while it runs in the distro, also while the helper is away; no Stop',
+  name: 'wsl chat: a background shell keeps the chat out of idle while it runs in the distro, also while the helper is away',
   ...T,
   async fn() {
     await keeperBinary();
@@ -353,11 +355,9 @@ Deno.test({
     await until(() => c.backgroundShells().length === 1, 'the shell counts', 15);
     await until(() => lab.host.calls.some(([m]) => m === 'proc.tree'), 'asked the distro', 10);
     assertEquals(studio.busyList().map((b) => b.state), ['background']);
-    const [tool] = Object.values(c.toolBackground());
-    assertEquals([tool.state, tool.stoppable], ['running', false]);
-    const toolId = Object.keys(c.toolBackground())[0];
-    const stop = await assertRejects(() => c.stopBackgroundTool(toolId));
-    assert(stop.message.includes("can't stop a command in a WSL chat"), stop.message);
+    // Stop is offered once the distro's snapshot named the command's processes
+    await until(() => Object.values(c.toolBackground())[0]?.stoppable, 'Stop offered', 10);
+    assertEquals(Object.values(c.toolBackground())[0].state, 'running');
 
     // the helper goes away: unknown, so it still counts (never a wrong idle)
     lab.host.state = 'stopped';
@@ -370,5 +370,61 @@ Deno.test({
     await until(() => studio.busyList().length === 0, 'the chat dropped out of the busy list', 30);
     assertEquals(c.backgroundShells(), []);
     assertEquals(Object.values(c.toolBackground())[0].state, 'done');
+  },
+});
+
+Deno.test('helper proc.stop: refuses bad params; a pid that is not below the agent, or has another start time, is never signalled', async () => {
+  const m = helper('/nowhere', () => []);
+  for (const bad of [{ root: 1, targets: [[5, 1]] }, { root: Deno.pid, targets: [[5, 1]] }, { root: 9, targets: [] }, { root: 9, targets: [[5, -1]] }, { root: 9, targets: [5] }]) {
+    await assertRejects(() => Promise.resolve(m['proc.stop'](bad)));
+  }
+  const python = fake()[0];
+  const spawn = () => new Deno.Command(python, { args: ['-c', 'import time; time.sleep(60)'], stdin: 'null', stdout: 'null', stderr: 'null' }).spawn();
+  const root = spawn(), unrelated = spawn();
+  const sent: number[] = [];
+  const watched = bgtaskMethods({ env: () => Promise.resolve({ env: {}, home: '/' }), store: () => Promise.resolve(null), killer: (t) => (sent.push(t.pid), true) });
+  try {
+    const answer = await watched['proc.stop']({ root: root.pid, targets: [[unrelated.pid, 0]] }) as Json;
+    assertEquals([answer.listed, answer.killed, answer.skipped, sent], [true, [], [unrelated.pid], []]);
+  } finally {
+    for (const p of [root, unrelated]) {
+      p.kill();
+      await p.status;
+    }
+  }
+});
+
+Deno.test({
+  name: 'wsl chat: Stop on a background row ends the command in the distro (its processes only) and the row shows stopped',
+  ...T,
+  async fn() {
+    await keeperBinary();
+    await using lab = new Lab();
+    const pidFile = join(lab.dir, 'child');
+    const studio = lab.studio(['--held-turn', '--child-pid-file', pidFile]);
+    const c = await studio.connect('claude', REF);
+    const gate = join(lab.dir, 'gate');
+    assertEquals((await studio.liveCall('prompt', { id: c.id, text: `bgshell:${gate}`, clientMessageId: 'm1' }))[0], 200);
+    await until(() => Object.values(c.toolBackground())[0]?.stoppable, 'Stop offered', 30);
+    const shell = Number(Deno.readTextFileSync(pidFile + '.shell'));
+    const agentChild = Number(Deno.readTextFileSync(pidFile)); // started with the agent, before the turn: never the command's
+    const toolId = Object.keys(c.toolBackground())[0];
+    assert(pidAlive(shell) && pidAlive(agentChild));
+
+    // a reused pid (the shell's pid, another start time) is not the command: nothing is signalled
+    const reused = await lab.host.call('proc.stop', { root: c.process!.pid, targets: [[shell, 3600]] });
+    assertEquals([reused.listed, reused.killed, reused.skipped], [true, [], [shell]]);
+    assert(pidAlive(shell));
+
+    const [status, body] = await studio.liveCall('tool-stop', { id: c.id, toolCallId: toolId }) as [number, Json];
+    assertEquals([status, body.state, body.killed], [200, 'stopped', 1], JSON.stringify(body));
+    const stops = lab.host.calls.filter(([m]) => m === 'proc.stop');
+    assertEquals(((stops.at(-1)![1] as Json).targets as [number, number][]).map(([pid]) => pid), [shell], 'only the noted process');
+    await until(() => !pidAlive(shell), 'the shell ended', 10);
+    assert(pidAlive(agentChild), "the agent's own child is untouched");
+    assertEquals(Object.values(c.toolBackground())[0], { state: 'stopped', stoppable: false });
+    await until(() => studio.busyList().length === 0, 'the chat dropped out of the busy list', 15);
+    const again = await studio.liveCall('tool-stop', { id: c.id, toolCallId: toolId });
+    assertEquals(again[0], 409);
   },
 });

@@ -56,7 +56,7 @@ import { artifactToolCommand } from '../artifacts/mcp.ts';
 import { isOwnForwardEntry, isOwnMcpUrl } from '../artifacts/mcp_http.ts';
 import { type Killable, ProcessTree, treeSpawnOptions } from '../platform/process_tree.ts';
 import { type Descendant, descendants, refreshDescendants } from '../platform/descendants.ts';
-import { refreshWslDescendants, wslDescendants } from '../wsl/procs.ts';
+import { refreshWslDescendants, wslDescendants, wslKillVerified } from '../wsl/procs.ts';
 import { INBOX } from '../attention/inbox_rules.ts';
 import type { ChannelInfo, KeeperRecord } from '../keeper/client.ts';
 import { type KeeperChannel, type KeeperChannelListener, type KeeperLink, parseNote } from '../keeper/link.ts';
@@ -2636,11 +2636,14 @@ export class Connection {
     if (now) this.#turnProcesses = new Set(now.map((d) => d.pid));
     else if (this.wsl) {
       // the snapshot comes a moment later: only processes that were already running when the turn began count as the turn's
-      const seq = this.promptSeq;
+      const seq = this.promptSeq + 1; // #startTurn counts the turn just after this
       const began = Date.now() / 1000;
       this.#afterWslTree((later) => {
         if (!later || this.promptSeq !== seq || this.#turnProcesses !== null) return;
-        this.#turnProcesses = new Set(later.filter((d) => d.started !== null && d.started < began).map((d) => d.pid));
+        // No shell call of this turn yet when the answer came: the distro listed them before any command ran, so all are the
+        // turn's (start times are whole seconds there: one started a moment before the turn could look newer). Else by start time.
+        const before = ![...this.#tools.values()].some((t) => t.shell && t.turn === seq);
+        this.#turnProcesses = new Set(later.filter((d) => before || (d.started !== null && d.started < began)).map((d) => d.pid));
       });
     }
   }
@@ -2714,16 +2717,28 @@ export class Connection {
     };
     const pids = commandOf(now);
     const at = this.#now();
+    const shell = this.#tools.get(id)?.shell ?? this.#shellCalls.has(id);
+    const others = () =>
+      [...this.#tools].some(([other, t]) =>
+        other !== id && t.shell &&
+        (t.since >= since - 2 || !['completed', 'failed'].includes(t.status) || this.#bgTools.get(other)?.state === 'running')
+      );
     if (this.wsl && pids === null) {
-      // A WSL chat's snapshot comes a moment later from its distro: until then the command counts as running (pids unknown); then
-      // its processes are noted, or, with none, it is done (as when a Windows snapshot finds none). Stop is not offered (no Stop in WSL).
+      // A WSL chat's snapshot comes a moment later from its distro: until then the command counts as running (pids unknown) and has
+      // no Stop; then its processes are noted (Stop offered on the same terms as on Windows, `others` asked again: a shell call
+      // started meanwhile would share the snapshot), or, with none, it is done (as when a Windows snapshot finds none).
       this.#afterWslTree((later) => {
         const found = commandOf(later);
-        if (found === null || this.#bgShells.get(task) !== null || this.#bgTools.get(id)?.state !== 'running') return;
-        if (found.length) {
-          this.#bgShells.set(task, found.map((d) => d.pid));
-          log.info('chat %s: background tool %s runs as processes %s', this.id, id, found.map((d) => d.pid).join(', '));
-        } else this.#backgroundEnded(id, this.#bgTools.get(id)!, 'done');
+        const t = this.#bgTools.get(id);
+        if (found === null || this.#bgShells.get(task) !== null || t?.state !== 'running') return;
+        if (!found.length) return this.#backgroundEnded(id, t, 'done');
+        this.#bgShells.set(task, found.map((d) => d.pid));
+        if (shell && this.#turnProcesses !== null && found.every((d) => d.started !== null) && !others()) {
+          t.procs = found.map((d) => ({ pid: d.pid, started: d.started as number }));
+          t.stoppable = true;
+          this.#announceBackground(id);
+        }
+        log.info('chat %s: background tool %s runs as processes %s%s', this.id, id, found.map((d) => d.pid).join(', '), t.stoppable ? '' : ', no Stop');
       });
     }
     if (pids && !pids.length) {
@@ -2737,14 +2752,8 @@ export class Connection {
     this.#shellSince.set(task, at);
     this.#shellsSeen = null;
     while (this.#bgShells.size > 100) this.#bgShells.delete(this.#bgShells.keys().next().value!);
-    const shell = this.#tools.get(id)?.shell ?? this.#shellCalls.has(id);
-    const others = [...this.#tools].some(([other, t]) =>
-      other !== id && t.shell &&
-      (t.since >= since - 2 || !['completed', 'failed'].includes(t.status) || this.#bgTools.get(other)?.state === 'running')
-    );
     const known = pids !== null && before !== null && pids.every((d) => d.started !== null);
-    // A WSL chat's processes are the distro's: AIB does not stop them (stopBackgroundTool refuses), so it never offers Stop there
-    const stoppable = shell && known && !others && !this.wsl;
+    const stoppable = shell && known && !others();
     const procs = stoppable ? pids!.map((d) => ({ pid: d.pid, started: d.started as number })) : null;
     this.#bgTools.set(id, { task, state: 'running', procs, stoppable, since, at, endedAt: null });
     this.#trimBackground();
@@ -2866,8 +2875,9 @@ export class Connection {
   /**
    * Stop a command running in the background (POST /api/live/tool-stop): AIB kills the processes it noted when the command moved
    * there, re-verified now (still the agent's, same start time) together with what they started since, leaf first
-   * (platform/kill_verified.ts). Refused (NotStoppable, HTTP 409) for anything else: an MCP tool, a command whose processes could
-   * not be told apart, one that already ended. The agent learns of it on its own (Claude Code's task notification).
+   * (platform/kill_verified.ts; a WSL chat's in its distro: helper `proc.stop`). Refused (NotStoppable, HTTP 409) for anything else:
+   * an MCP tool, a command whose processes could not be told apart, one that already ended. The agent learns of it on its own (Claude
+   * Code's task notification).
    */
   async stopBackgroundTool(toolCallId: unknown): Promise<Json> {
     this.#refuseReadOnly();
@@ -2878,14 +2888,13 @@ export class Connection {
       throw new NotStoppable("AIB can't stop a helper by itself: it runs inside the agent's own process. Ask the agent to stop it.");
     }
     if (background.state !== 'running') throw new NotStoppable('That command is no longer running.');
-    // its pids are the distro's; never killVerified here, which reads and kills Windows processes
-    if (this.wsl) throw new NotStoppable("AIB can't stop a command in a WSL chat yet. Ask the agent to stop it.");
     if (!background.stoppable || !background.procs?.length) {
       throw new NotStoppable('AIB cannot tell which processes belong to this command, so it cannot stop it.');
     }
     const pid = this.process?.pid;
     if (this.closed || !pid) throw new NotStoppable('The agent is not running.');
-    const result = await killVerified(pid, background.procs);
+    // a WSL chat's pids are the distro's: its helper runs the same verified kill there (never killVerified here, on Windows processes)
+    const result = this.wsl ? await wslKillVerified(this.wsl.distro, pid, background.procs) : await killVerified(pid, background.procs);
     if (!result) throw new NotStoppable('AIB cannot list the processes right now. Try again.');
     if (!result.killed.length) {
       this.#backgroundEnded(toolCallId as string, background, 'done');

@@ -11,9 +11,11 @@
  *   own agent channels in this distro (the pids AIB passes as `exclude`) and this helper's own process tree never count. There is no
  *   owner registry here: AIB adds its Windows one.
  * - `proc.tree`: platform/descendants.ts (`ps`) below the agents' pids, for the busy-children detection (wsl/procs.ts on Windows).
+ * - `proc.stop`: platform/kill_verified.ts, Stop on a background row: only processes AIB was shown by `proc.tree` (pid and age),
+ *   re-verified below the same agent with the same start time, and what they started since.
  *
- * Everything is read-only: nothing here signals, writes to or kills a process, and the only files read are the session's transcripts,
- * Claude Code's own task output files and /proc.
+ * Everything else is read-only: nothing but `proc.stop` signals or kills a process, nothing writes, and the only files read are the
+ * session's transcripts, Claude Code's own task output files and /proc.
  */
 import * as osp from '../../platform/ospath.ts';
 import { commandList, commandOutput, handleGet } from '../../transcripts/monitor.ts';
@@ -21,6 +23,7 @@ import type { Store } from '../../transcripts/store.ts';
 import { fetchProcesses, fetchProcessesPs, OwnershipProbe, type ProcInfo, ProcessSource } from '../../ownership/probe.ts';
 import { findExternalOwner } from '../../ownership/ownership.ts';
 import { descendants, refreshDescendants } from '../../platform/descendants.ts';
+import { type Killer, killVerified } from '../../platform/kill_verified.ts';
 import { BAD_PARAMS, type Handlers, RpcError, str } from './rpc.ts';
 import { ValueError } from '../../core/py.ts';
 
@@ -128,6 +131,8 @@ export interface BgtaskContext {
   /** Tests: the process list and the open-file check (default: /proc). */
   processes?: () => ProcInfo[];
   holders?: (path: string) => [number, string][] | null;
+  /** Tests: the kill of one verified process in `proc.stop` (default: TERM, then KILL after 2 s). */
+  killer?: Killer;
 }
 
 export function bgtaskMethods(ctx: BgtaskContext): Handlers {
@@ -227,6 +232,21 @@ export function bgtaskMethods(ctx: BgtaskContext): Handlers {
           : null;
       }
       return { trees };
+    },
+
+    'proc.stop': async (p) => {
+      const root = p.root, targets = p.targets;
+      if (!Number.isInteger(root) || (root as number) <= 1 || root === Deno.pid) throw new RpcError('root must be an agent process id', BAD_PARAMS);
+      const valid = (t: unknown) => Array.isArray(t) && t.length === 2 && Number.isInteger(t[0]) && t[0] > 1 && Number.isFinite(t[1]) && t[1] >= 0;
+      if (!Array.isArray(targets) || !targets.length || targets.length > MAX_ROOTS || !targets.every(valid)) {
+        throw new RpcError('targets must be a list of [pid, age]', BAD_PARAMS);
+      }
+      // ages to this clock's start times: killVerified checks each against `ps` here, so AIB's Windows clock never enters it
+      const now = Date.now() / 1000;
+      const result = await killVerified(root as number, (targets as [number, number][]).map(([pid, age]) => ({ pid, started: now - age })), ctx.killer);
+      if (!result) return { listed: false, killed: [], skipped: [] };
+      const at = Date.now() / 1000;
+      return { listed: true, killed: result.killed.map((k) => [k.pid, Math.max(0, at - k.started)]), skipped: result.skipped };
     },
   };
 }
