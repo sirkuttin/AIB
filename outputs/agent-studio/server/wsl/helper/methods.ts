@@ -17,7 +17,7 @@ import { checkPath, checkProject, createFolder, createProject, GIT_TIMEOUT, gitP
 import { repoBranch } from '../../worktrees/chat_folders.ts';
 import { defaultOmpCommand, type LaunchRow, resolveClaude, resolveCodex, resolveOmp } from '../../agents/adapters.ts';
 import { latestRolloutLimits } from '../../agents/codex_limits.ts';
-import { Store } from '../../transcripts/store.ts';
+import { findSessionFile, Store } from '../../transcripts/store.ts';
 import { handleGet } from '../../transcripts/monitor.ts';
 import { distroTrash, inspectInDistro, trashInDistro } from './trash.ts';
 import { Refused } from '../../desktop/project_delete.ts';
@@ -434,6 +434,18 @@ function phaseOne(ctx: HelperContext): Handlers {
       for (const name of TRANSCRIPT_ARGS) if (typeof given[name] === 'string') args.set(name, given[name] as string);
       const reply = await handleGet(store, '/api/transcript', args.toString());
       return { status: reply.status, body: reply.body };
+    },
+
+    // A saved chat's outside-file guard (Windows: files_routes.ts mentionedBy): does its own transcript (and its subagents') name
+    // `path`, by Linux rules? Only the session file and the files below its folder are read, never the path itself.
+    'transcripts.mentions': async (p) => {
+      const path = str(p, 'path');
+      if (!path.startsWith('/') || path.length > 4096 || path.includes('\0')) throw new RpcError('path must be an absolute Linux path', BAD_PARAMS);
+      const provider = str(p, 'provider'), sessionId = str(p, 'sessionId');
+      const store = await sessionStore(ctx, p);
+      if (!store) return { mentioned: false };
+      const texts = await outside.chatTexts({ sessionFile: (prov, sid) => findSessionFile(prov, store.root, sid) }, `${provider}:${sessionId}`);
+      return { mentioned: outside.mentions(texts, path, true) };
     },
 
     'chat.repoBranch': async (p) => {

@@ -193,6 +193,15 @@ export interface HelperMethods {
     result: { status: number; body: unknown };
   };
   /**
+   * Does one saved session's own transcript (and its subagents' files) name `path` (an absolute Linux path, matched by Linux rules,
+   * worktrees/outside_files.ts mentions)? The outside-file guard of a saved WSL chat that is not running in AIB. Reads only the
+   * transcripts, never `path`.
+   */
+  'transcripts.mentions': {
+    params: { provider: 'claude' | 'codex'; sessionId: string; path: string; claudeDir?: string };
+    result: { mentioned: boolean };
+  };
+  /**
    * The viewer's background-task reads of one saved session, answered by the helper's transcripts/monitor.ts handleGet (helper/
    * bgtasks.ts): `path` is '/api/agents' (the chat and its subagents, each with runningCommands), '/api/commands' (args.running '1':
    * only running ones) or '/api/command' (args.id; with the task's output, read only from Claude Code's own task folder under
