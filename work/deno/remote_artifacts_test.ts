@@ -803,18 +803,29 @@ Deno.test({
       assertEquals(chip.dot, chip.ok, 'Live chip dot is the good colour');
       assert(chip.dot !== chip.need);
       // the chat: the Subagents card (title and state only), a dot per subagent by state
-      const expected = [chip.work, chip.ok, chip.need, chip.muted];
       await page.click('.ph-card');
       await page.waitFor('document.getElementById("phSubsGo") && document.querySelector(".ph-msg a")', 15000, 'the chat');
       await page.eval('document.getElementById("phSubsGo").click(), true');
-      await page.waitFor('document.querySelectorAll("#phSubs li .ph-dot").length === 4', 15000, 'the Subagents card');
+      // the card is the PC's (subagents-ui.js): working and needs-you ones are listed, the finished ones fold under "N finished"
+      await page.waitFor('document.querySelectorAll("#phSubs li .ph-dot").length >= 1 && !!document.getElementById("phSubsDone")', 15000, 'the Subagents card');
+      assert(
+        (await page.eval<string>('document.querySelector("#phSubs .ph-fold").textContent')).includes('2 working'),
+        'the card heading counts the working subagents',
+      );
+      await page.eval('document.getElementById("phSubsDone").click(), true');
+      await page.waitFor('document.querySelectorAll("#phSubs li .ph-dot").length === 4', 15000, 'the Subagents card with its finished ones');
       const box = await page.eval<number[]>(`(() => {
         const card = document.getElementById('phSubs'); const b = card.getBoundingClientRect(); const li = card.querySelector('li .ph-subrow');
         const first = li.firstElementChild.getBoundingClientRect(); const last = li.lastElementChild.getBoundingClientRect();
         return [first.left - b.left, b.right - last.right]; })()`);
       assert(box[0] >= 12 && box[1] >= 12, `Subagents card inner padding ${box}`);
-      const chatDots = await page.eval<string[]>(`[...document.querySelectorAll('#phSubs li .ph-dot')].map((d) => getComputedStyle(d).backgroundColor)`);
-      assertEquals(chatDots, expected, 'working = amber, done = good, needs you = warning, idle = muted');
+      const chatDots = await page.eval<Json>(`Object.fromEntries([...document.querySelectorAll('#phSubs li[data-sub]')].map((li) =>
+        [li.dataset.sub, getComputedStyle(li.querySelector('.ph-dot')).backgroundColor]))`);
+      assertEquals(
+        chatDots,
+        { a: chip.work, c: chip.need, b: chip.ok, d: chip.ok },
+        'working = amber, needs you = warning, finished = good (an unknown state counts as finished)',
+      );
       // the inline link: at least 44 px tall, the paragraph has not grown
       const link = await page.eval<number[]>(`(() => { const a = document.querySelector('.ph-msg a'); const r = a.getBoundingClientRect();
         const p = a.parentElement.getBoundingClientRect(); return [r.height, p.height]; })()`);
