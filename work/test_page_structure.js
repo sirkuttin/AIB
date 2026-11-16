@@ -16,6 +16,10 @@ const SCRIPT_SRC = /<script\b[^>]*\bsrc="\/([a-z0-9-]+\.js)"/g; // reads the tag
 const LOADED_ON_DEMAND = new Set(['elicitation-ui.js']); // fetched by chat.js only when the server supports questions
 const DOC_HTML = fs.readFileSync(path.join(APP, 'doc.html'), 'utf8'); // the doc page loads its own scripts
 const PHONE_HTML = fs.readFileSync(path.join(APP, 'phone.html'), 'utf8'); // the phone page (phone port only) loads its own
+// Remote PC (phone port only): the loader at / loads its own script, and the computer page (/pc.html, chat.html rewritten by
+// server/remote/pc_page.ts pcShell) adds remote-auth.js and remote-windows.js to it.
+const REMOTE_LOADER_HTML = fs.readFileSync(path.join(APP, 'remote-loader.html'), 'utf8');
+const PC_SHELL_TS = fs.readFileSync(path.join(APP, 'server', 'remote', 'pc_page.ts'), 'utf8');
 const scripts = () => [...HTML.matchAll(SCRIPT_SRC)].map((m) => m[1]);
 
 /** Elements of an HTML text in document order as {tag, attrs, parents} (parents: the open elements around it, outermost first). */
@@ -83,7 +87,10 @@ test('every served module is loaded', () => {
   // The server serves any plainly named .js/.css in the app folder (studioAsset); every such script except the monitor
   // dashboard's own must be loaded by chat.html, or it is dead code.
   const served = fs.readdirSync(APP).filter((n) => n.endsWith('.js') && servedAsset('/' + n));
-  const loaded = new Set([...scripts(), ...[...DOC_HTML.matchAll(SCRIPT_SRC)].map((m) => m[1]), ...[...PHONE_HTML.matchAll(SCRIPT_SRC)].map((m) => m[1])]);
+  const loaded = new Set([
+    ...scripts(),
+    ...[DOC_HTML, PHONE_HTML, REMOTE_LOADER_HTML, PC_SHELL_TS].flatMap((text) => [...text.matchAll(SCRIPT_SRC)].map((m) => m[1])),
+  ]);
   assert.deepEqual(
     served.filter((n) => !loaded.has(n) && !LOADED_ON_DEMAND.has(n)),
     [],
