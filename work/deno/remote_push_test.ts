@@ -15,6 +15,9 @@ import { PUSH_KEYS_FILE, TOPIC, TTL_FINISHED, TTL_NEEDS, VapidKeys } from '../..
 import { startAttention } from '../../outputs/agent-studio/server/attention/watcher.ts';
 import { fakeTailscale, pairPhone, pc, phoneHeaders, raw, type RemoteStudio, remoteStudio, serveStatus } from './_remote_fixture.ts';
 
+// the fake push service below listens on https://127.0.0.1 (only known push services are taken otherwise: devices.ts PUSH_HOSTS)
+Deno.env.set('AIB_TEST_PUSH_LOOPBACK', '1');
+
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
 type Json = Record<string, unknown>;
 const SEP = Deno.build.os === 'windows' ? '\\' : '/';

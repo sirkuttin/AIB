@@ -912,6 +912,38 @@ html[data-ui-scaled] .st-page {
 .dv-check-words {
   font-size: 15px;
 }
+/* the approve box's Phone / Computer control: two joined buttons (the approver on this PC sets the kind) */
+.dv-kind {
+  display: inline-flex;
+  margin: 6px 0 2px;
+  border: 1px solid var(--line-control);
+  border-radius: 7px;
+  overflow: hidden;
+}
+.dv-kind-option {
+  margin: 0;
+  padding: 4px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--muted);
+}
+.dv-kind-option + .dv-kind-option {
+  border-left: 1px solid var(--line-control);
+}
+.dv-kind-option.on {
+  background: var(--st-letter-bg);
+  color: var(--chip-icon-text);
+}
+.dv-kind-option input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.dv-kind-option:has(input:focus-visible) {
+  outline: 2px solid var(--accent, currentColor);
+  outline-offset: -2px;
+}
 .dv-scopes {
   display: flex;
   flex-direction: column;

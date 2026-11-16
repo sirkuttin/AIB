@@ -31,6 +31,23 @@
     ['phone.approve', 'Approve requests once'],
     ['phone.push', 'Push notifications'],
   ];
+  // A computer's own switches (remote control from other PCs, design v2 section 6). Shown only for a computer; all on for a new one
+  // (lead call 2a), each can be turned off before Approve and later on its row. They go between Approve once and Push notifications.
+  const PC_SCOPES = [
+    ['pc.always', 'Allow always and modes that skip approvals'],
+    ['pc.files', 'Files: see and download'],
+    ['pc.terminal', 'Terminal'],
+    ['pc.projects', 'Add and remove projects'],
+  ];
+  /* The switches of a device kind, in the order the PC shows them. */
+  function scopesFor(kind) {
+    if (kind !== 'computer') return SCOPES;
+    const at = SCOPES.findIndex(([s]) => s === 'phone.push');
+    return SCOPES.slice(0, at).concat(PC_SCOPES, SCOPES.slice(at));
+  }
+  const LOST_COMPUTER =
+    'Lost a computer? Remove it, then sign the agents out and in again. Removing it stops AIB access at once, but agent sign-ins ' +
+    'it could reach stay valid until you sign out.';
 
   const D = {
     host: null,
@@ -39,6 +56,7 @@
     sig: '',
     pair: null, // {words, url, qr, expiresAt} from Add a phone
     scopes: {}, // claim id -> Set of scopes picked on the approve dialog
+    kinds: {}, // claim id -> 'phone' | 'computer' picked on the approve dialog (starts on what the device suggested)
     confirm: '', // 'all' or a device id waiting for its second click
     activity: null,
     showActivity: false,
@@ -64,9 +82,9 @@
     set.add('phone.read');
     if (scope === 'phone.prompt' && on && start !== false) set.add('phone.start');
     if (!set.has('phone.prompt')) set.delete('phone.start');
-    return SCOPES.map(([s]) => s).filter((s) => set.has(s));
+    return scopesFor('computer').map(([s]) => s).filter((s) => set.has(s));
   }
-  const START_NOTE = 'Lets this phone start a chat in one of your projects, with the agent, model and mode it picks.';
+  const START_NOTE = 'Lets this device start a chat in one of your projects, with the agent, model and mode it picks.';
   /* One switch row; Start new chats is indented under Send, greyed out (and off) while Send is off. */
   function scopeRow(scope, label, checked, disabled, onChange) {
     const child = scope === 'phone.start';
@@ -83,11 +101,11 @@
     box.append(l, el('p', START_NOTE, 'st-note dv-child-note'));
     return box;
   }
-  /* One Phone activity line: time · phone · action · chat: result. */
+  /* One Device activity line: time · device · action · chat: result, then the path for a file or project line (never contents). */
   function activityLine(e, when) {
-    const who = e.name || (e.device ? 'a phone' : 'AIB');
+    const who = e.name || (e.device ? 'a device' : 'AIB');
     const chat = e.chat ? ' · ' + (e.chatTitle ? '"' + e.chatTitle + '"' : 'chat ' + String(e.chat).slice(0, 8)) : '';
-    return when + ' · ' + who + ' · ' + e.action + chat + ': ' + e.result;
+    return when + ' · ' + who + ' · ' + e.action + chat + ': ' + e.result + (e.path ? ' · ' + e.path : '');
   }
   function ago(seconds, now) {
     const s = Math.max(0, Math.floor((now || Date.now()) / 1000 - Number(seconds || 0)));
@@ -828,8 +846,38 @@
   }
 
   function scopeSet(id) {
-    if (!D.scopes[id]) D.scopes[id] = new Set(SCOPES.map(([s]) => s));
+    if (!D.scopes[id]) D.scopes[id] = new Set(scopesFor('computer').map(([s]) => s));
     return D.scopes[id];
+  }
+  function kindOf(claim) {
+    if (!D.kinds[claim.id]) D.kinds[claim.id] = claim.hint === 'computer' ? 'computer' : 'phone';
+    return D.kinds[claim.id];
+  }
+  /* The approve box's Phone / Computer control: the approver on this PC decides (the device's own screen only suggests it), because
+     the kind picks between the phone page and the full page. */
+  function drawKind(claim) {
+    const kind = kindOf(claim);
+    const group = el('div', null, 'dv-kind');
+    group.setAttribute('role', 'radiogroup');
+    group.setAttribute('aria-label', 'Kind of device');
+    for (const [value, label] of [['phone', 'Phone'], ['computer', 'Computer']]) {
+      const l = el('label', null, 'dv-kind-option' + (kind === value ? ' on' : '')),
+        r = el('input');
+      r.type = 'radio';
+      r.name = 'dv-kind-' + claim.id;
+      r.value = value;
+      r.checked = kind === value;
+      r.disabled = !!D.busy;
+      r.dataset.kind = value;
+      r.addEventListener('change', () => {
+        if (!r.checked) return;
+        D.kinds[claim.id] = value;
+        draw();
+      });
+      l.append(r, el('span', label));
+      group.append(l);
+    }
+    return group;
   }
 
   /* A paired phone's switches; each change is saved at once and the phone's next request is checked against it. */
@@ -838,7 +886,7 @@
     list.setAttribute('aria-label', 'What ' + d.name + ' may do');
     const have = d.scopes || [];
     const send = have.includes('phone.prompt');
-    for (const [scope, label] of SCOPES) {
+    for (const [scope, label] of scopesFor(d.kind)) {
       const child = scope === 'phone.start';
       list.append(
         scopeRow(
@@ -859,13 +907,15 @@
     box.setAttribute('aria-label', 'Approve ' + claim.name);
     box.dataset.claim = claim.id;
     box.append(el('h4', 'Approve "' + claim.name + '"?', 'dv-sub'));
-    const p = el('p', 'A phone wants to connect. Approve only if it shows ', 'st-note');
+    const p = el('p', 'A device wants to connect. Approve only if it shows ', 'st-note');
     const w = el('b', claim.checkWords.join(' '), 'dv-check-words');
     p.append(w, doc().createTextNode('.'));
     box.append(p);
+    const kind = kindOf(claim);
+    box.append(drawKind(claim));
     const picked = scopeSet(claim.id);
     const list = el('div', null, 'dv-scopes');
-    for (const [scope, label] of SCOPES) {
+    for (const [scope, label] of scopesFor(kind)) {
       const child = scope === 'phone.start';
       const send = picked.has('phone.prompt');
       list.append(
@@ -877,13 +927,24 @@
       );
     }
     box.append(list);
-    box.append(el('p', "You can change these later on the phone's row under Phones.", 'st-note'));
+    box.append(
+      el(
+        'p',
+        kind === 'computer'
+          ? 'A computer opens the full AIB page. You can change these later on its row. To change Phone or Computer later, remove it and pair it again.'
+          : "You can change these later on the phone's row. To change Phone or Computer later, remove it and pair it again.",
+        'st-note',
+      ),
+    );
     const row = el('div', null, 'st-actions');
     row.append(
       btn('Reject', () => act('devices/reject', { claim: claim.id }, 'reject'), '', !!D.busy),
       btn(
         'Approve',
-        () => act('devices/approve', { claim: claim.id, scopes: [...picked] }, 'approve'),
+        () => {
+          const allowed = new Set(scopesFor(kind).map(([s]) => s));
+          act('devices/approve', { claim: claim.id, kind, scopes: [...picked].filter((s) => allowed.has(s)) }, 'approve');
+        },
         'primary',
         !!D.busy,
       ),
@@ -959,14 +1020,22 @@
       const row = el('div', null, 'st-agent dv-device');
       row.dataset.device = d.id;
       const head = el('div', null, 'st-agent-head');
-      head.append(el('b', d.name), el('span', 'Last seen ' + ago(d.lastSeen), 'st-tag'));
+      head.append(
+        el('b', d.name),
+        el('span', d.kind === 'computer' ? 'Computer' : 'Phone', 'st-tag dv-kind-tag'),
+        el('span', 'Last seen ' + ago(d.lastSeen), 'st-tag'),
+      );
       row.append(head);
       row.append(drawSwitches(d));
       row.append(drawRemind(d));
       const actions = el('div', null, 'st-actions');
       if (D.confirm === d.id) {
         actions.append(
-          el('span', 'Remove "' + d.name + '"? Its next request fails.', 'st-note'),
+          el(
+            'span',
+            'Remove "' + d.name + '"? Its next request fails' + (d.kind === 'computer' ? ' and its open terminals close.' : '.'),
+            'st-note',
+          ),
           btn('Remove', () => {
             D.confirm = '';
             act('devices/remove', { id: d.id }, 'remove');
@@ -1007,7 +1076,7 @@
     add.id = 'dvAdd';
     if (!ready) add.title = 'Finish the setup steps above first.';
     row.append(add);
-    row.append(btn(D.showActivity ? 'Hide phone activity' : 'Phone activity', () => {
+    row.append(btn(D.showActivity ? 'Hide device activity' : 'Device activity', () => {
       D.showActivity = !D.showActivity;
       if (!D.showActivity) return draw();
       Promise.resolve(D.host.get('/api/live/devices/activity')).then((r) => {
@@ -1039,8 +1108,15 @@
     if (D.showActivity) {
       const log = el('div', null, 'dv-activity');
       const entries = D.activity || [];
-      log.append(el('p', 'What each phone did: time, phone, action, chat and result. Message text and commands are never kept.', 'st-note'));
-      if (!entries.length) log.append(el('p', 'No phone activity yet.', 'st-note'));
+      log.append(
+        el(
+          'p',
+          'What each device did: time, device, action, chat and result, and the path of a downloaded file. Message text, commands, ' +
+            'terminal typing and file contents are never kept.',
+          'st-note',
+        ),
+      );
+      if (!entries.length) log.append(el('p', 'No device activity yet.', 'st-note'));
       for (const e of entries.slice(0, 100)) {
         const t = new Date(e.time * 1000);
         log.append(el('p', activityLine(e, t.toLocaleString()), 'st-note'));
@@ -1057,6 +1133,9 @@
     frag.append(
       el('p', "Lost a phone? Click Remove here, and also remove the phone in Tailscale's admin page.", 'st-note'),
     );
+    const lost = el('p', LOST_COMPUTER, 'st-note');
+    lost.id = 'dvLostComputer';
+    frag.append(lost);
     out.replaceChildren(frag);
   }
 
@@ -1093,8 +1172,11 @@
     refreshEvery,
     missingNotice,
     scopesAfter,
+    scopesFor,
     activityLine,
     SCOPES,
+    PC_SCOPES,
+    LOST_COMPUTER,
     TRAY_NOTE,
     REMIND_NOTE,
     _state: D,

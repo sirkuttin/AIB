@@ -7,7 +7,7 @@
  * and only then does the phone get its device token (once, through the claim's own secret).
  */
 import { checkWords, hex, parseCode, randomToken, sameBytes, SECRET_BYTES, secretWords, sha256Hex } from './words.ts';
-import type { DeviceScope } from './devices.ts';
+import { cleanKind, type DeviceKind, type DeviceScope } from './devices.ts';
 
 export const CODE_SECONDS = 5 * 60;
 export const MAX_WRONG = 3;
@@ -37,6 +37,9 @@ export interface Claim {
   secretHash: string;
   state: 'pending' | 'approved' | 'rejected';
   createdAt: number;
+  /** The kind the claiming device suggests (a fine pointer and a wide screen suggest a computer). Only pre-sets the Phone / Computer
+   * control on the PC's approve box: the approver decides (MF13). */
+  hint: DeviceKind;
   /** Set on approval and handed to the phone once. */
   handover?: { token: string; cookie: string; device: { id: string; name: string; scopes: DeviceScope[] } };
 }
@@ -94,7 +97,7 @@ export class Pairing {
   }
 
   /** A phone claims the code. Returns the claim and the claim secret the phone polls with. */
-  claim(input: { code: unknown; name: string; login: string; phoneNonce: unknown }): { claim: Claim; claimSecret: string } {
+  claim(input: { code: unknown; name: string; login: string; phoneNonce: unknown; hint?: unknown }): { claim: Claim; claimSecret: string } {
     this.#limit();
     const c = this.code;
     if (!c || this.clock() >= c.expiresAt) {
@@ -133,6 +136,7 @@ export class Pairing {
       secretHash: sha256Hex(claimSecret),
       state: 'pending',
       createdAt: this.clock(),
+      hint: cleanKind(input.hint),
     };
     this.claims.set(claim.id, claim);
     return { claim, claimSecret };

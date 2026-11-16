@@ -21,6 +21,8 @@ import { RemoteServer } from './server.ts';
 import { artifactServeCommand, readTailscale, type Runner, serveCommand, type TailscaleState } from './tailscale.ts';
 import { defaultEnv, funnelText, type SetupEnv, type SetupHost, TailscaleSetup } from './setup.ts';
 import { hex } from './words.ts';
+import { DeviceSockets, type SocketKind } from './pc_sockets.ts';
+import { DeviceViewPrefs } from './pc_page.ts';
 
 export const ACCESS_FILE = 'phone-access.json';
 /** A phone's switches as Settings > Remote control names them (for the activity log). */
@@ -31,6 +33,16 @@ const SCOPE_LABELS: Record<string, string> = {
   'phone.start': 'Start chats',
   'phone.approve': 'Approve once',
   'phone.push': 'Push',
+  'pc.always': 'Allow always',
+  'pc.files': 'Files',
+  'pc.terminal': 'Terminal',
+  'pc.projects': 'Projects',
+};
+
+/** The switches a paired computer's open socket needs: the terminal needs Terminal; the live doc editor writes, so it needs Send. */
+const SOCKET_NEEDS: Record<SocketKind, string[]> = {
+  terminal: ['pc.terminal'],
+  docs: ['phone.read', 'phone.prompt'],
 };
 
 /** Tests only (AGENT_STUDIO_TEST=1): a shorter wait for a busy phone port (AIB_TEST_REMOTE_BIND_MS). */
@@ -78,8 +90,12 @@ export class PhoneAccess implements SetupHost {
   artifactPort: number | null = null;
   artifactServer: RemoteArtifactServer | null = null;
   artifactProblem: AccessProblem | null = null;
-  /** Signed artifact links for paired phones (in memory: a restart ends them). */
+  /** Signed artifact links for paired phones (in memory: a restart ends them). Each is checked against the device store on every
+   * request, so a removed device's links stop working at once (artifact_server.ts). */
   readonly tickets = new ArtifactTickets();
+  /** The terminal and doc sockets of paired computers, by device (phase 1c): Remove closes them at once; the rest is rechecked every
+   * second and on each message (remote/pc_sockets.ts). */
+  readonly sockets: DeviceSockets;
   /** The setup buttons (Install, Sign in, Turn on HTTPS, Share AIB, Stop sharing, Turn off Funnel). */
   readonly setup: TailscaleSetup;
   /** AIB shared itself on Tailscale (Share AIB worked) and the owner has not stopped sharing since. */
@@ -96,6 +112,7 @@ export class PhoneAccess implements SetupHost {
     this.audit = new Audit(stateDir);
     this.vapid = new VapidKeys(stateDir);
     this.push = new PushSender(this.devices, this.vapid, options.pushFetch);
+    this.sockets = new DeviceSockets({ allowed: (id, kind) => this.socketAllowed(id, kind) });
     const [status, data] = readJsonFile(inDir(stateDir, ACCESS_FILE));
     if (status === 'ok' && data && typeof data === 'object') {
       const d = data as { on?: unknown; shared?: unknown; pendingUnshare?: unknown };
@@ -303,7 +320,20 @@ export class PhoneAccess implements SetupHost {
     this.#log(`phone artifact port listening on 127.0.0.1:${port}`);
   }
 
+  /** May this device still hold a socket of this kind: paired, a computer, and the switch on. In memory only (called per message). */
+  socketAllowed(id: string, kind: SocketKind): boolean {
+    const d = this.devices.devices.get(id);
+    if (!d || d.kind !== 'computer') return false;
+    return SOCKET_NEEDS[kind].every((s) => (d.scopes as string[]).includes(s));
+  }
+
+  /** A removed computer's own layout file goes too (phase 1b's per-device view prefs), also while the phone port is down. */
+  #forgetLayout(id: string): void {
+    (this.server?.pcPrefs ?? new DeviceViewPrefs(this.stateDir, () => this.ctx.viewPrefs)).forget(id);
+  }
+
   async #down(): Promise<void> {
+    this.sockets.closeAll(); // the port is going away: a computer's open terminal or doc goes with it
     const server = this.server;
     const artifacts = this.artifactServer;
     this.server = null;
@@ -358,6 +388,7 @@ export class PhoneAccess implements SetupHost {
     await (this.#busy ?? Promise.resolve()).catch(() => {});
     await this.devices.flush();
     await this.#down();
+    this.sockets.closeAll();
   }
 
   url(): string {
@@ -407,12 +438,27 @@ export class PhoneAccess implements SetupHost {
     return !!claim;
   }
 
+  /**
+   * Remove one device: everything is cut in this one step (design v2 section 6). The token (its next call gets 401 not_paired), its
+   * push subscription (it is part of the record), its artifact links (each is checked against the store), its open terminal and doc
+   * sockets (closed here, at once), its rate-limit bucket, its own layout file. Previews (phase 7) will add their forward here.
+   */
   async remove(id: unknown): Promise<boolean> {
     if (typeof id !== 'string') return false;
     const device = this.devices.devices.get(id);
     const removed = await this.devices.remove(id);
-    if (removed) this.audit.write({ device: id, name: device?.name ?? '', action: 'remove', result: 'removed on the PC' });
-    if (removed) this.ctx.presence.leavePhone(id, 'removed'); // no longer holds news back as "in hand"
+    if (removed) {
+      const closed = this.sockets.closeDevice(id);
+      this.server?.bridge.limit.forget(id);
+      this.#forgetLayout(id);
+      this.audit.write({
+        device: id,
+        name: device?.name ?? '',
+        action: 'remove',
+        result: closed ? `removed on the PC; ${closed} open ${closed === 1 ? 'socket' : 'sockets'} closed` : 'removed on the PC',
+      });
+      this.ctx.presence.leavePhone(id, 'removed'); // no longer holds news back as "in hand"
+    }
     return removed;
   }
 
@@ -420,6 +466,7 @@ export class PhoneAccess implements SetupHost {
     if (typeof id !== 'string' || !Array.isArray(scopes)) return null;
     const device = await this.devices.setScopes(id, scopes);
     if (device) {
+      this.sockets.recheck(); // Terminal (or Send) turned off: its open socket closes now, not on the next tick
       const words = device.scopes.map((x) => SCOPE_LABELS[x]).join(', ');
       this.audit.write({ device: id, name: device.name, action: 'switches', result: `set on the PC: ${words}` });
     }
@@ -437,7 +484,12 @@ export class PhoneAccess implements SetupHost {
   async removeAll(): Promise<number> {
     const ids = [...this.devices.devices.keys()];
     const count = await this.devices.removeAll();
-    for (const id of ids) this.ctx.presence.leavePhone(id, 'removed');
+    this.sockets.closeAll('device removed');
+    for (const id of ids) {
+      this.ctx.presence.leavePhone(id, 'removed');
+      this.server?.bridge.limit.forget(id);
+      this.#forgetLayout(id);
+    }
     this.pairing.cancel();
     await this.vapid.rotate();
     this.audit.write({ action: 'remove all phones', result: `${count} removed on the PC; new push keys` });
@@ -502,7 +554,13 @@ export class PhoneAccess implements SetupHost {
           ? { words: code.words, expiresAt: code.expiresAt, claimed: code.claimed, wrong: code.wrong, anotherTried: code.anotherTried }
           : null,
         anotherTried: !!used?.anotherTried,
-        pending: this.pairing.pending().map((c) => ({ id: c.id, name: c.name, checkWords: c.checkWords, createdAt: c.createdAt })),
+        pending: this.pairing.pending().map((c) => ({
+          id: c.id,
+          name: c.name,
+          checkWords: c.checkWords,
+          createdAt: c.createdAt,
+          hint: c.hint,
+        })),
       },
     };
   }

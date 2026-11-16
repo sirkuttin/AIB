@@ -156,14 +156,27 @@
     }
   }).observe(doc.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['src'] });
 
-  /* Removed on the PC (401 not_paired): the phone page says so and forgets the key (one place for both kinds). */
+  /* Removed on the PC (401 not_paired): this page's storage and the cached shell go now (drafts, layout picks); the phone page then
+     says so and forgets the key (one place for both kinds: phone.js removed() also wipes the origin). */
   let leaving = false;
+  async function wipe() {
+    try {
+      root.localStorage.clear();
+    } catch { /* not available */ }
+    try {
+      root.sessionStorage.clear();
+    } catch { /* not available */ }
+    try {
+      if (root.caches) for (const name of await root.caches.keys()) await root.caches.delete(name);
+    } catch { /* not available */ }
+  }
   function removed(response) {
     response
       .json()
-      .then((b) => {
+      .then(async (b) => {
         if (b && b.code === 'not_paired' && !leaving) {
           leaving = true;
+          await wipe();
           root.location.replace('/phone.html');
         }
       })
@@ -403,6 +416,36 @@
     root.setTimeout(() => URL.revokeObjectURL(a.href), 30000);
   }
 
+  /* Phase 1c: any file of the Files view as a download (binary, large, or not shown as text), through the computer-only route
+     GET /api/pc/files/download (at most 20 MiB; the PC logs the path, never the content). `d`: the Files scope args ({id, root:
+     'chat' | 'main'} or {root: 'project', project}) plus {path, name}.
+     Resolves to '' when it worked, else the PC's reason. */
+  async function downloadFile(d) {
+    const q = new URLSearchParams();
+    if (d && d.root === 'project') {
+      q.set('root', 'project');
+      q.set('project', String(d.project));
+    } else {
+      q.set('id', String((d && d.id) || ''));
+      q.set('root', String((d && d.root) || 'chat'));
+    }
+    q.set('path', String((d && d.path) || ''));
+    const r = await root.fetch('/api/pc/files/download?' + q.toString(), { cache: 'no-store', credentials: 'same-origin' });
+    if (!r.ok) {
+      const b = await r.json().catch(() => ({}));
+      return b.error || 'The download did not work (' + r.status + ').';
+    }
+    const blob = await r.blob();
+    const a = doc.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = String((d && (d.name || d.path)) || 'file').split(/[\/]/).pop() || 'file';
+    doc.body.append(a);
+    a.click();
+    a.remove();
+    root.setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+    return '';
+  }
+
   root.AIBRemote = {
     kind: 'pc',
     caps: { remote: true },
@@ -413,6 +456,7 @@
     push,
     install,
     downloadText,
+    downloadFile,
   };
   // a phone page shell or the loader never loads this file; the doc page does (pc_page.ts)
   if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', () => start(), { once: true });

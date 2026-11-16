@@ -1388,12 +1388,37 @@
     if (S.screen === 'chat' && (changed || noticed)) draw();
   }
 
+  /* What this device suggests it is (a fine pointer and a width of 900 px or more: a computer). Only pre-sets the Phone / Computer
+     control on the PC's approve box: the approver decides (MF13). */
+  function kindHint() {
+    try {
+      const fine = root.matchMedia && root.matchMedia('(pointer: fine)').matches;
+      return fine && (root.innerWidth || 0) >= 900 ? 'computer' : 'phone';
+    } catch {
+      return 'phone';
+    }
+  }
+
+  /* Removed on the PC (401 not_paired): this origin keeps nothing (design v2 section 6, phase 1c): the device key, the page's own
+     storage (drafts, picks) and the service worker's cached shell all go. The removed screen is drawn from memory. */
   async function removed() {
     S.token = '';
     S.device = null;
     await stored('device', null);
+    await wipeOrigin();
     S.screen = 'removed';
     draw();
+  }
+  async function wipeOrigin() {
+    try {
+      root.localStorage.clear();
+    } catch { /* not available */ }
+    try {
+      root.sessionStorage.clear();
+    } catch { /* not available */ }
+    try {
+      if (root.caches) for (const name of await root.caches.keys()) await root.caches.delete(name);
+    } catch { /* not available */ }
   }
 
 
@@ -4094,7 +4119,7 @@
     const nonce = randomHex(16);
     let r;
     try {
-      r = await call('POST', '/api/remote/pair/claim', { code: secretHex, name, nonce });
+      r = await call('POST', '/api/remote/pair/claim', { code: secretHex, name, nonce, kind: kindHint() });
     } catch {
       S.pairing = { code: codeText, name, error: "Can't reach " + S.pcName + '. Check that Tailscale is on, on this phone.' };
       return draw();

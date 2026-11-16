@@ -1945,12 +1945,12 @@ Deno.test({
       );
       assertEquals(again.status, 200, "Send is on now");
       await page.eval(
-        `[...document.querySelectorAll('.dv-slot button')].find((b) => b.textContent === 'Phone activity').click()`,
+        `[...document.querySelectorAll('.dv-slot button')].find((b) => b.textContent === 'Device activity').click()`,
       );
       const lines = await page.waitFor(
         `(() => { const l = [...document.querySelectorAll('.dv-activity p')].map((p) => p.textContent); return l.length > 3 ? l : null; })()`,
         8000,
-        "Phone activity",
+        "Device activity",
       ) as string[];
       assert(
         lines.some((l) =>

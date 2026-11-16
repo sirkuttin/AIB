@@ -1,7 +1,8 @@
 /**
  * The phone activity log (<state>/remote-audit.jsonl): one line per pairing step, device change, phone action (answer, approve,
  * send, stop, queue) and refused phone request, with the time, the phone (id and name), the action, the chat id and the result.
- * Never message text, answers, commands or codes. Kept small: at MAX_BYTES the file
+ * A paired computer adds terminal opened and closed, file downloaded, file outside the project read, and project added and removed,
+ * each with the path (never the content). Never message text, answers, commands, terminal input or codes. Kept small: at MAX_BYTES the file
  * moves to remote-audit.1.jsonl (one older file is kept) and a new one starts.
  */
 import { inDir } from '../state/base.ts';
@@ -14,6 +15,9 @@ export interface AuditEntry {
   /** The chat a phone action was for ('' for pairing and device changes). */
   chat: string;
   result: string;
+  /** A file or folder the action was about (a download, a file outside the project, a project added or removed): the path only,
+   * never the content. */
+  path?: string;
 }
 
 export const AUDIT_FILE = 'remote-audit.jsonl';
@@ -28,7 +32,7 @@ export class Audit {
     this.old = stateDir ? inDir(stateDir, AUDIT_OLD) : null;
   }
 
-  write(entry: { device?: string; name?: string; action: string; chat?: string; result: string }): void {
+  write(entry: { device?: string; name?: string; action: string; chat?: string; result: string; path?: string }): void {
     if (this.path === null) return;
     const line: AuditEntry = {
       time: Math.round(this.clock()),
@@ -37,6 +41,7 @@ export class Audit {
       action: entry.action.slice(0, 40),
       chat: String(entry.chat ?? '').slice(0, 100),
       result: entry.result.slice(0, 80),
+      ...(entry.path ? { path: String(entry.path).slice(0, 400) } : {}),
     };
     try {
       let size = 0;

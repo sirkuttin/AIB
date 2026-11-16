@@ -49,7 +49,8 @@ import { SAVED_KEY } from './saved.ts';
 import { cleanPushSub } from './devices.ts';
 import type { VapidKeys } from './push.ts';
 import { getLogger } from '../core/log.ts';
-import { PcBridge } from './pc_bridge.ts';
+import { PC_OWN_ROUTES, PcBridge } from './pc_bridge.ts';
+import type { DeviceSockets } from './pc_sockets.ts';
 import { entryFor } from './pc_routes.ts';
 import { TERMINAL_SOCKET } from '../web/terminal_routes.ts';
 import { DOCS_SOCKET } from '../web/docs_routes.ts';
@@ -276,6 +277,8 @@ export interface RemoteHost {
   artifactOrigin(): string;
   /** Signs the artifact links the phone opens (checked by the artifact port). */
   tickets: ArtifactTickets;
+  /** The open terminal and doc sockets of paired computers, by device (phase 1c; remote/pc_sockets.ts). */
+  sockets: DeviceSockets;
   /** The Tailscale login of this PC: only phones signed in with it may pair. */
   ownerLogin(): string;
   pcName(): string;
@@ -395,6 +398,8 @@ export class RemoteServer {
     this.bridge = new PcBridge({
       ctx: host.ctx,
       devices: host.devices,
+      sockets: host.sockets,
+      audit: host.audit,
       json: (s, b, e) => this.json(s, b, e),
       artifactLinks: (text, deviceId) =>
         remoteArtifactLinks(text, host.ctx.artifacts?.store.origin ?? '', host.artifactOrigin(), (id) => host.tickets.mint(deviceId, id)),
@@ -406,7 +411,7 @@ export class RemoteServer {
   #forBridge(method: string, path: string, headers: Headers): 'api' | 'socket' | null {
     const upgrade = headers.get('Upgrade') !== null || headers.has('Sec-WebSocket-Key');
     if (upgrade) return method === 'GET' && (path === TERMINAL_SOCKET || path === DOCS_SOCKET) ? 'socket' : null;
-    if (!headers.has(DEVICE_HEADER) || !entryFor(method, path)) return null;
+    if (!headers.has(DEVICE_HEADER) || !(entryFor(method, path) || PC_OWN_ROUTES.has(`${method} ${path}`))) return null;
     return path.startsWith('/api/') ? 'api' : null;
   }
 
@@ -746,7 +751,7 @@ export class RemoteServer {
     if (path === '/api/remote/pair/claim') {
       const name = cleanName(body.name);
       try {
-        const { claim, claimSecret } = pairing.claim({ code: body.code, name, login, phoneNonce: body.nonce });
+        const { claim, claimSecret } = pairing.claim({ code: body.code, name, login, phoneNonce: body.nonce, hint: body.kind });
         this.host.audit.write({ name, action: 'pair', result: 'waiting for approval on the PC' });
         return this.json(200, {
           claim: claim.id,
