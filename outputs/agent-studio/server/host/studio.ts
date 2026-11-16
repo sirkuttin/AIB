@@ -76,7 +76,6 @@ import {
   windowsPathInWsl,
   WSL_TOOLS_NOTICE,
   wslHost,
-  wslToolsNotice,
   wslLoc,
 } from '../wsl/access.ts';
 import { urlGate } from '../wsl/open_urls.ts';
@@ -866,7 +865,7 @@ export class Studio {
     if (!key) return { servers: [], notice: WSL_TOOLS_NOTICE };
     const tunnel = distro ? wslHost(distro)?.mcpTunnel ?? null : null;
     if (tunnel) {
-      return { servers: [tunnelEntry(tunnel.forwarder, tunnel.socket, key, conversationId) as unknown as McpServer], notice: wslToolsNotice() };
+      return { servers: [tunnelEntry(tunnel.forwarder, tunnel.socket, key, conversationId) as unknown as McpServer], notice: '' };
     }
     let forwarder: string | null = null;
     try {
@@ -886,7 +885,7 @@ export class Studio {
     }
     const entry = forwardEntry(program, file, key, conversationId) as { env: { name: string; value: string }[] };
     entry.env.push({ name: 'WSLENV', value: 'MCP_FORWARD_HEADERS' }); // the agent's variable crosses into the Windows forwarder
-    return { servers: [entry as unknown as McpServer], notice: wslToolsNotice() };
+    return { servers: [entry as unknown as McpServer], notice: '' };
   }
 
   /**

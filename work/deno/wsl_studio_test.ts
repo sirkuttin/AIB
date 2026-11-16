@@ -19,7 +19,7 @@ import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
 import { KeeperLink } from '../../outputs/agent-studio/server/keeper/link.ts';
 import { KeeperClient, keeperBinary, readKeeperInfo } from '../../outputs/agent-studio/server/keeper/client.ts';
 import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
-import { setWslHostResolver, WSL_TOOLS_NOTICE, wslToolsNotice } from '../../outputs/agent-studio/server/wsl/access.ts';
+import { setWslHostResolver, WSL_TOOLS_NOTICE } from '../../outputs/agent-studio/server/wsl/access.ts';
 import { mcpTunnelGate } from '../../outputs/agent-studio/server/wsl/mcp_tunnel.ts';
 import { TerminalSessions } from '../../outputs/agent-studio/server/terminal/sessions.ts';
 import type { WsLink } from '../../outputs/agent-studio/server/platform/websocket.ts';
@@ -164,7 +164,7 @@ Deno.test({
       assert(String(entry.command).startsWith('/mnt/') && /AIB-keeper(\.exe)?$/i.test(String(entry.command)), String(entry.command));
       assertEquals((entry.args as string[])[0], 'mcp-forward');
       assert((entry.env as Json[]).some((e) => e.name === 'WSLENV' && e.value === 'MCP_FORWARD_HEADERS'));
-      assert(notes(c).includes(wslToolsNotice()), notes(c).join(' | '));
+      assert(!notes(c).some((n) => n.startsWith('In WSL projects, AIB tools')), 'no tools note when the tools work: ' + notes(c).join(' | '));
     } else {
       assert(notes(c).includes(WSL_TOOLS_NOTICE), 'no entry: the chat says the tools are missing');
     }
@@ -207,7 +207,7 @@ Deno.test({
     assert(!env.some((e) => e.name === 'WSLENV'), 'nothing crosses WSL interop');
     const headers = JSON.parse(env.find((e) => e.name === 'MCP_FORWARD_HEADERS')!.value) as Record<string, string>;
     assertEquals(headers['X-Studio-Conversation-Id'], c.id);
-    assert(notes(c).includes(wslToolsNotice()), notes(c).join(' | '));
+    assert(!notes(c).some((n) => n.startsWith('In WSL projects, AIB tools')), 'no tools note when the tools work: ' + notes(c).join(' | '));
     assert(c.ownArtifactTool({ toolCall: { name: 'mcp__studio_artifact__publish' } }), "the tunnel entry is AIB's own tool (its calls need no permission)");
 
     // The helper hands a tool call over (mcp.request): AIB accepts it, answers it through its endpoint's checks, and replies.

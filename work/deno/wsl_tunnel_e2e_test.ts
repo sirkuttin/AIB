@@ -16,7 +16,6 @@ import { cleanRoot, inDistro, KEY, newAib, prepareRoot, readyHost, ROOT, T } fro
 import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
 import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
 import { refOf } from '../../outputs/agent-studio/server/platform/location.ts';
-import { wslToolsNotice } from '../../outputs/agent-studio/server/wsl/access.ts';
 import type { WslInstall } from '../../outputs/agent-studio/server/wsl/install.ts';
 import { KeeperLink } from '../../outputs/agent-studio/server/keeper/link.ts';
 
@@ -95,7 +94,7 @@ Deno.test({
       const entry = c.mcpServers[0] as unknown as Entry;
       assertEquals([entry.command, ...entry.args], [tunnel.forwarder, 'mcp-forward', '--helper-socket', tunnel.socket]);
       assert(!entry.env.some((e) => e.name === 'WSLENV'), 'nothing crosses interop');
-      assert(notes(c).includes(wslToolsNotice()), notes(c).join(' | '));
+      assert(!notes(c).some((n) => n.startsWith('In WSL projects, AIB tools')), 'no tools note when the tools work: ' + notes(c).join(' | '));
       const headers = entry.env.find((e) => e.name === 'MCP_FORWARD_HEADERS')!.value;
 
       const run = await runEntry(entry, headers);
@@ -149,7 +148,7 @@ Deno.test({
       assert(entry, `an entry, or the notice: ${notes(c).join(' | ')}`);
       assert(entry.command.startsWith('/mnt/') && /AIB-keeper\.exe$/i.test(entry.command), entry.command);
       assertEquals(entry.args[0], 'mcp-forward');
-      assert(notes(c).includes(wslToolsNotice()), notes(c).join(' | '));
+      assert(!notes(c).some((n) => n.startsWith('In WSL projects, AIB tools')), 'no tools note when the tools work: ' + notes(c).join(' | '));
       const headers = entry.env.find((e) => e.name === 'MCP_FORWARD_HEADERS')!.value;
       const run = await runEntry(entry, headers);
       assert(toolNames(run.answers.get(2)).includes('publish'), `${JSON.stringify([...run.answers])} ${run.err}`);
