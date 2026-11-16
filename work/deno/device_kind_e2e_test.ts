@@ -58,6 +58,17 @@ Deno.test({
       await page.eval(`[...document.querySelectorAll('.st-section')].find((b) => b.textContent === 'Remote control').click()`);
       await page.waitFor(`document.querySelectorAll('.dv-device').length === 2 && !!document.getElementById('dvAdd')`, 8000, 'two rows');
 
+      // Settings is still loading (agent sign-in checks, bootstrap) and redraws the whole page once more when they finish; a redraw
+      // while the page is scrolled can drop the scroll. Measure only after the page has been quiet, as the owner does.
+      let quiet = 0;
+      for (let i = 0, last = ''; i < 60 && quiet < 6; i++) {
+        const sig = await page.eval<string>(`(() => { const c = document.querySelector('.st-content'); return c.scrollHeight + ':' + c.innerHTML.length; })()`);
+        quiet = sig === last ? quiet + 1 : 0;
+        last = sig;
+        await settle(250);
+      }
+      assert(quiet >= 6, 'Settings never went quiet');
+
       // 1. Add a phone at its spot, then a second click there: the rows do not move, nothing of a row is under the pointer
       const tops = `JSON.stringify([...document.querySelectorAll('.dv-device')].map((r) => Math.round(r.getBoundingClientRect().top)))`;
       const at = await page.eval<[number, number]>(`(() => { const e = document.getElementById('dvAdd'); e.scrollIntoView({block: 'center'});
