@@ -664,7 +664,7 @@
             ]),
       );
       ul.append(
-        aptCheck(d, 'git', p.git || { state: 'missing' }, 'git', 'Needed for a chat\'s own copy, Changes and Merge; until then chats work in the project folder.'),
+        aptCheck(d, 'git', p.git || { state: 'missing' }, 'git', 'Needed for the Changes tab, and to merge older chats that still work in their own copy.'),
         aptCheck(d, 'curl', p.curl || { state: 'missing' }, 'curl', 'Needed by nvm\'s installer and the vendors\' install scripts.'),
       );
       const mb = p.diskFreeMB;
