@@ -4,9 +4,10 @@
  *   list      the saved chats the PC's own list shows (saved transcripts of added projects, as /api/sessions after filterSessions,
  *             plus chats that were open before a restart and did not come back), minus the ones running now, archived or deleted.
  *             Newest first, at most MAX_SAVED. Kept for LIST_MS (the phone polls home every 4 s; a transcript scan is not free).
- *   history   the last N events of one listed chat's saved transcript, in the shape of live events (what phone.js draws), with no
- *             picture bytes (saved transcripts only hold their address; the phone says the picture is on the PC) and under
- *             MAX_HISTORY_BYTES.
+ *   history   the last N events of one listed chat's saved transcript (or the N before=<seq>: Load earlier), in the shape of live
+ *             events (what phone.js draws), with no picture bytes (saved transcripts only hold their address; the phone says the
+ *             picture is on the PC) and under MAX_HISTORY_BYTES. An event's seq is its place in the transcript + 1, so pages join
+ *             up. A message longer than MAX_EVENT_TEXT is cut and marked (clipped: true; the phone says the rest is on the PC).
  *   continue  the PC's own reconnect: POST /api/live/connect {provider, cwd, resume} with the chat's saved agent and folder, never
  *             anything the phone sent (no agent, model, mode, folder or config: a body with any other field is refused). The
  *             ownership check runs as on the PC, and without continueAnyway: a chat that is open in another app (or another AIB
@@ -15,6 +16,7 @@
 import type { WebContext } from '../web/server.ts';
 import { afterConnect, filterSessions } from '../web/project_routes.ts';
 import { handleGet as monitorGet } from '../transcripts/monitor.ts';
+import { CLIP_NOTE } from '../transcripts/pycompat.ts';
 import { agentName, withArtifactOrigin } from './payloads.ts';
 
 type Json = Record<string, unknown>;
@@ -25,7 +27,9 @@ export const MAX_SAVED = 30;
 export const LIST_MS = 10_000;
 export const SAVED_TAIL = 200;
 export const MAX_HISTORY_BYTES = 512 * 1024;
-const MAX_EVENT_TEXT = 8000;
+/** The most text one saved message carries to the phone (longer ones are cut and marked clipped). The transcript reader cuts at
+ * 32,000 characters first (pycompat.clipped, with CLIP_NOTE): such a message is marked clipped as well. */
+export const MAX_EVENT_TEXT = 100_000;
 
 /** One chat that is not running, as the phone's home lists it. `cwd` and `transcript` stay on the PC. */
 export interface SavedChat {
@@ -154,23 +158,30 @@ export function publicSaved(c: SavedEntry): SavedChat {
 
 // ---- the saved history, as live events ---------------------------------------------------------------------------------------
 
-const clip = (v: unknown) => (typeof v === 'string' ? v.slice(0, MAX_EVENT_TEXT) : '');
-
-/** Saved transcript events (transcripts/normalize.ts) -> the live events phone.js draws. Thinking is left out; pictures are a note. */
-export function liveShaped(events: unknown[], first = 1): Json[] {
+/** Saved transcript events (transcripts/normalize.ts) -> the live events phone.js draws. Thinking is left out; pictures are a note.
+ * events[i] gets seq first + i (its place in the transcript + 1). `afterAgent`: the event before events[0] was a reply of the agent
+ * (a reply that follows another one starts with a blank line, as when both are on one page). */
+export function liveShaped(events: unknown[], first = 1, afterAgent = false): Json[] {
   const out: Json[] = [];
   let seq = first - 1;
-  let lastAgent = false;
+  let lastAgent = afterAgent;
+  let cut = false;
   const push = (kind: string, data: Json, time: unknown) => {
     const t = Date.parse(typeof time === 'string' ? time : '');
-    out.push({ seq: ++seq, kind, ...(t ? { time: t / 1000 } : {}), data });
+    out.push({ seq, kind, ...(t ? { time: t / 1000 } : {}), data, ...(cut ? { clipped: true } : {}) });
   };
   for (const raw of events) {
+    seq++;
     const e = obj(raw);
     const pictures = Array.isArray(e.images) && e.images.length;
     const note = pictures ? (pictures === 1 ? '[A picture: it is on your PC.]' : `[${pictures} pictures: they are on your PC.]`) : '';
-    const text = clip(e.text);
+    let full = typeof e.text === 'string' ? e.text : '';
     const kind = e.kind;
+    // the transcript reader already cut a very long text (its own limit, with a note at the end): the phone says so in its own words
+    const shortened = full.endsWith(CLIP_NOTE);
+    if (shortened) full = full.slice(0, -CLIP_NOTE.length);
+    cut = (shortened || full.length > MAX_EVENT_TEXT) && kind !== 'tool' && kind !== 'result' && kind !== 'error'; // no step output shown
+    const text = full.slice(0, MAX_EVENT_TEXT);
     if (kind === 'user') {
       push('user', { text: [text, note].filter(Boolean).join('\n') }, e.time);
       lastAgent = false;
@@ -216,20 +227,41 @@ export interface SavedHistory {
   lastActive: string;
   /** false: AIB keeps no saved transcript of this chat here (it can still be continued) */
   history: boolean;
+  /** Older messages exist before firstSeq (Load earlier asks before=firstSeq). */
   truncated: boolean;
+  /** The first event's seq (its place in the transcript + 1); `before` when a Load earlier page is empty. */
+  firstSeq: number;
   events: Json[];
 }
 
-/** The last `tail` events of a saved chat, under MAX_HISTORY_BYTES (the oldest are dropped first). */
-export async function savedHistory(ctx: WebContext, chat: SavedEntry, tail: number, artifactOrigin = ''): Promise<SavedHistory> {
-  const base = { ...publicSaved(chat), history: !!chat.transcript, truncated: false, events: [] as Json[] };
+/** The last `tail` events of a saved chat (or the `tail` before seq `before`: Load earlier), under MAX_HISTORY_BYTES (the oldest
+ * are dropped first). */
+export async function savedHistory(
+  ctx: WebContext,
+  chat: SavedEntry,
+  tail: number,
+  artifactOrigin = '',
+  before: number | null = null,
+): Promise<SavedHistory> {
+  const base = { ...publicSaved(chat), history: !!chat.transcript, truncated: false, firstSeq: before ?? 0, events: [] as Json[] };
   if (!chat.transcript) return base;
   const n = Math.max(1, Math.min(500, Math.trunc(tail) || SAVED_TAIL));
-  const reply = await monitorGet(ctx.transcripts, '/api/transcript', `key=${encodeURIComponent(chat.transcript)}&limit=${n}`);
+  // one event more than asked: the one before the page says whether its first reply follows another (it is not sent)
+  const end = before === null ? '' : `&before=${Math.max(0, Math.trunc(before) - 1)}`;
+  const reply = await monitorGet(ctx.transcripts, '/api/transcript', `key=${encodeURIComponent(chat.transcript)}&limit=${n + 1}${end}`);
   const page = obj(reply.body);
   if (reply.status !== 200 || !Array.isArray(page.events)) return { ...base, history: false };
-  let events = liveShaped(page.events, (Number(page.before) || 0) + 1).map((e) => withArtifactOrigin(e, artifactOrigin) as Json);
-  let truncated = Number(page.before) > 0;
+  let raw = page.events as unknown[];
+  let start = Number(page.before) || 0;
+  let afterAgent = false;
+  if (raw.length > n) {
+    const lead = obj(raw[0]);
+    afterAgent = lead.kind === 'assistant' && (!!String(lead.text ?? '').trim() || (Array.isArray(lead.images) && lead.images.length > 0));
+    raw = raw.slice(1);
+    start += 1;
+  }
+  let events = liveShaped(raw, start + 1, afterAgent).map((e) => withArtifactOrigin(e, artifactOrigin) as Json);
+  let truncated = start > 0;
   let size = new TextEncoder().encode(JSON.stringify(events)).byteLength;
   while (events.length > 1 && size > MAX_HISTORY_BYTES) {
     const drop = Math.max(1, Math.ceil(events.length / 10));
@@ -237,7 +269,8 @@ export async function savedHistory(ctx: WebContext, chat: SavedEntry, tail: numb
     events = events.slice(drop);
     truncated = true;
   }
-  return { ...base, truncated, events };
+  const firstSeq = events.length ? Number(events[0].seq) || 0 : before ?? start + 1;
+  return { ...base, truncated, firstSeq, events };
 }
 
 // ---- continue ------------------------------------------------------------------------------------------------------------------
