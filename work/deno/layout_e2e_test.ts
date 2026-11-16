@@ -968,6 +968,10 @@ layoutTest('L7b split view: no double scrollbars and no sideways scroll with two
     await settle(1000);
     const bad = sweepProblems(await sweep(page), ['pre', 'code', 'table', 'div.ws-tabs']);
     if (bad.length) problems.push(`${w} px: ${bad.join('; ')}`);
+    // the panes reach the right panel: its room is kept once, not twice (split-ui.js mirrorCss once raised the page's body rules
+    // over "html body > main" in activity.css, so main lost the right panel's column and still kept clear of it)
+    const room = await page.eval<number>(`(() => { const s = document.getElementById('splitStage').getBoundingClientRect(), a = document.getElementById('subagentsPane').getBoundingClientRect(); return a.width ? Math.round(a.left - s.right) : 0; })()`);
+    if (Math.abs(room) > 2) problems.push(`${w} px: ${room} px between the panes and the right panel`);
   }
   assert(!problems.length, problems.join('\n'));
 });
