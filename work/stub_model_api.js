@@ -18,6 +18,8 @@
  *          tool_result's text (and its tool_use_id: give each scripted call an `id` and chain on it) counts; "any": the
  *          whole request body; "system": the system prompt / instructions only
  *   once   (default true) the rule is used up after it matches once
+ *   capture  (optional) a regex run on the whole raw request; its first group replaces every "@CAP@" in the reply (e.g. an
+ *          agentId from an earlier tool result, so a scripted SendMessage can address a subagent whose id is only known at run time)
  *   reply  text, tool calls, or both. A rule that calls tools only matches a request that OFFERS every one of those tools, so
  *          side requests the CLI makes without tools (titles, summaries) never use up a rule.
  * Tool calls go out as Anthropic `tool_use` blocks (stop_reason "tool_use") on /v1/messages and as Responses API
@@ -86,8 +88,14 @@ function pick(body, raw) {
     const calls = (r.reply && r.reply.tools) || [];
     if (calls.some((c) => !offered.has(c.name))) continue;
     if (r.when !== undefined && !part(body, raw, r.in || 'last').includes(r.when)) continue;
+    let reply = r.reply || {};
+    if (r.capture) {
+      const m = raw.match(new RegExp(r.capture));
+      if (!m) continue; // the value to fill in is not there yet
+      reply = JSON.parse(JSON.stringify(reply).split('@CAP@').join(m[1]));
+    }
     if (r.once !== false) used.add(i);
-    return { index: i, reply: r.reply || {} };
+    return { index: i, reply };
   }
   return null;
 }
@@ -267,7 +275,7 @@ const server = http.createServer((req, res) => {
     const path = (req.url || '/').split('?')[0];
     const modelCall = req.method === 'POST' && (/\/messages$/.test(path) || /\/responses$/.test(path));
     const said = modelCall ? answer(body, raw) : null;
-    log({ method: req.method, path, codeword: codewordIn(raw), tools: toolNames(body), rule: said ? said.rule : null, last: part(body, raw, 'last').slice(-400) });
+    log({ at: Date.now(), method: req.method, path, codeword: codewordIn(raw), tools: toolNames(body), rule: said ? said.rule : null, last: part(body, raw, 'last').slice(-400) });
     if (req.method === 'POST' && /\/messages\/count_tokens$/.test(path)) {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ input_tokens: 10 }));

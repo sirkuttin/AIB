@@ -14,6 +14,10 @@
  *
  *   --delay-worktree MS  wait MS before answering WorktreeCreate (to tell "last answer wins" from "tier wins")
  *   --fail-worktree      answer WorktreeCreate with HTTP 500 (what the parent sees when AIB cannot make the copy)
+ *   --fail-pre           answer PreToolUse with HTTP 500 (P0b: does a 5xx block the tool or fail open?)
+ *   --delay-pre MS       answer PreToolUse only after MS (P0b: what a hook timeout does)
+ *   --plain-worktree     answer WorktreeCreate with the bare path as text (what a command hook must print; for the forwarder probe)
+ *   --fixed-name NAME    WorktreeCreate makes DIR/NAME (a path known in advance, so a script can name files inside it)
  *
  * Start:  node work/hook_recorder.js --log FILE [--port N] [--force-isolation] [--worktree-root DIR] [--stdin]
  * The first stdout line is `HOOKS_PORT=<port>`. Stops on SIGTERM / SIGINT, and with --stdin when stdin closes.
@@ -35,6 +39,10 @@ const FORCE = args.includes('--force-isolation');
 const ROOT = opt('--worktree-root', null);
 const DELAY = Number(opt('--delay-worktree', '0'));
 const FAIL = args.includes('--fail-worktree');
+const FAIL_PRE = args.includes('--fail-pre');
+const DELAY_PRE = Number(opt('--delay-pre', '0'));
+const FIXED = opt('--fixed-name', null);
+const PLAIN_WT = args.includes('--plain-worktree');
 
 function log(entry) {
   if (LOG) fs.appendFileSync(LOG, JSON.stringify({ at: Date.now(), ...entry }) + '\n');
@@ -46,7 +54,7 @@ function answer(input) {
     return { hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { ...input.tool_input, isolation: 'worktree' } } };
   }
   if (event === 'WorktreeCreate' && ROOT) {
-    const name = String(input.name || 'sub').replace(/[^A-Za-z0-9._-]/g, '-');
+    const name = FIXED || String(input.name || 'sub').replace(/[^A-Za-z0-9._-]/g, '-');
     const where = path.join(ROOT, name);
     execFileSync('git', ['worktree', 'add', '-b', `aib-sub-${name}`, where, 'HEAD'], { cwd: input.cwd, stdio: 'ignore', windowsHide: true });
     return { hookSpecificOutput: { hookEventName: 'WorktreeCreate', worktreePath: where } };
@@ -70,6 +78,20 @@ const server = http.createServer((req, res) => {
       res.end(JSON.stringify({ error: 'AIB could not make a copy of the project (test)' }));
       return;
     }
+    if (body.hook_event_name === 'PreToolUse' && FAIL_PRE) {
+      log({ via: 'http', label, body, reply: 'HTTP 500 (--fail-pre)' });
+      res.writeHead(500, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: 'AIB failed (test)' }));
+      return;
+    }
+    if (body.hook_event_name === 'PreToolUse' && DELAY_PRE) {
+      log({ via: 'http', label, body, reply: `delayed ${DELAY_PRE} ms (--delay-pre)` });
+      setTimeout(() => {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify(answer(body)));
+      }, DELAY_PRE);
+      return;
+    }
     if (body.hook_event_name === 'WorktreeCreate' && DELAY) {
       const until = Date.now() + DELAY;
       while (Date.now() < until) { /* a probe: block on purpose */ }
@@ -84,6 +106,11 @@ const server = http.createServer((req, res) => {
       return;
     }
     log({ via: 'http', label, body, reply });
+    if (PLAIN_WT && body.hook_event_name === 'WorktreeCreate' && reply.hookSpecificOutput) {
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      res.end(reply.hookSpecificOutput.worktreePath);
+      return;
+    }
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify(reply));
   });

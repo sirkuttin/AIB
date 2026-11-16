@@ -15,19 +15,21 @@
  *   --meta FILE     a JSON file sent as `_meta` on session/new and session/load (e.g. {"claudeCode": {"options": {"settings": ...}}})
  *   --allow         answer permission requests with the first allow option instead of refusing
  *   --events FILE   append every session/update and agent-to-client request as one JSON line, for tool_call / _meta checks
+ *   --mode ID       after session/new or session/load, call session/set_mode with this mode id (e.g. acceptEdits, bypassPermissions)
  *   --args JSON     a JSON array of extra arguments for the adapter process (e.g. ["-c", "features.multi_agent=false"])
  */
 'use strict';
 const { spawn } = require('node:child_process');
 
 const argv = process.argv.slice(2);
-const flags = { meta: null, allow: false, events: null, args: [] };
+const flags = { meta: null, allow: false, events: null, args: [], mode: null };
 while (argv[0] && argv[0].startsWith('--')) {
   const name = argv.shift();
   if (name === '--allow') flags.allow = true;
   else if (name === '--meta') flags.meta = JSON.parse(require('node:fs').readFileSync(argv.shift(), 'utf8'));
   else if (name === '--events') flags.events = argv.shift();
   else if (name === '--args') flags.args = JSON.parse(argv.shift());
+  else if (name === '--mode') flags.mode = argv.shift();
 }
 const [entry, op, ...rest] = argv;
 const record = (line) => {
@@ -128,6 +130,8 @@ async function main() {
   if (op === 'new') {
     const [cwd, words] = rest;
     const s = await request('session/new', { cwd, mcpServers: [], ...(flags.meta ? { _meta: flags.meta } : {}) });
+    record({ sessionNew: { modes: s.modes || null } });
+    if (flags.mode) record({ setMode: await request('session/set_mode', { sessionId: s.sessionId, modeId: flags.mode }) });
     const reply = await prompt(s.sessionId, words);
     finish({ sessionId: s.sessionId, reply });
   } else if (op === 'list') {
@@ -140,6 +144,7 @@ async function main() {
     const [cwd, sessionId, words] = rest;
     text = '';
     await request('session/load', { sessionId, cwd, mcpServers: [], ...(flags.meta ? { _meta: flags.meta } : {}) }, 120);
+    if (flags.mode) record({ setMode: await request('session/set_mode', { sessionId, modeId: flags.mode }) });
     const history = text;
     const reply = words ? await prompt(sessionId, words) : null;
     finish({ loaded: true, history, reply });
