@@ -38,8 +38,11 @@ export const HOOK_KEY_HEADER = 'X-Studio-Hook-Key';
 /** The forwarder's fresh random nonce for this call; AIB's answer carries HOOK_PROOF_HEADER over it (artifacts/keys.ts hookProof). */
 export const HOOK_NONCE_HEADER = 'X-Studio-Hook-Nonce';
 export const HOOK_PROOF_HEADER = 'X-Studio-Hook-Proof';
-// Gemini CLI's BeforeTool (subagents/gemini.ts) comes as /hooks/gemini/before-tool, event "gemini-before-tool"
-const HOOK_PATH = /^\/hooks\/(?:claude\/(pre-tool|worktree-create|post-agent|subagent-stop)|gemini\/(before-tool))$/;
+const HOOK_PATH = /^\/hooks\/claude\/(pre-tool|worktree-create|post-agent|subagent-stop)$/;
+/** Codex command hooks (subagents/codex.ts): POST /hooks/codex/<event>, handed on as event `codex-<event>`. */
+const CODEX_HOOK_PATH = /^\/hooks\/codex\/(pre-tool|subagent-start|subagent-stop)$/;
+/** Gemini CLI's BeforeTool (subagents/gemini.ts): POST /hooks/gemini/before-tool, handed on as event `gemini-before-tool`. */
+const GEMINI_HOOK_PATH = /^\/hooks\/gemini\/before-tool$/;
 const MAX_HOOK_BYTES = 4 * 1024 * 1024;
 
 type Json = Record<string, unknown>;
@@ -244,7 +247,10 @@ export class ArtifactMcpHttp {
       return refused(403, 'Forbidden');
     }
     const hook = HOOK_PATH.exec(new URL(request.url).pathname);
-    if (hook) return await this.#hook(request, hook[1] ?? `gemini-${hook[2]}`);
+    if (hook) return await this.#hook(request, hook[1]);
+    const codexHook = CODEX_HOOK_PATH.exec(new URL(request.url).pathname);
+    if (codexHook) return await this.#hook(request, `codex-${codexHook[1]}`);
+    if (GEMINI_HOOK_PATH.test(new URL(request.url).pathname)) return await this.#hook(request, 'gemini-before-tool');
     if (new URL(request.url).pathname !== MCP_PATH) {
       await drain(request);
       return refused(404, 'Not found');

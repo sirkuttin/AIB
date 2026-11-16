@@ -45,6 +45,7 @@ import { mcpTunnelGate, type TunnelAnswer } from '../wsl/mcp_tunnel.ts';
 import { forwarderOf, hookForwarderOf, keeperBinary, programVersion } from '../keeper/client.ts';
 import { deny as denyHook, type HookAnswer, SubagentWorktrees, type SubagentChat } from '../subagents/service.ts';
 import { claudeConfigDir, gitBashPath, hookSettings, readClaudeSetup, subagentsOffSettings } from '../subagents/claude_config.ts';
+import * as codexSub from '../subagents/codex.ts';
 import * as gemini from '../subagents/gemini.ts';
 import { isCompiled, isDesktopApp, selfCommand, TESTS_DIR } from '../core/app.ts';
 import { type ChannelInfo, type KeeperClient, KeeperError, missingFeatures, type OrphanCommand, readKeeperInfo } from '../keeper/client.ts';
@@ -1262,8 +1263,11 @@ export class Studio {
       }
       // Subagent worktrees (subagents/): a Claude chat in a git project gets command hooks through the keeper's forwarder; its key and
       // id go in the agent's environment (never in settings, a command line or a URL). A WSL chat gets none yet (they'd fail open).
+      // Codex (subagents/codex.ts): its hooks go in CODEX_CONFIG; hooks off or unavailable turn its subagents off instead.
       const subagent = provider === 'claude'
         ? await this.#subagentHooks(command, plan ? plan.path : workspace, workspace, !!plan, env, !!wsl)
+        : provider === 'codex'
+        ? await this.#codexSubagentHooks(command, plan ? plan.path : workspace, workspace, !!plan, env, launch ? launch.spawn.env ?? {} : null)
         : null;
       // Gemini (subagents/gemini.ts): every chat gets the fence (an admin policy); an API-key chat in a git project also the redirect
       const gem = provider === 'gemini' ? await this.#geminiSubagents(plan ? plan.path : workspace, workspace, !!plan, env, !!wsl) : null;
@@ -1328,7 +1332,7 @@ export class Studio {
           }
           c.localOnly = this.#localOnlyFor(c, local);
           await c.setup(resume || null);
-          if (c.subagentHooks?.off === HOOKS_OFF) { // design 2.6: said up front, before a subagent edits the folder (P0 A7)
+          if (c.provider === 'claude' && c.subagentHooks?.off === HOOKS_OFF) { // design 2.6: said up front, before a subagent edits the folder (P0 A7)
             c.recordedEvent('studio_note', {
               message: `Subagents that edit files are off in this chat: hooks are off in your Claude Code settings ` +
                 `(${c.subagentHooks.detail}), so AIB can't give them their own worktree. Read-only subagents (Explore, Plan) still work.`,
@@ -1336,6 +1340,8 @@ export class Studio {
             });
           } else if (c.subagentHooks?.off === NO_GIT_BASH) {
             c.recordedEvent('studio_note', { message: SUBAGENTS_OFF_NO_BASH, sessionId: c.sessionId });
+          } else if (subagent && 'note' in subagent && subagent.note) { // Codex: its subagents are off (hooks off or unavailable)
+            c.recordedEvent('studio_note', { message: subagent.note, sessionId: c.sessionId });
           }
           if (c.geminiSubagents?.off) { // the fence only: said up front (owner rule: refused, never in the folder)
             c.recordedEvent('studio_note', { message: gemini.GEMINI_TEXTS.off(c.geminiSubagents.off), sessionId: c.sessionId });
@@ -1413,6 +1419,11 @@ export class Studio {
       if (conn.channel) this.#keeperNoLongerNeeded();
     };
     c.onTurnEnd = (conn) => this.turnEnded(conn);
+    if (c.provider === 'codex' && this.subagents) { // a stopped turn stops its subagents (kept, never landed by themselves)
+      const subagents = this.subagents;
+      c.onTurnCancelled = (conn) => subagents.turnCancelled(conn.id);
+      c.subagentActivity = () => subagents.activity(c.id); // P3's Activity line (codex-acp's child session id is the agent_id)
+    }
     if (c.provider === 'claude' && this.subagents) { // subagent worktrees P2: what the parent's stream says of its subagents
       const subagents = this.subagents;
       c.onTurnCancelled = (conn) => subagents.turnCancelled(conn.id);
@@ -1809,7 +1820,7 @@ export class Studio {
     const c = this.connectionFactory(command, cwd, provider, options);
     if (isDict(note.worktree)) c.worktree = { branch: String(note.worktree.branch ?? ''), base: String(note.worktree.base ?? '') };
     c.projectRoot = isStr(note.projectRoot) && note.projectRoot ? note.projectRoot : cwd;
-    if (provider === 'claude') c.subagentHooks = hooksFromNote(note.subagentHooks); // on or off as the chat started (should-fix 6)
+    if (provider === 'claude' || provider === 'codex') c.subagentHooks = hooksFromNote(note.subagentHooks); // as the chat started (should-fix 6)
     if (provider === 'gemini' && this.hasStateDir && this.worktrees) { // its fence and redirect as launched (subagents/gemini.ts)
       c.geminiSubagents = gemini.restore(this.stateDir, this.worktrees.registry.root, c.id, c.projectRoot || cwd);
     }
@@ -2007,9 +2018,15 @@ export class Studio {
   /** One key-checked hook call. More than MAX_PRE_TOOL_WAITING pre-tool calls of one chat at once: the next is denied at once. */
   async #hookCall(event: string, conversation: string, body: unknown): Promise<HookAnswer> {
     if (!this.subagents) return { status: 503, body: 'No state folder', type: 'text/plain' };
-    if (event === 'gemini-before-tool') {
-      return this.geminiSubagents ? await this.geminiSubagents.beforeTool(conversation, body) : { status: 503, body: 'No state folder', type: 'text/plain' };
+    if (event.startsWith('codex-')) return await this.#codexHookCall(event, conversation, body);
+    if (event === 'gemini-before-tool') { // a Gemini chat's only (GeminiSubagents answers 503 for any other chat)
+      if (this.connections.get(conversation)?.provider !== 'gemini' || !this.geminiSubagents) {
+        return { status: 503, body: 'This chat is not open in AIB', type: 'text/plain' };
+      }
+      return await this.geminiSubagents.beforeTool(conversation, body);
     }
+    // each route answers its own agent's chats only (a Codex chat's key can't drive the Claude routes)
+    if (this.connections.get(conversation)?.provider !== 'claude') return { status: 503, body: 'This chat is not open in AIB', type: 'text/plain' };
     if (event !== 'pre-tool') return await this.subagents.hook(event, conversation, body);
     const waiting = this.#preToolWaiting.get(conversation) ?? 0;
     if (waiting >= MAX_PRE_TOOL_WAITING) return denyHook(SUBAGENT_BUSY);
@@ -2024,6 +2041,92 @@ export class Studio {
   }
 
   /**
+   * A Codex chat's hook call (subagents/codex.ts), key already checked. Only a Codex chat that was given hooks answers; its
+   * spawn_agent calls are limited like Claude's Agent calls (MAX_PRE_TOOL_WAITING at once). Never throws.
+   */
+  async #codexHookCall(event: string, conversation: string, body: unknown): Promise<HookAnswer> {
+    const chat = this.#subagentChat(conversation);
+    if (!chat || chat.provider !== 'codex' || !chat.hooks || !isDict(body)) {
+      return { status: 503, body: 'This chat is not open in AIB', type: 'text/plain' };
+    }
+    const spawn = event === 'codex-pre-tool' && !body.agent_id;
+    const waiting = this.#preToolWaiting.get(conversation) ?? 0;
+    if (spawn && waiting >= MAX_PRE_TOOL_WAITING) return denyHook(SUBAGENT_BUSY);
+    if (spawn) this.#preToolWaiting.set(conversation, waiting + 1);
+    try {
+      return await codexSub.codexHook(this.subagents!, event, chat, body as Record<string, unknown>);
+    } catch (error) {
+      log.exception(error, 'Codex subagent hook %s failed', event);
+      return event === 'codex-pre-tool'
+        ? denyHook(`AIB couldn't check this call against the subagent's worktree: ${errorText(error)}`)
+        : { status: 500, body: 'AIB could not answer this hook', type: 'text/plain' };
+    } finally {
+      if (spawn) {
+        const left = (this.#preToolWaiting.get(conversation) ?? 1) - 1;
+        if (left > 0) this.#preToolWaiting.set(conversation, left);
+        else this.#preToolWaiting.delete(conversation);
+      }
+    }
+  }
+
+  /**
+   * The hooks a new Codex chat gets (subagents/codex.ts): CODEX_CONFIG with AIB's hooks (the user's own CODEX_CONFIG merged in) and
+   * the chat's hook key in the agent's environment; or, when hooks are off or AIB can't give them (owner rule 2026-11-16), the same
+   * CODEX_CONFIG with features.multi_agent = false, and a chat line. `wslEnv`: the distro's environment of a WSL chat (its hooks
+   * would run in the distro: not yet, so off). Null: under test, a fixture or a run that allows no real agent (left as it is).
+   */
+  async #codexSubagentHooks(
+    command: string[],
+    folder: string,
+    project: string,
+    aibWorktree: boolean,
+    env: Record<string, string>,
+    wslEnv: Record<string, string> | null,
+  ): Promise<{ id?: string; env?: Record<string, string>; hooks: NonNullable<Connection['subagentHooks']>; note?: string } | null> {
+    const realAllowed = Deno.env.get('STUDIO_REAL_ADAPTER_TESTS') === '1' || Deno.env.get('AGENT_STUDIO_ALLOW_REAL_AGENT') === '1';
+    if (Deno.env.get('AGENT_STUDIO_TEST') === '1' && (isFixture(command) || !realAllowed)) return null;
+    const agentEnv = wslEnv ? { ...wslEnv, ...env } : { ...Deno.env.toObject(), ...testHomeEnv(command), ...env };
+    // a WSL chat's config files are the distro's: only its CODEX_CONFIG is read
+    const setup = wslEnv
+      ? codexSub.readCodexSetup('', agentEnv.CODEX_CONFIG ? { CODEX_CONFIG: agentEnv.CODEX_CONFIG } : {})
+      : codexSub.readCodexSetup(project, agentEnv);
+    if (setup.configError) return { hooks: offHooks(setup.configError) }; // codex-acp refuses it as well: nothing to merge into
+    const off = (why: string, detail: string) => ({
+      env: { CODEX_CONFIG: JSON.stringify(codexSub.withSubagentsOff(setup.config)) },
+      hooks: { ...offHooks(why, detail), prompt: codexSub.CODEX_SUBAGENTS_OFF_PROMPT },
+      note: `Subagents are off in this chat: ${detail}, so AIB can't give them their own worktree.`,
+    });
+    if (wslEnv) return off('WSL, coming', "AIB's subagent rule doesn't reach Codex in WSL yet");
+    if (!this.subagents || !this.hasStateDir) return off('AIB has no state folder', 'AIB has no state folder');
+    try {
+      if (!aibWorktree) { // as Claude's: no worktree can be made outside git (nothing changes for its subagents)
+        const top = await wt.git(['rev-parse', '--show-toplevel'], folder, { check: false });
+        if (top.returncode !== 0 || !wt.same(pyStrip(top.stdout), folder)) return { hooks: offHooks('not a git project') };
+        if ((await wt.git(['rev-parse', '--verify', '-q', 'HEAD'], folder, { check: false })).returncode !== 0) {
+          return { hooks: offHooks('the repository has no commits yet') };
+        }
+      }
+      if (setup.hooksOff) return off(HOOKS_OFF, setup.hooksOff);
+      const forwarder = await hookForwarderOf(this.keeper?.options.binary ?? null, this.stateDir).catch(() => null);
+      if (!forwarder) return off("AIB's keeper program can't run hooks", "AIB's keeper program can't run hooks");
+      const hooks = codexSub.codexHooks(forwarder, join(this.stateDir, FORWARD_FILE), folder, setup.config?.hooks);
+      if (!hooks) return off("AIB's folder can't be named in a hook command", "AIB's folder has a space or a sign Codex hooks can't run from");
+      this.artifactMcpHttp(); // listening, with its address published, before the agent's first hook
+      const id = crypto.randomUUID().replaceAll('-', '');
+      const key = artifactKeys.issueHookKey(id);
+      if (!key) return off('AIB has no key secret', 'AIB has no key secret');
+      return {
+        id,
+        env: { AIB_HOOK_KEY: key, AIB_HOOK_CHAT: id, CODEX_CONFIG: JSON.stringify(codexSub.withCodexHooks(setup.config, hooks)) },
+        hooks: { ...offHooks(''), adopted: true, prompt: codexSub.CODEX_SUBAGENT_PROMPT },
+      };
+    } catch (error) {
+      log.exception(error, 'Could not set up Codex subagent hooks; its subagents are off');
+      return off('AIB could not set up its hooks', `AIB could not set up its hooks (${errorText(error)})`);
+    }
+  }
+
+  /**
    * What subagents/service.ts may know of an open chat (by its live id). A chat taken over from the keeper after a restart has no
    * hooks record in this process: its hooks still run with its key (only AIB set AIB_HOOK_KEY), so its setup is read again here.
    */
@@ -2033,7 +2136,8 @@ export class Studio {
       const lasting = c.sessionId ? `${c.provider}:${c.sessionId}` : '';
       return { id: c.id, provider: c.provider, lasting, folder: c.cwd, project: c.projectRoot || c.cwd, hooks: null, subFolder: c.geminiSubagents.subFolder };
     }
-    if (!c || c.closed || c.provider !== 'claude' || c.wsl) return null;
+    if (!c || c.closed || (c.provider !== 'claude' && c.provider !== 'codex') || c.wsl) return null;
+    if (!c.subagentHooks && c.provider === 'codex') return null; // a Codex chat without a hooks record was given none
     if (!c.subagentHooks) {
       // a chat taken over from a keeper note older than the hooks record (newer notes carry it: hooksFromNote)
       const setup = readClaudeSetup(c.projectRoot || c.cwd, Deno.env.toObject());
@@ -3279,6 +3383,7 @@ function hooksFromNote(raw: unknown): Connection['subagentHooks'] {
     ...(text(raw.detail) ? { detail: text(raw.detail) } : {}),
     ...(text(raw.configDir, 1024) ? { configDir: text(raw.configDir, 1024) } : {}),
     adopted: raw.given === true, // its agent runs AIB's hooks
+    ...(text(raw.prompt, 2000) ? { prompt: text(raw.prompt, 2000) } : {}), // Codex: the system prompt line a reopen sends again
     ...(isDict(raw.deny) ? { deny: raw.deny as Json } : {}),
   };
 }
