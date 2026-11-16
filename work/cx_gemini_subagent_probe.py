@@ -21,6 +21,8 @@ Scenarios:
   deny      the hook denies a subagent's write_file
   policy    no hook; `--admin-policy <dir>` with [[rule]] {toolName = "write_file", subagent = "generalist", decision = "deny"}
   policy-all  the same rule with no subagent scope (proves the file loads: the parent loses write_file too)
+  console   no-popups check: AIB's PowerShell hook command form runs work/hook_console_check.py (console window handle, visible
+            windows of the process chain), then the real keeper forwarder (AIB_TEST_KEEPER_BIN) as AIB's hook does
 --acp drives the same play over ACP (`--acp`, session/new cwd = the project, session/prompt), as AIB launches Gemini. Under ACP the
 parent's own tool calls never reach hooks, so the client (AIB's part) marks a subagent in flight from the invoke_agent tool_call.
 Owner guard: mtimes of everything under the owner's ~/.gemini and ~/.codex, and ~/.claude outside its busy session folders.
@@ -182,6 +184,19 @@ def scenario(entry, base, name, acp):
         (pol / 'aib.toml').write_text(f'[[rule]]\ntoolName = "write_file"\n{scope}decision = "deny"\npriority = 900\n'
                                       'denyMessage = "AIB: subagents may not edit the main folder"\n', encoding='utf-8')
         args += ['--admin-policy', str(pol)]
+    if name == 'console':
+        # AIB's hook command form on Windows (server/subagents/gemini.ts hookCommand: PowerShell `& '<program>' ...`): first the
+        # console check (work/hook_console_check.py: GetConsoleWindow and every visible window of the chain), then the real keeper
+        # forwarder (AIB_TEST_KEEPER_BIN, built GUI-subsystem; no address file here: it answers nothing, the call goes on).
+        q = lambda x: "'" + str(x).replace("'", "''") + "'"  # noqa: E731
+        check = f"& {q(sys.executable)} {q(HERE / 'hook_console_check.py')} {q(base / 'console.log')} 'gemini'"
+        cmds = [{'type': 'command', 'command': check, 'timeout': 30000}]
+        if os.environ.get('AIB_TEST_KEEPER_BIN'):
+            fwd = f"& {q(os.environ['AIB_TEST_KEEPER_BIN'])} hook gemini-before-tool {q(base / 'no-address.json')}"
+            cmds.append({'type': 'command', 'command': fwd, 'timeout': 30000})
+        (home / '.gemini').mkdir()
+        (home / '.gemini' / 'settings.json').write_text(json.dumps({'hooks': {'BeforeTool': [{'matcher': '.*', 'hooks': cmds}]}}),
+                                                       encoding='utf-8')
     if name in ('log', 'redirect', 'deny'):
         git(project, 'worktree', 'add', '-q', '-b', 'aib/sub1', str(wt))
         hook = f'node "{HERE / "gemini_hook_probe.js"}" "{base / "hooks.log"}" "{wt}" {name} "{state}"'
@@ -210,7 +225,7 @@ def scenario(entry, base, name, acp):
             'sub_file_in_worktree': (wt / 'sub-made.txt').is_file(),
             'main_status': git(project, 'status', '--porcelain'),
             'worktree_status': git(wt, 'status', '--porcelain') if wt.is_dir() else None,
-            'stub_log': jl(base / 'stub.log'), 'hook_log': jl(base / 'hooks.log')}
+            'stub_log': jl(base / 'stub.log'), 'hook_log': jl(base / 'hooks.log'), 'console_log': jl(base / 'console.log')}
 
 
 def main():

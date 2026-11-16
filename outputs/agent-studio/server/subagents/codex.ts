@@ -52,15 +52,19 @@ export const CODEX_EVENTS: readonly (readonly [string, string, string])[] = [
 ];
 
 /**
- * The command line of one hook. Codex runs it with `cmd.exe /C` on Windows, where a line that starts with a quote silently fails
- * (verified on 0.166: so do `cd /d "<dir>" && ...` and `call "<program>" ...`): the program goes first, bare, so a keeper path with a
- * space or a cmd special character can't be named (null: the chat's subagents go off). The address file is quoted; `%` and `!`
- * would expand even there. Elsewhere `$SHELL -lc`: both single-quoted. `|| exit 2` blocks the call when the program can't run.
+ * The command line of one hook. On Windows Codex runs it through a shell: `cmd.exe /C` per its source, PowerShell 7 (pwsh.exe) as
+ * seen on 0.166 here (work/cx_codex_subagent_probe.py spawn-console), and on a PC without pwsh likely Windows PowerShell 5.1. The
+ * line must mean the same in all three: the program first and bare (a line that starts with a quote silently fails under cmd.exe,
+ * verified on 0.166: so do `cd /d "<dir>" && ...` and `call "<program>" ...`), so a keeper path with a space or a cmd or PowerShell
+ * special character can't be named (null: the chat's subagents go off); the address file in double quotes, with no `%`, `!`, `$` or
+ * backtick (they expand even there). No `|| exit 2` on Windows: PowerShell 5.1 refuses `||` (a parse error, and the call would
+ * run), and Codex runs a call whose hook exits 2 anyway; the forwarder refuses with a JSON deny itself. Elsewhere `$SHELL -lc`:
+ * both single-quoted, `|| exit 2` kept.
  */
 export function codexHookCommand(forwarder: string, addressFile: string, event: string, os: string = Deno.build.os): string | null {
   if (os === 'windows') {
-    if (!/^[A-Za-z]:\\[^\s"'&|<>^%!(),;=`]+$/.test(forwarder) || /["%!\r\n]/.test(addressFile)) return null;
-    return `${forwarder} hook ${event} "${addressFile}" || exit 2`;
+    if (!/^[A-Za-z]:\\[^\s"'&|<>^%!(),;=`$@{}]+$/.test(forwarder) || /["%!$`\r\n]/.test(addressFile)) return null;
+    return `${forwarder} hook ${event} "${addressFile}"`;
   }
   if (/['\r\n]/.test(forwarder + addressFile)) return null;
   return `'${forwarder}' hook ${event} '${addressFile}' || exit 2`;

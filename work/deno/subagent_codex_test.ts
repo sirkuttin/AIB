@@ -1,7 +1,8 @@
 /**
  * Subagent worktrees, Codex (server/subagents/codex.ts), without an agent. The real codex-acp end to end is
  * work/test_subagent_codex_e2e.py.
- *   the hook commands: a bare program first (cmd.exe /C), the address file quoted, `|| exit 2`; null for a path they can't hold
+ *   the hook commands: a bare program first, the address file quoted (cmd.exe, pwsh and PowerShell 5.1 read it alike: no `||` on
+ *        Windows); null for a path they can't hold
  *   the trust hashes match what a real codex app-server 0.166 listed for the same hooks (hooks/list currentHash)
  *   CODEX_CONFIG: the user's own hooks and settings kept, AIB's hooks after theirs with state keys at their group index;
  *        hooks off -> features.multi_agent = false merged into the user's features
@@ -61,7 +62,7 @@ Deno.test('Codex hook commands: bare program first, quoted address file, fail cl
       'codex-pre-tool',
       'windows',
     ),
-    'C:\\Users\\x\\AgentStudio\\keeper-bin\\ab\\AIB-keeper.exe hook codex-pre-tool "C:\\Users\\x\\AgentStudio\\artifact-mcp.json" || exit 2',
+    'C:\\Users\\x\\AgentStudio\\keeper-bin\\ab\\AIB-keeper.exe hook codex-pre-tool "C:\\Users\\x\\AgentStudio\\artifact-mcp.json"',
   );
   assertEquals(
     codexHookCommand('C:\\Users\\John Smith\\k.exe', 'C:\\a.json', 'codex-pre-tool', 'windows'),
@@ -70,6 +71,8 @@ Deno.test('Codex hook commands: bare program first, quoted address file, fail cl
   );
   assertEquals(codexHookCommand('C:\\a&b\\k.exe', 'C:\\a.json', 'codex-pre-tool', 'windows'), null);
   assertEquals(codexHookCommand('C:\\k.exe', 'C:\\%TEMP%\\a.json', 'codex-pre-tool', 'windows'), null, '% expands even in quotes');
+  assertEquals(codexHookCommand('C:\\k.exe', 'C:\\$x\\a.json', 'codex-pre-tool', 'windows'), null, '$ expands in PowerShell quotes');
+  assertEquals(codexHookCommand('C:\\$x\\k.exe', 'C:\\a.json', 'codex-pre-tool', 'windows'), null, '$ in a bare PowerShell word');
   assertEquals(
     codexHookCommand('/home/u/k', '/home/u/a.json', 'codex-subagent-stop', 'linux'),
     "'/home/u/k' hook codex-subagent-stop '/home/u/a.json' || exit 2",
@@ -107,7 +110,7 @@ Deno.test("CODEX_CONFIG: the user's hooks and settings are kept; AIB's hooks fol
   assertEquals(merged.hooks.PreToolUse[0].hooks[0].command, 'mine');
   assertEquals(
     merged.hooks.PreToolUse[1].hooks[0].command,
-    'C:\\k\\AIB-keeper.exe hook codex-pre-tool "C:\\s\\artifact-mcp.json" || exit 2',
+    'C:\\k\\AIB-keeper.exe hook codex-pre-tool "C:\\s\\artifact-mcp.json"',
   );
   assertEquals(merged.hooks.state['mine-key'], { trusted_hash: 'h' });
   const pre = codexHookHash('pre_tool_use', null, merged.hooks.PreToolUse[1].hooks[0]);
