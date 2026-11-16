@@ -251,13 +251,13 @@ export const WSL_TOOLS_NOTICE = 'AIB tools (docs, artifacts, merge) are not avai
 export const WSL_TOOLS_LIMITED = "In WSL projects, AIB tools are limited to artifacts (publish, list, update), docs and merging a chat's own copy.";
 
 const MERGE_TOOLS = "merging a chat's own copy";
-/** The artifacts part of the note: publish and update take the text itself, never a file path (so no binary files yet). */
-const WSL_ARTIFACTS_PART = 'artifacts (publish and update by content only: no file paths, so no PNG or other binary files yet; list, archive)';
+/** The artifacts part of the note: publish and update take the text or a file inside the project (images too), as a snapshot. */
+const WSL_ARTIFACTS_PART = 'artifacts (publish and update by content or by a file path inside the project, images included; list, archive)';
 
 /**
  * What a WSL chat with AIB tools says about them (tunnel or interop: the same tools), worded from mcp.ts WSL_TOOL_GROUPS so a group
  * switched on there shows here too. With today's groups: "In WSL projects, AIB tools cover artifacts (publish and update by content
- * only: no file paths, so no PNG or other binary files yet; list, archive), docs and merging a chat's own copy; helper chats are not
+ * or by a file path inside the project, images included; list, archive), docs and merging a chat's own copy; helper chats are not
  * available yet."
  */
 export function wslToolsNotice(groups: Readonly<Record<'artifacts' | 'merge' | 'swarm' | 'docs', boolean>> = WSL_TOOL_GROUPS): string {

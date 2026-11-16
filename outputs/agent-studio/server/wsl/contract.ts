@@ -112,6 +112,16 @@ export interface HelperMethods {
   'files.search': { params: { root: string; query: string; limit?: number }; result: unknown };
   'files.read': { params: { root: string; rel: string; maxBytes?: number }; result: { bytesB64: string; size: number; truncated: boolean; mtimeMs: number } };
   /**
+   * A whole file's bytes for an artifact published by path from a WSL chat (helper/methods.ts, wsl/artifact_read.ts): `rel` inside
+   * `root`, checked after links are resolved (code 'outside'); one piece of at most 1 MB at `offset` (`length`, default and cap 1 MB)
+   * with the file's `size` and `mtimeMs`, so AIB reads a big file in pieces and notices a change between them. Refusals by code:
+   * 'not_found', 'not_file' (a folder), 'too_large' (size over `maxBytes`, default 25 MB; nothing read), 'unreadable' (permission).
+   */
+  'files.readBytes': {
+    params: { root: string; rel: string; offset?: number; length?: number; maxBytes?: number };
+    result: { bytesB64: string; size: number; mtimeMs: number; offset: number; path: string; abs: string };
+  };
+  /**
    * A file outside the project folder (worktrees/outside_files.ts, run natively: checkShape, resolveOutside, readOutside, folderLabel).
    * AIB has already checked that the chat named the path; the helper adds the shape rules and refuses its own data folder
    * (~/.aib-server). `bytesB64` is there for a picture or page that fits the 1 MB read cap and is not a peek.

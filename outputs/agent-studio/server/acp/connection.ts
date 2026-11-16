@@ -636,19 +636,18 @@ export const ARTIFACT_PROMPT =
   'artifact or sharing service) when the user explicitly asks for a claude.ai page or a shareable link. ' + TOOLS_LOADING;
 
 /**
- * The same for a chat in a WSL project (design section 11: the artifact tools that need no project file). AIB runs on Windows and
- * cannot read files inside the distro, so publish takes the content; there are no doc or helper tools. A chat in its own copy also
+ * The same for a chat in a WSL project (design section 11). publish takes the content or a Linux `path` inside the project (AIB
+ * reads the file through the distro's helper, as a snapshot: wsl/artifact_read.ts); no helper tools. A chat in its own copy also
  * gets the merge tools (WORKTREE_PROMPT says so; the merge runs in the distro).
  */
 export const WSL_ARTIFACT_PROMPT =
   'You are running inside AIB, which shows artifacts beside the chat; when the user says "artifact" they ' +
-  'mean this viewer and its studio_artifact tool. This project is in WSL: AIB runs on Windows and cannot open files inside the ' +
-  'distro, so when you make something the user should look at rather than source code (an HTML page, one-off report, chart, ' +
-  'diagram or SVG), publish it with the studio_artifact publish tool by passing its content (never a file path: `path` is not ' +
-  'supported in WSL projects) and mention it in your reply as the Markdown link the tool returns; use update with the new content ' +
-  'to change it. A PNG or other binary file cannot be published from inside the distro yet: embed it in an HTML page as an ' +
-  'inline base64 <img> and publish that page, or ask the user to open the file. AIB helper tools are not available in WSL ' +
-  'projects. ' + TOOLS_LOADING;
+  'mean this viewer and its studio_artifact tool. This project is in WSL. When you make something the user should look at rather ' +
+  'than source code (an HTML page, one-off report, chart, diagram, SVG, image or PDF), publish it with the studio_artifact publish ' +
+  'tool, by its content or by its Linux `path` (relative to the chat folder, or absolute inside the chat or project folder; any ' +
+  'kind up to 25 MB, PNG and other images included), and mention it in your reply as the Markdown link the tool returns. AIB copies ' +
+  'a file when you publish it: after changing the file, call update with the same path (or the new content) to publish the new ' +
+  'version. AIB helper tools are not available in WSL projects. ' + TOOLS_LOADING;
 
 export const WORKTREE_PROMPT =
   'In this chat you work in your own copy of the project, on the git branch {branch} (it started from {base}). ' +

@@ -227,12 +227,12 @@ Deno.test({
 Deno.test('wsl tools: the chat line is worded from WSL_TOOL_GROUPS; the ready line\'s socket must be a plain absolute path', () => {
   assertEquals(
     wslToolsNotice(),
-    "In WSL projects, AIB tools cover artifacts (publish and update by content only: no file paths, so no PNG or other binary files yet; list, archive), docs and merging a chat's own copy; helper chats are not available yet.",
+    "In WSL projects, AIB tools cover artifacts (publish and update by content or by a file path inside the project, images included; list, archive), docs and merging a chat's own copy; helper chats are not available yet.",
   );
   assertEquals(wslToolsNotice({ ...WSL_TOOL_GROUPS, swarm: true }).endsWith("merging a chat's own copy and helper chats."), true);
   assertEquals(
     wslToolsNotice({ ...WSL_TOOL_GROUPS, merge: false, swarm: true }),
-    "In WSL projects, AIB tools cover artifacts (publish and update by content only: no file paths, so no PNG or other binary files yet; list, archive), docs and helper chats; merging a chat's own copy is not available yet.",
+    "In WSL projects, AIB tools cover artifacts (publish and update by content or by a file path inside the project, images included; list, archive), docs and helper chats; merging a chat's own copy is not available yet.",
   );
   assertEquals(wslToolsNotice({ artifacts: false, merge: false, swarm: false, docs: false }), WSL_TOOLS_NOTICE);
   assertEquals([WSL_TOOL_GROUPS.docs, WSL_TOOL_GROUPS.swarm], [true, false], 'docs work in WSL projects; helper chats stay off until they do');
