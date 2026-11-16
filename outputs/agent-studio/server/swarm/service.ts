@@ -571,6 +571,13 @@ export class Swarm {
     if (h.kind === 'subagent') { // a subagent continued in a later turn runs again: it lands at its next end
       const rec = readSubagents(this.ctx.stateDir)[h.sub?.record ?? ''];
       if (rec && rec.state !== 'done' && rec.state !== 'stopped') return;
+      // P3: queued as done, then the stream said it was killed (TaskStop; its SubagentStop came first): stopped, never landed by
+      // itself. A merge_helper after the stop queues it again later than the stop, and lands it.
+      if (rec && rec.state === 'stopped' && (rec.stoppedAt ?? 0) >= L.queuedAt) {
+        await this.registry.update(h.id, (cur) => (cur ? { ...cur, landing: null, state: 'stopped', reason: rec.stoppedWhy ?? '' } : null));
+        await this.#toldStopped(h.id, h.title, rec, parentId);
+        return;
+      }
     }
     await this.#runLanding(h, parentId);
   }
@@ -844,6 +851,9 @@ export class Swarm {
         continue;
       }
       if (rec.state !== 'done' && rec.state !== 'stopped') continue;
+      // a user-hook worktree is judged once its parent is idle: its PostToolUse hook (which makes it done) runs before the parent's
+      // ACP stream reports the Agent call's end (acpSeen), so judging it on first sight refused every one (P3)
+      if (rec.userHook && rec.state === 'done' && rec.adopted?.verified && !rec.acpSeen && obj(parent.attention).state !== 'idle') continue;
       try {
         await this.#adoptSubagent(rec, parent, ended);
       } catch (error) {
@@ -868,7 +878,7 @@ export class Swarm {
     const fresh: Helper = {
       id: rec.id,
       kind: 'subagent',
-      sub: { record: rec.id, agentType: rec.agentType, folder, userHook, turn: ended },
+      sub: { record: rec.id, agentType: rec.agentType, folder, userHook, turn: ended, ...(rec.agentId ? { agentId: rec.agentId } : {}) },
       title,
       project: folder,
       parent: { live: s(parent.id), lasting: rec.lasting || lasting(parent) },
@@ -899,21 +909,28 @@ export class Swarm {
     });
     if (!made || fresh.landing) return;
     if (userHook && !adoptable) {
+      await this.registry.patch(rec.id, { state: 'failed', reason: "your WorktreeCreate hook made its worktree" });
       await this.note(rec.id, 'swarm-fail', `Your WorktreeCreate hook made the worktree of subagent “${title}”; AIB doesn't merge it (${rec.stoppedWhy || 'AIB did not see its Agent call end'}).`);
       await this.#release(fresh);
       return;
     }
     if (rec.state === 'stopped') {
-      await this.note(rec.id, 'swarm-stop', `Subagent “${title}” was stopped before it finished (${rec.stoppedWhy || 'stopped'}). AIB didn't land its work.`);
-      await context(
-        `Subagent “${title}” was stopped before it finished, so AIB did not merge its work into this folder. If you want what it ` +
-          `did, call merge_helper with id ${rec.id}; AIB then lands it when your turn ends.`,
-      );
+      await this.#toldStopped(rec.id, title, rec, s(parent.id));
       return;
     }
     await this.registry.patch(rec.id, { state: 'failed', reason: 'no branch' });
     await this.note(rec.id, 'swarm-fail', `Couldn't land subagent “${title}”: the folder isn't on a branch.`);
     await context(`Subagent “${title}” did not land: this folder isn't on a branch. Its work is kept in ${path}.`);
+  }
+
+  /** A stopped subagent: the chat's line and the main agent's next-prompt line (it lands only when the main agent asks: merge_helper). */
+  async #toldStopped(id: string, title: string, rec: SubagentRecord, parentId: string): Promise<void> {
+    await this.note(id, 'swarm-stop', `Subagent “${title}” was stopped before it finished (${rec.stoppedWhy || 'stopped'}). AIB didn't land its work.`);
+    await this.ctx.host.liveCall('prompt-context', {
+      id: parentId,
+      line: `Subagent “${title}” was stopped before it finished, so AIB did not merge its work into this folder. If you want what it ` +
+        `did, call merge_helper with id ${rec.id}; AIB then lands it when your turn ends.`,
+    }).catch(() => [500, null]);
   }
 
   /**
@@ -989,7 +1006,7 @@ export class Swarm {
       ? `then call merge_helper with id ${h.id}; AIB also tries again when your next turn ends.`
       : 'AIB tries again when your next turn ends.';
     if (state === 'merged') {
-      await clear();
+      await this.registry.update(h.id, (cur) => (cur ? { ...cur, landing: null, sub: { ...cur.sub!, files: files.length } } : null));
       await this.note(h.id, 'swarm-merge', `Merged subagent “${h.title}” into ${target} · ${files.length} file${files.length === 1 ? '' : 's'}`, [
         'swarm-undo',
       ]);
@@ -1000,8 +1017,8 @@ export class Swarm {
       await this.#release(h);
       return;
     }
-    if (state === 'empty') { // no changes (line-ending churn included): its worktree goes, no line (design B4)
-      await this.registry.update(h.id, () => null);
+    if (state === 'empty') { // no changes (line-ending churn included): its worktree goes, no line (design B4); Activity says "No changes"
+      await this.registry.update(h.id, (cur) => (cur ? { ...cur, landing: null, state: 'merged', sub: { ...cur.sub!, empty: true, files: 0 } } : null));
       await this.#release(h);
       return;
     }

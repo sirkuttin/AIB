@@ -524,8 +524,14 @@ export class Studio {
         log.exception(error, 'Merging the user edits at the end of the turn failed');
       }
     }
-    // a prepared subagent worktree no Agent call took becomes the spare, or goes (bound ones stay for landing: P2)
-    if (this.subagents) await this.subagents.turnEnded(connection.id).catch((error) => log.exception(error, 'Subagent turn end failed'));
+    // a prepared subagent worktree no Agent call took becomes the spare, or goes (bound ones stay for landing: P2); P3: what the
+    // stream shows as ended is settled (a killed one, or one whose SubagentStop never reached AIB)
+    if (this.subagents) {
+      if (connection.provider === 'claude') {
+        await this.subagents.reconcileEnded(connection.id, connection.endedSubagents()).catch((error) => log.exception(error, 'Subagent turn end check failed'));
+      }
+      await this.subagents.turnEnded(connection.id).catch((error) => log.exception(error, 'Subagent turn end failed'));
+    }
     if (connection.provider && connection.sessionId) await this.#mark('your_turn', connection);
     void this.limits.refresh(connection); // Codex / Vibe: at most once a minute per account
   }
@@ -1390,6 +1396,10 @@ export class Studio {
       c.onClaudeTool = (conn, tool, toolUseId, input, status, agentId) => {
         void subagents.claudeTool(conn.id, tool, toolUseId, input, status, agentId).catch((error) => log.exception(error, 'Subagent tool update failed'));
       };
+      c.subagentActivity = () => subagents.activity(c.id);
+      c.onSubagentEnded = (conn, agentId, how) => {
+        void subagents.acpEnded(conn.id, agentId, how).catch((error) => log.exception(error, 'Subagent end failed'));
+      };
     }
     c.subagentWorktree = (toolUseId) => this.subagents?.worktreeOf(c.id, toolUseId) ?? null; // allow-rule parity (design 2.4)
     c.onLimits = (conn, kind, raw, at) => this.limits.fromAgent(conn, kind, raw, at);
@@ -1772,6 +1782,11 @@ export class Studio {
     try {
       await c.rebuilt;
     } catch { /* read-only (rebuildError says why) or the keeper went away */ }
+    // subagent worktrees P3: a subagent that ended while AIB was down (its SubagentStop hook failed open) is settled from the replayed
+    // stream, so it never stays "running"
+    if (provider === 'claude' && this.subagents) {
+      await this.subagents.reconcileEnded(c.id, c.endedSubagents()).catch((error) => log.exception(error, 'Subagent take-over check failed'));
+    }
     rebuildPhases(timer, c.rebuildTimes);
     try {
       if (c.closed) return false;
@@ -1910,7 +1925,7 @@ export class Studio {
       lasting: c.sessionId ? `${c.provider}:${c.sessionId}` : '',
       folder: c.cwd,
       project: c.projectRoot || c.cwd,
-      hooks: on ? { readOnly: new Set(h.readOnly), userWorktreeHook: !!h.userWorktreeHook } : null,
+      hooks: on ? { readOnly: new Set(h.readOnly), userWorktreeHook: !!h.userWorktreeHook, ...(h.configDir ? { configDir: h.configDir } : {}) } : null,
     };
   }
 

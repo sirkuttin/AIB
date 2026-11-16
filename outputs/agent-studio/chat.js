@@ -2451,6 +2451,14 @@
           agentType: c.agentType || d.agentType || '',
         });
       }
+    /* Subagent worktrees (P3): each card's fixed line, where it works and how its work lands (a child's session id is its agentId).
+       The same for a split view's chats: each is collected here with its own snapshot. */
+    const iso = snapshot.subagentIsolation,
+      wtInfo = snapshot.subagentWorktrees || {};
+    if (iso && window.SubagentsUI?.worktreeWords) {
+      const now = Date.now() / 1000;
+      for (const [id, c] of children) c.worktree = window.SubagentsUI.worktreeWords(c, iso, wtInfo[id], now);
+    }
     /* Interrupt stops the main reply, not the helpers: a subagent keeps the state the agent last reported. claude-agent-acp
        (subagents form, which AIB declares) lets background helpers run on after session/cancel and reports every child it does
        stop as {state: 'idle', stopReason: 'cancelled'} (shown as Stopped). A helper silent since the interrupt is usually busy in a

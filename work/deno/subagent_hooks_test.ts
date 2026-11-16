@@ -19,7 +19,8 @@ import {
   subagentsOffSettings,
 } from '../../outputs/agent-studio/server/subagents/claude_config.ts';
 import { ArtifactMcpHttp, CONVERSATION_HEADER, HOOK_KEY_HEADER, HOOK_NONCE_HEADER, HOOK_PROOF_HEADER } from '../../outputs/agent-studio/server/artifacts/mcp_http.ts';
-import { MAX_PER_CHAT, readSubagents, type SubagentChat, SubagentWorktrees, TEXTS } from '../../outputs/agent-studio/server/subagents/service.ts';
+import { landingWords, MAX_PER_CHAT, readSubagents, type SubagentChat, SubagentWorktrees, TEXTS } from '../../outputs/agent-studio/server/subagents/service.ts';
+import { subagentEnd } from '../../outputs/agent-studio/server/acp/connection.ts';
 import { join } from '../../outputs/agent-studio/server/platform/path.ts';
 
 function git(cwd: string, ...args: string[]): string {
@@ -46,7 +47,7 @@ Deno.test('B12: hook settings are byte-identical each time, bash-quoted, fail cl
   assert(!a.includes('\\\\'), 'forward slashes only (Git Bash runs the command)');
   assert(!/127\.0\.0\.1|:\d{4,5}/.test(a), 'no address in the settings');
   const s = JSON.parse(a).hooks;
-  assertEquals(s.PreToolUse[0].matcher, 'Agent|Task|EnterWorktree|Workflow');
+  assertEquals(s.PreToolUse[0].matcher, 'Agent|Task|EnterWorktree|Workflow|Skill');
   assertEquals(s.PreToolUse[0].hooks[0].command, '"C:/Users/x/AIB/keeper-bin/abc/AIB-keeper.exe" hook pre-tool "C:/Users/x/AIB/artifact-mcp.json" || exit 2');
   assertEquals(s.PreToolUse[0].hooks[0].timeout, 30);
   assert(s.WorktreeCreate[0].hooks[0].command.endsWith('|| exit 2'));
@@ -215,6 +216,111 @@ Deno.test('MF 1: every hook answer is signed over the nonce, the status and the 
     configure(null);
     Deno.removeSync(dir, { recursive: true });
   }
+});
+
+Deno.test('P3: skills that run as a forked subagent (context: fork) are refused; other skills pass; hooks off denies them too', async () => {
+  const dir = Deno.makeTempDirSync({ prefix: 'aib-forkskill-' });
+  const was = setPolicyReader(null);
+  try {
+    const state = join(dir, 'state'), config = join(dir, 'config');
+    const project = repo(join(dir, 'proj'));
+    const write = (path: string, text: string) => {
+      Deno.mkdirSync(path.replace(/[\\/][^\\/]+$/, ''), { recursive: true });
+      Deno.writeTextFileSync(path, text);
+    };
+    write(join(project, '.claude', 'skills', 'forker', 'SKILL.md'), '---\nname: forker\ndescription: f\ncontext: fork\nagent: general-purpose\n---\nwrite');
+    write(join(project, '.claude', 'skills', 'inline', 'SKILL.md'), '---\nname: inline\ndescription: i\n---\nsteps');
+    write(join(project, '.claude', 'commands', 'ops', 'forkcmd.md'), '---\ndescription: c\ncontext: "fork"\n---\nrun');
+    write(join(config, 'skills', 'userfork', 'SKILL.md'), '﻿---\nname: userfork\ncontext: fork\n---\nx');
+    write(join(project, 'apps', 'web', '.claude', 'skills', 'deploy', 'SKILL.md'), '---\nname: deploy\ncontext: fork\n---\nx');
+    const chat: SubagentChat = {
+      id: 'f0f0f0f0aa', provider: 'claude', lasting: 'claude:s1', folder: project, project,
+      hooks: { readOnly: new Set(['Explore']), userWorktreeHook: false, configDir: config },
+    };
+    const service = new SubagentWorktrees(state, join(state, 'worktrees'), (id) => (id === chat.id ? chat : null));
+    const skill = async (name: string) => JSON.parse((await service.hook('pre-tool', chat.id, { tool_name: 'Skill', tool_input: { skill: name } })).body);
+    for (const name of ['forker', 'forkcmd', 'ops:forkcmd', 'userfork', 'someplugin:forker', 'apps/web:deploy']) {
+      const out = (await skill(name)).hookSpecificOutput;
+      assertEquals(out?.permissionDecision, 'deny', name);
+      assertEquals(out.permissionDecisionReason, TEXTS.forkSkill(name));
+    }
+    for (const name of ['inline', 'unknown', 'apps/other:deploy', '../x:deploy2', '']) assertEquals(await skill(name), {}, `${name} passes`);
+    assertEquals(readSubagents(state), {}, 'a skill call records nothing');
+    // hooks off: the chat's per-session deny rules name the fork skills too
+    const deny = (subagentsOffSettings(project, { CLAUDE_CONFIG_DIR: config }, ['Explore']).permissions as { deny: string[] }).deny;
+    for (const name of ['forker', 'forkcmd', 'userfork']) assert(deny.includes(`Skill(${name})`), deny.join(','));
+    assert(!deny.includes('Skill(inline)'));
+  } finally {
+    setPolicyReader(was);
+    Deno.removeSync(dir, { recursive: true });
+  }
+});
+
+Deno.test('P3: the stream settles subagents whose SubagentStop never came: finished = done, killed = stopped; continued runs again', async () => {
+  const dir = Deno.makeTempDirSync({ prefix: 'aib-subends-' });
+  try {
+    const state = join(dir, 'state');
+    const project = repo(join(dir, 'proj'));
+    const chat: SubagentChat = {
+      id: 'e0e0e0e0aa', provider: 'claude', lasting: 'claude:s1', folder: project, project,
+      hooks: { readOnly: new Set(['Explore']), userWorktreeHook: false },
+    };
+    const service = new SubagentWorktrees(state, join(state, 'worktrees'), (id) => (id === chat.id ? chat : null));
+    const start = async (n: number) => {
+      await service.hook('pre-tool', chat.id, { tool_name: 'Agent', tool_use_id: `toolu_e${n}`, tool_input: { prompt: 'x', description: `sub ${n}` } });
+      await service.hook('worktree-create', chat.id, { name: `agent-ag${n}` });
+    };
+    const stateOf = (agentId: string) => Object.values(readSubagents(state)).find((r) => r.agentId === agentId);
+    for (const n of [1, 2, 3, 4]) await start(n);
+    assertEquals([1, 2, 3, 4].map((n) => stateOf(`ag${n}`)!.state), ['running', 'running', 'running', 'running']);
+    // AIB was down when they ended (their SubagentStop failed open): the take-over / turn end reads the replayed stream
+    await service.reconcileEnded(chat.id, new Map([['ag1', 'end_turn'], ['ag2', 'cancelled'], ['ag3', ''], ['other', 'end_turn']]));
+    assertEquals(stateOf('ag1')!.state, 'done');
+    assertEquals([stateOf('ag2')!.state, stateOf('ag2')!.stoppedWhy], ['stopped', 'it was cancelled']);
+    assertEquals([stateOf('ag3')!.state, stateOf('ag3')!.stoppedWhy], ['stopped', 'it ended without saying why']);
+    assertEquals(stateOf('ag4')!.state, 'running', 'still running: untouched');
+    // a background one TaskStop killed: its SubagentStop came first (done), then the stream said cancelled: stopped, never landed
+    await service.hook('subagent-stop', chat.id, { agent_id: 'ag4', agent_type: 'general-purpose' });
+    assertEquals(stateOf('ag4')!.state, 'done');
+    await service.acpEnded(chat.id, 'ag4', 'cancelled');
+    assertEquals(stateOf('ag4')!.state, 'stopped');
+    // a finished one the main agent continues (SendMessage, hidden in the RFD form): running again, then done at its next end
+    await service.acpEnded(chat.id, 'ag1', null);
+    assertEquals(stateOf('ag1')!.state, 'running');
+    await service.acpEnded(chat.id, 'ag1', 'end_turn');
+    assertEquals(stateOf('ag1')!.state, 'done');
+    await service.acpEnded(chat.id, 'ag2', null);
+    assertEquals(stateOf('ag2')!.state, 'stopped', 'a stopped one is not revived by the stream');
+    // Activity's words for the chat
+    const words = service.activity(chat.id);
+    assertEquals(words.ag1, { where: 'Own worktree', landing: 'Lands when the turn ends' });
+    assertEquals(words.ag2, { where: 'Own worktree', landing: 'Stopped — ask the agent to merge it' });
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+  }
+});
+
+Deno.test('P3: the landing words of a swarm subagent entry', () => {
+  assertEquals(landingWords({ state: 'merged', merge: {}, sub: { files: 3 } }), 'Merged · 3 files');
+  assertEquals(landingWords({ state: 'merged', merge: {}, sub: { files: 1 } }), 'Merged · 1 file');
+  assertEquals(landingWords({ state: 'merged', merge: null, sub: { empty: true, files: 0 } }), 'No changes');
+  assertEquals(landingWords({ state: 'merged', merge: { undo: { revert: 'x' } }, sub: { files: 2 } }), 'Merge undone');
+  assertEquals(landingWords({ state: 'failed', reason: 'protected' }), "Didn't land: it changed protected files");
+  assertEquals(landingWords({ state: 'done', landing: { waitsFor: 'touched-dirty' } }), "Didn't land: files it changed have uncommitted edits");
+  assertEquals(landingWords({ state: 'done', landing: { waitsFor: '' } }), 'Lands when the turn ends');
+  assertEquals(landingWords({ state: 'stopped' }), 'Stopped — ask the agent to merge it');
+  for (const t of ['Own copy', 'own copy']) assert(!JSON.stringify(TEXTS).includes(t));
+});
+
+Deno.test('P3: subagentEnd reads the adapter\'s RFD end states', () => {
+  assertEquals(subagentEnd({ state: 'running' }), null);
+  assertEquals(subagentEnd(undefined), null);
+  assertEquals(subagentEnd({ state: 'idle', stopReason: 'end_turn' }), 'end_turn');
+  assertEquals(subagentEnd({ state: 'idle', stopReason: 'cancelled' }), 'cancelled');
+  assertEquals(subagentEnd({ state: 'idle', stopReason: 'error' }), 'error');
+  assertEquals(subagentEnd({ state: 'idle' }), '');
+  assertEquals(subagentEnd({ state: 'unknown' }), 'unknown');
+  assertEquals(subagentEnd({ state: 'failed' }), 'error');
 });
 
 Deno.test('the hook routes: deny, pass, bind, cap, closed chats, hints; never allow; only AIB-made unbound worktrees go', async () => {
