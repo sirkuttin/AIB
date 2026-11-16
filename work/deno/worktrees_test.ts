@@ -955,7 +955,11 @@ Deno.test('planWithReason: the Windows manager never plans a WSL project (its re
     assertEquals(await manager.planWithReason('wsl://ubuntu/home/u/app'), { plan: null, reason: wt.WSL_PLANNED_THERE });
     assertEquals(await manager.plan('wsl://ubuntu/home/u/app'), null);
     assertEquals(Object.keys(manager.registry.all()), []);
-    assertEquals(wt.inPlaceNote(wt.WSL_PLANNED_THERE), '');
+    // build plan 1b (P1): a chat that wanted its own copy is told every reason, plainly (only a missed route reaches this one)
+    assertEquals(
+      wt.inPlaceNote(wt.WSL_PLANNED_THERE),
+      "Couldn't make an own copy for this chat, so it works in the project folder: a WSL project's worktree is made in its distro.",
+    );
   } finally {
     Deno.removeSync(dir, { recursive: true });
   }

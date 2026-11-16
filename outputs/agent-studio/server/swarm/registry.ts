@@ -153,9 +153,17 @@ class Mutex {
   }
 }
 
+/** One lock per registry file, so two Registry objects of the same state folder (the service's, project removal's) never race. */
+const LOCKS = new Map<string, Mutex>();
+
 export class Registry {
-  readonly #lock = new Mutex();
-  constructor(readonly stateDir: string) {}
+  readonly #lock: Mutex;
+  constructor(readonly stateDir: string) {
+    const key = normcase(pathOf(stateDir, FILE));
+    let lock = LOCKS.get(key);
+    if (!lock) LOCKS.set(key, lock = new Mutex());
+    this.#lock = lock;
+  }
 
   get path(): string {
     return pathOf(this.stateDir, FILE);
@@ -188,6 +196,38 @@ export class Registry {
 
   patch(id: string, fields: Partial<Helper>): Promise<Helper | null> {
     return this.update(id, (h) => (h ? { ...h, ...fields } : null));
+  }
+
+  /**
+   * Project removal (build plan 1b, 5.4): the records of `project`'s helpers whose copy is gone (the cleanup removed it, or the folder
+   * was deleted) and that do not run now (`live`: folders and provider:sessionId of the open chats). A helper whose copy was kept
+   * (unmerged work the user chose to keep) keeps its record, so it is still a helper, with its Undo, when it is opened again.
+   * Returns the ids dropped.
+   */
+  dropProject(project: string, live: Iterable<string> = []): Promise<string[]> {
+    const running = [...live];
+    const ofProject = (h: Helper) =>
+      project.startsWith('wsl://') || String(h.project ?? '').startsWith('wsl://') ? h.project === project : same(String(h.project ?? ''), project);
+    const runs = (h: Helper) =>
+      (!!h.chat?.lasting && running.includes(h.chat.lasting)) || running.some((p) => !!h.worktree?.path && same(h.worktree.path, p));
+    const copyThere = (h: Helper) => {
+      const path = String(h.worktree?.path ?? '');
+      if (!path || path.startsWith('wsl://')) return false;
+      try {
+        Deno.statSync(path);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    return this.#lock.run(() => {
+      const helpers = readHelpers(this.stateDir);
+      const dropped = Object.values(helpers).filter((h) => isDict(h) && ofProject(h) && !runs(h) && !copyThere(h)).map((h) => h.id);
+      if (!dropped.length) return [];
+      for (const id of dropped) delete helpers[id];
+      saveJson(this.path, { version: 1, helpers } as Doc, '.swarm-helpers-');
+      return dropped;
+    });
   }
 }
 

@@ -675,6 +675,9 @@ async function worktreeCall(ctx: ToolContext, action: string): Promise<Json> {
     return { content: [{ type: 'text', text: `${what}: ${pyStr(pyGet(reply, 'error'))}` }], isError: true };
   }
   if (action === 'merge') {
+    if (pyGet(reply, 'state') === 'queued') { // build plan 2.3: a chat that works in the project folder is busy; it merges when it pauses
+      return { content: [{ type: 'text', text: pyStr(pyGet(reply, 'message')) }] };
+    }
     if (pyGet(reply, 'state') === 'conflicts') {
       return {
         content: [{

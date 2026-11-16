@@ -41,6 +41,7 @@ import { ensureDefault } from '../worktrees/local_only.ts';
 import { defaultsAllowed } from '../worktrees/local_strays.ts';
 import { cleanupApply, cleanupScan, liveOf, titlesOf } from './cleanup_routes.ts';
 import { confirmView } from '../worktrees/cleanup.ts';
+import { Registry as SwarmRegistry } from '../swarm/registry.ts';
 
 type Json = Record<string, unknown>;
 
@@ -101,6 +102,11 @@ export async function projectRemove(ctx: ProjectRemoveContext, body: unknown): P
   }
   await ctx.removedProjects.remove(path);
   if (ctx.addedProjects) await ctx.addedProjects.remove(path);
+  try { // the project's helpers whose copies are gone leave swarm-helpers.json (a kept copy keeps its helper's record)
+    await new SwarmRegistry(ctx.stateDir).dropProject(path, live);
+  } catch (error) {
+    console.error("Dropping the removed project's helper records failed", error);
+  }
   return [200, { ok: true, disk, removed: ctx.removedProjects.public().removed, cleanup: cleaned }];
 }
 

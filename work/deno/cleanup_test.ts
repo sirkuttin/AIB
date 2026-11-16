@@ -221,8 +221,25 @@ Deno.test('16: project removal: one confirm lists the unmerged copy; the clean o
     stateDir: box.state,
     conversations: new ConversationState(box.state),
     removedProjects: new RemovedProjects(box.state),
-    host: { liveList: () => ({ connections: [] }) },
+    host: { liveList: () => ({ connections: [{ provider: 'claude', sessionId: 'live1' }] }) }, // h_running below
   };
+  // swarm records (P4a lead notes): a helper whose copy goes leaves swarm-helpers.json; one whose copy stays, a running one and
+  // another project's keep theirs
+  const helper = (id: string, project: string, path: string, lasting = '') => ({
+    id, project, title: id, parent: { live: '', lasting: '' }, chat: { live: '', lasting, provider: 'claude', model: '', mode: '' },
+    worktree: { path, branch: '', base: 'main', start: '' }, state: 'done', notes: [], reports: [],
+  });
+  const gonePath = pathOf(box.base, 'gone-copy');
+  Deno.writeTextFileSync(pathOf(box.state, 'swarm-helpers.json'), JSON.stringify({
+    version: 1,
+    helpers: {
+      h_clean: helper('h_clean', box.project, clean.plan.path),
+      h_kept: helper('h_kept', box.project, busy.plan.path),
+      h_running: helper('h_running', box.project, gonePath, 'claude:live1'),
+      h_other: helper('h_other', pathOf(box.base, 'other'), gonePath),
+    },
+  }));
+  const helperIds = () => Object.keys(JSON.parse(Deno.readTextFileSync(pathOf(box.state, 'swarm-helpers.json'))).helpers).sort();
   const [, check] = await projectRemove(ctx, { check: true, path: box.project, titles: { 'claude:s4': 'Fix login' } });
   const view = check.cleanup as { items: Record<string, unknown>[]; silent: number };
   assertEquals(view.items.map((i) => [i.id, i.title, i.files, i.own]), [[`copy:${'4'.repeat(32)}`, 'Fix login', 1, true]]);
@@ -234,6 +251,7 @@ Deno.test('16: project removal: one confirm lists the unmerged copy; the clean o
   assertEquals(status, 200);
   assertEquals((done.cleanup as { removed: string[] }).removed, [`copy:${'3'.repeat(32)}`]);
   assert(!exists(clean.plan.path) && exists(busy.plan.path));
+  assertEquals(helperIds(), ['h_kept', 'h_other', 'h_running'], "the removed copy's helper record is dropped, the rest stay");
   // the confirm with the tick
   await projectRemove(ctx, { path: box.project, cleanup: { remove: [`copy:${'4'.repeat(32)}`] } });
   assert(!exists(busy.plan.path) && !branchExists(box.project, busy.plan.branch));

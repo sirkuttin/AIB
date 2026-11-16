@@ -26,12 +26,14 @@
  *   - Refused (`blocked`) while a chat copy has uncommitted changes (untracked files count) or cannot be checked, a program works in
  *     this data folder (a shell in a chat copy), an agent install runs, or the process list cannot be read. The Windows side adds the
  *     working chats, the keeper's live chats and terminals, and the sign-in and Node.js terminals.
- *   - ~/.claude, ~/.codex, nvm, asdf and project folders are never inside the root, so they are never named; `kept` says so. Chat
- *     branches stay: only `git worktree prune` runs in each project, after its chat copies are gone.
+ *   - ~/.claude, ~/.codex, nvm, asdf and project folders are never inside the root, so they are never named; `kept` says so. In each
+ *     project (its copies' and the Windows side's added ones in this distro) what this AIB made and holds no unmerged work goes first
+ *     (decision 6 cleanup, cleanup.ts applyProject); branches with unmerged work stay, and `git worktree prune` runs after the copies.
  *
  * Process facts come from /proc read by sh (the compiled helper may not read /proc itself: helper/bgtasks.ts), never a signal.
  */
 import * as wt from '../../worktrees/worktrees.ts';
+import { applyProject } from '../../worktrees/cleanup.ts';
 import { LOCK_NAME, readJson } from '../../agents/installer.ts';
 import type { AibRemoveResult, AibUsage } from '../contract.ts';
 import { BAD_PARAMS, type Handlers, RpcError } from './rpc.ts';
@@ -348,6 +350,11 @@ export interface RemoveDeps {
   dirty(path: string): Promise<boolean | null>;
   /** `git worktree prune` in a project; false when it failed. */
   prune(project: string): Promise<boolean>;
+  /**
+   * Decision 6 cleanup of one project before the data folder (and its registry) goes: this AIB's copies, branches, refs and stash
+   * entries there without unmerged work (cleanup.ts applyProject, as worktree.cleanupApply with nothing ticked). Absent in tests.
+   */
+  cleanup?(project: string): Promise<{ removed: string[]; left: Record<string, string> }>;
   /** The chat copies of this data folder (the worktree registry): their folder and project. */
   worktrees(): { path: string; project: string; branch?: string; session?: string }[];
   /** The pid an agent install's lock names (agents/<id>/install.lock), else undefined (tests). */
@@ -522,7 +529,7 @@ export async function planRemoval(d: RemoveDeps): Promise<Plan> {
 }
 
 /** `aib.remove` 'check' and 'apply'. */
-export async function aibRemove(d: RemoveDeps, mode: 'check' | 'apply'): Promise<AibRemoveResult> {
+export async function aibRemove(d: RemoveDeps, mode: 'check' | 'apply', projects: string[] = []): Promise<AibRemoveResult> {
   const plan = await planRemoval(d);
   const base = { mode, blocked: plan.blocked, wouldRemove: plan.wouldRemove, kept: plan.kept, removed: [] as string[], left: [] as string[] };
   if (plan.gone) return { ...base, ok: true, message: `${d.root} is not there: nothing to remove.` };
@@ -534,9 +541,21 @@ export async function aibRemove(d: RemoveDeps, mode: 'check' | 'apply'): Promise
     if (!(await fs.lstat(path))) return;
     if (await removeInside(fs, root, path, left)) removed.push(path);
   };
-  // 1. the chat copies, then `git worktree prune` in their projects (their branches stay)
-  await del(`${data}/worktrees`);
   const notes: string[] = [];
+  // 0. what this AIB made in each project (its copies' projects and the Windows side's added ones) and holds no unmerged work goes
+  //    first, while the registry still says what is ours: work never merged stays on its branch
+  if (d.cleanup) {
+    for (const project of [...new Set([...plan.copies.map((c) => c.project), ...projects])].filter(plainAbs).sort()) {
+      if (!(await fs.lstat(project))?.isDirectory) continue;
+      try {
+        await d.cleanup(project);
+      } catch (error) {
+        notes.push(`AIB could not tidy up its branches in ${project} (${error instanceof Error ? error.message : String(error)}); they are kept.`);
+      }
+    }
+  }
+  // 1. the chat copies, then `git worktree prune` in their projects (their branches with unmerged work stay)
+  await del(`${data}/worktrees`);
   for (const project of [...new Set(plan.copies.map((c) => c.project))].filter(plainAbs)) {
     const info = await fs.lstat(project);
     if (!info?.isDirectory) continue;
@@ -735,6 +754,10 @@ export function aibMethods(ctx: AibContext): Handlers {
       keeperAlive: (dir) => keeperListening(dir),
       dirty: gitDirty,
       prune: gitPrune,
+      cleanup: async (project) => {
+        const done = await applyProject(ctx.data, project, [], { live: [] }); // Remove is refused while any chat runs here
+        return { removed: done.removed, left: done.left };
+      },
       worktrees: () => {
         try {
           return Object.values(new wt.Registry(ctx.data).all()).map((r) => ({
@@ -754,7 +777,8 @@ export function aibMethods(ctx: AibContext): Handlers {
     'aib.usage': async () => ({ ...await aibUsage(await deps()) }),
     'aib.remove': async (p) => {
       if (p.mode !== 'check' && p.mode !== 'apply') throw new RpcError("mode must be 'check' or 'apply'", BAD_PARAMS);
-      return { ...await aibRemove(await deps(), p.mode) };
+      const projects = Array.isArray(p.projects) ? p.projects.filter(plainAbs).slice(0, 500) : [];
+      return { ...await aibRemove(await deps(), p.mode, projects) };
     },
   };
 }

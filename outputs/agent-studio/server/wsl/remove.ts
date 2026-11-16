@@ -298,7 +298,7 @@ export function setFinalRunnerForTests(run: WslRunner | null): void {
 /** The real steps for a host: its helper, its keep-alive, its keeper, the flag, and the last step through wsl.exe. */
 export function realSteps(
   host: WslHost,
-  facts: Omit<RefusalFacts, 'live'>,
+  facts: Omit<RefusalFacts, 'live'> & { projects?: string[] },
   env: (name: string) => string | undefined = (n) => Deno.env.get(n),
 ): RemoveSteps {
   const h = host as RealHost;
@@ -312,7 +312,10 @@ export function realSteps(
     guard: () => h.install ? testGuard(h.install.root, env) : test ? '' : `AIB does not know where it is installed in ${facts.name}.`,
     call: async (mode) => {
       try {
-        return await host.call('aib.remove', { mode }, { timeoutMs: mode === 'apply' ? 900_000 : 180_000 });
+        // apply: the helper first tidies up what this AIB made in the distro's projects (wslCleanupApply's work; this host is used
+        // directly, since the 'removed' flag already hides the distro from wslHost())
+        const projects = mode === 'apply' && facts.projects?.length ? { projects: facts.projects } : {};
+        return await host.call('aib.remove', { mode, ...projects }, { timeoutMs: mode === 'apply' ? 900_000 : 180_000 });
       } catch (error) {
         if (error instanceof WslHelperError && ['unknown_method', 'no_method'].includes(error.code)) {
           throw new Error(`the AIB helper in ${facts.name} is too old to remove AIB; restart AIB first`);

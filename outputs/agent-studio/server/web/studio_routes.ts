@@ -13,6 +13,7 @@ import { pyInt } from '../transcripts/pycompat.ts';
 import { findPrompts } from '../transcripts/prompts.ts';
 import { branchOf, changesResponse, type ChatStudio, copyableOf } from '../worktrees/chat_folders.ts';
 import * as merge from '../worktrees/merge.ts';
+import * as mergeQueue from '../worktrees/merge_queue.ts';
 import { FROM_DOC_RESOLVED, MAX_BODY_BYTES } from '../artifacts/artifacts.ts';
 import { getUpdate, getUpdateNotes, postUpdateCheck, postUpdateInstall, postUpdateNotes } from '../desktop/updater.ts';
 import { parseQs } from '../artifacts/origin.ts';
@@ -476,7 +477,7 @@ export async function ownGatePost(ctx: WebContext, request: Request, url: URL): 
     }
     const studio = mergeStudio(ctx), wsl = await wslMerge.wslMergeChat(studio, conversation); // a WSL chat: its distro's helper merges
     try {
-      if (action === 'merge') return await refusedReply(() => wsl ? wslMerge.wslMerge(studio, wsl, '', true) : merge.mergeFromTool(studio, conversation));
+      if (action === 'merge') return await refusedReply(() => wsl ? wslMerge.wslMerge(studio, wsl, '', true) : mergeQueue.mergeFromToolQueued(studio, conversation));
       return await refusedReply(() => wsl ? wslMerge.wslResolveClash(studio, wsl, action, true) : merge.resolveClash(studio, conversation, action, true));
     } finally {
       forgetWorktreeStatus(conversation);

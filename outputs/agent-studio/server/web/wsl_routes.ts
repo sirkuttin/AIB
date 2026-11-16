@@ -372,7 +372,12 @@ export function wslRoutes(): Map<string, Handler> {
     if (why || !host) return [409, { error: why || `${distroName(distro)} is not running.`, code: 'wsl_unavailable' }];
     const busy = await ctx.host?.busyConnections().catch(() => []) ?? [];
     const terminals = ctx.terminals?.list() ?? [];
-    const steps = realSteps(host, { key, name: distroName(distro), busy: busy as { cwd?: unknown }[], terminals });
+    // the distro's added projects: the helper tidies up what this AIB made in them before its data folder goes (build plan 1b, 5.4)
+    const projects = Object.values(ctx.addedProjects?.public().added ?? {})
+      .map((a) => wslLoc(String((a as { path?: unknown })?.path ?? '')))
+      .filter((loc) => loc?.distro === key)
+      .map((loc) => loc!.linuxPath);
+    const steps = realSteps(host, { key, name: distroName(distro), busy: busy as { cwd?: unknown }[], terminals, projects });
     return [200, await removeAib(steps, mode)];
   });
   guarded('POST', '/api/live/wsl/open-url', (ctx, _args, body) => {
