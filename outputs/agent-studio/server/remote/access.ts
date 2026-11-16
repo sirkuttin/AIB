@@ -547,7 +547,12 @@ export class PhoneAccess implements SetupHost {
         }
         : null,
       setup: this.setup.view(ts),
-      devices: this.devices.list(),
+      // phase 2: "Active now" on the row of the device you are using (attention/presence.ts where())
+      devices: (() => {
+        const where = this.ctx.presence.where();
+        const active = where && where.who !== 'pc' ? where.device : '';
+        return this.devices.list().map((d) => (d.id === active ? { ...d, active: true } : d));
+      })(),
       devicesWarning: this.devices.warning,
       pairing: {
         open: code

@@ -168,8 +168,9 @@ export class PushSender {
     return this.devices.pushTargets().length > 0;
   }
 
-  async send(message: PushMessage): Promise<SendResult[]> {
-    const targets = this.devices.pushTargets();
+  /** `to` (phase 2, attention/watcher.ts pushPick): only the targets it picks ("where you are"); every target without it. */
+  async send(message: PushMessage, to?: (target: { id: string; kind: 'phone' | 'computer' }) => boolean): Promise<SendResult[]> {
+    const targets = this.devices.pushTargets().filter((t) => !to || to({ id: t.id, kind: t.kind }));
     if (!targets.length) return [];
     const pair = await this.keys.pair();
     const urgent = message.sheet || /need/i.test(message.title);

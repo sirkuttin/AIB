@@ -125,6 +125,14 @@
   function native() {
     return !!(root.AibDesktop && root.AibDesktop.available());
   }
+  const remotePush = () => {
+    try {
+      const R = root.AIBRemote;
+      return !!(R && R.push && typeof R.push.state === 'function' && R.push.state().on);
+    } catch {
+      return false;
+    }
+  };
   const supported = () => native() || typeof root.Notification === 'function';
   const permission = () => (native() ? 'granted' : supported() ? root.Notification.permission : 'unsupported');
   const desktopReady = () => S.prefs.desktop && permission() === 'granted';
@@ -624,7 +632,9 @@
         muted: e.muted,
         notifyFor: S.prefs.notifyFor,
         soundPref: S.prefs.sound,
-        desktopReady: !native() && desktopReady(), // the desktop app: the server notifies (see the top)
+        // the desktop app: the server notifies (see the top); a paired computer with notifications on gets the PC's push instead
+        // (remote-auth.js; phase 2), never both
+        desktopReady: !native() && !remotePush() && desktopReady(),
       });
       if (d.toast) showToast(ev.key, ev.kind, e.title, e.since, t);
       if (d.desktop || d.sound)

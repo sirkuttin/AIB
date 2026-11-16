@@ -110,6 +110,7 @@ Deno.test('T1: the answer lists the fresh windows; bad ids, kinds and keys are r
     soundOwner: 'w4',
     openAll: ['claude:s1'],
     windows: [{ w: 'w4', kind: 'chat', project: 'proj', chat: 'claude:s1', doc: null, focused: true, visible: true }],
+    quiet: false, // phase 2: true while you are at a paired computer (presence_where_test.ts)
   });
   p.reportWindow({ w: 'w5', kind: 'doc', project: { key: 'proj', name: 'n' }, doc: { project: 'proj', name: 'Release plan' } });
   assertEquals(p.windows()[1].doc, { project: 'proj', name: 'Release plan' });

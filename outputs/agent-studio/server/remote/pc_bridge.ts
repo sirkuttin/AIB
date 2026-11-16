@@ -38,6 +38,7 @@ import * as files from '../worktrees/files.ts';
 import { wslLoc } from '../wsl/access.ts';
 import { isBlocked } from './path_guard.ts';
 import { MAX_TOTAL_ATTACHMENT_BYTES } from '../acp/attachments.ts';
+import { answeredElsewhere, answerOf, answersOf } from '../attention/answers.ts';
 
 export const DEVICE_HEADER = 'X-AIB-Device';
 /** A socket cannot send a header: the device token comes as the subprotocol `aib-device.<token>`. */
@@ -97,6 +98,12 @@ export const MAX_DOWNLOAD_BYTES = MAX_TOTAL_ATTACHMENT_BYTES;
 export const PC_OWN_ROUTES: ReadonlyMap<string, readonly string[]> = new Map([[`GET ${DOWNLOAD_ROUTE}`, ['phone.read', 'pc.files']]]);
 /** The routes whose body may carry attachments (the PC composer's limits), read only once Send is checked. */
 const PROMPT_ROUTES = new Set(['/api/live/prompt', '/api/live/steer', '/api/live/queue']);
+/** Phase 2: the routes that answer a card, for "Allowed once on Laptop (Edge)" (attention/answers.ts). */
+const ANSWER_ROUTES = new Map<string, 'permission' | 'elicitation' | 'allow-answer'>([
+  ['/api/live/permission', 'permission'],
+  ['/api/live/elicitation', 'elicitation'],
+  ['/api/live/allow/answer', 'allow-answer'],
+]);
 
 type Json = Record<string, unknown>;
 
@@ -211,7 +218,11 @@ export class PcBridge {
     }
     const verdict = await decide(entry, { method, path, query: url.searchParams, body, ctx });
     if ('refuse' in verdict) {
-      return this.host.json(verdict.status ?? 403, { error: verdict.message, code: verdict.refuse }, { 'X-AIB-Refused': verdict.refuse });
+      // phase 2: a card another device answered first says who did
+      const first = verdict.refuse === 'gone' && ANSWER_ROUTES.has(path) ? answeredElsewhere(ctx, body?.id, body?.key) : null;
+      return this.host.json(verdict.status ?? 403, { error: first ?? verdict.message, code: verdict.refuse }, {
+        'X-AIB-Refused': verdict.refuse,
+      });
     }
     const missing = this.#missing(device, verdict.need);
     if (missing.length) {
@@ -231,7 +242,12 @@ export class PcBridge {
     if (!ctx.dispatchAs) return this.host.json(503, { error: 'AIB is starting. Try again in a moment.', code: 'busy' });
     const answer = await ctx.dispatchAs(principal, method as 'GET' | 'POST', url, request, body);
     if (path === '/api/live/terminal/list' && answer.status === 200) return await this.#terminalList(answer);
-    if (answer.status === 200) this.#logDone(device, path, url, body);
+    if (answer.status === 200) {
+      this.#logDone(device, path, url, body);
+      // phase 2: this computer answered the card (the route just wrote the PC's name: attention/answers.ts)
+      const op = ANSWER_ROUTES.get(path);
+      if (op) answersOf(ctx).note(body?.id, body?.key, { by: device.id, name: device.name, ...answerOf(op, body) });
+    }
     return await this.#remoteLinks(answer, device);
   }
 

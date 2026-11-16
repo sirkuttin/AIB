@@ -2476,7 +2476,15 @@
     if (!push.supported) line('This browser cannot show notifications from AIB.');
     else if (!push.allowed) line(pcName() + ' has notifications turned off for this computer. Turn them on there: Settings → Remote control.');
     else if (push.blocked) line('Notifications are blocked for this site in the browser. Allow them in the address bar, then come back.');
-    else line(push.on ? 'On. A chat that needs you or finishes shows a notification here when you are not looking at AIB.' : 'Off.');
+    else {
+      // phase 2: news goes to the device you used in the last 2 minutes (server/attention/presence.ts where())
+      line(
+        push.on
+          ? 'On. Notifications go to the device you used in the last 2 minutes. While you work here, they show on this computer, not on ' +
+              pcName() + ' or your phone; while you work on ' + pcName() + ', this computer stays quiet. Away from every device, all of them get it.'
+          : 'Off.',
+      );
+    }
     box.append(status);
     if (push.supported && push.allowed && !push.blocked) {
       box.append(button(push.on ? 'Turn off' : 'Turn on notifications', () => turn(!push.on), push.on ? '' : 'primary'));
