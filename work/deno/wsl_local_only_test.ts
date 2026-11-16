@@ -372,7 +372,7 @@ const systemTexts = (params: Json) =>
 Deno.test({ name: 'wsl studio local-only: a chat in its own copy is granted and told the main folder private/ (Linux paths)', ...T, async fn() {
   await keeperBinary();
   await using lab = new StudioLab();
-  const c = await lab.studio().connect('claude', REF);
+  const c = await lab.studio().connect('claude', REF, null, { ownCopy: true });
   await until(() => c.ready, 'ready', 30);
   assertEquals([c.cwd, c.agentCwd, c.projectRoot], [WT_REF, WT_LINUX, REF]);
   assertEquals(c.localOnly, { entries: [PRIV], dirs: [PRIV], private: PRIV, ignored: { dirs: [GAME], files: [ENV] } });
@@ -392,7 +392,7 @@ Deno.test({ name: 'wsl studio local-only: a project under /tmp gets the default 
   {
     await using lab = new StudioLab();
     lab.host.folders.set('/tmp/aib-wsl-test-fake', lab.dir);
-    const c = await lab.studio().connect('claude', 'wsl://ubuntu/tmp/aib-wsl-test-fake/app');
+    const c = await lab.studio().connect('claude', 'wsl://ubuntu/tmp/aib-wsl-test-fake/app', null, { ownCopy: true });
     await until(() => c.ready, 'ready', 30);
     assertEquals(lab.called('localOnly.ensure'), [{ project: '/tmp/aib-wsl-test-fake/app' }]);
     const ensureAt = lab.host.calls.findIndex(([m]) => m === 'localOnly.ensure');
@@ -401,7 +401,7 @@ Deno.test({ name: 'wsl studio local-only: a project under /tmp gets the default 
   }
   {
     await using lab = new StudioLab(false); // the fake helper answers localOnly.* with no_method
-    const c = await lab.studio().connect('claude', REF);
+    const c = await lab.studio().connect('claude', REF, null, { ownCopy: true });
     await until(() => c.ready, 'ready', 30);
     assertEquals([c.cwd, c.localOnly], [WT_REF, null]);
     assert(!('additionalDirectories' in lab.received('session/new')[0]));
@@ -412,7 +412,7 @@ Deno.test({ name: 'wsl files local-only: list and exclude of a WSL chat copy go 
   await keeperBinary();
   await using lab = new StudioLab();
   const studio = lab.studio();
-  const c = await studio.connect('claude', REF);
+  const c = await studio.connect('claude', REF, null, { ownCopy: true });
   await until(() => c.ready, 'ready', 30);
   const routes = filesRoutes();
   const ctx = {

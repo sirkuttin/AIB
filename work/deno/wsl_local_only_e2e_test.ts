@@ -76,7 +76,7 @@ Deno.test({
       assertEquals(await sh('git -C "$1" status --porcelain', repo), '', 'private/ and game/review/ are ignored');
       const gitignore = await sh('cat "$1/.gitignore"', repo);
       studio = studioIn(state);
-      const c = await studio.connect('claude', ref);
+      const c = await studio.connect('claude', ref, null, { ownCopy: true }); // a copy chat (new chats work in the folder: test-only ownCopy)
       await until(() => c.ready, 'ready', 60);
       const linux = c.agentCwd;
       assert(c.worktree?.branch.startsWith('studio/chat-'), 'the chat works in its own copy');

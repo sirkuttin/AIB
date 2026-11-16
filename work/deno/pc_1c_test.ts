@@ -24,9 +24,12 @@ import {
   DeviceSockets,
 } from "../../outputs/agent-studio/server/remote/pc_sockets.ts";
 import {
+  CACHE_FLAG,
   cleanPushSub,
   COMPUTER_SCOPES,
+  type Device,
   pushEndpointAllowed,
+  scopesForPhone,
 } from "../../outputs/agent-studio/server/remote/devices.ts";
 import type { WsLink } from "../../outputs/agent-studio/server/platform/websocket.ts";
 import {
@@ -129,6 +132,13 @@ Deno.test("socket registry: messages checked per device, Remove closes only that
 });
 
 // ---- push endpoints (unit) -------------------------------------------------------------------------------------------------------
+
+Deno.test("saved copies of chats are phone-only: a computer never gets the cache flag (memory only, SF6)", () => {
+  const base = { id: "d", name: "n", tokenHash: "", cookieHash: "", scopes: ["phone.read"], login: "", created: 0, lastSeen: 0 } as Device;
+  assertEquals(scopesForPhone(base), ["phone.read", CACHE_FLAG]);
+  assertEquals(scopesForPhone({ ...base, offlineCache: false }), ["phone.read"]);
+  assertEquals(scopesForPhone({ ...base, kind: "computer" }), ["phone.read"]);
+});
 
 Deno.test("push endpoints: only the known push services, https on the default port", () => {
   const yes = [

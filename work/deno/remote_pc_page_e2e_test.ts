@@ -582,11 +582,15 @@ Deno.test({
         'a computer name',
       );
       await page.shot('pc-pair');
-      // the device record where phones keep it (what pairing leaves behind)
+      // the device record where phones keep it (what pairing leaves behind: phone.js's version 2, with the saved-copies store; the
+      // loader and the computer page must open it at that version, not fail on an older one)
       await page.goto(`https://${NAME}/remote.css`); // any page of this origin that runs nothing
       await page.eval(`new Promise((resolve, reject) => {
-        const req = indexedDB.open('aib-phone', 1);
-        req.onupgradeneeded = () => req.result.createObjectStore('kv');
+        const req = indexedDB.open('aib-phone', 2);
+        req.onupgradeneeded = () => {
+          req.result.createObjectStore('kv');
+          req.result.createObjectStore('chats', { keyPath: 'key' });
+        };
         req.onsuccess = () => {
           const tx = req.result.transaction('kv', 'readwrite');
           tx.objectStore('kv').put({ token: ${JSON.stringify(computer.token)}, device: { id: ${JSON.stringify(computer.id)} } }, 'device');

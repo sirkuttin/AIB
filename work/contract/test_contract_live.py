@@ -10,6 +10,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from server_under_test import Server  # noqa: E402
 
 VOLATILE = {'now', 'checkedAt', 'instanceId', 'hostId', 'pid', 'startedAt', 'elapsedMs'}
+# Deno-only additions the Python reference never had: the ownership answer's folder-only rule (probe.ts folderOnlyEvidence)
+VOLATILE |= {'transcriptQuiet'}
 
 
 def strip(value):
