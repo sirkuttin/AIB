@@ -601,7 +601,7 @@
 
 /* ---- Split view: both panes' chats, each with its header, its files and its own Discard / Merge row (changes-ui.js
    splitSync; option B of the approved mockup). The single-chat bar, list and footer step aside. ---- */
-body.split-on #changesPane > :not(.sp-changes) {
+body.split-panel #changesPane > :not(.sp-changes) {
   display: none !important;
 }
 .sp-changes {

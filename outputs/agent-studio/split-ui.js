@@ -814,14 +814,18 @@
   // ---- the right panel: both panes' chats, in pane order, whatever has focus ---------------------------------------------
   // Activity, Changes and Artifacts list every pane's chat (owner, 2026-11-15). The list only changes when a pane shows another
   // chat or the panes come and go, never when focus moves; 'aib-split-chats' tells the panel when it does.
+  // Only when two chats are on screen side by side: a pane with the New chat view (or no stage) leaves the panel as it is with one
+  // chat, about the open chat (owner, 2026-11-16: one chat on screen showed split sections). body.split-panel marks it for the CSS.
   function paneChats() {
-    if (!active()) return [];
-    return order.map((g) => (g.active && g.active !== T().DRAFT ? g.active : '')).filter(Boolean);
+    if (!active() || !stage) return [];
+    const list = order.map((g) => (g.active && g.active !== T().DRAFT ? g.active : '')).filter(Boolean);
+    return list.length >= 2 ? list : [];
   }
   let chatsSig = null;
   function announceChats() {
     const list = paneChats(),
       sig = list.join('|');
+    if (doc() && doc().body) doc().body.classList.toggle('split-panel', list.length >= 2);
     if (sig === chatsSig) return;
     chatsSig = sig;
     try {

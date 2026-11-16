@@ -155,3 +155,59 @@ panelTest('right panel, split view: each chat folds its finished helpers the sam
   const after = JSON.stringify([await page.eval(LIST(SEC(1))), await page.eval(LIST(SEC(2)))]);
   assert(before === after, `focus changed the sections:\n${before}\n${after}`);
 });
+
+/* ---- split mode only with two chats on screen (owner, 2026-11-16: one chat on screen, yet the panel drew split sections) ----
+   A pane showing the New chat view is no chat: the panel is the one-chat panel (Subagents heading, fold, the × in its row),
+   about the open chat; with two chats on screen again it lists both. A New chat pane you leave closes (the split collapses). */
+const PANEL_MODE = `(() => {
+  const vis = (n) => !!n && n.getClientRects().length > 0 && n.getBoundingClientRect().width > 0;
+  return {
+    splitOn: document.body.classList.contains('split-on'),
+    splitPanel: document.body.classList.contains('split-panel'),
+    panes: AgentSplitUI.panes().length,
+    sections: [...document.querySelectorAll('#splitActivity .sp-grp')].filter(vis).length,
+    single: vis(document.getElementById('subagentList')) && vis(document.querySelector('#subagentList .sa-heading')),
+    hideInHeading: !!document.querySelector('#subagentList .sa-heading #activityHide'),
+  };
+})()`;
+type Mode = { splitOn: boolean; splitPanel: boolean; panes: number; sections: number; single: boolean; hideInHeading: boolean };
+const mode = (page: Page) => page.eval<Mode>(PANEL_MODE);
+async function waitMode(page: Page, want: string, what: string) {
+  await page.waitFor(`(() => { const m = ${PANEL_MODE}; return ${want}; })()`, 15000, what).catch(async (e) => {
+    throw new Error(`${e.message}: ${JSON.stringify(await mode(page))}`);
+  });
+}
+
+panelTest('right panel: a split with a New chat pane (one chat on screen) shows the one-chat panel; two chats again list both', async (lab) => {
+  const page = lab.page;
+  const { a, b } = await twoChats(lab, 3);
+  await split(lab, a, b);
+  await waitMode(page, 'm.splitPanel && m.sections === 2 && !m.single', 'two chats: split sections');
+  // New chat in the focused pane: A's pane shows the New chat view, B's pane B
+  await page.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'N', code: 'KeyN', ctrlKey: true, shiftKey: true, bubbles: true }))`);
+  await page.waitFor(`AgentSplitUI.panes().some((p) => p.group.active === '__draft__')`, 15000, 'a New chat pane');
+  await waitMode(page, 'm.splitOn && m.panes === 2 && !m.splitPanel && m.sections === 0 && m.single && m.hideInHeading', 'one chat on screen: the one-chat panel');
+  await page.click('#paneTab-changes');
+  await settle(500);
+  assert(!(await page.eval<boolean>(`!!document.querySelector('#splitChanges .sp-grp')?.offsetParent`)), 'Changes: no split sections');
+  await page.click('#paneTab-activity');
+  // focus B's pane: the New chat view goes, both panes show a chat again
+  await page.eval(`(() => { const p = AgentSplitUI.panes().find((p) => p.group.active === ${JSON.stringify(b.key)}); AgentSplitUI.focusPane(p.id); })()`);
+  await waitMode(page, 'm.splitPanel && m.sections === 2 && !m.single', 'two chats again: split sections');
+});
+
+panelTest('right panel: Ctrl+Backslash on a one-chat window gives a New chat pane (one-chat panel); leaving it closes the pane', async (lab) => {
+  const page = lab.page;
+  const a = await lab.chat();
+  await a.start();
+  a.say('Alpha here ALPHAEND');
+  helpers(a, 'a', [['Find rounding bug', 'running'], ['Done one', 'completed'], ['Done two', 'completed']]);
+  await lab.select(a);
+  await shown(page, 'ALPHAEND');
+  await page.eval(`AgentSplitUI.splitFocused('row')`);
+  await page.waitFor(`AgentSplitUI.panes().length === 2`, 15000, 'two panes');
+  await waitMode(page, 'm.splitOn && !m.splitPanel && m.sections === 0 && m.single', 'New chat pane + one chat: the one-chat panel');
+  await page.eval(`(() => { const p = AgentSplitUI.panes().find((p) => p.group.active === ${JSON.stringify(a.key)}); AgentSplitUI.focusPane(p.id); })()`);
+  await waitMode(page, '!m.splitOn && !m.splitPanel && m.panes === 0 && m.single', 'the New chat pane closed: one chat, no split');
+  await waitFold(page, '#subagentList', /^▸ 2 finished$/, 'the one-chat fold');
+});
