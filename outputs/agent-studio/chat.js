@@ -299,6 +299,8 @@
   /* ---- Live chats' events: chat-cache.js keeps them, one entry per connection id, shared by the main list, side panes and the
      subagent view. The arrays live only there: read them through the entry's named calls (work/test_event_readers.js). */
   const chatCache = window.ChatCache.create();
+  // split view's Activity sections (renderSplitActivity, by the split-view code further down)
+  const splitAct = { box: null, secs: new Map(), busy: false };
   const liveCache = (id = current) => chatCache.entry(id || '');
   const liveLoaded = () => liveCache().loaded();
   const SCROLL_V2 = (() => {
@@ -2357,10 +2359,14 @@
     }
   }
   function collectChildren() {
+    collectChildrenFor(children, snapshot, liveCache());
+  }
+  /* kids: the chat's helper map (filled in place); snap: its live state; cache: its chat-cache entry. Split view runs it for each pane's chat. */
+  function collectChildrenFor(children, snapshot, cache) {
     /* helpers AIB marked as going on in the background after a steer (the server's tool_call_update with background.helper) */
     const inBackground = new Map();
     /* helpers the opening page told about (their events are not loaded until one is opened: design 4.4) */
-    const told = liveCache().helpers;
+    const told = cache.helpers;
     if (told)
       for (const [id, h] of Object.entries(told)) {
         if (!id || id === snapshot.sessionId || children.has(id)) continue;
@@ -2379,7 +2385,7 @@
         });
         if (h.background) inBackground.set(id, true);
       }
-    liveLoaded().forEach((e) => {
+    cache.loaded().forEach((e) => {
       if (e.kind !== 'update') return;
       const u = e.data.update || {};
       if (u.sessionUpdate === 'tool_call_update' && u.background && typeof u.background.helper === 'string')
@@ -2418,7 +2424,7 @@
     });
     for (const [id, child] of children) child.background = inBackground.get(id) === true;
     // Model, tokens and what each helper is doing now (subagents-ui.js details); a part not known now keeps what was known before.
-    const facts = window.SubagentsUI?.details?.(liveLoaded(), snapshot.sessionId);
+    const facts = window.SubagentsUI?.details?.(cache.loaded(), snapshot.sessionId);
     if (facts)
       for (const [id, d] of facts) {
         const c = children.get(id);
@@ -2598,7 +2604,10 @@
       b.className = 'pane-badge';
       tab.append(b);
     }
-    const n = actCounts.working;
+    // split view: both panes' chats (the same whichever has focus)
+    const n = splitAct.secs.size
+      ? [...splitAct.secs.values()].reduce((t, s) => t + ((s.counts && s.counts.working) || 0), 0)
+      : actCounts.working;
     b.textContent = n > 99 ? '99+' : String(n);
     b.hidden = !n;
     tab.setAttribute('aria-label', 'Activity' + (n ? ', ' + n + (n === 1 ? ' subagent' : ' subagents') + ' working' : ''));
@@ -4618,9 +4627,21 @@
         button.onclick = () => toggleCommand(task.id);
       }
       existing.delete(task.id);
+      paintCommandCard(button, task, selectedCommand?.id === task.id);
+      if (box.children[index] !== button) box.insertBefore(button, box.children[index] || null);
+    }
+    for (const node of existing.values()) node.remove();
+    if (!rows.length)
+      box.replaceChildren(
+        text('p', showCommandHistory ? 'No recorded commands' : 'No commands running', 'empty-state'),
+      );
+    renderActivityStrip();
+  }
+  /* One process card (the Activity tab's Processes list, and each chat's section in split view). */
+  function paintCommandCard(button, task, isSelected) {
+    {
       const kind = isRunningCommand(task) ? 'running' : task.status === 'failed' ? 'failed' : 'ended';
-      button.className =
-        'command-card sa-card proc-row proc-' + kind + (selectedCommand?.id === task.id ? ' selected' : '');
+      button.className = 'command-card sa-card proc-row proc-' + kind + (isSelected ? ' selected' : '');
       button.title = [
         window.ActivityUI ? window.ActivityUI.processHover(task) : task.title,
         commandState(task),
@@ -4636,14 +4657,7 @@
         text('span', window.ActivityUI ? window.ActivityUI.processTitle(task) : task.title, 'proc-title'),
         ...(dur ? [text('span', dur, 'sa-when proc-dur')] : []),
       );
-      if (box.children[index] !== button) box.insertBefore(button, box.children[index] || null);
     }
-    for (const node of existing.values()) node.remove();
-    if (!rows.length)
-      box.replaceChildren(
-        text('p', showCommandHistory ? 'No recorded commands' : 'No commands running', 'empty-state'),
-      );
-    renderActivityStrip();
   }
   async function refreshCommands() {
     if (!selected) return;
@@ -5555,6 +5569,179 @@
     mirrorsAt = now;
     tickMirrors();
   }, 500);
+  // ---- Split view, the right panel's Activity: both panes' chats in pane order, each in full, whatever has focus (owner,
+  // 2026-11-15). Each chat's helpers and processes are read the same way here, focused or not, so moving focus changes nothing.
+  const paneAct = new Map(); // alias key -> { kids: Map, rows, commands, at, cmdAt, histAt }
+  function paneActEntry(key) {
+    let a = paneAct.get(key);
+    if (!a) {
+      a = { kids: new Map(), rows: [], commands: [], at: 0, cmdAt: 0, histAt: 0 };
+      paneAct.set(key, a);
+      while (paneAct.size > 8) paneAct.delete(paneAct.keys().next().value);
+    }
+    return a;
+  }
+  async function loadPaneActivity(c) {
+    const key = aliasKey(c),
+      a = paneActEntry(key),
+      now = Date.now();
+    if (c.live && !c.live.closed) {
+      const next = (await pullLive(c.live.id)).state,
+        entry = chatCache.entry(c.live.id);
+      if (next) collectChildrenFor(a.kids, next, entry);
+      a.rows = sortAgents([...a.kids.values()]);
+    } else if (isPseudoKey(c.key)) a.rows = [];
+    else if (!a.histAt || now - a.histAt > 5000) {
+      a.histAt = now;
+      const [w, roster] = await Promise.all([pollHistory(c.key), get('/api/agents', { session: c.key })]);
+      a.rows = sortAgents(withLaunched(roster.agents, w.events, c.key));
+    }
+    if (/^(live|agent|recovered):/.test(c.key) || isPseudoKey(c.key)) a.commands = [];
+    else if (!a.cmdAt || now - a.cmdAt > 4000) {
+      a.cmdAt = now;
+      try {
+        a.commands = (await get('/api/commands', { session: c.key })).commands || [];
+      } catch {}
+    }
+    a.at = now;
+  }
+  function splitActBox() {
+    if (splitAct.box) return splitAct.box;
+    const body = $('activityBody');
+    if (!body) return null;
+    splitAct.box = text('div', '', 'sp-activity');
+    splitAct.box.id = 'splitActivity';
+    body.prepend(splitAct.box);
+    return splitAct.box;
+  }
+  function splitActSection(key) {
+    let sec = splitAct.secs.get(key);
+    if (sec) return sec;
+    const root = text('section', '', 'sp-grp');
+    root.dataset.key = key;
+    const head = text('div', '', 'sp-head'),
+      none = text('p', 'Nothing running right now.', 'sp-none'),
+      subLabel = text('div', '', 'sp-label'),
+      subBox = text('div', '', 'sp-subs'),
+      procLabel = text('div', '', 'sp-label'),
+      procBox = text('div', '', 'sp-procs running-command-list');
+    procBox.setAttribute('role', 'group');
+    procBox.setAttribute('aria-label', 'Processes');
+    root.append(head, none, subLabel, subBox, procLabel, procBox);
+    sec = { root, head, none, subLabel, subBox, procLabel, procBox, cards: new Map(), counts: null };
+    splitAct.secs.set(key, sec);
+    return sec;
+  }
+  function renderSplitActivity() {
+    const S = window.AgentSplitUI,
+      A = window.ActivityUI;
+    const keys = S?.active?.() && S.paneChats ? S.paneChats() : [];
+    if (!keys.length || !A?.splitHead) {
+      if (splitAct.box) splitAct.box.replaceChildren();
+      splitAct.secs.clear();
+      paintActivityTabBadge();
+      return;
+    }
+    const box = splitActBox();
+    if (!box) return;
+    const nowS = Date.now() / 1000,
+      selKey = selected ? aliasKey(selected) : '';
+    for (const k of [...splitAct.secs.keys()]) if (!keys.includes(k)) splitAct.secs.delete(k);
+    const want = [];
+    for (const key of keys) {
+      const sec = splitActSection(key),
+        a = paneAct.get(key) || { rows: [], commands: [] },
+        info = S.chatInfo(key);
+      let counts = { working: 0, failed: 0, subagents: a.rows.length };
+      // The same cards as the single-chat Activity, every finished helper listed (no folding: owner, 2026-11-15).
+      window.SubagentsUI?.render({
+        box: sec.subBox,
+        rows: a.rows,
+        now: nowS,
+        convKey: key,
+        selectedKey: key === selKey ? subSelection?.key : undefined,
+        chatModel: '',
+        empty: '',
+        split: true,
+        onModel: (m) => {
+          counts = { working: m.working.length, failed: m.failed, subagents: m.top.length + m.done.length };
+        },
+        // A row opens its history in this panel; it never moves pane focus. The history reads the focused chat's live stream,
+        // so only that chat's rows open one.
+        onOpen: (agent) => {
+          if (key === (selected ? aliasKey(selected) : '')) toggleSubagent(agent);
+        },
+        rerender: renderSplitActivity,
+      });
+      const running = a.commands.filter(isRunningCommand);
+      sec.counts = { ...counts, processes: running.length };
+      A.splitHead(document, info, A.splitCounts(sec.counts), sec.head);
+      sec.none.hidden = !!(counts.working || counts.failed || running.length);
+      sec.subLabel.hidden = sec.subBox.hidden = !a.rows.length;
+      sec.subLabel.replaceChildren('Subagents', text('span', String(a.rows.length)));
+      sec.procLabel.hidden = sec.procBox.hidden = !running.length;
+      sec.procLabel.replaceChildren('Processes', text('span', running.length + ' running'));
+      const seen = new Set();
+      running.forEach((task, i) => {
+        let b = sec.cards.get(task.id);
+        if (!b) {
+          b = text('button', '', 'command-card');
+          b.type = 'button';
+          b.dataset.key = task.id;
+          b.onclick = () => {
+            if (key === (selected ? aliasKey(selected) : '')) toggleCommand(task.id);
+          };
+          sec.cards.set(task.id, b);
+        }
+        seen.add(task.id);
+        paintCommandCard(b, task, key === selKey && selectedCommand?.id === task.id);
+        if (sec.procBox.children[i] !== b) sec.procBox.insertBefore(b, sec.procBox.children[i] || null);
+      });
+      for (const [id, b] of sec.cards)
+        if (!seen.has(id)) {
+          b.remove();
+          sec.cards.delete(id);
+        }
+      want.push(sec.root);
+    }
+    want.forEach((n, i) => {
+      if (box.children[i] !== n) box.insertBefore(n, box.children[i] || null);
+    });
+    while (box.children.length > want.length) box.lastChild.remove();
+    paintActivityTabBadge();
+  }
+  async function tickSplitActivity() {
+    const S = window.AgentSplitUI;
+    if (!S?.active?.()) {
+      if (splitAct.secs.size) renderSplitActivity();
+      return;
+    }
+    if (splitAct.busy) return;
+    splitAct.busy = true;
+    try {
+      for (const key of S.paneChats()) {
+        const c = conversations.find((x) => aliasKey(x) === key);
+        if (!c) continue;
+        try {
+          await loadPaneActivity(c);
+        } catch {}
+      }
+    } finally {
+      splitAct.busy = false;
+    }
+    renderSplitActivity();
+  }
+  let splitActAt = 0;
+  setInterval(() => {
+    const now = Date.now();
+    if (now - splitActAt < pollEvery(1500, 5000) - 100) return;
+    splitActAt = now;
+    tickSplitActivity();
+  }, 500);
+  window.addEventListener('aib-split-chats', () => {
+    renderSplitActivity();
+    setTimeout(tickSplitActivity, 0);
+  });
   window.AgentSplitUI?.init({
     convOf: (key) => conversations.find((c) => aliasKey(c) === key),
     selectedKey: () => (selected ? aliasKey(selected) : ''),

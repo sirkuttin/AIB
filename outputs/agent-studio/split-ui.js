@@ -314,12 +314,14 @@
     if (!active()) {
       teardown();
       order = [];
+      announceChats();
       return;
     }
     const sig = T().shape(L).split('@')[0];
     const reshaped = !stage || sig !== shapeSig;
     if (reshaped) build();
     update();
+    announceChats();
     // More or fewer panes across: the chat list and Activity give way so every pane keeps its minimum width (resize-ui.js).
     if (reshaped && root.ResizeUI && typeof root.ResizeUI.layout === 'function') root.ResizeUI.layout();
   }
@@ -804,6 +806,37 @@
       .filter((g) => g.id !== L.focus && g.active && g.active !== T().DRAFT)
       .map((g) => ({ key: g.active, box: (panes.get(g.id) || {}).mirror ? panes.get(g.id).mirror.msgs : null }))
       .filter((m) => m.box);
+  }
+
+  // ---- the right panel: both panes' chats, in pane order, whatever has focus ---------------------------------------------
+  // Activity, Changes and Artifacts list every pane's chat (owner, 2026-11-15). The list only changes when a pane shows another
+  // chat or the panes come and go, never when focus moves; 'aib-split-chats' tells the panel when it does.
+  function paneChats() {
+    if (!active()) return [];
+    return order.map((g) => (g.active && g.active !== T().DRAFT ? g.active : '')).filter(Boolean);
+  }
+  let chatsSig = null;
+  function announceChats() {
+    const list = paneChats(),
+      sig = list.join('|');
+    if (sig === chatsSig) return;
+    chatsSig = sig;
+    try {
+      root.dispatchEvent(new root.CustomEvent('aib-split-chats', { detail: { keys: list } }));
+    } catch (e) {
+      /* no window events (node tests) */
+    }
+  }
+  // What the panel shows for a pane's chat: {key, conv, id (live id or ''), title, dot()}.
+  function chatInfo(key) {
+    const c = host && key ? host.convOf(key) : null;
+    return {
+      key,
+      conv: c || null,
+      id: c && c.live && !c.live.closed && typeof c.live.id === 'string' ? c.live.id : '',
+      title: c ? host.titleOf(c) : 'Conversation',
+      dot: () => (host && host.dotFor ? host.dotFor(key) : null),
+    };
   }
 
   // ---- strips and keys for the workspace --------------------------------------------------------------------------------
@@ -1338,6 +1371,8 @@
     closeTab,
     active,
     panes: paneList,
+    paneChats,
+    chatInfo,
     menuItems,
     mirrorTargets,
     handleKey,
