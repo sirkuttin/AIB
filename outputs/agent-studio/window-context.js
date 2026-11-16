@@ -71,7 +71,11 @@
 
   let ctx = null;
   const C = () => ctx || (ctx = readContext());
-  const app = () => !!(root.AibDesktop && root.AibDesktop.available && root.AibDesktop.available());
+  const desktop = () => !!(root.AibDesktop && root.AibDesktop.available && root.AibDesktop.available());
+  /* The computer page (remote control from other PCs, phase 4): remote-windows.js opens, routes and focuses this browser's own
+     windows, and its roster of them stands in for the PC's presence answer (the PC's windows are not this computer's). */
+  const remote = () => root.AIBRemoteWindows || null;
+  const app = () => desktop() || !!remote();
   // The query (or this window's saved context) names it; else, outside the desktop app, a per-tab id.
   function hasOwnId() {
     try {
@@ -86,7 +90,7 @@
   }
   let tabId = '';
   function me() {
-    if (hasOwnId() || app()) return C().w;
+    if (hasOwnId() || desktop()) return C().w;
     if (tabId) return tabId;
     const ss = session();
     try {
@@ -120,6 +124,7 @@
   function noteAnswer(ans, sentOpen) {
     if (!ans || typeof ans !== 'object' || ans.ok !== true) return false;
     quietAt = ans.quiet === true ? Date.now() : 0;
+    if (remote()) return true; // the computer page: this browser's windows come from remote-windows.js, never the PC's answer
     const before = othersOpen().join('\n') + '|' + others().map((w) => w.w + ':' + w.kind + ':' + w.project + ':' + w.chat).join(',');
     last = {
       at: Date.now(),
@@ -132,7 +137,7 @@
     if (before !== after) changed();
     return true;
   }
-  const answer = () => (last && Date.now() - last.at < ANSWER_MS ? last : null);
+  const answer = () => (remote() ? remote().answer() : last && Date.now() - last.at < ANSWER_MS ? last : null);
   // The other windows as the last fresh answer lists them (visible or not).
   function others() {
     const a = answer();
@@ -193,8 +198,9 @@
     return !focused && others().length > 0;
   }
   const pollMs = (fast, slow) => (background() ? slow : fast);
-  // Routing needs the desktop app and an app window id; in serve mode (or an old app) every open stays in this page.
-  const canRoute = () => app() && APP_W.test(me());
+  // Routing needs the desktop app and an app window id, or the computer page (remote-windows.js); in serve mode (or an old app)
+  // every open stays in this page.
+  const canRoute = () => (desktop() && APP_W.test(me())) || !!remote();
   const known = () => !!answer();
   // K3 op 'route': resolves {to:'self'} or {to:w}. post(path, body) is the page's token POST (chat.js post).
   function route(target, post) {
@@ -335,6 +341,7 @@
     },
   };
   root.AibWindow = api;
+  if (remote() && typeof remote().onChange === 'function') remote().onChange(changed);
   // store-merge.js (Phase 1B): a project another window owns is not written from here.
   if (root.AibStore && typeof root.AibStore.setOwnedElsewhere === 'function') root.AibStore.setOwnedElsewhere(ownedElsewhere);
   if (typeof module === 'object' && module.exports) module.exports = api;

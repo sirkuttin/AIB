@@ -18,11 +18,55 @@
   'use strict';
   const doc = root.document;
   const html = doc.documentElement;
-  const REFUSED = ['X-Studio-Token', 'X-AIB-Page-Key', 'X-AIB-Page-Session', 'X-Studio-Artifact-Key', 'X-Studio-Hook-Key'];
+  const REFUSED = [
+    'X-Studio-Token',
+    'X-AIB-Page-Key',
+    'X-AIB-Page-Session',
+    'X-Studio-Artifact-Key',
+    'X-Studio-Hook-Key',
+    'X-Studio-Hook-Nonce',
+    'X-Agent-Host-Token',
+  ]; // the bridge's REFUSED_HEADERS (server/remote/pc_bridge.ts): never sent from here
   const NAME_KEY = 'aib-remote-pc-name'; // the PC's name, for the "Can't reach" line before the PC answers (not a secret)
   const S = { token: '', boot: null, pushOn: false, pushKey: '', install: null, installed: false, started: false };
   const realFetch = root.fetch.bind(root);
   const RealSocket = root.WebSocket;
+
+  /* Memory only on another computer (security review SF6): what was typed or sent and the chats' names never go to its disk, so a
+     laptop that is lost and kept offline holds none of it (the 401 wipe needs the PC). The page's scripts keep these in
+     localStorage on the PC; here those keys live in this window's memory. Copies an older page left on disk go now. */
+  const MEMORY_KEYS = new Set([
+    'studio-drafts-v1', // drafts
+    'studio-pending-sends-v1', // messages mid-send (chat.js rememberSend), with their attachments
+    'studio-prompt-attempts-v1', // send attempts
+    'studio-conversation-names', // chat names
+  ]);
+  (function memoryOnly() {
+    let ls = null;
+    try {
+      ls = root.localStorage;
+    } catch {}
+    if (!ls || !root.Storage) return;
+    const P = root.Storage.prototype;
+    const get = P.getItem, set = P.setItem, drop = P.removeItem;
+    const mem = new Map();
+    for (const k of MEMORY_KEYS)
+      try {
+        drop.call(ls, k);
+      } catch {}
+    const ours = (store, k) => store === ls && MEMORY_KEYS.has(String(k));
+    P.getItem = function (k) {
+      return ours(this, k) ? (mem.has(String(k)) ? mem.get(String(k)) : null) : get.call(this, k);
+    };
+    P.setItem = function (k, v) {
+      if (ours(this, k)) mem.set(String(k), String(v));
+      else set.call(this, k, v);
+    };
+    P.removeItem = function (k) {
+      if (ours(this, k)) mem.delete(String(k));
+      else drop.call(this, k);
+    };
+  })();
 
   const kept = () => {
     try {
@@ -89,10 +133,25 @@
     // phase 2: this computer's own presence (the PC makes the slot ids from the device; the answer lists only this computer's tabs
     // and says `quiet` while you are at another device: no chime or notification of this page's own then)
     if (path === '/api/live/presence' && method === 'POST') return '/api/remote/pc/presence';
+    // this browser's own windows (phase 4): opened, routed and focused here by remote-windows.js, never on the PC's screen
+    if (path === '/api/live/desktop/windows' && method === 'POST' && root.AIBRemoteWindows) return windowsHere;
     if (path.startsWith('/api/live/desktop/') || path.startsWith('/api/live/devices') || path === '/api/live/open') return pcOnly;
     return null;
   }
   const offlineAnswer = () => answer(503, { error: "Can't reach " + pcName() + '. Trying again…', code: 'offline' });
+  const parsed = (init) => {
+    try {
+      return init && typeof init.body === 'string' ? JSON.parse(init.body) : null;
+    } catch {
+      return null;
+    }
+  };
+  /* POST /api/live/desktop/windows: answered at once (no await before window.open), so the click that asked still counts and the
+     browser lets the window open. */
+  function windowsHere(init) {
+    const r = root.AIBRemoteWindows.handle(parsed(init));
+    return r && typeof r.then === 'function' ? r.then((x) => answer(x.status, x.body)) : answer(r.status, r.body);
+  }
 
   // ---- every request of the page ----
   async function remoteFetch(input, init) {
@@ -106,7 +165,11 @@
     if (url.origin !== root.location.origin || !url.pathname.startsWith('/api/')) return realFetch(input, init);
     const method = String((init && init.method) || (req && req.method) || 'GET').toUpperCase();
     const instead = local(method, url.pathname);
-    if (typeof instead === 'function') return instead(); // nothing goes to the PC
+    // the page's presence report also tells this browser's other windows what this one shows (remote-windows.js)
+    if (url.pathname === '/api/live/presence' && method === 'POST' && root.AIBRemoteWindows) root.AIBRemoteWindows.report(parsed(init));
+    if (typeof instead === 'function') return instead(init); // nothing goes to the PC
+    // Offline (phase 4): nothing is sent or queued until the PC answers again; the page keeps what it shows (in memory only)
+    if (net.down && url.pathname !== '/api/remote/pc/bootstrap') return offlineRefusal(method);
     if (typeof instead === 'string') url.pathname = instead;
     const headers = new Headers((init && init.headers) || (req ? req.headers : undefined));
     for (const name of REFUSED) headers.delete(name);
@@ -116,8 +179,21 @@
     if (!options.method) options.method = method;
     // keepalive bodies are capped at 64 KB in all; a bigger one goes without
     if (options.keepalive && !(typeof options.body === 'string' && options.body.length < 32000)) delete options.keepalive;
-    const response = await realFetch(url.pathname + url.search, options);
+    let response;
+    try {
+      response = await realFetch(url.pathname + url.search, options);
+    } catch (error) {
+      // no answer at all (Tailscale off here, the PC asleep or offline). The page says "Connection lost …" for this request:
+      // a POST may have arrived, so the page's own words (check the chat before retrying) stay true.
+      if (!(error && error.name === 'AbortError')) lost('unreachable');
+      throw error;
+    }
     if (response.status === 401) removed(response.clone());
+    // Tailscale Serve answers 502/503/504 itself (not JSON) when nothing listens behind it: AIB is closed on the PC
+    if (response.status >= 502 && response.status <= 504 && !/json/i.test(response.headers.get('content-type') || '')) {
+      lost('down');
+      return offlineRefusal(method);
+    }
     return response;
   }
   root.fetch = remoteFetch;
@@ -134,8 +210,9 @@
   root.WebSocket = RemoteSocket;
 
   /* Pictures the page shows from an API address (a saved chat's pictures: /api/transcript/image): an <img> cannot send the device
-     key, so each one is fetched with it and shown from memory (blob:, which the page's CSP allows). */
-  const IMG_API = /^\/api\//;
+     key, so each one is fetched with it and shown from memory (blob:, which the page's CSP allows). Only that route: an address
+     agent-written content puts in the page is never fetched with the key (security review SF7). */
+  const IMG_API = /^\/api\/transcript\/image\?/;
   function keyedImage(img) {
     const src = img.getAttribute('src') || '';
     if (!IMG_API.test(src) || img.dataset.remoteSrc === src) return;
@@ -154,7 +231,7 @@
       for (const n of m.addedNodes || []) {
         if (n.nodeType !== 1) continue;
         if (n.tagName === 'IMG') keyedImage(n);
-        else if (n.querySelectorAll) for (const img of n.querySelectorAll('img[src^="/api/"]')) keyedImage(img);
+        else if (n.querySelectorAll) for (const img of n.querySelectorAll('img[src^="/api/transcript/image?"]')) keyedImage(img);
       }
     }
   }).observe(doc.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['src'] });
@@ -203,7 +280,7 @@
       }
       throw new Error(b.error || 'This computer is not paired with ' + pcName() + '.');
     }
-    if (!r.ok) throw new Error('offline');
+    if (!r.ok) throw new Error(r.status >= 502 && r.status <= 504 ? 'down' : 'offline');
     S.boot = await r.json();
     try {
       if (S.boot.pcName) root.localStorage.setItem(NAME_KEY, S.boot.pcName);
@@ -218,7 +295,31 @@
       html.toggleAttribute('data-can-' + s.split('.')[1], can(s));
     }
   }
-  function offlineScreen(message) {
+  /* ---- offline (phase 4; design v2 section 10) ----
+     The PC does not answer: a bar in the page's notice look says so ("Can't reach <PC>. Trying again…  Try now"; "AIB is closed on
+     <PC>" once Tailscale Serve has said for 20 s that nothing listens there), and the page keeps showing what it showed: from
+     memory only, nothing is written to the Cache API, IndexedDB or any other storage for it. While offline nothing is sent and
+     nothing is queued: every request of the page is answered here at once (503 offline), so nothing can go out later by itself.
+     It tries again every 5 s, every 30 s after 2 minutes, or at once on Try now; when the PC answers, the bar goes and the page's
+     own polls carry on from their cursors (no event lost, nothing sent again). Removed while offline: the first 401 not_paired
+     wipes this origin's storage (removed()). */
+  const CLOSED_AFTER_MS = 20000;
+  const net = { down: false, why: '', since: 0, timer: 0 };
+  function offlineRefusal(method) {
+    return answer(503, {
+      error: "Can't reach " + pcName() + (method === 'GET' || method === 'HEAD' ? '. Trying again…' : '. Nothing was sent.'),
+      code: 'offline',
+    });
+  }
+  function barText() {
+    if (net.why === 'down') {
+      return Date.now() - net.since < CLOSED_AFTER_MS
+        ? 'AIB on ' + pcName() + ' is not answering. Trying again…'
+        : 'AIB is closed on ' + pcName() + '. Trying again…';
+    }
+    return "Can't reach " + pcName() + '. Trying again…';
+  }
+  function showBar() {
     let box = doc.getElementById('remoteOffline');
     if (!box) {
       box = doc.createElement('div');
@@ -228,15 +329,85 @@
       const text = doc.createElement('span');
       const again = doc.createElement('button');
       again.type = 'button';
+      again.className = 'remote-offline-try';
       again.textContent = 'Try now';
-      again.addEventListener('click', () => start());
+      again.addEventListener('click', () => (S.started ? probe() : start()));
       box.append(text, again);
-      doc.body.prepend(box);
+      (doc.body || html).prepend(box);
     }
-    box.firstChild.textContent = message;
+    box.firstChild.textContent = barText();
   }
-  let retryMs = 5000,
-    firstFail = 0;
+  function retryIn() {
+    root.clearTimeout(net.timer);
+    net.timer = root.setTimeout(() => (S.started ? probe() : start()), Date.now() - net.since > 120000 ? 30000 : 5000);
+  }
+  function goOffline(why) {
+    if (!net.down) {
+      net.down = true;
+      net.since = Date.now();
+      html.setAttribute('data-remote-offline', '');
+    }
+    net.why = why;
+  }
+  /* A request of the started page got no answer: offline at once (nothing more is sent), one quick look a second later, and the
+     bar only when that look fails too (a one-off blip shows nothing). */
+  function lost(why) {
+    if (!S.started || leaving) return;
+    const first = !net.down;
+    goOffline(why);
+    if (first) {
+      root.clearTimeout(net.timer);
+      net.timer = root.setTimeout(probe, 1000);
+    }
+  }
+  let probing = null;
+  function probe() {
+    if (probing) return probing;
+    root.clearTimeout(net.timer);
+    probing = (async () => {
+      let why = '';
+      try {
+        const r = await realFetch('/api/remote/pc/bootstrap', {
+          headers: { 'X-AIB-Device': S.token },
+          cache: 'no-store',
+          credentials: 'same-origin',
+        });
+        if (r.status === 401 || r.status === 403) {
+          removed(r.clone());
+          return;
+        }
+        if (r.ok && /json/i.test(r.headers.get('content-type') || '')) {
+          S.boot = await r.json();
+          paintCaps();
+          back();
+          return;
+        }
+        why = 'down';
+      } catch {
+        why = 'unreachable';
+      }
+      goOffline(why);
+      showBar();
+      retryIn();
+    })().finally(() => {
+      probing = null;
+    });
+    return probing;
+  }
+  /* The PC answers again: the bar goes, the page's "Connection lost" line too, and the page reads on from where it was. */
+  function back() {
+    root.clearTimeout(net.timer);
+    const was = net.down;
+    net.down = false;
+    net.why = '';
+    net.since = 0;
+    html.removeAttribute('data-remote-offline');
+    const box = doc.getElementById('remoteOffline');
+    if (box) box.remove();
+    const err = doc.getElementById('error');
+    if (was && err && /^(Connection lost|Can't reach|Request timed out)/.test(err.textContent || '')) err.hidden = true;
+    if (was) root.dispatchEvent(new Event('aib-remote-back'));
+  }
   async function start() {
     const saved = await record();
     if (!saved || typeof saved.token !== 'string' || !saved.token) {
@@ -258,14 +429,12 @@
     } catch (error) {
       if (leaving) return;
       // AIB closed on the PC, or the PC can't be reached: say so and try again (every 5 s, every 30 s after 2 minutes)
-      if (!firstFail) firstFail = Date.now();
-      if (Date.now() - firstFail > 120000) retryMs = 30000;
-      offlineScreen("Can't reach " + pcName() + '. Trying again…');
-      root.setTimeout(start, retryMs);
+      goOffline(error && error.message === 'down' ? 'down' : 'unreachable');
+      showBar();
+      retryIn();
       return;
     }
-    const box = doc.getElementById('remoteOffline');
-    if (box) box.remove();
+    back();
     if (S.started) return;
     S.started = true;
     // this computer's layout, where view-prefs.js reads it (the PC's own is never here)

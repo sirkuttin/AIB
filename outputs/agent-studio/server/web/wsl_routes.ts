@@ -396,6 +396,8 @@ export async function wslFiles(
   wsl: { distro: string; linuxPath: string },
   args: Record<string, string[]>,
   origin = '',
+  /** A remote computer's check of the file the helper really read: its real path in the distro (links followed); true refuses. */
+  refuse: ((linuxAbs: string) => boolean) | null = null,
 ): Promise<Reply> {
   let host: WslHost;
   try {
@@ -417,6 +419,13 @@ export async function wslFiles(
     }
     const rel = one(args, 'path').replace(/^\/+/, '');
     const read = await host.call('files.read', { root: wsl.linuxPath, rel, maxBytes: LIMITS.readBytes });
+    if (refuse) {
+      // the helper answers the real path it read (files.resolveInside); without one (an older helper) a computer gets nothing
+      const real: unknown = read.abs;
+      if (typeof real !== 'string' || !real.startsWith('/') || refuse(real)) {
+        return [403, { error: 'This folder holds sign-ins or AIB data. Open it on the PC itself.', code: 'blocked_folder' }];
+      }
+    }
     const out = fileReadOf(wsl.linuxPath, rel, read);
     return [200, { root: ref, ...out, viewUrl: wslViewUrl(origin, refOf({ kind: 'wsl', distro: wsl.distro, linuxPath: out.abs }), out, read.bytesB64), wsl: true }];
   } catch (error) {

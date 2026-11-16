@@ -1099,6 +1099,11 @@ export interface RequestLike {
   headers: HeaderBag;
   /** The principal the web server passed in (a remote computer through the bridge); never read from a header. */
   principal?: Principal | null;
+  /**
+   * A remote computer's check of the file a path RESOLVES to (security review MF1): set by artifactPost for a REMOTE_PC principal;
+   * throws (ArtifactError 403 blocked_folder) when that file is in a blocked folder. Never read from the request.
+   */
+  pathGuard?: ((real: string) => void) | null;
 }
 
 /**
@@ -1441,7 +1446,7 @@ export class Service {
     const tool = publish || archive;
     if (!this.#authorized(handler, tool ? body.conversationId : null, tool)) return Service.denied(handler);
     try {
-      if (path === '/api/live/artifacts/preview') return [200, this.#preview(body)];
+      if (path === '/api/live/artifacts/preview') return [200, this.#preview(body, handler)];
       if (publish) return [200, this.#publish(body)];
       if (archive) return this.#archive(body, this.#tokenOk(handler));
       if (path === '/api/live/artifacts/delete') return [200, this.deleteArtifact(body.id)];
@@ -1735,9 +1740,10 @@ export class Service {
     }
   }
 
-  #preview(body: Json): Json {
+  #preview(body: Json, handler: RequestLike | null = null): Json {
     const conversationId = Service.conversation(body, (ident) => this.chat(ident));
     const [cwd, real] = this.resolvePath(conversationId, body.path);
+    handler?.pathGuard?.(real); // a remote computer: the file the path resolved to, never the path as sent
     const [manifest, changed] = this.syncFile(conversationId, real, 'preview', { cwd, projectRoot: this.projectRootFor(conversationId) });
     return changed ? this.event(manifest) : this.store.summary(manifest);
   }

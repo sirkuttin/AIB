@@ -11,7 +11,8 @@ import { HostUnavailable } from '../host/host_client.ts';
 import { keeperProblem } from '../keeper/link.ts';
 import { ConversationState, ProjectPrefs, ReadState, SettingsStore } from '../state/store.ts';
 import { ViewPrefs, ViewPrefsBusy } from '../state/view_prefs.ts';
-import { authorize, drawingHeaders, Gate, newToken, Principal, Refusal, securityHeaders, TOKEN_HEADER } from './security.ts';
+import { authorize, drawingHeaders, Gate, newToken, Principal, Refusal, REMOTE_PC, securityHeaders, TOKEN_HEADER } from './security.ts';
+import { KEY_FIELD, listedForComputer, PcTranscripts } from '../remote/pc_transcripts.ts';
 import { routeKind, ROUTES } from './routes.ts';
 import { handleGet as monitorGet, type Source } from '../transcripts/monitor.ts';
 import { liveRoutes } from './live_routes.ts';
@@ -627,14 +628,23 @@ export class WebServer {
     return this.json(500, { error: 'Internal error' });
   }
 
+  readonly #pcTranscripts = new PcTranscripts();
+
   /** A transcript viewer route (monitor.py): /api/sessions, /api/transcript, /api/transcript/image, /api/agents, /api/command(s). */
-  async #monitor(path: string, url: URL): Promise<Response> {
+  async #monitor(path: string, url: URL, principal: Principal | null = null): Promise<Response> {
+    const computer = principal?.kind === REMOTE_PC;
+    // a paired computer reads only the transcripts of chats AIB lists (remote/pc_transcripts.ts; security review SF1)
+    if (computer && Object.hasOwn(KEY_FIELD, path) && !(await this.#pcTranscripts.allowed(this.ctx, url.searchParams.get(KEY_FIELD[path])))) {
+      return this.json(403, { error: 'This chat is not in a project added to AIB.', code: 'not_listed' });
+    }
     const reply = await monitorGet(this.ctx.transcripts, path, url.search.slice(1));
     // Saved chats of folders that are not added projects are not shown anywhere in AIB (nothing on disk changes).
     if (path === '/api/sessions' && reply.status === 200 && reply.body && typeof reply.body === 'object') {
       const listed = reply.body as { sessions?: unknown };
       if (Array.isArray(listed.sessions)) {
-        listed.sessions = filterSessions(this.ctx.addedProjects, listed.sessions, this.ctx.conversations);
+        listed.sessions = computer
+          ? listedForComputer(this.ctx, listed.sessions)
+          : filterSessions(this.ctx.addedProjects, listed.sessions, this.ctx.conversations);
         // build plan 4.4: an old copy chat the migration script moved carries on in the project folder (the server's truth,
         // for every window; state/moved_chats.ts)
         const moved = readMoved(pathStr(this.ctx.stateDir));
@@ -671,7 +681,7 @@ export class WebServer {
       if (method === 'GET') {
         const handler = this.native.get(`GET ${path}`);
         if (handler) return await handler(this.ctx, url, null, request, principal);
-        if (routeKind('GET', path) === 'monitor' && path.startsWith('/api/')) return await this.#monitor(path, url);
+        if (routeKind('GET', path) === 'monitor' && path.startsWith('/api/')) return await this.#monitor(path, url, principal);
         return this.json(404, { error: 'Not found' });
       }
       const handler = this.native.get(`POST ${path}`);

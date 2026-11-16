@@ -694,6 +694,12 @@ export class RemoteServer {
     if (device.kind !== 'computer') {
       return this.json(403, { error: 'A phone uses the phone page. This needs a device paired as a computer.', code: 'not_computer' });
     }
+    // the computer's own routes share its bridge rate limit (security review SF9)
+    if (!this.bridge.limit.take(device.id)) {
+      return this.json(429, { error: 'Too many requests from this computer. Try again in a moment.', code: 'rate_limited' }, {
+        'Retry-After': '1',
+      });
+    }
     const ctx = this.host.ctx;
     if (path === '/api/remote/pc/bootstrap') {
       let instanceId: unknown = '';
@@ -715,7 +721,9 @@ export class RemoteServer {
       }
     }
     if (path === '/api/remote/pc/settings') {
-      return this.json(200, remoteSettingsView(await settingsView(studioOf(ctx), url.searchParams.get('recheck') === '1')));
+      // never `recheck=1` from a computer: it re-detects the agents, which runs programs on the PC (security review SF9); the
+      // computer's Settings shows Appearance and This computer only, the PC's own detection is enough
+      return this.json(200, remoteSettingsView(await settingsView(studioOf(ctx), false)));
     }
     if (path === '/api/remote/pc/wsl-status') return this.json(200, remoteWslStatus(await wslStatus(ctx)));
     if (path === '/api/remote/pc/presence') {

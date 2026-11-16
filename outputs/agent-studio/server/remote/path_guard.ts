@@ -17,21 +17,60 @@
  */
 import { isNetworkPath } from '../web/security.ts';
 import { isForeignPath, wslLocOf } from '../platform/location.ts';
+import { BETA_AGENTS } from '../agents/beta_catalog.ts';
 
 const WIN = Deno.build.os === 'windows';
 
-/** Folders under a home folder (Windows or Linux) a remote computer never reaches. */
+/** Folders under a home folder (Windows or Linux) a remote computer never reaches: the built-in agents' sign-ins (Claude Code, Codex,
+ * Gemini, OMP), the internal defaults, and every beta agent's sign-in folders from its catalog entry (agents/beta_catalog.ts). */
 export const BLOCKED_HOME_DIRS: readonly string[] = [
-  '.claude',
-  '.codex',
-  '.gemini',
-  '.ssh',
-  '.aws',
-  '.azure',
-  '.config/gh',
-  '.docker',
-  '.kube',
+  ...new Set([
+    '.claude',
+    '.codex',
+    '.gemini',
+    '.omp',
+    '.ssh',
+    '.aws',
+    '.azure',
+    '.config/gh',
+    '.docker',
+    '.kube',
+    ...BETA_AGENTS.flatMap((a) => a.signinDirs ?? []),
+  ]),
 ];
+
+/**
+ * Environment variables that move an agent's sign-in folder, with the part under them that is the folder ('' : the folder itself).
+ * Each one that is set to an absolute path is blocked too (an owner with a custom config folder is covered like ~/.claude).
+ * GEMINI_CLI_HOME is the home folder Gemini CLI puts its .gemini folder in.
+ */
+export const MOVED_SIGNIN_ENV: readonly (readonly [string, string])[] = [
+  ['CLAUDE_CONFIG_DIR', ''],
+  ['CODEX_HOME', ''],
+  ['GEMINI_CLI_HOME', '.gemini'],
+  ...BETA_AGENTS.flatMap((a) => (a.signinEnv ?? []).map((name) => [name, ''] as const)),
+];
+
+/** The sign-in folders the environment moved, as set now (absolute paths only). */
+export function movedSigninDirs(env: (name: string) => string | undefined = (n) => Deno.env.get(n)): string[] {
+  const out: string[] = [];
+  for (const [name, under] of MOVED_SIGNIN_ENV) {
+    const value = (env(name) ?? '').trim();
+    if (value && isAbsolute(value)) out.push(under ? `${value}/${under}` : value);
+  }
+  return out;
+}
+
+/**
+ * A path a remote computer may name: a drive path (C:\…, also \\?\C:\…) on Windows, a '/' path elsewhere. Anything else (a relative
+ * path, 'C:x', '\x') would be resolved against a folder AIB picks (the process's or the chat's), so it is never checked as sent:
+ * isBlocked treats it as blocked (security review MF1).
+ */
+export function isAbsolute(path: string, windows = WIN): boolean {
+  const text = path.trim();
+  if (windows) return /^[A-Za-z]:[\\/]/.test(text) || /^[\\/]{2}\?[\\/][A-Za-z]:[\\/]/.test(text);
+  return text.startsWith('/');
+}
 /** Files directly in a home folder a remote computer never reads. */
 export const BLOCKED_HOME_FILES: readonly string[] = ['.npmrc', '.git-credentials'];
 
@@ -87,6 +126,7 @@ export function blockedRoots(stateDir: string | null, home = homeDir()): { state
     for (const d of BLOCKED_HOME_DIRS) dirs.push(normal(`${home}/${d}`));
     for (const f of BLOCKED_HOME_FILES) files.push(normal(`${home}/${f}`));
   }
+  for (const d of movedSigninDirs()) dirs.push(normal(d));
   return { states, dirs, files };
 }
 
@@ -121,7 +161,8 @@ function realOf(path: string): string | null {
 
 /**
  * Is this path blocked for a remote computer? A WSL ref is checked by Linux rules; anything else as a path on this PC (and again by
- * its real path when it exists). An empty or non-text path is not blocked here (the route itself says what is wrong with it).
+ * its real path when it exists). An empty or non-text path is not blocked here (the route itself says what is wrong with it). A
+ * path that is not absolute is blocked (fail closed: isAbsolute).
  */
 export function isBlocked(path: unknown, stateDir: string | null, home = homeDir()): boolean {
   if (typeof path !== 'string' || !path.trim()) return false;
@@ -129,6 +170,7 @@ export function isBlocked(path: unknown, stateDir: string | null, home = homeDir
   const wsl = wslLocOf(path);
   if (wsl) return linuxBlocked(wsl.linuxPath);
   if (isForeignPath(path)) return linuxBlocked(path); // a bare Linux path on Windows: judge it by Linux rules
+  if (!isAbsolute(path)) return true;
   const { states, dirs, files } = blockedRoots(stateDir, home);
   const check = (p: string) => {
     const n = normal(p);
@@ -179,9 +221,18 @@ export function isHomeOrRoot(path: unknown, home = homeDir()): boolean {
     return parts.length === 0 || (parts.length === 1 && (parts[0] === 'root' || parts[0] === 'home' || parts[0] === 'mnt')) ||
       (parts.length === 2 && (parts[0] === 'home' || parts[0] === 'mnt'));
   }
-  const n = normal(path);
-  if (n === '/' || /^[a-z]:\/$/i.test(n)) return true;
-  return !!home && n === normal(home);
+  const rootOrHome = (p: string) => {
+    const n = normal(p);
+    return n === '/' || /^[a-z]:\/$/i.test(n) || (!!home && n === normal(home));
+  };
+  if (rootOrHome(path)) return true;
+  // and by real paths (security review SF2): a junction or link to the home folder, an 8.3 short name (C:\Users\LONGNA~1), an
+  // NTFS alias (…\name::$INDEX_ALLOCATION) or trailing dots all resolve to the home folder or the drive root itself
+  const real = isAbsolute(path) ? realOf(path) : null;
+  if (real === null) return false;
+  if (rootOrHome(real)) return true;
+  const realHome = home ? realOf(home) : null;
+  return realHome !== null && normal(real) === normal(realHome);
 }
 
 /** Throws when a computer may not add this folder as a project: blocked, a home folder or a drive root. */

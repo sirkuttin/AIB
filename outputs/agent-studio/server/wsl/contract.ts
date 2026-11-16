@@ -123,7 +123,7 @@ export interface HelperMethods {
   'git.init': { params: { path: string }; result: { ok: boolean; message?: string } };
   'files.list': { params: { root: string; rel?: string; offset?: number; limit?: number }; result: unknown };
   'files.search': { params: { root: string; query: string; limit?: number }; result: unknown };
-  'files.read': { params: { root: string; rel: string; maxBytes?: number }; result: { bytesB64: string; size: number; truncated: boolean; mtimeMs: number } };
+  'files.read': { params: { root: string; rel: string; maxBytes?: number }; result: { bytesB64: string; size: number; truncated: boolean; mtimeMs: number; path?: string; abs?: string } };
   /**
    * A file outside the project folder (worktrees/outside_files.ts, run natively: checkShape, resolveOutside, readOutside, folderLabel).
    * AIB has already checked that the chat named the path; the helper adds the shape rules and refuses its own data folder

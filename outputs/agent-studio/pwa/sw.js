@@ -31,6 +31,7 @@
     '/remote-loader.js',
     '/pc.html',
     '/remote-auth.js',
+    '/remote-windows.js',
     '/remote.css',
     '/pc.webmanifest',
   ];

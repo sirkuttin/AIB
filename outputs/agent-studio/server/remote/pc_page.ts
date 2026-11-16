@@ -38,6 +38,7 @@ export const PC_STATIC: Readonly<Record<string, string>> = (() => {
     'remote-loader.html',
     'remote-loader.js',
     'remote-auth.js',
+    'remote-windows.js',
     'remote.css',
     // chat.html's stylesheets
     'chat.css',
@@ -154,7 +155,11 @@ export const LATER_TYPE = 'text/x-aib-later';
  */
 export function pcShell(html: string, manifest = true): string {
   if (!html.includes('<script src="/page-auth.js"></script>')) throw new Error('pcShell: page-auth.js is not where it was');
-  let out = html.replace('<script src="/page-auth.js"></script>', '<script src="/remote-auth.js"></script>');
+  // remote-windows.js (phase 4): this browser's own AIB windows, before any page script asks for one
+  let out = html.replace(
+    '<script src="/page-auth.js"></script>',
+    '<script src="/remote-auth.js"></script><script src="/remote-windows.js"></script>',
+  );
   out = out.replace(/<script src="\/desktop-bridge\.js" defer><\/script>\s*/g, '');
   out = out.replace(
     /<script src="([^"]+)" defer><\/script>/g,
@@ -379,5 +384,7 @@ export function remoteArtifactLinks(text: string, loopback: string, remote: stri
   return text.replace(
     new RegExp(esc + '/a/([0-9a-f]{16})/', 'g'),
     (_m, id: string) => remote ? `${remote}/r/${ticket(id)}/a/${id}/` : 'about:blank#',
-  );
+  ) // any other link of the loopback origin (the Files view's /f/<ticket>/ preview links): left out, never the PC's loopback port
+    // (security review SF10; the computer's Files view shows Download for them)
+    .replace(new RegExp(esc + '[^"\\s\\\\]*', 'g'), '');
 }
