@@ -1044,6 +1044,19 @@ test('files-state: local rows are never dim and open without Show ignored, at an
   assert.equal(FS.localNote(LOCAL), '');
 });
 
+test('files-state: a WSL project\'s local-only part (main = its Linux main folder): Linux tooltip path, case-sensitive, Linux paths link', () => {
+  const WSL = { main: '/home/u/app', entries: ['private'], defaultState: 'on' };
+  assert.equal(
+    FS.localTip({ name: 'x.png', path: 'private/review/x.png', kind: 'file' }, WSL),
+    'x.png\nLocal only: never committed (listed in .git/info/exclude).\nThe same file in every chat: /home/u/app/private/review/x.png',
+  );
+  assert.equal(FS.isLocalRel(WSL, 'private/review/x.png'), true);
+  assert.equal(FS.isLocalRel(WSL, 'Private/review/x.png'), false, 'Linux paths compare case-sensitively');
+  assert.equal(FS.localRel('/home/u/app/private/review/x.png', WSL), 'private/review/x.png', "the agent's full path links from a chat copy");
+  assert.equal(FS.localRel('/home/u/app/src/a.ts', WSL), null);
+  assert.equal(FS.excludeItem({ path: 'game/review', kind: 'dir' }, { root: 'chat', branch: 'studio/chat-1' }).disabled, false, 'Git exclude is offered');
+});
+
 test('files-state: the tooltip names the real path; Git exclude is greyed with its reason; full paths into private/ link from a copy', () => {
   assert.equal(
     FS.localTip({ name: 'private', path: 'private', kind: 'dir' }, LOCAL),

@@ -402,8 +402,36 @@ export function localRootsSync(project: string): string[] {
   }
 }
 
+/** What a chat is told about local-only files (acp/connection.ts Connection.localOnly): absolute paths in the main folder. */
+export interface ChatLocalOnly {
+  entries: string[];
+  dirs: string[];
+  private: string;
+}
+
+/**
+ * What a chat is told about local-only files. private/ only when git really ignores it (state 'on'); a worktree chat gets the main
+ * folder's local-only paths, and the main folder's private/ is made (empty) so it can be granted as an extra writable folder from the
+ * first message (owner Q4 a). Shared by host/studio.ts (Windows) and the WSL helper (wsl/helper/local_only.ts, Linux paths).
+ */
+export function chatLocalOnly(lo: LocalOnly, worktree: boolean, warn: (dir: string, error: unknown) => void = () => {}): ChatLocalOnly | null {
+  const on = lo.defaultState === 'on';
+  const told = lo.entries.filter((e) => on || e.toLowerCase() !== DEFAULT_ENTRY);
+  const abs = (e: string) => osp.join(lo.project, ...e.split('/'));
+  const privateDir = on ? abs(lo.entries.find((e) => e.toLowerCase() === DEFAULT_ENTRY) ?? DEFAULT_ENTRY) : '';
+  if (worktree && privateDir && !osp.isdir(privateDir)) {
+    try {
+      Deno.mkdirSync(privateDir, { recursive: true });
+    } catch (error) {
+      warn(privateDir, error);
+    }
+  }
+  if (!told.length && !privateDir) return null;
+  return { entries: told.map(abs), dirs: told.map(abs).filter((p) => osp.isdir(p)), private: privateDir };
+}
+
 // ---- writing --------------------------------------------------------------------------------------------------------------
-const same = (a: Uint8Array | null, b: Uint8Array | null) => {
+const same =(a: Uint8Array | null, b: Uint8Array | null) => {
   if (a === null || b === null) return a === b;
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;

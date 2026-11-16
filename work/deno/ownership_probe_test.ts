@@ -11,6 +11,8 @@ import {
   classify,
   cleanText,
   fetchProcessesPs,
+  folderOnlyEvidence,
+  folderOnlyNote,
   humanizeAge,
   iso,
   lockHolders,
@@ -21,6 +23,7 @@ import {
   ProcessSource,
   processStartTime,
   type ProcInfo,
+  QUIET_TRANSCRIPT_SECONDS,
   validateAnnouncement,
 } from '../../outputs/agent-studio/server/ownership/probe.ts';
 import { dirname, join } from '../../outputs/agent-studio/server/platform/ospath.ts';
@@ -196,6 +199,13 @@ function runDeno(tree: Tree, fixture: Fixture) {
         projectRoot: (step.project_root as string) ?? null,
       });
       delete result.elapsedMs;
+      // Deno-only additions for the folder-only rule (folderOnlyEvidence): the Python probe has none of them
+      delete result.transcriptQuiet;
+      for (const reason of result.reasons) {
+        delete reason.label;
+        delete reason.startedBy;
+        delete reason.more;
+      }
       out.push(result);
     } else if (step.released) {
       probe.noteReleased(...(step.released as [string, string]));
@@ -955,5 +965,117 @@ probeTest('a real agent-named process holding the transcript open is reported th
     try {
       Deno.kill(pid, 'SIGKILL');
     } catch { /* already gone */ }
+  }
+});
+
+// --- folder-only evidence (asks first only on strong evidence) ------------------------------------------------------------------
+// An agent of the chat's provider merely running in its folder (the owner's VS Code Claude Code panels) is noted, not asked about,
+// once nobody but AIB wrote the transcript for QUIET_TRANSCRIPT_SECONDS. Each strong sign still asks or refuses.
+
+/** A probe over a temp Claude folder with a fixed clock, a stand-in process list and open-file check. */
+function folderProbe(tree: Tree, processes: ProcInfo[], holders: [number, string][] = [], registry: OwnerRegistry | null = null) {
+  return new OwnershipProbe({
+    claudeRoot: tree.claude,
+    registry,
+    processes: new ProcessSource(() => processes.map((p) => ({ ...p })), undefined, () => NOW),
+    lockProbe: () => holders,
+    clock: () => NOW,
+  });
+}
+
+/** VS Code (pid 10) and its Claude Code panel (pid 4242) in the project folder; extra arguments on the panel's command line. */
+const panel = (folder: string, extra = '', pid = 4242) => [
+  proc(10, exe('Code'), '', null, 1),
+  proc(pid, exe('claude'), `${binpath('claude')} --output-format stream-json --verbose${extra}`, folder, 10),
+];
+
+Deno.test('folder only: a Claude Code panel in the folder with a transcript quiet for 31 minutes continues with a note', async () => {
+  const tree = new Tree();
+  try {
+    tree.transcript('claude', 's1', 31 * 60);
+    const verdict = folderProbe(tree, panel(tree.project)).assess('claude', 's1', { cwd: tree.project, skipCmdline: true });
+    assertEquals([verdict.verdict, verdict.transcriptQuiet], ['possibly_active', true]);
+    assertEquals(folderOnlyEvidence(verdict)?.map((r) => r.pid), [4242]);
+    assertEquals(
+      folderOnlyNote(verdict),
+      'Claude Code is also running in this folder (PID 4242, started by VS Code). AIB found nothing that says it holds this conversation.',
+    );
+    // exactly the threshold counts as quiet
+    tree.transcript('claude', 's2', QUIET_TRANSCRIPT_SECONDS);
+    assert(folderOnlyEvidence(folderProbe(tree, panel(tree.project)).assess('claude', 's2', { cwd: tree.project, skipCmdline: true })));
+  } finally {
+    await tree.cleanup();
+  }
+});
+
+Deno.test('folder only: a transcript another app wrote 29 minutes ago still asks', async () => {
+  const tree = new Tree();
+  try {
+    tree.transcript('claude', 's1', 29 * 60);
+    const verdict = folderProbe(tree, panel(tree.project)).assess('claude', 's1', { cwd: tree.project, skipCmdline: true });
+    assertEquals([verdict.verdict, verdict.transcriptQuiet], ['possibly_active', false]);
+    assertEquals([folderOnlyEvidence(verdict), folderOnlyNote(verdict)], [null, null]);
+    // no transcript at all: how long it was quiet is unknown, so it asks
+    const missing = folderProbe(tree, panel(tree.project)).assess('claude', 'not-saved', { cwd: tree.project, skipCmdline: true });
+    assertEquals([missing.verdict, folderOnlyEvidence(missing)], ['possibly_active', null]);
+  } finally {
+    await tree.cleanup();
+  }
+});
+
+Deno.test('folder only: AIB\'s own recent writes (before it released the chat) leave the transcript quiet', async () => {
+  const tree = new Tree();
+  try {
+    tree.transcript('claude', 's1', 60);
+    const probe = folderProbe(tree, panel(tree.project));
+    assertEquals(folderOnlyEvidence(probe.assess('claude', 's1', { cwd: tree.project, skipCmdline: true })), null, 'not released: another app wrote it');
+    probe.noteReleased('claude', 's1');
+    assert(folderOnlyEvidence(probe.assess('claude', 's1', { cwd: tree.project, skipCmdline: true })));
+  } finally {
+    await tree.cleanup();
+  }
+});
+
+Deno.test('folder only: a process naming the session, holding the transcript open, or an announcement still asks or refuses', async () => {
+  const tree = new Tree();
+  try {
+    tree.transcript('claude', 's1', 3 * 3600);
+    const ask = { cwd: tree.project, skipCmdline: true };
+    // named session: refused (the command-line check; Studio runs it before assess as ownerProbe)
+    const named = folderProbe(tree, panel(tree.project, ' --resume s1')).assess('claude', 's1', { cwd: tree.project });
+    assertEquals([named.verdict, folderOnlyEvidence(named)], ['owned_elsewhere', null]);
+    // held-open transcript
+    const held = folderProbe(tree, panel(tree.project), [[4242, exe('claude')]]).assess('claude', 's1', ask);
+    assertEquals([held.verdict, held.transcriptQuiet, folderOnlyEvidence(held)], ['possibly_active', true, null]);
+    // a live announcement by another app: refused; a stale one: asks
+    tree.foreign('s1', {}, 'claude');
+    const registry = new OwnerRegistry(tree.owners, { instanceId: 'mine', clock: () => NOW });
+    const live = folderProbe(tree, panel(tree.project), [], registry).assess('claude', 's1', ask);
+    assertEquals([live.verdict, folderOnlyEvidence(live)], ['owned_elsewhere', null]);
+    tree.foreign('s1', { heartbeatAt: iso(NOW - 300) }, 'claude');
+    const stale = folderProbe(tree, panel(tree.project), [], registry).assess('claude', 's1', ask);
+    assertEquals([stale.verdict, folderOnlyEvidence(stale)], ['possibly_active', null]);
+    // a transcript written in the last two minutes, no process: asks as before
+    tree.transcript('claude', 's2', 30);
+    assertEquals(folderOnlyEvidence(folderProbe(tree, []).assess('claude', 's2', ask)), null);
+  } finally {
+    await tree.cleanup();
+  }
+});
+
+Deno.test('folder only: the note lists at most three PIDs, then "and N more"', async () => {
+  const tree = new Tree();
+  try {
+    tree.transcript('claude', 's1', 3600);
+    const processes = [proc(10, exe('Code'), '', null, 1), ...[1, 2, 3, 4, 5].map((i) => panel(tree.project, '', 100 + i)[1])];
+    const verdict = folderProbe(tree, processes).assess('claude', 's1', { cwd: tree.project, skipCmdline: true });
+    assertEquals(
+      folderOnlyNote(verdict),
+      'Claude Code is also running in this folder (PIDs 101, 102, 103 and 2 more, started by VS Code). AIB found nothing that says any of them holds this conversation.',
+    );
+    assertEquals(folderOnlyNote({ verdict: 'possibly_active', transcriptQuiet: true, reasons: [] }), null);
+    assertEquals(folderOnlyNote(null), null);
+  } finally {
+    await tree.cleanup();
   }
 });

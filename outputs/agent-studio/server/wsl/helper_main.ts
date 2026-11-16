@@ -3,6 +3,7 @@
  * for Linux (tools/build.ts wslBinaries) and spawned by AIB as a pipe channel of the distro's keeper, label {aib:'wsl-helper', v}.
  *
  *   AIB-wsl-helper [--data <linux data folder>] [--keeper <AIB-keeper>]   JSON-RPC 2.0 lines on stdin/stdout; the first line is `helper.ready`
+ *   AIB-wsl-helper import --data <data> --project <path> [...]            the one-off chat import (helper/import.ts; tools/wsl-import.ts)
  *
  * With `--data` it also keeps the WSL projects' worktrees (helper/worktrees.ts: `<data>/worktrees`, registry in `<data>`).
  * It installs AIB's own copies of agents into <root>/agents (helper/agent_install.ts).
@@ -22,6 +23,7 @@ import { serveOpenFifo, shimScript } from './helper/browser.ts';
 import { worktreeStartup } from './helper/worktrees.ts';
 import { HelperSync } from './helper/sync.ts';
 import { McpTunnel, SOCKET_NAME, spawnKeeperRelay } from './helper/mcp_tunnel.ts';
+import { importMain } from './helper/import.ts';
 
 const COMPILED = !/^deno(\.exe)?$/i.test(Deno.execPath().replace(/^.*[\\/]/, ''));
 const SHIM_NAME = 'aib-open';
@@ -263,5 +265,7 @@ async function helperMain(args: string[]): Promise<number> {
 }
 
 if (import.meta.main) {
-  Deno.exit(await helperMain(Deno.args));
+  // `import ...`: the one-off move of a project's existing chats into their own copies (helper/import.ts); it starts nothing of the
+  // helper's own (no shim, no open.fifo, no tunnel), so it can run next to a running AIB
+  Deno.exit(Deno.args[0] === 'import' ? await importMain(Deno.args.slice(1)) : await helperMain(Deno.args));
 }

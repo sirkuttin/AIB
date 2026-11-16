@@ -8,7 +8,7 @@ import { fake, pause, until } from './_connection.ts';
 import { Connection, ThreadEvent } from '../../outputs/agent-studio/server/acp/connection.ts';
 import { reconnectKey, Studio, type StudioOptions } from '../../outputs/agent-studio/server/host/studio.ts';
 import { OwnershipConflict, SessionLease } from '../../outputs/agent-studio/server/ownership/ownership.ts';
-import { OwnershipEvidence } from '../../outputs/agent-studio/server/ownership/probe.ts';
+import { OwnerRegistry, OwnershipEvidence, ProcessSource, type ProcInfo } from '../../outputs/agent-studio/server/ownership/probe.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -351,6 +351,91 @@ Deno.test({
     assertEquals(starts.length, 5);
     const sorted = [...starts].sort((a, b) => a - b);
     assert(sorted.slice(1).every((b, i) => b - sorted[i] >= 90), JSON.stringify(sorted));
+  },
+});
+
+// ---- Continue asks first only on strong evidence (folder-only evidence: proceed and note) ------------------------------------------
+Deno.test({
+  name: 'continue: a Claude Code panel in the folder and a quiet transcript continue with one note; strong signs still ask or refuse',
+  ...T,
+  async fn() {
+    // The owner's case: VS Code Claude Code panels (no session id on their command lines) run in the project folder for a day. Every
+    // Continue of a chat in that folder asked "Another app may be using this conversation". Now it continues and says so in the chat.
+    await using lab = new Lab();
+    const sep = Deno.build.os === 'windows' ? '\\' : '/';
+    const claude = `${lab.dir}${sep}claude-projects`;
+    const owners = `${lab.dir}${sep}owners`;
+    Deno.mkdirSync(`${claude}${sep}C--project`, { recursive: true });
+    const transcript = (id: string, minutesQuiet: number) => {
+      const path = `${claude}${sep}C--project${sep}${id}.jsonl`;
+      Deno.writeTextFileSync(path, '{"type":"assistant"}\n');
+      const when = new Date(Date.now() - minutesQuiet * 60_000);
+      Deno.utimeSync(path, when, when);
+      return path;
+    };
+    const exe = Deno.build.os === 'windows' ? '.exe' : '';
+    let procs: ProcInfo[] = [];
+    const studio = new Studio({ ompCommand: 'unused', stateDir: lab.state, port: 0, claudeProjects: claude, ownersDir: owners });
+    lab.studios.push(studio); // its own ownerProbe: the real command-line check over the stand-in process list
+    studio.connectionFactory = (_command, cwd, provider) => new Connection(fake(), cwd, provider);
+    studio.probe.processes = new ProcessSource(() => procs.map((p) => ({ ...p })), 0);
+    let holders: [number, string][] = [];
+    studio.probe.lockProbe = () => holders;
+    const panel = (extra = '') => [
+      { pid: 910, ppid: 1, name: `Code${exe}`, cmdline: null, cwd: null },
+      { pid: 4242, ppid: 910, name: `claude${exe}`, cmdline: `claude${exe} --output-format stream-json --verbose${extra}`, cwd: lab.dir },
+    ];
+    const notes = (c: Connection) => (c.public().events as Json[]).filter((e) => e.kind === 'studio_note').map((e) => (e.data as Json).message);
+    const NOTE = 'Claude Code is also running in this folder (PID 4242, started by VS Code). AIB found nothing that says it holds this conversation.';
+
+    // weak only, transcript quiet 31 minutes: proceeds, one note
+    procs = panel();
+    transcript('quiet-31', 31);
+    const quiet = await studio.connect('claude', lab.dir, 'quiet-31');
+    assert(quiet.ready && !quiet.closed);
+    assertEquals(notes(quiet), [NOTE]);
+    await quiet.close();
+    studio.evictClosed();
+
+    // the same panel, transcript written by another app 29 minutes ago: asks, with the words it always had
+    transcript('quiet-29', 29);
+    const asks = await assertRejects(() => studio.connect('claude', lab.dir, 'quiet-29'), OwnershipEvidence) as OwnershipEvidence;
+    assertEquals(asks.code, 'possibly_active');
+    assert(asks.message.startsWith('Another app may be using this conversation: Claude Code (PID 4242, started by VS Code) is running'), asks.message);
+    const anyway = await studio.connect('claude', lab.dir, 'quiet-29', { continueAnyway: true });
+    assertEquals(notes(anyway), [], 'continued after asking: no note');
+    await anyway.close();
+    studio.evictClosed();
+
+    // the panel holds the transcript open: asks
+    transcript('held', 120);
+    holders = [[4242, `claude${exe}`]];
+    const held = await assertRejects(() => studio.connect('claude', lab.dir, 'held'), OwnershipEvidence) as OwnershipEvidence;
+    assertEquals(held.code, 'possibly_active');
+    assert(held.message.includes('has the transcript file open'), held.message);
+    holders = [];
+
+    // the panel's command line names the session: refused with its PID, as before
+    procs = panel(' --resume named');
+    transcript('named', 120);
+    const named = await assertRejects(() => studio.connect('claude', lab.dir, 'named'), OwnershipConflict);
+    assert(named.message.includes('already open in another agent process (PID 4242)'), named.message);
+    procs = panel();
+
+    // another app announced the conversation (the Windows announcements): refused
+    transcript('announced', 120);
+    const theirs = new OwnerRegistry(owners, { instanceId: 'theirs', clientName: 'other-app' });
+    theirs.announce('claude', 'announced', lab.dir, 'working');
+    const announced = await assertRejects(() => studio.connect('claude', lab.dir, 'announced'), OwnershipEvidence) as OwnershipEvidence;
+    assertEquals(announced.code, 'session_in_use');
+    assert(announced.message.includes('other-app'), announced.message);
+    theirs.withdrawAll();
+
+    // the session lease still keeps a second AIB out, whatever the evidence
+    const open = await studio.connect('claude', lab.dir, 'quiet-31');
+    const second = lab.manager();
+    await assertRejects(() => second.connect('claude', lab.dir, 'quiet-31'), OwnershipConflict);
+    await open.close();
   },
 });
 

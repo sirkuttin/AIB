@@ -54,6 +54,7 @@ import { type AibUsage, WslHelperError, type WslHost } from '../wsl/contract.ts'
 import { refOf, type WslLoc } from '../platform/location.ts';
 import { distroName, hostWhenReady, notReady, peekState, peekWslHost, WSL_INSTALL, wslHost, wslLoc, wslOverview } from '../wsl/access.ts';
 import { urlGate } from '../wsl/open_urls.ts';
+import { noMethod } from '../wsl/local_only.ts';
 import { extOf, type FileRead, IMAGE_EXT, LIMITS, PAGE_EXT } from '../worktrees/files.ts';
 import { BUILTIN_IDS } from '../agents/agent_registry.ts';
 import { installFacts, lastProgress, wslInstallCall, wslUninstallCall } from '../wsl/agent_install.ts';
@@ -398,13 +399,19 @@ export function wslRoutes(): Map<string, Handler> {
 
 // ---- the Files view of a WSL project ------------------------------------------------------------------------------------------
 
-/** A Files request (list, search, read) for a WSL project's folder `{distro, linuxPath}`, through the distro's helper. */
+/**
+ * A Files request (list, search, read) for a WSL project's folder `{distro, linuxPath}`, through the distro's helper. `main` is the
+ * Linux main folder whose local-only paths are laid over it (the folder itself, or a chat copy's project): the helper's localOnly.*
+ * answer as files_routes.ts does for a Windows project. A helper without them (older) gets the phase 1 answer: plain files, and the
+ * localOnly part of a folder without git (so no exclude hints).
+ */
 export async function wslFiles(
   kind: 'list' | 'search' | 'read',
   ref: string,
   wsl: { distro: string; linuxPath: string },
   args: Record<string, string[]>,
   origin = '',
+  main = wsl.linuxPath,
 ): Promise<Reply> {
   let host: WslHost;
   try {
@@ -412,7 +419,11 @@ export async function wslFiles(
   } catch (error) {
     return [409, { error: error instanceof Error ? error.message : String(error), code: 'wsl_unavailable' }];
   }
-  // no local-only files (phase 1): the same answer a folder without git gets, so no exclude hints are offered
+  try {
+    return await wslLocalFiles(host, kind, ref, wsl, args, origin, main);
+  } catch (error) {
+    if (!noMethod(error)) return failed(error);
+  }
   const localOnly = { main: ref, entries: [], defaultState: 'no-git', sig: '' };
   try {
     if (kind === 'list') {
@@ -429,6 +440,68 @@ export async function wslFiles(
     const out = fileReadOf(wsl.linuxPath, rel, read);
     return [200, { root: ref, ...out, viewUrl: wslViewUrl(origin, refOf({ kind: 'wsl', distro: wsl.distro, linuxPath: out.abs }), out, read.bytesB64), wsl: true }];
   } catch (error) {
+    return failed(error);
+  }
+}
+
+/** list, search and read with the main folder's local-only paths (helper/local_only.ts); throws the helper's errors. */
+async function wslLocalFiles(
+  host: WslHost,
+  kind: 'list' | 'search' | 'read',
+  ref: string,
+  wsl: { distro: string; linuxPath: string },
+  args: Record<string, string[]>,
+  origin: string,
+  main: string,
+): Promise<Reply> {
+  const scope = { root: wsl.linuxPath, main };
+  if (kind === 'list') {
+    const listing = await host.call('localOnly.list', { ...scope, dir: one(args, 'dir') });
+    return [200, { ...listing, root: ref, wsl: true }];
+  }
+  if (kind === 'search') {
+    const found = await host.call('localOnly.search', { ...scope, query: one(args, 'q') });
+    return [200, { ...found, root: ref, wsl: true }];
+  }
+  const rel = one(args, 'path').replace(/^\/+/, '');
+  const read = await host.call('localOnly.read', { ...scope, rel, maxBytes: LIMITS.readBytes });
+  const readRoot = typeof read.readRoot === 'string' && read.readRoot.startsWith('/') ? read.readRoot : wsl.linuxPath;
+  const out: FileRead & { local?: true; from?: 'main' } = fileReadOf(readRoot, rel, read);
+  if (read.local) out.local = true;
+  if (read.from === 'main') out.from = 'main';
+  const view = wslViewUrl(origin, refOf({ kind: 'wsl', distro: wsl.distro, linuxPath: out.abs }), out, read.bytesB64);
+  return [200, { root: ref, ...out, viewUrl: view, wsl: true }];
+}
+
+/**
+ * POST files/exclude and files/strays/move for a WSL project (scope: refs from files_routes.ts scopeFor): the distro's helper runs
+ * local_only.ts addEntry / undoEntry / moveStrays in the project's own repository, and refuses a root that is neither the main folder
+ * nor one of its chat copies.
+ */
+export async function wslLocalPost(kind: 'exclude' | 'strays', scope: { root: string; main: string }, body: Record<string, unknown>): Promise<Reply> {
+  const root = wslLoc(scope.root), main = wslLoc(scope.main);
+  if (!root || !main || root.distro !== main.distro) return [404, { error: 'This folder cannot be shown', code: 'bad_root' }];
+  let host: WslHost;
+  try {
+    host = await hostWhenReady(root.distro);
+  } catch (error) {
+    return [409, { error: error instanceof Error ? error.message : String(error), code: 'wsl_unavailable' }];
+  }
+  const paths = { root: root.linuxPath, main: main.linuxPath };
+  try {
+    if (kind === 'strays') return [200, await host.call('localOnly.moveStrays', paths, { timeoutMs: 120_000 })];
+    const params = {
+      ...paths,
+      action: typeof body.action === 'string' ? body.action : '',
+      ...(typeof body.path === 'string' ? { path: body.path } : {}),
+      ...(body.undo !== undefined ? { undo: String(body.undo) } : {}),
+    };
+    const answer = await host.call('localOnly.exclude', params, { timeoutMs: 120_000 });
+    return [answer.status, answer.body];
+  } catch (error) {
+    if (noMethod(error)) {
+      return [409, { error: `The AIB helper in ${distroName(root.distro)} is too old for local-only files. Restart AIB.`, code: 'wsl_unsupported' }];
+    }
     return failed(error);
   }
 }

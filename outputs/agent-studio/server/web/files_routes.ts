@@ -20,8 +20,10 @@
  *
  * A WSL project (its folder is a ref, wsl://<distro>/<path>; docs/wsl/design.md section 4): list, search and read come from the
  * distro's helper (wsl_routes.ts wslFiles); a chat in its own worktree (made in the distro, wsl/worktrees.ts) has the project as its
- * main folder, from its record there; no local-only paths, no preview
- * link of its own (the read's bytes from the helper go into a ticket, file_tickets.ts issueBytes), and exclude / strays refuse. Outside files
+ * main folder, from its record there. Its local-only paths come from that main folder too, laid over the copy by the helper
+ * (wsl/helper/local_only.ts, `localOnly.*`: the same modules, natively), and exclude / strays run there; `localOnly.main` is then the
+ * main folder's Linux path. No preview
+ * link of its own (the read's bytes from the helper go into a ticket, file_tickets.ts issueBytes). Outside files
  * of a WSL chat come from the distro's helper (files.outside), after the same "the chat named it" guard.
  * The /api/live/wsl/* routes ride along in this table (wsl_routes.ts).
  */
@@ -43,7 +45,7 @@ import type { WebContext } from './server.ts';
 import { hostWhenReady, wslLoc } from '../wsl/access.ts';
 import { WslHelperError } from '../wsl/contract.ts';
 import { refOf } from '../platform/location.ts';
-import { wslFiles, wslRoutes, wslViewUrl } from './wsl_routes.ts';
+import { wslFiles, wslLocalPost, wslRoutes, wslViewUrl } from './wsl_routes.ts';
 import { wslRecord } from '../wsl/worktrees.ts';
 
 type Reply = [number, unknown];
@@ -106,7 +108,12 @@ export async function rootFor(ctx: WebContext, args: Record<string, string[]>): 
 export async function scopeFor(ctx: WebContext, args: Record<string, string[]>): Promise<{ root: string; main: string } | Reply> {
   const root = await rootFor(ctx, args);
   if (typeof root !== 'string') return root;
-  if (one(args, 'root', 'chat') !== 'chat' || wslLoc(root)) return { root, main: root }; // a WSL chat: no local-only paths, so no main folder to lay over it
+  if (one(args, 'root', 'chat') !== 'chat') return { root, main: root };
+  if (wslLoc(root)) {
+    // a WSL chat's own copy: the main folder is the project its record in the distro names; no record: the chat works in its folder
+    const record = await wslRecord(root).catch(() => null);
+    return { root, main: record && wslLoc(record.project)?.distro === wslLoc(root)!.distro ? record.project : root };
+  }
   // A chat's own copy: the main folder is the project its worktree record names (never mainFolderOf: for a project that is itself a
   // user-made worktree that would be the user's other checkout). No record: the chat works in its folder itself.
   const record = recordForPath(ctx.stateDir ?? null, root);
@@ -155,7 +162,7 @@ export function filesRoutes(): Map<string, Handler> {
       const wsl = wslLoc(scope.root);
       if (wsl) {
         const kind = path.slice(path.lastIndexOf('/') + 1) as 'list' | 'search' | 'read';
-        return await wslFiles(kind, scope.root, wsl, args, ctx.artifacts?.store.origin ?? '');
+        return await wslFiles(kind, scope.root, wsl, args, ctx.artifacts?.store.origin ?? '', wslLoc(scope.main)?.linuxPath ?? wsl.linuxPath);
       }
       return guarded(() => work(ctx, scope.root, args, scope.main));
     });
@@ -167,7 +174,8 @@ export function filesRoutes(): Map<string, Handler> {
       try {
         const scope = await scopeFor(ctx, bodyArgs(body as Record<string, unknown>));
         if (!Array.isArray(scope) && wslLoc(scope.root)) {
-          return [409, { error: 'Local-only files are not available for WSL projects yet.', code: 'wsl_unsupported' }];
+          // a WSL project: the distro's helper does the same work natively (wsl_routes.ts wslLocalPost)
+          return await wslLocalPost(path.endsWith('/exclude') ? 'exclude' : 'strays', scope, body as Record<string, unknown>);
         }
         return await work(ctx, body as Record<string, unknown>);
       } catch (error) {

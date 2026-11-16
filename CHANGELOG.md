@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- Continue asks only on real evidence: a Claude Code or OMP process that merely runs in the chat's folder (for example VS Code's
+  Claude Code panel) no longer brings up "Another app may be using this conversation" when the transcript has been quiet for 30
+  minutes; the chat continues and gets one note naming the process. A process naming the session, holding its transcript open, a
+  recent transcript write by another app or another app's announcement still asks or refuses as before. Windows and WSL chats.
+
+- Local-only folders in WSL projects: a chat in its own copy reaches the main folder's private/ again. Folders git never commits
+  (private/ by default) live only in the project's main folder, so a WSL chat in its own copy could not see them. Now its agent
+  can read and write them by their Linux path (for example /home/u/app/private), and is told where they are. Files shows them in
+  every chat's copy, Git exclude and Undo work in WSL projects, and AIB backs them up once a day inside the distro. Live sync and
+  Merge leave them out, as on Windows.
+- WSL chats in their own copy see everything git ignores in the main folder: folders and files listed in .gitignore or
+  .git/info/exclude (game/review/, .env, node_modules) used to be missing from a chat's copy. Now the Files tab lists them in the
+  copy, opens their folders at any depth and shows their files and pictures. Excluded folders such as private/ are shown in normal
+  colour; .gitignore ones stay dimmed. The chat's agent can read and edit them in the main folder by their full Linux path. AIB never
+  writes a .gitignore.
+
+
+- WSL: a one-off tool, `deno run -A tools/wsl-import.ts`, moves the chats a WSL project had before worktree copies into their own
+  copies (own branch, Changes, Merge). It starts with a dry run, keeps a backup of each moved history file, and can undo.
 - WSL screens: spacing, contrast and wording fixes.
 - WSL chats survive AIB being away: the Linux keeper keeps a distro's agents running for 2 hours without AIB, not 35 seconds. An
   AIB restart, crash, update or test-build swap, or an older AIB build that stopped the keep-alive, no longer stops claude or codex

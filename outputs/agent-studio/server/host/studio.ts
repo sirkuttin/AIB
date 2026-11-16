@@ -50,7 +50,16 @@ import { announce, getLogger, registerSecret } from '../core/log.ts';
 import { PhaseTimer, rebuildPhases } from '../core/timing.ts';
 import { isDict, isStr, pyLen, pyRepr, ValueError } from '../core/py.ts';
 import { findExternalOwner, OwnershipConflict, probeExternalOwner, SessionLease } from '../ownership/ownership.ts';
-import { ACTIVE_WINDOW_SECONDS, type Assessment, HEARTBEAT_SECONDS, OwnerRegistry, OwnershipEvidence, OwnershipProbe } from '../ownership/probe.ts';
+import {
+  ACTIVE_WINDOW_SECONDS,
+  type Assessment,
+  folderOnlyEvidence,
+  folderOnlyNote,
+  HEARTBEAT_SECONDS,
+  OwnerRegistry,
+  OwnershipEvidence,
+  OwnershipProbe,
+} from '../ownership/probe.ts';
 import { mergeAssessment, wslOwnerCheck, wslOwnerHints, wslOwnPids } from '../wsl/ownership.ts';
 import { expandUser } from '../platform/pypath.ts';
 import { home, isdir, join, realpath } from '../platform/ospath.ts';
@@ -61,7 +70,8 @@ import { isNetworkPath } from '../web/security.ts';
 import { isForeignPath } from '../platform/location.ts';
 import * as wt from '../worktrees/worktrees.ts';
 import { LiveSync, Mutex } from '../worktrees/sync.ts';
-import { DEFAULT_ENTRY, ensureDefault, type LocalOnly } from '../worktrees/local_only.ts';
+import { chatLocalOnly, ensureDefault, type LocalOnly } from '../worktrees/local_only.ts';
+import { wslChatLocalOnly, wslDefaultsAllowed, wslEnsureLocalOnly } from '../wsl/local_only.ts';
 import { helperOf, readHelpers } from '../swarm/registry.ts';
 import { swarmEnabled } from '../swarm/settings.ts';
 import { defaultsAllowed } from '../worktrees/local_strays.ts';
@@ -76,7 +86,6 @@ import {
   windowsPathInWsl,
   WSL_TOOLS_NOTICE,
   wslHost,
-  wslToolsNotice,
   wslLoc,
 } from '../wsl/access.ts';
 import { urlGate } from '../wsl/open_urls.ts';
@@ -536,14 +545,14 @@ export class Studio {
   }
 
   /** Throw OwnershipConflict / OwnershipEvidence unless a WSL chat may be continued: the same rules and words as for a Windows chat. */
-  async #wslCheckOwnership(provider: string, sessionId: string, wsl: { distro: string; linuxPath: string }, projectRoot: string | null, continueAnyway: boolean): Promise<void> {
+  async #wslCheckOwnership(provider: string, sessionId: string, wsl: { distro: string; linuxPath: string }, projectRoot: string | null, continueAnyway: boolean): Promise<Assessment> {
     const { owner, assessment } = await this.#wslAssess(provider, sessionId, wsl, projectRoot);
     if (owner !== null) {
       throw new OwnershipConflict(
         `This ${provider} conversation is already open in another agent process (PID ${owner}). Stop it in its current client before continuing here.`,
       );
     }
-    this.#refuseByVerdict(assessment, continueAnyway);
+    return this.#refuseByVerdict(assessment, continueAnyway);
   }
 
   /** Strong, read-only check: a native agent process whose command line names this session. */
@@ -593,7 +602,10 @@ export class Studio {
     }
   }
 
-  /** Throw OwnershipEvidence unless the conversation may be opened. The command-line probe has run already. */
+  /**
+   * Throw OwnershipEvidence unless the conversation may be opened; the assessment otherwise. The command-line probe has run already.
+   * Folder-only evidence (probe.ts folderOnlyEvidence) does not ask: connect() continues and notes it in the chat.
+   */
   checkOwnership(provider: string, sessionId: string, cwd: string, continueAnyway = false, fresh = true): unknown {
     return this.#refuseByVerdict(this.probe.assess(provider, sessionId, { cwd, skipCmdline: true, fresh }), continueAnyway);
   }
@@ -603,7 +615,7 @@ export class Studio {
       const strong = verdict.reasons.find((r) => r.strength === 'strong')!.text;
       throw new OwnershipEvidence(`${strong} Stop it in its current client before continuing here.`, 'session_in_use', verdict);
     }
-    if (verdict.verdict === 'possibly_active' && !continueAnyway) {
+    if (verdict.verdict === 'possibly_active' && !continueAnyway && !folderOnlyEvidence(verdict)) {
       throw new OwnershipEvidence(
         'Another app may be using this conversation: ' + verdict.reasons.slice(0, 2).map((r) => r.text).join(' '),
         'possibly_active',
@@ -866,7 +878,7 @@ export class Studio {
     if (!key) return { servers: [], notice: WSL_TOOLS_NOTICE };
     const tunnel = distro ? wslHost(distro)?.mcpTunnel ?? null : null;
     if (tunnel) {
-      return { servers: [tunnelEntry(tunnel.forwarder, tunnel.socket, key, conversationId) as unknown as McpServer], notice: wslToolsNotice() };
+      return { servers: [tunnelEntry(tunnel.forwarder, tunnel.socket, key, conversationId) as unknown as McpServer], notice: '' };
     }
     let forwarder: string | null = null;
     try {
@@ -886,7 +898,7 @@ export class Studio {
     }
     const entry = forwardEntry(program, file, key, conversationId) as { env: { name: string; value: string }[] };
     entry.env.push({ name: 'WSLENV', value: 'MCP_FORWARD_HEADERS' }); // the agent's variable crosses into the Windows forwarder
-    return { servers: [entry as unknown as McpServer], notice: wslToolsNotice() };
+    return { servers: [entry as unknown as McpServer], notice: '' };
   }
 
   /**
@@ -1165,11 +1177,12 @@ export class Studio {
     }
     const lease = resume ? await new SessionLease(this.stateDir, provider, resume).acquire() : null;
     let connection: Connection | null = null;
+    let ownerNote: string | null = null; // folder-only evidence: continued without asking, said in the chat
     try {
       // The ownership check reads Windows processes and transcripts; a WSL agent's are inside the distro, so its helper checks there.
       if (resume && wsl) {
         const project = record ? wslLoc(String(record.project ?? ''))?.linuxPath ?? null : null;
-        await this.#wslCheckOwnership(provider, resume, wsl, project, continueAnyway);
+        ownerNote = folderOnlyNote(await this.#wslCheckOwnership(provider, resume, wsl, project, continueAnyway));
       } else if (resume) {
         const owner = await this.ownerProbe(provider, resume, [Deno.pid]);
         if (owner !== null && owner !== undefined) {
@@ -1177,8 +1190,9 @@ export class Studio {
             `This ${provider} conversation is already open in another agent process (PID ${owner}). Stop it in its current client before continuing here.`,
           );
         }
-        this.checkOwnership(provider, resume, workspace, continueAnyway);
+        ownerNote = folderOnlyNote(this.checkOwnership(provider, resume, workspace, continueAnyway));
       }
+      if (ownerNote) log.info('ownership: %s %s continued with folder-only evidence: %s', provider, resume, ownerNote);
       const connectionOptions: ConnectionOptions = {};
       if (Object.keys(env).length) connectionOptions.env = env;
       if (launch) {
@@ -1221,9 +1235,12 @@ export class Studio {
       const finishSetup = async () => {
         try {
           // before the snapshot: the default /private exclude is in force, so a new copy never takes the main folder's private/
-          const local = wsl ? null : await this.#localOnlyDefault(c.worktree ? c.projectRoot : workspace);
+          const mainFolder = c.worktree ? c.projectRoot : workspace;
+          if (wsl) await this.#wslLocalOnlyDefault(mainFolder); // the same in the distro (its helper; never throws)
+          const local = wsl ? null : await this.#localOnlyDefault(mainFolder);
           if (plan) await this.#makeWorktree(c, plan, workspace);
-          c.localOnly = this.#localOnlyFor(c, local);
+          // a WSL chat: the main folder's local-only paths as Linux paths, from its distro's helper
+          c.localOnly = wsl ? await wslChatLocalOnly(c.worktree ? c.projectRoot : c.cwd, !!c.worktree) : this.#localOnlyFor(c, local);
           await c.setup(resume || null);
           if (plan instanceof WslPlan) {
             if (c.worktree) await wslSetSession(plan, provider, c.sessionId!);
@@ -1231,6 +1248,7 @@ export class Studio {
           const note = plan && c.worktree ? plan.note : startNote;
           if (note) c.recordedEvent('studio_note', { message: note, sessionId: c.sessionId });
           if (toolsNotice) c.recordedEvent('studio_note', { message: toolsNotice, sessionId: c.sessionId }); // a WSL chat's tools
+          if (ownerNote) c.recordedEvent('studio_note', { message: ownerNote, sessionId: c.sessionId }); // another agent in its folder
 
           if (!lease) {
             const newLease = await new SessionLease(this.stateDir, provider, c.sessionId!).acquire();
@@ -1785,19 +1803,16 @@ export class Studio {
     if (!lo) return null;
     const main = c.worktree ? c.projectRoot : c.cwd;
     if (realpath(main) !== realpath(lo.project)) return null; // the chat fell back to another folder
-    const on = lo.defaultState === 'on';
-    const told = lo.entries.filter((e) => on || e.toLowerCase() !== DEFAULT_ENTRY);
-    const abs = (e: string) => join(lo.project, ...e.split('/'));
-    const privateDir = on ? abs(lo.entries.find((e) => e.toLowerCase() === DEFAULT_ENTRY) ?? DEFAULT_ENTRY) : '';
-    if (c.worktree && privateDir && !isdir(privateDir)) {
-      try {
-        Deno.mkdirSync(privateDir, { recursive: true });
-      } catch (error) {
-        log.warning('Could not make %s: %s', privateDir, errorText(error));
-      }
-    }
-    if (!told.length && !privateDir) return null;
-    return { entries: told.map(abs), dirs: told.map(abs).filter((p) => isdir(p)), private: privateDir };
+    return chatLocalOnly(lo, !!c.worktree, (dir, error) => log.warning('Could not make %s: %s', dir, errorText(error)));
+  }
+
+  /**
+   * #localOnlyDefault for a WSL project (its ref): the distro's helper sets the default `/private` up, before the snapshot as above,
+   * and only where a Windows project would get it (wsl/local_only.ts wslDefaultsAllowed). Never throws.
+   */
+  async #wslLocalOnlyDefault(projectRef: string): Promise<void> {
+    if (!projectRef || !wslDefaultsAllowed(this.hasStateDir ? this.stateDir : '', projectRef)) return;
+    await wslEnsureLocalOnly(projectRef);
   }
 
   async #makeWorktree(connection: Connection, plan: wt.Plan, project: string): Promise<void> {

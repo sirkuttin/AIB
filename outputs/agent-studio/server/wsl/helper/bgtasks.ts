@@ -7,6 +7,7 @@
  *   ('/api/command') over the same Store as `transcripts.sessions` (methods.ts sessionStore).
  * - `ownership.check`, `ownership.hints`: ownership/probe.ts OwnershipProbe (transcript freshness, agent processes in the project folder,
  *   who holds the transcript open) and ownership.ts findExternalOwner (a `claude` or `omp` process whose command line names the session).
+ *   The assessment carries `transcriptQuiet`, so AIB applies the same folder-only rule as for a Windows chat (probe.ts folderOnlyEvidence).
  *   Its process list is probe.ts fetchProcesses (/proc), with each process named the way the agent was started (see agentNamed). AIB's
  *   own agent channels in this distro (the pids AIB passes as `exclude`) and this helper's own process tree never count. There is no
  *   owner registry here: AIB adds its Windows one.
