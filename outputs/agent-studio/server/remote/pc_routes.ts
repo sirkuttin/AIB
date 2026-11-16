@@ -20,6 +20,7 @@ import type { DeviceScope } from './devices.ts';
 import { isMergeRequest, phoneOption } from './actions.ts';
 import { Registry } from '../worktrees/worktrees.ts';
 import { BlockedPath, guardNewProject, guardPath, guardProjectPath, insideProjects } from './path_guard.ts';
+import { restoreFolders } from '../web/project_routes.ts';
 
 type Json = Record<string, unknown>;
 
@@ -209,6 +210,8 @@ function projectRemoveVerdict(ask: Ask): Verdict {
   if (Array.isArray(cleanup.remove) && cleanup.remove.length) {
     return pcOnly("Removing AIB's chat copies from the folder is done on the PC only.");
   }
+  // the project rule (security review SF8): `check` inspects the folder (whether it exists, is a worktree), so only an added project
+  guardProjectPath(isStr(body.path) ? body.path.trim() : body.path, ask.ctx.stateDir, projectFolders(ask.ctx));
   return { need: [P] };
 }
 
@@ -365,7 +368,14 @@ export const PC_ROUTES: Readonly<Record<string, RemoteEntry>> = {
     const need = isStr(body.action) ? CONVERSATION_ACTIONS[body.action] : undefined;
     if (!need) return pcOnly('That change is done on the PC only.');
     if (body.action === 'restore') {
-      for (const f of [body.cwd, body.projectRoot]) if (isStr(f) && f) guardPath(f, ask.ctx.stateDir);
+      // every folder the handler brings back (the body's and the ones stored on the mark: restoreFolders) is a new project from
+      // a computer unless it is already in one: never blocked, a home folder or a drive root (security review SF11)
+      const projects = projectFolders(ask.ctx);
+      for (const f of restoreFolders(ask.ctx.conversations, body)) {
+        if (!isStr(f) || !f) continue;
+        guardPath(f, ask.ctx.stateDir);
+        if (!insideProjects(f, projects)) guardNewFolder(f, ask.ctx);
+      }
     }
     return { need };
   }),

@@ -437,6 +437,12 @@ Deno.test({
         ['GET', `/api/live/files/read?root=project&project=${q(s.state)}&path=devices.json`, undefined],
         ['GET', `/api/live/files/search?root=project&project=${q(s.state)}&q=x`, undefined],
         ['POST', '/api/live/artifacts/preview', { conversationId: 't1', path: inHome('.ssh', 'id_rsa') }],
+        // relative paths resolve against the chat's folder: never checked as sent (security review MF1; pc_sec_test.ts has the rest)
+        ['POST', '/api/live/artifacts/preview', { conversationId: 't1', path: 'state/devices.json' }],
+        ['POST', '/api/live/artifacts/preview', { conversationId: 't1', path: './state/devices.json' }],
+        ['POST', '/api/live/artifacts/preview', { conversationId: 't1', path: 'sub/../state/devices.json' }],
+        ['GET', `/api/live/files/outside?id=t1&path=${q('state/devices.json')}`, undefined],
+        ['POST', '/api/live/project-remove', { path: inHome('.ssh'), check: true }],
         ['GET', `/api/live/folders/check?path=${q(inHome('.codex'))}`, undefined],
         ['GET', `/api/live/folders/kinds?paths=${q(JSON.stringify([inHome('.claude')]))}`, undefined],
         ['GET', `/api/live/folders/kinds?path=${q(inHome('.aws'))}`, undefined],
