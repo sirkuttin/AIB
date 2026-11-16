@@ -13,7 +13,10 @@ designs/subagent-worktrees/gemini-proof.md; code: server/subagents/gemini.ts.
   GeminiFenceTest      the same play with hooks off in the user's Gemini settings: the fence alone. The subagent's write is denied
                        by AIB's policy (Gemini's "denied by policy" text with AIB's reason reaches the subagent), nothing is written
                        anywhere, the parent's own write works, and the chat says up front that subagent edits are off.
-  Both: the owner's ~/.gemini, ~/.claude and ~/.codex are untouched.
+  Both: the owner's ~/.gemini (listing, mtimes), ~/.claude settings and projects, ~/.codex config, hooks and sessions are untouched
+  (not ~/.claude.json: the owner's own running Claude Code sessions rewrite it). The chat runs in yolo in a folder the user trusted:
+  Gemini 0.68 itself refuses invoke_agent in its default ACP mode, with or without AIB (checked with no --admin-policy).
+  The redirect test also checks the Activity card (from the invoke_agent call: running, then completed) and its worktree line.
 
 Needs node, Go (the keeper program is built from keeper/ into a temp folder; AIB_TEST_KEEPER_BIN names a built one) and the Gemini
 CLI 0.68 package folder (AIB_GEMINI_CLI = the folder holding node_modules/@google/gemini-cli; default: .gem-scratch/gemini-cli in
@@ -21,6 +24,7 @@ this worktree). Run with TEMP/TMP pointed at a scratch folder.
 """
 import _isolation  # noqa: F401  (test isolation: temp state folder, real per-user folder blocked)
 import json
+import re
 import os
 import pathlib
 import shutil
@@ -232,8 +236,15 @@ class GeminiRedirectTest(GeminiSubagentCase):
         wait_for(lambda: not landed(), 'the landed record to be released', seconds=60)
         spares = [r for r in json.loads(records.read_text(encoding='utf-8'))['subagents'].values()]
         self.assertLessEqual(len(spares), 1, 'at most the chat spare stays while the chat is open')
-        listing = run_git(project, 'worktree', 'list')
-        self.assertEqual(sum(1 for line in listing.splitlines() if '.gem-' in line), len(spares), listing)
+        helpers = json.loads((fx.state / 'swarm-helpers.json').read_text(encoding='utf-8'))['helpers'].values()
+        landed_paths = [pathlib.Path(h['worktree']['path']) for h in helpers if h.get('kind') == 'subagent' and h.get('state') == 'merged']
+        self.assertEqual(len(landed_paths), 1, helpers)
+        self.assertRegex(str(landed_paths[0]), r'[\\/]\.gem-[0-9a-f]{32}[\\/]sub-')
+        wait_for(lambda: not landed_paths[0].exists(), 'the landed worktree folder to go', seconds=60)
+        porcelain = run_git(project, 'worktree', 'list', '--porcelain')
+        # (this repo's own scratch folder is named .gem-scratch: match AIB's .gem-<chat id> folders only)
+        live = [b for b in porcelain.split('\n\n') if re.search(r'[\\/]\.gem-[0-9a-f]{32}[\\/]', b) and 'prunable' not in b]
+        self.assertEqual(len(live), len(spares), porcelain)
         # Activity: a card for the subagent, from its invoke_agent call (running, then completed), with P3's worktree line
         state = chat.state()
         self.assertEqual(state.get('subagentIsolation', {}).get('on'), True, state.get('subagentIsolation'))
