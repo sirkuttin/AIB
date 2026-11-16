@@ -7,6 +7,11 @@
   start as new text came in. Above that the phone only said "Earlier messages are on your PC." Now a chat opens with its newest
   messages by size, never starting inside a reply or a run of steps. Tap **Load earlier messages** at the top, or just scroll up:
   older messages come in above without moving what you are reading. Chats that are not running page back the same way.
+- Phone chats: updates no longer redraw the screen. Every 3 seconds a working chat used to rebuild every message and set the
+  scroll position back by hand, so a scroll in progress could stop, selected text was unselected and spinners started over. Now an
+  update changes only what is new: the reply being written grows where it is, a new message is added at the end, and everything
+  else stays untouched. Your scroll position, selected text, open steps and Show output stay as they are; at the end of the chat
+  you keep following new messages. The chat list updates only the cards that changed.
 - Phone steps: Show output. Open a run of steps and tap **Show output** under a finished step to read its whole output, also
   when the chat clipped it.
 - Phone saved chats: long messages keep their text. A chat that is not running used to cut every message at 8,000 characters

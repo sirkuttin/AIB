@@ -23,7 +23,8 @@
    switches. While the PC can't be reached, nothing can be sent or answered. The layout is chosen by the server (remote bootstrap
    says layout 'phone'), never by the window width.
    The device token lives in IndexedDB on this origin and goes in the X-AIB-Device header; images load by the HttpOnly cookie.
-   Polls every 4 s (home) or 3 s (a chat) while the page is visible, and stops while it is hidden.
+   Polls every 4 s (home) or 3 s (a chat) while the page is visible, and stops while it is hidden. A poll's draw changes only what
+   changed on screen (patch, keyed rows): it never resets the scroll position, a selection, an open fold, the focus or a draft.
    Phase C: a service worker (/sw.js, pwa/sw.js) keeps the page's own files, so the page still opens when AIB is closed; it then
    says "Reconnecting…" for about 20 s (the keeper starts a crashed AIB again in 5 s), then that AIB is closed on the PC (Tailscale
    Serve answers 502) or that the PC can't be reached (no answer at all), with Try again. It never claims the chats still run.
@@ -1144,8 +1145,113 @@
   function button(cls, text, onClick) {
     const b = el('button', cls, text);
     b.type = 'button';
-    b.addEventListener('click', onClick);
+    on(b, 'click', onClick);
     return b;
+  }
+  /* A handler on a node in #app. The page patches what is on screen from a fresh drawing (patch below), so a node on screen can
+     stay while its fresh twin goes: the handler is kept on the node (__on) and patch hands the fresh one over. A handler reads its
+     own node as e.currentTarget, never as a variable of the drawing (that would be the fresh twin, off screen). */
+  function onEvent(e) {
+    const f = this.__on && this.__on[e.type];
+    if (f) return f.call(this, e);
+  }
+  function on(n, type, fn) {
+    if (!n.__on) n.__on = {};
+    if (!n.__on[type]) n.addEventListener(type, onEvent);
+    n.__on[type] = fn;
+  }
+
+  /* Incremental drawing. draw() describes the whole screen as fresh, detached nodes; patch() then changes only what differs on the
+     page: a node that matches its fresh twin stays (its attributes and text are brought in line, its handlers handed over), so a
+     poll that changed nothing touches nothing, a new event adds its row, the reply streaming in grows in place, and what the reader
+     holds (the scroll position, a text selection, an open fold or Show output box, the focus and caret, an IME composition) is
+     never taken away. Prior art: morphdom / idiomorph (patch a live tree from a new one, keyed by id). Matching: a node with a key
+     (data-rk: a chat row, a card; or an id) meets the old node with that key wherever it is; others meet the next old node of the
+     same tag. A row that did not change is not drawn again at all: its drawing is a stub (keep()) that stands for the node on screen
+     (rows remember what they were drawn from in __sig; rowCache finds them by data-rk). */
+  const rowCache = new Map(); // data-rk -> the node on screen (refilled after each draw)
+  function keep(node) {
+    const stub = doc.createComment('');
+    stub.__keep = node;
+    return stub;
+  }
+  function keyOf(n) {
+    if (n.__keep) return keyOf(n.__keep);
+    if (n.nodeType !== 1) return '';
+    const k = n.getAttribute('data-rk');
+    return k ? 'k' + k : n.id ? '#' + n.id : '';
+  }
+  /* A fresh node about to go on the page: its stubs become the nodes they stand for. */
+  function live(n) {
+    if (n.__keep) return n.__keep;
+    if (n.nodeType === 1 && n.firstChild) {
+      const walk = doc.createTreeWalker(n, 128); // NodeFilter.SHOW_COMMENT
+      const stubs = [];
+      for (let c = walk.nextNode(); c; c = walk.nextNode()) if (c.__keep) stubs.push(c);
+      for (const s of stubs) s.replaceWith(s.__keep);
+    }
+    return n;
+  }
+  function patchChildren(parent, next) {
+    const keyed = new Map();
+    const loose = [];
+    for (let c = parent.firstChild; c; c = c.nextSibling) {
+      const k = keyOf(c);
+      if (k && !keyed.has(k)) keyed.set(k, c);
+      else if (!k) loose.push(c);
+    }
+    let li = 0;
+    const used = new Set();
+    const pairs = next.map((n) => {
+      if (n.parentNode === parent) return n; // a node that is on the page as it is (the composer)
+      if (n.__keep) return n.__keep;
+      const k = keyOf(n);
+      let old = null;
+      if (k) {
+        old = keyed.get(k) || null;
+        if (old && (old.nodeName !== n.nodeName || used.has(old))) old = null;
+      } else {
+        for (let i = li; i < loose.length; i++) {
+          if (loose[i].nodeName === n.nodeName) {
+            old = loose[i];
+            li = i + 1;
+            break;
+          }
+        }
+      }
+      if (old) used.add(old);
+      return old;
+    });
+    const stay = new Set(pairs.filter(Boolean));
+    // what is not wanted goes first, so a node that stays is never moved for it (moving a node drops its focus and selection)
+    for (let c = parent.firstChild; c; ) {
+      const n = c.nextSibling;
+      if (!stay.has(c)) c.remove();
+      c = n;
+    }
+    let at = parent.firstChild;
+    next.forEach((n, i) => {
+      const old = pairs[i];
+      if (old && old !== n && !n.__keep) patchNode(old, n);
+      const node = old || live(n);
+      if (node === at) at = at.nextSibling;
+      else parent.insertBefore(node, at);
+    });
+  }
+  function patchNode(old, n) {
+    if (old.nodeType !== 1) {
+      if (old.nodeValue !== n.nodeValue) old.nodeValue = n.nodeValue;
+      return;
+    }
+    const oa = old.attributes;
+    for (let i = oa.length - 1; i >= 0; i--) if (!n.hasAttribute(oa[i].name)) old.removeAttribute(oa[i].name);
+    for (const a of n.attributes) if (old.getAttribute(a.name) !== a.value) old.setAttribute(a.name, a.value);
+    if (n.__on) for (const t of Object.keys(n.__on)) on(old, t, n.__on[t]);
+    if (old.__on) for (const t of Object.keys(old.__on)) if (!n.__on || !n.__on[t]) old.__on[t] = null;
+    old.__sig = n.__sig;
+    if ((old.nodeName === 'TEXTAREA' || old.nodeName === 'INPUT') && old.type !== 'file' && old.value !== n.value && old !== doc.activeElement)
+      old.value = n.value;
+    patchChildren(old, [...n.childNodes]);
   }
 
   // ---- storage (IndexedDB; only the device token) ----
@@ -2157,8 +2263,8 @@
     ta.placeholder = ready ? 'What should ' + (nc.agents.find((a) => a.id === nc.agent) || {}).name + ' do?' : 'Pick a project and an agent first';
     ta.setAttribute('aria-label', 'First message');
     ta.value = S.ncText || '';
-    ta.addEventListener('input', () => {
-      S.ncText = ta.value;
+    on(ta, 'input', (e) => {
+      S.ncText = e.currentTarget.value;
       const go = doc.getElementById('phNewStart');
       if (go) go.disabled = !newChatReady(S.nc, S.ncText, S.attach.new.length) || S.nc.starting || S.offline || S.attachBusy.new > 0;
     });
@@ -2179,7 +2285,7 @@
     go.id = 'phNewStart';
     go.disabled = !newChatReady(nc, S.ncText, S.attach.new.length) || nc.starting || S.offline || S.attachBusy.new > 0;
     bottom.append(go);
-    bottom.addEventListener('submit', (e) => {
+    on(bottom, 'submit', (e) => {
       e.preventDefault();
       startNew();
     });
@@ -2527,6 +2633,7 @@
       cardItems.set(key, item);
     }
     const wrap = el('div', 'ph-cw');
+    wrap.setAttribute('data-rk', key);
     const more = button('ph-more-btn', '⋯', () => openCardMenu(item));
     more.disabled = opening;
     more.setAttribute('aria-label', 'More for ' + item.title);
@@ -2586,6 +2693,7 @@
     for (const g of inboxGroups(home, picked ? picked.id : '', picked ? picked.name : '')) {
       const sec = el('section', 'ph-isec');
       sec.dataset.group = g.id;
+      sec.setAttribute('data-rk', 'g:' + g.id);
       sec.append(el('h2', 'ph-ih', g.title));
       if (!g.chats.length) sec.append(el('p', 'ph-inone', 'Nothing needs you'));
       for (const c of g.chats) sec.append(inboxCard(c, now, can));
@@ -2601,15 +2709,16 @@
     const ask = obj(c.ask);
     const card = el('div', 'ph-icard' + (inboxNeeds(c) ? '' : ' rev'));
     card.dataset.chat = c.id;
+    card.setAttribute('data-rk', 'i:' + c.id);
     card.tabIndex = 0;
     card.setAttribute('role', 'button');
     const open = () => openChat(c.id, c.title, !!ask.key, item);
-    card.addEventListener('click', (e) => {
+    on(card, 'click', (e) => {
       if (e.target.closest && e.target.closest('button')) return;
       open();
     });
-    card.addEventListener('keydown', (e) => {
-      if (e.target === card && (e.key === 'Enter' || e.key === ' ')) {
+    on(card, 'keydown', (e) => {
+      if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
         e.preventDefault();
         open();
       }
@@ -2852,102 +2961,137 @@
     }
     rows.forEach((r, i) => {
       if (i === subsAt) box.append(subsCard(c));
-      if (r.kind === 'steps') {
-        const open = S.open.has(r.key);
-        const n = r.steps.length;
-        const running = c && c.busy ? r.steps.filter((s) => !s.done).length : 0;
-        const fold = button('ph-fold', '', () => {
-          if (S.open.has(r.key)) S.open.delete(r.key);
-          else S.open.add(r.key);
-          draw();
-        });
-        fold.append(
-          running ? el('span', 'ph-spin') : el('span', 'ph-check', '✓'),
-          doc.createTextNode(n + (n === 1 ? ' step' : ' steps') + (running ? ' · ' + running + ' running' : '')),
-          el('span', 'ph-chev2', '›'),
-        );
-        fold.setAttribute('aria-expanded', open ? 'true' : 'false');
-        const wrap = el('div', 'ph-steps-fold' + (open ? ' open' : ''));
-        wrap.append(fold);
-        if (open) {
-          const ul = el('ol', 'ph-fold-list');
-          for (const s of r.steps) {
-            const li = el('li', s.done ? '' : 'run', s.title + (s.done ? '' : ' · ' + (s.status === 'pending' ? 'waiting' : 'running')));
-            if (c && s.done && s.outSeq) {
-              // Show output: the step's output whole, from the PC
-              const out = S.outputs[s.outSeq];
-              const b = button('ph-btn sm quiet', out && out.state === 'open' ? 'Hide output' : out && out.state === 'loading' ? 'Loading output…' : 'Show output', () => showOutput(s.outSeq));
-              b.dataset.out = String(s.outSeq);
-              b.setAttribute('aria-expanded', out && out.state === 'open' ? 'true' : 'false');
-              const line = el('div');
-              line.append(b);
-              li.append(line);
-              if (out && out.state === 'error') li.append(el('p', 'ph-more', "Couldn't load the output. It may no longer be kept on " + S.pcName + '.'));
-              if (out && out.state === 'open') {
-                const pre = el('pre', 'ph-cmd ph-out', out.text);
-                pre.dataset.out = String(s.outSeq);
-                li.append(pre);
-              }
-            }
-            ul.append(li);
-          }
-          wrap.append(ul);
-        }
-        box.append(wrap);
+      // a row drawn from the same things as the one on screen is not drawn again (a waiting card always is: it has a form)
+      const rk = r.kind + ':' + r.key;
+      const sig = r.kind === 'req' ? '' : rowSig(r, c, agent);
+      const had = sig && rowCache.get(rk);
+      if (had && had.__sig === sig && had.isConnected) {
+        box.append(keep(had));
         return;
       }
-      if (r.kind === 'artifact') {
-        box.append(artifactCard(r.artifact));
-        return;
+      const at = box.lastChild;
+      drawRow(box, rows, r, c, agent);
+      const node = box.lastChild;
+      if (node && node !== at) {
+        node.setAttribute('data-rk', rk);
+        if (sig) node.__sig = sig;
       }
-      if (r.kind === 'req') {
-        box.append(reqCard(c, r.key, reqOpen(rows, r.key, S.reqOpened, S.landKey)));
-        return;
-      }
-      if (r.kind === 'record') {
-        const rec = el('div', 'ph-req done');
-        rec.dataset.req = r.key;
-        rec.dataset.record = '1';
-        const line = el('p', 'ph-rec');
-        line.append(el('span', 'ph-check', '✓'), doc.createTextNode(r.text));
-        rec.append(line);
-        box.append(rec);
-        return;
-      }
-      if (r.kind === 'notice') {
-        box.append(el('p', 'ph-notice' + (r.mine ? ' mine' : ''), r.text));
-        return;
-      }
-      const m = el('div', 'ph-msg ' + r.kind);
-      if (r.kind === 'agent') {
-        if (agent) m.append(el('div', 'ph-who', agent));
-        const text = el('div', 'ph-text');
-        if (root.AgentMarkdown) root.AgentMarkdown.render(text, r.text);
-        else text.textContent = r.text;
-        m.append(text);
-      } else if (r.text) {
-        const bub = el('div', 'ph-bub', r.text);
-        m.append(bub);
-      }
-      if (r.steered) m.append(el('span', 'ph-steered', 'Sent while working'));
-      if (r.clipped) m.append(el('span', 'ph-steered ph-clipped', 'Message shortened here. The whole message is on your PC.'));
-      const imgBox = r.kind === 'you' ? m.querySelector('.ph-bub') || m : m;
-      for (const url of r.images || []) {
-        const img = el('img', 'ph-img');
-        img.loading = 'lazy';
-        img.alt = 'Picture';
-        img.src = url;
-        imgBox.append(img);
-      }
-      if ((r.files || []).length) {
-        const files = el('ul', 'ph-sent-files');
-        files.setAttribute('aria-label', 'Attached files');
-        for (const name of r.files) files.append(el('li', '', name));
-        imgBox.append(files);
-      }
-      box.append(m);
     });
     if (subsAt >= rows.length) box.append(subsCard(c));
+  }
+
+  /* What a row is drawn from, as a string: the same string draws the same row. */
+  function rowSig(r, c, agent) {
+    let out = '';
+    if (r.kind === 'steps')
+      out = JSON.stringify([
+        S.open.has(r.key),
+        !!c,
+        !!(c && c.busy),
+        S.pcName,
+        r.steps.map((s) => [s.title, s.status, s.done, s.outSeq || 0, s.outSeq && S.outputs[s.outSeq] ? S.outputs[s.outSeq] : 0]),
+      ]);
+    else if (r.kind === 'artifact') out = JSON.stringify([r.artifact, S.artifacts]);
+    else out = JSON.stringify([r, agent]);
+    return out;
+  }
+
+  /* One row of a chat into `box`. */
+  function drawRow(box, rows, r, c, agent) {
+    if (r.kind === 'steps') {
+      const open = S.open.has(r.key);
+      const n = r.steps.length;
+      const running = c && c.busy ? r.steps.filter((s) => !s.done).length : 0;
+      const fold = button('ph-fold', '', () => {
+        if (S.open.has(r.key)) S.open.delete(r.key);
+        else S.open.add(r.key);
+        draw();
+      });
+      fold.append(
+        running ? el('span', 'ph-spin') : el('span', 'ph-check', '✓'),
+        doc.createTextNode(n + (n === 1 ? ' step' : ' steps') + (running ? ' · ' + running + ' running' : '')),
+        el('span', 'ph-chev2', '›'),
+      );
+      fold.setAttribute('aria-expanded', open ? 'true' : 'false');
+      const wrap = el('div', 'ph-steps-fold' + (open ? ' open' : ''));
+      wrap.append(fold);
+      if (open) {
+        const ul = el('ol', 'ph-fold-list');
+        for (const s of r.steps) {
+          const li = el('li', s.done ? '' : 'run', s.title + (s.done ? '' : ' · ' + (s.status === 'pending' ? 'waiting' : 'running')));
+          if (c && s.done && s.outSeq) {
+            // Show output: the step's output whole, from the PC
+            const out = S.outputs[s.outSeq];
+            const b = button('ph-btn sm quiet', out && out.state === 'open' ? 'Hide output' : out && out.state === 'loading' ? 'Loading output…' : 'Show output', () => showOutput(s.outSeq));
+            b.dataset.out = String(s.outSeq);
+            b.setAttribute('aria-expanded', out && out.state === 'open' ? 'true' : 'false');
+            const line = el('div');
+            line.append(b);
+            li.append(line);
+            if (out && out.state === 'error') li.append(el('p', 'ph-more', "Couldn't load the output. It may no longer be kept on " + S.pcName + '.'));
+            if (out && out.state === 'open') {
+              const pre = el('pre', 'ph-cmd ph-out', out.text);
+              pre.dataset.out = String(s.outSeq);
+              li.append(pre);
+            }
+          }
+          ul.append(li);
+        }
+        wrap.append(ul);
+      }
+      box.append(wrap);
+      return;
+    }
+    if (r.kind === 'artifact') {
+      box.append(artifactCard(r.artifact));
+      return;
+    }
+    if (r.kind === 'req') {
+      box.append(reqCard(c, r.key, reqOpen(rows, r.key, S.reqOpened, S.landKey)));
+      return;
+    }
+    if (r.kind === 'record') {
+      const rec = el('div', 'ph-req done');
+      rec.dataset.req = r.key;
+      rec.dataset.record = '1';
+      const line = el('p', 'ph-rec');
+      line.append(el('span', 'ph-check', '✓'), doc.createTextNode(r.text));
+      rec.append(line);
+      box.append(rec);
+      return;
+    }
+    if (r.kind === 'notice') {
+      box.append(el('p', 'ph-notice' + (r.mine ? ' mine' : ''), r.text));
+      return;
+    }
+    const m = el('div', 'ph-msg ' + r.kind);
+    if (r.kind === 'agent') {
+      if (agent) m.append(el('div', 'ph-who', agent));
+      const text = el('div', 'ph-text');
+      if (root.AgentMarkdown) root.AgentMarkdown.render(text, r.text);
+      else text.textContent = r.text;
+      m.append(text);
+    } else if (r.text) {
+      const bub = el('div', 'ph-bub', r.text);
+      m.append(bub);
+    }
+    if (r.steered) m.append(el('span', 'ph-steered', 'Sent while working'));
+    if (r.clipped) m.append(el('span', 'ph-steered ph-clipped', 'Message shortened here. The whole message is on your PC.'));
+    const imgBox = r.kind === 'you' ? m.querySelector('.ph-bub') || m : m;
+    for (const url of r.images || []) {
+      const img = el('img', 'ph-img');
+      img.loading = 'lazy';
+      img.alt = 'Picture';
+      img.src = url;
+      imgBox.append(img);
+    }
+    if ((r.files || []).length) {
+      const files = el('ul', 'ph-sent-files');
+      files.setAttribute('aria-label', 'Attached files');
+      for (const name of r.files) files.append(el('li', '', name));
+      imgBox.append(files);
+    }
+    box.append(m);
   }
 
   /* The Subagents card in the stream: each subagent's title and state (its own steps are on the PC). */
@@ -3329,6 +3473,7 @@
     for (const item of items) {
       const row = el('div', 'ph-queued');
       row.dataset.queued = item.id;
+      row.setAttribute('data-rk', 'q:' + item.id);
       const mine = S.editing && S.editing.messageId === item.id;
       if (mine) {
         const ta = el('textarea', 'ph-input');
@@ -3336,7 +3481,7 @@
         ta.rows = 3;
         ta.value = S.editing.text;
         ta.setAttribute('aria-label', 'Edit the queued message');
-        ta.addEventListener('input', () => (S.editing.text = ta.value));
+        on(ta, 'input', (e) => (S.editing.text = e.currentTarget.value));
         row.append(ta);
         const acts = el('div', 'ph-qa');
         const save = button('ph-btn sm', 'Save', () => queueEdit(item.id, 'save'));
@@ -3428,9 +3573,9 @@
     if (ta.value !== S.draft) ta.value = S.draft;
     ta.placeholder = 'Message ' + (c.agent || 'the agent');
     bar.querySelector('#phSend').disabled = S.sending || S.attachBusy.chat > 0;
-    bar.querySelector('#phChipsSlot').replaceChildren(chipsEl('chat'));
+    patchChildren(bar.querySelector('#phChipsSlot'), [chipsEl('chat')]);
     bar.querySelector('#phStop').hidden = !c.busy;
-    bar.querySelector('#phBottomExtra').replaceChildren(bottomExtra(c, abilities(S.scopes)));
+    patchChildren(bar.querySelector('#phBottomExtra'), [...bottomExtra(c, abilities(S.scopes)).childNodes]);
     const err = bar.querySelector('#phActError');
     err.textContent = S.actKey ? '' : S.actError;
     err.hidden = !err.textContent;
@@ -3661,6 +3806,7 @@
       for (const item of items) {
         const chip = el('li', 'ph-chip ' + (item.kind === 'image' ? 'pic' : 'file'));
         chip.dataset.chip = item.id;
+        chip.setAttribute('data-rk', 'chip:' + item.id);
         if (item.kind === 'image' && item.thumb) {
           const img = el('img', 'ph-chip-thumb');
           img.src = item.thumb;
@@ -3747,7 +3893,7 @@
       } else input.rows = 2;
       input.value = values[f.key] == null ? '' : String(values[f.key]);
       input.setAttribute('aria-label', f.title);
-      input.addEventListener('input', () => (values[f.key] = input.value));
+      on(input, 'input', (e) => (values[f.key] = e.currentTarget.value));
       wrap.append(input);
     }
     return wrap;
@@ -3917,10 +4063,10 @@
     go.id = 'pairGo';
     go.disabled = !!p.busy;
     form.append(go);
-    form.addEventListener('submit', (event) => {
+    on(form, 'submit', (event) => {
       event.preventDefault();
       const codeInput = doc.getElementById('pairCode');
-      claim(codeInput ? codeInput.value : '', name.value);
+      claim(codeInput ? codeInput.value : '', doc.getElementById('pairName').value);
     });
     body.append(form);
     frag.append(body);
@@ -3944,23 +4090,37 @@
     return frag;
   }
 
-  /* Put the screen's parts in #app. The composer, when it is already there, is never taken out (the keyboard stays up). */
-  function place(parts) {
-    const keep = composerEl && parts.includes(composerEl) && composerEl.parentNode === app ? composerEl : null;
-    if (!keep) return app.replaceChildren(...parts);
-    for (const n of [...app.childNodes]) if (n !== keep) n.remove();
-    const at = parts.indexOf(keep);
-    keep.before(...parts.slice(0, at));
-    keep.after(...parts.slice(at + 1));
+  /* Put the screen's parts in #app: the same screen (and chat) as before is patched (only what changed); another screen replaces
+     it. The composer, when it is already there, is never taken out (the keyboard stays up). */
+  let shown = '';
+  const shownKey = () => S.screen + ':' + (S.screen === 'chat' ? S.chatId : S.screen === 'saved' ? S.savedKey : '');
+  function place(parts, same) {
+    if (same) patchChildren(app, parts);
+    else {
+      const keepNode = composerEl && parts.includes(composerEl) && composerEl.parentNode === app ? composerEl : null;
+      if (!keepNode) app.replaceChildren(...parts.map(live));
+      else {
+        for (const n of [...app.childNodes]) if (n !== keepNode) n.remove();
+        const at = parts.indexOf(keepNode);
+        keepNode.before(...parts.slice(0, at).map(live));
+        keepNode.after(...parts.slice(at + 1).map(live));
+      }
+    }
+    rowCache.clear();
+    for (const n of app.querySelectorAll('[data-rk]')) if (n.__sig) rowCache.set(n.getAttribute('data-rk'), n);
   }
 
   function draw() {
     const y = root.scrollY;
     const d = doc.documentElement;
-    const atEnd = root.innerHeight + y >= d.scrollHeight - 40;
+    const height = d.scrollHeight;
+    const atEnd = root.innerHeight + y >= height - 40;
     const active = doc.activeElement;
     const focusId = active && active.id;
     const range = active && typeof active.selectionStart === 'number' ? [active.selectionStart, active.selectionEnd] : null;
+    const same = shown === shownKey();
+    if (!same) rowCache.clear(); // another screen or chat: nothing on screen is kept
+    shown = shownKey();
     const parts =
       S.screen === 'home'
         ? drawHome()
@@ -3981,10 +4141,10 @@
                   : S.screen === 'offline'
                     ? drawOfflineStart()
                     : el('p', 'ph-loading', 'Connecting…');
-    const list = Array.isArray(parts) ? parts : [parts];
+    const list = (Array.isArray(parts) ? parts : [parts]).flatMap((n) => (n.nodeType === 11 ? [...n.childNodes] : [n]));
     // the banner: only inside a chat, about another chat (never on the chat list)
     if (S.banner && inChat() && !S.offline) list.splice(1, 0, bannerEl());
-    place(list);
+    place(list, same);
     if (S.viewer && (S.screen === 'removed' || S.screen === 'pair')) closeArtifact(); // this phone may not see it any more
     app.dataset.screen = S.screen;
     if (focusId) {
@@ -4025,8 +4185,12 @@
         const top = target.getBoundingClientRect().top + root.scrollY - (head ? head.getBoundingClientRect().height : 0) - 12;
         root.scrollTo(0, Math.max(0, top));
       } else root.scrollTo(0, d.scrollHeight);
-    } else if ((S.screen === 'chat' || S.screen === 'saved') && atEnd && y > 0) root.scrollTo(0, d.scrollHeight); // keep up with new rows
+    } else if (same) {
+      if (inChat() && atEnd && d.scrollHeight > height) root.scrollTo(0, d.scrollHeight); // at the end: keep up with new rows
+    } else if (inChat() && atEnd && y > 0) root.scrollTo(0, d.scrollHeight);
     else root.scrollTo(0, y);
+    // else nothing: the rows were patched in place, and the browser's scroll anchoring keeps what you read where it is when rows
+    // above it change (a fling is never stopped by a scrollTo)
     checkAbove();
   }
 
