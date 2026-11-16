@@ -44,10 +44,10 @@ function stub(page: Page, a: Chat, b: Chat) {
   };
   const arts = {
     [a.id]: [
-      { id: 'art-a1', kind: 'html', title: 'Checkout bug root cause', version: 2, updatedAt: Date.now() / 1000 - 240 },
-      { id: 'art-a2', kind: 'svg', title: 'Totals before and after', version: 1, updatedAt: Date.now() / 1000 - 540 },
+      { id: 'art-a1', conversationId: a.id, kind: 'html', title: 'Checkout bug root cause', version: 2, updatedAt: Date.now() / 1000 - 240 },
+      { id: 'art-a2', conversationId: a.id, kind: 'svg', title: 'Totals before and after', version: 1, updatedAt: Date.now() / 1000 - 540 },
     ],
-    [b.id]: [{ id: 'art-b1', kind: 'md', title: 'RSS feed plan', version: 1, updatedAt: Date.now() / 1000 - 720 }],
+    [b.id]: [{ id: 'art-b1', conversationId: b.id, kind: 'md', title: 'RSS feed plan', version: 1, updatedAt: Date.now() / 1000 - 720 }],
   };
   return page.eval(`(() => {
     const files = ${JSON.stringify(files)}, arts = ${JSON.stringify(arts)};
@@ -113,7 +113,9 @@ const PANEL = `(() => {
   const pane = document.getElementById('subagentsPane'), out = [];
   for (const n of pane.querySelectorAll('*')) {
     if (!n.offsetParent && getComputedStyle(n).position !== 'fixed') continue;
-    const r = n.getBoundingClientRect();
+    // a spinning working dot's box turns with it: its untransformed box counts, not the turned one
+    const spin = getComputedStyle(n).animationName !== 'none', b = n.getBoundingClientRect();
+    const r = spin ? { left: b.left + b.width / 2 - n.offsetWidth / 2, top: b.top + b.height / 2 - n.offsetHeight / 2, width: n.offsetWidth, height: n.offsetHeight } : b;
     if (!r.width || !r.height) continue;
     const own = [...n.childNodes].filter((c) => c.nodeType === 3).map((c) => c.textContent).join('').replace(/\\d+/g, '#').trim();
     out.push([n.tagName, n.className, Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height), own].join('|'));
@@ -126,7 +128,7 @@ function diff(a: string[], b: string[]) {
   return out.slice(0, 8).join('\n');
 }
 async function clickOther(page: Page, want: string) {
-  await page.click('#splitStage .pane:not(.foc) .mirror-head');
+  await page.click('#splitStage .pane:not(.foc) :is(.mirror-copy > header [data-mid="title"], .mirror-head)');
   await page.waitFor(`AgentSplitUI.panes().find((p) => p.focused)?.group.active === ${JSON.stringify(want)}`, 15000, 'focus moved');
   await settle(2500);
 }
@@ -174,7 +176,7 @@ panelTest('split panel: both chats in pane order on every tab, focus changes not
   for (const tab of ['activity', 'changes', 'artifacts']) {
     await page.click(`#paneTab-${tab}`);
     if (tab === 'changes')
-      await page.waitFor(`document.querySelectorAll('#splitChanges .sp-grp .cg-file').length === 3`, 15000, 'both chats\\' files');
+      await page.waitFor(`document.querySelectorAll('#splitChanges .sp-grp .cg-file').length === 3`, 15000, 'files of both chats');
     if (tab === 'artifacts')
       await page.waitFor(`document.querySelectorAll('.ar-split .ar-spick:not(.plain)').length === 2`, 15000, 'both dropdowns');
     await settle(1500);
