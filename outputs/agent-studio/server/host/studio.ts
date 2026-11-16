@@ -43,8 +43,8 @@ import { ArtifactMcpHttp, FORWARD_FILE, forwardEntry, httpEntry, ownForwardFile,
 import { WSL_TOOL_GROUPS } from '../artifacts/mcp.ts';
 import { mcpTunnelGate, type TunnelAnswer } from '../wsl/mcp_tunnel.ts';
 import { forwarderOf, hookForwarderOf, keeperBinary, programVersion } from '../keeper/client.ts';
-import { SubagentWorktrees, type SubagentChat } from '../subagents/service.ts';
-import { hookSettings, readClaudeSetup, subagentsOffSettings } from '../subagents/claude_config.ts';
+import { deny as denyHook, type HookAnswer, SubagentWorktrees, type SubagentChat } from '../subagents/service.ts';
+import { claudeConfigDir, gitBashPath, hookSettings, readClaudeSetup, subagentsOffSettings } from '../subagents/claude_config.ts';
 import { isCompiled, isDesktopApp, selfCommand, TESTS_DIR } from '../core/app.ts';
 import { type ChannelInfo, type KeeperClient, KeeperError, missingFeatures, type OrphanCommand, readKeeperInfo } from '../keeper/client.ts';
 import { pidAlive } from './host_client.ts';
@@ -856,8 +856,7 @@ export class Studio {
         urlFile: join(this.stateDir, ARTIFACT_URL_FILE),
         // the keeper's MCP forwarder reads it, and every Claude chat's hook forwarder (subagent worktrees), in the keeper or not
         addressFile: join(this.stateDir, FORWARD_FILE),
-        hook: (event, conversation, body) =>
-          this.subagents ? this.subagents.hook(event, conversation, body) : Promise.resolve({ status: 503, body: 'No state folder', type: 'text/plain' }),
+        hook: (event, conversation, body) => this.#hookCall(event, conversation, body),
       });
     }
     this.#mcpHttp.start();
@@ -1313,6 +1312,8 @@ export class Studio {
                 `(${c.subagentHooks.detail}), so AIB can't give them their own worktree. Read-only subagents (Explore, Plan) still work.`,
               sessionId: c.sessionId,
             });
+          } else if (c.subagentHooks?.off === NO_GIT_BASH) {
+            c.recordedEvent('studio_note', { message: SUBAGENTS_OFF_NO_BASH, sessionId: c.sessionId });
           }
           if (plan instanceof WslPlan) {
             if (c.worktree) await wslSetSession(plan, provider, c.sessionId!);
@@ -1394,7 +1395,10 @@ export class Studio {
     c.onLimits = (conn, kind, raw, at) => this.limits.fromAgent(conn, kind, raw, at);
     const sync = this.liveSync;
     const wsl = this.wslSync; // a WSL chat in its own copy: its distro's helper runs the hooks (wsl/sync.ts)
-    if (sync) c.onTurnStart = (conn) => wslSyncChat(conn) && wsl ? wsl.turnStarted(conn) : sync.turnStarted(conn);
+    c.onTurnStart = (conn) => {
+      recheckSubagentHooks(conn); // hooks turned off mid-chat (should-fix 7)
+      if (sync) return wslSyncChat(conn) && wsl ? wsl.turnStarted(conn) : sync.turnStarted(conn);
+    };
     // Every chat (build plan SF 11): live sync's note for a copy, then AIB's own one-time lines (#ownContext), in one prompt.
     c.contextForPrompt = async (conn) => {
       const synced = sync ? await (wslSyncChat(conn) && wsl ? wsl.contextFor(conn) : sync.contextFor(conn)) as [string, unknown] | null : null;
@@ -1748,6 +1752,7 @@ export class Studio {
     const c = this.connectionFactory(command, cwd, provider, options);
     if (isDict(note.worktree)) c.worktree = { branch: String(note.worktree.branch ?? ''), base: String(note.worktree.base ?? '') };
     c.projectRoot = isStr(note.projectRoot) && note.projectRoot ? note.projectRoot : cwd;
+    if (provider === 'claude') c.subagentHooks = hooksFromNote(note.subagentHooks); // on or off as the chat started (should-fix 6)
     this.#wire(c);
     const helper = this.hasStateDir
       ? helperOf(readHelpers(this.stateDir), { lasting: isStr(note.resume) && note.resume ? `${provider}:${note.resume}` : null, path: cwd })
@@ -1835,12 +1840,19 @@ export class Studio {
           return { hooks: offHooks('the repository has no commits yet') };
         }
       }
+      const agentEnv = { ...Deno.env.toObject(), ...testHomeEnv(command), ...env };
+      // Claude Code runs command hooks with Git Bash; under another shell AIB's hook command fails open (security review P1, MF 7).
+      // Without it: no hooks, and the chat's editing subagents are turned off by the same per-session deny rules as hooks off (P2).
+      if (!gitBashPath(agentEnv)) {
+        const readOnly = readClaudeSetup(project, agentEnv).readOnly;
+        return { hooks: { ...offHooks(NO_GIT_BASH), readOnly, deny: subagentsOffSettings(project, agentEnv, readOnly) } };
+      }
       const forwarder = await hookForwarderOf(this.keeper?.options.binary ?? null, this.stateDir).catch(() => null);
       if (!forwarder) return { hooks: offHooks("AIB's keeper program can't run hooks") };
-      const setup = readClaudeSetup(project, { ...Deno.env.toObject(), ...testHomeEnv(command), ...env });
+      const configDir = claudeConfigDir(agentEnv);
+      const setup = readClaudeSetup(project, agentEnv);
       if (setup.hooksOff) { // owner rule: its editing subagents are turned off instead (per-session permission deny, not hooks)
-        const env2 = { ...Deno.env.toObject(), ...testHomeEnv(command), ...env };
-        return { hooks: { ...offHooks(HOOKS_OFF, setup.hooksOff), deny: subagentsOffSettings(project, env2, setup.readOnly) } };
+        return { hooks: { ...offHooks(HOOKS_OFF, setup.hooksOff), configDir, deny: subagentsOffSettings(project, agentEnv, setup.readOnly) } };
       }
       const settings = hookSettings(forwarder, join(this.stateDir, FORWARD_FILE), { worktreeCreate: !setup.userWorktreeHook });
       if (!settings) return { hooks: offHooks("AIB's folder can't be named in a hook command") };
@@ -1851,11 +1863,30 @@ export class Studio {
       return {
         id,
         env: { AIB_HOOK_KEY: key, AIB_HOOK_CHAT: id, AIB_HOOK_READONLY: setup.readOnly.join(',') },
-        hooks: { settings, readOnly: setup.readOnly, userWorktreeHook: setup.userWorktreeHook, off: '' },
+        hooks: { settings, readOnly: setup.readOnly, userWorktreeHook: setup.userWorktreeHook, off: '', configDir },
       };
     } catch (error) {
       log.exception(error, 'Could not set up subagent hooks; the chat runs without them');
       return { hooks: offHooks(`AIB could not set up its hooks (${errorText(error)})`) };
+    }
+  }
+
+  /** pre-tool calls of each chat waiting for an answer (security review P1, should-fix 3: a forged flood is refused at once). */
+  readonly #preToolWaiting = new Map<string, number>();
+
+  /** One key-checked hook call. More than MAX_PRE_TOOL_WAITING pre-tool calls of one chat at once: the next is denied at once. */
+  async #hookCall(event: string, conversation: string, body: unknown): Promise<HookAnswer> {
+    if (!this.subagents) return { status: 503, body: 'No state folder', type: 'text/plain' };
+    if (event !== 'pre-tool') return await this.subagents.hook(event, conversation, body);
+    const waiting = this.#preToolWaiting.get(conversation) ?? 0;
+    if (waiting >= MAX_PRE_TOOL_WAITING) return denyHook(SUBAGENT_BUSY);
+    this.#preToolWaiting.set(conversation, waiting + 1);
+    try {
+      return await this.subagents.hook(event, conversation, body);
+    } finally {
+      const left = (this.#preToolWaiting.get(conversation) ?? 1) - 1;
+      if (left > 0) this.#preToolWaiting.set(conversation, left);
+      else this.#preToolWaiting.delete(conversation);
     }
   }
 
@@ -1867,11 +1898,12 @@ export class Studio {
     const c = this.connections.get(id);
     if (!c || c.closed || c.provider !== 'claude' || c.wsl) return null;
     if (!c.subagentHooks) {
+      // a chat taken over from a keeper note older than the hooks record (newer notes carry it: hooksFromNote)
       const setup = readClaudeSetup(c.projectRoot || c.cwd, Deno.env.toObject());
       c.subagentHooks = { settings: null, readOnly: setup.readOnly, userWorktreeHook: setup.userWorktreeHook, off: '', adopted: true };
     }
     const h = c.subagentHooks!;
-    const on = !!h.settings || h.adopted === true;
+    const on = !!h.settings?.hooks || h.adopted === true; // hooks were given (a later "hooks are off" still lets them answer)
     return {
       id: c.id,
       provider: c.provider,
@@ -3051,9 +3083,67 @@ export async function holdKeeper(link: KeeperLink | null | undefined): Promise<b
 /** Subagent worktrees: the reason a chat whose Claude settings turn hooks off gets none (its chat line and Activity say so). */
 const HOOKS_OFF = 'hooks are off';
 
+/** Subagent worktrees: the reason a Windows chat without Git Bash gets no hooks; its subagents are denied instead (MF 7). */
+const NO_GIT_BASH = 'Git Bash not found';
+const SUBAGENTS_OFF_NO_BASH = "Subagents that edit files are off: Git Bash is needed for AIB's subagent rule. Read-only subagents (Explore, Plan) still work.";
+/**
+ * Subagent calls of one chat AIB prepares at once; more are denied at once (should-fix 3). Above the parallel subagents a turn
+ * usually starts, well under the cap of worktrees per chat.
+ */
+const MAX_PRE_TOOL_WAITING = 4;
+const SUBAGENT_BUSY = 'AIB is still preparing worktrees for other subagents of this chat; try this subagent again in a moment.';
+
+/**
+ * At each turn start (security review P1, should-fix 7): a chat that was given hooks reads its Claude settings again. When they now
+ * turn hooks off (disableAllHooks or allowManagedHooksOnly written mid-chat), Claude Code stops running AIB's hooks: the chat says so
+ * and Activity shows "Not isolated"; when they are back on, it says that too. Never throws.
+ */
+function recheckSubagentHooks(c: Connection): void {
+  const h = c.subagentHooks;
+  if (!h || c.provider !== 'claude' || !(h.settings?.hooks || h.adopted)) return;
+  if (h.off && h.off !== HOOKS_OFF) return;
+  try {
+    const now = readClaudeSetup(c.projectRoot || c.cwd, h.configDir ? { CLAUDE_CONFIG_DIR: h.configDir } : Deno.env.toObject()).hooksOff;
+    if (now && h.off !== HOOKS_OFF) {
+      h.off = HOOKS_OFF;
+      h.detail = now;
+      c.recordedEvent('studio_note', {
+        message: `Subagents aren't isolated any more: hooks are off in your Claude Code settings (${now}).`,
+        sessionId: c.sessionId,
+      });
+    } else if (!now && h.off === HOOKS_OFF) {
+      h.off = '';
+      delete h.detail;
+      c.recordedEvent('studio_note', { message: 'Hooks are back on: subagents that edit get their own worktree again.', sessionId: c.sessionId });
+    }
+  } catch (error) {
+    log.warning('Could not re-read the Claude settings of %s: %s', c.id, errorText(error));
+  }
+}
+
 /** A chat's subagent hooks record when it gets none, and why. */
 function offHooks(why: string, detail = ''): NonNullable<Connection['subagentHooks']> {
   return { settings: null, readOnly: [], userWorktreeHook: '', off: why, ...(detail ? { detail } : {}) };
+}
+
+/**
+ * The hooks record of a chat taken over from the keeper, from its chat note (Connection.hooksNote): hooks on (answered as before,
+ * with the read-only list the agent was given) or off with the reason. Null for a note older than the record (#subagentChat).
+ */
+function hooksFromNote(raw: unknown): Connection['subagentHooks'] {
+  if (!isDict(raw)) return null;
+  const text = (v: unknown, n = 300) => (typeof v === 'string' ? v.slice(0, n) : '');
+  const readOnly = Array.isArray(raw.readOnly) ? raw.readOnly.filter((n): n is string => typeof n === 'string' && /^[\w.:-]{1,200}$/.test(n)) : [];
+  return {
+    settings: null,
+    readOnly,
+    userWorktreeHook: text(raw.userWorktreeHook),
+    off: text(raw.off),
+    ...(text(raw.detail) ? { detail: text(raw.detail) } : {}),
+    ...(text(raw.configDir, 1024) ? { configDir: text(raw.configDir, 1024) } : {}),
+    adopted: raw.given === true, // its agent runs AIB's hooks
+    ...(isDict(raw.deny) ? { deny: raw.deny as Json } : {}),
+  };
 }
 
 /** A `<keeper program> mcp-forward <file>` entry (design 3.7). */

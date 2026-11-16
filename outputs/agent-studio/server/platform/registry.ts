@@ -27,13 +27,13 @@ function hkcu(): Deno.PointerValue {
 }
 
 /** One value of an open key: REG_SZ / REG_EXPAND_SZ as text, REG_DWORD as a number; undefined when missing or of another type. */
-function queryValue(key: Deno.PointerValue, name: string): RegValue | undefined {
+function queryValue(key: Deno.PointerValue, name: string, max = 65536): RegValue | undefined {
   const type = new Uint32Array(1);
   const size = new Uint32Array([1024]);
   let data = new Uint8Array(size[0]);
   const query = () => advapi32().RegQueryValueExW(key, wide(name), null, new Uint8Array(type.buffer), data, new Uint8Array(size.buffer));
   let status = query();
-  if (status === ERROR_MORE_DATA && size[0] <= 65536) {
+  if (status === ERROR_MORE_DATA && size[0] <= max) {
     data = new Uint8Array(size[0] + 2);
     status = query();
   }
@@ -84,6 +84,25 @@ export function hkcuValue(path: string, name: string): RegValue | undefined {
   if (key === null) return undefined;
   try {
     return queryValue(key, name);
+  } finally {
+    advapi32().RegCloseKey(key);
+  }
+}
+
+const HKEY_LOCAL_MACHINE = 0xFFFFFFFF80000002n;
+/** Policy values can be whole settings documents: read up to this much. */
+const MAX_POLICY_BYTES = 1 << 20;
+
+/**
+ * One text value of HKLM\<path> or HKCU\<path> (undefined when missing or not text; throws off Windows). Used for Claude Code's
+ * policy settings (HKLM/HKCU\SOFTWARE\Policies\ClaudeCode, value Settings: a JSON document).
+ */
+export function policyText(hive: 'HKLM' | 'HKCU', path: string, name: string): string | undefined {
+  const key = openKey(hive === 'HKLM' ? Deno.UnsafePointer.create(HKEY_LOCAL_MACHINE) : hkcu(), path);
+  if (key === null) return undefined;
+  try {
+    const value = queryValue(key, name, MAX_POLICY_BYTES);
+    return typeof value === 'string' ? value : undefined;
   } finally {
     advapi32().RegCloseKey(key);
   }

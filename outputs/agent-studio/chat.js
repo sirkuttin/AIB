@@ -2544,7 +2544,8 @@
      Activity says so under the Subagents heading (the chips per subagent come in P3). */
   function paintIsolationNote() {
     const iso = current && snapshot ? snapshot.subagentIsolation : null,
-      show = !!iso && !iso.on && iso.reason === 'hooks are off';
+      noBash = !!iso && !iso.on && iso.reason === 'Git Bash not found',
+      show = !!iso && !iso.on && (iso.reason === 'hooks are off' || noBash);
     let note = $('subagentIsolationNote');
     if (!note && !show) return;
     if (!note) {
@@ -2554,8 +2555,10 @@
       note.id = 'subagentIsolationNote';
       heading.after(note);
     }
-    note.textContent = 'Not isolated: hooks are off';
-    note.title = "Subagents aren't isolated: hooks are off in your Claude Code settings, so AIB can't give them their own worktree.";
+    note.textContent = noBash ? 'Editing subagents are off: Git Bash not found' : 'Not isolated: hooks are off';
+    note.title = noBash
+      ? "Claude Code runs AIB's hooks with Git Bash. Without it AIB can't give subagents their own worktree, so it turns subagents that edit off for this chat. Read-only ones (Explore, Plan) still work."
+      : "Subagents aren't isolated: hooks are off in your Claude Code settings, so AIB can't give them their own worktree.";
     note.hidden = !show;
   }
   function renderAgents() {

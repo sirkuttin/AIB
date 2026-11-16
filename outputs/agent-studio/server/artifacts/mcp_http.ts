@@ -35,6 +35,9 @@ export const MCP_PATH = '/mcp';
 export const MAX_BODY_BYTES = 64 * 1024 * 1024;
 /** Claude Code command hooks (subagent worktrees): POST /hooks/claude/<event>, the chat's hook key in this header. */
 export const HOOK_KEY_HEADER = 'X-Studio-Hook-Key';
+/** The forwarder's fresh random nonce for this call; AIB's answer carries HOOK_PROOF_HEADER over it (artifacts/keys.ts hookProof). */
+export const HOOK_NONCE_HEADER = 'X-Studio-Hook-Nonce';
+export const HOOK_PROOF_HEADER = 'X-Studio-Hook-Proof';
 const HOOK_PATH = /^\/hooks\/claude\/(pre-tool|worktree-create|post-agent|subagent-stop)$/;
 const MAX_HOOK_BYTES = 4 * 1024 * 1024;
 
@@ -276,8 +279,16 @@ export class ArtifactMcpHttp {
    * server: this listener is AIB's loopback-only MCP endpoint.
    */
   async #hook(request: Request, event: string): Promise<Response> {
-    const plain = (status: number, body: string) =>
-      new Response(body, { status, headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' } });
+    let key = '';
+    const nonce = request.headers.get(HOOK_NONCE_HEADER) ?? '';
+    // every answer after the key check is signed (security review P1, MF 1): the forwarder trusts no other
+    const answer = (status: number, text: string, type: string) => {
+      const body = new TextEncoder().encode(text);
+      const headers: Record<string, string> = { 'Content-Type': type, 'Cache-Control': 'no-store' };
+      if (key && /^[0-9a-f]{16,128}$/.test(nonce)) headers[HOOK_PROOF_HEADER] = artifactKeys.hookProof(key, nonce, status, body);
+      return new Response(body, { status, headers });
+    };
+    const plain = (status: number, body: string) => answer(status, body, 'text/plain; charset=utf-8');
     if (request.method !== 'POST') {
       await drain(request);
       return plain(405, 'Method not allowed');
@@ -287,6 +298,7 @@ export class ArtifactMcpHttp {
       await drain(request);
       return plain(401, 'AIB refused the hook key for this conversation');
     }
+    key = request.headers.get(HOOK_KEY_HEADER) ?? '';
     if (!this.studio.hook) {
       await drain(request);
       return plain(503, 'AIB has no subagent hooks');
@@ -299,8 +311,8 @@ export class ArtifactMcpHttp {
     } catch {
       return plain(400, 'The hook input is not JSON');
     }
-    const answer = await this.studio.hook(event, conversation, body);
-    return new Response(answer.body, { status: answer.status, headers: { 'Content-Type': answer.type, 'Cache-Control': 'no-store' } });
+    const result = await this.studio.hook(event, conversation, body);
+    return answer(result.status, result.body, result.type);
   }
 
   #keyOk(key: string, conversation: string): boolean {

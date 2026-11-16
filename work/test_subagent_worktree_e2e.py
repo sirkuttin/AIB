@@ -17,6 +17,8 @@
                          program as forwarder, AIB unreachable.
                            B13  dead address: the editing Agent call is refused with "AIB is restarting"; nothing written; Explore runs
                            B13b AIB accepts the connection but never answers: refused within the forwarder's deadline, never unisolated
+                           B13c another program on the port answers 200 {} or HTML, unsigned: refused (security review P1, MF 1)
+                           MF 7 no Git Bash: P2's hooks-off deny rules instead of hooks; the editing subagent never runs, Explore does
   B12 (settings byte-identical on reopen) and the route rules are pinned by work/deno/subagent_hooks_test.ts.
 
 Needs node, the Claude Code ACP adapter (AIB_CLAUDE_ACP or a global npm install) and Go (to build the keeper program from keeper/,
@@ -54,6 +56,7 @@ GO = shutil.which('go') or ('C:/Program Files/Go/bin/go.exe' if os.path.isfile('
 KEEPER_SRC = _isolation.REPO / 'keeper'
 
 RESTARTING = 'AIB is restarting; try the subagent again in a moment.'
+UNCONFIRMED = "AIB could not confirm this hook's answer, so the subagent was blocked; try again in a moment."
 ENTER_TEXT = 'In AIB, chats work in the project folder. Use a subagent instead; AIB gives it its own worktree.'
 WORKFLOW_TEXT = "Workflows aren't available in AIB chats yet, because their agents can't get their own worktree."
 PROMPT_LINE = 'Subagents that edit files work in their own git worktree.'
@@ -322,7 +325,7 @@ def aib_hook_settings(keeper, address):
 @unittest.skipUnless(GO or os.environ.get('AIB_TEST_KEEPER_BIN'), 'needs Go to build the keeper program (or AIB_TEST_KEEPER_BIN)')
 class AdapterFailClosedTest(unittest.TestCase):
 
-    def run_probe(self, address_doc, hang=False):
+    def run_probe(self, address_doc, hang=False, refused=None, settings=None):
         temp = pathlib.Path(tempfile.mkdtemp(prefix='aib-sr-a-'))
         self.addCleanup(shutil.rmtree, temp, True)
         mark = f'srp1{uuid.uuid4().hex[:6]}'
@@ -355,14 +358,16 @@ class AdapterFailClosedTest(unittest.TestCase):
                    AIB_HOOK_KEY='k' * 64, AIB_HOOK_CHAT='c' * 32, AIB_HOOK_READONLY='Explore,Plan,claude-code-guide,statusline-setup')
         env = stub_claude_env(env, stub)
         meta = temp / 'meta.json'
-        meta.write_text(json.dumps({'claudeCode': {'options': {'settings': aib_hook_settings(keeper_program(temp), address)}}}), encoding='utf-8')
+        settings = settings or aib_hook_settings(keeper_program(temp), address)
+        meta.write_text(json.dumps({'claudeCode': {'options': {'settings': settings}}}), encoding='utf-8')
         started = time.time()
         out = subprocess.run([NODE, str(PROBE), '--allow', '--meta', str(meta), str(CLAUDE_ACP), 'new', str(project), 'SR-PARENT go'],
                              capture_output=True, text=True, timeout=300, env=env, creationflags=NO_WINDOW, stdin=subprocess.DEVNULL)
         took = time.time() - started
         self.assertIn('PARENT-DONE', out.stdout + stub_text(stub), out.stderr[-1500:])
         sent = dumped(stub)
-        self.assertIn(RESTARTING, sent, 'the editing Agent call was not refused')
+        if refused is not False:
+            self.assertIn(refused or RESTARTING, sent, 'the editing Agent call was not refused')
         self.assertNotIn('SUB-DONE', stub_text(stub) + sent, 'the editing subagent ran')
         self.assertFalse((project / 'sub-a.txt').exists(), 'the subagent ran unisolated in the folder')
         self.assertEqual(run_git(project, 'status', '--porcelain'), '', 'the folder changed')
@@ -394,9 +399,45 @@ class AdapterFailClosedTest(unittest.TestCase):
         thread = threading.Thread(target=accept, daemon=True)
         thread.start()
         self.addCleanup(lambda: (stop.set(), [c.close() for c in held], sock.close()))
-        took = self.run_probe({'url': f'http://127.0.0.1:{sock.getsockname()[1]}/mcp', 'pid': 1})
+        took = self.run_probe({'url': f'http://127.0.0.1:{sock.getsockname()[1]}/mcp', 'pid': os.getpid()})
         self.assertTrue(held, 'the forwarder never connected')
         self.assertLess(took, 200)
+
+    def squatter(self, body, content_type):
+        """A listener that is not AIB (a dev server on AIB's old port) answering 200 to everything; its address file names a live pid."""
+        import http.server
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get('Content-Length') or 0))
+                self.send_response(200)
+                self.send_header('Content-Type', content_type)
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+        server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return {'url': f'http://127.0.0.1:{server.server_address[1]}/mcp', 'pid': os.getpid()}
+
+    def test_squatter_200_empty_json_never_runs_the_subagent(self):
+        """Security review P1 MF 1 / should-fix 12: an unsigned 200 {} blocks the editing subagent (it never runs in the folder)."""
+        self.run_probe(self.squatter(b'{}', 'application/json'), refused=UNCONFIRMED)
+
+    def test_no_git_bash_deny_rules_turn_subagents_off(self):
+        """MF 7: a chat without Git Bash gets no hooks but P2's hooks-off deny rules (claude_config.ts subagentsOffSettings, the shape
+        it gives a chat with no custom agents): with every permission prompt allowed, the editing subagent is refused and never runs in
+        the folder; Explore still runs."""
+        editing = ['claude', 'fork', 'general-purpose']
+        off = {'permissions': {'deny': [r for n in editing for r in (f'Agent({n})', f'Task({n})')] + ['Workflow', 'EnterWorktree']}}
+        self.run_probe({'closed': True, 'pid': os.getpid()}, refused=False, settings=off)
+
+    def test_squatter_200_html_never_runs_the_subagent(self):
+        self.run_probe(self.squatter(b'<!doctype html><title>dev</title>', 'text/html'), refused=UNCONFIRMED)
 
 
 if __name__ == '__main__':

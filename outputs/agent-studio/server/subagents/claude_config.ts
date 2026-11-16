@@ -2,23 +2,31 @@
  * Subagent worktrees, Claude Code (design v2 2.1, 2.2, 2.3.6, 2.6; P0b): what AIB reads of the user's Claude Code setup (read only,
  * never written) and the per-session settings it gives a chat.
  *
- *   readClaudeSetup(cwd, env)  the read-only agent types (built-ins + custom agents whose `tools` can't edit), whether any settings
- *                              tier or plugin defines its own WorktreeCreate hook, and whether hooks are off (disableAllHooks /
- *                              allowManagedHooksOnly). Sources: user (CLAUDE_CONFIG_DIR or ~/.claude), project (.claude/settings.json,
- *                              settings.local.json, agents/), installed plugins (agents/, hooks/hooks.json), managed settings.
+ *   readClaudeSetup(cwd, env)  the read-only agent types (built-ins + custom agents whose `tools` are all known read-only tools),
+ *                              whether any settings tier or plugin defines its own WorktreeCreate hook, and whether hooks are off
+ *                              (disableAllHooks / allowManagedHooksOnly). Sources: user (CLAUDE_CONFIG_DIR or ~/.claude), project
+ *                              (.claude/settings.json, settings.local.json, agents/), installed plugins (agents/, hooks/hooks.json),
+ *                              managed settings (the file, managed-settings.d/, the HKLM/HKCU policy keys).
+ *   gitBashPath(env)           Git Bash as Claude Code finds it (it runs the hooks); none: its editing subagents are denied (subagentsOffSettings).
  *   hookSettings(...)          the `_meta.claudeCode.options.settings` object: command hooks that run the keeper's forwarder
  *                              (`<keeper> hook <event> <address file>`). It holds no port and no key, so it is byte-identical on every
  *                              reopen (the adapter rebuilds the session when settings change).
  */
 import { isDict } from '../core/py.ts';
-import { join } from '../platform/path.ts';
+import { dirname, join } from '../platform/path.ts';
+import { policyText } from '../platform/registry.ts';
 
 type Json = Record<string, unknown>;
 
 /** Built-in agent types that cannot edit the project (statusline-setup edits only the user's own Claude settings). */
 export const BUILTIN_READ_ONLY = ['Explore', 'Plan', 'claude-code-guide', 'statusline-setup'];
-/** A custom agent whose `tools` list has none of these is read-only. */
-const EDITING_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Bash', 'PowerShell']);
+/**
+ * A custom agent is read-only only when EVERY tool its `tools` list names is one of these (security review P1, MF 3: an allowlist;
+ * an MCP tool, a wildcard, Skill, Agent or a tool Claude Code adds later may edit, so it gets a worktree).
+ */
+export const READ_ONLY_TOOLS = new Set([
+  'Read', 'Grep', 'Glob', 'LS', 'WebFetch', 'WebSearch', 'TodoWrite', 'ToolSearch', 'ListAgents', 'ReportFindings',
+]);
 
 /** The PreToolUse matcher: the spawning tool (and its old name), plus the two AIB refuses (P0b R8). */
 export const PRE_TOOL_MATCHER = 'Agent|Task|EnterWorktree|Workflow';
@@ -58,14 +66,103 @@ export function claudeConfigDir(env: Record<string, string | undefined>): string
   return join(home, '.claude');
 }
 
-export function managedSettingsPath(): string {
+/** The folder of Claude Code's managed settings (as Claude Code 2.1.310 names it). */
+export function managedSettingsDir(): string {
   switch (Deno.build.os) {
     case 'windows':
-      return 'C:\\Program Files\\ClaudeCode\\managed-settings.json';
+      return 'C:\\Program Files\\ClaudeCode';
     case 'darwin':
-      return '/Library/Application Support/ClaudeCode/managed-settings.json';
+      return '/Library/Application Support/ClaudeCode';
     default:
-      return '/etc/claude-code/managed-settings.json';
+      return '/etc/claude-code';
+  }
+}
+
+export function managedSettingsPath(): string {
+  return join(managedSettingsDir(), 'managed-settings.json');
+}
+
+/** Claude Code's policy settings in the Windows registry (HKLM and HKCU): a JSON document in the value `Settings`. */
+const POLICY_KEY = 'SOFTWARE\\Policies\\ClaudeCode';
+
+export type PolicyReader = (hive: 'HKLM' | 'HKCU', path: string, name: string) => string | undefined;
+/** How the registry is read: the real one on Windows (FFI, no reg.exe child), none elsewhere; tests put their own. */
+let policyReader: PolicyReader | null = Deno.build.os === 'windows' ? policyText : null;
+
+/** Tests: read the policy keys through this (null: none). Returns the reader it replaced. */
+export function setPolicyReader(reader: PolicyReader | null): PolicyReader | null {
+  const was = policyReader;
+  policyReader = reader;
+  return was;
+}
+
+function parseJson(text: string | undefined): Json | null {
+  if (!text) return null;
+  try {
+    const raw = JSON.parse(text);
+    return isDict(raw) ? raw as Json : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Every managed settings document Claude Code reads (security review P1, should-fix 8; Claude Code 2.1.310): managed-settings.json,
+ * the managed-settings.d drop-in folder (its *.json files not starting with '.', in name order) and, on Windows, the HKLM and HKCU
+ * policy keys. `dir`: the managed folder (tests).
+ */
+export function managedSettings(dir = managedSettingsDir()): [string, Json | null][] {
+  const out: [string, Json | null][] = [['managed Claude Code settings', readJson(join(dir, 'managed-settings.json'))]];
+  const dropIn = join(dir, 'managed-settings.d');
+  const names = listDir(dropIn).filter((e) => (e.isFile || e.isSymlink) && e.name.endsWith('.json') && !e.name.startsWith('.'))
+    .map((e) => e.name).sort();
+  for (const name of names) out.push([`managed Claude Code settings (managed-settings.d/${name})`, readJson(join(dropIn, name))]);
+  for (const hive of ['HKLM', 'HKCU'] as const) {
+    let text: string | undefined;
+    try {
+      text = policyReader?.(hive, POLICY_KEY, 'Settings');
+    } catch {
+      text = undefined; // no FFI permission: the files only
+    }
+    if (text !== undefined) out.push([`the Claude Code policy in the registry (${hive})`, parseJson(text)]);
+  }
+  return out;
+}
+
+/**
+ * Git Bash as Claude Code 2.1.310 finds it on Windows (P0b R3: it runs command hooks; without it they run in another shell, where
+ * AIB's hook command fails open; security review P1, MF 7): CLAUDE_CODE_GIT_BASH_PATH when it names an existing bash/sh, else
+ * C:\Program Files\Git\bin\bash.exe or C:\Program Files (x86)\Git\bin\bash.exe, else <the first git on PATH>\..\..\bin\bash.exe.
+ * Null when there is none. Off Windows: the shell is always there ('sh').
+ */
+export function gitBashPath(env: Record<string, string | undefined>, exists: (path: string) => boolean = isFile): string | null {
+  if (Deno.build.os !== 'windows') return 'sh';
+  const named = env.CLAUDE_CODE_GIT_BASH_PATH;
+  if (named) {
+    const base = named.replace(/^.*[\\/]/, '').toLowerCase();
+    if (['bash.exe', 'sh.exe', 'bash', 'sh'].includes(base) && exists(named)) return named;
+  }
+  for (const known of ['C:\\Program Files\\Git\\bin\\bash.exe', 'C:\\Program Files (x86)\\Git\\bin\\bash.exe']) {
+    if (exists(known)) return known;
+  }
+  const path = Object.entries(env).find(([k]) => k.toUpperCase() === 'PATH')?.[1] ?? '';
+  const pathext = (Object.entries(env).find(([k]) => k.toUpperCase() === 'PATHEXT')?.[1] || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean);
+  for (const dir of path.split(';').map((d) => d.trim().replace(/^"|"$/g, '')).filter(Boolean)) {
+    for (const ext of pathext) {
+      if (!exists(join(dir, `git${ext.toLowerCase()}`))) continue;
+      // <git>\..\..\bin\bash.exe: the folder above git's own folder (C:\Git\cmd\git.exe -> C:\Git\bin\bash.exe)
+      const bash = join(dirname(dir.replace(/[\\/]+$/, '')), 'bin', 'bash.exe');
+      return exists(bash) ? bash : null; // Claude Code looks only beside the first git it finds
+    }
+  }
+  return null;
+}
+
+function isFile(path: string): boolean {
+  try {
+    return Deno.statSync(path).isFile;
+  } catch {
+    return false;
   }
 }
 
@@ -108,9 +205,11 @@ function customAgents(dir: string, into: Map<string, boolean>): void {
     const name = (field('name') ?? entry.name.replace(/\.md$/, '')).replace(/^["']|["']$/g, '');
     if (!name) continue;
     const tools = field('tools');
-    // no `tools` (or "*"): every tool, so it can edit; else read-only only when none of the editing tools is listed
+    // no `tools` (every tool), a list in another form, or its own MCP servers: it may edit. Else read-only only when every listed
+    // tool is a known read-only one (an allowlist: mcp__*, "*", Skill and unknown tools may edit)
     const list = tools === null ? null : tools.replace(/[[\]"']/g, '').split(',').map((t) => t.trim().replace(/\(.*$/, '')).filter(Boolean);
-    into.set(name, !!list && list.length > 0 && !list.includes('*') && !list.some((t) => EDITING_TOOLS.has(t)));
+    const ownServers = /^mcpServers:/m.test(front[1]);
+    into.set(name, !!list && list.length > 0 && !ownServers && list.every((t) => READ_ONLY_TOOLS.has(t)));
   }
 }
 
@@ -126,7 +225,7 @@ export function readClaudeSetup(cwd: string, env: Record<string, string | undefi
     ['your Claude Code settings', readJson(join(configDir, 'settings.json'))],
     ["the project's .claude/settings.json", readJson(join(cwd, '.claude', 'settings.json'))],
     ["the project's .claude/settings.local.json", readJson(join(cwd, '.claude', 'settings.local.json'))],
-    ['managed Claude Code settings', readJson(managedSettingsPath())],
+    ...managedSettings(),
   ];
   let hooksOff = '';
   let userWorktreeHook = '';
@@ -203,3 +302,7 @@ export function subagentsOffSettings(cwd: string, env: Record<string, string | u
 /** The system prompt line for a chat whose editing subagents are off (hooks off in the user's Claude Code settings). */
 export const SUBAGENTS_OFF_PROMPT = 'In this chat, subagents that edit files are turned off, because hooks are off in the user\'s Claude ' +
   'Code settings and AIB could not give them their own worktree. Read-only subagents (Explore, Plan) still work; do edits yourself.';
+
+/** The system prompt line for a Windows chat without Git Bash: its editing subagents are off (security review P1, MF 7). */
+export const SUBAGENTS_OFF_NO_BASH_PROMPT = 'In this chat, subagents that edit files are turned off, because Git Bash is not installed and ' +
+  "AIB's subagent rule needs it to give them their own worktree. Read-only subagents (Explore, Plan) still work; do edits yourself.";

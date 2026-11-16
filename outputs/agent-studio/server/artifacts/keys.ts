@@ -107,6 +107,20 @@ export function checkHookKey(key: unknown, conversationId: unknown): boolean {
   }
 }
 
+const PROOF_PREFIX = new TextEncoder().encode('studio-hook-proof/v1\0');
+const NUL = new Uint8Array([0]);
+
+/**
+ * The proof AIB puts on each hook answer (X-Studio-Hook-Proof; security review P1, MF 1): lowercase hex HMAC-SHA256 keyed with the
+ * chat's hook key over 'studio-hook-proof/v1\0' + the forwarder's nonce + '\0' + the status + '\0' + the body bytes. The keeper's
+ * forwarder (keeper/hookforward.go hookProof) blocks any answer without it, so a program squatting AIB's port can't answer.
+ */
+export function hookProof(key: string, nonce: string, status: number, body: Uint8Array): string {
+  const enc = new TextEncoder();
+  return createHmac('sha256', key).update(PROOF_PREFIX).update(enc.encode(nonce)).update(NUL).update(enc.encode(String(status)))
+    .update(NUL).update(body).digest('hex');
+}
+
 /** The key for this conversation, or null when no state folder is configured. */
 export function issue(conversationId: unknown): string | null {
   if (!conversationId || state.secret === null) return null;
