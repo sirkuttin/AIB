@@ -79,7 +79,7 @@ Deno.test({
       const ref = refOf({ kind: 'wsl', distro: KEY, linuxPath: repo });
       await sh('cd "$1" && git branch -M main && printf "a\\nb\\nc\\nd\\ne\\nf\\n" > m.txt && git add m.txt && git commit -qm m', repo);
       studio = studioIn(state);
-      const c = await studio.connect('claude', ref);
+      const c = await studio.connect('claude', ref, null, { ownCopy: true });
       const linux = c.agentCwd;
       assert(c.worktree?.branch.startsWith('studio/chat-'), 'the chat works in its own copy');
       const ctx = { stateDir: studio.stateDir, host: studio, conversations: { public: () => ({ entries: {} }) } } as never;

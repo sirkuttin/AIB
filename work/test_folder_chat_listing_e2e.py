@@ -3,14 +3,13 @@ agent's OWN listing. Real agent adapters, the local stub model API (work/stub_mo
 
 Two layers:
   AibFolderChatListingTest  a real AIB (deno-split web server + agent host) starts a Claude Code chat in a temp git project with
-                            worktreePerChat off (the in-place path, which 1b makes the default). AIB's own `discover` route asks the
+                            no `ownCopy` (1b: the project folder by default), with worktreePerChat off and on. AIB's own `discover` route asks the
                             agent (session/list cwd=P), and the chat must be there with cwd P. Under test AIB gives a real agent a
                             throwaway HOME / CLAUDE_CONFIG_DIR / CODEX_HOME (acp/connection.ts testHomeEnv), so the agent's
                             listing is read from that temp home, never the owner's.
-                            TODO(P1): with the 1b server, also start the chat with no `ownCopy` while worktreePerChat is ON and
-                            assert the same (it must run in P, not in a copy). Codex: `discover` is Claude/OMP only today, and
-                            testHomeEnv replaces CODEX_HOME with an empty folder, so the stub's provider config cannot reach Codex
-                            through AIB yet. P1 adds Codex to `discover`; this test then needs a way to seed config.toml.
+                            Codex: `discover` is Claude/OMP only today, and testHomeEnv replaces CODEX_HOME with an empty folder,
+                            so the stub's provider config cannot reach Codex through AIB yet (needs Codex in `discover` and a way
+                            to seed config.toml; not in P1).
   AdapterFolderListingTest  the same goal one layer down, for Claude Code AND Codex: the adapter alone (work/acp_probe.js) makes a
                             session in P and its session/list for P has it, for another folder does not.
 
@@ -164,6 +163,13 @@ class RealClaudeFixture(E2EFixture):
 class AibFolderChatListingTest(unittest.TestCase):
 
     def test_chat_started_in_project_is_listed_for_project_by_claude(self):
+        self.listed_for_project(worktrees_on=False)
+
+    def test_new_chat_without_own_copy_is_listed_for_project_with_worktrees_on(self):
+        # build plan 1b: no `ownCopy` and nothing else working in the project -> the chat runs in P even with worktreePerChat on
+        self.listed_for_project(worktrees_on=True)
+
+    def listed_for_project(self, worktrees_on):
         temp = pathlib.Path(tempfile.mkdtemp(prefix='aib-e0-'))
         self.addCleanup(shutil.rmtree, temp, True)
         stub = Stub(self, temp)
@@ -175,14 +181,15 @@ class AibFolderChatListingTest(unittest.TestCase):
         RealClaudeFixture.stub = stub
         fx = RealClaudeFixture(self)
         web = fx.start_web()
-        # Today a new chat gets its own copy by default; the in-place path (what 1b makes the default) is worktreePerChat off.
-        status, _ = web.post('settings', {'server': {'worktreePerChat': False}})
+        # The old hidden flag no longer decides (1b): either way a new chat with no `ownCopy` works in the project folder.
+        status, _ = web.post('settings', {'server': {'worktreePerChat': worktrees_on}})
         self.assertEqual(status, 200)
         status, connection = web.post('connect', {'provider': 'claude', 'cwd': str(project), 'background': True})
         self.assertEqual(status, 200, connection)
         chat = Chat(None, connection['id'], web)
         wait_for(lambda: chat.state().get('ready') or (chat.state().get('error') and self.fail(chat.state()['error'])), 'chat ready')
-        self.assertEqual(os.path.normcase(chat.cwd), os.path.normcase(str(project)), 'worktreePerChat off: the chat runs in the folder')
+        self.assertEqual(os.path.normcase(chat.cwd), os.path.normcase(str(project)), 'no ownCopy: the chat runs in the folder')
+        self.assertNotIn('worktree', chat.state(), 'no copy: live.worktree is absent')
         reply = chat.send('the codeword is TEAL-42')
         self.assertIn('STUB codeword=TEAL-42', reply)
         session = chat.session
@@ -198,9 +205,6 @@ class AibFolderChatListingTest(unittest.TestCase):
         self.assertEqual(status, 200, elsewhere)
         self.assertNotIn(session, [s['sessionId'] for s in elsewhere['sessions']])
 
-    @unittest.skip('TODO(P1): needs the 1b server (`ownCopy`, folder by default even with worktreePerChat on)')
-    def test_new_chat_without_own_copy_is_listed_for_project_with_worktrees_on(self):
-        pass
 
 
 def probe(entry, env, *args, timeout=180):
