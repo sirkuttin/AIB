@@ -742,6 +742,19 @@
     }
   }
 
+  /* Back steps (Android's back gesture, the browser's Back): every screen and sheet is one history entry, each entry carrying the
+     whole chain from the chat list to it ([{k: 'root'}, {k: 'chat:c1', …}, {k: 'viewer', …}]). From the chain the history has
+     (`have`) to the chain on screen (`want`): how many entries to go back (to their common start) and which to add after.
+     Nothing to do: {back: 0, push: []}. The chat list is always the first entry, so Back there leaves the page as usual. */
+  function navPlan(have, want) {
+    const h = Array.isArray(have) && have.length ? have : [{ k: 'root' }];
+    const w = Array.isArray(want) && want.length ? want : [{ k: 'root' }];
+    let p = 0;
+    while (p < h.length && p < w.length && h[p].k === w[p].k) p++;
+    p = Math.max(1, p); // the first entry is the page's own: never left by going back, only kept
+    return { back: h.length - p, push: w.slice(p) };
+  }
+
   /* The banner after a poll's `notices` (news held back because this phone is in hand): the newest one about another chat than the
      one on screen (`current`); a "Needs you" banner is not replaced by another chat's "finished". old: the banner up now, or null.
      Returns {chat, kind: 'needs' | 'turn', title, text} or null. */
@@ -1279,6 +1292,7 @@
     isIPhone,
     setupSteps,
     openTarget,
+    navPlan,
     keyBytes,
     guessKind,
     bannerFrom,
@@ -1373,6 +1387,7 @@
     pcTheme: '', // the PC's theme (bootstrap, home): the phone follows it unless it picked its own
     pcSymbols: false,
     install: { event: null, installed: false, used: false }, // beforeinstallprompt kept for our Install AIB button; appinstalled
+    homeY: 0, // where the chat list was scrolled to (Back from a chat comes back there)
   };
   const TOAST_MS = 2200;
   const FILTER_KEY = 'aib-phone-filter';
@@ -2279,6 +2294,7 @@
       menuEl = null;
       if (menuFocus && menuFocus.isConnected) menuFocus.focus({ preventScroll: true });
       menuFocus = null;
+      navSync();
       return;
     }
     if (!menuEl) menuFocus = doc.activeElement;
@@ -2298,6 +2314,7 @@
     menuEl = layer;
     const first = sheet.querySelector('input, .ph-mi, .ph-btn');
     if (first && !sheet.contains(doc.activeElement)) first.focus({ preventScroll: true });
+    navSync();
   }
   function closeMenu() {
     S.menu = null;
@@ -2991,8 +3008,16 @@
   function openArts(item, from) {
     closeMenu();
     const c = obj(item.chat);
-    S.arts = { key: c.key, id: item.kind === 'live' ? c.id : '', title: item.title, agent: item.agent, from, list: null, error: '' };
-    S.artsBack = from === 'chat' ? { id: S.chatId, title: S.chatTitle, meta: S.chatMeta } : null;
+    showArts(
+      { key: c.key, id: item.kind === 'live' ? c.id : '', title: item.title, agent: item.agent, from },
+      from === 'chat' ? { id: S.chatId, title: S.chatTitle, meta: S.chatMeta } : null,
+    );
+  }
+  /* arts: {key, id, title, agent, from}; back: the chat its Back goes to, or null (home). */
+  function showArts(arts, back) {
+    S.arts = { ...arts, list: null, error: '' };
+    S.artsBack = back;
+    S.filterOpen = false;
     S.screen = 'arts';
     draw();
     root.scrollTo(0, 0);
@@ -3875,6 +3900,7 @@
     if (!v) {
       if (viewerEl) viewerEl.remove();
       viewerEl = null;
+      navSync();
       return;
     }
     const box = el('div', 'ph-viewer');
@@ -3960,6 +3986,7 @@
     else doc.body.append(box);
     viewerEl = box;
     if (!box.contains(doc.activeElement) || doc.activeElement === box) close.focus({ preventScroll: true });
+    navSync();
   }
 
   /* A waiting approval or question as a card in the stream. Closed: one line with Review / Answer. Open: Deny / Allow once (only
@@ -4876,6 +4903,7 @@
     fitFab();
     if (S.viewer && (S.screen === 'removed' || S.screen === 'pair')) closeArtifact(); // this phone may not see it any more
     app.dataset.screen = S.screen;
+    navSync();
     if (focusId) {
       const f = doc.getElementById(focusId);
       if (f && f.focus && doc.activeElement !== f) {
@@ -4952,6 +4980,7 @@
     S.qopen = false;
     S.banner = null;
     S.newJob = null;
+    S.filterOpen = false;
   }
 
   function goHome() {
@@ -4968,7 +4997,7 @@
     }
     S.screen = 'home';
     draw();
-    root.scrollTo(0, 0);
+    root.scrollTo(0, S.inbox ? 0 : S.homeY); // back on the list where you left it
     tick();
   }
 
@@ -5495,11 +5524,158 @@
     return true;
   }
 
+  // ---- Back steps: one history entry per screen and sheet (navPlan) ----
+  /* stack: the chain the history holds now (its last entry is the current one). ops: history calls in order (a go(-n) finishes
+     with a popstate; nothing else runs until it has). applying: a Back is being shown (no new entries meanwhile). */
+  const NAV = { on: false, stack: [{ k: 'root' }], ops: [], busy: false, timer: 0, applying: false, waiting: false };
+  const navState = (chain) => ({ aib: 1, chain });
+  /* The chain on screen: the list, the inbox (when it is up), the screen (a chat under its Artifacts page), then the sheets. */
+  function navChain() {
+    const c = [{ k: 'root' }];
+    const sc = S.screen;
+    const deep = sc === 'chat' || sc === 'saved' || sc === 'new' || sc === 'setup' || sc === 'arts';
+    if (S.inbox && S.device && (sc === 'home' || deep)) c.push({ k: 'inbox' });
+    const chat = (id, title, meta) => ({ k: 'chat:' + id, s: 'chat', id, title: title || '', meta: meta || null });
+    if (sc === 'chat' && S.chatId) c.push(chat(S.chatId, S.chatTitle, S.chatMeta));
+    else if (sc === 'saved' && S.savedKey) c.push({ k: 'saved:' + S.savedKey, s: 'saved', key: S.savedKey, title: S.chatTitle, meta: S.chatMeta });
+    else if (sc === 'new' || sc === 'setup') c.push({ k: sc, s: sc });
+    else if (sc === 'arts' && S.arts) {
+      const b = S.artsBack;
+      if (b && b.id) c.push(chat(b.id, b.title, b.meta));
+      const a = S.arts;
+      c.push({ k: 'arts:' + a.key + ':' + (a.id || ''), s: 'arts', arts: { key: a.key, id: a.id, title: a.title, agent: a.agent, from: a.from } });
+    }
+    if (sc === 'home' && S.filterOpen) c.push({ k: 'filter' });
+    const m = S.menu;
+    if (m) {
+      const item = m.kind === 'card' && m.item ? obj(m.item.chat) : null;
+      const key = item ? (m.item.kind === 'live' ? 'l:' + item.id : 's:' + item.key) : '';
+      c.push({ k: 'menu', menu: { kind: m.kind, target: m.target || '', key } });
+    }
+    const v = S.viewer;
+    if (v) c.push({ k: 'viewer', viewer: { id: v.id, version: v.version || 0, title: v.title, kind: v.kind } });
+    return c;
+  }
+  function navRun() {
+    while (!NAV.busy && NAV.ops.length) {
+      const op = NAV.ops.shift();
+      try {
+        if (op.go) {
+          NAV.busy = true;
+          NAV.timer = setTimeout(navDone, 1000); // a go that never lands (no entry there): carry on
+          root.history.go(op.go);
+        } else root.history.pushState(navState(op.push), '');
+      } catch {
+        NAV.busy = false; // a browser that refuses (too many calls): the screen is right, the history catches up next time
+      }
+    }
+  }
+  function navDone() {
+    clearTimeout(NAV.timer);
+    NAV.busy = false;
+    navRun();
+  }
+  /* After every draw: the history follows what is on screen (the same chain: nothing; a poll's redraw adds no entry). New entries
+     wait for the first tap on a page that has had none (a browser skips entries a page added on its own: a chat a notification
+     opened would else go straight out on Back). */
+  function navSync() {
+    if (!NAV.on || NAV.applying) return;
+    const want = navChain();
+    const plan = navPlan(NAV.stack, want);
+    if (!plan.back && !plan.push.length) return;
+    const ua = root.navigator.userActivation;
+    if (plan.push.length && ua && !ua.hasBeenActive) {
+      if (!NAV.waiting) {
+        NAV.waiting = true;
+        const later = () => {
+          NAV.waiting = false;
+          for (const t of ['pointerup', 'keydown', 'click']) doc.removeEventListener(t, later, true);
+          Promise.resolve().then(navSync); // before the tap's own handler opens anything (timers wait in a background tab)
+        };
+        for (const t of ['pointerup', 'keydown', 'click']) doc.addEventListener(t, later, true);
+      }
+      if (!plan.back) return; // going back (to the list) needs no tap
+      want.length = want.length - plan.push.length;
+      plan.push = [];
+    }
+    if (plan.back) NAV.ops.push({ go: -plan.back });
+    for (let i = want.length - plan.push.length; i < want.length; i++) NAV.ops.push({ push: want.slice(0, i + 1) });
+    NAV.stack = want;
+    navRun();
+  }
+  /* Back (or Forward) to an entry: show its chain. A sheet that can't be shown again (Forward to a card gone from the list) is
+     skipped by going back to what is shown. */
+  function navApply(want) {
+    NAV.applying = true;
+    try {
+      const has = (k) => want.find((e) => e.k === k);
+      let screen = null;
+      for (const e of want) if (e.s) screen = e;
+      if (S.viewer && !has('viewer')) closeArtifact();
+      if (S.menu && !has('menu')) closeMenu();
+      const inbox = !!has('inbox') && !!S.device;
+      const filter = !!has('filter');
+      const ready = !!S.device && (S.booted || !!S.copies.size);
+      const now = navChain().filter((e) => e.s).pop();
+      if (!screen) {
+        S.inbox = inbox;
+        S.filterOpen = filter;
+        if (S.screen === 'chat' || S.screen === 'saved' || S.screen === 'new' || S.screen === 'setup' || S.screen === 'arts') goHome();
+        else draw();
+      } else if (ready && (!now || now.k !== screen.k)) {
+        S.inbox = inbox;
+        if (screen.s === 'chat') openChat(screen.id, screen.title, false, screen.meta);
+        else if (screen.s === 'saved') openSaved(screen.key, screen.title, screen.meta);
+        else if (screen.s === 'new') openNew();
+        else if (screen.s === 'setup') openSetup();
+        else if (screen.s === 'arts') {
+          const parent = want[want.indexOf(screen) - 1];
+          leaveChat();
+          showArts(screen.arts, parent && parent.s === 'chat' ? { id: parent.id, title: parent.title, meta: parent.meta } : null);
+        }
+      } else if (S.inbox !== inbox) {
+        S.inbox = inbox;
+        draw();
+      }
+      const m = has('menu');
+      if (m && !S.menu) {
+        const mm = m.menu || {};
+        if (mm.kind === 'phone') S.menu = { kind: 'phone', step: 'phone' };
+        else if (mm.kind === 'attach') S.menu = { kind: 'attach', target: mm.target };
+        else if (mm.kind === 'card' && cardItems.get(mm.key)) {
+          const item = cardItems.get(mm.key);
+          S.menu = { kind: 'card', item, step: 'list', name: item.title, error: '' };
+        }
+        if (S.menu) drawMenu();
+      }
+      const v = has('viewer');
+      if (v && !S.viewer && v.viewer && S.artifacts) openArtifact(v.viewer.id, v.viewer.version, v.viewer);
+    } finally {
+      NAV.applying = false;
+    }
+    NAV.stack = want;
+    navSync(); // what could not be shown again: back to what is
+  }
+  /* The page opens: the address loses its #… (a pairing secret, a chat link), and this entry is the chat list. A page loaded
+     again on a deeper entry (a reload in a chat) keeps that chain: the first draw goes back to what it shows. */
+  function navStart() {
+    const was = root.history.state;
+    if (was && was.aib === 1 && Array.isArray(was.chain) && was.chain.length) NAV.stack = was.chain;
+    root.history.replaceState(navState(NAV.stack), '', root.location.pathname);
+    NAV.on = true;
+  }
+  root.addEventListener('popstate', (event) => {
+    const st = event.state;
+    if (NAV.busy) return navDone(); // our own go(-n)
+    if (!st || st.aib !== 1 || !Array.isArray(st.chain)) return; // a #chat=… link: hashchange opens it
+    navApply(st.chain);
+  });
+
   async function start() {
     const m = /^#p=([0-9a-f]{12})$/i.exec(root.location.hash || '');
     if (m) S.pairSecret = m[1].toLowerCase();
     S.openOnStart = openTarget(root.location.hash) || S.openOnStart;
-    if (root.location.hash) root.history.replaceState(null, '', root.location.pathname); // the secret leaves the address bar
+    navStart(); // the secret leaves the address bar
     registerWorker();
     const saved = await stored('device');
     if (saved && saved.token) {
@@ -5579,7 +5755,9 @@
   root.addEventListener('hashchange', () => {
     const open = openTarget(root.location.hash);
     if (!open) return;
-    root.history.replaceState(null, '', root.location.pathname);
+    // the link added a history entry: it is taken over (no #chat=… left in the address), and the chat opens over the list
+    NAV.stack = NAV.stack.concat([{ k: 'link' }]);
+    root.history.replaceState(navState(NAV.stack), '', root.location.pathname);
     if (S.device && S.booted) openChat(open.chat, '', open.sheet);
     else S.openOnStart = open;
   });
@@ -5603,6 +5781,7 @@
   root.addEventListener(
     'scroll',
     () => {
+      if (S.screen === 'home' && !S.inbox) S.homeY = root.scrollY;
       markRead();
       checkAbove();
       nearTop();
@@ -5626,5 +5805,6 @@
   });
   root.addEventListener('pagehide', left);
   root.__aibPhone = S; // tests read the page's state
+  root.__aibNav = NAV; // and its history steps
   start();
 })(typeof window !== 'undefined' ? window : globalThis);
