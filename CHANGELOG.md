@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Local-only folders in WSL projects: a chat in its own copy reaches the main folder's private/ again. Folders git never commits
+  (private/ by default) live only in the project's main folder, so a WSL chat in its own copy could not see them. Now its agent
+  can read and write them by their Linux path (for example /home/u/app/private), and is told where they are. Files shows them in
+  every chat's copy, Git exclude and Undo work in WSL projects, and AIB backs them up once a day inside the distro. Live sync and
+  Merge leave them out, as on Windows.
+
 - WSL screens: spacing, contrast and wording fixes.
 - WSL chats survive AIB being away: the Linux keeper keeps a distro's agents running for 2 hours without AIB, not 35 seconds. An
   AIB restart, crash, update or test-build swap, or an older AIB build that stopped the keep-alive, no longer stops claude or codex
