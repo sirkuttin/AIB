@@ -16,6 +16,9 @@
    notification brought you to it. After you act, the card is a one-line record ("You allowed once from this phone: …"). While a
    waiting card is scrolled out of view, a "Needs you · Show ↑" bar sits above the message box. The bottom: what waits to be sent
    (Edit, Remove, Send now; Resume after Stop), the message box with Send, and Stop (■) while the agent works.
+   History: a chat opens with its newest page by size (never starting inside a reply); "Load earlier messages" at the top (and
+   scrolling near the top) puts the page before it in front, keeping your place; polls drop only older whole turns. A finished step
+   in an open fold has Show output (its output whole, from the PC).
    Each control shows only when this phone's switch for it is on (Settings → Remote control on the PC); the server checks the same
    switches. While the PC can't be reached, nothing can be sent or answered. The layout is chosen by the server (remote bootstrap
    says layout 'phone'), never by the window width.
@@ -64,7 +67,9 @@
   const TIMEOUT_MS = 10000;
   const OPTIONS_MS = 30000; // New chat's projects and agents: the PC looks for every agent's program first (seconds when busy)
   const UPLOAD_MS = 180000; // a message with attachments: up to 20 MB on mobile data
-  const TAIL = 300;
+  const TAIL = 300; // a delta (and a saved chat's page) asks for at most this many events
+  const KEEP = 2000; // events a live chat keeps while new ones come in (older whole turns go; Load earlier brings them back)
+  const OLDER_BYTES = 256 * 1024; // one Load earlier page
   const DB = 'aib-phone';
   const READ_MS = 5000; // a chat's read position goes to the PC at most this often
   const RECONNECT_MS = 20000; // "Reconnecting…" this long before saying AIB is closed (the keeper restarts a crashed AIB in 5 s)
@@ -259,6 +264,7 @@
           images: imagesOf(data.attachments),
           files: (Array.isArray(data.files) ? data.files : []).map((f) => str(obj(f).name)).filter(Boolean),
           steered: data.steered === true,
+          clipped: e.clipped === true,
         });
       } else if (e.kind === 'update') {
         const u = obj(data.update);
@@ -266,8 +272,10 @@
         if (kind === 'agent_message_chunk') {
           const c = obj(u.content);
           const image = c.url ? [c.url] : [];
-          if (last && last.kind === 'agent' && !image.length && !last.images.length) last.text += str(c.text);
-          else rows.push({ kind: 'agent', key, text: str(c.text), images: image });
+          if (last && last.kind === 'agent' && !image.length && !last.images.length) {
+            last.text += str(c.text);
+            if (e.clipped) last.clipped = true;
+          } else rows.push({ kind: 'agent', key, text: str(c.text), images: image, clipped: e.clipped === true });
         } else if (kind === 'user_message_chunk') {
           const c = obj(u.content);
           if (last && last.kind === 'you') last.text += str(c.text);
@@ -285,6 +293,7 @@
             if (u.status) step.status = str(u.status);
           }
           step.done = step.status === 'completed' || step.status === 'failed';
+          if (u.rawOutput !== undefined || (Array.isArray(u.content) && u.content.length)) step.outSeq = Number(e.seq) || 0; // Show output
           if (kind === 'tool_call' || isArtifactTool(u)) step.artifactTool = step.artifactTool || isArtifactTool(u);
           card(artifactFrom(e, step.artifactTool), key);
         }
@@ -307,7 +316,7 @@
         if (title) rows.push({ kind: 'notice', key, text: (e.kind === 'permission' ? 'Asked to: ' : 'Asked: ') + title });
       } else if (e.kind === 'error' || e.kind === 'disconnected' || e.kind === 'studio_note') {
         const text = str(data.message);
-        if (text) rows.push({ kind: 'notice', key, text });
+        if (text) rows.push({ kind: 'notice', key, text: e.clipped ? text + ' …' : text });
       }
     }
     const out = rows.filter((r) => r.kind !== 'agent' || r.text.trim() || r.images.length);
@@ -317,6 +326,45 @@
       out.push(has(k) ? { kind: 'record', key: k, text: recordText(acted[k]) } : { kind: 'req', key: k });
     }
     return out;
+  }
+
+  /* History (Load earlier, polls). A chat's events as the phone keeps them: {seq, kind, time?, data, clipped?, bytes?}, oldest first,
+     one per seq. A later offline cache keeps these same objects (an IndexedDB store keyed by chat and seq). */
+
+  /* Two lists of events -> one, by seq (oldest first); a seq in both keeps the newer list's copy. */
+  function mergeEvents(older, newer) {
+    const by = new Map();
+    for (const e of Array.isArray(older) ? older : []) if (e && Number(e.seq) > 0) by.set(Number(e.seq), e);
+    for (const e of Array.isArray(newer) ? newer : []) if (e && Number(e.seq) > 0) by.set(Number(e.seq), e);
+    return [...by.keys()].sort((a, b) => a - b).map((k) => by.get(k));
+  }
+
+  /* At most about `max` events: older ones go, but only whole turns (the cut is at one of your messages), so a reply or a run of
+     steps is never cut in two; one turn longer than `max` stays whole. {events, cut: whether any went}. */
+  function trimEvents(events, max) {
+    const list = Array.isArray(events) ? events : [];
+    if (list.length <= max) return { events: list, cut: false };
+    let i = list.length - max;
+    while (i > 0 && obj(list[i]).kind !== 'user') i--;
+    return i > 0 ? { events: list.slice(i), cut: true } : { events: list, cut: false };
+  }
+
+  /* A step's output as text, from its event (Show output): the content's text, else its raw output. */
+  function outputText(event) {
+    const u = obj(obj(obj(event).data).update);
+    let texts = textsOf(u.content).filter((t) => t.trim());
+    if (!texts.length && typeof u.rawOutput === 'string') texts = [u.rawOutput];
+    if (!texts.length && u.rawOutput !== undefined && u.rawOutput !== null) {
+      texts = textsOf(u.rawOutput).filter((t) => t.trim());
+      if (!texts.length) {
+        try {
+          texts = [JSON.stringify(u.rawOutput, null, 2)];
+        } catch {
+          texts = [];
+        }
+      }
+    }
+    return texts.join('\n');
   }
 
   /* The live line of a working chat: the step running now, or "Working". */
@@ -964,6 +1012,10 @@
     newChatReady,
     firstMessageProblem,
     rowsFrom,
+    mergeEvents,
+    trimEvents,
+    outputText,
+    KEEP,
     stateWords,
     ago,
     projectColor,
@@ -1020,6 +1072,9 @@
     chatMeta: null, // {project, agent} from the card that opened the chat (its header before the chat loads; a saved chat's always)
     chat: null,
     chatEvents: [],
+    keepMin: 0, // events Load earlier brought in: polls keep at least this many (what you scrolled back to stays)
+    older: { busy: false, error: false }, // Load earlier (a live chat or a saved one): a page is on its way / the last one failed
+    outputs: {}, // Show output: event seq -> {state: 'loading' | 'open' | 'error', text}
     open: new Set(), // folds the reader opened
     lastOk: 0,
     offline: false,
@@ -1216,10 +1271,116 @@
     const before = sig(S.saved, S.scopes);
     if (Array.isArray(r.data.scopes)) S.scopes = r.data.scopes;
     if (r.data.live) return openChat(r.data.live, (S.saved && S.saved.title) || S.chatTitle);
-    const changed = before !== sig(r.data, S.scopes);
+    const next = r.data;
+    const had = S.saved && !S.saved.gone && Array.isArray(S.saved.events) ? S.saved : null;
+    if (had && had.firstSeq && next.firstSeq && had.firstSeq < next.firstSeq) {
+      // what Load earlier brought in stays (a saved chat only grows at its end)
+      next.events = mergeEvents(had.events.filter((e) => e.seq < next.firstSeq), next.events);
+      next.firstSeq = had.firstSeq;
+      next.truncated = had.truncated;
+    }
+    const changed = before !== sig(next, S.scopes);
     if (!S.saved || S.saved.gone) S.scrollTo = 'end';
-    S.saved = r.data;
+    S.saved = next;
     if (changed) draw();
+  }
+
+  /* Load earlier: the page before the first event shown (a live chat: by bytes from the PC's events; a saved chat: from its saved
+     transcript), put in front by seq. The screen stays on what you were reading (the next draw keeps the distance to the end). */
+  async function loadEarlier() {
+    const live = S.screen === 'chat';
+    const c = live ? S.chat : S.saved;
+    if (S.older.busy || S.offline || !c || c.gone || !c.truncated || !(Number(c.firstSeq) > 0)) return;
+    const id = live ? S.chatId : S.savedKey;
+    const first = Number(c.firstSeq);
+    S.older = { busy: true, error: false };
+    draw();
+    let r = null;
+    try {
+      r = live
+        ? await call('GET', '/api/remote/chat?id=' + encodeURIComponent(id) + '&before=' + first + '&bytes=' + OLDER_BYTES)
+        : await call('GET', '/api/remote/saved?key=' + encodeURIComponent(id) + '&tail=' + TAIL + '&before=' + first);
+    } catch {
+      r = null;
+    }
+    const now = live ? S.chat : S.saved;
+    if ((live ? S.chatId : S.savedKey) !== id || !now || now.gone || Number(now.firstSeq) !== first) {
+      S.older = { busy: false, error: false }; // another chat, or it started again meanwhile: this page is not wanted
+      return;
+    }
+    if (r && r.status === 401) return removed();
+    if (!r || r.status !== 200 || !Array.isArray(r.data.events)) {
+      S.older = { busy: false, error: true };
+      draw();
+      return;
+    }
+    const events = r.data.events.filter((e) => Number(e.seq) < first);
+    const more = live ? !!r.data.more : !!r.data.truncated;
+    if (!events.length && more) {
+      S.older = { busy: false, error: true }; // the PC is still opening this chat: try again shortly
+      draw();
+      return;
+    }
+    const d = doc.documentElement;
+    S.scrollTo = 'keep:' + Math.max(0, d.scrollHeight - root.scrollY);
+    if (live) {
+      S.chatEvents = mergeEvents(events, S.chatEvents);
+      S.keepMin = S.chatEvents.length;
+    } else S.saved.events = mergeEvents(events, S.saved.events);
+    now.firstSeq = Number(r.data.firstSeq) || (events.length ? Number(events[0].seq) : first);
+    now.truncated = more && now.firstSeq < first;
+    S.older = { busy: false, error: false };
+    draw();
+  }
+
+  /* Load earlier, in the chat above the first message: a button, "Loading…" while a page comes, or why it did not. */
+  function earlierEl() {
+    const p = el('p', 'ph-earlier');
+    p.id = 'phEarlier';
+    // one line whatever its state (the button stays, disabled while a page comes): the rows below never move
+    if (S.older.error) p.append(el('span', '', "Couldn't load earlier messages. "));
+    const words = S.older.busy ? 'Loading earlier messages…' : S.older.error ? 'Try again' : 'Load earlier messages';
+    const b = button('ph-btn sm quiet', words, () => loadEarlier());
+    b.id = 'phEarlierGo';
+    b.disabled = S.older.busy || S.offline;
+    p.append(b);
+    return p;
+  }
+
+  /* Scrolled near the top of a chat with earlier messages: the next page comes by itself. */
+  function nearTop() {
+    if (S.screen !== 'chat' && S.screen !== 'saved') return;
+    const c = S.screen === 'chat' ? S.chat : S.saved;
+    if (!c || !c.truncated || S.older.busy || S.older.error || S.offline) return;
+    if (root.scrollY > 300) return;
+    const d = doc.documentElement;
+    if (d.scrollHeight <= root.innerHeight) return; // nothing to scroll: the button is right there
+    loadEarlier();
+  }
+
+  /* Show output: a step's output whole, from the PC (one event; a big one was clipped in the chat's events). */
+  async function showOutput(seq) {
+    const now = S.outputs[seq];
+    if (now && now.state === 'open') {
+      delete S.outputs[seq];
+      draw();
+      return;
+    }
+    if (now && now.state === 'loading') return;
+    const id = S.chatId;
+    S.outputs[seq] = { state: 'loading', text: '' };
+    draw();
+    let r = null;
+    try {
+      r = await call('GET', '/api/remote/event?id=' + encodeURIComponent(id) + '&seq=' + seq, undefined, UPLOAD_MS);
+    } catch {
+      r = null;
+    }
+    if (S.chatId !== id) return;
+    if (r && r.status === 401) return removed();
+    const text = r && r.status === 200 ? outputText(r.data.event) : null;
+    S.outputs[seq] = text === null ? { state: 'error', text: '' } : { state: 'open', text: text || '(No output.)' };
+    draw();
   }
 
   /* AIB stopped answering (or still does not): "Reconnecting…" first, then closed / can't reach (offlineView). */
@@ -1365,13 +1526,28 @@
     }
     if (r.status !== 200) throw new Offline('refused');
     const c = r.data;
-    if (!after || c.reset) S.chatEvents = c.events;
-    else if (c.events.length) S.chatEvents = S.chatEvents.concat(c.events).slice(-TAIL * 2);
+    let truncated = after ? S.chat.truncated : c.truncated;
+    let firstSeq = after ? S.chat.firstSeq : c.firstSeq;
+    if (!after || c.reset || c.gap) {
+      // opened, renumbered, or more new events than a delta carries (gap): start again from these
+      S.chatEvents = c.events;
+      truncated = c.truncated;
+      firstSeq = c.firstSeq;
+      S.keepMin = 0;
+    } else if (c.events.length) {
+      // new events join by seq; older whole turns go past KEEP (never a reply or a run of steps cut in two)
+      const kept = trimEvents(mergeEvents(S.chatEvents, c.events), Math.max(KEEP, S.keepMin));
+      S.chatEvents = kept.events;
+      if (kept.cut) {
+        truncated = true;
+        firstSeq = Number(kept.events[0].seq) || firstSeq;
+      }
+    }
     const sig = (x) =>
       JSON.stringify([x.state, x.needs, x.busy, x.steerable, x.ready, x.waiting, x.queue, x.unknown, x.scopes, x.helpers, x.project]);
     const first = !S.chat || !after;
     const changed = first || c.events.length || sig(c) !== sig(S.chat);
-    S.chat = { ...c, truncated: after ? S.chat.truncated : c.truncated };
+    S.chat = { ...c, truncated, firstSeq };
     if (Array.isArray(c.scopes)) S.scopes = c.scopes;
     const keys = new Set((c.waiting || []).map((w) => w.key || 'sign-in'));
     // A record of what you did stays once the request is gone; a card you opened or closed that is gone is forgotten.
@@ -2651,7 +2827,7 @@
     else if (c.gone) body.append(el('p', 'ph-empty', 'This chat is no longer in the list on ' + S.pcName + '.'));
     else {
       body.append(el('p', 'ph-earlier', 'Not open on ' + S.pcName + ': these are its saved messages.'));
-      if (c.truncated) body.append(el('p', 'ph-earlier', 'Earlier messages are on your PC.'));
+      if (c.truncated) body.append(earlierEl());
       const rows = rowsFrom(c.events);
       const list = el('div', 'ph-list');
       drawRows(list, rows, null);
@@ -2697,6 +2873,22 @@
           const ul = el('ol', 'ph-fold-list');
           for (const s of r.steps) {
             const li = el('li', s.done ? '' : 'run', s.title + (s.done ? '' : ' · ' + (s.status === 'pending' ? 'waiting' : 'running')));
+            if (c && s.done && s.outSeq) {
+              // Show output: the step's output whole, from the PC
+              const out = S.outputs[s.outSeq];
+              const b = button('ph-btn sm quiet', out && out.state === 'open' ? 'Hide output' : out && out.state === 'loading' ? 'Loading output…' : 'Show output', () => showOutput(s.outSeq));
+              b.dataset.out = String(s.outSeq);
+              b.setAttribute('aria-expanded', out && out.state === 'open' ? 'true' : 'false');
+              const line = el('div');
+              line.append(b);
+              li.append(line);
+              if (out && out.state === 'error') li.append(el('p', 'ph-more', "Couldn't load the output. It may no longer be kept on " + S.pcName + '.'));
+              if (out && out.state === 'open') {
+                const pre = el('pre', 'ph-cmd ph-out', out.text);
+                pre.dataset.out = String(s.outSeq);
+                li.append(pre);
+              }
+            }
             ul.append(li);
           }
           wrap.append(ul);
@@ -2738,6 +2930,7 @@
         m.append(bub);
       }
       if (r.steered) m.append(el('span', 'ph-steered', 'Sent while working'));
+      if (r.clipped) m.append(el('span', 'ph-steered ph-clipped', 'Message shortened here. The whole message is on your PC.'));
       const imgBox = r.kind === 'you' ? m.querySelector('.ph-bub') || m : m;
       for (const url of r.images || []) {
         const img = el('img', 'ph-img');
@@ -3572,7 +3765,7 @@
       return body;
     }
     const can = abilities(S.scopes);
-    if (c.truncated) body.append(el('p', 'ph-earlier', 'Earlier messages are on your PC.'));
+    if (c.truncated) body.append(earlierEl());
     const rows = rowsFrom(S.chatEvents, { waiting: c.waiting, acted: S.acted });
     const list = el('div', 'ph-list');
     drawRows(list, rows, c);
@@ -3819,6 +4012,12 @@
     if (to && (S.screen === 'chat' || S.screen === 'saved') && (S.chat || S.saved)) {
       S.scrollTo = '';
       let target = null;
+      if (to.startsWith('keep:')) {
+        // Load earlier put rows in front: the same distance to the end as before, so what you read stays where it was
+        root.scrollTo(0, Math.max(0, d.scrollHeight - Number(to.slice(5))));
+        checkAbove();
+        return;
+      }
       if (to.startsWith('req:')) target = doc.querySelector('.ph-req[data-req="' + CSS.escape(to.slice(4)) + '"]');
       else if (to === 'subs') target = doc.getElementById('phSubs');
       if (target) {
@@ -3840,6 +4039,9 @@
     S.chatMeta = null;
     S.savedKey = '';
     S.saved = null;
+    S.keepMin = 0;
+    S.older = { busy: false, error: false };
+    S.outputs = {};
     S.continuing = false;
     S.actError = '';
     S.actKey = '';
@@ -4441,6 +4643,7 @@
     () => {
       markRead();
       checkAbove();
+      nearTop();
     },
     { passive: true },
   );

@@ -1241,6 +1241,22 @@ test("path link: another chat's artifact of the file opens too, matched by sourc
   assert.equal(t.FU._state().tabs.tabs.length, 0);
 });
 
+test('path link (WSL): a file published by path from a distro opens its artifact, matched by the wsl:// ref (Linux case kept); another file or case does not', async () => {
+  const REF = 'wsl://ubuntu/home/u/app';
+  const mk = (wslSource) => ({ list: [conv('a1', REF), conv('a2', REF)], width: 1000, ownList: [{ id: 'wslart', sourcePath: null, wslSource, conversationId: 'claude:a1', updatedAt: 3 }] });
+  const t = setup(mk(REF + '/outputs/bar-charts.html'));
+  const a = await linkTo(t, 'See outputs/bar-charts.html');
+  t.shell.document.dispatch('click', { target: a, ctrlKey: false });
+  await settle();
+  assert.deepEqual(t.opened, ['wslart'], 'the artifact opened, not the plain file');
+  assert.equal(t.FU._state().tabs.tabs.length, 0, 'no file tab');
+  const other = setup(mk(REF + '/outputs/Bar-Charts.html'));
+  const b = await linkTo(other, 'See outputs/bar-charts.html');
+  other.shell.document.dispatch('click', { target: b, ctrlKey: false });
+  await settle();
+  assert.deepEqual(other.opened, [], 'Linux paths are case-sensitive: a different case is another file');
+});
+
 test("path link: the open chat's artifact wins over another chat's for the same file; a deleted one never counts", async () => {
   const src = ROOT + '/outputs/bar-charts.html';
   const t = setup({

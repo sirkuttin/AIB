@@ -2452,12 +2452,12 @@
     }
     return out;
   }
-  // The artifact a path link names (matched by its source file, case and slashes aside on Windows): the open chat's first, else
+  // The artifact a path link names (matched by its source file, or for a WSL file by the wsl:// ref it was published from (wslSource), case and slashes aside on Windows): the open chat's first, else
   // the newest of any chat of the project. Deleted ones never count (projectArtifactList leaves them out).
   function artifactForLink(t) {
     const paths = linkAbsPaths(t);
     if (!paths.length) return null;
-    const hits = projectArtifactList().filter((a) => a.sourcePath && paths.some((p) => samePath(a.sourcePath, p)));
+    const hits = projectArtifactList().filter((a) => (a.sourcePath || a.wslSource) && paths.some((p) => (a.sourcePath && samePath(a.sourcePath, p)) || (a.wslSource && samePath(a.wslSource, p))));
     if (!hits.length) return null;
     const mine = chat ? hits.find((a) => a.conversationId === chat.key || a.ownerKey === chat.key) : null;
     return mine || hits.slice().sort((a, b) => (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0))[0];

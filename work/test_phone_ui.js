@@ -208,3 +208,39 @@ test('banner: news about another chat while this phone is in hand; Needs you is 
   assert.equal(P.bannerFrom([{ chat: 'c4', kind: 'turn' }], '', null).title, 'A chat');
   assert.ok(P.BANNER_TURN_MS >= 5000);
 });
+
+test('history: events join by seq; old whole turns go, never a reply or steps cut in two; Show output text; shortened messages', () => {
+  const user = (seq) => ({ seq, kind: 'user', data: { text: 'q' + seq } });
+  assert.deepEqual(P.mergeEvents([say(3, 'b'), say(1, 'a')], [say(3, 'B'), say(4, 'c')]).map((e) => [e.seq, e.data.update.content.text]), [
+    [1, 'a'],
+    [3, 'B'],
+    [4, 'c'],
+  ]);
+  // a streaming reply of 50 chunks after one prompt: a cut at 10 would land inside it, so nothing goes
+  const long = [user(1), ...Array.from({ length: 50 }, (_, i) => say(i + 2, 'x'))];
+  assert.deepEqual(P.trimEvents(long, 10), { events: long, cut: false });
+  // two turns: the cut goes back to the start of the newer turn (your message), whole
+  const two = [user(1), say(2, 'a'), say(3, 'b'), user(4), say(5, 'c'), say(6, 'd'), say(7, 'e')];
+  const t = P.trimEvents(two, 2);
+  assert.equal(t.cut, true);
+  assert.deepEqual(t.events.map((e) => e.seq), [4, 5, 6, 7]);
+  assert.equal(P.trimEvents(two, 100).cut, false);
+  assert.ok(P.KEEP >= 1000);
+  // a step's output: its content's text, else its raw output; the step knows the event that carries it
+  const rows = P.rowsFrom([
+    update(1, { sessionUpdate: 'tool_call', toolCallId: 't', title: 'Bash', status: 'in_progress' }),
+    update(2, { sessionUpdate: 'tool_call_update', toolCallId: 't', status: 'completed', rawOutput: 'all of it' }),
+  ]);
+  assert.equal(rows[0].steps[0].outSeq, 2);
+  assert.equal(P.outputText(update(2, { sessionUpdate: 'tool_call_update', rawOutput: 'all of it' })), 'all of it');
+  assert.equal(
+    P.outputText(
+      update(2, { sessionUpdate: 'tool_call_update', content: [{ type: 'content', content: { type: 'text', text: 'from content' } }], rawOutput: 'raw' }),
+    ),
+    'from content',
+  );
+  assert.equal(P.outputText(update(2, { sessionUpdate: 'tool_call_update', rawOutput: { exit: 0 } })), '{\n  "exit": 0\n}');
+  // a saved message cut on the PC side is marked on its row
+  const cut = P.rowsFrom([{ ...say(1, 'long'), clipped: true }, { seq: 2, kind: 'user', data: { text: 'q' }, clipped: true }]);
+  assert.deepEqual(cut.map((r) => [r.kind, r.clipped]), [['agent', true], ['you', true]]);
+});

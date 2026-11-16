@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Phone chat history: long replies show whole, and older messages load on the phone. A chat used to open with its last 300
+  events, so a long reply (sent in hundreds of small pieces) lost its beginning, and a reply still being written could lose its
+  start as new text came in. Above that the phone only said "Earlier messages are on your PC." Now a chat opens with its newest
+  messages by size, never starting inside a reply or a run of steps. Tap **Load earlier messages** at the top, or just scroll up:
+  older messages come in above without moving what you are reading. Chats that are not running page back the same way.
+- Phone steps: Show output. Open a run of steps and tap **Show output** under a finished step to read its whole output, also
+  when the chat clipped it.
+- Phone saved chats: long messages keep their text. A chat that is not running used to cut every message at 8,000 characters
+  without saying so. Now a message keeps up to 32,000 characters; a longer one says "Message shortened here. The whole message is
+  on your PC."
 - WSL path links: full Linux paths open as project files. Clicking /home/u/app/src/main.ts in a WSL chat's reply, or the open-file
   icon on an Edit/Write row, used to open it as "Outside this project", read-only. Now it opens in the Files tab like any project
   file, with its Changes badge and Show in Files, also in a chat's own copy.
@@ -43,6 +53,8 @@
 
 - WSL: a one-off tool, `deno run -A tools/wsl-import.ts`, moves the chats a WSL project had before worktree copies into their own
   copies (own branch, Changes, Merge). It starts with a dry run, keeps a backup of each moved history file, and can undo.
+- Path links in WSL chats: a file the agent published as an artifact opens that artifact. Clicking `out/chart.png` or `report.html` in a reply
+  now opens the published page in the Artifacts tab, as in a Windows chat, instead of the plain file.
 - WSL screens: spacing, contrast and wording fixes.
 - WSL chats survive AIB being away: the Linux keeper keeps a distro's agents running for 2 hours without AIB, not 35 seconds. An
   AIB restart, crash, update or test-build swap, or an older AIB build that stopped the keep-alive, no longer stops claude or codex
@@ -123,8 +135,12 @@
   the distro (a long test run, a dev server) and its subagents, with how many are still running and each command's latest output, as
   for a Windows chat. While such a command runs, the chat counts as still working in the background, so quitting or updating AIB
   warns you instead of cutting it off. If Ubuntu is not running, the pane says "Command updates unavailable: Ubuntu stopped.
-  Reconnect" instead of "No commands running". AIB cannot stop a WSL background command itself yet (no Stop button there; ask the
-  agent).
+  Reconnect" instead of "No commands running".
+- WSL projects: Stop a background command from AIB. A command a WSL chat left running in the background (a dev server, a long
+  test run) now has the same Stop button on its "Still running in the background" row as in a Windows chat, so you no longer have
+  to ask the agent to end it. Stop ends that command and whatever it started inside the distro, and the row then reads "Stopped by
+  you". It only ever touches processes AIB saw that command start: another chat's commands, the agent itself and anything else in
+  Ubuntu keep running. The button appears a moment after the row does, once AIB has checked the command's processes in the distro.
 - WSL projects: no second agent on one conversation. Before continuing a saved WSL chat, AIB now checks inside the distro whether
   another program already has that conversation open (for example `claude --resume` in a VS Code terminal in Ubuntu) and refuses with
   "This claude conversation is already open in another agent process (PID …)", exactly as for Windows chats. A chat written to

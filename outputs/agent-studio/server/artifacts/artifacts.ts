@@ -522,6 +522,7 @@ export class ArtifactStore {
       link: 'studio-artifact://' + manifest.id,
     };
     if (manifest.kind === 'md') out.viewUrl = out.url + '?view=1';
+    if (isStr(manifest.wslSource) && manifest.wslSource) out.wslSource = manifest.wslSource; // AIB's own field (Deno only): the wsl:// ref a WSL file was published from
     if (pyTruthy(manifest.sourceMissing)) out.sourceMissing = true;
     if (isDict(manifest.fromDoc)) out.fromDoc = manifest.fromDoc; // AIB's own field (Deno only): "Built from <doc › page>"
     if (isStr(manifest.becameDoc) && manifest.becameDoc) out.becameDoc = manifest.becameDoc; // Edit made it a doc (Deno only)
