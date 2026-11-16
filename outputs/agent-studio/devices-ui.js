@@ -1023,7 +1023,8 @@
       head.append(
         el('b', d.name),
         el('span', d.kind === 'computer' ? 'Computer' : 'Phone', 'st-tag dv-kind-tag'),
-        el('span', 'Last seen ' + ago(d.lastSeen), 'st-tag'),
+        // phase 2: the device you are using now (the PC's "where you are")
+        el('span', d.active ? 'Active now' : 'Last seen ' + ago(d.lastSeen), 'st-tag'),
       );
       row.append(head);
       row.append(drawSwitches(d));

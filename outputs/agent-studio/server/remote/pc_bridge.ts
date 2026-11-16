@@ -38,7 +38,7 @@ import * as files from '../worktrees/files.ts';
 import { wslLoc } from '../wsl/access.ts';
 import { isBlocked } from './path_guard.ts';
 import { MAX_TOTAL_ATTACHMENT_BYTES } from '../acp/attachments.ts';
-import { answerOf, answersOf } from '../attention/answers.ts';
+import { answeredElsewhere, answerOf, answersOf } from '../attention/answers.ts';
 
 export const DEVICE_HEADER = 'X-AIB-Device';
 /** A socket cannot send a header: the device token comes as the subprotocol `aib-device.<token>`. */
@@ -218,7 +218,11 @@ export class PcBridge {
     }
     const verdict = await decide(entry, { method, path, query: url.searchParams, body, ctx });
     if ('refuse' in verdict) {
-      return this.host.json(verdict.status ?? 403, { error: verdict.message, code: verdict.refuse }, { 'X-AIB-Refused': verdict.refuse });
+      // phase 2: a card another device answered first says who did
+      const first = verdict.refuse === 'gone' && ANSWER_ROUTES.has(path) ? answeredElsewhere(ctx, body?.id, body?.key) : null;
+      return this.host.json(verdict.status ?? 403, { error: first ?? verdict.message, code: verdict.refuse }, {
+        'X-AIB-Refused': verdict.refuse,
+      });
     }
     const missing = this.#missing(device, verdict.need);
     if (missing.length) {
