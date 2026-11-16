@@ -90,6 +90,7 @@ Deno.test('the route table is exactly the Python web server\'s (paths, scopes an
     'POST /api/live/devices/remove',
     'POST /api/live/devices/remove-all',
     'POST /api/live/devices/scopes',
+    'POST /api/live/devices/kind',
     'GET /api/live/devices/activity',
     'POST /api/live/devices/prefs',
     'POST /api/live/devices/tailscale/refresh',
