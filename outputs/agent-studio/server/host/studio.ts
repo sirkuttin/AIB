@@ -46,6 +46,7 @@ import { forwarderOf, hookForwarderOf, keeperBinary, programVersion } from '../k
 import { deny as denyHook, type HookAnswer, SubagentWorktrees, type SubagentChat } from '../subagents/service.ts';
 import { claudeConfigDir, gitBashPath, hookSettings, readClaudeSetup, subagentsOffSettings } from '../subagents/claude_config.ts';
 import * as codexSub from '../subagents/codex.ts';
+import * as gemini from '../subagents/gemini.ts';
 import { isCompiled, isDesktopApp, selfCommand, TESTS_DIR } from '../core/app.ts';
 import { type ChannelInfo, type KeeperClient, KeeperError, missingFeatures, type OrphanCommand, readKeeperInfo } from '../keeper/client.ts';
 import { pidAlive } from './host_client.ts';
@@ -366,6 +367,8 @@ export class Studio {
   readonly worktrees: wt.Manager | null;
   /** Subagent worktrees (subagents/service.ts): AIB's side of Claude chats' hooks; null without a state folder. */
   readonly subagents: SubagentWorktrees | null;
+  /** Subagent worktrees, Gemini (subagents/gemini.ts): who is calling (from the ACP stream) and the BeforeTool hook route. */
+  readonly geminiSubagents: gemini.GeminiSubagents | null;
   readonly liveSync: LiveSync | null;
   /** Live sync of WSL chats' worktrees: the engine runs in each distro's helper (wsl/sync.ts); null without worktrees. */
   readonly wslSync: WslSync | null;
@@ -456,12 +459,15 @@ export class Studio {
     this.worktrees = manager;
     const subagents = manager ? new SubagentWorktrees(this.stateDir, manager.registry.root, (id) => this.#subagentChat(id)) : null;
     this.subagents = subagents;
+    this.geminiSubagents = subagents ? new gemini.GeminiSubagents(subagents, (id) => this.#geminiChat(id)) : null;
     this.ready = (async () => {
       if (!manager) return;
       try {
         await manager.cleanupIncomplete(); // a half-made worktree of a process that died
         await manager.retryPending(); // removals that were pending (a file in use) + git worktree prune
         await subagents?.sweep(); // spare / unused subagent worktrees of chats that are gone
+        // no keeper: no Gemini chat can still be running, so their folders go (with a keeper: after its take-over, #takeOver...)
+        this.#sweepGeminiWithoutKeeper(manager.registry.root);
       } catch (error) {
         log.exception(error, 'Cleaning up half-made worktrees failed');
       }
@@ -527,6 +533,7 @@ export class Studio {
     }
     // a prepared subagent worktree no Agent call took becomes the spare, or goes (bound ones stay for landing: P2); P3: what the
     // stream shows as ended is settled (a killed one, or one whose SubagentStop never reached AIB)
+    this.geminiSubagents?.turnOver(connection.id); // a Gemini subagent call whose end never came is stopped
     if (this.subagents) {
       if (connection.provider === 'claude') {
         await this.subagents.reconcileEnded(connection.id, connection.endedSubagents()).catch((error) => log.exception(error, 'Subagent turn end check failed'));
@@ -1262,10 +1269,14 @@ export class Studio {
         : provider === 'codex'
         ? await this.#codexSubagentHooks(command, plan ? plan.path : workspace, workspace, !!plan, env, launch ? launch.spawn.env ?? {} : null)
         : null;
+      // Gemini (subagents/gemini.ts): every chat gets the fence (an admin policy); an API-key chat in a git project also the redirect
+      const gem = provider === 'gemini' ? await this.#geminiSubagents(plan ? plan.path : workspace, workspace, !!plan, env, !!wsl) : null;
       const connectionOptions: ConnectionOptions = {};
-      const agentEnv = subagent?.env ? { ...env, ...subagent.env } : env;
+      const agentEnv = { ...env, ...subagent?.env, ...gem?.env };
       if (Object.keys(agentEnv).length) connectionOptions.env = agentEnv;
       if (subagent?.id) connectionOptions.id = subagent.id;
+      if (gem?.id) connectionOptions.id = gem.id;
+      const launchCommand = gem ? [...command, ...gem.args] : command;
       if (launch) {
         connectionOptions.keeper = launch.link; // the distro's Linux keeper, whatever the Windows keeper's state
         // a new worktree chat's agent works in the worktree's Linux folder (cwd: its ref)
@@ -1274,9 +1285,14 @@ export class Studio {
       if (connectionOptions.keeper) connectionOptions.history = this.historyClient();
       if (plan) connectionOptions.start = false; // the agent starts in finishSetup, once its worktree exists
       connection = Object.keys(connectionOptions).length
-        ? this.connectionFactory(command, plan ? plan.path : workspace, provider, connectionOptions)
-        : this.connectionFactory(command, plan ? plan.path : workspace, provider);
+        ? this.connectionFactory(launchCommand, plan ? plan.path : workspace, provider, connectionOptions)
+        : this.connectionFactory(launchCommand, plan ? plan.path : workspace, provider);
       const c = connection;
+      if (gem) {
+        if (gem.id && c.id !== gem.id) { // another id: its hook key would not check; the fence alone holds
+          c.geminiSubagents = { ...gem.setup, home: '', subFolder: '', off: 'it was not set up' };
+        } else c.geminiSubagents = gem.setup;
+      }
       // a factory that gave the chat another id: its hooks' key would not check, so it gets none (it would fail closed otherwise)
       if (subagent) c.subagentHooks = !subagent.id || c.id === subagent.id ? subagent.hooks : offHooks('not set up');
       if (plan || record) {
@@ -1326,6 +1342,9 @@ export class Studio {
             c.recordedEvent('studio_note', { message: SUBAGENTS_OFF_NO_BASH, sessionId: c.sessionId });
           } else if (subagent && 'note' in subagent && subagent.note) { // Codex: its subagents are off (hooks off or unavailable)
             c.recordedEvent('studio_note', { message: subagent.note, sessionId: c.sessionId });
+          }
+          if (c.geminiSubagents?.off) { // the fence only: said up front (owner rule: refused, never in the folder)
+            c.recordedEvent('studio_note', { message: gemini.GEMINI_TEXTS.off(c.geminiSubagents.off), sessionId: c.sessionId });
           }
           if (plan instanceof WslPlan) {
             if (c.worktree) await wslSetSession(plan, provider, c.sessionId!);
@@ -1392,7 +1411,11 @@ export class Studio {
     }
     c.onRelease = (conn) => {
       this.withdraw(conn);
-      void this.subagents?.chatClosed(conn.id).catch((error) => log.exception(error, 'Removing spare subagent worktrees failed'));
+      void this.subagents?.chatClosed(conn.id).catch((error) => log.exception(error, 'Removing spare subagent worktrees failed'))
+        .then(() => { // after its spare went: the Gemini chat's home (junctions unlinked first), policy and empty subagent folder
+          this.geminiSubagents?.chatClosed(conn.id);
+          if (conn.geminiSubagents) gemini.tearDown(conn.geminiSubagents);
+        });
       if (conn.channel) this.#keeperNoLongerNeeded();
     };
     c.onTurnEnd = (conn) => this.turnEnded(conn);
@@ -1413,6 +1436,21 @@ export class Studio {
       };
     }
     c.subagentWorktree = (toolUseId) => this.subagents?.worktreeOf(c.id, toolUseId) ?? null; // allow-rule parity (design 2.4)
+    if (c.provider === 'gemini' && this.subagents && this.geminiSubagents) { // Gemini subagents start and end in the parent's stream
+      const subagents = this.subagents, gem = this.geminiSubagents;
+      c.onTurnCancelled = async (conn) => {
+        gem.turnOver(conn.id);
+        await subagents.turnCancelled(conn.id);
+      };
+      const told = new Map<string, { state: string; agent: string }>();
+      c.onGeminiTool = (conn, callId, title, status) => {
+        gem.toolUpdate(conn.id, callId, title, status);
+        // its Activity card (with P3's worktree line), from the call: Gemini's stream has no child session for it
+        const update = gemini.cardUpdate(callId, title, status, told);
+        if (update) conn.recordedEvent('update', { sessionId: conn.sessionId, update });
+      };
+      c.subagentActivity = () => subagents.activity(c.id); // P3's {where, landing} per subagent (keyed by its call id)
+    }
     c.onLimits = (conn, kind, raw, at) => this.limits.fromAgent(conn, kind, raw, at);
     const sync = this.liveSync;
     const wsl = this.wslSync; // a WSL chat in its own copy: its distro's helper runs the hooks (wsl/sync.ts)
@@ -1638,6 +1676,15 @@ export class Studio {
     const started = performance.now();
     const listed = await client.list();
     if (distro) this.#wslAsked.add(distro);
+    if (!distro && !check && this.hasStateDir && this.worktrees) { // Gemini chat folders no running or open chat uses any more
+      const keep = new Set([...this.connections.keys()]);
+      for (const info of listed) if (info.live) for (const id of gemini.idsInArgs([info.command, ...(info.args ?? [])])) keep.add(id);
+      try {
+        gemini.sweep(this.stateDir, this.worktrees.registry.root, keep);
+      } catch (error) {
+        log.exception(error, 'Sweeping Gemini chat folders failed');
+      }
+    }
     let rebuilt = 0;
     for (const info of listed) {
       try {
@@ -1774,6 +1821,9 @@ export class Studio {
     if (isDict(note.worktree)) c.worktree = { branch: String(note.worktree.branch ?? ''), base: String(note.worktree.base ?? '') };
     c.projectRoot = isStr(note.projectRoot) && note.projectRoot ? note.projectRoot : cwd;
     if (provider === 'claude' || provider === 'codex') c.subagentHooks = hooksFromNote(note.subagentHooks); // as the chat started (should-fix 6)
+    if (provider === 'gemini' && this.hasStateDir && this.worktrees) { // its fence and redirect as launched (subagents/gemini.ts)
+      c.geminiSubagents = gemini.restore(this.stateDir, this.worktrees.registry.root, c.id, c.projectRoot || cwd);
+    }
     this.#wire(c);
     const helper = this.hasStateDir
       ? helperOf(readHelpers(this.stateDir), { lasting: isStr(note.resume) && note.resume ? `${provider}:${note.resume}` : null, path: cwd })
@@ -1897,6 +1947,71 @@ export class Studio {
     }
   }
 
+  #sweepGeminiWithoutKeeper(root: string): void {
+    if (!this.keeper && this.hasStateDir) gemini.sweep(this.stateDir, root, new Set(this.connections.keys()));
+  }
+
+  /** The open Gemini chat with the redirect on (its folder and subagent folder), or null. */
+  #geminiChat(id: string): { folder: string; subFolder: string } | null {
+    const c = this.connections.get(id);
+    return c && !c.closed && c.provider === 'gemini' && c.geminiSubagents?.subFolder ? { folder: c.cwd, subFolder: c.geminiSubagents.subFolder } : null;
+  }
+
+  /**
+   * A new Gemini chat's subagent rule (subagents/gemini.ts): always the fence (`--admin-policy`); with an API-key sign-in in a git
+   * project, also the redirect (its own GEMINI_CLI_HOME with AIB's BeforeTool hook, the subagent folder in --include-directories),
+   * with a fixed chat id (its hook key is bound to it). Null under test unless a real agent was allowed, or with no state folder.
+   */
+  async #geminiSubagents(
+    folder: string,
+    project: string,
+    aibWorktree: boolean,
+    env: Record<string, string>,
+    wsl: boolean,
+  ): Promise<{ id: string; args: string[]; env: Record<string, string>; setup: gemini.GeminiSetup } | null> {
+    if (!this.subagents || !this.hasStateDir || !this.worktrees) return null;
+    const realAllowed = Deno.env.get('STUDIO_REAL_ADAPTER_TESTS') === '1' || Deno.env.get('AGENT_STUDIO_ALLOW_REAL_AGENT') === '1';
+    if (Deno.env.get('AGENT_STUDIO_TEST') === '1' && !realAllowed) return null;
+    const id = crypto.randomUUID().replaceAll('-', '');
+    let gitProject: '' | 'not a git project' | 'the repository has no commits yet' = '';
+    if (!aibWorktree && !wsl) {
+      const top = await wt.git(['rev-parse', '--show-toplevel'], folder, { check: false });
+      if (top.returncode !== 0 || !wt.same(pyStrip(top.stdout), folder)) gitProject = 'not a git project';
+      else if ((await wt.git(['rev-parse', '--verify', '-q', 'HEAD'], folder, { check: false })).returncode !== 0) {
+        gitProject = 'the repository has no commits yet';
+      }
+    }
+    const agentEnv = { ...Deno.env.toObject(), ...testHomeEnv(['gemini']), ...env };
+    const forwarder = wsl || gitProject ? null : await hookForwarderOf(this.keeper?.options.binary ?? null, this.stateDir).catch(() => null);
+    const dir = join(this.stateDir, 'gemini', id);
+    try {
+      if (forwarder) this.artifactMcpHttp(); // listening, with its address published, before the agent's first hook
+      const made = gemini.setUp({
+        stateDir: this.stateDir,
+        root: this.worktrees.registry.root,
+        chatId: id,
+        project,
+        folder,
+        env: agentEnv,
+        gitProject,
+        forwarder,
+        addressFile: join(this.stateDir, FORWARD_FILE),
+        hookKey: forwarder ? artifactKeys.issueHookKey(id) : null,
+        wsl,
+      });
+      return { id, ...made };
+    } catch (error) {
+      log.exception(error, 'Could not set up the Gemini subagent rule; the chat runs with the fence only');
+      const policyDir = join(dir, 'policy');
+      try { // the fence alone: every subagent edit denied
+        Deno.mkdirSync(policyDir, { recursive: true });
+        Deno.writeTextFileSync(join(policyDir, 'aib-subagents.toml'), gemini.policyToml(gemini.BUILTIN_AGENTS, null));
+      } catch { /* the chat still opens; logged above */ }
+      const setup = { policyDir, home: '', subFolder: '', off: `AIB could not set it up (${errorText(error)})`, dir };
+      return { id, args: ['--admin-policy', policyDir], env: {}, setup };
+    }
+  }
+
   /** pre-tool calls of each chat waiting for an answer (security review P1, should-fix 3: a forged flood is refused at once). */
   readonly #preToolWaiting = new Map<string, number>();
 
@@ -1904,6 +2019,12 @@ export class Studio {
   async #hookCall(event: string, conversation: string, body: unknown): Promise<HookAnswer> {
     if (!this.subagents) return { status: 503, body: 'No state folder', type: 'text/plain' };
     if (event.startsWith('codex-')) return await this.#codexHookCall(event, conversation, body);
+    if (event === 'gemini-before-tool') { // a Gemini chat's only (GeminiSubagents answers 503 for any other chat)
+      if (this.connections.get(conversation)?.provider !== 'gemini' || !this.geminiSubagents) {
+        return { status: 503, body: 'This chat is not open in AIB', type: 'text/plain' };
+      }
+      return await this.geminiSubagents.beforeTool(conversation, body);
+    }
     // each route answers its own agent's chats only (a Codex chat's key can't drive the Claude routes)
     if (this.connections.get(conversation)?.provider !== 'claude') return { status: 503, body: 'This chat is not open in AIB', type: 'text/plain' };
     if (event !== 'pre-tool') return await this.subagents.hook(event, conversation, body);
@@ -2011,6 +2132,10 @@ export class Studio {
    */
   #subagentChat(id: string): SubagentChat | null {
     const c = this.connections.get(id);
+    if (c && !c.closed && c.provider === 'gemini' && c.geminiSubagents?.subFolder) { // its subagents' worktrees: in its own folder
+      const lasting = c.sessionId ? `${c.provider}:${c.sessionId}` : '';
+      return { id: c.id, provider: c.provider, lasting, folder: c.cwd, project: c.projectRoot || c.cwd, hooks: null, subFolder: c.geminiSubagents.subFolder };
+    }
     if (!c || c.closed || (c.provider !== 'claude' && c.provider !== 'codex') || c.wsl) return null;
     if (!c.subagentHooks && c.provider === 'codex') return null; // a Codex chat without a hooks record was given none
     if (!c.subagentHooks) {

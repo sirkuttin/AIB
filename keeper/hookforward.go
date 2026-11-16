@@ -72,7 +72,8 @@ const (
 )
 
 var hookEvents = map[string]bool{"pre-tool": true, "worktree-create": true, "post-agent": true, "subagent-stop": true,
-	"codex-pre-tool": true, "codex-subagent-start": true, "codex-subagent-stop": true} // codex-*: hookforward_codex.go
+	"codex-pre-tool": true, "codex-subagent-start": true, "codex-subagent-stop": true, // codex-*: hookforward_codex.go
+	"gemini-before-tool": true} // Gemini CLI's BeforeTool (hookgemini.go)
 
 // blocking: the events whose failure must block the call (exit 2).
 func hookBlocking(event string) bool {
@@ -88,7 +89,7 @@ func hookMain(args []string) int {
 		return 0
 	}
 	if len(args) != 2 || !hookEvents[args[0]] || args[1] == "" {
-		fmt.Fprintln(os.Stderr, "usage: AIB-keeper hook pre-tool|worktree-create|post-agent|subagent-stop|codex-pre-tool|codex-subagent-start|codex-subagent-stop <address file>")
+		fmt.Fprintln(os.Stderr, "usage: AIB-keeper hook pre-tool|worktree-create|post-agent|subagent-stop|codex-pre-tool|codex-subagent-start|codex-subagent-stop|gemini-before-tool <address file>")
 		return 2
 	}
 	h := &hookForwarder{
@@ -157,6 +158,15 @@ func (h *hookForwarder) run(in io.Reader, stdout, stderr io.Writer) int {
 	}
 	if strings.HasPrefix(h.event, "codex-") {
 		return h.codexAnswer(input, status, body, stdout, stderr)
+	}
+	if h.event == "gemini-before-tool" {
+		if status != http.StatusOK {
+			return 0 // the policy fence decides (hookgemini.go)
+		}
+		if out, ok := checkGeminiAnswer(input, body, h.worktreesRoot()); ok && len(out) > 0 {
+			stdout.Write(out)
+		}
+		return 0
 	}
 	if !hookBlocking(h.event) {
 		return 0 // post-agent, subagent-stop: hints for AIB; nothing goes back to Claude Code
@@ -396,6 +406,9 @@ func (h *hookForwarder) endpoint() (string, error) {
 	u.Path = "/hooks/claude/" + h.event
 	if rest, ok := strings.CutPrefix(h.event, "codex-"); ok {
 		u.Path = "/hooks/codex/" + rest
+	}
+	if h.event == "gemini-before-tool" {
+		u.Path = "/hooks/gemini/before-tool"
 	}
 	u.RawQuery, u.Fragment = "", ""
 	return u.String(), nil

@@ -950,6 +950,8 @@ export class Connection {
   }
   /** The worktree a subagent works in, by its Agent call's tool_use_id (allow-rule parity); set by the Studio. */
   subagentWorktree: ((toolUseId: string) => string | null) | null = null;
+  /** Subagent worktrees, Gemini (subagents/gemini.ts): the fence and, when on, the redirect this Gemini chat was launched with. */
+  geminiSubagents: { policyDir: string; home: string; subFolder: string; off: string; dir: string } | null = null;
   sessionId: string | null = null;
   events: Json[] = [];
   eventImageBytes = 0;
@@ -1081,6 +1083,9 @@ export class Connection {
   onTurnCancelled: Hook | null = null;
   /** Claude Code: one of the main agent's Agent / Task / SendMessage / TaskStop calls was seen or updated (subagent worktrees P2). */
   onClaudeTool: ((c: Connection, tool: string, toolUseId: string, input: Json, status: string, agentId: string) => void) | null = null;
+  /** Gemini: the main session's invoke_agent tool calls (a subagent starts and ends), from the stream the agent can't forge. */
+  onGeminiTool: ((c: Connection, toolCallId: string, title: string, status: string) => void) | null = null;
+  #geminiCalls = new Set<string>();
   /**
    * Claude Code: the adapter said one of the main agent's subagents ended (subagent_update of child `agentId`, the RFD form: state
    * idle with stopReason end_turn / cancelled / error, none, or unknown). The child's session id IS its agentId (claude-agent-acp
@@ -2851,6 +2856,17 @@ export class Connection {
         this.onClaudeTool(this, named, id, isDict(raw) ? raw : {}, isStr(status) ? status : '', isStr(agentId) ? agentId : '');
       } catch (error) {
         log.exception(error, 'onClaudeTool failed');
+      }
+    }
+    const delegating = /^Delegating to agent/.test(String(get(update, 'title') ?? ''));
+    if (main && this.onGeminiTool && isStr(status) && (this.#geminiCalls.has(id) || id.startsWith('invoke_agent') || delegating)) {
+      this.#geminiCalls.add(id); // its later updates may carry another title (an error's)
+      while (this.#geminiCalls.size > 100) this.#geminiCalls.delete(this.#geminiCalls.values().next().value!);
+      const title = get(update, 'title');
+      try {
+        this.onGeminiTool(this, id, isStr(title) ? title : '', status);
+      } catch (error) {
+        log.exception(error, 'onGeminiTool failed');
       }
     }
     if (kind !== 'tool_call_update') return;
@@ -6103,6 +6119,11 @@ export class Connection {
         ? {
           subagentIsolation: { on: this.subagentIsolationOn(), reason: this.subagentHooks.off, readOnly: this.subagentHooks.readOnly },
           ...(this.subagents.size && this.subagentActivity ? { subagentWorktrees: this.#subagentActivitySafe() } : {}),
+        }
+        : this.geminiSubagents
+        ? { // Gemini (subagents/gemini.ts): on when its edits are moved into a worktree; else why the fence alone runs
+          subagentIsolation: { on: !!this.geminiSubagents.subFolder, reason: this.geminiSubagents.off, readOnly: ['codebase_investigator', 'cli_help'] },
+          ...(this.subagentActivity ? { subagentWorktrees: this.#subagentActivitySafe() } : {}),
         }
         : {}),
       pendingChanges: [...this.pendingChanges.values()].map((v) => ({ ...v })),
