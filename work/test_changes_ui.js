@@ -140,6 +140,10 @@ test('polling only while Changes is visible and the agent works; refresh when a 
   assert.equal(C.shouldPoll({ tab: 'activity', visible: true, busy: true }), false);
   assert.equal(C.shouldPoll({ tab: 'changes', visible: false, busy: true }), false);
   assert.equal(C.shouldPoll({ tab: 'changes', visible: true, busy: false }), false);
+  // a chat in the project folder: other chats' edits show up while you look, busy or not
+  assert.equal(C.shouldPoll({ tab: 'changes', visible: true, busy: false, shared: true }), true);
+  assert.equal(C.shouldPoll({ tab: 'activity', visible: true, busy: false, shared: true }), false);
+  assert.equal(C.shouldPoll({ tab: 'changes', visible: false, busy: false, shared: true }), false);
   assert.equal(C.turnEnded(true, false), true);
   assert.equal(C.turnEnded(false, false), false);
   assert.equal(C.turnEnded(false, true), false);
@@ -654,4 +658,13 @@ test('each chat keeps its right-column tab: back on a chat, the tab you left it 
   C.sync({ id: 'chat2', busy: false });
   await flush();
   assert.ok(pane.classList.contains('tab-artifacts'), 'chat2 is back on Artifacts');
+});
+
+test('folderKey: two chats in the project folder (same root, scope, prefix) are one folder; other replies are their own', () => {
+  const a = { git: true, scope: 'uncommitted', root: 'C:/p', prefix: '' };
+  assert.equal(C.folderKey(a), C.folderKey({ ...a, files: [] }));
+  assert.notEqual(C.folderKey(a), C.folderKey({ ...a, root: 'C:/q' }));
+  assert.notEqual(C.folderKey(a), C.folderKey({ ...a, scope: 'branch' }));
+  assert.notEqual(C.folderKey(a), C.folderKey({ ...a, prefix: 'sub/' }));
+  assert.notEqual(C.folderKey({ git: true }), C.folderKey({ git: true }), 'no root: never merged with another');
 });

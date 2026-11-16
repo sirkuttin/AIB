@@ -179,6 +179,11 @@
     foot.append(status);
     return { foot, status, note, folder };
   }
+  /* Which folder a Changes reply is about: two chats with the same key see the same files (two chats in the project folder). A reply
+     without a root (an older server) is its own. */
+  let anon = 0;
+  const folderKey = (data) =>
+    data && data.root ? [data.scope || '', String(data.root), data.prefix || ''].join('|') : 'anon:' + ++anon;
   /* Narrow strip chip. */
   const stripText = (n) => (num(n) ? num(n) + ' changed' : '');
   /* Notes shown above a diff when the picture is not the whole story. */
@@ -213,8 +218,9 @@
     }
     return s;
   }
-  /* Poll every 10 s only while you are looking at Changes and the agent works. */
-  const shouldPoll = (o) => !!(o && o.tab === 'changes' && o.visible && o.busy);
+  /* Poll every 10 s only while you are looking at Changes and the agent works, or, for a chat in the project folder (shared: any
+     chat's edits land there and show here), while you are looking at Changes at all. */
+  const shouldPoll = (o) => !!(o && o.tab === 'changes' && o.visible && (o.busy || o.shared));
   /* A refresh is due when a turn just ended (busy true -> false). */
   const turnEnded = (was, now) => !!was && !now;
   /* Accordion state: the list of open file paths. Toggling adds or removes one; pruning drops files that left the list. */
@@ -228,6 +234,7 @@
     return (open || []).filter((p) => have.has(p));
   };
   const pure = {
+    folderKey,
     moreLeft,
     moreText,
     docPagesText,
@@ -565,12 +572,19 @@
     }
     function paintBadges() {
       const t = data && data.git ? totalsOf(data) : null;
-      // split view: the files of both panes' chats (the same whichever has focus)
+      // split view: the files of both panes' chats (the same whichever has focus). Two chats in the project folder see the same
+      // files: those count once (folderKey).
       const n = splitOn()
-        ? SP.keys.reduce((m, k) => {
-            const x = SP.secs.get(k);
-            return m + (x && x.data && x.data.git ? shownCount(x.data) : 0);
-          }, 0)
+        ? (() => {
+            const seen = new Set();
+            return SP.keys.reduce((m, k) => {
+              const x = SP.secs.get(k),
+                key = x && x.data && x.data.git ? folderKey(x.data) : '';
+              if (!key || seen.has(key)) return m;
+              seen.add(key);
+              return m + shownCount(x.data);
+            }, 0);
+          })()
         : t
           ? shownCount(data)
           : 0;
@@ -826,10 +840,11 @@
       if (tab === 'artifacts' && was !== 'artifacts' && AR()) AR().shown();
     }
     function schedule() {
-      const want = shouldPoll({ tab: state.tab, visible: paneVisible(), busy: chat.busy });
+      const poll = () => shouldPoll({ tab: state.tab, visible: paneVisible(), busy: chat.busy, shared: isFolderView(chat, data) });
+      const want = poll();
       if (want && !timer)
         timer = win.setInterval(() => {
-          if (shouldPoll({ tab: state.tab, visible: paneVisible(), busy: chat.busy })) load(true);
+          if (poll()) load(true);
           else schedule();
         }, POLL_MS);
       else if (!want && timer) {
@@ -997,16 +1012,23 @@
       return s;
     }
     const spFiles = (s) => (s.data && s.data.git ? splitDocFiles(s.data).files : []);
+    /* A section's count: every changed file, also those past the first page of 300 the section lists (the tab badge's count). */
+    const spCount = (s) => (s.data && s.data.git ? shownCount(s.data) : 0);
     function spSumLine(s) {
-      const fs = spFiles(s);
+      const fs = spFiles(s),
+        t = totalsOf(s.data);
       let a = 0,
         d = 0;
       for (const f of fs) {
         a += num(f.added);
         d += num(f.removed);
       }
+      if (t.files > ((s.data && s.data.files) || []).length) {
+        a = num(t.added);
+        d = num(t.removed);
+      }
       const base = (s.data && s.data.worktree && s.data.worktree.base) || '';
-      return plural(fs.length, 'file', 'files') + ' · +' + a + ' ' + MINUS + d + (base ? ' vs ' + base : '');
+      return plural(spCount(s), 'file', 'files') + ' · +' + a + (t.partial ? '+' : '') + ' ' + MINUS + d + (base ? ' vs ' + base : '');
     }
     function spFoot(s) {
       const fs = spFiles(s),
@@ -1055,10 +1077,14 @@
       }
       return item;
     }
+    /* Fetched when a file opens, and again when its numbers change while it is open (as with one chat): the diff on screen
+       stays the one shown until the new one is in, so nothing flashes "Loading…". */
     async function spDetail(s, f) {
       const sig = fileSignature(f),
-        id = s.id;
-      s.cache.set(f.path, { sig, loading: true, d: null, err: '' });
+        id = s.id,
+        prev = s.cache.get(f.path),
+        mine = (s.dseq = (s.dseq || 0) + 1);
+      s.cache.set(f.path, { sig, seq: mine, loading: true, d: (prev && prev.d) || null, err: '' });
       let d = null,
         err = '';
       try {
@@ -1066,8 +1092,9 @@
       } catch (e) {
         err = e.message || 'Request failed';
       }
-      if (id !== s.id) return;
-      s.cache.set(f.path, { sig, loading: false, d, err });
+      const cur = s.cache.get(f.path);
+      if (id !== s.id || !cur || cur.seq !== mine) return;
+      s.cache.set(f.path, { sig, seq: mine, loading: false, d: err ? (prev && prev.d) || null : d, err });
       spPaint(s);
     }
     function spPaint(s) {
@@ -1075,14 +1102,19 @@
         S = SUI();
       const info = S ? S.chatInfo(s.key) : { key: s.key, title: 'Conversation' };
       const A = win.ActivityUI;
-      if (A && A.splitHead) A.splitHead(doc, info, plural(fs.length, 'file', 'files'), s.head);
+      if (A && A.splitHead) A.splitHead(doc, info, plural(spCount(s), 'file', 'files'), s.head);
       s.open = pruneOpen(s.open, fs);
+      for (const p of [...s.cache.keys()]) if (!fs.some((f) => f.path === p)) s.cache.delete(p);
+      for (const f of fs) {
+        const c = s.cache.get(f.path);
+        if (s.open.includes(f.path) && c && !c.loading && c.sig !== fileSignature(f)) spDetail(s, f);
+      }
       const sig = JSON.stringify([
         s.open,
         fs.map(fileSignature),
         fs.map((f) => {
           const c = s.cache.get(f.path);
-          return c ? [c.loading ? 1 : 0, c.err, c.d ? 1 : 0] : 0;
+          return c ? [c.sig, c.loading ? 1 : 0, c.err, c.d ? 1 : 0] : 0;
         }),
       ]);
       if (sig !== s.listSig) {

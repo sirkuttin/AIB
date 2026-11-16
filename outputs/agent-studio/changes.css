@@ -171,8 +171,10 @@
     display: none;
   }
 }
+/* The counts never shrink: when the bar is short of room (the folder chat's longer heading and "8 files +16 −11" at 280 px),
+   the heading gives way with an ellipsis (its full text is its tooltip), not the numbers. */
 .cg-sum {
-  flex: 1 1 auto;
+  flex: 1 0 auto;
   min-width: 0;
   text-align: right;
   white-space: nowrap;
