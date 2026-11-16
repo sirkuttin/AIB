@@ -231,7 +231,7 @@ test('Silent reminders: a switch under each phone, on unless the phone says off,
   assert.equal(JSON.stringify(posts.find((p) => p[0] === 'devices/prefs')), JSON.stringify(['devices/prefs', { id: 'p1', remind: false }]));
 });
 
-test('device row: Phone / Computer control saves at once; Silent reminders only for phones; wording follows the kind', async () => {
+test('device row: Phone / Computer asks in that row and saves only on "Make it a ..."; Silent reminders only for phones; wording follows the kind', async () => {
   const pc = ['phone.read', 'phone.answer', 'phone.prompt', 'phone.start', 'phone.approve', 'pc.always', 'pc.files', 'pc.terminal', 'pc.projects', 'phone.push'];
   const view = base(Object.assign({}, SIGNED_IN, { serving: true }), {}, { devices: [{ id: 'p1', name: 'Pixel 9', kind: 'phone', scopes: ['phone.read'], lastSeen: 0 }, { id: 'c1', name: 'Laptop', kind: 'computer', scopes: pc, lastSeen: 0 }], pairing: {} });
   const posts = [];
@@ -249,11 +249,22 @@ test('device row: Phone / Computer control saves at once; Silent reminders only 
   radios[1].checked = true;
   radios[1].dispatch ? radios[1].dispatch('change') : radios[1].dispatchEvent({ type: 'change' });
   await flush();
+  // the pick only asks (a radio also moves with an arrow key, or under a stray click): nothing is saved yet (owner 2026-11-16)
+  assert.ok(!posts.some((p) => p[0] === 'devices/kind'), 'picking Computer saves nothing by itself');
+  // the fake page keeps each earlier draw's slot: the last one is what is on screen
+  const drawn = () => box.children[box.children.length - 1];
+  const ask = drawn().querySelectorAll('div').filter((e) => e.className && e.className.includes('dv-kind-ask'));
+  assert.equal(ask.length, 1);
+  assert.ok(ask[0].textContent.includes('Make "Pixel 9" a computer?'));
+  ask[0].querySelectorAll('button').find((b) => b.textContent === 'Make it a computer').click();
+  await flush();
   assert.equal(JSON.stringify(posts.find((p) => p[0] === 'devices/kind')), JSON.stringify(['devices/kind', { id: 'p1', kind: 'computer' }]));
-  // choosing the kind it already has posts nothing
+  // choosing the kind it already has asks and posts nothing
   posts.length = 0;
-  radios[3].checked = true;
-  radios[3].dispatch ? radios[3].dispatch('change') : radios[3].dispatchEvent({ type: 'change' });
+  const again = drawn().querySelectorAll('input').filter((i) => i.dataset && i.dataset.kind);
+  again[3].checked = true;
+  again[3].dispatch ? again[3].dispatch('change') : again[3].dispatchEvent({ type: 'change' });
   await flush();
   assert.ok(!posts.some((p) => p[0] === 'devices/kind'));
+  assert.equal(drawn().querySelectorAll('div').filter((e) => e.className && e.className.includes('dv-kind-ask')).length, 0);
 });

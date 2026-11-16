@@ -921,6 +921,7 @@ html[data-ui-scaled] .st-page {
   overflow: hidden;
 }
 .dv-kind-option {
+  position: relative; /* holds its hidden radio: without it the radio sat outside the scrolled box, far from its label */
   margin: 0;
   padding: 4px 14px;
   font-size: 12px;

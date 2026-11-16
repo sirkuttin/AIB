@@ -389,8 +389,8 @@ export class WebServer {
       });
     }
     for (const [key, handler] of devicesRoutes()) {
-      this.native.set(key, async (c, url, body) => {
-        const [status, payload] = await handler(c, url, body);
+      this.native.set(key, async (c, url, body, request) => {
+        const [status, payload] = await handler(c, url, body, request);
         return this.json(status, payload);
       });
     }

@@ -474,7 +474,7 @@ export class PhoneAccess implements SetupHost {
   }
 
   /** Phone / Computer on a paired device's row. Open sockets are re-checked now; the device's page loads the other page next time. */
-  async setKind(id: unknown, kindValue: unknown): Promise<PublicDevice | null> {
+  async setKind(id: unknown, kindValue: unknown, by = 'the PC page'): Promise<PublicDevice | null> {
     if (typeof id !== 'string' || (kindValue !== 'phone' && kindValue !== 'computer')) return null;
     const device = await this.devices.setKind(id, kindValue);
     if (device) {
@@ -484,6 +484,7 @@ export class PhoneAccess implements SetupHost {
         name: device.name,
         action: 'kind',
         result: `${device.name} is now a ${kindValue}`,
+        by, // who made the change (owner 2026-11-16: a kind change he did not make had no trace of where it came from)
       });
     }
     return device;
