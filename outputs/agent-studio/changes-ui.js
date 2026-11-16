@@ -152,7 +152,7 @@
      one fixed footer line (no condition, so nothing toggles [SF 8]). An old chat that still has its own copy (the server sends
      data.worktree, a studio/chat-* branch) keeps the branch view and gets a footer line that points at its agent. chat.folder comes
      from chat.js (an open chat without live.worktree that is not a helper). */
-  const FOLDER_SCOPE = 'Project folder · uncommitted';
+  const FOLDER_SCOPE = 'Project folder';
   const FOLDER_FOOT =
     "Nothing to merge: edits go straight into the project folder, from any chat. Ask the agent to commit or undo.";
   const COPY_FOOT = 'This chat works in its own copy. To bring its work into the project, ask its agent to merge it.';
@@ -1053,7 +1053,9 @@
         inner = el('span', 'cg-path-in');
       inner.append(el('span', 'cg-path-dir', p.dir), el('b', '', p.base));
       path.append(inner);
-      b.append(el('span', 'cg-st ' + info.cls, info.letter), path);
+      const caret = el('span', 'cg-caret', isOpen ? '▾' : '▸');
+      caret.setAttribute('aria-hidden', 'true');
+      b.append(caret, el('span', 'cg-st ' + info.cls, info.letter), path);
       if (f.binary) b.append(el('span', 'cg-bin', 'binary'));
       else b.append(el('span', 'cg-add', addText(f)), el('span', 'cg-del', delText(f)));
       b.onclick = () => {
@@ -1097,12 +1099,25 @@
       s.cache.set(f.path, { sig, seq: mine, loading: false, d: err ? (prev && prev.d) || null : d, err });
       spPaint(s);
     }
+    /* Two chats in the same project folder see the same files: the first one's section lists them, a later one only keeps its
+       header (a "Project folder" line instead of a second identical list). Only a folder chat (no own copy) can be one. */
+    function spDup(s) {
+      const key = s.data && s.data.git && !s.data.worktree && s.data.root ? folderKey(s.data) : '';
+      if (!key) return false;
+      for (const k of SP.keys) {
+        if (k === s.key) return false;
+        const x = SP.secs.get(k);
+        if (x && x.data && x.data.git && !x.data.worktree && x.data.root && folderKey(x.data) === key) return true;
+      }
+      return false;
+    }
     function spPaint(s) {
       const fs = spFiles(s),
         S = SUI();
       const info = S ? S.chatInfo(s.key) : { key: s.key, title: 'Conversation' };
       const A = win.ActivityUI;
-      if (A && A.splitHead) A.splitHead(doc, info, plural(spCount(s), 'file', 'files'), s.head);
+      const dup = spDup(s);
+      if (A && A.splitHead) A.splitHead(doc, info, dup ? 'Project folder · files listed above' : plural(spCount(s), 'file', 'files'), s.head);
       s.open = pruneOpen(s.open, fs);
       for (const p of [...s.cache.keys()]) if (!fs.some((f) => f.path === p)) s.cache.delete(p);
       for (const f of fs) {
@@ -1110,6 +1125,7 @@
         if (s.open.includes(f.path) && c && !c.loading && c.sig !== fileSignature(f)) spDetail(s, f);
       }
       const sig = JSON.stringify([
+        dup,
         s.open,
         fs.map(fileSignature),
         fs.map((f) => {
@@ -1121,15 +1137,17 @@
         s.listSig = sig;
         const ae = doc.activeElement,
           focus = ae && s.list.contains(ae) ? ae.dataset.path : null;
-        s.list.replaceChildren(...fs.map((f) => spRow(s, f)));
+        s.list.replaceChildren(...(dup ? [] : fs).map((f) => spRow(s, f))); // a shared folder is listed once
         if (focus) {
           const n = [...s.list.querySelectorAll('.cg-file')].find((c) => c.dataset.path === focus);
           if (n) n.focus({ preventScroll: true });
         }
       }
-      s.list.hidden = !fs.length;
-      s.none.hidden = !!fs.length;
+      s.root.classList.toggle('sp-dup', dup);
+      s.list.hidden = dup || !fs.length;
+      s.none.hidden = dup || !!fs.length;
       spFoot(s);
+      if (dup) s.fp.foot.hidden = s.fp.status.hidden = true;
     }
     async function spLoad(s, force) {
       const S = SUI(),
@@ -1163,6 +1181,10 @@
         s.err = e.status === 404 ? '' : e.message;
       }
       spPaint(s);
+      for (const k of SP.keys) {
+        const o = SP.secs.get(k);
+        if (o && o !== s) spPaint(o); // which section lists the shared folder can change when this one's reply lands
+      }
       paintBadges();
     }
     function splitSync(keys) {

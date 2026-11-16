@@ -142,7 +142,7 @@ worksInTest('24: a folder chat\'s Changes tab: fixed header, no Merge or Discard
       buttons: p.querySelectorAll('.cg-foot button, .cg-merge-btn, .cg-discard').length };
   })()`);
   assertEquals(f, {
-    scope: 'Project folder · uncommitted',
+    scope: 'Project folder',
     foot: "Nothing to merge: edits go straight into the project folder, from any chat. Ask the agent to commit or undo.",
     footShown: true,
     buttons: 0,

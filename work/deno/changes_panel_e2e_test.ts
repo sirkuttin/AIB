@@ -93,7 +93,7 @@ changesTest('Changes, folder chat: the counts stay whole at the default width; t
   assertEquals(bar.sum, '8 files +14 −11');
   assert(bar.sumWhole, `the counts are cut: ${JSON.stringify(bar)}`);
   assert(bar.inBar, `heading, counts and refresh sit side by side: ${JSON.stringify(bar)}`);
-  assertEquals([bar.scope, bar.title], ['Project folder · uncommitted', 'Project folder · uncommitted']);
+  assertEquals([bar.scope, bar.title], ['Project folder', 'Project folder']);
 });
 
 changesTest('Changes, folder chat not working: an edit another chat makes in the folder shows up by itself', async (lab) => {
@@ -171,4 +171,42 @@ changesTest('Changes, split view: a section counts every changed file, also past
     badge: document.querySelector('#paneTab-changes .pane-badge').textContent,
   }))()`);
   assertEquals(s, { head: '320 files', foot: '320 files · +300+ −0', badge: '320' });
+});
+
+changesTest('Changes, split view, two folder chats: the folder lists once, rows have the arrow, the idle line says Ready', async (lab) => {
+  const page = lab.page,
+    ws = lab.fx.workspace;
+  repo(ws);
+  write(`${ws}\\notes.txt`, 'first line\n');
+  write(`${ws}\\other.txt`, 'x\n');
+  const a = await folderChat(lab, 'ONCEA');
+  const b = await lab.chat();
+  await b.start();
+  b.say('Second chat ONCEB');
+  b.end();
+  await lab.select(b);
+  await shown(page, 'ONCEB');
+  await lab.select(a);
+  await shown(page, 'ONCEA');
+  await page.eval(`AgentSplitUI.splitTab(${JSON.stringify(b.key)}, 'row')`);
+  await page.waitFor(`AgentSplitUI.panes().length === 2 && document.querySelectorAll('#splitChanges .sp-grp').length === 2`, 15000, 'two sections');
+  await page.eval(`document.getElementById('paneTab-changes').click()`);
+  await page.waitFor(`document.querySelectorAll('#splitChanges .cg-file').length === 2`, 20000, 'the folder files, once').catch(async (e) => {
+    throw new Error(`${e.message}: ${await page.eval<string>(`document.getElementById('splitChanges').innerText`)}`);
+  });
+  await settle(1500);
+  const r = await page.eval<{ files: number[]; second: string; arrows: string[]; badge: string }>(`(() => {
+    const g = [...document.querySelectorAll('#splitChanges .sp-grp')];
+    return { files: g.map((x) => [...x.querySelectorAll('.cg-file')].filter((f) => f.offsetParent).length),
+      second: g[1].querySelector('.sp-sub').textContent,
+      arrows: [...g[0].querySelectorAll('.cg-file .cg-caret')].map((c) => c.textContent),
+      badge: document.querySelector('#paneTab-changes .pane-badge').textContent };
+  })()`);
+  assertEquals(r.files, [2, 0], JSON.stringify(r));
+  assertEquals(r.second, 'Project folder · files listed above');
+  assert(r.arrows.length === 2 && r.arrows.every((c) => c === '▸' || c === '▾'), JSON.stringify(r.arrows));
+  assertEquals(r.badge, '2');
+  await page.eval(`document.getElementById('paneTab-activity').click()`);
+  await page.waitFor(`[...document.querySelectorAll('#splitActivity .sp-sub')].some((n) => n.textContent === 'Ready')`, 15000, 'Ready');
+  assert(!(await page.eval<boolean>(`/idle/i.test(document.getElementById('splitActivity').innerText)`)), 'no "idle"');
 });
