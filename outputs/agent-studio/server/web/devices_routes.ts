@@ -10,12 +10,20 @@ import type { WebContext } from './server.ts';
 
 type Json = Record<string, unknown>;
 type Reply = [number, unknown];
-type Handler = (ctx: WebContext, url: URL, body: Json | null) => Promise<Reply> | Reply;
+type Handler = (ctx: WebContext, url: URL, body: Json | null, request?: Request) => Promise<Reply> | Reply;
+
+/** Who changed a device, for the activity log: these routes answer the PC's own page only (the phone port never serves them and the
+ * computer bridge refuses them), so it is the PC page; the browser is from its User-Agent (the AIB window is Edge WebView2). */
+export function changedBy(request?: Request): string {
+  const agent = request?.headers.get('user-agent') ?? '';
+  const browser = /Edg\//.test(agent) ? 'Edge or the AIB window' : /Firefox\//.test(agent) ? 'Firefox' : /Chrome\//.test(agent) ? 'Chrome' : '';
+  return 'the PC page, Settings > Remote control' + (browser ? ` (${browser})` : '');
+}
 
 function wrap(handler: Handler): Handler {
-  return async (ctx, url, body) => {
+  return async (ctx, url, body, request) => {
     try {
-      return await handler(ctx, url, body);
+      return await handler(ctx, url, body, request);
     } catch (error) {
       if (error instanceof PairingError) return [error.status, { error: error.message, code: error.code }];
       if (error instanceof RangeError) throw new ValueError(error.message);
@@ -52,9 +60,9 @@ export function devicesRoutes(): Map<string, Handler> {
     if (!device) return [404, { error: 'That phone is no longer paired.', code: 'no_device' }];
     return [200, { ok: true, device }];
   });
-  routes.set('POST /api/live/devices/kind', async (ctx, _url, body) => {
+  routes.set('POST /api/live/devices/kind', async (ctx, _url, body, request) => {
     if (body?.kind !== 'phone' && body?.kind !== 'computer') throw new ValueError('kind must be phone or computer');
-    const device = await ctx.phone.setKind(body?.id, body.kind);
+    const device = await ctx.phone.setKind(body?.id, body.kind, changedBy(request));
     if (!device) return [404, { error: 'That device is no longer paired.', code: 'no_device' }];
     return [200, { ok: true, device }];
   });

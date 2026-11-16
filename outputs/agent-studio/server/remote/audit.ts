@@ -18,6 +18,8 @@ export interface AuditEntry {
   /** A file or folder the action was about (a download, a file outside the project, a project added or removed): the path only,
    * never the content. */
   path?: string;
+  /** Who made a change on the PC (a device's kind: "the PC page, Settings > Remote control (Chrome)"). */
+  by?: string;
 }
 
 export const AUDIT_FILE = 'remote-audit.jsonl';
@@ -32,7 +34,7 @@ export class Audit {
     this.old = stateDir ? inDir(stateDir, AUDIT_OLD) : null;
   }
 
-  write(entry: { device?: string; name?: string; action: string; chat?: string; result: string; path?: string }): void {
+  write(entry: { device?: string; name?: string; action: string; chat?: string; result: string; path?: string; by?: string }): void {
     if (this.path === null) return;
     const line: AuditEntry = {
       time: Math.round(this.clock()),
@@ -42,6 +44,7 @@ export class Audit {
       chat: String(entry.chat ?? '').slice(0, 100),
       result: entry.result.slice(0, 80),
       ...(entry.path ? { path: String(entry.path).slice(0, 400) } : {}),
+      ...(entry.by ? { by: String(entry.by).slice(0, 80) } : {}),
     };
     try {
       let size = 0;

@@ -58,6 +58,7 @@
     scopes: {}, // claim id -> Set of scopes picked on the approve dialog
     kinds: {}, // claim id -> 'phone' | 'computer' picked on the approve dialog (starts on what the device suggested)
     confirm: '', // 'all' or a device id waiting for its second click
+    kindAsk: null, // {id, kind}: a paired device's Phone / Computer change waiting for its "Make it a ..." click
     activity: null,
     showActivity: false,
     busy: '',
@@ -105,7 +106,7 @@
   function activityLine(e, when) {
     const who = e.name || (e.device ? 'a device' : 'AIB');
     const chat = e.chat ? ' · ' + (e.chatTitle ? '"' + e.chatTitle + '"' : 'chat ' + String(e.chat).slice(0, 8)) : '';
-    return when + ' · ' + who + ' · ' + e.action + chat + ': ' + e.result + (e.path ? ' · ' + e.path : '');
+    return when + ' · ' + who + ' · ' + e.action + chat + ': ' + e.result + (e.path ? ' · ' + e.path : '') + (e.by ? ' · by ' + e.by : '');
   }
   function ago(seconds, now) {
     const s = Math.max(0, Math.floor((now || Date.now()) / 1000 - Number(seconds || 0)));
@@ -880,12 +881,40 @@
       draw();
     });
   }
-  /* The same control on a paired device's row: changing it saves at once (devices/kind), keeps the device paired, and the device's
-     page is the other one on its next load. */
+  /* The same control on a paired device's row. Picking the other kind only asks (drawKindAsk): a radio also moves with an arrow key
+     and sits where a click meant for something else can land, and Computer gives a device Terminal and Files, so the change is
+     saved only by the "Make it a ..." button that names the device (owner 2026-11-16: his phone became a computer unasked). It
+     keeps the device paired, and the device's page is the other one on its next load. */
   function drawRowKind(d) {
-    return kindControl(d.id, d.kind === 'computer' ? 'computer' : 'phone', (value) => {
-      if (value !== (d.kind === 'computer' ? 'computer' : 'phone')) act('devices/kind', { id: d.id, kind: value }, 'kind');
+    const now = d.kind === 'computer' ? 'computer' : 'phone';
+    return kindControl(d.id, now, (value) => {
+      D.kindAsk = value === now ? null : { id: d.id, kind: value };
+      draw();
     });
+  }
+  function drawKindAsk(d) {
+    const ask = D.kindAsk;
+    if (!ask || ask.id !== d.id || ask.kind === (d.kind === 'computer' ? 'computer' : 'phone')) return null;
+    const box = el('div', null, 'st-actions dv-kind-ask');
+    box.dataset.kindAsk = ask.kind;
+    box.append(
+      el(
+        'span',
+        ask.kind === 'computer'
+          ? 'Make "' + d.name + '" a computer? It gets every switch, Terminal and Files included, and opens the full AIB page.'
+          : 'Make "' + d.name + '" a phone? It loses its computer switches and opens the phone page.',
+        'st-note',
+      ),
+      btn(ask.kind === 'computer' ? 'Make it a computer' : 'Make it a phone', () => {
+        D.kindAsk = null;
+        act('devices/kind', { id: d.id, kind: ask.kind }, 'kind');
+      }, ask.kind === 'computer' ? 'st-danger' : 'primary', !!D.busy),
+      btn('Cancel', () => {
+        D.kindAsk = null;
+        draw();
+      }),
+    );
+    return box;
   }
   function kindControl(id, kind, pick) {
     const group = el('div', null, 'dv-kind');
@@ -1037,12 +1066,8 @@
       return;
     }
     if (v.devicesWarning) frag.append(el('p', v.devicesWarning, 'st-note bad'));
-    for (const claim of (v.pairing && v.pairing.pending) || []) drawApprove(frag, claim);
-    if (v.pairing && v.pairing.anotherTried && !(v.pairing.open && v.pairing.open.anotherTried)) {
-      frag.append(el('p', 'Another device tried the last code after your phone used it.', 'st-note bad'));
-    }
-    drawPairing(frag, v);
     const devices = v.devices || [];
+    if (D.kindAsk && !devices.some((d) => d.id === D.kindAsk.id)) D.kindAsk = null;
     if (!devices.length) frag.append(el('p', 'No phones are paired. A house with no phones cannot stand… on the couch and answer chats.', 'st-note'));
     const list = el('div', null, 'dv-list');
     for (const d of devices) {
@@ -1057,6 +1082,8 @@
       );
       row.append(head);
       row.append(drawRowKind(d));
+      const ask = drawKindAsk(d);
+      if (ask) row.append(ask);
       row.append(
         el(
           'p',
@@ -1149,6 +1176,13 @@
       }
     }
     frag.append(row);
+    // The code and the approve box open under the Add button, never above the rows: drawn above, the 300 px code box slid the
+    // first device's row under the pointer still on Add a phone, so the next click landed on that row (owner 2026-11-16).
+    for (const claim of (v.pairing && v.pairing.pending) || []) drawApprove(frag, claim);
+    if (v.pairing && v.pairing.anotherTried && !(v.pairing.open && v.pairing.open.anotherTried)) {
+      frag.append(el('p', 'Another device tried the last code after your phone used it.', 'st-note bad'));
+    }
+    drawPairing(frag, v);
     if (D.showActivity) {
       const log = el('div', null, 'dv-activity');
       const entries = D.activity || [];
