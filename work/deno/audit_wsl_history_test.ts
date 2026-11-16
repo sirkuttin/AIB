@@ -202,7 +202,6 @@ Deno.test({
 Deno.test({
   name: 'KNOWN-BROKEN: audit wsl discover: "Find more chats via agent" is never answered by a WSL chat\'s Linux agent',
   ...T,
-  ignore: !Deno.env.get('AUDIT_WSL'),
   async fn() {
     // Studio.listAgentSessions picks ANY live chat of the provider (studio.ts:991). With a WSL Claude chat open, the Windows
     // "Find more chats via agent" button asks the agent inside the distro: it lists the distro's sessions (Linux cwds, filtered
@@ -214,5 +213,47 @@ Deno.test({
     const [status, payload] = await a.liveCall('discover', { provider: 'claude' });
     const asked = lab.received().filter((m) => m.method === 'session/list');
     assertEquals(asked.length, 0, `the Linux agent was asked for the Windows list (${status} ${JSON.stringify(payload)})`);
+  },
+});
+
+Deno.test({
+  name: 'F4: "Find more chats via agent" for a WSL project asks the running agent in its distro (Linux folder) and lists refs',
+  ...T,
+  async fn() {
+    await keeperBinary();
+    await using lab = new WslLab();
+    const a = lab.studio();
+    a.connectionFactory = (command, cwd, provider, options) => { // the fake agent's session/list answers Linux cwds (/fixture/project)
+      const wsl = options?.wsl ? { ...options.wsl, program: undefined } : options?.wsl;
+      return new Connection(fake('--cancel-aware', '--list-sessions'), cwd, provider, { ...options, wsl });
+    };
+    await a.connect('claude', REF);
+    const [status, payload] = await a.liveCall('discover', { provider: 'claude', cwd: REF });
+    assertEquals(status, 200);
+    const asked = lab.received().filter((m) => m.method === 'session/list');
+    assertEquals(asked.length, 1, 'the Linux agent was asked once');
+    assertEquals((asked[0].params as Json).cwd, '/home/u/app', 'with the Linux folder, never the ref');
+    const p = payload as Json;
+    assertEquals(p.via, 'studio-connection');
+    assertEquals((p.sessions as Json[]).map((s) => s.cwd), ['wsl://ubuntu/fixture/project', 'wsl://ubuntu/fixture/project']);
+    assertEquals(p.nextCursor, 'offset:2');
+  },
+});
+
+Deno.test({
+  name: 'F4: "Find more chats via agent" for a WSL project with no running agent there answers empty with a one-line reason (nothing started)',
+  ...T,
+  async fn() {
+    await keeperBinary();
+    await using lab = new WslLab();
+    const a = lab.studio();
+    const spawned = lab.host.link.spawned.length;
+    const [status, payload] = await a.liveCall('discover', { provider: 'claude', cwd: 'wsl://debian/home/u/app' });
+    assertEquals(status, 200);
+    const p = payload as Json;
+    assertEquals([p.supported, p.sessions, p.via], [true, [], 'none']);
+    assert(/Open a Claude Code chat in .+ first/.test(String(p.note)), String(p.note));
+    assertEquals(lab.host.link.spawned.length, spawned, 'nothing started in a distro');
+    assertEquals(lab.received().filter((m) => m.method === 'session/list').length, 0);
   },
 });
