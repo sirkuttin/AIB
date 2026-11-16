@@ -231,6 +231,27 @@ export interface HelperMethods {
    * `error`: AIB cannot take it, the forwarder says so at once). `mcp.closed` true: AIB was quit on purpose, so new messages are
    * answered "AIB is closed" at once; any other call from AIB clears it. Offered only when helper.ready carries `mcp: {socket}`.
    */
+  /**
+   * Local-only files of WSL projects (helper/local_only.ts: worktrees/local_only.ts, files.ts and local_backup.ts run natively). Linux
+   * paths only. `main` is the project's main folder; `root` the folder Files shows (main itself, or a chat's copy, which must then be
+   * inside the helper's `<data>/worktrees`). Answers are what files_routes.ts answers for a Windows project, with `localOnly.main`
+   * the Linux main folder. `localOnly.ensure` sets the default `/private` up (ensureDefault); `localOnly.chat` is what a chat is told
+   * (local_only.ts chatLocalOnly: entries, dirs, private; it makes the main folder's private/ for a worktree chat). `localOnly.read`
+   * reads like files.read, from `readRoot` (the main folder for a local-only path of a chat's copy). `localOnly.exclude` is POST
+   * files/exclude ({status, body}); `localOnly.backup` the daily zip into `<data>/local-only-backups` of the given projects and of the
+   * projects with chat copies (only with `--data`).
+   */
+  'localOnly.ensure': { params: { project: string }; result: { state: string } };
+  'localOnly.chat': { params: { project: string; worktree: boolean }; result: { localOnly: { entries: string[]; dirs: string[]; private: string } | null } };
+  'localOnly.list': { params: { root: string; main: string; dir?: string }; result: Record<string, unknown> };
+  'localOnly.search': { params: { root: string; main: string; query: string }; result: Record<string, unknown> };
+  'localOnly.read': {
+    params: { root: string; main: string; rel: string; maxBytes?: number };
+    result: { bytesB64: string; size: number; truncated: boolean; mtimeMs: number; readRoot: string; local?: boolean; from?: 'main' };
+  };
+  'localOnly.exclude': { params: { root: string; main: string; action: string; path?: string; undo?: string }; result: { status: number; body: Record<string, unknown> } };
+  'localOnly.moveStrays': { params: { root: string; main: string }; result: { moved: [string, string][]; failed: string[] } };
+  'localOnly.backup': { params: { projects?: string[] }; result: { results: Record<string, { status: string; files?: number }> } };
   'mcp.accept': { params: { rid: string }; result: { ok: boolean } };
   'mcp.reply': { params: { rid: string; status: number; body?: string; error?: string }; result: { ok: boolean } };
   'mcp.closed': { params: { closed: boolean }; result: { ok: boolean } };

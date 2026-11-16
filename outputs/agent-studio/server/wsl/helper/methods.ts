@@ -34,6 +34,7 @@ import { bgtaskMethods } from './bgtasks.ts';
 import { type EnvMode, envPrereqs, type PrereqDeps } from './prereqs.ts';
 import { signinStatus } from './signin_status.ts';
 import { aibMethods, type RemoveDeps } from './aib_remove.ts';
+import { localOnlyMethods, rawRead } from './local_only.ts';
 
 export const LIST_DIRS_DEFAULT = 500, LIST_DIRS_MAX = 2000;
 export const SESSIONS_DEFAULT = 500, SESSIONS_MAX = 5000;
@@ -196,6 +197,7 @@ export function makeMethods(ctx: HelperContext): Handlers {
     // background tasks, the ownership check and the agents' process trees (helper/bgtasks.ts)
     ...bgtaskMethods({ env: ctx.env, store: (p) => sessionStore(ctx, p) }),
     ...linkingMethods(ctx), // Linking (WSL) phase 2: env.prereqs, agents.signinStatus (agents.uninstall is in installMethods)
+    ...localOnlyMethods(data), // local-only files from the main folder (helper/local_only.ts); chat copies only under <data>/worktrees
     ...(data ? { ...worktreeMethods(data), ...mergeMethods(data), ...syncMethods(ctx.sync ?? new HelperSync(data)) } : {}),
     ...(ctx.root ? installMethods({ root: ctx.root, notify: ctx.notify ?? (() => {}), refreshPath: ctx.refreshPath }) : {}),
     // Linking (WSL) phase 3: disk use and Remove AIB from this distro (helper/aib_remove.ts), only with both folders known
@@ -351,34 +353,7 @@ function phaseOne(ctx: HelperContext): Handlers {
       return { ...found, matches: found.matches.slice(0, limit), truncated: true };
     },
 
-    'files.read': (p) => {
-      const [abs, path] = files.resolveInside(absPath(p, 'root'), str(p, 'rel'));
-      if (!path) throw new files.FilesError('Choose a file', 'not_file');
-      const st = stat(abs);
-      if (!st) throw new files.FilesError('Not found', 'not_found', 404);
-      if (!st.isFile) throw new files.FilesError('Not a file', 'not_file');
-      const cap = Math.min(int(p, 'maxBytes', files.LIMITS.readBytes), files.LIMITS.readBytes);
-      const file = Deno.openSync(abs, { read: true });
-      const buf = new Uint8Array(Math.min(cap, st.size));
-      let got = 0;
-      try {
-        while (got < buf.length) {
-          const n = file.readSync(buf.subarray(got));
-          if (n === null) break;
-          got += n;
-        }
-      } finally {
-        file.close();
-      }
-      return {
-        bytesB64: encodeBase64(buf.subarray(0, got)),
-        size: st.size,
-        truncated: st.size > got,
-        mtimeMs: st.mtime?.getTime() ?? 0,
-        path,
-        abs,
-      };
-    },
+    'files.read': (p) => rawRead(absPath(p, 'root'), str(p, 'rel'), Math.min(int(p, 'maxBytes', files.LIMITS.readBytes), files.LIMITS.readBytes)),
 
     'files.outside': async (p) => {
       // AIB's own folders in the distro (~/.aib-server, or AIB_WSL_ROOT under test) are never shown

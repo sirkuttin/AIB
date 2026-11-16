@@ -61,7 +61,8 @@ import { isNetworkPath } from '../web/security.ts';
 import { isForeignPath } from '../platform/location.ts';
 import * as wt from '../worktrees/worktrees.ts';
 import { LiveSync, Mutex } from '../worktrees/sync.ts';
-import { DEFAULT_ENTRY, ensureDefault, type LocalOnly } from '../worktrees/local_only.ts';
+import { chatLocalOnly, ensureDefault, type LocalOnly } from '../worktrees/local_only.ts';
+import { wslChatLocalOnly, wslDefaultsAllowed, wslEnsureLocalOnly } from '../wsl/local_only.ts';
 import { helperOf, readHelpers } from '../swarm/registry.ts';
 import { swarmEnabled } from '../swarm/settings.ts';
 import { defaultsAllowed } from '../worktrees/local_strays.ts';
@@ -1221,9 +1222,12 @@ export class Studio {
       const finishSetup = async () => {
         try {
           // before the snapshot: the default /private exclude is in force, so a new copy never takes the main folder's private/
-          const local = wsl ? null : await this.#localOnlyDefault(c.worktree ? c.projectRoot : workspace);
+          const mainFolder = c.worktree ? c.projectRoot : workspace;
+          if (wsl) await this.#wslLocalOnlyDefault(mainFolder); // the same in the distro (its helper; never throws)
+          const local = wsl ? null : await this.#localOnlyDefault(mainFolder);
           if (plan) await this.#makeWorktree(c, plan, workspace);
-          c.localOnly = this.#localOnlyFor(c, local);
+          // a WSL chat: the main folder's local-only paths as Linux paths, from its distro's helper
+          c.localOnly = wsl ? await wslChatLocalOnly(c.worktree ? c.projectRoot : c.cwd, !!c.worktree) : this.#localOnlyFor(c, local);
           await c.setup(resume || null);
           if (plan instanceof WslPlan) {
             if (c.worktree) await wslSetSession(plan, provider, c.sessionId!);
@@ -1785,19 +1789,16 @@ export class Studio {
     if (!lo) return null;
     const main = c.worktree ? c.projectRoot : c.cwd;
     if (realpath(main) !== realpath(lo.project)) return null; // the chat fell back to another folder
-    const on = lo.defaultState === 'on';
-    const told = lo.entries.filter((e) => on || e.toLowerCase() !== DEFAULT_ENTRY);
-    const abs = (e: string) => join(lo.project, ...e.split('/'));
-    const privateDir = on ? abs(lo.entries.find((e) => e.toLowerCase() === DEFAULT_ENTRY) ?? DEFAULT_ENTRY) : '';
-    if (c.worktree && privateDir && !isdir(privateDir)) {
-      try {
-        Deno.mkdirSync(privateDir, { recursive: true });
-      } catch (error) {
-        log.warning('Could not make %s: %s', privateDir, errorText(error));
-      }
-    }
-    if (!told.length && !privateDir) return null;
-    return { entries: told.map(abs), dirs: told.map(abs).filter((p) => isdir(p)), private: privateDir };
+    return chatLocalOnly(lo, !!c.worktree, (dir, error) => log.warning('Could not make %s: %s', dir, errorText(error)));
+  }
+
+  /**
+   * #localOnlyDefault for a WSL project (its ref): the distro's helper sets the default `/private` up, before the snapshot as above,
+   * and only where a Windows project would get it (wsl/local_only.ts wslDefaultsAllowed). Never throws.
+   */
+  async #wslLocalOnlyDefault(projectRef: string): Promise<void> {
+    if (!projectRef || !wslDefaultsAllowed(this.hasStateDir ? this.stateDir : '', projectRef)) return;
+    await wslEnsureLocalOnly(projectRef);
   }
 
   async #makeWorktree(connection: Connection, plan: wt.Plan, project: string): Promise<void> {
