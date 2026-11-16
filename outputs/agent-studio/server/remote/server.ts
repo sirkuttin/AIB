@@ -46,7 +46,7 @@ import { studioOf } from '../web/studio_routes.ts';
 import { bringBack, restoreFolders } from '../web/project_routes.ts';
 import { isDeleted, isDocHistory } from '../artifacts/artifacts.ts';
 import { SAVED_KEY } from './saved.ts';
-import { cleanPushSub } from './devices.ts';
+import { cleanPushSub, scopesForPhone } from './devices.ts';
 import type { VapidKeys } from './push.ts';
 import { getLogger } from '../core/log.ts';
 
@@ -568,7 +568,7 @@ export class RemoteServer {
     return this.json(200, {
       ...base,
       paired: true,
-      device: { id: device.id, name: device.name, scopes: [...device.scopes] },
+      device: { id: device.id, name: device.name, scopes: scopesForPhone(device) },
       push: { key: pushKey, on: !!device.push },
       // where this PC's artifacts open on the phone ('' while the artifact port is not up: "Open on your PC")
       artifacts: this.host.artifactOrigin(),
@@ -661,7 +661,7 @@ export class RemoteServer {
       const project = projectsFor(this.host.ctx, savedList.map((c) => c.cwd));
       const saved = savedList.map((c) => ({ ...publicSaved(c), project: project(c.cwd) }));
       // The phone's switches go with every answer (turned off on the PC: its buttons go away on the next poll).
-      const scopes = [...device.scopes];
+      const scopes = scopesForPhone(device);
       const theme = this.#pcTheme();
       const revision = home.revision + '.' + revisionOf(saved).slice(0, 8) + '.' + scopes.map((x) => x.slice(6, 8)).join('') + '.' +
         revisionOf(theme).slice(0, 6);
@@ -678,13 +678,13 @@ export class RemoteServer {
       if (!chat) {
         // running again (here or on the PC): the phone opens the live chat instead
         const live = await this.#liveByKey(key);
-        if (live) return this.json(200, { key, live, scopes: [...device.scopes], notices });
+        if (live) return this.json(200, { key, live, scopes: scopesForPhone(device), notices });
         return this.json(404, { error: 'This chat is no longer in the list on your PC.', code: 'not_found' });
       }
       const tail = Number(url.searchParams.get('tail') ?? SAVED_TAIL);
       const before = seqParam(url, 'before');
       const history = await savedHistory(this.host.ctx, chat, tail, remoteArtifactOrigin(this.host.name()), before);
-      return this.json(200, { ...history, live: null, scopes: [...device.scopes], notices });
+      return this.json(200, { ...history, live: null, scopes: scopesForPhone(device), notices });
     }
     const id = url.searchParams.get('id') ?? '';
     if (path === '/api/remote/event') {
@@ -709,7 +709,7 @@ export class RemoteServer {
     if (!chat) {
       return this.json(404, { error: 'This chat is not running on the PC any more.', code: 'connection_not_found', notices });
     }
-    return this.json(200, { ...chat, scopes: [...device.scopes], notices });
+    return this.json(200, { ...chat, scopes: scopesForPhone(device), notices });
   }
 
   /**

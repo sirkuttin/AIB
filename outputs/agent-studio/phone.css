@@ -1145,6 +1145,23 @@ button {
 .ph-stale textarea {
   pointer-events: none;
 }
+/* ---- saved copies (offline reading): what still works while the PC can't be reached ---- */
+.ph-stale .ph-copy-ok > .ph-card,
+.ph-stale .ph-earlier.ph-copy-ok .ph-btn {
+  pointer-events: auto;
+}
+.ph-copy-note {
+  margin: 10px 0;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+}
+.ph-copies {
+  margin: 16px 0;
+}
+.ph-copies .ph-note {
+  margin: 0 0 8px;
+}
 /* ---- finish setup (notifications, iPhone Home Screen), the setup bar on home ---- */
 .ph-setup-bar {
   display: flex;

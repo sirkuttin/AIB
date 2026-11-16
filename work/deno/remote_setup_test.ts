@@ -56,6 +56,7 @@ import {
   type Tool,
 } from "../../outputs/agent-studio/server/remote/setup_cli.ts";
 import { defaultRunner } from "../../outputs/agent-studio/server/remote/tailscale.ts";
+import { DeviceStore, scopesForPhone } from "../../outputs/agent-studio/server/remote/devices.ts";
 
 type Json = Record<string, unknown>;
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
@@ -1181,6 +1182,43 @@ Deno.test({
       const off = sim.reads.length;
       for (let i = 0; i < 3; i++) await pc(s, "GET", "/api/live/devices");
       assertEquals(sim.reads.length, off, "reading the view runs no command");
+    } finally {
+      await s.close();
+    }
+  },
+});
+
+Deno.test({
+  ...OPTS,
+  name:
+    "Saved copies of chats: per phone, on when missing (phone.cache in its scopes), saved at once, one activity line",
+  async fn() {
+    const sim = tailscaleSim();
+    const s = await setupStudio(sim);
+    try {
+      const added = await s.ctx.phone.devices.add({
+        name: "Pixel 9",
+        login: "owner@example.com",
+        scopes: ["phone.read"],
+      });
+      assertEquals(added.device.offlineCache, true);
+      const stored = () => JSON.parse(Deno.readTextFileSync(`${s.state}/devices.json`)).devices[0];
+      assertEquals("offlineCache" in stored(), false, "on = no field");
+      const device = s.ctx.phone.devices.devices.get(added.device.id)!;
+      assertEquals(scopesForPhone(device), ["phone.read", "phone.cache"]);
+      const [st, body] = await pc(s, "POST", "/api/live/devices/prefs", { id: added.device.id, offlineCache: false });
+      assertEquals([st, (body.device as Json).offlineCache], [200, false]);
+      assertEquals(((await view(s)).devices as Json[])[0].offlineCache, false);
+      assertEquals(stored().offlineCache, false);
+      // the switch survives a reload of devices.json, and the phone is no longer told phone.cache (it wipes its copies)
+      const again = new DeviceStore(s.state);
+      assertEquals(scopesForPhone(again.devices.get(added.device.id)!), ["phone.read"]);
+      assertEquals(again.list()[0].offlineCache, false);
+      await pc(s, "POST", "/api/live/devices/prefs", { id: added.device.id, offlineCache: true });
+      assertEquals("offlineCache" in stored(), false, "on again = the field is gone");
+      assertEquals((await pc(s, "POST", "/api/live/devices/prefs", { id: "nope", offlineCache: true }))[0], 404);
+      assertEquals((await pc(s, "POST", "/api/live/devices/prefs", { id: added.device.id, offlineCache: "no" }))[0], 400);
+      assert(Deno.readTextFileSync(`${s.state}/remote-audit.jsonl`).includes('"saved copies of chats"'));
     } finally {
       await s.close();
     }

@@ -1,6 +1,6 @@
 /**
  * Settings > Remote control on the PC (routes.ts DENO_ONLY, page token): Phone access on/off, Check again, Add a phone (pairing code, QR,
- * six words), approve or reject a phone that claimed the code, a phone's switches, remove one phone or all, a phone's Silent reminders, the phone activity log, and the Tailscale setup buttons
+ * six words), approve or reject a phone that claimed the code, a phone's switches, remove one phone or all, a phone's Silent reminders and saved copies of chats, the phone activity log, and the Tailscale setup buttons
  * (/api/live/devices/tailscale/*: refresh, run {action, replace?, confirm?}, job, cancel). These run on
  * the page port only; the phone port (remote/server.ts) never answers them.
  */
@@ -55,8 +55,10 @@ export function devicesRoutes(): Map<string, Handler> {
   routes.set('POST /api/live/devices/remove-all', async (ctx) => [200, { ok: true, removed: await ctx.phone.removeAll() }]);
   routes.set('GET /api/live/devices/activity', async (ctx) => [200, { entries: await ctx.phone.activity() }]);
   routes.set('POST /api/live/devices/prefs', async (ctx, _url, body) => {
-    if (typeof body?.remind !== 'boolean') throw new ValueError('remind must be true or false');
-    const device = await ctx.phone.setRemind(body?.id, body.remind);
+    // one switch per call: Silent reminders {id, remind} or saved copies of chats {id, offlineCache}
+    const cache = typeof body?.offlineCache === 'boolean';
+    if (!cache && typeof body?.remind !== 'boolean') throw new ValueError('remind or offlineCache must be true or false');
+    const device = cache ? await ctx.phone.setOfflineCache(body?.id, body.offlineCache) : await ctx.phone.setRemind(body?.id, body.remind);
     if (!device) return [404, { error: 'That phone is no longer paired.', code: 'no_device' }];
     return [200, { ok: true, device }];
   });

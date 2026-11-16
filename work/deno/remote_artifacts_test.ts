@@ -578,12 +578,12 @@ async function signInPage(page: Page, token: string, id: string): Promise<void> 
   await page.goto(`https://${NAME}/phone.html`);
   await page.waitFor('!!document.getElementById("app").dataset.screen', 15000, 'the phone page');
   await page.eval(`new Promise((resolve, reject) => {
-    const req = indexedDB.open('aib-phone', 1);
+    const req = indexedDB.open('aib-phone');
     req.onupgradeneeded = () => req.result.createObjectStore('kv');
     req.onsuccess = () => {
       const tx = req.result.transaction('kv', 'readwrite');
       tx.objectStore('kv').put({ token: ${JSON.stringify(token)}, device: { id: ${JSON.stringify(id)} } }, 'device');
-      tx.oncomplete = () => resolve(true);
+      tx.oncomplete = () => { req.result.close(); resolve(true); };
       tx.onerror = () => reject(tx.error);
     };
     req.onerror = () => reject(req.error);
