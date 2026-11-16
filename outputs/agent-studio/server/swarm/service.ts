@@ -18,7 +18,8 @@ import { getLogger } from '../core/log.ts';
 import * as merge from '../worktrees/merge.ts';
 import * as wt from '../worktrees/worktrees.ts';
 import * as agentRegistry from '../agents/agent_registry.ts';
-import { type Helper, helperOf, newHelperId, readHelpers, Registry, RUNNING_STATES } from './registry.ts';
+import { type Helper, helperOf, type Landing, newHelperId, readHelpers, Registry, RUNNING_STATES } from './registry.ts';
+import { lockChats, newLockId } from '../worktrees/landing_lock.ts';
 import { BriefError, briefPrompt, overlaps, owned, readBrief, wrapReport } from './brief.ts';
 import { DEFAULT_RULES, pickProvider, WORKSPACE_MODE } from './rules.ts';
 import { applyChange, changedFiles } from './undo.ts';
@@ -54,6 +55,45 @@ const s = (v: unknown) => (typeof v === 'string' ? v : '');
 const lasting = (c: Json) => (s(c.provider) && s(c.sessionId) ? `${s(c.provider)}:${s(c.sessionId)}` : '');
 export const providerName = (id: string) =>
   agentRegistry.BUILTIN_NAMES[id] ?? (agentRegistry.BETA_NAMES as Record<string, string>)[id] ?? id;
+
+/** Build plan 2.2: after this many refusals (busy, locked, moving) the chat gets one line; after this long queued, another. */
+export const LANDING_TRIES_NOTE = 3;
+export const LANDING_WAIT_NOTE_S = 600;
+/** Merge refusals a later try may not meet (git busy, the branch moving, a chat in the folder working). */
+const RETRY_CODES = new Set(['busy', 'locked', 'moving', 'ff_failed', 'folder_busy', 'running', 'stash_failed', 'failed']);
+
+/** A helper of a chat that works in the project folder: it lands on the folder's branch, queued, with no stash (build plan 2b). */
+export const folderParent = (h: Helper) => !!h.worktree?.landOn;
+
+/** The tool's answer when merge_helper queues (build plan 2.2). */
+export function queuedLine(h: Helper): string {
+  return `“${h.title}” (${providerName(h.chat.provider)}) lands in the project folder when your turn ends. Finish your turn; the result is ` +
+    'in your next message.';
+}
+
+export function newLanding(what: Landing['what'], by: Landing['by'], nowMs: number): Landing {
+  return {
+    what,
+    by,
+    queuedAt: nowMs / 1000,
+    tries: 0,
+    lastRefusal: '',
+    waitsFor: '',
+    stage: 'queued',
+    lockId: '',
+    stashSha: '',
+    stashName: '',
+    stashFolder: '',
+    landed: '',
+    tipBefore: '',
+    toldTries: false,
+    toldWait: false,
+  };
+}
+
+const shown = (files: string[], limit = 6) => files.slice(0, limit).join(', ') + (files.length > limit ? ' and more' : '');
+const baseName = (p: string) => p.slice(Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\')) + 1);
+const lower = (t: string) => (t ? t[0].toLowerCase() + t.slice(1) : t).replace(/[.\s]+$/, '');
 
 export class Refusal extends Error {
   constructor(readonly code: string, message: string, readonly status = 409) {
@@ -272,7 +312,13 @@ export class Swarm {
         await this.ctx.host.liveCall('disconnect', { id: h.chat.live });
         return await this.#fail(id, `Could not set ${providerName(h.chat.provider)}'s edit-in-workspace mode (${h.chat.mode})`);
       }
-      const worktree = { path: s(record.path), branch: s(record.branch), base: s(record.base), start: s(record.snapshot) };
+      const worktree = {
+        path: s(record.path),
+        branch: s(record.branch),
+        base: s(record.base),
+        start: s(record.snapshot),
+        ...(s(record.landOn) ? { landOn: s(record.landOn) } : {}), // a folder chat's helper (build plan 2.4)
+      };
       await this.registry.patch(id, { chat: { ...h.chat, lasting: lasting(state) }, worktree, cursor: Number(state.cursor) || 0 });
       const [code, payload] = await this.ctx.host.liveCall('prompt', {
         id: h.chat.live,
@@ -364,7 +410,11 @@ export class Swarm {
     }
   }
 
-  /** merge_helper: the helper's work lands on main through Merge (busy check, conflicts prompted to the helper), on the parent's behalf. */
+  /**
+   * merge_helper: the helper's work lands through Merge (busy check, conflicts prompted to the helper), on the parent's behalf. A helper
+   * of a chat that works in the project folder (build plan 2b) is queued instead: it lands when the parent's turn has ended and the
+   * parent is idle, under the host's landing lock, on the folder's branch, with no stash.
+   */
   async mergeHelper(caller: Json, id: string): Promise<Json> {
     const h = this.#mine(caller, id);
     if (h.merge && !h.merge.undo) throw new Refusal('merged', `“${h.title}” is already merged`);
@@ -372,12 +422,42 @@ export class Swarm {
       throw new Refusal('busy', `“${h.title}” is ${h.state}; merge it once its report is in`);
     }
     if (!h.chat.live) throw new Refusal('closed', 'The helper chat is not open');
-    const base = h.worktree.base || 'main';
-    const target = await merge.targetBranch(h.project, base);
+    if (folderParent(h)) {
+      await this.#queue(h, 'merge', 'tool');
+      return { ok: true, state: 'queued', message: queuedLine(h) };
+    }
+    await this.#patchLanding(id, { ...newLanding('merge', 'tool', this.clock()), stage: 'landing' }); // the journal (SF 3)
+    this.#working.add(id);
+    try {
+      return await this.#landMerge(h, []);
+    } finally {
+      this.#working.delete(id);
+      await this.registry.update(id, (cur) => (cur ? { ...cur, landing: null } : null));
+    }
+  }
+
+  /** Where a helper lands: its folder branch (landOn), else the project's main branch (build plan 2.4, MF 7). */
+  async #target(h: Helper): Promise<string> {
+    if (h.worktree.landOn) return h.worktree.landOn;
+    return await merge.targetBranch(h.project, h.worktree.base || 'main', wt.recordForPath(this.ctx.stateDir, h.worktree.path));
+  }
+
+  /** The merge itself: the tool's answer ({state: merged | conflicts | refused, ...}); posts the merge line when it landed. */
+  async #landMerge(h: Helper, held: string[]): Promise<Json> {
+    const id = h.id;
+    const target = await this.#target(h);
     const tipBefore = await merge.rev(h.project, `refs/heads/${target}`);
     let result: Json;
     try {
-      result = await merge.merge(this.#mergeStudio(), h.chat.live, h.title, false); // fromTool=false: the helper must be idle
+      result = await merge.merge(this.#mergeStudio(), h.chat.live, h.title, false, { // fromTool=false: the helper must be idle
+        held,
+        journal: (stage, data) =>
+          this.#patchLanding(id, {
+            stage: stage as 'stashed' | 'built' | 'moved',
+            ...(typeof data.stashSha === 'string' ? { stashSha: data.stashSha, stashName: s(data.stashName), stashFolder: s(data.folder) } : {}),
+            ...(typeof data.landed === 'string' ? { landed: data.landed, tipBefore: s(data.tipBefore) } : {}),
+          }),
+      });
     } catch (error) {
       if (error instanceof merge.Refused) {
         if (error.code === 'empty' && h.brief.read_only) {
@@ -387,9 +467,10 @@ export class Swarm {
             'swarm-merge',
             `Merged “${h.title}” (${providerName(h.chat.provider)}) into ${target} · nothing to land (read-only helper, report only)`,
           );
-          return { state: 'merged', commits: 0 };
+          return { state: 'merged', commits: 0, files: [], target };
         }
-        return { state: 'refused', code: error.code, message: error.message };
+        const files = error instanceof merge.TouchedDirty ? error.files : undefined;
+        return { state: 'refused', code: error.code, message: error.message, ...(files ? { files } : {}) };
       }
       throw error;
     }
@@ -397,6 +478,7 @@ export class Swarm {
       return {
         state: 'conflicts',
         files: result.files,
+        target,
         message: 'Nothing landed. The helper was asked to resolve the conflicts in its worktree; merge again when it reports.',
       };
     }
@@ -412,15 +494,188 @@ export class Swarm {
       `Merged “${h.title}” (${providerName(h.chat.provider)}) into ${target} · ${commits} commit${commits === 1 ? '' : 's'}`,
       ['swarm-undo'],
     );
-    return { state: 'merged', commits, range: [tipBefore, landed], target };
+    const files = tipBefore && landed ? await changedFiles(h.project, tipBefore, landed) : [];
+    return { state: 'merged', commits, range: [tipBefore, landed], target, files };
+  }
+
+  // ---- the landing queue (build plan 2.2) --------------------------------------------------------------------------------------
+  async #patchLanding(id: string, fields: Partial<Landing>): Promise<void> {
+    await this.registry.update(id, (cur) => (cur ? { ...cur, landing: { ...(cur.landing ?? newLanding('merge', 'tool', this.clock())), ...fields } } : null));
+  }
+
+  /** Queue a landing (or wake one that waited for the files to be committed). A landing that runs now is left alone. */
+  async #queue(h: Helper, what: Landing['what'], by: Landing['by']): Promise<void> {
+    await this.registry.update(h.id, (cur) => {
+      if (!cur) return null;
+      const now = cur.landing;
+      if (now && now.stage !== 'queued') return cur;
+      if (now && now.what === what) return { ...cur, landing: { ...now, waitsFor: '', by } };
+      return { ...cur, landing: newLanding(what, by, this.clock()) };
+    });
+  }
+
+  /**
+   * One look at a queued landing from the poll: the 10-minute line, then (unless it waits for the user's files) one try to hold the
+   * parent's landing lock. A parent that is not idle refuses the lock and nothing happens: it is tried again at the next poll.
+   */
+  async #landingStep(h: Helper, parentId: string): Promise<void> {
+    const L = h.landing;
+    if (!L || L.stage !== 'queued') return;
+    if (!L.toldWait && this.clock() / 1000 - L.queuedAt > LANDING_WAIT_NOTE_S) {
+      await this.#patchLanding(h.id, { toldWait: true });
+      await this.note(h.id, 'swarm-merge', `Still waiting for this chat to pause to land “${h.title}”.`);
+    }
+    if (L.waitsFor) return;
+    await this.#runLanding(h, parentId);
+  }
+
+  /** Hold the parent's lock, land, let go, then tell the parent. null when the parent was not idle (it stays queued). */
+  async #runLanding(h: Helper, parentId: string): Promise<Json | null> {
+    const L = h.landing!;
+    const lockId = newLockId();
+    const got = await lockChats(this.#mergeStudio(), [parentId], h.title, `swarm:${h.id}`, lockId);
+    if (!got.held) return null;
+    this.#working.add(h.id);
+    let out: Json;
+    try {
+      await this.#patchLanding(h.id, { stage: 'landing', lockId });
+      try {
+        out = L.what === 'merge' ? await this.#landMerge(h, [parentId]) : await this.#applyUndo(h, L.what, [parentId]);
+      } catch (error) {
+        log.exception(error, 'Landing helper %s failed', h.id);
+        out = { state: 'refused', code: 'failed', message: error instanceof Error ? error.message : String(error) };
+      }
+    } finally {
+      await got.held.release();
+      this.#working.delete(h.id);
+    }
+    await this.#afterLanding(h.id, L.what, out, parentId);
+    return out;
+  }
+
+  /** What a landing did, told: the queue entry cleared or kept, the line in the chat, and the parent's next-prompt line (2.5, 2.6). */
+  async #afterLanding(id: string, what: Landing['what'], out: Json, parentId: string): Promise<void> {
+    const h = this.registry.get(id);
+    if (!h) return;
+    const name = `“${h.title}” (${providerName(h.chat.provider)})`;
+    const files = Array.isArray(out.files) ? out.files.map(String) : [];
+    const state = s(out.state);
+    const context = (line: string) => this.ctx.host.liveCall('prompt-context', { id: parentId, line }).catch(() => [500, null]);
+    const clear = () => this.registry.update(id, (cur) => (cur ? { ...cur, landing: null } : null));
+    if (state === 'merged' || state === 'undone') {
+      await clear();
+      const did = what === 'undo' ? `the merge of helper ${name} was undone` : what === 'again' ? `helper ${name} was merged again` : '';
+      const line = what === 'merge'
+        ? `While you were idle, helper ${name} landed ${Number(out.commits) || 0} commit${Number(out.commits) === 1 ? '' : 's'} in this ` +
+          `folder (files: ${shown(files) || 'none'}). Re-read those files before editing them.`
+        : `While you were idle, ${did} in this folder (files: ${shown(files) || 'none'}). Re-read those files before editing them.`;
+      await context(line);
+      return;
+    }
+    if (state === 'dirty' || out.code === 'touched_dirty') {
+      await this.#patchLanding(id, { stage: 'queued', lockId: '', waitsFor: 'touched-dirty', lastRefusal: 'touched-dirty' });
+      const verb = what === 'merge' ? 'land' : what === 'undo' ? 'undo' : 'merge again';
+      await this.note(id, 'swarm-merge', `Didn't ${verb} “${h.title}”: it changes files with uncommitted edits (${shown(files.map(baseName))}).`);
+      if (what === 'merge') {
+        await context(
+          `Helper ${name} changes files you have uncommitted (${shown(files)}). Commit them or set them aside, then call merge_helper again.`,
+        );
+      }
+      return;
+    }
+    if (state === 'refused' && RETRY_CODES.has(s(out.code))) {
+      const tries = (h.landing?.tries ?? 0) + 1;
+      const tell = tries >= LANDING_TRIES_NOTE && !h.landing?.toldTries;
+      await this.#patchLanding(id, { stage: 'queued', lockId: '', tries, lastRefusal: s(out.message), ...(tell ? { toldTries: true } : {}) });
+      if (tell) {
+        await this.note(
+          id,
+          'swarm-merge',
+          `Couldn't land “${h.title}” yet: ${lower(s(out.message))}. It will try again when the chat is next idle.`,
+        );
+      }
+      return;
+    }
+    await clear(); // done for good: conflicts (the helper was asked), can't undo cleanly, or a refusal that a retry won't change
+    if (state === 'conflicts') {
+      const line = `Helper ${name} didn't land: it conflicts with ${s(out.target) || 'the folder branch'} in ${shown(files)}. ` +
+        'The helper was asked to resolve them; call merge_helper again after its next report.';
+      await this.note(id, 'swarm-merge', `Didn't land “${h.title}”: it conflicts in ${shown(files.map(baseName))}. The helper was asked to resolve it.`);
+      await context(line);
+    } else if (state === 'refused') {
+      await this.note(id, 'swarm-merge', `Couldn't land “${h.title}”: ${lower(s(out.message))}.`);
+      if (what === 'merge') await context(`Helper ${name} did not land: ${lower(s(out.message))}.`);
+    }
+  }
+
+  /**
+   * SF 3: a landing found mid-stage that nothing in this process runs (the web process died during it). The lock is let go; a landing
+   * whose branch already moved is finished, any other is rolled back: a folder chat's helper goes back in the queue (nothing was
+   * stashed, and the fast-forward is all or nothing), a copy parent's stash is put back (or, if that clashes, named in the chat).
+   */
+  async #recover(h: Helper, parentLive: string): Promise<void> {
+    const L = h.landing!;
+    this.#working.add(h.id);
+    try {
+      if (L.lockId && parentLive) await this.ctx.host.liveCall('landing-release', { id: parentLive, lock: L.lockId }).catch(() => {});
+      if (L.stashSha && L.stashFolder) await this.#putBackStash(h, L);
+      const target = await this.#target(h).catch(() => '');
+      const tip = target ? await merge.rev(h.project, `refs/heads/${target}`) : '';
+      const landed = L.what === 'merge' && L.landed && tip && (await merge.isAncestor(h.project, L.landed, tip));
+      if (landed) {
+        const commits = Number((await wt.git(['rev-list', '--count', `${L.tipBefore}..${L.landed}`], h.project, { check: false })).stdout.trim()) || 1;
+        await this.registry.update(h.id, (cur) =>
+          cur
+            ? { ...cur, state: 'merged', landing: null, merge: { tipBefore: L.tipBefore, landed: L.landed, commits, at: this.clock() / 1000, undo: null, again: null } }
+            : null
+        );
+        await this.note(
+          h.id,
+          'swarm-merge',
+          `Merged “${h.title}” (${providerName(h.chat.provider)}) into ${target} · ${commits} commit${commits === 1 ? '' : 's'} · finished after a restart`,
+          ['swarm-undo'],
+        );
+        if (folderParent(h) && parentLive) {
+          const files = await changedFiles(h.project, L.tipBefore, L.landed);
+          await this.ctx.host.liveCall('prompt-context', {
+            id: parentLive,
+            line: `While you were idle, helper “${h.title}” (${providerName(h.chat.provider)}) landed ${commits} commit${commits === 1 ? '' : 's'} ` +
+              `in this folder (files: ${shown(files) || 'none'}). Re-read those files before editing them.`,
+          }).catch(() => {});
+        }
+        return;
+      }
+      if (folderParent(h)) {
+        await this.#patchLanding(h.id, { stage: 'queued', lockId: '', stashSha: '', landed: '', tipBefore: '' }); // tried again when idle
+      } else {
+        await this.registry.update(h.id, (cur) => (cur ? { ...cur, landing: null } : null));
+        await this.note(h.id, 'swarm-merge', `Merging “${h.title}” was cut off when AIB stopped; nothing landed. Merge it again.`);
+      }
+    } finally {
+      this.#working.delete(h.id);
+    }
+  }
+
+  async #putBackStash(h: Helper, L: Landing): Promise<void> {
+    const listed = (await wt.git(['stash', 'list', '--format=%H %gd'], L.stashFolder, { check: false })).stdout.split(/\r?\n/);
+    const entry = listed.map((line) => line.split(' ')).find(([sha]) => sha === L.stashSha);
+    if (!entry) return; // put back before the stop
+    const back = await wt.git(['stash', 'apply', '--index', L.stashSha], L.stashFolder, { check: false });
+    if (back.returncode === 0) {
+      await wt.git(['stash', 'drop', entry[1]], L.stashFolder, { check: false });
+      await this.note(h.id, 'swarm-merge', `AIB stopped while landing “${h.title}”. Your uncommitted edits were set aside then and are back now.`);
+    } else {
+      await this.note(
+        h.id,
+        'swarm-merge',
+        `AIB stopped while landing “${h.title}”. Your uncommitted edits are kept in the stash “${L.stashName}” (${L.stashSha.slice(0, 8)}); nothing was lost.`,
+      );
+    }
+    await this.#patchLanding(h.id, { stashSha: '', stashName: '', stashFolder: '' });
   }
 
   #mergeStudio(): merge.MergeStudio {
-    return {
-      stateDir: this.ctx.stateDir,
-      liveState: (chatId) => this.ctx.host.liveState(chatId, 0),
-      liveCall: (op, payload) => this.ctx.host.liveCall(op, payload),
-    };
+    return merge.liveMergeStudio(this.ctx.stateDir, this.ctx.host);
   }
 
   // ---- the page's Undo and Merge again (page token only; never the agent's key: review break 14) -------------------------------
@@ -428,53 +683,90 @@ export class Swarm {
     const h = typeof id === 'string' ? this.registry.get(id) : null;
     if (!h || !h.merge) return [404, { error: 'That helper has no merge to undo' }];
     if (h.merge.undo && !h.merge.again) return [409, { error: 'Already undone' }];
-    const target = await merge.targetBranch(h.project, h.worktree.base || 'main');
-    const done = await applyChange(
-      this.ctx.stateDir,
-      h.project,
-      target,
-      h.merge.again ? h.merge.again.commit : h.merge.landed,
-      h.merge.again ? `${h.merge.again.commit}^` : h.merge.tipBefore,
-      `AIB: undo the merge of helper “${h.title}” (${providerName(h.chat.provider)})`,
-    );
-    if (done.state === 'conflicts') {
-      const files = done.files.length ? done.files : await changedFiles(h.project, h.merge.tipBefore, h.merge.landed);
-      await this.note(
-        h.id,
-        'swarm-undo',
-        `Can't undo “${h.title}” cleanly: later changes touch the same lines (${files.slice(0, 6).join(', ')}). Nothing changed.`,
-      );
-      return [200, { state: 'cannot_undo', files }];
-    }
-    if (done.state === 'refused') return [409, { error: done.message }];
-    await this.registry.patch(h.id, {
-      state: 'done',
-      merge: { ...h.merge, undo: { revert: done.commit, at: this.clock() / 1000 }, again: null },
-    });
-    await this.note(
-      h.id,
-      'swarm-undo',
-      `Undid the merge of “${h.title}” (${providerName(h.chat.provider)}) · ${target} is back to before it · the helper's branch is kept` +
-        (done.kept ? ` · your edits clash with it and are kept in a stash` : ''),
-      ['swarm-merge-again'],
-    );
-    return [200, { state: 'undone', commit: done.commit }];
+    return await this.#pageAction(h, 'undo');
   }
 
   async mergeAgain(id: unknown): Promise<Reply> {
     const h = typeof id === 'string' ? this.registry.get(id) : null;
     if (!h || !h.merge?.undo) return [404, { error: 'That helper has no undone merge' }];
-    const target = await merge.targetBranch(h.project, h.worktree.base || 'main');
+    return await this.#pageAction(h, 'again');
+  }
+
+  /**
+   * Undo / Merge again from the page. A folder chat's helper (build plan 2.2, MF 8): at once when the parent is idle, else queued
+   * until it is (the button says so); never a stash. A copy parent's: at once, as before, but it waits for any chat that works in
+   * the project folder (2.3).
+   */
+  async #pageAction(h: Helper, what: 'undo' | 'again'): Promise<Reply> {
+    let out: Json;
+    if (folderParent(h)) {
+      if (!h.parent.live) return [409, { error: 'Open the main chat first' }];
+      await this.#queue(h, what, 'page');
+      const fresh = this.registry.get(h.id)!;
+      if (fresh.landing?.stage !== 'queued' || fresh.landing.what !== what) return [409, { error: 'Another landing of this helper runs now' }];
+      const ran = await this.#runLanding(fresh, h.parent.live);
+      if (!ran) return [200, { state: 'queued', message: 'Waits for this chat to pause' }];
+      out = ran;
+    } else {
+      out = await this.#applyUndo(h, what, []);
+    }
+    const state = s(out.state);
+    if (state === 'refused') return [409, { error: s(out.message), code: s(out.code) }];
+    return [200, out];
+  }
+
+  /** Undo or Merge again itself: {state: undone | merged | cannot_undo | cannot_merge | dirty | refused, ...}; posts its line. */
+  async #applyUndo(h: Helper, what: 'undo' | 'again', held: string[]): Promise<Json> {
+    if (!h.merge) return { state: 'refused', code: 'gone', message: 'That helper has no merge' };
+    const target = await this.#target(h);
+    const options = { noStash: folderParent(h), host: this.#mergeStudio(), held, title: h.title };
+    if (what === 'undo') {
+      if (h.merge.undo && !h.merge.again) return { state: 'refused', code: 'done', message: 'Already undone' };
+      const done = await applyChange(
+        this.ctx.stateDir,
+        h.project,
+        target,
+        h.merge.again ? h.merge.again.commit : h.merge.landed,
+        h.merge.again ? `${h.merge.again.commit}^` : h.merge.tipBefore,
+        `AIB: undo the merge of helper “${h.title}” (${providerName(h.chat.provider)})`,
+        options,
+      );
+      if (done.state === 'conflicts') {
+        const files = done.files.length ? done.files : await changedFiles(h.project, h.merge.tipBefore, h.merge.landed);
+        await this.note(
+          h.id,
+          'swarm-undo',
+          `Can't undo “${h.title}” cleanly: later changes touch the same lines (${files.slice(0, 6).join(', ')}). Nothing changed.`,
+        );
+        return { state: 'cannot_undo', files };
+      }
+      if (done.state === 'refused') return { state: 'refused', code: done.code ?? 'refused', message: done.message };
+      if (done.state === 'dirty') return { state: 'dirty', files: done.files };
+      await this.registry.patch(h.id, {
+        state: 'done',
+        merge: { ...h.merge, undo: { revert: done.commit, at: this.clock() / 1000 }, again: null },
+      });
+      await this.note(
+        h.id,
+        'swarm-undo',
+        `Undid the merge of “${h.title}” (${providerName(h.chat.provider)}) · ${target} is back to before it · the helper's branch is kept` +
+          (done.kept ? ` · your edits clash with it and are kept in a stash` : ''),
+        ['swarm-merge-again'],
+      );
+      return { state: 'undone', commit: done.commit, files: done.files };
+    }
+    if (!h.merge.undo) return { state: 'refused', code: 'done', message: 'That helper has no undone merge' };
     const revert = h.merge.undo.revert;
-    const done = await applyChange(this.ctx.stateDir, h.project, target, revert, `${revert}^`, `AIB: merge helper “${h.title}” again`);
-    if (done.state === 'conflicts') return [200, { state: 'cannot_merge', files: done.files }];
-    if (done.state === 'refused') return [409, { error: done.message }];
+    const done = await applyChange(this.ctx.stateDir, h.project, target, revert, `${revert}^`, `AIB: merge helper “${h.title}” again`, options);
+    if (done.state === 'conflicts') return { state: 'cannot_merge', files: done.files };
+    if (done.state === 'refused') return { state: 'refused', code: done.code ?? 'refused', message: done.message };
+    if (done.state === 'dirty') return { state: 'dirty', files: done.files };
     await this.registry.patch(h.id, {
       state: 'merged',
       merge: { ...h.merge, undo: null, again: { commit: done.commit, at: this.clock() / 1000 } },
     });
     await this.note(h.id, 'swarm-merge', `Merged “${h.title}” (${providerName(h.chat.provider)}) into ${target} again`, ['swarm-undo']);
-    return [200, { state: 'merged', commit: done.commit }];
+    return { state: 'merged', commit: done.commit, files: done.files };
   }
 
   // ---- lines in the main chat ------------------------------------------------------------------------------------------------
@@ -538,7 +830,7 @@ export class Swarm {
 
   async #poll(): Promise<void> {
     const helpers = this.registry.all().filter((h) =>
-      h.state !== 'failed' || h.notes.some((n) => !n.delivered) || h.reports.some((r) => !r.delivered)
+      h.state !== 'failed' || h.notes.some((n) => !n.delivered) || h.reports.some((r) => !r.delivered) || !!h.landing
     );
     if (!helpers.length) return;
     const listing = obj(await this.ctx.host.liveList());
@@ -558,6 +850,15 @@ export class Swarm {
       if (parent) {
         await this.#flushNotes(h);
         await this.#deliverReports(h, parent);
+      }
+      // the landing queue and its journal (build plan 2.2, SF 3): a stage nothing here runs is a landing cut off by a stop
+      if (h.landing && h.landing.stage !== 'queued' && !this.#working.has(h.id)) {
+        await this.#recover(h, parentLive);
+        h = this.registry.get(h.id) ?? h;
+      }
+      if (parent && h.landing && !this.#working.has(h.id)) {
+        await this.#landingStep(h, parentLive);
+        h = this.registry.get(h.id) ?? h;
       }
       if (!chat || this.#working.has(h.id) || !['working', 'waiting', 'done'].includes(h.state)) continue;
       const attention = obj(chat.attention);

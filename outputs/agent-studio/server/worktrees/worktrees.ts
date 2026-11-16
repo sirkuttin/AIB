@@ -686,6 +686,8 @@ export class Plan {
   declare readonly folderBranch: string;
   /** The line for the chat's start note ('' when there is nothing to say); create() may set it. */
   declare note: string;
+  /** Build plan 2.4: the branch a folder chat's helper lands on (the folder's branch), '' for every other copy. */
+  declare landOn: string;
   constructor(
     project: string,
     readonly base: string,
@@ -701,6 +703,7 @@ export class Plan {
     // Not enumerable: a Plan spreads to the six fields Python's Plan has (the parity tests compare them).
     Object.defineProperty(this, 'folderBranch', { value: folderBranch || base, enumerable: false });
     Object.defineProperty(this, 'note', { value: note, enumerable: false, writable: true });
+    Object.defineProperty(this, 'landOn', { value: '', enumerable: false, writable: true });
   }
 }
 
@@ -1174,7 +1177,12 @@ export class Manager {
   }
 
   /** plan() plus, when the chat works in place, why ('' when it gets a worktree). */
-  async planWithReason(projectIn: string, key?: string | null, kind: 'chat' | 'helper' = 'chat'): Promise<{ plan: Plan | null; reason: string }> {
+  async planWithReason(
+    projectIn: string,
+    key?: string | null,
+    kind: 'chat' | 'helper' = 'chat',
+    options: { onFolderBranch?: boolean } = {},
+  ): Promise<{ plan: Plan | null; reason: string }> {
     // A WSL project (its ref, wsl://...) gets its worktree from its distro's helper (Studio routes it to wsl/worktrees.ts, where this
     // same Manager runs natively); this Windows manager never runs git for it and never records it.
     if (String(projectIn).startsWith(WSL_REF_PREFIX)) {
@@ -1194,8 +1202,9 @@ export class Manager {
     }
     key = key || crypto.randomUUID().replaceAll('-', '');
     const folderBranch = pyStrip((await git(['symbolic-ref', '--short', 'HEAD'], project)).stdout);
-    const base = await mainBranch(project, folderBranch);
-    const note = base === folderBranch && !['main', 'master'].includes(base)
+    // A folder chat's helper (build plan 2.4): from the folder's branch, whatever it is, and back onto it.
+    const base = options.onFolderBranch ? folderBranch : await mainBranch(project, folderBranch);
+    const note = !options.onFolderBranch && base === folderBranch && !['main', 'master'].includes(base)
       ? `Started from ${base}: this project has no main or master branch.`
       : '';
     const folder = pathOf(this.registry.root, repoHash(project));
@@ -1205,7 +1214,9 @@ export class Manager {
       const taken = (await git(['show-ref', '--verify', '--quiet', `refs/heads/${branch}`], project, { check: false })).returncode === 0 ||
         lexists(pathOf(folder, slug));
       if (!taken) {
-        return { plan: new Plan(project, base, key, slug, branch, pathOf(folder, slug), folderBranch, note), reason: '' };
+        const plan = new Plan(project, base, key, slug, branch, pathOf(folder, slug), folderBranch, note);
+        if (options.onFolderBranch) plan.landOn = folderBranch;
+        return { plan, reason: '' };
       }
     }
   }
@@ -1226,6 +1237,7 @@ export class Manager {
       created: nowSeconds(),
       editsFrom: plan.base, // live sync copies the folder's edits only while the folder has this branch checked out
     };
+    if (plan.landOn) record.landOn = plan.landOn; // build plan 2.4 (MF 7): Merge, Undo and Merge again read the target from here
     ACTIVE.add(plan.key);
     try {
       await this.registry.put(plan.key, record);

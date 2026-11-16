@@ -218,7 +218,9 @@ Deno.test({
   name: 'swarm slice: start a Codex helper in its own worktree, report back, merge into main with one line, Undo and Merge again',
   async fn() {
     await using box = new Box();
-    const main = await box.studio.connect('claude', box.project);
+    // an Own-copy main chat: its helper lands on main at once, as before 2b (folder_landing_test.ts has the folder chat's queue)
+    const main = await box.studio.connect('claude', box.project, null, { ownCopy: true });
+    assert(main.worktree, 'the main chat has its own copy');
     assertEquals(main.swarm?.role, 'main');
     assertEquals(env(main).STUDIO_MAIN, '1', 'a main chat is offered the swarm tools');
 

@@ -36,6 +36,7 @@ import { getLogger } from '../core/log.ts';
 import { clashLine, openClashes, pausedStatus, settleConflicts } from './sync.ts';
 import * as mr from './merge_request.ts';
 import { clashName, isLocalPath, type LocalOnly, localOnlyOf, slugOf } from './local_only.ts';
+import { type FolderChat, folderChats, type Held, lockChats } from './landing_lock.ts';
 
 const log = getLogger('worktree_merge');
 
@@ -62,6 +63,22 @@ export interface MergeStudio {
   stateDir: string;
   liveState(chatId: string): unknown;
   liveCall(op: string, payload: Record<string, unknown>): [number, unknown] | Promise<[number, unknown]>;
+  /**
+   * Build plan 2.3: the open chats that work in `folder` itself, so a landing there holds their landing lock (landing_lock.ts). A studio
+   * without it (a test's recorder, the WSL distro helper's, which has no swarm) holds nothing.
+   */
+  folderChats?(folder: string): Promise<FolderChat[]>;
+}
+
+/**
+ * Options of one merge (build plan 1b, 2.3 and SF 3):
+ * - held: chats the caller already holds the landing lock of (a folder chat's helper: its parent), so they are not locked again;
+ * - journal: told each stage before git changes anything ('stashed' with the stash SHA, 'built' with the commit to land, 'moved'
+ *   once the branch moved), so a crash mid-landing can be finished or rolled back at the next start.
+ */
+export interface MergeOptions {
+  held?: string[];
+  journal?: (stage: string, data: Record<string, unknown>) => Promise<void> | void;
 }
 
 /** The merge did not happen; message is the one line to show. `code` is a short machine word. */
@@ -333,6 +350,9 @@ export class Chat {
   startBase = '';
   /** The target found when the chat was opened ('' until then). */
   target = '';
+  /** Build plan 2.4: a folder chat's helper lands on this branch of the folder, by tree, with no stash ('' for every other chat). */
+  landOn = '';
+  options: MergeOptions = {};
   snapshot = '';
   user = '';
 
@@ -360,7 +380,7 @@ export class Chat {
     chat.registry = new wt.Registry(studio.stateDir);
     chat.key = record.key;
     chat.reload();
-    chat.target = await targetBranch(chat.project, chat.startBase);
+    chat.target = await targetBranch(chat.project, chat.startBase, chat.record);
     chat.base = chat.target;
     return chat;
   }
@@ -378,6 +398,7 @@ export class Chat {
     this.base = this.target || this.startBase;
     this.snapshot = str(record.snapshot) || '';
     this.user = str(record.user) || this.snapshot; // the user base U; S while live sync has not moved it
+    this.landOn = str(record.landOn);
     if (!(this.startBase && this.snapshot)) {
       throw new Refused('This chat has no base branch to merge into', 'no_base', 400);
     }
@@ -401,8 +422,13 @@ export class Chat {
   }
 }
 
-/** The branch a chat's work merges into: the project's main branch (main, else master), else the branch it started from. */
-export function targetBranch(project: string, startBase: string): Promise<string> {
+/**
+ * The branch a chat's work merges into: its worktree record's landOn (a folder chat's helper: the folder's branch, build plan 2.4),
+ * else the project's main branch (main, else master), else the branch it started from.
+ */
+export function targetBranch(project: string, startBase: string, record?: WorktreeRecord | null): Promise<string> {
+  const landOn = record ? str(record.landOn) : '';
+  if (landOn) return Promise.resolve(landOn);
   return wt.mainBranch(project, startBase); // the same rule picks where a new chat starts (worktrees.ts)
 }
 
@@ -645,8 +671,15 @@ async function resetTo(chat: Chat, tip: string, folder: string | null = null, cl
 export type MergeResult = Record<string, unknown>;
 
 /** Merge a worktree chat into its base branch: {ok, state: 'merged'|'conflicts', message, ...}; throws Refused with the line to show. */
-export async function merge(studio: MergeStudio, chatId: unknown, title: unknown = '', fromTool = false): Promise<MergeResult> {
+export async function merge(
+  studio: MergeStudio,
+  chatId: unknown,
+  title: unknown = '',
+  fromTool = false,
+  options: MergeOptions = {},
+): Promise<MergeResult> {
   const chat = await Chat.open(studio, chatId, fromTool);
+  chat.options = options;
   if (RUNNING.has(chat.key)) {
     throw new Refused('A merge of this chat is already running', 'running');
   }
@@ -956,7 +989,9 @@ async function land(chat: Chat, tip: string, title: unknown): Promise<MergeResul
     if (why) throw new Refused(why[0].toUpperCase() + why.slice(1), 'locked');
   }
   const head = await rev(chat.wt, 'HEAD');
-  const byTree = chat.user !== chat.snapshot;
+  // A folder chat's helper (SF 2): always by tree against U (S while live sync has not moved it), so only the helper's own change lands,
+  // never the main agent's uncommitted edits that were in S, and never by the whole-file squash fallback.
+  const byTree = chat.user !== chat.snapshot || !!chat.landOn;
   let files: Map<string, RawEntry> | null = null;
   let landed = '';
   let count = 0;
@@ -988,17 +1023,116 @@ async function land(chat: Chat, tip: string, title: unknown): Promise<MergeResul
       throw new Refused(`Nothing to merge into ${chat.base}`, 'empty');
     }
   }
+  // Build plan 2.3: no chat that works in the folder may start a turn while it changes; one that works now means this waits.
+  const holds = folder ? await holdFolderChats(chat.studio, folder, title, [chat.id, ...(chat.options.held ?? [])], `merge:${chat.key}`) : null;
+  try {
+    const out = await landHeld(chat, folder, tip, head, byTree, files, landed, count, title);
+    if (holds && out.state === 'merged') await toldFilesChanged(chat, holds, tip, str(out.tip), title);
+    return out;
+  } finally {
+    await holds?.release();
+  }
+}
+
+/** Hold the landing lock of every open chat that works in `folder` (but those the caller holds); refused when one is working. */
+export async function holdFolderChats(
+  host: MergeStudio,
+  folder: string,
+  title: unknown,
+  skip: string[],
+  owner: string,
+): Promise<Held | null> {
+  const held = new Set(skip);
+  const chats = (host.folderChats ? await host.folderChats(folder) : []).filter((c) => !held.has(c.id));
+  if (!chats.length) return null;
+  const name = pyStrip(pyStr(title || '')) || 'a chat';
+  const got = await lockChats(host, chats.map((c) => c.id), name, owner);
+  if (got.held) return got.held;
+  const busy = chats.find((c) => c.id === got.busy[0]);
+  throw new Refused(
+    `“${busy?.title || 'Another chat'}” is working in the project folder (${got.busy[1]}). This lands when it pauses: merge again then`,
+    'folder_busy',
+  );
+}
+
+/**
+ * SF 12: the chats that work in the folder and were idle while this landed get one line on their next prompt (the files changed under
+ * them). A folder chat's own helper tells its parent itself (swarm/service.ts), so the caller's held chats are not told here.
+ */
+async function toldFilesChanged(chat: Chat, holds: Held, tip: string, landed: string, title: unknown): Promise<void> {
+  if (!landed) return;
+  const files = nul((await git(['diff', '--name-only', '-z', '--no-renames', tip, landed], chat.project, { check: false })).stdout);
+  const line = filesChangedLine(pyStrip(pyStr(title || '')) || 'another chat', files);
+  for (const id of holds.ids) {
+    await Promise.resolve(chat.studio.liveCall('prompt-context', { id, line })).catch(() => {});
+  }
+}
+
+/** The one-time line a folder chat gets when another chat's work landed in its folder while it was idle (SF 12). */
+export function filesChangedLine(title: string, files: string[]): string {
+  return `While you were idle, the work of “${title}” landed in this folder (files: ${shownList(files, 12) || 'none'}). ` +
+    'Re-read those files before editing them.';
+}
+
+/** A MergeStudio over the live host (the web process): its live calls, plus the folder chats for the landing lock. */
+export function liveMergeStudio(
+  stateDir: string,
+  host: { liveState(id: unknown, after?: unknown): unknown; liveCall(name: string, body: unknown): Promise<[number, unknown]> },
+): MergeStudio {
+  const studio: MergeStudio = {
+    stateDir,
+    liveState: (chatId) => host.liveState(chatId, 0),
+    liveCall: (op, payload) => host.liveCall(op, payload),
+    folderChats: (folder) => folderChats(studio, folder),
+  };
+  return studio;
+}
+
+/** A folder chat's helper changes files the folder has uncommitted (build plan 2.5): nothing lands, nothing is stashed. */
+export class TouchedDirty extends Refused {
+  constructor(readonly files: string[], base: string) {
+    super(`Nothing landed: it changes files with uncommitted edits in ${base} (${shownList(files, 6)})`, 'touched_dirty', 409, { files });
+  }
+}
+
+/** The files `landed` changes on `tip` that `folder` has uncommitted (changed, staged or untracked). */
+export async function touchedDirty(folder: string, tip: string, landed: string): Promise<string[]> {
+  const dirty = await porcelainPaths(folder);
+  if (!dirty.size) return [];
+  const fold = (p: string) => (Deno.build.os === 'windows' ? p.toLowerCase() : p);
+  const mine = new Set([...dirty].map(fold));
+  const touched = nul((await git(['diff', '--name-only', '-z', '--no-renames', tip, landed], folder, { check: false })).stdout);
+  return touched.filter((f) => mine.has(fold(f)));
+}
+
+async function landHeld(
+  chat: Chat,
+  folder: string | null,
+  tip: string,
+  head: string,
+  byTree: boolean,
+  files: Map<string, RawEntry> | null,
+  landed: string,
+  count: number,
+  title: unknown,
+): Promise<MergeResult> {
   const pause = wt.pauseLock(chat.studio.stateDir, chat.project, settings.LOCK_WAIT);
   try {
     await pause.acquire(); // "sync paused": nothing copies the user's edits into a worktree while the project folder is being changed
   } catch {
     throw new Refused('AIB is still copying edits for this project; try Merge again', 'busy');
   }
+  const journal = async (stage: string, data: Record<string, unknown>) => {
+    if (chat.options.journal) await chat.options.journal(stage, data);
+  };
   let stash: StashRef | null = null;
   let clash: string[] = [];
   let leftOut: string[] = [], lo: LocalOnly | null = null, chatVersion = '';
   try {
-    stash = folder ? await stashUserWork(chat, folder) : null;
+    // Build plan 2.5 (MF 3): never a stash under a folder chat's helper landing. Git keeps the dirty files the landing doesn't touch,
+    // and touchedDirty refuses before anything moves when it would touch one.
+    stash = folder && !chat.landOn ? await stashUserWork(chat, folder) : null;
+    if (stash) await journal('stashed', { stashSha: stash.sha, stashName: stash.name, folder });
     try {
       if (!byTree) {
         [landed, count] = await prepareLanding(chat, tip, head, files!, title);
@@ -1009,8 +1143,14 @@ async function land(chat: Chat, tip: string, title: unknown): Promise<MergeResul
         const line = await saveLocalVersions(chat, lo!, chatVersion, leftOut);
         throw new Refused(`Nothing to merge into ${chat.base}. ${line}`, 'empty');
       }
+      if (chat.landOn && folder) {
+        const hit = await touchedDirty(folder, tip, landed);
+        if (hit.length) throw new TouchedDirty(hit, chat.base);
+      }
+      await journal('built', { landed, tipBefore: tip, base: chat.base });
       await hook('before_ff');
       await fastForward(chat, folder, tip, landed);
+      await journal('moved', { landed, tipBefore: tip, base: chat.base });
     } catch (error) {
       if (stash && folder && (await unstash(folder, stash)).length) { // nothing landed: the folder ends as it started
         log.error('Could not re-apply the stash %s after a failed merge; it is kept', stash.name);

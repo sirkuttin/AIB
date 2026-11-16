@@ -39,6 +39,16 @@
         resume: true,
         count: n,
       };
+    // build plan 2.3: a helper's (or copy chat's) work lands in this folder right now; the queue goes on its own after that
+    if (queue.landing)
+      return {
+        show: true,
+        head: n + ' queued · ' + (queue.message || 'Sends after “' + queue.landing + '” lands (a few seconds).'),
+        note: queue.message || n + ' queued',
+        tone: '',
+        resume: false,
+        count: n,
+      };
     return {
       show: true,
       head: n + ' queued · ' + (busy ? 'send when this turn ends' : 'sending'),
@@ -173,6 +183,7 @@
       ctx.busy,
       queue && queue.reason,
       queue && queue.message,
+      queue && queue.landing,
       items.map((i) => [i.id, i.text, i.sending, i.note, i.attachments.length]),
       held.map((i) => [i.id, i.text, i.state, i.heldReason]),
       ui.editor && ui.editor.id,

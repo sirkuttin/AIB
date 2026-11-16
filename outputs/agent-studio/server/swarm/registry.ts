@@ -56,7 +56,10 @@ export interface Helper {
   picked_by: 'rule' | 'main agent';
   rule: string;
   why: string;
-  worktree: { path: string; branch: string; base: string; start: string };
+  /** landOn (build plan 2.4): the folder branch a folder chat's helper lands on, from its worktree record; missing for a copy parent. */
+  worktree: { path: string; branch: string; base: string; start: string; landOn?: string };
+  /** The landing queue and its journal (build plan 2.2, SF 3); null or missing when nothing waits or runs. */
+  landing?: Landing | null;
   state: HelperState;
   reason: string;
   createdAt: number;
@@ -73,6 +76,32 @@ export interface Helper {
     again: null | { commit: string; at: number };
   };
   notes: Note[];
+}
+
+/**
+ * One queued or running landing of a helper (build plan 2.2): its merge, or the page's Undo / Merge again, waiting for the folder
+ * chat to be idle. It is also the journal (SF 3): `stage` is written before git changes anything, so a landing found mid-stage at
+ * start is finished (the branch already moved) or rolled back (put back in the queue; a copy parent's stash re-applied).
+ */
+export interface Landing {
+  what: 'merge' | 'undo' | 'again';
+  /** 'tool' (merge_helper) or 'page' (Undo, Merge again). */
+  by: 'tool' | 'page';
+  queuedAt: number;
+  /** Refusals so far (busy, locked, moving): after 3 the chat gets one line. */
+  tries: number;
+  lastRefusal: string;
+  /** 'touched-dirty': waits until merge_helper (or the button) is used again; '' otherwise. */
+  waitsFor: string;
+  stage: 'queued' | 'landing' | 'stashed' | 'built' | 'moved';
+  lockId: string;
+  stashSha: string;
+  stashName: string;
+  stashFolder: string;
+  landed: string;
+  tipBefore: string;
+  toldTries: boolean;
+  toldWait: boolean;
 }
 
 interface Doc {
