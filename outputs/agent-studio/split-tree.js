@@ -14,7 +14,8 @@
   const NARROW = 900; // under this window width the panes collapse to one
   const DRAFT = '__draft__'; // the temporary "New chat" tab; never stored
   const EDGE = 0.3; // a drop within this share of a pane's edge splits it
-  const MAX_GROUPS = 24,
+  const MAX_GROUPS = 2, // at most two panes side by side (owner, 2026-11-15)
+    MAX_STORED = 24, // a saved layout from an older version may hold more; it loads as two
     MAX_TABS = 200,
     MAX_LAYOUTS = 60;
   const STORE = 'studio-split-v1';
@@ -69,11 +70,7 @@
   // How many panes sit side by side at the widest point (a row adds its children up, a column takes its widest child).
   function across(layout) {
     const go = (n) =>
-      !n || n.k !== 's'
-        ? 1
-        : n.dir === 'row'
-          ? n.ch.reduce((sum, c) => sum + go(c), 0)
-          : Math.max(1, ...n.ch.map(go));
+      !n || n.k !== 's' ? 1 : n.dir === 'row' ? n.ch.reduce((sum, c) => sum + go(c), 0) : Math.max(1, ...n.ch.map(go));
     return layout && layout.tree ? go(layout.tree) : 0;
   }
   // The narrowest the split stage may get: MIN_W per pane across plus the 5 px dividers between them.
@@ -192,6 +189,7 @@
     if (!tgtHit || tgtHit.n.k !== 'g') return layout;
     const tgt = tgtHit.n,
       src = holder(L.tree, tab);
+    if (['left', 'right', 'top', 'bottom'].includes(zone) && groups(L.tree).length >= MAX_GROUPS) zone = 'center'; // no third pane: the chat opens in the target pane
     if (zone === 'center' || zone === 'tabs') {
       if (src === tgt) {
         if (zone === 'tabs' && idx != null) {
@@ -212,7 +210,6 @@
     }
     if (!['left', 'right', 'top', 'bottom'].includes(zone)) return layout;
     if (src === tgt && tgt.tabs.length === 1) return layout; // nothing to split off
-    if (groups(L.tree).length >= MAX_GROUPS) return layout;
     if (src) takeOut(src, tab);
     const ng = group([tab], tab),
       dir = zone === 'left' || zone === 'right' ? 'row' : 'col',
@@ -239,6 +236,7 @@
   function splitGroup(layout, gid, dir, tab) {
     const hit = find(layout.tree, gid);
     if (!hit || hit.n.k !== 'g') return layout;
+    if (groups(layout.tree).length >= MAX_GROUPS) return layout;
     const g = hit.n,
       zone = dir === 'col' ? 'bottom' : 'right',
       pick = tab && g.tabs.includes(tab) ? tab : g.active;
@@ -267,7 +265,8 @@
   }
   // The zone under the pointer (x, y) in a pane body rect {left, top, width, height}. A split zone that would make a pane
   // smaller than the minimum is not offered: the drop then opens a tab (center).
-  function zoneAt(rect, x, y, min) {
+  function zoneAt(rect, x, y, min, full) {
+    if (full) return 'center'; // two panes already: only a tab drop is offered
     const w = rect.width || 1,
       h = rect.height || 1,
       rx = (x - rect.left) / w,
@@ -451,9 +450,21 @@
       if (!g.tabs.includes(g.active)) g.active = g.tabs[0] || '';
     });
     tree = prune(tree);
-    if (!tree || groups(tree).length < 2 || groups(tree).length > MAX_GROUPS) return null;
-    const list = groups(tree);
-    return { tree, focus: list.some((g) => g.id === raw.focus) ? raw.focus : list[0].id };
+    if (!tree || groups(tree).length < 2 || groups(tree).length > MAX_STORED) return null;
+    let list = groups(tree);
+    let focus = list.some((g) => g.id === raw.focus) ? raw.focus : list[0].id;
+    if (list.length > MAX_GROUPS) {
+      // An older version saved more panes: keep the focused one and the one next to it. The other chats stay in the sidebar.
+      const at = list.findIndex((g) => g.id === focus),
+        mate = list[at + 1] || list[at - 1],
+        keep = new Set([focus, mate.id]);
+      walk(tree, (g) => {
+        if (!keep.has(g.id)) g.tabs = [];
+      });
+      tree = prune(tree);
+      list = groups(tree);
+    }
+    return { tree, focus };
   }
   // The whole store: { v: 1, layouts: { projectKey | "all": layout } }
   function emptyStore() {

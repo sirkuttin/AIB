@@ -46,20 +46,20 @@ test('splitting the only tab of a pane away from itself changes nothing', () => 
   assert.equal(T.drop(L, 'a', firstId(L), 'right'), L);
 });
 
-test('a split the same way as its parent joins the parent instead of nesting; the other way nests', () => {
+test('with two panes, a split zone opens a tab in the target pane instead of a third pane', () => {
   let L = T.single(['a', 'b', 'c'], 'a');
   L = T.drop(L, 'b', firstId(L), 'right');
-  const a = T.holder(L.tree, 'a');
-  L = T.drop(L, 'c', a.id, 'right'); // row inside a row: flat
-  assert.equal(L.tree.dir, 'row');
-  assert.equal(L.tree.ch.length, 3);
-  assert.deepEqual(tabsOfGroups(L), ['a', 'c', 'b']);
-  const b = T.holder(L.tree, 'b');
-  const n = T.drop(L, 'a', b.id, 'bottom'); // a column inside the row
-  assert.equal(
-    n.tree.ch.some((c) => c.k === 's' && c.dir === 'col'),
-    true,
-  );
+  assert.equal(T.countGroups(L), 2);
+  const a = T.holder(L.tree, 'a'),
+    b = T.holder(L.tree, 'b');
+  for (const zone of ['left', 'right', 'top', 'bottom']) {
+    const n = T.drop(L, 'c', a.id, zone);
+    assert.equal(T.countGroups(n), 2, zone + ': still two panes');
+    assert.deepEqual(T.holder(n.tree, 'c').id, a.id, zone + ': c joined the target pane');
+    assert.equal(T.countGroups(T.drop(L, 'z', b.id, zone)), 2, zone + ': a chat from the list too');
+  }
+  assert.equal(T.countGroups(T.splitGroup(L, a.id, 'row')), 2);
+  assert.equal(T.splitGroup(L, a.id, 'col'), L, 'Ctrl+\ and the menu do nothing with two panes');
 });
 
 test('the new pane takes half of the space of the pane it split', () => {
@@ -68,7 +68,7 @@ test('the new pane takes half of the space of the pane it split', () => {
   const [x, y] = T.groups(L.tree);
   assert.equal(x.f, y.f);
   L = T.drop(L, 'a', y.id, 'left');
-  assert.equal(T.groups(L.tree).length, 2, 'a moved: its old pane closed');
+  assert.equal(T.groups(L.tree).length, 1, 'two panes: the drop is a tab drop, the old pane closed');
 });
 
 test('center and the tab bar move a chat in as a tab, with an insertion index', () => {
@@ -105,8 +105,11 @@ test('reordering inside one tab bar uses the slot between tabs', () => {
 test('a chat that is in no pane yet (a card from the list) can be dropped anywhere', () => {
   const L = two();
   const split = T.drop(L, 'z', lastId(L), 'bottom');
-  assert.equal(T.countGroups(split), 3);
-  assert.equal(T.holder(split.tree, 'z').tabs.length, 1);
+  assert.equal(T.countGroups(split), 2, 'a third pane is never made');
+  assert.equal(T.holder(split.tree, 'z').id, lastId(L));
+  const solo = T.single(['a'], 'a'),
+    one = T.drop(solo, 'z', firstId(solo), 'bottom');
+  assert.equal(T.countGroups(one), 2, 'from one pane a split still works');
   const tab = T.drop(L, 'z', firstId(L), 'tabs', 1);
   assert.deepEqual(T.groups(tab.tree)[0].tabs, ['a', 'z', 'b']);
 });
@@ -127,13 +130,6 @@ test('closing the last tab of a pane closes the pane and a neighbour takes the f
   const gone = T.removeTab(L, 'c');
   assert.equal(T.countGroups(gone), 1);
   assert.equal(T.focused(gone).id, firstId(L));
-  const three = T.drop(L, 'c', lastId(L), 'bottom'); // [a b | (c)] -> still two; build three panes
-  const grid = T.drop(three, 'b', firstId(three), 'bottom');
-  assert.equal(T.countGroups(grid), 3);
-  const c = T.holder(grid.tree, 'c');
-  const closed = T.removeTab({ ...grid, focus: c.id }, 'c');
-  assert.equal(T.countGroups(closed), 2);
-  assert.notEqual(T.focused(closed).id, c.id);
 });
 
 test('closing a tab that is not the last keeps the pane and picks a neighbour tab', () => {
@@ -143,15 +139,6 @@ test('closing a tab that is not the last keeps the pane and picks a neighbour ta
   assert.equal(T.focused(r).active, 'c', 'the tab to the right takes over');
   const last = T.removeTab(T.single(['a', 'b'], 'b'), 'b');
   assert.equal(T.focused(last).active, 'a', 'at the end it is the left one');
-});
-
-test('closing panes nests back: a split with one child is replaced by the child', () => {
-  let L = T.single(['a', 'b', 'c'], 'a');
-  L = T.drop(L, 'b', firstId(L), 'right');
-  L = T.drop(L, 'c', T.holder(L.tree, 'b').id, 'bottom');
-  assert.equal(L.tree.ch[1].k, 's');
-  const r = T.removeTab(L, 'c');
-  assert.equal(r.tree.ch[1].k, 'g');
 });
 
 test('splitGroup moves the active tab to a new pane, or opens a New chat when it is the only tab', () => {
@@ -470,4 +457,44 @@ test('QA M3: panes across and the stage floor (a row adds up, a column takes its
   const nested = { tree: T.split('row', [g(), T.split('col', [T.split('row', [g(), g()]), g()])]), focus: '' };
   assert.equal(T.across(nested), 3);
   assert.equal(T.across({ tree: T.split('col', [g(), g()]), focus: '' }), 1);
+});
+
+test('no third pane: a drop is never offered a split zone with two panes', () => {
+  const rect = { left: 0, top: 0, width: 2000, height: 1000 };
+  assert.equal(T.zoneAt(rect, 5, 500), 'left');
+  assert.equal(T.zoneAt(rect, 5, 500, undefined, true), 'center');
+  assert.equal(T.MAX_GROUPS, 2);
+});
+
+test('an old saved layout with three or more panes loads as two: the focused pane and the one next to it', () => {
+  const g = (id, t) => ({ k: 'g', id, tabs: t, active: t[0], f: 1 });
+  const raw = (focus) => ({
+    tree: {
+      k: 's',
+      id: 's1',
+      dir: 'row',
+      f: 1,
+      ch: [g('g1', ['a']), g('g2', ['b', 'x']), g('g3', ['c']), g('g4', ['d'])],
+    },
+    focus,
+  });
+  const mid = T.sanitize(raw('g2'));
+  assert.deepEqual(tabsOfGroups(mid), ['b+x', 'c']);
+  assert.equal(mid.focus, 'g2');
+  const last = T.sanitize(raw('g4'));
+  assert.deepEqual(tabsOfGroups(last), ['c', 'd'], 'last pane: the one before it');
+  const store = T.sanitizeStore({ v: 1, layouts: { p: raw('g1') } });
+  assert.equal(T.countGroups(store.layouts.p), 2);
+  assert.deepEqual(tabsOfGroups(store.layouts.p), ['a', 'b+x']);
+  const nested = T.sanitize({
+    tree: {
+      k: 's',
+      id: 's1',
+      dir: 'row',
+      f: 1,
+      ch: [g('g1', ['a']), { k: 's', id: 's2', dir: 'col', f: 1, ch: [g('g2', ['b']), g('g3', ['c'])] }],
+    },
+    focus: 'g1',
+  });
+  assert.equal(T.countGroups(nested), 2);
 });
