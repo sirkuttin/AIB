@@ -497,6 +497,46 @@ test('the header line names the chat changes for a worktree chat and Uncommitted
   );
 });
 
+test('a project-folder chat: the fixed header, no Merge or Discard, and the footer line that points at the agent (plan 1.4)', async () => {
+  const t = setup();
+  C.sync({ id: 'chat1', busy: false, folder: true });
+  const pane = t.ids.subagentsPane;
+  // before the changes are read: the header and the footer are already there (nothing pops in when the list arrives)
+  assert.equal(pane.querySelector('.cg-scope').textContent, C.FOLDER_SCOPE);
+  assert.equal(C.FOLDER_SCOPE, "Uncommitted in the project folder (this chat's and anyone else's)");
+  t.ui().show('changes');
+  await flush();
+  assert.equal(pane.querySelector('.cg-scope').textContent, C.FOLDER_SCOPE, 'one fixed line, also with files listed');
+  assert.equal(rows(t).length, 3, 'the file list is unchanged');
+  const foot = pane.querySelector('.cg-foot'),
+    line = pane.querySelector('.cg-foot-folder');
+  assert.equal(foot.hidden, false);
+  assert.equal(line.hidden, false);
+  assert.equal(line.textContent, 'Works in the project folder · nothing to merge. Ask the agent to commit or undo changes.');
+  assert.equal(pane.querySelector('.cg-discard').hidden, true, 'no Discard');
+  assert.equal(pane.querySelector('.cg-merge-btn').hidden, true, 'no Merge');
+});
+test('an own-copy chat keeps its branch header, Discard and no folder line even if the page thought it was a folder chat', async () => {
+  const t = setup({ scope: 'branch', branch: 'studio/chat-1' });
+  C.sync({ id: 'chat1', busy: false, folder: true });
+  t.ui().show('changes');
+  await flush();
+  const pane = t.ids.subagentsPane;
+  assert.equal(pane.querySelector('.cg-scope').textContent, "This chat's changes", "the server's data.worktree wins");
+  assert.equal(pane.querySelector('.cg-foot-folder').hidden, true);
+  assert.equal(pane.querySelector('.cg-discard').hidden, false, 'Discard as today');
+});
+test('isFolderView: folder chats only, never a discarded chat, a worktree, a non-git folder or an unknown one', () => {
+  const f = { folder: true };
+  assert.equal(C.isFolderView(f, null), true, 'shown before the changes are read');
+  assert.equal(C.isFolderView(f, { git: true, files: [] }), true);
+  assert.equal(C.isFolderView({ folder: false }, { git: true, files: [] }), false);
+  assert.equal(C.isFolderView({ folder: true, discarded: true }, null), false);
+  assert.equal(C.isFolderView(f, { git: true, worktree: { branch: 'b' } }), false);
+  assert.equal(C.isFolderView(f, { git: false }), false);
+  assert.equal(C.isFolderView(f, { unknown: true }), false);
+});
+
 test('a chat in its own worktree (a WSL one too) gets Discard and Merge; worktree.merge: false keeps Merge away', () => {
   const files = [{ path: 'a.txt' }];
   const off = { git: true, files, worktree: { branch: 'studio/chat-1', merge: false } };

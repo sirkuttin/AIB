@@ -179,6 +179,10 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* A project-folder chat's long fixed heading gives way before the file count does. */
+.cg-scope.cg-folder ~ .cg-sum {
+  flex: 0 0 auto;
+}
 .cg-refresh {
   flex: 0 0 auto;
   width: 26px;
@@ -562,6 +566,15 @@
   font-size: 12px;
   line-height: 1.4;
   color: var(--muted);
+}
+/* A project-folder chat's status line: the same muted text as the footer note (no buttons, chat-first). */
+.cg-foot-folder {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+.cg-foot-folder[hidden] {
+  display: none;
 }
 .cg-foot-note.err {
   color: var(--cg-discard-text);

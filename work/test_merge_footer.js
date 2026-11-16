@@ -21,7 +21,7 @@ test('the footer is one row: status line on the left, Discard then Merge on the 
   );
   assert.deepEqual(
     parts.status.children.map((n) => n.className),
-    ['cg-foot-note', 'cg-merge-line'],
+    ['cg-foot-note', 'cg-foot-folder', 'cg-merge-line'],
   );
   assert.equal(parts.foot.children.filter((n) => n.tagName === 'BUTTON').length, 2, 'both buttons share the row');
   const win = {
