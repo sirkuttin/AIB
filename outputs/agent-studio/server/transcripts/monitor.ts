@@ -78,6 +78,39 @@ export async function commandList(source: Source, session: Json): Promise<Task[]
 
 const inFlight = new WeakMap<Source, Map<string, Promise<Task[]>>>();
 
+/** How long a page request waits for commandList before it is answered from what is already known (COMMAND_QUICK_MS). */
+export let COMMAND_QUICK_MS = 250;
+export function setCommandQuickMs(ms: number): void {
+  COMMAND_QUICK_MS = ms;
+}
+
+/**
+ * commandList for the page's polls (/api/commands, /api/agents' running counts), never kept waiting: the first build of a chat
+ * with a big family reads every subagent transcript (hundreds of MB for a long lead chat: seconds, half a minute while the PC is
+ * busy) and the page's poll waited for it, history and all. Waits at most COMMAND_QUICK_MS for the current list; past that it
+ * answers with the last list built for this chat (`stale`) or none yet (`pending`), and the build goes on behind it, so the next
+ * poll gets it. Errors that come back within the wait (an unknown chat) still throw.
+ */
+export async function commandListQuick(
+  source: Source,
+  session: Json,
+  waitMs = COMMAND_QUICK_MS,
+): Promise<{ tasks: Task[]; pending: boolean; stale: boolean }> {
+  const key = typeof session === 'string' ? session : JSON.stringify(session);
+  const known = source.commandMemo.get(key);
+  const build = commandList(source, session);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<null>((resolve) => (timer = setTimeout(() => resolve(null), waitMs)));
+  try {
+    const done = await Promise.race([build, late]);
+    if (done) return { tasks: done, pending: false, stale: false };
+  } finally {
+    clearTimeout(timer);
+  }
+  build.catch(() => {}); // still building: a later error is the next poll's
+  return known ? { tasks: [...known[2]], pending: false, stale: true } : { tasks: [], pending: true, stale: false };
+}
+
 function startedAt(task: Task): number {
   return isoTimestamp(pyStr(task.started).replaceAll('Z', '+00:00'));
 }
@@ -168,9 +201,9 @@ function loadKey(source: Source, key: Json): Promise<Transcript> {
 }
 
 /** {agent key: number of background commands still reported running} for one conversation. */
-export async function runningByAgent(source: Source, session: Json): Promise<Record<string, number>> {
+export async function runningByAgent(source: Source, session: Json, quick = false): Promise<Record<string, number>> {
   const counts: Record<string, number> = {};
-  for (const task of await commandList(source, session)) {
+  for (const task of quick ? (await commandListQuick(source, session)).tasks : await commandList(source, session)) {
     if (RUNNING.includes(task.status as string)) counts[task.agentKey as string] = (counts[task.agentKey as string] ?? 0) + 1;
   }
   return counts;
@@ -325,7 +358,7 @@ export async function handleGet(source: Source, path: string, query: string, opt
       const agents = await source.agents(arg('session'));
       let running: Record<string, number> = {};
       try {
-        running = await runningByAgent(source, arg('session'));
+        running = await runningByAgent(source, arg('session'), true); // never waits long for the commands (commandListQuick)
       } catch (error) {
         if (!(isOSError(error) || error instanceof ValueError || error instanceof PyTypeError)) throw error;
       }
@@ -333,13 +366,15 @@ export async function handleGet(source: Source, path: string, query: string, opt
       return json(200, { agents, now: now() });
     }
     if (path === '/api/commands') {
-      let commands = await commandList(source, arg('session'));
+      const quick = await commandListQuick(source, arg('session'));
+      let commands = quick.tasks;
       const running = commands.filter((t) => RUNNING.includes(t.status as string)).length;
       if (arg('running') === '1') commands = commands.filter((t) => RUNNING.includes(t.status as string));
       const shown = commands.slice(0, 200).map((task) =>
         Object.fromEntries(Object.entries(task).filter(([k]) => k !== 'output' && k !== 'command'))
       );
-      return json(200, { commands: shown, running, total: commands.length });
+      // pending: the first list of this chat is still being read (none to show yet); stale: the last one, a newer is being read
+      return json(200, { commands: shown, running, total: commands.length, ...(quick.pending ? { pending: true } : {}), ...(quick.stale ? { stale: true } : {}) });
     }
     if (path === '/api/command') {
       const commands = await commandList(source, arg('session'));

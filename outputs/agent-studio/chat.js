@@ -4778,8 +4778,12 @@
       const data = await get('/api/commands', { session: key });
       if (selected?.key !== key) return;
       commands = data.commands;
+      /* pending: the server is still reading this chat's saved commands the first time (a big family takes seconds); it answers
+         at once instead of holding the poll, and the next poll brings the list */
       noteCommands(
-        'Saved and inferred: status comes from saved agent events, not from a live AIB connection or an operating-system process check.',
+        data.pending
+          ? 'Reading the saved commands…'
+          : 'Saved and inferred: status comes from saved agent events, not from a live AIB connection or an operating-system process check.',
       );
       renderCommands();
       if (selectedCommand) {
@@ -5712,7 +5716,11 @@
     else if (!a.cmdAt || now - a.cmdAt > 4000) {
       a.cmdAt = now;
       try {
-        a.commands = (await get('/api/commands', { session: c.key })).commands || [];
+        const r = await get('/api/commands', { session: c.key });
+        if (r.pending) {
+          a.cmdAt = 0; // still being read the first time: ask again at the next poll
+          a.commands ||= [];
+        } else a.commands = r.commands || [];
       } catch {}
     }
     a.at = now;
