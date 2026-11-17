@@ -207,6 +207,7 @@ changesTest('Changes, split view, two folder chats: the folder lists once, rows 
   assert(r.arrows.length === 2 && r.arrows.every((c) => c === '▸' || c === '▾'), JSON.stringify(r.arrows));
   assertEquals(r.badge, '2');
   await page.eval(`document.getElementById('paneTab-activity').click()`);
-  await page.waitFor(`[...document.querySelectorAll('#splitActivity .sp-sub')].some((n) => n.textContent === 'Ready')`, 15000, 'Ready');
+  // the section line follows the chat's real state (fix/split-ready-label): an idle chat says Ready, one waiting on you Your turn
+  await page.waitFor(`[...document.querySelectorAll('#splitActivity .sp-sub')].some((n) => /^(Ready|Your turn)/.test(n.textContent))`, 15000, 'Ready or Your turn');
   assert(!(await page.eval<boolean>(`/idle/i.test(document.getElementById('splitActivity').innerText)`)), 'no "idle"');
 });
