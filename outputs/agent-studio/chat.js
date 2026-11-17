@@ -3485,7 +3485,7 @@
     renderConversations();
     if (selected) renderHeader();
     renamesOnTheirWay++;
-    post('chat-name', { key, name: v })
+    post('chat-name', { key, name: v, cwd: (c.live && c.live.cwd) || c.cwd || '' }) // cwd: where the agent can find it (a WSL chat: its distro)
       .then((out) => {
         renamesOnTheirWay--;
         if (renamesOnTheirWay || !out || typeof out.chatNames !== 'object' || !out.chatNames) return;

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Chat names: a name you give a chat in AIB is now its name in Claude Code and Codex too. Rename used to change the name in AIB
+  only, so `claude --resume`, the VS Code extension and Codex's own list kept showing the old title (an AIB chat called
+  "Ashborne orchestrator part3" was still "Ashborne orchestrator handoff" in VS Code). Now a rename on the PC or a phone also
+  names the agent's own session, the same way its `/rename` does, through the agent itself: no message is sent and no model
+  call is made. A chat that is working gets the name when its turn ends; a WSL chat is named inside its distro. Clearing a name
+  in AIB leaves the agent's title as it is. AIB's own name stays the one AIB shows.
 - Phone saved copies: read your recent chats with no connection. On a train or in a dead zone the phone used to show only
   "Can't reach your PC" and nothing to read. Now it keeps copies of up to 5 chats you opened recently (about 2 MB each, the
   oldest whole turns go first). A chat opens from its copy at once, then fills in from the PC. While the PC can't be reached,

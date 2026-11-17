@@ -4094,6 +4094,36 @@ export class Connection {
     return result;
   }
 
+  /**
+   * Name a saved session the agent's own way, in this short-lived process (no session loaded, no prompt, no model call): Claude
+   * Code's and Codex's adapters offer `_session/rename` to a client that declares their session index extension
+   * (`_meta.jetbrains.air.capabilities: ["sessionIndex"]`, which only this probe process declares: a chat's own process stays a
+   * plain ACP client). Claude Code's adapter appends the same `custom-title` / `agent-name` records and `custom-title.json` the
+   * CLI's `/rename` writes; codex-acp sets the thread name through its app-server (`thread/name/set`). Returns false when the agent
+   * does not offer it (an older adapter, another agent); throws on a refusal.
+   */
+  async renameSessionTitle(sessionId: string, title: string, timeoutSeconds = 45): Promise<boolean> {
+    this.initial = await this.request('initialize', {
+      protocolVersion: 1,
+      clientInfo: { name: 'agent-studio', title: 'AIB', version: APP_VERSION },
+      clientCapabilities: {
+        fs: { readTextFile: false, writeTextFile: false },
+        terminal: false,
+        _meta: { jetbrains: { air: { version: 1, capabilities: ['sessionIndex'] } } },
+      },
+    }, timeoutSeconds);
+    if (!isDict(this.initial) || !pyEq(get(this.initial, 'protocolVersion'), 1)) {
+      throw new ValueError('The agent did not negotiate supported ACP protocol version 1');
+    }
+    const meta = get(this.initial, '_meta');
+    const jetbrains = isDict(meta) ? get(meta, 'jetbrains') : null;
+    const air = isDict(jetbrains) ? get(jetbrains, 'air') : null;
+    const offered = isDict(air) ? get(air, 'capabilities') : null;
+    if (!Array.isArray(offered) || !offered.includes('sessionRename')) return false;
+    await this.request('_session/rename', { sessionId, title }, timeoutSeconds);
+    return true;
+  }
+
   /** Initialize only (no session) so session/list can run in a short-lived process. */
   async initializeForDiscovery(): Promise<void> {
     this.initial = await this.request('initialize', {

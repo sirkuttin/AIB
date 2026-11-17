@@ -37,6 +37,7 @@ import { BetaSigner } from '../agents/beta_signin.ts';
 import { AgentOptionsCache } from '../state/agent_options.ts';
 import { UsageLimitsStore } from '../state/usage_limits.ts';
 import { LimitsFeed, REFRESH_SECONDS } from './usage_limits_feed.ts';
+import { AgentTitles } from './agent_titles.ts';
 import * as artifactKeys from '../artifacts/keys.ts';
 import { artifactToolCommand } from '../artifacts/mcp.ts';
 import { ArtifactMcpHttp, FORWARD_FILE, forwardEntry, httpEntry, ownForwardFile, ownTunnelEntry, tunnelEntry } from '../artifacts/mcp_http.ts';
@@ -406,6 +407,8 @@ export class Studio {
   readonly agentOptions: AgentOptionsCache;
   /** Subscription usage limits per agent account, for the Limits chip (host/usage_limits_feed.ts). */
   limits: LimitsFeed;
+  /** Chat names given in AIB, given to the agent's own session too (host/agent_titles.ts). */
+  readonly agentTitles: AgentTitles;
   /** Running quiet probes by agent|folder, and when each last failed (seconds). */
   readonly #probes = new Map<string, Promise<void>>();
   readonly #probeFailed = new Map<string, number>();
@@ -459,6 +462,11 @@ export class Studio {
     this.settings = stores.settings ?? new SettingsStore(dir);
     this.agentOptions = new AgentOptionsCache(dir);
     this.limits = new LimitsFeed(new UsageLimitsStore(dir));
+    this.agentTitles = new AgentTitles({
+      live: (provider, sessionId) =>
+        [...this.connections.values()].find((c) => c.provider === provider && c.sessionId === sessionId && !c.closed) ?? null,
+      rename: (provider, sessionId, title, cwd) => this.#renameInAgent(provider, sessionId, title, cwd),
+    });
     // The usage checker also runs on its own, once a minute for every open chat (not only when a chat opens or a turn ends)
     this.#limitsTimer = setInterval(() => {
       if (this.#closed) return;
@@ -551,6 +559,7 @@ export class Studio {
       await this.subagents.turnEnded(connection.id).catch((error) => log.exception(error, 'Subagent turn end failed'));
     }
     if (connection.provider && connection.sessionId) await this.#mark('your_turn', connection);
+    if (connection.sessionId) this.agentTitles.turnEnded(connection.provider, connection.sessionId); // a name that waited for the turn
     void this.limits.refresh(connection); // Codex / Vibe: at most once a minute per account
   }
 
@@ -1075,6 +1084,32 @@ export class Studio {
     try {
       await probe.initializeForDiscovery();
       return { ...(await probe.listSessions((cwd as string) || null, (cursor as string) || null)), via: 'temporary-process' };
+    } finally {
+      await probe.close();
+    }
+  }
+
+  /**
+   * Name a saved session in the agent's own list (host/agent_titles.ts): a short-lived adapter process of the chat's agent, in its
+   * distro for a WSL chat, asks for `_session/rename`. Never loads the session or prompts it. False when the agent does not offer it.
+   */
+  async #renameInAgent(provider: string, sessionId: string, title: string, cwd: string): Promise<boolean> {
+    const loc = cwd ? wslLocOf(cwd) : null;
+    let probe: Connection;
+    if (loc) {
+      const launch = await this.wslLaunch(provider, loc);
+      const options: ConnectionOptions = { keeper: launch.link, wsl: launch.spawn };
+      if (Object.keys(launch.extra).length) options.env = launch.extra;
+      probe = this.connectionFactory(launch.command, refOf(loc), provider, options);
+    } else {
+      const [command, env] = await this.agentLaunch(provider);
+      const folder = cwd && !isForeignPath(cwd) && isdir(cwd) ? realpath(expandUser(cwd)) : home();
+      probe = Object.keys(env).length
+        ? this.connectionFactory(command, folder, provider, { env })
+        : this.connectionFactory(command, folder, provider);
+    }
+    try {
+      return await probe.renameSessionTitle(sessionId, title);
     } finally {
       await probe.close();
     }
@@ -3067,6 +3102,11 @@ export class Studio {
     if (name.startsWith('allow-')) return this.#allowCall(name, body); // allow rules: page-session routes only (web/live_routes.ts)
     if (name === 'agent-options') return [200, await this.agentOptionsFor(body)]; // POST /api/live/agent-options (web/live_routes.ts)
     if (name === 'discover') return [200, await this.listAgentSessions(need(body, 'provider'), body.cwd ?? null, body.cursor ?? null)];
+    if (name === 'agent-title') { // internal (web/server.ts chat-name, remote rename): not in LIVE_POST_OPS
+      const queued = this.agentTitles.request(String(need(body, 'provider')), String(need(body, 'sessionId')), String(body.title ?? ''), isStr(body.cwd) ? body.cwd : '');
+      return [200, { ok: true, queued }];
+    }
+    if (name === 'agent-title-state') return [200, { waiting: this.agentTitles.waiting(), done: this.agentTitles.done }]; // internal: tests
     if (name === 'forget') return [200, { ok: true, forgotten: this.forgetRecovered(body.provider, body.sessionId) }];
     if (name === 'worktree-note') { // internal (worktrees/merge.ts): not in LIVE_POST_OPS, so no page route reaches it
       const connection = this.#connection(body);
@@ -3252,6 +3292,7 @@ export class Studio {
     if (this.liveSync) await this.liveSync.stopAll().catch((error) => log.exception(error, 'Stopping live sync failed'));
     this.wslSync?.stopAll(); // the helpers go on syncing the WSL chats that keep running
     if (this.#heartbeat !== null) clearInterval(this.#heartbeat);
+    this.agentTitles.stop();
     this.#heartbeat = null;
     if (this.#limitsTimer !== null) clearInterval(this.#limitsTimer);
     this.#limitsTimer = null;
@@ -3303,6 +3344,7 @@ export class Studio {
     if (this.liveSync) await this.liveSync.stopAll().catch((error) => log.exception(error, 'Stopping live sync failed'));
     this.wslSync?.stopAll(); // the helpers go on syncing the WSL chats that keep running
     if (this.#heartbeat !== null) clearInterval(this.#heartbeat);
+    this.agentTitles.stop();
     this.#heartbeat = null;
     if (this.#limitsTimer !== null) clearInterval(this.#limitsTimer);
     this.#limitsTimer = null;

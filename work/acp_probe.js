@@ -7,6 +7,9 @@
  *   node work/acp_probe.js <entry.js> list [<cwd>]                    -> {"supported", "sessions": [{sessionId, cwd, title}]}
  *   node work/acp_probe.js <entry.js> load <cwd> <sessionId> [<prompt>] -> {"loaded": true, "history": "...", "reply": "..." | null}
  *                                                                       (an empty or missing prompt only loads)
+ *   node work/acp_probe.js <entry.js> rename <sessionId> <title>      -> {"renamed": true, "advertised": true}
+ *                                                                       (the adapter's own `_session/rename`, declared as a client
+ *                                                                        of the session index: no session is loaded, no model call)
  *
  * <entry.js> is the adapter's script (run with this node). The environment is passed through unchanged: the caller sets the
  * temp CLAUDE_CONFIG_DIR / CODEX_HOME / HOME and the stub URL. Permission requests are refused. Exit 1 with {"error"} on failure.
@@ -36,7 +39,7 @@ const record = (line) => {
   if (flags.events) require('node:fs').appendFileSync(flags.events, JSON.stringify({ at: Date.now(), ...line }) + '\n');
 };
 if (!entry || !op) {
-  process.stdout.write(JSON.stringify({ error: 'usage: acp_probe.js <entry.js> new|list|load ...' }) + '\n');
+  process.stdout.write(JSON.stringify({ error: 'usage: acp_probe.js <entry.js> new|list|load|rename ...' }) + '\n');
   process.exit(2);
 }
 
@@ -121,9 +124,12 @@ async function prompt(sessionId, words) {
 }
 
 async function main() {
+  // `rename` declares the session index extension (`_meta.jetbrains.air.capabilities: ["sessionIndex"]`), the only way the adapters
+  // offer `_session/rename`; every other op is a plain ACP client.
+  const sessionIndex = op === 'rename' ? { _meta: { jetbrains: { air: { version: 1, capabilities: ['sessionIndex'] } } } } : {};
   const init = await request('initialize', {
     protocolVersion: 1,
-    clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
+    clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false, ...sessionIndex },
     clientInfo: { name: 'aib-acp-probe', version: '1' },
   });
   const caps = (init && init.agentCapabilities) || {};
@@ -148,6 +154,12 @@ async function main() {
     const history = text;
     const reply = words ? await prompt(sessionId, words) : null;
     finish({ loaded: true, history, reply });
+  } else if (op === 'rename') {
+    const [sessionId, title] = rest;
+    const air = init && init._meta && init._meta.jetbrains && init._meta.jetbrains.air;
+    const advertised = !!(air && Array.isArray(air.capabilities) && air.capabilities.includes('sessionRename'));
+    await request('_session/rename', { sessionId, title }, 60);
+    finish({ renamed: true, advertised });
   } else {
     finish({ error: `unknown op ${op}` }, 2);
   }
