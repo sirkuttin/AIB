@@ -1,14 +1,12 @@
 # AIB — Agent Integration Bay
 
-**Honest AIB: provides the ground truth for all your agents, subagents, and processes across all your projects. Nothing hidden.**
+**One local app for Claude Code, Codex, OMP and ten more agents, side by side in the same project. Every agent, subagent and process across all your projects is visible in one place.**
 
-**_An agent pool divided against itself cannot stand_** 
-
-AIB allows you to run Claude Code, Codex, OMP (local) and ten more agents providers via ACP side by side, in the same project. Local Artifacts and Docs shared between all your agents. If details are your thing, visibility into every tool call, subagent, and running process is easy to access. AIB runs on your computer with the agent sign-ins you already have.
+AIB runs Claude Code, Codex, OMP and ten more agent providers (via ACP) side by side in the same project, on your computer, with the sign-ins you already have. Artifacts and Docs are local and shared between all your agents. If details are your thing, visibility into every tool call, subagent, and running process is easy to access. Nothing goes through an AIB server.
 
 **[Download the latest release](https://github.com/sirkuttin/AIB/releases/latest)** for Windows, macOS or Linux (x64, arm64).
 
-> **Beta: 0.1.0-beta.9.** Tested daily on Windows; macOS and Linux are lightly tested. Builds are not code-signed.
+> **Beta: 0.1.0-beta.11.** Tested daily on Windows; macOS and Linux are lightly tested. Builds are not code-signed.
 > Not affiliated with Anthropic, OpenAI or any other agent vendor.
 
 **_Codex and Claude Code working side by side in the same project_**
@@ -35,15 +33,15 @@ AIB allows you to run Claude Code, Codex, OMP (local) and ten more agents provid
 - The Prompts view lists each prompt you sent with the work it caused. Saved Claude Code and OMP chats from outside AIB are
   listed too, marked "In use elsewhere" when another app has them open.
 
-**4. Chats work in your folder; helpers get their own worktree.** *A chat divided against itself cannot stand.*
+**4. Chats work in your folder; helpers get their own worktree.**
 - Every chat works in your project folder, so it also shows up in `claude --resume`, the VS Code extension and the agent's other tools.
-- Helpers (agents a chat starts through AIB, from any provider) each work in their own worktree and branch, started from your folder's branch.
+- Helpers, and the subagents an agent starts itself, each work in their own worktree and branch, started from your folder's branch.
   Your saved edits are synced into the helpers' worktrees.
 - A helper's work lands in your folder when the main chat's turn ends, with **Undo** on the line that says so.
-  Conflicts go to the helper to resolve.
+  There are no Merge or Discard buttons. Conflicts go to the helper to resolve.
 - AIB cleans up the worktrees, branches and stashes it made. Work that was never merged is never deleted without asking.
 
-![A helper working in its own worktree: the Changes tab with Discard and Merge](docs/screenshots/06-worktree-changes-merge.png)
+![A helper's work landed in the project folder at the end of the turn, with Undo](docs/screenshots/06-helper-landed-with-undo.png)
 
 **5. Nothing stops when AIB does.**
 - Chats and chat terminals run in a separate program, the keeper. They keep running when you quit AIB, and when it restarts, updates or crashes.
@@ -127,8 +125,6 @@ Some Beta agents need their own paid plan or API key; Settings says which.
 
 ## Status and limits
 
-Honest Abe would list these first.
-
 - Beta. Report problems in [issues](https://github.com/sirkuttin/AIB/issues).
 - macOS and Linux are lightly tested; the chat terminal has not run on a real Mac or Linux machine.
 - The ten Beta agents are untested by us; some of their login commands are unconfirmed.
@@ -183,7 +179,7 @@ serves the page. Releases are built this way and uploaded by hand; no CI.
 
 | Path | What's there |
 | --- | --- |
-| `outputs/agent-studio/server/` | The app. `main.ts` is the entry point; `web/` routes and security, `host/` the agent host, `acp/` the ACP connection, `keeper/` the keeper client, `state/` the data files, `transcripts/` saved chats, `worktrees/` helpers' worktrees, Changes and Merge, `artifacts/`, `agents/`, `ownership/`, `terminal/`, `desktop/` (window, tray, updater), `platform/` all OS-specific code. |
+| `outputs/agent-studio/server/` | The app. `main.ts` is the entry point; `web/` routes and security, `host/` the agent host, `acp/` the ACP connection, `keeper/` the keeper client, `state/` the data files, `transcripts/` saved chats, `worktrees/` helpers' worktrees, Changes and landing, `artifacts/`, `agents/`, `ownership/`, `terminal/`, `desktop/` (window, tray, updater), `platform/` all OS-specific code. |
 | `outputs/agent-studio/*.js, *.css, *.html` | The page. |
 | `outputs/agent-studio/docs/` | Design notes: desktop app, agent host and keeper, themes, ACP capabilities. |
 | `outputs/agent-studio/icons/` | The app icon in every size the packages need, made by `tools/make_icons.ts` from the masters in `icons/src/` (hand-drawn pixel grids for 16-32 px, an SVG for the rest). |

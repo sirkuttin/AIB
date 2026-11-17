@@ -13,7 +13,7 @@ import { ROUTE_LIST } from '../../outputs/agent-studio/server/web/routes.ts';
 import { addHandler, removeHandler, rootState, setLevel, WARNING } from '../../outputs/agent-studio/server/core/log.ts';
 import { COOKIE_NAME, DEVICE_HEADER, REMOTE_ROUTES } from '../../outputs/agent-studio/server/remote/server.ts';
 import { readRemotePort, saveRemotePort } from '../../outputs/agent-studio/server/remote/port.ts';
-import { askOf, helpersOf, HELPERS_MAX, HOME_BUDGET, lineOf, plainLine, StateTimes } from '../../outputs/agent-studio/server/remote/payloads.ts';
+import { askOf, helpersOf, HELPERS_MAX, HOME_BUDGET, lineOf, plainLine, plainTitle, StateTimes } from '../../outputs/agent-studio/server/remote/payloads.ts';
 import {
   type FakeChat,
   fakeTailscale,
@@ -380,6 +380,15 @@ Deno.test('card line: what it asks, the step it works on, else the last message'
   };
   assertEquals(lineOf({ busy: true, events: [say(1, 'Ok'), running] }), 'Working on: Edit a.ts');
   assertEquals(lineOf({ events: [say(1, 'x'.repeat(400))] }).length, 140);
+});
+
+Deno.test('chat titles from the first prompt are plain text: no Markdown marks, none left by a cut', () => {
+  assertEquals(plainTitle('Run the **review** on [the PR](https://a.b/1) with `npm test`'), 'Run the review on the PR with npm test');
+  assertEquals(plainTitle('Run the **revi'), 'Run the revi');
+  assertEquals(plainTitle('## Fix the _login_ bug\nmore detail'), 'Fix the login bug');
+  assertEquals(plainTitle('snake_case_name and 2*3*4 stay'), 'snake_case_name and 2*3*4 stay');
+  assertEquals(plainTitle('x'.repeat(300)).length, 170);
+  assertEquals(plainTitle(undefined), '');
 });
 
 Deno.test('card line is plain text: no Markdown marks, a link as its text, never starting mid-word', () => {

@@ -2559,6 +2559,10 @@
     close.addEventListener('click', closePage);
     head.append(title, close);
     const content = el('div', null, 'st-content');
+    // The user's own scrolling (wheel, touch, keys, dragging the bar) ends any scroll restore still waiting for the page to grow.
+    for (const type of ['wheel', 'touchstart', 'pointerdown', 'keydown']) {
+      content.addEventListener(type, () => (S.inputAt = (S.inputAt || 0) + 1), { passive: true });
+    }
     body.append(head, content);
     // The page is a size container (settings.css): when it is too narrow for the section list beside the settings (a big
     // Interface size in a small window), the list moves above them instead of squeezing them.
@@ -2658,6 +2662,20 @@
   // Redrawing the page replaces every node, which drops the scroll position (the page is briefly empty, so the scroll clamps to 0)
   // and the focus (the clicked button is gone). keepView() records both before the redraw; the function it returns puts them back:
   // the same scroll offset, the clicked card at the same place on screen, focus on the button's replacement.
+  // A redraw while the page is still settling (cards that fill in a moment later) can leave it too short for the old offset, so the
+  // browser clamps the scroll (to 0 if the page was empty). Try again for a second as the page grows, unless the user scrolls meanwhile.
+  function keepScroll(c, want) {
+    if (!want || (c.scrollTop || 0) >= want - 1) return;
+    const token = (S.scrollToken = (S.scrollToken || 0) + 1);
+    const started = (S.inputAt = S.inputAt || 0);
+    let tries = 0;
+    const again = () => {
+      if (token !== S.scrollToken || S.inputAt !== started || !S.open || tries++ > 20) return;
+      if ((c.scrollTop || 0) < want - 1) c.scrollTop = want;
+      if ((c.scrollTop || 0) < want - 1) root.setTimeout(again, 50);
+    };
+    root.setTimeout(again, 50);
+  }
   function keepView() {
     const c = S.content;
     if (!c) return () => {};
@@ -2671,6 +2689,7 @@
     const cls = inside && act.className;
     return () => {
       c.scrollTop = scroll;
+      keepScroll(c, scroll);
       const now = agent ? rowOf(agent) : null;
       if (inside && !c.contains(doc().activeElement)) {
         const here = now || c;

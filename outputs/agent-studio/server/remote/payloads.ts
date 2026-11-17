@@ -345,7 +345,7 @@ export class TitleCache {
           const state = obj(await ctx.host.liveState(id, 0));
           const events = Array.isArray(state.events) ? state.events : [];
           const first = events.find((e) => obj(e).kind === 'user');
-          title = str(obj(obj(first).data).text, 170);
+          title = plainTitle(obj(obj(first).data).text);
         } catch { /* gone */ }
         this.titles.set(id, title);
         while (this.titles.size > 500) this.titles.delete(this.titles.keys().next().value!);
@@ -415,6 +415,14 @@ export function plainLine(text: string, partial = false): string {
   return '';
 }
 
+/** A chat title in plain words. Titles that come from the first prompt carry its markdown ("Run the **review** ..."), and a long one is
+ * cut mid-mark ("Run the **revi…"): the same plain text as a card's line, plus the marks of a pair the cut left open. A name the
+ * owner typed is never passed through here. */
+export function plainTitle(text: unknown, max = 170): string {
+  const t = plainLine(String(text ?? '')).replace(/(^|\s)(\*\*|__|~~|`)(?=\S)/g, '$1').replace(/(?<=\S)(\*\*|__|~~)(?=\s|$)/g, '');
+  return t.length > max ? t.slice(0, max) : t;
+}
+
 /** Markdown marks out of one line: images and links as their text, emphasis, strike and code marks gone, spaces collapsed. */
 export function plainInline(line: string): string {
   return String(line || '')
@@ -462,8 +470,8 @@ export async function homePayload(ctx: WebContext, pcName: string, titles: Title
     const mark = obj(marks[key]);
     if (mark.archivedAt || mark.deletedAt) continue;
     const attention = obj(c.attention);
-    const sessionTitle = str(obj(obj(c.breadth).sessionInfo).title, 170);
-    let title = str(names[key], 170) || str(mark.title, 170) || sessionTitle;
+    const sessionTitle = plainTitle(obj(obj(c.breadth).sessionInfo).title);
+    let title = str(names[key], 170) || plainTitle(mark.title) || sessionTitle;
     if (!title) {
       title = titles.titles.get(id) ?? '';
       if (!titles.titles.has(id)) titles.want(ctx, id);
@@ -724,7 +732,7 @@ export async function chatPayload(
   const agent = agentName(state.provider);
   const folder = folderName(state.projectRoot || state.cwd);
   const name = ctx.viewPrefs.chatNames()[`${str(state.provider, 60)}:${str(state.sessionId, 200)}`];
-  const title = str(name, 170) || str(mark.title, 170) || str(obj(obj(state.breadth).sessionInfo).title, 170) || titles.titles.get(id) ||
+  const title = str(name, 170) || plainTitle(mark.title) || plainTitle(obj(obj(state.breadth).sessionInfo).title) || titles.titles.get(id) ||
     `${agent}${folder ? ' in ' + folder : ''}`;
   const root = str(state.projectRoot, 2000) || str(state.cwd, 2000);
   const helpersMade = helpersOf(state.subagents, state.subagentWorktrees);

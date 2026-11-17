@@ -698,6 +698,44 @@ test('Install on a card that is not the first keeps the scroll position, the car
   }
 });
 
+// Found by an e2e run: scrolled to 849 while Settings was still loading, a later full redraw left the page at 0. A redraw can find the
+// page too short for the old offset for a moment (the browser clamps the scroll); the offset must come back once the page grows,
+// unless the user scrolled in the meantime.
+test('Settings redraw while the page is still short keeps the scroll offset once the page grows; the user scrolling wins', async () => {
+  const { shell, ctx } = await openSettings();
+  const content = shell.body.querySelector('.st-content');
+  let top = 0;
+  let max = 0;
+  Object.defineProperty(content, 'scrollTop', {
+    configurable: true,
+    get: () => top,
+    set: (v) => {
+      top = Math.max(0, Math.min(v, max));
+    },
+  });
+  const realReplace = content.replaceChildren;
+  content.replaceChildren = function (...n) {
+    top = 0;
+    max = 0; // the redrawn page is empty for a moment
+    return realReplace.apply(this, n);
+  };
+  max = 2000;
+  content.scrollTop = 849;
+  assert.equal(content.scrollTop, 849);
+  ctx.AgentSettingsUI.redraw();
+  assert.equal(content.scrollTop, 0, 'clamped while the page is short');
+  max = 2000; // the cards have filled in
+  shell.window.runTimers();
+  assert.equal(content.scrollTop, 849, 'the offset comes back');
+  // The user scrolls while it is still short: the restore gives up.
+  max = 0;
+  ctx.AgentSettingsUI.redraw();
+  for (const fn of content.listeners && content.listeners.wheel ? content.listeners.wheel : []) fn({});
+  max = 2000;
+  shell.window.runTimers();
+  assert.equal(content.scrollTop, 0, "the user's own scroll is not overridden");
+});
+
 test('Install that works turns the agent On at once, even if it had been turned Off before; a Ready one nobody turned off needs no click', async () => {
   const list = setupList();
   const cursor = list.findIndex((a) => a.id === 'cursor');
