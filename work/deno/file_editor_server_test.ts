@@ -494,3 +494,57 @@ Deno.test('the agent host\'s finished write calls: WriteTracker.finished names t
   assertEquals(t.finished(done).length, 1);
   assertEquals(t.finished(done), [], 'once');
 });
+
+Deno.test('after a save the folder\'s busy chats and the chat that wrote the file are told which lines the user edited (one line per file)', async () => {
+  const state = await temp('aib-fe-state-');
+  const dir = await project({ 'n.ts': Array.from({ length: 20 }, (_, i) => `line ${i + 1}\n`).join('') });
+  const host = new FakeHost();
+  host.chats = [{ id: 'busy-1', idle: 'a turn is running' }, { id: 'idle-1', idle: '' }];
+  const file = `${dir}${sep}n.ts`;
+  const lf = new LiveFiles({
+    stateDir: state,
+    liveCall: (n, b) => host.liveCall(n, b),
+    conversations: () => [{ id: 'claude:w1', cwd: dir, writes: [file] }],
+    connectionOf: (id) => (id === 'claude:w1' ? 'writer-1' : null),
+  }, { ...FAST, pollMs: 60_000 });
+  lf.start();
+  try {
+    const got = lf.open(dir, 'n.ts');
+    assert('file' in got);
+    const text = got.file.text.toString().replace('line 12\n', 'twelve\n').replace('line 13\n', 'thirteen\n');
+    assert((await lf.save(got.file.id, { text })).ok);
+    await until(() => host.notes().length >= 2, 'the notes');
+    const notes = host.notes();
+    assertEquals(notes.map((n) => n.id).sort(), ['busy-1', 'writer-1'], 'the writer and the busy chat; not the idle one');
+    assertEquals(notes[0].line, 'The user edited n.ts, lines 12-13 (saved); re-read it before changing it.');
+    assertEquals(notes[0].replace, 'The user edited n.ts', 'one line per file: a newer note replaces the older one');
+  } finally {
+    lf.close();
+  }
+});
+
+Deno.test('a formatter rewrite touching the user\'s lines is one "rewrote this file" state, not many blocks', async () => {
+  const state = await temp('aib-fe-state-');
+  const body = Array.from({ length: 40 }, (_, i) => `x${i}=1\n`).join('');
+  const dir = await project({ 'f.py': body });
+  const lf = new LiveFiles({ stateDir: state, liveCall: () => Promise.resolve([200, {}]), conversations: () => [], connectionOf: () => null }, { ...FAST, pollMs: 60_000 });
+  lf.start();
+  try {
+    const got = lf.open(dir, 'f.py');
+    assert('file' in got);
+    const f = got.file;
+    let mine = body;
+    for (const i of [3, 10, 17, 24, 31]) mine = mine.replace(`x${i}=1\n`, `x${i}=2\n`);
+    f.doc.transact(() => {
+      f.text.delete(0, f.text.length);
+      f.text.insert(0, mine);
+    }, 'page'); // unsaved
+    Deno.writeTextFileSync(`${dir}${sep}f.py`, body.replaceAll('=1', ' = 1'));
+    await lf.check(f, true);
+    assertEquals(f.meta.get('rewrite'), true, 'the page shows one row: "… rewrote this file · 5 overlaps · Compare"');
+    assertEquals(f.overlaps.length, 5);
+    assert(f.text.toString().includes('x3=2') && f.text.toString().includes('x4 = 1'), 'the user\'s lines stay, the rest is formatted');
+  } finally {
+    lf.close();
+  }
+});
