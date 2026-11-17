@@ -4,7 +4,14 @@
 
 AIB runs Claude Code, Codex, OMP and ten more agent providers (via ACP) side by side in the same project, on your computer, with the sign-ins you already have. Artifacts and Docs are local and shared between all your agents. If details are your thing, visibility into every tool call, subagent, and running process is easy to access. Nothing goes through an AIB server.
 
-**[Download the latest release](https://github.com/sirkuttin/AIB/releases/latest)** for Windows, macOS or Linux (x64, arm64). Guides, release notes and screenshots: **[aib.softsirkut.com](https://aib.softsirkut.com)**.
+<p align="center">
+  <a href="https://aib.softsirkut.com"><b>🌐 Website: aib.softsirkut.com</b></a> &nbsp;·&nbsp;
+  <a href="https://aib.softsirkut.com/download/"><b>⬇ Download</b></a> &nbsp;·&nbsp;
+  <a href="https://aib.softsirkut.com/start/"><b>Get started</b></a> &nbsp;·&nbsp;
+  <a href="https://aib.softsirkut.com/releases/"><b>What's new</b></a>
+</p>
+
+**[Download the latest release](https://github.com/sirkuttin/AIB/releases/latest)** for Windows, macOS or Linux (x64, arm64), or get it from the **[website](https://aib.softsirkut.com/download/)**, which also has the full guides, every release's notes and screenshots of each feature.
 
 > **Beta: 0.12.0 beta.** Tested daily on Windows; macOS and Linux are lightly tested. Builds are not code-signed.
 > Not affiliated with Anthropic, OpenAI or any other agent vendor.
@@ -61,6 +68,17 @@ AIB runs Claude Code, Codex, OMP and ten more agent providers (via ACP) side by 
 - No AIB cloud, no telemetry. The server listens on `127.0.0.1` only.
 - AGPL-3.0.
 
+
+## Guides on the website
+
+The README is the short version. **[aib.softsirkut.com](https://aib.softsirkut.com)** walks through each part with screenshots:
+
+- [Get started](https://aib.softsirkut.com/start/): install, add a project, start your first chats.
+- [Chats](https://aib.softsirkut.com/chats/) and [steering](https://aib.softsirkut.com/steering/): run agents side by side, send mid-turn.
+- [Inbox](https://aib.softsirkut.com/inbox/): answer, snooze and continue from one list or a Windows notification.
+- [Files and the file editor](https://aib.softsirkut.com/files/): edit beside your agents without losing a line.
+- [Remote](https://aib.softsirkut.com/remote/): use AIB from your phone or another computer.
+- [Updates](https://aib.softsirkut.com/updates/) and [release notes](https://aib.softsirkut.com/releases/).
 
 ## Features
 
