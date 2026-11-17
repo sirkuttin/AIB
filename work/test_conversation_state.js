@@ -835,7 +835,7 @@ test('header menu offers the same actions and reflects state on its button', asy
   t.select(t.conversations[0]);
   t.draw();
   assert.equal(t.byId.organizeCurrent.hidden, false);
-  assert.match(t.byId.organizeCurrent.textContent, /^Pinned/);
+  assert.match(t.byId.organizeCurrent.title, /\(Pinned\)/);
   t.byId.organizeCurrent.onclick();
   assert.deepEqual(menuItems(t), [
     'Rename',
@@ -848,7 +848,7 @@ test('header menu offers the same actions and reflects state on its button', asy
   menuItem(t, 'Unpin').onclick();
   await flush();
   assert.equal(t.server.entries['claude:a1'], undefined);
-  assert.match(t.byId.organizeCurrent.textContent, /^Organize/);
+  assert.equal(t.byId.organizeCurrent.title, 'Conversation actions');
   assert.equal(t.document.activeElement, t.byId.organizeCurrent, 'focus stays on the header control');
   t.select(null);
   t.draw();
@@ -1228,7 +1228,7 @@ test('Resume and Edit hold note come from the same menus, header included; archi
   assert.equal(t.server.entries['claude:a2'].holdNote, 'new note');
   t.select(t.conversations[1]);
   t.draw();
-  assert.match(t.byId.organizeCurrent.textContent, /^On hold/);
+  assert.match(t.byId.organizeCurrent.title, /\(On hold\)/);
   t.byId.organizeCurrent.onclick();
   assert.ok(menuItems(t).includes('Resume'));
   menuItem(t, 'Resume').onclick();
@@ -1263,7 +1263,7 @@ test('archived rows offer no hold action, and a pinned+held header reads Pinned 
   t.ui._closeMenu(false);
   t.select(t.conversations[1]);
   t.draw();
-  assert.match(t.byId.organizeCurrent.textContent, /^Pinned \u00B7 On hold/);
+  assert.match(t.byId.organizeCurrent.title, /Pinned · On hold/);
 });
 
 // ---- QA sidebar round (qa/2-sidebar) ----------------------------------------------------------------------------

@@ -784,7 +784,7 @@
     b.hidden = !show;
     if (!show) return;
     const e = entryOf(selected);
-    b.textContent =
+    const state =
       (e.deletedAt && !isLive(selected)
         ? 'Deleted'
         : e.archivedAt
@@ -795,8 +795,10 @@
               ? 'Pinned'
               : e.holdAt
                 ? 'On hold'
-                : 'Organize') + ' ▾';
-    b.setAttribute('aria-label', 'Organize this conversation: pin, archive or delete');
+                : '');
+    b.textContent = '⋯';
+    b.title = 'Conversation actions' + (state ? ' (' + state + ')' : '');
+    b.setAttribute('aria-label', 'Conversation actions' + (state ? ': ' + state : ''));
   }
 
   // ---- rendering ----------------------------------------------------------------------------

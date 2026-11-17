@@ -562,12 +562,6 @@ button:focus-visible,
   background: transparent;
   padding: 0;
   cursor: pointer;
-  opacity: 0;
-}
-.pg:hover .more,
-.pg:focus-within .more,
-.pg .more[aria-expanded='true'] {
-  opacity: 1;
 }
 .pg .more[aria-expanded='true'] {
   background: var(--line);

@@ -2146,18 +2146,6 @@ aside #connections {
   font-size: 13px;
   line-height: 18px;
   text-align: center;
-  opacity: 0;
-  transition: opacity 0.12s;
-}
-.attachment-card:hover .attachment-remove,
-.attachment-card:focus-within .attachment-remove,
-.attachment-card .attachment-remove:focus-visible {
-  opacity: 1;
-}
-@media (hover: none) {
-  .attachment-card .attachment-remove {
-    opacity: 1;
-  }
 }
 #prompt:focus-visible {
   outline: none;

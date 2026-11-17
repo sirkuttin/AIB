@@ -154,14 +154,8 @@ aside .rename-chat {
   background: var(--hover);
   border: 0;
 }
-aside .conversation-row:hover .rename-chat,
-aside .conversation-row:focus-within .rename-chat,
-aside .rename-chat:focus-visible {
+aside .rename-chat {
   opacity: 1;
-}
-aside .conversation-row:hover .row-age,
-aside .conversation-row:focus-within .row-age {
-  visibility: hidden;
 }
 aside .conversation-row .connection {
   padding-right: 8px;
@@ -323,12 +317,6 @@ aside .project-group {
   color: var(--muted);
   font-size: 15px;
   line-height: 1;
-  opacity: 0;
-}
-.ws-tab:hover .ws-tab-x,
-.ws-tab.on .ws-tab-x,
-.ws-tab-x:focus-visible {
-  opacity: 1;
 }
 .ws-tab-x:hover {
   background: var(--accent-wash-2);
@@ -1589,11 +1577,21 @@ aside .connection .hold-note {
   color: var(--warn-text);
 }
 aside .rename-chat {
-  top: 3px;
+  top: 24px;
   right: 4px;
   width: 24px;
-  height: 24px;
+  height: 22px;
   transform: none;
+  background: transparent;
+  color: var(--muted);
+}
+aside .rename-chat:hover,
+aside .rename-chat:focus-visible {
+  background: var(--accent-wash-2);
+  color: var(--text-bright);
+}
+aside .conversation-row .row-status {
+  padding-right: 22px;
 }
 /* Needs you: a thin amber outline (the needs-you colour), not the purple one that reads like focus or the selected card. */
 aside .connection.selected.attn-needs_you {
@@ -2232,9 +2230,9 @@ aside .list-heading .list-add {
   color: var(--muted);
   font-size: 15px;
   line-height: 1;
-  opacity: 0;
+  opacity: 0.6;
 }
-.project-head-row:hover .project-more,
+.project-more:hover,
 .project-more:focus-visible,
 .project-more[aria-expanded='true'] {
   opacity: 1;

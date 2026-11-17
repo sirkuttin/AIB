@@ -487,6 +487,7 @@
         const more = el('button', '⋯', 'project-more');
         more.type = 'button';
         more.setAttribute('aria-label', 'Project options: ' + g.name);
+        more.title = 'Project options';
         more.setAttribute('aria-haspopup', 'menu');
         more.onclick = (e) => {
           e.stopPropagation();

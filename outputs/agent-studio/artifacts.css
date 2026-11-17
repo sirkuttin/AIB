@@ -677,12 +677,6 @@ a.artifact-link code {
   color: var(--muted);
   border-radius: 4px;
   cursor: pointer;
-  opacity: 0;
-}
-.ar-it:hover .ar-dots,
-.ar-it:focus-visible .ar-dots,
-.ar-it:focus .ar-dots {
-  opacity: 1;
 }
 .ar-dots:hover {
   background: var(--hover-overlay);

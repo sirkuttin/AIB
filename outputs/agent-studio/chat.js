@@ -610,6 +610,7 @@
       const remove = text('button', '×', 'attachment-remove');
       remove.type = 'button';
       remove.setAttribute('aria-label', 'Remove ' + item.file.name);
+      remove.title = 'Remove ' + item.file.name;
       remove.disabled = !!sendingKey;
       remove.onclick = () => removeAttachment(curKey(), item.id);
       card.append(image, text('span', item.file.name), remove);

@@ -71,17 +71,6 @@
   flex: none;
   display: flex;
   gap: 2px;
-  opacity: 0;
-  transition: opacity 0.1s;
-}
-.q-row:hover .q-actions,
-.q-row:focus-within .q-actions {
-  opacity: 1;
-}
-@media (hover: none) {
-  .q-actions {
-    opacity: 1;
-  }
 }
 .q-btn {
   border: 0;

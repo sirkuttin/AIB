@@ -85,6 +85,30 @@ header .hd-line h1:focus-visible {
   color: var(--text-bright);
   background: var(--hover-overlay);
 }
+#organizeCurrent.hd-more {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  min-height: 24px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 22px;
+}
+#organizeCurrent.hd-more:hover,
+#organizeCurrent.hd-more:focus-visible,
+#organizeCurrent.hd-more[aria-expanded='true'] {
+  color: var(--text-bright);
+  background: var(--hover-overlay);
+}
+#organizeCurrent[hidden] {
+  display: none;
+}
 #renameCurrent[hidden] {
   display: none;
 }
