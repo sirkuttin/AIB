@@ -36,11 +36,18 @@ def masked(value, server):
     return strip(value)
 
 
+# Deno only (subagent worktrees P1/P3): whether a chat's subagents work in their own worktrees, and where each one works; the
+# reference has no subagent worktrees. The fixture chat is given no hooks (AGENT_STUDIO_TEST), but once the turn's subagent bookkeeping
+# asks for it (host/studio.ts #subagentChat, via subagents/service.ts adoptPrevious) it is read like a taken-over chat and the block
+# shows. work/test_subagent_worktree_e2e.py and work/deno/subagent*_test.ts cover it.
+SWARM_KEYS = ('swarm', 'subagentIsolation', 'subagentWorktrees')
+
+
 def drop_swarm(value):
     """Deno only (folder chats P1): a chat in the project folder can lead helpers, so its connection carries swarm: {role}; the
-    reference has no swarm."""
+    reference has no swarm. Nor the subagent worktree blocks (SWARM_KEYS)."""
     if isinstance(value, dict):
-        return {k: drop_swarm(v) for k, v in value.items() if k != 'swarm'}
+        return {k: drop_swarm(v) for k, v in value.items() if k not in SWARM_KEYS}
     if isinstance(value, list):
         return [drop_swarm(v) for v in value]
     return value

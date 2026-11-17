@@ -256,6 +256,13 @@ const DROP = new Set([
 const INBOX_FACTS = new Set(['phase', 'helpers', 'shells', 'followUntil', 'failedAt', 'error', 'failKind', 'asksAt', 'question', 'lastOutputAt', 'stalledAt', 'stallKind', 'stallStep']);
 const isAttention = (o: Json) => 'needs' in o && 'state' in o && 'phase' in o;
 
+/**
+ * A subagent's model and when it started and ended (the phone's row line 2, "model · time": server/acp/connection.ts
+ * #trackSubagent): Deno only, the Python reference never had them. Dropped only from the entries of a snapshot's subagents map;
+ * work/test_phone_list.js and work/test_subagent_cards.js cover them.
+ */
+const SUBAGENT_FACTS = new Set(['model', 'startedAt', 'endedAt']);
+
 /** Same shape with times dropped, random keys and terminal ids numbered in order of appearance, the temp folder replaced, the connection id gone. */
 function scrub(run: Json): Json {
   const cwd = run.cwd as string;
@@ -270,13 +277,17 @@ function scrub(run: Json): Json {
     if (!terminals.has(id)) terminals.set(id, `term_T${terminals.size + 1}`);
     return terminals.get(id)!;
   });
-  const walk = (value: unknown): unknown => {
-    if (Array.isArray(value)) return value.map(walk);
+  const walk = (value: unknown, subagent = false): unknown => {
+    if (Array.isArray(value)) return value.map((v) => walk(v));
     if (value === null || typeof value !== 'object') return value;
     const out: Json = {};
     const attention = isAttention(value as Json);
     for (const [k, v] of Object.entries(value)) {
-      if (DROP.has(k) || (attention && INBOX_FACTS.has(k))) continue;
+      if (DROP.has(k) || (attention && INBOX_FACTS.has(k)) || (subagent && SUBAGENT_FACTS.has(k))) continue;
+      if (k === 'subagents' && v !== null && typeof v === 'object' && !Array.isArray(v)) {
+        out[k] = Object.fromEntries(Object.entries(v).map(([child, entry]) => [child, walk(entry, true)]));
+        continue;
+      }
       if (
         (k === 'key' || k === 'leaseId') && typeof v === 'string' &&
         /^[A-Za-z0-9_-]{24}$/.test(v)

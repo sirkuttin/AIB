@@ -1639,7 +1639,19 @@ export class Connection {
   }
 
   async #handleRecord(record: KeeperRecord): Promise<void> {
-    this.#clock = this.#replaying ? record.time / 1000 : null;
+    // What the agent wrote is stamped with the keeper's time for it, live as in a replay: a take-over rebuilds every event with the
+    // same time it had (live, now() lags the keeper by the hop to AIB, a few ms, more under load). Live, only while this record is
+    // handled (with the reply's wait for its caller: the `connected` a session result makes).
+    const live = !this.#replaying;
+    this.#clock = live && record.kind !== 'out' && record.kind !== 'err' ? null : record.time / 1000;
+    try {
+      await this.#handleRecordAt(record);
+    } finally {
+      if (live && !this.#replaying) this.#clock = null;
+    }
+  }
+
+  async #handleRecordAt(record: KeeperRecord): Promise<void> {
     if (record.kind === 'out') {
       for (const line of this.#outLines.feed(record.body)) {
         const pending = this.#handleLine(line);
