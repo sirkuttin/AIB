@@ -75,6 +75,7 @@ Deno.test({
       long.push(say(22, '\n\n## Next\n- Ship the **beta** with [notes](https://example.com/notes)', 'sess-c2'));
       for (let i = 23; i <= 100; i++) long.push(say(i, ' more', 'sess-c2'));
       s.chats.push(liveChat('c2', s.project, { events: long }));
+      s.chats.push(liveChat('c10', s.project, { busy: true, attention: { state: 'working', needs: 0, busySince: new Date(Date.now() - 90000).toISOString() } }));
       for (let i = 3; i <= 9; i++) s.chats.push(liveChat('c' + i, s.project));
       const phone = await pairPhone(s);
       const page = await phonePage(browser, s, phone, undefined, W);
@@ -112,19 +113,72 @@ Deno.test({
       await page.shot('review-home-dark');
 
       // ---- 2: the header while the reply has ended but subagents run
+      // the home header's Live chip is the same compact one-line pill: dot next to the word, not a tall box
+      for (const w of [360, 412]) {
+        await page.send('Emulation.setDeviceMetricsOverride', { width: w, height: H, deviceScaleFactor: 2, mobile: true });
+        await page.waitFor(`document.documentElement.clientWidth === ${w}`, 5000, 'width ' + w);
+        const m = await page.eval<Json>(`(() => { const c = document.querySelector('.ph-head .ph-chip'), r = c.getBoundingClientRect(), sub = document.querySelector('.ph-head .ph-sub').getBoundingClientRect();
+          const rg = document.createRange(); rg.selectNodeContents(c); const t = rg.getBoundingClientRect(); const d = parseFloat(getComputedStyle(c, '::before').marginRight) + parseFloat(getComputedStyle(c, '::before').width);
+          return { h: r.height, subH: sub.height, text: c.textContent, dot: d, over: r.right > innerWidth, head: document.querySelector('.ph-head').getBoundingClientRect().height }; })()`);
+        assertEquals(m.text, 'Live');
+        assert((m.h as number) <= (m.subH as number) + 6, 'home chip one line at ' + w + ': ' + JSON.stringify(m));
+        assert((m.dot as number) <= 16 && !m.over, 'dot close to the word, in view: ' + JSON.stringify(m));
+      }
+      await page.send('Emulation.setDeviceMetricsOverride', { width: W, height: H, deviceScaleFactor: 2, mobile: true });
       await tap(page, '[data-chat="c1"]');
       await page.waitFor(`document.getElementById('app').dataset.screen === 'chat' && !!document.querySelector('.ph-head .ph-chip')`, 8000, 'chat');
       const chip = await page.eval<string>(`document.querySelector('.ph-head .ph-chip').textContent`);
       assertEquals(chip, 'Working · 2 subagents');
       assert(await page.eval<boolean>(`document.querySelector('.ph-head .ph-chip').classList.contains('work')`), 'working colour');
-      assertEquals(await page.eval<string>(`document.getElementById('phSubsGo').textContent`), '2 subagents working ›');
+      assertEquals(await page.eval<boolean>(`!document.getElementById('phSubsGo') && !document.querySelector('.ph-subs-go')`), true, 'the shortcut link is gone');
+      // the header is one fixed height at 360 and 412: nothing wraps or spills, the chip is one line, the sub line shows the project
+      for (const w of [360, 412]) {
+        await page.send('Emulation.setDeviceMetricsOverride', { width: w, height: H, deviceScaleFactor: 2, mobile: true });
+        await page.waitFor(`document.documentElement.clientWidth === ${w}`, 5000, 'width ' + w);
+        const m = await page.eval<Json>(`(() => {
+          const r = (q) => document.querySelector(q).getBoundingClientRect();
+          const h = r('.ph-head'), chip = r('#phChip'), sub = document.querySelector('.ph-head .ph-sub'), pn = document.querySelector('.ph-head .ph-pname');
+          const spill = [...document.querySelectorAll('.ph-head *')].filter((e) => { const b = e.getBoundingClientRect(); return b.bottom > h.bottom + 1 || b.top < h.top - 1 || b.right > innerWidth + 1; }).map((e) => e.className);
+          return { h: h.height, chipH: chip.height, chipW: chip.width, subH: sub.getBoundingClientRect().height, pname: pn.textContent, pnW: pn.clientWidth,
+            title: r('.ph-head h1').width, spill, chipText: document.getElementById('phChip').textContent, wide: document.documentElement.scrollWidth > innerWidth,
+            first: document.querySelector('.ph-msg, .ph-list > *').getBoundingClientRect().top >= h.bottom - 1 };
+        })()`);
+        assertEquals(m.h, 56, 'header height ' + w);
+        assertEquals(m.spill, [], 'nothing spills out of the header at ' + w);
+        assert((m.chipH as number) <= 24, 'chip is one line at ' + w + ': ' + m.chipH);
+        assert((m.subH as number) <= 20, 'sub line is one line at ' + w + ': ' + m.subH);
+        assert((m.pnW as number) > 20 && m.pname !== '', 'project name shows at ' + w);
+        assertEquals(m.chipText, 'Working · 2 subagents');
+        assert(!m.wide, 'no sideways scroll at ' + w);
+        console.log('header ' + w + ':', JSON.stringify(m));
+      }
+      // mid-turn the chip is plain "Working" (a span, no scroll target)
+      await tap(page, '#phBack');
+      await page.waitFor(`document.getElementById('app').dataset.screen === 'home'`, 5000, 'home');
+      await tap(page, '[data-chat="c10"]');
+      await page.waitFor(`document.getElementById('app').dataset.screen === 'chat' && !!document.querySelector('.ph-head .ph-chip')`, 8000, 'working chat');
+      for (const w of [360, 412]) {
+        await page.send('Emulation.setDeviceMetricsOverride', { width: w, height: H, deviceScaleFactor: 2, mobile: true });
+        await page.waitFor(`document.documentElement.clientWidth === ${w}`, 5000, 'width ' + w);
+        const m = await page.eval<Json>(`(() => { const h = document.querySelector('.ph-head').getBoundingClientRect(), c = document.querySelector('.ph-head .ph-chip').getBoundingClientRect(), pn = document.querySelector('.ph-head .ph-pname');
+          return { h: h.height, chipH: c.height, chipText: document.querySelector('.ph-head .ph-chip').textContent, pn: pn.clientWidth, over: [...document.querySelectorAll('.ph-head *')].some((e) => e.getBoundingClientRect().right > innerWidth + 1) }; })()`);
+        assertEquals(m.h, 56);
+        assert((m.chipH as number) <= 24 && /^Working/.test(String(m.chipText)) && !/subagent/.test(String(m.chipText)), 'mid-turn chip: ' + JSON.stringify(m));
+        assert((m.pn as number) > 20 && !m.over, 'project name shows, no overflow: ' + JSON.stringify(m));
+      }
+      await tap(page, '#phBack');
+      await page.waitFor(`document.getElementById('app').dataset.screen === 'home'`, 5000, 'home');
+      await tap(page, '[data-chat="c1"]');
+      await page.waitFor(`!!document.getElementById('phChip')`, 8000, 'chat c1');
+      await page.send('Emulation.setDeviceMetricsOverride', { width: W, height: H, deviceScaleFactor: 2, mobile: true });
       const fits = await page.eval<boolean>(`(() => { const d = document.documentElement; return d.scrollWidth <= d.clientWidth; })()`);
       assert(fits, 'no sideways scroll with the longer chip');
       await page.shot('review-chat-header-dark');
 
       // ---- 1: the Subagents card
-      await tap(page, '#phSubsGo');
+      await tap(page, '#phChip');
       await page.waitFor(`!!document.querySelector('#phSubs .ph-sub-list')`, 5000, 'subagents open');
+      assert(await page.eval<boolean>(`(() => { const t = document.getElementById('phSubs').getBoundingClientRect().top; return t >= 0 && t < innerHeight; })()`), 'the chip scrolled to the Subagents card');
       const head = await page.eval<string>(`document.querySelector('#phSubs > .ph-fold').textContent`);
       assertEquals(head, '⑂Subagents · 2 working · 1 failed›');
       const rows = () =>
@@ -152,8 +206,8 @@ Deno.test({
       await tap(page, '#phBack');
       await page.waitFor(`document.getElementById('app').dataset.screen === 'home'`, 5000, 'home');
       await tap(page, '[data-chat="c1"]');
-      await page.waitFor(`!!document.getElementById('phSubsGo')`, 8000, 'chat again');
-      await tap(page, '#phSubsGo');
+      await page.waitFor(`!!document.getElementById('phChip')`, 8000, 'chat again');
+      await tap(page, '#phChip');
       await page.waitFor(`document.querySelectorAll('#phSubs li[data-sub]').length === 30`, 5000, 'still open');
       if (shotsDir) console.log('screenshots in', shotsDir);
     } finally {

@@ -1086,14 +1086,14 @@ Deno.test({
       );
       // one agent per chat: its subagents are a card in the stream (name and state, finished ones folded) and a shortcut under the title
       assertEquals(
-        await page.eval('document.getElementById("phSubsGo").textContent'),
-        "2 subagents working ›",
+        await page.eval('document.getElementById("phChip").textContent'),
+        "Working · 2 subagents",
       );
       assert(
         await page.eval('![...document.querySelectorAll(".ph-head, #phSubs, .ph-bottom")].some((e) => /helper|main chat/i.test(e.textContent))'),
         "no helper or main-chat words around the conversation",
       );
-      await page.click("#phSubsGo");
+      await page.click("#phChip");
       await page.waitFor('document.querySelectorAll("#phSubs li").length === 3', 15000, "the Subagents card");
       assertEquals(
         await page.eval<string[]>('[...document.querySelectorAll("#phSubs li")].map((li) => li.textContent)'),
