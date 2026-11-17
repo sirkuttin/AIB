@@ -94,13 +94,14 @@ Deno.test({
         page.eval<Json>(`(() => {
           const c = document.querySelector('.ph-icard[data-chat="${id}"]');
           return { what: c.querySelector('.ph-iwhat').textContent, where: c.querySelector('.ph-il2').textContent, age: c.querySelector('.ph-iage')?.textContent || '',
-            rows: c.querySelectorAll('.ph-iacts').length, buttons: [...c.querySelectorAll('.ph-iacts button')].map((b) => b.textContent), text: c.innerText };
+            rows: c.querySelectorAll('.ph-iacts').length, buttons: [...c.querySelectorAll('.ph-iacts button:not([data-act=snooze])')].map((b) => b.textContent), snooze: !!c.querySelector('.ph-iacts button[data-act=snooze] svg'), text: c.innerText };
         })()`);
       const h = await card('c-here');
       assertEquals(h.what, 'Run npm install stripe@18.0.0');
       assertEquals(h.where, 'Checkout fix · shop');
       assertEquals(h.rows, 1);
       assertEquals(h.buttons, ['Allow once', 'Deny', 'Reply']);
+      assert(h.snooze, 'the snooze icon is visible on the card (Inbox v3.1)');
       assert(/^(now|\d+[mhd])$/.test(String(h.age)), `wait time ${h.age}`);
       assert(!/always|waited|Claude Code|Codex/i.test(String(h.text)), `no always / waited / agent name: ${h.text}`);
       const a = await card('c-away');

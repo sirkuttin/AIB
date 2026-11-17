@@ -1890,6 +1890,139 @@
     else w.textContent = oneLine(r.ask || r.summary);
     return w;
   }
+  // ---- Snooze (Inbox v3.1 phase 3): a visible alarm-clock icon on each Needs-you row (the owner: "We shouldn't be hiding
+  // things"), the same 24 px box as a row's ×, with a tooltip. Click: "1 hour" / "Tomorrow 9:00". Right-click on the row offers the
+  // same. The row leaves and the count drops; it comes back at that time or sooner when the chat changes (the server decides).
+  const ALARM = 'M10 16.5a5.5 5.5 0 1 0 0-11 5.5 5.5 0 0 0 0 11zM10 8v3l2 1.3M3.5 5.5l2.5-2M16.5 5.5l-2.5-2';
+  let snoozeMenu = null,
+    showSnoozed = false;
+  function closeSnoozeMenu() {
+    if (snoozeMenu && snoozeMenu.remove) snoozeMenu.remove();
+    snoozeMenu = null;
+  }
+  async function snoozeQuick(key, until) {
+    const s = qs(key);
+    closeSnoozeMenu();
+    if (!host.postJson) return;
+    const keys = rowKeys();
+    try {
+      takeInbox(await host.postJson('inbox/act', { key, action: 'snooze', until }));
+      s.error = '';
+      drawInbox();
+      focusNeighbour(keys, key);
+    } catch (e) {
+      s.error = (e && e.message) || 'It could not be snoozed.';
+      drawInbox();
+    }
+  }
+  async function wakeQuick(key) {
+    closeSnoozeMenu();
+    if (!host.postJson) return;
+    try {
+      takeInbox(await host.postJson('inbox/act', { key, action: 'wake' }));
+    } catch (e) {
+      /* the next pull shows it as it is */
+    }
+    drawInbox();
+  }
+  // The small menu: [{label, hint?, run}] at a point (right-click) or under a button; `head` names the chat.
+  function openSnoozeMenu(items, at, head, returnTo) {
+    closeSnoozeMenu();
+    const d = doc(),
+      m = el('div', null, 'ws-menu ws-snooze-menu');
+    m.setAttribute('role', 'menu');
+    if (head) m.append(el('div', head, 'ws-menu-head'));
+    for (const it of items) {
+      if (it === '-') {
+        m.append(el('div', null, 'ws-menu-sep'));
+        continue;
+      }
+      const b = btn(null, 'ws-menu-item');
+      b.setAttribute('role', 'menuitem');
+      b.append(el('span', it.label, 'ws-snooze-label'));
+      if (it.hint) b.append(el('span', it.hint, 'ws-snooze-hint'));
+      b.onclick = (e) => {
+        if (e && e.stopPropagation) e.stopPropagation();
+        closeSnoozeMenu();
+        it.run();
+      };
+      m.append(b);
+    }
+    m.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        closeSnoozeMenu();
+        if (returnTo && returnTo.focus) returnTo.focus();
+      }
+    });
+    m.style.left = Math.max(4, Math.round(at.x)) + 'px';
+    m.style.top = Math.max(4, Math.round(at.y)) + 'px';
+    if (d.body) d.body.append(m);
+    snoozeMenu = m;
+    const first = m.querySelector('.ws-menu-item');
+    if (first && first.focus) first.focus();
+    // a click anywhere else closes it
+    const away = (e) => {
+      if (snoozeMenu === m && !(e.target && m.contains(e.target))) closeSnoozeMenu();
+      if (snoozeMenu !== m) d.removeEventListener('mousedown', away, true);
+    };
+    d.addEventListener('mousedown', away, true);
+  }
+  const snoozeItems = (key) => {
+    const IR = root.AgentInboxRules;
+    const choices = IR && IR.snoozeChoices ? IR.snoozeChoices(Date.now()) : [];
+    return choices.map((c) => ({ label: c.label, run: () => snoozeQuick(key, c.until) }));
+  };
+  function snoozeBtn(r) {
+    const b = btn(null, 'ws-qa ws-qa-quiet ws-qa-snooze', 'Snooze: 1 hour or tomorrow 9:00');
+    b.setAttribute('aria-label', 'Snooze ' + r.title);
+    b.setAttribute('aria-haspopup', 'menu');
+    const icon = svgIcon(ALARM);
+    if (icon.setAttribute) {
+      icon.setAttribute('width', '15');
+      icon.setAttribute('height', '15');
+    }
+    b.append(icon);
+    b.onclick = (e) => {
+      if (e && e.stopPropagation) e.stopPropagation();
+      const rc = b.getBoundingClientRect ? b.getBoundingClientRect() : { left: 0, bottom: 0 };
+      openSnoozeMenu(snoozeItems(r.key), { x: rc.right - 200, y: rc.bottom + 4 }, '', b);
+    };
+    return b;
+  }
+  // The snoozed rows (the foot's "N snoozed" shows them at the bottom): quiet, the wake time where the wait is, Wake now.
+  function snoozedSection(frag) {
+    const list = (srvInbox && Array.isArray(srvInbox.snoozed) ? srvInbox.snoozed : []).filter((x) => !(gone.has(x.key)));
+    if (!showSnoozed || !list.length) return;
+    const IR = root.AgentInboxRules;
+    frag.append(el('div', 'Snoozed', 'ws-inbox-section ws-inbox-snoozed-head'));
+    for (const x of list) {
+      const wrap = el('div', null, 'ws-inbox-item ws-s-snoozed');
+      wrap.dataset.key = x.key;
+      const b = btn(null, 'ws-inbox-row');
+      const l1 = el('span', null, 'ws-inbox-l1');
+      l1.append(el('span', oneLine(x.what), 'ws-inbox-what'), el('span', IR && IR.untilText ? IR.untilText(x.until, Date.now()) : '', 'ws-inbox-age'));
+      const project = (x.project && x.project.name) || 'No folder';
+      b.append(l1, el('span', x.title + ' · ' + project, 'ws-inbox-l2'));
+      b.onclick = () => routeKey(x.key);
+      wrap.append(b);
+      const acts = el('div', null, 'ws-inbox-acts');
+      const w = actBtn('Wake now', 'ws-qa-quiet ws-qa-wake push', 'Bring it back to Needs you now');
+      w.onclick = (e) => {
+        if (e && e.stopPropagation) e.stopPropagation();
+        wakeQuick(x.key);
+      };
+      acts.append(w);
+      wrap.append(acts);
+      wrap.addEventListener('contextmenu', (e) => {
+        if (e.preventDefault) e.preventDefault();
+        openSnoozeMenu([{ label: 'Wake now', run: () => wakeQuick(x.key) }], { x: e.clientX || 0, y: e.clientY || 0 }, x.title, b);
+      });
+      frag.append(wrap);
+    }
+  }
+
   // The inbox (approved prototype v3): a "Needs you" section (approvals, questions, sign-ins, failed turns and questions in a
   // reply; the longest wait first; "Nothing blocked" when empty) and a "To review" section (finished turns, newest first; never
   // counted). One row = line 1 what it wants + the wait, line 2 chat title · project, at most one row of actions. Clicking a row
@@ -2088,6 +2221,18 @@
         // a sign-in or a complex question: no button; clicking the card opens the chat, where it is answered
         acts.append(handledBtn());
       }
+      if (r.section === 'needs' && r.server && !(act.reply && s.replying)) {
+        const z = snoozeBtn(r);
+        if (!acts.querySelector('.push')) z.classList.add('push');
+        acts.append(z);
+        wrap.addEventListener('contextmenu', (e) => {
+          if (e.preventDefault) e.preventDefault();
+          const more = [{ label: 'Open chat', run: () => routeKey(r.key) }];
+          if (r.handled) more.push({ label: 'Mark handled', run: () => markDone(r.key) });
+          const items = snoozeItems(r.key).map((x) => ({ label: 'Snooze ' + (x.label === '1 hour' ? '1 hour' : 'until tomorrow'), hint: x.label === '1 hour' ? '' : '9:00', run: x.run }));
+          openSnoozeMenu(items.concat(['-'], more), { x: e.clientX || 0, y: e.clientY || 0 }, r.title, b);
+        });
+      }
       if (s.error) {
         const er = el('div', s.error, 'ws-inbox-err');
         er.setAttribute('role', 'alert');
@@ -2096,9 +2241,23 @@
       wrap.append(acts);
       frag.append(wrap);
     }
+    snoozedSection(frag);
     // The foot: what still works and the way to the notification settings, on one quiet line.
     const foot = el('div', null, 'ws-inbox-foot');
-    foot.append(el('span', working, 'ws-inbox-working'));
+    const snoozedN = srvInbox && Array.isArray(srvInbox.snoozed) ? srvInbox.snoozed.length : 0;
+    if (!snoozedN) showSnoozed = false;
+    if (snoozedN) {
+      const z = btn(showSnoozed ? 'Hide snoozed' : snoozedN + ' snoozed', 'ws-inbox-snoozed-link', showSnoozed ? 'Hide the snoozed chats' : 'Show the snoozed chats');
+      z.setAttribute('aria-expanded', String(showSnoozed));
+      z.onclick = (e) => {
+        if (e && e.stopPropagation) e.stopPropagation();
+        showSnoozed = !showSnoozed;
+        drawInbox();
+      };
+      foot.append(z);
+      if (working && !showSnoozed) foot.append(el('span', '·', 'ws-inbox-dotsep'));
+    }
+    if (!showSnoozed) foot.append(el('span', working, 'ws-inbox-working'));
     if (root.AgentSettingsUI && root.AgentSettingsUI.open) {
       const notes = el('button', 'Notification settings…', 'ws-notify-link');
       notes.type = 'button';

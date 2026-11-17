@@ -107,7 +107,7 @@ Deno.test({
       const labels = await page.eval<string[][]>(
         '[...document.querySelectorAll("#wsInbox .ws-r-stalled")].map((r) => [...r.querySelectorAll(".ws-qa")].map((b) => b.textContent))',
       );
-      for (const l of labels) assertEquals(l, ['Continue', 'Reply', 'Mark handled']);
+      for (const l of labels) assertEquals(l, ['Continue', 'Reply', 'Mark handled', ''], 'and the snooze icon (phase 3)');
       await page.shot('inbox-stalled');
 
       // the phone: Continue · Reply · ×
@@ -119,7 +119,7 @@ Deno.test({
       const phoneActs = await ph.eval<string[][]>(
         '[...document.querySelectorAll(".ph-icard[data-kind=stalled]")].map((c) => [...c.querySelectorAll(".ph-iacts button")].map((b) => b.dataset.act))',
       );
-      for (const a of phoneActs) assertEquals(a, ['continue', 'reply', 'handled']);
+      for (const a of phoneActs) assertEquals(a, ['continue', 'reply', 'handled', 'snooze']);
 
       // Continue on each (PC): S2 sends at once, S3 stops first, S1 opens the chat again first
       const cont = async (key: string) => {

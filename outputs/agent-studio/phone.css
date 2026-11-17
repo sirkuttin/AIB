@@ -1966,3 +1966,47 @@ html.ph-viewing body {
   color: var(--muted);
   font-size: 18px;
 }
+
+/* Snooze (Inbox v3.1): the alarm clock in the same 44 px box as a card's ×, monochrome and quiet like it */
+.ph-btn.ph-ib.snooze {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+}
+.ph-btn.ph-ib.snooze.push {
+  margin-left: auto;
+}
+.ph-btn.ph-ib.snooze svg {
+  display: block;
+  flex: none;
+}
+.ph-btn.ph-ib.snooze-cancel {
+  margin-left: auto;
+  border-color: transparent;
+  color: var(--muted);
+}
+.ph-isnooze-foot {
+  display: block;
+  margin: 4px 4px 12px;
+  padding: 8px 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.ph-icard.ph-snoozed .ph-iwhat,
+.ph-icard.ph-snoozed .ph-il2 {
+  color: var(--muted);
+}
+.ph-btn.ph-ib.wake {
+  margin-left: auto;
+  border-color: transparent;
+  color: var(--muted);
+}

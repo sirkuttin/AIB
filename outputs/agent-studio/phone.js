@@ -1348,6 +1348,8 @@
     filter: '', // the project id home shows ('' = All projects), remembered on this phone
     filterOpen: false,
     focusPrompt: false, // Reply on an inbox card: focus the chat's message box once it loads
+    snoozeFor: '', // the inbox card (key) showing its two snooze times (Inbox v3.1)
+    showSnoozed: false, // the inbox shows its Snoozed section (the foot's "N snoozed")
     inbox: false, // home shows the inbox (the envelope is pressed) instead of the chat list
     reqOpened: {}, // waiting card key -> open (true) / closed (false), as you tapped it
     land: '', // a notification (or a banner) brought you to this chat: its first waiting card opens and comes into view
@@ -2640,6 +2642,16 @@
   let pressed = false;
   app.addEventListener('pointerdown', (e) => {
     pressed = false;
+    const ic = e.target && e.target.closest ? e.target.closest('.ph-icard[data-snooze]') : null;
+    if (ic && !(e.target.closest && e.target.closest('button'))) {
+      clearTimeout(pressTimer);
+      pressTimer = setTimeout(() => {
+        pressed = true;
+        S.snoozeFor = ic.dataset.key;
+        draw();
+      }, 550);
+      return;
+    }
     const card = e.target && e.target.closest ? e.target.closest('[data-menu-key]') : null;
     if (!card) return;
     clearTimeout(pressTimer);
@@ -2664,6 +2676,14 @@
     true,
   );
   app.addEventListener('contextmenu', (e) => {
+    const ic = e.target && e.target.closest ? e.target.closest('.ph-icard[data-snooze]') : null;
+    if (ic) {
+      e.preventDefault();
+      clearTimeout(pressTimer);
+      S.snoozeFor = ic.dataset.key;
+      draw();
+      return;
+    }
     const card = e.target && e.target.closest ? e.target.closest('[data-menu-key]') : null;
     if (!card) return;
     e.preventDefault();
@@ -3376,7 +3396,69 @@
       for (const r of g.chats) sec.append(inboxCard(r, now, can));
       box.append(sec);
     }
+    // Snooze (Inbox v3.1): a quiet "N snoozed" at the foot; a tap shows the Snoozed section (the wake time, Wake now)
+    const snoozed = inboxOf(home).snoozed;
+    if (!snoozed.length) S.showSnoozed = false;
+    if (snoozed.length) {
+      if (S.showSnoozed) {
+        const sec = el('section', 'ph-isec ph-isnoozed');
+        sec.dataset.group = 'snoozed';
+        sec.setAttribute('data-rk', 'g:snoozed');
+        sec.append(el('h2', 'ph-ih', 'Snoozed'));
+        for (const x of snoozed) {
+          const card = el('div', 'ph-icard ph-snoozed');
+          card.dataset.key = x.key;
+          card.setAttribute('data-rk', 'z:' + x.key);
+          const l1 = el('div', 'ph-il1');
+          l1.append(el('span', 'ph-iwhat', str(x.what)), el('span', 'ph-iage', untilWords(x.until, now)));
+          card.append(l1, el('div', 'ph-il2', str(x.title) + ' · ' + (str(obj(x.project).name) || 'No folder')));
+          const row = el('div', 'ph-iacts');
+          const w = button('ph-btn ph-ib wake', 'Wake now', () => inboxOp(x, 'wake', null, 'Back in Needs you'));
+          w.dataset.act = 'wake';
+          row.append(w);
+          card.append(row);
+          sec.append(card);
+        }
+        box.append(sec);
+      }
+      const foot = button('ph-isnooze-foot', S.showSnoozed ? 'Hide snoozed' : snoozed.length + ' snoozed', () => {
+        S.showSnoozed = !S.showSnoozed;
+        draw();
+      });
+      foot.id = 'phSnoozedFoot';
+      foot.setAttribute('aria-expanded', S.showSnoozed ? 'true' : 'false');
+      box.append(foot);
+    }
     return box;
+  }
+
+  /* "until 15:40" / "until tomorrow 9:00" (until in seconds, now in ms). */
+  function untilWords(until, now) {
+    const d = new Date((Number(until) || 0) * 1000);
+    const n = new Date(now || Date.now());
+    const hm = d.getHours() + ':' + String(d.getMinutes()).padStart(2, '0');
+    return 'until ' + (d.toDateString() === n.toDateString() ? hm : 'tomorrow ' + hm);
+  }
+  /* The two snooze times: 1 hour, and tomorrow 9:00 (before 6:00 that is today at 9:00), as on the PC (inbox-rules.js). */
+  function snoozeChoices(now) {
+    const n = new Date(now || Date.now());
+    const nine = new Date(n.getFullYear(), n.getMonth(), n.getDate(), 9, 0, 0, 0);
+    if (n.getHours() >= 6) nine.setDate(nine.getDate() + 1);
+    return [
+      { id: 'hour', label: '1 hour', until: Math.floor(n.getTime() / 1000) + 3600 },
+      { id: 'tomorrow', label: 'Tomorrow 9:00', until: Math.floor(nine.getTime() / 1000) },
+    ];
+  }
+  const ALARM_D = 'M10 16.5a5.5 5.5 0 1 0 0-11 5.5 5.5 0 0 0 0 11zM10 8v3l2 1.3M3.5 5.5l2.5-2M16.5 5.5l-2.5-2';
+  function alarmIcon() {
+    const NS = 'http://www.w3.org/2000/svg';
+    const svg = doc.createElementNS(NS, 'svg');
+    for (const [k, v] of Object.entries({ viewBox: '0 0 20 20', width: '20', height: '20', fill: 'none', stroke: 'currentColor', 'stroke-width': '1.5', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true' }))
+      svg.setAttribute(k, v);
+    const path = doc.createElementNS(NS, 'path');
+    path.setAttribute('d', ALARM_D);
+    svg.append(path);
+    return svg;
   }
 
   /* One inbox card, the same row as the PC's (the server built it): line 1 the request and the wait time, line 2 chat · project,
@@ -3412,7 +3494,25 @@
     const l2 = el('div', 'ph-il2', str(r.title) + ' · ' + (str(obj(r.project).name) || 'No folder'));
     card.append(l1, l2);
     const acts = inboxActions(r, can);
-    if (acts.length) {
+    if (inboxNeeds(r)) card.dataset.snooze = '1'; // long press: the snooze choices
+    if (inboxNeeds(r) && S.snoozeFor === r.key) {
+      // the snooze choices take the action row's place until one is picked (or Cancel)
+      const row = el('div', 'ph-iacts ph-isnooze');
+      for (const c of snoozeChoices(now)) {
+        const x = button('ph-btn ph-ib snooze-pick', c.label, () => {
+          S.snoozeFor = '';
+          inboxOp(r, 'snooze', { until: c.until }, 'Snoozed ' + (c.id === 'hour' ? 'for 1 hour' : 'until tomorrow 9:00'));
+        });
+        x.dataset.act = 'snooze-' + c.id;
+        row.append(x);
+      }
+      const no = button('ph-btn ph-ib snooze-cancel', 'Cancel', () => {
+        S.snoozeFor = '';
+        draw();
+      });
+      row.append(no);
+      card.append(row);
+    } else if (acts.length || inboxNeeds(r)) {
       const row = el('div', 'ph-iacts');
       for (const a of acts) {
         const x = button('ph-btn ph-ib ' + a.act, a.label, () => inboxAct(r, a, item));
@@ -3421,6 +3521,19 @@
         if (a.act === 'handled') x.setAttribute('aria-label', 'Mark handled');
         x.disabled = S.sending || (S.offline && a.act !== 'reply' && a.act !== 'review');
         row.append(x);
+      }
+      if (inboxNeeds(r)) {
+        // Snooze is visible on every Needs-you card (the owner: "We shouldn't be hiding things"), the same 44 px box as ×
+        const z = button('ph-btn ph-ib snooze' + (acts.some((a) => a.act === 'handled') ? '' : ' push'), '', () => {
+          S.snoozeFor = r.key;
+          draw();
+        });
+        z.dataset.act = 'snooze';
+        z.title = 'Snooze: 1 hour or tomorrow 9:00';
+        z.setAttribute('aria-label', 'Snooze ' + str(r.title));
+        z.append(alarmIcon());
+        z.disabled = S.offline;
+        row.append(z);
       }
       card.append(row);
     }

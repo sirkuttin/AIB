@@ -77,7 +77,8 @@ Deno.test({
       const shape = await page.eval<Json>(`(() => {
         const pop = document.getElementById('wsInbox');
         const row = (k) => pop.querySelector('.ws-inbox-item[data-key="claude:' + k + '"]');
-        const labels = (r) => Array.from(r.querySelectorAll('.ws-qa')).map((b) => b.textContent);
+        // the words of the row's buttons (the snooze alarm clock, Inbox v3.1, is an icon: counted on its own below)
+        const labels = (r) => Array.from(r.querySelectorAll('.ws-qa:not(.ws-qa-snooze)')).map((b) => b.textContent);
         const oneLine = (r) => { const a = r.querySelector('.ws-inbox-acts'); return a ? Math.round(a.getBoundingClientRect().height) : 0; };
         const foot = pop.querySelector('.ws-inbox-foot');
         const allow = row('sess-2').querySelector('.ws-qa.def');
@@ -91,6 +92,7 @@ Deno.test({
           where2: row('sess-2').querySelector('.ws-inbox-where').textContent,
           age3: row('sess-3').querySelector('.ws-inbox-age').textContent,
           long3: row('sess-3').querySelector('.ws-inbox-age').classList.contains('long'),
+          snoozes: ['sess-1', 'sess-2', 'sess-3'].map((k) => row(k).querySelectorAll('.ws-qa-snooze').length),
           risky: labels(row('sess-1')),
           plain: labels(row('sess-2')),
           failed: labels(row('sess-3')),
@@ -114,6 +116,7 @@ Deno.test({
       assertEquals(shape.risky, ['Review', 'Deny'], 'a force push is reviewed first');
       assertEquals(shape.plain, ['Allow', 'Always allow', 'Deny']);
       assertEquals(shape.failed, ['Retry', 'Reply', 'Mark handled']);
+      assertEquals(shape.snoozes, [1, 1, 1], 'a visible snooze icon on every Needs-you row');
       for (const h of shape.rowHeights as number[]) assert(h > 0 && h <= 26, `one action row per card: ${JSON.stringify(shape.rowHeights)}`);
       assertEquals(shape.allowBg, 'rgba(0, 0, 0, 0)', 'Allow is not filled');
       assert(String(shape.allowBorder).length > 0, 'Allow has its teal outline');
@@ -123,7 +126,7 @@ Deno.test({
       await page.eval('document.querySelector(\'.ws-inbox-item[data-key="claude:sess-1"] .ws-qa-review\').click()');
       const reviewed = await page.eval<Json>(`(() => {
         const r = document.querySelector('.ws-inbox-item[data-key="claude:sess-1"]');
-        return { detail: r.querySelector('.ws-inbox-detail').textContent, labels: Array.from(r.querySelectorAll('.ws-qa')).map((b) => b.textContent) };
+        return { detail: r.querySelector('.ws-inbox-detail').textContent, labels: Array.from(r.querySelectorAll('.ws-qa:not(.ws-qa-snooze)')).map((b) => b.textContent) };
       })()`);
       assert(String(reviewed.detail).startsWith('$ git push --force origin fix/vat\nForce push'), String(reviewed.detail));
       assertEquals(reviewed.labels, ['Allow', 'Deny']);

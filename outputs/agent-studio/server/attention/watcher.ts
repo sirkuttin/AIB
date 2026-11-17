@@ -445,6 +445,47 @@ export class AttentionWatcher {
         blocked.push({ key: r.key, chat: r.id, title: r.title, reason });
       }
     }
+    // Snooze (Inbox v3.1 phase 3): a snoozed chat's news is held back (remembered, so it never comes later); when its time comes,
+    // or sooner when the chat changed, the row is back with ONE notification "Back: <line 1>" (key wake|<chat>|<snoozedAt>), its
+    // snooze is dropped, and that chat's other news of this look is folded into it. A chat that no longer needs you (answered on
+    // the phone, in the chat, Mark handled) just loses its snooze.
+    if (inbox) {
+      const snoozed = new Set(inbox.snoozed.map((x) => x.key));
+      for (let i = news.length - 1; i >= 0; i--) {
+        if (snoozed.has(news[i].key)) {
+          quiet.push(news[i].fk);
+          news.splice(i, 1);
+        }
+      }
+      for (const [key, raw] of Object.entries(marks)) {
+        const m = obj(raw);
+        const until = Number(m.snoozedUntil) || 0;
+        if (!until || snoozed.has(key)) continue;
+        const row = inbox.rows.find((r) => r.key === key && r.section === 'needs');
+        const at = key.indexOf(':');
+        if (row) {
+          const fk = `wake|${key}|${Math.round(Number(m.snoozedAt) || 0)}`;
+          for (let i = news.length - 1; i >= 0; i--) {
+            if (news[i].key === key) {
+              quiet.push(news[i].fk);
+              news.splice(i, 1);
+            }
+          }
+          if (!this.fired.has(fk)) {
+            const conn = connections.find((c) => chatKey(c) === key && !c.closed);
+            const flags = RULES.flags(this.facts(conn ?? { provider: key.slice(0, at), sessionId: key.slice(at + 1), cwd: m.cwd }, marks), prefs);
+            if (RULES.notifies('needs', flags)) {
+              news.push({ key, chat: row.id, kind: 'needs', title: row.title, reason: 'wake', fk, flags, project: row.project.name, what: 'Back: ' + row.what });
+            } else quiet.push(fk);
+          }
+        }
+        try {
+          await this.sources.conversations.setInbox?.(key.slice(0, at), key.slice(at + 1), { snoozedUntil: 0, snoozedAt: 0, snoozeSig: '' });
+        } catch (error) {
+          log.info('attention: could not drop a snooze (%s)', error instanceof Error ? error.message : error);
+        }
+      }
+    }
     this.#blocked = blocked;
     for (const fk of [...this.#settling.keys()]) if (!done.has(fk)) this.#settling.delete(fk);
     for (const id of [...this.#needKeys.keys()]) if (!seen.has(id)) this.#needKeys.delete(id);
