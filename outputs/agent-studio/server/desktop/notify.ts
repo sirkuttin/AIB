@@ -54,7 +54,8 @@ export interface ShowResult {
 export interface OsNotify {
   /** 'windows-balloon' | 'osascript' | 'notify-send' */
   mechanism: string;
-  show(title: string, body: string, silent?: boolean): Promise<ShowResult>;
+  /** req: the whole notification (Windows toasts read its target to pick the buttons, toast.ts). */
+  show(title: string, body: string, silent?: boolean, req?: NotifyRequest): Promise<ShowResult>;
   /** Registers the click handler (Windows only; elsewhere a click is the OS's business). */
   onClick?(fn: () => void): void;
 }
@@ -268,13 +269,25 @@ export async function notifyUpdateReady(
 /** The route's side: rate limit, remember what a click opens, show. Clicks call `open` with the last notification's target. */
 export class DesktopNotifications {
   #last: NotifyTarget | null = null;
+  #os: OsNotify | null;
 
   constructor(
-    readonly os: OsNotify | null,
+    os: OsNotify | null,
     readonly open: (target: NotifyTarget | null) => void,
     readonly allowed: () => boolean = rateLimiter(6, 30_000),
   ) {
+    this.#os = os;
     os?.onClick?.(() => this.clicked());
+  }
+
+  get os(): OsNotify | null {
+    return this.#os;
+  }
+
+  /** Swaps the OS route (Windows: the toast route, which keeps the balloon as its fallback and forwards its clicks; toast.ts). */
+  use(os: OsNotify): void {
+    this.#os = os;
+    os.onClick?.(() => this.clicked());
   }
 
   get mechanism(): string {
@@ -286,7 +299,7 @@ export class DesktopNotifications {
     if (!this.allowed()) return { shown: false, reason: 'too many notifications in a row; try again in a moment' };
     let result: ShowResult;
     try {
-      result = await this.os.show(req.title, req.body, req.silent === true);
+      result = await this.os.show(req.title, req.body, req.silent === true, req);
     } catch (error) {
       result = { shown: false, reason: 'the system refused it' };
       log.info('notifications: %s failed: %s', this.os.mechanism, error);

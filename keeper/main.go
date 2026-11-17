@@ -77,6 +77,9 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "mcp-relay" {
 		os.Exit(mcpRelayMain(os.Args[2:])) // WSL: the MCP tunnel's socket, run by the WSL helper (mcprelay.go)
 	}
+	if len(os.Args) > 1 && os.Args[1] == "toast" {
+		os.Exit(toastMain(os.Args[2:])) // Windows toasts with buttons (Inbox v3.1 phase 4); never part of a serving keeper (toast.go)
+	}
 	if len(os.Args) > 1 && os.Args[1] == "bridge" {
 		os.Exit(bridgeMain(os.Args[2:])) // WSL: the stdio end of this distro's keeper (bridge.go)
 	}

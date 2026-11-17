@@ -221,6 +221,14 @@ export class InboxService {
     return this.look();
   }
 
+  #watchers = new Set<(inbox: Inbox) => void>();
+
+  /** Calls fn with every inbox built from now on (Windows toasts drop the ones whose request was answered); returns the unwatch. */
+  watch(fn: (inbox: Inbox) => void): () => void {
+    this.#watchers.add(fn);
+    return () => this.#watchers.delete(fn);
+  }
+
   /** The last inbox built, or null before the first look. */
   latest(): Inbox | null {
     return this.#last;
@@ -340,6 +348,11 @@ export class InboxService {
     const inbox: Inbox = { version, at: Math.floor(now), ...body };
     this.#last = inbox;
     this.#lastAt = nowMs;
+    for (const fn of this.#watchers) {
+      try {
+        fn(inbox);
+      } catch { /* a watcher never breaks a build */ }
+    }
     return inbox;
   }
 

@@ -48,14 +48,21 @@ export async function inboxAct(ctx: InboxActContext, body: unknown): Promise<[nu
     await ctx.conversations.setInbox(provider, sessionId, { snoozedUntil: 0, snoozedAt: 0, snoozeSig: '' });
     return [200, { ok: true, inbox: await ctx.inbox.look() }];
   }
-  if (action === 'continue') return await continueChat(ctx, key, provider, sessionId);
+  if (action === 'continue') return await sendToChat(ctx, key, INBOX.CONTINUE_TEXT, 'continue');
   return [400, { error: 'Unknown inbox action' }];
 }
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Continue on a stalled row: stop a quiet turn first, open a closed chat again, then send CONTINUE_TEXT. */
-async function continueChat(ctx: InboxActContext, key: string, provider: string, sessionId: string): Promise<[number, Json]> {
+/**
+ * Sends text to a chat as a new turn (Continue on a stalled row, and a Windows toast's Reply / Retry: desktop/toast_act.ts): stops a
+ * quiet turn first, opens a closed chat again from its saved session, then sends the text.
+ */
+export async function sendToChat(ctx: InboxActContext, key: string, text: string, tag = 'continue'): Promise<[number, Json]> {
+  if (!KEY.test(key)) return [400, { error: 'Invalid request' }];
+  const at = key.indexOf(':');
+  const provider = key.slice(0, at);
+  const sessionId = key.slice(at + 1);
   const find = async () => {
     const list = obj(await ctx.host.liveList());
     const all = (Array.isArray(list.connections) ? list.connections : []).map(obj)
@@ -93,10 +100,10 @@ async function continueChat(ctx: InboxActContext, key: string, provider: string,
   }
   const [status, answer] = await ctx.host.liveCall('prompt', {
     id: live.id,
-    text: INBOX.CONTINUE_TEXT,
-    clientMessageId: `continue-${key}-${Date.now()}`,
+    text,
+    clientMessageId: `${tag}-${key}-${Date.now()}`,
     attachments: [],
   });
-  if (status !== 200) return [status >= 400 && status < 600 ? status : 500, { error: String(obj(answer).error ?? 'Continue could not be sent.') }];
+  if (status !== 200) return [status >= 400 && status < 600 ? status : 500, { error: String(obj(answer).error ?? (tag === 'continue' ? 'Continue could not be sent.' : 'The message could not be sent.')) }];
   return [200, { ok: true, inbox: await ctx.inbox.look() }];
 }

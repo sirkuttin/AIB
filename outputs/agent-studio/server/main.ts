@@ -22,7 +22,7 @@ import { apply as applyStatePaths } from './state/paths.ts';
 import './state/migrate.ts'; // registers the data move with paths.ts
 import { leaveSplitHost, pidAlive, readInfo, SOURCE_COMMAND, stopHost } from './host/host_client.ts';
 import { decideKeeper, KeeperLink } from './keeper/link.ts';
-import { keeperRunning, PROTOCOL as KEEPER_PROTOCOL } from './keeper/client.ts';
+import { keeperBinary, keeperRunning, PROTOCOL as KEEPER_PROTOCOL } from './keeper/client.ts';
 import { attachHost, HostProxy } from './host/host_proxy.ts';
 import type { LiveBackend } from './host/backend.ts';
 import { holdKeeper, orphanCommand, Studio } from './host/studio.ts';
@@ -44,7 +44,9 @@ import { startedMarker } from './desktop/updater.ts';
 import { guardDataFolder, nativeNotice, watchSignal } from './desktop/single_instance.ts';
 import { presence as folderPresence } from './desktop/folder_presence.ts';
 import { ensureStartMenuShortcut } from './desktop/shortcut.ts';
-import { trayIconPng } from './desktop/tray_icon.ts';
+import { trayIconBytes, trayIconPng } from './desktop/tray_icon.ts';
+import { startWindowsToasts } from './desktop/toast_act.ts';
+import { userNotificationState } from './desktop/tray_win.ts';
 import { servePort, startBlank, startRedirect } from './desktop/serve_address.ts';
 import { startAttention } from './attention/watcher.ts';
 import { INBOX } from './attention/inbox_rules.ts';
@@ -522,6 +524,18 @@ export async function main(argv: string[]): Promise<void> {
         : undefined,
     });
     ctx.desktopNotify = app.notifications; // POST /api/live/desktop/notify: the page's notifications, shown by this process
+    if (Deno.build.os === 'windows' && Deno.env.get('AGENT_STUDIO_TEST') !== '1') {
+      // Inbox v3.1 phase 4: toasts with buttons through `AIB-keeper toast` (desktop/toast.ts); the balloon stays the fallback
+      void keeperBinary(stateDir).then((program) =>
+        startWindowsToasts(ctx, app.notifications, {
+          stateDir,
+          program,
+          launch: isCompiled() ? Deno.execPath() : '',
+          icon: trayIconBytes(32),
+          quietState: userNotificationState,
+        })
+      ).catch(() => {/* balloons, as before */});
+    }
     ctx.desktopWindows = app.desktopWindows; // K4: POST /api/live/desktop/windows opens, routes, focuses and closes app windows
     await app.start(); // the window navigates now: the server already listens
     startup.mark('window opened');

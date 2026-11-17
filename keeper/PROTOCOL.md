@@ -444,6 +444,9 @@ torn or corrupt tail and drops anything after it. The newest ~4 MiB of each chan
   carries `orphanStopAt` while the keeper's channels have no client. `orphanGrace` in `status` and `keeper.json`; `orphanSince` and
   `orphanStopAt` in `keeper.json`. AIB needs none of it (an older Linux keeper is replaced only once it holds no live channel, by
   the version rule).
+- (same version, no wire change) the Windows-only `AIB-keeper toast` subcommand: toasts with buttons for the AIB server, JSON
+  lines over stdio, its own HKCU registration and COM click handler (`toast.go`, `wintoast/`; Inbox v3.1 phase 4). It never runs
+  inside a serving keeper.
 
 ## 10. Bridge
 
