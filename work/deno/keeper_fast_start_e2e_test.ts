@@ -100,6 +100,12 @@ Deno.test({
         return /startup: take-over done/.test(t) ? t : '';
       }, 'the take-over line', 20);
       for (const phase of ['logging at', 'keeper decided at']) assert(text.includes(phase), `${phase} in ${text.slice(0, 400)}`);
+      // the time before AIB's code ran (Windows loading it) is logged too, from the OS's creation time of the process
+      if (Deno.build.os === 'windows') {
+        const before = text.match(/Windows created the process at \S+, (-?\d+) ms before the runtime started/);
+        assert(before, `the OS creation time in ${text.slice(0, 600)}`);
+        assert(Number(before[1]) >= -50 && Number(before[1]) < 30_000, `${before[1]} ms before the runtime started`);
+      }
       const listening = text.indexOf('startup: server listening');
       const done = text.indexOf('startup: take-over done');
       assert(listening > 0 && done > listening, 'listening, then the take-over');
