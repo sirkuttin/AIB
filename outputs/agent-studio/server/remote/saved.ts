@@ -17,6 +17,8 @@ import type { WebContext } from '../web/server.ts';
 import { afterConnect, filterSessions } from '../web/project_routes.ts';
 import { handleGet as monitorGet } from '../transcripts/monitor.ts';
 import { CLIP_NOTE } from '../transcripts/pycompat.ts';
+import { keptLinesIn } from '../history/lines.ts';
+import { pathStr } from '../platform/pypath.ts';
 import { agentName, plainTitle, withArtifactOrigin } from './payloads.ts';
 
 type Json = Record<string, unknown>;
@@ -219,6 +221,35 @@ export function liveShaped(events: unknown[], first = 1, afterAgent = false): Js
   return out;
 }
 
+/**
+ * AIB's own lines of the chat (history/lines.ts: turn ends, AIB notes; the transcript page's `lines`) put into the live-shaped
+ * events after their turns, with their own time. A line before transcript event `at` gets seq at + 0.5 (+ 0.001 for each line
+ * before it there): between the seqs of the events around it, never a whole number, so pages and Load earlier still count
+ * transcript events. Lines at or before `start` (the page's first event) belong to the older page. A note's buttons (Undo,
+ * Merge again) are left out: the chat is not running.
+ */
+export function withKeptLines(events: Json[], lines: unknown[], start: number): Json[] {
+  const extra: Json[] = [];
+  const perAt = new Map<number, number>();
+  for (const raw of lines) {
+    const l = obj(raw);
+    const at = Number(l.at);
+    if (!Number.isInteger(at) || at <= start || (l.kind !== 'turn_end' && l.kind !== 'studio_note')) continue;
+    const j = perAt.get(at) ?? 0;
+    perAt.set(at, j + 1);
+    const { actions: _actions, ...data } = obj(l.data);
+    const time = Number(l.time);
+    extra.push({
+      seq: at + 0.5 + Math.min(j, 499) / 1000,
+      kind: l.kind,
+      ...(time > 0 ? { time } : {}),
+      data: { ...data, restored: true },
+    });
+  }
+  if (!extra.length) return events;
+  return [...events, ...extra].sort((a, b) => Number(a.seq) - Number(b.seq));
+}
+
 export interface SavedHistory {
   key: string;
   title: string;
@@ -248,7 +279,9 @@ export async function savedHistory(
   const n = Math.max(1, Math.min(500, Math.trunc(tail) || SAVED_TAIL));
   // one event more than asked: the one before the page says whether its first reply follows another (it is not sent)
   const end = before === null ? '' : `&before=${Math.max(0, Math.trunc(before) - 1)}`;
-  const reply = await monitorGet(ctx.transcripts, '/api/transcript', `key=${encodeURIComponent(chat.transcript)}&limit=${n + 1}${end}`);
+  const reply = await monitorGet(ctx.transcripts, '/api/transcript', `key=${encodeURIComponent(chat.transcript)}&limit=${n + 1}${end}`, {
+    keptLines: keptLinesIn(pathStr(ctx.stateDir)),
+  });
   const page = obj(reply.body);
   if (reply.status !== 200 || !Array.isArray(page.events)) return { ...base, history: false };
   let raw = page.events as unknown[];
@@ -260,7 +293,8 @@ export async function savedHistory(
     raw = raw.slice(1);
     start += 1;
   }
-  let events = liveShaped(raw, start + 1, afterAgent).map((e) => withArtifactOrigin(e, artifactOrigin) as Json);
+  let events = withKeptLines(liveShaped(raw, start + 1, afterAgent), Array.isArray(page.lines) ? page.lines : [], start)
+    .map((e) => withArtifactOrigin(e, artifactOrigin) as Json);
   let truncated = start > 0;
   let size = new TextEncoder().encode(JSON.stringify(events)).byteLength;
   while (events.length > 1 && size > MAX_HISTORY_BYTES) {
@@ -268,6 +302,8 @@ export async function savedHistory(
     size -= new TextEncoder().encode(JSON.stringify(events.slice(0, drop))).byteLength;
     events = events.slice(drop);
     truncated = true;
+    // a page starts at a transcript event (Load earlier asks before its seq); AIB's lines cut off here come with that older page
+    while (events.length > 1 && !Number.isInteger(Number(events[0].seq))) events = events.slice(1);
   }
   const firstSeq = events.length ? Number(events[0].seq) || 0 : before ?? start + 1;
   return { ...base, truncated, firstSeq, events };

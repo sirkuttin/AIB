@@ -95,12 +95,13 @@ test('card actions: ONE row. Approval: Allow once / Deny / Reply (once-only opti
   assert.deepEqual(acts(one(needs('x', shop, 1, perm('npm test', ONCE, { pcOnly: true })))), ['Reply']);
 });
 
-test('card actions: a risky command is Review first; questions and failures Reply; stalled Continue / Reply / ×; To review Reply + ×', () => {
+test('card actions: a risky command is Review first; questions Reply; failures Retry / Reply; stalled Continue / Reply / ×; To review Reply + ×', () => {
   for (const cmd of ['git push origin main', 'git push --force', 'rm -rf build', 'git reset --hard HEAD~1', 'Remove-Item dist -Recurse']) {
     assert.deepEqual(acts(one(needs('r', shop, 1, perm(cmd)))), ['Review first', 'Deny=r1'], cmd);
   }
   assert.deepEqual(acts(row('s-old')), ['Reply']);
-  assert.deepEqual(acts(row('s-fail')), ['Reply']);
+  assert.deepEqual(acts(row('s-fail')), ['Retry', 'Reply']);
+  assert.deepEqual(acts(row('s-fail'), {}), ['Reply'], 'Retry needs the Send switch');
   assert.deepEqual(P.inboxActions(row('b-rev'), {}).map((a) => a.act), ['reply', 'handled']);
   const stalled = one(chat('st', shop, { ...idle, stalledAt: iso(3), stallKind: 'silent_end', stallStep: 'Edit src/cart.ts' }));
   assert.equal(stalled.kind, 'stalled');

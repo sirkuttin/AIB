@@ -1257,13 +1257,17 @@ export class RemoteServer {
     if (!SAVED_KEY.test(key)) throw new Refusal(400, 'invalid', 'Invalid request');
     const undo = this.#undoable.get(device.id) ?? new Map<string, Undoable>();
     const op = path === '/api/remote/chat-op' ? String(body.op ?? '') : path === '/api/remote/rename' ? 'rename' : 'mark';
-    if (!['rename', 'mark', 'handled', 'archive', 'delete', 'unarchive', 'restore', 'continue', 'snooze', 'wake'].includes(op)) {
+    if (!['rename', 'mark', 'handled', 'archive', 'delete', 'unarchive', 'restore', 'continue', 'retry', 'snooze', 'wake'].includes(op)) {
       throw new Refusal(400, 'invalid', 'Invalid request');
     }
     // the inbox's own actions (Inbox v3.1, attention/inbox_act.ts): the same as the PC's inbox row
-    if (op === 'continue' || op === 'snooze' || op === 'wake') {
-      if (op === 'continue' && !device.scopes.includes('phone.prompt')) {
-        throw new Refusal(403, 'scope', 'Continue needs "Send messages, stop turns and continue chats" on for this phone (Settings → Remote control on your PC).');
+    if (op === 'continue' || op === 'retry' || op === 'snooze' || op === 'wake') {
+      if ((op === 'continue' || op === 'retry') && !device.scopes.includes('phone.prompt')) {
+        throw new Refusal(
+          403,
+          'scope',
+          `${op === 'retry' ? 'Retry' : 'Continue'} needs "Send messages, stop turns and continue chats" on for this phone (Settings → Remote control on your PC).`,
+        );
       }
       const [status, answer] = await inboxAct(ctx, { key, action: op, until: body.until });
       log(key, status === 200 ? `inbox ${op}` : `inbox ${op} failed (${status})`);

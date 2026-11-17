@@ -12,6 +12,7 @@ import { type Dict, type Event, type Json, TEXT_LIMIT } from './normalize.ts';
 import { casefold, clipped, concat, isOSError, isoTimestamp, parseQs, pyInt, PyTypeError, strCmp, truthy } from './pycompat.ts';
 import { isDir, isFile, isRelativeTo, join, name, purePath, resolveLoose, rglobTail, statSig, stem, withoutSuffix } from './purepath.ts';
 import { wslSavedSessionsQuick, wslTranscriptGet } from '../wsl/transcripts.ts';
+import { type KeptLine, placeLines } from '../history/lines.ts';
 import { Catalog, COMMAND_LIST_TTL, now, QUIET_UNKNOWN_SECONDS, type Resolved, type Source, Store } from './store.ts';
 import { Mutex, readExactly, type Task, type Transcript } from './transcript.ts';
 
@@ -284,13 +285,38 @@ export interface Reply {
 export interface HandlerOptions {
   /** Where Claude Code writes background task output (tempfile.gettempdir()). */
   tempDir?: string;
+  /** AIB's own lines of a conversation (history/lines.ts: turn ends, AIB notes), merged into its saved transcript's pages. */
+  keptLines?: (provider: string, sessionId: string) => KeptLine[];
 }
 
 /** JSON.rawJSON (V8): a number written with exactly these digits (a nanosecond mtime exceeds a double's precision). */
 const rawJson = (text: string): unknown => (JSON as unknown as { rawJSON(text: string): unknown }).rawJSON(text);
 
-/** The transcript page reply (monitor.py's /api/transcript), events filtered and paged. */
-export async function transcriptPage(transcript: Transcript, arg: (name: string, fallback?: string) => string): Promise<Dict> {
+/** AIB's kept lines of a saved chat's transcript (provider: the key's first part; session: the transcript's own id). A subagent's
+ * transcript (it carries its parent's session id) has none. */
+function keptOf(options: HandlerOptions, key: string, transcript: Transcript): KeptLine[] {
+  if (!options.keptLines) return [];
+  const meta = transcript.meta;
+  if (truthy(meta.agentId) || typeof meta.id !== 'string' || !meta.id) return [];
+  const provider = key.split('/')[0] ?? '';
+  try {
+    return options.keptLines(provider, meta.id);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The transcript page reply (monitor.py's /api/transcript), events filtered and paged. `kept`: AIB's own lines of this
+ * conversation (history/lines.ts); without a search or kind filter the reply carries `lines`, the ones placed in this page:
+ * {n, at, kind, data, time}, `at` the index (as `before` / `end` count) of the event each goes before, before < at <= end, so
+ * the pages of one transcript carry each line once (a line after the last event comes with the newest page).
+ */
+export async function transcriptPage(
+  transcript: Transcript,
+  arg: (name: string, fallback?: string) => string,
+  kept: KeptLine[] = [],
+): Promise<Dict> {
   return await transcript.lock.run(() => {
     let events: Event[] = transcript.events;
     const query = pyStrip(casefold(arg('q')));
@@ -332,6 +358,11 @@ export async function transcriptPage(transcript: Transcript, arg: (name: string,
     if (arg('after') === '' && !query && !kind && start > 0) {
       // What the plan card and "N running tasks" fold needs from before this page; not for display.
       reply.context = transcript.planContext(start, arg('thinking') !== '1');
+    }
+    if (kept.length && !query && !kind) {
+      reply.lines = placeLines(events, kept)
+        .filter((l) => l.at > start && l.at <= end)
+        .map((l) => ({ n: l.n, at: l.at, kind: l.kind, data: l.data, time: l.time }));
     }
     return reply;
   });
@@ -391,7 +422,7 @@ export async function handleGet(source: Source, path: string, query: string, opt
     }
     if (path === '/api/transcript') {
       const transcript = await loadKey(source, arg('key'));
-      return json(200, await transcriptPage(transcript, arg));
+      return json(200, await transcriptPage(transcript, arg, keptOf(options, arg('key'), transcript)));
     }
     return json(404, { error: 'Not found' });
   } catch (error) {

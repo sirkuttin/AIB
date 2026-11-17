@@ -135,13 +135,13 @@ Deno.test({
       const phone = await pairPhone(s);
       const page = await phonePage(browser, s, phone, undefined, 360);
       await tap(page, '.ph-card[data-chat="c1"]');
-      await page.waitFor('document.querySelectorAll(".ph-note").length === 3', 10000, 'notes');
+      await page.waitFor('document.querySelectorAll(".ph-aibnote").length === 3', 10000, 'notes');
       const m = await page.eval<{ hs: number[]; undoH: number; undoW: number; cut: boolean; side: boolean; tint: boolean; copy: number }>(`(() => {
-        const n = [...document.querySelectorAll('.ph-note')], u = document.querySelector('.ph-note-act').getBoundingClientRect();
+        const n = [...document.querySelectorAll('.ph-aibnote')], u = document.querySelector('.ph-note-act').getBoundingClientRect();
         const t = n[0].querySelector('.ph-note-text'), d = document.documentElement;
         return { hs: n.map((x) => Math.round(x.getBoundingClientRect().height)), undoH: u.height, undoW: u.width, cut: t.scrollWidth > t.clientWidth,
           side: d.scrollWidth <= d.clientWidth, tint: getComputedStyle(n[1]).color !== getComputedStyle(n[2]).color,
-          copy: document.querySelectorAll('.ph-note button:not(.ph-note-act)').length }; })()`);
+          copy: document.querySelectorAll('.ph-aibnote button:not(.ph-note-act)').length }; })()`);
       console.log('phone note', JSON.stringify(m));
       assert(m.hs.every((x) => x <= 30), `one line high ${m.hs}`);
       assert(m.undoH >= 44 && m.undoW >= 44, `Undo tap area ${m.undoW} x ${m.undoH}`);

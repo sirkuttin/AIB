@@ -576,7 +576,7 @@
       return;
     }
     if (selected?.key !== key) return;
-    const rows = normalized({ events: w.events, context: w.context, start: w.start }, key, true),
+    const rows = normalized({ events: w.events, context: w.context, start: w.start, lines: w.lines }, key, true),
       unit = window.ChatViews.project(rows, 'prompts', {}).units.find((u) => sameHit(u.prompt, hit));
     if (unit) window.ChatViewsUI.openPrompt(unit.key);
     rowExtra.main = 1e9; // show every loaded prompt, so the opened one is drawn
@@ -2121,6 +2121,31 @@
       }));
     return out.length ? out : undefined;
   }
+  /* A saved chat's rows (rows[i]: the transcript event base + i, or null) with AIB's own lines put in after their turns (lines: the
+     history window's Map n -> {n, at, kind, data, time}; at = the transcript index each goes before). A turn end is the "turn
+     finished · time" divider, an AIB note the quiet AIB line (without its Undo / Merge again: the chat is not running). Lines placed
+     before the window's first event are on an older page. */
+  function withKeptRows(rows, lines, base) {
+    const list = lines instanceof Map ? [...lines.values()] : Array.isArray(lines) ? lines : [];
+    if (!list.length) return rows;
+    const placed = list.filter((l) => Number(l.at) >= base).sort((a, b) => a.at - b.at || a.n - b.n);
+    const rowOf = (l) => {
+      const d = l.data && typeof l.data === 'object' ? l.data : {};
+      if (l.kind === 'turn_end')
+        return { role: 'turn-end', label: 'Turn finished', value: d.stopReason || 'end_turn', time: l.time, rid: 'K:' + l.n };
+      if (l.kind === 'studio_note' && typeof d.message === 'string' && d.message)
+        return { role: 'notice', label: 'AIB', value: d.message, time: l.time, rid: 'K:' + l.n, ...(typeof d.kind === 'string' ? { noteKind: d.kind } : {}) };
+      return null;
+    };
+    const out = [];
+    let k = 0;
+    for (let i = 0; i < rows.length; i++) {
+      while (k < placed.length && placed[k].at <= base + i) out.push(rowOf(placed[k++]));
+      out.push(rows[i]);
+    }
+    while (k < placed.length) out.push(rowOf(placed[k++]));
+    return out;
+  }
   function normalized(data, key, dock) {
     const toRow = (e) => ({
       role: e.kind,
@@ -2135,9 +2160,11 @@
     /* row ids: 'T:' + the event's index in the whole transcript (data.start: the window's first), stable when older pages load */
     const base = Number.isFinite(data.start) ? data.start : 0,
       ctx = (data.context || []).map((e, i) => ({ ...toRow(e), ctx: true, rid: 'C:' + i })),
-      rows = data.events
-        .map((e, i) => (thinkingOn() || e.kind !== 'thinking' ? { ...toRow(e), rid: 'T:' + (base + i) } : null))
-        .filter(Boolean);
+      rows = withKeptRows(
+        data.events.map((e, i) => (thinkingOn() || e.kind !== 'thinking' ? { ...toRow(e), rid: 'T:' + (base + i) } : null)),
+        data.lines,
+        base,
+      ).filter(Boolean);
     const paired = window.ToolViews?.pairSaved ? window.ToolViews.pairSaved([...ctx, ...rows]) : [...ctx, ...rows];
     markRunningCall(paired, key);
     const out = window.PlanUI ? window.PlanUI.fold(paired, { working: savedWorking(key) }) : paired;
@@ -2977,7 +3004,7 @@
     const w = await pollHistory(target);
     subFetch = { key: target, at: Date.now() };
     if (subSelection?.key === target) {
-      showRows($('submessages'), normalized({ events: w.events, context: w.context, start: w.start }, target), 'sub');
+      showRows($('submessages'), normalized({ events: w.events, context: w.context, start: w.start, lines: w.lines }, target), 'sub');
       syncLoadEarlier($('submessages'), target, w, 'sub');
       managed($('submessages'))?.afterRedraw(); // the "Load earlier" button came in after the draw
     }
@@ -5123,7 +5150,7 @@
   function historyWindow(key, thinking) {
     let w = historyWindows.get(key);
     if (!w || w.thinking !== thinking) {
-      w = { thinking, start: 0, end: 0, total: 0, events: [], loaded: false, expanded: false, busy: false };
+      w = { thinking, start: 0, end: 0, total: 0, events: [], lines: new Map(), loaded: false, expanded: false, busy: false };
       historyWindows.delete(key);
       historyWindows.set(key, w);
       /* chats shown in split side panes are not evicted */ const pinned = new Set(
@@ -5139,6 +5166,11 @@
     }
     return w;
   }
+  /* AIB's own lines of a saved chat (turn ends, AIB notes; history/lines.ts on the server): each page carries the ones placed in
+     it ({n, at, kind, data, time}, at = the transcript index it goes before); kept by n, so a line two pages both carry shows once. */
+  function keepLines(w, data) {
+    for (const l of Array.isArray(data?.lines) ? data.lines : []) if (l && Number.isInteger(l.n)) w.lines.set(l.n, l);
+  }
   async function pollHistory(key) {
     const thinking = thinkingOn() ? '1' : '0',
       w = historyWindow(key, thinking);
@@ -5146,6 +5178,8 @@
       const data = await get('/api/transcript', { key, limit: HISTORY_PAGE, thinking });
       if (w.loaded) return w;
       w.events = data.events;
+      w.lines = new Map();
+      keepLines(w, data);
       w.context = data.context || [];
       w.start = data.before;
       w.end = data.end ?? data.total;
@@ -5163,6 +5197,7 @@
         return pollHistory(key);
       }
       w.total = data.total;
+      keepLines(w, data);
       if (!data.events.length) break;
       w.events.push(...data.events);
       w.end = data.end;
@@ -5183,7 +5218,7 @@
   }
   function renderMainHistory(w, key) {
     const box = $('messages');
-    showRows(box, normalized({ events: w.events, context: w.context, start: w.start }, key, true), 'main', {
+    showRows(box, normalized({ events: w.events, context: w.context, start: w.start, lines: w.lines }, key, true), 'main', {
       earlier: w.start > 0,
       ...savedExtra(key, w),
       find: findState(w),
@@ -5214,6 +5249,7 @@
     try {
       const data = await get('/api/transcript', { key, before: w.start, limit: HISTORY_PAGE, thinking: w.thinking });
       w.events = [...data.events, ...w.events];
+      keepLines(w, data);
       w.context = data.context || [];
       w.start = data.before;
       w.expanded = true;
@@ -5237,7 +5273,7 @@
         renderMainHistory(w, key);
       } else {
         subSignature = '';
-        showRows(box, normalized({ events: w.events, context: w.context, start: w.start }, key), 'sub');
+        showRows(box, normalized({ events: w.events, context: w.context, start: w.start, lines: w.lines }, key), 'sub');
         syncLoadEarlier(box, key, w, 'sub');
       }
       if (ctl) ctl.afterRedraw();
@@ -5512,7 +5548,7 @@
     } else {
       const w = await pollHistory(c.key);
       m.histKey = c.key;
-      m.rows = normalized({ events: w.events, context: w.context, start: w.start }, c.key);
+      m.rows = normalized({ events: w.events, context: w.context, start: w.start, lines: w.lines }, c.key);
     }
     return m.rows;
   }
@@ -5713,7 +5749,7 @@
         historyWindows.get(m.histKey) !== hist
       )
         return;
-      m.rows = normalized({ events: hist.events, context: hist.context, start: hist.start }, m.histKey);
+      m.rows = normalized({ events: hist.events, context: hist.context, start: hist.start, lines: hist.lines }, m.histKey);
       st.grow = true;
       paintMirror(box, m.rows);
       ok = true;

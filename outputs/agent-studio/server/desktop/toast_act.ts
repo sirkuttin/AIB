@@ -15,7 +15,7 @@ import { getLogger } from '../core/log.ts';
 import type { InboxRow } from '../attention/inbox_rules.ts';
 import { INBOX } from '../attention/inbox_rules.ts';
 import { answersOf } from '../attention/answers.ts';
-import { inboxAct, sendToChat } from '../attention/inbox_act.ts';
+import { inboxAct, lastUserText, sendToChat } from '../attention/inbox_act.ts';
 import type { WebContext } from '../web/server.ts';
 import type { DesktopNotifications, NotifyTarget } from './notify.ts';
 import {
@@ -83,18 +83,8 @@ export function toastActDeps(
   };
 }
 
-/** The last message you sent in this chat (the inbox's Retry sends it again), or ''. */
-export function lastUserText(state: unknown): string {
-  let text = '';
-  for (const raw of Array.isArray(obj(state).events) ? obj(state).events as unknown[] : []) {
-    const e = obj(raw);
-    if (e.kind === 'user') {
-      const t = obj(e.data).text;
-      if (typeof t === 'string' && t.trim()) text = t;
-    }
-  }
-  return text;
-}
+/** The last message you sent in this chat (the inbox's Retry sends it again), or '' (attention/inbox_act.ts, shared). */
+export { lastUserText };
 
 export async function applyToastClick(d: ToastActDeps, click: ToastClick): Promise<ToastOutcome> {
   const { act, chat, code } = parseToastArgs(click.args);

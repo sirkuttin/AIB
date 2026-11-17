@@ -2069,7 +2069,25 @@ html.ph-viewing body {
   color: var(--muted);
 }
 /* AIB's own notes: one quiet line (same look as the desktop's), the Undo word keeps a 44 px tap area without making the line taller */
-.ph-note {
+/* A saved chat's "turn finished · time" line (AIB's own, kept by conversation): the PC's turn divider, rule - words - rule */
+.ph-turn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 8px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 16px;
+}
+.ph-turn::before,
+.ph-turn::after {
+  content: '';
+  flex: 1 1 0;
+  height: 1px;
+  background: var(--line);
+}
+/* AIB's own note in a chat: one line (its own class; .ph-note is the page's plain small-print note, which wraps) */
+.ph-aibnote {
   display: flex;
   align-items: center;
   flex-wrap: nowrap;
@@ -2085,7 +2103,7 @@ html.ph-viewing body {
   line-height: 20px;
   white-space: nowrap;
 }
-.ph-note.warn {
+.ph-aibnote.warn {
   border-left-color: var(--warn-text);
   background: color-mix(in srgb, var(--warn-text) 9%, transparent);
   color: var(--warn-text);

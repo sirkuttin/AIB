@@ -257,6 +257,12 @@
   /* "Merged subagent “X” into main · 2 files" reads "Merged “X” · 2 files" */
   const noteWords = (t) =>
     String(t || '').replace(/\s+/g, ' ').trim().replace(/^(Merged|Didn.t land|Couldn.t land) subagent /i, '$1 ').replace(/ into main(?= ·|$)/, '');
+  /* A turn end's words, as the PC's divider says them (stream-ui.js turnEndText). */
+  function turnWords(reason) {
+    const r = str(reason);
+    return !r || r === 'end_turn' || r === 'Complete' ? 'turn finished' : r === 'cancelled' ? 'cancelled' : 'stopped: ' + r;
+  }
+
   function rowsFrom(events, opts) {
     const o = obj(opts);
     const acted = obj(o.acted);
@@ -319,6 +325,9 @@
           if (kind === 'tool_call' || isArtifactTool(u)) step.artifactTool = step.artifactTool || isArtifactTool(u);
           card(artifactFrom(e, step.artifactTool), key);
         }
+      } else if (e.kind === 'turn_end' && o.turnEnds) {
+        // a saved chat: AIB's "turn finished · time" line after each turn (kept by AIB, not in the agent's transcript)
+        rows.push({ kind: 'turn', key, text: turnWords(data.stopReason), time: e.time || 0 });
       } else if (e.kind === 'artifact') {
         card(artifactFrom(e), key);
       } else if (e.kind === 'permission' || e.kind === 'elicitation') {
@@ -909,8 +918,8 @@
   }
 
   /* The card's ONE action row. Approval (phone may allow): Allow once / Deny / Reply; risky: Review first / Deny. Stalled:
-     Continue / Reply / ×. To review: Reply / ×. Anything else: Reply. Only once-only options ever (allow_once / reject_once,
-     approvalButtons): nothing "always". Each: {act: 'allow' | 'deny' | 'review' | 'reply' | 'continue' | 'handled', label,
+     Continue / Reply / ×. Failed: Retry (with the Send switch) / Reply. To review: Reply / ×. Anything else: Reply. Only once-only options ever (allow_once / reject_once,
+     approvalButtons): nothing "always". Each: {act: 'allow' | 'deny' | 'review' | 'reply' | 'continue' | 'retry' | 'handled', label,
      optionId?}. */
   function inboxActions(r, can) {
     const x = obj(r);
@@ -922,6 +931,10 @@
       if (x.id) out.push({ act: 'reply', label: 'Reply' });
       out.push({ act: 'handled', label: '×' });
       return out;
+    }
+    if (x.kind === 'failed') {
+      // Retry: your last message again (the server's inbox action, as the PC inbox's Retry and a Windows notification's)
+      return obj(can).send ? [{ act: 'retry', label: 'Retry' }, { act: 'reply', label: 'Reply' }] : [{ act: 'reply', label: 'Reply' }];
     }
     const a = rowAsk(x);
     if (a && a.kind === 'permission' && a.key && !a.pcOnly && obj(can).approve) {
@@ -3598,7 +3611,7 @@
     return card;
   }
 
-  /* One of the server's inbox actions from the phone (POST /api/remote/chat-op): handled, continue, snooze, wake. */
+  /* One of the server's inbox actions from the phone (POST /api/remote/chat-op): handled, continue, retry, snooze, wake. */
   async function inboxOp(r, op, extra, done) {
     let res = null;
     try {
@@ -3627,6 +3640,7 @@
     }
     if (a.act === 'handled') return inboxOp(r, 'handled', null, 'Marked handled');
     if (a.act === 'continue') return inboxOp(r, 'continue', null, 'Sent: Continue where you left off.');
+    if (a.act === 'retry') return inboxOp(r, 'retry', null, 'Sent your last message again.');
     if (!r.id) return toast('This chat is not running. Use Continue, or open it on your PC.');
     openChat(r.id, r.title, !!ask.key, item);
     if (a.act === 'reply') S.focusPrompt = true;
@@ -3941,7 +3955,7 @@
       if (c.cached && S.offline) body.append(copyNote());
       body.append(el('p', 'ph-earlier', 'Not open on ' + S.pcName + ': these are its saved messages.'));
       if (c.truncated) body.append(earlierEl());
-      const rows = rowsFrom(c.events);
+      const rows = rowsFrom(c.events, { turnEnds: true });
       const list = el('div', 'ph-list');
       drawRows(list, rows, null);
       if (!rows.length) list.append(el('p', 'ph-empty', c.history ? 'No messages yet.' : 'The messages of this chat are on your PC.'));
@@ -4068,6 +4082,13 @@
       box.append(noteLine(c, r));
       return;
     }
+    if (r.kind === 'turn') {
+      const when = r.time ? new Date(r.time < 1e12 ? r.time * 1000 : r.time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
+      const line = el('p', 'ph-turn', r.text + (when && !/Invalid/.test(when) ? ' · ' + when : ''));
+      line.setAttribute('role', 'separator');
+      box.append(line);
+      return;
+    }
     if (r.kind === 'notice') {
       box.append(el('p', 'ph-notice' + (r.mine ? ' mine' : ''), r.text));
       return;
@@ -4108,7 +4129,7 @@
      are on the PC. */
   /* AIB's own note as one line: ⑂ text… · Undo · time. The word is a button with a 44 px tap area; the time goes first on a narrow screen. */
   function noteLine(c, r) {
-    const line = el('div', 'ph-note' + (r.warn ? ' warn' : ''));
+    const line = el('div', 'ph-aibnote' + (r.warn ? ' warn' : ''));
     line.setAttribute('role', 'note');
     line.title = r.text;
     const words = noteWords(r.text);

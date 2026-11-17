@@ -87,3 +87,41 @@ export class LineMerger {
     return out;
   }
 }
+
+/** A kept line placed in a saved transcript: `n` its place in the conversation's file (a stable id), `at` the index of the
+ * transcript event it goes before (the next user message after its turn; the number of events when its turn is the last). */
+export interface PlacedLine extends KeptLine {
+  n: number;
+  at: number;
+}
+
+/**
+ * The read-only view of a closed chat (its saved transcript: the PC's saved-chat view, the phone's saved chat) has none of AIB's
+ * lines: this places the conversation's kept lines in its transcript events, each after its own turn (just before the next user
+ * message, or after the last event), by the same anchors and rules as a session/load replay (LineMerger). `events` are the
+ * transcript reader's events (kind, text); lines of turns the transcript no longer has are left out.
+ */
+export function placeLines(events: readonly { kind?: unknown; text?: unknown }[], lines: readonly KeptLine[]): PlacedLine[] {
+  if (!lines.length) return [];
+  const merger = new LineMerger(lines.map((l, n) => ({ ...l, n })));
+  const out: PlacedLine[] = [];
+  let anchor = '';
+  const take = (at: number) => {
+    for (const l of merger.take(anchor) as (KeptLine & { n: number })[]) out.push({ ...l, at });
+  };
+  for (let i = 0; i < events.length; i++) {
+    const e = events[i];
+    if (e?.kind !== 'user') continue;
+    take(i); // the turn before this message ended here
+    anchor = anchorOf(typeof e.text === 'string' ? e.text : '');
+  }
+  take(events.length);
+  return out;
+}
+
+/** The kept lines of one conversation, read from AIB's data folder (`<state>/conversation-lines`), or [] when it has none. */
+export function keptLinesIn(stateDir: string): (provider: string, sessionId: string) => KeptLine[] {
+  if (!stateDir) return () => [];
+  const store = new ConversationLines(join(stateDir, 'conversation-lines'));
+  return (provider, sessionId) => (provider && sessionId ? store.read(provider, sessionId) : []);
+}

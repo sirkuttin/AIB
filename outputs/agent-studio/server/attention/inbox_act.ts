@@ -9,6 +9,8 @@
  *   wake     {key}: the snooze is dropped; the row is back at once.
  *   continue {key}: a stalled chat gets "Continue where you left off." A turn gone quiet (S3) is stopped first; a chat whose agent
  *            died (S1) is opened again from its saved session, the same resume path as sending to a closed chat.
+ *   retry    {key}: a Failed row's Retry: your last message to the chat sent again as a new turn, text only (as the PC inbox's
+ *            Retry and a Windows notification's). Only while the row is a Failed one; the same send path as Continue.
  */
 import type { WebContext } from '../web/server.ts';
 import { INBOX } from './inbox_rules.ts';
@@ -49,7 +51,31 @@ export async function inboxAct(ctx: InboxActContext, body: unknown): Promise<[nu
     return [200, { ok: true, inbox: await ctx.inbox.look() }];
   }
   if (action === 'continue') return await sendToChat(ctx, key, INBOX.CONTINUE_TEXT, 'continue');
+  if (action === 'retry') {
+    const row = (await ctx.inbox.look()).rows.find((r) => r.key === key && r.kind === 'failed');
+    if (!row) return [409, { error: 'This chat no longer shows a failed turn.', code: 'gone' }];
+    let text = '';
+    try {
+      text = lastUserText(await ctx.host.liveState(row.id, 1), sessionId);
+    } catch { /* none */ }
+    if (!text) return [409, { error: 'There is no message of yours to send again. Open the chat.', code: 'nothing' }];
+    return await sendToChat(ctx, key, text, 'retry');
+  }
   return [400, { error: 'Unknown inbox action' }];
+}
+
+/** The last message you sent in this chat (Retry sends it again), or ''. `sessionId`: only that session's (a chat's state can
+ * hold messages of an earlier session). */
+export function lastUserText(state: unknown, sessionId = ''): string {
+  let text = '';
+  for (const raw of Array.isArray(obj(state).events) ? obj(state).events as unknown[] : []) {
+    const e = obj(raw);
+    if (e.kind !== 'user') continue;
+    const d = obj(e.data);
+    if (sessionId && typeof d.sessionId === 'string' && d.sessionId && d.sessionId !== sessionId) continue;
+    if (typeof d.text === 'string' && d.text.trim()) text = d.text;
+  }
+  return text;
 }
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
