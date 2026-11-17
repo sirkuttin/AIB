@@ -3422,6 +3422,15 @@
       e.preventDefault();
       stepZoom(e.deltaY < 0 ? 1 : -1);
     }, { passive: false });
+    // A link in the page to another artifact (studio-artifact://<id>): the sandboxed page cannot open it, so its injected script
+    // (origin.ts SCROLL_SCRIPT) asks here. Taken only from the frame showing the artifact, only for an artifact id; open() asks the
+    // server for it and says so when there is no such artifact. The page keeps its sandbox.
+    win.addEventListener('message', (e) => {
+      const d = e.data;
+      if (!d || d.type !== 'studio-artifact-open' || !ui.frame || e.source !== ui.frame.contentWindow) return;
+      const id = artifactIdFromLink('studio-artifact://' + String(d.id || ''));
+      if (id) open(id);
+    });
     win.addEventListener('message', (e) => {
       const d = e.data;
       if (!d || d.type !== 'studio-artifact-scroll' || !ui.frame || e.source !== ui.frame.contentWindow) return;

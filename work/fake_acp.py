@@ -44,7 +44,7 @@ parser.add_argument('--not-claude', action='store_true', help='With --held-turn:
 parser.add_argument('--child-pid-file', help='Start a sleeping child process at launch and write its pid to this file (checks that closing the agent also removes its children)')
 parser.add_argument('--limits', action='store_true', help="Usage limits: a prompt 'ratelimit:<JSON>' sends usage_update with _meta['_claude/rateLimit'] = JSON (as claude-agent-acp); 'quota:<resetAt>' fails the prompt with -32603 and data.subscriptionQuota {memberType: 'plus', resetAt} (as Qwen Code); _account/read answers a Mistral Vibe account with a 37.5% monthly budget (as vibe-acp)")
 parser.add_argument('--extra-dirs', action='store_true', help='Advertise sessionCapabilities.additionalDirectories and systemPrompt (as claude-agent-acp and codex-acp do): local-only folders are granted and told; FAKE_ACP_LOG shows the params')
-parser.add_argument('--steer', choices=['claude', 'codex', 'omp', 'other'], help="Steer-on-send (beta.9): announces _meta.steering.supported, answers _session/steering like the named real adapter (claude-agent-acp 0.97.0, codex-acp 2.6.0, omp 18.13.1; 'other' = a steerable agent with no known identity) and replays the recorded scenarios of work/steer-recordings by prompt: 'steer-bash:<gate>' (a command runs; C1/X1/O1), 'steer-helper:<gate>' (Claude helper; C2), 'steer-perm' (a permission card is open; C4/O2), 'steer-wait:<gate>' (plain work until <gate> exists; steers get a reply and the turn goes on), 'steer-drop:<gate>' (Codex v1 silent drop: injected, never read), 'steer-late:<gate>' (X3: a steer is answered promptRequired just before the turn ends). After a steer-bash command ends, Claude's own cycle is held while <gate>.cycle-hold exists, until <gate>.cycle-end exists. Any other prompt: 'Fixture reply: <text>'. The commands are real child processes (a parent and a grandchild, pids in <gate>.pids) that end when <gate> exists")
+parser.add_argument('--steer', choices=['claude', 'codex', 'omp', 'other'], help="Steer-on-send (beta.9): announces _meta.steering.supported, answers _session/steering like the named real adapter (claude-agent-acp 0.97.0, codex-acp 2.6.0, omp 18.13.1; 'other' = a steerable agent with no known identity) and replays the recorded scenarios of work/steer-recordings by prompt: 'steer-bash:<gate>' (a command runs; C1/X1/O1), 'steer-helper:<gate>' (Claude helper; C2), 'steer-perm' (a permission card is open; C4/O2), 'steer-perm-helper' (a foreground helper's permission card is open: injected, the card stays, the steer is read once it is answered), 'steer-wait:<gate>' (plain work until <gate> exists; steers get a reply and the turn goes on), 'steer-drop:<gate>' (Codex v1 silent drop: injected, never read), 'steer-late:<gate>' (X3: a steer is answered promptRequired just before the turn ends). After a steer-bash command ends, Claude's own cycle is held while <gate>.cycle-hold exists, until <gate>.cycle-end exists. Any other prompt: 'Fixture reply: <text>'. The commands are real child processes (a parent and a grandchild, pids in <gate>.pids) that end when <gate> exists")
 args = parser.parse_args()
 if args.fixture_login and args.fail_login:
     print('Fixture terminal login: failed.', flush=True)
@@ -661,6 +661,8 @@ def steer_scenario(key, text):
         threading.Thread(target=steer_helper, args=(key, rest), daemon=True).start()
     elif text == 'steer-perm':
         threading.Thread(target=steer_perm, args=(key,), daemon=True).start()
+    elif text == 'steer-perm-helper':
+        threading.Thread(target=steer_perm_helper, args=(key,), daemon=True).start()
     elif verb in ('steer-wait', 'steer-drop', 'steer-late'):
         threading.Thread(target=steer_wait_turn, args=(key, rest, verb), daemon=True).start()
     elif not text.startswith(STEER_PLAIN_EXCLUDED) and text not in STEER_PLAIN_EXCLUDED and not args.rich and not args.demo and not args.held_turn:
@@ -891,6 +893,40 @@ def steer_perm(key):
     steer_end(turn)
 
 
+def steer_perm_helper(key):
+    """A foreground helper (subagent session steer-perm-child) asks for approval while the main turn waits on it. claude-agent-acp takes a steer then at priority
+    'later' (openUserInputs): injected, the card stays open, and the main agent reads the message once the helper goes on (C4 with the card in a helper)."""
+    child, tool, inner = 'steer-perm-child', 'toolu_steer_perm_agent', 'toolu_steer_perm_inner'
+    answers = {}
+    steer_ctx['answers'] = answers
+    turn = steer_begin(key)
+    update({'sessionUpdate': 'tool_call', 'toolCallId': tool, 'title': 'Agent', 'kind': 'think', 'status': 'pending', '_meta': {'claudeCode': {'toolName': 'Agent'}}})
+    update({'sessionUpdate': 'subagent_update', 'sessionId': child, 'title': 'Explore', 'description': 'Look around', 'capabilities': {'cancel': {}}, 'state': {'state': 'running'}})
+    update({'sessionUpdate': 'session_message', 'messageId': tool, 'senderSessionId': SID(), 'recipientSessionId': child, 'content': [{'type': 'text', 'text': 'Look around.'}]})
+    emit({'method': 'session/update', 'params': {'sessionId': child, 'update': {'sessionUpdate': 'tool_call', 'toolCallId': inner, 'title': 'echo hi > helper.txt', 'kind': 'execute', 'status': 'pending',
+          '_meta': {'claudeCode': {'toolName': 'Bash', 'parentToolUseId': tool}}}}})
+    answers['steer-perm-helper:event'] = threading.Event()
+    emit({'id': 'steer-perm-helper', 'method': 'session/request_permission', 'params': {'sessionId': child, 'toolCall': {'toolCallId': inner, 'title': 'echo hi > helper.txt', 'kind': 'execute', 'status': 'pending', 'rawInput': {'command': 'echo hi > helper.txt'},
+          '_meta': {'claudeCode': {'toolName': 'Bash', 'parentToolUseId': tool}}},
+          'options': [{'optionId': 'allow_once', 'name': 'Allow once', 'kind': 'allow_once'}, {'optionId': 'reject_once', 'name': 'Reject', 'kind': 'reject_once'}]}})
+    event = answers['steer-perm-helper:event']
+    deadline = time.time() + 600
+    while not event.is_set() and time.time() < deadline and not turn['cancel'].is_set():
+        time.sleep(0.02)
+    if turn['cancel'].is_set():
+        steer_end(turn, 'cancelled')
+        return
+    emit({'method': 'session/update', 'params': {'sessionId': child, 'update': {'sessionUpdate': 'tool_call_update', 'toolCallId': inner, 'status': 'completed', 'rawOutput': ''}}})
+    update({'sessionUpdate': 'tool_call_update', 'toolCallId': tool, 'status': 'completed'})
+    update({'sessionUpdate': 'subagent_update', 'sessionId': child, 'state': {'state': 'idle', 'stopReason': 'end_turn'}})
+    steer_say('The helper finished.')
+    steer_usage(HUMAN)
+    for t in turn['steers'][:]:   # the steer's own cycle, after the card ('later')
+        steer_say('Steered reply: ' + t)
+        steer_usage(HUMAN)
+    steer_end(turn)
+
+
 for line in sys.stdin:
     if _received_log:
         with open(_received_log, 'a', encoding='utf-8') as _log:
@@ -1065,7 +1101,7 @@ for line in sys.stdin:
             emit({'id': key, 'error': {'code': -32601, 'message': 'Method not found: _session/steering'}})
     elif method == 'session/cancel' and steer_ctx.get('turn'):
         steer_ctx['turn']['cancel'].set()
-    elif method is None and key in ('steer-perm', 'steer-perm-2') and 'answers' in steer_ctx:
+    elif method is None and key in ('steer-perm', 'steer-perm-2', 'steer-perm-helper') and 'answers' in steer_ctx:
         outcome = message.get('result', {}).get('outcome', {})
         steer_ctx['answers'][key] = outcome.get('optionId') or outcome.get('outcome')
         steer_ctx['answers'][key + ':event'].set()

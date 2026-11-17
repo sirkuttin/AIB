@@ -344,6 +344,7 @@ export const PC_ROUTES: Readonly<Record<string, RemoteEntry>> = {
   'GET /api/live/artifacts/item': scope(R),
   'GET /api/live/artifacts/source': scope(R),
   'GET /api/live/artifacts/states': scope(R),
+  'GET /api/live/artifacts/by-source': scope(R),
   'POST /api/live/artifacts/publish': AGENT_KEY,
   'POST /api/live/artifacts/archive': rule(['ids', 'id', 'archived', 'conversationId'], artifactArchiveVerdict),
   'POST /api/live/artifacts/pin': scope(S),

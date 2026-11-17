@@ -54,7 +54,7 @@ export interface QueueItem {
 
 /**
  * A message sent while the agent works (steer-on-send): it goes to the agent now, through `_session/steering`, not after the turn.
- *   held      waits because an approval or question is open (heldReason 'approval'); goes once the card is answered
+ *   held      waits because an approval or question is open (heldReason 'approval' or 'question', heldFor names the card); goes once it is answered
  *   sending   the steer request is out; the agent's answer has not come yet
  *   injected  the agent took it (the item leaves the lane at once; only the route's answer and the receipt say so)
  *   fallback  the agent said its turn is over (promptRequired): it goes as an ordinary prompt as soon as AIB is idle
@@ -68,6 +68,16 @@ export interface SteerItem {
   queuedAt: number;
   state: 'held' | 'sending' | 'injected' | 'fallback';
   heldReason: string;
+  /** While held: the card it waits for (what the queue box names), the first open one that holds it. */
+  heldFor?: HeldCard | null;
+}
+
+/** An open approval or question a message sent now waits for: what kind, its title, and whose (the session, main or a subagent's). */
+export interface HeldCard {
+  card: 'approval' | 'question';
+  title: string;
+  sessionId: string | null;
+  route: string;
 }
 
 /** The saved form of an item (as read back from a store file it may be any JSON). */
@@ -271,6 +281,7 @@ export class MessageQueue {
       queuedAt: item.queuedAt,
       state: item.state,
       ...(item.heldReason ? { heldReason: item.heldReason } : {}),
+      ...(item.heldReason && item.heldFor ? { heldFor: { ...item.heldFor } } : {}),
     }));
   }
 

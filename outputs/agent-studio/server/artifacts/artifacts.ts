@@ -637,6 +637,20 @@ export class ArtifactStore {
     return out;
   }
 
+  /**
+   * The artifact a path link names (by-source): a non-deleted artifact of any chat published from one of these files (a link can mean
+   * a few full paths: its own, and the same file under the chat's copy or the main folder). The given chat's first, else the newest.
+   */
+  bySource(paths: readonly unknown[], conversationId: unknown = null): Manifest | null {
+    const keys = new Set(paths.slice(0, 8).filter((p) => typeof p === 'string' && p).map((p) => pathKey(p)));
+    if (!keys.size) return null;
+    const hits = this.all().filter((m) =>
+      !isDeleted(m) && !isDocHistory(m) && pyTruthy(m.sourcePath) && keys.has(pathKey(m.sourcePath))
+    );
+    const mine = conversationId ? hits.find((m) => m.conversationId === conversationId) : undefined;
+    return mine ?? hits.sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0))[0] ?? null;
+  }
+
   /** Other non-deleted artifacts (any chat) whose source is this file. */
   sharing(artifactId: string, path: unknown): Manifest[] {
     const key = pathKey(path);
@@ -1430,6 +1444,17 @@ export class Service {
         const ids = one('ids').split(',').map((id) => id.trim()).filter(Boolean);
         if (ids.length > MAX_STATE_IDS) return [400, { error: `At most ${MAX_STATE_IDS} ids`, code: 'invalid' }];
         return [200, { states: this.store.states(ids) }];
+      }
+      if (path === '/api/live/artifacts/by-source') {
+        let paths: unknown;
+        try {
+          paths = JSON.parse(one('paths', '[]'));
+        } catch {
+          return [400, { error: 'paths must be a JSON list', code: 'invalid' }];
+        }
+        if (!Array.isArray(paths) || paths.length > 8) return [400, { error: 'At most 8 paths', code: 'invalid' }];
+        const hit = this.store.bySource(paths, one('conversationId') || null);
+        return [200, { artifact: hit ? this.store.summary(hit) : null }];
       }
       if (path === '/api/live/artifacts/item') return [200, this.store.item(one('id'))];
       if (path === '/api/live/artifacts/source') {

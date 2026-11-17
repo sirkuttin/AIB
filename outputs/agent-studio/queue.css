@@ -151,3 +151,19 @@
   color: var(--queue-paused-text);
   font-size: 11px;
 }
+/* A held row says which card it waits for on a line of its own under the message (owner, 2026-11-17: the short note on the right
+   was not noticed), so the card's name is never cut off. */
+.q-row.q-lane-held {
+  flex-wrap: wrap;
+  max-height: none;
+  row-gap: 0;
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+.q-row.q-lane-held .q-lane-note {
+  flex: 1 0 100%;
+  max-width: none;
+  padding-left: 22px;
+  white-space: normal;
+  font-weight: 600;
+}

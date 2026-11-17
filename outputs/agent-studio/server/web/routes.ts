@@ -88,6 +88,7 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   POST /api/live/artifacts/undelete         Restore from Recently deleted, the file back where it was (page only)
  *   POST /api/live/artifacts/purge            "Delete now": remove a deleted artifact for good (page only)
  *   GET  /api/live/artifacts/states           live / archived / deleted / gone per id (link labels in chat messages)
+ *   GET  /api/live/artifacts/by-source        the artifact published from a file (a path link in a reply opens it), any chat's
  *   POST /api/live/steer                      send now while the agent works (steer-on-send; Connection.steer)
  *   POST /api/live/tool-stop                  Stop on a "Still running in the background" row (Connection.stopBackgroundTool)
  *   POST /api/live/chat-name                  rename one chat (or clear its name): per key, so a phone's rename of another chat stays
@@ -196,6 +197,7 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['POST', '/api/live/artifacts/undelete', 'artifacts.write', 'own-gate'],
   ['POST', '/api/live/artifacts/purge', 'artifacts.write', 'own-gate'],
   ['GET', '/api/live/artifacts/states', 'artifacts.read', 'get'],
+  ['GET', '/api/live/artifacts/by-source', 'artifacts.read', 'get'],
   ['POST', '/api/live/steer', 'write', 'body'],
   ['POST', '/api/live/tool-stop', 'write', 'body'],
   ['POST', '/api/live/chat-name', 'write', 'body'],

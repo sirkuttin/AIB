@@ -37,7 +37,7 @@ import { validateContent, validateSchema, validateUrlRequest } from './elicitati
 import { arraySource, type Ev, type EventSource, page, type Page, type PageQuery } from './event_pages.ts';
 import type { HistoryClient } from '../history/client.ts';
 import type { Checkpoint, OpenInfo, StoredEvent, StoreEvent } from '../history/store.ts';
-import { MessageQueue, type QueueItem, type SavedItem, STEER_RESTART_NOTE, type SteerItem } from './msgqueue.ts';
+import { type HeldCard, MessageQueue, type QueueItem, type SavedItem, STEER_RESTART_NOTE, type SteerItem } from './msgqueue.ts';
 import { killVerified, type ProcId } from '../platform/kill_verified.ts';
 import { type AuthMethod, describeAuthMethods, isAuthRequired, PromptStateUnknown, RpcError } from './rpc_errors.ts';
 import {
@@ -5235,9 +5235,63 @@ export class Connection {
     return false;
   }
 
-  /** What the composer keys on (snapshot `steerable`): a prompt turn of ours runs and the agent can read a message during it. */
+  /**
+   * What the composer keys on (snapshot `steerable`): the agent works and can read a message now. A prompt turn of ours, with an
+   * agent that can steer; or a cycle Claude Code started on its own (a background task ended): `_session/steering` would answer
+   * promptRequired there (claude-agent-acp steers only a prompt's turn, and the cycle is none), but a session/prompt is folded into
+   * the cycle, which it takes over ("A prompt folded into an autonomous turn owns that turn now"), and nothing running stops. So
+   * Send now prompts it (steer(), #steerLane). Codex and OMP start no cycles of their own; one seen anyway is not steered.
+   */
   steerable(): boolean {
-    return this.busy && !this.autonomous && this.ready && !this.closed && !this.rebuildError && this.steeringSupported();
+    if (!this.busy || !this.ready || this.closed || this.rebuildError) return false;
+    return this.autonomous ? this.#autonomousTakesPrompt() : this.steeringSupported();
+  }
+
+  /** Claude Code's own cycle takes a prompt in (see steerable()). */
+  #autonomousTakesPrompt(): boolean {
+    return this.#claudeHolds();
+  }
+
+  /** Is this open card a subagent's (a helper inside this chat), not the main agent's own? */
+  #cardIsHelpers(params: unknown): boolean {
+    if (!isDict(params)) return false;
+    const session = get(params, 'sessionId');
+    if (isStr(session) && session && this.sessionId && session !== this.sessionId) return true;
+    const call = get(params, 'toolCall');
+    if (!isDict(call)) return false;
+    const meta = get(call, '_meta');
+    const claude = isDict(meta) ? get(meta, 'claudeCode') : null;
+    const parent = isDict(claude) ? get(claude, 'parentToolUseId') : null;
+    if (isStr(parent) && parent) return true;
+    const id = get(call, 'toolCallId');
+    const seen = isStr(id) ? this.#tools.get(id) : undefined;
+    return !!(seen && (seen.parent || !seen.main));
+  }
+
+  /**
+   * The open cards a message sent now waits for (owner decision 5), oldest first; none: it may go in. OMP withdraws an open card
+   * on a steer (recording O2), so every card holds there; Codex is not recorded with a card open: every card holds. Claude Code
+   * (claude-agent-acp) delivers a steer at priority `later` while the SDK awaits an answer, which leaves the card open (recording
+   * C4, IJAI-1191): a subagent's card does not hold it (owner, 2026-11-17), the main agent's own still does (decision 5).
+   */
+  #steerHolds(): HeldCard[] {
+    const past = this.#claudeHolds();
+    const out: HeldCard[] = [];
+    const clean = (t: unknown): string => isStr(t) ? t.replace(/\s+/g, ' ').trim().slice(0, 120) : '';
+    const title = (params: unknown, card: 'approval' | 'question'): string => {
+      if (!isDict(params)) return '';
+      if (card === 'question') return clean(get(params, 'message'));
+      const call = get(params, 'toolCall');
+      return isDict(call) ? clean(get(call, 'title')) : '';
+    };
+    for (const [card, map] of [['approval', this.permissions], ['question', this.elicitations]] as const) {
+      for (const v of map.values()) {
+        if (past && this.#cardIsHelpers(v.params)) continue;
+        const session = isDict(v.params) ? get(v.params, 'sessionId') : null;
+        out.push({ card, title: title(v.params, card), sessionId: isStr(session) ? session : null, route: this.route(session) });
+      }
+    }
+    return out;
   }
 
   /** A slash command the agent offers (or /doc): never sent into a running turn, it waits for the turn to end (B17). */
@@ -5365,16 +5419,20 @@ export class Connection {
         continue;
       }
       if (head.state === 'fallback') return; // B2: the agent's turn is over; it goes as a prompt once AIB has finished that turn
-      if (this.permissions.size || this.elicitations.size) {
-        // Owner decision 5 (B8): never steered while an approval or question is open (OMP would cancel the card). Released by any
-        // close of the last card (#cardsChanged), and by the turn's end (#queueAfterTurn).
+      const holds = this.#steerHolds();
+      if (holds.length) {
+        // Owner decision 5 (B8): never steered while an approval or question is open (OMP would cancel the card), except a Claude
+        // Code subagent's (#steerHolds). The row names the card it waits for. Released by any close of the last card that holds it
+        // (#cardsChanged), and by the turn's end (#queueAfterTurn).
+        const first = holds[0];
         let changed = false;
         for (const item of q.steer) {
-          if (item.state === 'sending') {
-            item.state = 'held';
-            item.heldReason = 'approval';
-            changed = true;
-          }
+          if (item.state !== 'sending' && item.state !== 'held') continue;
+          const was = JSON.stringify([item.state, item.heldReason, item.heldFor]);
+          item.state = 'held';
+          item.heldReason = first.card;
+          item.heldFor = { ...first };
+          if (JSON.stringify([item.state, item.heldReason, item.heldFor]) !== was) changed = true;
         }
         if (changed) this.#queueChanged();
         return;
@@ -5395,6 +5453,7 @@ export class Connection {
         if (item.state === 'held') {
           item.state = 'sending';
           item.heldReason = '';
+          item.heldFor = null;
           changed = true;
         }
       }
@@ -5600,9 +5659,10 @@ export class Connection {
     this.#queueChanged();
   }
 
-  /** An approval or question was answered or withdrawn: with none open, messages held for it go now (B8). */
+  /** An approval or question was answered or withdrawn: with none left that holds them, held messages go now (B8); else their
+   *  rows name the card they wait for now (#steerLane). */
   #cardsChanged(): void {
-    if (!this.queue.steer.length || this.permissions.size || this.elicitations.size) return;
+    if (!this.queue.steer.length) return;
     void this.#steerPump();
   }
 
@@ -5702,7 +5762,12 @@ export class Connection {
     // (`_session/steering`): Claude Code moves a running command or foreground helper to the background ("it was not interrupted") and
     // reads the message now; its background helpers go on. Only an agent that cannot steer (or a slash command, which never goes
     // mid-turn) still interrupts the turn and sends, as before.
-    if (!interrupt && this.steerable() && !this.#isAgentCommand(item.text) && !this.forkSkillRefusal(item.text) && q.steer.length < 50) {
+    // Claude Code's own cycle (steerable(): it takes a prompt in): any message goes through the lane, which prompts it, commands too.
+    const ownCycle = this.busy && this.autonomous;
+    if (
+      !interrupt && this.steerable() && q.steer.length < 50 &&
+      (ownCycle || (!this.#isAgentCommand(item.text) && !this.forkSkillRefusal(item.text)))
+    ) {
       q.remove(itemId);
       if (!q.items.length && q.hold === 'interrupted') q.hold = '';
       q.steer.push({
@@ -6700,7 +6765,8 @@ export class Connection {
       // Steer-on-send: the composer keys on `steerable` alone; steerAgent picks the page's hint copy; the lane of messages sent
       // while the agent works; background tool rows ({toolCallId: {state, stoppable}}).
       steerable: this.steerable(),
-      // Claude Code's own follow-up cycle (busy, but no turn of ours): the composer stays the plain Send, as before steer-on-send (T27)
+      // Claude Code's own follow-up cycle (busy, but no turn of ours). It takes a message in (steerable, owner 2026-11-17): Send now
+      // prompts it into the cycle; another agent's (not expected) is not steerable and the queue box says why.
       autonomous: this.busy && this.autonomous,
       steerAgent: STEER_AGENTS.has(this.provider) ? this.provider : null,
       steerLane: this.queue.steerPublic(light),

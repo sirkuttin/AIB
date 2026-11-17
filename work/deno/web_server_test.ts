@@ -109,6 +109,7 @@ Deno.test('the route table is exactly the Python web server\'s (paths, scopes an
     'POST /api/live/artifacts/undelete',
     'POST /api/live/artifacts/purge',
     'GET /api/live/artifacts/states',
+    'GET /api/live/artifacts/by-source',
     'POST /api/live/steer',
     'POST /api/live/tool-stop',
     'POST /api/live/chat-name',

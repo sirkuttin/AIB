@@ -109,11 +109,14 @@ export function guessType(name: string): string | null {
 /** Python's PATH_RE (`.` matches anything but a newline; `$` also matches before one trailing newline). */
 export const PATH_RE = /^\/a\/([0-9a-f]{16})\/v([0-9]{1,6})\/([^\n]+)\n?$/;
 
+// Injected into every artifact page: it reports the scroll position and Ctrl+wheel zoom to the viewer, and turns a click on a link to
+// another artifact (studio-artifact://<id>), which the sandboxed page cannot open, into an ask to the viewer (artifacts-ui.js takes it
+// only from the frame that shows the artifact). The Python reference (work/python-reference/artifact_origin.py) has the same text.
 export const SCROLL_SCRIPT = `<script>(function(){try{var m=/studio-scroll=(-?[0-9.]+),(-?[0-9.]+)/.exec(location.hash);
 function go(){if(m)window.scrollTo(+m[1],+m[2]);}
 if(m){go();window.addEventListener('load',function(){go();setTimeout(go,60);});}
 var t=0;window.addEventListener('scroll',function(){if(t)return;t=requestAnimationFrame(function(){t=0;
-try{parent.postMessage({type:'studio-artifact-scroll',x:window.scrollX,y:window.scrollY,f:Math.max(0,document.documentElement.scrollHeight-innerHeight)?window.scrollY/Math.max(1,document.documentElement.scrollHeight-innerHeight):0},'*');}catch(e){}});},{passive:true});var z=0;window.addEventListener('wheel',function(e){if(!e.ctrlKey)return;e.preventDefault();var n=Date.now();if(n-z<80)return;z=n;try{parent.postMessage({type:'studio-artifact-zoom',d:e.deltaY<0?1:-1},'*');}catch(_){}},{passive:false});}catch(e){}})();</script>`;
+try{parent.postMessage({type:'studio-artifact-scroll',x:window.scrollX,y:window.scrollY,f:Math.max(0,document.documentElement.scrollHeight-innerHeight)?window.scrollY/Math.max(1,document.documentElement.scrollHeight-innerHeight):0},'*');}catch(e){}});},{passive:true});var z=0;window.addEventListener('wheel',function(e){if(!e.ctrlKey)return;e.preventDefault();var n=Date.now();if(n-z<80)return;z=n;try{parent.postMessage({type:'studio-artifact-zoom',d:e.deltaY<0?1:-1},'*');}catch(_){}},{passive:false});document.addEventListener('click',function(e){var a=e.target&&e.target.closest?e.target.closest('a'):null;if(!a)return;var k=/^studio-artifact:[/][/]([0-9a-f]{8,64})[/]?$/i.exec(String(a.getAttribute('href')||a.getAttribute('xlink:href')||'').trim());if(!k)return;e.preventDefault();try{parent.postMessage({type:'studio-artifact-open',id:k[1].toLowerCase()},'*');}catch(_){}},true);}catch(e){}})();</script>`;
 
 const S = `[${PY_SPACE}]`; // Python's \s
 const NS = `[^${PY_SPACE}]`; // Python's \S

@@ -33,8 +33,8 @@ test('idle: no menu, no key hint, plain Send and Enter', () => {
   assert.equal(SM.route({ ...base, busy: false, hasQueue: true }, 'default'), 'queue');
 });
 
-/* ---- Claude Code's own follow-up cycle (T27): the plain Send of before, Enter waits for the cycle ---- */
-test("the agent's own cycle (autonomous): no menu, no key hint, Enter waits for it to end as before", () => {
+/* ---- an agent's own follow-up cycle that takes no message (T27): the plain Send of before, Enter waits for the cycle ---- */
+test("the agent's own cycle (autonomous, not steerable): no menu, no key hint, Enter waits for it to end as before", () => {
   const ctx = { ...base, autonomous: true, steerable: false };
   const v = SM.view(ctx);
   assert.equal(v.more, false);
@@ -42,6 +42,24 @@ test("the agent's own cycle (autonomous): no menu, no key hint, Enter waits for 
   assert.deepEqual(v.items, []);
   assert.equal(v.placeholder, C.placeholderQueue('Claude Code'));
   assert.equal(SM.route(ctx, 'default'), 'queue');
+});
+
+/* ---- Claude Code's own cycle takes a message in (owner, 2026-11-17): Send now, with its own hint ---- */
+test("Claude Code's own cycle (autonomous, steerable): Enter sends now, the menu says it joins the cycle and nothing stops", () => {
+  const ctx = { ...base, autonomous: true, steerable: true };
+  const v = SM.view(ctx);
+  assert.equal(v.more, true);
+  assert.equal(v.placeholder, C.placeholderSteer('Claude Code'));
+  assert.equal(v.items[0].hint, C.ownCycleHint('Claude Code'));
+  assert.match(v.items[0].hint, /started this turn itself .* joins it now; nothing running stops/);
+  assert.equal(SM.route(ctx, 'default'), 'steer');
+});
+
+test('queue box: in an own cycle that takes no message, the head says why they wait', () => {
+  const s = Q.summary({ items: [{ id: 'a', text: 'x', attachments: [] }] }, true, { autonomous: true, steerable: false, agent: 'Codex' });
+  assert.equal(s.head, '1 queued · Codex started this turn itself and can’t read messages until it ends · they send then');
+  const t = Q.summary({ items: [{ id: 'a', text: 'x', attachments: [] }] }, true, { autonomous: true, steerable: true, agent: 'Claude Code' });
+  assert.equal(t.head, '1 queued · send when this turn ends');
 });
 
 /* ---- working and steerable ---- */
@@ -268,6 +286,30 @@ test('queue box: a held message shows with the held words, no edit buttons; inje
   // nothing waiting: hidden again
   Q.render(ctx, { items: [], reason: '' }, []);
   assert.equal(box.hidden, true);
+});
+
+test('queue box: a held row names the card it waits for, a subagent’s by name, and says why in its tooltip', () => {
+  const shell = page();
+  const box = shell.make('div', 'q', shell.body);
+  const ctx = {
+    box,
+    connection: 'c2',
+    busy: true,
+    agentId: 'omp',
+    names: { 'sub-1': 'Explore' },
+    post: async () => ({}),
+    refresh: async () => {},
+    fail() {},
+  };
+  const held = (heldFor) => [{ id: 'a', text: 'wait', state: 'held', heldReason: heldFor.card, heldFor }];
+  Q.render(ctx, { items: [], reason: '' }, held({ card: 'approval', title: 'npm test', sessionId: 's', route: 'main' }));
+  const note = () => box.querySelector('.q-lane-note').textContent;
+  assert.equal(note(), 'Held until you answer the approval “npm test” above · then it goes in at once');
+  assert.match(box.querySelector('.q-lane-held').title, /OMP would cancel that card/);
+  Q.render(ctx, { items: [], reason: '' }, held({ card: 'approval', title: 'rm -rf build', sessionId: 'sub-1', route: 'subagent' }));
+  assert.equal(note(), 'Held until you answer Explore’s approval “rm -rf build” above · then it goes in at once');
+  Q.render(ctx, { items: [], reason: '' }, held({ card: 'question', title: 'Which branch?', sessionId: 'sub-9', route: 'subagent' }));
+  assert.equal(note(), 'Held until you answer a subagent’s question “Which branch?” above · then it goes in at once');
 });
 
 /* ---- inbox quick reply ---- */

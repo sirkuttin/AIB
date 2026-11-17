@@ -370,6 +370,7 @@ export function studioRoutes(): Map<string, StudioHandler> {
     '/api/live/artifacts/source',
     '/api/live/artifacts/diff',
     '/api/live/artifacts/states',
+    '/api/live/artifacts/by-source',
   ];
   for (const path of artifactGets) {
     routes.set(`GET ${path}`, async (ctx, url, _body, request, principal) => {

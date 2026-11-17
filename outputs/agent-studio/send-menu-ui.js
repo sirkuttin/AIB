@@ -41,7 +41,20 @@
     bgStopped: 'Stopped by you',
     bgStop: 'Stop',
     held: 'Waits for your answer above · then goes in at once',
+    // A held row names the card it waits for (owner, 2026-11-17: the plain note was not noticed). what = heldWhat(...).
+    heldOn: (what) => 'Held until you answer ' + what + ' above · then it goes in at once',
+    heldWhat: (card, who, title) =>
+      (who ? who + '’s ' : 'the ') + (card === 'question' ? 'question' : 'approval') + (title ? ' “' + title + '”' : ''),
+    heldWhy: {
+      omp: 'OMP would cancel that card if the message went in now.',
+    },
+    heldWhyOther: 'The agent reads it once the card is answered.',
     heldHead: 'Held until you answer the card above',
+    // Claude Code's own cycle (it started a turn itself, e.g. a background task ended): Send now joins it, nothing stops.
+    ownCycleHint: (agent) =>
+      agent + ' started this turn itself (a background task ended). Your message joins it now; nothing running stops.',
+    // Another agent's own cycle (not expected): why a message waits in the queue box.
+    ownCycleQueue: (agent) => agent + ' started this turn itself and can’t read messages until it ends',
     sendingHead: 'Sending',
     fallbackNote: 'Couldn’t send now: sends when this turn ends',
   };
@@ -62,8 +75,9 @@
   }
 
   // ctx: {busy, autonomous, hasQueue, steerable, agentId, agent, text, commands}. What the composer shows.
-  // autonomous: the agent runs a cycle of its own (Claude Code after a background command ended), no turn of the user's: the
-  // composer stays the plain Send of before (Enter waits for the cycle to end), with no menu and no key hint (T27).
+  // autonomous: the agent runs a cycle of its own (Claude Code after a background command ended), no turn of the user's. Claude Code
+  // takes a message in there (steerable; owner, 2026-11-17: queueing surprised him), so the composer is the working one, with its
+  // own hint; an agent whose cycle is not steerable keeps the plain Send of before (Enter waits for the cycle to end, T27).
   function view(ctx) {
     const agent = ctx.agent || 'the agent',
       working = !!ctx.busy,
@@ -72,7 +86,7 @@
       steerNow = steer && !slash;
     const out = { working, steerable: steer, slash, more: working, keyHint: '', placeholder: '', note: '', items: [] };
     if (!working) return out;
-    if (ctx.autonomous) {
+    if (ctx.autonomous && !steer) {
       out.more = false;
       out.placeholder = COPY.placeholderQueue(agent);
       out.note = COPY.noteQueue;
@@ -84,7 +98,11 @@
     else out.keyHint = COPY.cantSteerKey(agent);
     out.placeholder = steerNow ? COPY.placeholderSteer(agent) : COPY.placeholderQueue(agent);
     out.note = steerNow ? COPY.noteSteer : COPY.noteQueue;
-    const nowHint = steer ? COPY.nowHint[ctx.agentId] || COPY.nowHintOther(agent) : COPY.cantSteerMenu(agent);
+    const nowHint = !steer
+      ? COPY.cantSteerMenu(agent)
+      : ctx.autonomous
+        ? COPY.ownCycleHint(agent)
+        : COPY.nowHint[ctx.agentId] || COPY.nowHintOther(agent);
     out.items = [
       {
         id: 'now',

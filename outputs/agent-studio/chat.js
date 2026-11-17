@@ -1470,7 +1470,19 @@
       },
     );
     window.AgentQueueUI?.render(
-      { box: $('queueBox'), connection: current, busy, steerable: connected && !!snapshot.steerable, post, refresh, fail },
+      {
+        box: $('queueBox'),
+        connection: current,
+        busy,
+        steerable: connected && !!snapshot.steerable,
+        autonomous: connected && !!snapshot.autonomous,
+        agent: nameOf(selected.provider),
+        agentId: (connected && snapshot.steerAgent) || selected.provider,
+        names: Object.fromEntries([...children].map(([id, agent]) => [id, agent.name])),
+        post,
+        refresh,
+        fail,
+      },
       connected ? snapshot.queue : null,
       connected ? snapshot.steerLane : null,
     );

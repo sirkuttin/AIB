@@ -2143,10 +2143,13 @@
       a.disabled = !art && !target;
       a.onclick = () => {
         r.artNote = '';
-        openInArtifacts(art, d.abs, target, (m) => {
+        const say = (m) => {
           r.artNote = m;
           redraw();
-        });
+        };
+        // an artifact of this file that the page's lists do not hold yet opens as it is, never registered a second time
+        if (art) openInArtifacts(art, d.abs, target, say);
+        else artifactBySource([d.abs]).then((found) => openInArtifacts(found, d.abs, target, say));
       };
       tools.append(a);
     }
@@ -2765,13 +2768,33 @@
     if (how === 'beside' || line) return Promise.resolve(asFile());
     const hit = artifactForLink(t);
     if (hit) return asArtifact(hit);
-    // the project's artifact lists may still be on their way (a click soon after the app opened): wait for them, at most 1.5 s
+    // Not in the lists this page has: ask AIB, which knows every chat's artifacts (owner, 2026-11-17: a busy project has more chats
+    // than the page loads lists for, and those lists can take longer than a click waits, so the file opened as Source instead)
+    return artifactBySource(linkAbsPaths(t)).then((found) => {
+      if (found) return asArtifact(found);
+      // the project's artifact lists may still be on their way (a click soon after the app opened): wait for them, at most 1.5 s
+      let timer = 0;
+      const late = new Promise((res) => (timer = (root.setTimeout || setTimeout)(res, 1500)));
+      return Promise.race([loadProjectArtifacts(false), late]).then(() => {
+        (root.clearTimeout || clearTimeout)(timer);
+        const a = artifactForLink(t);
+        return a ? asArtifact(a) : asFile();
+      });
+    });
+  }
+  // The artifact (any chat's, not deleted) published from one of these files, as AIB's server knows it; null when none, or when
+  // it does not answer within 3 s (an older AIB without the route answers an error: null too).
+  function artifactBySource(paths) {
+    const list = (paths || []).filter(Boolean).slice(0, 8);
+    if (!host || !list.length) return Promise.resolve(null);
     let timer = 0;
-    const late = new Promise((res) => (timer = (root.setTimeout || setTimeout)(res, 1500)));
-    return Promise.race([loadProjectArtifacts(false), late]).then(() => {
+    const late = new Promise((res) => (timer = (root.setTimeout || setTimeout)(() => res(null), 3000)));
+    const ask = Promise.resolve()
+      .then(() => host.getJson('/api/live/artifacts/by-source', { paths: JSON.stringify(list), conversationId: chat ? chat.key : '' }))
+      .then((r) => (r && r.artifact && r.artifact.id ? r.artifact : null), () => null);
+    return Promise.race([ask, late]).then((a) => {
       (root.clearTimeout || clearTimeout)(timer);
-      const a = artifactForLink(t);
-      return a ? asArtifact(a) : asFile();
+      return a;
     });
   }
   function linkMenu(a, x, y) {

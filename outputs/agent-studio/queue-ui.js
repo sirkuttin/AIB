@@ -18,8 +18,8 @@
   };
   const RENEW_MS = 30000;
 
-  // queue: the `queue` object of a connection snapshot.
-  function summary(queue, busy) {
+  // queue: the `queue` object of a connection snapshot. ctx (optional): {autonomous, steerable, agent} of the chat.
+  function summary(queue, busy, ctx) {
     const items = (queue && queue.items) || [];
     const n = items.length;
     if (!n) return { show: false, head: '', note: '', tone: '', resume: false, count: 0 };
@@ -52,9 +52,19 @@
         resume: false,
         count: n,
       };
+    const C = root.AgentSendMenu && root.AgentSendMenu.COPY;
+    // The agent started this turn itself and cannot take a message in it: say why they wait (owner, 2026-11-17)
+    const ownCycle = busy && ctx && ctx.autonomous && !ctx.steerable;
     return {
       show: true,
-      head: n + ' queued · ' + (busy ? 'send when this turn ends' : 'sending'),
+      head:
+        n +
+        ' queued · ' +
+        (ownCycle
+          ? (C ? C.ownCycleQueue(ctx.agent || 'The agent') : 'The agent started this turn itself') + ' · they send then'
+          : busy
+            ? 'send when this turn ends'
+            : 'sending'),
       note: n + ' queued',
       tone: '',
       resume: false,
@@ -151,6 +161,21 @@
     area.focus();
   }
 
+  // What a held row says: the card it waits for, by name ("Held until you answer the approval “npm test” above · ..."), whose card it
+  // is when a subagent's (ctx.names: session id -> name), and why it cannot go in now in its tooltip.
+  function heldWords(item, ctx) {
+    const C = root.AgentSendMenu && root.AgentSendMenu.COPY;
+    const f = item && item.heldFor;
+    if (!C || !f) return { note: C ? C.held : T.held, why: '' };
+    const sub = f.route !== 'main' && f.sessionId;
+    const who = sub ? (ctx.names && ctx.names[f.sessionId]) || 'a subagent' : '';
+    const title = String(f.title || '').slice(0, 80);
+    return {
+      note: C.heldOn(C.heldWhat(f.card, who, title)),
+      why: (C.heldWhy && C.heldWhy[ctx.agentId]) || C.heldWhyOther,
+    };
+  }
+
   // Messages sent while the agent works that have not gone in yet (the snapshot's steerLane): held for an open approval card,
   // being sent, or fallen back to after the turn. Injected ones are done (the bubble in the chat shows them) and are not listed.
   const HELD = { held: 1, sending: 1, fallback: 1 };
@@ -165,7 +190,7 @@
     const held = laneItems(lane),
       C = root.AgentSendMenu && root.AgentSendMenu.COPY,
       W = C ? { held: C.held, fallback: C.fallbackNote, sending: C.sendingHead, laneHead: C.heldHead } : T; // the words live in send-menu-ui.js
-    if (!box) return summary(queue, ctx.busy);
+    if (!box) return summary(queue, ctx.busy, ctx);
     if (ui.conn !== ctx.connection) {
       // another conversation: the open editor belongs to the old one
       if (ui.editor) {
@@ -178,18 +203,21 @@
       ui.conn = ctx.connection;
       ui.sig = '';
     }
-    const s = summary(queue, ctx.busy);
+    const s = summary(queue, ctx.busy, ctx);
     const items = (queue && queue.items) || [];
     if (ui.editor && !items.some((i) => i.id === ui.editor.id)) stopEditor(); // it was sent or removed meanwhile
     const sig = JSON.stringify([
       ctx.connection,
       ctx.busy,
       !!ctx.steerable,
+      !!ctx.autonomous,
+      ctx.agent,
+      ctx.names,
       queue && queue.reason,
       queue && queue.message,
       queue && queue.landing,
       items.map((i) => [i.id, i.text, i.sending, i.note, i.attachments.length]),
-      held.map((i) => [i.id, i.text, i.state, i.heldReason]),
+      held.map((i) => [i.id, i.text, i.state, i.heldReason, i.heldFor]),
       ui.editor && ui.editor.id,
     ]);
     if (sig === ui.sig) return s;
@@ -202,17 +230,13 @@
     }
     const laneRows = held.map((item) => {
       const row = el(doc, 'li', 'q-row q-lane q-lane-' + item.state);
+      const words = item.state === 'held' ? heldWords(item, ctx) : null;
       row.append(
         el(doc, 'span', 'q-num', item.state === 'sending' ? '…' : '↓'),
         el(doc, 'span', 'q-text', String(item.text || '').replace(/\s+/g, ' ').trim()),
-        el(
-          doc,
-          'span',
-          'q-lane-note',
-          item.state === 'held' ? W.held : item.state === 'fallback' ? W.fallback : W.sending,
-        ),
+        el(doc, 'span', 'q-lane-note', words ? words.note : item.state === 'fallback' ? W.fallback : W.sending),
       );
-      row.title = String(item.text || '');
+      row.title = String(item.text || '') + (words ? '\n\n' + words.note + (words.why ? '\n' + words.why : '') : '');
       return row;
     });
     const head = el(doc, 'div', 'q-head' + (s.tone ? ' q-paused' : ''));
@@ -276,7 +300,7 @@
     return s;
   }
 
-  const api = { summary, render, laneItems, TEXT: T, state: ui };
+  const api = { summary, render, laneItems, heldWords, TEXT: T, state: ui };
   root.AgentQueueUI = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

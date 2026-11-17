@@ -103,6 +103,7 @@ function setup(o) {
       return Object.assign({ path: q.path, abs: q.path, name, size: 12, binary: false, tooBig: false, image: false, page: false, text: q.peek ? null : 'x = 1\n', lines: 1, viewUrl: '' }, r);
     }
     if (path === '/api/live/artifacts') return { artifacts: (opts.arts || {})[q.conversationId] || [] };
+    if (path === '/api/live/artifacts/by-source') return { artifact: opts.bySource ? opts.bySource(JSON.parse(q.paths), q.conversationId) : null };
     return {};
   };
   const W = ctx.AgentWorkspaceUI;
@@ -1279,6 +1280,26 @@ test("path link: the open chat's artifact wins over another chat's for the same 
   t2.shell.document.dispatch('click', { target: b, ctrlKey: false });
   await settle();
   assert.deepEqual(t2.opened, ['mine']);
+});
+
+test("path link: an artifact no list on the page holds (a chat the page did not load) is found by AIB's server and opens", async () => {
+  const asked = [];
+  const t = setup({
+    width: 1000,
+    ownList: [],
+    viewUrl: true,
+    bySource: (paths, conv) => {
+      asked.push({ paths, conv });
+      return paths.some((x) => /outputs\/bar-charts\.html$/.test(x)) ? { id: 'far1', sourcePath: paths[0] } : null;
+    },
+  });
+  const a = await linkTo(t, 'See outputs/bar-charts.html');
+  t.shell.document.dispatch('click', { target: a, ctrlKey: false });
+  await settle();
+  assert.deepEqual(t.opened, ['far1'], 'the artifact opened, not the file');
+  assert.equal(t.FU._state().tabs.tabs.length, 0, 'no file tab');
+  assert.equal(asked[0].conv, 'claude:a1', 'the open chat is asked about first');
+  assert.ok(asked[0].paths.every((x) => typeof x === 'string' && x), 'full paths only');
 });
 
 test('path link: a page file that is no artifact opens in the file view on Preview (Source one click away, Open in Artifacts kept)', async () => {

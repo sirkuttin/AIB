@@ -402,6 +402,53 @@ for (const who of ['claude', 'omp'] as const) {
 }
 
 Deno.test({
+  name: "S9b [A] Claude: a subagent's open approval does not hold Send now: the message goes in, the card stays open, it is answered",
+  ...TEST_OPTIONS,
+  async fn() {
+    // owner, 2026-11-17: claude-agent-acp steers at priority `later` while a card waits (it never cancels the card, recording C4)
+    await using lab = await started();
+    const chat = await lab.chat('claude');
+    await chat.prompt('steer-perm-helper', 'first');
+    await until(async () => ((await chat.state()).permissions as Json[]).length === 1, "the subagent's approval card", LONG);
+    const card = ((await chat.state()).permissions as Json[])[0];
+    assertEquals(card.route, 'subagent', "the card is the helper's");
+    const [status, body] = await chat.steer('also check the README', 'h-1');
+    assertEquals(status, 200, JSON.stringify(body));
+    assert(body.state !== 'held', `not held for a subagent's card: ${JSON.stringify(body)}`);
+    await until(() => lab.steersReceived(chat).some((m) => m.text === 'also check the README'), 'the steer reached Claude Code', LONG);
+    await until(async () => lane(await chat.state()).length === 0, 'the lane is empty (injected)', LONG);
+    assertEquals(((await chat.state()).permissions as Json[]).length, 1, "the helper's card is still open");
+    assert(!chat.received().some((m) => m.method === 'session/cancel'), 'nothing was cancelled');
+    await answerCard(lab, chat);
+    await waitText(chat, 'Steered reply: also check the README');
+    await idle(chat);
+    assertEquals(lab.promptsReceived(chat), ['steer-perm-helper'], 'one prompt: the message went in as a steer');
+  },
+});
+
+for (const who of ['claude', 'omp'] as const) {
+  Deno.test({
+    name: `S9c [A] ${who}: a held message names the card it waits for (heldFor: approval, its title, the main agent's)`,
+    ...TEST_OPTIONS,
+    async fn() {
+      await using lab = await started();
+      const chat = await lab.chat(who);
+      await chat.prompt('steer-perm', 'first');
+      await until(async () => ((await chat.state()).permissions as Json[]).length === 1, 'the approval card', LONG);
+      await chat.steer('wait for me', 'n-1');
+      const held = lane(await chat.state());
+      assertEquals(held[0].state, 'held');
+      const f = held[0].heldFor as Json;
+      assertEquals([f.card, f.title, f.route], ['approval', 'echo hello > note.txt', 'main']);
+      await answerCard(lab, chat);
+      await waitText(chat, 'wait for me');
+      assertEquals(lane(await chat.state()).filter((l) => l.heldFor).length, 0, 'released: no card named any more');
+      await idle(chat);
+    },
+  });
+}
+
+Deno.test({
   name: 'S10 [A] T23: Interrupt while a message is held moves it to the after-turn queue, paused; nothing is sent',
   ...TEST_OPTIONS,
   async fn() {
@@ -473,10 +520,62 @@ Deno.test({
   },
 });
 
-// ---- S13: T27 autonomous cycles are not steerable ----------------------------------------------------------------------------------------
+// ---- S13: autonomous cycles (owner, 2026-11-17: Claude's take a message in; was T27: not steerable) ------------------------------------
+
+/** A Claude chat in its own follow-up cycle (a backgrounded command ended), held until `${gate}.cycle-end` exists. */
+async function ownCycle(lab: SteerLab, chat: SteerChat): Promise<string> {
+  const gate = lab.gate();
+  Deno.writeTextFileSync(gate + '.cycle-hold', 'hold'); // the cycle waits for <gate>.cycle-end so the test can look at it
+  await chat.prompt(`steer-bash:${gate}`, 'first');
+  await working(chat);
+  await chat.steer('what is 2+2?', 'own-0');
+  await idle(chat);
+  chat.open(gate); // the command ends: Claude Code starts its own cycle
+  await until(async () => (await chat.state()).autonomous === true, 'the autonomous cycle is working', LONG);
+  return gate;
+}
 
 Deno.test({
-  name: "S13 [A] T27: during Claude's own follow-up cycle (a command ended) the chat is working but not steerable",
+  name: "S13 [A] Claude's own follow-up cycle takes Send now: steerable, the message goes in as a prompt at once, nothing is cancelled",
+  ...TEST_OPTIONS,
+  async fn() {
+    await using lab = await started();
+    const chat = await lab.chat('claude');
+    const gate = await ownCycle(lab, chat);
+    assertEquals((await chat.state()).steerable, true, 'busy, autonomous, and the composer offers Send now');
+    const [status, body] = await chat.steer('and the logs?', 's13');
+    assertEquals(status, 200, JSON.stringify(body));
+    assert(body.state !== 'queued', `not queued for the end of the cycle: ${JSON.stringify(body)}`);
+    await until(() => lab.promptsReceived(chat).includes('and the logs?'), 'it reached Claude Code now (a prompt the cycle takes in)', LONG);
+    assert(!chat.received().some((m) => m.method === 'session/cancel'), 'the cycle was not cancelled');
+    assertEquals(((await chat.state()).queue as Json).items, [], 'nothing waits in the queue');
+    await waitText(chat, 'Fixture reply: and the logs?');
+    Deno.writeTextFileSync(gate + '.cycle-end', 'go');
+    await idle(chat);
+  },
+});
+
+Deno.test({
+  name: "S13b [A] Claude's own cycle: a queued message's ↑ Send now goes in at once and never cancels the cycle",
+  ...TEST_OPTIONS,
+  async fn() {
+    await using lab = await started();
+    const chat = await lab.chat('claude');
+    const gate = await ownCycle(lab, chat);
+    await chat.queue('queued during the cycle', 'q13');
+    assertEquals((((await chat.state()).queue as Json).items as Json[]).length, 1, 'it waits for the cycle to end');
+    const [status, body] = await lab.web.post('queue-send-now', { id: chat.id, messageId: 'q13' });
+    assertEquals(status, 200, JSON.stringify(body));
+    assertEquals(body.steered, true, JSON.stringify(body));
+    await until(() => lab.promptsReceived(chat).includes('queued during the cycle'), 'it reached Claude Code now', LONG);
+    assert(!chat.received().some((m) => m.method === 'session/cancel'), 'Send now did not cancel the cycle');
+    Deno.writeTextFileSync(gate + '.cycle-end', 'go');
+    await idle(chat);
+  },
+});
+
+Deno.test({
+  name: "S13c [A] (was T27) the cycle Claude started is still told apart: autonomous until a message takes it over",
   ...TEST_OPTIONS,
   async fn() {
     await using lab = await started();
@@ -486,12 +585,13 @@ Deno.test({
     await chat.prompt(`steer-bash:${gate}`, 'first');
     await working(chat);
     assertEquals((await chat.state()).steerable, true);
-    await chat.steer('what is 2+2?', 's13');
+    await chat.steer('what is 2+2?', 's13c');
     await idle(chat);
     assertEquals((await chat.state()).steerable, false);
     chat.open(gate); // the command ends: Claude Code starts its own cycle
     await until(async () => (await chat.state()).busy === true, 'the autonomous cycle is working', LONG);
-    assertEquals((await chat.state()).steerable, false, 'busy but autonomous: the composer must not offer Send now');
+    const st = await chat.state();
+    assertEquals([st.autonomous, st.steerable], [true, true], 'busy, autonomous, and it takes a message');
     Deno.writeTextFileSync(gate + '.cycle-end', 'go');
     await idle(chat);
   },
@@ -602,6 +702,11 @@ pageTest('P4 [B] owner decision 5: a message typed while a card is open shows a 
     await page.waitFor(`/Allow once/.test(document.body.innerText)`, 15000, 'the approval card');
     await typeAndSend(page, 'hold on');
     await page.waitFor(`/until you answer/i.test(document.body.innerText)`, 8000, 'the held row explains itself');
+    // owner, 2026-11-17: the row itself names the card, on a line of its own, fully visible
+    const note = await page.eval<Json>(`(() => { const n = document.querySelector('#queueBox .q-lane-held .q-lane-note'); if (!n) return null; const r = n.getBoundingClientRect(); return { text: n.textContent, w: r.width, h: r.height, cut: n.scrollWidth > n.clientWidth + 1 }; })()`);
+    assert(note, 'a held row with a note');
+    assertEquals(note.text, 'Held until you answer the approval “echo hello > note.txt” above · then it goes in at once');
+    assert((note.w as number) > 0 && (note.h as number) > 0 && !note.cut, `visible and not cut off: ${JSON.stringify(note)}`);
     assert(!(await page.eval<boolean>(`/Deny and send/i.test(document.body.innerText)`)), 'no "Deny and send" (owner decision 5)');
     assertEquals(lab.steersReceived(chat).length, 0, 'nothing reached OMP, so it did not cancel the card');
     await clickByText(page, 'Allow once');
@@ -714,7 +819,7 @@ pageTest('P7 [B] a queued message\'s ↑ button says "Interrupt and send"', asyn
   }
 });
 
-pageTest("P8 [A+B] T27: in Claude's own follow-up cycle the composer is the plain Send (no ▾)", async () => {
+pageTest("P8 [A+B] in Claude's own follow-up cycle the composer offers Send now (▾ with the own-cycle hint); Enter sends it in at once", async () => {
   await using lab = await started();
   const chat = await lab.chat('claude');
   const page = await openPage(lab, chat);
@@ -727,7 +832,11 @@ pageTest("P8 [A+B] T27: in Claude's own follow-up cycle the composer is the plai
     await idle(chat);
     chat.open(gate);
     await until(async () => (await chat.state()).busy === true, 'the autonomous cycle', LONG);
-    await page.waitFor(`!([...document.querySelectorAll('#promptForm [aria-haspopup]')].some((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; }))`, 8000, 'no ▾ while the cycle runs');
+    await page.waitFor(`[...document.querySelectorAll('#promptForm [aria-haspopup]')].some((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; })`, 8000, 'the ▾ while the cycle runs');
+    await typeAndSend(page, 'join the cycle');
+    await until(() => lab.promptsReceived(chat).includes('join the cycle'), 'Enter sent it in at once', LONG);
+    assert(!chat.received().some((m) => m.method === 'session/cancel'), 'nothing was cancelled');
+    assert(!(await page.eval<boolean>(`/queued/.test(document.getElementById('queueBox')?.innerText || '')`)), 'not in the queue box');
     Deno.writeTextFileSync(gate + '.cycle-end', 'go');
     await idle(chat);
   } finally {
