@@ -2213,6 +2213,7 @@
         label,
         value,
         actions,
+        noteKind,
         steered = false,
         attachments = [];
       const sid = event.data?.sessionId || snap?.sessionId;
@@ -2329,6 +2330,7 @@
         label = 'AIB';
         value = event.data.message;
         if (Array.isArray(event.data.actions) && event.data.actions.length) actions = event.data.actions;
+        if (typeof event.data.kind === 'string') noteKind = event.data.kind;
       } else if (event.kind === 'turn_end') {
         turn++;
         role = 'turn-end';
@@ -2355,6 +2357,7 @@
           attachments,
           rid,
           ...(actions ? { actions } : {}),
+          ...(noteKind ? { noteKind } : {}),
           ...(steered ? { steered } : {}),
         });
     }
@@ -6186,6 +6189,8 @@
     if (!S) return null;
     if (row.role === 'turn-end') return S.divider(row);
     if (row.role === 'answered') return answeredLine(row);
+    if (row.role === 'notice' && row.label === 'AIB' && row.value && S.studioLine)
+      return S.studioLine(row, row.actions?.length ? clashButtons(row.actions) : null); // AIB's own notes: one quiet line, no card
     if (row.role === 'user' && !(row.attachments && row.attachments.length)) {
       const note = S.classifyUser(row.value);
       if (note) return S.noteCard(note, row, resolveAgentName);

@@ -88,6 +88,7 @@ Deno.test({
       'POST /api/remote/queue-resume',
       'POST /api/remote/queue-send-now',
       'POST /api/remote/steer',
+      'POST /api/remote/swarm-act',
     ]);
     const s = await phoneOn();
     try {

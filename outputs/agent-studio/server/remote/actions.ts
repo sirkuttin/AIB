@@ -46,6 +46,7 @@ export const ACTION_OPS: Readonly<Record<string, { op: string; audit: string }>>
   '/api/remote/dismiss-unknown': { op: 'dismiss-unknown', audit: 'dismiss' },
   '/api/remote/queue-resume': { op: 'queue-resume', audit: 'queue: resume' },
   '/api/remote/authenticate': { op: 'authenticate', audit: 'sign in' },
+  '/api/remote/swarm-act': { op: 'swarm-act', audit: 'merge: undo' }, // the Undo / Merge again word on a merge line (swarm/service.ts)
 };
 
 export class Refusal extends Error {

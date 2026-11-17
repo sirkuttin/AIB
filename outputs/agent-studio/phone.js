@@ -253,6 +253,10 @@
      asked (opts.waiting: the chat's waiting list; one that has no event in these rows, or a sign-in, comes last). A request you
      answered from this phone (opts.acted: key -> what you did) is a one-line record there.
      {kind:'you'|'agent'|'steps'|'notice'|'artifact'|'req'|'record', key, text?, images?, steps?, artifact?} */
+  const NOTE_WARN = /^(Didn.t|Couldn.t|Can.t|Failed|Helper .* failed|Merging .* was cut off|AIB stopped|Your WorktreeCreate)/i;
+  /* "Merged subagent “X” into main · 2 files" reads "Merged “X” · 2 files" */
+  const noteWords = (t) =>
+    String(t || '').replace(/\s+/g, ' ').trim().replace(/^(Merged|Didn.t land|Couldn.t land) subagent /i, '$1 ').replace(/ into main(?= ·|$)/, '');
   function rowsFrom(events, opts) {
     const o = obj(opts);
     const acted = obj(o.acted);
@@ -334,7 +338,16 @@
         if (title) rows.push({ kind: 'notice', key, text: (e.kind === 'permission' ? 'Asked to: ' : 'Asked: ') + title });
       } else if (e.kind === 'error' || e.kind === 'disconnected' || e.kind === 'studio_note') {
         const text = str(data.message);
-        if (text) rows.push({ kind: 'notice', key, text: e.clipped ? text + ' …' : text });
+        if (text && e.kind === 'studio_note') {
+          // AIB's own note: one quiet line (mark, text cut with "…", the Undo / Merge again word, time)
+          const acts = (Array.isArray(data.actions) ? data.actions : [])
+            .map(obj)
+            .filter((a) => (a.id === 'swarm-undo' || a.id === 'swarm-merge-again') && str(a.helper))
+            .map((a) => ({ id: str(a.id), label: str(a.label) || (a.id === 'swarm-undo' ? 'Undo' : 'Merge again'), helper: str(a.helper) }));
+          const kind = str(data.kind);
+          const warn = kind === 'swarm-fail' || NOTE_WARN.test(text) || (Array.isArray(data.actions) && data.actions.some((a) => obj(a).id === 'keep-mine' || obj(a).id === 'leave'));
+          rows.push({ kind: 'notice', key, note: true, noteKind: kind, warn, actions: acts, time: e.time || 0, text: e.clipped ? text + ' …' : text });
+        } else if (text) rows.push({ kind: 'notice', key, text: e.clipped ? text + ' …' : text });
       }
     }
     const out = rows.filter((r) => r.kind !== 'agent' || r.text.trim() || r.images.length);
@@ -4051,6 +4064,10 @@
       box.append(rec);
       return;
     }
+    if (r.kind === 'notice' && r.note) {
+      box.append(noteLine(c, r));
+      return;
+    }
     if (r.kind === 'notice') {
       box.append(el('p', 'ph-notice' + (r.mine ? ' mine' : ''), r.text));
       return;
@@ -4089,6 +4106,26 @@
      ones folded into "N finished" (closed at first, remembered per chat on this phone). A row: dot, the subagent's name, its state;
      under it (a working one) its type and, when AIB knows, the worktree line ("Own worktree", "Merged · 3 files"). Its own steps
      are on the PC. */
+  /* AIB's own note as one line: ⑂ text… · Undo · time. The word is a button with a 44 px tap area; the time goes first on a narrow screen. */
+  function noteLine(c, r) {
+    const line = el('div', 'ph-note' + (r.warn ? ' warn' : ''));
+    line.setAttribute('role', 'note');
+    line.title = r.text;
+    const words = noteWords(r.text);
+    const name = /“[^”]*”/.exec(words);
+    const text = el('span', 'ph-note-text');
+    if (name) text.append(doc.createTextNode(words.slice(0, name.index)), el('span', 'ph-note-name', name[0]), doc.createTextNode(words.slice(name.index + name[0].length)));
+    else text.textContent = words;
+    line.append(el('span', 'ph-note-mark', /^swarm-/.test(r.noteKind) ? '⑂' : '•'), text);
+    for (const a of r.actions) {
+      const b = button('ph-note-act', a.label, () => act('swarm-act', { id: c && c.id, helper: a.helper, action: a.id === 'swarm-undo' ? 'undo' : 'merge-again' }, r.key));
+      line.append(b);
+    }
+    const when = r.time ? new Date(r.time < 1e12 ? r.time * 1000 : r.time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
+    if (when && !/Invalid/.test(when)) line.append(el('time', 'ph-note-time', when));
+    return line;
+  }
+
   const SUBS_DONE_KEY = 'aib-phone-subs-finished:';
   const subsKey = (c) => SUBS_DONE_KEY + (str(c.savedKey) || str(c.id));
   function subsDoneOpen(c) {

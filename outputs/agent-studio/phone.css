@@ -2068,3 +2068,53 @@ html.ph-viewing body {
   border-color: transparent;
   color: var(--muted);
 }
+/* AIB's own notes: one quiet line (same look as the desktop's), the Undo word keeps a 44 px tap area without making the line taller */
+.ph-note {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 6px;
+  margin: 10px 8px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+.ph-note.warn {
+  color: color-mix(in srgb, var(--warn-text) 80%, var(--muted));
+}
+.ph-note-mark {
+  flex: 0 0 auto;
+}
+.ph-note-text {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ph-note-name {
+  color: var(--text);
+}
+.ph-note-act {
+  flex: 0 0 auto;
+  min-width: 44px;
+  min-height: 44px;
+  margin: -14px 0;
+  padding: 0 6px;
+  border: 0;
+  background: transparent;
+  color: var(--link);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+}
+.ph-note-time {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+@media (max-width: 480px) {
+  .ph-note-time {
+    display: none;
+  }
+}

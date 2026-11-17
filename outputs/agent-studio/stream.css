@@ -153,3 +153,75 @@
     transition: none;
   }
 }
+
+/* AIB's own notes in the chat ("Merged “X” · 2 files · Undo · 1:22 AM"): one quiet line in the turn divider's size and spacing, in the secondary text colour, no
+   card. The text is cut with "…" (its title holds all of it), the buttons never are; on a narrow chat the time goes first. */
+.studio-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 6px;
+  margin: 10px 0;
+  padding: 0 4px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 15px;
+  white-space: nowrap;
+}
+.studio-name {
+  color: var(--text);
+}
+.studio-warn {
+  color: color-mix(in srgb, var(--warn-text) 80%, var(--muted));
+}
+.studio-mark {
+  flex: 0 0 auto;
+}
+.studio-text {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.studio-line .note-actions {
+  display: contents;
+}
+.studio-line .note-action {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0 2px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--link);
+  font: inherit;
+  line-height: inherit;
+  text-decoration: underline;
+  font-weight: 600;
+}
+.studio-line .note-action:hover,
+.studio-line .note-action:focus-visible {
+  color: var(--text);
+}
+.studio-line .note-actions-result {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  color: inherit;
+}
+.studio-line .note-actions-result:empty {
+  display: none;
+}
+.studio-time {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding-left: 6px;
+}
+@media (max-width: 520px) {
+  .studio-time {
+    display: none;
+  }
+}

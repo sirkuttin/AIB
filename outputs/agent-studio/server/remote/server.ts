@@ -44,7 +44,7 @@ import { bindWithRetry } from './port.ts';
 import { agentsNow, folderOfProject, newChatOptions, NewChats, pickLists } from './newchat.ts';
 import { reasonWords } from '../agents/eligibility.ts';
 import { conversationAction, settingsView } from '../web/shared.ts';
-import { studioOf } from '../web/studio_routes.ts';
+import { studioOf, swarmOf } from '../web/studio_routes.ts';
 import { bringBack, restoreFolders } from '../web/project_routes.ts';
 import { isDeleted, isDocHistory } from '../artifacts/artifacts.ts';
 import { SAVED_KEY } from './saved.ts';
@@ -193,6 +193,7 @@ export const REMOTE_ROUTES: readonly [string, string, RemoteAuth][] = [
   ['POST', '/api/remote/queue-remove', 'action'],
   ['POST', '/api/remote/dismiss-unknown', 'action'],
   ['POST', '/api/remote/queue-resume', 'action'], // a queue that Stop paused goes on
+  ['POST', '/api/remote/swarm-act', 'action'], // Undo / Merge again on a merge line
   ['POST', '/api/remote/authenticate', 'action'], // always refused: signing an agent in is PC only
   // Phase C: this phone's Web Push subscription (the Push switch on the PC decides whether anything is sent to it).
   ['POST', '/api/remote/push/subscribe', 'push'],
@@ -261,6 +262,7 @@ export const ROUTE_SCOPE: Readonly<Record<string, PhoneScope>> = {
   'POST /api/remote/queue-remove': 'phone.prompt',
   'POST /api/remote/dismiss-unknown': 'phone.prompt',
   'POST /api/remote/queue-resume': 'phone.prompt',
+  'POST /api/remote/swarm-act': 'phone.prompt',
   'POST /api/remote/authenticate': 'phone.read',
   'POST /api/remote/push/subscribe': 'phone.push',
   'POST /api/remote/push/unsubscribe': 'phone.read',
@@ -1005,6 +1007,20 @@ export class RemoteServer {
     if (!body) {
       log('', 'refused: invalid request');
       return this.json(400, { error: 'Invalid request', code: 'invalid' });
+    }
+    if (op === 'swarm-act') {
+      // Undo / Merge again on a merge line: the same calls as the PC page's buttons (helper ids are the PC's own, never a path)
+      const helper = body.helper;
+      if (typeof helper !== 'string' || !helper || helper.length > 40 || !['undo', 'merge-again'].includes(String(body.action))) {
+        log(body.id, 'refused: invalid request');
+        return this.json(400, { error: 'Invalid request', code: 'invalid' });
+      }
+      const swarm = swarmOf(this.host.ctx);
+      const [code, reply] = body.action === 'undo' ? await swarm.undo(helper) : await swarm.mergeAgain(helper);
+      log(body.id, code === 200 ? 'done' : `failed (${code})`);
+      const answer = reply && typeof reply === 'object' ? reply as Record<string, unknown> : {};
+      if (code !== 200) return this.json(code, { error: typeof answer.error === 'string' ? answer.error : 'That did not work.', code: 'failed' });
+      return this.json(200, { ok: true, ...(typeof answer.state === 'string' ? { state: answer.state } : {}) });
     }
     let checked: Record<string, unknown>;
     try {

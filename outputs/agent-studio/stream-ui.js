@@ -350,6 +350,50 @@
     box.append(make('span', 'turn-divider-text', turnEndText(row.value, row.time)));
     return box;
   }
+  /* AIB's own notes in the chat (studio_note events: "Merged subagent “X” into main · 2 files", "Didn't land …", "Back: …"): one
+     quiet line like the turn divider, not a card. mark, the text cut with "…" (the whole text is the line's title and stays
+     selectable), the note's buttons, then the time. The kinds that need you (a conflict, "didn't land", a failure, a merge
+     clash) get the muted warning colour. `buttons` is the node holding the note's action buttons (chat.js clashButtons). */
+  const WARN_TEXT = /^(Didn.t|Couldn.t|Can.t|Failed|Helper .* failed|Merging .* was cut off|AIB stopped|Your WorktreeCreate)/i;
+  function noteIsWarn(row) {
+    const text = String((row && row.value) || '');
+    return (
+      (row && row.noteKind === 'swarm-fail') ||
+      WARN_TEXT.test(text) ||
+      !!(row && Array.isArray(row.actions) && row.actions.some((a) => a && (a.id === 'keep-mine' || a.id === 'leave')))
+    );
+  }
+  /* The line's words: "Merged subagent “X” into main · 2 files" reads "Merged “X” · 2 files". */
+  function noteLine(text) {
+    return String(text || '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .replace(/^(Merged|Didn.t land|Couldn.t land) subagent /i, '$1 ')
+      .replace(/ into main(?= ·|$)/, '');
+  }
+  function studioLine(row, buttons) {
+    const full = String((row && row.value) || '').trim();
+    const line = make('div', 'studio-line' + (noteIsWarn(row) ? ' studio-warn' : ''));
+    line.setAttribute('role', 'note');
+    line.title = full;
+    line.append(make('span', 'studio-mark', /^swarm-/.test((row && row.noteKind) || '') ? '⑂' : '•'));
+    const words = make('span', 'studio-text'),
+      shown = noteLine(full),
+      name = /“[^”]*”/.exec(shown);
+    if (name) {
+      /* the name in the regular text colour, the rest in the secondary one */
+      words.append(
+        doc().createTextNode(shown.slice(0, name.index)),
+        make('span', 'studio-name', name[0]),
+        doc().createTextNode(shown.slice(name.index + name[0].length)),
+      );
+    } else words.textContent = shown;
+    line.append(words);
+    if (buttons) line.append(buttons);
+    const when = row && row.time ? shortTime(row.time) : '';
+    if (when) line.append(make('time', 'studio-time', when));
+    return line;
+  }
   function noteCard(note, row, resolve) {
     const key = cardKey(note, row),
       card = make('article', 'msg-note msg-note-' + note.kind);
@@ -453,6 +497,9 @@
     newTurns,
     divider,
     noteCard,
+    studioLine,
+    noteIsWarn,
+    noteLine,
     earlierButton,
     patchChildren,
     WINDOW_ROWS,
