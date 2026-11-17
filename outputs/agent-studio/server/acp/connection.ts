@@ -5061,6 +5061,11 @@ export class Connection {
    * can't change anything under it. Null: none is.
    */
   subagentIsolated: ((child: string) => boolean) | null = null;
+  /**
+   * Claude Code: child session `child` (its agentId) is a background subagent of this chat (subagents/service.ts inBackground): a
+   * stopped turn leaves its open approvals and questions alone, as for a helper from an earlier turn. Set by the Studio.
+   */
+  subagentInBackground: ((child: string) => boolean) | null = null;
 
   /**
    * '' when nothing runs in this chat (no turn, nothing queued or being sent, no running subagent that works in the folder), else why
@@ -5674,7 +5679,8 @@ export class Connection {
   }
 
   /** Interrupt the running turn and send this message first. Refused while its editor is open. */
-  async queueSendNow(itemId: string): Promise<Json> {
+  /** `interrupt`: the composer's "Interrupt and send", which stops the turn on purpose; the queue row's Send now never does. */
+  async queueSendNow(itemId: string, interrupt = false): Promise<Json> {
     const q = this.queue;
     const item = q.find(itemId);
     if (item === null) {
@@ -5685,13 +5691,33 @@ export class Connection {
     if (q.leaseActive(item)) {
       throw new ValueError('Save or cancel the edit first');
     }
+    // Owner, 2026-11-16: Send now never stops what runs. When the agent can read a message mid-turn it goes through the steer lane
+    // (`_session/steering`): Claude Code moves a running command or foreground helper to the background ("it was not interrupted") and
+    // reads the message now; its background helpers go on. Only an agent that cannot steer (or a slash command, which never goes
+    // mid-turn) still interrupts the turn and sends, as before.
+    if (!interrupt && this.steerable() && !this.#isAgentCommand(item.text) && !this.forkSkillRefusal(item.text) && q.steer.length < 50) {
+      q.remove(itemId);
+      if (!q.items.length && q.hold === 'interrupted') q.hold = '';
+      q.steer.push({
+        id: item.id,
+        text: item.text,
+        attachments: item.attachments,
+        fingerprint: item.fingerprint,
+        queuedAt: item.queuedAt,
+        state: 'sending',
+        heldReason: '',
+      });
+      this.#queueChanged();
+      void this.#steerPump(); // the lane shows it as sending; the route never waits for the agent's answer
+      return { ok: true, steered: true, queue: this.queuePublic() };
+    }
     q.move(itemId, 0);
     item.lease = null;
     q.hold = '';
-    const interrupt = this.busy;
-    q.sendNow = interrupt;
+    const cancelling = this.busy;
+    q.sendNow = cancelling;
     this.#queueChanged();
-    if (interrupt) {
+    if (cancelling) {
       this.cancel();
       if (!this.busy) this.queue.sendNow = false; // the turn ended on its own meanwhile
     }
@@ -6420,6 +6446,15 @@ export class Connection {
     });
   }
 
+  #inBackground(child: string): boolean {
+    try {
+      return !!this.subagentInBackground?.(child);
+    } catch (error) {
+      log.exception(error, 'subagentInBackground failed');
+      return false;
+    }
+  }
+
   cancel(subagent: unknown = null): void {
     this.#refuseReadOnly();
     if (subagent !== null && subagent !== undefined) {
@@ -6431,7 +6466,9 @@ export class Connection {
     if (this.busy && !this.autonomous) this.#laneInterrupted();
     // B7: a helper still running in the background from an earlier turn goes on, so its approval stays open; everything else this
     // turn asked (the main session's, a helper the turn waits for) is answered cancelled, as before.
-    const background = (sid: unknown) => isStr(sid) && sid !== this.sessionId && this.#liveHelpers.has(sid) && !this.#turnHelpers.has(sid);
+    // A helper this turn started with run_in_background (or moved to the background) is one too (owner, 2026-11-16).
+    const background = (sid: unknown) =>
+      isStr(sid) && sid !== this.sessionId && this.#liveHelpers.has(sid) && (!this.#turnHelpers.has(sid) || this.#inBackground(sid));
     this.#clearPermissions({
       everything: true,
       except: background,

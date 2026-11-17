@@ -300,6 +300,49 @@ Deno.test('P3: the stream settles subagents whose SubagentStop never came: finis
   }
 });
 
+Deno.test('stopping the parent turn stops only the subagents it waits on: background ones run on and still land (owner, 2026-11-16)', async () => {
+  const dir = Deno.makeTempDirSync({ prefix: 'aib-subcancel-' });
+  try {
+    const state = join(dir, 'state');
+    const project = repo(join(dir, 'proj'));
+    const chat: SubagentChat = {
+      id: 'c0c0c0c0aa', provider: 'claude', lasting: 'claude:s1', folder: project, project,
+      hooks: { readOnly: new Set(['Explore']), userWorktreeHook: false },
+    };
+    const service = new SubagentWorktrees(state, join(state, 'worktrees'), (id) => (id === chat.id ? chat : null));
+    const start = async (n: number, background: boolean) => {
+      const input = { prompt: 'x', description: `sub ${n}`, ...(background ? { run_in_background: true } : {}) };
+      await service.hook('pre-tool', chat.id, { tool_name: 'Agent', tool_use_id: `toolu_c${n}`, tool_input: input });
+      await service.hook('worktree-create', chat.id, { name: `agent-cg${n}` });
+    };
+    const stateOf = (agentId: string) => Object.values(readSubagents(state)).find((r) => r.agentId === agentId)!;
+    await start(1, true); // run_in_background
+    await start(2, false); // foreground: the turn waits on it
+    await start(3, false); // foreground that a Send now moved to the background: its Agent call returned while it runs
+    await service.hook('post-agent', chat.id, { tool_name: 'Agent', tool_use_id: 'toolu_c3', tool_response: { agentId: 'cg3', status: 'async_launched' } });
+    assertEquals([service.inBackground(chat.id, 'cg1'), service.inBackground(chat.id, 'cg2'), service.inBackground(chat.id, 'cg3')], [true, false, true]);
+    await service.turnCancelled(chat.id, 'claude');
+    assertEquals(stateOf('cg1').state, 'running', 'a background subagent is not part of the stopped turn');
+    assertEquals([stateOf('cg2').state, stateOf('cg2').stoppedWhy], ['stopped', 'the turn was stopped']);
+    assertEquals(stateOf('cg3').state, 'running', 'moved to the background: runs on');
+    // it ends later: done, so it lands as usual (the landing itself: work/test_subagent_cancel_e2e.py)
+    await service.hook('subagent-stop', chat.id, { agent_id: 'cg1', agent_type: 'general-purpose' });
+    assertEquals(stateOf('cg1').state, 'done');
+    assertEquals(service.activity(chat.id).cg1, { where: 'Own worktree', landing: 'Lands when the turn ends' });
+    // the explicit stop still works: the stream says Claude Code cancelled it (the Activity panel's per-subagent stop, TaskStop)
+    await service.acpEnded(chat.id, 'cg3', 'cancelled');
+    assertEquals([stateOf('cg3').state, stateOf('cg3').stoppedWhy], ['stopped', 'it was cancelled']);
+    // Codex and Gemini subagents run inside the turn: a stopped turn stops them all, as before
+    const service2 = new SubagentWorktrees(join(dir, 'state2'), join(dir, 'state2', 'worktrees'), (id) => (id === chat.id ? chat : null));
+    await service2.hook('pre-tool', chat.id, { tool_name: 'Agent', tool_use_id: 'toolu_c9', tool_input: { prompt: 'x', description: 'sub 9', run_in_background: true } });
+    await service2.hook('worktree-create', chat.id, { name: 'agent-cg9' });
+    await service2.turnCancelled(chat.id); // no provider: every running one stops
+    assertEquals(Object.values(readSubagents(join(dir, 'state2'))).find((r) => r.agentId === 'cg9')!.state, 'stopped');
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+  }
+});
+
 Deno.test('P3: the landing words of a swarm subagent entry', () => {
   assertEquals(landingWords({ state: 'merged', merge: {}, sub: { files: 3 } }), 'Merged · 3 files');
   assertEquals(landingWords({ state: 'merged', merge: {}, sub: { files: 1 } }), 'Merged · 1 file');

@@ -360,3 +360,49 @@ Deno.test('B13: Codex ends its turn with no answer after a steer: the message co
   await p.reply(again.id, { stopReason: 'end_turn' });
   await until(() => !c.busy, 'done');
 });
+
+Deno.test('Interrupt keeps the approval of a helper THIS turn launched in the background (owner, 2026-11-16)', async () => {
+  await using lab = new SteerLab();
+  const { c, p } = await lab.chat('claude');
+  c.subagentInBackground = (child) => child === 'bg-1'; // the Studio's subagents service: run_in_background (or moved there)
+  await c.prompt('go', 'm1');
+  const prompt = await p.take('session/prompt');
+  await p.update({ sessionUpdate: 'subagent_update', sessionId: 'bg-1', title: 'general-purpose', state: { state: 'running' } });
+  await p.update({ sessionUpdate: 'subagent_update', sessionId: 'fg-1', title: 'general-purpose', state: { state: 'running' } });
+  await p.permission(30, 'bg-tool', 'bg-1');
+  await p.permission(31, 'fg-tool', 'fg-1');
+  await until(() => c.permissions.size === 2, 'both approvals');
+  c.cancel();
+  assertEquals((await p.answer(31)).result, { outcome: { outcome: 'cancelled' } }, 'the foreground helper is part of the turn');
+  await p.take('session/cancel');
+  await pause(150);
+  assert(!p.received.some((m) => m.id === 30 && !m.method), "the background helper's approval stays open");
+  await p.reply(prompt.id, { stopReason: 'cancelled' });
+  await until(() => !c.busy, 'stopped');
+});
+
+Deno.test('Send now on a queued message steers it in: no session/cancel; the composer Interrupt and send still cancels (owner, 2026-11-16)', async () => {
+  await using lab = new SteerLab();
+  const { c, p } = await lab.chat('claude');
+  await c.prompt('go', 'm1');
+  const prompt = await p.take('session/prompt');
+  await c.queueAdd('read this now', 'q1');
+  await c.queueAdd('later', 'q2');
+  const answer = await c.queueSendNow('q1');
+  assertEquals(answer.steered, true);
+  const steer = await p.take('_session/steering');
+  assertEquals(promptText(steer), 'read this now');
+  await p.reply(steer.id, { outcome: 'injected' });
+  await pause(150);
+  assertEquals(p.all('session/cancel').length, 0, 'Send now never stops the turn');
+  assertEquals(queued(c), [['later', '']]);
+  assert(c.busy, 'the turn runs on');
+  assertEquals(c.promptReceipts.get('q1')?.state, 'injected');
+  await c.queueSendNow('q2', true); // "Interrupt and send" from the composer: stops the turn on purpose, then sends
+  await p.take('session/cancel');
+  await p.reply(prompt.id, { stopReason: 'cancelled' });
+  const next = await p.take('session/prompt');
+  assertEquals(promptText(next), 'later');
+  await p.reply(next.id, { stopReason: 'end_turn' });
+  await until(() => !c.busy, 'done');
+});

@@ -1550,7 +1550,9 @@ export class Studio {
     }
     if (c.provider === 'claude' && this.subagents) { // subagent worktrees P2: what the parent's stream says of its subagents
       const subagents = this.subagents;
-      c.onTurnCancelled = (conn) => subagents.turnCancelled(conn.id);
+      // a stopped turn stops only the subagents it was waiting on: background ones run on and land (owner, 2026-11-16)
+      c.onTurnCancelled = (conn) => subagents.turnCancelled(conn.id, 'claude');
+      c.subagentInBackground = (child) => subagents.inBackground(c.id, child);
       c.onClaudeTool = (conn, tool, toolUseId, input, status, agentId) => {
         void subagents.claudeTool(conn.id, tool, toolUseId, input, status, agentId).catch((error) => log.exception(error, 'Subagent tool update failed'));
       };
@@ -3270,7 +3272,7 @@ export class Studio {
     if (name === 'queue-remove') return [200, await connection.queueRemove(need(body, 'messageId') as string)];
     if (name === 'queue-move') return [200, await connection.queueMove(need(body, 'messageId') as string, need(body, 'to'))];
     if (name === 'queue-resume') return [200, await connection.queueResume()];
-    if (name === 'queue-send-now') return [200, await connection.queueSendNow(need(body, 'messageId') as string)];
+    if (name === 'queue-send-now') return [200, await connection.queueSendNow(need(body, 'messageId') as string, body.interrupt === true)];
     if (name === 'cancel') connection.cancel(body.subagentSessionId ?? null);
     else if (name === 'permission') connection.permission(need(body, 'key'), body.option ?? null);
     else if (name === 'authenticate') connection.answerAuth(need(body, 'action'), body.methodId ?? null);

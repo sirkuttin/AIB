@@ -102,6 +102,7 @@ test('menu pick "Send after this turn" queues; "Interrupt and send" queues then 
   await page.tick();
   assert.deepEqual(names(posts), ['queue', 'queue-send-now']);
   assert.equal(posts[1][1].messageId, posts[0][1].clientMessageId);
+  assert.equal(posts[1][1].interrupt, true, 'the composer Interrupt and send stops the turn on purpose');
   void submit;
 });
 

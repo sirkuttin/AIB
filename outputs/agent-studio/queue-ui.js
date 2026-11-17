@@ -5,7 +5,10 @@
   'use strict';
   const T = {
     edit: 'Edit - pauses the queue while you edit',
-    sendNow: 'Interrupt and send',
+    // The ↑ on a queued row (owner, 2026-11-16): an agent that reads messages mid-turn gets it now and nothing running stops (Claude
+    // Code moves a running command or helper to the background); one that can't is interrupted, then it goes.
+    sendNow: 'Send now - nothing running stops',
+    sendNowInterrupt: 'Interrupt and send',
     remove: 'Remove from queue',
     resume: 'Resume sending the queued messages',
     held: 'Waits for your answer above · then goes in at once',
@@ -181,6 +184,7 @@
     const sig = JSON.stringify([
       ctx.connection,
       ctx.busy,
+      !!ctx.steerable,
       queue && queue.reason,
       queue && queue.message,
       queue && queue.landing,
@@ -245,7 +249,7 @@
       const act = el(doc, 'span', 'q-actions');
       act.append(
         iconButton(doc, '✎', T.edit, () => openEditor(ctx, item)),
-        iconButton(doc, '↑', T.sendNow, async () => {
+        iconButton(doc, '↑', ctx.busy && !ctx.steerable ? T.sendNowInterrupt : T.sendNow, async () => {
           try {
             await ctx.post('queue-send-now', { id: ctx.connection, messageId: item.id });
           } catch (e) {

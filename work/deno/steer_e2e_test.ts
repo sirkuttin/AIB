@@ -704,9 +704,9 @@ pageTest('P7 [B] a queued message\'s ↑ button says "Interrupt and send"', asyn
     await page.waitFor(`/queued one/.test(document.getElementById('queueBox').innerText)`, 8000, 'the queue row');
     assert(
       await page.eval<boolean>(
-        `[...document.querySelectorAll('#queueBox button')].some((b) => /Interrupt and send/i.test(b.title + ' ' + (b.getAttribute('aria-label') || '')))`,
+        `[...document.querySelectorAll('#queueBox button')].some((b) => /^Send now - nothing running stops$/.test(b.title || b.getAttribute('aria-label') || ''))`,
       ),
-      'tooltip "Interrupt and send"',
+      'tooltip "Send now - nothing running stops"',
     );
     chat.open(gate);
   } finally {

@@ -1469,7 +1469,7 @@
       },
     );
     window.AgentQueueUI?.render(
-      { box: $('queueBox'), connection: current, busy, post, refresh, fail },
+      { box: $('queueBox'), connection: current, busy, steerable: connected && !!snapshot.steerable, post, refresh, fail },
       connected ? snapshot.queue : null,
       connected ? snapshot.steerLane : null,
     );
@@ -4494,9 +4494,10 @@
         sendBy = async (way) => {
           if (way === 'steer') await post('steer', body);
           else if (way === 'interrupt') {
-            // Interrupt and send: it joins the queue, then jumps to the front and cancels the turn (what the queue row's ↑ does)
+            // Interrupt and send: it joins the queue, then jumps to the front and cancels the turn on purpose (interrupt: true; the
+            // queue row's ↑ Send now steers it in instead and never stops anything)
             await post('queue', body);
-            await post('queue-send-now', { id: connection, messageId: clientMessageId });
+            await post('queue-send-now', { id: connection, messageId: clientMessageId, interrupt: true });
           } else await post(way, body);
         };
       const way = wayOf(snapshot);

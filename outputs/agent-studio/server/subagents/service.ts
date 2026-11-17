@@ -92,7 +92,15 @@ export interface SubagentRecord {
   continuedAt?: number;
   stoppedAt?: number;
   stoppedWhy?: string;
+  /**
+   * Claude Code: the Agent call asked for `run_in_background`. Such a subagent is not part of the parent's turn: stopping the turn
+   * (or Send now) leaves it running, and it lands when it ends (turnCancelled).
+   */
+  background?: boolean;
 }
+
+/** What AIB knows of a subagent's start when it prepares its worktree. */
+export type SubagentMeta = { toolUseId: string; agentType: string; description: string; background?: boolean };
 
 /** What the service needs to know of an open chat. */
 export interface SubagentChat {
@@ -120,6 +128,8 @@ export interface HookAnswer {
 }
 
 const now = () => Date.now() / 1000;
+/** A Claude Code subagent that is not part of its parent's turn: launched with run_in_background, or its Agent call already returned. */
+const inBackground = (r: SubagentRecord): boolean => r.background === true || !!r.hints?.postAgent;
 const json = (payload: unknown, status = 200): HookAnswer => ({ status, body: JSON.stringify(payload), type: 'application/json' });
 const text = (body: string, status: number): HookAnswer => ({ status, body, type: 'text/plain' });
 const pass = (): HookAnswer => json({});
@@ -258,6 +268,7 @@ export class SubagentWorktrees {
       toolUseId,
       agentType: typeof input.subagent_type === 'string' ? input.subagent_type.slice(0, 200) : 'general-purpose',
       description: typeof input.description === 'string' ? input.description.slice(0, 300) : '',
+      background: input.run_in_background === true,
     };
     const isolated = json({ hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { ...input, isolation: 'worktree' } } });
     if (chat.hooks!.userWorktreeHook) {
@@ -280,7 +291,7 @@ export class SubagentWorktrees {
    */
   async prepareFor(
     chat: SubagentChat,
-    meta: { toolUseId: string; agentType: string; description: string },
+    meta: SubagentMeta,
   ): Promise<SubagentRecord | { deny: string }> {
     let timedOut = false;
     const work = this.#lockOf(chat.id).run(async () => {
@@ -409,7 +420,7 @@ export class SubagentWorktrees {
    */
   async #prepare(
     chat: SubagentChat,
-    meta: { toolUseId: string; agentType: string; description: string },
+    meta: SubagentMeta,
     late: () => boolean,
   ): Promise<SubagentRecord | string> {
     const s = await this.#snapshot(chat.folder);
@@ -436,7 +447,7 @@ export class SubagentWorktrees {
   async #build(
     chat: SubagentChat,
     s: { commit: string; tree: string },
-    meta: { toolUseId: string; agentType: string; description: string } | null,
+    meta: SubagentMeta | null,
   ): Promise<SubagentRecord | string> {
     const place = await this.#place(chat);
     const id = this.#newId();
@@ -651,13 +662,29 @@ export class SubagentWorktrees {
     await this.#stop(rec, why);
   }
 
-  /** P2: the user stopped the parent's turn: what still runs is stopped (kept, never landed by itself). */
-  async turnCancelled(chatId: string): Promise<void> {
+  /**
+   * P2: the user stopped the parent's turn: what the turn itself was running is stopped (kept, never landed by itself).
+   *
+   * Claude Code (`claude`): only a subagent the turn was still waiting on: its Agent call had not returned (no PostToolUse yet). A
+   * background subagent (run_in_background, or one a Send now moved to the background: its Agent call returned while it still ran)
+   * is not part of the turn. Claude Code's interrupt leaves it running, as Esc does in Claude Code itself, so AIB leaves it running too
+   * and it lands when it ends (owner, 2026-11-16: stopping the lead must never stop its subagents). If Claude Code did stop it, the
+   * stream says so (acpEnded 'cancelled') and that settles it. Codex and Gemini subagents run inside the turn: all are stopped.
+   */
+  async turnCancelled(chatId: string, provider = ''): Promise<void> {
     await this.#lockOf(chatId).run(async () => {
       for (const r of this.ofChat(chatId).filter((x) => x.state === 'running' || (x.state === 'user-hook' && x.agentId))) {
+        if (provider === 'claude' && inBackground(r)) continue;
         await this.#stop(r, 'the turn was stopped');
       }
     });
+  }
+
+  /** Claude Code: subagent `agentId` of the chat runs in the background (see turnCancelled), so a turn's stop leaves it alone. */
+  inBackground(chatId: string, agentId: string): boolean {
+    if (!agentId) return false;
+    const r = this.ofChat(chatId).find((x) => x.agentId === agentId);
+    return !!r && inBackground(r);
   }
 
   /**
@@ -784,7 +811,7 @@ export class SubagentWorktrees {
       let haveSpare = this.ofChat(chatId).some((r) => r.state === 'spare');
       for (const r of this.ofChat(chatId).filter((x) => x.state === 'prepared')) {
         if (!haveSpare && wt.lexists(r.path)) {
-          await this.#patch(r.id, { state: 'spare', toolUseId: '', agentType: '', description: '' });
+          await this.#patch(r.id, { state: 'spare', toolUseId: '', agentType: '', description: '', background: false });
           haveSpare = true;
         } else await this.#remove(r);
       }
