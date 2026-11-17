@@ -25,6 +25,9 @@ const kernel32Symbols = {
   TerminateProcess: { parameters: ['pointer', 'u32'], result: 'i32' },
   GetCurrentPackageFullName: { parameters: ['buffer', 'buffer'], result: 'i32' },
   CreateFileW: { parameters: ['buffer', 'u32', 'u32', 'buffer', 'u32', 'u32', 'pointer'], result: 'pointer' },
+  // core/crash_trail.ts: the desktop app's stderr (Deno's "Uncaught" lines, a Rust panic) into crash.log. Rust's std reads the
+  // handle on every write, so setting it after start takes effect at once. Tested in work/deno/crash_trail_test.ts.
+  SetStdHandle: { parameters: ['u32', 'pointer'], result: 'i32' },
   CreateProcessW: {
     parameters: ['pointer', 'buffer', 'pointer', 'pointer', 'i32', 'u32', 'pointer', 'buffer', 'buffer', 'buffer'],
     result: 'i32',

@@ -2,6 +2,7 @@
  * The agent host's side of the history Worker (store_worker.ts): one Worker for every chat's store, a promise per call. Errors keep
  * their code: 'fenced' (another owner took the store; it closed itself), 'closed', 'checkpoint', 'worker'.
  */
+import { logWorkerError } from '../core/crash_trail.ts';
 import type {
   Checkpoint,
   HistoryStore,
@@ -45,9 +46,11 @@ export class HistoryClient {
     };
     this.#worker.onerror = (e) => {
       e.preventDefault();
+      logWorkerError('history/store_worker.ts', e); // the crash trail: a dead store worker is never silent
       for (const p of this.#pending.values()) p.reject(new HistoryError('worker', e.message));
       this.#pending.clear();
     };
+    this.#worker.onmessageerror = (e) => logWorkerError('history/store_worker.ts', e);
     this.#ready = this.#call({ op: 'init', dir, options });
   }
 

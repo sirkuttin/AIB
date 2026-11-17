@@ -32,6 +32,7 @@ import { notifyUpdateReady } from './desktop/notify.ts';
 import { makeContext, WebServer } from './web/server.ts';
 import { openSource } from './transcripts/monitor.ts';
 import { ensureHiddenConsole } from './platform/console.ts';
+import { installCrashTrail } from './core/crash_trail.ts';
 import { processStartTime } from './platform/process_info.ts';
 import { configure as configureArtifactKeys } from './artifacts/keys.ts';
 import * as worktrees from './worktrees/worktrees.ts';
@@ -233,6 +234,10 @@ export async function main(argv: string[]): Promise<void> {
     for (const item of (result.active ?? []) as Record<string, unknown>[]) console.log(`  ${item.provider} in ${item.cwd}: ${item.state}`);
     Deno.exit(result.stopped || !result.running ? 0 : 2);
   }
+  // The crash trail (core/crash_trail.ts): uncaught errors, unhandled rejections, exits and memory into <data>/crash.log; the desktop
+  // app's stderr (it has no console) goes there too, so no end of AIB is silent again.
+  await installCrashTrail({ stateDir, version: APP_VERSION, captureStderr: desktop && isDesktopApp() });
+  startup.mark('crash trail');
   if (desktop && isDesktopApp()) {
     // An update cut off in the middle of its file swap: put the previous version back and start that (it is whole again).
     const { recoverInterruptedUpdate } = await import('./desktop/update_helper.ts');

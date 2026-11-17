@@ -19,6 +19,7 @@ import { codeWarning, HostUnavailable } from '../host/host_client.ts';
 import { keeperTakeoverProblem } from '../keeper/link.ts';
 import { packageContext, packageLabel } from '../state/paths.ts';
 import { Registry } from '../worktrees/worktrees.ts';
+import { logWorkerError } from '../core/crash_trail.ts';
 
 /** The command-line options these helpers read (server/core/options.ts has them all; migration comes from the state-folder setup). */
 export interface AgentOptions {
@@ -363,6 +364,7 @@ function agentWorkerNow(): Worker {
   };
   w.onerror = (e) => {
     e.preventDefault();
+    logWorkerError('web/agents_worker.ts', e);
     if (agentWorker === w) stopAgentWorker();
   };
   return (agentWorker = w);
