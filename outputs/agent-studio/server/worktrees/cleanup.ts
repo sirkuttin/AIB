@@ -129,6 +129,20 @@ async function diffNames(project: string, a: string, b: string, paths: string[] 
   return out;
 }
 
+/** True when `name` in the copy folder has the same text as on `branch` in the project (both missing counts as the same). */
+async function sameAsBranch(project: string, branch: string, folder: string, name: string): Promise<boolean> {
+  let disk: Uint8Array | null = null;
+  try {
+    disk = Deno.readFileSync(`${folder}/${name}`);
+  } catch { /* deleted in the copy */ }
+  const done = await wt.git(['cat-file', 'blob', `refs/heads/${branch}:${name}`], project, { check: false, binary: true });
+  const there = done.returncode === 0 ? done.out : null;
+  if (disk === null || there === null) return disk === null && there === null;
+  if (wt.sameBytes(disk, there)) return true;
+  const lf = (b: Uint8Array) => DEC.decode(b).replace(/\r\n/g, '\n');
+  return lf(disk) === lf(there);
+}
+
 const DEC = new TextDecoder();
 async function sameText(project: string, x: string, y: string): Promise<boolean> {
   const read = async (spec: string) => {
@@ -172,7 +186,18 @@ async function recordUnmerged(manager: wt.Manager, record: wt.WorktreeRecord): P
     if (!(await manager.hasChanges(record))) return 0;
     const base = wt.diffBase(record);
     try {
-      return base ? (await wt.touchedPaths(path, base)).length || -1 : -1;
+      if (!base) return -1;
+      const touched = await wt.touchedPaths(path, base);
+      if (!touched.length) return -1;
+      // A file the copy changed counts only while the project's main branch does not have it yet: a chat whose work was
+      // already merged (its copy at main's tip, or the same files on main) has nothing unmerged.
+      const target = str(record.base) && (await refExists(project, `refs/heads/${str(record.base)}`))
+        ? str(record.base)
+        : await wt.mainBranch(project, '');
+      if (!target) return touched.length;
+      let left = 0;
+      for (const name of touched) if (!(await sameAsBranch(project, target, path, name))) left++;
+      return left;
     } catch {
       return -1;
     }
