@@ -1200,6 +1200,64 @@ button {
 .ph-copies .ph-note {
   margin: 0 0 8px;
 }
+/* ---- the update line under the home header (Update ready · <version>, the confirm row, Updating…, Updated to …) ---- */
+.ph-upd {
+  margin: 12px 0 0;
+  padding: 8px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  font-size: 14px;
+}
+.ph-upd-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.ph-upd-text {
+  flex: 1 1 160px;
+  min-width: 0;
+  text-align: left;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+}
+button.ph-upd-text {
+  min-height: 44px;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+.ph-upd .ph-btn {
+  width: auto;
+  min-height: 44px;
+  margin: 0;
+}
+.ph-upd-note {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+.ph-upd.late,
+.ph-upd.failed {
+  border-color: var(--warn, var(--line));
+}
+.ph-upd-notes {
+  margin-top: 8px;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.ph-upd-ver {
+  margin: 8px 0 2px;
+  font-size: 14px;
+}
+.ph-upd-body {
+  margin: 0;
+  white-space: pre-wrap;
+  font-size: 13px;
+}
 /* ---- finish setup (notifications, iPhone Home Screen), the setup bar on home ---- */
 .ph-setup-bar {
   display: flex;

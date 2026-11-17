@@ -1217,7 +1217,43 @@
     );
   }
 
+  /* The update line under the home header (remote/update.ts): what it says and which buttons it has. upd: this phone's own
+     progress {phase: '' | 'confirm' | 'updating' | 'done' | 'failed', from, to, at, sawDown, msg}; update: the PC's status from
+     home; can: abilities(scopes). null: nothing to show. Kinds: ready, confirm, updating, late, done, failed. */
+  const UPDATE_LATE_MS = 120000;
+  function updateView(upd, update, pcName, can, now) {
+    const u = upd || {};
+    const pc = pcName || 'your PC';
+    if (u.phase === 'updating') {
+      if (now - (u.at || now) >= UPDATE_LATE_MS)
+        return {
+          kind: 'late',
+          text: 'AIB hasn’t come back yet on ' + pc + '.',
+          note: 'This phone keeps trying. If it stays like this, open AIB on the PC.',
+        };
+      return { kind: 'updating', text: 'Updating AIB on ' + pc + '…', note: 'Chats keep running. This comes back by itself.' };
+    }
+    if (u.phase === 'done') return { kind: 'done', text: 'Updated to ' + u.to, note: '' };
+    if (u.phase === 'failed')
+      return { kind: 'failed', text: 'AIB on ' + pc + ' is back, still on ' + u.to + '.', note: 'The update did not install. Try again, or update on the PC.' };
+    const up = update && typeof update === 'object' ? update : null;
+    if (!up || up.state !== 'ready' || !up.version) return null;
+    if (u.phase === 'confirm') return { kind: 'confirm', text: 'Restart AIB on ' + pc + ' to update? Chats keep running.', note: u.msg || '', version: up.version };
+    const note = u.msg
+      ? u.msg
+      : up.installWhenIdle
+        ? 'It installs when the chats finish.'
+        : !up.canInstall
+          ? 'Install it on ' + pc + '.'
+          : !can.send
+            ? 'Updating from here needs the Send switch (AIB on ' + pc + ' → Settings → Remote control).'
+            : '';
+    return { kind: 'ready', text: 'Update ready · ' + up.version, note, version: up.version, button: !!(up.canInstall && can.send && !up.installWhenIdle) };
+  }
+
   const api = {
+    updateView,
+    UPDATE_LATE_MS,
     inboxNeeds,
     inboxReview,
     inboxBadge,
@@ -1338,6 +1374,7 @@
     pairSecret: '', // hex, from the QR's '#p='
     pairing: null,
     scopes: [], // this phone's switches (bootstrap, then every home / chat answer)
+    upd: { phase: '', from: '', to: '', at: 0, sawDown: false, msg: '', notesOpen: false, notes: null, whenIdle: false }, // the update line
     filter: '', // the project id home shows ('' = All projects), remembered on this phone
     filterOpen: false,
     focusPrompt: false, // Reply on an inbox card: focus the chat's message box once it loads
@@ -1993,6 +2030,7 @@
       S.offline = true;
       S.offlineSince = Date.now();
     }
+    if (S.upd.phase === 'updating') S.upd.sawDown = true; // AIB went away for the update
     S.offlineWhy = why === 'down' ? 'down' : why === 'unreachable' ? 'unreachable' : S.offlineWhy || 'down';
     if (offlineView(S.offlineSince, Date.now(), S.offlineWhy, S.pcName, S.reconnectMs).kind !== S.offlineShown) draw();
   }
@@ -2113,6 +2151,7 @@
     S.homeRev = r.data.revision || '';
     takeTheme(r.data);
     takeScopes(r.data.scopes);
+    takeUpdate(r.data.update);
     if (r.data.pcName) S.pcName = r.data.pcName;
     if (S.screen === 'home') draw();
   }
@@ -2362,6 +2401,7 @@
       );
       // Install AIB: hidden once it runs installed (or was just installed)
       if (installKind(installFacts()) !== 'installed') sheet.append(menuItem('install', '⤓', 'Install AIB', () => installNow()));
+      sheet.append(menuItem('updates', '↻', 'Check for updates', () => void checkUpdates(), 'AIB on ' + S.pcName));
       sheet.append(menuItem('cancel', '', 'Cancel', closeMenu));
       return;
     }
@@ -3460,7 +3500,10 @@
         after: [phoneBtn],
       }),
     );
-    if (S.offline) parts.push(offlineBox());
+    const upLine = updateEl();
+    if (upLine) parts.push(upLine);
+    // while AIB restarts for an update, the update line says so (not "Can't reach")
+    if (S.offline && S.upd.phase !== 'updating') parts.push(offlineBox());
     else if (S.device && !pushReady()) {
       const bar = el('div', 'ph-setup-bar');
       bar.append(el('span', '', 'Get a notification when a chat needs you.'));
@@ -3538,6 +3581,158 @@
       }
     }
     return parts;
+  }
+
+  // ---- updates from the phone (remote/update.ts) ----
+  /* The calm line under the home header: "Update ready · <version>" with Update (and the notes on tap), the confirm row, then
+     "Updating AIB on <PC>…" across the restart, "Updated to <version>" once the new AIB answers. */
+  function updateEl() {
+    const v = updateView(S.upd, S.home && S.home.update, S.pcName, abilities(S.scopes), Date.now());
+    if (!v) return null;
+    const box = el('section', 'ph-upd ' + v.kind);
+    box.id = 'phUpdate';
+    box.dataset.update = v.kind;
+    box.setAttribute('role', v.kind === 'late' || v.kind === 'failed' ? 'alert' : 'status');
+    const row = el('div', 'ph-upd-row');
+    const text = el('span', 'ph-upd-text', v.text);
+    text.id = 'phUpdateText';
+    if (v.kind === 'ready' || v.kind === 'confirm') {
+      // the line itself opens the notes
+      const t = button('ph-upd-text', v.text, toggleUpdateNotes);
+      t.id = 'phUpdateText';
+      t.setAttribute('aria-expanded', S.upd.notesOpen ? 'true' : 'false');
+      row.append(t);
+    } else row.append(text);
+    if (v.kind === 'ready' && v.button) {
+      const b = button('ph-btn quiet', 'Update', () => {
+        S.upd.phase = 'confirm';
+        S.upd.msg = '';
+        draw();
+      });
+      b.id = 'phUpdateGo';
+      row.append(b);
+    }
+    if (v.kind === 'confirm') {
+      const yes = button('ph-btn', 'Update', () => startUpdate(S.upd.whenIdle));
+      yes.id = 'phUpdateYes';
+      const no = button('ph-btn quiet', 'Cancel', () => {
+        S.upd.phase = '';
+        S.upd.msg = '';
+        S.upd.whenIdle = false;
+        draw();
+      });
+      no.id = 'phUpdateNo';
+      row.append(yes, no);
+    }
+    if (v.kind === 'done' || v.kind === 'failed') {
+      const x = button('ph-ic', '×', () => {
+        S.upd.phase = '';
+        draw();
+      });
+      x.id = 'phUpdateClose';
+      x.setAttribute('aria-label', 'Close');
+      row.append(x);
+    }
+    box.append(row);
+    if (v.note) box.append(el('p', 'ph-upd-note', v.note));
+    if ((v.kind === 'ready' || v.kind === 'confirm') && S.upd.notesOpen) {
+      const notes = el('div', 'ph-upd-notes');
+      notes.id = 'phUpdateNotes';
+      if (!S.upd.notes) notes.append(el('p', 'ph-note', 'Loading what’s new…'));
+      else if (!S.upd.notes.length) notes.append(el('p', 'ph-note', 'No notes for this version.'));
+      for (const n of S.upd.notes || []) {
+        notes.append(el('h3', 'ph-upd-ver', 'AIB ' + n.version));
+        notes.append(el('p', 'ph-upd-body', n.body));
+      }
+      box.append(notes);
+    }
+    return box;
+  }
+  async function toggleUpdateNotes() {
+    S.upd.notesOpen = !S.upd.notesOpen;
+    draw();
+    if (!S.upd.notesOpen) return;
+    try {
+      const r = await call('GET', '/api/remote/update');
+      S.upd.notes = r.status === 200 && r.data.update ? r.data.update.notes || [] : [];
+    } catch {
+      S.upd.notes = [];
+    }
+    draw();
+  }
+  /* Update (confirmed): the PC runs its own install. Chats working that this update cannot take over: it offers to install when
+     they finish instead. */
+  async function startUpdate(whenIdle) {
+    const from = (S.home && S.home.update && S.home.update.current) || '';
+    let r;
+    try {
+      r = await call('POST', '/api/remote/update/install', { whenIdle: !!whenIdle });
+    } catch {
+      S.upd.msg = 'Can’t reach ' + S.pcName + '. Nothing was started.';
+      draw();
+      return;
+    }
+    if (r.status === 401) return removed();
+    if (r.status === 200 && r.data.state === 'installing') {
+      S.upd = { ...S.upd, phase: 'updating', from, to: '', at: Date.now(), sawDown: false, msg: '', notesOpen: false, whenIdle: false };
+      setTimeout(draw, UPDATE_LATE_MS + 500); // "hasn't come back yet" if it is still away by then
+      draw();
+      return;
+    }
+    if (r.status === 200 && r.data.state === 'waiting') {
+      S.upd = { ...S.upd, phase: '', msg: '', whenIdle: false };
+      if (r.data.update && S.home) S.home.update = r.data.update;
+      draw();
+      return;
+    }
+    if (r.data && r.data.code === 'chats_working') {
+      S.upd.phase = 'confirm';
+      S.upd.whenIdle = true; // the next Update waits for the chats
+      S.upd.msg = (r.data.error || 'Chats are working.') + ' Tap Update to install when they finish.';
+    } else {
+      S.upd.phase = '';
+      S.upd.msg = (r.data && r.data.error) || 'The update could not start.';
+    }
+    draw();
+  }
+  /* Every home answer: across the restart, the new version answering ends "Updating…". */
+  function takeUpdate(update) {
+    if (S.upd.phase !== 'updating' || !update) return;
+    if (update.current && update.current !== S.upd.from) {
+      S.upd = { ...S.upd, phase: 'done', to: update.current };
+      setTimeout(() => {
+        if (S.upd.phase === 'done') {
+          S.upd.phase = '';
+          draw();
+        }
+      }, 20000);
+    } else if (S.upd.sawDown) S.upd = { ...S.upd, phase: 'failed', to: update.current };
+  }
+  /* ⋯ → Check for updates: the PC checks now (GitHub and, on a test build, its local feed); the answer shows on the list. */
+  async function checkUpdates() {
+    closeMenu();
+    toast('Checking for updates on ' + S.pcName + '…');
+    try {
+      const r = await call('POST', '/api/remote/update/check', {});
+      if (r.status === 401) return removed();
+      if (r.status !== 200) {
+        toast((r.data && r.data.error) || 'Could not check for updates.');
+        return;
+      }
+      let up = r.data.update;
+      for (let i = 0; i < 40 && up && up.checking; i++) {
+        await new Promise((res) => setTimeout(res, 1500));
+        const g = await call('GET', '/api/remote/update');
+        up = g.status === 200 ? g.data.update : null;
+      }
+      if (up && S.home) S.home.update = { ...up, notes: undefined };
+      if (up && up.state === 'ready') toast('AIB ' + up.version + ' is ready to install.');
+      else if (up && up.error) toast(up.error);
+      else if (up) toast('AIB ' + up.current + ' is the newest version.');
+      draw();
+    } catch {
+      toast('Can’t reach ' + S.pcName + '.');
+    }
   }
 
   /* Continue this chat (or why this phone can't): the bottom bar of a chat that is not running. */

@@ -309,7 +309,7 @@
      own polls carry on from their cursors (no event lost, nothing sent again). Removed while offline: the first 401 not_paired
      wipes this origin's storage (removed()). */
   const CLOSED_AFTER_MS = 20000;
-  const net = { down: false, why: '', since: 0, timer: 0 };
+  const net = { down: false, why: '', since: 0, timer: 0, note: '' };
   function offlineRefusal(method) {
     return answer(503, {
       error: "Can't reach " + pcName() + (method === 'GET' || method === 'HEAD' ? '. Trying again…' : '. Nothing was sent.'),
@@ -317,6 +317,7 @@
     });
   }
   function barText() {
+    if (net.note) return net.note; // updates-ui.js: "Updating AIB on <PC>…" while AIB restarts for an update
     if (net.why === 'down') {
       return Date.now() - net.since < CLOSED_AFTER_MS
         ? 'AIB on ' + pcName() + ' is not answering. Trying again…'
@@ -664,6 +665,12 @@
     pcName,
     can,
     scopes,
+    /* updates-ui.js: what the offline bar says instead while AIB restarts for an update ('' = the usual words) */
+    setNote(text) {
+      net.note = String(text || '');
+      const box = doc.getElementById('remoteOffline');
+      if (box && box.firstChild) box.firstChild.textContent = barText();
+    },
     device: () => (S.boot && S.boot.device) || null,
     push,
     install,

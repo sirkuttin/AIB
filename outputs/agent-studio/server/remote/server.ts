@@ -35,6 +35,7 @@ import { LOGIN_HEADER, REMOTE_REASONS, RemoteGate } from './gate.ts';
 import { type Pairing, PairingError } from './pairing.ts';
 import { chatPayload, DEFAULT_TAIL, homePayload, imageOf, olderPage, plainTitle, revisionOf, type TitleCache, wholeEvent } from './payloads.ts';
 import { projectsFor } from './projects.ts';
+import { remoteInstall, remoteUpdate } from './update.ts';
 import { CONTINUE_FIELDS, continueSaved, publicSaved, SAVED_TAIL, type SavedChats, savedHistory } from './saved.ts';
 import { type ArtifactTickets, remoteArtifactOrigin } from './artifact_server.ts';
 import type { Manifest } from '../artifacts/artifacts.ts';
@@ -132,7 +133,8 @@ export type RemoteAuth =
   | 'read'
   | 'left'
   | 'phone'
-  | 'pc';
+  | 'pc'
+  | 'update';
 /** A whole non-negative number from the query (a seq), or null when it is missing or not one. */
 function seqParam(url: URL, name: string): number | null {
   const v = url.searchParams.get(name);
@@ -203,6 +205,10 @@ export const REMOTE_ROUTES: readonly [string, string, RemoteAuth][] = [
   ['POST', '/api/remote/rename', 'phone'],
   ['POST', '/api/remote/mark', 'phone'],
   ['GET', '/api/remote/artifacts', 'device'],
+  // Updates from remote devices (remote/update.ts): the PC's update status, check now, and the same install as the PC's click.
+  ['GET', '/api/remote/update', 'update'],
+  ['POST', '/api/remote/update/check', 'update'],
+  ['POST', '/api/remote/update/install', 'update'],
 ];
 /** The activity log word of each part-2 phone POST. */
 const PHONE_AUDIT: Readonly<Record<string, string>> = {
@@ -263,6 +269,10 @@ export const ROUTE_SCOPE: Readonly<Record<string, PhoneScope>> = {
   'GET /api/remote/pc/settings': 'phone.read',
   'GET /api/remote/pc/wsl-status': 'phone.read',
   'POST /api/remote/pc/presence': 'phone.read',
+  // updates: anyone paired sees and checks; restarting AIB to install needs Send (full control of the chats)
+  'GET /api/remote/update': 'phone.read',
+  'POST /api/remote/update/check': 'phone.read',
+  'POST /api/remote/update/install': 'phone.prompt',
 };
 /** The words a refused scope is reported with (what the phone shows; the switch is in Settings > Remote control on the PC). */
 const SCOPE_WORDS: Record<string, string> = {
@@ -579,6 +589,8 @@ export class RemoteServer {
           return await this.#phone(request, path);
         case 'pc':
           return await this.#pcRoute(request, url, path);
+        case 'update':
+          return await this.#update(request, path);
       }
     } catch (error) {
       if (error instanceof HostUnavailable) {
@@ -850,13 +862,14 @@ export class RemoteServer {
       // The phone's switches go with every answer (turned off on the PC: its buttons go away on the next poll).
       const scopes = scopesForPhone(device);
       const theme = this.#pcTheme();
+      const update = remoteUpdate(this.host.ctx.updates); // "Update ready · <version>" on the phone's list (remote/update.ts)
       const revision = home.revision + '.' + revisionOf(saved).slice(0, 8) + '.' + scopes.map((x) => x.slice(6, 8)).join('') + '.' +
-        revisionOf(theme).slice(0, 6);
+        revisionOf(theme).slice(0, 6) + '.' + revisionOf(update).slice(0, 6);
       const known = url.searchParams.get('rev') ?? request.headers.get('If-None-Match')?.replace(/"/g, '');
       if (known && known === revision && !notices.length) {
         return new Response(null, { status: 304, headers: { ...securityHeadersRemote(), ETag: `"${revision}"` } });
       }
-      return this.json(200, { ...home, saved, revision, scopes, notices, ...theme }, { ETag: `"${revision}"` });
+      return this.json(200, { ...home, saved, revision, scopes, notices, ...theme, update }, { ETag: `"${revision}"` });
     }
     if (path === '/api/remote/saved') {
       const notices = seen(null);
@@ -1104,6 +1117,41 @@ export class RemoteServer {
   }
 
   /** The phone's own POST routes of part 2: new chat, the card menu. One activity line each (never message text or names). */
+  /**
+   * Updates from a paired phone or computer (remote/update.ts): see the status and check now (See chats); install (Send), which
+   * runs the PC's own install path and is answered before AIB quits. One activity line per check or install.
+   */
+  async #update(request: Request, path: string): Promise<Response> {
+    const post = request.method.toUpperCase() === 'POST';
+    const device = this.#device(request, ROUTE_SCOPE[`${post ? 'POST' : 'GET'} ${path}`]);
+    const body = post ? await this.#body(request, 4096) : null;
+    const action = path.endsWith('/install') ? 'update: install' : 'update: check';
+    if (device instanceof Response) {
+      const known = device.status === 403 && this.host.devices.byToken(request.headers.get(DEVICE_HEADER));
+      if (known && post) this.host.audit.write({ device: known.id, name: known.name, action, result: 'refused: switched off' });
+      return device;
+    }
+    const svc = this.host.ctx.updates;
+    if (!post) return this.json(200, { update: remoteUpdate(svc, true), pcName: this.host.pcName() });
+    if (!remoteUpdate(svc)) return this.json(409, { error: 'Updates are not available on this PC.', code: 'unconfigured' });
+    if (path === '/api/remote/update/check') {
+      if (!this.bridge.limit.take(device.id)) {
+        return this.json(429, { error: 'Too many requests. Try again in a moment.', code: 'rate_limited' }, { 'Retry-After': '1' });
+      }
+      this.host.audit.write({ device: device.id, name: device.name, action, result: 'checking' });
+      svc.check(true).catch(() => {});
+      return this.json(200, { update: { ...remoteUpdate(svc), checking: true } });
+    }
+    const [status, reply] = await remoteInstall(svc, body);
+    this.host.audit.write({
+      device: device.id,
+      name: device.name,
+      action,
+      result: status === 200 ? String(reply.state ?? 'ok') : `refused: ${String(reply.code ?? status)}`,
+    });
+    return this.json(status, reply);
+  }
+
   async #phone(request: Request, path: string): Promise<Response> {
     const audit = PHONE_AUDIT[path];
     const chatOf = (v: unknown) => (typeof v === 'string' ? v.slice(0, 100) : '');

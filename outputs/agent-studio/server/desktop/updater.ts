@@ -1188,6 +1188,20 @@ export class UpdateService {
     return notes;
   }
 
+  /** The notes of the verified download waiting to install (newer than this app), newest first; [] when none (remote devices). */
+  upcomingNotes(): ReleaseNote[] {
+    const st = this.status();
+    const notes = this.#readNotes();
+    if (st.state !== 'ready' || !notes || notes.version !== st.available?.version) return [];
+    return notes.releases.filter((r) => {
+      try {
+        return compare(r.version, this.current) > 0;
+      } catch {
+        return false;
+      }
+    });
+  }
+
   /** The page opened the tab: never again for this version. */
   notesShown(): boolean {
     const notes = this.#readNotes();
