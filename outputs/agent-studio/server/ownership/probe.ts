@@ -773,6 +773,11 @@ export interface ProbeOptions {
   lockProbe?: LockProbe;
   clock?: () => number;
   inspectProcesses?: boolean;
+  /**
+   * Claude Code's live-session registry (claude_sessions.ts): a live process other than this AIB's that has the session open, or
+   * null. Strong evidence: it names the exact session, and an idle session open in another app shows nowhere else.
+   */
+  liveHolder?: (provider: string, sessionId: string) => { pid: number; app: string } | null;
 }
 
 export const SUMMARIES: Record<Exclude<Verdict, 'owned_by_studio'>, string> = {
@@ -863,6 +868,7 @@ export class OwnershipProbe {
   lockProbe: LockProbe;
   clock: () => number;
   inspectProcesses: boolean;
+  liveHolder: ProbeOptions['liveHolder'] | null;
   #released = new Map<string, number>();
   #seen = new Map<string, [number, number, number]>();
   #hintCache: [number, Record<string, Hint>] = [0.0, {}];
@@ -876,6 +882,7 @@ export class OwnershipProbe {
     this.lockProbe = options.lockProbe ?? lockHolders;
     this.clock = options.clock ?? (() => Date.now() / 1000);
     this.inspectProcesses = options.inspectProcesses ?? true;
+    this.liveHolder = options.liveHolder ?? null;
   }
 
   // -- bookkeeping -------------------------------------------------------------------------
@@ -1130,6 +1137,20 @@ export class OwnershipProbe {
     const base = { provider, sessionId, reasons, notes, unavailable, checkedAt: started };
     if (this.ownedByStudio(provider, sessionId)) {
       return { ...base, verdict: 'owned_by_studio', summary: 'This conversation is running in this AIB.' };
+    }
+    let holder: { pid: number; app: string } | null = null;
+    try {
+      holder = this.liveHolder ? this.liveHolder(provider, sessionId) : null;
+    } catch (error) {
+      log.warning('session registry check failed: %s', strOf(error));
+    }
+    if (holder) {
+      reasons.push({
+        signal: 'session-registry',
+        strength: 'strong',
+        pid: holder.pid,
+        text: `This conversation is open in ${cleanText(holder.app, 40)} (a running Claude Code process, PID ${holder.pid}).`,
+      });
     }
     const [extra, info, problems] = this.#registrySignals(provider, sessionId);
     reasons.push(...extra);

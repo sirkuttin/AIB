@@ -67,6 +67,7 @@ import { WslClientCaps } from './wsl_caps.ts';
 import { distroName, guardRealWslAgent, peekWslHost, wslTestHomeEnv } from '../wsl/access.ts';
 import { APP_VERSION, TESTS_DIR } from '../core/app.ts';
 import { getLogger } from '../core/log.ts';
+import { HeldElsewhere, type Holder } from '../ownership/claude_sessions.ts';
 import { DOCS_RULE } from '../docs/tool_defs.ts';
 import { claudeConfigDir, isForkSkill, SUBAGENT_PROMPT, SUBAGENTS_OFF_NO_BASH_PROMPT, SUBAGENTS_OFF_PROMPT, typedForkSkillText } from '../subagents/claude_config.ts';
 import {
@@ -909,6 +910,47 @@ export function subagentEnd(entry: Json | undefined): string | null {
   return null;
 }
 
+/**
+ * Open elsewhere: of the history a session/load sends back (session/update params, oldest first), the turns that came after the
+ * last user message this chat already showed (`lastUserText`), so only what was written in another app is shown again. A turn
+ * starts at a user message (consecutive user_message_chunk updates). The last turn whose user text contains `lastUserText` is
+ * this chat's own; everything after it is outside. `lastUserText` empty (the chat never showed a user message): every turn is
+ * outside. Not found: nothing (AIB shows no history twice; the agent still has it all).
+ */
+export function outsideTurns(updates: Json[], lastUserText: string): { updates: Json[]; turns: number } {
+  const turns: { text: string; updates: Json[] }[] = [];
+  let inUser = false;
+  for (const params of updates) {
+    const update = isDict(params) ? get(params, 'update', {}) as Json : {};
+    const kind = isDict(update) ? get(update, 'sessionUpdate') : null;
+    if (kind === 'user_message_chunk') {
+      if (!inUser || !turns.length) turns.push({ text: '', updates: [] });
+      inUser = true;
+      const content = get(update, 'content', {}) as Json;
+      if (isDict(content) && content.type === 'text' && isStr(content.text)) turns.at(-1)!.text += content.text;
+    } else {
+      inUser = false;
+      if (!turns.length) turns.push({ text: '', updates: [] }); // something before the first user message: part of what AIB had
+    }
+    turns.at(-1)!.updates.push(params);
+  }
+  const want = pyStrip(lastUserText);
+  let from = 0;
+  if (want) {
+    let mine = -1;
+    for (let i = turns.length - 1; i >= 0; i--) {
+      if (turns[i].text.includes(want)) {
+        mine = i;
+        break;
+      }
+    }
+    if (mine < 0) return { updates: [], turns: 0 };
+    from = mine + 1;
+  } else if (turns.length && !turns[0].text) from = 1;
+  const outside = turns.slice(from).filter((t) => t.text);
+  return { updates: outside.flatMap((t) => t.updates), turns: outside.length };
+}
+
 export class Connection {
   readonly id: string;
   provider: string;
@@ -1639,8 +1681,21 @@ export class Connection {
     this.pending.set(id, entry);
     if (method === 'session/prompt') return this.#replayTurn(id, entry, params);
     if (method === '_session/steering') return this.#replaySteer(id, entry, params);
+    // open elsewhere: a session/load after a hand-off (the chat was ready): the outside turns it showed are Studio events in the
+    // record already, so the history it brought back is dropped again
+    const reload = method === 'session/load' && this.ready && !!this.sessionId;
+    if (reload) this.#reload = { updates: [], discard: true };
     void entry.done.wait().then(() => {
       if (this.pending.get(id) === entry) this.pending.delete(id);
+      if (reload) {
+        this.#reload = null;
+        if (!Object.hasOwn(entry.response ?? {}, 'error')) this.elsewhere = null;
+      }
+      if (method === 'session/close' && !Object.hasOwn(entry.response ?? {}, 'error') && get(params, 'sessionId') === this.sessionId) {
+        // the old AIB let go of this chat (another app opened it); the line saying so is in the record as its own event
+        this.elsewhere = { app: 'another app', pid: 0, entrypoint: '', since: this.#now(), released: true };
+        return;
+      }
       this.#applyAnswered(method, params, entry.response ?? {});
     });
   }
@@ -3536,6 +3591,11 @@ export class Connection {
         });
       }
     } else if (method === 'session/update') {
+      if (this.#reload) { // the history a session/load after a hand-off sends: #reattach shows only the outside turns
+        if (!this.#reload.discard && this.#reload.updates.length < MAX_EVENTS) this.#reload.updates.push(params);
+        return;
+      }
+      this.#noteUserText(params);
       const update = get(params, 'update', {}) as Json;
       const sid = get(params, 'sessionId');
       if (isStr(sid) && sid) this.knownSessions.add(sid);
@@ -4006,6 +4066,7 @@ export class Connection {
       this.initial,
     );
     this.breadth.skippedMcp = skipped;
+    this.#sessionMcp = mcpServers; // a session/load after an open-elsewhere hand-off sends the same
     return mcpServers;
   }
 
@@ -4080,6 +4141,174 @@ export class Connection {
    * the process. Returns the session/new reply (sessionId, modes, configOptions, ...).
    */
   async probeSettings(timeoutSeconds = 30): Promise<Json> {
+    return await this.#probeSettings(timeoutSeconds);
+  }
+
+  // ---- open elsewhere (ownership/handoff.ts) ---------------------------------------------------------------------------------
+  /**
+   * Another app's Claude Code process holds this chat's session (Claude Code's session registry names it). `released`: AIB closed
+   * its session (session/close: the Claude process ended, the adapter and its keeper channel stay) and loads it again when the
+   * person comes back. null: AIB holds the session.
+   */
+  elsewhere: { app: string; pid: number; entrypoint: string; since: number; released: boolean; heldNoted?: boolean } | null = null;
+  /** Studio hook (handoff.ts): who else holds this chat's session now; null when nobody does (or AIB cannot tell). */
+  holderNow: (() => Promise<Holder | null>) | null = null;
+  /** Studio hook: this chat let go of its session ('released') or took it back ('back'). */
+  onElsewhere: ((connection: Connection, what: 'released' | 'back') => void) | null = null;
+  /** Processes the person chose Open here anyway over: their holding no longer makes this chat let go. */
+  readonly overriddenHolders = new Set<number>();
+  #sessionMcp: McpServer[] = [];
+  /** Set while a session/load after a hand-off runs: the history the agent sends back is held here, not shown again. */
+  #reload: { updates: Json[]; discard: boolean } | null = null;
+  #releasing = false;
+  #reclaiming: Promise<{ state: 'attached' | 'back' | 'held'; app?: string; picked?: number }> | null = null;
+  /** The text of the last user message this chat showed (sent here, or replayed by the agent): where the outside turns begin. */
+  #lastUserText = '';
+  #inUserText = false;
+
+  /** The agent can close a session and keep running (claude-agent-acp: sessionCapabilities.close). */
+  canCloseSession(): boolean {
+    return sessionCapabilities(this.initial).ops.includes('close');
+  }
+
+  /** Another app holds this chat's session: let go now when quiet, else when the turn (and its helpers) end. Idempotent. */
+  handOff(holder: Holder): void {
+    if (this.closed || !this.ready || !this.sessionId || this.#replaying || this.elsewhere || this.rebuildError) return;
+    if (this.overriddenHolders.has(holder.pid)) return; // the person chose Open here anyway over this one
+    if (!this.canCloseSession()) {
+      log.info('chat %s: open in %s, but its agent cannot close a session; AIB keeps it', this.id, holder.app);
+      return;
+    }
+    this.elsewhere = { app: holder.app, pid: holder.pid, entrypoint: holder.entrypoint, since: this.#now(), released: false };
+    void this.tryRelease();
+  }
+
+  /** Nothing would be lost by closing the session now: no turn, no question open, no background helper or shell, nothing sending. */
+  #quietForRelease(turnEnding: boolean): boolean {
+    return (turnEnding || !this.busy) && !this.permissions.size && !this.elicitations.size && !this.auth && !this.queue.inflight &&
+      !this.helpersRunning() && !this.backgroundShellsRunning() && !this.landing;
+  }
+
+  /** Close the session of a chat another app holds, if nothing would be lost now. true when it let go. */
+  async tryRelease(turnEnding = false): Promise<boolean> {
+    const e = this.elsewhere;
+    if (!e || e.released || this.closed || this.#releasing || this.#replaying || !this.sessionId) return false;
+    if (!this.#quietForRelease(turnEnding)) return false;
+    this.#releasing = true;
+    try {
+      await this.request('session/close', { sessionId: this.sessionId }, 15);
+      e.released = true;
+      e.heldNoted = false;
+      this.recordedEvent('studio_note', {
+        message: `Continued in ${e.app}. AIB let go of this chat. Open it here to take it back.`,
+        sessionId: this.sessionId,
+        elsewhere: 'released',
+        actions: [{ id: 'elsewhere-open', label: 'Open here' }],
+      });
+      log.info('chat %s: let go of %s (open in %s, pid %s)', this.id, this.sessionId, e.app, e.pid);
+      this.onElsewhere?.(this, 'released');
+      return true;
+    } catch (error) {
+      log.warning('chat %s: closing its session for %s failed: %s', this.id, e.app, errorText(error));
+      if (this.elsewhere === e) this.elsewhere = null; // the next scan tries again
+      return false;
+    } finally {
+      this.#releasing = false;
+    }
+  }
+
+  /**
+   * The person came back to a chat AIB let go of (sent a message, or chose Open here): load its session again when nobody else holds
+   * it, or `force` (Open here anyway). Still held: one line with Open here anyway, and nothing else happens. 'attached': AIB holds it.
+   */
+  reclaim(force = false): Promise<{ state: 'attached' | 'back' | 'held'; app?: string; picked?: number }> {
+    if (!this.elsewhere?.released) return Promise.resolve({ state: 'attached' });
+    if (this.#reclaiming) return this.#reclaiming;
+    const run = (async () => {
+      const e = this.elsewhere!;
+      const holder = this.holderNow ? await this.holderNow().catch(() => null) : null;
+      if (holder && !force) {
+        e.app = holder.app;
+        if (!e.heldNoted) {
+          e.heldNoted = true;
+          this.recordedEvent('studio_note', {
+            message: `Still open in ${holder.app}. Close it there first, or open it here anyway (two apps writing to one chat can ` +
+              'mix up its messages).',
+            sessionId: this.sessionId,
+            elsewhere: 'held',
+            actions: [{ id: 'elsewhere-force', label: 'Open here anyway' }],
+          });
+        }
+        return { state: 'held' as const, app: holder.app };
+      }
+      if (holder) this.overriddenHolders.add(holder.pid); // Open here anyway: that process no longer makes AIB let go
+      const picked = await this.#reattach(e.app);
+      return { state: 'back' as const, app: e.app, picked };
+    })();
+    this.#reclaiming = run;
+    return run.finally(() => {
+      if (this.#reclaiming === run) this.#reclaiming = null;
+    });
+  }
+
+  /** session/load again after a hand-off: the turns written elsewhere are shown, the rest of the history the agent sends is not. */
+  async #reattach(app: string): Promise<number> {
+    this.#reload = { updates: [], discard: false };
+    let result: unknown;
+    let updates: Json[] = [];
+    try {
+      result = await this.request('session/load', {
+        sessionId: this.sessionId,
+        cwd: this.agentCwd,
+        mcpServers: this.#sessionMcp,
+        ...this.artifactPrompt(this.#sessionMcp),
+        ...this.extraFolders(),
+        ...this.claudeMeta(),
+      }, 180);
+    } finally {
+      updates = this.#reload?.updates ?? [];
+      this.#reload = null;
+    }
+    if (isDict(result)) {
+      withModelsOption(result);
+      Object.assign(this.settings, result);
+      withModelsOption(this.settings);
+    }
+    const outside = outsideTurns(updates, this.#lastUserText);
+    for (const params of outside.updates) {
+      this.#noteUserText(params);
+      this.recordedEvent('update', params);
+    }
+    this.elsewhere = null;
+    const n = outside.turns;
+    this.recordedEvent('studio_note', {
+      message: n ? `AIB took this chat back, with ${n} turn${n === 1 ? '' : 's'} from ${app} above.` : 'AIB took this chat back.',
+      sessionId: this.sessionId,
+      elsewhere: 'back',
+    });
+    log.info('chat %s: took %s back (%s outside turn(s) of %s replayed updates)', this.id, this.sessionId, n, updates.length);
+    this.onElsewhere?.(this, 'back');
+    void this.#queuePump(); // messages queued while it was away go now, one per turn
+    return n;
+  }
+
+  /** Remember the newest user message the agent shows (its consecutive user_message_chunk updates). */
+  #noteUserText(params: unknown): void {
+    const update = isDict(params) ? get(params, 'update', {}) as Json : {};
+    const kind = get(update, 'sessionUpdate');
+    const own = !this.sessionId || !isDict(params) || get(params, 'sessionId') === this.sessionId;
+    if (!own) return;
+    if (kind === 'user_message_chunk') {
+      const content = get(update, 'content', {}) as Json;
+      if (!this.#inUserText) this.#lastUserText = '';
+      this.#inUserText = true;
+      if (isDict(content) && content.type === 'text' && isStr(content.text)) this.#lastUserText += content.text;
+    } else if (kind === 'agent_message_chunk' || kind === 'agent_thought_chunk' || kind === 'tool_call') {
+      this.#inUserText = false;
+    }
+  }
+
+  async #probeSettings(timeoutSeconds: number): Promise<Json> {
     await this.initializeForDiscovery();
     const result = await this.request('session/new', { cwd: this.agentCwd, mcpServers: [] }, timeoutSeconds);
     if (!isDict(result)) throw new ValueError('The agent returned an invalid session response');
@@ -4284,6 +4513,11 @@ export class Connection {
       }
     }
     this.#refuseReadOnly();
+    // Open elsewhere: AIB let go of this chat. Sending takes it back when nobody else holds it; still held: nothing is sent.
+    if (this.elsewhere?.released && !this.closed) {
+      const back = await this.reclaim(false);
+      if (back.state === 'held') throw new HeldElsewhere(back.app || 'another app');
+    }
     if (this.closed || !this.ready || !this.sessionId) {
       throw new ValueError('This connection is not ready');
     }
@@ -4318,6 +4552,10 @@ export class Connection {
     };
     if (fileSummaries.length) userEvent.files = fileSummaries; // names, types, sizes and a bounded text preview; never the full content
     this.event('user', userEvent);
+    if (isStr(text) && pyStrip(text)) {
+      this.#lastUserText = text;
+      this.#inUserText = false;
+    }
     this.#lastPrompt = { seq, text, attachments };
     this.turn = this.#runTurn(
       seq,
@@ -4503,6 +4741,8 @@ export class Connection {
       this.#promptOut.set();
       this.#clearSettle();
       this.withdrawTurnRequests();
+      // open elsewhere: another app opened this chat during the turn; let go now, before the chat counts as idle (no prompt slips in)
+      if (this.elsewhere && !this.elsewhere.released && !this.#replaying) await this.tryRelease(true);
       await this.#finishTurn();
       await this.#queueAfterTurn();
       if (!this.#replaying) this.#scheduleSnapshot(); // quiet now (or skipped when the queue started the next turn)
@@ -5434,6 +5674,11 @@ export class Connection {
       this.queue.sendNow = false;
       this.queue.hold = '';
     }
+    if (this.elsewhere && this.queue.steer.length) {
+      // open elsewhere: AIB let go (or is about to): what still waits in the steer lane is kept in the queue, never sent elsewhere's way
+      const waiting = this.queue.steer.splice(0);
+      this.#steerToQueue(waiting, `Not sent: this chat is open in ${this.elsewhere.app}.`);
+    }
     this.#queueChanged();
     await this.#steerPump(); // the steer lane first: a message the agent could not take mid-turn goes now, as a prompt
     await this.#queuePump();
@@ -5445,7 +5690,7 @@ export class Connection {
       if (this.#replaying || this.rebuildError) return;
       const q = this.queue;
       if (
-        this.closed || !this.ready || this.busy || !this.sessionId || this.landing ||
+        this.closed || !this.ready || this.busy || !this.sessionId || this.landing || this.elsewhere ||
         q.inflight || !q.items.length || q.pauseReason() || q.steer.length // the steer lane goes first
       ) return;
       if (this.permissions.size || this.elicitations.size || this.auth) return;
@@ -6334,6 +6579,8 @@ export class Connection {
       busy: this.busy,
       closed: this.closed,
       error: this.error,
+      // open elsewhere: another app holds this chat; `released` once AIB let go of it (ownership/handoff.ts)
+      ...(this.elsewhere ? { elsewhere: { app: this.elsewhere.app, released: this.elsewhere.released } } : {}),
       settings: this.settings,
       queue: this.queue.public(light),
       // Steer-on-send: the composer keys on `steerable` alone; steerAgent picks the page's hint copy; the lane of messages sent

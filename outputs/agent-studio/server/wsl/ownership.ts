@@ -21,6 +21,7 @@ import type { WslHost } from './contract.ts';
 import { linkOf, wslTestHomeEnv } from './access.ts';
 import { CLIENT_TERMINAL_PREFIX } from '../acp/keeper_terminal.ts';
 import { type Assessment, type Reason, SUMMARIES, type Verdict } from '../ownership/probe.ts';
+import { appName, type Holder } from '../ownership/claude_sessions.ts';
 
 /** The pids of this AIB's own channels in a distro's Linux keeper that run an agent (live pipes, the agents' client terminals). */
 export async function wslOwnPids(host: WslHost, known: Iterable<number> = []): Promise<number[]> {
@@ -67,6 +68,31 @@ export async function wslOwnerCheck(
     return { owner, assessment: answer.assessment as unknown as Assessment };
   } catch {
     return null;
+  }
+}
+
+/**
+ * Open elsewhere (ownership/handoff.ts): which of these sessions a live Claude Code process in the distro holds that is not one of
+ * this AIB's (`exclude` and everything below them), read from Claude Code's session registry there. {} when the helper cannot tell
+ * (an older helper without the method: the chat just stays attached).
+ */
+export async function wslSessionsHeld(host: WslHost, sessionIds: string[], exclude: number[]): Promise<Record<string, Holder>> {
+  if (!sessionIds.length) return {};
+  try {
+    const answer = await host.call('sessions.held', { sessionIds: sessionIds.slice(0, 200), exclude, ...claudeDir() }, { timeoutMs: 10_000 });
+    const out: Record<string, Holder> = {};
+    const held = answer.held;
+    if (!held || typeof held !== 'object') return out;
+    for (const [sid, h] of Object.entries(held as Record<string, unknown>)) {
+      if (!sessionIds.includes(sid) || !h || typeof h !== 'object') continue;
+      const v = h as Record<string, unknown>;
+      if (!Number.isInteger(v.pid)) continue;
+      const entrypoint = typeof v.entrypoint === 'string' ? v.entrypoint.slice(0, 80) : '';
+      out[sid] = { pid: v.pid as number, entrypoint, status: typeof v.status === 'string' ? v.status.slice(0, 40) : '', app: appName(entrypoint) };
+    }
+    return out;
+  } catch {
+    return {};
   }
 }
 

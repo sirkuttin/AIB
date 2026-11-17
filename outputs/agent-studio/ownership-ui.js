@@ -92,8 +92,21 @@
       dismissCurrent = finish;
       box.textContent = '';
       box.className = 'ownership-prompt ownership-prompt-' + (blocked ? 'blocked' : 'confirm');
+      // Open elsewhere: Claude Code's session registry says another app has it open (VS Code's choice: Open here anyway)
+      const openElsewhere =
+        !blocked &&
+        ownership &&
+        Array.isArray(ownership.reasons) &&
+        ownership.reasons.some((r) => r && r.signal === 'session-registry');
       box.append(
-        make('h3', blocked ? 'This conversation is in use elsewhere' : 'Another app may be using this conversation'),
+        make(
+          'h3',
+          blocked
+            ? 'This conversation is in use elsewhere'
+            : openElsewhere
+              ? 'This conversation is open in another app'
+              : 'Another app may be using this conversation',
+        ),
       );
       if (ownership && typeof ownership.summary === 'string') box.append(make('p', ownership.summary));
       const list = make('ul', '', 'ownership-evidence');
@@ -107,7 +120,9 @@
           'p',
           blocked
             ? 'Stop it in that app first, then continue here. Nothing was opened or sent.'
-            : 'AIB cannot prove either way. Continuing while another app is also using the conversation can interleave or lose messages. Nothing has been opened or sent yet.',
+            : openElsewhere
+              ? 'Close it there first, or open it here anyway. Two apps writing to one chat can mix up its messages. Nothing has been opened or sent yet.'
+              : 'AIB cannot prove either way. Continuing while another app is also using the conversation can interleave or lose messages. Nothing has been opened or sent yet.',
           'ownership-advice',
         ),
       );
@@ -122,7 +137,7 @@
         if (dismiss.focus) dismiss.focus();
       } else {
         const cancel = make('button', 'Cancel', 'primary');
-        const go = make('button', 'Continue anyway', 'ownership-continue');
+        const go = make('button', openElsewhere ? 'Open here anyway' : 'Continue anyway', 'ownership-continue');
         cancel.type = 'button';
         go.type = 'button';
         cancel.onclick = () => finish(false);

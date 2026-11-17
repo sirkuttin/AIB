@@ -74,7 +74,9 @@ import {
   OwnershipEvidence,
   OwnershipProbe,
 } from '../ownership/probe.ts';
-import { mergeAssessment, wslOwnerCheck, wslOwnerHints, wslOwnPids } from '../wsl/ownership.ts';
+import { Handoff } from '../ownership/handoff.ts';
+import type { Holder } from '../ownership/claude_sessions.ts';
+import { mergeAssessment, wslOwnerCheck, wslOwnerHints, wslOwnPids, wslSessionsHeld } from '../wsl/ownership.ts';
 import { expandUser } from '../platform/pypath.ts';
 import { home, isdir, join, normcase, realpath } from '../platform/ospath.ts';
 import { Recovery, StateStore } from '../state/recovery.ts';
@@ -368,6 +370,8 @@ export class Studio {
   ownerProbe: OwnerProbe;
   readonly owners: OwnerRegistry | null;
   readonly probe: OwnershipProbe;
+  /** Open elsewhere (ownership/handoff.ts): lets go of a Claude chat another app opened, takes it back when the person returns. */
+  readonly handoff: Handoff;
   heartbeatSeconds = HEARTBEAT_SECONDS;
   readonly store: StateStore | null;
   readonly recovery: Recovery | null;
@@ -446,6 +450,11 @@ export class Studio {
       registry: this.owners,
       ownedByStudio: (provider, sessionId) => this.#studioOwns(provider, sessionId),
       ownPids: () => this.#ownAgentPids(),
+      liveHolder: (provider, sessionId) => this.handoff.savedHolder(provider, sessionId),
+    });
+    this.handoff = new Handoff({
+      connections: () => this.connections.values(),
+      wslHeld: (distro, sessionIds, chatPids) => this.#wslHeld(distro, sessionIds, chatPids),
     });
     const name = construct.port !== undefined && construct.port !== null ? construct.port : options.port ?? 0;
     // Recovery state is kept only when a state directory was configured explicitly.
@@ -635,8 +644,18 @@ export class Studio {
     return findExternalOwner(rows, provider, sessionId, own);
   }
 
+  /** A WSL chat's open-elsewhere check: its distro's helper reads Claude Code's session registry there ({} when it cannot). */
+  async #wslHeld(distro: string, sessionIds: string[], chatPids: number[]): Promise<Record<string, Holder>> {
+    try {
+      const host = readyHost(distro);
+      return await wslSessionsHeld(host, sessionIds, await wslOwnPids(host, chatPids));
+    } catch {
+      return {};
+    }
+  }
+
   announce(connection: Connection, state: string | null = null): void {
-    if (!this.owners || !connection.sessionId || connection.closed) return;
+    if (!this.owners || !connection.sessionId || connection.closed || connection.elsewhere?.released) return;
     this.owners.announce(connection.provider, connection.sessionId, connection.cwd, state || (connection.busy ? 'working' : 'ready'));
     if (this.#heartbeat === null && !this.#closed) {
       this.#heartbeat = setInterval(() => this.heartbeatTick(), this.heartbeatSeconds * 1000);
@@ -681,6 +700,17 @@ export class Studio {
   }
 
   #refuseByVerdict(verdict: Assessment, continueAnyway: boolean): Assessment {
+    // Open elsewhere: when the only strong sign is Claude Code's session registry (another app has it open), the person may open it
+    // here anyway, as VS Code offers; any other strong sign still refuses
+    const strongs = verdict.reasons.filter((r) => r.strength === 'strong');
+    if (verdict.verdict === 'owned_elsewhere' && strongs.every((r) => r.signal === 'session-registry')) {
+      if (continueAnyway) return verdict;
+      throw new OwnershipEvidence(
+        `${strongs[0].text} Close it there first, or open it here anyway (two apps writing to one chat can mix up its messages).`,
+        'possibly_active',
+        verdict,
+      );
+    }
     if (verdict.verdict === 'owned_elsewhere') {
       const strong = verdict.reasons.find((r) => r.strength === 'strong')!.text;
       throw new OwnershipEvidence(`${strong} Stop it in its current client before continuing here.`, 'session_in_use', verdict);
@@ -1448,6 +1478,7 @@ export class Studio {
           void this.limits.refresh(c); // chat opened: Codex / Vibe limits (at most once a minute per account)
           if (this.recovery) this.recovery.connectionReady(c);
           this.announce(c, 'ready');
+          this.handoff.refresh(); // its Claude config folder is watched from now on (open elsewhere)
           if (this.liveSync && !wsl) {
             try {
               await this.liveSync.chatOpened(c); // watch its project, catch it up on the user's saved edits
@@ -1499,6 +1530,17 @@ export class Studio {
           if (conn.provider === 'codex' && conn.subagentHooks?.subFolder) codexSub.removeSubagentFolder(conn.subagentHooks.subFolder);
         });
       if (conn.channel) this.#keeperNoLongerNeeded();
+      this.handoff.refresh();
+    };
+    // open elsewhere (ownership/handoff.ts): who else holds its session; letting go withdraws AIB's owner announcement
+    c.holderNow = () => this.handoff.holderNow(c);
+    queueMicrotask(() => this.handoff.refresh()); // a chat rebuilt from the keeper comes only through here (connect() refreshes again once ready)
+    c.onElsewhere = (conn, what) => {
+      if (!conn.sessionId) return;
+      if (what === 'released') {
+        this.probe.noteReleased(conn.provider, conn.sessionId);
+        this.owners?.withdraw(conn.provider, conn.sessionId);
+      } else this.announce(conn);
     };
     c.onTurnEnd = (conn) => this.turnEnded(conn);
     if (c.provider === 'codex' && this.subagents) { // a stopped turn stops its subagents (kept, never landed by themselves)
@@ -3242,7 +3284,10 @@ export class Studio {
       this.rememberOptions(connection);
       return [200, { ok: true, ...result }];
     } else if (name === 'cancel-pending') return [200, { ok: true, pendingChanges: connection.cancelPending(need(body, 'key')) }];
-    else if (name === 'session-op') {
+    else if (name === 'session-op' && body.op === 'open-here') {
+      // open elsewhere: Open here / Open here anyway on the chat's line (ownership/handoff.ts); nothing is sent to the agent but session/load
+      return [200, { ok: true, ...(await connection.reclaim(body.force === true)) }];
+    } else if (name === 'session-op') {
       const deletedRef = body.op === 'delete' ? [connection.provider, connection.sessionId] : null;
       const result = await sessionOp(connection as never, body);
       const payload: Json = { ok: true, ...result };
@@ -3335,6 +3380,7 @@ export class Studio {
     if (this.#closed) return;
     this.#closed = true;
     this.#untunnel?.();
+    this.handoff.close();
     if (this.deliberateStop && this.store) {
       for (const c of this.connections.values()) {
         if (!c.sessionId) continue;

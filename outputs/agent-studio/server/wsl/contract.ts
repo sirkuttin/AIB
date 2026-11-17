@@ -256,6 +256,14 @@ export interface HelperMethods {
     params: { provider: string; sessionId: string; cwd?: string; projectRoot?: string; exclude?: number[]; claudeDir?: string; releasedAgo?: number };
     result: { owner: number | null; assessment: Record<string, unknown> };
   };
+  /**
+   * Open elsewhere (ownership/handoff.ts): of `sessionIds`, the ones a live Claude Code process in the distro holds per Claude Code's
+   * session registry (<claudeDir>/sessions/<pid>.json), not counting `exclude` (AIB's own agent channels) and what runs below them.
+   */
+  'sessions.held': {
+    params: { sessionIds: string[]; exclude?: number[]; claudeDir?: string };
+    result: { held: Record<string, { pid: number; entrypoint: string; status: string }> };
+  };
   /** The conversation list's ownership hints of the distro's sessions (probe.hints, no registry) and its list certainty. */
   'ownership.hints': {
     params: { exclude?: number[]; claudeDir?: string };

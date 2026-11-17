@@ -1582,6 +1582,10 @@
         box.append(swarmButton(a, box, result));
         continue;
       }
+      if (a && (a.id === 'elsewhere-open' || a.id === 'elsewhere-force')) {
+        box.append(elsewhereButton(a, box, result));
+        continue;
+      }
       // another computer (remote-auth.js): resolving a merge clash is the PC's (worktree/clash is never remote)
       if (!a || !['keep-mine', 'leave'].includes(a.id) || window.AIBRemote) continue;
       const button = text('button', a.label || a.id, 'note-action');
@@ -1601,6 +1605,26 @@
     }
     box.append(result);
     return box;
+  }
+  /* Open elsewhere: Open here (take the chat back if no other app holds it) / Open here anyway (take it back regardless). */
+  function elsewhereButton(a, box, result) {
+    const button = text('button', a.label || 'Open here', 'note-action');
+    button.type = 'button';
+    button.addEventListener('click', async () => {
+      for (const b of box.querySelectorAll('button')) b.disabled = true;
+      result.textContent = '';
+      try {
+        const done = await post('session-op', { id: current, op: 'open-here', force: a.id === 'elsewhere-force' });
+        if (done?.state === 'held') {
+          result.textContent = 'Still open in ' + (done.app || 'another app') + '.';
+          for (const b of box.querySelectorAll('button')) b.disabled = false;
+        }
+      } catch (error) {
+        result.textContent = error.message || 'Failed';
+        for (const b of box.querySelectorAll('button')) b.disabled = false;
+      }
+    });
+    return button;
   }
   /* Swarm phase 1: the buttons on a helper's line in the main chat (Undo / Merge again of its merge, Open chat). */
   function swarmButton(a, box, result) {

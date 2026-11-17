@@ -23,6 +23,7 @@ import { commandList, commandOutput, handleGet } from '../../transcripts/monitor
 import type { Store } from '../../transcripts/store.ts';
 import { fetchProcesses, fetchProcessesPs, OwnershipProbe, type ProcInfo, ProcessSource } from '../../ownership/probe.ts';
 import { findExternalOwner } from '../../ownership/ownership.ts';
+import { holderOf, readRecords } from '../../ownership/claude_sessions.ts';
 import { descendants, refreshDescendants } from '../../platform/descendants.ts';
 import { type Killer, killVerified } from '../../platform/kill_verified.ts';
 import { BAD_PARAMS, type Handlers, RpcError, str } from './rpc.ts';
@@ -211,6 +212,28 @@ export function bgtaskMethods(ctx: BgtaskContext): Handlers {
       const cwd = str(p, 'cwd', true), projectRoot = str(p, 'projectRoot', true);
       const assessment = probe.assess(provider, sessionId, { cwd: cwd || null, projectRoot: projectRoot || null, skipCmdline: true, fresh: false });
       return { owner, assessment: { ...assessment } };
+    },
+
+    // open elsewhere (ownership/handoff.ts): which of these sessions a live Claude Code process here holds that is not AIB's own
+    // (`exclude` and everything below them, this helper's tree), from Claude Code's session registry (<claude dir>/sessions/<pid>.json)
+    'sessions.held': async (p) => {
+      const ids = Array.isArray(p.sessionIds) ? p.sessionIds.filter((s): s is string => typeof s === 'string' && s.length <= 200).slice(0, 200) : [];
+      if (!ids.length) return { held: {} };
+      const exclude = pidList(p, 'exclude', MAX_EXCLUDE);
+      const projects = claudeProjects(await ctx.env(), str(p, 'claudeDir', true));
+      const probe = probeFor(projects);
+      probe.ownPids = () => exclude;
+      const [snapshot] = probe.processes.get(0);
+      if (!snapshot) return { held: {} }; // liveness cannot be told: no evidence
+      const running = new Set(snapshot.map((x) => x.pid));
+      const own = probe.ownProcessIds(snapshot);
+      const records = readRecords(osp.dirname(projects)).filter((r) => running.has(r.pid) && (!r.pidDomain || r.pidDomain.startsWith('linux:')));
+      const held: Record<string, { pid: number; entrypoint: string; status: string }> = {};
+      for (const sid of ids) {
+        const h = holderOf(records, sid, own);
+        if (h) held[sid] = { pid: h.pid, entrypoint: h.entrypoint, status: h.status };
+      }
+      return { held };
     },
 
     'ownership.hints': async (p) => {

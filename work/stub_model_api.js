@@ -8,6 +8,7 @@
  *
  * Plain mode (the default): every reply is one text message. It echoes the history it was sent so a resume can be checked: when
  * any message in the request says "the codeword is X", the reply is "STUB codeword=X"; otherwise "STUB no codeword".
+ * In any mode, "STUB_WAIT=<seconds>" in the newest message holds the reply that long (at most 60 s), for a turn that is still running.
  *
  * Script mode (--script FILE.json): the model can call tools. The file is
  *   {"rules": [{"when": "<substring>", "in": "last" | "any" | "system", "once": true,
@@ -285,7 +286,16 @@ const server = http.createServer((req, res) => {
     const path = (req.url || '/').split('?')[0];
     const modelCall = req.method === 'POST' && (/\/messages$/.test(path) || /\/responses$/.test(path));
     const said = modelCall ? answer(body, raw) : null;
-    log({ at: Date.now(), method: req.method, path, codeword: codewordIn(raw), tools: toolNames(body), rule: said ? said.rule : null, last: part(body, raw, 'last').slice(-400) });
+    const last = part(body, raw, 'last');
+    log({ at: Date.now(), method: req.method, path, codeword: codewordIn(raw), tools: toolNames(body), rule: said ? said.rule : null, last: last.slice(-400) });
+    // "STUB_WAIT=<seconds>" in the newest message holds a model reply that long (at most 60 s): a turn that is still running
+    const wait = modelCall ? Math.min(60, Number((/STUB_WAIT=(\d+)/.exec(last) || [])[1] || 0)) : 0;
+    setTimeout(() => reply(req, res, path, body, raw, said), wait * 1000);
+  });
+});
+
+function reply(req, res, path, body, raw, said) {
+  {
     if (req.method === 'POST' && /\/messages\/count_tokens$/.test(path)) {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ input_tokens: 10 }));
@@ -302,8 +312,8 @@ const server = http.createServer((req, res) => {
       res.writeHead(404, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ error: { type: 'not_found', message: `stub has no ${req.method} ${path}` } }));
     }
-  });
-});
+  }
+}
 
 server.listen(PORT, '127.0.0.1', () => {
   process.stdout.write(`STUB_PORT=${server.address().port}\n`);
