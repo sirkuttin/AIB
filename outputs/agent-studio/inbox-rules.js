@@ -33,7 +33,9 @@
   const TOOL_CAP_SECONDS = 60 * 60; // a tool call in progress counts as work this long at most (the helpers' cap)
   // The stall signals that make a row (Inbox v3.1 phase 2): S1 'died' (the agent's output ended mid-turn: can't misfire), S2
   // 'silent_end' (the turn ended with no final message) and S3 'quiet' (no output for QUIET_SECONDS while working with nothing
-  // running) are on only as far as the keeper-journal check allowed (see the commit and the build report for the numbers).
+  // running) passed the log check (2026-11-16, read-only, the owner's keeper journals Nov 11-16 and AIB's event history Nov 14-16:
+  // about 85 turns, S2 0 flags, S3 0 flags, so 0 misfires a day against the bar of under 1). A small sample: re-run the check
+  // with the same rules when more history exists, and drop a kind from this list if it misfires.
   const STALL_ON = ['died', 'silent_end', 'quiet'];
   const BLOCKED = ['needs_you', 'failed', 'asks', 'stalled'];
 
@@ -398,12 +400,18 @@
       { id: 'tomorrow', label: 'Tomorrow 9:00', until: tomorrowNine(now) },
     ];
   }
+  // A chat's attention facts for the rows: a closed connection (or a chat only its marks know) reads as closed, keeping its stall
+  // facts (an agent that died mid-turn: S1).
+  function attentionOf(c) {
+    const a = c && c.attention && typeof c.attention === 'object' ? c.attention : {};
+    return c && c.live ? a : Object.assign({}, a, { state: 'closed' });
+  }
   // One chat's row, or null (nothing for the inbox). now: epoch seconds.
   function rowOf(c, now) {
     const x = c && typeof c === 'object' ? c : {};
     const m = x.mark && typeof x.mark === 'object' ? x.mark : {};
     if (m.archivedAt || m.deletedAt) return null;
-    const a = x.live && x.attention && typeof x.attention === 'object' ? x.attention : { state: 'closed' };
+    const a = attentionOf(x);
     const phase = phaseOf(a, m, now);
     const stall = phase === 'stalled' ? stallOf(a, m) : null;
     const project = x.project && typeof x.project === 'object' ? x.project : {};
@@ -509,7 +517,7 @@
       if (!c || typeof c !== 'object') continue;
       const m = c.mark || {};
       if (m.archivedAt || m.deletedAt) continue;
-      const a = c.live && c.attention ? c.attention : { state: 'closed' };
+      const a = attentionOf(c);
       if (phaseOf(a, m, now) === 'working') {
         busy.add(c.key);
         busyProjects.add((c.project && c.project.key) || '');

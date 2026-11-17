@@ -90,7 +90,7 @@ export interface BlockedChat {
 /** What the watcher reads besides the agent host (the web context's stores). */
 export interface WatchSources {
   host: Pick<LiveBackend, 'liveList' | 'liveState' | 'busyConnections'>;
-  conversations: Pick<ConversationState, 'public'>;
+  conversations: Pick<ConversationState, 'public'> & Partial<Pick<ConversationState, 'setInbox'>>;
   projectPrefs: Pick<ProjectPrefs, 'public'>;
   viewPrefs: Pick<ViewPrefs, 'public'>;
   /** First prompts of chats with no other title (remote/payloads.ts TitleCache), when there is one. */
@@ -309,6 +309,28 @@ export class AttentionWatcher {
       if (since === undefined) this.#settling.set(fk, this.clock());
       return since !== undefined && this.clock() - since >= (this.options.settleMs ?? SETTLE_MS);
     };
+    // Inbox v3.1 stalled: a stall the agent host reports (died mid-turn, or ended without a final message) is saved in the chat's
+    // mark, so the row outlives a connection that leaves the list. Only once per stall (its time).
+    for (const c of connections) {
+      const a = obj(c.attention);
+      const kind = str(a.stallKind, 20);
+      const at = INBOX.secondsOf(a.stalledAt);
+      if (!at || (kind !== 'died' && kind !== 'silent_end') || !this.sources.conversations.setInbox) continue;
+      const provider = str(c.provider, 60), sessionId = str(c.sessionId, 300);
+      if (!provider || !sessionId) continue;
+      const m = obj(marks[`${provider}:${sessionId}`]);
+      if (Math.abs((Number(m.stalledAt) || 0) - at) < 1) continue;
+      if ((Number(m.handledAt) || 0) >= at) continue; // already acted on
+      try {
+        await this.sources.conversations.setInbox(provider, sessionId, { stalledAt: at, stallKind: kind, stallStep: str(a.stallStep, 200) }, {
+          title: this.title(c, names, marks),
+          cwd: str(c.cwd, 1024),
+          projectRoot: str(c.projectRoot, 1024),
+        });
+      } catch (error) {
+        log.info('attention: could not save a stall (%s)', error instanceof Error ? error.message : error);
+      }
+    }
     for (const c of connections) {
       const id = str(c.id, 100);
       if (!id || c.closed) continue;
@@ -349,6 +371,10 @@ export class AttentionWatcher {
       }
       const ended = attention.turnEndedAt;
       const turnKey = typeof ended === 'string' && ended ? `turn|${key}|${ended}` : '';
+      if (phase === 'stalled') {
+        if (turnKey) quiet.push(turnKey); // its turn did not finish: the stall is the news (below, from the inbox's rows)
+        continue;
+      }
       if (phase === 'failed' || phase === 'asks') {
         // The agent reported a failure, or its reply asks you something: news like a request (and its turn is not "finished")
         const at = str(phase === 'failed' ? attention.failedAt : attention.asksAt, 40);
@@ -395,6 +421,22 @@ export class AttentionWatcher {
       if (!settled(fk)) continue;
       if (RULES.notifies('turn', flags)) news.push({ key, chat: id, kind: 'turn', title: title(), reason: 'finished', fk, flags, project });
       else quiet.push(fk);
+    }
+    // one notification per stall (key stall|<chat>|<when it stopped>), through the Needs-you route, with the row's line 1
+    for (const r of inbox?.rows ?? []) {
+      if (r.kind !== 'stalled' || !r.stall) continue;
+      const fk = `stall|${r.key}|${Math.round(r.stall.at)}`;
+      if (this.fired.has(fk) || news.some((n) => n.fk === fk)) continue;
+      if (!(r.stall.at >= Math.floor(this.fired.since) - 1) || nowSeconds - r.stall.at > TURN_FRESH_SECONDS) {
+        quiet.push(fk); // a stall from before this AIB watched
+        continue;
+      }
+      const conn = connections.find((c) => chatKey(c) === r.key && !c.closed);
+      const m = obj(marks[r.key]);
+      const flags = RULES.flags(this.facts(conn ?? { provider: r.provider, sessionId: r.key.slice(r.key.indexOf(':') + 1), cwd: m.cwd, projectRoot: m.projectRoot }, marks), prefs);
+      if (RULES.notifies('needs', flags)) {
+        news.push({ key: r.key, chat: r.id, kind: 'needs', title: r.title, reason: 'stalled', fk, flags, project: r.project.name, what: r.what });
+      } else quiet.push(fk);
     }
     if (inbox) {
       for (const r of inbox.rows) {

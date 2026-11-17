@@ -1604,6 +1604,30 @@
       drawInbox();
     }
   }
+  // Continue on a stalled row (Inbox v3.1): the server stops a quiet turn first, opens a chat whose agent died again, and sends
+  // "Continue where you left off." The row shows Sending… and then leaves.
+  async function continueQuick(key) {
+    const s = qs(key);
+    if (s.busy || !host.postJson) return;
+    const keys = rowKeys();
+    s.busy = true;
+    s.error = '';
+    drawInbox();
+    try {
+      const r = await host.postJson('inbox/act', { key, action: 'continue' });
+      takeInbox(r);
+      quick.delete(key);
+      gone.set(key, Date.now());
+      if (host.reload) host.reload();
+      pullInbox(true);
+      drawInbox();
+      focusNeighbour(keys, key);
+    } catch (e) {
+      s.busy = false;
+      s.error = (e && e.message) || 'Continue could not be sent.';
+      drawInbox();
+    }
+  }
   async function answerQuick(key, item, b) {
     const s = qs(key);
     if (!item || !item.liveId) {
@@ -2008,6 +2032,15 @@
         if (s.queued) acts.append(el('span', 'Queued', 'ws-qa-note ws-qa-queued'));
         acts.append(replyBtn(false));
         acts.append(quietBtn('×', 'ws-qa-read push', 'Mark as read (E)', () => markDone(r.key)));
+      } else if (r.reason === 'stalled') {
+        // Continue / Reply / Mark handled: never Retry (half the work is done already)
+        const ct = actBtn(s.busy ? 'Sending…' : 'Continue', 'ws-qa-continue def', 'Send “Continue where you left off.”');
+        ct.disabled = s.busy;
+        ct.onclick = (e) => {
+          if (e && e.stopPropagation) e.stopPropagation();
+          continueQuick(r.key);
+        };
+        acts.append(ct, replyBtn(false), handledBtn());
       } else if (r.reason === 'failed') {
         // Retry / Reply / Mark handled; another agent stays reachable in the chat itself
         const rt = actBtn(s.busy ? 'Sending…' : 'Retry', 'ws-qa-retry def', 'Send your last message again (text only; attachments are not resent)');

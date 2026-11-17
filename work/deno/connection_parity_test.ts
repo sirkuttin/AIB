@@ -253,7 +253,7 @@ const DROP = new Set([
  * turnEndedAt, busySince}); the rules behind these live in one file (inbox-rules.js), covered by work/test_inbox_rules.js and
  * work/deno/inbox_facts_test.ts. Dropped only from attention objects ('error' is also a snapshot key).
  */
-const INBOX_FACTS = new Set(['phase', 'helpers', 'shells', 'followUntil', 'failedAt', 'error', 'failKind', 'asksAt', 'question']);
+const INBOX_FACTS = new Set(['phase', 'helpers', 'shells', 'followUntil', 'failedAt', 'error', 'failKind', 'asksAt', 'question', 'lastOutputAt', 'stalledAt', 'stallKind', 'stallStep']);
 const isAttention = (o: Json) => 'needs' in o && 'state' in o && 'phase' in o;
 
 /** Same shape with times dropped, random keys and terminal ids numbered in order of appearance, the temp folder replaced, the connection id gone. */

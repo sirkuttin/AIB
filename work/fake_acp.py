@@ -467,6 +467,29 @@ def held_turn(key, text):
         waiting['permission'] = key
         emit({'id': 'approve-test', 'method': 'session/request_permission', 'params': {'sessionId': SID(), 'toolCall': {'title': 'Fixture approval', 'toolCallId': 'fake-tool'}, 'options': [{'optionId': 'yes', 'name': 'Allow once', 'kind': 'allow_once'}, {'optionId': 'no', 'name': 'Reject', 'kind': 'reject_once'}]}})
         return
+    # Inbox v3.1 stalled (work/deno/inbox_stalled_test.ts): 'silent:<title>' ends its turn right after a tool call, with no final
+    # words; 'die:<title>' starts a tool call and exits mid-turn; 'quiet:<gate>' makes one tool call, then sends nothing at all
+    # until <gate> exists, then ends with a reply.
+    if text.startswith('silent:') or text.startswith('die:') or text.startswith('quiet:'):
+        verb, _, rest = text.partition(':')
+        title = rest if verb != 'quiet' else 'Read server/main.ts'
+        update({'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': 'Working on it.'}})
+        update({'sessionUpdate': 'tool_call', 'toolCallId': 'stall-' + verb, 'title': title, 'kind': 'execute', 'status': 'in_progress'})
+        if verb == 'die':
+            sys.stdout.flush()
+            os._exit(3)
+        update({'sessionUpdate': 'tool_call_update', 'toolCallId': 'stall-' + verb, 'status': 'completed'})
+        if verb == 'silent':
+            result(key, {'stopReason': 'end_turn'})
+            return
+        def wake(turn_key=key, path=rest):
+            deadline = time.time() + 300
+            while not os.path.exists(path) and time.time() < deadline:
+                time.sleep(0.02)
+            update({'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': 'Fixture reply: awake'}})
+            result(turn_key, {'stopReason': 'end_turn'})
+        threading.Thread(target=wake, daemon=True).start()
+        return
     if text.startswith('gate:'):   # a turn that ends (reply, result) once the test creates the named file
         def open_gate(turn_key=key, path=text[5:]):
             deadline = time.time() + 300
