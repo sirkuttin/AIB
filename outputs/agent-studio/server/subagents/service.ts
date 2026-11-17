@@ -744,6 +744,28 @@ export class SubagentWorktrees {
   }
   readonly #activity = new Map<string, { at: number; value: Record<string, SubagentActivity> }>();
 
+  /**
+   * The chat's subagent `agentId` works in a worktree of its own (AIB's, or the user's hook's that AIB verified), not in the chat's
+   * folder: a landing there can't touch its files, so it never keeps the parent from being idle for one (connection.ts
+   * landingIdleReason). Cached a second (asked per landing try and per folder-chats call).
+   */
+  isolated(chatId: string, agentId: string): boolean {
+    if (!agentId) return false;
+    const t = Date.now();
+    let hit = this.#isolated.get(chatId);
+    if (!hit || t - hit.at >= 1000) {
+      const ids = new Set<string>();
+      for (const r of this.ofChat(chatId)) {
+        if (!r.agentId || !['running', 'done', 'stopped', 'user-hook'].includes(r.state)) continue;
+        if (r.userHook ? r.adopted?.verified === true : !!r.path) ids.add(r.agentId);
+      }
+      this.#isolated.set(chatId, hit = { at: t, ids });
+      if (this.#isolated.size > 100) this.#isolated.delete(this.#isolated.keys().next().value!);
+    }
+    return hit.ids.has(agentId);
+  }
+  readonly #isolated = new Map<string, { at: number; ids: Set<string> }>();
+
   /** The worktree a subagent of this chat works in, by the Agent call's tool_use_id (allow-rule parity, design 2.4). */
   worktreeOf(chatId: string, toolUseId: string): string | null {
     if (!toolUseId) return null;

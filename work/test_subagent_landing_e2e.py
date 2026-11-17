@@ -131,7 +131,7 @@ def git_log(project):
 class Aib:
     """A real AIB with one Claude chat in a temp git project, driven turn by turn."""
 
-    def __init__(self, test, rules, setup=None):
+    def __init__(self, test, rules, setup=None, seed=None):
         temp = pathlib.Path(tempfile.mkdtemp(prefix='aib-sr2-'))
         test.addCleanup(shutil.rmtree, temp, True)
         self.test, self.temp = test, temp
@@ -155,6 +155,8 @@ class Aib:
         (temp / 'tmp').mkdir(exist_ok=True)
         RealClaudeFixture.stub = self.stub
         self.fx = Fixture(test)
+        if seed:  # state left from before AIB starts (fx.state exists, nothing runs yet)
+            seed(self)
         self.web = self.fx.start_web()
         status, connection = self.web.post('connect', {'provider': 'claude', 'cwd': str(self.project), 'background': True})
         test.assertEqual(status, 200, connection)

@@ -67,6 +67,25 @@ export const LANDING_WAIT_NOTE_S = 600;
 /** Merge refusals a later try may not meet (git busy, the branch moving, a chat in the folder working). */
 const RETRY_CODES = new Set(['busy', 'locked', 'moving', 'ff_failed', 'folder_busy', 'running', 'stash_failed', 'failed']);
 
+/** A finished subagent with no changes whose chat is not open goes this long after its end (#dropEmptyOrphan). */
+export const ORPHAN_EMPTY_S = 30 * 60;
+
+/**
+ * A subagent's worktree is exactly its snapshot S: HEAD (and its branch) at S, nothing changed, staged or untracked. A worktree that is
+ * gone counts when its branch is at S or gone too (nothing of it is anywhere). False whenever git can't say.
+ */
+export async function subagentUnchanged(rec: { path: string; folder: string; branch: string; snapshot: string }): Promise<boolean> {
+  if (!rec.snapshot || !rec.folder || !wt.lexists(rec.folder)) return false;
+  const branchAt = await wt.git(['rev-parse', '-q', '--verify', `refs/heads/${rec.branch}`], rec.folder, { check: false });
+  const tip = branchAt.returncode === 0 ? pyStr(branchAt.stdout).trim() : '';
+  if (tip && tip !== rec.snapshot) return false;
+  if (!rec.path || !wt.lexists(rec.path)) return true;
+  const head = await wt.git(['rev-parse', 'HEAD'], rec.path, { check: false });
+  if (head.returncode !== 0 || pyStr(head.stdout).trim() !== rec.snapshot) return false;
+  const status = await wt.git(['status', '--porcelain', '--untracked-files=all', '--ignored=no'], rec.path, { check: false });
+  return status.returncode === 0 && pyStr(status.stdout).trim() === '';
+}
+
 /** A helper of a chat that works in the project folder: it lands on the folder's branch, queued, with no stash (build plan 2b). */
 export const folderParent = (h: Helper) => !!h.worktree?.landOn;
 
@@ -844,7 +863,10 @@ export class Swarm {
   async #reconcileSubagents(subs: SubagentRecord[], chats: Json[], byLasting: Map<string, Json>): Promise<void> {
     for (const rec of subs) {
       const parent = chats.find((c) => c.id === rec.chat) ?? (rec.lasting ? byLasting.get(rec.lasting) : undefined);
-      if (!parent) continue; // its chat is not open here: it waits (keeper-held chats are listed once taken over)
+      if (!parent) { // its chat is not open here: it waits (keeper-held chats are listed once taken over); one with no changes goes
+        await this.#dropEmptyOrphan(rec).catch((error) => log.exception(error, 'Removing empty subagent %s failed', rec.id));
+        continue;
+      }
       const ended = s(obj(parent.attention).turnEndedAt);
       const h = this.registry.get(rec.id);
       if (h) {
@@ -867,6 +889,25 @@ export class Swarm {
         log.exception(error, 'Taking up subagent %s for landing failed', rec.id);
       }
     }
+  }
+
+  /**
+   * A finished subagent whose parent is not open here (closed, or a leftover from before an update) and that changed nothing: nothing
+   * would ever land, so its worktree, branch and record go without waiting for the parent (nothing in the parent's folder changes, so
+   * no landing lock is needed). Only one that finished ORPHAN_EMPTY_S ago (a keeper-held parent may still continue it while AIB is
+   * away), AIB's own worktree (never the user's hook's), and only when git says it is exactly its snapshot S, untracked files included.
+   */
+  async #dropEmptyOrphan(rec: SubagentRecord): Promise<void> {
+    if (rec.state !== 'done' || rec.userHook || !rec.snapshot || !rec.branch) return;
+    if (this.clock() / 1000 - (rec.doneAt ?? rec.createdAt) < ORPHAN_EMPTY_S) return;
+    const h = this.registry.get(rec.id);
+    if (h && (this.#working.has(rec.id) || (h.landing && h.landing.stage !== 'queued'))) return;
+    if (!(await subagentUnchanged(rec))) return;
+    log.info('swarm: subagent %s (%s) finished with no changes and its chat is not open; removing its worktree', rec.id, rec.branch);
+    if (h) {
+      await this.registry.update(rec.id, (cur) => (cur ? { ...cur, landing: null, state: 'merged', sub: { ...cur.sub!, empty: true, files: 0 } } : null));
+    }
+    await this.#release(h ?? ({ id: rec.id, sub: { record: rec.id } } as unknown as Helper));
   }
 
   async #adoptSubagent(rec: SubagentRecord, parent: Json, ended: string): Promise<void> {
