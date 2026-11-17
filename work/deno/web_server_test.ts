@@ -109,6 +109,8 @@ Deno.test('the route table is exactly the Python web server\'s (paths, scopes an
     'POST /api/live/chat-name',
     'POST /api/live/page-session',
     'GET /api/live/idle',
+    'GET /api/live/inbox', // the server-built inbox (Inbox v3.1)
+    'POST /api/live/inbox/act',
   ]);
   const denoOnly = new Set(DENO_ONLY.map(([m, p]) => `${m} ${p}`));
   // The other exception: the monitor page (its files, /api/bootstrap and /api/activity) the app removed; the frozen Python

@@ -17,7 +17,9 @@
   };
   const POLL_MS = 5 * 60 * 1000,
     FAST_POLL_MS = 2000,
-    FIRST_POLL_MS = 3000;
+    FIRST_POLL_MS = 3000,
+    FEED_FOCUS_MS = 15000, // a test build's feed read on window focus: at most this often
+    FEED_POLL_MS = 60 * 1000; // a test build (reads its local feed every 2 minutes): the page asks for the status this often
 
   // ---- pure: what to show ---------------------------------------------------------------------------------------------
   // The button for a status. notice: what the last click led to ({kind: 'installing', chats} | {kind: 'error', text}), or null.
@@ -177,7 +179,8 @@
         S.cards.delete(c);
         continue;
       }
-      fillCard(c.box, c.opts);
+      if (c.remote) fillRemoteCard(c.box);
+      else fillCard(c.box, c.opts);
     }
   }
   function paint() {
@@ -224,7 +227,7 @@
     S.status = st;
     if (st && st.state !== 'ready') S.notice = null;
     paint();
-    schedule(st && st.checking ? FAST_POLL_MS : POLL_MS);
+    schedule(st && st.checking ? FAST_POLL_MS : st && st.feed ? FEED_POLL_MS : POLL_MS);
     return st;
   }
   function refresh() {
@@ -360,7 +363,34 @@
       ),
     );
   }
+  // A paired computer's Settings card: the PC's version and Check for updates (the toggle is the PC's own setting).
+  function fillRemoteCard(box) {
+    box.replaceChildren();
+    const up = R.update;
+    const pc = rPc();
+    const line = !up
+      ? 'Loading…'
+      : up.checking
+        ? 'Checking…'
+        : up.state === 'ready'
+          ? 'AIB ' + up.version + ' is downloaded and verified on ' + pc + '. Use Update ready at the top right.'
+          : up.error || 'AIB on ' + pc + ' is ' + up.current + '.';
+    const row = el('div', null, 'st-row');
+    const b = el('button', 'Check for updates');
+    b.type = 'button';
+    b.id = 'updateRemoteCheck';
+    b.disabled = !!(up && up.checking);
+    b.addEventListener('click', () => void rCheck());
+    row.append(b);
+    box.append(row, el('p', line, 'st-note'), el('p', 'The check runs on ' + pc + '. Updates install only after a click.', 'st-note'));
+  }
   function renderCard(box, opts) {
+    if (R.on) {
+      const c = { box, opts, remote: true };
+      S.cards.add(c);
+      fillRemoteCard(box);
+      return;
+    }
     const c = { box, opts };
     S.cards.add(c);
     fillCard(box, opts);
@@ -369,8 +399,9 @@
 
   // host: {get(path), post(name, body)}.
   function init(host) {
-    // another computer (remote-auth.js): AIB's updates are the PC's (its Update button, What's new); nothing to poll here
-    if (root.AIBRemote && root.AIBRemote.kind === 'pc') return;
+    // another computer (remote-auth.js): the PC's update, seen and started from here (remote/update.ts); never the PC's own
+    // What's new or Settings card
+    if (root.AIBRemote && root.AIBRemote.kind === 'pc') return initRemote();
     S.host = host;
     const d = doc();
     paintButton();
@@ -388,10 +419,275 @@
         closePop();
       });
     }
+    // A test build reads its local test feed (no network) when the window gets focus too: a new test build shows up at once.
+    if (root.addEventListener) root.addEventListener('focus', feedOnFocus);
     schedule(FIRST_POLL_MS);
+  }
+  let feedAskedAt = 0;
+  function feedOnFocus() {
+    if (!S.host || !S.status || !S.status.feed || S.status.checking) return;
+    const now = Date.now();
+    if (now - feedAskedAt < FEED_FOCUS_MS) return;
+    feedAskedAt = now;
+    Promise.resolve(S.host.post('update/check', { feed: true })).then(
+      () => schedule(FAST_POLL_MS),
+      () => {},
+    );
+  }
+
+  // ---- a paired computer's page (remote-auth.js): the PC's update from here ---------------------------------------------------
+  // The strip shows a calm "Update ready · <version>"; a click opens a row under it with the notes and Update, which asks first
+  // in the row ("Restart AIB on <PC> to update? Chats keep running." Update / Cancel). Across the restart the strip and the offline
+  // bar say "Updating AIB on <PC>…"; the page retries by itself (remote-auth.js) and, once the new AIB answers, shows
+  // "Updated to <version>" and loads the new version's page. Still away after 2 minutes: "AIB hasn't come back yet on <PC>".
+  const REMOTE_LATE_MS = 120000,
+    REMOTE_POLL_MS = 60000,
+    REMOTE_FAST_MS = 3000,
+    DONE_KEY = 'aib-remote-updated';
+  // Pure: what the strip and the row say. r: {phase: ''|'confirm'|'updating'|'done'|'failed', from, to, at, msg, whenIdle};
+  // update: GET /api/remote/update's update; canSend: the Send switch. null: nothing to show.
+  function remoteView(r, update, pcName, canSend, now) {
+    const pc = pcName || 'the PC';
+    if (r.phase === 'updating') {
+      return now - r.at >= REMOTE_LATE_MS
+        ? { kind: 'late', label: 'AIB hasn’t come back yet on ' + pc, note: 'This page keeps trying. If it stays like this, open AIB on the PC.' }
+        : { kind: 'updating', label: 'Updating AIB on ' + pc + '…', note: 'Chats keep running. This page comes back by itself.' };
+    }
+    if (r.phase === 'done') return { kind: 'done', label: 'Updated to ' + r.to, note: '' };
+    if (r.phase === 'failed') return { kind: 'failed', label: 'AIB on ' + pc + ' is back, still on ' + r.to, note: 'The update did not install.' };
+    if (!update || update.state !== 'ready' || !update.version) return null;
+    if (r.phase === 'confirm') return { kind: 'confirm', label: 'Update ready · ' + update.version, text: 'Restart AIB on ' + pc + ' to update? Chats keep running.', note: r.msg || '' };
+    const note = r.msg
+      ? r.msg
+      : update.installWhenIdle
+        ? 'It installs when the chats finish.'
+        : !update.canInstall
+          ? 'Install it on ' + pc + '.'
+          : !canSend
+            ? 'Updating from here needs the Send switch (AIB on ' + pc + ' → Settings → Remote control).'
+            : '';
+    return { kind: 'ready', label: 'Update ready · ' + update.version, note, go: !!(update.canInstall && canSend && !update.installWhenIdle) };
+  }
+  const R = { on: false, update: null, phase: '', from: '', to: '', at: 0, msg: '', whenIdle: false, open: false, notes: null, sawDown: false, timer: null };
+  const remote = () => root.AIBRemote || {};
+  const rPc = () => (typeof remote().pcName === 'function' ? remote().pcName() : 'the PC');
+  const rCan = () => (typeof remote().can === 'function' ? !!remote().can('phone.prompt') : false);
+  async function rCall(method, path, body) {
+    const init = { method, headers: { 'Content-Type': 'application/json' }, cache: 'no-store' };
+    if (body !== undefined) init.body = JSON.stringify(body);
+    const res = await root.fetch(path, init); // remote-auth.js adds this computer's key; offline: 503 at once
+    let data = {};
+    try {
+      data = await res.json();
+    } catch {
+      data = {};
+    }
+    return { status: res.status, data };
+  }
+  function rSchedule(ms) {
+    root.clearTimeout(R.timer);
+    R.timer = root.setTimeout(rRefresh, ms);
+  }
+  async function rRefresh() {
+    let r = null;
+    try {
+      r = await rCall('GET', '/api/remote/update');
+    } catch {
+      r = null;
+    }
+    if (r && r.status === 200 && r.data.update) {
+      const up = r.data.update;
+      R.update = up;
+      if (R.phase === 'updating' && up.current && up.current !== R.from) {
+        R.phase = 'done';
+        R.to = up.current;
+        if (remote().setNote) remote().setNote('');
+        try {
+          root.sessionStorage.setItem(DONE_KEY, JSON.stringify({ to: up.current, at: Date.now() }));
+        } catch {
+          /* no session storage: the line just goes with the reload */
+        }
+        rPaint();
+        // the new version's page (its scripts match the server that answers now)
+        root.setTimeout(() => (R.reload || (() => root.location.reload()))(), 3000);
+        return;
+      }
+      if (R.phase === 'updating' && R.sawDown && up.current === R.from) {
+        R.phase = 'failed';
+        R.to = up.current;
+        if (remote().setNote) remote().setNote('');
+      }
+    } else if (R.phase === 'updating') R.sawDown = true; // AIB is away (restarting)
+    if (R.phase === 'updating' && remote().setNote) remote().setNote(remoteView(R, R.update, rPc(), rCan(), Date.now()).label);
+    rPaint();
+    rSchedule(R.phase === 'updating' ? REMOTE_FAST_MS : R.update && R.update.checking ? REMOTE_FAST_MS : REMOTE_POLL_MS);
+  }
+  function rPaint() {
+    const b = buttonNode();
+    if (!b.parentNode) attach(doc().getElementById('chatTabs'));
+    const v = remoteView(R, R.update, rPc(), rCan(), Date.now());
+    b.hidden = !v;
+    b.dataset.action = v ? 'remote' : 'none';
+    b.dataset.update = v ? v.kind : '';
+    b.textContent = v ? v.label : 'Update';
+    b.title = v ? v.label + (v.note ? '. ' + v.note : '') : '';
+    b.setAttribute('aria-label', b.title || 'Update AIB');
+    b.disabled = !!v && (v.kind === 'updating' || v.kind === 'late');
+    b.classList.toggle('waiting', !!v && v.kind !== 'ready' && v.kind !== 'confirm');
+    if (!v || !R.open) closePop();
+    else rRow(v);
+    paintCards();
+  }
+  // The row under the strip's line: notes, Update; the confirm; never a dialog of the browser.
+  function rRow(v) {
+    closePop();
+    const b = buttonNode();
+    const p = el('div', null, 'upd-pop upd-row');
+    p.id = 'updatePopover';
+    p.setAttribute('role', 'region');
+    p.setAttribute('aria-label', 'Update AIB on ' + rPc());
+    const x = el('button', '×', 'upd-pop-x');
+    x.type = 'button';
+    x.setAttribute('aria-label', 'Close');
+    x.addEventListener('click', () => {
+      R.open = false;
+      if (R.phase === 'confirm') R.phase = '';
+      rPaint();
+    });
+    p.append(x, el('p', v.kind === 'confirm' ? v.text : v.label, 'upd-pop-text'));
+    if (v.note) p.append(el('p', v.note, 'upd-pop-note'));
+    const row = el('div', null, 'upd-row-btns');
+    const btn = (text, id, fn, quiet) => {
+      const n = el('button', text, quiet ? 'upd-row-btn quiet' : 'upd-row-btn');
+      n.type = 'button';
+      n.id = id;
+      n.addEventListener('click', fn);
+      row.append(n);
+    };
+    if (v.kind === 'ready' && v.go)
+      btn('Update', 'updateRemoteGo', () => {
+        R.phase = 'confirm';
+        R.msg = '';
+        rPaint();
+      });
+    if (v.kind === 'confirm') {
+      btn('Update', 'updateRemoteYes', () => rInstall());
+      btn(
+        'Cancel',
+        'updateRemoteNo',
+        () => {
+          R.phase = '';
+          R.msg = '';
+          R.whenIdle = false;
+          rPaint();
+        },
+        true,
+      );
+    }
+    if (row.childNodes.length) p.append(row);
+    if (v.kind === 'ready' || v.kind === 'confirm') {
+      const notes = el('div', null, 'upd-row-notes');
+      notes.id = 'updateRemoteNotes';
+      if (!R.notes) notes.append(el('p', 'Loading what’s new…', 'upd-pop-note'));
+      else if (!R.notes.length) notes.append(el('p', 'No notes for this version.', 'upd-pop-note'));
+      for (const n of R.notes || []) notes.append(el('h4', 'AIB ' + n.version, 'upd-row-ver'), el('p', n.body, 'upd-row-body'));
+      p.append(notes);
+    }
+    (doc().body || doc().documentElement).append(p);
+    if (typeof b.getBoundingClientRect === 'function') {
+      const r = b.getBoundingClientRect(),
+        w = root.innerWidth || 0;
+      p.style.top = Math.round(r.bottom + 6) + 'px';
+      p.style.right = Math.max(8, Math.round(w - r.right)) + 'px';
+    }
+    b.setAttribute('aria-expanded', 'true');
+    S.pop = { node: p, text: v.label };
+  }
+  async function rOpen() {
+    if (R.open) {
+      R.open = false;
+      if (R.phase === 'confirm') R.phase = '';
+      return rPaint();
+    }
+    if (R.phase === 'done' || R.phase === 'failed') {
+      R.phase = '';
+      return rPaint();
+    }
+    R.open = true;
+    rPaint();
+    try {
+      const r = await rCall('GET', '/api/remote/update');
+      R.notes = r.status === 200 && r.data.update ? r.data.update.notes || [] : [];
+    } catch {
+      R.notes = [];
+    }
+    rPaint();
+  }
+  async function rInstall() {
+    const from = (R.update && R.update.current) || '';
+    let r;
+    try {
+      r = await rCall('POST', '/api/remote/update/install', { whenIdle: !!R.whenIdle });
+    } catch {
+      r = { status: 0, data: {} };
+    }
+    if (r.status === 200 && r.data.state === 'installing') {
+      Object.assign(R, { phase: 'updating', from, at: Date.now(), msg: '', whenIdle: false, open: false, sawDown: false });
+      if (remote().setNote) remote().setNote('Updating AIB on ' + rPc() + '…');
+      rPaint();
+      rSchedule(REMOTE_FAST_MS);
+      return;
+    }
+    if (r.status === 200 && r.data.state === 'waiting') {
+      Object.assign(R, { phase: '', msg: '', whenIdle: false });
+      if (r.data.update) R.update = r.data.update;
+    } else if (r.data && r.data.code === 'chats_working') {
+      Object.assign(R, { phase: 'confirm', whenIdle: true, msg: (r.data.error || 'Chats are working.') + ' Click Update to install when they finish.' });
+    } else {
+      Object.assign(R, { phase: '', msg: (r.data && r.data.error) || 'Can’t reach ' + rPc() + '. Nothing was started.' });
+    }
+    rPaint();
+  }
+  // Check for updates from this computer (the PC checks now; a just-built test feed version shows at once).
+  async function rCheck() {
+    try {
+      const r = await rCall('POST', '/api/remote/update/check', {});
+      if (r.status === 200 && r.data.update) R.update = r.data.update;
+    } catch {
+      /* offline: the next poll */
+    }
+    rPaint();
+    rSchedule(REMOTE_FAST_MS);
+  }
+  function initRemote() {
+    R.on = true;
+    try {
+      const done = JSON.parse(root.sessionStorage.getItem(DONE_KEY) || 'null');
+      root.sessionStorage.removeItem(DONE_KEY);
+      if (done && Date.now() - done.at < 60000) {
+        Object.assign(R, { phase: 'done', to: String(done.to) });
+        root.setTimeout(() => {
+          if (R.phase === 'done') {
+            R.phase = '';
+            rPaint();
+          }
+        }, 20000);
+      }
+    } catch {
+      /* no session storage */
+    }
+    const b = buttonNode();
+    b.removeEventListener('click', onButton);
+    b.addEventListener('click', () => void rOpen());
+    rPaint();
+    if (root.addEventListener) root.addEventListener('aib-remote-back', () => rSchedule(0)); // the page reached the PC again
+    rSchedule(FIRST_POLL_MS);
   }
 
   const api = {
+    remoteView,
+    remoteCheck: rCheck,
+    _remote: R,
     init,
     renderCard,
     refresh,

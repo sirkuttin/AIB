@@ -15,6 +15,7 @@ import type { WebContext } from '../web/server.ts';
 import { permissionDetail, type PhoneOption, phoneOptions } from './actions.ts';
 import { type PhoneProject, projectsFor } from './projects.ts';
 import { INBOX } from '../attention/inbox_rules.ts';
+import type { Inbox } from '../attention/inbox.ts';
 import { clipEvent, type Ev, rowStarts, sessionOf } from '../acp/event_pages.ts';
 
 type Json = Record<string, unknown>;
@@ -97,10 +98,12 @@ export interface HomeAsk {
 export interface Home {
   revision: string;
   pcName: string;
-  /** Chats blocked on you (needs you, failed, asks): the same one number as the PC's badge and the trays. */
+  /** Chats blocked on you (needs you, failed, asks, stalled): the server-built inbox's count, the PC's badge and the trays. */
   waiting: number;
   /** Newest change of state first. */
   chats: HomeChat[];
+  /** The server-built inbox (attention/inbox.ts): the same rows the PC's inbox draws. The phone's inbox draws only these. */
+  inbox?: Inbox;
 }
 
 /** The most a home answer may weigh (the phone polls it every 4 s on a mobile link): longer last lines are cut first. */
@@ -513,7 +516,14 @@ export async function homePayload(ctx: WebContext, pcName: string, titles: Title
   }
   chats.sort((a, b) => b.at - a.at || a.title.localeCompare(b.title));
   const list: HomeChat[] = chats.map(({ at: _at, ...c }) => c);
-  const body = { pcName, waiting: list.filter((c) => INBOX.blocked(c.phase)).length, chats: list };
+  // the inbox's rows and count come from the one server builder (attention/inbox.ts), never from the cards here
+  const inbox = await ctx.inbox?.current(500).catch(() => null);
+  const body = {
+    pcName,
+    waiting: inbox ? inbox.count : list.filter((c) => INBOX.blocked(c.phase)).length,
+    chats: list,
+    ...(inbox ? { inbox: { ...inbox, at: 0 } } : {}),
+  };
   fitBudget(list, () => new TextEncoder().encode(JSON.stringify(body)).byteLength);
   return { revision: revisionOf(body), ...body };
 }

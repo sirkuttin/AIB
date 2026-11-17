@@ -3742,6 +3742,45 @@ span.chip-static:hover {
 .upd-btn[hidden] {
   display: none;
 }
+/* A paired computer's page (updates-ui.js remote): a calm line ("Update ready · <version>"), not the teal call to action */
+.upd-btn[data-action='remote'] {
+  border-color: var(--line-strong);
+  background: transparent;
+  color: inherit;
+  font-weight: 500;
+}
+.upd-row-btns {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.upd-row-btn {
+  height: 28px;
+  padding: 0 14px;
+  border: 1px solid var(--update-btn-line);
+  border-radius: 6px;
+  background: var(--update-btn-bg);
+  color: var(--update-btn-text);
+  font-weight: 600;
+  cursor: pointer;
+}
+.upd-row-btn.quiet {
+  border-color: var(--line-strong);
+  background: transparent;
+  color: inherit;
+  font-weight: 500;
+}
+.upd-row-notes {
+  margin-top: 10px;
+}
+.upd-row-ver {
+  margin: 8px 0 2px;
+  font-size: 13px;
+}
+.upd-pop .upd-row-body {
+  white-space: pre-wrap;
+  font-size: 12px;
+}
 /* Its popover: instructions, why it waits, what went wrong. In the page, right under the button; never a dialog window. */
 .upd-pop {
   position: fixed;

@@ -458,6 +458,7 @@ Deno.test({
       'failedAt',
       'followUntil',
       'helpers',
+      'lastOutputAt', // Inbox v3.1: S3 "gone quiet" reads it (stalledAt / stallKind / stallStep only while stalled)
       'needs',
       'phase',
       'question',

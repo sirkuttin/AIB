@@ -94,6 +94,8 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   POST /api/live/page-session               the page trades the launch key (its link's #aib-key) for a lasting page session
  *                                             (page_access.ts); bootstrap gives the token only to the key or a session
  *   GET  /api/live/idle                       which chats are working, without the token (`aib deploy` waits for idle with it)
+ *   GET  /api/live/inbox                      the server-built inbox: rows, count, phases (attention/inbox.ts; Inbox v3.1)
+ *   POST /api/live/inbox/act                  an inbox row's action that only the server can do: continue, snooze, wake
  * The phone port's own routes (remote/server.ts REMOTE_ROUTES) are not in this table: the page port never answers them.
  */
 export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
@@ -194,6 +196,8 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['POST', '/api/live/chat-name', 'write', 'body'],
   ['POST', '/api/live/page-session', 'pair', 'body'], // the launch key for a page session (page_access.ts)
   ['GET', '/api/live/idle', 'bootstrap', 'get'], // working / waiting chats for `aib deploy`, no token
+  ['GET', '/api/live/inbox', 'read', 'get'], // the server-built inbox (Inbox v3.1)
+  ['POST', '/api/live/inbox/act', 'write', 'body'], // continue / snooze / wake an inbox row
 ];
 
 export const ROUTE_LIST: readonly [string, string, string, RouteKind][] = [

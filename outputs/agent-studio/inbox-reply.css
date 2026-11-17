@@ -345,3 +345,51 @@
   color: inherit;
 }
 
+
+/* Snooze (Inbox v3.1): the alarm clock sits in the same 24 px box as a row's ×, monochrome and quiet like it */
+.ws-qa.ws-qa-snooze {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  padding: 0;
+  border-radius: 4px;
+}
+.ws-qa.ws-qa-snooze:hover {
+  background: var(--hover);
+}
+.ws-qa.ws-qa-snooze svg {
+  display: block;
+  flex: none;
+}
+.ws-snooze-menu {
+  min-width: 200px;
+}
+.ws-snooze-menu .ws-menu-item {
+  justify-content: space-between;
+  gap: 12px;
+}
+.ws-snooze-hint {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+.ws-inbox-foot .ws-inbox-snoozed-link {
+  flex: none;
+  height: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--muted);
+}
+.ws-inbox-foot .ws-inbox-snoozed-link:hover {
+  color: var(--text);
+}
+.ws-inbox-foot .ws-inbox-dotsep {
+  flex: none;
+}
+.ws-inbox-item.ws-s-snoozed .ws-inbox-what,
+.ws-inbox-item.ws-s-snoozed .ws-inbox-l2 {
+  color: var(--muted);
+}

@@ -45,6 +45,8 @@ import { ArtifactHistory } from '../docs/history.ts';
 import { installWslDocFs } from '../wsl/docs.ts';
 import { type AccessOptions, PhoneAccess } from '../remote/access.ts';
 import { Presence } from '../attention/presence.ts';
+import { InboxService } from '../attention/inbox.ts';
+import { inboxAct } from '../attention/inbox_act.ts';
 import type { DeviceStore } from '../remote/devices.ts';
 import { devicesRoutes } from './devices_routes.ts';
 import { PageAccess } from './page_access.ts';
@@ -248,6 +250,8 @@ export interface WebContext {
   /** Whether the owner is at the PC (the page reports it: POST /api/live/presence): no desktop notification while an AIB window
    * has focus, no phone push while the owner is working in it (attention/presence.ts). */
   presence: Presence;
+  /** The server-built inbox (attention/inbox.ts): rows, count and phases for the page, the phone, notifications and trays. */
+  inbox: InboxService;
   /** "Keep this PC awake while AIB runs" (platform/keep_awake.ts): applied from Settings and at start, released on close. */
   keepAwake: KeepAwake;
   /** The remote computer bridge's entry into the API handlers (WebServer.dispatchAs; remote/pc_bridge.ts): set once a WebServer is
@@ -308,6 +312,17 @@ export class WebServer {
         ...(knownNames && knownNames !== names ? { chatNames: c.viewPrefs.chatNames() } : {}),
         webInstanceId: c.webInstanceId,
       });
+    });
+    // The server-built inbox (attention/inbox.ts): ?since=<version> answers 204 when nothing changed.
+    this.native.set('GET /api/live/inbox', async (c, url) => {
+      // ?fresh=1: built now (the page just acted on a row: Mark handled, a reply, an answer)
+      const inbox = url.searchParams.get('fresh') ? await c.inbox.look() : await c.inbox.current(500);
+      if (url.searchParams.get('since') === inbox.version) return new Response(null, { status: 204 });
+      return this.json(200, inbox);
+    });
+    this.native.set('POST /api/live/inbox/act', async (c, _url, body) => {
+      const [status, answer] = await inboxAct(c, body);
+      return this.json(status, answer);
     });
     this.native.set('GET /api/live/conversation-state', (c) => this.json(200, c.conversations.public()));
     this.native.set('GET /api/live/read-state', (c) => this.json(200, c.readState.public()));
@@ -800,6 +815,7 @@ export function makeContext(
     phone: null as unknown as PhoneAccess,
     devices: null as unknown as DeviceStore,
     presence: new Presence(),
+    inbox: null as unknown as InboxService,
     desktopWindows: null,
     keepAwake: new KeepAwake(options.keepAwakeBackend === undefined ? realBackend() : options.keepAwakeBackend),
   };
@@ -808,6 +824,14 @@ export function makeContext(
     ...options.phone,
   });
   ctx.devices = ctx.phone.devices;
+  ctx.inbox = new InboxService({
+    host: ctx.host,
+    conversations: ctx.conversations,
+    projectPrefs: ctx.projectPrefs,
+    viewPrefs: ctx.viewPrefs,
+    firstPrompt: (id) => ctx.phone.titles.titles.get(id) ?? '',
+    openOnPc: () => ctx.presence.openOnPc(),
+  });
   ctx.launcher = makeLauncher(() => ctx, () => ctx.editorList);
   ctx.artifacts = new Artifacts(
     options.stateDir,

@@ -1996,3 +1996,231 @@ Deno.test('release notes: a release without a body leaves no notes (no tab)', as
   assert(!isFileSync(env.dir + '/updates/release-notes.json'));
   assertEquals(getUpdateNotes(env.service({ current: '0.1.0-beta.2' })), [200, { notes: null }]);
 });
+
+// ---- test builds: version order and the local test feed ------------------------------------------------------------------
+import {
+  FEED_ENV,
+  FEED_INTERVAL,
+  feedDir as feedDirOf,
+  isTestBuild,
+  mergeNotes,
+  pickFeed,
+} from '../../outputs/agent-studio/server/desktop/updater.ts';
+import { feedArg, feedNotes, feedVersions, previousFeedCommit, pruneFeed, writeFeed } from '../../tools/build.ts';
+
+Deno.test('test builds: X.test.M is older than X, newer than X.test.M-1 and than everything before X', () => {
+  const c = compare;
+  assertEquals(c('0.1.0-beta.12', '0.1.0-beta.12.test.3'), 1, 'the real release replaces its test builds');
+  assertEquals(c('0.1.0-beta.12.test.3', '0.1.0-beta.12'), -1);
+  assertEquals(c('0.1.0-beta.12.test.3', '0.1.0-beta.12.test.2'), 1);
+  assertEquals(c('0.1.0-beta.12.test.10', '0.1.0-beta.12.test.9'), 1);
+  assertEquals(c('0.1.0-beta.12.test.3', '0.1.0-beta.12.test.3'), 0);
+  assertEquals(c('0.1.0-beta.12.test.1', '0.1.0-beta.11'), 1);
+  assertEquals(c('0.1.0-beta.12.test.1', '0.1.0-beta.11.test.9'), 1);
+  assertEquals(c('0.1.0-beta.12.test.9', '0.1.0-beta.13'), -1);
+  assertEquals(c('0.1.0-beta.12.test', '0.1.0-beta.12.test.1'), -1);
+  assertEquals(c('0.1.0', '0.1.0-test.1'), 1);
+  assertEquals(c('0.1.0-test.1', '0.1.0-rc.1'), 1);
+  assertEquals(c('0.1.1-beta.1.test.1', '0.1.0'), 1);
+  // versions without "test" keep plain semver
+  assertEquals(c('0.1.0-beta.12', '0.1.0-beta.12.1'), -1);
+  assertEquals(isTestBuild('0.1.0-beta.12.test.3'), true);
+  assertEquals(isTestBuild('0.1.0-test.1'), true);
+  assertEquals(isTestBuild('0.1.0-beta.12'), false);
+  assertEquals(isTestBuild('0.1.0-testing.1'), false);
+  assertEquals(isTestBuild('nope'), false);
+  // a test build is offered the real release of the version it tests
+  const asset = (n: string) => ({ name: n, state: 'uploaded', url: 'https://github.com/x/' + n, size: 1 });
+  const rel = release('v0.1.0-beta.12', [asset('AIB-0.1.0-beta.12-windows-x64.zip'), asset('SHA256SUMS')]);
+  assertEquals(pickRelease([rel], '0.1.0-beta.12.test.3', ['windows', 'x64'])?.version, '0.1.0-beta.12');
+  assertEquals(pickRelease([rel], '0.1.0-beta.12', ['windows', 'x64']), null);
+});
+
+/** A temp feed folder with test builds written the way tools/build.ts --feed writes them. */
+class Feed {
+  dir = Deno.makeTempDirSync({ prefix: 'aib-feed-test-' });
+  src = Deno.makeTempDirSync({ prefix: 'aib-feed-src-' });
+  async add(version: string, notes = `- ${version} notes\n`, payload = 'PK fake zip ' + version): Promise<string> {
+    const zip = `${this.src}/AIB-${version}-windows-x64.zip`;
+    Deno.writeTextFileSync(zip, payload.repeat(20));
+    return await writeFeed(this.dir, version, zip, { notes, commit: 'abc1234', date: '2026-11-16T10:00:00Z' });
+  }
+  [Symbol.dispose]() {
+    Deno.removeSync(this.dir, { recursive: true });
+    Deno.removeSync(this.src, { recursive: true });
+  }
+}
+
+Deno.test('test feed: the layout tools/build.ts writes, newest 3 kept, read back by the updater', async () => {
+  using feed = new Feed();
+  await feed.add('0.1.0-beta.12.test.1');
+  const folder = await feed.add('0.1.0-beta.12.test.2', '- Feed notes\n- Second line\n');
+  assertEquals(
+    [...Deno.readDirSync(folder)].map((e) => e.name).sort(),
+    ['AIB-0.1.0-beta.12.test.2-windows-x64.zip', 'SHA256SUMS', 'notes.md', 'release.json'],
+  );
+  const info = JSON.parse(Deno.readTextFileSync(`${folder}/release.json`));
+  assertEquals([info.version, info.commit, info.date, info.protocol], ['0.1.0-beta.12.test.2', 'abc1234', '2026-11-16T10:00:00Z', PROTOCOL_VERSION]);
+  const sums = Deno.readTextFileSync(`${folder}/SHA256SUMS`);
+  const zipName = 'AIB-0.1.0-beta.12.test.2-windows-x64.zip';
+  assertEquals(checksumFor(sums, zipName), await sha(Deno.readFileSync(`${folder}/${zipName}`)));
+  assertEquals(checksumFor(sums, 'release.json'), await sha(Deno.readFileSync(`${folder}/release.json`)));
+  assertEquals(previousFeedCommit(feed.dir, '0.1.0-beta.12.test.3'), 'abc1234');
+  assertEquals(previousFeedCommit(feed.dir, '0.1.0-beta.12.test.1'), '', 'nothing before the first');
+
+  const { found, notes } = pickFeed(feed.dir, '0.1.0-beta.12.test.1', ['windows', 'x64']);
+  assertEquals([found?.version, found?.feed, found?.installer.name], ['0.1.0-beta.12.test.2', true, zipName]);
+  assertEquals(notes.map((n) => [n.version, n.body, n.date]), [
+    ['0.1.0-beta.12.test.2', '- Feed notes\n- Second line', '2026-11-16T10:00:00Z'],
+    ['0.1.0-beta.12.test.1', '- 0.1.0-beta.12.test.1 notes', '2026-11-16T10:00:00Z'],
+  ]);
+  assertEquals(pickFeed(feed.dir, '0.1.0-beta.12.test.2', ['windows', 'x64']).found, null, 'nothing newer');
+  assertEquals(pickFeed(feed.dir, '0.1.0-beta.12.test.1', ['macos', 'arm64']).found, null, 'only the Windows zip is in the feed');
+
+  await feed.add('0.1.0-beta.12.test.3');
+  await feed.add('0.1.0-beta.12.test.10');
+  assertEquals(feedVersions(feed.dir), ['0.1.0-beta.12.test.10', '0.1.0-beta.12.test.3', '0.1.0-beta.12.test.2'], 'newest 3 kept');
+  assertEquals(pruneFeed(feed.dir, 1), ['0.1.0-beta.12.test.3', '0.1.0-beta.12.test.2']);
+  assert((await assertRejects(() => feed.add('0.1.0-beta.12'), Error)).message.includes('not a test build'));
+  assert(![...Deno.readDirSync(feed.dir)].some((e) => e.name.startsWith('.')), 'no temp folder left');
+});
+
+Deno.test('test feed: where it is (AIB_TEST_FEED_DIR, else LOCALAPPDATA), --feed, the notes from git', () => {
+  assertEquals(feedDirOf({ [FEED_ENV]: ' C:\\tmp\\feed ', LOCALAPPDATA: 'C:\\L' }), 'C:\\tmp\\feed');
+  assert(feedDirOf({ LOCALAPPDATA: 'C:\\L' }).replaceAll('\\', '/').endsWith('L/AIB-test-feed'));
+  assertEquals(feedArg(['--targets', 'windows-x64']), null);
+  assertEquals(feedArg(['--feed', 'D:\\f']), 'D:\\f');
+  assertEquals(feedArg(['--feed=D:\\f']), 'D:\\f');
+  assert((feedArg(['--feed', '--no-smoke']) ?? '').endsWith('AIB-test-feed'));
+  const calls: string[][] = [];
+  const log = (subjects: string | null) => (args: string[]) => (calls.push(args), subjects);
+  assertEquals(feedNotes('abc1234', log('Fix the tabs\nAIB snapshot\nMerge fix/x: y\n')), '- Fix the tabs\n- Merge fix/x: y\n');
+  assertEquals(calls[0].slice(-1), ['abc1234..HEAD']);
+  assertEquals(feedNotes('', log('')), '- No new commits.\n');
+});
+
+/** A test build's service reading `feed` (and no GitHub: the placeholder repository, unless a fake is given). */
+function feedService(env: Env, feed: Feed, o: UpdateServiceOptions = {}) {
+  return env.service({ current: '0.1.0-beta.12.test.1', repo: PLACEHOLDER_REPO, feedDir: feed.dir, ...o });
+}
+
+Deno.test('test feed: a test build copies the newer feed version in, verifies it, keeps its notes; a release build never looks', async () => {
+  using env = new Env();
+  using feed = new Feed();
+  await feed.add('0.1.0-beta.12.test.2', '- Feed notes\n');
+  const svc = feedService(env, feed, { app: { ...APP } });
+  assertEquals([svc.configured(), svc.status().feed], [true, true]);
+  const st = await svc.checkFeed();
+  assertEquals([st.state, st.available?.version, st.inPlace], ['ready', '0.1.0-beta.12.test.2', true], JSON.stringify(st));
+  const got = svc.state.downloaded!;
+  assert(isFileSync(got.path) && got.path.startsWith(env.dir), 'copied into <data>/updates');
+  assertEquals(got.hostProtocol, PROTOCOL_VERSION, 'release.json read and verified');
+  const saved = JSON.parse(Deno.readTextFileSync(env.dir + '/updates/release-notes.json'));
+  assertEquals(saved.releases.map((n: { version: string; body: string }) => [n.version, n.body]), [['0.1.0-beta.12.test.2', '- Feed notes']]);
+  // the click goes through the same helper
+  const launched: HelperArgs[] = [];
+  svc.launcher = (a) => void launched.push(a);
+  assertEquals((await svc.install()).state, 'installing');
+  assertEquals([launched[0].installer, launched[0].sha256, launched[0].version], [got.path, got.sha256, '0.1.0-beta.12.test.2']);
+  // after the swap, the new version shows the feed notes once
+  const after = feedService(env, feed, { current: '0.1.0-beta.12.test.2' });
+  after.cleanup();
+  assertEquals((getUpdateNotes(after)[1].notes as { version: string }).version, '0.1.0-beta.12.test.2');
+
+  // a release build: no feed, nothing configured (a source run), no status flag
+  using env2 = new Env();
+  const rel = feedService(env2, feed, { current: '0.1.0-beta.12' });
+  assertEquals([rel.feedDir, rel.configured(), rel.status().feed], ['', false, undefined]);
+  assertEquals((await rel.checkFeed()).state, 'unconfigured');
+  assertEquals((await rel.check(true)).state, 'unconfigured');
+});
+
+Deno.test('test feed: a checksum mismatch is refused and not copied again until the feed changes', async () => {
+  using env = new Env();
+  using feed = new Feed();
+  const folder = await feed.add('0.1.0-beta.12.test.2');
+  Deno.writeTextFileSync(`${folder}/AIB-0.1.0-beta.12.test.2-windows-x64.zip`, 'tampered');
+  const svc = feedService(env, feed);
+  const st = await svc.checkFeed();
+  assertEquals([st.state, st.errorCode], ['refused', 'checksum_mismatch']);
+  assertEquals(svc.state.downloaded, null);
+  assert(!isFileSync(env.dir + '/updates/0.1.0-beta.12.test.2/AIB-0.1.0-beta.12.test.2-windows-x64.zip'), 'deleted');
+  svc.state.code = 'marker';
+  await svc.checkFeed();
+  assertEquals(svc.state.code, 'marker', 'an unchanged feed is not tried again');
+  await feed.add('0.1.0-beta.12.test.2', '- rebuilt\n', 'PK rebuilt'); // rebuilt: a new zip, so a new SHA256SUMS
+  assertEquals((await svc.checkFeed()).state, 'ready');
+});
+
+Deno.test('test feed: the newest of GitHub and the feed wins; GitHub down still lets the feed through', async () => {
+  using feed = new Feed();
+  await feed.add('0.1.0-beta.12.test.2', '- Feed notes\n');
+  // GitHub has the real release: it beats the test build (and a later feed read does not take it back)
+  {
+    using env = new Env();
+    await using fake = await FakeGitHub.start({ tag: 'v0.1.0-beta.12', body: 'The real release.' });
+    env.base(fake.base);
+    const svc = feedService(env, feed, { repo: 'acme/aib' });
+    const st = await svc.check(true);
+    assertEquals([st.state, st.available?.version], ['ready', '0.1.0-beta.12']);
+    assertEquals((await svc.checkFeed()).available?.version, '0.1.0-beta.12');
+  }
+  // GitHub has only an older release: the feed's version wins, notes from both
+  {
+    using env = new Env();
+    await using fake = await FakeGitHub.start({ tag: 'v0.1.0-beta.11', body: 'Beta 11.' });
+    env.base(fake.base);
+    const st = await feedService(env, feed, { repo: 'acme/aib' }).check(true);
+    assertEquals([st.state, st.available?.version, st.error], ['ready', '0.1.0-beta.12.test.2', '']);
+    const saved = JSON.parse(Deno.readTextFileSync(env.dir + '/updates/release-notes.json'));
+    assertEquals(saved.releases.map((n: { version: string }) => n.version), ['0.1.0-beta.12.test.2', '0.1.0-beta.11']);
+  }
+  // GitHub unreachable: the feed still updates, and no error shows; with nothing in the feed the GitHub error shows as before
+  {
+    using env = new Env();
+    env.base(DEAD);
+    const st = await feedService(env, feed, { repo: 'acme/aib' }).check(true);
+    assertEquals([st.state, st.available?.version, st.error], ['ready', '0.1.0-beta.12.test.2', '']);
+    using env2 = new Env();
+    using empty = new Feed();
+    assertEquals((await feedService(env2, empty, { repo: 'acme/aib' }).check(true)).errorCode, 'offline');
+  }
+});
+
+Deno.test('test feed: the background loop reads it every FEED_INTERVAL (no network); the focus route reads it at once', async () => {
+  using env = new Env();
+  using feed = new Feed();
+  await feed.add('0.1.0-beta.12.test.2');
+  const svc = feedService(env, feed);
+  await svc.tick();
+  assertEquals(svc.status().available?.version, '0.1.0-beta.12.test.2');
+  await feed.add('0.1.0-beta.12.test.3');
+  env.clock.t += FEED_INTERVAL - 1;
+  await svc.tick();
+  assertEquals(svc.status().available?.version, '0.1.0-beta.12.test.2', 'not yet');
+  env.clock.t += 1;
+  await svc.tick();
+  assertEquals(svc.status().available?.version, '0.1.0-beta.12.test.3');
+  await feed.add('0.1.0-beta.12.test.4');
+  const [code, body] = postUpdateCheck(svc, { feed: true });
+  assertEquals([code, body.checking], [200, true]);
+  while (svc.status().checking) await new Promise((r) => setTimeout(r, 10));
+  assertEquals(svc.status().available?.version, '0.1.0-beta.12.test.4');
+  // automatic checks off: neither the loop nor focus reads the feed
+  const off = feedService(env, feed, { autoCheck: () => false, current: '0.1.0-beta.12.test.4' });
+  await feed.add('0.1.0-beta.12.test.5');
+  postUpdateCheck(off, { feed: true });
+  env.clock.t += FEED_INTERVAL;
+  await off.tick();
+  assertEquals(off.status().checking, false);
+  assertEquals(off.state.found?.version, '0.1.0-beta.12.test.4', 'unchanged');
+});
+
+Deno.test('mergeNotes: newest first, one per version, the first source wins', () => {
+  const n = (version: string, body: string) => ({ version, date: '', page: '', body });
+  assertEquals(
+    mergeNotes([n('0.1.0-beta.12.test.2', 'feed'), n('0.1.0-beta.11', 'feed copy')], [n('0.1.0-beta.11', 'gh'), n('0.1.0-beta.12.test.1', 'x')])
+      .map((r) => [r.version, r.body]),
+    [['0.1.0-beta.12.test.2', 'feed'], ['0.1.0-beta.12.test.1', 'x'], ['0.1.0-beta.11', 'feed copy']],
+  );
+});

@@ -1214,6 +1214,64 @@ button.ph-chip::after {
 .ph-copies .ph-note {
   margin: 0 0 8px;
 }
+/* ---- the update line under the home header (Update ready · <version>, the confirm row, Updating…, Updated to …) ---- */
+.ph-upd {
+  margin: 12px 0 0;
+  padding: 8px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  font-size: 14px;
+}
+.ph-upd-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.ph-upd-text {
+  flex: 1 1 160px;
+  min-width: 0;
+  text-align: left;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+}
+button.ph-upd-text {
+  min-height: 44px;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+.ph-upd .ph-btn {
+  width: auto;
+  min-height: 44px;
+  margin: 0;
+}
+.ph-upd-note {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+.ph-upd.late,
+.ph-upd.failed {
+  border-color: var(--warn, var(--line));
+}
+.ph-upd-notes {
+  margin-top: 8px;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.ph-upd-ver {
+  margin: 8px 0 2px;
+  font-size: 14px;
+}
+.ph-upd-body {
+  margin: 0;
+  white-space: pre-wrap;
+  font-size: 13px;
+}
 /* ---- finish setup (notifications, iPhone Home Screen), the setup bar on home ---- */
 .ph-setup-bar {
   display: flex;
@@ -1965,4 +2023,48 @@ html.ph-viewing body {
   background: transparent;
   color: var(--muted);
   font-size: 18px;
+}
+
+/* Snooze (Inbox v3.1): the alarm clock in the same 44 px box as a card's ×, monochrome and quiet like it */
+.ph-btn.ph-ib.snooze {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+}
+.ph-btn.ph-ib.snooze.push {
+  margin-left: auto;
+}
+.ph-btn.ph-ib.snooze svg {
+  display: block;
+  flex: none;
+}
+.ph-btn.ph-ib.snooze-cancel {
+  margin-left: auto;
+  border-color: transparent;
+  color: var(--muted);
+}
+.ph-isnooze-foot {
+  display: block;
+  margin: 4px 4px 12px;
+  padding: 8px 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.ph-icard.ph-snoozed .ph-iwhat,
+.ph-icard.ph-snoozed .ph-il2 {
+  color: var(--muted);
+}
+.ph-btn.ph-ib.wake {
+  margin-left: auto;
+  border-color: transparent;
+  color: var(--muted);
 }

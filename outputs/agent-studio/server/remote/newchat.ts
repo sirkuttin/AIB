@@ -82,9 +82,9 @@ export interface PickList {
 }
 
 /** Settings' agent rows (what Settings shows: found, signed in, on). Tests in this process swap it (setAgentRows). */
-let agentRows = async (ctx: WebContext): Promise<unknown> => (await settingsView(studioOf(ctx))).agents;
+let agentRows = async (ctx: WebContext): Promise<unknown> => (await settingsView(studioOf(ctx), false, { offThread: true })).agents;
 export function setAgentRows(fn: ((ctx: WebContext) => Promise<unknown>) | null): void {
-  agentRows = fn ?? (async (ctx: WebContext) => (await settingsView(studioOf(ctx))).agents);
+  agentRows = fn ?? (async (ctx: WebContext) => (await settingsView(studioOf(ctx), false, { offThread: true })).agents);
   agentCache = new WeakMap();
 }
 

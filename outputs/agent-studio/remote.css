@@ -2,9 +2,10 @@
    the shell, so these apply from the first paint; remote-auth.js sets data-can-<switch> for each switch of this computer before any
    page script draws, so nothing appears and then goes. Only looks: the PC refuses these actions anyway. */
 
-/* The PC's own screen and programs: the system folder picker (the folder is typed), the PC's update button. */
+/* The PC's own screen and programs: the system folder picker (the folder is typed). The update button shows only in its remote
+   form (updates-ui.js: "Update ready · <version>", data-action="remote"), never the PC's own. */
 html[data-remote='pc'] .np-browse:not(.np-browse-wsl),
-html[data-remote='pc'] .upd-btn {
+html[data-remote='pc'] .upd-btn:not([data-action='remote']) {
   display: none !important;
 }
 /* Switches turned off for this computer on the PC (Settings > Remote control). */

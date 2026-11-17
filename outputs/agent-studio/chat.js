@@ -326,7 +326,14 @@
         role: SCROLL_ROLES[box.id],
         clamp: box.id === 'submessages' || box.id === 'messages',
         onLost: (place, how) => scrollPlaceLost(box, how),
-        ...(box.id === 'messages' ? { onChange: mainScrollChanged, nearTop: { get px() { return 2 * (box.clientHeight || 400); }, fn: () => mainNearTop() } } : {}),
+        ...(box.id === 'messages'
+          ? {
+              onChange: mainScrollChanged,
+              nearTop: { get px() { return 2 * (box.clientHeight || 400); }, fn: () => mainNearTop() },
+              nearBottom: { get px() { return 2 * (box.clientHeight || 400); }, fn: () => mainNearBottom() },
+              moreBelow: () => !!box._winEnd, // rows left out below the drawn window (showRows' reading window)
+            }
+          : {}),
       });
     return box._scrollCtl;
   }
@@ -347,6 +354,14 @@
   }
   /* The most rows a list draws to keep a place you left far up in drawn (the window otherwise widens from it to the end). */
   const PLACE_DRAW_MAX = 300;
+  /* Reading far up a long chat: the most rows (Full) or prompt groups (Chat) drawn at once, how many stay drawn below and above
+     your place when the window is cut, and how many more are drawn when you scroll down to its end (showRows, mainNearBottom). */
+  const DRAW_MAX = 500,
+    DRAW_MAX_UNITS = 120,
+    DRAW_BELOW = 200,
+    DRAW_ABOVE = 150,
+    DRAW_ABOVE_MAX = 300,
+    DRAW_MORE = 100;
   /* Your place in each chat survives a restart and a new build folder (the owner's Q7): kept under a localStorage key that
      view-prefs.js copies to AIB's data folder (studio-view.json). The newest 200 chats. */
   window.ScrollController?.configure({ storage: localStorage, storageKey: 'studio-scroll-v1', max: 200, merge: window.AibStore });
@@ -1865,14 +1880,48 @@
         win = windowOf(total, rowExtra[signatureKey]);
       }
     }
+    /* While you read far up a long chat, the window also ends: rows far below your place are not drawn (DRAW_MAX rows, or
+       DRAW_MAX_UNITS prompt groups), so a chat read thousands of rows up does not hold 100k+ nodes that the browser restyles and
+       lays out for ever. The end is kept by its row's id (rows arriving or dropped at the front never move it); rows are drawn
+       again below as you scroll down to it (mainNearBottom), and following (↓ Latest, End, send) draws to the end again. Rows
+       taken off below your place never move what you see. */
+    let end = total;
+    if (ctl && reading && box.id === 'messages' && !find && total) {
+      const keys = proj ? proj.units.map((u) => unitRid(u)) : rows.map((r) => r.rid || '');
+      const max = proj ? DRAW_MAX_UNITS : DRAW_MAX;
+      if (box._winEnd) {
+        const i = keys.lastIndexOf(box._winEnd);
+        if (i >= win.start) end = i + 1;
+      }
+      const at = ctl.anchorIndex(keys);
+      // scrolled down to the drawn end: draw more below
+      if (box._endMore) end = Math.min(total, end + box._endMore);
+      box._endMore = 0;
+      // older rows drawn in near the top (more of the loaded ones, or a page just loaded) that are far above your place: only
+      // the nearest DRAW_ABOVE of them are drawn now, the rest as you scroll up to them (the window's start, _grow). Only in
+      // that draw: rows are being put in above you anyway (the controller keeps your row in place), and nothing is ever taken
+      // off above you while you scroll down (a smooth scroll still under way would carry on from the old offsets)
+      const topGrew = box._topGrew;
+      box._topGrew = false;
+      if (topGrew && at >= 0 && at - win.start > DRAW_ABOVE_MAX) {
+        rowExtra[signatureKey] = Math.max(0, total - (proj ? GROUP_WINDOW : window.StreamUI.WINDOW_ROWS || 150) - (at - DRAW_ABOVE));
+        win = windowOf(total, rowExtra[signatureKey]);
+      }
+      if (end - win.start > max) end = Math.max(win.start + max, at >= 0 ? Math.min(total, at + DRAW_BELOW) : 0);
+      end = Math.max(end, Math.min(total, win.start + 1));
+    } else box._endMore = 0;
+    box._winEnd =
+      end < total ? (proj ? unitRid(proj.units[end - 1]) : rows[end - 1] && rows[end - 1].rid) || null : null;
     box._winStart = win.start;
-    const shown = !proj && win.start ? rows.slice(win.start) : rows;
+    const shown = !proj && (win.start || end < total) ? rows.slice(win.start, end) : rows;
+    const drawnProj = proj && end < total ? { ...proj, units: proj.units.slice(0, end), tail: null } : proj;
     if (win.hidden) {
       const more = () => {
         const h = box.scrollHeight,
           y = box.scrollTop;
         if (ctl) ctl.anchorTop('earlier'); // the row under the button stays put while older rows are drawn above it
         rowExtra[signatureKey] = win.nextExtra;
+        box._topGrew = true;
         if (signatureKey === 'main') mainSignature = '';
         else subSignature = '';
         showRows(box, rows, signatureKey, extra);
@@ -1909,8 +1958,8 @@
             onOpen: promptOpened,
           }),
         );
-      else fragment.append(...window.ChatViewsUI.listNodes(proj, win.start, ctx));
-      flat = window.ChatViewsUI.flatFrom(proj, win.start);
+      else fragment.append(...window.ChatViewsUI.listNodes(drawnProj, win.start, ctx));
+      flat = window.ChatViewsUI.flatFrom(drawnProj, win.start);
     } else {
       const docked = box.id === 'messages' ? dockedPlan(rows) : null,
         drawn = docked ? planLast(shown, rows, docked) : box.id === 'messages' ? latestPlanOnly(shown, rows) : shown;
@@ -3070,6 +3119,18 @@
   /* Near the top of the main list (2 screens): first draw more of the loaded rows, then fetch the next older page; the rows you
      see stay put (anchorTop before, the controller re-applies the place before paint). A thin "Loading earlier…" line while it
      lands. A saved transcript loads its next older page the same way (no "Load earlier messages" button). */
+  /* Near the end of the drawn rows while newer ones are left out below (showRows' reading window): draw the next ones below
+     (nothing above you changes, so nothing you see moves). */
+  function mainNearBottom() {
+    const box = $('messages'),
+      ctl = mainCtl();
+    if (!box || !ctl || ctl.following || !box._winEnd || window.CopyUI?.holdRender?.(box)) return;
+    ctl.anchorTop('later');
+    box._endMore = DRAW_MORE;
+    mainSignature = '';
+    repaintMain();
+    ctl.afterRedraw();
+  }
   let olderRun = null;
   function mainNearTop() {
     const box = $('messages'),
@@ -3094,6 +3155,7 @@
       mainKeep = entry.from;
       ctl.anchorTop('earlier');
       mainSignature = '';
+      box._topGrew = true;
       repaintMain();
       ctl.afterRedraw();
       setTimeout(fillMain, 0);
@@ -3111,6 +3173,7 @@
         mainKeep = entry.from;
         ctl.anchorTop('earlier');
         mainSignature = '';
+        box._topGrew = true;
         repaintMain();
         line.remove();
         ctl.afterRedraw();
@@ -4779,8 +4842,12 @@
       const data = await get('/api/commands', { session: key });
       if (selected?.key !== key) return;
       commands = data.commands;
+      /* pending: the server is still reading this chat's saved commands the first time (a big family takes seconds); it answers
+         at once instead of holding the poll, and the next poll brings the list */
       noteCommands(
-        'Saved and inferred: status comes from saved agent events, not from a live AIB connection or an operating-system process check.',
+        data.pending
+          ? 'Reading the saved commands…'
+          : 'Saved and inferred: status comes from saved agent events, not from a live AIB connection or an operating-system process check.',
       );
       renderCommands();
       if (selectedCommand) {
@@ -5713,7 +5780,11 @@
     else if (!a.cmdAt || now - a.cmdAt > 4000) {
       a.cmdAt = now;
       try {
-        a.commands = (await get('/api/commands', { session: c.key })).commands || [];
+        const r = await get('/api/commands', { session: c.key });
+        if (r.pending) {
+          a.cmdAt = 0; // still being read the first time: ask again at the next poll
+          a.commands ||= [];
+        } else a.commands = r.commands || [];
       } catch {}
     }
     a.at = now;
@@ -5980,7 +6051,8 @@
     notices: () => (historyNoticeOn ? [HISTORY_NOTICE] : []),
   });
   function syncChatView() {
-    if (document.body?.dataset) document.body.dataset.historyNotice = historyNoticeOn ? HISTORY_NOTICE : '';
+    const v = historyNoticeOn ? HISTORY_NOTICE : '';
+    if (document.body?.dataset && document.body.dataset.historyNotice !== v) document.body.dataset.historyNotice = v; // every poll: only a change
   }
   function resolveAgentName(from) {
     const hit = allAgentRows().find((r) => r.agentId === from || r.key === from || String(r.key).endsWith(from));
@@ -6591,6 +6663,8 @@
   /* Test hook. The page itself never reads this. Tests load chat.js into a fake DOM and use these functions, and the accessors in
    `state` for the few variables they set up or check. Nothing else from this file is reachable from outside. */
   window.StudioChat = {
+    /* the main list's rows (drawn or not: a long chat read far up draws a window of them) have this text */
+    mainRowsHave: (q) => (lastMainRows || []).some((r) => String((r && r.value) || '').includes(q)),
     DraftStore,
     renderApprovals,
     answeredLine,

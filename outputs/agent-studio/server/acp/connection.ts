@@ -951,6 +951,18 @@ export function outsideTurns(updates: Json[], lastUserText: string): { updates: 
   return { updates: outside.flatMap((t) => t.updates), turns: outside.length };
 }
 
+/** S3's quiet time (inbox-rules.js QUIET_SECONDS); test runs (AGENT_STUDIO_TEST=1) may shorten it with AIB_TEST_QUIET_SECONDS. */
+let quietCache: number | null = null;
+function quietSeconds(): number {
+  if (quietCache !== null) return quietCache;
+  let v = INBOX.QUIET_SECONDS;
+  try {
+    const test = Deno.env.get('AGENT_STUDIO_TEST') === '1' ? Number(Deno.env.get('AIB_TEST_QUIET_SECONDS')) : NaN;
+    if (Number.isFinite(test) && test > 0) v = test;
+  } catch { /* no env access */ }
+  return (quietCache = v);
+}
+
 export class Connection {
   readonly id: string;
   provider: string;
@@ -1041,6 +1053,17 @@ export class Connection {
   turnError = '';
   /** The last reply asks you something in plain text (inbox-rules.js asksOf, rule R6): when it ended, and the question. */
   #asks: { at: number; question: string } | null = null;
+  /**
+   * Inbox v3.1 stalled: the agent stopped mid-work without saying it was done. 'died': its output ended (it exited, the pipe broke,
+   * the keeper lost it) while a turn ran and nobody pressed Stop or closed the chat (S1). 'silent_end': the turn ended normally but
+   * no main-agent text came after its last tool call (S2). When, the kind and the last step (the last main tool call's title).
+   * Cleared when the next turn starts. The third signal, gone quiet (S3), is read live in attention() from lastOutputAt.
+   */
+  #stall: { at: number; kind: string; step: string } | null = null;
+  /** When the agent last sent anything on its stream (seconds): S3 "gone quiet". */
+  #lastOutputAt: number | null = null;
+  /** The title of the main agent's last tool call (the stalled row's "during npm test"). */
+  #lastStep = '';
   /** When each live helper was first seen running, and each background shell started (seconds): the inbox's caps. */
   #helperSince = new Map<string, number>();
   #shellSince = new Map<string, number>();
@@ -2079,6 +2102,11 @@ export class Connection {
     this.turnError = isStr(s.turnError) ? s.turnError : '';
     const asks = isDict(s.asks) ? s.asks : null;
     this.#asks = asks && typeof asks.at === 'number' && isStr(asks.question) ? { at: asks.at, question: asks.question } : null;
+    const stall = isDict(s.stall) ? s.stall : null;
+    this.#stall = stall && typeof stall.at === 'number' && isStr(stall.kind)
+      ? { at: stall.at, kind: stall.kind, step: isStr(stall.step) ? stall.step : '' }
+      : null;
+    this.#lastStep = isStr(s.lastStep) ? s.lastStep : '';
     this.#workEndedAt = typeof s.workEndedAt === 'number' ? s.workEndedAt : null;
     this.#bgShells = new Map(
       (Array.isArray(s.bgShells) ? s.bgShells : []).filter((e): e is [string, number[] | null] =>
@@ -2172,6 +2200,8 @@ export class Connection {
       turnFailedAt: this.turnFailedAt,
       turnError: this.turnError,
       asks: this.#asks,
+      stall: this.#stall,
+      lastStep: this.#lastStep,
       workEndedAt: this.#workEndedAt,
       bgTools: [...this.#bgTools],
       breadth: { ...this.breadth, compaction: [...this.breadth.compaction] },
@@ -2870,6 +2900,15 @@ export class Connection {
     if (!isDict(update)) return;
     const kind = get(update, 'sessionUpdate');
     const main = get(params, 'sessionId') === this.sessionId;
+    this.#lastOutputAt = this.#now(); // S3: anything on the stream means the agent is not quiet
+    if (main && kind === 'tool_call') {
+      const m = get(update, '_meta');
+      const cc = isDict(m) ? get(m, 'claudeCode') : null;
+      const title = get(update, 'title');
+      if (!(isDict(cc) && get(cc as Json, 'parentToolUseId')) && isStr(title) && title.trim()) {
+        this.#lastStep = title.replace(/\s+/g, ' ').trim().slice(0, 200);
+      }
+    }
     const meta = get(update, '_meta');
     const claude = isDict(meta) ? get(meta, 'claudeCode') : null;
     if (
@@ -3485,6 +3524,9 @@ export class Connection {
     if (this.#ended) return;
     this.#ended = true;
     try {
+      // S1: the agent's output ended while a turn ran, and nobody pressed Stop or closed the chat (close() sets #closing first)
+      const turn = this.autonomous || this.cancelSeq < this.promptSeq;
+      if (this.busy && turn && !this.#closing && !this.#replaying) this.#stall = { at: this.#now(), kind: 'died', step: this.#lastStep };
       this.closed = true;
       if (this.closedAt === null) this.closedAt = now();
       this.ready = false;
@@ -4624,6 +4666,8 @@ export class Connection {
     this.turnFailedAt = null; // sending is acting on a failure or a question
     this.turnError = '';
     this.#asks = null;
+    this.#stall = null; // and on a stall
+    this.#lastOutputAt = this.#now();
     this.promptSeq += 1;
     const seq = this.promptSeq;
     if (clientMessageId) {
@@ -6506,6 +6550,7 @@ export class Connection {
       failKind: this.turnFailedAt ? INBOX.classifyError(this.turnError) : '',
       asksAt: exact(this.#asks?.at ?? null),
       question: this.#asks?.question ?? '',
+      ...this.#stallFacts(at, needs, helpers, shells, exact),
     };
     return {
       state,
@@ -6515,6 +6560,23 @@ export class Connection {
       phase: INBOX.basePhase({ closed: this.closed, ready: this.ready, busy: this.busy, needs, ...facts }, at),
       ...facts,
     };
+  }
+
+  /**
+   * The stall facts (Inbox v3.1): a saved S1 / S2 stall, or S3 read now: a turn that runs with no stream event for QUIET_SECONDS,
+   * nothing open, no helper or background shell, and no tool call of this turn still in progress that started within
+   * TOOL_CAP_SECONDS (a long npm test is work). lastOutputAt always (seconds, exact ISO).
+   */
+  #stallFacts(at: number, needs: number, helpers: number, shells: boolean, exact: (t: number | null) => string | null): Json {
+    const out: Json = { lastOutputAt: exact(this.#lastOutputAt) };
+    if (this.#stall) return { ...out, stalledAt: exact(this.#stall.at), stallKind: this.#stall.kind, stallStep: this.#stall.step };
+    const quietSince = this.#lastOutputAt ?? this.turnStartedAt;
+    if (!this.busy || this.closed || needs || helpers || shells || !quietSince || at - quietSince < quietSeconds()) return out;
+    const toolRuns = [...this.#tools.values()].some((t) =>
+      t.turn === this.promptSeq && t.status !== 'completed' && t.status !== 'failed' && at - t.since < INBOX.TOOL_CAP_SECONDS
+    );
+    if (toolRuns) return out;
+    return { ...out, stalledAt: exact(quietSince), stallKind: 'quiet', stallStep: this.#lastStep };
   }
 
   /** A background shell started within the inbox's cap still runs (the OS is asked at most every 2 s). */
@@ -6537,6 +6599,7 @@ export class Connection {
   #noteAsks(): void {
     const parts: string[] = [];
     let size = 0;
+    let step: string | null = null; // the main tool call the walk stopped at (the turn's last step)
     for (let i = this.events.length - 1; i >= 0 && size < 16384; i--) {
       const e = this.events[i];
       if (e.kind === 'user' || e.kind === 'turn_end') break;
@@ -6547,7 +6610,11 @@ export class Connection {
       if (kind === 'tool_call') {
         const meta = get(update, '_meta');
         const claude = isDict(meta) ? get(meta, 'claudeCode') : null;
-        if (!(isDict(claude) && get(claude as Json, 'parentToolUseId'))) break;
+        if (!(isDict(claude) && get(claude as Json, 'parentToolUseId'))) {
+          const title = get(update, 'title');
+          step = isStr(title) ? title.replace(/\s+/g, ' ').trim().slice(0, 200) : '';
+          break;
+        }
       }
       if (kind !== 'agent_message_chunk') continue;
       const content = get(update, 'content');
@@ -6557,8 +6624,11 @@ export class Connection {
         size += text.length;
       }
     }
-    const found = INBOX.asksOf(parts.reverse().join('').slice(-16384)); // the reply's end: one chunk may be megabytes
+    const words = parts.reverse().join('');
+    const found = INBOX.asksOf(words.slice(-16384)); // the reply's end: one chunk may be megabytes
     this.#asks = found.asks ? { at: this.#now(), question: found.question } : null;
+    // S2: the turn ended after a tool call with no word from the agent after it ("no final message")
+    this.#stall = step !== null && !words.trim() ? { at: this.#now(), kind: 'silent_end', step: step || this.#lastStep } : null;
   }
 
   /** Wire form of this connection. light=true is the sidebar listing: no events and no permission bodies. */

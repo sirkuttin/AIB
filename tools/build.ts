@@ -15,6 +15,8 @@
  * Usage (from anywhere): deno run -A tools/build.ts [--targets all|windows-x64,macos-arm64,...] [--out dist/] [--keep] [--no-smoke]
  *                       [--version V]   (a test build that reports version V; default APP_VERSION)
  *                       [--no-wsl]      (Windows zips without the WSL pair)
+ *                       [--feed [DIR]]  (a test build, windows-x64: also put it into the local test feed, default
+ *                                        %LOCALAPPDATA%\AIB-test-feed, which running test builds update from; see writeFeed)
  *                       deno run -A tools/build.ts --wsl-only [--targets windows-x64]   (only the WSL pair, into dist/wsl/linux-<arch>/,
  *                       for running AIB from source)
  *
@@ -30,6 +32,7 @@ import { APP_VERSION } from '../outputs/agent-studio/server/core/app.ts';
 import { PROTOCOL_VERSION } from '../outputs/agent-studio/server/host/host_client.ts';
 import { KEEPER_NEEDS, PROTOCOL as KEEPER_PROTOCOL } from '../outputs/agent-studio/server/keeper/client.ts';
 import { addToAppImage, addToDeb, fixAppImage, fixDeb } from './linux_package.ts';
+import { compare, FEED_ENV, feedDir, isTestBuild, parseVersion } from '../outputs/agent-studio/server/desktop/updater.ts';
 
 export const SIZE_LIMIT = 160 * 1024 * 1024;
 export const APP_NAME = 'AIB';
@@ -947,6 +950,109 @@ export async function smokeCheck(exe: string): Promise<string> {
   }
 }
 
+// ---- the local test feed (`--feed [dir]`): what test builds update from without a GitHub release ------------------------
+/**
+ * Layout (read by server/desktop/updater.ts feedReleases), one folder per version, newest FEED_KEEP kept:
+ *   <feed>/<version>/AIB-<version>-windows-x64.zip
+ *                   /SHA256SUMS      the zip's and release.json's lines (sha256sum format)
+ *                   /release.json    releaseInfo() + date (ISO) + commit (the HEAD it was built from)
+ *                   /notes.md        "- subject" per first-parent commit since the previous feed version's commit
+ * A version folder is written as .<version>.tmp and renamed into place, so a running AIB never reads half of one.
+ */
+export const FEED_KEEP = 3;
+
+/** %LOCALAPPDATA%\AIB-test-feed (the folder test builds read; ~/.local/share elsewhere). */
+export function defaultFeedDir(env: Record<string, string | undefined> = Deno.env.toObject()): string {
+  return feedDir({ ...env, [FEED_ENV]: undefined });
+}
+
+/** The feed's version folders, newest first. */
+export function feedVersions(dir: string): string[] {
+  const out: string[] = [];
+  try {
+    for (const e of Deno.readDirSync(dir)) if (e.isDirectory && parseVersion(e.name)) out.push(e.name);
+  } catch { /* no feed yet */ }
+  return out.sort((a, b) => compare(b, a));
+}
+
+/** The commit the newest feed version below `version` was built from ('' when none says). */
+export function previousFeedCommit(dir: string, version: string): string {
+  for (const v of feedVersions(dir)) {
+    if (compare(v, version) >= 0) continue;
+    try {
+      const info = JSON.parse(Deno.readTextFileSync(`${dir}/${v}/${RELEASE_INFO}`));
+      if (typeof info.commit === 'string' && /^[0-9a-f]{7,40}$/.test(info.commit)) return info.commit;
+    } catch { /* unreadable: look further back */ }
+  }
+  return '';
+}
+
+function git(args: string[]): string | null {
+  try {
+    const out = new Deno.Command('git', { args: ['-C', REPO, ...args], stdout: 'piped', stderr: 'null' }).outputSync();
+    return out.success ? new TextDecoder().decode(out.stdout) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** notes.md: one "- subject" line per first-parent commit since `since` (or the last 10 when unknown), snapshots left out. */
+export function feedNotes(since: string, log: (args: string[]) => string | null = git): string {
+  const base = ['log', '--first-parent', '--format=%s', '-n', '40'];
+  const text = (since ? log([...base, `${since}..HEAD`]) : null) ?? log(['log', '--first-parent', '--format=%s', '-n', '10']) ?? '';
+  const lines = text.split('\n').map((s) => s.trim()).filter((s) => s && s !== 'AIB snapshot');
+  return lines.length ? lines.map((s) => `- ${s}`).join('\n') + '\n' : '- No new commits.\n';
+}
+
+/** Puts one Windows build into the feed (see the layout above) and keeps only the newest `keep` versions. Returns the folder. */
+export async function writeFeed(
+  dir: string,
+  version: string,
+  zipPath: string,
+  o: { notes: string; commit: string; date?: string; keep?: number },
+): Promise<string> {
+  if (!isTestBuild(version)) throw new Error(`--feed: ${version} is not a test build (like 0.1.0-beta.12.test.1)`);
+  await Deno.mkdir(dir, { recursive: true });
+  const final = `${dir}/${version}`;
+  const tmp = `${dir}/.${version}.tmp`;
+  await Deno.remove(tmp, { recursive: true }).catch(() => {});
+  await Deno.mkdir(tmp);
+  const zipName = zipPath.replaceAll('\\', '/').split('/').pop()!;
+  await Deno.copyFile(zipPath, `${tmp}/${zipName}`);
+  const info = { ...JSON.parse(releaseInfo(version)), date: o.date ?? new Date().toISOString(), commit: o.commit };
+  await Deno.writeTextFile(`${tmp}/${RELEASE_INFO}`, JSON.stringify(info) + '\n');
+  await Deno.writeTextFile(`${tmp}/notes.md`, o.notes);
+  const sums = [];
+  for (const name of [zipName, RELEASE_INFO]) sums.push({ name, sha256: await fileSha256(`${tmp}/${name}`) });
+  await Deno.writeTextFile(`${tmp}/SHA256SUMS`, sha256sums(sums));
+  await Deno.remove(final, { recursive: true }).catch(() => {});
+  await Deno.rename(tmp, final);
+  pruneFeed(dir, o.keep ?? FEED_KEEP);
+  return final;
+}
+
+/** Removes all but the newest `keep` version folders (and stale .tmp folders). Returns what it removed. */
+export function pruneFeed(dir: string, keep = FEED_KEEP): string[] {
+  const removed: string[] = [];
+  for (const v of feedVersions(dir).slice(keep)) {
+    try {
+      Deno.removeSync(`${dir}/${v}`, { recursive: true });
+      removed.push(v);
+    } catch { /* in use: the next build tries again */ }
+  }
+  return removed;
+}
+
+/** `--feed` alone: the default folder; `--feed DIR` / `--feed=DIR`: that folder; absent: null. */
+export function feedArg(argv: string[]): string | null {
+  const eq = argv.find((a) => a.startsWith('--feed='));
+  if (eq) return eq.slice('--feed='.length);
+  const i = argv.indexOf('--feed');
+  if (i < 0) return null;
+  const next = argv[i + 1];
+  return next && !next.startsWith('--') ? next : defaultFeedDir();
+}
+
 /** The built program this machine can run, for the smoke check, or null. */
 function runnable(target: Target, work: string): string | null {
   if (target.triple !== Deno.build.target) return null;
@@ -993,6 +1099,12 @@ export async function main(argv: string[]): Promise<number> {
   const keep = argv.includes('--keep');
   const version = argValue(argv, '--version', APP_VERSION);
   if (!/^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$/.test(version)) throw new Error(`--version ${version}: not a version like 0.1.0-beta.2`);
+  const feed = feedArg(argv);
+  if (feed !== null) {
+    if (!feed) throw new Error('--feed: no folder (LOCALAPPDATA is not set); give one: --feed DIR');
+    if (!targets.some((t) => t.id === 'windows-x64')) throw new Error('--feed needs the windows-x64 target');
+    if (!isTestBuild(version)) throw new Error(`--feed needs a test build version (--version 0.1.0-beta.N.test.M), not ${version}`);
+  }
   await Deno.mkdir(out, { recursive: true });
   const stageDir = `${out}/.stage`;
   const work = `${out}/.build`;
@@ -1046,6 +1158,12 @@ export async function main(argv: string[]): Promise<number> {
   for (const r of over) console.error(`error: ${r.name} is over the size limit`);
   for (const r of rows) checkSize(r.name, r.bytes);
   console.log(`wrote ${rows.length} assets and SHA256SUMS to ${out}`);
+  if (feed && !over.length) {
+    const zip = rows.find((r) => r.name === assetNames(version, TARGETS[0])[0])!;
+    const commit = (git(['rev-parse', 'HEAD']) ?? '').trim();
+    const folder = await writeFeed(feed, version, zip.path, { notes: feedNotes(previousFeedCommit(feed, version)), commit });
+    console.log(`test feed: ${folder} (keeps the newest ${FEED_KEEP}: ${feedVersions(feed).join(', ')})`);
+  }
   return over.length ? 1 : 0;
 }
 

@@ -13,6 +13,9 @@
  *   - The desktop app (a `deno desktop` binary) installs in place on Windows (the per-user zip), macOS (the zipped AIB.app) and Linux
  *     when it runs from an AppImage: update_helper.ts swaps the files after the app quits. A .deb install, and any `deno run`, get the
  *     verified file and instructions.
+ *   - Test builds (0.1.0-beta.12.test.3) also read a local feed folder (%LOCALAPPDATA%\AIB-test-feed, filled by `tools/build.ts
+ *     --feed`) every FEED_INTERVAL and on window focus, and take the newest of GitHub and the feed. Same rules: a SHA256SUMS match
+ *     (the feed's own), the click, the helper. Version order puts X.test.M below X, so the real release replaces its test builds.
  *
  * The assets (tools/build.ts): AIB-<version>-windows-x64.zip, -windows-arm64.zip, -macos-x64.zip, -macos-arm64.zip,
  * -linux-x64.AppImage, -linux-arm64.AppImage, -linux-x64.deb, -linux-arm64.deb, and SHA256SUMS. There is no upgrade path from the
@@ -53,6 +56,16 @@ export const BASE_ENV = 'AIB_UPDATE_API_BASE';
  * test can download "the next version" with a source run and then start again as that version (the release-notes tab).
  */
 export const CURRENT_ENV = 'AIB_UPDATE_CURRENT';
+/**
+ * The local test channel: a test build (a version whose pre-release has a "test" identifier, 0.1.0-beta.12.test.3) also reads this
+ * folder, which `deno run -A tools/build.ts --feed` fills: one sub-folder per version holding the Windows zip, SHA256SUMS,
+ * release.json and notes.md. Release builds never look at it. AIB_TEST_FEED_DIR moves it (honoured only for test builds; tests).
+ */
+export const FEED_ENV = 'AIB_TEST_FEED_DIR';
+export const FEED_DIR_NAME = 'AIB-test-feed';
+export const FEED_NOTES = 'notes.md';
+/** How often a test build reads its local feed (a folder listing, no network); also on window focus (the page asks). */
+export const FEED_INTERVAL = 120;
 /** The release notes kept with a downloaded update (<data>/updates/release-notes.json): how many releases, how long each. */
 export const NOTES_FILE = 'release-notes.json';
 export const MAX_NOTES_RELEASES = 20;
@@ -101,16 +114,44 @@ export function parseVersion(text: unknown): Version | null {
 const cmp = (a: number | string, b: number | string): number => (a > b ? 1 : 0) - (a < b ? 1 : 0);
 const isDigits = (s: string) => /^[0-9]+$/.test(s);
 
-/** Semantic-version order: -1, 0 or 1 (a pre-release is older than its release; numbers sort below words). */
+/** The pre-release identifier that marks a test build: X.test.M is a test of X. */
+export const TEST_WORD = 'test';
+
+/** [the version a test build is a test of, the identifiers after "test"] or [the pre-release, null] for any other version. */
+function splitTest(pre: string[]): [string[], string[] | null] {
+  const i = pre.indexOf(TEST_WORD);
+  return i < 0 ? [pre, null] : [pre.slice(0, i), pre.slice(i + 1)];
+}
+
+/**
+ * Semantic-version order: -1, 0 or 1 (a pre-release is older than its release; numbers sort below words). One exception: a test
+ * build X.test.M (0.1.0-beta.12.test.3) is older than X itself (0.1.0-beta.12, which plain semver would put first) and newer than
+ * X.test.M-1 and everything before X, so a real release replaces the test builds made on the way to it.
+ */
 export function compare(a: string | Version | null, b: string | Version | null): number {
   const pa = typeof a === 'string' ? parseVersion(a) : a;
   const pb = typeof b === 'string' ? parseVersion(b) : b;
   if (!Array.isArray(pa) || !Array.isArray(pb)) throw new ValueError('not a version');
   for (let i = 0; i < 3; i++) if (pa[i] !== pb[i]) return cmp(pa[i] as number, pb[i] as number);
-  const [xa, xb] = [pa[3], pb[3]];
+  const [ba, ta] = splitTest(pa[3]);
+  const [bb, tb] = splitTest(pb[3]);
+  if (ta === null && tb === null) return comparePre(pa[3], pb[3]);
+  const base = comparePre(ba, bb);
+  if (base !== 0) return base;
+  if (ta === null) return 1; // X is newer than X.test.M
+  if (tb === null) return -1;
+  return identifiers(ta, tb);
+}
+
+/** Pre-release order: none (the release) is newest, then identifier by identifier. */
+function comparePre(xa: string[], xb: string[]): number {
   if (!xa.length && !xb.length) return 0;
   if (!xa.length) return 1;
   if (!xb.length) return -1;
+  return identifiers(xa, xb);
+}
+
+function identifiers(xa: string[], xb: string[]): number {
   for (let i = 0; i < Math.min(xa.length, xb.length); i++) {
     const [x, y] = [xa[i], xb[i]];
     if (x === y) continue;
@@ -171,6 +212,23 @@ export function releaseNotes(releases: unknown, version: string, withPre: boolea
 export function isPrerelease(version: string): boolean {
   const parsed = parseVersion(version);
   return !!(parsed && parsed[3].length);
+}
+
+/** A test build: its pre-release has a "test" identifier (0.1.0-beta.12.test.3). Only these read the local test feed. */
+export function isTestBuild(version: string): boolean {
+  const parsed = parseVersion(version);
+  return !!(parsed && parsed[3].includes(TEST_WORD));
+}
+
+/** Notes from several sources (GitHub, the test feed) for one tab: newest first, one per version (the first source wins), bounded. */
+export function mergeNotes(...lists: ReleaseNote[][]): ReleaseNote[] {
+  const seen = new Set<string>();
+  const all: [Version, ReleaseNote][] = [];
+  for (const n of lists.flat()) {
+    const v = parseVersion(n.version);
+    if (v && !seen.has(n.version)) seen.add(n.version), all.push([v, n]);
+  }
+  return all.sort((a, b) => compare(b[0], a[0])).slice(0, MAX_NOTES_RELEASES).map(([, n]) => n);
 }
 
 // ---- which installer is ours ----------------------------------------------------------------------------------------
@@ -264,6 +322,8 @@ export interface Found {
   sums: { name: string; url: string };
   /** release.json (tools/build.ts): {version, protocol}; present in releases built from beta.2 on. */
   info?: { name: string; url: string };
+  /** From the local test feed: the urls are file paths in the feed folder (read, never fetched). */
+  feed?: boolean;
 }
 
 /** int() of a JSON value (Python truncates floats and parses digit strings; anything else raises). */
@@ -315,7 +375,121 @@ export function pickRelease(
   return best;
 }
 
-const PY_WS = '\\t\\n\\v\\f\\r\\x1c-\\x20\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000';
+// ---- the local test feed ----------------------------------------------------------------------------------------------
+/** Where a test build looks for its feed: AIB_TEST_FEED_DIR, else %LOCALAPPDATA%\AIB-test-feed (~/.local/share elsewhere). */
+export function feedDir(env: Env): string {
+  const override = (env[FEED_ENV] ?? '').trim();
+  if (override) return override;
+  if (env.LOCALAPPDATA) return join(env.LOCALAPPDATA, FEED_DIR_NAME);
+  return env.HOME ? join(env.HOME, '.local', 'share', FEED_DIR_NAME) : '';
+}
+
+function readSmallText(path: string, limit: number): string {
+  try {
+    if (Deno.statSync(path).size > limit) return '';
+    return new TextDecoder().decode(Deno.readFileSync(path));
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * The feed folder as a GitHub-like release list: each sub-folder named as a version is one release, its files are the assets (url =
+ * the file's path), notes.md is the body, release.json's `date` the publish date. Unreadable folders are skipped.
+ */
+export function feedReleases(dir: string): Dict[] {
+  const out: Dict[] = [];
+  let entries: Deno.DirEntry[] = [];
+  try {
+    entries = [...Deno.readDirSync(dir)];
+  } catch {
+    return out;
+  }
+  for (const e of entries) {
+    if (!e.isDirectory || e.isSymlink || !NAME_OK.test(e.name) || !parseVersion(e.name)) continue;
+    const folder = join(dir, e.name);
+    const assets: Dict[] = [];
+    try {
+      for (const f of Deno.readDirSync(folder)) {
+        if (!f.isFile || !NAME_OK.test(f.name)) continue;
+        const path = join(folder, f.name);
+        assets.push({ name: f.name, state: 'uploaded', url: path, size: Deno.statSync(path).size });
+      }
+    } catch {
+      continue;
+    }
+    let date = '';
+    try {
+      const info = JSON.parse(readSmallText(join(folder, RELEASE_INFO_NAME), MAX_SUMS_BYTES) || '{}');
+      if (isDict(info) && typeof info.date === 'string') date = info.date;
+    } catch { /* no date */ }
+    out.push({
+      tag_name: e.name,
+      draft: false,
+      html_url: '',
+      published_at: date,
+      body: readSmallText(join(folder, FEED_NOTES), MAX_NOTES_CHARS * 2),
+      assets,
+    });
+  }
+  return out;
+}
+
+/** The newest feed version for this platform above `current` (marked feed: true) and the feed's notes up to it. */
+export function pickFeed(
+  dir: string,
+  current: string,
+  key: PlatformKey | null,
+  env?: Env,
+  exists?: (p: string) => boolean,
+): { found: Found | null; notes: ReleaseNote[] } {
+  const releases = feedReleases(dir);
+  const found = pickRelease(releases, current, key, env, exists);
+  if (!found) return { found: null, notes: [] };
+  found.feed = true;
+  return { found, notes: releaseNotes(releases, found.version, true) };
+}
+
+/** A feed file read whole, refused over `limit`. */
+async function readFeedFile(path: string, limit: number): Promise<Uint8Array> {
+  try {
+    if ((await Deno.stat(path)).size > limit) throw new UpdateError('The update file is larger than its limit.', 'too_big');
+    return await Deno.readFile(path);
+  } catch (error) {
+    if (error instanceof UpdateError) throw error;
+    throw new UpdateError('The local test feed could not be read.', 'bad_download');
+  }
+}
+
+/** Copy a feed file to dest (via a .part file), as downloadTo does; returns its SHA-256. */
+async function copyFeedFile(src: string, dest: string, limit: number): Promise<string> {
+  const part = dest + '.part';
+  const hash = createHash('sha256');
+  let total = 0;
+  try {
+    using input = await Deno.open(src, { read: true });
+    using out = await Deno.open(part, { write: true, create: true, truncate: true });
+    const buffer = new Uint8Array(1 << 20);
+    for (;;) {
+      const n = await input.read(buffer);
+      if (n === null) break;
+      total += n;
+      if (total > limit) throw new UpdateError('The update file is larger than its limit.', 'too_big');
+      const block = buffer.subarray(0, n);
+      hash.update(block);
+      let written = 0;
+      while (written < block.length) written += await out.write(block.subarray(written));
+    }
+  } catch (error) {
+    await Deno.remove(part).catch(() => {});
+    if (error instanceof UpdateError) throw error;
+    throw new UpdateError('The local test feed could not be read.', 'bad_download');
+  }
+  await Deno.rename(part, dest);
+  return hash.digest('hex');
+}
+
+const PY_WS ='\\t\\n\\v\\f\\r\\x1c-\\x20\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000';
 const SUM_LINE = new RegExp(`^([A-Fa-f0-9]{64}) [ *]?([^\\n]+?)[${PY_WS}]*$`);
 
 /** The one SHA-256 line for exactly this file name in a SHA256SUMS text. Zero or several: refused (code no_checksum). */
@@ -645,6 +819,8 @@ export interface UpdateServiceOptions {
   exists?: (path: string) => boolean;
   /** This app: inside a `deno desktop` binary, its pid and Deno.execPath(). Default: the running process. */
   app?: AppInfo;
+  /** The local test feed folder (test builds only; ignored otherwise). Default: feedDir(env). */
+  feedDir?: string;
 }
 
 export interface AppInfo {
@@ -674,6 +850,8 @@ export interface UpdateStatus {
   inPlace: boolean;
   available?: Record<string, unknown>;
   instructions?: string;
+  /** Present (true) only on a test build: it also reads the local test feed (the page asks again on window focus). */
+  feed?: boolean;
 }
 
 export type InstallResult = { state: 'installing'; chats?: number } | { state: 'waiting'; chats: number };
@@ -703,6 +881,11 @@ export class UpdateService {
   state: UpdateState;
   readonly holdInstall: () => boolean;
   onReady: ((version: string) => void | Promise<void>) | null;
+  /** The local test feed this test build reads; '' for every other version (a release build never looks at it). */
+  readonly feedDir: string;
+  /** When the feed was last read (seconds), and what it offered at the last try (version + its SHA256SUMS): an unchanged feed is not copied again. */
+  #feedAt = 0;
+  #feedTried = '';
   /** The notes of the release list the last check read, for the version it found (written with the download). */
   #notes: ReleaseNote[] = [];
   #checking = false;
@@ -721,9 +904,11 @@ export class UpdateService {
     this.appArgs = [...(options.appArgs ?? Deno.args)].filter((a) => a !== '--start-in-tray');
     this.launcher = options.launcher ?? ((args) => this.#launchHelper(args));
     this.onReady = options.onReady ?? null;
-    const testCurrent = apiBase()[1] ? (envGet(CURRENT_ENV) ?? '').trim() : '';
+    // AIB_UPDATE_CURRENT: only with a test source (the fake release server, or a test feed folder)
+    const testCurrent = apiBase()[1] || (envGet(FEED_ENV) ?? '').trim() ? (envGet(CURRENT_ENV) ?? '').trim() : '';
     this.current = options.current ?? (parseVersion(testCurrent) ? testCurrent : APP_VERSION);
     this.env = options.env ?? Deno.env.toObject();
+    this.feedDir = isTestBuild(this.current) ? (options.feedDir ?? feedDir(this.env)) : '';
     this.key = options.key ?? platformKey();
     this.now = options.now ?? (() => Date.now() / 1000);
     this.fetch = options.fetch ?? ((input, init) => fetch(input, init));
@@ -765,6 +950,11 @@ export class UpdateService {
 
   // -- what the page shows
   configured(): boolean {
+    return this.#github() || !!this.feedDir;
+  }
+
+  /** GitHub (or the fake release server) is asked: not for the placeholder repository. */
+  #github(): boolean {
     return this.repo !== PLACEHOLDER_REPO || apiBase()[1];
   }
 
@@ -824,6 +1014,7 @@ export class UpdateService {
       platform: this.key ? [...this.key] : null,
       inPlace: this.canInstallInPlace(),
     };
+    if (this.feedDir) out.feed = true;
     if (this.state.code === 'checksum_mismatch' || this.state.code === 'no_checksum') {
       out.state = 'refused';
     } else if (ready && found && got) {
@@ -997,6 +1188,20 @@ export class UpdateService {
     return notes;
   }
 
+  /** The notes of the verified download waiting to install (newer than this app), newest first; [] when none (remote devices). */
+  upcomingNotes(): ReleaseNote[] {
+    const st = this.status();
+    const notes = this.#readNotes();
+    if (st.state !== 'ready' || !notes || notes.version !== st.available?.version) return [];
+    return notes.releases.filter((r) => {
+      try {
+        return compare(r.version, this.current) > 0;
+      } catch {
+        return false;
+      }
+    });
+  }
+
   /** The page opened the tab: never again for this version. */
   notesShown(): boolean {
     const notes = this.#readNotes();
@@ -1009,7 +1214,37 @@ export class UpdateService {
     }
   }
 
+  /**
+   * The newest of GitHub's releases and (test builds) the local feed's versions. A GitHub failure is reported only when the feed has
+   * nothing newer either.
+   */
   async #fetchRelease(): Promise<Found | null> {
+    let releases: unknown = [];
+    let found: Found | null = null;
+    let failed: UpdateError | null = null;
+    if (this.#github()) {
+      try {
+        releases = await this.#githubReleases();
+        found = pickRelease(releases, this.current, this.key, this.env, this.exists);
+      } catch (error) {
+        if (!(error instanceof UpdateError)) throw error;
+        failed = error;
+      }
+    }
+    const feed = this.feedDir ? pickFeed(this.feedDir, this.current, this.key, this.env, this.exists) : { found: null, notes: [] };
+    if (this.feedDir) this.#feedAt = this.now();
+    if (feed.found && (!found || compare(feed.found.version, found.version) > 0)) found = feed.found;
+    if (!found && failed) throw failed;
+    this.#notes = found
+      ? mergeNotes(
+        found.feed ? feed.notes : [],
+        releaseNotes(releases, found.version, isPrerelease(this.current) || found.prerelease),
+      )
+      : [];
+    return found;
+  }
+
+  async #githubReleases(): Promise<unknown> {
     const url = `${apiBase()[0]}/repos/${this.repo}/releases?per_page=30`;
     const data = await readLimited(url, 'application/vnd.github+json', MAX_RELEASES_BYTES, this.fetch);
     let releases: unknown;
@@ -1019,9 +1254,48 @@ export class UpdateService {
       throw new UpdateError('GitHub sent a release list that could not be read.', 'bad_response');
     }
     if (!this.key) throw new UpdateError('This computer is not a platform AIB has installers for.', 'unsupported_platform');
-    const found = pickRelease(releases, this.current, this.key, this.env, this.exists);
-    this.#notes = found ? releaseNotes(releases, found.version, isPrerelease(this.current) || found.prerelease) : [];
-    return found;
+    return releases;
+  }
+
+  /**
+   * Test builds: read the local feed (a folder listing, no network) and, when it has a version newer than this app and than what
+   * GitHub offered, copy it in and verify it against the feed's SHA256SUMS, exactly as a download. Called every FEED_INTERVAL by the
+   * background loop and on window focus (POST /api/live/update/check {feed: true}); a feed that has not changed since the last try
+   * is not copied again. Nothing installs. Resolves to status().
+   */
+  async checkFeed(): Promise<UpdateStatus> {
+    if (!this.feedDir || this.#checking || !this.key) return this.status();
+    this.#feedAt = this.now();
+    const { found, notes } = pickFeed(this.feedDir, this.current, this.key, this.env, this.exists);
+    if (!found) return this.status();
+    const have = this.#freshFound();
+    if (have && compare(have.version, found.version) > 0) return this.status(); // GitHub offers something newer
+    const tried = found.version + '\n' + readSmallText(found.sums.url, MAX_SUMS_BYTES);
+    if (tried === this.#feedTried) return this.status();
+    this.#feedTried = tried;
+    const st = this.status();
+    if (st.state === 'ready' && st.available?.version === found.version) return st;
+    this.#checking = true;
+    try {
+      this.state.found = found;
+      this.state.error = '';
+      this.state.code = '';
+      this.#save();
+      try {
+        this.#notes = notes;
+        await this.#download(found);
+        this.#saveNotes(found.version);
+      } catch (error) {
+        if (!(error instanceof UpdateError)) throw error;
+        this.state.error = error.message;
+        this.state.code = error.code;
+        this.#save();
+      }
+    } finally {
+      this.#checking = false;
+    }
+    await this.announce();
+    return this.status();
   }
 
   async #download(found: Found): Promise<void> {
@@ -1039,10 +1313,15 @@ export class UpdateService {
   async #downloadInto(found: Found, folder: string): Promise<void> {
     const name = found.installer.name;
     if (!NAME_OK.test(name)) throw new UpdateError('The release names its installer in an unexpected way.', 'bad_name');
-    const sums = new TextDecoder().decode(await readLimited(found.sums.url, 'application/octet-stream', MAX_SUMS_BYTES, this.fetch));
+    // The local test feed is read from disk; everything else comes over the network. The checksum rules are the same.
+    const read = (url: string, limit: number) =>
+      found.feed ? readFeedFile(url, limit) : readLimited(url, 'application/octet-stream', limit, this.fetch);
+    const sums = new TextDecoder().decode(await read(found.sums.url, MAX_SUMS_BYTES));
     const want = checksumFor(sums, name);
     const dest = join(folder, name);
-    const have = await downloadTo(found.installer.url, dest, MAX_INSTALLER_BYTES, this.fetch);
+    const have = found.feed
+      ? await copyFeedFile(found.installer.url, dest, MAX_INSTALLER_BYTES)
+      : await downloadTo(found.installer.url, dest, MAX_INSTALLER_BYTES, this.fetch);
     if (have !== want) {
       await Deno.remove(dest).catch(() => {});
       throw new UpdateError(
@@ -1054,7 +1333,7 @@ export class UpdateService {
     if (found.info) {
       // The agent-host protocol the new version speaks: Install now keeps working chats only when it can attach to this host.
       try {
-        const raw = await readLimited(found.info.url, 'application/octet-stream', MAX_SUMS_BYTES, this.fetch);
+        const raw = await read(found.info.url, MAX_SUMS_BYTES);
         if (await bytesSha256(raw) === checksumFor(sums, RELEASE_INFO_NAME)) {
           const info = JSON.parse(new TextDecoder().decode(raw));
           if (Number.isInteger(info.protocol)) this.state.downloaded.hostProtocol = info.protocol;
@@ -1256,6 +1535,7 @@ export class UpdateService {
   /** One pass: an automatic check when one is due, and the install the person asked to wait for once no chat is working. */
   async tick(): Promise<void> {
     await this.check(false);
+    if (this.feedDir && this.autoCheck() && this.now() - this.#feedAt >= FEED_INTERVAL) await this.checkFeed();
     await this.announce(); // a download an earlier run finished but never announced
     if (this.state.installWhenIdle && this.status().state === 'ready' && !this.#held() && !await this.#busy()) {
       await this.#go(await this.keeperHandover() === true); // idle chats in the keeper are left to the new version too
@@ -1283,7 +1563,12 @@ export function postUpdateNotes(service: UpdateService, body: Record<string, unk
 }
 
 /** POST /api/live/update/check: start a manual check in the background (a download can outlast a request); the page polls GET. */
-export function postUpdateCheck(service: UpdateService, _body: Record<string, unknown> = {}): RouteReply {
+export function postUpdateCheck(service: UpdateService, body: Record<string, unknown> = {}): RouteReply {
+  if (body.feed === true) {
+    // The window got focus (a test build): read the local feed only, no network; not while automatic checks are off.
+    if (service.autoCheck()) service.checkFeed().catch(() => {});
+    return [200, { ...service.status() }];
+  }
   service.check(true).catch(() => {});
   return [200, { ...service.status(), checking: true }];
 }

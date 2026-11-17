@@ -170,7 +170,7 @@ export function studioRoutes(): Map<string, StudioHandler> {
   const routes = new Map<string, StudioHandler>();
   // ---- settings and conversation marks ----
   routes.set('GET /api/live/settings', async (ctx, url) => [200, {
-    ...(await settingsView(studioOf(ctx), one(argsOf(url), 'recheck') === '1')),
+    ...(await settingsView(studioOf(ctx), one(argsOf(url), 'recheck') === '1', { offThread: true })),
     keepAwake: ctx.keepAwake.status(),
     swarm: { enabled: swarmEnabled(ctx.stateDir) },
   }]);
@@ -186,7 +186,7 @@ export function studioRoutes(): Map<string, StudioHandler> {
     // only a body that held nothing but swarm skips the Settings patch; anything else (an empty body too) goes through it as before
     if (!(rest !== body && isDict(rest) && !Object.keys(rest).length)) await ctx.settings.update(rest);
     ctx.keepAwake.apply(ctx.settings.keepAwake()); // on or off takes effect now; a refusal comes back as keepAwake.error
-    return [200, { ...(await settingsView(studioOf(ctx))), keepAwake: ctx.keepAwake.status(), swarm: { enabled: swarmEnabled(ctx.stateDir) }, ok: true }];
+    return [200, { ...(await settingsView(studioOf(ctx), false, { offThread: true })), keepAwake: ctx.keepAwake.status(), swarm: { enabled: swarmEnabled(ctx.stateDir) }, ok: true }];
   });
   routes.set('POST /api/live/conversation-state', async (ctx, _url, body) => {
     const folders = restoreFolders(ctx.conversations, body);

@@ -32,6 +32,7 @@ import { notifyUpdateReady } from './desktop/notify.ts';
 import { makeContext, WebServer } from './web/server.ts';
 import { openSource } from './transcripts/monitor.ts';
 import { ensureHiddenConsole } from './platform/console.ts';
+import { processStartTime } from './platform/process_info.ts';
 import { configure as configureArtifactKeys } from './artifacts/keys.ts';
 import * as worktrees from './worktrees/worktrees.ts';
 import { mergesRunning } from './worktrees/merge.ts';
@@ -140,8 +141,27 @@ const startup = {
     this.logged = true;
     const started = new Date(performance.timeOrigin).toISOString();
     log.announce('studio', 'startup: process started %s; %s', started, this.marks.map(([p, at]) => `${p} at ${at} ms`).join(', '));
+    // The time before any of AIB's code runs (Windows loading AIB.dll, an antivirus scan of a new build, the runtime starting) is
+    // not in the marks above (they count from the runtime's start): the OS's creation time of this process shows it.
+    const created = osCreatedMs();
+    if (created !== null) {
+      const before = Math.round(performance.timeOrigin - created);
+      log.announce('studio', 'startup: Windows created the process at %s, %s ms before the runtime started%s', new Date(created).toISOString(), before,
+        before > 2000 ? ' (slow: Windows was loading AIB before any of its code ran, e.g. an antivirus scan of a new build)' : '');
+    }
   },
 };
+
+/** This process's creation time from the OS (epoch ms; Windows only), or null. Never throws. */
+function osCreatedMs(): number | null {
+  if (Deno.build.os !== 'windows') return null;
+  try {
+    const s = processStartTime(Deno.pid);
+    return s === null ? null : s * 1000;
+  } catch {
+    return null;
+  }
+}
 
 export async function main(argv: string[]): Promise<void> {
   startup.mark('main');
@@ -493,7 +513,9 @@ export async function main(argv: string[]): Promise<void> {
           const open = ctx.presence.openOnPc();
           return Promise.resolve({
             working: studio!.workingList().length,
-            needsYou: studio!.blockedChats(open),
+            // the server-built inbox's count (attention/inbox.ts), as the page and the phone show it; before its first look, the
+            // agent host's own reading of the same rules
+            needsYou: ctx.inbox.latest() ? ctx.inbox.desktopCount() : studio!.blockedChats(open),
             blocked: attention.blocked().filter((b) => !INBOX.isOpen(b.key, open)),
           });
         }

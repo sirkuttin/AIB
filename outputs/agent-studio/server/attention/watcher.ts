@@ -28,6 +28,7 @@ import type { ReadState } from '../state/read_state.ts';
 import { FiredStore } from './fired.ts';
 import { type ChatFacts, type Flags, type Group, type GroupEntry, type Kind, type Reason, RULES } from './rules.ts';
 import { INBOX } from './inbox_rules.ts';
+import type { Inbox, InboxService } from './inbox.ts';
 import type { Presence, Where } from './presence.ts';
 
 const log = getLogger('attention');
@@ -89,11 +90,14 @@ export interface BlockedChat {
 /** What the watcher reads besides the agent host (the web context's stores). */
 export interface WatchSources {
   host: Pick<LiveBackend, 'liveList' | 'liveState' | 'busyConnections'>;
-  conversations: Pick<ConversationState, 'public'>;
+  conversations: Pick<ConversationState, 'public'> & Partial<Pick<ConversationState, 'setInbox'>>;
   projectPrefs: Pick<ProjectPrefs, 'public'>;
   viewPrefs: Pick<ViewPrefs, 'public'>;
   /** First prompts of chats with no other title (remote/payloads.ts TitleCache), when there is one. */
   firstPrompt?: (id: string) => string;
+  /** The server-built inbox (inbox.ts): each look rebuilds it from the same chat list, and the blocked chats (trays) and the
+   * notifications' line 1 come from its rows. Without it (older tests) the watcher reads the phases itself as before. */
+  inbox?: Pick<InboxService, 'look'>;
 }
 
 export interface WatcherOptions {
@@ -279,6 +283,14 @@ export class AttentionWatcher {
     try {
       this.options.onList?.(listing);
     } catch { /* never stops a look */ }
+    // the server-built inbox from this same list: its rows are the blocked chats and the notifications' words
+    let inbox: Inbox | null = null;
+    try {
+      inbox = this.sources.inbox ? await this.sources.inbox.look(listing) : null;
+    } catch (error) {
+      log.info('attention: could not build the inbox (%s)', error instanceof Error ? error.message : error);
+    }
+    const rowOf = (key: string) => inbox?.rows.find((r) => r.key === key);
     let still: Set<string> | null = null; // chats whose helpers or background shells still run
     const marks = this.sources.conversations.public().entries as Record<string, unknown>;
     const prefs = this.sources.projectPrefs.public();
@@ -297,6 +309,28 @@ export class AttentionWatcher {
       if (since === undefined) this.#settling.set(fk, this.clock());
       return since !== undefined && this.clock() - since >= (this.options.settleMs ?? SETTLE_MS);
     };
+    // Inbox v3.1 stalled: a stall the agent host reports (died mid-turn, or ended without a final message) is saved in the chat's
+    // mark, so the row outlives a connection that leaves the list. Only once per stall (its time).
+    for (const c of connections) {
+      const a = obj(c.attention);
+      const kind = str(a.stallKind, 20);
+      const at = INBOX.secondsOf(a.stalledAt);
+      if (!at || (kind !== 'died' && kind !== 'silent_end') || !this.sources.conversations.setInbox) continue;
+      const provider = str(c.provider, 60), sessionId = str(c.sessionId, 300);
+      if (!provider || !sessionId) continue;
+      const m = obj(marks[`${provider}:${sessionId}`]);
+      if (Math.abs((Number(m.stalledAt) || 0) - at) < 1) continue;
+      if ((Number(m.handledAt) || 0) >= at) continue; // already acted on
+      try {
+        await this.sources.conversations.setInbox(provider, sessionId, { stalledAt: at, stallKind: kind, stallStep: str(a.stallStep, 200) }, {
+          title: this.title(c, names, marks),
+          cwd: str(c.cwd, 1024),
+          projectRoot: str(c.projectRoot, 1024),
+        });
+      } catch (error) {
+        log.info('attention: could not save a stall (%s)', error instanceof Error ? error.message : error);
+      }
+    }
     for (const c of connections) {
       const id = str(c.id, 100);
       if (!id || c.closed) continue;
@@ -310,7 +344,7 @@ export class AttentionWatcher {
       const title = () => this.title(c, names, marks);
       const project = this.projectName(c, prefs);
       const markObj = obj(mark);
-      if (INBOX.blocked(phase) && !markObj.archivedAt && !markObj.deletedAt) {
+      if (!inbox && INBOX.blocked(phase) && !markObj.archivedAt && !markObj.deletedAt) {
         const reason: Reason = phase === 'failed' || phase === 'asks'
           ? phase
           : c.auth
@@ -323,7 +357,8 @@ export class AttentionWatcher {
       if (state === 'needs_you') {
         const needs = Math.max(1, Number(attention.needs) || 1);
         const reason: Reason = c.auth ? 'signin' : Array.isArray(c.elicitations) && c.elicitations.length ? 'question' : 'approval';
-        const [requests, what] = await this.#requests(c, needs);
+        const [requests, asked] = await this.#requests(c, needs);
+        const what = rowOf(key)?.what || asked; // the row's line 1 is the notification's text
         for (const request of requests) {
           const fk = `needs|${key}|${request}`;
           if (this.fired.has(fk) || news.some((n) => n.fk === fk)) continue;
@@ -336,6 +371,10 @@ export class AttentionWatcher {
       }
       const ended = attention.turnEndedAt;
       const turnKey = typeof ended === 'string' && ended ? `turn|${key}|${ended}` : '';
+      if (phase === 'stalled') {
+        if (turnKey) quiet.push(turnKey); // its turn did not finish: the stall is the news (below, from the inbox's rows)
+        continue;
+      }
       if (phase === 'failed' || phase === 'asks') {
         // The agent reported a failure, or its reply asks you something: news like a request (and its turn is not "finished")
         const at = str(phase === 'failed' ? attention.failedAt : attention.asksAt, 40);
@@ -348,7 +387,10 @@ export class AttentionWatcher {
         }
         if (phase === 'asks' && !settled(fk)) continue;
         if (turnKey) quiet.push(turnKey);
-        if (RULES.notifies('needs', flags)) news.push({ key, chat: id, kind: 'needs', title: title(), reason: phase, fk, flags, project });
+        const said = rowOf(key)?.what;
+        if (RULES.notifies('needs', flags)) {
+          news.push({ key, chat: id, kind: 'needs', title: title(), reason: phase, fk, flags, project, ...(said ? { what: said } : {}) });
+        }
         else quiet.push(fk);
         continue;
       }
@@ -379,6 +421,70 @@ export class AttentionWatcher {
       if (!settled(fk)) continue;
       if (RULES.notifies('turn', flags)) news.push({ key, chat: id, kind: 'turn', title: title(), reason: 'finished', fk, flags, project });
       else quiet.push(fk);
+    }
+    // one notification per stall (key stall|<chat>|<when it stopped>), through the Needs-you route, with the row's line 1
+    for (const r of inbox?.rows ?? []) {
+      if (r.kind !== 'stalled' || !r.stall) continue;
+      const fk = `stall|${r.key}|${Math.round(r.stall.at)}`;
+      if (this.fired.has(fk) || news.some((n) => n.fk === fk)) continue;
+      if (!(r.stall.at >= Math.floor(this.fired.since) - 1) || nowSeconds - r.stall.at > TURN_FRESH_SECONDS) {
+        quiet.push(fk); // a stall from before this AIB watched
+        continue;
+      }
+      const conn = connections.find((c) => chatKey(c) === r.key && !c.closed);
+      const m = obj(marks[r.key]);
+      const flags = RULES.flags(this.facts(conn ?? { provider: r.provider, sessionId: r.key.slice(r.key.indexOf(':') + 1), cwd: m.cwd, projectRoot: m.projectRoot }, marks), prefs);
+      if (RULES.notifies('needs', flags)) {
+        news.push({ key: r.key, chat: r.id, kind: 'needs', title: r.title, reason: 'stalled', fk, flags, project: r.project.name, what: r.what });
+      } else quiet.push(fk);
+    }
+    if (inbox) {
+      for (const r of inbox.rows) {
+        if (r.section !== 'needs') continue;
+        const reason = (['approval', 'question', 'signin', 'asks', 'failed', 'stalled'].includes(r.kind) ? r.kind : 'approval') as Reason;
+        blocked.push({ key: r.key, chat: r.id, title: r.title, reason });
+      }
+    }
+    // Snooze (Inbox v3.1 phase 3): a snoozed chat's news is held back (remembered, so it never comes later); when its time comes,
+    // or sooner when the chat changed, the row is back with ONE notification "Back: <line 1>" (key wake|<chat>|<snoozedAt>), its
+    // snooze is dropped, and that chat's other news of this look is folded into it. A chat that no longer needs you (answered on
+    // the phone, in the chat, Mark handled) just loses its snooze.
+    if (inbox) {
+      const snoozed = new Set(inbox.snoozed.map((x) => x.key));
+      for (let i = news.length - 1; i >= 0; i--) {
+        if (snoozed.has(news[i].key)) {
+          quiet.push(news[i].fk);
+          news.splice(i, 1);
+        }
+      }
+      for (const [key, raw] of Object.entries(marks)) {
+        const m = obj(raw);
+        const until = Number(m.snoozedUntil) || 0;
+        if (!until || snoozed.has(key)) continue;
+        const row = inbox.rows.find((r) => r.key === key && r.section === 'needs');
+        const at = key.indexOf(':');
+        if (row) {
+          const fk = `wake|${key}|${Math.round(Number(m.snoozedAt) || 0)}`;
+          for (let i = news.length - 1; i >= 0; i--) {
+            if (news[i].key === key) {
+              quiet.push(news[i].fk);
+              news.splice(i, 1);
+            }
+          }
+          if (!this.fired.has(fk)) {
+            const conn = connections.find((c) => chatKey(c) === key && !c.closed);
+            const flags = RULES.flags(this.facts(conn ?? { provider: key.slice(0, at), sessionId: key.slice(at + 1), cwd: m.cwd }, marks), prefs);
+            if (RULES.notifies('needs', flags)) {
+              news.push({ key, chat: row.id, kind: 'needs', title: row.title, reason: 'wake', fk, flags, project: row.project.name, what: 'Back: ' + row.what });
+            } else quiet.push(fk);
+          }
+        }
+        try {
+          await this.sources.conversations.setInbox?.(key.slice(0, at), key.slice(at + 1), { snoozedUntil: 0, snoozedAt: 0, snoozeSig: '' });
+        } catch (error) {
+          log.info('attention: could not drop a snooze (%s)', error instanceof Error ? error.message : error);
+        }
+      }
     }
     this.#blocked = blocked;
     for (const fk of [...this.#settling.keys()]) if (!done.has(fk)) this.#settling.delete(fk);
@@ -594,6 +700,7 @@ export interface AttentionContext extends WatchSources {
   presence: Presence;
   readState: Pick<ReadState, 'update'>;
   desktopNotify: { show: DesktopShow } | null;
+  inbox?: Pick<InboxService, 'look'>;
   phone: {
     on: boolean;
     titles: { titles: Map<string, string>; seeList?: (listing: unknown) => void };

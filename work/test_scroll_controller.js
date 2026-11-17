@@ -36,6 +36,22 @@ test('a scroll you make (not the controller) anchors on the row at the top; at t
   assert.deepEqual(changes.at(-1), ['anchor', 'follow', 'user']);
 });
 
+test('newer rows left out below the drawn ones (moreBelow): the drawn end is not the end, so it does not follow; near it, nearBottom', () => {
+  let more = true,
+    asked = 0;
+  const { box, ctl } = setup(rows(20), { moreBelow: () => more, nearBottom: { px: 400, fn: () => asked++ } });
+  ctl.afterRedraw();
+  box.userScroll(900);
+  assert.equal(asked, 0, 'far from the drawn end: nothing asked');
+  box.userScroll(box.scrollHeight - box.clientHeight); // the very end of the drawn rows
+  assert.equal(ctl.state.mode, 'anchor', 'still reading: newer rows are not drawn yet');
+  assert.ok(asked >= 1, 'asked to draw the next rows');
+  more = false; // the rest was drawn
+  box.userScroll(900);
+  box.userScroll(box.scrollHeight - box.clientHeight);
+  assert.equal(ctl.following, true, 'the real end follows again');
+});
+
 test("the controller's own writes and the browser re-stating them are never taken as you", () => {
   const { box, ctl, changes } = setup(rows(20));
   ctl.afterRedraw();
