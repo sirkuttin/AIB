@@ -18,6 +18,8 @@ export class YSocketHub {
   #sockets = new Map<WsLink, { clients: Set<number>; tag: string }>();
   /** Called after a link went (closed by the page or by us). */
   onDetach: ((link: WsLink) => void) | null = null;
+  /** A JSON control message from a page (a text frame), e.g. the file editor's {type: 'undo'}; unparseable frames are ignored. */
+  onControl: ((link: WsLink, message: Record<string, unknown>) => void) | null = null;
 
   constructor(readonly doc: Y.Doc) {
     this.awareness = new awarenessProtocol.Awareness(doc);
@@ -45,7 +47,14 @@ export class YSocketHub {
   attach(link: WsLink, tag = ''): void {
     this.#sockets.set(link, { clients: new Set(), tag });
     link.onmessage = (data) => {
-      if (typeof data === 'string') return;
+      if (typeof data === 'string') {
+        let message: unknown = null;
+        try {
+          message = JSON.parse(data);
+        } catch { /* not JSON: ignored */ }
+        if (message && typeof message === 'object' && this.onControl) this.onControl(link, message as Record<string, unknown>);
+        return;
+      }
       try {
         this.#receive(link, data);
       } catch {

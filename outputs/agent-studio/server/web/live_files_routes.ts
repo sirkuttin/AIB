@@ -8,11 +8,13 @@
  *        for those edits first). 200 {ok, sha, mtime}; 409 {code: merged | unmergeable | deleted | behind | disk_busy | locked |
  *        read_only | access_denied | disk_full | folder_gone}; 423 {code: landing_busy, who}. `text` replaces the live text first
  *        (tests only stand in for the page's typing with it).
- *   POST /api/live/files/close {file, view, discard}   a tab closed; with discard ("Don't save") the unsaved text goes only when no
+ *   POST /api/live/files/close {file, view, discard, sv?}   a tab closed; with discard ("Don't save") the unsaved text goes only when no
  *        other view (another window, the beside pane) still shows the file.
  *   GET  /api/live/files/compare?file   the disk's text now, for Compare (read only; a form AIB can't edit is shown as far as it can).
  *   GET  /api/live/files/socket?file&view   the editor's WebSocket: y-protocols sync + awareness (binary) and {type: hello | reopen}
- *        (text). Its own subprotocol `aib-file` (and `aib-token.<page token>`), checked before the upgrade.
+ *        (text); the page's Ctrl+Z / Ctrl+Y as {type: undo | redo, id}, answered {type: undone, id, ok, at} (files/live_file.ts:
+ *        the person's undo history is the server's). Its own subprotocol `aib-file` (and `aib-token.<page token>`), checked before
+ *        the upgrade.
  */
 import { authorize, pageAllowed, type Principal, Refusal, REMOTE_PC, TOKEN_HEADER } from './security.ts';
 import { ROUTES } from './routes.ts';
@@ -108,9 +110,16 @@ export function liveFilesRoutes(): Map<string, Handler> {
     const { status, ...rest } = reply;
     return [status, rest];
   }));
-  routes.set('POST /api/live/files/close', guard((ctx, _url, body) => {
+  routes.set('POST /api/live/files/close', guard(async (ctx, _url, body) => {
     const b = body ?? {};
-    return Promise.resolve([200, liveFilesOf(ctx)!.closeView(String(b.file ?? ''), String(b.view ?? ''), b.discard === true)]);
+    const files = liveFilesOf(ctx)!, file = String(b.file ?? '');
+    if (b.discard === true && typeof b.sv === 'string' && b.sv) {
+      // "Don't save" becomes an undo step: the page's last keystrokes first, so none lands after the drop
+      try {
+        await files.covered(file, unb64(b.sv));
+      } catch { /* a broken vector: drop what is here */ }
+    }
+    return [200, files.closeView(file, String(b.view ?? ''), b.discard === true)];
   }));
   routes.set('GET /api/live/files/compare', guard((ctx, url) => {
     const lf = liveFilesOf(ctx)!.get(url.searchParams.get('file') ?? '');

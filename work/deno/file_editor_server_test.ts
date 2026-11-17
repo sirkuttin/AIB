@@ -401,7 +401,9 @@ Deno.test('Don\'t save in one of two views keeps the text; in the last view it d
     assertEquals(s.ctx.liveFiles!.get(id)!.text.toString(), 'typed x\n', 'window B still has the text');
     const dropped = await s.post('/api/live/files/close', { file: id, view: 'win-b', discard: true });
     assertEquals(dropped.body, { closed: true, discarded: true });
-    assertEquals(s.ctx.liveFiles!.get(id), null);
+    // the typing is dropped; the file stays only for its undo history (file_editor_undo_test.ts: Ctrl+Z brings it back)
+    const left = s.ctx.liveFiles!.get(id);
+    assert(!left || left.text.toString() === 'x\n', 'the unsaved text is dropped');
     assertEquals(Deno.readTextFileSync(`${dir}${sep}d.txt`), 'x\n');
   } finally {
     await s.close();

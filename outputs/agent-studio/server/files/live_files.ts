@@ -19,6 +19,12 @@
  * base and where the file is. At start every stored file is loaded and checked against the disk. Nothing is ever pruned by age:
  * unsaved text is only dropped by a save, "Don't save" in the last view, or the project's removal. Quitting AIB never asks.
  *
+ * Undo history (files/live_file.ts). A file whose text is the disk's but that has undo steps is stored too (`unsaved: false`), with
+ * its history, and let go from memory once no view shows it; opening it again loads it back (same lineage, so the steps still
+ * apply) and merges what changed on disk meanwhile as the disk's change. It is not loaded at start. The history ends when the file
+ * is deleted (checked every few polls, at start and on open) or the project is removed; "Don't save" in the last view keeps it and
+ * turns the drop into one undo step.
+ *
  * Notes to agents (design 3.8 / 3.9). They go out with the chat's next prompt (Studio's prompt-context), one per file, the newest
  * ranges only: after an overlap to the chat that wrote (else the folder's busy chats), after a save to the chats whose agent wrote
  * that file and the folder's busy chats.
@@ -110,6 +116,14 @@ function statOf(abs: string): Stat | null {
 }
 const sameStat = (a: Stat | null, b: Stat | null) => (!a && !b) || (!!a && !!b && a.size === b.size && a.mtime === b.mtime);
 
+/** A closed file kept only for its undo history: its registry key, path, folder and store id. */
+interface Kept {
+  key: string;
+  abs: string;
+  root: string;
+  id: string;
+}
+
 export class LiveFiles {
   readonly #byKey = new Map<string, LiveFile>();
   readonly #byId = new Map<string, LiveFile>();
@@ -122,6 +136,8 @@ export class LiveFiles {
   #off: (() => void) | null = null;
   /** The last note per file (one line per file, newest ranges only). */
   readonly #noted = new Map<string, string>();
+  /** Closed files kept only for their undo history (stored, not in memory): key -> where. */
+  readonly #history = new Map<string, Kept>();
   readonly timing: typeof LIVE_TIMING;
 
   constructor(readonly host: LiveFilesHost, timing: Partial<typeof LIVE_TIMING> = {}) {
@@ -173,31 +189,84 @@ export class LiveFiles {
     const have = this.#byKey.get(at.place.key);
     if (have) return { file: have };
     this.#sweepTemps(at.place.abs);
+    const id = sha1(at.place.key).slice(0, 16);
+    const kept = this.#history.get(at.place.key) ?? null;
     const { disk, mtime } = readDisk(at.place.abs);
-    if (!disk.editable) return { refused: disk.reason, disk };
-    const lf = new LiveFile(sha1(at.place.key).slice(0, 16), at.place, baseOf(disk, mtime), crypto.randomUUID());
+    if (!disk.editable) {
+      if (kept) this.#forgetHistory(at.place.key); // the file is no longer text AIB edits: its history ends
+      return { refused: disk.reason, disk };
+    }
+    if (kept) {
+      // closed with undo steps: the same lineage again, then what changed on disk meanwhile merges in as the disk's change
+      const back = this.#loadHistory(kept);
+      if (back) {
+        this.#add(back);
+        back.takeIn(disk, mtime, '');
+        back.refreshDirty();
+        return { file: back };
+      }
+    }
+    const lf = new LiveFile(id, at.place, baseOf(disk, mtime), crypto.randomUUID());
     lf.seen = { size: disk.size, mtime };
     this.#add(lf);
     return { file: lf };
   }
 
   #add(lf: LiveFile): void {
+    this.#history.delete(lf.place.key);
     this.#byKey.set(lf.place.key, lf);
     this.#byId.set(lf.id, lf);
     lf.onChange = () => this.#scheduleStore(lf);
-    lf.hub.onDetach = () => {
+    lf.hub.onDetach = (link) => {
+      lf.forget(link);
       if (!lf.hub.socketCount) lf.closedAt = Date.now();
     };
   }
 
+  /** Let go of a file: its text, its store and its undo history. */
   #drop(lf: LiveFile): void {
+    this.#release(lf);
+    this.#unstore(lf);
+  }
+
+  #release(lf: LiveFile): void {
     this.#byKey.delete(lf.place.key);
     this.#byId.delete(lf.id);
     const t = this.#storeTimers.get(lf.id);
     if (t !== undefined) clearTimeout(t);
     this.#storeTimers.delete(lf.id);
-    this.#unstore(lf);
     lf.destroy();
+  }
+
+  /** A closed file whose text is the disk's but which has undo steps: store it (with them) and let it go from memory. */
+  #unload(lf: LiveFile): void {
+    if (!this.#store(lf)) return; // not written: keep it in memory rather than lose the history
+    this.#release(lf);
+    this.#history.set(lf.place.key, { key: lf.place.key, abs: lf.place.abs, root: lf.place.root, id: lf.id });
+  }
+
+  /** Load a file kept for its history back from the store (null: unreadable, and then forgotten). */
+  #loadHistory(k: Kept): LiveFile | null {
+    try {
+      const s = JSON.parse(Deno.readTextFileSync(this.#storePath(k.root, k.id))) as Stored;
+      if (s && s.v === 1 && keyOf(s.place.key) === keyOf(k.key)) {
+        const lf = LiveFile.restore(s);
+        lf.closedAt = Date.now();
+        return lf;
+      }
+    } catch { /* unreadable: the history is gone, the file opens fresh */ }
+    this.#forgetHistory(k.key);
+    return null;
+  }
+
+  /** The history of a closed file ends (the file was deleted, or is no longer text AIB edits). */
+  #forgetHistory(key: string): void {
+    const k = this.#history.get(key);
+    if (!k) return;
+    this.#history.delete(key);
+    try {
+      Deno.removeSync(this.#storePath(k.root, k.id));
+    } catch { /* gone */ }
   }
 
   /** Leftover save temp files (a crash between write and rename) next to the file, older than a minute. */
@@ -231,7 +300,12 @@ export class LiveFiles {
     if (!lf) return { closed: true };
     if (lf.otherViews(view)) return { closed: true, kept: true };
     if (discard) {
-      this.#drop(lf);
+      if (lf.hasHistory() && lf.meta.get('disk') === 'ok') {
+        // the text goes back to the disk's as one more undo step: opening the file again, Ctrl+Z brings the edits back
+        lf.revertToBase();
+        lf.closedAt = Date.now();
+        this.#scheduleStore(lf, 0);
+      } else this.#drop(lf);
       return { closed: true, discarded: true };
     }
     lf.closedAt = Date.now();
@@ -318,16 +392,26 @@ export class LiveFiles {
 
   #onTick(): void {
     this.#ticks++;
+    // the history of a closed file ends when the file is deleted (one stat per closed file every few polls)
+    if (this.#history.size && (this.#ticks * this.timing.tickMs) % (this.timing.pollMs * 5) === 0) this.#sweepHistory();
     if (!this.#byId.size) return;
     void this.#pollFeed();
     if ((this.#ticks * this.timing.tickMs) % this.timing.pollMs === 0) {
       for (const lf of this.#byId.values()) void this.check(lf);
     }
-    // a file no view shows, whose text is the disk's: let go after a grace (a reload reattaches within it)
+    // a file no view shows, whose text is the disk's: let go after a grace (a reload reattaches within it); with undo steps it is
+    // stored first. A deleted file with nothing unsaved goes with its history.
     const now = Date.now();
     for (const lf of [...this.#byId.values()]) {
-      if (!lf.hub.socketCount && lf.closedAt && now - lf.closedAt > this.timing.closeGraceMs && lf.isClean()) this.#drop(lf);
+      if (lf.hub.socketCount || !lf.closedAt || now - lf.closedAt <= this.timing.closeGraceMs) continue;
+      if (lf.isClean()) lf.hasHistory() ? this.#unload(lf) : this.#drop(lf);
+      else if (lf.meta.get('disk') === 'deleted' && !lf.isDirty() && lf.overlaps.length === 0) this.#drop(lf);
     }
+  }
+
+  /** Closed files kept for their history whose file is gone: the history goes with them. */
+  #sweepHistory(): void {
+    for (const k of [...this.#history.values()]) if (!statOf(k.abs)) this.#forgetHistory(k.key);
   }
 
   /** The agent host's finished write calls since the last look (host/studio.ts files-changed). */
@@ -426,6 +510,12 @@ export class LiveFiles {
     return statOf(abs)?.mtime ?? Date.now();
   }
 
+  /** Wait (up to saveWaitMs) until the page's edits up to its state vector `sv` arrived ("Don't save" after the last keystrokes). */
+  covered(id: string, sv: Uint8Array): Promise<boolean> {
+    const lf = this.#byId.get(id);
+    return lf ? this.#covered(lf, sv) : Promise.resolve(true);
+  }
+
   async #covered(lf: LiveFile, sv: Uint8Array): Promise<boolean> {
     let want: Map<number, number>;
     try {
@@ -494,7 +584,11 @@ export class LiveFiles {
 
   // ---- the store ------------------------------------------------------------------------------------------------------------------
   #fileOf(lf: LiveFile): string {
-    return osp.join(this.storeDir, sha1(lf.place.root.toLowerCase()).slice(0, 12), lf.id + '.json');
+    return this.#storePath(lf.place.root, lf.id);
+  }
+
+  #storePath(root: string, id: string): string {
+    return osp.join(this.storeDir, sha1(root.toLowerCase()).slice(0, 12), id + '.json');
   }
 
   #scheduleStore(lf: LiveFile, delay = this.timing.storeMs): void {
@@ -509,9 +603,12 @@ export class LiveFiles {
     this.#storeTimers.set(lf.id, t);
   }
 
-  /** Write the file's store now (atomically), or remove it when nothing would be lost. */
-  #store(lf: LiveFile): void {
-    if (lf.isClean()) return this.#unstore(lf);
+  /** Write the file's store now (atomically), or remove it when nothing would be lost. false: it could not be written. */
+  #store(lf: LiveFile): boolean {
+    if (lf.isClean() && !lf.hasHistory()) {
+      this.#unstore(lf);
+      return true;
+    }
     const path = this.#fileOf(lf);
     try {
       Deno.mkdirSync(osp.dirname(path), { recursive: true });
@@ -527,8 +624,10 @@ export class LiveFiles {
         f.close();
       }
       Deno.renameSync(tmp, path);
+      return true;
     } catch (error) {
       console.error('Could not keep the unsaved text of', lf.place.rel, error);
+      return false;
     }
   }
 
@@ -559,6 +658,7 @@ export class LiveFiles {
   /** A project was removed from AIB (desktop/project_delete.ts): its stored unsaved text goes with it. */
   forgetProject(root: string): void {
     for (const lf of [...this.#byId.values()]) if (keyOf(lf.place.root) === keyOf(root)) this.#drop(lf);
+    for (const k of [...this.#history.values()]) if (keyOf(k.root) === keyOf(root)) this.#history.delete(k.key);
     for (const s of this.stored(root)) {
       try {
         Deno.removeSync(osp.join(this.storeDir, sha1(s.place.root.toLowerCase()).slice(0, 12), s.id + '.json'));
@@ -569,6 +669,13 @@ export class LiveFiles {
   #loadStored(): void {
     for (const s of this.stored()) {
       if (this.#byKey.has(s.place.key)) continue;
+      if (s.unsaved === false) {
+        // kept only for its undo history: loaded when the file is opened again; a deleted file's history ends
+        const k = { key: s.place.key, abs: s.place.abs, root: s.place.root, id: s.id };
+        this.#history.set(k.key, k);
+        if (!statOf(k.abs)) this.#forgetHistory(k.key);
+        continue;
+      }
       let lf: LiveFile;
       try {
         lf = LiveFile.restore(s);

@@ -6,7 +6,8 @@
        handles(tab)               a file in the project folder (scope 'main' or 'project'): it opens editable at once
        body(where, tab)           the tab's body: ONE persistent element per tab and pane ('main' | 'beside') holding the editor in a
                                   shadow root (CodeMirror's styles need one under the page's CSP). Redraws re-attach the same node, so
-                                  undo, caret, scroll and IME survive; only the head, tools and footer are rebuilt.
+                                  caret, scroll and IME survive; only the head, tools and footer are rebuilt. Undo/redo is the
+                                  server's history of the file: it survives closing the tab, a reload, another window and a restart.
        tools(where, tab, width)   the tools row: Save, Save all, the overlap state with Compare, the disk's state (deleted, a form AIB
                                   can't edit), Back to the editor while comparing. One row that never wraps (44 px).
        alert(where, tab)          the save-failed row (red tint), with Retry; or the landing-busy line (retries by itself)
@@ -207,12 +208,11 @@
       p.host._aibFocus = () => p.ed && p.ed.focus();
     }
     const c = st.client;
-    p.undo = new CE.cm.Y.UndoManager(c.text);
     p.ed = CE.create({
       parent: p.shadow,
       root: p.shadow,
       name: tab.name,
-      live: { ytext: c.text, undo: p.undo, overlaps: c.overlaps, doc: c.doc },
+      live: { ytext: c.text, history: historyOf(c), overlaps: c.overlaps, doc: c.doc },
       onSave: () => save(tab),
       onSaveAll: () => saveAll(),
       onOverlapClick: () => openCompare(where, tab),
@@ -227,6 +227,11 @@
       }
     }
   }
+  /**
+   * Undo and redo: the server's history of the file (server/files/live_file.ts), not one in the page, so closing the tab, a reload,
+   * another window or a restart keeps it (owner 2026-11-17). Only the person's own edits are in it, never an agent's merged change.
+   */
+  const historyOf = (c) => ({ undo: () => c.step('undo'), redo: () => c.step('redo') });
   /** The tab's body for files-ui's renderView (the same node every time). */
   function body(where, tab) {
     const p = paneOf(where, tab), st = ensureOpen(tab);
@@ -453,12 +458,12 @@
       root: shadow,
       disk,
       name: tab.name,
-      live: { ytext: st.client.text, undo: p.undo || new CE.cm.Y.UndoManager(st.client.text) },
+      live: { ytext: st.client.text, history: historyOf(st.client) },
       narrow: width > 0 && width < 640,
       readOnly: st.client.meta.get('disk') === 'unmergeable',
     });
     p.compareHost = wrap;
-    p.body.replaceChildren(wrap); // the editor's node is kept (detached) with its undo and caret
+    p.body.replaceChildren(wrap); // the editor's node is kept (detached) with its caret
     host.redraw(where);
   }
   function closeCompare(where, tab) {
@@ -489,7 +494,6 @@
     if (p) {
       if (p.compare) p.compare.destroy();
       if (p.ed) p.ed.destroy();
-      if (p.undo) p.undo.destroy();
       panes.delete(key);
     }
     const st = states.get(tab.id);
@@ -528,7 +532,8 @@
     const st = states.get(tab.id);
     const finish = (discard) => {
       if (st && st.info && !otherPane(where, tab)) {
-        host.post('files/close', { file: st.info.file, view: VIEW, discard: !!discard }).catch(() => {});
+        const sv = discard && st.client ? st.client.sv() : undefined; // the server waits for these keystrokes before it drops them
+        host.post('files/close', { file: st.info.file, view: VIEW, discard: !!discard, sv }).catch(() => {});
       }
       release(where, tab);
       go();

@@ -13,12 +13,22 @@
  *   queue      every piece of work on this file (a poll's take-in, a save, a landing's touch, a restore) runs in one serial queue
  *              (must-fix 4), so a save's new base is in place before the next poll looks.
  * The Y.Doc also holds `meta` (what the footer shows: saved at, updated by, disk state) and `overlaps`, so every window sees the
- * same thing live and the store keeps them. Undo stays per author: the page's undo manager tracks only its own editor origin.
+ * same thing live and the store keeps them.
+ *
+ * Undo history (owner 2026-11-17: "I want the undo/redo history to persist across the closing of a file"). The person's history
+ * lives HERE, next to the Y.Doc, not in the page: one Y.UndoManager per file that tracks only the page sockets' edits (and a
+ * "Don't save" revert), never the disk's (FILE_ORIGIN) or AIB's bookkeeping, so Ctrl+Z never takes an agent's change back. The page
+ * sends {type: 'undo' | 'redo'} over the file socket and gets {type: 'undone', at} back (where to put the caret). Because the history
+ * is the server's, it outlives closing the tab, a reload, and moving to another window. For a restart it is stored with the Y update
+ * (the same lineage, so the Yjs item ids in it still mean the same text): each step as two Yjs delete sets (what it inserted, what it
+ * deleted), the way y-prosemirror and Yjs' own UndoManager describe a step, plus the `redone` links Yjs keeps only in memory. Deleted
+ * text a step can bring back is kept from Yjs' GC (UndoManager's keepItem; on restore, the doc's gcFilter); everything else is
+ * collected when the file is loaded again. At most UNDO_LIMIT steps each way, oldest dropped first; dropping never touches the text.
  */
 import * as Y from 'yjs';
 import { YSocketHub } from '../live/ysocket.ts';
 import { decodeDisk, type DiskText, encodeText, type Eol, sha256 } from './file_text.ts';
-import { changedRanges, merge3, type MergeResult } from './line_merge.ts';
+import { changedRanges, merge3, type MergeResult, narrowEdit } from './line_merge.ts';
 import type { WsLink } from '../platform/websocket.ts';
 
 /** The disk's changes merged into the live text. */
@@ -27,6 +37,55 @@ export const FILE_ORIGIN = { kind: 'file' } as const;
 export const SERVER_ORIGIN = { kind: 'server' } as const;
 /** A test's stand-in for a page edit (the save route's `text` fallback). */
 export const TEST_PAGE_ORIGIN = { kind: 'page-test' } as const;
+/** "Don't save" in the last view of a file with history: the text goes back to the disk's as one undoable step. */
+export const REVERT_ORIGIN = { kind: 'revert' } as const;
+/** Undo steps kept per file (and redo steps), oldest dropped first. */
+export const UNDO_LIMIT = 500;
+
+/** A Yjs delete set as stored: [client, [clock, len, clock, len, ...]][]. */
+export type StoredSet = [number, number[]][];
+export interface StoredHistory {
+  v: 1;
+  /** Oldest first, like Y.UndoManager's stacks. i: what the step inserted; d: what it deleted. */
+  undo: { i: StoredSet; d: StoredSet }[];
+  redo: { i: StoredSet; d: StoredSet }[];
+  /** Yjs' in-memory `redone` links of items the stacks name: [client, clock, len, redoneClient, redoneClock]. */
+  redone: [number, number, number, number, number][];
+}
+type Step = { insertions: DeleteSet; deletions: DeleteSet; meta: Map<unknown, unknown> };
+type DeleteSet = ReturnType<typeof Y.createDeleteSet>;
+type Ranges = Map<number, number[]>;
+
+const setOut = (ds: DeleteSet): StoredSet =>
+  [...ds.clients].map(([client, items]) => [client, items.flatMap((d) => [d.clock, d.len])] as [number, number[]]).filter(([, f]) => f.length > 0);
+function setIn(s: StoredSet): DeleteSet {
+  const ds = Y.createDeleteSet();
+  for (const [client, flat] of s) {
+    const items: { clock: number; len: number }[] = [];
+    for (let i = 0; i + 1 < flat.length; i += 2) if (flat[i + 1] > 0) items.push({ clock: flat[i], len: flat[i + 1] });
+    items.sort((a, b) => a.clock - b.clock);
+    if (items.length) ds.clients.set(client, items as never);
+  }
+  return ds;
+}
+/** Every clock range the given steps name (client -> [clock, len, ...]), to keep their deleted text and their redone links. */
+function rangesOf(sets: StoredSet[]): Ranges {
+  const out: Ranges = new Map();
+  for (const s of sets) {
+    for (const [client, flat] of s) {
+      const have = out.get(client) ?? [];
+      have.push(...flat);
+      out.set(client, have);
+    }
+  }
+  return out;
+}
+const touches = (r: Ranges, client: number, clock: number, len: number): boolean => {
+  const flat = r.get(client);
+  if (!flat) return false;
+  for (let i = 0; i + 1 < flat.length; i += 2) if (flat[i] < clock + len && clock < flat[i] + flat[i + 1]) return true;
+  return false;
+};
 
 export interface Base {
   text: string;
@@ -59,6 +118,10 @@ export interface Stored {
   /** Y.encodeStateAsUpdate, base64. */
   update: string;
   at: number;
+  /** The person's undo history (absent in stores written before it existed). */
+  history?: StoredHistory;
+  /** false: kept only for its history (the text is the disk's); loaded when the file is opened again, not at start. */
+  unsaved?: boolean;
 }
 
 export interface OverlapRecord {
@@ -114,12 +177,29 @@ export class LiveFile {
   #queue: Promise<unknown> = Promise.resolve();
   #dirtyTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(readonly id: string, readonly place: Place, base: Base, readonly lineage: string, state: Uint8Array | null = null) {
+  /** The person's undo history of this file (see the header): every page socket's edits, never the disk's. */
+  readonly undo: Y.UndoManager;
+
+  constructor(
+    readonly id: string,
+    readonly place: Place,
+    base: Base,
+    readonly lineage: string,
+    state: Uint8Array | null = null,
+    history: StoredHistory | null = null,
+  ) {
     this.doc = new Y.Doc();
+    const kept = state && history ? rangesOf([...history.undo, ...history.redo].map((s) => s.d)) : null;
+    // loading: deleted text only the stored steps can bring back stays; the rest is collected now (Yjs GC)
+    if (kept) this.doc.gcFilter = (item: Y.Item) => !touches(kept, item.id.client, item.id.clock, item.length);
     if (state) Y.applyUpdate(this.doc, state, SERVER_ORIGIN);
+    this.doc.gcFilter = () => true;
     this.text = this.doc.getText('file');
     this.meta = this.doc.getMap('meta');
     this.overlaps = this.doc.getArray('overlaps');
+    this.undo = new Y.UndoManager(this.text, { trackedOrigins: new Set<unknown>([TEST_PAGE_ORIGIN, REVERT_ORIGIN]) });
+    this.undo.on('stack-item-added', () => this.#trim());
+    if (state && history) this.#restoreHistory(history);
     this.base = base;
     if (!state) {
       this.doc.transact(() => {
@@ -129,6 +209,11 @@ export class LiveFile {
     }
     this.#setMeta({ sha: base.sha, eol: base.eolKind, bom: base.bom, encoding: base.encoding });
     this.hub = new YSocketHub(this.doc);
+    this.hub.onControl = (link, m) => {
+      if (m.type !== 'undo' && m.type !== 'redo') return;
+      const r = this.step(m.type);
+      link.send(JSON.stringify({ type: 'undone', id: m.id ?? null, op: m.type, ok: r.ok, at: r.at }));
+    };
     this.doc.on('afterTransaction', (tr: Y.Transaction) => {
       if (tr.changed.has(this.text as unknown as Y.AbstractType<Y.YEvent<Y.Text>>)) this.#scheduleDirty();
       if (tr.changed.size) this.onChange?.();
@@ -136,11 +221,134 @@ export class LiveFile {
   }
 
   static restore(s: Stored): LiveFile {
-    return new LiveFile(s.id, s.place, s.base, s.lineage, unb64(s.update));
+    const h = s.history && s.history.v === 1 && Array.isArray(s.history.undo) && Array.isArray(s.history.redo) ? s.history : null;
+    return new LiveFile(s.id, s.place, s.base, s.lineage, unb64(s.update), h);
   }
 
   snapshot(): Stored {
-    return { v: 1, id: this.id, lineage: this.lineage, place: this.place, base: this.base, update: b64(Y.encodeStateAsUpdate(this.doc)), at: Date.now() };
+    return {
+      v: 1,
+      id: this.id,
+      lineage: this.lineage,
+      place: this.place,
+      base: this.base,
+      update: b64(Y.encodeStateAsUpdate(this.doc)),
+      at: Date.now(),
+      history: this.history(),
+      unsaved: !this.isClean(),
+    };
+  }
+
+  // ---- undo history ---------------------------------------------------------------------------------------------------------------
+  /** Steps to undo or redo are kept. */
+  hasHistory(): boolean {
+    return this.undo.undoStack.length > 0 || this.undo.redoStack.length > 0;
+  }
+
+  /** Undo or redo one step of the person's edits. `at`: the text offset after the last change it made (the page's caret), or -1. */
+  step(kind: 'undo' | 'redo'): { ok: boolean; at: number } {
+    let at = -1;
+    const watch = (ev: Y.YTextEvent, tr: Y.Transaction) => {
+      if (tr.origin !== this.undo) return;
+      let pos = 0;
+      for (const d of ev.delta) {
+        if (typeof d.retain === 'number') pos += d.retain;
+        else if (typeof d.insert === 'string') at = pos += d.insert.length;
+        else if (typeof d.delete === 'number') at = pos;
+      }
+    };
+    this.text.observe(watch);
+    let done: unknown = null;
+    try {
+      done = kind === 'undo' ? this.undo.undo() : this.undo.redo();
+    } finally {
+      this.text.unobserve(watch);
+      this.undo.stopCapturing(); // the next keystroke is a step of its own
+    }
+    return { ok: done != null, at };
+  }
+
+  /** The history as stored (see StoredHistory). */
+  history(): StoredHistory {
+    const steps = (stack: Step[]) => stack.map((s) => ({ i: setOut(s.insertions), d: setOut(s.deletions) }));
+    const undo = steps(this.undo.undoStack as unknown as Step[]), redo = steps(this.undo.redoStack as unknown as Step[]);
+    const named = rangesOf([...undo, ...redo].flatMap((s) => [s.i, s.d]));
+    const redone: StoredHistory['redone'] = [];
+    if (named.size) {
+      for (const [client, structs] of this.doc.store.clients) {
+        if (!named.has(client)) continue;
+        for (const st of structs) {
+          if (st instanceof Y.Item && st.redone && touches(named, client, st.id.clock, st.length)) {
+            redone.push([client, st.id.clock, st.length, st.redone.client, st.redone.clock]);
+          }
+        }
+      }
+    }
+    return { v: 1, undo, redo, redone };
+  }
+
+  /** Put a stored history back (the constructor, after the update). A step that names text this doc lacks drops the history. */
+  #restoreHistory(h: StoredHistory): void {
+    const store = this.doc.store;
+    const valid = (s: StoredSet) =>
+      Array.isArray(s) && s.every(([client, flat]) => {
+        const end = Y.getState(store, client);
+        for (let i = 0; i + 1 < flat.length; i += 2) if (!(flat[i] >= 0 && flat[i + 1] >= 0 && flat[i] + flat[i + 1] <= end)) return false;
+        return true;
+      });
+    const all = [...h.undo, ...h.redo];
+    if (!all.every((s) => s && valid(s.i) && valid(s.d))) return; // another lineage's history: start empty, the text is untouched
+    const make = (s: { i: StoredSet; d: StoredSet }): Step => ({ insertions: setIn(s.i), deletions: setIn(s.d), meta: new Map() });
+    const undo = h.undo.slice(-UNDO_LIMIT).map(make), redo = h.redo.slice(-UNDO_LIMIT).map(make);
+    try {
+      this.doc.transact((tr) => {
+        for (const s of [...undo, ...redo]) {
+          // what Y.UndoManager does for its own steps: deleted text a step can bring back is never collected
+          Y.iterateDeletedStructs(tr, s.deletions, (st) => {
+            if (st instanceof Y.Item) st.keep = true;
+          });
+        }
+        for (const [client, clock, len, rc, rclock] of Array.isArray(h.redone) ? h.redone : []) {
+          if (!(len > 0) || clock + len > Y.getState(store, client) || rclock >= Y.getState(store, rc)) continue;
+          Y.getItemCleanStart(tr, Y.createID(client, clock));
+          Y.getItemCleanEnd(tr, store, Y.createID(client, clock + len - 1));
+          const it = Y.getItem(store, Y.createID(client, clock));
+          if (it instanceof Y.Item && it.id.clock === clock && it.length === len) it.redone = Y.createID(rc, rclock);
+        }
+      }, SERVER_ORIGIN);
+    } catch {
+      return; // never risk the text for the history
+    }
+    this.undo.undoStack = undo as never;
+    this.undo.redoStack = redo as never;
+  }
+
+  /** Keep at most UNDO_LIMIT steps each way: the oldest go (the text is never touched). */
+  #trim(): void {
+    for (const stack of [this.undo.undoStack, this.undo.redoStack]) if (stack.length > UNDO_LIMIT) stack.splice(0, stack.length - UNDO_LIMIT);
+  }
+
+  /**
+   * "Don't save" in the last view of a file with history: the text goes back to the disk version it took in, as one undo step of
+   * its own, so Ctrl+Z after opening it again brings the dropped edits back. Overlaps are answered (the disk's text is taken).
+   */
+  revertToBase(): void {
+    const e = narrowEdit(this.text.toString(), this.base.text);
+    this.undo.stopCapturing();
+    if (e.to > e.from || e.insert) {
+      this.doc.transact(() => {
+        if (e.to > e.from) this.text.delete(e.from, e.to - e.from);
+        if (e.insert) this.text.insert(e.from, e.insert);
+      }, REVERT_ORIGIN);
+    }
+    this.undo.stopCapturing();
+    if (this.overlaps.length) this.doc.transact(() => this.overlaps.delete(0, this.overlaps.length), SERVER_ORIGIN);
+    this.refreshDirty();
+  }
+
+  /** A page socket went: its edits are no longer tracked (the history it made stays). */
+  forget(link: WsLink): void {
+    this.undo.removeTrackedOrigin(link);
   }
 
   /** Run `work` after every earlier piece of work on this file (one at a time). */
@@ -167,6 +375,7 @@ export class LiveFile {
   attach(link: WsLink, view: string): void {
     this.closedAt = 0;
     link.send(JSON.stringify({ type: 'hello', file: this.id, lineage: this.lineage }));
+    this.undo.addTrackedOrigin(link); // the person's typing (every window, the beside pane, a paired computer): one history
     this.hub.attach(link, view);
   }
 
@@ -362,6 +571,7 @@ export class LiveFile {
     if (this.#dirtyTimer !== null) clearTimeout(this.#dirtyTimer);
     this.#dirtyTimer = null;
     this.hub.destroy(4404, 'file closed');
+    this.undo.destroy();
     this.doc.destroy();
   }
 }

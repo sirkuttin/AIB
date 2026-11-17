@@ -4,11 +4,14 @@
 // Exposes window.AIBCodeEditor:
 //   create({ parent, root, text, name, readOnly, wrap, live, onChange, onSave, onSaveAll, onOverlapClick })
 //     -> { view, text(), setText(t), setWrap(on), setReadOnly(on), indent(), refreshMarks(), focus(), destroy() }
-//     live: { ytext, undo, overlaps?, doc? } binds the editor to a live file's Y.Text (y-codemirror.next); its overlaps (Y relative
-//     positions kept by the server, server/files/live_file.ts) show as a gutter marker plus a soft line tint, never as a block that
-//     pushes the code down (owner rule: nothing jarring).
+//     live: { ytext, undo | history, overlaps?, doc? } binds the editor to a live file's Y.Text (y-codemirror.next); its overlaps (Y
+//     relative positions kept by the server, server/files/live_file.ts) show as a gutter marker plus a soft line tint, never as a
+//     block that pushes the code down (owner rule: nothing jarring). `history` ({ undo(), redo() } -> Promise<{ok, at}|null>, a
+//     liveClient's step): Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z go to the server's undo history of the file, which outlives the tab, a
+//     reload, another window and a restart (owner 2026-11-17); `undo`: a Y.UndoManager in the page (a local live file).
 //   liveClient({ url, protocols, onHello, onReopen, onStatus, onSwap }) -> the page side of the file socket (server/web/
-//     live_files_routes.ts): y-protocols sync, reconnects, and a rebase onto a new lineage that keeps the page's text.
+//     live_files_routes.ts): y-protocols sync, reconnects, a rebase onto a new lineage that keeps the page's text, and step('undo' |
+//     'redo'), which asks the server to undo or redo the person's last edit of the file.
 //   compare({ parent, root, disk, live, name, narrow }) -> Compare in the same pane: the disk on the left (read only), your live text
 //     on the right with a "take theirs" arrow per chunk (MergeView revertControls); narrow: one column (unifiedMergeView).
 //   languageFor(name) -> CodeMirror extension (or [] for plain text)
@@ -143,6 +146,8 @@ const toB64 = (u) => {
 const REBASE = { kind: 'rebase' };
 function liveClient(o) {
   let doc = new Y.Doc(), ws = null, closed = false, synced = false, retry = 0, timer = null, lineage = '', localDirty = false;
+  let steps = 0;
+  const waiting = new Map(); // step id -> resolve (the server's {type: 'undone'} answer)
   let resolveSynced;
   let whenSynced = new Promise((r) => (resolveSynced = r));
   const send = (sock, build) => {
@@ -201,6 +206,11 @@ function liveClient(o) {
           send(sock, (e) => syncProtocol.writeSyncStep1(e, doc));
           if (o.onHello) o.onHello(m);
         } else if (m.type === 'reopen' && o.onReopen) o.onReopen(m);
+        else if (m.type === 'undone' && waiting.has(m.id)) {
+          const done = waiting.get(m.id);
+          waiting.delete(m.id);
+          done(m);
+        }
         return;
       }
       const d = decoding.createDecoder(new Uint8Array(ev.data));
@@ -263,6 +273,21 @@ function liveClient(o) {
     },
     whenSynced: () => whenSynced,
     sv: () => toB64(Y.encodeStateVector(doc)),
+    /**
+     * Undo or redo the person's last edit of this file on the server (its history outlives this page). The keystrokes typed before
+     * went out first on the same socket. Resolves {ok, at} (at: where the change ended, for the caret), or null while offline.
+     */
+    step(op) {
+      if (!ws || !synced || ws.readyState !== 1) return Promise.resolve(null);
+      const id = ++steps, sock = ws;
+      return new Promise((resolve) => {
+        waiting.set(id, resolve);
+        sock.send(JSON.stringify({ type: op === 'redo' ? 'redo' : 'undo', id }));
+        setTimeout(() => {
+          if (waiting.delete(id)) resolve(null);
+        }, 5000);
+      });
+    },
     connect,
     /** Connect again now (after the page opened the file again). */
     reconnect() {
@@ -340,14 +365,55 @@ function overlapValue(state, ranges) {
   return { gutter: g.finish(), lines: l.finish() };
 }
 
+// ---- undo: the server's history of the file (live.history), or a Y.UndoManager in the page (live.undo) ---------------------------
+// The server keeps the person's history next to the file's Y.Doc (server/files/live_file.ts), so it outlives the tab. Ctrl+Z, Ctrl+Y
+// and Ctrl+Shift+Z (and the browser's own historyUndo / historyRedo input) ask it; the caret goes to where the change ended.
+function serverUndo(h) {
+  const go = (op) => (view) => {
+    Promise.resolve(op === 'redo' ? h.redo() : h.undo()).then((r) => {
+      if (!r || !r.ok || !(r.at >= 0)) return;
+      try {
+        const at = Math.min(r.at, view.state.doc.length);
+        view.dispatch({ selection: { anchor: at }, scrollIntoView: true });
+      } catch (err) {
+        /* the editor is gone */
+      }
+    });
+    return true;
+  };
+  return {
+    keys: [
+      { key: 'Mod-z', run: go('undo'), preventDefault: true },
+      { key: 'Mod-y', mac: 'Mod-Shift-z', run: go('redo'), preventDefault: true },
+      { key: 'Mod-Shift-z', run: go('redo'), preventDefault: true },
+    ],
+    input: EditorView.domEventHandlers({
+      beforeinput(e, view) {
+        if (e.inputType === 'historyUndo') return go('undo')(view);
+        if (e.inputType === 'historyRedo') return go('redo')(view);
+        return false;
+      },
+    }),
+  };
+}
+function liveUndo(live) {
+  if (live.history) {
+    const s = serverUndo(live.history);
+    return { collab: yCollab(live.ytext, null, { undoManager: false }), keys: s.keys, extra: s.input };
+  }
+  return { collab: yCollab(live.ytext, null, { undoManager: live.undo }), keys: yUndoManagerKeymap, extra: [] };
+}
+
 // ---- Compare: in the same pane, at the same width --------------------------------------------------------------------------------
 function compare(o) {
   const lang = languageFor(o.name);
   const ro = [EditorState.readOnly.of(true), EditorView.editable.of(false)];
+  const u = liveUndo(o.live);
   const mine = [
     lineNumbers(),
-    yCollab(o.live.ytext, null, { undoManager: o.live.undo }),
-    keymap.of([...yUndoManagerKeymap, ...defaultKeymap]),
+    u.collab,
+    u.extra,
+    keymap.of([...u.keys, ...defaultKeymap]),
     theme,
     syntaxHighlighting(highlight),
     lang,
@@ -476,6 +542,7 @@ function create(opts) {
   const o = opts || {};
   const live = o.live ? (o.live === true ? liveFile(o.text) : o.live) : null;
   const text = live ? live.ytext.toString() : String(o.text ?? '');
+  const u = live ? liveUndo(live) : null;
   const wrap = new Compartment(), lang = new Compartment(), ro = new Compartment();
   const minified = text.split('\n', 50).some((l) => l.length > 5000);
   let wrapped = o.wrap ?? (/\.(md|markdown|txt)$/i.test(o.name || '') || minified);
@@ -509,7 +576,7 @@ function create(opts) {
       lineNumbers(),
       highlightActiveLineGutter(),
       highlightSpecialChars(),
-      live ? yCollab(live.ytext, null, { undoManager: live.undo }) : history(),
+      u ? [u.collab, u.extra] : history(),
       drawSelection(),
       dropCursor(),
       EditorState.allowMultipleSelections.of(true),
@@ -524,7 +591,7 @@ function create(opts) {
       highlightActiveLine(),
       highlightSelectionMatches(),
       search({ top: true }),
-      keymap.of([...keys, ...closeBracketsKeymap, ...defaultKeymap, ...searchKeymap, ...(live ? yUndoManagerKeymap : historyKeymap), indentWithTab]),
+      keymap.of([...keys, ...closeBracketsKeymap, ...defaultKeymap, ...searchKeymap, ...(u ? u.keys : historyKeymap), indentWithTab]),
       theme,
       wrap.of(wrapped ? EditorView.lineWrapping : []),
       lang.of(minified ? [] : languageFor(o.name)),
