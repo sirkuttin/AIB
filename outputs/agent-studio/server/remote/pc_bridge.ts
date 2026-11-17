@@ -18,6 +18,10 @@
  * the device, a 25 s ping), Files download (GET /api/pc/files/download, a computer-only route: see and download, never a save), and
  * the Device activity lines: terminal opened and closed, file downloaded and file outside the project read (by path, never the
  * content), project added and removed. Message text, terminal input and file contents are never logged.
+ *
+ * File editing (owner decision 2026-11-16, "1a"): a computer with Files uses the PC's file editor routes and its file socket, with the
+ * PC's rules plus the blocked folders and the project-root rule (pc_routes.ts); every save is a Device activity line with the device,
+ * the path and the result.
  */
 import { Principal, REMOTE_PC } from '../web/security.ts';
 import type { WebContext } from '../web/server.ts';
@@ -27,8 +31,9 @@ import type { WsLink } from '../platform/websocket.ts';
 import { DOCS_SOCKET, docsSocket } from '../web/docs_routes.ts';
 import { MAX_PROMPT_BODY_BYTES } from '../acp/attachments.ts';
 import type { Device, DeviceStore } from './devices.ts';
-import { chatKeys, decide, entryFor, systemTerminalKey } from './pc_routes.ts';
-import { guardPath, insideProjects } from './path_guard.ts';
+import { chatKeys, decide, entryFor, guardOpenFile, systemTerminalKey } from './pc_routes.ts';
+import { BlockedPath, guardPath, insideProjects } from './path_guard.ts';
+import { FILES_SOCKET, filesSocket } from '../web/live_files_routes.ts';
 import { LOGIN_HEADER } from './gate.ts';
 import type { DeviceSockets, SocketKind } from './pc_sockets.ts';
 import type { Audit } from './audit.ts';
@@ -98,6 +103,8 @@ export const MAX_DOWNLOAD_BYTES = MAX_TOTAL_ATTACHMENT_BYTES;
 export const PC_OWN_ROUTES: ReadonlyMap<string, readonly string[]> = new Map([[`GET ${DOWNLOAD_ROUTE}`, ['phone.read', 'pc.files']]]);
 /** The routes whose body may carry attachments (the PC composer's limits), read only once Send is checked. */
 const PROMPT_ROUTES = new Set(['/api/live/prompt', '/api/live/steer', '/api/live/queue']);
+/** The file editor's save: every one from a computer is a Device activity line (device, path, result). */
+const SAVE_ROUTE = '/api/live/files/save';
 /** Phase 2: the routes that answer a card, for "Allowed once on Laptop (Edge)" (attention/answers.ts). */
 const ANSWER_ROUTES = new Map<string, 'permission' | 'elicitation' | 'allow-answer'>([
   ['/api/live/permission', 'permission'],
@@ -217,6 +224,9 @@ export class PcBridge {
       body = read;
     }
     const verdict = await decide(entry, { method, path, query: url.searchParams, body, ctx });
+    const saving = path === SAVE_ROUTE;
+    if (saving && 'refuse' in verdict) this.#logSave(device, body, `refused: ${verdict.refuse}`);
+    if (saving && 'need' in verdict && this.#missing(device, verdict.need).length) this.#logSave(device, body, 'refused: scope');
     if ('refuse' in verdict) {
       // phase 2: a card another device answered first says who did
       const first = verdict.refuse === 'gone' && ANSWER_ROUTES.has(path) ? answeredElsewhere(ctx, body?.id, body?.key) : null;
@@ -242,6 +252,12 @@ export class PcBridge {
     if (!ctx.dispatchAs) return this.host.json(503, { error: 'AIB is starting. Try again in a moment.', code: 'busy' });
     const answer = await ctx.dispatchAs(principal, method as 'GET' | 'POST', url, request, body);
     if (path === '/api/live/terminal/list' && answer.status === 200) return await this.#terminalList(answer);
+    if (saving) {
+      // every save from a computer: the device, the path and how it went (never the text)
+      let code = '';
+      if (answer.status !== 200) code = String((await answer.clone().json().catch(() => ({})) as Json).code ?? answer.status);
+      this.#logSave(device, body, answer.status === 200 ? 'saved' : `not saved: ${code}`);
+    }
     if (answer.status === 200) {
       this.#logDone(device, path, url, body);
       // phase 2: this computer answered the card (the route just wrote the PC's name: attention/answers.ts)
@@ -266,6 +282,13 @@ export class PcBridge {
   /** A Device activity line (never message text, terminal input or file contents). */
   #log(device: Device, action: string, result: string, more: { chat?: string; path?: string } = {}): void {
     this.host.audit?.write({ device: device.id, name: device.name, action, result, ...more });
+  }
+
+  /** A file save from this computer (owner decision 2026-11-16, 1a): the file's path, never its text. */
+  #logSave(device: Device, body: Json | null, result: string): void {
+    const id = typeof body?.file === 'string' ? body.file : '';
+    const lf = id ? this.host.ctx.liveFiles?.get(id) : null;
+    this.#log(device, 'file saved', result, { path: lf ? lf.place.abs : id ? `(file ${id.slice(0, 40)} not open)` : '' });
   }
 
   /** The Device activity lines of a bridged request that went through: an outside file read, a project added or removed. */
@@ -360,7 +383,7 @@ export class PcBridge {
   }
 
   /**
-   * A WebSocket (terminal or docs) from a computer. The device token is the `aib-device.<token>` subprotocol; the exact Origin is
+   * A WebSocket (terminal, docs or the file editor's) from a computer. The device token is the `aib-device.<token>` subprotocol; the exact Origin is
    * required (RemoteGate checks it is this PC's address; here it must be present). The terminal: Terminal switch, a plain shell for a
    * chat key of an added project, cwd inside that chat's folder; no signin, setup, distro, shell, arg, step or start (v2 fix 4, 6).
    * The cwd rule is where the shell starts, not containment: a shell can cd anywhere, accepted under the Terminal switch.
@@ -411,6 +434,23 @@ export class PcBridge {
       const started = new URL(url);
       started.searchParams.set('cwd', cwd);
       const answer = terminalSocket(ctx, request, started, principal, this.#registered(device, 'terminal', key!));
+      return 'response' in answer ? answer.response : this.host.json(answer.refused[0], answer.refused[1]);
+    }
+    if (url.pathname === FILES_SOCKET) {
+      // the file editor (owner decision 2026-11-16, 1a): Files; the open file in an added project, never a blocked folder
+      if (!device.scopes.includes('pc.files')) {
+        return this.host.json(403, { error: 'This computer may not edit files.', code: 'scope', missing: ['pc.files'] });
+      }
+      const extra = [...new Set(q.keys())].filter((k) => k !== 'file' && k !== 'view');
+      if (extra.length) return this.host.json(403, { error: `Not accepted from another computer: ${extra.join(', ')}.`, code: 'pc_only' });
+      try {
+        guardOpenFile(ctx, q.get('file'));
+      } catch (error) {
+        if (error instanceof BlockedPath) return this.host.json(error.status, { error: error.message, code: error.code });
+        throw error;
+      }
+      this.host.devices.touch(device.id);
+      const answer = filesSocket(ctx, request, url, principal, this.#registered(device, 'files', ''));
       return 'response' in answer ? answer.response : this.host.json(answer.refused[0], answer.refused[1]);
     }
     if (url.pathname === DOCS_SOCKET) {

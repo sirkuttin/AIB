@@ -1256,7 +1256,7 @@
       };
       items.push(b);
     }
-    // Git exclude writes into the repo: not from another computer (Files there is see and download)
+    // Git exclude writes into the repo: not from another computer (Files there is see, download and edit)
     if (!REMOTE() && row && scope && (row.kind === 'file' || row.kind === 'dir')) {
       const it = F().excludeItem(row, scope);
       const b = btn(null, 'ws-menu-item fx-menu-it fx-menu-excl');

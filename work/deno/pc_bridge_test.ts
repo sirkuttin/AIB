@@ -158,14 +158,16 @@ Deno.test('contract 1: every ROUTE_LIST entry has exactly one remote entry, and 
     'GET /',
     'POST /api/live/files/exclude',
     'POST /api/live/files/strays/move',
-    // the file editor (live_files_routes.ts): page session only, its socket too (the file editor review's rule)
-    'POST /api/live/files/open',
-    'POST /api/live/files/save',
-    'POST /api/live/files/close',
-    'GET /api/live/files/compare',
-    'GET /api/live/files/socket',
   ];
   for (const key of mustNever) assertEquals(PC_ROUTES[key]?.kind, 'never', key);
+  // the file editor (owner decision 2026-11-16, 1a): a computer with Files edits with the PC's rules; each route is a rule (its fields
+  // allowlisted: never the tests' `text`), the socket the bridge's own entry
+  for (const key of ['POST /api/live/files/open', 'POST /api/live/files/save', 'POST /api/live/files/close', 'GET /api/live/files/compare']) {
+    const e = PC_ROUTES[key];
+    assert(e.kind === 'rule' && Array.isArray(e.fields) && !e.fields.includes('text'), `${key}: a rule with an allowlist`);
+  }
+  const fileSocket = PC_ROUTES['GET /api/live/files/socket'];
+  assert(fileSocket.kind === 'socket' && fileSocket.socket === 'files', 'the file socket goes through the bridge socket entry');
   for (const key of routes) if (key.includes('/api/live/devices')) assertEquals(PC_ROUTES[key].kind, 'never', key);
   for (const op of ['answer', 'rules', 'remove', 'restore', 'review', 'enable', 'builtin']) {
     const e = PC_ROUTES[`POST /api/live/allow/${op}`];
@@ -391,10 +393,14 @@ Deno.test({
           // the other allow rules (v2 fix 1)
           [L, 'POST /api/live/allow/answer', 'without pc.always', { id: 'c1' }, 'scope'],
           [L, 'POST /api/live/allow/rules', 'without pc.always', {}, 'scope'],
-          // files writes: never in v1
+          // Git exclude writes into the repo: never from a computer
           [A, 'POST /api/live/files/exclude', 'Git exclude', { id: 'c1', action: 'add', path: 'x' }, 'pc_only'],
-          // the file editor: page session only
-          [A, 'POST /api/live/files/save', 'a save', { file: 'f1', text: 'x' }, 'pc_only'],
+          // the file editor (owner decision 2026-11-16, 1a): with Files; never the tests' `text` stand-in, never a blocked folder
+          [A, 'POST /api/live/files/save', 'a save with text', { file: 'f1', text: 'x' }, 'pc_only'],
+          [A, 'POST /api/live/files/save', 'a save', { file: 'f1' }, null],
+          [A, 'POST /api/live/files/open', 'a project file', { root: 'project', project: s.project, path: 'a.txt' }, null],
+          [A, 'POST /api/live/files/open', 'an extra field', { root: 'project', project: s.project, path: 'a.txt', abs: HOME }, 'pc_only'],
+          [A, 'POST /api/live/files/close', 'close', { file: 'f1', view: 'v1' }, null],
           // the inbox's actions (Inbox v3.1): the phone's set; anything else or an extra field is refused
           [L, 'POST /api/live/inbox/act', 'wake', { key: 'claude:sess-c1', action: 'wake' }, null],
           [A, 'POST /api/live/inbox/act', 'an unknown action', { key: 'claude:sess-c1', action: 'archive' }, 'pc_only'],
@@ -448,6 +454,8 @@ Deno.test({
         ['GET', `/api/live/files/list?root=project&project=${q(s.state)}`, undefined],
         ['GET', `/api/live/files/read?root=project&project=${q(s.state)}&path=devices.json`, undefined],
         ['GET', `/api/live/files/search?root=project&project=${q(s.state)}&q=x`, undefined],
+        // the file editor (owner decision 2026-11-16, 1a): never a file in a blocked folder
+        ['POST', '/api/live/files/open', { root: 'project', project: s.state, path: 'devices.json' }],
         ['POST', '/api/live/artifacts/preview', { conversationId: 't1', path: inHome('.ssh', 'id_rsa') }],
         // relative paths resolve against the chat's folder: never checked as sent (security review MF1; pc_sec_test.ts has the rest)
         ['POST', '/api/live/artifacts/preview', { conversationId: 't1', path: 'state/devices.json' }],
@@ -492,6 +500,11 @@ Deno.test({
       const names = (listed.json.entries as Json[]).map((e) => e.name);
       assert(names.includes('projects') && !names.includes('state'), `rows: ${names.join(', ')}`);
       refusedBy(await call(s, A, 'GET', `/api/live/files/list?root=project&project=${q(s.root)}&dir=state`), 'blocked_folder', 'dir=state');
+      refusedBy(
+        await call(s, A, 'POST', '/api/live/files/open', { root: 'project', project: s.root, path: 'state/devices.json' }),
+        'blocked_folder',
+        'editing a file in the state folder',
+      );
       const found = await call(s, A, 'GET', `/api/live/files/search?root=project&project=${q(s.root)}&q=devices`);
       assertEquals(found.status, 200, found.text);
       assert(!(found.json.matches as Json[]).some((m) => String(m.path).startsWith('state')), 'no match inside the state folder');
@@ -552,6 +565,15 @@ Deno.test({
         'not_computer',
         'docs, phone',
       );
+      // the file editor's socket (owner decision 2026-11-16, 1a): a computer with Files only; phone token, page token, a computer
+      // without Files and anything but file and view refused before any upgrade
+      const noFiles = await pairPhone(s, 'Laptop 3', COMPUTER_SCOPES.filter((x) => x !== 'pc.files'), 'computer');
+      const F = '/api/live/files/socket?file=abc&view=v1';
+      refusedBy(await socket(s, F, `aib-file, ${DEVICE_PROTOCOL_PREFIX}${phone.token}`), 'not_computer', 'file socket, phone');
+      refusedBy(await socket(s, F, `aib-file, ${DEVICE_PROTOCOL_PREFIX}${noFiles.token}`), 'scope', 'file socket, no Files');
+      refusedBy(await socket(s, F, `aib-file, aib-token.${s.token}, ${DEVICE_PROTOCOL_PREFIX}${all.token}`), 'page_credential', 'file socket, page token');
+      refusedBy(await socket(s, `${F}&root=x`, `aib-file, ${DEVICE_PROTOCOL_PREFIX}${all.token}`), 'pc_only', 'file socket, extra query');
+      assertEquals((await socket(s, F, `aib-file, ${DEVICE_PROTOCOL_PREFIX}${all.token}`, { Origin: null })).status, 403);
       // any other socket path: refused as before
       assertEquals((await socket(s, '/api/remote/home', dev(all.token))).status, 403);
       // no own-gate / agent-key route reaches its handler through the bridge

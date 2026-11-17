@@ -10,7 +10,7 @@
  */
 import type { WsLink } from "../platform/websocket.ts";
 
-export type SocketKind = "terminal" | "docs";
+export type SocketKind = "terminal" | "docs" | "files";
 
 /** The close code a socket gets when its device was removed or lost the switch (the page shows "This device was removed"). */
 export const CLOSE_REMOVED = 4401;

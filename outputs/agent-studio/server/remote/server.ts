@@ -57,6 +57,7 @@ import type { DeviceSockets } from './pc_sockets.ts';
 import { entryFor } from './pc_routes.ts';
 import { TERMINAL_SOCKET } from '../web/terminal_routes.ts';
 import { DOCS_SOCKET } from '../web/docs_routes.ts';
+import { FILES_SOCKET } from '../web/live_files_routes.ts';
 import {
   DeviceViewPrefs,
   LOADER,
@@ -435,7 +436,7 @@ export class RemoteServer {
   /** A request for the bridge: a page route (ROUTE_LIST) the phone API does not have, from a client naming a device. */
   #forBridge(method: string, path: string, headers: Headers): 'api' | 'socket' | null {
     const upgrade = headers.get('Upgrade') !== null || headers.has('Sec-WebSocket-Key');
-    if (upgrade) return method === 'GET' && (path === TERMINAL_SOCKET || path === DOCS_SOCKET) ? 'socket' : null;
+    if (upgrade) return method === 'GET' && (path === TERMINAL_SOCKET || path === DOCS_SOCKET || path === FILES_SOCKET) ? 'socket' : null;
     if (!headers.has(DEVICE_HEADER) || !(entryFor(method, path) || PC_OWN_ROUTES.has(`${method} ${path}`))) return null;
     return path.startsWith('/api/') ? 'api' : null;
   }

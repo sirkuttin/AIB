@@ -408,7 +408,7 @@ Deno.test('Don\'t save in one of two views keeps the text; in the last view it d
   }
 });
 
-Deno.test('a paired computer is refused: the file socket and every editor route', async () => {
+Deno.test('a paired computer without Files is refused: the file socket and every editor route', async () => {
   const state = await temp('aib-fe-state-');
   const dir = await project({ 'p.txt': 'secret\n' });
   const s = await startServer(state, new FakeHost());
@@ -421,10 +421,11 @@ Deno.test('a paired computer is refused: the file socket and every editor route'
     const answer = filesSocket(s.ctx, req, new URL(req.url), { kind: REMOTE_PC } as never);
     assert('refused' in answer, 'no socket for a remote computer');
     assertEquals((answer as { refused: [number, Json] }).refused[0], 403);
-    for (const [method, path] of [['POST', '/api/live/files/open'], ['POST', '/api/live/files/save'], ['POST', '/api/live/files/close'], ['GET', '/api/live/files/compare'], ['GET', '/api/live/files/socket']]) {
-      const verdict = entryFor(method, path) as Json;
-      assertEquals(verdict.kind, 'never', `${method} ${path} is never reachable from a paired computer`);
+    // with Files (owner decision 2026-11-16, 1a) the bridge lets a computer through by rule, the socket by its own entry
+    for (const [method, path] of [['POST', '/api/live/files/open'], ['POST', '/api/live/files/save'], ['POST', '/api/live/files/close'], ['GET', '/api/live/files/compare']]) {
+      assertEquals((entryFor(method, path) as Json).kind, 'rule', `${method} ${path}`);
     }
+    assertEquals((entryFor('GET', '/api/live/files/socket') as Json).kind, 'socket');
     const viaBridge = await s.ctx.dispatchAs!({ kind: REMOTE_PC } as never, 'POST', new URL(`${s.origin}/api/live/files/save`), new Request(s.origin), { file: opened.body.file, text: 'x' });
     assertEquals(viaBridge.status, 403);
     assertEquals(Deno.readTextFileSync(`${dir}${sep}p.txt`), 'secret\n');

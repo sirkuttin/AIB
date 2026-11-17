@@ -1,6 +1,7 @@
 /**
- * The file editor's routes (files/live_files.ts). Page session only: never an agent's tool key, never a paired computer or phone
- * (pc_routes.ts lists each one as `never`), so nothing but the AIB page on this PC can change a project file's live text.
+ * The file editor's routes (files/live_files.ts). The page session, or a paired COMPUTER with Files (owner decision 2026-11-16, "1a":
+ * remote/pc_bridge.ts lets it through after pc_routes.ts's rules, with its REMOTE_PC principal); never an agent's tool key, a phone,
+ * or a computer without Files. Every rule of the page (editPlace: helpers' copies, aib-docs, AIB's data, .git) applies to both.
  *   POST /api/live/files/open {id|project, root: 'main'|'project', path}   open a file for editing: {editable: true, file, lineage,
  *        sha, eol, bom, encoding, ...} or {editable: false, reason, reasonText} (a helper's worktree, aib-docs, a binary file...)
  *   POST /api/live/files/save {file, sv?, force?, text?}   write the live text (sv: the page's Y state vector, base64; the server waits
@@ -15,7 +16,8 @@
  */
 import { authorize, pageAllowed, type Principal, Refusal, REMOTE_PC, TOKEN_HEADER } from './security.ts';
 import { ROUTES } from './routes.ts';
-import { upgradeWebSocket, wantsWebSocket } from '../platform/websocket.ts';
+import { upgradeWebSocket, wantsWebSocket, type WsLink } from '../platform/websocket.ts';
+import { isBlocked } from '../remote/path_guard.ts';
 import { TOKEN_PROTOCOL_PREFIX } from './terminal_routes.ts';
 import { scopeFor } from './files_routes.ts';
 import { FilesError } from '../worktrees/files.ts';
@@ -30,7 +32,11 @@ export const FILES_PROTOCOL = 'aib-file';
 type Reply = [number, unknown];
 type Handler = (ctx: WebContext, url: URL, body: Record<string, unknown> | null, request: Request, principal?: Principal) => Promise<Reply>;
 
-const REMOTE_REFUSED: Reply = [403, { error: 'Files are edited on the PC itself.', code: 'remote_refused' }];
+const REMOTE_REFUSED: Reply = [403, { error: 'This computer may not edit files. Turn on Files for it in AIB on the PC.', code: 'remote_refused' }];
+/** A REMOTE_PC principal may edit only with the Files switch (the bridge checked it too). */
+export const remoteMayEdit = (principal: Principal | null | undefined): boolean =>
+  principal?.kind === REMOTE_PC && !!principal.scopes?.has?.('pc.files' as never);
+const BLOCKED: Reply = [403, { error: 'This folder holds sign-ins or AIB data. Open it on the PC itself.', code: 'blocked_folder' }];
 const unb64 = (text: string) => Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
 
 function liveFilesOf(ctx: WebContext): LiveFiles | null {
@@ -44,7 +50,7 @@ function reasonText(reason: string): string {
 export function liveFilesRoutes(): Map<string, Handler> {
   const routes = new Map<string, Handler>();
   const guard = (handler: Handler): Handler => async (ctx, url, body, request, principal) => {
-    if (principal?.kind === REMOTE_PC) return REMOTE_REFUSED;
+    if (principal?.kind === REMOTE_PC && !remoteMayEdit(principal)) return REMOTE_REFUSED;
     if (!pageAllowed(principal, request.headers, ctx.token)) return [403, { error: 'Invalid local session token' }];
     const files = liveFilesOf(ctx);
     if (!files) return [503, { error: 'The file editor is not running', code: 'no_editor' }];
@@ -55,7 +61,7 @@ export function liveFilesRoutes(): Map<string, Handler> {
       throw error;
     }
   };
-  routes.set('POST /api/live/files/open', guard(async (ctx, _url, body) => {
+  routes.set('POST /api/live/files/open', guard(async (ctx, _url, body, _request, principal) => {
     const b = body ?? {};
     const root = String(b.root ?? '');
     if (root === 'chat') return [200, { editable: false, reason: 'worktree', reasonText: reasonText('worktree') }];
@@ -65,7 +71,11 @@ export function liveFilesRoutes(): Map<string, Handler> {
     const scope = await scopeFor(ctx, args);
     if (Array.isArray(scope)) return scope;
     if (wslLoc(scope.root)) return [200, { editable: false, reason: 'wsl', reasonText: reasonText('wsl') }];
+    // a computer: the blocked folders (sign-ins, AIB's data) also inside a project, after links are resolved (pc_routes.ts checked
+    // what was sent)
+    if (principal?.kind === REMOTE_PC && isBlocked(scope.root, ctx.stateDir ?? null)) return BLOCKED;
     const got = liveFilesOf(ctx)!.open(scope.root, b.path);
+    if (principal?.kind === REMOTE_PC && 'file' in got && isBlocked(got.file.place.abs, ctx.stateDir ?? null)) return BLOCKED;
     if ('refused' in got) return [200, { editable: false, reason: got.refused, reasonText: reasonText(got.refused) }];
     const lf = got.file;
     lf.refreshDirty();
@@ -124,20 +134,32 @@ function offered(request: Request): string[] {
 }
 
 /**
- * GET /api/live/files/socket (review must-fix 6): the page's token only, checked before the upgrade; a paired computer never gets here
- * (the bridge only opens the sockets it lists, and pc_routes.ts says `never`). A file that is not open here (the web server
- * restarted and it had nothing unsaved) is told {type: "reopen"}: the page opens it again and rebases its text on the new one.
+ * GET /api/live/files/socket (review must-fix 6): the page's token, checked before the upgrade; or a paired computer with Files, whose
+ * device token the bridge checked (remote/pc_bridge.ts socket: it passes the REMOTE_PC principal in, with its socket registry's
+ * wrap, and has checked the open file is in an added project and not in a blocked folder). A file that is not open here (the web
+ * server restarted and it had nothing unsaved) is told {type: "reopen"}: the page opens it again and rebases its text on the new one.
+ * The page and a computer editing one file share its live text, like two windows on the PC.
  */
-export function filesSocket(ctx: WebContext, request: Request, url: URL, principal: Principal | null = null): { refused: Reply } | { response: Response } {
-  if (principal?.kind === REMOTE_PC) return { refused: REMOTE_REFUSED };
+export function filesSocket(
+  ctx: WebContext,
+  request: Request,
+  url: URL,
+  principal: Principal | null = null,
+  /** A remote computer's socket registry (remote/pc_sockets.ts): the link the file gets, checked per message and closed on Remove. */
+  wrap: ((link: WsLink) => WsLink) | null = null,
+): { refused: Reply } | { response: Response } {
   const protocols = offered(request);
-  const token = protocols.find((p) => p.startsWith(TOKEN_PROTOCOL_PREFIX))?.slice(TOKEN_PROTOCOL_PREFIX.length) ?? '';
-  const headers = new Headers(request.headers);
-  headers.delete(TOKEN_HEADER);
-  if (token) headers.set(TOKEN_HEADER, token);
-  const allowed = authorize({ method: 'GET', path: FILES_SOCKET, headers }, ctx.gate, ROUTES.scopeFor('GET', FILES_SOCKET));
-  if (allowed instanceof Refusal) return { refused: [allowed.status, { error: allowed.message(FILES_SOCKET) }] };
-  if ((allowed as Principal).kind === REMOTE_PC) return { refused: REMOTE_REFUSED };
+  if (principal?.kind === REMOTE_PC) {
+    if (!remoteMayEdit(principal)) return { refused: REMOTE_REFUSED };
+  } else {
+    const token = protocols.find((p) => p.startsWith(TOKEN_PROTOCOL_PREFIX))?.slice(TOKEN_PROTOCOL_PREFIX.length) ?? '';
+    const headers = new Headers(request.headers);
+    headers.delete(TOKEN_HEADER);
+    if (token) headers.set(TOKEN_HEADER, token);
+    const allowed = authorize({ method: 'GET', path: FILES_SOCKET, headers }, ctx.gate, ROUTES.scopeFor('GET', FILES_SOCKET));
+    if (allowed instanceof Refusal) return { refused: [allowed.status, { error: allowed.message(FILES_SOCKET) }] };
+    if ((allowed as Principal).kind === REMOTE_PC) return { refused: REMOTE_REFUSED };
+  }
   if (request.headers.get('Origin') === null) return { refused: [403, { error: 'Request must come from the AIB page' }] };
   if (!wantsWebSocket(request) || !protocols.includes(FILES_PROTOCOL)) {
     return { refused: [400, { error: 'This address only takes a file editor WebSocket.' }] };
@@ -145,7 +167,9 @@ export function filesSocket(ctx: WebContext, request: Request, url: URL, princip
   const files = liveFilesOf(ctx);
   const id = url.searchParams.get('file') ?? '';
   const view = (url.searchParams.get('view') ?? '').slice(0, 64);
-  const { response, link } = upgradeWebSocket(request, FILES_PROTOCOL);
+  const upgraded = upgradeWebSocket(request, FILES_PROTOCOL);
+  const { response } = upgraded;
+  const link = wrap ? wrap(upgraded.link) : upgraded.link;
   if (!files || !files.attach(id, link, view)) {
     link.onmessage = () => {};
     link.send(JSON.stringify({ type: 'reopen', reason: 'not_open' }));

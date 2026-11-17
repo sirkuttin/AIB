@@ -12,8 +12,9 @@
  *
  * Switches (remote/devices.ts): phone.read "See chats", phone.answer "Answer questions", phone.prompt "Send messages, stop turns and
  * continue chats" (also doc editing: the Send switch, v2 fix 5), phone.start "Start new chats", phone.approve "Approve requests once",
- * pc.always "Allow always and modes that skip approvals", pc.files "Files: see and download", pc.terminal "Terminal", pc.projects
- * "Add and remove projects". phone.push is for the device's own subscription only.
+ * pc.always "Allow always and modes that skip approvals", pc.files "Files: see, download and edit" (owner decision 2026-11-16, 1a:
+ * the file editor with the PC's rules), pc.terminal "Terminal", pc.projects "Add and remove projects". phone.push is for the device's
+ * own subscription only.
  */
 import type { WebContext } from '../web/server.ts';
 import type { DeviceScope } from './devices.ts';
@@ -21,6 +22,9 @@ import { isMergeRequest, phoneOption } from './actions.ts';
 import { Registry } from '../worktrees/worktrees.ts';
 import { BlockedPath, guardNewProject, guardPath, guardProjectPath, insideProjects } from './path_guard.ts';
 import { restoreFolders } from '../web/project_routes.ts';
+import { scopeFor } from '../web/files_routes.ts';
+import * as osp from '../platform/ospath.ts';
+import { wslLoc } from '../wsl/access.ts';
 
 type Json = Record<string, unknown>;
 
@@ -42,7 +46,7 @@ export type RemoteEntry =
   | { kind: 'never'; why: string }
   | { kind: 'scope'; need: DeviceScope[]; paths?: { in: 'query' | 'body'; field: string; rule: PathRule; list?: boolean }[] }
   | { kind: 'rule'; fields: string[] | null; decide: (ask: Ask) => Verdict | Promise<Verdict> }
-  | { kind: 'socket'; socket: 'terminal' | 'docs' };
+  | { kind: 'socket'; socket: 'terminal' | 'docs' | 'files' };
 
 const R: DeviceScope = 'phone.read';
 const A: DeviceScope = 'phone.answer';
@@ -272,6 +276,38 @@ function docsOpenVerdict(ask: Ask): Verdict {
   return { need: [R] };
 }
 
+/**
+ * The file editor from a computer with Files (owner decision 2026-11-16, "1a"; design v2, architect review must-fix 6). The PC's own
+ * rules still apply in the routes (files/live_files.ts editPlace: a helper's or subagent's copy, aib-docs, AIB's data and .git are
+ * never editable); on top, the blocked folders (sign-ins, AIB's data) for the folder and the file, and an open file named by its id
+ * must be inside an added project.
+ */
+async function fileOpenVerdict(ask: Ask): Promise<Verdict> {
+  const body = obj(ask.body);
+  const args: Record<string, string[]> = {};
+  for (const k of ['id', 'project', 'root']) if (isStr(body[k])) args[k] = [body[k] as string];
+  const scope = await scopeFor(ask.ctx, args).catch(() => null);
+  if (scope && !Array.isArray(scope) && !wslLoc(scope.root)) {
+    guardPath(scope.root, ask.ctx.stateDir);
+    if (isStr(body.path) && body.path) guardPath(osp.join(scope.root, ...body.path.split(/[\\/]+/)), ask.ctx.stateDir);
+  }
+  return { need: [F] };
+}
+
+/** save / close / compare / the socket name an open file by its id: its folder and path pass the same guards, and the file is in
+ * an added project (an id that is not open: the route says so). Throws BlockedPath. */
+export function guardOpenFile(ctx: WebContext, id: unknown): void {
+  const lf = isStr(id) ? ctx.liveFiles?.get(id) : null;
+  if (!lf) return;
+  guardPath(lf.place.root, ctx.stateDir);
+  guardProjectPath(lf.place.abs, ctx.stateDir, projectFolders(ctx));
+}
+
+function fileIdVerdict(ask: Ask): Verdict {
+  guardOpenFile(ask.ctx, ask.method === 'GET' ? ask.query.get('file') : obj(ask.body).file);
+  return { need: [F] };
+}
+
 // ---- the table -----------------------------------------------------------------------------------------------------------------
 
 const DEVICES = never('Remote control and devices are changed on the PC only');
@@ -442,19 +478,20 @@ export const PC_ROUTES: Readonly<Record<string, RemoteEntry>> = {
   'POST /api/live/folders/pick': never("opens the system folder picker on the PC's screen; computers type the path"),
   'POST /api/live/project-add': rule(['path', 'paths'], projectAddVerdict),
   'POST /api/live/project-remove': rule(['path', 'check', 'disk', 'cleanup', 'titles', 'projects'], projectRemoveVerdict),
-  // ---- files: see and download (v1) ----
+  // ---- files: see, download and edit ----
   'GET /api/live/files/list': scope(F),
   'GET /api/live/files/search': scope(F),
   'GET /api/live/files/read': scope(F),
   'GET /api/live/files/outside': withPaths([F], [{ in: 'query', field: 'path', rule: 'blocked' }]),
-  'POST /api/live/files/exclude': never('Files is see and download only from another computer (v1)'),
-  'POST /api/live/files/strays/move': never('Files is see and download only from another computer (v1)'),
-  // the file editor: only the AIB page on the PC itself edits project files (architect review 2026-11-16, must-fix 6)
-  'POST /api/live/files/open': never('Files are edited on the PC itself'),
-  'POST /api/live/files/save': never('Files are edited on the PC itself'),
-  'POST /api/live/files/close': never('Files are edited on the PC itself'),
-  'GET /api/live/files/compare': never('Files are edited on the PC itself'),
-  'GET /api/live/files/socket': never('Files are edited on the PC itself'),
+  'POST /api/live/files/exclude': never('Git exclude is changed on the PC only'),
+  'POST /api/live/files/strays/move': never("A chat's files are moved on the PC only"),
+  // the file editor: a computer with Files edits with the PC's rules (owner decision 2026-11-16, 1a). `text` (a test's stand-in for
+  // typing) is not accepted from a computer: its edits come through the file socket like the page's
+  'POST /api/live/files/open': rule(['id', 'project', 'root', 'path'], fileOpenVerdict),
+  'POST /api/live/files/save': rule(['file', 'sv', 'force'], fileIdVerdict),
+  'POST /api/live/files/close': rule(['file', 'view', 'discard'], fileIdVerdict),
+  'GET /api/live/files/compare': rule(['file'], fileIdVerdict),
+  'GET /api/live/files/socket': { kind: 'socket', socket: 'files' },
   // ---- terminal ----
   'GET /api/live/terminal': { kind: 'socket', socket: 'terminal' },
   'GET /api/live/terminal/list': scope(T), // the answer is filtered to chat keys of added projects (pc_bridge.ts)

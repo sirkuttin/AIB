@@ -43,6 +43,7 @@ const SCOPE_LABELS: Record<string, string> = {
 const SOCKET_NEEDS: Record<SocketKind, string[]> = {
   terminal: ['pc.terminal'],
   docs: ['phone.read', 'phone.prompt'],
+  files: ['pc.files'], // the file editor (owner decision 2026-11-16, 1a)
 };
 
 /** Tests only (AGENT_STUDIO_TEST=1): a shorter wait for a busy phone port (AIB_TEST_REMOTE_BIND_MS). */

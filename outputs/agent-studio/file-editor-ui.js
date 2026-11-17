@@ -17,8 +17,9 @@
                                   tab (never a modal, never on quit); "Don't save" drops the text only where no other view shows it
        save(tab) / saveAll()
 
-     The live text is the server's (server/files/live_files.ts), synced over the page-only file socket by the bundle's liveClient:
-     one client per file per window, shared by the tab and the beside pane. A disk change merges in on the server; an overlap shows
+     The live text is the server's (server/files/live_files.ts), synced over the file socket by the bundle's liveClient (the page's
+     token, or on another computer with Files its device key): one client per file per window, shared by the tab and the beside pane;
+     the PC and another computer on one file share its live text like two windows. A disk change merges in on the server; an overlap shows
      as a gutter marker plus "1 overlap · Compare" (never a block that pushes code down); Compare opens in the same pane at the same
      width. Nothing here asks "Save changes?" on quit: unsaved text is kept by the server (hot exit). */
   const doc = () => root.document;
@@ -53,9 +54,10 @@
   };
   const editableScope = (s) => !!s && (s.root === 'main' || s.root === 'project');
   function handles(tab) {
-    // Another computer (remote-auth.js sets AIBRemote): files are edited on the PC itself (its routes are page-only, pc_routes.ts),
-    // so the tab stays the read-only view with Download.
-    if (root.AIBRemote) return false;
+    // Another computer (remote-auth.js sets AIBRemote): it edits with the PC's editor and rules only with the Files switch (owner
+    // decision 2026-11-16, 1a; the server decides anyway: pc_routes.ts). Without it, the tab stays the read-only view with Download.
+    const R = root.AIBRemote;
+    if (R && !(R.kind === 'pc' && typeof R.can === 'function' && R.can('pc.files'))) return false;
     return !!tab && !tab.kind && editableScope(tab.scope) && !(tab.scope && tab.scope.wsl);
   }
   const stateOf = (tab) => {
@@ -105,7 +107,8 @@
     let fileId = info.file;
     const client = CE.liveClient({
       url: () => proto + '//' + root.location.host + '/api/live/files/socket?file=' + encodeURIComponent(fileId) + '&view=' + VIEW,
-      protocols: async () => ['aib-file', 'aib-token.' + (await host.token())],
+      // another computer: no page token; remote-auth.js adds its device key (aib-device.<key>) to every socket
+      protocols: async () => (root.AIBRemote ? ['aib-file'] : ['aib-file', 'aib-token.' + (await host.token())]),
       onReopen: () => {
         // the server restarted with nothing unsaved of this file: open it again; the client rebases our text on the new one
         host.post('files/open', Object.assign({}, F().scopeArgs(tab.scope), { path: tab.path })).then((again) => {

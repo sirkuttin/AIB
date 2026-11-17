@@ -19,7 +19,7 @@ export type PhoneScope = typeof PHONE_SCOPES[number];
 export const DEFAULT_SCOPES: readonly PhoneScope[] = PHONE_SCOPES;
 
 /** Remote control from other PCs (design v2 section 6): a computer's extra switches. A computer has the phone switches too (they
- * cover the shared actions) plus these: Allow always and modes that skip approvals, Files: see and download, Terminal, Add and
+ * cover the shared actions) plus these: Allow always and modes that skip approvals, Files: see, download and edit, Terminal, Add and
  * remove projects. Lead call 2a: a new computer gets all of them (each can be turned off per computer). There is no pc.changes. */
 export const PC_SCOPES = ['pc.always', 'pc.files', 'pc.terminal', 'pc.projects'] as const;
 export type PcScope = typeof PC_SCOPES[number];

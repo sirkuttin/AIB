@@ -55,7 +55,7 @@
     '/wsl-settings-ui.js', '/start-page-ui.js', '/plan-ui.js', '/views.js', '/views-ui.js', '/focus-return.js',
     '/scroll-controller.js', '/chat-cache.js', '/chat.js', '/elicitation-ui.js', '/docs.css', '/doc-ui.js', '/doc-toolbar.js',
     '/doc-panels.js', '/doc.html', '/remote-loader.html', '/vendor/xterm/xterm.js', '/vendor/xterm/addon-fit.js',
-    '/vendor/xterm/addon-canvas.js', '/vendor/xterm/xterm.css', '/vendor/docs/editor.js',
+    '/vendor/xterm/addon-canvas.js', '/vendor/xterm/xterm.css', '/vendor/docs/editor.js', '/vendor/code/editor.js',
   ];
   const TAG = 'aib-attention';
 

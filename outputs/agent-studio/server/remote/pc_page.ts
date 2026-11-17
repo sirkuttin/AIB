@@ -104,7 +104,7 @@ export const PC_STATIC: Readonly<Record<string, string>> = (() => {
     'split-ui.js',
     'doc-icons.js',
     'files-state.js',
-    'file-editor-ui.js', // its editor stays off on the computer page (handles() is false there): the file routes are page-only
+    'file-editor-ui.js', // the file editor: on for a computer with Files (owner decision 2026-11-16, 1a), read-only without
     'files-ui.js',
     'doc-links.js',
     'subagents-ui.js',
@@ -142,6 +142,7 @@ export const PC_STATIC: Readonly<Record<string, string>> = (() => {
     out[`/vendor/xterm/${name}`] = `vendor${sep}xterm${sep}${name}`;
   }
   out['/vendor/docs/editor.js'] = `vendor${sep}docs${sep}editor.js`;
+  out['/vendor/code/editor.js'] = `vendor${sep}code${sep}editor.js`; // the file editor (CodeMirror 6), loaded on the first file tab
   return out;
 })();
 

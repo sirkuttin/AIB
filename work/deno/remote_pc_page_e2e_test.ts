@@ -654,11 +654,11 @@ Deno.test({
       const errors = page.errors.filter((e) => !/Failed to load resource|fetching the script/.test(e));
       assertEquals(errors, [], 'no page errors');
       assertEquals(await page.violations(), [], 'no CSP violations');
-      // the file editor loads but stays off: its routes are page-only, so a project file tab is the read-only view with Download
+      // the file editor is on for a computer with Files (owner decision 2026-11-16, 1a; remote_pc_file_editor_e2e_test.ts edits)
       assertEquals(
         await page.eval(`window.AgentFileEditor ? String(window.AgentFileEditor.handles({ id: 't', scope: { root: 'main' }, path: 'a.js' })) : 'none'`),
-        'false',
-        'no file editor on the computer page',
+        'true',
+        'the file editor on the computer page (Files is on)',
       );
 
       // the laptop's own layout: resizing the Activity column saves to this computer's prefs, never the PC's
@@ -749,7 +749,8 @@ Deno.test({
       await page.shot('pc-settings-this-computer');
 
       await page.key('Escape');
-      // Files: see and download. A file opens read only, with Download instead of "Open in <editor>" (the PC's programs)
+      // Files: see, download and edit. A project file opens in the editor (Save), with Download instead of "Open in <editor>" (the
+      // PC's programs); this test plays no WebSocket relay, so the editing itself is remote_pc_file_editor_e2e_test.ts's
       await page.click('.sf-mode-files');
       await page.waitFor(
         `[...document.querySelectorAll('.fx-row')].some((r) => r.textContent.includes('notes.txt'))`,
@@ -770,12 +771,12 @@ Deno.test({
         )),
         'no Open in editor',
       );
-      assert(
-        await page.eval<boolean>(
-          `document.body.textContent.includes('Menu fix notes')`,
-        ),
-        'the file is shown',
+      await page.waitFor(
+        `[...AgentFileEditor._states.values()].some((s) => s.info && s.info.path === 'notes.txt' && s.info.editable)`,
+        10000,
+        'notes.txt opened for editing',
       );
+      await page.waitFor(`[...document.querySelectorAll('#fileView button')].some((b) => b.textContent === 'Save')`, 5000, 'Save');
       await page.click('.sf-mode-chats');
 
       // Browse… (the PC's system folder picker) is not on a computer

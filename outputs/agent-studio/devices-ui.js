@@ -35,7 +35,7 @@
   // (lead call 2a), each can be turned off before Approve and later on its row. They go between Approve once and Push notifications.
   const PC_SCOPES = [
     ['pc.always', 'Allow always and modes that skip approvals'],
-    ['pc.files', 'Files: see and download'],
+    ['pc.files', 'Files: see, download and edit'],
     ['pc.terminal', 'Terminal'],
     ['pc.projects', 'Add and remove projects'],
   ];
