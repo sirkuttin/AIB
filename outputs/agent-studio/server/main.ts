@@ -493,7 +493,9 @@ export async function main(argv: string[]): Promise<void> {
           const open = ctx.presence.openOnPc();
           return Promise.resolve({
             working: studio!.workingList().length,
-            needsYou: studio!.blockedChats(open),
+            // the server-built inbox's count (attention/inbox.ts), as the page and the phone show it; before its first look, the
+            // agent host's own reading of the same rules
+            needsYou: ctx.inbox.latest() ? ctx.inbox.desktopCount() : studio!.blockedChats(open),
             blocked: attention.blocked().filter((b) => !INBOX.isOpen(b.key, open)),
           });
         }

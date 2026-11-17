@@ -30,7 +30,7 @@ export interface AppPrefs {
 export type Kind = 'needs' | 'turn';
 
 /** What a piece of news is about; `kind` stays binary (routing, sound rank, push words), the reason names it. */
-export type Reason = 'approval' | 'question' | 'signin' | 'asks' | 'failed' | 'wake' | 'finished';
+export type Reason = 'approval' | 'question' | 'signin' | 'asks' | 'failed' | 'stalled' | 'wake' | 'finished';
 
 export interface GroupEntry {
   key: string;

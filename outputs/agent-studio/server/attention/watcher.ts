@@ -28,6 +28,7 @@ import type { ReadState } from '../state/read_state.ts';
 import { FiredStore } from './fired.ts';
 import { type ChatFacts, type Flags, type Group, type GroupEntry, type Kind, type Reason, RULES } from './rules.ts';
 import { INBOX } from './inbox_rules.ts';
+import type { Inbox, InboxService } from './inbox.ts';
 import type { Presence, Where } from './presence.ts';
 
 const log = getLogger('attention');
@@ -94,6 +95,9 @@ export interface WatchSources {
   viewPrefs: Pick<ViewPrefs, 'public'>;
   /** First prompts of chats with no other title (remote/payloads.ts TitleCache), when there is one. */
   firstPrompt?: (id: string) => string;
+  /** The server-built inbox (inbox.ts): each look rebuilds it from the same chat list, and the blocked chats (trays) and the
+   * notifications' line 1 come from its rows. Without it (older tests) the watcher reads the phases itself as before. */
+  inbox?: Pick<InboxService, 'look'>;
 }
 
 export interface WatcherOptions {
@@ -279,6 +283,14 @@ export class AttentionWatcher {
     try {
       this.options.onList?.(listing);
     } catch { /* never stops a look */ }
+    // the server-built inbox from this same list: its rows are the blocked chats and the notifications' words
+    let inbox: Inbox | null = null;
+    try {
+      inbox = this.sources.inbox ? await this.sources.inbox.look(listing) : null;
+    } catch (error) {
+      log.info('attention: could not build the inbox (%s)', error instanceof Error ? error.message : error);
+    }
+    const rowOf = (key: string) => inbox?.rows.find((r) => r.key === key);
     let still: Set<string> | null = null; // chats whose helpers or background shells still run
     const marks = this.sources.conversations.public().entries as Record<string, unknown>;
     const prefs = this.sources.projectPrefs.public();
@@ -310,7 +322,7 @@ export class AttentionWatcher {
       const title = () => this.title(c, names, marks);
       const project = this.projectName(c, prefs);
       const markObj = obj(mark);
-      if (INBOX.blocked(phase) && !markObj.archivedAt && !markObj.deletedAt) {
+      if (!inbox && INBOX.blocked(phase) && !markObj.archivedAt && !markObj.deletedAt) {
         const reason: Reason = phase === 'failed' || phase === 'asks'
           ? phase
           : c.auth
@@ -323,7 +335,8 @@ export class AttentionWatcher {
       if (state === 'needs_you') {
         const needs = Math.max(1, Number(attention.needs) || 1);
         const reason: Reason = c.auth ? 'signin' : Array.isArray(c.elicitations) && c.elicitations.length ? 'question' : 'approval';
-        const [requests, what] = await this.#requests(c, needs);
+        const [requests, asked] = await this.#requests(c, needs);
+        const what = rowOf(key)?.what || asked; // the row's line 1 is the notification's text
         for (const request of requests) {
           const fk = `needs|${key}|${request}`;
           if (this.fired.has(fk) || news.some((n) => n.fk === fk)) continue;
@@ -348,7 +361,10 @@ export class AttentionWatcher {
         }
         if (phase === 'asks' && !settled(fk)) continue;
         if (turnKey) quiet.push(turnKey);
-        if (RULES.notifies('needs', flags)) news.push({ key, chat: id, kind: 'needs', title: title(), reason: phase, fk, flags, project });
+        const said = rowOf(key)?.what;
+        if (RULES.notifies('needs', flags)) {
+          news.push({ key, chat: id, kind: 'needs', title: title(), reason: phase, fk, flags, project, ...(said ? { what: said } : {}) });
+        }
         else quiet.push(fk);
         continue;
       }
@@ -379,6 +395,13 @@ export class AttentionWatcher {
       if (!settled(fk)) continue;
       if (RULES.notifies('turn', flags)) news.push({ key, chat: id, kind: 'turn', title: title(), reason: 'finished', fk, flags, project });
       else quiet.push(fk);
+    }
+    if (inbox) {
+      for (const r of inbox.rows) {
+        if (r.section !== 'needs') continue;
+        const reason = (['approval', 'question', 'signin', 'asks', 'failed', 'stalled'].includes(r.kind) ? r.kind : 'approval') as Reason;
+        blocked.push({ key: r.key, chat: r.id, title: r.title, reason });
+      }
     }
     this.#blocked = blocked;
     for (const fk of [...this.#settling.keys()]) if (!done.has(fk)) this.#settling.delete(fk);
@@ -594,6 +617,7 @@ export interface AttentionContext extends WatchSources {
   presence: Presence;
   readState: Pick<ReadState, 'update'>;
   desktopNotify: { show: DesktopShow } | null;
+  inbox?: Pick<InboxService, 'look'>;
   phone: {
     on: boolean;
     titles: { titles: Map<string, string>; seeList?: (listing: unknown) => void };

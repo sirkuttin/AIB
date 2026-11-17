@@ -7,8 +7,8 @@
    same list by time, drawn lighter. "All projects ▾" filters by project (no grouping), remembered on this phone.
    Inbox (inbox prototype v3): an envelope at the top right of home, next to the project picker, with the count of chats that need
    you in every project (needs-you colour), or a teal dot when only "To review" chats wait. A tap switches between the chat list and
-   the inbox: "Needs you in <picked project>", then "Needs you in other projects" right below, then "To review" (picked project
-   first); with All projects one "Needs you" list, then "To review". The PC's card: line 1 the request, line 2 chat · project, the
+   the inbox: the server-built rows (home.inbox, Inbox v3.1: the same rows as the PC's inbox), "Needs you" then "To review", with
+   no grouping by project. The PC's card: line 1 the request, line 2 chat · project, the
    wait time, ONE action row (Allow once / Deny / Reply; a risky command Review first; To review Reply / ×). Once-only options only.
    A chat: one agent. Its subagents are a "Subagents · N" card in the stream (title and state only) with a shortcut under the
    title. Approvals and questions are cards IN the stream ("Needs you · approval / question"), never a sheet over the chat: a card
@@ -831,83 +831,90 @@
   const RISKY = /\bgit\s+(push|reset\s+--hard|clean\b|branch\s+-D|rebase)\b|--force\b|\bpush\s+-f\b|\brm\s+-[a-z]*[rf]|\bRemove-Item\b[^|]*-Recurse|\b(rmdir|rd|del)\s+\/s\b|\bdrop\s+(table|database|schema)\b|\btruncate\s+table\b|\bmkfs\b|\bformat\s+[a-z]:/i;
   const isRisky = (ask) => obj(ask).kind === 'permission' && RISKY.test(str(obj(ask).detail) + ' ' + str(obj(ask).title));
 
-  /* Does this live home chat need you (blocked: an approval or question, a failed turn, a question in its reply)? */
-  function inboxNeeds(c) {
-    c = obj(c);
-    return c.needs > 0 || c.state === 'needs_you' || c.phase === 'needs_you' || c.phase === 'failed' || c.phase === 'asks';
+  /* The server-built inbox (home.inbox: attention/inbox.ts, Inbox v3.1): the same rows, count and order the PC's inbox draws. The
+     phone only draws them: no project grouping, no reading of its own. An older PC without it: nothing but the count. */
+  function inboxOf(home) {
+    const h = obj(home);
+    const ib = obj(h.inbox);
+    return {
+      rows: Array.isArray(ib.rows) ? ib.rows.filter((r) => r && str(r.key)) : [],
+      count: Number.isFinite(Number(ib.count)) && h.inbox ? Number(ib.count) : Number(h.waiting) || 0,
+      snoozed: Array.isArray(ib.snoozed) ? ib.snoozed : [],
+      working: obj(ib.working),
+    };
+  }
+  /* Is this inbox row in Needs you? */
+  function inboxNeeds(r) {
+    return obj(r).section === 'needs';
   }
   /* Is it waiting for you to read it ("To review": finished, not handled yet)? */
-  function inboxReview(c) {
-    c = obj(c);
-    if (inboxNeeds(c) || c.state === 'working' || c.phase === 'working') return false;
-    return c.phase ? c.phase === 'your_turn' : !!c.yourTurn;
+  function inboxReview(r) {
+    return obj(r).section === 'review';
   }
-  const atOf = (c) => Date.parse(str(obj(c).changedAt)) || 0;
 
-  /* The envelope's mark: {count: chats that need you in every project, dot: only "To review" chats wait}. */
+  /* The envelope's mark: {count: the server's one number, dot: only "To review" rows wait}. */
   function inboxBadge(home) {
-    const chats = Array.isArray(obj(home).chats) ? home.chats : [];
-    const count = chats.filter(inboxNeeds).length;
-    return { count, dot: count === 0 && chats.some(inboxReview) };
+    const ib = inboxOf(home);
+    return { count: ib.count, dot: ib.count === 0 && ib.rows.some(inboxReview) };
   }
 
-  /* The inbox's sections, in order. `filter`: the picked project id ('' = All projects); `name`: its name. Picked: "Needs you in
-     <name>" (always, may be empty), "Needs you in other projects" (when any), "To review" (picked project first). All projects: one
-     "Needs you" list, then "To review". Needs you oldest first; To review newest first. Each: {id, title, chats}. */
-  function inboxGroups(home, filter, name) {
-    const chats = Array.isArray(obj(home).chats) ? home.chats : [];
-    const needs = chats.filter(inboxNeeds).sort((a, b) => atOf(a) - atOf(b));
-    const review = chats.filter(inboxReview).sort((a, b) => atOf(b) - atOf(a));
-    const inP = (c) => obj(c.project).id === filter;
-    const out = [];
-    if (filter) {
-      out.push({ id: 'here', title: 'Needs you in ' + (str(name) || 'this project'), chats: needs.filter(inP) });
-      const there = needs.filter((c) => !inP(c));
-      if (there.length) out.push({ id: 'other', title: 'Needs you in other projects', chats: there });
-      if (review.length) out.push({ id: 'review', title: 'To review', chats: review.filter(inP).concat(review.filter((c) => !inP(c))) });
-    } else {
-      out.push({ id: 'needs', title: 'Needs you', chats: needs });
-      if (review.length) out.push({ id: 'review', title: 'To review', chats: review });
-    }
+  /* The inbox's sections, in the server's order: "Needs you" (always, may be empty), then "To review" (when any). The PC's two
+     sections, nothing per project (owner: "no project filters"). Each: {id, title, chats (rows)}. */
+  function inboxGroups(home) {
+    const rows = inboxOf(home).rows;
+    const out = [{ id: 'needs', title: 'Needs you', chats: rows.filter(inboxNeeds) }];
+    const review = rows.filter(inboxReview);
+    if (review.length) out.push({ id: 'review', title: 'To review', chats: review });
     return out;
   }
 
-  /* Line 1 of an inbox card: the actual request ("Run npm install", "Edit src/app.ts", the question), else the card's last line
-     without its prefix. No reason label. */
-  function inboxWhat(c) {
-    c = obj(c);
-    const a = obj(c.ask);
-    if (a.kind === 'permission') {
-      const d = str(a.detail);
-      if (!d) return str(a.title) || 'Asks to run something';
-      if (/^(edit|write|multiedit|create|update|apply)/i.test(str(a.title))) return 'Edit ' + d;
-      if (/^(read|fetch|webfetch|open|search|grep|glob)/i.test(str(a.title))) return str(a.title);
-      return 'Run ' + d;
-    }
-    if (a.kind === 'question') return str(a.title) || 'Has a question';
-    const line = str(c.line).replace(/^(Asks|Wants to run|Working on|You): /, '');
-    if (line) return line;
-    return c.phase === 'failed' ? 'The turn failed' : inboxReview(c) ? 'Finished' : 'Needs you';
+  /* Line 1 of an inbox card: the server wrote it (the request, the error, the stall, the agent's words). No reason label. */
+  function inboxWhat(r) {
+    return str(obj(r).what) || (inboxReview(r) ? 'Finished' : 'Needs you');
   }
 
-  /* The wait time on an inbox card: {text: "4m", long: waited 15 minutes or more} (never "waited"). */
-  function inboxWait(c, now) {
-    const t = atOf(c);
+  /* The wait time on an inbox card: {text: "4m", long: waited 15 minutes or more} (never "waited"); To review: how long ago. */
+  function inboxWait(r, now) {
+    const x = obj(r);
+    const t = (Number(inboxNeeds(x) ? x.since : x.at) || 0) * 1000;
     const n = now || Date.now();
-    return { text: ago(str(obj(c).changedAt), n), long: !!t && n - t >= INBOX_LONG_MS };
+    return { text: t ? ago(new Date(t).toISOString(), n) : '', long: inboxNeeds(x) && !!t && n - t >= INBOX_LONG_MS };
   }
 
-  /* The card's ONE action row. Approval (phone may allow): Allow once / Deny / Reply; risky: Review first / Deny. To review:
-     Reply / ×. Anything else: Reply. Only once-only options ever (allow_once / reject_once, approvalButtons): nothing "always".
-     Each: {act: 'allow' | 'deny' | 'review' | 'reply' | 'handled', label, optionId?}. */
-  function inboxActions(c, can) {
-    c = obj(c);
-    if (!inboxNeeds(c)) return inboxReview(c) ? [{ act: 'reply', label: 'Reply' }, { act: 'handled', label: '×' }] : [];
-    const a = obj(c.ask);
-    if (a.kind === 'permission' && a.key && !a.pcOnly && obj(can).approve) {
+  /* An approval row's request as the phone's waiting item ({kind, key, title, detail, options, pcOnly}). */
+  function rowAsk(r) {
+    const req = obj(obj(r).request);
+    const p = obj(req.params);
+    if (req.kind === 'question') return { kind: 'question', key: str(req.key), title: str(p.message) || 'An agent has a question', detail: '', options: [], pcOnly: p.mode !== 'form' };
+    if (req.kind !== 'permission') return null;
+    const tc = obj(p.toolCall);
+    const input = obj(tc.rawInput);
+    const cmd = typeof input.command === 'string' ? input.command : '';
+    const detail = cmd || str(input.file_path) || str(input.path) || str(input.url);
+    const options = (Array.isArray(p.options) ? p.options : []).map(obj).filter((o) => str(o.optionId));
+    return { kind: 'permission', key: str(req.key), title: str(tc.title) || 'An agent asks to run something', detail, options, pcOnly: !!req.pcOnly };
+  }
+
+  /* The card's ONE action row. Approval (phone may allow): Allow once / Deny / Reply; risky: Review first / Deny. Stalled:
+     Continue / Reply / ×. To review: Reply / ×. Anything else: Reply. Only once-only options ever (allow_once / reject_once,
+     approvalButtons): nothing "always". Each: {act: 'allow' | 'deny' | 'review' | 'reply' | 'continue' | 'handled', label,
+     optionId?}. */
+  function inboxActions(r, can) {
+    const x = obj(r);
+    if (inboxReview(x)) return [{ act: 'reply', label: 'Reply' }, { act: 'handled', label: '×' }];
+    if (!inboxNeeds(x)) return [];
+    if (x.kind === 'stalled') {
+      const out = [];
+      if (obj(can).send) out.push({ act: 'continue', label: 'Continue' });
+      if (x.id) out.push({ act: 'reply', label: 'Reply' });
+      out.push({ act: 'handled', label: '×' });
+      return out;
+    }
+    const a = rowAsk(x);
+    if (a && a.kind === 'permission' && a.key && !a.pcOnly && obj(can).approve) {
       const b = approvalButtons(a);
-      const allow = b.find((x) => x.tone === 'allow');
-      const deny = b.find((x) => x.tone === 'deny');
+      const allow = b.find((y) => y.tone === 'allow');
+      const deny = b.find((y) => y.tone === 'deny');
       const out = [];
       if (isRisky(a)) out.push({ act: 'review', label: 'Review first' });
       else if (allow) out.push({ act: 'allow', label: 'Allow once', optionId: allow.optionId });
@@ -3348,35 +3355,40 @@
     return b;
   }
 
-  /* The inbox under the picker: its sections (inboxGroups) with one card per chat. */
-  function inboxEl(home, picked) {
+  /* The inbox under the picker: the server's rows in its two sections (inboxGroups), one card per row. */
+  function inboxEl(home) {
     const box = el('div', 'ph-inbox');
     box.id = 'phInboxList';
     const now = Date.now();
     const can = abilities(S.scopes);
-    for (const g of inboxGroups(home, picked ? picked.id : '', picked ? picked.name : '')) {
+    for (const g of inboxGroups(home)) {
       const sec = el('section', 'ph-isec');
       sec.dataset.group = g.id;
       sec.setAttribute('data-rk', 'g:' + g.id);
       sec.append(el('h2', 'ph-ih', g.title));
       if (!g.chats.length) sec.append(el('p', 'ph-inone', 'Nothing needs you'));
-      for (const c of g.chats) sec.append(inboxCard(c, now, can));
+      for (const r of g.chats) sec.append(inboxCard(r, now, can));
       box.append(sec);
     }
     return box;
   }
 
-  /* One inbox card, the same as the PC's: line 1 the request and the wait time, line 2 chat · project, one action row. A tap on
-     the card opens the chat (at its waiting card when it waits on one). */
-  function inboxCard(c, now, can) {
-    const item = { project: obj(c.project), agent: c.agent };
-    const ask = obj(c.ask);
-    const card = el('div', 'ph-icard' + (inboxNeeds(c) ? '' : ' rev'));
-    card.dataset.chat = c.id;
-    card.setAttribute('data-rk', 'i:' + c.id);
+  /* One inbox card, the same row as the PC's (the server built it): line 1 the request and the wait time, line 2 chat · project,
+     one action row. A tap on the card opens the chat (at its waiting card when it waits on one). */
+  function inboxCard(r, now, can) {
+    const item = { project: obj(r.project), agent: r.agent };
+    const ask = obj(rowAsk(r));
+    const card = el('div', 'ph-icard' + (inboxNeeds(r) ? '' : ' rev'));
+    card.dataset.chat = r.id || '';
+    card.dataset.key = r.key;
+    card.dataset.kind = r.kind || '';
+    card.setAttribute('data-rk', 'i:' + r.key);
     card.tabIndex = 0;
     card.setAttribute('role', 'button');
-    const open = () => openChat(c.id, c.title, !!ask.key, item);
+    const open = () => {
+      if (r.id) openChat(r.id, r.title, !!ask.key, item);
+      else toast('This chat is not running. Use Continue, or open it on your PC.');
+    };
     on(card, 'click', (e) => {
       if (e.target.closest && e.target.closest('button')) return;
       open();
@@ -3388,16 +3400,16 @@
       }
     });
     const l1 = el('div', 'ph-il1');
-    l1.append(el('span', 'ph-iwhat', inboxWhat(c)));
-    const w = inboxWait(c, now);
+    l1.append(el('span', 'ph-iwhat', inboxWhat(r)));
+    const w = inboxWait(r, now);
     if (w.text) l1.append(el('span', 'ph-iage' + (w.long ? ' old' : ''), w.text));
-    const l2 = el('div', 'ph-il2', str(c.title) + ' · ' + (str(obj(c.project).name) || 'No folder'));
+    const l2 = el('div', 'ph-il2', str(r.title) + ' · ' + (str(obj(r.project).name) || 'No folder'));
     card.append(l1, l2);
-    const acts = inboxActions(c, can);
+    const acts = inboxActions(r, can);
     if (acts.length) {
       const row = el('div', 'ph-iacts');
       for (const a of acts) {
-        const x = button('ph-btn ph-ib ' + a.act, a.label, () => inboxAct(c, a, item));
+        const x = button('ph-btn ph-ib ' + a.act, a.label, () => inboxAct(r, a, item));
         x.dataset.act = a.act;
         if (a.optionId) x.dataset.option = a.optionId;
         if (a.act === 'handled') x.setAttribute('aria-label', 'Mark handled');
@@ -3406,7 +3418,7 @@
       }
       card.append(row);
     }
-    if (S.actError && ask.key && S.actKey === ask.key) {
+    if (S.actError && ((ask.key && S.actKey === ask.key) || S.actKey === r.key)) {
       const e = el('p', 'ph-error', S.actError);
       e.setAttribute('role', 'alert');
       card.append(e);
@@ -3414,33 +3426,37 @@
     return card;
   }
 
+  /* One of the server's inbox actions from the phone (POST /api/remote/chat-op): handled, continue, snooze, wake. */
+  async function inboxOp(r, op, extra, done) {
+    let res = null;
+    try {
+      res = await call('POST', '/api/remote/chat-op', Object.assign({ key: r.key, op }, extra || {}));
+    } catch {
+      res = null;
+    }
+    if (res && res.status === 401) return removed();
+    if (!res || res.status !== 200) return toast(res ? res.data.error || 'That did not work. Try again.' : "Can't reach " + S.pcName + '. Nothing was changed.');
+    S.homeRev = '';
+    if (done) toast(done);
+    clearTimeout(S.timer);
+    tick();
+  }
+
   /* An inbox card's button. Allow once / Deny answer the request from home; Review first and Reply open the chat (Reply with the
-     message box ready); × marks a To review chat handled on the PC. */
-  async function inboxAct(c, a, item) {
-    const ask = obj(c.ask);
+     message box ready); Continue sends "Continue where you left off." to a stalled chat; × marks the row handled on the PC. */
+  async function inboxAct(r, a, item) {
+    const ask = obj(rowAsk(r));
     if (a.act === 'allow' || a.act === 'deny') {
-      const done = await act('permission', { id: c.id, key: ask.key, option: a.optionId }, ask.key);
+      const done = await act('permission', { id: r.id, key: ask.key, option: a.optionId }, ask.key);
       if (!done) return;
       S.homeRev = '';
       toast(a.act === 'allow' ? 'Allowed once' : 'Denied');
       return;
     }
-    if (a.act === 'handled') {
-      let r = null;
-      try {
-        r = await call('POST', '/api/remote/chat-op', { key: c.key, op: 'handled' });
-      } catch {
-        r = null;
-      }
-      if (r && r.status === 401) return removed();
-      if (!r || r.status !== 200) return toast(r ? r.data.error || 'That did not work. Try again.' : "Can't reach " + S.pcName + '. Nothing was changed.');
-      S.homeRev = '';
-      toast('Marked handled');
-      clearTimeout(S.timer);
-      tick();
-      return;
-    }
-    openChat(c.id, c.title, !!ask.key, item);
+    if (a.act === 'handled') return inboxOp(r, 'handled', null, 'Marked handled');
+    if (a.act === 'continue') return inboxOp(r, 'continue', null, 'Sent: Continue where you left off.');
+    if (!r.id) return toast('This chat is not running. Use Continue, or open it on your PC.');
+    openChat(r.id, r.title, !!ask.key, item);
     if (a.act === 'reply') S.focusPrompt = true;
   }
 
@@ -3512,7 +3528,7 @@
     }
     if (!home) body.append(el('p', 'ph-empty', 'Loading your chats…'));
     else if (!all.length) body.append(el('p', 'ph-empty', 'No chats on ' + S.pcName + ' yet. Start one in AIB on the PC.'));
-    else if (S.inbox) body.append(inboxEl(home, picked));
+    else if (S.inbox) body.append(inboxEl(home));
     else {
       const now = Date.now();
       const cards = el('div', 'ph-cards');

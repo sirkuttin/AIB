@@ -34,6 +34,41 @@
     inboxPop = null,
     scrim = null,
     inboxOpen = false;
+  // The server-built inbox (GET /api/live/inbox, Inbox v3.1): rows, count, working and snoozed, the same the phone, the
+  // notifications and the trays read. null until the first answer (an older agent host: the page builds its rows as before).
+  let srvInbox = null,
+    srvPulling = false,
+    srvPulledAt = 0;
+  const SRV_PULL_MS = 1500;
+  function pullInbox(force) {
+    if (!host || !host.getJson || srvPulling) return;
+    if (!force && Date.now() - srvPulledAt < SRV_PULL_MS) return;
+    srvPulling = true;
+    srvPulledAt = Date.now();
+    Promise.resolve(host.getJson('/api/live/inbox', srvInbox && !force ? { since: srvInbox.version } : force ? { fresh: 1 } : {})).then(
+      (r) => {
+        srvPulling = false;
+        if (r && Array.isArray(r.rows) && (!srvInbox || r.version !== srvInbox.version || force)) {
+          srvInbox = r;
+          for (const [k, t] of Array.from(gone)) if ((Number(r.at) || 0) * 1000 >= t - 1000) gone.delete(k);
+          if (lastSyncArgs) sync(...lastSyncArgs);
+        }
+      },
+      () => {
+        srvPulling = false;
+      },
+    );
+  }
+  // Rows the page just acted on (Mark handled, a reply, an answer): out of the view until the server's rows were built after
+  // that (its `at`), so a row never flickers back between the click and the next answer.
+  const gone = new Map();
+  // Take an answer that carries the inbox (POST /api/live/inbox/act) at once, without waiting for the next pull.
+  function takeInbox(r) {
+    if (r && r.inbox && Array.isArray(r.inbox.rows)) {
+      srvInbox = r.inbox;
+      srvPulledAt = Date.now();
+    }
+  }
   const S = () => root.AgentSplitUI;
   const FU = () => root.AgentFilesUI; // files-ui.js: file tabs after the chat tabs, the file view in the middle
   const splitReady = () => !!(S() && S().ready());
@@ -1031,12 +1066,14 @@
     const more = W.othersOpen().filter((k) => mine.indexOf(k) < 0);
     return more.length ? mine.concat(more) : mine;
   }
+  // The rows the page shows: the server's (Inbox v3.1), else (an older agent host) the page's own reading of the same rules.
+  const baseRows = () => (srvInbox && St().fromServer ? St().fromServer(srvInbox.rows) : St().inbox(items));
   function inboxView() {
     const IR = root.AgentInboxRules,
       open = frontKeys();
-    return St()
-      .inbox(items)
+    return baseRows()
       .filter((r) => {
+        if (r.server && gone.has(r.key)) return false;
         // The chat open in the window is in front of you: no row and no count, in Needs you or Finished (inbox-rules.js isOpen).
         // When you switch to another chat, a chat still waiting comes back.
         if (IR && IR.isOpen ? IR.isOpen(r.key, open) : open.indexOf(r.key) >= 0) return false;
@@ -1045,7 +1082,7 @@
         if (r.section === 'finished') {
           if (r.key === selectedKey) return false;
           const it = itemOf(r.key);
-          if (it && (seenTurns[r.key] || 0) >= it.yourTurnAt) return false;
+          if (it && (seenTurns[r.key] || 0) >= (it.yourTurnAt || r.at)) return false;
         }
         return true;
       });
@@ -1445,7 +1482,11 @@
   };
   const detail = new Map(); // live id -> {needs, at, permissions: [...], loading} for approval rows (their bodies are not in the list)
   const RP = () => root.AgentInboxReply;
-  const detailFor = (item) => {
+  // The request a row answers: the server row's own (capped; Inbox v3.1), else the chat's live list entry and a state read.
+  const detailFor = (item, row) => {
+    const req = row && row.request;
+    if (req && req.kind === 'permission') return { elicitations: [], permissions: [{ key: req.key, params: req.params }] };
+    if (req && req.kind === 'question') return { elicitations: [{ key: req.key, params: req.params }], permissions: [] };
     const d = item && item.liveId ? detail.get(item.liveId) : null;
     return {
       elicitations: item ? item.elicReqs || [] : [],
@@ -1454,7 +1495,7 @@
   };
   // Permission bodies are only in the full state of a connection; fetch it once per chat while its approval row is shown.
   function wantDetail(item, row) {
-    if (!item || !item.liveId || row.kind !== 'needs' || item.elicitations || !host || !host.getJson) return;
+    if (!item || !item.liveId || row.kind !== 'needs' || row.request || item.elicitations || !host || !host.getJson) return;
     const d = detail.get(item.liveId);
     if (d && (d.loading || (d.needs === item.needs && Date.now() - d.at < 15000))) return;
     const rec = { needs: item.needs, at: Date.now(), permissions: [], loading: true };
@@ -1498,7 +1539,7 @@
   async function sendQuick(key) {
     const s = qs(key),
       text = s.text.trim(),
-      c = convOf(key);
+      c = convOf(key) || stubOf(key);
     if (s.busy || !text) return;
     if (!c || !host.quickPrompt) {
       s.error = 'This chat is not available. Use Open chat.';
@@ -1522,6 +1563,8 @@
         return;
       }
       quick.delete(key);
+      gone.set(key, Date.now());
+      pullInbox(true);
       drawInbox();
       focusNeighbour(keys, key);
     } catch (e) {
@@ -1536,7 +1579,7 @@
   // Retry on a Failed row: your last message again (text only), by the quick-reply route; the row goes once it is sent.
   async function retryQuick(key) {
     const s = qs(key),
-      c = convOf(key);
+      c = convOf(key) || stubOf(key);
     if (s.busy) return;
     if (!c || !host.retryLast) {
       s.error = 'This chat is not available. Use Open chat.';
@@ -1551,6 +1594,8 @@
       const res = await host.retryLast(c);
       if (res && res.attachments && host.notice) host.notice('Sent your last message again, without its attachments.');
       quick.delete(key);
+      gone.set(key, Date.now());
+      pullInbox(true);
       drawInbox();
       focusNeighbour(keys, key);
     } catch (e) {
@@ -1561,6 +1606,10 @@
   }
   async function answerQuick(key, item, b) {
     const s = qs(key);
+    if (!item || !item.liveId) {
+      const row = baseRows().find((x) => x.key === key);
+      if (row && row.liveId) item = Object.assign({}, item || {}, { liveId: row.liveId });
+    }
     if (s.busy || !item || !item.liveId || !host.postJson) return;
     const keys = rowKeys();
     s.busy = true;
@@ -1578,7 +1627,9 @@
         });
       detail.delete(item.liveId);
       quick.delete(key);
+      gone.set(key, Date.now());
       if (host.reload) await host.reload();
+      pullInbox(true);
       drawInbox();
       focusNeighbour(keys, key);
     } catch (e) {
@@ -1593,13 +1644,11 @@
   // kind), reply, retry, loading, openOnly, more, full (the whole command)}; null when the chat is not in the inbox.
   function toastCard(key) {
     const Rp = RP(),
-      r = St()
-        .inbox(items)
-        .find((x) => x.key === key);
+      r = baseRows().find((x) => x.key === key);
     if (!r || !Rp) return null;
     const item = itemOf(key);
     if (item) wantDetail(item, r);
-    const d = detailFor(item),
+    const d = detailFor(item, r),
       act = Rp.rowActions(r, d);
     const perm = !r.ask && d.permissions && d.permissions.length ? d.permissions[0] : null,
       permLine = perm && Rp.permissionTitle ? Rp.permissionTitle(perm) : '';
@@ -1607,7 +1656,9 @@
     const tc = perm && perm.params && perm.params.toolCall,
       cmd = tc && tc.rawInput && typeof tc.rawInput.command === 'string' ? tc.rawInput.command.trim() : '';
     const line1 =
-      r.reason === 'failed'
+      r.reason === 'stalled'
+        ? r.whatText
+        : r.reason === 'failed'
         ? r.ask || (item && item.lastText) || 'The last turn ended with an error.'
         : r.reason === 'asks'
           ? r.ask || (item && item.lastText) || r.summary
@@ -1676,12 +1727,28 @@
     drawInbox();
     focusRow(key);
   }
+  // A server row's chat the page has not listed (yet): enough of it to mark it (provider and session id are its key).
+  function stubOf(key) {
+    const row = baseRows().find((x) => x.key === key && x.server);
+    const at = key.indexOf(':');
+    if (!row || at <= 0) return null;
+    const sid = key.slice(at + 1);
+    return {
+      provider: key.slice(0, at),
+      id: sid,
+      sessionId: sid,
+      title: row.title,
+      ...(row.liveId ? { live: { id: row.liveId, closed: false, sessionId: sid } } : {}),
+    };
+  }
   function markDone(key) {
-    const c = convOf(key);
+    const c = convOf(key) || stubOf(key);
     if (!c || !root.AgentOrganizeUI) return;
     const keys = rowKeys();
     Promise.resolve(root.AgentOrganizeUI.markHandled(c)).then(() => {
       quick.delete(key);
+      gone.set(key, Date.now()); // the row leaves now; the server's next rows say the same
+      pullInbox(true);
       drawInbox();
       focusNeighbour(keys, key);
     });
@@ -1701,7 +1768,7 @@
       tag = e.target && e.target.tagName,
       typing = tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SELECT';
     const ctxRows = rows.map((r) => ({
-      reply: Rp.rowActions(r, detailFor(itemOf(r.key))).reply,
+      reply: Rp.rowActions(r, detailFor(itemOf(r.key), r)).reply,
       handled: !!r.handled,
     }));
     const idx = Math.max(
@@ -1764,6 +1831,8 @@
   const actBtn = (label, cls, title) => btn(label, 'ws-qa ' + (cls || ''), title);
   // "Working: 5 chats in 3 projects": what still runs, at the foot of the inbox (working chats are not rows). No subagent count.
   function workingLine() {
+    const IR = root.AgentInboxRules;
+    if (srvInbox && srvInbox.working && IR && IR.workingText) return IR.workingText(srvInbox.working);
     const busy = items.filter((i) => i.phase === 'working' && !i.archived && !i.deleted);
     if (!busy.length) return '';
     const projects = new Set(busy.map((i) => i.projectKey)).size;
@@ -1775,12 +1844,18 @@
   function whatOf(r, item, pa) {
     const w = el('span', null, 'ws-inbox-what');
     const turn = r.reason === 'finished';
-    if (r.reason === 'approval' && pa && (pa.target || pa.line)) {
+    if (r.reason === 'approval' && !pa && r.whatText) {
+      if (r.whatCode && r.whatText.endsWith(r.whatCode)) {
+        w.append(doc().createTextNode(r.whatText.slice(0, r.whatText.length - r.whatCode.length)), el('code', r.whatCode));
+      } else w.textContent = oneLine(r.whatText);
+    } else if (r.reason === 'approval' && pa && (pa.target || pa.line)) {
       if (pa.verb && pa.target && pa.code) {
         w.append(doc().createTextNode(pa.verb + ' '), el('code', pa.target));
         if (pa.diff && (pa.diff.add || pa.diff.del))
           w.append(el('span', '  +' + pa.diff.add + ' −' + pa.diff.del, 'ws-inbox-q'));
       } else w.textContent = pa.line || pa.target;
+    } else if (r.whatText && r.reason !== 'approval') {
+      w.textContent = oneLine(r.whatText); // the server wrote line 1 (Inbox v3.1)
     } else if (r.reason === 'question') {
       const q = item && item.elicReqs && item.elicReqs[0] && item.elicReqs[0].params;
       w.textContent = oneLine((q && q.message) || r.ask || r.summary);
@@ -1831,9 +1906,9 @@
       }
       if (item) wantDetail(item, r);
       const act = Rp
-        ? Rp.rowActions(r, detailFor(item))
+        ? Rp.rowActions(r, detailFor(item, r))
         : { reply: false, buttons: [], handled: !!r.handled, open: true, loading: false, openOnly: false, more: 0 };
-      const perms = r.reason === 'approval' && Rp ? detailFor(item).permissions : null,
+      const perms = r.reason === 'approval' && Rp ? detailFor(item, r).permissions : null,
         pa = perms && perms.length && Rp.permissionAction ? Rp.permissionAction(perms[0]) : null;
       const wrap = el(
         'div',
@@ -1842,6 +1917,7 @@
       );
       wrap.dataset.key = r.key;
       wrap.dataset.reason = r.reason;
+      if (r.server) wrap.dataset.src = 'server'; // drawn from the server-built rows (Inbox v3.1)
       const b = btn(null, 'ws-inbox-row');
       b.dataset.key = r.key;
       // Line 1: what it wants, and the wait alone ("4m"; orange after 15 min) or how long ago it finished.
@@ -2871,6 +2947,7 @@
   function sync(conversations, selected) {
     if (!host || !root.AgentSidebarUI) return;
     lastSyncArgs = [conversations, selected];
+    pullInbox(false);
     items = (conversations || []).filter((c) => c && c.provider).map(normalize);
     byKey = new Map(items.map((i) => [i.key, i]));
     if (popoutKey()) checkPopoutChat();
@@ -2951,7 +3028,9 @@
       '|' +
       items.map((i) => (i.yourTurnAt || 0) + i.phase + (i.helpers || 0) + (i.since || 0)).join(',') +
       '|' +
-      (inboxOpen ? Math.floor(Date.now() / 60000) : ''); // the inbox's phases, helpers and waits ("waited 12m" moves each minute)
+      (inboxOpen ? Math.floor(Date.now() / 60000) : '') + // the inbox's phases, helpers and waits ("waited 12m" moves each minute)
+      '|' +
+      (srvInbox ? srvInbox.version : '');
     if (sig === lastSig) return;
     if (drag && drag.on) return; // do not rebuild the dropdown under a drag; the next sync redraws
     lastSig = sig;

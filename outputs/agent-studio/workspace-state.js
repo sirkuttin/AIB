@@ -465,6 +465,53 @@
     return out.sort((a, b) => (a.section === b.section ? 0 : a.section === 'needs' ? -1 : 1) || b.at - a.at);
   }
 
+  // The server-built inbox's rows (GET /api/live/inbox, inbox-rules.js rowsOf: Inbox v3.1) in the page's row shape, so the page
+  // draws what the server built (the same rows the phone, the notifications and the trays read) instead of building its own.
+  // The server's order is kept. Each row also carries whatText (line 1 as the server wrote it), whatCode, request (the first
+  // open request, capped), stall and actions.
+  const SERVER_KINDS = { approval: 'permission', question: 'question', signin: 'auth' };
+  function fromServer(rows) {
+    const out = [];
+    for (const r of Array.isArray(rows) ? rows : []) {
+      if (!r || !isStr(r.key)) continue;
+      const needs = r.section === 'needs';
+      const answer = needs && SERVER_KINDS[r.kind];
+      const project = r.project && typeof r.project === 'object' ? r.project : {};
+      const what = String(r.what || '');
+      out.push({
+        key: r.key,
+        liveId: String(r.id || ''),
+        title: r.title || 'Conversation',
+        projectKey: project.key || '',
+        projectName: project.name || 'No folder',
+        provider: r.provider || '',
+        agent: r.agent || r.provider || '',
+        helpers: Number(r.helpers) || 0,
+        activity: 0,
+        section: needs ? 'needs' : 'finished',
+        reason: r.kind,
+        kind: answer ? 'needs' : 'yourTurn',
+        needs: answer ? Math.max(1, Number(r.needs) || 0) : 0,
+        kinds: answer ? [{ kind: answer, count: Math.max(1, Number(r.needs) || 0) }] : [],
+        summary: what,
+        ask: String(r.ask || ''),
+        snippet: needs ? '' : what,
+        line: what,
+        handled: r.kind !== 'approval',
+        since: Number(r.since) || 0,
+        at: Number(r.at) || 0,
+        whatText: what,
+        whatCode: String(r.whatCode || ''),
+        request: r.request && typeof r.request === 'object' ? r.request : null,
+        more: Number(r.more) || 0,
+        stall: r.stall || null,
+        actions: Array.isArray(r.actions) ? r.actions : [],
+        server: true,
+      });
+    }
+    return out;
+  }
+
   // The inbox grouped by project (alphabetical), each group's rows keeping the inbox order: [{projectKey, projectName, rows}].
   function groupInbox(rows) {
     const map = new Map();
@@ -933,6 +980,7 @@
     return n === cleanName(autoName) ? '' : n;
   }; // empty or equal to the folder name resets the name
   const api = {
+    fromServer,
     nameToSave,
     looksWindows,
     sepOf,

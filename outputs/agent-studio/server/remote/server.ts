@@ -33,6 +33,7 @@ import type { Audit } from './audit.ts';
 import { cleanName, type Device, type DeviceStore, type PhoneScope } from './devices.ts';
 import { LOGIN_HEADER, REMOTE_REASONS, RemoteGate } from './gate.ts';
 import { type Pairing, PairingError } from './pairing.ts';
+import { inboxAct } from '../attention/inbox_act.ts';
 import { chatPayload, DEFAULT_TAIL, homePayload, imageOf, olderPage, plainTitle, revisionOf, type TitleCache, wholeEvent } from './payloads.ts';
 import { projectsFor } from './projects.ts';
 import { CONTINUE_FIELDS, continueSaved, publicSaved, SAVED_TAIL, type SavedChats, savedHistory } from './saved.ts';
@@ -1191,8 +1192,19 @@ export class RemoteServer {
     if (!SAVED_KEY.test(key)) throw new Refusal(400, 'invalid', 'Invalid request');
     const undo = this.#undoable.get(device.id) ?? new Map<string, Undoable>();
     const op = path === '/api/remote/chat-op' ? String(body.op ?? '') : path === '/api/remote/rename' ? 'rename' : 'mark';
-    if (!['rename', 'mark', 'handled', 'archive', 'delete', 'unarchive', 'restore'].includes(op)) {
+    if (!['rename', 'mark', 'handled', 'archive', 'delete', 'unarchive', 'restore', 'continue', 'snooze', 'wake'].includes(op)) {
       throw new Refusal(400, 'invalid', 'Invalid request');
+    }
+    // the inbox's own actions (Inbox v3.1, attention/inbox_act.ts): the same as the PC's inbox row
+    if (op === 'continue' || op === 'snooze' || op === 'wake') {
+      if (op === 'continue' && !device.scopes.includes('phone.prompt')) {
+        throw new Refusal(403, 'scope', 'Continue needs "Send messages, stop turns and continue chats" on for this phone (Settings → Remote control on your PC).');
+      }
+      const [status, answer] = await inboxAct(ctx, { key, action: op, until: body.until });
+      log(key, status === 200 ? `inbox ${op}` : `inbox ${op} failed (${status})`);
+      return status === 200
+        ? this.json(200, { ok: true })
+        : this.json(status, { error: String((answer as Record<string, unknown>).error ?? 'That did not work.'), code: String((answer as Record<string, unknown>).code ?? 'failed') });
     }
     const isUndo = op === 'unarchive' || op === 'restore';
     const found = isUndo ? null : await this.#listed(key);
@@ -1246,7 +1258,9 @@ export class RemoteServer {
         return this.json(200, { ok: true });
       }
       case 'handled': {
-        if (!found?.live) throw new Refusal(409, 'not_live', 'Only a running chat can be marked handled.');
+        // a stalled chat whose agent died is a row without a running connection (its mark keeps it): it can be handled too
+        const stalled = !!(ctx.inbox.latest()?.rows.some((r) => r.key === key && r.kind === 'stalled'));
+        if (!found?.live && !stalled) throw new Refusal(409, 'not_live', 'Only a running chat can be marked handled.');
         const [status, answer] = await mark('handled');
         log(liveId, status === 200 ? 'marked handled' : `failed (${status})`);
         if (status !== 200) {

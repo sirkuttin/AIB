@@ -171,7 +171,7 @@
   }
 
   // ---- reasons: what a piece of news is about (inbox-rules.js reasonOf) ---------------------------------------------------------
-  const REASONS = ['approval', 'question', 'signin', 'asks', 'failed', 'wake', 'finished'];
+  const REASONS = ['approval', 'question', 'signin', 'asks', 'failed', 'stalled', 'wake', 'finished'];
   // An item's reason; an older caller without one: 'approval' for needs, 'finished' for a turn.
   function reasonFor(it) {
     const x = it || {};
@@ -185,6 +185,7 @@
     signin: 'Needs you to sign in',
     asks: 'Asks you something',
     failed: 'Failed',
+    stalled: 'Stopped mid-work',
     wake: 'Snooze ended',
     finished: TO_REVIEW,
   };

@@ -3,8 +3,8 @@
  * Serve, against an in-process AIB with a fake agent host:
  *  - no "Waiting on you · N" banner anywhere on home;
  *  - the envelope at the top right of home, next to the project picker, with the count of chats that need you (every project);
- *  - a tap shows the inbox: with All projects one "Needs you" list; with a project picked "Needs you in <project>" first, then
- *    "Needs you in other projects" right below;
+ *  - a tap shows the inbox: the server-built rows (Inbox v3.1), one "Needs you" list whatever project is picked (the old
+ *    "Needs you in <project>" split is gone: no project filters);
  *  - a card: line 1 the actual request, line 2 chat · project, the wait time, ONE row: Allow once / Deny / Reply, a risky command
  *    Review first / Deny; nothing "always", no agent name;
  *  - Allow once answers the request from home (the once-only option reaches the agent host); a tap on a card opens the chat;
@@ -28,7 +28,7 @@ const needs = { state: 'needs_you', needs: 1, turnEndedAt: null, busySince: null
 
 Deno.test({
   ...OPTS,
-  name: 'phone inbox: envelope with the count next to the picker; picked project first, then other projects; one action row; Allow once',
+  name: 'phone inbox: envelope with the count next to the picker; the server rows in one list, no project split; one action row; Allow once',
   ignore: !browserPath,
   async fn() {
     const s = await v2Studio();
@@ -79,19 +79,15 @@ Deno.test({
       assertEquals(new Set(all[0].slice(2)), new Set(['c-here', 'c-away']));
       assert(!(await page.eval<boolean>('!!document.querySelector(".ph-card")')), 'the chat list is not shown under the inbox');
 
-      // the picked project first, then other projects right below
+      // a picked project changes nothing in the inbox: still the server's one Needs you list (no "Needs you in <project>")
       await tap(page, '#phFilter');
       await tap(page, `.ph-flist [data-project="${s.projectId}"]`);
-      try {
-        await page.waitFor('document.querySelectorAll(".ph-isec").length === 2', 5000, 'two sections');
-      } catch (error) {
-        throw new Error(`${error}: ${s.projectId} ${await page.eval('document.getElementById("app").innerText.slice(0, 800)')}`);
-      }
+      await page.waitFor('!!document.getElementById("phInboxList")', 5000, 'the inbox');
       const picked = await page.eval<string[][]>(`[...document.querySelectorAll('.ph-isec')].map((s) => [s.dataset.group, s.querySelector('.ph-ih').textContent, ...[...s.querySelectorAll('.ph-icard')].map((c) => c.dataset.chat)])`);
-      assertEquals(picked[0][0], 'here');
-      assert(/^Needs you in /.test(picked[0][1]), picked[0][1]);
-      assertEquals(picked[0].slice(2), ['c-here']);
-      assertEquals(picked[1], ['other', 'Needs you in other projects', 'c-away']);
+      assertEquals(picked.length, 1, JSON.stringify(picked));
+      assertEquals(picked[0].slice(0, 2), ['needs', 'Needs you']);
+      assertEquals(new Set(picked[0].slice(2)), new Set(['c-here', 'c-away']));
+      assert(!/Needs you in /.test(await page.eval<string>('document.getElementById("phInboxList").innerText')), 'no per-project heading');
 
       // the card: request, chat · project, the wait time, one row; risky = Review first; nothing "always", no agent name
       const card = (id: string) =>
