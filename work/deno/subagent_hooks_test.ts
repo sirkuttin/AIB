@@ -418,7 +418,7 @@ Deno.test('the hook routes: deny, pass, bind, cap, closed chats, hints; never al
     await call('subagent-stop', { agent_id: 'a1', agent_type: 'general-purpose' });
     assertEquals(Object.values(readSubagents(state)).find((r) => r.agentId === 'a1')!.state, 'done');
 
-    // the cap: the chat holds at most MAX_PER_CHAT worktrees (the bound one counts)
+    // the cap: at most MAX_PER_CHAT live subagents (the finished a1 does not count: subagent_restart_test.ts)
     let denied = '';
     for (let i = 0; i < MAX_PER_CHAT + 1 && !denied; i++) {
       const d = await decision('pre-tool', { tool_name: 'Agent', tool_use_id: `toolu_c${i}`, tool_input: { prompt: 'x' } });

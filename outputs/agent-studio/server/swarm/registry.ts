@@ -101,6 +101,15 @@ export interface SubagentLanding {
   agentId?: string;
   files?: number;
   empty?: boolean;
+  /**
+   * Scratch files (scratchFiles): new, uncommitted files with a page or note extension at the top of its worktree, left out of the
+   * landing and kept in its worktree (it is not removed while they are there); the parent is told. merge_helper lands them too.
+   */
+  kept?: string[];
+  /** When the kept files were left (seconds): its worktree goes KEPT_DAYS later unless the parent calls merge_helper first. */
+  keptAt?: number;
+  /** merge_helper asked for everything, scratch files included. */
+  landScratch?: boolean;
 }
 
 /**

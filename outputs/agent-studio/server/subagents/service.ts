@@ -46,10 +46,15 @@ const STALE_S = 60;
 
 export type SubagentState = 'preparing' | 'spare' | 'prepared' | 'running' | 'done' | 'stopped' | 'user-hook';
 /**
- * States that hold one of the chat's slots (the cap): every one with a folder on disk that has not gone yet (security review SF 4),
- * and the user-hook records (MF 4: a forged pre-tool flood hits the cap too).
+ * States that hold one of the chat's slots (the cap): the live ones only, a subagent being prepared or at work, and the user-hook
+ * records (MF 4: a forged pre-tool flood hits the cap too). A finished one (done, waiting to land; stopped, kept for the main agent)
+ * never blocks a new subagent (beta 11: finished-but-unlanded ones did). Their folders are bounded by the landing, which removes them.
  */
-const SLOT_STATES = new Set<SubagentState>(['preparing', 'prepared', 'running', 'done', 'stopped', 'user-hook']);
+export const SLOT_STATES = new Set<SubagentState>(['preparing', 'prepared', 'running', 'user-hook']);
+/** How long a subagent of a chat that is gone may stay quiet before AIB stops waiting for it (adoptPrevious). */
+export const LOST_QUIET_S = 30 * 60;
+/** The records a later chat of the same conversation takes over (adoptPrevious): bound ones; spares and unused ones just go. */
+const ADOPT_STATES = new Set<SubagentState>(['running', 'done', 'stopped', 'user-hook']);
 /** A path hint from a hook body is stored at most this long (security review MF 4). */
 const MAX_HINT = 1024;
 
@@ -97,6 +102,15 @@ export interface SubagentRecord {
    * (or Send now) leaves it running, and it lands when it ends (turnCancelled).
    */
   background?: boolean;
+  /** The live chat id it was started under, when a later chat of the same conversation adopted it (a restart: adoptPrevious). */
+  adoptedFrom?: string;
+}
+
+/** The fields that describe one Agent call (not the worktree): they move together when AIB fixes which worktree runs which call. */
+const CALL_FIELDS = ['toolUseId', 'description', 'agentType', 'background', 'acpSeen', 'acpAgentId'] as const;
+type CallFields = Pick<SubagentRecord, (typeof CALL_FIELDS)[number]>;
+function callOf(r: SubagentRecord): CallFields {
+  return { toolUseId: r.toolUseId, description: r.description, agentType: r.agentType, background: r.background, acpSeen: r.acpSeen, acpAgentId: r.acpAgentId };
 }
 
 /** What AIB knows of a subagent's start when it prepares its worktree. */
@@ -163,6 +177,17 @@ export function readSubagents(stateDir: string): Record<string, SubagentRecord> 
   }
 }
 
+/**
+ * The prepared worktree a starting subagent takes: the one whose Agent call the parent's stream already tied to this agentId (its
+ * launch message names the call's tool_use_id and the child: claudeTool), else the oldest. With parallel Agent calls the worktrees
+ * are made in call order but taken in start order, so the oldest is often another call's: then claudeTool or post-agent swaps the
+ * call fields back (swapCalls), and each landing carries its own subagent's description.
+ */
+function readyFor(mine: SubagentRecord[], agentId: string): SubagentRecord | undefined {
+  const ready = mine.filter((r) => r.state === 'prepared' && wt.lexists(r.path)).sort((a, b) => a.createdAt - b.createdAt);
+  return ready.find((r) => r.acpAgentId === agentId) ?? ready.find((r) => !r.acpAgentId) ?? ready[0];
+}
+
 class Mutex {
   #tail: Promise<void> = Promise.resolve();
   async run<T>(work: () => Promise<T> | T): Promise<T> {
@@ -227,6 +252,7 @@ export class SubagentWorktrees {
     // not open here (a keeper-held chat before its take-over) or given no hooks: the forwarder fails closed ("AIB is restarting")
     if (!chat || !chat.hooks || !isDict(body)) return text('This chat is not open in AIB', 503);
     try {
+      await this.adoptPrevious(chat.id);
       switch (event) {
         case 'pre-tool':
           return await this.#preTool(chat, body as Record<string, unknown>);
@@ -325,7 +351,7 @@ export class SubagentWorktrees {
         if (own.state !== 'done') return null; // stopped (kept for the user), or anything else: no more edits there
         return await this.#patch(own.id, { state: 'running', continuedAt: now() });
       }
-      const ready = mine.filter((r) => r.state === 'prepared' && wt.lexists(r.path)).sort((a, b) => a.createdAt - b.createdAt)[0];
+      const ready = readyFor(mine, agentId);
       if (!ready) return null;
       return await this.#patch(ready.id, {
         agentId,
@@ -486,7 +512,7 @@ export class SubagentWorktrees {
       const mine = this.ofChat(chat.id);
       const again = mine.find((r) => r.agentId === m[1] && wt.lexists(r.path));
       if (again) return text(again.path, 200);
-      const ready = mine.filter((r) => r.state === 'prepared' && wt.lexists(r.path)).sort((a, b) => a.createdAt - b.createdAt)[0];
+      const ready = readyFor(mine, m[1]);
       if (!ready) return text(TEXTS.unexpected, 409);
       await this.#patch(ready.id, { agentId: m[1], state: 'running', boundAt: now() });
       return text(ready.path, 200);
@@ -502,9 +528,11 @@ export class SubagentWorktrees {
       const mine = this.ofChat(chat.id);
       const bound = agentId ? mine.find((r) => r.agentId === agentId) : undefined;
       if (bound) {
-        // parallel Agent calls: the prepared worktrees are interchangeable, so the pairing is fixed here (P0 A5: agentId is reliable)
+        // parallel Agent calls: the prepared worktrees are interchangeable, so the pairing is fixed here (P0 A5: agentId is reliable).
+        // The whole call moves (its description too: 2026-11-16 a subagent landed under a sibling's name when only the id moved).
         const other = toolUseId ? mine.find((r) => r.id !== bound.id && r.toolUseId === toolUseId) : undefined;
-        if (other) await this.#patch(other.id, { toolUseId: bound.toolUseId });
+        if (other && !other.userHook && !bound.userHook) await this.#swapCalls(bound, other);
+        else if (other) await this.#patch(other.id, { toolUseId: bound.toolUseId });
         await this.#patch(bound.id, { ...(toolUseId ? { toolUseId } : {}), hints: { ...bound.hints, postAgent: { at: now(), status } } });
         return;
       }
@@ -587,11 +615,19 @@ export class SubagentWorktrees {
     agentId = '',
   ): Promise<void> {
     const target = (v: unknown) => (typeof v === 'string' ? v : '');
+    await this.adoptPrevious(chatId);
     await this.#lockOf(chatId).run(async () => {
       const mine = this.ofChat(chatId);
       if ((tool === 'Agent' || tool === 'Task') && toolUseId) { // the parent really made this Agent call (a forged pre-tool has none)
         const rec = mine.find((r) => r.toolUseId === toolUseId && (!r.acpSeen || (agentId && !r.acpAgentId)));
         if (rec) await this.#patch(rec.id, { acpSeen: true, ...(agentId ? { acpAgentId: agentId.slice(0, 64) } : {}) });
+        // the stream says which agent runs this call: a worktree bound to another call's agent (parallel calls bind in start order,
+        // not call order) gets its own call back, description included, so its landing carries its own name
+        const call = agentId ? this.ofChat(chatId).find((r) => r.toolUseId === toolUseId && !r.userHook) : undefined;
+        if (call && call.agentId && call.agentId !== agentId) {
+          const runner = this.ofChat(chatId).find((r) => r.id !== call.id && r.agentId === agentId && !r.userHook);
+          if (runner) await this.#swapCalls(runner, call);
+        }
       }
       if (tool === 'SendMessage') {
         const to = target(input.to) || target(input.agent_id) || target(input.agentId);
@@ -608,6 +644,16 @@ export class SubagentWorktrees {
     });
   }
 
+  /** Records a and b trade their Agent calls (CALL_FIELDS); their worktrees, agents and states stay. Read fresh, under the chat lock. */
+  async #swapCalls(a: SubagentRecord, b: SubagentRecord): Promise<void> {
+    const all = readSubagents(this.stateDir);
+    const ca = all[a.id] ? callOf(all[a.id]) : null, cb = all[b.id] ? callOf(all[b.id]) : null;
+    if (!ca || !cb) return;
+    log.info('Subagent %s runs the Agent call of %s (%s): their calls swapped', a.id, b.id, cb.description);
+    await this.#patch(a.id, cb);
+    await this.#patch(b.id, ca);
+  }
+
   async #stop(rec: SubagentRecord, why: string): Promise<void> {
     await this.#patch(rec.id, { state: 'stopped', stoppedAt: now(), stoppedWhy: why });
   }
@@ -621,6 +667,7 @@ export class SubagentWorktrees {
    */
   async acpEnded(chatId: string, agentId: string, how: string | null): Promise<void> {
     if (!agentId) return;
+    await this.adoptPrevious(chatId);
     await this.#lockOf(chatId).run(async () => {
       const rec = this.ofChat(chatId).find((r) => r.agentId === agentId);
       if (!rec) return;
@@ -635,6 +682,7 @@ export class SubagentWorktrees {
 
   /** P3: at the parent's turn end and when AIB takes a chat over: every record of the chat the stream shows as ended is settled. */
   async reconcileEnded(chatId: string, ended: Map<string, string>): Promise<void> {
+    await this.adoptPrevious(chatId);
     if (!ended.size) return;
     await this.#lockOf(chatId).run(async () => {
       for (const rec of this.ofChat(chatId)) {
@@ -672,6 +720,7 @@ export class SubagentWorktrees {
    * stream says so (acpEnded 'cancelled') and that settles it. Codex and Gemini subagents run inside the turn: all are stopped.
    */
   async turnCancelled(chatId: string, provider = ''): Promise<void> {
+    await this.adoptPrevious(chatId);
     await this.#lockOf(chatId).run(async () => {
       for (const r of this.ofChat(chatId).filter((x) => x.state === 'running' || (x.state === 'user-hook' && x.agentId))) {
         if (provider === 'claude' && inBackground(r)) continue;
@@ -741,6 +790,63 @@ export class SubagentWorktrees {
     });
   }
 
+  // ---- a later chat of the same conversation (a restart) -----------------------------------------------------------------------
+
+  /**
+   * The chat's live id changes when AIB opens its conversation again (a crash, a restart of Claude Code: c533d888 became 7e47dbe3 on
+   * 2026-11-16), so the subagents started under the old id were no one's: their SubagentStop found no record, they stayed "running",
+   * never landed and held their worktrees. Records of the same conversation (same lasting name provider:sessionId, same project) whose
+   * own chat is not open here any more become this chat's (their old chat can't call for them: its hooks answer 503). Then what Claude
+   * Code wrote of each one still running settles it (#settleFromTranscript): finished, it is done and lands like the chat's own.
+   * Called before each hook, stream event and turn end of the chat (never under its lock). Returns the records adopted now.
+   */
+  async adoptPrevious(chatId: string): Promise<SubagentRecord[]> {
+    const chat = this.chat(chatId);
+    if (!chat || !chat.lasting) return [];
+    const key = (p: string) => normcase(p).replace(/[\\/]+$/, '');
+    const all = this.all();
+    const theirs = all.filter((r) =>
+      r.chat !== chat.id && r.lasting === chat.lasting && ADOPT_STATES.has(r.state) &&
+      (!r.project || key(r.project) === key(chat.project)) && !this.chat(r.chat)
+    );
+    const lost = all.some((r) => r.chat === chat.id && r.adoptedFrom && r.state === 'running' && !r.userHook);
+    if (!theirs.length && !lost) return [];
+    const adopted: SubagentRecord[] = [];
+    await this.#lockOf(chat.id).run(async () => {
+      for (const r of theirs) {
+        const next = await this.#update(r.id, (cur) => (cur && cur.chat === r.chat ? { ...cur, chat: chat.id, adoptedFrom: cur.adoptedFrom || cur.chat } : cur));
+        if (next && next.chat === chat.id) adopted.push(next);
+      }
+      if (adopted.length) log.info('Chat %s took over %d subagent(s) of its earlier chat %s', chat.id, adopted.length, adopted[0].adoptedFrom);
+      for (const r of this.ofChat(chat.id)) {
+        if (r.adoptedFrom && r.state === 'running' && !r.userHook) await this.#settleFromTranscript(r, chat.hooks?.configDir, true);
+      }
+    });
+    return adopted;
+  }
+
+  /**
+   * A running subagent no live chat can report on (its chat restarted, or AIB was down): Claude Code's own files say whether it ended
+   * (<config>/projects/<folder>/<session>/subagents/agent-<agentId>.meta.json: finished, description; the transcript's last entry:
+   * how). Ended at a natural stop (end_turn): done, it lands. Ended otherwise: stopped (kept; the main agent can merge_helper it).
+   * `lost` (its chat is gone): quiet for LOST_QUIET_S with no end, its process is gone too: stopped, so it never holds a slot.
+   */
+  async #settleFromTranscript(r: SubagentRecord, configDir: string | undefined, lost: boolean): Promise<void> {
+    const session = r.lasting.startsWith('claude:') ? r.lasting.slice('claude:'.length) : '';
+    if (!session || !r.agentId || r.userHook || r.state !== 'running') return;
+    const end = claudeSubagentEnd(configDir ?? claudeConfigDir(Deno.env.toObject()), session, r.agentId);
+    // Claude Code's own record of which call this agent ran (by its agentId): the right name, whatever pairing AIB guessed
+    const named = end?.description && end.description !== r.description ? { description: end.description.slice(0, 300) } : {};
+    if (end?.how === 'end_turn') {
+      await this.#patch(r.id, { ...named, state: 'done', doneAt: now() });
+      log.info('Subagent %s (%s) had finished while AIB was not watching: it lands', r.id, r.agentId);
+    } else if (end?.how === 'ended') {
+      await this.#patch(r.id, { ...named, state: 'stopped', stoppedAt: now(), stoppedWhy: 'it ended while AIB was not watching it' });
+    } else if (lost && (end ? end.quietS : now() - (r.boundAt ?? r.createdAt)) > LOST_QUIET_S) {
+      await this.#patch(r.id, { ...named, state: 'stopped', stoppedAt: now(), stoppedWhy: 'AIB lost track of it when its chat restarted' });
+    }
+  }
+
   // ---- what the rest of AIB asks ---------------------------------------------------------------------------------------------
 
   /**
@@ -805,6 +911,7 @@ export class SubagentWorktrees {
    * Bound ones stay for landing (P2).
    */
   async turnEnded(chatId: string): Promise<void> {
+    await this.adoptPrevious(chatId);
     await this.#lockOf(chatId).run(async () => {
       // user-hook records whose Agent call never showed a worktree (refused, failed, forged) go (security review MF 4)
       for (const r of this.ofChat(chatId).filter((x) => x.state === 'user-hook' && !x.adopted)) await this.#update(r.id, () => null);
@@ -828,6 +935,13 @@ export class SubagentWorktrees {
 
   /** At start: spares, unused prepared and half-made ('preparing') worktrees of chats not open here, older than a minute, go. */
   async sweep(): Promise<void> {
+    // a subagent that finished while AIB was down or its chat was gone (its SubagentStop answered 503): done, it lands when its
+    // conversation is open again (swarm/service.ts finds the parent by its lasting name)
+    for (const r of this.all()) {
+      if (r.state !== 'running' || r.userHook || this.chat(r.chat)) continue;
+      await this.#lockOf(r.chat).run(() => this.#settleFromTranscript(r, undefined, false))
+        .catch((error) => log.exception(error, 'Reading the end of subagent %s failed', r.id));
+    }
     for (const r of this.all()) {
       if (!['spare', 'prepared', 'preparing'].includes(r.state) || this.chat(r.chat) || now() - r.createdAt < STALE_S) continue;
       await this.#remove(r).catch((error) => log.exception(error, 'Removing subagent worktree %s failed', r.path));
@@ -871,13 +985,13 @@ export const LANDS_AT_TURN_END = 'Lands when the turn ends';
 export const STOPPED_WORDS = 'Stopped — ask the agent to merge it';
 
 /** The landing words of one swarm subagent entry. */
-export function landingWords(h: { state: string; reason?: string; merge?: { undo?: unknown } | null; landing?: { waitsFor?: string; lastRefusal?: string } | null; sub?: { files?: number; empty?: boolean } }): string {
+export function landingWords(h: { state: string; reason?: string; merge?: { undo?: unknown } | null; landing?: { waitsFor?: string; lastRefusal?: string } | null; sub?: { files?: number; empty?: boolean; kept?: string[] } }): string {
   if (h.landing) return h.landing.waitsFor === 'touched-dirty' ? "Didn't land: files it changed have uncommitted edits" : LANDS_AT_TURN_END;
   if (h.state === 'merged') {
     if (h.sub?.empty) return 'No changes';
     if (h.merge?.undo) return 'Merge undone';
-    const n = h.sub?.files ?? 0;
-    return `Merged · ${n} file${n === 1 ? '' : 's'}`;
+    const n = h.sub?.files ?? 0, k = h.sub?.kept?.length ?? 0;
+    return `Merged · ${n} file${n === 1 ? '' : 's'}` + (k ? ` · ${k} new file${k === 1 ? '' : 's'} kept in its worktree` : '');
   }
   if (h.state === 'stopped') return STOPPED_WORDS;
   if (h.state === 'failed') {
@@ -885,6 +999,8 @@ export function landingWords(h: { state: string; reason?: string; merge?: { undo
       ? 'it changed protected files'
       : h.reason === 'conflicts'
       ? 'it conflicts with the branch'
+      : h.reason === 'scratch'
+      ? 'only new files at the top of its worktree (kept there)'
       : h.reason === 'no branch'
       ? "the folder isn't on a branch"
       : h.reason || 'see the chat';
@@ -953,6 +1069,96 @@ export async function removeSubagentWorktree(path: string, gitCwd: string): Prom
   unlinkLinks(path);
   await wt.git(['worktree', 'unlock', path], gitCwd, { check: false });
   await wt.git(['worktree', 'remove', '--force', path], gitCwd, { check: false });
+}
+
+/** The projects/<folder> of each Claude Code session found (the folder name is Claude's encoding of its cwd: looked up, not built). */
+const sessionFolders = new Map<string, string>();
+
+/**
+ * What Claude Code wrote of subagent `agentId` of session `sessionId`: ended at a natural stop ('end_turn'), ended otherwise
+ * ('ended'), or not ended ('running', with how long its transcript has been quiet), and the description it ran with. Null when its
+ * files are not there. Reads only: agent-<id>.meta.json (Claude Code sets finished: true at any end) and the transcript's last entry.
+ */
+export function claudeSubagentEnd(
+  configDir: string,
+  sessionId: string,
+  agentId: string,
+): { how: 'end_turn' | 'ended' | 'running'; quietS: number; description: string } | null {
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(agentId) || !/^[A-Za-z0-9_-]{1,100}$/.test(sessionId) || !configDir) return null;
+  const projects = pathOf(configDir, 'projects');
+  const file = (folder: string, ext: string) => pathOf(projects, folder, sessionId, 'subagents', `agent-${agentId}${ext}`);
+  let folder = sessionFolders.get(`${projects}|${sessionId}`) ?? '';
+  if (!folder || !wt.lexists(file(folder, '.meta.json'))) {
+    folder = '';
+    try {
+      for (const entry of Deno.readDirSync(projects)) {
+        if (entry.isDirectory && wt.lexists(file(entry.name, '.meta.json'))) {
+          folder = entry.name;
+          break;
+        }
+      }
+    } catch {
+      return null;
+    }
+    if (!folder) return null;
+    sessionFolders.set(`${projects}|${sessionId}`, folder);
+    if (sessionFolders.size > 50) sessionFolders.delete(sessionFolders.keys().next().value!);
+  }
+  let meta: Record<string, unknown> = {};
+  try {
+    if (Deno.statSync(file(folder, '.meta.json')).size <= 65536) {
+      const raw = JSON.parse(new TextDecoder().decode(Deno.readFileSync(file(folder, '.meta.json'))));
+      if (isDict(raw)) meta = raw as Record<string, unknown>;
+    }
+  } catch {
+    return null;
+  }
+  const description = typeof meta.description === 'string' ? meta.description : '';
+  const transcript = file(folder, '.jsonl');
+  let mtime = 0;
+  try {
+    mtime = (Deno.statSync(transcript).mtime?.getTime() ?? 0) / 1000;
+  } catch { /* no transcript yet */ }
+  const quietS = mtime ? now() - mtime : Infinity;
+  if (meta.finished !== true) return { how: 'running', quietS, description };
+  return { how: lastStop(transcript) === 'end_turn' ? 'end_turn' : 'ended', quietS, description };
+}
+
+/** The stop_reason of a Claude Code transcript's last message entry when that is the assistant's ('' otherwise). Reads its tail only. */
+function lastStop(path: string): string {
+  let f: Deno.FsFile | null = null;
+  try {
+    f = Deno.openSync(path, { read: true });
+    const size = f.statSync().size;
+    const n = Math.min(size, 262144);
+    f.seekSync(size - n, Deno.SeekMode.Start);
+    const buf = new Uint8Array(n);
+    let got = 0;
+    while (got < n) {
+      const k = f.readSync(buf.subarray(got));
+      if (!k) break;
+      got += k;
+    }
+    const lines = new TextDecoder().decode(buf.subarray(0, got)).split('\n').map((l) => l.trim()).filter((l) => l);
+    for (let i = lines.length - 1; i >= 0; i--) {
+      let entry: unknown;
+      try {
+        entry = JSON.parse(lines[i]);
+      } catch {
+        continue; // the cut first line of the tail
+      }
+      if (!isDict(entry)) continue;
+      const e = entry as Record<string, unknown>;
+      if (e.type !== 'assistant' && e.type !== 'user') continue; // summaries, attachments and the like say nothing of the end
+      const message = isDict(e.message) ? e.message as Record<string, unknown> : {};
+      return e.type === 'assistant' && typeof message.stop_reason === 'string' ? message.stop_reason : '';
+    }
+  } catch { /* unreadable */ } finally {
+    try {
+      f?.close();
+    } catch { /* closed */ }
+  }
+  return '';
 }
 
 /** `path` is a worktree of the same repository as `folder` (git common dirs equal). */

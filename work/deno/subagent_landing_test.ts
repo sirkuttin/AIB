@@ -17,7 +17,7 @@ import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts'
 import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
 import { Swarm } from '../../outputs/agent-studio/server/swarm/service.ts';
 import { pathOf } from '../../outputs/agent-studio/server/state/paths.ts';
-import { ownSubagentPath, readSubagents } from '../../outputs/agent-studio/server/subagents/service.ts';
+import { ownSubagentPath, readSubagents, type SubagentRecord } from '../../outputs/agent-studio/server/subagents/service.ts';
 import * as wt from '../../outputs/agent-studio/server/worktrees/worktrees.ts';
 
 type Json = Record<string, unknown>;
@@ -50,7 +50,13 @@ class Box {
   }
 
   /** A subagent's worktree and record as subagents/service.ts makes them (S = the folder's HEAD here), with `file` changed in it. */
-  subagent(chat: string, file: string, body: string, state: 'done' | 'stopped' = 'done'): { id: string; path: string } {
+  subagent(
+    chat: string,
+    file: string,
+    body: string,
+    state: 'done' | 'stopped' | 'running' = 'done',
+    more: Partial<SubagentRecord> & { files?: Record<string, string>; commit?: boolean } = {},
+  ): { id: string; path: string } {
     const n = ++this.n;
     const root = this.studio.subagents!.root;
     const hash = wt.repoHash(this.project);
@@ -60,7 +66,13 @@ class Box {
     const s = runGit(this.project, 'rev-parse', 'HEAD').trim();
     runGit(this.project, 'worktree', 'add', '-q', '-b', `studio/${slug}`, path, s);
     runGit(this.project, 'worktree', 'lock', '--reason', 'AIB subagent', path);
-    write(path, file, body); // uncommitted, as a subagent leaves it
+    const { files, commit, ...fields } = more;
+    if (file) write(path, file, body); // uncommitted, as a subagent leaves it
+    for (const [name, text] of Object.entries(files ?? {})) write(path, name, text);
+    if (commit) {
+      runGit(path, 'add', '-A');
+      runGit(path, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'sub work');
+    }
     const id = `sa_test${n}`;
     const file2 = pathOf(this.state, 'subagent-worktrees.json');
     const all = readSubagents(this.state);
@@ -82,7 +94,8 @@ class Box {
       agentType: 'general-purpose',
       description: `sub ${n}`,
       createdAt: Date.now() / 1000,
-      ...(state === 'done' ? { doneAt: Date.now() / 1000 } : { stoppedAt: Date.now() / 1000, stoppedWhy: 'the turn was stopped' }),
+      ...(state === 'done' ? { doneAt: Date.now() / 1000 } : state === 'stopped' ? { stoppedAt: Date.now() / 1000, stoppedWhy: 'the turn was stopped' } : {}),
+      ...fields,
     };
     Deno.writeTextFileSync(file2, JSON.stringify({ version: 1, subagents: all }));
     return { id, path };
@@ -222,6 +235,179 @@ Deno.test({
     assertEquals(code, 200, JSON.stringify(out));
     await box.swarm.poll();
     await until(() => log(box.project).includes('AIB: subagent sub 1'), 'landed on merge_helper', 15);
+  },
+});
+
+/** The parent's next-prompt lines (prompt-context), as the Studio collects them. */
+function contextLines(box: Box): string[] {
+  const lines: string[] = [];
+  const own = box.studio.addPromptContext.bind(box.studio);
+  box.studio.addPromptContext = (c, line, replace) => {
+    lines.push(line);
+    own(c, line, replace);
+  };
+  return lines;
+}
+
+Deno.test({
+  ...T,
+  name: 'scratch: a subagent that only left a page and a note at its worktree top lands nothing, keeps them and tells the parent; merge_helper lands them',
+  async fn() {
+    await using box = new Box();
+    const main = await box.studio.connect('claude', box.project, null, {});
+    await settle(main);
+    const told = contextLines(box);
+    const { id, path } = box.subagent(main.id, 'inbox-v31-design.html', '<p>mockup</p>\n', 'done', {
+      description: 'Inbox v3.1: design',
+      files: { 'architect-review-v2.md': '# review\n' },
+    });
+    await box.swarm.poll();
+    await until(() => told.some((l) => l.includes('Subagent “Inbox v3.1: design” left new files')), 'the parent told', 15);
+    await box.swarm.poll();
+    assert(!log(box.project).includes('AIB: subagent Inbox v3.1: design'), 'scratch files landed');
+    assert(!exists(pathOf(box.project, 'inbox-v31-design.html')));
+    assert(readSubagents(box.state)[id], 'its record is kept');
+    assert(exists(pathOf(path, 'inbox-v31-design.html')) && exists(pathOf(path, 'architect-review-v2.md')), 'the files stay in its worktree');
+    const line = told.find((l) => l.includes('left new files'))!;
+    assert(line.includes('inbox-v31-design.html') && line.includes('architect-review-v2.md') && line.includes(path), line);
+    assert(line.includes(`merge_helper with id ${id}`) && line.includes('in 7 days'), line);
+    assert(notes(main).some((n) => n.startsWith('Didn\'t land subagent “Inbox v3.1: design”: it only left new files')), notes(main).join('\n'));
+    // the main agent wants them after all
+    const [code, out] = await box.swarm.tool(main.id, 'merge_helper', { helper: id });
+    assertEquals(code, 200, JSON.stringify(out));
+    await box.swarm.poll();
+    await until(() => log(box.project).includes('AIB: subagent Inbox v3.1: design'), 'landed on merge_helper', 15);
+    assert(exists(pathOf(box.project, 'inbox-v31-design.html')));
+    await until(() => !readSubagents(box.state)[id], 'released after landing', 15);
+  },
+});
+
+Deno.test({
+  ...T,
+  name: 'scratch: real changes land without the root note (kept in the worktree, parent told); a committed root note and a .txt land as work',
+  async fn() {
+    await using box = new Box();
+    const main = await box.studio.connect('claude', box.project, null, {});
+    await settle(main);
+    const told = contextLines(box);
+    const mixed = box.subagent(main.id, 'src/editor.js', 'export const x = 1;\n', 'done', {
+      description: 'File editor spike',
+      files: { 'file-editor-design-v2.md': '# design\n' },
+    });
+    await box.swarm.poll();
+    await until(() => log(box.project).includes('AIB: subagent File editor spike'), 'its code landed', 15);
+    assertEquals(runGit(box.project, 'show', '--name-only', '--format=', 'HEAD').trim(), 'src/editor.js');
+    assert(!exists(pathOf(box.project, 'file-editor-design-v2.md')), 'the scratch note stayed out of the project');
+    assert(exists(pathOf(mixed.path, 'file-editor-design-v2.md')) && readSubagents(box.state)[mixed.id], 'kept with its worktree');
+    assert(told.some((l) => l.includes('landed in this folder') && l.includes('file-editor-design-v2.md')), told.join('\n'));
+    assert(notes(main).some((n) => n.includes('1 new file kept in its worktree (file-editor-design-v2.md)')), notes(main).join('\n'));
+    await box.swarm.poll();
+    assert(exists(mixed.path), 'not released by a later poll while it keeps the file');
+    // merge_helper: only the kept note lands now, then the worktree goes
+    const [code] = await box.swarm.tool(main.id, 'merge_helper', { helper: mixed.id });
+    assertEquals(code, 200);
+    await box.swarm.poll();
+    await until(() => exists(pathOf(box.project, 'file-editor-design-v2.md')), 'the note landed on merge_helper', 15);
+    assertEquals(runGit(box.project, 'show', '--name-only', '--format=', 'HEAD').trim(), 'file-editor-design-v2.md');
+    await until(() => !readSubagents(box.state)[mixed.id], 'released', 15);
+
+    // a note the subagent committed, and a plain .txt, are its work: they land
+    box.subagent(main.id, '', '', 'done', { description: 'committed note', files: { 'NOTES.md': 'kept\n' }, commit: true });
+    await box.swarm.poll();
+    await until(() => log(box.project).includes('AIB: subagent committed note'), 'a committed root note lands', 15);
+    box.subagent(main.id, 'top.txt', 'x\n', 'done', { description: 'plain txt' });
+    await box.swarm.poll();
+    await until(() => log(box.project).includes('AIB: subagent plain txt'), 'a .txt lands', 15);
+  },
+});
+
+Deno.test({
+  ...T,
+  name: 'ignored: a subagent whose only output is a git-ignored file keeps its worktree, the parent gets the path, it goes after 7 days',
+  async fn() {
+    await using box = new Box();
+    write(box.project, '.gitignore', 'ignored.log\nbuild/\nnode_modules/\nprivate/\n');
+    runGit(box.project, 'commit', '-q', '-am', 'ignore private');
+    const main = await box.studio.connect('claude', box.project, null, {});
+    await settle(main);
+    const told = contextLines(box);
+    const { id, path } = box.subagent(main.id, 'private/release/beta12-release-notes-draft.md', '# Beta 12\n', 'done', {
+      description: 'Release notes draft',
+      files: { 'node_modules/pkg/index.js': 'x\n' }, // an install's folder never counts
+    });
+    await box.swarm.poll();
+    await until(() => told.some((l) => l.includes('private/release/beta12-release-notes-draft.md')), 'the parent told the path', 15);
+    const line = told.find((l) => l.includes('beta12-release-notes-draft.md'))!;
+    assert(!line.includes('node_modules'), line);
+    await box.swarm.poll();
+    assert(exists(pathOf(path, 'private', 'release', 'beta12-release-notes-draft.md')), 'the draft was removed with its worktree');
+    assert(readSubagents(box.state)[id], 'its record is kept (it can be resumed)');
+    // seven days on: the worktree goes
+    await box.swarm.registry.update(id, (h) => (h ? { ...h, sub: { ...h.sub!, keptAt: Date.now() / 1000 - 8 * 86400 } } : null));
+    await box.swarm.poll();
+    await until(() => !readSubagents(box.state)[id], 'released after the grace period', 15);
+    assert(!exists(path));
+  },
+});
+
+Deno.test({
+  ...T,
+  name: 'names: a queued landing takes the name its record was fixed to (parallel calls swapped back) before it lands',
+  async fn() {
+    await using box = new Box();
+    const main = await box.studio.connect('claude', box.project, null, {});
+    await settle(main);
+    const release = await holdTurn(box, main, 'names');
+    const { id } = box.subagent(main.id, 'spike.js', 'x\n', 'done', { description: 'Inbox v3.1: design + toast research' });
+    await box.swarm.poll();
+    assertEquals(box.swarm.registry.get(id)?.landing?.stage, 'queued');
+    const all = readSubagents(box.state); // the Studio fixed the pairing (subagents/service.ts swapCalls)
+    all[id] = { ...all[id], description: 'File editor: update design + spike' };
+    Deno.writeTextFileSync(pathOf(box.state, 'subagent-worktrees.json'), JSON.stringify({ version: 1, subagents: all }));
+    await box.swarm.poll();
+    await release();
+    await box.swarm.poll();
+    await until(() => log(box.project).includes('AIB: subagent File editor: update design + spike'), 'landed under its own name', 15);
+    assert(!log(box.project).includes('Inbox v3.1'), log(box.project));
+  },
+});
+
+Deno.test({
+  ...T,
+  name: "restart: subagents of the chat's earlier live id (same conversation) are adopted and land once Claude Code's files say they finished",
+  async fn() {
+    await using box = new Box();
+    const config = pathOf(box.dir, 'claude-config');
+    const was = Deno.env.get('CLAUDE_CONFIG_DIR');
+    Deno.env.set('CLAUDE_CONFIG_DIR', config);
+    try {
+      const main = await box.studio.connect('claude', box.project, null, {});
+      await settle(main);
+      assert(main.sessionId, 'the fake agent gives a session id');
+      const lasting = `claude:${main.sessionId}`;
+      // started under the chat's previous live id; that chat is gone (PC crash), its SubagentStop never reached AIB
+      const a = box.subagent('c533d888old', 'inbox.js', 'x\n', 'running', { lasting, agentId: 'agentOld1', description: 'Build Inbox v3.1 phases 1-3' });
+      const b = box.subagent('c533d888old', 'still.js', 'y\n', 'running', { lasting, agentId: 'agentOld2', description: 'still at work' });
+      const dir = pathOf(config, 'projects', 'C--proj', main.sessionId!, 'subagents');
+      Deno.mkdirSync(dir, { recursive: true });
+      Deno.writeTextFileSync(pathOf(dir, 'agent-agentOld1.meta.json'), JSON.stringify({ description: 'Build Inbox v3.1 phases 1-3', finished: true }));
+      Deno.writeTextFileSync(pathOf(dir, 'agent-agentOld1.jsonl'), JSON.stringify({ type: 'assistant', message: { stop_reason: 'end_turn', content: [] } }) + '\n');
+      Deno.writeTextFileSync(pathOf(dir, 'agent-agentOld2.meta.json'), JSON.stringify({ description: 'still at work' }));
+      Deno.writeTextFileSync(pathOf(dir, 'agent-agentOld2.jsonl'), '{}\n');
+      await main.prompt('next'); // the chat's next turn end adopts them (host/studio.ts turnEnded -> reconcileEnded)
+      await settle(main);
+      await until(() => readSubagents(box.state)[a.id]?.chat === main.id, 'adopted by the new chat', 15);
+      assertEquals(readSubagents(box.state)[a.id].state, 'done');
+      assertEquals([readSubagents(box.state)[b.id].chat, readSubagents(box.state)[b.id].state], [main.id, 'running']);
+      await box.swarm.poll();
+      await until(() => log(box.project).includes('AIB: subagent Build Inbox v3.1 phases 1-3'), 'landed', 15);
+      await until(() => !readSubagents(box.state)[a.id], 'released: worktree, branch and record gone', 15);
+      assert(!exists(a.path));
+      assert(exists(b.path), 'the one still at work keeps its worktree');
+    } finally {
+      if (was === undefined) Deno.env.delete('CLAUDE_CONFIG_DIR');
+      else Deno.env.set('CLAUDE_CONFIG_DIR', was);
+    }
   },
 });
 

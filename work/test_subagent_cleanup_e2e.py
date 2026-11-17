@@ -10,6 +10,13 @@ and record for as long as any other subagent ran.
         one turn starts three background subagents and ends: "sc long" (works for a minute, then writes long.txt), "sc empty"
         (changes nothing) and "sc change" (writes chg.txt). While "sc long" still runs, "sc empty"'s worktree, branch and record go
         and "sc change" lands as its commit; then "sc long" lands too.
+    test_parallel_calls_land_under_their_own_names
+        three Agent calls in one message: each landing commit carries its own description and only its own file (bug 2026-11-16)
+    test_scratch_only_subagent_is_kept_and_the_parent_told
+        a subagent that only wrote a page and a note at its worktree top lands nothing; its files stay; the next prompt names them
+    test_restart_adopts_the_earlier_chats_subagents
+        a running record of the chat's earlier live id (same conversation) whose Claude Code files say it finished is adopted at the
+        next turn end and lands
     test_startup_removes_empty_leftovers
         AIB starts with two "done" records of a chat that is not open, finished an hour ago (leftovers from before an update): the
         one with no changes goes by itself (worktree, branch, record); the one with a commit is kept for its chat.
@@ -28,7 +35,7 @@ import unittest
 from _e2e_support import run_git  # noqa: E402
 from test_folder_chat_listing_e2e import CLAUDE_ACP, NODE  # noqa: E402
 from test_subagent_worktree_e2e import GO, dumped  # noqa: E402
-from test_subagent_landing_e2e import SERVER_KIND, Aib, agent_call, bash, git_log, records  # noqa: E402
+from test_subagent_landing_e2e import SERVER_KIND, Aib, agent_call, bash, git_log, notes, records  # noqa: E402
 
 
 def branches(project):
@@ -93,6 +100,105 @@ class AibSubagentCleanupTest(unittest.TestCase):
         aib.wait('"sc long" to go after landing', lambda: not by_description(fx, 'sc long'))
         spares = {r['branch'] for r in records(fx).values() if r['state'] == 'spare'}
         self.assertEqual(branches(p) - spares, set(), 'every finished subagent branch must go')
+
+    def test_parallel_calls_land_under_their_own_names(self):
+        """Bug 2026-11-16: three Agent calls in one message; each landing commit carries its own subagent's description and file."""
+        rules = [
+            {'when': 'PN-GO', 'reply': {'tools': [
+                agent_call('toolu_pN1', 'pn alpha', 'SUBTASK-ALPHA: do the work', background=True),
+                agent_call('toolu_pN2', 'pn beta', 'SUBTASK-BETA: do the work', background=True),
+                agent_call('toolu_pN3', 'pn gamma', 'SUBTASK-GAMMA: do the work', background=True),
+            ]}},
+            {'when': 'SUBTASK-ALPHA', 'reply': {'tools': [bash('toolu_sN1', 'sleep 6 && mkdir -p pn && echo alpha > pn/alpha.txt')]}},
+            {'when': 'toolu_sN1', 'reply': {'text': 'SUB-ALPHA-DONE'}},
+            {'when': 'SUBTASK-BETA', 'reply': {'tools': [bash('toolu_sN2', 'sleep 2 && mkdir -p pn && echo beta > pn/beta.txt')]}},
+            {'when': 'toolu_sN2', 'reply': {'text': 'SUB-BETA-DONE'}},
+            {'when': 'SUBTASK-GAMMA', 'reply': {'tools': [bash('toolu_sN3', 'sleep 4 && mkdir -p pn && echo gamma > pn/gamma.txt')]}},
+            {'when': 'toolu_sN3', 'reply': {'text': 'SUB-GAMMA-DONE'}},
+            {'when': 'toolu_pN3', 'reply': {'text': 'PARENT-LAUNCHED'}},
+        ]
+        aib = Aib(self, rules)
+        p = aib.project
+        aib.turn('PN-GO go')
+        aib.wait('all three to land', lambda: all(f'AIB: subagent pn {n}' in git_log(p) for n in ('alpha', 'beta', 'gamma')), seconds=150)
+        for name in ('alpha', 'beta', 'gamma'):
+            sha = run_git(p, 'log', '--format=%H', '--grep', f'^AIB: subagent pn {name}$', '-n', '1').strip()
+            self.assertTrue(sha, name)
+            self.assertEqual(run_git(p, 'show', '--name-only', '--format=', sha).strip(), f'pn/{name}.txt', f'"pn {name}" landed another subagent\'s work')
+
+    def test_scratch_only_subagent_is_kept_and_the_parent_told(self):
+        """Bug 2026-11-16: a design subagent that only wrote a page and a note at its worktree top lands nothing; the main agent's next
+        prompt names the files and the worktree; nothing reaches the project."""
+        rules = [
+            {'when': 'SO-GO', 'reply': {'tools': [agent_call('toolu_pS1', 'so design', 'SUBTASK-DESIGN: do the work', background=True)]}},
+            {'when': 'SUBTASK-DESIGN', 'reply': {'tools': [bash('toolu_sS1', 'echo "<p>mock</p>" > so-design.html && echo "# review" > so-review.md')]}},
+            {'when': 'toolu_sS1', 'reply': {'text': 'SUB-DESIGN-DONE'}},
+            {'when': 'toolu_pS1', 'reply': {'text': 'PARENT-LAUNCHED'}},
+            {'when': 'SO-NEXT', 'reply': {'text': 'PARENT-NEXT'}},
+        ]
+        aib = Aib(self, rules)
+        p, fx = aib.project, aib.fx
+        aib.turn('SO-GO go')
+        aib.wait('the scratch line in the chat', lambda: any('so design' in n and 'only left new files' in n for n in notes(aib.chat)), seconds=90)
+        rec = by_description(fx, 'so design')
+        self.assertTrue(rec, 'its record is kept')
+        self.assertTrue(pathlib.Path(rec[0]['path'], 'so-design.html').is_file(), 'the page stays in its worktree')
+        self.assertFalse((p / 'so-design.html').exists())
+        self.assertNotIn('AIB: subagent so design', git_log(p))
+        aib.turn('SO-NEXT go')
+        sent = dumped(aib.stub)
+        at = sent.find('left new files in its worktree')
+        self.assertGreater(at, -1, 'the main agent was told')
+        told = sent[at:at + 900]
+        self.assertIn('so-design.html', told)
+        self.assertIn('so-review.md', told)
+        self.assertIn('merge_helper', told)
+
+    def test_restart_adopts_the_earlier_chats_subagents(self):
+        """Bug 2026-11-16: the chat's live id changed (same conversation); its old subagent finished but its SubagentStop never
+        reached AIB. At the chat's next turn end AIB adopts it, reads Claude Code's files (finished, end_turn) and lands it."""
+        rules = [
+            {'when': 'RS-HELLO', 'reply': {'text': 'PARENT-HELLO'}},
+            {'when': 'RS-NEXT', 'reply': {'text': 'PARENT-NEXT'}},
+        ]
+        aib = Aib(self, rules)
+        p, fx = aib.project, aib.fx
+        aib.turn('RS-HELLO go')
+        session = aib.chat.session
+        self.assertTrue(session)
+        transcripts = list(aib.temp.rglob(f'{session}.jsonl'))
+        self.assertTrue(transcripts, 'the session transcript (in the agent\'s throwaway home)')
+        agent = 'a0ld5e55107d1e'
+        side = transcripts[0].parent / session / 'subagents'
+        side.mkdir(parents=True, exist_ok=True)
+        (side / f'agent-{agent}.meta.json').write_text(json.dumps({'agentType': 'general-purpose', 'description': 'rs old work',
+                                                                     'toolUseId': 'toolu_rsOld', 'finished': True}), encoding='utf-8')
+        (side / f'agent-{agent}.jsonl').write_text(json.dumps({'type': 'assistant', 'message': {'stop_reason': 'end_turn', 'content': []}}) + '\n',
+                                                   encoding='utf-8')
+        head = run_git(p, 'rev-parse', 'HEAD').strip()
+        folder = fx.state / 'worktrees' / repo_hash(p)
+        folder.mkdir(parents=True, exist_ok=True)
+        slug = 'sub-c533d888-1'
+        path = folder / slug
+        run_git(p, 'worktree', 'add', '-q', '-b', f'studio/{slug}', str(path), head)
+        run_git(p, 'worktree', 'lock', '--reason', 'AIB subagent', str(path))
+        (path / 'rs').mkdir()
+        (path / 'rs' / 'old.txt').write_text('from-old\n', encoding='utf-8')
+        subs = records(fx)
+        t = time.time() - 600
+        subs['sa_c533old001'] = {
+            'id': 'sa_c533old001', 'kind': 'subagent', 'chat': 'c533d888' + 'a' * 24, 'lasting': f'claude:{session}',
+            'project': str(p), 'folder': str(p), 'slug': slug, 'branch': f'studio/{slug}', 'path': str(path), 'snapshot': head,
+            'tree': run_git(p, 'rev-parse', 'HEAD^{tree}').strip(), 'state': 'running', 'toolUseId': 'toolu_rsOld', 'agentId': agent,
+            'agentType': 'general-purpose', 'description': 'rs old work', 'createdAt': t, 'boundAt': t, 'acpSeen': True, 'acpAgentId': agent,
+            'background': True,
+        }
+        (fx.state / 'subagent-worktrees.json').write_text(json.dumps({'version': 1, 'subagents': subs}), encoding='utf-8')
+        aib.turn('RS-NEXT go')
+        aib.wait('the adopted subagent to land', lambda: 'AIB: subagent rs old work' in git_log(p), seconds=60)
+        self.assertEqual((p / 'rs' / 'old.txt').read_text(encoding='utf-8').strip(), 'from-old')
+        aib.wait('its worktree, branch and record to go', lambda: not by_description(fx, 'rs old work') and f'studio/{slug}' not in branches(p)
+                 and not path.exists())
 
     def test_startup_removes_empty_leftovers(self):
         chat = '0dd0dd00' + 'a' * 24

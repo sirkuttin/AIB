@@ -29,6 +29,7 @@ import { readSubagents, type SubagentRecord } from '../subagents/service.ts';
 import { canonicalName } from '../allow/paths.ts';
 import { WSL_TOOL_GROUPS } from '../artifacts/mcp.ts';
 import { isWslRef } from '../platform/location.ts';
+import { pathOf } from '../state/paths.ts';
 
 const log = getLogger('swarm');
 
@@ -83,7 +84,37 @@ export async function subagentUnchanged(rec: { path: string; folder: string; bra
   const head = await wt.git(['rev-parse', 'HEAD'], rec.path, { check: false });
   if (head.returncode !== 0 || pyStr(head.stdout).trim() !== rec.snapshot) return false;
   const status = await wt.git(['status', '--porcelain', '--untracked-files=all', '--ignored=no'], rec.path, { check: false });
-  return status.returncode === 0 && pyStr(status.stdout).trim() === '';
+  return status.returncode === 0 && pyStr(status.stdout).trim() === '' && !(await ignoredFiles(rec.path)).length;
+}
+
+/** Folders a build or an install makes again on its own: never a reason to keep a subagent's worktree (ignoredFiles). */
+const GENERATED = new Set([
+  'node_modules', '.venv', 'venv', '__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache', 'dist', 'build', 'target', 'coverage',
+  '.cache', '.next', '.turbo', '.parcel-cache', '.gradle', '.deno',
+]);
+/** How long a subagent worktree that holds files AIB did not land is kept before AIB removes it (the parent is told the date). */
+export const KEPT_DAYS = 7;
+
+/**
+ * Files a subagent made that git ignores (a draft in a git-ignored private/ folder: 2026-11-17, its worktree looked empty, was removed
+ * and the draft was lost), as worktree-relative paths: never landed by git, so the worktree that holds them is kept. A worktree starts
+ * as a plain `git worktree add` of S (no ignored files), so every one is the subagent's; generated folders (GENERATED) and compiled
+ * Python files don't count. At most 200 are named.
+ */
+export async function ignoredFiles(path: string): Promise<string[]> {
+  if (!path || !wt.lexists(path)) return [];
+  const list = async (extra: string[]) =>
+    pyStr((await wt.git(['ls-files', '-z', '--others', '--ignored', '--exclude-standard', ...extra], path, { check: false })).stdout)
+      .split('\0').filter((n) => n);
+  const generated = (f: string) => f.replace(/\/$/, '').split('/').some((part) => GENERATED.has(part)) || /\.py[co]$/.test(f);
+  const out: string[] = [];
+  for (const entry of await list(['--directory'])) {
+    if (out.length >= 200) break;
+    if (generated(entry)) continue;
+    if (!entry.endsWith('/')) out.push(entry);
+    else for (const f of await list(['--', entry])) if (!generated(f) && out.length < 200) out.push(f);
+  }
+  return out;
 }
 
 /** A helper of a chat that works in the project folder: it lands on the folder's branch, queued, with no stash (build plan 2b). */
@@ -118,9 +149,41 @@ export function newLanding(what: Landing['what'], by: Landing['by'], nowMs: numb
   };
 }
 
+const titleOf = (rec: SubagentRecord) => (rec.description || rec.agentType || 'subagent').replace(/\s+/g, ' ').trim().slice(0, 120);
 const shown = (files: string[], limit = 6) => files.slice(0, limit).join(', ') + (files.length > limit ? ' and more' : '');
 const baseName = (p: string) => p.slice(Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\')) + 1);
 const lower = (t: string) => (t ? t[0].toLowerCase() + t.slice(1) : t).replace(/[.\s]+$/, '');
+
+/**
+ * Pages, notes and pictures: what a read-only or design subagent writes for the main agent to read (a mockup, a review), not a change
+ * to the project. Plain .txt and code are never scratch.
+ */
+export const SCRATCH_EXT = /\.(html?|md|markdown|png|jpe?g|gif|webp|svg|pdf|log)$/i;
+
+/**
+ * Bug 2026-11-16 (scratch files landed: inbox-v31-design.html, hidden-actions-audit.html, architect-review-v2.md, file-editor-design-v2.md
+ * went into the project's main as "AIB: subagent ..." commits). Of a subagent's changes (`changed`, S to its head), the scratch files:
+ * new since S, at the top of its worktree (no folder), with a page / note / picture extension (SCRATCH_EXT), and never committed by
+ * the subagent (a file it committed is work it meant to keep). They never land by themselves and are never lost: they stay in its
+ * worktree, which is kept while they are there, and the main agent is told (copy them, or merge_helper lands them too).
+ */
+export async function scratchFiles(path: string, start: string, changed: string[]): Promise<string[]> {
+  const top = changed.filter((f) => !f.includes('/') && SCRATCH_EXT.test(f));
+  if (!top.length) return [];
+  const listed = async (rev: string) =>
+    new Set(pyStr((await wt.git(['ls-tree', '--name-only', '-z', rev, '--', ...top], path, { check: false })).stdout).split('\0').filter((n) => n));
+  const inStart = await listed(start), committed = await listed('HEAD');
+  return top.filter((f) => !inStart.has(f) && !committed.has(f));
+}
+
+/** `head` without `paths` (a commit on the same parent, built in a temporary index): what lands when scratch files stay behind. */
+async function withoutPaths(path: string, head: string, paths: string[], scratchDir: string): Promise<string> {
+  const env = { GIT_INDEX_FILE: pathOf(scratchDir, 'scratch-index') };
+  await wt.git(['read-tree', head], path, { env });
+  await wt.git(['update-index', '--force-remove', '--', ...paths], path, { env });
+  const tree = pyStr((await wt.git(['write-tree'], path, { env })).stdout).trim();
+  return pyStr((await wt.git(['commit-tree', tree, '-p', `${head}^`, '-m', 'AIB snapshot'], path, { env, identity: true })).stdout).trim();
+}
 
 /** How a line names a helper or a subagent entry. */
 export const label = (h: Helper) => (h.kind === 'subagent' ? `subagent “${h.title}”` : `“${h.title}” (${providerName(h.chat.provider)})`);
@@ -473,7 +536,8 @@ export class Swarm {
    */
   async mergeHelper(caller: Json, id: string): Promise<Json> {
     const h = this.#mine(caller, id);
-    if (h.merge && !h.merge.undo) throw new Refusal('merged', `“${h.title}” is already merged`);
+    const keptScratch = h.kind === 'subagent' && !!h.sub?.kept?.length; // its scratch files stayed in its worktree: they land now
+    if (h.merge && !h.merge.undo && !keptScratch) throw new Refusal('merged', `“${h.title}” is already merged`);
     if (h.kind === 'subagent') { // design 3.5: a retry after a refusal, or a stopped subagent's work the main agent wants landed
       if (h.reason === 'protected') {
         throw new Refusal('protected', `Subagent “${h.title}” changed protected files; only the user can land its work`);
@@ -481,7 +545,7 @@ export class Swarm {
       const rec = readSubagents(this.ctx.stateDir)[h.sub?.record ?? ''];
       if (!rec) throw new Refusal('gone', `Subagent “${h.title}” has no worktree any more; nothing to land`);
       if (rec.state !== 'done' && rec.state !== 'stopped') throw new Refusal('busy', `Subagent “${h.title}” is still running`);
-      await this.registry.update(id, (cur) => (cur ? { ...cur, state: 'done', reason: '' } : null));
+      await this.registry.update(id, (cur) => (cur ? { ...cur, state: 'done', reason: '', sub: { ...cur.sub!, landScratch: true } } : null));
       await this.#queue(this.registry.get(id)!, 'merge', 'tool');
       return { ok: true, state: 'queued', message: queuedLine(this.registry.get(id)!) };
     }
@@ -875,8 +939,17 @@ export class Swarm {
             cur?.landing ? { ...cur, landing: { ...cur.landing, waitsFor: '' }, sub: { ...cur.sub!, turn: ended } } : cur
           );
         }
-        // landed, but its worktree could not go then (the agent host was busy or restarting): again now
-        if (h.state === 'merged' && !h.landing && (rec.state === 'done' || rec.state === 'stopped')) await this.#release(h);
+        // its record's call was fixed after the entry was made (parallel Agent calls: subagents/service.ts swapCalls): its own name
+        const title = titleOf(rec);
+        if (h.title !== title && h.state !== 'merged' && (!h.landing || h.landing.stage === 'queued')) await this.registry.patch(h.id, { title });
+        // landed, but its worktree could not go then (the agent host was busy or restarting): again now. Not while it keeps scratch files.
+        if (h.state === 'merged' && !h.landing && (rec.state === 'done' || rec.state === 'stopped') && !h.sub?.kept?.length) await this.#release(h);
+        // files it left that AIB did not land: kept KEPT_DAYS (the parent was told the date), then its worktree goes
+        if (h.sub?.kept?.length && !h.landing && (this.clock() / 1000 - (h.sub.keptAt ?? h.createdAt)) > KEPT_DAYS * 86400) {
+          log.info('swarm: subagent %s kept files for %d days; removing its worktree', h.id, KEPT_DAYS);
+          await this.registry.update(h.id, (cur) => (cur ? { ...cur, sub: { ...cur.sub!, kept: [] } } : null));
+          await this.#release(h);
+        }
         continue;
       }
       if (rec.state !== 'done' && rec.state !== 'stopped') continue;
@@ -911,7 +984,7 @@ export class Swarm {
   }
 
   async #adoptSubagent(rec: SubagentRecord, parent: Json, ended: string): Promise<void> {
-    const title = (rec.description || rec.agentType || 'subagent').replace(/\s+/g, ' ').trim().slice(0, 120);
+    const title = titleOf(rec);
     const userHook = !!rec.userHook;
     const path = userHook ? rec.adopted?.path ?? '' : rec.path;
     const folder = rec.folder;
@@ -993,14 +1066,33 @@ export class Swarm {
     const target = h.worktree.landOn!;
     const scratch = Deno.makeTempDirSync({ prefix: '.subagent-land-', dir: this.ctx.stateDir });
     let head: string;
+    let start = h.worktree.start;
+    let changed: string[];
+    let kept: string[] = [];
+    let ignored: string[] = []; // files it made that git ignores: they can't land, so its worktree is kept for them
     try {
       head = await wt.snapshotCommit(path, scratch);
+      const diff = async (from: string) =>
+        (await wt.git(['diff', '--name-only', '-z', '--no-renames', from, head], path)).stdout.split('\0').filter((n) => n);
+      changed = await diff(start);
+      if (h.sub?.landScratch && h.merge && !h.merge.undo && h.sub.kept?.length) {
+        // its work landed already and its scratch files stayed behind; merge_helper asked for them: only they land now
+        start = await withoutPaths(path, head, h.sub.kept.filter((f) => changed.includes(f)), scratch);
+        changed = await diff(start);
+      } else if (!h.sub?.landScratch) {
+        ignored = await ignoredFiles(path);
+        kept = await scratchFiles(path, start, changed);
+        if (kept.length && kept.length === changed.length) return { state: 'scratch', files: [...kept, ...ignored] };
+        if (kept.length) {
+          head = await withoutPaths(path, head, kept, scratch);
+          changed = changed.filter((f) => !kept.includes(f));
+        }
+      }
     } finally {
       try {
         Deno.removeSync(scratch, { recursive: true });
       } catch { /* gone */ }
     }
-    const changed = (await wt.git(['diff', '--name-only', '-z', '--no-renames', h.worktree.start, head], path)).stdout.split('\0').filter((n) => n);
     const hit = changed.filter(protectedPath);
     if (hit.length) return { state: 'refused', code: 'protected', message: 'it changed protected files', files: hit };
     // design 3.5: it changed a file the folder has uncommitted (changed, staged or untracked): nothing lands, nothing is stashed. Checked
@@ -1014,7 +1106,7 @@ export class Swarm {
     try {
       result = await merge.landWorktree(
         this.#mergeStudio(),
-        { parent: held[0] ?? h.parent.live, key: `subagent:${h.id}`, worktree: path, project: folder, start: h.worktree.start, head, landOn: target },
+        { parent: held[0] ?? h.parent.live, key: `subagent:${h.id}`, worktree: path, project: folder, start, head, landOn: target },
         h.title,
         {
           held,
@@ -1027,7 +1119,7 @@ export class Swarm {
       );
     } catch (error) {
       if (error instanceof merge.Refused) {
-        if (error.code === 'empty') return { state: 'empty' };
+        if (error.code === 'empty') return { state: 'empty', kept: [...kept, ...ignored] };
         const files = error instanceof merge.TouchedDirty ? error.files : undefined;
         return { state: 'refused', code: error.code, message: error.message, ...(files ? { files } : {}) };
       }
@@ -1040,7 +1132,7 @@ export class Swarm {
       state: 'merged',
       merge: { tipBefore, landed, commits: 1, at: this.clock() / 1000, undo: null, again: null },
     });
-    return { state: 'merged', commits: 1, range: [tipBefore, landed], target, files };
+    return { state: 'merged', commits: 1, range: [tipBefore, landed], target, files, kept: [...kept, ...ignored] };
   }
 
   /** A subagent landing's outcome: the line in the parent chat, the parent's next-prompt line, and its worktree removed when done. */
@@ -1053,20 +1145,44 @@ export class Swarm {
     const retry = swarmEnabled(this.ctx.stateDir)
       ? `then call merge_helper with id ${h.id}; AIB also tries again when your next turn ends.`
       : 'AIB tries again when your next turn ends.';
+    const kept = Array.isArray(out.kept) ? out.kept.map(String) : [];
+    const until = new Date(this.clock() + KEPT_DAYS * 86400_000).toISOString().slice(0, 10);
+    const keptLine = (lead: string, left = kept) =>
+      `${lead} left new files in its worktree ${h.worktree.path} that AIB did not merge into this folder (pages or notes it wrote at ` +
+      `the top, or files git ignores): ${shown(left, 12)}. Copy them if you want them. Call merge_helper with id ${h.id} when you are ` +
+      `done: it lands the ones git can track and removes the worktree. Otherwise AIB removes it on ${until} (in ${KEPT_DAYS} days).`;
+    if (state === 'scratch' || (state === 'empty' && kept.length)) {
+      // only scratch files (scratchFiles): nothing lands, its worktree stays with them, the main agent is told
+      const left = state === 'scratch' ? files : kept;
+      await this.registry.update(h.id, (cur) =>
+        cur ? { ...cur, landing: null, state: 'failed', reason: 'scratch', sub: { ...cur.sub!, kept: left, keptAt: this.clock() / 1000, landScratch: false } } : null
+      );
+      await this.note(h.id, 'swarm-merge', `Didn't land subagent “${h.title}”: it only left new files in its worktree (${shown(left)}). They are kept there for ${KEPT_DAYS} days.`);
+      await context(keptLine(`Subagent “${h.title}”`, left));
+      return;
+    }
     if (state === 'merged') {
-      await this.registry.update(h.id, (cur) => (cur ? { ...cur, landing: null, sub: { ...cur.sub!, files: files.length } } : null));
-      await this.note(h.id, 'swarm-merge', `Merged subagent “${h.title}” into ${target} · ${files.length} file${files.length === 1 ? '' : 's'}`, [
-        'swarm-undo',
-      ]);
+      await this.registry.update(h.id, (cur) =>
+        cur ? { ...cur, landing: null, sub: { ...cur.sub!, files: files.length, kept, ...(kept.length ? { keptAt: this.clock() / 1000 } : {}), landScratch: false } } : null
+      );
+      await this.note(
+        h.id,
+        'swarm-merge',
+        `Merged subagent “${h.title}” into ${target} · ${files.length} file${files.length === 1 ? '' : 's'}` +
+          (kept.length ? ` · ${kept.length} new file${kept.length === 1 ? '' : 's'} kept in its worktree (${shown(kept)})` : ''),
+        ['swarm-undo'],
+      );
       await context(
         `While you were idle, your subagent “${h.title}” landed in this folder as one commit on ${target} (files: ${shown(files) || 'none'}). ` +
-          'Re-read those files before editing them.',
+          'Re-read those files before editing them.' + (kept.length ? ' ' + keptLine('It also') : ''),
       );
-      await this.#release(h);
+      if (!kept.length) await this.#release(h);
       return;
     }
     if (state === 'empty') { // no changes (line-ending churn included): its worktree goes, no line (design B4); Activity says "No changes"
-      await this.registry.update(h.id, (cur) => (cur ? { ...cur, landing: null, state: 'merged', sub: { ...cur.sub!, empty: true, files: 0 } } : null));
+      await this.registry.update(h.id, (cur) =>
+        cur ? { ...cur, landing: null, state: 'merged', sub: { ...cur.sub!, empty: !cur.merge, files: cur.merge ? cur.sub!.files : 0, kept: [], landScratch: false } } : null
+      );
       await this.#release(h);
       return;
     }
