@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="en" data-theme="teal-dark">
+<head>
+<meta charset="utf-8">
+<title>AIB Inbox v3.1: stalled, snooze, Windows toast buttons, server-built rows</title>
+<style>
+/* ---- tokens: copied from theme.css (teal-dark / teal-light), as in aib-inbox-prototype-v3.html ---- */
+[data-theme='teal-dark'] {
+ color-scheme: dark;
+ --bg: #121318; --panel: #1b1c23; --panel-2: #23242c; --bg-field: #1f2028; --hover: #272830;
+ --line: #2c2d36; --line-strong: #40414b; --text: #edeae2; --muted: #a9a497; --text-faint: #918d80;
+ --code-bg: #16171d; --accent: #2bb3a3; --on-accent: #0b1f1d; --link: #33bcab; --accent-wash: #17332f;
+ --accent-line: #2a7c72; --danger: #f08a8a; --ok: #7ad19c; --status-working: #ffc247;
+ --status-needs: #ff7a59; --status-needs-bg: #3d1f18; --status-done: #2bb3a3; --shadow-ink: #000000;
+ --diff-add-bg: #34a8642e; --diff-del-bg: #dc465a2e; --diff-removed-text: #ff9aa9; --ok-text-2: #8be3ad;
+}
+[data-theme='teal-light'] {
+ color-scheme: light;
+ --bg: #f7f4ee; --panel: #ffffff; --panel-2: #ffffff; --bg-field: #ffffff; --hover: #ece8df;
+ --line: #e2ded4; --line-strong: #c9c2b3; --text: #16151b; --muted: #5c5547; --text-faint: #6b6455;
+ --code-bg: #f1ede5; --accent: #0f766e; --on-accent: #ffffff; --link: #0f766e; --accent-wash: #e3f2ef;
+ --accent-line: #3d968b; --danger: #a82424; --ok: #16643a; --status-working: #8f5a00;
+ --status-needs: #b8381c; --status-needs-bg: #ffe4dc; --status-done: #08706a; --shadow-ink: #2a2418;
+ --diff-add-bg: color-mix(in srgb, #16643a 18%, transparent); --diff-del-bg: color-mix(in srgb, #a82424 18%, transparent);
+ --diff-removed-text: #a82424; --ok-text-2: #16643a;
+}
+:root {
+ --bg-popover: var(--bg-field);
+ --shadow-strong: color-mix(in srgb, var(--shadow-ink) 67%, transparent);
+ --text-2: color-mix(in srgb, var(--text) 87%, var(--text-faint));
+ --text-3: color-mix(in srgb, var(--text) 65%, var(--muted));
+ --focus-ring: var(--accent);
+ font-family: Segoe UI, system-ui, sans-serif; font-size: 14px; background: var(--bg); color: var(--text);
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+button { font: inherit; color: inherit; cursor: pointer; }
+code, .mono { font-family: Consolas, monospace; font-size: 12.5px; }
+
+/* ---- design page frame (not product) ---- */
+.page { max-width: 1120px; margin: 0 auto; padding: 22px 24px 60px; line-height: 1.5; }
+h1 { font-size: 20px; margin: 0 0 4px; font-weight: 600; }
+h2 { font-size: 16px; margin: 36px 0 8px; font-weight: 600; border-top: 1px solid var(--line); padding-top: 22px; }
+h3 { font-size: 14px; margin: 18px 0 6px; font-weight: 600; }
+p, li { color: var(--text-2); }
+.sub { color: var(--muted); font-size: 13px; }
+.seg { float: right; display: inline-flex; border: 1px solid var(--line-strong); border-radius: 6px; overflow: hidden; }
+.seg button { border: 0; background: transparent; padding: 4px 10px; font-size: 12px; color: var(--muted); }
+.seg button[aria-pressed='true'] { background: var(--hover); color: var(--text); }
+blockquote { margin: 6px 0; padding: 6px 12px; border-left: 3px solid var(--line-strong); color: var(--text-2); font-size: 13px; }
+table { border-collapse: collapse; width: 100%; font-size: 12.5px; margin: 8px 0 12px; }
+th, td { text-align: left; vertical-align: top; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+th { color: var(--muted); font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em; }
+.add { display: inline-block; font-size: 10.5px; font-weight: 600; letter-spacing: .03em; color: var(--muted); border: 1px solid var(--line-strong); border-radius: 4px; padding: 0 5px; margin-left: 4px; vertical-align: 1px; }
+.ev { color: var(--muted); font-size: 12px; }
+.stage { display: flex; gap: 28px; flex-wrap: wrap; align-items: flex-start; margin: 12px 0; }
+.cap { font-size: 11.5px; color: var(--muted); margin: 0 0 6px 2px; max-width: 360px; }
+pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; overflow: auto; font: 12px/1.5 Consolas, monospace; color: var(--text-2); }
+.box { border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; margin: 10px 0; background: var(--panel); }
+.dec { border: 1px solid var(--accent-line); border-radius: 8px; padding: 10px 14px; margin: 12px 0; }
+.dec h3 { margin-top: 2px; }
+.star { color: var(--link); font-weight: 600; }
+.toc a { color: var(--link); text-decoration: none; margin-right: 14px; font-size: 13px; }
+
+/* ---- the real inbox panel: workspace.css .ws-pop + inbox-reply.css (copied) ---- */
+.ws-pop { position: relative; width: 360px; max-width: 100%; padding: 4px; background: var(--bg-popover); border: 1px solid var(--line-strong); border-radius: 8px; box-shadow: 0 8px 24px var(--shadow-strong); }
+.ws-inbox-section { padding: 12px 10px 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.ws-inbox-none { padding: 2px 10px 6px; font-size: 12px; color: var(--muted); }
+.ws-inbox-item { position: relative; display: flex; flex-direction: column; padding: 8px 10px; border-radius: 6px; }
+.ws-inbox-item:hover, .ws-inbox-item.hov { background: var(--hover); }
+.ws-inbox-row { display: flex; flex-direction: column; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; font-weight: 400; }
+.ws-inbox-l1 { display: flex; align-items: baseline; gap: 10px; min-width: 0; font-size: 13px; line-height: 20px; color: var(--text); }
+.ws-inbox-what { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ws-inbox-what code { font-family: Consolas, monospace; font-size: 12px; }
+.ws-inbox-item.turn .ws-inbox-l1 { color: var(--text-3); }
+.ws-inbox-age { flex: none; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ws-inbox-age.long { color: var(--status-needs); font-weight: 600; }
+.ws-inbox-l2 { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12px; line-height: 16px; color: var(--muted); white-space: nowrap; overflow: hidden; }
+.ws-inbox-where { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ws-inbox-idot { flex: none; width: 6px; height: 6px; border-radius: 50%; }
+.ws-inbox-idot.done { background: var(--status-done); }
+.ws-inbox-idot.fail { background: var(--danger); }
+.ws-inbox-acts { display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; margin-top: 8px; min-width: 0; }
+.ws-qa { flex: none; height: 24px; max-width: 160px; margin: 0; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 5px; background: transparent; color: var(--text); font-size: 11.5px; white-space: nowrap; font-weight: 400; }
+.ws-qa:hover { background: var(--hover); border-color: var(--muted); }
+.ws-qa.def { border-color: var(--accent-line); color: var(--link); }
+.ws-qa.ws-qa-quiet { height: 24px; padding: 0 4px; border: 0; background: none; color: var(--muted); }
+.ws-qa.ws-qa-quiet:hover { color: var(--text); }
+.ws-qa.ws-qa-read { width: 24px; padding: 0; font-size: 15px; line-height: 1; border-radius: 4px; }
+.ws-qa.push { margin-left: auto; }
+.ws-inbox-foot { display: flex; align-items: center; gap: 8px; margin-top: 4px; padding: 8px 10px 6px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+.ws-inbox-foot .ws-notify-link, .ws-inbox-foot .ws-snoozed-link { flex: none; padding: 0; border: 0; background: none; font-size: 12px; color: var(--muted); }
+.ws-inbox-foot .ws-notify-link { margin-left: auto; }
+.ws-inbox-foot button:hover { color: var(--text); }
+/* the real context menu: workspace.css .ws-menu (used by tab and sidebar right-click) */
+.ws-menu { position: absolute; z-index: 5; min-width: 200px; padding: 4px; background: var(--bg-popover); border: 1px solid var(--line-strong); border-radius: 8px; box-shadow: 0 8px 24px var(--shadow-strong); }
+.ws-menu-head { padding: 6px 8px; font-size: 11px; color: var(--muted); max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ws-menu-item { display: flex; align-items: center; width: 100%; height: 30px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; color: inherit; font-size: 13px; text-align: left; }
+.ws-menu-item:hover { background: var(--accent-wash); }
+.ws-menu-sep { height: 1px; margin: 4px 6px; background: var(--line-strong); }
+.ws-menu-item .k { margin-left: auto; color: var(--muted); font-size: 12px; }
+
+/* ---- Windows 11 toast (drawn by Windows, not AIB: an approximation for the mockup only) ---- */
+.toast { width: 364px; background: #2b2b2b; color: #fff; border: 1px solid #3b3b3b; border-radius: 8px; box-shadow: 0 8px 28px #0009; font-family: 'Segoe UI Variable', 'Segoe UI', sans-serif; padding: 12px 14px 14px; }
+[data-theme='teal-light'] .toast { background: #f3f3f3; color: #1b1b1b; border-color: #ddd; box-shadow: 0 8px 28px #0003; }
+.toast .app { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #c8c8c8; }
+[data-theme='teal-light'] .toast .app { color: #555; }
+.toast .ico { width: 16px; height: 16px; border-radius: 4px; background: #2bb3a3; display: inline-grid; place-items: center; font-size: 9px; font-weight: 700; color: #0b1f1d; }
+.toast .x { margin-left: auto; opacity: .7; }
+.toast .t1 { margin-top: 10px; font-size: 14px; font-weight: 600; }
+.toast .t2 { font-size: 13px; color: #d6d6d6; margin-top: 2px; }
+[data-theme='teal-light'] .toast .t2 { color: #444; }
+.toast .in { margin-top: 10px; height: 32px; border-radius: 4px; border: 1px solid #555; border-bottom-color: #9a9a9a; background: #1f1f1f; padding: 0 10px; font-size: 13px; color: #9a9a9a; display: flex; align-items: center; }
+[data-theme='teal-light'] .toast .in { background: #fff; border-color: #ccc; border-bottom-color: #888; color: #777; }
+.toast .btns { display: flex; gap: 8px; margin-top: 10px; }
+.toast .btns span { flex: 1; height: 32px; border-radius: 4px; background: #3c3c3c; display: grid; place-items: center; font-size: 13px; }
+[data-theme='teal-light'] .toast .btns span { background: #e5e5e5; }
+</style>
+</head>
+<body>
+<div class="page">
+
+<div class="seg" role="group" aria-label="Theme"><button aria-pressed="true" data-t="teal-dark">Dark</button><button aria-pressed="false" data-t="teal-light">Light</button></div>
+<h1>Inbox v3.1: stalled, snooze, Windows toast buttons, server-built rows</h1>
+<div class="sub">Design + research, 2026-11-16. Read against main <code>eba14ff</code>, with the code in <code>outputs/agent-studio/</code>. The mockups copy the built inbox (CSS taken from <code>inbox-reply.css</code>, <code>workspace.css</code> <code>.ws-pop</code> / <code>.ws-menu</code>, tokens from <code>theme.css</code>). Every item that goes beyond the owner's words is tagged <span class="add">[Addition]</span>.</div>
+<p class="toc"><a href="#rules">Owner rules</a><a href="#stalled">1 Stalled</a><a href="#snooze">2 Snooze</a><a href="#toast">3 Windows toasts</a><a href="#rows">4 Server-built rows</a><a href="#phases">Phases</a><a href="#decisions">Decisions</a><a href="#sources">Sources</a></p>
+
+<div class="box"><b>In one line each.</b>
+<ul style="margin:4px 0 0">
+<li><b>Stalled</b>: a chat whose agent stopped mid-work without saying it was done goes into <b>Needs you</b>, worded "Stopped mid-work…", with <b>Continue · Reply · Mark handled</b>. Three signals; two of them don't exist yet (each is about 10 lines in <code>connection.ts</code>).</li>
+<li><b>Snooze</b>: right-click a Needs-you row (long-press on the phone) and pick <b>Later today (1 hour)</b> or <b>Tomorrow morning</b>. The row leaves and the count drops. It comes back at that time, or sooner if the chat changes. A quiet "1 snoozed" sits in the foot.</li>
+<li><b>Windows toast buttons</b>: a small GUI-subsystem helper written in Go, built into the AIB-keeper binary we already ship (<code>AIB-keeper toast</code>). It shows real toasts with Allow / Deny / Continue / a Reply box. It registers AIB's app id and click handler in HKCU (no installer, no shortcut change). If anything fails, AIB falls back to today's tray balloon. About 3 builder-days.</li>
+<li><b>Server-built rows</b>: one <code>GET /api/live/inbox</code> serves the PC, the phone, the toasts and the trays. Today four places build their own rows and counts. It goes first because the other three items get cheaper on top of it.</li>
+</ul>
+Total ≈ <b>9 builder-days</b> in 4 phases. Two owner decisions are at the end.</div>
+
+<!-- ======================================================================= -->
+<h2 id="rules">Owner rules this design keeps</h2>
+<p class="sub">Quoted from <code>private/designs/attention-ux/owner-feedback-2026-11-13.md</code>, the 2026-11-15 ask, and the standing rules.</p>
+<blockquote>"Inbox v3.1 (small): stalled state (agent stopped mid-work, no final message); snooze; real buttons on Windows' own notifications (needs Windows toast integration); server-built inbox rows." (2026-11-15)</blockquote>
+<blockquote>"Way too busy" · "No project filters above the message list." · "Way too colourful." · "More than one row of action buttons on a card: crazy." · "Reason labels on the card header … are dumb" · "The wait time alone is enough; no 'waited' on every card." · "Never show the model name on an inbox card" · "No visible keyboard-shortcut row." · "Scale: at most ~5 things at once; goal: multitask across projects." · "Second inbox section name: 'To review'"</blockquote>
+<blockquote>Standing: calm, not busy · effortless multitasking across projects, not triage · "Needs you" + Reply and × · nothing jarring (no show/hide/resize when focus moves) · notifications first: you get notified instead of waiting, and agents keep working with as little disruption as possible · chat-first, no git buttons.</blockquote>
+<p>How v3.1 keeps them: no new section headers above the list (Snoozed only appears at the bottom, and only when you click), no new colours, no reason words on rows, still one row of actions at most, and no keyboard hints. Snooze adds nothing visible to a row. Toast buttons let you answer without opening AIB, which is "be notified, not wait" taken one step further.</p>
+
+<!-- ======================================================================= -->
+<h2 id="stalled">1. Stalled: the agent stopped mid-work and never said it was done</h2>
+<p><b>Why.</b> The usage study (<code>usage-data-2026-11-13.md</code> §4 fact 2) found that "OMP stopping silently … happened 3 times, each noticed 5 to 11 hours later". Today such a chat simply leaves the inbox. A connection that closes is phase <code>closed</code> (<code>inbox-rules.js basePhase</code>: <code>if (x.closed) return 'closed'</code>), and the failed-turn rule deliberately skips it. <span class="ev">connection.ts:4727 "Failed (the inbox): only the agent's own answer to this prompt, never a Stop or a chat that closed under it."</span></p>
+
+<h3>When a chat counts as stalled (exact rules)</h3>
+<table>
+<tr><th>Signal</th><th>Rule</th><th>Never stalled when</th><th>Evidence: what exists today</th></tr>
+<tr><td><b>S1 Died mid-turn</b></td><td>The agent's output ended (the process exited, the pipe broke, or the keeper lost the channel) <i>while a turn was running</i>: <code>busy</code> was true when <code>#readerEnded</code> ran.</td><td>The owner pressed Stop (<code>cancelSeq ≥ promptSeq</code>). AIB itself closed the chat (<code>close()</code>, idle exit, quit; with the keeper, quitting never ends the agent anyway). The chat reopens and its turn is still alive.</td><td><b>Exists, not recorded.</b> <code>#readerEnded</code> (connection.ts:3483) sets <code>closed = true</code> and <code>busy = false</code>, but keeps no "was busy" flag. Add <code>stalledAt</code> + <code>stallKind:'died'</code> there (~10 lines). <code>exitCode</code> (connection.ts:1404) gives the wording.</td></tr>
+<tr><td><b>S2 Ended without final words</b></td><td>The turn ended normally (<code>end_turn</code>, not cancelled, not an error), but no main-agent text came after the last main tool call. That matches the owner's "no final message".</td><td>A Stop. A turn whose helpers or shells still run (phase <code>working</code> wins, as today). An open request (<code>needs_you</code> wins). Turns the agent started on its own (autonomous follow-ups) are judged only when they end.</td><td><b>Almost exists.</b> <code>#noteAsks()</code> (connection.ts:6537) already walks back from the turn end to the last main tool call and gathers the reply text. If <code>parts</code> comes back empty, set <code>stalledAt</code> + <code>stallKind:'silent_end'</code> (~8 lines).</td></tr>
+<tr><td><b>S3 Gone quiet</b></td><td>The turn is still <code>busy</code>, but there has been no stream event for <b>20 min</b>, no open request, no running helper or background shell, and no tool call started in the last 60 min that is still in progress.</td><td>A long <code>npm test</code> (a tool call in progress for under 60 min: the same cap as helpers, <code>HELPER_CAP_SECONDS</code>). A helper or a shell runs. The agent prints anything (the row leaves at once).</td><td><b>Partly exists.</b> Every event carries <code>time</code> (connection.ts:2703), and main output is already seen in <code>#mainOutput</code> (2877). Add <code>lastOutputAt</code> to <code>attention()</code> (6482). The threshold lives in <code>inbox-rules.js</code> as <code>QUIET_SECONDS = 20*60</code> <span class="add">[Addition: threshold]</span></td></tr>
+</table>
+<p class="ev">Phase 0 check (¼ day): run S2 and S3 over last week's keeper journals before turning them on, the same way the R6 question rule was measured. Ship S1 regardless (it can't misfire). Turn on S2 only if it flags fewer than 1 turn a day that the owner didn't consider unfinished.</p>
+
+<h3>Where it lives in the rules</h3>
+<ul>
+<li>New phase <code>stalled</code> in <code>inbox-rules.js</code>, added to <code>BLOCKED</code>. That puts it under <b>Needs you</b>, and it counts in the badge, title and tray. A stalled chat is blocked: nothing happens until you act.</li>
+<li><code>phaseOf</code> checks the <code>stalledAt</code> mark <i>before</i> the early <code>closed</code> return, and only when <code>stalledAt &gt; handledAt</code> (the same pattern as failed and asks).</li>
+<li>S1 and S2 are saved as a chat mark (<code>studio-conversations.json</code>, next to <code>handledAt</code>, conversations.ts:21) by the watcher, because a closed connection can drop out of the live list. S3 is live only: it clears itself when output resumes.</li>
+<li>Sending anything (Continue, Reply, a phone reply) clears it, like failed (connection.ts:4624).</li>
+</ul>
+
+<h3>How it shows</h3>
+<div class="stage">
+<div>
+<p class="cap">The inbox with a stalled chat (S1). It sits in Needs you in wait order, like any blocked row. Line 1 says what happened and what it was doing (the last tool call's title). The wait counts from when it stopped and turns orange after 15 min, as every row does. No dot, no new colour.</p>
+<div class="ws-pop">
+ <div class="ws-inbox-section">Needs you</div>
+ <div class="ws-inbox-item">
+  <div class="ws-inbox-row"><span class="ws-inbox-l1"><span class="ws-inbox-what">Stopped mid-work: the agent quit during <code>npm test</code></span><span class="ws-inbox-age long">2h 14m</span></span>
+  <span class="ws-inbox-l2"><span class="ws-inbox-where">Checkout flow · shopfront</span></span></div>
+  <div class="ws-inbox-acts"><button class="ws-qa def" title="Reopen the chat and send: Continue where you left off.">Continue</button><button class="ws-qa">Reply</button><button class="ws-qa ws-qa-quiet push">Mark handled</button></div>
+ </div>
+ <div class="ws-inbox-item">
+  <div class="ws-inbox-row"><span class="ws-inbox-l1"><span class="ws-inbox-what">Run <code>npm install stripe@18.0.0</code></span><span class="ws-inbox-age">4m</span></span>
+  <span class="ws-inbox-l2"><span class="ws-inbox-where">Payments · shopfront</span></span></div>
+  <div class="ws-inbox-acts"><button class="ws-qa def">Allow</button><button class="ws-qa">Deny</button></div>
+ </div>
+ <div class="ws-inbox-section">To review</div>
+ <div class="ws-inbox-item turn">
+  <div class="ws-inbox-row"><span class="ws-inbox-l1"><span class="ws-inbox-what">Docs page rebuilt; all links checked.</span><span class="ws-inbox-age">12m</span></span>
+  <span class="ws-inbox-l2"><span class="ws-inbox-idot done"></span><span class="ws-inbox-where">Release notes · aib-site</span></span></div>
+  <div class="ws-inbox-acts"><button class="ws-qa">Reply</button><button class="ws-qa ws-qa-quiet ws-qa-read push">×</button></div>
+ </div>
+ <div class="ws-inbox-foot"><span>Working: 2 chats in 2 projects</span><button class="ws-notify-link">Notification settings…</button></div>
+</div>
+</div>
+<div>
+<p class="cap">Line 1 wording for each signal (the last step comes from the chat's last main tool call; without one, the sentence just ends).</p>
+<div class="ws-pop">
+ <div class="ws-inbox-section">Needs you</div>
+ <div class="ws-inbox-item"><div class="ws-inbox-row"><span class="ws-inbox-l1"><span class="ws-inbox-what">Stopped mid-work: the agent quit during <code>npm test</code></span><span class="ws-inbox-age">3m</span></span><span class="ws-inbox-l2"><span class="ws-inbox-where">S1 · Checkout flow · shopfront</span></span></div></div>
+ <div class="ws-inbox-item"><div class="ws-inbox-row"><span class="ws-inbox-l1"><span class="ws-inbox-what">Stopped without a final message, after Edit <code>src/cart.ts</code></span><span class="ws-inbox-age">1m</span></span><span class="ws-inbox-l2"><span class="ws-inbox-where">S2 · Cart refactor · shopfront</span></span></div></div>
+ <div class="ws-inbox-item"><div class="ws-inbox-row"><span class="ws-inbox-l1"><span class="ws-inbox-what">No output for 20 minutes, last: Read <code>server/main.ts</code></span><span class="ws-inbox-age">20m</span></span><span class="ws-inbox-l2"><span class="ws-inbox-where">S3 · Startup speed · AIB</span></span></div></div>
+</div>
+<p class="cap" style="margin-top:8px">(The "S1 ·" prefixes are labels for this page only. Real line 2 is just "chat title · project".)</p>
+</div>
+</div>
+
+<h3>Actions (one row, same pattern as the built Failed row: Retry · Reply · Mark handled)</h3>
+<table>
+<tr><th>Button</th><th>What it does</th></tr>
+<tr><td><b>Continue</b> (default, teal outline)</td><td>S1: reopens the chat's session (the same resume path as sending to a closed chat) and sends <i>"Continue where you left off."</i> S2: sends that text. S3: stops the hung turn first, then sends it. The row shows "Sending…" and then leaves. It is never "Retry" (resend the last message), because half the work is already done; Retry stays on Failed rows only.</td></tr>
+<tr><td><b>Reply</b></td><td>The built reply box (it takes the action row's place; Enter sends).</td></tr>
+<tr><td><b>Mark handled</b> (quiet, right)</td><td>Sets <code>handledAt</code>. The row leaves until a new stall.</td></tr>
+</table>
+<p><b>Notification:</b> one per stall (watcher key <code>stall|&lt;chat&gt;|&lt;stalledAt&gt;</code>, announced once, like a failed turn). It goes through the Needs-you route with its sound. Text: <i>"shopfront · Stopped mid-work: the agent quit during npm test"</i>. Its toast button is <b>Continue</b> (section 3). The phone push says the same.</p>
+<p><b>Phone:</b> the same row from the server (section 4), with Continue · Reply · ×.</p>
+
+<!-- ======================================================================= -->
+<h2 id="snooze">2. Snooze: "not now" without losing it</h2>
+<p><b>Why it stays small.</b> The usage data calls snooze "weakly supported … keep it simple and secondary": questions get answered in a median under 1 min, and only 5% sat over 4 h. So snooze adds nothing visible to a row. It lives in the right-click menu AIB already uses for tabs and sidebar rows (<code>.ws-menu</code>, <code>AgentOrganizeUI.openContextMenu</code>, workspace-ui.js:1133) and in the phone's existing long-press card menu (phone.js:2439, 2631).</p>
+<div class="stage">
+<div>
+<p class="cap">Right-click a Needs-you row. Two times only, plus the existing actions. The menu header names the chat.</p>
+<div class="ws-pop" style="height:300px">
+ <div class="ws-inbox-section">Needs you</div>
+ <div class="ws-inbox-item hov">
+  <div class="ws-inbox-row"><span class="ws-inbox-l1"><span class="ws-inbox-what">Rewrite the parser, or just make it readable?</span><span class="ws-inbox-age">6m</span></span>
+  <span class="ws-inbox-l2"><span class="ws-inbox-where">Parser cleanup · notes-app</span></span></div>
+  <div class="ws-inbox-acts"><button class="ws-qa def">Reply</button><button class="ws-qa ws-qa-quiet push">Mark handled</button></div>
+ </div>
+ <div class="ws-menu" style="left:150px; top:74px">
+  <div class="ws-menu-head">Parser cleanup</div>
+  <button class="ws-menu-item">Snooze 1 hour</button>
+  <button class="ws-menu-item">Snooze until tomorrow<span class="k">9:00</span></button>
+  <div class="ws-menu-sep"></div>
+  <button class="ws-menu-item">Open chat</button>
+  <button class="ws-menu-item">Mark handled</button>
+ </div>
+</div>
+</div>
+<div>
+<p class="cap">After snoozing: the row is gone and the count drops. The foot gains a quiet "1 snoozed" on its left. It is only there while something is snoozed. The panel's size only changes because a row left, never because focus moved.</p>
+<div class="ws-pop">
+ <div class="ws-inbox-section">Needs you</div>
+ <div class="ws-inbox-none">Nothing blocked</div>
+ <div class="ws-inbox-section">To review</div>
+ <div class="ws-inbox-item turn">
+  <div class="ws-inbox-row"><span class="ws-inbox-l1"><span class="ws-inbox-what">Docs page rebuilt; all links checked.</span><span class="ws-inbox-age">12m</span></span>
+  <span class="ws-inbox-l2"><span class="ws-inbox-idot done"></span><span class="ws-inbox-where">Release notes · aib-site</span></span></div>
+  <div class="ws-inbox-acts"><button class="ws-qa">Reply</button><button class="ws-qa ws-qa-quiet ws-qa-read push">×</button></div>
+ </div>
+ <div class="ws-inbox-foot"><button class="ws-snoozed-link">1 snoozed</button><span>· Working: 1 chat</span><button class="ws-notify-link">Notification settings…</button></div>
+</div>
+<p class="cap" style="margin-top:14px">Clicking "1 snoozed" adds a SNOOZED section at the bottom, with the same rows quieted and the wake time where the wait usually is. Right-click → "Wake now".</p>
+<div class="ws-pop">
+ <div class="ws-inbox-section">Snoozed</div>
+ <div class="ws-inbox-item turn">
+  <div class="ws-inbox-row"><span class="ws-inbox-l1"><span class="ws-inbox-what">Rewrite the parser, or just make it readable?</span><span class="ws-inbox-age">until 15:40</span></span>
+  <span class="ws-inbox-l2"><span class="ws-inbox-where">Parser cleanup · notes-app</span></span></div>
+ </div>
+ <div class="ws-inbox-foot"><button class="ws-snoozed-link">Hide snoozed</button><button class="ws-notify-link">Notification settings…</button></div>
+</div>
+</div>
+</div>
+
+<h3>Rules (defaults chosen)</h3>
+<table>
+<tr><th>Question</th><th>Default</th></tr>
+<tr><td>Which rows</td><td><b>Needs you rows only</b> (approval, question, asks, failed, stalled). To review rows already have × and are never counted, so they don't need it.</td></tr>
+<tr><td>Times</td><td><b>1 hour</b> and <b>tomorrow 9:00</b> (local time; if it's before 6:00, "tomorrow" means today at 9:00). No custom picker. <span class="add">[Addition: 9:00 and the 6:00 rule]</span></td></tr>
+<tr><td>What it silences</td><td>The row, its share of the count (badge, title, tray, taskbar dot, phone envelope), and that chat's notifications. <b>The agent is never paused</b>: an approval it waits on keeps waiting, and work that doesn't depend on you keeps going.</td></tr>
+<tr><td>Coming back</td><td>When the time comes, <b>or sooner if the chat changes</b>: a new request, a new reply that asks, a new failure or stall. (A finished turn doesn't wake it. It shows under To review as usual.) It comes back to its old place (it keeps its original wait time, so it's usually at the top) and sends <b>one</b> notification: <i>"Back: Rewrite the parser, or just make it readable?"</i> <span class="add">[Addition: the "Back:" notification]</span></td></tr>
+<tr><td>Answered elsewhere</td><td>If the request is answered (on the phone, in the chat, by Mark handled), the snooze is simply dropped.</td></tr>
+<tr><td>Storage</td><td>The chat marks get <code>snoozedUntil</code> + <code>snoozedAt</code> (the architect's break 10, <code>architect-review-2026-11-13.md</code>: a separate field, never Hold, because Hold clears Your turn and moves the chat in the sidebar). It survives restarts. The watcher wakes it (it already polls every 2 s, watcher.ts <code>POLL_MS</code>) and fires once with key <code>wake|&lt;chat&gt;|&lt;snoozedAt&gt;</code>.</td></tr>
+<tr><td>Phone parity</td><td>The same two items in the phone's long-press card menu. The same "1 snoozed" line at the foot of the phone inbox. The rows come from the server (section 4), so PC and phone always agree. A Windows toast gets no Snooze button: the five buttons Windows allows are kept for answers <span class="add">[Addition]</span>.</td></tr>
+</table>
+
+<!-- ======================================================================= -->
+<h2 id="toast">3. Real buttons on Windows' own notifications</h2>
+
+<h3>Today</h3>
+<p>AIB's desktop notifications on Windows are a <b>tray balloon</b>: <code>Shell_NotifyIconW(NIM_MODIFY, NIF_INFO)</code> on AIB's tray icon (<code>server/desktop/notify.ts</code>, <code>tray_win.ts</code>). Windows 10/11 draw it as a toast, but a balloon <b>can't carry buttons or a text box</b>, and a click only reports <code>NIN_BALLOONUSERCLICK</code> (bring AIB forward, open the chat). It is always silent (<code>NIIF_NOSOUND</code>). The header of notify.ts says why it was picked: "Nothing is installed, no shortcut AppUserModelID or COM activator is needed, and no process is started." AIB already makes a Start-menu shortcut on first run (<code>shortcut.ts</code>, through WScript.Shell, which can't set the AUMID property). The server already decides <i>when</i> to notify (<code>watcher.ts</code>), so toasts arrive even with the window closed to the tray.</p>
+
+<h3>What a button toast needs on Windows</h3>
+<ol>
+<li><b>An app identity (AUMID)</b> that Windows maps to a name and an icon. For an app with no installer, Microsoft's unpackaged-app route is a registry key: <code>HKCU\Software\Classes\AppUserModelId\&lt;AUMID&gt;</code> with <code>DisplayName</code>, <code>IconUri</code> and <code>CustomActivator</code>. No Start-menu shortcut property is needed. This is what the Windows Community Toolkit's <code>ToastNotificationManagerCompat</code> and go-toast's <code>SetAppData</code> do. The older route (a shortcut carrying <code>System.AppUserModel.ID</code> + <code>ToastActivatorCLSID</code>) is what Electron + Squirrel installers use.</li>
+<li><b>A way back when a button is pressed.</b> There are two kinds:
+ <ul><li><b>Protocol activation</b>: the button opens <code>aib://…</code>. It is simple, but it <b>can't deliver what was typed in a text box</b>, and each click starts a new <code>AIB.exe</code> that forwards to the running one.</li>
+ <li><b>COM activation</b>: a class implementing <code>INotificationActivationCallback</code>, registered under <code>HKCU\Software\Classes\CLSID\{…}\LocalServer32</code>. Windows calls it with the button's arguments <b>and the typed text</b>. If nothing is running, Windows starts the registered exe. This works from the Action Center hours later too.</li></ul></li>
+<li><b>The toast itself</b>: WinRT <code>ToastNotificationManager.CreateToastNotifier(aumid).Show(...)</code> with ToastGeneric XML. It has to be called from a native thread with COM set up.</li>
+</ol>
+
+<h3>Options</h3>
+<table>
+<tr><th>Option</th><th>Reply box</th><th>Clicks when AIB is closed</th><th>Console / install</th><th>Size and risk</th></tr>
+<tr><td><b>A. Protocol only</b> (<code>aib://</code> in HKCU, toast shown from Deno through WinRT over FFI)</td><td>No</td><td>Starts AIB.exe, single-instance forwards (<code>single_instance.ts</code>)</td><td>None / HKCU</td><td>~2 d. Hand-written WinRT vtables in Deno FFI. Every click starts a process; focus can blink instead of coming forward (the dev.to Electron write-up hit this).</td></tr>
+<tr><td><b>B. Go helper in the keeper binary, COM activator</b> <span class="star">★</span></td><td><b>Yes</b></td><td>Windows starts <code>AIB-keeper.exe toast -Embedding</code>, which hands the click to AIB (below)</td><td>None: the keeper is already a GUI-subsystem exe (PROTOCOL.md §1) / HKCU only</td><td>~3 d. Pure-Go COM/WinRT (go-ole style, or go-toast's <code>wintoast</code> package, MIT/Unlicense) with its PowerShell fallback <b>removed</b>. Testable with a fake layer, like <code>notify.ts</code> today.</td></tr>
+<tr><td>C. Windows App SDK <code>AppNotificationManager</code></td><td>Yes</td><td>Yes</td><td>Needs the WinAppSDK runtime (a framework package to install, or ~30 MB of self-contained DLLs) plus a C#/C++ toolchain</td><td>~3–4 d plus a new toolchain in the release. Doesn't suit the zip.</td></tr>
+<tr><td>D. COM activator inside the Deno process (FFI + <code>UnsafeCallback</code>)</td><td>Yes</td><td>Only by starting the whole AIB.exe</td><td>None</td><td>~4 d. IClassFactory + callback vtables by hand on a thread-safe callback: fragile, and hard to test.</td></tr>
+<tr><td>E. PowerShell / BurntToast / SnoreToast (node-notifier's route)</td><td>SnoreToast: yes</td><td>Partly</td><td>PowerShell flashes a console and is slow. SnoreToast is a third-party exe started for each toast.</td><td>Rejected: "no console windows", and one process per toast.</td></tr>
+</table>
+
+<h3>Recommendation: B, <code>AIB-keeper toast</code></h3>
+<ul>
+<li><b>Why the keeper binary:</b> it already ships for every build, it is GUI-subsystem on Windows ("it can never get a console window"), it is started detached and hidden, and it is Go, the easiest language here for COM. No new binary goes in the zip. It is a separate subcommand, so the keeper's own protocol and constitution stay untouched.</li>
+<li><b>While AIB runs:</b> the AIB server starts <code>AIB-keeper toast</code> once, hidden (the same flags as the keeper: <code>DETACHED_PROCESS | CREATE_NO_WINDOW</code>), and talks JSON lines over its stdin/stdout. Show: <code>{op:'show', id, tag, xml}</code>. Remove: <code>{op:'remove', tag}</code>. Clicks come back as <code>{op:'activated', args, inputs}</code>. The helper calls <code>CoRegisterClassObject</code> for AIB's CLSID, so clicks reach the running helper with no new process.</li>
+<li><b>AIB closed to the tray:</b> the same as above (the server is still running).</li>
+<li><b>AIB fully quit</b> (the agents keep running in the keeper): Windows starts <code>AIB-keeper.exe toast -Embedding</code> from <code>LocalServer32</code>. The helper writes the click to <code>&lt;data&gt;/toast-inbox.json</code> and starts <code>AIB.exe</code>. AIB applies it after start-up, but only if that request is still open; otherwise it just opens the chat.</li>
+<li><b>Registry, written at every AIB start</b> (zip builds move around; this is the same idea as <code>ensureStartMenuShortcut</code>, but plain registry writes from Go, so no PowerShell): <code>AppUserModelId\AIB.Studio</code> {DisplayName "AIB", IconUri = a PNG in the data folder, CustomActivator = AIB's fixed CLSID} and <code>CLSID\{…}\LocalServer32</code> = "&lt;this build&gt;\AIB-keeper.exe" toast. Only HKCU, never admin. The last build started owns the keys, which is fine for one user.</li>
+<li><b>Fallback:</b> if the helper fails to start, crashes, or Windows refuses the toast, AIB uses today's balloon for that notification and logs why once. <code>quietReason()</code> (presentation mode, full screen) still applies first.</li>
+<li><b>Safety:</b> every button carries a one-time nonce (<code>req=&lt;request key&gt;&amp;n=&lt;nonce&gt;</code>). The AIB server only accepts a nonce it issued, for a request that is still open, so a crafted activation can't approve anything. Answers are logged as "Allowed on Windows notification" (<code>answers.ts</code>, by: 'pc'). Risky commands (push, force push, delete: the row's <b>Review</b>) never get Allow on a toast, only <b>Open</b>.</li>
+<li><b>Calm:</b> one toast per chat (<code>tag</code> = chat, <code>group</code> = "aib"), so a newer one replaces the older. When a request is answered anywhere (the row, the phone, the chat), AIB removes that toast from the Action Center (<code>ToastNotificationHistory.Remove</code>) <span class="add">[Addition]</span>. The grouped "3 agents are waiting for you" stays button-less: a click opens the inbox. Default toast scenario only (no "reminder" toasts that stay on screen); Finished stays silent.</li>
+</ul>
+
+<h3>The four toasts (Windows draws these; approximate)</h3>
+<div class="stage">
+<div><p class="cap">Approval (not risky): Allow / Deny, the same labels as the row's buttons. A click on the body opens the chat.</p>
+<div class="toast"><div class="app"><span class="ico">A</span>AIB<span class="x">✕</span></div><div class="t1">Run npm install stripe@18.0.0</div><div class="t2">Payments · shopfront</div><div class="btns"><span>Allow</span><span>Deny</span></div></div></div>
+<div><p class="cap">Asks / Finished: a Reply box and Send (the typed text goes back through COM activation). Finished toasts stay silent.</p>
+<div class="toast"><div class="app"><span class="ico">A</span>AIB<span class="x">✕</span></div><div class="t1">Rewrite the parser, or just make it readable?</div><div class="t2">Parser cleanup · notes-app</div><div class="in">Reply</div><div class="btns"><span>Send</span></div></div></div>
+<div><p class="cap">Stalled: Continue. (Failed gets Retry.)</p>
+<div class="toast"><div class="app"><span class="ico">A</span>AIB<span class="x">✕</span></div><div class="t1">Stopped mid-work: the agent quit during npm test</div><div class="t2">Checkout flow · shopfront</div><div class="btns"><span>Continue</span><span>Open</span></div></div></div>
+<div><p class="cap">Risky approval: never one-tap. Open shows the row with Review.</p>
+<div class="toast"><div class="app"><span class="ico">A</span>AIB<span class="x">✕</span></div><div class="t1">Push to origin/main</div><div class="t2">Release · AIB</div><div class="btns"><span>Open</span></div></div></div>
+</div>
+<pre>&lt;toast launch="act=open&amp;amp;chat=claude:9f2c" &gt;
+  &lt;visual&gt;&lt;binding template="ToastGeneric"&gt;
+    &lt;text&gt;Rewrite the parser, or just make it readable?&lt;/text&gt;
+    &lt;text&gt;Parser cleanup · notes-app&lt;/text&gt;
+  &lt;/binding&gt;&lt;/visual&gt;
+  &lt;actions&gt;
+    &lt;input id="reply" type="text" placeHolderContent="Reply"/&gt;
+    &lt;action content="Send" hint-inputId="reply" activationType="foreground"
+            arguments="act=reply&amp;amp;chat=claude:9f2c&amp;amp;n=4e1b…"/&gt;
+  &lt;/actions&gt;
+  &lt;audio silent="true"/&gt;   &lt;!-- Finished only --&gt;
+&lt;/toast&gt;</pre>
+<p class="ev">Desktop apps ignore <code>activationType="background"</code> (Microsoft's quickstart: "ignored for desktop apps"). Every click reaches the COM activator, and the helper decides not to bring a window up for Allow / Deny / Send / Continue. Only "Open" and a body click bring AIB forward.</p>
+<p><b>Phone parity (later, not in v3.1):</b> Android Web Push can carry up to two action buttons (Allow / Deny) but no inline reply. <code>pwa/sw.js</code> has no actions today. Noted as a follow-up, not built here <span class="add">[Addition]</span>.</p>
+<p><b>What the keeper can do beyond that:</b> nothing more is needed. Its role is only "the exe Windows can start" when AIB is quit. The keeper's <code>serve</code> process doesn't change.</p>
+
+<!-- ======================================================================= -->
+<h2 id="rows">4. Server-built inbox rows</h2>
+<p><b>Today four places build their own rows or counts</b>, and they already differ:</p>
+<table>
+<tr><th>Surface</th><th>Builds rows / counts in</th><th>Drift seen in the code</th></tr>
+<tr><td>PC inbox panel</td><td><code>workspace-state.js</code> <code>inbox()</code> (lines 378–465), plus a per-row detail fetch (<code>wantDetail</code>)</td><td>Line 1 text from page-only <code>ToolViews</code></td></tr>
+<tr><td>Phone inbox</td><td><code>phone.js</code> <code>inboxNeeds / inboxReview / inboxGroups / inboxWhat</code> (835–905)</td><td>Its own grouping ("Needs you in &lt;project&gt;", then other projects), its own line 1 ("The turn failed")</td></tr>
+<tr><td>Phone home payload</td><td><code>server/remote/payloads.ts</code> (its own 4-state <code>phaseOf</code> at :121, plus <code>INBOX.phaseOf</code> at :495)</td><td>Two phase functions in one file</td></tr>
+<tr><td>Notifications / trays</td><td><code>watcher.ts</code>, <code>main.ts</code>, <code>agent_host.ts</code></td><td>Counts from the shared rules, but rows are never shared</td></tr>
+</table>
+<p><b>What moving them to the server buys:</b></p>
+<ul>
+<li><b>One source of truth.</b> Badge = title = tray = phone envelope = toast text, always (the architect's break 12, test <code>inbox_counts_e2e_test.ts</code>).</li>
+<li><b>PC, phone and remote-PC parity for free.</b> Stalled, snoozed and every future row kind are written once. The phone stops guessing.</li>
+<li><b>Rows that outlive a connection.</b> A stalled chat whose agent is gone is a row from the marks file; only the server can see that.</li>
+<li><b>Less page work.</b> No N+1 detail fetch per row. The server caps the request body (≤ 2 KB per string, a diff head of ≤ 40 lines: architect break 13).</li>
+<li><b>Notifications and rows can't disagree.</b> The toast text is the row's line 1.</li>
+</ul>
+<h3>API shape</h3>
+<pre>GET /api/live/inbox?since=&lt;version&gt;        → 200 {…} | 204 (nothing changed)
+{
+  "version": 1842,                          // bumps on any row change; the page polls with it (2 s, like today)
+  "count": 2,                               // the ONE number (Needs you rows, open chats left out on the PC)
+  "rows": [{
+    "key": "claude:9f2c", "section": "needs" | "review",
+    "kind": "approval" | "question" | "signin" | "asks" | "failed" | "stalled" | "finished",
+    "what": "Stopped mid-work: the agent quit during npm test",   // line 1, ready to show
+    "whatCode": "npm test",                 // the part drawn as code, if any
+    "title": "Checkout flow", "project": {"key": "…", "name": "shopfront"},
+    "since": 1763300000, "at": 1763300000,  // wait start / finish time (s)
+    "actions": [{"id": "continue", "label": "Continue", "default": true}, {"id": "reply"}, {"id": "handled", "quiet": true}],
+    "request": { "key": "…", "options": [...], "toolCall": {...capped...}, "risky": false },   // approvals/questions
+    "stall": { "kind": "died" | "silent_end" | "quiet", "lastStep": "Run npm test" }
+  }],
+  "snoozed": [{ "key": "…", "what": "…", "title": "…", "project": {...}, "until": 1763303600 }],
+  "working": { "chats": 2, "projects": 2 }
+}
+POST /api/live/inbox/act  {key, action: "allow"|"deny"|"reply"|"retry"|"continue"|"handled"|"snooze"|"wake", option?, text?, until?, nonce?}</pre>
+<p>The phone gets the same object inside its home payload (<code>home.inbox</code>), so there is no extra request on a mobile link. PC open-chat filtering (<code>openKeys</code>) stays a query flag: <code>?open=…</code> is the PC's own view, and the phone asks without it.</p>
+<h3>Migration (no data migration: rows are computed, and marks only gain fields)</h3>
+<ol>
+<li>Add <code>rowsOf(listing, marks, now, opts)</code> to <code>inbox-rules.js</code> (pure, UMD), and <code>server/attention/inbox.ts</code> that runs it on the watcher's 2-s listing. Add the route.</li>
+<li>Page: <code>workspace-state.js inbox()</code> reads the route. The old builder stays one release behind a fallback for an older agent host, then goes.</li>
+<li>Phone: <code>phone.js</code> draws <code>home.inbox</code>. Its own <code>inboxNeeds…inboxGroups</code> are deleted (its project-first grouping goes too, matching "no project filters").</li>
+<li>Watcher and toasts take line 1 from the row. Trays and title read <code>count</code>.</li>
+<li>Tests: the counts-parity e2e test, plus one e2e test per row kind on PC and phone (the owner rule: approved behaviour gets a test).</li>
+</ol>
+
+<!-- ======================================================================= -->
+<h2 id="phases">Phases and sizes (builder-days)</h2>
+<table>
+<tr><th>Phase</th><th>What</th><th>Days</th><th>Proved by</th></tr>
+<tr><td>1</td><td><b>Server-built rows</b>: <code>rowsOf</code>, <code>inbox.ts</code>, the route, the page and phone switched over, old builders removed</td><td>2.5</td><td><code>inbox_counts_e2e_test.ts</code> (badge = title = tray = route = phone), and the PC/phone row e2e tests</td></tr>
+<tr><td>2</td><td><b>Stalled</b>: Phase 0 journal check (¼ d); the S1/S2/S3 facts in <code>connection.ts</code>; phase <code>stalled</code>; the mark; the watcher notification; the row with Continue</td><td>2</td><td><code>inbox_stalled_e2e_test.ts</code> with a fake agent that exits mid-turn, ends silent, or goes quiet (fake clock): the row, count, one notification, and Continue reopening the chat</td></tr>
+<tr><td>3</td><td><b>Snooze</b>: marks fields, rules, the watcher wake, PC right-click and phone long-press items, the foot line and the Snoozed section</td><td>1.5</td><td><code>inbox_snooze_e2e_test.ts</code>: leaves and the count drops; wakes on time and on change; survives a restart; one "Back:" notification; phone parity</td></tr>
+<tr><td>4</td><td><b>Windows toasts</b>: <code>AIB-keeper toast</code> (COM/WinRT, registry, activator, stdio), the Deno side (<code>notify.ts</code> windows route), the balloon fallback, nonces, removing answered toasts</td><td>3</td><td>Go unit tests for the XML, registry and argument parsing; <code>desktop_notify_test.ts</code> with a fake helper (show, click, typed reply, nonce refused, fallback). No real toast in automated runs ("nothing on screen"). One real check on the owner's PC with a test build.</td></tr>
+<tr><td></td><td><b>Total</b></td><td><b>9</b></td><td></td></tr>
+</table>
+<p class="ev">Order: 1 first (2 and 3 then only add one row kind or one mark), and 4 can run in parallel with 2 and 3 (it touches only <code>keeper/</code> and <code>server/desktop/</code>). At most 3 builders. Visible changes to announce to the owner: the new stalled rows, the right-click snooze items and the "N snoozed" foot line, Windows notifications that look different (AIB's app name and icon instead of the tray balloon) with buttons, and the phone inbox dropping its "Needs you in &lt;project&gt;" split (a side effect of the shared rows).</p>
+
+<!-- ======================================================================= -->
+<h2 id="decisions">Owner decisions (2)</h2>
+<div class="dec">
+<h3>1. Where does Snooze live on a row?</h3>
+<p><b>a <span class="star">★</span> Right-click on the PC / long-press on the phone only.</b> In practice: rows look exactly as they do today, with nothing new to see. You right-click a Needs-you row and pick "Snooze 1 hour" or "Snooze until tomorrow". Cost: you have to know it's there (the row's tooltip says "Right-click to snooze"). Recommended because snooze was "weakly supported" in your own usage (5% of questions sat over 4 h), so it shouldn't cost every row space.</p>
+<p><b>b A quiet "Later" word in the action row of Needs-you rows</b>, next to Mark handled. Click it and the two times appear. In practice: every blocked row gets one more grey word on its single action row. Easier to find, but busier.</p>
+</div>
+<div class="dec">
+<h3>2. Can a Windows notification approve a command with one click?</h3>
+<p><b>a <span class="star">★</span> Yes, for ordinary approvals.</b> In practice: "Run npm install stripe@18.0.0" pops up with Allow / Deny, you click Allow without AIB opening, and the agent carries on. Risky commands (push, force push, delete) still only get "Open", so you see the full command first, as the inbox does today. Risk: an Allow clicked in a hurry from a 2-line toast that shows less than the row does. The command text is still on the toast.</p>
+<p><b>b No. Toasts carry Reply / Retry / Continue, but approvals only get "Open".</b> In practice: every approval still needs AIB in front of you (one more click and a window switch per approval). Safer, but it gives up most of the "be notified, not wait" gain for approvals. You mostly run in bypass mode (0 approvals last week), so either choice matters most when approvals are on.</p>
+</div>
+
+<!-- ======================================================================= -->
+<h2 id="sources">Sources</h2>
+<ul>
+<li>Code (main <code>eba14ff</code>): <code>inbox-rules.js</code>; <code>workspace-state.js</code> 360–465; <code>workspace-ui.js</code> 1764–2010 (drawInbox), 1133 (right-click menu); <code>inbox-reply.css</code>; <code>phone.js</code> 835–905, 2439, 2631; <code>pwa/sw.js</code> 170; <code>server/acp/connection.ts</code> 1404, 2703, 2877, 3483, 4624, 4727, 6482, 6537; <code>server/attention/watcher.ts</code>; <code>server/remote/payloads.ts</code> 121, 470–500; <code>server/state/conversations.ts</code> 21, 245; <code>server/desktop/notify.ts</code>, <code>shortcut.ts</code>, <code>native.ts</code>; <code>keeper/PROTOCOL.md</code> §1.</li>
+<li>Prior AIB designs: <code>private/designs/attention-ux/usage-data-2026-11-13.md</code> (stall and snooze evidence), <code>architect-review-2026-11-13.md</code> (breaks 10, 12, 13), <code>owner-feedback-2026-11-13.md</code>, <code>aib-inbox-prototype-v3.html</code>.</li>
+<li>Microsoft: <a href="https://learn.microsoft.com/en-us/windows/apps/design/shell/tiles-and-notifications/send-local-toast-other-apps">Send a local toast notification from other types of unpackaged apps</a> (AUMID registry key with CustomActivator; the COM class implements INotificationActivationCallback); <a href="https://learn.microsoft.com/en-us/previous-versions/windows/desktop/win32_tile_badge_notif/respond-to-toast-activations">Respond to toast activations</a>; <a href="https://learn.microsoft.com/en-us/windows/apps/design/shell/tiles-and-notifications/send-local-toast-desktop-cpp-wrl">Send a local toast from a C++ WRL app</a>; <a href="https://learn.microsoft.com/en-us/previous-versions/windows/desktop/legacy/hh802762(v=vs.85)">Enable desktop toasts through an AppUserModelID</a> (the older shortcut route); <a href="https://learn.microsoft.com/en-us/windows/apps/develop/notifications/app-notifications/app-notifications-quickstart">Windows App SDK app notifications quickstart</a> ("activationType=background … is ignored for desktop apps").</li>
+<li>Go: <a href="https://pkg.go.dev/git.sr.ht/~jackmordaunt/go-toast/v2">go-toast v2</a> (Actions, text Inputs, <code>SetActivationCallback(func(args string, data []UserData))</code>, <code>SetAppData</code> writes the registry; it has a PowerShell fallback that AIB must not use); <a href="https://pkg.go.dev/git.sr.ht/~jackmordaunt/go-toast/wintoast">wintoast</a>.</li>
+<li>Electron: <a href="https://www.electronjs.org/docs/latest/tutorial/notifications">Notifications tutorial</a> (needs a Start Menu shortcut with AUMID + ToastActivatorCLSID; <code>toastXml</code> option); <a href="https://github.com/hatpick/electron-windows-interactive-notifications">electron-windows-interactive-notifications</a> (a COM activator for replies, from Slack's work; the npm package is now deprecated); <a href="https://dev.to/randomengy/proper-windows-notifications-on-electron-38jo">Proper Windows notifications on Electron</a> (protocol activation works for buttons but "can't handle typed replies"; Action Center clicks do nothing with the built-in route; the COM route abandoned as hard).</li>
+<li>Teams / Slack / VS Code: the new Teams is an MSIX-packaged app and gets toast activation from its package manifest (option C's route); Slack desktop is Electron with a COM activator; VS Code uses Electron's plain notifications without action buttons and keeps answers in its own window. These are the three ends of the same trade-off; AIB's zip and no-installer rule point to B.</li>
+</ul>
+<p class="ev">Not verified on this machine: no toast was shown (no popups rule). The exact Windows build where the registry-only AUMID route started working wasn't confirmed; Windows 10 and 11 are covered by the Community Toolkit's compat library, which uses it. Phase 4 starts with a 1-hour spike that shows one toast with a text box from a hidden Go exe on the owner's Windows 11 build.</p>
+</div>
+<script>
+document.querySelectorAll('.seg button').forEach((b) => b.addEventListener('click', () => {
+  document.documentElement.dataset.theme = b.dataset.t;
+  document.querySelectorAll('.seg button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+}));
+</script>
+</body>
+</html>
