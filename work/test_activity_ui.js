@@ -132,3 +132,15 @@ test('split Activity: a chat with nothing running says "Ready", never "idle"', (
   assert.deepEqual(A.splitCounts({}), [{ text: 'Ready' }]);
   assert.deepEqual(A.splitCounts({ working: 2, processes: 1 }), [{ text: '2 working' }, { text: '1 running' }]);
 });
+
+test('split Activity: the header line follows the chat state; "Nothing running" only when idle', () => {
+  const work = { text: 'Working · 12m', tone: 'work' },
+    idle = { text: 'Ready', tone: 'idle' };
+  assert.deepEqual(A.splitCounts({}, work), [{ text: 'Working · 12m', bad: false }]);
+  assert.deepEqual(A.splitCounts({ processes: 1 }, work), [{ text: 'Working · 12m', bad: false }, { text: '1 running' }]);
+  assert.deepEqual(A.splitCounts({}, { text: 'Needs you', tone: 'need' })[0].text, 'Needs you');
+  assert.deepEqual(A.splitCounts({}, idle), [{ text: 'Ready' }]);
+  assert.equal(A.splitNothing({}, work), false);
+  assert.equal(A.splitNothing({}, idle), true);
+  assert.equal(A.splitNothing({ processes: 1 }, idle), false);
+});
