@@ -16,7 +16,8 @@
 (function (root) {
   const POPUP =
     '[role="menu"], [role="listbox"], [role="dialog"], [role="alertdialog"], dialog, .send-menu, .chip-menu, #approvals, #questions, #authPrompts, #setupQuestions';
-  const TEXT = 'textarea, input:not([type]), input[type="text"], input[type="search"], [contenteditable="true"], [contenteditable=""]';
+  // .sf-code-host: the file editor's shadow host (files-ui.js): focus events see the host, not the editable text inside it
+  const TEXT = 'textarea, input:not([type]), input[type="text"], input[type="search"], [contenteditable="true"], [contenteditable=""], .sf-code-host';
   let home = null, // the place to come back to
     cur = null, // the element in focus (or last in focus)
     curInPopup = false;
@@ -56,7 +57,8 @@
   function back() {
     const el = homeEl();
     if (!el || !el.focus) return false;
-    el.focus({ preventScroll: true });
+    if (typeof el._aibFocus === 'function') el._aibFocus(); // the file editor puts the caret back where it was
+    else el.focus({ preventScroll: true });
     return doc().activeElement === el;
   }
   /* The safety net: the focused element was in a popup and went away (removed, hidden, disabled) with the focus left on the page. */

@@ -201,7 +201,8 @@ export class LiveFile {
     });
     this.doc.transact(() => {
       for (let i = gone.length - 1; i >= 0; i--) this.overlaps.delete(gone[i], 1);
-      this.#setMeta({ dirty: text !== this.base.text });
+      // checked: the state this dirty flag answers (a page clears its own "typed, not yet confirmed" flag once it covers its edits)
+      this.#setMeta({ dirty: text !== this.base.text, checked: Y.encodeStateVector(this.doc) });
     }, SERVER_ORIGIN);
   }
 

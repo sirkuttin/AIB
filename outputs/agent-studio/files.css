@@ -947,3 +947,63 @@ a.doc-chip.gone {
 .ar-docs-empty .ar-it {
   width: 100%;
 }
+
+/* ---- the file editor (file-editor-ui.js) ---- */
+/* The tools row of an editable file: one row that never wraps (44 px); long state text is cut with an ellipsis. */
+.sf-fv-tools.sf-ed-tools {
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+.sf-ed-tools > * {
+  flex: none;
+}
+.sf-ed-tools > .sf-ed-state {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.sf-ed-tools > .sf-ed-state.warn {
+  color: var(--warn);
+}
+/* The dirty dot in the tab's × box: always visible (not only on hover); the button still closes. */
+.ws-tab-x.sf-dirty {
+  opacity: 1;
+  color: var(--text);
+  font-size: 11px;
+}
+.ws-tab-x.sf-dirty:hover {
+  color: var(--text-bright);
+}
+/* The landing-busy line retries by itself: not red. */
+.sf-fv-alert.sf-ed-alert.auto {
+  background: var(--accent-wash);
+  color: var(--text-2);
+}
+.sf-ed-cmp {
+  overflow: auto;
+}
+/* Closing a tab with unsaved text: Save / Don't save / Cancel, by the tab (a small popover, never a modal). */
+.sf-close-pop {
+  position: fixed;
+  z-index: 60;
+  width: 280px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-field);
+  border-radius: 8px;
+  background: var(--bg-popover);
+  color: var(--text);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  font-size: 13px;
+}
+.sf-close-msg {
+  margin: 0 0 10px;
+  overflow-wrap: anywhere;
+}
+.sf-close-row {
+  display: flex;
+  gap: 8px;
+}

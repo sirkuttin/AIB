@@ -771,6 +771,7 @@
     error.code = response.body.code;
     error.ownership = response.body.ownership;
     error.chats = response.body.chats;
+    error.body = response.body; // the whole answer (the file editor's save reads who and overlaps)
     return error;
   }
   // Every /api/ GET except bootstrap carries the page token. A 403 means the token is stale (Studio restarted): fetch a fresh one and retry once; a GET is safe to repeat.
@@ -4542,7 +4543,8 @@
       inspectorShown() &&
       !document.querySelector('dialog[open]') &&
       !/^(INPUT|SELECT)$/.test(e.target?.tagName || '') &&
-      !e.target?.isContentEditable
+      !e.target?.isContentEditable &&
+      !window.AgentTyping?.isTyping(e)
     ) {
       e.preventDefault();
       const ae = document.activeElement,
@@ -5362,6 +5364,10 @@
   window.AgentFilesUI?.init({
     aliasKey,
     titleOf,
+    token: async () => {
+      if (!token) await refreshToken();
+      return token;
+    },
     getJson: get,
     post: (path, body) => post(path, body),
     notice: (m) => fail(Error(m)),
@@ -6535,6 +6541,7 @@
   /* End jumps to the latest message unless you're typing or working in a list. */
   document.addEventListener?.('keydown', (e) => {
     if (e.key !== 'End' || e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+    if (window.AgentTyping?.skip(e)) return; // End in the file editor (a shadow root) or a key another handler took
     const t = e.target;
     if (
       t &&

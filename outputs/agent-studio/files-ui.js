@@ -73,6 +73,7 @@
     return icon(DOC_D, cls);
   };
   const DL = () => root.AgentDocLinks;
+  const FE = () => root.AgentFileEditor; // file-editor-ui.js: the editable parts of a file tab
 
   // ---- state -------------------------------------------------------------------------------------------------------------
   const MODE_KEY = 'aib-sidebar-mode';
@@ -1672,7 +1673,16 @@
     setTabsHere({ tabs: t.tabs, active: id });
     showFile();
   }
+  // A file tab closes; with unsaved text in it the editor asks Save / Don't save / Cancel by the tab first (file-editor-ui.js).
   function closeFileTab(id) {
+    const tab = tabsHere().tabs.find((x) => x.id === id);
+    if (tab && FE() && FE().handles(tab)) {
+      const x = doc().querySelector('[data-key="file:' + (root.CSS && root.CSS.escape ? root.CSS.escape(id) : id) + '"] .ws-tab-x');
+      return FE().beforeClose('main', tab, x, () => closeFileTabNow(id));
+    }
+    closeFileTabNow(id);
+  }
+  function closeFileTabNow(id) {
     const r = F().closeTab(tabsHere(), id);
     setTabsHere(r.state);
     reads.delete(id);
@@ -1871,7 +1881,8 @@
     } else main.append(icon(FILE_D, 'sf-fico'), el('span', t.name, 'ws-tab-title'));
     main.onclick = () => onSelect(t.id);
     main.ondblclick = () => onKeep(t.id);
-    const x = btn('×', 'ws-tab-x', 'Close tab: ' + t.name);
+    const unsaved = !!(FE() && FE().handles(t) && FE().dirty(t));
+    const x = btn(unsaved ? '\u25CF' : '×', 'ws-tab-x' + (unsaved ? ' sf-dirty' : ''), (unsaved ? 'Unsaved changes. Close tab: ' : 'Close tab: ') + t.name);
     x.onclick = (e) => {
       e.stopPropagation();
       onClose(t.id);
@@ -2139,6 +2150,15 @@
       };
       tools.append(a);
     }
+    // the file editor (file-editor-ui.js): a file in the project folder opens editable at once, in Source mode
+    const imageOnly = !!(d && d.image && !/\.svg$/i.test(d.name || ''));
+    const ed = !!(FE() && FE().handles(tab) && r.mode !== 'page' && !imageOnly && !r.error && d && !FE().readOnly(tab, d));
+    if (ed) {
+      tools.classList.add('sf-ed-tools');
+      for (const n of FE().tools(where, tab, box.clientWidth || 0)) tools.append(n);
+    }
+    const ro = !ed && FE() ? FE().readOnly(tab, d) : null;
+    if (ro && ro.button) tools.append(ro.button);
     tools.append(el('span', null, 'fx-spacer'));
     tools.append(editorBtn(d && d.abs, tab.line, '', d, tab));
     const more = btn('⋯', 'fx-icobtn', REMOTE() ? 'More: Copy path' : 'More: Show in Explorer, Copy path');
@@ -2146,8 +2166,10 @@
     more.disabled = !(d && d.abs);
     more.onclick = () => moreMenu(more, d.abs);
     tools.append(more);
-    const body = el('div', null, 'sf-fv-body');
-    if (r.loading) body.append(el('p', 'Opening…', 'fx-note'));
+    const body = ed ? FE().body(where, tab) : el('div', null, 'sf-fv-body');
+    if (ed) {
+      /* the editor's own node: nothing to add */
+    } else if (r.loading) body.append(el('p', 'Opening…', 'fx-note'));
     else if (r.error) body.append(el('p', r.error, 'fx-note'));
     else if (d.image && d.viewUrl && !(r.mode === 'source' && d.text != null && !canPage)) {
       if (r.mode === 'page' || !canPage || d.text == null) {
@@ -2184,7 +2206,8 @@
       );
       if (badge) foot.append(el('span', badge.status === 'A' ? 'New, not committed' : badge.status === 'D' ? 'Deleted' : 'Changed, not committed'));
     }
-    foot.append(el('span', null, 'fx-spacer'), el('span', 'Read-only'));
+    if (ed) for (const n of FE().foot(where, tab)) foot.append(n);
+    else foot.append(el('span', null, 'fx-spacer'), el('span', ro ? ro.text : 'Read-only', 'sf-ro-reason'));
     // A failed "Open in Artifacts" says so right under the toolbar you clicked (the page's own error line is hidden while a file shows).
     const alert = r.artNote ? el('p', null, 'sf-fv-alert') : null;
     if (alert) {
@@ -2196,7 +2219,17 @@
       };
       alert.append(el('span', r.artNote), x);
     }
-    box.replaceChildren(...[head, tools, alert, body, foot].filter(Boolean));
+    const edAlert = ed ? FE().alert(where, tab) : null;
+    placeAround(box, [head, tools, alert, edAlert], body, [foot]);
+  }
+  // Replace a box's children, keeping `keep` where it is when it is already there (the editor's node: moving it would lose its
+  // scroll, caret and IME state), so a redraw rebuilds only the head, tools and footer.
+  function placeAround(box, before, keep, after) {
+    const pre = before.filter(Boolean), post = after.filter(Boolean);
+    if (keep.parentNode !== box) return box.replaceChildren(...pre, keep, ...post);
+    for (const k of [...box.children]) if (k !== keep) k.remove();
+    for (const n of pre) box.insertBefore(n, keep);
+    for (const n of post) box.append(n);
   }
   function codeView(text, tab, r) {
     const pre = el('div', null, 'fx-code');
@@ -2281,6 +2314,30 @@
     return { editor: ed, load: t1 - t0, mount: t2 - t1, total: t2 - t0 };
   }
 
+  // "Edit in project folder" (a helper's or subagent's copy is read-only): the same path in the project folder, if it is there.
+  async function openInProject(tab) {
+    const pp = projectPathNow();
+    const s = chat && chat.id
+      ? { id: chat.id, root: 'main', label: 'Folder', branch: '', chatKey: chat.key, title: chat.title, path: pp }
+      : F().projectScope(pp);
+    if (!s) return false;
+    try {
+      await host.getJson('/api/live/files/read', Object.assign(F().scopeArgs(s), { path: tab.path }));
+    } catch (e) {
+      return false;
+    }
+    openFile(s, tab.path, { keep: true });
+    return true;
+  }
+  // "Open in Docs" on a file under aib-docs/ (read-only here: the docs store owns those files).
+  function openDocOf(tab) {
+    const parts = String(tab.path || '').split('/');
+    if (parts.length < 2) return;
+    const dir = parts[0] + '/' + parts[1], idx = docIndexOf(tab.scope), d = idx ? idx.byDir.get(dir) : null;
+    if (d) openDocRow(tab.scope, d, true);
+    else openDoc(tab.scope, { name: parts[1], title: parts[1] });
+  }
+
   function mainBox() {
     const d = doc();
     let box = d.getElementById('fileView');
@@ -2318,6 +2375,7 @@
       view = 'chat';
       return;
     }
+    if (FE() && FE().prune) FE().prune('main', t.tabs);
     if (tab.kind === 'notes') return renderNotes(box, tab);
     renderView(box, tab, 'main');
   }
@@ -2424,21 +2482,38 @@
             drawBeside();
           },
           (id) => {
-            const r = F().closeTab(beside, id);
-            beside = r.state;
-            reads.delete(id);
-            drawBeside();
+            const gone = () => {
+              const r = F().closeTab(beside, id);
+              beside = r.state;
+              reads.delete(id);
+              drawBeside();
+            };
+            const t = beside.tabs.find((x) => x.id === id);
+            if (t && FE() && FE().handles(t)) FE().beforeClose('beside', t, box.querySelector('[data-key="file:' + id + '"] .ws-tab-x'), gone);
+            else gone();
           },
           () => {},
         ),
       );
     const close = btn('×', 'ws-tab-new sf-beside-close', 'Close the files beside the chat');
     close.onclick = () => {
-      beside = F().emptyTabs();
-      drawBeside();
+      // one tab at a time, so a tab with unsaved text asks first (and Cancel keeps it and the rest)
+      const next = () => {
+        const t = beside.tabs[0];
+        if (!t) return drawBeside();
+        const gone = () => {
+          beside = F().closeTab(beside, t.id).state;
+          reads.delete(t.id);
+          next();
+        };
+        if (FE() && FE().handles(t)) FE().beforeClose('beside', t, close, gone);
+        else gone();
+      };
+      next();
     };
     strip.replaceChildren(list, el('span', null, 'ws-spacer'), close);
     v.hidden = false;
+    if (FE() && FE().prune) FE().prune('beside', beside.tabs);
     renderView(v, tab, 'beside');
   }
 
@@ -2921,6 +2996,27 @@
   }
   function init(h) {
     host = h;
+    if (FE() && FE().init) {
+      FE().init({
+        getJson: (path, params) => host.getJson(path, params),
+        post: (path, body) => host.post(path, body),
+        token: () => (host.token ? host.token() : ''),
+        loadEditor: () => loadCodeEditor(),
+        redraw: (where) => {
+          if (where === 'beside') drawBeside();
+          else {
+            drawMain();
+            if (W() && W().refresh) W().refresh(); // the tab's dirty dot
+          }
+        },
+        keepTab: (tab) => {
+          if (tabsHere().tabs.some((x) => x.id === tab.id && x.preview)) keepTab(tab.id);
+        },
+        closeTab: (where, tab) => (where === 'beside' ? null : closeFileTab(tab.id)),
+        openProjectFile: (tab) => openInProject(tab),
+        openDoc: (tab) => openDocOf(tab),
+      });
+    }
     loadTabs();
     if (DL() && DL().onPops) DL().onPops(() => paint()); // a doc popped out or back: its row's arrow
     mount();

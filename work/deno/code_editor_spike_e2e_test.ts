@@ -207,7 +207,9 @@ async function run(fx: Fixture, desk: HiddenDesktop, saved: Record<string, strin
     // ---- 2. the 1 MB file in a file tab, today's view, then the editor -------------------------------------------------------
     const viewMs = await cdp.eval<number>(`(async () => {
       const t0 = performance.now();
-      AgentFilesUI.openFile(AgentFilesUI.currentScope(), 'big.ts', { keep: true });
+      // a helper's copy (read-only): the old read-only view, which the spike mounts its editor over (a project file opens the real
+      // editor now: file_editor_e2e_test.ts)
+      AgentFilesUI.openFile(Object.assign({}, AgentFilesUI.currentScope(), { root: 'chat', branch: 'aib/spike', label: 'Copy' }), 'big.ts', { keep: true });
       for (let i = 0; i < 600 && !document.querySelector('#fileView .fx-code'); i++) await new Promise((r) => setTimeout(r, 25));
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
       return performance.now() - t0;
