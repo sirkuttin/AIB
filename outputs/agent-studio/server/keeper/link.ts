@@ -42,6 +42,8 @@ import { WSL_HELPER_LABEL, WSL_HOLD_LABEL } from '../wsl/contract.ts';
 
 const log = getLogger('keeper');
 const ENC = new TextEncoder();
+/** An ACP session id in a line AIB wrote to the agent (its prompts name the chat's own session) or the agent wrote back. */
+const SESSION_ID_RE = /"sessionId"\s*:\s*"([^"\\]{1,200})"/;
 
 /** The label's `aib` of one of AIB's own channels (contract.ts), or '' for anything else (a chat, a terminal, no label). */
 export function aibInternalKind(label: unknown): string {
@@ -558,28 +560,59 @@ export class KeeperLink {
    * then detach. null when it has none.
    */
   async firstNote(client: KeeperClient, channel: string, timeoutMs = 10000): Promise<Json | null> {
-    let done: (value: Json | null) => void = () => {};
-    const result = new Promise<Json | null>((resolve) => (done = resolve));
-    const timer = setTimeout(() => done(null), timeoutMs);
+    const facts = await this.channelFacts(client, channel, timeoutMs);
+    return facts.note ?? facts.foreign;
+  }
+
+  /**
+   * What a channel says about itself: its chat note (or a snapshot's copy of it), read past every other note of AIB's. A journal
+   * truncated after a checkpoint starts at a segment boundary, so the notes written before the snapshot (steer, piped, released,
+   * receipts, events ...) come first: none of them means "not a chat" (2026-11-17: a `steer` note before the snapshot made the
+   * take-over stop the owner's lead chat). `foreign`: the first note that is not AIB's at all (no string `t`). `sessionId`: the
+   * session the agent's own lines name, for a chat whose note is gone (studio.ts rebuilds its record from it).
+   */
+  async channelFacts(
+    client: KeeperClient,
+    channel: string,
+    timeoutMs = 10000,
+  ): Promise<{ note: Json | null; foreign: Json | null; sessionId: string | null; timedOut: boolean }> {
+    let done: () => void = () => {};
+    const result = new Promise<void>((resolve) => (done = resolve));
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      done();
+    }, timeoutMs);
+    let note: Json | null = null;
+    let foreign: Json | null = null;
+    let fromIn: string | null = null;
+    let fromOut: string | null = null;
+    const sessionOf = (body: Uint8Array): string | null => {
+      const m = new TextDecoder().decode(body.subarray(0, 4096)).match(SESSION_ID_RE);
+      return m ? m[1] : null;
+    };
     try {
       await client.attach(channel, 0, {
         record(record) {
+          if (note) return;
+          if (record.kind === 'in') fromIn ??= sessionOf(record.body);
+          else if (record.kind === 'out') fromOut ??= sessionOf(record.body);
           if (record.kind !== 'note') return;
-          const note = parseNote(record.body);
-          if (note?.t === 'chat') done(note);
-          else if (note?.t === 'snapshot' && note.chat && typeof note.chat === 'object') done({ ...(note.chat as Json), t: 'chat' });
-          else if (!note || (note.t !== 'receipt' && note.t !== 'event' && note.t !== 'fsWrite' && note.t !== 'clientTerminal')) {
-            done(note); // not AIB's: the caller decides (it stops a channel without a chat record)
-          }
+          const parsed = parseNote(record.body);
+          if (parsed?.t === 'chat') note = parsed;
+          else if (parsed?.t === 'snapshot' && parsed.chat && typeof parsed.chat === 'object') note = { ...(parsed.chat as Json), t: 'chat' };
+          else if (!parsed || typeof parsed.t !== 'string') foreign ??= parsed ?? {};
+          if (note) done();
         },
         live() {
-          done(null);
+          done();
         },
         removed() {
-          done(null);
+          done();
         },
       });
-      return await result;
+      await result;
+      return { note, foreign: note ? null : foreign, sessionId: fromIn ?? fromOut, timedOut: timedOut && !note };
     } finally {
       clearTimeout(timer);
       try {

@@ -137,6 +137,7 @@
       const e = list[i];
       if (!e) continue;
       if (e.kind === 'user') return false;
+      if (e.kind === 'turn_end' && e.data && e.data.restored) return false; // a turn end put back from an earlier chat: not new
       if (e.kind === 'turn_end') return !(handledAt != null && typeof e.time === 'number' && e.time <= handledAt);
     }
     return false;

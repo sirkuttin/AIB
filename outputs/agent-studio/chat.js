@@ -4329,6 +4329,7 @@
     for (let i = evs.length - 1; i >= 0; i--) {
       const e = evs[i];
       if (!e || e.kind === 'user') return listed;
+      if (e.kind === 'turn_end' && e.data && e.data.restored) return listed; // put back from an earlier chat of the conversation
       if (e.kind === 'turn_end')
         return typeof e.time === 'number' && e.time * 1000 > listedAt - 15000 ? undefined : listed;
     }

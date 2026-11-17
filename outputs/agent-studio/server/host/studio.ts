@@ -22,6 +22,7 @@ import {
   ThreadEvent,
 } from '../acp/connection.ts';
 import { HistoryClient } from '../history/client.ts';
+import { ConversationLines } from '../history/lines.ts';
 import { sessionOp } from '../acp/breadth.ts';
 import type { McpServer } from '../acp/breadth.ts';
 import { PromptStateUnknown } from '../acp/rpc_errors.ts';
@@ -375,6 +376,7 @@ export class Studio {
   heartbeatSeconds = HEARTBEAT_SECONDS;
   readonly store: StateStore | null;
   readonly recovery: Recovery | null;
+  readonly conversationLines: ConversationLines | null;
   readonly conversations: ConversationState;
   readonly projectPrefs: ProjectPrefs;
   readonly readState: ReadState;
@@ -461,6 +463,8 @@ export class Studio {
     this.store = this.hasStateDir ? new StateStore(this.stateDir, `recovery-${name}`) : null;
     this.addedProjects = this.hasStateDir ? new AddedProjects(this.stateDir) : null;
     this.allow = this.hasStateDir ? new AllowGate(this.stateDir) : null;
+    // AIB's own lines (turn ends, notes) kept by conversation, so a chat rebuilt under another id shows them (history/lines.ts)
+    this.conversationLines = this.hasStateDir ? new ConversationLines(join(this.stateDir, 'conversation-lines')) : null;
     this.recovery = this.store ? new Recovery(this.store) : null;
     if (this.recovery) this.recovery.queues = new QueueStore(this.stateDir, `queues-${name}`); // queued messages survive a host restart (paused)
     const dir = this.hasStateDir ? this.stateDir : null;
@@ -1517,6 +1521,7 @@ export class Studio {
 
   /** The Studio's hooks on one connection (turn start and end, live sync, release) and its client capabilities. */
   #wire(c: Connection): void {
+    c.lines = this.conversationLines;
     if (this.allow) {
       c.allowGate = this.allow;
       if (!c.wsl) c.scratchDir = this.allow.scratchFor(c.id); // a Windows scratch folder is no folder for an agent in a distro (its additionalDirectories must be Linux paths)
@@ -1830,14 +1835,39 @@ export class Studio {
           continue;
         }
         const timer = new PhaseTimer();
-        const note = await keeper.firstNote(client, info.channel);
+        const facts = await keeper.channelFacts(client, info.channel);
+        let note = facts.note;
         timer.mark('note');
         if (!note || note.t !== 'chat' || !isStr(note.id) || !isStr(note.provider) || !isStr(note.cwd)) {
-          if (check) continue; // only the start stops a channel without a chat record
-          announce('studio', 'keeper: stopping channel %s: it has no chat record', info.channel);
-          await keeper.stopUnknown(client, info.channel);
-          continue;
+          if (check) continue; // only the start acts on a channel without a chat record
+          const chatId = chatIdOfChannel(info.channel);
+          if (!chatId) { // not a chat's channel at all (another program's, or an old build's): stopped as before
+            announce('studio', 'keeper: stopping channel %s: it has no chat record', info.channel);
+            await keeper.stopUnknown(client, info.channel);
+            continue;
+          }
+          // A chat's channel is never stopped for a missing record (owner rule: quitting or updating AIB never kills a working chat):
+          // its record is made again from what the keeper and AIB still know, and the chat is taken over with it.
+          note = this.#recordFromKeeper(info, chatId, facts.sessionId, distro);
+          if (!note) {
+            announce(
+              'studio',
+              'keeper: channel %s has no chat record and names no session; it keeps running in the keeper (not taken over)',
+              info.channel,
+            );
+            continue;
+          }
+          announce(
+            'studio',
+            'keeper: channel %s had no chat record%s; rebuilt it from the keeper: %s %s in %s',
+            info.channel,
+            facts.timedOut ? ' (reading it timed out)' : '',
+            note.provider,
+            note.resume,
+            note.cwd,
+          );
         }
+        if (!isStr(note.id)) continue;
         const known = this.connections.get(note.id);
         // A chat whose link to this channel was given up (the keeper could not be reached for a while) while its agent kept running
         // is rebuilt under its own id; any other chat this AIB has (open, or closed by the user) keeps the channel as it is.
@@ -1922,6 +1952,36 @@ export class Studio {
     return loser === c;
   }
 
+  /**
+   * A chat note made again for a chat channel whose own is gone (a journal truncated past it, or one that never had it): the chat id
+   * from the channel name, the session from the agent's lines, the provider, folder and project from AIB's recovery list (else
+   * from the agent's command and the keeper's folder). null: no session is known, so nothing can continue it.
+   */
+  #recordFromKeeper(info: ChannelInfo, chatId: string, sessionId: string | null, distro: string | null): Json | null {
+    if (!sessionId) return null;
+    const saved = this.store
+      ? [...this.store.conversations.values()].find((c) => c.sessionId === sessionId) ?? null
+      : null;
+    const command = [info.command, ...(info.args ?? [])].map(String);
+    const provider = saved?.provider || providerOfCommand(command);
+    // a distro's keeper knows the Linux folder; AIB's list has the wsl:// one the rebuild needs
+    const cwd = (distro ? saved?.cwd : info.cwd || saved?.cwd) || '';
+    if (!provider || !cwd) return null;
+    return {
+      t: 'chat',
+      id: chatId,
+      provider,
+      cwd,
+      loc: { kind: 'win' },
+      projectRoot: saved?.projectRoot || cwd,
+      worktree: null,
+      resume: sessionId,
+      command,
+      mcpServers: [],
+      rebuiltRecord: true,
+    };
+  }
+
   async #rebuildChat(
     info: ChannelInfo,
     note: Json,
@@ -1983,6 +2043,12 @@ export class Studio {
       if (c.closed) return false;
       if (c.rebuildError) {
         announce('studio', 'keeper: %s stays read-only: %s', label, c.rebuildError);
+        return false;
+      }
+      if ((!c.ready || !c.sessionId) && note.rebuiltRecord === true) {
+        // A record made again from the keeper that did not bring the chat back: its agent keeps running (never stopped for a lost
+        // record); the chat stays read-only here.
+        announce('studio', 'keeper: %s (record rebuilt from the keeper) did not come back ready; its agent keeps running', label);
         return false;
       }
       if (!c.ready || !c.sessionId) {
@@ -3559,6 +3625,21 @@ function hooksFromNote(raw: unknown): Connection['subagentHooks'] {
 function isForwardEntry(entry: unknown): boolean {
   const args = isDict(entry) && Array.isArray(entry.args) ? entry.args : [];
   return args[0] === 'mcp-forward';
+}
+
+/** The chat id of a chat's keeper channel (`chat-<id>`, connection.ts), or '' for any other channel. */
+export function chatIdOfChannel(channel: string): string {
+  const m = /^chat-([0-9a-f]{32})$/.exec(channel);
+  return m ? m[1] : '';
+}
+
+/** The provider an agent command runs, by its program and arguments ('' when it is not one AIB knows). */
+export function providerOfCommand(command: string[]): string {
+  const text = command.join(' ').toLowerCase().replaceAll('\\', '/');
+  if (/claude-agent-acp|claude-code-acp|\/claude(\.exe)?\b/.test(text)) return 'claude';
+  if (/codex/.test(text)) return 'codex';
+  if (/gemini/.test(text)) return 'gemini';
+  return '';
 }
 
 const INSTANCE_FILE = 'studio-instance-keeper.json';

@@ -36,6 +36,7 @@ import {
 import { validateContent, validateSchema, validateUrlRequest } from './elicitation.ts';
 import { arraySource, type Ev, type EventSource, page, type Page, type PageQuery } from './event_pages.ts';
 import type { HistoryClient } from '../history/client.ts';
+import { anchorOf, type ConversationLines, KEPT_KINDS, type KeptLine, LineMerger } from '../history/lines.ts';
 import type { Checkpoint, OpenInfo, StoredEvent, StoreEvent } from '../history/store.ts';
 import { type HeldCard, MessageQueue, type QueueItem, type SavedItem, STEER_RESTART_NOTE, type SteerItem } from './msgqueue.ts';
 import { killVerified, type ProcId } from '../platform/kill_verified.ts';
@@ -489,6 +490,21 @@ class NoWrites extends WriteTracker {
 export const SNAPSHOT_VERSION = 2;
 /** A snapshot note larger than this is not written (a note is at most 16 MiB); the replay then starts at the one before, or at 0. */
 export const MAX_SNAPSHOT_BYTES = 12 * 1024 * 1024;
+/** The `lines` note (AIB's kept lines a session/load puts back): the newest that fit. */
+const MAX_LINES_NOTE_BYTES = 8 * 1024 * 1024;
+
+/** The newest lines whose JSON fits in `bytes`, oldest first. */
+function linesWithin(lines: KeptLine[], bytes: number): KeptLine[] {
+  let used = 0;
+  let i = lines.length;
+  while (i > 0) {
+    const size = ENCODER.encode(JSON.stringify(lines[i - 1])).length + 1;
+    if (used + size > bytes) break;
+    used += size;
+    i--;
+  }
+  return lines.slice(i);
+}
 
 /** History store writes (history-loading design 3.1): queued events are committed this often (written_seq only). */
 export const HISTORY_FLUSH_MS = 200;
@@ -1238,6 +1254,14 @@ export class Connection {
   /** Why this chat could not be rebuilt from the keeper's record ('' when it was, or was never rebuilt). It is then read-only. */
   rebuildError = '';
   #replaying = false;
+  /** AIB's own lines of this conversation, kept by provider + session (history/lines.ts); set by Studio. */
+  lines: ConversationLines | null = null;
+  /** While a session/load replays the transcript (live only): puts the kept lines back after their turns. */
+  #merger: LineMerger | null = null;
+  /** The replayed user message being read (its text so far), or null between messages. */
+  #mergeUserText: string | null = null;
+  /** The anchor of the last replayed user message that ended (its turn's lines come before the next one). */
+  #mergeAnchor = '';
   /** The raw text and attachments of the latest prompt, so a turn that failed for sign-in can be sent again once (Deno only). */
   #lastPrompt: { seq: number; text: unknown; attachments: unknown } | null = null;
   /** The message to send again after a mid-session sign-in, or null. */
@@ -1811,9 +1835,15 @@ export class Connection {
   }
 
   #replayNote(note: Json | null): void {
-    if (note && note.t === 'event' && isStr(note.kind)) return this.event(note.kind, note.data ?? null); // Studio's own event
+    if (note && note.t === 'event' && isStr(note.kind)) { // Studio's own event (a line put back from the conversation keeps its time)
+      return this.event(note.kind, note.data ?? null, typeof note.time === 'number' ? note.time : undefined);
+    }
     if (note && note.t === 'chat') { // a record that has every event: the rebuild numbers them as before
       if (note.ev === 1 && isStr(note.eventsId) && note.eventsId) this.eventsId = note.eventsId;
+      return;
+    }
+    if (note?.t === 'lines' && Array.isArray(note.lines)) { // the conversation's kept lines a session/load merged (live: the same)
+      this.#merger = new LineMerger(note.lines.filter((l) => isDict(l) && isStr(l.kind) && isStr(l.after)) as KeptLine[]);
       return;
     }
     if (note?.t === 'clientTerminalReleased' && isStr(note.terminalId)) {
@@ -2728,14 +2758,16 @@ export class Connection {
    * An event Studio makes itself (not from the agent: an artifact, a Studio note, a session op). In the keeper it also goes into the
    * record as an `event` note, so a rebuild has it in the same place and numbers every later event the same.
    */
-  recordedEvent(kind: string, data: unknown): void {
-    if (this.channel && !this.#replaying && !this.rebuildError) void this.channel.sendNote({ t: 'event', kind, data });
-    this.event(kind, data);
+  recordedEvent(kind: string, data: unknown, time?: number): void {
+    if (this.channel && !this.#replaying && !this.rebuildError) {
+      void this.channel.sendNote({ t: 'event', kind, data, ...(time === undefined ? {} : { time }) });
+    }
+    this.event(kind, data, time);
   }
 
-  event(kind: string, data: unknown): void {
+  event(kind: string, data: unknown, time?: number): void {
     this.sequence += 1;
-    const item: Json = { seq: this.sequence, kind, data, time: this.#now() };
+    const item: Json = { seq: this.sequence, kind, data, time: time ?? this.#now() };
     // History the agent re-sends on session/load: 'time' is the reconnect, not when it was said.
     if (kind === 'update' && !this.ready && this.sessionId) item.replay = true;
     if (this.events.length >= MAX_EVENTS) {
@@ -2745,11 +2777,71 @@ export class Connection {
     this.eventImageBytes += eventImageSize(item);
     if (this.historyState === 'open' || this.historyState === 'claimed') this.#historyQueueEvent(item);
     if (kind === 'update') this.#trackSubagent(data);
+    if (KEPT_KINDS.has(kind) && this.lines && !this.#replaying) this.#keepLine(kind, data, item.time as number);
     while (
       this.eventImageBytes > MAX_EVENT_IMAGE_BYTES && this.events.length > 1
     ) {
       this.eventImageBytes -= eventImageSize(this.events.shift()!);
     }
+  }
+
+  /**
+   * One of AIB's own lines (a turn end, an AIB note) as it happens: kept by conversation as well (history/lines.ts), after the
+   * user message whose turn it belongs to, so a rebuild under another chat id shows it again. Lines put back from there are not
+   * kept twice.
+   */
+  #keepLine(kind: string, data: unknown, time: number): void {
+    if (!this.sessionId || (isDict(data) && data.restored === true)) return;
+    let after = '';
+    for (let i = this.events.length - 1; i >= 0; i--) {
+      const e = this.events[i];
+      if (e.kind !== 'user') continue;
+      const d = e.data;
+      if (isDict(d) && isStr(d.sessionId) && d.sessionId && d.sessionId !== this.sessionId) continue;
+      after = anchorOf(isDict(d) && isStr(d.text) ? d.text : '');
+      break;
+    }
+    this.lines!.append(this.provider, this.sessionId, { kind, data, time, after });
+  }
+
+  /** A session/load replay (live): a user message starts or the agent answers; the kept lines of the turn before go in first. */
+  #mergeReplayed(params: Json): void {
+    const update = get(params, 'update', {}) as Json;
+    const sid = get(params, 'sessionId');
+    if (isStr(sid) && sid && sid !== this.sessionId) return; // a helper's
+    if (get(update, 'sessionUpdate') === 'user_message_chunk') {
+      const content = get(update, 'content');
+      const text = isDict(content) && isStr(content.text) ? content.text : '';
+      if (this.#mergeUserText === null) {
+        this.#restoreLines(this.#mergeAnchor); // the turn before this message ended here
+        this.#mergeAnchor = '';
+        this.#mergeUserText = text;
+      } else this.#mergeUserText += text;
+      return;
+    }
+    if (this.#mergeUserText !== null) {
+      this.#mergeAnchor = anchorOf(this.#mergeUserText);
+      this.#mergeUserText = null;
+    }
+  }
+
+  /** The end of a session/load replay: the last replayed turn's lines, then no more merging. */
+  #mergeDone(): void {
+    if (!this.#merger) return;
+    if (this.#mergeUserText !== null) this.#mergeAnchor = anchorOf(this.#mergeUserText);
+    this.#restoreLines(this.#mergeAnchor);
+    this.#merger = null;
+    this.#mergeUserText = null;
+    this.#mergeAnchor = '';
+  }
+
+  #restoreLines(anchor: string): void {
+    for (const line of this.#merger?.take(anchor) ?? []) this.#restoreLine(line);
+  }
+
+  #restoreLine(line: KeptLine): void {
+    const data = isDict(line.data) ? { ...line.data, restored: true } : { value: line.data, restored: true };
+    this.event(line.kind, data, line.time); // no note of its own: a rebuild merges them again from the `lines` note
   }
 
   /** Remember what the agent says each child can do (RFD form: capabilities.cancel). */
@@ -3675,6 +3767,7 @@ export class Connection {
       this.writes.observe(params);
       const done = this.writes.finished(params);
       if (done.length) this.onWritesDone?.(this, done);
+      if (this.#merger && !this.ready) this.#mergeReplayed(params);
       this.event('update', params);
       this.#watchTools(params);
       return this.#watchHeldTurn(params);
@@ -4052,6 +4145,15 @@ export class Connection {
         );
       }
       this.sessionId = resume;
+      // AIB's own lines of this conversation (turn ends, AIB notes) go back in after the turns the transcript replays. They are
+      // written to the keeper's record first (before session/load): a rebuild merges the very same lines at the same places.
+      if (this.lines && !this.#replaying) {
+        const kept = linesWithin(this.lines.read(this.provider, resume), MAX_LINES_NOTE_BYTES);
+        if (kept.length) {
+          if (this.channel) await this.channel.sendNote({ t: 'lines', lines: kept });
+          this.#merger = new LineMerger(kept);
+        }
+      }
       result = await this.#setupSessionCall(
         resumeCaps.loadSession ? 'session/load' : 'session/resume',
         {
@@ -4127,6 +4229,7 @@ export class Connection {
 
   /** The session id and settings of a session/new, session/load or session/resume result. Live setup and replay share it. */
   #takeSession(result: unknown, resume: string | null): void {
+    this.#mergeDone(); // the transcript replay is over: the last replayed turn's lines
     if (resume) this.sessionId = resume;
     else this.sessionId = isDict(result) ? get(result, 'sessionId') as string | null : null;
     if (!isDict(result) || !isStr(this.sessionId) || !this.sessionId) {

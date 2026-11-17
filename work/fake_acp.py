@@ -31,6 +31,7 @@ parser.add_argument('--reject-config', action='store_true', help='session/set_co
 parser.add_argument('--require-config-type', action='store_true', help="session/set_config_option fails with -32602 unless params carry type 'id' or 'boolean' (the ACP v2 shape the real adapters demand); also records the last params in the reply")
 parser.add_argument('--subagent', action='store_true', help='Announce a cancellable child session when the prompt is "delegate"')
 parser.add_argument('--replay-history', action='store_true', help='session/load re-sends two history messages (one user, one agent) before it answers, like real agents do')
+parser.add_argument('--replay-file', help='session/load re-sends the conversation in this JSON file ([{"role": "user"|"agent", "text": ...}], a transcript as the agent keeps it) before it answers')
 parser.add_argument('--demo', action='store_true', help='Demo triggers: stream, html, plan, help (see work/demo-studio/README.md); also remembers the session folder')
 parser.add_argument('--models', action='store_true', help="A long model list, three modes with descriptions and an effort setting (implies --breadth's config options); a prompt 'settings?' replies with the current model, mode and effort; session/new calls are counted in the reply too")
 parser.add_argument('--beta-auth', action='store_true', help="With --auth-required: the Beta agents' sign-in shapes instead of the fixture ones: a terminal-type method (args ['--fixture-login']), offered only to a client that sends clientCapabilities.auth.terminal, and an agent-type API key method 'gemini-api-key' that takes the key in _meta['api-key']. A successful sign-in writes --auth-file, as a real agent keeps its login")
@@ -1040,6 +1041,11 @@ for line in sys.stdin:
             if args.replay_history and method == 'session/load':
                 update({'sessionUpdate': 'user_message_chunk', 'content': {'type': 'text', 'text': 'old question'}})
                 update({'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': 'old answer'}})
+            if args.replay_file and method == 'session/load':
+                with open(args.replay_file, encoding='utf-8') as fh:
+                    for item in json.load(fh):
+                        kind = 'user_message_chunk' if item.get('role') == 'user' else 'agent_message_chunk'
+                        update({'sessionUpdate': kind, 'content': {'type': 'text', 'text': item.get('text', '')}})
             if method == 'session/new':
                 session_news += 1
             session_result = {'sessionId': session_name, 'modes': json.loads(json.dumps(modes))}
