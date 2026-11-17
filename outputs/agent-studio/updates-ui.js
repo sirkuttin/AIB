@@ -17,7 +17,9 @@
   };
   const POLL_MS = 5 * 60 * 1000,
     FAST_POLL_MS = 2000,
-    FIRST_POLL_MS = 3000;
+    FIRST_POLL_MS = 3000,
+    FEED_FOCUS_MS = 15000, // a test build's feed read on window focus: at most this often
+    FEED_POLL_MS = 60 * 1000; // a test build (reads its local feed every 2 minutes): the page asks for the status this often
 
   // ---- pure: what to show ---------------------------------------------------------------------------------------------
   // The button for a status. notice: what the last click led to ({kind: 'installing', chats} | {kind: 'error', text}), or null.
@@ -224,7 +226,7 @@
     S.status = st;
     if (st && st.state !== 'ready') S.notice = null;
     paint();
-    schedule(st && st.checking ? FAST_POLL_MS : POLL_MS);
+    schedule(st && st.checking ? FAST_POLL_MS : st && st.feed ? FEED_POLL_MS : POLL_MS);
     return st;
   }
   function refresh() {
@@ -388,7 +390,20 @@
         closePop();
       });
     }
+    // A test build reads its local test feed (no network) when the window gets focus too: a new test build shows up at once.
+    if (root.addEventListener) root.addEventListener('focus', feedOnFocus);
     schedule(FIRST_POLL_MS);
+  }
+  let feedAskedAt = 0;
+  function feedOnFocus() {
+    if (!S.host || !S.status || !S.status.feed || S.status.checking) return;
+    const now = Date.now();
+    if (now - feedAskedAt < FEED_FOCUS_MS) return;
+    feedAskedAt = now;
+    Promise.resolve(S.host.post('update/check', { feed: true })).then(
+      () => schedule(FAST_POLL_MS),
+      () => {},
+    );
   }
 
   const api = {
