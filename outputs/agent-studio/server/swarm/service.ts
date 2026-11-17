@@ -1093,6 +1093,25 @@ export class Swarm {
         Deno.removeSync(scratch, { recursive: true });
       } catch { /* gone */ }
     }
+    // Work already in the target (the main agent merged the branch by hand, or made the same change): nothing to land, no conflict to
+    // report. A branch tip that is an ancestor of the target is landed already, so only what the worktree added after it can still land.
+    const branchTip = h.worktree.branch ? await merge.rev(folder, `refs/heads/${h.worktree.branch}`) : '';
+    if (branchTip && (await merge.isAncestor(folder, branchTip, `refs/heads/${target}`))) {
+      start = branchTip;
+      changed = (await wt.git(['diff', '--name-only', '-z', '--no-renames', start, head], path)).stdout.split('\0').filter((n) => n);
+    }
+    if (changed.length) {
+      const blob = async (rev: string, f: string) => pyStr((await wt.git(['rev-parse', '-q', '--verify', `${rev}:${f}`], folder, { check: false })).stdout).trim();
+      let same = true;
+      for (const f of changed) {
+        if ((await blob(head, f)) !== (await blob(`refs/heads/${target}`, f))) {
+          same = false;
+          break;
+        }
+      }
+      if (same) changed = [];
+    }
+    if (!changed.length) return { state: 'empty', kept: [...kept, ...ignored] };
     const hit = changed.filter(protectedPath);
     if (hit.length) return { state: 'refused', code: 'protected', message: 'it changed protected files', files: hit };
     // design 3.5: it changed a file the folder has uncommitted (changed, staged or untracked): nothing lands, nothing is stashed. Checked

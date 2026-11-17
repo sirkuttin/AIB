@@ -411,6 +411,50 @@ Deno.test({
   },
 });
 
+Deno.test({
+  ...T,
+  name: 'a branch the main agent merged by hand is already landed: no conflict line, worktree and branch removed',
+  async fn() {
+    await using box = new Box();
+    const main = await box.studio.connect('claude', box.project, null, {});
+    await settle(main);
+    const told = contextLines(box);
+    // committed in its worktree, then merged into main by hand, and main changed the same file again afterwards
+    const a = box.subagent(main.id, 'shared.txt', 'sub version\n', 'done', { commit: true });
+    runGit(box.project, 'merge', '-q', '--no-edit', 'studio/sub-test1');
+    write(box.project, 'shared.txt', 'later main version\n');
+    runGit(box.project, 'add', 'shared.txt');
+    runGit(box.project, 'commit', '-q', '-m', 'main moves on');
+    const before = runGit(box.project, 'rev-parse', 'main').trim();
+    await box.swarm.poll();
+    await until(() => !readSubagents(box.state)[a.id], 'the already merged subagent released', 15);
+    assert(!exists(a.path), 'its worktree is gone');
+    assertEquals(runGit(box.project, 'branch', '--list', 'studio/sub-*').trim(), '');
+    assertEquals(runGit(box.project, 'rev-parse', 'main').trim(), before, 'nothing new landed');
+    assert(!notes(main).some((n) => n.includes('conflict')), notes(main).join('\n'));
+    assert(!told.some((l) => l.includes('conflict') || l.includes('Redo')), told.join('\n'));
+  },
+});
+
+Deno.test({
+  ...T,
+  name: 'a real conflict with main (the branch was never merged) still reports and keeps the worktree',
+  async fn() {
+    await using box = new Box();
+    const main = await box.studio.connect('claude', box.project, null, {});
+    await settle(main);
+    const told = contextLines(box);
+    const b = box.subagent(main.id, 'shared.txt', 'other sub version\n');
+    write(box.project, 'shared.txt', 'main version\n');
+    runGit(box.project, 'add', 'shared.txt');
+    runGit(box.project, 'commit', '-q', '-m', 'main adds it differently');
+    await box.swarm.poll();
+    await until(() => notes(main).some((n) => n.includes('it conflicts with main in shared.txt')), 'conflict told', 15);
+    assert(exists(b.path), 'the conflicting worktree is kept');
+    assert(told.some((l) => l.includes('Redo the change')), told.join('\n'));
+  },
+});
+
 Deno.test('ownSubagentPath: only <root>\\<repo hash>\\sub-*, with no link on the way', () => {
   const dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-sub-path-' }));
   try {
