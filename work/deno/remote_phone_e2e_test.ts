@@ -276,7 +276,10 @@ Deno.test({
       "the chat with its subagent",
       30,
     );
-    assertEquals(chat.json.helpers, [{
+    const helpers = chat.json.helpers as Json[];
+    // line 2 of the phone's row: AIB stamps when it started (seconds); no model is known for this fixture
+    assert(typeof helpers[0]?.startedAt === "number" && helpers[0].startedAt > 1e9, "startedAt");
+    assertEquals(helpers.map(({ startedAt: _s, ...rest }) => rest), [{
       id: "child-1",
       title: "Review the fixture",
       description: "Reads the fixture and reports",

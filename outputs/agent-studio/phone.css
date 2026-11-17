@@ -656,7 +656,7 @@ button.ph-chip::after {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* the type and the worktree line under a subagent's name ("general-purpose · Own worktree"), as the PC's Activity card */
+/* line 2 under a subagent's name: "Explore · Sonnet · 3 min", then any exception ("Not isolated: …") */
 .ph-sub-meta {
   overflow: hidden;
   color: var(--muted);

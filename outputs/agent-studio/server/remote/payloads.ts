@@ -57,6 +57,10 @@ export interface Helper {
   stopReason?: string;
   where?: string;
   landing?: string;
+  /** The model it runs, as the agent names it ("sonnet", "Opus 5.5"), and when it started and ended (seconds). Row line 2. */
+  model?: string;
+  startedAt?: number;
+  endedAt?: number;
 }
 
 export interface HomeChat {
@@ -373,6 +377,12 @@ export function helpersOf(subagents: unknown, worktrees?: unknown): { helpers: H
     if (d) h.description = d;
     const why = str(a.stopReason, 40);
     if (why) h.stopReason = why;
+    const model = str(a.model, 80);
+    if (model) h.model = model;
+    const t0 = Number(a.startedAt);
+    if (t0 > 0) h.startedAt = t0;
+    const t1 = Number(a.endedAt);
+    if (t1 > 0) h.endedAt = t1;
     const w = obj(wt[id]);
     if (str(w.where, 200)) {
       h.where = str(w.where, 200);

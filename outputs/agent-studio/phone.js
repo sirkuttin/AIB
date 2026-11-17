@@ -995,6 +995,18 @@
   const SA = () =>
     root.SubagentsUI || (typeof module === 'object' && typeof require === 'function' ? require('./subagents-ui.js') : null);
   const NEEDS = /^(needs[_ ]?you|needs[_ ]?input|needs)$/i;
+  const nowSecs = () => Date.now() / 1000;
+  /* A model id as a short name: "claude-opus-4-5-20251101" / "opus" / "Sonnet 5.5" -> "Opus 4.5" / "Opus" / "Sonnet 5.5";
+     "gpt-5" -> "GPT-5". '' = unknown (inherit / default mean the chat's own model, which the row does not know). */
+  function modelWords(raw) {
+    const m = str(raw);
+    if (!m || /^(inherit|default)\b/i.test(m)) return '';
+    const c = /^(?:claude-)?(opus|sonnet|haiku|fable)(?:[-\s](\d{1,2})(?!\d)(?:[-.](\d{1,2})(?!\d))?)?/i.exec(m);
+    if (c) return c[1].charAt(0).toUpperCase() + c[1].slice(1).toLowerCase() + (c[2] ? ' ' + c[2] + (c[3] ? '.' + c[3] : '') : '');
+    if (/^gpt/i.test(m)) return 'GPT' + m.slice(3).replace(/^[-_ ]?/, '-');
+    if (/^[a-z][a-z0-9.-]*$/.test(m)) return m.charAt(0).toUpperCase() + m.slice(1);
+    return m.slice(0, 40);
+  }
   function subsModel(helpers, iso) {
     const U = SA();
     if (!U) return { top: [], done: [], working: 0, failed: 0, total: 0 }; // subagents-ui.js did not load: no card rather than a crash
@@ -1028,13 +1040,22 @@
         word = 'Stopped';
         tone = 'idle';
       }
-      let wt = '';
+      let wt = '',
+        exc = '';
+      const info = str(h.where) ? { where: str(h.where), landing: str(h.landing) } : null;
       if (iso && U.worktreeWords) {
-        const info = str(h.where) ? { where: str(h.where), landing: str(h.landing) } : null;
         const w = U.worktreeWords(Object.assign({}, a, { agentType: n.type }), iso, info, 0);
-        if (w) wt = [w.where, w.landing].filter(Boolean).join(' · ');
+        if (w) {
+          wt = [w.where, w.landing].filter(Boolean).join(' · ');
+          exc = U.rowExceptions(w).join(' · ');
+        }
       }
-      return { id: a.key, at: i, title: n.title, type: n.type, word, tone, group, failed: word === 'Failed', wt };
+      // line 2: type (not the default) · model · how long it has run or ran (seconds, the PC's clock)
+      const t0 = Number(h.startedAt) || 0,
+        t1 = Number(h.endedAt) || 0;
+      const secs = t0 ? (group === 'working' || !t1 ? Math.max(0, nowSecs() - t0) : Math.max(0, t1 - t0)) : -1;
+      const meta = U.rowMeta({ type: n.type, model: modelWords(h.model), time: secs >= 0 ? U.minutes(secs) : '' });
+      return { id: a.key, at: i, title: n.title, type: n.type, word, tone, group, failed: word === 'Failed', wt, exc, meta };
     });
     const newest = (x, y) => y.at - x.at;
     const working = items.filter((i) => i.group === 'working').sort(newest);
@@ -4168,11 +4189,13 @@
     b.setAttribute('aria-expanded', open ? 'true' : 'false');
     const text = el('span', 'ph-sub-text');
     text.append(el('span', 'ph-sub-title', h.title));
-    // as the PC's Activity card: a working one shows its type and worktree line, a finished one only its worktree line
-    const meta = [h.group === 'working' ? h.type : '', h.wt].filter(Boolean).join(' · ');
+    // line 2: "<type if not the default> · <model> · <time>" (never empty), then the exceptions ("Not isolated: …", "Didn't land: …",
+    // "Stopped …", "Merged · 3 files"); the worktree and landing words are in the opened row
+    const meta = [h.meta, h.exc].filter(Boolean).join(' · '); // nothing known: no second line at all (never a blank one)
     if (meta) text.append(el('span', 'ph-sub-meta', meta));
     b.append(el('span', 'ph-dot ' + h.tone), text, el('span', 'ph-sw ' + h.tone, h.word));
     li.append(b);
+    if (open && h.wt) li.append(el('p', 'ph-more ph-sub-wt', h.wt));
     if (open)
       li.append(
         el(

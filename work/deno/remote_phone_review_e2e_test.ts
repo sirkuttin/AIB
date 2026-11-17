@@ -41,8 +41,11 @@ function thirty(): { subagents: Json; worktrees: Json } {
   worktrees.stop1 = { where: 'Own worktree', landing: 'Stopped — ask the agent to merge it' };
   subagents.fail1 = { title: 'general-purpose', description: 'Fix the flaky test', state: 'failed' };
   worktrees.fail1 = { where: 'Own worktree', landing: "Didn't land: files it changed have uncommitted edits" };
-  subagents.run1 = { title: 'Explore', description: 'Find the phone routes', state: 'running' };
-  subagents.run2 = { title: 'general-purpose', description: 'Write the e2e test', state: 'running' };
+  const t = Date.now() / 1000;
+  subagents.done0 = { ...(subagents.done0 as Json), model: 'sonnet', startedAt: t - 900, endedAt: t - 300 };
+  subagents.fail1 = { ...(subagents.fail1 as Json), startedAt: t - 180, endedAt: t - 60 };
+  subagents.run1 = { title: 'Explore', description: 'Find the phone routes', state: 'running', model: 'sonnet', startedAt: t - 185 };
+  subagents.run2 = { title: 'general-purpose', description: 'Write the e2e test', state: 'running', model: 'claude-opus-4-5', startedAt: t - 725 };
   worktrees.run2 = { where: 'Own worktree', landing: 'Lands when the turn ends' };
   return { subagents, worktrees };
 }
@@ -185,9 +188,9 @@ Deno.test({
         page.eval<string[][]>(`[...document.querySelectorAll('#phSubs li[data-sub]')].map((li) => [
           li.querySelector('.ph-sub-title').textContent, (li.querySelector('.ph-sub-meta') || {}).textContent || '', li.querySelector('.ph-sw').textContent])`);
       assertEquals(await rows(), [
-        ['Write the e2e test', 'general-purpose · Own worktree · Lands when the turn ends', 'Working'],
-        ['Find the phone routes', 'Explore · In your folder (read-only)', 'Working'],
-        ['Fix the flaky test', "Own worktree · Didn't land: files it changed have uncommitted edits", 'Failed'],
+        ['Write the e2e test', 'Opus 4.5 · 12 min', 'Working'],
+        ['Find the phone routes', 'Explore · Sonnet · 3 min', 'Working'],
+        ['Fix the flaky test', "2 min · Didn't land: files it changed have uncommitted edits", 'Failed'],
       ]);
       assertEquals(await page.eval<string>(`document.getElementById('phSubsDone').textContent`), '▸27 finished');
       assertEquals(await page.eval<string>(`document.getElementById('phSubsDone').getAttribute('aria-expanded')`), 'false');
@@ -195,8 +198,14 @@ Deno.test({
       await tap(page, '#phSubsDone');
       await page.waitFor(`document.querySelectorAll('#phSubs li[data-sub]').length === 30`, 5000, 'finished open');
       const all = await rows();
-      assertEquals(all[3], ['Rename the helpers', 'Own worktree · Stopped — ask the agent to merge it', 'Stopped']);
-      assert(all.some((r) => r[0] === 'Check page 0' && r[1] === 'Own worktree · Merged · 3 files' && r[2] === 'Done'), 'merged line');
+      assertEquals(all[3], ['Rename the helpers', 'Stopped — ask the agent to merge it', 'Stopped']);
+      assert(all.some((r) => r[0] === 'Check page 0' && r[1] === 'Sonnet · 10 min · Merged · 3 files' && r[2] === 'Done'), 'merged line');
+      assert(!all.some((r) => /general-purpose|Own worktree|Lands when/.test(r[1])), 'no type or worktree words on any row');
+      // the opened row has the worktree and landing words
+      await tap(page, '#phSubs li[data-sub="run2"] .ph-subrow');
+      await page.waitFor(`!!document.querySelector('#phSubs li[data-sub="run2"] .ph-sub-wt')`, 5000, 'row opened');
+      assertEquals(await page.eval<string>(`document.querySelector('#phSubs li[data-sub="run2"] .ph-sub-wt').textContent`), 'Own worktree · Lands when the turn ends');
+      await tap(page, '#phSubs li[data-sub="run2"] .ph-subrow');
       assert(!all.some((r) => /idle/i.test(r.join(' '))), 'never idle');
       assert(all.some((r) => r[0] === 'Check page 5' && r[1] === ''), 'a finished one without a worktree line is one line');
       assert(all.slice(3).every((r) => r[2] === 'Done' || r[2] === 'Stopped'), 'finished words');

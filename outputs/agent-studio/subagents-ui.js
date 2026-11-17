@@ -403,6 +403,31 @@
       return { where: 'Not isolated: AIB saw no worktree for it', landing: '' };
     return { where: '', landing: '' }; // not known yet: the line keeps its place, empty
   }
+  /* A subagent row's second line (phone Subagents card and Activity panel): "Explore · Sonnet · 3 min". The type only when it is not
+     the agent's default ("general-purpose" for Claude Code, "default" for Codex), the model when known, how long it has run or ran;
+     never empty. "Own worktree" and "Lands when the turn ends" are not on the row (the subagent's detail shows them). */
+  const DEFAULT_TYPE = /^(general-purpose|default|generalist|fork)$/i;
+  function minutes(secs) {
+    const s = Number(secs);
+    if (!(s >= 0)) return '';
+    if (s < 60) return '<1 min';
+    const m = Math.floor(s / 60);
+    if (m < 60) return m + ' min';
+    const h = Math.floor(m / 60);
+    if (h < 24) return h + ' h' + (m % 60 ? ' ' + (m % 60) + ' min' : '');
+    return Math.floor(h / 24) + ' d';
+  }
+  /* The exceptions a row still says: "Not isolated: …", "Didn't land: …", "Stopped …", "Merged · N files", "No changes", "Merge
+     undone". The normal words (Own worktree, Lands when the turn ends, In your folder (read-only)) are left out. */
+  function rowExceptions(wt) {
+    const where = str(wt && wt.where),
+      landing = str(wt && wt.landing);
+    return [/^Not isolated/i.test(where) ? where : '', /^Lands when the turn ends$/i.test(landing) ? '' : landing].filter(Boolean);
+  }
+  function rowMeta(p) {
+    const type = str(p.type);
+    return [type && !DEFAULT_TYPE.test(type) ? type : '', str(p.model), str(p.time)].filter(Boolean).join(' · ');
+  }
   /* The words of the background line: the send menu's one copy table (send-menu-ui.js), the same as on a command's row. */
   const BACKGROUND_TEXT = () =>
     (root.AgentSendMenu && root.AgentSendMenu.COPY && root.AgentSendMenu.COPY.bgRunning) || 'Still running in the background';
@@ -458,6 +483,12 @@
           .filter(Boolean)
           .join('\n'),
         wt: wt ? wtText : null,
+        exc: wt ? rowExceptions(wt).join(' · ') : '',
+        meta: rowMeta({
+          type: n.type,
+          model: modelText,
+          time: start && end >= start ? minutes(c.group === 'working' ? now - start : end - start) : '',
+        }),
         when,
         ran,
         modelText,
@@ -526,11 +557,14 @@
       group: c.group,
       duration: d,
       cmds: Math.max(0, Number(a.runningCommands) || 0),
+      worktree:
+        a.worktree && typeof a.worktree === 'object' ? [a.worktree.where, a.worktree.landing].filter(Boolean).join(' · ') : '',
     };
   }
-  /* Inspector subtitle: "Opus 5.5 · general-purpose · Working · 2m · 198k tokens · live"; unknown parts are left out. */
+  /* Inspector subtitle: "Opus 5.5 · general-purpose · Working · 2m · 198k tokens · Own worktree · Lands when the turn ends · live";
+     unknown parts are left out. The worktree words live here (the pane header), not on the row. */
   function subtitle(h, live) {
-    return [h.model, h.type, h.state, h.duration, h.tokens, live ? 'live' : 'saved transcript']
+    return [h.model, h.type, h.state, h.duration, h.tokens, h.worktree, live ? 'live' : 'saved transcript']
       .filter(Boolean)
       .join(' · ');
   }
@@ -592,19 +626,18 @@
       if (cmd) l1.append(cmd);
       if (i.when) l1.append(el('span', 'sa-when', i.when));
       b.append(l1);
-      const meta = [i.modelText, i.type].filter(Boolean).join(' · ');
-      if (meta || i.tokens) {
+      if (i.meta || i.tokens) {
         const l2 = el('span', 'sa-line sa-l2');
-        l2.append(el('span', 'sa-meta', meta));
+        l2.append(el('span', 'sa-meta', i.meta));
         if (i.tokens) l2.append(el('span', 'sa-tokens', i.tokens));
         b.append(l2);
       }
-      if (i.wt !== null) b.append(wtLine(i.wt)); // a fixed slot: always there in a chat with the rule, so nothing moves when it fills
+      if (i.exc) b.append(wtLine(i.exc)); // only the exceptions ("Not isolated: …", "Didn't land: …"); the rest is in the pane header
       if (i.activity) b.append(el('span', 'sa-line sa-l3 sa-doing', i.activity));
       if (i.background) b.append(el('span', 'sa-line sa-l3 sa-bg', BACKGROUND_TEXT()));
       return b;
     }
-    const row = i.wt !== null ? el('span', 'sa-line sa-l1') : b;
+    const row = i.exc ? el('span', 'sa-line sa-l1') : b;
     row.append(el('span', 'sa-dot'), el('strong', 'sa-title', i.title));
     if (cmd) row.append(cmd);
     if (i.outcome) row.append(el('span', 'sa-outcome', i.outcome));
@@ -612,7 +645,7 @@
     if (i.ran) row.append(el('span', 'sa-when', i.ran));
     if (row !== b) {
       b.classList.add('sa-big', 'sa-two');
-      b.append(row, wtLine(i.wt));
+      b.append(row, wtLine(i.exc));
     }
     return b;
   }
@@ -652,6 +685,8 @@
         i.background,
         i.outcome,
         i.wt,
+        i.exc,
+        i.meta,
       ]),
     ]);
     if (split) {
@@ -751,6 +786,9 @@
     details,
     subtitle,
     worktreeWords,
+    minutes,
+    rowExceptions,
+    rowMeta,
   };
   if (typeof module === 'object' && module.exports) module.exports = root.SubagentsUI;
 })(typeof window !== 'undefined' ? window : globalThis);

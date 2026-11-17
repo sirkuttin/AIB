@@ -54,14 +54,14 @@ const working = (over = {}) => ({
   ...over,
 });
 
-test('a working subagent is a three-line card: name + run time, model · type + tokens, what it is doing', () => {
+test('a working subagent is a three-line card: name + run time, model · time + tokens, what it is doing', () => {
   const { draw } = setup();
   const box = draw([working()]);
   const c = cardOf(box, 'w1');
   assert.ok(c.classList.contains('sa-big'));
   assert.equal(textIn(c, '.sa-title'), 'Scroll e2e tests');
   assert.equal(textIn(c, '.sa-when'), 'running 2m');
-  assert.equal(textIn(c, '.sa-meta'), 'Opus 5.5 · general-purpose');
+  assert.equal(textIn(c, '.sa-meta'), 'Opus 5.5 · 2 min');
   assert.equal(textIn(c, '.sa-tokens'), '198k tokens');
   assert.equal(textIn(c, '.sa-doing'), 'Running: deno test scroll_e2e_test.ts');
   assert.ok(c.querySelector('.sa-l1') && c.querySelector('.sa-l2') && c.querySelector('.sa-l3'), 'three lines');
@@ -73,16 +73,16 @@ test('a working subagent is a three-line card: name + run time, model · type + 
 test('a helper that names no model shows the chat model; a family alone borrows the chat version', () => {
   const { draw } = setup();
   let box = draw([working({ model: '' })]);
-  assert.equal(textIn(cardOf(box, 'w1'), '.sa-meta'), 'Opus 5.5 · general-purpose');
+  assert.equal(textIn(cardOf(box, 'w1'), '.sa-meta'), 'Opus 5.5 · 2 min');
   assert.match(cardOf(box, 'w1').title, /Model: Opus 5\.5 \(the chat’s model\)/);
   box = draw([working({ model: 'opus' })]);
-  assert.equal(textIn(cardOf(box, 'w1'), '.sa-meta'), 'Opus 5.5 · general-purpose');
+  assert.equal(textIn(cardOf(box, 'w1'), '.sa-meta'), 'Opus 5.5 · 2 min');
   box = draw([working({ model: 'haiku' })]);
-  assert.equal(textIn(cardOf(box, 'w1'), '.sa-meta'), 'Haiku · general-purpose');
+  assert.equal(textIn(cardOf(box, 'w1'), '.sa-meta'), 'Haiku · 2 min');
   box = draw([working({ model: 'claude-sonnet-4-5-20250929' })]);
-  assert.equal(textIn(cardOf(box, 'w1'), '.sa-meta'), 'Sonnet 4.5 · general-purpose');
+  assert.equal(textIn(cardOf(box, 'w1'), '.sa-meta'), 'Sonnet 4.5 · 2 min');
   box = draw([working({ model: '' })], { chatModel: '' });
-  assert.equal(textIn(cardOf(box, 'w1'), '.sa-meta'), 'general-purpose', 'no model known at all: the part is left out');
+  assert.equal(textIn(cardOf(box, 'w1'), '.sa-meta'), '2 min', 'no model known at all: just the time');
 });
 
 test('tokens are hidden while unknown (never "0 tokens"); the activity line is left out when unknown', () => {
@@ -158,22 +158,31 @@ test('P3: each subagent of a chat with the worktree rule has a fixed read-only l
   assert.deepEqual(words(working({ created: NOW - 2 })), { where: '', landing: '' }, 'not known yet: empty, no guess');
   assert.equal(words(working()).where, 'Not isolated: AIB saw no worktree for it', 'the backstop (design 2.6)');
   assert.equal(U.worktreeWords(working(), null, undefined, NOW), null, 'no rule in this chat: no line');
-  // a working card: the slot is there while empty, and the same node place when it fills (no layout jump)
+  // a working card: the normal words ("Own worktree", "Lands when the turn ends") are not on the row; the row keeps model · time
   let c = cardOf(draw([working({ created: NOW - 2, worktree: { where: '', landing: '' } })]), 'w1');
   const lines = () => [...c.querySelectorAll('.sa-line')].map((n) => n.className.replace(/^sa-line /, ''));
-  assert.deepEqual(lines(), ['sa-l1', 'sa-l2', 'sa-l2 sa-wt', 'sa-l3 sa-doing']);
-  assert.equal(textIn(c, '.sa-wt'), ' ', 'an empty slot keeps its height');
+  assert.deepEqual(lines(), ['sa-l1', 'sa-l2', 'sa-l3 sa-doing']);
+  assert.equal(textIn(c, '.sa-meta'), 'Opus 5.5 · <1 min');
   c = cardOf(draw([working({ worktree: { where: 'Own worktree', landing: 'Lands when the turn ends' } })]), 'w1');
-  assert.deepEqual(lines(), ['sa-l1', 'sa-l2', 'sa-l2 sa-wt', 'sa-l3 sa-doing']);
-  assert.equal(textIn(c, '.sa-wt'), 'Own worktree · Lands when the turn ends');
+  assert.deepEqual(lines(), ['sa-l1', 'sa-l2', 'sa-l3 sa-doing']);
+  assert.equal(c.querySelector('.sa-wt'), null);
+  assert.doesNotMatch(c.textContent, /Own worktree|Lands when|general-purpose/);
   assert.match(c.title, /Worktree: Own worktree · Lands when the turn ends/);
   assert.equal(c.querySelector('button'), null, 'read-only text: no buttons');
-  // finished: its usual line, then the worktree line
+  // exceptions stay on the row
+  c = cardOf(draw([working({ worktree: { where: 'Not isolated: hooks are off', landing: '' } })]), 'w1');
+  assert.deepEqual(lines(), ['sa-l1', 'sa-l2', 'sa-l2 sa-wt', 'sa-l3 sa-doing']);
+  assert.equal(textIn(c, '.sa-wt'), 'Not isolated: hooks are off');
+  // a type that is not the default shows: "Explore · Sonnet · 3 min"
+  c = cardOf(draw([working({ agentType: 'Explore', model: 'sonnet', created: NOW - 200 })]), 'w1');
+  assert.equal(textIn(c, '.sa-meta'), 'Explore · Sonnet · 3 min');
+  // finished: its usual line; a second line only for the exceptions and outcomes
   const done = (key, landing) => ({ key, live: true, state: 'idle', name: 'Done ' + key, created: NOW - 600, since: NOW - 300,
     worktree: { where: 'Own worktree', landing } });
-  draw([done('m', 'Merged · 3 files'), done('x', "Didn't land: it changed protected files"), done('s', 'Stopped — ask the agent to merge it')]);
+  draw([done('m', 'Merged · 3 files'), done('x', "Didn't land: it changed protected files"), done('s', 'Stopped — ask the agent to merge it'), done('n', 'Lands when the turn ends')]);
   box.querySelector('.sa-toggle').onclick();
-  for (const [key, text] of [['m', 'Own worktree · Merged · 3 files'], ['x', "Own worktree · Didn't land: it changed protected files"], ['s', 'Own worktree · Stopped — ask the agent to merge it']]) {
+  assert.equal(cardOf(box, 'n').querySelector('.sa-wt'), null, 'nothing out of the ordinary: one line');
+  for (const [key, text] of [['m', 'Merged · 3 files'], ['x', "Didn't land: it changed protected files"], ['s', 'Stopped — ask the agent to merge it']]) {
     const f = cardOf(box, key);
     assert.ok(f.classList.contains('sa-two'), key);
     assert.equal(textIn(f, '.sa-wt'), text);
@@ -207,6 +216,8 @@ test('inspector subtitle: model · type · state · run time · tokens · live, 
   assert.equal(U.subtitle(h, true), 'Opus 5.5 · general-purpose · Working · 2m · 198k tokens · live');
   const h2 = U.header(working({ model: '', tokens: 0 }), NOW, 'claude-sonnet-5-5');
   assert.equal(U.subtitle(h2, true), 'Sonnet 5.5 · general-purpose · Working · 2m · live');
+  const h4 = U.header(working({ worktree: { where: 'Own worktree', landing: 'Lands when the turn ends' } }), NOW, 'claude-opus-5-5');
+  assert.equal(U.subtitle(h4, true), 'Opus 5.5 · general-purpose · Working · 2m · 198k tokens · Own worktree · Lands when the turn ends · live', 'the pane header says where it works and how it lands');
   const h3 = U.header({ key: 'x', name: 'Saved', created: NOW - 60, modified: NOW, finished: true }, NOW, '');
   assert.equal(U.subtitle(h3, false), 'Completed · 1m · saved transcript');
 });

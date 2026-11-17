@@ -160,3 +160,32 @@ test('subagents follow the PC Activity rules: description first, working and fai
   // no worktree rule in the chat: no line
   assert.equal(P.subsModel([{ id: 'x', title: 'general-purpose', description: 'X', state: 'running', where: 'Own worktree' }]).top[0].wt, '');
 });
+
+test('a subagent row line 2: model · time, the type only when it is not the default, no worktree words; exceptions stay', () => {
+  const now = Date.now() / 1000;
+  const iso = { on: true, reason: '', readOnly: [] };
+  const rows = (list) => P.subsModel(list, iso);
+  const by = (m, t) => m.top.concat(m.done).find((i) => i.title === t);
+  const m = rows([
+    { id: 'a', title: 'general-purpose', description: 'Run', state: 'running', model: 'claude-opus-4-5-20251101', startedAt: now - 12 * 60 - 5, where: 'Own worktree', landing: 'Lands when the turn ends' },
+    { id: 'b', title: 'Explore', description: 'Scan', state: 'running', model: 'sonnet', startedAt: now - 3 * 60 - 5, where: 'Own worktree', landing: 'Lands when the turn ends' },
+    { id: 'c', title: 'general-purpose', description: 'NoModel', state: 'running', startedAt: now - 20, where: 'Own worktree', landing: 'Lands when the turn ends' },
+    { id: 'd', title: 'general-purpose', description: 'Landed', state: 'idle', stopReason: 'end_turn', model: 'Sonnet 5.5', startedAt: now - 600, endedAt: now - 300, where: 'Own worktree', landing: 'Merged · 3 files' },
+    { id: 'e', title: 'general-purpose', description: 'Blocked', state: 'failed', startedAt: now - 120, where: 'Own worktree', landing: "Didn't land: it conflicts with the branch" },
+    { id: 'f', title: 'general-purpose', description: 'Loose', state: 'running', model: 'gpt-5', startedAt: now - 60, where: 'Not isolated: hooks are off' },
+    { id: 'g', title: 'general-purpose', description: 'Nothing', state: 'idle', stopReason: 'end_turn' },
+  ]);
+  assert.equal(by(m, 'Run').meta, 'Opus 4.5 · 12 min');
+  assert.equal(by(m, 'Scan').meta, 'Explore · Sonnet · 3 min');
+  assert.equal(by(m, 'NoModel').meta, '<1 min', 'model unknown: just the time');
+  assert.equal(by(m, 'Landed').meta, 'Sonnet 5.5 · 5 min', 'a finished one shows how long it ran');
+  assert.equal(by(m, 'Landed').exc, 'Merged · 3 files');
+  assert.equal(by(m, 'Blocked').exc, "Didn't land: it conflicts with the branch");
+  assert.equal(by(m, 'Loose').meta, 'GPT-5 · 1 min');
+  assert.equal(by(m, 'Loose').exc, 'Not isolated: hooks are off');
+  assert.equal(by(m, 'Nothing').meta, '', 'no model and no time: empty meta (the row falls back to its state word, never blank)');
+  for (const i of m.top.concat(m.done)) {
+    assert.doesNotMatch(i.meta + ' ' + i.exc, /general-purpose|Own worktree|Lands when/);
+  }
+  assert.equal(by(m, 'Run').wt, 'Own worktree · Lands when the turn ends', 'the opened row keeps the words');
+});

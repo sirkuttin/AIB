@@ -2776,7 +2776,7 @@ export class Connection {
     this.events.push(item);
     this.eventImageBytes += eventImageSize(item);
     if (this.historyState === 'open' || this.historyState === 'claimed') this.#historyQueueEvent(item);
-    if (kind === 'update') this.#trackSubagent(data);
+    if (kind === 'update') this.#trackSubagent(data, item.time as number);
     if (KEPT_KINDS.has(kind) && this.lines && !this.#replaying) this.#keepLine(kind, data, item.time as number);
     while (
       this.eventImageBytes > MAX_EVENT_IMAGE_BYTES && this.events.length > 1
@@ -2845,15 +2845,39 @@ export class Connection {
   }
 
   /** Remember what the agent says each child can do (RFD form: capabilities.cancel). */
-  #trackSubagent(params: unknown): void {
+  #trackSubagent(params: unknown, at?: number): void {
     const update = isDict(params) ? get(params, 'update') : null;
-    if (!isDict(update) || get(update, 'sessionUpdate') !== 'subagent_update') {
+    if (!isDict(update)) return;
+    if (get(update, 'sessionUpdate') !== 'subagent_update') {
+      // the child's own config_option_update names the model it runs (the phone's subagent row says it)
+      const sid = isDict(params) ? get(params, 'sessionId') : null;
+      const own = isStr(sid) ? this.subagents.get(sid) : undefined;
+      if (own && get(update, 'sessionUpdate') === 'config_option_update') {
+        const options = get(update, 'configOptions');
+        for (const o of Array.isArray(options) ? options : []) {
+          if (!isDict(o) || (o.id !== 'model' && o.category !== 'model') || !isStr(o.currentValue) || !o.currentValue) continue;
+          const pick = (Array.isArray(o.options) ? o.options : []).find((x) => isDict(x) && x.value === o.currentValue);
+          const label = isDict(pick) && isStr(pick.name) ? pick.name : '';
+          own.model = clip(label || o.currentValue, 80);
+        }
+      }
       return;
     }
     const child = get(update, 'sessionId');
     if (!isStr(child) || !child || child === this.sessionId) return;
     let entry = this.subagents.get(child);
     if (!entry) this.subagents.set(child, entry = { capabilities: {} });
+    // when it started (first seen) and ended, in seconds: the phone's row says how long it has run
+    if (typeof at === 'number' && Number.isFinite(at)) {
+      if (!(typeof entry.startedAt === 'number')) entry.startedAt = at;
+    }
+    {
+      const sub = isDict(get(update, 'subagent')) ? (get(update, 'subagent') as Json) : update;
+      const meta = isDict(get(sub, '_meta')) ? (get(sub, '_meta') as Json) : {};
+      const cc = isDict(meta.claudeCode) ? (meta.claudeCode as Json) : {};
+      const m = [get(sub, 'model'), meta.model, cc.model, get(update, 'model')].find((v) => isStr(v) && v.trim());
+      if (isStr(m)) entry.model = clip(m, 80);
+    }
     for (const name of ['title', 'description']) {
       const value = get(update, name);
       if (isStr(value) && pyStrip(value)) entry[name] = clip(value, 500);
@@ -2875,6 +2899,8 @@ export class Connection {
       if (isStr(why)) entry.stopReason = clip(why, 40);
       else delete entry.stopReason;
       const how = subagentEnd(entry);
+      if (how !== null && typeof entry.endedAt !== 'number' && typeof at === 'number' && Number.isFinite(at)) entry.endedAt = at;
+      else if (how === null) delete entry.endedAt;
       // subagent worktrees P3: its end, once per end; and its start again after an end (a SendMessage continued it: in the RFD form
       // that call is not shown as a tool call), as null
       if ((how !== null) !== (was !== null) && this.onSubagentEnded) {
