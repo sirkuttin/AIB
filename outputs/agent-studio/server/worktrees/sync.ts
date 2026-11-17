@@ -40,6 +40,7 @@ import { isDict, pyStr, pyStrip, pyTruthy } from '../core/py.ts';
 import { getLogger } from '../core/log.ts';
 import { FileLock, LockTimeout } from '../platform/lock.ts';
 import { localOnlyOf } from './local_only.ts';
+import { copyAtomic, writeAtomic } from './atomic.ts';
 
 const log = getLogger('worktree_sync');
 
@@ -333,75 +334,6 @@ async function sha(full: string): Promise<string | null> {
   }
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-1', bytes as Uint8Array<ArrayBuffer>));
   return [...digest].map((b) => b.toString(16).padStart(2, '0')).join('');
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/** state_store.replace_with_retry: os.replace, retried for a moment on Windows while another process has the target open. */
-async function replaceWithRetry(source: string, target: string): Promise<void> {
-  let pause = 20;
-  for (let attempt = 0;; attempt++) {
-    try {
-      Deno.renameSync(source, target);
-      return;
-    } catch (error) {
-      const transient = WIN && (error instanceof Deno.errors.PermissionDenied || error instanceof Deno.errors.Busy);
-      if (!transient || attempt >= 7) throw error;
-      await sleep(pause);
-      pause = Math.min(pause * 2, 400);
-    }
-  }
-}
-
-/** tempfile.mkstemp(prefix='.studio-sync-', suffix='.tmp', dir=folder): a new, empty file. */
-function mkstemp(folder: string): string {
-  for (let attempt = 0;; attempt++) {
-    const name = join(folder, `.studio-sync-${crypto.randomUUID().replaceAll('-', '').slice(0, 8)}.tmp`);
-    try {
-      Deno.openSync(name, { write: true, createNew: true, mode: 0o600 }).close();
-      return name;
-    } catch (error) {
-      if (!(error instanceof Deno.errors.AlreadyExists) || attempt > 50) throw error;
-    }
-  }
-}
-
-/** shutil.copymode: the permission bits (on Windows only the read-only flag, which Studio never sets: nothing to do). */
-function copyMode(source: string, target: string): void {
-  if (WIN) return;
-  try {
-    Deno.chmodSync(target, (Deno.statSync(source).mode ?? 0o644) & 0o7777);
-  } catch { /* ignored, as Python's OSError */ }
-}
-
-/** Write `data` (or the bytes of `source`) over `target` through a temp file in the same folder and a rename. */
-async function writeAtomicBytes(target: string, data: Uint8Array, modeFrom: string): Promise<void> {
-  const folder = dirname(target);
-  Deno.mkdirSync(folder, { recursive: true });
-  const temporary = mkstemp(folder);
-  try {
-    Deno.writeFileSync(temporary, data);
-    copyMode(modeFrom, temporary);
-    await replaceWithRetry(temporary, target);
-  } catch (error) {
-    try {
-      Deno.removeSync(temporary);
-    } catch { /* gone */ }
-    throw error;
-  }
-}
-
-/** Write `source` over `target` (shutil.copyfile: the bytes, not the times). */
-async function copyAtomic(source: string, target: string): Promise<void> {
-  await writeAtomicBytes(target, Deno.readFileSync(source), source);
-}
-
-/** Bytes into wt/path through a temp file and a rename (the mode of an existing file is kept). */
-async function writeAtomic(folder: string, path: string, data: Uint8Array): Promise<void> {
-  const target = join(folder, path);
-  await writeAtomicBytes(target, data, target);
 }
 
 /** Delete a synced-away file and the folders that became empty (never the worktree itself). */

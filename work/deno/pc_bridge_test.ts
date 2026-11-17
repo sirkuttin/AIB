@@ -118,7 +118,7 @@ function passed(r: { status: number; json: Json }, what: string) {
 
 Deno.test('contract 1: every ROUTE_LIST entry has exactly one remote entry, and the table names no other route', () => {
   const routes = new Set(ROUTE_LIST.map(([m, p]) => `${m} ${p}`));
-  assertEquals(routes.size, 173, 'the route table changed: classify the new route in remote/pc_routes.ts');
+  assertEquals(routes.size, 178, 'the route table changed: classify the new route in remote/pc_routes.ts');
   for (const key of routes) assert(Object.hasOwn(PC_ROUTES, key), `${key} has no remote entry`);
   for (const key of Object.keys(PC_ROUTES)) assert(routes.has(key), `${key} is not a page route`);
   // the review's never list (MF7 and v2 fix 5), by name
