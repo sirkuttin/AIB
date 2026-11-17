@@ -111,7 +111,7 @@
     // the reply ended but its subagents still run: the PC header's words ("Working · 2 subagents"), never Ready (a chat's answer
     // carries helpersRunning and its subagents; a home card has only the phase)
     const subs =
-      c.state === 'working' ? 0 : Math.max(Number(c.helpersRunning) || 0, Array.isArray(c.helpers) && c.helpers.length ? subsModel(c.helpers).working : 0);
+      Math.max(Number(c.helpersRunning) || 0, Array.isArray(c.helpers) && c.helpers.length ? subsModel(c.helpers).working : 0);
     if (subs) {
       const t = 'Working · ' + subs + (subs === 1 ? ' subagent' : ' subagents');
       return { text: t, tone: 'work', chip: t };
@@ -3154,7 +3154,13 @@
     if (o.extra) tt.append(o.extra);
     h.append(tt);
     for (const t of o.tools || []) if (t) h.append(t);
-    if (o.chip) h.append(el('span', 'ph-chip ' + o.chip[1], o.chip[0]));
+    if (o.chip) {
+      if (o.chip[2]) {
+        const cb = button('ph-chip ' + o.chip[1], o.chip[0], o.chip[2]);
+        cb.id = 'phChip';
+        h.append(cb);
+      } else h.append(el('span', 'ph-chip ' + o.chip[1], o.chip[0]));
+    }
     for (const t of o.after || []) if (t) h.append(t);
     return h;
   }
@@ -4659,16 +4665,13 @@
     const w = c && !c.gone ? stateWords(c) : null;
     const agent = (c && c.agent) || meta.agent || '';
     const project = (c && c.project) || meta.project;
-    let extra = null;
     const helpers = (c && !c.gone && c.helpers) || [];
-    if (helpers.length) {
-      extra = button('ph-subs-go', subsWords(helpers, c.helpersMore).short + ' ›', () => {
-        S.subsOpen = true;
-        S.scrollTo = 'subs';
-        draw();
-      });
-      extra.id = 'phSubsGo';
-    }
+    // the chip says "Working · N subagents" in small text on one line when the reply ended; with subagents running a tap on it scrolls to the Subagents card (their count is in that card)
+    const chipGo = () => {
+      S.subsOpen = true;
+      S.scrollTo = 'subs';
+      draw();
+    };
     let arts = null;
     if (c && !c.gone && c.savedKey) {
       const n = S.artCount[c.savedKey];
@@ -4683,9 +4686,12 @@
       header(title, {
         back: goHome,
         sub: project ? projectLine(project, [agent]) : agent,
-        extra,
         tools: [arts],
-        chip: S.offline ? ['Offline', 'off'] : w && !c.cached ? [w.chip || w.text.split(' · ')[0], w.tone] : null,
+        chip: S.offline
+          ? ['Offline', 'off']
+          : w && !c.cached
+            ? [w.chip || w.text.split(' · ')[0], w.tone, w.chip && helpers.length ? chipGo : null]
+            : null,
       }),
     ];
     if (S.offline) parts.push(offlineBox());

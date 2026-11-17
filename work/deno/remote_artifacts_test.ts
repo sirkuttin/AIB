@@ -804,8 +804,8 @@ Deno.test({
       assert(chip.dot !== chip.need);
       // the chat: the Subagents card (title and state only), a dot per subagent by state
       await page.click('.ph-card');
-      await page.waitFor('document.getElementById("phSubsGo") && document.querySelector(".ph-msg a")', 15000, 'the chat');
-      await page.eval('document.getElementById("phSubsGo").click(), true');
+      await page.waitFor('document.getElementById("phChip") && document.querySelector(".ph-msg a")', 15000, 'the chat');
+      await page.eval('document.getElementById("phChip").click(), true');
       // the card is the PC's (subagents-ui.js): working and needs-you ones are listed, the finished ones fold under "N finished"
       await page.waitFor('document.querySelectorAll("#phSubs li .ph-dot").length >= 1 && !!document.getElementById("phSubsDone")', 15000, 'the Subagents card');
       assert(

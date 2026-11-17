@@ -652,6 +652,13 @@ body.sf-file-on main > #fileView {
     monospace;
   color: var(--text);
 }
+/* The file editor's shadow host (files-ui.js editorSpike): CodeMirror fills it; its own styles live inside the shadow root. */
+.sf-code-host {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
 .fx-ln {
   display: flex;
   min-width: max-content;

@@ -62,8 +62,9 @@ const PROMPT_ROUTES = new Set(['/api/live/prompt', '/api/live/steer', '/api/live
 /** Routes with a smaller body limit than MAX_BODY (bytes; counted as read, not only as declared). */
 const SMALL_BODY = new Map([['/api/live/desktop/windows', MAX_WINDOWS_BODY]]);
 
-/** Vendored libraries (Deno only; the Python reference server has none): vendor/xterm/<name>.js|css. */
-const VENDOR_ASSET = /^\/vendor\/(xterm|docs)\/([a-z0-9][a-z0-9-]*\.(?:js|css))$/;
+/** Vendored libraries (Deno only; the Python reference server has none): vendor/xterm|docs|code/<name>.js|css (code: the file
+ * editor's CodeMirror bundle, tools/code-vendor/build.mjs). */
+const VENDOR_ASSET = /^\/vendor\/(xterm|docs|code)\/([a-z0-9][a-z0-9-]*\.(?:js|css))$/;
 /** The drawing page's Excalidraw bundle (tools/drawing/build.mjs): its code-split chunks, its CSS and its fonts. The server-only
  * Mermaid converter is not served. */
 const EXCALIDRAW_ASSET = /^\/vendor\/excalidraw\/((?:chunks\/|assets\/|fonts\/[A-Za-z]+\/)?[A-Za-z0-9][A-Za-z0-9_.-]*\.(?:js|css|woff2))$/;

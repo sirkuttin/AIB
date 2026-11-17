@@ -2236,6 +2236,51 @@
   }
   const gutterHas = (r, k) => (r.gutter === 'all' ? true : !!(r.gutter && r.gutter.has && r.gutter.has(k)));
 
+  /* ---- file editor, P0 spike (private/designs/file-editor, file-editor-design-v2.md) -------------------------------------------
+     CodeMirror 6 (vendor/code/editor.js, built by tools/code-vendor/build.mjs) loads on demand, on the first file tab that asks for
+     it; never in chat.html's head. No button calls this yet: work/deno/code_editor_spike_e2e_test.ts mounts it in the real AIB
+     window to prove the page's CSP and measure it. P1 replaces codeView with it and keeps one editor per tab across redraws. */
+  let codeLoading = null;
+  function loadCodeEditor() {
+    if (root.AIBCodeEditor) return Promise.resolve(root.AIBCodeEditor);
+    if (codeLoading) return codeLoading;
+    codeLoading = new Promise((resolve, reject) => {
+      const s = doc().createElement('script');
+      s.src = '/vendor/code/editor.js';
+      s.onload = () => (root.AIBCodeEditor ? resolve(root.AIBCodeEditor) : reject(Error('The editor did not load.')));
+      s.onerror = () => reject(Error('Could not load the editor.'));
+      doc().head.append(s);
+    });
+    codeLoading.catch(() => (codeLoading = null));
+    return codeLoading;
+  }
+  // Mounts an editor over the shown file tab's text ('main' or 'beside'); resolves with timings in ms (load = fetch + run the
+  // bundle, mount = build the editor until two frames have painted).
+  async function editorSpike(where) {
+    const t = where === 'beside' ? beside : tabsHere(),
+      tab = t.tabs.find((x) => x.id === t.active),
+      r = tab ? reads.get(tab.id) : null;
+    if (!r || !r.data || r.data.text == null) throw Error('No text file is shown.');
+    const box = where === 'beside' ? besideBox() : mainBox(),
+      body = box && box.querySelector('.sf-fv-body');
+    if (!body) throw Error('No file view.');
+    const now = () => (root.performance ? root.performance.now() : Date.now());
+    const frame = () => new Promise((res) => (root.requestAnimationFrame ? root.requestAnimationFrame(() => res()) : res()));
+    const t0 = now();
+    const CE = await loadCodeEditor();
+    const t1 = now();
+    // The editor lives in a shadow root: there CodeMirror's styles go in as a constructed stylesheet, which the page's CSP allows
+    // (in the document they would be a blocked <style> tag). AIB's CSS variables inherit through, so the theme follows.
+    const host = el('div', null, 'sf-code-host');
+    const shadow = host.attachShadow({ mode: 'open' });
+    body.replaceChildren(host);
+    const ed = CE.create({ parent: shadow, root: shadow, text: String(r.data.text).replace(/\r\n?/g, '\n'), name: tab.name, live: true }); // live: a Y.Text (the docs model)
+    await frame();
+    await frame();
+    const t2 = now();
+    return { editor: ed, load: t1 - t0, mount: t2 - t1, total: t2 - t0 };
+  }
+
   function mainBox() {
     const d = doc();
     let box = d.getElementById('fileView');
@@ -2958,7 +3003,9 @@
     currentChat: () => chat,
     projectChats,
     onFrameMessage,
-    _state: () => ({ mode, chat, following, pinned, query, changedOnly, showIgnored, sel, results, view, tabs: tabsHere(), beside, trees, newDoc, frames }),
+    loadCodeEditor,
+    _editorSpike: editorSpike,
+    _state:() => ({ mode, chat, following, pinned, query, changedOnly, showIgnored, sel, results, view, tabs: tabsHere(), beside, trees, newDoc, frames }),
     _reset: () => {
       trees.clear();
       reads.clear();
