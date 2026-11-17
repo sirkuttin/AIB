@@ -4772,15 +4772,31 @@ export class Connection {
   landing: { id: string; owner: string; title: string; at: number } | null = null;
   #landingTimer: ReturnType<typeof setTimeout> | null = null;
 
-  /** '' when nothing runs in this chat (no turn, nothing queued or being sent, no running subagent), else why not. */
+  /**
+   * Studio hook (subagent worktrees): this child (its agentId) works in its own worktree AIB made, so a landing in this chat's folder
+   * can't change anything under it. Null: none is.
+   */
+  subagentIsolated: ((child: string) => boolean) | null = null;
+
+  /**
+   * '' when nothing runs in this chat (no turn, nothing queued or being sent, no running subagent that works in the folder), else why
+   * not. A subagent in its own worktree doesn't count: a lead that always has one background subagent at work would otherwise never be
+   * idle, and the finished ones would never land or go (beta 11).
+   */
   landingIdleReason(): string {
     if (this.closed || !this.ready) return 'the chat is not open';
     if (this.busy) return 'a turn is running';
     const q = this.queue;
     if (q.inflight || q.items.length || q.steer.length) return 'messages are queued';
-    if (this.#helpersRunning()) return 'a subagent is running';
-    for (const entry of this.subagents.values()) {
-      if (entry.state === 'running' || entry.state === 'requires_action') return 'a subagent is running';
+    const isolated = (child: string) => {
+      try {
+        return !!this.subagentIsolated?.(child);
+      } catch {
+        return false;
+      }
+    };
+    for (const [child, entry] of this.subagents) {
+      if ((entry.state === 'running' || entry.state === 'requires_action') && !isolated(child)) return 'a subagent is running';
     }
     return '';
   }

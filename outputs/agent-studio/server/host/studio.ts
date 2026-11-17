@@ -1518,6 +1518,8 @@ export class Studio {
       };
     }
     c.subagentWorktree = (toolUseId) => this.subagents?.worktreeOf(c.id, toolUseId) ?? null; // allow-rule parity (design 2.4)
+    // a subagent in its own worktree never keeps the chat from being idle for a landing (finished ones land beside a running one)
+    c.subagentIsolated = (child) => this.subagents?.isolated(c.id, child) ?? false;
     if (c.provider === 'gemini' && this.subagents && this.geminiSubagents) { // Gemini subagents start and end in the parent's stream
       const subagents = this.subagents, gem = this.geminiSubagents;
       c.onTurnCancelled = async (conn) => {
