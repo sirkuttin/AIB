@@ -1851,8 +1851,9 @@ export class Studio {
   async #freeChannel(keeper: KeeperLink, chat: string): Promise<boolean> {
     const name = `chat-${chat}`;
     try {
-      const client = await keeper.client(false);
-      if (!client) return true; // no keeper runs: it has no channel of this chat
+      // the keeper the agent will start in (started now if it is not running, as the spawn would): one that starts again keeps the
+      // ended channels of its journal folder, so "not running" does not mean "no channel"
+      const client = await keeper.check();
       const info = (await client.list()).find((i) => i.channel === name);
       if (!info) return true;
       if (info.live) return false;

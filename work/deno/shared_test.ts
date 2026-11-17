@@ -398,5 +398,7 @@ Deno.test('archiving a chat in its own worktree asks the host to remove it; othe
   const plain = context(dir.root, { liveCall: (name, args) => (calls.push([name, args]), answer) });
   delete plain.findWorktree;
   await shared.conversationAction(plain, { action: 'archive', provider: 'omp', sessionId: 'no-wt' });
-  assertEquals(calls.length, 2);
+  // archive x2 and the delete: only the delete removes the chat's history stores (history-forget); archiving keeps the history
+  assertEquals(calls.map(([name]) => name), ['worktree-archive', 'history-forget', 'worktree-archive']);
+  assertEquals(calls[1], ['history-forget', { provider: 'claude', sessionId: 'wt-1' }]);
 });
