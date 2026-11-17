@@ -144,6 +144,8 @@ function setup(heights, o = {}) {
     MutationObserver: obs.MO,
     onChange: (next, prev, cause) => changes.push([prev.mode, next.mode, cause]),
     nearTop: o.nearTop,
+    nearBottom: o.nearBottom,
+    moreBelow: o.moreBelow,
   });
   return { box, ctl, ro: obs.made.ro, mo: obs.made.mo, changes };
 }

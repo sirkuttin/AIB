@@ -22,7 +22,8 @@
    your own scroll. (The one timer here saves the places to disk a moment after you stop scrolling.)
 
    API (window.ScrollController; module.exports for node tests):
-     const ctl = ScrollController.attach(box, {role, clamp, onChange(next, prev, cause), nearTop: {px, fn}})
+     const ctl = ScrollController.attach(box, {role, clamp, onChange(next, prev, cause), nearTop: {px, fn}, nearBottom: {px, fn},
+                                               moreBelow()})   moreBelow: newer rows are left out below the drawn ones
      ctl.state / ctl.following / ctl.key
      ctl.beforeRedraw()             a scroll you made that the browser has not reported yet is taken first
      ctl.afterRedraw()              end of every draw into box (clamps long blocks first when opts.clamp)
@@ -286,7 +287,7 @@
           state = { ...state, rid: ridOf(hit.el) };
           if (key) remember(prefix + ':' + key, state);
         }
-        if (max <= 0 && hit.exact) {
+        if (max <= 0 && hit.exact && !moreBelow()) {
           set(FOLLOW, 'fits'); // nothing to scroll and the row is drawn: there is no place to keep
           target = 0;
         } else {
@@ -316,11 +317,15 @@
       userScrolled();
       return true;
     }
+    /* The drawing code left newer rows out below the drawn ones (opts.moreBelow: a long chat read far up draws a window of it):
+       the end of the drawn rows is not the end of the chat, so reaching it does not follow. */
+    const moreBelow = () => !!(opts.moreBelow && opts.moreBelow());
     function userScrolled() {
       settled = box.scrollTop;
       const gap = box.scrollHeight - box.scrollTop - box.clientHeight;
-      set(gap <= 1 ? FOLLOW : anchorAtTop(), 'user');
+      set(gap <= 1 && !moreBelow() ? FOLLOW : anchorAtTop(), 'user');
       if (opts.nearTop && box.scrollTop < opts.nearTop.px) opts.nearTop.fn();
+      if (opts.nearBottom && gap < opts.nearBottom.px && moreBelow()) opts.nearBottom.fn();
     }
     function onScroll() {
       if (detached || lostLayout) return;
