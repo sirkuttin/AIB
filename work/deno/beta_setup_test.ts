@@ -71,10 +71,6 @@ Deno.test('install method per agent and OS: npm agents by AIB, the rest by the v
       assertEquals([plan(id, os).kind, plan(id, os).needs], ['npm', ['node']]);
     }
   }
-  // Maki: AIB downloads its GitHub release itself (no prerequisite) on every OS it publishes a build for.
-  for (const os of ['windows', 'darwin', 'linux'] as const) {
-    assertEquals([plan('maki', os).kind, plan('maki', os).needs], ['download', []]);
-  }
   const cursorUnix = 'curl https://cursor.com/install -fsS | bash';
   assertEquals(plan('cursor', 'windows').step, {
     shell: 'powershell',

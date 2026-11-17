@@ -94,7 +94,7 @@ class StudioContract(unittest.TestCase):
         # The Beta agents (server/agents/beta_catalog.ts) are Deno-only: drop their rows from the subject's lists before comparing.
         # So is the per-agent `setup` block (install prerequisites, server/agents/beta_setup.ts; commits 4db7392, 12e4d91 added it
         # to the built-in cards too): the Python reference has no such key, so drop it from the subject's agent rows.
-        beta = {'copilot', 'opencode', 'gemini', 'qwen', 'cursor', 'goose', 'vibe', 'cline', 'kimi', 'kilo', 'maki'}
+        beta = {'copilot', 'opencode', 'gemini', 'qwen', 'cursor', 'goose', 'vibe', 'cline', 'kimi', 'kilo'}
 
         def no_beta(data, server):
             if server is not self.subject:

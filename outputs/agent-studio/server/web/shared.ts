@@ -10,8 +10,7 @@ import * as adapters from '../agents/adapters.ts';
 import { BUILTIN_NAMES, commandStatus, type CustomAgent, hiddenEnv, letterOf } from '../agents/agent_registry.ts';
 import * as installer from '../agents/installer.ts';
 import * as signin from '../agents/signin.ts';
-import { BETA_AGENTS, betaAgent } from '../agents/beta_catalog.ts';
-import { releaseAsset } from '../agents/release_install.ts';
+import { BETA_AGENTS } from '../agents/beta_catalog.ts';
 import { resolveBeta } from '../agents/beta_agents.ts';
 import { BUILTIN_NPM, builtinSetup, defaultProbe, refreshWindowsPath, type SetupProbe, setupView } from '../agents/beta_setup.ts';
 import { isDict, ValueError } from '../core/py.ts';
@@ -219,10 +218,9 @@ export function betaSigninView(options: AgentOptions, agentId: string, liveStatu
   return { state: signin.effectiveState(cached.state, liveStatus), checkedAt: cached.checkedAt, job: job.state !== 'idle' ? job : null };
 }
 
-/** The Install job of a Beta agent AIB installs (npm or GitHub release) while it runs or after it failed (the same files as the built-ins' installs), else null. */
+/** The Install job of a Beta npm agent while it runs or after it failed (the same files as the built-ins' installs), else null. */
 function betaInstallState(options: AgentOptions, agentId: string): installer.InstallView | null {
-  const own = Object.prototype.hasOwnProperty.call(adapters.BETA_PACKAGES, agentId) || !!betaAgent(agentId)?.release;
-  if (!options.stateDir || !own) return null;
+  if (!options.stateDir || !Object.prototype.hasOwnProperty.call(adapters.BETA_PACKAGES, agentId)) return null;
   const view = installer.readStatus(options.stateDir, agentId);
   return view.state === 'running' || view.state === 'failed' ? view : null;
 }
@@ -246,9 +244,7 @@ export async function describeBeta(
   const keyStorage = options.stateDir ? keyStoreFor(options.stateDir).note : ''; // where a saved key is kept, never the key
   for (const agent of BETA_AGENTS) {
     const row = await resolveBeta(agent.id, { stateDir: options.stateDir ?? null, nodeCommand: options.nodeCommand || '' });
-    // npm agents, and release agents (Maki) that publish a build for this computer: AIB installs them into its own folder.
-    const installable = (!!agent.npm && Object.prototype.hasOwnProperty.call(adapters.BETA_PACKAGES, agent.id)) ||
-      (!!agent.release && !!releaseAsset(agent));
+    const installable = !!agent.npm && Object.prototype.hasOwnProperty.call(adapters.BETA_PACKAGES, agent.id);
     // Only for a card that still needs installing: the prerequisites are looked up (and their versions read) then.
     const setup = row.found ? null : await setupView(agent, probe);
     out.push({
@@ -272,7 +268,7 @@ export async function describeBeta(
       installable,
       installBlock: '',
       installHint: '',
-      packageBytes: sizes[agent.id] || releaseAsset(agent)?.bytes || 0,
+      packageBytes: sizes[agent.id] || 0,
       signin: row.found ? betaSigninView(options, agent.id, state[agent.id] ?? '') : null,
       betaInfo: {
         cost: agent.cost,

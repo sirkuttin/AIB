@@ -20,16 +20,12 @@
  *   --events FILE   append every session/update and agent-to-client request as one JSON line, for tool_call / _meta checks
  *   --mode ID       after session/new or session/load, call session/set_mode with this mode id (e.g. acceptEdits, bypassPermissions)
  *   --args JSON     a JSON array of extra arguments for the adapter process (e.g. ["-c", "features.multi_agent=false"])
- *   --exe           <entry.js> is a native program (Maki: `maki.exe` with --args ["acp"]), started directly instead of with node
- *   --graceful SECS before ending, close the agent's stdin and give it this long to exit by itself (Maki saves its session on
- *                   the way out; a kill right after the reply can lose the last save)
- *   --cancel SECS   send session/cancel this many seconds after the prompt; the result then also has "stopReason"
  */
 'use strict';
 const { spawn } = require('node:child_process');
 
 const argv = process.argv.slice(2);
-const flags = { meta: null, allow: false, events: null, args: [], mode: null, exe: false, cancel: null, graceful: 0 };
+const flags = { meta: null, allow: false, events: null, args: [], mode: null };
 while (argv[0] && argv[0].startsWith('--')) {
   const name = argv.shift();
   if (name === '--allow') flags.allow = true;
@@ -37,9 +33,6 @@ while (argv[0] && argv[0].startsWith('--')) {
   else if (name === '--events') flags.events = argv.shift();
   else if (name === '--args') flags.args = JSON.parse(argv.shift());
   else if (name === '--mode') flags.mode = argv.shift();
-  else if (name === '--exe') flags.exe = true;
-  else if (name === '--cancel') flags.cancel = Number(argv.shift());
-  else if (name === '--graceful') flags.graceful = Number(argv.shift());
 }
 const [entry, op, ...rest] = argv;
 const record = (line) => {
@@ -50,7 +43,7 @@ if (!entry || !op) {
   process.exit(2);
 }
 
-const child = spawn(flags.exe ? entry : process.execPath, flags.exe ? flags.args : [entry, ...flags.args], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+const child = spawn(process.execPath, [entry, ...flags.args], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
 let stderr = '';
 child.stderr.on('data', (c) => {
   stderr = (stderr + c.toString()).slice(-4000);
@@ -117,30 +110,16 @@ child.stdout.on('data', (c) => {
 
 function finish(result, code = 0) {
   process.stdout.write(JSON.stringify(result) + '\n');
-  const end = () => {
-    try {
-      child.kill();
-    } catch { /* gone */ }
-    process.exit(code);
-  };
-  if (!flags.graceful || child.exitCode !== null) return end();
-  child.once('exit', end);
-  setTimeout(end, flags.graceful * 1000);
   try {
-    child.stdin.end();
+    child.kill();
   } catch { /* gone */ }
+  process.exit(code);
 }
 
-let stopReason = null;
 async function prompt(sessionId, words) {
   text = '';
-  const pending = request('session/prompt', { sessionId, prompt: [{ type: 'text', text: words }] }, 240);
-  let timer = null;
-  if (flags.cancel !== null) timer = setTimeout(() => send({ method: 'session/cancel', params: { sessionId } }), flags.cancel * 1000);
-  const r = await pending;
-  if (timer) clearTimeout(timer);
+  const r = await request('session/prompt', { sessionId, prompt: [{ type: 'text', text: words }] }, 240);
   record({ promptResult: r });
-  stopReason = r && r.stopReason || null;
   return text;
 }
 
@@ -160,7 +139,7 @@ async function main() {
     record({ sessionNew: { modes: s.modes || null } });
     if (flags.mode) record({ setMode: await request('session/set_mode', { sessionId: s.sessionId, modeId: flags.mode }) });
     const reply = await prompt(s.sessionId, words);
-    finish({ sessionId: s.sessionId, reply, ...(flags.cancel !== null ? { stopReason } : {}) });
+    finish({ sessionId: s.sessionId, reply });
   } else if (op === 'list') {
     const [cwd] = rest;
     if (!caps.sessionCapabilities || !caps.sessionCapabilities.list) finish({ supported: false, sessions: [] });

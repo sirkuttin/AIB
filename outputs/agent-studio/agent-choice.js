@@ -11,7 +11,7 @@
   const ID_RE = /^custom-[a-z0-9]+(?:-[a-z0-9]+)*$/;
   // The Beta agents (server/agents/beta_catalog.ts): known to AIB, untested by us, off until turned on in Settings. They are listed after
   // the tested agents (and the ones you added), under a "Beta" group label in the agent menus.
-  const BETA_IDS = ['copilot', 'opencode', 'gemini', 'qwen', 'cursor', 'goose', 'vibe', 'cline', 'kimi', 'kilo', 'maki'];
+  const BETA_IDS = ['copilot', 'opencode', 'gemini', 'qwen', 'cursor', 'goose', 'vibe', 'cline', 'kimi', 'kilo'];
   const BETA_GROUP = 'Beta';
   const isBeta = (id) => BETA_IDS.includes(id);
   // AGENTS: the agents a new chat can use (enabled ones). ALL: every agent Studio knows, including ones turned off in Settings,

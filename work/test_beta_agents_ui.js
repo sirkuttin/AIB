@@ -274,36 +274,6 @@ test('every Beta card that is not installed has Install: npm ones by AIB, the ot
   assert.doesNotMatch(cursor.textContent, /can't install/);
 });
 
-test("Maki (a GitHub release AIB downloads and checks): Install is AIB's own install job, nothing needed first", async () => {
-  const list = LIST();
-  const cmd = 'irm https://maki.sh/install.ps1 | iex';
-  list.push(
-    beta('maki', 'Maki', {
-      installable: true,
-      packageBytes: 32666584,
-      problem: 'Not installed. Install it with: ' + cmd,
-      betaInfo: {
-        ...beta('maki', 'x').betaInfo,
-        cost: 'Free CLI · needs an API key or a provider sign-in',
-        installCommand: cmd,
-        keyEnv: 'ANTHROPIC_API_KEY',
-        signinCommand: ['auth', 'login'],
-        setup: setupOf('download', cmd),
-      },
-    }),
-  );
-  const { betaRow, posts } = await openSettings(list);
-  const row = betaRow('Maki');
-  assert.equal(row.querySelector('.st-beta-install').querySelector('.st-hint').textContent, 'Or install it yourself:');
-  assert.equal(row.querySelector('.st-beta-install').querySelector('code').textContent, cmd);
-  assert.equal(row.querySelector('.st-beta-needs'), null, 'no Node.js, no uv');
-  const go = buttonOf(row, 'Install');
-  assert.ok(go && !go.disabled);
-  go.click();
-  await flush();
-  assert.deepEqual(plain(posts.find((p) => p[0] === 'agents/install')), ['agents/install', { agent: 'maki' }], 'not a terminal run');
-});
-
 test('a missing prerequisite: "Needs first" with its install command and button; the agent Install is off with the reason', async () => {
   const { betaRow } = await openSettings(setupList());
   const gemini = betaRow('Gemini CLI');

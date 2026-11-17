@@ -40,8 +40,6 @@ import { ProcessTree } from '../platform/process_tree.ts';
 import { pathOf } from '../state/paths.ts';
 
 export const TERMINAL_NAME = 'signin-terminal.json';
-/** signin.ts Handshake's message for an agent that exited before it answered. */
-const STOPPED = 'The agent stopped before it answered.';
 export const TERMINAL_MAX_AGE = 10 * 60; // seconds: the page opens the terminal right after asking
 // Seconds for the whole check (initialize + session/new together); then the agent is killed and the state is unknown.
 export const CHECK_TIMEOUT = 25;
@@ -106,10 +104,7 @@ export class BetaSigner {
   readonly #guard = new Mutex();
   readonly #locks = new Map<string, Mutex>();
   /** The check running now per agent (a forced check joins only a forced one): concurrent callers share one agent start. */
-  readonly #checking = new Map<
-    string,
-    { force: boolean; done: Promise<{ agent: string; state: SignState; checkedAt: number; checked: boolean }> }
-  >();
+  readonly #checking = new Map<string, { force: boolean; done: Promise<{ agent: string; state: SignState; checkedAt: number; checked: boolean }> }>();
   readonly #baseEnv: () => Record<string, string>;
   readonly #checkTimeout: number;
 
@@ -171,8 +166,6 @@ export class BetaSigner {
       return 'unknown';
     } catch (error) {
       if (error instanceof HandshakeError && (error.code === -32000 || /auth/i.test(error.message))) return 'signin';
-      // Maki exits at once when no provider is set up: no answer at all is its "sign in first".
-      if (error instanceof HandshakeError && betaAgent(agentId)?.exitsWhenSignedOut && error.message === STOPPED) return 'signin';
       return 'unknown';
     } finally {
       await shake?.close();

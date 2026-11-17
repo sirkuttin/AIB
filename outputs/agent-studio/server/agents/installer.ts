@@ -14,15 +14,10 @@
  * `npm ci`, otherwise `npm install <package>@<exact>`; both with --ignore-scripts --omit=dev --no-audit --no-fund. npm is started as
  * `node <npm-cli.js>` (never through npm.cmd), so cancel can kill the whole process tree. Before anything is started the job is
  * refused, with one plain line, when it is bound to fail: Node missing or older than 22, too little disk space, or a path too long.
- *
- * A Beta agent with a GitHub `release` (beta_catalog.ts, Maki) uses the same job, lock and folders, but no npm: the archive for this
- * computer is downloaded from github.com, checked against the SHA-256 pinned in the catalog, and only its program is unpacked
- * (release_install.ts). Its pinned version and checksums live in the catalog, not in agent_versions.json.
  */
 import * as adapters from './adapters.ts';
 import { agentName } from './agent_registry.ts';
-import { BETA_AGENTS, betaAgent } from './beta_catalog.ts';
-import * as release from './release_install.ts';
+import { BETA_AGENTS } from './beta_catalog.ts';
 import { APP_ROOT } from '../core/app.ts';
 import { writeJsonAtomic } from '../core/fs.ts';
 import { clip, isDict, pyJsonDumps, pyStr, ValueError } from '../core/py.ts';
@@ -407,8 +402,6 @@ class Job {
   done: Promise<void> = Promise.resolve();
   percent = 0;
   cancelled = false;
-  /** A release download in flight (cancel aborts it). */
-  abort: AbortController | null = null;
   constructor(readonly agentId: string, readonly version: string, readonly folder: string) {}
 }
 
@@ -428,10 +421,6 @@ export interface InstallerOptions {
   npmEnv?: Record<string, string>;
   /** Called with the job's state each time it is saved (the WSL helper sends it to AIB as a progress notification). */
   onSave?: (view: InstallView) => void;
-  /** The fetch a release download uses (tests serve a fake archive). */
-  fetch?: typeof fetch;
-  /** The `<os>-<arch>` whose release archive is installed (default: this computer's). */
-  platform?: string;
 }
 
 type Outcome = 'done' | 'cancelled' | 'failed';
@@ -448,8 +437,6 @@ export class Installer {
   readonly #readLock: ((entry: AllowEntry) => string | null) | null;
   readonly #npmEnv: Record<string, string>;
   readonly #onSave: ((view: InstallView) => void) | null;
-  readonly #fetch: typeof fetch | undefined;
-  readonly #platform: string;
   readonly #guard = new Mutex();
 
   constructor(stateDir: string, options: InstallerOptions = {}) {
@@ -462,8 +449,6 @@ export class Installer {
     this.#readLock = options.readLock ?? null;
     this.#npmEnv = options.npmEnv ?? {};
     this.#onSave = options.onSave ?? null;
-    this.#fetch = options.fetch;
-    this.#platform = options.platform ?? release.platformKey();
   }
 
   // ---- what can be installed --------------------------------------------------------------------------------------
@@ -473,12 +458,6 @@ export class Installer {
 
   /** The allow-list entry for an agent id. Only ids that are known agents are looked at, so an id never becomes part of a path. */
   entry(agentId: unknown, verb = ''): AllowEntry {
-    const rel = release.releaseOf(agentId);
-    if (rel) {
-      // A release agent: pinned in the catalog. Uninstall works on any computer; start() checks there is an archive for this one.
-      const asset = release.releaseAsset(betaAgent(agentId), this.#platform);
-      return { package: `github:${rel.repo}`, version: rel.version, packageBytes: asset ? asset.bytes * 4 : 0 };
-    }
     const known = typeof agentId === 'string' && adapters.installPackages(agentId) !== null;
     const found = known ? this.allowList()[agentId as string] : null;
     if (!isDict(found) || !found.package || !found.version) {
@@ -503,14 +482,6 @@ export class Installer {
         `The install folder path is ${length} characters long, over the ${MAX_PATH_CHARS} Windows can handle. Start AIB with a shorter --state-dir.`,
       );
     }
-    if (release.releaseOf(agentId)) {
-      // A release agent needs no Node.js or npm: only an archive for this computer and the disk space.
-      if (!release.releaseAsset(betaAgent(agentId), this.#platform)) {
-        throw new InstallRefused(`${name} publishes no build for this computer (${this.#platform}).`);
-      }
-      this.#diskCheck(name, shown, entry);
-      return ['', ''];
-    }
     const node = adapters.findNode(this.nodeCommand);
     if (!node) {
       throw new InstallRefused(
@@ -529,12 +500,6 @@ export class Installer {
     if (!npmCli || !isFile(npmCli)) {
       throw new InstallRefused('npm was not found next to Node.js. Reinstall Node.js from nodejs.org and try again.');
     }
-    this.#diskCheck(name, shown, entry);
-    return [node, npmCli];
-  }
-
-  /** Throws InstallRefused when the drive of `shown` has less free space than the entry needs. */
-  #diskCheck(name: string, shown: string, entry: AllowEntry): void {
     const need = Math.max(2 * toInt(entry.packageBytes || 0), toInt(entry.minFreeBytes || 0));
     let probe = shown;
     for (;;) {
@@ -555,6 +520,7 @@ export class Installer {
         `Not enough free disk space for ${name}: it needs about ${sizeText(need)} and this drive has ${sizeText(free)} free.`,
       );
     }
+    return [node, npmCli];
   }
 
   // ---- the three calls ----------------------------------------------------------------------------------------------
@@ -628,7 +594,6 @@ export class Installer {
     job.cancelled = true;
     job.cancelEvent.set();
     job.tree?.kill();
-    job.abort?.abort();
     let timer: ReturnType<typeof setTimeout> | undefined;
     await Promise.race([job.done, new Promise<void>((resolve) => (timer = setTimeout(resolve, 60_000)))]);
     clearTimeout(timer);
@@ -805,7 +770,6 @@ export class Installer {
   }
 
   async #install(job: Job, entry: AllowEntry, node: string, npmCli: string): Promise<[Outcome, string]> {
-    if (release.releaseOf(job.agentId)) return await this.#installRelease(job);
     const { agentId, folder, version } = job;
     const pkg = String(entry.package);
     const lockSource = !this.#readLock && entry.lockfile ? pathOf(APP_ROOT, String(entry.lockfile)) : null;
@@ -899,51 +863,6 @@ export class Installer {
     if (problem) return ['failed', problem];
     if (job.cancelled) return ['cancelled', '']; // the marker is written last, and never after a cancel was accepted
     Deno.writeTextFileSync(pathOf(folder, adapters.COMPLETE_MARKER), pyJsonDumps({ package: pkg, version, finishedAt: now() }));
-    return ['done', ''];
-  }
-
-  /** A release agent: download the archive for this computer, check its SHA-256, unpack the program, then the marker. */
-  async #installRelease(job: Job): Promise<[Outcome, string]> {
-    const agent = betaAgent(job.agentId)!;
-    const rel = agent.release!;
-    const asset = release.releaseAsset(agent, this.#platform);
-    if (!asset) return ['failed', `${agent.name} publishes no build for this computer (${this.#platform}).`];
-    if (job.cancelEvent.isSet()) return ['cancelled', ''];
-    this.#progress(job, 'downloading', 8);
-    job.abort = new AbortController();
-    let shown = 0;
-    let archive: Uint8Array;
-    try {
-      archive = await release.downloadAsset(release.releaseUrl(rel, asset), asset, {
-        fetch: this.#fetch,
-        signal: job.abort.signal,
-        onBytes: (received) => {
-          if (now() - shown < 0.5) return;
-          shown = now();
-          this.#progress(job, 'downloading', 8 + 80 * Math.min(1, received / asset.bytes));
-        },
-      });
-    } catch (error) {
-      if (job.cancelEvent.isSet()) return ['cancelled', ''];
-      if (error instanceof release.ReleaseError) return ['failed', error.message];
-      throw error;
-    } finally {
-      job.abort = null;
-    }
-    if (job.cancelEvent.isSet()) return ['cancelled', ''];
-    this.#progress(job, 'verifying', 90);
-    if (await release.sha256Hex(archive) !== asset.sha256) {
-      return ['failed', `The download of ${agent.name} did not match the checksum AIB expects, so it was not used. Try again later.`];
-    }
-    let program: Uint8Array;
-    try {
-      program = await release.extractProgram(archive, asset.file, release.programFile(rel, this.#platform.split('-')[0]));
-    } catch (error) {
-      if (error instanceof release.ReleaseError) return ['failed', error.message];
-      throw error;
-    }
-    if (job.cancelled) return ['cancelled', '']; // the marker is written last, and never after a cancel was accepted
-    release.writeInstall(job.folder, rel, asset, program, now());
     return ['done', ''];
   }
 

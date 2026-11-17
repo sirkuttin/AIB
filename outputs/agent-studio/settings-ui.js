@@ -70,7 +70,6 @@
         'cline',
         'kimi',
         'kilo',
-        'maki',
         'api key',
       ],
     },
@@ -1371,11 +1370,10 @@
       if (setup && setup.prereqs && setup.prereqs.length) row.append(needsFirst(a, setup));
       const how = el('div', null, 'st-beta-install');
       // npm agents: AIB installs the package into its own folder (Install); the global npm command is the do-it-yourself way.
-      // download (Maki): AIB downloads the vendor's GitHub release and checks it (Install); the vendor's command is the other way.
       // Others: Install runs the vendor's installer for this computer in a terminal on this card; this is that command.
       const kind = setup ? setup.kind : a.installable ? 'npm' : 'none';
       const hint =
-        kind === 'npm' || kind === 'download'
+        kind === 'npm'
           ? 'Or install it yourself:'
           : kind === 'terminal'
             ? 'Install runs this in a terminal here:'
@@ -1447,12 +1445,11 @@
   // Off while a prerequisite is missing, with the reason next to it.
   function betaInstallButton(a, head, job, refused) {
     const setup = setupOf(a);
-    const own = setup && (setup.kind === 'npm' || setup.kind === 'download'); // AIB's own install job (installer.ts)
-    if (!setup || setup.kind === 'none' || (own && !a.installable)) return;
+    if (!setup || setup.kind === 'none' || (setup.kind === 'npm' && !a.installable)) return;
     const retry = !!job && (job.state === 'failed' || refused);
     const go = button(
       retry ? 'Retry' : 'Install',
-      () => (own ? startInstall(a) : startSetup(a, 'install', setup.command, null)),
+      () => (setup.kind === 'npm' ? startInstall(a) : startSetup(a, 'install', setup.command, null)),
       'st-primary',
     );
     const busy = !!betaTerms[a.id] && betaTerms[a.id].running;
