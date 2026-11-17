@@ -1721,7 +1721,8 @@ async function readThroughTrim(lab: Lab, burst: (chat: Chat, b: number) => void,
     await startFrames(page);
     burst(chat, b);
     chat.say(`\n\nBatch ${b} done BATCH${b}`);
-    await shown(page, `BATCH${b}`, 'messages', 30000);
+    // arrived in the chat's rows: while you read far up, rows far below your place are not drawn (chat.js showRows)
+    await page.waitFor(`!!window.StudioChat?.mainRowsHave(${JSON.stringify(`BATCH${b}`)})`, 30000, `BATCH${b} in the chat's rows`);
     await settle(1200);
     const rows = rowFramesProblems(await stopRowFrames(page), before!, 2);
     const low = (await stopFrames(page)).filter((f) => f.top < x0.top - 50);

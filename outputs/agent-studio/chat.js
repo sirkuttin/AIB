@@ -6662,6 +6662,8 @@
   /* Test hook. The page itself never reads this. Tests load chat.js into a fake DOM and use these functions, and the accessors in
    `state` for the few variables they set up or check. Nothing else from this file is reachable from outside. */
   window.StudioChat = {
+    /* the main list's rows (drawn or not: a long chat read far up draws a window of them) have this text */
+    mainRowsHave: (q) => (lastMainRows || []).some((r) => String((r && r.value) || '').includes(q)),
     DraftStore,
     renderApprovals,
     answeredLine,
