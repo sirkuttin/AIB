@@ -74,6 +74,16 @@
         });
       }
       if (f.opening) return make('opening', 'Opening…', 'AIB is starting the agent.');
+      // subagents running: the same words whether or not the agent itself is mid-turn (only the tooltip says if you can send)
+      const subs = Math.max(0, Number(f.helpers) || 0);
+      if (f.busy && subs) {
+        return make(
+          'working',
+          'Working · ' + subs + (subs === 1 ? ' subagent' : ' subagents'),
+          'The agent is busy on your last message and its subagents run too.',
+          { elapsedMs: f.busySince ? Math.max(0, now - f.busySince) : 0 },
+        );
+      }
       if (f.busy) {
         const t = f.busySince ? elapsedWords(now - f.busySince) : '';
         return make('working', t ? 'Working · ' + t : 'Working', 'The agent is busy on your last message.', {

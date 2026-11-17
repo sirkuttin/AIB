@@ -59,7 +59,7 @@ test('status words match the PC: Needs you, Working, Your turn, Ready (connected
   assert.deepEqual(P.stateWords({ needs: 0, state: 'idle', helpers: [{ id: 'a', state: 'running' }, { id: 'b', state: 'running' }, { id: 'c', state: 'idle' }] }, now), subs);
   assert.equal(P.stateWords({ needs: 0, state: 'idle', helpersRunning: 1 }, now).text, 'Working · 1 subagent');
   assert.deepEqual(P.stateWords({ needs: 0, state: 'idle', background: true }, now), { text: 'Working', tone: 'work' });
-  assert.equal(P.stateWords({ needs: 0, state: 'working', busySince: '2026-11-12T11:56:00Z', helpersRunning: 2 }, now).text, 'Working · 4m');
+  assert.deepEqual(P.stateWords({ needs: 0, state: 'working', busySince: '2026-11-12T11:56:00Z', helpersRunning: 2 }, now), subs, 'the same words while the agent itself is mid-turn');
   assert.equal(P.stateWords({ needs: 1, state: 'needs_you', helpersRunning: 2 }, now).text, 'Needs you');
   assert.equal(P.helperWord('running'), 'working');
   assert.equal(P.helperWord('completed'), 'done');

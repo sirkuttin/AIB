@@ -177,3 +177,14 @@ test('the three not-live words: saved chat Ready, gave up Couldn\'t reopen (reas
   assert.equal(s({ recovered: true, reconnecting: true }).label, 'Reconnecting…');
   for (const f of [{}, { recovered: true }, { reconnectError: 'x' }]) assert.ok(!/Not running/.test(s(f).label), s(f).label);
 });
+
+test('subagents running: the same words while the agent is mid-turn and after the reply ends', () => {
+  const busy = s({ connected: true, busy: true, busySince: 10 * 3600 * 1000 - 5 * 60000, helpers: 4 });
+  const ended = s({ connected: true, helpers: 4 });
+  assert.equal(busy.label, 'Working · 4 subagents');
+  assert.equal(ended.label, busy.label);
+  assert.equal(busy.tone, ended.tone);
+  assert.notEqual(busy.title, ended.title, 'only the tooltip tells whether you can send');
+  assert.equal(s({ connected: true, busy: true, helpers: 1 }).label, 'Working · 1 subagent');
+  assert.equal(s({ connected: true, busy: true, busySince: 10 * 3600 * 1000 - 5 * 60000 }).label, 'Working · 5m', 'no subagents: the time');
+});
