@@ -443,7 +443,7 @@ test('review 3: the first list call sends the names this page started with; a PC
   names = { 'claude:a': 'Phone A again', 'claude:b': 'B' }; // the phone renames a again; this page has not seen it
   page.context.window.AgentChatView.renameChat({ provider: 'claude', id: 'b', sessionId: 'b', key: 'k-b' }, 'PC B');
   for (let i = 0; i < 5; i++) await page.tick();
-  assert.deepEqual(renames, [{ key: 'claude:b', name: 'PC B' }], 'one chat’s name, never the whole copy');
+  assert.deepEqual(renames, [{ key: 'claude:b', name: 'PC B', cwd: '' }], 'one chat’s name, never the whole copy (cwd: where the agent finds it)');
   assert.deepEqual(names, { 'claude:a': 'Phone A again', 'claude:b': 'PC B' }, 'the phone’s rename stayed');
   assert.deepEqual(JSON.parse(page.context.localStorage.getItem('studio-conversation-names')), names, 'this page took them');
 });

@@ -26,7 +26,7 @@
 import { APP_ROOT, APP_VERSION } from '../core/app.ts';
 import { HostUnavailable } from '../host/host_client.ts';
 import { serve, type Server as HttpServer } from '../platform/http_serve.ts';
-import { type WebContext, withThemePref } from '../web/server.ts';
+import { agentTitle, type WebContext, withThemePref } from '../web/server.ts';
 import { ACTION_OPS, attachedWords, checkAction, Refusal } from './actions.ts';
 import { MAX_PROMPT_BODY_BYTES, MAX_TOTAL_ATTACHMENT_BYTES } from '../acp/attachments.ts';
 import type { Audit } from './audit.ts';
@@ -1233,6 +1233,7 @@ export class RemoteServer {
         const name = typeof body.name === 'string' ? body.name : '';
         if (name.length > 200) throw new Refusal(400, 'too_long', 'A chat name can be at most 200 characters.');
         await ctx.viewPrefs.setChatName(key, name);
+        agentTitle(ctx.host, key, name, String(found?.cwd ?? '')); // the agent's own list too (host/agent_titles.ts)
         this.host.saved.invalidate();
         log(liveId || key, name.trim() ? 'renamed' : 'name cleared');
         return this.json(200, { ok: true });

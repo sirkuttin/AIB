@@ -262,6 +262,22 @@ type Handler = (
   principal: Principal,
 ) => Promise<Response> | Response;
 
+/**
+ * A chat renamed in AIB ({provider}:{sessionId}): its agent's own session gets the same name (host/agent_titles.ts), in the background.
+ * A cleared name changes nothing there. Never throws.
+ */
+export function agentTitle(host: Pick<LiveBackend, 'liveCall'>, key: string, name: string, cwd = ''): void {
+  const at = key.indexOf(':');
+  const title = name.trim();
+  if (at <= 0 || !title) return;
+  const provider = key.slice(0, at);
+  const sessionId = key.slice(at + 1);
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$/.test(sessionId)) return; // a draft's key, not a session id
+  Promise.resolve()
+    .then(() => host.liveCall('agent-title', { provider, sessionId, title, cwd: cwd.slice(0, 1024) }))
+    .catch(() => {/* the agent host is away: AIB's own name is saved */});
+}
+
 export class WebServer {
   gate!: Gate;
   #server: HttpServer | null = null;
@@ -328,6 +344,8 @@ export class WebServer {
         if (error instanceof ViewPrefsBusy) return this.json(503, { error: error.message, code: 'busy' });
         throw error;
       }
+      // the agent's own list gets the same name (host/agent_titles.ts; Claude Code and Codex, when the chat is idle): not waited for
+      agentTitle(c.host, key, name, body && typeof body.cwd === 'string' ? body.cwd : '');
       return this.json(200, { ok: true, chatNamesRevision: c.viewPrefs.chatNamesRevision(), chatNames: c.viewPrefs.chatNames() });
     });
     // The desktop app shows a notification itself: the Settings test (the AttentionWatcher shows the others from the server, never
