@@ -17,7 +17,7 @@ import type { WebContext } from '../web/server.ts';
 import { afterConnect, filterSessions } from '../web/project_routes.ts';
 import { handleGet as monitorGet } from '../transcripts/monitor.ts';
 import { CLIP_NOTE } from '../transcripts/pycompat.ts';
-import { agentName, withArtifactOrigin } from './payloads.ts';
+import { agentName, plainTitle, withArtifactOrigin } from './payloads.ts';
 
 type Json = Record<string, unknown>;
 const obj = (v: unknown): Json => (v && typeof v === 'object' && !Array.isArray(v) ? v as Json : {});
@@ -121,7 +121,7 @@ export class SavedChats {
         sessionId,
         cwd,
         transcript,
-        title: str(names[key], 170) || str(mark.title, 170) || str(title, 170) || `${agent}${folder ? ' in ' + folder : ''}`,
+        title: str(names[key], 170) || plainTitle(mark.title) || plainTitle(title) || `${agent}${folder ? ' in ' + folder : ''}`,
         agent,
         folder,
         lastActive: isoOf(when),

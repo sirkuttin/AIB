@@ -33,7 +33,7 @@ import type { Audit } from './audit.ts';
 import { cleanName, type Device, type DeviceStore, type PhoneScope } from './devices.ts';
 import { LOGIN_HEADER, REMOTE_REASONS, RemoteGate } from './gate.ts';
 import { type Pairing, PairingError } from './pairing.ts';
-import { chatPayload, DEFAULT_TAIL, homePayload, imageOf, olderPage, revisionOf, type TitleCache, wholeEvent } from './payloads.ts';
+import { chatPayload, DEFAULT_TAIL, homePayload, imageOf, olderPage, plainTitle, revisionOf, type TitleCache, wholeEvent } from './payloads.ts';
 import { projectsFor } from './projects.ts';
 import { CONTINUE_FIELDS, continueSaved, publicSaved, SAVED_TAIL, type SavedChats, savedHistory } from './saved.ts';
 import { type ArtifactTickets, remoteArtifactOrigin } from './artifact_server.ts';
@@ -1096,7 +1096,7 @@ export class RemoteServer {
       if (!c || c.closed || `${c.provider}:${c.sessionId}` !== key) continue;
       if (mark.archivedAt || mark.deletedAt) return null;
       const info = ((c.breadth as Record<string, unknown> | undefined)?.sessionInfo ?? {}) as Record<string, unknown>;
-      const title = ctx.viewPrefs.chatNames()[key] || String(mark.title || '') || String(info.title || '');
+      const title = ctx.viewPrefs.chatNames()[key] || plainTitle(mark.title) || plainTitle(info.title);
       return { live: c, cwd: String(c.cwd || ''), title, projectRoot: String(c.projectRoot || '') };
     }
     const saved = await this.host.saved.find(ctx, key);
