@@ -85,7 +85,7 @@ test('the grey line under Send now, per agent, in the brief words', () => {
   const now = (agentId, agent) => SM.view({ ...base, agentId, agent }).items[0].hint;
   assert.equal(
     now('claude', 'Claude Code'),
-    'Claude Code answers right away. A command or helper it is running keeps going in the background.',
+    'Claude Code answers right away. A command or subagent it is running keeps going in the background.',
   );
   assert.equal(
     now('codex', 'Codex'),

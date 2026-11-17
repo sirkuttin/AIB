@@ -1065,7 +1065,7 @@
       'The agent’s own saved transcript is not touched.';
     if (running && obj(can).send)
       t +=
-        ' It is running: AIB ends its session first, which drops its queued messages and stops its helpers and terminals. ' +
+        ' It is running: AIB ends its session first, which drops its queued messages and stops its subagents and terminals. ' +
         'If it has its own copy of the project with no changes, that copy is removed.';
     return t;
   }

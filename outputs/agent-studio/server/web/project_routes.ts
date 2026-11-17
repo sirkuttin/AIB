@@ -37,6 +37,7 @@ import type { AddedProjects } from '../desktop/added_projects.ts';
 import { wslLocOf } from '../platform/location.ts';
 import { distroName, hostWhenReady, wslTestHomeEnv } from '../wsl/access.ts';
 import { WslHelperError } from '../wsl/contract.ts';
+import { realRoot } from '../worktrees/files.ts';
 import { ensureDefault } from '../worktrees/local_only.ts';
 import { defaultsAllowed } from '../worktrees/local_strays.ts';
 import { cleanupApply, cleanupScan, liveOf, titlesOf } from './cleanup_routes.ts';
@@ -57,6 +58,8 @@ export interface ProjectRemoveContext {
   guard?: (projects: string[]) => Guard;
   /** The running chats (their copies are never removed); absent in older tests. */
   host?: { liveList(): Promise<Record<string, unknown>> | Record<string, unknown> };
+  /** The file editor's open texts: a removed project's stored unsaved text goes with it (absent in older tests). */
+  liveFiles?: { forgetProject(root: string): void } | null;
 }
 
 function otherProjects(ctx: ProjectRemoveContext, body: Json, path: string): string[] {
@@ -92,6 +95,10 @@ export async function projectRemove(ctx: ProjectRemoveContext, body: unknown): P
   } catch (error) {
     console.error('Cleaning up what AIB made in the project failed', error);
   }
+  let realPath = '';
+  try { // the editor's store names the resolved folder; resolve it before a disk delete takes the folder away
+    realPath = realRoot(path);
+  } catch { /* not there, or not a local folder: the typed path is all there is */ }
   let disk: string = 'kept';
   if (body.disk === true) {
     try {
@@ -102,6 +109,11 @@ export async function projectRemove(ctx: ProjectRemoveContext, body: unknown): P
     }
   }
   await ctx.removedProjects.remove(path);
+  try { // only AIB's own stored editor text; never the project folder or its private/ folder
+    for (const root of new Set([path, realPath].filter(Boolean))) ctx.liveFiles?.forgetProject(root);
+  } catch (error) {
+    console.error("Dropping the removed project's stored editor text failed", error);
+  }
   if (ctx.addedProjects) await ctx.addedProjects.remove(path);
   try { // the project's helpers whose copies are gone leave swarm-helpers.json (a kept copy keeps its helper's record)
     await new SwarmRegistry(ctx.stateDir).dropProject(path, live);

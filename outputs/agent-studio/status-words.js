@@ -15,7 +15,7 @@
   //   opening          the agent is still starting                                           -> Opening… (transitional)
   //   needs, needsKind how many requests wait (approval / question / sign-in) and the first kind
   //   busy, busySince  the agent is working; busySince is when it started (ms)
-  //   helpers          the reply ended but this many of its helpers still run (attention.helpers)  -> Working · 2 helpers
+  //   helpers          the reply ended but this many of its subagents still run (attention.helpers) -> Working · 2 subagents
   //   background       the reply ended but a background command it started still runs (attention.shells) -> Working
   //   yourTurn         true = the agent finished its turn and the user has not acted since.
   //                    CONTRACT with the "your turn" mark owner (workspace code): expose a boolean `yourTurn` on the

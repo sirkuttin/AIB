@@ -37,7 +37,7 @@ test('archive and delete of a running chat: ending its session needs Send; the c
   const t = P.deleteText('Fix it', true, 'DESK-PC', { send: true });
   assert.match(t, /Delete “Fix it”\? It leaves AIB’s chat lists on DESK-PC and goes to Recently deleted there, where you can restore it\./);
   assert.match(t, /saved transcript is not touched/);
-  assert.match(t, /ends its session first, which drops its queued messages and stops its helpers and terminals/);
+  assert.match(t, /ends its session first, which drops its queued messages and stops its subagents and terminals/);
   assert.match(t, /own copy of the project with no changes, that copy is removed/);
   assert.doesNotMatch(P.deleteText('Old', false, 'DESK-PC', { send: true }), /ends its session/);
 });

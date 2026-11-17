@@ -506,7 +506,7 @@ const AFTER = 'Send after this turn';
 const INTERRUPT = 'Interrupt and send';
 
 const HINTS: Record<Who, RegExp> = {
-  claude: /Claude Code answers right away\. A command or helper it is running keeps going in the background\./,
+  claude: /Claude Code answers right away\. A command or subagent it is running keeps going in the background\./,
   codex: /Codex answers right away\. A command it is running keeps going in the background, and Codex isn't told when it ends\./,
   omp: /OMP answers right away\. A command it is running moves to the background, and OMP stops it after 2 minutes in total\./,
 };

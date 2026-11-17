@@ -3186,7 +3186,7 @@ export class Connection {
     if (!background) throw new NotStoppable('That tool is not running in the background.');
     this.toolBackground();
     if (background.helper) {
-      throw new NotStoppable("AIB can't stop a helper by itself: it runs inside the agent's own process. Ask the agent to stop it.");
+      throw new NotStoppable("AIB can't stop a subagent by itself: it runs inside the agent's own process. Ask the agent to stop it.");
     }
     if (background.state !== 'running') throw new NotStoppable('That command is no longer running.');
     if (!background.stoppable || !background.procs?.length) {
