@@ -733,7 +733,7 @@ export class RemoteServer {
     if (path === '/api/remote/pc/settings') {
       // never `recheck=1` from a computer: it re-detects the agents, which runs programs on the PC (security review SF9); the
       // computer's Settings shows Appearance and This computer only, the PC's own detection is enough
-      return this.json(200, remoteSettingsView(await settingsView(studioOf(ctx), false)));
+      return this.json(200, remoteSettingsView(await settingsView(studioOf(ctx), false, { offThread: true })));
     }
     if (path === '/api/remote/pc/wsl-status') return this.json(200, remoteWslStatus(await wslStatus(ctx)));
     if (path === '/api/remote/pc/presence') {

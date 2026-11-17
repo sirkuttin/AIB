@@ -298,8 +298,13 @@ function quietError(error: unknown): boolean {
     Object.values(Deno.errors).some((type) => error instanceof type);
 }
 
-/** GET /api/live/settings: the stored settings, the agent list with live status, and the revision other windows compare. */
-export async function settingsView(self: StudioContext, recheck = false): Promise<Record<string, unknown>> {
+/** GET /api/live/settings: the stored settings, the agent list with live status, and the revision other windows compare.
+ *  `offThread`: build the agent list in the agent-list Worker (agentListOffThread), so the server keeps answering meanwhile. */
+export async function settingsView(
+  self: StudioContext,
+  recheck = false,
+  opts: { offThread?: boolean } = {},
+): Promise<Record<string, unknown>> {
   let connections: unknown[] = [];
   try {
     const listed = (await self.liveList()).connections;
@@ -310,9 +315,120 @@ export async function settingsView(self: StudioContext, recheck = false): Promis
   }
   return {
     ...self.settings.public(),
-    agents: await describeAgents(self.options, self.settings, connections, recheck),
+    agents: opts.offThread
+      ? await agentListOffThread(self.options, self.settings, connections, recheck)
+      : await describeAgents(self.options, self.settings, connections, recheck),
     ...(await notices(self)),
   };
+}
+
+// ---- the agent list off the event loop -----------------------------------------------------------------------------------
+// describeAgents looks every agent's program up on PATH (every folder, every PATHEXT) and reads prerequisites' versions with
+// synchronous file checks: 0.4-2 s with a long PATH, and the whole server (every page, the phone) waited meanwhile. The Settings
+// page, the New chat menu and the phone ask for it; here it is built in a Worker (agents_worker.ts) instead. Requests with the
+// same inputs while one is built share it. The Worker stops after AGENT_WORKER_IDLE_MS without work (a live Worker keeps the
+// process running); a Worker that fails or does not answer in AGENT_WORKER_TIMEOUT_MS falls back to the build in this thread.
+export const AGENT_WORKER_IDLE_MS = 20_000;
+export const AGENT_WORKER_TIMEOUT_MS = 30_000;
+let agentWorker: Worker | null = null;
+let agentWorkerIdle: ReturnType<typeof setTimeout> | undefined;
+let agentWorkerNext = 1;
+const agentWorkerPending = new Map<number, { resolve: (rows: Record<string, unknown>[]) => void; reject: (e: Error) => void }>();
+const agentListRuns = new Map<string, Promise<Record<string, unknown>[]>>();
+
+function stopAgentWorker(): void {
+  agentWorker?.terminate();
+  agentWorker = null;
+  for (const p of agentWorkerPending.values()) p.reject(new Error('agent list worker stopped'));
+  agentWorkerPending.clear();
+}
+
+function agentWorkerNow(): Worker {
+  if (agentWorkerIdle !== undefined) clearTimeout(agentWorkerIdle);
+  agentWorkerIdle = undefined;
+  if (agentWorker) return agentWorker;
+  const w = new Worker(new URL('./agents_worker.ts', import.meta.url).href, { type: 'module' });
+  w.onmessage = (e: MessageEvent) => {
+    const m = e.data as { id: number; ok: boolean; rows?: Record<string, unknown>[]; error?: string };
+    const p = agentWorkerPending.get(m.id);
+    if (!p) return;
+    agentWorkerPending.delete(m.id);
+    if (m.ok) p.resolve(m.rows ?? []);
+    else p.reject(new Error(m.error || 'agent list worker failed'));
+    idleAgentWorker();
+  };
+  w.onerror = (e) => {
+    e.preventDefault();
+    if (agentWorker === w) stopAgentWorker();
+  };
+  return (agentWorker = w);
+}
+
+function idleAgentWorker(): void {
+  if (agentWorkerPending.size || agentWorkerIdle !== undefined) return;
+  const timer = setTimeout(() => {
+    agentWorkerIdle = undefined;
+    if (!agentWorkerPending.size) stopAgentWorker();
+  }, AGENT_WORKER_IDLE_MS);
+  Deno.unrefTimer(timer);
+  agentWorkerIdle = timer;
+}
+
+/** Only what describeAgents reads of a connection (its provider, closed, signing in, ready): plain data for the Worker. */
+function connectionFacts(connections: unknown[]): Record<string, unknown>[] {
+  return (connections ?? []).filter(isDict).map((c) => ({
+    provider: String(c.provider),
+    closed: !!c.closed,
+    auth: c.auth ? true : null,
+    ready: !!c.ready,
+  }));
+}
+
+/** describeAgents, built in the agent-list Worker (the server's event loop keeps answering meanwhile). Same rows. */
+export function agentListOffThread(
+  options: AgentOptions,
+  settings: Pick<SettingsLike, 'launcher' | 'snapshot'>,
+  connections: unknown[] = [],
+  recheck = false,
+): Promise<Record<string, unknown>[]> {
+  const request = {
+    options: {
+      stateDir: options.stateDir ?? null,
+      nodeCommand: options.nodeCommand ?? '',
+      ompCommand: options.ompCommand ?? '',
+      claudeLauncher: options.claudeLauncher ?? '',
+      codexLauncher: options.codexLauncher ?? '',
+    },
+    launchers: { claude: settings.launcher('claude'), codex: settings.launcher('codex') },
+    snapshot: { agents: settings.snapshot().agents },
+    connections: connectionFacts(connections),
+    recheck,
+  };
+  const key = JSON.stringify(request);
+  const running = agentListRuns.get(key);
+  if (running) return running;
+  const inThread = () => describeAgents(options, settings, connections, recheck);
+  const run = new Promise<Record<string, unknown>[]>((resolve, reject) => {
+    let w: Worker;
+    try {
+      w = agentWorkerNow();
+    } catch (error) {
+      reject(error);
+      return;
+    }
+    const id = agentWorkerNext++;
+    const timer = setTimeout(() => {
+      if (agentWorkerPending.delete(id)) reject(new Error('agent list worker: no answer'));
+      idleAgentWorker();
+    }, AGENT_WORKER_TIMEOUT_MS);
+    agentWorkerPending.set(id, {
+      resolve: (rows) => (clearTimeout(timer), resolve(rows)),
+      reject: (e) => (clearTimeout(timer), reject(e)),
+    });
+    w.postMessage({ ...request, id });
+  }).catch(() => inThread()).finally(() => agentListRuns.delete(key));
+  agentListRuns.set(key, run);
+  return run;
 }
 
 let packageCache: { value: string | null } | null = null; // packageContext() of this process (it cannot change while running)
