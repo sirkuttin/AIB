@@ -944,6 +944,58 @@ export function subagentEnd(entry: Json | undefined): string | null {
   return null;
 }
 
+/** The most of a session/load replay a ReplayWindow holds, in JSON bytes (besides MAX_EVENTS updates). */
+export const REPLAY_WINDOW_BYTES = 32 * 1024 * 1024;
+
+/**
+ * A session/load replay held while it arrives (a reopened chat, or one taken back after a hand-off: only the outside turns at its
+ * END are shown, outsideTurns): its NEWEST updates, at most `max` of them and `maxBytes` of JSON, the oldest dropped first, so
+ * memory stays bounded whatever the transcript's length. Until 0.12.1 the OLDEST MAX_EVENTS were kept: the end of a long transcript
+ * was lost, a generic last message ("[Request interrupted by user]") matched an old turn, and every later turn of the first 6000
+ * updates came back as "from outside AIB" (24 old turns in the owner's WSL chat, 2026-11-17).
+ */
+export class ReplayWindow {
+  #items: (Json | null)[] = [];
+  #sizes: number[] = [];
+  #head = 0;
+  #bytes = 0;
+  /** Updates received, and dropped (the oldest, over the bounds). */
+  received = 0;
+  dropped = 0;
+  constructor(readonly max = MAX_EVENTS, readonly maxBytes = REPLAY_WINDOW_BYTES) {}
+
+  push(params: Json): void {
+    let size = 0;
+    try {
+      size = JSON.stringify(params)?.length ?? 0;
+    } catch { /* not JSON: counted as nothing */ }
+    this.#items.push(params);
+    this.#sizes.push(size);
+    this.#bytes += size;
+    this.received += 1;
+    while (this.length > 1 && (this.length > this.max || this.#bytes > this.maxBytes)) {
+      this.#bytes -= this.#sizes[this.#head];
+      this.#items[this.#head] = null;
+      this.#head += 1;
+      this.dropped += 1;
+    }
+    if (this.#head > 4096 && this.#head * 2 > this.#items.length) { // drop the dead front now and then (no O(n) shift per update)
+      this.#items = this.#items.slice(this.#head);
+      this.#sizes = this.#sizes.slice(this.#head);
+      this.#head = 0;
+    }
+  }
+
+  get length(): number {
+    return this.#items.length - this.#head;
+  }
+
+  /** The updates held, oldest first. */
+  get updates(): Json[] {
+    return this.#items.slice(this.#head) as Json[];
+  }
+}
+
 /**
  * Open elsewhere: of the history a session/load sends back (session/update params, oldest first), the turns that came after the
  * last user message this chat already showed (`lastUserText`), so only what was written in another app is shown again. A turn
@@ -1778,7 +1830,7 @@ export class Connection {
     // notes in the record (#showOutsideTurns).
     const setupOfContinued = method === 'session/load' && this.#continued && !this.ready;
     const reload = (method === 'session/load' && this.ready && !!this.sessionId) || setupOfContinued;
-    if (reload) this.#reload = { updates: [], discard: true };
+    if (reload) this.#reload = { window: new ReplayWindow(), discard: true };
     void entry.done.wait().then(() => {
       if (this.pending.get(id) === entry) this.pending.delete(id);
       if (reload) {
@@ -2583,7 +2635,8 @@ export class Connection {
    * After a reopened chat's setup session/load: of what the agent replayed, only the turns after the last one the store has (written
    * in another app meanwhile) are shown, as `event` notes in the record (a rebuild drops the replay and shows these the same way).
    */
-  #showOutsideTurns(updates: Json[]): void {
+  #showOutsideTurns(replay: ReplayWindow): void {
+    const updates = replay.updates;
     const outside = this.#lastUserText ? outsideTurns(updates, this.#lastUserText) : { updates: [], turns: 0 };
     for (const params of outside.updates) {
       this.#noteUserText(params);
@@ -2594,10 +2647,11 @@ export class Connection {
       this.recordedEvent('studio_note', { message: `${n} turn${n === 1 ? '' : 's'} from outside AIB above.`, sessionId: this.sessionId });
     }
     log.info(
-      'chat %s: went on in its history store from seq %s (%s outside turn(s) of %s replayed updates)',
+      'chat %s: went on in its history store from seq %s (%s outside turn(s) of %s replayed updates, the newest %s kept)',
       this.id,
       this.continuedFrom,
       outside.turns,
+      replay.received,
       updates.length,
     );
   }
@@ -3915,7 +3969,7 @@ export class Connection {
       }
     } else if (method === 'session/update') {
       if (this.#reload) { // the history a session/load after a hand-off sends: #reattach shows only the outside turns
-        if (!this.#reload.discard && this.#reload.updates.length < MAX_EVENTS) this.#reload.updates.push(params);
+        if (!this.#reload.discard) this.#reload.window.push(params); // the newest updates (bounded): the outside turns are at the end
         return;
       }
       this.#noteUserText(params);
@@ -4321,7 +4375,7 @@ export class Connection {
     this.#checkSetupAbort();
     const mcpServers = this.#applyInitialize();
     let result: unknown;
-    let continuedUpdates: Json[] | null = null; // a reopened chat's setup replay (only its outside turns are shown)
+    let continuedUpdates: ReplayWindow | null = null; // a reopened chat's setup replay (only its outside turns are shown)
     if (resume) {
       const resumeCaps = sessionCapabilities(this.initial);
       if (!resumeCaps.loadSession && !resumeCaps.resume) {
@@ -4341,7 +4395,7 @@ export class Connection {
           this.#merger = new LineMerger(kept);
         }
       }
-      if (continued) this.#reload = { updates: [], discard: false };
+      if (continued) this.#reload = { window: new ReplayWindow(), discard: false };
       try {
         result = await this.#setupSessionCall(
           resumeCaps.loadSession ? 'session/load' : 'session/resume',
@@ -4356,7 +4410,7 @@ export class Connection {
         );
       } finally {
         if (continued) {
-          continuedUpdates = this.#reload?.updates ?? [];
+          continuedUpdates = this.#reload?.window ?? new ReplayWindow();
           this.#reload = null;
         }
         this.#continued = false; // (an agent that only resumes replays nothing: nothing to drop)
@@ -4508,7 +4562,7 @@ export class Connection {
   readonly overriddenHolders = new Set<number>();
   #sessionMcp: McpServer[] = [];
   /** Set while a session/load after a hand-off runs: the history the agent sends back is held here, not shown again. */
-  #reload: { updates: Json[]; discard: boolean } | null = null;
+  #reload: { window: ReplayWindow; discard: boolean } | null = null;
   #releasing = false;
   #reclaiming: Promise<{ state: 'attached' | 'back' | 'held'; app?: string; picked?: number }> | null = null;
   /** The text of the last user message this chat showed (sent here, or replayed by the agent): where the outside turns begin. */
@@ -4602,9 +4656,9 @@ export class Connection {
 
   /** session/load again after a hand-off: the turns written elsewhere are shown, the rest of the history the agent sends is not. */
   async #reattach(app: string): Promise<number> {
-    this.#reload = { updates: [], discard: false };
+    this.#reload = { window: new ReplayWindow(), discard: false };
     let result: unknown;
-    let updates: Json[] = [];
+    let replay = new ReplayWindow();
     try {
       result = await this.request('session/load', {
         sessionId: this.sessionId,
@@ -4615,9 +4669,10 @@ export class Connection {
         ...this.claudeMeta(),
       }, 180);
     } finally {
-      updates = this.#reload?.updates ?? [];
+      replay = this.#reload?.window ?? replay;
       this.#reload = null;
     }
+    const updates = replay.updates;
     if (isDict(result)) {
       withModelsOption(result);
       Object.assign(this.settings, result);
@@ -4635,7 +4690,14 @@ export class Connection {
       sessionId: this.sessionId,
       elsewhere: 'back',
     });
-    log.info('chat %s: took %s back (%s outside turn(s) of %s replayed updates)', this.id, this.sessionId, n, updates.length);
+    log.info(
+      'chat %s: took %s back (%s outside turn(s) of %s replayed updates, the newest %s kept)',
+      this.id,
+      this.sessionId,
+      n,
+      replay.received,
+      updates.length,
+    );
     this.onElsewhere?.(this, 'back');
     void this.#queuePump(); // messages queued while it was away go now, one per turn
     return n;

@@ -31,6 +31,7 @@ parser.add_argument('--reject-config', action='store_true', help='session/set_co
 parser.add_argument('--require-config-type', action='store_true', help="session/set_config_option fails with -32602 unless params carry type 'id' or 'boolean' (the ACP v2 shape the real adapters demand); also records the last params in the reply")
 parser.add_argument('--subagent', action='store_true', help='Announce a cancellable child session when the prompt is "delegate"')
 parser.add_argument('--replay-history', action='store_true', help='session/load re-sends two history messages (one user, one agent) before it answers, like real agents do')
+parser.add_argument('--new-session', help='session/new answers this session id (not fake-session), and messages carry it: several chats of one test, each its own conversation')
 parser.add_argument('--replay-file', help='session/load re-sends the conversation in this JSON file ([{"role": "user"|"agent", "text": ...}], a transcript as the agent keeps it) before it answers')
 parser.add_argument('--demo', action='store_true', help='Demo triggers: stream, html, plan, help (see work/demo-studio/README.md); also remembers the session folder')
 parser.add_argument('--models', action='store_true', help="A long model list, three modes with descriptions and an effort setting (implies --breadth's config options); a prompt 'settings?' replies with the current model, mode and effort; session/new calls are counted in the reply too")
@@ -85,7 +86,7 @@ def SID():
     """The session id agent messages carry: always 'fake-session' (what the tests expect), except with --demo or with
     AIB_FAKE_OWN_SESSION=1 in the environment, where it is the loaded chat's own id (what a real agent does: the page and the
     phone treat events of any other session id as a helper's)."""
-    return session_name if args.demo or os.environ.get('AIB_FAKE_OWN_SESSION') == '1' else 'fake-session'
+    return session_name if args.demo or args.new_session or os.environ.get('AIB_FAKE_OWN_SESSION') == '1' else 'fake-session'
 
 
 config_options = [
@@ -1033,7 +1034,7 @@ for line in sys.stdin:
         elif args.setup_fail:
             emit({'id': key, 'error': {'code': -32000, 'message': 'Fixture setup failure'}})
         else:
-            session_name = params.get('sessionId', 'fake-session')
+            session_name = params.get('sessionId', args.new_session or 'fake-session')
             session_cwd = params.get('cwd') or session_cwd
             last_mcp = params.get('mcpServers')
             if _mcp_pids and method == 'session/new':
