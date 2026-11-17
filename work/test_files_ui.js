@@ -1320,7 +1320,7 @@ test('path link: a page file that is no artifact opens in the file view on Previ
   assert.equal(t.shell.body.querySelector('#fileView').querySelector('iframe.sf-fv-page'), null);
 });
 
-test('path link: a page file named with a line opens on Source at that line; a file opened from the tree still opens on Source', async () => {
+test('path link: a page file named with a line opens on Source at that line; an HTML file opened from the tree opens on Preview (owner rule: HTML files default to Preview)', async () => {
   const t = setup({ width: 1000, ownList: [], viewUrl: true });
   const a = await linkTo(t, 'See outputs/bar-charts.html:4');
   t.shell.document.dispatch('click', { target: a, ctrlKey: false });
@@ -1334,7 +1334,7 @@ test('path link: a page file named with a line opens on Source at that line; a f
   await settle();
   rowOf(t2, 'outputs/bar-charts.html').click();
   await settle();
-  assert.equal(segPressed(t2), 'Source');
+  assert.equal(segPressed(t2), 'Preview');
 });
 
 test('a WSL project: a picture previews from its link, a binary file says it cannot be shown as text (no editor button for a distro path)', async () => {

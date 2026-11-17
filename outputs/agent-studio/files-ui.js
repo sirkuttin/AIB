@@ -1424,6 +1424,8 @@
     const idx = docIndexOf(scope),
       d = idx ? idx.byDir.get(path) : null;
     if (d) return openDocRow(scope, d, !!(o && o.keep));
+    // an HTML page opens on its Preview, as from a path link (Source is one click away)
+    if (/\.html?$/i.test(path)) pageWanted.add(F().tabId(scope, path));
     if (o && o.beside) openFile(scope, path, { keep: true, beside: true });
     else openFile(scope, path, { keep: !!(o && o.keep) });
   }
