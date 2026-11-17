@@ -73,6 +73,13 @@ async function say(studio: Studio, c: Connection, text: string): Promise<void> {
   await until(() => !c.busy && c.events.filter((e) => e.kind === 'turn_end').length > ends, `the end of ${text}`, 10);
 }
 
+/** Hide a chat's store (as if an older build had not found or had deleted it); the function puts it back. */
+function hide(lab: Lab, id: string): () => void {
+  const path = lab.state + SEP + 'history' + SEP + `${id}.sqlite`;
+  Deno.renameSync(path, path + '.hidden');
+  return () => Deno.renameSync(path + '.hidden', path);
+}
+
 async function run(args: string[]): Promise<{ code: number; out: string }> {
   const out = await new Deno.Command(Deno.execPath(), { args: ['run', '-A', '--config', CONFIG, SCRIPT, ...args], stdout: 'piped', stderr: 'piped' })
     .output();
@@ -122,8 +129,12 @@ Deno.test({
       { role: 'user', text: 'say:two' },
       { role: 'agent', text: 'two' },
     ]));
+    // (an older build: the earlier store was not found, so it came back under a new id; hidden here, put back after)
+    const hidden = hide(lab, old.id);
     const b = lab.studio();
     const now = await b.connect('omp', lab.work, session);
+    hidden();
+    assert(now.id !== old.id, 'a new chat id (the bug)');
     await say(b, now, 'three');
     await until(() => now.historyCkpt !== null && !now.busy && now.historyCkpt.sequence >= now.sequence - 1, 'its checkpoint', 10);
     assertEquals(story(now.events).filter((s) => s === 'turn finished').length, 1, 'only the new turn ends (the bug)');
@@ -166,5 +177,102 @@ Deno.test({
     assert(r.events.at(-1)!.seq as number > seqs.at(-1)!, 'the next turn follows on');
     const kept = Deno.readTextFileSync(lab.state + SEP + 'conversation-lines' + SEP + `omp_${session}.jsonl`).trim().split('\n');
     assertEquals(kept.length, 5, 'the three earlier turn ends and the note, then the new turn end');
+  },
+});
+
+function exists(path: string): boolean {
+  try {
+    Deno.statSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+Deno.test({
+  name: 'repair script: the 2026-11-17 chain (a gone store between the sources and the target, AIB quit idle): merged, reopened as the target',
+  ...T,
+  async fn() {
+    await keeperBinary();
+    await using lab = new Lab();
+    const turns: string[] = [];
+    const transcript = () =>
+      Deno.writeTextFileSync(lab.transcript, JSON.stringify(turns.flatMap((t) => [{ role: 'user', text: `say:${t}` }, { role: 'agent', text: t }])));
+    // A: the first chat, with an AIB note; AIB quits (idle)
+    const a = lab.studio();
+    const first = await a.connect('omp', lab.work);
+    await say(a, first, 'one');
+    first.recordedEvent('studio_note', { message: 'Merged subagent “Docs” into main', kind: 'swarm-merge', sessionId: first.sessionId });
+    turns.push('one');
+    const session = first.sessionId!;
+    await a.close();
+    // B: an older build brought it back under a new id (A's store not found); one turn; quit
+    const backFirst = hide(lab, first.id);
+    transcript();
+    const b = lab.studio();
+    const middle = await b.connect('omp', lab.work, session);
+    assert(middle.id !== first.id);
+    await say(b, middle, 'two');
+    turns.push('two');
+    await b.close();
+    // C: a new id again; one turn; then an idle quit of that older build deleted its store (the bug): its turn is only in the transcript
+    const backMiddle = hide(lab, middle.id);
+    transcript();
+    const c = lab.studio();
+    const gone = await c.connect('omp', lab.work, session);
+    await say(c, gone, 'three');
+    turns.push('three');
+    await c.close();
+    Deno.removeSync(lab.state + SEP + 'history' + SEP + `${gone.id}.sqlite`);
+    // T: the chat in use now (a new id once more): its replay holds C's turn; one turn of its own; AIB quits idle (the fix: kept)
+    transcript();
+    const d = lab.studio();
+    const target = await d.connect('omp', lab.work, session);
+    assert(target.id !== gone.id && target.id !== middle.id && target.id !== first.id);
+    await say(d, target, 'four');
+    turns.push('four');
+    await d.close();
+    backFirst();
+    backMiddle();
+    Deno.removeSync(lab.state + SEP + 'conversation-lines', { recursive: true });
+
+    // the repair refuses, changing nothing, when the target store is missing
+    const chain = `${first.id},${middle.id},${target.id}`;
+    const targetFile = lab.state + SEP + 'history' + SEP + `${target.id}.sqlite`;
+    Deno.renameSync(targetFile, targetFile + '.away');
+    const refused = await run(['--data', lab.state, '--chain', chain, '--session', session, '--provider', 'omp', '--apply']);
+    assertEquals(refused.code, 5, refused.out);
+    assert(refused.out.includes('Refused: the target store') && refused.out.includes('Nothing was changed'), refused.out);
+    assert(!exists(lab.state + SEP + 'repair-backups'), 'nothing was written');
+    Deno.renameSync(targetFile + '.away', targetFile);
+
+    const dry = await run(['--data', lab.state, '--chain', chain, '--session', session, '--provider', 'omp']);
+    assertEquals(dry.code, 0, dry.out);
+    assert(dry.out.includes('1 turn(s) no earlier store has'), dry.out);
+    const applied = await run(['--data', lab.state, '--chain', chain, '--session', session, '--provider', 'omp', '--apply']);
+    assertEquals(applied.code, 0, applied.out);
+
+    // AIB starts: the conversation reopens as the target chat (the newest store of it), with the whole history, once
+    const e = lab.studio();
+    const r = await e.connect('omp', lab.work, session);
+    assertEquals(r.id, target.id, 'the chat in use, same id');
+    const page = await e.liveEvents(r.id, { before: r.sequence + 1, bytes: 50_000_000 }) as Json;
+    const all = page.events as Json[];
+    assertEquals(all[0].seq, 1, 'from the first event');
+    assertEquals(story(all), [
+      'you: say:one',
+      'turn finished',
+      'AIB: Merged subagent “Docs” into main',
+      'you: say:two',
+      'turn finished',
+      'replayed: say:three', // the gone store's turn, from the target's replay...
+      'turn finished', // ...with its turn end, put back there from the conversation's kept lines (5648b75)
+      'you: say:four',
+      'turn finished',
+    ]);
+    const seqs = all.map((x) => x.seq as number);
+    assert(seqs.every((s, i) => i === 0 || s > seqs[i - 1]), 'in order');
+    await say(e, r, 'five');
+    assert(r.events.at(-1)!.seq as number > seqs.at(-1)!, 'the next turn follows on');
   },
 });

@@ -4,7 +4,8 @@
  * agent mid-turn streaming. Killing AIB hard (TerminateProcess) leaves the agent running in the keeper; with no client for 5 s the
  * keeper starts AIB again (its orphan command, rule V1), and the new AIB rebuilds the chat from the keeper's record under the same
  * id: it is still streaming, the question shows once, answering it works, and the keeper's record shows nothing was sent twice.
- * Then killing the keeper ends the agent; the chat says Interrupted, comes back by session/load, and nothing is resent. Temp state
+ * Then killing the keeper ends the agent; the chat says Interrupted, comes back by session/load under the same chat id (it goes on in
+ * its history store), and nothing is resent. Temp state
  * folder, OS-picked ports, only PIDs this test started (and the AIB its keeper started) are killed.
  */
 import { assert, assertEquals } from './_assert.ts';
@@ -196,7 +197,8 @@ ${fixture.read(fixture.state + SEP + 'studio.log').slice(-2500)}`);
       await until(
         async () => {
           const list = await web.listing();
-          return (list.connections as Json[]).some((c) => c.id !== id && c.sessionId === 'fake-session' && c.ready);
+          // the same chat id (owner rule 2026-11-17: a conversation is one chat; it goes on in its history store)
+          return (list.connections as Json[]).some((c) => c.id === id && c.sessionId === 'fake-session' && c.ready);
         },
         'reconnected by session/load',
         40,

@@ -129,8 +129,29 @@ export class HistoryClient {
   close(chat: string): Promise<void> {
     return this.#op({ op: 'close', chat });
   }
+  /** Delete the store for good (the person deleted the chat; tests). Quitting, an agent exit or closing a chat use release(). */
   delete(chat: string): Promise<void> {
     return this.#op({ op: 'delete', chat });
+  }
+  /** The chat stopped: close the store and keep it ('empty': a store with no event was removed). */
+  release(chat: string): Promise<'kept' | 'empty'> {
+    return this.#op({ op: 'release', chat });
+  }
+  /** Copy the store to archive/, then remove it (a store that cannot go on as this chat's). */
+  archive(chat: string, why: string): Promise<string> {
+    return this.#op({ op: 'archive', chat, why });
+  }
+  /** A reopened conversation: the store goes on under the new keeper channel's epoch, from this checkpoint. */
+  continueAt(chat: string, epoch: number, ckpt: Checkpoint): Promise<void> {
+    return this.#op({ op: 'continueAt', chat, epoch, ckpt });
+  }
+  /** The stores of one conversation, newest first. */
+  find(provider: string, session: string): Promise<{ chat: string; last: number; lastTime: number }[]> {
+    return this.#op({ op: 'find', provider, session });
+  }
+  /** The person deleted the conversation: every store of it is removed. Returns their chat ids. */
+  forget(provider: string, session: string): Promise<string[]> {
+    return this.#op({ op: 'forget', provider, session });
   }
 
   /** Close every store and stop the Worker. */

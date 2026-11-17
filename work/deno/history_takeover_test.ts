@@ -9,7 +9,7 @@
  *   - rollback round trip: an older build (AIB_HISTORY_V2=0: chunked snapshots) in between keeps the store's older history
  *   - migration: a chat whose journal has chunked history (built by the old path) gets a store on its first take-over
  *   - a store whose checkpoint is past the end of the journal (a reset WSL distro, faked) is dropped, the chat rebuilt from the journal
- *   - the store is deleted when the chat is closed (its channel removed)
+ *   - the store is kept when the chat is closed (its channel removed); a stale store is archived, never just deleted
  *   - /api/live/events pages and single events served from the store
  */
 import { assert, assertEquals } from './_assert.ts';
@@ -138,10 +138,10 @@ Deno.test({
     assertEquals((await r.storeEvent(1))?.seq, 1);
     await turn(b, r, 2, 'm3');
     await until(() => r.historyCkpt!.record > ckpt.record, 'the next checkpoint', 10);
-    // closing the chat removes its channel and deletes its store
+    // closing the chat removes its channel and KEEPS its store (owner rule 2026-11-17: the history is permanent), with every event
     await r.close();
     await r.historySettled();
-    await until(() => !Deno.statSync(lab.historyDir).isFile && ![...Deno.readDirSync(lab.historyDir)].some((e) => e.name.startsWith(c.id)), 'store deleted', 10);
+    assertEquals(lab.peek(c.id).last, r.sequence, 'the store is kept, with everything');
   },
 });
 
@@ -327,10 +327,12 @@ Deno.test({
     store.close();
     const { r } = await adopted(lab, c.id);
     assertEquals(r.attachedFrom, 0, 'not attached from the stale checkpoint');
-    assertEquals(r.rebuildError, '', 'the chat goes on (its older history is gone with the store)');
+    assertEquals(r.rebuildError, '', 'the chat goes on (its older store is in history/archive)');
     assertEquals(r.sequence, sequence, 'same numbering from the snapshot in the journal');
     assertEquals(before.length > 0, true);
     const seen = lab.peek(c.id);
     assert(!seen.ckpt || seen.ckpt.record < ckpt.record + 100000, 'the stale checkpoint is gone');
+    const archived = [...Deno.readDirSync(lab.historyDir + SEP + 'archive')].map((e) => e.name);
+    assert(archived.some((n) => n.startsWith(c.id) && n.includes('stale-checkpoint')), `the old store was archived (${archived})`);
   },
 });

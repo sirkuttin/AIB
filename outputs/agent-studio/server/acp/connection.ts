@@ -455,6 +455,21 @@ export interface ConnectionOptions {
   wsl?: WslSpawn | null;
   /** The agent host's history Worker (needs `keeper`): this chat's events go into its store; take-over starts at its checkpoint. */
   history?: HistoryClient | null;
+  /**
+   * A reopened conversation whose chat has a history store (owner rule 2026-11-17: a conversation is one chat): the chat keeps its id
+   * and goes on in that store. Its numbering (eventsId), the newest stored seq and the stored tail (shown at once; older pages come
+   * from the store). Needs `history`.
+   */
+  continueStore?: ContinueStore | null;
+}
+
+/** What a reopened chat continues from (Studio reads it from the chat's history store). */
+export interface ContinueStore {
+  eventsId: string;
+  /** The newest event seq in the store: the chat's next event is this + 1. */
+  sequence: number;
+  /** The store's newest events of the chat itself, oldest first. */
+  events: Record<string, unknown>[];
 }
 
 /**
@@ -1343,6 +1358,14 @@ export class Connection {
   attachedFrom = 0;
   /** Tests: stop the next checkpoint right after this step (a crash there). */
   historyStopAfter: CheckpointStep | null = null;
+  /** A reopened chat that goes on in its store: the newest stored seq it continued from (0: a new store, or a take-over). */
+  continuedFrom = 0;
+  /** The removal of this chat's ended keeper channel (a reopen under the same id waits for it before it spawns `chat-<id>` again). */
+  channelRemoved: Promise<void> = Promise.resolve();
+  /** A reopened chat: the store's checkpoint for the new channel (its state before the channel's first record), claimed with it. */
+  #continueCkpt: Checkpoint | null = null;
+  /** A reopened chat until its setup session/load ends: what the agent replays is in the store already (only outside turns are new). */
+  #continued = false;
   traceback = '';
   exitCode: number | null = null;
   #stdin: WritableStreamDefaultWriter<Uint8Array> | null = null;
@@ -1402,6 +1425,7 @@ export class Connection {
     if (this.keeper && options.history) {
       this.#history = options.history;
       this.historyState = 'open';
+      if (options.continueStore && !options.rebuild) this.#continueFrom(options.continueStore);
     }
     if (options.rebuild && this.keeper) this.#adoptChannel(options.rebuild);
     else {
@@ -1557,6 +1581,8 @@ export class Connection {
       // Every event of this chat is rebuilt from this record (Studio's own events go in as `event` notes), so a rebuild numbers
       // them exactly as now and an open page keeps its cursor.
       ev: 1,
+      // a reopened chat that goes on in its store from this seq: a rebuild drops its setup session/load's replay, as live did
+      ...(this.continuedFrom ? { continued: this.continuedFrom } : {}),
       eventsId: this.eventsId,
     };
   }
@@ -1677,8 +1703,9 @@ export class Connection {
       this.exitCode = code;
       this.#exitResolve?.();
       if (!this.#replaying) {
-        void this.channel?.remove(); // the agent is gone: its record is no longer needed
-        this.#historyEnd('delete'); // and its store with it (the chat is a saved chat now, read from the agent's transcript)
+        if (this.channel) this.channelRemoved = this.channel.remove(); // the agent is gone: its record is no longer needed
+        // its store is kept (owner rule 2026-11-17): reopening the conversation goes on in it under this chat id
+        void this.#historyFinish();
       }
       this.#readerEnded('');
     }
@@ -1747,13 +1774,17 @@ export class Connection {
     if (method === '_session/steering') return this.#replaySteer(id, entry, params);
     // open elsewhere: a session/load after a hand-off (the chat was ready): the outside turns it showed are Studio events in the
     // record already, so the history it brought back is dropped again
-    const reload = method === 'session/load' && this.ready && !!this.sessionId;
+    // A reopened chat's setup session/load: the transcript it replays is in the store; the outside turns live showed are `event`
+    // notes in the record (#showOutsideTurns).
+    const setupOfContinued = method === 'session/load' && this.#continued && !this.ready;
+    const reload = (method === 'session/load' && this.ready && !!this.sessionId) || setupOfContinued;
     if (reload) this.#reload = { updates: [], discard: true };
     void entry.done.wait().then(() => {
       if (this.pending.get(id) === entry) this.pending.delete(id);
       if (reload) {
         this.#reload = null;
-        if (!Object.hasOwn(entry.response ?? {}, 'error')) this.elsewhere = null;
+        if (setupOfContinued) this.#continued = false;
+        else if (!Object.hasOwn(entry.response ?? {}, 'error')) this.elsewhere = null;
       }
       if (method === 'session/close' && !Object.hasOwn(entry.response ?? {}, 'error') && get(params, 'sessionId') === this.sessionId) {
         // the old AIB let go of this chat (another app opened it); the line saying so is in the record as its own event
@@ -1852,6 +1883,11 @@ export class Connection {
     }
     if (note && note.t === 'chat') { // a record that has every event: the rebuild numbers them as before
       if (note.ev === 1 && isStr(note.eventsId) && note.eventsId) this.eventsId = note.eventsId;
+      // a reopened chat (its store's checkpoint is the state before this record): its setup session/load is dropped, as live
+      if (isInt(note.continued) && note.continued > 0 && !this.ready) {
+        this.continuedFrom = note.continued;
+        this.#continued = true;
+      }
       return;
     }
     if (note?.t === 'lines' && Array.isArray(note.lines)) { // the conversation's kept lines a session/load merged (live: the same)
@@ -2371,11 +2407,17 @@ export class Connection {
     this.#historyTimer = timer;
   }
 
-  /** A new chat: a store of its own (a leftover file under this id is removed first); claimed once the spawn has an epoch. */
+  /**
+   * A new chat: a store of its own, claimed once the spawn has an epoch. A reopened chat opens the store it goes on in. A leftover
+   * file under a new chat's id (ids are random: in practice never) is not this chat's history: it is archived, never just deleted.
+   */
   async #historyOpenNew(): Promise<void> {
     const h = this.#history!;
     try {
-      await h.delete(this.id);
+      if (!this.#continueCkpt) {
+        const copy = await h.archive(this.id, 'leftover');
+        if (copy) log.warning('history: %s: a leftover store under this new chat id was kept as %s', this.id, copy);
+      }
       this.#historyOpened = await h.open(this.id, { eventsId: this.eventsId, mainSession: this.sessionId });
     } catch (error) {
       this.#historyFailed(error);
@@ -2400,7 +2442,13 @@ export class Connection {
     const channel = this.channel;
     if (this.historyState === 'open' && !this.#replaying && !this.#historyAdopting && channel && channel.epoch > 0) { // a new chat
       try {
-        await h.claim(this.id, channel.epoch);
+        const ckpt = this.#continueCkpt;
+        if (ckpt) { // a reopened chat: its store goes on under the new channel
+          await h.continueAt(this.id, channel.epoch, ckpt);
+          this.historyCkpt = ckpt;
+          this.historyWrittenSeq = ckpt.sequence;
+          this.#continueCkpt = null;
+        } else await h.claim(this.id, channel.epoch);
         this.historyState = 'claimed';
       } catch (error) {
         this.#historyFailed(error);
@@ -2442,8 +2490,11 @@ export class Connection {
     this.#historyEnd('close');
   }
 
-  /** Stop writing: close the store, or delete it (the chat's channel is gone). A fenced writer never deletes the new owner's store. */
-  #historyEnd(how: 'close' | 'delete'): void {
+  /**
+   * Stop writing and close the store. Never deletes it (owner rule 2026-11-17: the chat history is permanent; only deleting the
+   * chat removes it: Studio.forgetHistory). A fenced writer leaves the new owner's store alone.
+   */
+  #historyEnd(_how: 'close' = 'close'): void {
     const h = this.#history;
     if (!h || this.historyState === 'off') return;
     if (this.#historyTimer !== null) {
@@ -2453,16 +2504,108 @@ export class Connection {
     this.#historyQueue = [];
     const was = this.historyState;
     this.historyState = 'dead';
-    if (how === 'delete' && !this.#historyFenced) {
-      this.#historyChain = this.#historyChain.then(() => h.delete(this.id)).catch((error) =>
-        log.warning('history: %s: deleting the store failed: %s', this.id, errorText(error))
-      );
-    } else if (was !== 'dead') this.#historyChain = this.#historyChain.then(() => h.close(this.id)).catch(() => {});
+    if (was !== 'dead') this.#historyChain = this.#historyChain.then(() => h.close(this.id)).catch(() => {});
+  }
+
+  /**
+   * The chat stopped (its agent exited, the chat was closed, AIB quit with it idle): what is queued is written, then the store is
+   * closed and KEPT, so reopening the conversation goes on in it under the same chat id (Studio.connect). A store with no event at
+   * all (a chat that never began) is removed: it holds no history.
+   */
+  #historyFinish(): Promise<void> {
+    if (!this.#historyFinishing) this.#historyFinishing = this.#historyFinishNow();
+    return this.#historyFinishing;
+  }
+
+  #historyFinishing: Promise<void> | null = null;
+
+  /**
+   * This chat's store is no longer this connection's: written to the end, closed, kept (Studio, before a reopened chat with the same
+   * id opens it: one store is never written by two connections). Never throws.
+   */
+  async historyDetach(): Promise<void> {
+    await this.#historyFinish().catch(() => {});
+    await this.historySettled();
+  }
+
+  async #historyFinishNow(): Promise<void> {
+    const h = this.#history;
+    if (!h || this.historyState === 'off' || this.historyState === 'dead') return;
+    await this.#historyAdopt.catch(() => {});
+    await this.#historyOpening.catch(() => {});
+    if (this.historyState === 'open' || this.historyState === 'claimed') await this.#historyFlush().catch(() => false);
+    if (this.historyState !== 'open' && this.historyState !== 'claimed') return; // the flush failed: the store was closed (kept)
+    if (this.#historyTimer !== null) {
+      clearTimeout(this.#historyTimer);
+      this.#historyTimer = null;
+    }
+    this.#historyQueue = [];
+    this.historyState = 'dead';
+    const fenced = this.#historyFenced;
+    this.#historyChain = this.#historyChain.then(async () => {
+      if (fenced) await h.close(this.id);
+      else await h.release(this.id);
+    }).catch((error) =>
+      log.warning('history: %s: closing the store failed: %s', this.id, errorText(error))
+    );
+    await this.#historyChain;
+  }
+
+  /**
+   * A reopened conversation goes on in its chat's store (Studio found it): the same numbering, the next seq after the newest stored
+   * one, the stored tail in RAM, and the checkpoint a later take-over of the new channel starts from (record 0: this state, before
+   * the channel's first record). The setup session/load's replay is dropped (it is in the store); turns made outside AIB meanwhile
+   * are shown (#showOutsideTurns).
+   */
+  #continueFrom(c: ContinueStore): void {
+    if (!isStr(c.eventsId) || !c.eventsId || !isInt(c.sequence) || c.sequence < 1) return;
+    this.eventsId = c.eventsId;
+    this.sequence = c.sequence;
+    this.events = (Array.isArray(c.events) ? c.events : []).filter((e) => isDict(e) && isInt(e.seq) && (e.seq as number) <= c.sequence)
+      .slice(-MAX_EVENTS) as Json[];
+    this.eventImageBytes = this.events.reduce((sum, e) => sum + eventImageSize(e), 0);
+    while (this.eventImageBytes > MAX_EVENT_IMAGE_BYTES && this.events.length > 1) this.eventImageBytes -= eventImageSize(this.events.shift()!);
+    this.#eventsSaved = c.sequence; // every seq up to here is in the store: it keeps its number
+    for (const e of this.events) { // where the outside turns begin: the last user message the chat showed
+      if (e.kind === 'user' && isDict(e.data) && isStr(e.data.text) && pyStrip(e.data.text)) {
+        this.#lastUserText = e.data.text;
+        this.#inUserText = false;
+      } else if (e.kind === 'update') this.#noteUserText(e.data);
+    }
+    this.continuedFrom = c.sequence;
+    this.#continued = true;
+    const state = this.#snapshotState();
+    state.eventsFrom = c.sequence + 1; // the history up to here is in the store
+    this.#continueCkpt = { state, sequence: c.sequence, record: 0, noteSeq: 0 };
+  }
+
+  /**
+   * After a reopened chat's setup session/load: of what the agent replayed, only the turns after the last one the store has (written
+   * in another app meanwhile) are shown, as `event` notes in the record (a rebuild drops the replay and shows these the same way).
+   */
+  #showOutsideTurns(updates: Json[]): void {
+    const outside = this.#lastUserText ? outsideTurns(updates, this.#lastUserText) : { updates: [], turns: 0 };
+    for (const params of outside.updates) {
+      this.#noteUserText(params);
+      this.recordedEvent('update', params);
+    }
+    if (outside.turns) {
+      const n = outside.turns;
+      this.recordedEvent('studio_note', { message: `${n} turn${n === 1 ? '' : 's'} from outside AIB above.`, sessionId: this.sessionId });
+    }
+    log.info(
+      'chat %s: went on in its history store from seq %s (%s outside turn(s) of %s replayed updates)',
+      this.id,
+      this.continuedFrom,
+      outside.turns,
+      updates.length,
+    );
   }
 
   /** The store's write chain has run (tests). */
   async historySettled(): Promise<void> {
     await this.#historyAdopt.catch(() => {});
+    await this.#historyFinishing?.catch(() => {});
     await this.#historyChain;
   }
 
@@ -2482,7 +2625,8 @@ export class Connection {
           opened.ckpt.record,
           info.last,
         );
-        await h.delete(this.id);
+        const copy = await h.archive(this.id, 'stale-checkpoint'); // kept (owner rule: the history is permanent); a new store starts
+        if (copy) log.warning('history: %s: the old store was kept as %s', this.id, copy);
         opened = await h.open(this.id, {});
       }
       this.#historyOpened = opened;
@@ -3682,6 +3826,8 @@ export class Connection {
       this.event('disconnected', {
         message: this.error || 'Agent connection closed',
       });
+      // the chat ended (its agent exited, the keeper was lost): its store is written to the end and closed, and kept
+      if (!this.#replaying) void this.#historyFinish();
     } finally {
       this.#endedResolve?.();
       this.#settleRebuild?.[0](); // ended during the rebuild: the caller sees it closed
@@ -4175,6 +4321,7 @@ export class Connection {
     this.#checkSetupAbort();
     const mcpServers = this.#applyInitialize();
     let result: unknown;
+    let continuedUpdates: Json[] | null = null; // a reopened chat's setup replay (only its outside turns are shown)
     if (resume) {
       const resumeCaps = sessionCapabilities(this.initial);
       if (!resumeCaps.loadSession && !resumeCaps.resume) {
@@ -4185,24 +4332,35 @@ export class Connection {
       this.sessionId = resume;
       // AIB's own lines of this conversation (turn ends, AIB notes) go back in after the turns the transcript replays. They are
       // written to the keeper's record first (before session/load): a rebuild merges the very same lines at the same places.
-      if (this.lines && !this.#replaying) {
+      // A reopened chat that goes on in its history store has them there already, with everything else: the replay is not shown.
+      const continued = this.#continued && !!resumeCaps.loadSession;
+      if (this.lines && !this.#replaying && !continued) {
         const kept = linesWithin(this.lines.read(this.provider, resume), MAX_LINES_NOTE_BYTES);
         if (kept.length) {
           if (this.channel) await this.channel.sendNote({ t: 'lines', lines: kept });
           this.#merger = new LineMerger(kept);
         }
       }
-      result = await this.#setupSessionCall(
-        resumeCaps.loadSession ? 'session/load' : 'session/resume',
-        {
-          sessionId: resume,
-          cwd: this.agentCwd,
-          mcpServers,
-          ...this.artifactPrompt(mcpServers),
-          ...this.extraFolders(),
-          ...this.claudeMeta(),
-        },
-      );
+      if (continued) this.#reload = { updates: [], discard: false };
+      try {
+        result = await this.#setupSessionCall(
+          resumeCaps.loadSession ? 'session/load' : 'session/resume',
+          {
+            sessionId: resume,
+            cwd: this.agentCwd,
+            mcpServers,
+            ...this.artifactPrompt(mcpServers),
+            ...this.extraFolders(),
+            ...this.claudeMeta(),
+          },
+        );
+      } finally {
+        if (continued) {
+          continuedUpdates = this.#reload?.updates ?? [];
+          this.#reload = null;
+        }
+        this.#continued = false; // (an agent that only resumes replays nothing: nothing to drop)
+      }
     } else {
       result = await this.#setupSessionCall('session/new', {
         cwd: this.agentCwd,
@@ -4223,6 +4381,7 @@ export class Connection {
       this.#checkSetupAbort();
     }
     this.#markReady();
+    if (continuedUpdates) this.#showOutsideTurns(continuedUpdates);
   }
 
   /** What the `initialize` result (this.initial) sets; returns the MCP servers this agent gets. Live setup and replay share it. */
@@ -6746,8 +6905,9 @@ export class Connection {
       this.tree!.kill();
       await this.#waitExit(3000);
     }
-    if (this.channel) void this.channel.remove(); // closed by the person: its record is not needed any more
-    if (this.channel) this.#historyEnd('delete');
+    if (this.channel) this.channelRemoved = this.channel.remove(); // closed: its keeper record is not needed any more
+    // its history store is kept (owner rule 2026-11-17): reopening the conversation goes on in it under this chat id
+    await this.#historyFinish();
     this.closed = true;
     if (this.closedAt === null) this.closedAt = now();
     this.ready = false;

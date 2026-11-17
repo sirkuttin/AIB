@@ -30,7 +30,7 @@
  *   its own row_start. A page never starts inside a run.
  */
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
-import { existsSync, renameSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 export const SCHEMA = 1;
@@ -624,8 +624,46 @@ export class HistoryStore {
     if (role) this.#stmt('INSERT INTO messages(row_start, role, text) VALUES (?, ?, ?)').run(rowStart, role, text);
   }
 
-  /** Throw everything away and start over under a new eventsId (design H4: only when the eventsId differs). Keeps the epoch. */
+  /**
+   * A reopened conversation (owner rule 2026-11-17: a conversation is one chat, its history permanent): the chat starts a new keeper
+   * channel under the same chat id and this store goes on under that channel's epoch. Everything stored stays; written_seq is the
+   * newest stored seq, and `ckpt` (record 0: "before the new channel's first record") is what a later take-over of the new channel
+   * starts from. The epoch is set whatever it was (the old channel is gone; its epochs do not count for the new one).
+   */
+  continueAt(epoch: number, ckpt: Checkpoint): void {
+    if (!Number.isInteger(epoch) || epoch < 1) throw new Error(`not an epoch: ${epoch}`);
+    if (ckpt.sequence !== this.#maxSeq) throw new CheckpointError(`a continued store goes on from ${this.#maxSeq}, not ${ckpt.sequence}`);
+    this.#write(() => {
+      this.#setMetaNow('epoch', String(epoch));
+      this.#writtenSeq = this.#maxSeq;
+      this.#setMetaNow('written_seq', String(this.#writtenSeq));
+      this.#setMetaNow('ckpt', JSON.stringify({ state: ckpt.state, sequence: ckpt.sequence, record: ckpt.record, noteSeq: ckpt.noteSeq }));
+      return true;
+    }, Number.POSITIVE_INFINITY); // any stored epoch: this is a new channel's first claim
+    this.#epoch = epoch;
+  }
+
+  /** How many events the store holds (an empty store of a chat that never began is not history). */
+  count(): number {
+    return this.#count();
+  }
+
+  /** A copy of the whole store in <dir>/archive/ (before anything would throw its events away). '' when there was nothing to keep. */
+  archiveCopy(why: string): string {
+    if (!this.#db || this.#count() === 0) return '';
+    const dir = join(this.dir, 'archive');
+    mkdirSync(dir, { recursive: true });
+    const target = join(dir, `${this.chatId}-${new Date().toISOString().replace(/[:.]/g, '-')}-${why}.sqlite`);
+    this.#db.prepare('VACUUM INTO ?').run(target);
+    return target;
+  }
+
+  /**
+   * Throw everything away and start over under a new eventsId (design H4: only when the eventsId differs). Keeps the epoch. The
+   * events are copied to <dir>/archive/ first (owner rule: the chat history is permanent).
+   */
   reset(eventsId: string): void {
+    this.archiveCopy('reset');
     this.#write(() => {
       this.#db!.exec("DELETE FROM events; DELETE FROM messages; DELETE FROM meta WHERE key IN ('ckpt', 'written_seq');");
       this.#setMetaNow('eventsId', eventsId);
@@ -805,6 +843,37 @@ export function deleteStoreFiles(path: string): void {
   for (const suffix of ['', '-wal', '-shm']) rmSync(path + suffix, { force: true });
 }
 
+/**
+ * Which conversation a store file holds ('<provider>:<session>' of its newest `connected` event of the chat itself; '' when it has
+ * none), and its newest event (seq and time). Read only; never throws.
+ */
+export function readConversation(path: string): { key: string; last: number; lastTime: number } {
+  let db: DatabaseSync | null = null;
+  try {
+    db = new DatabaseSync(path, { readOnly: true });
+    const row = db.prepare("SELECT data FROM events WHERE kind = 'connected' AND session IS NULL ORDER BY seq DESC LIMIT 1").get() as
+      | { data: string }
+      | undefined;
+    const top = (db.prepare('SELECT seq AS s, time AS t FROM events ORDER BY seq DESC LIMIT 1').get() ?? { s: 0, t: 0 }) as {
+      s: number | null;
+      t: number | null;
+    };
+    let key = '';
+    if (row) {
+      const event = JSON.parse(row.data) as { data?: { sessionId?: unknown; provider?: unknown } };
+      const d = event.data ?? {};
+      if (typeof d.provider === 'string' && typeof d.sessionId === 'string' && d.sessionId) key = `${d.provider}:${d.sessionId}`;
+    }
+    return { key, last: Number(top.s ?? 0), lastTime: Number(top.t ?? 0) };
+  } catch {
+    return { key: '', last: 0, lastTime: 0 };
+  } finally {
+    try {
+      db?.close();
+    } catch { /* closed */ }
+  }
+}
+
 /** Every store of one agent host (what the Worker holds), by chat id. */
 export class Stores {
   #open = new Map<string, HistoryStore>();
@@ -831,11 +900,93 @@ export class Stores {
     this.#open.delete(chatId);
   }
 
+  /**
+   * The chat stopped (AIB quit, its agent exited, the chat was closed): the store is closed and KEPT (owner rule 2026-11-17: the chat
+   * history is permanent). Only a store with no event at all (a chat that never began) is removed: it holds no history.
+   */
+  release(chatId: string): 'kept' | 'empty' {
+    const store = this.#open.get(chatId);
+    this.#open.delete(chatId);
+    if (!store || store.closed) return 'kept';
+    if (store.count() > 0) {
+      store.close();
+      return 'kept';
+    }
+    store.destroy();
+    this.#index.delete(storePath(this.dir, chatId));
+    return 'empty';
+  }
+
+  /** Delete the store for good: only when the person deleted the chat (forget) or in tests. */
   delete(chatId: string): void {
     const store = this.#open.get(chatId);
     this.#open.delete(chatId);
     if (store) store.destroy();
     else deleteStoreFiles(storePath(this.dir, chatId));
+    this.#index.delete(storePath(this.dir, chatId));
+  }
+
+  /**
+   * A store that cannot go on as this chat's (its checkpoint is another record's): copied to archive/ (owner rule: the history is
+   * permanent), then removed so the chat starts a new one. Returns the archive copy ('' when the store held nothing).
+   */
+  archive(chatId: string, why: string): string {
+    if (!this.#open.has(chatId) && !existsSync(storePath(this.dir, chatId))) return ''; // nothing there
+    const store = this.#open.get(chatId) ?? HistoryStore.open(this.dir, chatId, this.options).store;
+    let copy = '';
+    try {
+      copy = store.archiveCopy(why);
+    } finally {
+      this.#open.delete(chatId);
+      store.destroy();
+      this.#index.delete(storePath(this.dir, chatId));
+    }
+    return copy;
+  }
+
+  /** What each store file holds, by path (its size and time: read again only when the file changed). */
+  #index = new Map<string, { size: number; mtime: number; key: string; last: number; lastTime: number }>();
+
+  /**
+   * The stores of one conversation (provider + session: the session of the chat's `connected` events), newest first (by the time of
+   * their last event). A store being written right now is read through a second, read-only handle (WAL: safe).
+   */
+  find(provider: string, session: string): { chat: string; last: number; lastTime: number }[] {
+    const want = `${provider}:${session}`;
+    const found: { chat: string; last: number; lastTime: number }[] = [];
+    let names: string[] = [];
+    try {
+      names = readdirSync(this.dir).filter((n) => /^[0-9a-f]{32}\.sqlite$/.test(n));
+    } catch {
+      return [];
+    }
+    for (const name of names) {
+      const path = join(this.dir, name);
+      let size = 0;
+      let mtime = 0;
+      try {
+        const st = statSync(path);
+        size = st.size;
+        mtime = st.mtimeMs;
+      } catch {
+        continue;
+      }
+      const chat = name.slice(0, -'.sqlite'.length);
+      let entry = this.#index.get(path);
+      if (!entry || entry.size !== size || entry.mtime !== mtime || this.#open.has(chat)) {
+        entry = { size, mtime, ...readConversation(path) };
+        this.#index.set(path, entry);
+      }
+      if (entry.key === want) found.push({ chat, last: entry.last, lastTime: entry.lastTime });
+    }
+    return found.sort((a, b) => b.lastTime - a.lastTime || b.last - a.last);
+  }
+
+  /** The person deleted the conversation: every store of it goes. Returns the chat ids removed. */
+  forget(provider: string, session: string): string[] {
+    const chats = this.find(provider, session).map((f) => f.chat);
+    for (const chat of chats) this.delete(chat);
+    return chats;
   }
 
   closeAll(): void {
