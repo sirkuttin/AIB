@@ -2075,14 +2075,20 @@ html.ph-viewing body {
   flex-wrap: nowrap;
   gap: 6px;
   margin: 10px 8px;
+  padding: 3px 10px;
   min-width: 0;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 16px;
+  border-left: 2px solid var(--accent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  color: color-mix(in srgb, var(--text) 82%, var(--muted));
+  font-size: 14px;
+  line-height: 20px;
   white-space: nowrap;
 }
 .ph-note.warn {
-  color: color-mix(in srgb, var(--warn-text) 80%, var(--muted));
+  border-left-color: var(--warn-text);
+  background: color-mix(in srgb, var(--warn-text) 9%, transparent);
+  color: var(--warn-text);
 }
 .ph-note-mark {
   flex: 0 0 auto;
@@ -2095,6 +2101,7 @@ html.ph-viewing body {
 }
 .ph-note-name {
   color: var(--text);
+  font-weight: 600;
 }
 .ph-note-act {
   flex: 0 0 auto;

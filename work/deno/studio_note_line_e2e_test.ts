@@ -62,7 +62,7 @@ Deno.test({
         const heights: Record<string, number> = { divider };
         for (const id of ['merged', 'long', 'warn', 'fail', 'plain']) {
           heights[id] = await h(id);
-          assert(heights[id] <= divider + 6, `${width}px ${id}: ${heights[id]}px high, divider ${divider}px`);
+          assert(heights[id] <= 30, `${width}px ${id}: ${heights[id]}px high (one 20 px line + padding), divider ${divider}px`);
         }
         console.log(`heights at ${width}px`, JSON.stringify(heights));
         // no card parts
@@ -71,12 +71,9 @@ Deno.test({
           0,
           'no Copy / header / card',
         );
-        // the divider's font, not monospace
+        // not monospace, and readable: at least 13 px (owner 2026-11-17: the divider-sized line was "way too muted")
         assert(!/mono|consol|courier/i.test(await page.eval<string>('getComputedStyle(document.querySelector("#merged .studio-text")).fontFamily')));
-        assertEquals(
-          await page.eval('getComputedStyle(document.querySelector("#merged")).fontSize'),
-          await page.eval('getComputedStyle(document.querySelector("#divider")).fontSize'),
-        );
+        assert(parseFloat(await page.eval<string>('getComputedStyle(document.querySelector("#merged")).fontSize')) >= 13, 'note text at least 13 px');
         // Undo: visible, inside the line, clickable
         const undo = await page.eval<{ x: number; y: number; w: number; inside: boolean; shown: boolean }>(`(() => {
           const b = document.querySelector('#merged .note-action'), r = b.getBoundingClientRect(), l = document.getElementById('merged').getBoundingClientRect();
@@ -146,7 +143,7 @@ Deno.test({
           side: d.scrollWidth <= d.clientWidth, tint: getComputedStyle(n[1]).color !== getComputedStyle(n[2]).color,
           copy: document.querySelectorAll('.ph-note button:not(.ph-note-act)').length }; })()`);
       console.log('phone note', JSON.stringify(m));
-      assert(m.hs.every((x) => x <= 24), `one line high ${m.hs}`);
+      assert(m.hs.every((x) => x <= 30), `one line high ${m.hs}`);
       assert(m.undoH >= 44 && m.undoW >= 44, `Undo tap area ${m.undoW} x ${m.undoH}`);
       assert(m.cut && m.side && m.tint && m.copy === 0, JSON.stringify(m));
       await page.close();
