@@ -4,9 +4,9 @@
 
 AIB runs Claude Code, Codex, OMP and ten more agent providers (via ACP) side by side in the same project, on your computer, with the sign-ins you already have. Artifacts and Docs are local and shared between all your agents. If details are your thing, visibility into every tool call, subagent, and running process is easy to access. Nothing goes through an AIB server.
 
-**[Download the latest release](https://github.com/sirkuttin/AIB/releases/latest)** for Windows, macOS or Linux (x64, arm64).
+**[Download the latest release](https://github.com/sirkuttin/AIB/releases/latest)** for Windows, macOS or Linux (x64, arm64). Guides, release notes and screenshots: **[aib.softsirkut.com](https://aib.softsirkut.com)**.
 
-> **Beta: 0.1.0-beta.11.** Tested daily on Windows; macOS and Linux are lightly tested. Builds are not code-signed.
+> **Beta: 0.12.0 beta.** Tested daily on Windows; macOS and Linux are lightly tested. Builds are not code-signed.
 > Not affiliated with Anthropic, OpenAI or any other agent vendor.
 
 **_Codex and Claude Code working side by side in the same project_**
