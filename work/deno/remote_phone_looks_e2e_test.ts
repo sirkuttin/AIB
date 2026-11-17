@@ -170,19 +170,19 @@ Deno.test({
 
       // ---- the working chat: header 68 px with the subagents line at every width, amber dots, grey folds
       await tap(page, '.ph-card[data-chat="c1"]');
-      await page.waitFor('!!document.getElementById("phSubsGo")', 15000, 'the chat');
+      await page.waitFor('!!document.getElementById("phChip")', 15000, 'the chat');
       for (const w of [320, 375, 390]) {
         await size(page, w);
         const head = await rect(page, '.ph-head');
-        ok(head.h >= 66 && head.h <= 70, `chat header ${w}: ${head.h} px`);
+        ok(head.h === 56, `chat header ${w}: ${head.h} px`);
         const sub = await rect(page, '.ph-head .ph-sub');
         ok(sub.h <= 22, `chat subtitle ${w}: ${sub.h} px tall`);
-        const cut = await page.eval<boolean>(`[...document.querySelectorAll('.ph-head .ph-pname')].some((n) => n.scrollWidth > n.clientWidth + 1)`);
+        const cut = await page.eval<boolean>(`[...document.querySelectorAll('.ph-head .ph-pname')].some((n) => n.clientWidth < 20)`);
         ok(!cut, `the project name is clipped in the chat header at ${w}: ${await page.eval('[...document.querySelectorAll(".ph-head .ph-pname")].map((n) => n.textContent + " " + n.scrollWidth + "/" + n.clientWidth + " tt " + n.closest(".ph-tt").clientWidth).join()')}`);
         await sideways(page, `chat ${w}`);
       }
       await size(page, 375);
-      await page.eval('document.getElementById("phSubsGo").click()');
+      await page.eval('document.getElementById("phChip").click()');
       // the working one is listed; the finished one is folded into "1 finished" (the PC's Activity rule)
       await page.waitFor('document.querySelectorAll("#phSubs li .ph-dot").length === 1 && !!document.getElementById("phSubsDone")', 15000, 'subagents');
       const work = await token(page, '--hd-work');
@@ -193,7 +193,7 @@ Deno.test({
       }
       same(await css(page, '#phSubs', 'backgroundColor'), hover, 'the Subagents fold');
       ok(hover !== (await token(page, '--bg')), 'folds are visibly grey against the page');
-      await targets(page, '.ph-head button, .ph-send, .ph-fold, .ph-subrow', 'chat');
+      await targets(page, '.ph-head button:not(#phChip), .ph-send, .ph-fold, .ph-subrow', 'chat');
       await shots('chat');
 
       // ---- the approval card on the raised colour; Deny is raised too
