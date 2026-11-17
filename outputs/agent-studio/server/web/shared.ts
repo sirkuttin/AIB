@@ -523,6 +523,14 @@ export async function conversationAction(self: StudioContext, body: unknown): Pr
     str(body.projectRoot),
   );
   const payload: Record<string, unknown> = { ok: true, entry, revision: self.conversations.revision() };
+  if (action === 'delete' && typeof provider === 'string' && typeof sessionId === 'string') {
+    // Deleting the chat is the one thing that removes its history store(s) (quitting AIB, an agent exit or closing it never do)
+    try {
+      await self.liveCall('history-forget', { provider, sessionId });
+    } catch (error) {
+      console.error("Removing the deleted chat's history store failed", error);
+    }
+  }
   if ((action === 'archive' || action === 'delete') && typeof provider === 'string' && typeof sessionId === 'string') {
     const removal = await worktreeAfter(self, provider, sessionId);
     if (removal !== null && removal !== undefined) payload.worktree = removal;

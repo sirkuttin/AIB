@@ -160,6 +160,7 @@ Deno.test({
     assertEquals(b.recovered().map((x) => x.cwd), [REF]);
     assertEquals(b.startAutoReconnect(1, 0, 1, 0), 1);
     await until(() => [...b.connections.values()].some((x) => x.sessionId === sid && x.ready), 'reconnected', 30);
+    assertEquals([...b.connections.values()].find((x) => x.sessionId === sid)!.id, c.id, 'the same chat id (it goes on in its store)');
     const r = [...b.connections.values()].find((x) => x.sessionId === sid)!;
     assertEquals([r.cwd, r.agentCwd], [REF, '/home/u/app']);
     assert(r.keeper === lab.host.link, 'in the distro keeper');

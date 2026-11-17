@@ -130,8 +130,11 @@ Deno.test({
     const session = c.sessionId!;
     const ledger = a.conversationLines!.read('omp', session);
     assertEquals(ledger.length, 4, 'three turn ends and the note are kept by conversation');
-    // The chat goes (its store with it); the agent's transcript is all that is left of the conversation.
+    // The chat goes, and its store with it (since 0.12.1 only deleting the chat removes a store: this is a chat whose store an
+    // older build deleted); the agent's transcript is all that is left of the conversation.
     await c.close();
+    await c.historySettled();
+    await a.historyClient()!.delete(c.id);
     Deno.writeTextFileSync(
       lab.transcript,
       JSON.stringify(['one', 'two', 'three'].flatMap((t) => [{ role: 'user', text: `say:${t}` }, { role: 'agent', text: t }])),

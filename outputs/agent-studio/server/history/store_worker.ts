@@ -27,6 +27,11 @@ export type Request =
   | { id: number; op: 'info'; chat: string }
   | { id: number; op: 'close'; chat: string }
   | { id: number; op: 'delete'; chat: string }
+  | { id: number; op: 'release'; chat: string }
+  | { id: number; op: 'archive'; chat: string; why: string }
+  | { id: number; op: 'continueAt'; chat: string; epoch: number; ckpt: Checkpoint }
+  | { id: number; op: 'find'; provider: string; session: string }
+  | { id: number; op: 'forget'; provider: string; session: string }
   | { id: number; op: 'closeAll' };
 
 let stores: Stores | null = null;
@@ -43,6 +48,10 @@ export function handle(m: Request): unknown {
   if (m.op === 'open') return stores.open(m.chat, { eventsId: m.eventsId, mainSession: m.mainSession });
   if (m.op === 'close') return stores.close(m.chat);
   if (m.op === 'delete') return stores.delete(m.chat);
+  if (m.op === 'release') return stores.release(m.chat);
+  if (m.op === 'archive') return stores.archive(m.chat, m.why);
+  if (m.op === 'find') return stores.find(m.provider, m.session);
+  if (m.op === 'forget') return stores.forget(m.provider, m.session);
   const s = stores.get(m.chat);
   switch (m.op) {
     case 'claim':
@@ -76,6 +85,8 @@ export function handle(m: Request): unknown {
       return s.dropProvisional(m.above);
     case 'reset':
       return s.reset(m.eventsId);
+    case 'continueAt':
+      return s.continueAt(m.epoch, m.ckpt);
     case 'search':
       return s.search(m.query, m.limit);
     case 'info':

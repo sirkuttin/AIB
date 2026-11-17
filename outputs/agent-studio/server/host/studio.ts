@@ -14,8 +14,10 @@ import { AddedProjects } from '../desktop/added_projects.ts';
 import {
   Connection,
   type ConnectionOptions,
+  type ContinueStore,
   errorText,
   historyV2,
+  MAX_EVENTS,
   NotStoppable,
   SHARED_FOLDER_CONTEXT,
   sharedFolderNote,
@@ -1369,28 +1371,46 @@ export class Studio {
         ownerNote = folderOnlyNote(this.checkOwnership(provider, resume, workspace, continueAnyway));
       }
       if (ownerNote) log.info('ownership: %s %s continued with folder-only evidence: %s', provider, resume, ownerNote);
+      // the keeper this chat's agent runs in (a WSL chat: its distro's Linux keeper, whatever the Windows keeper's state)
+      const chatKeeper = launch ? launch.link : this.keeper && this.keeperForNew && await this.#keeperUsable() ? this.keeper : null;
+      // Owner rule 2026-11-17 (a conversation is one chat; its history is permanent): a conversation whose chat has a history store
+      // reopens as that chat, same id, going on in its store (after an idle quit, a crash, a lost keeper, an update, Continue).
+      const reopen = resume && chatKeeper && !asHelper ? await this.#storeToContinue(provider, resume, chatKeeper) : null;
+      const chatId = reopen?.id ?? null;
       // Subagent worktrees (subagents/): a Claude chat in a git project gets command hooks through the keeper's forwarder; its key and
       // id go in the agent's environment (never in settings, a command line or a URL). A WSL chat gets none yet (they'd fail open).
       // Codex (subagents/codex.ts): its hooks go in CODEX_CONFIG; hooks off or unavailable turn its subagents off instead.
       const subagent = provider === 'claude'
-        ? await this.#subagentHooks(command, plan ? plan.path : workspace, workspace, !!plan, env, !!wsl)
+        ? await this.#subagentHooks(command, plan ? plan.path : workspace, workspace, !!plan, env, !!wsl, chatId)
         : provider === 'codex'
-        ? await this.#codexSubagentHooks(command, plan ? plan.path : workspace, workspace, !!plan, env, launch ? launch.spawn.env ?? {} : null)
+        ? await this.#codexSubagentHooks(
+          command,
+          plan ? plan.path : workspace,
+          workspace,
+          !!plan,
+          env,
+          launch ? launch.spawn.env ?? {} : null,
+          chatId,
+        )
         : null;
       // Gemini (subagents/gemini.ts): every chat gets the fence (an admin policy); an API-key chat in a git project also the redirect
-      const gem = provider === 'gemini' ? await this.#geminiSubagents(plan ? plan.path : workspace, workspace, !!plan, env, !!wsl) : null;
+      const gem = provider === 'gemini'
+        ? await this.#geminiSubagents(plan ? plan.path : workspace, workspace, !!plan, env, !!wsl, chatId)
+        : null;
       const connectionOptions: ConnectionOptions = {};
       const agentEnv = { ...env, ...subagent?.env, ...gem?.env };
       if (Object.keys(agentEnv).length) connectionOptions.env = agentEnv;
       if (subagent?.id) connectionOptions.id = subagent.id;
       if (gem?.id) connectionOptions.id = gem.id;
+      if (chatId) connectionOptions.id = chatId;
       const launchCommand = gem ? [...command, ...gem.args] : command;
       if (launch) {
         connectionOptions.keeper = launch.link; // the distro's Linux keeper, whatever the Windows keeper's state
         // a new worktree chat's agent works in the worktree's Linux folder (cwd: its ref)
         connectionOptions.wsl = plan instanceof WslPlan ? { ...launch.spawn, linuxPath: plan.linuxPath } : launch.spawn;
-      } else if (this.keeper && this.keeperForNew && await this.#keeperUsable()) connectionOptions.keeper = this.keeper;
+      } else if (chatKeeper) connectionOptions.keeper = chatKeeper;
       if (connectionOptions.keeper) connectionOptions.history = this.historyClient();
+      if (reopen && connectionOptions.history) connectionOptions.continueStore = reopen.store;
       if (plan) connectionOptions.start = false; // the agent starts in finishSetup, once its worktree exists
       connection = Object.keys(connectionOptions).length
         ? this.connectionFactory(launchCommand, plan ? plan.path : workspace, provider, connectionOptions)
@@ -1779,6 +1799,86 @@ export class Studio {
     return [...this.connections.values()].find((c) => c.provider === provider && c.sessionId === sessionId && !c.closed) ?? null;
   }
 
+  /**
+   * Owner rule 2026-11-17 (a conversation is one chat; the owner's chat history, AIB's own lines too, is permanent): reopening a
+   * conversation whose chat has a history store goes on in that store under the same chat id, whatever ended the agent (an idle
+   * quit, a crash, a lost keeper, an update, a closed chat). Where one conversation has several stores (it came back under new ids
+   * before this rule), the newest one (by its last event) is continued. null: no store, or none can go on now (a new id and store).
+   */
+  async #storeToContinue(provider: string, sessionId: string, keeper: KeeperLink): Promise<{ id: string; store: ContinueStore } | null> {
+    const h = this.historyClient();
+    if (!h) return null;
+    let found: { chat: string }[] = [];
+    try {
+      found = await h.find(provider, sessionId);
+    } catch (error) {
+      log.warning('history: could not look for the stores of %s %s: %s', provider, sessionId, errorText(error));
+      return null;
+    }
+    for (const { chat } of found) {
+      const old = this.connections.get(chat);
+      if (old && !old.closed) continue; // its chat is open (a live one was returned before this); never two chats on one store
+      if (old) { // ended in this AIB: its keeper channel's removal and its store's close are done first (one writer per store)
+        await old.channelRemoved.catch(() => {});
+        await old.historyDetach();
+      }
+      if (!(await this.#freeChannel(keeper, chat))) continue;
+      try {
+        const info = await h.open(chat, {});
+        if (!info.last || !info.eventsId) {
+          await h.close(chat).catch(() => {});
+          continue;
+        }
+        const tail = await h.before(chat, info.last + 1, { session: null, limit: MAX_EVENTS, bytes: 32 * 1024 * 1024 });
+        await h.close(chat);
+        log.info('history: %s %s reopens as chat %s, going on in its store from seq %s', provider, sessionId, chat, info.last);
+        return {
+          id: chat,
+          store: { eventsId: info.eventsId, sequence: info.last, events: tail.events.map((r) => JSON.parse(r.data) as Json) },
+        };
+      } catch (error) {
+        log.warning('history: the store of %s could not be read to reopen it: %s', chat, errorText(error));
+        await h.close(chat).catch(() => {});
+      }
+    }
+    return null;
+  }
+
+  /**
+   * The keeper channel name `chat-<id>` free for a reopened chat: an ended channel of it (its agent exited, or the keeper came back
+   * after a crash with it on disk) is removed. False when it is live (its agent still runs there) or the keeper cannot say.
+   */
+  async #freeChannel(keeper: KeeperLink, chat: string): Promise<boolean> {
+    const name = `chat-${chat}`;
+    try {
+      // the keeper the agent will start in (started now if it is not running, as the spawn would): one that starts again keeps the
+      // ended channels of its journal folder, so "not running" does not mean "no channel"
+      const client = await keeper.check();
+      const info = (await client.list()).find((i) => i.channel === name);
+      if (!info) return true;
+      if (info.live) return false;
+      await keeper.removeEnded(client, name);
+      return true;
+    } catch (error) {
+      log.warning('keeper: could not free the channel of chat %s to reopen it: %s', chat, errorText(error));
+      return false;
+    }
+  }
+
+  /** The person deleted the conversation: its chat's history stores go too (every one of them). Returns the chat ids removed. */
+  async forgetHistory(provider: string, sessionId: string): Promise<string[]> {
+    const h = this.historyClient();
+    if (!h || !provider || !sessionId) return [];
+    const live = [...this.connections.values()].some((c) => !c.closed && c.provider === provider && c.sessionId === sessionId);
+    if (live) return []; // a delete of a live chat is refused before this (conversationAction)
+    for (const c of this.connections.values()) {
+      if (c.provider === provider && c.sessionId === sessionId) await c.historySettled().catch(() => {});
+    }
+    const removed = await h.forget(provider, sessionId);
+    if (removed.length) log.info('history: %s %s was deleted: removed its store(s) %s', provider, sessionId, removed.join(', '));
+    return removed;
+  }
+
   async #adoptFromNow(keeper: KeeperLink, distro: string | null, check: boolean): Promise<number> {
     let client;
     try {
@@ -2098,6 +2198,7 @@ export class Studio {
     aibWorktree: boolean,
     env: Record<string, string>,
     wsl = false,
+    chatId: string | null = null, // a reopened chat keeps its id (its hook key is bound to it)
   ): Promise<{ id?: string; env?: Record<string, string>; hooks: NonNullable<Connection['subagentHooks']> } | null> {
     if (!this.subagents || !this.hasStateDir) return { hooks: offHooks('AIB has no state folder') };
     // under test only a real agent the run allowed gets hooks (a fixture or a test's own factory runs none, and must not pay for them)
@@ -2130,7 +2231,7 @@ export class Studio {
       const settings = hookSettings(forwarder, join(this.stateDir, FORWARD_FILE), { worktreeCreate: !setup.userWorktreeHook });
       if (!settings) return { hooks: offHooks("AIB's folder can't be named in a hook command") };
       this.artifactMcpHttp(); // listening, with its address published, before the agent's first hook
-      const id = crypto.randomUUID().replaceAll('-', '');
+      const id = chatId ?? crypto.randomUUID().replaceAll('-', '');
       const key = artifactKeys.issueHookKey(id);
       if (!key) return { hooks: offHooks('AIB has no key secret') };
       return {
@@ -2165,11 +2266,12 @@ export class Studio {
     aibWorktree: boolean,
     env: Record<string, string>,
     wsl: boolean,
+    chatId: string | null = null, // a reopened chat keeps its id
   ): Promise<{ id: string; args: string[]; env: Record<string, string>; setup: gemini.GeminiSetup } | null> {
     if (!this.subagents || !this.hasStateDir || !this.worktrees) return null;
     const realAllowed = Deno.env.get('STUDIO_REAL_ADAPTER_TESTS') === '1' || Deno.env.get('AGENT_STUDIO_ALLOW_REAL_AGENT') === '1';
     if (Deno.env.get('AGENT_STUDIO_TEST') === '1' && !realAllowed) return null;
-    const id = crypto.randomUUID().replaceAll('-', '');
+    const id = chatId ?? crypto.randomUUID().replaceAll('-', '');
     let gitProject: '' | 'not a git project' | 'the repository has no commits yet' = '';
     if (!aibWorktree && !wsl) {
       const top = await wt.git(['rev-parse', '--show-toplevel'], folder, { check: false });
@@ -2279,6 +2381,7 @@ export class Studio {
     aibWorktree: boolean,
     env: Record<string, string>,
     wslEnv: Record<string, string> | null,
+    chatId: string | null = null, // a reopened chat keeps its id (its hook key and subagent folder are bound to it)
   ): Promise<{ id?: string; env?: Record<string, string>; hooks: NonNullable<Connection['subagentHooks']>; note?: string } | null> {
     const realAllowed = Deno.env.get('STUDIO_REAL_ADAPTER_TESTS') === '1' || Deno.env.get('AGENT_STUDIO_ALLOW_REAL_AGENT') === '1';
     if (Deno.env.get('AGENT_STUDIO_TEST') === '1' && (isFixture(command) || !realAllowed)) return null;
@@ -2309,7 +2412,7 @@ export class Studio {
       const hooks = codexSub.codexHooks(forwarder, join(this.stateDir, FORWARD_FILE), folder, setup.config?.hooks);
       if (!hooks) return off("AIB's folder can't be named in a hook command", "AIB's folder has a space or a sign Codex hooks can't run from");
       this.artifactMcpHttp(); // listening, with its address published, before the agent's first hook
-      const id = crypto.randomUUID().replaceAll('-', '');
+      const id = chatId ?? crypto.randomUUID().replaceAll('-', '');
       const key = artifactKeys.issueHookKey(id);
       if (!key) return off('AIB has no key secret', 'AIB has no key secret');
       // its subagents' worktrees go in a folder of this chat's own, a writable root of its sandbox (Connection.extraFolders)
@@ -3282,6 +3385,9 @@ export class Studio {
     if (name === 'subagent-release') { // internal (swarm/service.ts): a landed / empty / discarded subagent's worktree goes (P2)
       if (!this.subagents) return [404, { error: 'No subagent worktrees here' }];
       return [200, { ok: true, result: await this.subagents.release(String(need(body, 'subagent'))) }];
+    }
+    if (name === 'history-forget') { // internal (web/shared.ts conversationAction): the person deleted the chat; not in LIVE_POST_OPS
+      return [200, { ok: true, removed: await this.forgetHistory(String(body.provider ?? ''), String(body.sessionId ?? '')) }];
     }
     if (name === 'files-changed') { // internal (files/live_files.ts): write calls that finished since `after`; not in LIVE_POST_OPS
       const after = Number(body.after) || 0;

@@ -11,6 +11,7 @@ import {
   rowStarts,
   type StoreEvent,
   storePath,
+  Stores,
 } from '../../outputs/agent-studio/server/history/store.ts';
 import { HistoryClient, HistoryError } from '../../outputs/agent-studio/server/history/client.ts';
 import { existsSync } from 'node:fs';
@@ -470,6 +471,66 @@ Deno.test('the Worker: every op through client.ts; fenced keeps its code', async
   } finally {
     await client.shutdown();
     await other.shutdown();
+    cleanup(dir);
+  }
+});
+
+// ---- the history is permanent (owner rule 2026-11-17) ------------------------------------------------------------------------------
+const chatA = 'a'.repeat(32);
+const chatB = 'b'.repeat(32);
+function connected(provider: string, session: string, time: number): StoreEvent {
+  return { seq: ++seq, kind: 'connected', time, data: { sessionId: session, provider } };
+}
+
+Deno.test('kept stores: release keeps a store with events and drops an empty one; find lists a conversation\'s stores newest first', () => {
+  const dir = tempDir();
+  const stores = new Stores(dir);
+  try {
+    seq = 0;
+    for (const [chat, time] of [[chatA, T0], [chatB, T0 + 100]] as const) {
+      stores.open(chat, { eventsId: 'E', mainSession: 'S' });
+      stores.get(chat).claim(1);
+      stores.get(chat).append([connected('claude', 'S', time), { seq: ++seq, kind: 'turn_end', time, data: {} }]);
+      assertEquals(stores.release(chat), 'kept');
+      assert(existsSync(storePath(dir, chat)), 'a store with events is kept');
+    }
+    stores.open('c'.repeat(32), {});
+    assertEquals(stores.release('c'.repeat(32)), 'empty');
+    assert(!existsSync(storePath(dir, 'c'.repeat(32))), 'an empty store (a chat that never began) is removed');
+    assertEquals(stores.find('claude', 'S').map((f) => f.chat), [chatB, chatA], 'newest first');
+    assertEquals(stores.find('codex', 'S'), [], 'another provider\'s conversation is another one');
+    assertEquals(stores.forget('claude', 'S').sort(), [chatA, chatB]);
+    assert(!existsSync(storePath(dir, chatA)) && !existsSync(storePath(dir, chatB)), 'deleting the chat removes its stores');
+  } finally {
+    stores.closeAll();
+    cleanup(dir);
+  }
+});
+
+Deno.test('kept stores: continueAt goes on under a new channel\'s (lower) epoch from the newest seq; reset and archive keep a copy', () => {
+  const dir = tempDir();
+  const stores = new Stores(dir);
+  try {
+    seq = 0;
+    stores.open(chatA, { eventsId: 'E', mainSession: 'S' });
+    const s = stores.get(chatA);
+    s.claim(7);
+    s.append([connected('claude', 'S', T0), user('hi')]);
+    assertThrows(() => s.continueAt(1, { state: {}, sequence: 1, record: 0, noteSeq: 0 }), CheckpointError);
+    s.continueAt(1, { state: { sequence: 2 }, sequence: 2, record: 0, noteSeq: 0 });
+    assertEquals(s.epoch, 1);
+    assertEquals(s.checkpoint().ckpt?.record, 0);
+    assertEquals(s.append([user('next')]).writtenSeq, 3, 'it goes on with the next seq');
+    s.reset('E2');
+    const archived = [...Deno.readDirSync(`${dir}/archive`)].map((e) => e.name);
+    assert(archived.some((n) => n.startsWith(chatA) && n.endsWith('-reset.sqlite')), `reset kept a copy (${archived})`);
+    s.append([{ ...user('again'), seq: 1 }]);
+    assert(stores.archive(chatA, 'stale-checkpoint').endsWith('-stale-checkpoint.sqlite'));
+    assert(!existsSync(storePath(dir, chatA)), 'archived, then removed');
+    assertEquals(stores.archive(chatB, 'leftover'), '', 'nothing there: nothing archived, nothing made');
+    assert(!existsSync(storePath(dir, chatB)));
+  } finally {
+    stores.closeAll();
     cleanup(dir);
   }
 });

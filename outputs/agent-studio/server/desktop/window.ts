@@ -1434,7 +1434,7 @@ export class DesktopApp implements WindowsHost {
         ? 'Stop all chats and quit: stopping every chat'
         : leave
         ? 'the chats stay in the keeper until AIB is started again'
-        : 'nothing is working, so nothing is stopped',
+        : 'nothing is working: the idle chats close and keep their history (the next start reopens each as the same chat)',
     );
     try {
       await this.options.stopHost?.(stopAgents);
