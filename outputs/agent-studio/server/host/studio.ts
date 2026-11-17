@@ -1580,6 +1580,7 @@ export class Studio {
       c.subagentActivity = () => subagents.activity(c.id); // P3's {where, landing} per subagent (keyed by its call id)
     }
     c.onLimits = (conn, kind, raw, at) => this.limits.fromAgent(conn, kind, raw, at);
+    c.onWritesDone = (conn, paths) => this.#writesDone(conn, paths); // the file editor reads those files (files/live_files.ts)
     const sync = this.liveSync;
     const wsl = this.wslSync; // a WSL chat in its own copy: its distro's helper runs the hooks (wsl/sync.ts)
     c.onTurnStart = (conn) => {
@@ -2425,9 +2426,23 @@ export class Studio {
     else await this.worktrees!.discard(plan.key);
   }
 
+  /**
+   * The file editor's "files changed" feed (architect review 2026-11-16, must-fix 7): a chat's write tool call finished, so its files
+   * are on disk. The web server holds the open files' live text (files/live_files.ts) and asks for what is new with
+   * liveCall('files-changed', {after}) while a file is open; landings and Undo run in the web server and tell it directly
+   * (files/files_changed.ts). Kept in memory, the last 200.
+   */
+  readonly #filesChanged: { seq: number; paths: string[]; who: string; chat: string; at: number }[] = [];
+  #filesSeq = 0;
+  #writesDone(c: Connection, paths: string[]): void {
+    this.#filesChanged.push({ seq: ++this.#filesSeq, paths: paths.slice(0, 50), who: this.chatTitle(c), chat: c.id, at: Date.now() });
+    if (this.#filesChanged.length > 200) this.#filesChanged.splice(0, this.#filesChanged.length - 200);
+  }
+
   /** Put a one-time line in front of this chat's next prompt (in a <studio-context> block); said once, then dropped. */
-  addPromptContext(c: Connection, line: string): void {
-    const lines = this.#ownContext.get(c.id) ?? [];
+  addPromptContext(c: Connection, line: string, replace = ''): void {
+    let lines = this.#ownContext.get(c.id) ?? [];
+    if (replace) lines = lines.filter((l) => !l.startsWith(replace)); // one line per subject, the newest (the file editor's notes)
     if (!lines.includes(line)) lines.push(line);
     this.#ownContext.set(c.id, lines);
   }
@@ -3202,9 +3217,14 @@ export class Studio {
       if (!this.subagents) return [404, { error: 'No subagent worktrees here' }];
       return [200, { ok: true, result: await this.subagents.release(String(need(body, 'subagent'))) }];
     }
+    if (name === 'files-changed') { // internal (files/live_files.ts): write calls that finished since `after`; not in LIVE_POST_OPS
+      const after = Number(body.after) || 0;
+      return [200, { instance: this.instanceId, seq: this.#filesSeq, events: this.#filesChanged.filter((e) => e.seq > after) }];
+    }
     if (name === 'prompt-context') { // a one-time line in front of this chat's next prompt (a landing told it what changed)
       const connection = this.#connection(body);
-      this.addPromptContext(connection, [...String(need(body, 'line'))].slice(0, 2000).join(''));
+      const replace = typeof body.replace === 'string' ? body.replace.slice(0, 600) : '';
+      this.addPromptContext(connection, [...String(need(body, 'line'))].slice(0, 2000).join(''), replace);
       return [200, { ok: true }];
     }
     if (name === 'folder-chats') { // the open chats that work in this folder itself (not copies, not helpers)

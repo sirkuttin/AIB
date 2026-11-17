@@ -22,6 +22,7 @@ import {
 import type { Held } from '../worktrees/landing_lock.ts';
 import { pyStrip } from '../core/py.ts';
 import { getLogger } from '../core/log.ts';
+import { emitFilesChanged } from '../files/files_changed.ts';
 
 const log = getLogger('swarm_undo');
 
@@ -70,11 +71,15 @@ export async function applyChange(
         throw error;
       }
     }
+    let out: Outcome;
     try {
-      return await applyHeld(stateDir, project, branch, from, to, message, folder, options);
+      out = await applyHeld(stateDir, project, branch, from, to, message, folder, options);
     } finally {
       await holds?.release();
     }
+    // the file editor's open files in that folder take the new version in (files/files_changed.ts; review must-fix 7)
+    if (folder && out.state === 'done') emitFilesChanged({ folder, paths: out.files, who: options.title ?? '', kind: 'undo' });
+    return out;
   });
 }
 

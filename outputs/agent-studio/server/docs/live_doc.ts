@@ -29,10 +29,8 @@
  * own edits; an agent's doc_undo takes back only its own last call, and only if nobody changed those blocks since.
  */
 import * as Y from 'yjs';
-import * as syncProtocol from 'y-protocols/sync';
-import * as awarenessProtocol from 'y-protocols/awareness';
-import * as encoding from 'lib0/encoding';
-import * as decoding from 'lib0/decoding';
+import type * as awarenessProtocol from 'y-protocols/awareness';
+import { YSocketHub } from '../live/ysocket.ts';
 import {
   applyTextEdits,
   ATOM,
@@ -76,7 +74,6 @@ import { anyDeleted, Comments } from './comments.ts';
 export { FIELD };
 // deno-lint-ignore no-explicit-any
 type YType = Y.AbstractType<any>;
-const MSG_SYNC = 0, MSG_AWARENESS = 1;
 export const ROOT = 'root';
 /** The doc's pages, in order: one Y.Map per page ({id, title, field}); `field` names the page's root XmlFragment. */
 export const PAGES = 'pages';
@@ -297,7 +294,7 @@ export class LiveDoc {
   #undoOwner = new Map<Y.UndoManager, string>();
   #calls = new Map<string, { rev: number; ids: string[] }[]>();
   #topCache = new Map<string, { sub: number; json: PMJson; sig: string }>();
-  #sockets = new Map<WsLink, { clients: Set<number> }>();
+  readonly #hub: YSocketHub;
   readonly system: Origin = { kind: 'system', name: 'system' };
   /** The user's changes made through the server (page operations, restore, comments from the page's routes). */
   readonly user: Origin = { kind: 'user', name: 'user' };
@@ -321,8 +318,8 @@ export class LiveDoc {
     if (!this.pageList().length) this.doc.transact(() => this.pagesArr.push([newPageMap(FIRST_PAGE, 'Page 1', FIELD)]), this.system);
     this.comments = new Comments(this.doc);
     this.comments.pageOf = (id) => (this.has(id) ? this.pageOf(id) : null);
-    this.awareness = new awarenessProtocol.Awareness(this.doc);
-    this.awareness.setLocalState(null); // the server has no cursor
+    this.#hub = new YSocketHub(this.doc); // the page sockets (server/live/ysocket.ts): sync and awareness both ways
+    this.awareness = this.#hub.awareness;
     this.rev = meta?.rev ?? 0;
     this.#pending = { ...(meta?.pending ?? {}) };
     for (const [id, v] of Object.entries(meta?.gone ?? {})) {
@@ -341,26 +338,6 @@ export class LiveDoc {
       else delete e.by;
     }
     this.doc.on('afterTransaction', (tr: Y.Transaction) => this.#afterTransaction(tr));
-    this.doc.on('update', (update: Uint8Array, origin: unknown) => this.#broadcast(update, origin));
-    this.awareness.on(
-      'update',
-      (
-        { added, updated, removed }: { added: number[]; updated: number[]; removed: number[] },
-        origin: unknown,
-      ) => {
-        const changed = added.concat(updated, removed);
-        const socket = this.#sockets.get(origin as WsLink);
-        if (socket) {
-          for (const c of added.concat(updated)) socket.clients.add(c);
-          for (const c of removed) socket.clients.delete(c);
-        }
-        const e = encoding.createEncoder();
-        encoding.writeVarUint(e, MSG_AWARENESS);
-        encoding.writeVarUint8Array(e, awarenessProtocol.encodeAwarenessUpdate(this.awareness, changed));
-        const message = encoding.toUint8Array(e);
-        for (const link of this.#sockets.keys()) link.send(message);
-      },
-    );
   }
 
   meta(): Meta {
@@ -646,7 +623,7 @@ export class LiveDoc {
   }
 
   #authorOf(origin: unknown): string | null {
-    if (origin && this.#sockets.has(origin as WsLink)) return 'user';
+    if (origin && this.#hub.has(origin as WsLink)) return 'user';
     if (origin instanceof Y.UndoManager) return this.#undoOwner.get(origin) ?? 'user';
     if (origin && typeof origin === 'object' && 'kind' in origin) {
       const o = origin as Origin;
@@ -1470,74 +1447,25 @@ export class LiveDoc {
 
   /** Connect one page socket: sync both ways, awareness both ways. */
   attach(link: WsLink): void {
-    this.#sockets.set(link, { clients: new Set() });
-    link.onmessage = (data) => {
-      if (typeof data === 'string') return;
-      try {
-        this.#receive(link, data);
-      } catch {
-        link.close(1003, 'bad message');
-      }
-    };
-    link.onclose = () => this.detach(link);
-    const e = encoding.createEncoder();
-    encoding.writeVarUint(e, MSG_SYNC);
-    syncProtocol.writeSyncStep1(e, this.doc);
-    link.send(encoding.toUint8Array(e));
-    const states = [...this.awareness.getStates().keys()];
-    if (states.length) {
-      const a = encoding.createEncoder();
-      encoding.writeVarUint(a, MSG_AWARENESS);
-      encoding.writeVarUint8Array(a, awarenessProtocol.encodeAwarenessUpdate(this.awareness, states));
-      link.send(encoding.toUint8Array(a));
-    }
+    this.#hub.attach(link);
   }
 
   detach(link: WsLink): void {
-    const socket = this.#sockets.get(link);
-    if (!socket) return;
-    this.#sockets.delete(link);
-    awarenessProtocol.removeAwarenessStates(this.awareness, [...socket.clients], null);
+    this.#hub.detach(link);
   }
 
   /** A JSON control message (a text frame) to every page socket: hello, reopen, refused notes, history marks, requests. */
   sendControl(message: Record<string, unknown>): void {
-    const text = JSON.stringify(message);
-    for (const link of this.#sockets.keys()) link.send(text);
+    this.#hub.sendControl(message);
   }
 
   get socketCount(): number {
-    return this.#sockets.size;
-  }
-
-  #receive(link: WsLink, data: Uint8Array): void {
-    const d = decoding.createDecoder(data);
-    const type = decoding.readVarUint(d);
-    if (type === MSG_SYNC) {
-      const e = encoding.createEncoder();
-      encoding.writeVarUint(e, MSG_SYNC);
-      syncProtocol.readSyncMessage(d, e, this.doc, link);
-      if (encoding.length(e) > 1) link.send(encoding.toUint8Array(e));
-    } else if (type === MSG_AWARENESS) awarenessProtocol.applyAwarenessUpdate(this.awareness, decoding.readVarUint8Array(d), link);
-  }
-
-  #broadcast(update: Uint8Array, origin: unknown): void {
-    if (!this.#sockets.size) return;
-    const e = encoding.createEncoder();
-    encoding.writeVarUint(e, MSG_SYNC);
-    syncProtocol.writeUpdate(e, update);
-    const message = encoding.toUint8Array(e);
-    for (const link of this.#sockets.keys()) {
-      if (link !== origin) link.send(message);
-    }
+    return this.#hub.socketCount;
   }
 
   destroy(): void {
-    for (const link of [...this.#sockets.keys()]) {
-      link.close(1001, 'doc closed');
-    }
+    this.#hub.destroy(1001, 'doc closed');
     for (const um of this.#undo.values()) um.destroy();
-    this.awareness.destroy();
     this.doc.destroy();
   }
 }

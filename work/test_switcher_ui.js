@@ -470,7 +470,7 @@ test('command bar: New chat in <project> starts a chat there; Switch project ope
   assert.deepEqual(s.calls, ['switch:true']);
 });
 
-test('shortcut sheet: ? opens it outside text fields, lists the four groups, ? closes it', () => {
+test('shortcut sheet: ? opens it outside text fields, lists the five groups, ? closes it', () => {
   const rows = two();
   const b = bar(rows, { selected: rows[0], resize: true });
   b.ui.close();
@@ -484,7 +484,7 @@ test('shortcut sheet: ? opens it outside text fields, lists the four groups, ? c
   assert.equal(sheet.open, true);
   assert.deepEqual(
     sheet.find('sheet-group').map((g) => g.children[0].textContent),
-    ['Moving around', 'This chat', 'Panels', 'Text size'],
+    ['Moving around', 'This chat', 'Panels', 'Text size', 'File editor'],
   );
   const text = sheet.textContent;
   for (const k of ['Ctrl+K', 'Ctrl+Tab', 'F2', 'Ctrl+B', 'Ctrl+Alt+B', 'Shift+F10']) assert.ok(text.includes(k), k);

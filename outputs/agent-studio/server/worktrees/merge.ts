@@ -36,6 +36,7 @@ import { getLogger } from '../core/log.ts';
 import { clashLine, openClashes, pausedStatus, settleConflicts } from './sync.ts';
 import { clashName, isLocalPath, type LocalOnly, localOnlyOf, slugOf } from './local_only.ts';
 import { type FolderChat, folderChats, type Held, lockChats } from './landing_lock.ts';
+import { emitFilesChanged, hasFilesChangedListeners } from '../files/files_changed.ts';
 
 const log = getLogger('worktree_merge');
 
@@ -1247,6 +1248,11 @@ async function landHeld(
     if (!chat.detached) await resetTo(chat, landed, folder, clash.length > 0); // a subagent's worktree goes after landing
   } finally {
     pause.release();
+  }
+  // the file editor's open files in that folder take the landed version in (files/files_changed.ts; review must-fix 7)
+  if (folder && hasFilesChangedListeners()) {
+    const paths = nul((await git(['diff', '--name-only', '-z', '--no-renames', tip, landed], folder, { check: false })).stdout);
+    emitFilesChanged({ folder, paths, who: String(title ?? ''), kind: 'landing' });
   }
   const message = `Merged into ${chat.base} (${plural(count, 'commit')})`;
   const out: MergeResult = {

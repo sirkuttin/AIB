@@ -494,8 +494,18 @@
     { group: 'This chat', keys: 'Enter / Shift+Enter', label: 'Send / new line in the message box' },
     { group: 'Panels', keys: 'Esc', label: 'Close the open panel, menu or dialog' },
     { group: 'Text size', keys: 'Ctrl+Wheel', label: 'Bigger / smaller chat text (pointer over the chat)' },
+    // the file editor (file-editor-ui.js): these keys work while the caret is in a file tab
+    { group: 'File editor', keys: 'Ctrl+S', label: 'Save the file' },
+    { group: 'File editor', keys: 'Ctrl+Shift+S', label: 'Save all files with unsaved changes' },
+    { group: 'File editor', keys: 'Ctrl+F / Ctrl+H', label: 'Find / replace (F3 finds the next)' },
+    { group: 'File editor', keys: 'Ctrl+G', label: 'Go to line' },
+    { group: 'File editor', keys: 'Ctrl+D', label: 'Select the next match too' },
+    { group: 'File editor', keys: 'Ctrl+/', label: 'Comment or uncomment the line' },
+    { group: 'File editor', keys: 'Alt+↑ / Alt+↓', label: 'Move the line up / down' },
+    { group: 'File editor', keys: 'Alt+Z', label: 'Wrap long lines on / off' },
+    { group: 'File editor', keys: 'Ctrl+Z', label: 'Undo your own edits (never an agent’s)' },
   ];
-  const GROUPS = ['Moving around', 'This chat', 'Panels', 'Text size'];
+  const GROUPS = ['Moving around', 'This chat', 'Panels', 'Text size', 'File editor'];
   // Rows grouped for display. Registry actions that carry a shortcut come first in their group, then the static list.
   // Chat-scoped actions are listed even with no chat open (the sheet documents keys, not the current state).
   function sheetModel(ctx, statics) {

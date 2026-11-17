@@ -2,7 +2,15 @@
 // of AIB's CSS variables, so every AIB theme (incl. high contrast) works with no per-theme code.
 //
 // Exposes window.AIBCodeEditor:
-//   create({ parent, root, text, name, readOnly, wrap, live, onChange, onSave }) -> { view, text(), setText(t), setWrap(on), focus(), destroy() }
+//   create({ parent, root, text, name, readOnly, wrap, live, onChange, onSave, onSaveAll, onOverlapClick })
+//     -> { view, text(), setText(t), setWrap(on), setReadOnly(on), indent(), refreshMarks(), focus(), destroy() }
+//     live: { ytext, undo, overlaps?, doc? } binds the editor to a live file's Y.Text (y-codemirror.next); its overlaps (Y relative
+//     positions kept by the server, server/files/live_file.ts) show as a gutter marker plus a soft line tint, never as a block that
+//     pushes the code down (owner rule: nothing jarring).
+//   liveClient({ url, protocols, onHello, onReopen, onStatus, onSwap }) -> the page side of the file socket (server/web/
+//     live_files_routes.ts): y-protocols sync, reconnects, and a rebase onto a new lineage that keeps the page's text.
+//   compare({ parent, root, disk, live, name, narrow }) -> Compare in the same pane: the disk on the left (read only), your live text
+//     on the right with a "take theirs" arrow per chunk (MergeView revertControls); narrow: one column (unifiedMergeView).
 //   languageFor(name) -> CodeMirror extension (or [] for plain text)
 //   cm: the CodeMirror pieces the page and tests may need (EditorView, EditorState, ...)
 //
@@ -11,7 +19,7 @@
 // (adoptedStyleSheets), which CSP does not govern. So the page mounts every editor in a shadow root: create({ parent, root })
 // with root = that shadow root. AIB's CSS variables inherit into it, so the theme still follows AIB's theme. The spike e2e
 // (work/deno/code_editor_spike_e2e_test.ts) proves it in the real AIB window.
-import { EditorState, Compartment } from '@codemirror/state';
+import { EditorState, Compartment, StateEffect, StateField, RangeSet, RangeSetBuilder } from '@codemirror/state';
 import {
   EditorView,
   keymap,
@@ -23,6 +31,9 @@ import {
   rectangularSelection,
   crosshairCursor,
   highlightActiveLine,
+  gutter,
+  GutterMarker,
+  Decoration,
 } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, indentWithTab, toggleComment } from '@codemirror/commands';
 import { search, searchKeymap, highlightSelectionMatches, openSearchPanel, gotoLine, selectNextOccurrence } from '@codemirror/search';
@@ -57,6 +68,9 @@ import { powerShell } from '@codemirror/legacy-modes/mode/powershell';
 import { toml } from '@codemirror/legacy-modes/mode/toml';
 import * as Y from 'yjs';
 import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next';
+import * as syncProtocol from 'y-protocols/sync';
+import * as encoding from 'lib0/encoding';
+import * as decoding from 'lib0/decoding';
 
 // ---- live file (the docs model, server/docs/live_doc.ts): the open file is a Y.Text; the editor is bound to it with
 // y-codemirror.next. The user's typing is the editor's origin (tracked by the undo manager); a change on disk comes in as the FILE
@@ -104,6 +118,261 @@ function liveFile(text) {
   };
 }
 
+// ---- the page side of the file socket ----------------------------------------------------------------------------------------
+// One per open file per window (files-ui.js shares it between the tab and the beside pane). Edits made while the socket is down wait
+// in the Y.Doc and go out in the next sync. A server with another lineage (it restarted and had nothing unsaved of this file) gets a
+// fresh Y.Doc; once synced, the text the page had is put back on top as one narrowed edit (nothing typed is dropped), and onSwap
+// tells the page to bind its editors to the new text.
+const isHi = (c) => c >= 0xd800 && c <= 0xdbff;
+const isLo = (c) => c >= 0xdc00 && c <= 0xdfff;
+function narrow(old, next) {
+  let p = 0;
+  const lim = Math.min(old.length, next.length);
+  while (p < lim && old.charCodeAt(p) === next.charCodeAt(p)) p++;
+  if (p > 0 && (isHi(old.charCodeAt(p - 1)) || isLo(old.charCodeAt(p)) || isLo(next.charCodeAt(p)))) p--;
+  let q = 0;
+  while (q < lim - p && old.charCodeAt(old.length - 1 - q) === next.charCodeAt(next.length - 1 - q)) q++;
+  if (q > 0 && (isLo(old.charCodeAt(old.length - q)) || isHi(next.charCodeAt(next.length - q - 1)))) q--;
+  return { from: p, to: old.length - q, insert: next.slice(p, next.length - q) };
+}
+const toB64 = (u) => {
+  let s = '';
+  for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000));
+  return btoa(s);
+};
+const REBASE = { kind: 'rebase' };
+function liveClient(o) {
+  let doc = new Y.Doc(), ws = null, closed = false, synced = false, retry = 0, timer = null, lineage = '', localDirty = false;
+  let resolveSynced;
+  let whenSynced = new Promise((r) => (resolveSynced = r));
+  const send = (sock, build) => {
+    const e = encoding.createEncoder();
+    encoding.writeVarUint(e, 0);
+    build(e);
+    if (sock && sock.readyState === 1) sock.send(encoding.toUint8Array(e));
+  };
+  const onUpdate = (update, origin) => {
+    if (ws && origin === ws) return;
+    if (origin !== REBASE) localDirty = true;
+    if (ws && synced) send(ws, (e) => syncProtocol.writeUpdate(e, update));
+  };
+  const onMeta = (ev, tr) => {
+    // the server's dirty flag answers our edits once the state it checked (meta.checked) covers them
+    if (!localDirty || !(ws && tr.origin === ws) || !ev.keysChanged.has('checked')) return;
+    const checked = doc.getMap('meta').get('checked');
+    if (!(checked instanceof Uint8Array)) return;
+    const mine = Y.decodeStateVector(Y.encodeStateVector(doc)).get(doc.clientID) || 0;
+    if ((Y.decodeStateVector(checked).get(doc.clientID) || 0) >= mine) {
+      localDirty = false;
+      if (o.onDirty) o.onDirty();
+    }
+  };
+  const bind = (d) => {
+    d.on('update', onUpdate);
+    d.getMap('meta').observe(onMeta);
+  };
+  bind(doc);
+  async function connect() {
+    if (closed) return;
+    clearTimeout(timer);
+    const protocols = await o.protocols();
+    if (closed) return;
+    const sock = new WebSocket(o.url(), protocols);
+    sock.binaryType = 'arraybuffer';
+    ws = sock;
+    let rebase = null;
+    sock.onmessage = (ev) => {
+      if (ws !== sock) return;
+      if (typeof ev.data === 'string') {
+        let m = null;
+        try {
+          m = JSON.parse(ev.data);
+        } catch (err) {
+          return;
+        }
+        if (m.type === 'hello') {
+          if (lineage && m.lineage !== lineage) {
+            rebase = doc.getText('file').toString();
+            doc.off('update', onUpdate);
+            doc = new Y.Doc();
+            bind(doc);
+          }
+          lineage = m.lineage;
+          send(sock, (e) => syncProtocol.writeSyncStep1(e, doc));
+          if (o.onHello) o.onHello(m);
+        } else if (m.type === 'reopen' && o.onReopen) o.onReopen(m);
+        return;
+      }
+      const d = decoding.createDecoder(new Uint8Array(ev.data));
+      if (decoding.readVarUint(d) !== 0) return; // awareness: no cursors in v1
+      const e = encoding.createEncoder();
+      encoding.writeVarUint(e, 0);
+      const kind = syncProtocol.readSyncMessage(d, e, doc, sock);
+      if (encoding.length(e) > 1) sock.send(encoding.toUint8Array(e));
+      if (kind === syncProtocol.messageYjsSyncStep2 && !synced) {
+        synced = true;
+        retry = 0;
+        if (rebase !== null) {
+          const text = doc.getText('file'), cut = narrow(text.toString(), rebase);
+          rebase = null;
+          if (cut.to > cut.from || cut.insert) {
+            doc.transact(() => {
+              if (cut.to > cut.from) text.delete(cut.from, cut.to - cut.from);
+              if (cut.insert) text.insert(cut.from, cut.insert);
+            }, { kind: 'rebase-user' }); // the page's own text, sent like typing
+          }
+          if (o.onSwap) o.onSwap(doc);
+        }
+        resolveSynced();
+        if (o.onStatus) o.onStatus('synced');
+      }
+    };
+    sock.onclose = (ev) => {
+      if (ws !== sock) return;
+      ws = null;
+      if (synced) whenSynced = new Promise((r) => (resolveSynced = r));
+      synced = false;
+      if (o.onStatus) o.onStatus('closed', ev.code);
+      if (closed || ev.code === 4404) return; // 4404: not open on the server; the page opens it again (onReopen)
+      timer = setTimeout(connect, Math.min(5000, 400 * Math.pow(2, retry++)));
+    };
+    sock.onerror = () => {};
+  }
+  return {
+    get doc() {
+      return doc;
+    },
+    get text() {
+      return doc.getText('file');
+    },
+    get meta() {
+      return doc.getMap('meta');
+    },
+    get overlaps() {
+      return doc.getArray('overlaps');
+    },
+    get synced() {
+      return synced;
+    },
+    get lineage() {
+      return lineage;
+    },
+    /** Typed here and not yet answered by the server's dirty flag. */
+    get localDirty() {
+      return localDirty;
+    },
+    whenSynced: () => whenSynced,
+    sv: () => toB64(Y.encodeStateVector(doc)),
+    connect,
+    /** Connect again now (after the page opened the file again). */
+    reconnect() {
+      retry = 0;
+      if (ws) {
+        const old = ws;
+        ws = null;
+        try {
+          old.close(1000, 'reconnect');
+        } catch (err) {
+          /* gone */
+        }
+      }
+      synced = false;
+      return connect();
+    },
+    close() {
+      closed = true;
+      clearTimeout(timer);
+      if (ws) ws.close(1000, 'closed');
+      ws = null;
+    },
+  };
+}
+
+// ---- overlaps: a gutter marker and a soft line tint (never a block that pushes the code down) ----------------------------------
+const setOverlaps = StateEffect.define();
+const overlapField = StateField.define({
+  create: () => ({ gutter: RangeSet.empty, lines: Decoration.none }),
+  update(v, tr) {
+    let next = tr.docChanged ? { gutter: v.gutter.map(tr.changes), lines: v.lines.map(tr.changes) } : v;
+    for (const e of tr.effects) if (e.is(setOverlaps)) next = e.value;
+    return next;
+  },
+  provide: (f) => EditorView.decorations.from(f, (v) => v.lines),
+});
+class OverlapMarker extends GutterMarker {
+  toDOM() {
+    const s = document.createElement('span');
+    s.className = 'cm-aib-overlap';
+    s.textContent = '◆';
+    s.title = 'Changed on disk where you edited. Your text stays. Click to compare.';
+    return s;
+  }
+}
+const overlapMarker = new OverlapMarker();
+const overlapLine = Decoration.line({ class: 'cm-aib-overlap-line' });
+function overlapRanges(live) {
+  const out = [];
+  if (!live || !live.overlaps || !live.doc) return out;
+  for (const rec of live.overlaps.toArray()) {
+    try {
+      const a = Y.createAbsolutePositionFromRelativePosition(Y.decodeRelativePosition(rec.from), live.doc);
+      const b = Y.createAbsolutePositionFromRelativePosition(Y.decodeRelativePosition(rec.to), live.doc);
+      if (a && b) out.push({ from: a.index, to: Math.max(a.index, b.index) });
+    } catch (err) {
+      /* a position from another lineage */
+    }
+  }
+  return out;
+}
+function overlapValue(state, ranges) {
+  const g = new RangeSetBuilder(), l = new RangeSetBuilder();
+  const lines = new Set();
+  for (const r of ranges) {
+    const first = state.doc.lineAt(Math.min(r.from, state.doc.length)).number;
+    const last = state.doc.lineAt(Math.min(Math.max(r.from, r.to - 1), state.doc.length)).number;
+    for (let n = first; n <= last; n++) lines.add(n);
+  }
+  for (const n of [...lines].sort((a, b) => a - b)) {
+    const at = state.doc.line(n).from;
+    g.add(at, at, overlapMarker);
+    l.add(at, at, overlapLine);
+  }
+  return { gutter: g.finish(), lines: l.finish() };
+}
+
+// ---- Compare: in the same pane, at the same width --------------------------------------------------------------------------------
+function compare(o) {
+  const lang = languageFor(o.name);
+  const ro = [EditorState.readOnly.of(true), EditorView.editable.of(false)];
+  const mine = [
+    lineNumbers(),
+    yCollab(o.live.ytext, null, { undoManager: o.live.undo }),
+    keymap.of([...yUndoManagerKeymap, ...defaultKeymap]),
+    theme,
+    syntaxHighlighting(highlight),
+    lang,
+    o.readOnly ? ro : [],
+  ];
+  if (o.narrow) {
+    const view = new EditorView({
+      state: EditorState.create({ doc: o.live.ytext.toString(), extensions: [...mine, unifiedMergeView({ original: o.disk, mergeControls: !o.readOnly })] }),
+      parent: o.parent,
+      root: o.root,
+    });
+    return { view, destroy: () => view.destroy() };
+  }
+  const mv = new MergeView({
+    a: { doc: o.disk, extensions: [lineNumbers(), ...ro, theme, syntaxHighlighting(highlight), lang] },
+    b: { doc: o.live.ytext.toString(), extensions: mine },
+    parent: o.parent,
+    root: o.root,
+    revertControls: o.readOnly ? undefined : 'a-to-b',
+    highlightChanges: true,
+    gutter: true,
+  });
+  return { view: mv.b, merge: mv, destroy: () => mv.destroy() };
+}
+
 // ---- theme: AIB's CSS variables only ------------------------------------------------------------------------------------------
 const theme = EditorView.theme({
   '&': { height: '100%', backgroundColor: 'var(--code-bg)', color: 'var(--text)', fontSize: '13px' },
@@ -136,6 +405,16 @@ const theme = EditorView.theme({
   },
   '.cm-panel label': { color: 'var(--text-2)' },
   '.cm-tooltip': { backgroundColor: 'var(--bg-popover)', color: 'var(--text)', border: '1px solid var(--line-field)' },
+  '.cm-aib-overlap-gutter .cm-gutterElement': { width: '14px', color: 'var(--warn)', cursor: 'pointer', textAlign: 'center' },
+  '.cm-aib-overlap-line': { backgroundColor: 'color-mix(in srgb, var(--warn) 12%, transparent)' },
+  '&.cm-merge-a, &.cm-merge-b': { height: 'auto' },
+  '.cm-merge-revert button': {
+    color: 'var(--text)',
+    backgroundColor: 'var(--bg-field)',
+    border: '1px solid var(--line-field)',
+    borderRadius: '4px',
+    cursor: 'pointer',
+  },
 });
 const highlight = HighlightStyle.define([
   { tag: [t.keyword, t.operatorKeyword, t.modifier, t.controlKeyword, t.definitionKeyword, t.moduleKeyword], color: 'var(--syn-keyword)' },
@@ -206,6 +485,7 @@ function create(opts) {
   };
   const keys = [
     { key: 'Mod-s', preventDefault: true, run: () => (o.onSave ? (o.onSave(view.state.doc.toString()), true) : false) },
+    { key: 'Mod-Shift-s', preventDefault: true, run: () => (o.onSaveAll ? (o.onSaveAll(), true) : false) },
     { key: 'Mod-g', preventDefault: true, run: gotoLine }, // CodeMirror's default Mod-g is "find next" (F3 stays)
     { key: 'Mod-h', preventDefault: true, run: openSearchPanel }, // the search panel has the replace field
     { key: 'Mod-d', preventDefault: true, run: selectNextOccurrence },
@@ -215,6 +495,17 @@ function create(opts) {
   const state = EditorState.create({
     doc: text,
     extensions: [
+      live && live.overlaps
+        ? [
+          overlapField,
+          gutter({
+            class: 'cm-aib-overlap-gutter',
+            markers: (v) => v.state.field(overlapField).gutter,
+            initialSpacer: () => overlapMarker,
+            domEventHandlers: { mousedown: () => (o.onOverlapClick ? (o.onOverlapClick(), true) : false) },
+          }),
+        ]
+        : [],
       lineNumbers(),
       highlightActiveLineGutter(),
       highlightSpecialChars(),
@@ -245,6 +536,22 @@ function create(opts) {
     ],
   });
   const view = new EditorView({ state, parent: o.parent, root: o.root });
+  let marking = 0;
+  const refreshMarks = () => {
+    if (!live || !live.overlaps) return;
+    view.dispatch({ effects: setOverlaps.of(overlapValue(view.state, overlapRanges(live))) });
+  };
+  const soon = () => {
+    if (marking) return;
+    marking = setTimeout(() => {
+      marking = 0;
+      refreshMarks();
+    }, 30);
+  };
+  if (live && live.overlaps) {
+    live.overlaps.observe(soon);
+    refreshMarks();
+  }
   return {
     view,
     live,
@@ -253,7 +560,13 @@ function create(opts) {
     setWrap,
     setReadOnly: (on) => view.dispatch({ effects: ro.reconfigure(on ? [EditorState.readOnly.of(true), EditorView.editable.of(false)] : []) }),
     focus: () => view.focus(),
-    destroy: () => view.destroy(),
+    indent: () => detectIndent(view.state.doc.toString()),
+    refreshMarks,
+    destroy: () => {
+      if (live && live.overlaps) live.overlaps.unobserve(soon);
+      clearTimeout(marking);
+      view.destroy();
+    },
   };
 }
 
@@ -263,6 +576,9 @@ window.AIBCodeEditor = {
   languageFor,
   detectIndent,
   liveFile,
+  liveClient,
+  compare,
+  narrow,
   FILE,
   cm: { EditorState, EditorView, MergeView, unifiedMergeView, diff, Y },
 };

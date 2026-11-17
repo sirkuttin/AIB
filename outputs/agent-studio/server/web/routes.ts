@@ -131,6 +131,11 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['GET', '/api/live/files/outside', 'read', 'get'],
   ['POST', '/api/live/files/exclude', 'write', 'body'],
   ['POST', '/api/live/files/strays/move', 'write', 'body'],
+  ['POST', '/api/live/files/open', 'write', 'body'], // the file editor (live_files_routes.ts): page session only
+  ['POST', '/api/live/files/save', 'write', 'body'],
+  ['POST', '/api/live/files/close', 'write', 'body'],
+  ['GET', '/api/live/files/compare', 'read', 'get'],
+  ['GET', '/api/live/files/socket', 'write', 'get'],
   ['GET', '/api/live/wsl/status', 'read', 'get'], // WSL projects (wsl_routes.ts)
   ['GET', '/api/live/wsl/dirs', 'read', 'get'],
   ['GET', '/api/live/wsl/agents', 'read', 'get'],

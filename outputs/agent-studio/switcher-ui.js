@@ -531,7 +531,9 @@
       tag === 'textarea' ||
       tag === 'select' ||
       !!target.isContentEditable ||
-      !!(target.closest && target.closest('dialog[open]'))
+      !!(target.closest && target.closest('dialog[open]')) ||
+      // the file editor lives in a shadow root: its host stands for the editable text (typing.js, review must-fix 1)
+      !!(target.closest && target.closest('.sf-code-host'))
     );
   }
   function step(direction) {
@@ -555,7 +557,10 @@
     }
     if (dialog && dialog.open) return false;
     if (sheet && sheet.open) return false;
-    if (typing(event.target)) return false;
+    // a key another handler took (the editor's Alt+Up/Down moves a line), or one typed into a field or the file editor
+    if (event.defaultPrevented) return false;
+    const T = root.AgentTyping;
+    if (typing(event.target) || (T && T.isTyping(event))) return false;
     if (key === '?' && !mod && !event.altKey) {
       event.preventDefault();
       openSheet();

@@ -439,6 +439,12 @@ export const PC_ROUTES: Readonly<Record<string, RemoteEntry>> = {
   'GET /api/live/files/outside': withPaths([F], [{ in: 'query', field: 'path', rule: 'blocked' }]),
   'POST /api/live/files/exclude': never('Files is see and download only from another computer (v1)'),
   'POST /api/live/files/strays/move': never('Files is see and download only from another computer (v1)'),
+  // the file editor: only the AIB page on the PC itself edits project files (architect review 2026-11-16, must-fix 6)
+  'POST /api/live/files/open': never('Files are edited on the PC itself'),
+  'POST /api/live/files/save': never('Files are edited on the PC itself'),
+  'POST /api/live/files/close': never('Files are edited on the PC itself'),
+  'GET /api/live/files/compare': never('Files are edited on the PC itself'),
+  'GET /api/live/files/socket': never('Files are edited on the PC itself'),
   // ---- terminal ----
   'GET /api/live/terminal': { kind: 'socket', socket: 'terminal' },
   'GET /api/live/terminal/list': scope(T), // the answer is filtered to chat keys of added projects (pc_bridge.ts)

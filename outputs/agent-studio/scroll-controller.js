@@ -354,7 +354,8 @@
     }
     function onKey(e) {
       const t = e.target;
-      if (t && t.closest && t.closest('input, textarea, select, [contenteditable="true"]')) return;
+      if (t && t.closest && t.closest('input, textarea, select, [contenteditable="true"], .sf-code-host')) return;
+      if (root.AgentTyping && root.AgentTyping.skip(e)) return;
       if (['ArrowUp', 'PageUp', 'Home'].includes(e.key) || (e.key === ' ' && e.shiftKey)) earlyUp();
     }
     function onTouchStart(e) {

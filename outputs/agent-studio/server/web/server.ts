@@ -40,6 +40,8 @@ import { FolderPresence, presence } from '../desktop/folder_presence.ts';
 import { AddedProjects } from '../desktop/added_projects.ts';
 import { filesRoutes } from './files_routes.ts';
 import { DOCS_SOCKET, docsRoutes, docsSocket } from './docs_routes.ts';
+import { FILES_SOCKET, filesSocket, liveFilesRoutes } from './live_files_routes.ts';
+import { LiveFiles } from '../files/live_files.ts';
 import { DocStore } from '../docs/store.ts';
 import { ArtifactHistory } from '../docs/history.ts';
 import { installWslDocFs } from '../wsl/docs.ts';
@@ -235,6 +237,8 @@ export interface WebContext {
   editorList: Record<string, unknown>;
   /** The open local docs (docs/store.ts). */
   docs: DocStore;
+  /** The file editor's open files (files/live_files.ts): their live text, the disk poll, the store. */
+  liveFiles?: LiveFiles | null;
   /** The chats' terminal shells (terminal/sessions.ts); ended when this server closes. */
   terminals: TerminalSessions;
   /** The desktop app's own notifications (desktop/notify.ts), set by main.ts in the app; null in a server run (a browser uses the
@@ -416,6 +420,12 @@ export class WebServer {
         return this.json(status, payload);
       });
     }
+    for (const [key, handler] of liveFilesRoutes()) {
+      this.native.set(key, async (c, url, body, request, principal) => {
+        const [status, payload] = await handler(c, url, body, request, principal);
+        return this.json(status, payload);
+      });
+    }
     for (const [key, handler] of docsRoutes()) {
       this.native.set(key, async (c, url, body) => {
         const [status, payload] = await handler(c, url, body);
@@ -554,6 +564,7 @@ export class WebServer {
           this.gate = new Gate(port, () => this.ctx.token);
           this.ctx.gate = this.gate;
           this.ctx.docs.start();
+          this.ctx.liveFiles?.start();
           globalThis.addEventListener('unload', this.#onUnload);
           resolve(port);
         },
@@ -568,6 +579,10 @@ export class WebServer {
     try {
       if (method === 'GET' && path === DOCS_SOCKET) {
         const answer = docsSocket(this.ctx, request, url);
+        return 'response' in answer ? answer.response : this.json(answer.refused[0], answer.refused[1]);
+      }
+      if (method === 'GET' && path === FILES_SOCKET) {
+        const answer = filesSocket(this.ctx, request, url);
         return 'response' in answer ? answer.response : this.json(answer.refused[0], answer.refused[1]);
       }
       if (method === 'GET' && path === TERMINAL_SOCKET) {
@@ -733,6 +748,7 @@ export class WebServer {
     if (release) await this.ctx.terminals.releaseAll();
     else await this.ctx.terminals.endAll();
     await this.ctx.docs.close();
+    this.ctx.liveFiles?.close(); // unsaved text is kept in the store (hot exit); quitting never asks
     await this.#server?.shutdown();
   }
 
@@ -839,6 +855,12 @@ export function makeContext(
     () => ctx.token,
     async (chat) => chatStudioOf(ctx, await savedFolders(ctx, chat)),
   );
+  ctx.liveFiles = new LiveFiles({
+    stateDir: options.stateDir,
+    liveCall: (name, body) => ctx.host.liveCall(name, body),
+    conversations: () => ctx.artifacts?.conversations() ?? [],
+    connectionOf: (id) => ctx.artifacts?.connectionOf(id) ?? null,
+  });
   // a chat's turn ended (its turnEndedAt moved, or its connection went): the docs drop its presence and claims, show its refused notes
   ctx.artifacts.onTurnEnd = (chat) => ctx.docs.turnEnded(chat);
   return ctx;

@@ -475,6 +475,9 @@ class NoWrites extends WriteTracker {
   override observe(): string[] {
     return [];
   }
+  override finished(): string[] {
+    return [];
+  }
 }
 
 /**
@@ -1200,6 +1203,8 @@ export class Connection {
    * (usage_update._meta._claude/rateLimit) or 'qwen-quota' (a prompt error's data.subscriptionQuota); at = when, in seconds.
    */
   onLimits: ((connection: Connection, kind: string, raw: unknown, at: number) => void) | null = null;
+  /** A write tool call of this chat finished (its files are on disk): the absolute paths it named (host/studio.ts filesChanged). */
+  onWritesDone: ((connection: Connection, paths: string[]) => void) | null = null;
   /** Number of the latest prompt() accepted. */
   promptSeq = 0;
   /** cancel() cancels every prompt up to this number (one still before its send is dropped; later ones go through). */
@@ -3668,6 +3673,8 @@ export class Connection {
         this.#modes().currentModeId = get(update, 'currentModeId');
       }
       this.writes.observe(params);
+      const done = this.writes.finished(params);
+      if (done.length) this.onWritesDone?.(this, done);
       this.event('update', params);
       this.#watchTools(params);
       return this.#watchHeldTurn(params);

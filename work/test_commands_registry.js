@@ -247,11 +247,11 @@ test('keywords find actions', () => {
   assert.equal(C.compose(sources(), 'snooze', 'actions')[0].id, 'chat:hold');
 });
 
-test('sheet model: four groups, registry shortcuts plus the static ones, absent modules add no rows', () => {
+test('sheet model: five groups (with the file editor keys), registry shortcuts plus the static ones, absent modules add no rows', () => {
   const groups = C.sheetModel(baseCtx({ keys: { inbox: 'Alt+I' } }));
   assert.deepEqual(
     groups.map((g) => g.name),
-    ['Moving around', 'This chat', 'Panels', 'Text size'],
+    ['Moving around', 'This chat', 'Panels', 'Text size', 'File editor'],
   );
   const flat = groups.flatMap((g) => g.rows.map((r) => g.name + '|' + r.keys));
   for (const k of [

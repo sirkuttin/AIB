@@ -1909,6 +1909,8 @@ export class WriteTracker {
   readonly cwd: string;
   readonly paths = new Map<string, number>(); // path -> last time it was written (insertion ordered, oldest dropped)
   readonly calls = new Map<string | number, true>(); // toolCallId -> true when that call is a write (later updates may omit the kind)
+  /** toolCallId -> the paths that write call named so far (the file editor reads a file once its write call is done). */
+  readonly callPaths = new Map<string | number, Set<string>>();
 
   constructor(cwd: unknown = '') {
     this.cwd = cwd ? String(cwd) : '';
@@ -1961,7 +1963,32 @@ export class WriteTracker {
       recorded.push(normal);
     }
     while (this.paths.size > MAX_TRACKED_WRITES) this.paths.delete(this.paths.keys().next().value!);
+    if ((typeof callId === 'string' || isInt(callId)) && recorded.length) {
+      const id = callId as string | number;
+      const set = this.callPaths.get(id) ?? new Set<string>();
+      for (const p of recorded) set.add(p);
+      this.callPaths.set(id, set);
+      while (this.callPaths.size > 200) this.callPaths.delete(this.callPaths.keys().next().value!);
+    }
     return recorded;
+  }
+
+  /**
+   * The paths of a write call that just finished (a tool_call_update with status completed or failed), once; [] otherwise. Feed it
+   * the same params as observe, after observe. A tool_call fires before the write and before any approval, so only this says the
+   * bytes are on disk (architect review 2026-11-16, must-fix 4).
+   */
+  finished(params: unknown): string[] {
+    const update = isDict(params) ? params.update : null;
+    if (!isDict(update) || update.sessionUpdate !== 'tool_call_update') return [];
+    if (update.status !== 'completed' && update.status !== 'failed') return [];
+    let callId = update.toolCallId as unknown;
+    if (typeof callId === 'boolean') callId = callId ? 1 : 0;
+    if (typeof callId !== 'string' && !isInt(callId)) return [];
+    const set = this.callPaths.get(callId as string | number);
+    if (!set) return [];
+    this.callPaths.delete(callId as string | number);
+    return [...set];
   }
 
   written(): string[] {
