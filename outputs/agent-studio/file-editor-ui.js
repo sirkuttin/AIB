@@ -53,6 +53,9 @@
   };
   const editableScope = (s) => !!s && (s.root === 'main' || s.root === 'project');
   function handles(tab) {
+    // Another computer (remote-auth.js sets AIBRemote): files are edited on the PC itself (its routes are page-only, pc_routes.ts),
+    // so the tab stays the read-only view with Download.
+    if (root.AIBRemote) return false;
     return !!tab && !tab.kind && editableScope(tab.scope) && !(tab.scope && tab.scope.wsl);
   }
   const stateOf = (tab) => {

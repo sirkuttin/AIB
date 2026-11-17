@@ -199,6 +199,10 @@ export const CONVERSATION_ACTIONS: Readonly<Record<string, DeviceScope[]>> = {
   restore: [R, P],
 };
 
+/** POST /api/live/inbox/act (attention/inbox_act.ts): snooze and wake are marks like "handled" (See chats); continue sends a turn
+ * (the Send switch), as on the phone (remote/server.ts chat-op). */
+export const INBOX_ACTIONS: Readonly<Record<string, DeviceScope[]>> = { snooze: [R], wake: [R], continue: [S] };
+
 /** POST /api/live/session-op: the phone's chat-menu set only (end session, delete: Send); `list` names any folder: refused. */
 export const SESSION_OPS: Readonly<Record<string, DeviceScope[]>> = { close: [S], delete: [S] };
 
@@ -380,6 +384,12 @@ export const PC_ROUTES: Readonly<Record<string, RemoteEntry>> = {
     return { need };
   }),
   'POST /api/live/worktree-archive': withPaths([S], [{ in: 'body', field: 'cwd', rule: 'project' }]),
+  // ---- the server-built inbox (Inbox v3.1): the same rows and actions as the phone's (remote/server.ts chat-op) ----
+  'GET /api/live/inbox': scope(R),
+  'POST /api/live/inbox/act': rule(['key', 'action', 'until'], (ask) => {
+    const need = INBOX_ACTIONS[String(obj(ask.body).action ?? '')];
+    return need ? { need } : pcOnly('That inbox action is done on the PC only.');
+  }),
   // ---- allow rules: all of them are "Allow always" (v2 fix 1) ----
   'POST /api/live/allow/answer': scope(AL),
   'POST /api/live/allow/rules': scope(AL),

@@ -72,7 +72,9 @@ def drop_steer(value):
 
 # Deno-only (beta.10 inbox phase 1): the inbox's facts in a connection's attention block; the reference keeps the old attention
 # ({state, needs, turnEndedAt, busySince}). inbox-rules.js decides them (work/test_inbox_rules.js, work/deno/inbox_facts_test.ts).
-INBOX_FACTS = ('phase', 'helpers', 'shells', 'followUntil', 'failedAt', 'error', 'failKind', 'asksAt', 'question')
+# Inbox v3.1 adds the stall facts (lastOutputAt; stalledAt, stallKind, stallStep: server/acp/connection.ts stallFacts).
+INBOX_FACTS = ('phase', 'helpers', 'shells', 'followUntil', 'failedAt', 'error', 'failKind', 'asksAt', 'question', 'lastOutputAt', 'stalledAt',
+               'stallKind', 'stallStep')
 
 
 def drop_inbox(value):

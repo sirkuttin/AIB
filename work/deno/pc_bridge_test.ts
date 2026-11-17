@@ -118,7 +118,7 @@ function passed(r: { status: number; json: Json }, what: string) {
 
 Deno.test('contract 1: every ROUTE_LIST entry has exactly one remote entry, and the table names no other route', () => {
   const routes = new Set(ROUTE_LIST.map(([m, p]) => `${m} ${p}`));
-  assertEquals(routes.size, 178, 'the route table changed: classify the new route in remote/pc_routes.ts');
+  assertEquals(routes.size, 180, 'the route table changed: classify the new route in remote/pc_routes.ts');
   for (const key of routes) assert(Object.hasOwn(PC_ROUTES, key), `${key} has no remote entry`);
   for (const key of Object.keys(PC_ROUTES)) assert(routes.has(key), `${key} is not a page route`);
   // the review's never list (MF7 and v2 fix 5), by name
@@ -158,6 +158,12 @@ Deno.test('contract 1: every ROUTE_LIST entry has exactly one remote entry, and 
     'GET /',
     'POST /api/live/files/exclude',
     'POST /api/live/files/strays/move',
+    // the file editor (live_files_routes.ts): page session only, its socket too (the file editor review's rule)
+    'POST /api/live/files/open',
+    'POST /api/live/files/save',
+    'POST /api/live/files/close',
+    'GET /api/live/files/compare',
+    'GET /api/live/files/socket',
   ];
   for (const key of mustNever) assertEquals(PC_ROUTES[key]?.kind, 'never', key);
   for (const key of routes) if (key.includes('/api/live/devices')) assertEquals(PC_ROUTES[key].kind, 'never', key);
@@ -166,7 +172,7 @@ Deno.test('contract 1: every ROUTE_LIST entry has exactly one remote entry, and 
     assert(e.kind === 'scope' && e.need.includes('pc.always'), `allow/${op} needs pc.always`);
   }
   // the multi-job routes are rules, never a plain scope
-  for (const key of ['permission', 'connect', 'mode', 'config', 'session-op', 'conversation-state', 'project-remove', 'project-add']) {
+  for (const key of ['permission', 'connect', 'mode', 'config', 'session-op', 'conversation-state', 'project-remove', 'project-add', 'inbox/act']) {
     assertEquals(PC_ROUTES[`POST /api/live/${key}`].kind, 'rule', key);
   }
   assertEquals(entryFor('HEAD', '/api/live/list')?.kind, 'scope');
@@ -387,6 +393,12 @@ Deno.test({
           [L, 'POST /api/live/allow/rules', 'without pc.always', {}, 'scope'],
           // files writes: never in v1
           [A, 'POST /api/live/files/exclude', 'Git exclude', { id: 'c1', action: 'add', path: 'x' }, 'pc_only'],
+          // the file editor: page session only
+          [A, 'POST /api/live/files/save', 'a save', { file: 'f1', text: 'x' }, 'pc_only'],
+          // the inbox's actions (Inbox v3.1): the phone's set; anything else or an extra field is refused
+          [L, 'POST /api/live/inbox/act', 'wake', { key: 'claude:sess-c1', action: 'wake' }, null],
+          [A, 'POST /api/live/inbox/act', 'an unknown action', { key: 'claude:sess-c1', action: 'archive' }, 'pc_only'],
+          [A, 'POST /api/live/inbox/act', 'an extra field', { key: 'claude:sess-c1', action: 'wake', cwd: HOME }, 'pc_only'],
           // project-add: pc.projects
           [L, 'POST /api/live/project-add', 'without pc.projects', { path: outside }, 'scope'],
           [A, 'POST /api/live/project-add', 'a new folder', { path: outside }, null],

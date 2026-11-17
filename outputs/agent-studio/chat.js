@@ -5770,7 +5770,10 @@
       a = paneActEntry(key),
       now = Date.now();
     if (c.live && !c.live.closed) {
-      const next = (await pullLive(c.live.id)).state,
+      /* One read stream per chat: the pane's mirror (tickMirrors) and the main list read this chat on their own timers; this
+         timer runs at the same pace but drifts against them, so it takes any read made within one poll period instead of its own
+         (with the default 1 s window two timers 0.5 s apart read the same chat twice per period). */
+      const next = (await pullLive(c.live.id, { fresh: pollEvery(1500, 5000) })).state,
         entry = chatCache.entry(c.live.id);
       if (next) {
         a.snap = next;

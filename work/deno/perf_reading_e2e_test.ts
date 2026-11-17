@@ -62,6 +62,10 @@ Deno.test({
         const a = await anchor(page);
         await wheel(page, STEP);
         await sleep(40);
+        // measure what is painted: after two frames, so a draw and the controller's correction before paint (the same frame) are
+        // both in. A busy PC (the test pool) can run the wheel's scroll and a redraw later than the fixed sleep; the exact-wheel
+        // rule below is unchanged.
+        await page.eval('new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))');
         const now = a ? await whereIs(page, a.text) : null;
         const x = await m(page);
         // while you still read (the step that reaches the end follows: the list then keeps its newest row at the bottom)

@@ -44,6 +44,11 @@ Deno.test('the route table is exactly the Python web server\'s (paths, scopes an
     'GET /api/live/files/outside',
     'POST /api/live/files/exclude',
     'POST /api/live/files/strays/move',
+    'POST /api/live/files/open', // the file editor (live_files_routes.ts): page session only
+    'POST /api/live/files/save',
+    'POST /api/live/files/close',
+    'GET /api/live/files/compare',
+    'GET /api/live/files/socket',
     'GET /api/live/wsl/status',
     'GET /api/live/wsl/dirs',
     'GET /api/live/wsl/agents',

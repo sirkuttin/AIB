@@ -88,6 +88,9 @@
       return false;
     }
   }
+  // this page load's own id (presence `page`, see leave below)
+  const newPage = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+  let PAGE = newPage();
   let tabId = '';
   function me() {
     if (hasOwnId() || desktop()) return C().w;
@@ -216,7 +219,7 @@
   // ---- the fields every presence report carries (K2) ----
   function presenceFields(project) {
     const c = C(),
-      out = { w: me(), kind: c.kind, project: null };
+      out = { w: me(), page: PAGE, kind: c.kind, project: null };
     const p = project && typeof project === 'object' && project.key ? project : null;
     if (p) out.project = { key: String(p.key).slice(0, 400), name: String(p.name || '').slice(0, 80) };
     else if (c.project) out.project = { key: c.project, name: '' };
@@ -279,7 +282,9 @@
     if (typeof fn === 'function') changeFns.push(fn);
   }
 
-  // pagehide: the slot goes at once (K2 left:true, fetch keepalive), and the other windows are told.
+  // pagehide: the slot goes at once (K2 left:true, fetch keepalive), and the other windows are told. `page` names this page load:
+  // a report it sent just before (a blur or hidden report on another connection) can reach the server after the left one, and the
+  // server drops it instead of bringing the slot back (attention/presence.ts). A reload, or a return from the page cache, is a new one.
   let leftSent = false;
   function leave() {
     if (leftSent) return;
@@ -293,7 +298,7 @@
         method: 'POST',
         keepalive: true,
         headers: { 'Content-Type': 'application/json', 'X-Studio-Token': token },
-        body: JSON.stringify({ w: me(), left: true }),
+        body: JSON.stringify({ w: me(), left: true, page: PAGE }),
       });
     } catch (e) {
       /* the page is going */
@@ -302,13 +307,17 @@
   if (typeof root.addEventListener === 'function') {
     root.addEventListener('pagehide', leave);
     root.addEventListener('pageshow', (e) => {
-      if (e && e.persisted) leftSent = false; // back from the page cache: report again
+      if (e && e.persisted) {
+        leftSent = false; // back from the page cache: report again, as a new page load
+        PAGE = newPage();
+      }
     });
   }
 
   const api = {
     context: () => Object.assign({}, C()),
     id: me,
+    page: () => PAGE,
     kind,
     pinned,
     pinnedProject,

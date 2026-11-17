@@ -996,7 +996,7 @@ a.doc-chip.gone {
   border-radius: 8px;
   background: var(--bg-popover);
   color: var(--text);
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 6px 24px var(--shadow-soft);
   font-size: 13px;
 }
 .sf-close-msg {

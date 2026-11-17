@@ -67,6 +67,29 @@ Deno.test('T1: left drops a slot at once (B8); a call without w goes into slot "
   assert(p.active() === false && p.focused() === false);
 });
 
+Deno.test('T1: a report the closing page sent before its left, arriving after it, does not bring the slot back; a reload does', () => {
+  let now = 6_000_000;
+  const p = new Presence(() => now);
+  p.reportWindow(win('m', { page: 'pagem0001' }));
+  p.reportWindow(win('w2', { page: 'pagea0001', focused: true }));
+  p.reportWindow({ w: 'w2', left: true, page: 'pagea0001' });
+  // the blur / hidden report of the same page load, on another connection, lands late
+  p.reportWindow(win('w2', { page: 'pagea0001', visible: false }));
+  assertEquals(p.windows().map((x) => x.w), ['m'], 'the closed window stays gone');
+  // a reload of window w2 is a new page load: it reports at once
+  now += 200;
+  p.reportWindow(win('w2', { page: 'pageb0002' }));
+  assertEquals(p.windows().map((x) => x.w).sort(), ['m', 'w2']);
+  // a page without the field (an older page) keeps today's behaviour
+  p.reportWindow({ w: 'w3', left: true });
+  p.reportWindow(win('w3'));
+  assert(p.windows().some((x) => x.w === 'w3'));
+  // a computer's tab: the same rule
+  assertEquals(p.reportDevice('dev-1', { w: 't-abcd', page: 'pagec0003' }).windows.map((x) => x.w), ['t-abcd']);
+  p.reportDevice('dev-1', { w: 't-abcd', left: true, page: 'pagec0003' });
+  assertEquals(p.reportDevice('dev-1', { w: 't-abcd', page: 'pagec0003' }).windows, [], "the computer's closed tab stays gone");
+});
+
 Deno.test('T1: the sound owner is the focused window, else the one focused last (D1)', () => {
   let now = 1_000;
   const p = new Presence(() => now);

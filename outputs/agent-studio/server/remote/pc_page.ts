@@ -63,6 +63,7 @@ export const PC_STATIC: Readonly<Record<string, string>> = (() => {
     'files.css',
     // chat.html's scripts (themes.js and markdown.js are the phone's too)
     'view-prefs.js',
+    'typing.js',
     'store-merge.js',
     'window-context.js',
     'terminal-ui.js',
@@ -103,6 +104,7 @@ export const PC_STATIC: Readonly<Record<string, string>> = (() => {
     'split-ui.js',
     'doc-icons.js',
     'files-state.js',
+    'file-editor-ui.js', // its editor stays off on the computer page (handles() is false there): the file routes are page-only
     'files-ui.js',
     'doc-links.js',
     'subagents-ui.js',

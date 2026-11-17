@@ -100,6 +100,10 @@ interface Pending {
 
 /** K2: a presence slot id. 'm' and 'w2'…'w8' are app windows, 't-…' a browser tab in serve mode, '_' a call without an id. */
 export const PRESENCE_ID = /^(m|w[2-8]|t-[a-z0-9]{4,12}|_)$/;
+/** One page load's own id (window-context.js `page`): a reload of the same window has a new one. */
+const PAGE_ID = /^[a-z0-9]{6,40}$/;
+/** How many page loads that left are remembered (their late reports are dropped, for STALE_MS). */
+const LEFT_PAGES = 64;
 /** At most this many slots; the one reported longest ago goes first. */
 export const MAX_SLOTS = 16;
 const MAX_OPEN = 20;
@@ -220,6 +224,9 @@ export class Presence {
   #deviceInput = new Map<string, number>();
   /** Phase 2: a phone's last action (a send, an answer): it is in hand and used now. */
   #phoneInput = new Map<string, number>();
+  /** Page loads that sent `left: true` -> when. A report that page sent before it went can arrive after its left (another
+   * connection: a blur or hidden report racing the pagehide one); it must not bring the closed window's slot back. */
+  #leftPages = new Map<string, number>();
 
   constructor(readonly clock: () => number = Date.now) {}
 
@@ -243,10 +250,31 @@ export class Presence {
     if (typeof w !== 'string' || !PRESENCE_ID.test(w)) throw new ValueError('Invalid window');
     if (b.left === true) {
       this.leave(w);
+      this.#pageLeft(b.page);
       return this.answer();
     }
-    this.#put(w, slotOf(b), b.idleMs);
+    const slot = slotOf(b);
+    if (this.#pageGone(b.page)) return this.answer();
+    this.#put(w, slot, b.idleMs);
     return this.answer();
+  }
+
+  /** A page load said it left (`page`: its own id, window-context.js). */
+  #pageLeft(page: unknown): void {
+    if (typeof page !== 'string' || !PAGE_ID.test(page)) return;
+    this.#leftPages.delete(page);
+    this.#leftPages.set(page, this.clock());
+    while (this.#leftPages.size > LEFT_PAGES) this.#leftPages.delete(this.#leftPages.keys().next().value!);
+  }
+
+  /** Whether this report comes from a page load that already left (a late report): it is dropped. */
+  #pageGone(page: unknown): boolean {
+    if (typeof page !== 'string') return false;
+    const at = this.#leftPages.get(page);
+    if (at === undefined) return false;
+    if (this.clock() - at < STALE_MS) return true;
+    this.#leftPages.delete(page);
+    return false;
   }
 
   /**
@@ -262,9 +290,11 @@ export class Presence {
     const have = this.#slotOfTab(device, tab);
     if (b.left === true) {
       if (have) this.#drop(have);
+      this.#pageLeft(b.page);
       return this.deviceAnswer(device);
     }
     const slot = slotOf(b); // a bad body is refused before a slot is taken
+    if (this.#pageGone(b.page)) return this.deviceAnswer(device);
     let id = have;
     if (!id) {
       const mine = [...this.#slots.keys()].filter((k) => this.#remote.get(k)?.device === device);

@@ -509,7 +509,7 @@
         keepalive: true,
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json', 'X-AIB-Device': S.token },
-        body: JSON.stringify({ w: W.id(), left: true }),
+        body: JSON.stringify({ w: W.id(), left: true, page: typeof W.page === 'function' ? W.page() : undefined }),
       }).catch(() => {});
     } catch {
       /* the page is going */

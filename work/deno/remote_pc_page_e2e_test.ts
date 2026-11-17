@@ -654,6 +654,12 @@ Deno.test({
       const errors = page.errors.filter((e) => !/Failed to load resource|fetching the script/.test(e));
       assertEquals(errors, [], 'no page errors');
       assertEquals(await page.violations(), [], 'no CSP violations');
+      // the file editor loads but stays off: its routes are page-only, so a project file tab is the read-only view with Download
+      assertEquals(
+        await page.eval(`window.AgentFileEditor ? String(window.AgentFileEditor.handles({ id: 't', scope: { root: 'main' }, path: 'a.js' })) : 'none'`),
+        'false',
+        'no file editor on the computer page',
+      );
 
       // the laptop's own layout: resizing the Activity column saves to this computer's prefs, never the PC's
       await page.eval(
