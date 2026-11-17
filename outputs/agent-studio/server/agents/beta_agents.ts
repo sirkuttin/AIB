@@ -3,6 +3,7 @@
  * installs anything: an agent that is not found gets its official install command and docs link instead.
  *
  * Lookup order (first hit wins):
+ *   0. a release agent (Maki): AIB's own install of its GitHub release program (<state>/agents/<id>/<version>/maki[.exe]), run directly
  *   1. AIB's own install of its npm package (<state>/agents/<id>/<version>/, written by the installer), run with node
  *   2. a global `npm i -g` of that package, its package.json bin run with node (no .cmd shim involved)
  *   3. the agent's program names on PATH: a native .exe first, then an npm .cmd/.bat shim, which is started through cmd.exe
@@ -14,6 +15,7 @@
  */
 import * as adapters from './adapters.ts';
 import { type BetaAgent, betaAgent } from './beta_catalog.ts';
+import { findReleaseInstall } from './release_install.ts';
 import { pathOf } from '../state/paths.ts';
 import { isFile } from '../platform/pypath.ts';
 
@@ -151,6 +153,10 @@ export async function resolveBeta(id: string, options: BetaLookOptions = {}): Pr
   const env = options.env ?? Deno.env.toObject();
   const windows = options.windows ?? WIN;
   const comspec = env.ComSpec || env.COMSPEC || '';
+  const released = findReleaseInstall(agent, options.stateDir);
+  if (released) {
+    return row(agent, [released.program], 'studio', released.program, false, `AIB's own install ${released.version}: ${released.program}`);
+  }
   if (agent.npm?.native) {
     // A package whose bin is a postinstall placeholder (OpenCode): AIB's own install runs its platform binary, no node involved. A
     // global `npm i -g` ran the postinstall, so its PATH program is the real one (step 3 finds it).

@@ -5,6 +5,8 @@
  *
  *   npm        an npm package: AIB installs it into its own folder (installer.ts). Needs Node.js (MIN_NODE_MAJOR, or the package's
  *              own engines.node when higher).
+ *   download   a native program on the vendor's GitHub release (beta_catalog.ts `release`, Maki): AIB downloads the archive for this
+ *              computer, checks its pinned SHA-256 and unpacks the program into its own folder (installer.ts). Needs nothing first.
  *   terminal   no npm package: the vendor's installer for this OS (beta_catalog.ts vendorInstall), run in the card's terminal panel.
  *   none       the vendor documents no installer for this OS: the docs link only.
  *
@@ -18,6 +20,7 @@
 import * as adapters from './adapters.ts';
 import { type BetaAgent, betaAgent, type BetaSetupStep, type OsName } from './beta_catalog.ts';
 import { pathCandidates } from './beta_agents.ts';
+import { releaseAsset } from './release_install.ts';
 import { MIN_NODE_MAJOR } from './installer.ts';
 import { nvmInstallLine } from './nvm.ts';
 import type { ShellSpec } from '../platform/pty.ts';
@@ -145,7 +148,7 @@ export interface PrereqView {
 }
 
 export interface SetupView {
-  kind: 'npm' | 'terminal' | 'none';
+  kind: 'npm' | 'download' | 'terminal' | 'none';
   /** The command Install runs (terminal) or the person can run themselves (npm: the global npm command); '' for none. */
   command: string;
   source: string;
@@ -196,6 +199,7 @@ export function installPlan(
   os: OsName,
 ): { kind: SetupView['kind']; step: BetaSetupStep | null; needs: string[] } {
   if (agent.npm) return { kind: 'npm', step: null, needs: ['node'] };
+  if (agent.release && releaseAsset(agent, `${os}-${Deno.build.arch}`)) return { kind: 'download', step: null, needs: [] };
   const step = agent.vendorInstall?.[os] ?? null;
   if (!step) return { kind: 'none', step: null, needs: [] };
   return { kind: 'terminal', step, needs: [...(step.needs ?? [])] };
@@ -308,7 +312,7 @@ export async function setupView(
   const missing = prereqs.find((p) => p.state !== 'found');
   return {
     kind: plan.kind,
-    command: plan.kind === 'npm' ? agent.install : plan.step?.command ?? '',
+    command: plan.kind === 'npm' || plan.kind === 'download' ? agent.install : plan.step?.command ?? '',
     source: agent.vendorInstall?.source ?? agent.docs,
     uninstallDocs: agent.vendorInstall?.uninstallDocs ?? '',
     prereqs,

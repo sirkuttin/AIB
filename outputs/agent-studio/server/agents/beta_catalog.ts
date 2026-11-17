@@ -15,7 +15,9 @@
  *   commands   program names looked up on PATH (Windows: .exe first, then the .cmd/.bat npm shims, which are started through cmd.exe)
  *   known      install folders that are not always on PATH (Windows), relative to an environment variable
  *   args       the ACP arguments
- *   install    the official install command shown (copyable) when the agent is not found; AIB never downloads a binary itself
+ *   install    the official install command shown (copyable) when the agent is not found
+ *   release    a native program AIB downloads from the vendor's GitHub release and checks against a SHA-256 pinned here (Maki);
+ *              the only binary AIB downloads itself (vendor install scripts only ever run in a terminal panel the person watches)
  *   signin     terminal: the agent's own login command runs in an AIB terminal panel (ACP auth type "terminal");
  *              agent: ACP `authenticate` on a short-lived agent process (the agent opens the browser itself);
  *              key: an API key the person types in Settings, passed to the agent as an environment variable
@@ -63,6 +65,32 @@ export interface BetaVendorInstall {
   readonly uninstallDocs?: string;
 }
 
+/** One archive of a GitHub release: its file name and the SHA-256 AIB checks before anything in it is used. */
+export interface BetaReleaseAsset {
+  readonly file: string;
+  /** Lower-case hex SHA-256 of the archive, copied from the release (GitHub's asset digest and the release's own sha256sums.txt). */
+  readonly sha256: string;
+  /** The archive's size in bytes (progress, and a download that grows past it is stopped). */
+  readonly bytes: number;
+}
+
+/**
+ * A native program AIB installs itself from the vendor's GitHub release (no npm package, no install script): Install downloads the
+ * archive for this computer from https://github.com/<repo>/releases/download/<tag>/<file>, checks its SHA-256 against the value
+ * pinned here, and unpacks only `program` into <state>/agents/<id>/<version>/ (installer.ts, release_install.ts).
+ */
+export interface BetaRelease {
+  /** owner/name on github.com. */
+  readonly repo: string;
+  readonly tag: string;
+  /** The version folder name. */
+  readonly version: string;
+  /** The program's file name inside the archive and in the install folder (Windows adds .exe). */
+  readonly program: string;
+  /** Keyed `<Deno.build.os>-<Deno.build.arch>`; a computer with no entry gets the install command and docs link only. */
+  readonly assets: Readonly<Record<string, BetaReleaseAsset>>;
+}
+
 export interface BetaKnownPath {
   /** Environment variable the path starts from (USERPROFILE, LOCALAPPDATA, APPDATA). */
   readonly base: string;
@@ -99,6 +127,8 @@ export interface BetaAgent {
   /** One more plain line on the card, when the agent needs one. */
   readonly note?: string;
   readonly npm?: BetaNpm;
+  /** A native program AIB installs from the vendor's GitHub release, checked by SHA-256 (Maki). */
+  readonly release?: BetaRelease;
   readonly commands: readonly string[];
   readonly known?: readonly BetaKnownPath[];
   readonly args: readonly string[];
@@ -109,6 +139,11 @@ export interface BetaAgent {
   readonly signin: BetaSignin;
   /** session/new reports a model it does not use until the client sets one (github/copilot-cli#5363): set it right after. */
   readonly setModelAfterNew?: boolean;
+  /**
+   * It exits before answering `initialize` when it has no sign-in at all (Maki: "no provider available"), so the sign-in check reads an
+   * agent that stops before it answers as Needs sign-in instead of Not checked.
+   */
+  readonly exitsWhenSignedOut?: boolean;
   /** Its mode ids are full URLs (nothing to do: AIB passes mode ids through as opaque text). */
   readonly modeIdsAreUrls?: boolean;
   /** Its `copilot` name on PATH may be VS Code's install-prompt shim: such a file does not count as installed. */
@@ -402,6 +437,97 @@ export const BETA_AGENTS: readonly BetaAgent[] = [
     install: 'npm install -g @kilocode/cli',
     docs: 'https://kilo.ai/docs/cli',
     signin: { kind: 'terminal', terminalArgs: ['auth', 'login'] }, // UNCONFIRMED: the login subcommand
+  },
+  {
+    id: 'maki',
+    // Maki (maki.sh, github.com/tontinton/maki, MIT): a native Rust agent, `maki acp` over stdio. Read from the v0.7.2 source
+    // (2026-11-17) and checked against the real binary with work/stub_model_api.js (work/deno/maki_e2e_test.ts):
+    //   initialize: loadSession true, session list, image + embedded context prompts, MCP over http and stdio, authMethods [] (no
+    //     ACP auth: it signs in with keys in its environment or `maki auth login`). Without any provider it exits before initialize
+    //     ("no provider available - set an API key ... run `maki auth login`").
+    //   session/new + session/load: modes build / plan, and one config option "model" (category model) that grows as it finds models.
+    //   session/set_mode, session/set_config_option (model only), session/cancel, session/request_permission (allow_once,
+    //     allow_always, reject_once, reject_always), elicitation/create (its question tool, when the client offers form
+    //     elicitation). It makes no fs or terminal calls to the client.
+    //   Not offered: session/resume, session/close, session/set_model, slash commands (available_commands_update).
+    // Its data (config, sessions, saved sign-ins under auth/) is in etcetera's base folders: Windows %APPDATA%\maki (cache in
+    // %LOCALAPPDATA%\maki); macOS and Linux $XDG_DATA_HOME / $XDG_CONFIG_HOME / $XDG_STATE_HOME / $XDG_CACHE_HOME (default ~/.local/share,
+    // ~/.config, ~/.local/state, ~/.cache), each with a maki folder.
+    signinDirs: [
+      'AppData/Roaming/maki',
+      'AppData/Local/maki',
+      '.local/share/maki',
+      '.local/state/maki',
+      '.config/maki',
+      '.cache/maki',
+    ],
+    name: 'Maki',
+    letter: 'M',
+    license: 'MIT',
+    cost: 'Free CLI · needs an API key or a provider sign-in',
+    note:
+      'Works with Anthropic, OpenAI, Google, DeepSeek, OpenRouter, Ollama and more. Sign in picks one; the key box below is for an Anthropic (or Anthropic-compatible) key.',
+    // GitHub release v0.7.2 (github.com/tontinton/maki/releases/tag/v0.7.2, 2026-11-14): one archive per target with the program at
+    // its root, and sha256sums.txt. No signatures or build attestations are published (`gh attestation verify`: none), so AIB pins
+    // the SHA-256 of each archive here and checks it before unpacking. Windows has only an x86_64 build; Windows on Arm runs it under
+    // emulation (the project's own install.sh says so). Linux builds are static (musl).
+    release: {
+      repo: 'tontinton/maki',
+      tag: 'v0.7.2',
+      version: '0.7.2',
+      program: 'maki',
+      assets: {
+        'windows-x86_64': {
+          file: 'maki-v0.7.2-x86_64-pc-windows-msvc.zip',
+          sha256: 'abd87a0668cc69d75351a435c3f05a2c10d840cd8a0b412facbd0a42c6180160',
+          bytes: 32666584,
+        },
+        'windows-aarch64': {
+          file: 'maki-v0.7.2-x86_64-pc-windows-msvc.zip',
+          sha256: 'abd87a0668cc69d75351a435c3f05a2c10d840cd8a0b412facbd0a42c6180160',
+          bytes: 32666584,
+        },
+        'darwin-x86_64': {
+          file: 'maki-v0.7.2-x86_64-apple-darwin.tar.gz',
+          sha256: '805fdd641b00798c94db7c4a6bf1f1bfaa60802d533da5683d391585eddb4759',
+          bytes: 35067012,
+        },
+        'darwin-aarch64': {
+          file: 'maki-v0.7.2-aarch64-apple-darwin.tar.gz',
+          sha256: 'de286c993de103ce85d0be08681e7baad57731fe094874273c3972749c7820d4',
+          bytes: 32697887,
+        },
+        'linux-x86_64': {
+          file: 'maki-v0.7.2-x86_64-unknown-linux-musl.tar.gz',
+          sha256: '8b45124b74d1697a95948c51cd86eea20a7e8ab3989b478eedd1a4844b08a93c',
+          bytes: 37097676,
+        },
+        'linux-aarch64': {
+          file: 'maki-v0.7.2-aarch64-unknown-linux-musl.tar.gz',
+          sha256: 'f59aa1a0c90c67ff045de96be5f197c915704b4bb77b48b04259f1f80f7f6429',
+          bytes: 36035491,
+        },
+      },
+    },
+    commands: ['maki'],
+    // install.ps1's default folder (MAKI_INSTALL_DIR moves it); install.sh uses ~/.local/bin, which is normally on PATH.
+    known: [{ base: 'LOCALAPPDATA', parts: ['maki', 'maki.exe'] }],
+    args: ['acp'],
+    // The project's own install commands (README), shown for doing it by hand; AIB's Install never runs them.
+    install: Deno.build.os === 'windows' ? 'irm https://maki.sh/install.ps1 | iex' : 'curl -fsSL https://maki.sh/install.sh | sh',
+    docs: 'https://maki.sh/docs/',
+    // `maki auth login` is interactive (a provider list, then a key prompt or a browser sign-in), so it runs in the card's terminal
+    // panel. Keys it saves stay in Maki's own folder. The key box sets ANTHROPIC_API_KEY (Anthropic comes first in Maki's provider
+    // order) and the address box ANTHROPIC_BASE_URL (Maki reads <PROVIDER>_BASE_URL), e.g. DeepSeek's Anthropic-compatible API.
+    signin: {
+      kind: 'terminal',
+      terminalArgs: ['auth', 'login'],
+      keyEnv: 'ANTHROPIC_API_KEY',
+      keyUrl: 'https://console.anthropic.com/settings/keys',
+      baseUrlEnv: 'ANTHROPIC_BASE_URL',
+      baseUrlHint: 'https://api.anthropic.com',
+    },
+    exitsWhenSignedOut: true,
   },
 ];
 

@@ -13,7 +13,19 @@ export const BUILTIN_AGENTS: readonly { id: string; name: string }[] = [
   { id: 'codex', name: 'Codex' },
 ];
 /** agent-choice.js BETA_IDS. */
-export const BETA_IDS: readonly string[] = ['copilot', 'opencode', 'gemini', 'qwen', 'cursor', 'goose', 'vibe', 'cline', 'kimi', 'kilo'];
+export const BETA_IDS: readonly string[] = [
+  'copilot',
+  'opencode',
+  'gemini',
+  'qwen',
+  'cursor',
+  'goose',
+  'vibe',
+  'cline',
+  'kimi',
+  'kilo',
+  'maki',
+];
 const CUSTOM_ID = /^custom-[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 export type Reason = '' | 'Not installed' | 'Needs sign-in' | 'Turned off in Settings';
