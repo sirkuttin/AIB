@@ -218,7 +218,10 @@
   /* ---- split view: the right panel lists both panes' chats (owner, 2026-11-15, mockup v2) ----
      Every tab starts each chat's section with the same header: status dot, chat name, a short line ("2 working · 2 running",
      "3 files", "2 artifacts"). It is not focus-aware and not clickable: focus changes nothing in the panel. */
-  function splitCounts(c) {
+  /* status: {text, tone} from the same words as the pane header ("Working · 12m", "Needs you", "Ready"). The line starts with
+     those words, counts follow; with no status it is the counts alone, or "Ready" when nothing runs. */
+  const isIdle = (st) => !st || (st.tone === 'idle' && st.text === 'Ready');
+  function splitCounts(c, status) {
     const w = Math.max(0, Number(c && c.working) || 0),
       f = Math.max(0, Number(c && c.failed) || 0),
       p = Math.max(0, Number(c && c.processes) || 0);
@@ -226,7 +229,15 @@
     if (w) parts.push({ text: w + ' working' });
     if (f) parts.push({ text: f + ' failed', bad: true });
     if (p) parts.push({ text: p + ' running' });
+    if (status && status.text) {
+      if (isIdle(status) && !parts.length) return [{ text: 'Ready' }];
+      return [{ text: status.text, bad: status.tone === 'bad' }, ...parts];
+    }
     return parts.length ? parts : [{ text: 'Ready' }];
+  }
+  /* "Nothing running right now" shows only for an idle chat with no subagents, commands or failures. */
+  function splitNothing(c, status) {
+    return isIdle(status) && !(c && (c.working || c.failed || c.processes));
   }
   /* sub: a string or [{text, bad}] (splitCounts). info: {key, title, dot()} (AgentSplitUI.chatInfo). Reuses `head` when given. */
   function splitHead(doc, info, sub, head) {
@@ -269,6 +280,7 @@
   const isSplit = (doc) => !!(doc || document).body && (doc || document).body.classList.contains('split-panel');
   const api = {
     splitCounts,
+    splitNothing,
     splitHead,
     splitLabel,
     isSplit,

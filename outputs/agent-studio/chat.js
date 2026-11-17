@@ -5765,8 +5765,9 @@
       });
       const running = a.commands.filter(isRunningCommand);
       sec.counts = { ...counts, processes: running.length };
-      A.splitHead(document, info, A.splitCounts(sec.counts), sec.head);
-      sec.none.hidden = !!(counts.working || counts.failed || running.length);
+      const st = info.conv ? window.AgentWorkspaceUI?.statusTextOf(info.conv) || null : null;
+      A.splitHead(document, info, A.splitCounts(sec.counts, st), sec.head);
+      sec.none.hidden = !A.splitNothing(sec.counts, st);
       sec.subLabel.hidden = sec.subBox.hidden = !a.rows.length;
       sec.subLabel.replaceChildren('Subagents', text('span', String(a.rows.length)));
       sec.procLabel.hidden = sec.procBox.hidden = !running.length;
