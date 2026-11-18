@@ -116,6 +116,12 @@ export function signinView(options: AgentOptions, agentId: string, liveStatus = 
   return { state: signin.effectiveState(cached.state, liveStatus), checkedAt: cached.checkedAt, job: job.state !== 'idle' ? job : null };
 }
 
+/** What the Settings row says when Codex's adapter is found but the Codex program is not. */
+export const CODEX_CLI_HINT = 'AIB cannot find the Codex program, so it cannot check your sign-in. Install it with: npm i -g @openai/codex';
+
+/** Test seam: how the Codex program is looked for (never set in the app). */
+export const describeHooks: { codexCli?: (adapterArgv: string[]) => Promise<string[] | null> } = {};
+
 /**
  * The agent list the Settings page and the New chat dropdown read: built-ins first, then user-added agents.
  * status is '' (nothing known), 'running' (a chat of this agent is open and ready) or 'signin' (an open chat waits for sign-in);
@@ -161,6 +167,11 @@ export async function describeAgents(
     const installable = hasOwn(adapters.STUDIO_PACKAGES, agentId);
     // Not installed and AIB installs it (npm): the card lists Node.js under "Needs first:" when it is missing or too old.
     const setup = installable && row.source === 'missing' && BUILTIN_NPM.includes(agentId) ? await builtinSetup(probe) : null;
+    // The Codex adapter is here, but not the Codex program AIB asks "login status" (the one the adapter ships, or `codex` on PATH): the
+    // sign-in column then only knows whether a credentials file exists. Say so, and how to get it.
+    const cliHint = agentId === 'codex' && row.found && !(await (describeHooks.codexCli ?? signin.findCodexCli)(row.argv))
+      ? CODEX_CLI_HINT
+      : '';
     // `launcher`: read-only text for Settings saying which program starts this agent (and where it came from)
     out.push({
       id: agentId,
@@ -186,6 +197,7 @@ export async function describeAgents(
       packageBytes: sizes[agentId] || 0,
       signin: row.found ? signinView(options, agentId, state[agentId] ?? '') : null,
       ...(setup ? { setup } : {}), // only on a card that still needs installing: the row keeps the Python reference's shape otherwise
+      ...(cliHint ? { cliHint } : {}), // likewise: only a Codex adapter that has no Codex program to ask about the sign-in
     });
   }
   out.push(...(await describeBeta(options, snap, state, block, sizes, probe)));

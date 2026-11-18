@@ -1057,6 +1057,7 @@
         line.append(el('code', sign.command || '', 'st-command'));
         row.append(line);
       }
+      if (a.cliHint) row.append(note(a.cliHint, 'dim')); // the adapter is here, the Codex program it asks about the sign-in is not
       // One line under the row: a failure wins, then why installs cannot run, then what the agent is missing.
       const block = E.installBlock(a);
       if (job && job.state === 'failed') row.append(note(job.message || 'The install failed.', 'bad'));
