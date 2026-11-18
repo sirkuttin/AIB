@@ -107,6 +107,7 @@ function harness(routes, { confirmResult = true } = {}) {
     document: {
       getElementById: element,
       createElement: () => new El('created'),
+      createElementNS: (_ns, tag) => new El(tag), // SVG icons (the header's Let go icon)
       createDocumentFragment: () => new El('fragment'),
       body: { classList: { add() {}, remove() {} } },
     },

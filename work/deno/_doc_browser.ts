@@ -43,10 +43,14 @@ export async function temp(prefix: string): Promise<string> {
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** A Studio on a free port whose chats all work in one project; `chat()` sets what the agent host lists (the turn signal). */
-export async function studio(root?: string, port = 0) {
+/**
+ * A test Studio. `state`: the data folder of an earlier Studio, for a restart that keeps it as AIB's own restart does (the page
+ * sessions it knows are in it, server/web/page_access.ts); otherwise a fresh one.
+ */
+export async function studio(root?: string, port = 0, state?: string) {
   root ??= await temp('aib-docpage-');
   const project = `${root}${sep}project`;
-  const state = `${root}${sep}state-${Math.random().toString(36).slice(2, 7)}`;
+  state ??= `${root}${sep}state-${Math.random().toString(36).slice(2, 7)}`;
   await Deno.mkdir(`${project}${sep}docs`, { recursive: true });
   await Deno.mkdir(state, { recursive: true });
   const connections: Json[] = [];

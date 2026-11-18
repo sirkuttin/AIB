@@ -1265,7 +1265,7 @@ Deno.test({
           });
           const p = await open('restart');
           await shows(p, 'Two.');
-          const { root, port } = s;
+          const { root, port, state } = s;
           await s.close();
           await p.waitFor(
             `document.querySelector('#docStatusText').textContent.startsWith('Offline')`,
@@ -1277,7 +1277,8 @@ Deno.test({
           await p.waitFor(
             `document.querySelector('#docStatusText').textContent === 'Offline · not saved yet'`,
           );
-          s = await studio(root, port);
+          // AIB comes back on its own data folder: the page's session (memory only, its hash in the folder) still works there
+          s = await studio(root, port, state);
           await p.waitFor(
             `!document.querySelector('#docBanner').hidden && document.querySelector('#docBanner').textContent.includes('Not saved')`,
             20000,

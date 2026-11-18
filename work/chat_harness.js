@@ -159,6 +159,7 @@ function makePage({ routes = {}, window: extraWindow = {}, scripts = [], local =
     hidden: false,
     getElementById: element,
     createElement: () => new El('created'),
+    createElementNS: (_ns, tag) => new El(tag), // SVG icons (the header's Let go icon)
     createDocumentFragment: () => new El('fragment'),
     body: { classList: { add() {}, remove() {} }, dataset: {} },
     addEventListener: (name, fn) => {

@@ -139,7 +139,10 @@ t('cross-language for real: a Deno web server takes over an idle Python agent ho
   fx.hostPids.add(py.pid);
   const pyInfo = await until(async () => await readInfo(fx.state), 'python host file', 30);
   assertEquals(pyInfo.runtime, undefined);
-  const web = await fx.startWeb();
+  // AIB_SEAL=off: on Windows a Deno host seals its token in agent-host.json with DPAPI (security item 7, state/sealed.ts). The
+  // Python reference client below never learned that form (it is not shipped); this compares the plain protocol, as the other
+  // Python interop tests do. secret_files_test.ts proves the sealed file.
+  const web = await fx.startWeb([], { env: { AIB_SEAL: 'off' } });
   await until(() => !pidAlive(pyInfo.pid), 'python host stopped');
   const info = (await readInfo(fx.state))!;
   assertEquals(info.runtime, 'deno');

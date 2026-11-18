@@ -249,6 +249,7 @@ Deno.test({
         chat: "c1",
         sheet: false,
         silent: true, // a finished chat pushes silently (inbox 1b)
+        key: "claude:s-c1", // one chat's push carries its row key (the phone's buttons, remote/push_acts.ts)
       });
       assertEquals(
         t.desktop.length,

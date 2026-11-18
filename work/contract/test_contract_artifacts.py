@@ -41,7 +41,10 @@ class ArtifactContract(unittest.TestCase):
         (cls.project / 'outputs').mkdir()
         (cls.project / 'outputs' / 'page.html').write_text('<html><title>From disk</title><body>disk</body></html>', encoding='utf-8')
         (cls.project / 'notes.txt').write_text('plain\n', encoding='utf-8')
-        cls.subject = Server().__enter__()
+        # AIB_SEAL=off: on Windows the Deno server seals its artifact-key-secret with DPAPI (security item 7, server/artifacts/keys.ts),
+        # which the Python reference's artifact_keys (used below to issue each server's agent key) cannot open. The interop compares
+        # the plain form; work/deno/artifact_keys_test.ts and secret_files_test.ts cover the sealed file.
+        cls.subject = Server(env={'AIB_SEAL': 'off'}).__enter__()
         cls.reference = Server(kind='python').__enter__()
         store = artifacts.ArtifactStore(cls.subject.state_dir / 'artifacts')
         page = store.create(CHAT, 'A page', 'html', 'page.html', b'<html><body>one\ntwo\n</body></html>', project=str(cls.project))
