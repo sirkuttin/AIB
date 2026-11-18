@@ -10,7 +10,8 @@
  * others; the dry run only says so; a rerun changes nothing; a name that matches nothing is said and changes nothing.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { FAKE, PYTHON } from './_connection.ts';
+import { FAKE } from './_connection.ts';
+import { PY } from './_agents.ts'; // the interpreter's real path: a version-manager shim (asdf, pyenv) breaks once HOME is a temp folder
 import { exists, makeRepo, runGit, write } from './_worktree_fixtures.ts';
 import { pathOf } from '../../outputs/agent-studio/server/state/paths.ts';
 import * as wt from '../../outputs/agent-studio/server/worktrees/worktrees.ts';
@@ -79,7 +80,7 @@ class Box {
       args: [
         'run', '-A', '--quiet', '--config', native(CONFIG), native(SCRIPT),
         '--data', this.state, '--claude-dir', this.claudeDir, '--codex-home', this.codex,
-        '--codex-adapter', JSON.stringify([PYTHON, FAKE]),
+        '--codex-adapter', JSON.stringify([PY, FAKE]),
         ...extra,
       ],
       env,
