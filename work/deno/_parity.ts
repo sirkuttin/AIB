@@ -106,9 +106,10 @@ class LineSplitter extends TransformStream<string, string> {
  * Python 3.13 made base64.b64decode(validate=True) refuse padding after a complete group ("QUJD="); earlier Pythons accept it, and
  * the TypeScript port follows those. A parity test leaves such an input out when the oracle is 3.13 or newer.
  */
-export const oraclePadsStrictly: boolean = (() => {
+export const oracleIs313: boolean = (() => {
   const out = new Deno.Command(Deno.build.os === 'windows' ? 'python' : 'python3', { args: ['--version'], stdout: 'piped' }).outputSync();
   const m = new TextDecoder().decode(out.stdout).match(/(\d+)\.(\d+)/);
   return !!m && (Number(m[1]) > 3 || (Number(m[1]) === 3 && Number(m[2]) >= 13));
 })();
-export const excessPadding = (text: unknown): boolean => oraclePadsStrictly && typeof text === 'string' && /^(?:[A-Za-z0-9+\/]{4})+=/.test(text);
+/** Python 3.13 or newer is the oracle: some of its library answers changed (base64 padding, ipaddress for IPv4-mapped names). */
+export const excessPadding = (text: unknown): boolean => oracleIs313 && typeof text === 'string' && /^(?:[A-Za-z0-9+\/]{4})+=/.test(text);
