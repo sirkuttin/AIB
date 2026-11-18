@@ -2383,6 +2383,23 @@ export class Studio {
     wslEnv: Record<string, string> | null,
     chatId: string | null = null, // a reopened chat keeps its id (its hook key and subagent folder are bound to it)
   ): Promise<{ id?: string; env?: Record<string, string>; hooks: NonNullable<Connection['subagentHooks']>; note?: string } | null> {
+    const result = await this.#codexHooksFor(command, folder, project, aibWorktree, env, wslEnv, chatId);
+    if (!result) return null;
+    // open elsewhere (ownership/handoff.ts): its threads unload as soon as AIB lets go of them, so another app can open them at once
+    const agentEnv = wslEnv ? { ...wslEnv, ...env } : { ...Deno.env.toObject(), ...env };
+    const config = codexSub.withUnloadNow(result.env?.CODEX_CONFIG ?? agentEnv.CODEX_CONFIG);
+    return config === null ? result : { ...result, env: { ...result.env, CODEX_CONFIG: config } };
+  }
+
+  async #codexHooksFor(
+    command: string[],
+    folder: string,
+    project: string,
+    aibWorktree: boolean,
+    env: Record<string, string>,
+    wslEnv: Record<string, string> | null,
+    chatId: string | null,
+  ): Promise<{ id?: string; env?: Record<string, string>; hooks: NonNullable<Connection['subagentHooks']>; note?: string } | null> {
     const realAllowed = Deno.env.get('STUDIO_REAL_ADAPTER_TESTS') === '1' || Deno.env.get('AGENT_STUDIO_ALLOW_REAL_AGENT') === '1';
     if (Deno.env.get('AGENT_STUDIO_TEST') === '1' && (isFixture(command) || !realAllowed)) return null;
     const agentEnv = wslEnv ? { ...wslEnv, ...env } : { ...Deno.env.toObject(), ...testHomeEnv(command), ...env };

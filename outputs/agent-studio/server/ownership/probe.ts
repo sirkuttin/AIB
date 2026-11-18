@@ -1144,7 +1144,15 @@ export class OwnershipProbe {
     } catch (error) {
       log.warning('session registry check failed: %s', strOf(error));
     }
-    if (holder) {
+    if (holder && provider === 'codex') {
+      // Codex refuses a second writer (codex_threads.ts): no "open it here anyway", it must be closed there first
+      reasons.push({
+        signal: 'codex-writer',
+        strength: 'strong',
+        ...(holder.pid ? { pid: holder.pid } : {}),
+        text: `This conversation is open in ${cleanText(holder.app, 40)} (Codex lets only one app write to a chat at a time).`,
+      });
+    } else if (holder) {
       reasons.push({
         signal: 'session-registry',
         strength: 'strong',

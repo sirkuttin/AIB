@@ -12,7 +12,16 @@
  * registry again; free: session/load, which brings in the turns written elsewhere; still held: one line with Open here anyway, and
  * nothing is sent until it is chosen.
  *
- * Never throws out of a timer; costs one readdir and a few small reads per scan, and nothing while no Claude chat is open.
+ * Codex chats (codex_threads.ts): Codex lets one process write a thread and refuses a second opener without leaving a trace, so
+ * the sign AIB can see is a Codex CLI process whose command line names the thread (`codex resume <id>`: the TUI waits on its "open in
+ * another app, r to retry" card), found on the same 10 s beat (one process snapshot, command lines of codex/node processes only).
+ * Letting go is the same session/close (codex-acp: thread/unsubscribe; AIB gives Codex thread_unload_delay_secs = 0, so the thread
+ * unloads and its writer lock goes at once and the other app's Retry works). Coming back: the CLI process still there, or the
+ * thread's writer lock held by someone (read without locking), means still held; Codex never lets two apps write, so there is no
+ * Open here anyway, only Open here again once it is closed there. VS Code's and Codex Desktop's Codex start `codex app-server`,
+ * which names no thread: AIB cannot see them open a chat it holds (they show their own "open in another app" with Retry).
+ *
+ * Never throws out of a timer; costs one readdir and a few small reads per scan, and nothing while no Claude or Codex chat is open.
  */
 import type { Connection } from '../acp/connection.ts';
 import { isFixture, testHomeEnv } from '../acp/connection.ts';
@@ -21,6 +30,8 @@ import { descendants, refreshDescendants } from '../platform/descendants.ts';
 import { claudeConfigDir } from '../subagents/claude_config.ts';
 import { WIN } from '../platform/ospath.ts';
 import { type Holder, holderOf, liveRecords, type SessionRecord, sessionsDir } from './claude_sessions.ts';
+import { cliHolder, type CodexProcess, codexProcesses, writerLockPath, writerLockState } from './codex_threads.ts';
+import { codexHome } from '../subagents/codex.ts';
 
 const log = getLogger('handoff');
 
@@ -31,6 +42,10 @@ export const PENDING_MS = 1_000;
 
 /** Providers whose agent is Claude Code (they write the registry). */
 const CLAUDE_PROVIDERS = new Set(['claude']);
+/** Providers whose agent is Codex (one writer per thread: codex_threads.ts). Windows chats only for now (no WSL helper method yet). */
+const CODEX_PROVIDERS = new Set(['codex']);
+
+const isCodex = (c: Connection) => CODEX_PROVIDERS.has(c.provider);
 
 export interface HandoffHost {
   connections(): Iterable<Connection>;
@@ -41,6 +56,11 @@ export interface HandoffHost {
 /** The Claude config folder a Windows chat's agent reads (the throwaway home under test, as the agent gets it). */
 export function chatConfigDir(c: Connection): string {
   return claudeConfigDir({ ...Deno.env.toObject(), ...testHomeEnv(c.command), ...(c.env ?? {}) });
+}
+
+/** The Codex home a Windows Codex chat's agent uses (CODEX_HOME, else ~/.codex; the throwaway home under test). */
+export function chatCodexHome(c: Connection): string {
+  return codexHome({ ...Deno.env.toObject(), ...testHomeEnv(c.command), ...(c.env ?? {}) });
 }
 
 /**
@@ -54,7 +74,8 @@ function fixtureUnderTest(command: string[]): boolean {
 }
 
 function watched(c: Connection): boolean {
-  return CLAUDE_PROVIDERS.has(c.provider) && !c.closed && c.ready && !!c.sessionId && !c.replaying && !c.rebuildError &&
+  if (isCodex(c) && c.wsl) return false;
+  return (CLAUDE_PROVIDERS.has(c.provider) || isCodex(c)) && !c.closed && c.ready && !!c.sessionId && !c.replaying && !c.rebuildError &&
     !fixtureUnderTest(c.command);
 }
 
@@ -76,7 +97,9 @@ export class Handoff {
     if (this.#closed) return;
     const dirs = new Set<string>();
     let wsl = false;
+    let codex = false;
     for (const c of this.host.connections()) {
+      if (isCodex(c) && !c.wsl && !c.closed && !fixtureUnderTest(c.command)) codex = true; // no folder to watch: the beat looks
       if (!CLAUDE_PROVIDERS.has(c.provider) || c.closed || fixtureUnderTest(c.command)) continue;
       if (c.wsl) wsl = true;
       else dirs.add(sessionsDir(chatConfigDir(c)));
@@ -89,8 +112,9 @@ export class Handoff {
       } catch { /* closed */ }
     }
     for (const dir of dirs) if (!this.#watchers.has(dir)) this.#watch(dir);
-    // the backup beat runs only while a Claude chat is open: it follows the open chats (a folder that appeared is watched) and checks
-    if (dirs.size || wsl) {
+    // the backup beat runs only while a Claude or Codex chat is open: it follows the open chats (a folder that appeared is watched)
+    // and checks
+    if (dirs.size || wsl || codex) {
       if (this.#rescan === null) {
         const timer = setInterval(() => {
           this.refresh();
@@ -107,11 +131,25 @@ export class Handoff {
 
   /** A saved conversation's holder other than this AIB (Windows: the default Claude config folder AIB's agents get); null: none. */
   savedHolder(provider: string, sessionId: string): Holder | null {
+    if (CODEX_PROVIDERS.has(provider)) return this.#savedCodexHolder(sessionId);
     if (!CLAUDE_PROVIDERS.has(provider) || !WIN || fixtureUnderTest([provider])) return null;
     const dir = claudeConfigDir({ ...Deno.env.toObject(), ...testHomeEnv([provider]) });
     const records = liveRecords(dir);
     if (!records.some((r) => r.sessionId === sessionId)) return null;
     return holderOf(records, sessionId, this.#ownPids(true));
+  }
+
+  /**
+   * A saved Codex thread another app has open (the default Codex home AIB's agents get): a Codex CLI naming it, or its writer lock
+   * held (AIB holds no saved conversation: the probe asks only for those). Codex would refuse to open it here.
+   */
+  #savedCodexHolder(threadId: string): Holder | null {
+    if (fixtureUnderTest(['codex'])) return null;
+    const cli = cliHolder(this.#codexProcesses(), threadId, this.#ownPids(true));
+    if (cli) return cli;
+    const home = codexHome({ ...Deno.env.toObject(), ...testHomeEnv(['codex']) });
+    const lock = writerLockState(writerLockPath(home, threadId));
+    return lock.state === 'held' ? { pid: lock.pid, entrypoint: 'codex-writer-lock', status: '', app: 'another app' } : null;
   }
 
   #watch(dir: string): void {
@@ -182,8 +220,49 @@ export class Handoff {
     return holder;
   }
 
+  #codexSnapshot: { at: number; procs: CodexProcess[] } | null = null;
+
+  /**
+   * Codex processes now ([] when the list cannot be read: no sign is no hand-off, never a wrong one). One snapshot serves for a
+   * second (the probe asking about several saved chats); `fresh` (the person came back: a CLI that just quit must not count) reads
+   * the list again.
+   */
+  #codexProcesses(fresh = false): CodexProcess[] {
+    const now = Date.now();
+    if (!fresh && this.#codexSnapshot && now - this.#codexSnapshot.at < 1000) return this.#codexSnapshot.procs;
+    let procs: CodexProcess[] = [];
+    try {
+      procs = codexProcesses();
+    } catch (error) {
+      log.info('handoff: cannot list Codex processes (%s)', error instanceof Error ? error.message : error);
+    }
+    this.#codexSnapshot = { at: now, procs };
+    return procs;
+  }
+
+  /** A Codex CLI process outside AIB whose command line names this chat's thread; checked twice against a fresh process list. */
+  #codexCliHolder(c: Connection, procs: CodexProcess[]): Holder | null {
+    let holder = cliHolder(procs, c.sessionId!, this.#ownPids(false));
+    if (holder) holder = cliHolder(procs, c.sessionId!, this.#ownPids(true)); // a CLI the agent started a moment ago is AIB's own
+    return holder;
+  }
+
+  /**
+   * Who else has a Codex chat's thread now: a Codex CLI naming it, or (AIB let go of it, so its own app-server unloaded it) a held
+   * writer lock: another app writes it. Null: nobody, or AIB cannot tell (its own session/load then meets Codex's refusal).
+   */
+  #codexHolderNow(c: Connection): Holder | null {
+    if (c.wsl) return null;
+    const cli = this.#codexCliHolder(c, this.#codexProcesses(true));
+    if (cli) return cli;
+    if (!c.elsewhere?.released) return null;
+    const lock = writerLockState(writerLockPath(chatCodexHome(c), c.sessionId!));
+    return lock.state === 'held' ? { pid: lock.pid, entrypoint: 'codex-writer-lock', status: '', app: 'another app' } : null;
+  }
+
   /** Who else holds this chat's session now (null: nobody, or AIB cannot tell). Used when the person comes back. */
   async holderNow(c: Connection): Promise<Holder | null> {
+    if (isCodex(c) && c.sessionId) return this.#codexHolderNow(c);
     if (!CLAUDE_PROVIDERS.has(c.provider) || !c.sessionId) return null;
     if (c.wsl) {
       if (!this.host.wslHeld) return null;
@@ -203,10 +282,20 @@ export class Handoff {
     this.#scanning = true;
     try {
       const byDir = new Map<string, SessionRecord[]>();
+      let procs: CodexProcess[] | null = null;
       for (const c of [...this.host.connections()]) {
         if (!watched(c) || c.wsl) continue;
         if (c.elsewhere) {
           if (!c.elsewhere.released) await c.tryRelease();
+          continue;
+        }
+        if (isCodex(c)) {
+          procs ??= this.#codexProcesses(true);
+          const holder = this.#codexCliHolder(c, procs);
+          if (holder) {
+            log.info('handoff: Codex chat %s (%s) is open in %s (pid %s)', c.id, c.sessionId, holder.app, holder.pid);
+            c.handOff(holder);
+          }
           continue;
         }
         const dir = chatConfigDir(c);

@@ -155,9 +155,12 @@ export function holderOf(records: SessionRecord[], sessionId: string, own: Set<n
 export class HeldElsewhere extends OwnershipConflict {
   override name = 'HeldElsewhere';
   readonly code = 'held_elsewhere';
-  constructor(readonly app: string) {
+  /** `singleWriter`: a Codex chat (no Open here anyway: Codex lets one app write a chat). */
+  constructor(readonly app: string, singleWriter = false) {
     super(
-      `This chat is still open in ${app}, so nothing was sent. Close it there, or choose Open here anyway in the chat.`,
+      singleWriter
+        ? `This chat is still open in ${app}, so nothing was sent. Close it there, then send again.`
+        : `This chat is still open in ${app}, so nothing was sent. Close it there, or choose Open here anyway in the chat.`,
     );
   }
 }

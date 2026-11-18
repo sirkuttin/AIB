@@ -69,6 +69,7 @@ import { distroName, guardRealWslAgent, peekWslHost, wslTestHomeEnv } from '../w
 import { APP_VERSION, TESTS_DIR } from '../core/app.ts';
 import { getLogger } from '../core/log.ts';
 import { HeldElsewhere, type Holder } from '../ownership/claude_sessions.ts';
+import { activeWriterError } from '../ownership/codex_threads.ts';
 import { DOCS_RULE } from '../docs/tool_defs.ts';
 import { claudeConfigDir, isForkSkill, SUBAGENT_PROMPT, SUBAGENTS_OFF_NO_BASH_PROMPT, SUBAGENTS_OFF_PROMPT, typedForkSkillText } from '../subagents/claude_config.ts';
 import {
@@ -4621,32 +4622,55 @@ export class Connection {
   }
 
   /**
+   * One writer at a time: Codex refuses a second app on a thread (codex_threads.ts), so a Codex chat another app holds cannot be
+   * opened here anyway; it waits until it is closed there.
+   */
+  get singleWriter(): boolean {
+    return this.provider === 'codex';
+  }
+
+  /** The line of a chat AIB let go of that another app still holds (once per hand-off). */
+  #noteHeld(e: NonNullable<Connection['elsewhere']>, app: string): void {
+    e.app = app;
+    if (e.heldNoted) return;
+    e.heldNoted = true;
+    this.recordedEvent('studio_note', {
+      message: this.singleWriter
+        ? `Still open in ${app}. Close it there first, then choose Open here (Codex lets only one app write to a chat at a time).`
+        : `Still open in ${app}. Close it there first, or open it here anyway (two apps writing to one chat can mix up its messages).`,
+      sessionId: this.sessionId,
+      elsewhere: 'held',
+      actions: [this.singleWriter ? { id: 'elsewhere-open', label: 'Open here' } : { id: 'elsewhere-force', label: 'Open here anyway' }],
+    });
+  }
+
+  /**
    * The person came back to a chat AIB let go of (sent a message, or chose Open here): load its session again when nobody else holds
-   * it, or `force` (Open here anyway). Still held: one line with Open here anyway, and nothing else happens. 'attached': AIB holds it.
+   * it, or `force` (Open here anyway; not for Codex). Still held: one line with Open here anyway (Codex: Open here), and nothing else
+   * happens. 'attached': AIB holds it.
    */
   reclaim(force = false): Promise<{ state: 'attached' | 'back' | 'held'; app?: string; picked?: number }> {
     if (!this.elsewhere?.released) return Promise.resolve({ state: 'attached' });
     if (this.#reclaiming) return this.#reclaiming;
+    if (this.singleWriter) force = false;
     const run = (async () => {
       const e = this.elsewhere!;
       const holder = this.holderNow ? await this.holderNow().catch(() => null) : null;
       if (holder && !force) {
-        e.app = holder.app;
-        if (!e.heldNoted) {
-          e.heldNoted = true;
-          this.recordedEvent('studio_note', {
-            message: `Still open in ${holder.app}. Close it there first, or open it here anyway (two apps writing to one chat can ` +
-              'mix up its messages).',
-            sessionId: this.sessionId,
-            elsewhere: 'held',
-            actions: [{ id: 'elsewhere-force', label: 'Open here anyway' }],
-          });
-        }
+        this.#noteHeld(e, holder.app);
         return { state: 'held' as const, app: holder.app };
       }
       if (holder) this.overriddenHolders.add(holder.pid); // Open here anyway: that process no longer makes AIB let go
-      const picked = await this.#reattach(e.app);
-      return { state: 'back' as const, app: e.app, picked };
+      try {
+        const picked = await this.#reattach(e.app);
+        return { state: 'back' as const, app: e.app, picked };
+      } catch (error) {
+        // Codex refused: another app took the thread's writer lock (one AIB could not see, or since the check)
+        if (!this.singleWriter || !activeWriterError(error) || this.elsewhere !== e) throw error;
+        log.info('chat %s: %s is open in another app (Codex refused the load)', this.id, this.sessionId);
+        this.#noteHeld(e, 'another app');
+        return { state: 'held' as const, app: e.app };
+      }
     })();
     this.#reclaiming = run;
     return run.finally(() => {
@@ -4927,7 +4951,7 @@ export class Connection {
     // Open elsewhere: AIB let go of this chat. Sending takes it back when nobody else holds it; still held: nothing is sent.
     if (this.elsewhere?.released && !this.closed) {
       const back = await this.reclaim(false);
-      if (back.state === 'held') throw new HeldElsewhere(back.app || 'another app');
+      if (back.state === 'held') throw new HeldElsewhere(back.app || 'another app', this.singleWriter);
     }
     if (this.closed || !this.ready || !this.sessionId) {
       throw new ValueError('This connection is not ready');

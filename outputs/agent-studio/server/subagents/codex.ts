@@ -163,6 +163,25 @@ export function withCodexHooks(user: Json | null, hooks: Json): Json {
   return { ...(user ?? {}), hooks };
 }
 
+/**
+ * Open elsewhere (ownership/handoff.ts): a CODEX_CONFIG (JSON text; '' or none: {}) with thread_unload_delay_secs = 0, so a thread
+ * AIB lets go of (codex-acp session/close: thread/unsubscribe) unloads at once and frees its writer lock for the other app (Codex's
+ * default keeps it 60 s). codex-acp sends CODEX_CONFIG as each thread's config. Null when the text is not a JSON object (codex-acp
+ * refuses that anyway; left as it is).
+ */
+export function withUnloadNow(raw: string | undefined): string | null {
+  let config: unknown = {};
+  if (raw && raw.trim()) {
+    try {
+      config = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+  if (!isDict(config)) return null;
+  return JSON.stringify({ ...(config as Json), thread_unload_delay_secs: 0 });
+}
+
 /** The user's CODEX_CONFIG with the chat's subagents turned off (features.multi_agent = false, P0 A10). */
 export function withSubagentsOff(user: Json | null): Json {
   const base = user ?? {};
