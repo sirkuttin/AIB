@@ -33,3 +33,7 @@ site/dist/
 site/node_modules/
 site/.astro/
 outputs/qa-wsl/
+
+# Local-only notes shared by every chat of this repo (AIB makes it; never committed)
+aib-shared/
+private/
