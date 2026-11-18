@@ -65,7 +65,7 @@ export const CLAUDE_INSTALL = 'npm i -g @agentclientprotocol/claude-agent-acp';
 export const CODEX_INSTALL = 'npm i -g @agentclientprotocol/codex-acp';
 export const PATH_START = '__STUDIO_PATH_START__';
 export const PATH_END = '__STUDIO_PATH_END__';
-export const LOGIN_SHELL_TIMEOUT = 3.0;
+export const LOGIN_SHELL_TIMEOUT = 5.0;
 export const NPM_ROOT_TIMEOUT = 10.0;
 export const CODEX_NEEDS_ADAPTER = 'The Codex app is on this PC, but AIB needs its ACP adapter.';
 const NODE_MISSING = 'Node.js was not found. Install Node.js so AIB can start this adapter.';
@@ -165,17 +165,53 @@ function currentSystem(): string {
   return WIN ? 'Windows' : Deno.build.os === 'darwin' ? 'Darwin' : 'Linux';
 }
 
-/** PATH as the user's login shell sees it, or '' (Windows, no usable $SHELL, a timeout, a failure). Never throws. */
-export async function loginShellPath(environ?: Env, system?: string, run?: RunFn, timeout = LOGIN_SHELL_TIMEOUT): Promise<string> {
+/** The shell to run for the PATH: the user's $SHELL, else /bin/bash, else /bin/sh (the first that is a file); '' when none. */
+export function shellToRun(environ: Env, exists: (path: string) => boolean = isFile): string {
+  const own = environ.SHELL || '';
+  if ((own.startsWith('/') || isAbsolute(own)) && exists(own)) return own;
+  for (const fallback of ['/bin/bash', '/bin/sh']) if (exists(fallback)) return fallback;
+  return '';
+}
+
+/** The one fallback when the shell gives nothing: ~/.nvm/versions/node/<newest>/bin and ~/.local/bin, the ones that exist (':'-joined). */
+export function fallbackPath(
+  home: string,
+  fs: { names(dir: string): string[]; isDir(path: string): boolean } = { names: listNames, isDir: isDirSync },
+): string {
+  const out: string[] = [];
+  const nvm = `${home}/.nvm/versions/node`;
+  const newest = fs.names(nvm).filter((n) => fs.isDir(`${nvm}/${n}/bin`)).sort((a, b) => compareKeys(versionKey(b), versionKey(a)))[0];
+  if (newest) out.push(`${nvm}/${newest}/bin`);
+  if (home && fs.isDir(`${home}/.local/bin`)) out.push(`${home}/.local/bin`);
+  return out.join(':');
+}
+
+export type PathSource = 'shell' | 'fallback' | 'bare';
+export const TOOL_NAMES = ['npm', 'node', 'claude-agent-acp', 'codex-acp', 'claude', 'codex'] as const;
+
+/** The log line: where PATH came from and where each tool is (or "not found"). */
+export function toolReport(source: PathSource, lookup: (name: string) => string | null | undefined = which): string {
+  return `tool PATH from ${source}; ` + TOOL_NAMES.map((n) => `${n}: ${lookup(n) || 'not found'}`).join(', ');
+}
+
+/** PATH as the user's interactive login shell (`-ilc`, like VS Code's resolveShellEnv) sees it, or '' (Windows, no shell, a timeout,
+ * a failure). No TTY, stdin closed, anything outside the markers ignored. Never throws. */
+export async function loginShellPath(
+  environ?: Env,
+  system?: string,
+  run?: RunFn,
+  timeout = LOGIN_SHELL_TIMEOUT,
+  exists?: (path: string) => boolean,
+): Promise<string> {
   const env = environ ?? Deno.env.toObject();
   if ((system || currentSystem()) === 'Windows') return '';
-  const shell = env.SHELL || '';
-  if (!shell || !isAbsolute(shell) || !isFile(shell)) return '';
+  const shell = shellToRun(env, exists);
+  if (!shell) return '';
   const script = `printf '%s' '${PATH_START}'; printf %s "$PATH"; printf '%s' '${PATH_END}'`;
   const plain: Record<string, string> = {};
   for (const [k, v] of Object.entries(env)) if (v !== undefined) plain[k] = v;
   try {
-    const done = await (run ?? defaultRun)([shell, '-l', '-c', script], { timeout, env: plain, stdin: 'null' });
+    const done = await (run ?? defaultRun)([shell, '-ilc', script], { timeout, env: plain, stdin: 'null' });
     return parseMarkedPath(done.stdout || '');
   } catch {
     return '';
@@ -202,6 +238,32 @@ export async function initEnvironment(environ?: Env, system?: string, run?: RunF
   target.PATH = merged;
   if (real) Deno.env.set('PATH', merged);
   return merged;
+}
+
+/** macOS / Linux desktop start: the shell's PATH merged ahead of the current one, else the fallback folders, else the bare PATH.
+ * With no `environ` it sets this process's PATH, which every agent AIB starts inherits. Windows: nothing ('' is returned). */
+export async function initToolPath(
+  environ?: Env,
+  system?: string,
+  run?: RunFn,
+  home?: string,
+  fs?: Parameters<typeof fallbackPath>[1],
+  exists?: (path: string) => boolean,
+): Promise<PathSource | ''> {
+  if ((system || currentSystem()) === 'Windows') return '';
+  const real = environ === undefined;
+  const target: Env = environ ?? Deno.env.toObject();
+  let source: PathSource = 'shell';
+  let found = await loginShellPath(target, system, run, undefined, exists);
+  if (!found) {
+    source = 'fallback';
+    found = fallbackPath(home ?? target.HOME ?? '', fs);
+  }
+  if (!found) source = 'bare';
+  const merged = mergePaths(found, target.PATH ?? '', ':');
+  target.PATH = merged;
+  if (real) Deno.env.set('PATH', merged);
+  return source;
 }
 
 // ---- node and the npm global folder -----------------------------------------------------------------------------------
@@ -517,6 +579,8 @@ async function installedLaunch(pkg: Package, nodeCommand: string, npmRoot?: NpmR
 }
 
 export interface ResolveOptions {
+  /** Test seam: the claude-agent-acp found on PATH (macOS / Linux). */
+  onPath?: () => string;
   flag?: string;
   saved?: string;
   nodeCommand?: string;
@@ -530,7 +594,15 @@ export async function resolveClaude(options: ResolveOptions = {}): Promise<Launc
   if (flag) return scriptLaunch('flag', flag, nodeCommand);
   if (saved) return scriptLaunch('settings', saved, nodeCommand);
   const found = studioLaunch('claude', nodeCommand, stateDir) ?? await installedLaunch(CLAUDE_PACKAGE, nodeCommand, npmRoot);
-  return found ?? row([], 'missing', '', 'Not installed. Install the adapter with: ' + CLAUDE_INSTALL, 'Not installed');
+  if (found) return found;
+  // macOS / Linux: `claude-agent-acp` on PATH, a standalone binary or an npm bin link (run with the node found on PATH)
+  const path = WIN ? '' : (options.onPath ?? (() => which('claude-agent-acp') ?? ''))();
+  if (path) {
+    const viaNode = await nodeScriptLaunch(path, [CLAUDE_PACKAGE], { nodeCommand, npmRoot });
+    if (viaNode) return row(viaNode, 'installed', viaNode[1], '', `Installed adapter: ${viaNode[1]} (run with node, found as ${path})`);
+    return row([path], 'path', path, '', `claude-agent-acp on PATH: ${path}`);
+  }
+  return row([], 'missing', '', 'Not installed. Install the adapter with: ' + CLAUDE_INSTALL, 'Not installed');
 }
 
 /** A native `codex-acp` program on PATH. The Windows .cmd/.bat shims are skipped: they cannot be started directly. */

@@ -169,17 +169,16 @@ Deno.test('merge puts login entries first without repeats', () => {
   assertEquals(adapters.mergePaths('', '/x:/y', ':'), '/x:/y');
 });
 
-Deno.test('the login shell runs without the interactive flag and with a timeout', async () => {
+Deno.test('the login shell runs interactive (-ilc), with a 5 s timeout and no stdin', async () => {
   const seen: { argv?: string[]; options?: Record<string, unknown> } = {};
   const run: adapters.RunFn = (argv, options) => {
     Object.assign(seen, { argv, options });
     return Promise.resolve({ stdout: `banner\n${S}/opt/x/bin:/usr/bin${E}` });
   };
   assertEquals(await adapters.loginShellPath({ SHELL: PY, PATH: '/usr/bin' }, 'Linux', run), '/opt/x/bin:/usr/bin');
-  assertEquals(seen.argv!.slice(0, 3), [PY, '-l', '-c']);
-  assert(!seen.argv!.includes('-i'));
-  assert(seen.argv![3].includes('printf %s "$PATH"'));
-  assertEquals(seen.options!.timeout, 3.0);
+  assertEquals(seen.argv!.slice(0, 2), [PY, '-ilc']);
+  assert(seen.argv![2].includes('printf %s "$PATH"'));
+  assertEquals(seen.options!.timeout, 5.0);
   assertEquals(seen.options!.stdin, 'null');
 });
 

@@ -249,6 +249,13 @@ export async function main(argv: string[]): Promise<void> {
       Deno.exit(0);
     }
   }
+  if (desktop && isDesktopApp() && Deno.build.os !== 'windows') {
+    // From the app menu the PATH is the short system one: ask the user's interactive login shell for the real one, once, for finding
+    // tools and for every agent AIB starts (they inherit this process's environment).
+    const adapters = await import('./agents/adapters.ts');
+    const source = await adapters.initToolPath();
+    log.announce('studio', '%s', adapters.toolReport(source || 'bare'));
+  }
   if (desktop) {
     // The same port as last time when it is free, so the page's origin (and its localStorage drafts) stays the same across restarts
     // and updates; else the first free pair from 8777, like the Tauri app.
