@@ -11,6 +11,7 @@
 import { assert, assertEquals, assertRejects } from "./_assert.ts";
 import { commit, pythonProbe, read, runGit, Sandbox, write } from "./_worktree_fixtures.ts";
 import { chat, main, merge, record, refused, Refused, show, tree, WAITING } from "./_merge_fixtures.ts";
+import * as wt from "../../outputs/agent-studio/server/worktrees/worktrees.ts";
 import * as m from "../../outputs/agent-studio/server/worktrees/merge.ts";
 import { pathOf } from "../../outputs/agent-studio/server/state/paths.ts";
 import * as localOnly from "../../outputs/agent-studio/server/worktrees/local_only.ts";
@@ -48,6 +49,31 @@ Deno.test("a clean merge lands only the chat's commits and keeps the user's edit
     "main",
     main(ctx),
   ]);
+});
+
+Deno.test("AIB's own landing commit uses the Settings identity when set, else the repository's", async () => {
+  const who = (box: Sandbox, ref: string) => runGit(box.project, "log", "-1", "--format=%an <%ae>|%cn <%ce>", ref).trim();
+  const note = "AIB: work from chat My title";
+  for (const setting of [null, { name: "sirku", email: "907051+sirkuttin@users.noreply.github.com" }]) {
+    wt.setCommitIdentity(() => setting);
+    try {
+      using box = new Sandbox();
+      runGit(box.project, "config", "user.name", "Repo Owner");
+      runGit(box.project, "config", "user.email", "private@example.com");
+      const ctx = await chat(box);
+      commit(ctx.wt, "committed.txt", "a\n", "agent commit");
+      write(ctx.wt, "late.txt", "not committed yet\n"); // AIB commits this one itself
+      const before = main(ctx);
+      assertEquals((await merge(ctx.studio, ctx.id, "My title")).state, "merged");
+      const own = runGit(box.project, "log", "--format=%H", "--grep", note, `${before}..main`).trim().split("\n")[0];
+      assert(own, "AIB's commit landed");
+      const expect = setting ? `${setting.name} <${setting.email}>` : "Repo Owner <private@example.com>";
+      assertEquals(who(box, own), `${expect}|${expect}`);
+      assertEquals(runGit(box.project, "config", "--local", "--get", "user.email").trim(), "private@example.com", "the repository's config is untouched");
+    } finally {
+      wt.setCommitIdentity(() => null);
+    }
+  }
 });
 
 Deno.test("after a merge the chat goes on and a second merge works from the new base", async () => {

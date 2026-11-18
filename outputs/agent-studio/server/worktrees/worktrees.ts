@@ -50,6 +50,22 @@ export const LFS_MAGIC = new TextEncoder().encode(
 );
 export const SNAPSHOT_IDENTITY = ['-c', 'user.name=AIB', '-c', 'user.email=studio@localhost', '-c', 'commit.gpgsign=false'];
 
+/**
+ * Settings > "Name and email for AIB's commits": set at startup (main.ts). While it returns an identity, every commit AIB makes
+ * itself uses it (`git -c user.name=… -c user.email=…`, never the repository's config); null = the repository's own identity.
+ */
+let commitIdentity: () => { name: string; email: string } | null = () => null;
+export function setCommitIdentity(read: () => { name: string; email: string } | null): void {
+  commitIdentity = read;
+}
+export function configuredCommitIdentity(): { name: string; email: string } | null {
+  try {
+    return commitIdentity();
+  } catch {
+    return null;
+  }
+}
+
 const ACTIVE = new Set<string>(); // keys being created by this process right now (startup cleanup must not touch them)
 
 /** This chat works in place; message says why. */
@@ -168,7 +184,9 @@ export async function realGit(args: string[], cwd: string, options: GitOptions =
     binary = false,
     input,
   } = options;
-  const command = ['-c', 'core.longpaths=true', ...(identity ? SNAPSHOT_IDENTITY : []), ...args];
+  const own = identity ? configuredCommitIdentity() : null;
+  const who = own ? ['-c', `user.name=${own.name}`, '-c', `user.email=${own.email}`, '-c', 'commit.gpgsign=false'] : SNAPSHOT_IDENTITY;
+  const command = ['-c', 'core.longpaths=true', ...(identity ? who : []), ...args];
   let done: { code: number; out: Uint8Array; err: Uint8Array };
   try {
     const [program, ...lead] = testing.gitCommand ?? ['git'];

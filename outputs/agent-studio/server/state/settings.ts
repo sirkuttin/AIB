@@ -75,7 +75,7 @@ export interface Settings {
     betaUrls?: Record<string, string>;
   };
   defaults: { agent: string; byAgent: Record<string, Choice>; projects: Record<string, Choice>; migrated: boolean };
-  server: { autoReconnect: boolean; worktreePerChat: boolean; autoUpdateCheck: boolean; keepAwake: boolean };
+  server: { autoReconnect: boolean; worktreePerChat: boolean; autoUpdateCheck: boolean; keepAwake: boolean; getTestBuilds: boolean; commitIdentity: string };
   editors: { default: string };
   appearance: { defaultView: string };
   launchers: Record<string, string>;
@@ -194,7 +194,7 @@ export class SettingsStore extends JsonFileStore {
       // worktreePerChat: on by default; hidden, never shown by public(), and no longer read: every new chat works in the project
       // folder (owner decision 2026-11-16, no per-chat Own copy; only helpers get copies). Kept so old settings files load. The keeper has no setting (it is always on): an old saved
       // `server.keeper` is dropped on read.
-      server: { autoReconnect: true, worktreePerChat: true, autoUpdateCheck: true, keepAwake: false },
+      server: { autoReconnect: true, worktreePerChat: true, autoUpdateCheck: true, keepAwake: false, getTestBuilds: false, commitIdentity: '' },
       editors: { default: '' },
       appearance: { defaultView: 'full' },
       launchers: { claude: '', codex: '' },
@@ -276,6 +276,8 @@ export class SettingsStore extends JsonFileStore {
     if (typeof server.worktreePerChat === 'boolean') doc.server.worktreePerChat = server.worktreePerChat;
     if (typeof server.autoUpdateCheck === 'boolean') doc.server.autoUpdateCheck = server.autoUpdateCheck;
     if (typeof server.keepAwake === 'boolean') doc.server.keepAwake = server.keepAwake;
+    if (typeof server.getTestBuilds === 'boolean') doc.server.getTestBuilds = server.getTestBuilds;
+    if (isStr(server.commitIdentity) && parseCommitIdentity(server.commitIdentity)) doc.server.commitIdentity = server.commitIdentity.trim();
     const editor = isDict(raw.editors) ? raw.editors : {};
     doc.editors.default = isStr(editor.default) && EDITOR_IDS.includes(editor.default) ? editor.default : '';
     const appearance = isDict(raw.appearance) ? raw.appearance : {};
@@ -467,6 +469,16 @@ export class SettingsStore extends JsonFileStore {
   /** Settings > About > Automatically check for updates (on by default: the owner chose automatic updates). */
   autoUpdateCheck(): boolean {
     return this.snapshot().server.autoUpdateCheck;
+  }
+
+  /** Settings > Updates > Get test builds (off by default): a release build also reads the local test feed. */
+  getTestBuilds(): boolean {
+    return this.snapshot().server.getTestBuilds;
+  }
+
+  /** Settings > "Name and email for AIB's commits": "Name <email>"; null = the repository's own identity. */
+  commitIdentity(): { name: string; email: string } | null {
+    return parseCommitIdentity(this.snapshot().server.commitIdentity);
   }
 
   /** Settings > Keep this PC awake while AIB runs (off by default: the PC sleeps as usual). */
@@ -741,7 +753,7 @@ export class SettingsStore extends JsonFileStore {
 
   #applyServer(work: Settings, value: unknown): void {
     const patch = section(value, 'server');
-    if (unknownKeys(patch, ['autoReconnect', 'worktreePerChat', 'autoUpdateCheck', 'keepAwake'])) {
+    if (unknownKeys(patch, ['autoReconnect', 'worktreePerChat', 'autoUpdateCheck', 'keepAwake', 'getTestBuilds', 'commitIdentity'])) {
       throw new ValueError('Unknown server setting');
     }
     if ('worktreePerChat' in patch) {
@@ -752,6 +764,15 @@ export class SettingsStore extends JsonFileStore {
       if (typeof patch.autoUpdateCheck !== 'boolean') throw new ValueError('autoUpdateCheck must be true or false');
       work.server.autoUpdateCheck = patch.autoUpdateCheck;
     }
+    if ('getTestBuilds' in patch) {
+      if (typeof patch.getTestBuilds !== 'boolean') throw new ValueError('getTestBuilds must be true or false');
+      work.server.getTestBuilds = patch.getTestBuilds;
+    }
+    if ('commitIdentity' in patch) {
+      const text = typeof patch.commitIdentity === 'string' ? patch.commitIdentity.trim() : null;
+      if (text === null || (text && !parseCommitIdentity(text))) throw new ValueError('Use the form: Name <email@example.com>');
+      work.server.commitIdentity = text;
+    }
     if ('keepAwake' in patch) {
       if (typeof patch.keepAwake !== 'boolean') throw new ValueError('keepAwake must be true or false');
       work.server.keepAwake = patch.keepAwake;
@@ -761,4 +782,10 @@ export class SettingsStore extends JsonFileStore {
       work.server.autoReconnect = patch.autoReconnect;
     }
   }
+}
+
+/** "Name <email>" to its parts; null when empty or not in that form (one line, no control characters). */
+export function parseCommitIdentity(text: string): { name: string; email: string } | null {
+  const m = /^([^<>\r\n\x00]+?)\s*<([^<>\s\x00@]+@[^<>\s\x00@]+)>$/.exec(String(text).trim());
+  return m ? { name: m[1].trim(), email: m[2] } : null;
 }

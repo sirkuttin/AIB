@@ -2224,3 +2224,31 @@ Deno.test('mergeNotes: newest first, one per version, the first source wins', ()
     [['0.1.0-beta.12.test.2', 'feed'], ['0.1.0-beta.12.test.1', 'x'], ['0.1.0-beta.11', 'feed copy']],
   );
 });
+
+Deno.test('Get test builds: a release build reads the local test feed only while the switch is on; test builds always do', async () => {
+  using feed = new Feed();
+  await feed.add('0.1.0-beta.12.test.2', '- Feed notes\n');
+  // switch off (the default): a release build never looks at the feed
+  {
+    using env = new Env();
+    const off = feedService(env, feed, { current: '0.1.0-beta.11' });
+    assertEquals([off.feedDir, off.status().feed, (await off.checkFeed()).state], ['', undefined, 'unconfigured']);
+  }
+  // switch on: it picks up the newer feed version, and the switch is read live
+  {
+    using env = new Env();
+    let on = true;
+    const svc = feedService(env, feed, { current: '0.1.0-beta.11', getTestBuilds: () => on });
+    assertEquals([svc.configured(), svc.status().feed], [true, true]);
+    const st = await svc.checkFeed();
+    assertEquals([st.state, st.available?.version], ['ready', '0.1.0-beta.12.test.2'], JSON.stringify(st));
+    on = false;
+    assertEquals([svc.feedDir, svc.status().feed], ['', undefined], 'off again: not read');
+  }
+  // a test build keeps reading it with the switch off
+  {
+    using env = new Env();
+    const test = feedService(env, feed, { getTestBuilds: () => false });
+    assertEquals((await test.checkFeed()).available?.version, '0.1.0-beta.12.test.2');
+  }
+});

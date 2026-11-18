@@ -821,6 +821,8 @@ export interface UpdateServiceOptions {
   app?: AppInfo;
   /** The local test feed folder (test builds only; ignored otherwise). Default: feedDir(env). */
   feedDir?: string;
+  /** The Settings switch "Get test builds" (off by default): a release build then also reads the local test feed. */
+  getTestBuilds?: () => boolean;
 }
 
 export interface AppInfo {
@@ -882,7 +884,12 @@ export class UpdateService {
   readonly holdInstall: () => boolean;
   onReady: ((version: string) => void | Promise<void>) | null;
   /** The local test feed this test build reads; '' for every other version (a release build never looks at it). */
-  readonly feedDir: string;
+  get feedDir(): string {
+    return isTestBuild(this.current) || this.getTestBuilds() ? this.#feedBase : '';
+  }
+  #feedBase: string;
+  /** The Settings switch "Get test builds": a release build also reads the local test feed while it is on. */
+  getTestBuilds: () => boolean;
   /** When the feed was last read (seconds), and what it offered at the last try (version + its SHA256SUMS): an unchanged feed is not copied again. */
   #feedAt = 0;
   #feedTried = '';
@@ -908,7 +915,8 @@ export class UpdateService {
     const testCurrent = apiBase()[1] || (envGet(FEED_ENV) ?? '').trim() ? (envGet(CURRENT_ENV) ?? '').trim() : '';
     this.current = options.current ?? (parseVersion(testCurrent) ? testCurrent : APP_VERSION);
     this.env = options.env ?? Deno.env.toObject();
-    this.feedDir = isTestBuild(this.current) ? (options.feedDir ?? feedDir(this.env)) : '';
+    this.#feedBase = options.feedDir ?? feedDir(this.env);
+    this.getTestBuilds = options.getTestBuilds ?? (() => false);
     this.key = options.key ?? platformKey();
     this.now = options.now ?? (() => Date.now() / 1000);
     this.fetch = options.fetch ?? ((input, init) => fetch(input, init));

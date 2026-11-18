@@ -341,8 +341,10 @@ export async function main(argv: string[]): Promise<void> {
   else ctx.transcripts.projectResolver = resolve;
   // updater.UpdateService as studio.create_server builds it: the Settings toggle, the chats being worked on, and a quit that runs
   // the normal close path after the install route has answered.
+  worktrees.setCommitIdentity(() => ctx.settings.commitIdentity()); // AIB's own commits use the Settings identity
   ctx.updates = new UpdateService(stateDir, {
     autoCheck: () => ctx.settings.autoUpdateCheck(),
+    getTestBuilds: () => ctx.settings.getTestBuilds(),
     busyChats: async () => (await host.busyConnections()).length,
     quit: (release) => void setTimeout(() => void close('installing an update', release), 50),
     chatsKeepRunning: !studio, // the agent host outlives this app: an update never stops a working chat

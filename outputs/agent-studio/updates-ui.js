@@ -339,6 +339,20 @@
     cb.addEventListener('change', () => opts.saveAuto(cb.checked));
     label.append(cb, el('span', 'Automatically check for updates'));
     box.append(label, el('p', 'Checks GitHub once a day for a newer version.', 'st-note'));
+    if (opts.saveTestBuilds) {
+      const tl = el('label', null, 'st-toggle'),
+        tcb = el('input');
+      tcb.type = 'checkbox';
+      tcb.checked = !!opts.testBuilds();
+      tcb.disabled = off;
+      tcb.dataset.testBuilds = '1';
+      tcb.addEventListener('change', () => opts.saveTestBuilds(tcb.checked));
+      tl.append(tcb, el('span', 'Get test builds'));
+      box.append(
+        tl,
+        el('p', "Also reads test builds from this computer's test folder (AIB-test-feed). The newest of that and GitHub is offered. Off by default.", 'st-note'),
+      );
+    }
     const row = el('div', null, 'st-row');
     const b = el('button', 'Check for updates');
     b.type = 'button';

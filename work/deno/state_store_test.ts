@@ -654,9 +654,29 @@ Deno.test('settings: defaults when no file; the hidden flag never reaches the pa
   const store = new SettingsStore(dir);
   const data = store.snapshot();
   assertEquals(data.agents, { builtin: { omp: true, claude: true, codex: true }, custom: [] });
-  assertEquals(data.server, { autoReconnect: true, worktreePerChat: true, autoUpdateCheck: true, keepAwake: false });
-  assertEquals((store.public().settings as { server: unknown }).server, { autoReconnect: true, autoUpdateCheck: true, keepAwake: false });
+  assertEquals(data.server, { autoReconnect: true, worktreePerChat: true, autoUpdateCheck: true, keepAwake: false, getTestBuilds: false, commitIdentity: '' });
+  assertEquals((store.public().settings as { server: unknown }).server, {
+    autoReconnect: true,
+    autoUpdateCheck: true,
+    keepAwake: false,
+    getTestBuilds: false,
+    commitIdentity: '',
+  });
   assert(!exists(file(dir, SettingsStore.FILE)));
+});
+
+Deno.test('settings: commit identity ("Name <email>") and Get test builds are saved, validated and read back', async () => {
+  const dir = tempDir();
+  const store = new SettingsStore(dir);
+  assertEquals([store.commitIdentity(), store.getTestBuilds()], [null, false]);
+  await store.update({ server: { commitIdentity: ' sirku <907051+sirkuttin@users.noreply.github.com> ', getTestBuilds: true } });
+  const again = new SettingsStore(dir);
+  assertEquals(again.commitIdentity(), { name: 'sirku', email: '907051+sirkuttin@users.noreply.github.com' });
+  assertEquals(again.getTestBuilds(), true);
+  await assertRejects(() => store.update({ server: { commitIdentity: 'just a name' } }), ValueError);
+  await assertRejects(() => store.update({ server: { getTestBuilds: 'yes' } }), ValueError);
+  await store.update({ server: { commitIdentity: '' } });
+  assertEquals(new SettingsStore(dir).commitIdentity(), null, 'empty = the repository identity');
 });
 
 Deno.test('settings: roundtrip, atomic and revision', async () => {

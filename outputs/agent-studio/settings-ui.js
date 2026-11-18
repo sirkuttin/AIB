@@ -262,6 +262,12 @@
       keywords: ['sleep', 'awake', 'caffeinate', 'power', 'standby', 'idle', 'phone', 'wake lock', 'insomnia'],
     },
     {
+      id: 'commit-identity',
+      section: 'server',
+      label: "Name and email for AIB's commits",
+      keywords: ['git', 'commit', 'author', 'email', 'name', 'identity', 'noreply', 'privacy', 'push', 'github', 'landing', 'snapshot'],
+    },
+    {
       id: 'server-info',
       section: 'server',
       label: 'State folder, versions and process IDs',
@@ -2243,6 +2249,40 @@
       box.append(line);
     }
   }
+  // "Name <email>" for the commits AIB makes itself (landings, snapshots, merges); empty = each repository's own identity.
+  function renderCommitIdentity(box) {
+    const saved = (S.data && S.data.settings.server && S.data.settings.server.commitIdentity) || '';
+    const input = el('input');
+    input.type = 'text';
+    input.spellcheck = false;
+    input.value = saved;
+    input.placeholder = 'Name <email@example.com>';
+    input.setAttribute('aria-label', "Name and email for AIB's commits");
+    const err = note('', 'bad');
+    err.hidden = true;
+    const apply = () => {
+      const v = input.value.trim();
+      if (v === saved) return;
+      err.hidden = true;
+      save({ server: { commitIdentity: v } }).then(
+        () => {},
+        (e) => {
+          err.textContent = (e && e.message) || 'Use the form: Name <email@example.com>';
+          err.hidden = false;
+        },
+      );
+    };
+    input.addEventListener('change', apply);
+    const line = el('div', null, 'st-beta-row');
+    line.append(input, button('Save', apply, 'st-primary'));
+    box.append(
+      field("Name and email for AIB's commits", line),
+      note(
+        "Used for the commits AIB makes itself: helper landings, snapshots and merges. Leave it empty to use each repository's own git name and email. GitHub refuses pushes that contain a private email address; use your noreply address, for example: sirku <907051+sirkuttin@users.noreply.github.com>. Your repository's git settings are never changed.",
+      ),
+      err,
+    );
+  }
   function renderUpdates(box) {
     const server = () => (S.data && S.data.settings.server) || {};
     if (!root.AibUpdates) return;
@@ -2251,6 +2291,8 @@
     root.AibUpdates.renderCard(slot, {
       autoCheck: () => server().autoUpdateCheck !== false,
       saveAuto: (v) => saveQuiet({ server: { autoUpdateCheck: v } }),
+      testBuilds: () => server().getTestBuilds === true,
+      saveTestBuilds: (v) => saveQuiet({ server: { getTestBuilds: v } }),
     });
   }
   function wslRows() {
@@ -2423,6 +2465,7 @@
     'auto-reconnect': renderAutoReconnect,
     'swarm-helpers': renderSwarmHelpers,
     'keep-awake': renderKeepAwake,
+    'commit-identity': renderCommitIdentity,
     'server-info': renderServerInfo,
     updates: renderUpdates,
     'repo-cleanup': renderRepoCleanup,
@@ -2447,6 +2490,7 @@
     'auto-reconnect': 'Reconnect after a restart',
     'swarm-helpers': 'Helper agents',
     'keep-awake': 'Keep the PC awake',
+    'commit-identity': "Name and email for AIB's commits",
     'server-info': 'About AIB',
     updates: 'Updates',
     'repo-cleanup': "Remove AIB's data from my repos",

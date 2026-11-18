@@ -133,9 +133,14 @@ async function configured(cwd: string): Promise<boolean> {
   return true;
 }
 
-/** git that may commit: Studio's own identity only when the user has none configured. */
+/** git that may commit: the Settings identity for AIB's commits when set, else Studio's own only when the user has none configured. */
 export async function gitc(args: string[], cwd: string, options: wt.GitOptions = {}): Promise<wt.GitResult> {
-  return git(args, cwd, { ...options, identity: !(await configured(cwd)) });
+  return git(args, cwd, { ...options, identity: await needsIdentity(cwd) });
+}
+
+/** AIB's commits get an identity passed with -c when Settings sets one, or when the repository has none. */
+async function needsIdentity(cwd: string): Promise<boolean> {
+  return !!wt.configuredCommitIdentity() || !(await configured(cwd));
 }
 
 export async function rev(cwd: string, name: string): Promise<string> {
@@ -608,7 +613,7 @@ export async function prepareLanding(
       const done = await git(
         ['rebase', '--onto', tip, chat.snapshot, head],
         chat.wt,
-        { check: false, identity: !(await configured(chat.wt)) },
+        { check: false, identity: await needsIdentity(chat.wt) },
       );
       if (done.returncode === 0) landed = await rev(chat.wt, 'HEAD');
       else {
