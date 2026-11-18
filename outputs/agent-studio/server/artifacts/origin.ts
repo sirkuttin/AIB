@@ -566,7 +566,7 @@ function serveTicket(id: string, query: Record<string, string[]>, send: Send): R
     data = markdownPage(decodeReplace(data), pureStem(path));
     mime = 'text/html; charset=utf-8';
   } else if (ext === '.html' || ext === '.htm') {
-    data = rewriteLibBytes(data);
+    data = injectScroll(rewriteLibBytes(data)); // the Preview reports its scroll, so a reload after a change opens where the reader was
   }
   return send(200, data, mime, {}, true);
 }

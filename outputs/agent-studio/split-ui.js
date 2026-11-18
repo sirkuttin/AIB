@@ -300,6 +300,12 @@
     const keep = saveScroll();
     for (const p of panes.values()) dropMirror(p);
     main.append(...liveNodes);
+    // the file view and the doc frame that sat inside the first pane go back under the chat strip
+    const fv = doc().getElementById('fileView'),
+      dv = doc().getElementById('docView');
+    if (fv && stage.contains(fv)) strip0.after(fv);
+    if (dv && stage.contains(dv)) (fv && fv.parentNode === main ? fv : strip0).after(dv);
+    for (const p of panes.values()) p.el.classList.remove('has-file');
     stage.remove();
     stage = null;
     panes.clear();
@@ -321,6 +327,7 @@
     const reshaped = !stage || sig !== shapeSig;
     if (reshaped) build();
     update();
+    if (root.AgentFilesUI && root.AgentFilesUI.placeBoxes) root.AgentFilesUI.placeBoxes(); // a file on screen moves into the first pane
     announceChats();
     // More or fewer panes across: the chat list and Activity give way so every pane keeps its minimum width (resize-ui.js).
     if (reshaped && root.ResizeUI && typeof root.ResizeUI.layout === 'function') root.ResizeUI.layout();
@@ -881,8 +888,10 @@
   function bodyRect(id) {
     const p = panes.get(id);
     if (p && p.body) return p.body.getBoundingClientRect();
-    const hd = main.querySelector(':scope > header') || main,
-      sr = strip0.getBoundingClientRect(),
+    // a file showing hides the header (no box at all): the main column's own width stands in
+    let hd = main.querySelector(':scope > header') || main;
+    if (!hd.getBoundingClientRect().width) hd = main;
+    const sr = strip0.getBoundingClientRect(),
       hr = hd.getBoundingClientRect(),
       mr = main.getBoundingClientRect();
     return {

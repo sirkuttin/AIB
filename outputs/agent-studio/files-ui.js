@@ -94,6 +94,7 @@
     beside = F() ? F().emptyTabs() : { tabs: [], active: '' },
     view = 'chat'; // what the middle shows: 'chat' or 'file'
   const reads = new Map(); // tab id -> {loading, data, error, mode, gutter: Set|null}
+  const pageFrames = new Map(); // 'main|' or 'beside|' + tab id -> {body, frame, sig, scroll, checked}: a Preview that stays loaded across redraws
   // "What's new in AIB <version>" tabs (updates-ui.js, once after an update): tab id -> {version, releases}. Not saved: the notes
   // come from the server once, so the tab is gone after a reload.
   const notesData = new Map();
@@ -1697,6 +1698,7 @@
     const r = F().closeTab(tabsHere(), id);
     setTabsHere(r.state);
     reads.delete(id);
+    pageFrames.delete('main|' + id);
     notesData.delete(id);
     pruneFrames('main', r.state.tabs);
     if (!r.next) showChat();
@@ -1949,18 +1951,16 @@
 
   // ---- the file view ---------------------------------------------------------------------------------------------------
   const outsideText = (where) => 'Outside this project' + (where ? ' · ' + where : '');
+  const readCall = (tab) =>
+    tab.scope.root === 'outside'
+      ? host.getJson('/api/live/files/outside', { id: tab.scope.id, path: tab.scope.abs || tab.path })
+      : host.getJson('/api/live/files/read', Object.assign(F().scopeArgs(tab.scope), { path: tab.path }));
   function ensureRead(tab, redraw) {
     let r = reads.get(tab.id);
     if (r) return r;
     r = { loading: true, data: null, error: '', mode: 'source', gutter: null };
     reads.set(tab.id, r);
-    const outside = tab.scope.root === 'outside';
-    host
-      .getJson(
-        outside ? '/api/live/files/outside' : '/api/live/files/read',
-        outside ? { id: tab.scope.id, path: tab.scope.abs || tab.path } : Object.assign(F().scopeArgs(tab.scope), { path: tab.path }),
-      )
-      .then(
+    readCall(tab).then(
         (d) => {
           r.data = d;
           r.loading = false;
@@ -2180,7 +2180,8 @@
     more.disabled = !(d && d.abs);
     more.onclick = () => moreMenu(more, d.abs);
     tools.append(more);
-    const body = ed ? FE().body(where, tab) : el('div', null, 'sf-fv-body');
+    let body = ed ? FE().body(where, tab) : el('div', null, 'sf-fv-body');
+    let pageShown = false;
     if (ed) {
       /* the editor's own node: nothing to add */
     } else if (r.loading) body.append(el('p', 'Opening…', 'fx-note'));
@@ -2193,12 +2194,8 @@
         body.append(img);
       } else body.append(codeView(d.text, tab, r));
     } else if (r.mode === 'page' && canPage) {
-      const f = el('iframe', null, 'sf-fv-page');
-      f.setAttribute('sandbox', 'allow-scripts allow-popups');
-      f.setAttribute('referrerpolicy', 'no-referrer');
-      f.title = 'Preview of ' + d.name + ' (view only)';
-      f.src = d.viewUrl;
-      body.append(f);
+      pageShown = true;
+      body = pageBody(box, tab, where, d, r, redraw);
     } else if (wslScope(tab.scope) && (d.binary || d.text == null) && !d.tooBig) {
       // a WSL project's file that is no picture or page: no text to show, and no editor on this PC opens a path inside the distro
       const note = el('div', null, 'fx-note');
@@ -2212,6 +2209,7 @@
       );
       body.append(note);
     } else body.append(codeView(d.text, tab, r));
+    if (!pageShown) pageFrames.delete(where + '|' + tab.id);
     const foot = el('div', null, 'fx-pv-foot');
     if (d) {
       const ext = (/\.([^.]+)$/.exec(d.name) || [])[1] || '';
@@ -2235,6 +2233,54 @@
     }
     const edAlert = ed ? FE().alert(where, tab) : null;
     placeAround(box, [head, tools, alert, edAlert], body, [foot]);
+  }
+  /* A page file's Preview. The iframe lives in its own body node that a redraw keeps where it is (moving an iframe in the DOM, or
+     building a new one with the same address, loads the page again and it jumps back to the top). It loads again only when the file
+     changed (its mtime or size), and then it opens where the reader was: the page reports its scroll (origin.ts SCROLL_SCRIPT) and
+     the new frame's address carries it as #studio-scroll=x,y. A redraw also looks at the file, at most every 3 s, to notice a change. */
+  const PAGE_CHECK_MS = 3000;
+  const pageSig = (d) => [d.abs || '', d.mtime, d.size].join('|');
+  function pageBody(box, tab, where, d, r, redraw) {
+    const key = where + '|' + tab.id,
+      sig = pageSig(d);
+    let rec = pageFrames.get(key);
+    const live = !!rec && rec.body.parentNode === box && rec.frame.parentNode === rec.body;
+    if (live && rec.sig === sig) {
+      if (Date.now() - rec.checked >= PAGE_CHECK_MS && host) {
+        rec.checked = Date.now();
+        readCall(tab).then(
+          (nd) => {
+            if (reads.get(tab.id) !== r || !nd) return;
+            r.data = nd; // also a renewed view ticket: the page is not loaded again for it, but a later rebuild gets the live address
+            if (pageSig(nd) !== sig) redraw();
+          },
+          () => {},
+        );
+      }
+      return rec.body;
+    }
+    const f = el('iframe', null, 'sf-fv-page');
+    f.setAttribute('sandbox', 'allow-scripts allow-popups');
+    f.setAttribute('referrerpolicy', 'no-referrer');
+    f.title = 'Preview of ' + d.name + ' (view only)';
+    const at = rec && rec.scroll ? rec.scroll : null;
+    f.src = at ? String(d.viewUrl).replace(/#.*$/, '') + '#studio-scroll=' + Math.round(at.x) + ',' + Math.round(at.y) : d.viewUrl;
+    const body = rec ? rec.body : el('div', null, 'sf-fv-body');
+    body.replaceChildren(f);
+    rec = { body, frame: f, sig, scroll: at, checked: Date.now() };
+    pageFrames.set(key, rec);
+    return body;
+  }
+  // The page's own scroll reports (the sender is found by e.source; a sandboxed page's origin is opaque, so nothing else can tell).
+  function onPageScroll(e) {
+    const d = e && e.data;
+    if (!d || d.type !== 'studio-artifact-scroll') return;
+    for (const rec of pageFrames.values()) {
+      if (!rec.frame.contentWindow || rec.frame.contentWindow !== e.source) continue;
+      const x = Number(d.x),
+        y = Number(d.y);
+      if (Number.isFinite(x) && Number.isFinite(y)) rec.scroll = { x, y };
+    }
   }
   // Replace a box's children, keeping `keep` where it is when it is already there (the editor's node: moving it would lose its
   // scroll, caret and IME state), so a redraw rebuilds only the head, tools and footer.
@@ -2366,9 +2412,31 @@
     }
     return box;
   }
+  /* Where the file view and the doc frame sit: under the chat strip, or with panes side by side inside the first pane (the one whose
+     strip holds the file tabs), between its strip and its chat. Only that pane's chat gives way to a file; the other pane and both
+     strips stay. */
+  function placeBoxes() {
+    const box = doc().getElementById('fileView');
+    if (!box) return;
+    const dv = doc().getElementById('docView'),
+      S = root.AgentSplitUI,
+      first = S && S.active && S.active() && S.panes ? (S.panes()[0] || {}).strip : null,
+      pane = first ? first.parentNode : null;
+    if (pane) {
+      if (box.parentNode !== pane) pane.insertBefore(box, first.nextSibling);
+      if (dv && dv.parentNode !== pane) pane.insertBefore(dv, box.nextSibling);
+    } else {
+      const strip = doc().getElementById('chatTabs');
+      if (strip && box.parentNode !== strip.parentNode) strip.after(box);
+      if (dv && box.parentNode === strip.parentNode && dv.parentNode !== box.parentNode) box.after(dv);
+    }
+    for (const n of doc().querySelectorAll('.pane.has-file')) if (n !== pane || view !== 'file') n.classList.remove('has-file');
+    if (pane && view === 'file' && tabsHere().active) pane.classList.add('has-file');
+  }
   function drawMain() {
     const box = mainBox();
     if (!box) return;
+    placeBoxes();
     const t = tabsHere(),
       tab = view === 'file' ? t.tabs.find((x) => x.id === t.active) : null;
     const dv = docHolder('main', box);
@@ -2500,6 +2568,7 @@
               const r = F().closeTab(beside, id);
               beside = r.state;
               reads.delete(id);
+              pageFrames.delete('beside|' + id);
               drawBeside();
             };
             const t = beside.tabs.find((x) => x.id === id);
@@ -2518,6 +2587,7 @@
         const gone = () => {
           beside = F().closeTab(beside, t.id).state;
           reads.delete(t.id);
+          pageFrames.delete('beside|' + t.id);
           next();
         };
         if (FE() && FE().handles(t)) FE().beforeClose('beside', t, close, gone);
@@ -3089,6 +3159,7 @@
       linkMenu(a, e.clientX, e.clientY);
     });
     if (root.addEventListener) root.addEventListener('message', onFrameMessage);
+    if (root.addEventListener) root.addEventListener('message', onPageScroll);
     if (root.addEventListener) root.addEventListener('focus', () => refreshLocal());
     paint();
   }
@@ -3135,12 +3206,20 @@
     onFrameMessage,
     loadCodeEditor,
     _editorSpike: editorSpike,
+    placeBoxes,
+    _redraw: () => {
+      if (view === 'file') drawMain();
+      if (beside.active) drawBeside();
+    },
+    _refreshArtifacts: () => loadProjectArtifacts(true),
+    _reloadLocalTabs: reloadLocalTabs,
     _artifactFor: artifactFor,
     _artChatFor: artChatFor,
     _state:() => ({ mode, chat, following, pinned, query, changedOnly, showIgnored, sel, results, view, tabs: tabsHere(), beside, trees, newDoc, frames }),
     _reset: () => {
       trees.clear();
       reads.clear();
+      pageFrames.clear();
       notesData.clear();
       projectArts.clear();
       exists.clear();

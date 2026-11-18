@@ -229,7 +229,8 @@ Deno.test('view tickets: the artifact origin serves the one ticketed file, read 
     const ok = get('/f/' + id2 + '/chart.html');
     assertEquals(ok.status, 200);
     assert((ok.headers.get('Content-Security-Policy') ?? '').includes('sandbox'));
-    assertEquals(await ok.text(), '<h1>c</h1>\n');
+    const served = await ok.text();
+    assert(served.startsWith('<h1>c</h1>\n') && served.includes('studio-artifact-scroll'), 'the page, plus the script that reports its scroll');
     assertEquals(get('/f/' + 'f'.repeat(32) + '/chart.html').status, 404);
     const py = issue(osp.join(r.repo, 'scripts', 'load.py'));
     assertEquals(get('/f/' + py + '/load.py').headers.get('Content-Type'), 'text/plain; charset=utf-8', 'other files never run');

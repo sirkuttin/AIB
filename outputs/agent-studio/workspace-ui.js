@@ -1115,6 +1115,13 @@
     return env;
   }
 
+  // With panes side by side a file shows inside the first pane (the one whose strip holds the file tabs): a chat of the other pane
+  // being opened or clicked leaves it alone (nothing hides when focus moves); the first pane's own chats bring the chat back.
+  const fileStaysFor = (key) => {
+    if (!splitOn()) return false;
+    const first = S().panes()[0];
+    return !!first && !(first.group.tabs || []).includes(key);
+  };
   function tabNode(key, activeKey) {
     const item = itemOf(key);
     if (!item) return null;
@@ -1147,7 +1154,7 @@
         tabSuppress = false;
         return;
       }
-      if (FU() && FU().showChat) FU().showChat(); // a file was showing: back to the chat
+      if (FU() && FU().showChat && !fileStaysFor(key)) FU().showChat(); // a file was showing: back to the chat
       if (key !== selectedKey) openKey(key);
     };
     const x = btn('\u00D7', 'ws-tab-x', 'Close tab: ' + item.title + ' (Alt+W)');
@@ -3306,7 +3313,7 @@
     if (splitReady()) S().noteOpened(key, ws.active);
     if (switchingProject) {
       if (FU() && FU().projectShown) FU().projectShown();
-    } else if (FU() && FU().showChat) FU().showChat();
+    } else if (FU() && FU().showChat && !fileStaysFor(key)) FU().showChat();
     lastSig = '';
     // The narrow drawer closes when you go to another chat. The page also starts the chat it already shows again (its live
     // connection came up, a reconnect): that is not navigation, and it must not take the drawer away from a Files action in it.
