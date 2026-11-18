@@ -182,8 +182,11 @@ export async function fixDeb(path: string, name: string): Promise<string[]> {
   return [...edited, ...modes.map((m) => `mode ${m}`)];
 }
 
-/** One regular file as a tar entry: a ustar header (owner root) and the data padded to 512 bytes. */
-export function tarEntry(path: string, data: Uint8Array, mode: number, mtime = Math.floor(Date.now() / 1000)): Uint8Array {
+/**
+ * One regular file (or, with dir, a folder: path ending in "/", no data) as a tar entry: a ustar header (owner root) and the data
+ * padded to 512 bytes.
+ */
+export function tarEntry(path: string, data: Uint8Array, mode: number, mtime = Math.floor(Date.now() / 1000), dir = false): Uint8Array {
   if (enc.encode(path).length > 100) throw new Error(`tar path too long: ${path}`);
   const h = new Uint8Array(512);
   const put = (at: number, text: string) => h.set(enc.encode(text), at);
@@ -193,7 +196,7 @@ export function tarEntry(path: string, data: Uint8Array, mode: number, mtime = M
   put(116, '0000000\0');
   put(124, data.length.toString(8).padStart(11, '0') + '\0');
   put(136, mtime.toString(8).padStart(11, '0') + '\0');
-  h[156] = 0x30;
+  h[156] = dir ? 0x35 : 0x30;
   put(257, 'ustar\u000000');
   put(265, 'root');
   put(297, 'root');
@@ -226,21 +229,107 @@ export function addTarFile(tar: Uint8Array, path: string, data: Uint8Array, mode
   return concat([tar.subarray(0, p), tarEntry((dotSlash ? './' : '') + norm, data, mode), end]);
 }
 
-/** Adds a file to a .deb's data.tar.gz (rewritten in place). Its folder must already be in the package. */
-export async function addToDeb(path: string, relPath: string, data: Uint8Array, mode: number): Promise<void> {
+/** Every path in a tar (normalised: no "./"; folders end in "/"). */
+export function tarPaths(tar: Uint8Array): string[] {
+  const out: string[] = [];
+  let longName: string | null = null;
+  let p = 0;
+  while (p + 512 <= tar.length) {
+    const header = tar.subarray(p, p + 512);
+    if (header.every((b) => b === 0)) break;
+    const field = (o: number, n: number) => dec.decode(header.subarray(o, o + n)).replace(/\0.*$/s, '');
+    const size = parseInt(field(124, 12).trim() || '0', 8);
+    const type = String.fromCharCode(header[156] || 0x30);
+    const body = () => dec.decode(tar.subarray(p + 512, p + 512 + size)).replace(/\0.*$/s, '');
+    if (type === 'L') longName = body();
+    else if (type === 'x') longName = body().match(/^\d+ path=(.*)$/m)?.[1] ?? null;
+    else if (type !== 'g') {
+      const name = (longName ?? (field(345, 155) ? `${field(345, 155)}/${field(0, 100)}` : field(0, 100))).replace(/^\.\//, '');
+      longName = null;
+      out.push(type === '5' && !name.endsWith('/') ? name + '/' : name);
+    }
+    p += 512 + Math.ceil(size / 512) * 512;
+  }
+  return out;
+}
+
+/** Adds a folder entry (root, 0755) to a tar before its end-of-archive blocks, written the way the tar's own entries are. */
+export function addTarDir(tar: Uint8Array, path: string): Uint8Array {
+  const norm = path.replace(/^\.\//, '').replace(/\/?$/, '/');
+  let p = 0;
+  let dotSlash = false;
+  while (p + 512 <= tar.length) {
+    const header = tar.subarray(p, p + 512);
+    if (header.every((b) => b === 0)) break;
+    if (p === 0) dotSlash = dec.decode(header.subarray(0, 2)) === './';
+    const size = parseInt(dec.decode(header.subarray(124, 136)).replace(/\0.*$/s, '').trim() || '0', 8);
+    p += 512 + Math.ceil(size / 512) * 512;
+  }
+  const end = p + 1024 <= tar.length ? tar.subarray(p) : new Uint8Array(1024);
+  return concat([tar.subarray(0, p), tarEntry((dotSlash ? './' : '') + norm, new Uint8Array(), 0o755, undefined, true), end]);
+}
+
+/** One file for addFilesToDeb: its path in the package (usr/lib/aib/x), contents and mode. */
+export interface DebFile {
+  path: string;
+  data: Uint8Array;
+  mode: number;
+}
+
+/**
+ * Adds files to a .deb's data.tar.gz in one rewrite (in place). Each file's folder must already be in the package, unless `makeDirs`
+ * names a folder that may be created (then it and its missing parents are added, root 0755, as dpkg expects every folder listed).
+ */
+export async function addFilesToDeb(path: string, files: DebFile[], makeDirs: string[] = []): Promise<void> {
   const members = readAr(await Deno.readFile(path));
   const member = members.find((m) => m.name === 'data.tar.gz');
   if (!member) throw new Error(`${path}: no data.tar.gz member`);
-  const tar = await gunzip(member.data);
-  const folder = relPath.replace(/[^/]*$/, '');
-  let has = false;
-  editTar(tar, (p) => {
-    if (p.startsWith(folder)) has = true;
-    return false;
-  }, (_p, d) => d);
-  if (!has) throw new Error(`${path}: nothing in ${folder}; did the package layout change?`);
-  member.data = await gzip(addTarFile(tar, relPath, data, mode));
+  let tar = await gunzip(member.data);
+  const allowed = makeDirs.map((d) => d.replace(/\/?$/, '/'));
+  for (const file of files) {
+    const folder = file.path.replace(/[^/]*$/, '');
+    const paths = tarPaths(tar);
+    if (!paths.some((p) => p.startsWith(folder))) {
+      if (!allowed.some((d) => folder.startsWith(d) || d.startsWith(folder))) {
+        throw new Error(`${path}: nothing in ${folder}; did the package layout change?`);
+      }
+      const parts = folder.split('/').filter(Boolean);
+      for (let i = 1; i <= parts.length; i++) {
+        const dir = parts.slice(0, i).join('/') + '/';
+        if (!tarPaths(tar).includes(dir)) tar = addTarDir(tar, dir);
+      }
+    }
+    tar = addTarFile(tar, file.path, file.data, file.mode);
+  }
+  member.data = await gzip(tar);
   await Deno.writeFile(path, writeAr(members));
+}
+
+/** Adds a file to a .deb's data.tar.gz (rewritten in place). Its folder must already be in the package. */
+export async function addToDeb(path: string, relPath: string, data: Uint8Array, mode: number): Promise<void> {
+  await addFilesToDeb(path, [{ path: relPath, data, mode }]);
+}
+
+// ---- the .deb's self-update (server/desktop/updater.ts: Install now on a .deb install) ------------------------------------
+
+/** The root script AIB runs with pkexec to install a verified update, and where the .deb puts it (updater.ts DEB_INSTALLER). */
+export const DEB_INSTALLER_PATH = 'usr/lib/aib/aib-install-deb';
+/** The polkit action that gives pkexec its "Authentication is required to update AIB" prompt. */
+export const DEB_POLICY_PATH = 'usr/share/polkit-1/actions/dev.aib.app.update.policy';
+const LINUX_DIR = new URL('./linux/', import.meta.url);
+
+/** The files the .deb carries for its self-update (tools/linux/), with Unix line ends whatever the checkout did to them. */
+export async function debUpdaterFiles(): Promise<DebFile[]> {
+  const read = async (name: string) => enc.encode((await Deno.readTextFile(new URL(name, LINUX_DIR))).replace(/\r\n/g, '\n'));
+  return [
+    { path: DEB_INSTALLER_PATH, data: await read('aib-install-deb.sh'), mode: 0o755 },
+    { path: DEB_POLICY_PATH, data: await read('dev.aib.app.update.policy'), mode: 0o644 },
+  ];
+}
+
+/** Adds the self-update script and its polkit action to a .deb (one rewrite; usr/share/polkit-1/actions/ is created). */
+export async function addDebUpdater(path: string): Promise<void> {
+  await addFilesToDeb(path, await debUpdaterFiles(), ['usr/share/polkit-1/']);
 }
 
 // ---- squashfs (AppImage) -----------------------------------------------------------------------------------------------

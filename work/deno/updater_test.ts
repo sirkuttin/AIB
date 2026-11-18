@@ -973,7 +973,7 @@ Deno.test("automatic checks never install", async () => {
   assertEquals([launched, quit], [[], []]);
 });
 
-Deno.test("canInstallInPlace: the desktop app on Windows, macOS and a Linux AppImage; never .deb or deno run", () => {
+Deno.test("canInstallInPlace: the desktop app on Windows, macOS and a Linux AppImage (a .deb install: deb_update_test); never deno run", () => {
   using env = new Env();
   const mac = { desktop: true, pid: 1, exe: "/Applications/AIB.app/Contents/MacOS/laufey_webview" };
   const linux = { desktop: true, pid: 1, exe: "/tmp/.mount_AIBx/usr/bin/aib" };

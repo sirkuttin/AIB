@@ -82,6 +82,7 @@ export const SLOW: Record<string, number> = {
   'maki_e2e_test.ts': 15, // downloads the real Maki release (35 MB) from github.com and chats with it against the stub model API
   'antigravity_e2e_test.ts': 30, // downloads Google's real Antigravity CLI build (235 MB on Windows); sign-in check and session/new, no account
   'desktop_log_e2e_test.ts': 8, // a built AIB.exe started with no arguments writes studio.log in its data folder (AIB_SLOW_TESTS=1)
+  'deb_update_e2e_test.ts': 10, // the .deb self-update in the Ubuntu WSL distro: a throwaway user, test packages installed with apt, then purged
   'remote_setup_page_test.ts': 55, // Settings > Remote control's setup steps in a headless Chrome with a fake Tailscale
   'attention_modes_test.ts': 60, // the attention watcher through the real agent hosts: in-process, the keeper (Go) and a split host
 };

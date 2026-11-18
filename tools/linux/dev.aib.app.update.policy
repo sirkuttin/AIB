@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+  "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!-- AIB's .deb self-update: `pkexec /usr/lib/aib/aib-install-deb <file>` asks for an administrator password with this message. -->
+<policyconfig>
+  <vendor>AIB</vendor>
+  <vendor_url>https://github.com/sirkuttin/AIB</vendor_url>
+  <action id="dev.aib.app.update">
+    <description>Update AIB</description>
+    <message>Authentication is required to update AIB</message>
+    <icon_name>aib</icon_name>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/aib/aib-install-deb</annotate>
+  </action>
+</policyconfig>

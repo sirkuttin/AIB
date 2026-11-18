@@ -15,6 +15,11 @@
  *   appimage     target = the AppImage file ($APPIMAGE). The new file is copied beside it, made executable, and renamed over it
  *                (the old one becomes <name>.old-<stamp>). The updater starts this helper from the new AppImage, so the old one's
  *                mount can go away.
+ *   deb          target = /usr/lib/aib/aib (a .deb install). Nothing to swap: the updater already installed the new .deb with
+ *                `pkexec /usr/lib/aib/aib-install-deb` before AIB quit (dpkg replaced the files by rename, so the old app and its
+ *                keeper kept running from the old ones). The helper waits for the app to quit and starts the new version, as for the
+ *                other kinds. There is no rollback (it would need a second password prompt): a new version that does not confirm its
+ *                start is logged with how to reinstall the previous release.
  * If any rename fails, or the new app does not confirm its start (it writes the `marker` file, <data>/updates/started-<ver>.ok,
  * once its window has loaded the page, or once a `serve` listens; MARKER_SECONDS at most) or exits with an error first, every
  * rename is undone and the old app is started again. Without a marker (older callers) "still running after STARTUP_SECONDS"
@@ -44,7 +49,28 @@ export const KEEP = /\.WebView2$/i;
 export const LEFTOVER = /\.old-\d{8}-\d{6}(-\d+)?$/;
 export const STAGE_PREFIX = '.aib-update-';
 
-export type UpdateKind = 'windows-zip' | 'macos-zip' | 'appimage';
+export type UpdateKind = 'windows-zip' | 'macos-zip' | 'appimage' | 'deb';
+const KINDS: readonly string[] = ['windows-zip', 'macos-zip', 'appimage', 'deb'];
+
+/** A .deb install: the app's program, the symlink on PATH, and the root script that installs a verified update (pkexec). */
+export const DEB_EXE = '/usr/lib/aib/aib';
+export const DEB_LINK = '/usr/bin/aib';
+export const DEB_PACKAGE = 'aib';
+/** Where releases live: the line a failed .deb start leaves in install.log points there for the previous version. */
+export const RELEASES_PAGE = 'https://github.com/sirkuttin/AIB/releases';
+
+/**
+ * Does dpkg own the app's program (/usr/lib/aib/aib is listed in /var/lib/dpkg/info/aib.list, or aib:<arch>.list)? Never throws.
+ * `read` is replaced in tests.
+ */
+export function dpkgOwns(path: string, read: (file: string) => string = (f) => Deno.readTextFileSync(f)): boolean {
+  for (const list of [`${DEB_PACKAGE}.list`, `${DEB_PACKAGE}:amd64.list`, `${DEB_PACKAGE}:arm64.list`]) {
+    try {
+      if (read(`/var/lib/dpkg/info/${list}`).split('\n').some((line) => line.trim() === path)) return true;
+    } catch { /* not this one */ }
+  }
+  return false;
+}
 
 export interface HelperArgs {
   /** The downloaded, verified package (zip or AppImage). */
@@ -367,7 +393,7 @@ export async function run(args: Partial<HelperArgs> | Record<string, unknown>, d
   const exe = String(args.exe ?? '');
   const kind = args.kind as UpdateKind;
   const target = String(args.target ?? '');
-  if (!['windows-zip', 'macos-zip', 'appimage'].includes(kind) || !target || !exe) {
+  if (!KINDS.includes(kind) || !target || !exe) {
     log(note, `update to ${args.version ?? 'None'}: missing or unknown kind, target or exe; nothing was changed`);
     return 1;
   }
@@ -413,7 +439,16 @@ async function runSteps(args: Partial<HelperArgs> | Record<string, unknown>, _de
   const journalPath = note ? join(dirname(note), JOURNAL_NAME) : null;
   const persist: Persist = (journal) => {
     if (!journalPath) return;
-    const data = JSON.stringify({ format: 1, helperPid: Deno.pid, version: args.version ?? null, stamp, kind, target, exe, steps: journal });
+    const data = JSON.stringify({
+      format: 1,
+      helperPid: Deno.pid,
+      version: args.version ?? null,
+      stamp,
+      kind,
+      target,
+      exe,
+      steps: journal,
+    });
     Deno.writeTextFileSync(`${journalPath}.tmp`, data);
     Deno.renameSync(`${journalPath}.tmp`, journalPath);
   };
@@ -433,6 +468,7 @@ async function runSteps(args: Partial<HelperArgs> | Record<string, unknown>, _de
     await sleep(0.5);
     waited += 0.5;
   }
+  if (kind === 'deb') return await startDeb(args, c);
   let have: string;
   try {
     have = await sha256(installer);
@@ -515,12 +551,56 @@ async function runSteps(args: Partial<HelperArgs> | Record<string, unknown>, _de
   }
   restore(
     `the new version could not start (${
-      started ? (marker && !started.confirmed && started.code === null ? `no start confirmation within ${MARKER_SECONDS} s` : `exit code ${started.code}`) : why
+      started
+        ? (marker && !started.confirmed && started.code === null
+          ? `no start confirmation within ${MARKER_SECONDS} s`
+          : `exit code ${started.code}`)
+        : why
     })`,
   );
   try {
     await start(command, cleanEnv()); // the old version again
   } catch { /* the person starts it by hand */ }
+  return 7;
+}
+
+/**
+ * A .deb install: the new version is already installed (the updater ran aib-install-deb through pkexec before the app quit), so the
+ * helper only starts it, with the old app's arguments, and waits for its start confirmation. The package file is not checked again:
+ * apt has installed it and it may be gone. No rollback: going back needs the previous release and a password.
+ */
+async function startDeb(args: Partial<HelperArgs> | Record<string, unknown>, c: Steps): Promise<number> {
+  const { start, note, exe } = c;
+  const extra = Array.isArray(args.args) ? (args.args as unknown[]).filter((a): a is string => typeof a === 'string') : [];
+  const marker = typeof args.marker === 'string' && args.marker ? args.marker : undefined;
+  if (marker) {
+    try {
+      Deno.removeSync(marker);
+    } catch { /* none yet */ }
+  }
+  log(note, `the app has quit; ${args.version ?? 'the new version'} is installed (apt); starting it`);
+  let started: StartResult | null = null;
+  let why = '';
+  try {
+    started = await start([exe, ...extra], cleanEnv(), marker);
+  } catch (error) {
+    why = error instanceof Error ? error.message : String(error);
+  }
+  if (started && (marker ? started.confirmed === true : started.code === null || started.code === 0)) {
+    log(note, marker ? 'the new version is running (it confirmed its start)' : 'the new version is running');
+    return 0;
+  }
+  log(
+    note,
+    `the new version could not start (${
+      started
+        ? (marker && !started.confirmed && started.code === null
+          ? `no start confirmation within ${MARKER_SECONDS} s`
+          : `exit code ${started.code}`)
+        : why
+    }); it stays installed. To go back, download the previous AIB .deb from ${RELEASES_PAGE} and install it with: ` +
+      'sudo apt install --allow-downgrades ./<file>.deb',
+  );
   return 7;
 }
 
@@ -570,19 +650,24 @@ export interface InstallTarget {
 /**
  * What an in-place update replaces for the running app, or null when it cannot update itself. Inside a `deno desktop` binary
  * Deno.execPath() is the launcher itself (checked on Windows: <install folder>\AIB.exe, also for subcommands), so: Windows = its
- * folder; macOS = the bundle three levels above Contents/MacOS/<exe>; Linux = $APPIMAGE (a .deb install updates by hand).
+ * folder; macOS = the bundle three levels above Contents/MacOS/<exe>; Linux = $APPIMAGE, else /usr/lib/aib/aib when the program is
+ * that file (or the /usr/bin/aib link to it) and dpkg owns it (a .deb install: kind 'deb', installed with pkexec + apt).
  */
 export function installTarget(
   os: string = Deno.build.os,
   exe: string = Deno.execPath(),
   env: Record<string, string | undefined> = Deno.env.toObject(),
+  owned: (path: string) => boolean = dpkgOwns,
 ): InstallTarget | null {
   if (os === 'windows') return exe ? { kind: 'windows-zip', target: exe.replace(/[\\/][^\\/]*$/, '') } : null;
   if (os === 'darwin' || os === 'macos') {
     const m = /^(.*\.app)\/Contents\/MacOS\/[^/]+$/.exec(exe);
     return m ? { kind: 'macos-zip', target: m[1] } : null;
   }
-  if (os === 'linux') return env.APPIMAGE ? { kind: 'appimage', target: env.APPIMAGE } : null;
+  if (os === 'linux') {
+    if (env.APPIMAGE) return { kind: 'appimage', target: env.APPIMAGE };
+    if ((exe === DEB_EXE || exe === DEB_LINK) && owned(DEB_EXE)) return { kind: 'deb', target: DEB_EXE };
+  }
   return null;
 }
 
@@ -599,7 +684,7 @@ export function removeUpdateLeftovers(
   try {
     if (!(options.desktop ?? isDesktopApp()) && !options.target) return removed;
     const t = options.target !== undefined ? options.target : installTarget();
-    if (!t) return removed;
+    if (!t || t.kind === 'deb') return removed; // apt leaves nothing behind in /usr/lib/aib
     const folder = t.kind === 'windows-zip' ? t.target : dirname(t.target);
     const prefix = t.kind === 'windows-zip' ? '' : basename(t.target) + '.old-';
     const remove = (p: string): boolean => {
@@ -668,7 +753,7 @@ export function updateLeftoversLeft(options: { target?: InstallTarget | null; de
   try {
     if (!(options.desktop ?? isDesktopApp()) && !options.target) return false;
     const t = options.target !== undefined ? options.target : installTarget();
-    if (!t) return false;
+    if (!t || t.kind === 'deb') return false;
     const folder = t.kind === 'windows-zip' ? t.target : dirname(t.target);
     const prefix = t.kind === 'windows-zip' ? '' : basename(t.target) + '.old-';
     for (const e of Deno.readDirSync(folder)) {

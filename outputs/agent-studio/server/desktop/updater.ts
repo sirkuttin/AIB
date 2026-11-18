@@ -11,8 +11,15 @@
  *   - Nothing installs without the person's click. Automatic checks only look, download and verify.
  *   - Checks happen at most once a day (manual "Check for updates" is always allowed). Turned off in Settings: no network call.
  *   - The desktop app (a `deno desktop` binary) installs in place on Windows (the per-user zip), macOS (the zipped AIB.app) and Linux
- *     when it runs from an AppImage: update_helper.ts swaps the files after the app quits. A .deb install, and any `deno run`, get the
- *     verified file and instructions.
+ *     when it runs from an AppImage: update_helper.ts swaps the files after the app quits. Any `deno run` gets the verified file and
+ *     instructions.
+ *   - A .deb install (/usr/lib/aib/aib, owned by dpkg) updates itself the electron-updater DebUpdater way: on Install now, while AIB is
+ *     still open, `pkexec /usr/lib/aib/aib-install-deb <the verified .deb>` (a root script the .deb ships, with the polkit action
+ *     "Authentication is required to update AIB"; tools/linux/) runs `apt-get install --allow-downgrades` on it; then AIB quits and
+ *     the helper starts the new version, and keeper take-over works as on the other systems. No pkexec, no polkit agent (SSH), a
+ *     closed password prompt or a refused file: nothing is installed, AIB stays open and shows the manual line with the file's path.
+ *     The .deb Version is AIB's with every "-" a "~" (`deno desktop`); dpkg orders a release below its own test builds
+ *     (0.13.2~beta.1.test.2 > 0.13.2~beta.1), where AIB orders it above, hence --allow-downgrades.
  *   - Test builds (0.1.0-beta.12.test.3) also read a local feed folder (%LOCALAPPDATA%\AIB-test-feed, filled by `tools/build.ts
  *     --feed`) every FEED_INTERVAL and on window focus, and take the newest of GitHub and the feed. Same rules: a SHA256SUMS match
  *     (the feed's own), the click, the helper. Version order puts X.test.M below X, so the real release replaces its test builds.
@@ -29,6 +36,7 @@ import { writeJsonAtomic } from '../core/fs.ts';
 import { APP_VERSION, isDesktopApp } from '../core/app.ts';
 import { spawnDetached } from '../platform/spawn_detached.ts';
 import { cleanEnv, type HelperArgs, type InstallTarget, installTarget } from './update_helper.ts';
+export { DEB_EXE } from './update_helper.ts';
 import { PROTOCOL_VERSION } from '../host/host_client.ts';
 import { missingFeatures } from '../keeper/client.ts';
 import { getLogger } from '../core/log.ts';
@@ -489,7 +497,7 @@ async function copyFeedFile(src: string, dest: string, limit: number): Promise<s
   return hash.digest('hex');
 }
 
-const PY_WS ='\\t\\n\\v\\f\\r\\x1c-\\x20\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000';
+const PY_WS = '\\t\\n\\v\\f\\r\\x1c-\\x20\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000';
 const SUM_LINE = new RegExp(`^([A-Fa-f0-9]{64}) [ *]?([^\\n]+?)[${PY_WS}]*$`);
 
 /** The one SHA-256 line for exactly this file name in a SHA256SUMS text. Zero or several: refused (code no_checksum). */
@@ -807,6 +815,12 @@ export interface UpdateServiceOptions {
   onReady?: ((version: string) => void | Promise<void>) | null;
   /** Starts the detached helper (update_helper.ts). Replaced in tests. */
   launcher?: (args: HelperArgs) => void | Promise<void>;
+  /** A .deb install: runs `pkexec <argv>` (the root script that installs the verified .deb). Default runPkexec; replaced in tests. */
+  privileged?: PrivilegedRun;
+  /** A .deb install: does dpkg own /usr/lib/aib/aib (default: /var/lib/dpkg/info/aib.list lists it)? Replaced in tests. */
+  dpkgOwns?: (path: string) => boolean;
+  /** A .deb install: the pkexec arguments for a downloaded file and the home folder, or null (default debInstallArgs). Tests. */
+  debArgs?: (path: string, home: string) => string[] | null;
   current?: string;
   /** null or undefined: this machine (Python: key if key is not None else platform_key()). */
   key?: PlatformKey | null;
@@ -832,7 +846,82 @@ export interface AppInfo {
 }
 
 /** The package kind each system updates in place from, by asset ending. */
-const IN_PLACE_ENDING: Record<string, string> = { 'windows-zip': '.zip', 'macos-zip': '.zip', 'appimage': '.appimage' };
+const IN_PLACE_ENDING: Record<string, string> = { 'windows-zip': '.zip', 'macos-zip': '.zip', 'appimage': '.appimage', 'deb': '.deb' };
+
+// ---- a .deb install: pkexec + the root script the .deb ships (tools/linux/aib-install-deb.sh) ---------------------------------
+/** The root script that installs a verified .deb (polkit action dev.aib.app.update). */
+export const DEB_INSTALLER = '/usr/lib/aib/aib-install-deb';
+/** A version as aib-install-deb accepts it in a folder and file name. */
+const DEB_VERSION = /^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$/;
+
+/**
+ * The pkexec arguments for installing `path`, or null when aib-install-deb would refuse it anyway (so no password is asked for):
+ * the same rules as the script: an absolute, plain path (letters, digits, . _ / + -; no //, /./ or /../) inside `home`, ending in
+ * updates/<version>/AIB-<version>-linux-<x64|arm64>.deb. (Ownership, links and the package's own name and version the script checks.)
+ */
+export function debInstallArgs(path: string, home: string): string[] | null {
+  const h = (home ?? '').replace(/\/+$/, '');
+  if (!h.startsWith('/') || !/^\/[A-Za-z0-9._/+-]+$/.test(path) || /\/\/|\/\.\.?(\/|$)/.test(path)) return null;
+  if (!path.startsWith(h + '/')) return null;
+  const m = /\/updates\/([^/]+)\/AIB-([^/]+)-linux-(?:x64|arm64)\.deb$/.exec(path);
+  if (!m || m[1] !== m[2] || !DEB_VERSION.test(m[1])) return null;
+  return [DEB_INSTALLER, path];
+}
+
+/** What running pkexec gave: its exit code and error output, or null when pkexec could not be started (not installed). */
+export type PrivilegedResult = { code: number; stderr: string } | null;
+/** Runs `pkexec <argv>` and waits (the password prompt is the system's). Replaced in tests. */
+export type PrivilegedRun = (argv: string[]) => Promise<PrivilegedResult>;
+
+/** Why a .deb install did not happen, for the person (the manual line with the file's path follows it). */
+export type DebOutcome =
+  | { ok: true }
+  | { ok: false; reason: 'no_pkexec' | 'cancelled' | 'no_agent' | 'not_allowed' | 'refused' | 'failed'; message: string };
+
+/**
+ * pkexec's answer as an outcome. pkexec exits 126 when the password prompt was dismissed and 127 when it could not authorize (no
+ * polkit agent: "No authentication agent found"; or the account may not); otherwise the script's code: 0 installed, 64-66 refused
+ * (nothing ran), 70 apt failed (dpkg left the old version), 71 unexpected version after apt.
+ */
+export function debOutcome(result: PrivilegedResult): DebOutcome {
+  if (result === null) {
+    return { ok: false, reason: 'no_pkexec', message: 'AIB could not ask for your password to update itself (pkexec is not installed).' };
+  }
+  if (result.code === 0) return { ok: true };
+  const lines = result.stderr.split('\n').map((l) => l.trim()).filter(Boolean);
+  const own = lines.filter((l) => l.startsWith('aib-install-deb:')).pop();
+  const detail = (own ?? lines.pop() ?? '').replace(/^aib-install-deb:\s*/, '').slice(0, 200);
+  const why = detail ? ` (${detail})` : '';
+  if (result.code === 126) return { ok: false, reason: 'cancelled', message: 'The password prompt was closed, so nothing was installed.' };
+  if (result.code === 127 && /authentication agent/i.test(result.stderr)) {
+    return {
+      ok: false,
+      reason: 'no_agent',
+      message: 'AIB could not ask for your password here (no password prompt runs, as over SSH), so nothing was installed.',
+    };
+  }
+  if (result.code === 127) {
+    return { ok: false, reason: 'not_allowed', message: `Your account could not authorize the update${why}, so nothing was installed.` };
+  }
+  if (result.code >= 64 && result.code <= 66) {
+    return { ok: false, reason: 'refused', message: `AIB's installer refused the downloaded file${why}, so nothing was installed.` };
+  }
+  if (result.code === 70) {
+    return { ok: false, reason: 'failed', message: `apt could not install the update${why}; the installed AIB is unchanged.` };
+  }
+  return { ok: false, reason: 'failed', message: `The update did not install${why}.` };
+}
+
+/** pkexec from PATH, no input, its error output kept. Never throws. */
+export async function runPkexec(argv: string[]): Promise<PrivilegedResult> {
+  try {
+    const out = await new Deno.Command('pkexec', { args: argv, stdin: 'null', stdout: 'null', stderr: 'piped' }).output();
+    return { code: out.code, stderr: new TextDecoder().decode(out.stderr).slice(-4000) };
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return null;
+    return { code: 127, stderr: error instanceof Error ? error.message : String(error) };
+  }
+}
 
 export interface UpdateStatus {
   current: string;
@@ -869,6 +958,11 @@ export class UpdateService {
   busyChats: () => number | Promise<number>;
   quit: ((release?: boolean) => void) | null;
   launcher: (args: HelperArgs) => void | Promise<void>;
+  privileged: PrivilegedRun;
+  readonly dpkgOwns: ((path: string) => boolean) | undefined;
+  readonly debArgs: (path: string, home: string) => string[] | null;
+  /** A .deb install is asking for the password (or apt runs): a second Install now waits for it. */
+  #debInstalling = false;
   readonly chatsKeepRunning: boolean;
   readonly keeper: (() => Promise<KeeperState | null>) | null;
   readonly appArgs: string[];
@@ -910,6 +1004,9 @@ export class UpdateService {
     // A tray-only start (the keeper's orphan restart) is not how the person runs AIB: the new version opens its window again.
     this.appArgs = [...(options.appArgs ?? Deno.args)].filter((a) => a !== '--start-in-tray');
     this.launcher = options.launcher ?? ((args) => this.#launchHelper(args));
+    this.privileged = options.privileged ?? runPkexec;
+    this.dpkgOwns = options.dpkgOwns;
+    this.debArgs = options.debArgs ?? debInstallArgs;
     this.onReady = options.onReady ?? null;
     // AIB_UPDATE_CURRENT: only with a test source (the fake release server, or a test feed folder)
     const testCurrent = apiBase()[1] || (envGet(FEED_ENV) ?? '').trim() ? (envGet(CURRENT_ENV) ?? '').trim() : '';
@@ -966,15 +1063,19 @@ export class UpdateService {
     return this.repo !== PLACEHOLDER_REPO || apiBase()[1];
   }
 
-  /** What the helper would replace, or null: only the desktop app updates itself (Windows, macOS, an AppImage on Linux). */
+  /**
+   * What the helper would replace, or null: only the desktop app updates itself (Windows, macOS, and on Linux an AppImage or a .deb
+   * install).
+   */
   target(): InstallTarget | null {
     if (!this.key || !this.app.desktop) return null;
-    return installTarget(this.key[0] === 'macos' ? 'darwin' : this.key[0], this.app.exe, this.env);
+    return installTarget(this.key[0] === 'macos' ? 'darwin' : this.key[0], this.app.exe, this.env, this.dpkgOwns);
   }
 
   /**
-   * True for the desktop app on Windows and macOS, and on Linux when it runs from an AppImage. False for a .deb install and for
-   * `deno run`. When a file is already downloaded, it must be the in-place kind (a Linux AppImage run that only found a .deb: manual).
+   * True for the desktop app on Windows and macOS, and on Linux when it runs from an AppImage or a .deb install. False for `deno run`.
+   * When a file is already downloaded, it must be the in-place kind (a Linux AppImage run that only found a .deb, or the other way
+   * round: manual).
    */
   canInstallInPlace(): boolean {
     const t = this.target();
@@ -1459,8 +1560,12 @@ export class UpdateService {
     }
     const target = this.target();
     if (!target) throw new UpdateError('This copy of AIB cannot update itself; install the downloaded file by hand.', 'manual', { path });
-    this.state.installWhenIdle = false;
+    if (target.kind === 'deb' && this.#debInstalling) {
+      throw new UpdateError('AIB is already asking for your password to install the update.', 'busy');
+    }
+    this.state.installWhenIdle = false; // also before a password prompt: a closed prompt is not asked again on the next tick
     this.#save();
+    if (target.kind === 'deb') await this.#installDeb(path);
     await this.launcher({
       installer: path,
       sha256: got.sha256!,
@@ -1476,6 +1581,42 @@ export class UpdateService {
     });
     if (this.quit) this.quit(release);
     return { state: 'installing' };
+  }
+
+  /**
+   * A .deb install, while this app is still open: `pkexec aib-install-deb <file>` (the system asks for the password) installs the
+   * verified file with apt. Resolves once installed; otherwise throws UpdateError 'manual' with why and the manual line (the file's
+   * path in it), and nothing was installed.
+   */
+  async #installDeb(path: string): Promise<void> {
+    const manual = (why: string) => new UpdateError(`${why} ${this.instructions(path)}`, 'manual', { path });
+    let real = path;
+    let home = this.env.HOME ?? '';
+    try {
+      real = Deno.realPathSync(path); // aib-install-deb refuses a path that goes through a link
+      if (home) home = Deno.realPathSync(home);
+    } catch { /* checked as given */ }
+    const argv = this.debArgs(real, home);
+    if (!argv) {
+      log.info('update: %s is not where aib-install-deb accepts an update (in the home folder); install it by hand', real);
+      throw manual(
+        'This copy of AIB keeps its data where its installer does not take updates from (outside your home folder, or a folder name ' +
+          'with unusual characters), so it cannot install the update by itself.',
+      );
+    }
+    this.#debInstalling = true;
+    let outcome: DebOutcome;
+    try {
+      log.info('update: asking for the password to install %s (pkexec %s)', real, DEB_INSTALLER);
+      outcome = debOutcome(await this.privileged(argv));
+    } finally {
+      this.#debInstalling = false;
+    }
+    if (!outcome.ok) {
+      log.info('update: the .deb was not installed (%s): %s', outcome.reason, outcome.message);
+      throw manual(outcome.message);
+    }
+    log.info('update: %s installed with apt; quitting so the new version starts', real);
   }
 
   /**
@@ -1590,7 +1731,7 @@ const KEEPER_WHY: Record<string, string> = {
   unknown: 'AIB cannot tell whether the keeper can hand its chats to this update',
 };
 
-const INSTALL_STATUS: Record<string, number> = { chats_working: 409, not_ready: 409, manual: 400 };
+const INSTALL_STATUS: Record<string, number> = { chats_working: 409, not_ready: 409, busy: 409, manual: 400 };
 
 /**
  * POST /api/live/update/install: install now or, with whenIdle, once no chat is working; cancelWait drops the second. Throws

@@ -8,6 +8,8 @@
  *
  * Each package also carries the keeper (keeper/, Go, built with CGO off for the target) next to the app's program: AIB/AIB-keeper.exe,
  * AIB.app/Contents/MacOS/AIB-keeper, AIB-keeper at the AppImage's top level, usr/lib/aib/AIB-keeper in the .deb. Needs Go ($GO or go).
+ * The .deb also carries its self-update: usr/lib/aib/aib-install-deb (the root script `pkexec` runs to install a verified update) and
+ * usr/share/polkit-1/actions/dev.aib.app.update.policy (the prompt "Authentication is required to update AIB"), from tools/linux/.
  *
  * The Windows zips also carry AIB/wsl/AIB-keeper-linux and AIB-wsl-helper-linux (Linux, same arch) for WSL projects; they are cached
  * by source hash in dist/.wsl-cache, so only a change to the keeper or the helper rebuilds them.
@@ -31,7 +33,7 @@ import { createHash } from 'node:crypto';
 import { APP_VERSION } from '../outputs/agent-studio/server/core/app.ts';
 import { PROTOCOL_VERSION } from '../outputs/agent-studio/server/host/host_client.ts';
 import { KEEPER_NEEDS, PROTOCOL as KEEPER_PROTOCOL } from '../outputs/agent-studio/server/keeper/client.ts';
-import { addToAppImage, addToDeb, fixAppImage, fixDeb } from './linux_package.ts';
+import { addDebUpdater, addToAppImage, addToDeb, fixAppImage, fixDeb } from './linux_package.ts';
 import { compare, FEED_ENV, feedDir, isTestBuild, parseVersion } from '../outputs/agent-studio/server/desktop/updater.ts';
 
 export const SIZE_LIMIT = 160 * 1024 * 1024;
@@ -921,6 +923,7 @@ async function buildTarget(
     await desktop(stageDir, included, target, `${dir}/deb/aib.deb`);
     await fixDeb(`${dir}/deb/aib.deb`, APP_NAME); // deno desktop writes Name=aib
     await addToDeb(`${dir}/deb/aib.deb`, DEB_KEEPER_PATH, keeper, 0o755);
+    await addDebUpdater(`${dir}/deb/aib.deb`); // /usr/lib/aib/aib-install-deb and its polkit action: Install now on a .deb install
     await Deno.copyFile(`${dir}/deb/aib.deb`, `${out}/${names[1]}`);
   }
   return names;
