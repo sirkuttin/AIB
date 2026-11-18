@@ -14,12 +14,12 @@ Guard: no entry for the temp project may appear in the owner's ~/.claude/project
 Adapters: AIB_CLAUDE_ACP / AIB_CODEX_ACP (path to the adapter's dist/index.js), else the global npm install.
 """
 import _isolation  # noqa: F401  (test isolation: temp state folder, real per-user folder blocked)
+from _isolation import agent_mkdtemp
 import json
 import os
 import pathlib
 import shutil
 import sys
-import tempfile
 import time
 import unittest
 import uuid
@@ -41,7 +41,7 @@ def model_calls(stub):
 class AibRenameTest(unittest.TestCase):
 
     def test_rename_in_aib_names_the_claude_session(self):
-        temp = pathlib.Path(tempfile.mkdtemp(prefix='aib-title-'))
+        temp = pathlib.Path(agent_mkdtemp(prefix='aib-title-'))
         self.addCleanup(shutil.rmtree, temp, True)
         stub = Stub(self, temp)
         project = make_repo(temp / f'proj-{uuid.uuid4().hex[:6]}')
@@ -94,7 +94,7 @@ class AdapterRenameTest(unittest.TestCase):
     """The adapter's own `_session/rename`, one layer below AIB: temp CLAUDE_CONFIG_DIR / CODEX_HOME / HOME."""
 
     def setUp(self):
-        self.temp = pathlib.Path(tempfile.mkdtemp(prefix='aib-title-a-'))
+        self.temp = pathlib.Path(agent_mkdtemp(prefix='aib-title-a-'))
         self.addCleanup(shutil.rmtree, self.temp, True)
         self.stub = Stub(self, self.temp)
         self.project = make_repo(self.temp / f'proj-{uuid.uuid4().hex[:6]}')

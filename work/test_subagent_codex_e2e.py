@@ -25,12 +25,12 @@ no space in the temp folder's path (Codex runs a hook command through cmd.exe, p
 at a scratch folder.
 """
 import _isolation  # noqa: F401  (test isolation: temp state folder, real per-user folder blocked)
+from _isolation import agent_mkdtemp
 import json
 import os
 import pathlib
 import shutil
 import sys
-import tempfile
 import time
 import unittest
 import uuid
@@ -111,7 +111,7 @@ class AibCodex:
     """A real AIB with one Codex chat in a temp git project, driven turn by turn."""
 
     def __init__(self, test, rules, user_config=None):
-        temp = pathlib.Path(tempfile.mkdtemp(prefix='aib-srcx-'))
+        temp = pathlib.Path(agent_mkdtemp(prefix='aib-srcx-'))
         test.addCleanup(shutil.rmtree, temp, True)
         if ' ' in str(temp):
             test.skipTest('the temp folder has a space: Codex hooks cannot name the keeper there (TEMP=a scratch folder)')

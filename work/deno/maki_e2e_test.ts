@@ -12,6 +12,7 @@
  * skips (passes with a note) when github.com cannot be reached.
  */
 import { assert, assertEquals } from './_assert.ts';
+import { agentTempDirSync } from './_agent_tmp.ts';
 import { pause, until } from './_connection.ts';
 import { WORK } from './_parity.ts';
 import type { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
@@ -141,7 +142,7 @@ Deno.test({
       ),
     );
     const root = Deno.realPathSync(
-      Deno.makeTempDirSync({ prefix: 'aib-maki-e2e-' }),
+      agentTempDirSync('aib-maki-e2e-'), // outside the home folder (the real-agent rule, _agent_tmp.ts)
     );
     const home = pathOf(root, 'home');
     for (const name of HOME_VARS) {

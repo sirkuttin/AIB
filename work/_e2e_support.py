@@ -5,6 +5,7 @@ hosts are cleaned up, a web server handle, a fake agent host for the takeover te
 Speaks to agent hosts through the Python reference's host_client (work/python-reference), which reads and writes the same
 agent-host.json as the Deno server. Every child process is started without a console window."""
 import _isolation  # noqa: F401  (test isolation: temp state folder, real per-user folder blocked)
+from _isolation import agent_tempdir
 import http.server
 import json
 import os
@@ -13,7 +14,6 @@ import re
 import signal
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 import urllib.error
@@ -62,7 +62,7 @@ class Fixture:
     servers (start_web) and run the CLI (run_cli)."""
 
     def __init__(self, case, name='fixture'):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = agent_tempdir()  # outside the home folder: a real agent started from the workspace must not find ~/.claude/CLAUDE.md
         case.addCleanup(self.tmp.cleanup)
         self.root = pathlib.Path(self.tmp.name)
         self.state, self.owners, self.workspace = self.root / 'state', self.root / 'owners', self.root / 'workspace'

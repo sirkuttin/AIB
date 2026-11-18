@@ -19,6 +19,7 @@ Skipped when an adapter is not installed. Adapters: AIB_CLAUDE_ACP / AIB_CODEX_A
 the global npm install (`npm root -g`). `node` must be on PATH.
 """
 import _isolation  # noqa: F401  (test isolation: temp state folder, real per-user folder blocked)
+from _isolation import agent_mkdtemp
 import json
 import os
 import pathlib
@@ -26,7 +27,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 import unittest
 import uuid
@@ -170,7 +170,7 @@ class AibFolderChatListingTest(unittest.TestCase):
         self.listed_for_project(worktrees_on=True)
 
     def listed_for_project(self, worktrees_on):
-        temp = pathlib.Path(tempfile.mkdtemp(prefix='aib-e0-'))
+        temp = pathlib.Path(agent_mkdtemp(prefix='aib-e0-'))
         self.addCleanup(shutil.rmtree, temp, True)
         stub = Stub(self, temp)
         project = make_repo(temp / f'proj-{uuid.uuid4().hex[:6]}')
@@ -224,7 +224,7 @@ class AdapterFolderListingTest(unittest.TestCase):
     """The agent's own listing for P, one layer below AIB: the adapter alone, temp CLAUDE_CONFIG_DIR / CODEX_HOME / HOME."""
 
     def setUp(self):
-        self.temp = pathlib.Path(tempfile.mkdtemp(prefix='aib-e0a-'))
+        self.temp = pathlib.Path(agent_mkdtemp(prefix='aib-e0a-'))
         self.addCleanup(shutil.rmtree, self.temp, True)
         self.stub = Stub(self, self.temp)
         self.project = make_repo(self.temp / f'proj-{uuid.uuid4().hex[:6]}')

@@ -21,6 +21,7 @@ until the test closes its stdin, and each line the test writes is a turn typed t
 Skipped without node, the Claude Code ACP adapter, or the `claude` CLI (AIB_CLAUDE_CLI, else PATH). Targeted: run this file alone.
 """
 import _isolation  # noqa: F401  (test isolation: temp state folder, real per-user folder blocked)
+from _isolation import agent_mkdtemp
 import json
 import os
 import pathlib
@@ -150,7 +151,7 @@ def alive(pid):
 class OpenElsewhereTest(unittest.TestCase):
 
     def setUp(self):
-        self.temp = pathlib.Path(tempfile.mkdtemp(prefix='aib-oe-'))
+        self.temp = pathlib.Path(agent_mkdtemp(prefix='aib-oe-'))
         self.addCleanup(shutil.rmtree, self.temp, True)
         self.stub = Stub(self, self.temp)
         self.project = make_repo(self.temp / f'proj-{uuid.uuid4().hex[:6]}')

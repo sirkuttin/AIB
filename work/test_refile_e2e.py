@@ -16,13 +16,13 @@ Adapters: AIB_CLAUDE_ACP / AIB_CODEX_ACP (dist/index.js of the adapter), else th
 pinned codex-acp 2.6.0 inside the worktree works (AIB_CODEX_ACP=<copy>/node_modules/@agentclientprotocol/codex-acp/dist/index.js).
 """
 import _isolation  # noqa: F401
+from _isolation import agent_mkdtemp
 import json
 import os
 import pathlib
 import shutil
 import sqlite3
 import subprocess
-import tempfile
 import unittest
 import uuid
 
@@ -65,7 +65,7 @@ def assert_not_in_owner_codex(test, session):
 class RefileE2ETest(unittest.TestCase):
 
     def setUp(self):
-        self.temp = pathlib.Path(tempfile.mkdtemp(prefix='aib-e19-'))
+        self.temp = pathlib.Path(agent_mkdtemp(prefix='aib-e19-'))
         self.addCleanup(shutil.rmtree, self.temp, True)
         self.stub = Stub(self, self.temp)
         self.state = self.temp / 'state'

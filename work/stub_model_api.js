@@ -64,7 +64,9 @@ function replyText(raw) {
 /** The names of the tools a request offers the model (Anthropic `tools[].name`; Responses `tools[].name` or `.function.name`). */
 function toolNames(body) {
   const names = [];
-  for (const t of Array.isArray(body.tools) ? body.tools : []) {
+  // newer Codex offers its tools as an `additional_tools` input item ({tools: [...]}) instead of a top-level `tools`
+  const extra = Array.isArray(body.input) ? body.input.filter((i) => i && i.type === 'additional_tools').flatMap((i) => i.tools || []) : [];
+  for (const t of [...(Array.isArray(body.tools) ? body.tools : []), ...extra]) {
     if (!t) continue;
     const name = t.name || (t.function && t.function.name) || t.type;
     if (name) names.push(name);
@@ -228,22 +230,26 @@ function responsesCalls(res, body, said) {
   }
   for (const call of said.tools) {
     const argText = typeof call.input === 'string' ? call.input : JSON.stringify(call.input || {});
-    const item = {
-      type: 'function_call', id: newId('fc'), call_id: call.id || newId('call'), name: call.name, arguments: argText, status: 'completed',
-    };
+    // "custom": true is a Responses custom tool (Codex's `exec`): its input is raw text and the item is a custom_tool_call
+    const item = call.custom
+      ? { type: 'custom_tool_call', id: newId('ctc'), call_id: call.id || newId('call'), name: call.name, input: argText, status: 'completed' }
+      : { type: 'function_call', id: newId('fc'), call_id: call.id || newId('call'), name: call.name, arguments: argText, status: 'completed' };
     // "<namespace>.<tool>" (a namespaced tool, see toolNames) goes out as {namespace, name}
     const dot = call.name.indexOf('.');
     if (dot > 0) Object.assign(item, { namespace: call.name.slice(0, dot), name: call.name.slice(dot + 1) });
     const index = output.length;
     events.push(['response.output_item.added', {
-      type: 'response.output_item.added', output_index: index, item: { ...item, arguments: '', status: 'in_progress' },
+      type: 'response.output_item.added', output_index: index,
+      item: call.custom ? { ...item, input: '', status: 'in_progress' } : { ...item, arguments: '', status: 'in_progress' },
     }]);
-    events.push(['response.function_call_arguments.delta', {
-      type: 'response.function_call_arguments.delta', item_id: item.id, output_index: index, delta: argText,
-    }]);
-    events.push(['response.function_call_arguments.done', {
-      type: 'response.function_call_arguments.done', item_id: item.id, output_index: index, arguments: argText,
-    }]);
+    if (!call.custom) {
+      events.push(['response.function_call_arguments.delta', {
+        type: 'response.function_call_arguments.delta', item_id: item.id, output_index: index, delta: argText,
+      }]);
+      events.push(['response.function_call_arguments.done', {
+        type: 'response.function_call_arguments.done', item_id: item.id, output_index: index, arguments: argText,
+      }]);
+    }
     events.push(['response.output_item.done', { type: 'response.output_item.done', output_index: index, item }]);
     output.push(item);
   }

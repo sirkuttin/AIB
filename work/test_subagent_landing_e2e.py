@@ -24,13 +24,13 @@ Needs node, the Claude Code ACP adapter (AIB_CLAUDE_ACP or a global npm install)
 built one). Run with TEMP/TMP pointed at a scratch folder.
 """
 import _isolation  # noqa: F401  (test isolation: temp state folder, real per-user folder blocked)
+from _isolation import agent_mkdtemp
 import json
 import os
 import pathlib
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 import unittest
 import uuid
@@ -64,7 +64,7 @@ def temp_env(temp, home):
 class HooksOffAdapterTest(unittest.TestCase):
 
     def test_permission_deny_blocks_editing_subagents_with_hooks_off(self):
-        temp = pathlib.Path(tempfile.mkdtemp(prefix='aib-sr2-off-'))
+        temp = pathlib.Path(agent_mkdtemp(prefix='aib-sr2-off-'))
         self.addCleanup(shutil.rmtree, temp, True)
         mark = f'srp2{uuid.uuid4().hex[:6]}'
         project = make_repo(temp / mark)
@@ -132,7 +132,7 @@ class Aib:
     """A real AIB with one Claude chat in a temp git project, driven turn by turn."""
 
     def __init__(self, test, rules, setup=None, seed=None):
-        temp = pathlib.Path(tempfile.mkdtemp(prefix='aib-sr2-'))
+        temp = pathlib.Path(agent_mkdtemp(prefix='aib-sr2-'))
         test.addCleanup(shutil.rmtree, temp, True)
         self.test, self.temp = test, temp
         self.mark = f'srp2{uuid.uuid4().hex[:6]}'

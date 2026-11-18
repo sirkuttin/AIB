@@ -48,6 +48,48 @@ def _claude_config():
 _claude_config()
 
 
+def agent_temp_root():
+    """The folder a test puts the project folders of a REAL agent (Claude Code, Codex, Gemini, Maki) in. It is outside the user's home
+    folder: Claude Code walks the parent folders of its working folder for CLAUDE.md, so a project under the user's %TEMP% would load
+    the owner's ~/.claude/CLAUDE.md as project instructions even with CLAUDE_CONFIG_DIR set. C:/aib-test-tmp on Windows, /tmp on Linux
+    and macOS (AIB_TEST_AGENT_TMP overrides it; the guard test checks the result is outside the home folder)."""
+    root = os.environ.get('AIB_TEST_AGENT_TMP') or ('C:/aib-test-tmp' if os.name == 'nt' else '/tmp')
+    os.makedirs(root, exist_ok=True)
+    return root
+
+
+def inside_home(path):
+    """True when `path` is the user's home folder or inside it (HOME / USERPROFILE / expanduser, resolved)."""
+    homes = {os.path.realpath(os.path.expanduser('~'))}
+    for name in ('USERPROFILE', 'HOME'):
+        if os.environ.get(name):
+            homes.add(os.path.realpath(os.environ[name]))
+    target = os.path.normcase(os.path.realpath(path))
+    for home in homes:
+        home = os.path.normcase(home)
+        if target == home or target.startswith(home.rstrip(os.sep) + os.sep):
+            return True
+    return False
+
+
+def agent_mkdtemp(prefix='aib-'):
+    """tempfile.mkdtemp for a test that runs a real agent: a new folder under agent_temp_root(), never inside the home folder.
+    The caller removes it (addCleanup(shutil.rmtree, folder, True))."""
+    folder = tempfile.mkdtemp(prefix=prefix, dir=agent_temp_root())
+    if inside_home(folder):
+        raise RuntimeError(f'a real-agent test folder must be outside the home folder: {folder}')
+    return folder
+
+
+def agent_tempdir():
+    """tempfile.TemporaryDirectory for the same (a context-managed or .cleanup() folder)."""
+    folder = tempfile.TemporaryDirectory(prefix='aib-', dir=agent_temp_root())
+    if inside_home(folder.name):
+        folder.cleanup()
+        raise RuntimeError(f'a real-agent test folder must be outside the home folder: {folder.name}')
+    return folder
+
+
 def _fast_shutdown():
     """socketserver.serve_forever polls for shutdown() every 0.5 s by default, so every in-process test server needed up to half a
     second to stop (two servers per Studio: ~1 s per test). Poll every 20 ms here; the app's own default is unchanged, and

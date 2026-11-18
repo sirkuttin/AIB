@@ -23,6 +23,7 @@ CLI 0.68 package folder (AIB_GEMINI_CLI = the folder holding node_modules/@googl
 this worktree). Run with TEMP/TMP pointed at a scratch folder.
 """
 import _isolation  # noqa: F401  (test isolation: temp state folder, real per-user folder blocked)
+from _isolation import agent_mkdtemp
 import json
 import re
 import os
@@ -30,7 +31,6 @@ import pathlib
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 import unittest
 import uuid
@@ -137,7 +137,7 @@ class GeminiSubagentCase(unittest.TestCase):
     hooks_off = False
 
     def play(self):
-        temp = pathlib.Path(tempfile.mkdtemp(prefix='aib-srg-'))
+        temp = pathlib.Path(agent_mkdtemp(prefix='aib-srg-'))
         self.addCleanup(shutil.rmtree, temp, True)
         run = uuid.uuid4().hex[:8]
         project = make_repo(temp / f'srg{run}')

@@ -25,6 +25,7 @@ Needs node, the Claude Code ACP adapter (AIB_CLAUDE_ACP or a global npm install)
 into this test's temp folder; AIB_TEST_KEEPER_BIN names a built one instead). Run with TEMP/TMP pointed at a scratch folder.
 """
 import _isolation  # noqa: F401  (test isolation: temp state folder, real per-user folder blocked)
+from _isolation import agent_mkdtemp
 import hashlib
 import hmac
 import json
@@ -34,7 +35,6 @@ import shutil
 import socket
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 import unittest
@@ -73,7 +73,7 @@ def keeper_program(temp):
     if named:
         return pathlib.Path(named)
     if 'exe' not in _KEEPER:
-        out = pathlib.Path(tempfile.mkdtemp(prefix='aib-sr-keeper-'))
+        out = pathlib.Path(agent_mkdtemp(prefix='aib-sr-keeper-'))
         exe = out / ('AIB-keeper.exe' if os.name == 'nt' else 'AIB-keeper')
         env = dict(os.environ, CGO_ENABLED='0', GOCACHE=str(out / 'gocache'), GOTMPDIR='')
         flags = '-s -w -H windowsgui' if os.name == 'nt' else '-s -w'
@@ -203,7 +203,7 @@ def norm(p):
 class AibSubagentHooksTest(unittest.TestCase):
 
     def test_editing_subagent_gets_its_own_worktree(self):
-        temp = pathlib.Path(tempfile.mkdtemp(prefix='aib-sr-'))
+        temp = pathlib.Path(agent_mkdtemp(prefix='aib-sr-'))
         self.addCleanup(shutil.rmtree, temp, True)
         mark = f'srp1{uuid.uuid4().hex[:6]}'
         project = make_repo(temp / mark)
@@ -326,7 +326,7 @@ def aib_hook_settings(keeper, address):
 class AdapterFailClosedTest(unittest.TestCase):
 
     def run_probe(self, address_doc, hang=False, refused=None, settings=None):
-        temp = pathlib.Path(tempfile.mkdtemp(prefix='aib-sr-a-'))
+        temp = pathlib.Path(agent_mkdtemp(prefix='aib-sr-a-'))
         self.addCleanup(shutil.rmtree, temp, True)
         mark = f'srp1{uuid.uuid4().hex[:6]}'
         project = make_repo(temp / mark)

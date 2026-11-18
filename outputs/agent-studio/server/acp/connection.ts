@@ -673,7 +673,9 @@ export function resolveProgram(program: string, env: Record<string, string>): st
  */
 export const TOOLS_LOADING = 'The studio_artifact tools (full names like mcp__studio_artifact__doc_create) can take a few seconds to ' +
   'appear at the start of a chat: if you do not see them yet, wait a few seconds and look again (more than once) before telling ' +
-  'the user they are missing.';
+  'the user they are missing. In Codex they are never listed in your tool list: they are deferred nested tools of `exec`, so run ' +
+  '`text(JSON.stringify(ALL_TOOLS.filter(t => t.name.startsWith("mcp__studio_artifact__")).map(t => t.name)))` in `exec` to see them, ' +
+  'then call one as `await tools.mcp__studio_artifact__publish({...})` (the same for doc_create, doc_read, doc_edit and the rest).';
 
 export const ARTIFACT_PROMPT =
   'You are running inside AIB, which shows artifacts beside the chat; when the user says "artifact" they ' +
