@@ -447,6 +447,33 @@ Deno.test("desktop entries get the app's Name (and StartupWMClass when asked)", 
   );
 });
 
+Deno.test("desktop entries can be completed: Comment, Terminal=false, StartupNotify, StartupWMClass, and nothing that is there changes", () => {
+  const raw = "[Desktop Entry]\nType=Application\nName=aib\nExec=aib\nIcon=aib\n";
+  assertEquals(
+    fixDesktopEntry(raw, "AIB", "dev.aib.app", "Does things"),
+    "[Desktop Entry]\nType=Application\nName=AIB\nExec=aib\nIcon=aib\nComment=Does things\nTerminal=false\nStartupNotify=true\nStartupWMClass=dev.aib.app\n",
+  );
+  const done = "[Desktop Entry]\nName=AIB\nComment=Mine\nTerminal=true\nStartupNotify=false\nStartupWMClass=x\n";
+  assertEquals(fixDesktopEntry(done, "AIB", "dev.aib.app", "Does things"), done, "keys that are there stay as they are");
+});
+
+Deno.test("fixDeb completes the menu entry when it is given a comment", async () => {
+  const entry = "[Desktop Entry]\nName=aib\nExec=aib\n";
+  const tar = tarOf([["./usr/share/applications/aib.desktop", entry]]);
+  const dir = Deno.makeTempDirSync({ prefix: "aib-build-deb-" });
+  try {
+    const deb = `${dir}/aib.deb`;
+    Deno.writeFileSync(deb, arOf([["debian-binary", te.encode("2.0\n")], ["data.tar.gz", await gz(tar, "gzip")]]));
+    assertEquals(await fixDeb(deb, "AIB", "dev.aib.app", "Does things"), ["usr/share/applications/aib.desktop"]);
+    const out = td.decode(await gz(readAr(Deno.readFileSync(deb))[1].data, "gunzip"));
+    for (const line of ["Name=AIB", "Comment=Does things", "Terminal=false", "StartupNotify=true", "StartupWMClass=dev.aib.app"]) {
+      assert(out.includes(line + "\n"), line);
+    }
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+  }
+});
+
 /** A ustar archive of regular files (what deno desktop's data.tar holds, minus folders and links). */
 function tarOf(files: [string, string][]): Uint8Array {
   const parts: Uint8Array[] = [];
