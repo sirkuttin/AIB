@@ -205,6 +205,62 @@ export async function resolveBeta(id: string, options: BetaLookOptions = {}): Pr
   return missing(agent);
 }
 
+/** The data folder AIB gives an agent with a keyHome while an API key is saved (<state>/agents/<id>/<folder>), or '' without one. */
+export function keyHomeDir(agentId: string, stateDir: string | null | undefined): string {
+  const home = betaAgent(agentId)?.keyHome;
+  return home && stateDir ? pathOf(adapters.agentsRoot(stateDir), agentId, home.folder) : '';
+}
+
+/**
+ * Write the keyHome files (each a JSON object) into that folder: the catalog's keys are set, anything the agent itself saved there is
+ * kept. Only AIB's own folder is ever written. Returns the folder, or '' when there is nothing to do.
+ */
+export function prepareKeyHome(agentId: string, stateDir: string | null | undefined): string {
+  const agent = betaAgent(agentId);
+  const dir = keyHomeDir(agentId, stateDir);
+  if (!agent?.keyHome || !dir) return '';
+  for (const [rel, values] of Object.entries(agent.keyHome.files)) {
+    const parts = rel.split('/');
+    if (parts.some((p) => !p || p === '.' || p === '..')) continue; // catalog paths only, never outside the folder
+    const file = pathOf(dir, ...parts);
+    let current: Record<string, unknown> = {};
+    try {
+      const read = JSON.parse(Deno.readTextFileSync(file));
+      if (read && typeof read === 'object' && !Array.isArray(read)) current = read;
+    } catch { /* missing or unreadable: written fresh */ }
+    if (Object.entries(values).every(([k, v]) => JSON.stringify(current[k]) === JSON.stringify(v))) continue;
+    Deno.mkdirSync(pathOf(dir, ...parts.slice(0, -1)), { recursive: true });
+    Deno.writeTextFileSync(file, JSON.stringify({ ...current, ...values }, null, 2) + '\n', { mode: 0o600 });
+  }
+  return dir;
+}
+
+/**
+ * The launch with the agent's keyHome flag added when an API key is saved (Antigravity: `agy acp ... --gemini-dir <AIB folder>`, whose
+ * settings.json says modelProvider "gemini"), else the launch unchanged. A folder that cannot be written leaves the launch unchanged:
+ * the chat then asks for sign-in, where the key still works through ACP authenticate.
+ */
+export function withKeyHome(launch: BetaLaunch, agentId: string, stateDir: string | null | undefined, hasKey: boolean): BetaLaunch {
+  const agent = betaAgent(agentId);
+  if (!agent?.keyHome || !hasKey || !launch.found || !launch.base.length) return launch;
+  let dir = '';
+  try {
+    dir = prepareKeyHome(agentId, stateDir);
+  } catch (error) {
+    console.error(`Could not prepare ${agent.name}'s settings folder for the API key`, error);
+    return launch;
+  }
+  if (!dir) return launch;
+  const args = [...agent.args, agent.keyHome.flag, dir];
+  let argv: string[];
+  try {
+    argv = launch.shim ? shimArgv(launch.base[0], args, launch.comspec) : [...launch.base, ...args];
+  } catch {
+    return launch; // a folder path cmd.exe would read: the usual launch
+  }
+  return { ...launch, argv, text: launch.text };
+}
+
 /** A terminal sign-in to run: the agent's advertised ACP terminal method (args, env), or the catalog's login command. */
 export interface TerminalMethod {
   args: readonly string[];

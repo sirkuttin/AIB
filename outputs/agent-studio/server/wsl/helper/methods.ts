@@ -9,7 +9,9 @@
  * modules themselves (resolveInside, safeRelpath).
  */
 import * as osp from '../../platform/ospath.ts';
-import { which } from '../../platform/pypath.ts';
+import { isFile, which } from '../../platform/pypath.ts';
+import { resolveBeta } from '../../agents/beta_agents.ts';
+import { betaAgent } from '../../agents/beta_catalog.ts';
 import { branchEntries, commitExists, getChanges, getFileDiff, locate } from '../../worktrees/changes.ts';
 import * as files from '../../worktrees/files.ts';
 import * as outside from '../../worktrees/outside_files.ts';
@@ -175,6 +177,22 @@ type AgentRow = {
   bundledCli?: boolean;
 };
 
+/**
+ * Antigravity CLI in the distro (the one Beta agent AIB looks for in WSL so far): AIB's own install under <root>/agents first, then `agy`
+ * on the login shell's PATH, then ~/.local/bin/agy (where Google's install.sh puts it, which a non-login PATH may lack).
+ */
+export async function resolveAntigravity(
+  stateDir: string | null,
+  login: { env: Record<string, string>; home: string },
+): Promise<LaunchRow> {
+  const row = await resolveBeta('antigravity', { stateDir, env: login.env, windows: false });
+  if (row.found || !login.home) return row;
+  const local = osp.join(login.home, '.local', 'bin', 'agy');
+  if (!isFile(local)) return row;
+  const args = betaAgent('antigravity')!.args;
+  return { argv: [local, ...args], source: 'path', path: local, found: true, problem: '', text: local };
+}
+
 async function agentRow(id: string, row: LaunchRow): Promise<AgentRow> {
   const out: AgentRow = { id, found: row.found, source: row.source };
   if (row.argv.length) out.command = row.argv;
@@ -271,6 +289,7 @@ function phaseOne(ctx: HelperContext): Handlers {
         if (id === 'claude') agents.push(await agentRow(id, await resolveClaude({ stateDir })));
         else if (id === 'codex') agents.push(await agentRow(id, await resolveCodex({ stateDir })));
         else if (id === 'omp') agents.push(await agentRow(id, resolveOmp(defaultOmpCommand())));
+        else if (id === 'antigravity') agents.push(await agentRow(id, await resolveAntigravity(stateDir, await ctx.env())));
         else agents.push({ id, found: false, note: 'AIB does not look for this agent in WSL yet' });
       }
       return { agents };

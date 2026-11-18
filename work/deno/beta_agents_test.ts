@@ -36,8 +36,8 @@ const envWith = (...dirs: string[]) => ({ PATH: dirs.join(WIN ? ';' : ':'), ComS
 
 // ---- launch commands ---------------------------------------------------------------------------------------------------
 
-Deno.test('the Beta list: eleven agents in the brief order, unique ids that are providers, all off-by-default material', () => {
-  assertEquals(BETA_IDS, ['copilot', 'opencode', 'gemini', 'qwen', 'cursor', 'goose', 'vibe', 'cline', 'kimi', 'kilo', 'maki']);
+Deno.test('the Beta list: twelve agents in the brief order, unique ids that are providers, all off-by-default material', () => {
+  assertEquals(BETA_IDS, ['copilot', 'opencode', 'gemini', 'qwen', 'cursor', 'goose', 'vibe', 'cline', 'kimi', 'kilo', 'maki', 'antigravity']);
   for (const id of BETA_IDS) assert(isProvider(id), id);
   assert(!isProvider('beta-nothing'));
   for (const a of BETA_AGENTS) {
@@ -61,6 +61,7 @@ Deno.test('each Beta agent starts with its own command and ACP args (Qwen with -
     kimi: ['acp'],
     kilo: ['acp'],
     maki: ['acp'],
+    antigravity: ['acp', '--disable-telemetry'],
   };
   for (const agent of BETA_AGENTS) {
     const folder = join(dir.root, agent.id === 'cursor' ? 'cursor-agent' : agent.id);

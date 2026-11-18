@@ -171,8 +171,8 @@ async function finish(installer: Installer, id = 'maki') {
 
 // ---- the catalog entry ----------------------------------------------------------------------------------------------------
 
-Deno.test('Maki: `maki acp`, sign-in with `maki auth login` or an Anthropic key, last in the Beta list (PC and phone)', () => {
-  assertEquals(BETA_AGENTS[BETA_AGENTS.length - 1].id, 'maki');
+Deno.test('Maki: `maki acp`, sign-in with `maki auth login` or an Anthropic key, after Kilo in the Beta list (PC and phone)', () => {
+  assertEquals(BETA_AGENTS[BETA_AGENTS.findIndex((a) => a.id === 'kilo') + 1].id, 'maki');
   assert(ELIGIBLE_BETA.includes('maki'), 'the phone list knows it');
   assertEquals([maki.name, maki.license, maki.commands, maki.args], [
     'Maki',
@@ -218,7 +218,7 @@ Deno.test('Maki release: v0.7.2 archives for Windows (x64, Arm via x64), macOS a
     'windows-x86_64',
   ]);
   for (const [platform, asset] of Object.entries(rel.assets)) {
-    assert(/^[0-9a-f]{64}$/.test(asset.sha256), platform);
+    assert(/^[0-9a-f]{64}$/.test(asset.sha256 ?? ''), platform);
     assert(asset.bytes > 10_000_000 && asset.bytes < 100_000_000, platform);
     assert(
       asset.file.startsWith('maki-v0.7.2-') &&

@@ -2,11 +2,12 @@
  * Installing a Beta agent that ships as a native program on its GitHub release (beta_catalog.ts `release`, Maki): the pieces the
  * installer (installer.ts) runs, kept free of its job and lock handling so they can be tested on their own.
  *
- *   1. download   https://github.com/<repo>/releases/download/<tag>/<file> (GitHub redirects to its release CDN), at most the
- *                 catalog's byte count; nothing else is ever fetched (no "latest" lookup, no install script)
- *   2. verify     the archive's SHA-256 must equal the one pinned in the catalog, else nothing in it is used
+ *   1. download   https://github.com/<repo>/releases/download/<tag>/<file> (GitHub redirects to its release CDN), or the asset's own
+ *                 address on Google's Antigravity bucket (storage.googleapis.com/antigravity-public/), at most the catalog's byte
+ *                 count; nothing else is ever fetched (no "latest" lookup, no manifest, no install script)
+ *   2. verify     the archive's SHA-256 and/or SHA-512 must equal the ones pinned in the catalog, else nothing in it is used
  *   3. unpack     only the program at the archive's root (a .zip or a .tar.gz), read in memory; no other file is written, so a path
- *                 inside the archive can never point outside the install folder
+ *                 inside the archive can never point outside the install folder. A .exe download is the program itself.
  *
  * The install itself is <state>/agents/<id>/<version>/<program>[.exe] plus the `.complete` marker the npm installs use.
  */
@@ -17,8 +18,15 @@ import { pathOf } from '../state/paths.ts';
 
 /** The largest program AIB unpacks from a release archive (a damaged or hostile archive cannot fill the disk). */
 export const MAX_PROGRAM_BYTES = 512 * 1024 * 1024;
-/** Hosts a release download may come from: the github.com URL, then GitHub's own release CDN it redirects to. */
-const DOWNLOAD_HOSTS = [/^github\.com$/, /^(?:objects|release-assets)\.githubusercontent\.com$/];
+/**
+ * Where a release download may come from: the github.com URL, then GitHub's own release CDN it redirects to; and Google's public
+ * Antigravity bucket on Cloud Storage (only paths under /antigravity-public/, the bucket Google's own install scripts download from).
+ */
+const DOWNLOAD_HOSTS: readonly { host: RegExp; path?: string }[] = [
+  { host: /^github\.com$/ },
+  { host: /^(?:objects|release-assets)\.githubusercontent\.com$/ },
+  { host: /^storage\.googleapis\.com$/, path: '/antigravity-public/' },
+];
 
 /** `<os>-<arch>` of this computer, the key of BetaRelease.assets. */
 export function platformKey(): string {
@@ -41,8 +49,12 @@ export function programFile(release: BetaRelease, os: string = Deno.build.os): s
   return os === 'windows' ? `${release.program}.exe` : release.program;
 }
 
-/** The download address of one archive. Only github.com release downloads are ever built. */
+/** The download address of one archive: a github.com release download, or the asset's own address on an allowed host. */
 export function releaseUrl(release: BetaRelease, asset: BetaReleaseAsset): string {
+  if (asset.url !== undefined) {
+    if (!allowedDownload(asset.url)) throw new Error(`Not a download address AIB allows: ${asset.url}`);
+    return asset.url;
+  }
   const safe = (part: string) => /^[A-Za-z0-9._-]+$/.test(part);
   const [owner, name, ...rest] = release.repo.split('/');
   if (rest.length || !owner || !name || ![owner, name, release.tag, asset.file].every(safe)) {
@@ -51,19 +63,48 @@ export function releaseUrl(release: BetaRelease, asset: BetaReleaseAsset): strin
   return `https://github.com/${owner}/${name}/releases/download/${release.tag}/${asset.file}`;
 }
 
-/** True for an https address on github.com or GitHub's release CDN. */
+/** True for an https address on github.com, GitHub's release CDN, or Google's Antigravity bucket (no user info, no port). */
 export function allowedDownload(url: string): boolean {
   try {
     const u = new URL(url);
-    return u.protocol === 'https:' && DOWNLOAD_HOSTS.some((host) => host.test(u.hostname));
+    if (u.protocol !== 'https:' || u.username || u.password || u.port) return false;
+    return DOWNLOAD_HOSTS.some((d) => d.host.test(u.hostname) && (!d.path || u.pathname.startsWith(d.path)));
   } catch {
     return false;
   }
 }
 
-export async function sha256Hex(bytes: Uint8Array): Promise<string> {
-  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes as Uint8Array<ArrayBuffer>));
+/** The host name of a download address, for the card's lines ('github.com', 'storage.googleapis.com'). */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return 'the download site';
+  }
+}
+
+async function digestHex(algorithm: 'SHA-256' | 'SHA-512', bytes: Uint8Array): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest(algorithm, bytes as Uint8Array<ArrayBuffer>));
   return [...digest].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+export function sha256Hex(bytes: Uint8Array): Promise<string> {
+  return digestHex('SHA-256', bytes);
+}
+
+export function sha512Hex(bytes: Uint8Array): Promise<string> {
+  return digestHex('SHA-512', bytes);
+}
+
+/**
+ * True when the download matches every checksum the catalog pins for it (SHA-256 and/or SHA-512). An asset that pins none never
+ * matches: AIB uses nothing it cannot check.
+ */
+export async function checksumMatches(bytes: Uint8Array, asset: BetaReleaseAsset): Promise<boolean> {
+  if (!asset.sha256 && !asset.sha512) return false;
+  if (asset.sha256 && await sha256Hex(bytes) !== asset.sha256.toLowerCase()) return false;
+  if (asset.sha512 && await sha512Hex(bytes) !== asset.sha512.toLowerCase()) return false;
+  return true;
 }
 
 /** A download that could not be used; `message` is the one plain line the card shows. */
@@ -80,21 +121,23 @@ export interface DownloadOptions {
 
 /** The archive's bytes: the exact size the catalog names, from an allowed host only. Throws ReleaseError (or an AbortError). */
 export async function downloadAsset(url: string, asset: BetaReleaseAsset, options: DownloadOptions = {}): Promise<Uint8Array> {
-  if (!allowedDownload(url)) throw new ReleaseError('AIB only downloads agents from github.com releases.');
+  if (!allowedDownload(url)) throw new ReleaseError("AIB only downloads agents from github.com releases or Google's own download site.");
+  const google = /^storage\.googleapis\.com$/.test(hostOf(url));
+  const who = google ? 'Google' : 'GitHub';
   let response: Response;
   try {
     response = await (options.fetch ?? fetch)(url, { redirect: 'follow', signal: options.signal });
   } catch (error) {
     if (options.signal?.aborted) throw error;
-    throw new ReleaseError('Could not reach github.com. Check the internet connection and try again.');
+    throw new ReleaseError(`Could not reach ${hostOf(url)}. Check the internet connection and try again.`);
   }
   if (response.url && !allowedDownload(response.url)) {
     await response.body?.cancel();
-    throw new ReleaseError('The download was sent somewhere other than GitHub, so AIB stopped it.');
+    throw new ReleaseError(`The download was sent somewhere other than ${who}, so AIB stopped it.`);
   }
   if (!response.ok || !response.body) {
     await response.body?.cancel();
-    throw new ReleaseError(`GitHub answered ${response.status} for the download. Try again later.`);
+    throw new ReleaseError(`${who} answered ${response.status} for the download. Try again later.`);
   }
   const out = new Uint8Array(asset.bytes);
   let received = 0;
@@ -216,11 +259,24 @@ export async function fromTarGz(archive: Uint8Array, name: string, max = MAX_PRO
   throw new ReleaseError(`The download does not contain ${name}, so it was not used.`);
 }
 
-/** The program from the archive, by the archive's file name. */
+/**
+ * The program from the archive, by the archive's file name. A download that is a Windows program itself (.exe, Antigravity) is the
+ * program: it is used as it is (it was already checked against its pinned checksum).
+ */
 export function extractProgram(archive: Uint8Array, file: string, name: string): Promise<Uint8Array> {
   if (/\.zip$/i.test(file)) return fromZip(archive, name);
   if (/\.tar\.gz$|\.tgz$/i.test(file)) return fromTarGz(archive, name);
+  if (/\.exe$/i.test(file)) {
+    if (archive.length > MAX_PROGRAM_BYTES) return Promise.reject(bad());
+    return Promise.resolve(archive);
+  }
   return Promise.reject(new ReleaseError(`AIB cannot unpack ${file}.`));
+}
+
+/** The program's name inside the download: `inner` when the vendor names it differently (Antigravity: antigravity), else programFile. */
+export function innerFile(release: BetaRelease, os: string = Deno.build.os): string {
+  if (!release.inner) return programFile(release, os);
+  return os === 'windows' ? `${release.inner}.exe` : release.inner;
 }
 
 export interface ReleaseInstall {
@@ -248,7 +304,14 @@ export function writeInstall(dir: string, release: BetaRelease, asset: BetaRelea
   if (Deno.build.os !== 'windows') Deno.chmodSync(path, 0o755);
   Deno.writeTextFileSync(
     pathOf(dir, COMPLETE_MARKER),
-    JSON.stringify({ package: `github:${release.repo}`, version: release.version, file: asset.file, sha256: asset.sha256, finishedAt: at }),
+    JSON.stringify({
+      package: release.repo ? `github:${release.repo}` : asset.url ?? '',
+      version: release.version,
+      file: asset.file,
+      ...(asset.sha256 ? { sha256: asset.sha256 } : {}),
+      ...(asset.sha512 ? { sha512: asset.sha512 } : {}),
+      finishedAt: at,
+    }),
   );
   return path;
 }

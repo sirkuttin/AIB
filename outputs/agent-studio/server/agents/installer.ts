@@ -477,7 +477,8 @@ export class Installer {
     if (rel) {
       // A release agent: pinned in the catalog. Uninstall works on any computer; start() checks there is an archive for this one.
       const asset = release.releaseAsset(betaAgent(agentId), this.#platform);
-      return { package: `github:${rel.repo}`, version: rel.version, packageBytes: asset ? asset.bytes * 4 : 0 };
+      const label = rel.repo ? `github:${rel.repo}` : `${(rel.host ?? 'release').toLowerCase()}:${rel.program}`;
+      return { package: label, version: rel.version, packageBytes: asset ? asset.bytes * 4 : 0 };
     }
     const known = typeof agentId === 'string' && adapters.installPackages(agentId) !== null;
     const found = known ? this.allowList()[agentId as string] : null;
@@ -902,7 +903,7 @@ export class Installer {
     return ['done', ''];
   }
 
-  /** A release agent: download the archive for this computer, check its SHA-256, unpack the program, then the marker. */
+  /** A release agent: download the archive for this computer, check its pinned checksum(s), unpack the program, then the marker. */
   async #installRelease(job: Job): Promise<[Outcome, string]> {
     const agent = betaAgent(job.agentId)!;
     const rel = agent.release!;
@@ -932,12 +933,12 @@ export class Installer {
     }
     if (job.cancelEvent.isSet()) return ['cancelled', ''];
     this.#progress(job, 'verifying', 90);
-    if (await release.sha256Hex(archive) !== asset.sha256) {
+    if (!await release.checksumMatches(archive, asset)) {
       return ['failed', `The download of ${agent.name} did not match the checksum AIB expects, so it was not used. Try again later.`];
     }
     let program: Uint8Array;
     try {
-      program = await release.extractProgram(archive, asset.file, release.programFile(rel, this.#platform.split('-')[0]));
+      program = await release.extractProgram(archive, asset.file, release.innerFile(rel, this.#platform.split('-')[0]));
     } catch (error) {
       if (error instanceof release.ReleaseError) return ['failed', error.message];
       throw error;

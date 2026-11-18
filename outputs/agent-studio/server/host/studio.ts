@@ -35,7 +35,7 @@ import * as adapters from '../agents/adapters.ts';
 import { Installer, InstallRefused } from '../agents/installer.ts';
 import { readCached as readSignIn, Signer, SignInRefused } from '../agents/signin.ts';
 import { betaAgent, isBeta } from '../agents/beta_catalog.ts';
-import { resolveBeta } from '../agents/beta_agents.ts';
+import { resolveBeta, withKeyHome } from '../agents/beta_agents.ts';
 import { BetaSigner } from '../agents/beta_signin.ts';
 import { AgentOptionsCache } from '../state/agent_options.ts';
 import { UsageLimitsStore } from '../state/usage_limits.ts';
@@ -868,12 +868,17 @@ export class Studio {
   async #betaLaunch(provider: string, fresh: boolean): Promise<[string[], Record<string, string>]> {
     const agent = betaAgent(provider)!;
     if (fresh && !this.settings.betaEnabled(provider)) throw new ValueError(`${agent.name} is turned off in Settings`);
-    const row = await resolveBeta(provider, {
-      stateDir: this.hasStateDir ? this.stateDir : null,
-      nodeCommand: this.options.nodeCommand || '',
-    });
+    const row = await this.#betaRow(provider);
     if (!row.found) throw new ValueError(`${agent.name} is not available: ${row.problem}`);
     return [row.argv, this.betaEnv(provider)];
+  }
+
+  /** How a Beta agent starts on this PC: with its own keyHome folder flag when an API key is saved (Antigravity's --gemini-dir). */
+  async #betaRow(provider: string) {
+    const stateDir = this.hasStateDir ? this.stateDir : null;
+    const row = await resolveBeta(provider, { stateDir, nodeCommand: this.options.nodeCommand || '' });
+    const hasKey = !!betaAgent(provider)?.signin.keyEnv && !!this.settings.betaKey(provider);
+    return withKeyHome(row, provider, stateDir, hasKey);
   }
 
   /**
@@ -3276,7 +3281,7 @@ export class Studio {
     this.signer ??= new Signer(this.stateDir, (agent) => builtinLaunch(this.#agentOptions(), this.settings, agent));
     this.betaSigner ??= new BetaSigner(
       this.stateDir,
-      (agent) => resolveBeta(agent, { stateDir: this.hasStateDir ? this.stateDir : null, nodeCommand: this.options.nodeCommand || '' }),
+      (agent) => this.#betaRow(agent),
       (agent) => this.betaEnv(agent),
     );
     try {

@@ -71,6 +71,8 @@
         'kimi',
         'kilo',
         'maki',
+        'antigravity',
+        'agy',
         'api key',
       ],
     },

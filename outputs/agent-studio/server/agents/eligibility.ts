@@ -25,6 +25,7 @@ export const BETA_IDS: readonly string[] = [
   'kimi',
   'kilo',
   'maki',
+  'antigravity',
 ];
 const CUSTOM_ID = /^custom-[a-z0-9]+(?:-[a-z0-9]+)*$/;
 

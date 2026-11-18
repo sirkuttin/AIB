@@ -65,11 +65,19 @@ export interface BetaVendorInstall {
   readonly uninstallDocs?: string;
 }
 
-/** One archive of a GitHub release: its file name and the SHA-256 AIB checks before anything in it is used. */
+/**
+ * One download of a release: its file name and the checksum AIB checks before anything in it is used (SHA-256, SHA-512 or both; at
+ * least one). A GitHub release asset is fetched from github.com; one with `url` (Antigravity) from that exact address, which must be on
+ * a host release_install.ts allows.
+ */
 export interface BetaReleaseAsset {
   readonly file: string;
   /** Lower-case hex SHA-256 of the archive, copied from the release (GitHub's asset digest and the release's own sha256sums.txt). */
-  readonly sha256: string;
+  readonly sha256?: string;
+  /** Lower-case hex SHA-512 of the download, copied from the vendor's own release manifest (Antigravity). */
+  readonly sha512?: string;
+  /** The full https address of the download, when it is not a GitHub release asset. */
+  readonly url?: string;
   /** The archive's size in bytes (progress, and a download that grows past it is stopped). */
   readonly bytes: number;
 }
@@ -80,9 +88,16 @@ export interface BetaReleaseAsset {
  * pinned here, and unpacks only `program` into <state>/agents/<id>/<version>/ (installer.ts, release_install.ts).
  */
 export interface BetaRelease {
-  /** owner/name on github.com. */
+  /** owner/name on github.com ('' when every asset has its own `url`). */
   readonly repo: string;
   readonly tag: string;
+  /** Who publishes the download, for the card's error lines ('GitHub' when not set). */
+  readonly host?: string;
+  /**
+   * The program's name inside an archive when it differs from `program` (Antigravity's .tar.gz holds `antigravity`; AIB installs it
+   * as `agy`). A download that is the program itself (a .exe) is used as it is.
+   */
+  readonly inner?: string;
   /** The version folder name. */
   readonly version: string;
   /** The program's file name inside the archive and in the install folder (Windows adds .exe). */
@@ -144,6 +159,17 @@ export interface BetaAgent {
    * agent that stops before it answers as Needs sign-in instead of Not checked.
    */
   readonly exitsWhenSignedOut?: boolean;
+  /**
+   * With an API key saved, AIB starts the agent with `<flag> <folder>`: a data folder of its own inside AIB's
+   * (<state>/agents/<id>/<folder>), holding `files` (relative path -> JSON) that AIB writes, so a setting the key needs never goes into
+   * the person's own config (Antigravity: --gemini-dir with antigravity-cli/settings.json {"modelProvider": "gemini"}). Without a key
+   * the agent uses its usual folder and sign-in.
+   */
+  readonly keyHome?: {
+    readonly flag: string;
+    readonly folder: string;
+    readonly files: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+  };
   /** Its mode ids are full URLs (nothing to do: AIB passes mode ids through as opaque text). */
   readonly modeIdsAreUrls?: boolean;
   /** Its `copilot` name on PATH may be VS Code's install-prompt shim: such a file does not count as installed. */
@@ -239,7 +265,7 @@ export const BETA_AGENTS: readonly BetaAgent[] = [
     // Gemini API key still works with Gemini CLI (the post says paid keys only), so the card says a paid key.
     cost: 'Free CLI · needs a paid Gemini API key or a Code Assist Standard or Enterprise licence',
     note:
-      'Since June 18, 2026 a personal Google sign-in (free, AI Pro or Ultra) no longer works here: Google moved those to Antigravity CLI.',
+      'Personal Google accounts (free, AI Pro or Ultra): use the Antigravity CLI card instead. Google moved personal accounts to Antigravity CLI on 18 June 2026.',
     // registry: npx @google/gemini-cli@0.68.0 --acp. Node 20+.
     npm: { package: '@google/gemini-cli', version: '0.68.0', bin: 'gemini', entry: 'dist/index.js' },
     commands: ['gemini'],
@@ -528,6 +554,116 @@ export const BETA_AGENTS: readonly BetaAgent[] = [
       baseUrlHint: 'https://api.anthropic.com',
     },
     exitsWhenSignedOut: true,
+  },
+  {
+    id: 'antigravity',
+    // Google Antigravity CLI (`agy`, closed-source Go): since June 18 2026 the CLI for personal Google accounts (free, AI Pro, Ultra);
+    // Gemini CLI keeps paid keys and Code Assist Standard/Enterprise. `agy acp` speaks ACP v1 over stdio (antigravity.google/docs/cli/acp,
+    // /docs/ide/extensions/acp, read 2026-11-18). Checked against the real 1.5.11 Windows build, headless, with a throwaway home and a
+    // dummy key (work/deno/antigravity_test.ts):
+    //   initialize: loadSession, session resume / close / load / list, additionalDirectories, image + embedded context prompts,
+    //     auth.logout; authMethods oauth-personal, oauth-business, gemini-api-key, agent-platform, and (only to a client that says
+    //     auth.terminal) terminal-login, type terminal, args ["--login"]: AIB's Sign in runs `agy acp --disable-telemetry --login`.
+    //   No sign-in: session/new fails -32000 "Authentication required" (= Needs sign-in).
+    //   GEMINI_API_KEY alone is not enough: it also needs settings.json {"modelProvider": "gemini"}, or an ACP authenticate with
+    //     gemini-api-key. Its data folder (~/.gemini, settings in antigravity-cli/settings.json) moves with `--gemini-dir <absolute
+    //     path>` (a flag `agy acp --help` lists; no environment variable does it), so with a key AIB runs it with its own folder
+    //     (keyHome) and never writes the person's ~/.gemini.
+    //   session/new: models (21, e.g. gemini-3.1-pro-low), modes default / accept-edits / plan, config options model, thought_level
+    //     and mode, slash commands (available_commands_update), usage_update.
+    // Subagents: yes (its subagent tool, /swarm and run_workflow). They work in the chat's own folder unless the model asks for
+    // workspace "share" (its own working copy) or "branch" (an isolated clone); AIB cannot require that over ACP.
+    // It updates itself in the background (install.sh: "automatically self-updates"); no switch to turn that off is documented.
+    signinDirs: ['.gemini'],
+    name: 'Antigravity CLI',
+    letter: 'A',
+    license: 'Proprietary',
+    cost: 'Free CLI · sign in with a Google account, or use a Gemini API key',
+    note:
+      "Google's CLI for personal Google accounts (free, AI Pro and Ultra) since June 18, 2026. Sign in runs Google's paste-a-code sign-in here. With an API key saved, AIB gives it its own settings folder, so your ~/.gemini stays as it is.",
+    // Google publishes the CLI only through its install scripts (antigravity.google/download): they read a manifest per platform
+    // (antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/<platform>.json: version, url, sha512), download the
+    // build from storage.googleapis.com/antigravity-public/ and check its SHA-512. AIB pins the 1.5.11 manifest values here (read
+    // 2026-11-18; sizes from the files' Content-Length) and checks the SHA-512 itself; it never runs the scripts. The Windows build is
+    // the program itself (agy.exe; Authenticode-signed by Google LLC, checked by hand 2026-11-18); macOS and Linux are a .tar.gz with
+    // the program `antigravity` at its root. Linux: the glibc builds (Google also has _musl ones, which AIB does not pick).
+    release: {
+      repo: '',
+      tag: '1.5.11-6132547114106880',
+      version: '1.5.11',
+      program: 'agy',
+      host: 'Google',
+      inner: 'antigravity',
+      assets: {
+        'windows-x86_64': {
+          file: 'cli_windows_x64.exe',
+          url: 'https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.11-6132547114106880/windows-x64/cli_windows_x64.exe',
+          sha512:
+            '7de2a90b3a351c5c1d089b50a773d4fc455062870fa62fc4d50ee2779d7b9f1b630a7025c31163671f6c82ae0426aeda838f98f67270a50fdd2c7de2f2d7eb3f',
+          bytes: 234827416,
+        },
+        'windows-aarch64': {
+          file: 'cli_windows_arm64.exe',
+          url: 'https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.11-6132547114106880/windows-arm/cli_windows_arm64.exe',
+          sha512:
+            'a1c89cca8d3c7af9c3bdc77318975a9e0eb0fb93c421b198b14b18a4b65933c7adea2c9cb35651f7658e810b6241e8cf03a652b3b8bc221bbc2fcdb61edc01b6',
+          bytes: 222972056,
+        },
+        'darwin-x86_64': {
+          file: 'cli_mac_x64.tar.gz',
+          url: 'https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.11-6132547114106880/darwin-x64/cli_mac_x64.tar.gz',
+          sha512:
+            'ff1f625c2efcff03d2131e3e9dc67bb5d1974b67810706f80ad34317c83769486388226352f1a34ede54fad43f5941220ea9beddefc8b27419023c6e9aa4682c',
+          bytes: 90664657,
+        },
+        'darwin-aarch64': {
+          file: 'cli_mac_arm64.tar.gz',
+          url: 'https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.11-6132547114106880/darwin-arm/cli_mac_arm64.tar.gz',
+          sha512:
+            '1b2c8e1f832e1be9b257c24e4ac75c9029771fef5af9b529ea295fff1aa5b9d3e1e5447200a76ac8a775889aa8399210716f188f84242b3c34a2e9a8a3c2cc7d',
+          bytes: 85142629,
+        },
+        'linux-x86_64': {
+          file: 'cli_linux_x64.tar.gz',
+          url: 'https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.11-6132547114106880/linux-x64/cli_linux_x64.tar.gz',
+          sha512:
+            'dad3c015e8964fcdc1639b13b7152f4cb84cb1bde385707e2bcdf095d6f1831f4f6521199aec499cc052f9e99906b7fdbc52c273df064d5cb7c84b068ba3ce50',
+          bytes: 100130747,
+        },
+        'linux-aarch64': {
+          file: 'cli_linux_arm64.tar.gz',
+          url: 'https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.11-6132547114106880/linux-arm/cli_linux_arm64.tar.gz',
+          sha512:
+            '5f703c88e01851061c87c07b1a4ca54c1f5a6826ffada9fb005974a099e9a552ddb1f9ba2fe1194e2829803482c86084babf8cf91530a528bc7f659613600585',
+          bytes: 91203180,
+        },
+      },
+    },
+    commands: ['agy'],
+    // install.ps1's folder (--dir moves it); install.sh uses ~/.local/bin, which is normally on PATH.
+    known: [{ base: 'LOCALAPPDATA', parts: ['agy', 'bin', 'agy.exe'] }],
+    // --disable-telemetry: AIB's chats run with Google's telemetry off for this server (a documented `agy acp` flag).
+    args: ['acp', '--disable-telemetry'],
+    // Google's own install commands (antigravity.google/download), shown for doing it by hand; AIB's Install never runs them.
+    install: Deno.build.os === 'windows'
+      ? 'irm https://antigravity.google/cli/install.ps1 | iex'
+      : 'curl -fsSL https://antigravity.google/cli/install.sh | bash',
+    docs: 'https://antigravity.google/docs/cli/acp',
+    // Sign in: the advertised terminal-login method (`agy acp --login`, paste a code); the fallback is the same command. The key box
+    // sets GEMINI_API_KEY and, through keyHome, modelProvider "gemini". keyMethod: a chat that still asks for sign-in sends the key with
+    // ACP authenticate gemini-api-key (which also works without the setting). keyUrl: Google AI Studio's API keys page.
+    signin: {
+      kind: 'terminal',
+      terminalArgs: ['acp', '--login'],
+      keyEnv: 'GEMINI_API_KEY',
+      keyMethod: 'gemini-api-key',
+      keyUrl: 'https://aistudio.google.com/apikey',
+    },
+    keyHome: {
+      flag: '--gemini-dir',
+      folder: 'gemini-home',
+      files: { 'antigravity-cli/settings.json': { modelProvider: 'gemini' } },
+    },
   },
 ];
 
