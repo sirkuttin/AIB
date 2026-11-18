@@ -56,6 +56,8 @@
   }
   const FILE_D = 'M4 1.5h5l3.5 3.5v9.5h-8.5zM9 1.5V5h3.5';
   const DIR_D = 'M1.5 3.5h4.5l1.5 1.5h7v8.5h-13z';
+  // aib-shared: two stacked folders, the same folder in every chat copy (owner pick C, 2026-11-18)
+  const SHARED_D = 'M3.8 4.6V2h3.4l1.4 1.4h5.9v8.2h-1.8M1.5 5h4l1.4 1.4h5.6v7.6h-11z';
   const IMG_D = 'M2 3h12v10H2zM2 11l3.5-3.5 3 3 2-2L14 12';
   const CODE_D = 'M5.5 4.5 2 8l3.5 3.5M10.5 4.5 14 8l-3.5 3.5';
   const CODE_EXT = /\.(js|mjs|cjs|ts|tsx|jsx|py|rb|go|rs|java|c|h|cpp|cs|php|sh|ps1|css|scss|json|ya?ml|toml|sql|kt|swift|lua)$/i;
@@ -912,9 +914,18 @@
     const caret = el('span', r.kind === 'dir' && r.canOpen ? (r.open ? '▾' : '▸') : '', 'fx-caret');
     caret.setAttribute('aria-hidden', 'true');
     // aib-docs: the docs' own accent icon instead of the folder outline
-    n.append(caret, r.docsFolder ? docIcon('fx-ico fx-docico') : r.kind === 'dir' ? icon(DIR_D, 'fx-ico') : fileIcon(r.name));
-    // local only: a small blue dot on the folder icon (owner decision 4a)
-    if (r.local && r.kind === 'dir') {
+    n.append(
+      caret,
+      r.docsFolder
+        ? docIcon('fx-ico fx-docico')
+        : r.sharedFolder
+        ? icon(SHARED_D, 'fx-ico fx-sharedico')
+        : r.kind === 'dir'
+        ? icon(DIR_D, 'fx-ico')
+        : fileIcon(r.name),
+    );
+    // local only: a small blue dot on the folder icon (owner decision 4a); aib-shared's own blue icon says it already
+    if (r.local && r.kind === 'dir' && !r.sharedFolder) {
       const dot = el('span', '', 'fx-localdot');
       dot.setAttribute('aria-hidden', 'true');
       n.append(dot);

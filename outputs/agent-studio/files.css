@@ -237,6 +237,10 @@ body:not(.sf-files-mode) #filesPane {
   background: var(--local);
   box-shadow: 0 0 0 1.5px var(--panel);
 }
+/* aib-shared: its own stacked-folders icon in the local-only blue, instead of the folder outline and dot */
+.fx-sharedico {
+  color: var(--local);
+}
 .fx-local {
   flex: none;
   padding: 0 7px;

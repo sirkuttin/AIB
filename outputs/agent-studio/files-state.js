@@ -235,6 +235,8 @@
         };
         if (e.dir && !local) row.changed = changes ? changedBelow(changes, e.path) : Number(e.changed) || 0;
         if (isDocsDir(e)) Object.assign(row, { docsFolder: true, docCount: docs ? docsIn(docs) : 0 });
+        // the project's own aib-shared (local only): its own icon in the tree
+        if (isSharedDir(e) && local) row.sharedFolder = true;
         else {
           row.badge = local ? null : changes ? badgeOf(changes.get(e.path)) : letterBadge(e.status); // git never tracks a local-only file
           row.artifact = !!(arts && arts.has(e.path));

@@ -282,7 +282,13 @@ test('the filter gives a flat list of matches with their folder; Changed n lists
 test('aib-shared is the second row, right under aib-docs, above dot-folders (owner 2026-11-18)', () => {
   const dir = (n, extra) => Object.assign({ dir: true, path: n, name: n }, extra || {});
   const cache = { '': [dir('.claude', { ignored: true }), dir('.github'), dir('aib-docs'), dir('aib-shared', { local: true }), dir('dist'), { dir: false, path: 'README.md', name: 'README.md' }] };
-  assert.deepEqual(FS.treeRows(cache, new Set(), {}).map((r) => r.path).slice(0, 3), ['aib-docs', 'aib-shared', '.claude']);
+  const rows0 = FS.treeRows(cache, new Set(), {});
+  assert.deepEqual(rows0.map((r) => r.path).slice(0, 3), ['aib-docs', 'aib-shared', '.claude']);
+  // its own icon (owner pick C): only the top-level local-only aib-shared, never an ordinary folder of that name
+  assert.equal(rows0[1].sharedFolder, true);
+  assert.ok(!rows0.slice(2).some((r) => r.sharedFolder));
+  const notLocal = { '': [dir('aib-shared')] };
+  assert.ok(!FS.treeRows(notLocal, new Set(), {})[0].sharedFolder);
   // with no aib-docs folder yet, the "+ New doc" docs row still comes first
   const noDocs = { '': cache[''].filter((e) => e.path !== 'aib-docs') };
   assert.deepEqual(FS.treeRows(noDocs, new Set(), { newDoc: true }).map((r) => r.path).slice(0, 2), ['aib-docs', 'aib-shared']);
@@ -1090,14 +1096,15 @@ test('files-state: the tooltip names the real path; Git exclude is greyed with i
   assert.deepEqual(d.map((x) => x.rel), ['aib-shared/TASKS.md']);
 });
 
-test('Files: a local-only folder has the blue dot, the "local only" pill and the real-path tooltip; it opens without Show ignored', async () => {
+test('Files: aib-shared has its own blue icon (no dot), the "local only" pill and the real-path tooltip; it opens without Show ignored', async () => {
   const t = setup({ listing: LOCAL_LISTING, localOnly: LOCAL });
   t.FU.setMode('files');
   await flush();
   const p = rowOf(t, 'aib-shared');
   assert.ok(p.classList.contains('local'));
   assert.ok(!p.classList.contains('ignored'));
-  assert.ok(p.querySelector('.fx-localdot'), 'the dot on the folder icon');
+  assert.ok(p.querySelector('.fx-sharedico'), 'its own stacked-folders icon (owner pick C)');
+  assert.equal(p.querySelector('.fx-localdot'), null, 'the blue icon replaces the dot');
   assert.equal(p.querySelector('.fx-local').textContent, 'local only');
   assert.ok(p.title.includes('The same folder in every chat: C:\\work\\alpha\\aib-shared'), p.title);
   p.click();
