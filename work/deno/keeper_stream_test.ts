@@ -179,11 +179,7 @@ Deno.test({
     });
     const info = readKeeperInfo(dir)!;
     try {
-      const at = info.address.lastIndexOf(':');
-      const conn = await Deno.connect({
-        hostname: info.address.slice(0, at),
-        port: Number(info.address.slice(at + 1)),
-      });
+      const conn = await reconnect(info);
       const client = await KeeperClient.overStream(pipeStream(conn.readable, conn.writable), info.token, { client: 'stream test' });
       assert(client.has('labels'), client.features.join(','));
       assertEquals(await client.list(), []);
@@ -217,7 +213,9 @@ Deno.test({
   },
 });
 
-function reconnect(info: { address: string }): Promise<Deno.TcpConn> {
+/** The keeper's socket: a unix socket on Linux and macOS, loopback TCP (host:port) on Windows. */
+function reconnect(info: { address: string; transport?: string }): Promise<Deno.Conn> {
+  if (info.transport === 'unix') return Deno.connect({ transport: 'unix', path: info.address });
   const at = info.address.lastIndexOf(':');
   return Deno.connect({
     hostname: info.address.slice(0, at),
