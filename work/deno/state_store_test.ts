@@ -1066,9 +1066,27 @@ Deno.test('safety: the rename is retried on a permission error', async () => {
   const store = new ProjectPrefs(dir);
   const real = Deno.renameSync;
   let calls = 0;
+  if (!WIN) {
+    // Only Windows retries (a file another program has open gives brief sharing errors there, core/fs.ts transient): on Linux and
+    // macOS a failed rename is a real error, so a busy answer ends the save at once, naming the problem.
+    await patched('renameSync', () => {
+      calls++;
+      throw new Deno.errors.Busy('busy');
+    }, async () => {
+      let message = '';
+      try {
+        await store.update({ set: { p: { name: 'x' } } });
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      assert(message.includes('busy'), message);
+    });
+    assertEquals(calls, 1, 'no retry off Windows');
+    return;
+  }
   await patched('renameSync', (from: string | URL, to: string | URL) => {
     calls++;
-    if (calls < 3) throw WIN ? new Deno.errors.PermissionDenied('busy') : new Deno.errors.Busy('busy');
+    if (calls < 3) throw new Deno.errors.PermissionDenied('busy');
     real(from, to);
   }, () => store.update({ set: { p: { name: 'x' } } }));
   assert(calls >= 3, `${calls}`);
