@@ -359,7 +359,7 @@ Deno.test('notifier: desktop only while no AIB window has focus and per the app 
     test: false,
     silent: false,
   }]);
-  assertEquals(pushes, [{ title: 'A chat needs you', body: 'Chat a', tag: 'aib-attention', chat: 'c-a', sheet: true, silent: false }]);
+  assertEquals(pushes, [{ title: 'A chat needs you', body: 'Chat a', tag: 'aib-attention', chat: 'c-a', sheet: true, silent: false, key: 'claude:a' }]); // one chat: its row key (the phone's buttons)
   // a saved "Needs you only": a finished turn is no desktop notification, but it is a push (same group)
   view['studio-notifications-app'] = JSON.stringify({ desktop: true, sound: 'needs', notifyFor: 'needs' });
   now += 10_000;
@@ -481,7 +481,7 @@ Deno.test('notifier + presence: a chat on a phone screen gets no desktop notific
   assertEquals(ended.length, 1);
   assertEquals(ended[0].why, 'expired');
   assertEquals((ended[0].held as Json[]).map((h) => h.chat), ['c-x', 'c-x', 'c-y', 'c-z']);
-  assertEquals(pushes, [{ title: 'Chat finished', body: 'Chat z', tag: 'aib-attention', chat: 'c-z', sheet: false, silent: true }]);
+  assertEquals(pushes, [{ title: 'Chat finished', body: 'Chat z', tag: 'aib-attention', chat: 'c-z', sheet: false, silent: true, key: 'claude:z' }]);
   assertEquals(desktop.length, 2, 'the desktop already showed z');
   // nobody looking now: as before
   now += 70_000;

@@ -518,7 +518,7 @@ export interface NotifierOptions {
   desktop: () => DesktopShow | null;
   /** Sends one push to every device that may get it (remote/push.ts), or only to those `to` picks; null while there is nothing to
    * send to. */
-  push: () => ((text: ReturnType<typeof RULES.pushText>, to?: PushPick) => Promise<unknown>) | null;
+  push: () => ((text: PushText, to?: PushPick) => Promise<unknown>) | null;
   presence: Presence;
   /** The saved view preferences (the desktop app's notification choices live there). */
   viewPrefs: Pick<ViewPrefs, 'public'>;
@@ -538,6 +538,9 @@ const bare = ({ key, chat, kind, title, reason, project, what }: Fire): Fire => 
   ...(project ? { project } : {}),
   ...(what ? { what } : {}),
 });
+
+/** A push's words (notify-rules.js pushText), and for one chat its row key (the phone's notification buttons). */
+export type PushText = ReturnType<typeof RULES.pushText> & { key?: string };
 
 /** Which push targets get a push (remote/push.ts PushSender.send `to`). */
 export type PushPick = (target: { id: string; kind: 'phone' | 'computer' }) => boolean;
@@ -685,7 +688,9 @@ export class Notifier {
     const to = pushPick(where, inFront);
     this.options.record?.({ to: 'push', text, fires, ...(where?.who === 'computer' ? { device: where.device } : {}) });
     try {
-      await push(text, to);
+      // one chat's push carries its row key: the phone's buttons act on it (remote/push_acts.ts); the record stays the words only
+      const one = this.#push.entries.length === 1 ? this.#push.entries[0].key : '';
+      await push(one ? { ...text, key: one } : text, to);
     } catch (error) {
       log.info('attention: push failed (%s)', error instanceof Error ? error.message : error);
     }
@@ -704,7 +709,7 @@ export interface AttentionContext extends WatchSources {
   phone: {
     on: boolean;
     titles: { titles: Map<string, string>; seeList?: (listing: unknown) => void };
-    push: { any(): boolean; send(m: ReturnType<typeof RULES.pushText>, to?: PushPick): Promise<unknown> };
+    push: { any(): boolean; send(m: PushText, to?: PushPick): Promise<unknown> };
   };
 }
 

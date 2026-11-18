@@ -196,3 +196,77 @@ test('phone: Install AIB: our button where the browser offers it, the Share step
   assert.equal(P.setupSteps({ ...base, prompt: true })[0].kind, 'prompt');
   assert.equal(P.setupSteps({ ...base, firefox: true })[0].kind, 'firefox');
 });
+
+test('worker: notification buttons (0.13): at most two known ones, the key and code kept, a tap acts or opens the right page', () => {
+  const push = {
+    title: 'A chat needs you',
+    body: 'Payments',
+    chat: 'c1',
+    sheet: true,
+    key: 'claude:s1',
+    code: 'CODE',
+    actions: [
+      { action: 'allow', title: 'Allow' },
+      { action: 'deny', title: 'Deny' },
+      { action: 'open', title: 'Open' },
+      { action: 'evil', title: 'x' },
+    ],
+  };
+  const n = SW.notificationOf(push, 3).options;
+  assert.deepEqual(n.actions, [{ action: 'allow', title: 'Allow' }, { action: 'deny', title: 'Deny' }], 'Android shows two: never more');
+  assert.deepEqual(n.data, { chat: 'c1', sheet: true, open: '', key: 'claude:s1', code: 'CODE' });
+  assert.equal(SW.notificationOf(push, 1).options.actions.length, 1, 'a browser that shows one');
+  assert.equal(SW.notificationOf({ ...push, key: '' }).options.actions, undefined, 'no buttons without the chat key');
+  assert.equal(SW.notificationOf({ ...push, actions: [{ action: 'evil', title: 'x' }] }).options.actions, undefined);
+  // a tap
+  const data = n.data;
+  assert.deepEqual(SW.clickPlan(data, 'allow'), { act: 'allow', key: 'claude:s1', code: 'CODE' });
+  assert.deepEqual(SW.clickPlan(data, 'retry'), { act: 'retry', key: 'claude:s1', code: 'CODE' });
+  assert.deepEqual(SW.clickPlan({ ...data, code: undefined }, 'allow'), { url: '/phone.html#chat=c1&sheet=1' }, 'no code: only opens');
+  assert.deepEqual(SW.clickPlan(data, 'reply'), { url: '/phone.html#chat=c1&reply=1' }, 'Reply: the composer');
+  assert.deepEqual(SW.clickPlan(data, 'open'), { url: '/phone.html#chat=c1&sheet=1' });
+  assert.deepEqual(SW.clickPlan(data, ''), { url: '/phone.html#chat=c1&sheet=1' }, 'the notification itself');
+  assert.equal(SW.chatUrl('c 1', { note: 'expired' }), '/phone.html#chat=c%201&note=expired');
+  assert.equal(SW.chatUrl('c1', { note: '<b>' }), '/phone.html#chat=c1', 'a note is a code word only');
+  // every page a tap opens passes the worker's own address check
+  for (const u of ['/phone.html#chat=c1&reply=1', '/phone.html#chat=c%201&note=expired']) assert.equal(SW.openUrl({ open: u }), u);
+});
+
+test('worker: a button goes to AIB with the phone key; refusals and offline come back as a code word', async () => {
+  const sent = [];
+  const answer = (status, body) => async (url, o) => {
+    sent.push([url, o]);
+    return { ok: status === 200, status, json: async () => body };
+  };
+  const plan = { act: 'allow', key: 'claude:s1', code: 'CODE' };
+  assert.deepEqual(await SW.sendAct(plan, answer(200, { ok: true }), 'TOKEN'), { ok: true });
+  assert.equal(sent[0][0], '/api/remote/notify-act');
+  assert.equal(sent[0][1].method, 'POST');
+  assert.equal(sent[0][1].headers['X-AIB-Device'], 'TOKEN');
+  assert.deepEqual(JSON.parse(sent[0][1].body), { key: 'claude:s1', act: 'allow', code: 'CODE' });
+  assert.deepEqual(await SW.sendAct(plan, answer(409, { code: 'expired' }), 'TOKEN'), { ok: false, code: 'expired' });
+  assert.deepEqual(await SW.sendAct(plan, answer(403, { code: 'scope' }), 'TOKEN'), { ok: false, code: 'scope' });
+  assert.deepEqual(await SW.sendAct(plan, answer(409, { code: 'Not A Word!' }), 'TOKEN'), { ok: false, code: 'failed' });
+  assert.deepEqual(await SW.sendAct(plan, answer(502, {}), 'TOKEN'), { ok: false, code: 'offline' }, "Serve's 502: AIB closed");
+  const down = async () => {
+    throw new TypeError('network');
+  };
+  assert.deepEqual(await SW.sendAct(plan, down, 'TOKEN'), { ok: false, code: 'offline' });
+  const before = sent.length;
+  assert.deepEqual(await SW.sendAct(plan, answer(200, {}), ''), { ok: false, code: 'unknown' }, 'not paired: nothing sent');
+  assert.equal(sent.length, before);
+});
+
+test('phone: a notification link with Reply or a note; notes in words; notifications of answered chats are found', () => {
+  assert.deepEqual(P.openTarget('#chat=c1&reply=1'), { chat: 'c1', sheet: false, reply: true });
+  assert.deepEqual(P.openTarget('#chat=c1&note=expired'), { chat: 'c1', sheet: false, note: 'expired' });
+  assert.deepEqual(P.openTarget('#chat=c1&sheet=1&note=scope'), { chat: 'c1', sheet: true, note: 'scope' });
+  assert.equal(P.openTarget('#chat=c1&note=<b>'), null);
+  assert.equal(P.notifyNote('expired'), 'That notification is too old. Answer it here.');
+  assert.match(P.notifyNote('scope'), /Settings → Remote control/);
+  assert.equal(P.notifyNote('offline'), 'AIB could not be reached. Try again here.');
+  assert.equal(P.notifyNote('whatever'), 'That did not work. Try again here.');
+  const shown = [{ data: { key: 'claude:a' } }, { data: { key: 'claude:b' } }, { data: {} }];
+  assert.deepEqual(P.staleNotifications(shown, [{ key: 'claude:a' }]), [shown[1]], 'b was answered; a grouped one stays');
+  assert.deepEqual(P.staleNotifications(shown, [{ key: 'claude:a' }, { key: 'claude:b' }]), []);
+});

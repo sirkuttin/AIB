@@ -15,6 +15,11 @@
  * (RFC 8291, aes128gcm). Needs you goes with Urgency high and a short time to live; every push has the same Topic, so the push
  * service keeps only the newest one for a phone that is offline, and the same tag, so the phone shows only the newest one.
  * A subscription the push service calls gone (404 or 410) is deleted.
+ *
+ * Buttons (0.13, remote/push_acts.ts): a push about one chat also carries that chat's row key, the buttons for its kind (at most
+ * two, by this phone's switches) and a one-time code for this phone. Once that request is answered anywhere (its row is gone or
+ * about a newer request: seeInbox), the phone that was shown it gets a small "close" push with the key, and its service worker
+ * takes the notification away.
  */
 import { getLogger } from '../core/log.ts';
 import { inDir } from '../state/base.ts';
@@ -22,6 +27,9 @@ import { quarantine, readJsonFile, saveJson } from '../state/json.ts';
 import { dpapiProtect, dpapiUnprotect } from '../state/secrets.ts';
 import { ApplicationServer, PushMessageError, Urgency } from '../vendor/webpush/mod.ts';
 import type { DeviceStore, PushSub } from './devices.ts';
+import type { InboxRow } from '../attention/inbox_rules.ts';
+import type { ToastCodes } from '../desktop/toast.ts';
+import { pushButtons, rowSig } from './push_acts.ts';
 
 const log = getLogger('push');
 
@@ -144,6 +152,14 @@ export interface PushMessage {
   sheet: boolean;
   /** Finished only: the phone shows it without a sound or vibration (pwa/sw.js). */
   silent?: boolean;
+  /** One chat's push: its row key (provider:sessionId), for the buttons (remote/push_acts.ts). */
+  key?: string;
+}
+
+/** What the buttons need: the inbox row of a chat now, and the one-time codes (push-codes.json). */
+export interface PushButtonDeps {
+  rowOf(key: string): InboxRow | null;
+  codes: ToastCodes;
 }
 
 export interface SendResult {
@@ -161,7 +177,40 @@ export function openTarget(kind: 'phone' | 'computer', chat: unknown, sheet: unk
 
 /** Sends one message to every phone that may get pushes; drops subscriptions the push service calls gone. */
 export class PushSender {
-  constructor(readonly devices: DeviceStore, readonly keys: VapidKeys, readonly fetcher: typeof fetch = fetch) {}
+  /** device -> the chat (row key) and request its newest notification is about ('' key: a grouped one, nothing to close). */
+  #shown = new Map<string, { key: string; sig: string }>();
+
+  constructor(
+    readonly devices: DeviceStore,
+    readonly keys: VapidKeys,
+    readonly fetcher: typeof fetch = fetch,
+    readonly buttons: PushButtonDeps | null = null,
+  ) {}
+
+  /** The notification each phone was shown last (tests). */
+  shown(): { device: string; key: string; sig: string }[] {
+    return [...this.#shown].map(([device, v]) => ({ device, ...v }));
+  }
+
+  /** This phone's notification about this chat is gone already (its own button answered it): no close push for it. */
+  forget(device: string, key: string): void {
+    if (this.#shown.get(device)?.key === key) this.#shown.delete(device);
+  }
+
+  /** Every inbox built: a phone shown a request that was answered anywhere since gets a close push; its codes stop working. */
+  async seeInbox(inbox: { rows: InboxRow[] }): Promise<void> {
+    for (const [device, v] of [...this.#shown]) {
+      if (!v.key) continue;
+      const row = inbox.rows.find((r) => r.key === v.key);
+      if (row && rowSig(row) === v.sig) continue;
+      this.#shown.delete(device);
+      this.buttons?.codes.revokeChat(v.key, true, device);
+      const target = this.devices.pushTargets().find((t) => t.id === device);
+      if (!target) continue;
+      const pair = await this.keys.pair();
+      await this.#one(device, target.push, JSON.stringify({ type: 'close', key: v.key, tag: TOPIC }), false, pair, TTL_NEEDS);
+    }
+  }
 
   /** Anyone to send to? (a subscription and the Push switch on) */
   any(): boolean {
@@ -176,6 +225,11 @@ export class PushSender {
     const urgent = message.sheet || /need/i.test(message.title);
     const out: SendResult[] = [];
     for (const t of targets) {
+      // the buttons: a phone's push about one chat (a computer's page has its own; a grouped push has none)
+      const row = message.key && t.kind === 'phone' && this.buttons ? this.buttons.rowOf(message.key) : null;
+      const codes = this.buttons?.codes;
+      const buttons = row && codes ? pushButtons(row, t.scopes, (chat, sig, acts) => codes.issue(chat, sig, acts, t.id)) : null;
+      this.#shown.set(t.id, buttons && row ? { key: row.key, sig: rowSig(row) } : { key: '', sig: '' });
       // where a click opens it (phase 1b, v2 fix 7): the service worker cannot ask a page for the device kind, the server knows it
       const payload = JSON.stringify({
         title: message.title,
@@ -185,13 +239,14 @@ export class PushSender {
         sheet: message.sheet,
         open: openTarget(t.kind, message.chat, message.sheet),
         ...(message.silent ? { silent: true } : {}),
+        ...(buttons ? { key: buttons.key, actions: buttons.actions, ...(buttons.code ? { code: buttons.code } : {}) } : {}),
       });
       out.push(await this.#one(t.id, t.push, payload, urgent, pair));
     }
     return out;
   }
 
-  async #one(device: string, sub: PushSub, payload: string, urgent: boolean, pair: Pair): Promise<SendResult> {
+  async #one(device: string, sub: PushSub, payload: string, urgent: boolean, pair: Pair, ttl?: number): Promise<SendResult> {
     // A fresh application server (ECDH key) per message (RFC 8291 3.1); the VAPID pair signs the request.
     const server = await ApplicationServer.new({ contactInformation: CONTACT, vapidKeys: pair.keys });
     const subscriber = server.subscribe({ endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } });
@@ -199,7 +254,7 @@ export class PushSender {
     try {
       await subscriber.pushTextMessage(payload, {
         urgency: urgent ? Urgency.High : Urgency.Normal,
-        ttl: urgent ? TTL_NEEDS : TTL_FINISHED,
+        ttl: ttl ?? (urgent ? TTL_NEEDS : TTL_FINISHED),
         topic: TOPIC,
         signal,
         fetcher: this.fetcher,

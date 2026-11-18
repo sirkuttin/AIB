@@ -850,6 +850,7 @@ export function makeContext(
     firstPrompt: (id) => ctx.phone.titles.titles.get(id) ?? '',
     openOnPc: () => ctx.presence.openOnPc(),
   });
+  ctx.phone.watchInbox(ctx.inbox); // phone notifications answered anywhere are taken off the phone (remote/push.ts seeInbox)
   ctx.launcher = makeLauncher(() => ctx, () => ctx.editorList);
   ctx.artifacts = new Artifacts(
     options.stateDir,

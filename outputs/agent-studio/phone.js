@@ -753,15 +753,40 @@
     return steps;
   }
 
-  /* What a push or a link asks to open: '#chat=<id>&sheet=1' -> {chat, sheet}, or null. */
+  /* What a push or a link asks to open: '#chat=<id>&sheet=1' -> {chat, sheet}, or null. A notification's buttons (pwa/sw.js) add
+     '&reply=1' (Reply: the composer, keyboard up) or '&note=<code>' (a button that did not work: NOTIFY_NOTES says why). */
   function openTarget(hash) {
-    const m = /^#chat=([^&]{1,100})(&sheet=1)?$/.exec(String(hash || ''));
+    const m = /^#chat=([^&]{1,100})(&sheet=1)?(&reply=1)?(?:&note=([a-z_]{1,20}))?$/.exec(String(hash || ''));
     if (!m) return null;
     try {
-      return { chat: decodeURIComponent(m[1]), sheet: !!m[2] };
+      const out = { chat: decodeURIComponent(m[1]), sheet: !!m[2] };
+      if (m[3]) out.reply = true;
+      if (m[4]) out.note = m[4];
+      return out;
     } catch {
       return null;
     }
+  }
+
+  /* Why a notification's button did not work (server/remote/push_acts.ts NOTIFY_NOTES has the same words). */
+  const NOTIFY_NOTES = {
+    expired: 'That notification is too old. Answer it here.',
+    used: 'That button was already used.',
+    answered: 'This was already answered.',
+    gone: 'This was already answered.',
+    unknown: 'That notification is no longer valid. Answer it here.',
+    wrong_device: 'That notification was for another device.',
+    wrong_chat: 'That notification is no longer valid. Answer it here.',
+    not_allowed: 'Check this one here first.',
+    scope: 'This phone may not do that. Turn it on in AIB on your PC: Settings → Remote control.',
+    offline: 'AIB could not be reached. Try again here.',
+  };
+  const notifyNote = (code) => NOTIFY_NOTES[code] || 'That did not work. Try again here.';
+
+  /* The notifications still shown whose chat is no longer in the inbox (answered on the PC or another device): their keys. */
+  function staleNotifications(shown, rows) {
+    const keys = new Set((Array.isArray(rows) ? rows : []).map((r) => str(obj(r).key)));
+    return (Array.isArray(shown) ? shown : []).filter((n) => n && n.data && n.data.key && !keys.has(n.data.key));
   }
 
   /* Back steps (Android's back gesture, the browser's Back): every screen and sheet is one history entry, each entry carrying the
@@ -1382,6 +1407,8 @@
     isIPhone,
     setupSteps,
     openTarget,
+    notifyNote,
+    staleNotifications,
     navPlan,
     keyBytes,
     guessKind,
@@ -2205,6 +2232,7 @@
     if (r.status !== 200) throw new Offline('refused');
     S.home = r.data;
     S.homeRev = r.data.revision || '';
+    tidyNotifications(r.data);
     takeTheme(r.data);
     takeScopes(r.data.scopes);
     takeUpdate(r.data.update);
@@ -5702,6 +5730,32 @@
   }
 
   // ---- the service worker, notifications ----
+  /* A notification about a chat that is no longer in the inbox (answered on the PC or another phone) is taken away. */
+  function tidyNotifications(home) {
+    const sw = root.navigator.serviceWorker;
+    if (!sw || !obj(home).inbox || typeof sw.getRegistration !== 'function') return;
+    const rows = inboxOf(home).rows;
+    sw.getRegistration()
+      .then((reg) => (reg && reg.getNotifications ? reg.getNotifications({ tag: 'aib-attention' }) : []))
+      .then((shown) => staleNotifications(shown, rows).forEach((n) => n.close()))
+      .catch(() => {});
+  }
+
+  /* Where a notification lands: the chat (its card open), the composer focused (Reply), a short note (a button that failed). */
+  function landOn(open) {
+    openChat(open.chat, '', open.sheet);
+    if (open.note) toast(notifyNote(open.note));
+    if (!open.reply) return;
+    const until = Date.now() + 8000;
+    const focus = () => {
+      const ta = doc.getElementById('phPrompt');
+      if (S.screen !== 'chat' || S.chatId !== open.chat) return;
+      if (ta && !ta.disabled) return ta.focus();
+      if (Date.now() < until) setTimeout(focus, 150);
+    };
+    focus();
+  }
+
   function registerWorker() {
     const sw = root.navigator.serviceWorker;
     if (!sw || S.worker) return;
@@ -5711,7 +5765,10 @@
     });
     sw.addEventListener('message', (event) => {
       const d = event.data || {};
-      if (d.type === 'aib-open' && d.chat && S.device) openChat(String(d.chat), '', !!d.sheet); // a tap on a push
+      if (d.type === 'aib-open' && d.chat && S.device) {
+        // a tap on a push, or one of its buttons (Reply; a button that did not work brings its note)
+        landOn({ chat: String(d.chat), sheet: !!d.sheet, reply: d.reply === true, note: typeof d.note === 'string' ? d.note : '' });
+      }
     });
   }
 
@@ -6136,7 +6193,7 @@
       const open = S.openOnStart;
       S.openOnStart = null;
       if (open && open.chat) {
-        openChat(open.chat, '', open.sheet);
+        landOn(open);
         return;
       }
       S.screen = 'home';
@@ -6169,7 +6226,7 @@
     // the link added a history entry: it is taken over (no #chat=… left in the address), and the chat opens over the list
     NAV.stack = NAV.stack.concat([{ k: 'link' }]);
     root.history.replaceState(navState(NAV.stack), '', root.location.pathname);
-    if (S.device && S.booted) openChat(open.chat, '', open.sheet);
+    if (S.device && S.booted) landOn(open);
     else S.openOnStart = open;
   });
   // Artifact links in replies (studio-artifact://<id>, or a link to the phone's artifact origin) open the viewer here.

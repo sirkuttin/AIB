@@ -315,6 +315,9 @@ Deno.test({
         chat: 'c1',
         sheet: true,
         open: '/phone.html#chat=c1&sheet=1',
+        // 0.13: one chat's push carries its row key and buttons (remote/push_acts.ts); a request with no once-options: Open only
+        key: 'claude:s1',
+        actions: [{ action: 'open', title: 'Open' }],
       });
     } finally {
       await watcher.stop();

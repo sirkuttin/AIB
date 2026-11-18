@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Phone notifications: buttons, like the Windows notifications. A notification on the phone about one chat now has the two
+  buttons that fit its kind (Android Chrome shows at most two): **Allow** · **Deny** for an ordinary approval, **Reply** · **Open**
+  for a question in a reply or a finished chat, **Continue** · **Open** for a chat that stopped mid-work, **Retry** · **Open** for a
+  failed turn. A risky command (push, force push, delete), AIB's merge request, or anything the phone may not pick gets **Open**
+  only. Allow, Deny, Continue and Retry act straight from the notification, without opening the app, through the phone's own
+  checks and switches (**Approve once** for Allow and Deny, **Send** for the rest) and one line in the phone activity log. Each
+  button carries a one-time code for that phone and that request; it is refused once it is used, older than 12 hours, or the
+  request was answered anywhere, and then the phone page opens on the chat with a short note. Chrome has no text box on a web
+  notification, so **Reply** opens the phone page on the chat's message box with the cursor in it. A notification is taken off the
+  phone once its request is answered on the PC or another device.
 - aib-shared/: one shared folder for every chat, helper and subagent. The project's local-only folder `private/` is now
   `aib-shared/`. It lives only in the project's main folder, and every worktree AIB makes gets a link named `aib-shared` to it (a
   directory junction on Windows, a symlink in WSL), so a note a subagent writes in its worktree is in the main folder at once, with

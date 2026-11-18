@@ -16,6 +16,8 @@ import { SavedChats } from './saved.ts';
 import { ArtifactTickets, remoteArtifactOrigin, RemoteArtifactServer } from './artifact_server.ts';
 import { BIND_RETRY_MS, PortBusy, portFree, remoteArtifactPort, remotePort } from './port.ts';
 import { PushSender, VapidKeys } from './push.ts';
+import { ToastCodes } from '../desktop/toast.ts';
+import type { InboxRow } from '../attention/inbox_rules.ts';
 import { qrSvg } from './qr.ts';
 import { RemoteServer } from './server.ts';
 import { artifactServeCommand, readTailscale, type Runner, serveCommand, type TailscaleState } from './tailscale.ts';
@@ -25,6 +27,7 @@ import { DeviceSockets, type SocketKind } from './pc_sockets.ts';
 import { DeviceViewPrefs } from './pc_page.ts';
 
 export const ACCESS_FILE = 'phone-access.json';
+export const PUSH_CODES_FILE = 'push-codes.json';
 /** A phone's switches as Settings > Remote control names them (for the activity log). */
 const SCOPE_LABELS: Record<string, string> = {
   'phone.read': 'See chats',
@@ -66,6 +69,8 @@ export interface AccessOptions {
   avoid?: () => number[];
   /** Tests: the fetch pushes go out with (a fake push service). */
   pushFetch?: typeof fetch;
+  /** Tests: the clock and lifetime of the one-time codes on notification buttons (push-codes.json). */
+  pushCodes?: { clock?: () => number; ttlMs?: number };
   /** Tests: the setup buttons' programs, downloads and browser (remote/setup.ts SetupEnv), over the real ones. */
   setupEnv?: Partial<SetupEnv>;
   log?: (message: string) => void;
@@ -81,6 +86,8 @@ export class PhoneAccess implements SetupHost {
   /** The VAPID keys (push-keys.json) and the sender of phone pushes (remote/push.ts). */
   readonly vapid: VapidKeys;
   readonly push: PushSender;
+  /** The one-time codes on phone notification buttons (remote/push_acts.ts), hashes only, in <state>/push-codes.json. */
+  readonly pushCodes: ToastCodes;
   on = false;
   via = 'tailscale';
   tailscale: TailscaleState | null = null;
@@ -112,7 +119,11 @@ export class PhoneAccess implements SetupHost {
     this.devices = new DeviceStore(stateDir);
     this.audit = new Audit(stateDir);
     this.vapid = new VapidKeys(stateDir);
-    this.push = new PushSender(this.devices, this.vapid, options.pushFetch);
+    this.pushCodes = new ToastCodes({ file: inDir(stateDir, PUSH_CODES_FILE), ...options.pushCodes });
+    this.push = new PushSender(this.devices, this.vapid, options.pushFetch, {
+      codes: this.pushCodes,
+      rowOf: (key) => this.ctx.inbox?.latest()?.rows.find((r) => r.key === key) ?? null,
+    });
     this.sockets = new DeviceSockets({ allowed: (id, kind) => this.socketAllowed(id, kind) });
     const [status, data] = readJsonFile(inDir(stateDir, ACCESS_FILE));
     if (status === 'ok' && data && typeof data === 'object') {
@@ -122,6 +133,15 @@ export class PhoneAccess implements SetupHost {
       this.pendingUnshare = d.pendingUnshare === true;
     }
     this.setup = new TailscaleSetup(this, stateDir, { ...defaultEnv(), ...options.setupEnv });
+  }
+
+  /** Every inbox built (web/server.ts makeContext): a phone notification whose request was answered anywhere is taken away. */
+  watchInbox(inbox: { watch(fn: (inbox: { rows: InboxRow[] }) => void): () => void }): () => void {
+    let running: Promise<void> = Promise.resolve();
+    return inbox.watch((built) => {
+      if (!this.on) return;
+      running = running.then(() => this.push.seeInbox(built)).catch(() => {});
+    });
   }
 
   #saveAccess(): void {

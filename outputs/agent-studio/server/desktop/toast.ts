@@ -179,11 +179,13 @@ export function toastTag(chat: string): string {
 
 // ---------- the one-time codes ----------
 
-export type CodeRefusal = 'unknown' | 'used' | 'expired' | 'wrong_chat' | 'not_allowed' | 'answered';
+export type CodeRefusal = 'unknown' | 'used' | 'expired' | 'wrong_chat' | 'wrong_device' | 'not_allowed' | 'answered';
 
 interface CodeEntry {
   h: string;
   chat: string;
+  /** The paired phone a phone notification's code was issued to (remote/push_acts.ts); '' for a Windows toast's. */
+  device?: string;
   sig: string;
   acts: ToastAct[];
   exp: number;
@@ -212,6 +214,7 @@ export class ToastCodes {
             this.#codes.set(c.h, {
               h: c.h,
               chat: c.chat,
+              ...(typeof c.device === 'string' && c.device ? { device: c.device } : {}),
               sig: c.sig,
               acts: c.acts as ToastAct[],
               exp: Number(c.exp) || 0,
@@ -224,20 +227,29 @@ export class ToastCodes {
     }
   }
 
-  /** A new code for this chat's toast; the chat's older codes stop working (one toast per chat). */
-  issue(chat: string, sig: string, acts: ToastAct[]): string {
-    this.revokeChat(chat, false);
+  /** A new code for this chat's toast; the chat's older codes stop working (one toast per chat). `device`: a phone notification's
+   * code is good for that paired phone only (its older codes for the chat stop working; other phones' stay). */
+  issue(chat: string, sig: string, acts: ToastAct[], device = ''): string {
+    this.revokeChat(chat, false, device);
     const code = randomBytes(18).toString('base64url');
     const h = hashOf(code);
-    this.#codes.set(h, { h, chat, sig, acts: [...acts], exp: this.clock() + (this.options.ttlMs ?? CODE_TTL_MS) });
+    const exp = this.clock() + (this.options.ttlMs ?? CODE_TTL_MS);
+    this.#codes.set(h, { h, chat, ...(device ? { device } : {}), sig, acts: [...acts], exp });
     this.#save();
     return code;
   }
 
   /** Is this click good? currentSig: the chat's row's signature now (null: the chat no longer needs you). Good once. */
-  check(code: string, chat: string, act: string, currentSig: string | null): { ok: true } | { ok: false; reason: CodeRefusal } {
+  check(
+    code: string,
+    chat: string,
+    act: string,
+    currentSig: string | null,
+    device = '',
+  ): { ok: true } | { ok: false; reason: CodeRefusal } {
     const e = code ? this.#codes.get(hashOf(code)) : undefined;
     if (!e) return { ok: false, reason: 'unknown' };
+    if ((e.device ?? '') !== device) return { ok: false, reason: 'wrong_device' };
     if (e.used) return { ok: false, reason: 'used' };
     if (this.clock() > e.exp) return { ok: false, reason: 'expired' };
     if (e.chat !== chat) return { ok: false, reason: 'wrong_chat' };
@@ -248,11 +260,11 @@ export class ToastCodes {
     return { ok: true };
   }
 
-  /** The chat's codes stop working (its request was answered elsewhere). */
-  revokeChat(chat: string, save = true): void {
+  /** The chat's codes stop working (its request was answered elsewhere); `device`: only that phone's ('' a toast's; none: all). */
+  revokeChat(chat: string, save = true, device?: string): void {
     let changed = false;
     for (const [h, e] of this.#codes) {
-      if (e.chat === chat) {
+      if (e.chat === chat && (device === undefined || (e.device ?? '') === device)) {
         this.#codes.delete(h);
         changed = true;
       }

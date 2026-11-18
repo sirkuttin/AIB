@@ -49,7 +49,10 @@ import { bringBack, restoreFolders } from '../web/project_routes.ts';
 import { isDeleted, isDocHistory } from '../artifacts/artifacts.ts';
 import { SAVED_KEY } from './saved.ts';
 import { cleanPushSub, PUSH_HOSTS, PUSH_HOST_SUFFIXES, pushSubProblem, scopesForPhone } from './devices.ts';
-import type { VapidKeys } from './push.ts';
+import type { PushSender, VapidKeys } from './push.ts';
+import type { ToastCodes } from '../desktop/toast.ts';
+import { onceOptions } from '../desktop/toast.ts';
+import { pushActs, rowSig, scopeOfAct } from './push_acts.ts';
 import { getLogger } from '../core/log.ts';
 import { PC_OWN_ROUTES, PcBridge } from './pc_bridge.ts';
 import { answeredElsewhere, answerOf, answersOf } from '../attention/answers.ts';
@@ -136,7 +139,8 @@ export type RemoteAuth =
   | 'left'
   | 'phone'
   | 'pc'
-  | 'update';
+  | 'update'
+  | 'notify';
 /** A whole non-negative number from the query (a seq), or null when it is missing or not one. */
 function seqParam(url: URL, name: string): number | null {
   const v = url.searchParams.get(name);
@@ -198,6 +202,8 @@ export const REMOTE_ROUTES: readonly [string, string, RemoteAuth][] = [
   // Phase C: this phone's Web Push subscription (the Push switch on the PC decides whether anything is sent to it).
   ['POST', '/api/remote/push/subscribe', 'push'],
   ['POST', '/api/remote/push/unsubscribe', 'push'],
+  // 0.13: a button on a phone notification (remote/push_acts.ts): a one-time code, then the same checks as the phone's own routes
+  ['POST', '/api/remote/notify-act', 'notify'],
   // Phone UI v2 part 2 (remote/newchat.ts, phone_ops.ts): New chat (the Start new chats switch), the chat card menu (every paired
   // phone; ending a session needs Send), a chat's artifacts.
   ['GET', '/api/remote/new/options', 'device'],
@@ -266,6 +272,7 @@ export const ROUTE_SCOPE: Readonly<Record<string, PhoneScope>> = {
   'POST /api/remote/authenticate': 'phone.read',
   'POST /api/remote/push/subscribe': 'phone.push',
   'POST /api/remote/push/unsubscribe': 'phone.read',
+  'POST /api/remote/notify-act': 'phone.read', // and each button's own switch: Approve once (Allow, Deny), Send (Continue, Retry)
   // phase 1b: the computer page's own routes (a computer only: remote/pc_page.ts)
   'GET /api/remote/pc/bootstrap': 'phone.read',
   'GET /api/remote/pc/view-prefs': 'phone.read',
@@ -299,6 +306,9 @@ export interface RemoteHost {
   saved: SavedChats;
   /** The VAPID keys a phone subscribes with (remote/push.ts). */
   vapid: VapidKeys;
+  /** The one-time codes on phone notification buttons and the sender that tracks what each phone shows (remote/push_acts.ts). */
+  pushCodes?: ToastCodes;
+  push?: Pick<PushSender, 'forget'>;
   /** The tailnet name requests must be addressed to ('' = refuse everything). */
   name(): string;
   /** Phase D: https://<name>:8443 while the artifact port listens, else ''. */
@@ -595,6 +605,8 @@ export class RemoteServer {
           return await this.#pcRoute(request, url, path);
         case 'update':
           return await this.#update(request, path);
+        case 'notify':
+          return await this.#notifyAct(request);
       }
     } catch (error) {
       if (error instanceof HostUnavailable) {
@@ -1055,6 +1067,64 @@ export class RemoteServer {
       if (k in answer) out[k] = answer[k];
     }
     return this.json(200, out);
+  }
+
+  /**
+   * A button on a phone notification (pwa/sw.js; remote/push_acts.ts): {key, act, code}. The phone's key, then the button's own
+   * switch (Approve once for Allow / Deny, Send for Continue / Retry), then the one-time code (this phone's, this chat's, this
+   * request's, not used, not expired), then the row as it is now must still get that button (a risky command never gets Allow),
+   * then the same path as the phone's own routes: checkAction + the live op for Allow / Deny, the inbox's Continue / Retry. One
+   * activity line ("notification: allow") either way. A refusal answers {code}; the phone page then opens on the chat with a note.
+   */
+  async #notifyAct(request: Request): Promise<Response> {
+    const body = await this.#body(request);
+    const device = this.#device(request, ROUTE_SCOPE['POST /api/remote/notify-act']);
+    if (device instanceof Response) return device;
+    const key = typeof body?.key === 'string' ? body.key.slice(0, 600) : '';
+    const act = typeof body?.act === 'string' ? body.act : '';
+    const code = typeof body?.code === 'string' ? body.code.slice(0, 100) : '';
+    const audit = (result: string, chat = key) =>
+      this.host.audit.write({ device: device.id, name: device.name, action: `notification: ${act}`.slice(0, 40), chat, result });
+    const refuse = (status: number, why: string, message: string) => {
+      audit(`refused: ${why}`);
+      return this.json(status, { error: message, code: why });
+    };
+    if (!SAVED_KEY.test(key) || !['allow', 'deny', 'continue', 'retry'].includes(act)) {
+      return refuse(400, 'invalid', 'Invalid request');
+    }
+    if (!device.scopes.includes(scopeOfAct(act) as PhoneScope)) {
+      return refuse(403, 'scope', `This phone may not ${SCOPE_WORDS[scopeOfAct(act)]}. Turn it on for this phone in AIB on your PC: Settings → Remote control.`);
+    }
+    const codes = this.host.pushCodes;
+    if (!codes) return refuse(409, 'unknown', 'That notification is no longer valid.');
+    const ctx = this.host.ctx;
+    const row = (await ctx.inbox.look()).rows.find((r) => r.key === key) ?? null;
+    const verdict = codes.check(code, key, act, row ? rowSig(row) : null, device.id);
+    if (!verdict.ok) return refuse(409, verdict.reason, 'That notification is no longer valid.');
+    if (!row || !pushActs(row, device.scopes).includes(act as 'allow')) return refuse(403, 'not_allowed', 'Check this one in the chat first.');
+    this.host.push?.forget(device.id, key);
+    if (device.kind !== 'computer') ctx.presence.phoneInput(device.id);
+    if (act === 'allow' || act === 'deny') {
+      const { allow, deny } = onceOptions(row);
+      const option = act === 'allow' ? allow : deny;
+      if (!option || row.request?.kind !== 'permission') return refuse(403, 'not_allowed', 'Check this one in the chat first.');
+      let checked: Record<string, unknown>;
+      try {
+        checked = await checkAction(ctx, 'permission', { id: row.id, key: row.request.key, option: option.optionId });
+      } catch (error) {
+        if (!(error instanceof Refusal)) throw error;
+        return refuse(error.status, error.code, error.message);
+      }
+      const [status] = await ctx.host.liveCall('permission', checked);
+      if (status === 200) answersOf(ctx).note(checked.id, checked.key, { by: device.id, name: device.name, ...answerOf('permission', checked) });
+      audit(status === 200 ? 'done' : `failed (${status})`, row.id);
+      return status === 200 ? this.json(200, { ok: true }) : this.json(status, { error: 'That did not work.', code: 'failed' });
+    }
+    const [status, answer] = await inboxAct(ctx, { key, action: act });
+    audit(status === 200 ? 'done' : `failed (${status})`, row.id);
+    return status === 200
+      ? this.json(200, { ok: true })
+      : this.json(status, { error: String(answer.error ?? 'That did not work.'), code: String(answer.code ?? 'failed') });
   }
 
   /** A chat's artifacts for its Artifacts page (phone shape: no links, no paths). `key` provider:sessionId; `id` its live id (only
