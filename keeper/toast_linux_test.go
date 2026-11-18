@@ -4,11 +4,13 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -172,5 +174,101 @@ func TestFdoHelperOnRealBus(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(data, "toast-helper.pid")); err == nil {
 		t.Fatal("pid file left")
+	}
+}
+
+// Review finding 2 on the real bus: another client's ActionInvoked / NotificationReplied / NotificationClosed / ActivationToken
+// (broadcast, and sent straight to the helper's connection, which match rules do not filter) never come through; the server's do.
+// A forged NameOwnerChanged moves nothing. A restarted notification server is a reset, and from then on only the new owner counts.
+func TestFdoBusOnlyTheServerCanClick(t *testing.T) {
+	srv := fdoBusOrSkip(t, "actions", "body")
+	var mu sync.Mutex
+	var logs []string
+	old := fdoLog
+	fdoLog = func(f string, a ...any) { mu.Lock(); logs = append(logs, fmt.Sprintf(f, a...)); mu.Unlock() }
+	defer func() { fdoLog = old }()
+	bus, err := connectFdo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bus.Close()
+	if _, err := bus.Caps(); err != nil {
+		t.Fatal(err)
+	}
+	id, err := bus.Notify(fdoNote{AppName: "AIB", Title: "T", Actions: []string{"b0", "Allow"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rogue, err := dbus.ConnectSessionBus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rogue.Close()
+	helper := srv.Client()
+	for _, dest := range []string{"", helper} {
+		fakenotify.Rogue(rogue, dest, "ActivationToken", id, "evil")
+		fakenotify.Rogue(rogue, dest, "ActionInvoked", id, "b0")
+		fakenotify.Rogue(rogue, dest, "NotificationReplied", id, "rm -rf ~")
+		fakenotify.Rogue(rogue, dest, "NotificationClosed", id, uint32(2))
+	}
+	forged := &dbus.Message{Type: dbus.TypeSignal, Headers: map[dbus.HeaderField]dbus.Variant{
+		dbus.FieldPath: dbus.MakeVariant(dbus.ObjectPath(dbusPath)), dbus.FieldInterface: dbus.MakeVariant(dbusName),
+		dbus.FieldMember: dbus.MakeVariant("NameOwnerChanged"), dbus.FieldDestination: dbus.MakeVariant(helper),
+		dbus.FieldSignature: dbus.MakeVariant(dbus.SignatureOf("", "", "")),
+	}, Body: []interface{}{fdoName, "", rogue.Names()[0]}}
+	if err := rogue.Send(forged, nil).Err; err != nil {
+		t.Fatal(err)
+	}
+	fakenotify.Rogue(rogue, helper, "ActionInvoked", id, "b0")
+	srv.Invoke(id, "b0", "")
+	next := func() fdoSignal {
+		select {
+		case s := <-bus.Signals():
+			return s
+		case <-time.After(3 * time.Second):
+			t.Fatal("no signal")
+			return fdoSignal{}
+		}
+	}
+	if s := next(); s != (fdoSignal{Kind: "action", ID: id, Key: "b0"}) {
+		t.Fatalf("the first signal through is %+v, not the server's click", s)
+	}
+	if s := next(); s.Kind != "closed" {
+		t.Fatalf("%+v", s)
+	}
+	mu.Lock()
+	n := len(logs)
+	mu.Unlock()
+	// logged: the four sent straight to the helper, the forged owner change and the click after it. The broadcasts never reach
+	// the helper at all: the bus routes only the owner's (sender= in the match rule).
+	if n != 6 {
+		t.Fatalf("dropped and logged %d: %v", n, logs)
+	}
+
+	// the notification server restarts: gone, then a new owner (each a reset); the old connection's clicks no longer count
+	srv.Stop()
+	conn2, err := dbus.ConnectSessionBus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn2.Close()
+	srv2, err := fakenotify.Start(conn2, []string{"actions", "body"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := next(); s.Kind != "reset" {
+		t.Fatalf("%+v", s)
+	}
+	if s := next(); s.Kind != "reset" {
+		t.Fatalf("%+v", s)
+	}
+	id2, err := bus.Notify(fdoNote{AppName: "AIB", Title: "T", Actions: []string{"b0", "Allow"}})
+	if err != nil || srv2.Calls()[0].ID != id2 {
+		t.Fatalf("notify after the restart: %d %v", id2, err)
+	}
+	srv.Invoke(id2, "b0", "") // the old server's connection, still on the bus
+	srv2.Invoke(id2, "b0", "")
+	if s := next(); s != (fdoSignal{Kind: "action", ID: id2, Key: "b0"}) {
+		t.Fatalf("%+v", s)
 	}
 }

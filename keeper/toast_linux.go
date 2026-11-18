@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -27,9 +28,7 @@ func realToastDeps() (toastDeps, error) {
 }
 
 const (
-	fdoName  = "org.freedesktop.Notifications"
-	fdoPath  = dbus.ObjectPath("/org/freedesktop/Notifications")
-	fdoIface = "org.freedesktop.Notifications"
+	fdoPath = dbus.ObjectPath(fdoPathStr)
 	// codeTTL: how long a lingering helper waits for a click after AIB quit (CODE_TTL_MS in server/desktop/toast.ts).
 	codeTTL = 12 * time.Hour
 )
@@ -38,54 +37,102 @@ type dbusFdo struct {
 	conn *dbus.Conn
 	obj  dbus.BusObject
 	sigs chan fdoSignal
+	gate fdoGate
+	// the queue between godbus' reader (fdoSignalQueue.DeliverSignal must never block it) and sigs
+	mu    sync.Mutex
+	queue []fdoSignal
+	wake  chan struct{}
+	done  bool
 }
 
+// fdoSignalQueue is the connection's signal handler: it runs on godbus' reader, in message order, so an owner change is in the
+// gate before the reply of any call made after it is seen (a Notify answered by a restarted server gets the new generation).
+type fdoSignalQueue struct{ b *dbusFdo }
+
+func (q fdoSignalQueue) DeliverSignal(iface, member string, s *dbus.Signal) {
+	if s == nil {
+		return
+	}
+	sig, ok := q.b.gate.read(s.Sender, string(s.Path), s.Name, s.Body)
+	if !ok {
+		return
+	}
+	b := q.b
+	b.mu.Lock()
+	if !b.done {
+		b.queue = append(b.queue, sig)
+	}
+	b.mu.Unlock()
+	select {
+	case b.wake <- struct{}{}:
+	default:
+	}
+}
+
+// Terminate: godbus closed the connection (Close, or the bus went away).
+func (q fdoSignalQueue) Terminate() {
+	q.b.mu.Lock()
+	q.b.done = true
+	q.b.mu.Unlock()
+	select {
+	case q.b.wake <- struct{}{}:
+	default:
+	}
+}
+
+func (b *dbusFdo) pump() {
+	defer close(b.sigs)
+	for range b.wake {
+		for {
+			b.mu.Lock()
+			if len(b.queue) == 0 {
+				done := b.done
+				b.mu.Unlock()
+				if done {
+					return
+				}
+				break
+			}
+			sig := b.queue[0]
+			b.queue = b.queue[1:]
+			b.mu.Unlock()
+			b.sigs <- sig
+		}
+	}
+}
+
+// connectFdo: the notification signals are matched with sender=org.freedesktop.Notifications (the bus routes only the owner's),
+// and every signal's sender is checked against the owner's unique name too (fdoGate), since a signal sent straight to this
+// connection (with a destination) skips match rules. The owner is resolved after the NameOwnerChanged match is in place, so no
+// change is missed in between.
 func connectFdo() (fdoBus, error) {
-	conn, err := dbus.ConnectSessionBus()
+	b := &dbusFdo{sigs: make(chan fdoSignal, 64), wake: make(chan struct{}, 1)}
+	conn, err := dbus.ConnectSessionBus(dbus.WithSignalHandler(fdoSignalQueue{b}))
 	if err != nil {
 		return nil, err
 	}
-	if err := conn.AddMatchSignal(dbus.WithMatchObjectPath(fdoPath), dbus.WithMatchInterface(fdoIface)); err != nil {
-		conn.Close()
-		return nil, err
-	}
-	raw := make(chan *dbus.Signal, 64)
-	conn.Signal(raw)
-	b := &dbusFdo{conn: conn, obj: conn.Object(fdoName, fdoPath), sigs: make(chan fdoSignal, 64)}
-	go func() {
-		defer close(b.sigs)
-		for s := range raw { // closed by godbus when the connection ends
-			if sig, ok := fdoSignalOf(s); ok {
-				b.sigs <- sig
-			}
+	b.conn, b.obj = conn, conn.Object(fdoName, fdoPath)
+	go b.pump()
+	for _, rule := range [][]dbus.MatchOption{
+		{dbus.WithMatchSender(dbusName), dbus.WithMatchObjectPath(dbusPath), dbus.WithMatchInterface(dbusName),
+			dbus.WithMatchMember("NameOwnerChanged"), dbus.WithMatchArg(0, fdoName)},
+		{dbus.WithMatchSender(fdoName), dbus.WithMatchObjectPath(fdoPath), dbus.WithMatchInterface(fdoIface)},
+	} {
+		if err := conn.AddMatchSignal(rule...); err != nil {
+			conn.Close()
+			return nil, err
 		}
-	}()
+	}
+	gen := b.gate.Gen()
+	var owner string
+	if err := conn.BusObject().Call(dbusName+".GetNameOwner", 0, fdoName).Store(&owner); err == nil {
+		// none yet (not started): it comes with NameOwnerChanged, e.g. when GetCapabilities starts it
+		b.gate.initOwner(gen, owner)
+	}
 	return b, nil
 }
 
-// fdoSignalOf reads one bus signal of the notification interface.
-func fdoSignalOf(s *dbus.Signal) (fdoSignal, bool) {
-	if s == nil || s.Path != fdoPath || len(s.Body) < 2 {
-		return fdoSignal{}, false
-	}
-	id, ok := s.Body[0].(uint32)
-	if !ok {
-		return fdoSignal{}, false
-	}
-	str, _ := s.Body[1].(string)
-	switch s.Name {
-	case fdoIface + ".ActionInvoked":
-		return fdoSignal{Kind: "action", ID: id, Key: str}, true
-	case fdoIface + ".NotificationReplied":
-		return fdoSignal{Kind: "reply", ID: id, Text: str}, true
-	case fdoIface + ".ActivationToken":
-		return fdoSignal{Kind: "token", ID: id, Token: str}, true
-	case fdoIface + ".NotificationClosed":
-		reason, _ := s.Body[1].(uint32)
-		return fdoSignal{Kind: "closed", ID: id, Reason: reason}, true
-	}
-	return fdoSignal{}, false
-}
+func (b *dbusFdo) Gen() uint64 { return b.gate.Gen() }
 
 func (b *dbusFdo) call(method string, args ...interface{}) *dbus.Call {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -134,7 +181,12 @@ func realFdoDeps() (fdoDeps, error) {
 	// Its own session: AIB quitting (a terminal's Ctrl+C, a closed process group) leaves a helper that still waits for a click.
 	syscall.Setsid()
 	signal.Ignore(syscall.SIGPIPE, syscall.SIGHUP)
+	term := make(chan os.Signal, 1)
+	signal.Notify(term, syscall.SIGTERM)
+	stop := make(chan struct{})
+	go func() { <-term; close(stop) }()
 	return fdoDeps{
+		stop:    stop,
 		connect: connectFdo,
 		launch:  launchAIB,
 		claim:   claimHelper,
@@ -171,15 +223,20 @@ func launchAIB(program, token string) error {
 func helperPidFile(data string) string { return filepath.Join(data, "toast-helper.pid") }
 
 // claimHelper stops a helper that still lingers from an earlier AIB (only if that pid really is an `AIB-keeper toast`) and
-// records this one.
+// records this one. This one's pid is written before the old one is signalled: the old one removes the file on SIGTERM only while
+// it still names the old one, so it never removes this one's.
 func claimHelper(data string) {
 	file := helperPidFile(data)
+	old := 0
 	if b, err := os.ReadFile(file); err == nil {
 		if pid, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && pid > 1 && pid != os.Getpid() && isToastHelper(pid) {
-			syscall.Kill(pid, syscall.SIGTERM)
+			old = pid
 		}
 	}
 	os.WriteFile(file, []byte(strconv.Itoa(os.Getpid())+"\n"), 0o600)
+	if old != 0 {
+		syscall.Kill(old, syscall.SIGTERM)
+	}
 }
 
 func isToastHelper(pid int) bool {

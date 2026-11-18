@@ -36,6 +36,7 @@ type Server struct {
 	next   uint32
 	calls  []Call
 	closed []uint32
+	client string // the unique name of the last Notify caller (AIB's helper)
 	// OnNotify / OnClose are called for each Notify / CloseNotification (after it is recorded).
 	OnNotify func(Call)
 	OnClose  func(id uint32)
@@ -50,7 +51,7 @@ func (o busObj) GetServerInformation() (string, string, string, string, *dbus.Er
 	return "fakenotify", "AIB tests", "1", "1.2", nil
 }
 
-func (o busObj) Notify(app string, replaces uint32, icon, summary, body string, actions []string, hints map[string]dbus.Variant,
+func (o busObj) Notify(from dbus.Sender, app string, replaces uint32, icon, summary, body string, actions []string, hints map[string]dbus.Variant,
 	timeout int32) (uint32, *dbus.Error) {
 	s := o.s
 	s.mu.Lock()
@@ -65,6 +66,7 @@ func (o busObj) Notify(app string, replaces uint32, icon, summary, body string, 
 	}
 	c := Call{ID: id, AppName: app, ReplacesID: replaces, Icon: icon, Summary: summary, Body: body, Actions: actions, Hints: plain, Timeout: timeout}
 	s.calls = append(s.calls, c)
+	s.client = string(from)
 	fn := s.OnNotify
 	s.mu.Unlock()
 	if fn != nil {
@@ -124,6 +126,38 @@ func (s *Server) Reply(id uint32, text string) error { return s.emit("Notificati
 
 // Dismiss is the person closing it (reason 2).
 func (s *Server) Dismiss(id uint32) error { return s.emit("NotificationClosed", id, uint32(2)) }
+
+// Client is the unique bus name of the last Notify caller.
+func (s *Server) Client() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.client
+}
+
+// Stop gives up org.freedesktop.Notifications (a notification server going away; Start on another connection is its restart).
+func (s *Server) Stop() error {
+	_, err := s.conn.ReleaseName(Name)
+	s.conn.Export(nil, Path, Iface)
+	return err
+}
+
+// Rogue is any other program on the session bus faking the notification server's signal: on conn (not the server's), broadcast
+// when dest is empty, else sent straight to dest (a unicast signal, which match rules do not filter).
+func Rogue(conn *dbus.Conn, dest, member string, args ...interface{}) error {
+	if dest == "" {
+		return conn.Emit(Path, Iface+"."+member, args...)
+	}
+	msg := &dbus.Message{Type: dbus.TypeSignal, Headers: map[dbus.HeaderField]dbus.Variant{
+		dbus.FieldPath:        dbus.MakeVariant(Path),
+		dbus.FieldInterface:   dbus.MakeVariant(Iface),
+		dbus.FieldMember:      dbus.MakeVariant(member),
+		dbus.FieldDestination: dbus.MakeVariant(dest),
+	}, Body: args}
+	if len(args) > 0 {
+		msg.Headers[dbus.FieldSignature] = dbus.MakeVariant(dbus.SignatureOf(args...))
+	}
+	return conn.Send(msg, nil).Err
+}
 
 func (s *Server) Calls() []Call {
 	s.mu.Lock()

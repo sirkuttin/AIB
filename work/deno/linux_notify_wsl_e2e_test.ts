@@ -8,7 +8,11 @@
  *    the inline reply's text is sent to the chat; Continue and Retry act; a request answered elsewhere gets CloseNotification;
  *  - AIB quit: the helper stays, writes the click to toast-inbox.jsonl, starts AIB's program with the activation token and exits;
  *    AIB, started again, applies the click with the code it issued before quitting;
- *  - GNOME-like server (no inline-reply, body-markup): the reply box is an Open button that opens the chat; the body is escaped.
+ *  - GNOME-like server (no inline-reply, body-markup): the reply box is an Open button that opens the chat; body and title are
+ *    escaped;
+ *  - a second, rogue bus client faking ActionInvoked / NotificationReplied / NotificationClosed for AIB's ids (broadcast and sent
+ *    straight to the helper) is ignored, while the real server's signals act; a restarted notification server still works;
+ *  - the next AIB's helper SIGTERMs a lingering one, which closes its notifications and leaves the pid file to the new one.
  */
 import { assert, assertEquals } from './_assert.ts';
 import type { InboxRow } from '../../outputs/agent-studio/server/attention/inbox_rules.ts';
@@ -260,7 +264,9 @@ Deno.test({
       '-test.v',
     ]);
     assertEquals(r.code, 0, r.stdout);
-    assert(r.stdout.includes('--- PASS: TestFdoHelperOnRealBus') && r.stdout.includes('--- PASS: TestDbusFdoNotifyHintsSignals'), r.stdout);
+    for (const name of ['TestFdoHelperOnRealBus', 'TestDbusFdoNotifyHintsSignals', 'TestFdoBusOnlyTheServerCanClick']) {
+      assert(r.stdout.includes(`--- PASS: ${name}`), r.stdout);
+    }
   },
 });
 
@@ -372,7 +378,7 @@ Deno.test({
     const server = await fakeServer(bin.wsl, 'actions,body,body-markup,persistence');
     let r: WindowsToasts | null = null;
     try {
-      const rows = [row(3, 'asks')];
+      const rows = [{ ...row(3, 'asks'), title: 'Chat <i>3</i> & co' }];
       const codes = new ToastCodes();
       const aib = fakeAib(rows, codes);
       r = route(wslHelper(bin.wsl, server.address, '', []), dir, rows, codes, aib);
@@ -381,6 +387,7 @@ Deno.test({
       const c = server.calls()[0];
       assertEquals(c.actions, ['default', 'Open', 'b0', 'Open']);
       assertEquals(c.body, 'Use &lt;b&gt;bold&lt;/b&gt; &amp; more');
+      assertEquals(c.summary, 'Chat &lt;i&gt;3&lt;/i&gt; &amp; co', 'an agent-made chat name never becomes markup either');
       assert(!('x-kde-reply-placeholder-text' in c.hints));
       await server.tell({ op: 'invoke', id: c.id, key: 'b0' });
       await until('the chat opened', () => aib.opened.length === 1);
@@ -388,6 +395,122 @@ Deno.test({
       assertEquals(aib.calls, []);
     } finally {
       r?.close();
+      await server.stop();
+      await Deno.remove(dir, { recursive: true }).catch(() => {});
+    }
+  },
+});
+
+Deno.test({
+  ...OPTS,
+  name: 'linux notifications (WSL): another bus client cannot click or reply; a restarted notification server still works',
+  ignore: !READY,
+  async fn() {
+    const bin = await binaries();
+    const dir = await Deno.makeTempDir({ prefix: 'aib-fdo-rogue-' });
+    const server = await fakeServer(bin.wsl, 'actions,body,inline-reply');
+    let r: WindowsToasts | null = null;
+    try {
+      const rows = [row(1, 'approval'), row(2, 'approval'), row(3, 'asks')];
+      const codes = new ToastCodes();
+      const aib = fakeAib(rows, codes);
+      r = route(wslHelper(bin.wsl, server.address, '', []), dir, rows, codes, aib);
+      assert(await r.start());
+      const callOf = (n: number) => server.calls().filter((c) => c.summary === `Chat ${n}`).at(-1)!;
+      await show(r, rows[0]);
+      await show(r, rows[2]);
+      const c1 = callOf(1), c3 = callOf(3);
+      // a program on the session bus (an agent's shell command) fakes the server's signals for AIB's ids: broadcast, and sent
+      // straight to the helper's connection
+      const rogue = async () => {
+        for (const unicast of [false, true]) {
+          await server.tell({ op: 'rogue', member: 'ActivationToken', id: c1.id, token: 'evil', unicast });
+          await server.tell({ op: 'rogue', member: 'ActionInvoked', id: c1.id, key: 'b0', unicast });
+          await server.tell({ op: 'rogue', member: 'ActionInvoked', id: c1.id, key: 'default', unicast });
+          await server.tell({ op: 'rogue', member: 'NotificationReplied', id: c3.id, text: 'rm -rf ~', unicast });
+          await server.tell({ op: 'rogue', member: 'NotificationClosed', id: c1.id, unicast });
+          await server.tell({ op: 'rogue', member: 'NotificationClosed', id: c3.id, unicast });
+        }
+      };
+      await rogue();
+      assert(server.events.filter((e) => e.ev === 'done' && e.op === 'rogue').every((e) => e.ok), 'the rogue signals were sent');
+      await new Promise((res) => setTimeout(res, 600));
+      assertEquals(aib.calls, [], 'nothing approved, no reply sent');
+      assertEquals(aib.opened, [], 'nothing opened');
+      // the real server's click and reply still work (the rogue NotificationClosed did not end them either)
+      await server.tell({ op: 'invoke', id: c1.id, key: 'b0' });
+      await server.tell({ op: 'reply', id: c3.id, text: 'Real reply' });
+      await until('the real click and reply acted', () => aib.calls.length === 2);
+      const sorted = [...aib.calls].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+      assertEquals(sorted, [
+        ['permission', { id: 'c1', key: 'p1', option: 'yes' }],
+        ['send', { key: 'claude:s3', text: 'Real reply', tag: 'toast-reply' }],
+      ]);
+
+      // the notification server restarts (a new connection owns the name, counting ids from 1 again)
+      await server.tell({ op: 'restart' });
+      assert(server.events.filter((e) => e.ev === 'done' && e.op === 'restart').every((e) => e.ok), 'restarted');
+      await show(r, rows[1]);
+      const c2 = callOf(2);
+      assertEquals(c2.id, 1, 'the new server reuses id 1');
+      // the rogue again, now at the new server's id
+      for (const unicast of [false, true]) {
+        await server.tell({ op: 'rogue', member: 'ActionInvoked', id: c2.id, key: 'b0', unicast });
+      }
+      await new Promise((res) => setTimeout(res, 600));
+      assertEquals(aib.calls.length, 2, 'the rogue is still ignored after the restart');
+      // the new server's click works
+      await server.tell({ op: 'invoke', id: c2.id, key: 'b1' });
+      await until('the new server click acted', () => aib.calls.length === 3);
+      assertEquals(aib.calls[2], ['permission', { id: 'c2', key: 'p2', option: 'no' }]);
+    } finally {
+      r?.close();
+      await server.stop();
+      await Deno.remove(dir, { recursive: true }).catch(() => {});
+    }
+  },
+});
+
+Deno.test({
+  ...OPTS,
+  name: 'linux notifications (WSL): the next AIB stops a lingering helper; it closes its notifications and its pid file stays right',
+  ignore: !READY,
+  async fn() {
+    const bin = await binaries();
+    const dir = await Deno.makeTempDir({ prefix: 'aib-fdo-term-' });
+    const server = await fakeServer(bin.wsl, 'actions,body');
+    let r1: WindowsToasts | null = null;
+    let r2: WindowsToasts | null = null;
+    try {
+      const rows = [row(1, 'approval')];
+      const codes = new ToastCodes({ file: `${dir}/toast-codes.json` });
+      const aib = fakeAib(rows, codes);
+      const exited1: string[] = [];
+      r1 = route(wslHelper(bin.wsl, server.address, '', exited1), dir, rows, codes, aib);
+      assert(await r1.start());
+      await show(r1, rows[0]);
+      const c1 = server.calls()[0];
+      const pid1 = (await Deno.readTextFile(`${dir}/toast-helper.pid`)).trim();
+      r1.close(); // AIB quits with the notification up: the helper lingers
+      await new Promise((res) => setTimeout(res, 800));
+      assertEquals(exited1, [], 'it lingers for the click');
+
+      // AIB starts again: its helper's register SIGTERMs the old one
+      const exited2: string[] = [];
+      r2 = route(wslHelper(bin.wsl, server.address, '', exited2), dir, rows, codes, fakeAib(rows, codes));
+      assert(await r2.start());
+      await until('the old helper exited', () => exited1.length === 1, 10_000);
+      await until('its notification was closed', () => server.closes().includes(c1.id));
+      const pid2 = (await Deno.readTextFile(`${dir}/toast-helper.pid`)).trim();
+      assert(/^\d+$/.test(pid2) && pid2 !== pid1, `the pid file names the new helper (${pid1} -> ${pid2})`);
+      assertEquals(aib.calls, []);
+      // the new helper quits with nothing up: it exits and removes its pid file
+      r2.close();
+      await until('the new helper exited', () => exited2.length === 1, 10_000);
+      assert(!(await Deno.stat(`${dir}/toast-helper.pid`).then(() => true, () => false)), 'its pid file is gone');
+    } finally {
+      r1?.close();
+      r2?.close();
       await server.stop();
       await Deno.remove(dir, { recursive: true }).catch(() => {});
     }

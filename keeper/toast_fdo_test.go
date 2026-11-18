@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -26,6 +28,7 @@ type fakeFdo struct {
 	next    uint32
 	sigs    chan fdoSignal
 	shut    bool
+	gen     uint64
 }
 
 func newFakeFdo(caps ...string) *fakeFdo {
@@ -33,6 +36,11 @@ func newFakeFdo(caps ...string) *fakeFdo {
 }
 
 func (f *fakeFdo) Caps() ([]string, error) { return f.caps, f.capsErr }
+func (f *fakeFdo) Gen() uint64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.gen
+}
 func (f *fakeFdo) Notify(n fdoNote) (uint32, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -75,13 +83,14 @@ type fdoRun struct {
 	launched []string
 	claimed  []string
 	released []string
+	stop     chan struct{}
 }
 
 func startFdo(t *testing.T, bus *fakeFdo, linger time.Duration) *fdoRun {
 	t.Helper()
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()
-	r := &fdoRun{in: inW, out: bufio.NewScanner(outR), ret: make(chan int, 1), bus: bus}
+	r := &fdoRun{in: inW, out: bufio.NewScanner(outR), ret: make(chan int, 1), bus: bus, stop: make(chan struct{})}
 	d := fdoDeps{
 		connect: func() (fdoBus, error) {
 			if bus == nil {
@@ -100,6 +109,7 @@ func startFdo(t *testing.T, bus *fakeFdo, linger time.Duration) *fdoRun {
 		now:     func() time.Time { return time.UnixMilli(1234) },
 		linger:  linger,
 		settle:  30 * time.Millisecond,
+		stop:    r.stop,
 	}
 	go func() {
 		r.ret <- serveFdo(inR, outW, d)
@@ -267,23 +277,177 @@ func TestFdoReplyInlineOrOpen(t *testing.T) {
 	}
 }
 
+// Body and title: escaped where the server reads markup (titles carry agent-made chat names), raw where it does not.
 func TestFdoBodyMarkupEscaped(t *testing.T) {
 	text := `run <a href="x">rm</a> & "go"`
 	for _, tc := range []struct {
-		caps []string
-		want string
+		caps             []string
+		wantBody, wantTi string
 	}{
-		{[]string{"actions", "body", "body-markup"}, `run &lt;a href=&quot;x&quot;&gt;rm&lt;/a&gt; &amp; &quot;go&quot;`},
-		{[]string{"actions", "body"}, text},
+		{[]string{"actions", "body", "body-markup"}, `run &lt;a href=&quot;x&quot;&gt;rm&lt;/a&gt; &amp; &quot;go&quot;`, "&lt;b&gt;T&lt;/b&gt; &amp; co"},
+		{[]string{"actions", "body"}, text, "<b>T</b> & co"},
 	} {
 		bus := newFakeFdo(tc.caps...)
 		r := startFdo(t, bus, time.Second)
 		register(t, r, t.TempDir())
-		r.send(t, map[string]any{"op": "show", "id": "1", "tag": "t", "title": "<b>T</b>", "body": text, "default": openArgs})
+		r.send(t, map[string]any{"op": "show", "id": "1", "tag": "t", "title": "<b>T</b> & co", "body": text, "default": openArgs})
 		r.read(t)
-		if n := bus.last(); n.Body != tc.want || n.Title != "<b>T</b>" {
+		if n := bus.last(); n.Body != tc.wantBody || n.Title != tc.wantTi {
 			t.Fatalf("caps %v: body %q title %q", tc.caps, n.Body, n.Title)
 		}
+	}
+}
+
+// Only the owner of org.freedesktop.Notifications may click: any other bus client's ActionInvoked / NotificationReplied /
+// NotificationClosed / ActivationToken is dropped (and logged); NameOwnerChanged counts only from the bus itself; a new owner is a
+// reset (review finding 2).
+func TestFdoGateOnlyTheNotificationServer(t *testing.T) {
+	var logs []string
+	old := fdoLog
+	fdoLog = func(f string, a ...any) { logs = append(logs, f) }
+	defer func() { fdoLog = old }()
+	g := &fdoGate{}
+	g.setOwner(":1.5")
+	act := []any{uint32(7), "b0"}
+	if s, ok := g.read(":1.5", fdoPathStr, fdoIface+".ActionInvoked", act); !ok || s != (fdoSignal{Kind: "action", ID: 7, Key: "b0"}) {
+		t.Fatalf("the server's click: %+v %v", s, ok)
+	}
+	for _, c := range []struct {
+		name string
+		body []any
+	}{
+		{"ActionInvoked", act},
+		{"NotificationReplied", []any{uint32(7), "rm -rf"}},
+		{"NotificationClosed", []any{uint32(7), uint32(2)}},
+		{"ActivationToken", []any{uint32(7), "tok"}},
+	} {
+		for _, sender := range []string{":1.9", "", fdoName} {
+			if s, ok := g.read(sender, fdoPathStr, fdoIface+"."+c.name, c.body); ok {
+				t.Fatalf("%s from %q let through: %+v", c.name, sender, s)
+			}
+		}
+	}
+	if len(logs) != 12 {
+		t.Fatalf("logged %d: %v", len(logs), logs)
+	}
+	// a forged NameOwnerChanged (a client, not the bus) does not move the owner
+	if _, ok := g.read(":1.9", dbusPath, dbusName+".NameOwnerChanged", []any{fdoName, ":1.5", ":1.9"}); ok || g.currentOwner() != ":1.5" {
+		t.Fatalf("forged owner change: %q", g.currentOwner())
+	}
+	// another name's change: nothing
+	if _, ok := g.read(dbusName, dbusPath, dbusName+".NameOwnerChanged", []any{"org.other", "", ":1.9"}); ok || g.currentOwner() != ":1.5" {
+		t.Fatal("another name moved the owner")
+	}
+	// the notification server restarts: gone (reset), back under a new name (reset); the old name's clicks are dropped
+	if s, ok := g.read(dbusName, dbusPath, dbusName+".NameOwnerChanged", []any{fdoName, ":1.5", ""}); !ok || s != (fdoSignal{Kind: "reset", Gen: 1}) {
+		t.Fatalf("gone: %+v %v", s, ok)
+	}
+	if _, ok := g.read(":1.5", fdoPathStr, fdoIface+".ActionInvoked", act); ok {
+		t.Fatal("a click with no server")
+	}
+	if s, ok := g.read(dbusName, dbusPath, dbusName+".NameOwnerChanged", []any{fdoName, "", ":1.12"}); !ok || s != (fdoSignal{Kind: "reset", Gen: 2}) {
+		t.Fatalf("new owner: %+v %v", s, ok)
+	}
+	if _, ok := g.read(dbusName, dbusPath, dbusName+".NameOwnerChanged", []any{fdoName, "", ":1.12"}); ok {
+		t.Fatal("the same owner again is no reset")
+	}
+	if _, ok := g.read(":1.5", fdoPathStr, fdoIface+".ActionInvoked", act); ok {
+		t.Fatal("the old server's click")
+	}
+	if _, ok := g.read(":1.12", fdoPathStr, fdoIface+".ActionInvoked", act); !ok {
+		t.Fatal("the new server's click")
+	}
+	// no owner known yet: everything is dropped
+	if _, ok := (&fdoGate{}).read(":1.5", fdoPathStr, fdoIface+".ActionInvoked", act); ok {
+		t.Fatal("no owner")
+	}
+	// wrong path or shape: not a signal
+	if _, ok := g.read(":1.12", "/other", fdoIface+".ActionInvoked", act); ok {
+		t.Fatal("other path")
+	}
+	// GetNameOwner's answer does not overwrite an owner change seen while it was on its way
+	g2 := &fdoGate{}
+	gen := g2.Gen()
+	g2.read(dbusName, dbusPath, dbusName+".NameOwnerChanged", []any{fdoName, ":1.5", ":1.20"})
+	g2.initOwner(gen, ":1.5")
+	if g2.currentOwner() != ":1.20" {
+		t.Fatalf("owner %q", g2.currentOwner())
+	}
+	g3 := &fdoGate{}
+	g3.initOwner(g3.Gen(), ":1.5")
+	if g3.currentOwner() != ":1.5" {
+		t.Fatalf("owner %q", g3.currentOwner())
+	}
+}
+
+// A reset (the notification server restarted): every id this helper had is forgotten, so the new server's ids (counted from 1
+// again) are not mistaken for the old ones; a note of the same chat is shown fresh, not as a replacement.
+func TestFdoResetForgetsEveryNote(t *testing.T) {
+	bus := newFakeFdo("actions", "body")
+	r := startFdo(t, bus, time.Second)
+	register(t, r, t.TempDir())
+	r.send(t, map[string]any{"op": "show", "id": "1", "tag": "t1", "title": "x", "default": openArgs,
+		"buttons": []map[string]string{{"label": "Allow", "args": allowArgs}}})
+	r.read(t)
+	bus.sigs <- fdoSignal{Kind: "reset", Gen: 1}
+	bus.sigs <- fdoSignal{Kind: "action", ID: 101, Key: "b0"} // the new server's 101 is not AIB's
+	r.send(t, map[string]any{"op": "show", "id": "2", "tag": "t1", "title": "x", "default": openArgs})
+	if m := r.read(t); m.Op != "shown" {
+		t.Fatalf("%+v (a click came through after the reset?)", m)
+	}
+	if n := bus.last(); n.ReplacesID != 0 {
+		t.Fatalf("replaces %d after a reset", n.ReplacesID)
+	}
+	bus.sigs <- fdoSignal{Kind: "action", ID: 102, Key: "default"}
+	if m := r.read(t); m.Op != "activated" || m.Args != openArgs {
+		t.Fatalf("%+v", m)
+	}
+	// the server restarts again, and AIB shows a note before the reset reaches the helper: the new server gave that id, so it stays
+	bus.mu.Lock()
+	bus.gen = 2
+	bus.mu.Unlock()
+	r.send(t, map[string]any{"op": "show", "id": "3", "tag": "t3", "title": "y", "default": openArgs})
+	r.read(t)
+	bus.sigs <- fdoSignal{Kind: "reset", Gen: 2}
+	bus.sigs <- fdoSignal{Kind: "action", ID: 102, Key: "default"} // gen 1: forgotten
+	bus.sigs <- fdoSignal{Kind: "action", ID: 103, Key: "default"} // gen 2: still AIB's
+	if m := r.read(t); m.Op != "activated" || m.Args != openArgs {
+		t.Fatalf("%+v", m)
+	}
+	r.send(t, map[string]any{"op": "remove", "tag": "t1"})
+	if m := r.read(t); m.Op != "removed" {
+		t.Fatalf("only one click came through, then removed: %+v", m)
+	}
+	if got := bus.closedIDs(); len(got) != 0 {
+		t.Fatalf("t1 was forgotten by the reset, nothing to close: %v", got)
+	}
+}
+
+// SIGTERM (the next AIB's claim): every notification still up is closed and the helper exits, releasing its pid file.
+func TestFdoStopClosesNotesAndExits(t *testing.T) {
+	bus := newFakeFdo("actions", "body")
+	r := startFdo(t, bus, time.Hour)
+	data := t.TempDir()
+	register(t, r, data)
+	for i, tag := range []string{"t1", "t2"} {
+		r.send(t, map[string]any{"op": "show", "id": strconv.Itoa(i), "tag": tag, "title": "x", "default": openArgs})
+		r.read(t)
+	}
+	r.in.Close() // AIB quit: it lingers for the clicks
+	time.Sleep(50 * time.Millisecond)
+	close(r.stop)
+	if c := r.exit(t); c != 0 {
+		t.Fatalf("exit %d", c)
+	}
+	got := bus.closedIDs()
+	sort.Slice(got, func(i, j int) bool { return got[i] < got[j] })
+	if !reflect.DeepEqual(got, []uint32{101, 102}) {
+		t.Fatalf("closed %v", got)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !reflect.DeepEqual(r.released, []string{data}) {
+		t.Fatalf("released %v", r.released)
 	}
 }
 

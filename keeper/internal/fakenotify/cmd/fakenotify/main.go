@@ -8,12 +8,17 @@
 //	-> {"op":"invoke","id":N,"key":"b0","token":"t"}   ActivationToken, ActionInvoked, NotificationClosed
 //	-> {"op":"reply","id":N,"text":"..."}              NotificationReplied
 //	-> {"op":"dismiss","id":N}                         NotificationClosed (reason 2)
+//	-> {"op":"rogue","member":"ActionInvoked","id":N,"key":"b0","text":"...","token":"t","unicast":true}
+//	                                                   another bus client (not the server) fakes that signal: broadcast, or
+//	                                                   with unicast sent straight to the last Notify caller (AIB's helper)
+//	-> {"op":"restart"}                                the server gives up the name and a new connection takes it (ids from 1)
 //	stdin closed: exits.
 package main
 
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"flag"
 	"os"
 	"strings"
@@ -33,27 +38,40 @@ func main() {
 		defer mu.Unlock()
 		out.Encode(v)
 	}
-	conn, err := dbus.ConnectSessionBus()
-	if err != nil {
+	fail := func(err error) {
 		emit(map[string]any{"ev": "error", "error": err.Error()})
 		os.Exit(1)
 	}
-	s, err := fakenotify.Start(conn, strings.Split(*caps, ","))
-	if err != nil {
-		emit(map[string]any{"ev": "error", "error": err.Error()})
-		os.Exit(1)
+	start := func() (*dbus.Conn, *fakenotify.Server, error) {
+		conn, err := dbus.ConnectSessionBus()
+		if err != nil {
+			return nil, nil, err
+		}
+		s, err := fakenotify.Start(conn, strings.Split(*caps, ","))
+		if err != nil {
+			conn.Close()
+			return nil, nil, err
+		}
+		s.OnNotify = func(c fakenotify.Call) { emit(map[string]any{"ev": "notify", "call": c}) }
+		s.OnClose = func(id uint32) { emit(map[string]any{"ev": "close", "id": id}) }
+		return conn, s, nil
 	}
-	s.OnNotify = func(c fakenotify.Call) { emit(map[string]any{"ev": "notify", "call": c}) }
-	s.OnClose = func(id uint32) { emit(map[string]any{"ev": "close", "id": id}) }
+	conn, s, err := start()
+	if err != nil {
+		fail(err)
+	}
+	var rogue *dbus.Conn
 	emit(map[string]any{"ev": "ready", "address": os.Getenv("DBUS_SESSION_BUS_ADDRESS")})
 	sc := bufio.NewScanner(os.Stdin)
 	for sc.Scan() {
 		var m struct {
-			Op    string `json:"op"`
-			ID    uint32 `json:"id"`
-			Key   string `json:"key"`
-			Token string `json:"token"`
-			Text  string `json:"text"`
+			Op      string `json:"op"`
+			ID      uint32 `json:"id"`
+			Key     string `json:"key"`
+			Token   string `json:"token"`
+			Text    string `json:"text"`
+			Member  string `json:"member"`
+			Unicast bool   `json:"unicast"`
 		}
 		if json.Unmarshal(sc.Bytes(), &m) != nil {
 			continue
@@ -66,6 +84,41 @@ func main() {
 			err = s.Reply(m.ID, m.Text)
 		case "dismiss":
 			err = s.Dismiss(m.ID)
+		case "rogue":
+			if rogue == nil {
+				rogue, err = dbus.ConnectSessionBus()
+				if err != nil {
+					break
+				}
+			}
+			dest := ""
+			if m.Unicast {
+				dest = s.Client()
+			}
+			var args []interface{}
+			switch m.Member {
+			case "ActionInvoked":
+				args = []interface{}{m.ID, m.Key}
+			case "NotificationReplied":
+				args = []interface{}{m.ID, m.Text}
+			case "ActivationToken":
+				args = []interface{}{m.ID, m.Token}
+			case "NotificationClosed":
+				args = []interface{}{m.ID, uint32(2)}
+			default:
+				err = errors.New("unknown member")
+			}
+			if err == nil {
+				err = fakenotify.Rogue(rogue, dest, m.Member, args...)
+			}
+		case "restart":
+			s.Stop()
+			conn.Close()
+			var c2 *dbus.Conn
+			var s2 *fakenotify.Server
+			if c2, s2, err = start(); err == nil {
+				conn, s = c2, s2
+			}
 		}
 		ok := err == nil
 		emit(map[string]any{"ev": "done", "op": m.Op, "ok": ok})

@@ -20,11 +20,17 @@ package main
 // AIB fully quit (the Linux side of Windows' -Embedding): stdin ends but the helper stays while a notification it showed is still
 // open, for at most fdoDeps.linger (CODE_TTL_MS, 12 h). A click then goes to <data>/toast-inbox.jsonl (the same file and format
 // as on Windows) and AIB's program is started with the click's activation token; the helper exits a moment later. A helper that
-// lingers from an earlier AIB is stopped by the next one's register (<data>/toast-helper.pid).
+// lingers from an earlier AIB is stopped by the next one's register (<data>/toast-helper.pid): on SIGTERM it closes its
+// notifications (no dead buttons stay on screen) and removes its pid file.
+//
+// Who may click: any program on the session bus can emit ActionInvoked or NotificationReplied, and the click's args carry the
+// real one-time code. So only the signals of the connection that owns org.freedesktop.Notifications now count (fdoGate); others
+// are dropped and logged, and only ids this helper's Notify got back are acted on (fdoServer.live).
 
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"strconv"
@@ -32,6 +38,119 @@ import (
 	"sync"
 	"time"
 )
+
+const (
+	fdoName    = "org.freedesktop.Notifications"
+	fdoPathStr = "/org/freedesktop/Notifications"
+	fdoIface   = "org.freedesktop.Notifications"
+	dbusName   = "org.freedesktop.DBus" // the bus itself: the only sender of NameOwnerChanged
+	dbusPath   = "/org/freedesktop/DBus"
+)
+
+// fdoLog: where dropped signals are reported (the helper's stderr; tests swap it).
+var fdoLog = func(format string, args ...any) { fmt.Fprintf(os.Stderr, "AIB-keeper toast: "+format+"\n", args...) }
+
+// fdoGate decides which bus signals are the notification server's: those whose sender is the unique name that owns
+// org.freedesktop.Notifications now. The owner comes from GetNameOwner at connect and from NameOwnerChanged (sent by the bus only)
+// after that; a new owner (a restarted notification server) is a "reset": its ids are not the old server's. gen counts the owner
+// changes, so a reset forgets only the notifications shown before it.
+type fdoGate struct {
+	mu    sync.Mutex
+	owner string
+	gen   uint64
+}
+
+func (g *fdoGate) setOwner(owner string) {
+	g.mu.Lock()
+	g.owner = owner
+	g.mu.Unlock()
+}
+
+// initOwner sets GetNameOwner's answer, unless a NameOwnerChanged came in since gen (that one is as new or newer).
+func (g *fdoGate) initOwner(gen uint64, owner string) {
+	g.mu.Lock()
+	if g.gen == gen {
+		g.owner = owner
+	}
+	g.mu.Unlock()
+}
+
+func (g *fdoGate) Gen() uint64 {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.gen
+}
+
+func (g *fdoGate) currentOwner() string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.owner
+}
+
+// read turns one bus signal (sender: the bus-stamped unique name) into an fdoSignal; false for anything not ours or dropped.
+func (g *fdoGate) read(sender, path, name string, body []any) (fdoSignal, bool) {
+	if name == dbusName+".NameOwnerChanged" {
+		if sender != dbusName || path != dbusPath || len(body) < 3 {
+			if s, _ := firstString(body); s == fdoName {
+				fdoLog("dropped a NameOwnerChanged from %q (not the bus)", sender)
+			}
+			return fdoSignal{}, false
+		}
+		if s, _ := firstString(body); s != fdoName {
+			return fdoSignal{}, false
+		}
+		owner, _ := body[2].(string)
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		if owner == g.owner {
+			return fdoSignal{}, false
+		}
+		g.owner = owner
+		g.gen++
+		return fdoSignal{Kind: "reset", Gen: g.gen}, true
+	}
+	sig, ok := fdoSignalOf(path, name, body)
+	if !ok {
+		return fdoSignal{}, false
+	}
+	if owner := g.currentOwner(); owner == "" || sender != owner {
+		fdoLog("dropped %s for id %d from %q: not the notification server (%q)", sig.Kind, sig.ID, sender, owner)
+		return fdoSignal{}, false
+	}
+	return sig, true
+}
+
+func firstString(body []any) (string, bool) {
+	if len(body) == 0 {
+		return "", false
+	}
+	s, ok := body[0].(string)
+	return s, ok
+}
+
+// fdoSignalOf reads one signal of the notification interface.
+func fdoSignalOf(path, name string, body []any) (fdoSignal, bool) {
+	if path != fdoPathStr || len(body) < 2 {
+		return fdoSignal{}, false
+	}
+	id, ok := body[0].(uint32)
+	if !ok {
+		return fdoSignal{}, false
+	}
+	str, _ := body[1].(string)
+	switch name {
+	case fdoIface + ".ActionInvoked":
+		return fdoSignal{Kind: "action", ID: id, Key: str}, true
+	case fdoIface + ".NotificationReplied":
+		return fdoSignal{Kind: "reply", ID: id, Text: str}, true
+	case fdoIface + ".ActivationToken":
+		return fdoSignal{Kind: "token", ID: id, Token: str}, true
+	case fdoIface + ".NotificationClosed":
+		reason, _ := body[1].(uint32)
+		return fdoSignal{Kind: "closed", ID: id, Reason: reason}, true
+	}
+	return fdoSignal{}, false
+}
 
 // fdoNote is one Notify call (org.freedesktop.Notifications, spec 1.2).
 type fdoNote struct {
@@ -47,7 +166,8 @@ type fdoNote struct {
 }
 
 // fdoSignal is one signal from the notification server: "action" (ActionInvoked), "reply" (NotificationReplied), "closed"
-// (NotificationClosed) or "token" (ActivationToken).
+// (NotificationClosed) or "token" (ActivationToken); or "reset": the notification server changed (restarted, or gone), so every
+// notification this helper showed is gone with it.
 type fdoSignal struct {
 	Kind   string
 	ID     uint32
@@ -55,11 +175,14 @@ type fdoSignal struct {
 	Text   string // the reply's text
 	Token  string
 	Reason uint32
+	Gen    uint64 // reset: the notification server generation from now on (fdoBus.Gen)
 }
 
 type fdoBus interface {
 	Caps() ([]string, error)
 	Notify(fdoNote) (uint32, error)
+	// Gen counts the notification server's owner changes seen so far (a Notify's id belongs to the generation read after it).
+	Gen() uint64
 	CloseNote(id uint32) error
 	// Signals ends (is closed) when the bus connection goes.
 	Signals() <-chan fdoSignal
@@ -76,6 +199,8 @@ type fdoDeps struct {
 	now     func() time.Time
 	linger  time.Duration
 	settle  time.Duration
+	// stop: SIGTERM (the next AIB's claim, a logout). The helper closes its notifications and exits (its pid file goes).
+	stop <-chan struct{}
 }
 
 type toastButton struct {
@@ -113,6 +238,7 @@ type fdoLive struct {
 	def   string
 	keys  map[string]string // action key -> click args
 	reply string            // the reply button's args (inline reply)
+	gen   uint64            // the notification server generation that gave it its id
 }
 
 type fdoServer struct {
@@ -199,8 +325,22 @@ func serveFdo(r io.Reader, w io.Writer, d fdoDeps) int {
 			return 0
 		case <-settle:
 			return 0
+		case <-d.stop:
+			s.closeAll()
+			return 0
 		}
 	}
+}
+
+// closeAll takes every notification this helper showed off the screen (best effort: some may be gone already).
+func (s *fdoServer) closeAll() {
+	if s.bus == nil {
+		return
+	}
+	for id := range s.live {
+		s.bus.CloseNote(id)
+	}
+	s.live, s.byTag, s.tokens = map[uint32]*fdoLive{}, map[string]uint32{}, map[uint32]string{}
 }
 
 // waiting: after AIB quit, is there anything a click could still come from?
@@ -297,7 +437,10 @@ func (s *fdoServer) show(m fdoMsg) error {
 		Urgency:      1,
 	}
 	if s.caps["body-markup"] {
-		n.Body = markupEscape(m.Body) // the server reads the body as markup: an agent's text never becomes a tag or a link
+		// the server reads markup: an agent's text never becomes a tag or a link. The spec says the summary is plain text, but
+		// some servers (dunst with markup=full) format it too, and titles carry agent-made chat names.
+		n.Body = markupEscape(m.Body)
+		n.Title = markupEscape(m.Title)
 	}
 	if m.Silent {
 		n.Urgency, n.SuppressSound = 0, true
@@ -335,6 +478,7 @@ func (s *fdoServer) show(m fdoMsg) error {
 	if err != nil {
 		return err
 	}
+	live.gen = s.bus.Gen()
 	if n.ReplacesID != 0 && n.ReplacesID != id {
 		delete(s.live, n.ReplacesID)
 	}
@@ -345,6 +489,18 @@ func (s *fdoServer) show(m fdoMsg) error {
 
 func (s *fdoServer) signal(sig fdoSignal) {
 	switch sig.Kind {
+	case "reset":
+		// a new notification server: the old one's notifications are gone, and its ids mean nothing to the new one. A note the
+		// new server already gave an id (shown while this signal was on its way) stays.
+		for id, l := range s.live {
+			if l.gen < sig.Gen {
+				delete(s.live, id)
+				delete(s.tokens, id)
+				if s.byTag[l.tag] == id {
+					delete(s.byTag, l.tag)
+				}
+			}
+		}
 	case "token":
 		if _, ok := s.live[sig.ID]; ok {
 			s.tokens[sig.ID] = sig.Token
