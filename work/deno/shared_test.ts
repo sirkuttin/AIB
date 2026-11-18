@@ -32,6 +32,7 @@ function machine(block: [string, boolean] = ['', true]) {
   const modules = join(dir.root, 'global', 'node_modules');
   adapters.resetCache();
   adapters.adapterHooks.globalRoots = () => [modules];
+  adapters.adapterHooks.claudeOnPath = () => ''; // a claude-agent-acp on the real PATH decides nothing
   adapters.adapterHooks.codexOnPath = () => '';
   adapters.adapterHooks.codexPresent = () => false;
   installer.installerHooks.nodeBlock = () => block;
@@ -41,6 +42,7 @@ function machine(block: [string, boolean] = ['', true]) {
     modules,
     [Symbol.dispose]() {
       delete adapters.adapterHooks.globalRoots;
+      delete adapters.adapterHooks.claudeOnPath;
       delete adapters.adapterHooks.codexOnPath;
       delete adapters.adapterHooks.codexPresent;
       delete installer.installerHooks.nodeBlock;

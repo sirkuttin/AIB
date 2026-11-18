@@ -80,6 +80,7 @@ export function isWindows(): boolean {
 export const adapterHooks: {
   globalRoots?: (node?: string, npmRoot?: NpmRoot) => string[] | Promise<string[]>;
   findNode?: (configured?: string) => string;
+  claudeOnPath?: () => string;
   codexOnPath?: () => string;
   codexPresent?: () => boolean;
   nodeExecPath?: (node: string) => Promise<string>;
@@ -596,7 +597,7 @@ export async function resolveClaude(options: ResolveOptions = {}): Promise<Launc
   const found = studioLaunch('claude', nodeCommand, stateDir) ?? await installedLaunch(CLAUDE_PACKAGE, nodeCommand, npmRoot);
   if (found) return found;
   // macOS / Linux: `claude-agent-acp` on PATH, a standalone binary or an npm bin link (run with the node found on PATH)
-  const path = WIN ? '' : (options.onPath ?? (() => which('claude-agent-acp') ?? ''))();
+  const path = WIN ? '' : (options.onPath ?? adapterHooks.claudeOnPath ?? (() => which('claude-agent-acp') ?? ''))();
   if (path) {
     const viaNode = await nodeScriptLaunch(path, [CLAUDE_PACKAGE], { nodeCommand, npmRoot });
     if (viaNode) return row(viaNode, 'installed', viaNode[1], '', `Installed adapter: ${viaNode[1]} (run with node, found as ${path})`);
