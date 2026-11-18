@@ -27,7 +27,7 @@ const HELP = `Usage (from outputs/agent-studio):
   deno task test worktree host_ the files whose name contains either word
 
 Options:
-  --jobs N        files at once (default: half the cores, at most 8)
+  --jobs N        files at once (default 3: more parallel load has crashed the owner's PC)
   --junit DIR     a JUnit file per test file
   --no-rerun      do not run a failed file again on its own
   --no-log        do not write the log file (see Logs)
@@ -187,7 +187,7 @@ function parseArgs(args: string[]): Options {
     else if (arg.startsWith('--')) throw new Error(`unknown option ${arg} (--help lists them)`);
     else options.filters.push(arg);
   }
-  if (!options.jobs) options.jobs = Math.min(8, Math.max(2, Math.floor(navigator.hardwareConcurrency / 2)));
+  if (!options.jobs) options.jobs = 3; // more at once has blue-screened the owner's PC (0x20001); raise it with --jobs N
   return options;
 }
 

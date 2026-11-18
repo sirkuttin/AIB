@@ -2,7 +2,7 @@
 
     python work/run_parallel.py contract     work/contract/test_*.py, one process per file
     python work/run_parallel.py e2e          work/test_worktree_e2e.py, one process per test class
-    options: --jobs N (default 8), --serial (one process, the plain unittest run)
+    options: --jobs N (default 3: more at once has crashed the owner's PC), --serial (one process, the plain unittest run)
 
 Every process is a plain `python -m unittest <name>` and gets its own temp state folder (AGENT_STUDIO_STATE_DIR is not passed
 on, so _isolation.py makes a fresh one), its own servers on free ports and its own temp repos, as when it runs alone. A class
@@ -52,7 +52,7 @@ def main(argv):
     suite = argv[0] if argv and not argv[0].startswith('--') else None
     if suite not in SUITES:
         raise SystemExit(__doc__)
-    jobs = int(argv[argv.index('--jobs') + 1]) if '--jobs' in argv else 8
+    jobs = int(argv[argv.index('--jobs') + 1]) if '--jobs' in argv else 3
     cwd = SUITES[suite]
     if '--serial' in argv:
         target = ['discover', '-s', '.'] if suite == 'contract' else ['test_worktree_e2e']

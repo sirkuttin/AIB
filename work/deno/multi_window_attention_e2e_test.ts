@@ -89,6 +89,16 @@ const sawNeeds = (p: Page, key: string) =>
     20000,
     'the page saw ' + key + ' need you',
   );
+/**
+ * A click on the chat list row of `key` itself. Page.click aims at the row's place and then presses the mouse there: a list redrawn
+ * in between (a chat's status or order changed) put another row under the pointer, and A once routed claude:sess-1 to B where the
+ * test clicked claude:sess-2. The routing is what these tests check, so the click goes to the row element.
+ */
+async function clickRow(p: Page, key: string) {
+  const sel = `button.connection[data-key=${JSON.stringify(key)}]`;
+  await p.waitFor(`!!document.querySelector(${JSON.stringify(sel)})`, 8000, `the row of ${key}`);
+  await p.eval(`(document.querySelector(${JSON.stringify(sel)}).click(), true)`);
+}
 /** Report now and wait until this page holds a fresh answer that lists `n` windows. */
 async function fresh(p: Page, n: number) {
   await p.eval('window.AgentNotifyUI.reportPresence(true), true');
@@ -161,7 +171,7 @@ Deno.test({
       const a = await t.open('?w=m');
       const pk = await projectKey(a);
       const b = await t.open(`?w=w2&kind=project&project=${encodeURIComponent(pk)}`);
-      await b.click('button.connection[data-key="claude:sess-1"]');
+      await clickRow(b, 'claude:sess-1');
       await b.waitFor('JSON.stringify(window.AgentWorkspaceUI.openKeys()) === \'["claude:sess-1"]\'', 10000, 'B shows chat 1');
       await a.eval('window.__focus = true, true'); // A is in front: toasts, no sound
       await fresh(b, 2);
@@ -220,7 +230,7 @@ Deno.test({
       await fresh(a, 2);
       const before = await a.eval<string[]>('window.AgentWorkspaceUI.openKeys()');
       // a sidebar row in A
-      await a.click('button.connection[data-key="claude:sess-2"]');
+      await clickRow(a, 'claude:sess-2');
       const end = Date.now() + 8000;
       while (!dw.delivered.length && Date.now() < end) await sleep(100);
       assertEquals(dw.delivered, [['w2', { chat: 'claude:sess-2', project: pk }]], 'the route delivered it to B');
@@ -242,7 +252,7 @@ Deno.test({
       assertEquals(await a.eval('window.AgentWorkspaceUI.openKeys()'), before, 'A still shows what it showed');
       // B opens its own project's chat here, with no server call
       const routed = dw.delivered.length;
-      await b.click('button.connection[data-key="claude:sess-2"]');
+      await clickRow(b, 'claude:sess-2');
       await b.waitFor('JSON.stringify(window.AgentWorkspaceUI.openKeys()) === \'["claude:sess-2"]\'', 10000, 'B opens it');
       assertEquals(dw.delivered.length, routed, 'no route call for its own chat');
       assertEquals(a.errors, [], 'console errors A');
@@ -272,7 +282,7 @@ Deno.test({
       await sawNeeds(a, 'claude:sess-1');
       await sleep(300);
       assertEquals(await chimes(a), 1, 'away and alone: it chimes');
-      await a.click('button.connection[data-key="claude:sess-1"]');
+      await clickRow(a, 'claude:sess-1');
       await a.waitFor('JSON.stringify(window.AgentWorkspaceUI.openKeys()) === \'["claude:sess-1"]\'', 10000, 'opened here');
       assertEquals(dw.delivered, [], 'no route call');
       assertEquals(a.errors, [], 'console errors');

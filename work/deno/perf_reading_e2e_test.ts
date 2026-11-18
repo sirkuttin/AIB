@@ -51,7 +51,10 @@ Deno.test({
 
       // sit there
       const idle = await sampleFor(page, 20, 10, (s) => console.log('idle far up', JSON.stringify(s)));
-      const idleCpu = Math.max(...idle.map((s) => s.cpu));
+      // the main thread's CPU time (ThreadTime), not its task wall time (cpu): on a quiet PC they agree (1.8 % and 1.7 %), but other
+      // programs keeping the cores busy stretched the same work's task times to 7 % (same style and layout counts per second)
+      const idleCpu = Math.max(...idle.map((s) => s.thread));
+      assert(Number.isFinite(idleCpu), 'Chrome reports ThreadTime');
       assert(idleCpu < 5, `idle far up: ${idleCpu}% of a core (want < 5%)`);
 
       // back down: each wheel moves the row at the top by exactly the wheel while rows are drawn in below it

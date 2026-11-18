@@ -30,6 +30,10 @@ function mwTest(name: string, fn: (lab: Lab) => Promise<void>) {
     async fn() {
       const lab = await Lab.open(1280, 900);
       try {
+        // the main window as the desktop app opens it (window id m, as ?w=m says): with its id in presence, a window that reloads
+        // while another is open is seeded "missing-only" (N1), as in the app; a plain tab id (t-...) would not count as a window
+        await lab.page.goto(`http://127.0.0.1:${lab.web.port}/chat.html?w=m`);
+        await lab.page.waitFor('!!document.getElementById("messages")', 15000, 'chat page');
         await fn(lab);
         assert(
           lab.page.errors.length === 0,
@@ -46,6 +50,24 @@ const ls = (page: Page, key: string) =>
   page.eval<string | null>(`localStorage.getItem(${JSON.stringify(key)})`);
 const lsJson = async (page: Page, key: string) =>
   JSON.parse((await ls(page, key)) || "null");
+/**
+ * The key as `page` reads it once `ready` holds (at most 5 s), for a read right after ANOTHER window wrote: each Chromium renderer keeps
+ * its own copy of localStorage and the browser process brings the other window's write over a moment later, so an immediate read
+ * could miss it (the file tabs once read only ["zz-a"] in a loaded pool). Returns the last value read either way: the exact
+ * assertions after it decide.
+ */
+// deno-lint-ignore no-explicit-any
+async function lsJsonWhen(page: Page, key: string, ready: (value: any) => boolean): Promise<any> {
+  const end = Date.now() + 5000;
+  while (true) {
+    const value = await lsJson(page, key);
+    try {
+      if (ready(value)) return value;
+    } catch { /* not there yet */ }
+    if (Date.now() > end) return value;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
 
 async function finished(lab: Lab, folder: string, text: string): Promise<Chat> {
   const c = await lab.chat(folder);
@@ -239,7 +261,7 @@ mwTest(
           JSON.stringify(layout("claude:c1", "claude:c2"))
         }); s.set('zz-a', ${JSON.stringify(layout("claude:x", "claude:y"))})`,
       );
-      let split = await lsJson(A, "studio-split-v1");
+      let split = await lsJsonWhen(A, "studio-split-v1", (v) => "zz-c" in v.layouts);
       assertEquals(Object.keys(split.layouts).sort(), ["zz-a", "zz-c"]);
       assertEquals(
         split.layouts["zz-a"].tree.ch[0].tabs,
@@ -269,7 +291,7 @@ mwTest(
         "aib-file-tabs-v1",
         `s.set('zz-c', ${JSON.stringify(tab("c.md"))})`,
       );
-      const files = await lsJson(A, "aib-file-tabs-v1");
+      const files = await lsJsonWhen(A, "aib-file-tabs-v1", (v) => "zz-c" in v);
       assertEquals(Object.keys(files).sort(), ["zz-a", "zz-c"]);
 
       // reading places (scroll-controller.js): each page remembers its chat, both kept
@@ -279,7 +301,7 @@ mwTest(
       await C.eval(
         `ScrollController.remember('main:claude:c1', { mode: 'anchor', rid: 'm:7', off: 4, h: 30, w: 600 }); ScrollController.saveNow()`,
       );
-      const scroll = await lsJson(A, "studio-scroll-v1");
+      const scroll = await lsJsonWhen(A, "studio-scroll-v1", (v) => !!v["main:claude:c1"]);
       assert(
         scroll["main:claude:a1"] && scroll["main:claude:c1"],
         `both places: ${JSON.stringify(scroll)}`,
@@ -288,13 +310,13 @@ mwTest(
       // seen turns (workspace-ui.js) and collapsed groups (sidebar-ui.js)
       await store(A, "studio-seen-turns", `s.set('claude:a1', 111)`);
       await store(C, "studio-seen-turns", `s.set('claude:c1', 222)`);
-      assertEquals(await lsJson(A, "studio-seen-turns"), {
+      assertEquals(await lsJsonWhen(A, "studio-seen-turns", (v) => "claude:c1" in v), {
         "claude:a1": 111,
         "claude:c1": 222,
       });
       await A.eval(`AgentSidebarUI.setCollapsed('zz-a', true)`);
       await C.eval(`AgentSidebarUI.setCollapsed('zz-c', true)`);
-      assertEquals((await lsJson(A, "studio-sidebar-collapsed")).sort(), [
+      assertEquals((await lsJsonWhen(A, "studio-sidebar-collapsed", (v) => v.includes("zz-c"))).sort(), [
         "zz-a",
         "zz-c",
       ]);

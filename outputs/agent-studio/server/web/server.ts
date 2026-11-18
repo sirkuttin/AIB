@@ -618,8 +618,14 @@ export class WebServer {
         if (asset === 'chat.html') {
           // N1: with another app window open, the page seeds only the keys its (shared) localStorage lacks: the other window's
           // newer value may still be on its way to the server. ?w= missing or bad counts as the main window (K0, S6).
+          // Without the desktop app's window list (a page server with app windows' ids, as the multi-window tests run it), the
+          // windows that report presence say it: another app window id (m, w2-w8) seen lately is alive. A plain browser tab reports
+          // a tab id (t-...), never counted here, so a browser is unchanged.
           const w = url.searchParams.get('w') ?? '';
-          const others = this.ctx.desktopWindows?.othersAlive(WINDOW_ID.test(w) ? w : 'm') ?? false;
+          const self = WINDOW_ID.test(w) ? w : 'm';
+          const others = this.ctx.desktopWindows
+            ? this.ctx.desktopWindows.othersAlive(self)
+            : this.ctx.presence.windows().some((v) => WINDOW_ID.test(v.w) && v.w !== self);
           const page = withViewPrefs(
             await Deno.readTextFile(APP_ROOT + sep + asset),
             this.ctx.viewPrefs.public().prefs,

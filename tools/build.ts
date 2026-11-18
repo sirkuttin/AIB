@@ -428,30 +428,62 @@ export async function wslSourceKey(): Promise<string> {
   return hash.digest('hex').slice(0, 16);
 }
 
+/** A lock left by a build that died (a WSL build takes a few minutes; this is far past it). */
+const WSL_LOCK_STALE_MS = 20 * 60_000;
+
+/**
+ * Takes the WSL cache folder's lock (a file made with createNew), or returns once `done()` says another build finished it. A lock
+ * older than WSL_LOCK_STALE_MS is taken over. Returns the release function (a no-op when nothing was taken).
+ */
+export async function wslCacheLock(lock: string, done: () => Promise<boolean>): Promise<() => void> {
+  for (;;) {
+    try {
+      Deno.openSync(lock, { createNew: true, write: true }).close();
+      return () => Deno.removeSync(lock);
+    } catch (error) {
+      // taken (PermissionDenied: Windows, while the last holder's file is being deleted)
+      if (!(error instanceof Deno.errors.AlreadyExists) && !(error instanceof Deno.errors.PermissionDenied)) throw error;
+    }
+    if (await done()) return () => {};
+    const age = Date.now() - ((await Deno.stat(lock).catch(() => null))?.mtime?.getTime() ?? Date.now());
+    if (age > WSL_LOCK_STALE_MS) await Deno.remove(lock).catch(() => {});
+    else await new Promise((r) => setTimeout(r, 1000));
+  }
+}
+
 /**
  * Builds AIB-keeper-linux and AIB-wsl-helper-linux for the Linux target `t` into `outDir`. A build of the same sources is cached in
  * dist/.wsl-cache/<key>-<target>/ and copied from there (the helper is a ~100 MB deno compile; the normal build stays fast).
  */
 export async function buildWslBinaries(t: Target, outDir: string): Promise<{ keeper: number; helper: number; cached: boolean }> {
   const cache = `${REPO}/dist/.wsl-cache/${await wslSourceKey()}-${t.id}`;
+  const complete = async () => await Deno.stat(`${cache}/.complete`).then(() => true, () => false);
   let cached = true;
-  try {
-    await Deno.stat(`${cache}/.complete`); // written last (a folder rename right after a 100 MB write is refused while it is scanned)
-  } catch {
-    cached = false;
-    await Deno.remove(cache, { recursive: true }).catch(() => {});
-    await Deno.mkdir(cache, { recursive: true });
-    await buildKeeper(t, `${cache}/${WSL_KEEPER}`);
-    const out = await new Deno.Command(Deno.execPath(), {
-      args: helperCompileArgs(t, `${cache}/${WSL_HELPER}`),
-      cwd: APP_DIR,
-      stdout: 'piped',
-      stderr: 'piped',
-    }).output();
-    if (!out.success) {
-      throw new Error(`deno compile of the WSL helper failed for ${t.id}:\n${new TextDecoder().decode(out.stderr).slice(-2000)}`);
+  if (!(await complete())) {
+    // Two builds at once (the update tests build A and B together) have the same key: without the lock both emptied this folder
+    // and compiled into it, and deno compile's rename of its temp file failed. One builds; the other waits for .complete.
+    await Deno.mkdir(`${REPO}/dist/.wsl-cache`, { recursive: true });
+    const release = await wslCacheLock(`${cache}.lock`, complete);
+    try {
+      if (!(await complete())) { // the build we waited for may have failed: then this one builds
+        cached = false;
+        await Deno.remove(cache, { recursive: true }).catch(() => {});
+        await Deno.mkdir(cache, { recursive: true });
+        await buildKeeper(t, `${cache}/${WSL_KEEPER}`);
+        const out = await new Deno.Command(Deno.execPath(), {
+          args: helperCompileArgs(t, `${cache}/${WSL_HELPER}`),
+          cwd: APP_DIR,
+          stdout: 'piped',
+          stderr: 'piped',
+        }).output();
+        if (!out.success) {
+          throw new Error(`deno compile of the WSL helper failed for ${t.id}:\n${new TextDecoder().decode(out.stderr).slice(-2000)}`);
+        }
+        await Deno.writeTextFile(`${cache}/.complete`, ''); // written last (a folder rename right after a 100 MB write is refused while it is scanned)
+      }
+    } finally {
+      release();
     }
-    await Deno.writeTextFile(`${cache}/.complete`, '');
   }
   await Deno.mkdir(outDir, { recursive: true });
   for (const name of [WSL_KEEPER, WSL_HELPER]) await Deno.copyFile(`${cache}/${name}`, `${outDir}/${name}`);

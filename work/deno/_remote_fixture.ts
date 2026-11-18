@@ -14,7 +14,6 @@ import { projectKey } from '../../outputs/agent-studio/server/desktop/project_de
 import type { Runner } from '../../outputs/agent-studio/server/remote/tailscale.ts';
 import type { AccessOptions } from '../../outputs/agent-studio/server/remote/access.ts';
 import { readRemotePort, saveRemotePort } from '../../outputs/agent-studio/server/remote/port.ts';
-import { pickPort } from './_ports.ts';
 
 // test mode: the Tailscale and setup fakes are read, and no real Tailscale, winget, msiexec or browser can be reached
 Deno.env.set('AGENT_STUDIO_TEST', '1');
@@ -252,7 +251,15 @@ export async function remoteStudio(phone: AccessOptions = {}, root?: string, ext
     transcripts = await openSource(`${root}${sep}omp`, claudeDir);
   }
   // The phone port is fixed in remote-port.json (never port 0); an OS-chosen number, as for any child that comes back on its port.
-  if (readRemotePort(state) === null) saveRemotePort(state, pickPort(), pickPort()); // and the artifact port (Phase D)
+  // Both are held open until the studio is built (closed just before this returns): a number picked and let go at once could be
+  // taken by another process (an outgoing connection gets an ephemeral port too) before Phone access binds it, and AIB keeps its
+  // phone port (port_busy, then no pairing code), so under a loaded test pool the pairing failed now and then.
+  const held: Deno.Listener[] = [];
+  if (readRemotePort(state) === null) {
+    for (let i = 0; i < 2; i++) held.push(Deno.listen({ hostname: '127.0.0.1', port: 0 }));
+    const [phonePort, artifactPort] = held.map((l) => (l.addr as Deno.NetAddr).port);
+    saveRemotePort(state, phonePort, artifactPort); // and the artifact port (Phase D)
+  }
   const chats: FakeChat[] = [];
   const stateCalls: [string, number][] = [];
   /** Every live op the agent host got ([name, body]); `liveAnswer` sets what it answers. */
@@ -331,6 +338,7 @@ export async function remoteStudio(phone: AccessOptions = {}, root?: string, ext
   });
   const web = new WebServer(ctx);
   const port = await web.listen(0);
+  for (const listener of held) listener.close(); // the test turns Phone access on next: it binds them
   return {
     ctx,
     web,

@@ -36,6 +36,7 @@ import {
   stagedName,
   TARGETS,
   writeZip,
+  wslCacheLock,
   zipFolder,
 } from "../../tools/build.ts";
 import {
@@ -788,4 +789,39 @@ Deno.test({
       Deno.removeSync(dir, { recursive: true });
     }
   },
+});
+
+Deno.test("the WSL cache lock: one build at a time; the other waits for it, takes over when it failed, and takes a stale lock", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "aib-wsl-lock-" });
+  try {
+    const lock = `${dir}/key.lock`;
+    let complete = false;
+    const done = () => Promise.resolve(complete);
+    const first = await wslCacheLock(lock, done);
+    let waited = false;
+    const waiting = wslCacheLock(lock, done).finally(() => (waited = true));
+    await new Promise((r) => setTimeout(r, 1500));
+    assertEquals(waited, false, "the second build waits while the first holds the lock");
+    complete = true; // the first build wrote .complete (its lock is still held)
+    const second = await waiting;
+    assert(waited, "the second build goes on once the folder is complete");
+    first();
+    second(); // took nothing: a no-op
+    complete = false;
+    // a build that failed (no .complete): its release lets the waiting one take the lock and build
+    const failing = await wslCacheLock(lock, done);
+    const next = wslCacheLock(lock, done);
+    failing();
+    const mine = await next;
+    assertThrows(() => Deno.openSync(lock, { createNew: true, write: true }), Deno.errors.AlreadyExists);
+    mine();
+    // a lock left by a build that died long ago is taken over
+    Deno.writeTextFileSync(lock, "");
+    const old = new Date(Date.now() - 21 * 60_000);
+    Deno.utimeSync(lock, old, old);
+    (await wslCacheLock(lock, done))();
+    assertThrows(() => Deno.statSync(lock), Deno.errors.NotFound);
+  } finally {
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
+  }
 });

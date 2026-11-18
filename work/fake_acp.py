@@ -1202,8 +1202,9 @@ for line in sys.stdin:
                         'rawOutput': '%d:%s' % (i, pad)})
             result(key, {'stopReason': 'end_turn'})
         elif prompt_text.startswith('stream:'):   # 'stream:<n>:<ms>': n chunks, one every ms; halfway it asks a permission and waits
-            count, _, gap = prompt_text[7:].partition(':')
-            def stream(turn_key=key, count=int(count), gap=float(gap or 100) / 1000):
+            # 'stream:<n>:<ms>:<gate file>': after the last chunk the turn ends only once the test creates the file (no timer to outrun)
+            count, gap, gate = (prompt_text[7:].split(':', 2) + ['', ''])[:3]
+            def stream(turn_key=key, count=int(count), gap=float(gap or 100) / 1000, gate=gate):
                 for i in range(count):
                     if i == count // 2:
                         done = threading.Event()
@@ -1213,6 +1214,9 @@ for line in sys.stdin:
                         update({'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': 'answer=%s ' % stream_answer.get('outcome')}})
                     update({'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': 'chunk%d ' % i}})
                     time.sleep(gap)
+                deadline = time.time() + 300
+                while gate and not os.path.exists(gate) and time.time() < deadline:
+                    time.sleep(0.02)
                 result(turn_key, {'stopReason': 'end_turn'})
             threading.Thread(target=stream, daemon=True).start()
         elif prompt_text == 'wait':

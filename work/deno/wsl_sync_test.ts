@@ -168,7 +168,9 @@ Deno.test({ name: 'wsl helper sync.*: a storm pauses the project, the amber line
   const merge = mergeMethods(box.state);
   try {
     await h['sync.chats']({ chats: [{ chat: 'c1', cwd: c.wt }] });
-    await new Promise((r) => setTimeout(r, 500));
+    // the baseline scan, then the chat-open catch-up (about 1 s of git here): a storm landing during that catch-up is copied by it (it
+    // copies whatever the chat missed, with no storm limit), so the storm must come once the project is watched and caught up
+    await until(() => sync.live.projects.size === 1 && [...sync.live.projects.values()][0].baselined.isSet() && sync.live.workers.length === 0, 'baseline and catch-up done');
     // three new files at once: made in a folder outside the project, then moved in with one rename (no scan can see only some)
     const stage = pathOf(box.base, 'stage');
     for (const n of [1, 2, 3]) write(stage, `s${n}.txt`, `${n}\n`);

@@ -384,8 +384,9 @@ export class Store {
     if (!(await isDir(this.root))) return [];
     const folders: string[] = [];
     for await (const entry of Deno.readDir(this.root)) folders.push(join(this.root, entry.name));
-    // Folders and their chats are read concurrently (the file system answers many stats at once); order is kept for the sort.
-    const perFolder = await Promise.all(folders.map(async (folder) => {
+    // Folders and their chats are read concurrently (the file system answers many stats at once); order is kept for the sort,
+    // and a record that fails the whole listing fails it as Python does: the first failure in folder order, not the first to finish.
+    const perFolder = await allInOrder(folders.map(async (folder) => {
       if (!(await isDir(folder))) return [];
       const real = await resolve(folder);
       if (real === null || !isRelativeTo(real, this.root)) return [];
@@ -398,7 +399,7 @@ export class Store {
           files.push([join(folder, entry.name), lexical && entry.isFile && !entry.isSymlink ? [...lexical, entry.name].join('/') : undefined]);
         }
       } catch { /* not a folder */ }
-      const items = await Promise.all(files.map(async ([path, key]) => {
+      const items = await allInOrder(files.map(async ([path, key]) => {
         try {
           const item = { ...(await this.summary(path, key)) };
           item.subagentCount = await this.#subagentCount(withoutSuffix(path), `${item.size}:${item.modified}`);
@@ -557,6 +558,16 @@ export function usageTokens(tail: Uint8Array): number | null {
     return total || null;
   }
   return null;
+}
+
+/**
+ * Promise.all that waits for every promise and then throws the first rejection in list order (Promise.all throws the first to
+ * happen, which depends on timing: the same folder would fail with a different chat's error from one run to the next).
+ */
+async function allInOrder<T>(promises: Promise<T>[]): Promise<T[]> {
+  const settled = await Promise.allSettled(promises);
+  for (const outcome of settled) if (outcome.status === 'rejected') throw outcome.reason;
+  return settled.map((outcome) => (outcome as PromiseFulfilledResult<T>).value);
 }
 
 function sortSessions(items: Dict[]): Dict[] {

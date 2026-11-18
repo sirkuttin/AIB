@@ -213,6 +213,18 @@ Deno.test('the web server: chat.html has the saved values, POST /api/live/view-p
       'studio-workspace-v1': '{"v":1,"active":"all"}',
     });
     assert(page.indexOf('id="aibViewPrefs"') < page.indexOf('</head>'));
+    // N1 without the desktop app's window list: another app window in presence makes a page seed only what it lacks; a browser
+    // tab's id (t-...) is not an app window, and a window is not "another" to itself
+    const seedOf = async (query: string) => {
+      const text = await (await fetch(`${origin}/${query}`)).text();
+      return JSON.parse(text.match(/id="aibViewPrefs">([\s\S]*?)<\/script>/)![1]).seed ?? null;
+    };
+    ctx.presence.reportWindow({ w: 't-abcd1234', focused: true, idleMs: 0 });
+    assertEquals(await seedOf('?w=m'), null, 'a browser tab is not another app window');
+    ctx.presence.reportWindow({ w: 'w3', focused: false, idleMs: 0 });
+    assertEquals(await seedOf('?w=m'), 'missing-only');
+    assertEquals(await seedOf(''), 'missing-only', 'no ?w= is the main window');
+    assertEquals(await seedOf('?w=w3'), null, 'w3 itself, with no other app window');
     assert(
       Deno.statSync(`${stateDir}${sep}studio-view.json`).isFile,
       'kept in the state folder',

@@ -120,20 +120,43 @@
     } catch (e) {}
   }
   let live = null;
-  /* opts (tests): storage, proto (the Storage prototype to hook), fetch, setTimeout, clearTimeout. */
+  /* This window's changes the server has not confirmed yet ({key: value, null for a removal}), in sessionStorage: it outlives a
+     reload of the same window. A reload right after a change could be answered before that change's request reached Studio, and
+     chat.html then seeded Studio's older value over the newer one in localStorage (the change was lost). At start, a key still in
+     here keeps its local value and is sent again. */
+  const UNSENT_KEY = 'aib-view-prefs-unsent';
+  /* opts (tests): storage, session (this window's sessionStorage), proto (the Storage prototype to hook), fetch, setTimeout,
+     clearTimeout. */
   function init(win, opts) {
     win = win || root;
     opts = opts || {};
     if (live) return live;
     const saved = readBlock(win.document);
     if (!saved) return null;
-    let storage;
+    let storage, session;
     try {
       storage = opts.storage || win.localStorage;
     } catch (e) {
       storage = null;
     }
     if (!storage) return null;
+    try {
+      session = opts.session || win.sessionStorage || null;
+    } catch (e) {
+      session = null;
+    }
+    let unsent = {};
+    try {
+      const u = session && JSON.parse(session.getItem(UNSENT_KEY) || '{}');
+      if (u && typeof u === 'object' && !Array.isArray(u)) unsent = u;
+    } catch (e) {}
+    const keepUnsent = () => {
+      try {
+        if (!session) return;
+        if (Object.keys(unsent).length) session.setItem(UNSENT_KEY, JSON.stringify(unsent));
+        else session.removeItem(UNSENT_KEY);
+      } catch (e) {} // full: a reload right after a change may lose it, as before
+    };
     const proto = opts.proto || (win.Storage && win.Storage.prototype) || Object.getPrototypeOf(storage);
     const doFetch = opts.fetch || (win.fetch && win.fetch.bind(win));
     const later = opts.setTimeout || win.setTimeout.bind(win),
@@ -147,6 +170,18 @@
       }
     } catch (e) {}
     const { seed, upload } = plan(saved, local, !!saved[MISSING_ONLY]);
+    // this window's change that Studio never confirmed (a reload overtook its request): the local value stays and goes again
+    for (const k of Object.keys(unsent)) {
+      const v = unsent[k];
+      const here = Object.prototype.hasOwnProperty.call(local, k) ? local[k] : null;
+      if (!synced(k) || SEED_ONLY.includes(k) || (v !== null && typeof v !== 'string') || here !== v) {
+        delete unsent[k]; // changed since (another window, a seed): not ours to resend
+        continue;
+      }
+      delete seed[k];
+      upload[k] = v;
+    }
+    keepUnsent();
     /* What the data folder has, key by key. Writing the value it already has sends nothing: the page rewrites the same sidebar
        state on every list update; each of those was a request a change made right after it had to wait for. */
     const known = new Map();
@@ -206,12 +241,27 @@
         lastBatch.set(k, n);
       }
       let retry = false;
+      // Studio answered for this batch: its keys need no resend after a reload (unless a newer change of the key is on its way)
+      const answered = () => {
+        let any = false;
+        for (const k of Object.keys(batch)) {
+          if (lastBatch.get(k) === n && Object.prototype.hasOwnProperty.call(unsent, k) && unsent[k] === batch[k]) {
+            delete unsent[k];
+            any = true;
+          }
+        }
+        if (any) keepUnsent();
+      };
       try {
         const body = JSON.stringify({ set: batch, page: pageId, seq: n });
         let r = await post(body, keepalive, false);
         if (r.status === 403) r = await post(body, keepalive, true); // Studio restarted: a new token
-        if (r.status === 400) return false; // a malformed batch: the same body would fail again
+        if (r.status === 400) {
+          answered();
+          return false; // a malformed batch: the same body would fail again
+        }
         if (!r.ok) throw new Error('view-prefs ' + r.status); // 503: the file is busy just now
+        answered();
         return true; // keys the server refused (too big) are not sent again: they would be refused again
       } catch (e) {
         // again later, the keys no newer batch or change carries (newer changes win)
@@ -231,6 +281,8 @@
     function note(k, v) {
       if (!Object.prototype.hasOwnProperty.call(pending, k) && known.has(k) && known.get(k) === v) return; // it has it already
       pending[k] = v;
+      unsent[k] = v;
+      keepUnsent();
       if (leaving) {
         if (timer) cancel(timer);
         timer = 0;

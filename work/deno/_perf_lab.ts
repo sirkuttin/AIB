@@ -15,6 +15,9 @@ export interface Sample {
   documents: number;
   /** busy share of one core over the last interval (TaskDuration delta / wall delta), percent */
   cpu: number;
+  /** the main thread's CPU time over the last interval (ThreadTime delta / wall delta), percent: unlike cpu, not stretched when
+   * other programs keep the machine busy (a task waiting for a core still counts in TaskDuration) */
+  thread: number;
   /** script share of one core over the last interval, percent */
   script: number;
   layouts: number; // per second
@@ -208,6 +211,7 @@ export async function sampleFor(
     const cur: Record<string, number> = {
       ...(await metrics(page)),
       TaskDuration: busy.TaskDuration,
+      ThreadTime: busy.ThreadTime,
       ScriptDuration: busy.ScriptDuration,
       LayoutCount: busy.LayoutCount,
       RecalcStyleCount: busy.RecalcStyleCount,
@@ -219,6 +223,7 @@ export async function sampleFor(
       listeners: cur.JSEventListeners,
       documents: cur.Documents,
       cpu: +((100 * (cur.TaskDuration - prev.TaskDuration)) / wall).toFixed(1),
+      thread: +((100 * ((cur.ThreadTime ?? NaN) - (prev.ThreadTime ?? NaN))) / wall).toFixed(1),
       script: +((100 * (cur.ScriptDuration - prev.ScriptDuration)) / wall)
         .toFixed(1),
       layouts: +((cur.LayoutCount - prev.LayoutCount) / wall).toFixed(1),

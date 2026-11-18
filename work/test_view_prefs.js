@@ -397,3 +397,67 @@ test('A2: a theme another window picked is painted here without writing anything
   V.applyFromOtherWindow(win, 'aib-status-glyphs', 'on');
   assert.equal(attrs['data-status-glyphs'], 'on');
 });
+
+test('a reload right after a change keeps it: the page answered before the change reached Studio does not seed the older value over it', async () => {
+  const S = storageClass();
+  const storage = new S({ 'studio-layout-v1:<1400': '{"side":300}' });
+  const session = new S();
+  const posts = [];
+  const open = (saved, answer) => {
+    const timers = [];
+    const ctl = V.init(
+      {
+        document: { getElementById: () => ({ textContent: JSON.stringify({ prefs: saved }) }), addEventListener() {} },
+        addEventListener() {},
+      },
+      {
+        storage,
+        session,
+        proto: S.prototype,
+        fetch: async (url, o) => {
+          if (url === '/api/live/bootstrap') return { ok: true, status: 200, json: async () => ({ token: 't' }) };
+          posts.push(JSON.parse(o.body).set);
+          return { ok: answer === 200, status: answer, json: async () => ({}) };
+        },
+        setTimeout: (fn) => (timers.push(fn), timers.length),
+        clearTimeout: () => {},
+      },
+    );
+    const run = async () => {
+      while (timers.length) await timers.shift()();
+    };
+    const once = async () => {
+      const fn = timers.shift();
+      if (fn) await fn();
+    };
+    return { ctl, run, once };
+  };
+  // the drag saves 220; the reload comes before its request reached Studio (no timer ran): Studio still has 300
+  let p = open({ 'studio-layout-v1:<1400': '{"side":300}' }, 200);
+  storage.setItem('studio-layout-v1:<1400', '{"side":220}');
+  p.ctl.stop();
+  p = open({ 'studio-layout-v1:<1400': '{"side":300}' }, 200);
+  assert.equal(storage.getItem('studio-layout-v1:<1400'), '{"side":220}', 'the newer local value stays');
+  assert.deepEqual(p.ctl.seeded, []);
+  assert.deepEqual(p.ctl.uploading, ['studio-layout-v1:<1400'], 'and is sent again');
+  await p.run();
+  assert.deepEqual(posts.at(-1), { 'studio-layout-v1:<1400': '{"side":220}' });
+  assert.equal(session.getItem('aib-view-prefs-unsent'), null, 'confirmed: nothing left to resend');
+  p.ctl.stop();
+  // confirmed changes do not linger: the next start seeds what Studio has (here: changed elsewhere, a phone or another copy)
+  p = open({ 'studio-layout-v1:<1400': '{"side":260}' }, 200);
+  assert.equal(storage.getItem('studio-layout-v1:<1400'), '{"side":260}');
+  p.ctl.stop();
+  // a failed send stays unconfirmed; but once the key changed since (another window), the old value is not resent
+  p = open({ 'studio-layout-v1:<1400': '{"side":260}' }, 503);
+  storage.setItem('studio-layout-v1:<1400', '{"side":240}');
+  await p.once(); // 503: the retry is scheduled, not run here
+  assert.equal(JSON.parse(session.getItem('aib-view-prefs-unsent'))['studio-layout-v1:<1400'], '{"side":240}');
+  p.ctl.stop();
+  S.prototype.setItem.call(storage, 'studio-layout-v1:<1400', '{"side":250}'); // another window's write (this page's hook is off)
+  p = open({ 'studio-layout-v1:<1400': '{"side":260}' }, 200);
+  assert.equal(storage.getItem('studio-layout-v1:<1400'), '{"side":260}', 'seeded as before');
+  assert.deepEqual(p.ctl.uploading, []);
+  assert.equal(session.getItem('aib-view-prefs-unsent'), null);
+  p.ctl.stop();
+});
