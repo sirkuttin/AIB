@@ -86,7 +86,13 @@ notifications through the web API, updates as "open the installer" instructions)
   activation token, so GNOME may show "AIB is ready" instead; the chat still opens. AIB started by a click is handed the token
   (GTK 3.24 reads `DESKTOP_STARTUP_ID` and supports xdg-activation); not yet checked on a real Wayland desktop.
   Tests: `keeper/toast_fdo_test.go`, `work/deno/linux_notify_test.ts`, and headless in WSL with a fake notification server on a
-  private bus: `work/deno/linux_notify_wsl_e2e_test.ts`.
+  private bus: `work/deno/linux_notify_wsl_e2e_test.ts`. **Security limit:** the helper only takes clicks the bus stamps as sent by
+  the current owner of `org.freedesktop.Notifications`, so another program cannot fake one. But a notification button is only as
+  strong as the desktop's own input isolation: daemons with a control tool (dunst `dunstctl action`, mako `makoctl invoke`, swaync
+  `swaync-client`) let any program of the same user make the real daemon press a button, and an easily replaced daemon (dunst, mako,
+  xfce4-notifyd) can be killed and its name taken over. GNOME Shell and Plasma have no such invoke command. This is the same class as
+  Windows UI Automation pressing a toast button, or `xdotool` clicking Allow in AIB's own window on X11: a program that can drive
+  the user's desktop is outside what the one-time codes protect (risky requests never get an Allow button).
 - **Agent host:** a separate long-lived process by design (`AIB host`). Closing the window does not cut off a turn when the person
   chose to keep chats running. With no app attached the host shows its own tray icon while something works and exits 10 s after
   nothing does (docs/agent-host.md, "Lifecycle of the built app's host"). With such a host (an older version's, being drained) the

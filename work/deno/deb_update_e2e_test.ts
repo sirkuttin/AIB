@@ -1,24 +1,34 @@
 /**
  * The .deb self-update for real, in the Ubuntu WSL distro as a stand-in Linux machine (skips cleanly without it, without Deno for
- * Linux, curl or setpriv in it, when a real `aib` package is installed there, or when /etc/aib exists). Headless: wsl.exe with piped
- * stdio, no window, no password prompt.
+ * Linux, curl or setpriv in it, when a real `aib` package is installed there, or when an /etc/aib this test did not make exists).
+ * Headless: wsl.exe with piped stdio, no window, no password prompt.
+ *
+ * A crashed run (the PC went down: no `finally`) leaves /etc/aib with this test's marker, its user, sudoers drop-in and folder. The
+ * next run removes them first (cleanStale: only this test's own names, only when older than STALE_MIN, so a run in progress in
+ * another checkout is left alone) instead of skipping forever.
  *
  * Set-up (all undone at the end, also after a failure): a throwaway folder /tmp/aib-deb-e2e-<random>, a throwaway user whose home is
  * inside it, a sudoers drop-in that lets only that user run only /usr/lib/aib/aib-install-deb without a password (checked with
  * visudo before it is put in place), and a stand-in `pkexec` the driver calls by its absolute path (AIB itself only uses
  * /usr/bin/pkexec or /bin/pkexec) that goes through `sudo -n` (or answers "dismissed" for the cancel case, or swaps the file first
  * for the swap case). The root script fetches the release's SHA256SUMS itself; here it reads them from root-owned files under
- * <folder>/sums/v<version>/, because the test writes the root-owned /etc/aib/update-release-url (file:///...): the only override the
- * script takes, which nothing the user controls can set (and removes it at the end). Small test packages named `aib` are built here
+ * /etc/aib/test-sums/v<version>/, because the test writes the root-owned /etc/aib/update-release-url (file:///etc/aib/test-sums):
+ * the only override the script takes, which nothing the user controls can set (a file:// source must lie in root's own /etc/aib,
+ * every folder root's alone), and which goes with /etc/aib at the end. The last install also runs with /etc/aib/test-hook (the
+ * script runs it only from root's own /etc/aib): it plays a program of the user's that took the user-side reader's descriptor to
+ * the first copy and writes another package through it after root's hash. Small test packages named `aib` are built here
  * with tools/linux_package.ts the way tools/build.ts adds the self-update to the real .deb (the real root script and polkit action; a
  * shell script stands in for the app): 0.13.2-beta.1.test.2 (installed first with dpkg), 0.13.2-beta.1, 0.13.2, an older 0.13.1,
  * and an "evil" 0.13.2-beta.1 with other content. At the end the package is purged; the user, the drop-in, /etc/aib and the folder go.
  *
  * What it proves, with AIB's own code running in the distro (work/deno/_deb_update_driver.ts):
  *   - aib-install-deb refuses everything that is not the caller's own AIB download (links, outside home, another package, another
- *     version, folders others can write, a root-owned file, two arguments, no PKEXEC_UID), a file whose SHA-256 (root's own copy) is
- *     not the release's, a version whose SHA256SUMS cannot be fetched, a release-source file others can write, and anything not
+ *     version, not the version AIB offered, folders others can write, a root-owned file, one or three arguments, no PKEXEC_UID), a
+ *     file whose SHA-256 (root's own copy) is not the release's, a version whose SHA256SUMS cannot be fetched, a release-source
+ *     file others can write, a file:// source outside /etc/aib, through a link or in a folder others can write, and anything not
  *     newer than the installed version (older, equal), and installs nothing then;
+ *   - what is hashed and installed is a file root made itself (another inode than the user-side copy), and a descriptor to the
+ *     user-side copy kept open past the hash cannot change what is installed;
  *   - a closed password prompt and no pkexec leave the old version installed, no helper started, AIB open, why and the manual line;
  *   - a file swapped while the password prompt is open (same name, same Version, an `aib` package) is refused by root;
  *   - Install when chats finish, the phone's Install and the ticks never call pkexec;
@@ -62,13 +72,47 @@ function listedDistros(): string[] {
   }
 }
 
+/** This test's mark in the /etc/aib it makes (a leftover with it is this test's own, from a run that never reached `finally`). */
+const MARKER = '/etc/aib/.deb-update-e2e-test';
+/** Leftovers younger than this may belong to a run in progress (another checkout): left alone. A run takes about two minutes. */
+const STALE_MIN = 30;
+
+/**
+ * Removes what a crashed run of this test left (older than STALE_MIN minutes): /etc/aib with MARKER (and the test package, only if
+ * its Description says it is this test's), and per sudoers drop-in aib-deb-e2e-<id>: the drop-in, user aibe2e<id[0:8]> and
+ * /tmp/aib-deb-e2e-<id>. Prints one line per thing removed.
+ */
+async function cleanStale(): Promise<Run> {
+  return await asRoot(
+    `m=$1; min=$2
+    if [ -f "$m" ] && [ -n "$(find "$m" -mmin +"$min" 2>/dev/null)" ]; then
+      if dpkg-query -W -f='\${Description}' aib 2>/dev/null | grep -q deb_update_e2e_test; then dpkg --purge aib >/dev/null 2>&1; echo "purged the test package"; fi
+      rm -rf /etc/aib && echo "removed /etc/aib"
+    fi
+    for f in /etc/sudoers.d/aib-deb-e2e-*; do
+      id=\${f#/etc/sudoers.d/aib-deb-e2e-}
+      printf '%s\\n' "$id" | grep -Eqx '[0-9a-f]{12}' || continue
+      [ -n "$(find "$f" -mmin +"$min" 2>/dev/null)" ] || continue
+      u=aibe2e$(printf '%s' "$id" | cut -c1-8)
+      rm -f "$f"; pkill -u "$u" 2>/dev/null; getent passwd "$u" >/dev/null && userdel "$u" 2>/dev/null; rm -rf -- "/tmp/aib-deb-e2e-$id"
+      echo "removed run $id"
+    done
+    exit 0`,
+    MARKER,
+    String(STALE_MIN),
+  );
+}
+
 /** Why the test cannot run here ('' = it can): the distro, the tools it needs, Deno for Linux, no real aib, no /etc/aib. */
 async function blocker(): Promise<string> {
   if (!listedDistros().some((d) => d.toLowerCase() === DISTRO.toLowerCase())) return `no ${DISTRO} WSL distro`;
+  const stale = await cleanStale().catch((e) => ({ code: 1, out: '', err: String(e) }));
+  if (stale.out.trim()) console.log(`deb_update_e2e_test: a crashed run's leftovers: ${stale.out.trim().replaceAll('\n', '; ')}`);
   const r = await asRoot(
-    'for c in dpkg dpkg-deb apt-get sudo visudo useradd userdel runuser getent realpath setpriv timeout sha256sum awk; do command -v $c >/dev/null || { echo "no $c"; exit 1; }; done; ' +
+    'for c in dpkg dpkg-deb apt-get sudo visudo useradd userdel runuser getent realpath setpriv timeout sha256sum awk find; do command -v $c >/dev/null || { echo "no $c"; exit 1; }; done; ' +
       '[ -x /usr/bin/curl ] || { echo "no /usr/bin/curl"; exit 1; }; ' +
-      '[ -e /etc/aib ] && { echo "/etc/aib exists (the test writes its own and removes it)"; exit 1; }; ' +
+      `[ -e ${MARKER} ] && { echo "another run of this test is in progress (or crashed less than ${STALE_MIN} minutes ago: /etc/aib has its mark)"; exit 1; }; ` +
+      '[ -e /etc/aib ] && { echo "/etc/aib exists and was not made by this test (the test writes its own and removes it)"; exit 1; }; ' +
       'if dpkg-query -W -f="\\${Status}" aib 2>/dev/null | grep -q installed; then echo "a real aib package is installed"; exit 1; fi; ' +
       'u=$(getent passwd 1000 | cut -d: -f6); for d in "$u/.deno/bin/deno" /usr/local/bin/deno /usr/bin/deno; do [ -x "$d" ] && { echo "deno=$d"; exit 0; }; done; echo "no deno for Linux"; exit 1',
   ).catch((e) => ({ code: 1, out: String(e), err: '' }));
@@ -177,6 +221,8 @@ Deno.test({
     const USER = `aibe2e${id.slice(0, 8)}`;
     const SUDOERS = `/etc/sudoers.d/aib-deb-e2e-${id}`;
     const SOURCE = '/etc/aib/update-release-url'; // the root script's only override (root-owned)
+    const SUMS = '/etc/aib/test-sums'; // the release's SHA256SUMS as root fetches them here (file://, root-owned)
+    const HOOK = '/etc/aib/test-hook'; // the root script's test hook (root-owned)
     const HOME = `${ROOT}/home`;
     const STATE = `${HOME}/.local/state/agent-studio`;
     const PKEXEC = `${ROOT}/bin/pkexec`; // the stand-in, by its absolute path, as AIB calls /usr/bin/pkexec
@@ -218,7 +264,7 @@ exec sudo -n "$@"
       await ok(
         'set-up',
         `set -e
-        mkdir -m 755 "$1" "$1/bin" "$1/debs" "$1/feeds" "$1/sums"
+        mkdir -m 755 "$1" "$1/bin" "$1/debs" "$1/feeds"
         useradd -M -N -g nogroup -d "$1/home" -s /usr/sbin/nologin "$2"
         mkdir -m 700 "$1/home" && chown "$2" "$1/home"
         mkdir -m 755 "$1/run" "$1/tmp" "$1/denodir" && chown "$2" "$1/run" "$1/tmp" "$1/denodir" "$1/feeds"
@@ -235,9 +281,11 @@ exec sudo -n "$@"
       );
       etc = true; // the blocker made sure /etc/aib did not exist: from here on, the clean-up removes it
       await ok(
-        'the release source (root-owned)',
-        'mkdir -m 755 /etc/aib && printf "file://%s/sums\\n" "$1" > "$2" && chmod 644 "$2"',
+        'the release source (root-owned, its sums in root-owned /etc/aib/test-sums; the mark first, so a crash leaves it findable)',
+        'mkdir -m 755 /etc/aib && echo "$1" > "$2" && mkdir -m 755 "$3" && printf "file://%s\\n" "$3" > "$4" && chmod 644 "$2" "$4"',
         ROOT,
+        MARKER,
+        SUMS,
         SOURCE,
       );
       const uid = (await ok('uid', 'id -u "$1"', USER)).trim();
@@ -248,8 +296,8 @@ exec sudo -n "$@"
       const publish = (v: string, lines: [string, string][]) =>
         ok(
           'publish SHA256SUMS',
-          'mkdir -p "$1/sums/v$2" && printf "%s" "$3" > "$1/sums/v$2/SHA256SUMS"',
-          ROOT,
+          'mkdir -p "$1/v$2" && printf "%s" "$3" > "$1/v$2/SHA256SUMS"',
+          SUMS,
           v,
           lines.map(([hash, name]) => `${hash}  ${name}\n`).join(''),
         );
@@ -349,28 +397,33 @@ exec sudo -n "$@"
         const script = '/usr/lib/aib/aib-install-deb';
         const P = { PKEXEC_UID: uid };
         const cases: [string, string[], Record<string, string>, number, string][] = [
-          ['a link', [at('link')], P, 64, 'goes through a link'],
-          ['outside the home folder', [`${ROOT}/tmp/out/updates/${v}/${name}`], P, 64, 'not in the home folder'],
-          ['a folder others can write', [at('group')], P, 64, 'can be written by others'],
-          ['a root-owned file', [`${HOME}/rootfile/updates/${v}/${name}`], P, 64, 'does not belong'],
-          ['another package (listed in SHA256SUMS)', [at('other', '0.13.4')], P, 65, 'not an AIB package'],
-          ['another version inside (listed in SHA256SUMS)', [at('ver', '0.13.3')], P, 65, 'not 0.13.3'],
+          ['a link', [at('link'), v], P, 64, 'goes through a link'],
+          ['outside the home folder', [`${ROOT}/tmp/out/updates/${v}/${name}`, v], P, 64, 'not in the home folder'],
+          ['a folder others can write', [at('group'), v], P, 64, 'can be written by others'],
+          ['a root-owned file', [`${HOME}/rootfile/updates/${v}/${name}`, v], P, 64, 'does not belong'],
+          ['another package (listed in SHA256SUMS)', [at('other', '0.13.4'), '0.13.4'], P, 65, 'not an AIB package'],
+          ['another version inside (listed in SHA256SUMS)', [at('ver', '0.13.3'), '0.13.3'], P, 65, 'not 0.13.3'],
           [
             "same name and Version, other content: root's own SHA-256 is not the release's",
-            [at('swapped', versions[1])],
+            [at('swapped', versions[1]), versions[1]],
             P,
             69,
             "is not the release's",
           ],
-          ['no SHA256SUMS for the version (the fetch fails)', [at('nosums', '0.13.5')], P, 68, 'could not fetch'],
-          ['an older version (genuine, listed)', [at('older', '0.13.1')], P, 73, 'is not newer'],
-          ['the installed version again', [at('equal', versions[0])], P, 73, 'is not newer'],
-          ['two arguments', [at('good'), '-y'], P, 64, 'exactly one argument'],
-          ['a relative path', [`good/updates/${v}/${name}`], P, 64, 'not absolute'],
-          ['..', [`${HOME}/good/../good/updates/${v}/${name}`], P, 64, 'not plain'],
-          ['not through pkexec', [at('good')], {}, 66, 'without pkexec'],
-          ['asked for by root', [at('good')], { PKEXEC_UID: '0' }, 66, 'not by root'],
+          ['no SHA256SUMS for the version (the fetch fails)', [at('nosums', '0.13.5'), '0.13.5'], P, 68, 'could not fetch'],
+          ['an older version (genuine, listed)', [at('older', '0.13.1'), '0.13.1'], P, 73, 'is not newer'],
+          ['the installed version again', [at('equal', versions[0]), versions[0]], P, 73, 'is not newer'],
+          // S3: the version AIB offered (the window's) must be the folder's, the file name's and the package's
+          ['not the version AIB offered (a genuine, newer release)', [at('good'), '0.13.3'], P, 64, 'AIB offered version 0.13.3'],
+          ['an offered version that is no version', [at('good'), '0.13.2 x'], P, 64, 'has characters a version never has'],
+          ['one argument (no offered version)', [at('good')], P, 64, 'expects two arguments'],
+          ['three arguments', [at('good'), v, '-y'], P, 64, 'expects two arguments'],
+          ['a relative path', [`good/updates/${v}/${name}`, v], P, 64, 'not absolute'],
+          ['..', [`${HOME}/good/../good/updates/${v}/${name}`, v], P, 64, 'not plain'],
+          ['not through pkexec', [at('good'), v], {}, 66, 'without pkexec'],
+          ['asked for by root', [at('good'), v], { PKEXEC_UID: '0' }, 66, 'not by root'],
         ];
+        const install = (...args: string[]) => asRoot('exec env -i "$@"', `PKEXEC_UID=${uid}`, script, ...args);
         for (const [what, args, env, code, says] of cases) {
           const r = await asRoot('exec env -i "$@"', ...Object.entries(env).map(([k, val]) => `${k}=${val}`), script, ...args);
           assertEquals(r.code, code, `${what}: ${r.err}`);
@@ -378,24 +431,50 @@ exec sudo -n "$@"
         }
         // a SHA256SUMS line with another hash for the right name: refused the same way
         await publish(v, [['f'.repeat(64), name]]);
-        const mismatch = await asRoot('exec env -i "$@"', `PKEXEC_UID=${uid}`, script, at('good'));
+        const mismatch = await install(at('good'), v);
         assertEquals(mismatch.code, 69, mismatch.err);
         // the release source must be root's alone: writable by others, it is not trusted
         await ok('loosen the source', 'chmod 666 "$1"', SOURCE);
-        const loose = await asRoot('exec env -i "$@"', `PKEXEC_UID=${uid}`, script, at('good'));
+        const loose = await install(at('good'), v);
         await ok('restore the source', 'chmod 644 "$1"', SOURCE);
         assertEquals(loose.code, 74, loose.err);
         assert(loose.err.includes('can be written by others'), loose.err);
+        // S1: a file:// source only in root's own /etc/aib, every folder on the way root's alone and no link (a leftover pointing
+        // into /tmp, where any user can make the folder, is never taken)
+        await publish(v, [[good, name]]);
+        const source = async (what: string, base: string, says: string, setUp = 'true') => {
+          await ok(`source: ${what}`, `${setUp} && printf "%s\\n" "$1" > "$2"`, base, SOURCE);
+          const r = await install(at('good'), v);
+          assertEquals(r.code, 74, `${what}: ${r.err}`);
+          assert(r.err.includes(says), `${what}: ${r.err}`);
+        };
+        await ok('a sums folder in /tmp', `mkdir -p "$1/sums/v$2" && cp "${SUMS}/v$2/SHA256SUMS" "$1/sums/v$2/"`, ROOT, v);
+        await source('in /tmp', `file://${ROOT}/sums`, 'points outside /etc/aib');
+        await source('/etc/aib/.. tricks', 'file:///etc/aib/../tmp', 'not a plain path');
+        await source(
+          'a folder others can write',
+          `file://${SUMS}/loose`,
+          `${SUMS}/loose can be written by others`,
+          `mkdir ${SUMS}/loose && cp -r ${SUMS}/v${v} ${SUMS}/loose/ && chmod 777 ${SUMS}/loose`,
+        );
+        await source('a link on the way', 'file:///etc/aib/linked', '/etc/aib/linked is a link', `ln -s ${SUMS} /etc/aib/linked`);
+        await ok(
+          'restore the source',
+          `rm -rf ${SUMS}/loose /etc/aib/linked "${ROOT}/sums" && printf "file://%s\\n" "$1" > "$2"`,
+          SUMS,
+          SOURCE,
+        );
         // run as the user, without root: refused before anything
-        const plain = await userRun('/usr/lib/aib/aib-install-deb "$1"', at('good'));
+        const plain = await userRun('/usr/lib/aib/aib-install-deb "$1" "$2"', at('good'), v);
         assertEquals(plain.code, 66, plain.err);
         assertEquals(await version(), '0.13.2~beta.1.test.2', 'nothing was installed');
         await ok('no root copies left in /tmp', '! ls -d /tmp/aib-install-deb.* 2>/dev/null');
         await ok(
           'clean the cases',
-          'cd "$1" && rm -rf good link group other ver swapped nosums older equal rootfile "$2/tmp/out" "$2/sums"/*',
+          'cd "$1" && rm -rf good link group other ver swapped nosums older equal rootfile "$2/tmp/out" "$3"/*',
           HOME,
           ROOT,
+          SUMS,
         );
       });
 
@@ -418,7 +497,11 @@ exec sudo -n "$@"
           assert(why.includes('password prompt was closed') && why.includes(`sudo apt install "${path}"`), why);
           assertEquals([r.launched, r.quit, r.after.authorizing], [0, null, false]);
           assertEquals(await version(), '0.13.2~beta.1.test.2');
-          assertEquals(await calls(), `/usr/lib/aib/aib-install-deb ${path}`, 'pkexec was asked for exactly the verified file');
+          assertEquals(
+            await calls(),
+            `/usr/lib/aib/aib-install-deb ${path} ${versions[1]}`,
+            'pkexec: exactly the verified file and the offered version',
+          );
           await ok('allow mode', 'rm -f "$1/run/pkexec-mode" "$1/run/pkexec-calls.txt"', ROOT);
         },
       );
@@ -486,9 +569,57 @@ exec sudo -n "$@"
         },
       );
 
-      await t.step('Install now: beta -> release 0.13.2 the same way', async () => {
-        await update(versions[1], versions[2], await feed(versions[2]));
-      });
+      await t.step(
+        "Install now: beta -> release 0.13.2 the same way, while a descriptor to the user-side copy writes another package after root's hash: root installs only its own file",
+        async () => {
+          // M1: the user-side reader runs as the user, so a program of the user's can take its descriptor to the first copy
+          // (pidfd_getfd; WSL has no Yama, like Debian's ptrace_scope 0). The hook plays that program: at "read" it opens the
+          // first copy for writing and keeps it open; at "hashed" (after root's SHA-256 and package checks, before apt) it writes
+          // evil.deb (another aib package) through it. Root's script runs the hook only from its own /etc/aib.
+          const run = `${ROOT}/run`;
+          const hook = `#!/bin/sh
+# deb_update_e2e_test: a program of the user's holding the user-side reader's descriptor to the first copy
+run=${run}
+case $1 in
+  read)
+    stat -c %i -- "$2" > "$run/hook-read-inode"
+    sh -c 'exec 3<>"$1" || exit 1; : > "$2/hook-open"; while [ ! -e "$2/hook-go" ]; do sleep 0.1; done; cat "$3" >&3; echo $? > "$2/hook-wrote"' \\
+      sh "$2" "$run" "${ROOT}/debs/evil.deb" </dev/null >/dev/null 2>&1 &
+    i=0; while [ ! -e "$run/hook-open" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+    ;;
+  hashed)
+    stat -c %i -- "$2" > "$run/hook-hashed-inode"
+    : > "$run/hook-go"
+    i=0; while [ ! -e "$run/hook-wrote" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+    sha256sum -- "$2" | cut -d' ' -f1 > "$run/hook-hashed-sha"
+    ;;
+esac
+exit 0
+`;
+          Deno.writeTextFileSync(`${win}\\test-hook`, hook);
+          await ok(
+            'the test hook (root-owned, in /etc/aib)',
+            'tr -d "\\r" < "$1" > "$2" && chmod 644 "$2"',
+            `${toWsl(win)}/test-hook`,
+            HOOK,
+          );
+          try {
+            await update(versions[1], versions[2], await feed(versions[2]));
+          } finally {
+            await ok('remove the hook', 'rm -f "$1"', HOOK);
+          }
+          const read = async (f: string) => (await ok(f, 'cat "$1/$2"', run, f)).trim();
+          assertEquals(await read('hook-wrote'), '0', 'the descriptor to the first copy was open and evil.deb was written through it');
+          const [userInode, rootInode] = [await read('hook-read-inode'), await read('hook-hashed-inode')];
+          assert(
+            userInode && rootInode && userInode !== rootInode,
+            `root hashed and installed its own new file (${userInode} vs ${rootInode})`,
+          );
+          assertEquals(await read('hook-hashed-sha'), await hashOf(`AIB-${versions[2]}-linux-${word}.deb`), "root's file is unchanged");
+          assertEquals(await version(), '0.13.2', 'the release is installed, not the package written through the descriptor');
+          await ok('the genuine app is installed', 'grep -q "AIB 0.13.2 stand-in" /usr/lib/aib/aib && ! grep -q EVIL /usr/lib/aib/aib');
+        },
+      );
     } finally {
       // everything this test made in the distro, and only that
       if (/^\/tmp\/aib-deb-e2e-[0-9a-f]{12}$/.test(ROOT) && /^aibe2e[0-9a-f]{8}$/.test(USER)) {
@@ -506,6 +637,64 @@ exec sudo -n "$@"
         }
       }
       Deno.removeSync(win, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "deb update e2e: a crashed run's /etc/aib (with this test's mark), user, sudoers drop-in and folder are removed at the next start",
+  ignore: !!WHY,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    // what a run that never reached `finally` leaves: /etc/aib with the mark and a file:// source into /tmp, its user, drop-in, folder
+    const id = crypto.randomUUID().replaceAll('-', '').slice(0, 12);
+    const ROOT = `/tmp/aib-deb-e2e-${id}`;
+    const USER = `aibe2e${id.slice(0, 8)}`;
+    const SUDOERS = `/etc/sudoers.d/aib-deb-e2e-${id}`;
+    const leave = (age: string) =>
+      asRoot(
+        `set -e; mkdir -m 755 /etc/aib "$1"; echo "$1" > "$4"; printf "file://%s/sums\\n" "$1" > /etc/aib/update-release-url
+        useradd -M -N -g nogroup -d "$1/home" -s /usr/sbin/nologin "$2"
+        printf '%s ALL=(root) NOPASSWD: /usr/lib/aib/aib-install-deb\\n' "$2" > "$3"; chmod 440 "$3"
+        touch -d "$5" "$4" "$3"`,
+        ROOT,
+        USER,
+        SUDOERS,
+        MARKER,
+        age,
+      );
+    const gone = () =>
+      asRoot('[ ! -e /etc/aib ] && [ ! -e "$1" ] && [ ! -e "$3" ] && ! getent passwd "$2" >/dev/null', ROOT, USER, SUDOERS);
+    if ((await asRoot('[ -e /etc/aib ]')).code === 0) {
+      console.log('deb_update_e2e_test: the leftover check skipped (/etc/aib exists now: another run, never touched)');
+      return;
+    }
+    try {
+      // a fresh one may be a run in progress in another checkout: left alone, and the blocker says why
+      const fresh = await leave('1 minute ago');
+      assertEquals(fresh.code, 0, fresh.err);
+      assertEquals((await cleanStale()).out.trim(), '');
+      assertEquals((await asRoot('[ -e "$1" ] && [ -e "$2" ]', MARKER, SUDOERS)).code, 0, 'a fresh run is left alone');
+      assert((await blocker()).includes('another run of this test is in progress'), 'the blocker says why it skips');
+      // aged past STALE_MIN: everything goes, and the blocker no longer skips because of it
+      await asRoot('touch -d "2 hours ago" "$1" "$2"', MARKER, SUDOERS);
+      const out = (await cleanStale()).out;
+      assert(out.includes('removed /etc/aib') && out.includes(`removed run ${id}`), out);
+      assertEquals((await gone()).code, 0, 'nothing of the crashed run is left');
+      assertEquals(await blocker(), '', 'the test runs again');
+      // an /etc/aib without the mark is not this test's: never removed, the test skips with why
+      await asRoot('mkdir -m 755 /etc/aib && touch -d "2 hours ago" /etc/aib');
+      assertEquals((await cleanStale()).out.trim(), '');
+      assert((await blocker()).includes('was not made by this test'));
+    } finally {
+      await asRoot(
+        'rm -rf /etc/aib "$1" "$3"; pkill -u "$2" 2>/dev/null; getent passwd "$2" >/dev/null && userdel "$2"; exit 0',
+        ROOT,
+        USER,
+        SUDOERS,
+      );
+      assertEquals((await gone()).code, 0, 'clean-up');
     }
   },
 });

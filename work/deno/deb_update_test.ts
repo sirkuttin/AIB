@@ -33,20 +33,37 @@ import {
   run as runHelper,
   type StartResult,
 } from '../../outputs/agent-studio/server/desktop/update_helper.ts';
-import { addDebUpdater, DEB_INSTALLER_PATH, DEB_POLICY_PATH, readAr, tarEntry, tarPaths, writeAr } from '../../tools/linux_package.ts';
+import {
+  addDebUpdater,
+  DEB_INSTALLER_PATH,
+  DEB_POLICY_PATH,
+  readAr,
+  tarEntry,
+  tarPaths,
+  withUpdaterRelations,
+  writeAr,
+} from '../../tools/linux_package.ts';
 
 const HOME = '/home/ann';
+const V = '0.13.2';
 const GOOD = `${HOME}/.local/state/agent-studio/updates/0.13.2/AIB-0.13.2-linux-x64.deb`;
 
 Deno.test("debInstallArgs: only AIB's own download in the home folder gets a password prompt (the aib-install-deb rules)", () => {
-  assertEquals(debInstallArgs(GOOD, HOME), [DEB_INSTALLER, GOOD]);
-  assertEquals(debInstallArgs(GOOD, HOME + '/'), [DEB_INSTALLER, GOOD], 'a trailing slash on HOME');
+  assertEquals(debInstallArgs(GOOD, HOME, V), [DEB_INSTALLER, GOOD, V]);
+  assertEquals(debInstallArgs(GOOD, HOME + '/', V), [DEB_INSTALLER, GOOD, V], 'a trailing slash on HOME');
   const ok = [
     `${HOME}/.local/state/agent-studio/updates/0.13.2-beta.1/AIB-0.13.2-beta.1-linux-x64.deb`,
     `${HOME}/.local/state/agent-studio/updates/0.13.2-beta.12.test.3/AIB-0.13.2-beta.12.test.3-linux-arm64.deb`,
     `${HOME}/x/updates/1.0.0/AIB-1.0.0-linux-x64.deb`, // XDG_STATE_HOME elsewhere in the home folder
   ];
-  for (const p of ok) assertEquals(debInstallArgs(p, HOME), [DEB_INSTALLER, p], p);
+  for (const p of ok) {
+    const v = p.split('/').at(-2)!;
+    assertEquals(debInstallArgs(p, HOME, v), [DEB_INSTALLER, p, v], p);
+  }
+  // the version the window offered goes to root as the second argument; a file of another version gets no prompt
+  assertEquals(debInstallArgs(GOOD, HOME, '0.13.3'), null, 'not the offered version');
+  assertEquals(debInstallArgs(GOOD, HOME, ''), null, 'no offered version');
+  assertEquals(debInstallArgs(GOOD, HOME, '0.13.2 -y'), null, 'an offered version with extra words');
   const refused: [string, string][] = [
     ['relative', '.local/state/agent-studio/updates/0.13.2/AIB-0.13.2-linux-x64.deb'],
     ['outside home', '/tmp/updates/0.13.2/AIB-0.13.2-linux-x64.deb'],
@@ -66,10 +83,10 @@ Deno.test("debInstallArgs: only AIB's own download in the home folder gets a pas
     ['an option', '-oDpkg::Pre-Invoke=x'],
     ['empty', ''],
   ];
-  for (const [why, p] of refused) assertEquals(debInstallArgs(p, HOME), null, why);
-  assertEquals(debInstallArgs(GOOD, ''), null, 'no HOME');
-  assertEquals(debInstallArgs(GOOD, 'home/ann'), null, 'a relative HOME');
-  assertEquals(debInstallArgs('/updates/0.13.2/AIB-0.13.2-linux-x64.deb', '/'), null, 'HOME=/ (root) is not a user folder');
+  for (const [why, p] of refused) assertEquals(debInstallArgs(p, HOME, V), null, why);
+  assertEquals(debInstallArgs(GOOD, '', V), null, 'no HOME');
+  assertEquals(debInstallArgs(GOOD, 'home/ann', V), null, 'a relative HOME');
+  assertEquals(debInstallArgs('/updates/0.13.2/AIB-0.13.2-linux-x64.deb', '/', V), null, 'HOME=/ (root) is not a user folder');
 });
 
 Deno.test('debOutcome: pkexec and aib-install-deb exit codes become the reason shown with the manual line', () => {
@@ -106,6 +123,12 @@ Deno.test('debOutcome: pkexec and aib-install-deb exit codes become the reason s
     assertEquals(why, 'unverified');
     assert(text.includes("could not get the release's checksums from GitHub") && text.includes('nothing was installed'), text);
   }
+  // 75: a tool the script needs is missing (setpriv; curl and wget): says which, nothing installed
+  const [twhy, ttext] = no(
+    debOutcome(r(75, 'aib-install-deb: setpriv is not installed (it comes with util-linux); nothing was installed')),
+  );
+  assertEquals(twhy, 'failed');
+  assert(ttext.includes('needs a system tool') && ttext.includes('setpriv is not installed'), ttext);
   // 72: apt failed after unpacking: partly installed, says how to finish, never "unchanged"
   const [pwhy, ptext] = no(debOutcome(r(72, 'aib-install-deb: apt-get failed after unpacking 0.13.2: partly installed')));
   assertEquals(pwhy, 'partial');
@@ -207,7 +230,7 @@ class DebCase {
       exists: () => true, // dpkg is there: the .deb is the asset this machine takes
       app: { desktop: true, pid: 4242, exe: DEB_EXE },
       dpkgOwns: () => true,
-      debArgs: (p) => [DEB_INSTALLER, p], // the real check (above) needs POSIX paths; this test may run on Windows
+      debArgs: (p, _home, v) => [DEB_INSTALLER, p, v], // the real check (above) needs POSIX paths; this test may run on Windows
       privileged: async (argv) => {
         this.asked.push({ argv, launchedBefore: this.launched.length, quitBefore: this.quit.length });
         await new Promise((r) => setTimeout(r, 5)); // the prompt is open a moment
@@ -241,7 +264,11 @@ Deno.test('.deb Install now: answers at once (authorizing), the window says AIB 
   assertEquals(c.svc.status().authorizing, true, 'while the prompt is open the status says so (the window shows it)');
   assertEquals([c.launched.length, c.quit.length], [0, 0]);
   await c.svc.debSettled();
-  assertEquals(c.asked, [{ argv: [DEB_INSTALLER, path], launchedBefore: 0, quitBefore: 0 }], 'before the helper and the quit');
+  assertEquals(
+    c.asked,
+    [{ argv: [DEB_INSTALLER, path, VERSION], launchedBefore: 0, quitBefore: 0 }],
+    'before the helper and the quit; with the offered version',
+  );
   assertEquals(c.launched.length, 1);
   const a = c.launched[0];
   assertEquals([a.kind, a.target, a.exe, a.installer, a.version, a.sha256], ['deb', DEB_EXE, DEB_EXE, path, VERSION, await sha(PAYLOAD)]);
@@ -510,6 +537,14 @@ Deno.test('packaging: the .deb gets /usr/lib/aib/aib-install-deb (0755, LF) and 
       ...dirEntry('./usr/share/'),
       ...new Uint8Array(1024),
     ]);
+    // the control file as `deno desktop` writes it (seen in AIB-0.13.0-beta.test.2-linux-x64.deb), shortened
+    const control = 'Package: aib\nVersion: 0.13.2\nArchitecture: amd64\nMaintainer: aib <noreply@deno.com>\n' +
+      'Depends: libgtk-3-0, libnss3\nSection: utils\nPriority: optional\nDescription: aib desktop application\n';
+    const controlTar = new Uint8Array([
+      ...dirEntry('./'),
+      ...tarEntry('./control', enc.encode(control), 0o644, 0),
+      ...new Uint8Array(1024),
+    ]);
     const header = (name: string) => {
       const h = new Uint8Array(60).fill(0x20);
       h.set(enc.encode(name.padEnd(16, ' ')), 0);
@@ -525,11 +560,18 @@ Deno.test('packaging: the .deb gets /usr/lib/aib/aib-install-deb (0755, LF) and 
       deb,
       writeAr([
         { name: 'debian-binary', header: header('debian-binary'), data: enc.encode('2.0\n') },
-        { name: 'control.tar.gz', header: header('control.tar.gz'), data: await gz(new Uint8Array(1024)) },
+        { name: 'control.tar.gz', header: header('control.tar.gz'), data: await gz(controlTar) },
         { name: 'data.tar.gz', header: header('data.tar.gz'), data: await gz(data) },
       ]),
     );
     await addDebUpdater(deb);
+    // the control file now says what the root script needs (the app's own Depends kept, in front)
+    const ctl = await gunzip(readAr(Deno.readFileSync(deb)).find((m) => m.name === 'control.tar.gz')!.data);
+    assertEquals(tarPaths(ctl).at(-1), 'control');
+    const ctlSize = parseInt(new TextDecoder().decode(ctl.subarray(512 + 124, 512 + 135)), 8); // control: header at 512, data at 1024
+    const ctlText = new TextDecoder().decode(ctl.subarray(1024, 1024 + ctlSize));
+    assert(ctlText.includes('\nDepends: libgtk-3-0, libnss3, util-linux (>= 2.36) | setpriv, curl | wget\n'), ctlText);
+    assert(ctlText.includes('\nRecommends: pkexec | policykit-1\nDescription: aib desktop application\n'), ctlText);
     const tar = await gunzip(readAr(Deno.readFileSync(deb)).find((m) => m.name === 'data.tar.gz')!.data);
     const paths = tarPaths(tar);
     for (const p of ['usr/share/polkit-1/', 'usr/share/polkit-1/actions/', DEB_INSTALLER_PATH, DEB_POLICY_PATH, 'usr/lib/aib/aib']) {
@@ -556,7 +598,26 @@ Deno.test('packaging: the .deb gets /usr/lib/aib/aib-install-deb (0755, LF) and 
     assert(script.text.includes('url=$base/v$version/SHA256SUMS'));
     assert(script.text.includes('/usr/bin/curl') && script.text.includes('--proto "=$proto"') && script.text.includes('--max-time'));
     assert(script.text.includes('setpriv --reuid="$uid"'), "the copy is read with the user's permissions");
-    assert(script.text.includes('sha256sum -- "$copy"'), 'root hashes its own copy');
+    // M1: the user-side reader's file is never hashed or installed: root copies it into a new file in a new root-only folder first
+    assert(script.text.includes('head -c $((MAX_DEB + 1)) -- "$copy" >"$deb"'), "root's own new file from the user-side copy");
+    assert(script.text.includes('rm -rf -- "$work/user"'), 'the user-side copy and its folder go before anything is made readable');
+    assert(script.text.includes('sha256sum -- "$deb"') && !script.text.includes('sha256sum -- "$copy"'), 'root hashes only its own file');
+    assert(
+      script.text.includes('dpkg-deb --field "$deb" Package') && script.text.includes('--no-remove -o DPkg::Lock::Timeout=120 "$deb"'),
+    );
+    const at = (s: string) => script.text.indexOf(s);
+    assert(at('rm -rf -- "$work/user"') < at('chmod 755 "$work" "$work/root"'), 'never widened while the user-side copy is there');
+    assert(at('sha256sum -- "$deb"') < at('chmod 644 "$deb"'), 'readable only after the hash');
+    // S3, S4, the notes
+    assert(script.text.includes('[ "$#" -eq 2 ]') && script.text.includes('[ "$version" = "$expected" ]'), 'the offered version');
+    assert(script.text.includes('command -v setpriv') && script.text.includes('fail 75'), 'a missing setpriv says so');
+    assert(script.text.includes('timeout -k 10 300 setpriv'), 'the reader is killed even when traced');
+    assert(script.text.includes('/usr/bin/curl -q ') && script.text.includes('/usr/bin/wget --no-config '), 'no user config files');
+    assert(script.text.includes('file:///etc/aib/?*) proto=file'), 'S1: file:// only under /etc/aib');
+    assert(
+      script.text.includes('TEST_HOOK=/etc/aib/test-hook') && script.text.includes('root_only 74 "$TEST_HOOK"'),
+      'test hook: root only',
+    );
     assert(script.text.includes('dpkg --compare-versions "$debversion" gt "$installed"'), 'only newer');
     assert(script.text.includes('SOURCE_FILE=/etc/aib/update-release-url'), 'the only override: a root-owned file');
     assert(!/\$\{?AIB_|getenv|\$HOME/.test(script.text), 'nothing from the environment decides where SHA256SUMS comes from');
@@ -571,6 +632,26 @@ Deno.test('packaging: the .deb gets /usr/lib/aib/aib-install-deb (0755, LF) and 
   } finally {
     Deno.removeSync(dir, { recursive: true });
   }
+});
+
+Deno.test("packaging: Depends and Recommends for the self-update are added once, kept with the app's own, continuation lines too", () => {
+  const add = 'util-linux (>= 2.36) | setpriv, curl | wget';
+  assertEquals(
+    withUpdaterRelations('Package: aib\nDepends: libgtk-3-0\nDescription: x\n'),
+    `Package: aib\nDepends: libgtk-3-0, ${add}\nRecommends: pkexec | policykit-1\nDescription: x\n`,
+  );
+  assertEquals(
+    withUpdaterRelations('Package: aib\nDescription: x\n'),
+    `Package: aib\nDepends: ${add}\nRecommends: pkexec | policykit-1\nDescription: x\n`,
+    'no Depends yet: added before Description',
+  );
+  assertEquals(
+    withUpdaterRelations('Package: aib\nDepends: a,\n b\nRecommends: c\nDescription: x\n'),
+    `Package: aib\nDepends: a, b, ${add}\nRecommends: c, pkexec | policykit-1\nDescription: x\n`,
+    'a folded field is joined, the existing Recommends kept',
+  );
+  const once = withUpdaterRelations('Package: aib\nDepends: libgtk-3-0\nDescription: x\n');
+  assertEquals(withUpdaterRelations(once), once, 'a second build step adds nothing');
 });
 
 // ---- versions: what dpkg sees ---------------------------------------------------------------------------------------------

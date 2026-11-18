@@ -923,7 +923,7 @@ async function buildTarget(
     await desktop(stageDir, included, target, `${dir}/deb/aib.deb`);
     await fixDeb(`${dir}/deb/aib.deb`, APP_NAME); // deno desktop writes Name=aib
     await addToDeb(`${dir}/deb/aib.deb`, DEB_KEEPER_PATH, keeper, 0o755);
-    await addDebUpdater(`${dir}/deb/aib.deb`); // /usr/lib/aib/aib-install-deb and its polkit action: Install now on a .deb install
+    await addDebUpdater(`${dir}/deb/aib.deb`); // aib-install-deb, its polkit action and what it Depends on: Install now on a .deb
     await Deno.copyFile(`${dir}/deb/aib.deb`, `${out}/${names[1]}`);
   }
   return names;

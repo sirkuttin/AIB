@@ -327,9 +327,62 @@ export async function debUpdaterFiles(): Promise<DebFile[]> {
   ];
 }
 
-/** Adds the self-update script and its polkit action to a .deb (one rewrite; usr/share/polkit-1/actions/ is created). */
+/**
+ * What the self-update script needs from the system, as control-file relations (names on Debian 11+, Ubuntu 22.04 and 24.04):
+ * setpriv (util-linux since 2.36; its own package before) to read the file with the user's permissions, and curl or wget to fetch
+ * the release's SHA256SUMS. pkexec is only recommended: without it AIB shows the manual `sudo apt install` line instead (and a hard
+ * dependency would pull polkit onto machines that never use Install now).
+ */
+export const DEB_UPDATER_DEPENDS = ['util-linux (>= 2.36) | setpriv', 'curl | wget'];
+export const DEB_UPDATER_RECOMMENDS = ['pkexec | policykit-1'];
+
+/** A control file with `add` appended to its `field` (created when missing; a relation already listed is not added again). */
+function addRelations(control: string, field: string, add: string[]): string {
+  const lines = control.replace(/\r\n/g, '\n').replace(/\n*$/, '').split('\n');
+  const at = lines.findIndex((l) => l.toLowerCase().startsWith(field.toLowerCase() + ':'));
+  if (at < 0) {
+    const desc = lines.findIndex((l) => /^Description:/i.test(l));
+    lines.splice(desc < 0 ? lines.length : desc, 0, `${field}: ${add.join(', ')}`);
+    return lines.join('\n') + '\n';
+  }
+  let end = at;
+  while (end + 1 < lines.length && /^[ \t]/.test(lines[end + 1])) end++;
+  const value = lines.slice(at, end + 1).join('\n').slice(field.length + 1).trim();
+  const have = value.split(',').map((r) => r.trim().replace(/\s+/g, ' '));
+  const missing = add.filter((r) => !have.includes(r));
+  if (!missing.length) return lines.join('\n') + '\n';
+  lines.splice(at, end - at + 1, `${field}: ${[value, ...missing].filter(Boolean).join(', ').replace(/\n[ \t]*/g, ' ')}`);
+  return lines.join('\n') + '\n';
+}
+
+/** A .deb control file with the self-update's Depends and Recommends added (pure; see DEB_UPDATER_DEPENDS). */
+export function withUpdaterRelations(control: string): string {
+  return addRelations(addRelations(control, 'Depends', DEB_UPDATER_DEPENDS), 'Recommends', DEB_UPDATER_RECOMMENDS);
+}
+
+/** Adds the self-update's Depends and Recommends to a .deb's control file (control.tar.gz, rewritten in place). */
+export async function addDebUpdaterRelations(path: string): Promise<void> {
+  const members = readAr(await Deno.readFile(path));
+  const member = members.find((m) => m.name === 'control.tar.gz');
+  if (!member) throw new Error(`${path}: no control.tar.gz member`);
+  let found = false;
+  const { tar } = editTar(
+    await gunzip(member.data),
+    (p) => p === 'control' && (found = true),
+    (_p, body) => enc.encode(withUpdaterRelations(dec.decode(body))),
+  );
+  if (!found) throw new Error(`${path}: control.tar.gz has no control file`);
+  member.data = await gzip(tar);
+  await Deno.writeFile(path, writeAr(members));
+}
+
+/**
+ * Adds the self-update script and its polkit action to a .deb (one rewrite; usr/share/polkit-1/actions/ is created), and what the
+ * script needs to its control file.
+ */
 export async function addDebUpdater(path: string): Promise<void> {
   await addFilesToDeb(path, await debUpdaterFiles(), ['usr/share/polkit-1/']);
+  await addDebUpdaterRelations(path);
 }
 
 // ---- squashfs (AppImage) -----------------------------------------------------------------------------------------------

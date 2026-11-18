@@ -15,7 +15,7 @@
  *     instructions.
  *   - A .deb install (/usr/lib/aib/aib, owned by dpkg) updates itself the electron-updater DebUpdater way, but only from a click on
  *     Install now in AIB's window on the PC: AIB answers the click at once ({state: 'authorizing'}), and while AIB is still open
- *     `/usr/bin/pkexec /usr/lib/aib/aib-install-deb <the verified .deb>` (a root script the .deb ships, with the polkit action
+ *     `/usr/bin/pkexec /usr/lib/aib/aib-install-deb <the verified .deb> <its version>` (a root script the .deb ships, with the polkit action
  *     "Authentication is required to update AIB"; tools/linux/) asks for the system password. The window says "AIB is asking for
  *     your system password to install the update" meanwhile (status().authorizing). The root script trusts nothing on the user's
  *     side: it reads its own copy of the file, fetches the release's SHA256SUMS from GitHub itself and checks the copy against it,
@@ -826,7 +826,7 @@ export interface UpdateServiceOptions {
   /** A .deb install: does dpkg own /usr/lib/aib/aib (default: /var/lib/dpkg/info/aib.list lists it)? Replaced in tests. */
   dpkgOwns?: (path: string) => boolean;
   /** A .deb install: the pkexec arguments for a downloaded file and the home folder, or null (default debInstallArgs). Tests. */
-  debArgs?: (path: string, home: string) => string[] | null;
+  debArgs?: (path: string, home: string, version: string) => string[] | null;
   current?: string;
   /** null or undefined: this machine (Python: key if key is not None else platform_key()). */
   key?: PlatformKey | null;
@@ -863,15 +863,16 @@ const DEB_VERSION = /^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$
 /**
  * The pkexec arguments for installing `path`, or null when aib-install-deb would refuse it anyway (so no password is asked for):
  * the same rules as the script: an absolute, plain path (letters, digits, . _ / + -; no //, /./ or /../) inside `home`, ending in
- * updates/<version>/AIB-<version>-linux-<x64|arm64>.deb. (Ownership, links and the package's own name and version the script checks.)
+ * updates/<version>/AIB-<version>-linux-<x64|arm64>.deb, where <version> is `version`, the one the window offered (passed on: root
+ * refuses a file, a folder or a package of any other version). (Ownership, links and the package's own name the script checks.)
  */
-export function debInstallArgs(path: string, home: string): string[] | null {
+export function debInstallArgs(path: string, home: string, version: string): string[] | null {
   const h = (home ?? '').replace(/\/+$/, '');
   if (!h.startsWith('/') || !/^\/[A-Za-z0-9._/+-]+$/.test(path) || /\/\/|\/\.\.?(\/|$)/.test(path)) return null;
   if (!path.startsWith(h + '/')) return null;
   const m = /\/updates\/([^/]+)\/AIB-([^/]+)-linux-(?:x64|arm64)\.deb$/.exec(path);
-  if (!m || m[1] !== m[2] || !DEB_VERSION.test(m[1])) return null;
-  return [DEB_INSTALLER, path];
+  if (!m || m[1] !== m[2] || !DEB_VERSION.test(m[1]) || m[1] !== version) return null;
+  return [DEB_INSTALLER, path, version];
 }
 
 /** What running pkexec gave: its exit code and error output, or null when pkexec could not be started (not installed). */
@@ -897,7 +898,8 @@ export type DebOutcome =
  * polkit agent: "No authentication agent found"; or the account may not); otherwise the script's code (tools/linux/
  * aib-install-deb.sh): 0 installed; 64-66, 69, 73 refused (nothing ran: not AIB's download, not the release's file, not newer);
  * 68 and 74 the release's SHA256SUMS could not be fetched (74: the test-only source file is not root's); 70 apt failed and dpkg
- * left the old version; 71 unexpected version after apt; 72 apt failed after unpacking (partly installed).
+ * left the old version; 71 unexpected version after apt; 72 apt failed after unpacking (partly installed; also on a retry, when the
+ * same version is still half set up); 75 a tool the script needs is missing (setpriv, or both curl and wget).
  */
 export function debOutcome(result: PrivilegedResult): DebOutcome {
   if (result === null) {
@@ -928,6 +930,9 @@ export function debOutcome(result: PrivilegedResult): DebOutcome {
       reason: 'unverified',
       message: `AIB's installer could not get the release's checksums from GitHub to check the file${why}, so nothing was installed.`,
     };
+  }
+  if (result.code === 75) {
+    return { ok: false, reason: 'failed', message: `AIB's installer needs a system tool that is not installed${why}.` };
   }
   if (result.code === 70) {
     return { ok: false, reason: 'failed', message: `apt could not install the update${why}; the installed AIB is unchanged.` };
@@ -1028,7 +1033,7 @@ export class UpdateService {
   launcher: (args: HelperArgs) => void | Promise<void>;
   privileged: PrivilegedRun;
   readonly dpkgOwns: ((path: string) => boolean) | undefined;
-  readonly debArgs: (path: string, home: string) => string[] | null;
+  readonly debArgs: (path: string, home: string, version: string) => string[] | null;
   /** A .deb install is asking for the password (or apt runs): a second Install now waits for it. */
   #debInstalling = false;
   /** The background password step of a .deb install (tests wait for it with debSettled()). */
@@ -1712,7 +1717,7 @@ export class UpdateService {
       real = Deno.realPathSync(path); // aib-install-deb refuses a path that goes through a link
       if (home) home = Deno.realPathSync(home);
     } catch { /* checked as given */ }
-    const argv = this.debArgs(real, home);
+    const argv = this.debArgs(real, home, String(got.version ?? ''));
     if (!argv) {
       log.info('update: %s is not where aib-install-deb accepts an update (in the home folder); install it by hand', real);
       throw new UpdateError(
