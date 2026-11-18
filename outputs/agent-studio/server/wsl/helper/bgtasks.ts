@@ -11,7 +11,7 @@
  *   Its process list is probe.ts fetchProcesses (/proc), with each process named the way the agent was started (see agentNamed). AIB's
  *   own agent channels in this distro (the pids AIB passes as `exclude`) and this helper's own process tree never count. There is no
  *   owner registry here: AIB adds its Windows one.
- * - `proc.tree`: platform/descendants.ts (`ps`) below the agents' pids, for the busy-children detection (wsl/procs.ts on Windows).
+ * - `proc.tree`: platform/descendants.ts (/proc, read by `cat`) below the agents' pids, for the busy-children detection (wsl/procs.ts on Windows).
  * - `proc.stop`: platform/kill_verified.ts, Stop on a background row: only processes AIB was shown by `proc.tree` (pid and age),
  *   re-verified below the same agent with the same start time, and what they started since.
  *
@@ -326,14 +326,14 @@ export function bgtaskMethods(ctx: BgtaskContext): Handlers {
     'proc.tree': (p) => {
       const roots = pidList(p, 'roots', MAX_ROOTS);
       refreshDescendants();
-      const now = Date.now() / 1000;
+      const found = roots.map((root) => descendants(root)); // one process list, read now
+      const now = Date.now() / 1000; // after it: an age is never short (a start time never later than the real one)
+      // ages to a hundredth of a second (/proc's start times): a process started just before a turn must not look newer than it
+      const age = (d: { started: number | null }) => d.started === null ? null : Math.max(0, Math.ceil((now - d.started) * 100) / 100);
       const trees: Record<string, [number, number, number, number | null][] | null> = {};
-      for (const root of roots) {
-        const found = descendants(root);
-        trees[String(root)] = found
-          ? found.map((d) => [d.pid, d.parentPid, d.depth, d.started === null ? null : Math.max(0, Math.round(now - d.started))])
-          : null;
-      }
+      roots.forEach((root, i) => {
+        trees[String(root)] = found[i]?.map((d) => [d.pid, d.parentPid, d.depth, age(d)]) ?? null;
+      });
       return { trees };
     },
 

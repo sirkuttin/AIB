@@ -2,7 +2,7 @@
  * The processes an agent started, still running: what tells AIB that a Claude Code background shell (Bash with run_in_background)
  * still runs. Claude Code sends no update when such a shell ends to a client like AIB (only JetBrains AIR gets that lifecycle), so
  * AIB notes the agent's processes that started with the command and asks the OS whether they still run. Windows: a Toolhelp snapshot
- * (process_info.ts) and each process's creation time. POSIX: `ps -A -o pid=,ppid=,etime=`. One snapshot serves every call for a
+ * (process_info.ts) and each process's creation time. Linux: /proc (procTable); other POSIX: `ps -A -o pid=,ppid=,etime=`. One snapshot serves every call for a
  * second (Studio.busyList runs every second and asks each chat). Never throws: null when the processes cannot be listed.
  */
 import { processList, processStartTime } from './process_info.ts';
@@ -59,6 +59,10 @@ function defaultTable(): Table | null {
     for (const p of processList()) t.set(p.pid, { pid: p.pid, parentPid: p.parentPid, started: undefined });
     return t;
   }
+  if (Deno.build.os === 'linux') {
+    const t = procTable();
+    if (t) return t;
+  }
   const done = new Deno.Command('ps', { args: ['-A', '-o', 'pid=,ppid=,etime='], stdin: 'null', stdout: 'piped', stderr: 'null' })
     .outputSync();
   if (done.code !== 0) return null;
@@ -71,6 +75,50 @@ function defaultTable(): Table | null {
     t.set(Number(pid), { pid: Number(pid), parentPid: Number(ppid), started: age === null ? null : now - age });
   }
   return t;
+}
+
+/**
+ * Linux: the process list from /proc, start times to a hundredth of a second (ps's etime is whole seconds, so a process started a
+ * moment before a turn could look started after it: a WSL chat's agent child taken for a background command's, and stopped with it).
+ * Read by `cat`: the compiled WSL helper may not read /proc itself (Deno wants --allow-all for it; wsl/helper/bgtasks.ts
+ * distroProcesses). Null when /proc can't be read (then `ps`).
+ */
+function procTable(): Table | null {
+  try {
+    const before = Date.now() / 1000; // uptime is read first, a moment after this: never a start time later than the real one
+    const done = new Deno.Command('sh', {
+      args: ['-c', 'cat /proc/uptime && cat /proc/[0-9]*/stat 2>/dev/null; true'],
+      stdin: 'null',
+      stdout: 'piped',
+      stderr: 'null',
+    }).outputSync();
+    const lines = new TextDecoder().decode(done.stdout).split('\n');
+    const uptime = Number((lines[0] ?? '').split(/\s+/)[0]);
+    if (!done.success || !Number.isFinite(uptime) || uptime <= 0) return null;
+    const t: Table = new Map();
+    for (const line of lines.slice(1)) {
+      const row = statRow(line, before - uptime); // a process that ended meanwhile has no line
+      if (row) t.set(row.pid, row);
+    }
+    return t.size ? t : null;
+  } catch {
+    return null;
+  }
+}
+
+/** USER_HZ: the unit of /proc/<pid>/stat's starttime, 100 on every Linux architecture AIB runs on. */
+const CLOCK_TICKS = 100;
+
+/** One /proc/<pid>/stat line as a Row (`boot`: epoch seconds the system booted); null when not that shape. */
+export function statRow(stat: string, boot: number): Row | null {
+  const pid = /^(\d+) \(/.exec(stat);
+  const end = stat.lastIndexOf(')'); // the command name may hold spaces and parentheses
+  if (!pid || end < 0) return null;
+  // after the name: state, ppid (field 4) ... starttime (field 22), so 20 fields on from the state
+  const fields = stat.slice(end + 2).trim().split(/\s+/);
+  const ppid = Number(fields[1]), ticks = Number(fields[19]);
+  if (!Number.isInteger(ppid) || !Number.isFinite(ticks)) return null;
+  return { pid: Number(pid[1]), parentPid: ppid, started: boot + ticks / CLOCK_TICKS };
 }
 
 /** ps's etime, `[[dd-]hh:]mm:ss`, in seconds; null when not that. */

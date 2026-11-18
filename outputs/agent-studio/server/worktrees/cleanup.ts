@@ -130,15 +130,30 @@ async function diffNames(project: string, a: string, b: string, paths: string[] 
   return out;
 }
 
-/** True when `name` in the copy folder has the same text as on `branch` in the project (both missing counts as the same). */
+/**
+ * True when `name` in the copy folder has the same text as on `branch` in the project (both missing counts as the same). A link is
+ * itself, never what it points to (git keeps a link as its target text): a committed link to a folder is not "missing", and work
+ * that is only links is never taken for merged. Anything that can't be read as a file (a folder now) is not the same.
+ */
 async function sameAsBranch(project: string, branch: string, folder: string, name: string): Promise<boolean> {
+  const full = `${folder}/${name}`;
   let disk: Uint8Array | null = null;
+  let link = false;
   try {
-    disk = Deno.readFileSync(`${folder}/${name}`);
-  } catch { /* deleted in the copy */ }
+    const info = Deno.lstatSync(full);
+    link = info.isSymlink;
+    disk = link ? new TextEncoder().encode(Deno.readLinkSync(full)) : Deno.readFileSync(full);
+  } catch (error) {
+    if (!(error instanceof Deno.errors.NotFound)) return false; // there but unreadable: never "the same"
+  }
   const done = await wt.git(['cat-file', 'blob', `refs/heads/${branch}:${name}`], project, { check: false, binary: true });
   const there = done.returncode === 0 ? done.out : null;
   if (disk === null || there === null) return disk === null && there === null;
+  if (link) {
+    // the same only when the branch has a link there too, to the same target
+    const entry = await wt.git(['ls-tree', `refs/heads/${branch}`, '--', name], project, { check: false });
+    return entry.returncode === 0 && entry.stdout.startsWith('120000 ') && wt.sameBytes(disk, there);
+  }
   if (wt.sameBytes(disk, there)) return true;
   const lf = (b: Uint8Array) => DEC.decode(b).replace(/\r\n/g, '\n');
   return lf(disk) === lf(there);

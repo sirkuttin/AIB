@@ -155,6 +155,42 @@ Deno.test('17b: the unmerged-work test: live-synced edits alone do not count; a 
   assertEquals(await cleanup.branchUnmerged(box.project, 'studio/chat-squashed', 'main'), 0);
 });
 
+Deno.test('17c: a copy whose committed work main lacks keeps its copy and branch, a link to a folder too; once main has it, both go', async () => {
+  using box = new Sandbox();
+  const key = 'f'.repeat(32);
+  const a = await copy(box.state, box.project, key);
+  commit(a.plan.path, 'chat.txt', 'chat work\n');
+  let linked = false;
+  try {
+    Deno.mkdirSync(pathOf(box.base, 'outside'));
+    Deno.symlinkSync(pathOf(box.base, 'outside'), pathOf(a.plan.path, 'link-out'), { type: 'dir' });
+    linked = true;
+  } catch { /* Windows without the right to make links: the file case still runs (the real-WSL e2e has the link) */ }
+  if (linked) {
+    runGit(a.plan.path, 'add', 'link-out');
+    runGit(a.plan.path, 'commit', '-q', '-m', 'link');
+  }
+  let scan = await cleanup.scanProject(box.state, box.project);
+  assertEquals([item(scan, `copy:${key}`).unmerged, item(scan, `copy:${key}`).files], [true, linked ? 2 : 1]);
+  assertEquals((await cleanup.applyProject(box.state, box.project)).removed, [], 'nothing with work goes without a tick');
+  assert(exists(a.plan.path) && branchExists(box.project, a.plan.branch));
+
+  // the file reaches main by content: only the link is left, and a link main lacks is still work (never read through to its folder)
+  runGit(box.project, 'checkout', '-q', a.plan.branch, '--', 'chat.txt');
+  runGit(box.project, 'commit', '-q', '-m', 'merge by content');
+  scan = await cleanup.scanProject(box.state, box.project);
+  assertEquals(item(scan, `copy:${key}`).unmerged, linked);
+  if (linked) {
+    assertEquals((await cleanup.applyProject(box.state, box.project)).removed, []);
+    assert(branchExists(box.project, a.plan.branch), 'the branch with the link stays');
+    runGit(box.project, 'checkout', '-q', a.plan.branch, '--', 'link-out');
+    runGit(box.project, 'commit', '-q', '-m', 'the link too');
+    assertEquals(item(await cleanup.scanProject(box.state, box.project), `copy:${key}`).unmerged, false, 'the same link on main');
+  }
+  assertEquals((await cleanup.applyProject(box.state, box.project)).removed, [`copy:${key}`]);
+  assert(!exists(a.plan.path) && !branchExists(box.project, a.plan.branch), 'merged: the copy and its branch go');
+});
+
 Deno.test("a running chat's copy is never touched; a subfolder or busy repo is skipped", async () => {
   using box = new Sandbox();
   const a = await copy(box.state, box.project, 'e'.repeat(32), 'claude:se');

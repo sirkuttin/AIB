@@ -9,7 +9,7 @@ import { assert, assertEquals } from './_assert.ts';
 import { events, type Json, Lab, until, updateTexts } from './_connection.ts';
 import type { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
 import { AgentHost } from '../../outputs/agent-studio/server/host/agent_host.ts';
-import { descendants, elapsed, setTableReader } from '../../outputs/agent-studio/server/platform/descendants.ts';
+import { descendants, elapsed, setTableReader, statRow } from '../../outputs/agent-studio/server/platform/descendants.ts';
 import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
 
 const LONG = 60; // a deadline, not a delay
@@ -145,4 +145,11 @@ Deno.test("descendants: ps's etime", () => {
   assertEquals(elapsed('01:02:03'), 3723);
   assertEquals(elapsed('2-01:02:03'), 2 * 86400 + 3723);
   assertEquals(elapsed('ELAPSED'), null);
+});
+
+Deno.test('descendants: a /proc/<pid>/stat line gives the parent and a start time to the hundredth of a second (Linux)', () => {
+  // the command name may hold spaces and parentheses; starttime (field 22) is in clock ticks since boot
+  const stat = '4242 (my (odd) prog) S 4200 4242 4200 0 -1 4194560 100 0 0 0 1 2 0 0 20 0 1 0 12345 1000000 200 18446744073709551615';
+  assertEquals(statRow(stat, 1000), { pid: 4242, parentPid: 4200, started: 1123.45 });
+  assertEquals(statRow('garbage', 1000), null);
 });

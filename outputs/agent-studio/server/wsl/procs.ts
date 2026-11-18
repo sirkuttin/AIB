@@ -60,10 +60,13 @@ class DistroProcs {
       const at = Date.now();
       for (const root of roots) {
         const rows = answer.trees?.[String(root)];
+        // ages back from when the snapshot was asked for, not answered: a start time is never later than the real one (the turn's
+        // processes, Connection #noteTurnProcesses, are the ones started before the turn, to the hundredth of a second)
+        const asked = now / 1000;
         trees.set(
           root,
           Array.isArray(rows)
-            ? rows.map(([pid, parentPid, depth, age]) => ({ pid, parentPid, depth, started: typeof age === 'number' ? at / 1000 - age : null }))
+            ? rows.map(([pid, parentPid, depth, age]) => ({ pid, parentPid, depth, started: typeof age === 'number' ? asked - age : null }))
             : null,
         );
       }

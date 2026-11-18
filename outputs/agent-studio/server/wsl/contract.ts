@@ -311,8 +311,8 @@ export interface HelperMethods {
     result: { hints: Record<string, { verdict: string; reasons: Record<string, unknown>[] }>; certainty: 'unknown' | 'checked' };
   };
   /**
-   * The processes below each root pid (platform/descendants.ts run natively, `ps`): busy-children detection of WSL chats (a background
-   * shell still runs). Rows are [pid, parentPid, depth, age in seconds or null]; a root whose processes cannot be listed is null.
+   * The processes below each root pid (platform/descendants.ts run natively, /proc): busy-children detection of WSL chats (a background
+   * shell still runs). Rows are [pid, parentPid, depth, age in seconds (to 0.01 s; whole seconds from an older helper) or null]; a root whose processes cannot be listed is null.
    */
   'proc.tree': { params: { roots: number[] }; result: { trees: Record<string, [number, number, number, number | null][] | null> } };
   /**

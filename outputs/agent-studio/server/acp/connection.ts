@@ -3216,7 +3216,8 @@ export class Connection {
       this.#afterWslTree((later) => {
         if (!later || this.promptSeq !== seq || this.#turnProcesses !== null) return;
         // No shell call of this turn yet when the answer came: the distro listed them before any command ran, so all are the
-        // turn's (start times are whole seconds there: one started a moment before the turn could look newer). Else by start time.
+        // turn's. Else by start time (to the hundredth of a second, never later than the real one: wsl/procs.ts; an older helper's
+        // whole seconds could make one started a moment before the turn look newer, and Stop would end it with the command).
         const before = ![...this.#tools.values()].some((t) => t.shell && t.turn === seq);
         this.#turnProcesses = new Set(later.filter((d) => before || (d.started !== null && d.started < began)).map((d) => d.pid));
       });

@@ -155,7 +155,8 @@ Deno.test({
 
       // ---- 3. remove with another AIB's keeper alive: only this AIB's data folder goes
       await sh('rm -f -- "$1/new.txt"', [copy]);
-      // links inside the root to folders outside it, committed in the copy so it stays clean
+      // links inside the root to folders outside it, committed in the copy so it stays clean; that commit is work main lacks, so
+      // the clean-up before the removal (worktrees/cleanup.ts) keeps the chat branch (a link counts as itself, never its folder)
       await sh('ln -s "$2" "$1/link-out" && git -C "$1" add link-out && git -C "$1" commit -qm link', [copy, CANARY]);
       await sh('ln -s "$2" "$1/escape-canary" && ln -s "$3" "$4/escape-home"', [data, CANARY, HOME, `${ROOT}/agents`]);
       held.push(await startHeld('echo $$ > "$2"; exec "$1" 600', [`${AGENT}/bin/fake-agent`, `${OUT}/agent.pid`], `${OUT}/agent.pid`));

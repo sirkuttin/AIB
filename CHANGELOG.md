@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Stop on a WSL chat's background command: only that command ends. AIB reads the start times of the distro's processes to a
+  hundredth of a second, so a process the agent started a moment before your message (an MCP server of a new chat, for one)
+  stays running when you stop a command that started after it.
+- Clean-up and Remove AIB keep a chat's links. A link the chat committed counts as its own work while the project's main branch
+  lacks it, never as the folder it points to, so the chat's branch stays when its copy goes.
+
 - Phone notifications: buttons, like the Windows notifications. A notification on the phone about one chat now has the two
   buttons that fit its kind (Android Chrome shows at most two): **Allow** · **Deny** for an ordinary approval, **Reply** · **Open**
   for a question in a reply or a finished chat, **Continue** · **Open** for a chat that stopped mid-work, **Retry** · **Open** for a
