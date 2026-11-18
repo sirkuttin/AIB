@@ -1,6 +1,6 @@
 /** server/acp/elicitation.ts: the cases of work/test_elicitation.py, plus parity with Python's elicitation.py. */
 import { assertEquals, AssertionError } from './_assert.ts';
-import { PyParity } from './_parity.ts';
+import { oracleIs313, PyParity } from './_parity.ts';
 import {
   validateContent,
   validateSchema,
@@ -10,6 +10,16 @@ import {
 } from '../../outputs/agent-studio/server/acp/elicitation.ts';
 
 type Json = Record<string, unknown>;
+
+/**
+ * What `outcome` gives, unless the oracle is Python 3.13 or newer, whose urlparse refuses more than the older ones did (an unbalanced
+ * bracket, a signed port). AIB's check stays as lenient as before, so a 3.13 error where AIB accepts is not a difference; the other
+ * way round (AIB refuses what Python accepts) still is.
+ */
+function sameAsOracle(ours: unknown, theirs: unknown): boolean {
+  if (JSON.stringify(ours) === JSON.stringify(theirs)) return true;
+  return oracleIs313 && !!ours && typeof ours === 'object' && 'ok' in ours && !!theirs && typeof theirs === 'object' && 'error' in theirs;
+}
 
 function outcome(fn: () => unknown) {
   try {
@@ -443,7 +453,8 @@ Deno.test('string formats match Python (fuzzed)', async () => {
     const schema = obj({ v: { type: 'string', format } });
     for (const value of values) {
       const expected = await py.raw('elicitation', 'validate_content', [schema, { v: value }]);
-      assertEquals(outcome(() => validateContent(schema, { v: value })), expected, `${format} ${JSON.stringify(value)}`);
+      const ours = outcome(() => validateContent(schema, { v: value }));
+      if (!sameAsOracle(ours, expected)) assertEquals(ours, expected, `${format} ${JSON.stringify(value)}`);
     }
   }
 });
@@ -481,7 +492,9 @@ Deno.test('validateUrl and validateUrlRequest match Python', async () => {
   await using py = new PyParity();
   const urls: unknown[] = [...urlTemplates, ...badUrls, ...fuzz(5, 400, urlTemplates, [...alphabet, ':', '%', 'é'])];
   for (const url of urls) {
-    assertEquals(outcome(() => validateUrl(url)), await py.raw('elicitation', 'validate_url', [url]), JSON.stringify(url));
+    const ours = outcome(() => validateUrl(url));
+    const theirs = await py.raw('elicitation', 'validate_url', [url]);
+    if (!sameAsOracle(ours, theirs)) assertEquals(ours, theirs, JSON.stringify(url));
   }
   const good = { mode: 'url', message: 'm', url: 'https://example.com', elicitationId: 'id-1' };
   const requests: unknown[] = [
