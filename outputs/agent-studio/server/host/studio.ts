@@ -79,7 +79,7 @@ import {
 } from '../ownership/probe.ts';
 import { Handoff } from '../ownership/handoff.ts';
 import type { Holder } from '../ownership/claude_sessions.ts';
-import { mergeAssessment, wslOwnerCheck, wslOwnerHints, wslOwnPids, wslSessionsHeld } from '../wsl/ownership.ts';
+import { mergeAssessment, wslCodexScan, wslOwnerCheck, wslOwnerHints, wslOwnPids, wslSessionsHeld } from '../wsl/ownership.ts';
 import { expandUser } from '../platform/pypath.ts';
 import { home, isdir, join, normcase, realpath } from '../platform/ospath.ts';
 import { Recovery, StateStore } from '../state/recovery.ts';
@@ -458,6 +458,14 @@ export class Studio {
     this.handoff = new Handoff({
       connections: () => this.connections.values(),
       wslHeld: (distro, sessionIds, chatPids) => this.#wslHeld(distro, sessionIds, chatPids),
+      wslCodex: async (distro, sessionIds, chatPids) => {
+        try {
+          const host = readyHost(distro);
+          return await wslCodexScan(host, sessionIds, await wslOwnPids(host, chatPids));
+        } catch {
+          return null;
+        }
+      },
     });
     const name = construct.port !== undefined && construct.port !== null ? construct.port : options.port ?? 0;
     // Recovery state is kept only when a state directory was configured explicitly.
@@ -3497,6 +3505,20 @@ export class Studio {
     else if (name === 'session-op' && body.op === 'open-here') {
       // open elsewhere: Open here / Open here anyway on the chat's line (ownership/handoff.ts); nothing is sent to the agent but session/load
       return [200, { ok: true, ...(await connection.reclaim(body.force === true)) }];
+    } else if (name === 'session-op' && body.op === 'let-go') {
+      // the Let go icon on a Codex chat: let another app open it now (idle only; ownership/handoff.ts)
+      if (connection.provider !== 'codex') throw new ValueError('Let go is for Codex chats.');
+      if (connection.elsewhere?.released) return [200, { ok: true, state: 'already' }];
+      const state = await connection.letGoIdle(
+        { pid: 0, entrypoint: 'let-go', status: '', app: 'another app' },
+        'AIB let go of this chat so another app can open it. Open it here to take it back.',
+      );
+      return [200, {
+        ok: true,
+        state,
+        ...(state === 'busy' ? { message: 'This chat is working, so AIB did not let go. Try again when it is idle.' } : {}),
+        ...(state === 'no' ? { message: 'AIB could not let go of this chat right now.' } : {}),
+      }];
     } else if (name === 'session-op') {
       const deletedRef = body.op === 'delete' ? [connection.provider, connection.sessionId] : null;
       const result = await sessionOp(connection as never, body);

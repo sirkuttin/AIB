@@ -290,6 +290,21 @@ export interface HelperMethods {
     params: { sessionIds: string[]; exclude?: number[]; claudeDir?: string };
     result: { held: Record<string, { pid: number; entrypoint: string; status: string }> };
   };
+  /**
+   * Open elsewhere for Codex chats in the distro (helper/bgtasks.ts, ownership/codex_threads.ts, codex_apps.ts), read-only: of
+   * `sessionIds` (thread ids), `cli`: a Codex CLI process whose command line names the thread; `locked`: the thread's writer lock
+   * (<codexHome>/thread-writer-locks/<id>.lock; codexHome: CODEX_HOME, else ~/.codex of the distro user) is held now (/proc/locks);
+   * `appServers`: every `codex app-server` process classified by who started it ('own' = at or below `exclude`, AIB's agents;
+   * 'vscode', 'desktop', 'unrelated'), `start` naming the process with its pid. Processes come from `ps`, locks from /proc/locks.
+   */
+  'codex.scan': {
+    params: { sessionIds: string[]; exclude?: number[]; codexHome?: string };
+    result: {
+      cli: Record<string, { pid: number }>;
+      locked: Record<string, { pid: number }>;
+      appServers: { pid: number; start: string; kind: string; app: string }[];
+    };
+  };
   /** The conversation list's ownership hints of the distro's sessions (probe.hints, no registry) and its list certainty. */
   'ownership.hints': {
     params: { exclude?: number[]; claudeDir?: string };

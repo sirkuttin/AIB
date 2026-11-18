@@ -19,7 +19,11 @@
  * unloads and its writer lock goes at once and the other app's Retry works). Coming back: the CLI process still there, or the
  * thread's writer lock held by someone (read without locking), means still held; Codex never lets two apps write, so there is no
  * Open here anyway, only Open here again once it is closed there. VS Code's and Codex Desktop's Codex start `codex app-server`,
- * which names no thread: AIB cannot see them open a chat it holds (they show their own "open in another app" with Retry).
+ * which names no thread: AIB cannot see which chat they want. So, on the same beat, a `codex app-server` that is new (pid and start
+ * time not seen since AIB first looked: ones already running then, like a Codex Desktop open all day, are only noted) and was started by VS Code or Codex Desktop (codex_apps.ts: not AIB's own, not a terminal's) makes AIB let go
+ * of every IDLE Codex chat (Connection.letGoIdle: a working chat, helpers, shells or an open question are never touched), once per
+ * process. WSL Codex chats are checked inside their distro by its helper (`codex.scan`: ps, /proc/locks), the same way, which also
+ * covers VS Code Remote-WSL (its extension host and the extension's folder show in the distro's process list).
  *
  * Never throws out of a timer; costs one readdir and a few small reads per scan, and nothing while no Claude or Codex chat is open.
  */
@@ -30,7 +34,8 @@ import { descendants, refreshDescendants } from '../platform/descendants.ts';
 import { claudeConfigDir } from '../subagents/claude_config.ts';
 import { WIN } from '../platform/ospath.ts';
 import { type Holder, holderOf, liveRecords, type SessionRecord, sessionsDir } from './claude_sessions.ts';
-import { cliHolder, type CodexProcess, codexProcesses, writerLockPath, writerLockState } from './codex_threads.ts';
+import { cliHolder, type CodexProcess, writerLockPath, writerLockState } from './codex_threads.ts';
+import { type AppServer, appServerLine, appServers, appServerWho, processTable } from './codex_apps.ts';
 import { codexHome } from '../subagents/codex.ts';
 
 const log = getLogger('handoff');
@@ -42,7 +47,7 @@ export const PENDING_MS = 1_000;
 
 /** Providers whose agent is Claude Code (they write the registry). */
 const CLAUDE_PROVIDERS = new Set(['claude']);
-/** Providers whose agent is Codex (one writer per thread: codex_threads.ts). Windows chats only for now (no WSL helper method yet). */
+/** Providers whose agent is Codex (one writer per thread: codex_threads.ts). */
 const CODEX_PROVIDERS = new Set(['codex']);
 
 const isCodex = (c: Connection) => CODEX_PROVIDERS.has(c.provider);
@@ -51,6 +56,15 @@ export interface HandoffHost {
   connections(): Iterable<Connection>;
   /** WSL: who else holds these sessions in the distro (its helper's answer); {} when it cannot tell. */
   wslHeld?(distro: string, sessionIds: string[], chatPids: number[]): Promise<Record<string, Holder>>;
+  /** WSL Codex: the distro's helper's answer (codex.scan); null when it cannot tell. */
+  wslCodex?(distro: string, sessionIds: string[], chatPids: number[]): Promise<WslCodexScan | null>;
+}
+
+/** What the distro's helper sees for Codex chats: a CLI naming a thread, a thread's writer lock held, and the app-servers there. */
+export interface WslCodexScan {
+  cli: Record<string, Holder>;
+  locked: Record<string, Holder>;
+  appServers: AppServer[];
 }
 
 /** The Claude config folder a Windows chat's agent reads (the throwaway home under test, as the agent gets it). */
@@ -74,7 +88,6 @@ function fixtureUnderTest(command: string[]): boolean {
 }
 
 function watched(c: Connection): boolean {
-  if (isCodex(c) && c.wsl) return false;
   return (CLAUDE_PROVIDERS.has(c.provider) || isCodex(c)) && !c.closed && c.ready && !!c.sessionId && !c.replaying && !c.rebuildError &&
     !fixtureUnderTest(c.command);
 }
@@ -99,7 +112,10 @@ export class Handoff {
     let wsl = false;
     let codex = false;
     for (const c of this.host.connections()) {
-      if (isCodex(c) && !c.wsl && !c.closed && !fixtureUnderTest(c.command)) codex = true; // no folder to watch: the beat looks
+      if (isCodex(c) && !c.closed && !fixtureUnderTest(c.command)) { // no folder to watch: the beat looks
+        if (c.wsl) wsl = true;
+        else codex = true;
+      }
       if (!CLAUDE_PROVIDERS.has(c.provider) || c.closed || fixtureUnderTest(c.command)) continue;
       if (c.wsl) wsl = true;
       else dirs.add(sessionsDir(chatConfigDir(c)));
@@ -232,7 +248,7 @@ export class Handoff {
     if (!fresh && this.#codexSnapshot && now - this.#codexSnapshot.at < 1000) return this.#codexSnapshot.procs;
     let procs: CodexProcess[] = [];
     try {
-      procs = codexProcesses();
+      procs = processTable();
     } catch (error) {
       log.info('handoff: cannot list Codex processes (%s)', error instanceof Error ? error.message : error);
     }
@@ -251,8 +267,12 @@ export class Handoff {
    * Who else has a Codex chat's thread now: a Codex CLI naming it, or (AIB let go of it, so its own app-server unloaded it) a held
    * writer lock: another app writes it. Null: nobody, or AIB cannot tell (its own session/load then meets Codex's refusal).
    */
-  #codexHolderNow(c: Connection): Holder | null {
-    if (c.wsl) return null;
+  async #codexHolderNow(c: Connection): Promise<Holder | null> {
+    if (c.wsl) {
+      // inside the distro: its helper reads the process list and /proc/locks (codex.scan)
+      const found = await this.host.wslCodex?.(c.wsl.distro, [c.sessionId!], this.#wslChatPids(c.wsl.distro));
+      return found?.cli[c.sessionId!] ?? (c.elsewhere?.released ? found?.locked[c.sessionId!] : null) ?? null;
+    }
     const cli = this.#codexCliHolder(c, this.#codexProcesses(true));
     if (cli) return cli;
     if (!c.elsewhere?.released) return null;
@@ -262,7 +282,7 @@ export class Handoff {
 
   /** Who else holds this chat's session now (null: nobody, or AIB cannot tell). Used when the person comes back. */
   async holderNow(c: Connection): Promise<Holder | null> {
-    if (isCodex(c) && c.sessionId) return this.#codexHolderNow(c);
+    if (isCodex(c) && c.sessionId) return await this.#codexHolderNow(c);
     if (!CLAUDE_PROVIDERS.has(c.provider) || !c.sessionId) return null;
     if (c.wsl) {
       if (!this.host.wslHeld) return null;
@@ -283,6 +303,7 @@ export class Handoff {
     try {
       const byDir = new Map<string, SessionRecord[]>();
       let procs: CodexProcess[] | null = null;
+      const appChats: Connection[] = [];
       for (const c of [...this.host.connections()]) {
         if (!watched(c) || c.wsl) continue;
         if (c.elsewhere) {
@@ -295,7 +316,7 @@ export class Handoff {
           if (holder) {
             log.info('handoff: Codex chat %s (%s) is open in %s (pid %s)', c.id, c.sessionId, holder.app, holder.pid);
             c.handOff(holder);
-          }
+          } else appChats.push(c);
           continue;
         }
         const dir = chatConfigDir(c);
@@ -307,37 +328,109 @@ export class Handoff {
           c.handOff(holder);
         }
       }
+      // the same beat, the same process list: a VS Code / Codex Desktop app-server that is new lets go of the idle Codex chats
+      if (procs && appChats.length) await this.#appServerLetGo('this PC', appServers(procs, this.#ownPids(true)), appChats);
     } finally {
       this.#scanning = false;
       this.#armPending();
     }
   }
 
-  /** WSL chats: their distro's helper reads the registry there (Windows cannot check a Linux pid). */
+  /** WSL chats: their distro's helper reads the registry (Claude) or the processes and locks (Codex) there (Windows cannot check a Linux pid). */
   async #scanWsl(): Promise<void> {
-    if (!this.host.wslHeld) return;
     const byDistro = new Map<string, Connection[]>();
+    const codexByDistro = new Map<string, Connection[]>();
     for (const c of this.host.connections()) {
       if (!watched(c) || !c.wsl) continue;
       if (c.elsewhere) {
         if (!c.elsewhere.released) await c.tryRelease();
         continue;
       }
-      const list = byDistro.get(c.wsl.distro) ?? [];
+      const groups = isCodex(c) ? codexByDistro : byDistro;
+      const list = groups.get(c.wsl.distro) ?? [];
       list.push(c);
-      byDistro.set(c.wsl.distro, list);
+      groups.set(c.wsl.distro, list);
     }
-    for (const [distro, chats] of byDistro) {
-      const held = await this.host.wslHeld(distro, chats.map((c) => c.sessionId!), this.#wslChatPids(distro));
-      for (const c of chats) {
-        const holder = held[c.sessionId!];
-        if (holder && !c.closed && !c.elsewhere) {
-          log.info('handoff: WSL chat %s (%s) is open in %s (pid %s)', c.id, c.sessionId, holder.app, holder.pid);
-          c.handOff(holder);
+    if (this.host.wslHeld) {
+      for (const [distro, chats] of byDistro) {
+        const held = await this.host.wslHeld(distro, chats.map((c) => c.sessionId!), this.#wslChatPids(distro));
+        for (const c of chats) {
+          const holder = held[c.sessionId!];
+          if (holder && !c.closed && !c.elsewhere) {
+            log.info('handoff: WSL chat %s (%s) is open in %s (pid %s)', c.id, c.sessionId, holder.app, holder.pid);
+            c.handOff(holder);
+          }
         }
       }
     }
+    if (this.host.wslCodex) {
+      for (const [distro, chats] of codexByDistro) {
+        const found = await this.host.wslCodex(distro, chats.map((c) => c.sessionId!), this.#wslChatPids(distro));
+        if (!found) continue; // the helper cannot tell (an older one): no sign is no hand-off
+        const rest: Connection[] = [];
+        for (const c of chats) {
+          const holder = found.cli[c.sessionId!];
+          if (c.closed || c.elsewhere) continue;
+          if (holder) {
+            log.info('handoff: WSL Codex chat %s (%s) is open in %s (pid %s)', c.id, c.sessionId, holder.app, holder.pid);
+            c.handOff(holder);
+          } else rest.push(c);
+        }
+        if (rest.length) await this.#appServerLetGo(`WSL ${distro}`, found.appServers, rest);
+      }
+    }
     this.#armPending();
+  }
+
+  /** App-servers already seen (scope:pid:start): each new foreign one acts once. */
+  #seenAppServers = new Set<string>();
+  /** Scopes (this PC, a distro) looked at once already: what ran then is noted, not acted on. */
+  #baselined = new Set<string>();
+
+  /**
+   * A `codex app-server` of VS Code or Codex Desktop that AIB has not seen before (by pid and start time) lets go of every idle Codex
+   * chat in `chats` (the same scope: this PC, or one distro). Working chats, chats with helpers, shells or an open question are left
+   * alone (letGoIdle), and are not let go of later for the same process either. Never throws.
+   */
+  async #appServerLetGo(scope: string, servers: AppServer[], chats: Connection[]): Promise<void> {
+    try {
+      const prefix = `${scope}:`;
+      const present = new Set<string>();
+      const fresh: AppServer[] = [];
+      for (const s of servers) {
+        if (s.kind !== 'vscode' && s.kind !== 'desktop') continue;
+        const key = `${prefix}${s.pid}:${s.start}`;
+        present.add(key);
+        if (!this.#seenAppServers.has(key)) {
+          this.#seenAppServers.add(key);
+          fresh.push(s);
+        }
+      }
+      for (const key of [...this.#seenAppServers]) if (key.startsWith(prefix) && !present.has(key)) this.#seenAppServers.delete(key);
+      // the first look at a scope only takes note of what already runs (Codex Desktop or VS Code are often open all day, long before
+      // this chat): "appears" means after that
+      if (!this.#baselined.has(scope)) {
+        this.#baselined.add(scope);
+        if (fresh.length) log.info('handoff: %s: %d Codex app-server(s) already running, noted', scope, fresh.length);
+        return;
+      }
+      if (!fresh.length) return;
+      const app = fresh[0].app;
+      log.info('handoff: %s started a Codex app-server (pid %s, %s): letting go of idle Codex chats', app, fresh[0].pid, scope);
+      for (const c of chats) {
+        if (c.closed || c.elsewhere) continue;
+        const holder: Holder = { pid: fresh[0].pid, entrypoint: 'codex-app-server', status: '', app: appServerWho(app) };
+        const result = await c.letGoIdle(holder, appServerLine(app));
+        log.info(
+          'handoff: Codex chat %s (%s): %s',
+          c.id,
+          c.sessionId,
+          result === 'released' ? 'let go' : result === 'busy' ? 'working, kept' : 'not let go',
+        );
+      }
+    } catch (error) {
+      log.exception(error, 'handoff: app-server check failed');
+    }
   }
 
   /** While a chat waits to let go, look again every second (its turn's end also tries at once). */

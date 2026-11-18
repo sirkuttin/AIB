@@ -4554,7 +4554,7 @@ export class Connection {
    * its session (session/close: the Claude process ended, the adapter and its keeper channel stay) and loads it again when the
    * person comes back. null: AIB holds the session.
    */
-  elsewhere: { app: string; pid: number; entrypoint: string; since: number; released: boolean; heldNoted?: boolean } | null = null;
+  elsewhere: { app: string; pid: number; entrypoint: string; since: number; released: boolean; heldNoted?: boolean; line?: string } | null = null;
   /** Studio hook (handoff.ts): who else holds this chat's session now; null when nobody does (or AIB cannot tell). */
   holderNow: (() => Promise<Holder | null>) | null = null;
   /** Studio hook: this chat let go of its session ('released') or took it back ('back'). */
@@ -4587,6 +4587,23 @@ export class Connection {
     void this.tryRelease();
   }
 
+  /**
+   * Let go of this chat now, only when it is idle (Codex: an app-server of VS Code / Codex Desktop started, or the person chose Let go).
+   * Never waits for a turn: 'busy' means it is working (a turn, a question, a helper or a shell), 'no' that nothing was done (not
+   * ready, already let go, the agent cannot close a session, or closing failed). `line` is the chat line's text.
+   */
+  async letGoIdle(holder: Holder, line: string): Promise<'released' | 'busy' | 'no'> {
+    if (this.closed || !this.ready || !this.sessionId || this.#replaying || this.elsewhere || this.rebuildError) return 'no';
+    if (!this.canCloseSession()) return 'no';
+    if (!this.#quietForRelease(false)) return 'busy';
+    this.elsewhere = { app: holder.app, pid: holder.pid, entrypoint: holder.entrypoint, since: this.#now(), released: false, line };
+    const e = this.elsewhere;
+    if (await this.tryRelease()) return 'released';
+    if (this.elsewhere !== e) return 'no'; // closing failed (tryRelease cleared it)
+    this.elsewhere = null; // something started in between: no waiting for the turn to end, as the other hand-offs do
+    return 'busy';
+  }
+
   /** Nothing would be lost by closing the session now: no turn, no question open, no background helper or shell, nothing sending. */
   #quietForRelease(turnEnding: boolean): boolean {
     return (turnEnding || !this.busy) && !this.permissions.size && !this.elicitations.size && !this.auth && !this.queue.inflight &&
@@ -4604,7 +4621,7 @@ export class Connection {
       e.released = true;
       e.heldNoted = false;
       this.recordedEvent('studio_note', {
-        message: `Continued in ${e.app}. AIB let go of this chat. Open it here to take it back.`,
+        message: e.line ?? `Continued in ${e.app}. AIB let go of this chat. Open it here to take it back.`,
         sessionId: this.sessionId,
         elsewhere: 'released',
         actions: [{ id: 'elsewhere-open', label: 'Open here' }],

@@ -85,7 +85,8 @@ header .hd-line h1:focus-visible {
   color: var(--text-bright);
   background: var(--hover-overlay);
 }
-#organizeCurrent.hd-more {
+#organizeCurrent.hd-more,
+#letGoCurrent.hd-more {
   flex: none;
   width: 24px;
   height: 24px;
@@ -102,11 +103,32 @@ header .hd-line h1:focus-visible {
 }
 #organizeCurrent.hd-more:hover,
 #organizeCurrent.hd-more:focus-visible,
-#organizeCurrent.hd-more[aria-expanded='true'] {
+#organizeCurrent.hd-more[aria-expanded='true'],
+#letGoCurrent.hd-more:hover,
+#letGoCurrent.hd-more:focus-visible {
   color: var(--text-bright);
   background: var(--hover-overlay);
 }
-#organizeCurrent[hidden] {
+#letGoCurrent.hd-more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+#letGoCurrent.hd-more:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+#letGoCurrent.hd-more svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+#organizeCurrent[hidden],
+#letGoCurrent[hidden] {
   display: none;
 }
 #renameCurrent[hidden] {

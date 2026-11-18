@@ -91,6 +91,8 @@ export interface CodexProcess {
   ppid: number;
   name: string;
   cmdline: string;
+  /** Only on `codex app-server` rows (codex_apps.ts): an opaque start token; with the pid it names one process, never a reused pid. */
+  start?: string;
 }
 
 /** A Codex CLI process: codex.exe / codex, or node running the npm package's codex.js (it starts codex.exe with the same arguments). */

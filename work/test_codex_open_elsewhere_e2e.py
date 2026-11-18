@@ -23,6 +23,17 @@ reaches AIB's Codex through CODEX_CONFIG and the other Codex processes through `
       Released; an app-server client takes the thread: sending is refused (409 held_elsewhere, nothing sent, one line with Open here,
       no Open here anyway: Codex lets one app write); Open here, even forced, stays held; once that app quits, Open here takes it back.
 
+  test_vscode_app_server_lets_go_idle_chats_once
+      A fake "VS Code" (a copy of node named Code.exe) starts `codex app-server` (what VS Code's Codex extension does, no thread id):
+      AIB lets go of the idle chat with the app-server line, the writer lock goes; sending takes it back; the same app-server
+      process does not make AIB let go again.
+  test_app_server_does_not_touch_working_chat_or_unrelated_app_server
+      An app-server started by a script (not an editor) changes nothing; one started by "VS Code" while a turn runs leaves the
+      working chat alone, now and when the turn ends.
+  test_let_go_button
+      The header icon's server side (session-op let-go): lets go of an idle chat (line, lock gone), says "already" the second time,
+      Open here takes it back; a working chat is not let go and the answer says so.
+
 Skipped without node, codex-acp (AIB_CODEX_ACP) or Go (AIB_TEST_KEEPER_BIN names a built keeper). Targeted: run this file alone, with
 TEMP/TMP pointed at a scratch folder with no space in its path.
 """
@@ -30,6 +41,7 @@ import _isolation  # noqa: F401  (test isolation: temp state folder, real per-us
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import threading
@@ -188,6 +200,48 @@ class OtherAppServer:
         close_pipes(self.process)
 
 
+FAKE_VSCODE_JS = """
+// A stand-in for VS Code's extension host: this program (named Code.exe) starts the Codex extension's `codex app-server` and keeps it.
+const { spawn } = require('child_process');
+const [codex, ...args] = process.argv.slice(2);
+const child = spawn(codex, args, { stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true });
+child.on('exit', () => process.exit(0));
+process.stdin.resume();
+process.stdin.on('end', () => { child.kill(); process.exit(0); });
+"""
+
+
+class FakeVsCode:
+    """`Code.exe script.js codex ... app-server`: the app-server's parent is a program called Code.exe, as under VS Code's extension host.
+    parent_name: another name for the parent (an unrelated program)."""
+
+    def __init__(self, owner, home, project, stub, parent_name='Code.exe'):
+        folder = pathlib.Path(home) / 'tmp' / ('fake-' + uuid.uuid4().hex[:8])
+        folder.mkdir(parents=True, exist_ok=True)
+        exe = folder / parent_name
+        shutil.copyfile(NODE, exe)
+        script = folder / 'extension_host.js'
+        script.write_text(FAKE_VSCODE_JS, encoding='utf-8')
+        self.process = subprocess.Popen(
+            [str(exe), str(script), str(CODEX), *provider_flags(stub), 'app-server'], cwd=str(project), env=other_env(pathlib.Path(home)),
+            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=NO_WINDOW)
+        owner.addCleanup(self.stop)
+
+    @property
+    def pid(self):
+        return self.process.pid
+
+    def stop(self):
+        if self.process.poll() is None:
+            try:
+                self.process.stdin.close()
+                self.process.wait(20)
+            except (OSError, subprocess.TimeoutExpired):
+                self.process.kill()  # only the process this test started
+                self.process.wait(10)
+        close_pipes(self.process)
+
+
 @unittest.skipUnless(NODE and CODEX_ACP and CODEX and (GO or os.environ.get('AIB_TEST_KEEPER_BIN')),
                      'needs node, codex-acp (AIB_CODEX_ACP) with its codex executable, and Go or AIB_TEST_KEEPER_BIN')
 @unittest.skipUnless(SERVER_KIND == 'deno-split', 'runs against AIB_SERVER=deno-split (the default)')
@@ -296,6 +350,74 @@ class CodexOpenElsewhereTest(unittest.TestCase):
         self.assertEqual((status, answer.get('state')), (200, 'back'), answer)
         self.assertNotIn('elsewhere', self.chat.state())
         self.assertIn('STUB codeword=ALPHA', self.send('and the codeword?'))
+
+    def test_vscode_app_server_lets_go_idle_chats_once(self):
+        thread, home = self.start()
+        time.sleep(11)  # AIB's own app-server is never counted
+        self.assertNotIn('elsewhere', self.chat.state(), "AIB counted its own app-server as VS Code's")
+        FakeVsCode(self, home, self.project, self.stub)
+        started = time.time()
+        wait_for(self.released, "AIB to let go when VS Code's Codex started", 30)
+        self.assertLess(time.time() - started, 15)
+        line = "VS Code's Codex started: AIB let go so you can open this chat there. Open it here to take it back."
+        self.assertEqual([n['message'] for n in self.notes_of('released')], [line])
+        self.assertEqual(self.notes_of('released')[0]['actions'], [{'id': 'elsewhere-open', 'label': 'Open here'}])
+        wait_for(lambda: not lock_file(home, thread).exists(), 'the writer lock to go', 10)
+        self.assertFalse(self.chat.state()['closed'])
+
+        self.assertIn('STUB codeword=ALPHA', self.send('What is the codeword?'), 'sending takes the chat back')
+        self.assertNotIn('elsewhere', self.chat.state())
+        self.assertTrue(lock_file(home, thread).exists(), 'AIB holds the thread again')
+        time.sleep(12)  # a beat: that same app-server (pid and start) does not make AIB let go again
+        self.assertNotIn('elsewhere', self.chat.state())
+        self.assertEqual(len(self.notes_of('released')), 1)
+
+    def test_app_server_does_not_touch_working_chat_or_unrelated_app_server(self):
+        thread, home = self.start()
+        FakeVsCode(self, home, self.project, self.stub, parent_name='script_runner.exe')  # not an editor
+        time.sleep(13)
+        self.assertNotIn('elsewhere', self.chat.state(), "an app-server a script started is not VS Code's")
+        self.assertTrue(lock_file(home, thread).exists())
+
+        status, sent = self.web.post('prompt', {'id': self.chat.id, 'text': f'STUB_WAIT=25 the codeword is GAMMA {self.aib.mark}',
+                                                'clientMessageId': uuid.uuid4().hex})
+        self.assertEqual(status, 200, sent)
+        wait_for(lambda: self.chat.state()['busy'], 'the turn to run')
+        FakeVsCode(self, home, self.project, self.stub)
+        time.sleep(14)  # at least one beat while the turn runs
+        state = self.chat.state()
+        self.assertTrue(state['busy'], 'the turn still runs')
+        self.assertNotIn('elsewhere', state, 'a working chat is never let go for an app-server (and nothing waits for its turn)')
+        self.assertTrue(lock_file(home, thread).exists())
+        wait_for(lambda: not self.chat.state()['busy'], 'the turn to end', 60)
+        time.sleep(12)
+        self.assertNotIn('elsewhere', self.chat.state(), 'once seen, that app-server does not act when the turn ends')
+        self.assertIn('STUB codeword=GAMMA', self.send('and the codeword?'))
+
+    def test_let_go_button(self):
+        thread, home = self.start()
+        status, answer = self.web.post('session-op', {'id': self.chat.id, 'op': 'let-go'})
+        self.assertEqual((status, answer.get('state')), (200, 'released'), answer)
+        self.assertTrue(self.released())
+        self.assertEqual([n['message'] for n in self.notes_of('released')],
+                         ['AIB let go of this chat so another app can open it. Open it here to take it back.'])
+        wait_for(lambda: not lock_file(home, thread).exists(), 'the writer lock to go', 10)
+        status, answer = self.web.post('session-op', {'id': self.chat.id, 'op': 'let-go'})
+        self.assertEqual((status, answer.get('state')), (200, 'already'), answer)
+        status, answer = self.web.post('session-op', {'id': self.chat.id, 'op': 'open-here'})
+        self.assertEqual((status, answer.get('state')), (200, 'back'), answer)
+        self.assertNotIn('elsewhere', self.chat.state())
+        self.assertTrue(lock_file(home, thread).exists())
+
+        status, sent = self.web.post('prompt', {'id': self.chat.id, 'text': f'STUB_WAIT=20 the codeword is GAMMA {self.aib.mark}',
+                                                'clientMessageId': uuid.uuid4().hex})
+        self.assertEqual(status, 200, sent)
+        wait_for(lambda: self.chat.state()['busy'], 'the turn to run')
+        status, answer = self.web.post('session-op', {'id': self.chat.id, 'op': 'let-go'})
+        self.assertEqual((status, answer.get('state')), (200, 'busy'), answer)
+        self.assertEqual(answer['message'], 'This chat is working, so AIB did not let go. Try again when it is idle.')
+        self.assertNotIn('elsewhere', self.chat.state(), 'nothing was let go and nothing waits')
+        self.assertTrue(lock_file(home, thread).exists())
 
 
 if __name__ == '__main__':

@@ -22,6 +22,8 @@ import { linkOf, wslTestHomeEnv } from './access.ts';
 import { CLIENT_TERMINAL_PREFIX } from '../acp/keeper_terminal.ts';
 import { type Assessment, type Reason, SUMMARIES, type Verdict } from '../ownership/probe.ts';
 import { appName, type Holder } from '../ownership/claude_sessions.ts';
+import type { WslCodexScan } from '../ownership/handoff.ts';
+import type { AppServer } from '../ownership/codex_apps.ts';
 
 /** The pids of this AIB's own channels in a distro's Linux keeper that run an agent (live pipes, the agents' client terminals). */
 export async function wslOwnPids(host: WslHost, known: Iterable<number> = []): Promise<number[]> {
@@ -79,7 +81,9 @@ export async function wslOwnerCheck(
 export async function wslSessionsHeld(host: WslHost, sessionIds: string[], exclude: number[]): Promise<Record<string, Holder>> {
   if (!sessionIds.length) return {};
   try {
-    const answer = await host.call('sessions.held', { sessionIds: sessionIds.slice(0, 200), exclude, ...claudeDir() }, { timeoutMs: 10_000 });
+    const answer = await host.call('sessions.held', { sessionIds: sessionIds.slice(0, 200), exclude, ...claudeDir() }, {
+      timeoutMs: 10_000,
+    });
     const out: Record<string, Holder> = {};
     const held = answer.held;
     if (!held || typeof held !== 'object') return out;
@@ -88,11 +92,53 @@ export async function wslSessionsHeld(host: WslHost, sessionIds: string[], exclu
       const v = h as Record<string, unknown>;
       if (!Number.isInteger(v.pid)) continue;
       const entrypoint = typeof v.entrypoint === 'string' ? v.entrypoint.slice(0, 80) : '';
-      out[sid] = { pid: v.pid as number, entrypoint, status: typeof v.status === 'string' ? v.status.slice(0, 40) : '', app: appName(entrypoint) };
+      out[sid] = {
+        pid: v.pid as number,
+        entrypoint,
+        status: typeof v.status === 'string' ? v.status.slice(0, 40) : '',
+        app: appName(entrypoint),
+      };
     }
     return out;
   } catch {
     return {};
+  }
+}
+
+/**
+ * Open elsewhere for Codex chats of a distro (handoff.ts): the distro's helper reads its processes (a Codex CLI naming each thread,
+ * the app-servers and who started them) and the writer locks. null when the helper cannot tell (an older one without the method): the
+ * chats just stay attached.
+ */
+export async function wslCodexScan(host: WslHost, sessionIds: string[], exclude: number[]): Promise<WslCodexScan | null> {
+  if (!sessionIds.length) return null;
+  try {
+    const home = wslTestHomeEnv().CODEX_HOME;
+    const answer = await host.call('codex.scan', { sessionIds: sessionIds.slice(0, 200), exclude, ...(home ? { codexHome: home } : {}) }, {
+      timeoutMs: 10_000,
+    });
+    const holders = (found: unknown, entrypoint: string, app: string): Record<string, Holder> => {
+      const out: Record<string, Holder> = {};
+      if (!found || typeof found !== 'object') return out;
+      for (const [sid, h] of Object.entries(found as Record<string, unknown>)) {
+        const pid = (h as { pid?: unknown } | null)?.pid;
+        if (sessionIds.includes(sid) && Number.isInteger(pid)) out[sid] = { pid: pid as number, entrypoint, status: '', app };
+      }
+      return out;
+    };
+    const servers: AppServer[] = [];
+    for (const s of Array.isArray(answer.appServers) ? answer.appServers : []) {
+      if (!s || !Number.isInteger(s.pid) || typeof s.start !== 'string') continue;
+      const kind = s.kind === 'own' || s.kind === 'vscode' || s.kind === 'desktop' ? s.kind : 'unrelated';
+      servers.push({ pid: s.pid, start: s.start.slice(0, 80), kind, app: typeof s.app === 'string' ? s.app.slice(0, 40) : '' });
+    }
+    return {
+      cli: holders(answer.cli, 'codex-cli', 'a terminal'),
+      locked: holders(answer.locked, 'codex-writer-lock', 'another app'),
+      appServers: servers,
+    };
+  } catch {
+    return null;
   }
 }
 
@@ -111,7 +157,12 @@ export async function wslOwnerHints(host: WslHost, exclude: number[]): Promise<R
  * notes of both, the verdict and summary worked out again the way probe.assess does. `owner` adds the command-line reason the
  * distro found.
  */
-export function mergeAssessment(distro: Assessment | null, registry: Assessment, owner: number | null = null, distroLabel = 'the distro'): Assessment {
+export function mergeAssessment(
+  distro: Assessment | null,
+  registry: Assessment,
+  owner: number | null = null,
+  distroLabel = 'the distro',
+): Assessment {
   const reasons: Reason[] = [...(distro?.reasons ?? [])];
   if (owner !== null) {
     reasons.unshift({

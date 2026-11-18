@@ -1398,6 +1398,44 @@
     if (l && l.swarm && l.swarm.role === 'helper') return false;
     return !(c.worktree || (l && l.worktree) || (c.recovered && c.recovered.worktree));
   }
+  // Open elsewhere (Codex chats only): the header's "Let another app open this chat" icon. Codex lets one app write a chat at a time, so
+  // this lets go of it now (AIB takes it back when you send or choose Open here). A working chat is left alone, and the line says so.
+  let letGoWired = false;
+  function renderLetGo(connected) {
+    const b = $('letGoCurrent');
+    if (!b) return;
+    if (!letGoWired) {
+      letGoWired = true;
+      const ns = 'http://www.w3.org/2000/svg';
+      const svg = document.createElementNS(ns, 'svg');
+      svg.setAttribute('viewBox', '0 0 16 16');
+      svg.setAttribute('aria-hidden', 'true');
+      for (const d of ['M7 3H3.5A1.5 1.5 0 0 0 2 4.5v8A1.5 1.5 0 0 0 3.5 14h8a1.5 1.5 0 0 0 1.5-1.5V9', 'M9.5 2H14v4.5', 'M14 2 7.5 8.5']) {
+        const path = document.createElementNS(ns, 'path');
+        path.setAttribute('d', d);
+        svg.append(path);
+      }
+      b.append(svg);
+      b.addEventListener('click', async () => {
+        if (!current || b.disabled) return;
+        b.disabled = true;
+        try {
+          const done = await post('session-op', { id: current, op: 'let-go' });
+          if (done?.state === 'busy' || done?.state === 'no') fail({ message: done.message || 'AIB did not let go of this chat.' });
+          else clearError();
+        } catch (error) {
+          fail(error);
+        }
+        refresh();
+      });
+    }
+    const show = !!(connected && selected?.provider === 'codex' && !window.AIBRemote); // another computer's window: the PC's action
+    b.hidden = !show;
+    if (!show) return;
+    const released = !!snapshot?.elsewhere?.released;
+    b.disabled = released;
+    b.title = released ? 'AIB already let go of this chat' : 'Let another app open this chat';
+  }
   function renderHeaderBody() {
     if (!window.AgentHeaderUI?.isEditing?.()) $('title').textContent = titleOf(selected);
     const connected = !!current && snapshot && !snapshot.closed,
@@ -1488,6 +1526,7 @@
     );
     if (composer.working && composer.placeholder) $('prompt').placeholder = composer.placeholder;
     else if (queueMode) $('prompt').placeholder = 'Message ' + nameOf(selected.provider) + '… Enter to queue';
+    renderLetGo(connected && !gone);
     $('markHandled').hidden = !(
       turn?.status?.kind === 'your-turn' && typeof window.AgentWorkspaceUI?.markHandled === 'function'
     );
@@ -6731,6 +6770,7 @@
     /* the main list's rows (drawn or not: a long chat read far up draws a window of them) have this text */
     mainRowsHave: (q) => (lastMainRows || []).some((r) => String((r && r.value) || '').includes(q)),
     DraftStore,
+    renderLetGo,
     renderApprovals,
     answeredLine,
     paintActivityTabBadge,
