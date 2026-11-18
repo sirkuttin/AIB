@@ -66,21 +66,21 @@ import Shot from '../../components/Shot.astro';
     Collaborate on it: ask for a change, any agent can pick it up, and every version is kept to compare or restore. Then ship
     it: commit, download or hand off 🚀 [Artifacts](/artifacts/)
   </Card>
-  <Card title="private/ folder: notes every agent reads, git never commits" icon="padlock">
+  <Card title="aib-shared/ folder: notes every agent reads, git never commits" icon="padlock">
     One folder per project for plans and research. Every chat sees it; nothing in it reaches main.
-    [private/ folder](/private-folder/)
+    [aib-shared/ folder](/aib-shared/)
   </Card>
 </CardGrid>
 
 ## Same tools for every agent
 
-Every agent in AIB gets the same doc tools, the same artifact tools and the same `private/` folder, whichever provider it
+Every agent in AIB gets the same doc tools, the same artifact tools and the same `aib-shared/` folder, whichever provider it
 comes from. All of them land in one inbox and answer to one phone. Pick the agent for the job; the work stays in one place.
 
 ## Runs on your PC
 
 - The AIB server listens on `127.0.0.1` only.
-- Docs and private notes are files in your project.
+- Docs and `aib-shared/` notes are files in your project.
 - Your phone reaches your PC over your own Tailscale network.
 - No AIB account, no telemetry, no cloud service of ours.
 - Free and open source under the GNU AGPL-3.0.

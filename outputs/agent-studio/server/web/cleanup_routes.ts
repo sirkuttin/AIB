@@ -6,7 +6,7 @@
  *                                                   added project, what would go silently and what has unmerged work. Changes nothing.
  *   POST /api/live/cleanup/all {mode: 'apply', remove: {<project>: [ids]}}
  *                                                   project removal's cleanup for every added project (5.7): this install's items
- *                                                   without unmerged work plus the ticked ids. Private folders stay; the projects
+ *                                                   without unmerged work plus the ticked ids. aib-shared/ folders stay; the projects
  *                                                   stay in AIB.
  *
  * Running chats' copies are never touched (the live list). Old copy chats and the leftovers from before folder chats are tidied by

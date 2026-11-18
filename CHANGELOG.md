@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- aib-shared/: one shared folder for every chat, helper and subagent. The project's local-only folder `private/` is now
+  `aib-shared/`. It lives only in the project's main folder, and every worktree AIB makes gets a link named `aib-shared` to it (a
+  directory junction on Windows, a symlink in WSL), so a note a subagent writes in its worktree is in the main folder at once, with
+  no copies and no moving files around when a worktree is removed. Git ignores it everywhere through AIB's `/aib-shared` line in
+  `.git/info/exclude`, so nothing in it can be committed from any branch. Removing a worktree takes the link away first and never
+  touches the real folder. Agents are told: "aib-shared/ in the project folder is shared by every agent and chat, never committed."
+  Existing projects keep their `private/` folder until you run `work/migrate/rename_private_to_aib_shared.ts --apply` once.
 - Chat names: a name you give a chat in AIB is now its name in Claude Code and Codex too. Rename used to change the name in AIB
   only, so `claude --resume`, the VS Code extension and Codex's own list kept showing the old title (an AIB chat called
   "Ashborne orchestrator part3" was still "Ashborne orchestrator handoff" in VS Code). Now a rename on the PC or a phone also
@@ -58,14 +65,14 @@
   minutes; the chat continues and gets one note naming the process. A process naming the session, holding its transcript open, a
   recent transcript write by another app or another app's announcement still asks or refuses as before. Windows and WSL chats.
 
-- Local-only folders in WSL projects: a chat in its own copy reaches the main folder's private/ again. Folders git never commits
-  (private/ by default) live only in the project's main folder, so a WSL chat in its own copy could not see them. Now its agent
-  can read and write them by their Linux path (for example /home/u/app/private), and is told where they are. Files shows them in
+- Local-only folders in WSL projects: a chat in its own copy reaches the main folder's aib-shared/ again. Folders git never commits
+  (aib-shared/ by default) live only in the project's main folder, so a WSL chat in its own copy could not see them. Now its agent
+  can read and write them by their Linux path (for example /home/u/app/aib-shared), and is told where they are. Files shows them in
   every chat's copy, Git exclude and Undo work in WSL projects, and AIB backs them up once a day inside the distro. Live sync and
   Merge leave them out, as on Windows.
 - WSL chats in their own copy see everything git ignores in the main folder: folders and files listed in .gitignore or
   .git/info/exclude (game/review/, .env, node_modules) used to be missing from a chat's copy. Now the Files tab lists them in the
-  copy, opens their folders at any depth and shows their files and pictures. Excluded folders such as private/ are shown in normal
+  copy, opens their folders at any depth and shows their files and pictures. Excluded folders such as aib-shared/ are shown in normal
   colour; .gitignore ones stay dimmed. The chat's agent can read and edit them in the main folder by their full Linux path. AIB never
   writes a .gitignore.
 

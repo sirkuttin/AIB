@@ -1,15 +1,15 @@
 /**
  * Local-only files of WSL projects, Windows side (the distro's helper does the work: wsl/helper/local_only.ts, `localOnly.*`).
- *   wslDefaultsAllowed   local_strays.defaultsAllowed for a WSL project: a test or demo AIB (temp or no state folder) writes the
- *                        default `/private` only into projects under the distro's /tmp, never into a real repository
- *   wslEnsureLocalOnly   the default `/private` line in the distro (local_only.ensureDefault there); never throws
+ *   wslDefaultsAllowed   local_only.defaultsAllowed for a WSL project: a test or demo AIB (temp or no state folder) writes the
+ *                        default `/aib-shared` only into projects under the distro's /tmp, never into a real repository
+ *   wslEnsureLocalOnly   the default `/aib-shared` line in the distro (local_only.ensureDefault there); never throws
  *   wslChatLocalOnly     what a WSL chat is told and granted (Connection.localOnly, Linux paths of the main folder); null when the
  *                        project has none, or the helper is older and has no localOnly.* (the chat then works as before)
  *   startWslLocalBackups the hourly check of local_backup.ts for WSL projects, run by each ready distro's helper into its own data
  *                        folder; a distro that is not running is never started for it
  */
 import { getLogger } from '../core/log.ts';
-import { defaultsAllowed } from '../worktrees/local_strays.ts';
+import { defaultsAllowed } from '../worktrees/local_only.ts';
 import { settings } from '../worktrees/local_backup.ts';
 import { hostWhenReady, peekState, peekWslHost, wslLoc } from './access.ts';
 import { WslHelperError } from './contract.ts';
@@ -28,7 +28,7 @@ export function wslDefaultsAllowed(stateDir: string, ref: string): boolean {
   return defaultsAllowed(stateDir, '\0') || /^\/tmp\/./.test(wsl.linuxPath);
 }
 
-/** Sets the default `/private` up in the distro (idempotent). Never throws. */
+/** Sets the default `/aib-shared` up in the distro (idempotent). Never throws. */
 export async function wslEnsureLocalOnly(ref: string): Promise<void> {
   const wsl = wslLoc(ref);
   if (!wsl) return;
@@ -43,7 +43,7 @@ export async function wslEnsureLocalOnly(ref: string): Promise<void> {
 export interface WslChatLocalOnly {
   entries: string[];
   dirs: string[];
-  private: string;
+  shared: string;
   ignored?: { dirs: string[]; files: string[] };
 }
 
@@ -57,7 +57,7 @@ export async function wslChatLocalOnly(mainRef: string, worktree: boolean): Prom
     const lo = answer?.localOnly;
     if (!lo || !Array.isArray(lo.entries) || !Array.isArray(lo.dirs)) return null;
     const linux = (p: unknown): p is string => typeof p === 'string' && p.startsWith('/');
-    const out: WslChatLocalOnly = { entries: lo.entries.filter(linux), dirs: lo.dirs.filter(linux), private: linux(lo.private) ? lo.private : '' };
+    const out: WslChatLocalOnly = { entries: lo.entries.filter(linux), dirs: lo.dirs.filter(linux), shared: linux(lo.shared) ? lo.shared : '' };
     const ig = lo.ignored;
     if (worktree && ig && Array.isArray(ig.dirs) && Array.isArray(ig.files)) out.ignored = { dirs: ig.dirs.filter(linux), files: ig.files.filter(linux) };
     return out;

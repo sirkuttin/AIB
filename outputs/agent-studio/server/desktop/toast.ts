@@ -1,5 +1,5 @@
 /**
- * Windows toasts with buttons (Inbox v3.1 phase 4; private/designs/inbox-v31 section 3). The AIB server starts `AIB-keeper toast`
+ * Windows toasts with buttons (Inbox v3.1 phase 4; aib-shared/designs/inbox-v31 section 3). The AIB server starts `AIB-keeper toast`
  * once, hidden (the keeper is a GUI-subsystem program: no console, ever), and talks JSON lines with it (keeper/toast.go). The
  * helper writes AIB's app identity under HKCU at every start (no installer, no shortcut), shows the toasts and hands each click back.
  *

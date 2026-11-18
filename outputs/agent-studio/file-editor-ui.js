@@ -1,6 +1,6 @@
 (function (root) {
   'use strict';
-  /* The file editor in file tabs (private/designs/file-editor/file-editor-design-v2.md; architect review 2026-11-16). files-ui.js
+  /* The file editor in file tabs (aib-shared/designs/file-editor/file-editor-design-v2.md; architect review 2026-11-16). files-ui.js
      draws the tab (head, tools row, body, footer) and asks this module for the editable parts:
 
        handles(tab)               a file in the project folder (scope 'main' or 'project'): it opens editable at once

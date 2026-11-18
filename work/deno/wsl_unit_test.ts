@@ -307,11 +307,11 @@ Deno.test('mcp restricted: a WSL chat path goes to AIB as given (never resolved 
   try {
     const ctx = { key: 'k', conversation: 'c', worktree: false, restricted: true, cwd: null, roots: () => [`http://127.0.0.1:${server.addr.port}`] };
     const call = (id: number, name: string, args: Json) => handle({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } }, ctx);
-    const published = (await call(1, 'publish', { title: 'Map', path: ' private/review/x.png ' }) as Json).result as Json;
+    const published = (await call(1, 'publish', { title: 'Map', path: ' aib-shared/review/x.png ' }) as Json).result as Json;
     assert(!published.isError, JSON.stringify(published));
     await call(2, 'update', { id: 'a1', path: '/home/u/app/x.png' });
     await call(3, 'publish', { title: 'Page', content: '<p>hi</p>', filename: 'p.html' });
-    assertEquals(seen.map((b) => [b.path ?? null, b.content ?? null]), [['private/review/x.png', null], ['/home/u/app/x.png', null], [null, '<p>hi</p>']]);
+    assertEquals(seen.map((b) => [b.path ?? null, b.content ?? null]), [['aib-shared/review/x.png', null], ['/home/u/app/x.png', null], [null, '<p>hi</p>']]);
     const empty = (await call(4, 'publish', { title: 'x', path: '   ' }) as Json).result as Json;
     assert(empty.isError === true && String(((empty.content as Json[])[0]).text).includes('non-empty'), JSON.stringify(empty));
   } finally {

@@ -125,16 +125,21 @@ Local-only paths are AIB's block of the repository's `.git/info/exclude` (`workt
 project: they live only in the project's main folder, and git never copies them into a chat's copy. The helper runs the Windows
 modules natively (`wsl/helper/local_only.ts`, the `localOnly.*` methods), with Linux paths and Linux git:
 
-- **Default `/private`.** Before a chat's copy is made (and when a WSL project is added), the helper adds `/private` to AIB's block
-  (`localOnly.ensure`, `ensureDefault`): only when the block does not exist yet, the project does not commit `private/` and no
-  `.gitignore` negates it. The user's own exclude lines (for example their own `/private/`) are kept byte for byte. A test or demo
+- **Default `/aib-shared`.** Before a chat's copy is made (and when a WSL project is added), the helper adds `/aib-shared` to AIB's
+  block (`localOnly.ensure`, `ensureDefault`): only when the block does not exist yet, the project does not commit `aib-shared/` and no
+  `.gitignore` negates it. The user's own exclude lines (for example their own `/aib-shared/`) are kept byte for byte. A test or demo
   AIB (state folder under the Windows temp folder) only does this for projects under the distro's `/tmp`
   (`wsl/local_only.ts wslDefaultsAllowed`), never in a real repository.
+- **`aib-shared/` in a copy is a symlink** (`worktrees/shared_link.ts`, run by the helper's own worktree Manager): every copy the
+  helper makes (chats, helpers, subagents) gets `aib-shared` -> the main folder's real `aib-shared/` (absolute Linux path), made when
+  the copy is made and checked again before an old copy is used. A file written through it is in the main folder at once; git ignores
+  the link through the same `/aib-shared` line. Removing a copy takes the link away first (the link only), as on Windows.
 - **A chat in its own copy** (`localOnly.chat`, `chatLocalOnly`): its agent gets the main folder's existing local-only folders as
-  ACP `additionalDirectories` (writable, Linux paths, for example `/home/u/app/private`), when the agent advertises it, on
-  `session/new` and on `session/load`. The start note (the system prompt line, Windows wording) says where they are and that they
-  must not be made in the copy. The main folder's `private/` is made (empty) so it can be granted from the first message. The copy
-  itself never holds them. A chat working in the project folder gets the `private/` line only. No Windows scratch folder is added.
+  ACP `additionalDirectories` (writable, Linux paths, for example `/home/u/app/aib-shared`), when the agent advertises it, on
+  `session/new` and on `session/load`. The start note (the system prompt line, Windows wording) says "aib-shared/ in the project
+  folder is shared by every agent and chat, never committed." and names the other local-only paths, which must not be made in the
+  copy. The main folder's `aib-shared/` is made (empty) so it can be granted from the first message. A chat working in the project
+  folder gets the `aib-shared/` line only. No Windows scratch folder is added.
 - **Everything else git ignores** (owner, WSL only; `worktrees/ignored_overlay.ts`). A chat in its own copy is also granted every
   other top-level folder git ignores in the main folder (`git status --ignored`: git collapses nested ones to the highest ignored
   folder, so `game/review/`, `importer/node_modules/`, a user-excluded `scratch/`), and the start note names those folders and the
@@ -150,10 +155,10 @@ modules natively (`wsl/helper/local_only.ts`, the `localOnly.*` methods), with L
   agent's normal permission prompt. AIB adds no guard of its own: WSL chats have no write tracker, the backup only reads, and Merge
   and sync never touch ignored files.
 - **Files.** List, search and read of a chat's copy lay the main folder's local-only paths over it (`localOnly.list`, `.search`,
-  `.read`; `files.listLocal`, `excludeHints`, `findStrays`, `localFiles`); a local-only file is read from the main folder.
+  `.read`; `files.listLocal`, `excludeHints`, `localFiles`); a local-only file is read from the main folder.
   `localOnly.main` in the replies is the main folder's Linux path, so rows' tooltips show the path the agent uses. "Git exclude"
-  and its Undo (`localOnly.exclude`: `addEntry`, which moves the copy's file into the main folder first, and `undoEntry`) and the
-  stray row's Move (`localOnly.moveStrays`) work as on Windows. The helper only writes the exclude file of the main folder's own
+  and its Undo (`localOnly.exclude`: `addEntry`, which moves the copy's file into the main folder first, and `undoEntry`) work as on
+  Windows. The helper only writes the exclude file of the main folder's own
   repository, refuses paths out of the folder (`..`), `.git`, `node_modules`, `aib-docs` and tracked files, and refuses a root that
   is neither the main folder nor one of its own chat copies (under `<data>/worktrees`). It never writes a `.gitignore`.
   Beyond Windows: in a chat's copy every ignored entry of the main folder the copy lacks is listed too (`from: 'main'`), a folder
@@ -229,7 +234,7 @@ Project-level checks (any blocker refuses `--apply`):
   holds, so they must all be stopped first;
 - stale entries that `git worktree prune` would drop are only reported, never pruned.
 
-Git-ignored and excluded folders (`.gitignore`, `.git/info/exclude`, e.g. `private/`) are never copied or touched: they stay in the
+Git-ignored and excluded folders (`.gitignore`, `.git/info/exclude`, e.g. `aib-shared/`) are never copied or touched: they stay in the
 main folder, as for any new chat's copy. A chat in its copy reaches them through AIB's local-only folders, a separate feature.
 
 **Apply.** It runs the plan again and refuses on any blocker. In a normal run it needs `--confirm-project <the same path>`. Under test
@@ -322,7 +327,7 @@ WSL chat's `studio_artifact` MCP entry is the distro's own keeper program:
 An agent in a WSL chat publishes a file (a PNG, a PDF, an HTML page, any kind a Windows chat can publish) by its Linux `path`:
 
 - **Where.** Relative paths start at the chat's folder (its copy, or the project folder); a file the copy does not have is looked
-  up in the project's main folder too (local-only files such as `private/`). Absolute paths only inside the chat's folder or its
+  up in the project's main folder too (local-only files such as `aib-shared/`). Absolute paths only inside the chat's folder or its
   project folder (`wsl/artifact_read.ts publishRoots` is the one list). `~`, Windows paths, `..` that climbs out and links that
   lead out (the helper checks the real path in the distro) are refused.
 - **How.** Only the path travels through the tunnel. AIB reads the bytes through the distro's helper (`files.readBytes`, pieces of
@@ -991,7 +996,7 @@ keeps one failure from hiding the others' results.
 | `wsl_sessions_e2e` | an ended chat listed after a restart, its history read in the distro, continued there |
 | `wsl_worktrees_e2e` | a chat's worktree and branch in the distro, its Changes branch view, restart re-adoption, closing leaves the copy, a refused out-of-root plan, a non-git folder in place |
 | `wsl_allow_e2e` | allow rules in a WSL chat with the real helper: "Always allow" on an edit in the chat's folder, the next edit answered without a card, `git status` answered by Safe reads, an edit through a link to a folder outside the project asks (and offers no Always allow) |
-| `wsl_local_only_e2e` | a repo with the user's own `/private/` exclude: a chat's copy gets `/private` in AIB's block first, no `private/` in the copy, `session/new` with `additionalDirectories` = the main folder's `private/` (Linux path) and the note; the agent writes there; Files' local-only part and a read of `private/review/x.png` from the main folder; Git exclude from the copy writes the repo's exclude file and moves the folder, Undo, `..` and a root outside the copies refused; sync and Merge leave `private/` out |
+| `wsl_local_only_e2e` | a repo with the user's own `/aib-shared/` exclude: a chat's copy gets `/aib-shared` in AIB's block first and a symlink `aib-shared` -> the main folder's `aib-shared/`; a file the agent writes through it is in the main folder at once and git shows nothing; `session/new` with `additionalDirectories` = the main folder's `aib-shared/` (Linux path) and the note; Files' local-only part and a read of `aib-shared/review/x.png` from the main folder; Git exclude from the copy writes the repo's exclude file and moves the folder, Undo, `..` and a root outside the copies refused; sync and Merge never copy or commit `aib-shared/`; an old copy without the link gets it back (ensure); removing the copy takes the link only |
 
 | `wsl_import_e2e` | the one-off import over a temp repo: chats started in the project, in a subfolder, running (a process naming the id), in another tool's worktree, already imported, and a Codex one; a dirty main refuses apply and writes nothing; the dry run leaves every file as it was; the test guard; apply of one, then all, then a no-op re-run; one row per chat; Continue resumes in the copy (the agent's edit lands there), Changes shows the branch, Merge lands, Codex resumes in its copy; the same dry run through `--helper-bin` from `/mnt/c`; undo refuses the merged chat and restores the others (history back, no copy, no branch) |
 | `wsl_sync_e2e` | live sync with the helper's poll stretched to 5 minutes, so only inotify wakes a scan: events counted, a user edit and a new file in the copy within seconds, the prompt's note naming them, the helper killed and a new one catching up, Merge after sync landing only the chat's change, an edit both made merged at the next turn, a clash kept with its markers and the clash line until the chat resolves it |

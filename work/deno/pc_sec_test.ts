@@ -1,5 +1,5 @@
 /**
- * Remote control from other PCs: the fixes of the Phase 1 security review (private/designs/remote-pc/security-review-phase1).
+ * Remote control from other PCs: the fixes of the Phase 1 security review (aib-shared/designs/remote-pc/security-review-phase1).
  *   MF1   artifacts/preview: a relative path is refused (relative, ./, ../ forms), and the file it RESOLVES to is checked
  *   SF1   saved transcripts: a computer reads only listed chats' transcripts, subagents and background output
  *   SF2   home folder / drive root by real path (a junction, trailing dots)

@@ -1,5 +1,5 @@
 /**
- * Subagent worktrees, Gemini CLI part (private design gemini-proof.md; verified on Gemini CLI 0.68.0 under ACP). Owner rule: an agent's
+ * Subagent worktrees, Gemini CLI part (aib-shared design gemini-proof.md; verified on Gemini CLI 0.68.0 under ACP). Owner rule: an agent's
  * own subagent that edits files works in its own git worktree, landed like a helper's; when that can't run, its edits are refused,
  * never made in the folder.
  *

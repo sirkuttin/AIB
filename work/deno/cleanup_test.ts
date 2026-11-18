@@ -169,13 +169,13 @@ Deno.test("a running chat's copy is never touched; a subfolder or busy repo is s
   Deno.removeSync(pathOf(box.project, '.git', 'index.lock'));
 });
 
-Deno.test('16: project removal: one confirm lists the unmerged copy; the clean one goes silently; ticked ids go; private/ stays', async () => {
+Deno.test('16: project removal: one confirm lists the unmerged copy; the clean one goes silently; ticked ids go; aib-shared/ stays', async () => {
   const { projectRemove } = await import('../../outputs/agent-studio/server/web/project_routes.ts');
   const { RemovedProjects } = await import('../../outputs/agent-studio/server/desktop/project_delete.ts');
   const { ConversationState } = await import('../../outputs/agent-studio/server/state/store.ts');
   using box = new Sandbox();
-  write(box.project, 'private/notes.md', 'mine\n'); // the local-only folder (excluded by AIB's default line)
-  Deno.writeTextFileSync(pathOf(box.project, '.git', 'info', 'exclude'), '/private\n');
+  write(box.project, 'aib-shared/notes.md', 'mine\n'); // the local-only folder (excluded by AIB's default line)
+  Deno.writeTextFileSync(pathOf(box.project, '.git', 'info', 'exclude'), '/aib-shared\n');
   const clean = await copy(box.state, box.project, '3'.repeat(32), 'claude:s3');
   const busy = await copy(box.state, box.project, '4'.repeat(32), 'claude:s4');
   write(busy.plan.path, 'w.txt', 'work\n');
@@ -217,16 +217,16 @@ Deno.test('16: project removal: one confirm lists the unmerged copy; the clean o
   // the confirm with the tick
   await projectRemove(ctx, { path: box.project, cleanup: { remove: [`copy:${'4'.repeat(32)}`] } });
   assert(!exists(busy.plan.path) && !branchExists(box.project, busy.plan.branch));
-  assertEquals(Deno.readTextFileSync(pathOf(box.project, 'private', 'notes.md')), 'mine\n', 'the private folder stays');
-  assertEquals(Deno.readTextFileSync(pathOf(box.project, '.git', 'info', 'exclude')), '/private\n', 'and its exclude line');
+  assertEquals(Deno.readTextFileSync(pathOf(box.project, 'aib-shared', 'notes.md')), 'mine\n', 'the aib-shared folder stays');
+  assertEquals(Deno.readTextFileSync(pathOf(box.project, '.git', 'info', 'exclude')), '/aib-shared\n', 'and its exclude line');
 });
 
-Deno.test('18b: "Remove AIB\'s data from my repos" runs project removal\'s cleanup for every added project and leaves private/', async () => {
+Deno.test('18b: "Remove AIB\'s data from my repos" runs project removal\'s cleanup for every added project and leaves aib-shared/', async () => {
   const { allRoute } = await import('../../outputs/agent-studio/server/web/cleanup_routes.ts');
   using box = new Sandbox();
   const second = pathOf(box.base, 'proj2');
   makeRepoAt(second);
-  write(box.project, 'private/a.md', 'a\n');
+  write(box.project, 'aib-shared/a.md', 'a\n');
   const one = await copy(box.state, box.project, '5'.repeat(32));
   const two = await copy(box.state, second, '6'.repeat(32), 'claude:s6');
   write(two.plan.path, 'w.txt', 'work\n');
@@ -246,7 +246,7 @@ Deno.test('18b: "Remove AIB\'s data from my repos" runs project removal\'s clean
   await allRoute(ctx, { mode: 'apply', remove: { [second]: [`copy:${'6'.repeat(32)}`] } });
   assert(!exists(one.plan.path) && !exists(two.plan.path));
   assert(!branchExists(box.project, one.plan.branch) && !branchExists(second, two.plan.branch));
-  assertEquals(Deno.readTextFileSync(pathOf(box.project, 'private', 'a.md')), 'a\n');
+  assertEquals(Deno.readTextFileSync(pathOf(box.project, 'aib-shared', 'a.md')), 'a\n');
 });
 
 function makeRepoAt(folder: string): void {

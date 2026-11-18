@@ -455,6 +455,7 @@ export class SubagentWorktrees {
     if (spare) {
       const moved = await wt.git(['reset', '-q', '--hard', s.commit], spare.path, { check: false });
       if (moved.returncode === 0) {
+        await wt.giveSharedLink(spare.path, chat.project); // an old worktree reused: its aib-shared link checked first
         const rec = await this.#patch(spare.id, { state: late() ? 'spare' : 'prepared', snapshot: s.commit, tree: s.tree, ...(late() ? {} : meta) });
         this.#spareSoon(chat, s.commit);
         return rec!;
@@ -484,6 +485,8 @@ export class SubagentWorktrees {
       await wt.git(['worktree', 'add', '-q', '-b', place.branch, place.path, s.commit], chat.folder);
       // a running subagent's worktree is never removed by `git worktree remove` or prune (as Claude Code does with its own)
       await wt.git(['worktree', 'lock', '--reason', 'AIB subagent', place.path], chat.folder, { check: false });
+      // the project's aib-shared/ is the main folder's one: a link to it, never a copy (shared_link.ts)
+      await wt.giveSharedLink(place.path, chat.project);
     } catch (error) {
       await this.#remove(rec);
       return `git could not make it (${error instanceof Error ? error.message.slice(0, 300) : error})`;

@@ -37,18 +37,18 @@ const hex = (b: string | Uint8Array) => [...(typeof b === 'string' ? new TextEnc
 
 async function project(box: Sandbox): Promise<void> {
   runGit(box.project, 'config', 'core.autocrlf', 'false');
-  await ensureDefault(box.project); // /private in the temp repo's own exclude
+  await ensureDefault(box.project); // /aib-shared in the temp repo's own exclude
 }
 
 Deno.test('backup: made once, kept within the day, skipped when nothing changed, replaced the next day (one zip), and it opens', async () => {
   using box = new Sandbox();
   await project(box);
-  write(box.project, 'private/TASKS.md', 'first\n');
-  write(box.project, 'private/designs/ünïcode é.txt', 'utf-8 name\n');
+  write(box.project, 'aib-shared/TASKS.md', 'first\n');
+  write(box.project, 'aib-shared/designs/ünïcode é.txt', 'utf-8 name\n');
   const blob = new Uint8Array(300_000).map((_, i) => (i * 7919) % 251); // bigger than one read chunk, not very compressible
-  write(box.project, 'private/data.bin', blob);
-  write(box.project, 'private/empty.txt', '');
-  write(box.project, 'private/node_modules/x.js', 'skipped\n');
+  write(box.project, 'aib-shared/data.bin', blob);
+  write(box.project, 'aib-shared/empty.txt', '');
+  write(box.project, 'aib-shared/node_modules/x.js', 'skipped\n');
   write(box.project, 'tracked-not-local.txt', 'not backed up\n');
 
   const first = await backup.backupProject(box.state, box.project, T0);
@@ -57,20 +57,20 @@ Deno.test('backup: made once, kept within the day, skipped when nothing changed,
   assertEquals(first.zip, zip);
   const opened = await openZip(zip);
   assertEquals(opened.bad, null, 'every CRC checks out');
-  assertEquals(Object.keys(opened.files).sort(), ['private/TASKS.md', 'private/data.bin', 'private/designs/ünïcode é.txt', 'private/empty.txt']);
-  assertEquals(opened.files['private/TASKS.md'][2], hex('first\n'));
-  assertEquals(opened.files['private/data.bin'][2], hex(blob));
-  assertEquals(opened.files['private/data.bin'][1], 8, 'deflated');
-  assertEquals(opened.files['private/empty.txt'][0], 0);
+  assertEquals(Object.keys(opened.files).sort(), ['aib-shared/TASKS.md', 'aib-shared/data.bin', 'aib-shared/designs/ünïcode é.txt', 'aib-shared/empty.txt']);
+  assertEquals(opened.files['aib-shared/TASKS.md'][2], hex('first\n'));
+  assertEquals(opened.files['aib-shared/data.bin'][2], hex(blob));
+  assertEquals(opened.files['aib-shared/data.bin'][1], 8, 'deflated');
+  assertEquals(opened.files['aib-shared/empty.txt'][0], 0);
   const meta = JSON.parse(Deno.readTextFileSync(zip.replace(/\.zip$/, '.json')));
   assertEquals([meta.project, meta.files, meta.time, meta.skipped], [box.project, 4, T0, []]);
 
   assertEquals((await backup.backupProject(box.state, box.project, T0 + DAY / 2)).status, 'recent');
-  write(box.project, 'private/TASKS.md', 'second\n');
+  write(box.project, 'aib-shared/TASKS.md', 'second\n');
   assertEquals((await backup.backupProject(box.state, box.project, T0 + DAY / 2)).status, 'recent', 'once a day, even when it changed');
   const next = await backup.backupProject(box.state, box.project, T0 + DAY);
   assertEquals(next.status, 'made');
-  assertEquals((await openZip(zip)).files['private/TASKS.md'][2], hex('second\n'));
+  assertEquals((await openZip(zip)).files['aib-shared/TASKS.md'][2], hex('second\n'));
   assertEquals((await backup.backupProject(box.state, box.project, T0 + 3 * DAY)).status, 'unchanged');
   const kept = [...Deno.readDirSync(join(box.state, backup.FOLDER))].map((e) => e.name).filter((n) => !n.endsWith('.lock')).sort();
   assertEquals(kept, [repoHash(box.project) + '.json', repoHash(box.project) + '.zip'], 'only one zip, no partial left');
@@ -80,16 +80,16 @@ Deno.test('backup: every local-only entry (files too), no cap; nothing for proje
   using box = new Sandbox();
   assertEquals((await backup.backupProject(box.state, box.project, T0)).status, 'none', 'no AIB block yet');
   await project(box);
-  assertEquals((await backup.backupProject(box.state, box.project, T0)).status, 'none', '/private excluded but no folder');
+  assertEquals((await backup.backupProject(box.state, box.project, T0)).status, 'none', '/aib-shared excluded but no folder');
   write(box.project, 'notes.md', 'a local-only file\n');
   assert((await addEntry(box.project, 'notes.md')).ok);
-  write(box.project, 'private/a.txt', 'a\n');
+  write(box.project, 'aib-shared/a.txt', 'a\n');
   const made = await backup.backupProject(box.state, box.project, T0);
   assertEquals(made.status, 'made');
-  assertEquals(Object.keys((await openZip(made.zip!)).files).sort(), ['notes.md', 'private/a.txt']);
+  assertEquals(Object.keys((await openZip(made.zip!)).files).sort(), ['aib-shared/a.txt', 'notes.md']);
   const plain = join(box.base, 'plain');
-  Deno.mkdirSync(join(plain, 'private'), { recursive: true });
-  write(plain, 'private/x.txt', 'x\n');
+  Deno.mkdirSync(join(plain, 'aib-shared'), { recursive: true });
+  write(plain, 'aib-shared/x.txt', 'x\n');
   assertEquals((await backup.backupProject(box.state, plain, T0)).status, 'none');
   assertEquals((await backup.backupProject(box.state, join(box.base, 'gone'), T0)).status, 'none');
 });
@@ -111,7 +111,7 @@ Deno.test('backup: a file that cannot be read is skipped and listed; the zip aro
 Deno.test('backup: an open old zip that cannot be replaced keeps the old one; the schedule backs up each project once per run', async () => {
   using box = new Sandbox();
   await project(box);
-  write(box.project, 'private/a.txt', 'one\n');
+  write(box.project, 'aib-shared/a.txt', 'one\n');
   const runner = backup.startLocalBackups({
     stateDir: box.state,
     projects: () => [box.project, box.project, join(box.base, 'nothing-here')],
@@ -123,12 +123,12 @@ Deno.test('backup: an open old zip that cannot be replaced keeps the old one; th
   runner.stop();
   if (Deno.build.os !== 'windows') return; // only Windows refuses to replace a file that is open
   const zip = results.get(box.project)!.zip!;
-  write(box.project, 'private/a.txt', 'two\n');
+  write(box.project, 'aib-shared/a.txt', 'two\n');
   const held = Deno.openSync(zip, { read: true });
   try {
     const later = await backup.backupProject(box.state, box.project, T0 + DAY);
     if (later.status === 'busy') { // the rename was refused: the old zip is whole and the partial is gone
-      assertEquals((await openZip(zip)).files['private/a.txt'][2], hex('one\n'));
+      assertEquals((await openZip(zip)).files['aib-shared/a.txt'][2], hex('one\n'));
       assert(!Deno.readDirSync(join(box.state, backup.FOLDER)).some((e) => e.name.endsWith('.partial')));
     } else assertEquals(later.status, 'made'); // Deno opened it with delete sharing: the rename went through
   } finally {

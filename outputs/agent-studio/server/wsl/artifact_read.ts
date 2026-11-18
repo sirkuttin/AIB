@@ -6,7 +6,7 @@
  * it again. AIB keeps no link to the Linux file: no watcher, and Delete never touches it.
  *
  * Where a path may point (publishRoots, the one place that lists them): the chat's folder, plus its project's main folder for a chat in
- * its own worktree (where the local-only files such as private/ live):
+ * its own worktree (where the local-only files such as aib-shared/ live):
  *   - relative: against the chat's Linux folder; a file the chat's folder does not have is looked up in the project folder too;
  *   - absolute: only inside one of those folders;
  *   - `..` that climbs out, and links that lead out (the helper checks the real path in the distro), are refused.

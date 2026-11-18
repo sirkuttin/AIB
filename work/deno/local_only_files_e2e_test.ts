@@ -1,9 +1,9 @@
 /**
  * Local-only folders in Files (owner decisions 1a, 3, 4a), end to end: a real Studio server + headless Chrome/Edge (own temp profile
- * and data folder, free ports, no agent runs) on a temp git repo whose main folder has a local-only private/ (AIB's block in
- * .git/info/exclude) and a chat working in its own copy (a git worktree with no private/ on disk).
- *   E2E-1  the chat copy's Files shows the main folder's private/ in normal colour with the blue dot and the "local only" pill, and
- *          opens it and private/designs without "Show ignored"; nothing is put in the copy.
+ * and data folder, free ports, no agent runs) on a temp git repo whose main folder has a local-only aib-shared/ (AIB's block in
+ * .git/info/exclude) and a chat working in its own copy (a git worktree with no aib-shared/ on disk).
+ *   E2E-1  the chat copy's Files shows the main folder's aib-shared/ in normal colour with the blue dot and the "local only" pill, and
+ *          opens it and aib-shared/designs without "Show ignored"; nothing is put in the copy.
  *   E2E-5  right-click a file -> "Git exclude": the AIB block gets the line (the user's lines and CRLF kept), the file moves from the
  *          copy into the main folder (owner Q3) and the row turns local; the foot offers Undo, which removes only that line. A tracked
  *          file shows the item greyed with its reason.
@@ -29,7 +29,7 @@ function transcript(claude: string, id: string, cwd: string, text: string): void
 }
 
 Deno.test({
-  name: 'local only in Files: a chat copy shows the main folder private/ (pill, dot, opens without Show ignored); Git exclude with Undo',
+  name: 'local only in Files: a chat copy shows the main folder aib-shared/ (pill, dot, opens without Show ignored); Git exclude with Undo',
   ignore: !browserPath || !HAVE_GIT,
   ...TEST_OPTIONS,
   async fn() {
@@ -72,13 +72,13 @@ async function run(fx: Fixture, keep: (b: Browser) => void): Promise<void> {
   Deno.writeTextFileSync(`${alpha}${SEP}src${SEP}app.ts`, 'export {};\n');
   git(alpha, 'add', '-A');
   git(alpha, 'commit', '-q', '-m', 'base');
-  // the main folder's local-only private/ (never committed), and the user's own exclude lines in CRLF
+  // the main folder's local-only aib-shared/ (never committed), and the user's own exclude lines in CRLF
   const exclude = `${alpha}${SEP}.git${SEP}info${SEP}exclude`;
-  Deno.writeTextFileSync(exclude, '# my own lines\r\n/.test-logs/\r\n# AIB: local only (shown in every chat; never committed)\r\n/private\r\n# AIB: end\r\n');
-  Deno.mkdirSync(`${alpha}${SEP}private${SEP}designs`, { recursive: true });
-  Deno.writeTextFileSync(`${alpha}${SEP}private${SEP}TASKS.md`, '# Tasks\n- ship it\n');
-  Deno.writeTextFileSync(`${alpha}${SEP}private${SEP}designs${SEP}look.html`, '<h1>look</h1>\n');
-  // the chat's own copy: a worktree made from the commit, so it has no private/
+  Deno.writeTextFileSync(exclude, '# my own lines\r\n/.test-logs/\r\n# AIB: local only (shown in every chat; never committed)\r\n/aib-shared\r\n# AIB: end\r\n');
+  Deno.mkdirSync(`${alpha}${SEP}aib-shared${SEP}designs`, { recursive: true });
+  Deno.writeTextFileSync(`${alpha}${SEP}aib-shared${SEP}TASKS.md`, '# Tasks\n- ship it\n');
+  Deno.writeTextFileSync(`${alpha}${SEP}aib-shared${SEP}designs${SEP}look.html`, '<h1>look</h1>\n');
+  // the chat's own copy: a worktree made from the commit, so it has no aib-shared/
   Deno.mkdirSync(`${r}${SEP}copies`);
   git(alpha, 'worktree', 'add', '-q', '-b', 'studio/chat-5e1f', copy);
   Deno.writeTextFileSync(`${copy}${SEP}scratch.md`, 'only in this copy\n');
@@ -114,25 +114,25 @@ async function run(fx: Fixture, keep: (b: Browser) => void): Promise<void> {
     await page.waitFor(`document.getElementById('title').textContent === 'Plan the release'`, 30_000, 'the worktree chat open');
     await page.eval(`AibThemes.choose('teal-light')`);
     await page.eval(`AgentFilesUI.setMode('files')`);
-    await page.waitFor(`!!document.querySelector('.fx-row[data-path="private"]')`, 20_000, 'private listed in the chat copy');
+    await page.waitFor(`!!document.querySelector('.fx-row[data-path="aib-shared"]')`, 20_000, 'aib-shared listed in the chat copy');
     const scope = await page.eval<{ root: string; branch: string }>(`AgentFilesUI.currentScope()`);
     assertEquals([scope.root, scope.branch], ['chat', 'studio/chat-5e1f'], "Files shows the chat's own copy");
 
-    // E2E-1: the main folder's private/ in the copy's scope; nothing on disk in the copy
+    // E2E-1: the main folder's aib-shared/ in the copy's scope; nothing on disk in the copy
     let rows = await rowsOf(page);
-    const priv = rows.find((x) => x.path === 'private')!;
+    const priv = rows.find((x) => x.path === 'aib-shared')!;
     assert(priv.cls.includes('local') && !priv.cls.includes('ignored'), priv.cls);
     assertEquals([priv.pill, priv.dot], ['local only', true]);
-    assert(priv.title.includes('The same folder in every chat: ' + alpha + SEP + 'private'), priv.title);
-    assert(!(await exists(`${copy}${SEP}private`)), 'nothing is put in the copy');
-    await page.eval(`document.querySelector('.fx-row[data-path="private"]').click()`);
-    await page.waitFor(`!!document.querySelector('.fx-row[data-path="private/designs"]')`, 10_000, 'private opened without Show ignored');
-    await page.eval(`document.querySelector('.fx-row[data-path="private/designs"]').click()`);
-    await page.waitFor(`!!document.querySelector('.fx-row[data-path="private/designs/look.html"]')`, 10_000, 'private/designs opened');
+    assert(priv.title.includes('The same folder in every chat: ' + alpha + SEP + 'aib-shared'), priv.title);
+    assert(!(await exists(`${copy}${SEP}aib-shared`)), 'nothing is put in the copy');
+    await page.eval(`document.querySelector('.fx-row[data-path="aib-shared"]').click()`);
+    await page.waitFor(`!!document.querySelector('.fx-row[data-path="aib-shared/designs"]')`, 10_000, 'aib-shared opened without Show ignored');
+    await page.eval(`document.querySelector('.fx-row[data-path="aib-shared/designs"]').click()`);
+    await page.waitFor(`!!document.querySelector('.fx-row[data-path="aib-shared/designs/look.html"]')`, 10_000, 'aib-shared/designs opened');
     rows = await rowsOf(page);
-    assert(rows.find((x) => x.path === 'private/TASKS.md')!.cls.includes('local'));
+    assert(rows.find((x) => x.path === 'aib-shared/TASKS.md')!.cls.includes('local'));
     assertEquals(await page.eval(`(document.querySelector('.fx-foot-link') || {}).textContent`), 'Show ignored', 'Show ignored untouched');
-    await page.shot('1-files-worktree-private-light');
+    await page.shot('1-files-worktree-aib-shared-light');
 
     // a tracked file: the item is there, greyed, with the reason
     await rightClick(page, 'README.md');
@@ -152,7 +152,7 @@ async function run(fx: Fixture, keep: (b: Browser) => void): Promise<void> {
       'the row turns local',
     );
     const text = Deno.readTextFileSync(exclude);
-    assertEquals(text, '# my own lines\r\n/.test-logs/\r\n# AIB: local only (shown in every chat; never committed)\r\n/private\r\n/scratch.md\r\n# AIB: end\r\n');
+    assertEquals(text, '# my own lines\r\n/.test-logs/\r\n# AIB: local only (shown in every chat; never committed)\r\n/aib-shared\r\n/scratch.md\r\n# AIB: end\r\n');
     assertEquals(Deno.readTextFileSync(`${alpha}${SEP}scratch.md`), 'only in this copy\n');
     assert(!(await exists(`${copy}${SEP}scratch.md`)), 'the file left the copy');
     await page.shot('3-files-undo-foot-light');
@@ -170,8 +170,8 @@ async function run(fx: Fixture, keep: (b: Browser) => void): Promise<void> {
     await page.waitFor(`document.querySelector('.fx-foot-undo').hidden`, 10_000, 'Undo done');
     // the foot drops the Undo as it is clicked, before the server has undone it: wait for the line to leave the file
     await until(() => !Deno.readTextFileSync(exclude).includes('/scratch.md'), 'the Undo applied to .git/info/exclude', 10);
-    assertEquals(Deno.readTextFileSync(exclude), '# my own lines\r\n/.test-logs/\r\n# AIB: local only (shown in every chat; never committed)\r\n/private\r\n# AIB: end\r\n');
-    await page.shot('6-files-worktree-private-dark');
+    assertEquals(Deno.readTextFileSync(exclude), '# my own lines\r\n/.test-logs/\r\n# AIB: local only (shown in every chat; never committed)\r\n/aib-shared\r\n# AIB: end\r\n');
+    await page.shot('6-files-worktree-aib-shared-dark');
     assertEquals(page.errors, [], 'no page errors');
   } finally {
     await web.kill();

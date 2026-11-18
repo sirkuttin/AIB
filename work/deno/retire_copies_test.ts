@@ -1,5 +1,5 @@
 /**
- * Build plan 1b, phase P4b (private/designs/worktree-model/build-plan-1b.md 5.3; e2e 16c, MF 5), after the owner's decisions of
+ * Build plan 1b, phase P4b (aib-shared/designs/worktree-model/build-plan-1b.md 5.3; e2e 16c, MF 5), after the owner's decisions of
  * 2026-11-16: every chat works in the project folder; helpers keep copies, which go once merged and closed (or 7 days after they
  * stopped); an OLD main chat's copy (from before folder chats) is left alone by the app: Merge and Discard work on it as before, and
  * the owner's one-off migration script (work/migrate/folder_chats_migrate.ts, tested in folder_chats_migrate_test.ts) moves those

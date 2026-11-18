@@ -27,7 +27,7 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   GET  /api/live/files/read                 the Files view: one file, read only
  *   GET  /api/live/files/outside              the Files view: one file outside the chat's folder that the chat named
  *   POST /api/live/files/exclude              the Files view: "Git exclude" on a row (a local-only path) and its Undo
- *   POST /api/live/files/strays/move          the Files view: move a chat copy's files under local-only paths to the main folder
+
  *   GET  /api/live/wsl/status                 WSL projects: the distros, their state lines, the URLs waiting to be opened (wsl_routes.ts)
  *   GET  /api/live/wsl/dirs                   WSL projects: the folder browser of New / Add project
  *   GET  /api/live/wsl/agents                 WSL projects: which agents a distro has (the agent picker)
@@ -131,7 +131,7 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['GET', '/api/live/files/read', 'read', 'get'],
   ['GET', '/api/live/files/outside', 'read', 'get'],
   ['POST', '/api/live/files/exclude', 'write', 'body'],
-  ['POST', '/api/live/files/strays/move', 'write', 'body'],
+
   ['POST', '/api/live/files/open', 'write', 'body'], // the file editor (live_files_routes.ts): page session only
   ['POST', '/api/live/files/save', 'write', 'body'],
   ['POST', '/api/live/files/close', 'write', 'body'],

@@ -1,6 +1,6 @@
 /**
  * Real binary (slow: one `deno desktop` build, shared through _build_cache.ts; AIB_SLOW_TESTS=1, Windows only): the file editor's P0
- * spike (private/designs/file-editor, file-editor-design-v2.md) in the real AIB window (WebView2), on an invisible desktop
+ * spike (aib-shared/designs/file-editor, file-editor-design-v2.md) in the real AIB window (WebView2), on an invisible desktop
  * (_hidden_desktop.ts): no window ever shows on the person's screen. Its own data folders; never the owner's ports or ~/.claude.
  *
  *   1. A window with no file tab has not loaded the editor (vendor/code/editor.js is not fetched with the page).

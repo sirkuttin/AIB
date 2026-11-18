@@ -1,9 +1,9 @@
 /**
  * Local-only folders and agents (architect review breaks 5, 8 and 9; owner decisions 2a, 5a, Q4 a): what a chat is told about
- * private/ (Connection.localOnlyText, appended to the ACP system prompt), the extra writable folders a worktree chat gets
- * (ACP `additionalDirectories`, only for agents that advertise it), and the host side (host/studio.ts): the default `/private`
- * exclude before the chat's copy is made, an empty private/ in the main folder for a worktree chat, and nothing at all for a project
- * that commits private/. Fake ACP agent only; temp repos and temp state folders only.
+ * aib-shared/ (Connection.localOnlyText, appended to the ACP system prompt), the extra writable folders a worktree chat gets
+ * (ACP `additionalDirectories`, only for agents that advertise it), and the host side (host/studio.ts): the default `/aib-shared`
+ * exclude before the chat's copy is made, the main folder's aib-shared/ and the copy's link to it for a worktree chat, and nothing
+ * at all for a project that commits aib-shared/. Fake ACP agent only; temp repos and temp state folders only.
  */
 import { assert, assertEquals } from './_assert.ts';
 import { fake, until } from './_connection.ts';
@@ -12,8 +12,8 @@ import { runGit, Sandbox, write } from './_worktree_fixtures.ts';
 import {
   ARTIFACT_PROMPT,
   Connection,
-  LOCAL_ONLY_PROMPT,
   LOCAL_ONLY_WORKTREE_PROMPT,
+  SHARED_FOLDER_PROMPT,
 } from '../../outputs/agent-studio/server/acp/connection.ts';
 import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
 import { TESTS_DIR } from '../../outputs/agent-studio/server/core/app.ts';
@@ -28,7 +28,7 @@ const BOTH = { agentCapabilities: { sessionCapabilities: { systemPrompt: {}, add
 const PROMPT_ONLY = { agentCapabilities: { sessionCapabilities: { systemPrompt: {} } } };
 const NEITHER = { agentCapabilities: { sessionCapabilities: {} } };
 const MAIN = Deno.build.os === 'windows' ? 'C:\\work\\proj' : '/work/proj';
-const PRIVATE = join(MAIN, 'private');
+const SHARED = join(MAIN, 'aib-shared');
 const NOTES = join(MAIN, 'notes');
 
 function connection(initial: unknown, worktree: boolean, localOnly: Connection['localOnly']): Connection {
@@ -42,35 +42,33 @@ function connection(initial: unknown, worktree: boolean, localOnly: Connection['
 const texts = (out: Json) => (((out.systemPrompt as Json | undefined)?.content ?? []) as Json[]).map((x) => String(x.text));
 
 // ---- the connection (unit) -------------------------------------------------------------------------------------------------------
-Deno.test('local only: a worktree chat is told the main folder paths and may use the main private/; it gets them as extra folders', () => {
-  const lo = { entries: [PRIVATE, NOTES], dirs: [PRIVATE], private: PRIVATE };
+Deno.test('local only: a worktree chat is told about aib-shared/ and the other main folder paths; it gets them as extra folders', () => {
+  const lo = { entries: [SHARED, NOTES], dirs: [SHARED], shared: SHARED };
   const c = connection(BOTH, true, lo);
   const text = c.localOnlyText();
-  assertEquals(
-    text,
-    LOCAL_ONLY_WORKTREE_PROMPT.replace('{paths}', `${PRIVATE}, ${NOTES}`) + ` You may create and use ${PRIVATE} for local-only notes.`,
-  );
-  assert(text.includes(PRIVATE) && text.includes('not in this copy'), text);
+  assertEquals(text, SHARED_FOLDER_PROMPT + ' ' + LOCAL_ONLY_WORKTREE_PROMPT.replace('{paths}', NOTES));
+  assertEquals(SHARED_FOLDER_PROMPT, 'aib-shared/ in the project folder is shared by every agent and chat, never committed.');
+  assert(text.includes(NOTES) && text.includes('not in this copy') && !text.includes(SHARED), 'aib-shared/ is in the copy too (its link)');
   const own = [{ name: 'studio_artifact', ...artifactToolCommand() }];
   const out = c.artifactPrompt(own) as Json;
   assertEquals(texts(out)[0], ARTIFACT_PROMPT);
   assertEquals(texts(out).at(-1), text, 'after the artifact and worktree notes');
   assertEquals(texts(c.artifactPrompt([]) as Json), [text], 'sent even when the chat has no artifact tool');
-  assertEquals(c.extraFolders(), { additionalDirectories: [PRIVATE] }, 'only existing folders, never the main folder itself');
+  assertEquals(c.extraFolders(), { additionalDirectories: [SHARED] }, 'only existing folders, never the main folder itself');
 });
 
-Deno.test('local only: a main-folder chat gets the private/ wording and no extra folder', () => {
-  const c = connection(BOTH, false, { entries: [PRIVATE], dirs: [PRIVATE], private: PRIVATE });
-  assertEquals(c.localOnlyText(), LOCAL_ONLY_PROMPT);
-  assertEquals(texts(c.artifactPrompt([]) as Json), [LOCAL_ONLY_PROMPT]);
+Deno.test('local only: a main-folder chat gets the aib-shared/ wording and no extra folder', () => {
+  const c = connection(BOTH, false, { entries: [SHARED], dirs: [SHARED], shared: SHARED });
+  assertEquals(c.localOnlyText(), SHARED_FOLDER_PROMPT);
+  assertEquals(texts(c.artifactPrompt([]) as Json), [SHARED_FOLDER_PROMPT]);
   assertEquals(c.extraFolders(), {}, 'the folders are inside its own folder already');
 });
 
-Deno.test('local only: private/ not ignored (tracked, negated, off) means no private/ text; nothing known means no change at all', () => {
-  const told = connection(BOTH, true, { entries: [NOTES], dirs: [NOTES], private: '' });
+Deno.test('local only: aib-shared/ not ignored (tracked, negated, off) means no aib-shared/ text; nothing known means no change at all', () => {
+  const told = connection(BOTH, true, { entries: [NOTES], dirs: [NOTES], shared: '' });
   assertEquals(told.localOnlyText(), LOCAL_ONLY_WORKTREE_PROMPT.replace('{paths}', NOTES));
-  assert(!told.localOnlyText().includes('You may create'));
-  assertEquals(connection(BOTH, false, { entries: [NOTES], dirs: [NOTES], private: '' }).localOnlyText(), '');
+  assert(!told.localOnlyText().includes('aib-shared'));
+  assertEquals(connection(BOTH, false, { entries: [NOTES], dirs: [NOTES], shared: '' }).localOnlyText(), '');
   for (const worktree of [true, false]) {
     const none = connection(BOTH, worktree, null);
     assertEquals([none.localOnlyText(), none.artifactPrompt([]), none.extraFolders()], ['', {}, {}]);
@@ -78,7 +76,7 @@ Deno.test('local only: private/ not ignored (tracked, negated, off) means no pri
 });
 
 Deno.test('local only: agents that advertise neither capability get no note and no field; system prompt alone gets the note only', () => {
-  const lo = { entries: [PRIVATE], dirs: [PRIVATE], private: PRIVATE };
+  const lo = { entries: [SHARED], dirs: [SHARED], shared: SHARED };
   const bare = connection(NEITHER, true, lo);
   assertEquals([bare.artifactPrompt([]), bare.extraFolders()], [{}, {}]);
   const promptOnly = connection(PROMPT_ONLY, true, lo);
@@ -131,26 +129,31 @@ class Host {
 const systemTexts = (params: Json) => texts(params);
 
 Deno.test({
-  name: 'local only (host): a worktree chat gets /private excluded first, an empty main private/, the grant and the note, on new and load',
+  name: 'local only (host): a worktree chat gets /aib-shared excluded first, the link to the main aib-shared/, the grant and the note, on new and load',
   ...T,
   async fn() {
     await using host = new Host();
     const p = host.box.project;
-    write(p, 'private/old.md', 'notes made before AIB\n'); // must not reach the copy's snapshot: the exclude comes first
+    write(p, 'aib-shared/old.md', 'notes made before AIB\n'); // must not reach the copy's snapshot: the exclude comes first
     const studio = host.studio(['--extra-dirs']);
     const c = await studio.connect('omp', p, null, { ownCopy: true });
     await until(() => c.ready, 'the chat is ready', 30);
     assert(c.worktree, 'a worktree chat');
-    assert(host.exclude().includes(BLOCK_START) && host.exclude().includes('/private'), host.exclude());
-    const privateDir = join(p, 'private');
-    assert(Deno.statSync(privateDir).isDirectory);
-    assert(!runGit(c.cwd, 'ls-files').includes('private/'), 'private/ was excluded before the snapshot');
+    assert(host.exclude().includes(BLOCK_START) && host.exclude().includes('\n/aib-shared\n'), host.exclude());
+    const sharedDir = join(p, 'aib-shared');
+    assert(Deno.statSync(sharedDir).isDirectory);
+    assert(!runGit(c.cwd, 'ls-files').includes('aib-shared/'), 'aib-shared/ was excluded before the snapshot');
+    assert(Deno.lstatSync(join(c.cwd, 'aib-shared')).isSymlink, 'the copy has the link, not a copy');
+    assertEquals(Deno.readTextFileSync(join(c.cwd, 'aib-shared', 'old.md')), 'notes made before AIB\n');
+    Deno.writeTextFileSync(join(c.cwd, 'aib-shared', 'from-chat.md'), 'chat\n');
+    assertEquals(Deno.readTextFileSync(join(sharedDir, 'from-chat.md')), 'chat\n', 'written through the link: in the main folder at once');
+    assert(!runGit(c.cwd, 'status', '--porcelain', '--untracked-files=all').includes('aib-shared'), 'git shows nothing of it');
     const made = host.received('session/new');
     assertEquals(made.length, 1);
-    assertEquals(made[0].additionalDirectories, [privateDir, c.scratchDir], 'and the scratch folder of the chat (allow rules), outside the worktree');
+    assertEquals(made[0].additionalDirectories, [sharedDir, c.scratchDir], 'and the scratch folder of the chat (allow rules), outside the worktree');
     assert(systemTexts(made[0]).some((t) => t.includes('House rules from AIB') && t.includes(c.scratchDir!)), 'the brief has the literal scratch path');
     const note = systemTexts(made[0]).at(-1)!;
-    assert(note.includes(privateDir) && note.includes('not in this copy'), note);
+    assertEquals(note, SHARED_FOLDER_PROMPT);
     const sessionId = c.sessionId!;
     await studio.close();
 
@@ -159,13 +162,14 @@ Deno.test({
     await until(() => reopened.ready, 'the chat is reopened', 30);
     const loaded = host.received('session/load');
     assertEquals(loaded.length, 1);
-    assertEquals(loaded[0].additionalDirectories, [privateDir, reopened.scratchDir], 'session/load carries the grant too');
-    assert(systemTexts(loaded[0]).at(-1)!.includes(privateDir));
+    assertEquals(loaded[0].additionalDirectories, [sharedDir, reopened.scratchDir], 'session/load carries the grant too');
+    assertEquals(systemTexts(loaded[0]).at(-1), SHARED_FOLDER_PROMPT);
+    assert(Deno.lstatSync(join(reopened.cwd, 'aib-shared')).isSymlink, 'the reused copy keeps its link');
   },
 });
 
 Deno.test({
-  name: 'local only (host): an agent without the capabilities gets no field and no note; a main-folder chat gets the private/ wording',
+  name: 'local only (host): an agent without the capabilities gets no field and no note; a main-folder chat gets the aib-shared/ wording',
   ...T,
   async fn() {
     await using host = new Host();
@@ -182,26 +186,26 @@ Deno.test({
     assertEquals(c.worktree, null);
     const second = host.received('session/new')[1];
     assertEquals(second.additionalDirectories, [c.scratchDir], 'only the scratch folder (allow rules)');
-    assertEquals(systemTexts(second).at(-1), LOCAL_ONLY_PROMPT);
+    assertEquals(systemTexts(second).at(-1), SHARED_FOLDER_PROMPT);
   },
 });
 
 Deno.test({
-  name: 'local only (host): a project that commits private/ gets no AIB line, no private/ text and no grant',
+  name: 'local only (host): a project that commits aib-shared/ gets no AIB line, no aib-shared/ text and no grant',
   ...T,
   async fn() {
     await using host = new Host();
     const p = host.box.project;
-    write(p, 'private/a.md', 'committed\n');
+    write(p, 'aib-shared/a.md', 'committed\n');
     runGit(p, 'add', '-A');
-    runGit(p, 'commit', '-q', '-m', 'private is part of this project');
+    runGit(p, 'commit', '-q', '-m', 'aib-shared is part of this project');
     const before = host.exclude();
     const c = await host.studio(['--extra-dirs']).connect('omp', p);
     await until(() => c.ready, 'the chat is ready', 30);
     assertEquals(host.exclude(), before, 'the exclude file is untouched');
     const params = host.received('session/new')[0];
     assertEquals(params.additionalDirectories, [c.scratchDir], 'only the scratch folder (allow rules)');
-    assert(!systemTexts(params).some((t) => t.includes('private')), JSON.stringify(systemTexts(params)));
+    assert(!systemTexts(params).some((t) => t.includes('aib-shared')), JSON.stringify(systemTexts(params)));
     assertEquals(c.localOnly, null);
   },
 });

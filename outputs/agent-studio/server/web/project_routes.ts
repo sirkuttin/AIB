@@ -11,12 +11,12 @@
  * with work that was never merged (this install's, ticked by default in the dialog) and what another AIB install made in the repo
  * (unticked). Removing the project then removes everything this install made there (branches, refs, copies, records, stash entries
  * already in the working tree) plus the ids in `cleanup.remove` (`titles` {provider:sessionId: title} name the chats); never the
- * project's private folder, never a transcript. It runs before a disk delete. An older page sends no `cleanup`: nothing with unmerged
+ * project's aib-shared/ folder, never a transcript. It runs before a disk delete. An older page sends no `cleanup`: nothing with unmerged
  * work is removed then.
  *
  * POST /api/live/project-add (Deno only): {path} or {paths: [...]}: add projects to AIB (the New project dialog; a page's projects
  * made with that dialog before this version, kept in its own storage). Answers the project preferences view. A git project gets AIB's
- * default local-only `/private` in its .git/info/exclude (worktrees/local_only.ts ensureDefault; skipped when it commits private/).
+ * default local-only `/aib-shared` in its .git/info/exclude (worktrees/local_only.ts ensureDefault; skipped when it commits aib-shared/).
  *
  * The added-projects list (desktop/added_projects.ts): a project is in AIB only when the user added it. Saved chats of other
  * folders are left out of /api/sessions and of the agent's session/list answer ("Find more chats via agent") by filterSessions.
@@ -38,8 +38,7 @@ import { wslLocOf } from '../platform/location.ts';
 import { distroName, hostWhenReady, wslTestHomeEnv } from '../wsl/access.ts';
 import { WslHelperError } from '../wsl/contract.ts';
 import { realRoot } from '../worktrees/files.ts';
-import { ensureDefault } from '../worktrees/local_only.ts';
-import { defaultsAllowed } from '../worktrees/local_strays.ts';
+import { defaultsAllowed, ensureDefault } from '../worktrees/local_only.ts';
 import { cleanupApply, cleanupScan, liveOf, titlesOf } from './cleanup_routes.ts';
 import { confirmView } from '../worktrees/cleanup.ts';
 import { Registry as SwarmRegistry } from '../swarm/registry.ts';
@@ -109,7 +108,7 @@ export async function projectRemove(ctx: ProjectRemoveContext, body: unknown): P
     }
   }
   await ctx.removedProjects.remove(path);
-  try { // only AIB's own stored editor text; never the project folder or its private/ folder
+  try { // only AIB's own stored editor text; never the project folder or its aib-shared/ folder
     for (const root of new Set([path, realPath].filter(Boolean))) ctx.liveFiles?.forgetProject(root);
   } catch (error) {
     console.error("Dropping the removed project's stored editor text failed", error);
@@ -213,8 +212,8 @@ export async function projectAdd(
     throw new ValueError('Choose a project folder');
   }
   await added.add(...paths);
-  // the default local-only /private (idempotent, never throws; not a git folder: nothing). A test Studio (temp or no state folder)
-  // writes it only for projects in the temp folder, never into a real repo's .git/info/exclude (local_strays.defaultsAllowed).
+  // the default local-only /aib-shared (idempotent, never throws; not a git folder: nothing). A test Studio (temp or no state folder)
+  // writes it only for projects in the temp folder, never into a real repo's .git/info/exclude (local_only.defaultsAllowed).
   await Promise.all(paths.filter((p) => defaultsAllowed(stateDir, String(p))).map((p) => ensureDefault(String(p))));
   // a WSL project: the same in its distro, by the helper (wsl/local_only.ts; never throws), without holding the reply up
   for (const p of paths) if (wslLocOf(String(p)) && wslDefaultsAllowed(stateDir, String(p))) void wslEnsureLocalOnly(String(p));

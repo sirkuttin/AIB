@@ -1009,61 +1009,60 @@ test('⧉ stays on an archived artifact and goes from a deleted one (Recently de
 });
 
 // ---- local-only folders (owner decisions 1a, 3, 4a) ---------------------------------------------------------------------------
-const LOCAL = { main: 'C:\\work\\alpha', entries: ['private'], defaultState: 'on', sig: '1:1' };
+const LOCAL = { main: 'C:\\work\\alpha', entries: ['aib-shared'], defaultState: 'on', sig: '1:1' };
 const LOCAL_LISTING = Object.assign({}, LISTING, {
-  '': LISTING[''].concat([entry('private', { dir: true, local: true, from: 'main', noExclude: 'already' })]).concat([
+  '': LISTING[''].concat([entry('aib-shared', { dir: true, local: true, from: 'main', noExclude: 'already' })]).concat([
     entry('notes.md', { status: 'U' }),
     entry('README2.md', { noExclude: 'tracked' }),
   ]),
-  private: [entry('private/designs', { dir: true, local: true, from: 'main' }), entry('private/TASKS.md', { local: true, from: 'main' })],
-  'private/designs': [entry('private/designs/x.html', { local: true, from: 'main' })],
+  'aib-shared': [entry('aib-shared/designs', { dir: true, local: true, from: 'main' }), entry('aib-shared/TASKS.md', { local: true, from: 'main' })],
+  'aib-shared/designs': [entry('aib-shared/designs/x.html', { local: true, from: 'main' })],
 });
 
-test('files-state: local rows are never dim and open without Show ignored, at any depth; the stray and tracked notes; flat rows', () => {
+test('files-state: local rows are never dim and open without Show ignored, at any depth; no stray row any more; flat rows', () => {
   const cache = {
-    '': [entry('node_modules', { dir: true, ignored: true }), entry('private', { dir: true, local: true, strays: 2 })],
-    private: [entry('private/designs', { dir: true, local: true })],
+    '': [entry('node_modules', { dir: true, ignored: true }), entry('aib-shared', { dir: true, local: true, strays: 2 })],
+    'aib-shared': [entry('aib-shared/designs', { dir: true, local: true })],
   };
-  const out = FS.treeRows(cache, new Set(['private', 'node_modules', 'private/designs']), { showIgnored: false, localNote: 'note' });
+  const out = FS.treeRows(cache, new Set(['aib-shared', 'node_modules', 'aib-shared/designs']), { showIgnored: false, localNote: 'note' });
   const by = Object.fromEntries(out.map((r) => [r.path, r]));
   assert.equal(out[0].kind, 'localnote');
   assert.equal(out[0].text, 'note');
   assert.equal(by['node_modules'].canOpen, true, 'ignored folders open too (owner)');
   assert.equal(by['node_modules'].ignored, true);
-  assert.equal(by['private'].canOpen, true);
-  assert.equal(by['private'].open, true);
-  assert.equal(by['private'].ignored, false);
-  assert.equal(by['private'].local, true);
-  assert.equal(by['private/!stray'].kind, 'stray');
-  assert.equal(by['private/!stray'].count, 2);
-  assert.equal(by['private/designs'].canOpen, true, 'a sub-folder opens too');
-  const flat = FS.flatRows(['private/TASKS.md', 'README.md'], { localOnly: LOCAL });
+  assert.equal(by['aib-shared'].canOpen, true);
+  assert.equal(by['aib-shared'].open, true);
+  assert.equal(by['aib-shared'].ignored, false);
+  assert.equal(by['aib-shared'].local, true);
+  assert.equal(by['aib-shared/!stray'], undefined, 'aib-shared/ is one folder (a link in a copy): nothing to warn about');
+  assert.equal(by['aib-shared/designs'].canOpen, true, 'a sub-folder opens too');
+  const flat = FS.flatRows(['aib-shared/TASKS.md', 'README.md'], { localOnly: LOCAL });
   assert.deepEqual(flat.map((r) => r.local), [true, false]);
-  assert.equal(FS.isLocalRel(LOCAL, 'Private/x.md'), true, 'Windows paths compare case-insensitively');
-  assert.equal(FS.isLocalRel({ main: '/home/u/p', entries: ['private'] }, 'Private/x.md'), false);
-  assert.equal(FS.localNote({ defaultState: 'tracked' }), "private/ is committed in this project, so AIB doesn't keep it local only.");
+  assert.equal(FS.isLocalRel(LOCAL, 'AIB-Shared/x.md'), true, 'Windows paths compare case-insensitively');
+  assert.equal(FS.isLocalRel({ main: '/home/u/p', entries: ['aib-shared'] }, 'AIB-Shared/x.md'), false);
+  assert.equal(FS.localNote({ defaultState: 'tracked' }), "aib-shared/ is committed in this project, so AIB doesn't keep it local only.");
   assert.equal(FS.localNote(LOCAL), '');
 });
 
 test('files-state: a WSL project\'s local-only part (main = its Linux main folder): Linux tooltip path, case-sensitive, Linux paths link', () => {
-  const WSL = { main: '/home/u/app', entries: ['private'], defaultState: 'on' };
+  const WSL = { main: '/home/u/app', entries: ['aib-shared'], defaultState: 'on' };
   assert.equal(
-    FS.localTip({ name: 'x.png', path: 'private/review/x.png', kind: 'file' }, WSL),
-    'x.png\nLocal only: never committed (listed in .git/info/exclude).\nThe same file in every chat: /home/u/app/private/review/x.png',
+    FS.localTip({ name: 'x.png', path: 'aib-shared/review/x.png', kind: 'file' }, WSL),
+    'x.png\nLocal only: never committed (listed in .git/info/exclude).\nThe same file in every chat: /home/u/app/aib-shared/review/x.png',
   );
-  assert.equal(FS.isLocalRel(WSL, 'private/review/x.png'), true);
-  assert.equal(FS.isLocalRel(WSL, 'Private/review/x.png'), false, 'Linux paths compare case-sensitively');
-  assert.equal(FS.localRel('/home/u/app/private/review/x.png', WSL), 'private/review/x.png', "the agent's full path links from a chat copy");
+  assert.equal(FS.isLocalRel(WSL, 'aib-shared/review/x.png'), true);
+  assert.equal(FS.isLocalRel(WSL, 'AIB-Shared/review/x.png'), false, 'Linux paths compare case-sensitively');
+  assert.equal(FS.localRel('/home/u/app/aib-shared/review/x.png', WSL), 'aib-shared/review/x.png', "the agent's full path links from a chat copy");
   assert.equal(FS.localRel('/home/u/app/src/a.ts', WSL), null);
   assert.equal(FS.excludeItem({ path: 'game/review', kind: 'dir' }, { root: 'chat', branch: 'studio/chat-1' }).disabled, false, 'Git exclude is offered');
 });
 
-test('files-state: the tooltip names the real path; Git exclude is greyed with its reason; full paths into private/ link from a copy', () => {
+test('files-state: the tooltip names the real path; Git exclude is greyed with its reason; full paths into aib-shared/ link from a copy', () => {
   assert.equal(
-    FS.localTip({ name: 'private', path: 'private', kind: 'dir' }, LOCAL),
-    'private\nLocal only: never committed (listed in .git/info/exclude).\nThe same folder in every chat: C:\\work\\alpha\\private',
+    FS.localTip({ name: 'aib-shared', path: 'aib-shared', kind: 'dir' }, LOCAL),
+    'aib-shared\nLocal only: never committed (listed in .git/info/exclude).\nThe same folder in every chat: C:\\work\\alpha\\aib-shared',
   );
-  assert.ok(FS.localTip({ name: 'TASKS.md', path: 'private/TASKS.md', kind: 'file' }, LOCAL).endsWith('file in every chat: C:\\work\\alpha\\private\\TASKS.md'));
+  assert.ok(FS.localTip({ name: 'TASKS.md', path: 'aib-shared/TASKS.md', kind: 'file' }, LOCAL).endsWith('file in every chat: C:\\work\\alpha\\aib-shared\\TASKS.md'));
   const copy = { root: 'chat', branch: 'studio/chat-1' };
   assert.deepEqual(FS.excludeItem({ path: 'notes.md', kind: 'file' }, { root: 'main' }), {
     text: 'Git exclude',
@@ -1072,30 +1071,30 @@ test('files-state: the tooltip names the real path; Git exclude is greyed with i
   });
   assert.equal(FS.excludeItem({ path: 'notes.md', kind: 'file' }, copy).sub, 'Moves it to the main folder, never committed');
   assert.equal(FS.excludeItem({ path: 'README.md', noExclude: 'tracked' }).sub, "Git tracks this, so it can't be excluded");
-  assert.equal(FS.excludeItem({ path: 'private', local: true }).sub, 'Already local only');
+  assert.equal(FS.excludeItem({ path: 'aib-shared', local: true }).sub, 'Already local only');
   assert.equal(FS.excludeItem({ path: 'aib-docs', docsFolder: true }).sub, 'Docs are committed');
   assert.equal(FS.excludeItem({ path: 'x', noExclude: 'no_git' }).sub, 'Not a git project');
   assert.equal(FS.excludeItem({ path: 'README.md', noExclude: 'tracked' }).disabled, true);
-  assert.equal(FS.localRel('C:\\work\\alpha\\private\\TASKS.md', LOCAL), 'private/TASKS.md');
+  assert.equal(FS.localRel('C:\\work\\alpha\\aib-shared\\TASKS.md', LOCAL), 'aib-shared/TASKS.md');
   assert.equal(FS.localRel('C:\\work\\alpha\\README.md', LOCAL), null, 'only local-only paths of main');
-  const d = FS.dedupe([{ path: 'C:\\work\\alpha\\private\\TASKS.md', at: 0, len: 10 }], 'C:/wt/chat-1', LOCAL);
-  assert.deepEqual(d.map((x) => x.rel), ['private/TASKS.md']);
+  const d = FS.dedupe([{ path: 'C:\\work\\alpha\\aib-shared\\TASKS.md', at: 0, len: 10 }], 'C:/wt/chat-1', LOCAL);
+  assert.deepEqual(d.map((x) => x.rel), ['aib-shared/TASKS.md']);
 });
 
 test('Files: a local-only folder has the blue dot, the "local only" pill and the real-path tooltip; it opens without Show ignored', async () => {
   const t = setup({ listing: LOCAL_LISTING, localOnly: LOCAL });
   t.FU.setMode('files');
   await flush();
-  const p = rowOf(t, 'private');
+  const p = rowOf(t, 'aib-shared');
   assert.ok(p.classList.contains('local'));
   assert.ok(!p.classList.contains('ignored'));
   assert.ok(p.querySelector('.fx-localdot'), 'the dot on the folder icon');
   assert.equal(p.querySelector('.fx-local').textContent, 'local only');
-  assert.ok(p.title.includes('The same folder in every chat: C:\\work\\alpha\\private'), p.title);
+  assert.ok(p.title.includes('The same folder in every chat: C:\\work\\alpha\\aib-shared'), p.title);
   p.click();
   await flush();
-  assert.ok(t.calls.some((c) => c.path === '/api/live/files/list' && c.q.dir === 'private'), 'listed without Show ignored');
-  const tasks = rowOf(t, 'private/TASKS.md');
+  assert.ok(t.calls.some((c) => c.path === '/api/live/files/list' && c.q.dir === 'aib-shared'), 'listed without Show ignored');
+  const tasks = rowOf(t, 'aib-shared/TASKS.md');
   assert.ok(tasks.classList.contains('local'));
   assert.equal(tasks.querySelector('.fx-local'), null, 'the pill only on the entry itself');
 });
@@ -1118,7 +1117,7 @@ test('Files: right-click a file or folder -> Git exclude (greyed with its reason
   m = menuOf('outputs');
   assert.deepEqual(m.querySelectorAll('button').map((b) => b.querySelector('.fx-menu-t') ? b.querySelector('.fx-menu-t').textContent : b.textContent), ['New doc', 'Git exclude']);
   // the local folder itself: already local only
-  assert.equal(menuOf('private').querySelector('.fx-menu-excl').querySelector('.sub').textContent, 'Already local only');
+  assert.equal(menuOf('aib-shared').querySelector('.fx-menu-excl').querySelector('.sub').textContent, 'Already local only');
   // a file: applied at once
   m = menuOf('notes.md');
   it = m.querySelector('.fx-menu-excl');
@@ -1167,23 +1166,17 @@ test('Files: a refusal from the server is said in the foot, no Undo', async () =
   assert.equal(t.shell.body.querySelector('.fx-foot-undo').hidden, true);
 });
 
-test('Files: a stray row warns about files in the copy and moves them on request; a tracked private/ gets the note', async () => {
-  const listing = Object.assign({}, LOCAL_LISTING, { '': [entry('private', { dir: true, local: true, strays: 1 })] });
-  const t = setup({ listing, localOnly: LOCAL, post: async () => ({ moved: [['private/x.md', 'private/x (from chat-1).md']], failed: [] }) });
+test('Files: no stray row or move button (an old reply with strays shows nothing extra); a tracked aib-shared/ gets the note', async () => {
+  const listing = Object.assign({}, LOCAL_LISTING, { '': [entry('aib-shared', { dir: true, local: true, strays: 1 })] });
+  const t = setup({ listing, localOnly: LOCAL });
   t.FU.setMode('files');
   await flush();
-  const stray = t.shell.body.querySelector('.fx-stray');
-  assert.ok(stray, 'the warning row');
-  assert.ok(stray.textContent.includes("1 file here is only in this chat"));
-  stray.querySelector('.fx-stray-btn').click();
-  await flush();
-  await flush();
-  assert.equal(t.posts[0].path, 'files/strays/move');
-  assert.equal(t.shell.body.querySelector('.fx-foot-t').textContent, 'Moved 1 file to the main folder');
+  assert.equal(t.shell.body.querySelector('.fx-stray'), null);
+  assert.ok(rowOf(t, 'aib-shared'), 'the folder row itself');
   const t2 = setup({ listing: LISTING, localOnly: { main: 'C:\\work\\alpha', entries: [], defaultState: 'tracked' } });
   t2.FU.setMode('files');
   await flush();
-  assert.equal(t2.shell.body.querySelector('.fx-localnote').textContent, "private/ is committed in this project, so AIB doesn't keep it local only.");
+  assert.equal(t2.shell.body.querySelector('.fx-localnote').textContent, "aib-shared/ is committed in this project, so AIB doesn't keep it local only.");
 });
 
 test('Files: on window focus the local-only folders are listed again (another chat wrote there)', async () => {
@@ -1191,15 +1184,15 @@ test('Files: on window focus the local-only folders are listed again (another ch
   const t = setup({ listing, localOnly: LOCAL });
   t.FU.setMode('files');
   await flush();
-  rowOf(t, 'private').click();
+  rowOf(t, 'aib-shared').click();
   await flush();
-  assert.equal(rowOf(t, 'private/new.md'), undefined);
-  listing.private = listing.private.concat([entry('private/new.md', { local: true, from: 'main' })]); // a fresh reply
+  assert.equal(rowOf(t, 'aib-shared/new.md'), undefined);
+  listing['aib-shared'] = listing['aib-shared'].concat([entry('aib-shared/new.md', { local: true, from: 'main' })]); // a fresh reply
   for (const f of t.ctx.listeners.focus || []) f({});
   await flush();
   await flush();
   await flush();
-  assert.ok(rowOf(t, 'private/new.md'), 'the new file shows with no click');
+  assert.ok(rowOf(t, 'aib-shared/new.md'), 'the new file shows with no click');
 });
 
 // ---- path links to artifacts and page files (owner: a linked file that is already an artifact opens that artifact) ---------------

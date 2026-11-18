@@ -1,5 +1,5 @@
 /**
- * The desktop app's window list (multi-window Phase 2A; design private/designs/multi-window/aib-multi-window-design.html sections
+ * The desktop app's window list (multi-window Phase 2A; design aib-shared/designs/multi-window/aib-multi-window-design.html sections
  * 4, 5 and 7). The runtime gives no getAllWindows/fromId/isFocused (spike S1), so AIB keeps its own list: one entry per app window,
  * with its K0 id ('m', 'w2'…'w8'), kind, what it shows, its own keyed URL, its own rate limits, save timer and last good geometry.
  *

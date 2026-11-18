@@ -1,5 +1,5 @@
 /**
- * Multi-window contracts K0, K3 and K4 (design: private/designs/multi-window/aib-multi-window-design.html section 4), frozen before
+ * Multi-window contracts K0, K3 and K4 (design: aib-shared/designs/multi-window/aib-multi-window-design.html section 4), frozen before
  * Phase 1. Types, the URL builder and the request validators only: no window is made here.
  *
  *   K0  window ids ('m', 'w2'…'w8') and kinds; the server builds every window URL from fields (windowPath/windowUrl), the page

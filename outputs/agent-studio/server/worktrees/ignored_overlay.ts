@@ -1,6 +1,7 @@
 /**
  * Everything git ignores in a project's MAIN folder, for a chat working in its own copy (Deno only). Git never copies ignored or
- * excluded files into a worktree, so a copy lacks the main folder's `private/`, `game/review/`, `.env`, `node_modules/`… The owner
+ * excluded files into a worktree, so a copy lacks the main folder's `game/review/`, `.env`, `node_modules/`… (`aib-shared/` comes
+ * through the copy's link, shared_link.ts) The owner
  * wants all of them visible, traversable and openable from a chat copy's Files tab, and editable by its agent:
  *   overlayIgnored  lays the main folder's ignored entries the copy does not have over a copy's listing (from: 'main'), lists a folder
  *                   that exists only ignored in main from main, and shows paths excluded through `.git/info/exclude` (AIB's block or

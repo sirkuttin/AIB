@@ -130,12 +130,12 @@ Deno.test('helper files.readBytes: pieces of at most 1 MB with size and mtime; t
 Deno.test('readWslSnapshot: a 3 MB PNG read whole in 1 MB pieces, byte-identical; relative and absolute paths', async () => {
   using d = new Distro();
   const data = png(3 * 1024 * 1024 + 123);
-  d.write(`${APP}/private/review/map.png`, data);
-  const snap = await readWslSnapshot(d.host, target(), 'private/review/map.png');
+  d.write(`${APP}/aib-shared/review/map.png`, data);
+  const snap = await readWslSnapshot(d.host, target(), 'aib-shared/review/map.png');
   assertEquals(snap.data, data);
-  assertEquals([snap.name, snap.linuxPath], ['map.png', `${APP}/private/review/map.png`]);
+  assertEquals([snap.name, snap.linuxPath], ['map.png', `${APP}/aib-shared/review/map.png`]);
   assertEquals(d.pieces, 4);
-  const abs = await readWslSnapshot(d.host, target(), `${APP}/private/./review/../review/map.png`);
+  const abs = await readWslSnapshot(d.host, target(), `${APP}/aib-shared/./review/../review/map.png`);
   assertEquals(abs.data.length, data.length);
   for (const [method, params] of d.host.calls) {
     assertEquals(method, 'files.readBytes');
@@ -145,13 +145,13 @@ Deno.test('readWslSnapshot: a 3 MB PNG read whole in 1 MB pieces, byte-identical
 
 Deno.test('readWslSnapshot: a worktree chat reads its own copy, else the project folder (local-only files); absolute paths in either', async () => {
   using d = new Distro();
-  d.write(`${APP}/private/notes.md`, '# main');
+  d.write(`${APP}/aib-shared/notes.md`, '# main');
   d.write(`${COPY}/outputs/r.html`, '<p>copy</p>');
   d.write(`${APP}/outputs/r.html`, '<p>main</p>');
   const t = target(COPY, APP);
   assertEquals(new TextDecoder().decode((await readWslSnapshot(d.host, t, 'outputs/r.html')).data), '<p>copy</p>', 'its own copy first');
-  const local = await readWslSnapshot(d.host, t, 'private/notes.md');
-  assertEquals([new TextDecoder().decode(local.data), local.linuxPath], ['# main', `${APP}/private/notes.md`]);
+  const local = await readWslSnapshot(d.host, t, 'aib-shared/notes.md');
+  assertEquals([new TextDecoder().decode(local.data), local.linuxPath], ['# main', `${APP}/aib-shared/notes.md`]);
   assertEquals((await readWslSnapshot(d.host, t, `${APP}/outputs/r.html`)).linuxPath, `${APP}/outputs/r.html`);
   assertEquals(publishRoots(COPY, APP), [COPY, APP]);
   assertEquals(publishRoots(APP, APP), [APP]);
@@ -340,12 +340,12 @@ Deno.test('route: a WSL chat\'s path is read through its distro\'s helper (workt
   using d = new Distro();
   setWslHostResolver((key) => (key === 'ubuntu' ? d.host : null));
   try {
-    d.write(`${APP}/private/x.png`, png(4000));
-    const body: Json = { conversationId: 'c1', title: 'X', path: 'private/x.png' };
+    d.write(`${APP}/aib-shared/x.png`, png(4000));
+    const body: Json = { conversationId: 'c1', title: 'X', path: 'aib-shared/x.png' };
     // a chat in its own copy: the connection's projectRoot is the project folder (the fake helper has no worktree registry)
     assertEquals(await attachWslFile(routeCtx(`wsl://ubuntu${COPY}`, `wsl://ubuntu${APP}`), body), null);
     const file = body[WSL_FILE_RESOLVED] as { data: Uint8Array; ref: string };
-    assertEquals([file.data, file.ref], [png(4000), `wsl://ubuntu${APP}/private/x.png`]);
+    assertEquals([file.data, file.ref], [png(4000), `wsl://ubuntu${APP}/aib-shared/x.png`]);
 
     const outside: Json = { conversationId: 'c1', title: 'X', path: '/etc/hosts' };
     const reply = await attachWslFile(routeCtx(`wsl://ubuntu${COPY}`, `wsl://ubuntu${APP}`), outside);
@@ -361,7 +361,7 @@ Deno.test('route: a WSL chat\'s path is read through its distro\'s helper (workt
 
     // the distro is not there: one line, 503
     setWslHostResolver(() => null);
-    const gone = await attachWslFile(routeCtx(`wsl://ubuntu${APP}`), { conversationId: 'c1', path: 'private/x.png' });
+    const gone = await attachWslFile(routeCtx(`wsl://ubuntu${APP}`), { conversationId: 'c1', path: 'aib-shared/x.png' });
     assertEquals(gone?.[0], 503);
     assert(String((gone?.[1] as Json).error).startsWith('AIB cannot read files in'), JSON.stringify(gone));
   } finally {

@@ -17,7 +17,7 @@ Every beta, newest first. Each one links to its GitHub release, where the downlo
 
 > **Beta.** Builds are not code-signed. Expect rough edges. Install and download notes are the same as in [0.1.0 beta 1](https://github.com/sirkuttin/AIB/releases/tag/v0.1.0-beta.1).
 
-Your agents no longer stall because you stepped away. In beta 9, your phone becomes a remote for every chat in AIB: approve, answer and start work from the couch, the train or the shop, for Claude Code, Codex, OMP and the rest. It runs over your own Tailscale network, so nothing goes through a cloud service of ours. You can also correct an agent mid-turn: press Enter while it works and it hears you right away, instead of finishing the wrong job first. On top of that: a tidy Artifacts list, a `private/` folder every chat can see that git never commits, and an **Update** button so you never miss a new AIB.
+Your agents no longer stall because you stepped away. In beta 9, your phone becomes a remote for every chat in AIB: approve, answer and start work from the couch, the train or the shop, for Claude Code, Codex, OMP and the rest. It runs over your own Tailscale network, so nothing goes through a cloud service of ours. You can also correct an agent mid-turn: press Enter while it works and it hears you right away, instead of finishing the wrong job first. On top of that: a tidy Artifacts list, an `aib-shared/` folder every chat can see that git never commits, and an **Update** button so you never miss a new AIB.
 
 ### What's new
 
@@ -54,11 +54,11 @@ Long chats pile up drafts, old mockups and dead ends until the one artifact you 
 - **Agents can tidy up too:** ask any agent to archive its chat's artifacts. Only you can delete. Old links say **· archived** or **· deleted** instead of breaking.
 - Find both in the **⋯** menu on each artifact in the list (or right-click), and in the viewer's **⋯** menu.
 
-#### Manage non-git assets: `private/` folder keeps notes out of git and in front of every chat
+#### Manage non-git assets: `aib-shared/` folder keeps notes out of git and in front of every chat
 
-<Shot name="private-local-only.png" alt="Files showing the private folder with its blue local only label" />
+<Shot name="private-local-only.png" alt="Files showing the aib-shared folder with its blue local only label" />
 Some files should never be committed (scratch notes, plans, research), yet every agent should be able to read them. Now there's one folder for them.
-- **AIB now adds `private/` to each git project's `.git/info/exclude`** the first time a chat opens there, and creates an empty `private/` folder once a chat works in its own copy. That's a visible change: you'll see the folder, and git never commits it. Projects that already commit a `private/` folder are left alone.
+- **AIB now adds `aib-shared/` to each git project's `.git/info/exclude`** the first time a chat opens there, and creates an empty `aib-shared/` folder once a chat works in its own copy. That's a visible change: you'll see the folder, and git never commits it. Projects that already commit an `aib-shared/` folder are left alone.
 - **Every chat sees it**, including chats working in their own copy, under **Files** with a blue **local only** label.
 - **Every agent knows it's there**, whichever provider: they're told where the local-only files are and may write there.
 - **Nothing local-only leaks into main.** Files an agent writes into its own copy by mistake move to the shared folder before the copy is removed, and merges never carry them into main.

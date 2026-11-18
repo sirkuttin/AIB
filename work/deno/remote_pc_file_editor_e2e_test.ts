@@ -1,5 +1,5 @@
 /**
- * Remote file editing (owner decision 2026-11-16, "1a"; private/designs/file-editor/file-editor-design-v2.md, architect review v2
+ * Remote file editing (owner decision 2026-11-16, "1a"; aib-shared/designs/file-editor/file-editor-design-v2.md, architect review v2
  * must-fix 6): a paired COMPUTER with Files edits project files with the PC's editor and rules, on the computer page (/pc.html),
  * against an in-process AIB with a fake agent host. No real Tailscale: this test plays Tailscale Serve, as the other computer page
  * tests do (DevTools Fetch interception for requests, and a small TCP relay with Serve's headers for the editor's WebSocket).

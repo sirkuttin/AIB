@@ -506,24 +506,7 @@
     }
     relistAround(u.scope, u.path);
   }
-  // The stray warning row's button: this copy's own files under a local-only path go to the shared (main) folder now.
-  async function moveStrays(scope, entry) {
-    if (!host || !scope) return;
-    try {
-      const r = await host.post('files/strays/move', F().scopeArgs(scope));
-      const moved = (r && r.moved && r.moved.length) || 0,
-        failed = (r && r.failed && r.failed.length) || 0;
-      setFootNote({
-        text: moved ? 'Moved ' + moved + (moved === 1 ? ' file' : ' files') + ' to the main folder' + (failed ? ' · ' + failed + ' could not move' : '') : failed ? failed + ' could not move' : 'Nothing to move',
-        undo: null,
-        until: Date.now() + 6000,
-        error: !!failed,
-      });
-    } catch (e) {
-      setFootNote({ text: (e && e.message) || 'Could not move them', undo: null, until: Date.now() + 6000, error: true });
-    }
-    relistAround(scope, entry);
-  }
+
   // The scope's folder is the open chat's own folder: then the Changes tab's data is the source of the badges.
   function changesFor(scope) {
     const live = CH();
@@ -913,7 +896,7 @@
       n.style.setProperty('--d', '0');
       return n;
     }
-    if (r.kind === 'stray') return strayNode(r, scope);
+
     const n = el(
       'div',
       null,
@@ -1001,26 +984,7 @@
     });
     return n;
   }
-  // "1 file here is only in this chat": files an agent wrote under a local-only path inside the copy.
-  function strayNode(r, scope) {
-    const n = el('div', null, 'fx-row fx-stray');
-    n.style.setProperty('--d', String(r.depth));
-    const text = el(
-      'span',
-      (r.count === 1 ? '1 file here is' : r.count + ' files here are') + " only in this chat, so your other chats can't see " +
-        (r.count === 1 ? 'it' : 'them') + '. Nothing gets lost: AIB moves ' + (r.count === 1 ? 'it' : 'them') +
-        " into the project's own folder when this chat is archived or deleted.",
-      'fx-stray-t',
-    );
-    const b = btn('Share with all chats now', 'fx-stray-btn', 'Move ' + (r.count === 1 ? 'it' : 'them') + " into the project's own folder now, where every chat sees it" + ' (a name clash gets "(from chat-…)")');
-    b.onclick = (e) => {
-      e.stopPropagation();
-      b.disabled = true;
-      moveStrays(scope, r.entry);
-    };
-    n.append(text, b);
-    return n;
-  }
+
   const pagesText = (n) => n + (n === 1 ? ' page' : ' pages');
   // A doc: one row, no caret, never expands. Its name, its page count and a change badge.
   function docRowNode(r, scope) {
@@ -2329,7 +2293,7 @@
   }
   const gutterHas = (r, k) => (r.gutter === 'all' ? true : !!(r.gutter && r.gutter.has && r.gutter.has(k)));
 
-  /* ---- file editor, P0 spike (private/designs/file-editor, file-editor-design-v2.md) -------------------------------------------
+  /* ---- file editor, P0 spike (aib-shared/designs/file-editor, file-editor-design-v2.md) -------------------------------------------
      CodeMirror 6 (vendor/code/editor.js, built by tools/code-vendor/build.mjs) loads on demand, on the first file tab that asks for
      it; never in chat.html's head. No button calls this yet: work/deno/code_editor_spike_e2e_test.ts mounts it in the real AIB
      window to prove the page's CSP and measure it. P1 replaces codeView with it and keeps one editor per tab across redraws. */
@@ -2788,7 +2752,7 @@
     openTarget({ scope: scopeOfLink(a), rel: a.dataset.filePath, line: Number(a.dataset.line) || 0, abs: a.dataset.abs || '' }, how);
   }
   // The full paths a link can mean: its own, and its folder path under the chat's copy, the main folder and the main folder's
-  // local-only root (a full path into AIB/private links as the copy's private/... file, while the artifact may name either).
+  // local-only root (a full path into AIB/aib-shared links as the copy's aib-shared/... file, while the artifact may name either).
   function linkAbsPaths(t) {
     const out = [],
       sc = t && t.scope;

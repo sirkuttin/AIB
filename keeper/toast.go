@@ -1,6 +1,6 @@
 package main
 
-// AIB-keeper toast: Windows toasts with buttons (Inbox v3.1 phase 4, private/designs/inbox-v31 section 3). Never part of a serving
+// AIB-keeper toast: Windows toasts with buttons (Inbox v3.1 phase 4, aib-shared/designs/inbox-v31 section 3). Never part of a serving
 // keeper; the keeper's own protocol is untouched. The keeper binary is GUI-subsystem on Windows, so this never has a console.
 //
 // Two ways it runs:

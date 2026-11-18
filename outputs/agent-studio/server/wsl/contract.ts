@@ -321,8 +321,8 @@ export interface HelperMethods {
    * Local-only files of WSL projects (helper/local_only.ts: worktrees/local_only.ts, files.ts and local_backup.ts run natively). Linux
    * paths only. `main` is the project's main folder; `root` the folder Files shows (main itself, or a chat's copy, which must then be
    * inside the helper's `<data>/worktrees`). Answers are what files_routes.ts answers for a Windows project, with `localOnly.main`
-   * the Linux main folder. `localOnly.ensure` sets the default `/private` up (ensureDefault); `localOnly.chat` is what a chat is told
-   * (local_only.ts chatLocalOnly: entries, dirs, private; it makes the main folder's private/ for a worktree chat). `localOnly.read`
+   * the Linux main folder. `localOnly.ensure` sets the default `/aib-shared` up (ensureDefault); `localOnly.chat` is what a chat is told
+   * (local_only.ts chatLocalOnly: entries, dirs, shared; it makes the main folder's aib-shared/ for a worktree chat). `localOnly.read`
    * reads like files.read, from `readRoot` (the main folder for a local-only path of a chat's copy). `localOnly.exclude` is POST
    * files/exclude ({status, body}); `localOnly.backup` the daily zip into `<data>/local-only-backups` of the given projects and of the
    * projects with chat copies (only with `--data`).
@@ -334,7 +334,7 @@ export interface HelperMethods {
    */
   'localOnly.chat': {
     params: { project: string; worktree: boolean; ignored?: boolean };
-    result: { localOnly: { entries: string[]; dirs: string[]; private: string; ignored?: { dirs: string[]; files: string[] } } | null };
+    result: { localOnly: { entries: string[]; dirs: string[]; shared: string; ignored?: { dirs: string[]; files: string[] } } | null };
   };
   'localOnly.list': { params: { root: string; main: string; dir?: string }; result: Record<string, unknown> };
   'localOnly.search': { params: { root: string; main: string; query: string }; result: Record<string, unknown> };
@@ -343,7 +343,6 @@ export interface HelperMethods {
     result: { bytesB64: string; size: number; truncated: boolean; mtimeMs: number; readRoot: string; local?: boolean; from?: 'main' };
   };
   'localOnly.exclude': { params: { root: string; main: string; action: string; path?: string; undo?: string }; result: { status: number; body: Record<string, unknown> } };
-  'localOnly.moveStrays': { params: { root: string; main: string }; result: { moved: [string, string][]; failed: string[] } };
   'localOnly.backup': { params: { projects?: string[] }; result: { results: Record<string, { status: string; files?: number }> } };
   /**
    * Allow rules in a WSL chat (helper/allow_facts.ts, allow/linux.ts; addition): what the matcher needs to know of the distro, read

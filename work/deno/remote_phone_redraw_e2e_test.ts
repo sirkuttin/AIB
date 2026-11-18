@@ -1,5 +1,5 @@
 /**
- * The phone page's polls change only what changed (phase 0 of the native-feel plan, private/designs/phone-remote/
+ * The phone page's polls change only what changed (phase 0 of the native-feel plan, aib-shared/designs/phone-remote/
  * android-dynamic-thin-client-2026-11-16.md §4.4): headless Chrome (no window) at 375 px, where this test plays Tailscale Serve,
  * against an in-process AIB with a fake agent host. A long working chat (25 turns: your message, a reply, a run of steps) streams
  * while you read mid-history with text selected, a steps fold open with Show output open, and later a half-typed message with the

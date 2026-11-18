@@ -1369,7 +1369,7 @@ export class Service {
     if (!pathIsAbsolute(candidate)) {
       const relative = candidate;
       candidate = pathOf(cwd, relative);
-      // a relative private/... the chat's copy does not have: the main folder's local-only file of that name
+      // a relative local-only path the chat's copy does not have: the main folder's local-only file of that name
       if (!isFile(candidate)) {
         const { main, roots } = localOf();
         const there = pathOf(main, relative);

@@ -2,7 +2,7 @@
  * Steer-on-send, server side (server/acp/connection.ts steer lane): a message sent while the agent works goes to it now through
  * `_session/steering`, held while an approval or question is open, and falls back to an ordinary prompt when the agent's turn is
  * over. The agent end is a Puppet (_steer_puppet.ts) the test drives with the shapes of work/steer-recordings. Each test names the
- * architect-review break (B..) and test (T..) it covers (private/designs/send-while-working/architect-review-2026-11-12.md).
+ * architect-review break (B..) and test (T..) it covers (aib-shared/designs/send-while-working/architect-review-2026-11-12.md).
  */
 import { assert, assertEquals } from './_assert.ts';
 import { pause, until } from './_connection.ts';

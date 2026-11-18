@@ -1,5 +1,5 @@
 /**
- * Subagent worktrees, Codex (private/designs/subagent-worktrees/codex-gemini-isolation.md 1.5; owner 2026-11-16: the rule holds for
+ * Subagent worktrees, Codex (aib-shared/designs/subagent-worktrees/codex-gemini-isolation.md 1.5; owner 2026-11-16: the rule holds for
  * every provider, Codex subagents off when hooks are off). Codex can't give a subagent another folder (spawn_agent has no cwd; the
  * child always gets the parent's folder and sandbox), so AIB redirects each of its calls through Codex's own hooks:
  *

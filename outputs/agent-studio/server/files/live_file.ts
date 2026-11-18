@@ -1,5 +1,5 @@
 /**
- * One open file's live text in the web server (private/designs/file-editor/file-editor-design-v2.md, section 2 and 4; architect review
+ * One open file's live text in the web server (aib-shared/designs/file-editor/file-editor-design-v2.md, section 2 and 4; architect review
  * 2026-11-16). The file is a Y.Text that every editor (tab, beside pane, other window) syncs with over the page-only file socket
  * (server/live/ysocket.ts). The disk is the meeting point: agents write the file with their own tools, and AIB merges afterwards.
  *

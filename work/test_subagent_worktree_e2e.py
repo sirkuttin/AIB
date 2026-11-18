@@ -1,5 +1,5 @@
 """Subagent worktrees, P1 (enforcement, Claude Code): e2e with the REAL Claude Code adapter against the stub model API
-(work/stub_model_api.js script mode), temp config only. Design: private/designs/subagent-worktrees/design.md v2 + p0b-results.md.
+(work/stub_model_api.js script mode), temp config only. Design: aib-shared/designs/subagent-worktrees/design.md v2 + p0b-results.md.
 
   AibSubagentHooksTest   a real AIB (deno-split web server + agent host) starts a Claude chat in a temp git project whose folder has
                          an uncommitted edit. The model (scripted) starts an editing subagent, an Explore subagent, then tries

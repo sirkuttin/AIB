@@ -91,11 +91,10 @@ import * as wt from '../worktrees/worktrees.ts';
 import { movedTo as movedChatTo } from '../state/moved_chats.ts';
 import { applyProject as cleanupApply, dropChatRefs, logLine as cleanupLog } from '../worktrees/cleanup.ts';
 import { LiveSync, Mutex } from '../worktrees/sync.ts';
-import { chatLocalOnly, ensureDefault, type LocalOnly } from '../worktrees/local_only.ts';
+import { chatLocalOnly, defaultsAllowed, ensureDefault, type LocalOnly } from '../worktrees/local_only.ts';
 import { wslChatLocalOnly, wslDefaultsAllowed, wslEnsureLocalOnly } from '../wsl/local_only.ts';
 import { helperOf, readHelpers, Registry as HelperRegistry } from '../swarm/registry.ts';
 import { swarmEnabled } from '../swarm/settings.ts';
-import { defaultsAllowed } from '../worktrees/local_strays.ts';
 import { isFixture, testHomeEnv, type WslSpawn } from '../acp/connection.ts';
 import { normLinuxPath, refOf, type WslLoc, wslLocOf } from '../platform/location.ts';
 import { heldDistro, isAibInternalLabel } from '../keeper/link.ts';
@@ -1452,7 +1451,7 @@ export class Studio {
       if (resume) this.announce(c, 'opening'); // claim before session/load so other clients can see it
       const finishSetup = async () => {
         try {
-          // before the snapshot: the default /private exclude is in force, so a new copy never takes the main folder's private/
+          // before the snapshot: the default /aib-shared exclude is in force, so a new copy never takes the main folder's aib-shared/ (its link does)
           const mainFolder = c.worktree ? c.projectRoot : workspace;
           if (wsl) await this.#wslLocalOnlyDefault(mainFolder); // the same in the distro (its helper; never throws)
           const local = wsl ? null : await this.#localOnlyDefault(mainFolder);
@@ -2548,8 +2547,8 @@ export class Studio {
    * pointers, ...) the chat works in the project folder: it has not begun, so nothing is filed under another folder.
    */
   /**
-   * The project's local-only lookup after setting up the default `/private` exclude (local_only.ensureDefault: idempotent, never
-   * throws). null: not git, or a test Studio and a project outside the temp folder (local_strays.defaultsAllowed).
+   * The project's local-only lookup after setting up the default `/aib-shared` exclude (local_only.ensureDefault: idempotent, never
+   * throws). null: not git, or a test Studio and a project outside the temp folder (local_only.defaultsAllowed).
    */
   async #localOnlyDefault(project: string): Promise<LocalOnly | null> {
     if (!project || !defaultsAllowed(this.hasStateDir ? this.stateDir : '', project)) return null;
@@ -2562,8 +2561,8 @@ export class Studio {
   }
 
   /**
-   * What a chat is told about local-only files (Connection.localOnly). private/ only when git really ignores it (state 'on'); a
-   * worktree chat gets the main folder's local-only paths, and the main folder's private/ is made (empty) so it can be granted as an
+   * What a chat is told about local-only files (Connection.localOnly). aib-shared/ only when git really ignores it (state 'on'); a
+   * worktree chat gets the main folder's local-only paths, and the main folder's aib-shared/ is made (empty) so it can be granted as an
    * extra writable folder from the first message (owner Q4 a).
    */
   #localOnlyFor(c: Connection, lo: LocalOnly | null): Connection['localOnly'] {
@@ -2574,7 +2573,7 @@ export class Studio {
   }
 
   /**
-   * #localOnlyDefault for a WSL project (its ref): the distro's helper sets the default `/private` up, before the snapshot as above,
+   * #localOnlyDefault for a WSL project (its ref): the distro's helper sets the default `/aib-shared` up, before the snapshot as above,
    * and only where a Windows project would get it (wsl/local_only.ts wslDefaultsAllowed). Never throws.
    */
   async #wslLocalOnlyDefault(projectRef: string): Promise<void> {

@@ -1,7 +1,7 @@
 'use strict';
 // inbox-rules.js: the one set of inbox rules every surface uses (page inbox, badge, title, toasts; the server's notifications,
 // the phone's home, both trays). Rule R6 for plain-text questions is checked against the owner's hand-labelled replies from the
-// usage study (private/designs/attention-ux/usage-data-2026-11-13.md, section 5): each sample is the reply's last question or
+// usage study (aib-shared/designs/attention-ux/usage-data-2026-11-13.md, section 5): each sample is the reply's last question or
 // sentence, put back into a reply of a realistic length and shape.
 const test = require('node:test');
 const assert = require('node:assert/strict');

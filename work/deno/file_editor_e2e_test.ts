@@ -1,6 +1,6 @@
 /**
  * Real binary (slow: one `deno desktop` build, shared through _build_cache.ts; AIB_SLOW_TESTS=1, Windows only): the file editor v1
- * (private/designs/file-editor; architect review 2026-11-16) in the real AIB window (WebView2) on an invisible desktop
+ * (aib-shared/designs/file-editor; architect review 2026-11-16) in the real AIB window (WebView2) on an invisible desktop
  * (_hidden_desktop.ts): nothing shows on the person's screen. Its own data folders; never the owner's ports, ~/.claude or ~/.codex.
  * Keys are real key presses (CDP Input.dispatchKeyEvent). Only processes this test started are killed.
  *

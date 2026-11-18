@@ -1,0 +1,45 @@
+---
+title: 'aib-shared/ folder: notes every agent reads, git never commits'
+description: One folder per git project that git never commits and every chat and agent can read, helpers and subagents in worktrees included. Git exclude makes any file local-only, and AIB keeps a daily zip backup.
+---
+
+import Shot from '../../components/Shot.astro';
+
+Some files should never be committed: scratch notes, plans, research. Yet every agent should read them. The `aib-shared/` folder is
+that place: notes every agent reads and git never commits. It lives only in your project's main folder. Helpers and subagents work in
+worktrees, where gitignored files don't follow them, so each worktree gets a link named `aib-shared` that points to the main folder's one.
+
+## AIB keeps aib-shared/ out of git
+
+The first time a chat opens in a git project, AIB adds `/aib-shared` to its block in that project's `.git/info/exclude`. AIB creates an empty
+`aib-shared/` folder if there is none. You'll see the folder, and git never commits it.
+
+Projects that already commit an `aib-shared/` folder are left alone: worktrees get no link there. **Files** then says
+"aib-shared/ is committed in this project, so AIB doesn't keep it local only."
+
+## Every chat and every agent sees it
+
+Every chat sees the same `aib-shared/`, and so do helpers and subagents in their own worktrees. It shows under **Files** with a blue
+**local only** label. Every agent, whichever provider, is told where the local-only files are and that it may write there.
+
+In a worktree, `aib-shared` is a link to the main folder's one: a directory junction on Windows, a symlink in WSL and Linux. Files a
+helper or subagent writes there land straight in the shared folder.
+
+<Shot name="private-local-only.png" alt="Files showing the aib-shared folder with its blue local only label" />
+
+## Nothing local-only gets committed
+
+The `aib-shared` link in a worktree is git-ignored like the folder itself, so landing a helper's or subagent's work never carries
+local-only files into your commits.
+
+## Git exclude: make any file local-only
+
+Right-click any file or folder in **Files** and choose **Git exclude**. It's applied at once, with **Undo** for 10 seconds. When
+it can't apply, the menu item is greyed out with the reason, for example **Already local only**.
+
+<Shot name="private-git-exclude.png" alt="The right-click menu on a file in Files with Git exclude" />
+
+## A daily zip backup of local-only files
+
+Git holds no copy of local-only files, so AIB does. Once a day, when they changed, AIB zips each project's local-only files
+into one zip in its data folder, under `local-only-backups`. Only the newest zip is kept.

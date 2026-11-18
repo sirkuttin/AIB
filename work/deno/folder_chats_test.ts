@@ -1,5 +1,5 @@
 /**
- * Build plan 1b, phase P1 (private/designs/worktree-model/build-plan-1b.md section 8, e2e 0-6 and 12): new chats work in the project
+ * Build plan 1b, phase P1 (aib-shared/designs/worktree-model/build-plan-1b.md section 8, e2e 0-6 and 12): new chats work in the project
  * folder. Owner decision 2026-11-16: always (no per-chat Own copy, no pre-set); only helpers get copies, and a chat made in its own
  * copy before then keeps it. Through a real Studio with fake agents and real git in temp folders:
  * - 0 (fake-agent form): a new chat's agent is started in the project folder itself (session/new cwd = P), so the agent files it under P.

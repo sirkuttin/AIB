@@ -1,6 +1,6 @@
 /**
  * The open files' live texts (files/live_file.ts) in the web server: the registry, the disk poll, the store, the "files changed"
- * events, the save's locks and the notes to agents (private/designs/file-editor/file-editor-design-v2.md 4.2-4.5; architect review
+ * events, the save's locks and the notes to agents (aib-shared/designs/file-editor/file-editor-design-v2.md 4.2-4.5; architect review
  * 2026-11-16 must-fixes 3-8 and its should-fixes for keys, links, the store and quitting).
  *
  * Registry. One LiveFile per real path, case-folded on Windows (src/A.ts and src/a.ts are one file), created on the first editable

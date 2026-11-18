@@ -17,8 +17,8 @@
  *   - a stash entry AIB named that is not already in the working tree, and any kept clash stash (5.5), counts as unmerged.
  * Nothing with unmerged work is ever removed silently: `apply` takes the ids the user ticked for those.
  *
- * Private folders (the local-only `/private` and its exclude line) are never touched: copies go through Manager.remove, which moves
- * local-only files written into a copy back into the main folder first. Transcripts are never touched.
+ * The shared folder (the local-only `/aib-shared` and its exclude line) is never touched: copies go through Manager.remove, which
+ * takes a copy's `aib-shared` link away first (the link only, shared_link.ts). Transcripts are never touched.
  */
 import * as wt from './worktrees.ts';
 import { CLASH_FILE, folderState, repoLock } from './merge.ts';
@@ -29,6 +29,7 @@ import { pathOf } from '../state/paths.ts';
 import { isdir, normcase, normpath, SEP } from '../platform/ospath.ts';
 import { isDict, pyStrip } from '../core/py.ts';
 import { getLogger } from '../core/log.ts';
+import { unlinkShared, unlinkSharedFor } from './shared_link.ts';
 
 const log = getLogger('cleanup');
 
@@ -546,6 +547,8 @@ async function removeItem(manager: wt.Manager, project: string, item: CleanupIte
       // a copy without a record: git's own removal; only a studio/ branch goes with it
       if (item.own || item.path) {
         if (wt.same(item.path, project)) return 'the project folder itself';
+        // its aib-shared link first: git would follow a junction and empty the main folder's real aib-shared/
+        if (!(await unlinkSharedFor(item.path, project))) return "its aib-shared link couldn't be removed";
         await git(['worktree', 'remove', '--force', item.path], project);
         if (wt.lexists(item.path) && item.own) {
           try {
@@ -560,6 +563,7 @@ async function removeItem(manager: wt.Manager, project: string, item: CleanupIte
     case 'folder': {
       if (!manager.insideRoot(item.path)) return "not under AIB's worktrees folder";
       try {
+        if (!unlinkShared(item.path)) return "its aib-shared link couldn't be removed";
         wt.rmtree(item.path);
       } catch (error) {
         return error instanceof Error ? error.message : 'in use';

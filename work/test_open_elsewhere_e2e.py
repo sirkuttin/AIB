@@ -1,4 +1,4 @@
-"""Open elsewhere (private/designs/open-elsewhere/research.md; server/ownership/handoff.ts): AIB lets go of a Claude Code chat that another
+"""Open elsewhere (aib-shared/designs/open-elsewhere/research.md; server/ownership/handoff.ts): AIB lets go of a Claude Code chat that another
 app opened, and takes it back when the person returns.
 
 A real AIB (deno-split web server + agent host) runs a real Claude Code chat through the real ACP adapter against the local stub model

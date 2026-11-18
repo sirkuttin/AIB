@@ -1,5 +1,5 @@
 /**
- * Allow rules: the security review of phase 1 (private/designs/approvals/security-review-phase1-2026-11-14.md), one test per
+ * Allow rules: the security review of phase 1 (aib-shared/designs/approvals/security-review-phase1-2026-11-14.md), one test per
  * hole, each with the review's own inputs. Every one of them must ask (or grey out "Always allow").
  */
 import { assert, assertEquals } from './_assert.ts';

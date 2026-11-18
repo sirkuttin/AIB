@@ -1,5 +1,5 @@
 /**
- * Claude Code's live-session registry (private/designs/open-elsewhere/research.md): every running Claude Code process writes
+ * Claude Code's live-session registry (aib-shared/designs/open-elsewhere/research.md): every running Claude Code process writes
  * `<CLAUDE_CONFIG_DIR or ~/.claude>/sessions/<pid>.json` with the session it holds, its entrypoint (`claude-vscode`, `cli`, `sdk-cli`,
  * `sdk-ts`, ...), its status and, on Windows, its creation FILETIME (`procStart`). VS Code's Claude extension and the ACP adapter read
  * the same files to tell "this conversation is open in another Claude process". The format is not documented, so everything here is

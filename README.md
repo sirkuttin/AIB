@@ -46,6 +46,9 @@ AIB runs Claude Code, Codex, OMP and ten more agent providers (via ACP) side by 
   Your saved edits are synced into the helpers' worktrees.
 - A helper's work lands in your folder when the main chat's turn ends, with **Undo** on the line that says so.
   There are no Merge or Discard buttons. Conflicts go to the helper to resolve.
+- `aib-shared/` in your project folder holds notes, plans and drafts that every chat, helper and subagent reads and writes, on
+  every agent. Git never commits it. It lives only in your project folder; each worktree gets a link named `aib-shared` to it
+  (a directory junction on Windows, a symlink in WSL), so nothing is copied or lost when a worktree goes.
 - AIB cleans up the worktrees, branches and stashes it made. Work that was never merged is never deleted without asking.
 
 ![A helper's work landed in the project folder at the end of the turn, with Undo](docs/screenshots/06-helper-landed-with-undo.png)

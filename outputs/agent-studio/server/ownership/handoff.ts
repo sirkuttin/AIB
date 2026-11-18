@@ -1,5 +1,5 @@
 /**
- * Open elsewhere: AIB lets go of a Claude Code chat that another app opened (private/designs/open-elsewhere/research.md, section 5).
+ * Open elsewhere: AIB lets go of a Claude Code chat that another app opened (aib-shared/designs/open-elsewhere/research.md, section 5).
  *
  * Detection: Claude Code's live-session registry (claude_sessions.ts). The folder of every Windows Claude chat's config is watched
  * (Deno.watchFs, debounced) with a 10 s rescan as a backup; a live record that names a chat's session and whose process is not one of

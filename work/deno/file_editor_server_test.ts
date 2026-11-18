@@ -1,5 +1,5 @@
 /**
- * The file editor's server (files/live_file.ts, files/live_files.ts, web/live_files_routes.ts; private/designs/file-editor, design v2
+ * The file editor's server (files/live_file.ts, files/live_files.ts, web/live_files_routes.ts; aib-shared/designs/file-editor, design v2
  * and the architect review of 2026-11-16) on the real web server with a page's y-protocols client over the file socket:
  *   - open / sync / save; Ctrl+S right after typing saves the last keystrokes (the save waits for the page's state vector);
  *     CRLF and BOM bytes follow the disk version last taken in (must-fixes 5, 8)

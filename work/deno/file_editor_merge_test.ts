@@ -1,5 +1,5 @@
 /**
- * The file editor's pure parts (private/designs/file-editor; architect review 2026-11-16 must-fixes 2, 3 and 8):
+ * The file editor's pure parts (aib-shared/designs/file-editor; architect review 2026-11-16 must-fixes 2, 3 and 8):
  * files/line_merge.ts (the line 3-way merge: time limit, per-line overlaps, code points) and files/file_text.ts (sha, encoding, line
  * endings, BOM, what AIB can't edit, and the bytes a save writes).
  */

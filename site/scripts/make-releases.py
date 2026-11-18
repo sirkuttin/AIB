@@ -18,7 +18,7 @@ SHOTS = {
     (9, 'Remote control'): ('phone-cards.png', 'The phone page: chat cards with needs-you chats first', True),
     (9, 'Agent steering'): ('steering-send-menu.png', 'The Send menu open with Send now, Send after this turn and Interrupt and send', False),
     (9, 'Artifacts: Archive'): ('artifacts-menu-archive-delete.png', 'The ⋯ menu on an artifact with Archive and Delete', False),
-    (9, 'Manage non-git assets'): ('private-local-only.png', 'Files showing the private folder with its blue local only label', False),
+    (9, 'Manage non-git assets'): ('private-local-only.png', 'Files showing the aib-shared folder with its blue local only label', False),
     (9, 'AIB Updates'): ('updates-button.png', 'The teal Update button at the top right of the AIB window', False),
     (8, '`aib-docs`'): ('docs-comment-thread.png', 'A doc open in the Artifacts tab with a comment thread and an agent reply', False),
     (8, 'Subagent cards'): ('chats-subagent-card.png', 'A working subagent card with model, tokens, run time and current action', False),

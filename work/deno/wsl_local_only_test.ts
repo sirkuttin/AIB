@@ -1,10 +1,10 @@
 /**
  * Local-only folders of WSL projects without a distro (wsl/helper/local_only.ts, wsl/local_only.ts, files_routes.ts, host/studio.ts):
- *   - the helper's localOnly.* methods over the real modules, run natively here on a temp repo whose own exclude names `/private/`
- *     (the owner's shape): ensure adds AIB's block, chat answers the main folder's paths and makes private/, list / search / read
- *     from a chat copy (a git worktree under <data>/worktrees) show the main folder's private/, exclude writes the repo's
+ *   - the helper's localOnly.* methods over the real modules, run natively here on a temp repo whose own exclude names `/aib-shared/`
+ *     (the owner's shape): ensure adds AIB's block, chat answers the main folder's paths and makes aib-shared/, list / search / read
+ *     from a chat copy (a git worktree under <data>/worktrees) show the main folder's aib-shared/, exclude writes the repo's
  *     .git/info/exclude and its Undo takes it back, refusals (the project, .git, '..', a tracked file), a root outside AIB's copies is
- *     refused, strays move, and the daily backup zips into <data>/local-only-backups;
+ *     refused, and the daily backup zips into <data>/local-only-backups;
  *   - Studio with a FakeWslHost: a WSL chat in its own copy is granted the main folder's local-only folders (Linux paths, ACP
  *     additionalDirectories) and told where they are; a test AIB never sets the default up in a project outside /tmp; an older helper
  *     (no localOnly.*) leaves the chat as before;
@@ -21,7 +21,7 @@ import { localOnlyMethods } from '../../outputs/agent-studio/server/wsl/helper/l
 import { RpcError } from '../../outputs/agent-studio/server/wsl/helper/rpc.ts';
 import { BLOCK_START } from '../../outputs/agent-studio/server/worktrees/local_only.ts';
 import { wslBackupRound, wslDefaultsAllowed } from '../../outputs/agent-studio/server/wsl/local_only.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
+import { Connection, SHARED_FOLDER_PROMPT } from '../../outputs/agent-studio/server/acp/connection.ts';
 import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
 import { KeeperLink } from '../../outputs/agent-studio/server/keeper/link.ts';
 import { keeperBinary, KeeperClient, readKeeperInfo } from '../../outputs/agent-studio/server/keeper/client.ts';
@@ -48,8 +48,8 @@ class Lab {
     const p = this.box.project;
     commit(p, 'src/a.txt', 'tracked\n');
     // the owner's own exclude line, outside AIB's block
-    write(p, '.git/info/exclude', '# git ls-files --others --exclude-from=.git/info/exclude\n\n# Owner-only files\n/private/\n');
-    write(p, 'private/review/x.png', 'PNG-BYTES');
+    write(p, '.git/info/exclude', '# git ls-files --others --exclude-from=.git/info/exclude\n\n# Owner-only files\n/aib-shared/\n');
+    write(p, 'aib-shared/review/x.png', 'PNG-BYTES');
     Deno.mkdirSync(join(this.data, 'worktrees', 'h1'), { recursive: true });
     runGit(p, 'worktree', 'add', '-q', '-b', 'studio/chat-abcd1234', this.copy);
   }
@@ -75,20 +75,20 @@ Deno.test({ name: 'wsl helper localOnly: ensure keeps the user line and adds the
   assertEquals(await lab.call('localOnly.ensure', { project: p }), { state: 'on' });
   const after = lab.exclude();
   assert(after.startsWith(before), 'every line of the user is kept byte for byte');
-  assert(after.includes(BLOCK_START) && after.includes('\n/private\n'), after);
+  assert(after.includes(BLOCK_START) && after.includes('\n/aib-shared\n'), after);
   assertEquals(await lab.call('localOnly.ensure', { project: p }), { state: 'on' });
   assertEquals(lab.exclude(), after, 'idempotent');
-  const priv = join(p, 'private');
+  const priv = join(p, 'aib-shared');
   const chat = (await lab.call('localOnly.chat', { project: p, worktree: true })).localOnly;
-  assertEquals(chat, { entries: [priv], dirs: [priv], private: priv });
+  assertEquals(chat, { entries: [priv], dirs: [priv], shared: priv });
   assert(!Deno.statSync(join(lab.copy, 'src', 'a.txt')).isDirectory);
   let inCopy = true;
   try {
-    Deno.statSync(join(lab.copy, 'private'));
+    Deno.statSync(join(lab.copy, 'aib-shared'));
   } catch {
     inCopy = false;
   }
-  assert(!inCopy, "the chat's copy holds no private/: git never copies it");
+  assert(!inCopy, "the chat's copy holds no aib-shared/: git never copies it");
   // a project that is not git: nothing
   const plain = join(lab.box.base, 'plain');
   Deno.mkdirSync(plain);
@@ -96,29 +96,29 @@ Deno.test({ name: 'wsl helper localOnly: ensure keeps the user line and adds the
   assertEquals((await lab.call('localOnly.chat', { project: plain, worktree: true })).localOnly, null);
 } });
 
-Deno.test({ name: 'wsl helper localOnly: list, search and read from a chat copy show the main folder private/', ignore: !HAVE_GIT, ...T, async fn() {
+Deno.test({ name: 'wsl helper localOnly: list, search and read from a chat copy show the main folder aib-shared/', ignore: !HAVE_GIT, ...T, async fn() {
   using lab = new Lab();
   const p = lab.box.project;
   await lab.call('localOnly.ensure', { project: p });
   const top = await lab.call('localOnly.list', { root: lab.copy, main: p });
   const lo = top.localOnly as Json;
-  assertEquals([lo.main, lo.entries, lo.defaultState], [p, ['private'], 'on']);
-  const row = (top.entries as Json[]).find((e) => e.name === 'private')!;
+  assertEquals([lo.main, lo.entries, lo.defaultState], [p, ['aib-shared'], 'on']);
+  const row = (top.entries as Json[]).find((e) => e.name === 'aib-shared')!;
   assert(row && row.local === true, JSON.stringify(top.entries));
   assertEquals(row.noExclude, 'already');
   const srcRow = (top.entries as Json[]).find((e) => e.name === 'src')!;
   assertEquals(srcRow.noExclude, 'tracked');
-  const inside = await lab.call('localOnly.list', { root: lab.copy, main: p, dir: 'private/review' });
+  const inside = await lab.call('localOnly.list', { root: lab.copy, main: p, dir: 'aib-shared/review' });
   assertEquals((inside.entries as Json[]).map((e) => [e.name, e.from]), [['x.png', 'main']]);
   const found = await lab.call('localOnly.search', { root: lab.copy, main: p, query: 'x.png' });
-  assertEquals((found.matches as Json[]).map((m) => m.path), ['private/review/x.png']);
-  const read = await lab.call('localOnly.read', { root: lab.copy, main: p, rel: 'private/review/x.png' });
+  assertEquals((found.matches as Json[]).map((m) => m.path), ['aib-shared/review/x.png']);
+  const read = await lab.call('localOnly.read', { root: lab.copy, main: p, rel: 'aib-shared/review/x.png' });
   assertEquals([atob(String(read.bytesB64)), read.local, read.from, read.readRoot], ['PNG-BYTES', true, 'main', p]);
   const plain = await lab.call('localOnly.read', { root: lab.copy, main: p, rel: 'src/a.txt' });
   assertEquals([atob(String(plain.bytesB64)), plain.local, plain.readRoot], ['tracked\n', undefined, lab.copy]);
   // the main folder itself
   const own = await lab.call('localOnly.list', { root: p, main: p });
-  assert((own.entries as Json[]).some((e) => e.name === 'private' && e.local === true));
+  assert((own.entries as Json[]).some((e) => e.name === 'aib-shared' && e.local === true));
   // a root that is neither the main folder nor one of AIB's chat copies
   for (const root of [lab.box.base, lab.data, join(lab.data, 'worktrees')]) {
     const refused = await lab.call('localOnly.list', { root, main: p }).catch((e) => e);
@@ -126,7 +126,7 @@ Deno.test({ name: 'wsl helper localOnly: list, search and read from a chat copy 
   }
 } });
 
-Deno.test({ name: 'wsl helper localOnly: exclude writes the repo exclude file, Undo takes it back, refusals, strays, backup', ignore: !HAVE_GIT, ...T, async fn() {
+Deno.test({ name: 'wsl helper localOnly: exclude writes the repo exclude file, Undo takes it back, refusals, backup', ignore: !HAVE_GIT, ...T, async fn() {
   using lab = new Lab();
   const p = lab.box.project;
   await lab.call('localOnly.ensure', { project: p });
@@ -136,7 +136,7 @@ Deno.test({ name: 'wsl helper localOnly: exclude writes the repo exclude file, U
   const body = added.body as Json;
   assertEquals(body.path, 'game/review');
   assert(lab.exclude().includes('\n/game/review\n'), lab.exclude());
-  assertEquals((body.localOnly as Json).entries, ['private', 'game/review']);
+  assertEquals((body.localOnly as Json).entries, ['aib-shared', 'game/review']);
   const undone = await lab.call('localOnly.exclude', { root: p, main: p, action: 'undo', undo: body.undo });
   assertEquals([undone.status, (undone.body as Json).ok], [200, true]);
   assert(!lab.exclude().includes('/game/review'));
@@ -151,7 +151,7 @@ Deno.test({ name: 'wsl helper localOnly: exclude writes the repo exclude file, U
   assertEquals((hidden as { code?: string }).code, 'hidden');
   assertEquals(await code('src/a.txt'), [409, 'tracked']);
   assertEquals(await code('../outside'), [400, 'bad_path']);
-  assertEquals(await code('private'), [409, 'already']);
+  assertEquals(await code('aib-shared'), [409, 'already']);
   assertEquals((await lab.call('localOnly.exclude', { root: p, main: p, action: 'zap' })).status, 400);
   const outside = await lab.call('localOnly.exclude', { root: lab.box.base, main: p, action: 'add', path: 'x' }).catch((e) => e);
   assert(outside instanceof RpcError, 'a root outside the copies is refused');
@@ -160,11 +160,6 @@ Deno.test({ name: 'wsl helper localOnly: exclude writes the repo exclude file, U
   const moved = await lab.call('localOnly.exclude', { root: lab.copy, main: p, action: 'add', path: 'notes' });
   assertEquals(moved.status, 200);
   assertEquals(Deno.readTextFileSync(join(p, 'notes', 'todo.md')), 'mine');
-  // a stray: the copy has a file under private/ the main folder lacks
-  write(lab.copy, 'private/stray.md', 'stray');
-  const strays = await lab.call('localOnly.moveStrays', { root: lab.copy, main: p });
-  assertEquals(strays.moved, [['private/stray.md', 'private/stray.md']]);
-  assertEquals(Deno.readTextFileSync(join(p, 'private', 'stray.md')), 'stray');
   // the daily backup, into the helper's data folder
   const backup = await lab.call('localOnly.backup', { projects: [p] });
   const result = (backup.results as Record<string, Json>)[p];
@@ -197,7 +192,7 @@ Deno.test({ name: 'wsl helper localOnly: every ignored or excluded entry of main
   const gitignore = Deno.readTextFileSync(join(p, '.gitignore'));
   const row = (l: Json, name: string) => (l.entries as Json[]).find((e) => e.name === name);
   const top = await lab.call('localOnly.list', { root: lab.copy, main: p });
-  assertEquals([row(top, 'private')?.local, row(top, 'private')?.ignored], [true, false], 'AIB local-only: normal colour, chip');
+  assertEquals([row(top, 'aib-shared')?.local, row(top, 'aib-shared')?.ignored], [true, false], 'AIB local-only: normal colour, chip');
   assertEquals([row(top, 'scratch')?.from, row(top, 'scratch')?.ignored, row(top, 'scratch')?.excluded], ['main', false, true], 'excluded by the user line: normal colour');
   assertEquals([row(top, '.env')?.from, row(top, '.env')?.ignored], ['main', true], '.gitignore: dimmed');
   assertEquals([row(top, 'node_modules')?.from, row(top, 'node_modules')?.ignored], ['main', true]);
@@ -242,8 +237,8 @@ Deno.test({ name: 'wsl helper localOnly.chat ignored: top-level ignored folders 
   await lab.call('localOnly.ensure', { project: p });
   widen(lab);
   const lo = (await lab.call('localOnly.chat', { project: p, worktree: true, ignored: true })).localOnly as Json;
-  const priv = join(p, 'private');
-  assertEquals([lo.entries, lo.dirs, lo.private], [[priv], [priv], priv]);
+  const priv = join(p, 'aib-shared');
+  assertEquals([lo.entries, lo.dirs, lo.shared], [[priv], [priv], priv]);
   const ignored = lo.ignored as { dirs: string[]; files: string[] };
   assertEquals(ignored.dirs.sort(), [join(p, 'game', 'review'), join(p, 'node_modules'), join(p, 'scratch')].sort());
   assertEquals(ignored.files, [join(p, '.env')]);
@@ -271,7 +266,7 @@ const REF = 'wsl://ubuntu/home/u/app';
 const DATA = '/home/u/.aib-server/data-000000000000';
 const WT_LINUX = `${DATA}/worktrees/h1/chat-abcd1234`;
 const WT_REF = `wsl://ubuntu${WT_LINUX}`;
-const PRIV = '/home/u/app/private';
+const PRIV = '/home/u/app/aib-shared';
 const GAME = '/home/u/app/game/review';
 const ENV = '/home/u/app/.env';
 
@@ -312,9 +307,9 @@ class StudioLab {
     h['worktree.discard'] = () => ({ ok: true });
     if (localOnly) {
       h['localOnly.ensure'] = () => ({ state: 'on' });
-      h['localOnly.chat'] = (p) => ({ localOnly: p.project === '/home/u/app' ? { entries: [PRIV], dirs: [PRIV], private: PRIV, ...(p.ignored ? { ignored: { dirs: [GAME], files: [ENV] } } : {}) } : null });
-      h['localOnly.list'] = (p) => ({ root: p.root, dir: '', git: true, entries: [], truncated: false, localOnly: { main: p.main, entries: ['private'], defaultState: 'on', sig: '1' } });
-      h['localOnly.exclude'] = (p) => ({ status: 200, body: { ok: true, undo: '{}', path: p.path, localOnly: { main: p.main, entries: ['private', String(p.path)], defaultState: 'on', sig: '' } } });
+      h['localOnly.chat'] = (p) => ({ localOnly: p.project === '/home/u/app' ? { entries: [PRIV], dirs: [PRIV], shared: PRIV, ...(p.ignored ? { ignored: { dirs: [GAME], files: [ENV] } } : {}) } : null });
+      h['localOnly.list'] = (p) => ({ root: p.root, dir: '', git: true, entries: [], truncated: false, localOnly: { main: p.main, entries: ['aib-shared'], defaultState: 'on', sig: '1' } });
+      h['localOnly.exclude'] = (p) => ({ status: 200, body: { ok: true, undo: '{}', path: p.path, localOnly: { main: p.main, entries: ['aib-shared', String(p.path)], defaultState: 'on', sig: '' } } });
     }
   }
 
@@ -369,21 +364,21 @@ class StudioLab {
 const systemTexts = (params: Json) =>
   (((params.systemPrompt as Json | undefined)?.content as Json[] | undefined) ?? []).map((c) => String(c.text ?? ''));
 
-Deno.test({ name: 'wsl studio local-only: a chat in its own copy is granted and told the main folder private/ (Linux paths)', ...T, async fn() {
+Deno.test({ name: 'wsl studio local-only: a chat in its own copy is granted and told the main folder aib-shared/ (Linux paths)', ...T, async fn() {
   await keeperBinary();
   await using lab = new StudioLab();
   const c = await lab.studio().connect('claude', REF, null, { ownCopy: true });
   await until(() => c.ready, 'ready', 30);
   assertEquals([c.cwd, c.agentCwd, c.projectRoot], [WT_REF, WT_LINUX, REF]);
-  assertEquals(c.localOnly, { entries: [PRIV], dirs: [PRIV], private: PRIV, ignored: { dirs: [GAME], files: [ENV] } });
+  assertEquals(c.localOnly, { entries: [PRIV], dirs: [PRIV], shared: PRIV, ignored: { dirs: [GAME], files: [ENV] } });
   assertEquals(lab.called('localOnly.chat'), [{ project: '/home/u/app', worktree: true, ignored: true }]);
   assertEquals(lab.called('localOnly.ensure'), [], 'a test AIB never writes the default into a project outside /tmp');
   const made = lab.received('session/new');
   assertEquals(made.length, 1);
-  assertEquals(made[0].additionalDirectories, [PRIV, GAME], 'Linux paths of the main folder private/ and its other ignored folders (no Windows scratch folder)');
+  assertEquals(made[0].additionalDirectories, [PRIV, GAME], 'Linux paths of the main folder aib-shared/ and its other ignored folders (no Windows scratch folder)');
   assertEquals(made[0].cwd, WT_LINUX);
-  const note = systemTexts(made[0]).find((t) => t.includes('Local-only files'))!;
-  assert(note && note.includes(PRIV) && note.includes('not in this') && note.includes(`You may create and use ${PRIV}`), note);
+  const note = systemTexts(made[0]).find((t) => t.includes('aib-shared/ in the project folder'))!;
+  assert(note && note.startsWith(SHARED_FOLDER_PROMPT) && !note.includes('Local-only files'), note); // aib-shared/ comes through the copy's link
   assert(note.includes(`${GAME}, ${ENV}`) && note.includes('shared with the main folder'), note);
 } });
 
@@ -426,7 +421,7 @@ Deno.test({ name: 'wsl files local-only: list and exclude of a WSL chat copy go 
   const [status, list] = await routes.get('GET /api/live/files/list')!(ctx, new URL(`http://x/api/live/files/list?id=${c.id}&root=chat`), null, new Request('http://x', { headers })) as [number, Json];
   assertEquals(status, 200, JSON.stringify(list));
   assertEquals(list.root, WT_REF);
-  assertEquals(list.localOnly, { main: '/home/u/app', entries: ['private'], defaultState: 'on', sig: '1' });
+  assertEquals(list.localOnly, { main: '/home/u/app', entries: ['aib-shared'], defaultState: 'on', sig: '1' });
   assertEquals(lab.called('localOnly.list').at(-1), { root: WT_LINUX, main: '/home/u/app', dir: '' });
   const [code, body] = await routes.get('POST /api/live/files/exclude')!(ctx, new URL('http://x/api/live/files/exclude'), { id: c.id, root: 'chat', action: 'add', path: 'game/review' }, new Request('http://x', { headers })) as [number, Json];
   assertEquals([code, body.ok, body.path], [200, true, 'game/review']);

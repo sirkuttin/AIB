@@ -15,13 +15,13 @@
  * Local-only paths (worktrees/local_only.ts) always come from the main folder, in every scope: list, read and search lay them over
  * a chat's copy (files.listLocal), and every list and search reply carries `localOnly: {main, entries, defaultState, sig}`.
  *   POST /api/live/files/exclude {id|project, root, path, action: 'add'|'undo', undo?}   "Git exclude" on a row, and its Undo
- *   POST /api/live/files/strays/move {id, root}   moves what a chat's copy holds under local-only paths into the main folder
+
  * Needs the Studio token, like the Changes routes.
  *
  * A WSL project (its folder is a ref, wsl://<distro>/<path>; docs/wsl/design.md section 4): list, search and read come from the
  * distro's helper (wsl_routes.ts wslFiles); a chat in its own worktree (made in the distro, wsl/worktrees.ts) has the project as its
  * main folder, from its record there. Its local-only paths come from that main folder too, laid over the copy by the helper
- * (wsl/helper/local_only.ts, `localOnly.*`: the same modules, natively), and exclude / strays run there; `localOnly.main` is then the
+ * (wsl/helper/local_only.ts, `localOnly.*`: the same modules, natively), and exclude runs there; `localOnly.main` is then the
  * main folder's Linux path. No preview
  * link of its own (the read's bytes from the helper go into a ticket, file_tickets.ts issueBytes). Outside files
  * of a WSL chat come from the distro's helper (files.outside), after the same "the chat named it" guard.
@@ -219,7 +219,7 @@ export function filesRoutes(): Map<string, Handler> {
         const scope = await scopeFor(ctx, bodyArgs(body as Record<string, unknown>));
         if (!Array.isArray(scope) && wslLoc(scope.root)) {
           // a WSL project: the distro's helper does the same work natively (wsl_routes.ts wslLocalPost)
-          return await wslLocalPost(path.endsWith('/exclude') ? 'exclude' : 'strays', scope, body as Record<string, unknown>);
+          return await wslLocalPost(scope, body as Record<string, unknown>);
         }
         return await work(ctx, body as Record<string, unknown>);
       } catch (error) {
@@ -237,8 +237,7 @@ export function filesRoutes(): Map<string, Handler> {
     const base = files.realRoot(root);
     const lo = await local.localOnlyOf(main);
     const same = samePath(base, files.realRoot(main));
-    const strays = lo && !same ? await local.findStrays(base, lo) : [];
-    const listing = await files.listLocal(base, main, lo, one(args, 'dir'), strays);
+    const listing = await files.listLocal(base, main, lo, one(args, 'dir'));
     await files.excludeHints(main, lo, listing, same);
     const { sig, ...rest } = listing;
     return { root: base, ...rest, localOnly: localPart(main, lo, sig) };
@@ -258,7 +257,7 @@ export function filesRoutes(): Map<string, Handler> {
     const isLocal = !!lo && local.isLocalPath(lo, String(path));
     let read: files.FileRead & { local?: true; from?: 'main' };
     if (isLocal && !samePath(base, files.realRoot(main))) {
-      // a local-only file is the main folder's own (a copy's stray shows only while main has none)
+      // a local-only file is the main folder's own (a copy's own file shows only while main has none)
       try {
         read = { ...files.readFile(main, path), local: true, from: 'main' };
       } catch (error) {
@@ -295,14 +294,7 @@ export function filesRoutes(): Map<string, Handler> {
     const localOnly = localPart(scope.main, await local.localOnlyOf(scope.main));
     return result.ok ? [200, { ...result, path, localOnly }] : [409, { ...result, localOnly }];
   });
-  // The stray warning row's "Move to the shared folder": this chat copy's files under local-only paths go to the main folder now.
-  post('/api/live/files/strays/move', async (ctx, body) => {
-    const scope = await scopeFor(ctx, bodyArgs(body));
-    if (Array.isArray(scope)) return scope;
-    const lo = samePath(scope.root, scope.main) ? null : await local.localOnlyOf(scope.main);
-    if (!lo) return [200, { moved: [], failed: [] }];
-    return [200, await local.moveStrays(scope.root, lo, local.slugOf(scope.root))];
-  });
+
   routes.set('GET /api/live/files/outside', (ctx, url, _body, request, principal) => {
     if (!pageAllowed(principal, request.headers, ctx.token)) {
       return Promise.resolve([403, { error: 'Invalid local session token' }]);

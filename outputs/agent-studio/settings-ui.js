@@ -2313,7 +2313,7 @@
       box.append(note('Chats run without the keeper, so a restart or update stops them: ' + sv.keeperProblem));
   }
   // Decision 6 (build plan 1b 5.7): what an uninstall runs. For every added project, project removal's cleanup: the chat copies,
-  // studio/ branches, refs and stash entries this AIB made; private folders, transcripts and the projects themselves stay. Check
+  // studio/ branches, refs and stash entries this AIB made; aib-shared/ folders, transcripts and the projects themselves stay. Check
   // first (nothing changes), then one list of the copies with work that was never merged (ticked) and what another AIB install made
   // (unticked), then Remove. An uninstaller calls the same route (POST /api/live/cleanup/all).
   function renderRepoCleanup(box) {
@@ -2321,7 +2321,7 @@
     const DP = root.AgentDeleteProjectUI;
     box.append(
       note(
-        "Removes the chat copies, studio/ branches and other git leftovers AIB made in your projects' repositories. Your project folders, their private folders and your chats stay. Do this before you delete AIB.",
+        "Removes the chat copies, studio/ branches and other git leftovers AIB made in your projects' repositories. Your project folders, their aib-shared/ folders and your chats stay. Do this before you delete AIB.",
       ),
     );
     const run = (mode) => {

@@ -494,11 +494,10 @@ async function wslLocalFiles(
 }
 
 /**
- * POST files/exclude and files/strays/move for a WSL project (scope: refs from files_routes.ts scopeFor): the distro's helper runs
- * local_only.ts addEntry / undoEntry / moveStrays in the project's own repository, and refuses a root that is neither the main folder
- * nor one of its chat copies.
+ * POST files/exclude for a WSL project (scope: refs from files_routes.ts scopeFor): the distro's helper runs local_only.ts addEntry /
+ * undoEntry in the project's own repository, and refuses a root that is neither the main folder nor one of its chat copies.
  */
-export async function wslLocalPost(kind: 'exclude' | 'strays', scope: { root: string; main: string }, body: Record<string, unknown>): Promise<Reply> {
+export async function wslLocalPost(scope: { root: string; main: string }, body: Record<string, unknown>): Promise<Reply> {
   const root = wslLoc(scope.root), main = wslLoc(scope.main);
   if (!root || !main || root.distro !== main.distro) return [404, { error: 'This folder cannot be shown', code: 'bad_root' }];
   let host: WslHost;
@@ -509,7 +508,7 @@ export async function wslLocalPost(kind: 'exclude' | 'strays', scope: { root: st
   }
   const paths = { root: root.linuxPath, main: main.linuxPath };
   try {
-    if (kind === 'strays') return [200, await host.call('localOnly.moveStrays', paths, { timeoutMs: 120_000 })];
+
     const params = {
       ...paths,
       action: typeof body.action === 'string' ? body.action : '',

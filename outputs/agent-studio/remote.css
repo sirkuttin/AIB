@@ -56,9 +56,8 @@ html[data-remote='pc'][data-remote-offline] #send {
 .st-note.st-elsewhere {
   margin-top: 4px;
 }
-/* Files on a computer: see, download and edit (owner decision 2026-11-16, 1a); no Git exclude, no moving a chat's files; the live-sync Resume is the PC's. */
+/* Files on a computer: see, download and edit (owner decision 2026-11-16, 1a); no Git exclude; the live-sync Resume is the PC's. */
 html[data-remote='pc'] .fx-menu-excl,
-html[data-remote='pc'] .fx-stray-btn,
 html[data-remote='pc'] .clash-resume {
   display: none !important;
 }

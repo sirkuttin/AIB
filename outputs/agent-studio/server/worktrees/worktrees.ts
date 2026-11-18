@@ -31,7 +31,7 @@ import { clip, isDict, pyStrip, ValueError } from '../core/py.ts';
 import { getLogger } from '../core/log.ts';
 import { pidAlive } from '../host/host_client.ts';
 import { localOnlyOf } from './local_only.ts';
-import { moveStrays } from './local_strays.ts';
+import { linkShared, unlinkSharedFor } from './shared_link.ts';
 import { WSL_REF_PREFIX } from '../wsl/contract.ts';
 
 const log = getLogger('worktrees');
@@ -1243,27 +1243,28 @@ async function localEntries(project: string): Promise<string[]> {
 }
 
 /**
- * Before a worktree is removed: move the files written into its local-only folders into the main folder (a clash gets
- * "<name> (from chat-…)<ext>"). True when nothing is left to save; false when a file could not be moved (the removal must wait).
+ * The worktree's `aib-shared` link to the main folder's real one (shared_link.ts): made when the worktree is made, and checked
+ * again before an old one is used. Never throws.
  */
-export async function rescueStrays(record: WorktreeRecord): Promise<boolean> {
-  const path = str(record.path), project = str(record.project);
-  let lo;
+export async function giveSharedLink(path: string, project: string): Promise<void> {
+  let lo = null;
   try {
     lo = await localOnlyOf(project);
-  } catch (error) {
-    log.exception(error, 'Reading the local-only folders of %s failed', project);
-    return false;
-  }
-  if (!lo || !lo.entries.length) return true;
-  const copy = lo.prefix ? join(path, ...lo.prefix.replace(/\/+$/, '').split('/')) : path;
-  const { moved, failed } = await hooks.moveStrays(copy, lo, basename(normpath(path)), str(record.snapshot));
-  for (const [from, to] of moved) say(`Worktree: moved ${from} from ${path} into ${project} as ${to} (local only)`);
-  if (failed.length) {
-    log.warning('Could not move local-only files out of %s: %s', path, failed.slice(0, 20).join(', '));
-    return false;
-  }
-  return true;
+  } catch { /* no local-only lookup: no link */ }
+  const outcome = linkShared(path, lo, (text) => log.warning('%s', text));
+  if (outcome === 'linked') say(`Worktree: linked aib-shared in ${path} to ${project}`);
+}
+
+/**
+ * Before a worktree is removed: its `aib-shared` link goes first (the link only: `git worktree remove` and a recursive delete
+ * follow a junction and would empty the main folder's real folder). False when the link could not be removed (nothing is deleted).
+ */
+export async function dropSharedLink(record: WorktreeRecord): Promise<boolean> {
+  const path = str(record.path), project = str(record.project);
+  if (!lexists(path)) return true;
+  if (await unlinkSharedFor(path, project)) return true;
+  log.warning('Could not remove the aib-shared link in %s; the worktree stays', path);
+  return false;
 }
 
 // ---- the manager -------------------------------------------------------------------------------------------------
@@ -1377,6 +1378,7 @@ export class Manager {
         Deno.mkdirSync(dirname(plan.path), { recursive: true });
         await git(['worktree', 'add', '-b', plan.branch, plan.path, snapshot], plan.project);
         hooks.copyEnvFiles(plan.project, plan.path, await localEntries(plan.project));
+        await giveSharedLink(plan.path, plan.project);
         if (await hasLfsPointers(plan.path)) {
           throw new Fallback('the worktree would hold Git LFS pointer files');
         }
@@ -1401,8 +1403,7 @@ export class Manager {
 
   /**
    * Remove a worktree Studio made, its branch and its git registration. Refuses anything outside Studio's own worktrees folder.
-   * Files written into the copy's local-only folders are moved into the main folder first; false when one could not be moved
-   * (nothing was removed then).
+   * Its `aib-shared` link is removed first; false when it could not be (nothing was removed then).
    */
   async #discard(record: WorktreeRecord): Promise<boolean> {
     const path = str(record.path),
@@ -1415,7 +1416,7 @@ export class Manager {
       return true;
     }
     const projectOk = !!project && isdir(project);
-    if (projectOk && lexists(path) && !(await rescueStrays(record))) return false;
+    if (!(await dropSharedLink(record))) return false;
     if (projectOk) {
       await git(['worktree', 'remove', '--force', path], project, { check: false });
     }
@@ -1430,14 +1431,14 @@ export class Manager {
     return true;
   }
 
-  /** #discard, then forget the record; when a stray could not be moved, the record stays as a pending (confirmed) removal instead. */
+  /** #discard, then forget the record; when its link could not be removed, the record stays as a pending (confirmed) removal instead. */
   async #discardOrKeep(key: string, record: WorktreeRecord): Promise<boolean> {
     if (await this.#discard(record)) {
       await this.registry.remove(key);
       return true;
     }
     await this.registry.update(key, { status: PENDING, confirmed: true });
-    say(`Worktree: ${record.path ?? 'None'} holds local-only files that could not be moved; removal is pending and retried at the next start`);
+    say(`Worktree: ${record.path ?? 'None'} has an aib-shared link that could not be removed; removal is pending and retried at the next start`);
     return false;
   }
 
@@ -1501,8 +1502,8 @@ export class Manager {
       (await git(['rev-parse', '--git-dir'], project, { check: false }))
           .returncode === 0;
     if (lexists(path)) {
-      // local-only files written into the copy go to the main folder first (a plain remove deletes them, ignored or not)
-      if (projectOk && !(await rescueStrays(record))) return false;
+      // the aib-shared link goes first: git and rmtree would follow a junction into the main folder's real folder
+      if (!(await dropSharedLink(record))) return false;
       if (projectOk) {
         await git(['worktree', 'remove', ...(force ? ['--force'] : []), path], project, { check: false });
       }
@@ -1604,7 +1605,10 @@ export class Manager {
     const path = str(record.path),
       project = str(record.project),
       branch = str(record.branch);
-    if (isdir(path)) return path;
+    if (isdir(path)) {
+      if (project && isdir(project)) await giveSharedLink(path, project); // an old worktree: its link checked before it is used
+      return path;
+    }
     if (!(project && isdir(project)) || (await git(['rev-parse', '--git-dir'], project, { check: false })).returncode !== 0) {
       throw new WorktreeGone(GONE_MESSAGE);
     }
@@ -1622,6 +1626,7 @@ export class Manager {
       throw error;
     }
     hooks.copyEnvFiles(project, path, await localEntries(project));
+    await giveSharedLink(path, project);
     say(`Worktree: recreated ${path} from ${branch}`);
     return path;
   }
@@ -1631,7 +1636,7 @@ export class Manager {
 export class Died extends Error {}
 
 /** Swappable pieces (tests). */
-export const hooks = { copyEnvFiles, moveStrays, pidAlive: (pid: unknown) => pidAlive(pid) };
+export const hooks = { copyEnvFiles, pidAlive: (pid: unknown) => pidAlive(pid) };
 
 // ---- sha1 (sync: repo hashes are needed in synchronous lock-path code) -------------------------------------------
 export function sha1Hex(data: Uint8Array): string {

@@ -3,15 +3,16 @@
  * `.git/info/exclude` (the common one, so every worktree obeys it):
  *
  *   # AIB: local only (shown in every chat; never committed)
- *   /private
+ *   /aib-shared
  *   # AIB: end
  *
  * Only lines inside that block count; the user's own exclude lines are never read as local only and never touched. Lines are
  * anchored at the repository top (`/<prefix><rel>`, prefix = the project's place in its repo), with no trailing slash, and glob
  * characters escaped, so each line names exactly one file or folder.
  *
- * Every git project gets `/private` by default (ensureDefault), unless the project already tracks a `private/` folder, or a
- * `.gitignore` negates it. Files shows local-only paths from the MAIN folder in every chat (nothing is put on disk in chat copies).
+ * Every git project gets `/aib-shared` by default (ensureDefault), unless the project already tracks an `aib-shared/` folder, or a
+ * `.gitignore` negates it. Files shows local-only paths from the MAIN folder in every chat. `aib-shared/` lives only in the main
+ * folder; a worktree AIB makes gets a link to it (shared_link.ts), never a copy.
  *
  * Writing: one writer at a time across processes (a FileLock on `<exclude>.aib-lock`), only AIB's block changes, a UTF-8 BOM, the
  * file's line ending and every line outside the block are kept byte for byte, and the file is replaced by a rename after checking
@@ -21,13 +22,11 @@ import * as osp from '../platform/ospath.ts';
 import { FileLock } from '../platform/lock.ts';
 import { gitPath } from './changes.ts';
 
-export { findStrays, moveStrays } from './local_strays.ts';
-
 /**
- * The default `/private` line:
- *   on       in AIB's block and git ignores it (agents are told about private/ only in this state)
- *   tracked  the project commits files under private/, so AIB leaves it alone (Files shows a note)
- *   negated  a .gitignore turns it back on (`!private`), so it would not stay local
+ * The default `/aib-shared` line:
+ *   on       in AIB's block and git ignores it (agents are told about aib-shared/, and worktrees get its link, only in this state)
+ *   tracked  the project commits files under aib-shared/, so AIB leaves it alone (Files shows a note)
+ *   negated  a .gitignore turns it back on (`!aib-shared`), so it would not stay local
  *   off      not in AIB's block (the user removed it, or AIB has not set the default up yet)
  *   no-git   not a git project (only from callers that report it; localOnlyOf returns null then)
  */
@@ -46,7 +45,7 @@ export type AddResult =
 
 export const BLOCK_START = '# AIB: local only (shown in every chat; never committed)';
 export const BLOCK_END = '# AIB: end';
-export const DEFAULT_ENTRY = 'private';
+export const DEFAULT_ENTRY = 'aib-shared';
 export const MESSAGES = {
   tracked: "Git tracks this, so it can't be excluded",
   docs: 'Docs are committed',
@@ -406,28 +405,56 @@ export function localRootsSync(project: string): string[] {
 export interface ChatLocalOnly {
   entries: string[];
   dirs: string[];
-  private: string;
+  /** The main folder's aib-shared/ when git really ignores it ('' otherwise). */
+  shared: string;
 }
 
 /**
- * What a chat is told about local-only files. private/ only when git really ignores it (state 'on'); a worktree chat gets the main
- * folder's local-only paths, and the main folder's private/ is made (empty) so it can be granted as an extra writable folder from the
- * first message (owner Q4 a). Shared by host/studio.ts (Windows) and the WSL helper (wsl/helper/local_only.ts, Linux paths).
+ * What a chat is told about local-only files. aib-shared/ only when git really ignores it (state 'on'); the main folder's aib-shared/
+ * is made (empty) for a worktree chat, so its link (shared_link.ts) and the extra writable folder it is granted lead somewhere from
+ * the first message. Shared by host/studio.ts (Windows) and the WSL helper (wsl/helper/local_only.ts, Linux paths).
  */
 export function chatLocalOnly(lo: LocalOnly, worktree: boolean, warn: (dir: string, error: unknown) => void = () => {}): ChatLocalOnly | null {
   const on = lo.defaultState === 'on';
   const told = lo.entries.filter((e) => on || e.toLowerCase() !== DEFAULT_ENTRY);
   const abs = (e: string) => osp.join(lo.project, ...e.split('/'));
-  const privateDir = on ? abs(lo.entries.find((e) => e.toLowerCase() === DEFAULT_ENTRY) ?? DEFAULT_ENTRY) : '';
-  if (worktree && privateDir && !osp.isdir(privateDir)) {
+  const sharedDir = on ? abs(lo.entries.find((e) => e.toLowerCase() === DEFAULT_ENTRY) ?? DEFAULT_ENTRY) : '';
+  if (worktree && sharedDir && !osp.isdir(sharedDir)) {
     try {
-      Deno.mkdirSync(privateDir, { recursive: true });
+      Deno.mkdirSync(sharedDir, { recursive: true });
     } catch (error) {
-      warn(privateDir, error);
+      warn(sharedDir, error);
     }
   }
-  if (!told.length && !privateDir) return null;
-  return { entries: told.map(abs), dirs: told.map(abs).filter((p) => osp.isdir(p)), private: privateDir };
+  if (!told.length && !sharedDir) return null;
+  return { entries: told.map(abs), dirs: told.map(abs).filter((p) => osp.isdir(p)), shared: sharedDir };
+}
+
+/**
+ * True when AIB may write local-only defaults (the `/aib-shared` exclude line, an empty aib-shared/) for `project`. A Studio whose
+ * state folder is under the temp folder (or that has none) is a test or a demo: it only touches projects under the temp folder, so a
+ * test that opens a chat in a fixture folder inside a real repository never writes that repository's exclude file.
+ */
+export function defaultsAllowed(stateDir: string, project: string): boolean {
+  // '' = a Studio made without a state folder (tests): treated like a temp one
+  const temp = (() => {
+    try {
+      return osp.normcase(osp.realpath(Deno.env.get('TMPDIR') || Deno.env.get('TEMP') || Deno.env.get('TMP') || '/tmp'));
+    } catch {
+      return '';
+    }
+  })();
+  if (!temp) return !!stateDir;
+  const inside = (p: string) => {
+    let real: string;
+    try {
+      real = osp.normcase(osp.realpath(p));
+    } catch {
+      real = osp.normcase(osp.normpath(p));
+    }
+    return real === temp || real.startsWith(temp.replace(/[\\/]+$/, '') + osp.SEP);
+  };
+  return (!!stateDir && !inside(stateDir)) || inside(project);
 }
 
 // ---- writing --------------------------------------------------------------------------------------------------------------
@@ -477,7 +504,7 @@ async function rewrite<T>(excludeFile: string, change: (bytes: Uint8Array) => { 
 }
 
 /**
- * Sets the default `/private` up once: only when AIB's block does not exist yet, the project does not track private/, and no
+ * Sets the default `/aib-shared` up once: only when AIB's block does not exist yet, the project does not track aib-shared/, and no
  * .gitignore negates it. Idempotent (a block that exists, even empty, means it was done: a user who removed the line keeps it
  * removed), never throws, takes the lock. null = not a git project.
  */

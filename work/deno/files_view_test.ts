@@ -8,6 +8,8 @@ import { issue, lookup, TICKET_TTL_MS } from '../../outputs/agent-studio/server/
 import { makeHandler } from '../../outputs/agent-studio/server/artifacts/origin.ts';
 import { folderKinds } from '../../outputs/agent-studio/server/desktop/folders.ts';
 import { mainCheckoutOf } from '../../outputs/agent-studio/server/worktrees/worktrees.ts';
+import { localOnlyOf } from '../../outputs/agent-studio/server/worktrees/local_only.ts';
+import { linkShared, unlinkShared } from '../../outputs/agent-studio/server/worktrees/shared_link.ts';
 import type { WebContext } from '../../outputs/agent-studio/server/web/server.ts';
 
 const WIN = Deno.build.os === 'windows';
@@ -262,19 +264,19 @@ Deno.test({
 
 void WIN;
 
-// ---- local-only folders: the main folder's private/ in every scope (owner decisions 1a, 3, 4a) -----------------------------------
-/** main repo/ with private/ (TASKS.md, designs/x.html, node_modules/) local only, build/ gitignored, and a chat copy chat-1a2b. */
+// ---- local-only folders: the main folder's aib-shared/ in every scope (owner decisions 1a, 3, 4a) -----------------------------------
+/** main repo/ with aib-shared/ (TASKS.md, designs/x.html, node_modules/) local only, build/ gitignored, and a chat copy chat-1a2b. */
 function makeLocalRepo() {
   const r = makeRepo();
   const p = (...parts: string[]) => osp.join(r.repo, ...parts);
-  // the chat copy is made from a commit, so it has no private/ (an excluded folder never reaches a copy)
+  // the chat copy is made from a commit, so it has no aib-shared/ (an excluded folder never reaches a copy)
   const exclude = p('.git', 'info', 'exclude');
   Deno.mkdirSync(osp.dirname(exclude), { recursive: true });
-  write(exclude, '# user line\n# AIB: local only (shown in every chat; never committed)\n/private\n# AIB: end\n');
-  Deno.mkdirSync(p('private', 'designs'), { recursive: true });
-  write(p('private', 'TASKS.md'), 'main tasks\n');
-  write(p('private', 'designs', 'x.html'), '<p>x</p>\n');
-  Deno.mkdirSync(p('private', 'node_modules'));
+  write(exclude, '# user line\n# AIB: local only (shown in every chat; never committed)\n/aib-shared\n# AIB: end\n');
+  Deno.mkdirSync(p('aib-shared', 'designs'), { recursive: true });
+  write(p('aib-shared', 'TASKS.md'), 'main tasks\n');
+  write(p('aib-shared', 'designs', 'x.html'), '<p>x</p>\n');
+  Deno.mkdirSync(p('aib-shared', 'node_modules'));
   const wt = osp.join(r.root, 'chat-1a2b');
   git(r.repo, 'worktree', 'add', '-q', '-b', 'studio/chat-1a2b', wt);
   const state = osp.join(r.root, 'state');
@@ -291,7 +293,7 @@ function makeLocalRepo() {
   return { ...r, p, wt, state, ctx, exclude };
 }
 type ListReply = {
-  entries: { path: string; local?: boolean; from?: string; ignored: boolean; noExclude?: string; strays?: number }[];
+  entries: { path: string; local?: boolean; from?: string; ignored: boolean; noExclude?: string }[];
   localOnly: { main: string; entries: string[]; defaultState: string };
 };
 const post = async (ctx: WebContext, path: string, body: unknown, token = 'tok') => {
@@ -301,51 +303,87 @@ const post = async (ctx: WebContext, path: string, body: unknown, token = 'tok')
 };
 
 Deno.test({
-  name: 'local only: a chat copy lists, opens and searches the main folder private/ (local, not ignored, any depth)',
+  name: 'aib-shared: a chat copy with its aib-shared link shows one row from the main folder; reads and search go to the real files',
   ignore: !HAVE_GIT,
   sanitizeResources: false,
   sanitizeOps: false,
   fn: async () => {
     const r = makeLocalRepo();
     try {
-      assert(!osp.exists(osp.join(r.wt, 'private')), 'nothing is put in the copy');
+      const lo = await localOnlyOf(r.repo);
+      assertEquals(linkShared(r.wt, lo), 'linked');
+      assert(Deno.lstatSync(osp.join(r.wt, 'aib-shared')).isSymlink);
+      const [, top] = await call(r.ctx, '/api/live/files/list', 'id=live1&root=chat') as [number, ListReply];
+      const rows = top.entries.filter((e) => e.path === 'aib-shared');
+      assertEquals(rows.length, 1, 'the link and the main folder row are one row');
+      assertEquals([rows[0].local, rows[0].from, rows[0].ignored], [true, 'main', false]);
+      const [, inside] = await call(r.ctx, '/api/live/files/list', 'id=live1&root=chat&dir=aib-shared') as [number, ListReply];
+      assertEquals(inside.entries.map((e) => e.path).sort(), ['aib-shared/TASKS.md', 'aib-shared/designs', 'aib-shared/node_modules']);
+      const [s2, read] = await call(r.ctx, '/api/live/files/read', 'id=live1&root=chat&path=aib-shared/TASKS.md') as [
+        number,
+        { text: string; abs: string; from?: string },
+      ];
+      assertEquals([s2, read.text, read.from], [200, 'main tasks\n', 'main']);
+      assertEquals(osp.normcase(read.abs), osp.normcase(r.p('aib-shared', 'TASKS.md')), 'the real file, not the path through the link');
+      const [, found] = await call(r.ctx, '/api/live/files/search', 'id=live1&root=chat&q=TASKS') as [number, { matches: { path: string }[] }];
+      assertEquals(found.matches.map((m) => m.path), ['aib-shared/TASKS.md'], 'found once');
+      assertEquals(git(r.wt, 'status', '--porcelain', '--untracked-files=all').trim(), '', 'git in the copy shows nothing');
+    } finally {
+      unlinkShared(r.wt); // the link first: git worktree remove follows a junction
+      git(r.repo, 'worktree', 'remove', '--force', r.wt);
+      assert(osp.exists(r.p('aib-shared', 'TASKS.md')), 'the real folder is intact');
+      r.dispose();
+    }
+  },
+});
+
+
+Deno.test({
+  name: 'local only: a chat copy lists, opens and searches the main folder aib-shared/ (local, not ignored, any depth)',
+  ignore: !HAVE_GIT,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn: async () => {
+    const r = makeLocalRepo();
+    try {
+      assert(!osp.exists(osp.join(r.wt, 'aib-shared')), 'nothing is put in the copy');
       const [s, top] = await call(r.ctx, '/api/live/files/list', 'id=live1&root=chat') as [number, ListReply];
       assertEquals(s, 200);
-      const priv = top.entries.find((e) => e.path === 'private')!;
+      const priv = top.entries.find((e) => e.path === 'aib-shared')!;
       assertEquals([priv.local, priv.from, priv.ignored, priv.noExclude], [true, 'main', false, 'already']);
       assertEquals(osp.normcase(top.localOnly.main), osp.normcase(r.repo));
-      assertEquals([top.localOnly.entries, top.localOnly.defaultState], [['private'], 'on']);
+      assertEquals([top.localOnly.entries, top.localOnly.defaultState], [['aib-shared'], 'on']);
       assertEquals(top.entries.find((e) => e.path === 'README.md')!.noExclude, 'tracked');
-      const [, inside] = await call(r.ctx, '/api/live/files/list', 'id=live1&root=chat&dir=private') as [number, ListReply];
+      const [, inside] = await call(r.ctx, '/api/live/files/list', 'id=live1&root=chat&dir=aib-shared') as [number, ListReply];
       const byPath = Object.fromEntries(inside.entries.map((e) => [e.path, e]));
-      assertEquals([byPath['private/designs'].local, byPath['private/designs'].ignored], [true, false], 'a sub-folder opens too');
-      assertEquals([byPath['private/TASKS.md'].local, byPath['private/TASKS.md'].from], [true, 'main']);
-      assertEquals(byPath['private/node_modules'].ignored, true, 'node_modules inside stays dim');
-      const [, deep] = await call(r.ctx, '/api/live/files/list', 'id=live1&root=chat&dir=private/designs') as [number, ListReply];
-      assertEquals(deep.entries.map((e) => e.path), ['private/designs/x.html']);
-      const [s2, read] = await call(r.ctx, '/api/live/files/read', 'id=live1&root=chat&path=private/TASKS.md') as [
+      assertEquals([byPath['aib-shared/designs'].local, byPath['aib-shared/designs'].ignored], [true, false], 'a sub-folder opens too');
+      assertEquals([byPath['aib-shared/TASKS.md'].local, byPath['aib-shared/TASKS.md'].from], [true, 'main']);
+      assertEquals(byPath['aib-shared/node_modules'].ignored, true, 'node_modules inside stays dim');
+      const [, deep] = await call(r.ctx, '/api/live/files/list', 'id=live1&root=chat&dir=aib-shared/designs') as [number, ListReply];
+      assertEquals(deep.entries.map((e) => e.path), ['aib-shared/designs/x.html']);
+      const [s2, read] = await call(r.ctx, '/api/live/files/read', 'id=live1&root=chat&path=aib-shared/TASKS.md') as [
         number,
         { text: string; abs: string; local: boolean },
       ];
       assertEquals([s2, read.text, read.local], [200, 'main tasks\n', true]);
-      assertEquals(osp.normcase(read.abs), osp.normcase(r.p('private', 'TASKS.md')), 'Copy path / Open in editor name the real file');
-      assertEquals((await call(r.ctx, '/api/live/files/read', 'id=live1&root=chat&path=private/../README.md'))[0], 400);
-      assertEquals((await call(r.ctx, '/api/live/files/read', 'id=live1&root=chat&path=private/nope.md'))[0], 404);
+      assertEquals(osp.normcase(read.abs), osp.normcase(r.p('aib-shared', 'TASKS.md')), 'Copy path / Open in editor name the real file');
+      assertEquals((await call(r.ctx, '/api/live/files/read', 'id=live1&root=chat&path=aib-shared/../README.md'))[0], 400);
+      assertEquals((await call(r.ctx, '/api/live/files/read', 'id=live1&root=chat&path=aib-shared/nope.md'))[0], 404);
       const [, found] = await call(r.ctx, '/api/live/files/search', 'id=live1&root=chat&q=TASKS') as [
         number,
         { matches: { path: string }[]; localOnly: { entries: string[] } },
       ];
-      assertEquals(found.matches.map((m) => m.path), ['private/TASKS.md']);
-      assertEquals(found.localOnly.entries, ['private']);
+      assertEquals(found.matches.map((m) => m.path), ['aib-shared/TASKS.md']);
+      assertEquals(found.localOnly.entries, ['aib-shared']);
       // the main folder's own scope: the same row, local, no `from`
       const [, mainTop] = await call(r.ctx, '/api/live/files/list', 'id=main1&root=chat') as [number, ListReply];
-      const mp = mainTop.entries.find((e) => e.path === 'private')!;
+      const mp = mainTop.entries.find((e) => e.path === 'aib-shared')!;
       assertEquals([mp.local, mp.from, mp.ignored], [true, undefined, false]);
       assertEquals(mainTop.entries.find((e) => e.path === 'node_modules')!.ignored, true, 'node_modules stays ignored');
       assertEquals(mainTop.entries.find((e) => e.path === 'build')!.ignored, true, 'a .gitignored folder stays ignored');
       assertEquals(mainTop.entries.find((e) => e.path === 'build')!.noExclude, undefined, 'an ignored folder may be made local only');
       const [, mainFound] = await call(r.ctx, '/api/live/files/search', 'id=main1&root=chat&q=x.html') as [number, { matches: { path: string }[] }];
-      assertEquals(mainFound.matches.map((m) => m.path), ['private/designs/x.html'], 'excluded files are found in the main folder too');
+      assertEquals(mainFound.matches.map((m) => m.path), ['aib-shared/designs/x.html'], 'excluded files are found in the main folder too');
     } finally {
       git(r.repo, 'worktree', 'remove', '--force', r.wt);
       r.dispose();
@@ -367,7 +405,7 @@ Deno.test({
         number,
         { ok: boolean; undo: string; localOnly: { entries: string[] } },
       ];
-      assertEquals([s1, add.ok, add.localOnly.entries], [200, true, ['private', 'outputs']]);
+      assertEquals([s1, add.ok, add.localOnly.entries], [200, true, ['aib-shared', 'outputs']]);
       assert(Deno.readTextFileSync(r.exclude).startsWith('# user line\n'), 'the user line is kept');
       const [, list] = await call(r.ctx, '/api/live/files/list', 'id=main1&root=chat') as [number, ListReply];
       assertEquals(list.entries.find((e) => e.path === 'outputs')!.local, true, 'the row turns local');
@@ -375,7 +413,7 @@ Deno.test({
         number,
         { ok: boolean; localOnly: { entries: string[] } },
       ];
-      assertEquals([s2, undo.ok, undo.localOnly.entries], [200, true, ['private']]);
+      assertEquals([s2, undo.ok, undo.localOnly.entries], [200, true, ['aib-shared']]);
       const [s3, refused] = await post(r.ctx, '/api/live/files/exclude', body({ path: 'README.md' })) as [
         number,
         { ok: boolean; code: string; error: string },
@@ -393,7 +431,6 @@ Deno.test({
       assert(!osp.exists(osp.join(r.wt, 'notes.md')));
       const [, chatTop] = await call(r.ctx, '/api/live/files/list', 'id=live1&root=chat') as [number, ListReply];
       assertEquals(chatTop.entries.find((e) => e.path === 'notes.md')!.from, 'main');
-      assertEquals((await post(r.ctx, '/api/live/files/strays/move', { id: 'live1', root: 'chat' }))[0], 200);
     } finally {
       git(r.repo, 'worktree', 'remove', '--force', r.wt);
       r.dispose();

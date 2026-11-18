@@ -1,6 +1,6 @@
 /**
  * Removing a project from AIB also deletes the file editor's stored unsaved text for it (server/files/live_files.ts forgetProject,
- * called by server/web/project_routes.ts), never another project's, never the project folder or its private/ folder. Temp folders only.
+ * called by server/web/project_routes.ts), never another project's, never the project folder or its aib-shared/ folder. Temp folders only.
  */
 import { assert, assertEquals } from './_assert.ts';
 import { RemovedProjects } from '../../outputs/agent-studio/server/desktop/project_delete.ts';
@@ -18,14 +18,14 @@ const exists = async (p: string) => {
   }
 };
 
-Deno.test("removing a project deletes the editor's stored unsaved text for it only; the folder and its private/ stay", async () => {
+Deno.test("removing a project deletes the editor's stored unsaved text for it only; the folder and its aib-shared/ stay", async () => {
   const root = await Deno.realPath(await Deno.makeTempDir({ prefix: 'aib-project-editor-' }));
   const state = `${root}${SEP}state`, alpha = `${root}${SEP}alpha`, beta = `${root}${SEP}beta`;
   try {
     await Deno.mkdir(state, { recursive: true });
-    await Deno.mkdir(`${alpha}${SEP}private`, { recursive: true });
+    await Deno.mkdir(`${alpha}${SEP}aib-shared`, { recursive: true });
     await Deno.mkdir(beta, { recursive: true });
-    await Deno.writeTextFile(`${alpha}${SEP}private${SEP}note.md`, 'mine');
+    await Deno.writeTextFile(`${alpha}${SEP}aib-shared${SEP}note.md`, 'mine');
     await Deno.writeTextFile(`${alpha}${SEP}a.txt`, 'hello');
     await Deno.writeTextFile(`${beta}${SEP}b.txt`, 'beta');
     const mk = () => new LiveFiles({ stateDir: state, liveCall: () => Promise.resolve([200, { ok: true }]), conversations: () => [], connectionOf: () => null });
@@ -58,7 +58,7 @@ Deno.test("removing a project deletes the editor's stored unsaved text for it on
     assertEquals(live.stored(alpha).length, 0, "the removed project's text is gone");
     assertEquals(live.stored(beta).length, 1, "the other project's text is untouched");
     assertEquals(storeFiles(), 1);
-    assert(await exists(`${alpha}${SEP}private${SEP}note.md`), 'private/ untouched');
+    assert(await exists(`${alpha}${SEP}aib-shared${SEP}note.md`), 'aib-shared/ untouched');
     assertEquals(await Deno.readTextFile(`${alpha}${SEP}a.txt`), 'hello');
   } finally {
     await Deno.remove(root, { recursive: true }).catch(() => {});

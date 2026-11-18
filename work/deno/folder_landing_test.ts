@@ -1,5 +1,5 @@
 /**
- * Build plan 1b, phase P3 (private/designs/worktree-model/build-plan-1b.md section 2, e2e 7-11b, 13b, 25): a helper of a chat that works
+ * Build plan 1b, phase P3 (aib-shared/designs/worktree-model/build-plan-1b.md section 2, e2e 7-11b, 13b, 25): a helper of a chat that works
  * in the project folder lands when the main chat's turn has ended (owner decision 2b). Through a real Studio with fake agents and real git
  * in temp folders:
  * - 7   merge_helper from a busy folder parent is queued, and lands on landOn (the folder's branch) after the turn: the visible line, the

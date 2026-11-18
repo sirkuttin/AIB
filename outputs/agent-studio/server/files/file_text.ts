@@ -1,5 +1,5 @@
 /**
- * The file editor's view of a file's bytes (private/designs/file-editor, design v2 3.1; architect review must-fix 8).
+ * The file editor's view of a file's bytes (aib-shared/designs/file-editor, design v2 3.1; architect review must-fix 8).
  *
  * decodeDisk(bytes) says what the bytes are and whether AIB can edit them:
  *   sha          SHA-256 of the raw bytes (the save's hash check compares raw bytes, never decoded text)

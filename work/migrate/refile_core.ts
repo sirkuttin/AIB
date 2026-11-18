@@ -2,7 +2,7 @@
  * The re-file core of the one-off folder-chats migration (folder_chats_migrate.ts). It lived in the app as worktrees/refile.ts until
  * the owner asked for no migration code in the app (2026-11-16); only the script uses it now.
  *
- * What the P0 experiment proved (private/designs/worktree-model/refile-experiment.md):
+ * What the P0 experiment proved (aib-shared/designs/worktree-model/refile-experiment.md):
  *   - Claude Code: move `projects/<enc W>/<id>.jsonl` (and the `<id>/` side folder) to `projects/<enc P>/` AND rewrite every
  *     `"cwd"` W -> P, so the listing for P has it with cwd P (the listing's cwd is read from the transcript lines).
  *   - Codex: open the chat once in the project folder (`session/load` with cwd = P, no prompt): Codex re-indexes it itself. Nothing

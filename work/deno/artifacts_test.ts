@@ -1301,40 +1301,54 @@ Deno.test('wiring: "Open in Artifacts" registers a file for a saved chat that is
 function localFixture() {
   const tmp = temp();
   const main = join(tmp.dir, 'main'), copy = join(tmp.dir, 'chat-1');
-  Deno.mkdirSync(join(main, 'private', 'designs'), { recursive: true });
+  Deno.mkdirSync(join(main, 'aib-shared', 'designs'), { recursive: true });
   Deno.mkdirSync(join(copy, 'outputs'), { recursive: true });
-  Deno.writeTextFileSync(join(main, 'private', 'designs', 'x.html'), '<title>X</title>x');
+  Deno.writeTextFileSync(join(main, 'aib-shared', 'designs', 'x.html'), '<title>X</title>x');
   Deno.writeTextFileSync(join(main, 'shared.html'), '<p>tracked, main only</p>');
   Deno.writeTextFileSync(join(tmp.dir, 'outside.html'), '<p>outside</p>');
   const store = storeIn(tmp.dir);
   const service = new Service(store, () => 't', () => copy, {
-    localRoots: (_id, cwd) => ({ main, roots: cwd === copy ? [join(main, 'private')] : [] }),
+    localRoots: (_id, cwd) => ({ main, roots: cwd === copy ? [join(main, 'aib-shared')] : [] }),
   });
   const publish = (path: string) =>
     service.handlePost(headers(), '/api/live/artifacts/publish', { conversationId: 'c1', path }) as [number, Record<string, unknown>];
   return { tmp, main, copy, publish };
 }
 
-Deno.test('local only (8a): a chat copy publishes the main folder private/ by full and by relative path; the rest stays refused', () => {
+Deno.test('local only (8a): a chat copy publishes the main folder aib-shared/ by full and by relative path; the rest stays refused', () => {
   const { tmp, main, copy, publish } = localFixture();
   using _ = tmp;
-  const [s1, full] = publish(join(main, 'private', 'designs', 'x.html'));
+  const [s1, full] = publish(join(main, 'aib-shared', 'designs', 'x.html'));
   assertEquals(s1, 200, JSON.stringify(full));
-  const [s2, rel] = publish('private/designs/x.html'); // the copy has no private/: the main folder's file
+  const [s2, rel] = publish('aib-shared/designs/x.html'); // the copy has no aib-shared/: the main folder's file
   assertEquals([s2, rel.id], [200, full.id]);
   assertEquals(publish(join(main, 'shared.html'))[1].code, 'outside_project', 'only the local-only paths of main');
   assertEquals(publish('..\\outside.html')[1].code, 'outside_project');
-  assertEquals(publish(join(main, 'private', '..', 'shared.html'))[1].code, 'outside_project');
+  assertEquals(publish(join(main, 'aib-shared', '..', 'shared.html'))[1].code, 'outside_project');
   // a copy's own file of the same name wins over main's
-  Deno.mkdirSync(join(copy, 'private', 'designs'), { recursive: true });
-  Deno.writeTextFileSync(join(copy, 'private', 'designs', 'x.html'), '<title>own</title>');
-  const [s3, own] = publish('private/designs/x.html');
+  Deno.mkdirSync(join(copy, 'aib-shared', 'designs'), { recursive: true });
+  Deno.writeTextFileSync(join(copy, 'aib-shared', 'designs', 'x.html'), '<title>own</title>');
+  const [s3, own] = publish('aib-shared/designs/x.html');
   assertEquals(s3, 200);
   assert(own.id !== full.id, 'the copy file is its own artifact');
 });
 
+Deno.test('aib-shared: a chat copy publishes through its aib-shared link: the main folder\'s real file, one artifact either way', () => {
+  const { tmp, main, copy, publish } = localFixture();
+  using _ = tmp;
+  Deno.symlinkSync(join(main, 'aib-shared'), join(copy, 'aib-shared'), Deno.build.os === 'windows' ? { type: 'junction' } : undefined);
+  const [s1, viaLink] = publish('aib-shared/designs/x.html');
+  assertEquals(s1, 200, JSON.stringify(viaLink));
+  const [s2, full] = publish(join(main, 'aib-shared', 'designs', 'x.html'));
+  assertEquals([s2, full.id], [200, viaLink.id], 'the same real file: the same artifact');
+  const [s3, abs] = publish(join(copy, 'aib-shared', 'designs', 'x.html'));
+  assertEquals([s3, abs.id], [200, viaLink.id]);
+  Deno.removeSync(join(copy, 'aib-shared')); // the link only
+  assert(Deno.statSync(join(main, 'aib-shared', 'designs', 'x.html')).isFile);
+});
+
 Deno.test({
-  name: 'local only (D1 regression): a link inside the copy or inside private/ that points outside is still refused',
+  name: 'local only (D1 regression): a link inside the copy or inside aib-shared/ that points outside is still refused',
   ignore: Deno.build.os !== 'windows',
   fn: () => {
     const { tmp, main, copy, publish } = localFixture();
@@ -1342,14 +1356,14 @@ Deno.test({
     const away = join(tmp.dir, 'away');
     Deno.mkdirSync(away);
     Deno.writeTextFileSync(join(away, 'y.html'), '<p>y</p>');
-    const links = [join(copy, 'outputs', 'link'), join(main, 'private', 'link')];
+    const links = [join(copy, 'outputs', 'link'), join(main, 'aib-shared', 'link')];
     try {
       for (const link of links) Deno.symlinkSync(away, link, { type: 'junction' });
       assertEquals(publish(join(copy, 'outputs', 'link', 'y.html'))[1].code, 'outside_project');
       assertEquals(publish('outputs/link/y.html')[1].code, 'outside_project');
-      assertEquals(publish(join(main, 'private', 'link', 'y.html'))[1].code, 'outside_project');
-      // relative: the copy has no such file and main's resolves outside private/, so nothing is found
-      assertEquals(publish('private/link/y.html')[0], 404);
+      assertEquals(publish(join(main, 'aib-shared', 'link', 'y.html'))[1].code, 'outside_project');
+      // relative: the copy has no such file and main's resolves outside aib-shared/, so nothing is found
+      assertEquals(publish('aib-shared/link/y.html')[0], 404);
     } finally {
       for (const link of links) {
         try {

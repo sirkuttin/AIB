@@ -448,59 +448,59 @@ Deno.test("a merge already running for the chat is refused; non-worktree and unk
 });
 
 // ---- local-only paths never land (architect review break 6, owner Q2 a) --------------------------------------------------------
-Deno.test("local only: a chat made before the exclude merges without its private/ edits; its version is saved beside the main file", async () => {
+Deno.test("local only: a chat made before the exclude merges without its aib-shared/ edits; its version is saved beside the main file", async () => {
   using box = new Sandbox();
-  write(box.project, "private/T.md", "main start\n"); // untracked, not ignored yet: it goes into the chat's snapshot S
-  write(box.project, "private/New.md", "x\n");
+  write(box.project, "aib-shared/T.md", "main start\n"); // untracked, not ignored yet: it goes into the chat's snapshot S
+  write(box.project, "aib-shared/New.md", "x\n");
   const ctx = await chat(box);
-  assert(await localOnly.ensureDefault(box.project), "the temp repo gets /private");
-  write(box.project, "private/T.md", "main edit\n"); // the shared file moves on in the main folder
-  commit(ctx.wt, "private/T.md", "chat edit\n", "chat edits a local-only file");
+  assert(await localOnly.ensureDefault(box.project), "the temp repo gets /aib-shared");
+  write(box.project, "aib-shared/T.md", "main edit\n"); // the shared file moves on in the main folder
+  commit(ctx.wt, "aib-shared/T.md", "chat edit\n", "chat edits a local-only file");
   commit(ctx.wt, "work.txt", "real work\n", "real work");
-  write(ctx.wt, "private/Fresh.md", "made by the chat\n");
-  runGit(ctx.wt, "add", "-f", "private/Fresh.md"); // forced in: tracked in the copy only
+  write(ctx.wt, "aib-shared/Fresh.md", "made by the chat\n");
+  runGit(ctx.wt, "add", "-f", "aib-shared/Fresh.md"); // forced in: tracked in the copy only
   const result = await merge(ctx.studio, ctx.id, "T");
   assertEquals(result.state, "merged");
-  assertEquals(read(box.project, "private/T.md"), "main edit\n", "the main folder's file is never overwritten");
-  assertEquals(read(box.project, "private/T (from chat-aaaaaaaa).md"), "chat edit\n");
-  assertEquals(read(box.project, "private/Fresh.md"), "made by the chat\n", "a file the main folder lacks is saved at its own name");
-  assertEquals(runGit(box.project, "ls-files", "private"), "", "nothing local only is committed");
+  assertEquals(read(box.project, "aib-shared/T.md"), "main edit\n", "the main folder's file is never overwritten");
+  assertEquals(read(box.project, "aib-shared/T (from chat-aaaaaaaa).md"), "chat edit\n");
+  assertEquals(read(box.project, "aib-shared/Fresh.md"), "made by the chat\n", "a file the main folder lacks is saved at its own name");
+  assertEquals(runGit(box.project, "ls-files", "aib-shared"), "", "nothing local only is committed");
   assert(tree(ctx).includes("work.txt"));
-  assert(!tree(ctx).some((p) => p.startsWith("private/")));
-  assertEquals((result.localOnly as string[]).sort(), ["private/Fresh.md", "private/T.md"], "New.md is only S's copy: never landed");
+  assert(!tree(ctx).some((p) => p.startsWith("aib-shared/")));
+  assertEquals((result.localOnly as string[]).sort(), ["aib-shared/Fresh.md", "aib-shared/T.md"], "New.md is only S's copy: never landed");
   const notes = ctx.studio.notes();
   assertEquals(notes[0], result.message);
   assert(notes[1].startsWith("Local-only files are never merged"), notes[1]);
-  assert(notes[1].includes("private/T.md (your version is saved beside it as private/T (from chat-aaaaaaaa).md)"), notes[1]);
-  assert(notes[1].includes("private/Fresh.md (your version is saved there)"), notes[1]);
-  assertEquals(box.status(), "", "the main folder is clean: private/ stays ignored");
+  assert(notes[1].includes("aib-shared/T.md (your version is saved beside it as aib-shared/T (from chat-aaaaaaaa).md)"), notes[1]);
+  assert(notes[1].includes("aib-shared/Fresh.md (your version is saved there)"), notes[1]);
+  assertEquals(box.status(), "", "the main folder is clean: aib-shared/ stays ignored");
   assertEquals(runGit(box.project, "log", "--format=%s", "-1", "main").trim(), "AIB: work from chat T", "one commit");
 });
 
 Deno.test("local only: a chat that changed only local-only files has nothing to merge; its version is still saved, once", async () => {
   using box = new Sandbox();
-  write(box.project, "private/T.md", "main start\n");
+  write(box.project, "aib-shared/T.md", "main start\n");
   const ctx = await chat(box);
   await localOnly.ensureDefault(box.project);
-  commit(ctx.wt, "private/T.md", "chat edit\n", "local only");
+  commit(ctx.wt, "aib-shared/T.md", "chat edit\n", "local only");
   const before = main(ctx);
   const message = await refused(ctx, "empty");
   assert(message.startsWith("Nothing to merge into main. Local-only files are never merged"), message);
   assertEquals(main(ctx), before);
-  assertEquals(read(box.project, "private/T.md"), "main start\n");
-  assertEquals(read(box.project, "private/T (from chat-aaaaaaaa).md"), "chat edit\n");
+  assertEquals(read(box.project, "aib-shared/T.md"), "main start\n");
+  assertEquals(read(box.project, "aib-shared/T (from chat-aaaaaaaa).md"), "chat edit\n");
   const again = await refused(ctx, "empty");
-  assert(again.includes("already saved beside it as private/T (from chat-aaaaaaaa).md"), again);
-  assertEquals([...Deno.readDirSync(pathOf(box.project, "private"))].map((e) => e.name).sort(), ["T (from chat-aaaaaaaa).md", "T.md"]);
+  assert(again.includes("already saved beside it as aib-shared/T (from chat-aaaaaaaa).md"), again);
+  assertEquals([...Deno.readDirSync(pathOf(box.project, "aib-shared"))].map((e) => e.name).sort(), ["T (from chat-aaaaaaaa).md", "T.md"]);
 });
 
-Deno.test("local only: a clean replay that commits a forced-in private/ file lands as one commit without it", async () => {
+Deno.test("local only: a clean replay that commits a forced-in aib-shared/ file lands as one commit without it", async () => {
   using box = new Sandbox();
   await localOnly.ensureDefault(box.project);
   const ctx = await chat(box);
   commit(ctx.wt, "a.txt", "a\n", "first");
-  write(ctx.wt, "private/P.md", "chat notes\n");
-  runGit(ctx.wt, "add", "-f", "private/P.md");
+  write(ctx.wt, "aib-shared/P.md", "chat notes\n");
+  runGit(ctx.wt, "add", "-f", "aib-shared/P.md");
   runGit(ctx.wt, "commit", "-m", "notes too");
   commit(ctx.wt, "b.txt", "b\n", "last");
   const before = main(ctx);
@@ -509,7 +509,7 @@ Deno.test("local only: a clean replay that commits a forced-in private/ file lan
   assertEquals(runGit(box.project, "log", "--format=%s", `${before}..main`).trim(), "last");
   assert(runGit(box.project, "log", "-1", "--format=%b", "main").includes("Chat commits:\n- first\n- notes too\n- last"));
   assert(tree(ctx).includes("a.txt") && tree(ctx).includes("b.txt"));
-  assertEquals(runGit(box.project, "log", "--format=%H", "--all", "--", "private"), "", "never in main's history either");
-  assertEquals(read(box.project, "private/P.md"), "chat notes\n");
+  assertEquals(runGit(box.project, "log", "--format=%H", "--all", "--", "aib-shared"), "", "never in main's history either");
+  assertEquals(read(box.project, "aib-shared/P.md"), "chat notes\n");
   assertEquals(box.status(), "");
 });

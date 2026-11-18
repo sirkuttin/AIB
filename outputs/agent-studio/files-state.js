@@ -235,14 +235,13 @@
           row.artifact = !!(arts && arts.has(e.path));
         }
         out.push(row);
-        // files a chat's copy holds under a local-only path (they are not the shared ones): a warning row right below
-        if (Number(e.strays) > 0) out.push({ kind: 'stray', path: e.path + '/!stray', entry: e.path, count: Number(e.strays), depth: depth + 1 });
+
         if (isOpen) walk(e.path, depth + 1);
       }
       // the last row inside aib-docs
       if (dir === DOCS_FOLDER && o.newDoc) out.push({ kind: 'newdoc', path: NEW_DOC, depth });
     };
-    // the project commits private/, so AIB does not keep it local only: one note at the top
+    // the project commits aib-shared/, so AIB does not keep it local only: one note at the top
     if (o.localNote) out.unshift({ kind: 'localnote', path: '!localnote', text: o.localNote, depth: 0 });
     walk('', 0);
     return out;
@@ -297,7 +296,7 @@
       return p === x || p.startsWith(x + '/');
     });
   }
-  // The real file on disk for a local-only row: the main folder's (C:\…\main\private\TASKS.md).
+  // The real file on disk for a local-only row: the main folder's (C:\…\main\aib-shared\TASKS.md).
   function localAbs(lo, rel) {
     const m = String((lo && lo.main) || '').replace(/[\\/]+$/, '');
     if (!m) return '';
@@ -311,7 +310,7 @@
       row.name + '\n' + LOCAL_LINE + (abs ? '\nThe same ' + (row.kind === 'dir' ? 'folder' : 'file') + ' in every chat: ' + abs : '')
     );
   }
-  const LOCAL_NOTE_TRACKED = "private/ is committed in this project, so AIB doesn't keep it local only.";
+  const LOCAL_NOTE_TRACKED = "aib-shared/ is committed in this project, so AIB doesn't keep it local only.";
   const localNote = (lo) => (lo && lo.defaultState === 'tracked' ? LOCAL_NOTE_TRACKED : '');
   // "Git exclude" in a row's right-click menu: greyed with the reason when it can't apply (the server's refusals, by row).
   const EXCLUDE_WHY = {

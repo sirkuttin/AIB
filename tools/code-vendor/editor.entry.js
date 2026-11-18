@@ -1,4 +1,4 @@
-// The file tab's code editor (spike, P0 of private/designs/file-editor): CodeMirror 6 with AIB's language set and a theme made only
+// The file tab's code editor (spike, P0 of aib-shared/designs/file-editor): CodeMirror 6 with AIB's language set and a theme made only
 // of AIB's CSS variables, so every AIB theme (incl. high contrast) works with no per-theme code.
 //
 // Exposes window.AIBCodeEditor:

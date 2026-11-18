@@ -1,5 +1,5 @@
 """Subagent worktrees, Gemini CLI part: e2e with the REAL Gemini CLI over ACP (as AIB launches it) against the local Gemini API stub
-(work/gemini_stub_api.js, model pinned with GEMINI_MODEL so the router never calls), temp config only. Design: private
+(work/gemini_stub_api.js, model pinned with GEMINI_MODEL so the router never calls), temp config only. Design: aib-shared
 designs/subagent-worktrees/gemini-proof.md; code: server/subagents/gemini.ts.
 
   GeminiRedirectTest   a real AIB (deno-split web server + agent host) starts a Gemini chat (API-key sign-in) in a temp git project.

@@ -1,7 +1,7 @@
 //go:build windows
 
 // Package wintoast shows Windows toasts with buttons and a text box from a plain (unpackaged) Go program, and receives their
-// clicks through a COM activator: Inbox v3.1 phase 4 (private/designs/inbox-v31, section 3). Pure Go over combase/ole32, no cgo,
+// clicks through a COM activator: Inbox v3.1 phase 4 (aib-shared/designs/inbox-v31, section 3). Pure Go over combase/ole32, no cgo,
 // no PowerShell, no console. Every WinRT call runs on one locked OS thread in the multithreaded apartment.
 //
 // The app's identity is registry-only (registry.go): HKCU\Software\Classes\AppUserModelId\<AUMID> {DisplayName, IconUri,

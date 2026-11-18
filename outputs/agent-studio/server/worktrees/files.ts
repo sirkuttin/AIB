@@ -199,7 +199,7 @@ export interface Entry {
   link: boolean;
   local?: true; // a local-only path: shown in normal colour, opens without "Show ignored"
   from?: 'main'; // laid over a chat copy's listing from the main folder
-  strays?: number; // files under this local-only entry that sit in the chat's own copy instead (local_strays.ts)
+
   localWarn?: 'not-ignored'; // in AIB's block, but git does not ignore it (a later negation wins)
   noExclude?: ExcludeRefusal; // why "Git exclude" can't apply to this row (the menu greys the item)
 }
@@ -320,15 +320,14 @@ function localSig(main: string, entries: Entry[]): string {
 /**
  * One folder of `root` with the local-only paths of `main` laid over it. root === main (the main folder, or a chat working in it):
  * the plain listing with local rows marked. A chat's copy: a folder inside a local-only entry is listed from main; above one, each
- * entry that exists in main replaces the copy's same-name row (`strays` counts the copy's own files under it), and folders that
- * lead to a deeper entry are shown even when the copy lacks them.
+ * entry that exists in main replaces the copy's same-name row (the copy's `aib-shared` link among them, shared_link.ts), and folders
+ * that lead to a deeper entry are shown even when the copy lacks them.
  */
 export async function listLocal(
   root: string,
   main: string,
   lo: LocalOnly | null,
   rel: unknown,
-  strays: string[] = [],
 ): Promise<Listing & { sig: string }> {
   const dir = safeParts(rel).join('/');
   if (!lo) return { ...(await listDir(root, dir)), sig: '' };
@@ -358,14 +357,12 @@ export async function listLocal(
       const child = deeper.split('/')[0];
       const i = at(child);
       if (child === deeper) {
-        const own = strays.filter((s) => norm(s) === norm(entry) || norm(s).startsWith(norm(entry) + '/')).length;
         const fromMain = mainEntry(main, entry);
         if (fromMain) {
           fromMain.local = true;
-          if (own) fromMain.strays = own;
           if (i >= 0) listing.entries[i] = fromMain;
           else listing.entries.push(fromMain);
-        } else if (i >= 0 && own) listing.entries[i].strays = own; // only the copy has it: a stray
+        }
       } else if (i < 0) {
         const pass = mainEntry(main, dir ? dir + '/' + child : child);
         if (pass?.dir) listing.entries.push(pass);

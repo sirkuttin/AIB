@@ -1,4 +1,4 @@
-/** More desktop shots from the realistic demo (port 8851): Changes + Merge, artifact menu, private/ menu, subagent card. */
+/** More desktop shots from the realistic demo (port 8851): Changes + Merge, artifact menu, aib-shared/ menu, subagent card. */
 import { clickLeaf, clickText, clickExact, closeTabs, eachTheme, shot, sleep } from './lib.ts';
 import { Browser } from './lib.ts';
 const URL = 'http://127.0.0.1:8851/chat.html';
@@ -30,7 +30,7 @@ try {
     await project(p, 'storefront');
     await clickText(p, 'button.connection', 'Add CSV export'); await sleep(2000);
     await clickExact(p, 'button', 'Files'); await sleep(1500);
-    await p.eval(`(() => { const e = [...document.querySelectorAll('*')].filter(e => e.offsetParent && (e.innerText||'').trim().startsWith('private') && ![...e.children].some(c => (c.innerText||'').trim().startsWith('private')))[0]; const r = e.getBoundingClientRect(); window.__pr = [r.left + 20, r.top + r.height/2]; })()`);
+    await p.eval(`(() => { const e = [...document.querySelectorAll('*')].filter(e => e.offsetParent && (e.innerText||'').trim().startsWith('aib-shared') && ![...e.children].some(c => (c.innerText||'').trim().startsWith('private')))[0]; const r = e.getBoundingClientRect(); window.__pr = [r.left + 20, r.top + r.height/2]; })()`);
     const [x, y] = await p.eval<number[]>('window.__pr');
     await p.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'right', clickCount: 1 });
     await p.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'right', clickCount: 1 });

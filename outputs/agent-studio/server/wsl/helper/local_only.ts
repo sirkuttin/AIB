@@ -3,12 +3,11 @@
  * MAIN folder (AIB's block of `.git/info/exclude`, worktrees/local_only.ts). A chat working in its own copy can't see them there
  * (git does not copy ignored files), so, as for a Windows project, AIB shows them from the main folder in Files and grants the
  * chat's agent the main folder's local-only folders. The same modules run here natively, with Linux paths and Linux git:
- *   localOnly.ensure      local_only.ensureDefault: the default `/private` line (idempotent; AIB only asks where a Windows project
+ *   localOnly.ensure      local_only.ensureDefault: the default `/aib-shared` line (idempotent; AIB only asks where a Windows project
  *                         would get it, wsl/local_only.ts wslDefaultsAllowed)
  *   localOnly.chat        local_only.chatLocalOnly: what the chat's agent is told and granted (absolute Linux paths of the main folder)
- *   localOnly.list|search|read  the bodies of files_routes.ts' list, search and read (listLocal, excludeHints, findStrays, localFiles)
+ *   localOnly.list|search|read  the bodies of files_routes.ts' list, search and read (listLocal, excludeHints, localFiles)
  *   localOnly.exclude     POST files/exclude: addEntry (moving a chat copy's file into the main folder first) and undoEntry
- *   localOnly.moveStrays  POST files/strays/move
  *   localOnly.backup      local_backup.backupProject into `<data>/local-only-backups` (the safety net stays in the distro)
  *
  * `main` is any git folder AIB names (the project); a different `root` (a chat's copy) must be inside this helper's chat copies
@@ -113,7 +112,7 @@ export function localOnlyMethods(data?: string): Handlers {
       const given = new Set(told?.dirs ?? []);
       const ignored = { dirs: tops.dirs.filter((d) => !given.has(d)), files: tops.files };
       if (!told && !ignored.dirs.length && !ignored.files.length) return { localOnly: null };
-      return { localOnly: { ...(told ?? { entries: [], dirs: [], private: '' }), ignored } };
+      return { localOnly: { ...(told ?? { entries: [], dirs: [], shared: '' }), ignored } };
     },
 
     'localOnly.list': async (p) => {
@@ -121,10 +120,9 @@ export function localOnlyMethods(data?: string): Handlers {
       const base = files.realRoot(root);
       const lo = await local.localOnlyOf(main);
       const dir = files.safeParts(str(p, 'dir', true)).join('/');
-      const strays = lo && !same ? await local.findStrays(base, lo) : [];
       let listing: (files.Listing & { sig: string }) | null = null;
       try {
-        listing = await files.listLocal(base, main, lo, dir, strays);
+        listing = await files.listLocal(base, main, lo, dir);
       } catch (error) {
         // a folder the copy lacks: overlayIgnored lists it from main when main ignores it
         if (same || !(error instanceof files.FilesError) || error.code !== 'not_found') throw error;
@@ -184,12 +182,6 @@ export function localOnlyMethods(data?: string): Handlers {
       return result.ok ? { status: 200, body: { ...result, path, localOnly } } : { status: 409, body: { ...result, localOnly } };
     },
 
-    'localOnly.moveStrays': async (p) => {
-      const { root, main, same } = scopeOf(p, data);
-      const lo = same ? null : await local.localOnlyOf(main);
-      if (!lo) return { moved: [], failed: [] };
-      return await local.moveStrays(root, lo, local.slugOf(root));
-    },
 
     'localOnly.backup': async (p) => {
       if (!data) throw new RpcError('this helper has no data folder', undefined, { code: 'no_data' });

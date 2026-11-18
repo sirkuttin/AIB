@@ -489,7 +489,7 @@ export const PC_ROUTES: Readonly<Record<string, RemoteEntry>> = {
   'GET /api/live/files/read': scope(F),
   'GET /api/live/files/outside': withPaths([F], [{ in: 'query', field: 'path', rule: 'blocked' }]),
   'POST /api/live/files/exclude': never('Git exclude is changed on the PC only'),
-  'POST /api/live/files/strays/move': never("A chat's files are moved on the PC only"),
+
   // the file editor: a computer with Files edits with the PC's rules (owner decision 2026-11-16, 1a). `text` (a test's stand-in for
   // typing) is not accepted from a computer: its edits come through the file socket like the page's
   'POST /api/live/files/open': rule(['id', 'project', 'root', 'path'], fileOpenVerdict),

@@ -1,7 +1,7 @@
 package main
 
 // AIB-keeper hook gemini-before-tool <address file>: a Gemini CLI BeforeTool command hook (subagent worktrees, Gemini part;
-// private design gemini-proof.md). AIB gives each Gemini chat in a git project its own GEMINI_CLI_HOME whose settings run this for
+// aib-shared design gemini-proof.md). AIB gives each Gemini chat in a git project its own GEMINI_CLI_HOME whose settings run this for
 // write_file and replace. The chat's hook key and id ride in the hook entry's own `env` (Gemini sanitizes the inherited environment).
 //
 // The fence is not here. AIB launches every such chat with an --admin-policy file that denies each subagent's write_file and replace

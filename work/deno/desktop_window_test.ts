@@ -1535,7 +1535,7 @@ Deno.test('tray chat slots: up to 5 blocked chats in the menu, "+N more" past th
   }
 });
 
-// ---------- multi-window Phase 2A (design private/designs/multi-window, T8/T9): fake Shell, no window is shown ----------
+// ---------- multi-window Phase 2A (design aib-shared/designs/multi-window, T8/T9): fake Shell, no window is shown ----------
 
 const KEY = 'K'.repeat(43);
 const BASE = 'http://127.0.0.1:8890';

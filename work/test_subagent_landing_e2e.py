@@ -1,5 +1,5 @@
 """Subagent worktrees, P2 (landing): e2e with the REAL Claude Code adapter against the stub model API (work/stub_model_api.js script
-mode), temp config and temp dirs only. Design: private/designs/subagent-worktrees/design.md v2 (P2), owner 2026-11-16: subagent work
+mode), temp config and temp dirs only. Design: aib-shared/designs/subagent-worktrees/design.md v2 (P2), owner 2026-11-16: subagent work
 lands exactly like helpers' work (swarm/service.ts helper landing).
 
   HooksOffAdapterTest     the adapter alone (work/acp_probe.js) with `disableAllHooks` in the temp user settings and the per-session

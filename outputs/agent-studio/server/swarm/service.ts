@@ -1,5 +1,5 @@
 /**
- * Swarm phase 1 (design: private/designs/swarm, architect review 2026-11-13): a main chat's agent starts a helper agent of another
+ * Swarm phase 1 (design: aib-shared/designs/swarm, architect review 2026-11-13): a main chat's agent starts a helper agent of another
  * provider, in its own worktree branched from main; the helper's turn end comes back to the main chat as a report, and the main agent
  * merges it into main through the existing merge pipeline, with one "Merged “X” (Codex) into main · Undo" line in the main chat.
  *
@@ -96,17 +96,19 @@ const GENERATED = new Set([
 export const KEPT_DAYS = 7;
 
 /**
- * Files a subagent made that git ignores (a draft in a git-ignored private/ folder: 2026-11-17, its worktree looked empty, was removed
- * and the draft was lost), as worktree-relative paths: never landed by git, so the worktree that holds them is kept. A worktree starts
- * as a plain `git worktree add` of S (no ignored files), so every one is the subagent's; generated folders (GENERATED) and compiled
- * Python files don't count. At most 200 are named.
+ * Files a subagent made that git ignores (a draft in a git-ignored folder: 2026-11-17, its worktree looked empty, was removed and the
+ * draft was lost), as worktree-relative paths: never landed by git, so the worktree that holds them is kept. A worktree starts as a
+ * plain `git worktree add` of S plus its `aib-shared` link (no ignored files), so every one is the subagent's; generated folders
+ * (GENERATED), compiled Python files and anything reached through a link (the `aib-shared` link: those files are already in the main
+ * folder) don't count. At most 200 are named.
  */
 export async function ignoredFiles(path: string): Promise<string[]> {
   if (!path || !wt.lexists(path)) return [];
   const list = async (extra: string[]) =>
     pyStr((await wt.git(['ls-files', '-z', '--others', '--ignored', '--exclude-standard', ...extra], path, { check: false })).stdout)
       .split('\0').filter((n) => n);
-  const generated = (f: string) => f.replace(/\/$/, '').split('/').some((part) => GENERATED.has(part)) || /\.py[co]$/.test(f);
+  const generated = (f: string) =>
+    f.replace(/\/$/, '').split('/').some((part) => GENERATED.has(part)) || /\.py[co]$/.test(f) || throughLink(path, f);
   const out: string[] = [];
   for (const entry of await list(['--directory'])) {
     if (out.length >= 200) break;
@@ -115,6 +117,19 @@ export async function ignoredFiles(path: string): Promise<string[]> {
     else for (const f of await list(['--', entry])) if (!generated(f) && out.length < 200) out.push(f);
   }
   return out;
+}
+
+/** True when `rel` (worktree-relative, git's form) is a link or lies under one: the `aib-shared` link and what git lists through it. */
+function throughLink(path: string, rel: string): boolean {
+  const parts = rel.replace(/\/$/, '').split('/').filter(Boolean);
+  for (let i = 1; i <= parts.length; i++) {
+    try {
+      if (Deno.lstatSync(pathOf(path, ...parts.slice(0, i))).isSymlink) return true;
+    } catch {
+      return false;
+    }
+  }
+  return false;
 }
 
 /** A helper of a chat that works in the project folder: it lands on the folder's branch, queued, with no stash (build plan 2b). */

@@ -154,7 +154,7 @@ Deno.test({
       // the PNG: in the project's main folder, untracked (a chat in its own copy reaches it there, as a local-only file)
       const data = makePng(1024, 1000, 5);
       assert(data.length > 3 * 1000 * 1000, `${data.length}`);
-      const rel = 'private/review/leveldesign/dw26-family.png';
+      const rel = 'aib-shared/review/leveldesign/dw26-family.png';
       const put = (bytes: Uint8Array) => inDistro('mkdir -p "$(dirname "$1")" && cat > "$1"', [`${PROJECT}/${rel}`], bytes);
       assertEquals((await put(data)).code, 0);
       const outside = await inDistro('mkdir -p "$1/outside" && printf secret > "$1/outside/s.png" && ln -s "$1/outside/s.png" "$2/link.png" && mkdir -p "$2/pics"', [ROOT, PROJECT]);

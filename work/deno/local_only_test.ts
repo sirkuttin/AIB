@@ -1,4 +1,4 @@
-/** Local-only folders: AIB's block in .git/info/exclude (read, write, escape, refuse, Undo), the default /private, and the Q3 move. */
+/** Local-only folders: AIB's block in .git/info/exclude (read, write, escape, refuse, Undo), the default /aib-shared, and the Q3 move. */
 import { assert, assertEquals } from './_assert.ts';
 import { git, HAVE_GIT, write } from './_git_repo.ts';
 import * as osp from '../../outputs/agent-studio/server/platform/ospath.ts';
@@ -34,8 +34,8 @@ const ignored = (repo: string, rel: string) =>
 const opts = { ignore: !HAVE_GIT, sanitizeResources: false, sanitizeOps: false };
 
 Deno.test('escapeLine / unescapeLine: anchored, no trailing slash, globs and trailing spaces escaped', () => {
-  assertEquals(lo.escapeLine('', 'private'), '/private');
-  assertEquals(lo.escapeLine('sub/', 'private'), '/sub/private');
+  assertEquals(lo.escapeLine('', 'aib-shared'), '/aib-shared');
+  assertEquals(lo.escapeLine('sub/', 'aib-shared'), '/sub/aib-shared');
   assertEquals(lo.escapeLine('', 'a*b[1]?\\c.md'), '/a\\*b\\[1]\\?\\\\c.md');
   assertEquals(lo.escapeLine('', 'x  '), '/x\\ \\ ');
   assertEquals(lo.escapeLine('', '#n !m'), '/#n !m');
@@ -46,26 +46,26 @@ Deno.test('escapeLine / unescapeLine: anchored, no trailing slash, globs and tra
     threw = true;
   }
   assert(threw, 'a newline is refused');
-  for (const rel of ['private', 'a*b[1]?\\c.md', 'x  ', 'deep/er/path.txt']) assertEquals(lo.unescapeLine(lo.escapeLine('', rel)), rel);
-  assertEquals(lo.unescapeLine('/private/'), 'private');
+  for (const rel of ['aib-shared', 'a*b[1]?\\c.md', 'x  ', 'deep/er/path.txt']) assertEquals(lo.unescapeLine(lo.escapeLine('', rel)), rel);
+  assertEquals(lo.unescapeLine('/aib-shared/'), 'aib-shared');
   assertEquals(lo.unescapeLine('*.log'), null);
   assertEquals(lo.unescapeLine('/build/*'), null);
-  assertEquals(lo.unescapeLine('!/private'), null);
+  assertEquals(lo.unescapeLine('!/aib-shared'), null);
   assertEquals(lo.unescapeLine('# c'), null);
   assertEquals(lo.unescapeLine('notes'), null, 'unanchored lines are not one path');
-  assertEquals(lo.entriesOf(['/sub/private', '/other/x', '/sub/notes/'], 'sub/'), ['private', 'notes']);
+  assertEquals(lo.entriesOf(['/sub/aib-shared', '/other/x', '/sub/notes/'], 'sub/'), ['aib-shared', 'notes']);
 });
 
 Deno.test('isLocalPath: entries and what is inside them; case-insensitive on Windows', () => {
-  const l: lo.LocalOnly = { project: 'x', excludeFile: 'e', prefix: '', entries: ['private', 'notes/today.md'], existing: [], defaultState: 'on' };
-  assert(lo.isLocalPath(l, 'private'));
-  assert(lo.isLocalPath(l, 'private/designs/x.html'));
+  const l: lo.LocalOnly = { project: 'x', excludeFile: 'e', prefix: '', entries: ['aib-shared', 'notes/today.md'], existing: [], defaultState: 'on' };
+  assert(lo.isLocalPath(l, 'aib-shared'));
+  assert(lo.isLocalPath(l, 'aib-shared/designs/x.html'));
   assert(lo.isLocalPath(l, 'notes/today.md'));
   assert(!lo.isLocalPath(l, 'notes'));
-  assert(!lo.isLocalPath(l, 'privateer'));
+  assert(!lo.isLocalPath(l, 'aib-shareder'));
   assert(!lo.isLocalPath(l, ''));
-  assertEquals(lo.isLocalPath(l, 'Private/X.md'), Deno.build.os === 'windows');
-  assertEquals(lo.entryOf(l, 'private/a/b'), 'private');
+  assertEquals(lo.isLocalPath(l, 'AIB-Shared/X.md'), Deno.build.os === 'windows');
+  assertEquals(lo.entryOf(l, 'aib-shared/a/b'), 'aib-shared');
 });
 
 Deno.test('withLine / withoutLine: CRLF, BOM and a missing last newline survive byte for byte outside the block', () => {
@@ -98,22 +98,22 @@ Deno.test('blocks: two blocks are both read and the first is written; a start wi
   assertEquals(dec.decode(lo.withLine(enc.encode(broken), '/y')!), `${broken}${lo.BLOCK_START}\n/y\n${lo.BLOCK_END}\n`);
 });
 
-Deno.test('ensureDefault: /private once, state on, idempotent; a removed line stays removed', opts, async () => {
+Deno.test('ensureDefault: /aib-shared once, state on, idempotent; a removed line stays removed', opts, async () => {
   const r = tempRepo();
   try {
     const first = await lo.ensureDefault(r.repo);
     assert(first);
-    assertEquals(first.entries, ['private']);
+    assertEquals(first.entries, ['aib-shared']);
     assertEquals(first.defaultState, 'on');
     assertEquals(first.existing, [], 'nothing is made on disk');
-    assert(ignored(r.repo, 'private/x.md'));
+    assert(ignored(r.repo, 'aib-shared/x.md'));
     const bytes = Deno.readFileSync(r.exclude);
     await lo.ensureDefault(r.repo);
     assertEquals([...Deno.readFileSync(r.exclude)], [...bytes], 'second call writes nothing');
-    Deno.mkdirSync(r.p('private'));
-    assertEquals((await lo.localOnlyOf(r.repo))!.existing, [r.p('private')]);
+    Deno.mkdirSync(r.p('aib-shared'));
+    assertEquals((await lo.localOnlyOf(r.repo))!.existing, [r.p('aib-shared')]);
     // the user takes it out: AIB does not put it back
-    Deno.writeTextFileSync(r.exclude, dec.decode(bytes).replace('/private\n', ''));
+    Deno.writeTextFileSync(r.exclude, dec.decode(bytes).replace('/aib-shared\n', ''));
     lo._cache.clear();
     const after = await lo.ensureDefault(r.repo);
     assertEquals(after!.entries, []);
@@ -123,11 +123,11 @@ Deno.test('ensureDefault: /private once, state on, idempotent; a removed line st
   }
 });
 
-Deno.test('ensureDefault: a project that tracks private/ gets no line and state tracked', opts, async () => {
+Deno.test('ensureDefault: a project that tracks aib-shared/ gets no line and state tracked', opts, async () => {
   const r = tempRepo();
   try {
-    Deno.mkdirSync(r.p('private'));
-    write(r.p('private', 'a.md'), 'a');
+    Deno.mkdirSync(r.p('aib-shared'));
+    write(r.p('aib-shared', 'a.md'), 'a');
     git(r.repo, 'add', '-A');
     git(r.repo, 'commit', '-q', '-m', 'p');
     const before = osp.exists(r.exclude) ? Deno.readTextFileSync(r.exclude) : '';
@@ -140,10 +140,10 @@ Deno.test('ensureDefault: a project that tracks private/ gets no line and state 
   }
 });
 
-Deno.test('ensureDefault: a .gitignore that negates private gets no line and state negated', opts, async () => {
+Deno.test('ensureDefault: a .gitignore that negates aib-shared gets no line and state negated', opts, async () => {
   const r = tempRepo();
   try {
-    write(r.p('.gitignore'), '!private\n');
+    write(r.p('.gitignore'), '!aib-shared\n');
     const l = await lo.ensureDefault(r.repo);
     assertEquals(l!.entries, []);
     assertEquals(l!.defaultState, 'negated');
@@ -152,8 +152,8 @@ Deno.test('ensureDefault: a .gitignore that negates private gets no line and sta
     lo._cache.clear();
     assertEquals((await lo.ensureDefault(r.repo))!.defaultState, 'on');
     // a folder-only negation counts once the folder exists (git can't tell a missing path is a folder)
-    Deno.mkdirSync(r.p('private'));
-    write(r.p('.gitignore'), '!private/\n');
+    Deno.mkdirSync(r.p('aib-shared'));
+    write(r.p('.gitignore'), '!aib-shared/\n');
     lo._cache.clear();
     assertEquals((await lo.localOnlyOf(r.repo))!.defaultState, 'negated');
   } finally {
@@ -173,19 +173,19 @@ Deno.test('ensureDefault / localOnlyOf: a folder outside git gives null and writ
   }
 });
 
-Deno.test('a project in a sub-folder of its repo gets /sub/private, and git agrees', opts, async () => {
+Deno.test('a project in a sub-folder of its repo gets /sub/aib-shared, and git agrees', opts, async () => {
   const r = tempRepo();
   try {
     Deno.mkdirSync(r.p('sub'));
     write(r.p('sub', 'x.txt'), 'x');
     const l = await lo.ensureDefault(r.p('sub'));
     assertEquals(l!.prefix, 'sub/');
-    assertEquals(l!.entries, ['private']);
-    assert(Deno.readTextFileSync(r.exclude).includes('\n/sub/private\n'));
-    assert(ignored(r.repo, 'sub/private/a.md'));
-    assert(!ignored(r.repo, 'private/a.md'), 'the repo top is not touched');
-    // seen from the repo top, the same line is the path sub/private
-    assertEquals((await lo.localOnlyOf(r.repo))!.entries, ['sub/private']);
+    assertEquals(l!.entries, ['aib-shared']);
+    assert(Deno.readTextFileSync(r.exclude).includes('\n/sub/aib-shared\n'));
+    assert(ignored(r.repo, 'sub/aib-shared/a.md'));
+    assert(!ignored(r.repo, 'aib-shared/a.md'), 'the repo top is not touched');
+    // seen from the repo top, the same line is the path sub/aib-shared
+    assertEquals((await lo.localOnlyOf(r.repo))!.entries, ['sub/aib-shared']);
   } finally {
     r.dispose();
   }
@@ -227,7 +227,7 @@ Deno.test('addEntry refuses the project, .git, node_modules, aib-docs, tracked p
   try {
     await lo.ensureDefault(r.repo);
     const codes: Record<string, string> = {};
-    for (const rel of ['', '.git', '.git/hooks', 'node_modules', 'a/node_modules/x', 'aib-docs', 'aib-docs/x.json', 'README.md', 'private', 'private/x.md', 'a\nb', '../up']) {
+    for (const rel of ['', '.git', '.git/hooks', 'node_modules', 'a/node_modules/x', 'aib-docs', 'aib-docs/x.json', 'README.md', 'aib-shared', 'aib-shared/x.md', 'a\nb', '../up']) {
       const res = await lo.addEntry(r.repo, rel);
       assert(!res.ok, rel);
       codes[rel] = res.code;
@@ -241,8 +241,8 @@ Deno.test('addEntry refuses the project, .git, node_modules, aib-docs, tracked p
       'aib-docs': 'docs',
       'aib-docs/x.json': 'docs',
       'README.md': 'tracked',
-      'private': 'already',
-      'private/x.md': 'already',
+      'aib-shared': 'already',
+      'aib-shared/x.md': 'already',
       'a\nb': 'reserved',
       '../up': 'reserved',
     });
@@ -292,7 +292,7 @@ Deno.test('a worktree reads and writes the common exclude file', opts, async () 
     git(r.repo, 'worktree', 'add', '-q', '-b', 'c1', wt);
     const l = await lo.ensureDefault(wt);
     assertEquals(osp.normcase(l!.excludeFile), osp.normcase(r.exclude));
-    assertEquals((await lo.localOnlyOf(r.repo))!.entries, ['private']);
+    assertEquals((await lo.localOnlyOf(r.repo))!.entries, ['aib-shared']);
     git(r.repo, 'worktree', 'remove', '--force', wt);
   } finally {
     r.dispose();

@@ -27,7 +27,8 @@ import {
 } from './_worktree_fixtures.ts';
 import * as wt from '../../outputs/agent-studio/server/worktrees/worktrees.ts';
 import * as localOnly from '../../outputs/agent-studio/server/worktrees/local_only.ts';
-import * as localStrays from '../../outputs/agent-studio/server/worktrees/local_strays.ts';
+import * as sharedLinkMod from '../../outputs/agent-studio/server/worktrees/shared_link.ts';
+import { ignoredFiles } from '../../outputs/agent-studio/server/swarm/service.ts';
 import { envFiles } from '../../outputs/agent-studio/server/worktrees/sync.ts';
 import { pathOf } from '../../outputs/agent-studio/server/state/paths.ts';
 import { dirname } from '../../outputs/agent-studio/server/platform/ospath.ts';
@@ -797,154 +798,205 @@ Deno.test("git runs with Python's environment: repository overrides removed, pro
   assertEquals(wt.sha1Hex(new TextEncoder().encode('a'.repeat(1000))), '291e9a6c66994949b57ba5e650361e98fc36b1ba');
 });
 
-// ---- local-only folders: strays are moved into the main folder before any removal (architect review breaks 1 and 7) ------------
+// ---- aib-shared/: one real folder in the main folder, a link in every worktree (owner 2026-11-17) --------------------------------
 async function localOnlyProject(box: Sandbox): Promise<void> {
   runGit(box.project, 'config', 'core.autocrlf', 'false');
   const lo = await localOnly.ensureDefault(box.project); // the temp repo's own .git/info/exclude
-  assertEquals(lo?.entries, ['private']);
+  assertEquals(lo?.entries, ['aib-shared']);
   assertEquals(lo?.defaultState, 'on');
 }
 
-Deno.test('local only: a plain removal (archive, no --force) moves a stray private/ file into the main folder first', async () => {
+const sharedLink = (path: string) => pathOf(path, 'aib-shared');
+function assertLinked(path: string, project: string): void {
+  const st = Deno.lstatSync(sharedLink(path));
+  assert(st.isSymlink, `${sharedLink(path)} is a link (a junction on Windows), not a folder`);
+  assert(sharedLinkMod.linksTo(sharedLink(path), pathOf(project, 'aib-shared')), 'it points at the main folder\'s real aib-shared');
+}
+
+Deno.test('aib-shared: the exclude block gets /aib-shared (no trailing slash: it ignores the link too)', async () => {
+  using box = new Sandbox();
+  await localOnlyProject(box);
+  const exclude = Deno.readTextFileSync(pathOf(box.project, '.git', 'info', 'exclude'));
+  assert(exclude.includes(`${localOnly.BLOCK_START}\n/aib-shared\n${localOnly.BLOCK_END}`), exclude);
+  assert(!/^\/private/m.test(exclude));
+});
+
+Deno.test('aib-shared: a new worktree gets the link; a file written through it is in the main folder at once; git shows nothing', async () => {
   using box = new Sandbox();
   await localOnlyProject(box);
   const { manager, path, plan } = await made(box);
-  write(path, 'private/x.md', 'written in the copy\n');
-  write(path, 'private/deep/y.txt', 'deeper\n');
-  assert(!(await manager.hasChanges(onlyRecord(box))), 'ignored files never count as changes, so archive removes silently');
+  assertLinked(path, box.project);
+  write(path, 'aib-shared/notes/x.md', 'written in the worktree\n');
+  assertEquals(read(box.project, 'aib-shared/notes/x.md'), 'written in the worktree\n', 'no copy, no sync: the same file');
+  write(box.project, 'aib-shared/from-main.md', 'main\n');
+  assertEquals(read(path, 'aib-shared/from-main.md'), 'main\n');
+  assertEquals(runGit(path, 'status', '--porcelain', '--untracked-files=all'), '', 'the worktree shows nothing');
+  assertEquals(box.status(), '', 'nor does the main folder');
+  runGit(path, 'add', '-A');
+  assertEquals(runGit(path, 'diff', '--cached', '--name-only'), '', 'git add -A takes nothing from it');
+  assert(!(await manager.hasChanges(onlyRecord(box))), 'the link is no change of the chat');
   assertEquals(await manager.remove(plan.key), 'removed');
-  assert(!exists(path));
-  assertEquals(read(box.project, 'private/x.md'), 'written in the copy\n');
-  assertEquals(read(box.project, 'private/deep/y.txt'), 'deeper\n');
-  assertEquals(box.status(), '', 'still ignored in the main folder');
 });
 
-Deno.test('local only: a clash gets "(from chat-...)", an identical copy is not duplicated, nothing is overwritten', async () => {
+Deno.test('aib-shared: removing a worktree (plain, confirmed, discard) takes the link only; the real folder keeps every file', async () => {
   using box = new Sandbox();
   await localOnlyProject(box);
-  write(box.project, 'private/x.md', 'main version\n');
-  write(box.project, 'private/x (from chat-aaaaaaaa).md', 'an older save\n');
-  write(box.project, 'private/.env', 'KEY=1\n');
-  const { manager, path, plan } = await made(box);
-  write(path, 'private/x.md', 'chat version\n');
-  write(path, 'private/.env', 'KEY=1\n');
-  write(path, 'private/notes', 'no extension\n');
-  write(box.project, 'private/notes', 'main notes\n');
-  assertEquals(await localStrays.findStrays(path, (await localOnly.localOnlyOf(box.project))!), ['private/notes', 'private/x.md']);
-  assertEquals(await manager.remove(plan.key), 'removed');
-  assertEquals(read(box.project, 'private/x.md'), 'main version\n');
-  assertEquals(read(box.project, 'private/x (from chat-aaaaaaaa).md'), 'an older save\n');
-  assertEquals(read(box.project, 'private/x (from chat-aaaaaaaa) 2.md'), 'chat version\n');
-  assertEquals(read(box.project, 'private/notes (from chat-aaaaaaaa)'), 'no extension\n');
-  assertEquals(read(box.project, 'private/.env'), 'KEY=1\n');
-  assertEquals([...Deno.readDirSync(pathOf(box.project, 'private'))].map((e) => e.name).sort(), [
-    '.env',
-    'notes',
-    'notes (from chat-aaaaaaaa)',
-    'x (from chat-aaaaaaaa) 2.md',
-    'x (from chat-aaaaaaaa).md',
-    'x.md',
-  ]);
-});
-
-Deno.test('local only: a stray that cannot be moved keeps the removal pending, even confirmed; nothing is deleted', async () => {
-  using box = new Sandbox();
-  await localOnlyProject(box);
-  const { manager, path, plan } = await made(box);
-  write(path, 'private/locked.md', 'held open\n');
-  write(path, 'private/free.md', 'free\n');
-  write(path, 'work.txt', 'other work\n');
-  localStrays._strayHooks.beforeMove = (src) => {
-    if (src.endsWith('locked.md')) throw new Deno.errors.PermissionDenied('in use');
-  };
-  try {
-    assertEquals(await manager.remove(plan.key, true), 'pending');
-    assert(exists(pathOf(path, 'private', 'locked.md')), 'the copy keeps the file it could not move');
-    assertEquals(read(path, 'work.txt'), 'other work\n', 'nothing in the copy was deleted, though the removal was confirmed');
-    assertEquals(read(box.project, 'private/free.md'), 'free\n', 'what could move, moved');
-    assertEquals(onlyRecord(box).status, 'removal-pending');
-    assertEquals(await new wt.Manager(box.state).retryPending(), [], 'still held at the next start');
-    assert(exists(path));
-  } finally {
-    localStrays._strayHooks.beforeMove = null;
-  }
-  assertEquals(await new wt.Manager(box.state).retryPending(), [plan.key]);
-  assert(!exists(path));
-  assertEquals(read(box.project, 'private/locked.md'), 'held open\n');
-});
-
-Deno.test('local only: discard (a chat that never began, a half-made copy) rescues strays too, or stays pending', async () => {
-  using box = new Sandbox();
-  await localOnlyProject(box);
+  write(box.project, 'aib-shared/keep.md', 'keep me\n');
   const first = await made(box);
-  write(first.path, 'private/a.md', 'a\n');
-  await first.manager.discard(first.plan.key);
+  write(first.path, 'aib-shared/new.md', 'from the chat\n');
+  assertEquals(await first.manager.remove(first.plan.key), 'removed');
   assert(!exists(first.path));
-  assertEquals(read(box.project, 'private/a.md'), 'a\n');
-  assertEquals(first.manager.registry.all(), {});
   const second = await made(box, 'b'.repeat(32));
-  write(second.path, 'private/b.md', 'b\n');
-  localStrays._strayHooks.beforeMove = () => {
+  write(second.path, 'work.txt', 'unmerged work\n');
+  assertEquals(await second.manager.remove(second.plan.key, true), 'removed', 'git worktree remove --force and rmtree');
+  assert(!exists(second.path));
+  const third = await made(box, 'c'.repeat(32));
+  await third.manager.discard(third.plan.key);
+  assert(!exists(third.path));
+  assertEquals(read(box.project, 'aib-shared/keep.md'), 'keep me\n');
+  assertEquals(read(box.project, 'aib-shared/new.md'), 'from the chat\n');
+  assertEquals([...Deno.readDirSync(pathOf(box.project, 'aib-shared'))].map((e) => e.name).sort(), ['keep.md', 'new.md']);
+});
+
+Deno.test('aib-shared: a link that cannot be removed keeps the removal pending; nothing is deleted', async () => {
+  using box = new Sandbox();
+  await localOnlyProject(box);
+  write(box.project, 'aib-shared/keep.md', 'keep me\n');
+  const { manager, path, plan } = await made(box);
+  write(path, 'work.txt', 'other work\n');
+  sharedLinkMod._linkHooks.unlink = () => { // the link stays (a locked junction)
     throw new Deno.errors.PermissionDenied('in use');
   };
   try {
-    await second.manager.discard(second.plan.key);
+    assertEquals(await manager.remove(plan.key, true), 'pending', 'even confirmed: never a delete that could follow the link');
+    assertLinked(path, box.project);
+    assertEquals(read(path, 'work.txt'), 'other work\n');
+    assertEquals(onlyRecord(box).status, 'removal-pending');
   } finally {
-    localStrays._strayHooks.beforeMove = null;
+    sharedLinkMod._linkHooks.unlink = null;
   }
-  assert(exists(pathOf(second.path, 'private', 'b.md')));
-  const kept = onlyRecord(box);
-  assertEquals([kept.status, kept.confirmed], ['removal-pending', true]);
-  assertEquals(await new wt.Manager(box.state).retryPending(), [second.plan.key]);
-  assertEquals(read(box.project, 'private/b.md'), 'b\n');
+  assertEquals(await new wt.Manager(box.state).retryPending(), [plan.key]);
+  assert(!exists(path));
+  assertEquals(read(box.project, 'aib-shared/keep.md'), 'keep me\n');
+});
+
+Deno.test('aib-shared: a real aib-shared folder in a worktree is the worktree\'s own: removal deletes it, never the main one', async () => {
+  using box = new Sandbox();
+  await localOnlyProject(box);
+  write(box.project, 'aib-shared/keep.md', 'keep me\n');
+  const { manager, path, plan } = await made(box);
+  Deno.removeSync(sharedLink(path));
+  write(path, 'aib-shared/own.md', 'own\n');
+  assertEquals(await manager.remove(plan.key, true), 'removed');
+  assertEquals([...Deno.readDirSync(pathOf(box.project, 'aib-shared'))].map((e) => e.name), ['keep.md']);
+});
+
+Deno.test('aib-shared: an old worktree gets its link before it is used again (ensure), and a recreated one too', async () => {
+  using box = new Sandbox();
+  await localOnlyProject(box);
+  const { manager, path, plan } = await made(box);
+  Deno.removeSync(sharedLink(path)); // a worktree from before 0.13.0: no link
+  assertEquals(await manager.ensure(onlyRecord(box)), path);
+  assertLinked(path, box.project);
+  Deno.removeSync(sharedLink(path));
+  Deno.mkdirSync(sharedLink(path)); // an agent's empty mkdir before the link existed: replaced
+  await manager.ensure(onlyRecord(box));
+  assertLinked(path, box.project);
+  Deno.removeSync(sharedLink(path));
+  write(path, 'aib-shared/draft.md', 'a draft\n'); // a real folder with files: never deleted, left as it is
+  await manager.ensure(onlyRecord(box));
+  assert(!Deno.lstatSync(sharedLink(path)).isSymlink);
+  assertEquals(read(path, 'aib-shared/draft.md'), 'a draft\n');
+  Deno.removeSync(sharedLink(path), { recursive: true });
+  Deno.removeSync(path, { recursive: true }); // deleted outside AIB: made again from its branch, with the link
+  await manager.ensure(onlyRecord(box));
+  assertLinked(path, box.project);
+  assertEquals(await manager.remove(plan.key), 'removed');
+  assert(exists(pathOf(box.project, 'aib-shared')));
+});
+
+Deno.test('aib-shared: no link where the project commits aib-shared/ (tracked) or has no AIB line', async () => {
+  using box = new Sandbox();
+  runGit(box.project, 'config', 'core.autocrlf', 'false');
+  const plain = await made(box);
+  assert(!exists(sharedLink(plain.path)), 'no /aib-shared line: no link');
+  assertEquals(await plain.manager.remove(plain.plan.key), 'removed');
+  commit(box.project, 'aib-shared/committed.md', 'tracked\n');
+  const lo = await localOnly.ensureDefault(box.project);
+  assertEquals(lo?.defaultState, 'off', 'a tracked aib-shared/ gets no AIB line');
+  const tracked = await made(box, 'b'.repeat(32));
+  assert(!Deno.lstatSync(sharedLink(tracked.path)).isSymlink, 'the checked-out folder, not a link');
+  assertEquals(await tracked.manager.remove(tracked.plan.key), 'removed');
+  assertEquals(read(box.project, 'aib-shared/committed.md'), 'tracked\n');
+});
+
+Deno.test('aib-shared: a project in a subfolder of its repository: the link goes at its own place in a worktree (subagents)', async () => {
+  using box = new Sandbox();
+  runGit(box.project, 'config', 'core.autocrlf', 'false');
+  commit(box.project, 'app/readme.md', 'app\n');
+  const app = pathOf(box.project, 'app');
+  const lo = await localOnly.ensureDefault(app);
+  assertEquals([lo?.prefix, lo?.entries, lo?.defaultState], ['app/', ['aib-shared'], 'on']);
+  assert(Deno.readTextFileSync(pathOf(box.project, '.git', 'info', 'exclude')).includes('\n/app/aib-shared\n'));
+  const copy = pathOf(box.state, 'sub-copy'); // a subagent worktree is a checkout of the whole repository
+  runGit(box.project, 'worktree', 'add', '-q', '--detach', copy);
+  assertEquals(await sharedLinkMod.linkSharedFor(copy, app), 'linked');
+  assertEquals(await sharedLinkMod.linkSharedFor(copy, app), 'kept');
+  assert(sharedLinkMod.linksTo(pathOf(copy, 'app', 'aib-shared'), pathOf(app, 'aib-shared')));
+  assert(!exists(pathOf(copy, 'aib-shared')));
+  write(copy, 'app/aib-shared/x.md', 'x\n');
+  assertEquals(read(app, 'aib-shared/x.md'), 'x\n');
+  assertEquals(runGit(copy, 'status', '--porcelain', '--untracked-files=all'), '');
+  assert(await sharedLinkMod.unlinkSharedFor(copy, app));
+  assert(!exists(pathOf(copy, 'app', 'aib-shared')));
+  runGit(box.project, 'worktree', 'remove', '--force', copy);
+  assertEquals(read(app, 'aib-shared/x.md'), 'x\n');
+});
+
+Deno.test('aib-shared: a subagent finds no "ignored files" of its own in the link (the worktree is not kept for it)', async () => {
+  using box = new Sandbox();
+  await localOnlyProject(box);
+  write(box.project, 'aib-shared/main-note.md', 'main\n');
+  const { manager, path, plan } = await made(box);
+  write(path, 'aib-shared/sub-note.md', 'from the subagent\n');
+  assertEquals(await ignoredFiles(path), [], 'files reached through the link are already in the main folder');
+  write(path, 'scratch.log', 'x');
+  runGit(path, 'config', 'core.excludesFile', '');
+  Deno.writeTextFileSync(pathOf(path, '.gitignore'), 'scratch.log\n');
+  assertEquals(await ignoredFiles(path), ['scratch.log'], 'its own ignored files still count');
+  assertEquals(await manager.remove(plan.key, true), 'removed');
+  assertEquals(read(box.project, 'aib-shared/sub-note.md'), 'from the subagent\n');
 });
 
 Deno.test('local only: .env files inside a local-only folder are never copied into a chat (copyEnvFiles and the live-sync walk)', async () => {
   using box = new Sandbox();
   await localOnlyProject(box);
   write(box.project, '.env', 'TOP=1\n');
-  write(box.project, 'private/.env', 'SECRET=1\n');
-  write(box.project, 'private/sub/.env.local', 'SECRET=2\n');
+  write(box.project, 'aib-shared/.env', 'SECRET=1\n');
+  write(box.project, 'aib-shared/sub/.env.local', 'SECRET=2\n');
   write(box.project, 'sub/.env', 'SUB=1\n');
   const { manager, path, plan } = await made(box);
   assertEquals(read(path, '.env'), 'TOP=1\n');
   assertEquals(read(path, 'sub/.env'), 'SUB=1\n');
-  assert(!exists(pathOf(path, 'private')), 'no private/ in the copy at all');
-  assertEquals(envFiles(box.project, ['private']).sort(), ['.env', 'sub/.env']);
-  assertEquals(envFiles(box.project).sort(), ['.env', 'private/.env', 'private/sub/.env.local', 'sub/.env'], 'unchanged without entries');
+  assertLinked(path, box.project); // aib-shared/ is the link to the main folder's, never a copy
+  assertEquals(envFiles(box.project, ['aib-shared']).sort(), ['.env', 'sub/.env']);
+  assertEquals(envFiles(box.project).sort(), ['.env', 'aib-shared/.env', 'aib-shared/sub/.env.local', 'sub/.env'], 'unchanged without entries');
+  Deno.removeSync(sharedLink(path));
   Deno.removeSync(path, { recursive: true });
   await manager.ensure(onlyRecord(box)); // made again from its branch: the same skip
-  assert(exists(pathOf(path, '.env')) && !exists(pathOf(path, 'private')));
+  assert(exists(pathOf(path, '.env')));
+  assertLinked(path, box.project);
   assertEquals(await manager.remove(plan.key), 'removed');
-});
-
-Deno.test('local only: a chat made before the exclude saves its changed tracked copy beside the main file; unchanged ones are no clutter', async () => {
-  using box = new Sandbox();
-  runGit(box.project, 'config', 'core.autocrlf', 'false');
-  write(box.project, 'private/T.md', 'main start\n'); // untracked and not ignored yet: it goes into S
-  write(box.project, 'private/U.md', 'untouched\n');
-  const { manager, path, plan } = await made(box);
-  assertEquals(read(path, 'private/T.md'), 'main start\n');
-  await localOnlyProject(box); // now /private is excluded
-  write(path, 'private/T.md', 'chat edit\n');
-  write(box.project, 'private/T.md', 'main edit\n');
-  write(box.project, 'private/U.md', 'main changed this one\n'); // the copy's U.md is S's: the chat never touched it
-  const lo = (await localOnly.localOnlyOf(box.project))!;
-  assertEquals(await localStrays.findStrays(path, lo, String(onlyRecord(box).snapshot)), ['private/T.md']);
-  assertEquals(await manager.remove(plan.key, true), 'removed');
-  assertEquals(read(box.project, 'private/T.md'), 'main edit\n');
-  assertEquals(read(box.project, 'private/T (from chat-aaaaaaaa).md'), 'chat edit\n');
-  assertEquals(read(box.project, 'private/U.md'), 'main changed this one\n');
-  assert(!exists(pathOf(box.project, 'private', 'U (from chat-aaaaaaaa).md')));
+  assertEquals(read(box.project, 'aib-shared/.env'), 'SECRET=1\n');
 });
 
 Deno.test('local only: defaults are written only by a real Studio, or for projects under the temp folder', () => {
   using box = new Sandbox();
   const here = decodeURIComponent(new URL('.', import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1'); // work/deno of this repo
-  assert(localStrays.defaultsAllowed(box.state, box.project), 'a temp Studio and a temp project');
-  assert(!localStrays.defaultsAllowed(box.state, here), 'a temp Studio never writes a real repository');
-  assert(!localStrays.defaultsAllowed('', here), 'neither does a Studio without a state folder');
-  assert(localStrays.defaultsAllowed('', box.project));
+  assert(localOnly.defaultsAllowed(box.state, box.project), 'a temp Studio and a temp project');
+  assert(!localOnly.defaultsAllowed(box.state, here), 'a temp Studio never writes a real repository');
+  assert(!localOnly.defaultsAllowed('', here), 'neither does a Studio without a state folder');
+  assert(localOnly.defaultsAllowed('', box.project));
 });
 
 Deno.test('planWithReason: the Windows manager never plans a WSL project (its ref); no git runs on Windows for it', async () => {

@@ -707,13 +707,15 @@ export const WORKTREE_PROMPT =
   'conflicts there, commit, and call it again.';
 
 /**
- * Local-only files (AIB's block of .git/info/exclude; host/studio.ts fills Connection.localOnly). A chat in its own copy is told
- * where the main folder's local-only folders are ({paths}) and, when private/ is local only, that it may use it ({private}).
+ * Local-only files (AIB's block of .git/info/exclude; host/studio.ts fills Connection.localOnly). Every chat whose project keeps
+ * aib-shared/ local only is told SHARED_FOLDER_PROMPT (owner 2026-11-17); a chat in its own copy reaches the main folder's
+ * aib-shared/ through the copy's `aib-shared` link (worktrees/shared_link.ts). A chat in its own copy is also told where the main
+ * folder's other local-only paths are ({paths}).
  */
+export const SHARED_FOLDER_PROMPT = 'aib-shared/ in the project folder is shared by every agent and chat, never committed.';
 export const LOCAL_ONLY_WORKTREE_PROMPT = 'Local-only files (git never commits them) are kept in the main project folder, not in this ' +
   'copy: {paths}. Read and write them there by their full path. Never create those paths in this copy: ' +
   'files there are not shared with other chats.';
-export const LOCAL_ONLY_PRIVATE_WORKTREE = 'You may create and use {private} for local-only notes.';
 /**
  * A WSL chat in its own copy (wsl/local_only.ts): the main folder's other git-ignored folders and files, granted like the local-only
  * folders. Windows chats never get it (Connection.localOnly.ignored is only set for WSL chats).
@@ -721,8 +723,6 @@ export const LOCAL_ONLY_PRIVATE_WORKTREE = 'You may create and use {private} for
 export const IGNORED_SHARED_WORKTREE = 'These folders and files git ignores are in the main project folder too, not in this copy: ' +
   '{paths}. Read and edit them there by their full path: they are shared with the main folder, so an edit there is live at once ' +
   "and is not part of this copy or its branch.";
-/** The same for a chat that works in the project folder itself. */
-export const LOCAL_ONLY_PROMPT = 'You may create and use the private/ folder of this project for local-only notes: git never commits it.';
 
 /**
  * Build plan 1.1 (4): two chats work in the same project folder. The agents get this line once, on their next prompt (the new chat's
@@ -1066,11 +1066,11 @@ export class Connection {
   projectRoot: string;
   /**
    * Local-only files this chat is told about (host/studio.ts, before setup): absolute `entries` (the main folder's), the existing
-   * folders among them (`dirs`, granted to a worktree chat as extra writable folders) and the main folder's private/ when git
-   * really ignores it (`private`, '' otherwise). null: nothing to tell (not git, or nothing is local only).
+   * folders among them (`dirs`, granted to a worktree chat as extra writable folders) and the main folder's aib-shared/ when git
+   * really ignores it (`shared`, '' otherwise). null: nothing to tell (not git, or nothing is local only).
    */
   /** `ignored`: a WSL chat in its own copy also gets the main folder's other ignored folders and files (wsl/local_only.ts). */
-  localOnly: { entries: string[]; dirs: string[]; private: string; ignored?: { dirs: string[]; files: string[] } } | null = null;
+  localOnly: { entries: string[]; dirs: string[]; shared: string; ignored?: { dirs: string[]; files: string[] } } | null = null;
   /** Allow rules (server/allow): the host's gate and this chat's scratch folder (outside its worktree). */
   allowGate: AllowGate | null = null;
   scratchDir: string | null = null;
@@ -6359,13 +6359,15 @@ export class Connection {
   localOnlyText(): string {
     const lo = this.localOnly;
     if (!lo) return '';
-    if (!this.worktree) return lo.private ? LOCAL_ONLY_PROMPT : '';
-    const shared = lo.ignored ? [...lo.ignored.dirs, ...lo.ignored.files] : [];
-    const sharedText = shared.length ? IGNORED_SHARED_WORKTREE.replace('{paths}', shared.join(', ')) : '';
-    if (!lo.entries.length) return sharedText;
-    const text = LOCAL_ONLY_WORKTREE_PROMPT.replace('{paths}', lo.entries.join(', '));
-    const own = lo.private ? `${text} ${LOCAL_ONLY_PRIVATE_WORKTREE.replace('{private}', lo.private)}` : text;
-    return sharedText ? `${own} ${sharedText}` : own;
+    const folder = lo.shared ? SHARED_FOLDER_PROMPT : '';
+    if (!this.worktree) return folder;
+    const ignored = lo.ignored ? [...lo.ignored.dirs, ...lo.ignored.files] : [];
+    const ignoredText = ignored.length ? IGNORED_SHARED_WORKTREE.replace('{paths}', ignored.join(', ')) : '';
+    // aib-shared/ itself is in the copy too (its link): only the other local-only paths are named by their main-folder path
+    const same = (a: string, b: string) => a.replace(/[\\/]+$/, '').toLowerCase() === b.replace(/[\\/]+$/, '').toLowerCase();
+    const others = lo.entries.filter((e) => !(lo.shared && same(e, lo.shared)));
+    const othersText = others.length ? LOCAL_ONLY_WORKTREE_PROMPT.replace('{paths}', others.join(', ')) : '';
+    return [folder, othersText, ignoredText].filter(Boolean).join(' ');
   }
 
   /**

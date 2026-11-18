@@ -25,6 +25,7 @@ import { encoded } from '../../transcripts/normalize.ts';
 import { readJsonFile } from '../../state/json.ts';
 import { onWindowsDrive } from './worktrees.ts';
 import { openHolders } from './bgtasks.ts';
+import { unlinkSharedFor } from '../../worktrees/shared_link.ts';
 
 /** Printed by `import --probe`, and searched for in a helper binary by tools/wsl-import.ts: this helper knows `import`. */
 export const IMPORT_MARKER = 'aib-wsl-import-v1';
@@ -744,7 +745,7 @@ export async function planImport(o: ImportOptions): Promise<Report> {
   }
   const eligible = report.chats.filter((c) => c.status === 'eligible');
   report.notes.push(
-    'Git-ignored and excluded folders (.gitignore, .git/info/exclude, e.g. private/) are not copied or touched: they stay in the main ' +
+    'Git-ignored and excluded folders (.gitignore, .git/info/exclude, e.g. aib-shared/) are not copied or touched: they stay in the main ' +
       "folder, as for any new chat's copy (a chat reaches them through AIB's local-only folders)",
   );
   checks.backupBytes = eligible.filter((c) => c.provider === 'claude').reduce((n, c) => n + c.bytes, 0);
@@ -1036,6 +1037,8 @@ async function undoOne(d: ReturnType<typeof defaults>, manager: wt.Manager, proj
   // the copy goes (no "removed" note: the chat stays continuable in the project folder), then the history comes back
   if (stat(entry.worktree)) {
     if (!manager.insideRoot(entry.worktree)) throw new Error(`${entry.worktree} is not in AIB's worktrees folder`);
+    // the aib-shared link first (the link only), so nothing ever follows it into the main folder's real folder
+    if (!(await unlinkSharedFor(entry.worktree, project))) throw new Error(`the aib-shared link in ${entry.worktree} could not be removed`);
     const removed = await git(['worktree', 'remove', entry.worktree], project);
     if (removed.returncode !== 0) throw new Error(`git worktree remove failed: ${removed.stderr.trim().slice(0, 300)}`);
   }

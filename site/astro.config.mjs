@@ -10,6 +10,10 @@ export const REPO = 'https://github.com/sirkuttin/AIB';
 
 export default defineConfig({
   site: SITE,
+  // The private/ folder page became aib-shared/ (0.13.0): the old address keeps working.
+  redirects: {
+    '/private-folder/': '/aib-shared/',
+  },
   integrations: [
     starlight({
       // Fails the build on a broken link between pages.
@@ -43,7 +47,7 @@ export default defineConfig({
             'docs',
             'artifacts',
             'files',
-            'private-folder',
+            'aib-shared',
             'keeper',
             'updates',
             'limits',

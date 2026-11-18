@@ -506,7 +506,6 @@ Deno.test('the ready line can list every method of the contract', () => {
     'localOnly.search',
     'localOnly.read',
     'localOnly.exclude',
-    'localOnly.moveStrays',
     'localOnly.backup',
     'allow.facts',
   ];
