@@ -13,6 +13,7 @@
  *     or with a full-screen app, nothing is shown; Do not disturb / Focus is applied by Windows itself (it holds the toast back).
  *   - macOS: `osascript` with `display notification` (the text goes in as arguments, never into the script).
  *   - Linux: `notify-send` when it is installed. Either missing: nothing is shown and the reason is reported once in the log.
+ *     In the desktop app this is the fallback: toast_linux.ts gives Linux notifications the Windows toasts' buttons over D-Bus.
  *   Both run hidden (stdin/stdout/stderr null) and are killed after 10 s.
  */
 import { clip, isDict, isStr, ValueError } from '../core/py.ts';

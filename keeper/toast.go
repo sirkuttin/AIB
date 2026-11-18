@@ -2,6 +2,7 @@ package main
 
 // AIB-keeper toast: Windows toasts with buttons (Inbox v3.1 phase 4, aib-shared/designs/inbox-v31 section 3). Never part of a serving
 // keeper; the keeper's own protocol is untouched. The keeper binary is GUI-subsystem on Windows, so this never has a console.
+// On Linux the same subcommand is the D-Bus notification helper instead (toast_fdo.go: same clicks, plain fields, no registry).
 //
 // Two ways it runs:
 //
@@ -144,6 +145,9 @@ func toastCommand(exe string, m toastMsg) string {
 }
 
 func toastMain(args []string) int {
+	if fdoToasts {
+		return fdoMain() // Linux: org.freedesktop.Notifications (toast_fdo.go)
+	}
 	o, err := parseToastArgs(args)
 	if err != nil {
 		return 2

@@ -73,6 +73,20 @@ notifications through the web API, updates as "open the installer" instructions)
   (SHQueryUserNotificationState) and Do not disturb is applied by Windows. A click (NIN_BALLOONUSERCLICK on the tray thread) brings the
   window forward and opens that chat. macOS: `osascript`; Linux: `notify-send` when installed. The window's only binding is
   `aibDesktop`, which tells the page it runs in the app. The choices are saved in the data folder (`studio-notifications-app`).
+- **Linux notification buttons** (`server/desktop/toast_linux.ts`, `keeper/toast_fdo.go`, `toast_linux.go`): `AIB-keeper toast`
+  talks to `org.freedesktop.Notifications` over the session bus (godbus, no cgo) and gives notifications the Windows toasts'
+  buttons and one-time codes (Allow/Deny, Reply, Continue/Open, Retry/Open; `toast_act.ts` applies them unchanged). A body click is
+  the `default` action. The reply box is KDE's inline reply where the server has `inline-reply` (KDE, swaync); elsewhere (GNOME)
+  it is an Open button that opens the chat. An answered request's notification is closed (`CloseNotification`). AIB fully quit:
+  the helper (its own session) stays while one of its notifications is open, at most 12 h; a click goes to `toast-inbox.jsonl` and
+  starts AIB (`$APPIMAGE`, else the installed program) with the click's activation token (`XDG_ACTIVATION_TOKEN` and
+  `DESKTOP_STARTUP_ID`). The next AIB stops a lingering helper (`toast-helper.pid`). No notification server with `actions`:
+  `notify-send`, as before. The chat's line says "on desktop notification". **Known issue (Wayland):** a click on a running AIB
+  cannot raise its window: the `deno desktop` runtime (GTK 3) calls only `gtk_window_present`, with no way to hand it the click's
+  activation token, so GNOME may show "AIB is ready" instead; the chat still opens. AIB started by a click is handed the token
+  (GTK 3.24 reads `DESKTOP_STARTUP_ID` and supports xdg-activation); not yet checked on a real Wayland desktop.
+  Tests: `keeper/toast_fdo_test.go`, `work/deno/linux_notify_test.ts`, and headless in WSL with a fake notification server on a
+  private bus: `work/deno/linux_notify_wsl_e2e_test.ts`.
 - **Agent host:** a separate long-lived process by design (`AIB host`). Closing the window does not cut off a turn when the person
   chose to keep chats running. With no app attached the host shows its own tray icon while something works and exits 10 s after
   nothing does (docs/agent-host.md, "Lifecycle of the built app's host"). With such a host (an older version's, being drained) the

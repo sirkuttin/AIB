@@ -47,6 +47,7 @@ import { presence as folderPresence } from './desktop/folder_presence.ts';
 import { ensureStartMenuShortcut } from './desktop/shortcut.ts';
 import { trayIconBytes, trayIconPng } from './desktop/tray_icon.ts';
 import { startWindowsToasts } from './desktop/toast_act.ts';
+import { startLinuxToasts } from './desktop/toast_linux.ts';
 import { userNotificationState } from './desktop/tray_win.ts';
 import { servePort, startBlank, startRedirect } from './desktop/serve_address.ts';
 import { startAttention } from './attention/watcher.ts';
@@ -551,6 +552,17 @@ export async function main(argv: string[]): Promise<void> {
           quietState: userNotificationState,
         })
       ).catch(() => {/* balloons, as before */});
+    } else if (Deno.build.os === 'linux' && Deno.env.get('AGENT_STUDIO_TEST') !== '1') {
+      // the same buttons on Linux, through org.freedesktop.Notifications (desktop/toast_linux.ts); notify-send stays the fallback.
+      // A click while AIB is quit starts the AppImage file itself (the running copy's mount is gone by then) or the installed program.
+      void keeperBinary(stateDir).then((program) =>
+        startLinuxToasts(ctx, app.notifications, {
+          stateDir,
+          program,
+          launch: Deno.env.get('APPIMAGE') || (isCompiled() ? Deno.execPath() : ''),
+          icon: trayIconBytes(32),
+        })
+      ).catch(() => {/* notify-send, as before */});
     }
     ctx.desktopWindows = app.desktopWindows; // K4: POST /api/live/desktop/windows opens, routes, focuses and closes app windows
     await app.start(); // the window navigates now: the server already listens

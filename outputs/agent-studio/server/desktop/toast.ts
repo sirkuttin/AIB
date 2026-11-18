@@ -301,10 +301,14 @@ export interface ToastHelperProc {
 
 export type SpawnToastHelper = (onMessage: (m: Json) => void, onExit: (why: string) => void) => ToastHelperProc;
 
-/** `AIB-keeper toast` with stdin/stdout piped; stderr dropped. The keeper is GUI-subsystem: no console window ever. */
-export function keeperToastSpawner(program: string): SpawnToastHelper {
+/**
+ * `AIB-keeper toast` with stdin/stdout piped; stderr dropped. The keeper is GUI-subsystem: no console window ever. args: the
+ * command line after the program (tests run the Linux helper through wsl.exe). killOnClose false (Linux): close only ends its
+ * stdin, so a helper that still waits for a click on a notification stays (toast_fdo.go); it ends by itself.
+ */
+export function keeperToastSpawner(program: string, args: string[] = ['toast'], killOnClose = true): SpawnToastHelper {
   return (onMessage, onExit) => {
-    const child = new Deno.Command(program, { args: ['toast'], stdin: 'piped', stdout: 'piped', stderr: 'null' }).spawn();
+    const child = new Deno.Command(program, { args, stdin: 'piped', stdout: 'piped', stderr: 'null' }).spawn();
     const writer = child.stdin.getWriter();
     const enc = new TextEncoder();
     let open = true;
@@ -336,6 +340,7 @@ export function keeperToastSpawner(program: string): SpawnToastHelper {
       close() {
         open = false;
         writer.close().catch(() => {});
+        if (!killOnClose) return;
         setTimeout(() => {
           try {
             child.kill();
@@ -357,14 +362,32 @@ export interface RegisterInfo {
   launch: string;
 }
 
+/** The Linux helper's register (toast_fdo.go): no app id and no COM class; `desktop` is the .desktop file's id. */
+export interface FdoRegisterInfo {
+  name: string;
+  icon: string;
+  data: string;
+  launch: string;
+  desktop: string;
+}
+
 export interface ToastClick {
   args: string;
   inputs: Record<string, string>;
+  /** Linux: the notification server's activation token for the click (Wayland focus), when it sent one. */
+  token?: string;
 }
 
 export interface WindowsToastsOptions {
   spawn: SpawnToastHelper;
-  register: RegisterInfo;
+  register: RegisterInfo | FdoRegisterInfo;
+  /** The route's name (default 'windows-toast'; Linux: 'linux-notify'). */
+  mechanism?: string;
+  /** What a show message carries besides op/id/tag/group (default: the toast XML; Linux: plain fields, toast_linux.ts). */
+  render?: (spec: ToastSpec, chat: string) => Json;
+  /** For the log: the route and its fallback (default 'Windows toast route' and 'the tray balloon'). */
+  routeName?: string;
+  fallbackName?: string;
   /** Today's balloon route: every notification the toast route can't show goes there. */
   balloon: OsNotify;
   quietState: () => number | null;
@@ -380,7 +403,7 @@ type Waiter = (m: Json | null) => void;
 
 /** The Windows route with toasts: an OsNotify, so DesktopNotifications uses it as it used the balloon (notify.ts use()). */
 export class WindowsToasts implements OsNotify {
-  readonly mechanism = 'windows-toast';
+  readonly mechanism: string;
   #proc: ToastHelperProc | null = null;
   #state: 'off' | 'starting' | 'ready' | 'broken' = 'off';
   #starting: Promise<boolean> | null = null;
@@ -392,7 +415,9 @@ export class WindowsToasts implements OsNotify {
   /** tag -> the chat and request (row signature) its toast is about */
   #shown = new Map<string, { chat: string; sig: string }>();
 
-  constructor(readonly options: WindowsToastsOptions) {}
+  constructor(readonly options: WindowsToastsOptions) {
+    this.mechanism = options.mechanism ?? 'windows-toast';
+  }
 
   get state(): string {
     return this.#state;
@@ -406,7 +431,12 @@ export class WindowsToasts implements OsNotify {
   #once(why: string): void {
     if (this.#logged.has(why)) return;
     this.#logged.add(why);
-    log.info('notifications: Windows toast route: %s; using the tray balloon for it', why);
+    log.info(
+      'notifications: %s: %s; using %s for it',
+      this.options.routeName ?? 'Windows toast route',
+      why,
+      this.options.fallbackName ?? 'the tray balloon',
+    );
   }
 
   /** Starts the helper (once; again after a crash, up to 3 times). Resolves true when it is ready. */
@@ -474,7 +504,8 @@ export class WindowsToasts implements OsNotify {
       const inputs: Record<string, string> = {};
       for (const [k, v] of Object.entries(obj(m.inputs))) if (typeof v === 'string') inputs[k.slice(0, 40)] = v.slice(0, 8000);
       try {
-        this.options.onActivated({ args: typeof m.args === 'string' ? m.args : '', inputs });
+        const token = typeof m.token === 'string' && m.token ? { token: m.token.slice(0, 400) } : {}; // Linux only
+        this.options.onActivated({ args: typeof m.args === 'string' ? m.args : '', inputs, ...token });
       } catch (error) {
         log.info('notifications: toast click failed (%s)', error instanceof Error ? error.message : error);
       }
@@ -495,7 +526,8 @@ export class WindowsToasts implements OsNotify {
     const acts = chat ? toastActs(row) : [];
     const sig = row ? (row.sig ?? INBOX.sigOf(row)) : '';
     const code = acts.some((a) => a !== 'open') ? this.options.codes.issue(chat, sig, acts) : '';
-    const xml = toastXml(toastSpec({ title, body, target, silent }, row, code));
+    const spec = toastSpec({ title, body, target, silent }, row, code);
+    const content = this.options.render ? this.options.render(spec, chat) : { xml: toastXml(spec) };
     const tag = chat ? toastTag(chat) : 'group';
     const id = String(++this.#seq);
     const proc = this.#proc;
@@ -504,14 +536,15 @@ export class WindowsToasts implements OsNotify {
       setTimeout(() => {
         if (this.#waiters.delete(id)) resolve(null);
       }, this.options.timeoutMs ?? 3000);
-      proc.send({ op: 'show', id, tag, group: TOAST_GROUP, xml });
+      proc.send({ op: 'show', id, tag, group: TOAST_GROUP, ...content });
     });
     if (answer?.op === 'shown') {
       if (chat) this.#shown.set(tag, { chat, sig });
       return { shown: true, code: 1 };
     }
     if (chat) this.options.codes.revokeChat(chat);
-    this.#once(answer ? `Windows refused a toast (${String(answer.error ?? '')})` : 'the helper did not answer');
+    const refused = this.options.render ? 'the notification server refused it' : 'Windows refused a toast';
+    this.#once(answer ? `${refused} (${String(answer.error ?? '')})` : 'the helper did not answer');
     return balloon();
   }
 
