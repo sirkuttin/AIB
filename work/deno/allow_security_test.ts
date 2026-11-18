@@ -295,10 +295,12 @@ Deno.test('security H11: more risky env names; Claude ask rules for Edit, WebFet
   const before = Deno.env.get('CLAUDE_CONFIG_DIR');
   Deno.env.set('CLAUDE_CONFIG_DIR', home);
   try {
-    for (const name of ['CLAUDE_CODE_SHELL_PREFIX', 'PATHEXT', 'npm_config_script_shell', 'PYTHONPATH', 'PSModulePath']) {
+    for (const [i, name] of ['CLAUDE_CODE_SHELL_PREFIX', 'PATHEXT', 'npm_config_script_shell', 'PYTHONPATH', 'PSModulePath'].entries()) {
       Deno.writeTextFileSync(join(home, 'settings.json'), JSON.stringify({ env: { [name]: 'x' } }));
+      // the facts are cached by the file's modified time: a fast Linux disk writes the next file within the same millisecond, so
+      // give each write its own time before reading it
+      Deno.utimeSync(join(home, 'settings.json'), new Date(), new Date(Date.now() + 1000 * (i + 1)));
       assert(claudeFacts(l.project).riskyEnv.includes(name), name);
-      Deno.utimeSync(join(home, 'settings.json'), new Date(), new Date(Date.now() + Math.random() * 1e6));
     }
     Deno.writeTextFileSync(
       join(home, 'settings.json'),
