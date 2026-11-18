@@ -16,6 +16,8 @@ import { writeFeed } from '../../tools/build.ts';
 
 const base = APP_VERSION.replace(/\.test\..*$/, '');
 const CURRENT = `${base}.test.1`, PREVIOUS = `${base}.test.0`, NEXT = `${base}.test.2`;
+/** The installer this system takes from a feed: a Windows zip, a macOS zip, a Linux .deb (dpkg) — named as tools/build.ts names them. */
+const ASSET = Deno.build.os === 'windows' ? 'windows-x64.zip' : Deno.build.os === 'darwin' ? 'macos-arm64.zip' : 'linux-x64.deb';
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 Deno.test({
@@ -28,7 +30,7 @@ Deno.test({
     for (const d of ['appdata', 'localappdata', 'home', 'feed', 'src']) Deno.mkdirSync(`${r}${SEP}${d}`, { recursive: true });
     const feed = `${r}${SEP}feed`;
     for (const [version, notes] of [[PREVIOUS, '- The previous test build.\n'], [NEXT, '- **Feed** notes for the next test build.\n']]) {
-      const zip = `${r}${SEP}src${SEP}AIB-${version}-windows-x64.zip`;
+      const zip = `${r}${SEP}src${SEP}AIB-${version}-${ASSET}`;
       Deno.writeTextFileSync(zip, `not a real AIB ${version}`.repeat(100));
       await writeFeed(feed, version, zip, { notes, commit: 'abc1234', date: '2026-11-16T10:00:00Z' });
     }
@@ -57,11 +59,11 @@ Deno.test({
       assertEquals(st.state, 'ready', JSON.stringify(st));
       const available = st.available as Record<string, unknown>;
       assertEquals(available.version, NEXT);
-      assertEquals(available.name, `AIB-${NEXT}-windows-x64.zip`);
+      assertEquals(available.name, `AIB-${NEXT}-${ASSET}`);
       const path = String(available.path);
       assert(path.startsWith(fx.root) && !path.startsWith(feed), `copied into the data folder: ${path}`);
       const sums = Deno.readTextFileSync(`${feed}${SEP}${NEXT}${SEP}SHA256SUMS`);
-      assert(sums.includes(`${available.sha256}  AIB-${NEXT}-windows-x64.zip`), 'verified against the feed SHA256SUMS');
+      assert(sums.includes(`${available.sha256}  AIB-${NEXT}-${ASSET}`), 'verified against the feed SHA256SUMS');
       assert(typeof st.instructions === 'string', 'a source run cannot install in place: instructions, nothing installed');
       assertEquals((await web.get('/api/live/update/notes'))[1], { notes: null }, 'no notes while the old version runs');
     } finally {
