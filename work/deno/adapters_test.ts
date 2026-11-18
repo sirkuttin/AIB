@@ -33,7 +33,7 @@ function fixture() {
 }
 
 const claude = (flag = '', saved = '', node = PY, stateDir: string | null = null) =>
-  adapters.resolveClaude({ flag, saved, nodeCommand: node, stateDir });
+  adapters.resolveClaude({ flag, saved, nodeCommand: node, stateDir, onPath: () => '' }); // no claude-agent-acp on this machine's PATH decides a result
 
 // ---- launcher precedence (test_adapters.LauncherPrecedenceTests) ---------------------------------------------------------
 
