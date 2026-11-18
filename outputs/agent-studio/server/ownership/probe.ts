@@ -225,6 +225,28 @@ const PARENT_LABELS: Record<string, string> = {
   'pythonw.exe': 'a Python program (possibly another AIB)',
   'cursor.exe': 'Cursor',
   'windsurf.exe': 'Windsurf',
+  // Linux and macOS name a process without .exe: a VS Code panel there is started by `code`, a shell or a terminal program.
+  'code': 'VS Code',
+  'code-insiders': 'VS Code',
+  'codium': 'VS Code',
+  'cursor': 'Cursor',
+  'windsurf': 'Windsurf',
+  'claude': 'Claude app or CLI',
+  'devin': 'Devin',
+  'bash': 'a terminal',
+  'zsh': 'a terminal',
+  'fish': 'a terminal',
+  'sh': 'a terminal',
+  'tmux': 'a terminal',
+  'screen': 'a terminal',
+  'gnome-terminal-server': 'a terminal',
+  'konsole': 'a terminal',
+  'xterm': 'a terminal',
+  'alacritty': 'a terminal',
+  'kitty': 'a terminal',
+  'wezterm-gui': 'a terminal',
+  'terminal': 'a terminal',
+  'iterm2': 'a terminal',
 };
 
 /** What a `ps` run returns (subprocess.run's returncode and stdout). Throws when the program cannot run or times out. */
