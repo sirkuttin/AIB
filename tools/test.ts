@@ -31,6 +31,8 @@ Options:
   --junit DIR     a JUnit file per test file
   --no-rerun      do not run a failed file again on its own
   --no-log        do not write the log file (see Logs)
+  --wsl           also run the WSL test files (their names have "wsl"); on by default on Windows, off elsewhere, where they
+                  need a distro and wsl.exe and fail. A word you name that has "wsl" in it runs them too
   --no-shard      run each file in one process (SHARDS in tools/test.ts splits a few long files into several)
   --help          this text
   -- ARGS         passed on to deno test (deno task test -- --filter "parity")
@@ -145,6 +147,7 @@ interface Options {
   why: string;
   allSlow: boolean;
   shard: boolean;
+  wsl: boolean;
 }
 
 function parseArgs(args: string[]): Options {
@@ -164,6 +167,7 @@ function parseArgs(args: string[]): Options {
     why: '',
     allSlow: false,
     shard: true,
+    wsl: Deno.build.os === 'windows',
   };
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -185,6 +189,7 @@ function parseArgs(args: string[]): Options {
     else if (arg === '--why') options.why = args[++i];
     else if (arg === '--all-slow') options.allSlow = true;
     else if (arg === '--no-shard') options.shard = false;
+    else if (arg === '--wsl') options.wsl = true;
     else if (arg.startsWith('--')) throw new Error(`unknown option ${arg} (--help lists them)`);
     else options.filters.push(arg);
   }
@@ -192,9 +197,10 @@ function parseArgs(args: string[]): Options {
   return options;
 }
 
-export function testFiles(tier: 'all' | 'fast' | 'slow', filters: string[] = []): string[] {
+export function testFiles(tier: 'all' | 'fast' | 'slow', filters: string[] = [], wsl: boolean = Deno.build.os === 'windows'): string[] {
   const all = [...Deno.readDirSync(TESTS)].filter((e) => e.isFile && e.name.endsWith('_test.ts')).map((e) => e.name).sort();
   return all
+    .filter((f) => wsl || !/wsl/i.test(f) || filters.some((part) => /wsl/i.test(part) && f.includes(part)))
     .filter((f) => tier === 'all' || (tier === 'slow') === f in SLOW)
     .filter((f) => !filters.length || filters.some((part) => f.includes(part)))
     .sort((a, b) => weight(b) - weight(a) || a.localeCompare(b));
@@ -473,7 +479,7 @@ async function main(): Promise<number> {
   }
   if (options.affected) return await mainAffected(options);
   if (options.junit) Deno.mkdirSync(options.junit, { recursive: true });
-  const files = testFiles(options.tier, options.filters);
+  const files = testFiles(options.tier, options.filters, options.wsl);
   if (!files.length) {
     console.error('no test files match');
     return 1;
