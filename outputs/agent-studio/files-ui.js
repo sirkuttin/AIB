@@ -582,13 +582,21 @@
     const out = new Set();
     if (!rootDir) return out;
     for (const a of projectArtifactList()) {
-      const rel = a.sourcePath ? F().relTo(a.sourcePath, rootDir) : null;
+      const rel = artRel(a, rootDir);
       if (rel) out.add(rel);
     }
     return out;
   }
-  const artifactFor = (rootDir, rel) =>
-    (rootDir && projectArtifactList().find((a) => a.sourcePath && F().relTo(a.sourcePath, rootDir) === rel)) || null;
+  // An artifact's source file relative to rootDir: a Windows file by its sourcePath, a WSL file by the Linux path of the wsl:// ref it
+  // was published from (wslSource), against the folder's Linux path (a WSL tree's root is a Linux path or a ref).
+  const linuxOfRef = (p) => String(p || '').replace(/^wsl:\/\/[^/]+/i, '');
+  function artRel(a, rootDir) {
+    if (!a || !rootDir) return null;
+    if (a.sourcePath) return F().relTo(a.sourcePath, rootDir);
+    if (a.wslSource) return F().relTo(linuxOfRef(a.wslSource), linuxOfRef(rootDir));
+    return null;
+  }
+  const artifactFor = (rootDir, rel) => (rootDir && projectArtifactList().find((a) => artRel(a, rootDir) === rel)) || null;
   // "Open in Artifacts": an artifact of any chat opens in the right column's Artifacts tab, beside whatever is in the middle (the
   // viewer shows another chat's artifact by id, so a file tab stays open and you keep your place). A page file no chat registered yet
   // is registered first, which is the deliberate action, in the chat that can hold it: the chat whose copy the file is in, else the
@@ -598,7 +606,8 @@
     if (!abs || !scope || scope.root === 'outside') return null;
     const all = projectChats(),
       own = all.find((c) => c.key === scope.chatKey),
-      inside = (c) => !!(c && c.id && c.cwd && F().relTo(abs, c.cwd));
+      // a WSL chat (its folder a wsl:// ref) holds a file of its Linux folder
+      inside = (c) => !!(c && c.id && c.cwd && F().relTo(linuxOfRef(abs), linuxOfRef(c.cwd)));
     return (scope.root === 'chat' ? [own, chat] : [chat, own]).concat(all).find(inside) || null;
   }
   function openInArtifacts(art, abs, target, say) {
@@ -3126,6 +3135,8 @@
     onFrameMessage,
     loadCodeEditor,
     _editorSpike: editorSpike,
+    _artifactFor: artifactFor,
+    _artChatFor: artChatFor,
     _state:() => ({ mode, chat, following, pinned, query, changedOnly, showIgnored, sel, results, view, tabs: tabsHere(), beside, trees, newDoc, frames }),
     _reset: () => {
       trees.clear();

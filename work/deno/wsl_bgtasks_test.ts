@@ -177,6 +177,9 @@ Deno.test({
       const agents = await get('/api/agents', `session=${encodeURIComponent(wslKey)}`);
       assertEquals(((agents!.body as Json).agents as Json[]).map((a) => [a.key, a.runningCommands]), [[wslKey, 1]]);
       assertEquals((await get('/api/command', `session=${encodeURIComponent(wslKey)}&id=other%23c1`))?.status, 400);
+      // a picture of a saved WSL chat: said plainly (never the Windows transcript lookup)
+      const image = await get('/api/transcript/image', `key=${encodeURIComponent(wslKey)}&n=1&i=0`);
+      assertEquals([image?.status, (image?.body as Json).code], [404, 'wsl_image']);
 
       // the distro is not running: never started for a poll; the page is told why instead of "nothing runs"
       host.state = 'stopped';

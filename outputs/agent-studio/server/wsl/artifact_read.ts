@@ -189,7 +189,7 @@ export async function readWslSnapshot(host: Pick<WslHost, 'call'>, target: WslRe
   let last: unknown = null;
   for (const [root, rel] of tries) {
     try {
-      return await readPieces(host, root, rel, target.maxBytes, kindOk);
+      return await readWslBytes(host, root, rel, target.maxBytes, kindOk);
     } catch (error) {
       last = error;
       if (!(error instanceof WslHelperError && error.code === 'not_found')) break;
@@ -199,7 +199,8 @@ export async function readWslSnapshot(host: Pick<WslHost, 'call'>, target: WslRe
 }
 
 /** The whole file in pieces; the size and mtime must stay the same from the first piece to the last. */
-async function readPieces(host: Pick<WslHost, 'call'>, root: string, rel: string, maxBytes: number, kindOk: () => void): Promise<WslSnapshot> {
+/** A whole file of a WSL folder through the helper (files.readBytes in 1 MB pieces; a change between pieces: WslReadError). */
+export async function readWslBytes(host: Pick<WslHost, 'call'>, root: string, rel: string, maxBytes: number, kindOk: () => void): Promise<WslSnapshot> {
   const first = await host.call('files.readBytes', { root, rel, offset: 0, length: READ_CHUNK, maxBytes }, { timeoutMs: CALL_TIMEOUT_MS });
   kindOk();
   const size = first.size, mtime = first.mtimeMs;

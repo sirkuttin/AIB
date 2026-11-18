@@ -10,6 +10,11 @@
  *   - push endpoints limited to the known push services
  */
 import { assert, assertEquals } from "./_assert.ts";
+import { setWslHostResolver } from "../../outputs/agent-studio/server/wsl/access.ts";
+import {
+  WslHelperError,
+  type WslHost,
+} from "../../outputs/agent-studio/server/wsl/contract.ts";
 import {
   readRemoteArtifactPort,
   readRemotePort,
@@ -606,6 +611,68 @@ Deno.test({
 });
 
 // ---- Files download ----------------------------------------------------------------------------------------------------------------
+
+Deno.test({
+  ...OPTS,
+  name:
+    "files download: a WSL project's file through the distro's helper (0.13.0); missing, too big, blocked and away answered",
+  async fn() {
+    const s = await remoteOn();
+    const REF = "wsl://ubuntu/home/u/app";
+    const files: Record<string, string> = { "src/app.ts": "linux file content" };
+    let state: WslHost["state"] = "ready";
+    const host = {
+      distro: "Ubuntu",
+      get state() {
+        return state;
+      },
+      note: "",
+      link: null,
+      helperVersion: "test",
+      call(method: string, p: Record<string, unknown>) {
+        if (state !== "ready") return Promise.reject(new WslHelperError("Ubuntu stopped", "stopped"));
+        if (method !== "files.readBytes") return Promise.reject(new WslHelperError("No method", "no_method"));
+        const rel = String(p.rel);
+        if (rel === "big.bin") return Promise.reject(new WslHelperError("Too large", "too_large"));
+        const text = files[rel];
+        if (text === undefined) return Promise.reject(new WslHelperError("Not found", "not_found"));
+        return Promise.resolve({ bytesB64: btoa(text), size: text.length, mtimeMs: 1, offset: 0, path: rel, abs: `${String(p.root)}/${rel}` });
+      },
+      env: () => Promise.resolve({}),
+      onOpenUrl: () => () => {},
+      start: () => Promise.resolve(),
+      reconnect: () => Promise.resolve(),
+    } as unknown as WslHost;
+    setWslHostResolver((key) => (key === "ubuntu" ? host : null));
+    try {
+      await s.ctx.addedProjects!.add(REF);
+      const laptop = await pairPhone(s, "Laptop", undefined, "computer");
+      const url = (path: string) => `/api/pc/files/download?root=project&project=${q(REF)}&path=${q(path)}`;
+      const got = await call(s, laptop.token, "GET", url("src/app.ts"));
+      assertEquals(got.status, 200, got.text);
+      assertEquals(got.text, "linux file content");
+      assert((got.headers.get("content-disposition") ?? "").startsWith('attachment; filename="app.ts"'));
+      const line = (await activity(s)).find((e) => e.action === "file downloaded");
+      assertEquals(line?.path, `${REF}/src/app.ts`);
+      const missing = await call(s, laptop.token, "GET", url("nope.txt"));
+      assertEquals([missing.status, missing.json.code], [404, "not_found"]);
+      const big = await call(s, laptop.token, "GET", url("big.bin"));
+      assertEquals([big.status, big.json.code], [413, "too_big"]);
+      // a sign-in folder by Linux rules (a home folder added as a project)
+      await s.ctx.addedProjects!.add("wsl://ubuntu/home/u");
+      files[".ssh/id_ed25519"] = "key";
+      const ssh = await call(s, laptop.token, "GET", `/api/pc/files/download?root=project&project=${q("wsl://ubuntu/home/u")}&path=${q(".ssh/id_ed25519")}`);
+      assertEquals(ssh.status, 403, ssh.text);
+      assert(!ssh.text.includes("key\""), "never the content");
+      state = "stopped";
+      const away = await call(s, laptop.token, "GET", url("src/app.ts"));
+      assertEquals(away.status, 409, away.text);
+    } finally {
+      setWslHostResolver(null);
+      await s.close();
+    }
+  },
+});
 
 Deno.test({
   ...OPTS,

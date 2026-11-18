@@ -551,6 +551,11 @@ export async function artifactPost(ctx: WebContext, who: RequestLike, path: stri
   await ctx.artifacts.prepare(publishing, publishing ? body.conversationId : owner);
   delete body[FROM_DOC_RESOLVED];
   delete body[WSL_FILE_RESOLVED];
+  if (path === '/api/live/artifacts/preview' && body.path !== null && body.path !== undefined) {
+    // "Open in Artifacts" on a WSL project's file: read through its distro's helper, as a WSL publish by path (0.13.0)
+    const refused = await attachWslFile(ctx, body);
+    if (refused) return refused;
+  }
   if (path === '/api/live/artifacts/publish') {
     // "Built from <doc › page>": the tool's fromDoc, or (an update without one) the link the artifact has, at the page's rev now
     let from: unknown = body.fromDoc;

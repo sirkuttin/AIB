@@ -203,10 +203,12 @@ async function wslTaskGet(
  * distro's helper (the distro is started for it), the background-task reads by wslTaskGet. null when the key is not a WSL one.
  */
 export async function wslTranscriptGet(path: string, args: Map<string, string[]>): Promise<{ status: number; body: unknown } | null> {
-  const key = args.get(path === '/api/transcript' ? 'key' : 'session')?.[0];
+  const key = args.get(path === '/api/transcript' || path === '/api/transcript/image' ? 'key' : 'session')?.[0];
   const wsl = parseWslSessionKey(key);
   if (!wsl) return null;
   if (path === '/api/agents' || path === '/api/commands' || path === '/api/command') return await wslTaskGet(path, wsl, args);
+  // a picture in a saved WSL chat: the helper has no method for it yet (it fell through to the Windows lookup before)
+  if (path === '/api/transcript/image') return { status: 404, body: { error: 'Pictures of saved WSL chats are not shown yet', code: 'wsl_image' } };
   if (path !== '/api/transcript') return { status: 400, body: { error: 'Not available for WSL sessions yet' } };
   try {
     const test = wslTestHomeEnv();

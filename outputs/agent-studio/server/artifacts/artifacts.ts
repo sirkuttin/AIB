@@ -1776,6 +1776,29 @@ export class Service {
 
   #preview(body: Json, handler: RequestLike | null = null): Json {
     const conversationId = Service.conversation(body, (ident) => this.chat(ident));
+    const wslFile = wslFileOf(body[WSL_FILE_RESOLVED]);
+    if (wslFile) {
+      // the Files view's "Open in Artifacts" on a WSL project's file (0.13.0): the route read it through the distro's helper; a
+      // snapshot like a WSL publish (wslSource, no watcher), the same file in the same chat is the same artifact
+      handler?.pathGuard?.(wslFile.ref);
+      const entry = safeEntryName(wslFile.name);
+      const fileKind = kindFor(entry);
+      if (!fileKind) throw new ArtifactError('That kind of file cannot be previewed.', 400, 'unsupported_kind');
+      if (wslFile.data.length > MAX_FILE_BYTES) throw new ArtifactError('That file is too large to publish (limit 25 MB)', 413, 'too_large');
+      const same = this.store.findByWslSource(conversationId, wslFile.ref);
+      let manifest: Manifest, changed: boolean;
+      if (same) [manifest, changed] = this.store.addVersion(same.id, wslFile.data, { entry, by: 'preview' });
+      else {
+        manifest = this.store.create(conversationId, guessTitle(entry, fileKind, wslFile.data), fileKind, entry, wslFile.data, {
+          project: this.projectRootFor(conversationId),
+          by: 'preview',
+        });
+        manifest.wslSource = wslFile.ref;
+        this.store.save(manifest);
+        changed = true;
+      }
+      return changed ? this.event(manifest) : this.store.summary(manifest);
+    }
     const [cwd, real] = this.resolvePath(conversationId, body.path);
     handler?.pathGuard?.(real); // a remote computer: the file the path resolved to, never the path as sent
     const [manifest, changed] = this.syncFile(conversationId, real, 'preview', { cwd, projectRoot: this.projectRootFor(conversationId) });

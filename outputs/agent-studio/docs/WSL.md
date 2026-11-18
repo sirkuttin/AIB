@@ -517,6 +517,29 @@ path is Deno's file calls exactly as before; a `wsl://` path goes to `wsl/docs.t
 - Tests: `wsl_docs_test` (no distro: the helper's docs.fs on a temp folder, the whole store through a FakeWslHost, the distro away and
   back, the trash route), `test_doc_links.js` (the Files docs rows of a WSL project), `wsl_docs_e2e` (real distro).
 
+## File editor (0.13.0)
+
+A WSL project's files open in the same editor with the same guarantees as a Windows file (files/live_files.ts keeps the live text,
+the undo history and the unsaved text on Windows). Only the disk work moves into the distro: `files/file_io.ts` WslIo calls the
+helper's `editor.read`, `editor.write` and `editor.sweep` (`wsl/helper/editor.ts`) and `fs.stat` for the 2 s poll; nothing is read or
+written through `\\wsl$`.
+
+- **Where**: `rel` inside the project, resolved in the distro after links (a symlink inside the project saves its target; one that
+  leads out is refused, as is anything in .git). The guard refuses, for everyone: the agents' sign-in folders and the internal
+  defaults under the distro user's home (`~/.claude`, `~/.codex`, `~/.ssh`, `~/.aws`, `~/.config/gh`, ... as remote/path_guard.ts),
+  `CLAUDE_CONFIG_DIR` / `CODEX_HOME` of the login environment, under test the agents' home in AIB_WSL_ROOT, and AIB's own folders in the
+  distro (its data folder and the chats' copies; its root except under test). aib-docs/ is edited in Docs, as on Windows.
+- **Read**: settled in the distro (stat, pause, stat, read, stat must agree), in pieces of at most 1 MB.
+- **Save**: pieces into `.aib-save-<8 hex>.tmp` next to the real target (same folder, same file system), fsync, then the raw-byte
+  check against the bytes AIB compared (`expect`) right before the rename: a write in between is refused as `changed` and the page's
+  save runs again and merges. The temp file gets the target's mode, owner and group (refused with code `owner` when the owner or
+  group can't be kept) and is renamed over the target. Line endings, BOM and encoding are handled on Windows exactly as for any file.
+- **Distro away**: the poll skips the file (it never reads as deleted), a save answers `wsl_away` and the text stays.
+- **Agent writes**: a WSL chat's finished write call names a Linux path; the registry matches it to the open file by its Linux path.
+- **Remote computers with Files**: may edit WSL files like Windows files; the blocked names are checked on the ref too.
+- Tests: `file_editor_wsl_test` (no distro: a FakeWslHost running the real helper methods on a temp folder), `file_editor_wsl_e2e`
+  (real distro).
+
 ## Agent installs in the distro
 
 The new-chat agent panel of a WSL project offers **Install in Ubuntu** for a missing Claude Code or Codex, and **Update in Ubuntu**
@@ -976,6 +999,7 @@ keeps one failure from hiding the others' results.
 | `wsl_merge_e2e` | through AIB's merge routes: a clean merge with its note, a conflict sent back and then resolved, a merge in progress in the main checkout refused, a merge after an AIB restart, a clash kept in the stash with the clash line and Keep my version, uncommitted main edits put back |
 | `wsl_phase2_e2e` | a picture served from the distro's bytes, outside files (and AIB's own folder refused), project trash (refusals, `gio`, the freedesktop trash by hand, under the test's own `XDG_DATA_HOME`), Codex limits |
 | `wsl_fixes_e2e` | the set-up probe with `-` for no `AIB_WSL_ROOT` answers `$HOME/.aib-server` (read-only); the New project dialog's check and create in the distro (new, existing, missing parent, with and without a name and git init) |
+| `file_editor_wsl_e2e` | the file editor on a WSL file: open, type, save (bytes read back in the distro); an agent's change on another line merges; an overlap is shown and "keep mine" saves; CRLF and BOM bytes kept; mode, owner and group kept; a symlink saves its target and stays a link; .git, a link out and the agents' sign-in folders refused |
 | `wsl_docs_e2e` | an agent in the distro makes, reads and edits a doc through its real tunnel entry (Linux paths in the answers); doc.aibdoc valid JSON in the distro; the user's route edits and typing with an agent's stale rewrite refused; a sed in the distro taken in; history; Changes' doc row; a big doc in chunks; a symlink out refused; a restart from the cache and a rebuild from a changed file; Move doc to trash into the test's trash |
 | `wsl_agent_install_e2e` | the distro's own Node.js found (or the missing line with its command, nothing created); with a stand-in login shell, stub node and stub npm: Check again finds a new node, `npm ci` into the test root's `agents/` with AIB's lockfile and cache, detect and a chat's launch use it, Cancel kills npm and removes the folder |
 | `wsl_bgtasks_e2e` | a program named claude started with `--resume <id>` in the distro: Continue refused with its Linux pid, then continued once it ended; AIB's own agent (also named claude with `--resume <id>`) never counts, and is found when not excluded; a saved session's background command listed running with its output; a chat with a background shell in the distro stays in the busy list until the shell ends; Stop on one chat's background row ends its command in the distro while another chat's command, the agent's own child and an unrelated process run on |

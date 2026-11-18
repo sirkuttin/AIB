@@ -152,6 +152,32 @@ export interface HelperMethods {
   'project.trash': { params: { path: string; projects?: string[]; dataHome?: string; viaGio?: boolean }; result: { disk: 'gio' | 'xdg' | 'missing' } };
   'files.gitInfo': { params: { root: string }; result: unknown };
   /**
+   * The file editor's disk work in a WSL project (helper/editor.ts; files/wsl_disk.ts): `rel` inside `root` after links, the guard
+   * (sign-in folders: code 'blocked'; AIB's own folders: 'worktree' | 'data'; .git and out of the project: FilesError codes). read:
+   * settled with `settleMs`, pieces of at most 1 MB at `offset`, a file over 5 MB only its first 8 KB (`tooBig`). write: pieces into
+   * `.aib-save-<token>.tmp` next to the real target, the last (`done`) checks the target's raw bytes against `expect` (code
+   * 'changed'), keeps mode, owner and group (code 'owner') and renames. sweep: leftover temp files older than a minute.
+   */
+  'editor.read': {
+    params: { root: string; rel: string; blocked?: string[]; settleMs?: number; offset?: number };
+    result: {
+      state: 'ok' | 'moving' | 'gone';
+      real: string;
+      rel: string;
+      size?: number;
+      mtimeMs?: number;
+      mode?: number;
+      offset?: number;
+      tooBig?: boolean;
+      bytesB64?: string;
+    };
+  };
+  'editor.write': {
+    params: { root: string; rel: string; blocked?: string[]; token: string; offset: number; bytesB64: string; done: boolean; expect?: string | null };
+    result: { ok: boolean; offset?: number; real?: string; size?: number; mtimeMs?: number };
+  };
+  'editor.sweep': { params: { root: string; rel: string; blocked?: string[] }; result: { swept: number } };
+  /**
    * The docs' file work of a WSL project (helper/docs.ts; docs/doc_fs.ts on Windows): AIB holds the open doc, the helper reads and
    * writes its files in <project>/aib-docs/ natively. Linux paths, only under some folder's aib-docs/ (real paths checked). One
    * result per op, in order: {ok: true, ...} or {ok: false, error, code}. read -> text (null: missing), stat -> stat (null), list ->

@@ -290,6 +290,10 @@ async function fileOpenVerdict(ask: Ask): Promise<Verdict> {
   if (scope && !Array.isArray(scope) && !wslLoc(scope.root)) {
     guardPath(scope.root, ask.ctx.stateDir);
     if (isStr(body.path) && body.path) guardPath(osp.join(scope.root, ...body.path.split(/[\\/]+/)), ask.ctx.stateDir);
+  } else if (scope && !Array.isArray(scope)) {
+    // a WSL project's file (0.13.0): the same blocked names by Linux rules on the ref (the distro's helper checks the real path)
+    guardPath(scope.root, ask.ctx.stateDir);
+    if (isStr(body.path) && body.path) guardPath(`${scope.root.replace(/\/+$/, '')}/${body.path.replace(/\\/g, '/').replace(/^\/+/, '')}`, ask.ctx.stateDir);
   }
   return { need: [F] };
 }

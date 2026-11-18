@@ -36,6 +36,7 @@ import { signinStatus } from './signin_status.ts';
 import { aibMethods, type RemoveDeps } from './aib_remove.ts';
 import { localOnlyMethods, rawRead } from './local_only.ts';
 import { allowFactsMethods } from './allow_facts.ts';
+import { editorMethods } from './editor.ts';
 
 export const LIST_DIRS_DEFAULT = 500, LIST_DIRS_MAX = 2000;
 export const SESSIONS_DEFAULT = 500, SESSIONS_MAX = 5000;
@@ -198,6 +199,7 @@ export function makeMethods(ctx: HelperContext): Handlers {
   const methods = {
     ...phaseOne(ctx),
     ...docsMethods(ctx), // the docs' file work in the project's aib-docs/ (helper/docs.ts)
+    ...editorMethods(ctx), // the file editor's reads and atomic saves of a WSL project's files (helper/editor.ts)
     // background tasks, the ownership check and the agents' process trees (helper/bgtasks.ts)
     ...bgtaskMethods({ env: ctx.env, store: (p) => sessionStore(ctx, p) }),
     ...linkingMethods(ctx), // Linking (WSL) phase 2: env.prereqs, agents.signinStatus (agents.uninstall is in installMethods)

@@ -40,7 +40,9 @@ import type { Audit } from './audit.ts';
 import { parseQs } from '../artifacts/origin.ts';
 import { scopeFor } from '../web/files_routes.ts';
 import * as files from '../worktrees/files.ts';
-import { wslLoc } from '../wsl/access.ts';
+import { hostWhenReady, wslLoc } from '../wsl/access.ts';
+import { readWslBytes } from '../wsl/artifact_read.ts';
+import { WslHelperError } from '../wsl/contract.ts';
 import { isBlocked } from './path_guard.ts';
 import { MAX_TOTAL_ATTACHMENT_BYTES } from '../acp/attachments.ts';
 import { answeredElsewhere, answerOf, answersOf } from '../attention/answers.ts';
@@ -316,14 +318,37 @@ export class PcBridge {
     const args = parseQs(url.search.slice(1));
     const scope = await scopeFor(ctx, args);
     if (Array.isArray(scope)) return this.host.json(scope[0] as number, scope[1]);
-    if (wslLoc(scope.root)) {
-      return this.host.json(409, { error: 'Downloading from a WSL project is not available yet.', code: 'wsl_unsupported' });
-    }
     const stateDir = ctx.stateDir ?? null;
     const blocked = () =>
       this.host.json(403, { error: 'This folder holds sign-ins or AIB data. Open it on the PC itself.', code: 'blocked_folder' });
     const rel = args.path?.[0] ?? '';
     let abs: string, name: string;
+    const wsl = wslLoc(scope.root);
+    if (wsl) {
+      // a WSL project (0.13.0): the bytes through the distro's helper (files.readBytes: the realpath check in the distro, no .git),
+      // the blocked names by Linux rules on the folder and on the file's real path
+      if (isBlocked(scope.root, stateDir)) return blocked();
+      let got: { data: Uint8Array; linuxPath: string; name: string };
+      try {
+        const host = await hostWhenReady(wsl.distro, 20_000);
+        got = await readWslBytes(host, wsl.linuxPath, rel, MAX_DOWNLOAD_BYTES, () => {});
+      } catch (error) {
+        const code = error instanceof WslHelperError || error instanceof files.FilesError ? error.code : '';
+        if (code === 'too_large') {
+          return this.host.json(413, { error: `This file is larger than ${MAX_DOWNLOAD_BYTES / 1048576} MiB. Download it on the PC itself.`, code: 'too_big' });
+        }
+        if (code === 'not_found' || code === 'outside') return this.host.json(404, { error: 'Not found', code: 'not_found' });
+        if (code === 'hidden' || code === 'not_file') return this.host.json(400, { error: 'Not a file', code });
+        if (error instanceof Error && (error.name === 'ValueError' || error instanceof WslHelperError)) {
+          return this.host.json(409, { error: error.message, code: 'wsl_away' });
+        }
+        if (error instanceof Error && error.name === 'WslReadError') return this.host.json(409, { error: error.message, code: 'changed' });
+        throw error;
+      }
+      const ref = `wsl://${wsl.distro}${got.linuxPath}`;
+      if (isBlocked(ref, stateDir)) return blocked();
+      return this.#sendDownload(device, args, ref, got.name, got.data);
+    }
     try {
       if (isBlocked(scope.root, stateDir)) return blocked();
       let found: [string, string];
@@ -352,6 +377,10 @@ export class PcBridge {
       throw error;
     }
     const bytes = await Deno.readFile(abs);
+    return this.#sendDownload(device, args, abs, name, bytes);
+  }
+
+  #sendDownload(device: Device, args: Record<string, string[]>, abs: string, name: string, bytes: Uint8Array): Response {
     if (bytes.byteLength > MAX_DOWNLOAD_BYTES) return this.host.json(413, { error: 'This file is too large.', code: 'too_big' });
     this.#log(device, 'file downloaded', 'done', { chat: args.id?.[0] ?? '', path: abs });
     const headers = new Headers(this.host.json(200, null).headers);
@@ -360,7 +389,7 @@ export class PcBridge {
     headers.set('Content-Length', String(bytes.byteLength));
     headers.set('Cache-Control', 'no-store');
     headers.set('X-Content-Type-Options', 'nosniff');
-    return new Response(bytes, { status: 200, headers });
+    return new Response(bytes as Uint8Array<ArrayBuffer>, { status: 200, headers });
   }
 
   /** The link a socket's session gets: in the device's registry (Remove closes it; checked per message), with its log lines. */

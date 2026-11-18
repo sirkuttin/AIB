@@ -25,7 +25,6 @@ import { scopeFor } from './files_routes.ts';
 import { FilesError } from '../worktrees/files.ts';
 import { REASON_TEXT } from '../files/file_text.ts';
 import { type LiveFiles, REFUSED_TEXT } from '../files/live_files.ts';
-import { wslLoc } from '../wsl/access.ts';
 import type { WebContext } from './server.ts';
 
 export const FILES_SOCKET = '/api/live/files/socket';
@@ -72,11 +71,10 @@ export function liveFilesRoutes(): Map<string, Handler> {
     for (const k of ['id', 'project']) if (typeof b[k] === 'string') args[k] = [b[k] as string];
     const scope = await scopeFor(ctx, args);
     if (Array.isArray(scope)) return scope;
-    if (wslLoc(scope.root)) return [200, { editable: false, reason: 'wsl', reasonText: reasonText('wsl') }];
     // a computer: the blocked folders (sign-ins, AIB's data) also inside a project, after links are resolved (pc_routes.ts checked
-    // what was sent)
+    // what was sent). A WSL project's file: by Linux rules on the ref; its distro's helper refuses them for everyone anyway.
     if (principal?.kind === REMOTE_PC && isBlocked(scope.root, ctx.stateDir ?? null)) return BLOCKED;
-    const got = liveFilesOf(ctx)!.open(scope.root, b.path);
+    const got = await liveFilesOf(ctx)!.openFile(scope.root, b.path);
     if (principal?.kind === REMOTE_PC && 'file' in got && isBlocked(got.file.place.abs, ctx.stateDir ?? null)) return BLOCKED;
     if ('refused' in got) return [200, { editable: false, reason: got.refused, reasonText: reasonText(got.refused) }];
     const lf = got.file;
@@ -121,19 +119,16 @@ export function liveFilesRoutes(): Map<string, Handler> {
     }
     return [200, files.closeView(file, String(b.view ?? ''), b.discard === true)];
   }));
-  routes.set('GET /api/live/files/compare', guard((ctx, url) => {
-    const lf = liveFilesOf(ctx)!.get(url.searchParams.get('file') ?? '');
-    if (!lf) return Promise.resolve([404, { error: 'Open the file first', code: 'not_open' }]);
-    let bytes: Uint8Array;
-    try {
-      bytes = Deno.readFileSync(lf.place.abs);
-    } catch {
-      return Promise.resolve([200, { disk: null, reason: 'deleted' }]);
-    }
+  routes.set('GET /api/live/files/compare', guard(async (ctx, url) => {
+    const files = liveFilesOf(ctx)!;
+    const lf = files.get(url.searchParams.get('file') ?? '');
+    if (!lf) return [404, { error: 'Open the file first', code: 'not_open' }];
+    const bytes = await files.diskBytes(lf); // a WSL file: through its distro's helper
+    if (!bytes) return [200, { disk: null, reason: 'deleted' }];
     const utf16 = bytes[0] === 0xff && bytes[1] === 0xfe ? 'utf-16le' : bytes[0] === 0xfe && bytes[1] === 0xff ? 'utf-16be' : '';
     const binary = !utf16 && bytes.subarray(0, 8192).includes(0);
     const text = binary ? null : new TextDecoder(utf16 || 'utf-8').decode(bytes).replace(/^﻿/, '').replace(/\r\n?/g, '\n');
-    return Promise.resolve([200, { disk: text, reason: binary ? 'binary' : '', base: lf.base.sha }]);
+    return [200, { disk: text, reason: binary ? 'binary' : '', base: lf.base.sha }];
   }));
   return routes;
 }

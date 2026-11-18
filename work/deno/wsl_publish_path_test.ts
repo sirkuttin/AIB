@@ -302,6 +302,27 @@ Deno.test('publish by path (WSL): without the route\'s read the path is refused 
   assertEquals(forged[1].code, 'unknown_folder');
 });
 
+Deno.test('Open in Artifacts (preview) of a WSL file: a snapshot with its wsl:// ref; the same file again is the same artifact; a blocked guard refuses', async () => {
+  using d = new Distro();
+  const { svc, store } = service(d.dir);
+  const h = { headers: new Headers({ 'X-Studio-Token': 't' }) };
+  const preview = (body: Json, who: Json = h) => svc.handlePost(who as never, '/api/live/artifacts/preview', body) as [number, Json];
+  d.write(`${APP}/site/index.html`, '<p>one</p>');
+  const file = await wslPublishFile(`wsl://ubuntu${APP}`, null, `${APP}/site/index.html`, d.host);
+  const [status, a] = preview({ conversationId: 'c1', path: `${APP}/site/index.html`, [WSL_FILE_RESOLVED]: file });
+  assertEquals(status, 200, JSON.stringify(a));
+  const id = String((a.artifact as Json | undefined)?.id ?? a.id);
+  const m = store.get(id);
+  assertEquals([m.kind, m.wslSource, m.sourcePath ?? null], ['html', file.ref, null]);
+  const again = preview({ conversationId: 'c1', path: `${APP}/site/index.html`, [WSL_FILE_RESOLVED]: file })[1];
+  assertEquals(String((again.artifact as Json | undefined)?.id ?? again.id), id, 'one artifact per file and chat');
+  // a remote computer's guard sees the file's ref
+  const seen: string[] = [];
+  const guarded = preview({ conversationId: 'c1', path: 'x', [WSL_FILE_RESOLVED]: file }, { ...h, pathGuard: (p: string) => seen.push(p) });
+  assertEquals(guarded[0], 200);
+  assertEquals(seen, [file.ref]);
+});
+
 // ---- the route step ---------------------------------------------------------------------------------------------------------
 
 function routeCtx(cwd: string | null, projectRoot: string | null = null, windowsFolder: string | null = null): WebContext {

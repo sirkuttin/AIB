@@ -28,18 +28,27 @@
  * Notes to agents (design 3.8 / 3.9). They go out with the chat's next prompt (Studio's prompt-context), one per file, the newest
  * ranges only: after an overlap to the chat that wrote (else the folder's busy chats), after a save to the chats whose agent wrote
  * that file and the folder's busy chats.
+ *
+ * WSL projects (AIB 0.13.0). A file of a WSL project (its folder is a wsl:// ref) is the same LiveFile with the same rules; only its
+ * disk work goes through AIB's helper inside the distro (files/file_io.ts WslIo, wsl/helper/editor.ts), never through \\wsl$: the
+ * place and the guard (links resolved in the distro, .git, AIB's own folders, the agents' sign-in folders such as ~/.claude, ~/.codex
+ * and ~/.ssh), the settled read, and the atomic save with its raw-byte check right before the rename. Its key and `abs` are the ref
+ * of the real Linux path (case kept); its folder is the project's ref. A distro that is not running is "away": the poll skips the
+ * file (never "deleted"), a save fails with code 'wsl_away' and the text stays.
  */
 import * as Y from 'yjs';
 import { createHash } from 'node:crypto';
 import * as osp from '../platform/ospath.ts';
-import { decodeDisk, type DiskText, EDIT_LIMIT, readDisk } from './file_text.ts';
-import { baseOf, LiveFile, type SaveReply, type Stored, TEST_PAGE_ORIGIN } from './live_file.ts';
+import { type DiskText, readDisk } from './file_text.ts';
+import { baseOf, LiveFile, type Place, type SaveReply, type Stored, TEST_PAGE_ORIGIN } from './live_file.ts';
 import { narrowEdit, rangesText } from './line_merge.ts';
 import { type FilesChanged, onFilesChanged } from './files_changed.ts';
-import { FilesError, realRoot, resolveInside, within } from '../worktrees/files.ts';
-import { writeAtomicBytes } from '../worktrees/atomic.ts';
+import { FilesError, realRoot, resolveInside, safeParts, within } from '../worktrees/files.ts';
 import { LockTimeout, pauseLock, recordForPath, syncPaused } from '../worktrees/worktrees.ts';
 import type { WsLink } from '../platform/websocket.ts';
+import { AWAY, ioOf, type Read, sameStat, statSync, winIo, WslEditRefused, wslIo } from './file_io.ts';
+import { WslHelperError } from '../wsl/contract.ts';
+import { isWslRef, refOf, wslLocOf } from '../platform/location.ts';
 
 export type Json = Record<string, unknown>;
 
@@ -56,11 +65,12 @@ export interface LiveFilesHost {
 export const LIVE_TIMING = { pollMs: 2000, tickMs: 1000, settleMs: 300, storeMs: 1000, closeGraceMs: 15_000, saveWaitMs: 3000 };
 
 /** Why a file opens read-only (the page's footer and its one button). */
-export type PlaceRefusal = 'worktree' | 'docs' | 'data' | 'wsl';
+export type PlaceRefusal = 'worktree' | 'docs' | 'data' | 'blocked';
 
 const sha1 = (text: string) => createHash('sha1').update(text).digest('hex');
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const keyOf = (real: string) => (osp.WIN ? osp.normcase(osp.normpath(real)) : osp.normpath(real));
+/** The registry key: a Windows path case-folded; a WSL ref as it is (Linux names are case-sensitive). */
+const keyOf = (real: string) => (isWslRef(real) ? real : osp.WIN ? osp.normcase(osp.normpath(real)) : osp.normpath(real));
 const SAVE_TEMP = /^\.aib-save-[0-9a-f]{8}\.tmp$/i;
 
 /** AIB's own data folders: never edited (the state dir, and %LOCALAPPDATA%\AgentStudio where worktrees live). */
@@ -89,6 +99,26 @@ export function editPlace(stateDir: string, root: string, rel: unknown): { place
 /** The save-failed row's words for a write error (design 3.4). */
 export function saveFailure(error: unknown, abs: string): { code: string; error: string } {
   const msg = error instanceof Error ? error.message : String(error);
+  // a WSL file: the helper in the distro answered with its code (wsl/helper/editor.ts)
+  if (error instanceof WslEditRefused) {
+    return { code: error.code === 'blocked' ? 'blocked_folder' : 'access_denied', error: error.code === 'blocked' ? 'This folder holds sign-ins' : 'Access denied' };
+  }
+  if (error instanceof FilesError) return { code: 'access_denied', error: 'Access denied: ' + error.message };
+  if (error instanceof WslHelperError) {
+    const words: Record<string, string> = {
+      folder_gone: 'Folder gone',
+      disk_full: 'Disk full',
+      read_only: 'Read-only file',
+      access_denied: 'Access denied',
+      owner: "Owned by another Linux user: AIB can't keep its owner",
+      too_big: 'Over 5 MB',
+    };
+    if (words[error.code]) return { code: error.code, error: words[error.code] };
+    if (['stopped', 'helper_gone', 'helper_exited', 'helper_restart', 'helper_timeout', 'not_installed', 'unsupported', 'timeout'].includes(error.code)) {
+      return { code: 'wsl_away', error: 'WSL is not reachable: ' + msg.slice(0, 120) + '. Your text is kept; save again when it is back.' };
+    }
+    return { code: 'write_failed', error: 'Could not save: ' + msg.slice(0, 160) };
+  }
   const os = /os error (\d+)/.exec(msg)?.[1] ?? '';
   if (error instanceof Deno.errors.NotFound || os === '3') return { code: 'folder_gone', error: 'Folder gone' };
   if (os === '32' || os === '33' || error instanceof Deno.errors.Busy) return { code: 'locked', error: 'Locked by another program' };
@@ -102,26 +132,22 @@ export function saveFailure(error: unknown, abs: string): { code: string; error:
   return { code: 'write_failed', error: 'Could not save: ' + msg.slice(0, 160) };
 }
 
-interface Stat {
-  size: number;
-  mtime: number;
-}
-function statOf(abs: string): Stat | null {
-  try {
-    const st = Deno.statSync(abs);
-    return st.isFile ? { size: st.size, mtime: st.mtime ? st.mtime.getTime() : 0 } : null;
-  } catch {
-    return null;
-  }
-}
-const sameStat = (a: Stat | null, b: Stat | null) => (!a && !b) || (!!a && !!b && a.size === b.size && a.mtime === b.mtime);
+const statOf = statSync;
 
-/** A closed file kept only for its undo history: its registry key, path, folder and store id. */
+/** A closed file kept only for its undo history: its registry key, path, folder, path inside it and store id. */
 interface Kept {
   key: string;
   abs: string;
   root: string;
+  rel: string;
   id: string;
+}
+
+/** A WSL file's place from the helper's answer: the key and `abs` are the ref of the real Linux path, `root` the project's ref. */
+function wslPlace(root: string, real: string, rel: string): Place {
+  const loc = wslLocOf(root)!;
+  const abs = refOf({ kind: 'wsl', distro: loc.distro, linuxPath: real });
+  return { key: keyOf(abs), abs, root, rel };
 }
 
 export class LiveFiles {
@@ -212,6 +238,56 @@ export class LiveFiles {
     return { file: lf };
   }
 
+  /** open() for any project: a WSL project's file through its distro's helper (the routes use this one). */
+  async openFile(root: string, rel: unknown): Promise<{ file: LiveFile } | { refused: PlaceRefusal | DiskText['reason']; disk?: DiskText }> {
+    return wslLocOf(root) ? await this.#openWsl(root, rel) : this.open(root, rel);
+  }
+
+  async #openWsl(root: string, rel: unknown): Promise<{ file: LiveFile } | { refused: PlaceRefusal | DiskText['reason']; disk?: DiskText }> {
+    const parts = safeParts(rel); // the same shape rules as a Windows path (FilesError)
+    if (!parts.length) throw new FilesError('Choose a file', 'not_file');
+    if (parts[0].toLowerCase() === 'aib-docs') return { refused: 'docs' };
+    const asked = { abs: root, root, rel: parts.join('/') };
+    let got;
+    try {
+      got = await wslIo.read(asked, 0, true);
+    } catch (error) {
+      if (error instanceof WslEditRefused) return { refused: error.code as PlaceRefusal };
+      throw error;
+    }
+    if (got === AWAY) throw new FilesError(`${wslIo.distroOf(asked)} is not running. Open the file again when it is.`, 'wsl_away', 503);
+    if (got === 'moving') {
+      // being written: one settled read
+      const again = await wslIo.read(asked, this.timing.settleMs, true).catch(() => AWAY);
+      if (again === AWAY || again === 'moving') throw new FilesError('The file is being written; open it again in a moment.', 'disk_busy', 409);
+      got = again;
+    }
+    if ('gone' in got) throw new FilesError('Not found', 'not_found', 404);
+    const place = wslPlace(root, got.real, got.rel);
+    if (place.rel.split('/')[0].toLowerCase() === 'aib-docs') return { refused: 'docs' };
+    const have = this.#byKey.get(place.key);
+    if (have) return { file: have };
+    void wslIo.sweep(place);
+    const kept = this.#history.get(place.key) ?? null;
+    if (!got.disk.editable) {
+      if (kept) this.#forgetHistory(place.key);
+      return { refused: got.disk.reason, disk: got.disk };
+    }
+    if (kept) {
+      const back = this.#loadHistory(kept);
+      if (back) {
+        this.#add(back);
+        back.takeIn(got.disk, got.mtime, '');
+        back.refreshDirty();
+        return { file: back };
+      }
+    }
+    const lf = new LiveFile(sha1(place.key).slice(0, 16), place, baseOf(got.disk, got.mtime), crypto.randomUUID());
+    lf.seen = { size: got.disk.size, mtime: got.mtime };
+    this.#add(lf);
+    return { file: lf };
+  }
+
   #add(lf: LiveFile): void {
     this.#history.delete(lf.place.key);
     this.#byKey.set(lf.place.key, lf);
@@ -242,7 +318,7 @@ export class LiveFiles {
   #unload(lf: LiveFile): void {
     if (!this.#store(lf)) return; // not written: keep it in memory rather than lose the history
     this.#release(lf);
-    this.#history.set(lf.place.key, { key: lf.place.key, abs: lf.place.abs, root: lf.place.root, id: lf.id });
+    this.#history.set(lf.place.key, { key: lf.place.key, abs: lf.place.abs, root: lf.place.root, rel: lf.place.rel, id: lf.id });
   }
 
   /** Load a file kept for its history back from the store (null: unreadable, and then forgotten). */
@@ -271,15 +347,7 @@ export class LiveFiles {
 
   /** Leftover save temp files (a crash between write and rename) next to the file, older than a minute. */
   #sweepTemps(abs: string): void {
-    try {
-      const dir = osp.dirname(abs);
-      for (const e of Deno.readDirSync(dir)) {
-        if (!e.isFile || !SAVE_TEMP.test(e.name)) continue;
-        const p = osp.join(dir, e.name);
-        const st = Deno.statSync(p);
-        if (st.mtime && Date.now() - st.mtime.getTime() > 60_000) Deno.removeSync(p);
-      }
-    } catch { /* nothing to sweep */ }
+    void winIo.sweep({ abs, root: '', rel: '' }); // synchronous underneath
   }
 
   // ---- the page socket and closing views ------------------------------------------------------------------------------------------
@@ -315,24 +383,12 @@ export class LiveFiles {
   // ---- reading the disk -----------------------------------------------------------------------------------------------------------
   /** A settled read: the stat before, 300 ms later and after the read agree. null when the file is gone; 'moving' while it changes. */
   async readSettled(abs: string): Promise<{ disk: DiskText; mtime: number } | null | 'moving'> {
-    const a = statOf(abs);
-    await sleep(this.timing.settleMs);
-    const b = statOf(abs);
-    if (!sameStat(a, b)) return 'moving';
-    if (!b) return null;
-    let bytes: Uint8Array;
-    try {
-      bytes = b.size > EDIT_LIMIT ? new Uint8Array() : Deno.readFileSync(abs);
-    } catch {
-      return 'moving';
-    }
-    const c = statOf(abs);
-    if (!sameStat(b, c)) return 'moving';
-    if (b.size > EDIT_LIMIT) {
-      const { disk } = readDisk(abs);
-      return { disk, mtime: b.mtime };
-    }
-    return { disk: decodeDisk(bytes), mtime: b.mtime };
+    return await winIo.readSettled({ abs, root: '', rel: '' }, this.timing.settleMs) as Read | null | 'moving';
+  }
+
+  /** A settled read of an open file, on its own disk (a WSL file in its distro; 'away' while the distro is not reachable). */
+  #readSettled(place: Place): Promise<Read | null | 'moving' | typeof AWAY> {
+    return ioOf(place.abs).readSettled(place, this.timing.settleMs);
   }
 
   /** Check one file against the disk (in its queue). `hint`: an event named it, so read even when the stat looks the same. */
@@ -350,12 +406,14 @@ export class LiveFiles {
 
   async #checkNow(lf: LiveFile, hint: boolean): Promise<void> {
     if (!this.#byId.has(lf.id)) return;
-    const st = statOf(lf.place.abs);
+    const st = await ioOf(lf.place.abs).stat(lf.place);
+    if (st === AWAY) return; // the distro is not reachable: nothing is known, the next poll looks again
     const fresh = st && st.size < 1024 * 1024 && Date.now() - st.mtime < 3000;
     if (st && sameStat(st, lf.seen) && sameStat(st, { size: lf.base.size, mtime: lf.base.mtime }) && !hint && !fresh) return;
     if (!st && lf.meta.get('disk') === 'deleted') return;
     if (await syncPaused(this.host.stateDir, lf.place.root)) return void this.#later(lf, hint); // a landing or Undo is moving the folder
-    const got = await this.readSettled(lf.place.abs);
+    const got = await this.#readSettled(lf.place);
+    if (got === AWAY) return;
     if (got === 'moving') return void this.#later(lf, true);
     if (await syncPaused(this.host.stateDir, lf.place.root)) return void this.#later(lf, true);
     const who = lf.lastWhoNow();
@@ -377,6 +435,15 @@ export class LiveFiles {
   /** A "files changed" event (a landing, an Undo, an agent's write): the named open files are read when settled. */
   touched(e: FilesChanged): void {
     for (const p of e.paths) {
+      const wsl = this.#wslTouched(e.folder, p);
+      if (wsl !== undefined) {
+        // a WSL file: the event names a Linux path (a WSL chat's write) or a path in a WSL folder (a landing, an Undo)
+        if (wsl) {
+          wsl.lastWho = { who: e.who, chat: e.chat ?? '', at: Date.now() };
+          void this.check(wsl, true);
+        }
+        continue;
+      }
       const abs = e.folder ? osp.join(e.folder, ...p.split('/')) : p;
       let lf = this.#byKey.get(keyOf(abs));
       if (!lf) {
@@ -388,6 +455,24 @@ export class LiveFiles {
       lf.lastWho = { who: e.who, chat: e.chat ?? '', at: Date.now() };
       void this.check(lf, true);
     }
+  }
+
+  /**
+   * The open WSL file an event path names (null: none is open), or undefined when the path is not a WSL one. A bare Linux path
+   * (a WSL chat's write) matches by its Linux path in any distro: the real path or the project folder's path plus `rel`.
+   */
+  #wslTouched(folder: string, p: string): LiveFile | null | undefined {
+    const inFolder = folder ? wslLocOf(folder) : null;
+    const direct = !folder ? wslLocOf(p) : null;
+    const linux = inFolder ? `${inFolder.linuxPath.replace(/\/+$/, '')}/${p.replace(/^\/+/, '')}` : direct ? direct.linuxPath : p.startsWith('/') && !/^\/\/|^\/[A-Za-z]:/.test(p) && osp.WIN ? p : null;
+    if (linux === null) return undefined;
+    const distro = inFolder?.distro ?? direct?.distro ?? null;
+    for (const lf of this.#byId.values()) {
+      const at = wslLocOf(lf.place.abs), root = wslLocOf(lf.place.root);
+      if (!at || !root || (distro && at.distro !== distro)) continue;
+      if (at.linuxPath === linux || `${root.linuxPath.replace(/\/+$/, '')}/${lf.place.rel}` === linux) return lf;
+    }
+    return null;
   }
 
   #onTick(): void {
@@ -411,7 +496,16 @@ export class LiveFiles {
 
   /** Closed files kept for their history whose file is gone: the history goes with them. */
   #sweepHistory(): void {
-    for (const k of [...this.#history.values()]) if (!statOf(k.abs)) this.#forgetHistory(k.key);
+    for (const k of [...this.#history.values()]) {
+      if (!wslLocOf(k.abs)) {
+        if (!statOf(k.abs)) this.#forgetHistory(k.key);
+        continue;
+      }
+      // a WSL file: only a distro that answers "gone" ends the history (away: nothing is known)
+      void wslIo.stat({ abs: k.abs, root: k.root, rel: k.rel }).then((st) => {
+        if (st === null && this.#history.get(k.key) === k) this.#forgetHistory(k.key);
+      });
+    }
   }
 
   /** The agent host's finished write calls since the last look (host/studio.ts files-changed). */
@@ -475,8 +569,16 @@ export class LiveFiles {
         };
         const now = await read();
         if (now === 'moving') return { ok: false, status: 409, code: 'disk_busy', error: 'The file is being written; saving again.' };
-        return await lf.save(() => now, (bytes) => this.#write(lf, bytes), !!opts.force);
+        if (now === AWAY) {
+          return { ok: false, status: 409, code: 'wsl_away', error: `${wslIo.distroOf(lf.place)} is not reachable. Your text is kept; save again when it is back.` };
+        }
+        const expect = now ? now.disk.sha : null;
+        return await lf.save(() => now, (bytes) => ioOf(lf.place.abs).write(lf.place, bytes, expect), !!opts.force);
       } catch (error) {
+        // a WSL save whose check right before the rename found other bytes: read again (the page saves again, and merges)
+        if (error instanceof WslHelperError && error.code === 'changed') {
+          return { ok: false, status: 409, code: 'disk_busy', error: 'The file is being written; saving again.' };
+        }
         const f = saveFailure(error, lf.place.abs);
         return { ok: false, status: 409, ...f };
       } finally {
@@ -491,7 +593,14 @@ export class LiveFiles {
   }
 
   /** The save's read: the disk now, settled only when it differs from base (an unchanged file costs one read). */
-  async readSettledQuick(lf: LiveFile): Promise<{ disk: DiskText; mtime: number } | null | 'moving'> {
+  async readSettledQuick(lf: LiveFile): Promise<Read | null | 'moving' | typeof AWAY> {
+    if (wslLocOf(lf.place.abs)) {
+      // a WSL file: one helper read (it carries its own before/after stat); settled only when it differs from base
+      const got = await wslIo.readNow(lf.place);
+      if (got === null || got === 'moving' || got === AWAY) return got === 'moving' ? await this.#readSettled(lf.place) : got;
+      if (got.disk.sha === lf.base.sha) return got;
+      return await this.#readSettled(lf.place);
+    }
     const st = statOf(lf.place.abs);
     if (!st) return null;
     try {
@@ -503,11 +612,9 @@ export class LiveFiles {
     return await this.readSettled(lf.place.abs);
   }
 
-  async #write(lf: LiveFile, bytes: Uint8Array): Promise<number> {
-    const abs = lf.place.abs;
-    if (!osp.isdir(osp.dirname(abs))) throw new Deno.errors.NotFound('folder gone');
-    await writeAtomicBytes(abs, bytes, abs, { prefix: '.aib-save-', flush: true, mkdir: false });
-    return statOf(abs)?.mtime ?? Date.now();
+  /** The disk's bytes of an open file now (Compare), null when gone or unreadable. */
+  diskBytes(lf: LiveFile): Promise<Uint8Array | null> {
+    return ioOf(lf.place.abs).bytes(lf.place);
   }
 
   /** Wait (up to saveWaitMs) until the page's edits up to its state vector `sv` arrived ("Don't save" after the last keystrokes). */
@@ -574,7 +681,7 @@ export class LiveFiles {
     this.#noted.set(lf.id, line);
     const ids: string[] = [];
     for (const c of this.host.conversations()) {
-      if (!c.id || !(c.writes ?? []).some((w) => keyOf(w) === lf.place.key)) continue;
+      if (!c.id || !(c.writes ?? []).some((w) => keyOf(w) === lf.place.key || this.#wslTouched('', w) === lf)) continue;
       const live = this.host.connectionOf(c.id);
       if (live) ids.push(live);
     }
@@ -671,9 +778,9 @@ export class LiveFiles {
       if (this.#byKey.has(s.place.key)) continue;
       if (s.unsaved === false) {
         // kept only for its undo history: loaded when the file is opened again; a deleted file's history ends
-        const k = { key: s.place.key, abs: s.place.abs, root: s.place.root, id: s.id };
+        const k = { key: s.place.key, abs: s.place.abs, root: s.place.root, rel: s.place.rel, id: s.id };
         this.#history.set(k.key, k);
-        if (!statOf(k.abs)) this.#forgetHistory(k.key);
+        if (!wslLocOf(k.abs) && !statOf(k.abs)) this.#forgetHistory(k.key); // a WSL file: the history sweep asks its distro later
         continue;
       }
       let lf: LiveFile;
@@ -686,7 +793,8 @@ export class LiveFiles {
       this.#add(lf);
       // the restore merge: what changed on disk while AIB was closed merges in like any disk change
       void lf.run(async () => {
-        const got = await this.readSettled(lf.place.abs);
+        const got = await this.#readSettled(lf.place);
+        if (got === AWAY) return void lf.markRestored(s.at, false); // a WSL file whose distro is away: the poll merges it later
         const changed = got !== 'moving' && (!got || got.disk.sha !== lf.base.sha);
         if (got && got !== 'moving') lf.takeIn(got.disk, got.mtime, '');
         else if (got === null) lf.markDeleted('');
@@ -701,5 +809,5 @@ export const REFUSED_TEXT: Record<PlaceRefusal, string> = {
   worktree: "Read-only: a helper's or subagent's copy",
   docs: 'Read-only: AIB docs are edited in Docs',
   data: "Read-only: AIB's own data",
-  wsl: 'Read-only: WSL files are edited in the next version',
+  blocked: 'Read-only: this folder holds sign-ins',
 };

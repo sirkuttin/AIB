@@ -169,3 +169,14 @@ test('F5: Ctrl+click on a Windows outside link still sends the Windows path unch
   t.shell.document.dispatch('click', { target: p.querySelector('a.fx-path'), ctrlKey: true });
   assert.deepEqual(edits, [[String.raw`C:\other\run.log`, String.raw`C:\other`]]);
 });
+
+test('Open in Artifacts on a WSL file: its artifact is found by the wsl:// ref it was published from, and a WSL chat holds a Linux-path file', () => {
+  const { FU, ctx } = setup();
+  const art = { id: 'a1', title: 'Index', wslSource: REF + '/site/index.html', conversationId: 'k-w1' };
+  ctx.AgentArtifactsUI.state = () => ({ list: [art] });
+  assert.equal(FU._artifactFor(REF, 'site/index.html'), art, 'the tree root is the ref');
+  assert.equal(FU._artifactFor(LINUX, 'site/index.html'), art, 'or the Linux path');
+  assert.equal(FU._artifactFor(REF, 'site/other.html'), null);
+  const c = FU._artChatFor({ root: 'main' }, LINUX + '/site/index.html');
+  assert.ok(c && c.id === 'claude:w1', 'the WSL chat whose folder holds the file registers it');
+});
