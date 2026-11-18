@@ -58,6 +58,21 @@ function ownerGemini(): string {
   return home ? pathOf(home, ".gemini") : "";
 }
 
+/**
+ * True when the OS keyring already holds an Antigravity sign-in for this user. agy keeps its Google sign-in there (Windows
+ * Credential Manager target "gemini:antigravity"), which is per user, not per HOME, so a temp HOME does not hide it and the
+ * check answers "ready" instead of -32000. Only target names are listed, never a secret. Windows only; elsewhere assumed absent.
+ */
+function osSignIn(): boolean {
+  if (!WIN) return false;
+  try {
+    const out = new Deno.Command("cmdkey", { args: ["/list"], stdout: "piped", stderr: "null" }).outputSync();
+    return /Target:.*antigravity/i.test(new TextDecoder().decode(out.stdout));
+  } catch {
+    return false;
+  }
+}
+
 /** Newest modification time under a folder (0 when it does not exist), to see that nothing in it changed. */
 function newest(path: string, depth = 2): number {
   let out = 0;
@@ -85,6 +100,7 @@ Deno.test({
       return;
     }
     const owner = ownerGemini();
+    const signedInOnThisPc = osSignIn();
     const ownerBefore = [exists(owner), newest(owner)];
     const saved = Object.fromEntries(
       [
@@ -172,7 +188,12 @@ Deno.test({
       // ---- 2. Sign-in check with no sign-in and no key: -32000 = Needs sign-in ----
       let check =
         (await studio.signinCall("check", "antigravity", true))[1] as Json;
-      assertEquals(check.state, "signin", JSON.stringify(check));
+      // With an OS-level sign-in (see osSignIn) agy is ready even in a temp HOME; only without one is it -32000 = Needs sign-in.
+      assertEquals(
+        check.state,
+        signedInOnThisPc ? "ready" : "signin",
+        JSON.stringify(check),
+      );
       assert(exists(pathOf(home, ".gemini")), "agy used the temp home");
 
       // ---- 3. A dummy Gemini key: AIB's own folder with modelProvider "gemini", Ready ----

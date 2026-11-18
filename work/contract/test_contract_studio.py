@@ -63,7 +63,9 @@ class StudioContract(unittest.TestCase):
         omp.mkdir(exist_ok=True)
         cls.root = pathlib.Path(tempfile.mkdtemp(prefix='aib-contract-studio-')).resolve()
         cls.repo = make_repo(cls.root) if HAVE_GIT else None
-        cls.subject = Server(claude_dir=claude, omp_dir=omp).__enter__()
+        # AIB_SEAL=off: the Deno server seals artifact-key-secret with DPAPI on Windows, which the Python reference's artifact_keys
+        # (used by test_worktree_tool_route_gate to issue the agent key) cannot open; same reason as test_contract_artifacts.py.
+        cls.subject = Server(claude_dir=claude, omp_dir=omp, env={'AIB_SEAL': 'off'}).__enter__()
         cls.reference = Server(claude_dir=claude, omp_dir=omp, kind='python').__enter__()
 
     @classmethod
@@ -104,7 +106,9 @@ class StudioContract(unittest.TestCase):
                 data = {k: v for k, v in data.items() if k not in ('keepAwake', 'swarm')}  # swarm: Deno-only experimental switch
             def walk(v):
                 if isinstance(v, dict):
-                    return {k: walk(x) for k, x in v.items() if not (k == 'setup' and 'id' in v and 'installBlock' in v)}
+                    # server.getTestBuilds / server.commitIdentity (updater test-feed switch, Settings commit identity) are Deno-only too.
+                    return {k: walk(x) for k, x in v.items() if not (k == 'setup' and 'id' in v and 'installBlock' in v)
+                            and not (k in ('getTestBuilds', 'commitIdentity') and 'autoReconnect' in v)}
                 if isinstance(v, list):
                     return [walk(x) for x in v if not (isinstance(x, dict) and x.get('id') in beta)]
                 return v

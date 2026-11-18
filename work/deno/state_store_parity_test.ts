@@ -48,7 +48,13 @@ function norm(value: unknown, key = ''): unknown {
   if (Array.isArray(value)) return value.map((v) => norm(v));
   if (typeof value === 'object' && value !== null) {
     const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value)) if (k !== 'savedAt') out[k] = norm(v, k);
+    // server.getTestBuilds and server.commitIdentity (updater test-feed switch, Settings commit identity) are Deno-only by design:
+    // the Python reference has no such keys. Nothing else is dropped.
+    const server = 'autoReconnect' in value;
+    for (const [k, v] of Object.entries(value)) {
+      if (k === 'savedAt' || (server && (k === 'getTestBuilds' || k === 'commitIdentity'))) continue;
+      out[k] = norm(v, k);
+    }
     return out;
   }
   return value === undefined ? null : value;
