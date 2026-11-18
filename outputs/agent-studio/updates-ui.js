@@ -8,6 +8,10 @@
   //   - Click: install at once. Chats working that the update cannot take over: it waits for them by itself and reads "Update when
   //     chats finish"; a click then cancels the wait. A copy that cannot update itself (a .deb, a source run): the click opens a
   //     small popover in the page with the instructions. Never a pop-up dialog.
+  //   - A .deb install on Linux (status.password): the click answers at once ({state: 'authorizing'}) and the system asks for the
+  //     password; meanwhile the button reads "Waiting for password…" and the popover says "AIB is asking for your system password
+  //     to install the update." The outcome comes through the status (installError, restarting, or AIB quits and restarts). It never
+  //     waits for chats by itself: Install when chats finish and a phone's Update leave "Install now" waiting here (askOnPc).
   const doc = () => root.document;
   const el = (tag, content, cls) => {
     const n = doc().createElement(tag);
@@ -20,6 +24,9 @@
     FIRST_POLL_MS = 3000,
     FEED_FOCUS_MS = 15000, // a test build's feed read on window focus: at most this often
     FEED_POLL_MS = 60 * 1000; // a test build (reads its local feed every 2 minutes): the page asks for the status this often
+
+  // What the window says while a .deb install's system password prompt is open (the same words in the button, popover and card).
+  const ASKING = 'AIB is asking for your system password to install the update.';
 
   // ---- pure: what to show ---------------------------------------------------------------------------------------------
   // The button for a status. notice: what the last click led to ({kind: 'installing', chats} | {kind: 'error', text}), or null.
@@ -36,6 +43,39 @@
           'Installing ' + name + '. AIB will close and open again by itself.' + (notice.chats > 0 ? ' Your working chats keep running.' : ''),
         action: 'none',
         disabled: true,
+        waiting: false,
+      };
+    // A .deb install (status.password): a click asks for the system password. While the system's prompt is open the button says
+    // so, so the owner knows the prompt is AIB's (AIB asks only right after this click).
+    if (status.authorizing || (notice && notice.kind === 'authorizing'))
+      return {
+        show: true,
+        label: 'Waiting for password…',
+        title: ASKING + ' Type it in the system’s password window. AIB closes and opens again once ' + name + ' is installed.',
+        action: 'none',
+        disabled: true,
+        waiting: true,
+      };
+    if (status.restarting)
+      return {
+        show: true,
+        label: 'Restart when chats finish',
+        title: name + ' is installed. AIB closes and opens again on it when your chats finish.',
+        action: 'none',
+        disabled: true,
+        waiting: true,
+      };
+    if (status.password && status.inPlace)
+      return {
+        show: true,
+        label: status.askOnPc ? 'Install now' : 'Update',
+        title:
+          (notice && notice.kind === 'error' ? notice.text + ' ' : '') +
+          name +
+          ' is ready. Click to install: AIB asks for your system password, then closes and opens again.' +
+          (status.askOnPc ? ' It waits for your click here, since only a click here may ask for the password.' : ''),
+        action: 'install',
+        disabled: false,
         waiting: false,
       };
     if (status.installWhenIdle)
@@ -89,6 +129,9 @@
       return cur + ' This copy runs from source, so it does not update itself: updates come through the AIB desktop app.';
     switch (status.state) {
       case 'ready':
+        if (status.authorizing) return ASKING;
+        if (status.restarting) return 'AIB ' + status.available.version + ' is installed; AIB restarts on it when your chats finish.';
+        if (status.installError) return status.installError;
         return (
           'AIB ' +
           status.available.version +
@@ -223,17 +266,45 @@
     if (S.timer) root.clearTimeout(S.timer);
     S.timer = root.setTimeout(refresh, ms);
   }
+  const asking = () => !!(S.notice && S.notice.kind === 'authorizing');
   function setStatus(st) {
+    // a .deb install's password step ended: what came of it (the server says; this page asked, so it shows it)
+    if (asking() && st && !st.authorizing) {
+      if (st.installError) {
+        S.notice = { kind: 'error', text: st.installError };
+        S.status = st;
+        paint();
+        openPop(st.installError, /dpkg --configure/.test(st.installError) ? '' : 'Click Update to try again.');
+      } else if (st.restarting) {
+        S.notice = null;
+        S.status = st;
+        paint();
+        openPop(
+          'AIB ' + ((st.available && st.available.version) || '') + ' is installed. A chat started working while the password window was open, so AIB closes and opens again on it when your chats finish.',
+        );
+      } else {
+        closePop();
+        S.notice = { kind: 'installing', chats: 0 };
+      }
+    }
     S.status = st;
     if (st && st.state !== 'ready') S.notice = null;
     paint();
-    schedule(st && st.checking ? FAST_POLL_MS : st && st.feed ? FEED_POLL_MS : POLL_MS);
+    schedule(
+      st && (st.checking || st.authorizing || asking() || st.restarting)
+        ? FAST_POLL_MS
+        : st && st.feed
+          ? FEED_POLL_MS
+          : POLL_MS,
+    );
     return st;
   }
   function refresh() {
     if (!S.host) return Promise.resolve();
     if (!S.notesAsked) showNotes();
-    return Promise.resolve(S.host.get('/api/live/update')).then(setStatus, () => schedule(POLL_MS));
+    return Promise.resolve(S.host.get('/api/live/update')).then(setStatus, () =>
+      schedule(asking() || (S.notice && S.notice.kind === 'installing') ? FAST_POLL_MS : POLL_MS),
+    );
   }
   function check() {
     if (!S.host) return Promise.resolve();
@@ -243,17 +314,30 @@
   }
   const errBody = (err) => (err && err.body) || err || {};
   // Install now. Chats working that the update cannot take over (409 chats_working): it switches to "install when chats finish"
-  // by itself and says why in the popover.
+  // by itself and says why in the popover. A .deb install: the answer comes at once ('authorizing') and the system asks for the
+  // password; the page says so and follows the status. It never switches to "install when chats finish" (no prompt nobody asked for).
   function install() {
     closePop();
     return Promise.resolve(S.host.post('update/install', { whenIdle: false })).then(
       (res) => {
+        if (res && res.state === 'authorizing') {
+          S.notice = { kind: 'authorizing' };
+          paint();
+          openPop(ASKING, 'Type it in the system’s password window. AIB asks only right after you click Install now.');
+          return refresh();
+        }
         S.notice = res && res.state === 'installing' ? { kind: 'installing', chats: Number(res.chats) || 0 } : null;
         paint();
         return refresh();
       },
       (err) => {
         const body = errBody(err);
+        const code = body.code || err.code;
+        if (code === 'password_on_pc' || (code === 'chats_working' && (body.password || err.password))) {
+          S.notice = null;
+          openPop((err && err.message) || 'Click Install now when you are ready.');
+          return refresh();
+        }
         if (body.code === 'chats_working' || err.code === 'chats_working') {
           S.notice = null;
           const why = (err && err.message) || '';
@@ -361,7 +445,7 @@
     b.addEventListener('click', check);
     row.append(b);
     const st = S.status;
-    if (st && st.state === 'ready' && st.inPlace && !st.installWhenIdle) {
+    if (st && st.state === 'ready' && st.inPlace && !st.installWhenIdle && !st.authorizing && !st.restarting) {
       const i = el('button', 'Install now');
       i.type = 'button';
       i.addEventListener('click', () => act('install'));
@@ -479,7 +563,9 @@
           ? 'Install it on ' + pc + '.'
           : !canSend
             ? 'Updating from here needs the Send switch (AIB on ' + pc + ' → Settings → Remote control).'
-            : '';
+            : update.password
+              ? 'Installing asks for the system password on ' + pc + ', so it finishes there with Install now.'
+              : '';
     return { kind: 'ready', label: 'Update ready · ' + update.version, note, go: !!(update.canInstall && canSend && !update.installWhenIdle) };
   }
   const R = { on: false, update: null, phase: '', from: '', to: '', at: 0, msg: '', whenIdle: false, open: false, notes: null, sawDown: false, timer: null };

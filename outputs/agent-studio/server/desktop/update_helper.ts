@@ -16,10 +16,11 @@
  *                (the old one becomes <name>.old-<stamp>). The updater starts this helper from the new AppImage, so the old one's
  *                mount can go away.
  *   deb          target = /usr/lib/aib/aib (a .deb install). Nothing to swap: the updater already installed the new .deb with
- *                `pkexec /usr/lib/aib/aib-install-deb` before AIB quit (dpkg replaced the files by rename, so the old app and its
- *                keeper kept running from the old ones). The helper waits for the app to quit and starts the new version, as for the
- *                other kinds. There is no rollback (it would need a second password prompt): a new version that does not confirm its
- *                start is logged with how to reinstall the previous release.
+ *                `/usr/bin/pkexec /usr/lib/aib/aib-install-deb` before AIB quit (dpkg replaced the files by rename, so the old app and
+ *                its keeper kept running from the old ones). The helper waits for the app to quit and starts the new version, as for
+ *                the other kinds. There is no rollback (it would need a second password prompt): a new version that does not confirm
+ *                its start is logged with how to reinstall the previous release. Here `/usr/lib/aib/aib update-helper` is already the
+ *                NEW binary reading HelperArgs the OLD one wrote: keep HelperArgs readable across versions.
  * If any rename fails, or the new app does not confirm its start (it writes the `marker` file, <data>/updates/started-<ver>.ok,
  * once its window has loaded the page, or once a `serve` listens; MARKER_SECONDS at most) or exits with an error first, every
  * rename is undone and the old app is started again. Without a marker (older callers) "still running after STARTUP_SECONDS"

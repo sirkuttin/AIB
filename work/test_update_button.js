@@ -243,6 +243,103 @@ test('a failed install says so in the popover and the tooltip; the next click tr
   assert.equal(t.btn().textContent, 'Updating…');
 });
 
+// ---- a .deb install (Linux): Install now asks for the system password; the window says so --------------------------------------
+const DEB = Object.assign({}, READY, {
+  password: true,
+  authorizing: false,
+  askOnPc: false,
+  restarting: false,
+  installError: '',
+  available: { version: '0.1.0-beta.10', path: '/home/ann/.local/state/agent-studio/updates/0.1.0-beta.10/AIB-0.1.0-beta.10-linux-x64.deb' },
+});
+const ASKING = 'AIB is asking for your system password to install the update.';
+
+test('button() on a .deb install: says a click asks for the password; "Install now" when a phone or a wait asked for it', () => {
+  const b = U.button(DEB, null);
+  assert.equal([b.label, b.action].join(' '), 'Update install');
+  assert.match(b.title, /Click to install: AIB asks for your system password, then closes and opens again\.$/);
+  const asked = U.button(Object.assign({}, DEB, { askOnPc: true }), null);
+  assert.equal([asked.label, asked.action, asked.disabled].join(' '), 'Install now install false');
+  assert.match(asked.title, /It waits for your click here/);
+});
+
+test('button() while the system password prompt is open: "Waiting for password…", disabled, and says the prompt is AIB\'s', () => {
+  for (const [st, notice] of [[Object.assign({}, DEB, { authorizing: true }), null], [DEB, { kind: 'authorizing' }]]) {
+    const b = U.button(st, notice);
+    assert.equal([b.label, b.disabled, b.action].join(' '), 'Waiting for password… true none');
+    assert.ok(b.title.startsWith(ASKING), b.title);
+  }
+  const r = U.button(Object.assign({}, DEB, { restarting: true }), null);
+  assert.equal([r.label, r.disabled].join(' '), 'Restart when chats finish true');
+  assert.equal(U.cardLine(Object.assign({}, DEB, { authorizing: true })), ASKING);
+});
+
+test('.deb click: answered at once ("authorizing"), the popover says AIB asks for the password; a closed prompt shows why', async () => {
+  const t = pageWith({ status: DEB, install: (_body, set) => (set(Object.assign({}, DEB, { authorizing: true })), { state: 'authorizing', ok: true }) });
+  await t.U.refresh();
+  t.btn().click();
+  await flush();
+  assert.deepEqual(t.posts, [['update/install', { whenIdle: false }]], 'one request; it does not wait for the prompt');
+  assert.equal(t.btn().textContent, 'Waiting for password…');
+  assert.equal(t.btn().disabled, true);
+  assert.ok(t.pop() && t.pop().textContent.includes(ASKING), 'the window says the prompt is AIB\'s');
+  // the prompt was closed: the next status poll carries why; the page shows it and Update can be clicked again
+  const why = 'The password prompt was closed, so nothing was installed. Install it with: sudo apt install "x.deb"';
+  t.setStatus(Object.assign({}, DEB, { installError: why }));
+  await t.U.refresh();
+  assert.equal(t.btn().textContent, 'Update');
+  assert.equal(t.btn().disabled, false);
+  assert.ok(t.pop().textContent.includes('The password prompt was closed'), t.pop().textContent);
+  assert.match(t.btn().title, /^The password prompt was closed/);
+});
+
+test('.deb click: installed, the page reads "Updating…"; partly installed: the fix, no "try again"', async () => {
+  const asking = (_body, set) => (set(Object.assign({}, DEB, { authorizing: true })), { state: 'authorizing', ok: true });
+  const t = pageWith({ status: DEB, install: asking });
+  await t.U.refresh();
+  t.btn().click();
+  await flush();
+  t.setStatus(DEB); // authorizing over, no error: installed, AIB is quitting
+  await t.U.refresh();
+  assert.equal(t.btn().textContent, 'Updating…');
+  const p = pageWith({ status: DEB, install: asking });
+  await p.U.refresh();
+  p.btn().click();
+  await flush();
+  const partial = 'The update is only partly installed: ... To finish, open a terminal and run: sudo dpkg --configure -a  then restart AIB.';
+  p.setStatus(Object.assign({}, DEB, { installError: partial }));
+  await p.U.refresh();
+  assert.ok(p.pop().textContent.includes('sudo dpkg --configure -a'));
+  assert.ok(!p.pop().textContent.includes('try again'), p.pop().textContent);
+});
+
+test('.deb with chats working: no switch to "Update when chats finish" (no later prompt); it says to click again', async () => {
+  const msg = 'Some working chats do not run in the keeper (chats working now: 2). Installing asks for your system password, so click Install now again once they finish.';
+  const t = pageWith({
+    status: DEB,
+    install: () => Object.assign(new Error(msg), { code: 'chats_working', body: { code: 'chats_working', chats: 2, password: true } }),
+  });
+  await t.U.refresh();
+  t.btn().click();
+  await flush();
+  assert.deepEqual(t.posts.map((p) => p[1]), [{ whenIdle: false }], 'never asks for whenIdle on a .deb install');
+  assert.ok(t.pop().textContent.includes('click Install now again once they finish'));
+  const s = pageWith({
+    status: DEB,
+    install: () => Object.assign(new Error('Installing AIB 0.1.0-beta.10 needs your system password on the PC'), { code: 'password_on_pc' }),
+  });
+  await s.U.refresh();
+  s.btn().click();
+  await flush();
+  assert.ok(s.pop().textContent.includes('needs your system password on the PC'));
+  assert.equal(s.btn().disabled, false);
+});
+
+test('a paired computer sees that a .deb update finishes on the PC with the password', () => {
+  const v = U.remoteView({ phase: '' }, { state: 'ready', version: '0.1.0-beta.10', canInstall: true, password: true, installWhenIdle: false }, 'Desk', true, 0);
+  assert.equal(v.note, 'Installing asks for the system password on Desk, so it finishes there with Install now.');
+});
+
 // ---- "What's new in AIB <version>" ------------------------------------------------------------------------------------------
 const SCRIPTS = ['status-words.js', 'notify-rules.js', 'ownership-ui.js', 'sidebar-ui.js', 'workspace-state.js', 'split-tree.js', 'workspace-ui.js', 'tool-views.js', 'markdown.js', 'files-state.js', 'files-ui.js', 'updates-ui.js'];
 const NOTES = {

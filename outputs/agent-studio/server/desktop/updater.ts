@@ -13,13 +13,19 @@
  *   - The desktop app (a `deno desktop` binary) installs in place on Windows (the per-user zip), macOS (the zipped AIB.app) and Linux
  *     when it runs from an AppImage: update_helper.ts swaps the files after the app quits. Any `deno run` gets the verified file and
  *     instructions.
- *   - A .deb install (/usr/lib/aib/aib, owned by dpkg) updates itself the electron-updater DebUpdater way: on Install now, while AIB is
- *     still open, `pkexec /usr/lib/aib/aib-install-deb <the verified .deb>` (a root script the .deb ships, with the polkit action
- *     "Authentication is required to update AIB"; tools/linux/) runs `apt-get install --allow-downgrades` on it; then AIB quits and
- *     the helper starts the new version, and keeper take-over works as on the other systems. No pkexec, no polkit agent (SSH), a
- *     closed password prompt or a refused file: nothing is installed, AIB stays open and shows the manual line with the file's path.
- *     The .deb Version is AIB's with every "-" a "~" (`deno desktop`); dpkg orders a release below its own test builds
- *     (0.13.2~beta.1.test.2 > 0.13.2~beta.1), where AIB orders it above, hence --allow-downgrades.
+ *   - A .deb install (/usr/lib/aib/aib, owned by dpkg) updates itself the electron-updater DebUpdater way, but only from a click on
+ *     Install now in AIB's window on the PC: AIB answers the click at once ({state: 'authorizing'}), and while AIB is still open
+ *     `/usr/bin/pkexec /usr/lib/aib/aib-install-deb <the verified .deb>` (a root script the .deb ships, with the polkit action
+ *     "Authentication is required to update AIB"; tools/linux/) asks for the system password. The window says "AIB is asking for
+ *     your system password to install the update" meanwhile (status().authorizing). The root script trusts nothing on the user's
+ *     side: it reads its own copy of the file, fetches the release's SHA256SUMS from GitHub itself and checks the copy against it,
+ *     refuses anything not newer than the installed aib, and runs apt. Then AIB checks the chats again and quits (or, when a chat
+ *     it cannot hand over started meanwhile, restarts once they finish), and the helper starts the new version. "Install when chats
+ *     finish" and the phone never open the prompt: they leave the update waiting for a click on the PC (status().askOnPc). No
+ *     pkexec, no polkit agent (SSH), a closed password prompt or a refused file: nothing is installed, AIB stays open and shows why
+ *     (status().installError) with the manual line. The .deb Version is AIB's with every "-" a "~" (`deno desktop`); dpkg orders a
+ *     release below its own test builds (0.13.2~beta.1.test.2 > 0.13.2~beta.1), where AIB orders it above: the root script allows
+ *     exactly that step as a downgrade. A test build from the local feed has no GitHub release, so the root script refuses it.
  *   - Test builds (0.1.0-beta.12.test.3) also read a local feed folder (%LOCALAPPDATA%\AIB-test-feed, filled by `tools/build.ts
  *     --feed`) every FEED_INTERVAL and on window focus, and take the newest of GitHub and the feed. Same rules: a SHA256SUMS match
  *     (the feed's own), the click, the helper. Version order puts X.test.M below X, so the real release replaces its test builds.
@@ -873,15 +879,25 @@ export type PrivilegedResult = { code: number; stderr: string } | null;
 /** Runs `pkexec <argv>` and waits (the password prompt is the system's). Replaced in tests. */
 export type PrivilegedRun = (argv: string[]) => Promise<PrivilegedResult>;
 
-/** Why a .deb install did not happen, for the person (the manual line with the file's path follows it). */
+/**
+ * Why a .deb install did not happen, for the person. 'partial': apt unpacked the new version and then failed (the new files are on
+ * disk, half set up): the message says how to finish it, and no manual line follows. Every other reason: nothing was installed, and
+ * the manual line with the file's path follows the message.
+ */
 export type DebOutcome =
   | { ok: true }
-  | { ok: false; reason: 'no_pkexec' | 'cancelled' | 'no_agent' | 'not_allowed' | 'refused' | 'failed'; message: string };
+  | {
+    ok: false;
+    reason: 'no_pkexec' | 'cancelled' | 'no_agent' | 'not_allowed' | 'refused' | 'unverified' | 'failed' | 'partial';
+    message: string;
+  };
 
 /**
  * pkexec's answer as an outcome. pkexec exits 126 when the password prompt was dismissed and 127 when it could not authorize (no
- * polkit agent: "No authentication agent found"; or the account may not); otherwise the script's code: 0 installed, 64-66 refused
- * (nothing ran), 70 apt failed (dpkg left the old version), 71 unexpected version after apt.
+ * polkit agent: "No authentication agent found"; or the account may not); otherwise the script's code (tools/linux/
+ * aib-install-deb.sh): 0 installed; 64-66, 69, 73 refused (nothing ran: not AIB's download, not the release's file, not newer);
+ * 68 and 74 the release's SHA256SUMS could not be fetched (74: the test-only source file is not root's); 70 apt failed and dpkg
+ * left the old version; 71 unexpected version after apt; 72 apt failed after unpacking (partly installed).
  */
 export function debOutcome(result: PrivilegedResult): DebOutcome {
   if (result === null) {
@@ -903,19 +919,56 @@ export function debOutcome(result: PrivilegedResult): DebOutcome {
   if (result.code === 127) {
     return { ok: false, reason: 'not_allowed', message: `Your account could not authorize the update${why}, so nothing was installed.` };
   }
-  if (result.code >= 64 && result.code <= 66) {
+  if ((result.code >= 64 && result.code <= 66) || result.code === 69 || result.code === 73) {
     return { ok: false, reason: 'refused', message: `AIB's installer refused the downloaded file${why}, so nothing was installed.` };
+  }
+  if (result.code === 68 || result.code === 74) {
+    return {
+      ok: false,
+      reason: 'unverified',
+      message: `AIB's installer could not get the release's checksums from GitHub to check the file${why}, so nothing was installed.`,
+    };
   }
   if (result.code === 70) {
     return { ok: false, reason: 'failed', message: `apt could not install the update${why}; the installed AIB is unchanged.` };
   }
+  if (result.code === 72) {
+    return {
+      ok: false,
+      reason: 'partial',
+      message: "The update is only partly installed: apt put the new version's files on disk, then setting them up failed" +
+        `${why}. AIB keeps running for now. To finish, open a terminal and run: sudo dpkg --configure -a  then restart AIB.`,
+    };
+  }
   return { ok: false, reason: 'failed', message: `The update did not install${why}.` };
 }
 
-/** pkexec from PATH, no input, its error output kept. Never throws. */
-export async function runPkexec(argv: string[]): Promise<PrivilegedResult> {
+/**
+ * Where pkexec may be, in order: fixed system paths only, never a search of PATH (a program on PATH could draw its own password
+ * prompt and keep the password).
+ */
+export const PKEXEC_PATHS: readonly string[] = ['/usr/bin/pkexec', '/bin/pkexec'];
+
+/** The first of `paths` that is a file, or null. `stat` is replaced in tests. */
+export function findPkexec(
+  paths: readonly string[] = PKEXEC_PATHS,
+  stat: (path: string) => { isFile: boolean } = (p) => Deno.statSync(p),
+): string | null {
+  for (const p of paths) {
+    if (!p.startsWith('/')) continue;
+    try {
+      if (stat(p).isFile) return p;
+    } catch { /* not there */ }
+  }
+  return null;
+}
+
+/** pkexec by its absolute path (PKEXEC_PATHS; tests pass others), no input, its error output kept. Never throws. */
+export async function runPkexec(argv: string[], paths: readonly string[] = PKEXEC_PATHS): Promise<PrivilegedResult> {
+  const pkexec = findPkexec(paths);
+  if (!pkexec) return null;
   try {
-    const out = await new Deno.Command('pkexec', { args: argv, stdin: 'null', stdout: 'null', stderr: 'piped' }).output();
+    const out = await new Deno.Command(pkexec, { args: argv, stdin: 'null', stdout: 'null', stderr: 'piped' }).output();
     return { code: out.code, stderr: new TextDecoder().decode(out.stderr).slice(-4000) };
   } catch (error) {
     if (error instanceof Deno.errors.NotFound) return null;
@@ -943,9 +996,24 @@ export interface UpdateStatus {
   instructions?: string;
   /** Present (true) only on a test build: it also reads the local test feed (the page asks again on window focus). */
   feed?: boolean;
+  // The .deb install's own fields, present only there (a click on Install now on the PC asks for the system password):
+  /** Installing asks for the system password on the PC. */
+  password?: boolean;
+  /** AIB is asking for the system password now (or apt runs): the window says so. */
+  authorizing?: boolean;
+  /** "Install when chats finish" or a remote device asked for the install: it waits for a click on Install now on the PC. */
+  askOnPc?: boolean;
+  /** The new version is installed; AIB restarts on it once no chat is working (a chat it cannot hand over started meanwhile). */
+  restarting?: boolean;
+  /** Why the last Install now did not install (with what to do), '' when it did or none ran. */
+  installError?: string;
 }
 
-export type InstallResult = { state: 'installing'; chats?: number } | { state: 'waiting'; chats: number };
+/** 'authorizing': a .deb install asks for the system password now; the outcome comes through status(). */
+export type InstallResult =
+  | { state: 'installing'; chats?: number }
+  | { state: 'waiting'; chats: number }
+  | { state: 'authorizing'; chats?: number };
 
 function emptyState(): UpdateState {
   return { lastCheck: 0, found: null, downloaded: null, error: '', code: '', installWhenIdle: false, notified: '' };
@@ -963,6 +1031,12 @@ export class UpdateService {
   readonly debArgs: (path: string, home: string) => string[] | null;
   /** A .deb install is asking for the password (or apt runs): a second Install now waits for it. */
   #debInstalling = false;
+  /** The background password step of a .deb install (tests wait for it with debSettled()). */
+  #debRun: Promise<void> | null = null;
+  /** A .deb install was asked for where no password prompt may open (Install when chats finish, a remote device). */
+  #askOnPc = false;
+  /** Why the last .deb install did not happen ('' none). */
+  #debError = '';
   readonly chatsKeepRunning: boolean;
   readonly keeper: (() => Promise<KeeperState | null>) | null;
   readonly appArgs: string[];
@@ -1124,6 +1198,13 @@ export class UpdateService {
       inPlace: this.canInstallInPlace(),
     };
     if (this.feedDir) out.feed = true;
+    if (out.inPlace && this.target()?.kind === 'deb') {
+      out.password = true;
+      out.authorizing = this.#debInstalling;
+      out.askOnPc = this.#askOnPc;
+      out.restarting = !!this.#debInstalled;
+      out.installError = this.#debError;
+    }
     if (this.state.code === 'checksum_mismatch' || this.state.code === 'no_checksum') {
       out.state = 'refused';
     } else if (ready && found && got) {
@@ -1462,13 +1543,35 @@ export class UpdateService {
   // -- installing
   /**
    * The person clicked Install now (or Install when chats finish). {state: 'installing'} when the helper is running and this server
-   * is quitting, {state: 'waiting', chats} when it will install once no chat is working. Throws UpdateError.
+   * is quitting, {state: 'waiting', chats} when it will install once no chat is working, {state: 'authorizing'} when a .deb install
+   * asks for the system password now (its outcome comes through status()). Throws UpdateError.
+   *
+   * `from`: 'remote' for a phone or a paired computer. A .deb install opens the password prompt only for a click on the PC
+   * (`from` 'pc', not whenIdle): otherwise it throws 'password_on_pc' and leaves Install now waiting on the PC (status().askOnPc).
    */
-  async install(whenIdle = false): Promise<InstallResult> {
+  async install(whenIdle = false, from: 'pc' | 'remote' = 'pc'): Promise<InstallResult> {
     const status = this.status();
     if (status.state !== 'ready') throw new UpdateError('There is no verified update to install.', 'not_ready');
     if (!status.inPlace) {
       throw new UpdateError(status.instructions || 'Install it from the downloaded file.', 'manual', { path: status.available!.path });
+    }
+    if (status.password) {
+      if (this.#debInstalling) throw new UpdateError('AIB is already asking for your system password to install the update.', 'busy');
+      if (this.#debInstalled) throw new UpdateError('The update is installed; AIB restarts on it once no chat is working.', 'busy');
+      if (whenIdle || from === 'remote') {
+        // Never a password prompt nobody just asked for: the install waits for a click on the PC.
+        this.#askOnPc = true;
+        if (this.state.installWhenIdle) {
+          this.state.installWhenIdle = false;
+          this.#save();
+        }
+        const name = `AIB ${String(status.available?.version ?? '')}`.trim();
+        throw new UpdateError(
+          `Installing ${name} needs your system password on the PC, so it does not start by itself` +
+            `${from === 'remote' ? ' from here' : ' when the chats finish'}. Click Install now in AIB on the PC when you are ready.`,
+          'password_on_pc',
+        );
+      }
     }
     if (whenIdle) {
       this.state.installWhenIdle = true;
@@ -1496,6 +1599,16 @@ export class UpdateService {
         : keeps === 'unknown'
         ? `AIB cannot tell whether this update can take over running chats, so it waits until no chat is working (${busy} now).`
         : `${busy} chat(s) are working. Install when they finish, or wait.`;
+      if (status.password) {
+        // a .deb install never installs by itself later (that would open a password prompt nobody just asked for)
+        this.#askOnPc = true;
+        throw new UpdateError(
+          `${why.replace(/, so it waits until no chat is working \((\d+) now\)\.$/, ' (chats working now: $1).')} ` +
+            'Installing asks for your system password, so click Install now again once they finish.',
+          'chats_working',
+          { chats: busy, password: true },
+        );
+      }
       throw new UpdateError(why, 'chats_working', { chats: busy });
     }
     return await this.#go(handover === true);
@@ -1540,6 +1653,7 @@ export class UpdateService {
 
   cancelWait(): UpdateStatus {
     this.state.installWhenIdle = false;
+    this.#askOnPc = false;
     this.#save();
     return this.status();
   }
@@ -1560,36 +1674,38 @@ export class UpdateService {
     }
     const target = this.target();
     if (!target) throw new UpdateError('This copy of AIB cannot update itself; install the downloaded file by hand.', 'manual', { path });
-    if (target.kind === 'deb' && this.#debInstalling) {
-      throw new UpdateError('AIB is already asking for your password to install the update.', 'busy');
-    }
-    this.state.installWhenIdle = false; // also before a password prompt: a closed prompt is not asked again on the next tick
+    if (target.kind === 'deb') return this.#startDeb(path, { ...got } as Downloaded, target);
+    this.state.installWhenIdle = false;
     this.#save();
-    if (target.kind === 'deb') await this.#installDeb(path);
-    await this.launcher({
-      installer: path,
-      sha256: got.sha256!,
-      pid: this.app.pid,
-      exe: this.app.exe,
-      log: join(this.root, 'install.log'),
-      version: got.version!,
-      kind: target.kind,
-      target: target.target,
-      args: this.appArgs,
-      marker: startedMarker(this.root, got.version!),
-      ...(release && this.#keeperData ? { keeper: this.#keeperData } : {}),
-    });
-    if (this.quit) this.quit(release);
+    await this.#restart({ ...got } as Downloaded, target, release);
     return { state: 'installing' };
   }
 
+  /** Start the helper and quit: it swaps the files (or, for a .deb, only starts the version apt installed). */
+  async #restart(got: Downloaded, target: InstallTarget, release: boolean): Promise<void> {
+    await this.launcher({
+      installer: got.path,
+      sha256: got.sha256,
+      pid: this.app.pid,
+      exe: this.app.exe,
+      log: join(this.root, 'install.log'),
+      version: got.version,
+      kind: target.kind,
+      target: target.target,
+      args: this.appArgs,
+      marker: startedMarker(this.root, got.version),
+      ...(release && this.#keeperData ? { keeper: this.#keeperData } : {}),
+    });
+    if (this.quit) this.quit(release);
+  }
+
   /**
-   * A .deb install, while this app is still open: `pkexec aib-install-deb <file>` (the system asks for the password) installs the
-   * verified file with apt. Resolves once installed; otherwise throws UpdateError 'manual' with why and the manual line (the file's
-   * path in it), and nothing was installed.
+   * A .deb install, from a click on Install now on the PC: answers at once ({state: 'authorizing'}) and runs
+   * `/usr/bin/pkexec aib-install-deb <file>` in the background (the system asks for the password; status().authorizing meanwhile).
+   * Then #debOutcome. Throws UpdateError 'manual' (no prompt) when the root script would refuse the path anyway.
    */
-  async #installDeb(path: string): Promise<void> {
-    const manual = (why: string) => new UpdateError(`${why} ${this.instructions(path)}`, 'manual', { path });
+  #startDeb(path: string, got: Downloaded, target: InstallTarget): InstallResult {
+    if (this.#debInstalling) throw new UpdateError('AIB is already asking for your system password to install the update.', 'busy');
     let real = path;
     let home = this.env.HOME ?? '';
     try {
@@ -1599,24 +1715,75 @@ export class UpdateService {
     const argv = this.debArgs(real, home);
     if (!argv) {
       log.info('update: %s is not where aib-install-deb accepts an update (in the home folder); install it by hand', real);
-      throw manual(
+      throw new UpdateError(
         'This copy of AIB keeps its data where its installer does not take updates from (outside your home folder, or a folder name ' +
-          'with unusual characters), so it cannot install the update by itself.',
+          `with unusual characters), so it cannot install the update by itself. ${this.instructions(path)}`,
+        'manual',
+        { path },
       );
     }
     this.#debInstalling = true;
+    this.#askOnPc = false;
+    this.#debError = '';
+    if (this.state.installWhenIdle) {
+      this.state.installWhenIdle = false;
+      this.#save();
+    }
+    log.info('update: asking for the system password to install %s (%s)', real, DEB_INSTALLER);
+    this.#debRun = this.#runDeb(argv, path, got, target);
+    return { state: 'authorizing' };
+  }
+
+  /** The password step, then: the outcome in status(), or the restart (#debRestartNow). Never throws. */
+  async #runDeb(argv: string[], path: string, got: Downloaded, target: InstallTarget): Promise<void> {
     let outcome: DebOutcome;
     try {
-      log.info('update: asking for the password to install %s (pkexec %s)', real, DEB_INSTALLER);
       outcome = debOutcome(await this.privileged(argv));
+    } catch (error) {
+      outcome = { ok: false, reason: 'failed', message: `The update did not install (${error instanceof Error ? error.message : error}).` };
     } finally {
       this.#debInstalling = false;
     }
     if (!outcome.ok) {
       log.info('update: the .deb was not installed (%s): %s', outcome.reason, outcome.message);
-      throw manual(outcome.message);
+      this.#debError = outcome.reason === 'partial' ? outcome.message : `${outcome.message} ${this.instructions(path)}`;
+      return;
     }
-    log.info('update: %s installed with apt; quitting so the new version starts', real);
+    log.info('update: %s installed with apt', path);
+    this.#debInstalled = { got, target };
+    await this.#debRestartNow();
+  }
+
+  /** The installed .deb waiting for its restart (the chats), or null. */
+  #debInstalled: { got: Downloaded; target: InstallTarget } | null = null;
+
+  /**
+   * After the password step (and on each tick while it waits): the chats are checked again, since one may have started while the
+   * prompt was open. Restart now when none works or the keeper / agent host keeps them; otherwise wait (tick tries again).
+   */
+  async #debRestartNow(): Promise<void> {
+    const done = this.#debInstalled;
+    if (!done) return;
+    const busy = await this.#busy();
+    const handover = await this.keeperHandover();
+    if (busy && handover !== true && this.keepsChats() !== true) {
+      log.info('update: %s is installed; %d chat(s) are working: AIB restarts on it once they finish', done.got.version, busy);
+      return;
+    }
+    this.#debInstalled = null;
+    try {
+      await this.#restart(done.got, done.target, handover === true);
+      log.info('update: quitting so %s starts', done.got.version);
+    } catch (error) {
+      this.#debError = `AIB ${done.got.version} is installed, but AIB could not restart itself (${
+        error instanceof Error ? error.message : error
+      }). Quit AIB and start it again.`;
+    }
+  }
+
+  /** Tests: wait for the background password step of the last .deb Install now. */
+  async debSettled(): Promise<void> {
+    await this.#debRun;
   }
 
   /**
@@ -1681,11 +1848,25 @@ export class UpdateService {
     return held;
   }
 
-  /** One pass: an automatic check when one is due, and the install the person asked to wait for once no chat is working. */
+  /**
+   * One pass: an automatic check when one is due, and the install the person asked to wait for once no chat is working. A .deb
+   * install never starts here (that would open a password prompt nobody just asked for): a wait left from before turns into
+   * "Install now waits on the PC"; an installed .deb whose restart waits for the chats restarts once they finish.
+   */
   async tick(): Promise<void> {
     await this.check(false);
     if (this.feedDir && this.autoCheck() && this.now() - this.#feedAt >= FEED_INTERVAL) await this.checkFeed();
     await this.announce(); // a download an earlier run finished but never announced
+    if (this.#debInstalled) {
+      if (!this.#held()) await this.#debRestartNow();
+      return;
+    }
+    if (this.state.installWhenIdle && this.target()?.kind === 'deb') {
+      this.state.installWhenIdle = false;
+      this.#askOnPc = true;
+      this.#save();
+      return;
+    }
     if (this.state.installWhenIdle && this.status().state === 'ready' && !this.#held() && !await this.#busy()) {
       await this.#go(await this.keeperHandover() === true); // idle chats in the keeper are left to the new version too
     }
@@ -1731,19 +1912,23 @@ const KEEPER_WHY: Record<string, string> = {
   unknown: 'AIB cannot tell whether the keeper can hand its chats to this update',
 };
 
-const INSTALL_STATUS: Record<string, number> = { chats_working: 409, not_ready: 409, busy: 409, manual: 400 };
+const INSTALL_STATUS: Record<string, number> = { chats_working: 409, not_ready: 409, busy: 409, password_on_pc: 409, manual: 400 };
 
 /**
  * POST /api/live/update/install: install now or, with whenIdle, once no chat is working; cancelWait drops the second. Throws
  * ValueError (the HTTP layer's 400) for a whenIdle that is not a boolean, as Python does. The route must send the reply before the
  * service's quit callback ends the server.
  */
-export async function postUpdateInstall(service: UpdateService, body: Record<string, unknown>): Promise<RouteReply> {
+export async function postUpdateInstall(
+  service: UpdateService,
+  body: Record<string, unknown>,
+  from: 'pc' | 'remote' = 'pc',
+): Promise<RouteReply> {
   if (body.cancelWait === true) return [200, { ...service.cancelWait() }];
   const whenIdle = 'whenIdle' in body ? body.whenIdle : false;
   if (typeof whenIdle !== 'boolean') throw new ValueError('whenIdle must be true or false');
   try {
-    return [200, { ...await service.install(whenIdle), ok: true }];
+    return [200, { ...await service.install(whenIdle, from), ok: true }];
   } catch (error) {
     if (!(error instanceof UpdateError)) throw error;
     return [INSTALL_STATUS[error.code] ?? 500, { error: error.message, code: error.code, ...error.extra }];

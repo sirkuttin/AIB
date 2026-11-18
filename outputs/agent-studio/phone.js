@@ -1326,7 +1326,9 @@
           ? 'Install it on ' + pc + '.'
           : !can.send
             ? 'Updating from here needs the Send switch (AIB on ' + pc + ' → Settings → Remote control).'
-            : '';
+            : up.password
+              ? 'Installing asks for the system password on ' + pc + ', so it finishes there with Install now.'
+              : '';
     return { kind: 'ready', text: 'Update ready · ' + up.version, note, version: up.version, button: !!(up.canInstall && can.send && !up.installWhenIdle) };
   }
 

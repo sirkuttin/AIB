@@ -887,11 +887,7 @@
         headers: { 'Content-Type': 'application/json', 'X-Studio-Token': token },
         body: JSON.stringify(data),
       },
-      path === 'connect' ||
-        path === 'discover' ||
-        path === 'agent-options' ||
-        path === 'project-remove' ||
-        path === 'update/install' // a .deb install waits for the system password prompt
+      path === 'connect' || path === 'discover' || path === 'agent-options' || path === 'project-remove'
         ? 120000
         : 30000,
     );

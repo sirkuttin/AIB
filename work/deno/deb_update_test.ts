@@ -1,9 +1,12 @@
 /**
  * The .deb self-update (server/desktop/updater.ts, update_helper.ts kind 'deb', tools/linux/): the pkexec argument check that mirrors
- * aib-install-deb, pkexec's answers as outcomes, the install target of a .deb install, the Install now flow (the password step runs
- * BEFORE the helper and the quit; a closed prompt, a missing pkexec or polkit agent leave AIB open with the manual line and the file's
- * path), the helper's deb start, the packaging step that adds the script and the polkit action to a .deb, and the Debian Version
- * `deno desktop` writes. Everything is faked: no pkexec, no apt, no real app. The real install runs in deb_update_e2e_test.ts (WSL).
+ * aib-install-deb, pkexec's answers as outcomes, pkexec only by its absolute path, the install target of a .deb install, the Install
+ * now flow (the click answers at once with 'authorizing'; the password step runs in the background BEFORE the helper and the quit;
+ * the chats are checked again after it; a closed prompt, a missing pkexec or polkit agent, a refused or unverifiable file leave AIB
+ * open with why and the manual line; a partial install says how to finish it), that Install when chats finish, the background tick
+ * and a remote device never open the password prompt, the helper's deb start, the packaging step that adds the script and the polkit
+ * action to a .deb, and the Debian Version `deno desktop` writes. Everything is faked: no pkexec, no apt, no real app. The real
+ * install (and the root script's own SHA256SUMS check and downgrade refusal) runs in deb_update_e2e_test.ts (WSL).
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
 import {
@@ -11,12 +14,16 @@ import {
   DEB_INSTALLER,
   debInstallArgs,
   debOutcome,
+  findPkexec,
+  PKEXEC_PATHS,
   postUpdateInstall,
   type PrivilegedResult,
+  runPkexec,
   UpdateError,
   UpdateService,
   type UpdateServiceOptions,
 } from '../../outputs/agent-studio/server/desktop/updater.ts';
+import { remoteInstall, remoteUpdate } from '../../outputs/agent-studio/server/remote/update.ts';
 import {
   DEB_EXE,
   dpkgOwns,
@@ -88,6 +95,44 @@ Deno.test('debOutcome: pkexec and aib-install-deb exit codes become the reason s
   assertEquals(no(debOutcome(r(71, 'aib-install-deb: aib is at version 0.13.1')))[0], 'failed');
   assertEquals(no(debOutcome(r(1)))[1], 'The update did not install.');
   assert(no(debOutcome(r(9, 'x'.repeat(1000))))[1].length < 300, 'the detail is cut');
+  // the root script's own checks: not the release's file (69), not newer (73): refused; no SHA256SUMS (68, 74): unverified
+  for (const [code, says] of [[69, 'its SHA-256 is not the one in SHA256SUMS'], [73, '0.13.2 is not newer']] as const) {
+    const [why, text] = no(debOutcome(r(code, `aib-install-deb: ${says}`)));
+    assertEquals(why, 'refused', String(code));
+    assert(text.includes(says) && text.includes('nothing was installed'), text);
+  }
+  for (const code of [68, 74]) {
+    const [why, text] = no(debOutcome(r(code, 'aib-install-deb: could not fetch https://github.com/x/SHA256SUMS')));
+    assertEquals(why, 'unverified');
+    assert(text.includes("could not get the release's checksums from GitHub") && text.includes('nothing was installed'), text);
+  }
+  // 72: apt failed after unpacking: partly installed, says how to finish, never "unchanged"
+  const [pwhy, ptext] = no(debOutcome(r(72, 'aib-install-deb: apt-get failed after unpacking 0.13.2: partly installed')));
+  assertEquals(pwhy, 'partial');
+  assert(ptext.includes('partly installed') && ptext.includes('sudo dpkg --configure -a') && !ptext.includes('unchanged'), ptext);
+});
+
+Deno.test('pkexec: only by its absolute system path (/usr/bin/pkexec, then /bin/pkexec), never looked up on PATH', async () => {
+  assertEquals(PKEXEC_PATHS, ['/usr/bin/pkexec', '/bin/pkexec']);
+  const there = (set: string[]) => (p: string) => {
+    if (!set.includes(p)) throw new Deno.errors.NotFound(p);
+    return { isFile: true };
+  };
+  assertEquals(findPkexec(PKEXEC_PATHS, there(['/usr/bin/pkexec', '/bin/pkexec'])), '/usr/bin/pkexec');
+  assertEquals(findPkexec(PKEXEC_PATHS, there(['/bin/pkexec'])), '/bin/pkexec');
+  assertEquals(findPkexec(PKEXEC_PATHS, there([])), null, 'none: no pkexec (the manual line), not a PATH search');
+  assertEquals(findPkexec(['pkexec', 'bin/pkexec'], () => ({ isFile: true })), null, 'a bare or relative name is never used');
+  assertEquals(findPkexec(PKEXEC_PATHS, () => ({ isFile: false })), null, 'a folder is not pkexec');
+  // a pkexec only on PATH is not found: runPkexec answers "no pkexec" without running anything
+  const dir = Deno.makeTempDirSync({ prefix: 'aib-pkexec-path-test-' });
+  try {
+    assertEquals(await runPkexec([DEB_INSTALLER, GOOD], [`${dir}/nowhere/pkexec`]), null);
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+  }
+  // the source: Deno.Command gets the found absolute path, never the bare name 'pkexec'
+  const src = Deno.readTextFileSync(new URL('../../outputs/agent-studio/server/desktop/updater.ts', import.meta.url));
+  assert(!/new Deno\.Command\(\s*['"]pkexec['"]/.test(src), 'no Deno.Command("pkexec")');
 });
 
 Deno.test('installTarget: a .deb install (/usr/lib/aib/aib owned by dpkg) is kind deb; an AppImage still wins; others unchanged', () => {
@@ -144,6 +189,8 @@ class DebCase {
   /** Each pkexec call: its arguments and what launched/quit looked like at that moment. */
   asked: { argv: string[]; launchedBefore: number; quitBefore: number }[] = [];
   answers: PrivilegedResult[] = [];
+  /** Runs while the (fake) password prompt is open. */
+  duringPrompt: (() => void) | null = null;
   busy = 0;
   svc!: UpdateService;
   async ready(o: UpdateServiceOptions = {}) {
@@ -161,9 +208,11 @@ class DebCase {
       app: { desktop: true, pid: 4242, exe: DEB_EXE },
       dpkgOwns: () => true,
       debArgs: (p) => [DEB_INSTALLER, p], // the real check (above) needs POSIX paths; this test may run on Windows
-      privileged: (argv) => {
+      privileged: async (argv) => {
         this.asked.push({ argv, launchedBefore: this.launched.length, quitBefore: this.quit.length });
-        return Promise.resolve(this.answers.length ? this.answers.shift()! : { code: 0, stderr: '' });
+        await new Promise((r) => setTimeout(r, 5)); // the prompt is open a moment
+        this.duringPrompt?.();
+        return this.answers.length ? this.answers.shift()! : { code: 0, stderr: '' };
       },
       launcher: (a) => void this.launched.push(a),
       quit: (release) => void this.quit.push(release),
@@ -173,6 +222,11 @@ class DebCase {
     });
     const st = await this.svc.checkFeed();
     assertEquals([st.state, st.inPlace, st.instructions], ['ready', true, undefined], 'a .deb install offers Install now');
+    assertEquals(
+      [st.password, st.authorizing, st.askOnPc, st.restarting, st.installError],
+      [true, false, false, false, ''],
+      'the .deb fields',
+    );
     return this.svc.state.downloaded!.path;
   }
   [Symbol.dispose]() {
@@ -180,15 +234,25 @@ class DebCase {
   }
 }
 
-Deno.test('.deb Install now: the password step (pkexec aib-install-deb <file>) runs first, then the helper starts and AIB quits', async () => {
+Deno.test('.deb Install now: answers at once (authorizing), the window says AIB asks for the password, then helper and quit', async () => {
   using c = new DebCase();
   const path = await c.ready();
-  assertEquals((await c.svc.install()).state, 'installing');
+  assertEquals(await c.svc.install(), { state: 'authorizing' }, 'the click is answered at once, not after the prompt');
+  assertEquals(c.svc.status().authorizing, true, 'while the prompt is open the status says so (the window shows it)');
+  assertEquals([c.launched.length, c.quit.length], [0, 0]);
+  await c.svc.debSettled();
   assertEquals(c.asked, [{ argv: [DEB_INSTALLER, path], launchedBefore: 0, quitBefore: 0 }], 'before the helper and the quit');
   assertEquals(c.launched.length, 1);
   const a = c.launched[0];
   assertEquals([a.kind, a.target, a.exe, a.installer, a.version, a.sha256], ['deb', DEB_EXE, DEB_EXE, path, VERSION, await sha(PAYLOAD)]);
   assertEquals(c.quit, [false]);
+  assertEquals(c.svc.status().authorizing, false);
+  // the route: 200 {state: 'authorizing'} at once
+  using d = new DebCase();
+  await d.ready();
+  const [code, body] = await postUpdateInstall(d.svc, {});
+  assertEquals([code, body.state, body.ok], [200, 'authorizing', true]);
+  await d.svc.debSettled();
 });
 
 for (
@@ -209,53 +273,137 @@ for (
       { code: 64, stderr: 'aib-install-deb: the path goes through a link' },
       'refused the downloaded file',
     ],
+    [
+      "the file is not the release's (root's own SHA-256 vs SHA256SUMS)",
+      { code: 69, stderr: "aib-install-deb: the file is not the release's AIB-0.13.2-linux-x64.deb" },
+      "the file is not the release's",
+    ],
+    [
+      "root could not fetch the release's SHA256SUMS",
+      { code: 68, stderr: 'aib-install-deb: could not fetch https://github.com/sirkuttin/AIB/releases/download/v0.13.2/SHA256SUMS' },
+      "could not get the release's checksums",
+    ],
+    ['the version is not newer', { code: 73, stderr: 'aib-install-deb: 0.13.2 is not newer' }, 'is not newer'],
     ['apt fails', { code: 70, stderr: 'aib-install-deb: apt-get could not install 0.13.2' }, 'apt could not install'],
   ] as [string, PrivilegedResult, string][]
 ) {
-  Deno.test(`.deb Install now when ${what}: nothing installs, AIB stays open, the manual line with the file's path`, async () => {
+  Deno.test(`.deb Install now when ${what}: nothing installs, AIB stays open, the status says why with the manual line`, async () => {
     using c = new DebCase();
     const path = await c.ready();
     c.answers.push(answer);
-    const error = await assertRejects(() => c.svc.install(), UpdateError) as UpdateError;
-    assertEquals(error.code, 'manual');
-    assertEquals(error.extra.path, path);
-    assert(error.message.includes(says), error.message);
-    assert(error.message.includes(`sudo apt install "${path}"`), "today's manual line, with the path: " + error.message);
-    assertEquals([c.launched.length, c.quit.length], [0, 0], 'no helper, no quit');
+    assertEquals((await c.svc.install()).state, 'authorizing');
+    await c.svc.debSettled();
     const st = c.svc.status();
-    assertEquals([st.state, st.inPlace, st.installWhenIdle], ['ready', true, false], 'Update can be clicked again');
-    // the route answers 400 with the message (the page opens it in the popover)
-    c.answers.push(answer);
-    const [code, body] = await postUpdateInstall(c.svc, {});
-    assertEquals([code, body.code, body.path], [400, 'manual', path]);
-    assert(String(body.error).includes(says));
+    assert(st.installError!.includes(says), st.installError);
+    assert(st.installError!.includes(`sudo apt install "${path}"`), "today's manual line, with the path: " + st.installError);
+    assertEquals([c.launched.length, c.quit.length], [0, 0], 'no helper, no quit');
+    assertEquals([st.state, st.inPlace, st.installWhenIdle, st.authorizing], ['ready', true, false, false], 'Update can be clicked again');
+    // the next click starts afresh (the old reason goes)
+    assertEquals((await c.svc.install()).state, 'authorizing');
+    assertEquals(c.svc.status().installError, '');
+    await c.svc.debSettled();
+    assertEquals(c.launched.length, 1);
   });
 }
 
-Deno.test('.deb Install when chats finish: the password is asked when the install runs; a closed prompt is not asked again', async () => {
+Deno.test('.deb partly installed (apt failed after unpacking): says so and how to finish it, never "unchanged"; no restart', async () => {
+  using c = new DebCase();
+  await c.ready();
+  c.answers.push({ code: 72, stderr: "aib-install-deb: apt-get failed after unpacking 0.13.2: aib is now '0.13.2 iF ', partly installed" });
+  await c.svc.install();
+  await c.svc.debSettled();
+  const e = c.svc.status().installError!;
+  assert(e.includes('only partly installed') && e.includes('sudo dpkg --configure -a') && e.includes('restart AIB'), e);
+  assert(!e.includes('unchanged') && !e.includes('sudo apt install'), 'no "nothing changed", no manual line: ' + e);
+  assertEquals([c.launched.length, c.quit.length], [0, 0]);
+});
+
+Deno.test('.deb Install when chats finish never opens the password prompt: it waits for Install now on the PC', async () => {
   using c = new DebCase();
   await c.ready();
   c.busy = 2;
-  assertEquals(await c.svc.install(true), { state: 'waiting', chats: 2 });
-  assertEquals(c.asked.length, 0, 'no prompt while chats work');
+  const e = await assertRejects(() => c.svc.install(true), UpdateError) as UpdateError;
+  assertEquals(e.code, 'password_on_pc');
+  assert(e.message.includes('needs your system password on the PC') && e.message.includes('Click Install now in AIB on the PC'), e.message);
+  const st = c.svc.status();
+  assertEquals([st.askOnPc, st.installWhenIdle], [true, false], 'Install now waits on the PC; no automatic install');
   c.busy = 0;
-  c.answers.push({ code: 126, stderr: 'Request dismissed' });
-  await assertRejects(() => c.svc.tick(), UpdateError);
-  assertEquals([c.asked.length, c.launched.length, c.svc.state.installWhenIdle], [1, 0, false]);
   await c.svc.tick();
-  assertEquals(c.asked.length, 1, 'the next tick does not open the prompt again');
+  await c.svc.tick();
+  assertEquals([c.asked.length, c.launched.length, c.quit.length], [0, 0, 0], 'chats done: still no prompt, no install');
+  // the route answers 409 with the message
+  const [code, body] = await postUpdateInstall(c.svc, { whenIdle: true });
+  assertEquals([code, body.code], [409, 'password_on_pc']);
+  // a wait saved by an older build (installWhenIdle in state.json): the tick turns it into Install now on the PC, no prompt
+  c.svc.state.installWhenIdle = true;
+  await c.svc.tick();
+  assertEquals([c.asked.length, c.svc.state.installWhenIdle, c.svc.status().askOnPc], [0, false, true]);
+  // only the click on the PC asks
+  assertEquals((await c.svc.install()).state, 'authorizing');
+  assertEquals(c.svc.status().askOnPc, false);
+  await c.svc.debSettled();
+  assertEquals([c.asked.length, c.launched.length], [1, 1]);
+});
+
+Deno.test('.deb Install now with chats working that cannot be handed over: no prompt now, no automatic install later', async () => {
+  using c = new DebCase();
+  await c.ready();
+  c.busy = 1;
+  const e = await assertRejects(() => c.svc.install(), UpdateError) as UpdateError;
+  assertEquals([e.code, e.extra.password, e.extra.chats], ['chats_working', true, 1]);
+  assert(e.message.includes('click Install now again once they finish') && !e.message.includes('so it waits'), e.message);
+  assertEquals(c.svc.status().askOnPc, true);
+  c.busy = 0;
+  await c.svc.tick();
+  assertEquals(c.asked.length, 0);
+});
+
+Deno.test('.deb from a phone or a paired computer: never a password prompt; 409 password_on_pc and Install now waits on the PC', async () => {
+  using c = new DebCase();
+  await c.ready();
+  assertEquals(remoteUpdate(c.svc)?.password, true, 'the device can say it finishes on the PC');
+  assertEquals(remoteUpdate(c.svc)?.canInstall, true);
+  for (const body of [{}, { whenIdle: true }, { whenIdle: false }]) {
+    const [code, reply] = await remoteInstall(c.svc, body);
+    assertEquals([code, reply.code], [409, 'password_on_pc'], JSON.stringify(body));
+    assert(String(reply.error).includes('needs your system password on the PC') && String(reply.error).includes('from here'));
+    assertEquals((reply.update as { password?: boolean }).password, true);
+  }
+  await c.svc.tick();
+  assertEquals([c.asked.length, c.launched.length, c.quit.length], [0, 0, 0]);
+  assertEquals(c.svc.status().askOnPc, true);
+});
+
+Deno.test('.deb: a chat that starts while the prompt is open is seen after it: installed, AIB restarts once the chats finish', async () => {
+  using c = new DebCase();
+  await c.ready();
+  c.duringPrompt = () => void (c.busy = 1);
+  assertEquals((await c.svc.install()).state, 'authorizing');
+  await c.svc.debSettled();
+  assertEquals(c.asked.length, 1, 'installed');
+  assertEquals([c.launched.length, c.quit.length], [0, 0], 'no quit over the chat that started during the prompt');
+  assertEquals(c.svc.status().restarting, true);
+  const [code, body] = await postUpdateInstall(c.svc, {});
+  assertEquals([code, body.code], [409, 'busy'], 'no second prompt for an installed update');
+  await c.svc.tick();
+  assertEquals(c.quit.length, 0, 'still working');
+  c.busy = 0;
+  await c.svc.tick();
+  assertEquals([c.asked.length, c.launched.length, c.quit], [1, 1, [false]], 'chats done: restart, no second password prompt');
+  assertEquals(c.launched[0].kind, 'deb');
 });
 
 Deno.test('.deb Install now: a second click while the password prompt is open waits for it (409 busy)', async () => {
   using c = new DebCase();
   let answer!: (r: PrivilegedResult) => void;
   await c.ready({ privileged: () => new Promise<PrivilegedResult>((r) => (answer = r)) });
-  const first = c.svc.install();
-  await new Promise((r) => setTimeout(r, 20));
+  assertEquals((await c.svc.install()).state, 'authorizing');
   const [code, body] = await postUpdateInstall(c.svc, {});
   assertEquals([code, body.code], [409, 'busy']);
+  const [rcode, rbody] = await remoteInstall(c.svc, {});
+  assertEquals([rcode, rbody.code], [409, 'busy']);
   answer({ code: 0, stderr: '' });
-  assertEquals((await first).state, 'installing');
+  await c.svc.debSettled();
   assertEquals(c.launched.length, 1);
 });
 
@@ -273,7 +421,8 @@ Deno.test('.deb Install now with the keeper: the chats are left to the new versi
   });
   c.svc.state.downloaded!.keeper = { protocols: [3], needs: ['a'] };
   c.busy = 1;
-  assertEquals(await c.svc.install(), { state: 'installing', chats: 1 });
+  assertEquals(await c.svc.install(), { state: 'authorizing', chats: 1 });
+  await c.svc.debSettled();
   assertEquals(c.asked.length, 1);
   assertEquals(c.launched[0].keeper, '/home/ann/.local/state/agent-studio');
   assertEquals(c.quit, [true], 'release: the app leaves the chats running');
@@ -402,11 +551,23 @@ Deno.test('packaging: the .deb gets /usr/lib/aib/aib-install-deb (0755, LF) and 
     assertEquals(script.mode & 0o7777, 0o755);
     assert(script.text.startsWith('#!/bin/sh\n') && !script.text.includes('\r'), 'a POSIX script with LF line ends');
     assert(script.text.includes('--allow-downgrades') && script.text.includes('PKEXEC_UID'));
+    // root checks the file itself: its own copy read as the user, the release's SHA256SUMS fetched over HTTPS, only forward
+    assert(script.text.includes('RELEASES=https://github.com/sirkuttin/AIB/releases/download'));
+    assert(script.text.includes('url=$base/v$version/SHA256SUMS'));
+    assert(script.text.includes('/usr/bin/curl') && script.text.includes('--proto "=$proto"') && script.text.includes('--max-time'));
+    assert(script.text.includes('setpriv --reuid="$uid"'), "the copy is read with the user's permissions");
+    assert(script.text.includes('sha256sum -- "$copy"'), 'root hashes its own copy');
+    assert(script.text.includes('dpkg --compare-versions "$debversion" gt "$installed"'), 'only newer');
+    assert(script.text.includes('SOURCE_FILE=/etc/aib/update-release-url'), 'the only override: a root-owned file');
+    assert(!/\$\{?AIB_|getenv|\$HOME/.test(script.text), 'nothing from the environment decides where SHA256SUMS comes from');
     const policy = files[DEB_POLICY_PATH];
     assertEquals(policy.mode & 0o7777, 0o644);
     assert(policy.text.includes('<message>Authentication is required to update AIB</message>'));
     assert(policy.text.includes('<annotate key="org.freedesktop.policykit.exec.path">/usr/lib/aib/aib-install-deb</annotate>'));
     assert(policy.text.includes('<allow_active>auth_admin</allow_active>'), 'an administrator password every time');
+    assert(policy.text.includes('<allow_any>no</allow_any>'), 'no prompt over SSH and the like');
+    assert(policy.text.includes('<allow_inactive>no</allow_inactive>'), 'no prompt in an inactive session');
+    assert(!policy.text.includes('auth_admin_keep'), 'never the five-minute keep');
   } finally {
     Deno.removeSync(dir, { recursive: true });
   }
