@@ -10,6 +10,19 @@ import { DENO, Fixture, MAIN, PAGE_KEY, TEST_OPTIONS, until } from './_host_fixt
 import { waitListenedPort } from './_ports.ts';
 import { PageAccess } from '../../outputs/agent-studio/server/web/page_access.ts';
 
+/** node binds a moment after serve() returns (http_serve.ts says so): wait until the port takes a connection, as a client that retries. */
+async function listening(port: number): Promise<void> {
+  for (let i = 0; i < 100; i++) {
+    try {
+      (await Deno.connect({ hostname: '127.0.0.1', port })).close();
+      return;
+    } catch {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+  }
+  throw new Error(`nothing listens on ${port}`);
+}
+
 function withImpl<T>(impl: 'node' | 'deno', fn: () => Promise<T>): Promise<T> {
   const before = Deno.env.get('AIB_HTTP_IMPL');
   Deno.env.set('AIB_HTTP_IMPL', impl);
@@ -51,6 +64,7 @@ for (const impl of ['node', 'deno'] as const) {
         try {
           const port = server.addr.port;
           assert(port > 0, 'the port is known at once');
+          await listening(port);
           let threw = false;
           try {
             serve({ hostname: '127.0.0.1', port }, () => new Response('')).shutdown();
@@ -110,6 +124,7 @@ for (const impl of ['node', 'deno'] as const) {
         try {
           assert(server, 'bound');
           const port = server.addr.port;
+          await listening(port);
           for (const path of ['/', '/chat.html?c=abc', '/api/x']) {
             const r = await fetch(`http://127.0.0.1:${port}${path}`, { redirect: 'manual' });
             assertEquals(r.status, 302);
@@ -257,6 +272,7 @@ for (const impl of ['node', 'deno'] as const) {
         try {
           assert(server, 'bound');
           const port = server.addr.port;
+          await listening(port);
           const r = await fetch(`http://127.0.0.1:${port}/`, { redirect: 'manual' });
           assertEquals(r.status, 200, 'the runtime finds a server at once: no "Server not ready after 15s"');
           assertEquals(await r.text(), '<!doctype html><title>AIB</title>');
