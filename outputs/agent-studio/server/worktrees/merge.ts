@@ -1028,12 +1028,24 @@ function savedAs(dest: string, slug: string): string[] {
  * file: at its own name when the main folder has none, else beside it as "<name> (from chat-...)<ext>" (not again when those bytes
  * are already there). Returns one line for the chat.
  */
+/** True when `path` in commit `version` is a symbolic link (git mode 120000). */
+async function isSymlinkAt(cwd: string, version: string, path: string): Promise<boolean> {
+  const r = await git(['ls-tree', version, '--', path], cwd, { check: false });
+  return r.returncode === 0 && new TextDecoder().decode(r.out).startsWith('120000 ');
+}
+
 async function saveLocalVersions(chat: Chat, lo: LocalOnly, version: string, paths: string[]): Promise<string> {
   const slug = slugOf(chat.wt);
   const parts: string[] = [];
   for (const path of paths) {
     const rel = path.slice(lo.prefix.length);
     const dir = rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/') + 1) : '';
+    if (rel.toLowerCase() === 'aib-shared' && await isSymlinkAt(chat.wt, version, path)) {
+      // The chat committed AIB's own aib-shared link (a symlink on Linux and in WSL, where git can commit it; a Windows junction is a
+      // folder to git). Its content is only the link's target path: never a version of a file to save.
+      parts.push(`${rel} (AIB's own link to the shared folder, nothing to save)`);
+      continue;
+    }
     const got = await git(['cat-file', '--filters', `${version}:${path}`], chat.wt, { check: false, binary: true });
     if (got.returncode !== 0) { // the chat deleted it: the main folder's file stays as it is
       parts.push(`${rel} (left as it is in the main folder)`);
