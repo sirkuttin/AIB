@@ -20,6 +20,7 @@ import { getLogger } from '../core/log.ts';
 import { spawnDetached } from '../platform/spawn_detached.ts';
 import { pidAlive } from '../host/host_client.ts';
 import { BRIDGE_MAGIC, type BridgePreamble } from '../wsl/contract.ts';
+import { isSealedText, openText, sealingOn, sealText } from '../state/sealed.ts';
 
 const log = getLogger('keeper');
 const WIN = Deno.build.os === 'windows';
@@ -646,7 +647,15 @@ export function keeperDir(dataDir: string): string {
 export function readKeeperInfo(dataDir: string): KeeperInfo | null {
   try {
     const raw = JSON.parse(Deno.readTextFileSync(`${keeperDir(dataDir)}${SEP}keeper.json`));
-    if (!raw || typeof raw !== 'object' || typeof raw.token !== 'string' || typeof raw.address !== 'string') return null;
+    if (!raw || typeof raw !== 'object' || typeof raw.address !== 'string') return null;
+    // Keeper 1.7.0 on Windows: the token is sealed with DPAPI for this user (keeper/seal_windows.go); older keepers write it plain.
+    if (isSealedText(raw.tokenSealed)) {
+      const token = openText('keeper-token', raw.tokenSealed);
+      if (token === null) return null;
+      raw.token = token;
+      delete raw.tokenSealed;
+    }
+    if (typeof raw.token !== 'string') return null;
     return raw as KeeperInfo;
   } catch {
     return null;
@@ -754,7 +763,27 @@ export function keeperBinary(dataDir?: string): Promise<string> {
   return built;
 }
 
-const forwarders = new Map<string, Promise<boolean>>();
+const checkLines = new Map<string, Promise<string>>();
+const checkedLines = new Map<string, string>();
+
+/** What `<program> <sub> --check` prints ('' when it fails), asked once per program and subcommand. */
+function checkLine(program: string, sub: 'mcp-forward' | 'hook'): Promise<string> {
+  const key = `${sub}\0${program}`;
+  let line = checkLines.get(key);
+  if (!line) {
+    line = Promise.resolve().then(() =>
+      new Deno.Command(program, { args: [sub, '--check'], stdin: 'null', stdout: 'piped', stderr: 'null' }).output()
+    ).then(
+      (out) => (out.success ? DEC.decode(out.stdout).trim() : ''),
+      () => '',
+    ).then((text) => {
+      checkedLines.set(key, text);
+      return text;
+    });
+    checkLines.set(key, line);
+  }
+  return line;
+}
 
 /**
  * The keeper program to give agents as their MCP forwarder (`AIB-keeper mcp-forward <file>`, design 3.7): `binary` (a test's), else
@@ -763,20 +792,8 @@ const forwarders = new Map<string, Promise<boolean>>();
  */
 export async function forwarderOf(binary: string | null, dataDir: string): Promise<string | null> {
   const program = binary ?? await keeperBinary(dataDir);
-  let ok = forwarders.get(program);
-  if (!ok) {
-    ok = Promise.resolve().then(() =>
-      new Deno.Command(program, { args: ['mcp-forward', '--check'], stdin: 'null', stdout: 'piped', stderr: 'null' }).output()
-    ).then(
-      (out) => out.success && DEC.decode(out.stdout).startsWith('mcp-forward'),
-      () => false,
-    );
-    forwarders.set(program, ok);
-  }
-  return await ok ? program : null;
+  return (await checkLine(program, 'mcp-forward')).startsWith('mcp-forward') ? program : null;
 }
-
-const hookForwarders = new Map<string, Promise<boolean>>();
 
 /**
  * The keeper program to run a Claude chat's command hooks (`AIB-keeper hook <event> <address file>`, subagent worktrees): `binary`
@@ -785,17 +802,30 @@ const hookForwarders = new Map<string, Promise<boolean>>();
  */
 export async function hookForwarderOf(binary: string | null, dataDir: string): Promise<string | null> {
   const program = binary ?? await keeperBinary(dataDir);
-  let ok = hookForwarders.get(program);
-  if (!ok) {
-    ok = Promise.resolve().then(() =>
-      new Deno.Command(program, { args: ['hook', '--check'], stdin: 'null', stdout: 'piped', stderr: 'null' }).output()
-    ).then(
-      (out) => out.success && DEC.decode(out.stdout).startsWith('hook 1'),
-      () => false,
-    );
-    hookForwarders.set(program, ok);
+  return (await checkLine(program, 'hook')).startsWith('hook 1') ? program : null;
+}
+
+/**
+ * True when this keeper program opens DPAPI-sealed keys (keeper 1.7.0 on Windows: its `--check` line ends in " sealed"). Known only
+ * once forwarderOf / hookForwarderOf asked it (every forwarder AIB hands out came from one of them); false before.
+ */
+export function forwarderOpensSealed(program: string): boolean {
+  // Both subcommands are the same program: either answer tells.
+  return ['mcp-forward', 'hook'].some((sub) => / sealed$/.test(checkedLines.get(`${sub}\0${program}`) ?? ''));
+}
+
+/**
+ * A per-chat key (MCP_FORWARD_HEADERS, AIB_HOOK_KEY) as AIB hands it to `program` through the agent: sealed with DPAPI when this
+ * AIB seals and the program opens sealed keys, so the copy in the agent's keeper journal, its chat note or a Gemini settings file
+ * is of no use to another chat that reads it (security item 7). Plain otherwise (an older keeper program, Linux, WSL tunnel).
+ */
+export function keyForForwarder(program: string, purpose: 'mcp-forward-headers' | 'hook-key', value: string): string {
+  if (!sealingOn() || !forwarderOpensSealed(program)) return value;
+  try {
+    return sealText(purpose, value);
+  } catch {
+    return value; // DPAPI refused: the chat keeps working with the plain key, as before
   }
-  return await ok ? program : null;
 }
 
 /**

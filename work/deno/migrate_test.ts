@@ -129,6 +129,15 @@ Deno.test('migration copies everything and changes nothing but the note', async 
 });
 
 Deno.test('an artifact key issued before still checks after; queue, reconnect list and artifacts survive (read by both sides)', async () => {
+  // Python reads the secret file too: the plain form (the retired Python server cannot open a DPAPI-sealed one, keys.ts)
+  const sealBefore = Deno.env.get('AIB_SEAL');
+  Deno.env.set('AIB_SEAL', 'off');
+  using _restore = {
+    [Symbol.dispose]() {
+      if (sealBefore === undefined) Deno.env.delete('AIB_SEAL');
+      else Deno.env.set('AIB_SEAL', sealBefore);
+    },
+  };
   await using py = new PyParity();
   using tmp = tempRoot();
   const f = new Fixture(tmp.root);

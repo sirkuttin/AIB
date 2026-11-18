@@ -128,6 +128,12 @@ func (k *keeper) serve(nc net.Conn) {
 }
 
 func (c *conn) hello(req *request) bool {
+	if why := c.k.peerRefusal(c.nc); why != "" {
+		c.k.logf("hello refused: %s", why)
+		time.Sleep(200 * time.Millisecond)
+		c.send(fail(req, errBadPeer, why, nil), nil)
+		return false
+	}
 	if subtle.ConstantTimeCompare([]byte(req.Token), []byte(c.k.token)) != 1 {
 		time.Sleep(200 * time.Millisecond)
 		c.send(fail(req, errBadToken, "", nil), nil)

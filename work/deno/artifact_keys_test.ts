@@ -4,8 +4,21 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { PyParity } from './_parity.ts';
-import { check, configure, issue, SECRET_FILE } from '../../outputs/agent-studio/server/artifacts/keys.ts';
+import { check, configure, issue, SECRET_FILE, secretOfFile } from '../../outputs/agent-studio/server/artifacts/keys.ts';
 import { join } from '../../outputs/agent-studio/server/platform/path.ts';
+import { sealingOn } from '../../outputs/agent-studio/server/state/sealed.ts';
+
+/** The Python interop cases share the plain file format; the retired Python server cannot open a DPAPI-sealed secret. */
+function plainSecrets(): { [Symbol.dispose](): void } {
+  const before = Deno.env.get('AIB_SEAL');
+  Deno.env.set('AIB_SEAL', 'off');
+  return {
+    [Symbol.dispose]() {
+      if (before === undefined) Deno.env.delete('AIB_SEAL');
+      else Deno.env.set('AIB_SEAL', before);
+    },
+  };
+}
 
 const CONVERSATIONS = ['conv-1', 'omp:s1', 'claude:7f3c-é😀', 'x'.repeat(500), '0'];
 
@@ -37,8 +50,11 @@ Deno.test('a key is HMAC-SHA256 of the conversation with the secret file, and on
   using tmp = temp();
   const state = join(tmp.dir, 'state', 'nested');
   assertEquals(configure(state), true, 'the folder is created');
-  const secret = Deno.readFileSync(join(state, SECRET_FILE));
+  const raw = Deno.readFileSync(join(state, SECRET_FILE));
+  const secret = secretOfFile(raw) as Uint8Array<ArrayBuffer>;
   assertEquals(secret.length, 32);
+  // security item 7: on Windows the file holds the secret sealed with DPAPI, never the 32 bytes themselves
+  if (sealingOn()) assert(new TextDecoder().decode(raw).startsWith('dpapi:v1:') && raw.length > 32, 'sealed on Windows');
   if (Deno.build.os !== 'windows') assertEquals(Deno.statSync(join(state, SECRET_FILE)).mode! & 0o777, 0o600);
   const key = issue('conv-1')!;
   assert(/^[0-9a-f]{64}$/.test(key), key);
@@ -77,6 +93,7 @@ Deno.test('a key issued before a move still checks after the secret file was cop
 
 Deno.test('a secret file that never reaches 32 bytes means no keys, as in Python', async () => {
   await using py = new PyParity();
+  using _plain = plainSecrets();
   using tmp = temp();
   Deno.writeFileSync(join(tmp.dir, SECRET_FILE), new Uint8Array(5));
   assertEquals(configure(tmp.dir), false);
@@ -87,6 +104,7 @@ Deno.test('a secret file that never reaches 32 bytes means no keys, as in Python
 
 Deno.test('interop: a secret made by Python, keys issued by either side check in the other', async () => {
   await using py = new PyParity();
+  using _plain = plainSecrets();
   using tmp = temp();
   assertEquals(await py.call('artifact_keys', 'configure', [tmp.dir]), true);
   assertEquals(configure(tmp.dir), true);
@@ -104,6 +122,7 @@ Deno.test('interop: a secret made by Python, keys issued by either side check in
 
 Deno.test('interop: a secret made by Deno is read by Python', async () => {
   await using py = new PyParity();
+  using _plain = plainSecrets();
   using tmp = temp();
   assertEquals(configure(tmp.dir), true);
   const secret = Deno.readFileSync(join(tmp.dir, SECRET_FILE));
@@ -114,4 +133,32 @@ Deno.test('interop: a secret made by Deno is read by Python', async () => {
   assertEquals(await py.call('artifact_keys', 'check', [issue('conv-1'), 'conv-1']), true);
   assertEquals(Deno.readFileSync(join(tmp.dir, SECRET_FILE)), secret, 'Python did not rewrite the secret');
   await py.call('artifact_keys', 'configure', [null]);
+});
+
+Deno.test('migration: a plain secret from an older AIB is sealed in place on Windows, and its keys keep checking', async () => {
+  using tmp = temp();
+  const plain = crypto.getRandomValues(new Uint8Array(32));
+  Deno.writeFileSync(join(tmp.dir, SECRET_FILE), plain);
+  assertEquals(configure(tmp.dir), true);
+  const key = issue('conv-1')!;
+  assertEquals(key, await hmacHex(plain, 'conv-1'), 'the same secret: keys issued before the update still check');
+  const after = Deno.readFileSync(join(tmp.dir, SECRET_FILE));
+  if (sealingOn()) {
+    assert(new TextDecoder().decode(after).startsWith('dpapi:v1:'), 'sealed in place');
+    assert(!after.some((_, i) => plain.every((b, j) => after[i + j] === b)), 'the plain bytes are gone from the file');
+  } else assertEquals(after, plain, 'no DPAPI here: unchanged');
+  assertEquals(secretOfFile(after), plain);
+  configure(null);
+  assertEquals(configure(tmp.dir), true, 'the sealed file opens on the next start');
+  assertEquals(issue('conv-1'), key);
+});
+
+Deno.test('a sealed secret that cannot be opened (another Windows account) gives no keys and is never replaced', () => {
+  if (!sealingOn()) return;
+  using tmp = temp();
+  const damaged = 'dpapi:v1:' + btoa('not a DPAPI blob at all, long enough');
+  Deno.writeTextFileSync(join(tmp.dir, SECRET_FILE), damaged);
+  assertEquals(configure(tmp.dir), false);
+  assertEquals(issue('conv-1'), null);
+  assertEquals(Deno.readTextFileSync(join(tmp.dir, SECRET_FILE)), damaged);
 });

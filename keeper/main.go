@@ -39,8 +39,10 @@ type keeper struct {
 	opts  options
 	dir   string // <data>/keeper
 	token string
-	pid   int
-	log   *log.Logger
+	// sealedToken: the token as keeper.json shows it on Windows (DPAPI), sealed once.
+	sealedToken string
+	pid         int
+	log         *log.Logger
 
 	mu       sync.Mutex
 	channels map[string]*channel
@@ -240,8 +242,22 @@ func (k *keeper) listen() error {
 // writeInfo writes <data>/keeper/keeper.json (user-only). Written after the socket listens: its presence means "ready".
 func (k *keeper) writeInfo() {
 	k.mu.Lock()
-	info := map[string]any{"pid": k.pid, "protocol": protocolVersion, "keeper": keeperVersion, "token": k.token,
+	info := map[string]any{"pid": k.pid, "protocol": protocolVersion, "keeper": keeperVersion,
 		"started": k.started.UnixMilli(), "orphanCommand": k.orphan, "held": k.held}
+	// Keeper 1.7.0: on Windows the token is sealed with DPAPI for this user ("tokenSealed"), so reading the file gives an agent
+	// nothing it can say hello with. Elsewhere it stays in this 0600 file and the hello's peer check guards it (peer_linux.go).
+	if k.sealedToken == "" && canSeal {
+		if s, err := sealText(sealKeeperToken, k.token); err == nil {
+			k.sealedToken = s
+		} else {
+			k.logf("keeper.json: DPAPI could not seal the token (%v); it is written in the clear", err)
+		}
+	}
+	if k.sealedToken != "" {
+		info["tokenSealed"] = k.sealedToken
+	} else {
+		info["token"] = k.token
+	}
 	if g := k.opts.orphanGrace; g > 0 { // only with --orphan-grace: a keeper without it writes exactly what it always did
 		info["orphanGrace"] = int64(g / time.Second)
 		if !k.orphanSince.IsZero() {

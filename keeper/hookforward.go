@@ -85,7 +85,7 @@ var errAIBGone = errors.New("the AIB named in the address file is not running")
 
 func hookMain(args []string) int {
 	if len(args) == 1 && args[0] == "--check" {
-		fmt.Println("hook 1")
+		fmt.Println(checkLine("hook 1"))
 		return 0
 	}
 	if len(args) != 2 || !hookEvents[args[0]] || args[1] == "" {
@@ -95,7 +95,7 @@ func hookMain(args []string) int {
 	h := &hookForwarder{
 		event:       args[0],
 		addressFile: args[1],
-		key:         os.Getenv("AIB_HOOK_KEY"),
+		key:         openedEnv(sealHookKey, "AIB_HOOK_KEY"),
 		chat:        os.Getenv("AIB_HOOK_CHAT"),
 		readOnly:    splitList(os.Getenv("AIB_HOOK_READONLY")),
 		deadline:    hookDeadline,

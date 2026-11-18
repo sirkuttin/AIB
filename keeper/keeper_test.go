@@ -352,7 +352,7 @@ func TestAuthAndBadFrames(t *testing.T) {
 	<-c.closed
 	// A newer protocol only.
 	c = newClient(t, rawDial(t, k))
-	if r := c.call("hello", map[string]any{"token": k.info["token"], "min": 2, "max": 5}, nil); r.str("error") != errUnsupportedVer {
+	if r := c.call("hello", map[string]any{"token": infoToken(k.info), "min": 2, "max": 5}, nil); r.str("error") != errUnsupportedVer {
 		t.Fatalf("min 2: %v", r.h)
 	}
 	// A browser or anything speaking HTTP: the first four bytes are a huge length, so it is closed at once.
@@ -376,7 +376,7 @@ func TestAuthAndBadFrames(t *testing.T) {
 	}
 	// Hello answer carries the features.
 	c2 := newClient(t, rawDial(t, k))
-	h := c2.must("hello", map[string]any{"token": k.info["token"], "min": 1, "max": 3, "client": "AIB test"}, nil)
+	h := c2.must("hello", map[string]any{"token": infoToken(k.info), "min": 1, "max": 3, "client": "AIB test"}, nil)
 	if h.num("protocol") != 1 || !strings.Contains(fmt.Sprint(h.h["features"]), "pty") {
 		t.Fatalf("hello %v", h.h)
 	}
@@ -560,7 +560,7 @@ func TestManyClientsAndDroppedFrames(t *testing.T) {
 			defer wg.Done()
 			if i%2 == 0 {
 				nc := rawDial(t, k)
-				f, _ := encodeFrame(map[string]any{"op": "hello", "token": k.info["token"], "min": 1, "max": 1}, nil)
+				f, _ := encodeFrame(map[string]any{"op": "hello", "token": infoToken(k.info), "min": 1, "max": 1}, nil)
 				nc.Write(f)
 				g, _ := encodeFrame(map[string]any{"op": "attach", "channel": "m"}, make([]byte, 1000))
 				nc.Write(g[:len(g)/2]) // half a frame, then gone

@@ -43,7 +43,9 @@ const (
 // 1.5.0: WSL MCP tunnel: `mcp-forward --helper-socket <socket>` and the `mcp-relay --socket <socket>` subcommand (no protocol change).
 // 1.6.0: `serve --orphan-grace` (feature `orphan-grace`): live channels without a client wait that long before they stop; the
 // bridge starts the Linux keeper with 2h. `orphanGrace` in status and keeper.json, `orphanSince`/`orphanStopAt` in keeper.json.
-var keeperVersion = "1.6.0"
+// 1.7.0: keeper.json seals its token with DPAPI on Windows ("tokenSealed"); on Linux a hello from a process under one of the
+// keeper's channels is refused (bad_peer); mcp-forward and hook open DPAPI-sealed keys ("--check" says "sealed").
+var keeperVersion = "1.7.0"
 
 // features are advertised in hello. Additions only.
 var features = []string{"pty", "notes", "truncate", "orphan", "signal", "once", "channel-ids", "scrollback", "labels", "hold", "orphan-grace"}
@@ -148,6 +150,7 @@ const (
 	errBadRequest     = "bad_request"
 	errNotAuth        = "not_authenticated"
 	errBadToken       = "bad_token"
+	errBadPeer        = "bad_peer" // keeper 1.7.0, Linux: the connecting process runs under one of the keeper's channels (peer_linux.go)
 	errUnsupportedVer = "unsupported_protocol"
 	errNoChannel      = "no_channel"
 	errExists         = "exists"

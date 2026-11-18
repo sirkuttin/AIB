@@ -61,16 +61,16 @@ type forwarder struct {
 
 func mcpForwardMain(args []string) int {
 	if len(args) == 1 && args[0] == "--check" {
-		fmt.Println("mcp-forward 1")
+		fmt.Println(checkLine("mcp-forward 1"))
 		return 0
 	}
 	var f *forwarder
 	var err error
 	switch {
 	case len(args) == 2 && args[0] == "--helper-socket" && args[1] != "":
-		f, err = newSocketForwarder(args[1], os.Getenv("MCP_FORWARD_HEADERS"), os.Stdout)
+		f, err = newSocketForwarder(args[1], openedEnv(sealForwardHeader, "MCP_FORWARD_HEADERS"), os.Stdout)
 	case len(args) == 1 && args[0] != "" && !strings.HasPrefix(args[0], "--"):
-		f, err = newForwarder(args[0], os.Getenv("MCP_FORWARD_HEADERS"), os.Stdout)
+		f, err = newForwarder(args[0], openedEnv(sealForwardHeader, "MCP_FORWARD_HEADERS"), os.Stdout)
 	default:
 		fmt.Fprintln(os.Stderr, "usage: AIB-keeper mcp-forward <address file> | mcp-forward --helper-socket <unix socket>")
 		return 2

@@ -81,12 +81,12 @@ const utf8 = new TextEncoder();
 const fromUtf8 = new TextDecoder('utf-8', { fatal: true });
 const joinPath = (dir: string, name: string) => dir.replace(/[\\/]+$/, '') + (dir.includes('\\') ? '\\' : '/') + name;
 
-function toBase64(bytes: Uint8Array): string {
+export function toBase64(bytes: Uint8Array): string {
   let text = '';
   for (let i = 0; i < bytes.length; i += 0x8000) text += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   return btoa(text);
 }
-function fromBase64(text: string): Uint8Array<ArrayBuffer> {
+export function fromBase64(text: string): Uint8Array<ArrayBuffer> {
   const raw = atob(text);
   const out = new Uint8Array(raw.length);
   for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
@@ -199,19 +199,19 @@ function takeBlob(blob: Uint8Array<ArrayBuffer>): Uint8Array<ArrayBuffer> {
 }
 
 /** CryptProtectData for the current user. */
-export function dpapiProtect(plain: Uint8Array<ArrayBuffer>): Uint8Array<ArrayBuffer> {
+export function dpapiProtect(plain: Uint8Array<ArrayBuffer>, entropy: Uint8Array<ArrayBuffer> = ENTROPY): Uint8Array<ArrayBuffer> {
   const { crypt } = libs();
   const out = new Uint8Array(16);
-  const ok = crypt.symbols.CryptProtectData(blobOf(plain), DESCRIPTION, blobOf(ENTROPY), null, null, CRYPTPROTECT_UI_FORBIDDEN, out);
+  const ok = crypt.symbols.CryptProtectData(blobOf(plain), DESCRIPTION, blobOf(entropy), null, null, CRYPTPROTECT_UI_FORBIDDEN, out);
   if (!ok) throw new Error('Windows could not encrypt the key (CryptProtectData failed)');
   return takeBlob(out);
 }
 
 /** CryptUnprotectData; null when it cannot be opened (another Windows account, a damaged value). */
-export function dpapiUnprotect(sealed: Uint8Array<ArrayBuffer>): Uint8Array<ArrayBuffer> | null {
+export function dpapiUnprotect(sealed: Uint8Array<ArrayBuffer>, entropy: Uint8Array<ArrayBuffer> = ENTROPY): Uint8Array<ArrayBuffer> | null {
   const { crypt } = libs();
   const out = new Uint8Array(16);
-  const ok = crypt.symbols.CryptUnprotectData(blobOf(sealed), null, blobOf(ENTROPY), null, null, CRYPTPROTECT_UI_FORBIDDEN, out);
+  const ok = crypt.symbols.CryptUnprotectData(blobOf(sealed), null, blobOf(entropy), null, null, CRYPTPROTECT_UI_FORBIDDEN, out);
   return ok ? takeBlob(out) : null;
 }
 

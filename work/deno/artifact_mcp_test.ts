@@ -16,6 +16,7 @@ import { ArtifactMcpHttp, CONVERSATION_HEADER, KEY_HEADER } from '../../outputs/
 import { DOC_TOOL_NAMES, DOCS_RULE } from '../../outputs/agent-studio/server/docs/tool_defs.ts';
 import { DRAWING_TOOL_NAMES } from '../../outputs/agent-studio/server/docs/drawing/tool_defs.ts';
 import { pyJsonDumps } from '../../outputs/agent-studio/server/core/py.ts';
+import { openText, sealingOn } from '../../outputs/agent-studio/server/state/sealed.ts';
 
 const WIN = Deno.build.os === 'windows';
 const SEP = WIN ? '\\' : '/';
@@ -698,8 +699,10 @@ Deno.test('the Deno Studio gives agents the Deno tool: entry shape and key', asy
   assertEquals(env.STUDIO_ARTIFACT_URL, 'http://127.0.0.1:8123');
   assertEquals(env.STUDIO_CONVERSATION_ID, 'conv-1');
   assert(env.STUDIO_ARTIFACT_URL_FILE.endsWith(ARTIFACT_URL_FILE));
-  assert(artifactKeys.check(env.STUDIO_ARTIFACT_KEY, 'conv-1'));
-  assert(!artifactKeys.check(env.STUDIO_ARTIFACT_KEY, 'conv-2'));
+  // security item 7: sealed with DPAPI on Windows (the entry is in the agent's journal); mcp-artifact opens it
+  assertEquals(env.STUDIO_ARTIFACT_KEY.startsWith('dpapi:v1:'), sealingOn());
+  assert(artifactKeys.check(openText('artifact-key', env.STUDIO_ARTIFACT_KEY), 'conv-1'));
+  assert(!artifactKeys.check(openText('artifact-key', env.STUDIO_ARTIFACT_KEY), 'conv-2'));
   assertEquals(validateMcpServers([entry])[0].name, 'studio_artifact'); // same shape --mcp-config entries have
   assertEquals(envOf((studio.artifactMcpServers('c', true) as unknown as Json[])[0]).STUDIO_WORKTREE, '1');
 });
@@ -713,7 +716,7 @@ Deno.test('the injected entry runs: an agent starting it gets the studio_artifac
   const result = (await shim.request('initialize', { protocolVersion: '2025-06-18' })).result as Json;
   assertEquals((result.serverInfo as Json).name, 'studio_artifact');
   assert(!('isError' in (await shim.call('list', {}))));
-  assertEquals(lab.fake.requests.at(-1)!.key, env.STUDIO_ARTIFACT_KEY);
+  assertEquals(lab.fake.requests.at(-1)!.key, openText('artifact-key', env.STUDIO_ARTIFACT_KEY));
 });
 
 Deno.test('host URL provider wins and can fail; the tool can be turned off', async () => {

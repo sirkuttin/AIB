@@ -53,6 +53,9 @@ import {
   tailscaleStatus,
   writeSavedChat,
 } from "./_remote_fixture.ts";
+import { openText } from "../../outputs/agent-studio/server/state/sealed.ts";
+import { readKeeperInfo } from "../../outputs/agent-studio/server/keeper/client.ts";
+import { secretOfFile } from "../../outputs/agent-studio/server/artifacts/keys.ts";
 import { OwnerRegistry } from "../../outputs/agent-studio/server/ownership/probe.ts";
 import { startAttention } from "../../outputs/agent-studio/server/attention/watcher.ts";
 
@@ -190,23 +193,14 @@ async function pairOverHttp(
 
 function secretsOf(fx: Fixture, web: Web): string[] {
   const out = [web.token];
-  try {
-    out.push(
-      String(
-        JSON.parse(fx.read(fx.state + SEP + "agent-host.json")).token ?? "",
-      ),
-    );
+  try { // security item 7: on Windows the token is sealed (tokenSealed); openText gives the plain one either way
+    const host = JSON.parse(fx.read(fx.state + SEP + "agent-host.json"));
+    out.push(String(openText("agent-host-token", String(host.tokenSealed ?? host.token ?? "")) ?? ""));
   } catch { /* in-process: no agent host */ }
+  out.push(readKeeperInfo(fx.state)?.token ?? ""); // the keeper is off in this fixture when null
   try {
-    out.push(
-      String(
-        JSON.parse(fx.read(fx.state + SEP + "keeper" + SEP + "keeper.json"))
-          .token ?? "",
-      ),
-    );
-  } catch { /* the keeper is off in this fixture */ }
-  try {
-    const secret = Deno.readFileSync(fx.state + SEP + "artifact-key-secret");
+    const secret = secretOfFile(Deno.readFileSync(fx.state + SEP + "artifact-key-secret"));
+    if (!secret) throw new Error("no secret");
     out.push(
       [...secret].map((b) => b.toString(16).padStart(2, "0")).join(""),
       btoa(String.fromCharCode(...secret)),

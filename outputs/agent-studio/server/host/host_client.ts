@@ -7,6 +7,7 @@ import { spawnDetached } from '../platform/spawn_detached.ts';
 import { processAlive } from '../platform/process_info.ts';
 import { APP_ROOT, APP_VERSION, isCompiled, launchDir } from '../core/app.ts';
 import { pyJsonDumps } from '../core/py.ts';
+import { isSealedText, openText, sealOrPlain } from '../state/sealed.ts';
 
 export const PROTOCOL_VERSION = 4;
 export const HOST_FORMAT = 'agent-studio-host';
@@ -257,6 +258,13 @@ export async function readInfo(stateDir: string): Promise<HostInfo | null> {
       continue;
     }
     const d = data as Record<string, unknown>;
+    // Security item 7: on Windows the token is sealed with DPAPI for this user (writeInfo); an older host wrote it plain.
+    if (d && typeof d === 'object' && isSealedText(d.tokenSealed)) {
+      const token = openText('agent-host-token', d.tokenSealed);
+      if (token === null) return null;
+      d.token = token;
+      delete d.tokenSealed;
+    }
     if (d && typeof d === 'object' && d.format === HOST_FORMAT && Number.isInteger(d.port) && typeof d.token === 'string') {
       return d as HostInfo;
     }
@@ -321,7 +329,16 @@ export async function writeInfo(stateDir: string, info: Record<string, unknown>)
   await Deno.mkdir(stateDir, { recursive: true });
   const path = infoPath(stateDir);
   const temporary = `${path}.${Deno.pid}.tmp`;
-  await Deno.writeTextFile(temporary, JSON.stringify(info, null, 1));
+  // Security item 7: the token never sits in the file in the clear on Windows (an agent of this user can read the file).
+  const published: Record<string, unknown> = { ...info };
+  if (typeof info.token === 'string') {
+    const sealed = sealOrPlain('agent-host-token', info.token);
+    if (isSealedText(sealed)) {
+      delete published.token;
+      published.tokenSealed = sealed;
+    }
+  }
+  await Deno.writeTextFile(temporary, JSON.stringify(published, null, 1));
   await restrictToUser(temporary);
   await Deno.rename(temporary, path);
 }

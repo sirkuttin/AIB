@@ -80,6 +80,11 @@ With `--orphan-grace` (keeper 1.6.0) it also has `"orphanGrace": <seconds>`, and
 `"orphanSince"` and `"orphanStopAt"` (Unix ms: when that stretch began, and when the channels stop unless a client comes). A
 client that reads them must do so before its hello: an authenticated connection ends the stretch.
 
+Keeper 1.7.0 on Windows writes `"tokenSealed": "dpapi:v1:<base64>"` instead of `token`: the token sealed with DPAPI
+(CryptProtectData, current user, entropy `AIB sealed secret v1\0keeper-token`). Every process of the user can read this file,
+the agents the keeper runs included, so it never shows the token in the clear there. A client opens it with CryptUnprotectData
+(AIB: server/state/sealed.ts). Elsewhere `token` stays, and the hello's peer check guards it (section 3).
+
 To connect: read `keeper.json`; check that `pid` is alive; dial `transport`/`address`; send hello with `token`. If the file is
 missing, or the dial fails, start a keeper and poll for the file (it normally appears within ~100 ms). If the new keeper exits
 with code 3, another one won the race: read the file again.
@@ -137,7 +142,12 @@ Must be the first frame, within 10 s.
 
 `min`/`max` is the protocol range the client speaks (`max` 0 = same as `min`). Errors (each closes the connection):
 `bad_token` (after a 200 ms delay), `unsupported_protocol` (with `"protocol":1`), `not_authenticated` (any other op first),
-`shutting_down`.
+`shutting_down`, `bad_peer` (keeper 1.7.0, Linux, after a 200 ms delay, checked before the token).
+
+The peer check (keeper 1.7.0, Linux unix socket): right after a spawn the keeper lowers the channel process's hard
+`RLIMIT_MSGQUEUE` by one byte below its own. Every descendant inherits that and no unprivileged process can raise a hard limit
+again, so a hello whose peer (SO_PEERCRED) has a lower hard limit than the keeper comes from something a channel started, an
+agent's shell included, and is refused. A process started outside the keeper's tree (AIB, the bridge, systemd-run, cron) passes.
 
 ### list
 
@@ -408,7 +418,8 @@ torn or corrupt tail and drops anything after it. The newest ~4 MiB of each chan
 
 ## 7. Error codes
 
-`unknown_op`, `bad_request`, `not_authenticated`, `bad_token`, `unsupported_protocol`, `no_channel`, `exists`, `ended`,
+`unknown_op`, `bad_request`, `not_authenticated`, `bad_token`, `bad_peer` (keeper 1.7.0, Linux: the process that connected
+runs under one of this keeper's channels; see hello), `unsupported_protocol`, `no_channel`, `exists`, `ended`,
 `fenced`, `duplicate`, `busy`, `spawn_failed`, `unsupported`, `failed`, `shutting_down`.
 
 ## 8. Events
@@ -444,6 +455,11 @@ torn or corrupt tail and drops anything after it. The newest ~4 MiB of each chan
   carries `orphanStopAt` while the keeper's channels have no client. `orphanGrace` in `status` and `keeper.json`; `orphanSince` and
   `orphanStopAt` in `keeper.json`. AIB needs none of it (an older Linux keeper is replaced only once it holds no live channel, by
   the version rule).
+- keeper 1.7.0 (protocol still 1, no new feature names; security item 7): on Windows `keeper.json` has `tokenSealed` (DPAPI)
+  instead of `token` (section 1); on Linux hello refuses a peer under one of its channels with `bad_peer` (section 4, hello).
+  `mcp-forward` and `hook` open DPAPI-sealed `MCP_FORWARD_HEADERS` / `AIB_HOOK_KEY` values (`dpapi:v1:`, entropy purposes
+  `mcp-forward-headers` / `hook-key`), and on Windows their `--check` lines end in ` sealed` (`mcp-forward 1 sealed`, `hook 1 sealed`),
+  which is how AIB knows it may seal a chat's key for that program. AIB reads both forms of keeper.json.
 - (same version, no wire change) the Windows-only `AIB-keeper toast` subcommand: toasts with buttons for the AIB server, JSON
   lines over stdio, its own HKCU registration and COM click handler (`toast.go`, `wintoast/`; Inbox v3.1 phase 4). It never runs
   inside a serving keeper.

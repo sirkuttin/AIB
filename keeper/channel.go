@@ -157,6 +157,7 @@ func (ch *channel) start(spec spawnSpec) error {
 	if err != nil {
 		return err
 	}
+	markUnderKeeper(p.Pid()) // Linux: what the channel starts can never say hello (peer_linux.go)
 	ch.mu.Lock()
 	ch.proc = p
 	ch.pid = p.Pid()

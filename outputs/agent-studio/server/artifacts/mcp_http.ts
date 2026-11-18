@@ -25,6 +25,7 @@ import { reply, SERVER_NAME, type ToolContext, urlFromFile } from './mcp.ts';
 import { pyJsonDumps, pyStrip } from '../core/py.ts';
 import { getLogger } from '../core/log.ts';
 import { serve, type Server as HttpServer } from '../platform/http_serve.ts';
+import { keyForForwarder } from '../keeper/client.ts';
 
 const log = getLogger('artifact_mcp_http');
 
@@ -93,13 +94,17 @@ export function isOwnForwardEntry(command: unknown, args: string[]): boolean {
 /**
  * The stdio entry an agent in the keeper gets for the artifact tool: the keeper's forwarder (its program lives outside every AIB
  * version folder), posting to this Studio's HTTP endpoint with the conversation's key, whichever AIB version serves it now.
+ * On Windows, with a keeper program that opens them (keeper 1.7.0), the headers are sealed with DPAPI (keyForForwarder): this entry
+ * is in the agent's keeper journal and its chat note, which any other agent of this user can read. `program` is the forwarder as
+ * this process ran its --check (a WSL chat's entry names the same program by its /mnt/c path).
  */
-export function forwardEntry(forwarder: string, addressFile: string, key: string, conversationId: string): Json {
+export function forwardEntry(forwarder: string, addressFile: string, key: string, conversationId: string, program = forwarder): Json {
+  const headers = JSON.stringify({ [KEY_HEADER]: key, [CONVERSATION_HEADER]: conversationId });
   return {
     name: SERVER_NAME,
     command: forwarder,
     args: ['mcp-forward', addressFile],
-    env: [{ name: 'MCP_FORWARD_HEADERS', value: JSON.stringify({ [KEY_HEADER]: key, [CONVERSATION_HEADER]: conversationId }) }],
+    env: [{ name: 'MCP_FORWARD_HEADERS', value: keyForForwarder(program, 'mcp-forward-headers', headers) }],
   };
 }
 

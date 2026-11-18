@@ -25,6 +25,7 @@
  * without an account, and a copied or linked credentials file could leave the user signed out or on stale tokens. They get a chat line.
  */
 import { getLogger } from '../core/log.ts';
+import { keyForForwarder } from '../keeper/client.ts';
 import { isDict } from '../core/py.ts';
 import { pathOf } from '../state/paths.ts';
 import { normcase, SEP } from '../platform/ospath.ts';
@@ -329,7 +330,7 @@ export function setUp(i: SetupInput): { setup: GeminiSetup; args: string[]; env:
   const home = pathOf(dir, 'home');
   Deno.mkdirSync(subFolder, { recursive: true });
   const command = hookCommand(i.forwarder!, i.addressFile);
-  buildHome(home, realHome, mergedSettings(settings!, command, { AIB_HOOK_KEY: i.hookKey!, AIB_HOOK_CHAT: i.chatId }), pathOf(i.stateDir, 'gemini', 'shared'));
+  buildHome(home, realHome, mergedSettings(settings!, command, { AIB_HOOK_KEY: keyForForwarder(i.forwarder!, 'hook-key', i.hookKey!), AIB_HOOK_CHAT: i.chatId }), pathOf(i.stateDir, 'gemini', 'shared'));
   return {
     setup: { policyDir, home, subFolder, off: '', dir },
     args: [...args, '--include-directories', subFolder],

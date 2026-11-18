@@ -19,6 +19,7 @@ import { expandUser, isAbsolute, isFile, pathStr } from '../platform/pypath.ts';
 import { join, normpath } from '../platform/ospath.ts';
 import { DOC_TOOL_NAMES, DOC_TOOLS, DOCS_RULE } from '../docs/tool_defs.ts';
 import { DRAWING_TOOL_NAMES, DRAWING_TOOLS } from '../docs/drawing/tool_defs.ts';
+import { openText } from '../state/sealed.ts';
 
 type Json = Record<string, unknown>;
 
@@ -294,7 +295,7 @@ export interface ToolContext {
 /** The stdio server's context: the STUDIO_* environment variables and this process's folder. */
 export function envContext(): ToolContext {
   return {
-    key: env('STUDIO_ARTIFACT_KEY'),
+    key: openText('artifact-key', env('STUDIO_ARTIFACT_KEY')) ?? '', // studio.ts seals it on Windows (state/sealed.ts)
     conversation: env('STUDIO_CONVERSATION_ID'),
     worktree: Deno.env.get('STUDIO_WORKTREE') === '1',
     main: Deno.env.get('STUDIO_MAIN') === '1',

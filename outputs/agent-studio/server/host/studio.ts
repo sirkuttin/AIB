@@ -42,11 +42,12 @@ import { UsageLimitsStore } from '../state/usage_limits.ts';
 import { LimitsFeed, REFRESH_SECONDS } from './usage_limits_feed.ts';
 import { AgentTitles } from './agent_titles.ts';
 import * as artifactKeys from '../artifacts/keys.ts';
+import { sealOrPlain } from '../state/sealed.ts';
 import { artifactToolCommand } from '../artifacts/mcp.ts';
 import { ArtifactMcpHttp, FORWARD_FILE, forwardEntry, httpEntry, ownForwardFile, ownTunnelEntry, tunnelEntry } from '../artifacts/mcp_http.ts';
 import { WSL_TOOL_GROUPS } from '../artifacts/mcp.ts';
 import { mcpTunnelGate, type TunnelAnswer } from '../wsl/mcp_tunnel.ts';
-import { forwarderOf, hookForwarderOf, keeperBinary, programVersion } from '../keeper/client.ts';
+import { forwarderOf, hookForwarderOf, keeperBinary, keyForForwarder, programVersion } from '../keeper/client.ts';
 import { deny as denyHook, type HookAnswer, SubagentWorktrees, type SubagentChat } from '../subagents/service.ts';
 import { claudeConfigDir, gitBashPath, hookSettings, readClaudeSetup, subagentsOffSettings } from '../subagents/claude_config.ts';
 import * as codexSub from '../subagents/codex.ts';
@@ -1011,7 +1012,7 @@ export class Studio {
       log.exception(error, 'Could not start the HTTP artifact tool for a WSL chat');
       return { servers: [], notice: WSL_TOOLS_NOTICE };
     }
-    const entry = forwardEntry(program, file, key, conversationId) as { env: { name: string; value: string }[] };
+    const entry = forwardEntry(program, file, key, conversationId, forwarder!) as { env: { name: string; value: string }[] };
     entry.env.push({ name: 'WSLENV', value: 'MCP_FORWARD_HEADERS' }); // the agent's variable crosses into the Windows forwarder
     return { servers: [entry as unknown as McpServer], notice: '' };
   }
@@ -1095,7 +1096,7 @@ export class Studio {
     const env: Record<string, string> = {
       STUDIO_ARTIFACT_URL: this.artifactBaseUrl(),
       STUDIO_ARTIFACT_URL_FILE: join(this.stateDir, ARTIFACT_URL_FILE),
-      STUDIO_ARTIFACT_KEY: key,
+      STUDIO_ARTIFACT_KEY: sealOrPlain('artifact-key', key), // sealed on Windows: this entry is in the agent's journal and note
       STUDIO_CONVERSATION_ID: conversationId,
     };
     if (worktree) env.STUDIO_WORKTREE = '1'; // only a worktree chat is offered the merge tools
@@ -2243,7 +2244,7 @@ export class Studio {
       if (!key) return { hooks: offHooks('AIB has no key secret') };
       return {
         id,
-        env: { AIB_HOOK_KEY: key, AIB_HOOK_CHAT: id, AIB_HOOK_READONLY: setup.readOnly.join(',') },
+        env: { AIB_HOOK_KEY: keyForForwarder(forwarder, 'hook-key', key), AIB_HOOK_CHAT: id, AIB_HOOK_READONLY: setup.readOnly.join(',') },
         hooks: { settings, readOnly: setup.readOnly, userWorktreeHook: setup.userWorktreeHook, off: '', configDir },
       };
     } catch (error) {
@@ -2444,7 +2445,7 @@ export class Studio {
       Deno.mkdirSync(subFolder, { recursive: true });
       return {
         id,
-        env: { AIB_HOOK_KEY: key, AIB_HOOK_CHAT: id, CODEX_CONFIG: JSON.stringify(codexSub.withCodexHooks(setup.config, hooks)) },
+        env: { AIB_HOOK_KEY: keyForForwarder(forwarder, 'hook-key', key), AIB_HOOK_CHAT: id, CODEX_CONFIG: JSON.stringify(codexSub.withCodexHooks(setup.config, hooks)) },
         hooks: { ...offHooks(''), adopted: true, prompt: codexSub.CODEX_SUBAGENT_PROMPT, subFolder },
       };
     } catch (error) {

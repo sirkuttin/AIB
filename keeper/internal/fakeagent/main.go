@@ -11,8 +11,11 @@ package main
 
 import (
 	"bufio"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net"
 	"os"
 	"os/exec"
 	"strconv"
@@ -53,7 +56,58 @@ func main() {
 		echo(false)
 	case "echo":
 		echo(len(os.Args) > 2 && os.Args[2] == "pty")
+	case "steal":
+		steal(os.Args[2], len(os.Args) > 3 && os.Args[3] == "detach")
 	}
+}
+
+// steal FILE [detach]: what an agent with a shell could try (security item 7). After a moment (the keeper marks its channel's
+// process right after the spawn) it reads keeper.json like any file, takes whatever "token" it finds, dials the keeper and says
+// hello; prints {"stole":<the answer's header>}. With "detach" it first starts itself again as a process that leaves its parent
+// (Unix: a new session), and that one does the reading.
+func steal(file string, detach bool) {
+	if detach {
+		cmd := exec.Command(os.Args[0], "steal", file)
+		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+		detachProcess(cmd)
+		if err := cmd.Start(); err != nil {
+			fmt.Println(`{"stole":{"error":"could not start"}}`)
+		}
+		return // the parent leaves at once; the other one carries on without it
+	}
+	time.Sleep(300 * time.Millisecond)
+	var info struct {
+		Transport, Address, Token string
+	}
+	b, err := os.ReadFile(file)
+	if err == nil {
+		err = json.Unmarshal(b, &info)
+	}
+	if err != nil {
+		fmt.Printf("{\"stole\":{\"error\":%q}}\n", err.Error())
+		return
+	}
+	nc, err := net.Dial(info.Transport, info.Address)
+	if err != nil {
+		fmt.Printf("{\"stole\":{\"error\":%q}}\n", err.Error())
+		return
+	}
+	defer nc.Close()
+	head, _ := json.Marshal(map[string]any{"op": "hello", "id": 1, "token": info.Token, "min": 1, "max": 1, "client": "agent"})
+	frame := make([]byte, 8+len(head))
+	binary.LittleEndian.PutUint32(frame[0:], uint32(len(head)))
+	copy(frame[4:], head)
+	binary.LittleEndian.PutUint32(frame[4+len(head):], 0)
+	nc.Write(frame)
+	nc.SetReadDeadline(time.Now().Add(5 * time.Second))
+	var size [4]byte
+	if _, err := io.ReadFull(nc, size[:]); err != nil {
+		fmt.Printf("{\"stole\":{\"error\":%q}}\n", err.Error())
+		return
+	}
+	answer := make([]byte, binary.LittleEndian.Uint32(size[:]))
+	io.ReadFull(nc, answer)
+	fmt.Printf("{\"stole\":%s}\n", answer)
 }
 
 func echo(pty bool) {

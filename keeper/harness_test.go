@@ -163,7 +163,7 @@ func rawDial(t *testing.T, k *keeperProc) net.Conn {
 func dial(t *testing.T, k *keeperProc) *client {
 	t.Helper()
 	c := newClient(t, rawDial(t, k))
-	r := c.call("hello", map[string]any{"token": k.info["token"], "min": 1, "max": 1, "client": "test"}, nil)
+	r := c.call("hello", map[string]any{"token": infoToken(k.info), "min": 1, "max": 1, "client": "test"}, nil)
 	if !r.ok() {
 		t.Fatalf("hello: %v", r.h)
 	}
