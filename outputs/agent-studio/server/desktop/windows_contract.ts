@@ -113,10 +113,12 @@ export function windowPath(spec: WindowSpec): string {
   throw new ValueError('Invalid window');
 }
 
-/** K0: the full URL the app process navigates that window to: origin + path + #aib-key=<launch key>. */
-export function windowUrl(origin: string, spec: WindowSpec, launchKey: string): string {
-  const base = origin.replace(/\/+$/, '') + windowPath(spec);
-  return launchKey ? `${base}#aib-key=${encodeURIComponent(launchKey)}` : base;
+/**
+ * K0: the full URL the app process navigates that window to: origin + path. Never a launch key: a URL lands in the browser's history
+ * and session-restore files, so the page gets its one-time key through the window's private channel (window.ts pageKeyScript).
+ */
+export function windowUrl(origin: string, spec: WindowSpec): string {
+  return origin.replace(/\/+$/, '') + windowPath(spec);
 }
 
 /** A name or title for a window title: control characters become spaces, whitespace collapsed, at most MAX_TITLE characters. */

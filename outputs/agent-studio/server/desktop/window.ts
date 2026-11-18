@@ -26,7 +26,6 @@ import {
   cleanSavedGeometry,
   DEFAULT_MAIN_SIZE,
   defaultSize,
-  launchKeyOf,
   loadSavedList,
   openAnswer,
   pageWindowId,
@@ -256,21 +255,40 @@ export function pageDecision(href: string, appOrigin: string): PageDecision {
 export const PAGE_PROBE = `JSON.stringify({ href: String(location.href), title: String(document.title || '') })`;
 
 /**
- * What the page holds to prove it is the page (page-auth.js): the launch key kept for this tab and the page session this origin
- * keeps. Read through the window's private evaluate channel only, and checked in this process (DesktopOptions.pageConnected).
+ * What the page holds to prove it is the page (page-auth.js, in its memory only): its page session, whether a key is on its way to
+ * it, and whether page-auth.js is there at all. Read through the window's private evaluate channel only, and checked in this
+ * process (DesktopOptions.pageConnected).
  */
-export const PAGE_AUTH_PROBE = `(() => { const r = (a, n) => { try { return String(window[a].getItem(n) || ''); } catch { return ''; } };
-  return JSON.stringify({ key: r('sessionStorage', 'aib-page-key'), session: r('localStorage', 'aib-page-session') }); })()`;
+export const PAGE_AUTH_PROBE =
+  `(() => { const a = window.AIBPageAuth; if (!a || typeof a.state !== 'function') return JSON.stringify({ auth: false });
+  const s = a.state(); return JSON.stringify({ auth: true, session: String(s.session || ''), waiting: !!s.waiting }); })()`;
+
+/** What the auth probe read. `auth` false: page-auth.js is not there (yet), so no key can be handed to it. */
+export interface HeldAuth {
+  auth: boolean;
+  session: string;
+  waiting: boolean;
+}
 
 /** The auth probe's answer, or null when it couldn't be read. */
-export function parseAuthProbe(value: unknown): { key: string; session: string } | null {
+export function parseAuthProbe(value: unknown): HeldAuth | null {
   if (typeof value !== 'string' || !value.startsWith('{')) return null;
   try {
     const o = JSON.parse(value);
-    return { key: typeof o?.key === 'string' ? o.key : '', session: typeof o?.session === 'string' ? o.session : '' };
+    return { auth: o?.auth === true, session: typeof o?.session === 'string' ? o.session : '', waiting: o?.waiting === true };
   } catch {
     return null;
   }
+}
+
+/**
+ * The script that hands a one-time launch key to our page (page-auth.js accept), through the window's private evaluate channel:
+ * never in a URL, so it lands in no browser history or session-restore file. It runs in the window's top frame and checks the origin
+ * there, in the same turn, so a key never reaches another site the window might show. 'ok' when the page took it.
+ */
+export function pageKeyScript(origin: string, key: string): string {
+  return `(function(){if(location.origin!==${JSON.stringify(origin)})return 'elsewhere';var a=window.AIBPageAuth;` +
+    `if(!a||typeof a.accept!=='function')return 'no-auth';return a.accept(${JSON.stringify(key)})?'ok':'refused';})()`;
 }
 
 /** The probe's answer, or null when it couldn't be read (the page is loading, or the call failed). */
@@ -451,11 +469,13 @@ export interface DesktopOptions {
   /** The window loaded our page (the update helper's health marker is written then). */
   onPageLoaded?: () => void;
   /**
-   * True when what our page holds (PAGE_AUTH_PROBE) gets it the token: the launch key, or a page session the server knows. Our page
-   * without either (the runtime's startup navigation to its own serve port lands there through a key-less redirect, which may
-   * overwrite the keyed one) is sent to `url` again, which carries the key. Not given: not checked (tests of other things).
+   * True when what our page holds (PAGE_AUTH_PROBE) gets it the token: a page session the server knows. Our page without one (every
+   * fresh load: a new window, a reload, a crash, a restart) is handed a new one-time key from pageKeys through the window's private
+   * evaluate channel. Not given: not checked (tests of other things).
    */
-  pageConnected?: (held: { key: string; session: string }) => boolean;
+  pageConnected?: (held: { session: string }) => boolean;
+  /** The one-time launch keys (web/page_access.ts): one is made for each handover, and dropped again when the page didn't take it. */
+  pageKeys?: { mint(): string; revoke(key: string): void };
   /**
    * The normal close path (the web server). stopAgents: Stop all chats and quit. leave: Quit AIB with work running; the chats stay in
    * the keeper, which holds them until an AIB is started again (no restart in the tray). Never returns in the real app (Deno.exit).
@@ -533,8 +553,6 @@ export class DesktopApp implements WindowsHost {
   #stopTimer: ReturnType<typeof setTimeout> | undefined;
   #loadedOnce = false;
   readonly origin: string;
-  /** The launch key in options.url (each window's K0 URL carries it in its fragment, N4). */
-  readonly launchKey: string;
   /** The app windows (K0 ids), and the one writer of desktop-windows.json (K1). */
   readonly windows: WindowList;
   /** K4: ctx.desktopWindows. */
@@ -555,7 +573,6 @@ export class DesktopApp implements WindowsHost {
 
   constructor(readonly shell: Shell, readonly options: DesktopOptions) {
     this.origin = new URL(options.url).origin;
-    this.launchKey = launchKeyOf(options.url);
     this.windows = new WindowList(options.stateDir);
     this.desktopWindows = new AppWindows(this);
     this.notifications = new DesktopNotifications(shell.notifier, (target) => void this.openFromNotification(target));
@@ -953,7 +970,7 @@ export class DesktopApp implements WindowsHost {
       ...(w.doc ? { doc: w.doc } : {}),
       ...(w.from && (w.kind === 'chat' || w.kind === 'doc') ? { from: w.from } : {}),
       handle,
-      url: windowUrl(this.origin, specOf(w), this.launchKey),
+      url: windowUrl(this.origin, specOf(w)), // never a key in it (N4 now: pageKeyScript, the private channel)
       title: windowTitle(w),
       geometry: { width: g.width, height: g.height, ...(g.x !== undefined && g.y !== undefined ? { x: g.x, y: g.y } : {}) },
       maximized: !!w.maximized,
@@ -962,6 +979,7 @@ export class DesktopApp implements WindowsHost {
       focusedAt: this.windows.get(w.id)?.focusedAt ?? 0,
       backAllowed: rateLimiter(4, 30_000),
       keyAllowed: rateLimiter(3, 60_000),
+      askAllowed: rateLimiter(6, 60_000),
     };
   }
 
@@ -1166,6 +1184,32 @@ export class DesktopApp implements WindowsHost {
   /** One binding: the page asks it whether it runs in the app (desktop-bridge.js available()). It does nothing else. */
   bindAll(win: WindowHandle): void {
     win.bind('aibDesktop', () => true);
+    // page-auth.js asks for a launch key as soon as it runs. The answer never comes back through the binding (bindings exist in every
+    // frame, artifact iframes included): the key goes to the window's top frame only, through its private evaluate channel, and
+    // only while that shows our origin. Rate-limited per window, separately from the load check's own sends.
+    win.bind('aibPageKey', () => {
+      const e = this.#entryOf(win);
+      if (e && !win.isClosed() && !this.#quitting && e.askAllowed()) void this.#sendKey(e, 'asked');
+      return true;
+    });
+  }
+
+  /** Hands the window's page a fresh one-time launch key (pageKeyScript); the key is dropped again when the page didn't take it. */
+  async #sendKey(e: AppWindow, why: string): Promise<boolean> {
+    const keys = this.options.pageKeys;
+    if (!keys) return false;
+    const key = keys.mint();
+    let answer: unknown;
+    try {
+      answer = await e.handle.evaluate(pageKeyScript(this.origin, key));
+    } catch { /* gone */ }
+    if (answer !== 'ok') {
+      keys.revoke(key);
+      log.info('window %s: launch key not handed over (%s, %s)', e.id, why, String(answer ?? 'no answer'));
+      return false;
+    }
+    log.info('window %s: launch key handed over (%s)', e.id, why);
+    return true;
   }
 
   /**
@@ -1251,28 +1295,29 @@ export class DesktopApp implements WindowsHost {
   }
 
   /**
-   * Our page, but holding neither the launch key nor a known page session ("This browser is not connected to AIB yet"): the
-   * runtime sent the window to its serve port after our keyed navigation, and that redirect carries no key (it is open to every
-   * local process, so it never may). The key reaches the page only here, through this window's own navigate (N4). Rate-limited
-   * per window.
+   * Our page without a known page session: every fresh load (a new window, a reload or a crash of the page, a restart, an update's
+   * new AIB), or a session AIB dropped. The page keeps its session in memory only (page-auth.js), so it is handed a new one-time
+   * launch key here, through this window's private evaluate channel (N4: never in a URL, the runtime's redirects included).
+   * Usually the page has asked for one already (bindings.aibPageKey) and is waiting for it: then it is left alone. Rate-limited per
+   * window.
    */
   async #ensureConnected(e: AppWindow, href: string, why: string): Promise<void> {
     const check = this.options.pageConnected;
     const win = e.handle;
     if (!check || win.isClosed() || this.#quitting) return;
     const held = parseAuthProbe(await win.evaluate(PAGE_AUTH_PROBE));
-    if (!held) return; // can't read it now: the next load or watchdog tick looks again
+    if (!held || !held.auth || held.waiting) return; // can't tell now, or a key is on its way: the next load or watchdog tick looks again
     let connected = true;
     try {
       connected = check(held);
     } catch { /* unknown: leave the page alone */ }
     if (connected) return;
     if (!e.keyAllowed()) {
-      log.warning('window %s: our page (%s) is not connected; not opened again: too many tries in a row', e.id, why);
+      log.warning('window %s: our page (%s) is not connected; no key sent: too many tries in a row', e.id, why);
       return;
     }
-    log.warning('window %s: our page %s holds no launch key or known page session (%s); opening it again with the key', e.id, href, why);
-    win.navigate(e.url);
+    log.info('window %s: our page %s holds no known page session (%s); handing it a launch key', e.id, href, why);
+    await this.#sendKey(e, why);
   }
 
   async busy(): Promise<number | null> {

@@ -147,11 +147,29 @@ export async function studio(root?: string, port = 0) {
 }
 export type Studio = Awaited<ReturnType<typeof studio>>;
 
+/**
+ * What a page of a test Studio gets in place of the app window's key handover (server/desktop/window.ts): the app's binding
+ * (bindings.aibPageKey), answered with the run's fixed launch key through AIBPageAuth.accept, as the desktop side answers with a
+ * fresh one-time key. Only on the test Studio's own origin (127.0.0.1 / localhost) in a top frame, never in another origin's frame.
+ */
+export function fakeAppBinding(key: string = PAGE_KEY): string {
+  return `(() => { if (!/^https?:[/][/](127[.]0[.]0[.]1|localhost)(:|[/]|$)/.test(location.href) || window.top !== window) return;
+  window.bindings = Object.assign(window.bindings || {}, { aibPageKey: () => { setTimeout(() => {
+    if (window.AIBPageAuth && window.AIBPageAuth.accept) window.AIBPageAuth.accept(${
+    JSON.stringify(key)
+  }); }, 0); return true; } }); })();`;
+}
+
 /** A headless browser over the DevTools protocol. */
 export class Browser {
   #proc: Deno.ChildProcess;
   readonly profile: string;
   readonly port: number;
+  /**
+   * Pages opened from now on play the app window (fakeAppBinding): every load, a reload included, is handed the run's launch key,
+   * as the desktop side hands a fresh one-time key to its windows. False: a plain browser (only a link with the key connects).
+   */
+  fakeApp = true;
   constructor(proc: Deno.ChildProcess, profile: string, port: number) {
     this.#proc = proc;
     this.profile = profile;
@@ -207,6 +225,7 @@ export class Browser {
       source:
         "window.__csp = []; document.addEventListener('securitypolicyviolation', (e) => window.__csp.push(e.violatedDirective + ' ' + (e.blockedURI || '') + ' ' + (e.sourceFile || '') + ':' + e.lineNumber));",
     });
+    if (this.fakeApp) await page.send('Page.addScriptToEvaluateOnNewDocument', { source: fakeAppBinding() });
     await page.viewport(width, height);
     await page.goto(url);
     return page;
@@ -304,8 +323,8 @@ export class Page {
     });
   }
   async goto(url: string): Promise<void> {
-    // The launch key in the link, as the app's window has it; not when this page is already on that origin (a link that differs
-    // only by #fragment would not load the page again): the tab keeps the key in its sessionStorage instead.
+    // The launch key in the link (a `serve` link); not when this page is already on that origin (a link that differs only by
+    // #fragment would not load the page again): there the fake app binding hands the new page the key (fakeAppBinding).
     let here = '';
     try {
       here = String(await this.eval('location.origin'));
@@ -314,10 +333,6 @@ export class Page {
     try {
       same = here === new URL(url).origin;
     } catch { /* not a URL */ }
-    if (same && withPageKey(url) !== url) {
-      // a test that cleared the page's storage (a fresh profile): the tab keeps the key, as after its first link
-      await this.eval(`sessionStorage.setItem('aib-page-key', ${JSON.stringify(PAGE_KEY)})`).catch(() => {});
-    }
     await this.send('Page.navigate', { url: same ? url : withPageKey(url) });
     await this.waitFor('document.readyState === "complete"', 10000);
   }

@@ -13,8 +13,9 @@
  *      while it swaps the files, starts B and waits for B's start confirmation.
  *   4. B takes the chat over from the keeper's record under the same connection id: every chunk once and in order, the question once,
  *      the answer reaches the agent once, the prompt reached it once, the same agent process, the same keeper process. B is on A's
- *      port, so a localStorage key A's page wrote (through the WebView2 DevTools port) is still there, and the page session A's
- *      window keeps there gets the page token from B (B has a launch key of its own: the test's AIB_PAGE_KEY reaches only A).
+ *      port, so a localStorage key A's page wrote (through the WebView2 DevTools port) is still there; the page session A's window
+ *      held in memory (never in localStorage) gets the page token from B (only its hash is on disk), and B's own window is handed a
+ *      one-time key of B's and connects with a session of its own (the test's AIB_PAGE_KEY reaches only A).
  *   5. The agent's artifact tool is the keeper's MCP forwarder (`AIB-keeper mcp-forward`, run from the data folder's keeper-bin),
  *      never A's AIB.exe, so B removes the update's .old-* files at its start while the chat still runs.
  *   6. B is killed hard mid-turn: the keeper starts AIB again with --start-in-tray (rule V1): no window, only the tray icon (Open AIB,
@@ -215,10 +216,12 @@ Deno.test({
       assertEquals(bootA.hostMode, 'keeper', 'one AIB process; agents in the keeper');
       assertEquals(await readInfo(fx.state), null, 'no separate agent host');
       await until(() => cdpEval(`localStorage.setItem('aib-e2e-draft', 'kept across the update'), 'ok'`), 'localStorage write', 60);
-      // The page session A's window made with its launch key (page-auth.js): B and the keeper's restart give the token for it.
+      // The page session A's window traded its one-time launch key for (page-auth.js, in the page's memory only): only its hash is
+      // on disk, so B and the keeper's restart give the token for it too.
       const pageSession = String(
-        await until(() => cdpEval(`localStorage.getItem('aib-page-session')`), "the page session of A's window", 60),
+        await until(() => cdpEval(`window.AIBPageAuth ? AIBPageAuth.state().session : ''`), "the page session of A's window", 60),
       );
+      assertEquals(await cdpEval(`localStorage.getItem('aib-page-session')`), null, 'never in localStorage');
       const post = (token: string, name: string, body: unknown) => httpJson('POST', PORT, '/api/live/' + name, token, body);
       const [cs, conn] = await post(tokenA, 'connect', { provider: 'claude', cwd: fx.workspace, background: true });
       assertEquals(cs, 200, JSON.stringify(conn));
@@ -308,6 +311,18 @@ Deno.test({
       assert(installLog.includes('the new version is running (it confirmed its start)'), installLog);
       assert([...Deno.readDirSync(trays)].some((e) => e.name.startsWith('helper-')), 'the update helper showed a tray icon');
       assertEquals(await until(() => cdpEval(`localStorage.getItem('aib-e2e-draft')`), 'localStorage read on B', 60), 'kept across the update');
+      // B reconnects its window: the new page is handed a one-time key of B's and has a page session of its own.
+      const sessionB = String(
+        await until(
+          async () => {
+            const s = String(await cdpEval(`window.AIBPageAuth ? AIBPageAuth.state().session : ''`) ?? '');
+            return s && s !== pageSession ? s : null;
+          },
+          "B's window connected with a key of its own",
+          60,
+        ),
+      );
+      assertEquals((await bootstrapWithSession(sessionB))[1].token, tokenB, "B's window gets the token");
       const studioLog = Deno.readTextFileSync(`${fx.state}\\studio.log`);
       assert(studioLog.includes('closing (installing an update); leaving the chats in the keeper'), studioLog.slice(-3000));
       assert(studioLog.includes('released 1 chat(s) to the keeper'), studioLog.slice(-3000));

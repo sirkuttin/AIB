@@ -130,7 +130,7 @@ Deno.test('T2: the server builds every URL (K0); titles are cleaned and cut to 8
   const q = (w: string) => new URL(byId[w].url);
   assertEquals([q('w2').pathname, q('w2').searchParams.get('w'), q('w2').searchParams.get('kind')], ['/', 'w2', 'project']);
   assertEquals(q('w2').searchParams.get('project'), evil.key, 'escaped by URLSearchParams, read back exactly');
-  assertEquals(q('w2').hash, '#aib-key=' + encodeURIComponent('K&y #1'));
+  assertEquals(q('w2').hash, '', 'never a launch key in a window URL (it would land in the browser history)');
   assertEquals(
     [
       q('w3').searchParams.get('kind'),
@@ -150,8 +150,8 @@ Deno.test('T2: the server builds every URL (K0); titles are cleaned and cut to 8
   assertEquals(cleanTitle('a\u0085b\u009f  c'), 'a b c', 'C1 controls too');
   assertEquals(windowPath({ w: 'm', kind: 'main' }), '/?w=m');
   assertEquals(
-    windowUrl('http://127.0.0.1:5/', { w: 'w5', kind: 'project', project: 'p' }, 'k'),
-    'http://127.0.0.1:5/?w=w5&kind=project&project=p#aib-key=k',
+    windowUrl('http://127.0.0.1:5/', { w: 'w5', kind: 'project', project: 'p' }),
+    'http://127.0.0.1:5/?w=w5&kind=project&project=p',
   );
   let threw = false;
   try {

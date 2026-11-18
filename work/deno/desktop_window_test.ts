@@ -5,8 +5,6 @@
 import { assert, assertEquals } from './_assert.ts';
 import {
   choosePortPair,
-  lastPortPair,
-  saveLastPort,
   cleanGeometry,
   closeDecision,
   DEFAULT_SIZE,
@@ -15,22 +13,25 @@ import {
   GEOMETRY_FILE,
   isExternal,
   KEEPER_URL,
+  lastPortPair,
   loadGeometry,
   PAGE_AUTH_PROBE,
   PAGE_PROBE,
   pageDecision,
+  pageKeyScript,
   parseProbe,
+  PHONE_ON_TOOLTIP,
   portFree,
   portGiven,
   rateLimiter,
   saveGeometry,
-  PHONE_ON_TOOLTIP,
+  saveLastPort,
   type Shell,
+  SLOT_ITEMS,
   STOP_CONFIRM_MS,
   STOP_INDEX,
   stopConfirmLabel,
   TRAY_ITEMS,
-  SLOT_ITEMS,
   TRAY_SLOTS,
   trayChatSlots,
   trayOnlyView,
@@ -40,7 +41,6 @@ import {
   canPlaceWindows,
   chooseOrder,
   cleanSavedList,
-  launchKeyOf,
   loadSavedList,
   openAnswer,
   restorePlan,
@@ -75,9 +75,9 @@ import {
   chosenItem,
   menuCommand,
   notifyIconData,
+  NOTIFYICONDATAW_SIZE,
   SLOT_SEPARATOR_COMMAND,
   slotMenuOps,
-  NOTIFYICONDATAW_SIZE,
   TRAY_CALLBACK,
   trayEvent,
 } from '../../outputs/agent-studio/server/desktop/tray_win.ts';
@@ -214,13 +214,16 @@ class FakeWindow implements WindowHandle {
     this.maximized = true;
     this.log.push('maximize');
   }
-  /** What the page holds (page-auth.js storage): a navigation to /#aib-key=K leaves the key in sessionStorage, like the page. */
-  held = { key: '', session: '' };
+  /** What the page holds (page-auth.js, in its memory): a new page has no session; `waiting` while a key is on its way. */
+  held = { auth: true, session: '', waiting: false };
+  /** The launch keys handed to the page (pageKeyScript), what the page answers, and what it does with one (trade it). */
+  handed: string[] = [];
+  keyAnswer: unknown = 'ok';
+  onKey: ((key: string) => void) | null = null;
   navigate(url: string) {
     this.urls.push(url);
     this.href = url;
-    const key = /#aib-key=([A-Za-z0-9_-]+)/.exec(url)?.[1];
-    if (key) this.held = { ...this.held, key };
+    this.held = { auth: true, session: '', waiting: false }; // a new page: the old one's memory is gone
   }
   show() {
     this.visible = true;
@@ -267,6 +270,12 @@ class FakeWindow implements WindowHandle {
   evaluate(code: string) {
     if (code === PAGE_PROBE) return Promise.resolve(this.href ? JSON.stringify({ href: this.href, title: this.title }) : undefined);
     if (code === PAGE_AUTH_PROBE) return Promise.resolve(JSON.stringify(this.held));
+    const handed = /a\.accept\("([A-Za-z0-9_-]+)"\)/.exec(code);
+    if (handed && code.startsWith('(function(){if(location.origin!==')) {
+      this.handed.push(handed[1]);
+      if (this.keyAnswer === 'ok') this.onKey?.(handed[1]);
+      return Promise.resolve(this.keyAnswer);
+    }
     const open = /openFromDesktop\((.*)\);return r===/.exec(code);
     if (open) {
       this.opened.push(JSON.parse(open[1]));
@@ -355,20 +364,35 @@ async function makeApp(
   shell.removeTray = () => (order.push('tray removed'), removeTray());
   const app = new DesktopApp(shell, options);
   await app.start();
-  return { app, s, updates, quits, leaves, stops, order, dir, done: () => (app.stop(), settled(app).then(() => Deno.remove(dir, { recursive: true }))) };
+  return {
+    app,
+    s,
+    updates,
+    quits,
+    leaves,
+    stops,
+    order,
+    dir,
+    done: () => (app.stop(), settled(app).then(() => Deno.remove(dir, { recursive: true }))),
+  };
 }
 
-Deno.test('start: one window titled AIB on the page, a keeper, a tray, one binding only', async () => {
+Deno.test('start: one window titled AIB on the page, a keeper, a tray, two bindings that hand out nothing', async () => {
   const { s, done } = await makeApp(() => Promise.resolve(0));
   try {
     assertEquals(s.windows.length, 1);
     const w = s.windows[0];
     assertEquals(w.options.title, 'AIB');
     assertEquals(w.urls, ['http://127.0.0.1:8890/?w=m']);
-    assertEquals([...w.bound.keys()], ['aibDesktop'], 'it only says "the app"; notifications go through the server');
+    assertEquals([...w.bound.keys()], ['aibDesktop', 'aibPageKey'], 'it says "the app" and takes a key request; nothing comes back');
     assertEquals(await w.bound.get('aibDesktop')!(), true);
     assertEquals(s.keepers, 1);
-    assertEquals(s.tray?.items.filter((i) => !(i as { hidden?: boolean }).hidden).map((i) => i.label), ['Open AIB', '', 'Quit AIB', 'Stop all chats and quit']);
+    assertEquals(s.tray?.items.filter((i) => !(i as { hidden?: boolean }).hidden).map((i) => i.label), [
+      'Open AIB',
+      '',
+      'Quit AIB',
+      'Stop all chats and quit',
+    ]);
     const png = trayIconPng();
     assertEquals([...png.slice(1, 4)], [0x50, 0x4e, 0x47], 'a PNG');
     assertEquals(s.tray?.icon, png, 'the tray gets the colour icon tray_icon.ts chose (16 or 32 px)');
@@ -436,7 +460,7 @@ Deno.test('tray: icon, menu Open AIB / status / Quit AIB / Stop all chats and qu
   const a = await makeApp(() => Promise.resolve(2));
   try {
     assertEquals(a.s.tray?.tooltip, 'AIB');
-    assertEquals(a.s.tray?.items, [...TRAY_ITEMS, ...SLOT_ITEMS], "the fixed items, then the chat slots (hidden until used)");
+    assertEquals(a.s.tray?.items, [...TRAY_ITEMS, ...SLOT_ITEMS], 'the fixed items, then the chat slots (hidden until used)');
     assertEquals(TRAY_ITEMS.map((i) => [i.label, !!i.disabled]), [
       ['Open AIB', false],
       ['', true],
@@ -993,36 +1017,62 @@ Deno.test('a load on another local port or an error page goes back to our page a
   }
 });
 
-Deno.test('the runtime key-less redirect lands after the keyed navigation: the window opens the page again with the key', async () => {
-  const access = new PageAccess(null, 'L'.repeat(43));
+/** The window side of page_access.ts as main.ts wires it: one-time keys, and the page that trades a handed key for a session. */
+function pageKeysFor(access: PageAccess, w?: FakeWindow) {
+  if (w) w.onKey = (key) => (w.held = { ...w.held, session: access.pair(key) ?? '' });
+  return {
+    pageConnected: (held: { session: string }) => access.holds(held),
+    pageKeys: { mint: () => access.mintKey(), revoke: (key: string) => access.revoke(key) },
+  };
+}
+
+Deno.test('a page without a session is handed a one-time key through the private channel: never in a URL, never a navigation', async () => {
+  const access = new PageAccess(null, null);
   const base = 'http://127.0.0.1:8890';
-  const keyed = `${base}/?w=m#aib-key=${access.launchKey}`; // K0: the main window's own keyed URL
-  const a = await makeApp(() => Promise.resolve(0), null, { url: access.pageUrl(base), pageConnected: (held) => access.holds(held) });
+  const a = await makeApp(() => Promise.resolve(0), null, { url: `${base}/`, ...pageKeysFor(access) });
   try {
     const w = a.s.windows[0];
-    assertEquals(w.urls, [keyed], 'the window opens on the keyed page');
-    // Fresh profile: the runtime's startup navigation to its serve port wins; the 302 to `${url}/` carries no key (and no ?w=, S6).
-    w.href = `${base}/`;
-    w.held = { key: '', session: '' };
+    pageKeysFor(access, w);
+    assertEquals(w.urls, [`${base}/?w=m`], 'the window opens on its plain page: no key in the URL');
+    // The page loads; page-auth.js asked through the binding (aibPageKey) as soon as it ran: the key goes to the top frame.
+    w.href = `${base}/?w=m`;
+    w.bound.get('aibPageKey')!();
+    await tick();
+    assertEquals(w.handed.length, 1);
+    assert(access.holds(w.held), 'the page traded it for a session the server knows');
+    assertEquals(access.pair(w.handed[0]), null, 'the handed key is used up');
     w.emit('load');
     await tick();
-    assertEquals(w.urls, [keyed, keyed], 'not connected: sent to the keyed page once more');
-    assert(access.holds(w.held), 'the page now holds the launch key: bootstrap gives it the token');
-    w.href = `${base}/?w=m`; // page-auth.js took the key out of the address bar
-    w.emit('load');
     await a.app.watchdogTick();
-    assertEquals(w.urls.length, 2, 'connected: left alone');
-    // A page session the server knows (the next start, with a new key) is connected too.
-    w.held = { key: '', session: access.pair(access.launchKey)! };
+    assertEquals([w.handed.length, w.urls.length], [1, 1], 'connected: left alone, nothing navigated');
+    // A reload (Ctrl+R, a crashed page): a new page with no session. The load check hands it one (a binding call may not come).
+    w.held = { auth: true, session: '', waiting: false };
     w.emit('load');
     await tick();
-    assertEquals(w.urls.length, 2);
-    // A page that never connects is not navigated in a loop.
-    for (let i = 0; i < 10; i++) {
-      w.held = { key: '', session: 'unknown'.repeat(6) };
-      await a.app.checkPage(w, 'load');
-    }
-    assertEquals(w.urls.length, 2 + 2, 'at most 3 key navigations in 60 s (one used above)');
+    assertEquals(w.handed.length, 2);
+    assert(access.holds(w.held));
+    assertEquals(w.urls.length, 1, 'still no navigation');
+    // A page that is waiting for its key already (asked through the binding) is not sent a second one.
+    w.held = { auth: true, session: '', waiting: true };
+    w.emit('load');
+    await tick();
+    assertEquals(w.handed.length, 2, 'a key is on its way: left alone');
+    // Not our page any more (the window shows another site): the script refuses in the page itself, and the key is revoked.
+    w.held = { auth: true, session: '', waiting: false };
+    w.keyAnswer = 'elsewhere';
+    w.bound.get('aibPageKey')!();
+    await tick();
+    assertEquals(w.handed.length, 3);
+    assertEquals(access.pair(w.handed[2]), null, 'a key the page did not take is revoked at once');
+    // A page that never connects gets at most 3 keys a minute from the load check, and 6 asked ones (artifact frames can call it).
+    for (let i = 0; i < 10; i++) await a.app.checkPage(w, 'load');
+    assertEquals(w.handed.length, 3 + 2, 'at most 3 load-check keys in 60 s (one used above)');
+    for (let i = 0; i < 10; i++) w.bound.get('aibPageKey')!();
+    await tick();
+    assertEquals(w.handed.length, 5 + 4, 'at most 6 asked keys in 60 s (two used above)');
+    // The script itself: checks the origin in the page, in the same turn, before page-auth.js sees the key.
+    const script = pageKeyScript('http://127.0.0.1:8890', 'k'.repeat(43));
+    assert(script.startsWith(`(function(){if(location.origin!=="http://127.0.0.1:8890")return 'elsewhere';`), script);
   } finally {
     await a.done();
   }
@@ -1199,9 +1249,14 @@ Deno.test('tray-only start (--start-in-tray): no window, a keeper, the tray menu
   const counts = { working: 2, needsYou: 1 };
   const { app, s, updates, quits, done } = await trayOnlyApp(counts);
   try {
-    assertEquals(s.windows.length, 0, 'nothing pops up over the person\'s work');
+    assertEquals(s.windows.length, 0, "nothing pops up over the person's work");
     assertEquals(s.keepers, 1, 'the hidden keeper window keeps the runtime alive');
-    assertEquals(s.tray?.items.filter((i) => !(i as { hidden?: boolean }).hidden).map((i) => i.label), ['Open AIB', '', 'Quit AIB', 'Stop all chats and quit']);
+    assertEquals(s.tray?.items.filter((i) => !(i as { hidden?: boolean }).hidden).map((i) => i.label), [
+      'Open AIB',
+      '',
+      'Quit AIB',
+      'Stop all chats and quit',
+    ]);
     assertEquals(updates.at(-1), ['AIB · 1 chat needs you, 1 running', 1, '1 chat needs you, 1 running']);
     counts.needsYou = 0;
     await app.trayTick();
@@ -1493,7 +1548,11 @@ Deno.test('tray chat slots: up to 5 blocked chats in the menu, "+N more" past th
   const many = trayChatSlots(chats);
   assertEquals(many.length, TRAY_SLOTS);
   assertEquals(many.at(-1), { label: '+3 more', target: { type: 'inbox' } }, '4 chats and "+3 more", which opens the inbox');
-  assertEquals(trayChatSlots(chats.slice(0, 1), 3).map((x) => x.label), ['Chat 0 · Approval', '+2 more'], 'the count may be ahead of the list');
+  assertEquals(
+    trayChatSlots(chats.slice(0, 1), 3).map((x) => x.label),
+    ['Chat 0 · Approval', '+2 more'],
+    'the count may be ahead of the list',
+  );
   assertEquals(trayChatSlots([{ key: 'k', title: 'x'.repeat(100) }])[0].label.length, 60 + ' · Needs you'.length);
   // the Windows menu calls: slots and their line removed, then the line and the labels appended in order
   assertEquals(slotMenuOps(4, 2, ['A']), [
@@ -1537,13 +1596,12 @@ Deno.test('tray chat slots: up to 5 blocked chats in the menu, "+N more" past th
 
 // ---------- multi-window Phase 2A (design aib-shared/designs/multi-window, T8/T9): fake Shell, no window is shown ----------
 
-const KEY = 'K'.repeat(43);
 const BASE = 'http://127.0.0.1:8890';
 const PROJ = { key: 'p:budget', name: 'budget-app', path: 'C:\\work\\budget-app' };
 const PROJ2 = { key: 'p:recipe', name: 'recipe-site', path: 'C:\\work\\recipe-site' };
 const CHAT = { key: 'claude:csv', project: 'p:budget', title: 'CSV import' };
 
-/** The app with a keyed URL; `saved`: a desktop-windows.json written before it starts. */
+/** The app (its page URL; never a key in a window URL); `saved`: a desktop-windows.json written before it starts. */
 async function makeMulti(extra: Partial<DesktopOptions> = {}, saved?: unknown, shellExtra: Partial<Shell> = {}, busy = 0) {
   const dir = await Deno.makeTempDir();
   if (saved !== undefined) await Deno.writeTextFile(`${dir}/${WINDOWS_FILE}`, typeof saved === 'string' ? saved : JSON.stringify(saved));
@@ -1552,7 +1610,7 @@ async function makeMulti(extra: Partial<DesktopOptions> = {}, saved?: unknown, s
   const quits: boolean[] = [];
   const gone: string[] = [];
   const app = new DesktopApp(shell, {
-    url: `${BASE}/#aib-key=${KEY}`,
+    url: `${BASE}/`,
     stateDir: dir,
     trayIcon: trayIconPng(),
     busyCount: () => Promise.resolve(busy),
@@ -1597,13 +1655,13 @@ Deno.test('multi-window K0: each window gets its own keyed URL and title; one pr
   const m = await makeMulti();
   try {
     assertEquals(m.s.windows.length, 1);
-    assertEquals(m.win('m').urls, [`${BASE}/?w=m#aib-key=${KEY}`]);
+    assertEquals(m.win('m').urls, [`${BASE}/?w=m`], 'never a key in a window URL');
     await m.load('m');
     assertEquals(m.win('m').title, 'AIB');
     const dw = m.app.desktopWindows;
     assertEquals(await dw.open({ project: PROJ }, 'm'), { w: 'w2', existed: false });
     const w2 = m.win('w2');
-    assertEquals(w2.urls, [`${BASE}/?w=w2&kind=project&project=p%3Abudget#aib-key=${KEY}`]);
+    assertEquals(w2.urls, [`${BASE}/?w=w2&kind=project&project=p%3Abudget`]);
     assertEquals(w2.options.title, 'AIB · budget-app');
     assertEquals(m.s.fronts.at(-1), w2.hwnd, 'the new window comes forward with its own handle');
     assertEquals(await dw.open({ project: PROJ }, 'm'), { w: 'w2', existed: true });
@@ -1612,9 +1670,9 @@ Deno.test('multi-window K0: each window gets its own keyed URL and title; one pr
     const w3 = m.win('w3');
     assertEquals([w3.options.width, w3.options.height], [480, 720], 'a pop-out is small');
     assertEquals(w3.options.title, 'CSV import · AIB');
-    assert(w3.urls[0].startsWith(`${BASE}/?w=w3&kind=chat&mode=chat&chat=claude%3Acsv&project=p%3Abudget#aib-key=`));
+    assert(w3.urls[0].startsWith(`${BASE}/?w=w3&kind=chat&mode=chat&chat=claude%3Acsv&project=p%3Abudget`));
     assertEquals(await dw.open({ doc: { project: 'p:budget', name: 'Release plan' } }, 'w2'), { w: 'w4', existed: false });
-    assert(m.win('w4').urls[0].startsWith(`${BASE}/doc.html?w=w4&kind=doc&project=p%3Abudget&name=Release+plan#aib-key=`));
+    assert(m.win('w4').urls[0].startsWith(`${BASE}/doc.html?w=w4&kind=doc&project=p%3Abudget&name=Release+plan`));
     assertEquals(dw.list().map((i) => [i.w, i.kind, i.project, i.chat]), [
       ['m', 'main', null, null],
       ['w2', 'project', 'p:budget', null],
@@ -1637,8 +1695,8 @@ Deno.test('multi-window K0: each window gets its own keyed URL and title; one pr
 });
 
 Deno.test('multi-window B2/B3/S6: every window is checked against its own URL, with its own rate limits; the watchdog checks all', async () => {
-  const access = new PageAccess(null, KEY);
-  const m = await makeMulti({ pageConnected: (held) => access.holds(held) });
+  const access = new PageAccess(null, null);
+  const m = await makeMulti(pageKeysFor(access));
   try {
     await m.load('m');
     await m.app.desktopWindows.open({ project: PROJ }, 'm');
@@ -1653,14 +1711,16 @@ Deno.test('multi-window B2/B3/S6: every window is checked against its own URL, w
     await m.load('w2', 'https://example.com/x');
     assertEquals(m.s.external, ['https://example.com/x']);
     assertEquals(w2.urls.at(-1), own);
-    // our page with its id but no key or session: its own keyed URL (N4)
-    w2.held = { key: '', session: '' };
-    await m.load('w2', own.replace(/#.*$/, ''));
-    assertEquals(w2.urls.at(-1), own);
+    // our page with its id but no session: handed a one-time key through the private channel, not navigated (N4)
+    pageKeysFor(access, w2);
     const n = w2.urls.length;
-    w2.held = { key: KEY, session: '' };
-    await m.load('w2', own.replace(/#.*$/, ''));
-    assertEquals(w2.urls.length, n, 'connected on its own page: left alone');
+    w2.held = { auth: true, session: '', waiting: false };
+    await m.load('w2', own);
+    assertEquals([w2.urls.length, w2.handed.length], [n, 1], 'a key, no navigation');
+    assert(access.holds(w2.held), 'connected');
+    await m.load('w2', own);
+    assertEquals([w2.urls.length, w2.handed.length], [n, 1], 'connected on its own page: left alone');
+    assertEquals(m.win('m').handed.length, 1, 'the main window got its own key at its load');
     // per-window limits: w2 used up its 4 "back" sends; the main window still has its own
     for (let i = 0; i < 6; i++) await m.load('w2', 'chrome-error://chromewebdata/');
     const stuck = w2.urls.length;
@@ -1758,7 +1818,11 @@ Deno.test('multi-window S4: closing from code (K4 close) drops the window from t
 });
 
 Deno.test('multi-window G4: a pinned window that closes itself as the last one opens the main window instead of leaving none', async () => {
-  const m = await makeMulti({}, { v: 1, lastFocused: 'w2', windows: [{ id: 'w2', kind: 'project', project: PROJ, width: 900, height: 700 }] });
+  const m = await makeMulti({}, {
+    v: 1,
+    lastFocused: 'w2',
+    windows: [{ id: 'w2', kind: 'project', project: PROJ, width: 900, height: 700 }],
+  });
   try {
     assertEquals(m.app.desktopWindows.list().map((i) => i.w), ['w2'], 'only the project window was saved');
     assert(m.app.desktopWindows.close('w2'));
@@ -1796,7 +1860,11 @@ Deno.test('multi-window B1/B6/K6: a notification goes to the pop-out, then the p
     assertEquals(m.s.fronts[0], pop.hwnd);
     assertEquals(m.win('w2').opened, [], 'the project window was not asked');
     // nobody takes it and there is no main window: one is made (B6)
-    const n = await makeMulti({}, { v: 1, lastFocused: 'w2', windows: [{ id: 'w2', kind: 'project', project: PROJ, width: 900, height: 700 }] });
+    const n = await makeMulti({}, {
+      v: 1,
+      lastFocused: 'w2',
+      windows: [{ id: 'w2', kind: 'project', project: PROJ, width: 900, height: 700 }],
+    });
     try {
       n.win('w2').openAnswer = 'no';
       const p = n.app.openFromNotification({ type: 'chat', key: 'claude:other' }, 3, 0);
@@ -1830,7 +1898,11 @@ Deno.test('multi-window Phase 3: a pop-out keeps the window it was moved out of 
     // restart: the restored pop-out still knows where it came from
     const n = await makeMulti({}, saved);
     try {
-      assertEquals(n.app.desktopWindows.list().map((i) => [i.w, i.kind, i.from]), [['m', 'main', null], ['w2', 'project', null], ['w3', 'chat', 'w2'], ['w4', 'doc', 'm']]);
+      assertEquals(n.app.desktopWindows.list().map((i) => [i.w, i.kind, i.from]), [['m', 'main', null], ['w2', 'project', null], [
+        'w3',
+        'chat',
+        'w2',
+      ], ['w4', 'doc', 'm']]);
     } finally {
       await n.done();
     }
@@ -1978,7 +2050,13 @@ Deno.test('multi-window restore plan: monitor gone (G1), cascade (G2), folder go
       { id: 'm', kind: 'main', x: 80, y: 60, width: 1400, height: 900 },
       { id: 'w2', kind: 'project', project: PROJ, x: 9000, y: 9000, width: 1280, height: 1000 },
       { id: 'w3', kind: 'project', project: { key: 'p:gone', name: 'gone', path: 'C:\\gone' }, width: 900, height: 700 },
-      { id: 'w4', kind: 'project', project: { key: 'p:wsl', name: 'wsl', path: '\\\\wsl.localhost\\Ubuntu\\home\\me\\x' }, width: 900, height: 700 },
+      {
+        id: 'w4',
+        kind: 'project',
+        project: { key: 'p:wsl', name: 'wsl', path: '\\\\wsl.localhost\\Ubuntu\\home\\me\\x' },
+        width: 900,
+        height: 700,
+      },
       { id: 'w5', kind: 'chat', chat: CHAT, width: 480, height: 720 },
     ],
   });
@@ -2018,7 +2096,11 @@ Deno.test('multi-window G4 at start: a project window whose folder is gone is sk
   const dir = await Deno.makeTempDir();
   try {
     await Deno.writeTextFile(`${dir}/${GEOMETRY_FILE}`, JSON.stringify({ width: 1111, height: 777, x: 5, y: 6 }));
-    assertEquals(await loadSavedList(dir), { v: 1, lastFocused: 'm', windows: [{ id: 'm', kind: 'main', width: 1111, height: 777, x: 5, y: 6 }] });
+    assertEquals(await loadSavedList(dir), {
+      v: 1,
+      lastFocused: 'm',
+      windows: [{ id: 'm', kind: 'main', width: 1111, height: 777, x: 5, y: 6 }],
+    });
     await Deno.writeTextFile(`${dir}/${WINDOWS_FILE}`, '{broken');
     assertEquals((await loadSavedList(dir))!.windows[0].width, 1111, 'an unreadable new file falls back to the old one');
   } finally {
@@ -2027,10 +2109,13 @@ Deno.test('multi-window G4 at start: a project window whose folder is gone is sk
 });
 
 Deno.test('multi-window G7/G9: --start-in-tray makes no window until Open AIB, then all; phone on + last closed keeps it for Open AIB', async () => {
-  const saved = { v: 1, windows: [{ id: 'm', kind: 'main', width: 1400, height: 900 }, { id: 'w2', kind: 'project', project: PROJ, width: 900, height: 700 }] };
+  const saved = {
+    v: 1,
+    windows: [{ id: 'm', kind: 'main', width: 1400, height: 900 }, { id: 'w2', kind: 'project', project: PROJ, width: 900, height: 700 }],
+  };
   const t = await makeMulti({ startInTray: true }, saved);
   try {
-    assertEquals(t.s.windows.length, 0, 'no window over the person\'s work');
+    assertEquals(t.s.windows.length, 0, "no window over the person's work");
     t.s.tray!.onMenu('open');
     await waitFor(() => t.s.windows.length === 2, 'both windows');
     assertEquals(t.app.desktopWindows.list().map((i) => i.w), ['m', 'w2']);
@@ -2089,19 +2174,51 @@ Deno.test('multi-window chooser order and K6 answers (pure)', () => {
     doc: null,
     focusedAt,
   });
-  const wins = [w('m', 'main', null, null, 1), w('w2', 'project', 'p:a', null, 3), w('w3', 'project', 'p:b', null, 2), w('w4', 'chat', null, 'c:1', 4)];
+  const wins = [
+    w('m', 'main', null, null, 1),
+    w('w2', 'project', 'p:a', null, 3),
+    w('w3', 'project', 'p:b', null, 2),
+    w('w4', 'chat', null, 'c:1', 4),
+  ];
   assertEquals(chooseOrder({ chat: 'c:1' }, wins), { order: ['w4', 'w2', 'w3', 'm'], needsMain: false });
   assertEquals(chooseOrder({ chat: 'c:9', project: 'p:b' }, wins).order, ['w3', 'm', 'w2']);
   assertEquals(chooseOrder({}, wins).order, ['m', 'w4', 'w2', 'w3'], 'the inbox: main, then the last used');
   assertEquals(chooseOrder({ chat: 'c:9' }, wins.slice(1)).needsMain, true);
-  assertEquals([openAnswer('mine'), openAnswer(true), openAnswer('no'), openAnswer(false), openAnswer(undefined)], ['mine', 'mine', 'no', null, null]);
-  assertEquals(launchKeyOf(`${BASE}/#aib-key=${KEY}`), KEY);
-  assertEquals(launchKeyOf(`${BASE}/`), '');
-  assertEquals(findOwnWindow([
-    { hwnd: 1n, width: 1, height: 1, title: 'AIB' },
-    { hwnd: 2n, width: 1200, height: 800, title: 'AIB' },
-    { hwnd: 3n, width: 480, height: 720, title: 'CSV import · AIB' },
-  ], 'CSV import · AIB', new Set([2n])), 3n);
-  assertEquals(findOwnWindow([{ hwnd: 2n, width: 1200, height: 800, title: 'AIB' }, { hwnd: 4n, width: 900, height: 800, title: 'AIB' }], 'AIB', new Set()), null, 'two unclaimed with one title: none, not a wrong one');
-  assertEquals(findOwnWindow([{ hwnd: 2n, width: 1200, height: 800, title: 'AIB' }, { hwnd: 4n, width: 900, height: 800, title: 'x' }], 'AIB', new Set([2n])), 4n, 'the one unclaimed window, before its title is applied');
+  assertEquals([openAnswer('mine'), openAnswer(true), openAnswer('no'), openAnswer(false), openAnswer(undefined)], [
+    'mine',
+    'mine',
+    'no',
+    null,
+    null,
+  ]);
+  assertEquals(
+    findOwnWindow(
+      [
+        { hwnd: 1n, width: 1, height: 1, title: 'AIB' },
+        { hwnd: 2n, width: 1200, height: 800, title: 'AIB' },
+        { hwnd: 3n, width: 480, height: 720, title: 'CSV import · AIB' },
+      ],
+      'CSV import · AIB',
+      new Set([2n]),
+    ),
+    3n,
+  );
+  assertEquals(
+    findOwnWindow(
+      [{ hwnd: 2n, width: 1200, height: 800, title: 'AIB' }, { hwnd: 4n, width: 900, height: 800, title: 'AIB' }],
+      'AIB',
+      new Set(),
+    ),
+    null,
+    'two unclaimed with one title: none, not a wrong one',
+  );
+  assertEquals(
+    findOwnWindow(
+      [{ hwnd: 2n, width: 1200, height: 800, title: 'AIB' }, { hwnd: 4n, width: 900, height: 800, title: 'x' }],
+      'AIB',
+      new Set([2n]),
+    ),
+    4n,
+    'the one unclaimed window, before its title is applied',
+  );
 });

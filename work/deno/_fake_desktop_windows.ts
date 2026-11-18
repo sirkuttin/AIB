@@ -35,7 +35,7 @@ export class FakeDesktopWindows implements DesktopWindows {
 
   constructor(
     readonly origin = 'http://127.0.0.1:1',
-    readonly launchKey = 'launch-key',
+    readonly launchKey = 'launch-key', // kept for the callers' argument order; window URLs never carry a key now
     readonly makeMs = 0,
     withMain = true,
   ) {
@@ -57,7 +57,7 @@ export class FakeDesktopWindows implements DesktopWindows {
       chat: spec.kind === 'chat' ? spec.chat : null,
       doc: spec.kind === 'doc' ? { project: spec.project, name: spec.name } : null,
       visible: true,
-      url: windowUrl(this.origin, spec, this.launchKey),
+      url: windowUrl(this.origin, spec),
       title,
     };
     this.windows.push(info);

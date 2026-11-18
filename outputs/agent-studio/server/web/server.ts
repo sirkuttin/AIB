@@ -197,7 +197,7 @@ function contentType(name: string): string {
 
 export interface WebContext {
   token: string;
-  /** Who may be given the token: the launch key in the page's link, or a page session made with it (page_access.ts). */
+  /** Who may be given the token: a page session made with a one-time launch key, or a launcher's fixed key (page_access.ts). */
   pageAccess: PageAccess;
   webInstanceId: string;
   port: number;
@@ -447,7 +447,7 @@ export class WebServer {
     }
     this.native.set('GET /api/live/bootstrap', async (c, _url, _body, request) => {
       const boot = await this.bootstrap(c);
-      // The token only for the page: its link's launch key or a page session (page_access.ts). Anyone else (a program on this PC,
+      // The token only for the page: a page session (or a launcher's fixed key) (page_access.ts). Anyone else (a program on this PC,
       // an agent's shell command) gets every other field and an empty token, so the keys stay those of the Python reference.
       if (!c.pageAccess.allows(request.headers)) boot.token = '';
       return this.json(200, boot);
@@ -802,7 +802,7 @@ export function makeContext(
     phone?: AccessOptions;
     /** The OS backend for keep-awake (tests: a recording one, or null); default: the real one for this OS (none in a test run). */
     keepAwakeBackend?: Backend | null;
-    /** The launch key (page_access.ts): main.ts passes AIB_PAGE_KEY when a launcher set it; default: a new random one. */
+    /** The launch key (page_access.ts): a launcher's fixed key (AIB_PAGE_KEY, tests); default: none, every key one-time. */
     pageKey?: string | null;
   },
 ): WebContext {

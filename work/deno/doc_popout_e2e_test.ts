@@ -78,8 +78,8 @@ async function lab() {
 const editorReady = (p: Page) =>
   p.waitFor(`!!(window.AIBDoc && window.AIBDoc.editor && document.querySelector('#docEditor .ProseMirror'))`, 15000, 'the doc editor');
 const storageKeys = (p: Page) => p.eval<string[]>('Object.keys(localStorage).sort()');
-// What a doc page may keep: the page session, and per-doc things (its last page, its open toggles). Never a layout key.
-const docOnly = (k: string) => k === 'aib-page-session' || k.startsWith('aib-doc-page:') || k.startsWith('aib-doc-toggles:');
+// What a doc page may keep: per-doc things (its last page, its open toggles). Never a layout key, never the page session (memory only).
+const docOnly = (k: string) => k.startsWith('aib-doc-page:') || k.startsWith('aib-doc-toggles:');
 
 Deno.test({
   ...OPTS,

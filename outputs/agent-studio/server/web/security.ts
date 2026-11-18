@@ -4,7 +4,7 @@
  *
  *   page        the Studio page in a browser (or the desktop window): X-Studio-Token, Host and Origin of this server, Fetch Metadata
  *               same-origin or absent, no navigation on /api/, POSTs only with an Origin or same-origin. Bootstrap needs no token
- *               but hands one out only to a caller with the launch key or a page session (page_access.ts).
+ *               but hands one out only to a caller with a page session (or a launcher's fixed key) (page_access.ts).
  *   agent_tool  the artifact MCP shim (no browser): X-Studio-Artifact-Key valid for one conversation, and no Origin or Sec-Fetch-*
  *               headers (a browser must never be able to use a key).
  *
@@ -25,7 +25,7 @@ export const REMOTE_PC = 'remote_pc';
 
 export const SCOPE_STATIC = 'static';
 export const SCOPE_BOOTSTRAP = 'bootstrap';
-/** POST /api/live/page-session: the page trades the launch key for a page session (page_access.ts); no token yet. */
+/** POST /api/live/page-session: the page trades a one-time launch key for a page session (page_access.ts); no token yet. */
 export const SCOPE_PAIR = 'pair';
 export const SCOPE_IMAGE = 'image';
 export const SCOPE_READ = 'read';

@@ -3,20 +3,26 @@
  * a loopback Host header, so any program on the PC (an agent's shell command included) could take it and act as the page:
  * approve its own permission requests, answer questions, change settings, merge any chat.
  *
- * The approach is the one Jupyter and VS Code's server use (a secret in the link the app opens, traded for a lasting credential),
- * with browser storage instead of a cookie, because a cookie on 127.0.0.1 is also sent to every other port (the artifact origin
- * and any server an agent starts).
+ * The approach is the one Jupyter and VS Code's server use (a secret the app hands the page, traded for a credential), with the
+ * credential in the page's memory instead of a cookie (a cookie on 127.0.0.1 is also sent to every other port: the artifact origin
+ * and any server an agent starts) or browser storage (localStorage, sessionStorage and IndexedDB are plain files in the browser's
+ * profile, which every program of the user can read: an agent could take the session from there and act as the page).
  *
- *   launch key   random per AIB process, kept in memory only. The app opens its window on `/#aib-key=<key>` (a URL fragment never
- *                reaches a server or a log); `serve --open` opens the browser the same way; `serve` prints the link only to a
- *                console (never into a redirected log). A launcher may choose it with AIB_PAGE_KEY (tests); AIB removes that
- *                variable from its own environment at once (not in a test run), so no agent, terminal or keeper it starts inherits it.
- *   page session random, made by POST /api/live/page-session for a page that shows the launch key; the page keeps it in its own
- *                origin's localStorage (port-specific, unlike a cookie), so a reload or an AIB restart needs no new link. Only its
- *                SHA-256 is on disk (<state>/page-sessions.json): reading that file does not give a working session.
+ *   launch key   one-time: made for one handover (mintKey), kept in this process's memory only (its SHA-256), good once and only
+ *                for a short time (KEY_TTL_MS; a link `serve` prints or opens, LINK_TTL_MS), invalid as soon as it is traded. The
+ *                app's windows never carry one in their URL: the desktop side hands a fresh one to the page through the window's
+ *                private evaluate channel (desktop/window.ts), at every load (a reload, a crash, a second window, a restart). `serve
+ *                --open` opens the browser on `/#aib-key=<key>` (a URL fragment never reaches a server or a log); `serve` prints the
+ *                link only to a console (never into a redirected log). A launcher may fix one reusable key with AIB_PAGE_KEY
+ *                (tests and demo Studios only); AIB removes that variable from its own environment at once (not in a test run), so no
+ *                agent, terminal or keeper it starts inherits it.
+ *   page session random, made by POST /api/live/page-session for a page that shows a launch key; the page keeps it in its own
+ *                memory only (page-auth.js), so nothing on disk holds it. Only its SHA-256 is on disk (<state>/page-sessions.json),
+ *                so a browser tab keeps working across an AIB restart; reading that file does not give a working session. Sessions
+ *                of the old format (1: the page kept them in localStorage, where any program could read them) are dropped.
  *
- * Bootstrap gives the token to a request with the launch key (X-AIB-Page-Key) or a known page session (X-AIB-Page-Session);
- * anyone else gets every other field and an empty token.
+ * Bootstrap gives the token to a request with a known page session (X-AIB-Page-Session) or the launcher's fixed key
+ * (X-AIB-Page-Key); anyone else gets every other field and an empty token. A one-time key is good only at POST /page-session.
  */
 import { createHash } from 'node:crypto';
 import { registerSecret } from '../core/log.ts';
@@ -29,8 +35,19 @@ export const PAGE_KEY_ENV = 'AIB_PAGE_KEY';
 export const SESSIONS_FILE = 'page-sessions.json';
 /** The URL fragment parameter the page reads the launch key from. */
 export const KEY_FRAGMENT = 'aib-key';
-/** At most this many page sessions are remembered (oldest dropped): one per browser or window profile that opened AIB. */
-export const MAX_SESSIONS = 20;
+/**
+ * At most this many page sessions are remembered (oldest dropped). Every page load makes one (the page keeps it in memory only), so
+ * this covers the open windows and tabs with room for many reloads; a window whose session was dropped is handed a new key.
+ */
+export const MAX_SESSIONS = 200;
+/** The page-sessions.json format whose sessions are kept (1: sessions the page kept in localStorage; dropped). */
+export const SESSIONS_FORMAT = 2;
+/** How long a one-time launch key handed to an app window works (the page trades it at once). */
+export const KEY_TTL_MS = 60_000;
+/** How long the one-time link `serve` prints or opens works (a person may take a while to click it). */
+export const LINK_TTL_MS = 15 * 60_000;
+/** At most this many one-time keys wait to be used (oldest dropped). */
+export const MAX_KEYS = 64;
 
 const KEY_SHAPE = /^[A-Za-z0-9_-]{32,128}$/;
 const SEP = Deno.build.os === 'windows' ? '\\' : '/';
@@ -72,36 +89,88 @@ interface Entry {
 }
 
 export class PageAccess {
-  readonly launchKey: string;
+  /** The launcher's fixed, reusable key (AIB_PAGE_KEY: tests and demo Studios), null in a normal start. */
+  readonly fixedKey: string | null;
   readonly #file: string | null;
   #entries: Entry[] = [];
   #mtime = -1;
+  /** One-time launch keys not used yet: SHA-256 to the time they stop working. */
+  readonly #keys = new Map<string, number>();
+  readonly #now: () => number;
 
   /** stateDir null: sessions are kept in memory only (tests). */
-  constructor(stateDir: string | null, launchKey: string | null = null) {
-    this.launchKey = [launchKey, testRunKey()].find((k) => !!k && KEY_SHAPE.test(k)) ??
-      newToken();
-    registerSecret(this.launchKey); // the window's URL is logged ("window: opening ..."): the key is blanked there
+  constructor(stateDir: string | null, fixedKey: string | null = null, now: () => number = Date.now) {
+    this.fixedKey = [fixedKey, testRunKey()].find((k) => !!k && KEY_SHAPE.test(k)) ?? null;
+    if (this.fixedKey) registerSecret(this.fixedKey);
+    this.#now = now;
     this.#file = stateDir ? `${stateDir.replace(/[\\/]+$/, '')}${SEP}${SESSIONS_FILE}` : null;
     this.#load();
   }
 
-  /** The page URL that carries the launch key (base: http://127.0.0.1:<port>). */
-  pageUrl(base: string): string {
-    return `${base.replace(/\/+$/, '')}/#${KEY_FRAGMENT}=${this.launchKey}`;
+  /**
+   * A new one-time launch key: good for one POST /api/live/page-session within `ttlMs`, then never again. Kept only as a hash in
+   * this process's memory.
+   */
+  mintKey(ttlMs: number = KEY_TTL_MS): string {
+    this.#sweep();
+    while (this.#keys.size >= MAX_KEYS) this.#keys.delete(this.#keys.keys().next().value!); // the oldest first
+    const key = newToken();
+    this.#keys.set(sha256(key), this.#now() + Math.max(0, ttlMs));
+    return key;
   }
 
-  /** True when these request headers prove the caller is the page: the launch key, or a page session made with it. */
+  /** A key that was not handed over after all (the window had left our page): it stops working now. */
+  revoke(key: string): void {
+    if (typeof key === 'string' && KEY_SHAPE.test(key)) this.#keys.delete(sha256(key));
+  }
+
+  /** True when this one-time key is still good (not used, not expired). Does not use it up. */
+  keyValid(key: unknown): boolean {
+    if (typeof key !== 'string' || !KEY_SHAPE.test(key)) return false;
+    this.#sweep();
+    return this.#keys.has(sha256(key));
+  }
+
+  /** Uses a launch key up: true for a good one-time key (gone from now on) or the launcher's fixed key. */
+  #useKey(key: unknown): boolean {
+    if (typeof key !== 'string' || !KEY_SHAPE.test(key)) return false;
+    if (this.fixedKey && tokenMatches(key, this.fixedKey)) return true;
+    const hash = sha256(key);
+    const until = this.#keys.get(hash);
+    if (until === undefined) return false;
+    this.#keys.delete(hash); // once, whatever happens next
+    return until >= this.#now();
+  }
+
+  #sweep(): void {
+    const now = this.#now();
+    for (const [hash, until] of this.#keys) if (until < now) this.#keys.delete(hash);
+  }
+
+  /**
+   * The page URL with a launch key (base: http://127.0.0.1:<port>), for `serve` to print or open: the launcher's fixed key, else a
+   * new one-time key good for LINK_TTL_MS. The app's windows never use it (desktop/window.ts hands keys over privately).
+   */
+  pageUrl(base: string): string {
+    let key = this.fixedKey;
+    if (!key) {
+      key = this.mintKey(LINK_TTL_MS);
+      registerSecret(key); // a one-off link: blanked if it ever reaches a log line
+    }
+    return `${base.replace(/\/+$/, '')}/#${KEY_FRAGMENT}=${key}`;
+  }
+
+  /** True when these request headers prove the caller is the page: a known page session, or the launcher's fixed key. */
   allows(headers: Headers): boolean {
     const key = headers.get(PAGE_KEY_HEADER);
-    if (key && tokenMatches(key, this.launchKey)) return true;
+    if (key && this.fixedKey && tokenMatches(key, this.fixedKey)) return true;
     const session = headers.get(PAGE_SESSION_HEADER);
     return !!session && this.knows(session);
   }
 
-  /** True when what a page holds (its launch key, its page session; '' for none) gets it the token: the same rule as allows(). */
-  holds(held: { key: string; session: string }): boolean {
-    return (!!held.key && tokenMatches(held.key, this.launchKey)) || (!!held.session && this.knows(held.session));
+  /** True when what a page holds (its page session; '' for none) gets it the token: the same rule as allows(). */
+  holds(held: { key?: string; session: string }): boolean {
+    return (!!held.key && !!this.fixedKey && tokenMatches(held.key, this.fixedKey)) || (!!held.session && this.knows(held.session));
   }
 
   /** True for a page session made by pair() (in this or another AIB of the same data folder). */
@@ -115,11 +184,12 @@ export class PageAccess {
     return false;
   }
 
-  /** A page session for a caller that shows the launch key (the one it has when it is still known, else a new one), or null. */
+  /**
+   * A page session for a caller that shows a launch key, or null. The key is used up by this: a one-time key never works twice.
+   * `existing`: a session the page still has (a tab that got a new link) is kept when AIB knows it.
+   */
   pair(key: unknown, existing: unknown = null): string | null {
-    if (typeof key !== 'string' || !tokenMatches(key, this.launchKey)) {
-      return null;
-    }
+    if (!this.#useKey(key)) return null;
     if (typeof existing === 'string' && existing && this.knows(existing)) {
       return existing;
     }
@@ -127,7 +197,7 @@ export class PageAccess {
     this.#load();
     this.#entries = [...this.#entries, {
       hash: sha256(session),
-      at: Date.now() / 1000,
+      at: this.#now() / 1000,
     }].slice(-MAX_SESSIONS);
     this.#save();
     return session;
@@ -145,7 +215,8 @@ export class PageAccess {
     if (mtime === this.#mtime) return false;
     try {
       const data = JSON.parse(Deno.readTextFileSync(this.#file));
-      const list = Array.isArray(data?.sessions) ? data.sessions : [];
+      // Format 1: sessions the page kept in localStorage, a plain file any program could read; they are dropped.
+      const list = data?.format === SESSIONS_FORMAT && Array.isArray(data?.sessions) ? data.sessions : [];
       this.#entries = list
         .filter((e: unknown) =>
           !!e && typeof (e as Entry).hash === 'string' &&
@@ -166,7 +237,7 @@ export class PageAccess {
     try {
       Deno.writeTextFileSync(
         temp,
-        JSON.stringify({ format: 1, sessions: this.#entries }, null, 1),
+        JSON.stringify({ format: SESSIONS_FORMAT, sessions: this.#entries }, null, 1),
         { mode: 0o600 },
       );
       Deno.renameSync(temp, this.#file);

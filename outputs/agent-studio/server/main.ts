@@ -480,9 +480,11 @@ export async function main(argv: string[]): Promise<void> {
   if (desktop) {
     const { nativeShell } = await import('./desktop/native.ts');
     const app = desktopApp = new DesktopApp(nativeShell(), {
-      url: ctx.pageAccess.pageUrl(url), // `${url}/#aib-key=...`: the window is the page that gets the token (web/page_access.ts)
-      // Our page holding no key or known session (the runtime's own navigation landed there without the key): opened again with it.
+      url: `${url}/`, // never a key in a window URL: it would land in WebView2's history and session-restore files
+      // The window is the page that gets the token (web/page_access.ts): every fresh page is handed a one-time launch key through
+      // the window's private channel, and trades it for a page session it keeps in memory only.
       pageConnected: (held) => ctx.pageAccess.holds(held),
+      pageKeys: { mint: () => ctx.pageAccess.mintKey(), revoke: (key) => ctx.pageAccess.revoke(key) },
       stateDir,
       trayIcon: trayIconPng(),
       busyCount: async () => (await host.busyConnections()).length,
@@ -556,14 +558,14 @@ export async function main(argv: string[]): Promise<void> {
     return;
   }
   writeStartedMarker(stateDir); // `serve`: up once it listens
-  // The link with the launch key (web/page_access.ts): a browser that opens it once is given the page token from then on. Printed
-  // only to a console a person sees, never into a redirected log file another program could read.
+  // The link with a one-time launch key (web/page_access.ts): it connects one browser tab, once, within 15 minutes (the tab keeps
+  // its page session in memory: a reload needs a new link). Printed only to a console a person sees, never into a redirected log.
   const pageLink = ctx.pageAccess.pageUrl(url);
   let onConsole = false;
   try {
     onConsole = Deno.stdout.isTerminal();
   } catch { /* no stdout */ }
-  if (onConsole) console.log(`Open AIB in a browser with this link (it connects that browser to this AIB): ${pageLink}`);
+  if (onConsole) console.log(`Open AIB in a browser with this link (it connects one browser tab, once, within 15 minutes): ${pageLink}`);
   if (options.open) {
     const opener = Deno.build.os === 'windows'
       ? ['cmd', '/c', 'start', '', pageLink]

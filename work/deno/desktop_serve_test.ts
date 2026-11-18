@@ -129,7 +129,7 @@ Deno.test({
   name: 'redirect listener never reveals the launch key (any local process can call it), even if handed the keyed page URL',
   ...TEST_OPTIONS,
   fn: async () => {
-    const access = new PageAccess(null, 'k'.repeat(43));
+    const access = new PageAccess(null, 'k'.repeat(43)); // a fixed key: the one pageUrl() puts in the link
     const base = 'http://127.0.0.1:8777'; // only the redirect's text
     for (const target of [`${base}/`, access.pageUrl(base)]) { // main.ts passes `${url}/`; the keyed URL must not leak either
       const server = startRedirect(0, target)!;
@@ -140,9 +140,9 @@ Deno.test({
           const location = r.headers.get('location') ?? '';
           await r.body?.cancel();
           assertEquals(r.status, 302);
-          assert(!location.includes(access.launchKey) && !location.includes('#'), `no key or fragment in ${location}`);
+          assert(!location.includes(access.fixedKey!) && !location.includes('#'), `no key or fragment in ${location}`);
           const text = await (await fetch(`http://127.0.0.1:${port}${path}`, { redirect: 'manual' })).text();
-          assert(!text.includes(access.launchKey), 'nor in the body');
+          assert(!text.includes(access.fixedKey!), 'nor in the body');
         }
       } finally {
         await server.shutdown();

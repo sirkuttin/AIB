@@ -1,7 +1,7 @@
 /**
  * The desktop app's window list (multi-window Phase 2A; design aib-shared/designs/multi-window/aib-multi-window-design.html sections
  * 4, 5 and 7). The runtime gives no getAllWindows/fromId/isFocused (spike S1), so AIB keeps its own list: one entry per app window,
- * with its K0 id ('m', 'w2'…'w8'), kind, what it shows, its own keyed URL, its own rate limits, save timer and last good geometry.
+ * with its K0 id ('m', 'w2'…'w8'), kind, what it shows, its own URL, its own rate limits, save timer and last good geometry.
  *
  *   - Pure rules, tested with fakes (work/deno/desktop_window_test.ts): K1 saved list (cleanSavedList, load with the one-time
  *     migration from desktop-window.json, atomic write), restorePlan (G1 monitor gone, G2 cascade, G4 folder gone, S8 Wayland),
@@ -253,16 +253,6 @@ export function specOf(w: { id: string; kind: WindowKind; project?: ProjectRef; 
   return { w: w.id, kind: 'main' };
 }
 
-/** The launch key in the app's page URL (`…/#aib-key=K`), '' when it has none. */
-export function launchKeyOf(url: string): string {
-  try {
-    const m = /(?:^|&)aib-key=([^&]*)/.exec(new URL(url).hash.replace(/^#/, ''));
-    return m ? decodeURIComponent(m[1]) : '';
-  } catch {
-    return '';
-  }
-}
-
 /** S6: the `w` the page's own URL carries ('' when none). */
 export function pageWindowId(href: string): string {
   try {
@@ -327,7 +317,7 @@ export interface AppWindow {
   /** A pop-out: the window it was moved out of (SavedWindow.from). */
   from?: string;
   handle: WindowHandle;
-  /** K0: its own keyed URL (the key only in the fragment). */
+  /** K0: its own URL (never a key in it: the page gets a one-time key through the window's private channel). */
   url: string;
   title: string;
   /** The last good normal geometry (read with getSize/getPosition after the first load, S7). */
@@ -338,9 +328,13 @@ export interface AppWindow {
   /** G2: placed this many CASCADE_PX down and right of the first window after its first load (0: no). */
   cascade: number;
   focusedAt: number;
-  /** Sending it back to its page: at most 4 times in 30 s; its key/URL re-send: at most 3 times in 60 s (per window, B2). */
+  /**
+   * Sending it back to its page: at most 4 times in 30 s; its URL re-send or launch key from the load check: at most 3 times in 60 s;
+   * a launch key the page asked for (bindings.aibPageKey): at most 6 times in 60 s (per window, B2).
+   */
   backAllowed: () => boolean;
   keyAllowed: () => boolean;
+  askAllowed: () => boolean;
   saveTimer?: ReturnType<typeof setTimeout>;
 }
 

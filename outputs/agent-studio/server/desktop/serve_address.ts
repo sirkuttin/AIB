@@ -24,7 +24,7 @@ export function servePort(value: string | undefined | null): number | null {
 /**
  * Where a request to the runtime's port goes: the same path and query on our page, never a fragment. Any local process can call
  * this port, so the page's launch key is never in the answer; a window that lands on our page this way gets the key from
- * window.ts (#ensureConnected), through its own navigate.
+ * window.ts (#ensureConnected), through its private evaluate channel.
  */
 export function redirectTarget(requestUrl: string, pageUrl: string): string {
   const from = new URL(requestUrl);
