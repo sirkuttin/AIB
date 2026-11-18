@@ -124,6 +124,7 @@
     artifact: false,
   });
   const DOCS_FOLDER = 'aib-docs';
+  const SHARED_FOLDER = 'aib-shared';
   // How many docs aib-docs holds (its direct sub-folders that are docs), from docIndex().
   const docsIn = (docs) => Array.from(docs.byDir.keys()).filter((d) => d.indexOf(DOCS_FOLDER + '/') === 0 && d.indexOf('/', DOCS_FOLDER.length + 1) < 0).length;
   // The aib-docs row's count: "3 docs", "3 docs · 1 changed", "1 changed" while the docs are not listed yet; '' for nothing.
@@ -178,8 +179,12 @@
         list = list.filter((e) => !(e.dir && e.path === DOCS_FOLDER));
       }
       const virt = dir === '' && o.newDoc && !list.some((e) => e.dir && e.path === DOCS_FOLDER);
+      // aib-shared (the project's local-only folder) comes right after aib-docs, above every other folder too.
       const isDocsDir = (e) => dir === '' && e.dir && e.path === DOCS_FOLDER;
-      const entries = dir === '' ? list.filter(isDocsDir).concat(list.filter((e) => !isDocsDir(e))) : list;
+      const isSharedDir = (e) => dir === '' && e.dir && e.path === SHARED_FOLDER;
+      const entries = dir === ''
+        ? list.filter(isDocsDir).concat(list.filter(isSharedDir), list.filter((e) => !isDocsDir(e) && !isSharedDir(e)))
+        : list;
       let virtDone = !virt;
       const virtRow = () => {
         virtDone = true;

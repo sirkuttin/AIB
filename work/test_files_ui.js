@@ -279,6 +279,15 @@ test('the filter gives a flat list of matches with their folder; Changed n lists
   assert.match(t.shell.body.querySelector('.fx-foot-t').textContent, /^1 match/);
 });
 
+test('aib-shared is the second row, right under aib-docs, above dot-folders (owner 2026-11-18)', () => {
+  const dir = (n, extra) => Object.assign({ dir: true, path: n, name: n }, extra || {});
+  const cache = { '': [dir('.claude', { ignored: true }), dir('.github'), dir('aib-docs'), dir('aib-shared', { local: true }), dir('dist'), { dir: false, path: 'README.md', name: 'README.md' }] };
+  assert.deepEqual(FS.treeRows(cache, new Set(), {}).map((r) => r.path).slice(0, 3), ['aib-docs', 'aib-shared', '.claude']);
+  // with no aib-docs folder yet, the "+ New doc" docs row still comes first
+  const noDocs = { '': cache[''].filter((e) => e.path !== 'aib-docs') };
+  assert.deepEqual(FS.treeRows(noDocs, new Set(), { newDoc: true }).map((r) => r.path).slice(0, 2), ['aib-docs', 'aib-shared']);
+});
+
 test('arrow keys move and open folders, Enter opens a file', () => {
   const cache = { '': LISTING[''], scripts: LISTING.scripts };
   const open = new Set(['scripts']);
