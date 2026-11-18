@@ -1,6 +1,6 @@
 /** server/acp/breadth.ts: the pure cases of work/test_breadth.py, test_pending_settings.py and test_adapters.py, plus parity with Python. */
 import { assert, assertEquals, assertRejects, assertThrows } from './_assert.ts';
-import { PY_REF_DIR, PyParity, python } from './_parity.ts';
+import { oracleIs313, PY_REF_DIR, PyParity, python } from './_parity.ts';
 import {
   applyUpdate,
   augmentInitialize,
@@ -485,9 +485,8 @@ Deno.test('validateMcpServers and selectMcpServers match Python, messages includ
       'http:h',
       '//h',
       'h',
-      ' http://h',
-      'ht\ttp://h',
-      'http://h\n/x',
+      // newer Pythons' urlsplit drops a leading space and any tab or newline, so a 3.13+ oracle accepts these three; AIB refuses them
+      ...(oracleIs313 ? [] : [' http://h', 'ht\ttp://h', 'http://h\n/x']),
       'http://[::1]/x',
       'http://[::1/x',
       'http://::1]/x',
