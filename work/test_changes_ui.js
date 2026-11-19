@@ -135,18 +135,64 @@ test('tab state: expand only on Changes, leaving Changes or opening a subagent h
   assert.deepEqual(C.tabState(s, { type: 'show', tab: 'bogus' }), s);
   assert.deepEqual(C.tabState(s, { type: 'reset' }), { tab: 'activity', expanded: false });
 });
-test('polling only while Changes is visible and the agent works; refresh when a turn ends', () => {
-  assert.equal(C.shouldPoll({ tab: 'changes', visible: true, busy: true }), true);
-  assert.equal(C.shouldPoll({ tab: 'activity', visible: true, busy: true }), false);
-  assert.equal(C.shouldPoll({ tab: 'changes', visible: false, busy: true }), false);
-  assert.equal(C.shouldPoll({ tab: 'changes', visible: true, busy: false }), false);
-  // a chat in the project folder: other chats' edits show up while you look, busy or not
-  assert.equal(C.shouldPoll({ tab: 'changes', visible: true, busy: false, shared: true }), true);
-  assert.equal(C.shouldPoll({ tab: 'activity', visible: true, busy: false, shared: true }), false);
-  assert.equal(C.shouldPoll({ tab: 'changes', visible: false, busy: false, shared: true }), false);
+test('polling only while Changes is visible; a turn that ends refreshes (owner 2026-11-18)', () => {
+  assert.equal(C.shouldPoll({ tab: 'changes', visible: true }), true);
+  assert.equal(C.shouldPoll({ tab: 'changes', visible: true, busy: false }), true, 'busy or not: other chats edit the project too');
+  assert.equal(C.shouldPoll({ tab: 'activity', visible: true }), false, 'no polling while another tab is showing');
+  assert.equal(C.shouldPoll({ tab: 'artifacts', visible: true }), false);
+  assert.equal(C.shouldPoll({ tab: 'changes', visible: false }), false, 'no polling while the panel is hidden');
+  assert.equal(C.shouldPoll(null), false);
   assert.equal(C.turnEnded(true, false), true);
   assert.equal(C.turnEnded(false, false), false);
   assert.equal(C.turnEnded(false, true), false);
+});
+test('turnStamp changes when any chat of the project ends a turn, and only then', () => {
+  const a = { key: 'claude:a', turnEndedAt: '2026-11-18T10:00:00Z' },
+    b = { key: 'claude:b', turnEndedAt: '2026-11-18T10:05:00Z' };
+  assert.equal(C.turnStamp([a, b]), C.turnStamp([b, a]), 'the order of the list does not matter');
+  assert.notEqual(C.turnStamp([a, b]), C.turnStamp([a, { ...b, turnEndedAt: '2026-11-18T10:06:00Z' }]));
+  assert.equal(C.turnStamp([{ key: 'x', turnEndedAt: '' }]), '', 'a chat that never ended a turn adds nothing');
+  assert.equal(C.turnStamp(null), '');
+});
+
+/* ---- the project's sections ---- */
+const sec = (id, kind, over) =>
+  Object.assign({ id, kind, name: id, git: true, state: 'active', why: '', expanded: true, counts: { files: 0, added: 0, removed: 0 } }, over);
+test('projectTotals counts main (a doc once) and the active worktree sections, never left-over work', () => {
+  const main = sec('main', 'main', { counts: { files: 3, added: 10, removed: 2 } });
+  const r = {
+    main,
+    sections: [sec('s1', 'subagent', { counts: { files: 2, added: 5, removed: 1, partial: true } }), sec('s2', 'helper', { counts: { files: 1, added: 1, removed: 0 } })],
+    left: [sec('l1', 'subagent', { state: 'left', counts: { files: 9, added: 90, removed: 9 } })],
+  };
+  assert.deepEqual(C.projectTotals(r), { files: 6, added: 16, removed: 3, partial: true });
+  const docs = [{ doc: 'plan', dir: 'd', title: 'P', pages: 2, paths: ['d/a', 'd/b'] }];
+  const withDocs = { ...r, main: { ...main, changes: { git: true, files: [{ path: 'd/a' }, { path: 'd/b' }, { path: 'x' }], docs, totals: { files: 3 } } } };
+  assert.equal(C.projectTotals(withDocs).files, 5, 'two pages of a doc are one row');
+  assert.deepEqual(C.projectTotals(null), { files: 0, added: 0, removed: 0 });
+  assert.deepEqual(C.projectTotals({ main: { git: false }, sections: [] }), { files: 0, added: 0, removed: 0 });
+});
+test('section heads: counts, the sub-line names the parent chat and branch, a left-over one says why', () => {
+  const s = sec('s1', 'subagent', { branch: 'studio/sub-1', counts: { files: 1, added: 4, removed: 0 } });
+  assert.deepEqual(C.sectionSum(s), { files: '1 file', added: '+4', removed: '−0', n: 1 });
+  assert.equal(C.sectionSub(s, 'Fix login'), 'Subagent of “Fix login” · studio/sub-1');
+  assert.equal(C.sectionSub(s, ''), 'Subagent · studio/sub-1');
+  assert.equal(C.sectionSub(sec('h1', 'helper', { provider: 'codex', branch: 'studio/helper-1' }), 'Main'), 'Helper (codex) of “Main” · studio/helper-1');
+  assert.equal(C.sectionSub(sec('main', 'main', { branch: 'main' }), ''), 'Branch main');
+  assert.match(C.sectionSub(sec('l', 'subagent', { state: 'left', why: 'stopped', branch: 'b' }), 'Chat'), /Stopped before its work landed$/);
+  assert.match(C.sectionSub(sec('l', 'subagent', { state: 'left', why: 'kept' }), ''), /Files kept in its worktree$/);
+});
+test('folding: a section is open unless folded, a left-over one folded unless unfolded; only real ids are kept', () => {
+  const act = sec('s1', 'subagent'),
+    left = sec('l1', 'subagent', { state: 'left' });
+  assert.equal(C.wantOpen(act, new Set(), new Set()), true);
+  assert.equal(C.wantOpen(act, new Set(['s1']), new Set()), false);
+  assert.equal(C.wantOpen(left, new Set(), new Set()), false);
+  assert.equal(C.wantOpen(left, new Set(), new Set(['l1'])), true);
+  assert.deepEqual(C.foldQuery(new Set(['b', 'a']), new Set(['l1'])), { fold: 'a,b', unfold: 'l1' });
+  assert.deepEqual(C.foldQuery(null, null), { fold: '', unfold: '' });
+  const r = { main: act, sections: [act], left: [left] };
+  assert.deepEqual([...C.keepIds(new Set(['s1', 'gone', 'main']), r)].sort(), ['main', 's1']);
 });
 
 /* ---- accordion helpers ---- */
@@ -289,38 +335,86 @@ const DIFF = (p) => ({
   abs: '/r/' + p,
   hunks: [{ header: '@@ -1,2 +1,3 @@', lines: [' keep', '+added ' + p, ' tail'] }],
 });
+const sums = (files) => ({
+  files: files.length,
+  added: files.reduce((a, f) => a + f.added, 0),
+  removed: files.reduce((a, f) => a + f.removed, 0),
+});
+/* One worktree of the project: opts.sections / opts.left are [{id, kind, name, files, ...}]. */
 function setup(opts) {
   opts = opts || {};
   const calls = [],
-    posts = [];
-  let files = opts.files || FILES;
+    posts = [],
+    intervals = new Map();
+  let files = opts.files || FILES,
+    sections = opts.sections || [],
+    left = opts.left || [],
+    next = 1;
   const ok = (body) => ({ ok: true, status: 200, json: async () => body });
+  const section = (s, open) => {
+    const c = sums(s.files);
+    const out = {
+      id: s.id,
+      kind: s.kind || 'subagent',
+      name: s.name || s.id,
+      parent: s.parent || { live: 'chat1', lasting: 'claude:one' },
+      provider: s.provider || '',
+      branch: s.branch || 'studio/' + s.id,
+      state: s.state || 'active',
+      why: s.why || '',
+      working: !!s.working,
+      expanded: open,
+      git: true,
+      counts: c,
+    };
+    if (open) out.changes = { git: true, scope: 'branch', root: '/w/' + s.id, prefix: '', files: s.files, filesTotal: s.files.length, totals: c, truncated: false };
+    return out;
+  };
   const fetchImpl = async (url, init) => {
     calls.push(url);
     if (init && init.method === 'POST') posts.push([url, JSON.parse(init.body)]);
     if (url.includes('/bootstrap')) return ok({ token: 't' });
-    if (opts.paged) {
-      const off = Number((/offset=(\d+)/.exec(url) || [0, 0])[1]),
-        all = opts.paged;
-      return ok({
-        git: true,
-        scope: opts.scope,
-        files: all.slice(off, off + 300),
-        filesTotal: all.length,
-        offset: off,
-        totals: { files: all.length, added: all.length, removed: 0 },
-        truncated: off + 300 < all.length,
-      });
-    }
     if (url.includes('/changes/file')) {
       if (opts.hold) await opts.hold;
       if (opts.fail) return { ok: false, status: 500, json: async () => ({ error: 'boom' }) };
       return ok(DIFF(decodeURIComponent(/path=([^&]*)/.exec(url)[1])));
     }
-    const body = opts.scope ? { git: true, scope: opts.scope, files } : { git: true, files };
-    if (opts.branch) body.worktree = { branch: opts.branch };
-    if (opts.docs) body.docs = opts.docs;
-    return ok(body);
+    if (opts.paged && url.includes('/api/live/changes?')) {
+      const off = Number((/offset=(\d+)/.exec(url) || [0, 0])[1]),
+        all = opts.paged;
+      return ok({ git: true, files: all.slice(off, off + 300), filesTotal: all.length, offset: off, totals: sums(all), truncated: off + 300 < all.length });
+    }
+    if (url.includes('/api/live/project/changes?')) {
+      const q = new URLSearchParams(url.split('?')[1]),
+        fold = new Set((q.get('fold') || '').split(',').filter(Boolean)),
+        unfold = new Set((q.get('unfold') || '').split(',').filter(Boolean));
+      const all = opts.paged || files;
+      const first = opts.paged ? all.slice(0, 300) : all;
+      const c = sums(all);
+      const main = {
+        id: 'main',
+        kind: 'main',
+        name: 'Project folder',
+        parent: null,
+        provider: '',
+        branch: 'main',
+        state: 'active',
+        why: '',
+        working: false,
+        expanded: true,
+        git: true,
+        counts: c,
+        changes: { git: true, scope: 'uncommitted', root: '/r', prefix: '', files: first, filesTotal: all.length, totals: c, offset: 0, truncated: first.length < all.length },
+      };
+      if (opts.docs) main.changes.docs = opts.docs;
+      return ok({
+        git: true,
+        main,
+        sections: sections.map((s) => section(s, !fold.has(s.id))),
+        left: left.map((s) => section({ ...s, state: 'left' }, unfold.has(s.id))),
+      });
+    }
+    return ok({ git: true, files });
   };
   const ids = {};
   const doc = { activeElement: null };
@@ -358,21 +452,31 @@ function setup(opts) {
     matchMedia: () => ({ matches: false, addEventListener() {} }),
     innerWidth: 1400,
     addEventListener() {},
-    setInterval: () => 1,
-    clearInterval() {},
+    setInterval: (fn, ms) => {
+      const id = next++;
+      intervals.set(id, { fn, ms });
+      return id;
+    },
+    clearInterval: (id) => intervals.delete(id),
   };
   C.init(win);
-  C.sync({ id: 'chat1', busy: false });
+  C.sync({ id: 'chat1', busy: false, titleFor: (k) => ({ 'chat1': 'Fix login', 'claude:one': 'Fix login' })[k] || '' });
   return {
     calls,
     posts,
     win,
     ids,
+    intervals,
     setFiles: (f) => {
       files = f;
     },
+    setSections: (s, l) => {
+      sections = s;
+      if (l) left = l;
+    },
     ui: () => C._live(),
-    list: () => ids.subagentsPane.querySelector('.cg-files'),
+    list: () => ids.subagentsPane.querySelector('.cg-project'),
+    secs: () => ids.subagentsPane.querySelector('.cg-project').all().filter((n) => n.dataset && n.dataset.sec && n.dataset.sec !== 'left' && n.tagName === 'SECTION'),
   };
 }
 const tick = () => new Promise((r) => setImmediate(r));
@@ -380,12 +484,19 @@ const flush = async () => {
   for (let i = 0; i < 10; i++) await tick();
 };
 const rows = (t) => t.list().querySelectorAll('.cg-file');
+const secRows = (s) => s.querySelectorAll('.cg-file');
+const heads = (t) => t.list().querySelectorAll('.cg-sec-head');
 const diffCalls = (t) => t.calls.filter((u) => u.includes('/changes/file')).length;
+const reads = (t) => t.calls.filter((u) => u.includes('/api/live/project/changes?'));
 const reload = async (t) => {
   t.ui().show('activity');
   t.ui().show('changes');
   await flush();
 };
+const SUBS = [
+  { id: 's1', name: 'Port the parser', files: [{ path: 'pkg/p.js', status: 'M', added: 7, removed: 2 }, { path: 'pkg/q.js', status: 'U', added: 4, removed: 0 }], working: true },
+  { id: 's2', name: 'Check the docs', files: [{ path: 'docs/x.md', status: 'M', added: 1, removed: 1 }] },
+];
 
 test('accordion: rows are buttons with a caret and aria-expanded; the first file opens by default and has no separate heading', async () => {
   const t = setup();
@@ -398,17 +509,11 @@ test('accordion: rows are buttons with a caret and aria-expanded; the first file
   assert.equal(rs[1].attrs['aria-expanded'], 'false');
   assert.ok(rs[0].textContent.startsWith('▾'));
   assert.ok(rs[1].textContent.startsWith('▸'));
-  assert.equal(
-    t
-      .list()
-      .all()
-      .filter((n) => /cg-diff-head|cg-diff-path/.test(n.className)).length,
-    0,
-  );
+  assert.equal(t.list().all().filter((n) => /cg-diff-head|cg-diff-path/.test(n.className)).length, 0);
   const d = t.list().querySelector('.cg-diff');
   assert.ok(d);
   assert.ok(rs[0].parentNode.contains(d));
-  assert.ok(d.children[0].matches('.cg-lines') || d.querySelector('.cg-hunk'));
+  assert.ok(d.querySelector('.cg-hunk'));
 });
 test('accordion: clicking toggles a file, several can be open, a diff is fetched only on first open', async () => {
   const t = setup();
@@ -481,101 +586,157 @@ test('accordion: a Loading line while reading, an error line when it fails', asy
   assert.match(msg.textContent, /Could not read this diff: boom/);
 });
 
-test('the header line names the chat changes for a worktree chat and Uncommitted otherwise', async () => {
-  const plain = setup();
-  plain.ui().show('changes');
-  await flush();
-  assert.equal(plain.ids.subagentsPane.querySelector('.cg-scope').textContent, 'Uncommitted');
-  const wt = setup({ scope: 'branch' });
-  wt.ui().show('changes');
-  await flush();
-  assert.equal(wt.ids.subagentsPane.querySelector('.cg-scope').textContent, "This chat's changes");
-  assert.equal(rows(wt).length, 3, 'the list is the same view');
-  assert.ok(
-    wt.calls.every((u) => !u.includes('scope=branch')),
-    'the page still asks for its usual scope; the server decides',
-  );
-});
-
-test('a project-folder chat: the fixed header and the footer line that points at the agent (plan 1.4)', async () => {
-  const t = setup();
-  C.sync({ id: 'chat1', busy: false, folder: true });
-  const pane = t.ids.subagentsPane;
-  // before the changes are read: the header and the footer are already there (nothing pops in when the list arrives)
-  assert.equal(pane.querySelector('.cg-scope').textContent, C.FOLDER_SCOPE);
-  assert.equal(C.FOLDER_SCOPE, 'Project folder', 'short enough for the 280 px column, no "uncommitted" (the footer says it)');
+test('the project: main first, then one section per active worktree, each head with name, parent chat, branch and counts', async () => {
+  const t = setup({ sections: SUBS });
   t.ui().show('changes');
   await flush();
-  assert.equal(pane.querySelector('.cg-scope').textContent, C.FOLDER_SCOPE, 'one fixed line, also with files listed');
-  assert.equal(rows(t).length, 3, 'the file list is unchanged');
-  const foot = pane.querySelector('.cg-foot'),
-    line = pane.querySelector('.cg-foot-folder');
-  assert.equal(foot.hidden, false);
-  assert.equal(line.hidden, false);
-  assert.equal(line.textContent, C.FOLDER_FOOT);
-  assert.ok(/from any chat/.test(C.FOLDER_FOOT), 'whose changes they are: in the footer, not the header');
+  const secs = t.secs();
+  assert.deepEqual(secs.map((s) => s.dataset.sec), ['main', 's1', 's2']);
+  assert.deepEqual(secs.map((s) => secRows(s).length), [3, 2, 1], "main's files are not repeated in the worktree sections");
+  const head = (s) => s.querySelector('.cg-sec-head').textContent.replace(/\s+/g, ' ').trim();
+  assert.match(head(secs[0]), /^▾Project folder3 files \+6 −1$/);
+  assert.match(head(secs[1]), /^▾Port the parser2 files \+11 −2$/);
+  assert.match(head(secs[2]), /^▾Check the docs1 file \+1 −1$/);
+  assert.equal(secs[1].querySelector('.cg-sec-sub').textContent, 'Subagent of “Fix login” · studio/s1');
+  assert.equal(secs[0].querySelector('.cg-sec-sub').textContent, 'Branch main');
+  assert.equal(t.ids.subagentsPane.querySelector('.cg-scope').textContent, 'Project');
+  assert.equal(t.ids.subagentsPane.querySelector('.cg-sum').textContent.replace(/\s+/g, ' ').trim(), '6 files +18 −4', 'the bar counts the project');
 });
-/* Owner, 2026-11-16: no Merge and no Discard for any chat, ever ("these buttons will never exist for anything anymore"). */
+test('the header chip, the tab badge and the narrow strip count the project, not one chat', async () => {
+  const t = setup({ sections: SUBS });
+  await flush();
+  const pane = t.ids.subagentsPane;
+  assert.equal(pane.querySelector('.pane-badge').textContent, '6');
+  assert.equal(pane.querySelector('.pane-badge').hidden, false);
+  assert.equal(C.chipText(C.projectTotals(t.ui().project())), 'Changes · 6 files +18 −4');
+  assert.equal(t.ui().project().sections.length, 2);
+});
+test('a worktree file is asked by its section id, never by a path; main keeps its own route', async () => {
+  const t = setup({ sections: SUBS });
+  t.ui().show('changes');
+  await flush();
+  const s1 = t.secs()[1];
+  secRows(s1)[0].click();
+  await flush();
+  const asked = t.calls.filter((u) => u.includes('/api/live/project/changes/file'));
+  assert.equal(asked.length, 1);
+  assert.ok(/section=s1/.test(asked[0]) && /path=pkg%2Fp\.js/.test(asked[0]), asked[0]);
+  assert.ok(!/scope=|cwd=|folder=/.test(asked[0]), 'no scope, no folder, no raw path of the worktree');
+  assert.ok(t.secs()[1].querySelector('.cg-hunk'), 'its diff opens under its row');
+  assert.equal(t.calls.filter((u) => /\/api\/live\/changes\/file\?/.test(u)).length, 1, "main's first file opened by default, by the old route");
+});
+test('folding: a folded section keeps only its head, the next read asks for counts only, unfolding reads its files', async () => {
+  const t = setup({ sections: SUBS });
+  t.ui().show('changes');
+  await flush();
+  t.secs()[1].querySelector('.cg-sec-head').click(); // fold s1
+  await flush();
+  assert.equal(secRows(t.secs()[1]).length, 0);
+  assert.equal(t.secs()[1].querySelector('.cg-sec-head').attrs['aria-expanded'], 'false');
+  assert.ok(t.secs()[1].querySelector('.cg-sec-head').textContent.includes('2 files'), 'the numbers stay on the head');
+  await reload(t);
+  assert.ok(/fold=s1/.test(reads(t).at(-1)), reads(t).at(-1));
+  assert.equal(secRows(t.secs()[1]).length, 0, 'still folded');
+  assert.equal(t.ui().project().sections[0].changes, undefined, 'the reply had its counts only');
+  t.secs()[1].querySelector('.cg-sec-head').click(); // unfold
+  await flush();
+  assert.equal(secRows(t.secs()[1]).length, 2);
+  assert.ok(!/fold=s1/.test(reads(t).at(-1)));
+});
+test('Left over: a folded group, only when there is left-over work; unfold the group, then a section, to see its files', async () => {
+  const none = setup({ sections: SUBS });
+  none.ui().show('changes');
+  await flush();
+  assert.equal(none.list().querySelector('.cg-left'), null, 'no group without left-over work');
+  const L = [{ id: 'l1', name: 'Old refactor', files: [{ path: 'old.js', status: 'M', added: 5, removed: 0 }], why: 'stopped' }];
+  const t = setup({ sections: SUBS, left: L });
+  t.ui().show('changes');
+  await flush();
+  const group = t.list().querySelector('.cg-left');
+  assert.ok(group);
+  const gh = group.querySelector('.cg-left-head');
+  assert.equal(gh.textContent, '▸Left over (1)');
+  assert.equal(gh.attrs['aria-expanded'], 'false');
+  assert.equal(group.querySelectorAll('.cg-sec').length, 0, 'folded: nothing below the head');
+  assert.equal(t.secs().length, 3, 'the left-over work is not one of the sections');
+  gh.click();
+  const sec = t.list().querySelector('.cg-left').querySelector('.cg-sec');
+  assert.ok(sec);
+  assert.equal(sec.querySelector('.cg-sec-head').attrs['aria-expanded'], 'false', 'its section is folded too');
+  assert.match(sec.querySelector('.cg-sec-sub').textContent, /Stopped before its work landed/);
+  assert.equal(secRows(sec).length, 0);
+  assert.match(t.list().querySelector('.cg-left').textContent, /never reached the project folder/);
+  sec.querySelector('.cg-sec-head').click();
+  await flush();
+  assert.ok(/unfold=l1/.test(reads(t).at(-1)), reads(t).at(-1));
+  assert.equal(secRows(t.list().querySelector('.cg-left')).length, 1);
+  assert.equal(C.projectTotals(t.ui().project()).files, 6, 'left-over work is not in the project count');
+  assert.equal(t.list().querySelectorAll('button').filter((b) => /merge|discard|commit/i.test(b.textContent)).length, 0, 'no Merge or Discard');
+});
+test('refresh rule: no timer while the Changes tab is hidden; every 10 s while it shows; a turn that ends reads at once', async () => {
+  const t = setup();
+  await flush();
+  assert.equal(t.intervals.size, 0, 'Activity is showing: nothing polls');
+  const base = reads(t).length;
+  t.ui().show('changes');
+  await flush();
+  assert.equal(t.intervals.size, 1);
+  assert.equal([...t.intervals.values()][0].ms, 10000);
+  const n = reads(t).length;
+  [...t.intervals.values()][0].fn();
+  await flush();
+  assert.equal(reads(t).length, n + 1, 'a tick reads the project');
+  t.ui().show('artifacts');
+  assert.equal(t.intervals.size, 0, 'another tab: the timer is gone');
+  t.ui().show('activity');
+  assert.equal(t.intervals.size, 0);
+  const before = reads(t).length;
+  // another chat of the project ended its turn: the numbers refresh at once (the chips count the project), whichever tab shows
+  C.turns('p1', '');
+  C.turns('p1', 'claude:b=2026-11-18T10:00:00Z');
+  await flush();
+  assert.equal(reads(t).length, before + 1);
+  C.turns('p1', 'claude:b=2026-11-18T10:00:00Z');
+  await flush();
+  assert.equal(reads(t).length, before + 1, 'the same stamp again reads nothing');
+  assert.ok(base >= 0);
+});
+test('moving to another chat of the project changes nothing on screen and reads nothing new; the open chat ending a turn reads', async () => {
+  const t = setup({ sections: SUBS });
+  t.ui().show('changes');
+  await flush();
+  const shown = t.list().textContent,
+    n = reads(t).length;
+  C.sync({ id: 'chat2', busy: false, titleFor: (k) => ({ chat1: 'Fix login', 'claude:one': 'Fix login' })[k] || '' });
+  assert.equal(t.list().textContent, shown, 'the same sections at once');
+  await flush();
+  assert.equal(t.secs().length, 3);
+  C.sync({ id: 'chat2', busy: true });
+  C.sync({ id: 'chat2', busy: false });
+  await flush();
+  assert.ok(reads(t).length > n, 'its turn ended: refreshed');
+});
+
+/* The panel is read-only: the one footer line, no buttons, for every kind of section. */
 const noButtons = (pane) => {
   assert.equal(pane.querySelector('.cg-merge-btn'), null, 'no Merge button');
   assert.equal(pane.querySelector('.cg-discard'), null, 'no Discard button');
   assert.equal(pane.querySelector('.cg-foot').querySelectorAll('button').length, 0, 'nothing to click in the footer');
 };
-test('no Merge or Discard for any chat kind: folder chat, old copy chat, helper, plain', async () => {
-  for (const [opts, ctx] of [
-    [{}, { folder: true }],
-    [{ scope: 'branch', branch: 'studio/chat-1' }, {}],
-    [{ scope: 'branch', branch: 'studio/helper-1' }, {}],
-    [{}, {}],
-  ]) {
-    const t = setup(opts);
-    C.sync({ id: 'chat1', busy: false, ...ctx });
-    t.ui().show('changes');
-    await flush();
-    noButtons(t.ids.subagentsPane);
-    assert.equal(rows(t).length, 3, 'what changed is still listed');
-    assert.ok(t.posts.every((p) => !/worktree|merge|discard/.test(p[0])), 'nothing merges or discards');
-  }
-});
-test('an old copy chat keeps its branch header (read only) and a footer line that points at its agent, even if the page thought it was a folder chat', async () => {
-  const t = setup({ scope: 'branch', branch: 'studio/chat-1' });
-  C.sync({ id: 'chat1', busy: false, folder: true });
+test('the footer: one fixed read-only line that points at the agent, and no Merge or Discard anywhere', async () => {
+  const t = setup({ sections: SUBS });
   t.ui().show('changes');
   await flush();
   const pane = t.ids.subagentsPane;
-  assert.equal(pane.querySelector('.cg-scope').textContent, "This chat's changes", "the server's data.worktree wins");
   const line = pane.querySelector('.cg-foot-folder');
-  assert.equal(line.hidden, false);
-  assert.equal(line.textContent, C.COPY_FOOT);
-  assert.match(C.COPY_FOOT, /ask its agent to merge it/);
   assert.equal(pane.querySelector('.cg-foot').hidden, false);
-});
-test("a helper's branch view has no footer line (its work lands by itself), and nor has an old copy chat without changes", async () => {
-  const h = setup({ scope: 'branch', branch: 'studio/helper-1' });
-  h.ui().show('changes');
-  await flush();
-  assert.equal(h.ids.subagentsPane.querySelector('.cg-foot').hidden, true);
-  const e = setup({ scope: 'branch', branch: 'studio/chat-1', files: [] });
-  e.ui().show('changes');
-  await flush();
-  assert.equal(e.ids.subagentsPane.querySelector('.cg-foot').hidden, true);
-  assert.equal(C.isCopyView({ git: true, files: [{ path: 'a' }], worktree: { branch: 'studio/chat-1' } }), true);
-  assert.equal(C.isCopyView({ git: true, files: [{ path: 'a' }], worktree: { branch: 'studio/helper-1' } }), false);
-  assert.equal(C.isCopyView({ git: true, files: [{ path: 'a' }] }), false);
-  assert.equal(C.isCopyView(null), false);
-});
-test('isFolderView: folder chats only, never a discarded chat, a worktree, a non-git folder or an unknown one', () => {
-  const f = { folder: true };
-  assert.equal(C.isFolderView(f, null), true, 'shown before the changes are read');
-  assert.equal(C.isFolderView(f, { git: true, files: [] }), true);
-  assert.equal(C.isFolderView({ folder: false }, { git: true, files: [] }), false);
-  assert.equal(C.isFolderView({ folder: true, discarded: true }, null), false);
-  assert.equal(C.isFolderView(f, { git: true, worktree: { branch: 'b' } }), false);
-  assert.equal(C.isFolderView(f, { git: false }), false);
-  assert.equal(C.isFolderView(f, { unknown: true }), false);
+  assert.equal(line.textContent, C.FOLDER_FOOT);
+  assert.match(C.FOLDER_FOOT, /from any chat/);
+  noButtons(pane);
+  assert.ok(t.posts.every((p) => !/worktree|merge|discard/.test(p[0])), 'nothing merges or discards');
 });
 
-/* ---- QA right column: paging, discarded chats ---- */
+/* ---- QA right column: paging ---- */
 const many = (n) =>
   Array.from({ length: n }, (_, i) => ({
     path: 'f' + String(i).padStart(4, '0') + '.txt',
@@ -598,32 +759,17 @@ test('QA M5: every file is reachable: "Show the last 61" lists the next page, an
   await flush();
   assert.ok(t.calls.some((u) => u.includes('offset=300')));
   assert.equal(rows(t).length, 361);
-  assert.ok(
-    rows(t).some((r) => r.dataset.path === 'f0360.txt'),
-    'the last file is listed',
-  );
+  assert.ok(rows(t).some((r) => r.dataset.path === 'f0360.txt'), 'the last file is listed');
   assert.equal(pane(t).querySelector('.cg-more'), null);
   await reload(t);
   assert.equal(rows(t).length, 361, 'a refresh keeps the pages you opened');
-});
-
-test('QA M4: a chat discarded before the buttons went: the Changes tab says so instead of "not available yet" and reads nothing more', async () => {
-  const t = setup({ scope: 'branch', branch: 'studio/x' });
-  t.ui().show('changes');
-  await flush();
-  const before = t.calls.length;
-  C.sync({ id: 'chat1', busy: false, discarded: true });
-  await reload(t);
-  assert.match(pane(t).querySelector('.cg-note').textContent, /discarded with its branch/);
-  assert.equal(rows(t).length, 0);
-  assert.equal(t.calls.filter((u, i) => i >= before && u.includes('/api/live/changes?')).length, 0);
 });
 
 test('local docs: a doc is one row "2 pages changed" (its files are not listed), the tab counts it once', async () => {
   const docPaths = ['docs/plan/doc.aibdoc', 'docs/plan/01-overview.md', 'docs/plan/02-risks.md'];
   const files = docPaths.map((p) => ({ path: p, status: 'M', added: 2, removed: 1 })).concat([{ path: 'docs/README.md', status: 'M', added: 1, removed: 0 }]);
   const docs = [{ doc: 'plan', dir: 'docs/plan', title: 'Release plan', pages: 2, paths: docPaths }];
-  const t = setup({ scope: 'branch', branch: 'studio/x', files, docs });
+  const t = setup({ files, docs });
   const opened = [];
   t.win.AgentDocLinks = { openDoc: (o) => opened.push(o) };
   t.ui().show('changes');
@@ -636,6 +782,7 @@ test('local docs: a doc is one row "2 pages changed" (its files are not listed),
   assert.equal(rs[1].dataset.path, 'docs/README.md', "a user's docs/README.md stays a file row");
   assert.deepEqual(t.ui().files().map((f) => f.path), ['docs/README.md']);
   assert.equal(C.shownCount({ git: true, files, docs }), 2);
+  assert.equal(pane(t).querySelector('.pane-badge').textContent, '2');
   rs[0].click();
   assert.deepEqual(opened.map((o) => [o.name, o.from]), [['plan', 'chat']]);
   noButtons(pane(t));
@@ -643,7 +790,6 @@ test('local docs: a doc is one row "2 pages changed" (its files are not listed),
 
 test('the right-column tab is the project\'s: another chat of the project keeps it, each project (per window) keeps its own, and a reload brings it back (owner 2026-11-18)', async () => {
   const t = setup();
-  const C = require(path.join(APP_DIR, 'changes-ui.js'));
   const pane = t.ids.subagentsPane;
   const saved = new Map();
   t.win.localStorage = { getItem: (k) => (saved.has(k) ? saved.get(k) : null), setItem: (k, v) => saved.set(k, String(v)) };
@@ -674,11 +820,18 @@ test('the right-column tab is the project\'s: another chat of the project keeps 
   assert.deepEqual(JSON.parse(saved.get('studio-panel-tab-v1:w2')), { p1: 'changes', p2: 'artifacts' }, 'kept per window');
   assert.ok(!saved.has('studio-panel-tab-v1'), "the main window's key is not touched");
 });
-test('folderKey: two chats in the project folder (same root, scope, prefix) are one folder; other replies are their own', () => {
-  const a = { git: true, scope: 'uncommitted', root: 'C:/p', prefix: '' };
-  assert.equal(C.folderKey(a), C.folderKey({ ...a, files: [] }));
-  assert.notEqual(C.folderKey(a), C.folderKey({ ...a, root: 'C:/q' }));
-  assert.notEqual(C.folderKey(a), C.folderKey({ ...a, scope: 'branch' }));
-  assert.notEqual(C.folderKey(a), C.folderKey({ ...a, prefix: 'sub/' }));
-  assert.notEqual(C.folderKey({ git: true }), C.folderKey({ git: true }), 'no root: never merged with another');
+test('another project resets the project\'s Changes: its folds and open diffs are not carried over', async () => {
+  const t = setup({ sections: SUBS });
+  let pk = 'p1';
+  t.win.AgentWorkspaceUI = { panelProject: () => ({ key: pk, name: pk }) };
+  C.sync({ id: 'chat1', busy: false });
+  t.ui().show('changes');
+  await flush();
+  t.secs()[1].querySelector('.cg-sec-head').click();
+  await flush();
+  assert.equal(secRows(t.secs()[1]).length, 0);
+  pk = 'p2';
+  C.sync({ id: 'chat9', busy: false });
+  await flush();
+  assert.equal(secRows(t.secs()[1]).length, 2, "p2's s1 is open again: the fold was p1's");
 });

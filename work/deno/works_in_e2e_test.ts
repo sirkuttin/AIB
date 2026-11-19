@@ -8,8 +8,8 @@
  * 20. The New chat screen has no Works in chip, no note under the folder line, and the folder line is "<folder> · <branch>", as
  *     before the chip was added; also while another folder chat is working (no pre-set, no amber warning). The first message's
  *     connect carries no ownCopy.
- * 24. A folder chat's Changes tab: the fixed header, no Merge or Discard, the footer line. A chat in its own copy (one made before
- *     2026-11-16, stood in for by a stubbed Changes reply) is unchanged.
+ * 24. The project's Changes tab (right panel slice S2): the fixed header, no Merge or Discard, the footer line. Another chat of the
+ *     project (even one that was made in its own copy, stood in for by a stubbed reply) changes nothing in the tab.
  *
  * Run (from outputs/agent-studio): deno test -A ../../work/deno/works_in_e2e_test.ts   (ignored without Chrome or Edge)
  * AIB_WORKS_IN_SHOTS=<folder> saves a screenshot of each state there.
@@ -19,7 +19,7 @@ import { browserPath, type Chat, Lab, ownerProblems, type Page, settle } from '.
 
 const SHOTS = Deno.env.get('AIB_WORKS_IN_SHOTS') || '';
 
-/** The stub: /api/live/changes and /api/live/worktree answer from window.__changes (by chat id). Connect bodies go to __connects. */
+/** The stub: /api/live/project/changes and /api/live/worktree answer from window.__changes (by chat id). Connect bodies go to __connects. */
 const STUB = `(() => {
   const real = window.fetch.bind(window);
   const json = (o) => new Response(JSON.stringify(o), { status: 200, headers: { 'Content-Type': 'application/json' } });
@@ -28,7 +28,11 @@ const STUB = `(() => {
     const u = new URL(String(url), location.href);
     const id = u.searchParams.get('id') || '';
     const ch = window.__changes && window.__changes[id];
-    if (u.pathname === '/api/live/changes' && ch) return Promise.resolve(json(ch));
+    if (u.pathname === '/api/live/project/changes' && ch) {
+      const sum = { files: ch.files.length, added: ch.files.reduce((a, f) => a + f.added, 0), removed: ch.files.reduce((a, f) => a + f.removed, 0) };
+      return Promise.resolve(json({ git: true, sections: [], left: [], main: { id: 'main', kind: 'main', name: 'Project folder', branch: 'main', state: 'active',
+        expanded: true, git: true, counts: sum, changes: { git: true, scope: 'uncommitted', root: '/r', prefix: '', files: ch.files, filesTotal: sum.files, totals: sum } } }));
+    }
     if (u.pathname === '/api/live/worktree' && ch)
       return Promise.resolve(json(ch.worktree ? { worktree: true, enabled: true, state: 'ready', base: 'main', label: 'Merge' } : { worktree: false }));
     if (u.pathname === '/api/live/connect' && init && init.body) window.__connects.push(JSON.parse(init.body));
@@ -118,7 +122,7 @@ worksInTest('20: New chat has no Works in chip or note, the folder line is "<fol
   await settle(300);
 });
 
-worksInTest('24: a folder chat\'s Changes tab: fixed header, no Merge or Discard, the footer line; a copy chat is unchanged', async (lab) => {
+worksInTest('24: the project\'s Changes tab: fixed header, no Merge or Discard, the footer line; another chat changes nothing', async (lab) => {
   const page = lab.page;
   const folder = await lab.chat();
   await folder.start();
@@ -142,7 +146,7 @@ worksInTest('24: a folder chat\'s Changes tab: fixed header, no Merge or Discard
       buttons: p.querySelectorAll('.cg-foot button, .cg-merge-btn, .cg-discard').length };
   })()`);
   assertEquals(f, {
-    scope: 'Project folder',
+    scope: 'Project',
     foot: "Nothing to merge: edits go straight into the project folder, from any chat. Ask the agent to commit or undo.",
     footShown: true,
     buttons: 0,
@@ -153,21 +157,21 @@ worksInTest('24: a folder chat\'s Changes tab: fixed header, no Merge or Discard
     return { sw: s.scrollWidth, cw: s.clientWidth, panel: Math.round(document.getElementById('subagentsPane').getBoundingClientRect().width),
       sum: sum.scrollWidth <= sum.clientWidth ? 'whole' : 'cut' };
   })()`);
-  assert(fit.panel <= 290, `the default panel width: ${fit.panel}`);
+  assert(fit.panel === 320, `the default panel width (320 px, owner 2026-11-18): ${fit.panel}`);
   assert(fit.sw <= fit.cw, `the header is cut at ${fit.panel} px: ${fit.sw} > ${fit.cw}`);
   assertEquals(fit.sum, 'whole', 'the file count is not cut either');
   await shot(page, '24-folder-changes');
   const panelW = await page.eval<number>(`Math.round(document.getElementById('subagentsPane').getBoundingClientRect().width)`);
 
   await lab.select(copy);
-  await page.waitFor(`document.querySelector('#changesPane .cg-scope').textContent === "This chat's changes"`, 15000, 'copy chat header');
-  // an old copy chat: read only, no Merge or Discard (owner, 2026-11-16); its footer line points at its agent
-  await page.waitFor(`/ask its agent to merge it/.test(document.querySelector('#changesPane .cg-foot-folder').textContent)`, 15000, 'the copy line');
-  const c = await page.eval<{ foot: string; buttons: number }>(`(() => {
+  await settle(1500);
+  // the panel is the project's: another chat (here one that stood in for an old copy chat) shows the same Changes, same footer
+  const c = await page.eval<{ scope: string; files: number; foot: string; buttons: number }>(`(() => {
     const p = document.getElementById('changesPane'), line = p.querySelector('.cg-foot-folder');
-    return { foot: line.hidden ? '' : line.textContent, buttons: p.querySelectorAll('.cg-foot button, .cg-merge-btn, .cg-discard').length };
+    return { scope: p.querySelector('.cg-scope').textContent, files: p.querySelectorAll('.cg-file').length, foot: line.hidden ? '' : line.textContent,
+      buttons: p.querySelectorAll('.cg-foot button, .cg-merge-btn, .cg-discard').length };
   })()`);
-  assertEquals(c, { foot: 'This chat works in its own copy. To bring its work into the project, ask its agent to merge it.', buttons: 0 });
+  assertEquals(c, { scope: 'Project', files: 1, foot: f.foot, buttons: 0 });
   await shot(page, '24-copy-changes');
   assertEquals(
     await page.eval<number>(`Math.round(document.getElementById('subagentsPane').getBoundingClientRect().width)`),

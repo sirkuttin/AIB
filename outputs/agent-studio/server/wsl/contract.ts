@@ -187,6 +187,12 @@ export interface HelperMethods {
   'docs.fs': { params: { ops: DocFsOp[] }; result: { results: Record<string, unknown>[] } };
   'changes.get': { params: { folder: string; offset?: number; base?: string }; result: unknown };
   'changes.diff': { params: { folder: string; path: string; base?: string }; result: unknown };
+  /**
+   * Several folders in one call (the project right panel's Changes: one answer for the project, one helper call, not one per folder).
+   * One result per folder, in order: what changes.get answers (or only the numbers, `counts: true`: changes.ts getCounts), or
+   * {error, code} for a folder that cannot be read.
+   */
+  'changes.many': { params: { folders: { folder: string; base?: string; offset?: number; counts?: boolean }[] }; result: { results: unknown[] } };
   'changes.branchEntries': { params: { folder: string; base?: string }; result: unknown };
   'chat.repoBranch': { params: { folder: string }; result: { repo: string | null; branch: string | null } };
   /**

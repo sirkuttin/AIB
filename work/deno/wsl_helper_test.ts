@@ -483,6 +483,7 @@ Deno.test('the ready line can list every method of the contract', () => {
     'folder.createProject',
     'changes.get',
     'changes.diff',
+    'changes.many',
     'changes.branchEntries',
     'chat.repoBranch',
     'transcripts.sessions',
@@ -654,6 +655,25 @@ gitTest(
     } finally {
       Deno.removeSync(none, { recursive: true });
     }
+  },
+);
+
+gitTest(
+  'changes.many: several folders in one call, in order; counts only on request; a folder that cannot be read answers its own error',
+  async () => {
+    using r = new TempRepo();
+    write(r.p('mod.txt'), 'a\nB\nc\nd\n');
+    write(r.p('new.txt'), 'one\ntwo\n');
+    const many = (await call('changes.many', {
+      folders: [{ folder: r.repo }, { folder: r.repo, counts: true }, { folder: 'relative/path' }, { folder: r.p('sub') }],
+    })).result!;
+    const out = many.results as Record<string, unknown>[];
+    assertEquals(out.length, 4, 'one result per folder');
+    assertEquals((out[0].files as { path: string }[]).map((f) => f.path), ['mod.txt', 'new.txt'], 'the same list changes.get gives');
+    assertEquals([out[1].git, out[1].files, out[1].files === undefined], [true, 2, false]);
+    assertEquals(out[1].added, (out[0].totals as { added: number }).added, 'counts match the list totals');
+    assertEquals(typeof out[2].error, 'string', 'a bad folder is its own error, the others still answer');
+    assertEquals(out[3].git, true, 'a sub folder of the repository');
   },
 );
 

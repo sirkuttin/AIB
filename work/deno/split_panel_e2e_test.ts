@@ -38,7 +38,7 @@ function panelTest(name: string, fn: (lab: Lab) => Promise<void>) {
   });
 }
 
-/** Changes, artifact and doc lists per chat id, B's processes, answered in the page. */
+/** The project's Changes (the same list for every chat), artifact and doc lists per chat id, B's processes, answered in the page. */
 function stub(page: Page, a: Chat, b: Chat) {
   const files = {
     [a.id]: [
@@ -68,8 +68,11 @@ function stub(page: Page, a: Chat, b: Chat) {
     const json = (o) => Promise.resolve(new Response(JSON.stringify(o), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     window.fetch = (url, init) => {
       const u = new URL(String(url), location.href), id = u.searchParams.get('id') || u.searchParams.get('conversationId') || '';
-      if (u.pathname === '/api/live/changes' && files[id])
-        return json({ git: true, scope: 'branch', files: files[id], worktree: { branch: 'aib/' + id.slice(0, 6), base: 'main' } });
+      if (u.pathname === '/api/live/project/changes' && Object.keys(files).length) { // the project's Changes: one list for every chat
+        const all = Object.values(files).flat(), sum = { files: all.length, added: all.reduce((n, f) => n + f.added, 0), removed: all.reduce((n, f) => n + f.removed, 0) };
+        return json({ git: true, sections: [], left: [], main: { id: 'main', kind: 'main', name: 'Project folder', branch: 'main', state: 'active', expanded: true, git: true,
+          counts: sum, changes: { git: true, scope: 'uncommitted', root: '/r', prefix: '', files: all, filesTotal: all.length, totals: sum } } });
+      }
       if (u.pathname === '/api/live/artifacts' && arts[id]) return json({ artifacts: arts[id] });
       if (u.pathname === '/api/live/docs/list' && docs[id]) return json({ docs: docs[id] });
       // a saved chat's session is its transcript path (".../feedsaved.jsonl"), the key "claude:feedsaved"
@@ -164,7 +167,7 @@ panelTest('split panel: with one chat on screen Activity already lists both work
   assertEquals(st.focus, [a.key], 'the open chat has the accent');
   await page.click('#paneTab-changes');
   await settle(600);
-  assert(await page.eval<boolean>(`!document.querySelector('#splitChanges')?.offsetParent && !!document.querySelector('#changesPane .cg-bar')?.offsetParent`), 'single Changes view');
+  assert(await page.eval<boolean>(`!!document.querySelector('#projectChanges')?.offsetParent && !!document.querySelector('#changesPane .cg-bar')?.offsetParent`), 'the project Changes view');
   await page.click('#paneTab-artifacts');
   await settle(600);
   assert(await page.eval<boolean>(`!document.querySelector('.ar-split')?.offsetParent`), 'no split dropdowns with one chat');
@@ -196,7 +199,7 @@ panelTest('split panel: both chats in pane order on every tab, focus changes not
   for (const tab of ['activity', 'changes', 'artifacts']) {
     await page.click(`#paneTab-${tab}`);
     if (tab === 'changes')
-      await page.waitFor(`document.querySelectorAll('#splitChanges .sp-grp .cg-file').length === 3`, 15000, 'files of both chats');
+      await page.waitFor(`document.querySelectorAll('#projectChanges .cg-file').length === 3`, 15000, 'the project\'s files');
     if (tab === 'artifacts')
       await page.waitFor(`document.querySelectorAll('.ar-split .ar-spick:not(.plain)').length === 2`, 15000, 'both dropdowns');
     await settle(1500);
@@ -210,14 +213,14 @@ panelTest('split panel: both chats in pane order on every tab, focus changes not
       assertEquals(await page.eval<string[]>(`[...document.querySelectorAll('#projectActivity .sp-grp.sp-focus')].map((g) => g.dataset.key)`), [other], 'the accent moved');
   }
 
-  // Changes: pane order, per-chat headers and summary rows; no Merge or Discard anywhere (owner, 2026-11-16)
+  // Changes: the project's one list, whichever chats are in the panes; no Merge or Discard anywhere (owner, 2026-11-16)
   await page.click('#paneTab-changes');
-  assert(JSON.stringify(await keysOf(page, '#splitChanges .sp-grp')) === JSON.stringify([a.key, b.key]), 'Changes in pane order');
-  await page.waitFor(`[...document.querySelectorAll('#splitChanges .sp-foot')].filter((n) => n.offsetParent && /file/.test(n.textContent)).length === 2`, 15000, 'two summary rows');
+  assertEquals(await page.eval<string[]>(`[...document.querySelectorAll('#projectChanges > .cg-sec')].map((s) => s.dataset.sec)`), ['main'], 'one project section, not one per chat');
+  assertEquals(await page.eval<number>(`document.querySelectorAll('#projectChanges .cg-file').length`), 3);
   assertEquals(await page.eval<number>(`document.querySelectorAll('#changesPane button.cg-merge-btn, #changesPane button.cg-discard, #changesPane .cg-foot button').length`), 0, 'no Merge or Discard');
 
   // clicks anywhere in the panel never move focus
-  for (const sel of ['#paneTab-activity', '#projectActivity .sp-grp:nth-child(2) .sp-head', '#projectActivity .sp-grp:nth-child(2) .subagent-card', '#paneTab-changes', '#splitChanges .sp-grp:nth-child(2) .sp-head', '#splitChanges .sp-grp:nth-child(2) .cg-file', '#paneTab-artifacts', '.ar-split .ar-sgrp:nth-child(2) .ar-spick']) {
+  for (const sel of ['#paneTab-activity', '#projectActivity .sp-grp:nth-child(2) .sp-head', '#projectActivity .sp-grp:nth-child(2) .subagent-card', '#paneTab-changes', '#projectChanges .cg-file', '#projectChanges .cg-sec-head', '#paneTab-artifacts', '.ar-split .ar-sgrp:nth-child(2) .ar-spick']) {
     const was = await focusedKey(page);
     await page.waitFor(`!!document.querySelector(${JSON.stringify(sel)})?.offsetParent`, 10000, sel);
     await page.click(sel);

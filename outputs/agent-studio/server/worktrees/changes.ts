@@ -491,6 +491,49 @@ export async function getFileDiff(cwd: string, path: unknown, baseCommit: string
   return await fileDiff(top, base, path, statusLetter(xy), old, xy === '??');
 }
 
+/** getCounts reads the lines of this many new files; any more are counted as files only (partial). */
+const COUNT_NEW_FILES = 40;
+
+export interface Counts {
+  git: boolean;
+  files?: number;
+  added?: number;
+  removed?: number;
+  /** New (untracked) files are counted as files, but their lines are not read. */
+  partial?: boolean;
+}
+
+/**
+ * Only the numbers of a folded section (project right panel, Changes): how many files changed and the lines of the tracked ones,
+ * against `baseCommit` (a worktree's snapshot) or HEAD. Three runs of the tool; the lines of the first few new files are read and
+ * the rest of them are left out (partial). No file list: that is fetched when the section is unfolded.
+ */
+export async function getCounts(cwd: string, baseCommit: string | null = null): Promise<Counts> {
+  const found = await locate(cwd);
+  if (!found) return { git: false };
+  const [top, prefix, head] = found;
+  const base = baseCommit && await commitExists(top, baseCommit) ? baseCommit : head;
+  const scope = prefix ? ['--', prefix.replace(/\/+$/, '')] : [];
+  const [nums, , ncode] = await runGit(['diff', base, '--numstat', '-z', '-M', '--no-ext-diff', '--no-textconv', ...scope], top);
+  const stats = ncode === 0 || ncode === 1 || ncode === null ? parseNumstat(nums) : new Map<string, Stat>();
+  const [raw, , code] = await runGit(['ls-files', '--others', '--exclude-standard', '-z', ...scope], top);
+  const fresh = code === 0 ? decode(raw).split('\0').filter(Boolean) : [];
+  let added = 0, removed = 0, partial = false;
+  for (const [a, r] of stats.values()) {
+    added += a;
+    removed += r;
+  }
+  fresh.forEach((path, i) => {
+    if (i >= COUNT_NEW_FILES || !safeRelpath(path)) partial = true; // the lines of the first few new files are read, the rest are not
+    else {
+      const [rows, cut] = readUntracked(top, path);
+      added += rows.length;
+      if (cut) partial = true;
+    }
+  });
+  return { git: true, files: stats.size + fresh.length, added, removed, ...(partial ? { partial: true } : {}) };
+}
+
 async function fileDiff(top: string, base: string, path: string, letter: string, old: string, untracked: boolean): Promise<FileDiff> {
   const result: FileDiff = {
     git: true,

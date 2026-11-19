@@ -12,7 +12,7 @@ import * as osp from '../../platform/ospath.ts';
 import { isFile, which } from '../../platform/pypath.ts';
 import { resolveBeta } from '../../agents/beta_agents.ts';
 import { betaAgent } from '../../agents/beta_catalog.ts';
-import { branchEntries, commitExists, getChanges, getFileDiff, locate } from '../../worktrees/changes.ts';
+import { branchEntries, type ChangesResult, commitExists, getChanges, getCounts, getFileDiff, locate } from '../../worktrees/changes.ts';
 import * as files from '../../worktrees/files.ts';
 import * as outside from '../../worktrees/outside_files.ts';
 import { checkPath, checkProject, createFolder, createProject, GIT_TIMEOUT, gitPath, runCommand } from '../../desktop/folders.ts';
@@ -131,6 +131,15 @@ async function trashSetup(ctx: HelperContext, p: Record<string, unknown>) {
 }
 
 /** An absolute path param, normalised; relative, NUL and over-long paths are refused. */
+/** A doc's files show as one row "2 pages changed", as chat_folders.ts does for a Windows project (docs/rows.ts). */
+function withDocs(result: ChangesResult): ChangesResult {
+  if (result.git && Array.isArray(result.files)) {
+    const docs = docRows(String(result.root), result.files.map((f) => f.path));
+    if (docs.length) (result as unknown as Record<string, unknown>).docs = docs;
+  }
+  return result;
+}
+
 function absPath(params: Record<string, unknown>, key: string): string {
   const path = str(params, key);
   if (!path || path.length > 4096 || !osp.isabs(path)) throw new RpcError(`${key} must be an absolute path`, BAD_PARAMS);
@@ -462,16 +471,27 @@ function phaseOne(ctx: HelperContext): Handlers {
     'files.gitInfo': async (p) => await files.gitInfo(absPath(p, 'root')),
 
     'changes.get': async (p) => {
-      const result = await getChanges(absPath(p, 'folder'), str(p, 'base', true) || null, int(p, 'offset', 0));
-      if (result.git && Array.isArray(result.files)) {
-        // a doc's files show as one row "2 pages changed", as chat_folders.ts does for a Windows project (docs/rows.ts)
-        const docs = docRows(String(result.root), (result.files as { path: string }[]).map((f) => f.path));
-        if (docs.length) (result as unknown as Record<string, unknown>).docs = docs;
-      }
-      return result;
+      return withDocs(await getChanges(absPath(p, 'folder'), str(p, 'base', true) || null, int(p, 'offset', 0)));
     },
 
     'changes.diff': async (p) => await getFileDiff(absPath(p, 'folder'), p.path, str(p, 'base', true) || null),
+
+    // several folders in one call, one after another (never in parallel), a folder that cannot be read answers {error, code}
+    'changes.many': async (p) => {
+      const folders = Array.isArray(p.folders) ? p.folders.slice(0, 40) : [];
+      const results: unknown[] = [];
+      for (const raw of folders) {
+        const one = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+        try {
+          const folder = absPath(one, 'folder'), base = str(one, 'base', true) || null;
+          if (one.counts === true) results.push(await getCounts(folder, base));
+          else results.push(withDocs(await getChanges(folder, base, int(one, 'offset', 0))));
+        } catch (error) {
+          results.push({ error: error instanceof Error ? error.message : String(error), code: (error as { code?: string }).code ?? 'failed' });
+        }
+      }
+      return { results };
+    },
 
     'changes.branchEntries': async (p) => {
       const found = await locate(absPath(p, 'folder'));

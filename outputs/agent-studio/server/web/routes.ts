@@ -222,6 +222,8 @@ export const ROUTE_LIST: readonly [string, string, string, RouteKind][] = [
   ['GET', '/api/live/branch', 'read', 'get'],
   ['GET', '/api/live/changes', 'read', 'get'],
   ['GET', '/api/live/changes/file', 'read', 'get'],
+  ['GET', '/api/live/project/changes', 'read', 'get'], // the project's Changes: main plus its active worktrees (right panel)
+  ['GET', '/api/live/project/changes/file', 'read', 'get'], // one file of a worktree section, by record id
   ['GET', '/api/live/conversation-state', 'read', 'get'],
   ['GET', '/api/live/editors', 'read', 'get'],
   ['GET', '/api/live/folders/check', 'read', 'get'],

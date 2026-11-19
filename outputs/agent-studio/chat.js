@@ -1180,6 +1180,7 @@
     window.AgentSidebarUI?.sync(conversations, selected);
     window.AgentWorkspaceUI?.sync(conversations, selected);
     renderProjectActivity(); // a chat that started or stopped working joins or leaves Activity
+    noteProjectTurns();
     const org = window.AgentOrganizeUI;
     org?.syncHeader(selected);
     const q = '';
@@ -1392,19 +1393,27 @@
             id: current || selected.provider + ':' + selected.id,
             busy: !!(current && snapshot && !snapshot.closed && snapshot.busy),
             cwd: selected.cwd || '',
-            discarded: isDiscarded(selected),
-            folder: worksInFolder(selected),
+            key: selected.key || '',
+            titleFor: changesTitleFor,
           }
         : null,
     );
   }
-  // A chat that works in the project folder (build plan 1.4): no live.worktree (nor a remembered one) and not a helper. The
-  // Changes tab gives it the fixed folder header and footer; the server's data.worktree still wins there.
-  function worksInFolder(c) {
-    if (!c || isDiscarded(c)) return false;
-    const l = c.live;
-    if (l && l.swarm && l.swarm.role === 'helper') return false;
-    return !(c.worktree || (l && l.worktree) || (c.recovered && c.recovered.worktree));
+  // The Changes tab names the parent chat of a worktree section (its live id or lasting key) by that chat's title.
+  function changesTitleFor(k) {
+    const c = k && conversations.find((x) => x.live?.id === k || x.key === k || aliasKey(x) === k);
+    return c ? titleOf(c) : '';
+  }
+  // Any chat of the project ending a turn refreshes the Changes numbers (the chips count the project): a stamp of the turn ends.
+  function noteProjectTurns() {
+    const p = panelProject();
+    if (!p.key) return;
+    const chats = [];
+    for (const c of conversations) {
+      const at = c.live?.attention?.turnEndedAt;
+      if (at && projectOfChat(c) === p.key) chats.push({ key: aliasKey(c), turnEndedAt: String(at) });
+    }
+    window.AgentChangesUI?.turns?.(p.key, window.AgentChangesUI.turnStamp(chats));
   }
   // Open elsewhere (Codex chats only): the header's "Let another app open this chat" icon. Codex lets one app write a chat at a time, so
   // this lets go of it now (AIB takes it back when you send or choose Open here). A working chat is left alone, and the line says so.

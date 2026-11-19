@@ -1,7 +1,8 @@
 'use strict';
-/* Changes tab (phase 2, read-only): the right column gets "Activity | Changes N" tabs. Changes lists what git sees as uncommitted
-   for the chat's folder and shows each file as an accordion row that opens its own unified diff right under it (several can be open). Data comes from GET /api/live/changes and /changes/file
-   (changes.py). No polling unless the Changes tab is visible and the agent is working. The pure helpers at the top have node tests. */
+/* Changes tab: the right column's "Activity | Changes N | Artifacts" tabs. Changes is the PROJECT's (design project-right-panel, slice S2):
+   VS Code Source Control style, the project folder first, then one section per worktree of an active subagent or helper, then a
+   folded "Left over" group. Each file is an accordion row that opens its own unified diff right under it (several can be open).
+   Data comes from GET /api/live/project/changes (one read) and /changes/file (changes.ts). The pure helpers have node tests. */
 (function (root) {
   const TABS = ['activity', 'changes', 'artifacts'];
   const MINUS = '\u2212';
@@ -146,21 +147,6 @@
     const listed = ((data && data.files) || []).length;
     return Math.max(0, num(t.files) - (listed - s.files.length)) + s.docs.length;
   }
-  /* The Changes tab only shows what changed: no Merge, no Discard, for any chat (owner, 2026-11-16: "these buttons will never
-     exist for anything anymore"). Chat-first: a chat's work is merged by asking its agent (merge_into_project); a helper's lands on
-     its own at the main chat's turn end. A chat that works in the project folder (build plan 1.4) gets one fixed header line and
-     one fixed footer line (no condition, so nothing toggles [SF 8]). An old chat that still has its own copy (the server sends
-     data.worktree, a studio/chat-* branch) keeps the branch view and gets a footer line that points at its agent. chat.folder comes
-     from chat.js (an open chat without live.worktree that is not a helper). */
-  const FOLDER_SCOPE = 'Project folder';
-  const FOLDER_FOOT =
-    "Nothing to merge: edits go straight into the project folder, from any chat. Ask the agent to commit or undo.";
-  const COPY_FOOT = 'This chat works in its own copy. To bring its work into the project, ask its agent to merge it.';
-  const isFolderView = (chat, data) =>
-    !!(chat && chat.folder && !chat.discarded && !(data && (data.worktree || data.git === false || data.unknown)));
-  /* An old copy chat (not a helper: a helper's work lands by itself) with changes in its branch view. */
-  const isCopyView = (data) =>
-    !!(data && data.git && data.worktree && /^studio\/(?!helper-)/.test(data.worktree.branch || '') && (data.files || []).length);
   /* The footer of the Changes tab: one read-only status line (the folder line or the copy line). */
   function footer(doc) {
     const make = (tag, cls) => {
@@ -179,11 +165,6 @@
     foot.append(status);
     return { foot, status, note, folder };
   }
-  /* Which folder a Changes reply is about: two chats with the same key see the same files (two chats in the project folder). A reply
-     without a root (an older server) is its own. */
-  let anon = 0;
-  const folderKey = (data) =>
-    data && data.root ? [data.scope || '', String(data.root), data.prefix || ''].join('|') : 'anon:' + ++anon;
   /* Narrow strip chip. */
   const stripText = (n) => (num(n) ? num(n) + ' changed' : '');
   /* Notes shown above a diff when the picture is not the whole story. */
@@ -218,9 +199,68 @@
     }
     return s;
   }
-  /* Poll every 10 s only while you are looking at Changes and the agent works, or, for a chat in the project folder (shared: any
-     chat's edits land there and show here), while you are looking at Changes at all. */
-  const shouldPoll = (o) => !!(o && o.tab === 'changes' && o.visible && (o.busy || o.shared));
+  /* The panel is the project's (owner, 2026-11-18): Changes shows the project folder first, then one section per worktree an
+     ACTIVE subagent or helper of any chat of the project works in, and a folded "Left over" group for worktrees whose work never
+     landed. No Merge, no Discard, no Commit (owner, 2026-11-16: "these buttons will never exist for anything anymore"): the agent
+     lands or undoes work when asked in chat. One server read gives all of it (GET /api/live/project/changes). */
+  const FOLDER_FOOT =
+    'Nothing to merge: edits go straight into the project folder, from any chat. Ask the agent to commit or undo.';
+  const WHY = {
+    stopped: 'Stopped before its work landed',
+    refused: 'Its work did not land',
+    kept: 'Files kept in its worktree',
+  };
+  const LEFT_HINT = 'Work these agents left that never reached the project folder. Ask the agent in chat to land or undo it.';
+  /* Poll every 10 s, only while you are looking at the Changes tab (the badge and chips refresh when a turn ends instead). */
+  const shouldPoll = (o) => !!(o && o.tab === 'changes' && o.visible);
+  /* The files of the project: main's (a doc counts once) plus those of each active worktree section. Left-over work is not counted:
+     it is not changing the project. Lines of new files that were not read show as "+N+" (partial). */
+  function projectTotals(r) {
+    const out = { files: 0, added: 0, removed: 0 };
+    if (!r || !r.main || !r.main.git) return out;
+    const add = (sec, files) => {
+      const c = sec.counts || {};
+      out.files += files;
+      out.added += num(c.added);
+      out.removed += num(c.removed);
+      if (c.partial) out.partial = true;
+    };
+    add(r.main, r.main.changes ? shownCount(r.main.changes) : num((r.main.counts || {}).files));
+    for (const s of r.sections || []) add(s, num((s.counts || {}).files));
+    return out;
+  }
+  /* "3 files +12 −4" parts of a section head. */
+  function sectionSum(sec) {
+    const c = (sec && sec.counts) || {},
+      files = sec && sec.changes ? shownCount(sec.changes) : num(c.files);
+    return { files: plural(files, 'file', 'files'), added: '+' + num(c.added) + (c.partial ? '+' : ''), removed: MINUS + num(c.removed), n: files };
+  }
+  /* The sub-line of a worktree section: who works there ("Subagent of “Chat”"), its branch, and why it was left over. */
+  function sectionSub(sec, parentTitle) {
+    if (!sec || sec.kind === 'main') return sec && sec.branch ? 'Branch ' + sec.branch : '';
+    const who = sec.kind === 'helper' ? 'Helper' + (sec.provider ? ' (' + sec.provider + ')' : '') : 'Subagent';
+    const bits = [who + (parentTitle ? ' of “' + parentTitle + '”' : '')];
+    if (sec.branch) bits.push(sec.branch);
+    if (sec.state === 'left' && WHY[sec.why]) bits.push(WHY[sec.why]);
+    return bits.join(' · ');
+  }
+  /* Query of a read: the sections the user folded (default open) and the left-over ones unfolded (default folded). */
+  const foldQuery = (fold, unfold) => ({ fold: [...(fold || [])].sort().join(','), unfold: [...(unfold || [])].sort().join(',') });
+  /* A section shows its files unless the user folded it; a left-over one only when the user unfolded it. */
+  const wantOpen = (sec, fold, unfold) =>
+    sec && sec.state === 'left' ? !!unfold && unfold.has(sec.id) : !(fold && fold.has(sec && sec.id));
+  /* Section ids to keep after a read: ids of folds the reply no longer has are dropped. */
+  const keepIds = (set, resp) => {
+    const ids = new Set(['main', ...((resp && resp.sections) || []).concat((resp && resp.left) || []).map((s) => s.id)]);
+    return new Set([...(set || [])].filter((id) => ids.has(id)));
+  };
+  /* Stamp of the turns that ended in the project: it changes when any chat's turn ends. */
+  const turnStamp = (chats) =>
+    (chats || [])
+      .filter((c) => c && c.turnEndedAt)
+      .map((c) => c.key + '=' + c.turnEndedAt)
+      .sort()
+      .join(';');
   /* A refresh is due when a turn just ended (busy true -> false). */
   const turnEnded = (was, now) => !!was && !now;
   /* Accordion state: the list of open file paths. Toggling adds or removes one; pruning drops files that left the list. */
@@ -234,7 +274,6 @@
     return (open || []).filter((p) => have.has(p));
   };
   const pure = {
-    folderKey,
     moreLeft,
     moreText,
     docPagesText,
@@ -261,6 +300,13 @@
     tabState,
     shouldPoll,
     turnEnded,
+    projectTotals,
+    sectionSum,
+    sectionSub,
+    foldQuery,
+    wantOpen,
+    keepIds,
+    turnStamp,
   };
 
   /* ---- page part --------------------------------------------------------------------------------------------------- */
@@ -279,19 +325,10 @@
       if (txt != null) n.textContent = txt;
       return n;
     };
-    const store = {
-      get(k) {
-        try {
-          return win.localStorage.getItem(k);
-        } catch (e) {
-          return null;
-        }
-      },
-    };
     const POLL_MS = 10000,
       MIN_GAP = 1200;
     let state = { tab: 'activity', expanded: false };
-    let chat = { id: '', busy: false };
+    let chat = { id: '', busy: false, titleFor: null };
     /* The panel is the project's (owner, 2026-11-18): the tab it shows (Activity / Changes / Artifacts) is remembered per project
        and per window, kept over a restart, and never changes when you open another chat of the same project or move split focus.
        tabProject: the project the panel shows now. */
@@ -326,20 +363,26 @@
         return '';
       }
     };
-    let data = null,
-      loadedFor = '',
+    /* What the project's Changes holds: the last reply, which sections the user folded, which left-over ones they unfolded, the
+       open diffs per section and their cache. All of it is the project's: another chat of the project changes none of it. */
+    let resp = null,
       error = '',
       seq = 0,
       lastFetch = 0,
       timer = 0,
       loading = false;
-    let open = [],
+    let fold = new Set(),
+      unfold = new Set(),
+      leftOpen = false,
+      open = new Map(),
       cache = new Map(),
       detailSeq = 0,
       autoOpened = false,
       token = '',
       pages = 1,
-      loadingMore = false;
+      loadingMore = false,
+      turnProject = '',
+      turnSeen = '';
     const editors = () => {
       const e = win.AgentEditors;
       return e && typeof e.open === 'function' ? e : null;
@@ -374,7 +417,7 @@
     const artBadge = el('span', 'pane-badge');
     artBadge.hidden = true;
     tabArtifacts.append(artBadge);
-    const expandBtn = el('button', 'pane-expand', '\u21e4');
+    const expandBtn = el('button', 'pane-expand', '⇤');
     expandBtn.type = 'button';
     expandBtn.title = 'Widen this column';
     expandBtn.setAttribute('aria-label', 'Widen this column');
@@ -390,9 +433,10 @@
     view.setAttribute('aria-labelledby', 'paneTab-changes');
     view.hidden = true;
     const bar = el('div', 'cg-bar');
-    const scopeEl = el('span', 'cg-scope', 'Uncommitted'),
+    const scopeEl = el('span', 'cg-scope', 'Project'),
       modeEl = el('span', 'cg-mode', 'Unified');
-    const refresh = el('button', 'cg-refresh', '\u21bb');
+    scopeEl.title = 'The project folder and the worktrees of its running subagents and helpers';
+    const refresh = el('button', 'cg-refresh', '↻');
     refresh.type = 'button';
     refresh.title = 'Refresh changes';
     refresh.setAttribute('aria-label', 'Refresh changes');
@@ -401,12 +445,16 @@
     const note = el('p', 'cg-note');
     note.setAttribute('role', 'status');
     note.hidden = true;
-    const list = el('div', 'cg-files');
-    list.setAttribute('role', 'list');
-    /* One footer row: a read-only status line. */
+    /* The one scroll area: the project folder, the worktree sections, the "Left over" group. */
+    const box = el('div', 'cg-project');
+    box.id = 'projectChanges';
+    box.setAttribute('role', 'list');
+    box.hidden = true;
+    /* One footer row: a read-only status line, the same for every chat. */
     const parts = footer(doc),
       foot = parts.foot;
-    view.append(bar, note, list, foot);
+    parts.folder.textContent = FOLDER_FOOT;
+    view.append(bar, note, box, foot);
     const bodyEl = $('activityBody');
     bodyEl && bodyEl.nextSibling ? pane.insertBefore(view, bodyEl.nextSibling) : pane.append(view);
     /* Artifacts tab (artifacts-ui.js owns what is inside the panel). */
@@ -419,12 +467,12 @@
     const AR = () =>
       win.AgentArtifactsUI && typeof win.AgentArtifactsUI.mount === 'function' ? win.AgentArtifactsUI : null;
 
-    /* -- header chip and narrow strip chip -- */
+    /* -- header chip and narrow strip chip: both count the project (its folder and its running worktrees) -- */
     const chip = el('button', 'changes-chip');
     chip.type = 'button';
     chip.id = 'changesChip';
     chip.hidden = true;
-    chip.title = 'Show the changes in the project folder';
+    chip.title = 'Show the changes in the project';
     const actions = doc.querySelector('.header-actions');
     if (actions) actions.insertBefore(chip, actions.firstChild);
     const stripChip = el('span', 'ac-changed');
@@ -475,20 +523,35 @@
         .map(([k, v]) => k + '=' + encodeURIComponent(v))
         .join('&');
 
-    /* "Show the next 300": one more page, appended to what is listed. */
+    const mainSec = () => (resp && resp.main) || null;
+    /* main's data in the shape the Files view reads (git, files, prefix, root); null before the first read */
+    const mainData = () => {
+      const m = mainSec();
+      return m && m.changes ? m.changes : m && m.git === false ? { git: false } : null;
+    };
+    const secsOf = (r) => (r ? [r.main, ...(r.sections || []), ...(r.left || [])].filter(Boolean) : []);
+    const secById = (id) => secsOf(resp).find((s) => s.id === id) || null;
+    const filesOf = (sec) => (sec && sec.changes && sec.changes.git ? splitDocFiles(sec.changes).files : []);
+    const files = () => filesOf(mainSec());
+    const openOf = (id) => open.get(id) || [];
+    const keyOf = (id, path) => id + '\n' + path;
+
+    /* "Show the next 300": one more page of the project folder's files, appended to what is listed. */
     async function loadMore() {
-      if (!chat.id || !data || !moreLeft(data) || loadingMore) return;
-      const id = chat.id,
-        mine = seq,
-        before = data.files.length;
+      const m = mainSec(),
+        id = chat.id;
+      if (!id || !m || !m.changes || !moreLeft(m.changes) || loadingMore) return;
+      const mine = seq,
+        before = m.changes.files.length;
       loadingMore = true;
       paintList(true);
       try {
-        const more = await api('/api/live/changes?' + q({ id, scope: 'uncommitted', offset: data.files.length }));
-        if (mine !== seq || id !== chat.id || !data) return;
+        const more = await api('/api/live/changes?' + q({ id, scope: 'uncommitted', offset: m.changes.files.length }));
+        const cur = mainSec();
+        if (mine !== seq || id !== chat.id || !cur || !cur.changes) return;
         if (more.git && (more.files || []).length) {
           pages++;
-          data = Object.assign({}, data, more, { files: data.files.concat(more.files), offset: 0 });
+          cur.changes = Object.assign({}, cur.changes, more, { files: cur.changes.files.concat(more.files), offset: 0 });
         }
       } catch (e) {
         if (mine === seq) error = e.message;
@@ -497,20 +560,13 @@
       }
       paintAll();
       const ae = doc.activeElement;
-      if (!ae || !list.contains(ae)) {
-        const first = list.querySelectorAll('.cg-file')[before]; // the first newly listed file, for the keyboard
+      if (!ae || !box.contains(ae)) {
+        const first = box.querySelectorAll('[data-sec="main"] .cg-file')[before]; // the first newly listed file, for the keyboard
         if (first) first.focus({ preventScroll: true });
       }
     }
     async function load(force) {
-      if (!chat.id) {
-        return;
-      }
-      if (chat.discarded) {
-        data = null;
-        paintAll();
-        return;
-      }
+      if (!chat.id) return;
       const now = Date.now();
       if (!force && now - lastFetch < MIN_GAP) return;
       lastFetch = now;
@@ -519,84 +575,98 @@
       loading = true;
       paintBar();
       try {
-        const next = await api('/api/live/changes?' + q({ id, scope: 'uncommitted' }));
+        const next = await api('/api/live/project/changes?' + q(Object.assign({ id }, foldQuery(fold, unfold))));
         if (mine !== seq || id !== chat.id) return;
         /* The pages you asked for with "Show the next 300" stay listed across refreshes. */
-        for (let p = 1; p < pages && next.git && moreLeft(next); p++) {
-          const more = await api('/api/live/changes?' + q({ id, scope: 'uncommitted', offset: next.files.length }));
+        const m = next.main;
+        for (let p = 1; p < pages && m && m.changes && moreLeft(m.changes); p++) {
+          const more = await api('/api/live/changes?' + q({ id, scope: 'uncommitted', offset: m.changes.files.length }));
           if (mine !== seq || id !== chat.id) return;
           if (!more.git || !(more.files || []).length) break;
-          Object.assign(next, more, { files: next.files.concat(more.files), offset: 0 });
+          m.changes = Object.assign({}, m.changes, more, { files: m.changes.files.concat(more.files), offset: 0 });
         }
-        data = next;
-        loadedFor = id;
+        resp = next;
+        fold = keepIds(fold, next);
+        unfold = keepIds(unfold, next);
         error = '';
       } catch (e) {
         if (mine !== seq || id !== chat.id) return;
         error = e.status === 404 ? '' : e.message;
-        data = e.status === 404 ? { git: null, unknown: true } : null;
-        loadedFor = id;
+        resp = e.status === 404 ? { unknown: true, main: { git: null, counts: {} }, sections: [], left: [] } : null;
       } finally {
         if (mine === seq) loading = false;
       }
       paintAll();
-      if (state.tab === 'changes') ensureOpen();
+      ensureOpen();
+      // a section the user unfolded while this read ran, or one that is new: its files come with the next read
+      if (resp && secsOf(resp).some((s) => s.git && wantOpen(s, fold, unfold) && !s.changes && s.id !== 'main')) load(true);
     }
-    /* Lazy: a file's diff is fetched the first time it is opened, and again when its numbers change while it is open. */
-    async function loadDetail(f) {
+    /* Lazy: a file's diff is fetched the first time it is opened, and again when its numbers change while it is open. A worktree's
+       file is asked by its section id (a record id), never by a path of the worktree. */
+    async function loadDetail(sec, f) {
       const path = f.path,
         sig = fileSignature(f),
         id = chat.id,
+        k = keyOf(sec.id, path),
         mine = ++detailSeq;
-      const prev = cache.get(path);
-      cache.set(path, { sig, seq: mine, loading: true, d: (prev && prev.d) || null, err: '' });
+      const prev = cache.get(k);
+      cache.set(k, { sig, seq: mine, loading: true, d: (prev && prev.d) || null, err: '' });
       paintList();
       let d = null,
         err = '';
       try {
-        d = await api('/api/live/changes/file?' + q({ id, path, scope: 'uncommitted' }));
+        d = await api(
+          sec.id === 'main'
+            ? '/api/live/changes/file?' + q({ id, path, scope: 'uncommitted' })
+            : '/api/live/project/changes/file?' + q({ id, section: sec.id, path }),
+        );
       } catch (e) {
         err = e.message || 'Request failed';
       }
-      const cur = cache.get(path);
+      const cur = cache.get(k);
       if (!cur || cur.seq !== mine || id !== chat.id) return;
-      cache.set(path, { sig, seq: mine, loading: false, d: err ? (prev && prev.d) || null : d, err });
+      cache.set(k, { sig, seq: mine, loading: false, d: err ? (prev && prev.d) || null : d, err });
       paintList();
     }
-    const files = () => splitDocFiles(data).files;
-    const needsLoad = (f) => {
-      const c = cache.get(f.path);
+    const needsLoad = (sec, f) => {
+      const c = cache.get(keyOf(sec.id, f.path));
       return !c || c.sig !== fileSignature(f);
     };
     function ensureOpen() {
-      const fs = files();
-      open = pruneOpen(open, fs);
-      for (const p of [...cache.keys()]) if (!fs.some((f) => f.path === p)) cache.delete(p);
-      if (!autoOpened && fs.length) {
-        autoOpened = true;
-        if (!open.length) open = [fs[0].path];
+      if (!resp) return;
+      for (const sec of secsOf(resp)) {
+        const fs = filesOf(sec);
+        open.set(sec.id, pruneOpen(openOf(sec.id), fs));
+        for (const k of [...cache.keys()]) if (k.startsWith(sec.id + '\n') && !fs.some((f) => keyOf(sec.id, f.path) === k)) cache.delete(k);
+        if (sec.id === 'main' && !autoOpened && fs.length) {
+          autoOpened = true;
+          if (!openOf('main').length) open.set('main', [fs[0].path]);
+        }
+        for (const f of fs) if (openOf(sec.id).includes(f.path) && needsLoad(sec, f)) loadDetail(sec, f);
       }
-      for (const f of fs) if (open.includes(f.path) && needsLoad(f)) loadDetail(f);
       paintList();
     }
-    function toggle(f) {
-      open = toggleOpen(open, f.path);
-      autoOpened = true;
-      if (open.includes(f.path) && needsLoad(f)) loadDetail(f);
+    function toggleFile(sec, f) {
+      open.set(sec.id, toggleOpen(openOf(sec.id), f.path));
+      if (sec.id === 'main') autoOpened = true;
+      if (openOf(sec.id).includes(f.path) && needsLoad(sec, f)) loadDetail(sec, f);
       paintList();
+    }
+    /* The fold caret of a section (and of the Left over group): a visible button, never a menu. */
+    function toggleSection(sec) {
+      const set = sec.state === 'left' ? unfold : fold,
+        was = wantOpen(sec, fold, unfold);
+      if (set.has(sec.id)) set.delete(sec.id);
+      else set.add(sec.id);
+      paintList();
+      if (!was && sec.id !== 'main' && !sec.changes) load(true); // unfolded: its files are read now
     }
 
     /* -- painting -- */
     function paintBar() {
-      scopeEl.textContent = isFolderView(chat, data)
-        ? FOLDER_SCOPE
-        : data && data.scope === 'branch'
-          ? "This chat's changes"
-          : 'Uncommitted';
-      scopeEl.title = scopeEl.textContent;
-      const t = data && data.git ? totalsOf(data) : null;
+      const t = projectTotals(resp);
       sum.replaceChildren();
-      if (t && t.files) {
+      if (t.files) {
         sum.append(
           el('span', '', plural(t.files, 'file', 'files') + ' '),
           el('span', 'cg-add', pure.addText({ added: t.added, partial: t.partial })),
@@ -608,23 +678,8 @@
       refresh.classList.toggle('spin', loading);
     }
     function paintBadges() {
-      const t = data && data.git ? totalsOf(data) : null;
-      // split view: the files of both panes' chats (the same whichever has focus). Two chats in the project folder see the same
-      // files: those count once (folderKey).
-      const n = splitOn()
-        ? (() => {
-            const seen = new Set();
-            return SP.keys.reduce((m, k) => {
-              const x = SP.secs.get(k),
-                key = x && x.data && x.data.git ? folderKey(x.data) : '';
-              if (!key || seen.has(key)) return m;
-              seen.add(key);
-              return m + shownCount(x.data);
-            }, 0);
-          })()
-        : t
-          ? shownCount(data)
-          : 0;
+      const t = projectTotals(resp),
+        n = t.files;
       badgeEl.textContent = badge(n);
       badgeEl.hidden = !n;
       tabChanges.setAttribute('aria-label', 'Changes' + (n ? ', ' + plural(n, 'file', 'files') + ' changed' : ''));
@@ -632,7 +687,7 @@
       chip.replaceChildren();
       if (c) {
         chip.append(
-          el('span', '', c.label + ' \u00b7 ' + c.files + ' '),
+          el('span', '', c.label + ' · ' + c.files + ' '),
           el('span', 'cg-add', c.added),
           doc.createTextNode(' '),
           el('span', 'cg-del', c.removed),
@@ -642,59 +697,52 @@
       stripChip.textContent = stripText(n);
       stripChip.hidden = !n;
     }
-    function paintFoot() {
-      const text = isFolderView(chat, data) ? FOLDER_FOOT : isCopyView(data) ? COPY_FOOT : '';
-      parts.folder.textContent = text;
-      parts.folder.hidden = !text;
-      foot.hidden = parts.status.hidden = !text;
-    }
     function paintNote() {
+      const m = mainSec();
       let msg = '';
-      if (!chat.id) msg = 'Open a chat to see what it changed.';
-      else if (chat.discarded)
-        msg = 'This chat’s changes were discarded with its branch: there is nothing left to show.';
-      else if (data && data.git === false) msg = 'No git here: the Changes view needs a git repository.';
-      else if (data && data.unknown) msg = 'Changes are not available for this chat yet.';
+      if (!chat.id) msg = 'Open a chat to see what changed in its project.';
+      else if (m && m.git === false) msg = 'No git here: the Changes view needs a git repository.';
+      else if (resp && resp.unknown) msg = 'Changes are not available for this project yet.';
       else if (error) msg = 'Could not read the changes: ' + error;
-      else if (!data) msg = 'Reading changes\u2026';
-      else if (data.git && !files().length) msg = 'No uncommitted changes.';
+      else if (!resp) msg = 'Reading changes…';
       note.textContent = msg;
       note.hidden = !msg;
       /* More files than listed: the button at the end of the list shows the rest. Only when git's own output was cut is there no way on. */
-      if (data && data.git && data.truncated && !moreLeft(data)) {
-        note.textContent =
-          (msg ? msg + ' ' : '') + 'Git reported more changes than AIB can read; some files are not listed.';
+      const d = mainData();
+      if (d && d.git && d.truncated && !moreLeft(d)) {
+        note.textContent = (msg ? msg + ' ' : '') + 'Git reported more changes than AIB can read; some files are not listed.';
         note.hidden = false;
       }
+      foot.hidden = parts.status.hidden = parts.folder.hidden = !(m && m.git);
     }
-    function rowFor(f) {
+    function rowFor(sec, f) {
       const info = statusInfo(f.status),
         p = splitPath(f.path),
-        isOpen = open.includes(f.path);
+        isOpen = openOf(sec.id).includes(f.path);
       const item = el('div', 'cg-item' + (isOpen ? ' open' : ''));
       item.setAttribute('role', 'listitem');
       item.dataset.path = f.path;
       const b = el('button', 'cg-file' + (isOpen ? ' open' : ''));
       b.type = 'button';
       b.dataset.path = f.path;
+      b.dataset.fk = 'f:' + keyOf(sec.id, f.path);
       b.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
       b.title = f.path + (f.oldPath ? '\n(was ' + f.oldPath + ')' : '') + '\n' + info.label;
       const path = el('span', 'cg-path'),
         inner = el('span', 'cg-path-in');
       inner.append(el('span', 'cg-path-dir', p.dir), el('b', '', p.base)); // the folder part shrinks first, the name stays
       path.append(inner);
-      const caret = el('span', 'cg-caret', isOpen ? '\u25be' : '\u25b8');
+      const caret = el('span', 'cg-caret', isOpen ? '▾' : '▸');
       caret.setAttribute('aria-hidden', 'true');
       b.append(caret, el('span', 'cg-st ' + info.cls, info.letter), path);
       if (f.binary) b.append(el('span', 'cg-bin', 'binary'));
       else b.append(el('span', 'cg-add', addText(f)), el('span', 'cg-del', delText(f)));
-      b.onclick = () => toggle(f);
+      b.onclick = () => toggleFile(sec, f);
       item.append(b);
-      if (isOpen) item.append(bodyFor(f));
+      if (isOpen) item.append(bodyFor(sec, f));
       return item;
     }
-    let listSig = '';
-    /* A doc: one row, "2 pages changed". Clicked, the doc opens in the Artifacts tab; no diff in v1. */
+    /* A doc: one row, "2 pages changed". Clicked, the doc opens in the Docs view; no diff in v1. */
     function rowForDoc(d) {
       const item = el('div', 'cg-item cg-doc');
       item.setAttribute('role', 'listitem');
@@ -702,6 +750,7 @@
       const b = el('button', 'cg-file cg-doc-btn');
       b.type = 'button';
       b.dataset.path = d.dir;
+      b.dataset.fk = 'd:' + d.doc;
       b.title = (d.title || d.doc) + ' (doc)\n' + docPagesText(d.pages) + '\nClick: open the doc';
       const path = el('span', 'cg-path'),
         inner = el('span', 'cg-path-in');
@@ -718,43 +767,124 @@
       return item;
     }
     function moreRow() {
-      const left = moreLeft(data);
+      const d = mainData(),
+        left = d ? moreLeft(d) : 0;
       if (!left) return null;
       const b = el('button', 'cg-more', loadingMore ? 'Listing…' : moreText(left));
       b.type = 'button';
       b.disabled = loadingMore;
+      b.dataset.fk = 'more';
       b.addEventListener('click', loadMore);
       return b;
     }
+    /* One section: a visible fold button as its head (caret, name, counts), the sub-line, then its files. */
+    function sectionNode(sec) {
+      const want = wantOpen(sec, fold, unfold),
+        s = sectionSum(sec);
+      const root_ = el('section', 'cg-sec' + (sec.id === 'main' ? ' cg-main' : '') + (sec.state === 'left' ? ' cg-leftsec' : ''));
+      root_.dataset.sec = sec.id;
+      root_.dataset.kind = sec.kind;
+      root_.setAttribute('role', 'listitem');
+      const head = el('button', 'cg-sec-head');
+      head.type = 'button';
+      head.dataset.fk = 'h:' + sec.id;
+      head.setAttribute('aria-expanded', want ? 'true' : 'false');
+      head.title = (want ? 'Fold ' : 'Unfold ') + sec.name;
+      const caret = el('span', 'cg-caret', want ? '▾' : '▸');
+      caret.setAttribute('aria-hidden', 'true');
+      const nums = el('span', 'cg-sec-sum');
+      if (sec.git) nums.append(el('span', '', s.files + ' '), el('span', 'cg-add', s.added), doc.createTextNode(' '), el('span', 'cg-del', s.removed));
+      head.append(caret, el('span', 'cg-sec-name', sec.name), nums);
+      head.onclick = () => toggleSection(sec);
+      root_.append(head);
+      let who = '';
+      try {
+        who = sec.parent && chat.titleFor ? chat.titleFor(sec.parent.live || sec.parent.lasting) || chat.titleFor(sec.parent.lasting) || '' : '';
+      } catch (e) {}
+      const subline = sectionSub(sec, who);
+      if (subline) root_.append(el('div', 'cg-sec-sub', subline));
+      if (!want) return root_;
+      const c = sec.changes;
+      if (!sec.git) {
+        root_.append(el('p', 'cg-sec-none', 'Could not read this worktree.'));
+        return root_;
+      }
+      if (!c) {
+        root_.append(el('p', 'cg-sec-none', 'Reading…'));
+        return root_;
+      }
+      const fs = filesOf(sec),
+        ds = sec.id === 'main' ? docsOfData(c) : [];
+      if (!fs.length && !ds.length) {
+        root_.append(el('p', 'cg-sec-none', sec.id === 'main' ? 'No uncommitted changes.' : 'No changes yet.'));
+        return root_;
+      }
+      const lst = el('div', 'cg-files');
+      lst.setAttribute('role', 'list');
+      lst.append(...ds.map(rowForDoc), ...fs.map((f) => rowFor(sec, f)));
+      root_.append(lst);
+      if (sec.id !== 'main' && moreLeft(c)) root_.append(el('p', 'cg-sec-none', 'Showing the first ' + fs.length + ' of ' + num(c.filesTotal) + ' files.'));
+      if (sec.id === 'main') {
+        const more = moreRow();
+        if (more) root_.append(more);
+      }
+      return root_;
+    }
+    function leftNode(list) {
+      const g = el('section', 'cg-left');
+      g.dataset.sec = 'left';
+      g.setAttribute('role', 'listitem');
+      const head = el('button', 'cg-sec-head cg-left-head');
+      head.type = 'button';
+      head.dataset.fk = 'h:left';
+      head.setAttribute('aria-expanded', leftOpen ? 'true' : 'false');
+      head.title = (leftOpen ? 'Fold' : 'Unfold') + ' Left over';
+      const caret = el('span', 'cg-caret', leftOpen ? '▾' : '▸');
+      caret.setAttribute('aria-hidden', 'true');
+      head.append(caret, el('span', 'cg-sec-name', 'Left over (' + list.length + ')'));
+      head.onclick = () => {
+        leftOpen = !leftOpen;
+        paintList();
+      };
+      g.append(head);
+      if (leftOpen) {
+        g.append(el('div', 'cg-sec-sub', LEFT_HINT));
+        for (const sec of list) g.append(sectionNode(sec));
+      }
+      return g;
+    }
+    let listSig = '';
     function paintList(force) {
-      const fs = files(),
-        ds = docsOfData(data);
-      const sig = JSON.stringify([
-        ds.map((d) => [d.doc, d.title, d.pages, d.paths.length]),
-        force ? Math.random() : 0,
-        moreLeft(data),
-        loadingMore,
-        open,
-        fs.map(fileSignature),
-        fs.map((f) => {
-          const c = cache.get(f.path);
-          return c ? [c.sig, c.loading ? 1 : 0, c.err, c.d ? 1 : 0] : 0;
-        }),
-      ]);
+      const m = mainSec(),
+        sig = JSON.stringify([
+          resp,
+          [...fold],
+          [...unfold],
+          leftOpen,
+          [...open.entries()],
+          [...cache.entries()].map(([k, c]) => [k, c.sig, c.loading ? 1 : 0, c.err, c.d ? 1 : 0]),
+          loadingMore,
+          force ? Math.random() : 0,
+          !!chat.titleFor,
+        ]);
       if (sig === listSig) return;
       listSig = sig;
-      const top = list.scrollTop,
+      const top = box.scrollTop,
         ae = doc.activeElement,
-        focus = ae && list.contains(ae) ? ae.dataset.path : null;
-      const more = moreRow(),
-        moreHad = ae && ae.classList && ae.classList.contains('cg-more');
-      list.replaceChildren(...ds.map(rowForDoc), ...fs.map(rowFor), ...(more ? [more] : []));
-      list.scrollTop = top;
+        focus = ae && box.contains(ae) ? ae.dataset.fk : null;
+      const nodes = [];
+      if (resp && m && m.git) {
+        nodes.push(sectionNode(m));
+        for (const sec of resp.sections || []) nodes.push(sectionNode(sec));
+        if ((resp.left || []).length) nodes.push(leftNode(resp.left));
+      }
+      box.replaceChildren(...nodes);
+      box.scrollTop = top;
       if (focus) {
-        const n = [...list.querySelectorAll('.cg-file')].find((c) => c.dataset.path === focus);
+        const n = [...box.querySelectorAll('[data-fk]')].find((c) => c.dataset.fk === focus);
         if (n) n.focus({ preventScroll: true });
-      } else if (moreHad && more) more.focus({ preventScroll: true });
-      list.hidden = !fs.length && !ds.length;
+      }
+      box.hidden = !nodes.length;
     }
     function diffRows(h, f, detail) {
       const frag = doc.createDocumentFragment();
@@ -781,7 +911,7 @@
       const ed = editors(),
         line = openLine(h);
       if (ed && f.status !== 'D' && detail && detail.abs) {
-        const b = el('button', 'cg-open', 'Open at line ' + line + ' \u2197');
+        const b = el('button', 'cg-open', 'Open at line ' + line + ' ↗');
         b.type = 'button';
         b.title = 'Open this file at line ' + line + ' in your editor';
         b.onclick = () => {
@@ -805,34 +935,33 @@
       return frag;
     }
     /* The body under an open row: no heading of its own, the row is the heading. */
-    function bodyFor(f) {
-      const box = el('div', 'cg-diff'),
-        c = cache.get(f.path);
-      if (f.oldPath) box.append(el('p', 'cg-was', 'was ' + f.oldPath));
+    function bodyFor(sec, f) {
+      const diff = el('div', 'cg-diff'),
+        c = cache.get(keyOf(sec.id, f.path));
+      if (f.oldPath) diff.append(el('p', 'cg-was', 'was ' + f.oldPath));
       if (!c || (c.loading && !c.d)) {
-        box.append(el('p', 'cg-msg', 'Loading\u2026'));
-        return box;
+        diff.append(el('p', 'cg-msg', 'Loading…'));
+        return diff;
       }
       if (c.err && !c.d) {
-        box.append(el('p', 'cg-msg cg-err', 'Could not read this diff: ' + c.err));
-        return box;
+        diff.append(el('p', 'cg-msg cg-err', 'Could not read this diff: ' + c.err));
+        return diff;
       }
       const detail = c.d || {};
       if (detail.error) {
-        box.append(el('p', 'cg-msg cg-err', 'Could not read this diff: ' + detail.error));
-        return box;
+        diff.append(el('p', 'cg-msg cg-err', 'Could not read this diff: ' + detail.error));
+        return diff;
       }
-      for (const n of diffNotes(detail)) box.append(el('p', 'cg-msg', n));
+      for (const n of diffNotes(detail)) diff.append(el('p', 'cg-msg', n));
       const scroll = el('div', 'cg-lines');
       for (const h of detail.hunks || []) scroll.append(diffRows(h, f, detail));
-      if ((detail.hunks || []).length) box.append(scroll);
-      return box;
+      if ((detail.hunks || []).length) diff.append(scroll);
+      return diff;
     }
     function paintAll() {
       paintBadges();
       paintBar();
       paintNote();
-      paintFoot();
       listSig = '';
       paintList();
     }
@@ -863,7 +992,6 @@
       body.classList.toggle('changes-wide', wide && state.expanded && !narrow());
       if (AR()) AR().setVisible(art && paneVisible());
       schedule();
-      if (SP) spSchedule();
     }
     function show(tab) {
       const was = state.tab;
@@ -876,8 +1004,10 @@
       }
       if (tab === 'artifacts' && was !== 'artifacts' && AR()) AR().shown();
     }
+    /* Refresh rule: every 10 s while the Changes tab is on screen, and nothing while it is not (the badge and chips are refreshed
+       when a chat's turn ends, see turns() and sync()). */
     function schedule() {
-      const poll = () => shouldPoll({ tab: state.tab, visible: paneVisible(), busy: chat.busy, shared: isFolderView(chat, data) });
+      const poll = () => shouldPoll({ tab: state.tab, visible: paneVisible() });
       const want = poll();
       if (want && !timer)
         timer = win.setInterval(() => {
@@ -976,293 +1106,86 @@
       } catch (e) {}
     }
 
-    /* -- chat.js feeds this on every header render: {id, busy} for the open chat, or null -- */
+    /* Everything that is the project's goes when another project is on screen (never for another chat of the same project). */
+    function resetProject() {
+      seq++;
+      detailSeq++;
+      resp = null;
+      error = '';
+      fold = new Set();
+      unfold = new Set();
+      leftOpen = false;
+      open = new Map();
+      cache = new Map();
+      pages = 1;
+      autoOpened = false;
+      listSig = '';
+      lastFetch = 0;
+      turnSeen = '';
+      turnProject = '';
+    }
+    /* -- chat.js feeds this on every header render: {id, busy, cwd, titleFor} for the open chat, or null -- */
     function sync(ctx) {
       const id = ctx && typeof ctx.id === 'string' ? ctx.id : '',
-        busy = !!(ctx && ctx.busy),
-        discarded = !!(ctx && ctx.discarded),
-        folder = !!(ctx && ctx.folder);
+        busy = !!(ctx && ctx.busy);
       const changed = id !== chat.id,
-        ended = turnEnded(chat.busy, busy),
-        gone = discarded && !chat.discarded && !changed,
-        refiled = folder !== !!chat.folder && !changed;
-      chat = { id, busy, discarded, folder };
-      if (refiled && !gone) paintAll();
-      if (gone) {
-        data = null; // the branch is gone: the Changes view says so instead of "not available yet"
-        paintAll();
-      }
+        ended = turnEnded(chat.busy, busy);
+      chat = { id, busy, key: ctx && ctx.key ? ctx.key : '', titleFor: ctx && typeof ctx.titleFor === 'function' ? ctx.titleFor : null };
       if (AR()) AR().sync(id ? { id, busy, cwd: ctx && typeof ctx.cwd === 'string' ? ctx.cwd : '' } : null);
-      // Another project on screen: its own remembered tab. Another chat of the same project, or split focus: the tab stays.
+      // Another project on screen: its own remembered tab and its own Changes. Another chat of the same project, or split focus:
+      // the tab and the Changes stay as they are.
       const pk = panelProjectKey();
+      let moved = false;
       if (pk !== tabProject) {
         tabProject = pk;
+        moved = true;
+        resetProject();
         const back = pk ? savedTabs()[pk] : '';
         state = tabState(state, { type: 'reset' });
         if (back && back !== 'activity') state = tabState(state, { type: 'show', tab: back });
         apply();
         if (state.tab === 'artifacts' && AR() && !changed) AR().shown();
       }
-      if (changed) {
+      if (changed && !id) {
         seq++;
-        detailSeq++;
-        data = null;
-        loadedFor = '';
-        error = '';
-        open = [];
-        cache = new Map();
-        pages = 1;
-        autoOpened = false;
+        resp = null;
         listSig = '';
-        lastFetch = 0;
-        apply();
         paintAll();
-        if (id) load(true);
+      }
+      if (changed) {
         if (state.tab === 'artifacts' && AR()) AR().shown();
+        paintAll();
+        if (id && (moved || !resp)) load(true);
+        else if (id && resp) load(false); // the same project's data stays on screen; a quiet re-read
       } else if (ended && id) load(true);
       schedule();
     }
-    /* -- split view: both panes' chats, in pane order, each with its header, its files and a read-only summary line (option B of
-       the approved mockup, owner 2026-11-15). Nothing here follows focus: each section reads its own chat's changes. -- */
-    var SP = { keys: [], secs: new Map(), timer: 0 }; // var: paintBadges / apply may run before this line
-    const spBox = el('div', 'sp-changes');
-    spBox.id = 'splitChanges';
-    view.append(spBox);
-    function SUI() {
-      return win.AgentSplitUI && win.AgentSplitUI.active && win.AgentSplitUI.active() ? win.AgentSplitUI : null;
-    }
-    function splitOn() {
-      return !!SP && SP.keys.length > 0;
-    }
-    function spSection(key) {
-      let s = SP.secs.get(key);
-      if (s) return s;
-      const rootEl = el('section', 'sp-grp sp-cg');
-      rootEl.dataset.key = key;
-      const head = el('div', 'sp-head'),
-        lst = el('div', 'cg-files sp-files'),
-        none = el('p', 'sp-none', 'No changes in this chat yet');
-      lst.setAttribute('role', 'list');
-      const fp = footer(doc);
-      fp.foot.classList.add('sp-foot');
-      rootEl.append(head, lst, none, fp.foot);
-      s = { key, root: rootEl, head, list: lst, none, fp, data: null, err: '', open: [], cache: new Map(), seq: 0, id: '' };
-      SP.secs.set(key, s);
-      return s;
-    }
-    const spFiles = (s) => (s.data && s.data.git ? splitDocFiles(s.data).files : []);
-    /* A section's count: every changed file, also those past the first page of 300 the section lists (the tab badge's count). */
-    const spCount = (s) => (s.data && s.data.git ? shownCount(s.data) : 0);
-    function spSumLine(s) {
-      const fs = spFiles(s),
-        t = totalsOf(s.data);
-      let a = 0,
-        d = 0;
-      for (const f of fs) {
-        a += num(f.added);
-        d += num(f.removed);
-      }
-      if (t.files > ((s.data && s.data.files) || []).length) {
-        a = num(t.added);
-        d = num(t.removed);
-      }
-      const base = (s.data && s.data.worktree && s.data.worktree.base) || '';
-      return plural(spCount(s), 'file', 'files') + ' · +' + a + (t.partial ? '+' : '') + ' ' + MINUS + d + (base ? ' vs ' + base : '');
-    }
-    function spFoot(s) {
-      const fs = spFiles(s),
-        fp = s.fp;
-      fp.note.textContent = fs.length ? spSumLine(s) : '';
-      // No summary row for a chat with nothing changed.
-      fp.foot.hidden = fp.status.hidden = !fs.length;
-    }
-    function spRow(s, f) {
-      const info = statusInfo(f.status),
-        p = splitPath(f.path),
-        isOpen = s.open.includes(f.path);
-      const item = el('div', 'cg-item' + (isOpen ? ' open' : ''));
-      item.setAttribute('role', 'listitem');
-      item.dataset.path = f.path;
-      const b = el('button', 'cg-file' + (isOpen ? ' open' : ''));
-      b.type = 'button';
-      b.dataset.path = f.path;
-      b.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
-      b.title = f.path + (f.oldPath ? '\n(was ' + f.oldPath + ')' : '') + '\n' + info.label;
-      const path = el('span', 'cg-path'),
-        inner = el('span', 'cg-path-in');
-      inner.append(el('span', 'cg-path-dir', p.dir), el('b', '', p.base));
-      path.append(inner);
-      const caret = el('span', 'cg-caret', isOpen ? '▾' : '▸');
-      caret.setAttribute('aria-hidden', 'true');
-      b.append(caret, el('span', 'cg-st ' + info.cls, info.letter), path);
-      if (f.binary) b.append(el('span', 'cg-bin', 'binary'));
-      else b.append(el('span', 'cg-add', addText(f)), el('span', 'cg-del', delText(f)));
-      b.onclick = () => {
-        s.open = toggleOpen(s.open, f.path);
-        if (s.open.includes(f.path)) spDetail(s, f);
-        spPaint(s);
-      };
-      item.append(b);
-      if (isOpen) {
-        const box = el('div', 'cg-diff'),
-          c = s.cache.get(f.path);
-        if (!c || (c.loading && !c.d)) box.append(el('p', 'cg-msg', 'Loading…'));
-        else if (c.err && !c.d) box.append(el('p', 'cg-msg cg-err', 'Could not read this diff: ' + c.err));
-        else {
-          for (const n of diffNotes(c.d)) box.append(el('p', 'cg-msg', n));
-          const sc = el('div', 'cg-lines');
-          for (const h of c.d.hunks || []) sc.append(diffRows(h, f, c.d));
-          if ((c.d.hunks || []).length) box.append(sc);
-        }
-        item.append(box);
-      }
-      return item;
-    }
-    /* Fetched when a file opens, and again when its numbers change while it is open (as with one chat): the diff on screen
-       stays the one shown until the new one is in, so nothing flashes "Loading…". */
-    async function spDetail(s, f) {
-      const sig = fileSignature(f),
-        id = s.id,
-        prev = s.cache.get(f.path),
-        mine = (s.dseq = (s.dseq || 0) + 1);
-      s.cache.set(f.path, { sig, seq: mine, loading: true, d: (prev && prev.d) || null, err: '' });
-      let d = null,
-        err = '';
-      try {
-        d = await api('/api/live/changes/file?' + q({ id, path: f.path, scope: 'uncommitted' }));
-      } catch (e) {
-        err = e.message || 'Request failed';
-      }
-      const cur = s.cache.get(f.path);
-      if (id !== s.id || !cur || cur.seq !== mine) return;
-      s.cache.set(f.path, { sig, seq: mine, loading: false, d: err ? (prev && prev.d) || null : d, err });
-      spPaint(s);
-    }
-    /* Two chats in the same project folder see the same files: the first one's section lists them, a later one only keeps its
-       header (a "Project folder" line instead of a second identical list). Only a folder chat (no own copy) can be one. */
-    function spDup(s) {
-      const key = s.data && s.data.git && !s.data.worktree && s.data.root ? folderKey(s.data) : '';
-      if (!key) return false;
-      for (const k of SP.keys) {
-        if (k === s.key) return false;
-        const x = SP.secs.get(k);
-        if (x && x.data && x.data.git && !x.data.worktree && x.data.root && folderKey(x.data) === key) return true;
-      }
-      return false;
-    }
-    function spPaint(s) {
-      const fs = spFiles(s),
-        S = SUI();
-      const info = S ? S.chatInfo(s.key) : { key: s.key, title: 'Conversation' };
-      const A = win.ActivityUI;
-      const dup = spDup(s);
-      if (A && A.splitHead) A.splitHead(doc, info, dup ? 'Project folder · files listed above' : plural(spCount(s), 'file', 'files'), s.head);
-      s.open = pruneOpen(s.open, fs);
-      for (const p of [...s.cache.keys()]) if (!fs.some((f) => f.path === p)) s.cache.delete(p);
-      for (const f of fs) {
-        const c = s.cache.get(f.path);
-        if (s.open.includes(f.path) && c && !c.loading && c.sig !== fileSignature(f)) spDetail(s, f);
-      }
-      const sig = JSON.stringify([
-        dup,
-        s.open,
-        fs.map(fileSignature),
-        fs.map((f) => {
-          const c = s.cache.get(f.path);
-          return c ? [c.sig, c.loading ? 1 : 0, c.err, c.d ? 1 : 0] : 0;
-        }),
-      ]);
-      if (sig !== s.listSig) {
-        s.listSig = sig;
-        const ae = doc.activeElement,
-          focus = ae && s.list.contains(ae) ? ae.dataset.path : null;
-        s.list.replaceChildren(...(dup ? [] : fs).map((f) => spRow(s, f))); // a shared folder is listed once
-        if (focus) {
-          const n = [...s.list.querySelectorAll('.cg-file')].find((c) => c.dataset.path === focus);
-          if (n) n.focus({ preventScroll: true });
-        }
-      }
-      s.root.classList.toggle('sp-dup', dup);
-      s.list.hidden = dup || !fs.length;
-      s.none.hidden = dup || !!fs.length;
-      spFoot(s);
-      if (dup) s.fp.foot.hidden = s.fp.status.hidden = true;
-    }
-    async function spLoad(s, force) {
-      const S = SUI(),
-        info = S ? S.chatInfo(s.key) : null,
-        id = info ? info.id : '';
-      if (id !== s.id) {
-        s.id = id;
-        s.data = null;
-        s.open = [];
-        s.cache = new Map();
-        s.listSig = '';
-      }
-      s.busy = !!(info && info.conv && info.conv.live && info.conv.live.busy);
-      if (!id) {
-        s.data = null;
-        spPaint(s);
+    /* chat.js feeds this on every chat-list render: a stamp of the project's turn ends. A turn that ended in any chat of the project
+       refreshes the numbers at once, whichever tab is showing (the chips count the project). */
+    function turns(pk, stamp) {
+      if (pk !== turnProject) {
+        turnProject = pk;
+        turnSeen = stamp;
         return;
       }
-      const now = Date.now();
-      if (!force && s.at && now - s.at < MIN_GAP) return;
-      s.at = now;
-      const mine = ++s.seq;
-      try {
-        const next = await api('/api/live/changes?' + q({ id, scope: 'uncommitted' }));
-        if (mine !== s.seq || id !== s.id) return;
-        s.data = next;
-        s.err = '';
-      } catch (e) {
-        if (mine !== s.seq || id !== s.id) return;
-        s.data = null;
-        s.err = e.status === 404 ? '' : e.message;
-      }
-      spPaint(s);
-      for (const k of SP.keys) {
-        const o = SP.secs.get(k);
-        if (o && o !== s) spPaint(o); // which section lists the shared folder can change when this one's reply lands
-      }
-      paintBadges();
-    }
-    function splitSync(keys) {
-      SP.keys = keys.slice();
-      for (const k of [...SP.secs.keys()]) if (!SP.keys.includes(k)) SP.secs.delete(k);
-      const want = SP.keys.map((k) => spSection(k).root);
-      want.forEach((n, i) => {
-        if (spBox.children[i] !== n) spBox.insertBefore(n, spBox.children[i] || null);
-      });
-      while (spBox.children.length > want.length) spBox.lastChild.remove();
-      for (const k of SP.keys) spLoad(spSection(k), true);
-      paintBadges();
-      spSchedule();
-    }
-    function spSchedule() {
-      const want = splitOn() && paneVisible();
-      if (want && !SP.timer)
-        SP.timer = win.setInterval(() => {
-          if (!splitOn() || !paneVisible()) return spSchedule();
-          // the Changes tab polls often; the badge (other tabs) every few polls is enough
-          if (state.tab !== 'changes' && (SP.tick = (SP.tick || 0) + 1) % 3) return;
-          for (const k of SP.keys) spLoad(spSection(k), false);
-        }, POLL_MS / 2);
-      else if (!want && SP.timer) {
-        win.clearInterval(SP.timer);
-        SP.timer = 0;
+      if (stamp !== turnSeen) {
+        turnSeen = stamp;
+        if (chat.id) load(true);
       }
     }
-    win.addEventListener('aib-split-chats', (e) => splitSync((e && e.detail && e.detail.keys) || []));
     /* The Files view's change badge: show the Changes tab with this file's diff open and in view. path is repository-relative. */
     function focusFile(path) {
       const f = files().find((x) => x.path === path);
       reveal('changes');
+      fold.delete('main');
       if (!f) return false;
-      if (!open.includes(path)) open = open.concat(path);
+      const m = mainSec();
+      if (!openOf('main').includes(path)) open.set('main', openOf('main').concat(path));
       autoOpened = true;
-      if (needsLoad(f)) loadDetail(f);
+      if (needsLoad(m, f)) loadDetail(m, f);
+      listSig = '';
       paintList();
-      const row = [...list.querySelectorAll('.cg-file')].find((c) => c.dataset.path === path);
+      const row = [...box.querySelectorAll('[data-sec="main"] .cg-file')].find((c) => c.dataset.path === path);
       if (row) {
         if (row.scrollIntoView) row.scrollIntoView({ block: 'nearest' });
         if (row.focus) row.focus({ preventScroll: true });
@@ -1271,14 +1194,16 @@
     }
     live = {
       sync,
+      turns,
       show,
       reveal,
       state: () => ({ tab: state.tab, expanded: state.expanded }),
       files,
-      data: () => data,
+      data: mainData,
+      project: () => resp,
       chatId: () => chat.id,
       focusFile,
-      open: () => open.slice(),
+      open: () => openOf('main').slice(),
     };
     if (AR()) AR().mount({ view: artView, badge: artBadge, tab: tabArtifacts, reveal: () => reveal('artifacts'), win });
     apply();
@@ -1286,14 +1211,11 @@
   }
   const api = {
     ...pure,
-    isFolderView,
-    isCopyView,
-    FOLDER_SCOPE,
     FOLDER_FOOT,
-    COPY_FOOT,
     footer,
     init,
     sync: (ctx) => live && live.sync(ctx),
+    turns: (pk, stamp) => live && live.turns(pk, stamp),
     show: (tab) => live && live.show(tab),
     reveal: (tab) => live && live.reveal(tab),
     _live: () => live,

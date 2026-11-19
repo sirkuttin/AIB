@@ -20,7 +20,11 @@ import { wslPublishFile, WslReadError } from '../wsl/artifact_read.ts';
 import { wslRecord } from '../wsl/worktrees.ts';
 import { getUpdate, getUpdateNotes, postUpdateCheck, postUpdateInstall, postUpdateNotes } from '../desktop/updater.ts';
 import { parseQs } from '../artifacts/origin.ts';
-import { authorize, type Principal, Refusal, REMOTE_PC, SCOPE_ARTIFACTS_TOOL } from './security.ts';
+import { authorize, pageAllowed, type Principal, Refusal, REMOTE_PC, SCOPE_ARTIFACTS_TOOL } from './security.ts';
+import { projectChanges, sectionDiff } from '../worktrees/project_changes.ts';
+import * as changes from '../worktrees/changes.ts';
+import { readSubagents } from '../subagents/service.ts';
+import { WslHelperError } from '../wsl/contract.ts';
 import { check as checkArtifactKey } from '../artifacts/keys.ts';
 import { ROUTES } from './routes.ts';
 import type { WebContext } from './server.ts';
@@ -299,7 +303,47 @@ export function studioRoutes(): Map<string, StudioHandler> {
       });
     });
   }
-  routes.set('GET /api/live/branch', async (_ctx, url) => [200, { branch: await branchOf(one(argsOf(url), 'cwd')) }]); // a WSL ref: its helper
+  // The project's Changes (right panel): main plus the worktrees of the project's active subagents and helpers, in one read.
+  // `id` names any chat of the project (the folder comes from it); `fold` / `unfold` are comma lists of section ids. A worktree's file
+  // diff is asked by its section id (a record id), never by a path.
+  for (const path of ['/api/live/project/changes', '/api/live/project/changes/file']) {
+    routes.set(`GET ${path}`, (ctx, url, _body, request, principal) => {
+      const who = principal?.kind === REMOTE_PC ? `pc:${principal.device}` : request.headers.get('X-Studio-Token') ?? '';
+      return shared(changesRuns, `${who}|${path}|${url.search}`, async () => {
+        const args = argsOf(url);
+        const studio = chatStudioOf(ctx, await savedFolders(ctx, one(args, 'id')));
+        if (!pageAllowed(principal ?? null, request.headers, studio.token ?? '')) {
+          return [403, { error: 'Invalid local session token' }] as Reply;
+        }
+        const folder = await changesFolder(studio, one(args, 'id'));
+        if (folder === null) return [404, { error: 'This chat has no known project folder.', code: 'unknown_folder' }] as Reply;
+        const list = (name: string) => new Set(one(args, name).split(',').filter(Boolean).slice(0, 200));
+        const targets = {
+          folder,
+          stateDir: ctx.stateDir ?? null,
+          subs: ctx.stateDir ? readSubagents(ctx.stateDir) : {},
+          helpers: swarmOf(ctx).registry.all(),
+          fold: list('fold'),
+          unfold: list('unfold'),
+        };
+        try {
+          if (path.endsWith('/file')) {
+            const diff = await sectionDiff(targets, one(args, 'section'), one(args, 'path'));
+            if (!diff) return [404, { error: 'That worktree is not in use any more.', code: 'unknown_section' }] as Reply;
+            return principal?.kind === REMOTE_PC ? remoteChanges(ctx, '/api/live/changes/file', [200, diff]) : [200, diff] as Reply;
+          }
+          const offset = one(args, 'offset', '0');
+          const reply = await projectChanges(targets, /^\d+$/.test(offset) ? Number(offset) : 0);
+          return principal?.kind === REMOTE_PC ? remoteProject(ctx, [200, reply]) : [200, reply] as Reply;
+        } catch (error) {
+          if (error instanceof changes.ChangesError) return [400, { error: error.message, code: error.code }] as Reply;
+          if (error instanceof WslHelperError) return [error.code === 'wsl_unavailable' ? 409 : 400, { error: error.message, code: error.code }] as Reply;
+          throw error;
+        }
+      });
+    });
+  }
+  routes.set('GET /api/live/branch',async (_ctx, url) => [200, { branch: await branchOf(one(argsOf(url), 'cwd')) }]); // a WSL ref: its helper
   // A WSL chat's merge runs in its distro's helper (wsl/merge.ts); every other chat's here (merge.ts).
   routes.set('GET /api/live/worktree', async (ctx, url) => {
     const studio = mergeStudio(ctx), id = one(argsOf(url), 'id');
@@ -413,6 +457,23 @@ function remoteChanges(ctx: WebContext, path: string, reply: [number, unknown]):
   if (!root || !Array.isArray(payload.files)) return reply;
   const files = (payload.files as unknown[]).filter((f) => !(isDict(f) && typeof f.path === 'string' && blocked(`${root}/${f.path}`)));
   return [status, { ...payload, files }];
+}
+
+/** The project's Changes for a remote computer: every section's rows inside blocked folders are left out (as remoteChanges does). */
+function remoteProject(ctx: WebContext, reply: [number, unknown]): [number, unknown] {
+  const [status, payload] = reply;
+  if (status !== 200 || !isDict(payload)) return reply;
+  const filter = (sec: unknown) => {
+    if (!isDict(sec) || !isDict(sec.changes)) return sec;
+    const [, kept] = remoteChanges(ctx, '/api/live/changes', [200, sec.changes]);
+    return { ...sec, changes: kept };
+  };
+  return [status, {
+    ...payload,
+    main: filter(payload.main),
+    sections: (payload.sections as unknown[]).map(filter),
+    left: (payload.left as unknown[]).map(filter),
+  }];
 }
 
 function artifactCall(work: () => Reply): Reply {

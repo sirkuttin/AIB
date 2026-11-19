@@ -453,6 +453,8 @@ export const PC_ROUTES: Readonly<Record<string, RemoteEntry>> = {
   // ---- Changes (read only now), branch ----
   'GET /api/live/changes': scope(F),
   'GET /api/live/changes/file': scope(F),
+  'GET /api/live/project/changes': scope(F),
+  'GET /api/live/project/changes/file': scope(F),
   'GET /api/live/branch': withPaths([R], [{ in: 'query', field: 'cwd', rule: 'project' }]),
   // ---- settings, editors, desktop ----
   'GET /api/live/settings': SETTINGS, // phase 1b: an allowlisted remote settings view
