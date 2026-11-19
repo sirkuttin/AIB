@@ -223,6 +223,7 @@ Deno.test({
     const SOURCE = '/etc/aib/update-release-url'; // the root script's only override (root-owned)
     const SUMS = '/etc/aib/test-sums'; // the release's SHA256SUMS as root fetches them here (file://, root-owned)
     const HOOK = '/etc/aib/test-hook'; // the root script's test hook (root-owned)
+    const HOOK_RUN = '/etc/aib/hook-run'; // the hook's scratch folder: root-owned, 0700; the script runs the hook only if it is root's
     const HOME = `${ROOT}/home`;
     const STATE = `${HOME}/.local/state/agent-studio`;
     const PKEXEC = `${ROOT}/bin/pkexec`; // the stand-in, by its absolute path, as AIB calls /usr/bin/pkexec
@@ -576,14 +577,16 @@ exec sudo -n "$@"
           // (pidfd_getfd; WSL has no Yama, like Debian's ptrace_scope 0). The hook plays that program: at "read" it opens the
           // first copy for writing and keeps it open; at "hashed" (after root's SHA-256 and package checks, before apt) it writes
           // evil.deb (another aib package) through it. Root's script runs the hook only from its own /etc/aib.
-          const run = `${ROOT}/run`;
+          // T1: the hook's scratch files are in root's own /etc/aib/hook-run (0700), never in a folder a user can make; the root script
+          // runs the hook only when that folder is root's alone, and the loop below has a time limit of its own (60 s).
+          const run = HOOK_RUN;
           const hook = `#!/bin/sh
 # deb_update_e2e_test: a program of the user's holding the user-side reader's descriptor to the first copy
 run=${run}
 case $1 in
   read)
     stat -c %i -- "$2" > "$run/hook-read-inode"
-    sh -c 'exec 3<>"$1" || exit 1; : > "$2/hook-open"; while [ ! -e "$2/hook-go" ]; do sleep 0.1; done; cat "$3" >&3; echo $? > "$2/hook-wrote"' \\
+    sh -c 'exec 3<>"$1" || exit 1; : > "$2/hook-open"; i=0; while [ ! -e "$2/hook-go" ] && [ $i -lt 600 ]; do sleep 0.1; i=$((i + 1)); done; [ -e "$2/hook-go" ] || exit 1; cat "$3" >&3; echo $? > "$2/hook-wrote"' \\
       sh "$2" "$run" "${ROOT}/debs/evil.deb" </dev/null >/dev/null 2>&1 &
     i=0; while [ ! -e "$run/hook-open" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
     ;;
@@ -598,10 +601,11 @@ exit 0
 `;
           Deno.writeTextFileSync(`${win}\\test-hook`, hook);
           await ok(
-            'the test hook (root-owned, in /etc/aib)',
-            'tr -d "\\r" < "$1" > "$2" && chmod 644 "$2"',
+            'the test hook (root-owned, in /etc/aib) and its root-only scratch folder',
+            'mkdir -m 700 "$3" && tr -d "\\r" < "$1" > "$2" && chmod 644 "$2"',
             `${toWsl(win)}/test-hook`,
             HOOK,
+            HOOK_RUN,
           );
           try {
             await update(versions[1], versions[2], await feed(versions[2]));
@@ -618,6 +622,79 @@ exit 0
           assertEquals(await read('hook-hashed-sha'), await hashOf(`AIB-${versions[2]}-linux-${word}.deb`), "root's file is unchanged");
           assertEquals(await version(), '0.13.2', 'the release is installed, not the package written through the descriptor');
           await ok('the genuine app is installed', 'grep -q "AIB 0.13.2 stand-in" /usr/lib/aib/aib && ! grep -q EVIL /usr/lib/aib/aib');
+        },
+      );
+
+      await t.step(
+        "T1: root runs the test hook only when the hook's scratch folder is root's alone (else exit 74, hook not run); a failing or endless hook ends with its own code (76)",
+        async () => {
+          // the script run directly as root the way pkexec starts it, on the 0.13.1 download in the user's home; it stops at the hook
+          // ("read") or right after it, at the release's checksums (none published for 0.13.1: 68)
+          const file = `${HOME}/updates/0.13.1/AIB-0.13.1-linux-${word}.deb`;
+          await ok(
+            'a download for the direct runs',
+            'mkdir -p "$1/updates/0.13.1" && cp "$2" "$3" && chmod 644 "$3" && chown -R "$4" "$1/updates" && chmod 755 "$1/updates" "$1/updates/0.13.1"',
+            HOME,
+            debOf('0.13.1'),
+            file,
+            USER,
+          );
+          const short = `${ROOT}/aib-install-deb-short`; // the same script with a 2 s hook limit
+          await ok(
+            'a copy with a short hook limit',
+            'sed "s/^HOOK_LIMIT=120 /HOOK_LIMIT=2 /" /usr/lib/aib/aib-install-deb > "$1" && grep -q "^HOOK_LIMIT=2 " "$1" && chmod 755 "$1"',
+            short,
+          );
+          const installHook = (body: string) =>
+            ok(
+              'install a hook',
+              'printf "#!/bin/sh\\n: > /etc/aib/hook-ran\\n%s\\n" "$1" > /etc/aib/test-hook && chmod 644 /etc/aib/test-hook && rm -f /etc/aib/hook-ran',
+              body,
+            );
+          const direct = (script: string) =>
+            asRoot('PKEXEC_UID="$1" "$2" "$3" 0.13.1 </dev/null', uid, script, file);
+          const ran = async () => (await asRoot('[ -e /etc/aib/hook-ran ]')).code === 0;
+          const folder = (script: string) => ok('hook folder', script, HOOK_RUN);
+          const SCRIPT = '/usr/lib/aib/aib-install-deb';
+          try {
+            await installHook('exit 0');
+            // not root's alone: not there, a user's folder, a user-writable folder, a link: refused, and the hook never ran
+            for (
+              const [what, make, expect] of [
+                ['missing', 'rm -rf "$1"', 'is not a folder'],
+                ['owned by the user', `rm -rf "$1" && mkdir -m 700 "$1" && chown ${USER} "$1"`, 'does not belong to root'],
+                ['writable by others', 'rm -rf "$1" && mkdir "$1" && chmod 777 "$1"', 'can be written by others'],
+                ['a link', 'rm -rf "$1" && ln -s /tmp "$1"', 'is a link'],
+              ] as const
+            ) {
+              await folder(make);
+              const r = await direct(SCRIPT);
+              assertEquals(r.code, 74, `${what}: ${r.err}`);
+              assert(r.err.includes(expect), `${what}: ${r.err}`);
+              assert(!(await ran()), `${what}: the hook was not run`);
+            }
+            await folder('rm -rf "$1" && mkdir -m 700 "$1"');
+            // root's own folder: the hook runs; a failing hook has its own code and message
+            await installHook('exit 3');
+            let r = await direct(SCRIPT);
+            assertEquals(r.code, 76, r.err);
+            assert(r.err.includes('the test hook') && r.err.includes('failed or took longer'), r.err);
+            assert(await ran(), 'the hook ran');
+            // an endless hook (and anything it started) is stopped by the time limit
+            await installHook('sleep 60');
+            const t0 = Date.now();
+            r = await direct(short);
+            assertEquals(r.code, 76, r.err);
+            assert(Date.now() - t0 < 30000, `stopped by the time limit, took ${Date.now() - t0} ms`);
+            assertEquals((await asRoot('pgrep -f "[s]leep 60" >/dev/null')).code, 1, 'no hook process is left');
+            // a good hook: the script goes on to the release's checksums (none for 0.13.1)
+            await installHook('exit 0');
+            r = await direct(SCRIPT);
+            assertEquals(r.code, 68, r.err);
+            assert(await ran(), 'the hook ran');
+          } finally {
+            await asRoot('rm -rf /etc/aib/test-hook /etc/aib/hook-run /etc/aib/hook-ran');
+          }
         },
       );
     } finally {

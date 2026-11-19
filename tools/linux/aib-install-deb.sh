@@ -31,14 +31,16 @@
 #
 # A test machine may point the SHA256SUMS fetch elsewhere with SOURCE_FILE (root-owned, in a root-owned folder, writable by no one
 # else; one line: an https:// base, or a file:///etc/aib/... base whose every folder is root's alone), and may run TEST_HOOK (the
-# same rules) at two steps. Nothing the user controls (environment, arguments, files) can do either.
+# same rules) at two steps. The hook runs only if its scratch folder, TEST_HOOK_RUN (/etc/aib/hook-run), is root's alone too (root
+# writes there, so never a folder a user can create or swap), and it gets a hard time limit. Nothing the user controls (environment,
+# arguments, files) can do either.
 #
 # Exit codes: 0 installed; 64 bad argument or a file that is not AIB's download (or not the version AIB offered); 65 not an AIB
 # package of that version; 66 not started as root through pkexec/sudo; 68 the release's SHA256SUMS could not be fetched; 69 the file
 # is not the release's (no line for it, or another SHA-256); 70 apt-get failed and the old version is still installed; 71 apt-get ran
 # but the version is not the new one; 72 apt-get failed after unpacking: partly installed (run `sudo dpkg --configure -a`);
 # 73 not newer than the installed version; 74 SOURCE_FILE or TEST_HOOK is not root's alone (not 67: WSL turns that exit code into its
-# own error); 75 a tool it needs (setpriv; curl or wget) is not installed.
+# own error); 75 a tool it needs (setpriv; curl or wget) is not installed; 76 the test hook failed or ran out of time (test machines only).
 set -eu
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
@@ -51,6 +53,8 @@ cd /
 RELEASES=https://github.com/sirkuttin/AIB/releases/download
 SOURCE_FILE=/etc/aib/update-release-url
 TEST_HOOK=/etc/aib/test-hook
+TEST_HOOK_RUN=/etc/aib/hook-run # the hook's scratch folder (test machines): root-owned, made by the test
+HOOK_LIMIT=120 # seconds, for the hook and everything it started
 MAX_DEB=268435456 # 256 MiB; a release .deb is about 50 MB
 MAX_SUMS=1048576
 
@@ -78,7 +82,11 @@ test_hook() {
   if [ -e "$TEST_HOOK" ] || [ -L "$TEST_HOOK" ]; then
     root_only 74 "$TEST_HOOK" "${TEST_HOOK%/*}"
     [ -f "$TEST_HOOK" ] || fail 74 "$TEST_HOOK is not a plain file"
-    /bin/sh "$TEST_HOOK" "$@" </dev/null >&2 || fail 74 "$TEST_HOOK failed"
+    # root writes into the hook's scratch folder: it must be root's own (a crash can leave the hook behind, /tmp is emptied, and a
+    # user could re-create a folder there and put links in it)
+    [ -d "$TEST_HOOK_RUN" ] || fail 74 "$TEST_HOOK_RUN is not a folder, so the test hook was not run"
+    root_only 74 "$TEST_HOOK_RUN"
+    timeout -k 5 "$HOOK_LIMIT" /bin/sh "$TEST_HOOK" "$@" </dev/null >&2 || fail 76 "the test hook $TEST_HOOK failed or took longer than $HOOK_LIMIT s"
   fi
 }
 
@@ -206,7 +214,9 @@ if [ -x /usr/bin/curl ]; then
   /usr/bin/curl -q --silent --show-error --fail --location --proto "=$proto" --proto-redir =https --max-redirs 5 \
     --connect-timeout 20 --max-time 90 --max-filesize "$MAX_SUMS" --output "$sums" "$url" 2>"$work/fetch.err" ||
     fail 68 "could not fetch $url ($(tail -n 1 "$work/fetch.err" 2>/dev/null)); nothing was installed"
-elif [ -x /usr/bin/wget ] && [ "$proto" = https ]; then
+elif [ "$proto" = file ]; then
+  fail 75 "curl is not installed, and a file:// source needs it (sudo apt install curl); nothing was installed"
+elif [ -x /usr/bin/wget ]; then
   /usr/bin/wget --no-config --quiet --https-only --max-redirect=5 --timeout=30 --tries=2 --output-document="$sums" "$url" 2>/dev/null ||
     fail 68 "could not fetch $url; nothing was installed"
 else

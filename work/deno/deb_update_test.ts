@@ -618,6 +618,18 @@ Deno.test('packaging: the .deb gets /usr/lib/aib/aib-install-deb (0755, LF) and 
       script.text.includes('TEST_HOOK=/etc/aib/test-hook') && script.text.includes('root_only 74 "$TEST_HOOK"'),
       'test hook: root only',
     );
+    // T1: the hook's scratch folder must be root's alone too, and the hook has a hard time limit and its own exit code (76)
+    assert(
+      script.text.includes('TEST_HOOK_RUN=/etc/aib/hook-run') && script.text.includes('root_only 74 "$TEST_HOOK_RUN"'),
+      'test hook: its scratch folder is root only',
+    );
+    assert(
+      at('root_only 74 "$TEST_HOOK_RUN"') < at('timeout -k 5 "$HOOK_LIMIT" /bin/sh "$TEST_HOOK"'),
+      'the folder is checked before the hook runs',
+    );
+    assert(script.text.includes('HOOK_LIMIT=120 ') && script.text.includes('fail 76 "the test hook'), 'time limit, own code');
+    // N2: a file:// source with no curl does not claim wget is missing
+    assert(script.text.includes('elif [ "$proto" = file ]; then\n  fail 75 "curl is not installed'), 'file:// needs curl: says so');
     assert(script.text.includes('dpkg --compare-versions "$debversion" gt "$installed"'), 'only newer');
     assert(script.text.includes('SOURCE_FILE=/etc/aib/update-release-url'), 'the only override: a root-owned file');
     assert(!/\$\{?AIB_|getenv|\$HOME/.test(script.text), 'nothing from the environment decides where SHA256SUMS comes from');
