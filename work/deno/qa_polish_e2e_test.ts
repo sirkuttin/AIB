@@ -58,7 +58,8 @@ async function newDoc(page: Page, name: string): Promise<void> {
 
 async function run(fx: Fixture, keep: (b: Browser) => void, wt: boolean): Promise<void> {
   const r = fx.root;
-  const alpha = `${r}${SEP}Empty Project`;
+  // A name that fits the title with room to spare: the page font is "Segoe UI, system-ui", so the width varies (Noto Sans on Linux is ~4 % wider).
+  const alpha = `${r}${SEP}Empty Space`;
   Deno.mkdirSync(alpha, { recursive: true });
   git(alpha, 'init', '-q');
   Deno.writeTextFileSync(`${alpha}${SEP}README.md`, '# alpha\n');
