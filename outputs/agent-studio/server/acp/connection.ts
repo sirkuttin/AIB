@@ -677,6 +677,15 @@ export const TOOLS_LOADING = 'The studio_artifact tools (full names like mcp__st
   '`text(JSON.stringify(ALL_TOOLS.filter(t => t.name.startsWith("mcp__studio_artifact__")).map(t => t.name)))` in `exec` to see them, ' +
   'then call one as `await tools.mcp__studio_artifact__publish({...})` (the same for doc_create, doc_read, doc_edit and the rest).';
 
+/**
+ * How the agent writes a command for the user to run. AIB puts a "Run in terminal" button on a fenced shell block in a reply
+ * (run-terminal-ui.js: the language tag decides) that pastes the command into the chat's terminal and never presses Enter.
+ */
+export const COMMANDS_RULE =
+  'When you give the user a shell command to run, put it in its own fenced code block tagged bash (powershell on Windows), ' +
+  'one command per block, with no explanation or comments inside the block; AIB then shows a Run in terminal button that ' +
+  "pastes it into the chat's terminal without running it. Write the explanation outside the block.";
+
 export const ARTIFACT_PROMPT =
   'You are running inside AIB, which shows artifacts beside the chat; when the user says "artifact" they ' +
   'mean this viewer and its studio_artifact tool. ' + DOCS_RULE + ' When you make something else the user ' +
@@ -685,7 +694,7 @@ export const ARTIFACT_PROMPT =
   'or among source files, then publish it with the studio_artifact publish tool (pass a file path or the content) and mention it in your reply ' +
   'as the Markdown link the tool returns. When you change it, use the studio_artifact update tool so it gets a new ' +
   'version, and do not tell the user to open the file by hand. Only publish to claude.ai (or any other web ' +
-  'artifact or sharing service) when the user explicitly asks for a claude.ai page or a shareable link. ' + TOOLS_LOADING;
+  'artifact or sharing service) when the user explicitly asks for a claude.ai page or a shareable link. ' + TOOLS_LOADING + ' ' + COMMANDS_RULE;
 
 /**
  * The same for a chat in a WSL project (design section 11). publish takes the content or a Linux `path` inside the project (AIB
@@ -699,7 +708,7 @@ export const WSL_ARTIFACT_PROMPT =
   'tool, by its content or by its Linux `path` (relative to the chat folder, or absolute inside the chat or project folder; any ' +
   'kind up to 25 MB, PNG and other images included), and mention it in your reply as the Markdown link the tool returns. AIB copies ' +
   'a file when you publish it: after changing the file, call update with the same path (or the new content) to publish the new ' +
-  'version. AIB helper tools are not available in WSL projects. ' + TOOLS_LOADING;
+  'version. AIB helper tools are not available in WSL projects. ' + TOOLS_LOADING + ' ' + COMMANDS_RULE.replace(' (powershell on Windows)', '');
 
 export const WORKTREE_PROMPT =
   'In this chat you work in your own copy of the project, on the git branch {branch} (it started from {base}). ' +

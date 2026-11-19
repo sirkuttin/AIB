@@ -10,7 +10,7 @@ import * as artifactKeys from '../../outputs/agent-studio/server/artifacts/keys.
 import { artifactToolCommand, INSTRUCTIONS, OFFLINE_LIBS_NOTE } from '../../outputs/agent-studio/server/artifacts/mcp.ts';
 import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
 import { ARTIFACT_URL_FILE } from '../../outputs/agent-studio/server/host/studio.ts';
-import { ARTIFACT_PROMPT, Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
+import { ARTIFACT_PROMPT, COMMANDS_RULE, Connection, WSL_ARTIFACT_PROMPT } from '../../outputs/agent-studio/server/acp/connection.ts';
 import { selectMcpServers, validateMcpServers } from '../../outputs/agent-studio/server/acp/breadth.ts';
 import { ArtifactMcpHttp, CONVERSATION_HEADER, KEY_HEADER } from '../../outputs/agent-studio/server/artifacts/mcp_http.ts';
 import { DOC_TOOL_NAMES, DOCS_RULE } from '../../outputs/agent-studio/server/docs/tool_defs.ts';
@@ -299,6 +299,12 @@ Deno.test('the ACP system prompt says the same about docs as the MCP instruction
   assert(ARTIFACT_PROMPT.includes(DOCS_RULE));
   assert(ARTIFACT_PROMPT.includes('mcp__studio_artifact__doc_create'), 'names the full tool, for agents whose tools load late');
   assert(!ARTIFACT_PROMPT.includes('Markdown document'), 'a Markdown document is a doc now, not something to publish');
+});
+
+Deno.test('the session prompt tells the agent to write commands in bash fences so AIB can offer Run in terminal', () => {
+  assert(ARTIFACT_PROMPT.includes(COMMANDS_RULE));
+  assert(COMMANDS_RULE.includes('tagged bash') && COMMANDS_RULE.includes('one command per block'));
+  assert(WSL_ARTIFACT_PROMPT.includes('tagged bash') && !WSL_ARTIFACT_PROMPT.includes('powershell'), 'a WSL chat runs bash only');
 });
 
 Deno.test('unknown method, unknown tool and garbage', async () => {
