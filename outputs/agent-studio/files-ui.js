@@ -1086,7 +1086,9 @@
     const path = (W() && W().projectPathOf ? W().projectPathOf(pk) : '') || (saved && saved.path) || '';
     return path ? F().projectScope(path) : null;
   }
+  // A doc from the Files tree opens in the right column's Docs tab (owner decision 2a); its ⤢ moves it to a middle tab.
   function openDocRow(scope, d, keep) {
+    if (DL() && DL().openDoc && DL().openDoc({ name: d.name, title: d.title || d.name, dir: d.dir, from: 'files', chat: { id: scope.id }, preview: !keep })) return;
     openDoc(scope, { name: d.name, title: d.title || d.name, dir: d.dir, where: 'tab', preview: !keep });
   }
   // "+ New doc": the last row inside aib-docs (while no doc exists yet, an empty aib-docs folder row holds only it). Clicked, it
@@ -1210,7 +1212,7 @@
         delete t.cache[DF];
         listDir(scope, DF);
       }
-      openDoc(scope, { name: r.name, title: r.title || r.name, dir: r.dir, page: '', where: 'tab', preview: false });
+      openDocRow(scope, { name: r.name, title: r.title || r.name, dir: r.dir }, true);
     } catch (e) {
       if (!newDoc) return;
       newDoc.busy = false;

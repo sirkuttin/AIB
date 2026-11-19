@@ -727,9 +727,13 @@
   function openDocFromDesktop(project, name) {
     if (!project || !name || popoutKey() || !mayShowProject(project) || !projectOfKey(project)) return false;
     if (!ws || ws.active !== project) selectProject(project);
-    const U = FU();
-    if (!U || !U.openDoc || !U.currentScope) return false;
-    U.openDoc(U.currentScope(), { name, title: name, where: 'tab' });
+    const U = FU(),
+      D = root.AgentDocLinks;
+    if (!U || !U.currentScope) return false;
+    const scope = U.currentScope();
+    if (D && D.openDoc && scope && D.openDoc({ name, title: name, from: 'files', chat: { id: scope.id } })) return true; // the Docs tab
+    if (!U.openDoc) return false;
+    U.openDoc(scope, { name, title: name, where: 'tab' });
     return true;
   }
   // While a project switch opens that project's chat: its files come back as they were (files-ui.js projectShown), instead of

@@ -428,10 +428,6 @@
   border-radius: 50%;
   background: var(--accent);
 }
-/* A doc in the viewer: the doc page itself (same origin, the full editor), on the app's own background. */
-.ar-docframe {
-  background: var(--bg);
-}
 .ar-sep {
   height: 1px;
   margin: 4px 2px;

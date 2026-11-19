@@ -283,7 +283,7 @@ test('Edit and Request a change: Markdown gets Edit (one click makes the doc, op
   assert.equal(became.querySelector('.ar-built-t').textContent, 'Now a doc: Load test summary \u00b7 ');
   assert.equal(became.querySelector('.ar-undo').hidden, false);
   assert.equal(edit.hidden, true);
-  assert.equal(A.pickerGroups(UI._S.list, 'm1', 0, [], [])[0].items[0].meta, 'now a doc');
+  assert.equal(A.pickerGroups(UI._S.list, 'm1', 0)[0].items[0].meta, 'now a doc');
   await flush();
   const live = view.querySelector('.ar-live');
   assert.ok(live, 'the live preview');

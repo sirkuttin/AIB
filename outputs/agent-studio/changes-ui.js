@@ -1,10 +1,10 @@
 'use strict';
-/* Changes tab: the right column's "Activity | Changes N | Artifacts" tabs. Changes is the PROJECT's (design project-right-panel, slice S2):
+/* Changes tab: the right column's "Activity | Changes N | Artifacts N | Docs" tabs. Changes is the PROJECT's (design project-right-panel, slice S2):
    VS Code Source Control style, the project folder first, then one section per worktree of an active subagent or helper, then a
    folded "Left over" group. Each file is an accordion row that opens its own unified diff right under it (several can be open).
    Data comes from GET /api/live/project/changes (one read) and /changes/file (changes.ts). The pure helpers have node tests. */
 (function (root) {
-  const TABS = ['activity', 'changes', 'artifacts'];
+  const TABS = ['activity', 'changes', 'artifacts', 'docs'];
   const MINUS = '\u2212';
   const num = (v) => Math.max(0, Number(v) || 0);
 
@@ -417,13 +417,20 @@
     const artBadge = el('span', 'pane-badge');
     artBadge.hidden = true;
     tabArtifacts.append(artBadge);
+    /* Docs has no count, only a live dot while an agent writes a doc (docs-tab-ui.js). */
+    const tabDocs = tabBtn('docs', 'Docs');
+    const docsDot = el('span', 'pane-dot');
+    docsDot.hidden = true;
+    docsDot.setAttribute('role', 'img');
+    docsDot.setAttribute('aria-label', 'An agent is writing a doc');
+    tabDocs.append(docsDot);
     const expandBtn = el('button', 'pane-expand', '⇤');
     expandBtn.type = 'button';
     expandBtn.title = 'Widen this column';
     expandBtn.setAttribute('aria-label', 'Widen this column');
     expandBtn.setAttribute('aria-pressed', 'false');
     expandBtn.hidden = true;
-    tabs.append(tabActivity, tabChanges, tabArtifacts, expandBtn);
+    tabs.append(tabActivity, tabChanges, tabArtifacts, tabDocs, expandBtn);
     pane.insertBefore(tabs, pane.firstChild);
 
     /* -- changes view -- */
@@ -466,6 +473,14 @@
     pane.insertBefore(artView, view.nextSibling);
     const AR = () =>
       win.AgentArtifactsUI && typeof win.AgentArtifactsUI.mount === 'function' ? win.AgentArtifactsUI : null;
+    /* Docs tab (docs-tab-ui.js owns what is inside). */
+    const docsView = el('section', 'docs-tab-pane');
+    docsView.id = 'docsPane';
+    docsView.setAttribute('role', 'tabpanel');
+    docsView.setAttribute('aria-labelledby', 'paneTab-docs');
+    docsView.hidden = true;
+    pane.insertBefore(docsView, artView.nextSibling);
+    const DT = () => (win.AgentDocsTabUI && typeof win.AgentDocsTabUI.mount === 'function' ? win.AgentDocsTabUI : null);
 
     /* -- header chip and narrow strip chip: both count the project (its folder and its running worktrees) -- */
     const chip = el('button', 'changes-chip');
@@ -970,13 +985,16 @@
     function apply() {
       const on = state.tab === 'changes',
         art = state.tab === 'artifacts',
+        docs = state.tab === 'docs',
         wide = on || art;
       pane.classList.toggle('tab-changes', on);
       pane.classList.toggle('tab-artifacts', art);
+      pane.classList.toggle('tab-docs', docs);
       for (const [b, sel] of [
-        [tabActivity, !on && !art],
+        [tabActivity, !on && !art && !docs],
         [tabChanges, on],
         [tabArtifacts, art],
+        [tabDocs, docs],
       ]) {
         b.setAttribute('aria-selected', sel ? 'true' : 'false');
         b.tabIndex = sel ? 0 : -1;
@@ -984,6 +1002,7 @@
       }
       view.hidden = !on;
       artView.hidden = !art;
+      docsView.hidden = !docs;
       expandBtn.hidden = !wide || narrow();
       expandBtn.setAttribute('aria-pressed', state.expanded ? 'true' : 'false');
       expandBtn.title = state.expanded ? 'Narrow this column again' : 'Widen this column';
@@ -991,6 +1010,7 @@
       expandBtn.textContent = state.expanded ? '⇥' : '⇤'; // QA m8: widen pulls the edge left, narrow pushes it back
       body.classList.toggle('changes-wide', wide && state.expanded && !narrow());
       if (AR()) AR().setVisible(art && paneVisible());
+      if (DT()) DT().setVisible(docs && paneVisible());
       schedule();
     }
     function show(tab) {
@@ -1020,7 +1040,7 @@
       }
     }
     /* Make the column and the Changes tab visible from a chip. */
-    function reveal(tab) {
+    function reveal(tab, opts) {
       tab = TABS.includes(tab) ? tab : 'changes';
       const A = win.ActivityUI;
       if (A && A.isHidden && A.isHidden()) A.setHidden(false);
@@ -1029,11 +1049,13 @@
         if (strip) strip.setAttribute('aria-expanded', 'true');
       }
       show(tab);
-      ({ activity: tabActivity, changes: tabChanges, artifacts: tabArtifacts })[tab].focus({ preventScroll: true });
+      // opening a doc moves nothing but the tab: the focus stays where it is (owner rule: focus changes only the accent)
+      if (!(opts && opts.focus === false)) ({ activity: tabActivity, changes: tabChanges, artifacts: tabArtifacts, docs: tabDocs })[tab].focus({ preventScroll: true });
     }
     tabActivity.addEventListener('click', () => show('activity'));
     tabChanges.addEventListener('click', () => show('changes'));
     tabArtifacts.addEventListener('click', () => show('artifacts'));
+    tabDocs.addEventListener('click', () => show('docs'));
     tabs.addEventListener('keydown', (e) => {
       if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight' && e.key !== 'Home' && e.key !== 'End') return;
       const at = TABS.indexOf(state.tab),
@@ -1045,7 +1067,7 @@
               : TABS[Math.max(0, Math.min(TABS.length - 1, at + (e.key === 'ArrowLeft' ? -1 : 1)))];
       e.preventDefault();
       show(next);
-      ({ activity: tabActivity, changes: tabChanges, artifacts: tabArtifacts })[next].focus();
+      ({ activity: tabActivity, changes: tabChanges, artifacts: tabArtifacts, docs: tabDocs })[next].focus();
     });
     expandBtn.addEventListener('click', () => {
       state = tabState(state, { type: 'toggleExpand' });
@@ -1138,6 +1160,8 @@
             ? { id, busy, cwd: ctx && typeof ctx.cwd === 'string' ? ctx.cwd : '', project: panelProjectKey(), tagFor: ctx && typeof ctx.tagFor === 'function' ? ctx.tagFor : null }
             : null,
         );
+      // Docs is the project's too: the open doc stays when another chat of the project opens
+      if (DT()) DT().sync({ id, project: panelProjectKey(), tagFor: ctx && typeof ctx.tagFor === 'function' ? ctx.tagFor : null });
       // Another project on screen: its own remembered tab and its own Changes. Another chat of the same project, or split focus:
       // the tab and the Changes stay as they are.
       const pk = panelProjectKey();
@@ -1213,6 +1237,7 @@
       open: () => openOf('main').slice(),
     };
     if (AR()) AR().mount({ view: artView, badge: artBadge, tab: tabArtifacts, reveal: () => reveal('artifacts'), win });
+    if (DT()) DT().mount({ view: docsView, dot: docsDot, tab: tabDocs, reveal: () => reveal('docs', { focus: false }), win });
     apply();
     paintAll();
   }

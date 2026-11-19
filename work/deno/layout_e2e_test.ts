@@ -173,10 +173,11 @@ async function agentPublishes(lab: Lab, chat: Chat, title: string, marker: strin
   return id;
 }
 
-const viewing = (page: Page) => page.eval<boolean>(`document.body.classList.contains('ar-viewing')`);
+// a doc or artifact shows in the right column: ar-viewing (the Artifacts viewer) or dt-viewing (a doc in the Docs tab)
+const viewing = (page: Page) => page.eval<boolean>(`document.body.classList.contains('ar-viewing') || document.body.classList.contains('dt-viewing')`);
 
 async function waitViewing(page: Page, on: boolean) {
-  await page.waitFor(`document.body.classList.contains('ar-viewing') === ${on}`, 10000, on ? 'the right column widens for the viewer' : 'the viewer closes');
+  await page.waitFor(`(document.body.classList.contains('ar-viewing') || document.body.classList.contains('dt-viewing')) === ${on}`, 10000, on ? 'the right column widens for the viewer' : 'the viewer closes');
   await settle(1200);
 }
 
@@ -225,17 +226,17 @@ layoutTest('L1b following, click an artifact link in a reply: the right column w
   chat.end();
 });
 
-layoutTest('L1c reading midway, open a doc from the Artifacts tab: the row you were reading stays at the top of the view', async (lab) => {
+layoutTest('L1c reading midway, open a doc from the Docs tab: the row you were reading stays at the top of the view', async (lab) => {
   const page = lab.page;
   const chat = await openSeeded(lab, 40);
   await agentMakesDoc(lab, chat, 'Reading notes');
   await settle();
-  await clickHere(page, '#paneTab-artifacts');
-  await page.waitFor(`!!document.querySelector('.ar-empty .ar-doc')`, 8000, 'the doc row in the Artifacts tab');
+  await clickHere(page, '#paneTab-docs');
+  await page.waitFor(`!!document.querySelector('#docsPane .dt-row')`, 8000, 'the doc row in the Docs tab');
   await readMidway(page);
   const { a, x } = await readingState(page);
   await startRowFrames(page, a!.text);
-  await clickHere(page, '.ar-empty .ar-doc');
+  await clickHere(page, '#docsPane .dt-row');
   await waitViewing(page, true);
   const drawn = rowFramesProblems(await stopRowFrames(page), a!, 24);
   const moved = await rowMoved(page, a);
@@ -709,7 +710,7 @@ layoutTest('L4b right column handle: the chat keeps 420 px; one width for Activi
   chat.end();
 });
 
-layoutTest('L4e switching from a chat showing an artifact to one showing Activity (and back) never changes the right column width', async (lab) => {
+layoutTest('L4e switching from a chat showing an artifact to another chat of the project (and back) never changes the right column width', async (lab) => {
   const page = lab.page;
   const b = await openSeeded(lab, 4);
   const a = await openSeeded(lab, 4);
@@ -721,7 +722,7 @@ layoutTest('L4e switching from a chat showing an artifact to one showing Activit
   await page.eval(`(() => { const w = (window.__actW = []); const t = () => { w.push(parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--activity-w')) || 0); if (w.length < 2000 && !window.__actStop) requestAnimationFrame(t); }; requestAnimationFrame(t); })()`);
   await lab.select(b);
   await settle(1500);
-  assert(!(await viewing(page)), 'the other chat shows Activity');
+  assert(await viewing(page), "another chat of the project keeps the tab: the panel is the project's (owner, 2026-11-18)");
   widths.push(await css(page, '--activity-w'));
   await lab.select(a);
   await settle(1500);
@@ -815,7 +816,7 @@ layoutTest('L5b the doc viewer dragged to its narrowest and widest: no sideways 
   await clickHere(page, '#messages .doc-card .art-btn');
   await waitViewing(page, true);
   await page.waitFor(
-    `(() => { const d = document.querySelector('iframe.ar-docframe')?.contentDocument; return d && d.querySelector('#docApp .ProseMirror'); })() && true`,
+    `(() => { const d = document.querySelector('iframe.dt-frame')?.contentDocument; return d && d.querySelector('#docApp .ProseMirror'); })() && true`,
     20000,
     'the doc editor',
   );
@@ -824,7 +825,7 @@ layoutTest('L5b the doc viewer dragged to its narrowest and widest: no sideways 
     await dragHandle(page, 'rs-activity', dx);
     await settle(900);
     const r = await page.eval<Record<string, number>>(`(() => {
-      const f = document.querySelector('iframe.ar-docframe'), d = f.contentDocument, e = d.scrollingElement;
+      const f = document.querySelector('iframe.dt-frame'), d = f.contentDocument, e = d.scrollingElement;
       return { col: Math.round(f.getBoundingClientRect().width), sw: e.scrollWidth, cw: e.clientWidth };
     })()`);
     if (r.sw > r.cw + 1) problems.push(`column ${r.col} px: the doc scrolls sideways (${r.sw}/${r.cw})`);

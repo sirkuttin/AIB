@@ -401,10 +401,10 @@
   const chatOf = (node) => (FU() && FU().chatOfNode ? FU().chatOfNode(node) : null);
   const openChat = () => (FU() && FU().currentChat ? FU().currentChat() : null);
 
-  // Open a doc. from: 'files' | 'ctrlk' | 'new': a tab in the strip. from: 'chat' (a card, link or row in a reply, /doc, the
-  // Artifacts picker, Open doc): the right column's Artifacts viewer, when it shows that chat; else a tab. background: show it
-  // in the Artifacts tab without switching to it (an agent made the doc).
-  const AU = () => root.AgentArtifactsUI;
+  // Open a doc. A doc ALWAYS opens in the right column's Docs tab (owner decision 2a, 2026-11-18), whether it comes from Files,
+  // Ctrl+K, "+ New doc" or a card, link or row in a chat reply. where: 'tab' is the one way to a middle tab (the Docs tab's ⤢, a
+  // restored tab). background: an agent made the doc: the Docs list marks it new, nothing opens.
+  const DU = () => root.AgentDocsTabUI;
   function openDoc(o) {
     const U = FU();
     if (!o || !o.name) return false;
@@ -415,8 +415,8 @@
     const WS = root.AgentWorkspaceUI;
     const pk = WS && WS.currentProject ? WS.currentProject() : '';
     if (!o.background && pk && focusPopout(pk, o.name)) return true;
-    const A = AU();
-    if (o.from === 'chat' && o.where !== 'tab' && A && A.openDoc && A.openDoc(d, { chat: c.id, background: !!o.background })) return true;
+    const T = DU();
+    if (o.where !== 'tab' && T && T.open && T.open(d, { background: !!o.background })) return true;
     if (o.background) return false;
     if (!U || !U.openDoc) return false;
     U.openDoc(o.scope || { id: c.id, root: 'main', label: 'Folder', branch: '', chatKey: c.key || '', title: c.title || '' }, {
@@ -430,6 +430,11 @@
       preview: !!o.preview,
     });
     return true;
+  }
+  // "+ New doc": make an empty doc linked to the chat (POST /api/live/docs/open with create). Resolves {name, title, ...}.
+  function createDoc(chatId, name) {
+    if (!host || !host.post) return Promise.reject(new Error('not ready'));
+    return Promise.resolve(host.post('docs/open', { id: chatId, name, create: '' }));
   }
 
   // ---- chips -------------------------------------------------------------------------------------------------------------------
@@ -985,6 +990,7 @@
     forget,
     onList: (fn) => listeners.add(fn),
     openDoc,
+    createDoc,
     decorate,
     decorateToolRow,
     runCommand,

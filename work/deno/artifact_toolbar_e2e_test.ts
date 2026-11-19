@@ -1,5 +1,5 @@
 /**
- * The artifact viewer's toolbar is one row (lead decision 2026-11-16): at the default 280 px right panel it shows the picker
+ * The artifact viewer's toolbar is one row (lead decision 2026-11-16): at the default 320 px right panel it shows the picker
  * (its title ends in "…", the full title on hover), the version chip, the compact zoom (− 100% +), ↗ and ⋯ on one 40 px row;
  * "Request a change" is the first item of ⋯. A wider panel shows "Request a change" as a button again, still on one row.
  * Switching artifacts never changes the row's height or the panel's width.
@@ -84,7 +84,7 @@ async function setPanel(page: Page, px: number) {
 }
 
 Deno.test({
-  name: "artifact toolbar: one row at the default 280 px panel, Request a change first in ⋯, nothing jumps between artifacts",
+  name: "artifact toolbar: one row at the default 320 px panel, Request a change first in ⋯, nothing jumps between artifacts",
   ignore: !browserPath,
   sanitizeResources: false,
   sanitizeOps: false,
@@ -106,13 +106,13 @@ Deno.test({
       await page.waitFor(`!!document.querySelector('#artifactsPane > .ar-bar .ar-ver') && /v3/.test(document.querySelector('#artifactsPane > .ar-bar .ar-ver').textContent)`, 15000, "v3 shown");
       await settle(400);
       const a = await measure(page);
-      if (LOG) console.log("280 long", JSON.stringify(a));
-      await shot(page, "280-long");
-      assert(a.panel === 280, `the default panel is 280 px (got ${a.panel})`);
-      assert(rows(a) === 1, `one row at 280 px: ${JSON.stringify(a.items)}`);
+      if (LOG) console.log("320 long", JSON.stringify(a));
+      await shot(page, "320-long");
+      assert(a.panel === 320, `the default panel is 320 px (got ${a.panel})`);
+      assert(rows(a) === 1, `one row at 320 px: ${JSON.stringify(a.items)}`);
       assert(a.bar.h <= 41, `the bar is one row high (got ${a.bar.h} px)`);
-      for (const k of ["pick", "ver", "zoomOut", "zoomPct", "zoomIn", "ext", "more"]) assert(!!a.items[k], `${k} shows at 280 px`);
-      assert(!a.items.request, "Request a change is not a button at 280 px");
+      for (const k of ["pick", "ver", "zoomOut", "zoomPct", "zoomIn", "ext", "more"]) assert(!!a.items[k], `${k} shows at 320 px`);
+      assert(!a.items.request, "Request a change is not a button at 320 px");
       assert(a.titleCut && a.pickTitle === longTitle, "a long title ends in … with the full title on hover");
       const right = Math.max(...Object.values(a.items).filter((x): x is Box => !!x).map((x) => x.x + x.w));
       assert(right <= a.bar.x + a.bar.w - 9, `nothing overflows the bar (${right} vs ${a.bar.x + a.bar.w})`);
@@ -132,8 +132,8 @@ Deno.test({
       await page.waitFor(`document.querySelector('#artifactsPane > .ar-bar .ar-pick').title === 'Plan'`, 10000, "Plan shown");
       await settle(300);
       const b = await measure(page);
-      if (LOG) console.log("280 short", JSON.stringify(b));
-      await shot(page, "280-short");
+      if (LOG) console.log("320 short", JSON.stringify(b));
+      await shot(page, "320-short");
       assert(b.bar.h === a.bar.h && b.panel === a.panel, `no jump: bar ${a.bar.h}->${b.bar.h}, panel ${a.panel}->${b.panel}`);
       for (const k of ["zoomOut", "zoomPct", "zoomIn", "ext", "more"]) {
         assert(b.items[k]!.x === a.items[k]!.x, `${k} stays put (${a.items[k]!.x} -> ${b.items[k]!.x})`);

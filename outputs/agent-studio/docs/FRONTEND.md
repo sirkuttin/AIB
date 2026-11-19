@@ -50,6 +50,7 @@ The page (`chat.html`) is plain JavaScript and CSS served as they are. There is 
 | 32 | `activity-ui.js` | `ActivityUI` | Activity column chrome: hide/show, the narrow strip, chips. |
 | 33 | `changes-ui.js` | `AgentChangesUI` (alias `ChangesUI`) | The Changes tab: what git sees as uncommitted, with diffs. |
 | 34 | `artifacts-ui.js` | `AgentArtifactsUI` (alias `ArtifactsUI`) | The Artifacts tab, stream cards and Preview buttons. Pages run in a sandboxed iframe. |
+| 34a | `docs-tab-ui.js` | `AgentDocsTabUI` | The Docs tab: the project's doc list, and the open doc in the panel (every doc opens here; ⤢ moves it to a middle tab). |
 | 35 | `clamp-ui.js` | `ClampUI` | Long blocks in the history are clamped with a "Show all N lines" toggle. |
 | 36 | `header-ui.js` | `AgentHeaderUI` | The one-line chat header with inline rename. |
 | 37 | `queue-ui.js` | `AgentQueueUI` | Queued messages above the message box. |

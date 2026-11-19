@@ -116,46 +116,60 @@ test('3 columns has its own icon', () => {
   assert.ok(!/Teal and blue are left out/.test(src), 'the agents note is gone');
 });
 
-test('the Artifacts viewer shows a doc from the chat in a frame; an agent-made doc is only announced (count, marked row); an artifact replaces the doc', async () => {
-  const shell = page({ ids: ['artifactsView'] });
+test('the Docs tab lists the project docs newest first with a writing chip and a new mark; a click opens the doc in a frame (no count); the Artifacts tab keeps no docs', async () => {
+  const shell = page({ ids: ['docsView'] });
   const w = shell.window;
   w.setInterval = () => 1;
   w.clearInterval = () => {};
-  w.fetch = async () => ({ ok: true, status: 200, json: async () => ({ token: 't', artifacts: [] }) });
-  const ctx = load(shell, ['artifacts-ui.js']);
-  ctx.location = { origin: 'http://127.0.0.1:9' };
-  const UI = ctx.ArtifactsUI;
-  const badge = shell.document.createElement('span'),
-    tab = shell.document.createElement('button');
+  w.setTimeout = () => 1;
+  const ctx = load(shell, ['docs-tab-ui.js']);
+  const UI = ctx.AgentDocsTabUI;
+  const docs = [
+    { name: 'old', title: 'Old doc', pages: 1, editedAt: 1000, editedBy: 'Codex', chat: 'chat1' },
+    { name: 'launch-notes', title: 'Launch notes', pages: 3, editedAt: 5000, editedBy: 'Claude Code', chat: 'chat1', writing: [{ chat: 'claude:a', name: 'Claude Code', page: 'Overview', section: 'Risks' }] },
+  ];
+  const listeners = [];
+  ctx.AgentDocLinks = {
+    cached: () => docs,
+    listFor: async () => docs,
+    onList: (fn) => listeners.push(fn),
+    docUrl: (o) => '/doc.html?chat=' + o.chat + '&name=' + o.name + '&where=' + o.where,
+  };
+  ctx.AgentFilesUI = { attachDocFrame: () => ({ detach() {} }) };
+  const tab = shell.document.createElement('button'),
+    dot = shell.document.createElement('span');
   let reveals = 0;
-  UI.mount({ view: shell.byId.artifactsView, badge, tab, win: ctx, reveal: () => reveals++ });
-  UI.sync({ id: 'chat1', busy: false, cwd: '' });
+  UI.mount({ view: shell.byId.docsView, dot, tab, win: ctx, reveal: () => reveals++ });
+  UI.sync({ id: 'chat1', project: 'p1' });
   UI.setVisible(true);
-  // an agent made it: announced, not opened, no reveal
-  assert.equal(UI.openDoc({ name: 'launch-notes', title: 'Launch notes' }, { chat: 'chat1', background: true }), true);
+  // newest edited first; the writing chip names the agent; the tab's dot is on (no count anywhere)
+  const rows = () => shell.byId.docsView.querySelectorAll('.dt-row');
+  assert.deepEqual(rows().map((r) => r.dataset.doc), ['launch-notes', 'old']);
+  assert.equal(rows()[0].querySelector('.dt-writing').textContent, 'Claude Code writing');
+  assert.equal(rows()[1].querySelector('.dt-writing'), null);
+  assert.equal(dot.hidden, false, 'the live dot');
+  assert.ok(shell.byId.docsView.querySelector('.dt-newrow'), 'a + New doc row');
+  assert.deepEqual(UI.sortDocs(docs).map((d) => d.name), ['launch-notes', 'old']);
+  assert.equal(UI.metaText(docs[1], 6000), '3 pages \u00b7 edited by Claude Code \u00b7 just now');
+  assert.equal(UI.metaText(docs[0], 1000 + 5 * 60000), '1 page \u00b7 edited by Codex \u00b7 5 min ago');
+  // an agent made one while you watch: marked new, nothing opens, nothing is revealed
+  assert.equal(UI.open({ name: 'fresh', title: 'Fresh' }, { background: true }), true);
   assert.equal(UI.state().doc, null);
-  assert.equal(UI.state().fresh, 'doc:launch-notes');
   assert.equal(reveals, 0);
-  assert.equal(badge.hidden, true, 'the badge counts artifacts, not docs');
-  assert.match(tab.getAttribute('aria-label'), /something new/);
-  const row = shell.byId.artifactsView.querySelector('.ar-doc');
-  assert.ok(row && row.classList.contains('ar-new') && row.querySelector('.ar-newdot'), 'the row is marked new');
-  assert.ok(!row.textContent.includes('\u2197'), 'no arrow on the row');
-  // another chat's doc is not shown here
-  assert.equal(UI.openDoc({ name: 'x' }, { chat: 'chat2' }), false);
-  // clicked: shown in a frame, revealed, the mark goes
-  row.click();
-  await new Promise((r) => setTimeout(r, 0));
+  // a click opens it in the panel: revealed, in a frame, the list gone, ← Docs and ⤢ there
+  rows()[0].click();
   assert.equal(UI.state().doc.name, 'launch-notes');
-  assert.equal(UI.state().fresh, '');
   assert.equal(reveals, 1);
-  const frame = shell.byId.artifactsView.querySelector('iframe.ar-docframe');
-  assert.ok(frame, 'the doc frame');
-  assert.equal(shell.byId.artifactsView.querySelector('.ar-ver').hidden, true, 'no version chip for a doc');
-  // an artifact replaces the doc
-  UI.upsert({ id: 'a1', title: 'First', kind: 'html', version: 1, versions: 1, updatedAt: 1, url: 'http://a/a1/v1/', conversationId: 'chat1' });
-  assert.equal(badge.textContent, '1', 'the count is the artifacts of the project');
-  await UI.open('a1');
+  const frame = shell.byId.docsView.querySelector('iframe.dt-frame');
+  assert.ok(frame && /where=docs/.test(frame.src), 'the doc frame');
+  assert.equal(shell.byId.docsView.querySelector('.dt-list').hidden, true);
+  assert.equal(shell.byId.docsView.querySelector('.dt-bar').hidden, false);
+  assert.equal(shell.byId.docsView.querySelector('.dt-wide').textContent, '\u2922');
+  // another chat of the project: the open doc stays; ← Docs closes it
+  UI.sync({ id: 'chat2', project: 'p1' });
+  assert.equal(UI.state().doc.name, 'launch-notes');
+  assert.equal(shell.byId.docsView.querySelector('iframe.dt-frame'), frame, 'the same frame');
+  shell.byId.docsView.querySelector('.dt-back').click();
   assert.equal(UI.state().doc, null);
-  assert.equal(shell.byId.artifactsView.querySelector('iframe.ar-docframe'), null, 'the doc frame is gone');
+  assert.equal(shell.byId.docsView.querySelector('iframe.dt-frame'), null);
 });

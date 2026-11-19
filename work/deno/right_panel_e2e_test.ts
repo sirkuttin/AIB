@@ -8,7 +8,7 @@
  * history in the panel. Opening another chat of the project (or
  * moving split focus) moves only the accent (no reorder, show, hide or resize). Each section holds that chat's subagents (finished
  * ones folded into "N finished", remembered per chat) and processes. A subagent history opens inside the panel at its width. The
- * panel's tab is remembered per project and window; a layout with no saved width starts at 320 px; below 320 px of panel the tabs
+ * panel's tab is remembered per project and window; a layout with no saved width starts at 320 px; below 320 px of panel the four tabs (Activity, Changes, Artifacts, Docs)
  * are icon + count (also at 125 % display scaling and a bigger interface size). Split view adds Left / Right tags on the pane chats' heads.
  *
  * A real Studio (the scroll lab: temp state folder, free port; never the live ports), scripted live chats with scripted
@@ -387,7 +387,7 @@ panelTest('right panel: the tab is remembered per project (and window): another 
   await shown(page, 'OTHEREND');
   await page.waitFor(`document.querySelector('#paneTabs [aria-selected="true"]').dataset.tab === 'activity'`, 8000, 'the other project starts on Activity');
   assertEquals(await page.eval<string[]>(`[...document.querySelectorAll('#projectActivity > .sp-grp')].map((g) => g.dataset.key)`), [other.key], "the panel shows the other project's working chat only");
-  await page.click('#paneTab-artifacts');
+  await page.click('#paneTab-docs');
   await settle(300);
   await page.eval(`AgentWorkspaceUI.selectProject(${JSON.stringify(pkA)})`);
   await lab.select(a);
@@ -400,7 +400,7 @@ panelTest('right panel: the tab is remembered per project (and window): another 
   await page.waitFor(`document.querySelector('#paneTabs [aria-selected="true"]').dataset.tab === 'changes'`, 15000, 'after a reload: Changes');
   const saved = await page.eval<Record<string, string>>(`JSON.parse(localStorage.getItem('studio-panel-tab-v1') || '{}')`);
   assertEquals(saved[pkA], 'changes');
-  assertEquals(saved[pkO], 'artifacts');
+  assertEquals(saved[pkO], 'docs');
   for (const x of [a, a2, other]) x.end();
 });
 
@@ -418,8 +418,8 @@ panelTest('right panel: 320 px only without a saved width; tabs keep their names
   })()`);
   let l = await look();
   assertEquals(l.w, 320, 'no saved width: 320 px');
-  assert(l.labels.every(Boolean) && !l.icons.some(Boolean), `320 px default: labelled tabs ${JSON.stringify(l)}`);
-  assert(l.names.every((n) => /^(Activity|Changes|Artifacts)/.test(n) && /\|(Activity|Changes|Artifacts)$/.test(n)), `labels stay in the aria label and tooltip: ${JSON.stringify(l.names)}`);
+  assert(l.labels.length === 4 && l.labels.every(Boolean) && !l.icons.some(Boolean), `320 px default: four labelled tabs ${JSON.stringify(l)}`);
+  assert(l.names.every((n) => /^(Activity|Changes|Artifacts|Docs)/.test(n) && /\|(Activity|Changes|Artifacts|Docs)$/.test(n)), `labels stay in the aria label and tooltip: ${JSON.stringify(l.names)}`);
   // a saved width wins (the layout key of this window-width bucket)
   const save = (w: number) => page.eval(`localStorage.setItem('studio-layout-v1:<1800', JSON.stringify({ activity: ${w} }))`);
   const reload = async () => {

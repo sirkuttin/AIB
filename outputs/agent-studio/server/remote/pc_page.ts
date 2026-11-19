@@ -112,6 +112,7 @@ export const PC_STATIC: Readonly<Record<string, string>> = (() => {
     'clash-ui.js',
     'changes-ui.js',
     'artifacts-ui.js',
+    'docs-tab-ui.js',
     'clamp-ui.js',
     'header-ui.js',
     'send-menu-ui.js',

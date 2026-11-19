@@ -4934,7 +4934,7 @@
   // Open and on screen: on the Changes or Artifacts tab the history stays open (CSS hides it) for when you come back to Activity.
   function inspectorShown() {
     const pane = $('subagentsPane');
-    return inspectorOpen() && !pane.classList.contains('tab-changes') && !pane.classList.contains('tab-artifacts');
+    return inspectorOpen() && !pane.classList.contains('tab-changes') && !pane.classList.contains('tab-artifacts') && !pane.classList.contains('tab-docs');
   }
   function toggleSubagent(agent, owner) {
     const who = owner || (selected ? aliasKey(selected) : '');

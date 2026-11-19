@@ -67,6 +67,31 @@
 .pane-ico-artifacts {
   --pane-ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.5' stroke-linejoin='round'%3E%3Crect x='1.5' y='2.5' width='13' height='11' rx='1.5'/%3E%3Cpath d='M1.5 5.5h13'/%3E%3C/svg%3E");
 }
+.pane-ico-docs {
+  --pane-ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.5 1.5h6l3 3v10h-9z'/%3E%3Cpath d='M9.5 1.5v3h3M5.5 8h5M5.5 11h5'/%3E%3C/svg%3E");
+}
+/* The Docs tab's live dot: only while an agent writes a doc (it has no count). */
+.pane-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--status-working, #e0a030);
+  animation: pane-dot-pulse 1.4s ease-in-out infinite;
+}
+.pane-dot[hidden] {
+  display: none;
+}
+@keyframes pane-dot-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pane-dot {
+    animation: none;
+  }
+}
 @container (max-width: 299.98px) {
   .pane-tabs .pane-tab-ico {
     display: block;
@@ -159,7 +184,8 @@
   }
 }
 /* Changes replaces the Activity body while its tab is open. */
-#subagentsPane.tab-changes #activityBody {
+#subagentsPane.tab-changes #activityBody,
+#subagentsPane.tab-docs #activityBody {
   display: none !important;
 }
 .changes-pane {
@@ -700,4 +726,188 @@
 }
 .cg-leftsec .cg-sec-head {
   padding-left: 20px;
+}
+/* Docs tab (docs-tab-ui.js): the project's doc list, and the open doc in the panel. */
+.docs-tab-pane {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.docs-tab-pane[hidden],
+.dt-bar[hidden],
+.dt-list[hidden],
+.dt-stage[hidden] {
+  display: none;
+}
+.dt-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--line);
+}
+.dt-back,
+.dt-wide {
+  flex: 0 0 auto;
+  height: 26px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 550;
+}
+.dt-wide {
+  width: 28px;
+  padding: 0;
+  font-size: 16px;
+  line-height: 1;
+}
+.dt-back:hover,
+.dt-wide:hover {
+  color: var(--text);
+  background: var(--hover-2);
+}
+.dt-back:focus-visible,
+.dt-wide:focus-visible,
+.dt-row:focus-visible,
+.dt-newrow:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+.dt-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 13px;
+  font-weight: 600;
+}
+.dt-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+.dt-frame {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  border: 0;
+  background: var(--bg); /* the doc page itself (same origin, the full editor) on the app's own background */
+}
+.dt-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.dt-newrow,
+.dt-row {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  width: 100%;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+}
+.dt-newrow {
+  color: var(--link);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.dt-newrow:hover,
+.dt-row:hover,
+.dt-row.on {
+  background: var(--hover-2);
+}
+.dt-row-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.dt-row-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 13px;
+  font-weight: 600;
+}
+.dt-row-meta,
+.dt-chat {
+  font-size: 11.5px;
+  color: var(--muted);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.dt-writing {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: var(--status-working-track);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+}
+.dt-writing::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: var(--status-working, #e0a030);
+  animation: pane-dot-pulse 1.4s ease-in-out infinite;
+}
+.dt-newdot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.dt-namebox {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 8px;
+}
+.dt-name {
+  width: 100%;
+  box-sizing: border-box;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+.dt-error {
+  font-size: 11.5px;
+  color: var(--danger, #d4554a);
+}
+.dt-empty {
+  margin: 8px;
+  font-size: 12.5px;
+  color: var(--muted);
 }

@@ -632,13 +632,14 @@ test('plain unified text without file headers, and an empty diff, are handled', 
 
 /* ---- tab row (changes-ui.js) ---- */
 test('the right column has an Artifacts tab that can be widened like Changes', () => {
-  assert.deepEqual(C.TABS, ['activity', 'changes', 'artifacts']);
+  assert.deepEqual(C.TABS, ['activity', 'changes', 'artifacts', 'docs']);
   let s = C.tabState(null, { type: 'show', tab: 'artifacts' });
   assert.equal(s.tab, 'artifacts');
   s = C.tabState(s, { type: 'toggleExpand' });
   assert.equal(s.expanded, true);
   s = C.tabState(s, { type: 'show', tab: 'changes' });
   assert.equal(s.expanded, true, 'widening carries between the two wide tabs');
+  assert.equal(C.tabState(s, { type: 'show', tab: 'docs' }).expanded, false, 'Docs is not widened: its \u2922 moves a doc to the middle');
   assert.deepEqual(C.tabState(s, { type: 'show', tab: 'activity' }), { tab: 'activity', expanded: false });
   assert.deepEqual(C.tabState({ tab: 'artifacts', expanded: true }, { type: 'subchat', open: true }), {
     tab: 'activity',
@@ -732,7 +733,7 @@ test('the picker: live artifacts in Pinned / Newest first, then "Archived N" and
   );
   assert.equal(g[2].divider, true, 'one divider above the foot groups');
   assert.equal(g[3].divider, false);
-  g = A.pickerGroups(list, 'a1', NOW, [], [], '', { archived: true, deleted: true });
+  g = A.pickerGroups(list, 'a1', NOW, '', { archived: true, deleted: true });
   const archived = g.find((x) => x.key === 'archived'),
     deleted = g.find((x) => x.key === 'deleted');
   assert.deepEqual(archived.items.map((r) => r.id), ['a1', 'a2'], 'newest archived first');
@@ -745,7 +746,7 @@ test('the picker: live artifacts in Pinned / Newest first, then "Archived N" and
   g = A.pickerGroups([list[2]], '', NOW);
   assert.deepEqual(g.map((x) => [x.key, x.divider]), [['archived', false]]);
   // a group you opened stays while empty and says so in the chat menu's words
-  g = A.pickerGroups([list[1]], 'l', NOW, [], [], '', { archived: true, deleted: true });
+  g = A.pickerGroups([list[1]], 'l', NOW, '', { archived: true, deleted: true });
   assert.deepEqual(
     g.filter((x) => x.foot).map((x) => [x.label, x.count, x.empty]),
     [
@@ -1115,21 +1116,19 @@ const mixed = () => [
 ];
 
 test('the project list: one group newest first, every row tagged with its chat and agent', () => {
-  const g = A.pickerGroups(mixed(), 'b1', NOW, [], null, '', {}, { tagFor });
+  const g = A.pickerGroups(mixed(), 'b1', NOW, '', {}, { tagFor });
   assert.deepEqual(g.map((x) => x.key), ['all']);
   assert.deepEqual(g[0].items.map((i) => i.id), ['b1', 'a2', 'a1', 'x1']);
   assert.deepEqual(g[0].items.map((i) => [i.tag.title, i.tag.agent]), [['Docs sweep', 'Codex'], ['Auth work', 'Claude'], ['Auth work', 'Claude'], ['Another chat', '']]);
   assert.equal(A.chatTag({ conversationId: '' }).title, 'No chat');
 });
-test('the chat filter narrows the list to one chat; docs follow it; a stale choice shows everything', () => {
-  const g = A.pickerGroups(mixed(), '', NOW, [], null, '', {}, { chat: 'claude:a', tagFor });
+test('the chat filter narrows the list to one chat; a stale choice shows everything', () => {
+  const g = A.pickerGroups(mixed(), '', NOW, '', {}, { chat: 'claude:a', tagFor });
   assert.deepEqual(g[0].items.map((i) => i.id), ['a2', 'a1']);
   assert.deepEqual(A.filterList(mixed(), 'claude:a').map((a) => a.id), ['a1', 'a2']);
   assert.equal(A.filterList(mixed(), 'codex:nothing').length, 4, 'a chat with no artifact: all of them, never an empty list');
   assert.equal(A.filterList(mixed(), '').length, 4);
-  const docs = [{ name: 'p', chat: 'claude:a' }, { name: 'q', chat: 'codex:b' }];
-  assert.deepEqual(A.pickerGroups([], '', NOW, docs, null, '', {}, { chat: 'codex:b' })[0].items.map((i) => i.name), ['q']);
-  assert.deepEqual(A.pickerGroups([], '', NOW, docs, null).filter((x) => x.key === 'docs')[0].items.map((i) => i.name), ['p', 'q'], 'null: every chat of the project');
+  assert.deepEqual(A.pickerGroups([], '', NOW, '', {}, { chat: 'codex:b' }), [], 'no docs group any more: the docs are in the Docs tab');
 });
 test('the filter choices: All chats first, then each chat with live artifacts, newest artifact first', () => {
   const o = A.chatOptions(mixed().concat([sum({ id: 'z', conversationId: 'claude:a', archivedAt: 5 })]), tagFor);

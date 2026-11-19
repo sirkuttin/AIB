@@ -88,19 +88,17 @@ function setup(o) {
       reveal() {},
     }),
   };
-  // the Artifacts viewer shows the open chat (claude:a1); opts.noViewer: an AIB without it (docs then open as tabs)
+  // The right column's Docs tab (docs-tab-ui.js) takes every doc: the project's, whichever chat is open (owner decision 2a,
+  // 2026-11-18). opts.noViewer: an AIB without it (docs then open as middle tabs, as ⤢ makes them).
   const viewer = [];
-  ctx.AgentArtifactsUI = opts.noViewer
-    ? { state: () => ({ list: [] }), open() {} }
-    : {
-        state: () => ({ list: [] }),
-        open() {},
-        openDoc: (d, o) => {
-          if (o && o.chat && o.chat !== 'claude:a1') return false;
-          viewer.push(Object.assign({}, d, { background: !!(o && o.background) }));
-          return true;
-        },
-      };
+  ctx.AgentArtifactsUI = { state: () => ({ list: [] }), open() {} };
+  if (!opts.noViewer)
+    ctx.AgentDocsTabUI = {
+      open: (d, o) => {
+        viewer.push(Object.assign({}, d, { background: !!(o && o.background) }));
+        return true;
+      },
+    };
   const list = opts.list || [conv('a1', ROOT), conv('a2', ROOT)];
   const getJson = async (path, q) => {
     calls.push({ path, q: Object.assign({}, q) });
@@ -376,32 +374,18 @@ test('doc tabs: one per doc; a single click is a preview the next one replaces; 
   assert.equal(st.tabs.find((x) => x.kind === 'doc').doc.page, 'p1');
 });
 
-test('the Artifacts picker: artifacts, then "Docs the chats wrote" under a divider; no other docs, never a doc history', () => {
+test('the Artifacts picker lists artifacts only: no docs group (the docs are in the Docs tab), never a doc history', () => {
   const list = [
     { id: 'a1', title: 'Checkout v2 timeline', kind: 'html', version: 2, conversationId: 'claude:a1', updatedAt: 10 },
     { id: 'h1', title: 'release-plan', kind: 'md', version: 6, conversationId: null, sourcePath: null, updatedAt: 20 },
   ];
-  const docs = [plan(), Object.assign(plan(), { name: 'onboarding', title: 'Onboarding', pages: 3, chat: 'claude:zz' })];
-  const g = A.pickerGroups(list, 'a1', 0, docs, ['claude:a1']);
-  assert.deepEqual(g.map((x) => x.label), ['Newest first', 'Docs the chats wrote']);
+  const g = A.pickerGroups(list, 'a1', 0, 'a1');
+  assert.deepEqual(g.map((x) => x.label), ['Newest first']);
   assert.deepEqual(g[0].items.map((i) => [i.badge, i.title, i.meta.replace(/ · .*/, '')]), [['html', 'Checkout v2 timeline', 'v2']]);
-  assert.deepEqual(g[1].items.map((i) => [i.doc, i.title, i.meta]), [[true, 'Release plan', '2 pages']]);
-  assert.equal(g[1].note, 'Open here to edit; you and agents both can');
-  assert.equal(g[1].items[0].on, false);
-  const sel = A.pickerGroups(list, 'doc:release-plan', 0, docs, ['claude:a1'], 'a1');
-  assert.equal(sel[1].items[0].on, true, 'the doc shown in the viewer is the picked row');
-  assert.equal(sel[0].items[0].fresh, true, 'a row that came while you looked away is marked new');
-  assert.equal(g[1].divider, true);
-  assert.ok(!g.some((x) => x.items.some((i) => i.title === 'Onboarding')), 'a doc another chat wrote is left out');
   assert.ok(!g.some((x) => x.items.some((i) => i.id === 'h1')), 'the doc history is left out');
   assert.equal(A.isDocHistory(list[1]), true);
-  // no artifacts: the doc group alone, no divider
-  const only = A.pickerGroups([], '', 0, docs, ['claude:a1']);
-  assert.deepEqual(only.map((x) => [x.label, x.divider]), [['Docs the chats wrote', false]]);
-  assert.deepEqual(A.pickerGroups([], '', 0, docs, ['claude:other']), []);
-  assert.equal(A.pickerIsPlain([list[0]], [], ['claude:a1']), true);
-  assert.equal(A.pickerIsPlain([list[0]], docs, ['claude:a1']), false, 'a doc this chat wrote makes it a dropdown');
-  assert.equal(A.pickerIsPlain([list[0]], docs, ['claude:other']), true, 'docs of other chats do not');
+  assert.deepEqual(A.pickerGroups([], '', 0), [], 'no artifacts: nothing, and no docs group either');
+  assert.equal(A.pickerIsPlain([list[0]]), true);
 });
 
 // ---- the Files view ---------------------------------------------------------------------------------------------------------------
@@ -548,8 +532,29 @@ test('Files: the aib-docs row has the accent doc icon (not the folder outline), 
   assert.equal(r2.querySelector('.fx-dirchg'), null);
 });
 
-test('Files: a doc row opens a preview tab on one click and keeps it on a double-click; Enter keeps it', async () => {
+test('Files, Ctrl+K and "+ New doc" open the doc in the Docs tab, never as a middle tab (the middle tab is only ⤢)', async () => {
   const t = setup();
+  await openDocsFolder(t);
+  docRowOf(t, 'release-plan').click();
+  await flush();
+  assert.deepEqual(t.viewer.map((v) => [v.name, v.background]), [['release-plan', false]], 'Files: the Docs tab');
+  assert.equal(t.FU._state().tabs.tabs.length, 0, 'no middle tab');
+  assert.equal(frames(t).length, 0);
+  t.DL.openDoc({ name: 'release-plan', page: 'p2', chat: { id: 'claude:a1' }, from: 'ctrlk' });
+  await flush();
+  assert.deepEqual(t.viewer.map((v) => v.page), ['', 'p2'], 'Ctrl+K: the Docs tab, on the page');
+  t.DL.openDoc({ name: 'release-plan', chat: { id: 'claude:a1' }, from: 'new' });
+  assert.equal(t.viewer.length, 3, '+ New doc: the Docs tab');
+  assert.equal(t.FU._state().tabs.tabs.length, 0, 'still no middle tab');
+  // ⤢ asks for a middle tab and gets one
+  t.DL.openDoc({ name: 'release-plan', title: 'Release plan', chat: { id: 'claude:a1' }, from: 'chat', where: 'tab' });
+  await flush();
+  assert.equal(t.viewer.length, 3, 'the Docs tab is not asked again');
+  assert.equal(t.FU._state().tabs.tabs[0].doc.name, 'release-plan', 'a middle tab');
+});
+
+test('Files: a doc row opens a preview tab on one click and keeps it on a double-click; Enter keeps it (no Docs tab: middle tabs)', async () => {
+  const t = setup({ noViewer: true });
   await openDocsFolder(t);
   docRowOf(t, 'release-plan').click();
   await flush();
@@ -646,9 +651,8 @@ test('Files: "+ New doc" turns into a name field reading "Untitled doc"; Enter m
   await flush();
   const made = t.posts.filter(([p, b]) => p === 'docs/open' && b.create !== undefined).pop();
   assert.deepEqual(made[1], { id: 'claude:a1', name: 'Launch notes', create: '' });
-  const tab = t.FU._state().tabs.tabs.find((x) => x.kind === 'doc');
-  assert.equal(tab.doc.name, 'launch-notes');
-  assert.equal(tab.preview, false);
+  assert.deepEqual(t.viewer.map((v) => v.name), ['launch-notes'], 'the new doc opens in the Docs tab');
+  assert.ok(!t.FU._state().tabs.tabs.some((x) => x.kind === 'doc'), 'not as a middle tab');
   assert.equal(t.FU._state().newDoc, null);
   // right-click on a folder in Files offers New doc: aib-docs opens with the name field as its last row
   rowOf(t, 'aib-docs').click(); // close it
@@ -687,7 +691,7 @@ async function draw(t, row) {
   return { line, out };
 }
 
-test('a DOC tool row names doc › page and its "open ↗" opens it in the Artifacts viewer at every width; never beside the chat', async () => {
+test('a DOC tool row names doc › page and its "open ↗" opens it in the Docs tab at every width; never beside the chat', async () => {
   const t = setup();
   await t.DL.listFor('claude:a1', 'main');
   const { line } = await draw(t, docRow('doc_edit', { doc: 'release-plan', page: 'Risks', ops: [] }, { doc: 'release-plan', page: 'p2', ok: true }));
@@ -709,8 +713,12 @@ test('a DOC tool row names doc › page and its "open ↗" opens it in the Artif
   r2.line.querySelector('.doc-open').click();
   await flush();
   assert.deepEqual(n.viewer.map((v) => v.page), ['p1']);
-  // the viewer shows another chat: a kept tab
+  // the Docs tab is the project's: a doc from another chat of it opens there too, and ⤢ makes the kept middle tab
   n.DL.openDoc({ name: 'release-plan', page: 'p2', chat: { id: 'claude:a2' }, from: 'chat' });
+  await flush();
+  assert.deepEqual(n.viewer.map((v) => v.page), ['p1', 'p2']);
+  assert.equal(frames(n, 'main').length, 0);
+  n.DL.openDoc({ name: 'release-plan', page: 'p2', chat: { id: 'claude:a2' }, from: 'chat', where: 'tab' });
   await flush();
   assert.equal(query(frames(n, 'main')[0].frame.src).page, 'p2');
   assert.equal(query(frames(n, 'main')[0].frame.src).where, 'tab');
@@ -724,7 +732,7 @@ test('a DOC tool row names doc › page and its "open ↗" opens it in the Artif
   assert.equal(frames(o, 'beside').length, 0);
 });
 
-test('doc_create adds a doc-created card whose Open shows the doc in the Artifacts viewer', async () => {
+test('doc_create adds a doc-created card whose Open shows the doc in the Docs tab', async () => {
   const t = setup();
   await t.DL.listFor('claude:a1', 'main');
   const { out, line } = await draw(t, docRow('doc_create', { doc: 'release-plan' }, { doc: 'release-plan', created: true, pages: [{ id: 'p1', title: 'Overview' }] }));
@@ -740,7 +748,7 @@ test('doc_create adds a doc-created card whose Open shows the doc in the Artifac
   assert.deepEqual(t.viewer.map((v) => [v.name, v.background]), [['release-plan', false]]);
 });
 
-test('an agent making a doc while you watch: announced in the Artifacts viewer in the background, once; no tab, the chat stays in front', async () => {
+test('an agent making a doc while you watch: announced in the Docs tab in the background, once; no tab, the chat stays in front', async () => {
   const t = setup();
   await t.DL.listFor('claude:a1', 'main');
   const call = (result) => ({
@@ -810,7 +818,7 @@ test('/doc with a page: an existing page opens; an unknown page is made; a new d
   r = await t.DL.runCommand('/doc release notes', chat);
   const made = t.posts.find(([p, b]) => p === 'docs/open' && b.create !== undefined);
   assert.deepEqual(made[1], { id: 'claude:a1', name: 'Release notes', create: '' });
-  assert.ok(t.viewer.some((v) => v.name === 'release-notes'), 'shown in the Artifacts viewer');
+  assert.ok(t.viewer.some((v) => v.name === 'release-notes'), 'shown in the Docs tab');
   assert.deepEqual(JSON.parse(JSON.stringify(await t.DL.runCommand('/doc', chat))), { error: 'Name the doc: /doc release plan' });
 });
 
@@ -895,7 +903,7 @@ test('/doc in the composer: the doc list, then after ">" its pages; Tab complete
 });
 
 test('doc frames talk by the contract: pin keeps the preview, title names the tab, closed closes it, pick-chat answers', async () => {
-  const t = setup();
+  const t = setup({ noViewer: true });
   await openDocsFolder(t);
   docRowOf(t, 'release-plan').click();
   await flush();

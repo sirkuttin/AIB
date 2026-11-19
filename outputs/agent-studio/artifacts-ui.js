@@ -116,26 +116,8 @@
   /* A local doc's history (no chat, no source file): the doc's History panel shows it, the picker never does (the server leaves
      them out of the list already; this keeps an old answer from showing one). */
   const isDocHistory = (a) => !!a && !a.conversationId && !a.sourcePath;
-  /* The doc rows: {doc: true, name, title, badge 'doc', meta "4 pages"}. `chatKey`: the chat's lasting id(s) a doc links to. */
-  const docRow = (d) => ({
-    doc: true,
-    id: 'doc:' + d.name,
-    name: d.name,
-    badge: 'doc',
-    title: d.title || d.name,
-    meta: Math.max(1, num(d.pages)) + (Math.max(1, num(d.pages)) === 1 ? ' page' : ' pages'),
-    pinned: false,
-    on: false,
-  });
-  /* Picker rows in groups: "Pinned" and "Newest first" list the project's artifacts (every chat's, each row tagged with its chat);
-     below a divider, "Docs the chats wrote" lists the docs linked to a chat of the project (and a doc opened here). A doc opens in this viewer, in the full doc editor. The project's other docs are
-     not listed: Files and Ctrl+K have every doc, and open them as tabs. An empty group is left out. */
-  const DOCS_NOTE = 'Open here to edit; you and agents both can';
-  const linkedDocs = (docs, chatKeys) => {
-    if (chatKeys === null) return (Array.isArray(docs) ? docs : []).filter((d) => d && d.name && d.chat); // the project's: any chat's
-    const keys = (Array.isArray(chatKeys) ? chatKeys : [chatKeys]).filter(Boolean);
-    return (Array.isArray(docs) ? docs : []).filter((d) => d && d.name && d.chat && keys.includes(d.chat));
-  };
+  /* Picker rows in groups: "Pinned" and "Newest first" list the project's artifacts (every chat's, each row tagged with its chat).
+     The project's docs are in the Docs tab (docs-tab-ui.js), not here. An empty group is left out. */
   /* ---- archive and Recently deleted (owner decisions 2026-11-12) ------------------------------------------------------
      An archived artifact (archivedAt) is out of the picker's main groups but whole; a deleted one (deletedAt) waits in Recently
      deleted until purgeAt (30 days), and its source file waits in the artifact's bin (deletedFile says which file went, or why it was
@@ -279,7 +261,7 @@
       .map((o) => Object.assign({}, chatTag({ conversationId: o.key }, tagFor), { n: o.n }));
     return [{ key: '', title: 'All chats', agent: '', n: live.length }].concat(rest);
   }
-  function pickerGroups(list, selectedId, nowMs, docs, chatKeys, freshId, foot, view) {
+  function pickerGroups(list, selectedId, nowMs, freshId, foot, view) {
     const tagFor = view && view.tagFor,
       chat = (view && view.chat) || '';
     list = filterList(list, chat);
@@ -299,15 +281,9 @@
       ordered = all.filter(isLive),
       pinned = ordered.filter((a) => a.pinned).map(row),
       rest = ordered.filter((a) => !a.pinned).map(row);
-    const mine = linkedDocs(docs, chatKeys)
-      .filter((d) => !chat || d.chat === chat)
-      .map(docRow)
-      .map((r) => Object.assign(r, { on: r.id === selectedId, fresh: !!freshId && r.id === freshId }));
     const groups = [];
     if (pinned.length) groups.push({ key: 'pinned', label: 'Pinned', items: pinned });
     if (rest.length) groups.push({ key: 'all', label: 'Newest first', items: rest });
-    if (mine.length)
-      groups.push({ key: 'docs', label: 'Docs the chats wrote', note: DOCS_NOTE, divider: !!(pinned.length || rest.length), items: mine });
     foot = foot || {};
     const archived = all.filter(isArchived).sort((a, b) => num(b.archivedAt) - num(a.archivedAt)),
       deleted = all.filter(isDeleted).sort((a, b) => num(b.deletedAt) - num(a.deletedAt));
@@ -333,9 +309,8 @@
     );
     return groups;
   }
-  /* One live artifact, no doc a chat wrote and nothing archived or deleted: plain text, no caret. Otherwise a dropdown. */
-  const pickerIsPlain = (list, docs, chatKeys) =>
-    liveOf(list).length <= 1 && !linkedDocs(docs, chatKeys).length && !hiddenCounts(list);
+  /* One live artifact and nothing archived or deleted: plain text, no caret. Otherwise a dropdown. */
+  const pickerIsPlain = (list) => liveOf(list).length <= 1 && !hiddenCounts(list);
   /* The version shown: the user's pick, or the latest when following. */
   const shownVersion = (latest, picked) =>
     picked != null && picked >= 1 && picked <= num(latest) ? Math.floor(picked) : Math.max(1, num(latest) || 1);
@@ -960,7 +935,6 @@
     reloadPending: false,
     fresh: '',
     doc: null, // the doc shown in the viewer: {name, title, page, block, thread}
-    docExtras: [], // docs this chat opened or made that the doc list does not link to it (yet)
     foot: { archived: false, deleted: false }, // the picker's foot groups you opened
     confirmPurge: '', // the Recently deleted row showing "Delete for good? … Delete for good · Keep"
   };
@@ -1038,7 +1012,7 @@
       const newest = added.slice().sort((a, b) => num(b.updatedAt) - num(a.updatedAt))[0];
       if (newest.id !== S.selId) S.fresh = newest.id;
     }
-    if (S.fresh && !isDocId(S.fresh) && (S.fresh === S.selId || !known(S.fresh))) S.fresh = '';
+    if (S.fresh && (S.fresh === S.selId || !known(S.fresh))) S.fresh = '';
     paintCount();
     relinkAll();
     refreshCards();
@@ -1215,12 +1189,9 @@
       S.dirty = true;
       S.stageKey = '';
       S.fresh = '';
-      S.doc = null;
-      S.docExtras = [];
       S.foot = { archived: false, deleted: false };
       S.confirmPurge = '';
       S.filter = project ? String(savedFilters()[project] || '') : '';
-      dropDoc();
       closePop();
       const back = project ? S.lastSel.get(project) : null;
       if (back) {
@@ -1306,7 +1277,6 @@
     }
     S.selId = id;
     S.userPicked = true;
-    S.doc = null;
     if (S.fresh === id) S.fresh = '';
     S.mode = 'page';
     S.cmp = null;
@@ -1326,9 +1296,7 @@
   }
   function selectArtifact(id) {
     if (S.fresh === id) S.fresh = '';
-    const wasDoc = !!S.doc;
-    S.doc = null;
-    if (id === S.selId && !wasDoc) return;
+    if (id === S.selId) return;
     S.selId = id;
     S.userPicked = true;
     S.picked = null;
@@ -1399,209 +1367,20 @@
     } else noteArm(Math.max(1500, noteLeft));
   }
 
-  /* -- local docs: doc-links.js keeps the project's doc list. A doc from this chat (its card, a link, /doc, the picker's "Docs this
-     chat wrote", Open doc) opens here, in the full doc editor (doc.html in a frame; files-ui.js answers the frame's messages). A
-     doc an agent makes while you watch is announced, not opened: the tab's count goes up and its row is marked new. -- */
+  /* -- docs are not shown here: a doc always opens in the Docs tab (docs-tab-ui.js). Edit-as-doc and "Open the doc" ask doc-links.js. -- */
   const DL = () => win && win.AgentDocLinks;
-  const FUI = () => win && win.AgentFilesUI;
-  const isDocId = (id) => String(id || '').indexOf('doc:') === 0;
-  let docsAsked = '',
-    docsHooked = false;
-  function projectDocs() {
-    const D = DL();
-    if (!D || !S.chat.id) return S.docExtras.slice();
-    if (!docsHooked && D.onList) {
-      docsHooked = true;
-      D.onList(() => paintAll());
-    }
-    const now = D.cached(S.chat.id, 'main');
-    if (!now && docsAsked !== S.chat.id) {
-      docsAsked = S.chat.id;
-      D.listFor(S.chat.id, 'main').then(() => paintAll());
-    }
-    return (now || []).concat(S.docExtras);
-  }
-  /* null: the docs of any chat of the project (the picker never depends on which chat is open). */
-  const chatKeys = () => null;
-  /* This chat's docs for the picker and the count: the docs linked to it, plus the ones it opened or made here; one row a doc. */
-  function myDocs() {
-    const out = [];
-    for (const d of linkedDocs(projectDocs(), chatKeys())) if (!out.some((o) => o.name === d.name)) out.push(d);
-    return out;
-  }
-  function rememberDoc(d) {
-    if (myDocs().some((o) => o.name === d.name)) return;
-    const all = (DL() && DL().cached(S.chat.id, 'main')) || [];
-    const hit = all.find((o) => o.name === d.name);
-    S.docExtras = S.docExtras
-      .filter((o) => o.name !== d.name)
-      .concat([Object.assign({}, hit || { name: d.name, title: d.title || d.name, pages: 1 }, { chat: S.chat.id })]);
-  }
-  const docTitle = (name) => {
-    const hit = myDocs().find((d) => d.name === name);
-    return (hit && (hit.title || hit.name)) || (S.doc && S.doc.name === name ? S.doc.title : '') || name;
-  };
-  /* Open a doc in the viewer. opts: {chat: the chat it came from (another chat's doc is not shown here: false), background: an
-     agent made it (mark it new, never switch to it, never take the focus)}. Returns whether it is shown or announced here. */
-  function openDoc(d, opts) {
-    opts = opts || {};
-    if (!S.mounted || !ui || !d || !d.name || !S.chat.id) return false;
-    if (opts.chat && opts.chat !== S.chat.id) return false;
-    rememberDoc(d);
-    if (opts.background) {
-      if (!(S.doc && S.doc.name === d.name)) S.fresh = 'doc:' + d.name;
-      paintAll();
-      return true;
-    }
-    const same = !!(S.doc && S.doc.name === d.name && ui.docFrame && ui.docFrame.parentNode === ui.stage);
-    S.doc = { name: d.name, title: d.title || docTitle(d.name), page: d.page || '', block: d.block || '', thread: d.thread || '' };
-    S.userPicked = true;
-    if (S.fresh === 'doc:' + d.name) S.fresh = '';
-    if (same) {
-      if (d.page || d.block || d.thread)
-        try {
-          ui.docFrame.contentWindow.postMessage({ type: 'aib-doc:goto', page: d.page || '', block: d.block || '', thread: d.thread || '' }, win.location.origin);
-        } catch (e) {
-          /* still loading */
-        }
-    } else {
-      S.dirty = true;
-      S.stageKey = '';
-    }
-    ui.reveal();
-    paintAll();
-    paintStage('open');
-    return true;
-  }
-  function openDocRow(it) {
-    openDoc({ name: it.name, title: it.title });
-  }
-  function docButton(it) {
-    const row = popItem('ar-doc' + (it.on ? ' on' : '') + (it.fresh ? ' ar-new' : ''));
-    row.dataset.doc = it.name;
-    row.append(el('span', 'ar-k', it.badge), el('span', 'ar-it-title', it.title), el('span', 'ar-it-meta', it.meta));
-    if (it.fresh) row.append(newDot());
-    row.title = 'Open ' + it.title + ' here';
-    row.setAttribute('aria-label', it.title + ', ' + it.meta + (it.fresh ? ', new' : ''));
-    row.addEventListener('click', () => {
-      closePop();
-      openDocRow(it);
-    });
-    return row;
-  }
-  /* The mark on a row that came while you were not looking (the "New: …" line names it too). */
-  function newDot() {
-    const d = el('span', 'ar-newdot');
-    d.setAttribute('aria-hidden', 'true');
-    d.title = 'New';
-    return d;
-  }
-  /* The doc frame: kept while the viewer shows that doc, dropped (and its messages forgotten) when anything else is shown. */
-  let docRec = null;
-  function dropDoc() {
-    if (docRec) docRec.detach();
-    docRec = null;
-    if (ui && ui.docFrame) {
-      if (ui.docFrame.parentNode) ui.docFrame.remove();
-      ui.docFrame = null;
-    }
-  }
-  function paintDocStage() {
-    if (!S.visible) {
-      S.dirty = true;
-      return;
-    }
-    S.dirty = false;
-    const key = 'doc:' + S.doc.name;
-    if (S.stageKey === key && ui.docFrame && ui.docFrame.parentNode === ui.stage) return;
-    S.renderSeq++;
-    S.stageKey = key;
-    const D = DL(),
-      d = S.doc;
-    const f = el('iframe', 'ar-frame ar-docframe');
-    f.title = 'Doc: ' + (d.title || d.name);
-    f.src = D && D.docUrl ? D.docUrl({ chat: S.chat.id, name: d.name, page: d.page, block: d.block, thread: d.thread, where: 'artifacts' }) : 'about:blank';
-    dropDoc();
-    ui.docFrame = f;
-    setStage(f);
-    ui.docFrame = f;
-    const FU = FUI();
-    if (FU && FU.attachDocFrame)
-      docRec = FU.attachDocFrame(f, { id: S.chat.id, root: 'main', label: 'Folder', branch: '', chatKey: '', title: '' }, d, {
-        open: (o) => openDoc(o),
-        title: (t) => {
-          if (!S.doc || S.doc.name !== d.name) return;
-          if (t.title) S.doc.title = t.title;
-          if (t.page) S.doc.page = t.page;
-          f.title = 'Doc: ' + S.doc.title;
-          paintBar();
-        },
-        closed: () => {
-          if (!S.doc || S.doc.name !== d.name) return;
-          S.doc = null;
-          S.docExtras = S.docExtras.filter((o) => o.name !== d.name);
-          dropDoc();
-          if (D && D.forget) D.forget();
-          S.stageKey = '';
-          S.dirty = true;
-          paintAll();
-          paintStage('open');
-        },
-      });
-  }
-  function paintDocBar() {
-    const d = S.doc;
-    ui.bar.hidden = false;
-    ui.stage.hidden = false;
-    ui.empty.hidden = true;
-    ui.foot.hidden = true;
-    for (const n of [ui.avail, ui.built, ui.stale, ui.became, ui.ver, ui.ext, ui.more, ui.edit, ui.request]) n.hidden = true;
-    const others = liveOf(S.list).length + myDocs().filter((o) => o.name !== d.name).length;
-    const plain = others === 0 && !hiddenCounts(S.list);
-    ui.pick.replaceChildren(el('span', 'ar-k', 'doc'), el('span', 'ar-pick-title', d.title || d.name));
-    if (!plain) ui.pick.append(el('span', 'ar-caret', '▾'));
-    ui.pick.disabled = plain;
-    ui.pick.classList.toggle('plain', plain);
-    ui.pick.title = (d.title || d.name) + ' (doc)';
-    ui.pick.setAttribute('aria-haspopup', plain ? 'false' : 'menu');
-    paintFresh();
-  }
-  function freshInfo() {
-    if (!S.fresh) return null;
-    if (isDocId(S.fresh)) return { title: docTitle(S.fresh.slice(4)) };
-    return known(S.fresh);
-  }
   function paintFresh() {
-    const fresh = freshInfo();
+    const fresh = S.fresh ? known(S.fresh) : null;
     ui.fresh.hidden = !fresh;
     if (fresh) ui.freshText.textContent = 'New: ' + (fresh.title || 'Untitled') + ' · ';
   }
-  /* A group's head: a divider before "Docs the chats wrote", its label and its note line. */
+  /* A group's head: its label and its note line. */
   function groupHead(g) {
     const out = [];
     if (g.divider) out.push(el('div', 'ar-sep'));
     out.push(el('div', 'ar-gh', g.label));
     if (g.note) out.push(el('div', 'ar-gnote', g.note));
     return out;
-  }
-  /* No artifacts yet: the docs the chats wrote still show, under the empty text. */
-  function paintEmptyDocs() {
-    if (!ui) return;
-    let box = ui.empty.querySelector('.ar-docs-empty');
-    const groups = pickerGroups([], '', undefined, myDocs(), chatKeys(), S.fresh);
-    if (!groups.length) {
-      if (box) box.remove();
-      return;
-    }
-    if (!box) {
-      box = el('div', 'ar-docs-empty');
-      ui.empty.append(box);
-    }
-    box.replaceChildren();
-    for (const g of groups) {
-      box.append(...groupHead(g));
-      for (const it of g.items) box.append(docButton(it));
-    }
   }
 
   /* -- painting: tab badge, toolbar, banner -- */
@@ -1624,7 +1403,6 @@
     syncViewing();
   }
   function paintBar2() {
-    if (S.doc) return paintDocBar();
     const a = current(),
       none = !a,
       gone = isDeleted(a); // in Recently deleted: no versions, no page to open
@@ -1640,10 +1418,9 @@
       ui.avail.hidden = true;
       ui.fresh.hidden = true;
       paintEmptyHidden();
-      paintEmptyDocs();
       return;
     }
-    const plain = pickerIsPlain(S.list.length ? S.list : [a], myDocs(), chatKeys());
+    const plain = pickerIsPlain(S.list.length ? S.list : [a]);
     ui.pick.replaceChildren(
       el('span', 'ar-k', kindInfo(a.kind).badge),
       el('span', 'ar-pick-title', a.title || 'Untitled'),
@@ -1674,7 +1451,7 @@
   /* "Archived 2 d ago. Hidden from the project's list. · Unarchive" over an archived artifact; the page shows as usual. */
   function paintArchivedStrip(a) {
     if (!ui) return;
-    const on = !S.doc && isArchived(a);
+    const on = isArchived(a);
     ui.archived.hidden = !on;
     if (on) ui.archivedText.textContent = archivedStrip(a) + ' · ';
   }
@@ -1912,7 +1689,6 @@
   /* -- stage -- */
   function setStage(node) {
     if (!ui) return;
-    if (!(ui.docFrame && node === ui.docFrame)) dropDoc();
     ui.stage.replaceChildren(node);
     ui.frame = null;
   }
@@ -1927,7 +1703,6 @@
   }
   /* A new page loads in a hidden second frame and replaces the first when it has loaded: no white flash. */
   function swapFrame(url, kind, keepScroll) {
-    dropDoc();
     const spec = frameSpec(kind),
       f = doc.createElement('iframe');
     f.className = 'ar-frame loading';
@@ -2044,12 +1819,10 @@
   }
   async function paintStage(reason) {
     if (!ui) return;
-    if (S.doc) return paintDocStage();
     const a = current();
     if (!a) {
       S.dirty = false;
       S.stageKey = '';
-      dropDoc();
       ui.stage.replaceChildren();
       ui.frame = null;
       return;
@@ -2177,14 +1950,13 @@
     const was = opts.keep ? { top: ui.pop.scrollTop, key: focusKey() } : null;
     closePop();
     const a = current(),
-      docs = myDocs(),
       hidden = hiddenCounts(S.list);
-    if (!a && !S.doc && !hidden) return;
+    if (!a && !hidden) return;
     const emptyLink = () =>
       ui.emptyHidden.hidden ? null : ui.emptyHidden.querySelector('[data-group="' + ((opts.anchor && opts.anchor.dataset.group) || '') + '"]') || ui.emptyHidden.querySelector('.ar-hidden-open');
     const anchor = opts.anchor && opts.anchor.isConnected !== false ? opts.anchor : !ui.bar.hidden ? ui.pick : emptyLink();
     if (!anchor) return;
-    if (anchor === ui.pick && (S.doc ? ui.pick.disabled : pickerIsPlain(S.list, docs, chatKeys()))) return;
+    if (anchor === ui.pick && pickerIsPlain(S.list)) return;
     // A foot group that was emptied while open (the last archived artifact left it) says "Nothing archived." only until the picker
     // closes: opened again, it is gone, like any group with nothing in it.
     if (!opts.keep) {
@@ -2197,8 +1969,8 @@
     ui.popFor = 'pick';
     ui.popAnchor = anchor;
     if (anchor === ui.pick) ui.pick.setAttribute('aria-expanded', 'true');
-    const sel = S.doc ? 'doc:' + S.doc.name : a ? a.id : '';
-    const groups = pickerGroups(S.list, sel, undefined, docs, chatKeys(), S.fresh, S.foot, { chat: S.filter, tagFor: S.tagFor });
+    const sel = a ? a.id : '';
+    const groups = pickerGroups(S.list, sel, undefined, S.fresh, S.foot, { chat: S.filter, tagFor: S.tagFor });
     const frag = doc.createDocumentFragment();
     frag.append(...filterRows());
     for (const g of groups) {
@@ -2208,13 +1980,12 @@
         if (g.open && g.empty) frag.append(el('div', 'ar-gnote ar-foot-empty', g.empty));
       } else frag.append(...groupHead(g));
       for (const it of g.items) {
-        if (it.doc) frag.append(docButton(it));
-        else if (it.deleted) frag.append(deletedRow(it));
+        if (it.deleted) frag.append(deletedRow(it));
         else frag.append(artifactRow(it));
       }
     }
     ui.pop.replaceChildren(frag);
-    ui.pop.setAttribute('aria-label', 'Artifacts and docs in this project');
+    ui.pop.setAttribute('aria-label', 'Artifacts in this project');
     placePop(anchor, false);
     if (was) ui.pop.scrollTop = was.top;
     const back = was && was.key ? ui.pop.querySelector('[data-key="' + was.key + '"]') : null;
@@ -2600,7 +2371,7 @@
     S.loading = false;
   }
   function moveOff(id) {
-    if (S.doc || S.selId !== id) return;
+    if (S.selId !== id) return;
     const next = S.list.find((x) => x.id !== id && pickable(x));
     S.selId = next ? next.id : '';
     S.picked = null;
@@ -2612,7 +2383,7 @@
     paintStage('open');
   }
   function reselect(id) {
-    if (known(id) && S.selId !== id && !S.doc) selectArtifact(id);
+    if (known(id) && S.selId !== id) selectArtifact(id);
   }
   async function doArchive(id, archived, quiet) {
     const a = known(id);
@@ -3199,7 +2970,6 @@
       tab: o.tab,
       reveal: o.reveal || (() => {}),
       frame: null,
-      docFrame: null,
       popFor: '',
     };
     S.mounted = true;
@@ -3235,8 +3005,7 @@
     freshOpen.addEventListener('click', () => {
       const id = S.fresh;
       S.fresh = '';
-      if (isDocId(id)) openDoc({ name: id.slice(4), title: docTitle(id.slice(4)) });
-      else if (id) selectArtifact(id);
+      if (id) selectArtifact(id);
       paintAll();
       pick.focus({ preventScroll: true });
     });
@@ -3358,10 +3127,9 @@
     decorateToolRow,
     linkify,
     open,
-    openDoc,
     upsert,
     note,
-    state: () => ({ chat: S.chat, project: S.project, filter: S.filter, list: S.list, selId: S.selId, picked: S.picked, mode: S.mode, fresh: S.fresh, doc: S.doc }),
+    state: () => ({ chat: S.chat, project: S.project, filter: S.filter, list: S.list, selId: S.selId, picked: S.picked, mode: S.mode, fresh: S.fresh }),
     _S: S,
   });
   root.ArtifactsUI = api2;

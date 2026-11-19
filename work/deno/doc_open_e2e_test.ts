@@ -2,9 +2,11 @@
  * Where docs and files open, end to end (beta.8): a real Studio (Deno web server + in-process agent host, temp state folder, free
  * port; never the live ports), the scripted agent work/scroll-fixture/agent.py, and a headless Chrome/Edge on chat.html (no window).
  *
- *  - An agent making a doc while you type: the doc shows in the right column's Artifacts tab in the background (the tab's count
- *    goes up, its row is marked new); no tab opens, nothing opens beside the chat, the message box keeps the focus and the text.
- *  - Open doc on the doc card: the doc opens in the Artifacts viewer, in the full doc editor, and fits the column.
+ *  - An agent making a doc while you type: the doc shows in the right column's Docs tab in the background (its row is marked
+ *    new; the tab has no count and Artifacts is untouched); no tab opens, nothing opens beside the chat, the message box keeps
+ *    the focus and the text.
+ *  - Open doc on the doc card: the doc opens in the Docs tab (owner decision 2a, 2026-11-18), in the full doc editor, and fits the
+ *    column.
  *  - A file named in a reply still opens beside the chat on a wide window, at 45 % of the room between the chat list and the right
  *    column. Its divider drags within the minimums (pane 360 px, chat 420 px), the width survives a reload, double-click resets it,
  *    and the arrow keys move it.
@@ -56,64 +58,64 @@ async function agentMakesDoc(lab: Lab, chat: Chat, title: string): Promise<strin
   return name;
 }
 
-e2e('an agent-made doc shows in the Artifacts tab in the background: count up, row marked new, no tab, the message box keeps the focus', async (lab) => {
+e2e('an agent-made doc shows in the Docs tab in the background: row marked new, no count, no tab, the message box keeps the focus', async (lab) => {
   const page = lab.page;
   const chat = await openChat(lab);
   await page.click('#prompt');
   await page.type('half a thought');
   assert((await badge(page)) === '', 'no count before');
   const name = await agentMakesDoc(lab, chat, 'Launch notes');
-  await page.waitFor(`(document.querySelector('#paneTab-artifacts .pane-badge:not([hidden])') || {}).textContent === '1'`, 10000, 'the count goes to 1');
+  await page.waitFor(`!!document.querySelector('#docsPane .dt-row.dt-new .dt-newdot')`, 15000, 'the row marked new');
   const st = await page.eval<Record<string, unknown>>(`(() => ({
-    fresh: ArtifactsUI.state().fresh,
-    doc: ArtifactsUI.state().doc,
+    doc: AgentDocsTabUI.state().doc,
     focus: document.activeElement && document.activeElement.id,
     text: document.getElementById('prompt').value,
     fileTabs: document.querySelectorAll('.sf-ftab').length,
     beside: document.body.classList.contains('sf-beside-on'),
-    frames: document.querySelectorAll('iframe.sf-docframe, iframe.ar-docframe').length,
-    label: document.getElementById('paneTab-artifacts').getAttribute('aria-label'),
+    frames: document.querySelectorAll('iframe.sf-docframe, iframe.dt-frame, iframe.ar-docframe').length,
+    docsTab: document.getElementById('paneTab-docs').getAttribute('aria-selected'),
+    docsBadge: !!document.querySelector('#paneTab-docs .pane-badge'),
+    artBadge: (document.querySelector('#paneTab-artifacts .pane-badge:not([hidden])') || {}).textContent || '',
   }))()`);
-  assert(st.fresh === 'doc:' + name, `marked new: ${st.fresh}`);
   assert(st.doc === null, 'not opened');
   assert(st.focus === 'prompt' && st.text === 'half a thought', `focus ${st.focus}, text ${st.text}`);
   assert(st.fileTabs === 0 && !st.beside && st.frames === 0, `no tab, nothing beside: ${JSON.stringify(st)}`);
-  assert(/1 doc/.test(String(st.label)) && /new/.test(String(st.label)), `tab label: ${st.label}`);
-  // the Artifacts tab: the doc row is marked new, with no ↗
-  await page.click('#paneTab-artifacts');
-  await page.waitFor(`!!document.querySelector('.ar-empty .ar-doc.ar-new .ar-newdot')`, 8000, 'the marked doc row');
-  const row = await page.eval<string>(`document.querySelector('.ar-empty .ar-doc').textContent`);
-  assert(!row.includes('↗'), `no arrow: ${row}`);
+  assert(st.docsTab === 'false', 'the tab did not switch to Docs');
+  assert(st.docsBadge === false && st.artBadge === '', `no count on Docs, Artifacts untouched: ${JSON.stringify(st)}`);
+  // the Docs tab: the doc's row is marked new, with no ↗
+  await page.click('#paneTab-docs');
+  const row = await page.eval<string>(`document.querySelector('#docsPane .dt-row[data-doc="${name}"]').textContent`);
+  assert(!row.includes('↗') && row.includes('Launch notes'), `row: ${row}`);
   chat.end();
 });
 
-e2e('Open doc on the card opens the doc in the Artifacts viewer, in the full editor, and it fits the column', async (lab) => {
+e2e('Open doc on the card opens the doc in the Docs tab, in the full editor, and it fits the column', async (lab) => {
   const page = lab.page;
   const chat = await openChat(lab);
   await agentMakesDoc(lab, chat, 'Release plan');
   await page.click('.doc-card .art-btn');
-  await page.waitFor(`!!document.querySelector('#artifactsPane .ar-stage iframe.ar-docframe')`, 10000, 'the doc frame in the viewer');
+  await page.waitFor(`!!document.querySelector('#docsPane .dt-stage iframe.dt-frame')`, 10000, 'the doc frame in the Docs tab');
   const st = await page.eval<Record<string, unknown>>(`(() => ({
-    tab: document.getElementById('paneTab-artifacts').getAttribute('aria-selected'),
-    pick: document.querySelector('#artifactsPane .ar-pick').textContent,
-    ver: document.querySelector('#artifactsPane .ar-ver').hidden,
+    tab: document.getElementById('paneTab-docs').getAttribute('aria-selected'),
+    title: document.querySelector('#docsPane .dt-title').textContent,
     fileTabs: document.querySelectorAll('.sf-ftab').length,
     beside: document.body.classList.contains('sf-beside-on'),
-    src: document.querySelector('iframe.ar-docframe').getAttribute('src'),
+    src: document.querySelector('iframe.dt-frame').getAttribute('src'),
+    artFrames: document.querySelectorAll('#artifactsPane iframe').length,
   }))()`);
-  assert(st.tab === 'true', 'the Artifacts tab shows');
-  assert(/doc\s*Release plan/.test(String(st.pick)), `picker: ${st.pick}`);
-  assert(st.ver === true, 'no version chip for a doc');
+  assert(st.tab === 'true', 'the Docs tab shows');
+  assert(st.title === 'Release plan', `title: ${st.title}`);
   assert(st.fileTabs === 0 && !st.beside, 'no tab, nothing beside the chat');
-  assert(/where=artifacts/.test(String(st.src)), `src ${st.src}`);
+  assert(st.artFrames === 0, 'nothing in the Artifacts viewer');
+  assert(/where=docs/.test(String(st.src)), `src ${st.src}`);
   // the editor loads and is editable, with no sideways scroll at the column's width
   await page.waitFor(
-    `(() => { const d = document.querySelector('iframe.ar-docframe').contentDocument; return d && d.querySelector('#docApp .ProseMirror[contenteditable="true"]'); })() && true`,
+    `(() => { const d = document.querySelector('iframe.dt-frame').contentDocument; return d && d.querySelector('#docApp .ProseMirror[contenteditable="true"]'); })() && true`,
     20000,
     'the doc editor',
   );
   const fit = await page.eval<Record<string, unknown>>(`(() => {
-    const f = document.querySelector('iframe.ar-docframe'), d = f.contentDocument, app = d.getElementById('docApp');
+    const f = document.querySelector('iframe.dt-frame'), d = f.contentDocument, app = d.getElementById('docApp');
     return { w: f.clientWidth, scroll: d.documentElement.scrollWidth, client: d.documentElement.clientWidth,
       narrow: app.classList.contains('narrow'), picker: !d.getElementById('pagePicker').hidden,
       more: getComputedStyle(d.querySelector('.tbar .tb-more')).display };
@@ -122,7 +124,7 @@ e2e('Open doc on the card opens the doc in the Artifacts viewer, in the full edi
   assert(Number(fit.scroll) <= Number(fit.client) + 1, `no sideways scroll: ${fit.scroll} > ${fit.client}`);
   // the right column keeps its one width for a doc (owner 2026-11-15); below 900 px the pages are a header picker
   if (Number(fit.w) < 900) assert(fit.picker === true, `pages as a header picker below 900 px: ${JSON.stringify(fit)}`);
-  await page.shot('doc-in-artifacts');
+  await page.shot('doc-in-docs-tab');
   chat.end();
 });
 

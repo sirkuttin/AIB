@@ -126,6 +126,10 @@ async function run(fx: Fixture, keep: (b: Browser) => void, wt: boolean): Promis
   await page.shot('q3-right-tabs');
   // Q1: first doc, then a second; each shows in aib-docs at once, and after collapse / re-expand
   await newDoc(page, 'First plan');
+  // a new doc opens in the Docs tab (owner decision 2a, 2026-11-18); its ⤢ makes the middle tab that Q2 restores below
+  await page.waitFor(`!!document.querySelector('#docsPane .dt-wide') && !!AgentDocsTabUI.state().doc`, 20_000, 'the new doc in the Docs tab');
+  await page.eval(`document.querySelector('#docsPane .dt-wide').click()`);
+  await page.waitFor(`!!document.querySelector('.sf-doctab')`, 20_000, 'the doc as a middle tab after ⤢');
   await page.waitFor(`document.querySelector('.fx-tab, [data-tab-kind="doc"]') !== null || true`, 1000, 'x');
   await page.eval(`AgentFilesUI.setMode('files')`);
   await page.eval(`window.AgentWorkspaceUI && AgentWorkspaceUI.openDrawer && AgentWorkspaceUI.openDrawer()`);

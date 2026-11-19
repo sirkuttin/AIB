@@ -238,7 +238,7 @@ panelTest('split panel: both chats in pane order on every tab, focus changes not
   assertEquals(await page.eval<number>(`document.querySelectorAll('.ar-split, .ar-spick').length`), 0, 'one renderer, no per-pane dropdowns');
 });
 
-panelTest('split panel: the one picker also lists "Docs the chats wrote" (the project\'s, whichever chat is focused)', async (lab) => {
+panelTest('split panel: the Docs tab lists the project\'s docs whichever chat is focused; the Artifacts picker has no docs group', async (lab) => {
   const page = lab.page;
   const { a, b } = await openSplit(lab);
   await split(lab, a, b);
@@ -247,25 +247,28 @@ panelTest('split panel: the one picker also lists "Docs the chats wrote" (the pr
   const was = await focusedKey(page);
   // the open chat's doc list was read before the stub went in: read it again now
   await page.eval(`AgentDocLinks.listFor(ArtifactsUI.state().chat.id, 'main', true)`);
+  // the Artifacts picker lists artifacts only
+  await page.click('#artifactsPane .ar-pick');
+  await page.waitFor(`!!document.querySelector('.ar-pop:not([hidden]) .ar-it[data-id]')`, 8000, 'the picker is open');
+  const pick = await page.eval<{ text: string; docs: number }>(`({ text: document.querySelector('.ar-pop').innerText, docs: document.querySelectorAll('.ar-pop [data-doc]').length })`);
+  assert(!/Docs the chats wrote/i.test(pick.text) && pick.docs === 0, `no docs group in the Artifacts picker: ${pick.text}`);
+  assert(/RSS feed plan/.test(pick.text) && /Checkout bug root cause/.test(pick.text), "both chats' artifacts are listed");
+  await page.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
+  await settle(300);
+  // the Docs tab: the project's docs
+  await page.click('#paneTab-docs');
   const docsOf = async () => {
-    await page.click('#artifactsPane .ar-pick');
-    await page.waitFor(`!!document.querySelector('.ar-pop:not([hidden]) .ar-it[data-doc="feed-notes"]')`, 8000, 'the doc is listed').catch(async (e) => {
-      throw new Error(`${e.message}: ${await page.eval("JSON.stringify([document.querySelector('.ar-pop')?.innerText, ArtifactsUI.state().chat, AgentDocLinks.cached(ArtifactsUI.state().chat.id, 'main')])")}`);
+    await page.waitFor(`!!document.querySelector('#docsPane .dt-row[data-doc="feed-notes"]')`, 8000, 'the doc is listed').catch(async (e) => {
+      throw new Error(`${e.message}: ${await page.eval("JSON.stringify([document.querySelector('#docsPane')?.innerText, ArtifactsUI.state().chat, AgentDocLinks.cached(ArtifactsUI.state().chat.id, 'main')])")}`);
     });
-    const pop = await page.eval<{ text: string; docs: string[] }>(`({ text: document.querySelector('.ar-pop').innerText,
-      docs: [...document.querySelectorAll('.ar-pop [data-doc]')].map((n) => n.dataset.doc) })`);
-    await page.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
-    await settle(300);
-    return pop;
+    return page.eval<string[]>(`[...document.querySelectorAll('#docsPane .dt-row')].map((n) => n.dataset.doc).sort()`);
   };
   const first = await docsOf();
-  assert(/Docs the chats wrote/i.test(first.text), `group label: ${first.text}`);
-  assertEquals(first.docs, ['feed-notes', 'other-notes']);
-  assert(/RSS feed plan/.test(first.text) && /Checkout bug root cause/.test(first.text), "both chats' artifacts are listed");
-  assert((await focusedKey(page)) === was, 'opening the picker did not move focus');
+  assertEquals(first, ['feed-notes', 'other-notes']);
+  assert((await focusedKey(page)) === was, 'opening the Docs tab did not move focus');
   // focus on the other pane: the same list
   await clickOther(page, b.key);
-  assertEquals((await docsOf()).docs, first.docs, 'the list does not depend on the focused chat');
+  assertEquals(await docsOf(), first, 'the list does not depend on the focused chat');
 });
 
 panelTest('split panel: the other chat\'s subagent and process rows open their history without moving focus; it stays open when focus moves', async (lab) => {
