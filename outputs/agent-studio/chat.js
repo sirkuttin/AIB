@@ -294,8 +294,23 @@
      subagent view. The arrays live only there: read them through the entry's named calls (work/test_event_readers.js). */
   const chatCache = window.ChatCache.create();
   // The right panel's Activity: one section per working chat of the project (renderProjectActivity, further down). order: the
-  // sections' alias keys in the order they joined; pk: the project they belong to.
-  const projAct = { secs: new Map(), busy: false, order: [], pk: '', empty: null };
+  // sections' alias keys in the order they joined; pk: the project they belong to. Below them, one collapsed section per idle chat
+  // (idleSecs; idle: their keys, most recently active first; stopped: alias key -> when this page saw it stop working; idleAll: the
+  // "Show N more" row was clicked for this project).
+  const projAct = {
+    secs: new Map(),
+    busy: false,
+    order: [],
+    pk: '',
+    empty: null,
+    idleSecs: new Map(),
+    idle: [],
+    idleShown: [],
+    stopped: new Map(),
+    idleAll: false,
+    idleBox: null,
+    more: null,
+  };
   const paneAct = new Map(); // alias key -> what its section shows: { kids: Map, rows, commands, snap, at, cmdAt, histAt }
   const liveCache = (id = current) => chatCache.entry(id || '');
   const liveLoaded = () => liveCache().loaded();
@@ -2933,7 +2948,12 @@
     }
     const x = subCtx();
     if (subSelection.live && !x.snap) {
-      if (x.own) closeInspector(); // the other pane's chat: its state comes with the panel's next read
+      /* No state yet: the other pane's chat gets it with the panel's next read; the open chat with its own first read, which
+         Activity (reading the chat on its own) can show a helper row before: then wait for that read (refresh() calls this
+         again), do not close. Close only when the open chat is no longer live. */
+      if (!x.own) return;
+      if (!(selected?.live && !selected.live.closed)) closeInspector();
+      else if (current) refresh().catch(() => {}); // sets the snapshot, then calls this again (never loops: it has one then)
       return;
     }
     renderSubagentControls();
@@ -4938,7 +4958,7 @@
   function refocusRow() {
     const pick = (box, key) =>
       key && box ? [...box.querySelectorAll('[data-key]')].find((n) => n.dataset.key === key && n.offsetParent) : null;
-    const sec = lastOpened.owner ? projAct.secs.get(lastOpened.owner) : null;
+    const sec = lastOpened.owner ? projAct.secs.get(lastOpened.owner) || projAct.idleSecs.get(lastOpened.owner) : null;
     const target =
       pick(sec?.subBox, lastOpened.agent) ||
       pick(sec?.procBox, lastOpened.command) ||
@@ -5724,7 +5744,7 @@
     if (!a) {
       a = { kids: new Map(), rows: [], commands: [], at: 0, cmdAt: 0, histAt: 0 };
       paneAct.set(key, a);
-      const cap = Math.max(8, projAct.order.length + 2);
+      const cap = Math.max(8, projAct.order.length + projAct.idleShown.length + 2);
       while (paneAct.size > cap) paneAct.delete(paneAct.keys().next().value);
     }
     return a;
@@ -5789,28 +5809,96 @@
   /* The sections, in the order the chats joined: a chat keeps its place while it works and a new one joins at the end. Chats that
      are already working when the panel first looks (a reload, another project) are put in the order they started their turn, so
      two windows of one project list them the same way. */
+  /* Also sets projAct.idle: the project's other chats (owner, 2026-11-18: "just have the idle chats at the bottom with their
+     finished subagent lists collapsed"; then: every idle chat, not only those with finished subagents), most recently active
+     first. A chat that stops working is the most recent (stopped), so it goes to the top of that group; one that starts again
+     joins the working sections at the end. Archived and deleted chats are left out, as in the sidebar. */
   function projectActivityKeys() {
     const p = panelProject();
     if (p.key !== projAct.pk) {
       projAct.pk = p.key;
       projAct.order = [];
+      projAct.idleAll = false;
     }
-    if (!p.key) return (projAct.order = []);
+    if (!p.key) {
+      projAct.idle = [];
+      return (projAct.order = []);
+    }
     const seen = new Set(),
-      working = [];
+      working = [],
+      idle = [],
+      O = window.AgentOrganizeUI;
     for (const c of conversations) {
       const k = aliasKey(c);
       if (seen.has(k)) continue;
       seen.add(k);
-      if (projectOfChat(c) === p.key && chatWorking(c)) working.push(c);
+      if (projectOfChat(c) !== p.key) continue;
+      if (chatWorking(c)) working.push(c);
+      else {
+        const e = (O?.entryOf && O.entryOf(c)) || {};
+        if (!e.archivedAt && !(e.deletedAt && !(c.live && !c.live.closed))) idle.push(c);
+      }
     }
     const on = new Set(working.map(aliasKey)),
       order = projAct.order.filter((k) => on.has(k)),
       fresh = working
         .filter((c) => !order.includes(aliasKey(c)))
         .sort((a, b) => busySinceOf(a) - busySinceOf(b) || (aliasKey(a) < aliasKey(b) ? -1 : 1));
+    const now = Date.now();
+    for (const k of projAct.order) if (!on.has(k)) projAct.stopped.set(k, now);
+    for (const k of on) projAct.stopped.delete(k);
+    projAct.idle = idle
+      .map((c) => [aliasKey(c), lastActiveOf(c)])
+      .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
+      .map((x) => x[0]);
     return (projAct.order = order.concat(fresh.map(aliasKey)));
   }
+  /* When an idle chat was last active (ms): this page saw it stop, its turn ended or started (the server's facts, the same in
+     every window), or its transcript was written. A live chat with no saved transcript yet ("live:" rows) has no file time: its
+     `modified` is the time of the list read, so it is not used (it would reorder the group at every read). */
+  function lastActiveOf(c) {
+    const at = (v) => {
+        const t = Date.parse(v || '');
+        return Number.isFinite(t) ? t : 0;
+      },
+      a = c?.live?.attention,
+      mod = /^live:/.test(c?.key || '') ? 0 : Number(c?.modified) * 1000;
+    return Math.max(
+      projAct.stopped.get(aliasKey(c)) || 0,
+      at(a?.turnEndedAt),
+      at(a?.busySince),
+      Number.isFinite(mod) ? mod : 0,
+    );
+  }
+  /* Which idle chats are expanded: per project and window (like the panel tab), kept over a reload. */
+  const IDLE_OPEN_KEY = 'studio-activity-idle-open-v1';
+  const idleOpenKey = () => (window.AibStore ? window.AibStore.winKey(IDLE_OPEN_KEY) : IDLE_OPEN_KEY);
+  function idleOpenAll() {
+    try {
+      const o = JSON.parse(localStorage.getItem(idleOpenKey()) || '{}');
+      return o && typeof o === 'object' && !Array.isArray(o) ? o : {};
+    } catch {
+      return {};
+    }
+  }
+  function idleOpen(pk, key) {
+    const list = idleOpenAll()[pk];
+    return Array.isArray(list) && list.includes(key);
+  }
+  function setIdleOpen(pk, key, open) {
+    if (!pk || (window.AibStore && !window.AibStore.layoutWritable())) return; // a pop-out writes no layout
+    const o = idleOpenAll(),
+      list = (Array.isArray(o[pk]) ? o[pk] : []).filter((k) => k !== key);
+    if (open) list.push(key);
+    delete o[pk];
+    if (list.length) o[pk] = list.slice(-40); // newest last; the oldest projects drop off past 60
+    const keys = Object.keys(o);
+    for (const k of keys.slice(0, Math.max(0, keys.length - 60))) delete o[k];
+    try {
+      localStorage.setItem(idleOpenKey(), JSON.stringify(o));
+    } catch {}
+  }
+  const IDLE_CAP = 10;
   function projectSection(key) {
     let sec = projAct.secs.get(key);
     if (sec) return sec;
@@ -5919,11 +6007,144 @@
         ' is working. Working chats, their subagents and processes show here, from every agent: Claude Code, Codex, Gemini, Antigravity, OMP and Maki. All on this PC.';
       want.push(empty);
     }
+    const idleGroup = renderIdleGroup(nowS, focus);
+    if (idleGroup) want.push(idleGroup);
     want.forEach((n, i) => {
       if (box.children[i] !== n) box.insertBefore(n, box.children[i] || null);
     });
     for (const n of [...box.children].slice(want.length)) n.remove();
     renderActivityStrip();
+  }
+  /* The idle chats below the working ones: one collapsed head line each (caret, dot, name, "N finished", agent), most recently
+     active first, the first IDLE_CAP and a "Show N more" row. A caret only when something finished; expanding (remembered per
+     project and window) lists the chat's finished subagents and commands, each opening its history in the panel. Focus only
+     moves the accent: it never expands, moves or resizes a section. */
+  function idleSection(key) {
+    let sec = projAct.idleSecs.get(key);
+    if (sec) return sec;
+    const root = text('section', '', 'sp-idle');
+    root.dataset.key = key;
+    root.setAttribute('role', 'listitem');
+    const head = text('button', '', 'sp-ihead'),
+      caret = text('span', '', 'sp-caret'),
+      name = text('b', '', 'sp-name'),
+      count = text('span', '', 'sp-count'),
+      agent = text('span', '', 'sp-agent'),
+      tag = text('span', '', 'sp-pane-tag'),
+      body = text('div', '', 'sp-idle-body'),
+      subLabel = text('div', '', 'sp-label'),
+      subBox = text('div', '', 'sp-subs'),
+      procLabel = text('div', '', 'sp-label'),
+      procBox = text('div', '', 'sp-procs');
+    head.type = 'button';
+    head.onclick = () => {
+      const open = !idleOpen(projAct.pk, key);
+      setIdleOpen(projAct.pk, key, open);
+      renderProjectActivity();
+      if (open) setTimeout(tickProjectActivity, 0); // read its finished work now, not at the next poll
+    };
+    procBox.setAttribute('role', 'group');
+    procBox.setAttribute('aria-label', 'Processes');
+    body.append(subLabel, subBox, procLabel, procBox);
+    root.append(head, body);
+    sec = { root, head, caret, name, count, agent, tag, body, subLabel, subBox, procLabel, procBox, cards: new Map(), dot: null };
+    projAct.idleSecs.set(key, sec);
+    return sec;
+  }
+  function renderIdleGroup(nowS, focus) {
+    const all = projAct.idle,
+      shown = projAct.idleAll ? all : all.slice(0, IDLE_CAP),
+      S = window.AgentSplitUI;
+    projAct.idleShown = shown;
+    for (const k of [...projAct.idleSecs.keys()]) if (!shown.includes(k)) projAct.idleSecs.delete(k);
+    if (!shown.length) return null;
+    const group = (projAct.idleBox ||= text('div', '', 'sp-idle-list'));
+    group.setAttribute('role', 'list');
+    group.setAttribute('aria-label', 'Idle chats');
+    const want = [];
+    for (const key of shown) {
+      const sec = idleSection(key),
+        a = paneAct.get(key),
+        conv = conversations.find((x) => aliasKey(x) === key) || null,
+        rows = a?.rows || [],
+        done = (a?.commands || []).filter((t) => !isRunningCommand(t)),
+        n = rows.length + done.length,
+        open = n > 0 && idleOpen(projAct.pk, key);
+      const dot = window.AgentWorkspaceUI?.dotForKey(key) || null,
+        d = dot || text('i', '', 'status-dot');
+      d.classList.add('sp-dot');
+      sec.name.textContent = conv ? titleOf(conv) : 'Conversation';
+      sec.name.title = sec.name.textContent;
+      sec.caret.textContent = n ? (open ? '▾' : '▸') : '';
+      sec.count.textContent = n ? n + ' finished' : '';
+      sec.agent.textContent = conv ? nameOf(conv.provider) : '';
+      sec.agent.hidden = !sec.agent.textContent;
+      const side = S?.paneSide ? S.paneSide(key) : '';
+      sec.tag.textContent = side ? side[0].toUpperCase() + side.slice(1) : '';
+      sec.tag.title = side ? 'Open in the ' + side + ' pane' : '';
+      sec.head.replaceChildren(sec.caret, d, sec.name, sec.count, sec.agent, ...(side ? [sec.tag] : []));
+      sec.head.disabled = !n;
+      if (n) sec.head.setAttribute('aria-expanded', open ? 'true' : 'false');
+      else sec.head.removeAttribute('aria-expanded');
+      sec.head.title = n ? (open ? 'Hide' : 'Show') + ' what this chat finished' : 'Nothing finished';
+      sec.root.className = 'sp-idle' + (open ? ' sp-open' : '') + (key === focus ? ' sp-focus' : '');
+      sec.body.hidden = !open;
+      if (open) {
+        window.SubagentsUI?.render({
+          box: sec.subBox,
+          rows,
+          now: nowS,
+          convKey: key,
+          flat: true,
+          selectedKey: key === subOwner ? subSelection?.key : undefined,
+          chatModel: '',
+          empty: '',
+          onOpen: (agent) => toggleSubagent(agent, key),
+          rerender: renderProjectActivity,
+        });
+        sec.subLabel.hidden = sec.subBox.hidden = !rows.length;
+        sec.subLabel.replaceChildren('Subagents', text('span', String(rows.length)));
+        sec.procLabel.hidden = sec.procBox.hidden = !done.length;
+        sec.procLabel.replaceChildren('Processes', text('span', String(done.length)));
+        const seen = new Set();
+        done.forEach((task, i) => {
+          let b = sec.cards.get(task.id);
+          if (!b) {
+            b = text('button', '', 'command-card');
+            b.type = 'button';
+            b.dataset.key = task.id;
+            b.onclick = () => toggleCommand(task.id, key);
+            sec.cards.set(task.id, b);
+          }
+          seen.add(task.id);
+          paintCommandCard(b, task, key === subOwner && selectedCommand?.id === task.id);
+          if (sec.procBox.children[i] !== b) sec.procBox.insertBefore(b, sec.procBox.children[i] || null);
+        });
+        for (const [id, b] of sec.cards)
+          if (!seen.has(id)) {
+            b.remove();
+            sec.cards.delete(id);
+          }
+      }
+      want.push(sec.root);
+    }
+    const rest = all.length - shown.length;
+    if (rest > 0) {
+      const more = (projAct.more ||= text('button', '', 'sp-idle-more'));
+      more.type = 'button';
+      more.textContent = 'Show ' + rest + ' more';
+      more.onclick = () => {
+        projAct.idleAll = true;
+        renderProjectActivity();
+        setTimeout(tickProjectActivity, 0);
+      };
+      want.push(more);
+    }
+    want.forEach((n, i) => {
+      if (group.children[i] !== n) group.insertBefore(n, group.children[i] || null);
+    });
+    for (const n of [...group.children].slice(want.length)) n.remove();
+    return group;
   }
   async function tickProjectActivity() {
     if (projAct.busy) return;
@@ -5932,6 +6153,16 @@
       const keys = projectActivityKeys().slice();
       // an open history of a chat that just stopped working keeps being read until you close it
       if (subOwner && inspectorOpen() && !keys.includes(subOwner)) keys.push(subOwner);
+      /* Idle chats on screen: read once for their "N finished", again when they were active since, and at the poll pace while
+         expanded (an open one is being looked at). */
+      const shown = projAct.idleAll ? projAct.idle : projAct.idle.slice(0, IDLE_CAP);
+      projAct.idleShown = shown;
+      for (const key of shown) {
+        if (keys.includes(key)) continue;
+        const a = paneAct.get(key),
+          c = conversations.find((x) => aliasKey(x) === key);
+        if (!a?.at || (c && a.at < lastActiveOf(c)) || idleOpen(projAct.pk, key)) keys.push(key);
+      }
       for (const key of keys) {
         const c = conversations.find((x) => aliasKey(x) === key);
         if (!c) continue;

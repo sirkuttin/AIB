@@ -2,7 +2,10 @@
  * The right panel is the project's (owner, 2026-11-18; design aib-shared/designs/project-right-panel, slice S1).
  *
  * Activity lists one section per WORKING chat of the project on screen (mid-turn, or its helpers still run), in the order the chats
- * started working; idle and finished chats are not listed, and a chat that finishes leaves. Opening another chat of the project (or
+ * started working; a chat that finishes leaves them. Below them, every other (idle) chat of the project has one collapsed head line,
+ * most recently active first (a chat that just stopped on top), the first 10 and a "Show N more" row (owner, 2026-11-18); a caret
+ * only when it finished something, expanding (remembered per project and window) lists its finished subagents, each opening its
+ * history in the panel. Opening another chat of the project (or
  * moving split focus) moves only the accent (no reorder, show, hide or resize). Each section holds that chat's subagents (finished
  * ones folded into "N finished", remembered per chat) and processes. A subagent history opens inside the panel at its width. The
  * panel's tab is remembered per project and window; a layout with no saved width starts at 320 px; below 320 px of panel the tabs
@@ -51,7 +54,16 @@ async function working(lab: Lab, end: string, list: [string, string][] = [], fol
 }
 /** Wait until the chat has its Activity section (the page reads the chat list every 5 s). */
 async function joined(page: Page, c: Chat) {
-  await page.waitFor(`!!document.querySelector(${JSON.stringify(`#projectActivity .sp-grp[data-key=${JSON.stringify(c.key)}]`)})`, 20000, `${c.key} joined`);
+  await page.waitFor(`!!document.querySelector(${JSON.stringify(`#projectActivity > .sp-grp[data-key=${JSON.stringify(c.key)}]`)})`, 20000, `${c.key} joined`);
+}
+/** An idle chat: one turn saying `end`, the helpers given, then the turn ends. */
+async function idleChat(lab: Lab, end: string, list: [string, string][] = []) {
+  const c = await lab.chat();
+  await c.start();
+  c.say(`Here ${end}`);
+  helpers(c, end.toLowerCase(), list);
+  c.end();
+  return c;
 }
 /** A: one running, one failed and `done` finished helpers. B: one running and two finished. Both working, A open. */
 async function twoChats(lab: Lab, done = 12) {
@@ -61,6 +73,7 @@ async function twoChats(lab: Lab, done = 12) {
   const a = await working(lab, 'ALPHAEND', list);
   await lab.select(a); // the panel shows a project once a chat of it is open
   await joined(page, a);
+  await settle(1100); // turn start times are whole seconds: a page that first sees both orders them by it
   const b = await working(lab, 'BETAEND', [['Check feed spec', 'running'], ['Read old feed', 'completed'], ['List feeds', 'completed']]);
   await joined(page, b);
   await lab.select(b);
@@ -107,7 +120,33 @@ async function waitKeys(page: Page, want: string[], what: string) {
   });
 }
 
-panelTest('right panel: 3 working chats and 1 idle give 3 sections in the order they joined; the idle chat is absent; the tab counts 3', async (lab) => {
+/** The idle group: keys in DOM order, each head's caret / count / agent text, expanded or not, its box (px), the accent, the
+ *  visible subagent titles of expanded ones, and the "Show N more" row. */
+const IDLE_SEC = (key: string) => `#projectActivity > .sp-idle-list > .sp-idle[data-key=${JSON.stringify(key)}]`;
+const IDLES = `(() => {
+  const list = document.querySelector('#projectActivity > .sp-idle-list');
+  const g = list ? [...list.querySelectorAll(':scope > .sp-idle')] : [];
+  const vis = (n) => !!n && n.getClientRects().length > 0;
+  const more = list?.querySelector(':scope > .sp-idle-more');
+  return { keys: g.map((n) => n.dataset.key),
+    heads: g.map((n) => { const h = n.querySelector('.sp-ihead'); return [h.querySelector('.sp-caret').textContent, h.querySelector('.sp-count').textContent, h.querySelector('.sp-agent').textContent, h.disabled ? 'off' : 'on'].join('|'); }),
+    open: g.filter((n) => vis(n.querySelector('.sp-idle-body'))).map((n) => n.dataset.key),
+    titles: g.map((n) => [...n.querySelectorAll('.sp-idle-body .subagent-card')].filter(vis).map((c) => c.querySelector('.sa-title')?.textContent || '')),
+    boxes: g.map((n) => { const r = n.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)].join(','); }),
+    focus: g.filter((n) => n.classList.contains('sp-focus')).map((n) => n.dataset.key),
+    more: vis(more) ? more.textContent : '' };
+})()`;
+type Idles = { keys: string[]; heads: string[]; open: string[]; titles: string[][]; boxes: string[]; focus: string[]; more: string };
+const idles = (page: Page) => page.eval<Idles>(IDLES);
+async function waitIdle(page: Page, test: string, what: string) {
+  await page.waitFor(`(() => { const i = ${IDLES}; return ${test}; })()`, 20000, what).catch(async (e) => {
+    throw new Error(`${e.message}: ${JSON.stringify(await idles(page))}`);
+  });
+}
+const waitIdleKeys = (page: Page, want: string[], what: string) =>
+  waitIdle(page, `JSON.stringify(i.keys) === ${JSON.stringify(JSON.stringify(want))}`, what);
+
+panelTest('right panel: 3 working chats and 1 idle give 3 sections in the order they joined; the idle chat is a head line below them; the tab counts 3', async (lab) => {
   const page = lab.page;
   const a = await working(lab, 'ALPHAEND', [['Find rounding bug', 'running']]);
   await lab.select(a);
@@ -125,18 +164,136 @@ panelTest('right panel: 3 working chats and 1 idle give 3 sections in the order 
   await waitKeys(page, [a.key, b.key, c.key], 'three working chats, in join order');
   const s = await sections(page);
   assertEquals(s.badge, '3', 'the Activity tab counts the working chats');
-  assertEquals(s.focus, [], 'the open (idle) chat has no section, so nothing has the accent');
-  // a chat that finishes leaves; the others keep their places; a new working one joins at the end
+  assertEquals(s.focus, [], 'the open chat is idle: no working section has the accent');
+  // the idle chat: one head line below, no caret and no count (it finished nothing), the agent's name; it has the accent
+  await waitIdleKeys(page, [idle.key], 'the idle chat below');
+  await settle(1500); // read once
+  let i = await idles(page);
+  assertEquals(i.heads, ['||Claude Code|off'], 'nothing finished: no caret, no count');
+  assertEquals([i.open, i.focus, i.more], [[], [idle.key], ''], 'collapsed, the accent, no "Show more"');
+  // a chat that finishes leaves the working sections for the top of the idle group; a new working one joins at the end
   b.end();
   await waitKeys(page, [a.key, c.key], 'B finished: its section left');
+  await waitIdleKeys(page, [b.key, idle.key], 'B on top of the idle group');
   const d = await working(lab, 'DELTAEND');
   await waitKeys(page, [a.key, c.key, d.key], 'D joined at the end');
-  assertEquals((await sections(page)).badge, '3');
+  assertEquals((await sections(page)).badge, '3', 'the tab counts working chats only');
   for (const x of [a, c, d]) x.end();
   await page.waitFor(`!!document.querySelector('#projectActivity > .sp-empty')`, 20000, 'nothing working: the note');
   const note = await page.eval<string>(`document.querySelector('#projectActivity > .sp-empty').textContent`);
   assert(/^No chat in .+ is working\. .*Claude Code, Codex, Gemini, Antigravity, OMP and Maki\. All on this PC\.$/.test(note), note);
   assertEquals((await sections(page)).badge, '', 'no count when nothing works');
+  await waitIdle(page, 'i.keys.length === 5', 'all five idle, below the note');
+  i = await idles(page);
+  assertEquals(i.keys[4], idle.key, 'the chat idle longest is last');
+  assert(i.keys.indexOf(b.key) > i.keys.indexOf(a.key) && i.keys.indexOf(b.key) > i.keys.indexOf(d.key), `the newest stops on top: ${JSON.stringify(i.keys)}`);
+  assert(await page.eval<boolean>(`document.querySelector('#projectActivity > .sp-empty').nextElementSibling?.classList.contains('sp-idle-list')`), 'the idle group follows the note');
+});
+
+panelTest('right panel: an idle chat with finished helpers is collapsed below ("N finished", a caret); expanding lists them and a click opens the history at the same width; remembered over a reload', async (lab) => {
+  const page = lab.page;
+  const w = await working(lab, 'WORKEND', [['Find rounding bug', 'running']]);
+  await lab.select(w);
+  await joined(page, w);
+  const none = await idleChat(lab, 'NONEEND');
+  await settle(1100); // a later turn end: "done" is the most recent
+  const done = await idleChat(lab, 'DONEEND', [['Port the parser', 'completed'], ['Check the docs', 'completed'], ['Try the old build', 'failed']]);
+  await waitIdleKeys(page, [done.key, none.key], 'two idle chats, the most recently active first');
+  await waitIdle(page, `i.heads[0] === '▸|3 finished|Claude Code|on'`, 'done: caret and "3 finished"');
+  let i = await idles(page);
+  assertEquals(i.heads[1], '||Claude Code|off', 'none: no caret, no count');
+  assertEquals(i.open, [], 'collapsed by default');
+  assertEquals((await sections(page)).keys, [w.key], 'the working section first, alone');
+  assertEquals((await sections(page)).badge, '1', 'the tab counts working chats only');
+  const w0 = (await sections(page)).panelW;
+  await page.click(`${IDLE_SEC(done.key)} .sp-ihead`);
+  await waitIdle(page, `i.open.length === 1 && i.titles[0].length === 3`, 'expanded: the three finished helpers');
+  i = await idles(page);
+  assertEquals(i.heads[0], '▾|3 finished|Claude Code|on');
+  assertEquals([...i.titles[0]].sort(), ['Check the docs', 'Port the parser', 'Try the old build']);
+  await page.click(`${IDLE_SEC(done.key)} .subagent-card`);
+  await page.waitFor(`!document.getElementById('subchatPane').hidden && /Port the parser|Check the docs|Try the old build/.test(document.getElementById('subchatTitle').textContent)`, 10000, "the idle chat's helper history");
+  await settle(500);
+  assert(await page.eval<boolean>(`document.getElementById('messages').textContent.includes('WORKEND')`), 'the open chat did not change');
+  assertEquals(await page.eval<number>(`Math.round(document.getElementById('subagentsPane').getBoundingClientRect().width)`), w0, 'the same width');
+  // remembered over a reload (per project and window)
+  await page.goto(`http://127.0.0.1:${lab.web.port}/chat.html`);
+  await page.waitFor('!!document.getElementById("messages")', 15000, 'chat page');
+  await lab.select(w);
+  await shown(page, 'WORKEND');
+  await waitIdle(page, `i.open.length === 1 && i.open[0] === ${JSON.stringify(done.key)} && i.titles[0].length === 3`, 'still expanded after a reload');
+  const saved = await page.eval<Record<string, string[]>>(`JSON.parse(localStorage.getItem('studio-activity-idle-open-v1') || '{}')`);
+  assertEquals(Object.values(saved), [[done.key]], 'one project, one expanded chat');
+  // collapse again
+  await page.click(`${IDLE_SEC(done.key)} .sp-ihead`);
+  await waitIdle(page, `i.open.length === 0 && i.heads[0] === '▸|3 finished|Claude Code|on'`, 'collapsed again');
+  w.end();
+});
+
+panelTest('right panel: opening an idle chat moves only the accent: it does not expand, nothing moves or resizes', async (lab) => {
+  const page = lab.page;
+  const w = await working(lab, 'WORKEND', [['Find rounding bug', 'running']]);
+  await lab.select(w);
+  await joined(page, w);
+  const one = await idleChat(lab, 'ONEEND', [['First helper', 'completed']]);
+  await settle(1100);
+  const two = await idleChat(lab, 'TWOEND', [['Second helper', 'completed'], ['Third helper', 'completed']]);
+  await waitIdle(page, `JSON.stringify(i.heads) === '["▸|2 finished|Claude Code|on","▸|1 finished|Claude Code|on"]'`, 'both idle with counts');
+  await page.click(`${IDLE_SEC(two.key)} .sp-ihead`); // one expanded, one collapsed
+  await waitIdle(page, `i.open.length === 1 && i.titles[0].length === 2`, 'two expanded');
+  await settle(2500);
+  const s0 = await sections(page), i0 = await idles(page);
+  assertEquals(i0.focus, [], 'the open chat is working: no idle accent');
+  for (const [c, word] of [[one, 'ONEEND'], [two, 'TWOEND'], [w, 'WORKEND']] as [Chat, string][]) {
+    await lab.select(c);
+    await shown(page, word);
+    await settle(2500);
+    const s = await sections(page), i = await idles(page);
+    assertEquals([s.keys, s.boxes, s.panelW], [s0.keys, s0.boxes, s0.panelW], `${word}: the working sections did not change`);
+    assertEquals([i.keys, i.boxes, i.open, i.heads], [i0.keys, i0.boxes, i0.open, i0.heads], `${word}: the idle group did not change`);
+    assertEquals([...s.focus, ...i.focus], [c.key], `${word}: only the accent moved`);
+  }
+  w.end();
+});
+
+panelTest('right panel: a working chat that stops goes to the top of the idle group; when it starts again it is back at the end of the working sections', async (lab) => {
+  const page = lab.page;
+  const a = await working(lab, 'ALPHAEND');
+  await lab.select(a);
+  await joined(page, a);
+  const old = await idleChat(lab, 'OLDEND', [['Old helper', 'completed']]);
+  const b = await working(lab, 'BETAEND', [['Beta helper', 'running']]);
+  await joined(page, b);
+  const c = await working(lab, 'GAMMAEND');
+  await waitKeys(page, [a.key, b.key, c.key], 'three working');
+  await waitIdleKeys(page, [old.key], 'one idle');
+  b.step({ u: { sessionUpdate: 'subagent_update', subagent: { sessionId: 'betaend-helper-0', description: 'Beta helper', state: 'completed' } } });
+  b.end();
+  await waitKeys(page, [a.key, c.key], 'B left the working sections');
+  await waitIdleKeys(page, [b.key, old.key], 'B on top of the idle group');
+  await waitIdle(page, `i.heads[0] === '▸|1 finished|Claude Code|on'`, "B's finished helper counted");
+  await b.start();
+  b.say('Again BETAAGAIN');
+  await waitKeys(page, [a.key, c.key, b.key], 'B back, at the end of the working sections');
+  await waitIdleKeys(page, [old.key], 'B left the idle group');
+  for (const x of [a, b, c]) x.end();
+});
+
+panelTest('right panel: the idle group shows the 10 most recently active chats and a "Show N more" row', async (lab) => {
+  const page = lab.page;
+  const w = await working(lab, 'WORKEND');
+  for (let n = 0; n < 12; n++) {
+    const s = lab.savedChat(`idle-saved-${n}`);
+    s.user(`Question ${n}`);
+    s.say(`Answer ${n}`);
+  }
+  await lab.select(w);
+  await joined(page, w);
+  await waitIdle(page, `i.keys.length === 10 && i.more === 'Show 2 more'`, 'ten idle chats and "Show 2 more"');
+  assertEquals((await sections(page)).badge, '1', 'the tab counts working chats only');
+  await page.click('#projectActivity > .sp-idle-list > .sp-idle-more');
+  await waitIdle(page, `i.keys.length === 12 && i.more === ''`, 'all twelve, no more row');
+  w.end();
 });
 
 panelTest('right panel: opening another chat of the project moves only the accent: no reorder, no size change, same width', async (lab) => {
