@@ -282,6 +282,26 @@ Deno.test('.deb Install now: answers at once (authorizing), the window says AIB 
   await d.svc.debSettled();
 });
 
+Deno.test({
+  name: '.deb Install now: a download saved group-writable (umask 002) is closed before the password prompt, so the root script takes it',
+  ignore: Deno.build.os === 'windows',
+  async fn() {
+    using c = new DebCase();
+    const path = await c.ready();
+    const folder = path.slice(0, path.lastIndexOf('/'));
+    const updates = folder.slice(0, folder.lastIndexOf('/'));
+    // what an older build left: the file 664, its folders 775 (aib-install-deb: "can be written by others")
+    Deno.chmodSync(path, 0o664);
+    Deno.chmodSync(folder, 0o775);
+    Deno.chmodSync(updates, 0o775);
+    let others: number[] = [];
+    c.duringPrompt = () => void (others = [path, folder, updates].map((p) => Deno.statSync(p).mode! & 0o022));
+    assertEquals((await c.svc.install()).state, 'authorizing');
+    await c.svc.debSettled();
+    assertEquals(others, [0, 0, 0], 'file, version folder and updates folder: no group or other write while the root script runs');
+  },
+});
+
 for (
   const [what, answer, says] of [
     [
