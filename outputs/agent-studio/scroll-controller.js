@@ -150,6 +150,14 @@
     const isRow = (el) => !!(el && el.dataset && (el.dataset.rid || el.dataset.ridFrom));
     const kids = () => Array.from(box.children || []);
     const boxTop = () => box.getBoundingClientRect().top;
+    /* Drawn px per scroll px. Places are measured on screen (getBoundingClientRect: after CSS zoom, the chat text size zooms the
+       list itself), scrollTop counts the list's own px: a distance on screen is divided by this before it moves scrollTop. Read
+       from the width (the larger side, so offsetWidth's whole-px rounding costs least); 1 without layout (node tests). */
+    const zoomOf = () => {
+      const w = box.offsetWidth,
+        r = w > 0 ? box.getBoundingClientRect().width : 0;
+      return r > 0 ? r / w : 1;
+    };
     const drawn = (el) => !el.getClientRects || el.getClientRects().length > 0;
 
     function emit() {
@@ -296,7 +304,7 @@
             hit.exact && state.off < 0 && state.h > 0 && state.w && state.w !== box.clientWidth
               ? (state.off * r.height) / state.h
               : state.off;
-          target = box.scrollTop + (r.top - boxTop()) - want;
+          target = box.scrollTop + (r.top - boxTop() - want) / zoomOf();
         }
       }
       target = Math.max(0, Math.min(Math.max(0, max), target));
@@ -420,7 +428,7 @@
         return;
       }
       const max = box.scrollHeight - box.clientHeight,
-        t = box.scrollTop + (r.top - top) - (off || 0);
+        t = box.scrollTop + (r.top - top - (off || 0)) / zoomOf();
       if (t >= max - 1) return follow(cause); // that place is past the end: you are at the newest row
       box.scrollTop = Math.max(0, t);
       markSettled();

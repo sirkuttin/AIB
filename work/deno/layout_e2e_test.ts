@@ -429,15 +429,36 @@ layoutTest('L2d following, a file opens beside the chat: the chat stays at the b
   chat.end();
 });
 
+// Was (2026-11-18, found when the right panel default went 280 -> 320 px): the chat text size zooms #messages itself (CSS zoom), so
+// a place measured on screen (getBoundingClientRect) is 1.3x a scrollTop px. scroll-controller.js moved scrollTop by the on-screen
+// distance; the row overshot by 30 % of how far the zoom pushed it (a few px at 280 px, where the replies' 100ch cap kept the
+// rows from wrapping again; 155 px at 320, 330 px at 520). Fixed: the controller divides on-screen distances by the list's zoom.
 layoutTest('L2e reading midway, chat text size 100 -> 130 %: the row you were reading stays at the top', async (lab) => {
   const page = lab.page;
-  // Kept at the 280 px right column this test was written for. KNOWN GAP (2026-11-18): at the new 320 px default the row you read
-  // drifts about 155 px up on this change (row height 99 -> 154, the composer grows 171 px); a scroll-anchoring fix of its own.
-  await page.eval(`localStorage.setItem('studio-layout-v1:<1800', '{"activity":280}')`);
-  await page.goto(`http://127.0.0.1:${lab.web.port}/chat.html`);
-  await page.waitFor('!!document.getElementById("messages")', 15000, 'chat page');
+  const w = await css(page, '--activity-w');
+  assert(w === 320, `runs at the default right panel (320 px): ${w}`);
   await openSeeded(lab, 40);
   await keepsReadingRow(page, () => page.eval('AgentTextSize.setChat(130)'), 'chat text 130 %');
+  await keepsReadingRow(page, () => page.eval('AgentTextSize.setChat(100)'), 'chat text 130 -> 100 %', 'messages', false);
+});
+
+layoutTest('L2e2 reading midway at right panel 240 / 400 / 520 px and window 1200 / 2000 px: chat text size changes keep the row', async (lab) => {
+  const page = lab.page;
+  const cases: [number, number, string][] = [[1600, 240, '<1800'], [1600, 400, '<1800'], [1600, 520, '<1800'], [1200, 320, '<1400'], [2000, 520, '>=1800']];
+  for (const [win, panel, bucket] of cases) {
+    await page.viewport(win, 900);
+    await page.eval(`localStorage.setItem(${JSON.stringify('studio-layout-v1:' + bucket)}, '{"activity":${panel}}')`);
+    await page.goto(`http://127.0.0.1:${lab.web.port}/chat.html`);
+    await page.waitFor('!!document.getElementById("messages")', 15000, 'chat page');
+    const w = await css(page, '--activity-w');
+    assert(w === panel, `window ${win}: the right panel is ${panel} px: ${w}`);
+    const chat = await openSeeded(lab, 40);
+    const at = `window ${win}, panel ${panel}`;
+    await keepsReadingRow(page, () => page.eval('AgentTextSize.setChat(130)'), `${at}: chat text 130 %`);
+    await keepsReadingRow(page, () => page.eval('AgentTextSize.setChat(80)'), `${at}: chat text 130 -> 80 %`, 'messages', false);
+    await keepsReadingRow(page, () => page.eval('AgentTextSize.setChat(100)'), `${at}: chat text 80 -> 100 %`, 'messages', false);
+    chat.end();
+  }
 });
 
 layoutTest('L2f reading midway, interface size 100 -> 125 %: the row you were reading stays at the top', async (lab) => {
