@@ -16,6 +16,7 @@
  *  13 New chat sends no model or mode unless one is picked or saved; a pick not on the agent's list is refused.
  *  And the fake agent host itself: not ready / busy refused, a repeated id de-duplicated, the same id with other text refused.
  */
+import { folderKey } from '../../outputs/agent-studio/server/state/agent_options.ts';
 import { assert, assertEquals } from './_assert.ts';
 import { NewChats, setAgentRows } from '../../outputs/agent-studio/server/remote/newchat.ts';
 import { RemoteServer } from '../../outputs/agent-studio/server/remote/server.ts';
@@ -34,7 +35,8 @@ async function until(fn: () => boolean | Promise<boolean>, what: string, ms = 80
   }
   throw new Error('timed out: ' + what);
 }
-const folderKeyOf = (p: string) => 'w:' + p.replaceAll('\\', '/').toLowerCase();
+// A project's key: 'w:' + lower case for a Windows path, 'p:' + the path as it is for a POSIX one (AIB's own folderKey).
+const folderKeyOf = folderKey;
 const entries = (s: { ctx: { conversations: { public(): { entries: unknown } } } }) =>
   s.ctx.conversations.public().entries as unknown as Record<string, Json>;
 

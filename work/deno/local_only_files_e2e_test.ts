@@ -15,7 +15,8 @@ import { git, HAVE_GIT } from './_git_repo.ts';
 import { Fixture, SEP, TEST_OPTIONS, until } from './_host_fixture.ts';
 import { Browser, browserPath, type Page } from './_doc_browser.ts';
 
-const key = (path: string) => 'w:' + path.replaceAll('\\', '/').toLowerCase();
+// A project's key as the page names it (sidebar-ui.js pathKey): 'w:' + lower case for a Windows path, 'p:' + the path as it is for a POSIX one.
+const key = projectKey;
 
 function transcript(claude: string, id: string, cwd: string, text: string): void {
   const stamp = new Date(Date.now() - 60_000).toISOString();
