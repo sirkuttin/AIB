@@ -13,16 +13,27 @@ import { zstdCompressSync, zstdDecompressSync } from 'node:zlib';
 
 // ---- desktop entries ---------------------------------------------------------------------------------------------------
 
-/** A desktop entry with Name=<name> and, when wmClass is given and the entry has none, StartupWMClass=<wmClass>. */
+/**
+ * A desktop entry with Name=<name>; StartupWMClass=<wmClass> when given and missing (so a dock matches the window to the entry);
+ * and, when `comment` is given, the keys a complete menu entry has and `deno desktop` leaves out: Comment=<comment>, Terminal=false
+ * and StartupNotify=true. A key the entry already has is never changed.
+ */
 export function fixDesktopEntry(
   text: string,
   name: string,
   wmClass?: string,
+  comment?: string,
 ): string {
   let out = /^Name=.*$/m.test(text) ? text.replace(/^Name=.*$/m, `Name=${name}`) : text;
-  if (wmClass && !/^StartupWMClass=/m.test(out)) {
-    out = `${out.replace(/\n*$/, '\n')}StartupWMClass=${wmClass}\n`;
+  const add = (key: string, value: string) => {
+    if (!new RegExp(`^${key}=`, 'm').test(out)) out = `${out.replace(/\n*$/, '\n')}${key}=${value}\n`;
+  };
+  if (comment) {
+    add('Comment', comment);
+    add('Terminal', 'false');
+    add('StartupNotify', 'true');
   }
+  if (wmClass) add('StartupWMClass', wmClass);
   return out;
 }
 
@@ -161,7 +172,7 @@ export function editTar(
 }
 
 /** Sets Name=<name> in every desktop entry of a .deb and the modes wantedMode asks for (rewritten in place). Returns the changes. */
-export async function fixDeb(path: string, name: string): Promise<string[]> {
+export async function fixDeb(path: string, name: string, wmClass?: string, comment?: string): Promise<string[]> {
   const members = readAr(await Deno.readFile(path));
   const data = members.find((m) => m.name.startsWith('data.tar'));
   if (!data) throw new Error(`${path}: no data.tar member`);
@@ -173,7 +184,7 @@ export async function fixDeb(path: string, name: string): Promise<string[]> {
   const { tar, edited, modes } = editTar(
     await gunzip(data.data),
     (p) => /^usr\/.*\.desktop$/.test(p),
-    (_p, body) => enc.encode(fixDesktopEntry(dec.decode(body), name)),
+    (_p, body) => enc.encode(fixDesktopEntry(dec.decode(body), name, wmClass, comment)),
     (p, body) => wantedMode(p, body.subarray(0, 4)),
   );
   if (!edited.length && !modes.length) return [];
@@ -899,6 +910,7 @@ export async function fixAppImage(
   path: string,
   name: string,
   wmClass: string,
+  comment?: string,
 ): Promise<string[]> {
   const file = await Deno.readFile(path);
   const offset = appImageOffset(file);
@@ -912,7 +924,7 @@ export async function fixAppImage(
     root.children!.find((c) => c.kind === 'file' && c.name.endsWith('.desktop'));
   if (!entry) throw new Error(`${path}: no top-level desktop entry`);
   const text = dec.decode(readSqFile(fs, entry));
-  const fixed = fixDesktopEntry(text, name, wmClass);
+  const fixed = fixDesktopEntry(text, name, wmClass, comment);
   if (fixed !== text) {
     entry.newData = enc.encode(fixed), changed.push(entry.name);
   }

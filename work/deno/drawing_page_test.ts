@@ -4,6 +4,7 @@
  * the way a drag ends. The server must then hold the new x (Excalidraw -> Y) and see b1 as selected (awareness), so the
  * agent's next edit of b1 is refused with user_editing. Skipped when no Chrome or Edge is installed.
  */
+import { SANDBOX_OFF } from './_doc_browser.ts';
 import { assert, assertEquals } from './_assert.ts';
 import { readModels } from '../../outputs/agent-studio/server/docs/drawing/model.ts';
 import { drawing_edit } from '../../outputs/agent-studio/server/docs/drawing/tools.ts';
@@ -11,6 +12,7 @@ import { LiveDoc } from '../../outputs/agent-studio/server/docs/live_doc.ts';
 import { startDemo } from '../../outputs/agent-studio/server/docs/drawing/demo_server.ts';
 
 const BROWSERS = [
+  Deno.env.get('CHROME_PATH') ?? '', // as _doc_browser.ts does
   'C:/Program Files/Google/Chrome/Application/chrome.exe',
   'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
   '/usr/bin/google-chrome',
@@ -53,6 +55,7 @@ Deno.test({
       const chrome = new Deno.Command(browser!, {
         args: [
           '--headless=new',
+          ...SANDBOX_OFF,
           '--disable-gpu',
           '--no-first-run',
           '--no-default-browser-check',

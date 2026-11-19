@@ -19,6 +19,19 @@ import type { UpdateService } from '../../outputs/agent-studio/server/desktop/up
 import type { Source } from '../../outputs/agent-studio/server/transcripts/monitor.ts';
 
 const win = Deno.build.os === 'windows';
+if (!win && Deno.build.os !== 'darwin') {
+  // The shells below start as login shells, so the machine's own startup files (nvm, a zsh prompt theme that redraws on a resize)
+  // decide how fast they are ready and what an early line looks like. A plain bash with an empty home is the same on every machine.
+  Deno.env.set('SHELL', '/bin/bash');
+  const home = Deno.makeTempDirSync({ prefix: 'aib-term-home-' });
+  Deno.env.set('HOME', home);
+  addEventListener('unload', () => {
+    try {
+      Deno.removeSync(home, { recursive: true });
+    } catch { /* gone already */ }
+  });
+  Deno.env.delete('ZDOTDIR');
+}
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // deno-lint-ignore no-control-regex
 const strip = (s: string) => s.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '').replace(/\x1b\][^\x07]*\x07/g, '');

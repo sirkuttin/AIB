@@ -11,6 +11,7 @@
  *  - the contract gate: every REMOTE_ROUTES entry needs a paired phone with its switch, swept automatically;
  *  - one activity line per action, never the message text or the name.
  */
+import { folderKey } from '../../outputs/agent-studio/server/state/agent_options.ts';
 import { assert, assertEquals } from './_assert.ts';
 import { DEVICE_HEADER, MAX_BODY, REMOTE_ROUTES, ROUTE_SCOPE } from '../../outputs/agent-studio/server/remote/server.ts';
 import { setAgentRows } from '../../outputs/agent-studio/server/remote/newchat.ts';
@@ -207,9 +208,8 @@ function clean(v: unknown): Json {
   return Object.fromEntries(Object.entries((v ?? {}) as Json).filter(([, x]) => x !== ''));
 }
 
-function folderKeyOf(p: string): string {
-  return 'w:' + p.replaceAll('\\', '/').toLowerCase();
-}
+/** The saved-choice key of a folder: 'w:' + lower case for a Windows path, 'p:' + the path as it is for a POSIX one. */
+const folderKeyOf = folderKey;
 
 Deno.test({
   ...OPTS,

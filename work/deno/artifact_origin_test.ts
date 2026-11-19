@@ -234,7 +234,10 @@ const maskCsp = (policy: string | undefined) =>
 async function compare(target: string, method = 'GET', host?: (port: number) => string | null) {
   const mine = await raw(origin.port, target, host ? host(origin.port) : `127.0.0.1:${origin.port}`, method);
   const theirs = await raw(pyPort, target, host ? host(pyPort) : `127.0.0.1:${pyPort}`, method);
-  const pick = (r: Reply) => Object.fromEntries(COMPARED.filter((k) => k in r.headers).map((k) => [k, r.headers[k]]));
+  // The Python server asks the system for a file type: Windows says text/xml for .xml, a Linux mime.types says application/xml. They are
+  // the same type to a browser, and AIB's own table answers text/xml everywhere.
+  const type = (k: string, v: string) => (k === 'content-type' && v === 'application/xml' ? 'text/xml' : v);
+  const pick = (r: Reply) => Object.fromEntries(COMPARED.filter((k) => k in r.headers).map((k) => [k, type(k, r.headers[k])]));
   assertEquals(mine.status, theirs.status, `${method} ${target}: status`);
   assertEquals(pick(mine), pick(theirs), `${method} ${target}: headers`);
   assertEquals(maskCsp(mine.headers['content-security-policy']), theirs.headers['content-security-policy'], `${method} ${target}: CSP`);

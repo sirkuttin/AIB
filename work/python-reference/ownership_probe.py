@@ -288,7 +288,13 @@ def restart_manager_holders(path):
 _INTERESTING = {'claude.exe', 'omp.exe', 'node.exe', 'devin.exe', 'claude', 'omp', 'node', 'devin'}
 _PARENT_LABELS = {'devin.exe': 'Devin', 'code.exe': 'VS Code', 'claude.exe': 'Claude app or CLI', 'windowsterminal.exe': 'a terminal',
                   'cmd.exe': 'a terminal', 'powershell.exe': 'a terminal', 'pwsh.exe': 'a terminal', 'python.exe': 'a Python program (possibly another AIB)',
-                  'pythonw.exe': 'a Python program (possibly another AIB)', 'cursor.exe': 'Cursor', 'windsurf.exe': 'Windsurf'}
+                  'pythonw.exe': 'a Python program (possibly another AIB)', 'cursor.exe': 'Cursor', 'windsurf.exe': 'Windsurf',
+                  # Linux and macOS name a process without .exe
+                  'code': 'VS Code', 'code-insiders': 'VS Code', 'codium': 'VS Code', 'cursor': 'Cursor', 'windsurf': 'Windsurf',
+                  'claude': 'Claude app or CLI', 'devin': 'Devin', 'bash': 'a terminal', 'zsh': 'a terminal', 'fish': 'a terminal',
+                  'sh': 'a terminal', 'tmux': 'a terminal', 'screen': 'a terminal', 'gnome-terminal-server': 'a terminal',
+                  'konsole': 'a terminal', 'xterm': 'a terminal', 'alacritty': 'a terminal', 'kitty': 'a terminal',
+                  'wezterm-gui': 'a terminal', 'terminal': 'a terminal', 'iterm2': 'a terminal'}
 
 
 def _ps_lines(run, columns):

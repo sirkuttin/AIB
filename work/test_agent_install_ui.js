@@ -288,6 +288,14 @@ test('a failure line wins over the block and the adapter text; only one line sho
   assert.deepEqual(lines(UI.agentRow(agent())), ['The Codex app is on this PC, but AIB needs its ACP adapter.']);
 });
 
+test('a found Codex adapter without the Codex program shows the install line; without cliHint nothing extra', () => {
+  const { UI } = setup([]);
+  const hint = 'AIB cannot find the Codex program, so it cannot check your sign-in. Install it with: npm i -g @openai/codex';
+  const found = { found: true, problem: '', launcherSource: 'installed' };
+  assert.deepEqual(lines(UI.agentRow(agent({ ...found, cliHint: hint }))), [hint]);
+  assert.deepEqual(lines(UI.agentRow(agent(found))), []);
+});
+
 test('the npm hint shows only when installs cannot run at all, and names the right package', () => {
   const { UI } = setup([]);
   const text = UI.agentRow(

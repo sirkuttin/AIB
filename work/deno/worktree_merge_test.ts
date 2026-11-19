@@ -16,6 +16,32 @@ import * as m from "../../outputs/agent-studio/server/worktrees/merge.ts";
 import { pathOf } from "../../outputs/agent-studio/server/state/paths.ts";
 import * as localOnly from "../../outputs/agent-studio/server/worktrees/local_only.ts";
 
+
+/**
+ * Commits a file under aib-shared/ the way an agent that forces it in would. On Windows the chat's aib-shared is a junction git
+ * walks through. Elsewhere (Linux, WSL) it is a symlink, and git refuses a path beyond a symbolic link, so the link steps aside
+ * for the commit and goes back: the commit in the history is the same.
+ */
+function forceIn(worktree: string, rel: string, text: string, message: string) {
+  const link = pathOf(worktree, "aib-shared");
+  const target = Deno.build.os !== "windows" && Deno.lstatSync(link).isSymlink ? Deno.readLinkSync(link) : "";
+  if (target) {
+    Deno.removeSync(link);
+    Deno.mkdirSync(link);
+  }
+  try {
+    write(worktree, rel, text);
+    runGit(worktree, "add", "-f", rel);
+    runGit(worktree, "commit", "-m", message);
+  } finally {
+    if (target) {
+      Deno.copyFileSync(pathOf(worktree, rel), pathOf(target, rel.replace(/^aib-shared\//, ""))); // through the junction the file lands in the shared folder
+      Deno.removeSync(link, { recursive: true });
+      Deno.symlinkSync(target, link);
+    }
+  }
+}
+
 // ---- landing (test_worktree_merge.py) --------------------------------------------------------------------------------
 Deno.test("a clean merge lands only the chat's commits and keeps the user's edits", async () => {
   using box = new Sandbox();
@@ -520,14 +546,31 @@ Deno.test("local only: a chat that changed only local-only files has nothing to 
   assertEquals([...Deno.readDirSync(pathOf(box.project, "aib-shared"))].map((e) => e.name).sort(), ["T (from chat-aaaaaaaa).md", "T.md"]);
 });
 
+Deno.test("local only: on Linux and in WSL a chat that commits the aib-shared link itself lands without it", async () => {
+  if (Deno.build.os === "windows") return; // a junction is a folder to git; only a symlink is a file git can commit
+  using box = new Sandbox();
+  await localOnly.ensureDefault(box.project);
+  const ctx = await chat(box);
+  commit(ctx.wt, "a.txt", "a\n", "first");
+  assert(Deno.lstatSync(pathOf(ctx.wt, "aib-shared")).isSymlink, "the chat's aib-shared is a symlink here");
+  runGit(ctx.wt, "add", "-f", "aib-shared");
+  runGit(ctx.wt, "commit", "-m", "the link too");
+  commit(ctx.wt, "b.txt", "b\n", "last");
+  const before = main(ctx);
+  const result = await merge(ctx.studio, ctx.id, "T");
+  assertEquals(result.state, "merged");
+  assertEquals(runGit(box.project, "log", "--format=%H", "--all", "--", "aib-shared"), "", "the link is never in main's history");
+  assert(tree(ctx).includes("a.txt") && tree(ctx).includes("b.txt") && !tree(ctx).includes("aib-shared"));
+  assertEquals(runGit(box.project, "log", "--format=%s", `${before}..main`).trim(), "last");
+  assertEquals(box.status(), "");
+});
+
 Deno.test("local only: a clean replay that commits a forced-in aib-shared/ file lands as one commit without it", async () => {
   using box = new Sandbox();
   await localOnly.ensureDefault(box.project);
   const ctx = await chat(box);
   commit(ctx.wt, "a.txt", "a\n", "first");
-  write(ctx.wt, "aib-shared/P.md", "chat notes\n");
-  runGit(ctx.wt, "add", "-f", "aib-shared/P.md");
-  runGit(ctx.wt, "commit", "-m", "notes too");
+  forceIn(ctx.wt, "aib-shared/P.md", "chat notes\n", "notes too");
   commit(ctx.wt, "b.txt", "b\n", "last");
   const before = main(ctx);
   const result = await merge(ctx.studio, ctx.id, "T");

@@ -13,7 +13,10 @@ import * as fx from './_monitor_fixtures.ts';
 
 const py = new PyParity();
 const TMP = Deno.makeTempDirSync({ prefix: 'aib-monitor-golden-' });
-const TOLERANCE: Record<string, number> = { created: 0.0015, transcriptIdleSeconds: 2 };
+// `created` is the file's change time on Linux, and Deno reports that one in whole seconds (its birth and modification times carry
+// milliseconds), while Python's st_ctime has nanoseconds: up to a second apart there. Windows and macOS use the birth time.
+const WHOLE_SECOND_CTIME = Deno.build.os === 'linux';
+const TOLERANCE: Record<string, number> = { created: WHOLE_SECOND_CTIME ? 1.001 : 0.0015, transcriptIdleSeconds: 2 };
 // steered: a message Claude Code saved as sent while it worked (normalize.ts, B15, beta.9) is Deno only; the Python reference never had it
 const IGNORED = new Set(['now', 'steered']);
 

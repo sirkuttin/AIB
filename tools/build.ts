@@ -39,6 +39,8 @@ import { compare, FEED_ENV, feedDir, isTestBuild, parseVersion } from '../output
 export const SIZE_LIMIT = 160 * 1024 * 1024;
 export const APP_NAME = 'AIB';
 export const APP_IDENTIFIER = 'dev.aib.app';
+/** The menu entry's one-line description (Comment= in the Linux .desktop file). */
+export const DESKTOP_COMMENT = 'Run Claude Code, Codex and other coding agents side by side';
 
 export interface Target {
   id: string;
@@ -916,12 +918,12 @@ async function buildTarget(
     keeperBytes(await buildKeeper(target, `${dir}/${keeperFile(target)}`));
     const keeper = await Deno.readFile(`${dir}/${keeperFile(target)}`);
     await desktop(stageDir, included, target, `${dir}/${APP_NAME}.AppImage`);
-    await fixAppImage(`${dir}/${APP_NAME}.AppImage`, APP_NAME, APP_IDENTIFIER); // .DirIcon, root 0755, Name/StartupWMClass
+    await fixAppImage(`${dir}/${APP_NAME}.AppImage`, APP_NAME, APP_IDENTIFIER, DESKTOP_COMMENT); // .DirIcon, root 0755, Name/StartupWMClass
     await addToAppImage(`${dir}/${APP_NAME}.AppImage`, keeperFile(target), keeper, 0o755); // next to the top-level AIB
     await Deno.copyFile(`${dir}/${APP_NAME}.AppImage`, `${out}/${names[0]}`);
     await Deno.mkdir(`${dir}/deb`, { recursive: true });
     await desktop(stageDir, included, target, `${dir}/deb/aib.deb`);
-    await fixDeb(`${dir}/deb/aib.deb`, APP_NAME); // deno desktop writes Name=aib
+    await fixDeb(`${dir}/deb/aib.deb`, APP_NAME, APP_IDENTIFIER, DESKTOP_COMMENT); // deno desktop writes Name=aib
     await addToDeb(`${dir}/deb/aib.deb`, DEB_KEEPER_PATH, keeper, 0o755);
     await addDebUpdater(`${dir}/deb/aib.deb`); // aib-install-deb, its polkit action and what it Depends on: Install now on a .deb
     await Deno.copyFile(`${dir}/deb/aib.deb`, `${out}/${names[1]}`);

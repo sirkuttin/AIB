@@ -30,7 +30,8 @@ import { nvmInstallLine } from '../../outputs/agent-studio/server/agents/nvm.ts'
 
 // the one pinned nvm command (nvm.ts): install.sh checked by its SHA-256 before it runs
 const NVM = nvmInstallLine({ portable: true });
-const PS = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+// the path the Windows branch builds with this system's separator (this test also runs it, simulated, on Linux and macOS)
+const PS = Deno.build.os === 'windows' ? 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe' : 'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe';
 
 /** A probe: this OS, this environment, this node (with this --version), and fixed --version answers per program. */
 function probe(

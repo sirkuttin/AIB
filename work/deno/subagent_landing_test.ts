@@ -157,7 +157,10 @@ Deno.test({
     const target = pathOf(box.dir, 'linked-pkg');
     write(target, 'index.js', 'keep me\n');
     const { id, path } = box.subagent(main.id, 'sub.txt', 'from-sub\n');
-    Deno.symlinkSync(target, pathOf(path, 'node_modules'), { type: 'junction' }); // an `npm link` in the subagent's worktree
+    // An `npm link` in the subagent's worktree. git does not stage a Windows junction at all, but on Linux and macOS it is a symlink that
+    // `git add -A` stages like any file; real projects ignore node_modules, so the test does too there.
+    if (Deno.build.os !== 'windows') Deno.writeTextFileSync(pathOf(box.project, '.git', 'info', 'exclude'), 'node_modules\n', { append: true });
+    Deno.symlinkSync(target, pathOf(path, 'node_modules'), { type: 'junction' });
     await box.swarm.poll();
     await until(() => log(box.project).includes('AIB: subagent sub 1'), 'landed', 15);
     assertEquals(runGit(box.project, 'show', '--name-only', '--format=', 'HEAD').trim(), 'sub.txt');

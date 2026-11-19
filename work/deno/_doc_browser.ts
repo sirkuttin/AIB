@@ -25,6 +25,12 @@ const BROWSERS = [
   '/usr/bin/chromium',
   '/usr/bin/chromium-browser',
 ];
+/**
+ * Chrome's own sandbox needs unprivileged user namespaces, which Ubuntu 24.04 and newer refuse to a Chrome that is not installed
+ * from a package (AppArmor); it then never starts. The tests only load AIB's own pages on 127.0.0.1, so on Linux they run without it.
+ */
+export const SANDBOX_OFF: string[] = Deno.build.os === 'linux' ? ['--no-sandbox'] : [];
+
 export const browserPath = BROWSERS.find((p) => {
   try {
     return !!p && Deno.statSync(p).isFile;
@@ -187,6 +193,7 @@ export class Browser {
     const proc = new Deno.Command(browserPath!, {
       args: [
         '--headless=new',
+        ...SANDBOX_OFF,
         '--disable-gpu',
         '--no-first-run',
         '--no-default-browser-check',

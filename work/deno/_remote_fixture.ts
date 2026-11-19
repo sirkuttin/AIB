@@ -46,7 +46,12 @@ export async function raw(port: number, method: string, path: string, headers: R
     for (const [k, v] of Object.entries(all)) head += `${k}: ${v}\r\n`;
     head += '\r\n';
     await conn.write(new TextEncoder().encode(head));
-    if (payload.byteLength) await conn.write(payload);
+    // Send the body while reading the answer: a server that refuses a big body early never reads it, and a write that waits for the
+    // whole body to be taken (Linux's socket buffers are small next to 31 MB) would wait forever, with the 413 already sent.
+    if (payload.byteLength) {
+      const writer = conn.writable.getWriter();
+      void writer.write(payload).catch(() => {}).finally(() => writer.releaseLock());
+    }
     const chunks: Uint8Array[] = [];
     const buf = new Uint8Array(65536);
     const deadline = Date.now() + 20000;

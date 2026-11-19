@@ -181,7 +181,9 @@ test('long lines are cut', async () => {
 
 test('unsafe or unchanged paths are refused', async () => {
   using r = new TempRepo();
-  for (const bad of ['', '../x', 'a/../b', '/etc/passwd', 'C:/x', 'a\\b', './mod.txt', 'a//b', 'x\0y']) {
+  // 'C:/x' (a drive) and 'a\\b' (a separator) are only unsafe on Windows; on Linux and macOS they are ordinary names.
+  const winOnly = ['C:/x', 'a\\b'];
+  for (const bad of ['', '../x', 'a/../b', '/etc/passwd', ...(osp.WIN ? winOnly : []), './mod.txt', 'a//b', 'x\0y']) {
     const error = await assertRejects(() => getFileDiff(r.repo, bad), ChangesError) as ChangesError;
     assertEquals(error.code, 'bad_path', bad);
   }
@@ -254,6 +256,10 @@ Deno.test('parsers', async () => {
   const text = '@@ -1 +1 @@ ' + 'h'.repeat(400) + '\n-a\r\n+' + 'b'.repeat(3000) + '\n\nnoise\n';
   assertEquals(parseHunks(text), await py.call('changes', 'parse_hunks', [text]));
   for (const path of ['', 'a', 'a/b', '../x', 'a/./b', 'C:/x', 'x:y', '/x', 'a\\b', 'a//b', 'x'.repeat(1025), 'é/😀']) {
+    if (!osp.WIN && path.includes('\\')) { // the Python reference refuses a backslash everywhere; here it is a name character off Windows
+      assertEquals(safeRelpath(path), true, path);
+      continue;
+    }
     assertEquals(safeRelpath(path), await py.call('changes', 'safe_relpath', [path]), path);
   }
 });

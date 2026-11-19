@@ -457,7 +457,8 @@ Deno.test('not editable: aib-docs, AIB data, helper worktrees, .git; case-insens
     } catch (e) {
       threw = (e as { code?: string }).code ?? String(e);
     }
-    assertEquals(threw, 'bad_path');
+    // Windows drops a trailing dot, so '.git.' is refused as a spelling of .git; elsewhere it is an ordinary (here missing) name
+    assertEquals(threw, WIN ? 'bad_path' : 'not_found');
     const inData = await project({ 'f.txt': 'x' });
     const dataLf = new LiveFiles({ stateDir: inData, liveCall: () => Promise.resolve([200, {}]), conversations: () => [], connectionOf: () => null });
     assertEquals(dataLf.open(inData, 'f.txt'), { refused: 'worktree' }, 'a folder inside AIB\'s data (where worktrees live) is read-only');

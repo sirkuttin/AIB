@@ -32,6 +32,7 @@ function machine(block: [string, boolean] = ['', true]) {
   const modules = join(dir.root, 'global', 'node_modules');
   adapters.resetCache();
   adapters.adapterHooks.globalRoots = () => [modules];
+  adapters.adapterHooks.claudeOnPath = () => ''; // a claude-agent-acp on the real PATH decides nothing
   adapters.adapterHooks.codexOnPath = () => '';
   adapters.adapterHooks.codexPresent = () => false;
   installer.installerHooks.nodeBlock = () => block;
@@ -41,6 +42,7 @@ function machine(block: [string, boolean] = ['', true]) {
     modules,
     [Symbol.dispose]() {
       delete adapters.adapterHooks.globalRoots;
+      delete adapters.adapterHooks.claudeOnPath;
       delete adapters.adapterHooks.codexOnPath;
       delete adapters.adapterHooks.codexPresent;
       delete installer.installerHooks.nodeBlock;
@@ -115,6 +117,32 @@ Deno.test('Node.js missing: the block line on missing agents and the npm hint fo
   assertEquals(listed.claude.installBlock, 'Node.js 22 or newer is needed to install this agent.');
   assertEquals(listed.codex.installHint, 'Or install it yourself with: npm i -g @agentclientprotocol/codex-acp');
   assertEquals([listed.omp.installBlock, listed.omp.installable], ['', false]);
+});
+
+Deno.test('Codex adapter found but no Codex program: the row says to install it; with the program, it says nothing', async () => {
+  using m = machine();
+  makeInstall(m.state, 'codex', '2.6.0', '@agentclientprotocol/codex-acp', { bin: { 'codex-acp': 'dist/index.js' } });
+  const options = { stateDir: m.state, nodeCommand: PY, claudeLauncher: '', codexLauncher: '', ompCommand: '' };
+  const row = async () => (await shared.describeAgents(options, new SettingsStore(m.state))).find((a) => a.id === 'codex')!;
+  try {
+    shared.describeHooks.codexCli = () => Promise.resolve(null);
+    const without = await row();
+    assertEquals(without.found, true);
+    assertEquals(without.cliHint, shared.CODEX_CLI_HINT);
+    assert(String(without.cliHint).includes('npm i -g @openai/codex'));
+    shared.describeHooks.codexCli = () => Promise.resolve(['/usr/bin/codex']);
+    assert(!('cliHint' in await row()), 'the program is there: no hint');
+  } finally {
+    delete shared.describeHooks.codexCli;
+  }
+  // nothing installed at all: the install line is the hint, not this one
+  Deno.removeSync(join(m.state, 'agents'), { recursive: true });
+  shared.describeHooks.codexCli = () => Promise.resolve(null);
+  try {
+    assert(!('cliHint' in await row()));
+  } finally {
+    delete shared.describeHooks.codexCli;
+  }
 });
 
 Deno.test('a new install is seen by the next lookup with no restart (WebServerAndHostReadFresh)', async () => {
@@ -220,7 +248,9 @@ Deno.test('the agent list matches Python on the same fixture', async () => {
       codexLauncher: opts.codex_launcher,
     };
     // The Beta agents' rows are Deno only (beta_catalog.ts): the Python list has none.
-    const mine = (await shared.describeAgents(options, new SettingsStore(settingsDir), connections)).filter((r) => !r.beta);
+    // cliHint (Codex's adapter without the Codex program) is Deno only too.
+    const mine = (await shared.describeAgents(options, new SettingsStore(settingsDir), connections)).filter((r) => !r.beta)
+      .map(({ cliHint: _cliHint, ...row }) => row);
     const theirs = await py.call('agents_shim', 'describe', [m.state, settingsDir, opts, connections, [m.modules], '', false, block]);
     assertEquals(mine, theirs, JSON.stringify(opts));
   }

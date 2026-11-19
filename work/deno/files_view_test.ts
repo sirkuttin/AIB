@@ -51,22 +51,23 @@ function makeRepo(): { root: string; repo: string; dispose: () => void } {
 
 Deno.test('safeParts refuses traversal, absolute, drive, UNC, streams and .git', () => {
   assertEquals(files.safeParts(''), []);
-  assertEquals(files.safeParts('a/b\\c'), ['a', 'b', 'c']);
+  // Windows splits on a backslash too; POSIX (Linux, macOS, WSL) has only '/' and '\\' is a name character.
+  assertEquals(files.safeParts('a/b\\c'), WIN ? ['a', 'b', 'c'] : ['a', 'b\\c']);
   for (
     const bad of [
       '../x',
       'a/../../x',
       '/etc/passwd',
-      'C:\\Windows',
-      'c:/x',
-      '\\\\srv\\share\\x',
-      '//srv/x',
-      'a/b:stream',
       '.git/config',
       'a\0b',
+      ...(WIN ? ['C:\\Windows', 'c:/x', '\\\\srv\\share\\x', '//srv/x', 'a/b:stream'] : []),
     ]
   ) {
     assertThrows(() => files.safeParts(bad), files.FilesError);
+  }
+  if (!WIN) { // no drives, UNC paths or streams there: these are plain names
+    assertEquals(files.safeParts('C:\\Windows'), ['C:\\Windows']);
+    assertEquals(files.safeParts('a/b:stream'), ['a', 'b:stream']);
   }
 });
 
@@ -197,7 +198,7 @@ Deno.test('the three routes: token, chat folder, list / search / read, refusals'
     const [s1, list] = await call(ctx, '/api/live/files/list', 'id=live1&dir=scripts') as [number, { entries: { path: string }[] }];
     assertEquals([s1, list.entries.map((e) => e.path)], [200, ['scripts/load.py']]);
     assertEquals((await call(ctx, '/api/live/files/list', 'id=live1&dir=..'))[0], 400);
-    assertEquals((await call(ctx, '/api/live/files/read', 'id=live1&path=' + encodeURIComponent('C:\\Windows\\win.ini')))[0], 400);
+    assertEquals((await call(ctx, '/api/live/files/read', 'id=live1&path=' + encodeURIComponent('C:\\Windows\\win.ini')))[0], WIN ? 400 : 404); // a plain missing name off Windows
     assertEquals((await call(ctx, '/api/live/files/read', 'id=live1&path=.git/config'))[0], 400);
     const [s2, read] = await call(ctx, '/api/live/files/read', 'id=live1&path=outputs/chart.html') as [
       number,
