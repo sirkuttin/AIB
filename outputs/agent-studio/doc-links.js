@@ -432,9 +432,9 @@
     return true;
   }
   // "+ New doc": make an empty doc linked to the chat (POST /api/live/docs/open with create). Resolves {name, title, ...}.
-  function createDoc(chatId, name) {
+  function createDoc(chatId, name, linkChat) {
     if (!host || !host.post) return Promise.reject(new Error('not ready'));
-    return Promise.resolve(host.post('docs/open', { id: chatId, name, create: '' }));
+    return Promise.resolve(host.post('docs/open', Object.assign({ id: chatId, name, create: '' }, linkChat ? { chat: linkChat } : {})));
   }
 
   // ---- chips -------------------------------------------------------------------------------------------------------------------

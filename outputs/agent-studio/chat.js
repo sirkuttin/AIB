@@ -2968,7 +2968,12 @@
          again), do not close. Close only when the open chat is no longer live. */
       if (!x.own) return;
       if (!(selected?.live && !selected.live.closed)) closeInspector();
-      else if (current) refresh().catch(() => {}); // sets the snapshot, then calls this again (never loops: it has one then)
+      else if (current && !subSelection.snapRetried) {
+        // sets the snapshot, then calls this again. One try per selection: a read that keeps leaving no snapshot (no state, no
+        // error) must not become a continuous request loop (code review S7).
+        subSelection.snapRetried = true;
+        refresh().catch(() => {});
+      }
       return;
     }
     renderSubagentControls();
@@ -5751,7 +5756,7 @@
   }, 500);
   // ---- The right panel's Activity: the project's working chats (owner, 2026-11-18: the right panel is project level) ----
   // One section per chat of the project on screen that is working (mid-turn, or its subagents or a command it started still run),
-  // in the order they started working; a chat that stops working leaves. Idle and finished chats are not listed. Nothing here
+  // in the order they started working; a chat that stops working leaves the working list and joins the collapsed Idle group below it. Nothing here
   // follows the open chat: opening another chat of the project, or moving split focus, only moves the accent to that chat's
   // section (sp-focus). Each chat's helpers and processes are read the same way, open or not. Split view adds a small pane tag.
   function paneActEntry(key) {
@@ -5914,6 +5919,7 @@
     } catch {}
   }
   const IDLE_CAP = 10;
+  const IDLE_READS = 3; // idle chats read per tick
   function projectSection(key) {
     let sec = projAct.secs.get(key);
     if (sec) return sec;
@@ -6085,9 +6091,8 @@
         done = (a?.commands || []).filter((t) => !isRunningCommand(t)),
         n = rows.length + done.length,
         open = n > 0 && idleOpen(projAct.pk, key);
-      const dot = window.AgentWorkspaceUI?.dotForKey(key) || null,
-        d = dot || text('i', '', 'status-dot');
-      d.classList.add('sp-dot');
+      // owner decision: no needs-you styling in Activity. Every idle chat gets the same neutral hollow dot (never the sidebar's amber one)
+      const d = (sec.dot ||= text('i', '', 'status-dot st-idle sp-dot sp-idle-dot'));
       sec.name.textContent = conv ? titleOf(conv) : 'Conversation';
       sec.name.title = sec.name.textContent;
       sec.caret.textContent = n ? (open ? '▾' : '▸') : '';
@@ -6168,16 +6173,22 @@
       const keys = projectActivityKeys().slice();
       // an open history of a chat that just stopped working keeps being read until you close it
       if (subOwner && inspectorOpen() && !keys.includes(subOwner)) keys.push(subOwner);
-      /* Idle chats on screen: read once for their "N finished", again when they were active since, and at the poll pace while
-         expanded (an open one is being looked at). */
+      /* Idle chats on screen: read once for their "N finished" and again only after that chat was active (ended a turn) since.
+         An expanded one is NOT re-read at the poll pace: it is idle, nothing changes (it is read when it is expanded, if it
+         was never read). At most IDLE_READS idle chats are read per tick, expanded ones first, so "Show N more" never reads
+         every idle chat at once; the rest follow at the next ticks (see below). */
       const shown = projAct.idleAll ? projAct.idle : projAct.idle.slice(0, IDLE_CAP);
       projAct.idleShown = shown;
+      const due = [];
       for (const key of shown) {
         if (keys.includes(key)) continue;
         const a = paneAct.get(key),
           c = conversations.find((x) => aliasKey(x) === key);
-        if (!a?.at || (c && a.at < lastActiveOf(c)) || idleOpen(projAct.pk, key)) keys.push(key);
+        if (!a?.at || (c && a.at < lastActiveOf(c))) due.push(key);
       }
+      due.sort((x, y) => Number(idleOpen(projAct.pk, y)) - Number(idleOpen(projAct.pk, x)));
+      keys.push(...due.slice(0, IDLE_READS));
+      projAct.idleLeft = due.length > IDLE_READS;
       for (const key of keys) {
         const c = conversations.find((x) => aliasKey(x) === key);
         if (!c) continue;
@@ -6189,6 +6200,7 @@
       projAct.busy = false;
     }
     renderProjectActivity();
+    if (projAct.idleLeft) setTimeout(tickProjectActivity, 1500); // more idle chats still to count: the next few, not all at once
     // with no chat open (the New chat view) nothing else reads an open history of a project chat
     if (!selected && inspectorOpen()) {
       if (subSelection) refreshSubagent().catch(() => {});

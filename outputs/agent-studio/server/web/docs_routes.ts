@@ -143,7 +143,8 @@ export function docsRoutes(): Map<string, Route> {
       const create = byKey ? undefined : typeof body?.create === 'string' ? body.create : undefined;
       const doc = await ctx.docs.open(root, body?.name, create, 'user');
       // a new doc is linked to the chat it was made from; opening one never moves its link (the link route is the user's pick)
-      if (create !== undefined) ctx.docs.link(doc, ctx.artifacts.chatOf(String(body?.id ?? '')), true);
+      // (`chat`: the Docs tab asks by the project's folder when no chat of the project is open, and names the chat to link, if any)
+      if (create !== undefined) ctx.docs.link(doc, ctx.artifacts.chatOf(String(body?.chat || body?.id || '')), true);
       // by key: the page asks later calls (Duplicate, the chat list) with this id
       return [200, { ok: true, ...(await ctx.docs.infoWithOwned(doc)), ...(byKey ? { projectId: id } : {}) }];
     } catch (error) {

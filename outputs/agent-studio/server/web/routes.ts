@@ -101,6 +101,9 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  * The phone port's own routes (remote/server.ts REMOTE_ROUTES) are not in this table: the page port never answers them.
  */
 export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
+  ['GET', '/api/live/project/changes', 'read', 'get'], // the project right panel's Changes: main plus the active worktrees, one read
+  ['GET', '/api/live/project/changes/file', 'read', 'get'], // one file's diff of main or of a worktree section (by record id)
+  ['GET', '/api/live/project/artifacts', 'artifacts.read', 'get'], // the project right panel's Artifacts: every chat's, tagged
   ['GET', '/api/live/events', 'read', 'get'], // history loading: one page of a chat's events (event_pages.ts)
   ['GET', '/api/live/event', 'read', 'get'], // one event whole (a clipped tool output's full text)
   ['POST', '/api/live/allow/answer', 'write', 'body'], // allow rules: page session only (server/allow; no MCP tool, no phone route)

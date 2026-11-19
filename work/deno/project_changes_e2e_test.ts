@@ -211,8 +211,12 @@ Deno.test({
           throw new Error(`${e.message}: ${await page.eval<string>(`document.getElementById('projectChanges').innerText.slice(0, 800)`)}`);
         });
       assertEquals(await page.eval<string>(`document.querySelector('${ROW}').getAttribute('aria-expanded')`), 'true');
-      const asked = await page.eval<string[]>(`performance.getEntriesByType('resource').map((e) => e.name).filter((n) => n.includes('/api/live/project/changes/file'))`);
+      const asked = await page.eval<string[]>(`performance.getEntriesByType('resource').map((e) => e.name).filter((n) => n.includes('/api/live/project/changes/file') && !n.includes('section=main'))`);
       assertEquals(asked.length, 1);
+      // main's own diff (opened by itself) is asked of the project route too, as section=main: never the per-chat route
+      const mainAsked = await page.eval<string[]>(`performance.getEntriesByType('resource').map((e) => e.name).filter((n) => n.includes('section=main'))`);
+      assert(mainAsked.length >= 1, 'main\'s diff comes from the project route');
+      assertEquals(await page.eval<number>(`performance.getEntriesByType('resource').filter((e) => /\\/api\\/live\\/changes\\/file/.test(e.name)).length`), 0, 'no per-chat diff route');
       assert(/section=sub-a/.test(asked[0]) && /path=pkg%2Fparser\.ts/.test(asked[0]), asked[0]);
       assert(!asked[0].includes(encodeURIComponent(fx.trees['sub-a'])) && !/worktrees/.test(asked[0]), `the worktree's own path was sent: ${asked[0]}`);
       // a click again folds the diff

@@ -66,7 +66,6 @@
     if (n < 3600) return Math.floor(n / 60) + 'm ' + String(n % 60).padStart(2, '0') + 's';
     return Math.floor(n / 3600) + 'h ' + String(Math.floor((n % 3600) / 60)).padStart(2, '0') + 'm';
   }
-  const processHeading = (n) => n + ' running';
   /* Process row text: the agent's own description when it gave one, else the command's first line. The hover keeps the full command. */
   const oneLine = (v) =>
     String(v == null ? '' : v)
@@ -295,7 +294,6 @@
     chips,
     renderStrip,
     shortDuration,
-    processHeading,
     processTitle,
     processHover,
     processStatusText,

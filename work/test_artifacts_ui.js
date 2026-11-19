@@ -639,11 +639,12 @@ test('the right column has an Artifacts tab that can be widened like Changes', (
   assert.equal(s.expanded, true);
   s = C.tabState(s, { type: 'show', tab: 'changes' });
   assert.equal(s.expanded, true, 'widening carries between the two wide tabs');
-  assert.equal(C.tabState(s, { type: 'show', tab: 'docs' }).expanded, false, 'Docs is not widened: its \u2922 moves a doc to the middle');
-  assert.deepEqual(C.tabState(s, { type: 'show', tab: 'activity' }), { tab: 'activity', expanded: false });
+  // owner rule: the width changes only by the owner's own action, so a widened panel stays widened on every tab
+  assert.equal(C.tabState(s, { type: 'show', tab: 'docs' }).expanded, true, 'a doc opening in Docs does not snap the width back');
+  assert.deepEqual(C.tabState(s, { type: 'show', tab: 'activity' }), { tab: 'activity', expanded: true });
   assert.deepEqual(C.tabState({ tab: 'artifacts', expanded: true }, { type: 'subchat', open: true }), {
     tab: 'activity',
-    expanded: false,
+    expanded: true,
   });
 });
 test('chat.html loads the module (deferred, before chat.js) and the stylesheet', () => {

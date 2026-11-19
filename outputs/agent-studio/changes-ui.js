@@ -182,21 +182,16 @@
   /* Same file, same numbers: the diff on screen is still current. */
   const fileSignature = (f) =>
     f ? [f.path, f.status, f.added, f.removed, f.binary ? 1 : 0, f.partial ? 1 : 0, f.oldPath || ''].join('|') : '';
-  /* Tab state: {tab, expanded}. Expanding only makes sense on the Changes and Artifacts tabs and ends when you leave them. */
+  /* Tab state: {tab, expanded}. The panel's width changes only by the owner's own action (owner rule): once widened it stays
+     widened over tab switches, an opened doc, a subagent history and a project switch, until the owner narrows it (the button,
+     Escape) or drags the edge ('unwiden'). The widen button is offered on every tab while widened. */
   function tabState(prev, action) {
     const s = Object.assign({ tab: 'activity', expanded: false }, prev);
-    if (action && action.type === 'show' && TABS.includes(action.tab)) {
-      s.tab = action.tab;
-      if (action.tab !== 'changes' && action.tab !== 'artifacts') s.expanded = false;
-    } else if (action && action.type === 'toggleExpand' && (s.tab === 'changes' || s.tab === 'artifacts'))
-      s.expanded = !s.expanded;
-    else if (action && action.type === 'subchat' && action.open) {
-      s.tab = 'activity';
-      s.expanded = false;
-    } else if (action && action.type === 'reset') {
-      s.tab = 'activity';
-      s.expanded = false;
-    }
+    if (action && action.type === 'show' && TABS.includes(action.tab)) s.tab = action.tab;
+    else if (action && action.type === 'toggleExpand' && (s.tab === 'changes' || s.tab === 'artifacts' || s.expanded)) s.expanded = !s.expanded;
+    else if (action && action.type === 'unwiden') s.expanded = false;
+    else if (action && action.type === 'subchat' && action.open) s.tab = 'activity';
+    else if (action && action.type === 'reset') s.tab = 'activity';
     return s;
   }
   /* The panel is the project's (owner, 2026-11-18): Changes shows the project folder first, then one section per worktree an
@@ -561,7 +556,7 @@
       loadingMore = true;
       paintList(true);
       try {
-        const more = await api('/api/live/changes?' + q({ id, scope: 'uncommitted', offset: m.changes.files.length }));
+        const more = await nextMain(id, m.changes.files.length);
         const cur = mainSec();
         if (mine !== seq || id !== chat.id || !cur || !cur.changes) return;
         if (more.git && (more.files || []).length) {
@@ -580,6 +575,11 @@
         if (first) first.focus({ preventScroll: true });
       }
     }
+    /* The next page of MAIN's files: asked of the project route (main only), so it is the project folder's, never the open chat's own worktree. */
+    async function nextMain(id, offset) {
+      const r = await api('/api/live/project/changes?' + q({ id, only: 'main', offset }));
+      return (r && r.main && r.main.changes) || { git: false, files: [] };
+    }
     async function load(force) {
       if (!chat.id) return;
       const now = Date.now();
@@ -595,7 +595,7 @@
         /* The pages you asked for with "Show the next 300" stay listed across refreshes. */
         const m = next.main;
         for (let p = 1; p < pages && m && m.changes && moreLeft(m.changes); p++) {
-          const more = await api('/api/live/changes?' + q({ id, scope: 'uncommitted', offset: m.changes.files.length }));
+          const more = await nextMain(id, m.changes.files.length);
           if (mine !== seq || id !== chat.id) return;
           if (!more.git || !(more.files || []).length) break;
           m.changes = Object.assign({}, m.changes, more, { files: m.changes.files.concat(more.files), offset: 0 });
@@ -632,14 +632,16 @@
       try {
         d = await api(
           sec.id === 'main'
-            ? '/api/live/changes/file?' + q({ id, path, scope: 'uncommitted' })
+            ? '/api/live/project/changes/file?' + q({ id, section: 'main', path })
             : '/api/live/project/changes/file?' + q({ id, section: sec.id, path }),
         );
       } catch (e) {
         err = e.message || 'Request failed';
       }
       const cur = cache.get(k);
-      if (!cur || cur.seq !== mine || id !== chat.id) return;
+      // (not `id !== chat.id`: the diff is the PROJECT's, so opening another chat of the project while it loads must not drop it and
+      // leave "Loading…" for good; another project empties the cache (resetProject), which `cur` catches)
+      if (!cur || cur.seq !== mine) return;
       cache.set(k, { sig, seq: mine, loading: false, d: err ? (prev && prev.d) || null : d, err });
       paintList();
     }
@@ -1003,12 +1005,12 @@
       view.hidden = !on;
       artView.hidden = !art;
       docsView.hidden = !docs;
-      expandBtn.hidden = !wide || narrow();
+      expandBtn.hidden = !(wide || state.expanded) || narrow();
       expandBtn.setAttribute('aria-pressed', state.expanded ? 'true' : 'false');
       expandBtn.title = state.expanded ? 'Narrow this column again' : 'Widen this column';
       expandBtn.setAttribute('aria-label', expandBtn.title);
       expandBtn.textContent = state.expanded ? '⇥' : '⇤'; // QA m8: widen pulls the edge left, narrow pushes it back
-      body.classList.toggle('changes-wide', wide && state.expanded && !narrow());
+      body.classList.toggle('changes-wide', state.expanded && !narrow());
       if (AR()) AR().setVisible(art && paneVisible());
       if (DT()) DT().setVisible(docs && paneVisible());
       schedule();
@@ -1112,7 +1114,6 @@
       if (
         e.key === 'Escape' &&
         state.expanded &&
-        (state.tab === 'changes' || state.tab === 'artifacts') &&
         !e.defaultPrevented &&
         doc.activeElement &&
         pane.contains(doc.activeElement)
@@ -1122,6 +1123,11 @@
       }
     });
     win.addEventListener('resize', () => apply());
+    // the owner drags the panel's edge (resize-ui.js): the drag takes over, the widened state ends
+    win.addEventListener('aib-panel-unwiden', () => {
+      state = tabState(state, { type: 'unwiden' });
+      apply();
+    });
     if (win.matchMedia) {
       try {
         win.matchMedia('(max-width:1099px)').addEventListener('change', apply);
@@ -1202,6 +1208,7 @@
         turnSeen = stamp;
         if (chat.id) load(true);
         if (AR()) AR().refresh();
+        if (DT()) DT().refresh(); // the Docs list: a "writing" chip ends with the turn, a new doc appears
       }
     }
     /* The Files view's change badge: show the Changes tab with this file's diff open and in view. path is repository-relative. */

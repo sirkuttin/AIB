@@ -123,17 +123,22 @@ test('file signatures change when the numbers change', () => {
   assert.notEqual(C.fileSignature(a), C.fileSignature({ ...a, added: 2 }));
   assert.equal(C.fileSignature(null), '');
 });
-test('tab state: expand only on Changes, leaving Changes or opening a subagent history collapses it', () => {
+test('tab state: the widened state changes only by the owner: tabs, a subagent history and a project switch keep it', () => {
   let s = C.tabState(null, { type: 'toggleExpand' });
-  assert.deepEqual(s, { tab: 'activity', expanded: false });
+  assert.deepEqual(s, { tab: 'activity', expanded: false }, 'widen is offered on Changes and Artifacts');
   s = C.tabState(s, { type: 'show', tab: 'changes' });
   s = C.tabState(s, { type: 'toggleExpand' });
   assert.deepEqual(s, { tab: 'changes', expanded: true });
-  assert.deepEqual(C.tabState(s, { type: 'show', tab: 'activity' }), { tab: 'activity', expanded: false });
-  assert.deepEqual(C.tabState(s, { type: 'subchat', open: true }), { tab: 'activity', expanded: false });
+  assert.deepEqual(C.tabState(s, { type: 'show', tab: 'activity' }), { tab: 'activity', expanded: true }, 'leaving Changes keeps it');
+  assert.deepEqual(C.tabState(s, { type: 'show', tab: 'docs' }), { tab: 'docs', expanded: true }, 'a doc opening in Docs keeps it');
+  assert.deepEqual(C.tabState(s, { type: 'subchat', open: true }), { tab: 'activity', expanded: true });
+  assert.deepEqual(C.tabState(s, { type: 'reset' }), { tab: 'activity', expanded: true }, 'a project switch keeps it');
   assert.deepEqual(C.tabState(s, { type: 'subchat', open: false }), s);
   assert.deepEqual(C.tabState(s, { type: 'show', tab: 'bogus' }), s);
-  assert.deepEqual(C.tabState(s, { type: 'reset' }), { tab: 'activity', expanded: false });
+  const docs = C.tabState(s, { type: 'show', tab: 'docs' });
+  assert.deepEqual(C.tabState(docs, { type: 'toggleExpand' }), { tab: 'docs', expanded: false }, 'the owner can narrow it from any tab');
+  assert.deepEqual(C.tabState(docs, { type: 'unwiden' }), { tab: 'docs', expanded: false }, 'dragging the edge ends it');
+  assert.deepEqual(C.tabState({ tab: 'docs', expanded: false }, { type: 'toggleExpand' }), { tab: 'docs', expanded: false });
 });
 test('polling only while Changes is visible; a turn that ends refreshes (owner 2026-11-18)', () => {
   assert.equal(C.shouldPoll({ tab: 'changes', visible: true }), true);
@@ -379,10 +384,12 @@ function setup(opts) {
       if (opts.fail) return { ok: false, status: 500, json: async () => ({ error: 'boom' }) };
       return ok(DIFF(decodeURIComponent(/path=([^&]*)/.exec(url)[1])));
     }
-    if (opts.paged && url.includes('/api/live/changes?')) {
+    if (opts.paged && url.includes('/api/live/project/changes?') && /[?&]only=main/.test(url)) {
+      // main's next page, asked of the project route (never the per-chat one: that is the open chat's own folder)
       const off = Number((/offset=(\d+)/.exec(url) || [0, 0])[1]),
-        all = opts.paged;
-      return ok({ git: true, files: all.slice(off, off + 300), filesTotal: all.length, offset: off, totals: sums(all), truncated: off + 300 < all.length });
+        all = opts.paged,
+        part = { git: true, files: all.slice(off, off + 300), filesTotal: all.length, offset: off, totals: sums(all), truncated: off + 300 < all.length };
+      return ok({ git: true, main: { id: 'main', changes: part }, sections: [], left: [] });
     }
     if (url.includes('/api/live/project/changes?')) {
       const q = new URLSearchParams(url.split('?')[1]),
@@ -618,12 +625,13 @@ test('a worktree file is asked by its section id, never by a path; main keeps it
   const s1 = t.secs()[1];
   secRows(s1)[0].click();
   await flush();
-  const asked = t.calls.filter((u) => u.includes('/api/live/project/changes/file'));
+  const asked = t.calls.filter((u) => u.includes('/api/live/project/changes/file') && !u.includes('section=main'));
   assert.equal(asked.length, 1);
   assert.ok(/section=s1/.test(asked[0]) && /path=pkg%2Fp\.js/.test(asked[0]), asked[0]);
   assert.ok(!/scope=|cwd=|folder=/.test(asked[0]), 'no scope, no folder, no raw path of the worktree');
   assert.ok(t.secs()[1].querySelector('.cg-hunk'), 'its diff opens under its row');
-  assert.equal(t.calls.filter((u) => /\/api\/live\/changes\/file\?/.test(u)).length, 1, "main's first file opened by default, by the old route");
+  assert.equal(t.calls.filter((u) => /\/api\/live\/changes\/file\?/.test(u)).length, 0, "no per-chat route: that is the open chat's own folder");
+  assert.equal(t.calls.filter((u) => /project\/changes\/file\?.*section=main/.test(u)).length, 1, "main's first file opened by default, from the project route");
 });
 test('folding: a folded section keeps only its head, the next read asks for counts only, unfolding reads its files', async () => {
   const t = setup({ sections: SUBS });
@@ -757,7 +765,8 @@ test('QA M5: every file is reachable: "Show the last 61" lists the next page, an
   assert.equal(pane(t).querySelector('.pane-badge').textContent, '361');
   more.click();
   await flush();
-  assert.ok(t.calls.some((u) => u.includes('offset=300')));
+  assert.ok(t.calls.some((u) => u.includes('offset=300') && u.includes('/api/live/project/changes?') && u.includes('only=main')));
+  assert.ok(!t.calls.some((u) => /\/api\/live\/changes\?/.test(u)), 'never the per-chat route');
   assert.equal(rows(t).length, 361);
   assert.ok(rows(t).some((r) => r.dataset.path === 'f0360.txt'), 'the last file is listed');
   assert.equal(pane(t).querySelector('.cg-more'), null);

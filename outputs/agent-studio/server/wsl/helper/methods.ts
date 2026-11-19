@@ -130,7 +130,6 @@ async function trashSetup(ctx: HelperContext, p: Record<string, unknown>) {
   };
 }
 
-/** An absolute path param, normalised; relative, NUL and over-long paths are refused. */
 /** A doc's files show as one row "2 pages changed", as chat_folders.ts does for a Windows project (docs/rows.ts). */
 function withDocs(result: ChangesResult): ChangesResult {
   if (result.git && Array.isArray(result.files)) {
@@ -140,6 +139,7 @@ function withDocs(result: ChangesResult): ChangesResult {
   return result;
 }
 
+/** An absolute path param, normalised; relative, NUL and over-long paths are refused. */
 function absPath(params: Record<string, unknown>, key: string): string {
   const path = str(params, key);
   if (!path || path.length > 4096 || !osp.isabs(path)) throw new RpcError(`${key} must be an absolute path`, BAD_PARAMS);

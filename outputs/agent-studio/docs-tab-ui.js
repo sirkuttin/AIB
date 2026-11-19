@@ -7,7 +7,8 @@
 (function (root) {
   'use strict';
   const KEY = 'studio-docs-tab-v1';
-  const POLL_MS = 4000;
+  const POLL_MS = 4000; // the Docs tab is showing: the writing chips come and go with the agents
+  const HIDDEN_MS = 10000; // another tab is showing: only the tab's own dot needs the list (plus a read at every turn end and on window focus)
 
   /* -- pure helpers (tested in node) -- */
   const num = (n) => (Number.isFinite(Number(n)) ? Number(n) : 0);
@@ -107,9 +108,18 @@
     const stage = el('div', 'dt-stage');
     view.append(bar, list, stage);
 
+    /* What the docs are asked with: the open chat of THIS project (the server maps a worktree chat to the project's main folder), else
+       the project's own folder ('project:<folder>', as a doc pop-out does) so the New chat page of a project lists that project's docs. */
+    const docsId = () => {
+      if (chatId) return chatId;
+      const W = win.AgentWorkspaceUI,
+        path = project && W && typeof W.projectPathOf === 'function' ? W.projectPathOf(project) : '';
+      return path ? 'project:' + path : '';
+    };
+    let askedFor = '';
     const docs = () => {
       const D = DL();
-      return (D && chatId && D.cached(chatId, 'main')) || [];
+      return (D && docsId() && D.cached(docsId(), 'main')) || [];
     };
     const titleOf = (name) => {
       const hit = docs().find((d) => d.name === name);
@@ -117,8 +127,8 @@
     };
     function refresh(force) {
       const D = DL();
-      if (!D || !chatId) return Promise.resolve([]);
-      return D.listFor(chatId, 'main', !!force).then((r) => {
+      if (!D || !docsId()) return Promise.resolve([]);
+      return D.listFor(docsId(), 'main', !!force).then((r) => {
         paintList();
         return r;
       });
@@ -218,7 +228,7 @@
       naming.busy = true;
       paintList();
       try {
-        const r = await D.createDoc(chatId, name);
+        const r = await D.createDoc(docsId(), name, chatId);
         naming = null;
         await refresh(true);
         open({ name: r.name, title: r.title || r.name });
@@ -234,7 +244,7 @@
       const top = list.scrollTop;
       const items = sortDocs(docs());
       const kids = [newRow()];
-      if (!items.length) kids.push(el('p', 'dt-empty', chatId ? 'No docs in this project yet. Docs you and agents write together show here.' : 'Open a chat to see the project’s docs.'));
+      if (!items.length) kids.push(el('p', 'dt-empty', docsId() ? 'No docs in this project yet. Docs you and agents write together show here.' : 'Open a chat to see the project’s docs.'));
       for (const d of items) kids.push(row(d));
       list.replaceChildren(...kids);
       list.scrollTop = top;
@@ -253,18 +263,18 @@
       frame = null;
     }
     function ensureFrame() {
-      if (!cur || !chatId || frame) return;
+      if (!cur || !docsId() || frame) return;
       const D = DL(),
         d = cur;
       const f = el('iframe', 'dt-frame');
       f.title = 'Doc: ' + (d.title || d.name);
       const W = win.AgentWorkspaceUI;
-      f.src = D && D.docUrl ? D.docUrl({ chat: chatId, project: (W && W.currentProjectPath && W.currentProjectPath()) || '', name: d.name, page: d.page, block: d.block, thread: d.thread, where: 'docs' }) : 'about:blank';
+      f.src = D && D.docUrl ? D.docUrl({ chat: docsId(), project: (W && W.currentProjectPath && W.currentProjectPath()) || '', name: d.name, page: d.page, block: d.block, thread: d.thread, where: 'docs' }) : 'about:blank';
       frame = f;
       stage.replaceChildren(f);
       const U = FU();
       if (U && U.attachDocFrame)
-        rec = U.attachDocFrame(f, { id: chatId, root: 'main', label: 'Folder', branch: '', chatKey: '', title: '' }, d, {
+        rec = U.attachDocFrame(f, { id: docsId(), root: 'main', label: 'Folder', branch: '', chatKey: '', title: '' }, d, {
           open: (n) => open(n),
           title: (t) => {
             if (!cur || cur.name !== d.name) return;
@@ -339,7 +349,7 @@
       const d = { name: cur.name, title: cur.title, page: cur.page, block: '', thread: '' };
       const D = DL();
       closeDoc();
-      if (D && D.openDoc) D.openDoc(Object.assign({}, d, { where: 'tab', from: 'chat', chat: { id: chatId } }));
+      if (D && D.openDoc) D.openDoc(Object.assign({}, d, { where: 'tab', from: 'chat', chat: { id: docsId() } }));
     });
     list.addEventListener('scroll', () => {
       if (cur || restore) return; // a repaint that clamps the scroll is not the owner's scroll
@@ -348,16 +358,24 @@
     });
 
     /* -- the project's docs, asked again while the page is in view: the writing chip and the tab's dot come and go with the agents -- */
+    /* Every 4 s while the Docs tab is showing. With another tab showing, the list is still needed for the tab's own "writing" dot:
+       read at most every 10 s, and at once when any chat of the project ends a turn (changes-ui turns() -> refresh()) and when
+       the window gets focus. (Chosen over riding doc_edit tool events: those only reach the chat on screen, while the dot must
+       also show an agent writing in another chat of the project.) */
     function tick() {
       timer = 0;
-      if (chatId && !doc.hidden) refresh(true);
+      if (docsId() && !doc.hidden) refresh(true);
       arm();
     }
     function arm() {
-      if (timer || !chatId) return;
-      timer = win.setTimeout(tick, POLL_MS);
+      if (timer || !docsId()) return;
+      timer = win.setTimeout(tick, visible ? POLL_MS : HIDDEN_MS);
       if (timer && timer.unref) timer.unref();
     }
+    if (win.addEventListener)
+      win.addEventListener('focus', () => {
+        if (docsId()) refresh(true);
+      });
 
     /* chat.js feeds this on every header render (through changes-ui): {id, project, tagFor} for the open chat. Another chat of the
        same project changes nothing here; another project puts its own open doc and scroll back. */
@@ -365,11 +383,10 @@
       const id = ctx && typeof ctx.id === 'string' ? ctx.id : '';
       const pk = ctx && typeof ctx.project === 'string' ? ctx.project : '';
       tagFor = ctx && typeof ctx.tagFor === 'function' ? ctx.tagFor : tagFor;
-      const first = !chatId && !!id;
-      if (id) chatId = id;
       if (pk && pk !== project) {
         if (project) remember();
         project = pk;
+        chatId = ''; // the previous project's chat is never used for the new project's docs (a New chat page names no chat)
         dropFrame();
         const s = saved()[pk];
         cur = s && s.doc && s.doc.name ? { name: s.doc.name, title: s.doc.title || s.doc.name, page: s.doc.page || '', block: '', thread: '' } : null;
@@ -378,14 +395,24 @@
         restore = true;
         paint();
       }
-      if (id) {
-        if (first || !DL() || !DL().cached(id, 'main')) refresh(false);
+      if (id) chatId = id;
+      const did = docsId();
+      if (did) {
+        // a new docs address (first chat, another project): its list now; the same address: only when nothing is known yet
+        if (did !== askedFor || !DL() || !DL().cached(did, 'main')) refresh(false);
+        askedFor = did;
         arm();
         if (cur && visible) ensureFrame();
       }
     }
     function setVisible(v) {
+      const was = visible;
       visible = !!v;
+      if (visible !== was && timer) {
+        win.clearTimeout(timer);
+        timer = 0;
+        arm();
+      }
       if (!visible && doc.body) doc.body.classList.remove('dt-viewing');
       if (visible) {
         paint();

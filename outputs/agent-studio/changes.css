@@ -76,7 +76,7 @@
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--status-working, #e0a030);
+  background: var(--status-working);
   animation: pane-dot-pulse 1.4s ease-in-out infinite;
 }
 .pane-dot[hidden] {
@@ -874,7 +874,7 @@
   height: 6px;
   margin-right: 5px;
   border-radius: 50%;
-  background: var(--status-working, #e0a030);
+  background: var(--status-working);
   animation: pane-dot-pulse 1.4s ease-in-out infinite;
 }
 .dt-newdot {
@@ -904,7 +904,7 @@
 }
 .dt-error {
   font-size: 11.5px;
-  color: var(--danger, #d4554a);
+  color: var(--danger);
 }
 .dt-empty {
   margin: 8px;

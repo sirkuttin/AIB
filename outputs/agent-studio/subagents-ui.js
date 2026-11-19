@@ -524,10 +524,6 @@
       cmds: items.reduce((n, i) => n + i.cmds, 0),
     };
   }
-  /* Section heading qualifier: "2 working · 1 failed". */
-  function sectionHeading(m) {
-    return m.working.length + ' working · ' + m.failed + ' failed';
-  }
   function heading(m) {
     return m.working.length + ' working · ' + m.finished.length + ' finished';
   }
@@ -742,7 +738,6 @@
     names,
     model,
     heading,
-    sectionHeading,
     strip,
     header,
     childrenOf,

@@ -93,7 +93,6 @@ test('a doc or artifact showing never changes the right column: one width, only 
   const narrow = R.computeLayout({ vw: 1100, activity: 280, side: 240, sideOn: true, actOn: true, viewer: true });
   assert.ok(1100 - narrow.side - narrow.activity >= 420, JSON.stringify(narrow));
   assert.equal(R.computeLayout({ vw: 1440, viewer: true, sideOn: true, actOn: false }).activity, 0);
-  assert.equal(R.sanitize('{"viewer":640.2}').viewer, 640);
 });
 test('side panels yield before the chat drops under 420 px', () => {
   for (const vw of [1100, 1150, 1280, 1366, 1440, 1600]) {
@@ -128,15 +127,13 @@ test('message box: floor 56, no fixed ceiling (about 200 px of the window stay f
   assert.equal(R.growCap(null, 300), 100);
 });
 test('stored sizes: junk becomes defaults', () => {
-  assert.deepEqual(R.sanitize('{"side":300.4,"activity":"x","composer":-5,"split":120}'), {
+  assert.deepEqual(R.sanitize('{"side":300.4,"activity":"x","composer":-5,"split":120,"viewer":640}'), {
     side: 300,
     activity: null,
-    viewer: null,
     composer: null,
-    split: 120,
   });
-  assert.deepEqual(R.sanitize('not json'), { side: null, activity: null, viewer: null, composer: null, split: null });
-  assert.deepEqual(R.sanitize(null), { side: null, activity: null, viewer: null, composer: null, split: null });
+  assert.deepEqual(R.sanitize('not json'), { side: null, activity: null, composer: null });
+  assert.deepEqual(R.sanitize(null), { side: null, activity: null, composer: null });
 });
 
 test('QA M3/m13: the chat list stops at 480 px; split panes side by side raise the chat column floor', () => {

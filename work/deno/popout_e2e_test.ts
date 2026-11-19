@@ -292,7 +292,10 @@ Deno.test({
       assertEquals(await a.eval('window.AgentWorkspaceUI.currentProject()'), t.pk);
       assertEquals(await askOpen(a, { type: 'project', key: 'w:c:/no/such/project' }), 'no', 'an unknown project');
       assertEquals(await askOpen(a, { type: 'doc', project: t.pk, name: 'release-plan' }), 'mine');
-      await a.waitFor(`window.AgentFilesUI._state().tabs.tabs.some((x) => x.kind === 'doc')`, 10000, 'the doc tab');
+      await a.waitFor(`window.AgentDocsTabUI.state().doc?.name === 'release-plan'`, 10000, 'the doc in the Docs tab (a doc always opens there)');
+      // its ⤢ moves it to a middle tab (the one way to a middle tab); that doc on screen is what Ctrl+K can pop out
+      await a.eval(`document.querySelector('#docsPane .dt-wide').click()`);
+      await a.waitFor(`window.AgentFilesUI._state().tabs.tabs.some((x) => x.kind === 'doc')`, 10000, 'the doc tab (from the Docs tab ⤢)');
       // Ctrl+K "Pop out this doc" (the doc on screen) and "Pop out this chat" are offered in the desktop app
       await a.waitFor(`!!window.AgentFilesUI.shownDocTab()`, 10000, 'the doc on screen');
       const ids = await actionIds(a);

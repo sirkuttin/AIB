@@ -22,7 +22,7 @@ import { getUpdate, getUpdateNotes, postUpdateCheck, postUpdateInstall, postUpda
 import { parseQs } from '../artifacts/origin.ts';
 import { authorize, pageAllowed, type Principal, Refusal, REMOTE_PC, SCOPE_ARTIFACTS_TOOL } from './security.ts';
 import { projectChanges, sectionDiff } from '../worktrees/project_changes.ts';
-import { projectArtifacts } from '../artifacts/project_list.ts';
+import { ChatFolderCache, projectArtifacts } from '../artifacts/project_list.ts';
 import { ProjectResolver } from '../worktrees/worktrees.ts';
 import * as changes from '../worktrees/changes.ts';
 import { readSubagents } from '../subagents/service.ts';
@@ -317,8 +317,10 @@ export function studioRoutes(): Map<string, StudioHandler> {
         if (!pageAllowed(principal ?? null, request.headers, studio.token ?? '')) {
           return [403, { error: 'Invalid local session token' }] as Reply;
         }
-        const folder = await changesFolder(studio, one(args, 'id'));
-        if (folder === null) return [404, { error: 'This chat has no known project folder.', code: 'unknown_folder' }] as Reply;
+        const chatFolder = await changesFolder(studio, one(args, 'id'));
+        if (chatFolder === null) return [404, { error: 'This chat has no known project folder.', code: 'unknown_folder' }] as Reply;
+        // the PROJECT's folder, never the open chat's worktree: another chat of the project must change nothing
+        const folder = projectFolderOf(ctx.stateDir ?? '', chatFolder);
         const list = (name: string) => new Set(one(args, name).split(',').filter(Boolean).slice(0, 200));
         const targets = {
           folder,
@@ -327,6 +329,7 @@ export function studioRoutes(): Map<string, StudioHandler> {
           helpers: swarmOf(ctx).registry.all(),
           fold: list('fold'),
           unfold: list('unfold'),
+          onlyMain: one(args, 'only') === 'main',
         };
         try {
           if (path.endsWith('/file')) {
@@ -345,7 +348,7 @@ export function studioRoutes(): Map<string, StudioHandler> {
       });
     });
   }
-  routes.set('GET /api/live/branch',async (_ctx, url) => [200, { branch: await branchOf(one(argsOf(url), 'cwd')) }]); // a WSL ref: its helper
+  routes.set('GET /api/live/branch', async (_ctx, url) => [200, { branch: await branchOf(one(argsOf(url), 'cwd')) }]); // a WSL ref: its helper
   // A WSL chat's merge runs in its distro's helper (wsl/merge.ts); every other chat's here (merge.ts).
   routes.set('GET /api/live/worktree', async (ctx, url) => {
     const studio = mergeStudio(ctx), id = one(argsOf(url), 'id');
@@ -434,10 +437,14 @@ export function studioRoutes(): Map<string, StudioHandler> {
     }
     if (folder === null) return [404, { error: 'This chat has no known project folder.', code: 'unknown_folder' }] as Reply;
     const resolver = new ProjectResolver(ctx.stateDir ?? '');
+    // chat -> folder is kept between reads (a lookup scans transcripts or asks a WSL helper); dropped when the live chats change
+    const cache = chatFolders(ctx);
+    cache.reset(ctx.artifacts.openConnections().map((c) => String(c.id)).sort().join('|'));
     const reply = await projectArtifacts(ctx.artifacts.store, folder, {
       mainOf: (path) => resolver.resolve(path)?.project ?? path,
       // a chat that is running is asked by its connection id, as the artifact routes do (artifactFolder); a saved one by its lasting id
-      chatFolder: async (chat) => changesFolder(chatStudioOf(ctx, await savedFolders(ctx, chat)), ctx.artifacts.connectionOf(chat) || chat),
+      chatFolder: (chat) =>
+        cache.get(chat, async () => changesFolder(chatStudioOf(ctx, await savedFolders(ctx, chat)), ctx.artifacts.connectionOf(chat) || chat)),
     }, { deleted: one(args, 'deleted') === '1' });
     return [200, reply] as Reply;
   });
@@ -449,6 +456,23 @@ export function studioRoutes(): Map<string, StudioHandler> {
     });
   }
   return routes;
+}
+
+const CHAT_FOLDERS = new WeakMap<WebContext, ChatFolderCache>();
+function chatFolders(ctx: WebContext): ChatFolderCache {
+  let cache = CHAT_FOLDERS.get(ctx);
+  if (!cache) CHAT_FOLDERS.set(ctx, cache = new ChatFolderCache());
+  return cache;
+}
+
+/** The project's main folder for the folder a chat works in: a worktree maps to its project (as the artifacts route does); a WSL ref and any other folder stay. */
+function projectFolderOf(stateDir: string, folder: string): string {
+  if (wslLocOf(folder)) return folder;
+  try {
+    return new ProjectResolver(stateDir).resolve(folder)?.project ?? folder;
+  } catch {
+    return folder;
+  }
 }
 
 const SWARMS = new WeakMap<WebContext, Swarm>();

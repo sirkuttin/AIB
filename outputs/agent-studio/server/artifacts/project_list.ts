@@ -28,8 +28,38 @@ export interface ProjectDeps {
   chatFolder(chat: string): Promise<string | null>;
 }
 
-/** At most this many untagged chats are looked up per read (each is a transcript or helper lookup). */
-const MAX_LOOKUPS = 80;
+/**
+ * Chat -> folder answers kept between reads (a lookup is a transcript scan or a WSL helper call). A folder never changes for a
+ * lasting chat id, so a hit is kept for minutes; a miss (a chat whose transcript is not filed yet, or is gone) only briefly. The
+ * server drops the cache when the set of live chats changes (a chat is created or closed): `reset`.
+ */
+export class ChatFolderCache {
+  #hits = new Map<string, { at: number; found: boolean; folder: Promise<string | null> }>();
+  #sig = '';
+  constructor(readonly foundMs = 5 * 60_000, readonly missMs = 15_000, readonly now: () => number = Date.now) {}
+
+  /** Drop everything when `sig` (a signature of the live chats) differs from the last one seen. */
+  reset(sig: string): void {
+    if (sig !== this.#sig) {
+      this.#sig = sig;
+      this.#hits.clear();
+    }
+  }
+
+  get(chat: string, lookup: (chat: string) => Promise<string | null>): Promise<string | null> {
+    const hit = this.#hits.get(chat);
+    if (hit && this.now() - hit.at < (hit.found ? this.foundMs : this.missMs)) return hit.folder;
+    const rec = { at: this.now(), found: false, folder: Promise.resolve<string | null>(null) };
+    rec.folder = lookup(chat).then((f) => {
+      rec.found = !!f;
+      return f;
+    });
+    rec.folder.catch(() => {});
+    this.#hits.set(chat, rec);
+    if (this.#hits.size > 5000) this.#hits.delete(this.#hits.keys().next().value as string);
+    return rec.folder;
+  }
+}
 
 export async function projectArtifacts(
   store: ArtifactStore,
@@ -45,13 +75,11 @@ export async function projectArtifacts(
     const raw = typeof m.project === 'string' ? m.project : '';
     return raw ? projectKey(deps.mainOf(raw)) : '';
   };
-  let lookups = 0;
   for (const m of all) {
     let key = tagged(m);
     const chat = typeof m.conversationId === 'string' ? m.conversationId : '';
     if (!key && chat) {
-      if (!chatProject.has(chat) && lookups < MAX_LOOKUPS) {
-        lookups++;
+      if (!chatProject.has(chat)) {
         let found = '';
         try {
           const where = await deps.chatFolder(chat);

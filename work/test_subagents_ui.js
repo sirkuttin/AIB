@@ -105,7 +105,6 @@ test('top list is working then failed; other finished rows are collapsed into do
     m.done.map((i) => i.key),
     ['d', 'b'],
   );
-  assert.equal(U.sectionHeading(m), '1 working · 1 failed');
 });
 test('steer-on-send: a working helper marked as gone to the background says so; a finished one does not', () => {
   const m = U.model(

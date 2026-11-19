@@ -1114,16 +1114,17 @@
     }
     if (hint) scheduleList();
   }
-  /* The page may not be able to push, and the other chats' artifacts never arrive as events here: poll every 3 s while the list has
-     something (every 12 s while it is empty, so a first artifact from another chat still shows up and counts). */
-  const POLL_MS = 3000;
-  let pollTick = 0;
+  /* The other chats' artifacts never arrive as events here. The list is polled (every 10 s, like Changes) ONLY while the Artifacts
+     tab is showing. With another tab showing it is read when any chat of the project ends a turn (changes-ui turns() ->
+     refresh()), when the tab is shown, when an artifact event hints at one, and when the window gets focus again: the badge stays
+     right without a timer (a read can look up many chats, so never a fast poll; architect review issue 5). */
+  const POLL_MS = 10000;
   function schedule() {
     const want = S.mounted && !!S.chat.id && !!S.project;
     if (want && !S.listTimer)
       S.listTimer = win.setInterval(() => {
-        if (doc.hidden) return;
-        if (S.list.length || ++pollTick % 4 === 0) loadList();
+        if (doc.hidden || !S.visible) return;
+        loadList();
       }, POLL_MS);
     else if (!want && S.listTimer) {
       win.clearInterval(S.listTimer);
@@ -2973,6 +2974,11 @@
       popFor: '',
     };
     S.mounted = true;
+    // back in the window after a while: the project's list is read once (no timer runs while another tab shows)
+    if (win.addEventListener)
+      win.addEventListener('focus', () => {
+        if (S.mounted && S.chat.id) loadList();
+      });
     pick.addEventListener('click', openPicker);
     ver.addEventListener('click', openVersions);
     more.addEventListener('click', openMenu);

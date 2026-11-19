@@ -99,7 +99,6 @@ test('process duration is compact and heading says how many run', () => {
   assert.equal(A.shortDuration(3720), '1h 02m');
   assert.equal(A.shortDuration(NaN), '');
   assert.equal(A.shortDuration(-1), '');
-  assert.equal(A.processHeading(2), '2 running');
 });
 test('hidden flag round-trips and survives a broken store', () => {
   const mem = {

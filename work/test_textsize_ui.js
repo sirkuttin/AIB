@@ -460,9 +460,9 @@ test('resize-ui: panel widths and limits grow with the interface size, unchanged
   assert.equal(R.maxSide(1920, 280, 1.5), 720);
   assert.equal(R.maxActivity(1100, 240, 1.5), Math.max(330, Math.min(900, 1100 - 240 - 420)));
   const base = { vw: 1500, side: null, activity: null, sideOn: true, actOn: true };
-  assert.deepEqual(R.computeLayout(base), { side: 240, activity: 280 });
-  assert.deepEqual(R.computeLayout({ ...base, scale: 1 }), { side: 240, activity: 280 });
-  assert.deepEqual(R.computeLayout({ ...base, scale: 1.5 }), { side: 360, activity: 420 });
+  assert.deepEqual(R.computeLayout(base), { side: 240, activity: 320 });
+  assert.deepEqual(R.computeLayout({ ...base, scale: 1 }), { side: 240, activity: 320 });
+  assert.deepEqual(R.computeLayout({ ...base, scale: 1.5 }), { side: 360, activity: 480 });
   // a narrow window still gives way before the chat column drops under 420 px
   const l = R.computeLayout({ ...base, vw: 1000, scale: 1.5 });
   assert.ok(l.side + l.activity + 420 <= 1000 || (l.side === 300 && l.activity === 330));

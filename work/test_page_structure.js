@@ -159,13 +159,15 @@ test('split scripts and styles are loaded in order', () => {
   for (const name of ['/split.css', '/split-tree.js', '/split-ui.js']) assert.equal(servedAsset(name), name.slice(1));
 });
 
-test('the activity column starts with the open chat header', () => {
-  // Decision 2: the Activity column says which chat it shows. First child of the column, empty and hidden until a chat is open.
-  const m = HTML.match(/<section id="subagentsPane"[^>]*>(<div[^>]*>)/);
+test('the right column is the project panel: the summary strip first, then the project\'s working chats; no per-chat header', () => {
+  // Owner, 2026-11-18: the right panel is the project's, not the open chat's. It has no activityHead (the "which chat is open"
+  // header) by design: the first child is the summary strip, and the working chats are listed in #projectActivity inside #activityBody.
+  const m = HTML.match(/<section id="subagentsPane"[^>]*>(<button[^>]*>)/);
   assert.ok(m);
-  assert.ok(m[1].includes('id="activityHead"'));
-  assert.ok(m[1].includes('class="ahead"'));
-  assert.ok(m[1].includes('hidden'));
+  assert.ok(m[1].includes('id="activityStrip"'));
+  assert.ok(m[1].includes('class="activity-strip"'));
+  assert.ok(!HTML.includes('id="activityHead"'), 'no per-chat header any more');
+  assert.match(HTML, /<div id="activityBody">[\s\S]*<div id="projectActivity" class="sp-activity" role="list"/);
 });
 
 test('the split hooks and keys have behaviour tests', () => {

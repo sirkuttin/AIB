@@ -6,7 +6,7 @@
 (function (root) {
   /* activity: the right panel's width for a layout with no saved width (owner, 2026-11-18: 320, so its tabs fit). A saved width
      always wins, and only your own drag changes it. */
-  const DEF = { side: 240, activity: 320, viewer: 920 },
+  const DEF = { side: 240, activity: 320 },
     SIDE = { min: 200, max: 480 }, // a wider chat list only takes room from the chat (QA m13)
     ACT = { min: 220, max: Infinity },
     COMPOSER_MIN = 56,
@@ -115,7 +115,7 @@
     }
     o = o && typeof o === 'object' ? o : {};
     const pick = (k) => (num(o[k]) && o[k] > 0 ? Math.round(o[k]) : null);
-    return { side: pick('side'), activity: pick('activity'), viewer: pick('viewer'), composer: pick('composer'), split: pick('split') };
+    return { side: pick('side'), activity: pick('activity'), composer: pick('composer') }; // an old stored viewer or split width is dropped here, so the next save cleans it
   }
   const storageKey = (width) => 'studio-layout-v1:' + bucketKey(width);
   const pure = {
@@ -425,6 +425,12 @@
         start: { y: e.clientY, value: d.value() },
         grab: d.grab(e),
       };
+      // the owner's drag takes over the right panel's width: a widened Changes/Artifacts column un-widens (changes-ui.js listens)
+      if (id === 'activity' && body.classList.contains('changes-wide')) {
+        try {
+          win.dispatchEvent(new win.CustomEvent('aib-panel-unwiden'));
+        } catch (err) {}
+      }
       body.classList.add('rs-dragging');
       body.dataset.rsAxis = d.axis;
       h.classList.add('rs-active');

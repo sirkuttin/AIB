@@ -123,6 +123,8 @@ export interface Args {
   /** Sections the user folded (default open), and left-over ones the user unfolded (default folded). Main is always read in full. */
   fold: Set<string>;
   unfold: Set<string>;
+  /** Main only ("Show the next 300" asks for main's next page: no worktree is read). */
+  onlyMain?: boolean;
 }
 
 interface Counts {
@@ -160,6 +162,51 @@ function section(t: Omit<Partial<Target>, 'kind'> & { id: string; kind: string; 
   return out;
 }
 
+/** Left-over worktrees' counts, by worktree path: valid while the signature (its HEAD, its index time, its folder time) stays. */
+const LEFT = new Map<string, { sig: string; base: string; result: Awaited<ReturnType<typeof changes.getCounts>> | null }>();
+/** Git runs made for left-over worktrees (a test reads it: an unchanged one is not counted again). */
+export const leftCounted = { n: 0 };
+
+/** What changes when a worktree's work does: where HEAD points, the index's mtime, the folder's mtime. '' when it cannot be read. */
+export function leftSignature(path: string): string {
+  try {
+    const dotgit = osp.join(path, '.git');
+    let gitdir = dotgit;
+    if (Deno.statSync(dotgit).isFile) {
+      const m = /^gitdir:\s*(.+)$/m.exec(Deno.readTextFileSync(dotgit));
+      if (!m) return '';
+      gitdir = osp.isabs(m[1].trim()) ? m[1].trim() : osp.join(path, m[1].trim());
+    }
+    const time = (p: string) => {
+      try {
+        return String(Deno.statSync(p).mtime?.getTime() ?? 0);
+      } catch {
+        return '0';
+      }
+    };
+    let head = '';
+    try {
+      head = Deno.readTextFileSync(osp.join(gitdir, 'HEAD')).trim();
+      const ref = /^ref:\s*(.+)$/.exec(head);
+      if (ref) head += '=' + Deno.readTextFileSync(osp.join(gitdir, ref[1].trim())).trim();
+    } catch { /* a ref in packed-refs: the HEAD text alone then */ }
+    return [head, time(osp.join(gitdir, 'index')), time(path)].join('|');
+  } catch {
+    return '';
+  }
+}
+
+async function leftCounts(t: Target) {
+  const sig = leftSignature(t.path);
+  const hit = LEFT.get(t.path);
+  if (sig && hit && hit.sig === sig && hit.base === t.base) return hit.result;
+  leftCounted.n++;
+  const result = await changes.getCounts(t.path, t.base || null).catch(() => null);
+  if (sig) LEFT.set(t.path, { sig, base: t.base, result });
+  while (LEFT.size > 200) LEFT.delete(LEFT.keys().next().value as string);
+  return result;
+}
+
 /** The answer of GET /api/live/project/changes. `offset`: the first file of main's page (the page's "Show the next 300"). */
 export async function projectChanges(args: Args, offset = 0): Promise<Json> {
   const wsl = wslLoc(args.folder);
@@ -176,12 +223,15 @@ export async function projectChanges(args: Args, offset = 0): Promise<Json> {
     true,
     main as unknown as Json,
   );
+  if (args.onlyMain) return { git: !!main.git, main: mainSection, sections: [], left: [] };
   const sections: Json[] = [], left: Json[] = [];
   for (const t of worktreeTargets([args.folder, top], args.subs, args.helpers)) {
     const open = t.state === 'active' ? !args.fold.has(t.id) : args.unfold.has(t.id);
     // one at a time: the git runs of a project never overlap
     const result = open
       ? await changes.getChanges(t.path, t.base || null, 0).catch(() => null)
+      : t.state === 'left'
+      ? await leftCounts(t) // a left-over worktree rarely changes: counted again only when its HEAD or files' times move
       : await changes.getCounts(t.path, t.base || null).catch(() => null);
     const sec = section(t, open, result as unknown as Json | null);
     const c = sec.counts as Counts;
@@ -211,6 +261,15 @@ async function wslProject(args: Args, wsl: { distro: string; linuxPath: string }
 
 /** The diff of one file of a worktree section: by record id; null when no worktree of this project has that id. */
 export async function sectionDiff(args: Args, id: string, path: string): Promise<Json | null> {
+  // main: the project folder's own uncommitted file (never the open chat's worktree: the folder is the project's)
+  if (id === 'main') {
+    const wsl = wslLoc(args.folder);
+    if (!wsl) return await changes.getFileDiff(args.folder, path, null) as unknown as Json;
+    const host = wslHost(wsl.distro);
+    const why = notReady(host, wsl.distro);
+    if (why) throw new WslHelperError(why, 'wsl_unavailable');
+    return await host!.call('changes.diff', { folder: wsl.linuxPath, path }) as Json;
+  }
   const top = wslLoc(args.folder) ? '' : ((await changes.locate(args.folder)) ?? [''])[0];
   const t = worktreeTargets([args.folder, top], args.subs, args.helpers).find((x) => x.id === id);
   if (!t) return null;
