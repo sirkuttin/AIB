@@ -1540,7 +1540,11 @@ Deno.test("installTarget: the folder of AIB.exe, the .app bundle, $APPIMAGE", ()
     kind: "appimage",
     target: "/home/u/AIB.AppImage",
   });
-  assertEquals(installTarget("linux", "/usr/bin/aib", {}), null, "a .deb install updates by hand");
+  // dpkg's answer is passed in: on a machine that has AIB installed as a .deb the real one says yes, whatever the test is about
+  assertEquals(installTarget("linux", "/usr/bin/aib", {}, () => false), null, "a program dpkg does not own updates by hand");
+  assertEquals(installTarget("linux", "/usr/bin/aib", {}, () => true), { kind: "deb", target: "/usr/lib/aib/aib" }, "a .deb install updates itself");
+  assertEquals(installTarget("linux", "/usr/lib/aib/aib", {}, () => true), { kind: "deb", target: "/usr/lib/aib/aib" });
+  assertEquals(installTarget("linux", "/opt/other/aib", {}, () => true), null, "not the packaged program");
   assertEquals(installTarget("freebsd", "/x", {}), null);
 });
 
