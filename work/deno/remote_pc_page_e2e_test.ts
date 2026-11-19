@@ -578,7 +578,8 @@ Deno.test({
       );
       assert(
         String(await page.eval('document.getElementById("pairName").value'))
-          .startsWith('Laptop'),
+          // the page names the computer by its browser's system (phone.js guessName): Windows 'Laptop', Linux 'Linux PC', macOS 'Mac'
+          .startsWith(Deno.build.os === 'linux' ? 'Linux PC' : Deno.build.os === 'darwin' ? 'Mac' : 'Laptop'),
         'a computer name',
       );
       await page.shot('pc-pair');
