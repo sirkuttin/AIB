@@ -371,7 +371,7 @@ async function keepsFollowing(page: Page, act: () => Promise<unknown>, what: str
 }
 
 async function fileLinkInReply(lab: Lab, chat: Chat) {
-  Deno.writeTextFileSync(`${lab.fx.workspace}\\notes.txt`, 'line one\nline two\n');
+  Deno.writeTextFileSync(`${lab.fx.workspace}/notes.txt`, 'line one\nline two\n');
   chat.say('\n\nI wrote notes.txt FILEREADY');
   await shown(lab.page, 'FILEREADY');
   await lab.page.waitFor(`!!document.querySelector('#messages a.fx-path')`, 15000, 'the file link');
