@@ -304,6 +304,7 @@ Deno.test('the ACP system prompt says the same about docs as the MCP instruction
 Deno.test('the session prompt tells the agent to write commands in bash fences so AIB can offer Run in terminal', () => {
   assert(ARTIFACT_PROMPT.includes(COMMANDS_RULE));
   assert(COMMANDS_RULE.includes('tagged bash') && COMMANDS_RULE.includes('one command per block'));
+  assert(COMMANDS_RULE.includes('needs sudo') && COMMANDS_RULE.includes('cannot type a password'), 'sudo goes to the user\'s terminal');
   assert(WSL_ARTIFACT_PROMPT.includes('tagged bash') && !WSL_ARTIFACT_PROMPT.includes('powershell'), 'a WSL chat runs bash only');
 });
 

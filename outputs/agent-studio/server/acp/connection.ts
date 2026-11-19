@@ -684,7 +684,8 @@ export const TOOLS_LOADING = 'The studio_artifact tools (full names like mcp__st
 export const COMMANDS_RULE =
   'When you give the user a shell command to run, put it in its own fenced code block tagged bash (powershell on Windows), ' +
   'one command per block, with no explanation or comments inside the block; AIB then shows a Run in terminal button that ' +
-  "pastes it into the chat's terminal without running it. Write the explanation outside the block.";
+  "pastes it into the chat's terminal without running it. Write the explanation outside the block. You cannot type a password, so " +
+  'never run a command that needs sudo yourself: give it to the user in such a block, and carry on once they say it is done.';
 
 export const ARTIFACT_PROMPT =
   'You are running inside AIB, which shows artifacts beside the chat; when the user says "artifact" they ' +
