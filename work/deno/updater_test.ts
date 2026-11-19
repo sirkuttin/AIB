@@ -28,6 +28,7 @@ import {
   pickRelease,
   platformKey,
   RETRY_INTERVAL,
+  FOCUS_CHECK_INTERVAL,
   postUpdateCheck,
   postUpdateInstall,
   defaultRepo,
@@ -691,6 +692,46 @@ Deno.test("automatic checks run at most once a day, across restarts; failures ar
   const failing = env2.service();
   await failing.check();
   assertEquals(failing.due(), false);
+});
+
+Deno.test("Get test builds: GitHub is checked hourly with it on, daily with it off", async () => {
+  for (const [on, wait, expected] of [[true, 3600, 2], [false, 3600, 1], [false, 24 * 3600, 2]] as const) {
+    using env = new Env();
+    await using fake = await FakeGitHub.start({ tag: "v0.1.0-beta.1" });
+    env.base(fake.base);
+    const svc = env.service({ getTestBuilds: () => on });
+    await svc.check();
+    env.clock.t += wait;
+    await svc.check();
+    assertEquals(fake.requests.filter((r) => r.startsWith("/repos")).length, expected, `on=${on} wait=${wait}`);
+  }
+});
+
+Deno.test("focus checks GitHub in test-build mode, at most every 15 minutes, never with automatic checks off", async () => {
+  using env = new Env();
+  await using fake = await FakeGitHub.start({ tag: "v0.1.0-beta.1" });
+  env.base(fake.base);
+  const n = () => fake.requests.filter((r) => r.startsWith("/repos")).length;
+  const svc = env.service({ getTestBuilds: () => true });
+  postUpdateCheck(svc, { feed: true });
+  await new Promise((r) => setTimeout(r, 300));
+  assertEquals(n(), 1, "first focus asks GitHub");
+  env.clock.t += FOCUS_CHECK_INTERVAL - 1;
+  assertEquals(await svc.focusCheck(), false);
+  assertEquals(n(), 1, "second focus inside 15 min does not");
+  env.clock.t += 1;
+  assertEquals(await svc.focusCheck(), true);
+  assertEquals(n(), 2, "after 15 min it does");
+
+  using env2 = new Env();
+  await using fake2 = await FakeGitHub.start({ tag: "v0.1.0-beta.1" });
+  env2.base(fake2.base);
+  const off = env2.service({ getTestBuilds: () => true, autoCheck: () => false });
+  postUpdateCheck(off, { feed: true });
+  assertEquals(await off.focusCheck(), false);
+  const release = env2.service({ getTestBuilds: () => false });
+  assertEquals(await release.focusCheck(), false, "switch off: no focus check");
+  assertEquals(fake2.requests.filter((r) => r.startsWith("/repos")).length, 0);
 });
 
 Deno.test("toggle off means no network call; the button still works", async () => {

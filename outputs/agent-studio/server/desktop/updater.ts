@@ -85,6 +85,10 @@ export const NOTES_FILE = 'release-notes.json';
 export const MAX_NOTES_RELEASES = 20;
 export const MAX_NOTES_CHARS = 32 * 1024;
 export const CHECK_INTERVAL = 24 * 3600;
+/** A test build, or a release build with "Get test builds" on, asks GitHub this often (a new test pre-release shows up within the hour). */
+export const TEST_CHECK_INTERVAL = 3600;
+/** In that mode, window focus also asks GitHub, at most this often (GitHub allows 60 unauthenticated requests an hour). */
+export const FOCUS_CHECK_INTERVAL = 15 * 60;
 /** An automatic check that failed for a passing reason (no network, GitHub busy) is tried again after this, not a day later. */
 export const RETRY_INTERVAL = 3600;
 /** The error codes RETRY_INTERVAL applies to; a refusal (checksum, bad name, unsupported platform) waits the full day. */
@@ -1242,7 +1246,25 @@ export class UpdateService {
 
   // -- checking
   due(): boolean {
-    return this.now() - this.state.lastCheck >= (this.#retrying() ? RETRY_INTERVAL : CHECK_INTERVAL);
+    return this.now() - this.state.lastCheck >= (this.#retrying() ? RETRY_INTERVAL : this.checkInterval());
+  }
+
+  /** Seconds between automatic GitHub checks: 1 h for a test build or with "Get test builds" on, else 24 h. */
+  checkInterval(): number {
+    return isTestBuild(this.current) || this.getTestBuilds() ? TEST_CHECK_INTERVAL : CHECK_INTERVAL;
+  }
+
+  #focusAt = 0;
+  /**
+   * The window got focus: in test-build mode, ask GitHub now, at most once per FOCUS_CHECK_INTERVAL; never with automatic checks
+   * off. Resolves to true when a check ran.
+   */
+  async focusCheck(): Promise<boolean> {
+    if (!this.configured() || !this.autoCheck() || !(isTestBuild(this.current) || this.getTestBuilds())) return false;
+    if (this.#focusAt && this.now() - this.#focusAt < FOCUS_CHECK_INTERVAL) return false;
+    this.#focusAt = this.now();
+    await this.check(true);
+    return true;
   }
 
   /** The last check failed for a passing reason (offline, GitHub busy): the next automatic one comes after RETRY_INTERVAL. */
@@ -1900,8 +1922,11 @@ export function postUpdateNotes(service: UpdateService, body: Record<string, unk
 /** POST /api/live/update/check: start a manual check in the background (a download can outlast a request); the page polls GET. */
 export function postUpdateCheck(service: UpdateService, body: Record<string, unknown> = {}): RouteReply {
   if (body.feed === true) {
-    // The window got focus (a test build): read the local feed only, no network; not while automatic checks are off.
-    if (service.autoCheck()) service.checkFeed().catch(() => {});
+    // The window got focus (a test build): read the local feed; in test-build mode also GitHub (throttled); not while automatic checks are off.
+    if (service.autoCheck()) {
+      service.checkFeed().catch(() => {});
+      service.focusCheck().catch(() => {}); // GitHub too, test-build mode only, at most every 15 minutes
+    }
     return [200, { ...service.status() }];
   }
   service.check(true).catch(() => {});
