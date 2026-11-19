@@ -127,11 +127,12 @@
     pinned: false,
     on: false,
   });
-  /* Picker rows in groups: "Pinned" and "This chat" list artifacts; below a divider, "Docs this chat wrote" lists the docs linked to
-     this chat (and a doc this chat opened here). A doc opens in this viewer, in the full doc editor. The project's other docs are
+  /* Picker rows in groups: "Pinned" and "Newest first" list the project's artifacts (every chat's, each row tagged with its chat);
+     below a divider, "Docs the chats wrote" lists the docs linked to a chat of the project (and a doc opened here). A doc opens in this viewer, in the full doc editor. The project's other docs are
      not listed: Files and Ctrl+K have every doc, and open them as tabs. An empty group is left out. */
   const DOCS_NOTE = 'Open here to edit; you and agents both can';
   const linkedDocs = (docs, chatKeys) => {
+    if (chatKeys === null) return (Array.isArray(docs) ? docs : []).filter((d) => d && d.name && d.chat); // the project's: any chat's
     const keys = (Array.isArray(chatKeys) ? chatKeys : [chatKeys]).filter(Boolean);
     return (Array.isArray(docs) ? docs : []).filter((d) => d && d.name && d.chat && keys.includes(d.chat));
   };
@@ -200,7 +201,7 @@
   }
   /* The strip over an archived artifact in the viewer. */
   const archivedStrip = (a, nowMs) =>
-    isArchived(a) ? 'Archived ' + (relTime(a.archivedAt, nowMs) || 'just now') + ". Hidden from this chat's list." : '';
+    isArchived(a) ? 'Archived ' + (relTime(a.archivedAt, nowMs) || 'just now') + ". Hidden from the project's list." : '';
   const quoted = (title) => '"' + (title || 'Untitled') + '"';
   /* The note line after Archive / Unarchive (archiving a pinned artifact unpins it, decision 6a). */
   const archiveNote = (title, archived, unpinned) =>
@@ -249,8 +250,41 @@
 
   /* `foot` {archived: open?, deleted: open?}: the two groups at the picker's foot ("Archived N", "Recently deleted N"), closed until
      opened; they show only while they hold something (or are open: "Nothing archived."). */
-  function pickerGroups(list, selectedId, nowMs, docs, chatKeys, freshId, foot) {
+  /* The chat tag of an artifact: {key, title, agent} from the page's chat lookup (tagFor(key) -> {title, agent} or null). A chat the
+     page does not list (deleted, or another computer's) reads "Another chat"; an artifact no chat made reads "No chat". */
+  function chatTag(a, tagFor) {
+    const key = (a && a.conversationId) || '';
+    const t = key && typeof tagFor === 'function' ? tagFor(key) : null;
+    return { key, title: (t && t.title) || (key ? 'Another chat' : 'No chat'), agent: (t && t.agent) || '' };
+  }
+  /* The "All chats" filter: the artifacts of one chat (chat '' or no artifact of it: all of them, so a stale choice never empties the list). */
+  function filterList(list, chat) {
+    const l = Array.isArray(list) ? list : [];
+    if (!chat || !l.some((a) => a && a.conversationId === chat)) return l;
+    return l.filter((a) => a && a.conversationId === chat);
+  }
+  /* The filter's choices: "All chats" first, then each chat that has a live artifact, the one with the newest artifact first. */
+  function chatOptions(list, tagFor) {
+    const live = liveOf(list).filter((a) => !isDocHistory(a)),
+      byChat = new Map();
+    for (const a of live) {
+      const k = a.conversationId || '';
+      const o = byChat.get(k) || { key: k, n: 0, at: 0 };
+      o.n++;
+      o.at = Math.max(o.at, num(a.updatedAt));
+      byChat.set(k, o);
+    }
+    const rest = [...byChat.values()]
+      .sort((a, b) => b.at - a.at || String(a.key).localeCompare(String(b.key)))
+      .map((o) => Object.assign({}, chatTag({ conversationId: o.key }, tagFor), { n: o.n }));
+    return [{ key: '', title: 'All chats', agent: '', n: live.length }].concat(rest);
+  }
+  function pickerGroups(list, selectedId, nowMs, docs, chatKeys, freshId, foot, view) {
+    const tagFor = view && view.tagFor,
+      chat = (view && view.chat) || '';
+    list = filterList(list, chat);
     const row = (a) => ({
+      tag: chatTag(a, tagFor),
       id: a.id,
       badge: kindInfo(a.kind).badge,
       title: a.title || 'Untitled',
@@ -266,13 +300,14 @@
       pinned = ordered.filter((a) => a.pinned).map(row),
       rest = ordered.filter((a) => !a.pinned).map(row);
     const mine = linkedDocs(docs, chatKeys)
+      .filter((d) => !chat || d.chat === chat)
       .map(docRow)
       .map((r) => Object.assign(r, { on: r.id === selectedId, fresh: !!freshId && r.id === freshId }));
     const groups = [];
     if (pinned.length) groups.push({ key: 'pinned', label: 'Pinned', items: pinned });
-    if (rest.length) groups.push({ key: 'chat', label: 'This chat', items: rest });
+    if (rest.length) groups.push({ key: 'all', label: 'Newest first', items: rest });
     if (mine.length)
-      groups.push({ key: 'docs', label: 'Docs this chat wrote', note: DOCS_NOTE, divider: !!(pinned.length || rest.length), items: mine });
+      groups.push({ key: 'docs', label: 'Docs the chats wrote', note: DOCS_NOTE, divider: !!(pinned.length || rest.length), items: mine });
     foot = foot || {};
     const archived = all.filter(isArchived).sort((a, b) => num(b.archivedAt) - num(a.archivedAt)),
       deleted = all.filter(isDeleted).sort((a, b) => num(b.deletedAt) - num(a.deletedAt));
@@ -298,7 +333,7 @@
     );
     return groups;
   }
-  /* One live artifact, no doc this chat wrote and nothing archived or deleted: plain text, no caret. Otherwise a dropdown. */
+  /* One live artifact, no doc a chat wrote and nothing archived or deleted: plain text, no caret. Otherwise a dropdown. */
   const pickerIsPlain = (list, docs, chatKeys) =>
     liveOf(list).length <= 1 && !linkedDocs(docs, chatKeys).length && !hiddenCounts(list);
   /* The version shown: the user's pick, or the latest when following. */
@@ -852,6 +887,9 @@
     hiddenCounts,
     bySource,
     pickerGroups,
+    chatTag,
+    filterList,
+    chatOptions,
     pickerIsPlain,
     shownVersion,
     chipState,
@@ -894,7 +932,10 @@
     doc = typeof document !== 'undefined' ? document : null;
   const S = {
     lastSel: new Map(),
-    chat: { id: '', busy: false, cwd: '' },
+    chat: { id: '', busy: false, cwd: '' }, // the open chat: only the accent and the doc calls follow it; the list is the project's
+    project: '', // the panel's project key: the list and the filter belong to it
+    filter: '', // the "All chats" filter: one chat's lasting id, or '' (kept per project and window)
+    tagFor: null, // chat.js: (chat id) -> {title, agent} for the row chips
     list: [],
     extras: {},
     items: {},
@@ -981,7 +1022,7 @@
   function setList(next) {
     const before = new Set(S.list.map((a) => a.id));
     S.list = orderArtifacts(next);
-    const first = (S.list.find(pickable) || {}).id || ''; // the viewer's own pick is never an archived or deleted artifact
+    const first = (shownList().find(pickable) || S.list.find(pickable) || {}).id || ''; // the viewer's own pick is never an archived or deleted artifact
     const added = before.size ? S.list.filter((a) => !before.has(a.id)) : [];
     // the viewer's own pick (not yours) leaves an artifact archived or deleted elsewhere; yours shows its strip or Restore message
     const ownPickHidden = !S.userPicked && !S.extras[S.selId] && !!known(S.selId) && !pickable(known(S.selId));
@@ -1046,14 +1087,15 @@
     S.picked = num(S.cmp.to) || null;
   }
   async function loadList() {
-    if (!S.mounted || !S.chat.id || S.loading || Date.now() < S.failUntil) return;
+    if (!S.mounted || !S.chat.id || !S.project || S.loading || Date.now() < S.failUntil) return;
     const mine = ++S.listSeq,
-      id = S.chat.id;
+      id = S.chat.id,
+      pk = S.project;
     S.loading = true;
     try {
       // deleted=1: Recently deleted too (the picker's foot group); only this panel asks for them
-      const d = await api('/api/live/artifacts?' + q({ conversationId: id, deleted: 1 }));
-      if (mine !== S.listSeq || id !== S.chat.id) return;
+      const d = await api('/api/live/project/artifacts?' + q({ id, deleted: 1 }));
+      if (mine !== S.listSeq || pk !== S.project) return;
       const sig = (a) => [a.id, a.version, a.pinned ? 1 : 0, a.title, a.archivedAt || 0, a.deletedAt || 0].join(':');
       const prior = S.list.map(sig).join('|');
       const next = Array.isArray(d.artifacts) ? d.artifacts : [];
@@ -1070,7 +1112,7 @@
       }
       schedule();
     } catch (e) {
-      if (mine !== S.listSeq || id !== S.chat.id) return;
+      if (mine !== S.listSeq || pk !== S.project) return;
       S.failUntil = Date.now() + (e.status === 404 ? 60000 : 15000);
     } finally {
       if (mine === S.listSeq) S.loading = false;
@@ -1098,32 +1140,67 @@
     }
     if (hint) scheduleList();
   }
-  /* The page may not be able to push: poll every 3 s, but only while a chat that has artifacts is on screen. */
+  /* The page may not be able to push, and the other chats' artifacts never arrive as events here: poll every 3 s while the list has
+     something (every 12 s while it is empty, so a first artifact from another chat still shows up and counts). */
   const POLL_MS = 3000;
+  let pollTick = 0;
   function schedule() {
-    const want = S.mounted && !!S.chat.id && S.list.length > 0;
+    const want = S.mounted && !!S.chat.id && !!S.project;
     if (want && !S.listTimer)
       S.listTimer = win.setInterval(() => {
         if (doc.hidden) return;
-        if (S.list.length) loadList();
-        else schedule();
+        if (S.list.length || ++pollTick % 4 === 0) loadList();
       }, POLL_MS);
     else if (!want && S.listTimer) {
       win.clearInterval(S.listTimer);
       S.listTimer = 0;
     }
   }
+  /* -- the "All chats" filter: kept per project and per window (never set by focus) -- */
+  const FILTER_KEY = 'studio-artifact-filter-v1';
+  const filterStoreKey = () => (win.AibStore && win.AibStore.winKey ? win.AibStore.winKey(FILTER_KEY) : FILTER_KEY);
+  function savedFilters() {
+    try {
+      const o = JSON.parse(win.localStorage.getItem(filterStoreKey()) || '{}');
+      return o && typeof o === 'object' && !Array.isArray(o) ? o : {};
+    } catch (e) {
+      return {};
+    }
+  }
+  function setFilter(chat) {
+    chat = String(chat || '');
+    if (chat === S.filter) return;
+    S.filter = chat;
+    if (S.project && !(win.AibStore && win.AibStore.layoutWritable && !win.AibStore.layoutWritable())) {
+      const o = savedFilters();
+      delete o[S.project];
+      if (chat) o[S.project] = chat;
+      const keys = Object.keys(o);
+      for (const k of keys.slice(0, Math.max(0, keys.length - 60))) delete o[k];
+      try {
+        win.localStorage.setItem(filterStoreKey(), JSON.stringify(o));
+      } catch (e) {}
+    }
+    paintAll();
+    repaintPicker();
+  }
+  /* The list the picker and the viewer's first pick use: the filter applied (see filterList for a stale choice). */
+  const shownList = () => filterList(S.list, S.filter);
+  /* chat.js feeds this on every header render: {id, busy, cwd, project, tagFor} for the open chat, or null. A new chat of the SAME
+     project changes only the accent (S.chat): the list, the filter and the viewer stay. Another project starts over. */
   function sync(ctx) {
     if (!S.mounted) return;
     const id = (ctx && ctx.id) || '',
       busy = !!(ctx && ctx.busy),
-      changed = id !== S.chat.id,
-      ended = S.chat.busy && !busy;
-    const prevId = S.chat.id;
+      ended = S.chat.busy && !busy,
+      project = id ? (ctx && ctx.project) || 'chat:' + id : '';
+    const moved = project !== S.project;
     S.chat = { id, busy, cwd: (ctx && ctx.cwd) || '' };
-    if (changed) {
-      // the artifact each chat last showed (this run of the app): back on that chat, the viewer shows it again once the list loads
-      if (prevId && S.selId) S.lastSel.set(prevId, { selId: S.selId, userPicked: S.userPicked });
+    S.tagFor = ctx && typeof ctx.tagFor === 'function' ? ctx.tagFor : null;
+    if (moved) {
+      // the artifact each project last showed (this run of the app): back on that project, the viewer shows it again once the list loads
+      if (S.project && S.selId) S.lastSel.set(S.project, { selId: S.selId, userPicked: S.userPicked });
+      S.project = project;
       S.listSeq++;
       S.loading = false;
       S.list = [];
@@ -1142,9 +1219,10 @@
       S.docExtras = [];
       S.foot = { archived: false, deleted: false };
       S.confirmPurge = '';
+      S.filter = project ? String(savedFilters()[project] || '') : '';
       dropDoc();
       closePop();
-      const back = id ? S.lastSel.get(id) : null;
+      const back = project ? S.lastSel.get(project) : null;
       if (back) {
         S.selId = back.selId;
         S.userPicked = back.userPicked;
@@ -1153,8 +1231,15 @@
       paintAll();
       refreshCards();
       if (id) loadList();
-    } else if (ended && id) loadList();
+    } else {
+      if (ended && id) loadList();
+      paintCount();
+    }
     schedule();
+  }
+  /* A turn ended in some chat of the project: its artifacts may be new. */
+  function refresh() {
+    loadList();
   }
   function setVisible(v) {
     v = !!v;
@@ -1336,11 +1421,8 @@
     }
     return (now || []).concat(S.docExtras);
   }
-  function chatKeys() {
-    const FU = FUI(),
-      c = FU && FU.currentChat ? FU.currentChat() : null;
-    return [S.chat.id, c && c.key, c && c.id].filter(Boolean);
-  }
+  /* null: the docs of any chat of the project (the picker never depends on which chat is open). */
+  const chatKeys = () => null;
   /* This chat's docs for the picker and the count: the docs linked to it, plus the ones it opened or made here; one row a doc. */
   function myDocs() {
     const out = [];
@@ -1494,7 +1576,7 @@
     ui.fresh.hidden = !fresh;
     if (fresh) ui.freshText.textContent = 'New: ' + (fresh.title || 'Untitled') + ' · ';
   }
-  /* A group's head: a divider before "Docs this chat wrote", its label and its note line. */
+  /* A group's head: a divider before "Docs the chats wrote", its label and its note line. */
   function groupHead(g) {
     const out = [];
     if (g.divider) out.push(el('div', 'ar-sep'));
@@ -1502,7 +1584,7 @@
     if (g.note) out.push(el('div', 'ar-gnote', g.note));
     return out;
   }
-  /* No artifacts yet: the docs this chat wrote still show, under the empty text. */
+  /* No artifacts yet: the docs the chats wrote still show, under the empty text. */
   function paintEmptyDocs() {
     if (!ui) return;
     let box = ui.empty.querySelector('.ar-docs-empty');
@@ -1525,18 +1607,11 @@
   /* -- painting: tab badge, toolbar, banner -- */
   function paintCount() {
     if (!ui) return;
-    // split view: both panes' chats' artifacts (the same whichever has focus)
-    const a = splitOn()
-        ? SPL.keys.reduce((t, k) => t + (SPL.secs.has(k) ? splLive(SPL.secs.get(k)).length : 0), 0)
-        : liveOf(S.list).length, // archived and deleted ones are not counted
-      dn = splitOn() ? 0 : myDocs().length,
-      n = a + dn;
+    // the project's live artifacts, every chat's; archived and deleted ones are not counted, and neither the filter nor the open chat changes it
+    const n = liveOf(S.list).length;
     ui.badge.textContent = n > 99 ? '99+' : String(n);
     ui.badge.hidden = !n;
-    const parts = [];
-    if (a) parts.push(a + (a === 1 ? ' artifact' : ' artifacts'));
-    if (dn) parts.push(dn + (dn === 1 ? ' doc' : ' docs'));
-    ui.tab.setAttribute('aria-label', 'Artifacts' + (parts.length ? ', ' + parts.join(' and ') : '') + (S.fresh ? ', something new' : ''));
+    ui.tab.setAttribute('aria-label', 'Artifacts' + (n ? ', ' + n + (n === 1 ? ' artifact' : ' artifacts') : '') + (S.fresh ? ', something new' : ''));
   }
   /* body.ar-viewing: a doc or artifact is showing in the visible Artifacts tab (resize-ui.js widens the column to 600 px). */
   function syncViewing() {
@@ -1596,7 +1671,7 @@
     paintBuilt(a);
     paintBecame(a);
   }
-  /* "Archived 2 d ago. Hidden from this chat's list. · Unarchive" over an archived artifact; the page shows as usual. */
+  /* "Archived 2 d ago. Hidden from the project's list. · Unarchive" over an archived artifact; the page shows as usual. */
   function paintArchivedStrip(a) {
     if (!ui) return;
     const on = !S.doc && isArchived(a);
@@ -1606,7 +1681,7 @@
   /* Nothing live left: "Nothing showing." and "Archived 18 · Recently deleted 4", each opening the picker on its group (break 7). */
   function paintEmptyHidden() {
     const c = hiddenCounts(S.list);
-    ui.emptyTitle.textContent = c ? 'Nothing showing.' : 'No artifacts in this chat yet';
+    ui.emptyTitle.textContent = c ? 'Nothing showing.' : 'No artifacts in this project yet';
     ui.emptyHint.hidden = !!c;
     ui.emptyHidden.hidden = !c;
     const sig = c ? c.archived + ':' + c.deleted : '';
@@ -1832,7 +1907,6 @@
   function paintAll() {
     paintCount();
     paintBar();
-    if (splitOn()) splPaint();
   }
 
   /* -- stage -- */
@@ -2066,7 +2140,6 @@
     ui.pop.hidden = true;
     ui.pop.replaceChildren();
     for (const b of [ui.pick, ui.ver, ui.more]) b.setAttribute('aria-expanded', 'false');
-    for (const x of SPL.secs.values()) x.pick.setAttribute('aria-expanded', 'false');
     ui.popFor = '';
   }
   function placePop(anchor, right) {
@@ -2115,6 +2188,7 @@
     // A foot group that was emptied while open (the last archived artifact left it) says "Nothing archived." only until the picker
     // closes: opened again, it is gone, like any group with nothing in it.
     if (!opts.keep) {
+      filterOpen = false;
       const l = Array.isArray(S.list) ? S.list : [];
       if (!l.some(isArchived)) S.foot.archived = false;
       if (!l.some(isDeleted)) S.foot.deleted = false;
@@ -2124,8 +2198,9 @@
     ui.popAnchor = anchor;
     if (anchor === ui.pick) ui.pick.setAttribute('aria-expanded', 'true');
     const sel = S.doc ? 'doc:' + S.doc.name : a ? a.id : '';
-    const groups = pickerGroups(S.list, sel, undefined, docs, chatKeys(), S.fresh, S.foot);
+    const groups = pickerGroups(S.list, sel, undefined, docs, chatKeys(), S.fresh, S.foot, { chat: S.filter, tagFor: S.tagFor });
     const frag = doc.createDocumentFragment();
+    frag.append(...filterRows());
     for (const g of groups) {
       if (g.foot) {
         if (g.divider) frag.append(el('div', 'ar-sep'));
@@ -2139,7 +2214,7 @@
       }
     }
     ui.pop.replaceChildren(frag);
-    ui.pop.setAttribute('aria-label', 'Artifacts and docs in this chat');
+    ui.pop.setAttribute('aria-label', 'Artifacts and docs in this project');
     placePop(anchor, false);
     if (was) ui.pop.scrollTop = was.top;
     const back = was && was.key ? ui.pop.querySelector('[data-key="' + was.key + '"]') : null;
@@ -2155,6 +2230,53 @@
     const f = doc.activeElement;
     return f && ui.pop.contains(f) && f.getAttribute ? f.getAttribute('data-key') || '' : '';
   };
+  /* "All chats ▾" at the top of the picker (only when two or more chats have artifacts): the filter narrows the list to one chat. It
+     opens in place into one row per chat; the choice is kept per project and window. */
+  let filterOpen = false;
+  function chatChip(tag) {
+    const chip = el('span', 'ar-chip');
+    chip.title = (tag.agent ? tag.agent + ': ' : '') + tag.title;
+    if (tag.agent) chip.append(el('span', 'ar-chip-agent', tag.agent));
+    chip.append(el('span', 'ar-chip-name', tag.title));
+    return chip;
+  }
+  function filterRows() {
+    const opts = chatOptions(S.list, S.tagFor);
+    if (opts.length < 3) return []; // one chat (or none) has artifacts: nothing to choose
+    const effective = filterList(S.list, S.filter) !== S.list ? S.filter : '';
+    const cur = opts.find((o) => o.key === effective) || opts[0];
+    const head = popItem('ar-filter' + (filterOpen ? ' open' : ''));
+    head.setAttribute('data-key', 'filter');
+    head.setAttribute('aria-expanded', filterOpen ? 'true' : 'false');
+    head.setAttribute('aria-label', 'Show artifacts of: ' + cur.title);
+    head.append(el('span', 'ar-filter-t', cur.key ? cur.title : 'All chats'), el('span', 'ar-caret', '▾'));
+    if (cur.key && cur.agent) head.insertBefore(el('span', 'ar-chip-agent', cur.agent), head.firstChild);
+    head.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      filterOpen = !filterOpen;
+      repaintPicker();
+    });
+    const out = [head];
+    if (filterOpen) {
+      for (const o of opts) {
+        const r = popItem('ar-fopt' + (o.key === cur.key ? ' on' : ''));
+        r.setAttribute('data-key', 'chat:' + o.key);
+        r.setAttribute('role', 'menuitemradio');
+        r.setAttribute('aria-checked', o.key === cur.key ? 'true' : 'false');
+        if (o.agent) r.append(el('span', 'ar-chip-agent', o.agent));
+        r.append(el('span', 'ar-it-title', o.title), el('span', 'ar-it-meta', String(o.n)));
+        r.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          filterOpen = false;
+          setFilter(o.key);
+          repaintPicker();
+        });
+        out.push(r);
+      }
+      out.push(el('div', 'ar-sep'));
+    }
+    return out;
+  }
   /* "▸ Archived 18": a closed group at the foot; a click opens or closes it. */
   function footHead(g) {
     const b = el('button', 'ar-it ar-foothead' + (g.open ? ' open' : ''));
@@ -2186,6 +2308,10 @@
       openRowMenu(it.id, dots, row);
     });
     row.append(el('span', 'ar-k', it.badge), el('span', 'ar-it-title', it.title), el('span', 'ar-it-meta', it.meta), dots);
+    if (it.tag) {
+      row.classList.add('ar-has-chip');
+      row.append(chatChip(it.tag));
+    }
     if (!it.archived) {
       const star = el('span', 'ar-star' + (it.pinned ? ' on' : ''), it.pinned ? '★' : '☆');
       star.setAttribute('role', 'button');
@@ -2218,6 +2344,7 @@
     const head = el('div', 'ar-del-head');
     head.append(el('span', 'ar-k', it.badge), el('span', 'ar-it-title', it.title));
     box.append(head, el('div', 'ar-del-line', it.line));
+    if (it.tag) box.insertBefore(chatChip(it.tag), box.children[1]);
     const btn = (cls, label, key, fn) => {
       const b = el('button', 'ar-nav ' + cls, label);
       b.type = 'button';
@@ -2883,245 +3010,6 @@
   }
 
   /* -- mounting (called by changes-ui.js, which owns the tab row) -- */
-  /* -- split view (owner, 2026-11-15, mockup v2): one artifact dropdown per pane's chat, side by side when the panel has room
-     (stacked when it is too narrow), and the one viewer below. The viewer shows the chat whose artifact you last picked; moving
-     focus between the panes changes nothing here. The dropdown whose artifact is showing has the accent border. -- */
-  const SPL = { keys: [], secs: new Map(), showing: '', box: null, timer: 0, pageCtx: null };
-  const splitUI = () => (root.AgentSplitUI && root.AgentSplitUI.active && root.AgentSplitUI.active() ? root.AgentSplitUI : null);
-  const splitOn = () => SPL.keys.length > 0;
-  /* chat.js / changes-ui.js report the focused chat here. In split view the viewer keeps its own chat. */
-  function syncFromPage(ctx) {
-    SPL.pageCtx = ctx || null;
-    if (!splitOn()) return sync(ctx);
-    if (ctx && ctx.id && ctx.id === S.chat.id) sync(Object.assign({}, ctx));
-  }
-  function splSection(key) {
-    let s = SPL.secs.get(key);
-    if (s) return s;
-    const rootEl = el('div', 'ar-sgrp sp-grp');
-    rootEl.dataset.key = key;
-    const head = el('div', 'sp-head'),
-      sbar = el('div', 'ar-bar ar-sbar'),
-      pick = el('button', 'ar-pick ar-spick');
-    pick.type = 'button';
-    pick.setAttribute('aria-haspopup', 'menu');
-    pick.setAttribute('aria-expanded', 'false');
-    sbar.append(pick);
-    rootEl.append(head, sbar);
-    s = { key, root: rootEl, head, sbar, pick, list: [], id: '', seq: 0 };
-    pick.addEventListener('click', (ev) => {
-      ev.stopPropagation();
-      splOpenPicker(s);
-    });
-    SPL.secs.set(key, s);
-    return s;
-  }
-  const splLive = (s) => orderArtifacts(liveOf(s.list).filter((a) => !isDocHistory(a)));
-  /* A pane's chat's "Docs this chat wrote" (as myDocs, for that chat): {docs, keys}. */
-  function splDocs(s) {
-    const D = DL(),
-      U = splitUI(),
-      c = U && U.chatInfo ? U.chatInfo(s.key).conv : null,
-      keys = [s.id, c && c.key, c && c.id].filter(Boolean);
-    if (!D || !s.id) return { docs: [], keys };
-    if (!docsHooked && D.onList) {
-      docsHooked = true;
-      D.onList(() => paintAll());
-    }
-    const now = D.cached(s.id, 'main');
-    if (!now && s.docsAsked !== s.id) {
-      s.docsAsked = s.id;
-      D.listFor(s.id, 'main').then(() => paintAll());
-    }
-    const all = (now || []).concat(s.id === S.chat.id ? S.docExtras : []),
-      docs = [];
-    for (const d of linkedDocs(all, keys)) if (!docs.some((o) => o.name === d.name)) docs.push(d);
-    return { docs, keys };
-  }
-  function splPaint() {
-    if (!ui || !SPL.box) return;
-    const U = splitUI(),
-      A = root.ActivityUI;
-    for (const k of SPL.keys) {
-      const s = splSection(k),
-        info = U ? U.chatInfo(k) : { key: k, title: 'Conversation' },
-        items = splLive(s),
-        n = items.length,
-        dn = splDocs(s).docs.length;
-      const line = [n + (n === 1 ? ' artifact' : ' artifacts')];
-      if (dn) line.push(dn + (dn === 1 ? ' doc' : ' docs'));
-      if (A && A.splitHead) A.splitHead(doc, info, line.join(' · '), s.head);
-      const on = SPL.showing === k && !!S.chat.id && S.chat.id === s.id;
-      const a = on ? current() : null,
-        shownDoc = on && S.doc ? S.doc : null,
-        shownA = a && items.some((x) => x.id === a.id) ? a : items[0];
-      s.pick.classList.toggle('showing', on && !!(a || shownDoc));
-      if (shownDoc || (!n && dn)) {
-        // a doc on screen (or only docs in this chat): the bar names it; the dropdown lists the docs under "Docs this chat wrote"
-        const t = shownDoc ? shownDoc.title || shownDoc.name : dn + (dn === 1 ? ' doc' : ' docs') + ' this chat wrote';
-        s.pick.replaceChildren(el('span', 'ar-k', 'doc'), el('span', 'ar-pick-title', t), el('span', 'ar-caret', '▾'));
-        s.pick.disabled = false;
-        s.pick.classList.remove('plain');
-        s.pick.title = t;
-        s.pick.setAttribute('aria-haspopup', 'menu');
-      } else if (!n) {
-        s.pick.replaceChildren(el('span', 'ar-pick-title', 'No artifacts in this chat yet'));
-        s.pick.disabled = true;
-        s.pick.classList.add('plain');
-        s.pick.title = '';
-        s.pick.setAttribute('aria-haspopup', 'false');
-      } else {
-        s.pick.replaceChildren(
-          el('span', 'ar-k', kindInfo(shownA.kind).badge),
-          el('span', 'ar-pick-title', shownA.title || 'Untitled'),
-          el('span', 'ar-caret', '▾'),
-        );
-        s.pick.disabled = false;
-        s.pick.classList.remove('plain');
-        // the full title on hover: the bar is narrow when two sit side by side (the title ends in …)
-        s.pick.title = (shownA.title || 'Untitled') + (on && a ? ' (showing below)' : '');
-        s.pick.setAttribute('aria-haspopup', 'menu');
-      }
-    }
-    const want = SPL.keys.map((k) => splSection(k).root);
-    want.forEach((nd, i) => {
-      if (SPL.box.children[i] !== nd) SPL.box.insertBefore(nd, SPL.box.children[i] || null);
-    });
-    while (SPL.box.children.length > want.length) SPL.box.lastChild.remove();
-    const t = ui.empty && ui.empty.querySelector('.ar-empty-t');
-    if (t) t.textContent = splitOn() ? 'Pick an artifact from either chat above.' : 'No artifacts in this chat yet';
-    ui.view.classList.toggle('ar-split-on', splitOn());
-    paintCount();
-  }
-  function splOpenPicker(s) {
-    if (!ui) return;
-    if (ui.popFor === 'split:' + s.key) {
-      closePop();
-      return;
-    }
-    closePop();
-    const here = SPL.showing === s.key && S.chat.id === s.id,
-      on = here ? (S.doc ? 'doc:' + S.doc.name : S.selId) : '',
-      dk = splDocs(s);
-    const groups = pickerGroups(s.list, on, Date.now(), dk.docs, dk.keys, '', {}).filter((g) => !g.foot);
-    const out = [];
-    for (const g of groups) {
-      out.push(...groupHead(g));
-      for (const it of g.items) {
-        if (it.doc) {
-          // "Docs this chat wrote": opens in the viewer below, in the full doc editor, as with one chat
-          const row = popItem('ar-doc' + (it.on ? ' on' : ''));
-          row.dataset.doc = it.name;
-          row.setAttribute('data-key', 'doc:' + it.name);
-          row.append(el('span', 'ar-k', it.badge), el('span', 'ar-it-title', it.title), el('span', 'ar-it-meta', it.meta));
-          row.title = 'Open ' + it.title + ' here';
-          row.addEventListener('click', () => {
-            closePop();
-            splShowDoc(s.key, it);
-          });
-          out.push(row);
-          continue;
-        }
-        const row = popItem(it.on ? 'on' : '');
-        row.dataset.id = it.id;
-        row.setAttribute('data-key', 'row:' + it.id);
-        row.append(el('span', 'ar-k', it.badge), el('span', 'ar-it-title', it.title), el('span', 'ar-it-meta', it.meta));
-        row.addEventListener('click', () => {
-          closePop();
-          splShow(s.key, it.id);
-        });
-        out.push(row);
-      }
-    }
-    ui.pop.replaceChildren(...out);
-    ui.pop.setAttribute('aria-label', 'Artifacts and docs in this chat');
-    ui.popFor = 'split:' + s.key;
-    ui.popAnchor = s.pick;
-    s.pick.setAttribute('aria-expanded', 'true');
-    placePop(s.pick);
-    const first = ui.pop.querySelector('.ar-it.on') || ui.pop.querySelector('.ar-it');
-    if (first) first.focus({ preventScroll: true });
-  }
-  /* Show a chat's artifact in the viewer (artifactId: the one picked; none: the chat's latest). */
-  function splShow(key, artifactId) {
-    const U = splitUI(),
-      info = U ? U.chatInfo(key) : null;
-    if (!info || !info.id) return;
-    SPL.showing = key;
-    if (S.chat.id !== info.id) {
-      if (artifactId) S.lastSel.set(info.id, { selId: artifactId, userPicked: true });
-      const pc = SPL.pageCtx && SPL.pageCtx.id === info.id ? SPL.pageCtx : null;
-      sync({ id: info.id, busy: !!(pc && pc.busy), cwd: (pc && pc.cwd) || '' });
-    } else if (artifactId) selectArtifact(artifactId);
-    splPaint();
-  }
-  /* Show a chat's doc in the viewer (the viewer takes that chat first). */
-  function splShowDoc(key, it) {
-    splShow(key);
-    const U = splitUI(),
-      info = U ? U.chatInfo(key) : null;
-    if (info && info.id && S.chat.id === info.id) openDoc({ name: it.name, title: it.title });
-    splPaint();
-  }
-  async function splLoad(s) {
-    const U = splitUI(),
-      info = U ? U.chatInfo(s.key) : null,
-      id = info ? info.id : '';
-    if (id !== s.id) {
-      s.id = id;
-      s.list = [];
-    }
-    if (!id) return;
-    const mine = ++s.seq;
-    try {
-      const d = await api('/api/live/artifacts?' + q({ conversationId: id }));
-      if (mine !== s.seq || id !== s.id) return;
-      s.list = Array.isArray(d.artifacts) ? d.artifacts : [];
-    } catch (e) {}
-  }
-  async function splLoadAll() {
-    await Promise.all(SPL.keys.map((k) => splLoad(splSection(k))));
-    if (!splitOn()) return;
-    // nothing showing yet: the first chat (pane order) that has an artifact
-    if (!SPL.showing || !SPL.keys.includes(SPL.showing)) {
-      const k = SPL.keys.find((x) => splLive(splSection(x)).length);
-      if (k) splShow(k);
-    }
-    splPaint();
-  }
-  function splitSync(keys) {
-    if (!S.mounted || !ui) return;
-    const was = splitOn();
-    SPL.keys = keys.slice();
-    for (const k of [...SPL.secs.keys()]) if (!SPL.keys.includes(k)) SPL.secs.delete(k);
-    if (!splitOn()) {
-      SPL.showing = '';
-      splPaint();
-      if (SPL.timer) {
-        win.clearInterval(SPL.timer);
-        SPL.timer = 0;
-      }
-      if (was) sync(SPL.pageCtx); // one chat again: the viewer follows the open chat, as always
-      return;
-    }
-    if (!SPL.box) {
-      SPL.box = el('div', 'ar-split');
-      ui.view.insertBefore(SPL.box, ui.view.firstChild);
-    }
-    const U = splitUI();
-    if (SPL.showing && !SPL.keys.includes(SPL.showing)) SPL.showing = '';
-    // the chat the viewer already shows stays on screen when it is one of the panes
-    if (!SPL.showing && S.chat.id)
-      SPL.showing = SPL.keys.find((k) => U && U.chatInfo(k).id === S.chat.id) || '';
-    if (!SPL.showing && S.chat.id) sync(null);
-    splPaint();
-    splLoadAll();
-    if (!SPL.timer)
-      SPL.timer = win.setInterval(() => {
-        if (splitOn() && S.visible) splLoadAll();
-      }, 10000);
-  }
-  root.addEventListener && root.addEventListener('aib-split-chats', (e) => splitSync((e && e.detail && e.detail.keys) || []));
   function mount(o) {
     if (S.mounted || !o || !o.view) return;
     win = o.win || root;
@@ -3238,7 +3126,7 @@
     const becameActs = el('span', 'ar-became-acts');
     becameActs.append(becameOpen, becameSep, undoBtn);
     became.append(becameText, becameActs);
-    // "Archived 2 d ago. Hidden from this chat's list. · Unarchive"
+    // "Archived 2 d ago. Hidden from the project's list. · Unarchive"
     const archived = el('div', 'ar-built ar-archived');
     archived.hidden = true;
     archived.setAttribute('role', 'status');
@@ -3257,7 +3145,7 @@
     noteEl.append(noteText, noteUndo);
     const stage = el('div', 'ar-stage');
     const empty = el('div', 'ar-empty');
-    const emptyTitle = el('p', 'ar-empty-t', 'No artifacts in this chat yet'),
+    const emptyTitle = el('p', 'ar-empty-t', 'No artifacts in this project yet'),
       emptyHint = el('p', '', 'When the agent publishes a page, diagram or report, or saves a file in outputs/, it shows up here.'),
       emptyHidden = el('p', 'ar-empty-hidden');
     emptyHidden.hidden = true;
@@ -3446,22 +3334,24 @@
 
   /* Files view, "Open in Artifacts" on a file no chat has registered: the deliberate action that registers it in a chat (the one
      files-ui picked, whose folder holds the file; else the open chat), by the same route the old Preview used, then shows it here.
-     Another chat's artifact is shown by id and kept out of the open chat's list. Throws when it cannot be shown. */
+     The artifact joins the project's list. Throws when it cannot be shown. */
   async function registerFile(path, conversationId) {
     const id = conversationId || S.chat.id;
     if (!id) throw new Error('Open a chat first');
     if (!path) throw new Error('Choose a file');
     const s = await api('/api/live/artifacts/preview', { conversationId: id, path });
     if (!s || !s.id) return null;
-    if (id === S.chat.id) upsert(s);
-    else if (!S.list.some((a) => a.id === s.id)) S.extras[s.id] = Object.assign({}, S.extras[s.id], s);
+    upsert(s); // the project's list: a file of any chat of the project joins it
     if (!(await open(s.id))) throw new Error('the Artifacts viewer could not show it');
     return s;
   }
   const api2 = Object.assign({}, pure, {
     registerFile,
     mount,
-    sync: syncFromPage,
+    sync,
+    refresh,
+    setFilter,
+    filter: () => S.filter,
     setVisible,
     shown,
     onEvents,
@@ -3471,7 +3361,7 @@
     openDoc,
     upsert,
     note,
-    state: () => ({ chat: S.chat, list: S.list, selId: S.selId, picked: S.picked, mode: S.mode, fresh: S.fresh, doc: S.doc }),
+    state: () => ({ chat: S.chat, project: S.project, filter: S.filter, list: S.list, selId: S.selId, picked: S.picked, mode: S.mode, fresh: S.fresh, doc: S.doc }),
     _S: S,
   });
   root.ArtifactsUI = api2;

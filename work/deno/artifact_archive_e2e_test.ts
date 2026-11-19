@@ -255,19 +255,19 @@ e2e(
       8000,
       "the note",
     );
-    // the picker redraws in place: "This chat" has one, "Archived 1" at the foot, closed
+    // the picker redraws in place: "Newest first" has one, "Archived 1" at the foot, closed
     const groups = await page.eval<string>(
       `[...${pop}.querySelectorAll('.ar-gh, .ar-foothead')].map((g) => g.textContent).join('|')`,
     );
     assert(
-      /This chat/i.test(groups) && /Archived\s*1/.test(groups),
+      /Newest first/i.test(groups) && /Archived\s*1/.test(groups),
       `groups: ${groups}`,
     );
     assert(
       !(await page.eval<boolean>(
         `!!document.querySelector(${JSON.stringify(rowSel(a.id))})`,
       )),
-      "the archived row is out of This chat",
+      "the archived row is out of Newest first",
     );
     assert(
       (await page.eval<string>(

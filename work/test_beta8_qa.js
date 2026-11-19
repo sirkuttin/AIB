@@ -136,8 +136,8 @@ test('the Artifacts viewer shows a doc from the chat in a frame; an agent-made d
   assert.equal(UI.state().doc, null);
   assert.equal(UI.state().fresh, 'doc:launch-notes');
   assert.equal(reveals, 0);
-  assert.equal(badge.textContent, '1');
-  assert.match(tab.getAttribute('aria-label'), /1 doc.*new/);
+  assert.equal(badge.hidden, true, 'the badge counts artifacts, not docs');
+  assert.match(tab.getAttribute('aria-label'), /something new/);
   const row = shell.byId.artifactsView.querySelector('.ar-doc');
   assert.ok(row && row.classList.contains('ar-new') && row.querySelector('.ar-newdot'), 'the row is marked new');
   assert.ok(!row.textContent.includes('\u2197'), 'no arrow on the row');
@@ -154,7 +154,7 @@ test('the Artifacts viewer shows a doc from the chat in a frame; an agent-made d
   assert.equal(shell.byId.artifactsView.querySelector('.ar-ver').hidden, true, 'no version chip for a doc');
   // an artifact replaces the doc
   UI.upsert({ id: 'a1', title: 'First', kind: 'html', version: 1, versions: 1, updatedAt: 1, url: 'http://a/a1/v1/', conversationId: 'chat1' });
-  assert.equal(badge.textContent, '2', 'the count is artifacts plus docs');
+  assert.equal(badge.textContent, '1', 'the count is the artifacts of the project');
   await UI.open('a1');
   assert.equal(UI.state().doc, null);
   assert.equal(shell.byId.artifactsView.querySelector('iframe.ar-docframe'), null, 'the doc frame is gone');

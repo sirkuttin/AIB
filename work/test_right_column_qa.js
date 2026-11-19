@@ -136,7 +136,7 @@ test("the viewer's ⋯ menu in a narrow column (one right-column width, no 920 p
   assert.equal(A.placeRight(0, 210, 900), 4, 'never closer than 4 px to the right edge');
 });
 
-test("Open in Artifacts (Files view): registerFile in another chat shows that artifact here, reveals the Artifacts tab, keeps it out of this chat's list", async () => {
+test("Open in Artifacts (Files view): registerFile in another chat shows that artifact here, reveals the Artifacts tab, and it joins the project's list", async () => {
   const shell = page({ ids: ['artifactsView'] });
   const w = shell.window;
   w.setInterval = () => 1;
@@ -178,7 +178,7 @@ test("Open in Artifacts (Files view): registerFile in another chat shows that ar
   );
   assert.equal(UI.state().selId, 'p1', 'it is the artifact on show');
   assert.deepEqual(revealed, ['artifacts'], 'the right column opens on the Artifacts tab');
-  assert.equal(UI.state().list.length, 0, "not added to the open chat's own list");
+  assert.equal(UI.state().list.length, 1, "the project's list: another chat's file joins it");
   // no chat open and none given: a clear error, not silence
   UI.sync(null);
   await assert.rejects(() => UI.registerFile('C:/w/main/x.html'), /Open a chat first/);

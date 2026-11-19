@@ -861,58 +861,57 @@ a.artifact-link.artifact-link-deleted {
   color: var(--text);
 }
 
-/* ---- Split view: one dropdown per pane's chat (artifacts-ui.js splitSync), side by side whenever each gets 128 px (the default
-   280 px panel fits both; a long title ends in …, the full title on hover), stacked only below about 256 px; the viewer below shows
-   the one picked. The bar of the artifact on screen has the accent border. ---- */
-.ar-split {
-  flex: 0 0 auto;
-  display: flex;
+/* ---- The project's list (right panel, Artifacts): each row is tagged with the chat that made it, and "All chats" narrows it ---- */
+.ar-it.ar-has-chip {
   flex-wrap: wrap;
-  border-bottom: 1px solid var(--line);
+  row-gap: 1px;
 }
-.ar-split > .ar-sgrp {
-  flex: 1 1 128px;
+.ar-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   min-width: 0;
-  border-bottom: 0;
-  padding-bottom: 0;
+  max-width: 100%;
+  font-size: 11px;
+  color: var(--muted);
 }
-.ar-split .ar-sbar {
-  padding: 0 10px 8px 10px;
-  border-bottom: 0;
+.ar-has-chip > .ar-chip {
+  order: 5;
+  flex: 1 0 100%;
+  padding-left: 26px;
 }
-/* side by side (2 x 128 px fit): 8 px between the two bars instead of 20, more room for the titles */
-.ar-split {
-  container-type: inline-size;
+.ar-chip-agent {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  border: 1px solid var(--line-card);
+  border-radius: 8px;
+  font-size: 10px;
+  line-height: 14px;
+  color: var(--text-faint-3);
 }
-@container (min-width: 256px) {
-  .ar-split > .ar-sgrp:first-child:not(:last-child) .ar-sbar {
-    padding-right: 4px;
-  }
-  .ar-split > .ar-sgrp:nth-child(2) .ar-sbar {
-    padding-left: 4px;
-  }
-  .ar-split > .ar-sgrp:nth-child(2) > .sp-head {
-    padding-left: 4px;
-  }
-}
-/* side by side in a narrow panel (under 360 px): the kind badge gives its room to the title (the list still shows each kind) */
-@container (min-width: 256px) and (max-width: 359px) {
-  .ar-split > .ar-sgrp:not(:only-child) .ar-spick:not(.plain) > .ar-k {
-    display: none;
-  }
-}
-.ar-split .ar-spick {
-  flex: 1 1 auto;
+.ar-chip-name {
   min-width: 0;
-  max-width: none;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
-.ar-split .ar-spick.showing {
-  border-color: var(--accent);
+.ar-del > .ar-chip {
+  padding: 0 0 2px 26px;
 }
-.ar-split .ar-spick.plain {
-  padding-left: 0;
+.ar-it.ar-filter {
+  gap: 6px;
+  color: var(--text-5);
+  font-weight: 600;
 }
-/* the viewer's own row keeps the version, open-in-browser and More of the artifact on screen; its picker is the dropdowns above */
-.artifacts-pane.ar-split-on > .ar-bar:not(.ar-sbar) > .ar-pick {
-  display: none;
+.ar-filter-t {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.ar-filter > .ar-caret {
+  margin-left: auto;
+}
+.ar-it.ar-fopt {
+  padding-left: 18px;
 }

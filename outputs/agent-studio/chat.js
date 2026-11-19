@@ -1395,6 +1395,7 @@
             cwd: selected.cwd || '',
             key: selected.key || '',
             titleFor: changesTitleFor,
+            tagFor: artifactTagFor,
           }
         : null,
     );
@@ -1403,6 +1404,11 @@
   function changesTitleFor(k) {
     const c = k && conversations.find((x) => x.live?.id === k || x.key === k || aliasKey(x) === k);
     return c ? titleOf(c) : '';
+  }
+  // A row chip in Artifacts: the chat (live id, lasting id or key) that made the artifact, with its agent's name; null when it is not listed.
+  function artifactTagFor(k) {
+    const c = k && conversations.find((x) => x.live?.id === k || x.key === k || aliasKey(x) === k);
+    return c ? { title: titleOf(c), agent: nameOf(c.provider) } : null;
   }
   // Any chat of the project ending a turn refreshes the Changes numbers (the chips count the project): a stamp of the turn ends.
   function noteProjectTurns() {

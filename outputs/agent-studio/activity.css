@@ -575,12 +575,8 @@ body.subchat-open #activityBody {
 }
 
 /* ---- Sections: one per chat (owner, 2026-11-15 mockup v2; 2026-11-18 project level). Each section starts with its own header
-   (status dot, name, a short line). Shared by Activity (the project's working chats), and by Artifacts in split view
-   (activity-ui.js splitHead). ---- */
+   (status dot, name, a short line). Used by Activity (the project's chats; activity-ui.js splitHead). ---- */
 
-body:not(.split-panel) .ar-split {
-  display: none !important;
-}
 #projectActivity {
   flex: 1 1 auto;
   min-height: 0;

@@ -2,7 +2,7 @@
  * Split view, the right panel (owner, 2026-11-15, mockup v2): with two chats side by side, Changes and Artifacts list BOTH chats in
  * pane order, each under its own header, and look the same whichever pane has focus. Activity is the project's (2026-11-18): every
  * working chat of the project, split or not, with a Left / Right tag on the pane chats; focus only moves its accent. Nothing in the panel moves
- * pane focus. Artifacts: one dropdown per chat, side by side when the panel has room, stacked when it is narrow. Changes: each
+ * pane focus. Artifacts: the one project picker (project_artifacts_e2e_test.ts). Changes: each
  * chat's own read-only summary row, no Merge or Discard (owner, 2026-11-16). One chat (no split): none of it shows.
  *
  * A real Studio (the scroll lab: temp state folder, free port; never the live ports), two scripted live chats, headless Chrome or
@@ -10,8 +10,8 @@
  * needs no git worktrees; the helpers are real (scripted subagent_update events).
  *
  * Gaps closed (owner, 2026-11-15): a subagent or process row of the UNFOCUSED chat opens its history here without moving focus;
- * an open history stays open when focus moves; the × that hides Activity is where it is with one chat and never moves; each chat's
- * dropdown also lists "Docs this chat wrote"; the two dropdowns sit side by side at the default 280 px panel.
+ * an open history stays open when focus moves; the × that hides Activity is where it is with one chat and never moves;
+ * the one picker also lists the docs the chats wrote.
  *
  * Run (from outputs/agent-studio): deno test -A ../../work/deno/split_panel_e2e_test.ts   (ignored without Chrome or Edge)
  */
@@ -73,8 +73,9 @@ function stub(page: Page, a: Chat, b: Chat) {
         return json({ git: true, sections: [], left: [], main: { id: 'main', kind: 'main', name: 'Project folder', branch: 'main', state: 'active', expanded: true, git: true,
           counts: sum, changes: { git: true, scope: 'uncommitted', root: '/r', prefix: '', files: all, filesTotal: all.length, totals: sum } } });
       }
+      if (u.pathname === '/api/live/project/artifacts') return json({ artifacts: Object.values(arts).flat().sort((x, y) => y.updatedAt - x.updatedAt) }); // the project's: every chat's
       if (u.pathname === '/api/live/artifacts' && arts[id]) return json({ artifacts: arts[id] });
-      if (u.pathname === '/api/live/docs/list' && docs[id]) return json({ docs: docs[id] });
+      if (u.pathname === '/api/live/docs/list' && docs[id]) return json({ docs: Object.values(docs).flat() }); // the project's docs, whichever chat asks
       // a saved chat's session is its transcript path (".../feedsaved.jsonl"), the key "claude:feedsaved"
       const sess = u.searchParams.get('session') || '',
         session = Object.keys(cmds).find((k) => sess === k || sess.endsWith('/' + k.split(':').pop() + '.jsonl')) || sess;
@@ -170,7 +171,7 @@ panelTest('split panel: with one chat on screen Activity already lists both work
   assert(await page.eval<boolean>(`!!document.querySelector('#projectChanges')?.offsetParent && !!document.querySelector('#changesPane .cg-bar')?.offsetParent`), 'the project Changes view');
   await page.click('#paneTab-artifacts');
   await settle(600);
-  assert(await page.eval<boolean>(`!document.querySelector('.ar-split')?.offsetParent`), 'no split dropdowns with one chat');
+  assert(await page.eval<boolean>(`!document.querySelector('.ar-split')`), 'the per-chat split dropdowns are gone: one picker');
 });
 
 panelTest('split panel: both chats in pane order on every tab, focus changes nothing, panel clicks keep focus', async (lab) => {
@@ -201,7 +202,7 @@ panelTest('split panel: both chats in pane order on every tab, focus changes not
     if (tab === 'changes')
       await page.waitFor(`document.querySelectorAll('#projectChanges .cg-file').length === 3`, 15000, 'the project\'s files');
     if (tab === 'artifacts')
-      await page.waitFor(`document.querySelectorAll('.ar-split .ar-spick:not(.plain)').length === 2`, 15000, 'both dropdowns');
+      await page.waitFor(`document.querySelector('#paneTab-artifacts .pane-badge')?.textContent === '3'`, 15000, "the project's three artifacts");
     await settle(1500);
     const before = await page.eval<string[]>(PANEL);
     const other = (await focusedKey(page)) === a.key ? b.key : a.key;
@@ -220,73 +221,51 @@ panelTest('split panel: both chats in pane order on every tab, focus changes not
   assertEquals(await page.eval<number>(`document.querySelectorAll('#changesPane button.cg-merge-btn, #changesPane button.cg-discard, #changesPane .cg-foot button').length`), 0, 'no Merge or Discard');
 
   // clicks anywhere in the panel never move focus
-  for (const sel of ['#paneTab-activity', '#projectActivity .sp-grp:nth-child(2) .sp-head', '#projectActivity .sp-grp:nth-child(2) .subagent-card', '#paneTab-changes', '#projectChanges .cg-file', '#projectChanges .cg-sec-head', '#paneTab-artifacts', '.ar-split .ar-sgrp:nth-child(2) .ar-spick']) {
+  for (const sel of ['#paneTab-activity', '#projectActivity .sp-grp:nth-child(2) .sp-head', '#projectActivity .sp-grp:nth-child(2) .subagent-card', '#paneTab-changes', '#projectChanges .cg-file', '#projectChanges .cg-sec-head', '#paneTab-artifacts', '#artifactsPane .ar-pick']) {
     const was = await focusedKey(page);
     await page.waitFor(`!!document.querySelector(${JSON.stringify(sel)})?.offsetParent`, 10000, sel);
     await page.click(sel);
     await settle(400);
     assert((await focusedKey(page)) === was, `clicking ${sel} moved focus`);
   }
-  // the second chat's dropdown lists its artifact; picking it shows it and gives that bar the accent border
-  await page.waitFor(`!!document.querySelector('.ar-pop:not([hidden]) .ar-it[data-id="art-b1"]')`, 5000, 'B dropdown open');
+  // the one picker lists the project's artifacts, both chats', each tagged with its chat; picking B's shows it
+  await page.waitFor(`!!document.querySelector('.ar-pop:not([hidden]) .ar-it[data-id="art-b1"]')`, 5000, 'the picker is open');
+  const rows = await page.eval<string[]>(`[...document.querySelectorAll('.ar-pop .ar-it[data-id]')].map((r) => r.dataset.id)`);
+  assertEquals(rows, ['art-a1', 'art-a2', 'art-b1'], 'newest first, both chats');
+  assertEquals(await page.eval<number>(`document.querySelectorAll('.ar-pop .ar-it[data-id] .ar-chip').length`), 3, 'each row tagged with its chat');
   await page.click('.ar-pop .ar-it[data-id="art-b1"]');
-  await page.waitFor(`document.querySelector('.ar-split .ar-sgrp:nth-child(2) .ar-spick')?.classList.contains('showing')`, 10000, 'B showing');
-  assert(!(await page.eval<boolean>(`document.querySelector('.ar-split .ar-sgrp:nth-child(1) .ar-spick').classList.contains('showing')`)), 'only one bar has the accent');
-  assert(JSON.stringify(await keysOf(page, '.ar-split .ar-sgrp')) === JSON.stringify([a.key, b.key]), 'Artifacts in pane order');
+  await page.waitFor(`/RSS feed plan/.test(document.querySelector('#artifactsPane .ar-pick')?.textContent || '')`, 10000, 'B shown');
+  assertEquals(await page.eval<number>(`document.querySelectorAll('.ar-split, .ar-spick').length`), 0, 'one renderer, no per-pane dropdowns');
 });
 
-panelTest('split panel: artifact dropdowns side by side at the default 280 px panel (titles end in …), stacked only when narrower', async (lab) => {
+panelTest('split panel: the one picker also lists "Docs the chats wrote" (the project\'s, whichever chat is focused)', async (lab) => {
   const page = lab.page;
   const { a, b } = await openSplit(lab);
   await split(lab, a, b);
   await page.click('#paneTab-artifacts');
-  await page.waitFor(`document.querySelectorAll('.ar-split .ar-spick:not(.plain)').length === 2`, 15000, 'two dropdowns');
-  const at = async (w: number) => {
-    await page.eval(`document.documentElement.style.setProperty('--activity-w', '${w}px')`);
-    await settle(400);
-    return page.eval<{ w: number; t: number[]; l: number[]; titleW: number[]; full: string[]; over: boolean[] }>(`(() => {
-      const g = [...document.querySelectorAll('.ar-split .ar-sgrp')], picks = g.map((n) => n.querySelector('.ar-spick'));
-      const titles = picks.map((p) => p.querySelector('.ar-pick-title'));
-      return { w: Math.round(document.getElementById('subagentsPane').getBoundingClientRect().width),
-        t: g.map((n) => Math.round(n.getBoundingClientRect().top)), l: g.map((n) => Math.round(n.getBoundingClientRect().left)),
-        titleW: titles.map((n) => Math.round(n.getBoundingClientRect().width)), full: picks.map((p) => p.title),
-        over: titles.map((n) => getComputedStyle(n).textOverflow === 'ellipsis' && getComputedStyle(n).whiteSpace === 'nowrap') };
-    })()`);
-  };
-  const dflt = await at(280);
-  assert(dflt.w === 280, `panel width ${dflt.w}`);
-  assert(dflt.t[0] === dflt.t[1] && dflt.l[1] > dflt.l[0], `default 280 px panel: side by side, tops ${dflt.t} lefts ${dflt.l}`);
-  assert(dflt.titleW.every((x) => x >= 75), `titles readable (>= 75 px each): ${dflt.titleW}`);
-  assert(dflt.over.every(Boolean), 'a long title ends in an ellipsis');
-  assert(/^Checkout bug root cause/.test(dflt.full[0]) && /^RSS feed plan/.test(dflt.full[1]), `full titles on hover: ${JSON.stringify(dflt.full)}`);
-  const wide = await at(440);
-  assert(wide.t[0] === wide.t[1], `wide panel (${wide.w}px): side by side, tops ${wide.t}`);
-  const narrow = await at(250);
-  assert(narrow.t[1] > narrow.t[0], `narrow panel (${narrow.w}px): stacked, tops ${narrow.t}`);
-});
-
-panelTest('split panel: each chat\'s dropdown also lists "Docs this chat wrote"', async (lab) => {
-  const page = lab.page;
-  const { a, b } = await openSplit(lab);
-  await split(lab, a, b);
-  await page.click('#paneTab-artifacts');
-  await page.waitFor(`document.querySelectorAll('.ar-split .ar-spick:not(.plain)').length === 2`, 15000, 'two dropdowns');
-  await page.waitFor(`/1 doc/.test(document.querySelector('.ar-split .ar-sgrp:nth-child(2) .sp-sub')?.textContent || '')`, 15000, 'B header counts its doc');
+  await page.waitFor(`document.querySelector('#paneTab-artifacts .pane-badge')?.textContent === '3'`, 15000, 'three artifacts');
   const was = await focusedKey(page);
-  await page.click('.ar-split .ar-sgrp:nth-child(2) .ar-spick');
-  await page.waitFor(`!!document.querySelector('.ar-pop:not([hidden]) .ar-it[data-doc="feed-notes"]')`, 5000, "B's doc listed");
-  const pop = await page.eval<{ text: string; docs: string[] }>(`({ text: document.querySelector('.ar-pop').innerText,
-    docs: [...document.querySelectorAll('.ar-pop [data-doc]')].map((n) => n.dataset.doc) })`);
-  assert(/Docs this chat wrote/i.test(pop.text), `group label: ${pop.text}`);
-  assert(JSON.stringify(pop.docs) === JSON.stringify(['feed-notes']), `only B's own docs: ${JSON.stringify(pop.docs)}`);
-  assert(/RSS feed plan/.test(pop.text), "B's artifact is still listed");
-  assert((await focusedKey(page)) === was, 'opening the dropdown did not move focus');
-  await page.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
-  await settle(300);
-  // A's dropdown: A wrote no docs, so no docs group
-  await page.click('.ar-split .ar-sgrp:nth-child(1) .ar-spick');
-  await page.waitFor(`!!document.querySelector('.ar-pop:not([hidden]) .ar-it[data-id="art-a1"]')`, 5000, 'A dropdown open');
-  assert(!(await page.eval<boolean>(`/Docs this chat wrote/i.test(document.querySelector('.ar-pop').innerText)`)), 'A lists no docs group');
+  // the open chat's doc list was read before the stub went in: read it again now
+  await page.eval(`AgentDocLinks.listFor(ArtifactsUI.state().chat.id, 'main', true)`);
+  const docsOf = async () => {
+    await page.click('#artifactsPane .ar-pick');
+    await page.waitFor(`!!document.querySelector('.ar-pop:not([hidden]) .ar-it[data-doc="feed-notes"]')`, 8000, 'the doc is listed').catch(async (e) => {
+      throw new Error(`${e.message}: ${await page.eval("JSON.stringify([document.querySelector('.ar-pop')?.innerText, ArtifactsUI.state().chat, AgentDocLinks.cached(ArtifactsUI.state().chat.id, 'main')])")}`);
+    });
+    const pop = await page.eval<{ text: string; docs: string[] }>(`({ text: document.querySelector('.ar-pop').innerText,
+      docs: [...document.querySelectorAll('.ar-pop [data-doc]')].map((n) => n.dataset.doc) })`);
+    await page.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
+    await settle(300);
+    return pop;
+  };
+  const first = await docsOf();
+  assert(/Docs the chats wrote/i.test(first.text), `group label: ${first.text}`);
+  assertEquals(first.docs, ['feed-notes', 'other-notes']);
+  assert(/RSS feed plan/.test(first.text) && /Checkout bug root cause/.test(first.text), "both chats' artifacts are listed");
+  assert((await focusedKey(page)) === was, 'opening the picker did not move focus');
+  // focus on the other pane: the same list
+  await clickOther(page, b.key);
+  assertEquals((await docsOf()).docs, first.docs, 'the list does not depend on the focused chat');
 });
 
 panelTest('split panel: the other chat\'s subagent and process rows open their history without moving focus; it stays open when focus moves', async (lab) => {

@@ -22,6 +22,8 @@ import { getUpdate, getUpdateNotes, postUpdateCheck, postUpdateInstall, postUpda
 import { parseQs } from '../artifacts/origin.ts';
 import { authorize, pageAllowed, type Principal, Refusal, REMOTE_PC, SCOPE_ARTIFACTS_TOOL } from './security.ts';
 import { projectChanges, sectionDiff } from '../worktrees/project_changes.ts';
+import { projectArtifacts } from '../artifacts/project_list.ts';
+import { ProjectResolver } from '../worktrees/worktrees.ts';
 import * as changes from '../worktrees/changes.ts';
 import { readSubagents } from '../subagents/service.ts';
 import { WslHelperError } from '../wsl/contract.ts';
@@ -416,6 +418,29 @@ export function studioRoutes(): Map<string, StudioHandler> {
     '/api/live/artifacts/states',
     '/api/live/artifacts/by-source',
   ];
+  // The project's artifacts (right panel): every chat's, newest first, tagged with its chat. `id` names any chat of the project (its
+  // folder comes from it, as for Changes); `deleted=1` adds Recently deleted. The project of each artifact is computed here.
+  routes.set('GET /api/live/project/artifacts', async (ctx, url, _body, request, principal) => {
+    const args = argsOf(url), id = one(args, 'id');
+    const studio = chatStudioOf(ctx, await savedFolders(ctx, id));
+    if (!pageAllowed(principal ?? null, request.headers, studio.token ?? '')) return [403, { error: 'Invalid local session token' }] as Reply;
+    await ctx.artifacts.prepare(false, null);
+    let folder: string | null;
+    try {
+      folder = await changesFolder(studio, id);
+    } catch (error) {
+      if (error instanceof ValueError) return [400, { error: error.message, code: 'invalid' }] as Reply;
+      throw error;
+    }
+    if (folder === null) return [404, { error: 'This chat has no known project folder.', code: 'unknown_folder' }] as Reply;
+    const resolver = new ProjectResolver(ctx.stateDir ?? '');
+    const reply = await projectArtifacts(ctx.artifacts.store, folder, {
+      mainOf: (path) => resolver.resolve(path)?.project ?? path,
+      // a chat that is running is asked by its connection id, as the artifact routes do (artifactFolder); a saved one by its lasting id
+      chatFolder: async (chat) => changesFolder(chatStudioOf(ctx, await savedFolders(ctx, chat)), ctx.artifacts.connectionOf(chat) || chat),
+    }, { deleted: one(args, 'deleted') === '1' });
+    return [200, reply] as Reply;
+  });
   for (const path of artifactGets) {
     routes.set(`GET ${path}`, async (ctx, url, _body, request, principal) => {
       const args = argsOf(url);

@@ -1131,7 +1131,13 @@
       const changed = id !== chat.id,
         ended = turnEnded(chat.busy, busy);
       chat = { id, busy, key: ctx && ctx.key ? ctx.key : '', titleFor: ctx && typeof ctx.titleFor === 'function' ? ctx.titleFor : null };
-      if (AR()) AR().sync(id ? { id, busy, cwd: ctx && typeof ctx.cwd === 'string' ? ctx.cwd : '' } : null);
+      // Artifacts is the project's: it gets the project key (another chat of the same project moves only its accent) and the chat lookup for its row chips
+      if (AR())
+        AR().sync(
+          id
+            ? { id, busy, cwd: ctx && typeof ctx.cwd === 'string' ? ctx.cwd : '', project: panelProjectKey(), tagFor: ctx && typeof ctx.tagFor === 'function' ? ctx.tagFor : null }
+            : null,
+        );
       // Another project on screen: its own remembered tab and its own Changes. Another chat of the same project, or split focus:
       // the tab and the Changes stay as they are.
       const pk = panelProjectKey();
@@ -1171,6 +1177,7 @@
       if (stamp !== turnSeen) {
         turnSeen = stamp;
         if (chat.id) load(true);
+        if (AR()) AR().refresh();
       }
     }
     /* The Files view's change badge: show the Changes tab with this file's diff open and in view. path is repository-relative. */

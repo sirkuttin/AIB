@@ -42,7 +42,7 @@ test('picker orders pinned first, then newest first, and groups them', () => {
   const g = A.pickerGroups(list, 'b', NOW);
   assert.deepEqual(
     g.map((x) => x.label),
-    ['Pinned', 'This chat'],
+    ['Pinned', 'Newest first'],
   );
   assert.deepEqual(
     g[1].items.map((i) => i.id),
@@ -52,7 +52,7 @@ test('picker orders pinned first, then newest first, and groups them', () => {
   assert.equal(g[0].items[0].pinned, true);
   assert.deepEqual(
     A.pickerGroups([art({ id: 'x' })], 'x', NOW).map((x) => x.label),
-    ['This chat'],
+    ['Newest first'],
   );
   assert.deepEqual(A.pickerGroups([], '', NOW), []);
 });
@@ -712,7 +712,7 @@ test('archived, deleted and live: one state per artifact; only live ones count',
   assert.deepEqual(A.liveOf([live, arch, del, hist]).map((a) => a.id), ['l']);
   assert.deepEqual(['live', 'archived', 'deleted', 'gone'].map(A.stateWord), ['', 'archived', 'deleted', 'deleted']);
 });
-test('the picker: live artifacts in Pinned / This chat, then "Archived N" and "Recently deleted N" closed at the foot', () => {
+test('the picker: live artifacts in Pinned / Newest first, then "Archived N" and "Recently deleted N" closed at the foot', () => {
   const list = [
     art({ id: 'p', title: 'Pinned', pinned: true }),
     art({ id: 'l', title: 'Live' }),
@@ -725,7 +725,7 @@ test('the picker: live artifacts in Pinned / This chat, then "Archived N" and "R
     g.map((x) => [x.key, x.label, x.count === undefined ? x.items.length : x.count, x.items.length]),
     [
       ['pinned', 'Pinned', 1, 1],
-      ['chat', 'This chat', 1, 1],
+      ['all', 'Newest first', 1, 1],
       ['archived', 'Archived', 2, 0],
       ['deleted', 'Recently deleted', 1, 0],
     ],
@@ -753,7 +753,7 @@ test('the picker: live artifacts in Pinned / This chat, then "Archived N" and "R
       ['Recently deleted', 0, 'Nothing deleted recently.'],
     ],
   );
-  assert.deepEqual(A.pickerGroups([list[1]], 'l', NOW).map((x) => x.key), ['chat'], 'closed and empty: not shown');
+  assert.deepEqual(A.pickerGroups([list[1]], 'l', NOW).map((x) => x.key), ['all'], 'closed and empty: not shown');
 });
 test('the picker is a dropdown as soon as something is archived or deleted, even with one live artifact or none', () => {
   assert.equal(A.pickerIsPlain([art()]), true);
@@ -837,7 +837,7 @@ test('the note line names what happened: unpinned and archived, the file that we
     "Restored \"Report\" without its file: this chat's folder is gone.",
   );
   assert.equal(A.restoreNote('Typed', null), 'Restored "Typed".');
-  assert.equal(A.archivedStrip(art({ archivedAt: 1794175000 - 2 * DAY }), NOW), "Archived 2 d ago. Hidden from this chat's list.");
+  assert.equal(A.archivedStrip(art({ archivedAt: 1794175000 - 2 * DAY }), NOW), "Archived 2 d ago. Hidden from the project's list.");
 });
 test('tool cards keep showing archived and deleted artifacts with the state word; a file card prefers the non-deleted artifact', () => {
   const m = A.cardModel(A.artifactCall(rawRow()), [art({ version: 2, archivedAt: 5 })], NOW);
@@ -913,7 +913,7 @@ function panel(answers) {
     calls.push({ url, body });
     const hit = Object.keys(answers).find((k) => url.startsWith(k));
     // the list answers what the page already has (as the server would), unless a test says otherwise
-    const reply = hit ? answers[hit] : url.startsWith('/api/live/artifacts?') ? () => ({ artifacts: JSON.parse(JSON.stringify(UI.state().list)) }) : { token: 't' };
+    const reply = hit ? answers[hit] : url.startsWith('/api/live/project/artifacts?') ? () => ({ artifacts: JSON.parse(JSON.stringify(UI.state().list)) }) : { token: 't' };
     const data = typeof reply === 'function' ? reply(url, body) : reply;
     return { ok: !data.status, status: data.status || 200, json: async () => data };
   };
@@ -931,7 +931,7 @@ function panel(answers) {
 const sum = (o) => Object.assign({ conversationId: 'c1', title: 'T', kind: 'html', version: 1, versions: 1, updatedAt: 1794175000, url: 'http://a/x/v1/' }, o);
 
 test('panel: a summary without archivedAt clears it (replayed Archive then Unarchive ends live); counts and picks skip hidden ones', async () => {
-  const p = panel({ '/api/live/artifacts?': { artifacts: [] } });
+  const p = panel({ '/api/live/project/artifacts?': { artifacts: [] } });
   p.UI.sync({ id: 'c1', busy: false, cwd: '' });
   p.UI.setVisible(true);
   p.UI.upsert(sum({ id: 'a', title: 'A', updatedAt: 2 }));
@@ -1061,7 +1061,7 @@ test('panel: Delete shows which file went and offers Undo; a deleted artifact in
 });
 
 test('panel: the Undo note stays 10 s (5 s without Undo) and is held while the pointer is on it', () => {
-  const p = panel({ '/api/live/artifacts?': { artifacts: [] } });
+  const p = panel({ '/api/live/project/artifacts?': { artifacts: [] } });
   const timers = new Map();
   let seq = 0;
   p.ctx.setTimeout = (fn, ms) => (timers.set(++seq, { fn, ms }), seq);
@@ -1083,23 +1083,127 @@ test('panel: the Undo note stays 10 s (5 s without Undo) and is held while the p
   assert.equal(note.querySelector('.ar-note-undo').hidden, true);
 });
 
-test('panel: each chat keeps the artifact it showed; back on that chat the viewer shows it again (owner 2026-11-15)', async () => {
+test('panel: each project keeps the artifact it showed; back on that project the viewer shows it again (owner 2026-11-15)', async () => {
   const p = panel({
-    '/api/live/artifacts?': (url) =>
-      url.includes('c1') ? { artifacts: [sum({ id: 'a', title: 'A', updatedAt: 2 }), sum({ id: 'b', title: 'B', updatedAt: 1 })] } : { artifacts: [] },
+    '/api/live/project/artifacts?': (url) =>
+      url.includes('id=c1') ? { artifacts: [sum({ id: 'a', title: 'A', updatedAt: 2 }), sum({ id: 'b', title: 'B', updatedAt: 1 })] } : { artifacts: [] },
     '/api/live/artifacts/item': { versions: [{ n: 1 }] },
   });
-  p.UI.sync({ id: 'c1', busy: false, cwd: '' });
+  p.UI.sync({ id: 'c1', busy: false, cwd: '', project: 'P1' });
   p.UI.setVisible(true);
   await p.flush();
   assert.equal(p.UI.state().selId, 'a', 'the newest shows first');
   await p.UI.open('b');
   await p.flush();
   assert.equal(p.UI.state().selId, 'b');
-  p.UI.sync({ id: 'c2', busy: false, cwd: '' });
+  p.UI.sync({ id: 'c2', busy: false, cwd: '', project: 'P2' });
   await p.flush();
   assert.equal(p.UI.state().selId, '');
-  p.UI.sync({ id: 'c1', busy: false, cwd: '' });
+  p.UI.sync({ id: 'c1', busy: false, cwd: '', project: 'P1' });
   await p.flush();
-  assert.equal(p.UI.state().selId, 'b', 'B, the one you left c1 on');
+  assert.equal(p.UI.state().selId, 'b', 'B, the one you left P1 on');
+});
+
+/* ---- the project's list (right panel, Artifacts; owner 2026-11-18, decision 1a) ---- */
+const TAGS = { 'claude:a': { title: 'Auth work', agent: 'Claude' }, 'codex:b': { title: 'Docs sweep', agent: 'Codex' } };
+const tagFor = (k) => TAGS[k] || null;
+const mixed = () => [
+  sum({ id: 'a1', conversationId: 'claude:a', title: 'Old A', updatedAt: 100 }),
+  sum({ id: 'b1', conversationId: 'codex:b', title: 'New B', updatedAt: 300 }),
+  sum({ id: 'a2', conversationId: 'claude:a', title: 'Mid A', updatedAt: 200 }),
+  sum({ id: 'x1', conversationId: 'claude:gone', title: 'Orphan', updatedAt: 50 }),
+];
+
+test('the project list: one group newest first, every row tagged with its chat and agent', () => {
+  const g = A.pickerGroups(mixed(), 'b1', NOW, [], null, '', {}, { tagFor });
+  assert.deepEqual(g.map((x) => x.key), ['all']);
+  assert.deepEqual(g[0].items.map((i) => i.id), ['b1', 'a2', 'a1', 'x1']);
+  assert.deepEqual(g[0].items.map((i) => [i.tag.title, i.tag.agent]), [['Docs sweep', 'Codex'], ['Auth work', 'Claude'], ['Auth work', 'Claude'], ['Another chat', '']]);
+  assert.equal(A.chatTag({ conversationId: '' }).title, 'No chat');
+});
+test('the chat filter narrows the list to one chat; docs follow it; a stale choice shows everything', () => {
+  const g = A.pickerGroups(mixed(), '', NOW, [], null, '', {}, { chat: 'claude:a', tagFor });
+  assert.deepEqual(g[0].items.map((i) => i.id), ['a2', 'a1']);
+  assert.deepEqual(A.filterList(mixed(), 'claude:a').map((a) => a.id), ['a1', 'a2']);
+  assert.equal(A.filterList(mixed(), 'codex:nothing').length, 4, 'a chat with no artifact: all of them, never an empty list');
+  assert.equal(A.filterList(mixed(), '').length, 4);
+  const docs = [{ name: 'p', chat: 'claude:a' }, { name: 'q', chat: 'codex:b' }];
+  assert.deepEqual(A.pickerGroups([], '', NOW, docs, null, '', {}, { chat: 'codex:b' })[0].items.map((i) => i.name), ['q']);
+  assert.deepEqual(A.pickerGroups([], '', NOW, docs, null).filter((x) => x.key === 'docs')[0].items.map((i) => i.name), ['p', 'q'], 'null: every chat of the project');
+});
+test('the filter choices: All chats first, then each chat with live artifacts, newest artifact first', () => {
+  const o = A.chatOptions(mixed().concat([sum({ id: 'z', conversationId: 'claude:a', archivedAt: 5 })]), tagFor);
+  assert.deepEqual(o.map((x) => [x.key, x.title, x.n]), [['', 'All chats', 4], ['codex:b', 'Docs sweep', 1], ['claude:a', 'Auth work', 2], ['claude:gone', 'Another chat', 1]]);
+});
+
+test('panel: the badge counts the whole project; another chat of the project moves only the accent (list, viewer and filter stay)', async () => {
+  let loads = 0;
+  const p = panel({
+    '/api/live/project/artifacts?': () => (loads++, { artifacts: mixed() }),
+    '/api/live/artifacts/item': { versions: [{ n: 1 }] },
+  });
+  p.UI.sync({ id: 'c1', busy: false, cwd: '', project: 'P', tagFor });
+  p.UI.setVisible(true);
+  await p.flush();
+  assert.equal(p.badge.textContent, '4');
+  assert.equal(p.UI.state().selId, 'b1');
+  p.UI.setFilter('claude:a');
+  await p.UI.open('a1');
+  const before = loads;
+  p.UI.sync({ id: 'c2', busy: false, cwd: '', project: 'P', tagFor });
+  p.UI.sync({ id: 'c3', busy: true, cwd: '', project: 'P', tagFor });
+  await p.flush();
+  assert.equal(p.badge.textContent, '4', 'the same count');
+  assert.equal(p.UI.state().selId, 'a1', 'the viewer stays');
+  assert.equal(p.UI.state().filter, 'claude:a', 'the filter stays');
+  assert.equal(p.UI.state().list.length, 4, 'the list stays');
+  assert.equal(loads, before, 'a chat switch reads nothing');
+  assert.ok(p.calls.filter((c) => c.url.startsWith('/api/live/project/artifacts?')).every((c) => /deleted=1/.test(c.url)));
+});
+
+test('panel: the filter is kept per project and window and comes back after a reload; another project starts at All chats', async () => {
+  const store = new Map();
+  const p = panel({ '/api/live/project/artifacts?': { artifacts: mixed() } });
+  p.ctx.localStorage = { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)) };
+  p.ctx.AibStore = { winKey: (k) => k + '@w1', layoutWritable: () => true };
+  p.UI.sync({ id: 'c1', busy: false, cwd: '', project: 'P', tagFor });
+  await p.flush();
+  p.UI.setFilter('codex:b');
+  assert.deepEqual(JSON.parse(store.get('studio-artifact-filter-v1@w1')), { P: 'codex:b' });
+  p.UI.sync({ id: 'c9', busy: false, cwd: '', project: 'Q', tagFor });
+  assert.equal(p.UI.state().filter, '', 'another project: All chats');
+  p.UI.sync({ id: 'c1', busy: false, cwd: '', project: 'P', tagFor });
+  assert.equal(p.UI.state().filter, 'codex:b', 'back on P');
+  // a reload: a new page reads the same storage
+  const again = panel({ '/api/live/project/artifacts?': { artifacts: mixed() } });
+  again.ctx.localStorage = p.ctx.localStorage;
+  again.ctx.AibStore = p.ctx.AibStore;
+  again.UI.sync({ id: 'c2', busy: false, cwd: '', project: 'P', tagFor });
+  assert.equal(again.UI.state().filter, 'codex:b');
+  // a pop-out writes no layout
+  p.ctx.AibStore = { winKey: (k) => k, layoutWritable: () => false };
+  p.UI.setFilter('');
+  assert.deepEqual(JSON.parse(store.get('studio-artifact-filter-v1@w1')), { P: 'codex:b' });
+});
+
+test('panel: the picker opens with "All chats" and a row per chat; choosing one filters the rows and the chips name the chat', async () => {
+  const p = panel({ '/api/live/project/artifacts?': { artifacts: mixed() }, '/api/live/artifacts/item': { versions: [{ n: 1 }] } });
+  p.UI.sync({ id: 'c1', busy: false, cwd: '', project: 'P', tagFor });
+  p.UI.setVisible(true);
+  await p.flush();
+  p.view.querySelector('.ar-pick').click();
+  const pop = p.view.querySelector('.ar-pop');
+  const rows = () => pop.querySelectorAll('.ar-it').filter((b) => b.dataset.id);
+  assert.deepEqual(rows().map((r) => r.dataset.id), ['b1', 'a2', 'a1', 'x1']);
+  assert.equal(rows()[0].querySelector('.ar-chip-name').textContent, 'Docs sweep');
+  assert.equal(rows()[0].querySelector('.ar-chip-agent').textContent, 'Codex');
+  const head = pop.querySelector('.ar-filter');
+  assert.match(head.textContent, /All chats/);
+  head.click();
+  const opt = pop.querySelectorAll('.ar-fopt').find((b) => b.getAttribute('data-key') === 'chat:claude:a');
+  assert.ok(opt, 'a row for the chat');
+  opt.click();
+  assert.deepEqual(rows().map((r) => r.dataset.id), ['a2', 'a1']);
+  assert.match(pop.querySelector('.ar-filter').textContent, /Auth work/);
+  assert.equal(p.badge.textContent, '4', 'the badge still counts the project');
 });

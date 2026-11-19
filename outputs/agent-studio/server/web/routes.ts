@@ -88,6 +88,7 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   POST /api/live/artifacts/undelete         Restore from Recently deleted, the file back where it was (page only)
  *   POST /api/live/artifacts/purge            "Delete now": remove a deleted artifact for good (page only)
  *   GET  /api/live/artifacts/states           live / archived / deleted / gone per id (link labels in chat messages)
+ *   GET  /api/live/project/artifacts          the project's artifacts: every chat's, newest first, each tagged with its chat (right panel)
  *   GET  /api/live/artifacts/by-source        the artifact published from a file (a path link in a reply opens it), any chat's
  *   POST /api/live/steer                      send now while the agent works (steer-on-send; Connection.steer)
  *   POST /api/live/tool-stop                  Stop on a "Still running in the background" row (Connection.stopBackgroundTool)
@@ -222,6 +223,7 @@ export const ROUTE_LIST: readonly [string, string, string, RouteKind][] = [
   ['GET', '/api/live/branch', 'read', 'get'],
   ['GET', '/api/live/changes', 'read', 'get'],
   ['GET', '/api/live/changes/file', 'read', 'get'],
+  ['GET', '/api/live/project/artifacts', 'artifacts.read', 'get'], // the project's artifacts: every chat's, tagged with its chat (right panel)
   ['GET', '/api/live/project/changes', 'read', 'get'], // the project's Changes: main plus its active worktrees (right panel)
   ['GET', '/api/live/project/changes/file', 'read', 'get'], // one file of a worktree section, by record id
   ['GET', '/api/live/conversation-state', 'read', 'get'],
