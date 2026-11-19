@@ -44,7 +44,7 @@ function git(cwd: string, ...args: string[]) {
   if (!o.success) throw new Error(`git ${args.join(' ')}: ${new TextDecoder().decode(o.stderr)}`);
 }
 function write(path: string, text: string) {
-  Deno.mkdirSync(path.replace(/\\[^\\]+$/, ''), { recursive: true });
+  Deno.mkdirSync(path.replace(/[\\/][^\\/]+$/, ''), { recursive: true });
   Deno.writeTextFileSync(path, text);
 }
 const lines = (n: number, tag: string) => Array.from({ length: n }, (_, i) => `${tag} ${i + 1}`).join('\n') + '\n';
@@ -52,8 +52,8 @@ const lines = (n: number, tag: string) => Array.from({ length: n }, (_, i) => `$
 /** The workspace as a repository with one commit (src/app.ts, src/gone.ts). */
 function repo(ws: string) {
   git(ws, 'init', '-q', '-b', 'main');
-  write(`${ws}\\src\\app.ts`, lines(40, 'app'));
-  write(`${ws}\\src\\gone.ts`, lines(10, 'gone'));
+  write(`${ws}/src/app.ts`, lines(40, 'app'));
+  write(`${ws}/src/gone.ts`, lines(10, 'gone'));
   git(ws, 'add', '-A');
   git(ws, 'commit', '-q', '-m', 'base');
 }
@@ -76,9 +76,9 @@ changesTest('Changes, folder chat: the counts stay whole at the default width; t
   const page = lab.page,
     ws = lab.fx.workspace;
   repo(ws);
-  write(`${ws}\\src\\app.ts`, lines(40, 'app').replace('app 5\n', 'app five\nadded\n'));
-  Deno.removeSync(`${ws}\\src\\gone.ts`);
-  for (const n of ['a', 'b', 'c', 'd', 'e', 'f']) write(`${ws}\\notes\\${n}.md`, lines(2, n));
+  write(`${ws}/src/app.ts`, lines(40, 'app').replace('app 5\n', 'app five\nadded\n'));
+  Deno.removeSync(`${ws}/src/gone.ts`);
+  for (const n of ['a', 'b', 'c', 'd', 'e', 'f']) write(`${ws}/notes/${n}.md`, lines(2, n));
   await folderChat(lab, 'COUNTS');
   await page.waitFor(`document.querySelectorAll('#changesPane > .cg-files .cg-file').length === 8`, 20000, 'eight files');
   await settle(300);
@@ -100,11 +100,11 @@ changesTest('Changes, folder chat not working: an edit another chat makes in the
   const page = lab.page,
     ws = lab.fx.workspace;
   repo(ws);
-  write(`${ws}\\src\\app.ts`, lines(41, 'app'));
+  write(`${ws}/src/app.ts`, lines(41, 'app'));
   await folderChat(lab, 'IDLEFOLDER');
   await page.waitFor(`document.querySelectorAll('#changesPane > .cg-files .cg-file').length === 1`, 20000, 'one file');
   // the chat is not working; another chat in the same folder writes a file
-  write(`${ws}\\from_other_chat.txt`, 'hello\n');
+  write(`${ws}/from_other_chat.txt`, 'hello\n');
   await page.waitFor(`[...document.querySelectorAll('#changesPane > .cg-files .cg-file')].some((b) => b.dataset.path === 'from_other_chat.txt')`, 25000,
     'the other chat\'s file listed without a chat switch').catch(async (e) => {
       throw new Error(`${e.message}: ${JSON.stringify(await rows(page))}`);
@@ -117,7 +117,7 @@ changesTest('Changes, split view: an open diff follows its file when the file ch
   const page = lab.page,
     ws = lab.fx.workspace;
   repo(ws);
-  write(`${ws}\\notes.txt`, 'first line\n');
+  write(`${ws}/notes.txt`, 'first line\n');
   const a = await folderChat(lab, 'SPLITA');
   const b = await lab.chat();
   await b.start();
@@ -136,7 +136,7 @@ changesTest('Changes, split view: an open diff follows its file when the file ch
   const diff = () => page.eval<string>(`(document.querySelector('${SEC} .cg-diff .cg-lines')?.innerText || '').replace(/\\s+/g, ' ')`);
   await page.waitFor(`/first line/.test(document.querySelector('${SEC} .cg-diff .cg-lines')?.innerText || '')`, 15000, 'the diff');
   assert(!/second line/.test(await diff()), 'not yet');
-  write(`${ws}\\notes.txt`, 'first line\nsecond line\nthird line\n');
+  write(`${ws}/notes.txt`, 'first line\nsecond line\nthird line\n');
   await page.waitFor(`/\\+3/.test(document.querySelector('${SEC} .cg-file[data-path="notes.txt"] .cg-add')?.textContent || '')`, 20000, 'the row counts +3');
   await page.waitFor(`/third line/.test(document.querySelector('${SEC} .cg-diff .cg-lines')?.innerText || '')`, 15000, 'the open diff shows the new lines')
     .catch(async (e) => {
@@ -149,7 +149,7 @@ changesTest('Changes, split view: a section counts every changed file, also past
   const page = lab.page,
     ws = lab.fx.workspace;
   repo(ws);
-  for (let i = 0; i < 320; i++) write(`${ws}\\big\\f${String(i).padStart(3, '0')}.txt`, 'x\n');
+  for (let i = 0; i < 320; i++) write(`${ws}/big/f${String(i).padStart(3, '0')}.txt`, 'x\n');
   const a = await folderChat(lab, 'BIGA');
   await page.waitFor(`/^320$/.test(document.querySelector('#paneTab-changes .pane-badge')?.textContent || '')`, 20000, 'badge 320');
   const b = await lab.chat();
@@ -177,8 +177,8 @@ changesTest('Changes, split view, two folder chats: the folder lists once, rows 
   const page = lab.page,
     ws = lab.fx.workspace;
   repo(ws);
-  write(`${ws}\\notes.txt`, 'first line\n');
-  write(`${ws}\\other.txt`, 'x\n');
+  write(`${ws}/notes.txt`, 'first line\n');
+  write(`${ws}/other.txt`, 'x\n');
   const a = await folderChat(lab, 'ONCEA');
   const b = await lab.chat();
   await b.start();
