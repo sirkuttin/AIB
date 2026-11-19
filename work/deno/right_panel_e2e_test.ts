@@ -5,7 +5,7 @@
  * started working; idle and finished chats are not listed, and a chat that finishes leaves. Opening another chat of the project (or
  * moving split focus) moves only the accent (no reorder, show, hide or resize). Each section holds that chat's subagents (finished
  * ones folded into "N finished", remembered per chat) and processes. A subagent history opens inside the panel at its width. The
- * panel's tab is remembered per project and window; a layout with no saved width starts at 320 px; below 330 px of panel the tabs
+ * panel's tab is remembered per project and window; a layout with no saved width starts at 320 px; below 320 px of panel the tabs
  * are icon + count (also at 125 % display scaling and a bigger interface size). Split view adds Left / Right tags on the pane chats' heads.
  *
  * A real Studio (the scroll lab: temp state folder, free port; never the live ports), scripted live chats with scripted
@@ -247,7 +247,7 @@ panelTest('right panel: the tab is remembered per project (and window): another 
   for (const x of [a, a2, other]) x.end();
 });
 
-panelTest('right panel: 320 px only without a saved width; tabs are icon + count below 330 px of panel, at 100 %, 125 % display scaling and a bigger interface size', async (lab) => {
+panelTest('right panel: 320 px only without a saved width; tabs keep their names at the 320 px default and are icon + count below 320 px of panel, at 100 %, 125 % display scaling and a bigger interface size', async (lab) => {
   const page = lab.page;
   const a = await working(lab, 'ALPHAEND', [['Find rounding bug', 'running']]);
   await lab.select(a);
@@ -261,7 +261,7 @@ panelTest('right panel: 320 px only without a saved width; tabs are icon + count
   })()`);
   let l = await look();
   assertEquals(l.w, 320, 'no saved width: 320 px');
-  assert(l.icons.every(Boolean) && !l.labels.some(Boolean), `320 px: icon tabs ${JSON.stringify(l)}`);
+  assert(l.labels.every(Boolean) && !l.icons.some(Boolean), `320 px default: labelled tabs ${JSON.stringify(l)}`);
   assert(l.names.every((n) => /^(Activity|Changes|Artifacts)/.test(n) && /\|(Activity|Changes|Artifacts)$/.test(n)), `labels stay in the aria label and tooltip: ${JSON.stringify(l.names)}`);
   // a saved width wins (the layout key of this window-width bucket)
   const save = (w: number) => page.eval(`localStorage.setItem('studio-layout-v1:<1800', JSON.stringify({ activity: ${w} }))`);
@@ -276,25 +276,26 @@ panelTest('right panel: 320 px only without a saved width; tabs are icon + count
   await reload();
   l = await look();
   assertEquals(l.w, 280, 'a saved 280 stays 280');
+  assert(l.icons.every(Boolean) && !l.labels.some(Boolean), `280 px: icon tabs ${JSON.stringify(l)}`);
   await save(360);
   await reload();
   l = await look();
   assertEquals(l.w, 360);
   assert(l.labels.every(Boolean) && !l.icons.some(Boolean), `360 px: labelled tabs ${JSON.stringify(l)}`);
-  // 125 % Windows display scaling (device pixels 1.25 per CSS px): CSS widths are the same, so the same switch at 330 CSS px
+  // 125 % Windows display scaling (device pixels 1.25 per CSS px): CSS widths are the same, so the same switch at 320 CSS px
   await page.send('Emulation.setDeviceMetricsOverride', { width: 1600, height: 900, deviceScaleFactor: 1.25, mobile: false });
   await page.eval(`localStorage.removeItem('studio-layout-v1:<1800')`);
   await reload();
   l = await look();
   assertEquals(l.w, 320, '125 % display scaling, no saved width: 320');
-  assert(l.icons.every(Boolean) && !l.labels.some(Boolean), `125 % display, 320 px: icon tabs ${JSON.stringify(l)}`);
+  assert(l.labels.every(Boolean) && !l.icons.some(Boolean), `125 % display, 320 px: labelled tabs ${JSON.stringify(l)}`);
   await save(360);
   await reload();
   l = await look();
   assert(l.labels.every(Boolean) && !l.icons.some(Boolean), `125 % display, 360 px: labelled tabs ${JSON.stringify(l)}`);
   await page.send('Emulation.setDeviceMetricsOverride', { width: 1600, height: 900, deviceScaleFactor: 1, mobile: false });
   // AIB's own interface size (steps of 10; 120 % here): widths grow with it and the switch is on the panel's own width (on
-  // screen / 1.2): a saved 360 is 300 own (icons), 450 is 375 own (labels); no saved width is 320 x 1.2 = 384 (320 own, icons)
+  // screen / 1.2): a saved 360 is 300 own (icons), 450 is 375 own (labels); no saved width is 320 x 1.2 = 384 (320 own, labels)
   await page.eval(`AgentTextSize.setUi(120)`);
   await settle(800);
   l = await look();
@@ -309,7 +310,7 @@ panelTest('right panel: 320 px only without a saved width; tabs are icon + count
   await reload();
   l = await look();
   assertEquals(l.w, 384, '120 %, no saved width: 320 x 1.2');
-  assert(l.icons.every(Boolean) && !l.labels.some(Boolean), `120 %, 320 own px: icon tabs ${JSON.stringify(l)}`);
+  assert(l.labels.every(Boolean) && !l.icons.some(Boolean), `120 %, 320 own px: labelled tabs ${JSON.stringify(l)}`);
   await page.eval(`AgentTextSize.setUi(100)`);
   a.end();
 });

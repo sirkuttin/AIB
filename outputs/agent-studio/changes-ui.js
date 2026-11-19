@@ -350,7 +350,7 @@
     tabs.id = 'paneTabs';
     tabs.setAttribute('role', 'tablist');
     tabs.setAttribute('aria-label', 'Right column');
-    /* Below 330 px of panel the tabs show an icon and their count, the label in the tooltip and aria label (changes.css draws the
+    /* Below 320 px of panel the tabs show an icon and their count, the label in the tooltip and aria label (changes.css draws the
        icons). */
     const tabBtn = (id, label) => {
       const b = el('button', 'pane-tab');

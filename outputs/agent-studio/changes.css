@@ -47,7 +47,7 @@
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-/* Below 330 px of panel (its own width, so the same at every interface size) each tab is its icon and its count; the label stays
+/* Below a ~315 px panel (the query measures the tab row inside its padding: about 305 px at the 320 px default, which keeps the names) (its own width, so the same at every interface size) each tab is its icon and its count; the label stays
    in the tooltip and the aria label (changes-ui.js tabBtn). The tab row is the size container. */
 .pane-tab-ico {
   display: none;
@@ -67,7 +67,7 @@
 .pane-ico-artifacts {
   --pane-ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.5' stroke-linejoin='round'%3E%3Crect x='1.5' y='2.5' width='13' height='11' rx='1.5'/%3E%3Cpath d='M1.5 5.5h13'/%3E%3C/svg%3E");
 }
-@container (max-width: 329.98px) {
+@container (max-width: 299.98px) {
   .pane-tabs .pane-tab-ico {
     display: block;
   }
