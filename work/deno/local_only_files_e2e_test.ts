@@ -50,9 +50,9 @@ Deno.test({
 });
 
 const rowsOf = (page: Page) =>
-  page.eval<{ path: string; cls: string; title: string; pill: string; dot: boolean }[]>(
+  page.eval<{ path: string; cls: string; title: string; pill: string; dot: boolean; shared: boolean }[]>(
     `Array.from(document.querySelectorAll('.fx-row[data-path]')).map((n) => ({ path: n.dataset.path, cls: n.className, title: n.title,
-      pill: (n.querySelector('.fx-local') || {}).textContent || '', dot: !!n.querySelector('.fx-localdot') }))`,
+      pill: (n.querySelector('.fx-local') || {}).textContent || '', dot: !!n.querySelector('.fx-localdot'), shared: !!n.querySelector('.fx-sharedico') }))`,
   );
 const rightClick = (page: Page, path: string) =>
   page.eval(`(() => { const n = Array.from(document.querySelectorAll('.fx-row[data-path]')).find((x) => x.dataset.path === ${JSON.stringify(path)});
@@ -123,7 +123,7 @@ async function run(fx: Fixture, keep: (b: Browser) => void): Promise<void> {
     let rows = await rowsOf(page);
     const priv = rows.find((x) => x.path === 'aib-shared')!;
     assert(priv.cls.includes('local') && !priv.cls.includes('ignored'), priv.cls);
-    assertEquals([priv.pill, priv.dot], ['local only', true]);
+    assertEquals([priv.pill, priv.dot, priv.shared], ['local only', false, true], 'its own blue icon (owner pick C) instead of the dot');
     assert(priv.title.includes('The same folder in every chat: ' + alpha + SEP + 'aib-shared'), priv.title);
     assert(!(await exists(`${copy}${SEP}aib-shared`)), 'nothing is put in the copy');
     await page.eval(`document.querySelector('.fx-row[data-path="aib-shared"]').click()`);
