@@ -62,7 +62,11 @@ test('inverted handles (Activity left edge, message box top edge) grow the other
   assert.equal(R.keyStep('ArrowDown', split), 216);
 });
 test('layout defaults, user widths, and a hidden panel', () => {
-  assert.deepEqual(R.computeLayout({ vw: 1440, sideOn: true, actOn: true }), { side: 240, activity: 280 });
+  // no saved width: the right panel starts at 320 px (owner 2026-11-18, so its tabs fit); a saved width always wins
+  assert.deepEqual(R.computeLayout({ vw: 1440, sideOn: true, actOn: true }), { side: 240, activity: 320 });
+  assert.equal(R.DEF.activity, 320);
+  assert.equal(R.computeLayout({ vw: 1440, activity: 280, sideOn: true, actOn: true }).activity, 280, 'a saved 280 stays 280');
+  assert.equal(R.computeLayout({ vw: 1440, sideOn: true, actOn: true, scale: 1.25 }).activity, 400, '125 % interface: 320 grows with it');
   assert.deepEqual(R.computeLayout({ vw: 1920, side: 400, activity: 500, sideOn: true, actOn: true }), {
     side: 400,
     activity: 500,
@@ -98,18 +102,12 @@ test('side panels yield before the chat drops under 420 px', () => {
     assert.ok(r.side >= 200 && r.activity >= 220, String(vw));
   }
 });
-test('a subagent history widens Activity to max(your width, 480) within the room', () => {
-  assert.equal(R.computeLayout({ vw: 1920, activity: 280, sideOn: true, actOn: true, subchat: true }).activity, 480);
-  assert.equal(R.computeLayout({ vw: 1920, activity: 550, sideOn: true, actOn: true, subchat: true }).activity, 550);
-  assert.equal(
-    R.computeLayout({ vw: 1440, activity: 280, side: 240, sideOn: true, actOn: true, subchat: true }).activity,
-    480,
-  );
-  const tight = R.computeLayout({ vw: 1100, activity: 280, side: 240, sideOn: true, actOn: true, subchat: true });
-  assert.equal(tight.activity, 1100 - 240 - 420);
-  assert.ok(1100 - tight.side - tight.activity >= 420);
-  assert.equal(R.computeLayout({ vw: 1440, activity: 280, sideOn: true, actOn: true, subchat: false }).activity, 280);
-  assert.equal(R.computeLayout({ vw: 1440, activity: 280, sideOn: true, actOn: false, subchat: true }).activity, 0);
+test('a subagent history never widens the right panel (owner 2026-11-18: width only by your drag)', () => {
+  for (const vw of [1100, 1440, 1920])
+    for (const activity of [280, 320, 550]) {
+      const o = { vw, activity, side: 240, sideOn: true, actOn: true };
+      assert.deepEqual(R.computeLayout({ ...o, subchat: true }), R.computeLayout(o), vw + ' ' + activity);
+    }
 });
 test('Changes expanded widens Activity to about 60% of the window, never squeezing the chat below its minimum', () => {
   assert.equal(R.computeLayout({ vw: 1920, activity: 280, sideOn: true, actOn: true, expand: true }).activity, 1152);
@@ -128,12 +126,6 @@ test('message box: floor 56, no fixed ceiling (about 200 px of the window stay f
   assert.equal(R.growCap(300, 900), 300);
   assert.equal(R.growCap(700, 900), 700);
   assert.equal(R.growCap(null, 300), 100);
-});
-test('Subagents/Processes split keeps 96 px each', () => {
-  assert.deepEqual(R.splitBounds(500), { min: 96, max: 404 });
-  assert.equal(R.clampSplit(10, 500), 96);
-  assert.equal(R.clampSplit(450, 500), 404);
-  assert.deepEqual(R.splitBounds(150), { min: 96, max: 96 });
 });
 test('stored sizes: junk becomes defaults', () => {
   assert.deepEqual(R.sanitize('{"side":300.4,"activity":"x","composer":-5,"split":120}'), {

@@ -215,6 +215,9 @@ historyTest('h4 a side pane on a chat uses the shared cache: no opening page or 
 
 historyTest("h5 a helper's history is fetched when it is opened (the chat's open has none of its events)", async (lab) => {
   const page = lab.page;
+  // recorded from the start: the project's Activity reads a working chat of the project on screen before you open it (that read is
+  // its opening page, shared with the main list when you open it)
+  await page.eval(RECORD);
   const chat = await lab.chat();
   await chat.start();
   chat.say('Starting a helper');
@@ -227,15 +230,14 @@ historyTest("h5 a helper's history is fetched when it is opened (the chat's open
   }
   chat.say('\n\nMain after HELPERSTARTED');
   await sleep(1500);
-  await page.eval(RECORD);
   await lab.select(chat);
   await shown(page, 'HELPERSTARTED');
-  await page.waitFor(`!!document.querySelector('#subagentList button[data-key="child-1"]')`, 15000, 'subagent card from the helper facts');
+  await page.waitFor(`!!document.querySelector('#projectActivity button[data-key="child-1"]')`, 15000, 'subagent card from the helper facts');
   let list = await reqs(page);
   const open = forId(list, '/api/live/events', chat.id).filter((r) => !q(r).get('session'));
   assert(open.length >= 1 && open.every((r) => (r.sids || []).every((s) => s !== 'child-1')), 'the open page has no helper events');
   assert(forId(list, '/api/live/events', chat.id).every((r) => q(r).get('session') !== 'child-1'), 'not fetched before it is opened');
-  await clickHere(page, '#subagentList button[data-key="child-1"]');
+  await clickHere(page, '#projectActivity button[data-key="child-1"]');
   await shown(page, 'Child read 24', 'submessages');
   list = await reqs(page);
   const helper = forId(list, '/api/live/events', chat.id).filter((r) => q(r).get('session') === 'child-1');

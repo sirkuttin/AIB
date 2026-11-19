@@ -838,12 +838,6 @@ header p {
   border-top: 1px solid var(--line);
   margin: 0;
 }
-#subagentList {
-  flex: 1;
-  overflow: auto;
-  padding: 12px 10px;
-  scrollbar-width: thin;
-}
 .subagent-card {
   width: 100%;
   padding: 13px 10px;
@@ -1027,54 +1021,6 @@ body > main {
 #commandsFrame {
   display: none;
 }
-#subagentList {
-  order: 2;
-  flex: 1 1 auto;
-  min-height: 100px;
-}
-#commandSection {
-  order: 1;
-  flex: 0 1 auto;
-  min-height: 0;
-  max-height: 40vh;
-  display: flex;
-  flex-direction: column;
-  border-bottom: 1px solid var(--line);
-  padding: 10px 10px 8px;
-}
-.command-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  padding: 0 3px 8px;
-}
-.command-heading h3 {
-  font-size: 11px;
-  font-weight: 550;
-  margin: 0;
-  line-height: 1.4;
-}
-#commandCount {
-  font-size: 10px;
-  color: var(--muted);
-  margin-left: 4px;
-}
-#commandHistoryToggle {
-  font-size: 9px;
-  padding: 4px 6px;
-  white-space: nowrap;
-}
-.running-command-list {
-  min-height: 100px;
-  max-height: calc(40vh - 44px);
-  overflow-y: auto;
-  scrollbar-width: thin;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 1px 2px 4px;
-}
 .command-card {
   display: block;
   width: 100%;
@@ -1231,21 +1177,6 @@ body > main {
   order: 3;
 }
 
-.subagent-section-heading {
-  order: 2;
-  font-size: 11px;
-  font-weight: 550;
-  margin: 0;
-  padding: 14px 16px 5px;
-}
-.subagent-section-heading span {
-  font-size: 10px;
-  color: var(--muted);
-  margin-left: 6px;
-}
-#subagentList {
-  order: 3;
-}
 #subagentsPane > .note {
   order: 4;
 }
@@ -1295,20 +1226,6 @@ body > main {
   border-color: var(--subagent-card-selected-line);
 }
 
-#commandSection {
-  flex: 0 0 auto;
-  max-height: 38vh;
-}
-.command-heading,
-#commandStatusNote,
-.subagent-section-heading {
-  flex-shrink: 0;
-}
-.running-command-list {
-  flex: 1 1 auto;
-  min-height: 80px;
-  max-height: calc(38vh - 100px);
-}
 #subagentsPane > .pane-heading {
   flex-shrink: 0;
 }

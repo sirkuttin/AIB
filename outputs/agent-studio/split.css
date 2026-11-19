@@ -1,47 +1,9 @@
-/* Split view (docs/design/split-view.html). With one pane none of the pane rules apply: only the Activity header at the bottom shows. */
-
-/* ---- Activity column header: the open chat of the focused pane, with its status dot ---- */
-.ahead {
-  order: -1;
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  height: var(--hd-h, 48px);
-  padding: 0 12px;
-  border-bottom: 1px solid var(--line);
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-}
-.ahead .ahead-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.ahead .status-dot,
-.ahead .ws-tab-plus {
-  flex: none;
-}
-@media (max-width: 1099px) {
-  #subagentsPane:not(.open) .ahead {
-    display: none;
-  }
-}
-/* Only split view needs it (which pane's chat the column shows); with one pane the tabs sit in the chat title's row. */
-body:not(.split-on) .ahead {
-  display: none;
-}
+/* Split view (docs/design/split-view.html). With one pane none of the pane rules apply. The right panel is the project's and has
+   no header naming a pane's chat (2026-11-18). */
 
 /* ---- The stage: panes in a nested split ---- */
 body.split-on #subagentsPane {
   margin-top: 0;
-}
-body.split-on .ahead {
-  height: var(--tabs-h, 40px);
 }
 .split-stage {
   flex: 1 1 auto;

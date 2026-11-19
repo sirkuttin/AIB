@@ -215,9 +215,10 @@
     writeHidden(false);
     live.open();
   }
-  /* ---- split view: the right panel lists both panes' chats (owner, 2026-11-15, mockup v2) ----
-     Every tab starts each chat's section with the same header: status dot, chat name, a short line ("2 working · 2 running",
-     "3 files", "2 artifacts"). It is not focus-aware and not clickable: focus changes nothing in the panel. */
+  /* ---- sections: one per chat (owner, 2026-11-15 mockup v2): Activity's working chats of the project (2026-11-18), and the
+     pane chats of Changes and Artifacts in split view ----
+     Every section starts with the same header: status dot, chat name, a short line ("2 working · 2 running", "3 files",
+     "2 artifacts"). It is not clickable; focus only moves Activity's accent (chat.js sp-focus). */
   /* status: {text, tone} from the same words as the pane header ("Working · 12m", "Needs you", "Ready"). The line starts with
      those words, counts follow; with no status it is the counts alone, or "Ready" when nothing runs. */
   const isIdle = (st) => !st || (st.tone === 'idle' && st.text === 'Ready');

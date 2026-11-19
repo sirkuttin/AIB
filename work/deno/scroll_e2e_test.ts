@@ -684,8 +684,8 @@ async function openSubagent(lab: Lab): Promise<(step: Record<string, unknown>) =
     child({ sessionUpdate: 'tool_call', toolCallId: `c${i}`, title: `Child read ${i}`, kind: 'read', status: 'completed' });
   }
   await lab.select(chat);
-  await page.waitFor(`!!document.querySelector('#subagentList button[data-key="child-1"]')`, 15000, 'subagent card');
-  await clickHere(page, '#subagentList button[data-key="child-1"]');
+  await page.waitFor(`!!document.querySelector('#projectActivity button[data-key="child-1"]')`, 15000, 'subagent card');
+  await clickHere(page, '#projectActivity button[data-key="child-1"]');
   await shown(page, 'Child read 24', 'submessages');
   await settle();
   return child;
@@ -1031,8 +1031,8 @@ scrollTest('B1 two subagents: scrolled up in one, the next one opens at its bott
     }
   }
   await lab.select(chat);
-  await page.waitFor(`document.querySelectorAll('#subagentList button[data-key^="child-"]').length >= 2`, 15000, 'two subagent cards');
-  await clickHere(page, '#subagentList button[data-key="child-1"]');
+  await page.waitFor(`document.querySelectorAll('#projectActivity button[data-key^="child-"]').length >= 2`, 15000, 'two subagent cards');
+  await clickHere(page, '#projectActivity button[data-key="child-1"]');
   await shown(page, 'Helper 1 read 24', 'submessages');
   await settle();
   await wheel(page, -600, 'submessages');
@@ -1041,7 +1041,7 @@ scrollTest('B1 two subagents: scrolled up in one, the next one opens at its bott
   assert(before && (await m(page, 'submessages')).paused, 'reading in the first helper');
   await clickHere(page, '#subchatBack');
   await page.waitFor(`!document.body.classList.contains('subchat-open')`, 8000, 'the history closed');
-  await clickHere(page, '#subagentList button[data-key="child-2"]');
+  await clickHere(page, '#projectActivity button[data-key="child-2"]');
   await shown(page, 'Helper 2 read 24', 'submessages');
   await settle();
   await assertFollowing(page, 'the second helper opened', 'submessages');
@@ -1050,7 +1050,7 @@ scrollTest('B1 two subagents: scrolled up in one, the next one opens at its bott
   await clickHere(page, '#subchatBack');
   await page.waitFor(`!document.body.classList.contains('subchat-open')`, 8000, 'the history closed');
   await startRowFrames(page, before!.text, 'submessages');
-  await clickHere(page, '#subagentList button[data-key="child-1"]');
+  await clickHere(page, '#projectActivity button[data-key="child-1"]');
   await shown(page, 'Helper 1 read 24', 'submessages');
   await settle();
   const drawn = rowFramesProblems(await stopRowFrames(page), before!, 2);

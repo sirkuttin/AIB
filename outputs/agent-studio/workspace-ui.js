@@ -3235,7 +3235,6 @@
     lastSig = sig;
     drawListHead();
     drawStrip();
-    drawAhead();
     if (inboxOpen) drawInbox();
     if (FU() && FU().paint) FU().paint(); // the amber count on the Chats half
     autosize();
@@ -3267,25 +3266,6 @@
       wantDraft: !!draft && !selectedKey,
     });
     if (r && r.collapsed && A !== ALLK) commit(St().orderTabs(ws, A, r.collapsed));
-  }
-  // The Activity column's first row: which chat it is about (the open chat of the focused pane) and its status dot.
-  function drawAhead() {
-    const a = doc().getElementById('activityHead');
-    if (!a) return;
-    const it = itemOf(selectedKey),
-      isDraft = !it && !selectedKey && !!draft;
-    if (!it && !isDraft) {
-      a.hidden = true;
-      a.replaceChildren();
-      a.title = '';
-      return;
-    }
-    a.hidden = false;
-    a.title = (it ? it.title : 'New chat') + ' \u00B7 Activity of the open chat';
-    a.replaceChildren(
-      it ? dotFor(it) : el('span', '+', 'ws-tab-plus'),
-      el('span', it ? it.title : 'New chat', 'ahead-name'),
-    );
   }
   /* The chat the page reopens at start (keepProjectFor): it opens without moving the sidebar off the project you had. You can
      pick a project with no open tabs while another project's chat stays in the middle; reopening that chat used to switch the
@@ -3841,6 +3821,14 @@
       const p = ws && ws.active !== St().ALL ? projectOfKey(ws.active) : null;
       return p ? p.name : '';
     },
+    // For the right panel (chat.js Activity): the project it is about, the one whose tabs the strip shows (with "All chats" on the
+    // rail, the open chat's project), and which project a chat belongs to. The panel never follows the open chat within a project.
+    panelProject: () => {
+      const pk = ws ? activeProjectKey() : '',
+        p = pk && pk !== St().ALL ? projectOfKey(pk) : null;
+      return { key: pk && pk !== St().ALL ? pk : '', name: p ? p.name : '' };
+    },
+    projectKeyOf: (c) => (host && c ? projectKeyOf(c) : ''),
     waitingIn: (pk) => (pk ? waitingFor(pk) : 0),
     closeDrawer: () => setListOpen(false),
     openDrawer: () => {

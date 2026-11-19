@@ -390,10 +390,10 @@ splitTest('SF4 split view: focus changes nothing in the panes but the accent lin
     await page.waitFor(`document.getElementById('messages').textContent.includes('ALPHAEND') && document.activeElement?.id === 'prompt'`, 8000, 'one click on the other message box focuses the pane and the box');
   }
 
-  // the right panel: hovering or clicking its tabs, the Activity header, strip and lists never moves pane focus
+  // the right panel: hovering or clicking its tabs, strip and the Activity list never moves pane focus
   const focusNow = await page.eval<string>(`AgentSplitUI.layout().focus`);
   let tried = 0;
-  for (const sel of ['#paneTab-changes', '#paneTab-artifacts', '#paneTab-activity', '#activityHead', '#activityStrip', '#subagentList', '#runningCommandList']) {
+  for (const sel of ['#paneTab-changes', '#paneTab-artifacts', '#paneTab-activity', '#activityStrip', '#projectActivity']) {
     const at = await page.eval<[number, number] | null>(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (!e) return null; const r = e.getBoundingClientRect();
       return r.width > 0 && r.height > 0 ? [r.left + Math.min(20, r.width / 2), r.top + Math.min(10, r.height / 2)] : null; })()`);
     if (!at) continue;

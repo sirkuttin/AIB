@@ -586,15 +586,7 @@
       localStorage.setItem(storeKey(convKey), open ? '1' : '0');
     } catch (e) {}
   }
-  let lastSignature = '',
-    lastBox = null;
-  const splitSigs = new WeakMap();
-  /* The × that hides Activity, held from page load: opening a chat empties the list it sits in, and a detached button cannot be
-     found by id again (it was lost after the first chat switch). */
-  let hideRef = null;
-  const hideButton = () =>
-    (hideRef = (typeof document !== 'undefined' && document.getElementById('activityHide')) || hideRef);
-  if (typeof document !== 'undefined') hideButton();
+  const sigs = new WeakMap(); // box -> what it shows now
   function el(tag, cls, txt) {
     const n = document.createElement(tag);
     if (cls) n.className = cls;
@@ -653,16 +645,13 @@
   function wtLine(text) {
     return el('span', 'sa-line sa-l2 sa-wt', text || ' ');
   }
+  /* One chat's subagents in its Activity section (chat.js renderProjectActivity), no heading of its own (the section's SUBAGENTS
+     label). Finished helpers fold into "N finished", remembered per chat, so a section never changes when the open chat changes. */
   function render(ctx) {
     const m = model(ctx.rows, ctx.now, ctx.chatModel),
-      /* split view: one section per chat, no heading of its own (activity-ui splitLabel). Finished helpers fold into "N finished"
-         exactly as with one chat, remembered per chat (the same key), so a section never changes when pane focus moves. */
-      split = !!ctx.split,
       open = expanded(ctx.convKey);
-    if (ctx.countEl) ctx.countEl.textContent = ctx.rows.length ? sectionHeading(m) : '0';
     if (ctx.onModel) ctx.onModel(m);
     const sig = JSON.stringify([
-      split,
       ctx.convKey,
       ctx.empty,
       ctx.selectedKey,
@@ -689,36 +678,17 @@
         i.meta,
       ]),
     ]);
-    if (split) {
-      if (splitSigs.get(ctx.box) === sig && ctx.box.firstChild) return;
-      splitSigs.set(ctx.box, sig);
-    } else {
-      if (sig === lastSignature && ctx.box === lastBox && ctx.box.firstChild) return;
-      lastSignature = sig;
-      lastBox = ctx.box;
-    }
+    if (sigs.get(ctx.box) === sig && ctx.box.firstChild) return;
+    sigs.set(ctx.box, sig);
     const box = ctx.box,
       focus = document.activeElement && box.contains(document.activeElement) ? document.activeElement : null,
       focusKey = focus?.dataset?.key,
       focusToggle = focus?.classList?.contains('sa-toggle');
     const tops = [...box.querySelectorAll('.sa-scroll')].map((n) => n.scrollTop);
     const frag = document.createDocumentFragment();
-    if (!split) {
-      const h = el('h4', 'sa-heading', 'Subagents');
-      if (ctx.rows.length) {
-        const q = el('span', 'sa-qualifier', m.working.length + ' working · ');
-        q.append(el('span', m.failed ? 'sa-failed-count' : '', m.failed + ' failed'));
-        h.append(q);
-      }
-      // split view keeps the × at the panel's top right (chat.js renderSplitActivity): the hidden list must not take it back
-      const hideBtn = hideButton();
-      if (hideBtn && !document.body.classList.contains('split-panel')) h.append(hideBtn);
-      frag.append(h);
-    }
     if (!ctx.rows.length) {
       if (ctx.empty) frag.append(el('p', 'empty-state sa-empty', ctx.empty));
-    }
-    else {
+    } else {
       const list = el('div', 'sa-scroll');
       for (const i of m.top) list.append(card(i, ctx));
       if (!m.top.length && !m.done.length) list.append(el('p', 'sa-none', 'Nothing running right now.'));
@@ -730,8 +700,7 @@
         t.append(el('span', 'sa-caret', open ? '▾' : '▸'), el('span', 'sa-title', m.done.length + ' finished'));
         t.onclick = () => {
           remember(ctx.convKey, !open);
-          lastSignature = '';
-          splitSigs.delete(box);
+          sigs.delete(box);
           ctx.rerender();
         };
         list.append(t);

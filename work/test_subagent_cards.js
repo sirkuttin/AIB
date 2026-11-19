@@ -396,14 +396,46 @@ test('a child the agent stopped (idle, stopReason cancelled) is Stopped; an erro
   assert.equal(done.kind, 'idle');
 });
 
-test('the Activity tab shows how many subagents are working, and nothing when none are', () => {
+test('Activity lists the working chats of the project in the order they joined, and its tab counts them (owner 2026-11-18)', () => {
+  const st = { a: 'working', b: 'idle', c: 'working', d: 'working', x: 'working', n: 'needs' };
   const h = makePage({});
+  // the page modules the panel asks (set after load: chat.js starts them itself when they are there at load)
+  Object.assign(h.context.window, {
+    AgentWorkspaceUI: {
+      panelProject: () => ({ key: 'p1', name: 'shop' }),
+      projectKeyOf: (c) => c.pk,
+      dotForKey: () => null,
+      statusTextOf: () => null,
+    },
+    AgentSidebarUI: { phrase: (c) => ({ kind: st[c.id] }) },
+    ActivityUI: { splitHead: () => {}, splitCounts: () => [], splitNothing: () => false, renderStrip() {} },
+  });
+  const conv = (id, pk, since) => ({ provider: 'claude', id, key: 'claude:' + id, pk, live: { id: 'L' + id, attention: { busySince: since } } });
+  const list = [
+    conv('a', 'p1', '2026-11-18T10:00:00Z'),
+    conv('b', 'p1', null),
+    conv('c', 'p1', '2026-11-18T09:00:00Z'),
+    conv('d', 'p1', null),
+    conv('x', 'p2', '2026-11-18T08:00:00Z'), // another project's working chat
+    conv('n', 'p1', null), // waits on an approval: not listed
+  ];
   const tab = h.element('paneTab-activity');
-  h.run('setActCounts({subagents:5,working:2,failed:0});paintActivityTabBadge()');
   const badge = () => tab.querySelector('.pane-badge');
-  assert.ok(badge(), 'a count badge like Changes and Artifacts');
-  assert.equal(badge().textContent, '2');
+  const show = () => {
+    h.run(`conversations = ${JSON.stringify(list)}; renderProjectActivity()`);
+    return h.run('projectOrder()');
+  };
+  // already working when the panel first looks: in the order their turns started (no start time last)
+  assert.deepEqual([...show()], ['claude:c', 'claude:a', 'claude:d'], 'idle chats, a chat waiting on an approval and other projects are not listed');
+  assert.equal(badge().textContent, '3');
   assert.equal(badge().hidden, false);
-  h.run('setActCounts({subagents:5,working:0,failed:0});paintActivityTabBadge()');
-  assert.equal(badge().hidden, true);
+  st.b = 'working'; // joins at the end
+  assert.deepEqual([...show()], ['claude:c', 'claude:a', 'claude:d', 'claude:b']);
+  st.a = 'idle'; // finished: its section leaves, the others keep their places
+  assert.deepEqual([...show()], ['claude:c', 'claude:d', 'claude:b']);
+  st.a = 'working'; // works again: back at the end
+  assert.deepEqual([...show()], ['claude:c', 'claude:d', 'claude:b', 'claude:a']);
+  for (const k of Object.keys(st)) st[k] = 'idle';
+  assert.deepEqual([...show()], []);
+  assert.equal(badge().hidden, true, 'no count when no chat works');
 });

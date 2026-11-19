@@ -292,9 +292,40 @@
       MIN_GAP = 1200;
     let state = { tab: 'activity', expanded: false };
     let chat = { id: '', busy: false };
-    /* The tab each chat last showed (Activity / Changes / Artifacts), for this run of the app: coming back to a chat shows the tab
-       you left it on (owner, 2026-11-15: back from another chat, Artifacts had turned into Activity). */
-    const tabOf = new Map();
+    /* The panel is the project's (owner, 2026-11-18): the tab it shows (Activity / Changes / Artifacts) is remembered per project
+       and per window, kept over a restart, and never changes when you open another chat of the same project or move split focus.
+       tabProject: the project the panel shows now. */
+    const TAB_KEY = 'studio-panel-tab-v1';
+    const tabKey = () => (win.AibStore ? win.AibStore.winKey(TAB_KEY) : TAB_KEY);
+    let tabProject = null;
+    function savedTabs() {
+      try {
+        const o = JSON.parse(win.localStorage.getItem(tabKey()) || '{}');
+        return o && typeof o === 'object' && !Array.isArray(o) ? o : {};
+      } catch (e) {
+        return {};
+      }
+    }
+    function rememberTab(pk, tab) {
+      if (!pk || (win.AibStore && !win.AibStore.layoutWritable())) return; // a pop-out writes no layout
+      const o = savedTabs();
+      if (o[pk] === tab) return;
+      delete o[pk];
+      o[pk] = tab; // newest last; the oldest projects drop off past 60
+      const keys = Object.keys(o);
+      for (const k of keys.slice(0, Math.max(0, keys.length - 60))) delete o[k];
+      try {
+        win.localStorage.setItem(tabKey(), JSON.stringify(o));
+      } catch (e) {}
+    }
+    const panelProjectKey = () => {
+      const W = win.AgentWorkspaceUI;
+      try {
+        return (W && W.panelProject && W.panelProject().key) || '';
+      } catch (e) {
+        return '';
+      }
+    };
     let data = null,
       loadedFor = '',
       error = '',
@@ -319,13 +350,19 @@
     tabs.id = 'paneTabs';
     tabs.setAttribute('role', 'tablist');
     tabs.setAttribute('aria-label', 'Right column');
+    /* Below 330 px of panel the tabs show an icon and their count, the label in the tooltip and aria label (changes.css draws the
+       icons). */
     const tabBtn = (id, label) => {
       const b = el('button', 'pane-tab');
       b.type = 'button';
       b.id = 'paneTab-' + id;
       b.setAttribute('role', 'tab');
+      b.setAttribute('aria-label', label);
+      b.title = label;
       b.dataset.tab = id;
-      b.append(el('span', 'pane-tab-label', label));
+      const ico = el('span', 'pane-tab-ico pane-ico-' + id);
+      ico.setAttribute('aria-hidden', 'true');
+      b.append(ico, el('span', 'pane-tab-label', label));
       return b;
     };
     const tabActivity = tabBtn('activity', 'Activity'),
@@ -824,7 +861,6 @@
       expandBtn.setAttribute('aria-label', expandBtn.title);
       expandBtn.textContent = state.expanded ? '⇥' : '⇤'; // QA m8: widen pulls the edge left, narrow pushes it back
       body.classList.toggle('changes-wide', wide && state.expanded && !narrow());
-      body.classList.toggle('rc-other-tab', wide); // resize-ui.js: an open subagent history no longer widens the column here
       if (AR()) AR().setVisible(art && paneVisible());
       schedule();
       if (SP) spSchedule();
@@ -832,6 +868,7 @@
     function show(tab) {
       const was = state.tab;
       state = tabState(state, { type: 'show', tab });
+      if (tabProject) rememberTab(tabProject, state.tab);
       apply();
       if (tab === 'changes' && was !== 'changes') {
         paintAll();
@@ -909,6 +946,7 @@
         subchatWas = now;
         if (opened && state.tab !== 'activity') {
           state = tabState(state, { type: 'subchat', open: true });
+          if (tabProject) rememberTab(tabProject, state.tab);
           apply();
         }
       }).observe(body, { attributes: true, attributeFilter: ['class'] });
@@ -944,8 +982,7 @@
         busy = !!(ctx && ctx.busy),
         discarded = !!(ctx && ctx.discarded),
         folder = !!(ctx && ctx.folder);
-      const prevId = chat.id,
-        changed = id !== chat.id,
+      const changed = id !== chat.id,
         ended = turnEnded(chat.busy, busy),
         gone = discarded && !chat.discarded && !changed,
         refiled = folder !== !!chat.folder && !changed;
@@ -956,6 +993,16 @@
         paintAll();
       }
       if (AR()) AR().sync(id ? { id, busy, cwd: ctx && typeof ctx.cwd === 'string' ? ctx.cwd : '' } : null);
+      // Another project on screen: its own remembered tab. Another chat of the same project, or split focus: the tab stays.
+      const pk = panelProjectKey();
+      if (pk !== tabProject) {
+        tabProject = pk;
+        const back = pk ? savedTabs()[pk] : '';
+        state = tabState(state, { type: 'reset' });
+        if (back && back !== 'activity') state = tabState(state, { type: 'show', tab: back });
+        apply();
+        if (state.tab === 'artifacts' && AR() && !changed) AR().shown();
+      }
       if (changed) {
         seq++;
         detailSeq++;
@@ -968,14 +1015,6 @@
         autoOpened = false;
         listSig = '';
         lastFetch = 0;
-        if (prevId) tabOf.set(prevId, state.tab);
-        const back = id ? tabOf.get(id) : '';
-        // Split view: moving focus between the panes opens the other chat here, and changes nothing in the panel (owner,
-        // 2026-11-15): the tab stays as it is.
-        if (!SUI()) {
-          state = tabState(state, { type: 'reset' });
-          if (back && back !== 'activity') state = tabState(state, { type: 'show', tab: back });
-        }
         apply();
         paintAll();
         if (id) load(true);

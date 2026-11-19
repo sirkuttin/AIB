@@ -841,6 +841,15 @@
       /* no window events (node tests) */
     }
   }
+  // Which pane shows this chat, for the small tag on its Activity section head: 'left' / 'right' (side by side) or 'top' / 'bottom'
+  // (stacked); '' when it is in no pane or there is no split. Never focus-aware.
+  function paneSide(key) {
+    const list = paneChats(),
+      i = key ? list.indexOf(key) : -1;
+    if (i < 0) return '';
+    const col = !!(L && L.tree && L.tree.k === 's' && L.tree.dir === 'col');
+    return (col ? ['top', 'bottom'] : ['left', 'right'])[i] || '';
+  }
   // What the panel shows for a pane's chat: {key, conv, id (live id or ''), title, dot()}.
   function chatInfo(key) {
     const c = host && key ? host.convOf(key) : null;
@@ -1388,6 +1397,7 @@
     active,
     panes: paneList,
     paneChats,
+    paneSide,
     chatInfo,
     menuItems,
     mirrorTargets,

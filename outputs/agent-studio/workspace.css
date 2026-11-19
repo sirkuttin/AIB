@@ -1998,7 +1998,7 @@ aside .connection.attn-unread:not(.selected) {
 }
 
 /* ---- Resizable layout (resize-ui.js): sash handles like VS Code ------------------------------------------------
-   --side-w / --activity-w / --composer-h / --act-split are set on <html> by the script; the numbers here are only fallbacks. */
+   --side-w / --activity-w / --composer-h are set on <html> by the script; the numbers here are only fallbacks. */
 .rs-handle {
   position: fixed;
   z-index: 30;
@@ -2087,13 +2087,6 @@ aside .connection.attn-unread:not(.selected) {
 .rs-composer:focus-visible::after {
   top: 0;
 }
-.rs-split {
-  position: relative;
-  order: 2;
-  flex: 0 0 7px;
-  margin: -3px 0;
-  z-index: 3;
-}
 body.rs-dragging {
   user-select: none;
   -webkit-user-select: none;
@@ -2128,7 +2121,6 @@ body.rs-dragging iframe {
   }
 }
 @media (max-width: 1099px) {
-  .rs-split,
   .rs-side,
   .rs-activity {
     display: none !important;

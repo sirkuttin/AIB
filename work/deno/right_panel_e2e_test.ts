@@ -1,15 +1,19 @@
 /**
- * The right panel's Activity tab, finished helpers (owner, 2026-11-16: in beta.11 a chat listed all 54 finished helpers one by
- * one; beta.10 folds them). With one chat: working and failed helpers are listed, every other finished helper sits under one
- * "N finished" row, collapsed by default; opening it is remembered per chat (switching chats, a reload). In split view each
- * chat's section folds the same way, from the same remembered state, and moving pane focus changes nothing.
+ * The right panel is the project's (owner, 2026-11-18; design aib-shared/designs/project-right-panel, slice S1).
+ *
+ * Activity lists one section per WORKING chat of the project on screen (mid-turn, or its helpers still run), in the order the chats
+ * started working; idle and finished chats are not listed, and a chat that finishes leaves. Opening another chat of the project (or
+ * moving split focus) moves only the accent (no reorder, show, hide or resize). Each section holds that chat's subagents (finished
+ * ones folded into "N finished", remembered per chat) and processes. A subagent history opens inside the panel at its width. The
+ * panel's tab is remembered per project and window; a layout with no saved width starts at 320 px; below 330 px of panel the tabs
+ * are icon + count (also at 125 % display scaling and a bigger interface size). Split view adds Left / Right tags on the pane chats' heads.
  *
  * A real Studio (the scroll lab: temp state folder, free port; never the live ports), scripted live chats with scripted
- * subagent_update events, headless Chrome or Edge.
+ * subagent_update events, headless Chrome or Edge. The WSL variant of these rules is right_panel_wsl_e2e_test.ts.
  *
  * Run (from outputs/agent-studio): deno test -A ../../work/deno/right_panel_e2e_test.ts   (ignored without Chrome or Edge)
  */
-import { assert } from './_assert.ts';
+import { assert, assertEquals } from './_assert.ts';
 import { browserPath, type Chat, Lab, ownerProblems, type Page, settle, shown } from './_scroll_lab.ts';
 
 function panelTest(name: string, fn: (lab: Lab) => Promise<void>) {
@@ -37,19 +41,28 @@ function helpers(chat: Chat, tag: string, list: [string, string][]) {
     chat.step({ u: { sessionUpdate: 'subagent_update', subagent: { sessionId: `${tag}-helper-${i}`, description: desc, state } } })
   );
 }
-/** A: one running, one failed and `done` finished helpers. B: one running and two finished. */
+/** A working chat (its turn stays open until `end()`), saying `end` and running the helpers given. */
+async function working(lab: Lab, end: string, list: [string, string][] = [], folder = '') {
+  const c = await lab.chat(folder);
+  await c.start();
+  c.say(`Here ${end}`);
+  helpers(c, end.toLowerCase(), list);
+  return c;
+}
+/** Wait until the chat has its Activity section (the page reads the chat list every 5 s). */
+async function joined(page: Page, c: Chat) {
+  await page.waitFor(`!!document.querySelector(${JSON.stringify(`#projectActivity .sp-grp[data-key=${JSON.stringify(c.key)}]`)})`, 20000, `${c.key} joined`);
+}
+/** A: one running, one failed and `done` finished helpers. B: one running and two finished. Both working, A open. */
 async function twoChats(lab: Lab, done = 12) {
   const page = lab.page;
-  const a = await lab.chat();
-  await a.start();
-  a.say('Alpha here ALPHAEND');
   const list: [string, string][] = [['Find rounding bug', 'running'], ['Map tax rules', 'failed']];
   for (let i = 0; i < done; i++) list.push([`Finished job ${i}`, 'completed']);
-  helpers(a, 'a', list);
-  const b = await lab.chat();
-  await b.start();
-  b.say('Beta here BETAEND');
-  helpers(b, 'b', [['Check feed spec', 'running'], ['Read old feed', 'completed'], ['List feeds', 'completed']]);
+  const a = await working(lab, 'ALPHAEND', list);
+  await lab.select(a); // the panel shows a project once a chat of it is open
+  await joined(page, a);
+  const b = await working(lab, 'BETAEND', [['Check feed spec', 'running'], ['Read old feed', 'completed'], ['List feeds', 'completed']]);
+  await joined(page, b);
   await lab.select(b);
   await shown(page, 'BETAEND');
   await lab.select(a);
@@ -57,6 +70,7 @@ async function twoChats(lab: Lab, done = 12) {
   return { a, b };
 }
 
+const SEC = (key: string) => `#projectActivity .sp-grp[data-key=${JSON.stringify(key)}]`;
 /** What a box of subagent rows shows: visible card titles, the fold row's text and state. */
 const LIST = (box: string) => `(() => {
   const box = document.querySelector(${JSON.stringify(box)});
@@ -70,57 +84,252 @@ const LIST = (box: string) => `(() => {
   };
 })()`;
 type List = { titles: string[]; fold: string; open: string | null };
-const single = (page: Page) => page.eval<List>(LIST('#subagentList'));
-
-async function waitFold(page: Page, box: string, want: RegExp, what: string) {
+const list = (page: Page, key: string) => page.eval<List>(LIST(`${SEC(key)} .sp-subs`));
+async function waitFold(page: Page, key: string, want: RegExp, what: string) {
+  const box = `${SEC(key)} .sp-subs`;
   await page.waitFor(`(() => { const l = ${LIST(box)}; return !!l && ${want}.test(l.fold); })()`, 20000, what).catch(async (e) => {
     throw new Error(`${e.message}: ${JSON.stringify(await page.eval(LIST(box)))}`);
   });
 }
+/** The sections: keys in DOM order, boxes (px), which one has the accent, the panel's width. */
+const SECTIONS = `(() => {
+  const g = [...document.querySelectorAll('#projectActivity > .sp-grp')];
+  return { keys: g.map((n) => n.dataset.key), boxes: g.map((n) => { const r = n.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)].join(','); }),
+    focus: g.filter((n) => n.classList.contains('sp-focus')).map((n) => n.dataset.key),
+    panelW: Math.round(document.getElementById('subagentsPane').getBoundingClientRect().width),
+    badge: document.querySelector('#paneTab-activity .pane-badge')?.hidden === false ? document.querySelector('#paneTab-activity .pane-badge').textContent : '' };
+})()`;
+type Sections = { keys: string[]; boxes: string[]; focus: string[]; panelW: number; badge: string };
+const sections = (page: Page) => page.eval<Sections>(SECTIONS);
+async function waitKeys(page: Page, want: string[], what: string) {
+  await page.waitFor(`JSON.stringify((${SECTIONS}).keys) === ${JSON.stringify(JSON.stringify(want))}`, 20000, what).catch(async (e) => {
+    throw new Error(`${e.message}: ${JSON.stringify(await sections(page))}`);
+  });
+}
 
-panelTest('right panel, one chat: finished helpers fold into "N finished", collapsed by default', async (lab) => {
+panelTest('right panel: 3 working chats and 1 idle give 3 sections in the order they joined; the idle chat is absent; the tab counts 3', async (lab) => {
   const page = lab.page;
-  await twoChats(lab);
-  await waitFold(page, '#subagentList', /^▸ 12 finished$/, 'A: the fold row');
-  const l = await single(page);
-  assert(l.open === 'false', `collapsed by default: ${JSON.stringify(l)}`);
-  // the always-visible rows: working, then failed; none of the 12 finished ones
-  assert(JSON.stringify(l.titles) === JSON.stringify(['Find rounding bug', 'Map tax rules']), `visible rows: ${JSON.stringify(l.titles)}`);
-  assert(!(await page.eval<boolean>(`!!document.querySelector('#splitActivity .sp-grp')?.offsetParent`)), 'no split sections with one chat');
-  // the heading is the one-chat heading, not the split label
-  const head = await page.eval<string>(`document.querySelector('#subagentList .sa-heading')?.innerText.replace(/\\s+/g, ' ') || ''`);
-  assert(/^subagents 1 working · 1 failed/i.test(head), `heading: ${head}`);
+  const a = await working(lab, 'ALPHAEND', [['Find rounding bug', 'running']]);
+  await lab.select(a);
+  await joined(page, a);
+  const b = await working(lab, 'BETAEND');
+  await joined(page, b);
+  const c = await working(lab, 'GAMMAEND', [['Check feed spec', 'running']]);
+  await joined(page, c);
+  const idle = await lab.chat();
+  await idle.start();
+  idle.say('Idle here IDLEEND');
+  idle.end();
+  await lab.select(idle);
+  await shown(page, 'IDLEEND');
+  await waitKeys(page, [a.key, b.key, c.key], 'three working chats, in join order');
+  const s = await sections(page);
+  assertEquals(s.badge, '3', 'the Activity tab counts the working chats');
+  assertEquals(s.focus, [], 'the open (idle) chat has no section, so nothing has the accent');
+  // a chat that finishes leaves; the others keep their places; a new working one joins at the end
+  b.end();
+  await waitKeys(page, [a.key, c.key], 'B finished: its section left');
+  const d = await working(lab, 'DELTAEND');
+  await waitKeys(page, [a.key, c.key, d.key], 'D joined at the end');
+  assertEquals((await sections(page)).badge, '3');
+  for (const x of [a, c, d]) x.end();
+  await page.waitFor(`!!document.querySelector('#projectActivity > .sp-empty')`, 20000, 'nothing working: the note');
+  const note = await page.eval<string>(`document.querySelector('#projectActivity > .sp-empty').textContent`);
+  assert(/^No chat in .+ is working\. .*Claude Code, Codex, Gemini, Antigravity, OMP and Maki\. All on this PC\.$/.test(note), note);
+  assertEquals((await sections(page)).badge, '', 'no count when nothing works');
 });
 
-panelTest('right panel, one chat: opening the fold lists them and is remembered per chat (chat switch, reload)', async (lab) => {
+panelTest('right panel: opening another chat of the project moves only the accent: no reorder, no size change, same width', async (lab) => {
   const page = lab.page;
-  const { a, b } = await twoChats(lab);
-  await waitFold(page, '#subagentList', /^▸ 12 finished$/, 'A: the fold row');
-  await page.click('#subagentList .sa-toggle');
-  await waitFold(page, '#subagentList', /^▾ 12 finished$/, 'A: opened');
-  let l = await single(page);
-  assert(l.open === 'true' && l.titles.length === 14, `A open: ${JSON.stringify(l)}`);
-  assert(l.titles.slice(2).every((t) => /^Finished job \d+$/.test(t)), `finished rows under the fold: ${JSON.stringify(l.titles)}`);
-  // B has its own state: still collapsed
+  const { a, b } = await twoChats(lab, 3);
+  await waitKeys(page, [a.key, b.key], 'both sections');
+  await settle(2500); // both read once
+  const before = await sections(page);
+  assertEquals(before.focus, [a.key], 'A open: its section has the accent');
   await lab.select(b);
   await shown(page, 'BETAEND');
-  await waitFold(page, '#subagentList', /^▸ 2 finished$/, 'B: collapsed');
-  assert(JSON.stringify((await single(page)).titles) === JSON.stringify(['Check feed spec']), 'B shows only its working helper');
-  // back on A: still open
-  await lab.select(a);
-  await shown(page, 'ALPHAEND');
-  await waitFold(page, '#subagentList', /^▾ 12 finished$/, 'A: still open after a chat switch');
-  // a reload keeps it
+  await settle(2500);
+  const after = await sections(page);
+  assertEquals(after.keys, before.keys, 'no reorder');
+  assertEquals(after.boxes, before.boxes, 'no section moved or changed size');
+  assertEquals(after.panelW, before.panelW, 'the panel kept its width');
+  assertEquals(after.focus, [b.key], 'the accent moved to B');
+  a.end();
+  b.end();
+});
+
+panelTest('right panel: finished helpers fold into "N finished" per section, remembered per chat over a chat switch and a reload', async (lab) => {
+  const page = lab.page;
+  const { a, b } = await twoChats(lab);
+  await waitFold(page, a.key, /^▸ 12 finished$/, 'A: the fold row');
+  let l = await list(page, a.key);
+  assert(l.open === 'false', `collapsed by default: ${JSON.stringify(l)}`);
+  assertEquals(l.titles, ['Find rounding bug', 'Map tax rules'], 'the always-visible rows: working, then failed');
+  await waitFold(page, b.key, /^▸ 2 finished$/, 'B: collapsed');
+  await page.click(`${SEC(a.key)} .sa-toggle`);
+  await waitFold(page, a.key, /^▾ 12 finished$/, 'A: opened');
+  l = await list(page, a.key);
+  assert(l.open === 'true' && l.titles.length === 14, `A open: ${JSON.stringify(l)}`);
+  assertEquals((await list(page, b.key)).titles, ['Check feed spec'], 'B keeps its own state');
+  await lab.select(b);
+  await shown(page, 'BETAEND');
+  await waitFold(page, a.key, /^▾ 12 finished$/, 'A: still open after a chat switch');
   await page.goto(`http://127.0.0.1:${lab.web.port}/chat.html`);
   await page.waitFor('!!document.getElementById("messages")', 15000, 'chat page');
   await lab.select(a);
   await shown(page, 'ALPHAEND');
-  await waitFold(page, '#subagentList', /^▾ 12 finished$/, 'A: still open after a reload');
-  // closing it again
-  await page.click('#subagentList .sa-toggle');
-  await waitFold(page, '#subagentList', /^▸ 12 finished$/, 'A: closed again');
-  l = await single(page);
-  assert(l.titles.length === 2, `closed: ${JSON.stringify(l)}`);
+  await waitFold(page, a.key, /^▾ 12 finished$/, 'A: still open after a reload');
+  a.end();
+  b.end();
+});
+
+panelTest("right panel: another chat's subagent history opens in the panel at its width; it stays open when you open another chat", async (lab) => {
+  const page = lab.page;
+  const { a, b } = await twoChats(lab, 0);
+  await page.waitFor(`!!document.querySelector(${JSON.stringify(SEC(b.key) + ' .subagent-card')})?.offsetParent`, 20000, "B's helper row");
+  const w0 = (await sections(page)).panelW;
+  assertEquals(w0, 320, 'a layout with no saved width starts at 320 px');
+  await page.click(`${SEC(b.key)} .subagent-card`);
+  await page.waitFor(`!document.getElementById('subchatPane').hidden && /Check feed spec/.test(document.getElementById('subchatTitle').textContent)`, 10000, "B's helper history");
+  await settle(800);
+  assert(await page.eval<boolean>(`document.getElementById('messages').textContent.includes('ALPHAEND')`), 'A is still the open chat');
+  assertEquals(await page.eval<number>(`Math.round(document.getElementById('subagentsPane').getBoundingClientRect().width)`), w0, 'no widening (the old 480 px)');
+  await lab.select(b);
+  await shown(page, 'BETAEND');
+  await settle(800);
+  assert(await page.eval<boolean>(`!document.getElementById('subchatPane').hidden && /Check feed spec/.test(document.getElementById('subchatTitle').textContent)`), 'still open after opening B');
+  assertEquals(await page.eval<number>(`Math.round(document.getElementById('subagentsPane').getBoundingClientRect().width)`), w0, 'same width');
+  a.end();
+  b.end();
+});
+
+panelTest('right panel: the tab is remembered per project (and window): another chat of the project keeps it, another project has its own, a reload keeps both', async (lab) => {
+  const page = lab.page;
+  const a = await working(lab, 'ALPHAEND');
+  await lab.select(a);
+  await shown(page, 'ALPHAEND');
+  const a2 = await working(lab, 'ALPHATWO');
+  await joined(page, a2);
+  const other = await working(lab, 'OTHEREND', [], 'other');
+  await page.waitFor(`StudioChat.state.conversations.some((c) => c.provider + ':' + (c.sessionId || c.id) === ${JSON.stringify(other.key)})`, 20000, 'the other project\'s chat listed');
+  await lab.select(a2);
+  await shown(page, 'ALPHATWO');
+  await lab.select(a);
+  await shown(page, 'ALPHAEND');
+  const tab = () => page.eval<string>(`document.querySelector('#paneTabs [aria-selected="true"]').dataset.tab`);
+  const pkOf = (key: string) => page.eval<string>(`AgentWorkspaceUI.projectKeyOf(StudioChat.state.conversations.find((c) => c.provider + ':' + (c.sessionId || c.id) === ${JSON.stringify(key)}))`);
+  const pkA = await pkOf(a.key), pkO = await pkOf(other.key);
+  assert(pkA && pkO && pkA !== pkO, `two projects: ${pkA} / ${pkO}`);
+  await page.click('#paneTab-changes');
+  await settle(300);
+  await lab.select(a2);
+  await shown(page, 'ALPHATWO');
+  assertEquals(await tab(), 'changes', 'another chat of the same project keeps Changes');
+  await page.eval(`AgentWorkspaceUI.selectProject(${JSON.stringify(pkO)})`);
+  await lab.select(other);
+  await shown(page, 'OTHEREND');
+  await page.waitFor(`document.querySelector('#paneTabs [aria-selected="true"]').dataset.tab === 'activity'`, 8000, 'the other project starts on Activity');
+  assertEquals(await page.eval<string[]>(`[...document.querySelectorAll('#projectActivity > .sp-grp')].map((g) => g.dataset.key)`), [other.key], "the panel shows the other project's working chat only");
+  await page.click('#paneTab-artifacts');
+  await settle(300);
+  await page.eval(`AgentWorkspaceUI.selectProject(${JSON.stringify(pkA)})`);
+  await lab.select(a);
+  await shown(page, 'ALPHAEND');
+  await page.waitFor(`document.querySelector('#paneTabs [aria-selected="true"]').dataset.tab === 'changes'`, 20000, 'back on the first project: Changes');
+  await page.goto(`http://127.0.0.1:${lab.web.port}/chat.html`);
+  await page.waitFor('!!document.getElementById("messages")', 15000, 'chat page');
+  await lab.select(a);
+  await shown(page, 'ALPHAEND');
+  await page.waitFor(`document.querySelector('#paneTabs [aria-selected="true"]').dataset.tab === 'changes'`, 15000, 'after a reload: Changes');
+  const saved = await page.eval<Record<string, string>>(`JSON.parse(localStorage.getItem('studio-panel-tab-v1') || '{}')`);
+  assertEquals(saved[pkA], 'changes');
+  assertEquals(saved[pkO], 'artifacts');
+  for (const x of [a, a2, other]) x.end();
+});
+
+panelTest('right panel: 320 px only without a saved width; tabs are icon + count below 330 px of panel, at 100 %, 125 % display scaling and a bigger interface size', async (lab) => {
+  const page = lab.page;
+  const a = await working(lab, 'ALPHAEND', [['Find rounding bug', 'running']]);
+  await lab.select(a);
+  await shown(page, 'ALPHAEND');
+  const look = () => page.eval<{ w: number; own: number; labels: boolean[]; icons: boolean[]; names: string[] }>(`(() => {
+    const tabs = [...document.querySelectorAll('#paneTabs .pane-tab')], vis = (n) => !!n && getComputedStyle(n).display !== 'none' && n.getBoundingClientRect().width > 0;
+    return { w: Math.round(document.getElementById('subagentsPane').getBoundingClientRect().width),
+      own: Math.round(document.getElementById('paneTabs').offsetWidth),
+      labels: tabs.map((t) => vis(t.querySelector('.pane-tab-label'))), icons: tabs.map((t) => vis(t.querySelector('.pane-tab-ico'))),
+      names: tabs.map((t) => t.getAttribute('aria-label') + '|' + t.title) };
+  })()`);
+  let l = await look();
+  assertEquals(l.w, 320, 'no saved width: 320 px');
+  assert(l.icons.every(Boolean) && !l.labels.some(Boolean), `320 px: icon tabs ${JSON.stringify(l)}`);
+  assert(l.names.every((n) => /^(Activity|Changes|Artifacts)/.test(n) && /\|(Activity|Changes|Artifacts)$/.test(n)), `labels stay in the aria label and tooltip: ${JSON.stringify(l.names)}`);
+  // a saved width wins (the layout key of this window-width bucket)
+  const save = (w: number) => page.eval(`localStorage.setItem('studio-layout-v1:<1800', JSON.stringify({ activity: ${w} }))`);
+  const reload = async () => {
+    await page.goto(`http://127.0.0.1:${lab.web.port}/chat.html`);
+    await page.waitFor('!!document.getElementById("messages")', 15000, 'chat page');
+    await lab.select(a);
+    await shown(page, 'ALPHAEND');
+    await settle(600);
+  };
+  await save(280);
+  await reload();
+  l = await look();
+  assertEquals(l.w, 280, 'a saved 280 stays 280');
+  await save(360);
+  await reload();
+  l = await look();
+  assertEquals(l.w, 360);
+  assert(l.labels.every(Boolean) && !l.icons.some(Boolean), `360 px: labelled tabs ${JSON.stringify(l)}`);
+  // 125 % Windows display scaling (device pixels 1.25 per CSS px): CSS widths are the same, so the same switch at 330 CSS px
+  await page.send('Emulation.setDeviceMetricsOverride', { width: 1600, height: 900, deviceScaleFactor: 1.25, mobile: false });
+  await page.eval(`localStorage.removeItem('studio-layout-v1:<1800')`);
+  await reload();
+  l = await look();
+  assertEquals(l.w, 320, '125 % display scaling, no saved width: 320');
+  assert(l.icons.every(Boolean) && !l.labels.some(Boolean), `125 % display, 320 px: icon tabs ${JSON.stringify(l)}`);
+  await save(360);
+  await reload();
+  l = await look();
+  assert(l.labels.every(Boolean) && !l.icons.some(Boolean), `125 % display, 360 px: labelled tabs ${JSON.stringify(l)}`);
+  await page.send('Emulation.setDeviceMetricsOverride', { width: 1600, height: 900, deviceScaleFactor: 1, mobile: false });
+  // AIB's own interface size (steps of 10; 120 % here): widths grow with it and the switch is on the panel's own width (on
+  // screen / 1.2): a saved 360 is 300 own (icons), 450 is 375 own (labels); no saved width is 320 x 1.2 = 384 (320 own, icons)
+  await page.eval(`AgentTextSize.setUi(120)`);
+  await settle(800);
+  l = await look();
+  assertEquals(l.w, 360, 'a saved width stays as it is at another interface size');
+  assert(l.icons.every(Boolean) && !l.labels.some(Boolean), `120 %, 300 own px: icon tabs ${JSON.stringify(l)}`);
+  await save(450);
+  await reload();
+  l = await look();
+  assertEquals(l.w, 450);
+  assert(l.labels.every(Boolean) && !l.icons.some(Boolean), `120 %, 375 own px: labelled tabs ${JSON.stringify(l)}`);
+  await page.eval(`localStorage.removeItem('studio-layout-v1:<1800')`);
+  await reload();
+  l = await look();
+  assertEquals(l.w, 384, '120 %, no saved width: 320 x 1.2');
+  assert(l.icons.every(Boolean) && !l.labels.some(Boolean), `120 %, 320 own px: icon tabs ${JSON.stringify(l)}`);
+  await page.eval(`AgentTextSize.setUi(100)`);
+  a.end();
+});
+
+panelTest('right panel: two pages of the same project list the same sections in the same order', async (lab) => {
+  const page = lab.page;
+  const { a, b } = await twoChats(lab, 0);
+  await waitKeys(page, [a.key, b.key], 'page 1: both sections');
+  const second = await lab.browser.open('about:blank', 1600, 900);
+  try {
+    await second.goto(`http://127.0.0.1:${lab.web.port}/chat.html`);
+    await second.waitFor('!!document.getElementById("messages")', 15000, 'page 2');
+    await second.waitFor(`document.querySelectorAll('#projectActivity > .sp-grp').length === 2`, 20000, 'page 2: both sections');
+    assertEquals((await sections(second)).keys, (await sections(page)).keys, 'same sections, same order');
+    assert(second.errors.length === 0, `page 2 console errors: ${second.errors.join(' | ')}`);
+  } finally {
+    await second.close();
+  }
+  a.end();
+  b.end();
 });
 
 /* ---- split view ---- */
@@ -131,83 +340,47 @@ async function split(lab: Lab, a: Chat, b: Chat) {
   await page.eval(`(() => { const p = AgentSplitUI.panes().find((p) => p.group.active === ${JSON.stringify(a.key)}); if (p && !p.focused) AgentSplitUI.focusPane(p.id); })()`);
   await page.waitFor(`AgentSplitUI.panes().find((p) => p.focused)?.group.active === ${JSON.stringify(a.key)}`, 15000, 'A focused');
 }
-const SEC = (n: number) => `#splitActivity .sp-grp:nth-child(${n}) .sp-subs`;
 const focusedKey = (page: Page) => page.eval<string>(`AgentSplitUI.panes().find((p) => p.focused)?.group.active || ''`);
+const tags = (page: Page) => page.eval<string[]>(`[...document.querySelectorAll('#projectActivity > .sp-grp')].map((g) => g.querySelector('.sp-pane-tag')?.textContent || '')`);
 
-panelTest('right panel, split view: each chat folds its finished helpers the same way; focus changes nothing', async (lab) => {
+panelTest('right panel, split view: the same sections with Left / Right tags; a third working chat is listed too; focus moves only the accent', async (lab) => {
   const page = lab.page;
-  const { a, b } = await twoChats(lab);
+  const { a, b } = await twoChats(lab, 3);
+  await settle(300);
+  const c = await working(lab, 'GAMMAEND', [['Third helper', 'running']]);
+  await waitKeys(page, [a.key, b.key, c.key], 'three working chats');
   await split(lab, a, b);
-  await waitFold(page, SEC(1), /^▸ 12 finished$/, "A's section folds");
-  await waitFold(page, SEC(2), /^▸ 2 finished$/, "B's section folds");
-  const la = await page.eval<List>(LIST(SEC(1)));
-  assert(JSON.stringify(la.titles) === JSON.stringify(['Find rounding bug', 'Map tax rules']), `A rows: ${JSON.stringify(la.titles)}`);
-  // open B's fold (the unfocused chat): only B's section opens, focus stays on A
-  await page.click(`${SEC(2)} .sa-toggle`);
-  await waitFold(page, SEC(2), /^▾ 2 finished$/, "B's section opened");
-  assert((await page.eval<List>(LIST(SEC(1)))).open === 'false', "A's section stays collapsed");
+  await page.waitFor(`JSON.stringify([...document.querySelectorAll('#projectActivity > .sp-grp')].map((g) => g.querySelector('.sp-pane-tag')?.textContent || '')) === '["Left","Right",""]'`, 15000, 'pane tags').catch(async (e) => {
+    throw new Error(`${e.message}: ${JSON.stringify(await tags(page))}`);
+  });
+  await waitFold(page, a.key, /^▸ 3 finished$/, "A's section folds");
+  await page.click(`${SEC(b.key)} .sa-toggle`);
+  await waitFold(page, b.key, /^▾ 2 finished$/, "B's section opened");
   assert((await focusedKey(page)) === a.key, 'opening the fold did not move focus');
-  const before = JSON.stringify([await page.eval(LIST(SEC(1))), await page.eval(LIST(SEC(2)))]);
-  // focus B: neither section changes
+  await settle(2000);
+  const before = await sections(page);
   await page.click('#splitStage .pane:not(.foc) :is(.mirror-copy > header [data-mid="title"], .mirror-head)');
   await page.waitFor(`AgentSplitUI.panes().find((p) => p.focused)?.group.active === ${JSON.stringify(b.key)}`, 15000, 'focus on B');
   await settle(2500);
-  const after = JSON.stringify([await page.eval(LIST(SEC(1))), await page.eval(LIST(SEC(2)))]);
-  assert(before === after, `focus changed the sections:\n${before}\n${after}`);
+  const after = await sections(page);
+  assertEquals(after.keys, before.keys, 'no reorder');
+  assertEquals(after.boxes, before.boxes, 'no move or size change');
+  assertEquals(after.panelW, before.panelW, 'same width');
+  assertEquals([before.focus, after.focus], [[a.key], [b.key]], 'only the accent moved');
+  assertEquals(await tags(page), ['Left', 'Right', ''], 'tags never follow focus');
+  for (const x of [a, b, c]) x.end();
 });
 
-/* ---- split mode only with two chats on screen (owner, 2026-11-16: one chat on screen, yet the panel drew split sections) ----
-   A pane showing the New chat view is no chat: the panel is the one-chat panel (Subagents heading, fold, the × in its row),
-   about the open chat; with two chats on screen again it lists both. A New chat pane you leave closes (the split collapses). */
-const PANEL_MODE = `(() => {
-  const vis = (n) => !!n && n.getClientRects().length > 0 && n.getBoundingClientRect().width > 0;
-  return {
-    splitOn: document.body.classList.contains('split-on'),
-    splitPanel: document.body.classList.contains('split-panel'),
-    panes: AgentSplitUI.panes().length,
-    sections: [...document.querySelectorAll('#splitActivity .sp-grp')].filter(vis).length,
-    single: vis(document.getElementById('subagentList')) && vis(document.querySelector('#subagentList .sa-heading')),
-    hideInHeading: !!document.querySelector('#subagentList .sa-heading #activityHide'),
-  };
-})()`;
-type Mode = { splitOn: boolean; splitPanel: boolean; panes: number; sections: number; single: boolean; hideInHeading: boolean };
-const mode = (page: Page) => page.eval<Mode>(PANEL_MODE);
-async function waitMode(page: Page, want: string, what: string) {
-  await page.waitFor(`(() => { const m = ${PANEL_MODE}; return ${want}; })()`, 15000, what).catch(async (e) => {
-    throw new Error(`${e.message}: ${JSON.stringify(await mode(page))}`);
-  });
-}
-
-panelTest('right panel: a split with a New chat pane (one chat on screen) shows the one-chat panel; two chats again list both', async (lab) => {
+panelTest('right panel, split view with a New chat pane: the sections stay, the pane tags go (only one chat on screen)', async (lab) => {
   const page = lab.page;
   const { a, b } = await twoChats(lab, 3);
   await split(lab, a, b);
-  await waitMode(page, 'm.splitPanel && m.sections === 2 && !m.single', 'two chats: split sections');
-  // New chat in the focused pane: A's pane shows the New chat view, B's pane B
+  await page.waitFor(`document.querySelectorAll('#projectActivity .sp-pane-tag').length === 2`, 15000, 'two tags');
   await page.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'N', code: 'KeyN', ctrlKey: true, shiftKey: true, bubbles: true }))`);
   await page.waitFor(`AgentSplitUI.panes().some((p) => p.group.active === '__draft__')`, 15000, 'a New chat pane');
-  await waitMode(page, 'm.splitOn && m.panes === 2 && !m.splitPanel && m.sections === 0 && m.single && m.hideInHeading', 'one chat on screen: the one-chat panel');
-  await page.click('#paneTab-changes');
-  await settle(500);
-  assert(!(await page.eval<boolean>(`!!document.querySelector('#splitChanges .sp-grp')?.offsetParent`)), 'Changes: no split sections');
-  await page.click('#paneTab-activity');
-  // focus B's pane: the New chat view goes, both panes show a chat again
-  await page.eval(`(() => { const p = AgentSplitUI.panes().find((p) => p.group.active === ${JSON.stringify(b.key)}); AgentSplitUI.focusPane(p.id); })()`);
-  await waitMode(page, 'm.splitPanel && m.sections === 2 && !m.single', 'two chats again: split sections');
-});
-
-panelTest('right panel: Ctrl+Backslash on a one-chat window gives a New chat pane (one-chat panel); leaving it closes the pane', async (lab) => {
-  const page = lab.page;
-  const a = await lab.chat();
-  await a.start();
-  a.say('Alpha here ALPHAEND');
-  helpers(a, 'a', [['Find rounding bug', 'running'], ['Done one', 'completed'], ['Done two', 'completed']]);
-  await lab.select(a);
-  await shown(page, 'ALPHAEND');
-  await page.eval(`AgentSplitUI.splitFocused('row')`);
-  await page.waitFor(`AgentSplitUI.panes().length === 2`, 15000, 'two panes');
-  await waitMode(page, 'm.splitOn && !m.splitPanel && m.sections === 0 && m.single', 'New chat pane + one chat: the one-chat panel');
-  await page.eval(`(() => { const p = AgentSplitUI.panes().find((p) => p.group.active === ${JSON.stringify(a.key)}); AgentSplitUI.focusPane(p.id); })()`);
-  await waitMode(page, '!m.splitOn && !m.splitPanel && m.panes === 0 && m.single', 'the New chat pane closed: one chat, no split');
-  await waitFold(page, '#subagentList', /^▸ 2 finished$/, 'the one-chat fold');
+  await page.waitFor(`document.querySelectorAll('#projectActivity .sp-pane-tag').length === 0`, 15000, 'no tags with one chat on screen');
+  assertEquals((await sections(page)).keys, [a.key, b.key], 'the same working chats');
+  assertEquals((await sections(page)).focus, [], 'the New chat view has no section');
+  a.end();
+  b.end();
 });

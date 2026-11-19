@@ -641,25 +641,39 @@ test('local docs: a doc is one row "2 pages changed" (its files are not listed),
   noButtons(pane(t));
 });
 
-test('each chat keeps its right-column tab: back on a chat, the tab you left it on shows again (owner 2026-11-15)', async () => {
+test('the right-column tab is the project\'s: another chat of the project keeps it, each project (per window) keeps its own, and a reload brings it back (owner 2026-11-18)', async () => {
   const t = setup();
   const C = require(path.join(APP_DIR, 'changes-ui.js'));
   const pane = t.ids.subagentsPane;
+  const saved = new Map();
+  t.win.localStorage = { getItem: (k) => (saved.has(k) ? saved.get(k) : null), setItem: (k, v) => saved.set(k, String(v)) };
+  t.win.AibStore = { winKey: (k) => k + ':w2', layoutWritable: () => true }; // window 2 of the app
+  let pk = 'p1';
+  t.win.AgentWorkspaceUI = { panelProject: () => ({ key: pk, name: pk }) };
+  const tab = () => (pane.classList.contains('tab-changes') ? 'changes' : pane.classList.contains('tab-artifacts') ? 'artifacts' : 'activity');
+  C.sync({ id: 'chat1', busy: false });
+  assert.equal(tab(), 'activity', 'a project never seen starts on Activity');
   t.ui().show('changes');
   await flush();
-  assert.ok(pane.classList.contains('tab-changes'));
-  C.sync({ id: 'chat2', busy: false }); // another chat: it starts on Activity
+  C.sync({ id: 'chat2', busy: false }); // another chat of p1
   await flush();
-  assert.ok(!pane.classList.contains('tab-changes') && !pane.classList.contains('tab-artifacts'), 'a new chat shows Activity');
+  assert.equal(tab(), 'changes', 'another chat of the same project keeps the tab');
+  pk = 'p2';
+  C.sync({ id: 'chat3', busy: false }); // a chat of another project
+  await flush();
+  assert.equal(tab(), 'activity', 'another project starts on its own tab (Activity when never set)');
   t.ui().show('artifacts');
+  pk = 'p1';
   C.sync({ id: 'chat1', busy: false });
   await flush();
-  assert.ok(pane.classList.contains('tab-changes'), 'chat1 is back on Changes');
-  C.sync({ id: 'chat2', busy: false });
+  assert.equal(tab(), 'changes', 'p1 is back on Changes');
+  pk = 'p2';
+  C.sync({ id: 'chat3', busy: false });
   await flush();
-  assert.ok(pane.classList.contains('tab-artifacts'), 'chat2 is back on Artifacts');
+  assert.equal(tab(), 'artifacts', 'p2 is back on Artifacts');
+  assert.deepEqual(JSON.parse(saved.get('studio-panel-tab-v1:w2')), { p1: 'changes', p2: 'artifacts' }, 'kept per window');
+  assert.ok(!saved.has('studio-panel-tab-v1'), "the main window's key is not touched");
 });
-
 test('folderKey: two chats in the project folder (same root, scope, prefix) are one folder; other replies are their own', () => {
   const a = { git: true, scope: 'uncommitted', root: 'C:/p', prefix: '' };
   assert.equal(C.folderKey(a), C.folderKey({ ...a, files: [] }));

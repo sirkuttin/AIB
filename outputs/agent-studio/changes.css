@@ -8,7 +8,7 @@
   border-bottom: 1px solid var(--line);
   container-type: inline-size;
 }
-/* The default 280 px column: tighter tabs, so all three labels and the widen button fit without cutting anything (QA m8). */
+/* A narrow column: tighter tabs, so the labels and the widen button fit without cutting anything (QA m8). */
 @container (max-width: 340px) {
   .pane-tabs .pane-tab {
     padding: 0 3px;
@@ -46,6 +46,43 @@
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+/* Below 330 px of panel (its own width, so the same at every interface size) each tab is its icon and its count; the label stays
+   in the tooltip and the aria label (changes-ui.js tabBtn). The tab row is the size container. */
+.pane-tab-ico {
+  display: none;
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  background: currentColor;
+  -webkit-mask: var(--pane-ico) center / contain no-repeat;
+  mask: var(--pane-ico) center / contain no-repeat;
+}
+.pane-ico-activity {
+  --pane-ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1.5 8h3l2-5 3 10 2-5h3'/%3E%3C/svg%3E");
+}
+.pane-ico-changes {
+  --pane-ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.5' stroke-linecap='round'%3E%3Crect x='2.5' y='1.5' width='11' height='13' rx='2'/%3E%3Cpath d='M8 4.5v4M6 6.5h4M6 11h4'/%3E%3C/svg%3E");
+}
+.pane-ico-artifacts {
+  --pane-ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.5' stroke-linejoin='round'%3E%3Crect x='1.5' y='2.5' width='13' height='11' rx='1.5'/%3E%3Cpath d='M1.5 5.5h13'/%3E%3C/svg%3E");
+}
+@container (max-width: 329.98px) {
+  .pane-tabs .pane-tab-ico {
+    display: block;
+  }
+  .pane-tabs .pane-tab-label {
+    display: none;
+  }
+  .pane-tabs .pane-tab {
+    padding: 0 7px;
+    gap: 4px;
+  }
+}
+/* The Activity count while any chat of the project works: a Working-colour fill (the text keeps the body colour for contrast). */
+.pane-badge.pane-badge-working {
+  background: var(--status-working-track);
+  color: var(--text);
 }
 .pane-tab:hover {
   color: var(--text);
@@ -119,13 +156,6 @@
     /* the chat title's row height, but never a tall band when a narrowed chat column wraps its header to two rows (QA m9) */
     height: min(var(--hd-h, 48px), 56px);
     min-height: min(var(--hd-h, 48px), 56px);
-  }
-  /* the tab row now takes the chat title's row; the Subagents heading is an ordinary 28 px heading below it */
-  .sa-heading {
-    height: 28px;
-    min-height: 28px;
-    margin-top: 4px;
-    border-bottom: 0;
   }
 }
 /* Changes replaces the Activity body while its tab is open. */

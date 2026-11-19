@@ -50,7 +50,7 @@
     conversations = [],
     agents = [],
     subSelection = null,
-    /* the chat (alias key) whose subagent or process history is open. Split view: either pane's chat, whichever has focus. */
+    /* the chat (alias key) whose subagent or process history is open: any chat with an Activity section, open or not. */
     subOwner = '',
     provider = 'all',
     polling = false,
@@ -133,7 +133,6 @@
     drafts = new DraftStore(localStorage, 'studio-drafts-v1', window.AibStore);
   let commands = [],
     selectedCommand = null,
-    showCommandHistory = false,
     commandSignature = '';
   let recoveredList = [],
     recoveryWarning = '',
@@ -294,9 +293,10 @@
   /* ---- Live chats' events: chat-cache.js keeps them, one entry per connection id, shared by the main list, side panes and the
      subagent view. The arrays live only there: read them through the entry's named calls (work/test_event_readers.js). */
   const chatCache = window.ChatCache.create();
-  // split view's Activity sections (renderSplitActivity, by the split-view code further down)
-  const splitAct = { box: null, secs: new Map(), busy: false };
-  const activityHideBtn = $('activityHide'); // held: opening a chat empties #subagentList, where it sits with one chat
+  // The right panel's Activity: one section per working chat of the project (renderProjectActivity, further down). order: the
+  // sections' alias keys in the order they joined; pk: the project they belong to.
+  const projAct = { secs: new Map(), busy: false, order: [], pk: '', empty: null };
+  const paneAct = new Map(); // alias key -> what its section shows: { kids: Map, rows, commands, snap, at, cmdAt, histAt }
   const liveCache = (id = current) => chatCache.entry(id || '');
   const liveLoaded = () => liveCache().loaded();
   const SCROLL_V2 = (() => {
@@ -1164,6 +1164,7 @@
     if (newDraft && !selected) renderNewChat();
     window.AgentSidebarUI?.sync(conversations, selected);
     window.AgentWorkspaceUI?.sync(conversations, selected);
+    renderProjectActivity(); // a chat that started or stopped working joins or leaves Activity
     const org = window.AgentOrganizeUI;
     org?.syncHeader(selected);
     const q = '';
@@ -1279,13 +1280,9 @@
   function beginConversation(c) {
     // split view: the chat leaving the real view keeps its header, bars and chip row for its pane's copy (split-ui.js)
     if (selected && aliasKey(selected) !== aliasKey(c)) window.AgentSplitUI?.snapshot?.();
-    // Split view: focus moving to the other pane changes nothing in the right panel, so an open history (of either pane's chat)
-    // stays open, on the same item.
-    const S = window.AgentSplitUI,
-      keepHist =
-        !!(S?.active?.() && subOwner && (subSelection || selectedCommand) && !$('subchatPane').hidden) &&
-        S.paneChats().includes(subOwner) &&
-        S.paneChats().includes(aliasKey(c));
+    // The right panel is the project's: opening another chat of the same project (or moving split focus) changes nothing in it,
+    // so an open history (of any of the project's chats) stays open, on the same item. Another project's chat closes it.
+    const keepHist = !!(subOwner && (subSelection || selectedCommand) && !$('subchatPane').hidden) && sameProject(subOwner, c);
     const incoming = splitSwap(c),
       opening = () =>
         incoming
@@ -1297,7 +1294,6 @@
     if (selected) keepDraft();
     $('prompt').value = drafts.get(aliasKey(c)) || '';
     if (!keepHist) document.body.classList.remove('subchat-open');
-    $('subagentCount').textContent = '0';
     newDraft = null;
     window.ToolViews?.setScope?.(aliasKey(c)); // open tool rows and step groups belong to this chat
     notePlaces([c]);
@@ -1325,7 +1321,6 @@
       subTrail = [];
     }
     commands = [];
-    showCommandHistory = false;
     commandSignature = '';
     children.clear();
     agents = [];
@@ -1352,9 +1347,7 @@
     $('renameCurrent').hidden = false;
     opening();
     if (incoming) mainCtl()?.apply(); // the rows from the pane's copy, at the place you read there
-    $('subagentList').replaceChildren();
-    $('runningCommandList').replaceChildren();
-    $('commandCount').textContent = '0';
+    renderProjectActivity(); // the accent moves to this chat's section (nothing else in the panel changes)
     sessionStorage.setItem('studio-selected', c.key);
     clearError();
     renderHeader();
@@ -2724,96 +2717,31 @@
     return typeof main?.model === 'string' ? main.model : '';
   }
   /* Subagent worktrees (P1): a Claude chat whose Claude Code settings turn hooks off can't give its subagents their own worktree;
-     Activity says so under the Subagents heading (the chips per subagent come in P3). */
-  function paintIsolationNote() {
-    const iso = current && snapshot ? snapshot.subagentIsolation : null,
-      noBash = !!iso && !iso.on && iso.reason === 'Git Bash not found',
-      show = !!iso && !iso.on && (iso.reason === 'hooks are off' || noBash);
-    let note = $('subagentIsolationNote');
-    if (!note && !show) return;
-    if (!note) {
-      const heading = document.querySelector('#activityBody > .subagent-section-heading');
-      if (!heading) return;
-      note = text('p', '', 'command-status-note subagent-isolation-note');
-      note.id = 'subagentIsolationNote';
-      heading.after(note);
-    }
-    note.textContent = noBash ? 'Editing subagents are off: Git Bash not found' : 'Not isolated: hooks are off';
-    note.title = noBash
-      ? "Claude Code runs AIB's hooks with Git Bash. Without it AIB can't give subagents their own worktree, so it turns subagents that edit off for this chat. Read-only ones (Explore, Plan) still work."
-      : "Subagents aren't isolated: hooks are off in your Claude Code settings, so AIB can't give them their own worktree.";
-    note.hidden = !show;
+     its Activity section says so under its head (the chips per subagent come in P3). iso: the chat's snapshot.subagentIsolation. */
+  function isolationWords(iso) {
+    const noBash = !!iso && !iso.on && iso.reason === 'Git Bash not found';
+    if (!iso || iso.on || !(iso.reason === 'hooks are off' || noBash)) return null;
+    return {
+      text: noBash ? 'Editing subagents are off: Git Bash not found' : 'Not isolated: hooks are off',
+      title: noBash
+        ? "Claude Code runs AIB's hooks with Git Bash. Without it AIB can't give subagents their own worktree, so it turns subagents that edit off for this chat. Read-only ones (Explore, Plan) still work."
+        : "Subagents aren't isolated: hooks are off in your Claude Code settings, so AIB can't give them their own worktree.",
+    };
   }
+  /* The open chat's own helper counts (actCounts: the header's "working elsewhere" facts), then the project's Activity. */
   function renderAgents() {
-    paintIsolationNote();
-    const rows = sortAgents(current ? [...children.values()] : agents.filter((a) => !a.main));
-    if (window.SubagentsUI) {
-      window.SubagentsUI.render({
-        box: $('subagentList'),
-        countEl: $('subagentCount'),
-        rows,
-        now: Date.now() / 1000,
-        convKey: selected?.key || '',
-        selectedKey: subSelection?.key,
-        chatModel: chatModel(),
-        empty: 'No subagents yet',
-        onModel: (m) => {
-          actCounts = { subagents: m.top.length + m.done.length, working: m.working.length, failed: m.failed };
-          renderActivityStrip();
-        },
-        onOpen: toggleSubagent,
-        rerender: renderAgents,
-      });
-      return;
-    }
-    $('subagentCount').textContent = rows.length;
-    const box = $('subagentList'),
-      existing = new Map([...box.children].map((n) => [n.dataset.key, n]));
-    for (const [index, a] of rows.entries()) {
-      let button = existing.get(a.key);
-      if (!button) {
-        button = text('button', '', 'subagent-card');
-        button.dataset.key = a.key;
-        button.onclick = () => toggleSubagent(a);
-      }
-      existing.delete(a.key);
-      button.className = 'subagent-card' + (subSelection?.key === a.key ? ' selected' : '');
-      button.replaceChildren(
-        text('strong', a.name),
-        agentBadge(a),
-        text(
-          'p',
-          (
-            (a.description && a.description !== a.name ? a.description : '') ||
-            a.last?.text ||
-            a.last?.intent ||
-            a.model ||
-            ''
-          )
-            .replace(/\s+/g, ' ')
-            .slice(0, 140),
-        ),
-      );
-      if (box.children[index] !== button) box.insertBefore(button, box.children[index] || null);
-    }
-    for (const node of existing.values()) node.remove();
-    if (!rows.length)
-      box.replaceChildren(
-        text(
-          'p',
-          current
-            ? 'Subagents will appear here when the agent delegates work.'
-            : 'No saved subagents in this conversation.',
-          'empty-state',
-        ),
-      );
+    const m = window.SubagentsUI?.model(allAgentRows(), Date.now() / 1000, chatModel());
+    actCounts = m
+      ? { subagents: m.top.length + m.done.length, working: m.working.length, failed: m.failed }
+      : { subagents: 0, working: 0, failed: 0 };
+    renderProjectActivity();
   }
   let rowExtra = { main: 0, sub: 0 };
   let subTrail = [],
     subFetch = { key: '', at: 0 },
     subLinksSignature = '',
     actCounts = { subagents: 0, working: 0, failed: 0 };
-  /* The Activity tab's count: subagents working right now, like Changes and Artifacts show theirs. */
+  /* The Activity tab's count: the working chats it lists (amber while any), like Changes and Artifacts show theirs. */
   function paintActivityTabBadge() {
     const tab = $('paneTab-activity');
     if (!tab) return;
@@ -2823,26 +2751,25 @@
       b.className = 'pane-badge';
       tab.append(b);
     }
-    // split view: both panes' chats (the same whichever has focus)
-    const n = splitAct.secs.size
-      ? [...splitAct.secs.values()].reduce((t, s) => t + ((s.counts && s.counts.working) || 0), 0)
-      : actCounts.working;
+    const n = projAct.secs.size;
     b.textContent = n > 99 ? '99+' : String(n);
     b.hidden = !n;
-    tab.setAttribute('aria-label', 'Activity' + (n ? ', ' + n + (n === 1 ? ' subagent' : ' subagents') + ' working' : ''));
+    b.className = 'pane-badge' + (n ? ' pane-badge-working' : '');
+    tab.setAttribute('aria-label', 'Activity' + (n ? ', ' + n + (n === 1 ? ' chat' : ' chats') + ' working' : ''));
   }
+  /* The narrow-window strip: the project's working subagents, failed ones and running processes, summed over the sections. */
   function renderActivityStrip() {
-    window.ActivityUI?.renderStrip($('activityChips'), {
-      ...actCounts,
-      processes: commands.filter(isRunningCommand).length,
-    });
+    const t = { subagents: 0, working: 0, failed: 0, processes: 0 };
+    for (const s of projAct.secs.values())
+      if (s.counts) for (const k in t) t[k] += Number(s.counts[k]) || 0;
+    window.ActivityUI?.renderStrip($('activityChips'), t);
     paintActivityTabBadge();
   }
   function allAgentRows() {
     return current ? [...children.values()] : agents.filter((a) => !a.main);
   }
-  /* The chat the open history belongs to: the focused chat's own state, or (split view) the other pane's chat as the right panel
-     reads it (paneAct). Opening or reading a history never moves pane focus. */
+  /* The chat the open history belongs to: the open chat's own state, or another chat of the project as its Activity section reads
+     it (paneAct). Opening or reading a history never opens that chat or moves pane focus. */
   function subCtx() {
     const selKey = selected ? aliasKey(selected) : '';
     if (!subOwner || subOwner === selKey)
@@ -2857,7 +2784,7 @@
     else if (selectedCommand) subTrail.push({ command: selectedCommand.id });
   }
   async function openSubagent(agent, keepTrail, owner) {
-    if (!current && !selected) {
+    if (!owner && !current && !selected) {
       closeInspector();
       return;
     }
@@ -2881,9 +2808,7 @@
     window.AgentChangesUI?.show('activity'); // the history lives in the Activity tab
     window.ActivityUI?.drill(true);
     renderSubHead();
-    renderAgents();
-    renderCommands();
-    renderSplitActivity();
+    renderProjectActivity();
     await refreshSubagent();
   }
   async function subBack() {
@@ -3752,7 +3677,6 @@
     renderConversations();
     renderNewChat();
     renderAgents();
-    renderCommands();
     $('prompt').focus();
   }
   // The new chat's folder and its branch as GET /api/live/branch answered. Every new chat works in the project folder (owner
@@ -4848,12 +4772,6 @@
       }[task.status] || task.status
     );
   }
-  function noteCommands(note, isError) {
-    $('commandStatusNote').textContent = note;
-    $('commandStatusNote').hidden = !isError;
-    const heading = $('commandListHeading').parentNode;
-    if (heading) heading.title = note;
-  }
   function procSeconds(task) {
     if (Number.isFinite(task.durationMs)) return task.durationMs / 1000;
     const start = Date.parse(task.started),
@@ -4862,38 +4780,7 @@
     if (Number.isFinite(end)) return Math.max(0, (end - start) / 1000);
     return isRunningCommand(task) ? Math.max(0, (Date.now() - start) / 1000) : NaN;
   }
-  function renderCommands() {
-    const running = commands.filter(isRunningCommand),
-      rows = commands.filter((task) => showCommandHistory || isRunningCommand(task));
-    $('commandCount').textContent = window.ActivityUI
-      ? window.ActivityUI.processHeading(running.length)
-      : running.length + ' running';
-    $('commandListHeading').textContent = 'Processes';
-    const toggle = $('commandHistoryToggle');
-    toggle.title = showCommandHistory ? 'Hide history' : 'Show history';
-    toggle.setAttribute('aria-label', showCommandHistory ? 'Hide command history' : 'Show command history');
-    toggle.setAttribute('aria-pressed', String(showCommandHistory));
-    const box = $('runningCommandList'),
-      existing = new Map([...box.children].map((node) => [node.dataset.key, node]));
-    for (const [index, task] of rows.entries()) {
-      let button = existing.get(task.id);
-      if (!button) {
-        button = text('button', '', 'command-card');
-        button.dataset.key = task.id;
-        button.onclick = () => toggleCommand(task.id);
-      }
-      existing.delete(task.id);
-      paintCommandCard(button, task, selectedCommand?.id === task.id);
-      if (box.children[index] !== button) box.insertBefore(button, box.children[index] || null);
-    }
-    for (const node of existing.values()) node.remove();
-    if (!rows.length)
-      box.replaceChildren(
-        text('p', showCommandHistory ? 'No recorded commands' : 'No commands running', 'empty-state'),
-      );
-    renderActivityStrip();
-  }
-  /* One process card (the Activity tab's Processes list, and each chat's section in split view). */
+  /* One process card (a chat's Processes in its Activity section). */
   function paintCommandCard(button, task, isSelected) {
     {
       const kind = isRunningCommand(task) ? 'running' : task.status === 'failed' ? 'failed' : 'ended';
@@ -4918,34 +4805,22 @@
   async function refreshCommands() {
     if (!selected) return;
     const key = selected.key;
-    if (/^(live|agent|recovered):/.test(key)) {
-      noteCommands('Commands appear when this agent saves its conversation.');
-      renderCommands();
-      return;
-    }
+    if (/^(live|agent|recovered):/.test(key)) return; // commands appear when this agent saves its conversation
     try {
+      /* The open chat's commands: the header's "working elsewhere" facts and an open command's details (the list itself is its
+         Activity section's, read by loadPaneActivity). pending: the server still reads them the first time; the next poll has them. */
       const data = await get('/api/commands', { session: key });
       if (selected?.key !== key) return;
       commands = data.commands;
-      /* pending: the server is still reading this chat's saved commands the first time (a big family takes seconds); it answers
-         at once instead of holding the poll, and the next poll brings the list */
-      noteCommands(
-        data.pending
-          ? 'Reading the saved commands…'
-          : 'Saved and inferred: status comes from saved agent events, not from a live AIB connection or an operating-system process check.',
-      );
-      renderCommands();
       if (selectedCommand) {
         const currentTask = commands.find((t) => t.id === selectedCommand.id);
         if (currentTask) selectedCommand = { ...selectedCommand, ...currentTask };
         await refreshCommandDetails();
       }
-    } catch (error) {
-      if (selected?.key === key) noteCommands('Command updates unavailable: ' + error.message, true);
-    }
+    } catch {}
   }
   async function openCommand(id, keepTrail, owner) {
-    if (!current && !selected) {
+    if (!owner && !current && !selected) {
       closeInspector();
       return;
     }
@@ -4973,13 +4848,11 @@
     $('submessages').hidden = true;
     $('commandDetails').hidden = false;
     renderSubHead();
-    renderAgents();
-    renderCommands();
-    renderSplitActivity();
+    renderProjectActivity();
     await refreshCommandDetails();
   }
   async function refreshCommandDetails() {
-    if (!selectedCommand || !selected) return;
+    if (!selectedCommand) return;
     const id = selectedCommand.id,
       key = subCtx().session;
     if (!key) return;
@@ -5017,10 +4890,6 @@
       if (selectedCommand?.id === id) $('subchatStatus').textContent = 'Could not update command: ' + error.message;
     }
   }
-  $('commandHistoryToggle').onclick = () => {
-    showCommandHistory = !showCommandHistory;
-    renderCommands();
-  };
 
   // ---- Package D: recovery, live-vs-saved state, discovery and windowed history ----
   // Clicking the open item again closes the drawer, and so does any click in the main chat (it is the most important view).
@@ -5054,29 +4923,31 @@
       const t = e.target;
       if (!inspectorShown() || !t?.closest) return;
       if (t.closest('#subchatPane,#subagentsPane,dialog,[role="menu"]')) return;
-      // Split view: a press in the other pane only moves focus, and focus changes nothing in the right panel; a click in the pane
-      // showing the history's own chat closes it, as with one chat.
+      // Only a click in the history's own chat closes it: the history of another chat of the project stays open while you work in
+      // this one. Split view: a press in the other pane only moves focus, which changes nothing in the right panel.
+      if (subOwner !== (selected ? aliasKey(selected) : '')) return;
       const pane = window.AgentSplitUI?.active?.() ? t.closest('#splitStage .pane') : null;
-      if (pane && (!pane.classList.contains('foc') || subOwner !== (selected ? aliasKey(selected) : ''))) return;
+      if (pane && !pane.classList.contains('foc')) return;
       if (t.closest('main')) closeInspector();
     },
     true,
   );
   /* QA m10: after Close (or Back from the first item, or Escape inside it) the focus goes to the row the history was opened from,
      else to the Activity tab: never to <body>. */
-  let lastOpened = { agent: '', command: '' };
+  let lastOpened = { owner: '', agent: '', command: '' };
   function refocusRow() {
     const pick = (box, key) =>
       key && box ? [...box.querySelectorAll('[data-key]')].find((n) => n.dataset.key === key && n.offsetParent) : null;
+    const sec = lastOpened.owner ? projAct.secs.get(lastOpened.owner) : null;
     const target =
-      pick($('subagentList'), lastOpened.agent) ||
-      pick($('runningCommandList'), lastOpened.command) ||
+      pick(sec?.subBox, lastOpened.agent) ||
+      pick(sec?.procBox, lastOpened.command) ||
       $('paneTab-activity') ||
       $('prompt');
     target?.focus?.({ preventScroll: true });
   }
   function closeAndRefocus() {
-    lastOpened = { agent: subSelection?.key || '', command: selectedCommand?.id || '' };
+    lastOpened = { owner: subOwner, agent: subSelection?.key || '', command: selectedCommand?.id || '' };
     closeInspector();
     refocusRow();
   }
@@ -5087,8 +4958,7 @@
     selectedCommand = null;
     $('subchatPane').hidden = true;
     document.body.classList.remove('subchat-open');
-    renderAgents();
-    renderCommands();
+    renderProjectActivity();
   }
   function isPseudoKey(key) {
     return /^(agent|recovered|discarded):/.test(key || '');
@@ -5844,15 +5714,18 @@
     mirrorsAt = now;
     tickMirrors();
   }, 500);
-  // ---- Split view, the right panel's Activity: both panes' chats in pane order, each in full, whatever has focus (owner,
-  // 2026-11-15). Each chat's helpers and processes are read the same way here, focused or not, so moving focus changes nothing.
-  const paneAct = new Map(); // alias key -> { kids: Map, rows, commands, at, cmdAt, histAt }
+  // ---- The right panel's Activity: the project's working chats (owner, 2026-11-18: the right panel is project level) ----
+  // One section per chat of the project on screen that is working (mid-turn, or its subagents or a command it started still run),
+  // in the order they started working; a chat that stops working leaves. Idle and finished chats are not listed. Nothing here
+  // follows the open chat: opening another chat of the project, or moving split focus, only moves the accent to that chat's
+  // section (sp-focus). Each chat's helpers and processes are read the same way, open or not. Split view adds a small pane tag.
   function paneActEntry(key) {
     let a = paneAct.get(key);
     if (!a) {
       a = { kids: new Map(), rows: [], commands: [], at: 0, cmdAt: 0, histAt: 0 };
       paneAct.set(key, a);
-      while (paneAct.size > 8) paneAct.delete(paneAct.keys().next().value);
+      const cap = Math.max(8, projAct.order.length + 2);
+      while (paneAct.size > cap) paneAct.delete(paneAct.keys().next().value);
     }
     return a;
   }
@@ -5861,7 +5734,7 @@
       a = paneActEntry(key),
       now = Date.now();
     if (c.live && !c.live.closed) {
-      /* One read stream per chat: the pane's mirror (tickMirrors) and the main list read this chat on their own timers; this
+      /* One read stream per chat: a split pane's mirror (tickMirrors) and the main list read this chat on their own timers; this
          timer runs at the same pace but drifts against them, so it takes any read made within one poll period instead of its own
          (with the default 1 s window two timers 0.5 s apart read the same chat twice per period). */
       const next = (await pullLive(c.live.id, { fresh: pollEvery(1500, 5000) })).state,
@@ -5890,60 +5763,94 @@
     }
     a.at = now;
   }
-  function splitActBox() {
-    if (splitAct.box) return splitAct.box;
-    const body = $('activityBody');
-    if (!body) return null;
-    splitAct.box = text('div', '', 'sp-activity');
-    splitAct.box.id = 'splitActivity';
-    body.prepend(splitAct.box);
-    return splitAct.box;
+  /* Which chats Activity lists: the sidebar's own status words (status-words.js) say Working. */
+  function chatWorking(c) {
+    try {
+      return window.AgentSidebarUI?.phrase?.(c)?.kind === 'working';
+    } catch {
+      return false;
+    }
   }
-  function splitActSection(key) {
-    let sec = splitAct.secs.get(key);
+  function panelProject() {
+    return window.AgentWorkspaceUI?.panelProject?.() || { key: '', name: '' };
+  }
+  function projectOfChat(c) {
+    return window.AgentWorkspaceUI?.projectKeyOf?.(c) || '';
+  }
+  /* Does the chat with alias key `key` belong to the same project as chat c? */
+  function sameProject(key, c) {
+    const o = conversations.find((x) => aliasKey(x) === key);
+    return !!o && !!c && projectOfChat(o) === projectOfChat(c);
+  }
+  function busySinceOf(c) {
+    const t = Date.parse(c?.live?.attention?.busySince || '');
+    return Number.isFinite(t) ? t : Infinity;
+  }
+  /* The sections, in the order the chats joined: a chat keeps its place while it works and a new one joins at the end. Chats that
+     are already working when the panel first looks (a reload, another project) are put in the order they started their turn, so
+     two windows of one project list them the same way. */
+  function projectActivityKeys() {
+    const p = panelProject();
+    if (p.key !== projAct.pk) {
+      projAct.pk = p.key;
+      projAct.order = [];
+    }
+    if (!p.key) return (projAct.order = []);
+    const seen = new Set(),
+      working = [];
+    for (const c of conversations) {
+      const k = aliasKey(c);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      if (projectOfChat(c) === p.key && chatWorking(c)) working.push(c);
+    }
+    const on = new Set(working.map(aliasKey)),
+      order = projAct.order.filter((k) => on.has(k)),
+      fresh = working
+        .filter((c) => !order.includes(aliasKey(c)))
+        .sort((a, b) => busySinceOf(a) - busySinceOf(b) || (aliasKey(a) < aliasKey(b) ? -1 : 1));
+    return (projAct.order = order.concat(fresh.map(aliasKey)));
+  }
+  function projectSection(key) {
+    let sec = projAct.secs.get(key);
     if (sec) return sec;
     const root = text('section', '', 'sp-grp');
     root.dataset.key = key;
+    root.setAttribute('role', 'listitem');
     const head = text('div', '', 'sp-head'),
+      tag = text('span', '', 'sp-pane-tag'),
+      note = text('p', '', 'command-status-note subagent-isolation-note'),
       none = text('p', 'Nothing running right now.', 'sp-none'),
       subLabel = text('div', '', 'sp-label'),
       subBox = text('div', '', 'sp-subs'),
       procLabel = text('div', '', 'sp-label'),
-      procBox = text('div', '', 'sp-procs running-command-list');
+      procBox = text('div', '', 'sp-procs');
+    note.hidden = true;
     procBox.setAttribute('role', 'group');
     procBox.setAttribute('aria-label', 'Processes');
-    root.append(head, none, subLabel, subBox, procLabel, procBox);
-    sec = { root, head, none, subLabel, subBox, procLabel, procBox, cards: new Map(), counts: null };
-    splitAct.secs.set(key, sec);
+    root.append(head, note, none, subLabel, subBox, procLabel, procBox);
+    sec = { root, head, tag, note, none, subLabel, subBox, procLabel, procBox, cards: new Map(), counts: null };
+    projAct.secs.set(key, sec);
     return sec;
   }
-  function renderSplitActivity() {
-    const S = window.AgentSplitUI,
-      A = window.ActivityUI;
-    const keys = S?.active?.() && S.paneChats ? S.paneChats() : [];
-    const hide = activityHideBtn;
-    if (!keys.length || !A?.splitHead) {
-      if (splitAct.box) splitAct.box.replaceChildren();
-      splitAct.secs.clear();
-      // one chat again: the × goes back to the end of the Subagents heading row
-      if (hide && hide.parentNode === $('activityBody'))
-        (document.querySelector('#subagentList .sa-heading') || $('subagentList')).append(hide);
-      paintActivityTabBadge();
-      return;
-    }
-    const box = splitActBox();
-    if (!box) return;
-    // split view: the × that hides Activity stays at the panel's top right, the same spot as with one chat (activity.css)
-    if (hide && hide.parentNode !== $('activityBody')) $('activityBody').append(hide);
-    const nowS = Date.now() / 1000;
-    for (const k of [...splitAct.secs.keys()]) if (!keys.includes(k)) splitAct.secs.delete(k);
+  function renderProjectActivity() {
+    const box = $('projectActivity'),
+      A = window.ActivityUI,
+      S = window.AgentSplitUI;
+    if (!box || !A?.splitHead) return;
+    const keys = projectActivityKeys(),
+      nowS = Date.now() / 1000,
+      focus = selected ? aliasKey(selected) : '';
+    for (const k of [...projAct.secs.keys()]) if (!keys.includes(k)) projAct.secs.delete(k);
+    if (keys.some((k) => !paneAct.has(k))) setTimeout(tickProjectActivity, 0); // a chat just joined: read it now, not a poll later
     const want = [];
     for (const key of keys) {
-      const sec = splitActSection(key),
+      const sec = projectSection(key),
         a = paneAct.get(key) || { rows: [], commands: [] },
-        info = S.chatInfo(key);
+        conv = conversations.find((x) => aliasKey(x) === key) || null,
+        info = { key, conv, title: conv ? titleOf(conv) : 'Conversation', dot: () => window.AgentWorkspaceUI?.dotForKey(key) || null };
       let counts = { working: 0, failed: 0, subagents: a.rows.length };
-      // The same cards as the single-chat Activity, finished helpers folded into "N finished" the same way (remembered per chat).
+      // Finished helpers fold into "N finished" (remembered per chat), the same cards whichever chat is open.
       window.SubagentsUI?.render({
         box: sec.subBox,
         rows: a.rows,
@@ -5952,18 +5859,31 @@
         selectedKey: key === subOwner ? subSelection?.key : undefined,
         chatModel: '',
         empty: '',
-        split: true,
         onModel: (m) => {
           counts = { working: m.working.length, failed: m.failed, subagents: m.top.length + m.done.length };
         },
-        // A row opens its history in this panel, for either pane's chat; it never moves pane focus.
+        // A row opens its history in this panel, at its width, for any chat of the project; it never opens that chat.
         onOpen: (agent) => toggleSubagent(agent, key),
-        rerender: renderSplitActivity,
+        rerender: renderProjectActivity,
       });
       const running = a.commands.filter(isRunningCommand);
       sec.counts = { ...counts, processes: running.length };
-      const st = info.conv ? window.AgentWorkspaceUI?.statusTextOf(info.conv) || null : null;
+      const st = conv ? window.AgentWorkspaceUI?.statusTextOf(conv) || null : null;
       A.splitHead(document, info, A.splitCounts(sec.counts, st), sec.head);
+      // split view: which pane shows this chat (a tag, never focus-aware)
+      const side = S?.paneSide ? S.paneSide(key) : '';
+      if (side) {
+        sec.tag.textContent = side[0].toUpperCase() + side.slice(1);
+        sec.tag.title = 'Open in the ' + side + ' pane';
+        sec.head.append(sec.tag);
+      }
+      sec.root.className = 'sp-grp' + (key === focus ? ' sp-focus' : '');
+      const iso = isolationWords(a.snap?.subagentIsolation);
+      sec.note.hidden = !iso;
+      if (iso) {
+        sec.note.textContent = iso.text;
+        sec.note.title = iso.title;
+      }
       sec.none.hidden = !A.splitNothing(sec.counts, st);
       sec.subLabel.hidden = sec.subBox.hidden = !a.rows.length;
       sec.subLabel.replaceChildren('Subagents', text('span', String(a.rows.length)));
@@ -5990,22 +5910,29 @@
         }
       want.push(sec.root);
     }
+    if (!want.length) {
+      const empty = (projAct.empty ||= text('p', '', 'empty-state sp-empty')),
+        name = panelProject().name;
+      empty.textContent =
+        'No chat in ' +
+        (name || 'this project') +
+        ' is working. Working chats, their subagents and processes show here, from every agent: Claude Code, Codex, Gemini, Antigravity, OMP and Maki. All on this PC.';
+      want.push(empty);
+    }
     want.forEach((n, i) => {
       if (box.children[i] !== n) box.insertBefore(n, box.children[i] || null);
     });
-    while (box.children.length > want.length) box.lastChild.remove();
-    paintActivityTabBadge();
+    for (const n of [...box.children].slice(want.length)) n.remove();
+    renderActivityStrip();
   }
-  async function tickSplitActivity() {
-    const S = window.AgentSplitUI;
-    if (!S?.active?.()) {
-      if (splitAct.secs.size) renderSplitActivity();
-      return;
-    }
-    if (splitAct.busy) return;
-    splitAct.busy = true;
+  async function tickProjectActivity() {
+    if (projAct.busy) return;
+    projAct.busy = true;
     try {
-      for (const key of S.paneChats()) {
+      const keys = projectActivityKeys().slice();
+      // an open history of a chat that just stopped working keeps being read until you close it
+      if (subOwner && inspectorOpen() && !keys.includes(subOwner)) keys.push(subOwner);
+      for (const key of keys) {
         const c = conversations.find((x) => aliasKey(x) === key);
         if (!c) continue;
         try {
@@ -6013,21 +5940,24 @@
         } catch {}
       }
     } finally {
-      splitAct.busy = false;
+      projAct.busy = false;
     }
-    renderSplitActivity();
+    renderProjectActivity();
+    // with no chat open (the New chat view) nothing else reads an open history of a project chat
+    if (!selected && inspectorOpen()) {
+      if (subSelection) refreshSubagent().catch(() => {});
+      else if (selectedCommand) refreshCommandDetails().catch(() => {});
+    }
   }
-  let splitActAt = 0;
+  let projActAt = 0;
   setInterval(() => {
     const now = Date.now();
-    if (now - splitActAt < pollEvery(1500, 5000) - 100) return;
-    splitActAt = now;
-    tickSplitActivity();
+    if (now - projActAt < pollEvery(1500, 5000) - 100) return;
+    projActAt = now;
+    tickProjectActivity();
   }, 500);
-  window.addEventListener('aib-split-chats', () => {
-    renderSplitActivity();
-    setTimeout(tickSplitActivity, 0);
-  });
+  // split view: a pane showing another chat changes the pane tags
+  window.addEventListener('aib-split-chats', () => renderProjectActivity());
   window.AgentSplitUI?.init({
     convOf: (key) => conversations.find((c) => aliasKey(c) === key),
     selectedKey: () => (selected ? aliasKey(selected) : ''),
@@ -6141,7 +6071,6 @@
 
   try {
     renderAgents();
-    renderCommands();
   } catch (e) {} /* empty Activity column on first paint */
   // ---- Message stream, history notice and chats running in another app ----
   let historyNoticeOn = false;
@@ -6774,6 +6703,8 @@
     renderApprovals,
     answeredLine,
     paintActivityTabBadge,
+    renderProjectActivity,
+    projectOrder: () => projAct.order.slice(), // tests: the Activity sections' chats, in join order
     setActCounts: (c) => (actCounts = c),
     headerYourTurn,
     collectChildren,

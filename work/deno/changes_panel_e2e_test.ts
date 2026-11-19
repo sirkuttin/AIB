@@ -89,7 +89,7 @@ changesTest('Changes, folder chat: the counts stay whole at the default width; t
       sumWhole: s.scrollWidth <= s.clientWidth, scope: sc.textContent, title: sc.title,
       inBar: r.left >= br.left && r.right <= f.left && sc.getBoundingClientRect().right <= r.left };
   })()`);
-  assert(bar.panel <= 290, `the default column width: ${bar.panel}`);
+  assert(bar.panel === 320, `the default column width (320 px, owner 2026-11-18): ${bar.panel}`);
   assertEquals(bar.sum, '8 files +14 −11');
   assert(bar.sumWhole, `the counts are cut: ${JSON.stringify(bar)}`);
   assert(bar.inBar, `heading, counts and refresh sit side by side: ${JSON.stringify(bar)}`);
@@ -207,7 +207,7 @@ changesTest('Changes, split view, two folder chats: the folder lists once, rows 
   assert(r.arrows.length === 2 && r.arrows.every((c) => c === '▸' || c === '▾'), JSON.stringify(r.arrows));
   assertEquals(r.badge, '2');
   await page.eval(`document.getElementById('paneTab-activity').click()`);
-  // the section line follows the chat's real state (fix/split-ready-label): an idle chat says Ready, one waiting on you Your turn
-  await page.waitFor(`[...document.querySelectorAll('#splitActivity .sp-sub')].some((n) => /^(Ready|Your turn)/.test(n.textContent))`, 15000, 'Ready or Your turn');
-  assert(!(await page.eval<boolean>(`/idle/i.test(document.getElementById('splitActivity').innerText)`)), 'no "idle"');
+  // Activity lists only the project's working chats (owner 2026-11-18): both chats finished, so no section, the note says so
+  await page.waitFor(`!!document.querySelector('#projectActivity > .sp-empty') && !document.querySelector('#projectActivity .sp-grp')`, 15000, 'no working chat');
+  assert(!(await page.eval<boolean>(`/idle/i.test(document.getElementById('projectActivity').innerText)`)), 'no "idle"');
 });

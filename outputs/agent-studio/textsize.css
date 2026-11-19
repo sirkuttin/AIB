@@ -43,9 +43,6 @@ html[data-ui-scaled]
   }
 }
 /* Viewport-relative heights inside zoomed blocks would grow with the zoom; keep them a share of the window. */
-html[data-ui-scaled] #subagentsPane #commandSection {
-  max-height: calc(38vh / var(--ui-scale));
-}
 html[data-ui-scaled] aside #archivedScroll {
   max-height: calc(38vh / var(--ui-scale));
 }

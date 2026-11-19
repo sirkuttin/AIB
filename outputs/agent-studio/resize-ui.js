@@ -1,15 +1,16 @@
 'use strict';
-/* Resizable layout: chat list (right edge), Activity column (left edge), message box (top edge), Subagents/Processes split.
+/* Resizable layout: chat list (right edge), Activity column (left edge), message box (top edge).
    VS Code behaviour: thin handles that light up on hover and drag, snap-to-collapse 40 px below a panel's minimum, double-click
    or Enter resets, arrow keys / Home / End on focused handles, Ctrl+B (chat list) and Ctrl+Alt+B (Activity). Sizes are kept in
    localStorage per window-width bucket. The pure helpers at the top have node tests; the DOM part starts at init(). */
 (function (root) {
-  const DEF = { side: 240, activity: 280, viewer: 920 },
+  /* activity: the right panel's width for a layout with no saved width (owner, 2026-11-18: 320, so its tabs fit). A saved width
+     always wins, and only your own drag changes it. */
+  const DEF = { side: 240, activity: 320, viewer: 920 },
     SIDE = { min: 200, max: 480 }, // a wider chat list only takes room from the chat (QA m13)
     ACT = { min: 220, max: Infinity },
     COMPOSER_MIN = 56,
-    COMPOSER_GROW = 200,
-    SPLIT_MIN = 96;
+    COMPOSER_GROW = 200;
   const MAX_CHAT = 1310; // the conversation stops at 1250 px (chat.css) plus its side padding: wider windows give Activity the rest
   // (only when the chat has the middle to itself: with split panes or files beside the chat the floor is above MIN_CHAT, see splitFloor)
   const MIN_CHAT = 420,
@@ -17,7 +18,6 @@
     STEP = 16,
     BIG_STEP = 64,
     NARROW = 1100,
-    SUBCHAT_W = 480,
     EXPAND_FRAC = 0.6;
   const num = (v) => typeof v === 'number' && isFinite(v);
   const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), Math.max(lo, hi));
@@ -57,8 +57,7 @@
     const sign = (key === fwd ? 1 : -1) * (inverted ? -1 : 1);
     return Math.round(clamp((num(value) ? value : def) + sign * step, min, max));
   }
-  /* Effective widths. sizes may be null (default). Side panels give way before the chat column drops below MIN_CHAT; when a
-   subagent history is open Activity widens to max(its width, 480) as far as the room allows. */
+  /* Effective widths. sizes may be null (default). Side panels give way before the chat column drops below MIN_CHAT. */
   function computeLayout(o) {
     const vw = Number(o.vw) || 0,
       sideOn = !!o.sideOn,
@@ -70,12 +69,9 @@
       aMin = sc(ACT.min, k),
       aMax = sc(ACT.max, k);
     let side = sideOn ? clamp(num(o.side) ? o.side : sc(DEF.side, k), sMin, sMax) : 0;
-    /* One width for the right column, whatever it shows (Activity, Changes, a doc or an artifact) and whichever chat is open:
-       only your own drag changes it (owner, 2026-11-15: switching from a chat showing an artifact to one showing Activity made
-       the column narrower). o.viewer / o.viewerW are ignored; the 920 px viewer width is gone. */
-    const normal = clamp(num(o.activity) ? o.activity : sc(DEF.activity, k), aMin, aMax),
-      user = normal;
-    let act = actOn ? user : 0;
+    /* One width for the right panel, whatever it shows (Activity, a subagent history, Changes, a doc or an artifact) and whichever
+       chat is open: only your own drag changes it (owner, 2026-11-15; 2026-11-18: a subagent history no longer widens it to 480). */
+    let act = actOn ? clamp(num(o.activity) ? o.activity : sc(DEF.activity, k), aMin, aMax) : 0;
     const over = side + act + minChat - vw;
     if (over > 0) {
       const ss = sideOn ? side - sMin : 0,
@@ -95,11 +91,6 @@
       const floor = vw - side - sc(MAX_CHAT, k);
       if (floor > act) act = Math.min(floor, aMax);
     }
-    if (o.subchat && actOn) {
-      const room = Math.max(0, vw - side - minChat),
-        want = Math.min(aMax, Math.max(user, sc(SUBCHAT_W, k)));
-      act = Math.max(act, Math.min(want, room));
-    }
     /* Changes expanded (the tab row's widen button): about 60% of the window, as far as the chat keeps its minimum. */
     if (o.expand && actOn) {
       const room = Math.max(0, vw - side - minChat);
@@ -112,12 +103,6 @@
   const composerMax = (vh) => Math.max(COMPOSER_MIN, Math.floor((Number(vh) || 0) - 200));
   const clampComposer = (h, vh) => Math.round(clamp(h, COMPOSER_MIN, composerMax(vh)));
   const growCap = (userH, vh) => clamp(Math.max(COMPOSER_GROW, num(userH) ? userH : 0), COMPOSER_MIN, composerMax(vh));
-  /* Subagents/Processes split: each keeps SPLIT_MIN of the `total` px they share. */
-  const splitBounds = (total) => ({ min: SPLIT_MIN, max: Math.max(SPLIT_MIN, Math.floor(total) - SPLIT_MIN) });
-  const clampSplit = (h, total) => {
-    const b = splitBounds(total);
-    return Math.round(clamp(h, b.min, b.max));
-  };
   /* Stored sizes: only finite numbers survive; anything else means "default". */
   function sanitize(raw) {
     let o = raw;
@@ -139,7 +124,6 @@
     SIDE,
     ACT,
     COMPOSER_MIN,
-    SPLIT_MIN,
     MIN_CHAT,
     SNAP,
     STEP,
@@ -156,8 +140,6 @@
     composerMax,
     clampComposer,
     growCap,
-    splitBounds,
-    clampSplit,
     sanitize,
   };
 
@@ -243,7 +225,6 @@
       AUI().setHidden(v);
     };
 
-    const viewing = () => body.classList.contains('ar-viewing');
     function layout() {
       const vw = win.innerWidth,
         sideOn = wideSide() && !sideHidden,
@@ -253,12 +234,8 @@
         vw,
         side: sizes.side,
         activity: sizes.activity,
-        viewer: viewing(),
-        viewerW: sizes.viewer,
         sideOn,
         actOn,
-        /* An open history widens the column only on the Activity tab (on Changes / Artifacts it is hidden: changes-ui.js sets rc-other-tab). */
-        subchat: body.classList.contains('subchat-open') && !body.classList.contains('rc-other-tab'),
         expand: body.classList.contains('changes-wide'),
         scale: k,
         minChat: splitFloor(),
@@ -279,13 +256,6 @@
       if (prompt && prompt.style) {
         if (ch && dragging && dragging.id === 'composer') prompt.style.height = ch + 'px';
       }
-      if (num(sizes.split) && splitTotal() > 0) {
-        set('--act-split', clampSplit(sizes.split, splitTotal()) + 'px');
-        body.classList.toggle('act-split-set', true);
-      } else {
-        rootEl.style.removeProperty('--act-split');
-        body.classList.toggle('act-split-set', false);
-      }
       syncHandles();
     }
     /* Split panes side by side: the chat column keeps room for every pane across (split-ui.js says how much). Files beside the
@@ -300,11 +270,6 @@
         }
       };
       return Math.max(ask(win.AgentSplitUI, 'minWidth'), ask(win.AgentFilesUI, 'besideMinWidth'));
-    }
-    function splitTotal() {
-      const a = $('subagentList'),
-        c = $('commandSection');
-      return a && c && a.offsetParent !== null ? a.offsetHeight + c.offsetHeight : 0;
     }
 
     /* ---- handles ----------------------------------------------------------------------------------------------- */
@@ -406,29 +371,6 @@
           if (p && p.style) p.style.height = '';
         },
         available: () => true,
-      },
-      split: {
-        label: 'Resize Subagents and Processes',
-        orientation: 'horizontal',
-        axis: 'y',
-        inverted: false,
-        collapsible: false,
-        def: null,
-        min: () => SPLIT_MIN,
-        max: () => splitBounds(splitTotal()).max,
-        value: () => {
-          const a = $('subagentList');
-          return a ? a.offsetHeight : 0;
-        },
-        rawFrom: (e, g, start) => start.value + (e.clientY - start.y) / uiK(),
-        grab: () => 0,
-        apply(r) {
-          sizes.split = r.size;
-        },
-        reset() {
-          sizes.split = null;
-        },
-        available: () => wideAct() && !actHidden() && !body.classList.contains('subchat-open') && splitTotal() > 0,
       },
     };
     /* After a reset the message box goes back to fitting its text. workspace-ui listens to "input" for that. */
@@ -586,10 +528,6 @@
       wire('activity', make('activity', 'rs-v rs-activity', defs.activity.label, 'vertical'));
       const form = $('promptForm');
       if (form) wire('composer', make('composer', 'rs-h rs-composer', defs.composer.label, 'horizontal', form));
-      const list = $('subagentList'),
-        cmd = $('commandSection');
-      if (list && cmd && cmd.parentNode)
-        wire('split', make('split', 'rs-h rs-split', defs.split.label, 'horizontal', cmd.parentNode));
       for (const id in handles) handles[id].hidden = true;
     }
     function onResize() {
@@ -673,21 +611,11 @@
     if (win.AgentTextSize && typeof win.AgentTextSize.onChange === 'function')
       win.AgentTextSize.onChange(() => layout());
     api.layout = layout;
-    /* artifacts-ui.js sets body.ar-viewing while the viewer shows a doc or artifact: widen / narrow the column then. */
-    if (typeof win.MutationObserver === 'function') {
-      let was = viewing();
-      new win.MutationObserver(() => {
-        if (viewing() !== was) {
-          was = viewing();
-          layout();
-        }
-      }).observe(body, { attributes: true, attributeFilter: ['class'] });
-    }
     api.toggleSide = toggleSide;
     api.toggleActivity = toggleActivity;
     api.reduced = reduced;
     layout();
-    /* The Subagents list is filled in after load; re-check the split handle once things settle. */
+    /* The tab strip and header heights settle after load: lay out once more. */
     win.setTimeout(layout, 400);
   }
   api = Object.assign({}, pure, {
