@@ -295,8 +295,7 @@
   const chatCache = window.ChatCache.create();
   // The right panel's Activity: one section per working chat of the project (renderProjectActivity, further down). order: the
   // sections' alias keys in the order they joined; pk: the project they belong to. Below them, one collapsed section per idle chat
-  // (idleSecs; idle: their keys, most recently active first; stopped: alias key -> when this page saw it stop working; idleAll: the
-  // "Show N more" row was clicked for this project).
+  // (idleSecs; idle: their keys, most recently active first; stopped: alias key -> when this page saw it stop working).
   const projAct = {
     secs: new Map(),
     busy: false,
@@ -305,11 +304,8 @@
     empty: null,
     idleSecs: new Map(),
     idle: [],
-    idleShown: [],
     stopped: new Map(),
-    idleAll: false,
     idleBox: null,
-    more: null,
   };
   const paneAct = new Map(); // alias key -> what its section shows: { kids: Map, rows, commands, snap, at, cmdAt, histAt }
   const liveCache = (id = current) => chatCache.entry(id || '');
@@ -5764,7 +5760,7 @@
     if (!a) {
       a = { kids: new Map(), rows: [], commands: [], at: 0, cmdAt: 0, histAt: 0 };
       paneAct.set(key, a);
-      const cap = Math.max(8, projAct.order.length + projAct.idleShown.length + 2);
+      const cap = Math.max(8, projAct.order.length + projAct.idle.length + 2);
       while (paneAct.size > cap) paneAct.delete(paneAct.keys().next().value);
     }
     return a;
@@ -5838,7 +5834,6 @@
     if (p.key !== projAct.pk) {
       projAct.pk = p.key;
       projAct.order = [];
-      projAct.idleAll = false;
     }
     if (!p.key) {
       projAct.idle = [];
@@ -5918,7 +5913,6 @@
       localStorage.setItem(idleOpenKey(), JSON.stringify(o));
     } catch {}
   }
-  const IDLE_CAP = 10;
   const IDLE_READS = 3; // idle chats read per tick
   function projectSection(key) {
     let sec = projAct.secs.get(key);
@@ -6037,7 +6031,7 @@
     renderActivityStrip();
   }
   /* The idle chats below the working ones: one collapsed head line each (caret, dot, name, "N finished", agent), most recently
-     active first, the first IDLE_CAP and a "Show N more" row. A caret only when something finished; expanding (remembered per
+     active first. A caret only when something finished; expanding (remembered per
      project and window) lists the chat's finished subagents and commands, each opening its history in the panel. Focus only
      moves the accent: it never expands, moves or resizes a section. */
   function idleSection(key) {
@@ -6073,11 +6067,10 @@
     return sec;
   }
   function renderIdleGroup(nowS, focus) {
-    const all = projAct.idle,
-      shown = projAct.idleAll ? all : all.slice(0, IDLE_CAP),
+    const shown = projAct.idle,
+      keys = new Set(shown),
       S = window.AgentSplitUI;
-    projAct.idleShown = shown;
-    for (const k of [...projAct.idleSecs.keys()]) if (!shown.includes(k)) projAct.idleSecs.delete(k);
+    for (const k of projAct.idleSecs.keys()) if (!keys.has(k)) projAct.idleSecs.delete(k);
     if (!shown.length) return null;
     const group = (projAct.idleBox ||= text('div', '', 'sp-idle-list'));
     group.setAttribute('role', 'list');
@@ -6148,18 +6141,6 @@
       }
       want.push(sec.root);
     }
-    const rest = all.length - shown.length;
-    if (rest > 0) {
-      const more = (projAct.more ||= text('button', '', 'sp-idle-more'));
-      more.type = 'button';
-      more.textContent = 'Show ' + rest + ' more';
-      more.onclick = () => {
-        projAct.idleAll = true;
-        renderProjectActivity();
-        setTimeout(tickProjectActivity, 0);
-      };
-      want.push(more);
-    }
     want.forEach((n, i) => {
       if (group.children[i] !== n) group.insertBefore(n, group.children[i] || null);
     });
@@ -6175,12 +6156,10 @@
       if (subOwner && inspectorOpen() && !keys.includes(subOwner)) keys.push(subOwner);
       /* Idle chats on screen: read once for their "N finished" and again only after that chat was active (ended a turn) since.
          An expanded one is NOT re-read at the poll pace: it is idle, nothing changes (it is read when it is expanded, if it
-         was never read). At most IDLE_READS idle chats are read per tick, expanded ones first, so "Show N more" never reads
+         was never read). At most IDLE_READS idle chats are read per tick, expanded ones first, so Activity never reads
          every idle chat at once; the rest follow at the next ticks (see below). */
-      const shown = projAct.idleAll ? projAct.idle : projAct.idle.slice(0, IDLE_CAP);
-      projAct.idleShown = shown;
       const due = [];
-      for (const key of shown) {
+      for (const key of projAct.idle) {
         if (keys.includes(key)) continue;
         const a = paneAct.get(key),
           c = conversations.find((x) => aliasKey(x) === key);

@@ -279,7 +279,7 @@ panelTest('right panel: a working chat that stops goes to the top of the idle gr
   for (const x of [a, b, c]) x.end();
 });
 
-panelTest('right panel: the idle group shows the 10 most recently active chats and a "Show N more" row', async (lab) => {
+panelTest('right panel: all idle chats are visible below the working chats', async (lab) => {
   const page = lab.page;
   const w = await working(lab, 'WORKEND');
   for (let n = 0; n < 12; n++) {
@@ -289,10 +289,9 @@ panelTest('right panel: the idle group shows the 10 most recently active chats a
   }
   await lab.select(w);
   await joined(page, w);
-  await waitIdle(page, `i.keys.length === 10 && i.more === 'Show 2 more'`, 'ten idle chats and "Show 2 more"');
+  await waitIdle(page, `i.keys.length === 12 && i.more === ''`, 'all twelve idle chats');
   assertEquals((await sections(page)).badge, '1', 'the tab counts working chats only');
-  await page.click('#projectActivity > .sp-idle-list > .sp-idle-more');
-  await waitIdle(page, `i.keys.length === 12 && i.more === ''`, 'all twelve, no more row');
+  assertEquals(await page.eval<string>(`getComputedStyle(document.querySelector('#projectActivity > .sp-focus')).backgroundColor`), 'rgba(0, 0, 0, 0)');
   w.end();
 });
 
