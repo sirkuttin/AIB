@@ -225,15 +225,16 @@
     const w = Math.max(0, Number(c && c.working) || 0),
       f = Math.max(0, Number(c && c.failed) || 0),
       p = Math.max(0, Number(c && c.processes) || 0);
+    // "2 subagents · 1 process" (owner 2026-11-23): only the counts, never the chat's own status text beside them (that read
+    // "Working · 2 subagents · 2 working · 1 running"); a bad status (an error) still leads.
     const parts = [];
-    if (w) parts.push({ text: w + ' working' });
+    if (w) parts.push({ text: w + (w === 1 ? ' subagent' : ' subagents') });
     if (f) parts.push({ text: f + ' failed', bad: true });
-    if (p) parts.push({ text: p + ' running' });
-    if (status && status.text) {
-      if (isIdle(status) && !parts.length) return [{ text: 'Ready' }];
-      return [{ text: status.text, bad: status.tone === 'bad' }, ...parts];
-    }
-    return parts.length ? parts : [{ text: 'Ready' }];
+    if (p) parts.push({ text: p + (p === 1 ? ' process' : ' processes') });
+    if (status && status.text && status.tone === 'bad') return [{ text: status.text, bad: true }, ...parts];
+    if (parts.length) return parts;
+    if (!status || !status.text || isIdle(status)) return [{ text: 'Ready' }];
+    return [{ text: status.text }];
   }
   /* "Nothing running right now" shows only for an idle chat with no subagents, commands or failures. */
   function splitNothing(c, status) {

@@ -129,14 +129,17 @@ test('hidden flag round-trips and survives a broken store', () => {
 
 test('split Activity: a chat with nothing running says "Ready", never "idle"', () => {
   assert.deepEqual(A.splitCounts({}), [{ text: 'Ready' }]);
-  assert.deepEqual(A.splitCounts({ working: 2, processes: 1 }), [{ text: '2 working' }, { text: '1 running' }]);
+  // owner 2026-11-23: "2 subagents · 1 process", only the counts
+  assert.deepEqual(A.splitCounts({ working: 2, processes: 1 }), [{ text: '2 subagents' }, { text: '1 process' }]);
+  assert.deepEqual(A.splitCounts({ working: 1, processes: 2 }), [{ text: '1 subagent' }, { text: '2 processes' }]);
 });
 
 test('split Activity: the header line follows the chat state; "Nothing running" only when idle', () => {
   const work = { text: 'Working · 12m', tone: 'work' },
     idle = { text: 'Ready', tone: 'idle' };
-  assert.deepEqual(A.splitCounts({}, work), [{ text: 'Working · 12m', bad: false }]);
-  assert.deepEqual(A.splitCounts({ processes: 1 }, work), [{ text: 'Working · 12m', bad: false }, { text: '1 running' }]);
+  assert.deepEqual(A.splitCounts({}, work), [{ text: 'Working · 12m' }]);
+  assert.deepEqual(A.splitCounts({ processes: 1 }, work), [{ text: '1 process' }], 'the chat status never sits beside the counts');
+  assert.deepEqual(A.splitCounts({ working: 1 }, { text: 'Failed', tone: 'bad' }), [{ text: 'Failed', bad: true }, { text: '1 subagent' }], 'an error still leads');
   assert.deepEqual(A.splitCounts({}, { text: 'Needs you', tone: 'need' })[0].text, 'Needs you');
   assert.deepEqual(A.splitCounts({}, idle), [{ text: 'Ready' }]);
   assert.equal(A.splitNothing({}, work), false);

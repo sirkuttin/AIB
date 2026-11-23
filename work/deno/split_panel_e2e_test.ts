@@ -192,7 +192,8 @@ panelTest('split panel: both chats in pane order on every tab, focus changes not
     labels: [...document.querySelectorAll('#projectActivity .sp-label')].filter((n) => n.offsetParent).map((n) => n.innerText.replace(/\\s+/g, ' ')),
     tags: [...document.querySelectorAll('#projectActivity .sp-grp')].map((g) => g.querySelector('.sp-pane-tag')?.textContent || ''),
   })`);
-  assert(/1 working/.test(act.heads[0]) && /1 working/.test(act.heads[1]), `headers: ${JSON.stringify(act.heads)}`);
+  // owner 2026-11-23: the head reads "1 subagent" (counts only, never "1 working")
+  assert(/1 subagentb/.test(act.heads[0]) && /1 subagentb/.test(act.heads[1]) && !act.heads.some((h) => /working/.test(h)), `headers: ${JSON.stringify(act.heads)}`);
   assert(act.labels.filter((l) => /^subagents/i.test(l)).length === 2, `labels: ${JSON.stringify(act.labels)}`);
   // the count is the working subagents only, never the finished ones (owner 2026-11-23)
   assert(act.labels.filter((l) => /^subagents/i.test(l)).every((l) => /^subagents [0-9]+ working$/i.test(l)), `working-only count: ${JSON.stringify(act.labels)}`);
