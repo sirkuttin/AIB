@@ -859,6 +859,13 @@ export function makeContext(
         settle: (folder, name) => ctx.docs.settleSynced(folder, name),
         drop: (folder, name) => ctx.docs.dropSynced(folder, name),
       },
+      // Device activity: one line per received batch, "ubuntu-pc synced 3 files to shop" (no per-file lines)
+      applied: (peer, link, area, count) =>
+        ctx.phone?.audit.write({
+          name: peer.name,
+          action: 'sync',
+          result: `${count} ${count === 1 ? 'file' : 'files'} to ${link.name}${area === 'docs' ? ' (docs)' : ''}`,
+        }),
       ...options.pcsync,
     }),
     presence: new Presence(),

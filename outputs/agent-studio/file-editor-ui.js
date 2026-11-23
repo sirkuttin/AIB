@@ -440,15 +440,19 @@
   }
 
   // ---- Compare: in the same pane, at the same width --------------------------------------------------------------------------------
-  async function openCompare(where, tab) {
+  // other: {text} compares the editor's text with that text instead of the file on disk (a sync conflict copy, from Files).
+  async function openCompare(where, tab, other) {
     const st = stateOf(tab), p = paneOf(where, tab), CE = root.AIBCodeEditor;
     if (!st.client || !CE || p.compare) return;
     let disk = '';
-    try {
-      const r = await host.getJson('/api/live/files/compare', { file: st.info.file });
-      disk = r && typeof r.disk === 'string' ? r.disk : '';
-    } catch (e) {
-      disk = '';
+    if (other && typeof other.text === 'string') disk = other.text;
+    else {
+      try {
+        const r = await host.getJson('/api/live/files/compare', { file: st.info.file });
+        disk = r && typeof r.disk === 'string' ? r.disk : '';
+      } catch (e) {
+        disk = '';
+      }
     }
     const wrap = el('div', null, 'sf-code-host sf-ed-cmp');
     const shadow = wrap.attachShadow({ mode: 'open', delegatesFocus: true });

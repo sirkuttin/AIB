@@ -568,6 +568,7 @@ export const PC_ROUTES: Readonly<Record<string, RemoteEntry>> = {
   'GET /api/live/devices/tailscale/job': DEVICES,
   'POST /api/live/devices/tailscale/cancel': DEVICES,
   'GET /api/live/pcsync': PCSYNC,
+  'GET /api/live/pcsync/marks': PCSYNC,
   'GET /api/live/pcsync/devices': PCSYNC,
   'POST /api/live/pcsync/on': PCSYNC,
   'POST /api/live/pcsync/start': PCSYNC,
@@ -582,6 +583,7 @@ export const PC_ROUTES: Readonly<Record<string, RemoteEntry>> = {
   'POST /api/live/pcsync/projects/unlink': PCSYNC,
   'POST /api/live/pcsync/projects/switch': PCSYNC,
   'POST /api/live/pcsync/projects/files': PCSYNC,
+  'POST /api/live/pcsync/projects/conflict': PCSYNC,
 };
 
 /** The entry for (method, path), or null: not a page route, so the bridge answers 404. */

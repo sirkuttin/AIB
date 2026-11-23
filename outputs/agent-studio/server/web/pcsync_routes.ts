@@ -27,6 +27,8 @@ function wrap(handler: Handler): Handler {
 export function pcsyncRoutes(): Map<string, Handler> {
   const routes = new Map<string, Handler>();
   routes.set('GET /api/live/pcsync', async (ctx) => [200, await ctx.pcsync.view()]);
+  // the sidebar marks (slice V6): the same project data as the card, without the Tailscale read; the page polls it
+  routes.set('GET /api/live/pcsync/marks', (ctx) => [200, ctx.pcsync.marks()]);
   routes.set('GET /api/live/pcsync/devices', async (ctx) => [200, { devices: await ctx.pcsync.devices() }]);
   routes.set('POST /api/live/pcsync/on', async (ctx, _url, body) => {
     if (typeof body?.on !== 'boolean') throw new ValueError('on must be true or false');
@@ -60,6 +62,18 @@ export function pcsyncRoutes(): Map<string, Handler> {
     const engine = body.which === 'docs' ? ctx.pcsync.docsSync : ctx.pcsync.files; // which: 'docs' for the aib-docs sync (slice V5)
     if (typeof body.sync !== 'string' || !engine.decide(body.sync, body.action)) {
       throw new PairingError(409, 'not_paused', 'Nothing is waiting for a decision in that project.');
+    }
+    return [200, { ok: true }];
+  });
+  // a conflict copy in Files (slice V6): Keep this (the copy goes to the sync bin) or Keep other (the copy replaces the file, the
+  // replaced one goes to the bin). Only aib-shared has conflict copies; docs conflicts are blocks inside the doc.
+  routes.set('POST /api/live/pcsync/projects/conflict', async (ctx, _url, body) => {
+    if (body?.action !== 'this' && body?.action !== 'other') throw new ValueError('action must be this or other');
+    if (typeof body.sync !== 'string' || typeof body.path !== 'string') throw new ValueError('sync and path are required');
+    try {
+      await ctx.pcsync.files.resolveConflict(body.sync, body.path, body.action);
+    } catch (error) {
+      throw new PairingError(409, 'conflict_failed', error instanceof Error ? error.message : String(error));
     }
     return [200, { ok: true }];
   });

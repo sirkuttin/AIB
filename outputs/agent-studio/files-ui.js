@@ -956,6 +956,31 @@
       if (r.changed) c.append(el('span', r.changed + ' changed', 'fx-dirchg'));
       n.append(c);
     } else if (r.kind === 'dir' && r.changed && !r.ignored) n.append(el('span', r.changed + ' changed', 'fx-dirchg'));
+    // A sync conflict copy (sync between PCs): a pill and three always-visible icons: Compare, Keep this, Keep other.
+    const cf = r.kind === 'file' ? conflictOf(r.path) : null;
+    if (cf) {
+      n.append(el('span', 'sync conflict', 'fx-conflict'));
+      const sync = syncOfProject();
+      const icons = [['compare', 'Compare', 'Compare with ' + cf.original.split('/').pop() + ': the two versions side by side', CMP_D, () => compareConflict(scope, r.path, cf)]];
+      if (sync) {
+        icons.push(
+          ['keep-this', 'Keep this', 'Keep this: ' + cf.original.split('/').pop() + ' stays as it is here, the conflict copy goes to the sync bin', KEEP_D, () => resolveConflict(scope, r.path, 'this')],
+          ['keep-other', 'Keep other', 'Keep other: the conflict copy replaces ' + cf.original.split('/').pop() + ', the replaced file goes to the sync bin', SWAP_D, () => resolveConflict(scope, r.path, 'other')],
+        );
+      }
+      for (const [act, label, tip, d, run] of icons) {
+        const b = btn(null, 'fx-cf', tip);
+        b.dataset.act = act;
+        b.setAttribute('aria-label', label + ': ' + cf.original);
+        b.tabIndex = -1;
+        b.append(icon(d, 'fx-cf-ico'));
+        b.onclick = (e) => {
+          e.stopPropagation();
+          run();
+        };
+        n.append(b);
+      }
+    }
     if (r.artifact) {
       const a = btn(null, 'fx-art', 'Open in Artifacts');
       a.append(el('span', '⧉'));
@@ -994,6 +1019,49 @@
       rowMenu(n, r, scope, e.clientX, e.clientY);
     });
     return n;
+  }
+
+  // ---- sync conflicts (sync between PCs, aib-shared only: a conflict in a doc is a block inside the doc) ----------------------------
+  const CMP_D = 'M2.5 3h4.5v10H2.5zM9 3h4.5v10H9z';
+  const KEEP_D = 'M3 8.5l3.2 3.2L13 4.8';
+  const SWAP_D = 'M3 5.5h9.5L10.5 3.5M13 10.5H3.5l2 2';
+  const CONFLICT_MARK = /\.sync-conflict-\d{8}-\d{6}-[A-Za-z0-9-]*/;
+  const SHARED_DIR = 'aib-shared/';
+  /* {original}: the file a conflict copy in aib-shared belongs to (tree path), or null for any other file. */
+  function conflictOf(path) {
+    if (path.indexOf(SHARED_DIR) !== 0 || !CONFLICT_MARK.test(path)) return null;
+    const original = path.replace(CONFLICT_MARK, '');
+    return original && original !== path && !/\/$/.test(original) ? { original } : null;
+  }
+  const syncOfProject = () => (root.AIBPcSyncUI && root.AIBPcSyncUI.syncOf ? root.AIBPcSyncUI.syncOf(projectPathNow()) : '');
+  async function resolveConflict(scope, path, action) {
+    const sync = syncOfProject();
+    if (!sync) return host.notice('This project is not synced with another PC.');
+    try {
+      await host.post('pcsync/projects/conflict', { sync, path: path.slice(SHARED_DIR.length), action });
+    } catch (e) {
+      return host.notice('Could not resolve the conflict: ' + ((e && e.message) || e));
+    }
+    listDir(scope, F().dirOf(path));
+  }
+  // Compare: the original opens in the editor and its Compare view shows it against the conflict copy's text (read only).
+  async function compareConflict(scope, path, cf) {
+    let other = null;
+    try {
+      other = await host.getJson('/api/live/files/read', Object.assign(F().scopeArgs(scope), { path }));
+    } catch (e) {
+      other = null;
+    }
+    if (!other || typeof other.text !== 'string') return host.notice('Compare shows text files. This conflict copy cannot be read as text.');
+    openFile(scope, cf.original, { keep: true });
+    const id = F().tabId(scope, cf.original);
+    for (let i = 0; i < 60; i++) {
+      const tab = tabsHere().tabs.find((x) => x.id === id);
+      const st = FE() && FE()._states ? FE()._states.get(id) : null;
+      if (tab && st && st.client && st.client.synced) return FE().openCompare('main', tab, { text: other.text });
+      await new Promise((r) => (root.setTimeout || setTimeout)(r, 150));
+    }
+    host.notice('Compare could not open ' + cf.original + '. Open it and try again.');
   }
 
   const pagesText = (n) => n + (n === 1 ? ' page' : ' pages');

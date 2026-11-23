@@ -42,6 +42,7 @@ import {
   BIN_DAYS,
   binAgeDays,
   conflictName,
+  conflictOriginal,
   GUARD_COUNT,
   GUARD_MIN,
   GUARD_SHARE,
@@ -69,8 +70,10 @@ export interface FileTimings {
   stallMs: number;
   /** A file that failed to pull is left alone this long. */
   retryMs: number;
+  /** Files that land within this long of each other are one received batch (one Device activity line). */
+  batchMs: number;
 }
-export const DEFAULT_FILE_TIMINGS: FileTimings = { debounceMs: 1500, rescanMs: 60_000, stallMs: 20_000, retryMs: 10_000 };
+export const DEFAULT_FILE_TIMINGS: FileTimings = { debounceMs: 1500, rescanMs: 60_000, stallMs: 20_000, retryMs: 10_000, batchMs: 2000 };
 const CHUNK = 512 * 1024;
 const MAX_DEPTH = 40;
 const MAX_REMOTE = 60_000;
@@ -103,6 +106,8 @@ export interface FileDeps {
   docs?: DocsHooks;
   /** Resolves when the project matching has applied every item it was given (a link may arrive just before a switch). */
   settled?(): Promise<void>;
+  /** One call per received batch: `count` files from the other PC were put in place (or deleted here) in this project (Device activity). */
+  applied?(peer: Peer, link: ProjectLink, area: Area, count: number): void;
 }
 
 interface Entry {
@@ -235,6 +240,8 @@ export class FileSync {
   #timer: Timer | undefined;
   #saver: Timer | undefined;
   #pruned = new Map<string, number>();
+  /** Per project: files received since the last Device activity line, and the quiet-period timer that writes it. */
+  #landed = new Map<string, { n: number; timer: Timer }>();
 
   /** 'shared': the project's aib-shared/ (V4). 'docs': its aib-docs/ (V5): only each doc's doc.aibdoc and assets/, through the docs store. */
   readonly label: string;
@@ -270,7 +277,25 @@ export class FileSync {
     this.#running = false;
     clearInterval(this.#timer);
     for (const p of this.#projs.values()) this.#deactivate(p);
+    for (const l of this.#landed.values()) clearTimeout(l.timer);
+    this.#landed.clear();
     this.#flush();
+  }
+
+  /** One more file came from the other PC: when no more arrive for batchMs, the batch is reported once (not one line per file). */
+  #received(p: Proj): void {
+    if (!this.deps.applied) return;
+    const entry = this.#landed.get(p.sync) ?? { n: 0, timer: 0 as unknown as Timer };
+    clearTimeout(entry.timer);
+    entry.n++;
+    entry.timer = setTimeout(() => {
+      this.#landed.delete(p.sync);
+      const link = this.#link(p.sync);
+      const peer = link && this.#peer(link);
+      if (link && peer) this.deps.applied?.(peer, link, this.area, entry.n);
+    }, this.timings.batchMs);
+    Deno.unrefTimer(entry.timer as unknown as number);
+    this.#landed.set(p.sync, entry);
   }
 
   /** Tests: resolves when the queued work is done. */
@@ -926,6 +951,51 @@ export class FileSync {
     await this.#pump(p);
   }
 
+  /**
+   * The owner's choice on a conflict copy (Files: Keep this / Keep other). 'this': the original stays and the copy goes to the bin.
+   * 'other': the copy replaces the original, the replaced version goes to the bin (and the copy's own file too). Both changes then
+   * travel like any edit: the next scan sees them and the other PC gets the new file and the delete. Throws a plain sentence on refusal.
+   */
+  resolveConflict(sync: string, path: string, keep: 'this' | 'other'): Promise<void> {
+    let failure: Error | null = null;
+    const done = this.#run(async () => {
+      try {
+        const p = this.#projs.get(sync);
+        const original = conflictOriginal(path);
+        if (!p?.active || !p.scanned) throw new Error('Sync is not running for this project right now.');
+        if (!original || !checkPath(path, this.area).ok) throw new Error('That is not a sync conflict copy.');
+        const copy = this.#safe(p, path, false);
+        const orig = this.#safe(p, original, false);
+        const st = lstat(copy);
+        if (!st || !st.isFile) throw new Error('The conflict copy is already gone.');
+        if (keep === 'other') {
+          const oldSt = lstat(orig);
+          if (oldSt && !oldSt.isFile) throw new Error('The original is not a plain file.');
+          Deno.mkdirSync(this.#tmpDir(p), { recursive: true });
+          const tmp = osp.join(this.#tmpDir(p), `k-${randomToken(6)}`);
+          Deno.copyFileSync(copy, tmp);
+          if (oldSt) this.#bin(p, original, orig, false);
+          for (let i = 0;; i++) {
+            try {
+              Deno.renameSync(tmp, orig);
+              break;
+            } catch (error) {
+              if (i >= 20) throw error;
+              await sleep(50);
+            }
+          }
+        }
+        this.#bin(p, path, copy, true);
+        await this.#rescan(p);
+      } catch (error) {
+        failure = error instanceof Error ? error : new Error(String(error));
+      }
+    });
+    return done.then(() => {
+      if (failure) throw failure;
+    });
+  }
+
   /** The owner's choice on a paused batch of deletes: 'allow' applies it, 'keep' keeps the files and sends them back. */
   decide(sync: string, action: 'allow' | 'keep'): boolean {
     const p = this.#projs.get(sync);
@@ -1066,6 +1136,7 @@ export class FileSync {
         return;
       }
       if (st) this.#bin(p, path, abs, true);
+      this.#received(p);
       for (let dir = osp.dirname(abs); dir.length > p.root.length; dir = osp.dirname(dir)) {
         try {
           Deno.removeSync(dir); // an empty folder only
@@ -1212,6 +1283,7 @@ export class FileSync {
           drop('', 0);
           return this.#again(p);
         }
+        this.#received(p);
         this.#announce(p, peer);
         await this.#reconcile(p);
         return;
@@ -1273,6 +1345,7 @@ export class FileSync {
       p.dirty = true;
       this.#dirty(p);
       await this.#keepBase(p, x.path, p.files.get(x.path)!);
+      this.#received(p);
     } catch (error) {
       drop(`${error instanceof Error ? error.message : error}`, this.timings.retryMs);
       const why = `Held: ${error instanceof Error ? error.message : error}.`;

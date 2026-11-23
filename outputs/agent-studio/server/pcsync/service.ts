@@ -19,7 +19,8 @@ import { portFree } from '../remote/port.ts';
 import { type Peer, PeerStore, type PublicPeer, publicPeer } from './peers.ts';
 import { SYNC_REASONS, SyncGate } from './gate.ts';
 import { type LinkHost, LinkManager, type LinkTimings } from './link.ts';
-import { ProjectSync, type SourceProject } from './projects.ts';
+import { type ProjectLink, ProjectSync, type SourceProject } from './projects.ts';
+import type { Area } from './frames.ts';
 import { type DocsHooks, FileSync, type FileTimings } from './files.ts';
 import { readRepoIdentity, type RepoIdentity } from './repo_id.ts';
 import { notReady, peekWslHost } from '../wsl/access.ts';
@@ -64,6 +65,8 @@ export interface PcSyncOptions {
   files?: Partial<FileTimings>;
   /** The docs store's hooks for the aib-docs sync (slice V5); without them docs are not synced. */
   docs?: DocsHooks;
+  /** Device activity (slice V6): one call per received batch of files, for the activity line "ubuntu-pc synced 3 files to shop". */
+  applied?: (peer: Peer, link: ProjectLink, area: Area, count: number) => void;
   /** Later slices: what a peer's batch frame goes to. */
   onBatch?: LinkHost['onBatch'];
   log?: (message: string) => void;
@@ -181,6 +184,7 @@ export class PcSync {
       isWsl: (folder: string) => !!this.options.projects?.().find((p) => p.path === folder)?.wsl,
       log: (message: string) => this.options.log?.(message),
       settled: () => this.projects.settled(),
+      applied: (peer: Peer, link: ProjectLink, area: Area, count: number) => this.options.applied?.(peer, link, area, count),
     };
     this.files = new FileSync(stateDir, engineDeps, options.files);
     this.docsSync = new FileSync(stateDir, { ...engineDeps, docs: options.docs }, options.files, 'docs');
@@ -606,6 +610,19 @@ export class PcSync {
       join: this.#join ? { ...this.#join } : null,
       peers: this.peers.list().map((p) => ({
         ...publicPeer(p),
+        reach: this.links.state(p.id) === 'connected' ? 'online' : this.links.state(p.id),
+        projects: this.projects.view(p),
+      })),
+    };
+  }
+
+  /** The sidebar marks' data (slice V6): the paired PCs with their projects' file states. Cheap: no Tailscale read, polled by the page. */
+  marks(): Json {
+    return {
+      on: this.peers.on,
+      peers: this.peers.list().map((p) => ({
+        id: p.id,
+        name: p.name,
         reach: this.links.state(p.id) === 'connected' ? 'online' : this.links.state(p.id),
         projects: this.projects.view(p),
       })),

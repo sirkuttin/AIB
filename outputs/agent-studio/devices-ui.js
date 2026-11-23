@@ -105,6 +105,8 @@
   /* One Device activity line: time · device · action · chat: result, then the path for a file or project line (never contents). */
   function activityLine(e, when) {
     const who = e.name || (e.device ? 'a device' : 'AIB');
+    // sync between PCs (one line per received batch): "ubuntu-pc synced 3 files to shop"
+    if (e.action === 'sync' && !e.device) return when + ' · ' + who + ' synced ' + e.result + ' · PC to PC';
     const chat = e.chat ? ' · ' + (e.chatTitle ? '"' + e.chatTitle + '"' : 'chat ' + String(e.chat).slice(0, 8)) : '';
     return when + ' · ' + who + ' · ' + e.action + chat + ': ' + e.result + (e.path ? ' · ' + e.path : '') + (e.by ? ' · by ' + e.by : '');
   }

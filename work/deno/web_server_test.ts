@@ -106,6 +106,7 @@ Deno.test('the route table is exactly the Python web server\'s (paths, scopes an
     'POST /api/live/devices/tailscale/cancel',
     // Settings > Sync (pair your PCs; sync V1)
     'GET /api/live/pcsync',
+    'GET /api/live/pcsync/marks',
     'GET /api/live/pcsync/devices',
     'POST /api/live/pcsync/on',
     'POST /api/live/pcsync/start',
@@ -120,6 +121,7 @@ Deno.test('the route table is exactly the Python web server\'s (paths, scopes an
     'POST /api/live/pcsync/projects/unlink',
     'POST /api/live/pcsync/projects/switch',
     'POST /api/live/pcsync/projects/files',
+    'POST /api/live/pcsync/projects/conflict',
     'POST /api/live/presence',
     'POST /api/live/desktop/windows', // multi-window K3
     'POST /api/live/artifacts/archive',

@@ -84,6 +84,7 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   GET  /api/live/devices/tailscale/job      Settings > Remote control: the running or last setup job
  *   POST /api/live/devices/tailscale/cancel   Settings > Remote control: Cancel on a setup job
  *   GET  /api/live/pcsync                     Settings > Sync: this PC's sync state, the pairing, the paired PCs (pcsync_routes.ts)
+ *   GET  /api/live/pcsync/marks               the sidebar sync marks: the paired PCs' project file states, no Tailscale read
  *   GET  /api/live/pcsync/devices             Settings > Sync: your other Tailscale devices to join from
  *   POST /api/live/pcsync/on                  Settings > Sync: turn sync on or off on this PC {on}
  *   POST /api/live/pcsync/start               Settings > Sync: Start a sync chain (six words)
@@ -98,6 +99,7 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   POST /api/live/pcsync/projects/unlink     Settings > Sync: Unlink a project on both PCs {sync}
  *   POST /api/live/pcsync/projects/switch     Settings > Sync: a project's Docs or aib-shared switch {sync, which, on}
  *   POST /api/live/pcsync/projects/files      Settings > Sync: a paused batch of deletes: Allow or Keep files {sync, action}
+ *   POST /api/live/pcsync/projects/conflict   Files: a sync conflict copy: Keep this or Keep other {sync, path, action: this|other}
  *   POST /api/live/presence                   the page: window focus, time since the last input, open chats, per window (attention/presence.ts K2)
  *   POST /api/live/desktop/windows            open / pop out / route to / focus / close an AIB window (windows_route.ts K3; page only)
  *   POST /api/live/artifacts/archive          archive / unarchive artifacts (the page, or an agent for its own chat's: agent key)
@@ -214,6 +216,7 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['GET', '/api/live/devices/tailscale/job', 'write', 'get'],
   ['POST', '/api/live/devices/tailscale/cancel', 'write', 'body'],
   ['GET', '/api/live/pcsync', 'read', 'get'],
+  ['GET', '/api/live/pcsync/marks', 'read', 'get'],
   ['GET', '/api/live/pcsync/devices', 'read', 'get'],
   ['POST', '/api/live/pcsync/on', 'write', 'body'],
   ['POST', '/api/live/pcsync/start', 'write', 'body'],
@@ -228,6 +231,7 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['POST', '/api/live/pcsync/projects/unlink', 'write', 'body'],
   ['POST', '/api/live/pcsync/projects/switch', 'write', 'body'],
   ['POST', '/api/live/pcsync/projects/files', 'write', 'body'],
+  ['POST', '/api/live/pcsync/projects/conflict', 'write', 'body'],
   ['POST', '/api/live/presence', 'write', 'body'],
   ['POST', '/api/live/desktop/windows', 'write', 'body'], // multi-window K3: page token only, 2 KB, 10 per 10 s
   ['POST', '/api/live/artifacts/archive', 'artifacts.tool', 'own-gate'],

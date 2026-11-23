@@ -482,6 +482,9 @@
         };
         headRow.append(add);
       }
+      // Sync between PCs (pcsync-ui.js): a small always-visible mark after the "+" on a synced project only; a click opens Settings > Sync.
+      const syncMark = root.AIBPcSyncUI && root.AIBPcSyncUI.markFor && g.path ? root.AIBPcSyncUI.markFor(g.path) : null;
+      if (syncMark) headRow.append(syncMark);
       headRow.append(badge);
       if (W2 && W2.openProjectCtx && g.key) {
         const more = el('button', '⋯', 'project-more');

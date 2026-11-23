@@ -29,6 +29,7 @@
     sig: '',
     timer: 0,
     tick: 0,
+    scrollTo: '', // a project (sync id) to scroll to after the next draw
   };
 
   // ---- pure helpers (node tests) ----
@@ -80,6 +81,154 @@
   function countdown(expiresAt, now) {
     const s = Math.max(0, Math.floor(expiresAt - now / 1000));
     return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+  }
+
+  // ---- the sidebar sync mark (slice V6) ----
+  const MARK_ORDER = ['paused', 'conflict', 'waiting', 'syncing', 'ok'];
+  const plural = (n, one, many) => n + ' ' + (n === 1 ? one : many);
+  /* One area's (aib-shared or aib-docs) state for the mark, from the server's file status: {state, n, text}. null: that area is off. */
+  function areaMark(f, folder, who) {
+    if (!f || f.state === 'off') return null;
+    switch (f.state) {
+      case 'wsl': return { state: 'off', n: 0, text: 'Sync for WSL projects is not available yet.' };
+      case 'offline': return { state: 'waiting', n: 0, text: who + ' is off or not reachable. Changes wait here.' };
+      case 'other_off': return { state: 'waiting', n: 0, text: folder + ' sync is off on ' + who + '. Changes wait here.' };
+      case 'blocked': return { state: 'waiting', n: 0, text: f.reason || 'Not synced here.' };
+      case 'checking': return { state: 'syncing', n: 0, text: 'Checking ' + folder + ' with ' + who };
+    }
+    if (f.pause) {
+      return { state: 'paused', n: f.pause.deletes, text: 'Sync paused: ' + f.pause.deletes + ' of ' + f.pause.total + ' files were deleted on ' + who + '. Click to choose.' };
+    }
+    if (f.conflictCount > 0) return { state: 'conflict', n: f.conflictCount, text: '' };
+    if (f.pending > 0) return { state: 'syncing', n: f.pending, text: '' };
+    return { state: 'ok', n: 0, text: '' };
+  }
+  /* The one mark of a linked project: aib-shared and docs combined, the state that needs you most wins. {state, n, text}.
+     state: ok | syncing | waiting | conflict | paused | off. The tooltip is plain text and says PC to PC, no cloud where it fits. */
+  function markOf(link, peerName) {
+    const who = peerName || 'the other PC';
+    const parts = [areaMark(link.files, 'aib-shared', who), areaMark(link.docsFiles, 'aib-docs', who)].filter(Boolean);
+    if (!parts.length) return { state: 'off', n: 0, text: 'Sync is off for this project. Click to open Sync settings.' };
+    const live = parts.filter((x) => x.state !== 'off');
+    if (!live.length) return parts[0];
+    const best = live.slice().sort((a, b) => MARK_ORDER.indexOf(a.state) - MARK_ORDER.indexOf(b.state))[0];
+    const n = live.filter((x) => x.state === best.state).reduce((sum, x) => sum + x.n, 0);
+    if (best.state === 'ok') return { state: 'ok', n: 0, text: 'Up to date with ' + who + '. PC to PC over Tailscale, no cloud.' };
+    if (best.state === 'syncing') return { state: 'syncing', n, text: n ? 'Syncing ' + plural(n, 'file', 'files') + ' with ' + who + '. PC to PC, no cloud.' : best.text };
+    if (best.state === 'conflict') return { state: 'conflict', n, text: plural(n, 'sync conflict', 'sync conflicts') + ' with ' + who + '. Click to open Sync settings.' };
+    return { state: best.state, n, text: best.text };
+  }
+  const normFolder = (p) => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+
+  const M = { host: null, data: null, timer: 0, changed: null, sig: '', nodes: new Set() };
+  /* Every linked project in the marks data: [{folder, sync, name, peer, mark}]. */
+  function marksList(data) {
+    const out = [];
+    for (const peer of (data && data.peers) || []) {
+      for (const l of (peer.projects && peer.projects.links) || []) {
+        if (!l.confirmed || l.missing || !l.folder) continue;
+        out.push({ folder: normFolder(l.folder), sync: l.sync, name: l.name, peer: peer.name, mark: markOf(l, peer.name) });
+      }
+    }
+    return out;
+  }
+  function markNode(entry) {
+    const b = el('button', null, 'sync-mark');
+    b.type = 'button';
+    b.dataset.sync = entry.sync;
+    const svg = doc().createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 16 16');
+    svg.setAttribute('width', '14');
+    svg.setAttribute('height', '14');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('class', 'sync-mark-ico');
+    b.append(svg, el('span', null, 'sync-mark-n'));
+    b.addEventListener('click', (e) => {
+      e.stopPropagation(); // the project row keeps its own click
+      openSettingsAt(b.dataset.sync);
+    });
+    paintMark(b, entry);
+    M.nodes.add(b);
+    return b;
+  }
+  const ARROWS = ['M5.5 13V3M3 5.5L5.5 3 8 5.5', 'M10.5 3v10M8 10.5l2.5 2.5 2.5-2.5'];
+  const BARS = ['M5.5 3.5v9', 'M10.5 3.5v9'];
+  function paintMark(b, entry) {
+    const m = entry.mark;
+    b.dataset.state = m.state;
+    b.title = m.text;
+    b.setAttribute('aria-label', 'Sync with ' + entry.peer + ': ' + m.text);
+    const svg = b.firstChild;
+    svg.replaceChildren();
+    const add = (d, width) => {
+      const p = doc().createElementNS(NS, 'path');
+      p.setAttribute('d', d);
+      p.setAttribute('fill', 'none');
+      p.setAttribute('stroke', 'currentColor');
+      p.setAttribute('stroke-width', width || '1.4');
+      p.setAttribute('stroke-linecap', 'round');
+      p.setAttribute('stroke-linejoin', 'round');
+      svg.append(p);
+    };
+    for (const d of m.state === 'paused' ? BARS : ARROWS) add(d);
+    if (m.state === 'waiting') {
+      const c = doc().createElementNS(NS, 'circle');
+      c.setAttribute('cx', '12.5');
+      c.setAttribute('cy', '12.5');
+      c.setAttribute('r', '3');
+      c.setAttribute('class', 'sync-mark-clock');
+      c.setAttribute('stroke', 'currentColor');
+      c.setAttribute('stroke-width', '1.2');
+      svg.append(c);
+      add('M12.5 11v1.6h1.2', '1');
+    }
+    if (m.state === 'off') add('M3 13L13 3');
+    b.lastChild.textContent = m.state === 'conflict' && m.n ? (m.n > 9 ? '9+' : String(m.n)) : '';
+  }
+  /* The mark for the project in this folder, or null when it does not sync (no mark, no space). Never depends on focus. */
+  function markFor(folder) {
+    const want = normFolder(folder);
+    if (!want || !M.data) return null;
+    const entry = marksList(M.data).find((x) => x.folder === want);
+    return entry ? markNode(entry) : null;
+  }
+  /* The sync id of the project in this folder (Files: the conflict actions need it), or ''. */
+  function syncOf(folder) {
+    const want = normFolder(folder);
+    const entry = want && M.data ? marksList(M.data).find((x) => x.folder === want) : null;
+    return entry ? entry.sync : '';
+  }
+  function openSettingsAt(sync) {
+    P.scrollTo = sync || '';
+    const S = root.AgentSettingsUI;
+    if (S && S.open) S.open('sync');
+    if (P.box && P.box.isConnected && P.view) draw();
+  }
+  function takeMarks(data) {
+    if (!data || typeof data !== 'object' || !('peers' in data)) return;
+    M.data = data;
+    const list = marksList(data);
+    const sig = list.map((x) => x.sync + '@' + x.folder).sort().join('|');
+    for (const b of Array.from(M.nodes)) {
+      const entry = list.find((x) => x.sync === b.dataset.sync);
+      if (!b.isConnected || !entry) M.nodes.delete(b);
+      else paintMark(b, entry);
+    }
+    if (sig !== M.sig) {
+      M.sig = sig;
+      if (M.changed) M.changed(); // the set of synced projects changed: the sidebar draws its marks again
+    }
+  }
+  function pollMarks() {
+    if (!M.host || doc().visibilityState === 'hidden') return Promise.resolve();
+    return Promise.resolve(M.host.get('/api/live/pcsync/marks')).then(takeMarks, () => {});
+  }
+  /* host: {get(path)}; changed(): called when a project starts or stops syncing. Polls every 4 s while the page is visible. */
+  function watch(host, changed) {
+    M.host = host;
+    M.changed = changed || null;
+    pollMarks();
+    if (!M.timer) M.timer = root.setInterval(pollMarks, 4000);
   }
 
   // ---- drawing ----
@@ -166,6 +315,12 @@
     }
     box.replaceChildren(frag);
     box._psDrawn = true;
+    if (P.scrollTo && v) {
+      // a click on a sidebar mark: scroll that project's row into view (once)
+      const row = Array.from(box.querySelectorAll('[data-sync]')).find((n) => n.dataset.sync === P.scrollTo);
+      if (row && row.scrollIntoView) row.scrollIntoView({ block: 'center' });
+      P.scrollTo = '';
+    }
   }
 
   /* One project's switch: a labelled checkbox, saved at once, off by default. */
@@ -226,7 +381,7 @@
         }
         row.append(status);
         const items = [];
-        for (const c of f.conflicts || []) items.push(['conflict', c, 'Conflict copy: both versions are kept. Delete the one you do not want.']);
+        for (const c of f.conflicts || []) items.push(['conflict', c, 'Conflict copy: both versions are kept. Open Files to compare them and choose.']);
         for (const h of f.held || []) items.push(['held', h.path, h.why]);
         if (items.length) {
           const list = el('ul', null, 'ps-filelist');
@@ -489,7 +644,7 @@
     }
   }
 
-  const api = { render, refresh, statusText, reachText, howText, filesText, countdown, _state: P };
+  const api = { _take: takeMarks, _poll: pollMarks, render, refresh, watch, markFor, markOf, syncOf, openSettingsAt, normFolder, statusText, reachText, howText, filesText, countdown, _state: P };
   root.AIBPcSyncUI = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

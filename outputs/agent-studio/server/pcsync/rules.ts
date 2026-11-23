@@ -46,6 +46,12 @@ export function isSecretPath(path: string): boolean {
 export const CONFLICT_MARK = '.sync-conflict-';
 export const isConflictCopy = (path: string): boolean => path.includes(CONFLICT_MARK);
 
+/** The file a conflict copy belongs to: `a/notes.sync-conflict-20261123-143000-studio-pc.md` is `a/notes.md`. null: not a conflict copy. */
+export function conflictOriginal(path: string): string | null {
+  const original = path.replace(/\.sync-conflict-\d{8}-\d{6}-[A-Za-z0-9-]*/, '');
+  return original !== path && original.length > 0 && !original.endsWith('/') ? original : null;
+}
+
 /** `.md` and `.txt` files get a 3-way line merge before a conflict copy is made. */
 export const isMergeable = (path: string): boolean => /\.(md|txt)$/i.test(path);
 

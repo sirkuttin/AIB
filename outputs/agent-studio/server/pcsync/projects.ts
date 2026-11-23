@@ -458,6 +458,7 @@ export class ProjectSync {
     const links = [...this.#links.values()].filter((l) => l.peer === peer.host).map((l) => ({
       sync: l.sync,
       name: l.name,
+      folder: l.folder,
       otherName: l.other.name,
       how: l.how,
       confirmed: l.confirmed,

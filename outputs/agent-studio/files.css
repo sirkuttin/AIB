@@ -345,6 +345,34 @@ body:not(.sf-files-mode) #filesPane {
   font-size: 12px;
   line-height: 20px;
 }
+/* A sync conflict copy (aib-shared): a "sync conflict" pill and three always-visible icons: Compare, Keep this, Keep other. */
+.fx-conflict {
+  flex: none;
+  padding: 0 7px;
+  border-radius: 9px;
+  border: 1px solid var(--status-needs-line);
+  color: var(--status-needs);
+  font-size: 11.5px;
+  line-height: 16px;
+}
+.fx-cf {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.fx-cf:hover,
+.fx-cf:focus-visible {
+  color: var(--text-bright);
+  background: var(--accent-wash-2);
+}
 .fx-empty {
   margin: 8px 4px;
   font-size: 12px;

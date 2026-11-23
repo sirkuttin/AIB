@@ -985,6 +985,13 @@
     }
     const pen = doc().getElementById('wsRenameProj');
     if (pen) pen.hidden = !p || !!projEdit;
+    // Sync between PCs (pcsync-ui.js): the mark of the project on screen, after its name; none when it does not sync.
+    if (pen && pen.parentNode && pen.parentNode.querySelector) {
+      const oldMark = pen.parentNode.querySelector('.sync-mark');
+      if (oldMark) oldMark.remove();
+      const mark = p && p.path && root.AIBPcSyncUI && root.AIBPcSyncUI.markFor ? root.AIBPcSyncUI.markFor(p.path) : null;
+      if (mark) pen.parentNode.insertBefore(mark, pen);
+    }
     const add = doc().getElementById('new');
     if (add) {
       const t = 'New chat' + (p ? ' in ' + p.name : '') + ' (Ctrl+Shift+N)';
@@ -3762,6 +3769,7 @@
     dotForKey,
     statusTextOf,
     refresh,
+    redrawHead: drawListHead, // the project header again (the sync mark appears or goes when a project starts or stops syncing)
     paletteProjects,
     focusNewChatIn,
     newChatIn,
