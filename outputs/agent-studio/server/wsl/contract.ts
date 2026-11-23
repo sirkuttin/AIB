@@ -187,6 +187,14 @@ export interface HelperMethods {
    * is `chunk` ops ({path, token, text, first}) then `writeAtomic` {path, token}.
    */
   'docs.fs': { params: { ops: DocFsOp[] }; result: { results: Record<string, unknown>[] } };
+  /**
+   * The sync between PCs' file work of a WSL project (helper/pcsync.ts runs pcsync/diskops.ts natively; Windows side wsl/pcsync.ts). One
+   * batch of ops on the project's aib-shared/ or aib-docs/ (`area`): walk (one listing, links never followed), hash, read (chunked),
+   * tmpWrite + install (an atomic write: a temp file, then a rename in the distro), deleteFile and bin ops (the bin is in the repo's
+   * .git/aib-sync/bin: binList, binToTmp for Restore, binPrune, capBin), and git (merge or rebase in progress, current branch). Paths are
+   * relative to the folder; bytes travel as bytesB64. One result per op: {ok: true, ...} or {ok: false, error, code}.
+   */
+  'pcsync.fs': { params: { project: string; area: 'shared' | 'docs'; sync: string; ops: Record<string, unknown>[] }; result: { results: Record<string, unknown>[] } };
   'changes.get': { params: { folder: string; offset?: number; base?: string }; result: unknown };
   'changes.diff': { params: { folder: string; path: string; base?: string }; result: unknown };
   /**

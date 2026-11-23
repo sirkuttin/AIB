@@ -24,6 +24,8 @@ import type { Area } from './frames.ts';
 import { type DocsHooks, FileSync, type FileTimings } from './files.ts';
 import { readRepoIdentity, type RepoIdentity } from './repo_id.ts';
 import { notReady, peekWslHost } from '../wsl/access.ts';
+import { wslDisk } from '../wsl/pcsync.ts';
+import { localDisk } from './disk.ts';
 import {
   otherAibListens,
   readSyncServe,
@@ -209,7 +211,8 @@ export class PcSync {
       connected: (peerId: string) => this.links.state(peerId) === 'connected',
       send: (peerId: string, batch: Parameters<LinkManager['sendBatch']>[1]) => this.links.sendBatch(peerId, batch),
       own: () => (this.#ts?.name ? { host: this.#ts.name, name: this.#ts.machine } : null),
-      isWsl: (folder: string) => !!this.options.projects?.().find((p) => p.path === folder)?.wsl,
+      // a WSL project's files are read and written in its distro by the helper (wsl/pcsync.ts); every other project's on this PC
+      disk: (link: ProjectLink, area: Area) => wslDisk(link.folder, area, link.sync) ?? localDisk(link.folder, area, link.sync),
       log: (message: string) => this.options.log?.(message),
       settled: () => this.projects.settled(),
       applied: (peer: Peer, link: ProjectLink, area: Area, count: number) => this.options.applied?.(peer, link, area, count),

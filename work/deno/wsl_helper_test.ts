@@ -492,6 +492,7 @@ Deno.test('the ready line can list every method of the contract', () => {
     'transcripts.read',
     'transcripts.mentions',
     'docs.fs',
+    'pcsync.fs',
     'editor.read',
     'editor.write',
     'editor.sweep',

@@ -68,7 +68,6 @@
     if (!f || f.state === 'off') return '';
     const who = peerName || 'the other PC';
     switch (f.state) {
-      case 'wsl': return 'Sync for WSL projects comes in a later update.';
       case 'offline': return 'Waiting for ' + who + ' to be online.';
       case 'blocked': return f.reason || 'Not synced here.';
       case 'other_off': return 'Waiting: ' + (folder || 'aib-shared') + ' is off on ' + who + '.';
@@ -92,7 +91,6 @@
   function areaMark(f, folder, who) {
     if (!f || f.state === 'off') return null;
     switch (f.state) {
-      case 'wsl': return { state: 'off', n: 0, text: 'Sync for WSL projects is not available yet.' };
       case 'offline': return { state: 'waiting', n: 0, text: who + ' is off or not reachable. Changes wait here.' };
       case 'other_off': return { state: 'waiting', n: 0, text: folder + ' sync is off on ' + who + '. Changes wait here.' };
       case 'blocked': return { state: 'waiting', n: 0, text: f.reason || 'Not synced here.' };

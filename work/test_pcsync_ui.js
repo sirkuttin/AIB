@@ -53,7 +53,7 @@ test('file status: one plain phrase per state, paused first, then syncing, confl
   assert.equal(UI.filesText({ ...ok, conflictCount: 1 }, 'desk'), '1 conflict');
   assert.equal(UI.filesText({ ...ok, conflictCount: 2 }, 'desk'), '2 conflicts');
   assert.equal(UI.filesText({ ...ok, pause: { deletes: 12, total: 12 }, pending: 4, conflictCount: 1 }, 'desk'), 'Paused: big delete');
-  assert.match(UI.filesText({ ...ok, state: 'wsl' }, 'desk'), /WSL projects comes in a later update/);
+  assert.equal(UI.filesText({ ...ok, state: 'waiting', reason: 'Waiting: Ubuntu is not running.' }, 'desk'), 'Waiting: Ubuntu is not running.');
   assert.match(UI.filesText({ ...ok, state: 'offline' }, 'desk'), /Waiting for desk/);
   assert.match(UI.filesText({ ...ok, state: 'other_off' }, 'desk'), /off on desk/);
   assert.equal(UI.filesText({ ...ok, state: 'other_off' }, 'desk', 'aib-docs'), 'Waiting: aib-docs is off on desk.');
@@ -119,4 +119,17 @@ test('git waits: a project that waits for a git operation or another branch show
   assert.deepEqual(mark(null, fv({ state: 'waiting', reason: why })), { state: 'waiting', n: 0, text: why });
   assert.equal(mark(fv({ pending: 2 }), fv({ state: 'waiting', reason: why })).state, 'waiting', 'waiting outranks syncing');
   assert.equal(mark(fv({ conflictCount: 1 }), fv({ state: 'waiting', reason: why })).state, 'conflict', 'a conflict still outranks it');
+});
+
+test('WSL projects (V7): the mark shows real states and matches the wsl:// ref the sidebar holds', () => {
+  const ok = { state: 'ok', reason: '', pending: 0, conflicts: [], conflictCount: 0, held: [], pause: null };
+  const link = (files) => ({ confirmed: true, folder: 'wsl://ubuntu/home/u/app', sync: 'abcdefgh1', name: 'app', files, docsFiles: null });
+  assert.equal(UI.markOf(link(ok), 'desk').state, 'ok');
+  assert.equal(UI.markOf(link({ ...ok, pending: 2 }), 'desk').state, 'syncing');
+  assert.equal(UI.markOf(link({ ...ok, conflictCount: 1 }), 'desk').state, 'conflict');
+  const waiting = UI.markOf(link({ ...ok, state: 'waiting', reason: 'Waiting: Ubuntu is not running.' }), 'desk');
+  assert.equal(waiting.state, 'waiting');
+  assert.equal(waiting.text, 'Waiting: Ubuntu is not running.');
+  // the sidebar's g.path is the chat's or project's wsl:// ref: any casing or trailing slash of it finds the link's folder
+  assert.equal(UI.normFolder('wsl://Ubuntu/home/u/app/'), UI.normFolder('wsl://ubuntu/home/u/app'));
 });

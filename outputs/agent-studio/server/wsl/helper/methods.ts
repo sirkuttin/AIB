@@ -33,6 +33,7 @@ import { ProjectResolver } from '../../worktrees/worktrees.ts';
 import { bundledClaudeCli, bundledCodexCli, findCodexCli } from '../../agents/signin.ts';
 import { installMethods } from './agent_install.ts';
 import { docsMethods } from './docs.ts';
+import { pcsyncMethods } from './pcsync.ts';
 import { docRows } from '../../docs/rows.ts';
 import { bgtaskMethods } from './bgtasks.ts';
 import { type EnvMode, envPrereqs, type PrereqDeps } from './prereqs.ts';
@@ -228,6 +229,7 @@ export function makeMethods(ctx: HelperContext): Handlers {
   const methods = {
     ...phaseOne(ctx),
     ...docsMethods(ctx), // the docs' file work in the project's aib-docs/ (helper/docs.ts)
+    ...pcsyncMethods(), // sync between PCs: the file work in a project's aib-shared/ and aib-docs/ (helper/pcsync.ts)
     ...editorMethods(ctx), // the file editor's reads and atomic saves of a WSL project's files (helper/editor.ts)
     // background tasks, the ownership check and the agents' process trees (helper/bgtasks.ts)
     ...bgtaskMethods({ env: ctx.env, store: (p) => sessionStore(ctx, p) }),
