@@ -177,9 +177,9 @@ export class Lab {
    *  watches a chat another program is writing). `add*` append rows to the file at once. */
   savedChat(session: string): Saved {
     const cwd = this.fx.workspace;
-    const folder = `${this.fx.root}\\claude\\${cwd.replace(/[^A-Za-z0-9]/g, '-')}`;
+    const folder = `${this.fx.root}/claude/${cwd.replace(/[^A-Za-z0-9]/g, '-')}`;
     Deno.mkdirSync(folder, { recursive: true });
-    const file = `${folder}\\${session}.jsonl`;
+    const file = `${folder}/${session}.jsonl`;
     let n = 0;
     let clock = Date.now() - 3600_000;
     const row = (type: string, message: Record<string, unknown>) => {

@@ -796,12 +796,12 @@
     return !!job && job.state === 'waiting';
   };
   // A Beta agent can also be signed in while Not checked (its check runs only once it is on); one that signs in with an API key only
-  // has the key box.
+  // has the key box. Copilot offers account sign-in even when the ACP readiness check succeeds.
   const canSignIn = (a) =>
     !!a.found &&
     !!a.signin &&
     !signinWaiting(a) &&
-    (a.signin.state === 'signin' || (!!a.beta && a.signin.state !== 'ready')) &&
+    (a.signin.state === 'signin' || (!!a.beta && (a.signin.state !== 'ready' || a.id === 'copilot'))) &&
     !(a.beta && betaInfo(a).signin === 'key');
   function syncSignins(list) {
     for (const a of list || []) {
@@ -1406,7 +1406,9 @@
     const msg = setupNotes[E.key(a)];
     if (msg && !a.found) row.append(note(msg, 'dim'));
     // A distro's card uses the key saved on Windows (one key per agent): it says so instead of a second key box.
-    if (info.keyEnv) row.append(E.sharedKey ? note('API key (' + info.keyEnv + '): uses your Windows key, saved in AIB Linking.', 'dim st-beta-key-shared') : keyBox(a, info));
+    if (info.keyEnv && (a.id !== 'copilot' || E.sharedKey)) {
+      row.append(E.sharedKey ? note('API key (' + info.keyEnv + '): uses your Windows key, saved in AIB Linking.', 'dim st-beta-key-shared') : keyBox(a, info));
+    }
     const term = E.terminal(a);
     if (term) row.append(term.node);
   }

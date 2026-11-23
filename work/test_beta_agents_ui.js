@@ -421,6 +421,28 @@ test("a card with an API key box links to the provider's key page, opened in the
   assert.equal(rows[1].querySelector('.st-beta-keylink'), null, 'OpenCode has no key box, so no link');
 });
 
+test('a Ready Copilot card offers GitHub sign-in without an API token field', async () => {
+  const list = LIST();
+  list[3] = {
+    ...list[3],
+    found: true,
+    signin: { state: 'ready' },
+    betaInfo: { ...list[3].betaInfo, keyEnv: 'COPILOT_GITHUB_TOKEN' },
+  };
+  const { betaRow, ctx, posts } = await openSettings(list);
+  const launches = [];
+  ctx.AibTerminal = { runSignin: (_view, id) => launches.push(id) };
+  const row = betaRow('GitHub Copilot CLI');
+  assert.equal(row.querySelector('.st-status').textContent, 'Ready');
+  assert.equal(row.querySelector('.st-beta-key'), null);
+  const signIn = row.querySelectorAll('button').find((b) => b.textContent === 'Sign in');
+  assert.ok(signIn);
+  signIn.click();
+  await flush();
+  assert.ok(posts.some(([route, body]) => route === 'agents/signin' && body.agent === 'copilot'));
+  assert.deepEqual(launches, ['copilot']);
+});
+
 test('the New chat agent menu and the composer agent chip list Beta agents last, under a "Beta" group label', async () => {
   const shell = page();
   const ctx = load(shell, ['agent-choice.js', 'composer-chips.js']);
