@@ -136,25 +136,37 @@ test('a server row: name, address, status, the three row icons always visible, S
   assert.equal(key.type, 'password');
   assert.equal(key.value, '');
   assert.equal(key.placeholder, '•••• (stored)');
-  // Use with: one switch per agent that works today; no Codex switch
+  // Use with: one switch per agent (Claude Code, Codex, Maki, Qwen Code), all the same
   const boxes = r.querySelector('.ms-use').querySelectorAll('input');
-  assert.deepEqual(plain(boxes.map((b) => [b.dataset.useWith, b.checked, b.disabled])), [['claude', true, false], ['maki', false, false], ['qwen', false, false]]);
-  assert.ok(!/Codex/.test(r.querySelector('.ms-use').textContent), 'Codex has no switch until codex@ entries exist');
-  assert.ok(/Adds "Claude Code · strata" to New chat/.test(r.querySelector('.ms-use').textContent));
+  assert.deepEqual(plain(boxes.map((b) => [b.dataset.useWith, b.checked, b.disabled])), [['claude', true, false], ['codex', false, false], ['maki', false, false], ['qwen', false, false]]);
+  // every agent's switch says the same thing: it adds its own entry
+  const hints = r.querySelector('.ms-use').querySelectorAll('.st-hint').map((h) => h.textContent);
+  assert.deepEqual(plain(hints.slice(0, 2)), ['Adds "Claude Code · strata" to New chat.', 'Adds "Codex · strata" to New chat.']);
+  assert.ok(/Adds "Maki · strata" to New chat/.test(r.querySelector('.ms-use').textContent));
+  assert.ok(/Adds "Qwen Code · strata" to New chat/.test(r.querySelector('.ms-use').textContent));
 });
 
 test('a switch that the server does not support is greyed with the reason; the others work', async () => {
   const responses = { ...UP, kinds: ['responses'] };
   const { row } = await open({ health: [responses], servers: [{ ...SERVER, useWith: [] }] });
   const boxes = row().querySelector('.ms-use').querySelectorAll('input');
-  assert.deepEqual(plain(boxes.map((b) => [b.dataset.useWith, b.disabled])), [['claude', true], ['maki', true], ['qwen', true]]);
+  assert.deepEqual(plain(boxes.map((b) => [b.dataset.useWith, b.disabled])), [['claude', true], ['codex', false], ['maki', true], ['qwen', true]]);
   assert.ok(/Claude Code needs a server that speaks Anthropic Messages/.test(row().querySelector('.ms-use').textContent));
+  assert.ok(/Maki needs a server that speaks Anthropic Messages/.test(row().querySelector('.ms-use').textContent));
   assert.ok(/Qwen Code needs a server that speaks Chat Completions/.test(row().querySelector('.ms-use').textContent));
+});
+
+test('Codex is greyed the same way, with its reason, when the server speaks neither Responses nor Chat Completions', async () => {
+  const anthropicOnly = { ...UP, kinds: ['anthropic'] };
+  const { row } = await open({ health: [anthropicOnly], servers: [{ ...SERVER, useWith: [] }] });
+  const boxes = row().querySelector('.ms-use').querySelectorAll('input');
+  assert.deepEqual(plain(boxes.map((b) => [b.dataset.useWith, b.disabled])), [['claude', false], ['codex', true], ['maki', false], ['qwen', true]]);
+  assert.ok(/Codex needs a server that speaks OpenAI Responses or Chat Completions/.test(row().querySelector('.ms-use').textContent));
 });
 
 test('Use with: a switch saves {useWith} for that server and nothing else', async () => {
   const { row, posts } = await open();
-  const maki = row().querySelector('.ms-use').querySelectorAll('input')[1];
+  const maki = row().querySelector('.ms-use').querySelectorAll('input')[2];
   maki.checked = true;
   maki.dispatch('change');
   await flush();

@@ -451,6 +451,24 @@ function phaseOne(ctx: HelperContext): Handlers {
       return { found: latestRolloutLimits(osp.normpath(dir)) };
     },
 
+    // A model-server Codex entry's own CODEX_HOME inside the distro (<AIB's folder>/codex-home/<server id>/config.toml, written by AIB
+    // from the same generated text as on Windows). Never the user's ~/.codex.
+    'codexhome.write': async (p) => {
+      const id = str(p, 'id');
+      const toml = str(p, 'toml');
+      if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id) || id.length > 30) throw new RpcError('id must be a model server id', BAD_PARAMS);
+      if (toml.length > 20_000) throw new RpcError('toml is too long', BAD_PARAMS);
+      const dir = osp.join((await ownFolders(ctx))[0], 'codex-home', id);
+      Deno.mkdirSync(dir, { recursive: true });
+      const file = osp.join(dir, 'config.toml');
+      let same = false;
+      try {
+        same = Deno.readTextFileSync(file) === toml;
+      } catch { /* not written yet */ }
+      if (!same) Deno.writeTextFileSync(file, toml);
+      return { path: dir };
+    },
+
     // Project delete in the distro: the same refusals as a Windows delete, then the distro's trash (gio, else the freedesktop trash).
     // Never a permanent delete: with no usable trash the answer is a refusal.
     'project.inspect': async (p) => {

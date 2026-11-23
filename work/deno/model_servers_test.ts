@@ -1,7 +1,8 @@
 /**
- * Model servers (server/agents/model_servers.ts): an Anthropic-compatible server appears as its own Claude Code agent
- * agents built from it, `claude@<server id>` ("Claude Code · <server name>"), that run the SAME Claude adapter with another environment. The plumbing, with no UI:
- *   - the Claude-family helper, and the settings list (add, edit, remove; key sealed in the data folder, never in the page's view)
+ * Model servers (server/agents/model_servers.ts): a server appears as its own entry per agent turned on for it, `<agent>@<server id>`
+ * ("Claude Code · <server name>", "Codex · ...", "Maki · ...", "Qwen Code · ..."), that runs the SAME adapter as its base agent with
+ * another environment (Codex: its own CODEX_HOME with a generated config.toml). The plumbing, with no UI:
+ *   - the family helpers (baseAgent / isServerEntry / isClaudeFamily / isCodexFamily: codex@ acts like codex), and the settings list (add, edit, remove; key sealed in the data folder, never in the page's view)
  *   - the agent row, New chat on the PC (agent-choice.js) and on the phone (eligibility.ts)
  *   - the launch env (address, key or dummy, model), the same adapter argv as `claude`, an unreachable server's plain error
  *   - the model picker lists the server's models, not the adapter's
@@ -14,10 +15,14 @@ import { assert, assertEquals, assertRejects } from './_assert.ts';
 import { fake } from './_connection.ts';
 import { FakeWslHost } from './_wsl_fake.ts';
 import '../../outputs/agent-studio/agent-choice.js';
-import { claudeBase, isClaudeFamily, isModelServerId, modelServerAgentId, serverIdOf } from '../../outputs/agent-studio/server/agents/claude_family.ts';
+import { baseAgent, claudeBase, isClaudeFamily, isCodexFamily, isModelServerId, isServerEntry, modelServerAgentId, sameAgent, serverIdOf } from '../../outputs/agent-studio/server/agents/claude_family.ts';
 import { isProvider } from '../../outputs/agent-studio/server/agents/agent_registry.ts';
 import {
+  betaServerEnv,
   checkModelServer,
+  CODEX_KEY_ENV,
+  codexConfigToml,
+  codexWireApi,
   DUMMY_KEY,
   isLoopbackAddress,
   modelServerEnv,
@@ -36,6 +41,7 @@ import { match, type MatchContext } from '../../outputs/agent-studio/server/allo
 import { readSubagents, type SubagentChat, SubagentWorktrees } from '../../outputs/agent-studio/server/subagents/service.ts';
 import { OwnershipProbe } from '../../outputs/agent-studio/server/ownership/probe.ts';
 import { withServerModels } from '../../outputs/agent-studio/server/acp/breadth.ts';
+import { makeMethods } from '../../outputs/agent-studio/server/wsl/helper/methods.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -59,10 +65,25 @@ class Lab {
   readonly dir = outsideHome('aib-modelserver-');
   readonly state = this.dir + SEP + 'state';
   readonly launcher = this.dir + SEP + 'claude-launcher.js';
+  readonly codexLauncher = this.dir + SEP + 'codex-launcher.js';
   readonly studios: Studio[] = [];
   readonly servers: Deno.HttpServer[] = [];
   constructor() {
     Deno.writeTextFileSync(this.launcher, '');
+    Deno.writeTextFileSync(this.codexLauncher, '');
+  }
+
+  /** A fake server that speaks the kinds asked for (an empty POST is rejected with 400: it speaks it, else 404) and lists models. */
+  serveKinds(kinds: ('anthropic' | 'responses' | 'chat')[], models = ['fake-model-a']): { url: string } {
+    const path = { anthropic: '/v1/messages', responses: '/v1/responses', chat: '/v1/chat/completions' };
+    const server = Deno.serve({ hostname: '127.0.0.1', port: 0, onListen() {} }, (request) => {
+      const at = new URL(request.url).pathname;
+      if (request.method === 'GET' && at === '/v1/models') return Response.json({ data: models.map((id) => ({ id })) });
+      const speaks = kinds.some((k) => path[k] === at);
+      return new Response('{}', { status: request.method === 'POST' && speaks ? 400 : 404 });
+    });
+    this.servers.push(server);
+    return { url: `http://127.0.0.1:${server.addr.port}` };
   }
 
   /** A fake Anthropic-compatible server: GET /v1/models lists these models; with `needKey` it answers 401 to any other key. */
@@ -88,7 +109,7 @@ class Lab {
 
   studio(flags: string[] = []): Studio {
     const studio = new Studio(
-      { stateDir: this.state, port: 0, ownersDir: null, noArtifactTool: true, claudeLauncher: this.launcher, nodeCommand: Deno.execPath() },
+      { stateDir: this.state, port: 0, ownersDir: null, noArtifactTool: true, claudeLauncher: this.launcher, codexLauncher: this.codexLauncher, nodeCommand: Deno.execPath() },
       { keeper: null },
     );
     studio.ownerProbe = () => null;
@@ -379,4 +400,172 @@ Deno.test('a server has its own id; agent entries and their label are built from
   await store.update({ agents: { modelServer: { remove: 'claude-2' } } });
   assertEquals([store.snapshot().defaults.agent, store.betaKey('claude-2')], ['', '']);
   assert(!(await describeAgents(options, store)).some((r) => r.id === 'claude@claude-2'));
+});
+
+Deno.test('parity helpers: codex@, maki@ and qwen@ are entries that act like their base agent; the Claude family is unchanged', () => {
+  for (const id of ['claude@strata', 'codex@strata', 'maki@strata', 'qwen@my-server-2']) assert(isModelServerId(id) && isServerEntry(id) && isProvider(id), id);
+  for (const id of ['claude', 'codex', 'maki', 'qwen', 'gemini@x', 'codex@', 'codex@Bad', 'custom-codex@x', 'codex@a--']) assert(!isServerEntry(id), id);
+  assertEquals(['claude@a', 'codex@a', 'maki@a', 'qwen@a', 'codex', 'custom-x'].map(baseAgent), ['claude', 'codex', 'maki', 'qwen', 'codex', 'custom-x']);
+  assertEquals(['claude@a', 'codex@a', 'maki@a', 'qwen@a'].map((id) => claudeBase(id)), ['claude', 'codex', 'maki', 'qwen']);
+  assert(isCodexFamily('codex') && isCodexFamily('codex@strata') && !isCodexFamily('claude@strata') && !isCodexFamily('maki@strata'));
+  assert(isClaudeFamily('claude@strata') && !isClaudeFamily('codex@strata'), 'codex@ is not the Claude family');
+  assertEquals([serverIdOf('codex@strata'), serverIdOf('maki@x'), serverIdOf('qwen')], ['strata', 'x', null]);
+  assertEquals([modelServerAgentId('codex', 'strata'), modelServerLabel('codex', 'strata'), modelServerLabel('maki', 's'), modelServerLabel('qwen', 's')], ['codex@strata', 'Codex \u00b7 strata', 'Maki \u00b7 s', 'Qwen Code \u00b7 s']);
+  assert(sameAgent('claude', 'claude@x') && !sameAgent('codex', 'codex@x'), 'only the Claude family shares one saved-chat folder');
+});
+
+Deno.test('parity: the allow matcher, ownership and the subagent service treat codex@ like codex', async () => {
+  const params = { toolCall: { toolCallId: 't1', kind: 'execute', title: 'Run', rawInput: { command: 'git status' } } };
+  const base = { toolName: 'Run', cwd: 'C:/aib-x/proj', project: 'C:/aib-x/proj' } as unknown as MatchContext;
+  for (const mode of ['auto', 'read-only', 'full-access', 'default']) {
+    const a = match(params, { ...base, mode, provider: 'codex' }, [], {} as never);
+    const b = match(params, { ...base, mode, provider: 'codex@strata' }, [], {} as never);
+    assertEquals(JSON.stringify(b), JSON.stringify(a), mode);
+  }
+  const probe = new OwnershipProbe({ registry: null, ownedByStudio: () => false, inspectProcesses: false, lockProbe: () => [] });
+  probe.noteReleased('codex@strata', 's9');
+  assert(probe.releasedAt('codex', 's9') !== null, 'a release by a codex@ chat is the Codex session released');
+});
+
+Deno.test('the Codex entry launches with its OWN CODEX_HOME and a generated config.toml (wire_api from the API kinds); the key goes in its env', async () => {
+  await using lab = new Lab();
+  const both = lab.serveKinds(['responses', 'chat'], ['gpt-local', 'other']);
+  const chatOnly = lab.serveKinds(['chat']);
+  const studio = lab.studio();
+  await studio.settings.update({ agents: { modelServer: { upsert: { name: 'strata', url: both.url + '/', model: 'gpt-local', key: KEY, useWith: ['codex'] } } } });
+  await studio.settings.update({ agents: { modelServer: { upsert: { name: 'plain chat', url: chatOnly.url, useWith: ['codex'] } } } });
+  const [normalArgv, normalEnv] = await studio.agentLaunch('codex');
+  const [argv, env] = await studio.agentLaunch('codex@strata');
+  assertEquals(argv, normalArgv, 'the same Codex adapter command as normal Codex');
+  assert(!('CODEX_HOME' in normalEnv) && !(CODEX_KEY_ENV in normalEnv), 'normal Codex is not changed');
+  const home = lab.state + SEP + 'codex-home' + SEP + 'strata';
+  assertEquals(env.CODEX_HOME, home, 'a folder AIB owns, in its data folder');
+  assertEquals(env[CODEX_KEY_ENV], KEY);
+  const toml = Deno.readTextFileSync(home + SEP + 'config.toml');
+  assertEquals(
+    toml.split('\n').filter((l) => l && !l.startsWith('#')),
+    [
+      'model_provider = "strata"',
+      'model = "gpt-local"',
+      '[model_providers.strata]',
+      'name = "strata"',
+      `base_url = "${both.url}/v1"`,
+      `env_key = "${CODEX_KEY_ENV}"`,
+      'wire_api = "responses"',
+    ],
+  );
+  assert(!toml.includes(KEY), 'the key is never written to the file');
+  assert(!home.includes(SEP + '.codex'), 'never the owner\u2019s ~/.codex');
+  // a server that speaks only Chat Completions: wire_api = "chat"; no key: a dummy
+  const [, chatEnv] = await studio.agentLaunch('codex@plain-chat');
+  assertEquals(chatEnv[CODEX_KEY_ENV], DUMMY_KEY);
+  const chatToml = Deno.readTextFileSync(lab.state + SEP + 'codex-home' + SEP + 'plain-chat' + SEP + 'config.toml');
+  assert(chatToml.includes('wire_api = "chat"') && !chatToml.includes('model = '), chatToml);
+  assertEquals([codexWireApi([]), codexWireApi(['anthropic']), codexWireApi(['chat']), codexWireApi(['chat', 'responses'])], ['responses', 'responses', 'chat', 'responses']);
+  // an address that already ends in /v1, and a provider id that Codex reserves
+  const text = codexConfigToml({ id: 'ollama', name: 'o', url: 'http://h:1/v1', model: '', useWith: ['codex'] }, 'responses');
+  assert(text.includes('model_provider = "aib-ollama"') && text.includes('[model_providers.aib-ollama]') && text.includes('base_url = "http://h:1/v1"'), text);
+  // the unreachable server: a plain error naming the address, nothing written, no adapter started
+  const dead = lab.deadAddress();
+  await studio.settings.update({ agents: { modelServer: { upsert: { name: 'down', url: dead, useWith: ['codex'] } } } });
+  const error = await assertRejects(() => studio.agentLaunch('codex@down'));
+  assert(error.message.includes(dead), error.message);
+});
+
+Deno.test('a Codex entry chat starts the Codex adapter with CODEX_HOME and the key, and is wired like a Codex chat', async () => {
+  await using lab = new Lab();
+  const up = lab.serveKinds(['responses'], ['srv-one', 'srv-two']);
+  const studio = lab.studio(['--breadth']);
+  await studio.settings.update({ agents: { modelServer: { upsert: { name: 'strata', url: up.url, model: 'srv-two', key: KEY, useWith: ['codex'] } } } });
+  launched.length = 0;
+  const chat = await studio.connect('codex@strata', lab.dir);
+  assertEquals(launched.length, 1);
+  assertEquals(launched[0].provider, 'codex@strata');
+  assertEquals([launched[0].env!.CODEX_HOME, launched[0].env![CODEX_KEY_ENV]], [lab.state + SEP + 'codex-home' + SEP + 'strata', KEY]);
+  assertEquals(typeof chat.onTurnCancelled, 'function', 'a Codex chat\u2019s subagent wiring');
+  assertEquals((chat.public() as Json).steerAgent, 'codex', 'steering is the Codex chat\u2019s');
+  const model = ((chat.public().settings as Json).configOptions as Json[]).find((o) => o.category === 'model')!;
+  assertEquals((model.options as Json[]).map((o) => o.value), ['srv-two', 'srv-one'], 'the server\u2019s models in the picker');
+});
+
+Deno.test('Maki and Qwen Code entries start their normal adapter with the server env; the normal entries are not given it', async () => {
+  await using lab = new Lab();
+  const bin = lab.dir + SEP + 'bin';
+  Deno.mkdirSync(bin);
+  for (const name of ['qwen', 'qwen.exe', 'maki', 'maki.exe']) Deno.writeTextFileSync(bin + SEP + name, '');
+  const before = Deno.env.get('PATH') ?? '';
+  Deno.env.set('PATH', bin + (WIN ? ';' : ':') + before);
+  try {
+    const up = lab.serve(['m-a', 'm-b']);
+    const studio = lab.studio();
+    await studio.settings.update({ agents: { modelServer: { upsert: { name: 'strata', url: up.url, model: 'm-b', key: KEY, useWith: ['maki', 'qwen'] } } } });
+    launched.length = 0;
+    await studio.connect('qwen@strata', lab.dir);
+    await studio.connect('maki@strata', lab.dir);
+    assertEquals(launched.map((l) => l.provider), ['qwen@strata', 'maki@strata']);
+    assertEquals(launched[0].env, { OPENAI_BASE_URL: up.url, OPENAI_API_KEY: KEY, OPENAI_MODEL: 'm-b' });
+    assertEquals(launched[1].env, { ANTHROPIC_BASE_URL: up.url, ANTHROPIC_API_KEY: KEY });
+    assertEquals(betaServerEnv('qwen', studio.settings.modelServer('strata')!, ''), { OPENAI_BASE_URL: up.url, OPENAI_API_KEY: DUMMY_KEY, OPENAI_MODEL: 'm-b' });
+  } finally {
+    Deno.env.set('PATH', before);
+  }
+});
+
+Deno.test({
+  name: 'WSL: Codex, Maki and Qwen Code entries get the same env in a distro; Codex gets its own CODEX_HOME there (fake helper)',
+  ...T,
+  async fn() {
+    await using lab = new Lab();
+    const up = lab.serveKinds(['responses', 'chat'], ['srv-two']);
+    const host = new FakeWslHost(lab.dir + SEP + 'linux-keeper', 'Ubuntu');
+    host.handlers['agents.detect'] = (p) => ({
+      agents: ((p.ids as string[]) ?? []).map((id) => ({ id, found: true, command: [`/usr/bin/${id}-acp`] })),
+    });
+    const written: Json[] = [];
+    host.handlers['codexhome.write'] = (p) => {
+      written.push(p);
+      return { path: '/home/u/.aib-server/codex-home/' + p.id };
+    };
+    setWslHostResolver((d) => (d === 'ubuntu' ? host : null));
+    setDistroSource(() => Promise.resolve([{ name: 'Ubuntu', version: 2, isDefault: true }]));
+    const studio = lab.studio();
+    await studio.settings.update({ agents: { modelServer: { upsert: { name: 'strata', url: up.url, model: 'srv-two', key: KEY, useWith: ['claude', 'codex', 'maki', 'qwen'] } } } });
+    const server = studio.settings.modelServer('strata')!;
+    const wsl = { distro: 'ubuntu', linuxPath: '/home/u/app' };
+    const codex = await studio.wslLaunch('codex@strata', wsl, true);
+    assertEquals(codex.command, ['/usr/bin/codex-acp'], 'the distro\u2019s own Codex adapter');
+    assertEquals(codex.extra.CODEX_HOME, '/home/u/.aib-server/codex-home/strata', 'its own folder inside the distro');
+    assertEquals(codex.extra[CODEX_KEY_ENV], KEY);
+    assertEquals(written, [{ id: 'strata', toml: codexConfigToml(server, 'responses') }], 'the same generated config.toml as on Windows');
+    const qwen = await studio.wslLaunch('qwen@strata', wsl, true);
+    assertEquals(qwen.command, ['/usr/bin/qwen-acp']);
+    for (const [name, value] of Object.entries(betaServerEnv('qwen', server, KEY))) assertEquals(qwen.extra[name], value, name);
+    const maki = await studio.wslLaunch('maki@strata', wsl, true);
+    for (const [name, value] of Object.entries(betaServerEnv('maki', server, KEY))) assertEquals(maki.extra[name], value, name);
+    assert(!('CODEX_HOME' in maki.extra) && !('CODEX_HOME' in qwen.extra));
+    assertEquals(host.calls.filter(([m]) => m === 'agents.detect').map(([, p]) => (p.ids as string[])[0]), ['codex', 'qwen', 'maki']);
+    // normal Codex in the distro: no server env, no CODEX_HOME of ours
+    const plain = await studio.wslLaunch('codex', wsl, true);
+    assert(!('CODEX_HOME' in plain.extra) && !(CODEX_KEY_ENV in plain.extra));
+  },
+});
+
+Deno.test('the helper writes the distro\u2019s Codex entry home inside AIB\u2019s own folder only', async () => {
+  const root = outsideHome('aib-ms-helper-');
+  try {
+    const methods = makeMethods({
+      env: () => Promise.resolve({ env: {}, shell: '/bin/sh', home: root, arch: 'amd64' }),
+      own: [root + SEP + '.aib-server'],
+    });
+    const write = methods['codexhome.write'];
+    const answer = await write({ id: 'strata', toml: 'model_provider = "strata"\n' }) as { path: string };
+    assertEquals(answer.path, root + SEP + '.aib-server' + SEP + 'codex-home' + SEP + 'strata');
+    assertEquals(Deno.readTextFileSync(answer.path + SEP + 'config.toml'), 'model_provider = "strata"\n');
+    await write({ id: 'strata', toml: 'again\n' });
+    assertEquals(Deno.readTextFileSync(answer.path + SEP + 'config.toml'), 'again\n');
+    for (const id of ['../x', 'A', '', 'a/b']) await assertRejects(async () => await write({ id, toml: 'x' }));
+    assert(!Deno.statSync(root).isFile);
+  } finally {
+    Deno.removeSync(root, { recursive: true });
+  }
 });

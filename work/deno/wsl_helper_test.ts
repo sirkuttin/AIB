@@ -477,6 +477,7 @@ Deno.test('the ready line can list every method of the contract', () => {
     'files.gitInfo',
     'files.outside',
     'codex.limits',
+    'codexhome.write',
     'project.inspect',
     'project.trash',
     'folder.project',

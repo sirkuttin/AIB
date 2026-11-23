@@ -1,8 +1,8 @@
 /**
  * Model servers: an Anthropic-compatible server (a local model server such as strata, a gateway, a proxy), a record of its own with
- * its own id (`strata`). Agent entries are BUILT from it: `claude@strata` now (label "<agent label> · <server name>", e.g.
- * "Claude Code · strata"), `codex@strata` later. The Claude entry launches the SAME Claude ACP adapter as `claude`; only the
- * environment differs (modelServerEnv). Pure helpers plus one probe (GET <address>/v1/models). No UI knowledge lives here.
+ * its own id (`strata`). Agent entries are BUILT from it, one per agent switched on ("Use with"): `claude@strata`, `codex@strata`,
+ * `maki@strata`, `qwen@strata` (label "<agent label> · <server name>"). Each launches the SAME adapter as its base agent; only the
+ * environment differs (modelServerEnv, betaServerEnv, codexConfigToml + its own CODEX_HOME). Pure helpers plus one probe (GET <address>/v1/models). No UI knowledge lives here.
  *
  * Stored in settings as agents.modelServers [{id, name, url, model}]; the key (optional) lives in the data folder's secrets under the
  * SERVER's id (settings betaKeys[<server id>]: sealed with DPAPI on Windows) and never reaches the page.
@@ -43,22 +43,35 @@ export const API_KIND_NAMES: Record<ApiKind, string> = {
 };
 
 /**
- * The agents a server can be switched on for. `entry`: the switch adds its own New chat entry (`claude@strata`, "Claude Code · strata").
- * The others (Maki, Qwen Code) do not get an entry: with the switch on, the agent's own address comes from the server (one server at
- * a time per agent). Codex joins when codex@ entries exist.
+ * The agents a server can be switched on for. EVERY agent works the same way (owner, 2026-11-23): its switch adds its OWN separate
+ * New chat entry (`claude@strata`, `codex@strata`, `maki@strata`, `qwen@strata`, labelled "<agent label> · <server name>") next to the
+ * agent's normal entry, which a server never changes. `kinds`: the API kinds the agent can speak, any one of them fits (Codex prefers
+ * Responses and falls back to Chat Completions).
  */
 export interface UseWith {
   agent: string;
   label: string;
-  kind: ApiKind;
-  entry: boolean;
+  kinds: readonly ApiKind[];
 }
 export const USE_WITH: readonly UseWith[] = [
-  { agent: 'claude', label: 'Claude Code', kind: 'anthropic', entry: true },
-  { agent: 'maki', label: 'Maki', kind: 'anthropic', entry: false },
-  { agent: 'qwen', label: 'Qwen Code', kind: 'chat', entry: false },
+  { agent: 'claude', label: 'Claude Code', kinds: ['anthropic'] },
+  { agent: 'codex', label: 'Codex', kinds: ['responses', 'chat'] },
+  { agent: 'maki', label: 'Maki', kinds: ['anthropic'] },
+  { agent: 'qwen', label: 'Qwen Code', kinds: ['chat'] },
 ];
 export const USE_WITH_IDS: readonly string[] = USE_WITH.map((u) => u.agent);
+
+/** "Anthropic Messages", "OpenAI Responses or Chat Completions": what an agent needs, in words. */
+export function kindsWords(kinds: readonly ApiKind[]): string {
+  return kinds.map((k) => API_KIND_NAMES[k]).join(' or ');
+}
+
+/** Why the agent cannot use a server that speaks `speaks` ('' when it can): the words a greyed switch shows. */
+export function useWithProblem(agent: string, speaks: readonly ApiKind[]): string {
+  const u = USE_WITH.find((x) => x.agent === agent);
+  if (!u || u.kinds.some((k) => speaks.includes(k))) return '';
+  return `${u.label} needs a server that speaks ${kindsWords(u.kinds)}.`;
+}
 
 /** Keep only known "Use with" agents, once each, in the catalogue's order. */
 export function cleanUseWith(value: unknown): string[] {
@@ -144,6 +157,64 @@ export function modelServerEnv(server: ModelServer, key: string): Record<string,
     env.ANTHROPIC_DEFAULT_OPUS_MODEL = server.model;
   }
   return env;
+}
+
+/**
+ * Maki and Qwen Code entries launch their normal adapter with the server's address, key (or a dummy) and model in the variables the
+ * agent reads (beta_catalog.ts baseUrlEnv / keyEnv). Maki reads Anthropic-compatible servers through ANTHROPIC_BASE_URL and
+ * ANTHROPIC_API_KEY; Qwen Code reads OpenAI-compatible ones through OPENAI_BASE_URL, OPENAI_API_KEY and OPENAI_MODEL.
+ */
+export function betaServerEnv(agent: string, server: ModelServer, key: string): Record<string, string> {
+  const secret = key || DUMMY_KEY;
+  if (agent === 'maki') return { ANTHROPIC_BASE_URL: server.url, ANTHROPIC_API_KEY: secret };
+  const env: Record<string, string> = { OPENAI_BASE_URL: server.url, OPENAI_API_KEY: secret };
+  if (server.model) env.OPENAI_MODEL = server.model;
+  return env;
+}
+
+/** The environment variable that carries the key to codex-acp (named in the generated config.toml as env_key). */
+export const CODEX_KEY_ENV = 'AIB_MODEL_SERVER_KEY';
+
+/** Codex's wire API for a server: Responses when it speaks it, Chat Completions when that is all it speaks, else Responses. */
+export function codexWireApi(kinds: readonly ApiKind[]): 'responses' | 'chat' {
+  if (kinds.includes('responses')) return 'responses';
+  return kinds.includes('chat') ? 'chat' : 'responses';
+}
+
+/** Codex's own provider ids that a custom provider cannot reuse. */
+const CODEX_RESERVED = new Set(['openai', 'ollama', 'lmstudio', 'amazon-bedrock']);
+export const codexProviderId = (serverId: string): string => (CODEX_RESERVED.has(serverId) ? `aib-${serverId}` : serverId);
+
+const tomlString = (v: string): string => JSON.stringify(v); // a TOML basic string: JSON escapes are valid
+
+/** <server address>/v1 (the address may already end in /v1). */
+export function codexBaseUrl(url: string): string {
+  const base = url.replace(/\/+$/, '');
+  return /\/v1$/.test(base) ? base : `${base}/v1`;
+}
+
+/**
+ * The config.toml AIB generates for a Codex entry's own CODEX_HOME: the server as Codex's model provider. The key itself is never in
+ * the file: `env_key` names the variable codex-acp is started with (CODEX_KEY_ENV). No sign-in is copied: a custom provider with an
+ * env_key needs none, so the owner's ~/.codex (auth.json, config.toml) is neither read nor copied.
+ */
+export function codexConfigToml(server: ModelServer, wire: 'responses' | 'chat'): string {
+  const id = codexProviderId(server.id);
+  const lines = [
+    '# Written by AIB for the model server entry "codex@' + server.id + '". Edits are overwritten at the next start.',
+    `model_provider = ${tomlString(id)}`,
+  ];
+  if (server.model) lines.push(`model = ${tomlString(server.model)}`);
+  lines.push(
+    '',
+    `[model_providers.${id}]`,
+    `name = ${tomlString(server.name)}`,
+    `base_url = ${tomlString(codexBaseUrl(server.url))}`,
+    `env_key = ${tomlString(CODEX_KEY_ENV)}`,
+    `wire_api = ${tomlString(wire)}`,
+    '',
+  );
+  return lines.join('\n');
 }
 
 export interface ServerCheck {

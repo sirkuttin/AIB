@@ -35,8 +35,20 @@ import * as adapters from '../agents/adapters.ts';
 import { Installer, InstallRefused } from '../agents/installer.ts';
 import { readCached as readSignIn, Signer, SignInRefused } from '../agents/signin.ts';
 import { betaAgent, isBeta } from '../agents/beta_catalog.ts';
-import { claudeBase, isClaudeFamily, isModelServerId, sameAgent, serverIdOf } from '../agents/claude_family.ts';
-import { checkModelServer, DUMMY_KEY, modelServerEnv, type ServerCheck } from '../agents/model_servers.ts';
+import { baseAgent, claudeBase, isClaudeFamily, isCodexFamily, isModelServerId, sameAgent, serverIdOf } from '../agents/claude_family.ts';
+import {
+  betaServerEnv,
+  checkModelServer,
+  CODEX_KEY_ENV,
+  codexConfigToml,
+  codexWireApi,
+  DUMMY_KEY,
+  modelServerEnv,
+  serverHealth,
+  type ModelServer,
+  type ServerCheck,
+  type ServerInspection,
+} from '../agents/model_servers.ts';
 import { withServerModels } from '../acp/breadth.ts';
 import { resolveBeta, withKeyHome } from '../agents/beta_agents.ts';
 import { BetaSigner } from '../agents/beta_signin.ts';
@@ -941,35 +953,74 @@ export class Studio {
     return [[agentRegistry.checkCommand(agent.command), ...agent.args], Object.fromEntries(agent.env.map((e) => [e.name, e.value]))];
   }
 
-  /** The model server behind a `claude@<slug>` agent, or a ValueError (it may have been removed in Settings). */
+  /** The model server behind an `<agent>@<slug>` entry, or a ValueError (it may have been removed in Settings). */
   #modelServerOf(provider: string) {
     const server = this.settings.modelServer(serverIdOf(provider) ?? '');
     if (!server) throw new ValueError('That model server is not in Settings (it may have been removed)');
     return server;
   }
 
-  /** The environment a `claude@<slug>` agent gets on top of `claude`'s: the server's address, key (or a dummy) and model. */
+  /**
+   * The environment an `<agent>@<slug>` entry gets on top of its base agent's (the same on Windows and in a distro): the server's
+   * address, key (or a dummy) and model in the variables that agent reads. Codex: the key in CODEX_KEY_ENV (its config.toml names it);
+   * its CODEX_HOME is added by the launch (a folder AIB owns, different on Windows and in a distro).
+   */
   modelServerEnv(provider: string): Record<string, string> {
     const server = this.#modelServerOf(provider);
     const key = this.settings.betaKey(server.id); // stored under the server's id
     if (key) registerSecret(key); // never in a log line
-    return modelServerEnv(server, key);
+    const base = baseAgent(provider);
+    if (base === 'claude') return modelServerEnv(server, key);
+    if (base === 'codex') return { [CODEX_KEY_ENV]: key || DUMMY_KEY };
+    return betaServerEnv(base, server, key);
+  }
+
+  /** Codex's wire API for this server, from the API kinds the server answered to (the kept health answer; asked when there is none). */
+  async #codexWire(server: ModelServer, key: string): Promise<'responses' | 'chat'> {
+    const inspection = await this.modelServerInspect(server, key).catch(() => null);
+    return codexWireApi(inspection ? inspection.kinds.filter((k) => k.speaks).map((k) => k.kind) : []);
+  }
+
+  /** Writes a Codex entry's own CODEX_HOME (<data folder>/codex-home/<server id>/config.toml) and returns the folder. */
+  async #codexHomeFor(server: ModelServer, key: string): Promise<string> {
+    const dir = join(this.stateDir, 'codex-home', server.id);
+    const toml = codexConfigToml(server, await this.#codexWire(server, key));
+    Deno.mkdirSync(dir, { recursive: true });
+    const file = join(dir, 'config.toml');
+    let same = false;
+    try {
+      same = Deno.readTextFileSync(file) === toml;
+    } catch { /* not written yet */ }
+    if (!same) Deno.writeTextFileSync(file, toml);
+    return dir;
   }
 
   /**
-   * A model-server agent starts the SAME Claude adapter as `claude`, with its server's environment. The server is asked once first
-   * (GET /v1/models, a few seconds at most): a server that is down gives one plain line naming the address instead of a chat that waits.
+   * An `<agent>@<slug>` entry starts the SAME adapter as its base agent (Claude Code, Codex, Maki, Qwen Code) with its server's
+   * environment. The server is asked once first (GET /v1/models, a few seconds at most): a server that is down gives one plain line
+   * naming the address instead of a chat that waits. The base agent's own entry is never changed by a server.
    */
   async #modelServerLaunch(provider: string): Promise<[string[], Record<string, string>]> {
     const server = this.#modelServerOf(provider);
-    const row = await builtinLaunch(this.#agentOptions(), this.settings, 'claude');
-    if (!row.found) throw new ValueError(`Claude Code is not available: ${row.problem}`);
+    const base = baseAgent(provider);
+    const builtin = (agentRegistry.BUILTIN_IDS as readonly string[]).includes(base);
+    const label = builtin ? agentRegistry.BUILTIN_NAMES[base] : betaAgent(base)?.name ?? base;
+    const row = builtin ? await builtinLaunch(this.#agentOptions(), this.settings, base) : await this.#betaRow(base);
+    if (!row.found) throw new ValueError(`${label} is not available: ${row.problem}`);
     const env = this.modelServerEnv(provider);
-    const result = await this.modelServerCheck(server.url, this.settings.betaKey(server.id));
+    const key = this.settings.betaKey(server.id);
+    const result = await this.modelServerCheck(server.url, key);
     if (!result.reachable) throw new ValueError(result.error);
     if (result.models.length) this.#serverModels.set(server.id, result.models);
-    return [row.argv, { ...adapters.claudeEnv(Deno.env.toObject()), ...env }];
+    if (base === 'codex') {
+      if (!this.hasStateDir) throw new ValueError('Codex on a model server needs AIB\'s data folder');
+      env.CODEX_HOME = await this.#codexHomeFor(server, key);
+    }
+    return [row.argv, { ...(base === 'claude' ? adapters.claudeEnv(Deno.env.toObject()) : {}), ...env }];
   }
+
+  /** Test seam: how a model server is inspected for its API kinds (default: the kept health answer, 30 s). */
+  modelServerInspect: (server: ModelServer, key: string) => Promise<ServerInspection> = (server, key) => serverHealth.check(server, key);
 
   /** The models each model server (by its own id) listed the last time a chat of it started. */
   readonly #serverModels = new Map<string, string[]>();
@@ -1008,18 +1059,15 @@ export class Studio {
   betaEnv(provider: string): Record<string, string> {
     const agent = betaAgent(provider);
     const out: Record<string, string> = {};
-    // A Model server switched on for this agent ("Use with", Settings > Model servers) gives the address (and its key and model when
-    // the agent's own key box is empty). An address saved on the card before that move still applies when no server is switched on.
-    const server = agent?.signin.baseUrlEnv ? this.settings.modelServerFor(provider) : null;
-    let key = agent?.signin.keyEnv ? this.settings.betaKey(provider) : '';
-    if (server && agent?.signin.keyEnv && !key) key = this.settings.betaKey(server.id) || DUMMY_KEY;
+    // A Beta agent's own entry uses its own settings only (its card key and, from before addresses moved to Model servers, its saved
+    // address). A model server never changes it: a server switched on for the agent is its own separate entry (maki@strata).
+    const key = agent?.signin.keyEnv ? this.settings.betaKey(provider) : '';
     if (agent?.signin.keyEnv && key) {
       registerSecret(key); // never in a log line
       out[agent.signin.keyEnv] = key;
     }
-    const url = server ? server.url : agent?.signin.baseUrlEnv ? this.settings.betaUrl(provider) : '';
+    const url = agent?.signin.baseUrlEnv ? this.settings.betaUrl(provider) : '';
     if (agent?.signin.baseUrlEnv && url) out[agent.signin.baseUrlEnv] = url;
-    if (server && server.model && provider === 'qwen') out.OPENAI_MODEL = server.model;
     return out;
   }
 
@@ -1188,14 +1236,21 @@ export class Studio {
       extra = Object.fromEntries(agent.env.map((e) => [e.name, e.value]));
     } else {
       const server = isModelServerId(provider) ? this.#modelServerOf(provider) : null;
-      const detectId = server ? 'claude' : provider; // a model server runs the distro's Claude adapter
-      const label = server ? 'Claude Code' : isBeta(provider) ? betaAgent(provider)!.name : agentRegistry.agentName(provider);
+      const detectId = baseAgent(provider); // a model server entry runs the distro's adapter of its base agent
+      const label = isBeta(detectId) ? betaAgent(detectId)!.name : agentRegistry.agentName(detectId);
       const detected = await host.call('agents.detect', { ids: [detectId] });
       const row = detected.agents.find((a) => a.id === detectId);
       if (!row?.found || !row.command?.length) throw new ValueError(`${label} is not installed in ${name}`);
       command = row.command.map(String);
       if (isBeta(provider)) extra = this.betaEnv(provider);
-      if (server) extra = this.modelServerEnv(provider); // same env as a Windows chat; no reachability test from here (see WSL_LOOPBACK_NOTE)
+      if (server) { // same env as a Windows chat; no reachability test from here (see WSL_LOOPBACK_NOTE)
+        extra = this.modelServerEnv(provider);
+        if (detectId === 'codex') { // its own CODEX_HOME inside the distro, with the same generated config.toml
+          const key = this.settings.betaKey(server.id);
+          const toml = codexConfigToml(server, await this.#codexWire(server, key));
+          extra.CODEX_HOME = (await host.call('codexhome.write', { id: server.id, toml })).path;
+        }
+      }
     }
     const env = await host.env();
     if (isClaudeFamily(provider)) extra = { ...adapters.claudeEnv(env), ...extra };
@@ -1529,7 +1584,7 @@ export class Studio {
       // Codex (subagents/codex.ts): its hooks go in CODEX_CONFIG; hooks off or unavailable turn its subagents off instead.
       const subagent = isClaudeFamily(provider)
         ? await this.#subagentHooks(command, plan ? plan.path : workspace, workspace, !!plan, env, !!wsl, chatId)
-        : provider === 'codex'
+        : isCodexFamily(provider)
         ? await this.#codexSubagentHooks(
           command,
           plan ? plan.path : workspace,
@@ -1699,7 +1754,7 @@ export class Studio {
         .then(() => { // after its spare went: the Gemini chat's home (junctions unlinked first), policy and empty subagent folder
           this.geminiSubagents?.chatClosed(conn.id);
           if (conn.geminiSubagents) gemini.tearDown(conn.geminiSubagents);
-          if (conn.provider === 'codex' && conn.subagentHooks?.subFolder) codexSub.removeSubagentFolder(conn.subagentHooks.subFolder);
+          if (isCodexFamily(conn.provider) && conn.subagentHooks?.subFolder) codexSub.removeSubagentFolder(conn.subagentHooks.subFolder);
         });
       if (conn.channel) this.#keeperNoLongerNeeded();
       this.handoff.refresh();
@@ -1715,7 +1770,7 @@ export class Studio {
       } else this.announce(conn);
     };
     c.onTurnEnd = (conn) => this.turnEnded(conn);
-    if (c.provider === 'codex' && this.subagents) { // a stopped turn stops its subagents (kept, never landed by themselves)
+    if (isCodexFamily(c.provider) && this.subagents) { // a stopped turn stops its subagents (kept, never landed by themselves)
       const subagents = this.subagents;
       c.onTurnCancelled = (conn) => subagents.turnCancelled(conn.id);
       c.subagentActivity = () => subagents.activity(c.id); // P3's Activity line (codex-acp's child session id is the agent_id)
@@ -2260,7 +2315,7 @@ export class Studio {
     const c = this.connectionFactory(command, cwd, provider, options);
     if (isDict(note.worktree)) c.worktree = { branch: String(note.worktree.branch ?? ''), base: String(note.worktree.base ?? '') };
     c.projectRoot = isStr(note.projectRoot) && note.projectRoot ? note.projectRoot : cwd;
-    if (isClaudeFamily(provider) || provider === 'codex') c.subagentHooks = hooksFromNote(note.subagentHooks); // as the chat started (should-fix 6)
+    if (isClaudeFamily(provider) || isCodexFamily(provider)) c.subagentHooks = hooksFromNote(note.subagentHooks); // as the chat started (should-fix 6)
     if (provider === 'gemini' && this.hasStateDir && this.worktrees) { // its fence and redirect as launched (subagents/gemini.ts)
       c.geminiSubagents = gemini.restore(this.stateDir, this.worktrees.registry.root, c.id, c.projectRoot || cwd);
     }
@@ -2496,7 +2551,7 @@ export class Studio {
    */
   async #codexHookCall(event: string, conversation: string, body: unknown): Promise<HookAnswer> {
     const chat = this.#subagentChat(conversation);
-    if (!chat || chat.provider !== 'codex' || !chat.hooks || !isDict(body)) {
+    if (!chat || !isCodexFamily(chat.provider) || !chat.hooks || !isDict(body)) {
       return { status: 503, body: 'This chat is not open in AIB', type: 'text/plain' };
     }
     const spawn = event === 'codex-pre-tool' && !body.agent_id;
@@ -2607,8 +2662,8 @@ export class Studio {
       const lasting = c.sessionId ? `${c.provider}:${c.sessionId}` : '';
       return { id: c.id, provider: c.provider, lasting, folder: c.cwd, project: c.projectRoot || c.cwd, hooks: null, subFolder: c.geminiSubagents.subFolder };
     }
-    if (!c || c.closed || (!isClaudeFamily(c.provider) && c.provider !== 'codex') || c.wsl) return null;
-    if (!c.subagentHooks && c.provider === 'codex') return null; // a Codex chat without a hooks record was given none
+    if (!c || c.closed || (!isClaudeFamily(c.provider) && !isCodexFamily(c.provider)) || c.wsl) return null;
+    if (!c.subagentHooks && isCodexFamily(c.provider)) return null; // a Codex chat without a hooks record was given none
     if (!c.subagentHooks) {
       // a chat taken over from a keeper note older than the hooks record (newer notes carry it: hooksFromNote)
       const setup = readClaudeSetup(c.projectRoot || c.cwd, Deno.env.toObject());
@@ -2618,7 +2673,7 @@ export class Studio {
     const on = !!h.settings?.hooks || h.adopted === true; // hooks were given (a later "hooks are off" still lets them answer)
     const project = c.projectRoot || c.cwd;
     // a Codex chat's own subagent folder: given at the start, or (taken over from the keeper) the one made for its id, if it exists
-    const own = c.provider === 'codex' && on ? h.subFolder ?? codexSub.subagentFolder(this.subagents!.root, project, c.id) : '';
+    const own = isCodexFamily(c.provider) && on ? h.subFolder ?? codexSub.subagentFolder(this.subagents!.root, project, c.id) : '';
     const subFolder = own && wt.lexists(own) ? own : '';
     return {
       id: c.id,
@@ -3661,7 +3716,7 @@ export class Studio {
       return [200, { ok: true, ...(await connection.reclaim(body.force === true)) }];
     } else if (name === 'session-op' && body.op === 'let-go') {
       // the Let go icon on a Codex chat: let another app open it now (idle only; ownership/handoff.ts)
-      if (connection.provider !== 'codex') throw new ValueError('Let go is for Codex chats.');
+      if (!isCodexFamily(connection.provider)) throw new ValueError('Let go is for Codex chats.');
       if (connection.elsewhere?.released) return [200, { ok: true, state: 'already' }];
       const state = await connection.letGoIdle(
         { pid: 0, entrypoint: 'let-go', status: '', app: 'another app' },

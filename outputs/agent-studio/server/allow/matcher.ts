@@ -4,7 +4,7 @@
  * `ruleFor` drafts the rule the card's "Always allow" would save (or says why it can't: floor and never items are greyed out).
  */
 import { basename, isAbsolute, relative, resolve } from 'node:path';
-import { isClaudeFamily } from '../agents/claude_family.ts';
+import { isClaudeFamily, isCodexFamily } from '../agents/claude_family.ts';
 import {
   batArgProblem,
   downloadAndRun,
@@ -170,7 +170,7 @@ export function readRequest(params: unknown, ctx: MatchContext): Request {
     return paths.length ? { kind: 'edit', paths } : { kind: 'unknown', reason: 'no file path' };
   }
   if (call.kind === 'fetch' && isStr(raw.url)) return fetchOf(raw.url);
-  if (ctx.provider === 'codex' && call.kind === 'execute') {
+  if (isCodexFamily(ctx.provider) && call.kind === 'execute') {
     const escalation = raw.additionalPermissions !== undefined && raw.additionalPermissions !== null
       ? 'asks for more permissions'
       : isStr(raw.url) || isDict(raw.network)
@@ -327,7 +327,7 @@ function matchInner(params: unknown, ctx: MatchContext, rules: AllowRule[], buil
     return { allow: false, reason: 'changes folder' };
   }
   const pctx = partContext(ctx, cwdOk.real, req.shell);
-  const codexSandboxed = ctx.provider === 'codex' && CODEX_SANDBOXED.has(ctx.mode ?? '');
+  const codexSandboxed = isCodexFamily(ctx.provider) && CODEX_SANDBOXED.has(ctx.mode ?? '');
   const used: { id: string; label: string }[] = [];
   for (const part of parsed.parts) {
     tick();
@@ -620,7 +620,7 @@ export function ruleFor(params: unknown, ctx: MatchContext, scope: 'project' | '
     };
   }
   if (req.escalation) return no(`Not available: AIB never auto-allows requests that ${req.escalation}.`, true);
-  if (ctx.provider === 'codex' && CODEX_SANDBOXED.has(ctx.mode ?? '')) {
+  if (isCodexFamily(ctx.provider) && CODEX_SANDBOXED.has(ctx.mode ?? '')) {
     return no('Not available: in this mode Codex asks only to run outside its sandbox; AIB allows only Safe reads for it.');
   }
   const parsed = req.shell === 'bash' ? parseBash(req.command) : parsePwsh(req.command);

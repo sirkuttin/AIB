@@ -1450,7 +1450,7 @@
         refresh();
       });
     }
-    const show = !!(connected && selected?.provider === 'codex' && !window.AIBRemote); // another computer's window: the PC's action
+    const show = !!(connected && /^codex(@|$)/.test(selected?.provider || '') && !window.AIBRemote); // another computer's window: the PC's action
     b.hidden = !show;
     if (!show) return;
     const released = !!snapshot?.elsewhere?.released;

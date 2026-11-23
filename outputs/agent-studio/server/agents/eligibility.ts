@@ -26,7 +26,7 @@ export const BETA_IDS: readonly string[] = [
   'maki',
   'antigravity',
 ];
-const CUSTOM_ID = /^(?:custom-|claude@)[a-z0-9]+(?:-[a-z0-9]+)*$/; // user-added agents and model servers (claude@<slug>)
+const CUSTOM_ID = /^(?:custom-|(?:claude|codex|maki|qwen)@)[a-z0-9]+(?:-[a-z0-9]+)*$/; // user-added agents and model servers (<agent>@<slug>)
 
 export type Reason = '' | 'Not installed' | 'Needs sign-in' | 'Turned off in Settings' | 'Not answering';
 

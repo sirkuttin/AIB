@@ -163,10 +163,8 @@ export async function describeAgents(
     }
   }
   const probe = defaultProbe(options.nodeCommand || '', recheck);
-  let claudeRow: adapters.LaunchRow | null = null;
   for (const [agentId, letter] of [['claude', 'C'], ['codex', 'X']] as const) {
     const row = await builtinLaunch(options, settings, agentId);
-    if (agentId === 'claude') claudeRow = row;
     const installable = hasOwn(adapters.STUDIO_PACKAGES, agentId);
     // Not installed and AIB installs it (npm): the card lists Node.js under "Needs first:" when it is missing or too old.
     const setup = installable && row.source === 'missing' && BUILTIN_NPM.includes(agentId) ? await builtinSetup(probe) : null;
@@ -203,30 +201,37 @@ export async function describeAgents(
       ...(cliHint ? { cliHint } : {}), // likewise: only a Codex adapter that has no Codex program to ask about the sign-in
     });
   }
-  // Model servers (agents/model_servers.ts): agent entries are built from each server, `<agent>@<server id>`, labelled
-  // "<agent label> · <server name>". The Claude entry runs the same adapter as claude and never needs a claude.ai sign-in.
+  // Model servers (agents/model_servers.ts): every agent works the same way. Each "Use with" switch of a server adds its OWN entry,
+  // `<agent>@<server id>`, labelled "<agent label> · <server name>", next to the agent's normal entry (which a server never changes).
+  // The entry runs the same adapter as its base agent, so it takes that row's program and install state, and it never needs the base
+  // agent's own sign-in.
   const keyNote = options.stateDir ? keyStoreFor(options.stateDir).note : '';
-  const adapterRow = claudeRow as adapters.LaunchRow | null;
-  for (const s of snap.agents.modelServers ?? []) {
+  const beta = await describeBeta(options, snap, state, block, sizes, probe);
+  const servers = snap.agents.modelServers ?? [];
+  const baseRows = new Map<string, Record<string, unknown>>();
+  for (const row of [...out, ...beta]) baseRows.set(String(row.id), row);
+  for (const s of servers) {
     for (const base of MODEL_SERVER_AGENTS) {
       if (!s.useWith.includes(base)) continue; // the "Use with" switch of the Model servers section
       const id = modelServerAgentId(base, s.id);
+      const row = baseRows.get(base);
       out.push({
         id,
         name: modelServerLabel(base, s.name),
-        letter: 'C',
+        letter: String(row?.letter ?? 'C'),
         builtin: false,
         modelServer: true,
         serverId: s.id,
+        baseAgent: base,
         enabled: true,
-        command: adapterRow?.text ?? '',
-        launcher: adapterRow?.text ?? '',
+        command: String(row?.command ?? ''),
+        launcher: String(row?.launcher ?? ''),
         launcherSource: 'model-server',
         args: [],
         env: [],
-        found: !!adapterRow?.found,
-        resolved: adapterRow?.found ? adapterRow.path : '',
-        problem: adapterRow?.problem ?? '',
+        found: !!row?.found,
+        resolved: row?.found ? String(row.resolved ?? '') : '',
+        problem: String(row?.problem ?? ''),
         status: state[id] ?? '',
         signin: null,
         modelServerInfo: {
@@ -241,18 +246,11 @@ export async function describeAgents(
       });
     }
   }
-  const beta = await describeBeta(options, snap, state, block, sizes, probe);
-  // Model servers on the agents' own cards: a read-only line ("Also on model servers: strata") and, for the agents that read their
-  // address from a server (Maki, Qwen Code), which server that is. Nothing is configured on a card.
-  const servers = snap.agents.modelServers ?? [];
-  for (const row of out) {
+  // Model servers on the agents' own cards: a read-only line ("Also on model servers: strata"). Nothing is configured on a card.
+  for (const row of [...out, ...beta]) {
+    if (row.modelServer === true) continue;
     const names = servers.filter((s) => s.useWith.includes(String(row.id))).map((s) => s.name);
-    if (names.length && USE_WITH.some((u) => u.agent === row.id && u.entry)) row.alsoOnServers = names;
-  }
-  for (const row of beta) {
-    const s = servers.find((x) => x.useWith.includes(String(row.id)));
-    const info = row.betaInfo as Record<string, unknown> | undefined;
-    if (s && info) info.server = { id: s.id, name: s.name, url: s.url };
+    if (names.length && USE_WITH.some((u) => u.agent === row.id)) row.alsoOnServers = names;
   }
   out.push(...beta);
   for (const a of snap.agents.custom) {

@@ -56,7 +56,7 @@ import {
 import { WriteTracker } from '../artifacts/artifacts.ts';
 import { findOption as findPickOption } from '../state/agent_options.ts';
 import { betaAgent } from '../agents/beta_catalog.ts';
-import { claudeBase, isClaudeFamily } from '../agents/claude_family.ts';
+import { claudeBase, isClaudeFamily, isCodexFamily } from '../agents/claude_family.ts';
 import { artifactToolCommand } from '../artifacts/mcp.ts';
 import { isOwnForwardEntry, isOwnMcpUrl } from '../artifacts/mcp_http.ts';
 import { type Killable, ProcessTree, treeSpawnOptions } from '../platform/process_tree.ts';
@@ -4670,7 +4670,7 @@ export class Connection {
    * opened here anyway; it waits until it is closed there.
    */
   get singleWriter(): boolean {
-    return this.provider === 'codex';
+    return isCodexFamily(this.provider);
   }
 
   /** The line of a chat AIB let go of that another app still holds (once per hand-off). */
@@ -6192,7 +6192,7 @@ export class Connection {
     this.#steerTurn.injected += 1;
     this.#steerTurn.outputAfter = false;
     this.#clearSettle();
-    if (item && this.provider === 'codex') this.#steerTurn.unread.push(item);
+    if (item && isCodexFamily(this.provider)) this.#steerTurn.unread.push(item);
   }
 
   /**
@@ -6585,7 +6585,7 @@ export class Connection {
   extraFolders(): Json {
     const own = this.worktree ? [...(this.localOnly?.dirs ?? []), ...(this.localOnly?.ignored?.dirs ?? [])] : [];
     // a Codex chat's subagent folder: only its own subagents' worktrees go there (never the folder's parent or other chats' copies)
-    const sub = this.provider === 'codex' && this.subagentHooks?.subFolder ? [this.subagentHooks.subFolder] : [];
+    const sub = isCodexFamily(this.provider) && this.subagentHooks?.subFolder ? [this.subagentHooks.subFolder] : [];
     const dirs = [...own, ...(this.scratchDir ? [this.scratchDir] : []), ...sub];
     if (!dirs.length || !isDict(this.#sessionCaps()?.additionalDirectories)) return {};
     return { additionalDirectories: [...dirs] };

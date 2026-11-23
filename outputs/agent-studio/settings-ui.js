@@ -1630,15 +1630,14 @@
     if (info.baseUrlEnv) wrap.append(serverLine(a, info));
     return wrap;
   }
-  // The agent's address is a Model servers setting (Settings > Model servers, "Use with"); the card says where it comes from and links
-  // there. An address saved on the card before that move (not yet moved by the migration script) is shown, read only.
+  // A model server is a Model servers setting (Settings > Model servers, "Use with"): it adds its own New chat entry and never changes
+  // this card's agent. An address saved on the card before that move (not yet moved by the migration script) is shown, read only.
   function serverLine(a, info) {
     const box = el('div', null, 'st-beta-url');
     let text;
-    if (info.server) text = 'Address: from model server ' + info.server.name + ' (' + info.server.url + ').';
-    else if (info.baseUrl)
+    if (info.baseUrl)
       text = 'Address: ' + info.baseUrl + ' (saved here before addresses moved to Model servers; the migration script moves it).';
-    else text = 'Use another server (a local model, a gateway) instead of ' + a.name + "'s own address:";
+    else text = 'Use a model server (a local model, a gateway) as a separate "' + a.name + ' · server" entry in New chat:';
     const line = el('span', text + ' ', 'st-hint');
     line.append(button('Model servers', () => goSection('servers'), 'st-link'));
     box.append(line);
@@ -2460,15 +2459,16 @@
   // ---- Model servers ----------------------------------------------------------------------------------------------------------
   // An address agents talk to (a local model server such as strata, Ollama or LM Studio, or a gateway): its own section, apart from the
   // agent cards. Each server has a name, an address, an optional key (never shown back) and a model from the server's /v1/models.
-  // "Use with" has one switch per agent the server's API kinds support; Claude Code's switch adds a New chat entry ("Claude Code ·
-  // strata"), Maki's and Qwen Code's make the agent read its address from the server. The row icons (Check, Edit, Remove) are always
+  // "Use with" has one switch per agent (Claude Code, Codex, Maki, Qwen Code), all the same: it adds that agent's own New chat entry
+  // ("Claude Code · strata", "Codex · strata", ...) and is greyed, with the reason, when the server's API kinds do not fit. The row icons (Check, Edit, Remove) are always
   // visible: no hover or right-click menus, no popups. The server side: /api/live/model-servers (list with health) and
   // /api/live/model-servers/check; edits go through POST /api/live/settings {agents: {modelServer: {upsert | remove}}}.
   const MS = { health: {}, at: 0, busy: null, form: null, confirm: '', drafts: {}, error: '', checking: {} };
   const MS_USE = [
-    { agent: 'claude', label: 'Claude Code', kind: 'anthropic', entry: true },
-    { agent: 'maki', label: 'Maki', kind: 'anthropic', entry: false },
-    { agent: 'qwen', label: 'Qwen Code', kind: 'chat', entry: false },
+    { agent: 'claude', label: 'Claude Code', kinds: ['anthropic'] },
+    { agent: 'codex', label: 'Codex', kinds: ['responses', 'chat'] },
+    { agent: 'maki', label: 'Maki', kinds: ['anthropic'] },
+    { agent: 'qwen', label: 'Qwen Code', kinds: ['chat'] },
   ];
   const MS_KINDS = { anthropic: 'Anthropic Messages', responses: 'OpenAI Responses', chat: 'Chat Completions' };
   const serversList = () => (S.data && Array.isArray(S.data.modelServers) ? S.data.modelServers : []);
@@ -2577,7 +2577,7 @@
     box.append(el('span', 'Use with', 'st-label'));
     for (const u of MS_USE) {
       const on = (srv.useWith || []).includes(u.agent);
-      const speaks = !h || !h.reachable || (h.kinds || []).includes(u.kind);
+      const speaks = !h || !h.reachable || u.kinds.some((k) => (h.kinds || []).includes(k));
       const row = el('div', null, 'ms-use-row');
       const sw = toggle(u.label, on, (checked) => {
         const next = MS_USE.filter((x) => (x.agent === u.agent ? checked : (srv.useWith || []).includes(x.agent))).map((x) => x.agent);
@@ -2588,18 +2588,9 @@
       cb.setAttribute('aria-label', 'Use ' + srv.name + ' with ' + u.label);
       if (!speaks && !on) {
         cb.disabled = true;
-        row.append(sw, el('span', u.label + ' needs a server that speaks ' + MS_KINDS[u.kind] + '.', 'st-hint'));
+        row.append(sw, el('span', u.label + ' needs a server that speaks ' + u.kinds.map((k) => MS_KINDS[k]).join(' or ') + '.', 'st-hint'));
       } else {
-        row.append(
-          sw,
-          el(
-            'span',
-            u.entry
-              ? 'Adds "' + u.label + ' · ' + srv.name + '" to New chat.'
-              : u.label + ' reads its address from this server (one server at a time).',
-            'st-hint',
-          ),
-        );
+        row.append(sw, el('span', 'Adds "' + u.label + ' · ' + srv.name + '" to New chat.', 'st-hint'));
       }
       box.append(row);
     }

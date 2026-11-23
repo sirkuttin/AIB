@@ -3,6 +3,7 @@
  * a fake agent host, no real agent and no real model server):
  *   - "Claude Code · strata" sits under a "Model servers" label, after the tested agents, and starts a chat with the server's entry
  *   - a server that does not answer is greyed with "<name> is not answering at <address>. Start it on your PC." and cannot be picked
+ *   - every agent's entry (Claude Code, Codex, Maki, Qwen Code) is listed and greys the same way
  *   - the Start of a greyed entry is refused by the server with the same words (a phone that held an old list)
  * The PC's own menu is work/test_model_servers_ui.js; the checks behind both are work/deno/model_servers_ui_test.ts.
  */
@@ -14,9 +15,10 @@ import { setAgentRows } from '../../outputs/agent-studio/server/remote/newchat.t
 import { AGENT_ROWS, liveChat, phoneCall, v2Studio } from './_remote_v2b.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
-const entry = (id: string, name: string, down = '') => ({
-  id: `claude@${id}`,
-  name: `Claude Code · ${name}`,
+const LABELS: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', maki: 'Maki', qwen: 'Qwen Code' };
+const entry = (id: string, name: string, down = '', agent = 'claude') => ({
+  id: `${agent}@${id}`,
+  name: `${LABELS[agent]} · ${name}`,
   modelServer: true,
   serverId: id,
   enabled: true,
@@ -52,6 +54,41 @@ Deno.test({
       });
       assert(start.status >= 400, String(start.status));
       assert(JSON.stringify(start.json).includes('is not answering at 127.0.0.1:1'), JSON.stringify(start.json));
+      assert(!s.liveCalls.some(([n]) => n === 'connect'), 'no chat was started');
+    } finally {
+      setAgentRows(null);
+      await s.close();
+    }
+  },
+});
+
+const ALL = ['claude', 'codex', 'maki', 'qwen'];
+Deno.test({
+  ...OPTS,
+  name: 'every agent works the same: Claude Code, Codex, Maki and Qwen Code entries are listed under Model servers, and all grey when the server is down',
+  async fn() {
+    const s = await v2Studio();
+    try {
+      setAgentRows(() =>
+        Promise.resolve([
+          ...AGENT_ROWS.slice(0, 3),
+          ...ALL.map((a) => entry('strata', 'strata', '', a)),
+          ...ALL.map((a) => entry('dead', 'dead', DOWN, a)),
+          AGENT_ROWS[3],
+        ])
+      );
+      const phone = await pairPhone(s);
+      const r = await phoneCall(s, phone.token, 'GET', '/api/remote/new/options');
+      assertEquals(r.status, 200);
+      const agents = r.json.agents as { id: string; name: string; ok: boolean; group?: string; why: string; reason: string }[];
+      const servers = agents.filter((a) => a.group === 'Model servers');
+      assertEquals(servers.map((a) => a.id), [...ALL.map((a) => `${a}@strata`), ...ALL.map((a) => `${a}@dead`)]);
+      assertEquals(servers.slice(0, 4).map((a) => [a.name, a.ok, a.why]), ALL.map((a) => [`${LABELS[a]} · strata`, true, '']));
+      assertEquals(servers.slice(4).map((a) => [a.ok, a.reason, a.why]), ALL.map(() => [false, 'Not answering', DOWN + '. Start it on your PC.']));
+      for (const a of ALL) {
+        const start = await phoneCall(s, phone.token, 'POST', '/api/remote/new', { project: s.projectId, agent: `${a}@dead`, text: 'hi', clientMessageId: `m-${a}` });
+        assert(start.status >= 400 && JSON.stringify(start.json).includes('is not answering at 127.0.0.1:1'), `${a}: ${JSON.stringify(start.json)}`);
+      }
       assert(!s.liveCalls.some(([n]) => n === 'connect'), 'no chat was started');
     } finally {
       setAgentRows(null);

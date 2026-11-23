@@ -4,17 +4,19 @@
  * work/deno/model_servers_phone_e2e_test.ts.
  *   - adding a server: the API kinds are found with empty POSTs (400/422 speaks it, 401/403 wants a key, 404/405 does not), and no
  *     request that could make a model write anything is ever sent
- *   - "Use with": one switch per agent; Claude Code's makes the New chat entry (PC list and phone list), switched off it is gone; the
- *     Claude card gets the read-only "Also on model servers" data
+ *   - "Use with": one switch per agent (Claude Code, Codex, Maki, Qwen Code), ALL the same: each adds exactly one separate New chat
+ *     entry `<agent>@<server>` (PC list and phone list), switched off it is gone; the agent's normal entry never changes; the
+ *     agent's card gets the read-only "Also on model servers" data; every switch is greyed with the reason when the API kinds do not fit
  *   - Edit, Remove and Check (Check always asks the server)
  *   - a server that does not answer greys its entries with "<name> is not answering at <address>"; checked when New chat opens and
  *     kept 30 s
  *   - the key never reaches the page
- *   - Maki and Qwen Code read their address from the server that is switched on for them
- *   - the migration script (work/migrate/beta_addresses_to_model_servers.ts): dry run changes nothing, --apply moves the addresses
+ *   - Maki and Qwen Code entries launch with the server's address, key and model; their normal entries keep their own settings
+ *   - the migration script (work/migrate/beta_addresses_to_model_servers.ts): dry run changes nothing, --apply turns the addresses
+ *     into servers with "Use with" on, which gives the owner a "Maki · <server>" entry
  *   - saved-chat discovery launches with the server's env; the WSL listing asks a live Claude-family chat of the distro
  */
-import { assert, assertEquals } from './_assert.ts';
+import { assert, assertEquals, assertRejects } from './_assert.ts';
 import { fake } from './_connection.ts';
 import '../../outputs/agent-studio/agent-choice.js';
 import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
@@ -23,7 +25,7 @@ import { SettingsStore } from '../../outputs/agent-studio/server/state/settings.
 import { describeAgents, modelServersView, settingsView, type StudioContext } from '../../outputs/agent-studio/server/web/shared.ts';
 import { studioRoutes } from '../../outputs/agent-studio/server/web/studio_routes.ts';
 import { eligibleAgents, MODEL_SERVERS_GROUP, reasonWords } from '../../outputs/agent-studio/server/agents/eligibility.ts';
-import { HEALTH_MS, inspectModelServer, notAnsweringLine, ServerHealth } from '../../outputs/agent-studio/server/agents/model_servers.ts';
+import { HEALTH_MS, inspectModelServer, notAnsweringLine, ServerHealth, USE_WITH, useWithProblem } from '../../outputs/agent-studio/server/agents/model_servers.ts';
 import { main as migrate } from '../migrate/beta_addresses_to_model_servers.ts';
 
 type Json = Record<string, unknown>;
@@ -43,11 +45,30 @@ class Lab {
   readonly dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-msui-' }));
   readonly state = this.dir + SEP + 'state';
   readonly launcher = this.dir + SEP + 'claude-launcher.js';
+  readonly codexLauncher = this.dir + SEP + 'codex-launcher.js';
+  /** Fake qwen and maki programs (empty files): found on PATH while a test puts this folder in front. */
+  readonly bin = this.dir + SEP + 'bin';
   readonly servers: Deno.HttpServer[] = [];
   readonly studios: Studio[] = [];
   constructor() {
     Deno.mkdirSync(this.state, { recursive: true });
     Deno.writeTextFileSync(this.launcher, '');
+    Deno.writeTextFileSync(this.codexLauncher, '');
+    Deno.mkdirSync(this.bin);
+    for (const name of ['qwen', 'qwen.exe', 'maki', 'maki.exe']) Deno.writeTextFileSync(this.bin + SEP + name, '');
+    Deno.env.set('PATH', this.bin + (WIN ? ';' : ':') + this.pathBefore); // the same Qwen Code and Maki programs whatever this PC has installed
+  }
+  readonly pathBefore = Deno.env.get('PATH') ?? '';
+
+  /** Runs `fn` with the fake qwen and maki programs first on PATH. */
+  async withPrograms<T>(fn: () => Promise<T>): Promise<T> {
+    const before = Deno.env.get('PATH') ?? '';
+    Deno.env.set('PATH', this.bin + (WIN ? ';' : ':') + before);
+    try {
+      return await fn();
+    } finally {
+      Deno.env.set('PATH', before);
+    }
   }
 
   /**
@@ -87,7 +108,7 @@ class Lab {
   }
 
   options() {
-    return { claudeLauncher: this.launcher, nodeCommand: Deno.execPath(), stateDir: this.state };
+    return { claudeLauncher: this.launcher, codexLauncher: this.codexLauncher, nodeCommand: Deno.execPath(), stateDir: this.state };
   }
 
   /** What a route gets: the settings store, the agent options, and a host with no chats. */
@@ -114,7 +135,7 @@ class Lab {
 
   studio(launched: { provider: string; env: Record<string, string> | null }[], flags: string[] = []): Studio {
     const studio = new Studio(
-      { stateDir: this.state, port: 0, ownersDir: null, noArtifactTool: true, claudeLauncher: this.launcher, nodeCommand: Deno.execPath() },
+      { stateDir: this.state, port: 0, ownersDir: null, noArtifactTool: true, claudeLauncher: this.launcher, codexLauncher: this.codexLauncher, nodeCommand: Deno.execPath() },
       { keeper: null },
     );
     studio.ownerProbe = () => null;
@@ -127,6 +148,7 @@ class Lab {
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
+    Deno.env.set('PATH', this.pathBefore);
     for (const s of this.studios.reverse()) await s.close().catch(() => {});
     for (const s of this.servers) await s.shutdown().catch(() => {});
     for (let i = 0; i < 20; i++) {
@@ -197,7 +219,7 @@ Deno.test('Use with: Claude Code makes the New chat entry on the PC and the phon
   let rows = await describeAgents(lab.options(), store);
   assertEquals(rows.filter((r) => r.modelServer).map((r) => r.id), ['claude@strata'], 'only the server that is switched on');
   assertEquals(rows.find((r) => r.id === 'claude')!.alsoOnServers, ['strata']);
-  assertEquals(rows.find((r) => r.id === 'codex')!.alsoOnServers, undefined, 'no Codex switch: codex@ entries do not exist yet');
+  assertEquals(rows.find((r) => r.id === 'codex')!.alsoOnServers, undefined, 'only the agents a server is switched on for say so');
   // PC New chat: the entry sits in its own group, after the tested agents
   const pc = AC.mergeRegistry(rows);
   const entry = pc.all.find((a) => a.id === 'claude@strata')!;
@@ -214,14 +236,63 @@ Deno.test('Use with: Claude Code makes the New chat entry on the PC and the phon
   assert(!rows.some((r) => r.modelServer), 'no entry');
   assertEquals(rows.find((r) => r.id === 'claude')!.alsoOnServers, undefined);
   assertEquals(store.modelServers().length, 2);
-  // switches for agents that are not offered are dropped; Maki and Qwen Code read ONE server each
+  // switches for agents that are not offered are dropped; every agent can be on several servers (each makes its own entry)
   await store.update({ agents: { modelServer: { upsert: { id: 'strata', useWith: ['codex', 'qwen', 'bogus'] } } } });
-  assertEquals(store.modelServer('strata')!.useWith, ['qwen']);
+  assertEquals(store.modelServer('strata')!.useWith, ['codex', 'qwen']);
   await store.update({ agents: { modelServer: { upsert: { id: 'lms', useWith: ['qwen', 'maki'] } } } });
-  assertEquals([store.modelServer('strata')!.useWith, store.modelServer('lms')!.useWith], [[], ['maki', 'qwen']]);
-  // the Beta cards say which server their address comes from
+  assertEquals([store.modelServer('strata')!.useWith, store.modelServer('lms')!.useWith], [['codex', 'qwen'], ['maki', 'qwen']]);
   const beta = await describeAgents(lab.options(), store);
-  assertEquals((beta.find((r) => r.id === 'qwen')!.betaInfo as Json).server, { id: 'lms', name: 'lms', url: 'http://127.0.0.1:1234' });
+  assertEquals(beta.filter((r) => r.modelServer).map((r) => r.id), ['codex@strata', 'qwen@strata', 'maki@lms', 'qwen@lms']);
+  assertEquals((beta.find((r) => r.id === 'qwen')!.betaInfo as Json).server, undefined, 'a Beta card is not changed by a server');
+  assertEquals(beta.find((r) => r.id === 'qwen')!.alsoOnServers, ['strata', 'lms']);
+});
+
+Deno.test('every agent works the same: each switch adds exactly ONE separate entry next to the normal one, which is never changed', async () => {
+  await using lab = new Lab();
+  const store = lab.store();
+  const plain = await describeAgents(lab.options(), store);
+  const normal = ['claude', 'codex', 'maki', 'qwen'].map((id) => JSON.stringify(plain.find((r) => r.id === id)));
+  await store.update({ agents: { modelServer: { upsert: { name: 'strata', url: 'http://127.0.0.1:8080', model: 'm', useWith: [], key: KEY } } } });
+  const labels: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', maki: 'Maki', qwen: 'Qwen Code' };
+  const on: string[] = [];
+  for (const agent of ['claude', 'codex', 'maki', 'qwen']) {
+    on.push(agent);
+    await store.update({ agents: { modelServer: { upsert: { id: 'strata', useWith: [...on] } } } });
+    const rows = await describeAgents(lab.options(), store);
+    const entries = rows.filter((r) => r.modelServer);
+    assertEquals(entries.map((r) => r.id), on.map((a) => `${a}@strata`), 'one entry per switch that is on');
+    assertEquals(entries.map((r) => r.name), on.map((a) => `${labels[a]} \u00b7 strata`));
+    assertEquals(entries.map((r) => r.baseAgent), on);
+    // the normal entries are exactly what they were with no server (the "also on" line is data for the card, not a change of the agent)
+    const now = ['claude', 'codex', 'maki', 'qwen'].map((id) => {
+      const row = { ...(rows.find((r) => r.id === id) as Json) };
+      delete row.alsoOnServers;
+      return JSON.stringify(row);
+    });
+    assertEquals(now, normal);
+    // the entry shows on the PC and the phone, in the Model servers group
+    const pc = AC.mergeRegistry(rows).all.find((a) => a.id === `${agent}@strata`)!;
+    const phone = eligibleAgents(rows).find((a) => a.id === `${agent}@strata`)!;
+    assertEquals([pc.group, phone.group, pc.enabled, phone.ok], ['Model servers', MODEL_SERVERS_GROUP, true, true]);
+  }
+  assert(!JSON.stringify(await describeAgents(lab.options(), store)).includes(KEY));
+});
+
+Deno.test('every switch is greyed the same way, with the reason, when the server\u2019s API kinds do not fit', async () => {
+  const kinds = (...k: ('anthropic' | 'responses' | 'chat')[]) => k;
+  assertEquals(useWithProblem('claude', kinds('chat')), 'Claude Code needs a server that speaks Anthropic Messages.');
+  assertEquals(useWithProblem('claude', kinds('anthropic', 'chat')), '');
+  assertEquals(useWithProblem('codex', kinds('anthropic')), 'Codex needs a server that speaks OpenAI Responses or Chat Completions.');
+  assertEquals([useWithProblem('codex', kinds('responses')), useWithProblem('codex', kinds('chat'))], ['', '']);
+  assertEquals(useWithProblem('maki', kinds('responses', 'chat')), 'Maki needs a server that speaks Anthropic Messages.');
+  assertEquals(useWithProblem('qwen', kinds('anthropic')), 'Qwen Code needs a server that speaks Chat Completions.');
+  assertEquals([USE_WITH.map((u) => u.agent), USE_WITH.every((u) => u.kinds.length > 0)], [['claude', 'codex', 'maki', 'qwen'], true]);
+  // the page's own table (settings-ui.js) holds the same agents and kinds
+  const page = Deno.readTextFileSync(new URL('../../outputs/agent-studio/settings-ui.js', import.meta.url));
+  for (const u of USE_WITH) {
+    const list = u.kinds.map((k) => `'${k}'`).join(', ');
+    assert(page.includes(`{ agent: '${u.agent}', label: '${u.label}', kinds: [${list}] }`), `${u.agent} in settings-ui.js`);
+  }
 });
 
 Deno.test('Edit, Remove and Check: Edit keeps the id and the key, Remove forgets everything, Check always asks the server', async () => {
@@ -302,6 +373,23 @@ Deno.test('a server that does not answer greys its entries with the reason, on t
   // nothing is polled: no timer is left behind by the cache (the test would leak one)
 });
 
+Deno.test('an unreachable server greys EVERY entry built from it the same way, on the PC and the phone', async () => {
+  await using lab = new Lab();
+  const dead = lab.deadAddress();
+  const store = lab.store();
+  await store.update({ agents: { modelServer: { upsert: { name: 'strata', url: dead, useWith: ['claude', 'codex', 'maki', 'qwen'] } } } });
+  const rows = (await settingsView(lab.view(store), false, { health: true })).agents as Json[];
+  const line = notAnsweringLine('strata', dead);
+  const entries = rows.filter((r) => r.modelServer);
+  assertEquals(entries.map((r) => [r.id, r.down]), ['claude', 'codex', 'maki', 'qwen'].map((a) => [`${a}@strata`, line]));
+  const phone = eligibleAgents(rows).filter((a) => a.group === MODEL_SERVERS_GROUP);
+  assertEquals(phone.map((a) => [a.id, a.ok, a.reason, a.detail]), entries.map((r) => [r.id, false, 'Not answering', line]));
+  const pc = AC.mergeRegistry(rows).unavailable.filter((a) => a.group === 'Model servers');
+  assertEquals(pc.map((a) => [a.id, a.reason]), entries.map((r) => [r.id, line]));
+  // the agents' own normal entries are not greyed by their server
+  assert(!rows.filter((r) => !r.modelServer).some((r) => r.down));
+});
+
 Deno.test('the key never reaches the page: not in the list, the settings view, the check answers, nor the agent rows', async () => {
   await using lab = new Lab();
   const up = lab.serve({ anthropic: true, chat: 'key' });
@@ -324,28 +412,37 @@ Deno.test('the key never reaches the page: not in the list, the settings view, t
   assertEquals((await modelServersView(self)).map((s) => s.keySet), [false]);
 });
 
-Deno.test('Maki and Qwen Code read their address from the server switched on for them (their own key stays on the card)', async () => {
+Deno.test('Maki and Qwen Code entries launch with the server\u2019s address, key and model; their normal entries keep their own settings', async () => {
   await using lab = new Lab();
+  const up = lab.serve({ chat: true, anthropic: true, models: ['qwen3-x', 'other'] });
   const launched: { provider: string; env: Record<string, string> | null }[] = [];
   const studio = lab.studio(launched);
   const store = studio.settings;
-  // nothing switched on: as before (no address, and the card's address when one is still saved)
   assertEquals(studio.betaEnv('qwen'), {});
   await store.update({ agents: { betaUrl: { qwen: 'https://old.example.invalid/v1' }, betaKey: { qwen: 'card-key-1' } } });
-  assertEquals(studio.betaEnv('qwen'), { OPENAI_API_KEY: 'card-key-1', OPENAI_BASE_URL: 'https://old.example.invalid/v1' });
-  // a server switched on wins over the saved address; the card key stays
-  await store.update({ agents: { modelServer: { upsert: { name: 'local', url: 'http://127.0.0.1:8080', model: 'qwen3-x', useWith: ['qwen', 'maki'], key: KEY } } } });
-  assertEquals(studio.betaEnv('qwen'), { OPENAI_API_KEY: 'card-key-1', OPENAI_BASE_URL: 'http://127.0.0.1:8080', OPENAI_MODEL: 'qwen3-x' });
-  // no card key: the server's key (or a dummy for a server that needs none)
-  await store.update({ agents: { betaKey: { qwen: null } } });
-  assertEquals(studio.betaEnv('qwen').OPENAI_API_KEY, KEY);
-  const maki = studio.betaEnv('maki');
-  assertEquals([maki.ANTHROPIC_BASE_URL, maki.ANTHROPIC_API_KEY], ['http://127.0.0.1:8080', KEY]);
+  const own = { OPENAI_API_KEY: 'card-key-1', OPENAI_BASE_URL: 'https://old.example.invalid/v1' };
+  assertEquals(studio.betaEnv('qwen'), own);
+  await store.update({ agents: { modelServer: { upsert: { name: 'local', url: up.url, model: 'qwen3-x', useWith: ['qwen', 'maki'], key: KEY } } } });
+  // the normal entries are exactly as before: a server never changes them
+  assertEquals(studio.betaEnv('qwen'), own);
+  assertEquals(studio.betaEnv('maki'), {});
+  // the entries: the normal adapter (same argv) with the server's address, key and model in the agent's own variables
+  const [qwenArgv] = await lab.withPrograms(() => studio.agentLaunch('qwen'));
+  const [qArgv, qEnv] = await lab.withPrograms(() => studio.agentLaunch('qwen@local'));
+  assertEquals(qArgv, qwenArgv, 'the same adapter command as normal Qwen Code');
+  assertEquals(qEnv, { OPENAI_BASE_URL: up.url, OPENAI_API_KEY: KEY, OPENAI_MODEL: 'qwen3-x' });
+  const [makiArgv] = await lab.withPrograms(() => studio.agentLaunch('maki'));
+  const [mArgv, mEnv] = await lab.withPrograms(() => studio.agentLaunch('maki@local'));
+  assertEquals(mArgv, makiArgv);
+  assertEquals(mEnv, { ANTHROPIC_BASE_URL: up.url, ANTHROPIC_API_KEY: KEY });
+  // the card key is not used by an entry; a server with no key gives the dummy; the normal entry still has its card key
   await store.update({ agents: { modelServer: { upsert: { id: 'local', key: null } } } });
-  assertEquals(studio.betaEnv('qwen').OPENAI_API_KEY, 'aib-model-server');
-  // switched off again: the agent's own address (here the old saved one)
+  assertEquals((await lab.withPrograms(() => studio.agentLaunch('qwen@local')))[1].OPENAI_API_KEY, 'aib-model-server');
+  assertEquals((await lab.withPrograms(() => studio.agentLaunch('maki@local')))[1].ANTHROPIC_API_KEY, 'aib-model-server');
+  assertEquals((await lab.withPrograms(() => studio.agentLaunch('qwen')))[1], own);
+  // switched off: the entry is gone, the normal entry is as before
   await store.update({ agents: { modelServer: { upsert: { id: 'local', useWith: [] } } } });
-  assertEquals(studio.betaEnv('qwen').OPENAI_BASE_URL, 'https://old.example.invalid/v1');
+  assertEquals(studio.betaEnv('qwen'), own);
 });
 
 Deno.test('the migration script: a dry run changes nothing, --apply moves the Maki and Qwen Code addresses into model servers', async () => {
@@ -383,15 +480,20 @@ Deno.test('the migration script: a dry run changes nothing, --apply moves the Ma
   ]);
   assertEquals([after.betaUrl('qwen'), after.betaUrl('maki')], ['', ''], 'the cards no longer hold an address');
   assertEquals(after.betaKey('qwen'), KEY, 'the key stays on the card');
-  assertEquals(after.modelServerFor('qwen')!.name, 'ws-1.ap-southeast-1.maas.aliyuncs.com');
+  const qwenServer = after.modelServers().find((x) => x.useWith.includes('qwen'))!;
+  assertEquals(after.betaKey(qwenServer.id), KEY, 'and is copied to the server for its entry');
+  // the owner now has the entries "Maki · <server>" and "Qwen Code · <server>", next to the normal ones
+  const rows = await describeAgents(lab.options(), after);
+  assertEquals(rows.filter((r) => r.modelServer).map((r) => r.name), ['Maki \u00b7 api.deepseek.invalid', 'Qwen Code \u00b7 ws-1.ap-southeast-1.maas.aliyuncs.com']);
+  assertEquals(eligibleAgents(rows).filter((a) => a.group === MODEL_SERVERS_GROUP).map((a) => a.id), rows.filter((r) => r.modelServer).map((r) => r.id));
   // again: nothing is left to move
   const again = await quiet(['--data', lab.state, '--apply']);
   assertEquals(again.code, 0);
   assert(again.lines.some((l) => l.includes('nothing to move')), again.lines.join('\n'));
-  // an agent that already reads a server keeps its saved address and is told so
-  await after.update({ agents: { betaUrl: { maki: 'https://x.invalid/a' } } });
+  // an address that already has its entry stays saved on the card and is told so
+  await after.update({ agents: { betaUrl: { maki: 'https://api.deepseek.invalid/anthropic' } } });
   assert((await quiet(['--data', lab.state])).lines.some((l) => l.includes('skip') && l.includes('Maki')), 'skipped');
-  assertEquals(new SettingsStore(lab.state).betaUrl('maki'), 'https://x.invalid/a');
+  assertEquals(new SettingsStore(lab.state).betaUrl('maki'), 'https://api.deepseek.invalid/anthropic');
   // the same address from two agents is ONE server with both switches on
   await using lab2 = new Lab();
   const two = lab2.store();

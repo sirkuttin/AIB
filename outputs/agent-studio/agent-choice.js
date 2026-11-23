@@ -7,7 +7,7 @@
     { id: 'claude', name: 'Claude Code', letter: 'C', builtin: true, enabled: true },
     { id: 'codex', name: 'Codex', letter: 'X', builtin: true, enabled: true },
   ];
-  const ID_RE = /^(?:custom-|claude@)[a-z0-9]+(?:-[a-z0-9]+)*$/; // user-added agents and model servers (claude@<slug>)
+  const ID_RE = /^(?:custom-|(?:claude|codex|maki|qwen)@)[a-z0-9]+(?:-[a-z0-9]+)*$/; // user-added agents and model servers (<agent>@<slug>)
   // The Beta agents (server/agents/beta_catalog.ts): known to AIB, untested by us, off until turned on in Settings. They are listed after
   // the tested agents (and the ones you added), under a "Beta" group label in the agent menus.
   const BETA_IDS = ['copilot', 'opencode', 'gemini', 'qwen', 'cursor', 'goose', 'vibe', 'cline', 'kimi', 'kilo', 'maki', 'antigravity'];
@@ -203,7 +203,7 @@
       const map = readJson(storage, PROJECT_KEY); // the global "last used" stays a browser fallback in loadChoice
       const projects = {}; // the server takes at most 50 project changes per request
       for (const k of Object.keys(map).slice(-50))
-        if (typeof map[k] === 'string' && /^(claude|codex|custom-[a-z0-9-]+|claude@[a-z0-9-]+)$/.test(map[k]))
+        if (typeof map[k] === 'string' && /^(claude|codex|custom-[a-z0-9-]+|(?:claude|codex|maki|qwen)@[a-z0-9-]+)$/.test(map[k]))
           projects[k] = { agent: map[k] };
       const patch = { migrated: true };
       if (Object.keys(projects).length) patch.projects = projects;
