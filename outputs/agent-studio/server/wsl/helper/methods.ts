@@ -17,6 +17,7 @@ import * as files from '../../worktrees/files.ts';
 import * as outside from '../../worktrees/outside_files.ts';
 import { checkPath, checkProject, createFolder, createProject, GIT_TIMEOUT, gitPath, runCommand } from '../../desktop/folders.ts';
 import { repoBranch } from '../../worktrees/chat_folders.ts';
+import { readRepoIdentity } from '../../pcsync/repo_id.ts';
 import { defaultOmpCommand, type LaunchRow, resolveClaude, resolveCodex, resolveOmp } from '../../agents/adapters.ts';
 import { latestRolloutLimits } from '../../agents/codex_limits.ts';
 import { findSessionFile, Store } from '../../transcripts/store.ts';
@@ -533,6 +534,8 @@ function phaseOne(ctx: HelperContext): Handlers {
       const texts = await outside.chatTexts({ sessionFile: (prov, sid) => findSessionFile(prov, store.root, sid) }, `${provider}:${sessionId}`);
       return { mentioned: outside.mentions(texts, path, true) };
     },
+
+    'git.identity': async (p) => await readRepoIdentity(absPath(p, 'folder')),
 
     'chat.repoBranch': async (p) => {
       const folder = absPath(p, 'folder');

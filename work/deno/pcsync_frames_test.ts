@@ -141,3 +141,53 @@ Deno.test('frames: size caps (4 KB for the first frame, 1 MB after) count bytes,
   assertEquals(parseFrame(first(100), true).ok, true);
   assertEquals(parseFrame(first(MAX_HELLO_BYTES), true).ok, false);
 });
+
+// ---- slice V3: project matching items ------------------------------------------------------------------------------------------
+const batchOf = (project: string | undefined, ...items: unknown[]) =>
+  JSON.stringify({ t: 'batch', id: 'b1', ...(project ? { project } : {}), items });
+const offer = (over: Record<string, unknown> = {}) => ({
+  op: 'project.offer',
+  id: 'oid-12345678',
+  name: 'shop',
+  remote: 'github.com/acme/shop',
+  prefix: 'packages/api',
+  wsl: false,
+  ...over,
+});
+
+Deno.test('project items: an offer, a link and an unlink validate and keep only their own keys', () => {
+  const parsed = parseFrame(batchOf(undefined, { op: 'project.begin', x: 1 }, offer({ junk: 'extra' }), { op: 'project.end' }));
+  assert(parsed.ok);
+  const items = (parsed as { ok: true; value: { items: Record<string, unknown>[] } }).value.items;
+  assertEquals(items[0], { op: 'project.begin' });
+  assertEquals(items[1], offer(), 'unknown keys are dropped');
+  assertEquals(parseFrame(batchOf('sync-12345678', { op: 'project.link', mine: 'oid-12345678', theirs: 'oid-87654321', how: 'manual' })).ok, true);
+  assertEquals(parseFrame(batchOf('sync-12345678', { op: 'project.unlink' })).ok, true);
+  assertEquals(parseFrame(batchOf(undefined, offer({ remote: null, prefix: '' }))).ok, true);
+});
+
+Deno.test('project items: a name, remote or place that could be a folder path is refused', () => {
+  const bad: Record<string, unknown>[] = [
+    { name: 'C:\\Users\\x\\shop' },
+    { name: '/home/u/shop' },
+    { name: 'a/b' },
+    { name: '' },
+    { name: 'x'.repeat(81) },
+    { prefix: '/home/u/shop' },
+    { prefix: 'C:/x' },
+    { prefix: '../x' },
+    { prefix: 'a//b' },
+    { prefix: 'a\\b' },
+    { remote: 'C:\\repos\\shop' },
+    { remote: '/srv/git/shop.git' },
+    { remote: 'github.com' },
+    { id: 'short' },
+    { id: 'has space 123' },
+    { wsl: 'yes' },
+  ];
+  for (const over of bad) assertEquals(parseFrame(batchOf(undefined, offer(over))).ok, false, JSON.stringify(over));
+  for (const key of ['root', 'folder', 'dir', 'abs']) assertEquals(parseFrame(batchOf(undefined, offer({ [key]: 'x' }))).ok, false, key);
+  assertEquals(parseFrame(batchOf('sync-12345678', { op: 'project.link', mine: 'oid-12345678', theirs: 'oid-87654321', how: 'folder' })).ok, false);
+  assertEquals(parseFrame(batchOf('sync-12345678', { op: 'project.link', mine: 'short', theirs: 'oid-87654321', how: 'remote' })).ok, false);
+  assertEquals(parseFrame(batchOf('sync-12345678', { op: 'project.other' })).ok, false);
+});

@@ -70,6 +70,8 @@ export interface LinkHost {
   /** Which of the owner's tailnet PCs show as online right now, by tailnet name. */
   online(): Promise<Map<string, boolean>>;
   touch(peer: Peer): void;
+  /** A link to this peer just came up (called after the hello exchange is on the wire, so a frame sent from here follows it). */
+  onUp?(peer: Peer): void;
   onBatch?(peer: Peer, batch: { id: string; project?: string; items: BatchItem[] }): void;
   log(message: string): void;
 }
@@ -354,6 +356,10 @@ export class LinkManager {
     Deno.unrefTimer(link.timer as unknown as number);
     this.host.touch(peer);
     this.host.log(`sync link to ${peer.name} is up (${dir})`);
+    // after this tick: the listening side sends its hello right after registering, and nothing may be sent before it
+    setTimeout(() => {
+      if (!link.gone) this.host.onUp?.(peer);
+    }, 0);
     return link;
   }
 

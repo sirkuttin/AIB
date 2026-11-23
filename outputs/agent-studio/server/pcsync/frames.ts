@@ -22,7 +22,8 @@ export const AREAS: readonly Area[] = ['shared', 'docs'];
 
 export interface BatchItem {
   op: string;
-  area: Area;
+  /** File items name one of a project's two folders; the project matching items (`project.*`) have none. */
+  area?: Area;
   path?: string;
   [key: string]: unknown;
 }
@@ -76,11 +77,55 @@ export function checkPath(value: unknown, area: Area): Checked<string> {
   return { ok: true, value };
 }
 
+const hasControl = (v: string) => [...v].some((c) => c < ' ' || c === '\u007f');
+export const OID = /^[A-Za-z0-9_-]{8,64}$/;
+export const REMOTE = /^[a-z0-9.-]{1,253}\/[^\s\\:]{1,300}$/;
+/** A project's place in its repo, as an offer carries it: relative, forward slashes, no dot segments (never a folder path). */
+export const placeOk = (v: unknown): v is string =>
+  typeof v === 'string' && v.length <= 300 && !/[\\:]/.test(v) && !hasControl(v) && !v.startsWith('/') &&
+  (v === '' || v.split('/').every((s) => s !== '' && s !== '.' && s !== '..'));
+export const nameOk = (v: unknown): v is string =>
+  typeof v === 'string' && v.length >= 1 && v.length <= 80 && !/[\\/]/.test(v) && !hasControl(v);
+
+/**
+ * Project matching items (slice V3). Only the listed keys survive; a project is named by an opaque offer id, never a folder.
+ *   project.begin / project.end   the start and the end of one PC's list of offers
+ *   project.offer                 {id, name, remote (normalized git remote or null), prefix (place in the repo), wsl}
+ *   project.link                  {mine, theirs, how}: batch.project is the new project sync id; mine = the sender's offer id
+ *   project.unlink                batch.project is the project sync id
+ */
+function checkProjectItem(item: Record<string, unknown>): Checked<BatchItem> {
+  const op = item.op as string;
+  switch (op) {
+    case 'project.begin':
+    case 'project.end':
+    case 'project.unlink':
+      return { ok: true, value: { op } };
+    case 'project.offer': {
+      if (typeof item.id !== 'string' || !OID.test(item.id)) return bad('bad offer id');
+      if (!nameOk(item.name)) return bad('bad project name');
+      if (item.remote !== null && (typeof item.remote !== 'string' || !REMOTE.test(item.remote))) return bad('bad remote');
+      if (!placeOk(item.prefix)) return bad('bad place in repo');
+      if (typeof item.wsl !== 'boolean') return bad('bad wsl flag');
+      return { ok: true, value: { op, id: item.id, name: item.name, remote: item.remote, prefix: item.prefix, wsl: item.wsl } };
+    }
+    case 'project.link':
+      if (typeof item.mine !== 'string' || !OID.test(item.mine) || typeof item.theirs !== 'string' || !OID.test(item.theirs)) {
+        return bad('bad offer id');
+      }
+      if (item.how !== 'remote' && item.how !== 'manual') return bad('bad link kind');
+      return { ok: true, value: { op, mine: item.mine, theirs: item.theirs, how: item.how } };
+    default:
+      return bad('bad op');
+  }
+}
+
 function checkItem(raw: unknown): Checked<BatchItem> {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return bad('item must be an object');
   const item = raw as Record<string, unknown>;
   for (const key of Object.keys(item)) if (ROOT_KEYS.has(key.toLowerCase())) return bad(`item may not carry "${key}"`);
   if (typeof item.op !== 'string' || !/^[a-z][a-z0-9._-]{0,31}$/.test(item.op)) return bad('bad op');
+  if (item.op.startsWith('project.')) return checkProjectItem(item);
   if (!AREAS.includes(item.area as Area)) return bad('bad area');
   if (item.path !== undefined) {
     const path = checkPath(item.path, item.area as Area);

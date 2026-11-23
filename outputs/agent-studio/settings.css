@@ -1288,6 +1288,7 @@ html[data-ui-scaled] .st-page {
 }
 .ps-peer {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
@@ -1319,4 +1320,32 @@ html[data-ui-scaled] .st-page {
 .ps-remove:focus-visible {
   color: var(--text);
   border-color: var(--line-control);
+}
+
+/* Settings > Sync, matched projects under each PC (pcsync-ui.js): two switches and an always-visible Unlink icon per project. */
+.ps-projects {
+  flex-basis: 100%;
+  margin: 2px 0 6px 12px;
+}
+.ps-project {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 0;
+}
+.ps-project-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.ps-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+}
+.ps-linkto select {
+  max-width: 180px;
 }

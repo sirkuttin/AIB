@@ -23,6 +23,7 @@
     pick: '',
     code: '',
     busy: '',
+    linkPick: {}, // per peer id: the two projects picked in Link to…
     error: '',
     info: '',
     sig: '',
@@ -54,6 +55,13 @@
     if (r === 'offline') return 'Offline';
     return 'Checking';
   }
+  /* The line under a matched project saying why it is matched. */
+  function howText(link) {
+    if (link.missing) return 'This project is no longer on this PC.';
+    if (!link.confirmed) return 'The other PC linked this by hand. Check it is the same project, then confirm.';
+    return link.how === 'remote' ? 'Same git remote' : 'Linked by hand';
+  }
+  const LATER = 'Files start syncing in a later update. The switches are saved.';
   function countdown(expiresAt, now) {
     const s = Math.max(0, Math.floor(expiresAt - now / 1000));
     return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
@@ -136,12 +144,109 @@
         const text = el('div', null, 'ps-peer-text');
         text.append(el('b', p.name), el('span', ' ' + p.host, 'ps-dim'), el('span', reachText(p.reach), 'ps-reach ' + p.reach));
         li.append(text, removeIcon('Remove ' + p.name, () => remove(p)));
+        if (p.projects) li.append(drawProjects(p));
         list.append(li);
       }
       frag.append(list);
     }
     box.replaceChildren(frag);
     box._psDrawn = true;
+  }
+
+  /* One project's switch: a labelled checkbox, saved at once, off by default. */
+  function check(label, on, disabled, onChange) {
+    const wrap = el('label', null, 'ps-switch');
+    const box = el('input');
+    box.type = 'checkbox';
+    box.checked = !!on;
+    box.disabled = !!disabled;
+    box.addEventListener('change', () => onChange(box.checked));
+    wrap.append(box, el('span', label));
+    return wrap;
+  }
+
+  /* The matched projects under one PC (slice V3): each with Docs and aib-shared switches and an always-visible Unlink icon,
+     the name-only suggestions, and Link to… for the rest. Nothing is copied yet. */
+  function drawProjects(peer) {
+    const pr = peer.projects;
+    const wrap = el('div', null, 'ps-projects');
+    wrap.dataset.projects = peer.id;
+    if (pr.links.length) wrap.append(el('p', LATER, 'st-note ps-later'));
+    for (const l of pr.links) {
+      const row = el('div', null, 'ps-project');
+      row.dataset.sync = l.sync;
+      const head = el('div', null, 'ps-project-head');
+      const title = el('b', l.name);
+      head.append(title);
+      if (l.otherName && l.otherName !== l.name) head.append(el('span', ' is ' + l.otherName + ' on ' + peer.name, 'ps-dim'));
+      head.append(el('span', howText(l), 'ps-dim ps-how'));
+      row.append(head);
+      const controls = el('div', null, 'ps-project-controls');
+      if (!l.missing) {
+        if (!l.confirmed) controls.append(btn('Confirm', () => projAct('pcsync/projects/confirm', { sync: l.sync }), '', !!P.busy));
+        const docs = check('Docs', l.docs, !l.confirmed || !!P.busy, (on) => projAct('pcsync/projects/switch', { sync: l.sync, which: 'docs', on }));
+        const shared = check('aib-shared', l.shared, !l.confirmed || !!P.busy, (on) => projAct('pcsync/projects/switch', { sync: l.sync, which: 'shared', on }));
+        docs.dataset.switch = 'docs';
+        shared.dataset.switch = 'shared';
+        controls.append(docs, shared);
+      }
+      const gone = removeIcon('Unlink ' + l.name, () => projAct('pcsync/projects/unlink', { sync: l.sync }));
+      gone.classList.add('ps-unlink');
+      controls.append(gone);
+      row.append(controls);
+      wrap.append(row);
+    }
+    for (const sg of pr.suggestions || []) {
+      const row = el('div', null, 'ps-project ps-suggest');
+      row.dataset.suggest = sg.mine + ':' + sg.theirs;
+      row.append(
+        el('span', sg.name + ': same folder name on ' + peer.name + '. Check it is the same project.', 'st-note'),
+        btn('Link', () => projAct('pcsync/projects/link', { peer: peer.id, mine: sg.mine, theirs: sg.theirs }), '', !!P.busy || peer.reach !== 'online'),
+      );
+      wrap.append(row);
+    }
+    if (peer.reach === 'online' && pr.mine.length && pr.theirs.length) {
+      const pick = P.linkPick[peer.id] || (P.linkPick[peer.id] = { mine: '', theirs: '' });
+      const row = el('div', null, 'ps-project ps-linkto');
+      const select = (label, items, key) => {
+        const sel = el('select');
+        sel.setAttribute('aria-label', label);
+        const first = el('option', label);
+        first.value = '';
+        sel.append(first);
+        for (const it of items) {
+          const o = el('option', it.name);
+          o.value = it.oid;
+          sel.append(o);
+        }
+        sel.value = items.some((it) => it.oid === pick[key]) ? pick[key] : '';
+        sel.addEventListener('change', () => {
+          pick[key] = sel.value;
+        });
+        return sel;
+      };
+      row.append(
+        el('span', 'Link to…', 'ps-dim'),
+        select('A project on this PC', pr.mine, 'mine'),
+        select('A project on ' + peer.name, pr.theirs, 'theirs'),
+        btn('Link', () => {
+          if (!pick.mine || !pick.theirs) {
+            P.error = 'Pick a project on each PC.';
+            return draw();
+          }
+          const body = { peer: peer.id, mine: pick.mine, theirs: pick.theirs };
+          pick.mine = '';
+          pick.theirs = '';
+          return projAct('pcsync/projects/link', body);
+        }, '', !!P.busy),
+      );
+      wrap.append(row);
+    }
+    return wrap;
+  }
+
+  function projAct(name, body) {
+    return act(name, body, 'project');
   }
 
   function drawPairing(pairing) {
@@ -340,7 +445,7 @@
     }
   }
 
-  const api = { render, refresh, statusText, reachText, countdown, _state: P };
+  const api = { render, refresh, statusText, reachText, howText, countdown, _state: P };
   root.AIBPcSyncUI = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

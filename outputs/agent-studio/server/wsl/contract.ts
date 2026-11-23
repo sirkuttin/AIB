@@ -194,6 +194,8 @@ export interface HelperMethods {
    */
   'changes.many': { params: { folders: { folder: string; base?: string; offset?: number; counts?: boolean }[] }; result: { results: unknown[] } };
   'changes.branchEntries': { params: { folder: string; base?: string }; result: unknown };
+  /** Sync between PCs (slice V3): a folder's git remote (origin, else the first remote) and its place in the repo. No path comes back. */
+  'git.identity': { params: { folder: string }; result: { git: boolean; url: string | null; prefix: string } };
   'chat.repoBranch': { params: { folder: string }; result: { repo: string | null; branch: string | null } };
   /**
    * The worktree per chat of WSL projects (helper/worktrees.ts: worktrees/worktrees.ts Manager run natively, rooted at

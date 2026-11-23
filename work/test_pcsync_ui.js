@@ -36,6 +36,13 @@ test('reachability words and the countdown', () => {
   assert.equal(UI.countdown(5, 10000), '0:00');
 });
 
+test('matched projects: the line under a project says why it is matched', () => {
+  assert.equal(UI.howText({ how: 'remote', confirmed: true }), 'Same git remote');
+  assert.equal(UI.howText({ how: 'manual', confirmed: true }), 'Linked by hand');
+  assert.match(UI.howText({ how: 'manual', confirmed: false }), /confirm/);
+  assert.match(UI.howText({ how: 'remote', confirmed: true, missing: true }), /no longer on this PC/);
+});
+
 test('Settings has its own Sync section after Remote control, and search finds the card', () => {
   const ids = SET.SECTIONS.map((s) => s.id);
   assert.equal(ids[ids.indexOf('devices') + 1], 'sync');

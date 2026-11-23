@@ -19,6 +19,9 @@ import { portFree } from '../remote/port.ts';
 import { type Peer, PeerStore, type PublicPeer, publicPeer } from './peers.ts';
 import { SYNC_REASONS, SyncGate } from './gate.ts';
 import { type LinkHost, LinkManager, type LinkTimings } from './link.ts';
+import { ProjectSync, type SourceProject } from './projects.ts';
+import { readRepoIdentity, type RepoIdentity } from './repo_id.ts';
+import { notReady, peekWslHost } from '../wsl/access.ts';
 import {
   otherAibListens,
   readSyncServe,
@@ -50,6 +53,12 @@ export interface PcSyncOptions {
   pollMs?: number;
   /** Link timings (tests make them short): ping, idle, backoff, Tailscale poll. */
   link?: Partial<LinkTimings>;
+  /** This PC's projects (server.ts passes the page's list). Default: none. */
+  projects?: () => SourceProject[];
+  /** Tests: how a project's git remote is read (default: git here, or the WSL helper's `git.identity` for a WSL project). */
+  identity?: (project: SourceProject) => Promise<RepoIdentity | null>;
+  /** How long a read of the projects' remotes is trusted (ms). */
+  projectsTtlMs?: number;
   /** Later slices: what a peer's batch frame goes to. */
   onBatch?: LinkHost['onBatch'];
   log?: (message: string) => void;
@@ -74,8 +83,22 @@ export function cleanPcName(value: unknown): string {
   return text.slice(0, 60) || 'Another PC';
 }
 
+/** A project's repo identity: git on this PC, or the WSL helper's for a WSL project (never starts a distro; null when it is off). */
+export async function projectIdentity(project: SourceProject): Promise<RepoIdentity | null> {
+  const wsl = project.wsl;
+  if (!wsl) return await readRepoIdentity(project.path);
+  const host = peekWslHost(wsl.distro);
+  if (!host || notReady(host, wsl.distro)) return null;
+  try {
+    return await host.call('git.identity', { folder: wsl.linuxPath });
+  } catch {
+    return null;
+  }
+}
+
 export class PcSync {
   readonly peers: PeerStore;
+  readonly projects: ProjectSync;
   readonly pairing = new Pairing(
     () => Date.now() / 1000,
     'On the first PC, click Start a sync chain again.',
@@ -109,8 +132,22 @@ export class PcSync {
       online: async () => new Map((await tailnetPcs(this.options.runner)).map((p) => [p.host, p.online])),
       touch: (peer) => this.peers.touch(peer.id),
       log: (message) => this.options.log?.(message),
-      onBatch: (peer, batch) => this.options.onBatch?.(peer, batch),
+      onUp: (peer) => void this.projects.onUp(peer),
+      onBatch: (peer, batch) => {
+        this.projects.onBatch(peer, batch);
+        this.options.onBatch?.(peer, batch);
+      },
     }, options.link);
+    this.projects = new ProjectSync(stateDir, {
+      list: () => this.options.projects?.() ?? [],
+      identity: (project) => (this.options.identity ?? projectIdentity)(project),
+      peers: () => this.peers.list(),
+      own: () => (this.#ts?.name ? { host: this.#ts.name } : null),
+      connected: (peerId) => this.links.state(peerId) === 'connected',
+      send: (peerId, batch) => this.links.sendBatch(peerId, batch),
+      log: (message) => this.options.log?.(message),
+      ttlMs: options.projectsTtlMs,
+    });
     this.gate = new SyncGate(() => this.#ts?.name ?? '', () => this.#ts?.login ?? '');
   }
 
@@ -272,6 +309,7 @@ export class PcSync {
             return this.#json(200, { ok: true, name: this.#ts?.machine ?? '' });
           }
           this.peers.remove(peer.id);
+          this.projects.dropPeer(peer.host);
           this.links.forget(peer.id);
           return this.#json(200, { ok: true });
         }
@@ -477,6 +515,7 @@ export class PcSync {
   async remove(id: unknown): Promise<{ removed: boolean; notified: boolean; name: string }> {
     const peer = typeof id === 'string' ? this.peers.remove(id) : null;
     if (!peer) return { removed: false, notified: false, name: '' };
+    this.projects.dropPeer(peer.host);
     this.links.forget(peer.id);
     const token = this.peers.outToken(peer);
     let notified = false;
@@ -502,6 +541,7 @@ export class PcSync {
   // ---- the page's view ---------------------------------------------------------------------------------------------------------
   async view(): Promise<Json> {
     const ts = await this.#read(5000).catch(() => null);
+    if (this.peers.on) await this.projects.refresh().catch(() => {});
     if (this.peers.on && this.#port && ts?.signedIn) this.#serve = await readSyncServe(ts.name, this.#port, this.options.runner);
     const code = this.pairing.open();
     const pending = this.pairing.pending().filter((c) => this.#extras.has(c.id)).map((c) => ({
@@ -523,6 +563,7 @@ export class PcSync {
       peers: this.peers.list().map((p) => ({
         ...publicPeer(p),
         reach: this.links.state(p.id) === 'connected' ? 'online' : this.links.state(p.id),
+        projects: this.projects.view(p),
       })),
     };
   }

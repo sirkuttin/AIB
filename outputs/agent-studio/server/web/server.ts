@@ -54,6 +54,7 @@ import type { DeviceStore } from '../remote/devices.ts';
 import { devicesRoutes } from './devices_routes.ts';
 import { pcsyncRoutes } from './pcsync_routes.ts';
 import { PcSync, type PcSyncOptions } from '../pcsync/service.ts';
+import { sourceProjects } from '../pcsync/projects.ts';
 import { PageAccess } from './page_access.ts';
 import { type DesktopWindows, MAX_WINDOWS_BODY, WINDOW_ID } from '../desktop/windows_contract.ts';
 import { WindowsRoute } from './windows_route.ts';
@@ -851,7 +852,10 @@ export function makeContext(
     desktopNotify: null,
     phone: null as unknown as PhoneAccess,
     devices: null as unknown as DeviceStore,
-    pcsync: new PcSync(options.stateDir, options.pcsync),
+    pcsync: new PcSync(options.stateDir, {
+      projects: () => sourceProjects(ctx.addedProjects.public().added, (path) => ctx.folderPresence.isGone(path)),
+      ...options.pcsync,
+    }),
     presence: new Presence(),
     inbox: null as unknown as InboxService,
     desktopWindows: null,

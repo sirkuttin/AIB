@@ -486,6 +486,7 @@ Deno.test('the ready line can list every method of the contract', () => {
     'changes.many',
     'changes.branchEntries',
     'chat.repoBranch',
+    'git.identity',
     'transcripts.sessions',
     'transcripts.read',
     'transcripts.mentions',
@@ -513,6 +514,24 @@ Deno.test('the ready line can list every method of the contract', () => {
   ];
   assertEquals(Object.keys(methods).sort(), [...names].sort());
 });
+
+gitTest(
+  'git.identity answers the remote and the place in the repo (sync between PCs), and no path',
+  async () => {
+    using r = new TempRepo();
+    assertEquals((await call('git.identity', { folder: r.repo })).result, { git: true, url: null, prefix: '' });
+    git(r.repo, 'remote', 'add', 'origin', 'git@example.com:acme/app.git');
+    assertEquals((await call('git.identity', { folder: r.repo })).result, { git: true, url: 'git@example.com:acme/app.git', prefix: '' });
+    assertEquals((await call('git.identity', { folder: r.p('sub') })).result, { git: true, url: 'git@example.com:acme/app.git', prefix: 'sub' });
+    const none = Deno.makeTempDirSync({ prefix: 'aib-wsl-nogit-' });
+    try {
+      assertEquals((await call('git.identity', { folder: none })).result, { git: false, url: null, prefix: '' });
+    } finally {
+      Deno.removeSync(none, { recursive: true });
+    }
+    assertEquals((await call('git.identity', { folder: 'relative/path' })).error?.code !== undefined, true);
+  },
+);
 
 gitTest(
   'files.list, search, read and gitInfo answer what files.ts answers; reads are base64 and capped',

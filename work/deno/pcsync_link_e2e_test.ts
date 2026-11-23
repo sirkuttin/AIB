@@ -183,7 +183,7 @@ Deno.test({
       const ok = socket(a);
       await ok.opened;
       ok.ws.send(hello(tokenToA(b)));
-      await until('a hello answers', () => ok.messages.length === 1);
+      await until('a hello answers', () => ok.messages.length >= 1);
       assertEquals(JSON.parse(ok.messages[0]).t, 'hello');
       assertEquals(linked(a).length, 1);
       ok.ws.close(1000);
@@ -204,7 +204,7 @@ Deno.test({
         const s = socket(a);
         await s.opened;
         s.ws.send(hello(tokenToA(b)));
-        await until('linked', () => s.messages.length === 1 && linked(a).length === 1);
+        await until('linked', () => s.messages.length >= 1 && linked(a).length === 1);
         return s;
       };
       let s = await open();

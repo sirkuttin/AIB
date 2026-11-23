@@ -43,6 +43,17 @@ export function pcsyncRoutes(): Map<string, Handler> {
   routes.set('POST /api/live/pcsync/join', async (ctx, _url, body) => [200, await ctx.pcsync.join(body?.host, body?.code)]);
   routes.set('POST /api/live/pcsync/share', async (ctx) => [200, await ctx.pcsync.share()]);
   routes.set('POST /api/live/pcsync/remove', async (ctx, _url, body) => [200, { ok: true, ...await ctx.pcsync.remove(body?.id) }]);
+  // project matching (slice V3): link by hand, confirm a link the other PC proposed, unlink, the Docs and aib-shared switches
+  routes.set('POST /api/live/pcsync/projects/link', async (ctx, _url, body) => {
+    const link = await ctx.pcsync.projects.linkByHand(body?.peer, body?.mine, body?.theirs);
+    return [200, { ok: true, sync: link.sync }];
+  });
+  routes.set('POST /api/live/pcsync/projects/confirm', (ctx, _url, body) => [200, { ok: true, sync: ctx.pcsync.projects.confirm(body?.sync).sync }]);
+  routes.set('POST /api/live/pcsync/projects/unlink', (ctx, _url, body) => [200, { ok: true, unlinked: ctx.pcsync.projects.unlink(body?.sync) }]);
+  routes.set('POST /api/live/pcsync/projects/switch', (ctx, _url, body) => {
+    const link = ctx.pcsync.projects.setSwitch(body?.sync, body?.which, body?.on);
+    return [200, { ok: true, sync: link.sync, docs: link.docs, shared: link.shared }];
+  });
   for (const [key, handler] of routes) routes.set(key, wrap(handler));
   return routes;
 }
