@@ -73,6 +73,12 @@ export interface SwarmHost {
    * sets it. Never called with a chat's own turn end or request: those are announced by the chat's own watcher look.
    */
   announce?(news: HelperNews): void;
+  /**
+   * Writes a chat's display name (`provider:sessionId`, name) when it has none yet: the chat names the owner's Rename uses, so the
+   * name shows wherever the chat does, and an owner's rename (or an earlier name) is never replaced. Resolves true once the chat has
+   * a name (this one or the owner's). Without it (tests) no name is written.
+   */
+  nameChat?(key: string, name: string): Promise<boolean>;
   settings: { builtinEnabled?(id: string): boolean; betaEnabled?(id: string): boolean; modelServer?(id: string): ModelServer | null; modelServers?(): ModelServer[] };
 }
 
@@ -161,6 +167,11 @@ const lower = (t: string) => (t ? t[0].toLowerCase() + t.slice(1) : t).replace(/
 
 /** How a notification names a helper chat: “Helper “Login bug” (Codex)”, never the brief's first words. */
 export const helperTitle = (h: Helper) => `Helper “${h.title}” (${chatName(h)})`;
+/** A helper chat's own name: named after its job, "Fix Use-with list layout (Codex)", "… (Claude Code · strata)". */
+export const helperChatName = (h: Helper) => {
+  const label = ` (${chatName(h)})`;
+  return h.title.replace(/\s+/g, ' ').trim().slice(0, Math.max(10, 190 - label.length)) + label;
+};
 
 /** One piece of helper news for the notification paths (SwarmHost.announce). `parent` is the main chat's live id. */
 export interface HelperNews {
@@ -493,7 +504,8 @@ export class Swarm {
         start: s(record.snapshot),
         ...(s(record.landOn) ? { landOn: s(record.landOn) } : {}), // a folder chat's helper (build plan 2.4)
       };
-      await this.registry.patch(id, { chat: { ...h.chat, mode: usedMode, lasting: lasting(state) }, worktree, cursor: Number(state.cursor) || 0 });
+      const patched = await this.registry.patch(id, { chat: { ...h.chat, mode: usedMode, lasting: lasting(state) }, worktree, cursor: Number(state.cursor) || 0 });
+      if (patched) await this.#ensureName(patched);
       const [code, payload] = await this.ctx.host.liveCall('prompt', {
         id: h.chat.live,
         text: briefPrompt(h.title, h.brief, worktree.branch),
@@ -503,6 +515,16 @@ export class Swarm {
       await this.registry.patch(id, { state: 'working' });
     } finally {
       this.#working.delete(id);
+    }
+  }
+
+  /** The helper's chat gets its name once (never "New conversation"); the owner's own name or rename is never put back. */
+  async #ensureName(h: Helper): Promise<void> {
+    if (h.kind === 'subagent' || h.named || !h.chat.lasting || !this.ctx.nameChat) return;
+    try {
+      if (await this.ctx.nameChat(h.chat.lasting, helperChatName(h))) await this.registry.patch(h.id, { named: true });
+    } catch (error) {
+      log.info('swarm: could not name helper %s (%s)', h.id, error instanceof Error ? error.message : error);
     }
   }
 
@@ -1649,6 +1671,7 @@ export class Swarm {
       if (parentLive !== h.parent.live || chatLive !== h.chat.live) {
         h = (await this.registry.patch(h.id, { parent: { ...h.parent, live: parentLive }, chat: { ...h.chat, live: chatLive } })) ?? h;
       }
+      await this.#ensureName(h);
       if (parent) {
         await this.#flushNotes(h);
         await this.#deliverReports(h, parent);

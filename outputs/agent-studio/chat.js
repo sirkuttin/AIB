@@ -308,7 +308,7 @@
   };
   /* Helpers from other agents (swarm), as /api/live/swarm lists them: each shows as a row in its MAIN chat's Activity section, in the
      same list as that chat's subagents, and never as a section of its own (helperRows, projectActivityKeys). */
-  const swarm = { list: [], at: 0, busy: false };
+  const swarm = { list: [], at: 0, busy: false, sig: '' };
   const paneAct = new Map(); // alias key -> what its section shows: { kids: Map, rows, commands, snap, at, cmdAt, histAt }
   const liveCache = (id = current) => chatCache.entry(id || '');
   const liveLoaded = () => liveCache().loaded();
@@ -1125,6 +1125,7 @@
       if (conversations === built) conversations = kept;
     }
     annotateElsewhere();
+    if (!swarm.at) await loadSwarmHelpers(); // which saved chats are helpers: the first list draw already leaves them out
     if (selected) {
       const updated = conversations.find((c) => aliasKey(c) === aliasKey(selected));
       if (updated) selected = updated;
@@ -1187,6 +1188,7 @@
         (c) =>
           (provider === 'all' || c.provider === provider) &&
           window.AgentWorkspaceUI?.inProject(c) !== false &&
+          !isListedHelper(c) && // helper chats are rows in their main chat's Activity, not in this list (search still finds them)
           `${titleOf(c)} ${c.cwd} ${c.id}`.toLowerCase().includes(q),
       )
       .sort(
@@ -3518,65 +3520,85 @@
     box.parentNode.insertBefore(toast, box.nextSibling);
     setTimeout(() => toast.remove(), 15000);
   }
+  /* One approval card: the open chat's own request, or (helper) a helper's, which the main chat shows with the same card and the same
+     options (owner, 2026-11-23). `to` is the connection the answer goes to: the helper's own chat for a helper's request. */
+  function approvalCard(p, to) {
+    const ui = window.AgentElicitationUI,
+      h = to.helper || null,
+      info = h ? null : ui?.routeInfo(p.params.sessionId, p.route, to.context),
+      card = text('section', '', 'approval' + (h ? ' approval-helper' : ''));
+    card.dataset.route = h ? 'helper' : info ? info.kind : 'main';
+    if (h) card.dataset.helper = h.id;
+    card.dataset.key = p.key;
+    card.append(
+      text('h3', h ? (h.label || h.provider) + ' helper “' + h.title + '” requests approval' : info ? info.name + ' requests approval' : 'Approval requested'),
+    );
+    const note = info ? ui.routeNote(info) : '';
+    if (note) card.append(text('p', note, 'elicitation-subagent'));
+    if (info?.kind === 'subagent') {
+      const agent = children.get(info.sessionId);
+      if (agent) {
+        const show = text('button', 'Show this subagent');
+        show.onclick = () => openSubagent(agent).catch(fail);
+        card.append(show);
+      }
+    }
+    card.append(...approvalDetail(p.params));
+    const always = window.AllowRulesUI ? window.AllowRulesUI.choice(p.allow) : null;
+    if (always) card.append(always.element);
+    const hideAgentAlways = !!p.allow?.project?.hideAgentAlways;
+    for (const option of [...(p.params.options || []), { name: 'Cancel request', optionId: null }]) {
+      if (hideAgentAlways && option.kind === 'allow_always') continue; // decision 2a: AIB's own Always replaces it on this card
+      const button = text('button', option.name || option.optionId);
+      button.dataset.option = option.optionId === null ? '' : String(option.optionId);
+      button.onclick = async () => {
+        button.disabled = true;
+        try {
+          if (always && always.ticked() && option.kind === 'allow_once') {
+            const chat = to.id;
+            const saved = await window.AllowRulesUI.answer(
+              (body) => post('allow/answer', { id: chat, key: p.key, option: option.optionId, ...body }),
+              always.scope(),
+            );
+            if (saved) showAllowToast(saved);
+            answerChoice.set(p.key, String(option.name || option.optionId) + ' · always');
+            await afterApproval(h);
+            return;
+          }
+          await post('permission', { id: to.id, key: p.key, option: option.optionId });
+          answerChoice.set(p.key, option.optionId === null ? 'Cancelled' : String(option.name || option.optionId));
+          await afterApproval(h);
+        } catch (e) {
+          fail(e);
+          button.disabled = false;
+          afterApproval(h);
+        }
+      };
+      card.append(button);
+    }
+    return card;
+  }
+  async function afterApproval(helper) {
+    if (helper) {
+      await loadSwarmHelpers(true); // the helper's request is gone from the list: its Activity row and this card clear
+      approvalSignature = '';
+    }
+    await refresh();
+    if (helper) renderProjectActivity();
+  }
   function renderApprovals() {
     const list = snapshot.permissions || [],
       names = Object.fromEntries([...children].map(([id, agent]) => [id, agent.name])),
-      signature = JSON.stringify([list, names]);
+      helperAsks = selected ? helperApprovals(aliasKey(selected)) : [],
+      signature = JSON.stringify([list, names, helperAsks.map((x) => [x.h.id, x.h.chat, x.p.key, x.p.params])]);
     if (signature === approvalSignature) return;
     approvalSignature = signature;
     const box = $('approvals'),
-      ui = window.AgentElicitationUI,
       context = questionContext(current, snapshot);
     box.replaceChildren();
-    for (const p of list) {
-      const info = ui?.routeInfo(p.params.sessionId, p.route, context),
-        card = text('section', '', 'approval');
-      card.dataset.route = info ? info.kind : 'main';
-      card.append(text('h3', info ? info.name + ' requests approval' : 'Approval requested'));
-      const note = info ? ui.routeNote(info) : '';
-      if (note) card.append(text('p', note, 'elicitation-subagent'));
-      if (info?.kind === 'subagent') {
-        const agent = children.get(info.sessionId);
-        if (agent) {
-          const show = text('button', 'Show this subagent');
-          show.onclick = () => openSubagent(agent).catch(fail);
-          card.append(show);
-        }
-      }
-      card.append(...approvalDetail(p.params));
-      const always = window.AllowRulesUI ? window.AllowRulesUI.choice(p.allow) : null;
-      if (always) card.append(always.element);
-      const hideAgentAlways = !!p.allow?.project?.hideAgentAlways;
-      for (const option of [...(p.params.options || []), { name: 'Cancel request', optionId: null }]) {
-        if (hideAgentAlways && option.kind === 'allow_always') continue; // decision 2a: AIB's own Always replaces it on this card
-        const button = text('button', option.name || option.optionId);
-        button.onclick = async () => {
-          button.disabled = true;
-          try {
-            if (always && always.ticked() && option.kind === 'allow_once') {
-              const chat = current;
-              const saved = await window.AllowRulesUI.answer(
-                (body) => post('allow/answer', { id: chat, key: p.key, option: option.optionId, ...body }),
-                always.scope(),
-              );
-              if (saved) showAllowToast(saved);
-              answerChoice.set(p.key, String(option.name || option.optionId) + ' · always');
-              await refresh();
-              return;
-            }
-            await post('permission', { id: current, key: p.key, option: option.optionId });
-            answerChoice.set(p.key, option.optionId === null ? 'Cancelled' : String(option.name || option.optionId));
-            await refresh();
-          } catch (e) {
-            fail(e);
-            button.disabled = false;
-            refresh();
-          }
-        };
-        card.append(button);
-      }
-      box.append(card);
-    }
+    for (const p of list) box.append(approvalCard(p, { id: current, context }));
+    // a helper's requests: the same card, routed to the helper's own connection
+    for (const { h, p } of helperAsks) box.append(approvalCard(p, { id: h.chat, helper: h }));
   }
   function startRename(c) {
     if (selected && c && aliasKey(c) === aliasKey(selected) && window.AgentHeaderUI?.beginRename?.()) return;
@@ -5517,6 +5539,7 @@
   });
   window.AgentSwitcherUI?.init({
     conversations: () => conversations,
+    helperOf: (c) => helperInfo(c), // search still finds a helper's chat, labelled "helper of <main chat>"
     aliasKey,
     titleOf,
     getSelected: () => selected,
@@ -6010,6 +6033,25 @@
     }
     return keys;
   }
+  /* The ONE client predicate for "this chat is left out of the chat lists" (the server's is registry.ts hiddenFromLists, sent as
+     `hidden` on each helper). A later rule that tucks a helper under its main chat changes this and that one. A helper that is done
+     or merged is left out too. The chat stays reachable from its main chat's Activity row, search (Ctrl+K) and a direct link. */
+  function helperInfo(c) {
+    const k = aliasKey(c);
+    for (const h of swarm.list) {
+      if (h.kind === 'subagent' || h.hidden === false) continue;
+      if ((h.chatKey && k === h.chatKey) || (h.chat && c.live && c.live.id === h.chat) || (c.live?.swarm?.helperId && c.live.swarm.helperId === h.id)) {
+        const parent = helperParent(h);
+        return { id: h.id, parent: parent ? titleOf(parent) : '' };
+      }
+    }
+    if (c.live?.swarm?.role === 'helper' && !c.live.closed) {
+      const parent = conversations.find((x) => x.live && x.live.id === c.live.swarm.parent);
+      return { id: c.live.swarm.helperId || '', parent: parent ? titleOf(parent) : '' };
+    }
+    return null;
+  }
+  const isListedHelper = (c) => !!helperInfo(c);
   /* A helper as a subagent row: the same card and states. state: working | waiting (the helper's chat needs you) | completed |
      failed | stopped. A click opens the helper chat's saved history in the panel (refreshSubagent), never the chat itself. */
   function helperRow(h) {
@@ -6025,6 +6067,7 @@
       helper: true,
       helperId: h.id,
       name: h.title,
+      fullName: (c && aliases[aliasKey(c)]) || h.title + ' (' + (h.label || h.provider) + ')', // the chat's own name, as it shows everywhere else
       description: '',
       agentType: h.label || h.provider,
       model: h.model || '',
@@ -6035,7 +6078,54 @@
       tokens: 0,
       activity: state === 'waiting' ? 'Waiting on you' : '',
       launchedOnly: !saved,
+      ask: state === 'waiting' ? helperAskOf(h) : null,
     };
+  }
+  /* What a waiting helper's Activity row offers without opening its chat: Allow / Deny for a plain approval (its allow-once and
+     deny-once options); an Open button for a question, a sign-in, several requests, a risky command or an option it lacks. */
+  const RISKY_TEXT = (s) => !!window.AgentNotifyRules?.isRisky?.(s);
+  function helperAskOf(h) {
+    const w = h.waits || {},
+      perms = Array.isArray(w.permissions) ? w.permissions : [],
+      qs = Array.isArray(w.elicitations) ? w.elicitations : [];
+    if (perms.length === 1 && !qs.length) {
+      const p = perms[0],
+        opts = Array.isArray(p?.params?.options) ? p.params.options : [],
+        allow = opts.find((o) => o && o.kind === 'allow_once'),
+        deny = opts.find((o) => o && o.kind === 'reject_once'),
+        call = p?.params?.toolCall || {},
+        raw = call.rawInput || {},
+        shown = [raw.command, raw.file_path, raw.url, call.title].filter((x) => typeof x === 'string').join(' ');
+      if (allow && deny && p.key && !RISKY_TEXT(shown) && !isMergeAsk(p.params))
+        return { kind: 'approve', chat: h.chat, key: p.key, allow: allow.optionId, deny: deny.optionId };
+    }
+    return { kind: 'open' };
+  }
+  /* AIB's own merge requests are decided on the card (they carry choices that matter): never a one-tap Allow. */
+  const isMergeAsk = (params) => /merge_into_project|resolve_edit_clash/.test(JSON.stringify(params?.toolCall?.rawInput || params?.toolCall?.title || ''));
+  /* A helper's open approval requests for the main chat with this key: {h, p} (p is the permission as its own chat reports it). */
+  function helperApprovals(key) {
+    const out = [];
+    for (const h of swarm.list) {
+      if (h.kind === 'subagent' || !h.waits || !h.chat) continue;
+      const parent = helperParent(h);
+      if (!parent || aliasKey(parent) !== key) continue;
+      for (const p of h.waits.permissions || []) if (p && p.key && p.params) out.push({ h, p });
+    }
+    return out;
+  }
+  async function answerHelperAsk(agent, act) {
+    const a = agent.ask;
+    if (!a || a.kind !== 'approve') return;
+    try {
+      await post('permission', { id: a.chat, key: a.key, option: act === 'allow' ? a.allow : a.deny });
+    } catch (e) {
+      fail(e);
+    }
+    await loadSwarmHelpers(true);
+    approvalSignature = '';
+    if (selected && current) refresh();
+    renderProjectActivity();
   }
   function helperRows(key) {
     const out = [];
@@ -6050,12 +6140,22 @@
     const extra = helperRows(key);
     return extra.length ? sortAgents([...rows, ...extra]) : rows;
   }
-  async function loadSwarmHelpers() {
-    if (swarm.busy) return;
+  async function loadSwarmHelpers(force) {
+    if (swarm.busy && !force) return;
     swarm.busy = true;
     try {
       const r = await get('/api/live/swarm', {});
-      swarm.list = Array.isArray(r?.helpers) ? r.helpers : [];
+      const next = Array.isArray(r?.helpers) ? r.helpers : [];
+      // the left list leaves helper chats out and an approval card reads the helper's requests: draw again when either changed
+      const sig = JSON.stringify(next.map((h) => [h.id, h.hidden, h.chatKey, h.chat, h.title, h.label, h.waits ? h.waits.permissions.map((p) => p.key) : 0]));
+      swarm.list = next;
+      if (sig !== swarm.sig) {
+        swarm.sig = sig;
+        sidebarSignature = '';
+        approvalSignature = '';
+        if (conversations.length) renderConversations();
+        if (selected && current && snapshot) renderApprovals();
+      }
     } catch {
       /* an older server, or the helper switch is off: no helper rows */
     } finally {
@@ -6118,6 +6218,7 @@
         },
         // A row opens its history in this panel, at its width, for any chat of the project; it never opens that chat.
         onOpen: (agent) => toggleSubagent(agent, key),
+        onAsk: (agent, act) => (act === 'open' ? toggleSubagent(agent, key) : answerHelperAsk(agent, act)),
         rerender: renderProjectActivity,
       });
       const running = a.commands.filter(isRunningCommand);
@@ -6265,6 +6366,7 @@
           chatModel: '',
           empty: '',
           onOpen: (agent) => toggleSubagent(agent, key),
+          onAsk: (agent, act) => (act === 'open' ? toggleSubagent(agent, key) : answerHelperAsk(agent, act)),
           rerender: renderProjectActivity,
         });
         sec.subLabel.hidden = sec.subBox.hidden = !rows.length;

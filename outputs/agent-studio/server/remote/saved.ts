@@ -21,6 +21,7 @@ import { keptLinesIn } from '../history/lines.ts';
 import { pathStr } from '../platform/pypath.ts';
 import { agentName, plainTitle, withArtifactOrigin } from './payloads.ts';
 import { isRetired, RETIRED_NOTE } from '../agents/agent_registry.ts';
+import { hiddenChats, readHelpers } from '../swarm/registry.ts';
 
 type Json = Record<string, unknown>;
 const obj = (v: unknown): Json => (v && typeof v === 'object' && !Array.isArray(v) ? v as Json : {});
@@ -112,10 +113,11 @@ export class SavedChats {
     }
     const marks = ctx.conversations.public().entries;
     const names = ctx.viewPrefs.chatNames(); // Rename, on the PC or a phone
+    const helperChats = hiddenChats(ctx.stateDir ? readHelpers(ctx.stateDir) : {}); // a helper's chat is not in the phone's list
     const out = new Map<string, SavedEntry>();
     const add = (provider: string, sessionId: string, cwd: string, title: string, when: unknown, transcript: string) => {
       const key = `${provider}:${sessionId}`;
-      if (!provider || !sessionId || !cwd || out.has(key) || running.has(key) || !SAVED_KEY.test(key)) return;
+      if (!provider || !sessionId || !cwd || out.has(key) || running.has(key) || helperChats.lasting.has(key) || !SAVED_KEY.test(key)) return;
       const mark = obj(marks[key]);
       if (mark.archivedAt || mark.deletedAt) return;
       const agent = agentName(provider);

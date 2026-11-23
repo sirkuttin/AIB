@@ -37,6 +37,7 @@ import { bringBack, restoreFolders } from './project_routes.ts';
 import { DOCS_TOOL, docsTool, resolveFromDoc } from './docs_routes.ts';
 import { DocRefusal } from '../docs/live_doc.ts';
 import { chatName, Swarm } from '../swarm/service.ts';
+import { hiddenFromLists } from '../swarm/registry.ts';
 import { agentProblem } from '../swarm/ready.ts';
 import { setSwarmEnabled, swarmEnabled } from '../swarm/settings.ts';
 import * as wslMerge from '../wsl/merge.ts';
@@ -51,6 +52,7 @@ export type StudioHandler = (ctx: WebContext, url: URL, body: Json | null, reque
 function argsOf(url: URL): Record<string, string[]> {
   return parseQs(url.search.slice(1));
 }
+const obj = (v: unknown): Record<string, unknown> => (isDict(v) ? v as Record<string, unknown> : {});
 const one = (args: Record<string, string[]>, name: string, fallback = '') => Object.hasOwn(args, name) ? args[name][0] : fallback;
 
 /** The StudioContext the shared helpers read (RemoteStudio's attributes: options, stores, host calls, host info). */
@@ -424,12 +426,33 @@ export function studioRoutes(): Map<string, StudioHandler> {
   // ---- swarm phase 1: the merge line's Undo / Merge again, and a chat's helpers (page only; never the agent key) ----
   routes.set('POST /api/live/swarm/undo', (ctx, _url, body) => swarmOf(ctx).undo(body?.helper));
   routes.set('POST /api/live/swarm/merge-again', (ctx, _url, body) => swarmOf(ctx).mergeAgain(body?.helper));
-  routes.set('GET /api/live/swarm', (ctx, url) => {
+  routes.set('GET /api/live/swarm', async (ctx, url) => {
     const id = one(argsOf(url), 'conversationId');
     const swarm = swarmOf(ctx);
-    const helpers = swarm.registry.all().filter((h) => !id || h.parent.live === id || h.chat.live === id).map((h) => ({
+    const all = swarm.registry.all().filter((h) => !id || h.parent.live === id || h.chat.live === id);
+    // A helper whose chat waits on you: its open requests, so the main chat and Activity can answer them (never the helper's events).
+    const waits = new Map<string, { permissions: unknown[]; elicitations: unknown[] }>();
+    const waiting = all.filter((h) => h.kind !== 'subagent' && h.chat.live && ['working', 'waiting', 'done'].includes(h.state));
+    if (waiting.length) {
+      const listing = obj(await ctx.host.liveList().catch(() => null));
+      const cursors = new Map<string, number>();
+      for (const raw of Array.isArray(listing.connections) ? listing.connections : []) {
+        const c = obj(raw);
+        if (!c.closed && typeof c.id === 'string' && (Number(obj(c.attention).needs) > 0 || (Array.isArray(c.elicitations) && c.elicitations.length))) {
+          cursors.set(c.id, Number(c.cursor) || 0);
+        }
+      }
+      await Promise.all(waiting.filter((h) => cursors.has(h.chat.live)).map(async (h) => {
+        const state = obj(await ctx.host.liveState(h.chat.live, cursors.get(h.chat.live)).catch(() => null));
+        const permissions = Array.isArray(state.permissions) ? state.permissions : [];
+        const elicitations = Array.isArray(state.elicitations) ? state.elicitations : [];
+        if (permissions.length || elicitations.length) waits.set(h.id, { permissions, elicitations });
+      }));
+    }
+    const helpers = all.map((h) => ({
       id: h.id,
       kind: h.kind ?? 'helper', // 'subagent': a landing entry of a Claude subagent, not a helper chat (Activity lists helper chats only)
+      hidden: hiddenFromLists(h), // left out of the chat lists (registry.ts hiddenFromLists: the one predicate)
       title: h.title,
       provider: h.chat.provider,
       label: chatName(h), // "Codex", "Claude Code · strata": Activity's row says which agent it is
@@ -447,8 +470,9 @@ export function studioRoutes(): Map<string, StudioHandler> {
       branch: h.worktree.branch,
       brief: h.brief,
       merged: !!h.merge && !h.merge.undo,
+      ...(waits.has(h.id) ? { waits: waits.get(h.id) } : {}),
     }));
-    return Promise.resolve([200, { helpers }]);
+    return [200, { helpers }];
   });
   // ---- updates ----
   routes.set('GET /api/live/update', (ctx) => Promise.resolve(getUpdate(ctx.updates)));
@@ -525,7 +549,17 @@ const SWARMS = new WeakMap<WebContext, Swarm>();
 export function swarmOf(ctx: WebContext): Swarm {
   let swarm = SWARMS.get(ctx);
   if (!swarm) {
-    swarm = new Swarm({ stateDir: ctx.stateDir, host: ctx.host, settings: ctx.settings, agentProblem: (provider) => agentProblem(ctx, provider) });
+    swarm = new Swarm({
+      stateDir: ctx.stateDir,
+      host: ctx.host,
+      settings: ctx.settings,
+      agentProblem: (provider) => agentProblem(ctx, provider),
+      nameChat: async (key, name) => {
+        if (ctx.viewPrefs.chatNames()[key]) return true; // the owner's name (or an earlier one) wins
+        await ctx.viewPrefs.setChatName(key, name);
+        return true;
+      },
+    });
     SWARMS.set(ctx, swarm);
     swarm.startWatching();
   }

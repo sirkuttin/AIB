@@ -46,6 +46,7 @@
         project: p.name,
         path: p.path,
         provider: S ? S.providerName(c.provider) : c.provider,
+        helper: host.helperOf ? host.helperOf(c) : null,
         archived: bucket === 'archived',
         pinned: bucket === 'pinned',
         hold: bucket === 'hold',
@@ -296,6 +297,7 @@
         li.append(S ? S.dot(r.status.state, r.status.label, r.status.needs) : el('span'));
         text.append(el('span', r.title, 'switcher-title'));
         const sub = [r.project, r.provider];
+        if (r.helper) sub.push('helper of ' + (r.helper.parent || 'a main chat'));
         if (r.pinned) sub.push('Pinned');
         if (r.hold) sub.push('On hold');
         if (r.archived) sub.push('Archived');

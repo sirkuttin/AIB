@@ -168,6 +168,40 @@ body {
   background: var(--accent-wash-4);
   color: var(--link);
 }
+/* A helper that waits on you: its card, then a row of small always-visible buttons (Allow / Deny, or Open). */
+.sa-askwrap {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+.sa-ask {
+  display: flex;
+  gap: 6px;
+  margin: 0 4px 4px;
+  padding: 0 8px 0 24px;
+}
+.sa-askbtn {
+  height: 24px;
+  padding: 0 10px;
+  font-size: 12px;
+  line-height: 22px;
+  border: 1px solid var(--border, currentColor);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.sa-askbtn:hover {
+  background: var(--bg-card-hover);
+}
+.sa-askbtn:focus-visible {
+  outline: 2px solid var(--link);
+  outline-offset: 1px;
+}
+.sa-askbtn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
 /* A working subagent is a card of up to three lines: name + run time; model · type + tokens; what it is doing now. Lines 2-3 start
    under the name (dot 8 px + gap 8 px). */
 .sa-card.sa-big {

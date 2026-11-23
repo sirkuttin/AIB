@@ -5,7 +5,8 @@ sends it at once, so the test decides exactly what arrives and when. Lines:
 
   {"u": {...}}                    a session/update for this chat (any ACP update body: agent_message_chunk, tool_call, ...)
   {"u": {...}, "sid": "child-1"}  the same for another session id (a subagent's own messages)
-  {"ask": "title"}                a permission request (the approval card); the answer is ignored, the script goes on
+  {"ask": "title"}                a permission request (the approval card); the answer does not change the script; it is recorded in <script>.answers
+  {"elicit": "question"}          a question (form elicitation); answered like an approval, recorded in <script>.answers
   {"end": "end_turn"}             the turn ends with that stopReason
 
 Any other prompt is answered with one line and ends at once. session/cancel ends the open turn. Studio starts the Claude launcher
@@ -74,6 +75,10 @@ def follow(key, path):
                     'sessionId': SESSION, 'toolCall': {'title': step['ask'], 'toolCallId': 'scroll-ask-%d' % asks},
                     'options': [{'optionId': 'yes', 'name': 'Allow once', 'kind': 'allow_once'},
                                 {'optionId': 'no', 'name': 'Reject', 'kind': 'reject_once'}]}})
+            elif 'elicit' in step:
+                emit({'id': 'scroll-elicit-%d' % (asks + 1), 'method': 'elicitation/create', 'params': {
+                    'sessionId': SESSION, 'mode': 'form', 'message': step['elicit'],
+                    'requestedSchema': {'type': 'object', 'properties': {'answer': {'type': 'string', 'title': 'Answer'}}}}})
             elif 'end' in step:
                 end(key, step['end'])
                 return
@@ -100,6 +105,7 @@ for raw in sys.stdin:
                      and not b.get('text', '').startswith('<studio-context>')), '').strip()
         if text.startswith('script:'):   # only the first line names the script: the rest is what a person typed under it
             turn['key'] = key
+            turn['path'] = text.splitlines()[0][7:].strip()
             threading.Thread(target=follow, args=(key, text.splitlines()[0][7:].strip()), daemon=True).start()
         else:
             update({'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': 'ok: ' + text[:200]}})
@@ -111,4 +117,11 @@ for raw in sys.stdin:
         emit({'id': key, 'result': {}})
     elif key is not None and method:
         emit({'id': key, 'error': {'code': -32601, 'message': 'Method not found'}})
-    # answers to our own requests (permission) need nothing
+    elif method is None and key is not None and turn.get('path'):
+        # the answer to our own permission request: recorded next to the script (<script>.answers), so a test can see who answered what
+        try:
+            with open(turn['path'] + '.answers', 'a', encoding='utf-8') as f:
+                f.write(json.dumps({'id': key, 'result': message.get('result')}) + chr(10))
+        except OSError:
+            pass
+    # answers to our own requests (permission) need nothing else

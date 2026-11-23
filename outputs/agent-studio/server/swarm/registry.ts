@@ -78,6 +78,8 @@ export interface Helper {
   reports: Report[];
   /** When its worktree and branch were removed (cleanup: after a merge, once its chat is closed). */
   cleanedAt?: number;
+  /** The chat's name ("<title> (<agent>)") was written to the chat names once; an owner's rename or clear is never put back. */
+  named?: boolean;
   merge: null | {
     tipBefore: string;
     landed: string;
@@ -183,6 +185,27 @@ export function helperOf(
     if (chat.path && h.worktree?.path && same(h.worktree.path, chat.path)) return h;
   }
   return null;
+}
+
+/**
+ * Owner decision 2026-11-23: a helper's chat is left out of the chat lists (the PC's left list, the phone's, a paired PC's). It stays
+ * reachable from its main chat's Activity row, search and a direct link, and is never archived or deleted. This is the ONE predicate: a
+ * later rule that tucks a helper under its main chat (like Claude Code desktop) changes only this function. A subagent's landing entry
+ * has no chat, so there is nothing to list. Every state counts: a helper that is done or merged stays out of the list too.
+ */
+export function hiddenFromLists(h: Helper | null | undefined): boolean {
+  return !!h && isDict(h) && h.kind !== 'subagent' && isDict(h.chat);
+}
+
+/** The chats the lists leave out: their live ids and lasting names (`provider:sessionId`), from the registry file. */
+export function hiddenChats(helpers: Record<string, Helper>): { live: Set<string>; lasting: Set<string> } {
+  const live = new Set<string>(), lastingKeys = new Set<string>();
+  for (const h of Object.values(helpers)) {
+    if (!hiddenFromLists(h)) continue;
+    if (h.chat.live) live.add(h.chat.live);
+    if (h.chat.lasting) lastingKeys.add(h.chat.lasting);
+  }
+  return { live, lasting: lastingKeys };
 }
 
 /** One in-process lock: every write of the file goes through it (only the web process writes). */

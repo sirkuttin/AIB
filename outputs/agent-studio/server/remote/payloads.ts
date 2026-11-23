@@ -16,6 +16,7 @@ import type { WebContext } from '../web/server.ts';
 import { permissionDetail, type PhoneOption, phoneOptions } from './actions.ts';
 import { type PhoneProject, projectsFor } from './projects.ts';
 import { INBOX } from '../attention/inbox_rules.ts';
+import { hiddenChats, readHelpers } from '../swarm/registry.ts';
 import type { Inbox } from '../attention/inbox.ts';
 import { clipEvent, type Ev, rowStarts, sessionOf } from '../acp/event_pages.ts';
 
@@ -478,9 +479,12 @@ export async function homePayload(ctx: WebContext, pcName: string, titles: Title
   const raws = (Array.isArray(listing.connections) ? listing.connections : []).map(obj).filter((c) => !c.closed && str(c.id, 100));
   const project = projectsFor(ctx, raws.map((c) => str(c.projectRoot, 2000) || str(c.cwd, 2000)));
   const chats: (HomeChat & { at: number })[] = [];
+  // a helper's chat is not in the phone's list (it is in the inbox when it needs you, and opens by its link): registry.ts hiddenFromLists
+  const helperChats = hiddenChats(ctx.stateDir ? readHelpers(ctx.stateDir) : {});
   for (const c of raws) {
     const id = str(c.id, 100);
     const key = `${str(c.provider, 60)}:${str(c.sessionId, 200)}`;
+    if (helperChats.live.has(id) || helperChats.lasting.has(key) || obj(c.swarm).role === 'helper') continue;
     const mark = obj(marks[key]);
     if (mark.archivedAt || mark.deletedAt) continue;
     const attention = obj(c.attention);

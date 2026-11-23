@@ -68,6 +68,8 @@ export interface Chat {
   tool(id: string, title: string, status?: string, extra?: Record<string, unknown>): void;
   toolDone(id: string, output?: string): void;
   end(): void;
+  /** What the agent was answered to its permission requests and questions (scroll-fixture/agent.py: <script>.answers). */
+  answers(): { id: string; result: Record<string, unknown> | null }[];
 }
 
 export interface Saved {
@@ -169,6 +171,13 @@ export class Lab {
           },
         }),
       end: () => append({ end: 'end_turn' }),
+      answers: () => {
+        try {
+          return Deno.readTextFileSync(file + '.answers').split(/\r?\n/).filter(Boolean).map((l) => JSON.parse(l));
+        } catch {
+          return [];
+        }
+      },
     };
     return chat;
   }

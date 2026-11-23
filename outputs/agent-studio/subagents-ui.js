@@ -497,6 +497,7 @@
         tokens,
         activity,
         background,
+        ask: a.ask && typeof a.ask === 'object' && c.group === 'working' ? a.ask : null,
         outcome,
         source: a.live ? 'live' : 'saved',
         end,
@@ -546,7 +547,7 @@
     const end = c.group === 'working' ? now : a.live ? Number(a.since) || now : Number(a.modified) || now;
     const d = start ? span(Math.max(0, end - start)) : '';
     return {
-      title: n.title,
+      title: a.helper === true && first(a.fullName) ? first(a.fullName) : n.title, // a helper's pane carries its chat's name
       type: n.type,
       model: modelName(a.model, chatModel),
       tokens: tokensText(a.tokens),
@@ -626,7 +627,7 @@
       if (i.exc) b.append(wtLine(i.exc)); // only the exceptions ("Not isolated: …", "Didn't land: …"); the rest is in the pane header
       if (i.activity) b.append(el('span', 'sa-line sa-l3 sa-doing', i.activity));
       if (i.background) b.append(el('span', 'sa-line sa-l3 sa-bg', BACKGROUND_TEXT()));
-      return b;
+      return i.ask && ctx.onAsk ? withAsk(b, i, ctx) : b;
     }
     const row = i.exc ? el('span', 'sa-line sa-l1') : b;
     row.append(el('span', 'sa-dot'), el('strong', 'sa-title', i.title));
@@ -639,6 +640,30 @@
       b.append(row, wtLine(i.exc));
     }
     return b;
+  }
+  /* A helper that waits on you: small always-visible buttons under its card, so the request is answered without opening its chat.
+     A plain approval: Allow / Deny (its allow-once and deny-once options); a question or anything bigger: Open (its history). */
+  function withAsk(b, i, ctx) {
+    const wrap = el('div', 'sa-askwrap');
+    const row = el('div', 'sa-ask');
+    const add = (cls, label, act, aria) => {
+      const x = el('button', 'sa-askbtn ' + cls, label);
+      x.type = 'button';
+      x.dataset.act = act;
+      x.setAttribute('aria-label', aria + ' ' + i.title);
+      x.onclick = (e) => {
+        e.stopPropagation();
+        if (act !== 'open') x.disabled = true;
+        ctx.onAsk(i.a, act);
+      };
+      row.append(x);
+    };
+    if (i.ask.kind === 'approve') {
+      add('sa-allow', 'Allow', 'allow', 'Allow once:');
+      add('sa-deny', 'Deny', 'deny', 'Deny:');
+    } else add('sa-open', 'Open', 'open', 'Open');
+    wrap.append(b, row);
+    return wrap;
   }
   /* The worktree line: one 16 px line, ellipsis; empty keeps its height (a no-break space). */
   function wtLine(text) {
@@ -673,6 +698,7 @@
         i.tokens,
         i.activity,
         i.background,
+        i.ask,
         i.outcome,
         i.wt,
         i.exc,

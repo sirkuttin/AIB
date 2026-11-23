@@ -106,7 +106,7 @@ Deno.test({
       const clicked = await page.eval<boolean>(`(() => { const c = [...document.querySelectorAll(${JSON.stringify(SEC(main.key))} + ' .subagent-card')]
         .find((n) => n.querySelector('.sa-title')?.textContent === 'Login bug'); if (!c) return false; c.click(); return true; })()`);
       assert(clicked, 'the helper card is there to click');
-      await page.waitFor(`!document.getElementById('subchatPane').hidden && document.getElementById('subchatTitle').textContent === 'Login bug'`, 10000, 'the history opens');
+      await page.waitFor(`!document.getElementById('subchatPane').hidden && document.getElementById('subchatTitle').textContent === 'Login bug (Claude Code · strata)'`, 10000, 'the history opens');
       assertEquals(await page.eval<string>(`document.getElementById('inspectorEyebrow').textContent`), 'HELPER HISTORY');
       assert((await page.eval<string>(`document.getElementById('subchatStatus').textContent`)).includes('helper chat'));
       const after = await page.eval<Json>(`({ sel: document.querySelector('button.connection.selected')?.dataset.key,
