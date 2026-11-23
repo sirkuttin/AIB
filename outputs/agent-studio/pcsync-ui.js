@@ -273,7 +273,7 @@
     const status = el('p', statusText(v), 'st-note ps-status');
     status.setAttribute('role', 'status');
     frag.append(
-      el('p', 'Pair your own PCs to keep aib-shared the same on both. PC to PC over your Tailscale: no cloud, no account. A project syncs when both PCs have its aib-shared switch on. Docs sync comes in a later update.', 'st-note'),
+      el('p', 'Pair your own PCs: PC to PC over your Tailscale, no cloud, no account. A project syncs when both PCs have its switch on; then its aib-shared files and AIB docs come too.', 'st-note'),
       status,
     );
     if (P.error) {
