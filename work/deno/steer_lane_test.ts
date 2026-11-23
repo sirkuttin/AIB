@@ -239,6 +239,28 @@ Deno.test('B17 and agents without steering: slash commands and a non-steering ag
   assertEquals(other.p.all('_session/steering').length, 0);
 });
 
+Deno.test('Send now on a non-steering agent never cancels: the message goes first the moment the turn ends (owner, 2026-11-23)', async () => {
+  await using lab = new SteerLab();
+  const { c, p } = await lab.chat('plain', { steering: false });
+  await c.prompt('go', 'm1');
+  const prompt = await p.take('session/prompt');
+  await c.queueAdd('first in line', 'q1');
+  await c.queueAdd('urgent', 'q2');
+  const answer = await c.queueSendNow('q2');
+  assert(!answer.steered, 'nothing to steer with');
+  await pause(200);
+  assertEquals(p.all('session/cancel').length, 0, 'Send now never stops the turn');
+  assertEquals(p.all('_session/steering').length, 0);
+  assert(c.busy, 'the turn runs on');
+  assertEquals(queued(c).map((q) => q[0]), ['urgent', 'first in line'], 'it moved to the front');
+  await p.reply(prompt.id, { stopReason: 'end_turn' });
+  const next = await p.take('session/prompt');
+  assertEquals(promptText(next), 'urgent');
+  assertEquals(p.all('session/cancel').length, 0);
+  await p.reply(next.id, { stopReason: 'end_turn' });
+  assertEquals(promptText(await p.take('session/prompt')), 'first in line');
+});
+
 Deno.test('T28 (B12): a steer carries the <studio-context> note like a prompt, without the turn-start hook', async () => {
   await using lab = new SteerLab();
   const { c, p } = await lab.chat('claude');

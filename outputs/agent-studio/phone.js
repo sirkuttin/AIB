@@ -4647,7 +4647,7 @@
             if (await act('queue-remove', { id: c.id, messageId: item.id })) toast('Removed from the queue');
           });
           remove.dataset.act = 'remove';
-          const now = button('ph-btn sm quiet', 'Send now', () => act('queue-send-now', { id: c.id, messageId: item.id }));
+          const now = button('ph-btn sm quiet', c.busy && !c.steerable ? 'Send next' : 'Send now', () => act('queue-send-now', { id: c.id, messageId: item.id }));
           now.dataset.act = 'send-now';
           acts.append(edit, remove, now);
           row.append(acts);

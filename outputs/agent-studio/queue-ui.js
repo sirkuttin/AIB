@@ -6,9 +6,9 @@
   const T = {
     edit: 'Edit - pauses the queue while you edit',
     // The ↑ on a queued row (owner, 2026-11-16): an agent that reads messages mid-turn gets it now and nothing running stops (Claude
-    // Code moves a running command or helper to the background); one that can't is interrupted, then it goes.
+    // Code moves a running command or helper to the background); one that can't keeps it first in the queue and sends it when the turn ends (nothing is cancelled).
     sendNow: 'Send now - nothing running stops',
-    sendNowInterrupt: 'Interrupt and send',
+    sendNext: 'Send next - goes first when this turn ends',
     remove: 'Remove from queue',
     resume: 'Resume sending the queued messages',
     held: 'Waits for your answer above · then goes in at once',
@@ -273,7 +273,7 @@
       const act = el(doc, 'span', 'q-actions');
       act.append(
         iconButton(doc, '✎', T.edit, () => openEditor(ctx, item)),
-        iconButton(doc, '↑', ctx.busy && !ctx.steerable ? T.sendNowInterrupt : T.sendNow, async () => {
+        iconButton(doc, '↑', ctx.busy && !ctx.steerable ? T.sendNext : T.sendNow, async () => {
           try {
             await ctx.post('queue-send-now', { id: ctx.connection, messageId: item.id });
           } catch (e) {

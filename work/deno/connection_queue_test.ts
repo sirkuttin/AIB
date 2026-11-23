@@ -229,15 +229,19 @@ Deno.test('queue: interrupting pauses the queue', async () => {
   assertEquals(texts(c), ['wait']);
 });
 
-Deno.test('queue: send-now interrupts and sends that item first', async () => {
+Deno.test('queue: send-now moves that item first and waits for the turn to end (never cancels)', async () => {
   await using lab = new QueueLab();
   const c = await lab.open();
-  await busyTurn(c, 'wait');
+  const g = lab.gate();
+  await busyTurn(c, g);
   await c.queueAdd('mcp', 'a');
   await c.queueAdd('mcp', 'b');
   await c.queueSendNow('b');
-  await until(() => texts(c)[1] === 'mcp', 'b sent', LONG);
-  await until(() => texts(c).length === 3, 'a follows', LONG);
+  await pause(300);
+  assert(c.busy, 'the running turn was not cancelled');
+  assertEquals(ids(c), ['b', 'a']);
+  lab.release(g);
+  await until(() => texts(c).length === 3, 'b then a follow', LONG);
   assertEquals(events(c, 'user').map((e) => (e.data as Json).clientMessageId), [null, 'b', 'a']);
 });
 

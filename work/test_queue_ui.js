@@ -42,6 +42,6 @@ test('an abandoned edit or a needs-you pause offers Resume', () => {
 test('every icon button has a tooltip text', () => {
   assert.strictEqual(Q.TEXT.edit, 'Edit - pauses the queue while you edit');
   assert.strictEqual(Q.TEXT.sendNow, 'Send now - nothing running stops');
-  assert.strictEqual(Q.TEXT.sendNowInterrupt, 'Interrupt and send');
+  assert.strictEqual(Q.TEXT.sendNext, 'Send next - goes first when this turn ends');
   assert.strictEqual(Q.TEXT.remove, 'Remove from queue');
 });

@@ -6200,8 +6200,8 @@ export class Connection {
     }
     // Owner, 2026-11-16: Send now never stops what runs. When the agent can read a message mid-turn it goes through the steer lane
     // (`_session/steering`): Claude Code moves a running command or foreground helper to the background ("it was not interrupted") and
-    // reads the message now; its background helpers go on. Only an agent that cannot steer (or a slash command, which never goes
-    // mid-turn) still interrupts the turn and sends, as before.
+    // reads the message now; its background helpers go on. An agent that cannot steer (or a slash command, which never goes
+    // mid-turn) waits at the front of the queue (owner, 2026-11-23: never cancels).
     // Claude Code's own cycle (steerable(): it takes a prompt in): any message goes through the lane, which prompts it, commands too.
     const ownCycle = this.busy && this.autonomous;
     if (
@@ -6226,7 +6226,9 @@ export class Connection {
     q.move(itemId, 0);
     item.lease = null;
     q.hold = '';
-    const cancelling = this.busy;
+    // Owner, 2026-11-23: Send now never cancels running work. An agent that cannot steer keeps the message at the front of the
+    // queue and gets it the moment this turn ends (#queueAfterTurn pumps). Only the composer's explicit "Interrupt and send" cancels.
+    const cancelling = interrupt && this.busy;
     q.sendNow = cancelling;
     this.#queueChanged();
     if (cancelling) {
