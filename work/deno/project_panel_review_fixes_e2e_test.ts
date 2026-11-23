@@ -2,7 +2,7 @@
  * The fixes of the project right panel code review (aib-shared/reviews/project-right-panel-code-review.md), in the real page. A real
  * Studio (the scroll lab: temp state folder, free port; never the live ports), the scripted agent, headless Chrome or Edge.
  *
- *   S1  An expanded idle chat is read once, not at the poll pace; "Show N more" reads a few idle chats at a time.
+ *   S1  An expanded idle chat is read once, not at the poll pace; every idle chat is listed and read a few at a time.
  *   S4  Every idle chat has the same neutral dot, never the sidebar's amber needs-you dot.
  *   M3  The Artifacts list is not polled while another tab shows; it is read when any chat's turn ends and when the window gets focus.
  *   S5  A widened panel keeps its width over tab switches (a doc opening in Docs, Activity) and a project switch, until the owner
@@ -112,7 +112,7 @@ panelTest('S1: an expanded idle chat is read once, not at the poll pace', async 
   w.end();
 });
 
-panelTest('S1: "Show N more" reads a few idle chats at a time, not all at once, and never again at the poll pace', async (lab) => {
+panelTest('S1: every idle chat is listed (owner 2026-11-21: no "Show N more"), read a few at a time, and never again at the poll pace', async (lab) => {
   const page = lab.page;
   const w = await working(lab, 'WORKEND');
   for (let n = 0; n < 30; n++) {
@@ -122,17 +122,10 @@ panelTest('S1: "Show N more" reads a few idle chats at a time, not all at once, 
   }
   await lab.select(w);
   await joined(page, w);
-  await waitIdle(page, `i.keys.length === 10 && i.more === 'Show 20 more'`, 'ten idle chats and "Show 20 more"');
+  await waitIdle(page, `i.keys.length === 30 && i.more === ''`, 'all thirty idle chats listed, no "Show more" row');
   const read = `(() => { const seen = new Set(); for (const e of performance.getEntriesByType('resource')) { const m = /lazy-saved-(\\d+)/.exec(decodeURIComponent(e.name)); if (m && /\\/api\\/(agents|commands)/.test(decodeURIComponent(e.name))) seen.add(m[1]); } return seen.size; })()`;
-  await page.waitFor(`${read} === 10`, 60000, 'the ten shown chats are read (three at a time)');
-  await settle(3000);
-  const before = await page.eval<number>(read);
-  assertEquals(before, 10, 'only the shown chats are read');
-  await page.click('#projectActivity > .sp-idle-list > .sp-idle-more');
-  await waitIdle(page, `i.keys.length === 30 && i.more === ''`, 'all thirty listed');
   await settle(400);
-  const burst = (await page.eval<number>(read)) - before;
-  assert(burst <= 3, `a few more chats are read right after "Show 20 more", not 20 at once: ${burst}`);
+  assert((await page.eval<number>(read)) <= 6, 'idle chats are read a few at a time, not all thirty at once');
   await page.waitFor(`${read} === 30`, 90000, 'every idle chat is counted in the end');
   const all = `/lazy-saved-/.test(n) && /\\/api\\/(agents|commands)/.test(n)`;
   await settle(2000);
