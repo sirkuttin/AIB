@@ -30,6 +30,8 @@ import { type ChatFacts, type Flags, type Group, type GroupEntry, type Kind, typ
 import { INBOX } from './inbox_rules.ts';
 import type { Inbox, InboxService } from './inbox.ts';
 import type { Presence, Where } from './presence.ts';
+import { type Helper, helperOf, readHelpers } from '../swarm/registry.ts';
+import { type HelperNews, helperTitle } from '../swarm/service.ts';
 
 const log = getLogger('attention');
 
@@ -132,6 +134,10 @@ export class AttentionWatcher {
   /** Finished turns seen done (turn key -> since when, ms): announced once they stayed done for SETTLE_MS. */
   #settling = new Map<string, number>();
   #blocked: BlockedChat[] = [];
+  /** The helper registry as of this look: a helper's chat is titled by its helper, never by the brief's first words. */
+  #helpers: Record<string, Helper> = {};
+  /** News the swarm service announced (a helper that never started): decided at the next look, with that look's rules and flags. */
+  #announced: HelperNews[] = [];
   readonly clock: () => number;
 
   constructor(readonly sources: WatchSources, readonly options: WatcherOptions) {
@@ -184,6 +190,14 @@ export class AttentionWatcher {
     return run;
   }
 
+  /**
+   * Helper news from the swarm service (a helper failed to open: its chat says nothing of its own). It goes the way a failed chat's
+   * news goes (kind needs, reason failed), once per key, and only where the main chat may notify (muted, hidden, archived...).
+   */
+  announce(news: HelperNews): void {
+    if (this.#announced.length < 100) this.#announced.push(news);
+  }
+
   #kindOf(path: string) {
     const given = this.options.kinds;
     if (given) return given(path);
@@ -229,6 +243,11 @@ export class AttentionWatcher {
   title(c: Json, names: Record<string, unknown>, marks: Record<string, unknown>): string {
     const key = chatKey(c);
     const mark = obj(marks[`${str(c.provider, 60)}:${str(c.sessionId, 300)}`]);
+    if (!str(names[key], 170)) {
+      const lasting = str(c.provider, 60) && str(c.sessionId, 300) ? `${str(c.provider, 60)}:${str(c.sessionId, 300)}` : '';
+      const helper = helperOf(this.#helpers, { live: str(c.id, 100), lasting, path: str(c.cwd, 1024) });
+      if (helper && helper.kind !== 'subagent') return helperTitle(helper).slice(0, 170);
+    }
     return str(names[key], 170) || str(obj(obj(c.breadth).sessionInfo).title, 170) || str(mark.title, 170) ||
       str(this.sources.firstPrompt?.(str(c.id, 100)), 170) || 'Conversation';
   }
@@ -280,6 +299,7 @@ export class AttentionWatcher {
     const listing = obj(await this.sources.host.liveList());
     const connections = (Array.isArray(listing.connections) ? listing.connections : []).map(obj);
     if (listing.instanceId === 'host-unavailable') return; // the agent host is starting or gone: nothing to compare
+    this.#helpers = this.options.stateDir ? readHelpers(this.options.stateDir) : {};
     try {
       this.options.onList?.(listing);
     } catch { /* never stops a look */ }
@@ -485,6 +505,31 @@ export class AttentionWatcher {
           log.info('attention: could not drop a snooze (%s)', error instanceof Error ? error.message : error);
         }
       }
+    }
+    // Helper news (SwarmHost.announce): once per key, through the main chat's own flags
+    for (const n of this.#announced.splice(0)) {
+      if (this.fired.has(n.fk) || news.some((x) => x.fk === n.fk)) continue;
+      const parent = connections.find((c) =>
+        !c.closed && (str(c.id, 100) === n.parent || (!!n.parentLasting && `${str(c.provider, 60)}:${str(c.sessionId, 300)}` === n.parentLasting))
+      );
+      if (!parent) {
+        quiet.push(n.fk); // its main chat is not open: the line waits there, no notification later
+        continue;
+      }
+      const flags = RULES.flags(this.facts(parent, marks), prefs);
+      if (RULES.notifies(n.kind, flags)) {
+        news.push({
+          key: chatKey(parent),
+          chat: str(parent.id, 100),
+          kind: n.kind,
+          title: n.title.slice(0, 170),
+          reason: n.reason,
+          fk: n.fk,
+          flags,
+          project: this.projectName(parent, prefs),
+          ...(n.what ? { what: n.what.slice(0, 200) } : {}),
+        });
+      } else quiet.push(n.fk);
     }
     this.#blocked = blocked;
     for (const fk of [...this.#settling.keys()]) if (!done.has(fk)) this.#settling.delete(fk);

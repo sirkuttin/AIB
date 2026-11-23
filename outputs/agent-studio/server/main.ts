@@ -390,6 +390,7 @@ export async function main(argv: string[]): Promise<void> {
   // closed; the same in-process, with the keeper and with a split agent host (attention/watcher.ts).
   const attention = startAttention(ctx);
   const swarm = swarmOf(ctx); // swarm phase 1: helper reports and lines that waited for a restart (swarm/service.ts)
+  swarm.ctx.announce = (news) => attention.announce(news); // a helper that failed to start: notified like a failed chat
   ctx.keepAwake.apply(ctx.settings.keepAwake()); // the saved value (off by default); the request dies with this process
   ctx.updates.start(); // the daily update check and the wait-for-idle install (studio.main: server.updates.start())
   // The daily zip of each project's local-only folders (never committed, so git keeps no copy): the added projects and the

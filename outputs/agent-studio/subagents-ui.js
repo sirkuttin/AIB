@@ -42,6 +42,8 @@
       const s = stateText(a.state),
         l = s.toLowerCase();
       if (RUNNING.test(s)) return { group: 'working', kind: 'working', label: LABELS[l] || 'Working' };
+      /* a helper from another agent whose chat waits for you (an approval, a question, a sign-in): still working, never finished */
+      if (l === 'waiting') return { group: 'working', kind: 'waiting', label: 'Waiting on you' };
       if (/^(failed|error)$/.test(l)) return { group: 'finished', kind: 'failed', label: 'Failed' };
       if (/^(cancelled|canceled|stopped|killed|interrupted)$/.test(l))
         return { group: 'finished', kind: 'stopped', label: l === 'interrupted' ? 'Interrupted' : 'Stopped' };
@@ -551,6 +553,7 @@
       state: c.label,
       kind: c.kind,
       group: c.group,
+      helper: a.helper === true,
       duration: d,
       cmds: Math.max(0, Number(a.runningCommands) || 0),
       worktree:
@@ -560,7 +563,7 @@
   /* Inspector subtitle: "Opus 5.5 · general-purpose · Working · 2m · 198k tokens · Own worktree · Lands when the turn ends · live";
      unknown parts are left out. The worktree words live here (the pane header), not on the row. */
   function subtitle(h, live) {
-    return [h.model, h.type, h.state, h.duration, h.tokens, h.worktree, live ? 'live' : 'saved transcript']
+    return [h.model, h.type, h.state, h.duration, h.tokens, h.worktree, h.helper ? 'helper chat' : live ? 'live' : 'saved transcript']
       .filter(Boolean)
       .join(' · ');
   }

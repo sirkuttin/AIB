@@ -1655,6 +1655,7 @@ export class Studio {
       else if (known) c.swarm = { role: 'helper', helperId: known.id, parent: known.parent.live };
       // every other chat can lead helpers, in its own copy or in the project folder (MF 1); WSL: only once its swarm tools are on
       else if (!wsl || WSL_TOOL_GROUPS.swarm) c.swarm = { role: 'main' };
+      c.helpersOffHint = c.swarm?.role === 'main' && this.hasStateDir && !swarmEnabled(this.stateDir); // its prompt says helpers are off
       let toolsNotice = '';
       if (launch) {
         const tools = await this.wslMcpServers(c.id, wsl!.distro); // the tunnel, else interop, else a notice (WSL_TOOL_GROUPS)
@@ -2349,6 +2350,7 @@ export class Studio {
       : c.worktree && (!wsl || WSL_TOOL_GROUPS.swarm)
       ? { role: 'main' }
       : null;
+    c.helpersOffHint = c.swarm?.role === 'main' && this.hasStateDir && !swarmEnabled(this.stateDir);
     c.mcpServers = Array.isArray(note.mcpServers) ? note.mcpServers as McpServer[] : [];
     if (wsl) for (const entry of c.mcpServers) ownTunnelEntry(entry); // its tunnel entry is still AIB's own tool after a restart
     c.sessionId = isStr(note.resume) && note.resume ? note.resume : null;

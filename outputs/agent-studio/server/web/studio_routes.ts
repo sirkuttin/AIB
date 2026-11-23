@@ -36,7 +36,8 @@ import { wslLocOf } from '../platform/location.ts';
 import { bringBack, restoreFolders } from './project_routes.ts';
 import { DOCS_TOOL, docsTool, resolveFromDoc } from './docs_routes.ts';
 import { DocRefusal } from '../docs/live_doc.ts';
-import { Swarm } from '../swarm/service.ts';
+import { chatName, Swarm } from '../swarm/service.ts';
+import { agentProblem } from '../swarm/ready.ts';
 import { setSwarmEnabled, swarmEnabled } from '../swarm/settings.ts';
 import * as wslMerge from '../wsl/merge.ts';
 import { wslResumeSync } from '../wsl/sync.ts';
@@ -428,11 +429,17 @@ export function studioRoutes(): Map<string, StudioHandler> {
     const swarm = swarmOf(ctx);
     const helpers = swarm.registry.all().filter((h) => !id || h.parent.live === id || h.chat.live === id).map((h) => ({
       id: h.id,
+      kind: h.kind ?? 'helper', // 'subagent': a landing entry of a Claude subagent, not a helper chat (Activity lists helper chats only)
       title: h.title,
       provider: h.chat.provider,
+      label: chatName(h), // "Codex", "Claude Code · strata": Activity's row says which agent it is
       model: h.chat.model,
       chat: h.chat.live,
+      chatKey: h.chat.lasting, // provider:sessionId, the page's chat key (live ids change across restarts)
       parent: h.parent.live,
+      parentKey: h.parent.lasting,
+      createdAt: h.createdAt,
+      endedAt: h.endedAt || h.merge?.at || h.reports.at(-1)?.at || 0,
       state: h.state,
       reason: h.reason,
       rule: h.rule,
@@ -518,7 +525,7 @@ const SWARMS = new WeakMap<WebContext, Swarm>();
 export function swarmOf(ctx: WebContext): Swarm {
   let swarm = SWARMS.get(ctx);
   if (!swarm) {
-    swarm = new Swarm({ stateDir: ctx.stateDir, host: ctx.host, settings: ctx.settings });
+    swarm = new Swarm({ stateDir: ctx.stateDir, host: ctx.host, settings: ctx.settings, agentProblem: (provider) => agentProblem(ctx, provider) });
     SWARMS.set(ctx, swarm);
     swarm.startWatching();
   }

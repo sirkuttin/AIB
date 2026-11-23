@@ -718,6 +718,14 @@ export const WSL_ARTIFACT_PROMPT =
   'a file when you publish it: after changing the file, call update with the same path (or the new content) to publish the new ' +
   'version. AIB helper tools are not available in WSL projects. ' + TOOLS_LOADING + ' ' + COMMANDS_RULE.replace(' (powershell on Windows)', '');
 
+/**
+ * Said only to a main chat while "Helpers from other agents" is off (Settings › Experimental): it has no helper tools, and without
+ * this line it would quietly do the work itself. It tells the owner instead.
+ */
+export const HELPERS_OFF_PROMPT =
+  'AIB can start helper agents (Codex, Gemini, Claude Code on a model server), but the owner has them switched off in Settings › ' +
+  'Experimental. If the owner asks for a helper, say so and tell them where the switch is; do not work around it.';
+
 export const WORKTREE_PROMPT =
   'In this chat you work in your own copy of the project, on the git branch {branch} (it started from {base}). ' +
   'Helpers you start work in their own copies: when one finishes, merge its branch into yours with `git merge <branch>`. ' +
@@ -779,6 +787,12 @@ export function ownToolName(call: Json): string {
   const raw = isDict(call.rawInput) ? call.rawInput : {};
   const invocation = isDict(raw.invocation) ? raw.invocation : raw;
   if (invocation.server === 'studio_artifact' && isStr(invocation.tool) && OWN_TOOL_NAMES.has(invocation.tool)) return invocation.tool;
+  // codex-acp 2.6.0, recorded from a real Codex run (work/test_tool_details.js CODEX_MCP_DOC_CREATE): kind 'execute', title
+  // "mcp.studio_artifact.<tool>", `_meta.is_mcp_tool_call`. Only with that mark: a shell command titled alike never has it.
+  if (meta.is_mcp_tool_call === true && isStr(call.title)) {
+    const recorded = /^mcp\.studio_artifact\.([a-z_]+)$/.exec(call.title.trim());
+    if (recorded && OWN_TOOL_NAMES.has(recorded[1])) return recorded[1];
+  }
   if (call.kind === 'execute' || call.kind === 'edit' || call.kind === 'delete' || call.kind === 'move') return '';
   const title = isStr(call.title) ? call.title.trim() : '';
   const codex = /^Tool: studio_artifact\/([a-z_]+)$/.exec(title);
@@ -1155,6 +1169,8 @@ export class Connection {
   turnEndedAt: number | null = null;
   /** Swarm: this chat's role, set by the Studio when it is made (a helper's own record says whose); null outside a worktree. */
   swarm: { role: 'main' | 'helper'; helperId?: string; parent?: string } | null = null;
+  /** True: this main chat started while "Helpers from other agents" was off, so its AIB prompt says so (HELPERS_OFF_PROMPT). */
+  helpersOffHint = false;
   /** Wall-clock time the current prompt turn started (attention.busySince, so a reloaded page keeps "Working · 12m"). */
   turnStartedAt: number | null = null;
   /**
@@ -6532,6 +6548,7 @@ export class Connection {
     const subagents = this.subagentHooks?.prompt ? this.subagentHooks.prompt : isDict(this.subagentHooks?.settings?.hooks) ? SUBAGENT_PROMPT : this.subagentHooks?.deny
       ? (this.subagentHooks.off === 'Git Bash not found' ? SUBAGENTS_OFF_NO_BASH_PROMPT : SUBAGENTS_OFF_PROMPT)
       : '';
+    const helpersOff = own && this.helpersOffHint && this.swarm?.role === 'main';
     if (!own && !local && !brief && !subagents) return {};
     const out: Json = {};
     // Presence is support (ACP capability objects): codex-acp advertises `systemPrompt: {}`, which a truthiness test missed.
@@ -6545,6 +6562,7 @@ export class Connection {
             .replaceAll('{base}', worktree.base || 'the project branch'),
         });
       }
+      if (helpersOff) content.push({ type: 'text', text: HELPERS_OFF_PROMPT });
       if (brief) content.push({ type: 'text', text: brief });
       if (local) content.push({ type: 'text', text: local });
       if (subagents) content.push({ type: 'text', text: subagents });
