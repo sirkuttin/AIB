@@ -619,7 +619,7 @@ test('Qwen: no API address box on the card any more; the address is a Model serv
   const box = row.querySelector('.st-beta-url');
   assert.equal(box.querySelector('input'), null, 'no address input on the card');
   assert.ok(!/Save address/.test(row.textContent), 'no Save address button');
-  assert.ok(/Use another server \(a local model, a gateway\)/.test(box.textContent), box.textContent);
+  assert.ok(/Use a model server \(a local model, a gateway\) as a separate "Qwen Code · server" entry in New chat/.test(box.textContent), box.textContent);
   assert.equal(box.querySelector('button').textContent, 'Model servers');
   assert.equal(inside(row, '.st-beta-key', 'input').type, 'password', 'the key box stays on the card');
   assert.equal(
@@ -628,18 +628,12 @@ test('Qwen: no API address box on the card any more; the address is a Model serv
     'the key comes from the same (Singapore) Model Studio console',
   );
   assert.equal(betaRow('Gemini CLI').querySelector('.st-beta-url'), null, 'only agents that take an address');
-  // an address saved before the move is shown read only; a server switched on is named
+  // an address saved before the move is shown read only (a server switched on is a separate entry in New chat, not text on the card)
   const old = LIST();
   old.push(qwen('https://ws-1.example.invalid/compatible-mode/v1'));
   const s1 = await openSettings(old);
   assert.ok(/ws-1\.example\.invalid/.test(s1.betaRow('Qwen Code').querySelector('.st-beta-url').textContent));
   assert.equal(inside(s1.betaRow('Qwen Code'), '.st-beta-url', 'input'), null);
-  const on = LIST();
-  on.push(qwen('', { id: 'strata', name: 'strata', url: 'http://127.0.0.1:8080' }));
-  const s2 = await openSettings(on);
-  assert.ok(
-    /from model server strata \(http:\/\/127\.0\.0\.1:8080\)/.test(s2.betaRow('Qwen Code').querySelector('.st-beta-url').textContent),
-  );
   void UI;
 });
 

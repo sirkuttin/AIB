@@ -68,10 +68,10 @@ const MENU = `(() => {
     if (e.scrollWidth > e.clientWidth + 1 && getComputedStyle(e).overflowX !== 'visible') bad('text cut off: ' + (e.textContent || '').trim().slice(0, 40));
   }
   const text = menu.innerText;
-  for (const item of ['Send now', 'Send after this turn', 'Interrupt and send']) if (!text.includes(item)) bad('the menu lacks "' + item + '"');
+  for (const item of ['Send now', 'Send after this turn', 'Interrupt and send', 'Send later']) if (!text.includes(item)) bad('the menu lacks "' + item + '"');
   // seen and clickable: what is on top at five points of each item is that item (not the composer, not something clipping it)
   const items = [...menu.querySelectorAll('[role=menuitem]')];
-  if (items.length !== 3) bad('the menu has ' + items.length + ' items, not 3');
+  if (items.length !== 4) bad('the menu has ' + items.length + ' items, not 4 (the three sends and Send later)');
   for (const item of items) {
     const r = item.getBoundingClientRect();
     const name = (item.querySelector('b') || item).textContent.trim();

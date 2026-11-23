@@ -111,7 +111,7 @@ class StudioContract(unittest.TestCase):
                 return drop_omp(data)
             # "Keep the PC awake while AIB runs" (phone remote, Settings > AIB server) is Deno-only: the reference has no such key.
             if isinstance(data, dict):
-                data = {k: v for k, v in data.items() if k not in ('keepAwake', 'swarm')}  # swarm: Deno-only experimental switch
+                data = {k: v for k, v in data.items() if k not in ('keepAwake', 'swarm', 'modelServers')}  # swarm: Deno-only experimental switch; modelServers: Deno-only (Settings > Model servers)
             def walk(v):
                 if isinstance(v, dict):
                     # server.getTestBuilds / server.commitIdentity (updater test-feed switch, Settings commit identity) are Deno-only too.

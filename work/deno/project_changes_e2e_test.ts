@@ -126,6 +126,7 @@ async function withPanel(fn: (page: Page, fx: Fixture) => Promise<void>) {
   try {
     const page = await browser.open('about:blank', 1600, 900);
     await page.goto(`http://127.0.0.1:${fx.s.port}/chat.html`);
+    await page.eval('performance.setResourceTimingBufferSize(20000)');
     await openChat(page, 'claude:sess-1');
     await fn(page, fx);
     assertEquals(page.errors, [], 'console errors');

@@ -226,6 +226,7 @@
   }
   /* host: {get(path)}; changed(): called when a project starts or stops syncing. Polls every 4 s while the page is visible. */
   function watch(host, changed) {
+    if (root.AIBRemote) return; // another computer's page: syncing PCs is set up on the PC itself (the marks route refuses it)
     M.host = host;
     M.changed = changed || null;
     pollMarks();

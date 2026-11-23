@@ -109,7 +109,7 @@ async function step(c: Connection, s: Step, state: Json): Promise<unknown> {
     case 'queue': {
       const method = camel('queue_' + (s.action as string)) as keyof Connection;
       return await (c[method] as (...args: unknown[]) => unknown)(
-        ...((s.args as unknown[]) ?? []),
+        ...(((s.portArgs ?? s.args) as unknown[] | undefined) ?? []),
       );
     }
     case 'wait':
@@ -637,7 +637,8 @@ const SCRIPTS: Script[] = [
       { op: 'wait', for: 'wrote:session/prompt' }, // busy comes before Python's turn thread sends the prompt
       { op: 'queue_add', text: 'mcp', id: 'a' },
       { op: 'queue_add', text: 'mcp', id: 'b' },
-      { op: 'queue', action: 'send_now', args: ['b'] },
+      // the Python reference's send_now interrupts; the port's Send now never does (2026-11-23), its "Interrupt and send" is the flag
+      { op: 'queue', action: 'send_now', args: ['b'], portArgs: ['b', true] },
       { op: 'wait', for: 'events:user:3' },
       { op: 'wait', for: 'idle' },
       { op: 'close' },
@@ -752,7 +753,7 @@ const SCRIPTS: Script[] = [
     // AIB terminal; the Python reference never had that): work/deno/chat_signin_test.ts.
     name: 'sign-in: terminal method refused, in-app method, retry',
     flags: ['--auth-required'],
-    provider: 'omp',
+    provider: 'gemini',
     steps: [
       { op: 'setup_bg' },
       { op: 'wait', for: 'auth' },
@@ -941,7 +942,7 @@ for (const script of SCRIPTS) {
     await using py = new PyParity();
     const agent = script.agent ?? 'fake';
     const flags = script.flags ?? [];
-    const provider = script.provider ?? 'omp';
+    const provider = script.provider ?? 'gemini';
     const options = script.options ?? {};
     const expected = scrub(
       await py.call('connection_shim', 'run_script', [

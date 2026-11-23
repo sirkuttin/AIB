@@ -429,7 +429,7 @@ Deno.test('Maki and Qwen Code entries launch with the server\u2019s address, key
   // the entries: the normal adapter (same argv) with the server's address, key and model in the agent's own variables
   const [qwenArgv] = await lab.withPrograms(() => studio.agentLaunch('qwen'));
   const [qArgv, qEnv] = await lab.withPrograms(() => studio.agentLaunch('qwen@local'));
-  assertEquals(qArgv, qwenArgv, 'the same adapter command as normal Qwen Code');
+  assertEquals(qArgv, [...qwenArgv, '--auth-type', 'openai'], 'the same adapter command as normal Qwen Code, plus the auth type that makes it read the server’s variables');
   assertEquals(qEnv, { OPENAI_BASE_URL: up.url, OPENAI_API_KEY: KEY, OPENAI_MODEL: 'qwen3-x' });
   const [makiArgv] = await lab.withPrograms(() => studio.agentLaunch('maki'));
   const [mArgv, mEnv] = await lab.withPrograms(() => studio.agentLaunch('maki@local'));

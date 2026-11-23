@@ -142,6 +142,8 @@ panelTest('M3: the Artifacts list is not polled while another tab shows; it is r
   await joined(page, a);
   const b = await working(lab, 'BETAEND');
   await joined(page, b);
+  // the page's own polling (sync marks, devices, Activity) can fill the default 250-entry timing buffer before the turn-end read: widen it
+  await page.eval('performance.setResourceTimingBufferSize(20000)');
   const list = `n.includes('/api/live/project/artifacts')`;
   await page.waitFor(`performance.getEntriesByType('resource').some((e) => e.name.includes('/api/live/project/artifacts'))`, 20000, 'the first read');
   await settle(1500);

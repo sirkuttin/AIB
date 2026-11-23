@@ -35,21 +35,21 @@ export class Lab {
   readonly dir = Deno.makeTempDirSync({ prefix: 'aib-conn-test-' });
   readonly connections: Connection[] = [];
 
-  connection(command: string[], options: ConnectionOptions = {}, cwd = this.dir, provider = 'omp'): Connection {
+  connection(command: string[], options: ConnectionOptions = {}, cwd = this.dir, provider = 'gemini'): Connection {
     const c = new Connection(command, cwd, provider, options);
     this.connections.push(c);
     return c;
   }
 
   /** A connection to fake_acp.py with these flags, set up (session/new) unless setup is false. */
-  async open(flags: string[] = [], { setup = true, provider = 'omp' } = {}): Promise<Connection> {
+  async open(flags: string[] = [], { setup = true, provider = 'gemini' } = {}): Promise<Connection> {
     const c = this.connection(fake(...flags), {}, this.dir, provider);
     if (setup) await c.setup(null);
     return c;
   }
 
   /** Setup running in the background, as InteractiveRequestTests.start does. */
-  start(flags: string[] = [], provider = 'omp', resume: string | null = null): [Connection, { done?: boolean; error?: Error }] {
+  start(flags: string[] = [], provider = 'gemini', resume: string | null = null): [Connection, { done?: boolean; error?: Error }] {
     const c = this.connection(fake(...flags), {}, this.dir, provider);
     const outcome: { done?: boolean; error?: Error } = {};
     c.setup(resume).catch((error) => (outcome.error = error)).finally(() => (outcome.done = true));
