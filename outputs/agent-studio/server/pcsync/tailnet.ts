@@ -93,3 +93,19 @@ export async function shareSync(port: number, run: Runner = defaultRunner): Prom
   const out = await run(['serve', '--bg', `--https=${SYNC_HTTPS_PORT}`, `http://127.0.0.1:${port}`]);
   return !!out && out.code === 0;
 }
+
+/**
+ * Is `other` (what https 8444 goes to now) another AIB's live sync listener on this PC? True only for a loopback port that is not
+ * `ownPort` and accepts a connection: a stale share to a dead port is not an owner, and is simply replaced.
+ */
+export async function otherAibListens(other: string, ownPort: number): Promise<boolean> {
+  const m = other.match(/^(?:https?:\/\/)?(?:127\.0\.0\.1|localhost):(\d+)/i);
+  if (!m || Number(m[1]) === ownPort) return false;
+  try {
+    const conn = await Deno.connect({ hostname: '127.0.0.1', port: Number(m[1]), signal: AbortSignal.timeout(800) });
+    conn.close();
+    return true;
+  } catch {
+    return false;
+  }
+}

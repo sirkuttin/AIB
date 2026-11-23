@@ -2,8 +2,9 @@
  * Sync between PCs, slice V1: pairing your own AIB installs (Settings > Sync). Brave-sync-like: "Start a sync chain" on PC A opens
  * a pairing (six words, 5 minutes, once; remote/pairing.ts); on PC B you pick PC A from your Tailscale devices and type the words;
  * both show two check words; you click Approve on A. Then each side holds a peer record (pcsync/peers.ts) with one token per
- * direction. Nothing else is shared yet: the listener answers only pairing, hello and remove. Later slices add the sync routes, which
- * a peer token alone may call.
+ * direction. V2 adds the link: one authenticated WebSocket per peer at /pcsync/sync (pcsync/link.ts, frames.ts), dialed by both PCs,
+ * reconnecting. Nothing else is shared yet: the listener answers pairing, hello, remove and that socket. Later slices add what travels
+ * over the link.
  *
  * The listener is its own loopback port (saved in <state>/pcsync-port.json) that Tailscale Serve sends https 8444 to. It is open
  * only while sync is on. It is not the phone port: turning Phone access off does not stop it and a phone or computer token means
@@ -17,7 +18,17 @@ import { readTailscale, type Runner, type TailscaleState } from '../remote/tails
 import { portFree } from '../remote/port.ts';
 import { type Peer, PeerStore, type PublicPeer, publicPeer } from './peers.ts';
 import { SYNC_REASONS, SyncGate } from './gate.ts';
-import { readSyncServe, shareSync, SYNC_HTTPS_PORT, type SyncServe, syncServeCommand, type TailnetPc, tailnetPcs } from './tailnet.ts';
+import { type LinkHost, LinkManager, type LinkTimings } from './link.ts';
+import {
+  otherAibListens,
+  readSyncServe,
+  shareSync,
+  SYNC_HTTPS_PORT,
+  type SyncServe,
+  syncServeCommand,
+  type TailnetPc,
+  tailnetPcs,
+} from './tailnet.ts';
 
 export const PORT_FILE = 'pcsync-port.json';
 const FIRST_PORT = 8800;
@@ -25,8 +36,8 @@ const SCAN = 100;
 const MAX_BODY = 4096;
 const DIAL_MS = 8000;
 const POLL_MS = 1500;
+export const BUSY_TEXT = 'Sync runs in another AIB on this PC.';
 const JOIN_SECONDS = 10 * 60;
-const REACH_MS = 15_000;
 const HOST = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/;
 
 export interface PcSyncOptions {
@@ -37,8 +48,10 @@ export interface PcSyncOptions {
   peerUrl?: (host: string) => string;
   /** The wait for a busy pairing poll (tests make it short). */
   pollMs?: number;
-  /** How long a peer's reachable / not reachable answer is kept before the next hello (tests make it short). */
-  reachMs?: number;
+  /** Link timings (tests make them short): ping, idle, backoff, Tailscale poll. */
+  link?: Partial<LinkTimings>;
+  /** Later slices: what a peer's batch frame goes to. */
+  onBatch?: LinkHost['onBatch'];
   log?: (message: string) => void;
 }
 
@@ -51,11 +64,6 @@ interface Join {
   checkWords: [string, string] | null;
   error: string;
   startedAt: number;
-}
-
-export interface Reach {
-  state: 'online' | 'offline' | 'refused';
-  at: number;
 }
 
 /** A PC's name as the owner sees it: one line, no control characters. */
@@ -80,17 +88,29 @@ export class PcSync {
   #ts: TailscaleState | null = null;
   #tsAt = 0;
   #serve: SyncServe = { shared: false, other: '', funnel: false };
-  #reach = new Map<string, Reach>();
-  #pinging = false;
   #failed: number[] = [];
   #server: Deno.HttpServer | null = null;
   #port = 0;
   problem = '';
   #closed = false;
   readonly gate: SyncGate;
+  readonly links: LinkManager;
 
   constructor(readonly stateDir: string, readonly options: PcSyncOptions = {}) {
     this.peers = new PeerStore(stateDir);
+    this.links = new LinkManager({
+      peers: () => this.peers.list(),
+      outToken: (peer) => this.peers.outToken(peer),
+      own: () => (this.#ts?.name ? { host: this.#ts.name, name: this.#ts.machine } : null),
+      url: (host) =>
+        (this.options.peerUrl ? this.options.peerUrl(host) : `https://${host}:${SYNC_HTTPS_PORT}`).replace(/^http/i, 'ws') +
+        '/pcsync/sync',
+      authenticate: (token) => this.#checkToken(token),
+      online: async () => new Map((await tailnetPcs(this.options.runner)).map((p) => [p.host, p.online])),
+      touch: (peer) => this.peers.touch(peer.id),
+      log: (message) => this.options.log?.(message),
+      onBatch: (peer, batch) => this.options.onBatch?.(peer, batch),
+    }, options.link);
     this.gate = new SyncGate(() => this.#ts?.name ?? '', () => this.#ts?.login ?? '');
   }
 
@@ -107,11 +127,23 @@ export class PcSync {
   /** At startup: listen again when sync was on. */
   async start(): Promise<void> {
     if (this.peers.on) await this.#listen();
+    this.#links();
+  }
+
+  /** The links run exactly while sync is on and this PC owns the listener (one owner per state folder). */
+  #links(): void {
+    if (this.peers.on && this.listening && !this.#closed) {
+      this.links.start();
+      this.links.ensure();
+    } else {
+      this.links.stop();
+    }
   }
 
   async close(): Promise<void> {
     this.#closed = true;
     this.#joinRun++;
+    this.links.stop();
     await this.#unlisten();
   }
 
@@ -139,6 +171,9 @@ export class PcSync {
     this.#serve = await readSyncServe(ts.name, this.#port, this.options.runner);
     if (this.#serve.funnel) {
       throw new PairingError(409, 'funnel', `Funnel is on for https ${SYNC_HTTPS_PORT} of this PC. Turn it off first.`);
+    }
+    if (!this.#serve.shared && (await otherAibListens(this.#serve.other, this.#port))) {
+      throw new PairingError(409, 'another_aib', `${BUSY_TEXT} Its share of https ${SYNC_HTTPS_PORT} is left as it is.`);
     }
     if (!this.#serve.shared && !(await shareSync(this.#port, this.options.runner))) {
       throw new PairingError(
@@ -180,16 +215,18 @@ export class PcSync {
       this.problem = '';
     } catch (error) {
       this.problem = /address already in use|AddrInUse|10048/i.test(String(error))
-        ? 'The sync port is busy. Another AIB on this PC may be running sync.'
+        ? BUSY_TEXT
         : `The sync listener could not start: ${error instanceof Error ? error.message : error}`;
     }
     await this.#read(0).catch(() => {});
+    this.#links();
   }
 
   async #unlisten(): Promise<void> {
     const server = this.#server;
     this.#server = null;
     this.#port = 0;
+    this.links.stop();
     if (server) await server.shutdown().catch(() => {});
   }
 
@@ -204,8 +241,10 @@ export class PcSync {
     const url = new URL(request.url);
     if (!url.pathname.startsWith('/pcsync/')) return this.#json(404, { error: 'Not found' });
     await this.#read().catch(() => {});
-    const why = this.gate.check(request.headers);
+    const socketPath = url.pathname === '/pcsync/sync';
+    const why = this.gate.check(request.headers, socketPath);
     if (why) return this.#json(SYNC_REASONS[why][0], { error: SYNC_REASONS[why][1], code: why });
+    if (socketPath) return this.#socket(request);
     const login = (request.headers.get('Tailscale-User-Login') ?? '').trim();
     if (request.method !== 'POST') return this.#json(405, { error: 'POST only' });
     if (Number(request.headers.get('Content-Length') ?? '0') > MAX_BODY) return this.#json(413, { error: 'Too big' });
@@ -233,7 +272,7 @@ export class PcSync {
             return this.#json(200, { ok: true, name: this.#ts?.machine ?? '' });
           }
           this.peers.remove(peer.id);
-          this.#reach.delete(peer.id);
+          this.links.forget(peer.id);
           return this.#json(200, { ok: true });
         }
         default:
@@ -245,16 +284,32 @@ export class PcSync {
     }
   }
 
-  /** The peer a body's token belongs to, or a refusal (failed tries are counted: a flood of wrong tokens is answered 429). */
-  #authenticate(token: unknown): Peer | Response {
+  /** The sync WebSocket: only a GET upgrade; the token comes in the first frame (link.ts), so nothing is checked here beyond the gate. */
+  #socket(request: Request): Response {
+    if (request.method !== 'GET' || (request.headers.get('Upgrade') ?? '').toLowerCase() !== 'websocket') {
+      return this.#json(426, { error: 'This address is a WebSocket for other AIB installs.', code: 'websocket_only' });
+    }
+    if (!this.links.canAccept()) return this.#json(503, { error: 'Sync is off or busy.', code: 'busy' });
+    const { socket, response } = Deno.upgradeWebSocket(request, { idleTimeout: 0 });
+    this.links.accept(socket);
+    return response;
+  }
+
+  /** The peer a token belongs to, 'many' after a flood of wrong ones (counted per minute), or null. */
+  #checkToken(token: unknown): Peer | 'many' | null {
     const at = Date.now();
     this.#failed = this.#failed.filter((t) => at - t < 60_000);
-    if (this.#failed.length >= 20) return this.#json(429, { error: 'Too many wrong tokens. Wait a minute.', code: 'too_many' });
+    if (this.#failed.length >= 20) return 'many';
     const peer = this.peers.byToken(token);
-    if (!peer) {
-      this.#failed.push(at);
-      return this.#json(401, { error: 'This PC is not paired for sync.', code: 'not_paired' });
-    }
+    if (!peer) this.#failed.push(at);
+    return peer;
+  }
+
+  /** The peer a body's token belongs to, or a refusal (failed tries are counted: a flood of wrong tokens is answered 429). */
+  #authenticate(token: unknown): Peer | Response {
+    const peer = this.#checkToken(token);
+    if (peer === 'many') return this.#json(429, { error: 'Too many wrong tokens. Wait a minute.', code: 'too_many' });
+    if (!peer) return this.#json(401, { error: 'This PC is not paired for sync.', code: 'not_paired' });
     return peer;
   }
 
@@ -317,6 +372,7 @@ export class PcSync {
     const peer = this.peers.add({ name: claim.name, host: extra.host, login: claim.login, inToken, outToken: extra.outToken });
     this.pairing.approve(claim.id, { token: inToken, cookie: '', device: { id: peer.id, name: peer.name, scopes: [] } });
     this.#extras.delete(claim.id);
+    this.links.ensure();
     return publicPeer(peer);
   }
 
@@ -408,7 +464,7 @@ export class PcSync {
         if (status === 200 && json.state === 'approved' && typeof json.token === 'string') {
           if (this.#joinRun !== run) return;
           this.peers.add({ name, host: pc.host, login, inToken, outToken: json.token });
-          this.#reach.set(this.peers.list().at(-1)!.id, { state: 'online', at: Date.now() });
+          this.#links();
           return end('approved');
         }
       } catch { /* not answering this second: keep trying until the time is up */ }
@@ -421,7 +477,7 @@ export class PcSync {
   async remove(id: unknown): Promise<{ removed: boolean; notified: boolean; name: string }> {
     const peer = typeof id === 'string' ? this.peers.remove(id) : null;
     if (!peer) return { removed: false, notified: false, name: '' };
-    this.#reach.delete(peer.id);
+    this.links.forget(peer.id);
     const token = this.peers.outToken(peer);
     let notified = false;
     if (token) {
@@ -432,33 +488,11 @@ export class PcSync {
     return { removed: true, notified, name: peer.name };
   }
 
-  /** Ask each peer hello with this PC's token: online, offline, or refused (it no longer trusts this PC). */
-  async #pingAll(): Promise<void> {
-    if (this.#pinging) return;
-    this.#pinging = true;
-    try {
-      await Promise.all(
-        this.peers.list().map(async (peer) => {
-          const token = this.peers.outToken(peer);
-          let state: Reach['state'] = 'offline';
-          if (token) {
-            try {
-              const { status } = await this.#post(peer.host, '/pcsync/hello', { token }, 4000);
-              state = status === 200 ? 'online' : status === 401 ? 'refused' : 'offline';
-            } catch { /* offline */ }
-          }
-          this.#reach.set(peer.id, { state, at: Date.now() });
-        }),
-      );
-    } finally {
-      this.#pinging = false;
-    }
-  }
-
   async setOn(on: boolean): Promise<void> {
     this.peers.setOn(on);
     if (on) {
       await this.#listen();
+      this.#links();
     } else {
       this.cancelPairing();
       await this.#unlisten();
@@ -469,9 +503,6 @@ export class PcSync {
   async view(): Promise<Json> {
     const ts = await this.#read(5000).catch(() => null);
     if (this.peers.on && this.#port && ts?.signedIn) this.#serve = await readSyncServe(ts.name, this.#port, this.options.runner);
-    if (this.peers.list().some((p) => Date.now() - (this.#reach.get(p.id)?.at ?? 0) > (this.options.reachMs ?? REACH_MS))) {
-      void this.#pingAll();
-    }
     const code = this.pairing.open();
     const pending = this.pairing.pending().filter((c) => this.#extras.has(c.id)).map((c) => ({
       id: c.id,
@@ -489,7 +520,10 @@ export class PcSync {
         ? { words: code?.words ?? [], expiresAt: code?.expiresAt ?? 0, pending, anotherTried: !!this.pairing.code?.anotherTried }
         : null,
       join: this.#join ? { ...this.#join } : null,
-      peers: this.peers.list().map((p) => ({ ...publicPeer(p), reach: this.#reach.get(p.id)?.state ?? 'unknown' })),
+      peers: this.peers.list().map((p) => ({
+        ...publicPeer(p),
+        reach: this.links.state(p.id) === 'connected' ? 'online' : this.links.state(p.id),
+      })),
     };
   }
 

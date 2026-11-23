@@ -48,9 +48,10 @@
     return n ? 'Paired with ' + n + (n === 1 ? ' PC.' : ' PCs.') : 'Ready. No PC is paired yet.';
   }
   function reachText(r) {
-    if (r === 'online') return 'Online';
+    if (r === 'online') return 'Connected';
+    if (r === 'connecting') return 'Connecting';
     if (r === 'refused') return 'No longer trusts this PC. Remove it and pair again.';
-    if (r === 'offline') return 'Not reachable now';
+    if (r === 'offline') return 'Offline';
     return 'Checking';
   }
   function countdown(expiresAt, now) {

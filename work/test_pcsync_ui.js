@@ -26,8 +26,9 @@ test('status: one plain line per state', () => {
 });
 
 test('reachability words and the countdown', () => {
-  assert.equal(UI.reachText('online'), 'Online');
-  assert.equal(UI.reachText('offline'), 'Not reachable now');
+  assert.equal(UI.reachText('online'), 'Connected');
+  assert.equal(UI.reachText('offline'), 'Offline');
+  assert.equal(UI.reachText('connecting'), 'Connecting');
   assert.match(UI.reachText('refused'), /No longer trusts this PC/);
   assert.equal(UI.reachText('unknown'), 'Checking');
   assert.equal(UI.countdown(300, 0), '5:00');

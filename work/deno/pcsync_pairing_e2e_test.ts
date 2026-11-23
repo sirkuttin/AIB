@@ -11,142 +11,25 @@
 import { assert, assertEquals } from './_assert.ts';
 import { ROUTE_LIST } from '../../outputs/agent-studio/server/web/routes.ts';
 import { ROUTE_SCOPE } from '../../outputs/agent-studio/server/remote/server.ts';
-import { readRemotePort } from '../../outputs/agent-studio/server/remote/port.ts';
 import { DEVICE_HEADER, DEVICE_PROTOCOL_PREFIX, RateLimit } from '../../outputs/agent-studio/server/remote/pc_bridge.ts';
 import { PeerStore } from '../../outputs/agent-studio/server/pcsync/peers.ts';
-import type { Runner } from '../../outputs/agent-studio/server/remote/tailscale.ts';
-import { LOGIN, nonce, pairPhone, pc, phoneHeaders, raw, type RemoteStudio, remoteStudio, tailscaleStatus } from './_remote_fixture.ts';
+import { nonce, pairPhone, pc, phoneHeaders, raw } from './_remote_fixture.ts';
+import {
+  approveAndWait,
+  closeAll,
+  type Json,
+  listener,
+  pair,
+  serveHeaders,
+  tokenToA,
+  tokenToB,
+  twoNodes,
+  until,
+} from './_pcsync_fixture.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
-type Json = Record<string, unknown>;
 const WIN = Deno.build.os === 'windows';
 const sep = WIN ? '\\' : '/';
-
-interface Node {
-  s: RemoteStudio;
-  name: string;
-  machine: string;
-  shared: boolean;
-  calls: string[][];
-  proxy: Deno.HttpServer;
-  up: boolean;
-}
-
-/** Two PCs on one tailnet, the same Tailscale login, each with the other as a peer in `tailscale status --json`. */
-async function twoNodes(): Promise<[Node, Node]> {
-  const urls = new Map<string, string>();
-  const nodes: Node[] = [];
-  const spec = [
-    ['studio-pc.tail-a1b2.ts.net', 'studio-pc', 'windows'],
-    ['ubuntu-pc.tail-a1b2.ts.net', 'ubuntu-pc', 'linux'],
-  ];
-  for (const [name, machine] of spec) {
-    const other = spec.find(([n]) => n !== name)!;
-    const node = { name, machine, shared: true, calls: [] as string[][], up: true } as Node;
-    const runner: Runner = (args) => {
-      node.calls.push(args);
-      if (args[0] === 'status') {
-        return Promise.resolve({
-          code: 0,
-          stdout: JSON.stringify(tailscaleStatus({
-            Self: { DNSName: name + '.', HostName: machine, UserID: 42 },
-            CertDomains: [name],
-            Peer: {
-              'nodekey:other': { DNSName: other[0] + '.', HostName: other[1], UserID: 42, Online: true, OS: other[2] },
-              'nodekey:friend': { DNSName: 'friend.tail-a1b2.ts.net.', HostName: 'friend', UserID: 99, Online: true, OS: 'linux' },
-            },
-          })),
-        });
-      }
-      if (args[0] === 'serve' && args[1] === 'status') {
-        const web: Json = {};
-        const phone = readRemotePort(node.s.state);
-        if (phone) web[`${name}:443`] = { Handlers: { '/': { Proxy: `http://127.0.0.1:${phone}` } } };
-        if (node.shared) web[`${name}:8444`] = { Handlers: { '/': { Proxy: `http://127.0.0.1:${node.s.ctx.pcsync.port}` } } };
-        return Promise.resolve({ code: 0, stdout: JSON.stringify({ Web: web }) });
-      }
-      if (args[0] === 'serve' && args.includes('--bg')) {
-        node.shared = true;
-        return Promise.resolve({ code: 0, stdout: '' });
-      }
-      return Promise.resolve({ code: 1, stdout: '' });
-    };
-    node.s = await remoteStudio({ runner }, undefined, {
-      saved: true,
-      pcsync: { runner, port: 0, pollMs: 50, reachMs: 100, peerUrl: (host) => urls.get(host) ?? 'http://127.0.0.1:1' },
-    });
-    // Tailscale Serve's stand-in: the real listener gets the Host and login Serve would add
-    node.proxy = Deno.serve({ hostname: '127.0.0.1', port: 0, onListen: () => {} }, async (request) => {
-      if (!node.up) return new Response('down', { status: 503 });
-      const url = new URL(request.url);
-      const body = request.method === 'GET' ? undefined : await request.text();
-      const r = await raw(node.s.ctx.pcsync.port, request.method, url.pathname, { Host: name, 'Tailscale-User-Login': LOGIN }, body);
-      return new Response(r.text, { status: r.status, headers: { 'Content-Type': 'application/json' } });
-    });
-    urls.set(name, `http://127.0.0.1:${(node.proxy.addr as Deno.NetAddr).port}`);
-    nodes.push(node);
-  }
-  return [nodes[0], nodes[1]];
-}
-
-async function closeAll(nodes: Node[]) {
-  for (const n of nodes) {
-    await n.proxy.shutdown().catch(() => {});
-    await n.s.close();
-  }
-}
-
-/** The headers Tailscale Serve puts on a request to the sync listener. */
-const serveHeaders = (n: Node, extra: Record<string, string | null> = {}) => {
-  const out: Record<string, string> = { Host: n.name, 'Tailscale-User-Login': LOGIN };
-  for (const [k, v] of Object.entries(extra)) {
-    if (v === null) delete out[k];
-    else out[k] = v;
-  }
-  return out;
-};
-const listener = (n: Node, path: string, body: Json, extra: Record<string, string | null> = {}) =>
-  raw(n.s.ctx.pcsync.port, 'POST', path, serveHeaders(n, extra), JSON.stringify(body));
-
-async function until(what: string, fn: () => boolean | Promise<boolean>, ms = 8000) {
-  const end = Date.now() + ms;
-  while (Date.now() < end) {
-    if (await fn()) return;
-    await new Promise((r) => setTimeout(r, 40));
-  }
-  throw new Error(`timed out: ${what}`);
-}
-
-/** The full pairing through the page routes of both PCs. Returns the words, the check words and each side's dialing token. */
-async function pair(a: Node, b: Node) {
-  const [startStatus, start] = await pc(a.s, 'POST', '/api/live/pcsync/start', {});
-  assertEquals(startStatus, 200, JSON.stringify(start));
-  const words = (start.words as string[]).join(' ');
-  const [, list] = await pc(b.s, 'GET', '/api/live/pcsync/devices');
-  const devices = list.devices as Json[];
-  assertEquals(devices.map((d) => d.host), [a.name], "only this Tailscale user's other PCs are offered, not a friend's");
-  const [joinStatus, join] = await pc(b.s, 'POST', '/api/live/pcsync/join', { host: a.name, code: words });
-  assertEquals(joinStatus, 200, JSON.stringify(join));
-  const [, view] = await pc(a.s, 'GET', '/api/live/pcsync');
-  const pending = (view.pairing as Json).pending as Json[];
-  assertEquals(pending.length, 1);
-  const [, bView] = await pc(b.s, 'GET', '/api/live/pcsync');
-  return {
-    words,
-    aCheck: pending[0].checkWords as string[],
-    bCheck: (bView.join as Json).checkWords as string[],
-    claim: pending[0].id as string,
-  };
-}
-
-async function approveAndWait(a: Node, b: Node, claim: string) {
-  const [status, approved] = await pc(a.s, 'POST', '/api/live/pcsync/approve', { claim });
-  assertEquals(status, 200, JSON.stringify(approved));
-  await until('B holds A as a peer', () => b.s.ctx.pcsync.peers.list().length === 1);
-}
-
-const tokenToA = (b: Node) => b.s.ctx.pcsync.peers.outToken(b.s.ctx.pcsync.peers.list()[0])!;
-const tokenToB = (a: Node) => a.s.ctx.pcsync.peers.outToken(a.s.ctx.pcsync.peers.list()[0])!;
 
 Deno.test({
   ...OPTS,
@@ -301,11 +184,24 @@ Deno.test({
         Connection: 'Upgrade',
         'Sec-WebSocket-Key': 'dGhlIHNhbXBsZSBub25jZQ==',
       });
-      assert(socket.status === 400 || socket.status === 403, `a WebSocket: ${socket.status}`);
+      assert(socket.status === 400 || socket.status === 403, `a WebSocket on a path other than /pcsync/sync: ${socket.status}`);
       await refused('a GET', raw(a.s.ctx.pcsync.port, 'GET', '/pcsync/hello', serveHeaders(a)), 405);
-      for (const path of ['/', '/api/live/list', '/api/remote/home', '/mcp', '/pcsync', '/pcsync/sync', '/pcsync/../api/live/list']) {
+      for (
+        const path of [
+          '/',
+          '/api/live/list',
+          '/api/remote/home',
+          '/mcp',
+          '/pcsync',
+          '/pcsync/syncx',
+          '/pcsync/sync/x',
+          '/pcsync/../api/live/list',
+        ]
+      ) {
         await refused('path ' + path, listener(a, path, { token }), 404);
       }
+      // the one socket path answers a plain POST with 426 (WebSocket only), never 404
+      await refused('a POST to the socket path', listener(a, '/pcsync/sync', { token }), 426);
       await refused('no token', listener(a, '/pcsync/hello', {}), 401);
       await refused('a wrong token', listener(a, '/pcsync/hello', { token: 'x'.repeat(43) }), 401);
       await refused('a body that is not JSON', raw(a.s.ctx.pcsync.port, 'POST', '/pcsync/hello', serveHeaders(a), '[1]'), 400);
