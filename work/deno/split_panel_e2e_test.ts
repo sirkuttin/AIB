@@ -194,6 +194,8 @@ panelTest('split panel: both chats in pane order on every tab, focus changes not
   })`);
   assert(/1 working/.test(act.heads[0]) && /1 working/.test(act.heads[1]), `headers: ${JSON.stringify(act.heads)}`);
   assert(act.labels.filter((l) => /^subagents/i.test(l)).length === 2, `labels: ${JSON.stringify(act.labels)}`);
+  // the count is the working subagents only, never the finished ones (owner 2026-11-23)
+  assert(act.labels.filter((l) => /^subagents/i.test(l)).every((l) => /^subagents [0-9]+ working$/i.test(l)), `working-only count: ${JSON.stringify(act.labels)}`);
   assertEquals(act.tags, ['Left', 'Right'], 'pane tags');
 
   // focus changes nothing in the panel, on each tab (on Activity only the accent moves to the focused chat's section)

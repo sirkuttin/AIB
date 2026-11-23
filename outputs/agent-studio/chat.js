@@ -5991,7 +5991,8 @@
       }
       sec.none.hidden = !A.splitNothing(sec.counts, st);
       sec.subLabel.hidden = sec.subBox.hidden = !a.rows.length;
-      sec.subLabel.replaceChildren('Subagents', text('span', String(a.rows.length)));
+      // the count is the working subagents only: the finished ones have their own folded "N finished" line below (owner 2026-11-23)
+      sec.subLabel.replaceChildren('Subagents', text('span', (sec.counts.working || 0) + ' working'));
       sec.procLabel.hidden = sec.procBox.hidden = !running.length;
       sec.procLabel.replaceChildren('Processes', text('span', running.length + ' running'));
       const seen = new Set();
