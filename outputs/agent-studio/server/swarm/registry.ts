@@ -14,9 +14,15 @@ import { normcase, realpath } from '../platform/ospath.ts';
 
 export const FILE = 'swarm-helpers.json';
 
-export type HelperState = 'starting' | 'working' | 'waiting' | 'done' | 'merged' | 'stopped' | 'failed';
-/** States that count toward the "helpers at once" cap. */
+/** `discarded`: its worktree and branch were removed without a merge (the chat was deleted, or a merge was undone after cleanup). */
+export type HelperState = 'starting' | 'working' | 'waiting' | 'done' | 'merged' | 'stopped' | 'failed' | 'discarded';
+/** States of a helper that is working now (stop_helper "all" stops these). */
 export const RUNNING_STATES: ReadonlySet<string> = new Set(['starting', 'working', 'waiting']);
+/**
+ * States that count toward the "helpers at once" cap and the owns clash: a helper that works, waits for an answer, or is done but
+ * not merged yet (its files are still its own until the main agent merges or discards it). A read-only helper holds nothing.
+ */
+export const HOLDING_STATES: ReadonlySet<string> = new Set(['starting', 'working', 'waiting', 'done']);
 
 export interface Brief {
   goal: string;
@@ -70,11 +76,15 @@ export interface Helper {
   turnEndedAt: string;
   cursor: number;
   reports: Report[];
+  /** When its worktree and branch were removed (cleanup: after a merge, once its chat is closed). */
+  cleanedAt?: number;
   merge: null | {
     tipBefore: string;
     landed: string;
     commits: number;
     at: number;
+    /** The helper's branch tip right after the merge: cleanup removes its worktree and branch only while the branch is still there. */
+    branchTip?: string;
     undo: null | { revert: string; at: number };
     again: null | { commit: string; at: number };
   };

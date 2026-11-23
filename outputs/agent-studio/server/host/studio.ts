@@ -3639,6 +3639,21 @@ export class Studio {
       if (!this.subagents) return [404, { error: 'No subagent worktrees here' }];
       return [200, { ok: true, result: await this.subagents.release(String(need(body, 'subagent'))) }];
     }
+    if (name === 'helper-release') { // internal (swarm/service.ts #cleanup): a merged helper's worktree and branch go (the swarm checked it is merged and clean)
+      const path = String(body.path ?? '');
+      const record = path && this.worktrees ? await this.#worktreeRecord(path, null) : null;
+      if (!record) return [200, { ok: true, result: 'gone' }];
+      const branch = String(record.branch ?? '');
+      if (!branch.startsWith('studio/helper-') || branch !== String(body.branch ?? '') || wslLoc(path)) {
+        return [409, { error: 'Not a helper copy of this host' }]; // never any other chat's worktree
+      }
+      const session = String(record.session ?? '');
+      const at = session.indexOf(':');
+      if (this.#connectionsIn(path).length || (at > 0 && (await this.#openAnywhere(session.slice(0, at), session.slice(at + 1), path)))) {
+        return [200, { ok: true, result: 'open' }];
+      }
+      return [200, { ok: true, result: await this.#removeWorktree({ ...record }, false) }]; // never confirmed: git refuses a worktree with edits
+    }
     if (name === 'history-forget') { // internal (web/shared.ts conversationAction): the person deleted the chat; not in LIVE_POST_OPS
       return [200, { ok: true, removed: await this.forgetHistory(String(body.provider ?? ''), String(body.sessionId ?? '')) }];
     }

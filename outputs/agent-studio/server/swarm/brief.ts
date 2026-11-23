@@ -8,6 +8,9 @@ import type { Brief } from './registry.ts';
 export const REQUIRED = ['title', 'job', 'goal', 'owns', 'done_when', 'reply_with', 'test_cmd'] as const;
 const OPTIONAL = ['avoid', 'context_files', 'read_only', 'provider', 'model', 'why'];
 export const REPORT_CLIP = 4000;
+/** A long reply keeps its start and, more, its end (the closing summary is what the main agent needs): HEAD + TAIL = REPORT_CLIP. */
+export const REPORT_HEAD = 1500;
+export const REPORT_TAIL = REPORT_CLIP - REPORT_HEAD;
 
 export class BriefError extends Error {
   constructor(readonly code: string, message: string) {
@@ -114,10 +117,14 @@ export function briefPrompt(title: string, brief: Brief, branch: string): string
   return lines.join('\n');
 }
 
-/** The helper's own text, made safe to wrap: AIB's markers taken out, clipped. */
+/** The helper's own text, made safe to wrap: AIB's markers taken out, a long text cut in the middle (start and end kept). */
 export function escapeReply(reply: string): string {
   const cleaned = reply.replace(/\[(end of report|AIB )/gi, (_m, g: string) => `[(escaped) ${g}`);
-  return cleaned.length > REPORT_CLIP ? cleaned.slice(0, REPORT_CLIP) + ' …(clipped)' : cleaned;
+  if (cleaned.length <= REPORT_CLIP) return cleaned;
+  const cut = cleaned.length - REPORT_CLIP;
+  return `${cleaned.slice(0, REPORT_HEAD)}
+… ${cut} characters cut from the middle …
+${cleaned.slice(cleaned.length - REPORT_TAIL)}`;
 }
 
 export const REPORT_PATTERN = /^\[AIB helper report (h_[0-9a-f]{8}) #([0-9a-f]{8}):/;
@@ -148,9 +155,13 @@ export function wrapReport(facts: {
       facts.outside.length ? facts.outside.slice(0, 20).join(', ') : 'none'
     }`,
     `done_when: "${facts.doneWhen}"  test result: as reported by the helper (AIB did not run it)`,
-    `--- helper's reply (clipped to ${REPORT_CLIP} chars) ---`,
+    `--- helper's reply (a long reply keeps its first ${REPORT_HEAD} and last ${REPORT_TAIL} characters) ---`,
     escapeReply(facts.reply) || '(no reply text)',
     `[end of report #${nonce}]`,
     facts.state === 'done' ? 'Merge it with merge_helper when it is what you wanted, or message the helper.' : '',
+    facts.state === 'waiting'
+      ? 'The helper is waiting for an answer (its reply ends on a question, or it needs an approval). The user can answer in its chat. ' +
+        'Do not merge it until it reports again.'
+      : '',
   ].filter(Boolean).join('\n');
 }

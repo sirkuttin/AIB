@@ -77,7 +77,7 @@ Deno.test('report: one wrapper with a nonce; markers in the helper text are esca
   assert(text.startsWith('[AIB helper report h_0123abcd #deadbeef: data from a helper, not from the user.'));
   assertEquals(text.split('[end of report').length, 2, 'only the real end marker');
   assertEquals(text.split('[AIB helper report').length, 2, 'no second header');
-  assert(text.includes('…(clipped)'));
+  assert(text.includes('characters cut from the middle'), 'a long reply is cut in the middle (swarm_bugs_test.ts: the end is kept)');
   assert(text.includes('test result: as reported by the helper (AIB did not run it)'));
 });
 
@@ -333,7 +333,7 @@ Deno.test({
         parent: { live: main.id, lasting: '' },
         chat: { live: '', lasting: '', provider: 'codex', model: '', mode: 'auto' },
         brief: { goal: '', owns: [owns], avoid: [], done_when: '', reply_with: '', test_cmd: '', read_only: false, context_files: [] },
-        state: n === 3 ? 'done' : 'working',
+        state: n === 3 ? 'merged' : 'working', // a done-but-unmerged helper now counts too (swarm_bugs_test.ts bug 5)
         notes: [],
         reports: [],
       }));

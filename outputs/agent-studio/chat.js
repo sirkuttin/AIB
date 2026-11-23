@@ -1751,8 +1751,11 @@
           ? 'Waits for this chat to pause'
           : done?.state === 'dirty'
           ? 'Nothing changed: it touches files with uncommitted edits'
+          : done?.state === 'cannot_merge'
+          ? "Couldn't merge again: conflict, nothing changed"
           : '';
-        if (done?.state === 'dirty') for (const b of box.querySelectorAll('button')) b.disabled = false;
+        // nothing changed in these two cases: the button works again (a conflict also posts its own line in the chat)
+        if (done?.state === 'dirty' || done?.state === 'cannot_merge') for (const b of box.querySelectorAll('button')) b.disabled = false;
       } catch (error) {
         result.textContent = error.message || 'Failed';
         for (const b of box.querySelectorAll('button')) b.disabled = false;
@@ -6001,8 +6004,9 @@
      failed | stopped. A click opens the helper chat's saved history in the panel (refreshSubagent), never the chat itself. */
   function helperRow(h) {
     const c = helperChat(h),
-      needs = c?.live?.attention?.state === 'needs_you',
       busy = !!c && chatWorking(c),
+      /* the chat needs you (an open approval or question), or the server says the helper ended on a question and nothing runs since */
+      needs = c?.live?.attention?.state === 'needs_you' || (h.state === 'waiting' && !busy),
       running = ['starting', 'working', 'waiting'].includes(h.state) || (busy && ['done', 'stopped'].includes(h.state));
     const state = h.state === 'failed' ? 'failed' : needs ? 'waiting' : running ? 'working' : h.state === 'stopped' ? 'stopped' : 'completed';
     const saved = c && !/^live:/.test(c.key || '') ? c.key : h.chatKey;

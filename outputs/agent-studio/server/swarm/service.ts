@@ -18,7 +18,7 @@ import { getLogger } from '../core/log.ts';
 import * as merge from '../worktrees/merge.ts';
 import * as wt from '../worktrees/worktrees.ts';
 import * as agentRegistry from '../agents/agent_registry.ts';
-import { type Helper, helperOf, type Landing, newHelperId, readHelpers, Registry, RUNNING_STATES } from './registry.ts';
+import { type Helper, helperOf, HOLDING_STATES, type Landing, newHelperId, readHelpers, Registry, RUNNING_STATES } from './registry.ts';
 import { lockChats, newLockId } from '../worktrees/landing_lock.ts';
 import { CopyMergeQueue } from '../worktrees/merge_queue.ts';
 import { BriefError, briefPrompt, overlaps, owned, readBrief, wrapReport } from './brief.ts';
@@ -43,6 +43,8 @@ export type Reply = [number, unknown];
 
 export const MAX_RUNNING = 3;
 export const POLL_MS = 2000;
+/** The cleanup of merged helpers' copies is looked at this often (and at the first poll after start). */
+export const SWEEP_MS = 30_000;
 /** How long a helper may take to open (the phone's new-chat wait, remote/newchat.ts). */
 export const OPEN_MS = 120_000;
 /** helper_status calls within this time get the same answer plus a reminder that reports come on their own (review 28). */
@@ -182,6 +184,8 @@ export class Swarm {
   #statusAt = new Map<string, [number, Json]>();
   /** Helper ids whose report or open step runs now (a poll never starts a second one). */
   #working = new Set<string>();
+  /** When the cleanup sweep last ran (0: not yet, so the first look after start sweeps the leftovers). */
+  #sweepAt = 0;
   clock: () => number = Date.now;
   openMs = OPEN_MS;
 
@@ -296,9 +300,17 @@ export class Swarm {
     return await this.ctx.host.modelServerDown(provider).catch(() => '');
   }
 
+  /**
+   * The helpers of a project that hold a place in the cap and their files in the owns clash: the ones that work or wait, and the ones
+   * that are done but not merged yet (their files stay theirs until the main agent merges or discards them). A read-only helper that
+   * is done holds nothing, and a subagent's landing entry is not a helper.
+   */
   #runningIn(project: string): Helper[] {
     const key = (p: string) => p.replaceAll('\\', '/').toLowerCase();
-    return this.registry.all().filter((h) => key(h.project) === key(project) && RUNNING_STATES.has(h.state));
+    return this.registry.all().filter((h) =>
+      h.kind !== 'subagent' && key(h.project) === key(project) && HOLDING_STATES.has(h.state) &&
+      (RUNNING_STATES.has(h.state) || !h.brief?.read_only)
+    );
   }
 
   async providers(caller: Json): Promise<Json> {
@@ -329,16 +341,24 @@ export class Swarm {
     const project = s(caller.projectRoot);
     const running = this.#runningIn(project);
     if (running.length >= MAX_RUNNING) {
+      const unmerged = running.filter((h) => h.state === 'done').length;
       throw new Refusal(
         'cap',
-        `${running.length} helpers are already running in this project (cap ${MAX_RUNNING}). Wait for one to finish.`,
+        `${running.length} helpers are already running or waiting to be merged in this project (cap ${MAX_RUNNING}). ` +
+          (unmerged ? `${unmerged} finished but not merged yet: merge it with merge_helper (or stop it) to free a place. ` : '') +
+          'Wait for one to finish.',
       );
     }
     if (!brief.read_only) {
-      for (const h of running) {
+      for (const h of running) { // running, waiting and done-but-unmerged helpers: their files are theirs until merged or discarded
         for (const mine of brief.owns) {
           const clash = h.brief.owns.find((theirs) => overlaps(mine, theirs));
-          if (clash !== undefined) throw new Refusal('owns_clash', `${mine} overlaps ${clash}, owned by “${h.title}”`);
+          if (clash !== undefined) {
+            throw new Refusal(
+              'owns_clash',
+              `${mine} overlaps ${clash}, owned by “${h.title}”` + (h.state === 'done' ? ' (finished, not merged yet: merge it first)' : ''),
+            );
+          }
         }
       }
     }
@@ -544,10 +564,10 @@ export class Swarm {
   }
 
   /** Commit what is uncommitted in the helper's worktree; returns how many commits its branch has over its start. */
-  async #keepWork(h: Helper, message: string): Promise<number> {
+  async #keepWork(h: Helper, message: string, settle = true): Promise<number> {
     if (!h.worktree.path) return 0;
     try {
-      await new Promise((r) => setTimeout(r, 300)); // the cancelled turn's last writes
+      if (settle) await new Promise((r) => setTimeout(r, 300)); // the cancelled turn's last writes
       if ((await merge.porcelainPaths(h.worktree.path)).size) {
         await wt.git(['add', '-A'], h.worktree.path);
         await wt.unstageLineEndingOnly(h.worktree.path, 'HEAD'); // line-ending churn is not the helper's work
@@ -582,10 +602,15 @@ export class Swarm {
       await this.#queue(this.registry.get(id)!, 'merge', 'tool');
       return { ok: true, state: 'queued', message: queuedLine(this.registry.get(id)!) };
     }
+    if (h.state === 'discarded') throw new Refusal('gone', `“${h.title}” was discarded: its worktree and branch are gone; nothing to merge`);
     if (!['done', 'waiting', 'stopped'].includes(h.state)) {
       throw new Refusal('busy', `“${h.title}” is ${h.state}; merge it once its report is in`);
     }
-    if (!h.chat.live) throw new Refusal('closed', 'The helper chat is not open');
+    // A closed helper chat is merged from its recorded worktree and branch (#landByRecord), as a subagent is; only a worktree that is
+    // gone leaves nothing to land.
+    if (!(await this.#chatOpen(h)) && !(h.worktree.path && wt.lexists(h.worktree.path))) {
+      throw new Refusal('gone', `“${h.title}” has no open chat and its worktree is gone; nothing to land`);
+    }
     if (folderParent(h)) {
       await this.#queue(h, 'merge', 'tool');
       return { ok: true, state: 'queued', message: queuedLine(h) };
@@ -597,6 +622,7 @@ export class Swarm {
     } finally {
       this.#working.delete(id);
       await this.registry.update(id, (cur) => (cur ? { ...cur, landing: null } : null));
+      await this.#cleanup(id); // a closed helper's copy goes at once; an open chat's when it is closed (the sweep)
     }
   }
 
@@ -606,34 +632,40 @@ export class Swarm {
     return await merge.targetBranch(h.project, h.worktree.base || 'main', wt.recordForPath(this.ctx.stateDir, h.worktree.path));
   }
 
-  /** The merge itself: the tool's answer ({state: merged | conflicts | refused, ...}); posts the merge line when it landed. */
+  /** True when the helper's chat is open here; a closed one is landed from its recorded worktree (#landByRecord). */
+  async #chatOpen(h: Helper): Promise<boolean> {
+    if (!h.chat.live) return false;
+    const state = obj(await this.ctx.host.liveState(h.chat.live, 0).catch(() => null));
+    return !!state.id && !state.closed;
+  }
+
+  /**
+   * The merge itself: the tool's answer ({state: merged | conflicts | refused, ...}); posts the merge line when it landed.
+   * Bug fix (owner 2026-11-23): `tipBefore` is the tip the landing built on, read UNDER the repository lock and told by the journal,
+   * never read before Merge takes the lock (another merge landing in between made Undo take that one back too).
+   */
   async #landMerge(h: Helper, held: string[]): Promise<Json> {
     if (h.kind === 'subagent') return await this.#landSubagent(h, held);
     const id = h.id;
     const target = await this.#target(h);
-    const tipBefore = await merge.rev(h.project, `refs/heads/${target}`);
+    if (!(await this.#chatOpen(h))) return await this.#landByRecord(h, held, target);
+    let lockedTip = '';
     let result: Json;
     try {
       result = await merge.merge(this.#mergeStudio(), h.chat.live, h.title, false, { // fromTool=false: the helper must be idle
         held,
-        journal: (stage, data) =>
-          this.#patchLanding(id, {
+        journal: (stage, data) => {
+          if (typeof data.tipBefore === 'string' && data.tipBefore) lockedTip = data.tipBefore;
+          return this.#patchLanding(id, {
             stage: stage as 'stashed' | 'built' | 'moved',
             ...(typeof data.stashSha === 'string' ? { stashSha: data.stashSha, stashName: s(data.stashName), stashFolder: s(data.folder) } : {}),
             ...(typeof data.landed === 'string' ? { landed: data.landed, tipBefore: s(data.tipBefore) } : {}),
-          }),
+          });
+        },
       });
     } catch (error) {
       if (error instanceof merge.Refused) {
-        if (error.code === 'empty' && h.brief.read_only) {
-          await this.registry.patch(id, { state: 'merged' });
-          await this.note(
-            id,
-            'swarm-merge',
-            `Merged “${h.title}” (${chatName(h)}) into ${target} · nothing to land (read-only helper, report only)`,
-          );
-          return { state: 'merged', commits: 0, files: [], target };
-        }
+        if (error.code === 'empty' && h.brief.read_only) return await this.#readOnlyDone(h, target);
         const files = error instanceof merge.TouchedDirty ? error.files : undefined;
         return { state: 'refused', code: error.code, message: error.message, ...(files ? { files } : {}) };
       }
@@ -649,12 +681,31 @@ export class Swarm {
     }
     const landed = s(result.tip);
     const commits = Number(result.commits) || 0;
-    await this.registry.patch(id, {
+    return await this.#merged(h, target, lockedTip || (await this.#parentOf(h.project, landed, commits)), landed, commits);
+  }
+
+  /** A read-only helper with nothing to land: merged, report only. */
+  async #readOnlyDone(h: Helper, target: string): Promise<Json> {
+    await this.registry.patch(h.id, { state: 'merged' });
+    await this.note(h.id, 'swarm-merge', `Merged “${h.title}” (${chatName(h)}) into ${target} · nothing to land (read-only helper, report only)`);
+    return { state: 'merged', commits: 0, files: [], target };
+  }
+
+  /** The tip a landing of `commits` commits was built on (the commits are consecutive): only when the journal did not tell it. */
+  async #parentOf(project: string, landed: string, commits: number): Promise<string> {
+    if (!landed) return '';
+    return await merge.rev(project, `${landed}~${Math.max(1, commits)}`);
+  }
+
+  /** A landing is done: the record (with the helper's branch tip, for the cleanup), the line with Undo, and the tool's answer. */
+  async #merged(h: Helper, target: string, tipBefore: string, landed: string, commits: number): Promise<Json> {
+    const branchTip = h.worktree.path && wt.lexists(h.worktree.path) ? await merge.rev(h.worktree.path, 'HEAD').catch(() => '') : '';
+    await this.registry.patch(h.id, {
       state: 'merged',
-      merge: { tipBefore, landed, commits, at: this.clock() / 1000, undo: null, again: null },
+      merge: { tipBefore, landed, commits, at: this.clock() / 1000, ...(branchTip ? { branchTip } : {}), undo: null, again: null },
     });
     await this.note(
-      id,
+      h.id,
       'swarm-merge',
       `Merged “${h.title}” (${chatName(h)}) into ${target} · ${commits} commit${commits === 1 ? '' : 's'}`,
       ['swarm-undo'],
@@ -662,6 +713,65 @@ export class Swarm {
     const files = tipBefore && landed ? await changedFiles(h.project, tipBefore, landed) : [];
     return { state: 'merged', commits, range: [tipBefore, landed], target, files };
   }
+
+  /**
+   * "Merge by worktree record" (owner 2026-11-23): the helper's chat is closed, so Merge (which works through the chat) can't run. The
+   * helper's work lands from its recorded worktree and branch the way a subagent's does (landSubagentWork: a snapshot of the worktree,
+   * its own changes only, the folder's uncommitted-edit check, no stash). Uncommitted work is committed on its branch first; every
+   * file lands (scratch and ignored files too: a helper's job is the files it was given). A conflict leaves a clean `-landable`
+   * branch of only the helper's changes for the main agent to merge by hand.
+   */
+  async #landByRecord(h: Helper, held: string[], target: string): Promise<Json> {
+    const path = h.worktree.path;
+    if (!path || !wt.lexists(path)) return { state: 'refused', code: 'gone', message: 'its worktree is gone' };
+    await this.#keepWork(h, 'AIB: helper work kept', false);
+    let lockedTip = '';
+    const out = await landSubagentWork(this.#mergeStudio(), {
+      scratchDir: this.ctx.stateDir,
+      path,
+      folder: h.project,
+      target,
+      branch: h.worktree.branch,
+      parent: held[0] ?? h.parent.live,
+      key: `helper:${h.id}`,
+      title: h.title,
+      start: h.worktree.start,
+      held,
+      landKept: null,
+      landScratch: true,
+    }, async (stage, data) => {
+      if (typeof data.tipBefore === 'string' && data.tipBefore) lockedTip = data.tipBefore;
+      await this.#patchLanding(h.id, {
+        stage: stage as 'built' | 'moved',
+        ...(typeof data.landed === 'string' ? { landed: data.landed, tipBefore: s(data.tipBefore) } : {}),
+      });
+    });
+    const state = s(out.state);
+    if (state === 'merged') {
+      const landed = s(out.landed);
+      const counted = Number((await wt.git(['rev-list', '--count', `${h.worktree.start}..HEAD`], path, { check: false })).stdout.trim()) || 0;
+      return await this.#merged(h, target, lockedTip || s(out.tipBefore), landed, Math.max(1, counted));
+    }
+    if (state === 'empty' || state === 'scratch') {
+      if (h.brief.read_only) return await this.#readOnlyDone(h, target);
+      return { state: 'refused', code: 'empty', message: `Nothing to merge into ${target}: the helper's work is already there or has no changes` };
+    }
+    if (state === 'conflicts') {
+      const landable = s(out.landable);
+      return {
+        state: 'conflicts',
+        files: out.files,
+        target,
+        ...(landable ? { landable } : {}),
+        message: `Nothing landed: the helper's chat is closed and its work conflicts with ${target}. ` +
+          (landable
+            ? `Merge the branch ${landable} into ${target} by hand and resolve the conflicts; it holds only the helper's own changes.`
+            : `Its work is on branch ${h.worktree.branch}; merge it by hand.`),
+      };
+    }
+    return { state: 'refused', code: s(out.code) || 'refused', message: s(out.message), ...(Array.isArray(out.files) ? { files: out.files } : {}) };
+  }
+
 
   // ---- the landing queue (build plan 2.2) --------------------------------------------------------------------------------------
   async #patchLanding(id: string, fields: Partial<Landing>): Promise<void> {
@@ -726,6 +836,7 @@ export class Swarm {
       this.#working.delete(h.id);
     }
     await this.#afterLanding(h.id, L.what, out, parentId);
+    await this.#cleanup(h.id);
     return out;
   }
 
@@ -922,14 +1033,18 @@ export class Swarm {
       }
       if (done.state === 'refused') return { state: 'refused', code: done.code ?? 'refused', message: done.message };
       if (done.state === 'dirty') return { state: 'dirty', files: done.files };
+      // a helper whose worktree and branch were cleaned up after the merge has nothing left to merge again by merge_helper: Merge again
+      // (the button) still re-applies the commit, so it is not counted as a running or waiting helper
+      const cleaned = h.kind !== 'subagent' && !!h.cleanedAt;
       await this.registry.patch(h.id, {
-        state: 'done',
+        state: cleaned ? 'discarded' : 'done',
         merge: { ...h.merge, undo: { revert: done.commit, at: this.clock() / 1000 }, again: null },
       });
       await this.note(
         h.id,
         'swarm-undo',
-        `Undid the merge of ${label(h)} · ${target} is back to before it` + (h.kind === 'subagent' ? '' : ` · the helper's branch is kept`) +
+        `Undid the merge of ${label(h)} · ${target} is back to before it` +
+          (h.kind === 'subagent' ? '' : cleaned ? ` · the helper's copy was already cleaned up` : ` · the helper's branch is kept`) +
           (done.kept ? ` · your edits clash with it and are kept in a stash` : ''),
         ['swarm-merge-again'],
       );
@@ -938,7 +1053,28 @@ export class Swarm {
     if (!h.merge.undo) return { state: 'refused', code: 'done', message: 'That helper has no undone merge' };
     const revert = h.merge.undo.revert;
     const done = await applyChange(this.ctx.stateDir, h.project, target, revert, `${revert}^`, `AIB: merge ${h.kind === 'subagent' ? label(h) : `helper “${h.title}”`} again`, options);
-    if (done.state === 'conflicts') return { state: 'cannot_merge', files: done.files };
+    if (done.state === 'conflicts') {
+      // Bug fix (owner 2026-11-23): this used to say nothing and the button stayed disabled. A line in the chat, the main agent woken the
+      // way a failed landing wakes it, and the page (chat.js) re-enables the button.
+      const files = done.files;
+      const n = files.length;
+      await this.note(
+        h.id,
+        'swarm-merge',
+        `Couldn't merge ${label(h)} again: conflict in ${n} file${n === 1 ? '' : 's'} (${shown(files, 3)}). Nothing changed. ` +
+          `Later changes to ${target} touch the same lines.`,
+      );
+      const own = h.worktree.branch ? `its branch ${h.worktree.branch} (${h.merge.landed ? `merged as ${h.merge.landed.slice(0, 8)}` : 'merged earlier'})` : 'its merged commit';
+      await this.#wakeParent(
+        h,
+        held[0] || h.parent.live,
+        'again-conflict',
+        `The user asked to merge ${label(h)} again after undoing it, but it conflicts with ${target} in ${shown(files)}. Nothing changed ` +
+          `and AIB does not retry it. If the user wants that work back, re-apply ${own} onto ${target} by hand, resolving the conflicts ` +
+          'so both sides keep what they intended. Tell the user.',
+      );
+      return { state: 'cannot_merge', files };
+    }
     if (done.state === 'refused') return { state: 'refused', code: done.code ?? 'refused', message: done.message };
     if (done.state === 'dirty') return { state: 'dirty', files: done.files };
     await this.registry.patch(h.id, {
@@ -1268,6 +1404,82 @@ export class Swarm {
     if (code !== 200) log.info('swarm: the worktree of subagent %s stays for now (%s)', h.id, pyStr(obj(payload).error ?? code));
   }
 
+  // ---- cleanup (owner 2026-11-23: helper worktrees and branches were never removed) -------------------------------------------------
+  /**
+   * A merged helper's worktree and branch go once its chat is closed, as a subagent's go after landing (Studio's own retire does it the
+   * moment a merged copy's chat closes; this covers the rest: a helper merged by record, one merged before this existed, one whose chat
+   * closed while AIB was away). Never unmerged work: it needs state merged (not undone), the branch still at the tip the merge left it
+   * (or its changes all in the target), and a clean worktree. A `-landable` branch goes only once its commit is in the target (the
+   * main agent merged it by hand). A helper whose worktree and branch are both gone without a merge is `discarded`: it stops counting.
+   */
+  async #cleanup(id: string, chats?: Json[]): Promise<void> {
+    try {
+      const h = this.registry.get(id);
+      if (!h || h.kind === 'subagent' || this.#working.has(id) || h.landing) return;
+      const path = h.worktree.path, branch = h.worktree.branch;
+      if (!path || !branch.startsWith('studio/helper-') || !h.project) return;
+      if (!wt.lexists(h.project)) return; // the project folder is not here: git can't say anything
+      await this.#dropLandable(h);
+      const tip = await merge.rev(h.project, `refs/heads/${branch}`);
+      if (!wt.lexists(path) && !tip && !h.merge && ['done', 'waiting', 'stopped'].includes(h.state)) {
+        await this.registry.patch(id, { state: 'discarded', reason: 'its worktree and branch were removed', endedAt: this.clock() / 1000 });
+        return;
+      }
+      if (h.state !== 'merged' || !h.merge || h.merge.undo || h.cleanedAt) return;
+      const open = chats
+        ? chats.some((c) => (!!h.chat.live && c.id === h.chat.live) || (!!h.chat.lasting && lasting(c) === h.chat.lasting))
+        : await this.#chatOpen(h);
+      if (open) return;
+      const target = await this.#target(h);
+      if (tip && !(await this.#nothingUnmerged(h, tip, target))) return; // new work since the merge: kept until merged or discarded
+      if (wt.lexists(path) && (await merge.porcelainPaths(path)).size) return; // edits in its worktree: kept
+      const [code, payload] = await this.ctx.host.liveCall('helper-release', { path, branch }).catch(() => [500, null] as [number, unknown]);
+      const result = s(obj(payload).result);
+      if (code === 200 && (result === 'removed' || result === 'gone')) {
+        if (result === 'gone' && !wt.lexists(path) && tip) { // no worktree record any more, folder gone: the branch alone is left
+          await wt.git(['branch', '-D', branch], h.project, { check: false });
+        } else if (result === 'gone' && wt.lexists(path)) return; // a folder AIB has no record of: not removed
+        await this.registry.patch(id, { cleanedAt: this.clock() / 1000 });
+        log.info('swarm: removed the worktree and branch of merged helper %s (%s)', id, branch);
+      } else if (code !== 200 || result !== 'open') {
+        log.info('swarm: the copy of helper %s stays for now (%s)', id, result || pyStr(obj(payload).error ?? code));
+      }
+    } catch (error) {
+      log.exception(error, 'Cleaning up helper %s failed', id);
+    }
+  }
+
+  /** True when nothing of the helper's branch is missing from the target: still where the merge left it, in the target, or the same tree as landed. */
+  async #nothingUnmerged(h: Helper, tip: string, target: string): Promise<boolean> {
+    if (h.merge?.branchTip && tip === h.merge.branchTip) return true;
+    if (await merge.isAncestor(h.project, tip, `refs/heads/${target}`)) return true;
+    const landed = h.merge?.landed;
+    if (landed) {
+      const same = await wt.git(['diff', '--quiet', landed, tip], h.project, { check: false });
+      if (same.returncode === 0) return true;
+    }
+    return false;
+  }
+
+  /** The `-landable` branch of a helper (a conflicting landing's clean branch) goes once its commit is in the target. */
+  async #dropLandable(h: Helper): Promise<void> {
+    const name = `${h.worktree.branch}-landable`;
+    const tip = await merge.rev(h.project, `refs/heads/${name}`);
+    if (!tip) return;
+    const target = await this.#target(h).catch(() => '');
+    if (target && (await merge.isAncestor(h.project, tip, `refs/heads/${target}`))) {
+      await wt.git(['branch', '-D', name], h.project, { check: false });
+    }
+  }
+
+  /** At start and every SWEEP_MS: the cleanup for every helper (leftovers of earlier runs go at the first look). */
+  async #sweep(chats: Json[]): Promise<void> {
+    const now = this.clock();
+    if (this.#sweepAt && now - this.#sweepAt < SWEEP_MS) return;
+    this.#sweepAt = now;
+    for (const h of this.registry.all()) if (h.kind !== 'subagent') await this.#cleanup(h.id, chats);
+  }
+
   // ---- lines in the main chat ------------------------------------------------------------------------------------------------
   /** A line in the parent chat; kept in the record and posted when the parent is open (now or later). */
   async note(id: string, kind: string, text: string, actions: string[] = []): Promise<void> {
@@ -1333,7 +1545,7 @@ export class Swarm {
     const pending = (h: Helper) =>
       h.kind === 'subagent'
         ? !!h.landing || h.notes.some((n) => !n.delivered)
-        : h.state !== 'failed' || h.notes.some((n) => !n.delivered) || h.reports.some((r) => !r.delivered) || !!h.landing;
+        : (h.state !== 'failed' && h.state !== 'discarded') || h.notes.some((n) => !n.delivered) || h.reports.some((r) => !r.delivered) || !!h.landing;
     const subs = Object.values(readSubagents(this.ctx.stateDir));
     if (!subs.length && !this.registry.all().some(pending)) return;
     const listing = obj(await this.ctx.host.liveList());
@@ -1341,6 +1553,7 @@ export class Swarm {
     const chats = (Array.isArray(listing.connections) ? listing.connections : []).map(obj).filter((c) => !c.closed);
     const byLasting = new Map(chats.filter((c) => lasting(c)).map((c) => [lasting(c), c]));
     if (subs.length) await this.#reconcileSubagents(subs, chats, byLasting);
+    await this.#sweep(chats);
     const helpers = this.registry.all().filter(pending);
     for (const h0 of helpers) {
       let h = h0;
@@ -1367,6 +1580,7 @@ export class Swarm {
       }
       if (!chat || this.#working.has(h.id) || !['working', 'waiting', 'done'].includes(h.state)) continue;
       const attention = obj(chat.attention);
+      h = await this.#followAttention(h, chat, attention);
       const ended = s(attention.turnEndedAt);
       const queue = obj(chat.queue);
       const idle = attention.state === 'idle' && !(Array.isArray(queue.items) && queue.items.length);
@@ -1380,6 +1594,25 @@ export class Swarm {
       const fresh = this.registry.get(h.id);
       if (fresh && parent) await this.#deliverReports(fresh, parent);
     }
+  }
+
+  /**
+   * `waiting` (owner 2026-11-23: it was declared but never set): the helper's state while its chat needs the person, an open approval,
+   * question or sign-in (attention needs_you; #report sets it too when a turn ends on a question). Activity's "Waiting on you" row and
+   * the notification read the same chat attention, so helper_status, the row and the notification agree. It goes back to `working`
+   * when the chat works again (the person answered).
+   */
+  async #followAttention(h: Helper, chat: Json, attention: Json): Promise<Helper> {
+    if (attention.state === 'needs_you' && h.state !== 'waiting') {
+      const reason = chat.auth
+        ? 'needs you to sign in'
+        : Array.isArray(chat.elicitations) && chat.elicitations.length
+        ? 'asked you a question'
+        : 'waiting for your approval';
+      return (await this.registry.patch(h.id, { state: 'waiting', reason })) ?? h;
+    }
+    if (h.state === 'waiting' && attention.state === 'working') return (await this.registry.patch(h.id, { state: 'working', reason: '' })) ?? h;
+    return h;
   }
 
   /** The helper's turn ended: build the report from AIB's own facts and the helper's reply text. */
@@ -1407,12 +1640,14 @@ export class Swarm {
       }
     }
     const done = !h.reports.length || h.state !== 'merged';
+    // the turn ended on a question: the helper's reply asks the person something (the chat's own `asks` fact, as the notification reads it)
+    const asks = done && !!s(obj(chat.attention).asksAt);
     const text = wrapReport({
       id: h.id,
       title: h.title,
       providerName: chatName(h),
       model: h.chat.model,
-      state: done ? 'done' : h.state,
+      state: asks ? 'waiting' : done ? 'done' : h.state,
       minutes: Math.max(0, Math.round((this.clock() / 1000 - h.createdAt) / 60)),
       branch: h.worktree.branch,
       commits,
@@ -1427,7 +1662,8 @@ export class Swarm {
       cur
         ? {
           ...cur,
-          state: cur.state === 'merged' ? cur.state : 'done',
+          state: cur.state === 'merged' ? cur.state : asks ? 'waiting' : 'done',
+          reason: cur.state === 'merged' ? cur.reason : asks ? 'ended on a question' : '',
           turnEndedAt: ended,
           cursor: Number(state.cursor) || cur.cursor,
           reports: [...cur.reports, { n: cur.reports.length + 1, at: this.clock() / 1000, text, delivered: false, how: '' }],
@@ -1438,7 +1674,7 @@ export class Swarm {
       'swarm-report',
       `Report from “${h.title}” (${
         chatName(h)
-      }): ${files.length} file(s) changed, +${insertions} −${deletions}, ${commits} commit(s)`,
+      }): ${files.length} file(s) changed, +${insertions} −${deletions}, ${commits} commit(s)${asks ? ' · ended on a question, waiting for an answer' : ''}`,
       ['swarm-open'],
     );
   }

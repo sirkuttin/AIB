@@ -188,14 +188,22 @@ export async function landSubagentWork(
   // design 3.5: it changed a file the folder has uncommitted (changed, staged or untracked): nothing lands, nothing is stashed. Checked
   // by merge.ts landHeld on what would really land (touchedDirty, tip to landed): files that only came from the folder's own
   // uncommitted state (the worktree's snapshot, a builder branch it merged) are left out of the landing and are not a reason to refuse.
-  const tipBefore = await merge.rev(folder, `refs/heads/${target}`);
+  // Only a first guess: the tip the landing really built on is the one read under the repository lock, which the journal tells
+  // (owner 2026-11-23: another merge landing between this read and the lock was undone with this one).
+  let tipBefore = await merge.rev(folder, `refs/heads/${target}`);
   let result: Json;
   try {
     result = await merge.landWorktree(
       studio,
       { parent: spec.held[0] ?? spec.parent, key: spec.key, worktree: path, project: folder, start, head, landOn: target },
       spec.title,
-      { held: spec.held, journal: (stage, data) => journal(stage, data) },
+      {
+        held: spec.held,
+        journal: (stage, data) => {
+          if (typeof data.tipBefore === 'string' && data.tipBefore) tipBefore = data.tipBefore;
+          return journal(stage, data);
+        },
+      },
     );
   } catch (error) {
     if (error instanceof merge.Refused) {
