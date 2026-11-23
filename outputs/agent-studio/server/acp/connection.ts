@@ -811,6 +811,13 @@ export const TERMINAL_SIGNIN_PROVIDERS: ReadonlySet<string> = new Set(['claude']
  */
 export const steerTiming = { settleMs: 3000, steerTimeoutSeconds: 30, steerLateSeconds: 300 };
 
+/** OMP's refusal of a prompt while its agent still works ("Agent is already processing. Use steer() or followUp()..."). */
+export function isAgentBusyError(error: unknown): boolean {
+  return /already processing/i.test(errorText(error));
+}
+/** How a prompt that met a busy agent (isAgentBusyError) is tried again: every delayMs, for at most maxSeconds. Tests lower it. */
+export const busyRetry = { delayMs: 1000, maxSeconds: 1800 };
+
 /** The note on a queued message a steer could not deliver (the agent refused it or did not answer). */
 export const STEER_FAILED_NOTE = "Couldn't send now: sends when this turn ends.";
 /** Codex may drop a steer that lands as its turn ends (codex-acp v1 turn/completed): no reply after it means it was probably lost. */
@@ -5136,14 +5143,31 @@ export class Connection {
         // (not `receipt`: that is the keeper's receipt note for this turn, below)
         const promptReceipt = clientMessageId ? this.promptReceipts.get(clientMessageId) : undefined;
         if (promptReceipt) promptReceipt.sent = true;
-        const response = this.request('session/prompt', {
-          sessionId: this.sessionId,
-          prompt: blocks,
-        }, 86400, {
-          // keeper: the receipt note goes first, so a later AIB rebuilds the page's message and receipt; the key stops a resend
-          note: (id) => receipt ? { t: 'receipt', rpc: id, ...receipt } : null,
-          once: clientMessageId ? `prompt:${clientMessageId}` : undefined,
-        });
+        const send = (attempt: number): Promise<unknown> =>
+          this.request('session/prompt', {
+            sessionId: this.sessionId,
+            prompt: blocks,
+          }, 86400, {
+            // keeper: the receipt note goes first, so a later AIB rebuilds the page's message and receipt; the key stops a resend
+            note: (id) => receipt ? { t: 'receipt', rpc: id, ...receipt } : null,
+            once: clientMessageId ? `prompt:${clientMessageId}${attempt ? ':' + attempt : ''}` : undefined,
+          });
+        // OMP still works on something AIB thinks is over (a steer it answered promptRequired, the end of a cancelled turn) and refuses
+        // the prompt with "Agent is already processing...". That is no failure: the message waits and goes the moment OMP is free.
+        const sendWhenFree = async (): Promise<unknown> => {
+          const until = Date.now() + busyRetry.maxSeconds * 1000;
+          for (let attempt = 0;; attempt++) {
+            try {
+              return await send(attempt);
+            } catch (error) {
+              if (!isAgentBusyError(error) || this.closed || this.cancelSeq >= seq || Date.now() >= until) throw error;
+              log.info('chat %s: the agent is still processing; the message goes when it is free', this.id);
+              await new Promise((resolve) => setTimeout(resolve, busyRetry.delayMs));
+              if (this.closed || this.cancelSeq >= seq) throw error;
+            }
+          }
+        };
+        const response = sendWhenFree();
         this.#promptOut.set(); // written: a steer from now on reaches this turn
         result = await this.#untilReplyEnds(seq, response);
         await this.#studioContextSent(context);
