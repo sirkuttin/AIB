@@ -1733,7 +1733,7 @@ Deno.test({
         await page.eval(
           '[...document.querySelectorAll(".ph-queued[data-queued=q1] .ph-btn")].map((b) => b.textContent)',
         ),
-        ["Edit", "Remove", "Send now"],
+        ["Edit", "Remove", "Send next"], // a busy agent that cannot steer: the message goes first when the turn ends (owner 2026-11-23)
       );
       await page.click('.ph-queued[data-queued="q1"] [data-act="remove"]');
       await page.waitFor(
