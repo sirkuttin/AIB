@@ -9,7 +9,8 @@
  *     and proposes (both PCs apply the same rule to the same two names), the other checks the match itself before it agrees.
  *   - Same folder name only: listed as a suggestion for "Link to…", never automatic.
  *   - Link to… by hand: one PC proposes, the other shows it as "needs your OK" (an unconfirmed link) until its owner confirms.
- * Docs and aib-shared are two switches per link, off by default, saved here per PC. Nothing reads them yet (the file engine, V4).
+ * Docs and aib-shared are two switches per link, off by default, saved here per PC. The aib-shared switch is read by the file engine
+ * (files.ts, V4); a change of any switch or link tells it (deps.changed).
  * Unlink removes the link on both PCs; when the other PC is off, the unlink is kept and sent when it is back.
  */
 import { inDir } from '../state/base.ts';
@@ -69,6 +70,10 @@ export interface ProjectDeps {
   send(peerId: string, batch: { id: string; project?: string; items: BatchItem[] }): boolean;
   log(message: string): void;
   ttlMs?: number;
+  /** A link or a switch changed (the file engine looks at its projects again). */
+  changed?(): void;
+  /** The file engine's status line for one link (the card shows it). */
+  fileStatus?(sync: string): unknown;
 }
 
 const str = (v: unknown, max = 300) => (typeof v === 'string' ? v.slice(0, max) : '');
@@ -130,6 +135,11 @@ export class ProjectSync {
   /** The links as the other slices read them (V4: the file engine). Confirmed links only, with this PC's own folder. */
   confirmedLinks(): ProjectLink[] {
     return [...this.#links.values()].filter((l) => l.confirmed);
+  }
+
+  /** Resolves when every batch given so far has been applied. */
+  settled(): Promise<void> {
+    return this.#queue;
   }
 
   link(sync: string): ProjectLink | null {
@@ -265,6 +275,7 @@ export class ProjectSync {
           if (link && link.peer === peer.host) {
             this.#links.delete(link.sync);
             this.#save();
+            this.deps.changed?.();
             this.deps.log(`${peer.name} unlinked ${link.name}`);
           }
           break;
@@ -327,6 +338,7 @@ export class ProjectSync {
     };
     this.#links.set(sync, link);
     this.#save();
+    this.deps.changed?.();
     this.deps.log(`linked ${l.name} with ${offer.name} on ${peer.name} (${how})`);
     return link;
   }
@@ -387,6 +399,7 @@ export class ProjectSync {
     if (!link.confirmed) {
       link.confirmed = true;
       this.#save();
+      this.deps.changed?.();
     }
     return link;
   }
@@ -405,6 +418,7 @@ export class ProjectSync {
       this.#unlinks.set(link.peer, set);
     }
     this.#save();
+    this.deps.changed?.();
     return true;
   }
 
@@ -417,6 +431,7 @@ export class ProjectSync {
     if (link[which] !== on) {
       link[which] = on;
       this.#save();
+      this.deps.changed?.();
     }
     return link;
   }
@@ -431,7 +446,10 @@ export class ProjectSync {
       }
     }
     this.#theirs.delete(host);
-    if (changed) this.#save();
+    if (changed) {
+      this.#save();
+      this.deps.changed?.();
+    }
   }
 
   // ---- what the card shows -----------------------------------------------------------------------------------------------------
@@ -446,6 +464,7 @@ export class ProjectSync {
       docs: l.docs,
       shared: l.shared,
       missing: !here.has(l.folder),
+      files: l.confirmed ? this.deps.fileStatus?.(l.sync) ?? null : null,
     }));
     const state = this.#theirs.get(peer.host);
     const mine = this.#local.filter((l) => !this.#localLinked(l.path, peer.host));

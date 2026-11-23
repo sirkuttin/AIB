@@ -61,7 +61,22 @@
     if (!link.confirmed) return 'The other PC linked this by hand. Check it is the same project, then confirm.';
     return link.how === 'remote' ? 'Same git remote' : 'Linked by hand';
   }
-  const LATER = 'Files start syncing in a later update. The switches are saved.';
+  /* The small status next to a project's aib-shared switch (slice V4): one plain phrase, from the server's file status. */
+  function filesText(f, peerName) {
+    if (!f || f.state === 'off') return '';
+    const who = peerName || 'the other PC';
+    switch (f.state) {
+      case 'wsl': return 'Sync for WSL projects comes in a later update.';
+      case 'offline': return 'Waiting for ' + who + ' to be online.';
+      case 'blocked': return f.reason || 'Not synced here.';
+      case 'other_off': return 'Waiting: aib-shared is off on ' + who + '.';
+      case 'checking': return 'Checking files.';
+    }
+    if (f.pause) return 'Paused: big delete';
+    if (f.pending > 0) return 'Syncing ' + f.pending + (f.pending === 1 ? ' file' : ' files');
+    if (f.conflictCount > 0) return f.conflictCount + (f.conflictCount === 1 ? ' conflict' : ' conflicts');
+    return 'Up to date';
+  }
   function countdown(expiresAt, now) {
     const s = Math.max(0, Math.floor(expiresAt - now / 1000));
     return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
@@ -109,7 +124,7 @@
     const status = el('p', statusText(v), 'st-note ps-status');
     status.setAttribute('role', 'status');
     frag.append(
-      el('p', 'Pair your own PCs for sync of aib-docs and aib-shared. PC to PC over your Tailscale: no cloud, no account. This step only pairs the PCs; nothing is copied between them yet.', 'st-note'),
+      el('p', 'Pair your own PCs to keep aib-shared the same on both. PC to PC over your Tailscale: no cloud, no account. A project syncs when both PCs have its aib-shared switch on. Docs sync comes in a later update.', 'st-note'),
       status,
     );
     if (P.error) {
@@ -171,7 +186,6 @@
     const pr = peer.projects;
     const wrap = el('div', null, 'ps-projects');
     wrap.dataset.projects = peer.id;
-    if (pr.links.length) wrap.append(el('p', LATER, 'st-note ps-later'));
     for (const l of pr.links) {
       const row = el('div', null, 'ps-project');
       row.dataset.sync = l.sync;
@@ -194,6 +208,34 @@
       gone.classList.add('ps-unlink');
       controls.append(gone);
       row.append(controls);
+      const f = l.files;
+      const line = filesText(f, peer.name);
+      if (line) {
+        const status = el('div', null, 'ps-files');
+        status.dataset.files = f.state;
+        status.setAttribute('role', 'status');
+        status.append(el('span', line, 'ps-files-text' + (f.pause ? ' bad' : '')));
+        if (f.pause) {
+          status.append(
+            el('span', f.pause.deletes + ' of ' + f.pause.total + ' files were deleted on ' + peer.name + '. They stay here until you choose.', 'ps-dim'),
+            btn('Allow', () => projAct('pcsync/projects/files', { sync: l.sync, action: 'allow' }), 'ps-small', !!P.busy),
+            btn('Keep files', () => projAct('pcsync/projects/files', { sync: l.sync, action: 'keep' }), 'ps-small', !!P.busy),
+          );
+        }
+        row.append(status);
+        const items = [];
+        for (const c of f.conflicts || []) items.push(['conflict', c, 'Conflict copy: both versions are kept. Delete the one you do not want.']);
+        for (const h of f.held || []) items.push(['held', h.path, h.why]);
+        if (items.length) {
+          const list = el('ul', null, 'ps-filelist');
+          for (const [kind, path, why] of items) {
+            const li = el('li', null, 'ps-file ' + kind);
+            li.append(el('code', path), el('span', ' ' + why, 'ps-dim'));
+            list.append(li);
+          }
+          row.append(list);
+        }
+      }
       wrap.append(row);
     }
     for (const sg of pr.suggestions || []) {
@@ -445,7 +487,7 @@
     }
   }
 
-  const api = { render, refresh, statusText, reachText, howText, countdown, _state: P };
+  const api = { render, refresh, statusText, reachText, howText, filesText, countdown, _state: P };
   root.AIBPcSyncUI = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

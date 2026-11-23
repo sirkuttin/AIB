@@ -9,6 +9,7 @@ import { assert, assertEquals } from './_assert.ts';
 import { readRemotePort } from '../../outputs/agent-studio/server/remote/port.ts';
 import type { Runner } from '../../outputs/agent-studio/server/remote/tailscale.ts';
 import type { LinkTimings } from '../../outputs/agent-studio/server/pcsync/link.ts';
+import type { FileTimings } from '../../outputs/agent-studio/server/pcsync/files.ts';
 import { LOGIN, pc, raw, type RemoteStudio, remoteStudio, tailscaleStatus, tempDir } from './_remote_fixture.ts';
 
 export type Json = Record<string, unknown>;
@@ -46,8 +47,11 @@ export const TEST_LINK: Partial<LinkTimings> = {
   probeMs: 400,
 };
 
+/** Quick file-engine timings: a change is seen in a fraction of a second, a stalled pull is retried at once. */
+export const TEST_FILES: Partial<FileTimings> = { debounceMs: 80, rescanMs: 400, stallMs: 3000, retryMs: 300 };
+
 /** Two PCs on one tailnet, the same Tailscale login, each with the other as a peer in `tailscale status --json`. */
-export async function twoNodes(link: Partial<LinkTimings> = TEST_LINK): Promise<[Node, Node]> {
+export async function twoNodes(link: Partial<LinkTimings> = TEST_LINK, files: Partial<FileTimings> = TEST_FILES): Promise<[Node, Node]> {
   const urls = new Map<string, string>();
   const nodes: Node[] = [];
   const spec = [
@@ -100,7 +104,7 @@ export async function twoNodes(link: Partial<LinkTimings> = TEST_LINK): Promise<
     const start = async (root?: string) => {
       node.s = await remoteStudio({ runner }, root, {
         saved: true,
-        pcsync: { runner, port: 0, pollMs: 50, link, peerUrl: (host) => urls.get(host) ?? 'http://127.0.0.1:1' },
+        pcsync: { runner, port: 0, pollMs: 50, link, files, peerUrl: (host) => urls.get(host) ?? 'http://127.0.0.1:1' },
       });
       node.root = node.s.root;
     };
@@ -240,8 +244,8 @@ export async function approveAndWait(a: Node, b: Node, claim: string) {
 }
 
 /** Pair the two PCs completely (no assertions about the words). */
-export async function paired(): Promise<[Node, Node]> {
-  const [a, b] = await twoNodes();
+export async function paired(files: Partial<FileTimings> = TEST_FILES): Promise<[Node, Node]> {
+  const [a, b] = await twoNodes(TEST_LINK, files);
   try {
     const { claim } = await pair(a, b);
     await approveAndWait(a, b, claim);

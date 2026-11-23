@@ -93,6 +93,7 @@ export const nameOk = (v: unknown): v is string =>
  *   project.offer                 {id, name, remote (normalized git remote or null), prefix (place in the repo), wsl}
  *   project.link                  {mine, theirs, how}: batch.project is the new project sync id; mine = the sender's offer id
  *   project.unlink                batch.project is the project sync id
+ *   project.switch                {shared, docs}: the sender's two switches for batch.project (V4: files move only when both PCs have it on)
  */
 function checkProjectItem(item: Record<string, unknown>): Checked<BatchItem> {
   const op = item.op as string;
@@ -101,6 +102,9 @@ function checkProjectItem(item: Record<string, unknown>): Checked<BatchItem> {
     case 'project.end':
     case 'project.unlink':
       return { ok: true, value: { op } };
+    case 'project.switch':
+      if (typeof item.shared !== 'boolean' || typeof item.docs !== 'boolean') return bad('bad switch');
+      return { ok: true, value: { op, shared: item.shared, docs: item.docs } };
     case 'project.offer': {
       if (typeof item.id !== 'string' || !OID.test(item.id)) return bad('bad offer id');
       if (!nameOk(item.name)) return bad('bad project name');
@@ -120,12 +124,66 @@ function checkProjectItem(item: Record<string, unknown>): Checked<BatchItem> {
   }
 }
 
+const HASH = /^[0-9a-f]{64}$/;
+const B64 = /^[A-Za-z0-9+/]*={0,2}$/;
+/** A chunk's base64 text must fit a frame with room to spare (512 KB of bytes is 699,052 characters). */
+export const MAX_CHUNK_TEXT = 760_000;
+const whole = (v: unknown, max: number): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= max;
+
+/**
+ * File items (slice V4, aib-shared), all under batch.project; `area` is 'shared' (docs come with V5). Only the listed keys survive.
+ *   file.begin / file.end   the start and end of one PC's full list of its files (what is absent from a complete list is deleted)
+ *   file.state              {path, hash (sha256 hex, null = deleted), size, mtime (ms), sup?}: one file as the sender has it now;
+ *                           sup lists the hashes this version replaces (a merge) or 'del' (kept against a delete)
+ *   file.get                {path, hash, offset}: asks for the next chunk of the version with that hash
+ *   file.data               {path, hash, offset, size, last, data (base64)}: one chunk (at most 512 KB of bytes)
+ *   file.gone               {path, hash}: that version is no longer here
+ */
+function checkFileItem(item: Record<string, unknown>): Checked<BatchItem> {
+  const op = item.op as string;
+  if (item.area !== 'shared') return bad('bad area');
+  const area: Area = 'shared';
+  if (op === 'file.begin' || op === 'file.end') return { ok: true, value: { op, area } };
+  const path = checkPath(item.path, area);
+  if (!path.ok) return path;
+  const base = { op, area, path: path.value };
+  switch (op) {
+    case 'file.state': {
+      if (item.hash !== null && (typeof item.hash !== 'string' || !HASH.test(item.hash))) return bad('bad hash');
+      if (!whole(item.size, 2 ** 40) || !whole(item.mtime, 2 ** 53)) return bad('bad size or time');
+      let sup: string[] = [];
+      if (item.sup !== undefined) {
+        if (!Array.isArray(item.sup) || item.sup.length > 4) return bad('bad sup');
+        for (const h of item.sup) if (typeof h !== 'string' || !(HASH.test(h) || h === 'del')) return bad('bad sup');
+        sup = item.sup as string[];
+      }
+      return { ok: true, value: { ...base, hash: item.hash, size: item.size, mtime: item.mtime, sup } };
+    }
+    case 'file.get':
+      if (typeof item.hash !== 'string' || !HASH.test(item.hash) || !whole(item.offset, 2 ** 40)) return bad('bad request');
+      return { ok: true, value: { ...base, hash: item.hash, offset: item.offset } };
+    case 'file.data':
+      if (typeof item.hash !== 'string' || !HASH.test(item.hash) || !whole(item.offset, 2 ** 40) || !whole(item.size, 2 ** 40)) {
+        return bad('bad chunk');
+      }
+      if (typeof item.last !== 'boolean') return bad('bad chunk');
+      if (typeof item.data !== 'string' || item.data.length > MAX_CHUNK_TEXT || !B64.test(item.data)) return bad('bad chunk data');
+      return { ok: true, value: { ...base, hash: item.hash, offset: item.offset, size: item.size, last: item.last, data: item.data } };
+    case 'file.gone':
+      if (typeof item.hash !== 'string' || !HASH.test(item.hash)) return bad('bad hash');
+      return { ok: true, value: { ...base, hash: item.hash } };
+    default:
+      return bad('bad op');
+  }
+}
+
 function checkItem(raw: unknown): Checked<BatchItem> {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return bad('item must be an object');
   const item = raw as Record<string, unknown>;
   for (const key of Object.keys(item)) if (ROOT_KEYS.has(key.toLowerCase())) return bad(`item may not carry "${key}"`);
   if (typeof item.op !== 'string' || !/^[a-z][a-z0-9._-]{0,31}$/.test(item.op)) return bad('bad op');
   if (item.op.startsWith('project.')) return checkProjectItem(item);
+  if (item.op.startsWith('file.')) return checkFileItem(item);
   if (!AREAS.includes(item.area as Area)) return bad('bad area');
   if (item.path !== undefined) {
     const path = checkPath(item.path, item.area as Area);

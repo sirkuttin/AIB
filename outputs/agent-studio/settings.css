@@ -1349,6 +1349,35 @@ html[data-ui-scaled] .st-page {
 .ps-linkto select {
   max-width: 180px;
 }
+/* Settings > Sync, a project's file status (pcsync-ui.js): one small line, the paused-delete buttons, and the held and conflict files. */
+.ps-files {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.ps-files-text {
+  color: var(--muted);
+}
+.ps-files-text.bad {
+  color: var(--st-note-bad-text);
+}
+.ps-small {
+  padding: 2px 8px;
+  font-size: 12px;
+}
+.ps-filelist {
+  flex-basis: 100%;
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+}
+.ps-file code {
+  word-break: break-all;
+}
 /* Settings > Model servers (settings-ui.js): the always-visible row icons (Check, Edit, Remove), the Use with switches and the add form. */
 .ms-icon {
   display: inline-flex;

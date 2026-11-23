@@ -43,6 +43,23 @@ test('matched projects: the line under a project says why it is matched', () => 
   assert.match(UI.howText({ how: 'remote', confirmed: true, missing: true }), /no longer on this PC/);
 });
 
+test('file status: one plain phrase per state, paused first, then syncing, conflicts, up to date', () => {
+  const ok = { state: 'ok', reason: '', pending: 0, conflicts: [], conflictCount: 0, held: [], pause: null };
+  assert.equal(UI.filesText(null, 'desk'), '');
+  assert.equal(UI.filesText({ ...ok, state: 'off' }, 'desk'), '');
+  assert.equal(UI.filesText(ok, 'desk'), 'Up to date');
+  assert.equal(UI.filesText({ ...ok, pending: 3 }, 'desk'), 'Syncing 3 files');
+  assert.equal(UI.filesText({ ...ok, pending: 1 }, 'desk'), 'Syncing 1 file');
+  assert.equal(UI.filesText({ ...ok, conflictCount: 1 }, 'desk'), '1 conflict');
+  assert.equal(UI.filesText({ ...ok, conflictCount: 2 }, 'desk'), '2 conflicts');
+  assert.equal(UI.filesText({ ...ok, pause: { deletes: 12, total: 12 }, pending: 4, conflictCount: 1 }, 'desk'), 'Paused: big delete');
+  assert.match(UI.filesText({ ...ok, state: 'wsl' }, 'desk'), /WSL projects comes in a later update/);
+  assert.match(UI.filesText({ ...ok, state: 'offline' }, 'desk'), /Waiting for desk/);
+  assert.match(UI.filesText({ ...ok, state: 'other_off' }, 'desk'), /off on desk/);
+  assert.equal(UI.filesText({ ...ok, state: 'blocked', reason: 'Git already tracks aib-shared.' }, 'desk'), 'Git already tracks aib-shared.');
+  assert.equal(UI.filesText({ ...ok, state: 'checking' }, 'desk'), 'Checking files.');
+});
+
 test('Settings has its own Sync section after Remote control, and search finds the card', () => {
   const ids = SET.SECTIONS.map((s) => s.id);
   assert.equal(ids[ids.indexOf('devices') + 1], 'sync');

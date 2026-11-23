@@ -54,6 +54,14 @@ export function pcsyncRoutes(): Map<string, Handler> {
     const link = ctx.pcsync.projects.setSwitch(body?.sync, body?.which, body?.on);
     return [200, { ok: true, sync: link.sync, docs: link.docs, shared: link.shared }];
   });
+  // a paused batch of deletes (slice V4): Allow applies it, Keep files keeps the files and sends them back
+  routes.set('POST /api/live/pcsync/projects/files', (ctx, _url, body) => {
+    if (body?.action !== 'allow' && body?.action !== 'keep') throw new ValueError('action must be allow or keep');
+    if (typeof body.sync !== 'string' || !ctx.pcsync.files.decide(body.sync, body.action)) {
+      throw new PairingError(409, 'not_paused', 'Nothing is waiting for a decision in that project.');
+    }
+    return [200, { ok: true }];
+  });
   for (const [key, handler] of routes) routes.set(key, wrap(handler));
   return routes;
 }

@@ -191,3 +191,65 @@ Deno.test('project items: a name, remote or place that could be a folder path is
   assertEquals(parseFrame(batchOf('sync-12345678', { op: 'project.link', mine: 'short', theirs: 'oid-87654321', how: 'remote' })).ok, false);
   assertEquals(parseFrame(batchOf('sync-12345678', { op: 'project.other' })).ok, false);
 });
+
+// ---- slice V4: file items and the switch --------------------------------------------------------------------------------------------
+const H = 'a'.repeat(64);
+const state = (over: Record<string, unknown> = {}) => ({ op: 'file.state', area: 'shared', path: 'notes/a.md', hash: H, size: 5, mtime: 1700000000000, sup: [], ...over });
+
+Deno.test('file items: begin, end, state, get, data and gone validate and keep only their own keys', () => {
+  const frame = batchOf(
+    'sync-12345678',
+    { op: 'file.begin', area: 'shared', x: 1 },
+    state({ junk: 'extra', sup: [H, 'del'] }),
+    state({ hash: null, size: 0 }),
+    { op: 'file.get', area: 'shared', path: 'a.md', hash: H, offset: 524288 },
+    { op: 'file.data', area: 'shared', path: 'a.md', hash: H, offset: 0, size: 3, last: true, data: 'YWJj', extra: 1 },
+    { op: 'file.gone', area: 'shared', path: 'a.md', hash: H },
+    { op: 'file.end', area: 'shared' },
+    { op: 'project.switch', shared: true, docs: false, junk: 1 },
+  );
+  const parsed = parseFrame(frame);
+  assert(parsed.ok);
+  const items = (parsed as { ok: true; value: { items: Record<string, unknown>[] } }).value.items;
+  assertEquals(items[0], { op: 'file.begin', area: 'shared' });
+  assertEquals(items[1], state({ sup: [H, 'del'] }), 'unknown keys are dropped');
+  assertEquals(items[4], { op: 'file.data', area: 'shared', path: 'a.md', hash: H, offset: 0, size: 3, last: true, data: 'YWJj' });
+  assertEquals(items[7], { op: 'project.switch', shared: true, docs: false });
+});
+
+Deno.test('file items: a bad path, hash, size, offset, chunk or switch is refused; the docs area is not accepted yet', () => {
+  const bad: unknown[] = [
+    state({ path: '/etc/passwd' }),
+    state({ path: '../x' }),
+    state({ path: 'C:/x' }),
+    state({ path: 'CON.md' }),
+    state({ hash: 'short' }),
+    state({ hash: 'A'.repeat(64) }),
+    state({ hash: undefined }),
+    state({ size: -1 }),
+    state({ size: 1.5 }),
+    state({ mtime: 'now' }),
+    state({ sup: 'x' }),
+    state({ sup: ['nothash'] }),
+    state({ sup: [H, H, H, H, H] }),
+    state({ area: 'docs', path: 'plan/doc.aibdoc' }),
+    state({ area: undefined }),
+    { op: 'file.get', area: 'shared', path: 'a.md', hash: H, offset: -1 },
+    { op: 'file.get', area: 'shared', path: 'a.md', hash: 'x', offset: 0 },
+    { op: 'file.data', area: 'shared', path: 'a.md', hash: H, offset: 0, size: 3, last: 'yes', data: 'YWJj' },
+    { op: 'file.data', area: 'shared', path: 'a.md', hash: H, offset: 0, size: 3, last: true, data: 'not base64!' },
+    { op: 'file.data', area: 'shared', path: 'a.md', hash: H, offset: 0, size: 3, last: true, data: 'A'.repeat(760_001) },
+    { op: 'file.data', area: 'shared', path: 'a.md', hash: H, offset: 0, size: 3, last: true },
+    { op: 'file.gone', area: 'shared', path: 'a.md' },
+    { op: 'file.other', area: 'shared', path: 'a.md' },
+    { op: 'file.get', area: 'shared', offset: 0, hash: H },
+    { op: 'project.switch', shared: 'yes', docs: false },
+    { op: 'project.switch', shared: true },
+  ];
+  for (const item of bad) assertEquals(parseFrame(batchOf('sync-12345678', item)).ok, false, JSON.stringify(item).slice(0, 120));
+  for (const key of ['root', 'folder', 'dir', 'abs']) assertEquals(parseFrame(batchOf('sync-12345678', state({ [key]: 'x' }))).ok, false, key);
+  // a full 512 KB chunk (699,052 base64 characters) fits one frame
+  const chunk = 'A'.repeat(699_052);
+  const full = parseFrame(batchOf('sync-12345678', { op: 'file.data', area: 'shared', path: 'a.bin', hash: H, offset: 0, size: 524288, last: false, data: chunk }));
+  assert(full.ok, 'a full chunk fits under the frame cap');
+});

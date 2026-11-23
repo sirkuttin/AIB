@@ -20,6 +20,7 @@ import { type Peer, PeerStore, type PublicPeer, publicPeer } from './peers.ts';
 import { SYNC_REASONS, SyncGate } from './gate.ts';
 import { type LinkHost, LinkManager, type LinkTimings } from './link.ts';
 import { ProjectSync, type SourceProject } from './projects.ts';
+import { FileSync, type FileTimings } from './files.ts';
 import { readRepoIdentity, type RepoIdentity } from './repo_id.ts';
 import { notReady, peekWslHost } from '../wsl/access.ts';
 import {
@@ -59,6 +60,8 @@ export interface PcSyncOptions {
   identity?: (project: SourceProject) => Promise<RepoIdentity | null>;
   /** How long a read of the projects' remotes is trusted (ms). */
   projectsTtlMs?: number;
+  /** Tests: the file engine's timings. */
+  files?: Partial<FileTimings>;
   /** Later slices: what a peer's batch frame goes to. */
   onBatch?: LinkHost['onBatch'];
   log?: (message: string) => void;
@@ -99,6 +102,8 @@ export async function projectIdentity(project: SourceProject): Promise<RepoIdent
 export class PcSync {
   readonly peers: PeerStore;
   readonly projects: ProjectSync;
+  /** The aib-shared file engine (files.ts). */
+  readonly files: FileSync;
   readonly pairing = new Pairing(
     () => Date.now() / 1000,
     'On the first PC, click Start a sync chain again.',
@@ -132,9 +137,14 @@ export class PcSync {
       online: async () => new Map((await tailnetPcs(this.options.runner)).map((p) => [p.host, p.online])),
       touch: (peer) => this.peers.touch(peer.id),
       log: (message) => this.options.log?.(message),
-      onUp: (peer) => void this.projects.onUp(peer),
+      onUp: (peer) => {
+        void this.projects.onUp(peer);
+        this.files.onUp(peer);
+      },
+      onDown: (peer) => this.files.onDown(peer),
       onBatch: (peer, batch) => {
         this.projects.onBatch(peer, batch);
+        this.files.onBatch(peer, batch);
         this.options.onBatch?.(peer, batch);
       },
     }, options.link);
@@ -147,7 +157,19 @@ export class PcSync {
       send: (peerId, batch) => this.links.sendBatch(peerId, batch),
       log: (message) => this.options.log?.(message),
       ttlMs: options.projectsTtlMs,
+      changed: () => void this.files.refresh(),
+      fileStatus: (sync) => this.files.status(sync),
     });
+    this.files = new FileSync(stateDir, {
+      links: () => this.projects.confirmedLinks(),
+      peers: () => this.peers.list(),
+      connected: (peerId) => this.links.state(peerId) === 'connected',
+      send: (peerId, batch) => this.links.sendBatch(peerId, batch),
+      own: () => (this.#ts?.name ? { host: this.#ts.name, name: this.#ts.machine } : null),
+      isWsl: (folder) => !!this.options.projects?.().find((p) => p.path === folder)?.wsl,
+      log: (message) => this.options.log?.(message),
+      settled: () => this.projects.settled(),
+    }, options.files);
     this.gate = new SyncGate(() => this.#ts?.name ?? '', () => this.#ts?.login ?? '');
   }
 
@@ -172,8 +194,10 @@ export class PcSync {
     if (this.peers.on && this.listening && !this.#closed) {
       this.links.start();
       this.links.ensure();
+      this.files.start();
     } else {
       this.links.stop();
+      this.files.stop();
     }
   }
 
@@ -181,6 +205,7 @@ export class PcSync {
     this.#closed = true;
     this.#joinRun++;
     this.links.stop();
+    this.files.stop();
     await this.#unlisten();
   }
 
@@ -264,6 +289,7 @@ export class PcSync {
     this.#server = null;
     this.#port = 0;
     this.links.stop();
+    this.files.stop();
     if (server) await server.shutdown().catch(() => {});
   }
 

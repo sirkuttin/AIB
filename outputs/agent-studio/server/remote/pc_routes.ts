@@ -581,6 +581,7 @@ export const PC_ROUTES: Readonly<Record<string, RemoteEntry>> = {
   'POST /api/live/pcsync/projects/confirm': PCSYNC,
   'POST /api/live/pcsync/projects/unlink': PCSYNC,
   'POST /api/live/pcsync/projects/switch': PCSYNC,
+  'POST /api/live/pcsync/projects/files': PCSYNC,
 };
 
 /** The entry for (method, path), or null: not a page route, so the bridge answers 404. */

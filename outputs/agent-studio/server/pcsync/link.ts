@@ -72,6 +72,8 @@ export interface LinkHost {
   touch(peer: Peer): void;
   /** A link to this peer just came up (called after the hello exchange is on the wire, so a frame sent from here follows it). */
   onUp?(peer: Peer): void;
+  /** The link to this peer ended (a close, an error, a drop, a stop). */
+  onDown?(peer: Peer): void;
   onBatch?(peer: Peer, batch: { id: string; project?: string; items: BatchItem[] }): void;
   log(message: string): void;
 }
@@ -381,7 +383,9 @@ export class LinkManager {
     link.gone = true;
     clearInterval(link.timer);
     clearTimeout(link.probe);
-    if (this.#links.get(link.peer.id) === link) this.#links.delete(link.peer.id);
+    const registered = this.#links.get(link.peer.id) === link;
+    if (registered) this.#links.delete(link.peer.id);
+    if (registered) this.host.onDown?.(link.peer);
     if (code) closeSocket(link.ws, code, reason);
     else closeSocket(link.ws, 1000, '');
     const wasCurrent = this.#running && this.#dialers.has(link.peer.id) && !this.#links.has(link.peer.id);

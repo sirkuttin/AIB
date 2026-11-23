@@ -119,6 +119,7 @@ Deno.test('the route table is exactly the Python web server\'s (paths, scopes an
     'POST /api/live/pcsync/projects/confirm',
     'POST /api/live/pcsync/projects/unlink',
     'POST /api/live/pcsync/projects/switch',
+    'POST /api/live/pcsync/projects/files',
     'POST /api/live/presence',
     'POST /api/live/desktop/windows', // multi-window K3
     'POST /api/live/artifacts/archive',
