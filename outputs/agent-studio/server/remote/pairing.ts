@@ -56,7 +56,13 @@ export class Pairing {
   claims = new Map<string, Claim>();
   #attempts: number[] = [];
 
-  constructor(readonly clock: () => number = () => Date.now() / 1000) {}
+  /** `again`: what the refusals tell the owner to do on the PC (Add a phone again; sync pairing says its own button); `gone`: the
+   * text for a claim that is no longer waiting. */
+  constructor(
+    readonly clock: () => number = () => Date.now() / 1000,
+    readonly again = 'On your PC, click Add a phone again.',
+    readonly gone = 'That phone is no longer waiting. Ask it to scan the code again.',
+  ) {}
 
   /** Open a new pairing (replaces one that is open). */
   start(): PairingCode {
@@ -101,10 +107,10 @@ export class Pairing {
     this.#limit();
     const c = this.code;
     if (!c || this.clock() >= c.expiresAt) {
-      throw new PairingError(410, 'expired', 'This code has expired. On your PC, click Add a phone again.');
+      throw new PairingError(410, 'expired', `This code has expired. ${this.again}`);
     }
     if (c.wrong >= MAX_WRONG) {
-      throw new PairingError(410, 'expired', 'This code no longer works after three wrong tries. On your PC, click Add a phone again.');
+      throw new PairingError(410, 'expired', `This code no longer works after three wrong tries. ${this.again}`);
     }
     const given = parseCode(input.code);
     if (!given || !sameBytes(given, c.secret)) {
@@ -113,13 +119,13 @@ export class Pairing {
         403,
         'wrong_code',
         c.wrong >= MAX_WRONG
-          ? 'Wrong code three times, so it no longer works. On your PC, click Add a phone again.'
+          ? `Wrong code three times, so it no longer works. ${this.again}`
           : 'That code is not right. Check the six words on your PC.',
       );
     }
     if (c.claimed) {
       c.anotherTried = true;
-      throw new PairingError(409, 'already_used', 'This code was already used by another device. On your PC, click Add a phone again.');
+      throw new PairingError(409, 'already_used', `This code was already used by another device. ${this.again}`);
     }
     const phoneNonce = typeof input.phoneNonce === 'string' && /^[0-9a-f]{32,64}$/.test(input.phoneNonce) ? input.phoneNonce : '';
     if (!phoneNonce) throw new PairingError(400, 'bad_request', 'The phone page sent an incomplete request. Reload it and try again.');
@@ -167,7 +173,7 @@ export class Pairing {
   approve(id: unknown, handover: NonNullable<Claim['handover']>): Claim {
     const c = this.get(id);
     if (!c || c.state !== 'pending') {
-      throw new PairingError(404, 'no_claim', 'That phone is no longer waiting. Ask it to scan the code again.');
+      throw new PairingError(404, 'no_claim', this.gone);
     }
     c.state = 'approved';
     c.handover = handover;

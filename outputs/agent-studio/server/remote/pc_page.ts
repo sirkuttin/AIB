@@ -119,6 +119,7 @@ export const PC_STATIC: Readonly<Record<string, string>> = (() => {
     'queue-ui.js',
     'updates-ui.js',
     'devices-ui.js',
+    'pcsync-ui.js',
     'allow-rules-ui.js',
     'settings-ui.js',
     'wsl-settings-ui.js',

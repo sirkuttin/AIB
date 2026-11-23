@@ -18,6 +18,7 @@
     { id: 'defaults', label: 'Defaults' },
     { id: 'notifications', label: 'Notifications' },
     { id: 'devices', label: 'Remote control' }, // id kept: old links to #devices still open it
+    { id: 'sync', label: 'Sync' }, // sync between your PCs, pairing (pcsync-ui.js)
     { id: 'allow', label: 'Allow rules' },
     { id: 'editors', label: 'Editors' },
     { id: 'keyboard', label: 'Keyboard' },
@@ -196,6 +197,12 @@
         'reminders',
         'notification',
       ],
+    },
+    {
+      id: 'sync-pcs',
+      section: 'sync',
+      label: 'Sync between your PCs',
+      keywords: ['sync', 'pair', 'pairing', 'chain', 'join', 'start a sync chain', 'tailscale', 'pc', 'aib-docs', 'aib-shared', 'docs', 'peers', 'remove'],
     },
     {
       id: 'allow-rules',
@@ -2460,6 +2467,8 @@
     notifications: renderNotifications,
     'devices-access': (box) => renderDevices('access', box),
     'devices-phones': (box) => renderDevices('phones', box),
+    'sync-pcs': (box) =>
+      root.AIBPcSyncUI ? root.AIBPcSyncUI.render(box, S.host) : box.append(note('This part could not be drawn: pcsync-ui.js is missing.', 'bad')),
     'allow-rules': (box) =>
       root.AllowRulesUI ? root.AllowRulesUI.renderSettings(box, S.host) : box.append(note('This part could not be drawn: allow-rules-ui.js is missing.', 'bad')),
     editors: renderEditors,
@@ -2487,6 +2496,7 @@
     notifications: 'Notifications',
     'devices-access': 'Phone access',
     'devices-phones': 'Phones',
+    'sync-pcs': 'Sync between your PCs',
     editors: 'Editors',
     keyboard: 'Keyboard shortcuts',
     theme: 'Theme',

@@ -387,6 +387,7 @@ export async function main(argv: string[]): Promise<void> {
   // In the background: a busy port is retried for ~20 s and then reported in Devices, never swapped for another.
   ctx.phone.options.log = (m) => log.announce('studio', 'phone access: %s', m);
   void ctx.phone.start();
+  void ctx.pcsync.start(); // sync between PCs (Settings > Sync): listens again when it was on
   // "Needs you" and "finished", decided here (not by the page), so desktop notifications and phone pushes come with the window
   // closed; the same in-process, with the keeper and with a split agent host (attention/watcher.ts).
   const attention = startAttention(ctx);

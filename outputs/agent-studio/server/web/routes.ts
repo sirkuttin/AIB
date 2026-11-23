@@ -81,6 +81,16 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   POST /api/live/devices/tailscale/run      Settings > Remote control: a setup button {action, replace?, confirm?} (202 + job)
  *   GET  /api/live/devices/tailscale/job      Settings > Remote control: the running or last setup job
  *   POST /api/live/devices/tailscale/cancel   Settings > Remote control: Cancel on a setup job
+ *   GET  /api/live/pcsync                     Settings > Sync: this PC's sync state, the pairing, the paired PCs (pcsync_routes.ts)
+ *   GET  /api/live/pcsync/devices             Settings > Sync: your other Tailscale devices to join from
+ *   POST /api/live/pcsync/on                  Settings > Sync: turn sync on or off on this PC {on}
+ *   POST /api/live/pcsync/start               Settings > Sync: Start a sync chain (six words)
+ *   POST /api/live/pcsync/cancel              Settings > Sync: Cancel the open code or a join
+ *   POST /api/live/pcsync/approve             Settings > Sync: Approve the PC that claimed the code {claim}
+ *   POST /api/live/pcsync/reject              Settings > Sync: Reject it {claim}
+ *   POST /api/live/pcsync/join                Settings > Sync: Join a sync chain {host, code}
+ *   POST /api/live/pcsync/share               Settings > Sync: Share sync on Tailscale (https 8444)
+ *   POST /api/live/pcsync/remove              Settings > Sync: Remove a paired PC {id}
  *   POST /api/live/presence                   the page: window focus, time since the last input, open chats, per window (attention/presence.ts K2)
  *   POST /api/live/desktop/windows            open / pop out / route to / focus / close an AIB window (windows_route.ts K3; page only)
  *   POST /api/live/artifacts/archive          archive / unarchive artifacts (the page, or an agent for its own chat's: agent key)
@@ -194,6 +204,16 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['POST', '/api/live/devices/tailscale/run', 'write', 'body'],
   ['GET', '/api/live/devices/tailscale/job', 'write', 'get'],
   ['POST', '/api/live/devices/tailscale/cancel', 'write', 'body'],
+  ['GET', '/api/live/pcsync', 'read', 'get'],
+  ['GET', '/api/live/pcsync/devices', 'read', 'get'],
+  ['POST', '/api/live/pcsync/on', 'write', 'body'],
+  ['POST', '/api/live/pcsync/start', 'write', 'body'],
+  ['POST', '/api/live/pcsync/cancel', 'write', 'body'],
+  ['POST', '/api/live/pcsync/approve', 'write', 'body'],
+  ['POST', '/api/live/pcsync/reject', 'write', 'body'],
+  ['POST', '/api/live/pcsync/join', 'write', 'body'],
+  ['POST', '/api/live/pcsync/share', 'write', 'body'],
+  ['POST', '/api/live/pcsync/remove', 'write', 'body'],
   ['POST', '/api/live/presence', 'write', 'body'],
   ['POST', '/api/live/desktop/windows', 'write', 'body'], // multi-window K3: page token only, 2 KB, 10 per 10 s
   ['POST', '/api/live/artifacts/archive', 'artifacts.tool', 'own-gate'],

@@ -52,6 +52,8 @@ import { InboxService } from '../attention/inbox.ts';
 import { inboxAct } from '../attention/inbox_act.ts';
 import type { DeviceStore } from '../remote/devices.ts';
 import { devicesRoutes } from './devices_routes.ts';
+import { pcsyncRoutes } from './pcsync_routes.ts';
+import { PcSync, type PcSyncOptions } from '../pcsync/service.ts';
 import { PageAccess } from './page_access.ts';
 import { type DesktopWindows, MAX_WINDOWS_BODY, WINDOW_ID } from '../desktop/windows_contract.ts';
 import { WindowsRoute } from './windows_route.ts';
@@ -247,6 +249,8 @@ export interface WebContext {
   desktopNotify: DesktopNotifications | null;
   /** Phone access (remote/access.ts): the switch, Tailscale checks, the phone port, pairing. Settings > Remote control. */
   phone: PhoneAccess;
+  /** Sync between your PCs, pairing (pcsync/service.ts). Settings > Sync. Its peers are their own file, never devices.json. */
+  pcsync: PcSync;
   /** The paired phones (<state>/devices.json; remote/devices.ts), the same store phone.devices holds. */
   devices: DeviceStore;
   /** K4: the desktop app's windows (desktop/windows_contract.ts), set by main.ts in the app; null in serve mode (and until Phase
@@ -430,6 +434,12 @@ export class WebServer {
     for (const [key, handler] of docsRoutes()) {
       this.native.set(key, async (c, url, body) => {
         const [status, payload] = await handler(c, url, body);
+        return this.json(status, payload);
+      });
+    }
+    for (const [key, handler] of pcsyncRoutes()) {
+      this.native.set(key, async (c, url, body, request) => {
+        const [status, payload] = await handler(c, url, body, request);
         return this.json(status, payload);
       });
     }
@@ -755,6 +765,7 @@ export class WebServer {
     globalThis.removeEventListener('unload', this.#onUnload);
     if (release) await this.ctx.terminals.releaseAll();
     else await this.ctx.terminals.endAll();
+    await this.ctx.pcsync.close().catch(() => {});
     await this.ctx.docs.close();
     this.ctx.liveFiles?.close(); // unsaved text is kept in the store (hot exit); quitting never asks
     await this.#server?.shutdown();
@@ -800,6 +811,8 @@ export function makeContext(
     stores?: { conversations?: ConversationState; projectPrefs?: ProjectPrefs; readState?: ReadState; settings?: SettingsStore };
     /** Phone access options (tests: a fake Tailscale CLI, a short bind retry). */
     phone?: AccessOptions;
+    /** Sync between PCs options (tests: a fake Tailscale CLI, the listener port, where a peer is dialed). */
+    pcsync?: PcSyncOptions;
     /** The OS backend for keep-awake (tests: a recording one, or null); default: the real one for this OS (none in a test run). */
     keepAwakeBackend?: Backend | null;
     /** The launch key (page_access.ts): a launcher's fixed key (AIB_PAGE_KEY, tests); default: none, every key one-time. */
@@ -838,6 +851,7 @@ export function makeContext(
     desktopNotify: null,
     phone: null as unknown as PhoneAccess,
     devices: null as unknown as DeviceStore,
+    pcsync: new PcSync(options.stateDir, options.pcsync),
     presence: new Presence(),
     inbox: null as unknown as InboxService,
     desktopWindows: null,

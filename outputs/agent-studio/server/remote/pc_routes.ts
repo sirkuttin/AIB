@@ -315,6 +315,7 @@ function fileIdVerdict(ask: Ask): Verdict {
 // ---- the table -----------------------------------------------------------------------------------------------------------------
 
 const DEVICES = never('Remote control and devices are changed on the PC only');
+const PCSYNC = never('Sync between PCs is set up on the PC itself');
 const AGENT_KEY = never("an agent's own tool route (its key), never a device");
 const SETTINGS = never('Settings and programs are changed on the PC only (v1)');
 const DESK_SCREEN = never("acts on the PC's own screen or disk outside the projects");
@@ -564,6 +565,16 @@ export const PC_ROUTES: Readonly<Record<string, RemoteEntry>> = {
   'POST /api/live/devices/tailscale/run': DEVICES,
   'GET /api/live/devices/tailscale/job': DEVICES,
   'POST /api/live/devices/tailscale/cancel': DEVICES,
+  'GET /api/live/pcsync': PCSYNC,
+  'GET /api/live/pcsync/devices': PCSYNC,
+  'POST /api/live/pcsync/on': PCSYNC,
+  'POST /api/live/pcsync/start': PCSYNC,
+  'POST /api/live/pcsync/cancel': PCSYNC,
+  'POST /api/live/pcsync/approve': PCSYNC,
+  'POST /api/live/pcsync/reject': PCSYNC,
+  'POST /api/live/pcsync/join': PCSYNC,
+  'POST /api/live/pcsync/share': PCSYNC,
+  'POST /api/live/pcsync/remove': PCSYNC,
 };
 
 /** The entry for (method, path), or null: not a page route, so the bridge answers 404. */

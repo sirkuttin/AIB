@@ -18,7 +18,7 @@ import { dpapiProtect, dpapiUnprotect, fromBase64, toBase64 } from './secrets.ts
 
 export const SEALED_PREFIX = 'dpapi:v1:';
 
-export type SealPurpose = 'keeper-token' | 'agent-host-token' | 'artifact-key-secret' | 'mcp-forward-headers' | 'hook-key' | 'artifact-key';
+export type SealPurpose = 'pcsync-peer-token' | 'keeper-token' | 'agent-host-token' | 'artifact-key-secret' | 'mcp-forward-headers' | 'hook-key' | 'artifact-key';
 
 const utf8 = new TextEncoder();
 const fromUtf8 = new TextDecoder('utf-8', { fatal: true });

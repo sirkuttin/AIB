@@ -13,6 +13,7 @@ import { openSource, type Source } from '../../outputs/agent-studio/server/trans
 import { projectKey } from '../../outputs/agent-studio/server/desktop/project_delete.ts';
 import type { Runner } from '../../outputs/agent-studio/server/remote/tailscale.ts';
 import type { AccessOptions } from '../../outputs/agent-studio/server/remote/access.ts';
+import type { PcSyncOptions } from '../../outputs/agent-studio/server/pcsync/service.ts';
 import { readRemotePort, saveRemotePort } from '../../outputs/agent-studio/server/remote/port.ts';
 
 // test mode: the Tailscale and setup fakes are read, and no real Tailscale, winget, msiexec or browser can be reached
@@ -239,7 +240,7 @@ export function writeSavedChat(claudeDir: string, project: string, spec: SavedCh
 
 /** An in-process Studio (page port 0) with a fake agent host the test fills; phone access options come from the test.
  * `saved`: real saved transcripts (a Claude Code folder under the root) and one added project, `project`, they belong to. */
-export async function remoteStudio(phone: AccessOptions = {}, root?: string, extra: { saved?: boolean } = {}) {
+export async function remoteStudio(phone: AccessOptions = {}, root?: string, extra: { saved?: boolean; pcsync?: PcSyncOptions } = {}) {
   root ??= await tempDir('aib-remote-');
   const state = `${root}${sep}state`;
   await Deno.mkdir(state, { recursive: true });
@@ -339,6 +340,7 @@ export async function remoteStudio(phone: AccessOptions = {}, root?: string, ext
     ompSessions: state,
     shutdown: () => {},
     phone: { bindRetryMs: 1500, ...phone },
+    pcsync: extra.pcsync,
     pageKey: PAGE_KEY, // a browser on chat.html carries it in its link (_doc_browser.ts Page.goto)
   });
   const web = new WebServer(ctx);
