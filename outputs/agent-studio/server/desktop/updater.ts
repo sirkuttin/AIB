@@ -659,6 +659,18 @@ export async function readLimited(url: string, accept: string, limit: number, fe
   return out;
 }
 
+/**
+ * Linux and macOS: the file, its version folder and the updates folder end up writable by their owner alone. They take the process's
+ * umask, and the common one (002, Ubuntu's own) makes them group-writable; the .deb installer (tools/linux/aib-install-deb.sh) runs as
+ * root and refuses any of the three that others can write ("can be written by others"). Windows has no such modes.
+ */
+export function closeToOthers(root: string, folder: string, file: string): void {
+  if (WINDOWS) return;
+  Deno.chmodSync(root, 0o755);
+  Deno.chmodSync(folder, 0o755);
+  Deno.chmodSync(file, 0o644);
+}
+
 /** Stream an asset to dest (via a .part file); returns its SHA-256. Refuses a web page where a file should be. */
 export async function downloadTo(url: string, dest: string, limit: number, fetchFn?: FetchFn): Promise<string> {
   const response = await httpOpen(url, 'application/octet-stream', fetchFn);
@@ -1517,7 +1529,13 @@ export class UpdateService {
 
   async #download(found: Found): Promise<void> {
     const got = this.state.downloaded;
-    if (got && got.version === found.version && isFile(got.path ?? '') && await fileSha256(got.path) === got.sha256) return;
+    if (got && got.version === found.version && isFile(got.path ?? '') && await fileSha256(got.path) === got.sha256) {
+      // Already here (a file an earlier build saved with the process's umask: group-writable, refused by the root installer): close it
+      try {
+        closeToOthers(this.root, parentOf(got.path), got.path);
+      } catch { /* not ours to change: the installer will say so */ }
+      return;
+    }
     const folder = join(this.root, found.version);
     await Deno.mkdir(folder, { recursive: true });
     try {
@@ -1539,6 +1557,7 @@ export class UpdateService {
     const have = found.feed
       ? await copyFeedFile(found.installer.url, dest, MAX_INSTALLER_BYTES)
       : await downloadTo(found.installer.url, dest, MAX_INSTALLER_BYTES, this.fetch);
+    closeToOthers(this.root, folder, dest);
     if (have !== want) {
       await Deno.remove(dest).catch(() => {});
       throw new UpdateError(
@@ -1739,6 +1758,9 @@ export class UpdateService {
       real = Deno.realPathSync(path); // aib-install-deb refuses a path that goes through a link
       if (home) home = Deno.realPathSync(home);
     } catch { /* checked as given */ }
+    try {
+      closeToOthers(this.root, parentOf(real), real); // a download an older build saved group-writable: the root script refuses it
+    } catch { /* not ours to change: the root script will say so */ }
     const argv = this.debArgs(real, home, String(got.version ?? ''));
     if (!argv) {
       log.info('update: %s is not where aib-install-deb accepts an update (in the home folder); install it by hand', real);

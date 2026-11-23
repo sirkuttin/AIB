@@ -5,6 +5,7 @@
  * The keeper step: Go target names and build flags per target, adding the keeper to a .deb and an AppImage (multi-block file),
  * and (when Go is installed) a real keeper build for this machine that answers `version`.
  */
+import { createHash } from "node:crypto";
 import { assert, assertEquals, assertRejects, assertThrows } from "./_assert.ts";
 import {
   APP_VERSION,
@@ -70,6 +71,8 @@ import {
   fixAppImage,
   fixDeb,
   fixDesktopEntry,
+  strayDesktopEntry,
+  updateMd5sums,
   readAr,
   readSqFile,
   readSquashfs,
@@ -472,6 +475,36 @@ Deno.test("fixDeb completes the menu entry when it is given a comment", async ()
   } finally {
     Deno.removeSync(dir, { recursive: true });
   }
+});
+
+Deno.test("the .deb leaves out the stray desktop entry in usr/lib and keeps its md5sums true", async () => {
+  assert(strayDesktopEntry("usr/lib/aib/dev.aib.app.desktop"));
+  assert(!strayDesktopEntry("usr/share/applications/aib.desktop"), "the menu entry stays");
+  assert(!strayDesktopEntry("usr/lib/aib/aib"));
+  const md5 = (t: string) => [...new Uint8Array(createHash("md5").update(te.encode(t)).digest())].map((b) => b.toString(16).padStart(2, "0")).join("");
+  const menu = "[Desktop Entry]\nName=aib\nExec=aib\n";
+  const stray = "[Desktop Entry]\nName=aib\nExec=aib\nIcon=AppIcon\n";
+  const data = tarOf([["./usr/lib/aib/aib", "program"], ["./usr/lib/aib/dev.aib.app.desktop", stray], ["./usr/share/applications/aib.desktop", menu]]);
+  const sums = `${md5("program")}  usr/lib/aib/aib\n${md5(stray)}  usr/lib/aib/dev.aib.app.desktop\n${md5(menu)}  usr/share/applications/aib.desktop\n`;
+  const control = tarOf([["./md5sums", sums]]);
+  const dir = Deno.makeTempDirSync({ prefix: "aib-build-deb-" });
+  try {
+    const deb = `${dir}/aib.deb`;
+    Deno.writeFileSync(deb, arOf([["debian-binary", te.encode("2.0\n")], ["control.tar.gz", await gz(control, "gzip")], ["data.tar.gz", await gz(data, "gzip")]]));
+    assertEquals(await fixDeb(deb, "AIB", "dev.aib.app", "Does things"), ["usr/share/applications/aib.desktop", "dropped usr/lib/aib/dev.aib.app.desktop"]);
+    const members = readAr(Deno.readFileSync(deb));
+    const files = td.decode(await gz(members[2].data, "gunzip"));
+    assert(!files.includes("dev.aib.app.desktop"), "the stray entry is gone from the package");
+    assert(files.includes("usr/share/applications/aib.desktop") && files.includes("Comment=Does things"), "the menu entry stays, completed");
+    const out = td.decode(await gz(members[1].data, "gunzip"));
+    const newMenu = menu.replace("Name=aib", "Name=AIB") + "Comment=Does things\nTerminal=false\nStartupNotify=true\nStartupWMClass=dev.aib.app\n";
+    assert(out.includes(`${md5("program")}  usr/lib/aib/aib\n`), "an untouched file keeps its sum");
+    assert(!out.includes("dev.aib.app.desktop"), "the dropped file has no sum line");
+    assert(out.includes(`${md5(newMenu)}  usr/share/applications/aib.desktop\n`), "the rewritten file has its new sum");
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+  }
+  assertEquals(updateMd5sums("", new Map(), []), "\n");
 });
 
 /** A ustar archive of regular files (what deno desktop's data.tar holds, minus folders and links). */

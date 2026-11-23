@@ -127,7 +127,7 @@ export class Lab {
   /** A new live chat with the scripted agent (its own sub-folder of the workspace, so two chats can share or not). */
   /** ownCopy: a chat in its own copy, as AIB made them before 2026-11-16 (needs open(..., {AIB_TEST_COPY_CHATS: '1'})). */
   async chat(folder = '', options: { ownCopy?: boolean } = {}): Promise<Chat> {
-    const cwd = folder ? `${this.fx.workspace}\\${folder}` : this.fx.workspace;
+    const cwd = folder ? `${this.fx.workspace}/${folder}` : this.fx.workspace;
     if (folder) Deno.mkdirSync(cwd, { recursive: true });
     const body = { provider: 'claude', cwd, background: true, ...(options.ownCopy ? { ownCopy: true } : {}) };
     const [status, connection] = await this.web.post('connect', body);
@@ -145,13 +145,13 @@ export class Lab {
       sid,
       key: `claude:${sid}`,
       start: async () => {
-        file = `${this.fx.root}\\script-${++this.#scripts}.jsonl`;
+        file = `${this.fx.root}/script-${++this.#scripts}.jsonl`;
         Deno.writeTextFileSync(file, '');
         const [s, body] = await this.web.post('prompt', { id, text: `script:${file}`, clientMessageId: `t${this.#scripts}` });
         if (s !== 200) throw new Error(`prompt: ${s} ${JSON.stringify(body)}`);
       },
       nextPrompt: () => {
-        file = `${this.fx.root}\\script-${++this.#scripts}.jsonl`;
+        file = `${this.fx.root}/script-${++this.#scripts}.jsonl`;
         Deno.writeTextFileSync(file, '');
         return `script:${file}`;
       },

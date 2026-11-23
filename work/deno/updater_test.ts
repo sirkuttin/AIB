@@ -527,6 +527,30 @@ Deno.test("found, downloaded, verified", async () => {
   assert(fake.requests.includes("/repos/acme/aib/releases?per_page=30"));
 });
 
+Deno.test({
+  name: "a downloaded installer, its version folder and the updates folder are not writable by group or others, whatever the umask",
+  ignore: WINDOWS,
+  async fn() {
+    const before = Deno.umask(0o002); // Ubuntu's default: new files are 664 and folders 775, which the root installer refuses
+    try {
+      using env = new Env();
+      await using fake = await FakeGitHub.start();
+      env.base(fake.base);
+      const st = await env.service().check();
+      assertEquals(st.state, "ready");
+      const file = (st.available as Record<string, string>).path;
+      const folder = file.slice(0, file.lastIndexOf("/"));
+      const updates = folder.slice(0, folder.lastIndexOf("/"));
+      for (const path of [file, folder, updates]) {
+        assertEquals(Deno.statSync(path).mode! & 0o022, 0, `${path} is writable by others`);
+      }
+      assertEquals(Deno.statSync(file).mode! & 0o777, 0o644);
+    } finally {
+      Deno.umask(before);
+    }
+  },
+});
+
 Deno.test("a hash mismatch is refused and deleted; a missing line is refused; no SHA256SUMS asset is not offered", async () => {
   {
     using env = new Env();
@@ -1581,7 +1605,11 @@ Deno.test("installTarget: the folder of AIB.exe, the .app bundle, $APPIMAGE", ()
     kind: "appimage",
     target: "/home/u/AIB.AppImage",
   });
-  assertEquals(installTarget("linux", "/usr/bin/aib", {}), null, "a .deb install updates by hand");
+  // dpkg's answer is passed in: on a machine that has AIB installed as a .deb the real one says yes, whatever the test is about
+  assertEquals(installTarget("linux", "/usr/bin/aib", {}, () => false), null, "a program dpkg does not own updates by hand");
+  assertEquals(installTarget("linux", "/usr/bin/aib", {}, () => true), { kind: "deb", target: "/usr/lib/aib/aib" }, "a .deb install updates itself");
+  assertEquals(installTarget("linux", "/usr/lib/aib/aib", {}, () => true), { kind: "deb", target: "/usr/lib/aib/aib" });
+  assertEquals(installTarget("linux", "/opt/other/aib", {}, () => true), null, "not the packaged program");
   assertEquals(installTarget("freebsd", "/x", {}), null);
 });
 

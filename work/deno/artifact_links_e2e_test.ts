@@ -157,8 +157,8 @@ Deno.test({
       Deno.writeTextFileSync(far, '<!doctype html><h1>Far</h1>');
       const [ps, made] = await lab.web.post('artifacts/publish', { conversationId: farChat, path: far, title: 'Far page' });
       assert(ps === 200, `publish: ${ps} ${JSON.stringify(made)}`);
-      const [bs, by] = await lab.web.get(`/api/live/artifacts/by-source?paths=${encodeURIComponent(JSON.stringify([far.toUpperCase()]))}`);
-      assertEquals([bs, (by.artifact as Record<string, unknown> | null)?.id], [200, made.id], 'the route finds it (Windows: any case)');
+      const [bs, by] = await lab.web.get(`/api/live/artifacts/by-source?paths=${encodeURIComponent(JSON.stringify([Deno.build.os === 'windows' ? far.toUpperCase() : far]))}`);
+      assertEquals([bs, (by.artifact as Record<string, unknown> | null)?.id], [200, made.id], 'the route finds it (Windows: any case; elsewhere paths are case-sensitive, so the same case)');
       chat.say(`\n\nThe other chat made ${far} FARREADY`);
       await shown(page, 'FARREADY');
       await page.waitFor(`!!${byAbs(far)}`, 20000, 'the far link');

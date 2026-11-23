@@ -9,6 +9,7 @@
  *              is, the metadata (inodes, directories, fragment and id tables) is written anew with zstd, and changed files get a
  *              new uncompressed data block. The AppImage runtime (the ELF in front) is kept.
  */
+import { createHash } from 'node:crypto';
 import { zstdCompressSync, zstdDecompressSync } from 'node:zlib';
 
 // ---- desktop entries ---------------------------------------------------------------------------------------------------
@@ -109,14 +110,17 @@ export function editTar(
   want: (path: string) => boolean,
   edit: (path: string, data: Uint8Array) => Uint8Array,
   mode?: (path: string, data: Uint8Array) => number | null,
+  drop?: (path: string) => boolean,
 ): {
   tar: Uint8Array;
   edited: string[];
   modes: string[];
+  dropped: string[];
 } {
   const parts: Uint8Array[] = [];
   const edited: string[] = [];
   const modes: string[] = [];
+  const dropped: string[] = [];
   const checksum = (header: Uint8Array) => {
     header.fill(0x20, 148, 156);
     const sum = header.reduce((a, b) => a + b, 0);
@@ -145,6 +149,11 @@ export function editTar(
     }
     path = path.replace(/^\.\//, '');
     const regular = type === '0' || type === '\0';
+    if (regular && drop?.(path)) { // the entry (header and data) is left out of the archive
+      dropped.push(path);
+      p += 512 + padded;
+      continue;
+    }
     const want_ = regular && mode ? mode(path, body) : null;
     const had = parseInt(field(100, 8).trim() || '0', 8);
     if (want_ !== null && (had & 0o7777) !== want_) {
@@ -168,8 +177,15 @@ export function editTar(
     }
     p += 512 + padded;
   }
-  return { tar: concat(parts), edited, modes };
+  return { tar: concat(parts), edited, modes, dropped };
 }
+
+/**
+ * The copy of the app's desktop entry that `deno desktop` also puts next to the program (usr/lib/aib/dev.aib.app.desktop). Nothing
+ * reads it: the menu and the dock use usr/share/applications/aib.desktop (a run of the installed app under strace opened no .desktop
+ * file, with this one present or removed), and nothing searches usr/lib. The .deb leaves it out.
+ */
+export const strayDesktopEntry = (path: string): boolean => /^usr\/lib\/[^/]+\/[^/]+\.desktop$/.test(path);
 
 /** Sets Name=<name> in every desktop entry of a .deb and the modes wantedMode asks for (rewritten in place). Returns the changes. */
 export async function fixDeb(path: string, name: string, wmClass?: string, comment?: string): Promise<string[]> {
@@ -181,16 +197,52 @@ export async function fixDeb(path: string, name: string, wmClass?: string, comme
       `${path}: ${data.name} is not supported (only data.tar.gz)`,
     );
   }
-  const { tar, edited, modes } = editTar(
+  const written = new Map<string, Uint8Array>();
+  const { tar, edited, modes, dropped } = editTar(
     await gunzip(data.data),
     (p) => /^usr\/.*\.desktop$/.test(p),
-    (_p, body) => enc.encode(fixDesktopEntry(dec.decode(body), name, wmClass, comment)),
+    (p, body) => {
+      const out = enc.encode(fixDesktopEntry(dec.decode(body), name, wmClass, comment));
+      written.set(p, out);
+      return out;
+    },
     (p, body) => wantedMode(p, body.subarray(0, 4)),
+    strayDesktopEntry,
   );
-  if (!edited.length && !modes.length) return [];
+  if (!edited.length && !modes.length && !dropped.length) return [];
   data.data = await gzip(tar);
+  // dpkg --verify and debsums compare the files with the package's md5sums: keep them true for what changed here
+  const control = members.find((m) => m.name === 'control.tar.gz');
+  if (control && (edited.length || dropped.length)) {
+    try {
+      control.data = await gzip(
+        editTar(
+          await gunzip(control.data),
+          (p) => p === 'md5sums',
+          (_p, body) => enc.encode(updateMd5sums(dec.decode(body), written, dropped)),
+        ).tar,
+      );
+    } catch { /* a control member that is not a gzip tar (a test's stand-in): the sums stay as they were, which only a verify run notices */ }
+  }
   await Deno.writeFile(path, writeAr(members));
-  return [...edited, ...modes.map((m) => `mode ${m}`)];
+  return [...edited, ...modes.map((m) => `mode ${m}`), ...dropped.map((d) => `dropped ${d}`)];
+}
+
+/** An md5sums file with the sums of the rewritten files recomputed and the lines of dropped files removed (pure). */
+export function updateMd5sums(text: string, written: Map<string, Uint8Array>, dropped: string[]): string {
+  const gone = new Set(dropped);
+  const out: string[] = [];
+  for (const line of text.split('\n')) {
+    const m = line.match(/^([0-9a-f]{32})  (.+)$/);
+    if (!m) {
+      if (line) out.push(line);
+      continue;
+    }
+    if (gone.has(m[2])) continue;
+    const body = written.get(m[2]);
+    out.push(body ? `${createHash('md5').update(body).digest('hex')}  ${m[2]}` : line);
+  }
+  return out.join('\n') + '\n';
 }
 
 /**
