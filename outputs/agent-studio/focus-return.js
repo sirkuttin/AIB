@@ -1,6 +1,7 @@
 'use strict';
 /* Where the keyboard focus goes back to when something that floated over the chat page closes (a menu, a card you answered, a
-   dialog, the image viewer, the file picker): the place you were typing in before it opened, normally the message box (#prompt).
+   dialog, the image viewer, the file picker, a queued message's card): the place you were typing in before it opened, normally
+   the message box (#prompt).
 
    The page keeps one note, `home`: the last text box you were in (a textarea, a text input, an editable area), or the last control
    you reached with the keyboard (Tab), outside any popup. A button that took the focus only because the mouse pressed it (a chip,
@@ -15,7 +16,7 @@
    Nothing happens when the focus is anywhere else (you clicked or tabbed somewhere on purpose). */
 (function (root) {
   const POPUP =
-    '[role="menu"], [role="listbox"], [role="dialog"], [role="alertdialog"], dialog, .send-menu, .chip-menu, #approvals, #questions, #authPrompts, #setupQuestions';
+    '[role="menu"], [role="listbox"], [role="dialog"], [role="alertdialog"], dialog, .send-menu, .chip-menu, #approvals, #questions, #authPrompts, #setupQuestions, #queueBox';
   // .sf-code-host: the file editor's shadow host (files-ui.js): focus events see the host, not the editable text inside it
   const TEXT = 'textarea, input:not([type]), input[type="text"], input[type="search"], [contenteditable="true"], [contenteditable=""], .sf-code-host';
   let home = null, // the place to come back to

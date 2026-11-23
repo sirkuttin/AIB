@@ -4250,6 +4250,8 @@
       startingNew = false;
       if (newDraft && !selected) renderNewChat();
       else if (selected) renderHeader();
+      // the box is where you type the next line: starting the chat disabled it, which dropped the caret (start page Enter)
+      if (newDraft || selected) composerFocusBack();
     }
   }
   // Plain text with its http(s) links clickable (only those two schemes; the text itself is never read as markup).

@@ -9,6 +9,10 @@
  *       card you answered, the title rename (Enter, Escape), Ctrl+K, a composer chip's menu opened with the mouse (Escape, a pick),
  *       the image viewer, the file picker (its change and cancel). Was: the focus fell to the page (the Send button it went to
  *       was disabled; the answered card was removed) or stayed on the chip / the title. The common part: focus-return.js.
+ *   C3  a queued message gives the focus back when its line goes away: ✕ remove, the ✎ editor closed with Escape, ↑ send now.
+ *       Was: the queue card (#queueBox) was not one of focus-return.js's popups, so its buttons left the focus on the page.
+ *   C4  the first message of a new chat, sent with Enter on the New chat page, leaves you in the box. Was: starting the chat
+ *       disabled the box (renderNewChat's `startingNew`) and startNewChat's finally never gave the focus back.
  */
 import { assert } from './_assert.ts';
 import { browserPath, clickHere, Lab, type Page, settle, shown } from './_scroll_lab.ts';
@@ -162,4 +166,55 @@ e2e('C2 a popup that closes gives the focus back to the message box', async (lab
   }
   chat.end();
   assert(!bad.length, bad.join('\n'));
+});
+
+e2e('C3 a queued message gives the focus back when its line goes away', async (lab) => {
+  const page = lab.page;
+  const chat = await lab.chat();
+  await lab.select(chat);
+  await chat.start();
+  chat.say('working WORKING');
+  await shown(page, 'WORKING');
+  await settle(1800);
+  const bad: string[] = [];
+  const check = async (what: string, ms = 1000) => {
+    await settle(ms);
+    if (!(await inBox(page))) bad.push(`${what}: focus on ${await page.eval(ACTIVE)}`);
+  };
+  const queue = async (text: string) => {
+    await clickHere(page, '#prompt');
+    await page.type(text);
+    await page.key('Enter', 1); // Alt: "after this turn"
+    await settle(1200);
+  };
+  const qbtn = (n: number) => `.q-row .q-actions button:nth-of-type(${n})`; // the order in the row: ✎, ↑, ✕
+  await queue('queued one');
+  await check('Alt+Enter into the queue');
+  await page.waitFor(`!!document.querySelector('.q-row .q-actions button')`, 8000, 'the queued line');
+  await clickHere(page, qbtn(3));
+  await check('queue line removed');
+  await queue('queued two');
+  await page.waitFor(`!!document.querySelectorAll('.q-row .q-actions button')[0]`, 8000, 'the second queued line');
+  await clickHere(page, qbtn(1));
+  await page.waitFor(`!!document.querySelector('.q-area')`, 8000, 'the queue editor');
+  await page.key('Escape');
+  await check('queue editor, Escape', 1200);
+  await queue('queued three');
+  await page.waitFor(`!!document.querySelectorAll('.q-row .q-actions button')[1]`, 8000, 'the third queued line');
+  await clickHere(page, qbtn(2));
+  await check('queue line sent now', 1500);
+  chat.end();
+  assert(!bad.length, bad.join('\n'));
+});
+
+e2e('C4 the first message of a new chat leaves you in the message box', async (lab) => {
+  const page = lab.page;
+  await page.eval(`document.getElementById('new').click()`); // the New chat control is off-screen in this layout
+  await settle(900);
+  await page.waitFor(`/to start the chat/.test(document.getElementById('prompt').placeholder)`, 8000, 'the New chat page');
+  await clickHere(page, '#prompt');
+  await page.type('start a chat');
+  await page.key('Enter');
+  await settle(3500);
+  assert(await inBox(page), `new chat, Enter: focus on ${await page.eval(ACTIVE)}`);
 });

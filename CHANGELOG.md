@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- The message box keeps the caret when a queued message's line goes away. **✕** remove, the **✎** editor (Escape) and **↑**
+  send now each left the focus on the page: the queue card was not one of the popups `focus-return.js` watches, so nothing gave the
+  caret back. The first message of a new chat lost it the same way (Enter on the New chat page): starting the chat disables the box
+  while its agent opens, and that path never returned the focus. Both put you back in the box, where the next line is typed.
+
 - Stop on a WSL chat's background command: only that command ends. AIB reads the start times of the distro's processes to a
   hundredth of a second, so a process the agent started a moment before your message (an MCP server of a new chat, for one)
   stays running when you stop a command that started after it.
