@@ -3,7 +3,7 @@
  * flag asks, architect review 2.2). The never list (rules never cover these) and the floor (always the owner, never a rule and
  * later never the main agent) are read from AIB's own parse, never from the agent's words.
  */
-import { checkPath, fromGitBash, inside, looksSecret, pathFormProblem, type PathOps, realish, WIN_OPS } from './paths.ts';
+import { checkPath, fromGitBash, inside, looksSecret, pathFormProblem, type PathOps, realish, segmentsBelow, WIN_OPS } from './paths.ts';
 import { LinuxView } from './linux.ts';
 import type { Part } from './shell.ts';
 
@@ -18,6 +18,8 @@ export interface PartContext {
   stateDir: string | null;
   /** The path rules (absent: this PC's own, WIN_OPS; a WSL chat: its LinuxView). */
   ops?: PathOps;
+  /** A helper chat in its own worktree (swarm): the worktree's own path (under AIB's data folder) is not "AIB's data folder". */
+  helper?: boolean;
 }
 
 const opsOf = (ctx: PartContext): PathOps => ctx.ops ?? WIN_OPS;
@@ -677,6 +679,18 @@ const PM_RUNS = new Set([
   'access',
   'deprecate',
 ]);
+/**
+ * A helper's worktree lives under AIB's data folder (...\AgentStudio\worktrees\...), so every absolute path to a file in it
+ * matched PROTECTED_PATH ("agentstudio"). True when the word is a path inside the worktree whose part below the worktree is not
+ * protected (.claude, .codex, .git/config, .git/hooks...): only that part is then tested.
+ */
+function protectedBelowRootOnly(word: string, ctx: PartContext): boolean {
+  if (!/[\\/]/.test(word) || pathFormProblem(word)) return false;
+  const real = realish(word, ctx.cwd), root = realish(ctx.root, ctx.root);
+  if (!real || !root || !inside(real, root)) return false;
+  return !PROTECTED_PATH.test(segmentsBelow(real, root).join('/'));
+}
+
 const KILLS = new Set(['kill', 'taskkill', 'stop-process', 'spps', 'pkill', 'killall', 'tskill']);
 const PROTECTED_PATH = /(^|[\\/])(\.claude|\.codex|\.gemini|\.cursor)([\\/]|$)|agentstudio|allow-rules|\.git[\\/](config|hooks)/i;
 
@@ -691,7 +705,7 @@ export function neverPart(part: Part, ctx: PartContext): Never | null {
   // a WSL chat: paths compare with the chat folder resolved in the distro ('' when unknown: nothing is inside it)
   const root = lx ? lx.realish(ctx.root, ctx.root) ?? '' : ctx.root;
   for (const a of part.words) {
-    if (PROTECTED_PATH.test(a)) return floor("AIB's data folder or an agent's config");
+    if (PROTECTED_PATH.test(a) && !(ctx.helper && !lx && protectedBelowRootOnly(a, ctx))) return floor("AIB's data folder or an agent's config");
     if (lx) {
       if (LINUX_OWN.test(a)) return floor("AIB's data folder");
       if (a.includes('/')) {
@@ -800,4 +814,79 @@ export function projectScript(words: string[]): string[] | null {
   if (name === 'deno' && sub === 'task' && words[2] && !words[2].startsWith('-')) return [name, sub, words[2]];
   if (name === 'git' && sub === 'commit') return [name, sub];
   return null;
+}
+
+// ---- a helper's own tests (swarm: "helper in its own worktree") -----------------------------------------------------------------
+
+/** Test flags a helper may add without asking: counts, filters, quiet/fail-fast. Never permissions, reporters that load modules, or code. */
+const TEST_FLAG = /^--?(jobs|j|filter|test-name-pattern|test-only|fail-fast|quiet|q|no-color|color|bail|test|verbose|v|reporter)(=[\w.,:*\- ]{0,80})?$/i;
+const DANGER_FLAG = /(^|-)(allow|deny|eval|exec|require|import|loader|config|node-options|script|plugin|preload|prefix|cwd|tool|hook|experimental)|^-[ACEcepPr]$/i;
+
+/** A word that is a plain test name or number (model_servers_ui_test, 2, swarm). */
+const PLAIN = /^[\w.:-]{1,80}$/;
+
+/** The brief's test command split into its commands (`a ; then, from x: b && c`), each as words. */
+export function briefTestCommands(testCmd: string): string[][] {
+  const out: string[][] = [];
+  for (const raw of testCmd.split(/\s*(?:;|&&|\n|\bthen,?\s|\band then\b)\s*/i)) {
+    const cleaned = raw.replace(/^\s*(?:then,?\s+)?(?:from [^:]{1,120}:\s*)?/i, '').replace(/[.,]+$/, '').trim();
+    if (!cleaned) continue;
+    const words = cleaned.split(/\s+/).filter(Boolean);
+    if (words.length) out.push(words);
+  }
+  return out;
+}
+
+const RUNNERS = new Set(['node', 'deno', 'npm', 'pnpm', 'yarn', 'pytest', 'py.test', 'python', 'python3', 'py']);
+
+/**
+ * A helper's test run inside its own worktree: '' when this part is `deno task test|deno test|node --test|npm test|npm run test*|
+ * pnpm/yarn test|pytest|python -m pytest|unittest` (or exactly a command the brief names as its tests), with only counts, filters and
+ * paths or plain names inside the worktree, else why not. Never inline code, permission flags or a program given by path.
+ */
+export function helperTest(part: Part, ctx: PartContext, testCmd: string): string {
+  const words = part.words;
+  if (part.globs.some(Boolean)) return 'glob';
+  const name = programName(words[0]);
+  if (!RUNNERS.has(name)) return 'not a test runner';
+  const prob = programProblem(words[0], ctx);
+  if (prob) return prob;
+  const bat = batArgProblem(words[0], words.slice(1), !!linuxOf(ctx));
+  if (bat) return bat;
+  const sub = words[1] ?? '';
+  let start = 0;
+  let shape = false;
+  if (name === 'deno') {
+    if (sub === 'task' && words[2] === 'test') start = 3, shape = true;
+    else if (sub === 'test') start = 2, shape = true;
+  } else if (name === 'node') {
+    if (sub === '--test') start = 2, shape = true;
+  } else if (name === 'npm' || name === 'pnpm' || name === 'yarn') {
+    if (sub === 'test' || sub === 't') start = 2, shape = true;
+    else if ((sub === 'run' || sub === 'run-script') && /^test(:[\w-]+)?$/.test(words[2] ?? '')) start = 3, shape = true;
+  } else if (name === 'pytest' || name === 'py.test') {
+    start = 1, shape = true;
+  } else {
+    const m = words.findIndex((w) => w === '-m');
+    if (m > 0 && words.slice(1, m).every((w) => w === '-I') && /^(pytest|unittest)$/.test(words[m + 1] ?? '')) start = m + 2, shape = true;
+  }
+  const exact = briefTestCommands(testCmd).some((c) => c.length === words.length && c.every((w, i) => w === words[i]));
+  if (!shape && !exact) return 'not a test command';
+  if (!shape && ['npm', 'pnpm', 'yarn'].includes(name) && ['install', 'i', 'add', 'ci', 'exec', 'dlx', 'publish'].includes(sub)) {
+    return 'installs or runs a downloaded program';
+  }
+  for (let i = start > 0 ? start : 1; i < words.length; i++) {
+    const a = words[i];
+    if (a === '--') continue;
+    if (a.startsWith('-')) {
+      if (DANGER_FLAG.test(a) && !/^--test(-name-pattern|-only)?(=|$)/i.test(a)) return `flag ${a}`;
+      if (!exact && !TEST_FLAG.test(a)) return `flag ${a} is not on the list`;
+      continue;
+    }
+    if (/[\\/]/.test(a) || /\.[A-Za-z0-9]{1,8}$/.test(a)) {
+      const v = checkPath(a, ctx.cwd, ctx.root, {}, opsOf(ctx));
+      if (!v.ok) return `${a}: ${v.reason}`;
+    } else if (!PLAIN.test(a)) return `"${a}" is not a plain name or path`;
+  }
+  return '';
 }

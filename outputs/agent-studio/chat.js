@@ -2387,7 +2387,12 @@
           ask: 'auto',
           key: 'auto:' + event.seq,
           rid,
-          autoText: what + ' · Allowed by rule · ' + (event.data?.label || 'rule') + (event.data?.flagged ? ' · Claude asked in bypass' : ''),
+          autoText: event.data?.ruleId === 'builtin:helper-copy'
+            ? /* a helper in its own worktree (swarm): "Allowed by AIB: edit settings-ui.js in the helper's own copy" */
+              'Allowed by AIB: ' +
+              (call.kind === 'edit' ? 'edit ' + String((call.locations || [])[0]?.path || 'files').split(/[\\/]/).slice(-2).join('/') : 'run ' + what) +
+              " in the helper's own copy"
+            : what + ' · Allowed by rule · ' + (event.data?.label || 'rule') + (event.data?.flagged ? ' · Claude asked in bypass' : ''),
           ruleId: String(event.data?.ruleId || ''),
           value: '',
           time: event.replay ? 0 : event.time,

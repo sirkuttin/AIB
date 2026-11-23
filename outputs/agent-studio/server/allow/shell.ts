@@ -290,6 +290,12 @@ export function splitWindows(line: string): string[] | null {
  * inner script, or null when the string is not exactly that wrapper.
  */
 export function unwrapCodexPowershell(command: string): string | null {
+  // codex-acp shows a script without a single quote as `pwsh.exe -Command '<script>'` (its display join): one single-quoted script
+  const single = /^("[^"]*"|[^\s"']+)\s+((?:-NoLogo\s+|-NoProfile\s+)*)-(?:Command|c)\s+'([^']*)'$/i.exec(command.trim());
+  if (single) {
+    const exe = single[1].replace(/^"|"$/g, '').replaceAll('/', '\\').split('\\').pop()!.toLowerCase();
+    return ['powershell', 'powershell.exe', 'pwsh', 'pwsh.exe'].includes(exe) ? single[3] : null;
+  }
   const words = splitWindows(command.trim());
   if (!words || words.length < 3) return null;
   const exe = words[0].replaceAll('/', '\\').split('\\').pop()!.toLowerCase();

@@ -1184,6 +1184,8 @@ export class Connection {
   swarm: { role: 'main' | 'helper'; helperId?: string; parent?: string } | null = null;
   /** True: this main chat started while "Helpers from other agents" was off, so its AIB prompt says so (HELPERS_OFF_PROMPT). */
   helpersOffHint = false;
+  /** Swarm: this helper's brief test command (allow rules: the built-in "helper copy" rule answers its runs); set by the Studio. */
+  helperTestCmd: () => string = () => '';
   /** Wall-clock time the current prompt turn started (attention.busySince, so a reloaded page keeps "Working · 12m"). */
   turnStartedAt: number | null = null;
   /**
@@ -6669,6 +6671,7 @@ export class Connection {
       project: this.projectRoot || this.cwd,
       scratch: this.scratchDir,
       stateDir: this.allowGate?.stateDir ?? null,
+      ...(this.swarm?.role === 'helper' && this.worktree ? { helper: { testCmd: this.helperTestCmd() } } : {}),
     };
   }
 

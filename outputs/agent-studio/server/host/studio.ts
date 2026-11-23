@@ -1783,6 +1783,12 @@ export class Studio {
     c.lines = this.conversationLines;
     if (this.allow) {
       c.allowGate = this.allow;
+      // a helper's test command from its brief (the allow rules answer it; read when asked, the registry lists the helper by then)
+      c.helperTestCmd = () => {
+        const id = c.swarm?.role === 'helper' ? c.swarm.helperId : '';
+        const brief = id && this.hasStateDir ? readHelpers(this.stateDir)[id]?.brief : null;
+        return typeof brief?.test_cmd === 'string' ? brief.test_cmd : '';
+      };
       if (!c.wsl) c.scratchDir = this.allow.scratchFor(c.id); // a Windows scratch folder is no folder for an agent in a distro (its additionalDirectories must be Linux paths)
     }
     c.onRelease = (conn) => {

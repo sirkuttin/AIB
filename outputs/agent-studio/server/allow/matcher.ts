@@ -8,6 +8,7 @@ import { isClaudeFamily, isCodexFamily } from '../agents/claude_family.ts';
 import {
   batArgProblem,
   downloadAndRun,
+  helperTest,
   linuxOf,
   looksDownloadAndRun,
   neverPart,
@@ -55,6 +56,8 @@ export const BUILTIN = {
   safeReads: { id: 'builtin:safe-reads', label: 'Safe reads' },
   syntax: { id: 'builtin:syntax', label: 'Syntax checks' },
   scratch: { id: 'builtin:scratch', label: 'Scratch folder' },
+  /** Swarm: a helper chat's routine requests inside its own worktree (always on for helpers; the owner's master switch still applies). */
+  helperCopy: { id: 'builtin:helper-copy', label: "In the helper's own copy" },
 } as const;
 
 export interface Builtins {
@@ -84,6 +87,11 @@ export interface MatchContext {
    * folder and `project` the project's `wsl://` ref (rules and pins are keyed by it).
    */
   linux?: LinuxView | null;
+  /**
+   * Swarm: this chat is a helper working in its own worktree (`cwd`). Its file edits there, and its test runs (the brief's `testCmd`
+   * and the common runners), are answered by the built-in "helper copy" rule; nothing else changes for it.
+   */
+  helper?: { testCmd: string } | null;
 }
 
 const opsOf = (ctx: MatchContext): PathOps => ctx.linux ?? WIN_OPS;
@@ -278,7 +286,15 @@ export function match(params: unknown, ctx: MatchContext, rules: AllowRule[], bu
 }
 
 function partContext(ctx: MatchContext, cwd: string, shell: 'bash' | 'pwsh'): PartContext {
-  return { cwd, root: ctx.cwd, shell, scratch: ctx.scratch, stateDir: ctx.stateDir, ...(ctx.linux ? { ops: ctx.linux } : {}) };
+  return {
+    cwd,
+    root: ctx.cwd,
+    shell,
+    scratch: ctx.scratch,
+    stateDir: ctx.stateDir,
+    ...(ctx.linux ? { ops: ctx.linux } : {}),
+    ...(ctx.helper ? { helper: true } : {}),
+  };
 }
 
 function matchInner(params: unknown, ctx: MatchContext, rules: AllowRule[], builtins: Builtins, tick: () => void): MatchResult {
@@ -305,6 +321,10 @@ function matchInner(params: unknown, ctx: MatchContext, rules: AllowRule[], buil
   }
   if (req.kind === 'edit') {
     if (flagged) return { allow: false, reason: 'Claude flagged it in bypass mode' };
+    // a helper's edit inside its own worktree (never .git, hooks, .claude, .codex: checkPath's protected names)
+    if (ctx.helper && req.paths.every((p) => checkPath(p, ctx.cwd, ctx.cwd, { write: true }, ops).ok)) {
+      return { allow: true, ruleId: BUILTIN.helperCopy.id, label: BUILTIN.helperCopy.label, flagged };
+    }
     for (const r of here.filter((x) => x.kind === 'edit')) {
       const folder = ctx.linux ? ctx.linux.folderIn(ctx.cwd, r.folder ?? '') : resolve(ctx.cwd, r.folder ?? '');
       const ok = req.paths.every((p) => {
@@ -351,6 +371,7 @@ function matchPart(
 ): { id: string; label: string } | null {
   const asked = ctx.facts?.askPrograms;
   if (asked && (asked.has('*') || asked.has(programName(part.words[0])))) return null; // the agent's own ask rule names it (review 4.2)
+  if (ctx.helper && !mode.flagged && !helperTest(part, pctx, ctx.helper.testCmd)) return BUILTIN.helperCopy; // a helper's own test run
   if (builtins.scratch && !mode.codexSandboxed && !scratchWrite(part, pctx)) return BUILTIN.scratch;
   if (builtins.syntax && !mode.codexSandboxed && !syntaxCheck(part, pctx)) return BUILTIN.syntax;
   if (mode.flagged) return null; // bypass: only Scratch and Syntax checks may answer what Claude flagged

@@ -260,7 +260,7 @@ def allow_prompt(key, params):
     """Allow rules: 'allow:<command>' asks like claude-agent-acp's Bash (a tool_call naming the tool, then request_permission with
     Yes / Always / No); 'allowcodex:<command>' asks like codex-acp (kind execute, rawInput.command, no tool name)."""
     text = next((b.get('text', '') for b in params.get('prompt', []) if b.get('type') == 'text'), '')
-    if not (text.startswith('allow:') or text.startswith('allowcodex:') or text.startswith('allowedit:')):
+    if not (text.startswith('allow:') or text.startswith('allowcodex:') or text.startswith('allowedit:') or text.startswith('allowcodexedit:')):
         return False
     claude = text.startswith('allow:') or text.startswith('allowedit:')
     command = text.split(':', 1)[1]
@@ -268,6 +268,13 @@ def allow_prompt(key, params):
     tool = 'allow-tool-%d' % allow_count[0]
     rid = 'allow-%d' % allow_count[0]
     waiting[rid] = key
+    if text.startswith('allowcodexedit:'):
+        # 'allowcodexedit:<path>' asks like codex-acp 2.6's file edit on Windows (recorded from a real helper, 2026-11-23): kind edit,
+        # title "Edit files", the path in locations, no rawInput, Codex's own option ids
+        call = {'toolCallId': 'exec-edit-%d' % allow_count[0], 'title': 'Edit files', 'locations': [{'path': command}], 'kind': 'edit', 'status': 'pending'}
+        options = [{'optionId': 'allow_once', 'name': 'Yes, proceed', 'kind': 'allow_once'}, {'optionId': 'allow_for_session', 'name': "Yes, and don't ask again for these files", 'kind': 'allow_always'}, {'optionId': 'cancel', 'name': 'No, and tell Codex what to do differently', 'kind': 'reject_once'}]
+        emit({'id': rid, 'method': 'session/request_permission', 'params': {'sessionId': SID(), 'toolCall': call, 'options': options}})
+        return True
     if text.startswith('allowedit:'):
         # 'allowedit:<path>' asks like claude-agent-acp's Edit (the file path as the agent gave it)
         call = {'toolCallId': tool, 'kind': 'edit', 'title': 'Edit ' + command, 'rawInput': {'file_path': command, 'old_string': 'a', 'new_string': 'b'}, 'status': 'pending'}
