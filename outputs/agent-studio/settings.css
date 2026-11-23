@@ -1378,6 +1378,24 @@ html[data-ui-scaled] .st-page {
 .ps-file code {
   word-break: break-all;
 }
+/* the sync bin list (pcsync-ui.js): a small toggle, then the recent entries each with an always-visible Restore icon */
+.ps-bin {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.ps-binlist .ps-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ps-autostash {
+  flex-basis: 100%;
+  font-size: 12px;
+}
 /* Settings > Model servers (settings-ui.js): the always-visible row icons (Check, Edit, Remove), the Use with switches and the add form. */
 .ms-icon {
   display: inline-flex;

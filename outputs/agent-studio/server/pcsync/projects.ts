@@ -58,6 +58,8 @@ export interface ProjectLink {
   confirmed: boolean;
   docs: boolean;
   shared: boolean;
+  /** Git settings AIB turned on in this repo when Docs was ticked (merge.autoStash, rebase.autoStash); the card tells the owner. */
+  autoStash?: string[];
   created: number;
 }
 
@@ -114,6 +116,7 @@ export class ProjectSync {
         confirmed: r.confirmed !== false,
         docs: r.docs === true,
         shared: r.shared === true,
+        ...(Array.isArray(r.autoStash) && r.autoStash.length ? { autoStash: r.autoStash.filter((x): x is string => typeof x === 'string').slice(0, 4) } : {}),
         created: Number(r.created) || 0,
       });
     }
@@ -436,6 +439,14 @@ export class ProjectSync {
     return link;
   }
 
+  /** AIB turned these git settings on in the link's repo (shown on the card). */
+  noteAutoStash(sync: string, keys: string[]): void {
+    const link = this.#links.get(sync);
+    if (!link || !keys.length) return;
+    link.autoStash = [...new Set([...(link.autoStash ?? []), ...keys])].slice(0, 4);
+    this.#save();
+  }
+
   /** A removed peer takes its links and waiting unlinks with it. */
   dropPeer(host: string): void {
     let changed = this.#unlinks.delete(host);
@@ -464,6 +475,7 @@ export class ProjectSync {
       confirmed: l.confirmed,
       docs: l.docs,
       shared: l.shared,
+      autoStash: l.autoStash ?? [],
       missing: !here.has(l.folder),
       files: l.confirmed ? this.deps.fileStatus?.(l.sync, 'shared') ?? null : null,
       docsFiles: l.confirmed ? this.deps.fileStatus?.(l.sync, 'docs') ?? null : null,

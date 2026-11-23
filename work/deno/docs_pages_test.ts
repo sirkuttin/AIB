@@ -458,3 +458,124 @@ Deno.test('history with pages: a version keeps every page (marked); restore brin
     await dirs.done();
   }
 });
+
+// ---- the by-id pairing of a doc.aibdoc edit (a git pull, sync) must move a block, not copy it -------------------------------------
+async function twoPagesOfFour(store: DocStore, project: string): Promise<OpenDoc> {
+  await tool(store, project, 'doc_create', { doc: 'Plan', markdown: 'Alpha one.\n\nAlpha two.\n' });
+  await tool(store, project, 'doc_page', { doc: 'plan', action: 'add', title: 'Second', markdown: 'Beta one.\n\nBeta two.\n' });
+  const doc = await store.open(project, 'plan');
+  await store.flush(doc);
+  return doc;
+}
+const wordsOf = (p: unknown) =>
+  (p as { content: { content?: { text?: string }[] }[] }).content.map((n) => (n.content ?? []).map((c) => c.text).join(''));
+
+Deno.test('a git pull that moves a block to an earlier page leaves it only there (review probe: it used to be on both pages)', async () => {
+  const dirs = await tempDirs();
+  const store = new DocStore(dirs.state, { idleMs: 60_000 });
+  try {
+    const doc = await twoPagesOfFour(store, dirs.project);
+    const aib = parseAib(await Deno.readTextFile(doc.file));
+    aib.pages[0].content.push(aib.pages[1].content.pop()!); // "Beta two." from the end of page 2 to the end of page 1
+    await Deno.writeTextFile(doc.file, stringifyAib(aib));
+    const skipped = await store.syncMirror(doc);
+    await store.flush(doc);
+    const after = parseAib(await Deno.readTextFile(doc.file));
+    assertEquals(wordsOf(after.pages[0]), ['Alpha one.', 'Alpha two.', 'Beta two.']);
+    assertEquals(wordsOf(after.pages[1]), ['Beta one.']);
+    assertEquals(skipped.map((s) => s.reason), []);
+    assertEquals(blocksOf(doc.live, after.pages[1].id).map((b) => b.md), ['Beta one.']);
+    assertEquals((await store.syncMirror(doc)).length, 0, 'nothing is left to do on the next look');
+  } finally {
+    await store.close();
+    await dirs.done();
+  }
+});
+
+Deno.test('a git pull that moves a block to a later page, and one that swaps blocks between pages, leave each block on one page', async () => {
+  const dirs = await tempDirs();
+  const store = new DocStore(dirs.state, { idleMs: 60_000 });
+  try {
+    const doc = await twoPagesOfFour(store, dirs.project);
+    let aib = parseAib(await Deno.readTextFile(doc.file));
+    aib.pages[1].content.push(aib.pages[0].content.shift()!); // "Alpha one." from page 1 to the end of page 2
+    await Deno.writeTextFile(doc.file, stringifyAib(aib));
+    assertEquals((await store.syncMirror(doc)).map((s) => s.reason), []);
+    await store.flush(doc);
+    aib = parseAib(await Deno.readTextFile(doc.file));
+    assertEquals(wordsOf(aib.pages[0]), ['Alpha two.']);
+    assertEquals(wordsOf(aib.pages[1]), ['Beta one.', 'Beta two.', 'Alpha one.']);
+    // swap: the first block of each page changes pages
+    const first = aib.pages[0].content.shift()!, second = aib.pages[1].content.shift()!;
+    aib.pages[0].content.push(second);
+    aib.pages[1].content.push(first);
+    await Deno.writeTextFile(doc.file, stringifyAib(aib));
+    assertEquals((await store.syncMirror(doc)).map((s) => s.reason), []);
+    await store.flush(doc);
+    aib = parseAib(await Deno.readTextFile(doc.file));
+    assertEquals(wordsOf(aib.pages[0]), ['Beta one.']);
+    assertEquals(wordsOf(aib.pages[1]), ['Beta two.', 'Alpha one.', 'Alpha two.']);
+  } finally {
+    await store.close();
+    await dirs.done();
+  }
+});
+
+Deno.test('agent edits of doc.aibdoc and of the page copy still apply: a block without an id, an edit, a delete, an insert', async () => {
+  const dirs = await tempDirs();
+  const store = new DocStore(dirs.state, { idleMs: 60_000 });
+  try {
+    const doc = await twoPagesOfFour(store, dirs.project);
+    // an agent with file tools edits doc.aibdoc: it adds a block with no id (the by-id pairing is skipped), edits one, deletes one
+    const aib = parseAib(await Deno.readTextFile(doc.file));
+    const p0 = aib.pages[0].content as { content?: { text?: string }[] }[];
+    p0[0].content![0].text = 'Alpha ONE.';
+    aib.pages[0].content.push({ type: 'paragraph', content: [{ type: 'text', text: 'Added by an agent.' }] });
+    aib.pages[1].content.shift();
+    await Deno.writeTextFile(doc.file, stringifyAib(aib));
+    assertEquals((await store.syncMirror(doc)).map((s) => s.reason), []);
+    await store.flush(doc);
+    const after = parseAib(await Deno.readTextFile(doc.file));
+    assertEquals(wordsOf(after.pages[0]), ['Alpha ONE.', 'Alpha two.', 'Added by an agent.']);
+    assertEquals(wordsOf(after.pages[1]), ['Beta two.']);
+    // the page copy (Markdown) edited the same way: the old content pairing
+    const copy = `${doc.dir}${sep}01-page-1.md`;
+    const md = await Deno.readTextFile(copy);
+    await Deno.writeTextFile(copy, md.replace('Alpha two.', 'Alpha TWO.').replace('Added by an agent.', 'Added by an agent.\n\nInserted in the copy.'));
+    assertEquals((await store.syncMirror(doc)).map((s) => s.reason), []);
+    await store.flush(doc);
+    assertEquals(wordsOf(parseAib(await Deno.readTextFile(doc.file)).pages[0]), [
+      'Alpha ONE.',
+      'Alpha TWO.',
+      'Added by an agent.',
+      'Inserted in the copy.',
+    ]);
+  } finally {
+    await store.close();
+    await dirs.done();
+  }
+});
+
+Deno.test('equal text in two blocks: the content pairing of a page copy tells them apart, and a user edit in the doc is skipped, not overwritten', async () => {
+  const dirs = await tempDirs();
+  const store = new DocStore(dirs.state, { idleMs: 60_000 });
+  try {
+    await tool(store, dirs.project, 'doc_create', { doc: 'Plan', markdown: 'Same.\n\nMiddle.\n\nSame.\n' });
+    const doc = await store.open(dirs.project, 'plan');
+    await store.flush(doc);
+    const ids = doc.live.topIds();
+    const user = new UserClient(doc.live);
+    user.type(ids[1], 0, 'Typed: ');
+    const copy = `${doc.dir}${sep}01-page-1.md`;
+    await Deno.writeTextFile(copy, (await Deno.readTextFile(copy)).replace('Middle.', 'Middle (file).').replace(/Same\.\n$/, 'Same, changed.\n'));
+    const skipped = await store.syncMirror(doc);
+    assertEquals(skipped.map((s) => s.reason), ['user_changed']);
+    assertEquals(doc.live.topIds()[0], ids[0], 'the first "Same." keeps its id');
+    assertEquals(user.text(ids[1]), 'Typed: Middle.', "the user's typing stands");
+    assertEquals(blocksOf(doc.live).map((b) => b.md), ['Same.', 'Typed: Middle.', 'Same, changed.']);
+    doc.live.detach(user.link);
+  } finally {
+    await store.close();
+    await dirs.done();
+  }
+});

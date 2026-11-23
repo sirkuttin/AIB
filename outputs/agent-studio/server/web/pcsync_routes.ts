@@ -6,6 +6,7 @@
  */
 import { ValueError } from '../core/py.ts';
 import { PairingError } from '../remote/pairing.ts';
+import { ensureAutoStash } from '../pcsync/gitstate.ts';
 import type { WebContext } from './server.ts';
 
 type Json = Record<string, unknown>;
@@ -52,9 +53,15 @@ export function pcsyncRoutes(): Map<string, Handler> {
   });
   routes.set('POST /api/live/pcsync/projects/confirm', (ctx, _url, body) => [200, { ok: true, sync: ctx.pcsync.projects.confirm(body?.sync).sync }]);
   routes.set('POST /api/live/pcsync/projects/unlink', (ctx, _url, body) => [200, { ok: true, unlinked: ctx.pcsync.projects.unlink(body?.sync) }]);
-  routes.set('POST /api/live/pcsync/projects/switch', (ctx, _url, body) => {
+  routes.set('POST /api/live/pcsync/projects/switch', async (ctx, _url, body) => {
     const link = ctx.pcsync.projects.setSwitch(body?.sync, body?.which, body?.on);
-    return [200, { ok: true, sync: link.sync, docs: link.docs, shared: link.shared }];
+    // Docs ticked on a repo that tracks aib-docs: git autostash is turned on in that repo (only its own config), and the card says so
+    let autoStash: string[] = [];
+    if (body?.which === 'docs' && body?.on === true) {
+      autoStash = await ensureAutoStash(link.folder).catch(() => []);
+      ctx.pcsync.projects.noteAutoStash(link.sync, autoStash);
+    }
+    return [200, { ok: true, sync: link.sync, docs: link.docs, shared: link.shared, autoStash }];
   });
   // a paused batch of deletes (slice V4): Allow applies it, Keep files keeps the files and sends them back
   routes.set('POST /api/live/pcsync/projects/files', (ctx, _url, body) => {
@@ -74,6 +81,20 @@ export function pcsyncRoutes(): Map<string, Handler> {
       await ctx.pcsync.files.resolveConflict(body.sync, body.path, body.action);
     } catch (error) {
       throw new PairingError(409, 'conflict_failed', error instanceof Error ? error.message : String(error));
+    }
+    return [200, { ok: true }];
+  });
+  // the sync bin (what sync replaced or deleted here, kept under .git): the recent entries, and Restore for one of them
+  routes.set('POST /api/live/pcsync/projects/bin', async (ctx, _url, body) => {
+    if (typeof body?.sync !== 'string') throw new ValueError('sync is required');
+    return [200, { entries: await ctx.pcsync.binEntries(body.sync) }];
+  });
+  routes.set('POST /api/live/pcsync/projects/restore', async (ctx, _url, body) => {
+    if (typeof body?.sync !== 'string' || typeof body?.entry !== 'string') throw new ValueError('sync and entry are required');
+    try {
+      await ctx.pcsync.restoreBin(body.sync, body.entry);
+    } catch (error) {
+      throw new PairingError(409, 'restore_failed', error instanceof Error ? error.message : String(error));
     }
     return [200, { ok: true }];
   });

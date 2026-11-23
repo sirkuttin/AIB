@@ -57,6 +57,7 @@ import {
   IdMap,
   pageNodes,
   parseAib,
+  mergeAibExtras,
   restoreDrawings,
   restoreThreads,
   stringifyAib,
@@ -525,6 +526,8 @@ export class DocStore {
     nameValue: unknown,
     create?: string,
     by?: string,
+    /** Sync only (landSynced): the caller does not count as a user of the doc, so it can close what it opened if nobody else took it. */
+    quiet = false,
   ): Promise<OpenDoc> {
     const { name, title } = docRef(nameValue);
     const id = await docId(projectRoot, name);
@@ -541,7 +544,7 @@ export class DocStore {
       );
     }
     const open = this.docs.get(id);
-    if (open) return open;
+    if (open) return quiet ? open : this.#used(open);
     if (create === undefined && !(await this.exists(projectRoot, name))) {
       throw new DocRefusal('no_doc', `No doc named "${name}" in this project. doc_list shows the docs; doc_create makes one.`);
     }
@@ -549,13 +552,21 @@ export class DocStore {
     // doc (loading it again would put a second copy in `docs`, and a page socket attached to the first would edit a copy AIB
     // no longer saves). The check of `docs` and of #opening below run with no await between them.
     const loaded = this.docs.get(id);
-    if (loaded) return loaded;
+    if (loaded) return quiet ? loaded : this.#used(loaded);
     let pending = this.#opening.get(id);
     if (!pending) {
       pending = this.#load(id, projectRoot, name, title, create, create !== undefined ? by : undefined).finally(() => this.#opening.delete(id));
       this.#opening.set(id, pending);
     }
-    return await pending;
+    const got = await pending;
+    return quiet ? got : this.#used(got);
+  }
+
+  /** How often each open doc was handed out by open(): landSynced closes a doc it opened only if nobody else got it meanwhile. */
+  #uses = new WeakMap<OpenDoc, number>();
+  #used(doc: OpenDoc): OpenDoc {
+    this.#uses.set(doc, (this.#uses.get(doc) ?? 0) + 1);
+    return doc;
   }
 
   /** The docs of a project: folders with a doc.aibdoc, and docs of the old layout (`legacy`: moved on first open). */
@@ -1100,6 +1111,7 @@ export class DocStore {
         source,
       });
     };
+    const lastDeletes: string[] = []; // deletes that would have emptied the page, retried after the page's inserts
     let anchor: string | null = null; // the doc block the next inserted block goes after
     let pairs = align(before.map((b) => b.raw), after);
     if (fileIds?.length === after.length && fileIds.every(Boolean)) {
@@ -1147,7 +1159,9 @@ export class DocStore {
           continue;
         }
         if (pair.kind === 'delete') {
+          // a page keeps at least one block: the delete of its only block waits for the blocks the file adds (a page whose blocks all moved)
           if (live.topIds(page).length > 1) live.edit([{ op: 'delete', target: { kind: 'blocks', ids: [old.id] }, force: true }], origin, page);
+          else lastDeletes.push(old.id);
           continue;
         }
         const ack = live.edit(
@@ -1168,14 +1182,23 @@ export class DocStore {
         );
       }
     }
+    for (const id of lastDeletes) {
+      try {
+        if (live.has(id) && live.pageOf(id) === page && live.topIds(page).length > 1) {
+          live.edit([{ op: 'delete', target: { kind: 'blocks', ids: [id] }, force: true }], origin, page);
+        }
+      } catch (error) {
+        if (!(error instanceof DocRefusal)) throw error;
+      }
+    }
     return skipped;
   }
 
   /**
    * doc.aibdoc changed on disk while the doc is open (a git pull, a hand edit): compare it with what AIB last wrote and take in what
    * changed there. Pages added, renamed, moved and deleted, then each page's blocks, on the guarded path of #applyBlocks: whatever
-   * the user changed in the doc since that write is skipped, never overwritten. Comments and drawings in the file are not merged
-   * (the doc's stand); the file is then written again from the doc.
+   * the user changed in the doc since that write is skipped, never overwritten. Comment threads and drawings come in by id, 3-way
+   * (mergeAibExtras); the file is then written again from the doc.
    */
   #mergeAib(doc: OpenDoc, text: string): SkippedEdit[] {
     const live = doc.live;
@@ -1250,18 +1273,27 @@ export class DocStore {
         }
       } else note('user_changed', AIBDOC, 'pages were reordered in doc.aibdoc; they were reordered in AIB since');
     }
-    // blocks, page by page
+    // blocks, page by page. Every page's `before` is read first: a block moved to an earlier page is inserted there and re-mapped to its
+    // new live id, which must not hide the original (still on its old page) from that page's own delete.
+    const befores = new Map(
+      next.pages.map((p) => [
+        p.id,
+        (lastPages.get(p.id)?.content ?? []).map((n) => {
+          const node = stripIds(n);
+          return { id: doc.ids.liveOf(String(n.id ?? '')), raw: blockKey(node), sig: sigOf(node) };
+        }),
+      ]),
+    );
     for (const p of next.pages) {
       const was = lastPages.get(p.id);
       if (!was || !livePages().has(p.id)) continue;
-      const before = was.content.map((n) => {
-        const node = stripIds(n);
-        return { id: doc.ids.liveOf(String(n.id ?? '')), raw: blockKey(node), sig: sigOf(node) };
-      });
+      const before = befores.get(p.id)!;
       const nodes = pageNodes(p);
       skipped.push(...this.#applyBlocks(doc, p.id, before, nodes.map(blockKey), nodes, 'aibdoc', p.content.map((n) => (typeof n.id === 'string' ? n.id : ''))));
     }
     if (next.title && next.title !== last.title && doc.title === last.title) doc.title = next.title;
+    // comment threads and drawings: what the file changed since AIB last wrote it comes in (3-way, the doc's own changes stand)
+    mergeAibExtras(live, doc.ids, last, next, origin);
     doc.aib = { ...doc.aib, text };
     return skipped;
   }
@@ -1644,13 +1676,37 @@ export class DocStore {
     }
     await fsOf(file).writeAtomic(file, text);
     try {
-      const doc = await this.open(projectRoot, name);
+      const doc = await this.open(projectRoot, name, undefined, undefined, true);
       credit(doc);
       await this.flush(doc);
-      return doc.aib.text || text;
+      const landed = doc.aib.text || text;
+      await this.#closeIfIdle(doc, 0); // opened only to render its copies: not kept open (every synced doc open = a poll and a Y.Doc each)
+      return landed;
     } catch {
       return text; // it parses but would not load: the file stays as the other PC wrote it
     }
+  }
+
+  /**
+   * Close a doc nobody uses (no page socket, no agent writing, nothing unsaved, and open() has not handed it to anyone since `uses`):
+   * its state is cached, the next open loads it again. Checked again after the last await, so a caller that got the doc meanwhile keeps it.
+   */
+  async #closeIfIdle(doc: OpenDoc, uses: number): Promise<void> {
+    const idle = () =>
+      this.docs.get(doc.id) === doc && (this.#uses.get(doc) ?? 0) === uses && doc.live.socketCount === 0 && doc.agents.presence().length === 0 &&
+      doc.timer === null && !doc.dirty;
+    if (!idle()) return;
+    await this.flush(doc).catch(() => {});
+    await doc.busy.catch(() => {});
+    if (!idle()) return;
+    this.snapshot(doc);
+    if (doc.snapTimer !== null) clearTimeout(doc.snapTimer);
+    await this.#saveState(doc).catch(() => {});
+    doc.dirty = false; // the snapshot marked it; the state it covers was just saved
+    if (!idle()) return;
+    this.docs.delete(doc.id);
+    doc.agents.destroy();
+    doc.live.destroy();
   }
 
   /** Sync, before it deletes a doc the other PC deleted: an open doc's unsaved edits are written now. True when there were any (an edit beats a delete). */

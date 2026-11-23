@@ -36,16 +36,19 @@ import { localOnlyOf } from '../worktrees/local_only.ts';
 import { type Area, type BatchItem, checkPath } from './frames.ts';
 import { canonAib, mergeAibdocs } from './aibmerge.ts';
 import { pageNodes, parseAib } from '../docs/aibdoc.ts';
+import { branchOf, gitBusy } from './gitstate.ts';
 import type { Peer } from './peers.ts';
 import type { ProjectLink } from './projects.ts';
 import {
   BIN_DAYS,
+  BIN_MAX_BYTES,
   binAgeDays,
   conflictName,
   conflictOriginal,
   GUARD_COUNT,
   GUARD_MIN,
   GUARD_SHARE,
+  GUARD_WINDOW_MS,
   isAibdoc,
   isConflictCopy,
   isDocsPath,
@@ -72,8 +75,12 @@ export interface FileTimings {
   retryMs: number;
   /** Files that land within this long of each other are one received batch (one Device activity line). */
   batchMs: number;
+  /** The mass-delete guard counts deletes of this long together. */
+  guardWindowMs: number;
+  /** The sync bin of one project is kept under this size (oldest first out). */
+  binMaxBytes: number;
 }
-export const DEFAULT_FILE_TIMINGS: FileTimings = { debounceMs: 1500, rescanMs: 60_000, stallMs: 20_000, retryMs: 10_000, batchMs: 2000 };
+export const DEFAULT_FILE_TIMINGS: FileTimings = { debounceMs: 1500, rescanMs: 60_000, stallMs: 20_000, retryMs: 10_000, batchMs: 2000, guardWindowMs: GUARD_WINDOW_MS, binMaxBytes: BIN_MAX_BYTES };
 const CHUNK = 512 * 1024;
 const MAX_DEPTH = 40;
 const MAX_REMOTE = 60_000;
@@ -150,7 +157,7 @@ interface Proj {
   sync: string;
   files: Map<string, Entry>;
   dirty: boolean;
-  theirs: { shared: boolean; docs: boolean } | null;
+  theirs: { shared: boolean; docs: boolean; branch: string | null } | null;
   sentSwitch: string;
   active: boolean;
   reason: string;
@@ -170,14 +177,23 @@ interface Proj {
   xfer: Xfer | null;
   pause: { paths: string[]; total: number } | null;
   allow: boolean;
+  /** Deletes applied here lately (the guard counts them with the next ones: a wipe that arrives in halves is one wipe). */
+  delLog: { at: number; path: string }[];
+  /** Why this project waits (git is busy here, or the PCs are on different branches); '' when it does not. */
+  wait: string;
+  /** The complete file list went to the peer (it is held back while this project waits). */
+  indexSent: boolean;
+  recheck: Timer | undefined;
+  /** Is the volume case-insensitive (Windows, macOS)? null: not tested yet. */
+  insensitive: boolean | null;
   pending: number;
   watcher: Deno.FsWatcher | null;
   debounce: Timer | undefined;
 }
 
 export interface FileStatus {
-  /** off: this PC's switch is off. wsl, offline, blocked (reason), other_off (the peer's switch), checking, ok. */
-  state: 'off' | 'wsl' | 'offline' | 'blocked' | 'other_off' | 'checking' | 'ok';
+  /** off: this PC's switch is off. wsl, offline, blocked (reason), other_off (the peer's switch), waiting (reason: git is busy, or another branch), checking, ok. */
+  state: 'off' | 'wsl' | 'offline' | 'blocked' | 'other_off' | 'waiting' | 'checking' | 'ok';
   reason: string;
   /** Files that still differ between the PCs (being copied, or waiting for the other PC to copy them). */
   pending: number;
@@ -240,6 +256,8 @@ export class FileSync {
   #timer: Timer | undefined;
   #saver: Timer | undefined;
   #pruned = new Map<string, number>();
+  /** Per git dir: bytes put in the bin since the size cap was last checked. */
+  #binAdded = new Map<string, number>();
   /** Per project: files received since the last Device activity line, and the quiet-period timer that writes it. */
   #landed = new Map<string, { n: number; timer: Timer }>();
 
@@ -352,6 +370,11 @@ export class FileSync {
       xfer: null,
       pause: null,
       allow: false,
+      delLog: [],
+      wait: '',
+      indexSent: false,
+      recheck: undefined,
+      insensitive: null,
       pending: 0,
       watcher: null,
       debounce: undefined,
@@ -367,7 +390,8 @@ export class FileSync {
           hash: hex(raw.hash),
           size: Number(raw.size) || 0,
           mtime: Number(raw.mtime) || 0,
-          sup: [],
+          // a "Keep files" decision (or a merge) the other PC has not answered yet survives a restart
+          sup: Array.isArray(raw.sup) ? raw.sup.filter((x): x is string => x === 'del' || hex(x) !== null).slice(0, 8) : [],
         });
       }
     }
@@ -390,8 +414,8 @@ export class FileSync {
       p.dirty = false;
       try {
         Deno.mkdirSync(inDir(inDir(this.stateDir, 'pcsync'), this.#filesName), { recursive: true });
-        const files: Record<string, { base: string | null; hash: string | null; size: number; mtime: number }> = {};
-        for (const [path, e] of p.files) files[path] = { base: e.base, hash: e.hash, size: e.size, mtime: e.mtime };
+        const files: Record<string, { base: string | null; hash: string | null; size: number; mtime: number; sup?: string[] }> = {};
+        for (const [path, e] of p.files) files[path] = { base: e.base, hash: e.hash, size: e.size, mtime: e.mtime, ...(e.sup.length ? { sup: e.sup } : {}) };
         saveJson(this.#stateFile(p.sync), { version: 1, files }, 'pcsync-files-');
       } catch (error) {
         this.deps.log(`${this.label} sync could not save its state: ${error instanceof Error ? error.message : error}`);
@@ -448,7 +472,7 @@ export class FileSync {
     for (const item of items) {
       switch (item.op) {
         case 'project.switch':
-          p.theirs = { shared: item.shared === true, docs: item.docs === true };
+          p.theirs = { shared: item.shared === true, docs: item.docs === true, branch: typeof item.branch === 'string' ? item.branch : null };
           switched = true;
           break;
         case 'file.begin':
@@ -485,7 +509,10 @@ export class FileSync {
           break;
       }
     }
-    if (switched) await this.#refreshNow();
+    if (switched) {
+      await this.#refreshNow();
+      if (p.active) this.#touch(p); // the other PC's branch may have changed: look again
+    }
     if (changed && p.active) await this.#reconcile(p);
   }
 
@@ -510,7 +537,7 @@ export class FileSync {
       const connected = !!peer && this.deps.connected(peer.id);
       let p = this.#projs.get(link.sync);
       if (!p) p = this.#proj(link.sync); // also with the switch off: the other PC is told so
-      if (connected && peer && this.area === 'shared') this.#sendSwitch(p, link, peer);
+      if (connected && peer) this.#sendSwitch(p, link, peer);
       const want = this.#on(link) && connected && this.#theirOn(p) && !this.deps.isWsl(link.folder) &&
         (this.area !== 'docs' || !!this.deps.docs);
       if (want && !p.active && peer) await this.#activate(p, link, peer);
@@ -519,12 +546,13 @@ export class FileSync {
   }
 
   #sendSwitch(p: Proj, link: ProjectLink, peer: Peer): void {
-    const now = `${link.shared}/${link.docs}`;
+    const branch = branchOf(link.folder, p.gitDir);
+    const now = `${link.shared}/${link.docs}/${branch ?? ''}`;
     if (p.sentSwitch === now) return;
     const sent = this.deps.send(peer.id, {
       id: batchId(),
       project: link.sync,
-      items: [{ op: 'project.switch', shared: link.shared, docs: link.docs }],
+      items: [{ op: 'project.switch', shared: link.shared, docs: link.docs, ...(branch ? { branch } : {}) }],
     });
     if (sent) p.sentSwitch = now;
   }
@@ -568,6 +596,7 @@ export class FileSync {
     p.gitDir = found.gitDir;
     p.active = true;
     p.scanned = false;
+    p.indexSent = false;
     p.announced.clear();
     p.queue = [];
     p.pause = null;
@@ -583,6 +612,7 @@ export class FileSync {
       return;
     }
     this.#watch(p); // after the scan: the folder exists by then
+    this.#sendSwitch(p, link, peer); // with the branch (p.gitDir is known now)
     this.#sendIndex(p, peer);
     this.#maintain(p);
     await this.#reconcile(p);
@@ -599,6 +629,10 @@ export class FileSync {
     p.pending = 0;
     clearTimeout(p.debounce);
     p.debounce = undefined;
+    clearTimeout(p.recheck);
+    p.recheck = undefined;
+    p.wait = '';
+    p.indexSent = false;
     const watcher = p.watcher;
     p.watcher = null;
     try {
@@ -655,9 +689,36 @@ export class FileSync {
     if (!peer || !this.deps.connected(peer.id)) return;
     await this.#scan(p);
     if (!p.scanned) return;
-    this.#announce(p, peer);
+    this.#sendSwitch(p, link, peer); // a branch change on this PC is told before any file state
+    p.wait = this.#waitReason(p, link, peer);
+    if (p.indexSent) this.#announce(p, peer);
+    else this.#sendIndex(p, peer);
     this.#maintain(p);
     await this.#reconcile(p);
+  }
+
+  /**
+   * Why this project must not sync now, or ''. Docs only: git rewrites tracked docs on purpose while it merges, rebases, cherry-picks,
+   * stashes or switches branch, and that must not travel as an edit; and two PCs on different branches hold different docs.
+   */
+  #waitReason(p: Proj, link: ProjectLink, peer: Peer): string {
+    if (this.area !== 'docs') return '';
+    const busy = gitBusy(link.folder, p.gitDir);
+    if (busy) return `Waiting: ${busy} is in progress here. Docs sync resumes when it is done.`;
+    const mine = branchOf(link.folder, p.gitDir);
+    const theirs = p.theirs?.branch ?? null;
+    if (mine && theirs && mine !== theirs) return `Waiting: ${peer.name} is on branch ${theirs}; this PC is on ${mine}. Docs sync when both are on the same branch.`;
+    return '';
+  }
+
+  /** Check again soon (a git operation or a branch difference ends without any file changing here). */
+  #recheckSoon(p: Proj): void {
+    if (p.recheck) return;
+    p.recheck = setTimeout(() => {
+      p.recheck = undefined;
+      void this.#run(() => this.#rescan(p));
+    }, Math.max(500, Math.floor(this.timings.retryMs / 2)));
+    Deno.unrefTimer(p.recheck as unknown as number);
   }
 
   /** Stat every file; hash only those whose size or mtime changed; note deletions. Sets p.scanned, p.held, p.total, p.reason. */
@@ -798,6 +859,9 @@ export class FileSync {
 
   /** The complete list of this PC's files (a peer treats what is not in it as deleted), sent when the project starts. */
   #sendIndex(p: Proj, peer: Peer): void {
+    const link = this.#link(p.sync);
+    p.wait = link ? this.#waitReason(p, link, peer) : '';
+    if (p.wait) return this.#recheckSoon(p);
     const items: BatchItem[] = [{ op: 'file.begin', area: this.area }];
     p.announced.clear();
     for (const [path, e] of p.files) {
@@ -807,10 +871,12 @@ export class FileSync {
     }
     items.push({ op: 'file.end', area: this.area });
     this.#sendItems(peer, p.sync, items);
+    p.indexSent = true;
   }
 
   /** What changed since the last announcement. */
   #announce(p: Proj, peer: Peer): void {
+    if (p.wait) return; // git is busy or the PCs are on different branches: nothing is announced
     const items: BatchItem[] = [];
     const done: [string, string][] = [];
     for (const [path, e] of p.files) {
@@ -831,13 +897,33 @@ export class FileSync {
     const peer = link && this.#peer(link);
     const own = this.deps.own();
     if (!link || !peer || !own) return;
+    p.wait = this.#waitReason(p, link, peer);
+    if (p.wait) {
+      p.queue = [];
+      p.pending = 0;
+      if (p.xfer) this.#abort(p, '', 0);
+      this.#recheckSoon(p);
+      return;
+    }
     const now = Date.now();
     const pulls: Pull[] = [];
     const deletes: string[] = [];
     const agreed: string[] = [];
     p.heldIn.clear();
     let pending = 0;
+    // a volume that ignores case (Windows, macOS) holds one of `notes.md` and `Notes.md`, never both: the second is held, not pulled
+    const taken = new Map<string, string>();
+    const insensitive = this.#caseInsensitive(p);
+    if (insensitive) {
+      for (const [path, e] of p.files) if (e.hash !== null) taken.set(path.toLowerCase(), path);
+    }
     const want = (path: string, rem: Remote, kind: Pull['kind']) => {
+      const holder = insensitive ? taken.get(path.toLowerCase()) : undefined;
+      if (holder !== undefined && holder !== path) {
+        p.heldIn.set(path, `Held: the name differs only in case from ${holder}, and this PC's disk treats them as one file.`);
+        return;
+      }
+      if (insensitive) taken.set(path.toLowerCase(), path);
       const bad = p.bad.get(path);
       if (bad && bad.hash === rem.hash) {
         p.heldIn.set(path, bad.why); // that version did not open as a doc: it is not written, and not asked for again
@@ -922,9 +1008,15 @@ export class FileSync {
     if (p.dirty) this.#dirty(p);
     // the mass-delete guard
     let apply = true;
+    p.delLog = p.delLog.filter((d) => now - d.at < this.timings.guardWindowMs);
     if (deletes.length) {
       const total = [...p.files.values()].filter((e) => e.hash !== null).length;
-      const big = deletes.length >= GUARD_MIN && (deletes.length > GUARD_COUNT || deletes.length > total * GUARD_SHARE);
+      // deletes of the last minute count with these (a wipe that arrives in halves, over two scans or frames, is one wipe), and the
+      // folder they came from is as big as it was before them
+      const lately = p.delLog.filter((d) => !deletes.includes(d.path)).length;
+      const count = deletes.length + lately, before = total + lately;
+      const empties = deletes.length >= total; // whatever the count: the folder would end up empty
+      const big = empties || (count >= GUARD_MIN && (count > GUARD_COUNT || count > before * GUARD_SHARE));
       if (big && !p.allow) {
         p.pause = { paths: deletes, total };
         apply = false;
@@ -944,6 +1036,7 @@ export class FileSync {
         continue;
       }
       this.#removeLocal(p, path);
+      if (p.files.get(path)?.hash === null) p.delLog.push({ at: Date.now(), path });
       if (doc && p.files.get(path)?.hash === null) await doc.drop(link.folder, name).catch(() => {});
     }
     if (deletes.length) this.#announce(p, peer);
@@ -1048,20 +1141,160 @@ export class FileSync {
     return abs;
   }
 
-  /** Move or copy a file into the bin: <git dir>/aib-sync/bin/<date-time>/<path> (never inside aib-shared). */
+  /** Is this project's volume case-insensitive? Tested once with a temp name in the sync temp folder (the same volume as the git dir). */
+  #caseInsensitive(p: Proj): boolean {
+    if (p.insensitive !== null) return p.insensitive;
+    let result = Deno.build.os !== 'linux';
+    try {
+      const dir = this.#tmpDir(p);
+      Deno.mkdirSync(dir, { recursive: true });
+      const name = `Case-${randomToken(4)}`;
+      const upper = osp.join(dir, name);
+      Deno.writeFileSync(upper, new Uint8Array());
+      try {
+        result = !!lstat(osp.join(dir, name.toLowerCase()));
+      } finally {
+        Deno.removeSync(upper);
+      }
+    } catch { /* the OS default stands */ }
+    p.insensitive = result;
+    return result;
+  }
+
+  /** The bin of one area: <git dir>/aib-sync/bin/<date-time>[-docs]/<path>. aib-shared and aib-docs never share a folder (a path may be in both). */
+  #binDir(p: Proj): string {
+    return osp.join(p.gitDir, 'aib-sync', 'bin', this.area === 'docs' ? `${stamp()}-docs` : stamp());
+  }
+
+  /** Move or copy a file into the bin (never inside aib-shared). */
   #bin(p: Proj, rel: string, abs: string, move: boolean): void {
-    const first = osp.join(p.gitDir, 'aib-sync', 'bin', stamp(), ...segs(rel));
+    const first = osp.join(this.#binDir(p), ...segs(rel));
     Deno.mkdirSync(osp.dirname(first), { recursive: true });
     let dest = first;
     for (let i = 1; osp.exists(dest); i++) dest = `${first}.${i}`;
+    const size = lstat(abs)?.size ?? 0;
     if (move) {
       try {
         Deno.renameSync(abs, dest);
-        return;
-      } catch { /* another volume or a busy file: copy, then remove */ }
-      Deno.copyFileSync(abs, dest);
-      Deno.removeSync(abs);
+      } catch {
+        /* another volume or a busy file: copy, then remove */
+        Deno.copyFileSync(abs, dest);
+        Deno.removeSync(abs);
+      }
     } else Deno.copyFileSync(abs, dest);
+    // the bin stays under its size cap: checked once enough has been added since the last check
+    const added = (this.#binAdded.get(p.gitDir) ?? 0) + size;
+    if (added >= Math.min(64 * 1024 * 1024, Math.max(1, Math.floor(this.timings.binMaxBytes / 4)))) {
+      this.#binAdded.set(p.gitDir, 0);
+      this.#capBin(p.gitDir);
+    } else this.#binAdded.set(p.gitDir, added);
+  }
+
+  /** Delete the oldest bin folders until the whole bin (both areas) is under the cap. The newest folder always stays. */
+  #capBin(gitDir: string): void {
+    try {
+      const bin = osp.join(gitDir, 'aib-sync', 'bin');
+      const sizeOf = (dir: string): number => {
+        let n = 0;
+        for (const e of Deno.readDirSync(dir)) {
+          const full = osp.join(dir, e.name);
+          if (e.isDirectory) n += sizeOf(full);
+          else if (e.isFile) n += lstat(full)?.size ?? 0;
+        }
+        return n;
+      };
+      const dirs = [...Deno.readDirSync(bin)].filter((e) => e.isDirectory).map((e) => ({ name: e.name, size: sizeOf(osp.join(bin, e.name)) }));
+      dirs.sort((a, b) => (a.name < b.name ? -1 : 1)); // the stamps sort by time
+      let total = dirs.reduce((n, d) => n + d.size, 0);
+      for (const d of dirs.slice(0, -1)) {
+        if (total <= this.timings.binMaxBytes) break;
+        Deno.removeSync(osp.join(bin, d.name), { recursive: true });
+        total -= d.size;
+      }
+    } catch { /* no bin yet */ }
+  }
+
+  /**
+   * The recent bin entries of a project for this area, newest first: what sync replaced or deleted here, with when. `id` is what
+   * restore() takes. A project that is not a git project has none.
+   */
+  async binEntries(sync: string, limit = 40): Promise<{ id: string; area: Area; path: string; at: string; size: number }[]> {
+    const link = this.#link(sync);
+    if (!link) return [];
+    const gitDir = await this.#gitDirOf(link);
+    if (!gitDir) return [];
+    const bin = osp.join(gitDir, 'aib-sync', 'bin');
+    const out: { id: string; area: Area; path: string; at: string; size: number }[] = [];
+    try {
+      const dirs = [...Deno.readDirSync(bin)].filter((e) => e.isDirectory && binAgeDays(e.name) >= 0).map((e) => e.name).sort().reverse();
+      for (const name of dirs) {
+        if ((name.endsWith('-docs') ? 'docs' : 'shared') !== this.area) continue;
+        const m = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/.exec(name)!;
+        const at = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).toISOString();
+        const walk = (abs: string, rel: string) => {
+          for (const e of Deno.readDirSync(abs)) {
+            if (out.length >= limit) return;
+            const path = rel ? `${rel}/${e.name}` : e.name;
+            if (e.isDirectory) walk(osp.join(abs, e.name), path);
+            else if (e.isFile) {
+              out.push({ id: `${name}/${path}`, area: this.area, path: path.replace(/\.\d+$/, ''), at, size: lstat(osp.join(abs, e.name))?.size ?? 0 });
+            }
+          }
+        };
+        walk(osp.join(bin, name), '');
+        if (out.length >= limit) break;
+      }
+    } catch { /* no bin yet */ }
+    return out;
+  }
+
+  /**
+   * Put a bin entry back (Restore). The file returns to its old place in this project's folder; a file that is there now goes to the bin
+   * first. It then travels to the other PC like any edit. Throws a plain sentence on refusal.
+   */
+  restore(sync: string, id: string): Promise<void> {
+    let failure: Error | null = null;
+    const done = this.#run(async () => {
+      try {
+        const link = this.#link(sync);
+        const p = this.#projs.get(sync);
+        if (!link || !p?.active || !p.scanned) throw new Error('Sync is not running for this project right now.');
+        const m = /^(\d{8}-\d{6}(?:-docs)?)\/(.+)$/.exec(id);
+        if (!m || (m[1].endsWith('-docs') ? 'docs' : 'shared') !== this.area) throw new Error('That bin entry is not here.');
+        const rel = m[2].replace(/\.\d+$/, '');
+        if (!checkPath(rel, this.area).ok || isSecretPath(rel)) throw new Error('That name is not allowed here.');
+        const from = osp.join(p.gitDir, 'aib-sync', 'bin', m[1], ...segs(m[2]));
+        const st = lstat(from);
+        if (!st || !st.isFile) throw new Error('That bin entry is gone.');
+        const dest = this.#safe(p, rel, true);
+        Deno.mkdirSync(this.#tmpDir(p), { recursive: true });
+        const tmp = osp.join(this.#tmpDir(p), `r-${randomToken(6)}`);
+        Deno.copyFileSync(from, tmp);
+        if (lstat(dest)) this.#bin(p, rel, dest, false);
+        for (let i = 0;; i++) {
+          try {
+            Deno.renameSync(tmp, dest);
+            break;
+          } catch (error) {
+            if (i >= 20) throw error;
+            await sleep(50);
+          }
+        }
+        await this.#rescan(p);
+      } catch (error) {
+        failure = error instanceof Error ? error : new Error(String(error));
+      }
+    });
+    return done.then(() => {
+      if (failure) throw failure;
+    });
+  }
+
+  async #gitDirOf(link: ProjectLink): Promise<string> {
+    const p = this.#projs.get(link.sync);
+    if (p?.gitDir) return p.gitDir;
+    const lo = await localOnlyOf(link.folder).catch(() => null);
+    return lo ? osp.dirname(osp.dirname(lo.excludeFile)) : '';
   }
 
   #maintain(p: Proj): void {
@@ -1075,6 +1308,7 @@ export class FileSync {
           if (e.isDirectory && age > BIN_DAYS) Deno.removeSync(osp.join(bin, e.name), { recursive: true });
         }
       } catch { /* no bin yet */ }
+      this.#capBin(p.gitDir);
     }
     try {
       const keep = new Set([...p.files.values()].map((e) => e.base).filter((b): b is string => !!b));
@@ -1474,6 +1708,7 @@ export class FileSync {
     const offset = Number(item.offset);
     const gone = () =>
       this.deps.send(peer.id, { id: batchId(), project: p.sync, items: [{ op: 'file.gone', area: this.area, path, hash }] });
+    if (p.wait) return void gone(); // git is busy here, or another branch: what is on disk is not what was announced
     const e = p.files.get(path);
     if (!e || e.hash !== hash || offset > e.size || isSecretPath(path)) return void gone();
     let file: Deno.FsFile | null = null;
@@ -1530,6 +1765,7 @@ export class FileSync {
     if (!p) return { ...empty, state: 'checking' };
     if (p.reason && !p.active) return { ...empty, state: 'blocked', reason: p.reason };
     if (!this.#theirOn(p)) return { ...empty, state: p.theirs ? 'other_off' : 'checking' };
+    if (p.active && p.wait) return { ...empty, state: 'waiting', reason: p.wait };
     const conflicts = [...p.files].filter(([path, e]) => e.hash !== null && isConflictCopy(path)).map(([path]) => path);
     const held = [...p.held, ...[...p.heldIn].map(([path, why]) => ({ path, why }))].slice(0, 50);
     const ready = p.active && p.scanned && p.remoteDone;

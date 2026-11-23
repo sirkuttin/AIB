@@ -15,7 +15,7 @@ import { boxOf, union } from './geometry.ts';
 import { drawing_edit, type DrawingHost, type Op, type Refusal } from './tools.ts';
 
 /**
- * `key` names the doc in the file's `aib` block (the store passes its stable doc id; a Y.Doc's guid is new every load), so an import
+ * `key` names the doc in the file's `aib` block (the store passes the doc folder name: the same on every PC, so a synced file is never rewritten for it), so an import
  * knows the file was exported from this very drawing.
  */
 export function exportScene(hub: DrawingHost, drawingId: string, key = hub.doc.guid) {

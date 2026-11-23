@@ -379,6 +379,121 @@ export function versionAib(text: string): AibDoc | null {
   }
 }
 
+/**
+ * A doc.aibdoc that changed on disk while the doc is open (a pull, sync): its comment threads and drawings are taken in, by id and
+ * 3-way against `last` (the file as AIB last wrote it), so what changed only in the doc stays and what changed only in the file comes in:
+ *   - a thread the file has and neither the doc nor `last` has: added, anchored on the doc's blocks (through the id map);
+ *   - a thread both have: the replies it lacks are added; resolved/reopened comes in when the file changed it and the doc did not;
+ *   - a drawing the doc lacks: added whole; one both have: each element the file added, changed or removed since `last` is taken in
+ *     unless the doc changed that element too (the doc's stand).
+ * A thread or an element the doc deleted is not brought back. Runs in one transaction with `origin`. Returns whether anything changed.
+ */
+export function mergeAibExtras(live: LiveDoc, ids: IdMap, last: AibDoc | null, next: AibDoc, origin: unknown): boolean {
+  const ydoc = live.doc;
+  const byFile = new Map<string, Y.XmlElement>();
+  const walk = (el: Y.XmlFragment | Y.XmlElement) => {
+    for (const c of el.toArray()) {
+      if (!(c instanceof Y.XmlElement)) continue;
+      const f = ids.fileOf(idOf(c));
+      if (!byFile.has(f)) byFile.set(f, c);
+      walk(c);
+    }
+  };
+  for (const { frag } of live.pageFrags()) walk(frag);
+  const lastThreads = new Map((last?.comments ?? []).map((t) => [String(t.id), t]));
+  const lastDrawings = new Map((last?.drawings ?? []).map((d) => [String(d.id), d]));
+  const sorted = (v: unknown): unknown =>
+    Array.isArray(v)
+      ? v.map(sorted)
+      : v && typeof v === 'object'
+      ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => (a < b ? -1 : 1)).map(([k, x]) => [k, sorted(x)]))
+      : v;
+  const sameJson = (a: unknown, b: unknown) => JSON.stringify(sorted(a)) === JSON.stringify(sorted(b));
+  const replyKey = (r: Json) => `${r.by}|${r.at}|${r.text}`;
+  let changed = false;
+  ydoc.transact(() => {
+    const comments = ydoc.getMap(COMMENTS) as Y.Map<Y.Map<unknown>>;
+    const fresh: AibThread[] = [];
+    for (const t of next.comments) {
+      if (!t || typeof t.id !== 'string') continue;
+      const had = comments.get(t.id);
+      if (!(had instanceof Y.Map)) {
+        if (!lastThreads.has(t.id)) fresh.push(t);
+        continue;
+      }
+      const was = lastThreads.get(t.id);
+      const replies = had.get('replies') as Y.Array<Json> | undefined;
+      const mine = new Set((replies?.toArray() ?? []).map(replyKey));
+      const add = (Array.isArray(t.replies) ? t.replies as Json[] : []).filter((r) => !mine.has(replyKey(r)));
+      let touched = false;
+      if (add.length && replies) {
+        replies.push(add);
+        touched = true;
+      }
+      if (was && Boolean(t.resolved) !== Boolean(was.resolved) && Boolean(had.get('resolved')) === Boolean(was.resolved)) {
+        for (const k of ['resolved', 'resolvedBy', 'resolvedAt', 'reopenedBy']) {
+          if (t[k] === undefined) had.delete(k);
+          else had.set(k, t[k]);
+        }
+        touched = true;
+      }
+      if (touched && typeof t.seq === 'number' && t.seq > (Number(had.get('seq')) || 0)) had.set('seq', t.seq);
+      changed ||= touched;
+    }
+    if (fresh.length) {
+      restoreThreads(ydoc, fresh, byFile);
+      changed = true;
+    }
+    const map = drawingsMap(ydoc);
+    for (const d of next.drawings) {
+      if (!d || typeof d.id !== 'string') continue;
+      const dm = map.get(d.id);
+      if (!(dm instanceof Y.Map)) {
+        if (!lastDrawings.has(d.id)) {
+          restoreDrawings(ydoc, [d]);
+          changed = true;
+        }
+        continue;
+      }
+      const els = dm.get('elements') as Y.Map<Y.Map<unknown>>;
+      const was = new Map((lastDrawings.get(d.id)?.elements ?? []).map((e) => [String((e as Json).id), e as Json]));
+      const now = (id: string): Json | null => {
+        const m = els.get(id);
+        if (!m) return null;
+        const out: Json = { id };
+        for (const [k, v] of m.entries()) out[k] = v;
+        if (typeof out.v !== 'number') out.v = 0;
+        return out;
+      };
+      const inFile = new Set<string>();
+      for (const e of Array.isArray(d.elements) ? d.elements : []) {
+        const el = e as Json;
+        if (!el || typeof el.id !== 'string') continue;
+        inFile.add(el.id);
+        const cur = now(el.id), old = was.get(el.id);
+        if (!cur) {
+          if (!old) {
+            els.set(el.id, newElementMap(el));
+            changed = true;
+          }
+        } else if (old && !sameJson(el, old) && sameJson(cur, old)) {
+          els.set(el.id, newElementMap(el));
+          changed = true;
+        }
+      }
+      for (const [id, old] of was) {
+        if (inFile.has(id)) continue;
+        const cur = now(id);
+        if (cur && sameJson(cur, old)) {
+          els.delete(id);
+          changed = true;
+        }
+      }
+    }
+  }, origin);
+  return changed;
+}
+
 /** Rebuilt pages keep their content ids: a doc from a file, read back, gives the same file. For tests and the merge. */
 export function contentOf(live: LiveDoc, page: string): PMJson[] {
   return live.fragOf(page).toArray().filter((c): c is Y.XmlElement => c instanceof Y.XmlElement).map((el) => jsonOf(el));

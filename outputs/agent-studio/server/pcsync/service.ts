@@ -39,6 +39,32 @@ export const PORT_FILE = 'pcsync-port.json';
 const FIRST_PORT = 8800;
 const SCAN = 100;
 const MAX_BODY = 4096;
+
+/** The request body as text, read at most `max` bytes: null when it is longer (the rest is never read). */
+async function readLimited(request: Request, max: number): Promise<string | null> {
+  if (!request.body) return '';
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.length;
+      if (size > max) {
+        await reader.cancel().catch(() => {});
+        return null;
+      }
+      chunks.push(value);
+    }
+  } catch {
+    return null;
+  }
+  const all = new Uint8Array(size);
+  let at = 0;
+  for (const c of chunks) all.set(c, at), at += c.length;
+  return new TextDecoder().decode(all);
+}
 const DIAL_MS = 8000;
 const POLL_MS = 1500;
 export const BUSY_TEXT = 'Sync runs in another AIB on this PC.';
@@ -123,7 +149,9 @@ export class PcSync {
   #ts: TailscaleState | null = null;
   #tsAt = 0;
   #serve: SyncServe = { shared: false, other: '', funnel: false };
-  #failed: number[] = [];
+  /** Wrong tokens in the last minute, per source (see #source): one program's guessing never locks the real peer out. */
+  #failed = new Map<string, number[]>();
+  #source = '';
   #server: Deno.HttpServer | null = null;
   #port = 0;
   problem = '';
@@ -292,7 +320,7 @@ export class PcSync {
         port: this.#choosePort(),
         onListen: () => {},
         onError: () => new Response('error', { status: 500 }),
-      }, (request) => this.#handle(request));
+      }, (request, info) => this.#handle(request, info.remoteAddr?.hostname ?? ''));
       this.#server = server;
       this.#port = (server.addr as Deno.NetAddr).port;
       this.problem = '';
@@ -322,7 +350,7 @@ export class PcSync {
     });
   }
 
-  async #handle(request: Request): Promise<Response> {
+  async #handle(request: Request, remote = ''): Promise<Response> {
     const url = new URL(request.url);
     if (!url.pathname.startsWith('/pcsync/')) return this.#json(404, { error: 'Not found' });
     await this.#read().catch(() => {});
@@ -333,10 +361,14 @@ export class PcSync {
     const login = (request.headers.get('Tailscale-User-Login') ?? '').trim();
     if (request.method !== 'POST') return this.#json(405, { error: 'POST only' });
     if (Number(request.headers.get('Content-Length') ?? '0') > MAX_BODY) return this.#json(413, { error: 'Too big' });
-    const text = (await request.text()).slice(0, MAX_BODY + 1);
+    // at most MAX_BODY bytes are read, whatever the headers say (a chunked body has no Content-Length)
+    const text = await readLimited(request, MAX_BODY);
+    if (text === null) return this.#json(413, { error: 'Too big' });
+    // who is asking: the address Tailscale Serve saw (X-Forwarded-For), else the connection's own
+    this.#source = (request.headers.get('X-Forwarded-For') ?? '').split(',')[0].trim().slice(0, 64) || remote || 'local';
     let body: Json;
     try {
-      const parsed = text.length > MAX_BODY ? null : JSON.parse(text);
+      const parsed = JSON.parse(text);
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('shape');
       body = parsed as Json;
     } catch {
@@ -381,14 +413,29 @@ export class PcSync {
     return response;
   }
 
-  /** The peer a token belongs to, 'many' after a flood of wrong ones (counted per minute), or null. */
+  /**
+   * The peer a token belongs to, 'many' after a flood of wrong ones from the same source (20 a minute; a few hundred a minute across
+   * all sources), or null. A right token is never refused for someone else's guessing: it is checked first.
+   */
   #checkToken(token: unknown): Peer | 'many' | null {
-    const at = Date.now();
-    this.#failed = this.#failed.filter((t) => at - t < 60_000);
-    if (this.#failed.length >= 20) return 'many';
     const peer = this.peers.byToken(token);
-    if (!peer) this.#failed.push(at);
-    return peer;
+    if (peer) return peer;
+    const at = Date.now();
+    const mine = (this.#failed.get(this.#source) ?? []).filter((t) => at - t < 60_000);
+    let all = 0;
+    for (const [key, list] of this.#failed) {
+      const fresh = key === this.#source ? mine : list.filter((t) => at - t < 60_000);
+      if (!fresh.length && key !== this.#source) this.#failed.delete(key);
+      else all += fresh.length;
+    }
+    if (mine.length >= 20 || all >= 300) {
+      this.#failed.set(this.#source, mine);
+      return 'many';
+    }
+    mine.push(at);
+    this.#failed.set(this.#source, mine);
+    if (this.#failed.size > 500) this.#failed.delete(this.#failed.keys().next().value as string);
+    return null;
   }
 
   /** The peer a body's token belongs to, or a refusal (failed tries are counted: a flood of wrong tokens is answered 429). */
@@ -614,6 +661,17 @@ export class PcSync {
         projects: this.projects.view(p),
       })),
     };
+  }
+
+  /** The recent sync-bin entries of a project, both folders (aib-shared and aib-docs), newest first. */
+  async binEntries(sync: string): Promise<unknown[]> {
+    const all = [...await this.files.binEntries(sync), ...await this.docsSync.binEntries(sync)];
+    return all.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0)).slice(0, 40);
+  }
+
+  /** Restore one bin entry (the id says which folder it came from). */
+  restoreBin(sync: string, entry: string): Promise<void> {
+    return (/^\d{8}-\d{6}-docs\//.test(entry) ? this.docsSync : this.files).restore(sync, entry);
   }
 
   /** The sidebar marks' data (slice V6): the paired PCs with their projects' file states. Cheap: no Tailscale read, polled by the page. */

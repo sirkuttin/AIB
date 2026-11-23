@@ -100,6 +100,8 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   POST /api/live/pcsync/projects/switch     Settings > Sync: a project's Docs or aib-shared switch {sync, which, on}
  *   POST /api/live/pcsync/projects/files      Settings > Sync: a paused batch of deletes: Allow or Keep files {sync, action}
  *   POST /api/live/pcsync/projects/conflict   Files: a sync conflict copy: Keep this or Keep other {sync, path, action: this|other}
+ *   POST /api/live/pcsync/projects/bin        Settings > Sync: the recent entries of a project's sync bin {sync}
+ *   POST /api/live/pcsync/projects/restore    Settings > Sync: put a bin entry back {sync, entry, which?}
  *   POST /api/live/presence                   the page: window focus, time since the last input, open chats, per window (attention/presence.ts K2)
  *   POST /api/live/desktop/windows            open / pop out / route to / focus / close an AIB window (windows_route.ts K3; page only)
  *   POST /api/live/artifacts/archive          archive / unarchive artifacts (the page, or an agent for its own chat's: agent key)
@@ -232,6 +234,8 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['POST', '/api/live/pcsync/projects/switch', 'write', 'body'],
   ['POST', '/api/live/pcsync/projects/files', 'write', 'body'],
   ['POST', '/api/live/pcsync/projects/conflict', 'write', 'body'],
+  ['POST', '/api/live/pcsync/projects/bin', 'write', 'body'],
+  ['POST', '/api/live/pcsync/projects/restore', 'write', 'body'],
   ['POST', '/api/live/presence', 'write', 'body'],
   ['POST', '/api/live/desktop/windows', 'write', 'body'], // multi-window K3: page token only, 2 KB, 10 per 10 s
   ['POST', '/api/live/artifacts/archive', 'artifacts.tool', 'own-gate'],

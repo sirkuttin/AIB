@@ -112,3 +112,11 @@ test('Device activity: a sync batch reads "ubuntu-pc synced 3 files to shop"', (
     'T · ubuntu-pc synced 3 files to shop · PC to PC',
   );
 });
+
+test('git waits: a project that waits for a git operation or another branch shows the reason on the card and as a waiting mark', () => {
+  const why = 'Waiting: ubuntu-pc is on branch other; this PC is on main. Docs sync when both are on the same branch.';
+  assert.equal(UI.filesText(fv({ state: 'waiting', reason: why }), 'ubuntu-pc', 'aib-docs'), why);
+  assert.deepEqual(mark(null, fv({ state: 'waiting', reason: why })), { state: 'waiting', n: 0, text: why });
+  assert.equal(mark(fv({ pending: 2 }), fv({ state: 'waiting', reason: why })).state, 'waiting', 'waiting outranks syncing');
+  assert.equal(mark(fv({ conflictCount: 1 }), fv({ state: 'waiting', reason: why })).state, 'conflict', 'a conflict still outranks it');
+});

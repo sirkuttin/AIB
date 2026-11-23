@@ -14,6 +14,10 @@ export const GUARD_MIN = 10;
 export const GUARD_SHARE = 0.5;
 export const GUARD_COUNT = 200;
 export const BIN_DAYS = 30;
+/** The sync bin of one project is kept under this size: the oldest bin folders go first. */
+export const BIN_MAX_BYTES = 1024 * 1024 * 1024;
+/** The mass-delete guard counts the deletes of this long together, across scans and frames. */
+export const GUARD_WINDOW_MS = 60_000;
 /** The doc.aibdoc kept as the base of a later block merge (a bigger doc is not merged: the newer one wins, the older goes to the bin). */
 export const MAX_DOC_BASE_BYTES = 8 * 1024 * 1024;
 
@@ -32,13 +36,16 @@ export const isAibdoc = (path: string): boolean => /^[^/]+\/doc\.aibdoc$/.test(p
 
 const SECRET = [
   /^\.env(\..*)?$/i,
-  /\.(pem|key|pfx|p12)$/i,
+  /\.(pem|key|pfx|p12|kdbx|keystore|aibkey)$/i,
   /^id_(rsa|dsa|ecdsa|ed25519)/i,
   /^\.?credentials([._-].*)?$/i,
   /^\.netrc$/i,
+  /^\.npmrc$/i,
+  /^\.git-credentials$/i,
+  /^\.(ssh|aws|gnupg)$/i, // a folder: everything under it (any name in the path counts)
 ];
 
-/** True when any name in the path looks like a secret (`.env*`, `*.pem`, `*.key`, `id_rsa*`, credentials files): never synced. */
+/** True when any name in the path looks like a secret (`.env*`, `*.pem`, `*.key`, `*.kdbx`, `*.keystore`, `*.aibkey`, `id_rsa*`, credentials files, `.npmrc`, `.git-credentials`, `.ssh/`, `.aws/`, `.gnupg/`): never synced. */
 export function isSecretPath(path: string): boolean {
   return path.split('/').some((name) => SECRET.some((re) => re.test(name)));
 }

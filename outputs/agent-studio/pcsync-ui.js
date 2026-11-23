@@ -30,6 +30,7 @@
     timer: 0,
     tick: 0,
     scrollTo: '', // a project (sync id) to scroll to after the next draw
+    bin: {}, // per project sync id: the sync bin list {open, entries, error}
   };
 
   // ---- pure helpers (node tests) ----
@@ -71,6 +72,7 @@
       case 'offline': return 'Waiting for ' + who + ' to be online.';
       case 'blocked': return f.reason || 'Not synced here.';
       case 'other_off': return 'Waiting: ' + (folder || 'aib-shared') + ' is off on ' + who + '.';
+      case 'waiting': return f.reason || 'Waiting.';
       case 'checking': return 'Checking files.';
     }
     if (f.pause) return 'Paused: big delete';
@@ -94,6 +96,7 @@
       case 'offline': return { state: 'waiting', n: 0, text: who + ' is off or not reachable. Changes wait here.' };
       case 'other_off': return { state: 'waiting', n: 0, text: folder + ' sync is off on ' + who + '. Changes wait here.' };
       case 'blocked': return { state: 'waiting', n: 0, text: f.reason || 'Not synced here.' };
+      case 'waiting': return { state: 'waiting', n: 0, text: f.reason || 'Waiting.' };
       case 'checking': return { state: 'syncing', n: 0, text: 'Checking ' + folder + ' with ' + who };
     }
     if (f.pause) {
@@ -265,6 +268,91 @@
     return b;
   }
 
+  /* A small restore icon button (an arrow turning back), always visible. */
+  function restoreIcon(label, onClick) {
+    const b = el('button', null, 'ps-remove ps-restore');
+    b.type = 'button';
+    b.title = label;
+    b.setAttribute('aria-label', label);
+    const svg = doc().createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 16 16');
+    svg.setAttribute('width', '16');
+    svg.setAttribute('height', '16');
+    svg.setAttribute('aria-hidden', 'true');
+    for (const d of ['M3.5 8a4.5 4.5 0 1 0 1.4-3.3', 'M3 2.5v3h3']) {
+      const p = doc().createElementNS(NS, 'path');
+      p.setAttribute('d', d);
+      p.setAttribute('fill', 'none');
+      p.setAttribute('stroke', 'currentColor');
+      p.setAttribute('stroke-width', '1.3');
+      p.setAttribute('stroke-linecap', 'round');
+      p.setAttribute('stroke-linejoin', 'round');
+      svg.append(p);
+    }
+    b.append(svg);
+    b.addEventListener('click', onClick);
+    return b;
+  }
+  function binWhen(iso) {
+    const t = Date.parse(iso);
+    if (!Number.isFinite(t)) return '';
+    const min = Math.max(0, Math.round((Date.now() - t) / 60000));
+    if (min < 1) return 'just now';
+    if (min < 60) return min + ' min ago';
+    if (min < 1440) return Math.round(min / 60) + ' h ago';
+    return Math.round(min / 1440) + ' d ago';
+  }
+  function loadBin(sync) {
+    const b = P.bin[sync] || (P.bin[sync] = { open: true, entries: [], error: '' });
+    return Promise.resolve(P.host.post('pcsync/projects/bin', { sync })).then(
+      (r) => {
+        b.entries = r && Array.isArray(r.entries) ? r.entries : [];
+        b.error = '';
+        draw();
+      },
+      (e) => {
+        b.error = e && e.message ? e.message : String(e);
+        draw();
+      },
+    );
+  }
+  /* The sync bin of one project: what sync replaced or deleted on this PC, kept under .git. Restore puts one back. */
+  function drawBin(l) {
+    const b = P.bin[l.sync];
+    const wrap = el('div', null, 'ps-bin');
+    wrap.dataset.bin = l.sync;
+    const toggle = btn(b && b.open ? 'Hide sync bin' : 'Sync bin', () => {
+      if (b && b.open) {
+        b.open = false;
+        draw();
+      } else loadBin(l.sync);
+    }, 'ps-small', false);
+    toggle.dataset.act = 'bin';
+    toggle.title = 'Files sync replaced or deleted on this PC are kept for 30 days. Restore puts one back.';
+    wrap.append(toggle);
+    if (b && b.open) {
+      if (b.error) wrap.append(el('span', b.error, 'ps-files-text bad'));
+      if (!b.error && !b.entries.length) wrap.append(el('span', 'Nothing in the sync bin.', 'ps-dim'));
+      if (b.entries.length) {
+        const list = el('ul', null, 'ps-filelist ps-binlist');
+        for (const e of b.entries) {
+          const li = el('li', null, 'ps-file bin');
+          li.dataset.entry = e.id;
+          li.append(
+            el('code', (e.area === 'docs' ? 'aib-docs/' : 'aib-shared/') + e.path),
+            el('span', ' ' + binWhen(e.at), 'ps-dim'),
+            restoreIcon('Restore ' + e.path, () => {
+              act('pcsync/projects/restore', { sync: l.sync, entry: e.id }, 'project').then(() => loadBin(l.sync));
+            }),
+          );
+          list.append(li);
+        }
+        wrap.append(list);
+      }
+    }
+    return wrap;
+  }
+
   function draw() {
     const box = P.box;
     if (!box || !box.isConnected) return;
@@ -393,6 +481,14 @@
           row.append(list);
         }
       }
+      if (l.autoStash && l.autoStash.length) {
+        row.append(el(
+          'div',
+          'AIB turned on git autostash (' + l.autoStash.join(' and ') + ') in this project, so a git pull still works while your synced docs are uncommitted. It only changed this repo\'s own git settings.',
+          'ps-dim ps-autostash',
+        ));
+      }
+      if (l.confirmed && !l.missing) row.append(drawBin(l));
       wrap.append(row);
     }
     for (const sg of pr.suggestions || []) {
@@ -544,7 +640,7 @@
   function take(v) {
     if (!v || typeof v !== 'object' || !('on' in v)) return;
     P.view = v;
-    const sig = JSON.stringify(v) + '|' + P.busy + '|' + P.error + '|' + P.info + '|' +
+    const sig = JSON.stringify(v) + '|' + JSON.stringify(P.bin) + '|' + P.busy + '|' + P.error + '|' + P.info + '|' +
       (P.devices === null ? '' : 'form' + P.devices.length);
     if (sig !== P.sig || (P.box && P.box.isConnected && !P.box._psDrawn)) {
       P.sig = sig;

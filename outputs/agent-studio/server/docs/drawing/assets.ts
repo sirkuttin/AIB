@@ -90,9 +90,9 @@ export async function syncDrawings(doc: OpenDoc): Promise<SkippedEdit[]> {
     if (text !== null) {
       const origin = live.originFor('file', 'file edit');
       try {
-        if (!held) importJson(live, ref.drawing, text, { key: doc.id, origin, rebuild: true });
-        else if (text !== (last.get(files.json) ?? exportJson(live, ref.drawing, doc.id))) {
-          const res = importJson(live, ref.drawing, text, { key: doc.id, origin });
+        if (!held) importJson(live, ref.drawing, text, { key: doc.name, origin, rebuild: true });
+        else if (text !== (last.get(files.json) ?? exportJson(live, ref.drawing, doc.name))) {
+          const res = importJson(live, ref.drawing, text, { key: doc.name, origin });
           for (const r of res.refused) {
             skipped.push({
               at: new Date().toISOString(),
@@ -110,9 +110,9 @@ export async function syncDrawings(doc: OpenDoc): Promise<SkippedEdit[]> {
       }
     }
     if (!drawingsMap(live.doc).has(ref.drawing)) continue; // nothing to write: no shapes yet and no file to start from
-    const json = exportJson(live, ref.drawing, doc.id);
+    const json = exportJson(live, ref.drawing, doc.name);
     if (text !== json) await writeAtomic(files.json, json);
-    if (text !== json || svgText === null) await writeAtomic(files.svg, exportSvg(live, ref.drawing, doc.id));
+    if (text !== json || svgText === null) await writeAtomic(files.svg, exportSvg(live, ref.drawing, doc.name));
     last.set(files.json, json);
   }
   if (skipped.length) {

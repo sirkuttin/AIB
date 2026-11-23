@@ -93,7 +93,8 @@ export const nameOk = (v: unknown): v is string =>
  *   project.offer                 {id, name, remote (normalized git remote or null), prefix (place in the repo), wsl}
  *   project.link                  {mine, theirs, how}: batch.project is the new project sync id; mine = the sender's offer id
  *   project.unlink                batch.project is the project sync id
- *   project.switch                {shared, docs}: the sender's two switches for batch.project (V4: files move only when both PCs have it on)
+ *   project.switch                {shared, docs, branch?}: the sender's two switches for batch.project (V4: files move only when both PCs have
+ *                                 it on) and the git branch of its folder (docs sync only while both PCs are on the same branch)
  */
 function checkProjectItem(item: Record<string, unknown>): Checked<BatchItem> {
   const op = item.op as string;
@@ -104,7 +105,17 @@ function checkProjectItem(item: Record<string, unknown>): Checked<BatchItem> {
       return { ok: true, value: { op } };
     case 'project.switch':
       if (typeof item.shared !== 'boolean' || typeof item.docs !== 'boolean') return bad('bad switch');
-      return { ok: true, value: { op, shared: item.shared, docs: item.docs } };
+      return {
+        ok: true,
+        value: {
+          op,
+          shared: item.shared,
+          docs: item.docs,
+          ...(typeof item.branch === 'string' && item.branch.length <= 200 && [...item.branch].every((c) => c >= ' ' && c !== '\x7f')
+            ? { branch: item.branch }
+            : {}),
+        },
+      };
     case 'project.offer': {
       if (typeof item.id !== 'string' || !OID.test(item.id)) return bad('bad offer id');
       if (!nameOk(item.name)) return bad('bad project name');

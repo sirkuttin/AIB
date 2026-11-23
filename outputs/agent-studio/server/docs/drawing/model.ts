@@ -93,7 +93,9 @@ export function elementsMap(doc: Y.Doc, drawingId: string, create = true): Y.Map
 
 export function toModel(id: string, m: Y.Map<unknown>): Model {
   const out: Record<string, unknown> = { id };
-  for (const [k, val] of m.entries()) out[k] = val;
+  // in key order, not in the order this Y.Map happens to hold them (that depends on how each PC built or patched the element): the
+  // files written from it are then the same text on every PC, so synced drawings are never rewritten just for a different key order
+  for (const [k, val] of [...m.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) out[k] = val;
   if (typeof out.v !== 'number') out.v = 0;
   return out as Model;
 }
