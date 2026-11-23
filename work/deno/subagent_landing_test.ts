@@ -15,9 +15,9 @@ import { FAKE, pause, PYTHON, until } from './_connection.ts';
 import { makeRepo, read, runGit, write } from './_worktree_fixtures.ts';
 import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
 import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { Swarm } from '../../outputs/agent-studio/server/swarm/service.ts';
+import { LANDING_BUSY_WAKE_S, LANDING_DIRTY_RETRY_S, LANDING_REMIND_S, Swarm } from '../../outputs/agent-studio/server/swarm/service.ts';
 import { pathOf } from '../../outputs/agent-studio/server/state/paths.ts';
-import { ownSubagentPath, readSubagents, type SubagentRecord } from '../../outputs/agent-studio/server/subagents/service.ts';
+import { landingWords, ownSubagentPath, readSubagents, type SubagentRecord } from '../../outputs/agent-studio/server/subagents/service.ts';
 import * as wt from '../../outputs/agent-studio/server/worktrees/worktrees.ts';
 
 type Json = Record<string, unknown>;
@@ -584,7 +584,100 @@ Deno.test({
     assert(!log(box.project).includes('AIB: subagent'), log(box.project));
     assert(!exists(pathOf(box.project, 'other.txt')), 'nothing landed');
     assert(exists(a.path), 'its worktree is kept');
-    assertEquals(woke.length, 0, 'waiting for the files is not a failed landing');
+    // 2026-11-23: told only at the lead's next prompt, an idle lead never saw it: now it is woken, once, with the files named
+    assertEquals(woke.length, 1, JSON.stringify(woke));
+    assert(woke[0].op === 'steer' && woke[0].text.includes('uncommitted edits') && woke[0].text.includes('notes.txt'), woke[0].text);
+    await box.swarm.poll();
+    assertEquals(woke.length, 1, 'the same refusal is not told twice');
+    assertEquals(landingWords(box.swarm.registry.get(a.id)!), "Didn't land: files it changed have uncommitted edits");
+    // never waits forever: the owner sets the file aside; the next timed retry lands it without any turn end
+    Deno.removeSync(pathOf(box.project, 'notes.txt'));
+    const at = Date.now();
+    box.swarm.clock = () => at + (LANDING_DIRTY_RETRY_S + 5) * 1000;
+    await settle(main); // the wake was a turn of the parent's own: landing waits until it is over
+    await box.swarm.poll();
+    await box.swarm.poll();
+    await until(() => log(box.project).includes('AIB: subagent sub 1'), 'landed by the timed retry '+ JSON.stringify(box.swarm.registry.get(a.id)?.landing), 15);
+  },
+});
+
+Deno.test({
+  ...T,
+  name: '2026-11-23: a parent that stays busy keeps the landing queued: it says why, wakes the parent once, and lands when the parent is idle',
+  async fn() {
+    await using box = new Box();
+    const main = await box.studio.connect('claude', box.project, null, {});
+    await settle(main);
+    const woke = wakes(box);
+    const release = await holdTurn(box, main, 'busy');
+    const a = box.subagent(main.id, 'a.txt', 'a\n');
+    await box.swarm.poll();
+    await box.swarm.poll();
+    const L = box.swarm.registry.get(a.id)!.landing!;
+    assertEquals(L.stage, 'queued'); // the found state: queued, tries 0, no refusal ever recorded, no line
+    assertEquals(woke.length, 0, 'a short wait says nothing');
+    assert(landingWords(box.swarm.registry.get(a.id)!).startsWith('Waiting to land: a turn is running'), landingWords(box.swarm.registry.get(a.id)!));
+    const at = Date.now();
+    box.swarm.clock = () => at + (LANDING_BUSY_WAKE_S + 5) * 1000;
+    await box.swarm.poll();
+    assertEquals(woke.length, 1, JSON.stringify(woke));
+    assert(woke[0].text.includes('has not landed yet: a turn is running') && woke[0].text.includes('studio/sub-test1'), woke[0].text);
+    assert(notes(main).some((n) => n.includes('is waiting to land: a turn is running')), notes(main).join('\n'));
+    await box.swarm.poll();
+    assertEquals(woke.length, 1, 'once, not at every poll');
+    // a long wait is reminded again
+    box.swarm.clock = () => at + (LANDING_REMIND_S + LANDING_BUSY_WAKE_S) * 1000;
+    await box.swarm.poll();
+    assertEquals(woke.length, 2, JSON.stringify(woke));
+    // the wake is a turn of the parent's own (it steers the held turn to its end); once that turn is over the landing goes
+    await release().catch(() => {});
+    await settle(main);
+    for (let i = 0; i < 20 && !log(box.project).includes('AIB: subagent sub 1'); i++) {
+      await box.swarm.poll();
+      await pause(200);
+    }
+    assert(log(box.project).includes('AIB: subagent sub 1'), 'landed once idle: ' + JSON.stringify(box.swarm.registry.get(a.id)?.landing));
+  },
+});
+
+Deno.test({
+  ...T,
+  name: 'a folder that is not on a branch: the subagent is not landed and the parent is woken with the reason',  async fn() {
+    await using box = new Box();
+    const main = await box.studio.connect('claude', box.project, null, {});
+    await settle(main);
+    const woke = wakes(box);
+    box.subagent(main.id, 'a.txt', 'a\n');
+    runGit(box.project, 'checkout', '-q', '--detach');
+    await box.swarm.poll();
+    await until(() => woke.length > 0, 'woken', 15);
+    assert(woke[0].op === 'steer' && woke[0].text.includes("isn't on a branch"), woke[0].text);
+    assert(notes(main).some((n) => n.includes("the folder isn't on a branch")), notes(main).join('\n'));
+  },
+});
+
+Deno.test({
+  ...T,
+  name: '2026-11-23: a builder the main agent already landed by hand (same patch, file changed since) says so, not a conflict',
+  async fn() {
+    await using box = new Box();
+    const main = await box.studio.connect('claude', box.project, null, {});
+    await settle(main);
+    const woke = wakes(box);
+    const a = box.subagent(main.id, 'hand.txt', 'builder text\n');
+    write(box.project, 'hand.txt', 'builder text\n'); // the lead's hand landing: the same change, as one commit
+    runGit(box.project, 'add', 'hand.txt');
+    runGit(box.project, 'commit', '-q', '-m', 'lead lands it by hand');
+    write(box.project, 'hand.txt', 'builder text\nlater edit\n'); // and the file moved on
+    runGit(box.project, 'commit', '-q', '-am', 'later edit');
+    const before = runGit(box.project, 'rev-parse', 'main').trim();
+    await box.swarm.poll();
+    await until(() => notes(main).some((n) => n.includes('already landed by hand')), 'said plainly: ' + notes(main).join(' | ') + JSON.stringify(woke) + runGit(box.project, 'log', '--oneline', '-n', '4'), 15);
+    assertEquals(runGit(box.project, 'rev-parse', 'main').trim(), before, 'nothing new landed');
+    assert(!notes(main).some((n) => n.includes("couldn't land")), notes(main).join('\n'));
+    assertEquals(woke.filter((w) => w.text.includes('conflict')).length, 0, JSON.stringify(woke));
+    assertEquals(runGit(box.project, 'branch', '--list', 'studio/sub-test1-landable').trim(), '');
+    await until(() => !readSubagents(box.state)[a.id], 'its worktree released', 15);
   },
 });
 

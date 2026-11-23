@@ -991,7 +991,11 @@ export const STOPPED_WORDS = 'Stopped — ask the agent to merge it';
 
 /** The landing words of one swarm subagent entry. */
 export function landingWords(h: { state: string; reason?: string; merge?: { undo?: unknown } | null; landing?: { waitsFor?: string; lastRefusal?: string } | null; sub?: { files?: number; empty?: boolean; kept?: string[] } }): string {
-  if (h.landing) return h.landing.waitsFor === 'touched-dirty' ? "Didn't land: files it changed have uncommitted edits" : LANDS_AT_TURN_END;
+  if (h.landing) {
+    if (h.landing.waitsFor === 'touched-dirty') return "Didn't land: files it changed have uncommitted edits";
+    // a refused try (the chat was busy, git was busy): it is tried again, and the reason shows (2026-11-23: four builders waited unseen)
+    return h.landing.lastRefusal ? `Waiting to land: ${h.landing.lastRefusal}` : LANDS_AT_TURN_END;
+  }
   if (h.state === 'merged') {
     if (h.sub?.empty) return 'No changes';
     if (h.merge?.undo) return 'Merge undone';

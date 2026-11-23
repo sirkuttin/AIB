@@ -147,6 +147,10 @@ export interface Landing {
   tipBefore: string;
   toldTries: boolean;
   toldWait: boolean;
+  /** The last refusal the parent was woken for (a key: code and files, or the busy reason and how long): the same one is not told twice. */
+  told?: string;
+  /** When a landing that waited for the user's files was last let go to try again. */
+  retriedAt?: number;
 }
 
 interface Doc {

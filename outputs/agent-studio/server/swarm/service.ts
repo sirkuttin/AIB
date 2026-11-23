@@ -89,6 +89,14 @@ export const chatName = (h: Helper) => h.chat.label || providerName(h.chat.provi
 /** Build plan 2.2: after this many refusals (busy, locked, moving) the chat gets one line; after this long queued, another. */
 export const LANDING_TRIES_NOTE = 3;
 export const LANDING_WAIT_NOTE_S = 600;
+/**
+ * A subagent's landing needs its parent idle (the landing lock). Still refused after this long, the parent is woken with the reason
+ * (2026-11-23: four builders waited hours behind a busy lead, with no line and no wake), and again every LANDING_REMIND_S.
+ */
+export const LANDING_BUSY_WAKE_S = 120;
+export const LANDING_REMIND_S = 1800;
+/** A landing that waits for the user's files to be committed is tried again this often (the files may be committed by now). */
+export const LANDING_DIRTY_RETRY_S = 300;
 /** Merge refusals a later try may not meet (git busy, the branch moving, a chat in the folder working). */
 const RETRY_CODES = new Set(['busy', 'locked', 'moving', 'ff_failed', 'folder_busy', 'running', 'stash_failed', 'failed']);
 
@@ -807,7 +815,13 @@ export class Swarm {
       await this.#patchLanding(h.id, { toldWait: true });
       await this.note(h.id, 'swarm-merge', `Still waiting for this chat to pause to land “${h.title}”.`);
     }
-    if (L.waitsFor) return;
+    if (L.waitsFor) {
+      // the user's files may be committed by now: try again now and then, not only when the parent's turn ends (never wait forever)
+      if (h.kind === 'subagent' && L.waitsFor === 'touched-dirty' && this.clock() / 1000 - (L.retriedAt ?? L.queuedAt) > LANDING_DIRTY_RETRY_S) {
+        await this.#patchLanding(h.id, { waitsFor: '', retriedAt: this.clock() / 1000 });
+      }
+      return;
+    }
     if (h.kind === 'subagent') { // a subagent continued in a later turn runs again: it lands at its next end
       const rec = readSubagents(this.ctx.stateDir)[h.sub?.record ?? ''];
       if (rec && rec.state !== 'done' && rec.state !== 'stopped') return;
@@ -822,12 +836,53 @@ export class Swarm {
     await this.#runLanding(h, parentId);
   }
 
+  /**
+   * A subagent's landing could not take the parent's lock (the chat works, has messages queued, or a subagent that works in the folder
+   * runs). It stays queued and is tried at every poll; the reason is kept (Activity says "Waiting to land: <reason>", and the log has it),
+   * and once it has waited LANDING_BUSY_WAKE_S the parent is woken with a plain line, again every LANDING_REMIND_S.
+   */
+  async #landingBusy(h: Helper, parentId: string, why: string): Promise<void> {
+    const L = this.registry.get(h.id)?.landing;
+    if (!L || L.stage !== 'queued') return;
+    const reason = why || 'the chat is busy';
+    if (L.lastRefusal !== reason) {
+      log.info('swarm: landing of subagent %s waits: %s', h.id, reason);
+      await this.#patchLanding(h.id, { lastRefusal: reason });
+    }
+    const waited = this.clock() / 1000 - L.queuedAt;
+    if (waited < LANDING_BUSY_WAKE_S) return;
+    const key = `busy:${Math.floor(waited / LANDING_REMIND_S)}`;
+    if (L.told === key) return;
+    await this.#patchLanding(h.id, { told: key });
+    const branch = h.worktree.branch || '';
+    await this.note(h.id, 'swarm-merge', `Subagent “${h.title}” is waiting to land: ${reason}. It lands when the chat is idle.`);
+    await this.#wakeParent(
+      h,
+      parentId,
+      `waiting-${key.replace(':', '-')}`,
+      `Subagent “${h.title}” finished but has not landed yet: ${reason}. AIB lands it as soon as this chat is idle (no turn, no queued ` +
+        `messages, no subagent at work in this folder), so finish or pause your turn. ` +
+        (branch ? `Its work is on branch ${branch} (it starts with a snapshot of this folder's uncommitted files, so check it before merging by hand) ` : '') +
+        `in ${h.worktree.path}.`,
+    );
+  }
+
+  /** The parent is woken for a refusal once per distinct reason (`key`): a retry that refuses the same way says nothing new. */
+  async #tellOnce(h: Helper, parentId: string, kind: string, key: string, text: string): Promise<void> {
+    if (this.registry.get(h.id)?.landing?.told === key) return;
+    await this.#patchLanding(h.id, { told: key });
+    await this.#wakeParent(h, parentId, kind, text);
+  }
+
   /** Hold the parent's lock, land, let go, then tell the parent. null when the parent was not idle (it stays queued). */
   async #runLanding(h: Helper, parentId: string): Promise<Json | null> {
     const L = h.landing!;
     const lockId = newLockId();
     const got = await lockChats(this.#mergeStudio(), [parentId], h.title, `swarm:${h.id}`, lockId);
-    if (!got.held) return null;
+    if (!got.held) {
+      if (h.kind === 'subagent' && L.what === 'merge') await this.#landingBusy(h, parentId, got.busy[1]).catch((e) => log.exception(e, 'Telling a waiting landing failed'));
+      return null;
+    }
     this.#working.add(h.id);
     let out: Json;
     try {
@@ -1195,7 +1250,6 @@ export class Swarm {
       merge: null,
       notes: [],
     };
-    const context = (line: string) => this.ctx.host.liveCall('prompt-context', { id: s(parent.id), line }).catch(() => [500, null]);
     const adoptable = !userHook || (rec.adopted?.verified === true && rec.acpSeen === true && (!rec.acpAgentId || rec.acpAgentId === rec.agentId));
     if (rec.state === 'done' && adoptable && branch && start && path) fresh.landing = newLanding('merge', 'tool', this.clock());
     let made = false;
@@ -1208,6 +1262,12 @@ export class Swarm {
     if (userHook && !adoptable) {
       await this.registry.patch(rec.id, { state: 'failed', reason: "your WorktreeCreate hook made its worktree" });
       await this.note(rec.id, 'swarm-fail', `Your WorktreeCreate hook made the worktree of subagent “${title}”; AIB doesn't merge it (${rec.stoppedWhy || 'AIB did not see its Agent call end'}).`);
+      await this.#wakeParent(
+        fresh,
+        s(parent.id),
+        'hook',
+        `Subagent “${title}” did not land: your WorktreeCreate hook made its worktree and AIB doesn't merge it (${rec.stoppedWhy || 'AIB did not see its Agent call end'}). Its work is in ${path}.`,
+      );
       await this.#release(fresh);
       return;
     }
@@ -1217,7 +1277,7 @@ export class Swarm {
     }
     await this.registry.patch(rec.id, { state: 'failed', reason: 'no branch' });
     await this.note(rec.id, 'swarm-fail', `Couldn't land subagent “${title}”: the folder isn't on a branch.`);
-    await context(`Subagent “${title}” did not land: this folder isn't on a branch. Its work is kept in ${path}.`);
+    await this.#wakeParent(fresh, s(parent.id), 'nobranch', `Subagent “${title}” did not land: this folder isn't on a branch. Its work is kept in ${path}.`);
   }
 
   /** A stopped subagent: the chat's line and the main agent's next-prompt line (it lands only when the main agent asks: merge_helper). */
@@ -1329,14 +1389,23 @@ export class Swarm {
         cur ? { ...cur, landing: null, state: 'merged', sub: { ...cur.sub!, empty: !cur.merge, files: cur.merge ? cur.sub!.files : 0, kept: [], landScratch: false } } : null
       );
       await this.#release(h);
+      if (out.alreadyLanded) { // its changes are on the branch already (landed by hand): said plainly, not a conflict
+        await this.note(h.id, 'swarm-merge', `Subagent “${h.title}” was already landed by hand: its changes are on ${target}. Nothing to do.`);
+        await context(`Subagent “${h.title}” was already landed by hand: its changes are on ${target} (same patch). Nothing to do.`);
+      }
       return;
     }
     if (out.code === 'touched_dirty') {
-      await this.#patchLanding(h.id, { stage: 'queued', lockId: '', waitsFor: 'touched-dirty', lastRefusal: 'touched-dirty' });
+      await this.#patchLanding(h.id, { stage: 'queued', lockId: '', waitsFor: 'touched-dirty', lastRefusal: 'touched-dirty', retriedAt: this.clock() / 1000 });
       await this.note(h.id, 'swarm-merge', `Didn't land subagent “${h.title}”: it changed files with uncommitted edits (${shown(files.map(baseName))}).`);
-      await context(
+      // woken, not only told at its next prompt (2026-11-23: an idle lead never saw it); once per distinct set of files
+      await this.#tellOnce(
+        h,
+        parentId,
+        'dirty',
+        `dirty:${[...files].sort().join('|')}`,
         `Subagent “${h.title}” changed files with uncommitted edits in this folder (${shown(files)}). Nothing landed and nothing was ` +
-          `stashed. Commit those edits or set them aside, ${retry}`,
+          `stashed. Commit those edits or set them aside, ${retry} AIB also tries again every ${LANDING_DIRTY_RETRY_S / 60} minutes.`,
       );
       return;
     }
@@ -1358,6 +1427,14 @@ export class Swarm {
       const tell = tries >= LANDING_TRIES_NOTE && !h.landing?.toldTries;
       await this.#patchLanding(h.id, { stage: 'queued', lockId: '', tries, lastRefusal: s(out.message), ...(tell ? { toldTries: true } : {}) });
       if (tell) await this.note(h.id, 'swarm-merge', `Couldn't land subagent “${h.title}” yet: ${lower(s(out.message))}. It will try again when the chat is next idle.`);
+      // woken at the first refusal (once per reason): a try that keeps failing is never silent
+      await this.#tellOnce(
+        h,
+        parentId,
+        'retry',
+        `retry:${s(out.code)}`,
+        `Subagent “${h.title}” has not landed yet: ${lower(s(out.message))}. AIB tries again when this chat is next idle; ${retry}`,
+      );
       return;
     }
     await clear();

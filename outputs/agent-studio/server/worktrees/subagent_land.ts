@@ -106,6 +106,31 @@ async function changedBetween(project: string, a: string, b: string): Promise<st
   return nulList((await wt.git(['diff', '--name-only', '-z', a, b], project, { check: false })).stdout);
 }
 
+/** The stable patch-id of a diff (git patch-id --stable), '' when git can't say. */
+async function patchIdOf(cwd: string, diff: Uint8Array): Promise<string> {
+  if (!diff.length) return '';
+  const out = await wt.rawGit(['patch-id', '--stable'], cwd, {}, diff).catch(() => null);
+  return out && out.returncode === 0 ? pyStr(out.stdout).trim().split(/\s+/)[0] ?? '' : '';
+}
+
+/**
+ * True when the changes `start..head` are already on `target` as a commit with the same patch-id (the main agent landed the work by
+ * hand, and other commits touched the same files since, so a file comparison sees a difference and a merge sees a conflict;
+ * 2026-11-23: a builder's late landing reported a conflict with its own hand-made landing). Looks at the last 200 commits since `start`.
+ */
+export async function landedByHand(folder: string, path: string, start: string, head: string, target: string): Promise<boolean> {
+  const mine = await wt.rawGit(['diff', '--no-renames', start, head], path).catch(() => null);
+  if (!mine || mine.returncode !== 0) return false;
+  const want = await patchIdOf(folder, mine.out);
+  if (!want) return false;
+  const list = await wt.git(['rev-list', '--no-merges', '-n', '200', `${start}..refs/heads/${target}`], folder, { check: false });
+  for (const c of pyStr(list.stdout).split('\n').map((l) => l.trim()).filter(Boolean)) {
+    const theirs = await wt.rawGit(['diff', '--no-renames', `${c}^`, c], folder).catch(() => null);
+    if (theirs && theirs.returncode === 0 && (await patchIdOf(folder, theirs.out)) === want) return true;
+  }
+  return false;
+}
+
 /** What the landing needs of one subagent. */
 export interface LandSpec {
   /** A folder for this landing's temporary files (AIB's state folder, or the helper's data folder). */
@@ -214,6 +239,7 @@ export async function landSubagentWork(
     throw error;
   }
   if (result.state === 'conflicts') {
+    if (await landedByHand(folder, path, start, head, target)) return { state: 'empty', alreadyLanded: true, kept: [...kept, ...ignored] };
     // the main agent merges it by hand: the builder's own branch starts with a snapshot of the folder's uncommitted files, so a
     // clean branch of only its own changes is made for that
     const landable = spec.branch
