@@ -1130,11 +1130,8 @@ export class Swarm {
     const hit = changed.filter(protectedPath);
     if (hit.length) return { state: 'refused', code: 'protected', message: 'it changed protected files', files: hit };
     // design 3.5: it changed a file the folder has uncommitted (changed, staged or untracked): nothing lands, nothing is stashed. Checked
-    // on its own changes (S to its head) before the tree merge, which would call an untracked file's change a conflict.
-    const fold = (p: string) => (Deno.build.os === 'windows' ? p.toLowerCase() : p);
-    const dirty = new Set([...(await merge.porcelainPaths(folder))].map(fold));
-    const touched = changed.filter((f) => dirty.has(fold(f)));
-    if (touched.length) return { state: 'refused', code: 'touched_dirty', message: 'it changed files with uncommitted edits', files: touched };
+    // by merge.ts landHeld on what would really land (touchedDirty, tip to landed): files that only came from the folder's own
+    // uncommitted state (the worktree's snapshot, a builder branch it merged) are left out of the landing and are not a reason to refuse.
     const tipBefore = await merge.rev(folder, `refs/heads/${target}`);
     let result: Json;
     try {
@@ -1159,7 +1156,17 @@ export class Swarm {
       }
       throw error;
     }
-    if (result.state === 'conflicts') return { state: 'conflicts', files: result.files, target };
+    if (result.state === 'conflicts') {
+      // the main agent merges it by hand: the builder's own branch starts with a snapshot of the folder's uncommitted files, so a
+      // clean branch of only its own changes is made for that
+      const landable = h.worktree.branch
+        ? await merge.landableBranch({ project: folder, worktree: path, start, head, branch: h.worktree.branch }, h.title).catch((error) => {
+          log.exception(error, 'Making the landable branch of subagent %s failed', h.id);
+          return '';
+        })
+        : '';
+      return { state: 'conflicts', files: result.files, target, landable };
+    }
     const landed = s(result.tip);
     const files = tipBefore && landed ? await changedFiles(folder, tipBefore, landed) : [];
     await this.registry.patch(h.id, {
@@ -1233,7 +1240,10 @@ export class Swarm {
       await clear();
       await this.registry.patch(h.id, { state: 'failed', reason: 'protected' });
       await this.note(h.id, 'swarm-fail', `Didn't land subagent “${h.title}”: it changed protected files (${shown(files)}). AIB doesn't merge those by itself.`);
-      await context(
+      await this.#wakeParent(
+        h,
+        parentId,
+        'protected',
         `Subagent “${h.title}” changed protected files (${shown(files)}). AIB did not merge any of its work into this folder; only the ` +
           'user can land it. Tell the user.',
       );
@@ -1249,16 +1259,46 @@ export class Swarm {
     await clear();
     if (state === 'conflicts') {
       await this.registry.patch(h.id, { state: 'failed', reason: 'conflicts' });
-      await this.note(h.id, 'swarm-merge', `Didn't land subagent “${h.title}”: it conflicts with ${target} in ${shown(files.map(baseName))}.`);
-      await context(
-        `Subagent “${h.title}” did not land: its changes conflict with ${target} in ${shown(files)}. Its work is kept on branch ` +
-          `${h.worktree.branch || '(the user hook\'s branch)'} in ${h.worktree.path}. Redo the change in this folder yourself, then tell the user.`,
+      await this.note(
+        h.id,
+        'swarm-merge',
+        `Builder '${h.title}' couldn't land: conflict in ${files.length} file${files.length === 1 ? '' : 's'} (${shown(files, 3)}). The main agent is merging it by hand.`,
+      );
+      const landable = s(out.landable);
+      const own = h.worktree.branch || "(the user hook's branch)";
+      await this.#wakeParent(
+        h,
+        parentId,
+        'conflict',
+        `Builder “${h.title}” did not land: its changes conflict with ${target} in ${shown(files)}. Merge it into ${target} by hand now ` +
+          'and resolve the conflicts, keeping what both sides intended; AIB does not retry it. ' +
+          (landable
+            ? `Merge the branch ${landable}: it holds only the builder's own changes. Do not merge ${own} (it starts with a snapshot of ` +
+              "this folder's uncommitted files, which would be committed). "
+            : `Its work is on branch ${own}; check what it contains before merging, because it starts with a snapshot of this folder's uncommitted files. `) +
+          `Its worktree is ${h.worktree.path}. When it is merged, tell the user.`,
       );
       return;
     }
     await this.registry.patch(h.id, { state: 'failed', reason: s(out.code) });
     await this.note(h.id, 'swarm-fail', `Couldn't land subagent “${h.title}”: ${lower(s(out.message))}.`);
-    await context(`Subagent “${h.title}” did not land: ${lower(s(out.message))}.`);
+    await this.#wakeParent(h, parentId, 'failed', `Subagent “${h.title}” did not land: ${lower(s(out.message))}.`);
+  }
+
+  /**
+   * A landing that failed wakes the chat that started the builder, as a finished builder's report does (#deliverReports): through the
+   * steer lane (an idle chat takes it as its next prompt), into its paused queue after the user pressed Stop. When that is refused
+   * (the chat is closed) the text is held as a next-prompt line instead, so it is never lost.
+   */
+  async #wakeParent(h: Helper, parentId: string, kind: string, text: string): Promise<void> {
+    const state = obj(await this.ctx.host.liveState(parentId, 0).catch(() => null));
+    const how = obj(state.queue).paused ? 'queued' : 'steer';
+    const [code] = await this.ctx.host.liveCall(how === 'queued' ? 'queue' : 'steer', {
+      id: parentId,
+      text,
+      clientMessageId: `swarm-landing-${kind}-${h.id}-${Math.floor(this.clock() / 1000)}`,
+    }).catch(() => [500] as [number]);
+    if (code !== 200) await this.ctx.host.liveCall('prompt-context', { id: parentId, line: text }).catch(() => [500, null]);
   }
 
   /** Its worktree, branch and record go (the Studio owns subagent-worktrees.json); tried again at the next poll when it can't now. */

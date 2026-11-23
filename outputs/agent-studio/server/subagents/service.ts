@@ -966,6 +966,7 @@ export class SubagentWorktrees {
     if (own && rec.folder && wt.lexists(rec.folder)) {
       await removeSubagentWorktree(rec.path, rec.folder);
       if (/^studio\/sub-[\w.-]+$/.test(rec.branch)) await wt.git(['branch', '-D', rec.branch], rec.folder, { check: false });
+      if (/^studio\/sub-[\w.-]+$/.test(rec.branch)) await wt.git(['branch', '-D', `${rec.branch}-landable`], rec.folder, { check: false }); // the clean branch made when its landing conflicted
     }
     if (own && wt.lexists(rec.path)) {
       try {

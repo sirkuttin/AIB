@@ -12,7 +12,7 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { FAKE, pause, PYTHON, until } from './_connection.ts';
-import { makeRepo, runGit, write } from './_worktree_fixtures.ts';
+import { makeRepo, read, runGit, write } from './_worktree_fixtures.ts';
 import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
 import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
 import { Swarm } from '../../outputs/agent-studio/server/swarm/service.ts';
@@ -55,7 +55,7 @@ class Box {
     file: string,
     body: string,
     state: 'done' | 'stopped' | 'running' = 'done',
-    more: Partial<SubagentRecord> & { files?: Record<string, string>; commit?: boolean } = {},
+    more: Partial<SubagentRecord> & { files?: Record<string, string>; commit?: boolean; seed?: boolean } = {},
   ): { id: string; path: string } {
     const n = ++this.n;
     const root = this.studio.subagents!.root;
@@ -63,10 +63,10 @@ class Box {
     const slug = `sub-test${n}`;
     const path = pathOf(root, hash, slug);
     Deno.mkdirSync(pathOf(root, hash), { recursive: true });
-    const s = runGit(this.project, 'rev-parse', 'HEAD').trim();
+    const s = more.seed ? this.snapshotOfFolder() : runGit(this.project, 'rev-parse', 'HEAD').trim();
     runGit(this.project, 'worktree', 'add', '-q', '-b', `studio/${slug}`, path, s);
     runGit(this.project, 'worktree', 'lock', '--reason', 'AIB subagent', path);
-    const { files, commit, ...fields } = more;
+    const { files, commit, seed: _seed, ...fields } = more;
     if (file) write(path, file, body); // uncommitted, as a subagent leaves it
     for (const [name, text] of Object.entries(files ?? {})) write(path, name, text);
     if (commit) {
@@ -99,6 +99,32 @@ class Box {
     };
     Deno.writeTextFileSync(file2, JSON.stringify({ version: 1, subagents: all }));
     return { id, path };
+  }
+
+  /** S as subagents/service.ts makes it: HEAD plus the folder's uncommitted files (untracked ones too), as an "AIB snapshot" commit. */
+  snapshotOfFolder(): string {
+    const index = pathOf(this.dir, `snapshot-index-${++this.n}`);
+    const run = (...args: string[]) => {
+      const done = new Deno.Command('git', {
+        args: ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args],
+        cwd: this.project,
+        env: { GIT_INDEX_FILE: index },
+        stdout: 'piped',
+        stderr: 'piped',
+      }).outputSync();
+      assertEquals(done.code, 0, new TextDecoder().decode(done.stderr));
+      return new TextDecoder().decode(done.stdout).trim();
+    };
+    run('read-tree', 'HEAD');
+    run('add', '-A');
+    return run('commit-tree', run('write-tree'), '-p', 'HEAD', '-m', 'AIB snapshot');
+  }
+
+  /** The subagent's state changed in the record file (a running one finishes). */
+  setState(id: string, state: 'done' | 'running'): void {
+    const all = readSubagents(this.state);
+    all[id] = { ...all[id], state, ...(state === 'done' ? { doneAt: Date.now() / 1000 } : {}) };
+    Deno.writeTextFileSync(pathOf(this.state, 'subagent-worktrees.json'), JSON.stringify({ version: 1, subagents: all }));
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
@@ -250,6 +276,17 @@ function contextLines(box: Box): string[] {
     own(c, line, replace);
   };
   return lines;
+}
+
+/** The turns that wake the parent (swarm reports and failed landings go in through steer, or queue when the user stopped it). */
+function wakes(box: Box): { op: string; text: string; id: string }[] {
+  const out: { op: string; text: string; id: string }[] = [];
+  const own = box.studio.liveCall.bind(box.studio);
+  box.studio.liveCall = (name, body) => {
+    if (name === 'steer' || name === 'queue') out.push({ op: name, text: String((body as Json).text), id: String((body as Json).clientMessageId) });
+    return own(name, body);
+  };
+  return out;
 }
 
 Deno.test({
@@ -441,20 +478,113 @@ Deno.test({
 
 Deno.test({
   ...T,
-  name: 'a real conflict with main (the branch was never merged) still reports and keeps the worktree',
+  name: 'a real conflict with main wakes the parent at once with a visible line, keeps the worktree and offers a clean branch',
   async fn() {
     await using box = new Box();
     const main = await box.studio.connect('claude', box.project, null, {});
     await settle(main);
     const told = contextLines(box);
+    const woke = wakes(box);
     const b = box.subagent(main.id, 'shared.txt', 'other sub version\n');
     write(box.project, 'shared.txt', 'main version\n');
     runGit(box.project, 'add', 'shared.txt');
     runGit(box.project, 'commit', '-q', '-m', 'main adds it differently');
     await box.swarm.poll();
-    await until(() => notes(main).some((n) => n.includes('it conflicts with main in shared.txt')), 'conflict told', 15);
+    await until(() => notes(main).some((n) => n.includes("couldn't land")), 'conflict told', 15);
     assert(exists(b.path), 'the conflicting worktree is kept');
-    assert(told.some((l) => l.includes('Redo the change')), told.join('\n'));
+    assert(
+      notes(main).includes("Builder 'sub 1' couldn't land: conflict in 1 file (shared.txt). The main agent is merging it by hand."),
+      notes(main).join('\n'),
+    );
+    // the parent is woken now (a turn of its own), not at the owner's next message (no held next-prompt line)
+    assertEquals(woke.length, 1, JSON.stringify(woke));
+    assert(woke[0].op === 'steer' && woke[0].text.includes('did not land') && woke[0].text.includes('shared.txt'), woke[0].text);
+    assert(woke[0].text.includes('studio/sub-test1-landable') && woke[0].text.includes('by hand'), woke[0].text);
+    assert(!told.some((l) => l.includes('did not land')), told.join('\n'));
+    // the clean branch: one commit on main's old HEAD with only the builder's change
+    assertEquals(runGit(box.project, 'show', '--name-only', '--format=', 'studio/sub-test1-landable').trim(), 'shared.txt');
+  },
+});
+
+for (const shape of ['fast-forward', 'merge commit']) {
+  Deno.test({
+    ...T,
+    name: `a builder that took in an already landed builder's branch (${shape}) lands only its own changes, with no conflict`,
+    async fn() {
+      await using box = new Box();
+      const main = await box.studio.connect('claude', box.project, null, {});
+      await settle(main);
+      const woke = wakes(box);
+      const a = box.subagent(main.id, 'a.txt', 'from A\n', 'running', { commit: true, description: 'builder A' });
+      const own = shape === 'merge commit'; // B has a commit of its own first, so taking in A's branch makes a merge commit
+      const b = box.subagent(main.id, '', '', 'running', { description: 'builder B', ...(own ? { files: { 'b0.txt': 'B first\n' }, commit: true } : {}) });
+      runGit(b.path, 'merge', '-q', '--no-edit', 'studio/sub-test1'); // B builds on A's branch
+      assertEquals(runGit(b.path, 'rev-list', '--merges', '--count', 'HEAD').trim(), own ? '1' : '0');
+      write(b.path, 'b.txt', 'from B\n');
+      box.setState(a.id, 'done');
+      await box.swarm.poll();
+      await until(() => log(box.project).includes('AIB: subagent builder A'), 'A landed', 15);
+      await until(() => !readSubagents(box.state)[a.id], 'A released: its branch is gone', 15);
+      // the main agent changes A's file afterwards: the same change twice in different shapes
+      write(box.project, 'a.txt', 'main edited A\n');
+      runGit(box.project, 'commit', '-q', '-am', 'main edits a.txt');
+      box.setState(b.id, 'done');
+      await box.swarm.poll();
+      await until(() => log(box.project).includes('AIB: subagent builder B') || notes(main).some((n) => n.includes('builder B')), 'B landed', 15);
+      assert(log(box.project).includes('AIB: subagent builder B'), notes(main).join('\n'));
+      const names = runGit(box.project, 'show', '--name-only', '--format=', 'HEAD').split('\n').filter((n) => n).sort();
+      assertEquals(names, own ? ['b.txt', 'b0.txt'] : ['b.txt']);
+      assertEquals(read(box.project, 'a.txt'), 'main edited A\n');
+      assertEquals(woke.length, 0, 'no failed landing');
+      assert(!notes(main).some((n) => n.includes("couldn't land")), notes(main).join('\n'));
+    },
+  });
+}
+
+Deno.test({
+  ...T,
+  name: "a snapshot never lands the main folder's uncommitted files (untracked or edited) nor aib-shared content",
+  async fn() {
+    await using box = new Box();
+    const main = await box.studio.connect('claude', box.project, null, {});
+    await settle(main);
+    // B starts clean; then the owner writes a doc (untracked) and edits a tracked file; A starts from a snapshot that holds them
+    const b = box.subagent(main.id, '', '', 'running', { description: 'builder B' });
+    write(box.project, 'aib-docs/notes-things-to-fix/01-page-1.md', 'owner notes\n');
+    write(box.project, 'tracked.txt', 'owner edit, uncommitted\n');
+    box.subagent(main.id, 'a.txt', 'from A\n', 'running', { commit: true, seed: true, description: 'builder A' });
+    runGit(b.path, 'merge', '-q', '--no-edit', 'studio/sub-test2'); // B builds on A's branch (A is not landed)
+    write(b.path, 'b.txt', 'from B\n');
+    write(b.path, 'aib-shared/shared-note.txt', 'shared\n'); // content of the main folder's shared folder, as seen through the link
+    box.setState(b.id, 'done');
+    await box.swarm.poll();
+    await until(() => log(box.project).includes('AIB: subagent builder B'), 'B landed', 15);
+    const landed = runGit(box.project, 'show', '--name-only', '--format=', 'HEAD').split('\n').filter((n) => n).sort();
+    assertEquals(landed, ['a.txt', 'b.txt']);
+    const status = runGit(box.project, 'status', '--porcelain', '-uall');
+    assert(status.includes('?? aib-docs/notes-things-to-fix/01-page-1.md') && status.includes(' M tracked.txt'), status);
+    assertEquals(read(box.project, 'aib-docs/notes-things-to-fix/01-page-1.md'), 'owner notes\n');
+    assertEquals(read(box.project, 'tracked.txt'), 'owner edit, uncommitted\n');
+  },
+});
+
+Deno.test({
+  ...T,
+  name: "landing never overwrites an uncommitted main-folder file: the builder's change to it is refused, the file stays as it is",
+  async fn() {
+    await using box = new Box();
+    const main = await box.studio.connect('claude', box.project, null, {});
+    await settle(main);
+    const woke = wakes(box);
+    const a = box.subagent(main.id, 'notes.txt', 'builder version\n', 'done', { files: { 'other.txt': 'x\n' } });
+    write(box.project, 'notes.txt', 'owner draft, untracked\n'); // after the worktree was made
+    await box.swarm.poll();
+    await until(() => notes(main).some((n) => n.includes('uncommitted edits')), 'refused and told', 15);
+    assertEquals(read(box.project, 'notes.txt'), 'owner draft, untracked\n');
+    assert(!log(box.project).includes('AIB: subagent'), log(box.project));
+    assert(!exists(pathOf(box.project, 'other.txt')), 'nothing landed');
+    assert(exists(a.path), 'its worktree is kept');
+    assertEquals(woke.length, 0, 'waiting for the files is not a failed landing');
   },
 });
 

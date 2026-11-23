@@ -900,37 +900,212 @@ type TreeLanding = ['landed', string, number] | ['empty'] | ['conflicts', string
 
 /** U is past S: land exactly what the chat changed since U, by a three-way merge of the trees (U as the base). */
 async function treeLanding(chat: Chat, tip: string, head: string, title: unknown, logHead = head): Promise<TreeLanding> {
-  const done = await git(
-    ['merge-tree', '--write-tree', '--name-only', '--no-messages', `--merge-base=${chat.user}`, tip, head],
-    chat.wt,
-    {
-      check: false,
-    },
-  );
-  const lines = splitlines(done.stdout);
-  if (done.returncode === 1) {
-    const names: string[] = [];
-    for (const name of lines.slice(1)) {
-      if (!name) break;
-      names.push(name);
+  const treeOf = async (rev: string) => strip((await git(['rev-parse', rev + '^{tree}'], chat.wt)).stdout);
+  const failed = (done: wt.GitResult): ['conflicts', string[]] | null => {
+    if (done.returncode === 1) {
+      const names: string[] = [];
+      for (const name of splitlines(done.stdout).slice(1)) {
+        if (!name) break;
+        names.push(name);
+      }
+      return ['conflicts', names.length ? names : ['(see git status)']];
     }
-    return ['conflicts', names.length ? names : ['(see git status)']];
+    if (done.returncode !== 0 || !splitlines(done.stdout).length) {
+      throw new GitError('git merge-tree failed: ' + strip(done.stderr || done.stdout).slice(-400));
+    }
+    return null;
+  };
+  // A subagent's branch may hold other builders' branches that already landed on the folder branch as their own commits (it merged
+  // them to build on them). Those are not its work: only its own commits are replayed on the tip.
+  const sides = chat.detached ? await landedSides(chat, tip, head) : [];
+  let tree = '';
+  if (sides.length) {
+    const replayed = await replayOwn(chat, tip, head, sides);
+    if (replayed[0] === 'conflicts') return replayed;
+    tree = replayed[1];
+  } else {
+    const done = await git(
+      ['merge-tree', '--write-tree', '--name-only', '--no-messages', `--merge-base=${chat.user}`, tip, head],
+      chat.wt,
+      { check: false },
+    );
+    const bad = failed(done);
+    if (bad) return bad;
+    tree = strip(splitlines(done.stdout)[0]);
   }
-  if (done.returncode !== 0 || !lines.length) {
-    throw new GitError('git merge-tree failed: ' + strip(done.stderr || done.stdout).slice(-400));
-  }
-  const tree = strip(lines[0]);
-  if (tree === strip((await git(['rev-parse', tip + '^{tree}'], chat.wt)).stdout)) return ['empty'];
+  if (chat.detached) tree = await withoutForeign(chat, tip, tree);
+  if (tree === await treeOf(tip)) return ['empty'];
   const own = splitlines(
-    (await git(['log', '--no-merges', '--reverse', '--format=%s', `${chat.user}..${logHead}`, `^${tip}`], chat.wt)).stdout,
+    (await git(['log', '--no-merges', '--reverse', '--format=%s', `${chat.user}..${logHead}`, `^${tip}`, ...sides.map((s) => '^' + s)], chat.wt))
+      .stdout,
   );
   const body = own.length
     ? 'Chat commits:\n' +
       own.slice(0, 30).map((subject) => '- ' + clip(subject, 120)).join('\n')
     : '';
-  const message = [chat.detached ? subagentMessage(title) : commitMessage(title), ...(body ? [body] : [])];
+  // the branch tip that landed: a later builder that merged this branch knows its work is in the folder branch (landedSides)
+  const trailer = chat.detached ? `${LANDED_TRAILER}${await rev(chat.wt, logHead)}` : '';
+  const message = [chat.detached ? subagentMessage(title) : commitMessage(title), ...(body ? [body] : []), ...(trailer ? [trailer] : [])];
   const sha = strip((await gitc(['commit-tree', tree, '-p', tip, ...message.flatMap((m) => ['-m', m])], chat.wt)).stdout);
   return ['landed', sha, Math.max(1, own.length)];
+}
+
+/** A line of a landing commit: the tip of the subagent branch that landed in it. */
+export const LANDED_TRAILER = 'AIB-Landed: ';
+const SNAPSHOT_SUBJECT = 'AIB snapshot';
+
+/**
+ * The builder branches inside the subagent's branch whose work is already in `tip`: the branches it merged (second parents of its merge
+ * commits) and the tips of builders it fast-forwarded onto, when a landing commit of that builder (LANDED_TRAILER, its branch tip at the
+ * time) is in tip's history and the branch is part of it.
+ */
+async function landedSides(chat: Chat, tip: string, head: string): Promise<string[]> {
+  const trailers = new Set<string>();
+  for (const m of (await git(['log', '-n', '400', '--format=%B', tip], chat.wt)).stdout.matchAll(/^AIB-Landed: ([0-9a-f]{40})\s*$/gm)) trailers.add(m[1]);
+  if (!trailers.size) return [];
+  const sides = new Set<string>();
+  for (const line of splitlines((await git(['rev-list', '--merges', '--parents', `${chat.user}..${head}`, `^${tip}`], chat.wt)).stdout)) {
+    for (const parent of pySplitWords(line).slice(2)) sides.add(parent);
+  }
+  for (const t of trailers) { // a builder this one was started on top of (fast-forward): its tip is in this branch's history
+    if (await isAncestor(chat.wt, t, head) && !(await isAncestor(chat.wt, t, chat.user))) sides.add(t);
+  }
+  const landed: string[] = [];
+  for (const side of sides) {
+    for (const t of trailers) {
+      if (await isAncestor(chat.wt, side, t)) {
+        landed.push(side);
+        break;
+      }
+    }
+  }
+  return landed;
+}
+
+/**
+ * `tip` plus the builder's own commits (everything in the chat's range that is not part of a landed side branch), each replayed by a
+ * three-way merge of trees against its own parent: no worktree is touched. A commit whose change is in tip already replays to nothing.
+ */
+async function replayOwn(chat: Chat, tip: string, head: string, sides: string[]): Promise<['ok', string] | ['conflicts', string[]]> {
+  const commits = pySplitWords(
+    (await git(['rev-list', '--no-merges', '--reverse', '--topo-order', `${chat.user}..${head}`, `^${tip}`, ...sides.map((s) => '^' + s)], chat.wt))
+      .stdout,
+  );
+  let cur = tip;
+  for (const commit of commits) {
+    const done = await git(
+      ['merge-tree', '--write-tree', '--name-only', '--no-messages', `--merge-base=${commit}^`, cur, commit],
+      chat.wt,
+      { check: false },
+    );
+    const lines = splitlines(done.stdout);
+    if (done.returncode === 1) {
+      const names: string[] = [];
+      for (const name of lines.slice(1)) {
+        if (!name) break;
+        names.push(name);
+      }
+      return ['conflicts', names.length ? names : ['(see git status)']];
+    }
+    if (done.returncode !== 0 || !lines.length) throw new GitError('git merge-tree failed: ' + strip(done.stderr || done.stdout).slice(-400));
+    const tree = strip(lines[0]);
+    if (tree === strip((await git(['rev-parse', cur + '^{tree}'], chat.wt)).stdout)) continue;
+    cur = strip((await gitc(['commit-tree', tree, '-p', cur, '-m', 'AIB: replayed builder commit'], chat.wt)).stdout);
+  }
+  return ['ok', strip((await git(['rev-parse', cur + '^{tree}'], chat.wt)).stdout)];
+}
+
+/**
+ * `tree` (a landing's result on `tip`) without what is not the builder's own work, each such path back to its version in `tip`:
+ *   - files that only came from the main folder's uncommitted state: a worktree starts from a snapshot commit of the folder, and a
+ *     branch the builder merged (another builder's, not landed yet) carries its own such snapshot. A path whose content is still the
+ *     content of one of those snapshot commits was never changed by the builder;
+ *   - anything under aib-shared/ (the main folder's local-only shared folder) that the folder branch does not track;
+ *   - new files the main folder's git ignores (.gitignore, .git/info/exclude).
+ */
+async function withoutForeign(chat: Chat, tip: string, tree: string): Promise<string> {
+  const added = await rawDiff(chat.wt, tip, tree);
+  if (!added.size) return tree;
+  const seeds = new Map<string, Set<string>>();
+  const range = chat.head ? `${chat.user}..${chat.head}^` : `${chat.user}..HEAD`;
+  const snapshots = splitlines((await git(['log', '--no-merges', '--format=%H%x09%s', range, `^${tip}`], chat.wt, { check: false })).stdout)
+    .map((line) => line.split('\t')).filter(([, subject]) => subject === SNAPSHOT_SUBJECT).map(([sha]) => sha);
+  for (const sha of snapshots) {
+    for (const [path, [, blob, status]] of await rawDiff(chat.wt, `${sha}^`, sha)) {
+      if (status === 'D') continue;
+      if (!seeds.has(path)) seeds.set(path, new Set());
+      seeds.get(path)!.add(blob);
+    }
+  }
+  const tracksShared = !!strip((await git(['ls-tree', '--name-only', tip, '--', 'aib-shared'], chat.wt, { check: false })).stdout);
+  const fresh = [...added].filter(([, [, , status]]) => status === 'A').map(([path]) => path);
+  const ignored = new Set<string>();
+  if (fresh.length) {
+    const checked = await git(['check-ignore', '--no-index', '-z', '--stdin'], chat.project, {
+      check: false,
+      input: fresh.join('\0') + '\0',
+    });
+    for (const name of nul(checked.stdout)) ignored.add(name);
+  }
+  const drop: string[] = [];
+  for (const [path, [, blob, status]] of added) {
+    const shared = !tracksShared && /^aib-shared(\/|$)/i.test(path) && status === 'A';
+    if (shared || ignored.has(path) || (status !== 'D' && seeds.get(path)?.has(blob))) drop.push(path);
+  }
+  if (!drop.length) return tree;
+  const kept = new Map<string, string>(); // path -> "mode sha" in tip
+  for (const item of nul((await git(['ls-tree', '-z', '--full-tree', tip, '--', ...drop], chat.wt)).stdout)) {
+    const tab = item.indexOf('\t');
+    const [mode, , sha] = item.slice(0, tab).split(' ');
+    kept.set(item.slice(tab + 1), `${mode} ${sha}`);
+  }
+  const scratch = Deno.makeTempDirSync({ prefix: '.studio-foreign-', dir: await gitDir(chat.wt) });
+  const env = { GIT_INDEX_FILE: join(scratch, 'index') };
+  try {
+    await git(['read-tree', tree], chat.wt, { env });
+    const lines = drop.map((path) => (kept.get(path) ?? '0 ' + '0'.repeat(40)) + '\t' + path + '\n');
+    const done = await wt.rawGit(['update-index', '--index-info'], chat.wt, env, new TextEncoder().encode(lines.join('')));
+    if (done.returncode !== 0) throw new GitError('git update-index failed: ' + pyStrip(done.stderr + done.stdout).slice(-600));
+    return strip((await git(['write-tree'], chat.wt, { env })).stdout);
+  } finally {
+    try {
+      Deno.removeSync(scratch, { recursive: true });
+    } catch { /* ignore_errors */ }
+  }
+}
+
+/**
+ * A conflicted subagent's work for the main agent to merge by hand: a branch (`<branch>-landable`) of one commit on the folder's HEAD
+ * at the time the worktree was made (the snapshot's parent), holding only the builder's own changes. The builder's own branch starts
+ * with a snapshot commit of the main folder's uncommitted files, so merging it would commit those. '' when it can't be built.
+ */
+export async function landableBranch(
+  spec: { project: string; worktree: string; start: string; head: string; branch: string },
+  title: unknown,
+): Promise<string> {
+  const isSnapshot = strip((await git(['log', '-1', '--format=%s', spec.start], spec.project, { check: false })).stdout) === SNAPSHOT_SUBJECT;
+  const parent = isSnapshot ? await rev(spec.project, `${spec.start}^`) : spec.start;
+  if (!parent || !spec.branch) return '';
+  const chat = Chat.detachedOf({ stateDir: '', liveState: () => null, liveCall: () => [200, null] }, {
+    id: '',
+    key: 'landable',
+    worktree: spec.worktree,
+    project: spec.project,
+    start: spec.start,
+    head: spec.head,
+    landOn: parent,
+  });
+  const done = await git(
+    ['merge-tree', '--write-tree', '--name-only', '--no-messages', `--merge-base=${spec.start}`, parent, spec.head],
+    spec.worktree,
+    { check: false },
+  );
+  if (done.returncode !== 0) return '';
+  const tree = await withoutForeign(chat, parent, strip(splitlines(done.stdout)[0]));
+  const sha = strip((await gitc(['commit-tree', tree, '-p', parent, '-m', subagentMessage(title)], spec.worktree)).stdout);
+  const name = `${spec.branch}-landable`;
+  if ((await git(['update-ref', `refs/heads/${name}`, sha], spec.project, { check: false })).returncode !== 0) return '';
+  return name;
 }
 
 // ---- local-only paths never land (owner Q2 a) ---------------------------------------------------------------------
