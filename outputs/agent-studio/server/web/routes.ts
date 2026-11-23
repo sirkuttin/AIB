@@ -204,6 +204,10 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['GET', '/api/live/artifacts/by-source', 'artifacts.read', 'get'],
   ['POST', '/api/live/steer', 'write', 'body'],
   ['POST', '/api/live/tool-stop', 'write', 'body'],
+  ['POST', '/api/live/schedule', 'write', 'body'], // Send later: the message waits for a time, then joins the queue (Connection.scheduleAdd)
+  ['POST', '/api/live/schedule-edit', 'write', 'body'],
+  ['POST', '/api/live/schedule-cancel', 'write', 'body'],
+  ['POST', '/api/live/schedule-send-now', 'write', 'body'],
   ['POST', '/api/live/chat-name', 'write', 'body'],
   ['POST', '/api/live/page-session', 'pair', 'body'], // the launch key for a page session (page_access.ts)
   ['GET', '/api/live/idle', 'bootstrap', 'get'], // working / waiting chats for `aib deploy`, no token

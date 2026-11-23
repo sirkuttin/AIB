@@ -112,6 +112,10 @@ Deno.test('the route table is exactly the Python web server\'s (paths, scopes an
     'GET /api/live/artifacts/by-source',
     'POST /api/live/steer',
     'POST /api/live/tool-stop',
+    'POST /api/live/schedule', // Send later
+    'POST /api/live/schedule-edit',
+    'POST /api/live/schedule-cancel',
+    'POST /api/live/schedule-send-now',
     'POST /api/live/chat-name',
     'POST /api/live/page-session',
     'GET /api/live/idle',
@@ -154,7 +158,7 @@ Deno.test('CLI flags parse like studio.py', () => {
 Deno.test('LIVE_POST_OPS equals Studio.LIVE_POST_OPS', async () => {
   await using py = new PyParity();
   // Steer-on-send's two calls are Deno only (routes.ts DENO_ONLY lists their routes); everything else is Python's set.
-  const denoOnly = ['steer', 'tool-stop'];
+  const denoOnly = ['steer', 'tool-stop', 'schedule', 'schedule-edit', 'schedule-cancel', 'schedule-send-now']; // Send later too
   assert(denoOnly.every((op) => (LIVE_POST_OPS as readonly string[]).includes(op)));
   assertEquals([...LIVE_POST_OPS].filter((op) => !denoOnly.includes(op)).sort(), await py.call('shims', 'live_post_ops'));
 });

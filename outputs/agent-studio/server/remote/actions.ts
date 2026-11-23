@@ -42,6 +42,7 @@ export const ACTION_OPS: Readonly<Record<string, { op: string; audit: string }>>
   '/api/remote/cancel': { op: 'cancel', audit: 'stop' },
   '/api/remote/queue-send-now': { op: 'queue-send-now', audit: 'queue: send now' },
   '/api/remote/queue-edit': { op: 'queue-edit', audit: 'queue: edit' },
+  '/api/remote/schedule-cancel': { op: 'schedule-cancel', audit: 'scheduled: cancel' },
   '/api/remote/queue-remove': { op: 'queue-remove', audit: 'queue: remove' },
   '/api/remote/dismiss-unknown': { op: 'dismiss-unknown', audit: 'dismiss' },
   '/api/remote/queue-resume': { op: 'queue-resume', audit: 'queue: resume' },
@@ -328,6 +329,12 @@ export async function checkAction(ctx: WebContext, op: string, body: Json): Prom
     case 'queue-remove': {
       const item = messageId(body, 'messageId');
       queuedItem(state, item);
+      return { id, messageId: item };
+    }
+    case 'schedule-cancel': { // a phone sees the scheduled cards and can cancel one (scheduling itself is from the PC)
+      const item = messageId(body, 'messageId');
+      const waiting = Array.isArray(obj(state.queue).scheduled) ? obj(state.queue).scheduled as unknown[] : [];
+      if (!waiting.map(obj).some((i) => i.id === item)) throw REFUSALS.notQueued();
       return { id, messageId: item };
     }
     case 'queue-edit': {

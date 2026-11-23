@@ -137,6 +137,37 @@
     margin: 6px 15px 0;
   }
 }
+/* Scheduled messages (Send later): a solid line like a held one, with the time on the right and ✎ ↑ ✕ always showing. */
+.q-row.q-sched {
+  border-style: solid;
+}
+.q-when-note {
+  color: var(--muted);
+}
+.q-sched-edit {
+  align-items: flex-start;
+}
+.q-sched-fields {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.q-when {
+  align-self: flex-start;
+  font: inherit;
+  font-size: 12px;
+  padding: 2px 6px;
+  color: inherit;
+  background: var(--bg);
+  border: 1px solid var(--line-control);
+  border-radius: 4px;
+}
+.q-sched-error {
+  font-size: 11px;
+  color: var(--turn-lost-text);
+}
 /* Messages sent while the agent works that have not gone in yet (held for an approval card, sending, fell back to after the turn). */
 .q-row.q-lane {
   border-style: solid;

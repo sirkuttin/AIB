@@ -23,12 +23,12 @@ const base = {
 };
 
 /* ---- idle: exactly as today ---- */
-test('idle: no menu, no key hint, plain Send and Enter', () => {
+test('idle: no key hint, plain Send and Enter; the menu holds only Send later', () => {
   const v = SM.view({ ...base, busy: false });
   assert.equal(v.working, false);
-  assert.equal(v.more, false);
+  assert.equal(v.more, true);
   assert.equal(v.keyHint, '');
-  assert.deepEqual(v.items, []);
+  assert.deepEqual(v.items.map((i) => i.id), ['later']);
   assert.equal(SM.route({ ...base, busy: false }, 'default'), 'prompt');
   assert.equal(SM.route({ ...base, busy: false, hasQueue: true }, 'default'), 'queue');
 });
@@ -37,9 +37,8 @@ test('idle: no menu, no key hint, plain Send and Enter', () => {
 test("the agent's own cycle (autonomous, not steerable): no menu, no key hint, Enter waits for it to end as before", () => {
   const ctx = { ...base, autonomous: true, steerable: false };
   const v = SM.view(ctx);
-  assert.equal(v.more, false);
   assert.equal(v.keyHint, '', 'no Send tooltip');
-  assert.deepEqual(v.items, []);
+  assert.deepEqual(v.items.map((i) => i.id), ['later'], 'only Send later: nothing can be sent into that cycle');
   assert.equal(v.placeholder, C.placeholderQueue('Claude Code'));
   assert.equal(SM.route(ctx, 'default'), 'queue');
 });
@@ -78,11 +77,12 @@ test('working + steerable: Enter steers, Alt+Enter queues after the turn, the Se
       ['now', 'Send now', false],
       ['after', 'Send after this turn', false],
       ['interrupt', 'Interrupt and send', false],
+      ['later', 'Send later…', false],
     ],
   );
   assert.deepEqual(
     v.items.map((i) => i.key),
-    ['Enter', 'Alt+Enter', ''],
+    ['Enter', 'Alt+Enter', '', ''],
   );
 });
 
@@ -166,10 +166,12 @@ function menu(viewOver) {
   return { shell, m, send, picked, key };
 }
 
-test('the arrow menu shows only while working and opens with ArrowDown on the Send button', () => {
+test('the arrow menu opens with ArrowDown on the Send button, idle too (it holds Send later)', () => {
   const { m, send, key } = menu({ busy: false });
+  assert.equal(m.state.more.hidden, false);
+  m.update({ ...SM.view(base), more: false });
   assert.equal(m.state.more.hidden, true);
-  assert.equal(key('ArrowDown'), false, 'idle: ArrowDown is left alone');
+  assert.equal(key('ArrowDown'), false, 'no menu: ArrowDown is left alone');
   m.update(SM.view(base));
   assert.equal(m.state.more.hidden, false);
   assert.equal(m.state.wrap.contains(send), true, 'Send sits inside the split');
@@ -187,10 +189,12 @@ test('menu keyboard: arrows move, Enter picks, Esc closes and returns to Send', 
   assert.equal(m.state.index, 1);
   key('ArrowDown');
   assert.equal(m.state.index, 2);
+  key('ArrowDown');
+  assert.equal(m.state.index, 3, 'Send later is the last item');
   key('ArrowDown'); // wraps
   assert.equal(m.state.index, 0);
   key('ArrowUp');
-  assert.equal(m.state.index, 2);
+  assert.equal(m.state.index, 3);
   key('Escape');
   assert.equal(m.state.open, false);
   assert.equal(shell.document.activeElement, send);
@@ -200,7 +204,8 @@ test('menu keyboard: arrows move, Enter picks, Esc closes and returns to Send', 
   assert.deepEqual(picked, ['after']);
   assert.equal(m.state.open, false);
   key('ArrowDown');
-  key('End');
+  key('ArrowDown');
+  key('ArrowDown');
   key(' ');
   assert.deepEqual(picked, ['after', 'interrupt']);
 });
@@ -210,19 +215,20 @@ test('a greyed "Send now" is skipped by the keyboard and cannot be picked by a c
   key('ArrowDown');
   assert.equal(m.state.index, 1, 'the first enabled item is "Send after this turn"');
   key('ArrowUp');
-  assert.equal(m.state.index, 2, 'wraps over the greyed one');
+  assert.equal(m.state.index, 3, 'wraps over the greyed one');
   m.state.buttons[0].click();
   assert.deepEqual(picked, []);
   m.state.buttons[1].click();
   assert.deepEqual(picked, ['after']);
 });
 
-test('the menu closes by itself when the agent stops working', () => {
+test('when the agent stops working the open menu keeps only Send later', () => {
   const { m, key } = menu({});
   key('ArrowDown');
   m.update(SM.view({ ...base, busy: false }));
-  assert.equal(m.state.open, false);
-  assert.equal(m.state.more.hidden, true);
+  assert.equal(m.state.open, true);
+  assert.equal(m.state.more.hidden, false);
+  assert.deepEqual(m.state.items.map((i) => i.id), ['later']);
 });
 
 test('the arrow button toggles the menu; a click outside closes it', () => {

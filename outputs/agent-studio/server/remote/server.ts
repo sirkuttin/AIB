@@ -194,6 +194,7 @@ export const REMOTE_ROUTES: readonly [string, string, RemoteAuth][] = [
   ['POST', '/api/remote/cancel', 'action'],
   ['POST', '/api/remote/queue-send-now', 'action'],
   ['POST', '/api/remote/queue-edit', 'action'],
+  ['POST', '/api/remote/schedule-cancel', 'action'],
   ['POST', '/api/remote/queue-remove', 'action'],
   ['POST', '/api/remote/dismiss-unknown', 'action'],
   ['POST', '/api/remote/queue-resume', 'action'], // a queue that Stop paused goes on
@@ -265,6 +266,7 @@ export const ROUTE_SCOPE: Readonly<Record<string, PhoneScope>> = {
   'POST /api/remote/cancel': 'phone.prompt',
   'POST /api/remote/queue-send-now': 'phone.prompt',
   'POST /api/remote/queue-edit': 'phone.prompt',
+  'POST /api/remote/schedule-cancel': 'phone.prompt',
   'POST /api/remote/queue-remove': 'phone.prompt',
   'POST /api/remote/dismiss-unknown': 'phone.prompt',
   'POST /api/remote/queue-resume': 'phone.prompt',

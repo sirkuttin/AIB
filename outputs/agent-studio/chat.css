@@ -3938,6 +3938,37 @@ span.chip-static:hover {
   white-space: normal;
 }
 
+/* Send later (send-menu-ui.js): the panel that replaces the list in the same menu. */
+.send-later-title {
+  padding: 4px 10px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.send-later-custom {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 7px 10px 4px;
+}
+.send-later-input {
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 6px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line-control);
+  border-radius: 4px;
+}
+.send-later-error {
+  padding: 0 10px 2px;
+  font-size: 11px;
+  color: var(--turn-lost-text);
+}
+.send-later-go .send-item-line b {
+  color: var(--link);
+}
+
 .sent-tag {
   color: var(--muted);
   font-size: 10px;

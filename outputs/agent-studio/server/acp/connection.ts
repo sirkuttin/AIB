@@ -38,7 +38,7 @@ import { arraySource, type Ev, type EventSource, page, type Page, type PageQuery
 import type { HistoryClient } from '../history/client.ts';
 import { anchorOf, type ConversationLines, KEPT_KINDS, type KeptLine, LineMerger } from '../history/lines.ts';
 import type { Checkpoint, OpenInfo, StoredEvent, StoreEvent } from '../history/store.ts';
-import { type HeldCard, MessageQueue, type QueueItem, type SavedItem, STEER_RESTART_NOTE, type SteerItem } from './msgqueue.ts';
+import { type HeldCard, MAX_ITEMS, MAX_SCHEDULED, MessageQueue, type QueueItem, type SavedItem, STEER_RESTART_NOTE, type SteerItem } from './msgqueue.ts';
 import { killVerified, type ProcId } from '../platform/kill_verified.ts';
 import { type AuthMethod, describeAuthMethods, isAuthRequired, PromptStateUnknown, RpcError } from './rpc_errors.ts';
 import {
@@ -89,6 +89,11 @@ import {
 } from '../core/py.ts';
 
 const log = getLogger('acp_connection');
+
+/** "Nov 23, 9:00 AM": a scheduled time in this computer's local time (for the "Sent late" line in the chat). */
+function scheduleStamp(ms: number): string {
+  return new Date(ms).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
 
 export const MAX_EVENTS = 6000;
 const SEP = Deno.build.os === 'windows' ? '\\' : '/';
@@ -5595,12 +5600,131 @@ export class Connection {
   async queueContinue(saved: SavedItem[] | unknown): Promise<void> {
     this.queue.load(saved, '', true);
     void this.#steerPump(); // not awaited: a steer the old AIB sent may still wait for the agent's answer
+    this.#scheduleArm();
+    await this.scheduleTick(); // messages whose time came while AIB was away go now ("sent late"), through the queue
     await this.#queuePump();
   }
 
   /** After a host restart: the saved queue comes back PAUSED; nothing is sent until the user resumes. */
   queueRestore(saved: SavedItem[] | unknown): void {
     this.queue.load(saved, 'restart');
+    this.#scheduleArm();
+    void this.scheduleTick().catch((error) => log.exception(error, 'Sending scheduled messages failed'));
+  }
+
+  // ---- send later: messages that wait for a time, then join the after-turn queue ------------------------------------------------
+  /** Tests inject a fake clock (epoch ms) to move time without waiting. */
+  scheduleNow: () => number = () => Date.now();
+  #scheduleTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** A time this late or later (ms after the scheduled time) counts as "sent late": AIB was not running at the time. */
+  static readonly SCHEDULE_LATE_MS = 90_000;
+
+  #scheduleTime(at: unknown): number {
+    const when = typeof at === 'number' ? at : isStr(at) && at.trim() ? Number(at) : NaN;
+    if (!Number.isFinite(when) || when <= 0) throw new ValueError('Pick a date and time');
+    const now = this.scheduleNow();
+    if (when < now - 5000) throw new ValueError('That time has already passed');
+    if (when > now + 366 * 86_400_000) throw new ValueError('Pick a time within the next year');
+    return Math.round(when);
+  }
+
+  /** Put the text on the schedule. Same payload as queueAdd, plus `at` (epoch ms). */
+  async scheduleAdd(text: unknown, at: unknown, clientMessageId: string | null = null, attachments: unknown = null): Promise<Json> {
+    this.#refuseReadOnly();
+    const [, , , fingerprint] = this.preparePrompt(text, clientMessageId, attachments);
+    if (this.closed || !this.ready || !this.sessionId) throw new ValueError('This connection is not ready');
+    const q = this.queue;
+    const id = clientMessageId || crypto.randomUUID().replaceAll('-', '');
+    const known = q.scheduled.find((item) => item.id === id);
+    if (known) {
+      if (known.fingerprint !== fingerprint) throw new ValueError('This client message ID was already used for different text');
+      return { ok: true, duplicate: true, id, at: known.at, queue: q.public() };
+    }
+    const when = this.#scheduleTime(at);
+    if (q.scheduled.length >= MAX_SCHEDULED) throw new ValueError(`At most ${MAX_SCHEDULED} messages can be scheduled`);
+    q.scheduled.push({
+      id,
+      text: text as string,
+      attachments: pyTruthy(attachments) ? attachments as unknown[] : [],
+      fingerprint,
+      queuedAt: Date.now() / 1000,
+      at: when,
+    });
+    q.scheduled.sort((a, b) => a.at - b.at);
+    this.#queueChanged();
+    this.#scheduleArm();
+    return { ok: true, duplicate: false, id, at: when, queue: q.public() };
+  }
+
+  /** Change a scheduled message's text, its time, or both. */
+  async scheduleEdit(id: string, text: unknown = null, at: unknown = null): Promise<Json> {
+    const q = this.queue;
+    const item = q.scheduled.find((i) => i.id === id);
+    if (!item) throw new ValueError('That message is no longer scheduled (it may already have been sent)');
+    if (text !== null && text !== undefined) {
+      if (!isStr(text)) throw new ValueError('Message text is required');
+      const [, , , fingerprint] = this.preparePrompt(text, null, item.attachments);
+      item.text = text;
+      item.fingerprint = fingerprint;
+    }
+    if (at !== null && at !== undefined) item.at = this.#scheduleTime(at);
+    q.scheduled.sort((a, b) => a.at - b.at);
+    this.#queueChanged();
+    this.#scheduleArm();
+    return { ok: true, queue: q.public() };
+  }
+
+  async scheduleCancel(id: string): Promise<Json> {
+    const q = this.queue;
+    const at = q.scheduled.findIndex((i) => i.id === id);
+    if (at < 0) throw new ValueError('That message is no longer scheduled (it may already have been sent)');
+    q.scheduled.splice(at, 1);
+    this.#queueChanged();
+    this.#scheduleArm();
+    return { ok: true, queue: q.public() };
+  }
+
+  /** The ↑ on a scheduled card: it goes now, as the queue row's Send now does (nothing running is cancelled). */
+  async scheduleSendNow(id: string): Promise<Json> {
+    const q = this.queue;
+    const item = q.scheduled.find((i) => i.id === id);
+    if (!item) throw new ValueError('That message is no longer scheduled (it may already have been sent)');
+    q.add(item.id, item.text, item.attachments, item.fingerprint);
+    q.scheduled.splice(q.scheduled.indexOf(item), 1);
+    this.#scheduleArm();
+    return await this.queueSendNow(id);
+  }
+
+  /** Move every message whose time has come into the after-turn queue and send as the queue allows. Safe to call at any time. */
+  async scheduleTick(): Promise<void> {
+    const q = this.queue;
+    if (this.closed || this.#replaying || !this.ready || !this.sessionId || !q.scheduled.length) return;
+    const now = this.scheduleNow();
+    const due = q.scheduled.filter((i) => i.at <= now);
+    if (!due.length) return;
+    for (const item of due) {
+      if (q.items.length >= MAX_ITEMS) break; // the queue is full: it stays scheduled and goes when there is room
+      const queued = q.add(item.id, item.text, item.attachments, item.fingerprint);
+      if (now - item.at > Connection.SCHEDULE_LATE_MS) queued.late = item.at;
+      q.scheduled.splice(q.scheduled.indexOf(item), 1);
+    }
+    this.#queueChanged();
+    await this.#queuePump();
+  }
+
+  #scheduleArm(): void {
+    if (this.#scheduleTimer !== null) clearTimeout(this.#scheduleTimer);
+    this.#scheduleTimer = null;
+    const q = this.queue;
+    if (this.closed || this.#closing || !q.scheduled.length) return;
+    const wait = Math.min(Math.max(q.scheduled[0].at - this.scheduleNow(), 0), 30_000);
+    const timer = setTimeout(() => {
+      this.#scheduleTimer = null;
+      this.scheduleTick().catch((error) => log.exception(error, 'Sending scheduled messages failed')).finally(() => this.#scheduleArm());
+    }, wait || 250);
+    Deno.unrefTimer(timer as unknown as number);
+    this.#scheduleTimer = timer;
   }
 
   /** Same payload as prompt(). A message that arrives while the agent is idle and nothing waits ahead of it is sent right away. */
@@ -6305,6 +6429,9 @@ export class Connection {
         }
       }
       q.inflight = null;
+      if (!failure && item.late && !(result ?? {}).duplicate) { // a scheduled message that went out after its time
+        this.recordedEvent('studio_note', { message: `Sent late (scheduled ${scheduleStamp(item.late)})`, sessionId: this.sessionId });
+      }
       if (failure) {
         item.note = failure[0] ? failure[1] : '';
         q.items.unshift(item);
@@ -7017,6 +7144,8 @@ export class Connection {
   async close(): Promise<void> {
     if (this.#closing) return;
     this.#closing = true;
+    if (this.#scheduleTimer !== null) clearTimeout(this.#scheduleTimer);
+    this.#scheduleTimer = null;
     let stop = false;
     try {
       for (const key of [...this.permissions.keys()]) {

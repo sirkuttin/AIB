@@ -642,10 +642,17 @@ export interface ChatPayload {
   /** Why it ended or could not open ('' when it did not). */
   error: string;
   /** Messages waiting to be sent in this chat (text, whether one is being sent or edited). */
-  queue: { items: QueuedItem[]; paused: boolean; message: string };
+  queue: { items: QueuedItem[]; paused: boolean; message: string; scheduled?: ScheduledView[] };
   /** Messages that may or may not have reached the agent before AIB restarted. */
   unknown: { clientMessageId: string; at: number }[];
   events: unknown[];
+}
+
+/** A message set to go out later (Send later): its time is epoch ms. A phone sees it and can cancel it. */
+export interface ScheduledView {
+  id: string;
+  text: string;
+  at: number;
 }
 
 export interface QueuedItem {
@@ -744,6 +751,11 @@ export async function chatPayload(
     sending: !!i.sending,
     editing: !!i.editing,
   }));
+  const scheduled: ScheduledView[] = (Array.isArray(queue.scheduled) ? queue.scheduled : []).map(obj).map((i) => ({
+    id: str(i.id, 128),
+    text: typeof i.text === 'string' ? i.text.slice(0, 8000) : '',
+    at: Number(i.at) || 0,
+  }));
   const unknown = (Array.isArray(state.unknownReceipts) ? state.unknownReceipts : []).map(obj)
     .filter((r) => typeof r.clientMessageId === 'string')
     .map((r) => ({ clientMessageId: r.clientMessageId as string, at: Number(r.at) || 0 }));
@@ -784,7 +796,7 @@ export async function chatPayload(
     closed: !!state.closed,
     savedKey: str(state.provider, 60) && str(state.sessionId, 300) ? `${str(state.provider, 60)}:${str(state.sessionId, 300)}` : '',
     error: state.closed ? str(state.error, 400) : '',
-    queue: { items: queued, paused: !!queue.paused, message: str(queue.message, 120) },
+    queue: { items: queued, paused: !!queue.paused, message: str(queue.message, 120), ...(scheduled.length ? { scheduled } : {}) },
     unknown,
     events: events.map((e) => phoneEvent(id, e, artifactOrigin)),
   };

@@ -57,6 +57,77 @@
     ownCycleQueue: (agent) => agent + ' started this turn itself and can’t read messages until it ends',
     sendingHead: 'Sending',
     fallbackNote: 'Couldn’t send now: sends when this turn ends',
+    // Send later (owner, 2026-11-23): the message waits for a time, then goes out like any Send (behind a running turn, never cancelling it).
+    later: 'Send later…',
+    laterHint: 'Pick a time. AIB sends it then, even if the window is closed.',
+    laterNeedsText: 'Type a message first.',
+    laterTitle: 'Send later',
+    laterBack: '‹ Back',
+    laterCustom: 'Pick a date and time',
+    laterSchedule: 'Schedule',
+    laterPast: 'That time has already passed.',
+    laterNone: 'Pick a date and time.',
+    scheduledFor: (when) => 'Scheduled for ' + when,
+    scheduledHead: (n) => n + ' scheduled',
+    scheduleEdit: 'Edit text and time',
+    scheduleSendNow: 'Send now - nothing running stops',
+    scheduleCancel: 'Cancel - the message is not sent',
+    scheduleSave: 'Save',
+    scheduleKeep: 'Cancel edit',
+  };
+
+  // ---- Send later: the quick picks and the words for a time --------------------------------------------------------------
+  const pad = (n) => (n < 10 ? '0' : '') + n;
+  const clock = (d) => {
+    const h = d.getHours();
+    return (h % 12 || 12) + ':' + pad(d.getMinutes()) + ' ' + (h < 12 ? 'AM' : 'PM');
+  };
+  const dayKey = (d) => d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  // A time in words, local: "3:30 PM" today, "tomorrow 9:00 AM", else "Mon, Nov 30, 9:00 AM".
+  function whenWords(at, now) {
+    const d = new Date(at),
+      n = new Date(now == null ? Date.now() : now);
+    if (dayKey(d) === dayKey(n)) return clock(d);
+    const next = new Date(n.getFullYear(), n.getMonth(), n.getDate() + 1);
+    if (dayKey(d) === dayKey(next)) return 'tomorrow ' + clock(d);
+    return DAYS[d.getDay()] + ', ' + MONTHS[d.getMonth()] + ' ' + d.getDate() + ', ' + clock(d);
+  }
+  // The quick picks: in 30 min, in 1 hour, in 3 hours, tomorrow 9:00. at = epoch ms.
+  function laterPicks(now) {
+    const t = now == null ? Date.now() : now,
+      n = new Date(t);
+    return [
+      { id: 'm30', label: 'In 30 minutes', at: t + 30 * 60000 },
+      { id: 'h1', label: 'In 1 hour', at: t + 60 * 60000 },
+      { id: 'h3', label: 'In 3 hours', at: t + 3 * 60 * 60000 },
+      { id: 'tomorrow', label: 'Tomorrow 9:00', at: new Date(n.getFullYear(), n.getMonth(), n.getDate() + 1, 9, 0).getTime() },
+    ];
+  }
+  // The value of the date+time field ("2026-11-24T09:00", local time) as epoch ms, or an error line.
+  function customAt(value, now) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(String(value || ''));
+    if (!m) return { error: COPY.laterNone };
+    const at = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]).getTime();
+    if (!Number.isFinite(at)) return { error: COPY.laterNone };
+    if (at < (now == null ? Date.now() : now)) return { error: COPY.laterPast };
+    return { at };
+  }
+  // The value a date+time field starts with: an hour from now, rounded up to the next 5 minutes.
+  function localValue(ms) {
+    const d = new Date(Math.ceil(ms / 300000) * 300000);
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+  const LATER_ITEM = (ctx) => {
+    const empty = ctx.hasContent === false;
+    return {
+      id: 'later',
+      label: COPY.later,
+      key: '',
+      hint: empty ? COPY.laterNeedsText : COPY.laterHint,
+      disabled: empty,
+    };
   };
 
   // Slash commands (the names the agent lists, plus /doc) are never steered: they always go after this turn.
@@ -84,10 +155,11 @@
       slash = working && isSlashCommand(ctx.text, ctx.commands),
       steer = working && !!ctx.steerable,
       steerNow = steer && !slash;
-    const out = { working, steerable: steer, slash, more: working, keyHint: '', placeholder: '', note: '', items: [] };
+    // The menu is always there: while idle it holds only "Send later…"; while working it adds the ways to send into a running turn.
+    const later = LATER_ITEM(ctx);
+    const out = { working, steerable: steer, slash, more: true, keyHint: '', placeholder: '', note: '', items: [later] };
     if (!working) return out;
     if (ctx.autonomous && !steer) {
-      out.more = false;
       out.placeholder = COPY.placeholderQueue(agent);
       out.note = COPY.noteQueue;
       return out;
@@ -113,6 +185,7 @@
       },
       { id: 'after', label: COPY.after, key: steerNow ? 'Alt+Enter' : 'Enter', hint: COPY.afterHint(agent), disabled: false },
       { id: 'interrupt', label: COPY.interrupt, key: '', hint: COPY.interruptHint, disabled: false },
+      later,
     ];
     return out;
   }
@@ -135,7 +208,7 @@
   }
 
   // ---- the menu -------------------------------------------------------------------------------------------
-  // init({send, doc, root, onPick(id)}) puts a ▾ next to the Send button, inside one wrapper; its menu floats at the page's top level.
+  // init({send, doc, root, onPick(id), onSchedule(epochMs)}) puts a ▾ next to the Send button, inside one wrapper; its menu floats at the page's top level.
   function init(opts) {
     const doc = opts.doc,
       send = opts.send,
@@ -161,7 +234,7 @@
     // (#promptForm has overflow: hidden), so a menu inside it showed only its last ~19 px (QA beta.9).
     const top = doc.body && typeof doc.body.append === 'function' ? doc.body : wrap;
     top.append(menu);
-    const self = { wrap, more, menu, send, open: false, index: 0, items: [], buttons: [] };
+    const self = { wrap, more, menu, send, open: false, index: 0, items: [], buttons: [], mode: 'list', input: null };
     const view = doc.defaultView || (typeof window !== 'undefined' ? window : null);
     // Above the Send split, its right edge on the split's right edge; below it when there is more room there; kept inside the
     // window (8 px from its edges), scrolling inside when even the larger side is too short.
@@ -228,6 +301,7 @@
         b.append(line, hint);
         b.addEventListener('click', () => {
           if (it.disabled) return;
+          if (it.id === 'later') return api.showLater();
           api.close(false);
           opts.onPick(it.id);
         });
@@ -237,13 +311,105 @@
       });
       menu.replaceChildren(...nodes);
     }
+    // The "Send later…" panel, in place of the list: quick picks, a date+time field (local time), Schedule, and a way back.
+    // Buttons (picks, Schedule, Back) are reached with the arrows; the field with Tab (arrows belong to the field).
+    function buildLater() {
+      const now = Date.now(),
+        mk = (tag, cls, text) => {
+          const n = doc.createElement(tag);
+          if (cls) n.className = cls;
+          if (text != null) n.textContent = text;
+          return n;
+        },
+        btn = (label, hint, onClick) => {
+          const b = mk('button', 'send-item');
+          b.type = 'button';
+          b.setAttribute('role', 'menuitem');
+          b.setAttribute('tabindex', '-1');
+          const line = mk('span', 'send-item-line');
+          line.append(mk('b', '', label));
+          if (hint) line.append(mk('kbd', '', hint));
+          b.append(line);
+          b.addEventListener('click', onClick);
+          return b;
+        };
+      const back = btn(COPY.laterBack, '', () => api.showList());
+      back.classList.add('send-later-back');
+      const picks = laterPicks(now).map((p) =>
+        btn(p.label, whenWords(p.at, now), () => api.schedule(p.at)),
+      );
+      const label = mk('label', 'send-later-custom');
+      label.append(mk('span', 'send-item-hint', COPY.laterCustom));
+      const input = mk('input', 'send-later-input');
+      input.type = 'datetime-local';
+      input.value = localValue(now + 60 * 60000);
+      input.setAttribute('aria-label', COPY.laterCustom);
+      input.min = localValue(now - 300000);
+      label.append(input);
+      const error = mk('span', 'send-later-error');
+      error.setAttribute('role', 'alert');
+      error.hidden = true;
+      const go = btn(COPY.laterSchedule, '', () => {
+        const r = customAt(input.value, Date.now());
+        if (r.error) {
+          error.textContent = r.error;
+          error.hidden = false;
+          input.focus && input.focus();
+          return;
+        }
+        api.schedule(r.at);
+      });
+      go.classList.add('send-later-go');
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          e.stopPropagation();
+          go.click();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          e.stopPropagation();
+          api.close(true);
+        } else e.stopPropagation(); // Tab, arrows, digits: the field's own keys, not the menu's
+      });
+      self.input = input;
+      self.buttons = [...picks, go, back];
+      menu.replaceChildren(
+        mk('span', 'send-later-title', COPY.laterTitle),
+        ...picks,
+        label,
+        error,
+        go,
+        back,
+      );
+    }
     const api = {
       state: self,
+      // Later mode: the list is replaced by the picks. schedule(at) hands the time to the page (opts.onSchedule) and closes.
+      showLater() {
+        if (!self.open) return;
+        self.mode = 'later';
+        buildLater();
+        place();
+        focusIndex(0);
+      },
+      showList() {
+        self.mode = 'list';
+        self.input = null;
+        build();
+        place();
+        const ok = enabled();
+        focusIndex(ok.length ? ok[ok.length - 1] : 0);
+      },
+      schedule(at) {
+        api.close(false);
+        if (opts.onSchedule) opts.onSchedule(at);
+      },
       update(v) {
         self.items = v.items;
         more.hidden = !v.more;
         if (!v.more && self.open) api.close(false);
-        // keep an open menu in step with the words (the agent may stop working while it is open)
+        // keep an open menu in step with the words (the agent may stop working while it is open); the Send later panel stays as it is
+        else if (self.open && self.mode === 'later') return;
         else if (self.open) {
           const at = self.index;
           build();
@@ -254,6 +420,7 @@
       openMenu() {
         if (more.hidden || self.open) return;
         self.open = true;
+        self.mode = 'list';
         build();
         menu.hidden = false;
         place();
@@ -264,6 +431,8 @@
       close(refocus) {
         if (!self.open) return;
         self.open = false;
+        self.mode = 'list';
+        self.input = null;
         menu.hidden = true;
         more.setAttribute('aria-expanded', 'false');
         // back where you were typing (the message box), not onto Send: it may be disabled with an empty box (focus then fell to the
@@ -282,7 +451,7 @@
           }
           return false;
         }
-        const ok = enabled(),
+        const ok = self.mode === 'later' ? self.buttons.map((_, i) => i) : enabled(),
           at = Math.max(0, ok.indexOf(self.index));
         if (e.key === 'Escape') {
           e.preventDefault();
@@ -295,12 +464,21 @@
           if (ok.length) focusIndex(e.key === 'Home' ? ok[0] : ok[ok.length - 1]);
         } else if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
+          if (self.mode === 'later') {
+            const b = self.buttons[self.index];
+            if (b) b.click();
+            return true;
+          }
           const it = self.items[self.index];
           if (it && !it.disabled) {
-            api.close(false);
-            opts.onPick(it.id);
+            if (it.id === 'later') api.showLater();
+            else {
+              api.close(false);
+              opts.onPick(it.id);
+            }
           }
         } else if (e.key === 'Tab') {
+          if (self.mode === 'later') return false; // Tab walks through the panel: picks, the date field, Schedule, Back
           api.close(false);
         } else return false;
         return true;
@@ -348,7 +526,7 @@
     return pill;
   }
 
-  const api = { COPY, isSlashCommand, view, route, keyIntent, init, backgroundOf, backgroundPill };
+  const api = { COPY, isSlashCommand, view, route, keyIntent, init, backgroundOf, backgroundPill, whenWords, laterPicks, customAt, localValue };
   root.AgentSendMenu = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

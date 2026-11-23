@@ -21,6 +21,7 @@ export const VERSION = 1;
 export const LEASE_SECONDS = 600;
 export const MAX_ITEMS = 50;
 export const MAX_SESSIONS = 50;
+export const MAX_SCHEDULED = 50;
 
 export const HOLD_MESSAGES: Record<string, string> = {
   needs_you: 'Paused - the agent needs you',
@@ -50,6 +51,18 @@ export interface QueueItem {
   queuedAt: number;
   lease: Lease | null;
   note: string;
+  /** Set when a scheduled message went out after its time (AIB was not running then): the time it was scheduled for, epoch ms. */
+  late?: number;
+}
+
+/** A message set to go out at `at` (epoch ms): "Send later". The host's timer moves it into the after-turn queue when it is due. */
+export interface ScheduledItem {
+  id: string;
+  text: string;
+  attachments: unknown[];
+  fingerprint: unknown;
+  queuedAt: number;
+  at: number;
 }
 
 /**
@@ -111,6 +124,8 @@ export class MessageQueue {
   sendNow = false;
   /** Messages sent while the agent works (steer lane): first in first out, ahead of `items`. See SteerItem. */
   steer: SteerItem[] = [];
+  /** Messages waiting for their time ("Send later"), earliest first. Saved with the queue. */
+  scheduled: ScheduledItem[] = [];
   /**
    * Build plan 1b, 2.3: the title of the helper (or copy chat) whose work is landing in this chat's folder right now, '' otherwise.
    * While it is set nothing is sent; the queue box says what it waits for. Not saved: the landing lock lives only in the host.
@@ -265,6 +280,15 @@ export class MessageQueue {
       message: reason ? (messages[reason] ?? '') : '',
       leaseSeconds: this.leaseSeconds,
     };
+    if (this.scheduled.length) { // only while something is scheduled, so every other answer stays as it was
+      out.scheduled = this.scheduled.map((item) => ({
+        id: item.id,
+        text: light ? clip(item.text, 300) : item.text,
+        attachments: MessageQueue.attachmentSummary(item.attachments),
+        queuedAt: item.queuedAt,
+        at: item.at,
+      }));
+    }
     if (this.landing) { // only while a landing holds the chat, so every other answer stays as it was
       out.landing = this.landing;
       if (!reason) out.message = landingMessage(this.landing);
@@ -306,7 +330,18 @@ export class MessageQueue {
       lane: 'steer',
       state: item.state,
     }));
-    return [...lane, ...[...(this.inflight ? [this.inflight] : []), ...this.items].map((item) => ({ ...item, lease: null }))];
+    const later: SavedItem[] = this.scheduled.map((item) => ({
+      id: item.id,
+      text: item.text,
+      attachments: item.attachments,
+      fingerprint: item.fingerprint,
+      queuedAt: item.queuedAt,
+      lease: null,
+      note: '',
+      lane: 'scheduled',
+      at: item.at,
+    }));
+    return [...later, ...lane, ...[...(this.inflight ? [this.inflight] : []), ...this.items].map((item) => ({ ...item, lease: null }))];
   }
 
   /**
@@ -317,6 +352,7 @@ export class MessageQueue {
   load(saved: unknown, hold = 'restart', keepLane = false): void {
     this.items = [];
     this.steer = [];
+    this.scheduled = [];
     const front: QueueItem[] = [];
     for (const raw of Array.isArray(saved) ? saved : []) {
       if (isDict(raw) && isStr(raw.id) && isStr(raw.text)) {
@@ -329,6 +365,21 @@ export class MessageQueue {
           lease: null,
           note: pyStr(pyOr(raw.note, '')),
         };
+        if (raw.lane === 'scheduled') {
+          const at = pyFloat(pyOr(raw.at, 0));
+          if (at > 0 && this.scheduled.length < MAX_SCHEDULED) {
+            this.scheduled.push({
+              id: item.id,
+              text: item.text,
+              attachments: item.attachments,
+              fingerprint: item.fingerprint,
+              queuedAt: item.queuedAt,
+              at,
+            });
+          }
+          continue;
+        }
+        if (typeof raw.late === 'number' && raw.late > 0) item.late = raw.late;
         if (raw.lane !== 'steer') {
           this.items.push(item);
           continue;
@@ -352,6 +403,7 @@ export class MessageQueue {
     }
     this.items = [...front, ...this.items].slice(0, MAX_ITEMS);
     this.steer = this.steer.slice(0, MAX_ITEMS);
+    this.scheduled.sort((a, b) => a.at - b.at);
     this.hold = this.items.length ? hold : '';
   }
 }

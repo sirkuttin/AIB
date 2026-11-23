@@ -20,6 +20,7 @@ import { afterConnect, discoverAdded } from './project_routes.ts';
 export const LIVE_POST_OPS = [
   'connect', 'discover', 'forget', 'prompt', 'cancel', 'permission', 'authenticate', 'elicitation', 'config', 'mode', 'cancel-pending',
   'session-op', 'disconnect', 'queue', 'queue-edit', 'queue-remove', 'queue-move', 'queue-resume', 'queue-send-now', 'steer', 'tool-stop',
+  'schedule', 'schedule-edit', 'schedule-cancel', 'schedule-send-now',
   'dismiss-unknown',
   'worktree-archive',
 ] as const;

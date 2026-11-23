@@ -1483,9 +1483,14 @@
             agent: nameOf(selected.provider),
             text: $('prompt').value,
             commands: snapshot?.breadth?.commands,
+            hasContent,
           })
         : { working: false, more: false, items: [], keyHint: '' };
-    sendMenu ||= SM && SM.init({ doc: document, root: document, send: $('send'), onPick: (id) => sendWith(id) });
+    // Send later needs a running chat to hold the message: no ▾ while the chat is only selected, opening or discarded
+    if (!connected || gone || opening) composer.more = false;
+    sendMenu ||=
+      SM &&
+      SM.init({ doc: document, root: document, send: $('send'), onPick: (id) => sendWith(id), onSchedule: (at) => scheduleSend(at) });
     sendMenu?.update(composer);
     // The shortcuts while the agent works: the Send button's tooltip and the ▾ menu (no hint row under the box: its height stays put)
     $('send').title = composer.working && composer.keyHint ? composer.keyHint : '';
@@ -4610,6 +4615,46 @@
     sendIntent = intent;
     $('promptForm').requestSubmit();
   }
+  // Send later: the box's message is put on the chat's schedule (the server sends it at `at`, epoch ms, even with this window closed).
+  // The box clears and the message shows as a "Scheduled for …" card above it.
+  async function scheduleSend(at) {
+    const value = $('prompt').value,
+      images = selectedAttachments().slice();
+    if (!current || sendingKey || (!value.trim() && !images.length) || (!imageCapability() && images.length)) return;
+    if (window.AgentDocLinks?.isDocCommand(value)) {
+      fail(Error('A /doc command runs now; it can’t be scheduled. Your draft has been kept.'));
+      return;
+    }
+    const key = aliasKey(selected),
+      connection = current;
+    keepDraft();
+    sendingKey = key;
+    clearError();
+    renderHeader();
+    try {
+      const fingerprint = await imageFingerprint(images),
+        clientMessageId = attemptId(key, value, fingerprint),
+        attachments = await imageBlocks(images);
+      await post('schedule', { id: connection, text: value, clientMessageId, attachments, at });
+      clearAttempt(key, value, fingerprint);
+      clearSentAttachments(key, images);
+      if (drafts.get(key) === value) {
+        try {
+          drafts.delete(key);
+        } catch {
+          fail(Error('Message scheduled, but browser draft storage could not be cleared. Check the schedule before sending again.'));
+        }
+        if (selected && aliasKey(selected) === key) $('prompt').value = '';
+      }
+      await refresh();
+    } catch (error) {
+      fail(Error(sentence(error.message) + ' Your draft has been kept.'));
+    } finally {
+      sendingKey = '';
+      renderHeader();
+      if (selected && aliasKey(selected) === key) composerFocusBack();
+    }
+  }
   $('cancel').onclick = async () => {
     try {
       await post('cancel', { id: current });
@@ -7004,6 +7049,7 @@
     rowStatus,
     renderHeader,
     sendWith,
+    scheduleSend,
     safeImageBlock,
     showRows,
     sortAgents,

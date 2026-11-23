@@ -4598,10 +4598,11 @@
 
   function queueBox(c, can) {
     const items = (c.queue && c.queue.items) || [];
-    if (!items.length) return null;
+    const sched = (c.queue && c.queue.scheduled) || []; // Send later: set on the PC; the phone sees them and can cancel one
+    if (!items.length && !sched.length) return null;
     const box = el('section', 'ph-queue');
     box.setAttribute('aria-label', 'Messages waiting to send');
-    const open = S.qopen || !!S.editing || c.queue.paused;
+    const open = S.qopen || !!S.editing || c.queue.paused || !items.length;
     const head = button('ph-qh', '', () => {
       S.qopen = !open;
       draw();
@@ -4609,7 +4610,13 @@
     head.id = 'phQueueToggle';
     head.setAttribute('aria-expanded', open ? 'true' : 'false');
     head.append(
-      el('span', 'ph-qh-title', 'Waiting to send · ' + items.length + (c.queue.paused ? ' · paused' : '')),
+      el(
+        'span',
+        'ph-qh-title',
+        items.length
+          ? 'Waiting to send · ' + items.length + (c.queue.paused ? ' · paused' : '') + (sched.length ? ' · ' + sched.length + ' scheduled' : '')
+          : 'Scheduled · ' + sched.length,
+      ),
       el('span', 'ph-qh-go', open ? 'Hide' : 'Show'),
     );
     box.append(head);
@@ -4652,6 +4659,23 @@
           acts.append(edit, remove, now);
           row.append(acts);
         }
+      }
+      box.append(row);
+    }
+    for (const item of sched) {
+      const row = el('div', 'ph-queued ph-scheduled');
+      row.dataset.scheduled = item.id;
+      row.setAttribute('data-rk', 's:' + item.id);
+      row.append(el('p', 'ph-queued-text', item.text.length > 400 ? item.text.slice(0, 400) + '…' : item.text));
+      row.append(el('p', 'ph-note', 'Scheduled for ' + new Date(item.at).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })));
+      if (can.send && !S.offline) {
+        const acts = el('div', 'ph-qa');
+        const cancel = button('ph-btn sm quiet', 'Cancel', async () => {
+          if (await act('schedule-cancel', { id: c.id, messageId: item.id })) toast('Scheduled message cancelled');
+        });
+        cancel.dataset.act = 'cancel-scheduled';
+        acts.append(cancel);
+        row.append(acts);
       }
       box.append(row);
     }

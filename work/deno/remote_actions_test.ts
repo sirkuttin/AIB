@@ -87,6 +87,7 @@ Deno.test({
       'POST /api/remote/queue-remove',
       'POST /api/remote/queue-resume',
       'POST /api/remote/queue-send-now',
+      'POST /api/remote/schedule-cancel',
       'POST /api/remote/steer',
       'POST /api/remote/swarm-act',
     ]);
@@ -332,6 +333,37 @@ Deno.test({
         { id: 'q-sending', text: 'queued q-sending', files: 0, sending: true, editing: false },
         { id: 'q1', text: 'queued q1', files: 0, sending: false, editing: false },
       ]);
+    } finally {
+      await s.close();
+    }
+  },
+});
+
+Deno.test({
+  ...OPTS,
+  name: 'send later: a phone sees the scheduled messages of a chat and can cancel one that is scheduled right now, nothing else',
+  async fn() {
+    const s = await phoneOn();
+    try {
+      const at = Date.now() + 3600_000;
+      s.chats.push(
+        chat('c1', { queue: { items: [], paused: false, message: '', scheduled: [{ id: 's1', text: 'weekly report', attachments: [], queuedAt: 1, at }] } }),
+        chat('c2', { queue: { items: [], paused: false, message: '' } }),
+      );
+      const phone = await pairPhone(s);
+      const p = (path: string, body: Json) => post(s, phone.token, path, body);
+      const page = await raw(s.phonePort(), 'GET', '/api/remote/chat?id=c1', phoneHeaders({ [DEVICE_HEADER]: phone.token }));
+      assertEquals((page.json.queue as Json).scheduled, [{ id: 's1', text: 'weekly report', at }]);
+      const none = await raw(s.phonePort(), 'GET', '/api/remote/chat?id=c2', phoneHeaders({ [DEVICE_HEADER]: phone.token }));
+      assertEquals('scheduled' in (none.json.queue as Json), false, 'no key when nothing is scheduled');
+      for (const [id, messageId] of [['c1', 'never'], ['c2', 's1']]) {
+        const r = await p('/api/remote/schedule-cancel', { id, messageId });
+        assertEquals([r.status, r.json.code], [409, 'not_queued'], `${id} ${messageId}`);
+      }
+      assertEquals(s.liveCalls.length, 0);
+      s.answerLive(() => [200, { ok: true }]);
+      assertEquals((await p('/api/remote/schedule-cancel', { id: 'c1', messageId: 's1' })).status, 200);
+      assertEquals(s.liveCalls, [['schedule-cancel', { id: 'c1', messageId: 's1' }]]);
     } finally {
       await s.close();
     }

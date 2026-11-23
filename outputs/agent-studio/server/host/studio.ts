@@ -169,6 +169,10 @@ export const LIVE_POST_OPS: ReadonlySet<string> = new Set([
   'queue-send-now',
   'steer',
   'tool-stop',
+  'schedule',
+  'schedule-edit',
+  'schedule-cancel',
+  'schedule-send-now',
   'dismiss-unknown',
   'worktree-archive',
 ]);
@@ -3495,6 +3499,16 @@ export class Studio {
     if (name === 'queue-move') return [200, await connection.queueMove(need(body, 'messageId') as string, need(body, 'to'))];
     if (name === 'queue-resume') return [200, await connection.queueResume()];
     if (name === 'queue-send-now') return [200, await connection.queueSendNow(need(body, 'messageId') as string, body.interrupt === true)];
+    if (name === 'schedule') { // Send later: the message waits for `at` (epoch ms), then joins the queue like any Send
+      const result = await connection.scheduleAdd(text, need(body, 'at'), messageId, attachments);
+      if (connection.provider && connection.sessionId && !result.duplicate) await this.#mark('handled', connection); // scheduling is acting
+      return [200, result];
+    }
+    if (name === 'schedule-edit') {
+      return [200, await connection.scheduleEdit(need(body, 'messageId') as string, body.text ?? null, body.at ?? null)];
+    }
+    if (name === 'schedule-cancel') return [200, await connection.scheduleCancel(need(body, 'messageId') as string)];
+    if (name === 'schedule-send-now') return [200, await connection.scheduleSendNow(need(body, 'messageId') as string)];
     if (name === 'cancel') connection.cancel(body.subagentSessionId ?? null);
     else if (name === 'permission') connection.permission(need(body, 'key'), body.option ?? null);
     else if (name === 'authenticate') connection.answerAuth(need(body, 'action'), body.methodId ?? null);
