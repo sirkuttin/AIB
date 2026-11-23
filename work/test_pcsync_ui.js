@@ -56,6 +56,7 @@ test('file status: one plain phrase per state, paused first, then syncing, confl
   assert.match(UI.filesText({ ...ok, state: 'wsl' }, 'desk'), /WSL projects comes in a later update/);
   assert.match(UI.filesText({ ...ok, state: 'offline' }, 'desk'), /Waiting for desk/);
   assert.match(UI.filesText({ ...ok, state: 'other_off' }, 'desk'), /off on desk/);
+  assert.equal(UI.filesText({ ...ok, state: 'other_off' }, 'desk', 'aib-docs'), 'Waiting: aib-docs is off on desk.');
   assert.equal(UI.filesText({ ...ok, state: 'blocked', reason: 'Git already tracks aib-shared.' }, 'desk'), 'Git already tracks aib-shared.');
   assert.equal(UI.filesText({ ...ok, state: 'checking' }, 'desk'), 'Checking files.');
 });

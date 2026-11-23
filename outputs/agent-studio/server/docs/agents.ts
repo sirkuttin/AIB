@@ -25,6 +25,7 @@ export function agentName(who: string): string {
   if (who === 'user') return 'You';
   if (who === 'file') return 'File edit';
   if (who === 'system') return 'AIB';
+  if (who.startsWith('sync:')) return `Sync from ${who.slice(5)}`; // a doc the other PC's sync changed (pcsync)
   const provider = who.includes(':') ? who.slice(0, who.indexOf(':')) : who;
   return BUILTIN_NAMES[provider] ?? RETIRED_NAMES[provider] ?? provider;
 }

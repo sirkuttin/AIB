@@ -73,7 +73,7 @@ export interface ProjectDeps {
   /** A link or a switch changed (the file engine looks at its projects again). */
   changed?(): void;
   /** The file engine's status line for one link (the card shows it). */
-  fileStatus?(sync: string): unknown;
+  fileStatus?(sync: string, area?: 'shared' | 'docs'): unknown;
 }
 
 const str = (v: unknown, max = 300) => (typeof v === 'string' ? v.slice(0, max) : '');
@@ -464,7 +464,8 @@ export class ProjectSync {
       docs: l.docs,
       shared: l.shared,
       missing: !here.has(l.folder),
-      files: l.confirmed ? this.deps.fileStatus?.(l.sync) ?? null : null,
+      files: l.confirmed ? this.deps.fileStatus?.(l.sync, 'shared') ?? null : null,
+      docsFiles: l.confirmed ? this.deps.fileStatus?.(l.sync, 'docs') ?? null : null,
     }));
     const state = this.#theirs.get(peer.host);
     const mine = this.#local.filter((l) => !this.#localLinked(l.path, peer.host));
@@ -472,7 +473,9 @@ export class ProjectSync {
     const suggestions: { mine: string; theirs: string; name: string }[] = [];
     for (const l of mine) {
       for (const o of theirs) {
-        if (l.name.toLowerCase() === o.name.toLowerCase() && !this.#sameRepo(l, o)) suggestions.push({ mine: l.oid, theirs: o.oid, name: l.name });
+        if (l.name.toLowerCase() === o.name.toLowerCase() && !this.#sameRepo(l, o)) {
+          suggestions.push({ mine: l.oid, theirs: o.oid, name: l.name });
+        }
       }
     }
     return {

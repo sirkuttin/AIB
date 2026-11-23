@@ -131,7 +131,7 @@ export const MAX_CHUNK_TEXT = 760_000;
 const whole = (v: unknown, max: number): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= max;
 
 /**
- * File items (slice V4, aib-shared), all under batch.project; `area` is 'shared' (docs come with V5). Only the listed keys survive.
+ * File items (slice V4 aib-shared, V5 aib-docs), all under batch.project; `area` is 'shared' (aib-shared/) or 'docs' (aib-docs/, slice V5: only `<doc>/doc.aibdoc` and `<doc>/assets/**`). Only the listed keys survive.
  *   file.begin / file.end   the start and end of one PC's full list of its files (what is absent from a complete list is deleted)
  *   file.state              {path, hash (sha256 hex, null = deleted), size, mtime (ms), sup?}: one file as the sender has it now;
  *                           sup lists the hashes this version replaces (a merge) or 'del' (kept against a delete)
@@ -141,8 +141,8 @@ const whole = (v: unknown, max: number): v is number => typeof v === 'number' &&
  */
 function checkFileItem(item: Record<string, unknown>): Checked<BatchItem> {
   const op = item.op as string;
-  if (item.area !== 'shared') return bad('bad area');
-  const area: Area = 'shared';
+  if (item.area !== 'shared' && item.area !== 'docs') return bad('bad area');
+  const area: Area = item.area;
   if (op === 'file.begin' || op === 'file.end') return { ok: true, value: { op, area } };
   const path = checkPath(item.path, area);
   if (!path.ok) return path;

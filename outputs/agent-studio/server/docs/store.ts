@@ -1079,6 +1079,8 @@ export class DocStore {
     after: string[],
     nodes: PMJson[],
     source: 'md' | 'aibdoc',
+    /** aibdoc: the file's block id of each `after` block ('' when it has none). */
+    fileIds?: string[],
   ): SkippedEdit[] {
     const live = doc.live;
     const origin: Origin = live.originFor('file', 'file edit');
@@ -1099,7 +1101,22 @@ export class DocStore {
       });
     };
     let anchor: string | null = null; // the doc block the next inserted block goes after
-    for (const pair of align(before.map((b) => b.raw), after)) {
+    let pairs = align(before.map((b) => b.raw), after);
+    if (fileIds?.length === after.length && fileIds.every(Boolean)) {
+      // a doc.aibdoc names its blocks: pair them by id (a block with the same id is the same block, changed or not; any other id is a
+      // new or a removed block), so a block keeps its name when the file's text and another block's text happen to be equal
+      const ids = fileIds.map((f) => doc.ids.liveOf(f));
+      if (new Set(ids).size === ids.length && new Set(before.map((b) => b.id)).size === before.length) {
+        pairs = align(before.map((b) => b.id), ids).flatMap((p): Pair[] =>
+          p.kind === 'change'
+            ? [{ kind: 'delete', a: p.a }, { kind: 'insert', b: p.b }]
+            : p.kind === 'same' && before[p.a!].raw !== after[p.b!]
+            ? [{ kind: 'change', a: p.a, b: p.b }]
+            : [p]
+        );
+      }
+    }
+    for (const pair of pairs) {
       if (pair.kind === 'same') {
         if (live.has(before[pair.a!].id)) anchor = before[pair.a!].id;
         continue;
@@ -1110,6 +1127,8 @@ export class DocStore {
             ? { op: 'insert', target: { kind: 'blocks', ids: [anchor] }, side: 'after', source: blocksSource(nodes[pair.b!]) }
             : { op: 'insert', target: { kind: 'root' }, side: anchor ? 'end' : 'start', source: blocksSource(nodes[pair.b!]) };
           const ack = live.edit([op], origin, page) as { created?: string[] };
+          const fid = fileIds?.[pair.b!]; // a block the file named (sync's copies): it keeps its name in the file we write
+          if (fid && ack.created?.[0]) doc.ids.set(ack.created[0], fid);
           anchor = ack.created?.at(-1) ?? anchor;
           continue;
         }
@@ -1136,6 +1155,8 @@ export class DocStore {
           origin,
           page,
         ) as { created?: string[] };
+        const fid = fileIds?.[pair.b!];
+        if (fid && !live.has(old.id) && ack.created?.[0]) doc.ids.set(ack.created[0], fid);
         anchor = live.has(old.id) ? old.id : ack.created?.at(-1) ?? anchor;
       } catch (error) {
         if (!(error instanceof DocRefusal)) throw error;
@@ -1238,7 +1259,7 @@ export class DocStore {
         return { id: doc.ids.liveOf(String(n.id ?? '')), raw: blockKey(node), sig: sigOf(node) };
       });
       const nodes = pageNodes(p);
-      skipped.push(...this.#applyBlocks(doc, p.id, before, nodes.map(blockKey), nodes, 'aibdoc'));
+      skipped.push(...this.#applyBlocks(doc, p.id, before, nodes.map(blockKey), nodes, 'aibdoc', p.content.map((n) => (typeof n.id === 'string' ? n.id : ''))));
     }
     if (next.title && next.title !== last.title && doc.title === last.title) doc.title = next.title;
     doc.aib = { ...doc.aib, text };
@@ -1591,6 +1612,76 @@ export class DocStore {
     doc.live.destroy();
     await fsOf(doc.dir).remove(doc.dir, true).catch(() => {});
     await Deno.remove(this.#cacheDir(doc.id), { recursive: true }).catch(() => {});
+  }
+
+  /**
+   * Sync between PCs (pcsync, slice V5): the other PC's doc.aibdoc is put in place. It must parse and fit the schema first (a file that
+   * does not is refused and nothing is written). An open doc takes it in like any outside change to its file (a git pull): the write
+   * and the merge run in the doc's own queue, so the user's unsaved typing is kept (a block typed in is skipped, never overwritten).
+   * A closed doc is written, then opened, which renders its Markdown copies. The change is credited to "Sync from <pc>". Returns the
+   * file's text after the store is done with it.
+   */
+  async landSynced(projectRoot: string, nameValue: unknown, text: string, from: string): Promise<string> {
+    const { name } = docRef(nameValue);
+    for (const p of parseAib(text).pages) pageNodes(p);
+    const id = await docId(projectRoot, name);
+    const file = `${this.docDir(projectRoot, name)}${sepOf(projectRoot)}${AIBDOC}`;
+    const by = `sync:${from}`;
+    const credit = (doc: OpenDoc) => {
+      doc.edited = { at: Date.now() / 1000, by };
+      doc.dirty = true;
+    };
+    const open = this.docs.get(id);
+    if (open) {
+      return await this.#serial(open, async () => {
+        const before = open.aib.text;
+        await fsOf(file).writeAtomic(file, text);
+        await this.#sync(open);
+        if (open.aib.text !== before) credit(open);
+        await this.#write(open);
+        return open.aib.text;
+      });
+    }
+    await fsOf(file).writeAtomic(file, text);
+    try {
+      const doc = await this.open(projectRoot, name);
+      credit(doc);
+      await this.flush(doc);
+      return doc.aib.text || text;
+    } catch {
+      return text; // it parses but would not load: the file stays as the other PC wrote it
+    }
+  }
+
+  /** Sync, before it deletes a doc the other PC deleted: an open doc's unsaved edits are written now. True when there were any (an edit beats a delete). */
+  async settleSynced(projectRoot: string, nameValue: unknown): Promise<boolean> {
+    const doc = this.docs.get(await docId(projectRoot, docRef(nameValue).name));
+    if (!doc) return false;
+    const pending = doc.timer !== null || doc.dirty;
+    if (pending) await this.flush(doc);
+    return pending;
+  }
+
+  /** Sync: the doc was deleted by the other PC. An open doc is closed (its pages are told), its cache goes, and so do its Markdown copies. */
+  async dropSynced(projectRoot: string, nameValue: unknown): Promise<void> {
+    const { name } = docRef(nameValue);
+    const id = await docId(projectRoot, name);
+    const doc = this.docs.get(id);
+    if (doc) {
+      if (doc.timer !== null) clearTimeout(doc.timer);
+      if (doc.snapTimer !== null) clearTimeout(doc.snapTimer);
+      await doc.busy.catch(() => {});
+      doc.live.sendControl({ type: 'closed' });
+      this.docs.delete(id);
+      doc.agents.destroy();
+      doc.live.destroy();
+    }
+    await Deno.remove(this.#cacheDir(id), { recursive: true }).catch(() => {});
+    const dir = this.docDir(projectRoot, name);
+    for (const e of (await fsOf(dir).readDir(dir)) ?? []) {
+      if (e.isFile && /^\d\d-.*\.md$/.test(e.name)) await fsOf(dir).remove(`${dir}${sepOf(dir)}${e.name}`).catch(() => {});
+    }
+    await fsOf(dir).remove(dir).catch(() => {}); // the folder, only when nothing else is in it
   }
 
   /** info() plus the files the doc owns (the Files view, Ctrl+K, Changes and Merge hide exactly these). */

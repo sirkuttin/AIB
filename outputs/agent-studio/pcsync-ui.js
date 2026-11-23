@@ -62,14 +62,14 @@
     return link.how === 'remote' ? 'Same git remote' : 'Linked by hand';
   }
   /* The small status next to a project's aib-shared switch (slice V4): one plain phrase, from the server's file status. */
-  function filesText(f, peerName) {
+  function filesText(f, peerName, folder) {
     if (!f || f.state === 'off') return '';
     const who = peerName || 'the other PC';
     switch (f.state) {
       case 'wsl': return 'Sync for WSL projects comes in a later update.';
       case 'offline': return 'Waiting for ' + who + ' to be online.';
       case 'blocked': return f.reason || 'Not synced here.';
-      case 'other_off': return 'Waiting: aib-shared is off on ' + who + '.';
+      case 'other_off': return 'Waiting: ' + (folder || 'aib-shared') + ' is off on ' + who + '.';
       case 'checking': return 'Checking files.';
     }
     if (f.pause) return 'Paused: big delete';
@@ -208,18 +208,20 @@
       gone.classList.add('ps-unlink');
       controls.append(gone);
       row.append(controls);
-      const f = l.files;
-      const line = filesText(f, peer.name);
-      if (line) {
+      /* the aib-shared line, then the Docs line (slice V5): the same status for each folder */
+      for (const [f, folder, which] of [[l.files, 'aib-shared', 'shared'], [l.docsFiles, 'aib-docs', 'docs']]) {
+        const line = filesText(f, peer.name, folder);
+        if (!line) continue;
         const status = el('div', null, 'ps-files');
         status.dataset.files = f.state;
+        status.dataset.area = which;
         status.setAttribute('role', 'status');
-        status.append(el('span', line, 'ps-files-text' + (f.pause ? ' bad' : '')));
+        status.append(el('span', (which === 'docs' ? 'Docs: ' : '') + line, 'ps-files-text' + (f.pause ? ' bad' : '')));
         if (f.pause) {
           status.append(
             el('span', f.pause.deletes + ' of ' + f.pause.total + ' files were deleted on ' + peer.name + '. They stay here until you choose.', 'ps-dim'),
-            btn('Allow', () => projAct('pcsync/projects/files', { sync: l.sync, action: 'allow' }), 'ps-small', !!P.busy),
-            btn('Keep files', () => projAct('pcsync/projects/files', { sync: l.sync, action: 'keep' }), 'ps-small', !!P.busy),
+            btn('Allow', () => projAct('pcsync/projects/files', { sync: l.sync, which, action: 'allow' }), 'ps-small', !!P.busy),
+            btn('Keep files', () => projAct('pcsync/projects/files', { sync: l.sync, which, action: 'keep' }), 'ps-small', !!P.busy),
           );
         }
         row.append(status);

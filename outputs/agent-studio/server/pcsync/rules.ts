@@ -14,6 +14,21 @@ export const GUARD_MIN = 10;
 export const GUARD_SHARE = 0.5;
 export const GUARD_COUNT = 200;
 export const BIN_DAYS = 30;
+/** The doc.aibdoc kept as the base of a later block merge (a bigger doc is not merged: the newer one wins, the older goes to the bin). */
+export const MAX_DOC_BASE_BYTES = 8 * 1024 * 1024;
+
+/**
+ * What the docs sync looks at inside aib-docs/ (slice V5): `<doc>/doc.aibdoc` and everything under `<doc>/assets/`. Everything else
+ * (the generated `NN-*.md` page copies, README.md, other files) is left alone: the docs store writes the copies again on each PC.
+ * `dir`: the path is a folder (is it worth walking into?).
+ */
+export function isDocsPath(path: string, dir: boolean): boolean {
+  const s = path.split('/');
+  if (dir) return s.length === 1 || s[1] === 'assets';
+  return (s.length === 2 && s[1] === 'doc.aibdoc') || (s.length >= 3 && s[1] === 'assets');
+}
+/** `<doc>/doc.aibdoc`: the file that gets a block merge and goes through the docs store. */
+export const isAibdoc = (path: string): boolean => /^[^/]+\/doc\.aibdoc$/.test(path);
 
 const SECRET = [
   /^\.env(\..*)?$/i,

@@ -33,7 +33,9 @@ import { readJsonFile, saveJson } from '../state/json.ts';
 import { randomToken } from '../remote/words.ts';
 import { runGit } from '../worktrees/changes.ts';
 import { localOnlyOf } from '../worktrees/local_only.ts';
-import { type BatchItem, checkPath } from './frames.ts';
+import { type Area, type BatchItem, checkPath } from './frames.ts';
+import { canonAib, mergeAibdocs } from './aibmerge.ts';
+import { pageNodes, parseAib } from '../docs/aibdoc.ts';
 import type { Peer } from './peers.ts';
 import type { ProjectLink } from './projects.ts';
 import {
@@ -43,9 +45,12 @@ import {
   GUARD_COUNT,
   GUARD_MIN,
   GUARD_SHARE,
+  isAibdoc,
   isConflictCopy,
+  isDocsPath,
   isMergeable,
   isSecretPath,
+  MAX_DOC_BASE_BYTES,
   MAX_FILE_BYTES,
   MAX_FILES,
   MAX_FOLDER_BYTES,
@@ -73,6 +78,16 @@ const SAVE_MS = 1500;
 const PRUNE_MS = 6 * 3600_000;
 const STATE_BATCH = 300;
 
+/** What the docs store does for the docs sync (DocStore.landSynced and dropSynced). */
+export interface DocsHooks {
+  /** Put the other PC's doc.aibdoc in place (refused unless it parses); returns the file's text afterwards. */
+  land(folder: string, name: string, text: string, from: string): Promise<string>;
+  /** Before a delete: write an open doc's unsaved edits. True when there were any (the delete then waits: an edit beats a delete). */
+  settle(folder: string, name: string): Promise<boolean>;
+  /** The other PC deleted the doc: close it if it is open and remove its page copies. */
+  drop(folder: string, name: string): Promise<void>;
+}
+
 export interface FileDeps {
   /** Confirmed links only. */
   links(): ProjectLink[];
@@ -84,6 +99,8 @@ export interface FileDeps {
   /** A project of a WSL distro: its files wait for the helper (slice V7). */
   isWsl(folder: string): boolean;
   log(message: string): void;
+  /** aib-docs (slice V5): the docs store, which writes and merges every doc.aibdoc that arrives (docs_hooks in server.ts). */
+  docs?: DocsHooks;
   /** Resolves when the project matching has applied every item it was given (a link may arrive just before a switch). */
   settled?(): Promise<void>;
 }
@@ -141,6 +158,8 @@ interface Proj {
   announced: Map<string, string>;
   held: Held[];
   heldIn: Map<string, string>;
+  /** Docs: a doc.aibdoc version that did not open as a doc (never written), and why. */
+  bad: Map<string, { hash: string; why: string }>;
   skip: Map<string, number>;
   queue: Pull[];
   xfer: Xfer | null;
@@ -217,8 +236,25 @@ export class FileSync {
   #saver: Timer | undefined;
   #pruned = new Map<string, number>();
 
-  constructor(readonly stateDir: string, readonly deps: FileDeps, timings: Partial<FileTimings> = {}) {
+  /** 'shared': the project's aib-shared/ (V4). 'docs': its aib-docs/ (V5): only each doc's doc.aibdoc and assets/, through the docs store. */
+  readonly label: string;
+
+  constructor(
+    readonly stateDir: string,
+    readonly deps: FileDeps,
+    timings: Partial<FileTimings> = {},
+    readonly area: Area = 'shared',
+  ) {
     this.timings = { ...DEFAULT_FILE_TIMINGS, ...timings };
+    this.label = area === 'docs' ? 'aib-docs' : 'aib-shared';
+  }
+
+  /** The project's switch for this folder (both PCs must have it on). */
+  #on(link: ProjectLink): boolean {
+    return this.area === 'docs' ? link.docs : link.shared;
+  }
+  #theirOn(p: Proj): boolean {
+    return (this.area === 'docs' ? p.theirs?.docs : p.theirs?.shared) === true;
   }
 
   // ---- lifecycle ---------------------------------------------------------------------------------------------------------------
@@ -249,16 +285,20 @@ export class FileSync {
   }
 
   #run(fn: () => Promise<void>): Promise<void> {
-    this.#q = this.#q.then(fn).catch((e) => this.deps.log(`aib-shared sync: ${e instanceof Error ? e.message : e}`));
+    this.#q = this.#q.then(fn).catch((e) => this.deps.log(`${this.label} sync: ${e instanceof Error ? e.message : e}`));
     return this.#q;
   }
 
   // ---- paths and state ---------------------------------------------------------------------------------------------------------
   #stateFile(sync: string) {
-    return inDir(inDir(inDir(this.stateDir, 'pcsync'), 'files'), `${sync}.json`);
+    return inDir(inDir(inDir(this.stateDir, 'pcsync'), this.#filesName), `${sync}.json`);
   }
   #baseDir(sync: string) {
-    return inDir(inDir(inDir(this.stateDir, 'pcsync'), 'base'), sync);
+    return inDir(inDir(inDir(this.stateDir, 'pcsync'), this.area === 'docs' ? 'docs-base' : 'base'), sync);
+  }
+  /** The per-area table of last-synced hashes. */
+  get #filesName() {
+    return this.area === 'docs' ? 'docs-files' : 'files';
   }
 
   #proj(sync: string): Proj {
@@ -281,6 +321,7 @@ export class FileSync {
       announced: new Map(),
       held: [],
       heldIn: new Map(),
+      bad: new Map(),
       skip: new Map(),
       queue: [],
       xfer: null,
@@ -294,7 +335,7 @@ export class FileSync {
     const files = status === 'ok' && data && typeof data === 'object' ? (data as { files?: unknown }).files : null;
     if (files && typeof files === 'object') {
       for (const [path, raw] of Object.entries(files as Record<string, Record<string, unknown>>).slice(0, MAX_REMOTE)) {
-        if (!raw || typeof raw !== 'object' || !checkPath(path, 'shared').ok) continue;
+        if (!raw || typeof raw !== 'object' || !checkPath(path, this.area).ok) continue;
         const hex = (v: unknown) => (typeof v === 'string' && /^[0-9a-f]{64}$/.test(v) ? v : null);
         p.files.set(path, {
           base: hex(raw.base),
@@ -323,12 +364,12 @@ export class FileSync {
       if (!p.dirty) continue;
       p.dirty = false;
       try {
-        Deno.mkdirSync(inDir(inDir(this.stateDir, 'pcsync'), 'files'), { recursive: true });
+        Deno.mkdirSync(inDir(inDir(this.stateDir, 'pcsync'), this.#filesName), { recursive: true });
         const files: Record<string, { base: string | null; hash: string | null; size: number; mtime: number }> = {};
         for (const [path, e] of p.files) files[path] = { base: e.base, hash: e.hash, size: e.size, mtime: e.mtime };
         saveJson(this.#stateFile(p.sync), { version: 1, files }, 'pcsync-files-');
       } catch (error) {
-        this.deps.log(`aib-shared sync could not save its state: ${error instanceof Error ? error.message : error}`);
+        this.deps.log(`${this.label} sync could not save its state: ${error instanceof Error ? error.message : error}`);
       }
     }
   }
@@ -360,7 +401,7 @@ export class FileSync {
 
   /** A batch from a peer (the link checked its shape). Items for a project this peer is not linked to are dropped. */
   onBatch(peer: Peer, batch: { id: string; project?: string; items: BatchItem[] }): void {
-    const mine = batch.items.filter((i) => i.op === 'project.switch' || i.op.startsWith('file.'));
+    const mine = batch.items.filter((i) => i.op === 'project.switch' || (i.op.startsWith('file.') && i.area === this.area));
     if (!mine.length) return;
     void this.#run(async () => {
       await this.deps.settled?.(); // a project.link that came just before is still being applied
@@ -444,8 +485,9 @@ export class FileSync {
       const connected = !!peer && this.deps.connected(peer.id);
       let p = this.#projs.get(link.sync);
       if (!p) p = this.#proj(link.sync); // also with the switch off: the other PC is told so
-      if (connected && peer) this.#sendSwitch(p, link, peer);
-      const want = link.shared && connected && p.theirs?.shared === true && !this.deps.isWsl(link.folder);
+      if (connected && peer && this.area === 'shared') this.#sendSwitch(p, link, peer);
+      const want = this.#on(link) && connected && this.#theirOn(p) && !this.deps.isWsl(link.folder) &&
+        (this.area !== 'docs' || !!this.deps.docs);
       if (want && !p.active && peer) await this.#activate(p, link, peer);
       else if (!want && p.active) this.#deactivate(p);
     }
@@ -476,13 +518,15 @@ export class FileSync {
   /** The folder to sync, or why not. Only the project's own real aib-shared, only while git keeps it local-only. */
   async #resolve(link: ProjectLink): Promise<{ root: string; gitDir: string } | { reason: string }> {
     const lo = await localOnlyOf(link.folder).catch(() => null);
-    if (!lo) return { reason: 'This project is not a git project, so aib-shared is not synced.' };
-    if (lo.defaultState === 'tracked') return { reason: 'Git already tracks aib-shared in this project. It is not synced here.' };
-    if (lo.defaultState !== 'on') return { reason: 'aib-shared is not set to local-only in this project, so it is not synced.' };
-    const root = osp.join(link.folder, 'aib-shared');
+    if (!lo) return { reason: `This project is not a git project, so ${this.label} is not synced.` };
+    if (this.area === 'shared') {
+      if (lo.defaultState === 'tracked') return { reason: `Git already tracks ${this.label} in this project. It is not synced here.` };
+      if (lo.defaultState !== 'on') return { reason: `${this.label} is not set to local-only in this project, so it is not synced.` };
+    } // aib-docs may be tracked by git or not: the docs are synced either way
+    const root = osp.join(link.folder, this.label);
     const st = lstat(root);
-    if (st?.isSymlink) return { reason: 'aib-shared here is a link, not the real folder.' };
-    if (st && !st.isDirectory) return { reason: 'aib-shared here is a file, not a folder.' };
+    if (st?.isSymlink) return { reason: `${this.label} here is a link, not the real folder.` };
+    if (st && !st.isDirectory) return { reason: `${this.label} here is a file, not a folder.` };
     const gitDir = osp.dirname(osp.dirname(lo.excludeFile));
     if (!osp.isdir(gitDir)) return { reason: 'The git folder of this project was not found.' };
     return { root, gitDir };
@@ -597,19 +641,19 @@ export class FileSync {
     const st = lstat(p.root);
     if (!st) {
       if ([...p.files.values()].some((e) => e.base !== null || e.hash !== null)) {
-        p.reason = 'The aib-shared folder is missing here. Nothing is synced until it is back.';
+        p.reason = `The ${this.label} folder is missing here. Nothing is synced until it is back.`;
         p.scanned = false;
         return;
       }
       try {
         Deno.mkdirSync(p.root, { recursive: true });
       } catch (error) {
-        p.reason = `The aib-shared folder could not be made: ${error instanceof Error ? error.message : error}`;
+        p.reason = `The ${this.label} folder could not be made: ${error instanceof Error ? error.message : error}`;
         p.scanned = false;
         return;
       }
     } else if (st.isSymlink || !st.isDirectory) {
-      p.reason = 'aib-shared here is a link or a file, not the real folder.';
+      p.reason = `${this.label} here is a link or a file, not the real folder.`;
       p.scanned = false;
       return;
     }
@@ -631,6 +675,7 @@ export class FileSync {
       for (const e of list) {
         const path = rel ? `${rel}/${e.name}` : e.name;
         if (++seen % 200 === 0) await tick();
+        if (!e.isSymlink && this.area === 'docs' && !isDocsPath(path, e.isDirectory)) continue; // the page copies and other files: not synced
         present.add(path);
         if (e.isSymlink) continue; // a link (junction or symlink) is never followed, listed or synced
         const full = osp.join(abs, e.name);
@@ -644,7 +689,7 @@ export class FileSync {
           held.push({ path, why: 'Not synced: the name looks like a secret.' });
           continue;
         }
-        const ok = checkPath(path, 'shared');
+        const ok = checkPath(path, this.area);
         if (!ok.ok) {
           held.push({ path, why: `Not synced: ${ok.error}.` });
           continue;
@@ -683,7 +728,7 @@ export class FileSync {
       let hash: string;
       try {
         this.stats.hashed++;
-        hash = await hashFile(osp.join(p.root, ...segs(f.path)));
+        hash = await this.#hashAt(f.path, osp.join(p.root, ...segs(f.path)));
         const after = await Deno.lstat(osp.join(p.root, ...segs(f.path)));
         if (after.size !== f.size || (after.mtime?.getTime() ?? 0) !== f.mtime) continue; // written while read: the next scan
       } catch {
@@ -715,7 +760,7 @@ export class FileSync {
 
   // ---- announcing --------------------------------------------------------------------------------------------------------------
   #stateItem(path: string, e: Entry): BatchItem {
-    return { op: 'file.state', area: 'shared', path, hash: e.hash, size: e.size, mtime: e.mtime, sup: e.sup };
+    return { op: 'file.state', area: this.area, path, hash: e.hash, size: e.size, mtime: e.mtime, sup: e.sup };
   }
 
   #sendItems(peer: Peer, sync: string, items: BatchItem[]): boolean {
@@ -728,14 +773,14 @@ export class FileSync {
 
   /** The complete list of this PC's files (a peer treats what is not in it as deleted), sent when the project starts. */
   #sendIndex(p: Proj, peer: Peer): void {
-    const items: BatchItem[] = [{ op: 'file.begin', area: 'shared' }];
+    const items: BatchItem[] = [{ op: 'file.begin', area: this.area }];
     p.announced.clear();
     for (const [path, e] of p.files) {
       if (e.hash === null) continue;
       items.push(this.#stateItem(path, e));
       p.announced.set(path, sig(e));
     }
-    items.push({ op: 'file.end', area: 'shared' });
+    items.push({ op: 'file.end', area: this.area });
     this.#sendItems(peer, p.sync, items);
   }
 
@@ -768,11 +813,16 @@ export class FileSync {
     p.heldIn.clear();
     let pending = 0;
     const want = (path: string, rem: Remote, kind: Pull['kind']) => {
+      const bad = p.bad.get(path);
+      if (bad && bad.hash === rem.hash) {
+        p.heldIn.set(path, bad.why); // that version did not open as a doc: it is not written, and not asked for again
+        return;
+      }
       pending++;
       if ((p.skip.get(path) ?? 0) > now) return;
       const why = isSecretPath(path)
         ? 'Not synced: the name looks like a secret.'
-        : !checkPath(path, 'shared').ok
+        : !checkPath(path, this.area).ok
         ? 'Not synced: the name is not allowed here.'
         : rem.size > MAX_FILE_BYTES
         ? 'Held: over 100 MB (on the other PC).'
@@ -861,7 +911,16 @@ export class FileSync {
       return;
     }
     p.allow = false;
-    for (const path of deletes) this.#removeLocal(p, path);
+    for (const path of deletes) {
+      const doc = this.area === 'docs' && isAibdoc(path) ? this.deps.docs : undefined;
+      const name = path.slice(0, path.indexOf('/'));
+      if (doc && await doc.settle(link.folder, name).catch(() => false)) {
+        this.#touch(p); // the doc was being edited here: the file is written now, and it is looked at again (an edit beats a delete)
+        continue;
+      }
+      this.#removeLocal(p, path);
+      if (doc && p.files.get(path)?.hash === null) await doc.drop(link.folder, name).catch(() => {});
+    }
     if (deletes.length) this.#announce(p, peer);
     p.queue = pulls.filter((x) => !(p.xfer && p.xfer.path === x.path && p.xfer.hash === x.hash));
     await this.#pump(p);
@@ -902,7 +961,7 @@ export class FileSync {
   /** Throws unless every folder from the root to the file's parent is a real folder (never a link), and the file is not a link or folder. */
   #safe(p: Proj, rel: string, mayCreate: boolean): string {
     const root = lstat(p.root);
-    if (!root || root.isSymlink || !root.isDirectory) throw new Error('the aib-shared folder is not a real folder');
+    if (!root || root.isSymlink || !root.isDirectory) throw new Error(`the ${this.label} folder is not a real folder`);
     const parts = segs(rel);
     let cur = p.root;
     for (let i = 0; i < parts.length - 1; i++) {
@@ -955,14 +1014,42 @@ export class FileSync {
     } catch { /* no base files yet */ }
   }
 
-  /** The content of an agreed .md or .txt file is kept (by hash) as the base of a later line merge. */
+  #docFile(rel: string): boolean {
+    return this.area === 'docs' && isAibdoc(rel);
+  }
+
+  /**
+   * The hash a file is known by. Plain files: sha256 of the bytes. A doc.aibdoc: sha256 of its canonical form (aibmerge.ts canonAib:
+   * who typed what is not part of it), because each PC's docs store writes the same doc with its own authorship marks. Two PCs
+   * holding the same content then agree, and the store's rewrite after a merge is not an edit (no echo, no ping-pong). A file that
+   * does not parse is known by its plain hash.
+   */
+  #hashBytes(rel: string, bytes: Uint8Array): string {
+    if (this.#docFile(rel)) {
+      try {
+        return sha(new TextEncoder().encode(canonAib(new TextDecoder('utf-8', { fatal: true }).decode(bytes))));
+      } catch { /* not a doc: plain */ }
+    }
+    return sha(bytes);
+  }
+  async #hashAt(rel: string, abs: string): Promise<string> {
+    if (!this.#docFile(rel)) return await hashFile(abs);
+    return this.#hashBytes(rel, await Deno.readFile(abs));
+  }
+
+  /** Files whose agreed content is kept as the base of a later merge: .md and .txt (line merge); in aib-docs, each doc.aibdoc (block merge). */
+  #baseable(path: string): boolean {
+    return this.area === 'docs' ? isAibdoc(path) : isMergeable(path);
+  }
+
+  /** The content of an agreed .md or .txt file (a doc.aibdoc in aib-docs) is kept (by hash) as the base of a later merge. */
   async #keepBase(p: Proj, path: string, e: Entry): Promise<void> {
-    if (!isMergeable(path) || e.hash === null || e.size > MAX_MERGE_BYTES) return;
+    if (!this.#baseable(path) || e.hash === null || e.size > (this.area === 'docs' ? MAX_DOC_BASE_BYTES : MAX_MERGE_BYTES)) return;
     const file = osp.join(this.#baseDir(p.sync), e.hash);
     if (osp.exists(file)) return;
     try {
       const bytes = await Deno.readFile(osp.join(p.root, ...segs(path)));
-      if (sha(bytes) !== e.hash) return;
+      if (this.#hashBytes(path, bytes) !== e.hash) return;
       Deno.mkdirSync(this.#baseDir(p.sync), { recursive: true });
       Deno.writeFileSync(file, bytes, { mode: 0o600 });
     } catch { /* no base: a clash of this file will get a conflict copy */ }
@@ -1023,7 +1110,7 @@ export class FileSync {
     return this.deps.send(peer.id, {
       id: batchId(),
       project: p.sync,
-      items: [{ op: 'file.get', area: 'shared', path: x.path, hash: x.hash, offset: x.offset }],
+      items: [{ op: 'file.get', area: this.area, path: x.path, hash: x.hash, offset: x.offset }],
     });
   }
 
@@ -1050,7 +1137,7 @@ export class FileSync {
       p.skip.set(x.path, Date.now() + skipMs);
       this.#later(p, skipMs);
     }
-    if (why) this.deps.log(`aib-shared sync: ${x.path}: ${why}`);
+    if (why) this.deps.log(`${this.label} sync: ${x.path}: ${why}`);
   }
 
   /** Look at a project again after a pause (a file that failed to pull is retried). */
@@ -1098,9 +1185,9 @@ export class FileSync {
         p.skip.set(x.path, Date.now() + skipMs);
         this.#later(p, skipMs);
       }
-      if (why) this.deps.log(`aib-shared sync: ${x.path}: ${why}`);
+      if (why) this.deps.log(`${this.label} sync: ${x.path}: ${why}`);
     };
-    if (x.hasher.digest('hex') !== x.hash) {
+    if ((this.#docFile(x.path) ? this.#hashBytes(x.path, await Deno.readFile(x.tmp)) : x.hasher.digest('hex')) !== x.hash) {
       drop('the copy does not match its hash', this.timings.retryMs);
       return this.#again(p);
     }
@@ -1118,6 +1205,17 @@ export class FileSync {
         this.#touch(p);
         return this.#again(p);
       }
+      if (this.area === 'docs' && isAibdoc(x.path)) {
+        // a doc.aibdoc never goes in by a rename: the docs store takes it (checked, merged with an open doc, page copies rendered)
+        const done = await this.#landDoc(p, x, e, abs, here);
+        if (!done) {
+          drop('', 0);
+          return this.#again(p);
+        }
+        this.#announce(p, peer);
+        await this.#reconcile(p);
+        return;
+      }
       let sup: string[] = [];
       let keepBin = here !== null;
       let base: string | null = x.hash;
@@ -1128,7 +1226,7 @@ export class FileSync {
           const mh = sha(merged);
           sup = mh === x.hash ? [] : [here, x.hash];
           base = mh === x.hash ? x.hash : e!.base;
-          this.deps.log(`aib-shared sync: merged ${x.path} from both PCs`);
+          this.deps.log(`${this.label} sync: merged ${x.path} from both PCs`);
         } else {
           const own = this.deps.own();
           const copy = conflictName(x.path, own?.name ?? 'pc');
@@ -1144,7 +1242,7 @@ export class FileSync {
             sup: [],
           });
           keepBin = false; // the loser's version stays beside the winner: nothing to bin
-          this.deps.log(`aib-shared sync: ${x.path} changed on both PCs: the older version is kept as a conflict copy`);
+          this.deps.log(`${this.label} sync: ${x.path} changed on both PCs: the older version is kept as a conflict copy`);
         }
       }
       if (keepBin) this.#bin(p, x.path, abs, false);
@@ -1185,6 +1283,61 @@ export class FileSync {
     await this.#reconcile(p);
   }
 
+  /**
+   * A doc.aibdoc from the other PC is in the temp file. Both PCs changed it: a block merge (aibmerge.ts) against the last agreed copy,
+   * else the newer version wins and this PC's goes to the bin. The result must parse as a doc (nothing else is ever written); the
+   * docs store then writes it (an open doc merges it like an outside edit). false: it was refused (held, nothing written).
+   */
+  async #landDoc(p: Proj, x: Xfer, e: Entry | undefined, abs: string, here: string | null): Promise<boolean> {
+    const link = this.#link(p.sync);
+    const docs = this.deps.docs;
+    if (!link || !docs) throw new Error('the docs store is not ready');
+    const from = this.#peer(link)?.name ?? 'the other PC';
+    const bytes = await Deno.readFile(x.tmp);
+    let text: string;
+    try {
+      text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+      for (const page of parseAib(text).pages) pageNodes(page);
+    } catch (error) {
+      const why = error instanceof Error ? error.message : String(error);
+      p.bad.set(x.path, { hash: x.hash, why: `Not written: ${from}'s doc.aibdoc does not open as a doc (${why}).` });
+      this.deps.log(`${this.label} sync: ${x.path}: not a valid doc.aibdoc, not written`);
+      return false;
+    }
+    p.bad.delete(x.path);
+    let sup: string[] = [];
+    let base: string | null = x.hash;
+    if (here !== null && x.kind === 'conflict') {
+      const merged = await this.#merge(p, x, e!);
+      if (merged) {
+        text = new TextDecoder().decode(merged);
+        sup = [here, x.hash];
+        base = e!.base;
+        this.deps.log(`${this.label} sync: merged ${x.path} from both PCs`);
+      } else this.deps.log(`${this.label} sync: ${x.path} changed on both PCs and could not be merged: the newer version is used`);
+    }
+    if (bytes.length <= MAX_DOC_BASE_BYTES) {
+      // what both PCs agreed on (the other PC's version): the base of the next merge
+      const file = osp.join(this.#baseDir(p.sync), x.hash);
+      if (!osp.exists(file)) {
+        Deno.mkdirSync(this.#baseDir(p.sync), { recursive: true });
+        Deno.writeFileSync(file, bytes, { mode: 0o600 });
+      }
+    }
+    if (here !== null) this.#bin(p, x.path, abs, false);
+    await docs.land(link.folder, x.path.slice(0, x.path.indexOf('/')), text, from);
+    try {
+      Deno.removeSync(x.tmp);
+    } catch { /* none */ }
+    const hash = await this.#hashAt(x.path, abs);
+    const info = Deno.lstatSync(abs);
+    p.files.set(x.path, { base: sup.length ? base : x.hash, hash, size: info.size, mtime: info.mtime?.getTime() ?? 0, sup });
+    p.dirty = true;
+    this.#dirty(p);
+    await this.#keepBase(p, x.path, p.files.get(x.path)!);
+    return true;
+  }
+
   #again(p: Proj): Promise<void> {
     const link = this.#link(p.sync);
     const peer = link && this.#peer(link);
@@ -1194,6 +1347,26 @@ export class FileSync {
 
   /** A 3-way line merge of an .md or .txt file against the last agreed version (git merge-file). null: not mergeable or it conflicts. */
   async #merge(p: Proj, x: Xfer, e: Entry): Promise<Uint8Array | null> {
+    if (this.area === 'docs') {
+      // a doc.aibdoc: a 3-way merge by block id (aibmerge.ts); no base (never agreed) merges as two PCs that made the same doc
+      if (!isAibdoc(x.path) || e.size > MAX_DOC_BASE_BYTES || x.size > MAX_DOC_BASE_BYTES) return null;
+      try {
+        const link = this.#link(p.sync);
+        let base: string | null = null;
+        if (e.base) {
+          const bytes = await Deno.readFile(osp.join(this.#baseDir(p.sync), e.base)).catch(() => null);
+          if (bytes && this.#hashBytes(x.path, bytes) === e.base) base = new TextDecoder().decode(bytes);
+        }
+        const ours = await Deno.readFile(osp.join(p.root, ...segs(x.path)));
+        if (this.#hashBytes(x.path, ours) !== e.hash) return null;
+        const theirs = await Deno.readFile(x.tmp);
+        const from = (link && this.#peer(link)?.name) || 'the other PC';
+        const text = mergeAibdocs(base, new TextDecoder().decode(ours), new TextDecoder().decode(theirs), from);
+        return text === null ? null : new TextEncoder().encode(text);
+      } catch {
+        return null;
+      }
+    }
     if (!isMergeable(x.path) || !e.base || e.size > MAX_MERGE_BYTES || x.size > MAX_MERGE_BYTES) return null;
     const dir = this.#tmpDir(p);
     const names = [0, 1, 2].map((i) => osp.join(dir, `m-${randomToken(6)}-${i}`));
@@ -1227,7 +1400,7 @@ export class FileSync {
     const hash = String(item.hash);
     const offset = Number(item.offset);
     const gone = () =>
-      this.deps.send(peer.id, { id: batchId(), project: p.sync, items: [{ op: 'file.gone', area: 'shared', path, hash }] });
+      this.deps.send(peer.id, { id: batchId(), project: p.sync, items: [{ op: 'file.gone', area: this.area, path, hash }] });
     const e = p.files.get(path);
     if (!e || e.hash !== hash || offset > e.size || isSecretPath(path)) return void gone();
     let file: Deno.FsFile | null = null;
@@ -1253,7 +1426,7 @@ export class FileSync {
         project: p.sync,
         items: [{
           op: 'file.data',
-          area: 'shared',
+          area: this.area,
           path,
           hash,
           offset,
@@ -1276,14 +1449,14 @@ export class FileSync {
     const link = this.#link(sync);
     if (!link) return null;
     const empty: FileStatus = { state: 'off', reason: '', pending: 0, conflicts: [], conflictCount: 0, held: [], pause: null };
-    if (!link.shared) return empty;
+    if (!this.#on(link)) return empty;
     if (this.deps.isWsl(link.folder)) return { ...empty, state: 'wsl' };
     const peer = this.#peer(link);
     if (!peer || !this.deps.connected(peer.id)) return { ...empty, state: 'offline' };
     const p = this.#projs.get(sync);
     if (!p) return { ...empty, state: 'checking' };
     if (p.reason && !p.active) return { ...empty, state: 'blocked', reason: p.reason };
-    if (p.theirs?.shared !== true) return { ...empty, state: p.theirs ? 'other_off' : 'checking' };
+    if (!this.#theirOn(p)) return { ...empty, state: p.theirs ? 'other_off' : 'checking' };
     const conflicts = [...p.files].filter(([path, e]) => e.hash !== null && isConflictCopy(path)).map(([path]) => path);
     const held = [...p.held, ...[...p.heldIn].map(([path, why]) => ({ path, why }))].slice(0, 50);
     const ready = p.active && p.scanned && p.remoteDone;

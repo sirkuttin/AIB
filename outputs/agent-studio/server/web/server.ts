@@ -854,6 +854,11 @@ export function makeContext(
     devices: null as unknown as DeviceStore,
     pcsync: new PcSync(options.stateDir, {
       projects: () => sourceProjects(ctx.addedProjects.public().added, (path) => ctx.folderPresence.isGone(path)),
+      docs: { // the aib-docs sync lets the docs store write and merge what arrives
+        land: (folder, name, text, from) => ctx.docs.landSynced(folder, name, text, from),
+        settle: (folder, name) => ctx.docs.settleSynced(folder, name),
+        drop: (folder, name) => ctx.docs.dropSynced(folder, name),
+      },
       ...options.pcsync,
     }),
     presence: new Presence(),

@@ -20,7 +20,7 @@ import { type Peer, PeerStore, type PublicPeer, publicPeer } from './peers.ts';
 import { SYNC_REASONS, SyncGate } from './gate.ts';
 import { type LinkHost, LinkManager, type LinkTimings } from './link.ts';
 import { ProjectSync, type SourceProject } from './projects.ts';
-import { FileSync, type FileTimings } from './files.ts';
+import { type DocsHooks, FileSync, type FileTimings } from './files.ts';
 import { readRepoIdentity, type RepoIdentity } from './repo_id.ts';
 import { notReady, peekWslHost } from '../wsl/access.ts';
 import {
@@ -62,6 +62,8 @@ export interface PcSyncOptions {
   projectsTtlMs?: number;
   /** Tests: the file engine's timings. */
   files?: Partial<FileTimings>;
+  /** The docs store's hooks for the aib-docs sync (slice V5); without them docs are not synced. */
+  docs?: DocsHooks;
   /** Later slices: what a peer's batch frame goes to. */
   onBatch?: LinkHost['onBatch'];
   log?: (message: string) => void;
@@ -104,6 +106,8 @@ export class PcSync {
   readonly projects: ProjectSync;
   /** The aib-shared file engine (files.ts). */
   readonly files: FileSync;
+  /** The aib-docs engine: the same engine on each project's aib-docs/ (docs only; the docs store writes what arrives). */
+  readonly docsSync: FileSync;
   readonly pairing = new Pairing(
     () => Date.now() / 1000,
     'On the first PC, click Start a sync chain again.',
@@ -140,11 +144,16 @@ export class PcSync {
       onUp: (peer) => {
         void this.projects.onUp(peer);
         this.files.onUp(peer);
+        this.docsSync.onUp(peer);
       },
-      onDown: (peer) => this.files.onDown(peer),
+      onDown: (peer) => {
+        this.files.onDown(peer);
+        this.docsSync.onDown(peer);
+      },
       onBatch: (peer, batch) => {
         this.projects.onBatch(peer, batch);
         this.files.onBatch(peer, batch);
+        this.docsSync.onBatch(peer, batch);
         this.options.onBatch?.(peer, batch);
       },
     }, options.link);
@@ -157,19 +166,24 @@ export class PcSync {
       send: (peerId, batch) => this.links.sendBatch(peerId, batch),
       log: (message) => this.options.log?.(message),
       ttlMs: options.projectsTtlMs,
-      changed: () => void this.files.refresh(),
-      fileStatus: (sync) => this.files.status(sync),
+      changed: () => {
+        void this.files.refresh();
+        void this.docsSync.refresh();
+      },
+      fileStatus: (sync, area) => (area === 'docs' ? this.docsSync : this.files).status(sync),
     });
-    this.files = new FileSync(stateDir, {
+    const engineDeps = {
       links: () => this.projects.confirmedLinks(),
       peers: () => this.peers.list(),
-      connected: (peerId) => this.links.state(peerId) === 'connected',
-      send: (peerId, batch) => this.links.sendBatch(peerId, batch),
+      connected: (peerId: string) => this.links.state(peerId) === 'connected',
+      send: (peerId: string, batch: Parameters<LinkManager['sendBatch']>[1]) => this.links.sendBatch(peerId, batch),
       own: () => (this.#ts?.name ? { host: this.#ts.name, name: this.#ts.machine } : null),
-      isWsl: (folder) => !!this.options.projects?.().find((p) => p.path === folder)?.wsl,
-      log: (message) => this.options.log?.(message),
+      isWsl: (folder: string) => !!this.options.projects?.().find((p) => p.path === folder)?.wsl,
+      log: (message: string) => this.options.log?.(message),
       settled: () => this.projects.settled(),
-    }, options.files);
+    };
+    this.files = new FileSync(stateDir, engineDeps, options.files);
+    this.docsSync = new FileSync(stateDir, { ...engineDeps, docs: options.docs }, options.files, 'docs');
     this.gate = new SyncGate(() => this.#ts?.name ?? '', () => this.#ts?.login ?? '');
   }
 
@@ -195,9 +209,11 @@ export class PcSync {
       this.links.start();
       this.links.ensure();
       this.files.start();
+      this.docsSync.start();
     } else {
       this.links.stop();
       this.files.stop();
+      this.docsSync.stop();
     }
   }
 
@@ -206,6 +222,7 @@ export class PcSync {
     this.#joinRun++;
     this.links.stop();
     this.files.stop();
+    this.docsSync.stop();
     await this.#unlisten();
   }
 
@@ -290,6 +307,7 @@ export class PcSync {
     this.#port = 0;
     this.links.stop();
     this.files.stop();
+    this.docsSync.stop();
     if (server) await server.shutdown().catch(() => {});
   }
 

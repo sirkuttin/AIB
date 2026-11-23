@@ -217,7 +217,7 @@ Deno.test('file items: begin, end, state, get, data and gone validate and keep o
   assertEquals(items[7], { op: 'project.switch', shared: true, docs: false });
 });
 
-Deno.test('file items: a bad path, hash, size, offset, chunk or switch is refused; the docs area is not accepted yet', () => {
+Deno.test('file items: a bad path, hash, size, offset, chunk or switch is refused; the docs area takes only doc.aibdoc and assets', () => {
   const bad: unknown[] = [
     state({ path: '/etc/passwd' }),
     state({ path: '../x' }),
@@ -232,7 +232,13 @@ Deno.test('file items: a bad path, hash, size, offset, chunk or switch is refuse
     state({ sup: 'x' }),
     state({ sup: ['nothash'] }),
     state({ sup: [H, H, H, H, H] }),
-    state({ area: 'docs', path: 'plan/doc.aibdoc' }),
+    state({ area: 'docs', path: 'plan/01-page-1.md' }),
+    state({ area: 'docs', path: 'plan/notes.txt' }),
+    state({ area: 'docs', path: 'doc.aibdoc' }),
+    state({ area: 'docs', path: 'plan/sub/doc.aibdoc' }),
+    state({ area: 'docs', path: '.bad/doc.aibdoc' }),
+    state({ area: 'docs', path: 'plan/assets' }),
+    state({ area: 'other', path: 'a.md' }),
     state({ area: undefined }),
     { op: 'file.get', area: 'shared', path: 'a.md', hash: H, offset: -1 },
     { op: 'file.get', area: 'shared', path: 'a.md', hash: 'x', offset: 0 },
@@ -248,6 +254,12 @@ Deno.test('file items: a bad path, hash, size, offset, chunk or switch is refuse
   ];
   for (const item of bad) assertEquals(parseFrame(batchOf('sync-12345678', item)).ok, false, JSON.stringify(item).slice(0, 120));
   for (const key of ['root', 'folder', 'dir', 'abs']) assertEquals(parseFrame(batchOf('sync-12345678', state({ [key]: 'x' }))).ok, false, key);
+  // the docs area (slice V5): a doc's doc.aibdoc and its assets, in every file op
+  for (const path of ['plan/doc.aibdoc', 'My Doc (2)/doc.aibdoc', 'plan/assets/pic.png', 'plan/assets/sub/a.json']) {
+    assert(parseFrame(batchOf('sync-12345678', state({ area: 'docs', path }))).ok, path);
+    assert(parseFrame(batchOf('sync-12345678', { op: 'file.get', area: 'docs', path, hash: H, offset: 0 })).ok, path);
+  }
+  assert(parseFrame(batchOf('sync-12345678', { op: 'file.begin', area: 'docs' })).ok);
   // a full 512 KB chunk (699,052 base64 characters) fits one frame
   const chunk = 'A'.repeat(699_052);
   const full = parseFrame(batchOf('sync-12345678', { op: 'file.data', area: 'shared', path: 'a.bin', hash: H, offset: 0, size: 524288, last: false, data: chunk }));

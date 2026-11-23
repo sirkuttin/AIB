@@ -57,7 +57,8 @@ export function pcsyncRoutes(): Map<string, Handler> {
   // a paused batch of deletes (slice V4): Allow applies it, Keep files keeps the files and sends them back
   routes.set('POST /api/live/pcsync/projects/files', (ctx, _url, body) => {
     if (body?.action !== 'allow' && body?.action !== 'keep') throw new ValueError('action must be allow or keep');
-    if (typeof body.sync !== 'string' || !ctx.pcsync.files.decide(body.sync, body.action)) {
+    const engine = body.which === 'docs' ? ctx.pcsync.docsSync : ctx.pcsync.files; // which: 'docs' for the aib-docs sync (slice V5)
+    if (typeof body.sync !== 'string' || !engine.decide(body.sync, body.action)) {
       throw new PairingError(409, 'not_paused', 'Nothing is waiting for a decision in that project.');
     }
     return [200, { ok: true }];
