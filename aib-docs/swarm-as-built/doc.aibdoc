@@ -12315,6 +12315,53 @@
           ]
         },
         {
+          "id": "2621299841.1728",
+          "type": "callout",
+          "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e",
+          "attrs": {
+            "variant": "success"
+          },
+          "content": [
+            {
+              "id": "2621299841.1730",
+              "type": "paragraph",
+              "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e",
+              "attrs": {
+                "align": null
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Update 2026-11-23:",
+                  "marks": [
+                    {
+                      "type": "bold"
+                    },
+                    {
+                      "type": "agentEdit",
+                      "attrs": {
+                        "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "text": " fixed on main (d273e031, e4a08af6): helper notifications, an up-front sign-in check, the main chat told when helpers are off, helpers listed in their main chat's Activity section (with a \"Waiting on you\" state), the \"waiting\" state, reports that keep their ending, merging a closed helper, \"Merge again\" conflicts shown, finished-but-unmerged helpers counting for the cap and file clashes, the Undo race, and cleanup of helper worktrees and branches. Helpers can also use model-server entries (\"Claude Code · strata\"). Still open: real Codex/Gemini approval shapes (needs signed-in adapters), helpers in WSL projects, Maki/Qwen Code as helpers, and the phase 2 screens. The list below is kept as it was written.",
+                  "marks": [
+                    {
+                      "type": "agentEdit",
+                      "attrs": {
+                        "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
           "id": "2571760180.281",
           "type": "paragraph",
           "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e",
@@ -12613,14 +12660,14 @@
         {
           "id": "2571760180.283",
           "type": "paragraph",
-          "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e",
+          "by": "file",
           "attrs": {
             "align": null
           },
           "content": [
             {
               "type": "text",
-              "text": "Found in the code:",
+              "text": "Found in the code, fixed 2026-11-23 (tests: ",
               "marks": [
                 {
                   "type": "bold"
@@ -12628,7 +12675,40 @@
                 {
                   "type": "agentEdit",
                   "attrs": {
-                    "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e"
+                    "by": "file"
+                  }
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "text": "work/deno/swarm_bugs_test.ts",
+              "marks": [
+                {
+                  "type": "bold"
+                },
+                {
+                  "type": "code"
+                },
+                {
+                  "type": "agentEdit",
+                  "attrs": {
+                    "by": "file"
+                  }
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "text": "):",
+              "marks": [
+                {
+                  "type": "bold"
+                },
+                {
+                  "type": "agentEdit",
+                  "attrs": {
+                    "by": "file"
                   }
                 }
               ]
@@ -12638,7 +12718,7 @@
         {
           "id": "2571760180.284",
           "type": "bulletList",
-          "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e",
+          "by": "file",
           "content": [
             {
               "id": "2571760180.18680",
@@ -12648,14 +12728,32 @@
                 {
                   "id": "2571760180.18681",
                   "type": "paragraph",
-                  "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e",
+                  "by": "file",
                   "attrs": {
                     "align": null
                   },
                   "content": [
                     {
                       "type": "text",
-                      "text": "\"waiting\" never used:",
+                      "text": "waiting",
+                      "marks": [
+                        {
+                          "type": "bold"
+                        },
+                        {
+                          "type": "code"
+                        },
+                        {
+                          "type": "agentEdit",
+                          "attrs": {
+                            "by": "file"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "text": " is set:",
                       "marks": [
                         {
                           "type": "bold"
@@ -12663,26 +12761,26 @@
                         {
                           "type": "agentEdit",
                           "attrs": {
-                            "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e"
+                            "by": "file"
                           }
                         }
                       ]
                     },
                     {
                       "type": "text",
-                      "text": " every turn end reports as ",
+                      "text": " while the helper's chat needs the person (open approval, question, sign-in) and when a turn ends on a question (the chat's ",
                       "marks": [
                         {
                           "type": "agentEdit",
                           "attrs": {
-                            "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e"
+                            "by": "file"
                           }
                         }
                       ]
                     },
                     {
                       "type": "text",
-                      "text": "done",
+                      "text": "asks",
                       "marks": [
                         {
                           "type": "code"
@@ -12690,19 +12788,73 @@
                         {
                           "type": "agentEdit",
                           "attrs": {
-                            "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e"
+                            "by": "file"
                           }
                         }
                       ]
                     },
                     {
                       "type": "text",
-                      "text": ", even when the helper ended on a question.",
+                      "text": " fact). helper_status, the report (",
                       "marks": [
                         {
                           "type": "agentEdit",
                           "attrs": {
-                            "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e"
+                            "by": "file"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "text": "state: waiting",
+                      "marks": [
+                        {
+                          "type": "code"
+                        },
+                        {
+                          "type": "agentEdit",
+                          "attrs": {
+                            "by": "file"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "text": "), the registry and Activity's \"Waiting on you\" row agree; it goes back to ",
+                      "marks": [
+                        {
+                          "type": "agentEdit",
+                          "attrs": {
+                            "by": "file"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "text": "working",
+                      "marks": [
+                        {
+                          "type": "code"
+                        },
+                        {
+                          "type": "agentEdit",
+                          "attrs": {
+                            "by": "file"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "text": " when the chat works again.",
+                      "marks": [
+                        {
+                          "type": "agentEdit",
+                          "attrs": {
+                            "by": "file"
                           }
                         }
                       ]
@@ -12719,14 +12871,14 @@
                 {
                   "id": "2571760180.18791",
                   "type": "paragraph",
-                  "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e",
+                  "by": "file",
                   "attrs": {
                     "align": null
                   },
                   "content": [
                     {
                       "type": "text",
-                      "text": "Long reports lose their end:",
+                      "text": "Long reports keep their end:",
                       "marks": [
                         {
                           "type": "bold"
@@ -12734,19 +12886,19 @@
                         {
                           "type": "agentEdit",
                           "attrs": {
-                            "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e"
+                            "by": "file"
                           }
                         }
                       ]
                     },
                     {
                       "type": "text",
-                      "text": " clipping keeps the first 4,000 characters, so the closing summary is what gets cut.",
+                      "text": " a reply over 4,000 characters keeps its first 1,500 and last 2,500, with \"… N characters cut from the middle …\".",
                       "marks": [
                         {
                           "type": "agentEdit",
                           "attrs": {
-                            "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e"
+                            "by": "file"
                           }
                         }
                       ]
@@ -12763,14 +12915,14 @@
                 {
                   "id": "2571760180.18912",
                   "type": "paragraph",
-                  "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e",
+                  "by": "file",
                   "attrs": {
                     "align": null
                   },
                   "content": [
                     {
                       "type": "text",
-                      "text": "A closed helper can't be merged:",
+                      "text": "A closed helper is merged by worktree record:",
                       "marks": [
                         {
                           "type": "bold"
@@ -12778,7 +12930,7 @@
                         {
                           "type": "agentEdit",
                           "attrs": {
-                            "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e"
+                            "by": "file"
                           }
                         }
                       ]
@@ -12790,7 +12942,7 @@
                         {
                           "type": "agentEdit",
                           "attrs": {
-                            "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e"
+                            "by": "file"
                           }
                         }
                       ]
@@ -12805,26 +12957,26 @@
                         {
                           "type": "agentEdit",
                           "attrs": {
-                            "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e"
+                            "by": "file"
                           }
                         }
                       ]
                     },
                     {
                       "type": "text",
-                      "text": " refuses with ",
+                      "text": " lands from the recorded worktree and branch (uncommitted work committed first; the subagent landing, no stash, refused on the user's uncommitted edits to the same files; a conflict leaves a ",
                       "marks": [
                         {
                           "type": "agentEdit",
                           "attrs": {
-                            "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e"
+                            "by": "file"
                           }
                         }
                       ]
                     },
                     {
                       "type": "text",
-                      "text": "closed",
+                      "text": "-landable",
                       "marks": [
                         {
                           "type": "code"
@@ -12832,19 +12984,19 @@
                         {
                           "type": "agentEdit",
                           "attrs": {
-                            "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e"
+                            "by": "file"
                           }
                         }
                       ]
                     },
                     {
                       "type": "text",
-                      "text": "; the \"merge by worktree record\" fallback wasn't built.",
+                      "text": " branch).",
                       "marks": [
                         {
                           "type": "agentEdit",
                           "attrs": {
-                            "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e"
+                            "by": "file"
                           }
                         }
                       ]
@@ -12861,14 +13013,14 @@
                 {
                   "id": "2571760180.19053",
                   "type": "paragraph",
-                  "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e",
+                  "by": "file",
                   "attrs": {
                     "align": null
                   },
                   "content": [
                     {
                       "type": "text",
-                      "text": "Merge again conflict is silent:",
+                      "text": "Merge again conflict:",
                       "marks": [
                         {
                           "type": "bold"
@@ -12876,73 +13028,19 @@
                         {
                           "type": "agentEdit",
                           "attrs": {
-                            "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e"
+                            "by": "file"
                           }
                         }
                       ]
                     },
                     {
                       "type": "text",
-                      "text": " no line posted and the button stays disabled (",
+                      "text": " posts \"Couldn't merge “X” (Agent) again: conflict in N files …\", wakes the main agent, and the button works again.",
                       "marks": [
                         {
                           "type": "agentEdit",
                           "attrs": {
-                            "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e"
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "type": "text",
-                      "text": "service.ts:465",
-                      "marks": [
-                        {
-                          "type": "code"
-                        },
-                        {
-                          "type": "agentEdit",
-                          "attrs": {
-                            "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e"
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "type": "text",
-                      "text": "; ",
-                      "marks": [
-                        {
-                          "type": "agentEdit",
-                          "attrs": {
-                            "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e"
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "type": "text",
-                      "text": "chat.js:1490-1491",
-                      "marks": [
-                        {
-                          "type": "code"
-                        },
-                        {
-                          "type": "agentEdit",
-                          "attrs": {
-                            "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e"
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "type": "text",
-                      "text": ").",
-                      "marks": [
-                        {
-                          "type": "agentEdit",
-                          "attrs": {
-                            "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e"
+                            "by": "file"
                           }
                         }
                       ]
@@ -12959,14 +13057,14 @@
                 {
                   "id": "2571760180.19187",
                   "type": "paragraph",
-                  "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e",
+                  "by": "file",
                   "attrs": {
                     "align": null
                   },
                   "content": [
                     {
                       "type": "text",
-                      "text": "Done helpers free their files:",
+                      "text": "Done helpers hold their files and a place:",
                       "marks": [
                         {
                           "type": "bold"
@@ -12974,19 +13072,19 @@
                         {
                           "type": "agentEdit",
                           "attrs": {
-                            "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e"
+                            "by": "file"
                           }
                         }
                       ]
                     },
                     {
                       "type": "text",
-                      "text": " done-but-unmerged helpers don't count toward the cap or owns clash.",
+                      "text": " running, waiting and done-but-unmerged helpers count for the cap (3) and the owns clash until merged or discarded. A done read-only helper holds nothing.",
                       "marks": [
                         {
                           "type": "agentEdit",
                           "attrs": {
-                            "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e"
+                            "by": "file"
                           }
                         }
                       ]
@@ -13003,7 +13101,7 @@
                 {
                   "id": "2571760180.19294",
                   "type": "paragraph",
-                  "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e",
+                  "by": "file",
                   "attrs": {
                     "align": null
                   },
@@ -13018,7 +13116,7 @@
                         {
                           "type": "agentEdit",
                           "attrs": {
-                            "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e"
+                            "by": "file"
                           }
                         }
                       ]
@@ -13030,7 +13128,7 @@
                         {
                           "type": "agentEdit",
                           "attrs": {
-                            "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e"
+                            "by": "file"
                           }
                         }
                       ]
@@ -13045,46 +13143,19 @@
                         {
                           "type": "agentEdit",
                           "attrs": {
-                            "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e"
+                            "by": "file"
                           }
                         }
                       ]
                     },
                     {
                       "type": "text",
-                      "text": " is read before Merge takes the lock (",
+                      "text": " is the tip the landing was built on, read under the repository lock (the journal tells it), so Undo takes back only its own commits.",
                       "marks": [
                         {
                           "type": "agentEdit",
                           "attrs": {
-                            "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e"
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "type": "text",
-                      "text": "service.ts:372",
-                      "marks": [
-                        {
-                          "type": "code"
-                        },
-                        {
-                          "type": "agentEdit",
-                          "attrs": {
-                            "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e"
-                          }
-                        }
-                      ]
-                    },
-                    {
-                      "type": "text",
-                      "text": "); another merge landing in between would be undone too.",
-                      "marks": [
-                        {
-                          "type": "agentEdit",
-                          "attrs": {
-                            "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e"
+                            "by": "file"
                           }
                         }
                       ]
@@ -13101,14 +13172,14 @@
                 {
                   "id": "2571760180.19443",
                   "type": "paragraph",
-                  "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e",
+                  "by": "file",
                   "attrs": {
                     "align": null
                   },
                   "content": [
                     {
                       "type": "text",
-                      "text": "No cleanup:",
+                      "text": "Cleanup:",
                       "marks": [
                         {
                           "type": "bold"
@@ -13116,19 +13187,73 @@
                         {
                           "type": "agentEdit",
                           "attrs": {
-                            "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e"
+                            "by": "file"
                           }
                         }
                       ]
                     },
                     {
                       "type": "text",
-                      "text": " helper worktrees and branches are never removed.",
+                      "text": " a merged helper's worktree and branch are removed once its chat is closed (Studio on close, and a sweep at start and every 30 s), only while its branch is still where the merge left it and its worktree is clean; unmerged work stays; a ",
                       "marks": [
                         {
                           "type": "agentEdit",
                           "attrs": {
-                            "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e"
+                            "by": "file"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "text": "-landable",
+                      "marks": [
+                        {
+                          "type": "code"
+                        },
+                        {
+                          "type": "agentEdit",
+                          "attrs": {
+                            "by": "file"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "text": " branch goes once it is in main. A helper whose worktree and branch were removed without a merge is ",
+                      "marks": [
+                        {
+                          "type": "agentEdit",
+                          "attrs": {
+                            "by": "file"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "text": "discarded",
+                      "marks": [
+                        {
+                          "type": "code"
+                        },
+                        {
+                          "type": "agentEdit",
+                          "attrs": {
+                            "by": "file"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "text": ".",
+                      "marks": [
+                        {
+                          "type": "agentEdit",
+                          "attrs": {
+                            "by": "file"
                           }
                         }
                       ]
@@ -13136,16 +13261,48 @@
                   ]
                 }
               ]
-            },
+            }
+          ]
+        },
+        {
+          "id": "2621299841.1622",
+          "type": "paragraph",
+          "by": "file",
+          "attrs": {
+            "align": null
+          },
+          "content": [
             {
-              "id": "2571760180.19511",
+              "type": "text",
+              "text": "Still open:",
+              "marks": [
+                {
+                  "type": "bold"
+                },
+                {
+                  "type": "agentEdit",
+                  "attrs": {
+                    "by": "file"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "2621299841.1639",
+          "type": "bulletList",
+          "by": "file",
+          "content": [
+            {
+              "id": "2621299841.1640",
               "type": "listItem",
-              "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e",
+              "by": "file",
               "content": [
                 {
-                  "id": "2571760180.19512",
+                  "id": "2621299841.1641",
                   "type": "paragraph",
-                  "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e",
+                  "by": "file",
                   "attrs": {
                     "align": null
                   },
@@ -13160,7 +13317,7 @@
                         {
                           "type": "agentEdit",
                           "attrs": {
-                            "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e"
+                            "by": "file"
                           }
                         }
                       ]
@@ -13172,7 +13329,7 @@
                         {
                           "type": "agentEdit",
                           "attrs": {
-                            "by": "claude:a16e40ca-fbee-46c2-9e61-388e4b23cb4e"
+                            "by": "file"
                           }
                         }
                       ]

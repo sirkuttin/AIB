@@ -173,6 +173,8 @@ Also: the report itself shows as a plain message bubble in the main chat (no rep
 
 ## 9. Not built yet, and known gaps
 
+> **Done:** **Update 2026-11-23:** fixed on main (d273e031, e4a08af6): helper notifications, an up-front sign-in check, the main chat told when helpers are off, helpers listed in their main chat's Activity section (with a "Waiting on you" state), the "waiting" state, reports that keep their ending, merging a closed helper, "Merge again" conflicts shown, finished-but-unmerged helpers counting for the cap and file clashes, the Undo race, and cleanup of helper worktrees and branches. Helpers can also use model-server entries ("Claude Code · strata"). Still open: real Codex/Gemini approval shapes (needs signed-in adapters), helpers in WSL projects, Maki/Qwen Code as helpers, and the phase 2 screens. The list below is kept as it was written.
+
 **Planned for later:**
 
 - **Notifications:** helpers notify and push like normal chats.
@@ -182,15 +184,18 @@ Also: the report itself shows as a plain message bubble in the main chat (no rep
 - **Phase 2 UI:** sidebar nesting, inbox roll-up, Helpers strip, phone labels, Settings › Helpers, helper and report cards.
 - **Model hints** in the rules are not applied.
 
-**Found in the code:**
+**Found in the code, fixed 2026-11-23 (tests: `work/deno/swarm_bugs_test.ts`):**
 
-- **"waiting" never used:** every turn end reports as `done`, even when the helper ended on a question.
-- **Long reports lose their end:** clipping keeps the first 4,000 characters, so the closing summary is what gets cut.
-- **A closed helper can't be merged:** `merge_helper` refuses with `closed`; the "merge by worktree record" fallback wasn't built.
-- **Merge again conflict is silent:** no line posted and the button stays disabled (`service.ts:465`; `chat.js:1490-1491`).
-- **Done helpers free their files:** done-but-unmerged helpers don't count toward the cap or owns clash.
-- **Undo race:** `tipBefore` is read before Merge takes the lock (`service.ts:372`); another merge landing in between would be undone too.
-- **No cleanup:** helper worktrees and branches are never removed.
+- **`waiting` is set:** while the helper's chat needs the person (open approval, question, sign-in) and when a turn ends on a question (the chat's `asks` fact). helper_status, the report (`state: waiting`), the registry and Activity's "Waiting on you" row agree; it goes back to `working` when the chat works again.
+- **Long reports keep their end:** a reply over 4,000 characters keeps its first 1,500 and last 2,500, with "… N characters cut from the middle …".
+- **A closed helper is merged by worktree record:** `merge_helper` lands from the recorded worktree and branch (uncommitted work committed first; the subagent landing, no stash, refused on the user's uncommitted edits to the same files; a conflict leaves a `-landable` branch).
+- **Merge again conflict:** posts "Couldn't merge “X” (Agent) again: conflict in N files …", wakes the main agent, and the button works again.
+- **Done helpers hold their files and a place:** running, waiting and done-but-unmerged helpers count for the cap (3) and the owns clash until merged or discarded. A done read-only helper holds nothing.
+- **Undo race:** `tipBefore` is the tip the landing was built on, read under the repository lock (the journal tells it), so Undo takes back only its own commits.
+- **Cleanup:** a merged helper's worktree and branch are removed once its chat is closed (Studio on close, and a sweep at start and every 30 s), only while its branch is still where the merge left it and its worktree is clean; unmerged work stays; a `-landable` branch goes once it is in main. A helper whose worktree and branch were removed without a merge is `discarded`.
+
+**Still open:**
+
 - **Missing tests:** restart, report delivery modes, merge conflict, stop-then-merge.
 
 **Where the code differs from the design:**
