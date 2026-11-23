@@ -1418,12 +1418,27 @@ html[data-ui-scaled] .st-page {
   color: var(--text);
   border-color: var(--line-control);
 }
-.ms-use-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 12px;
-  margin: 4px 0;
+.ms-use .ms-use-row {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 2px 8px;
+  margin: 0;
+}
+.ms-use-row input {
+  width: 16px;
+  padding: 0;
+}
+.ms-use-row > span:first-of-type {
+  white-space: nowrap;
+}
+.ms-use-row > .st-hint {
+  grid-column: 2;
+}
+.ms-use-row:has(input:disabled) {
+  cursor: default;
+}
+.ms-use-row:has(input:disabled) > span:first-of-type {
+  color: var(--muted);
 }
 .ms-form {
   display: flex;

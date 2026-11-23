@@ -2578,21 +2578,20 @@
     for (const u of MS_USE) {
       const on = (srv.useWith || []).includes(u.agent);
       const speaks = !h || !h.reachable || u.kinds.some((k) => (h.kinds || []).includes(k));
-      const row = el('div', null, 'ms-use-row');
       const sw = toggle(u.label, on, (checked) => {
         const next = MS_USE.filter((x) => (x.agent === u.agent ? checked : (srv.useWith || []).includes(x.agent))).map((x) => x.agent);
         msUpsert(srv.id, { useWith: next });
       });
       const cb = sw.querySelector('input');
+      sw.classList.add('ms-use-row');
       cb.dataset.useWith = u.agent;
       cb.setAttribute('aria-label', 'Use ' + srv.name + ' with ' + u.label);
-      if (!speaks && !on) {
-        cb.disabled = true;
-        row.append(sw, el('span', u.label + ' needs a server that speaks ' + u.kinds.map((k) => MS_KINDS[k]).join(' or ') + '.', 'st-hint'));
-      } else {
-        row.append(sw, el('span', 'Adds "' + u.label + ' · ' + srv.name + '" to New chat.', 'st-hint'));
-      }
-      box.append(row);
+      cb.disabled = !speaks && !on;
+      const hint = cb.disabled
+        ? u.label + ' needs a server that speaks ' + u.kinds.map((k) => MS_KINDS[k]).join(' or ') + '.'
+        : 'Adds "' + u.label + ' · ' + srv.name + '" to New chat.';
+      sw.append(el('span', hint, 'st-hint'));
+      box.append(sw);
     }
     return box;
   }
