@@ -178,7 +178,7 @@ Deno.test({
       await sh('rm -f "$1/slow"', [ROOT]);
       await wslInstallCall(host, KEY, DISTRO, 'start', 'claude');
       await until('the reinstall', async () => ((await wslInstallCall(host, KEY, DISTRO, 'status', 'claude'))[1] as Json).state === 'done');
-      studio = new Studio({ ompCommand: 'unused', stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
+      studio = new Studio({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
       const launch = await studio.wslLaunch('claude', { distro: KEY, linuxPath: ROOT });
       assertEquals(launch.command, row.command);
     } finally {

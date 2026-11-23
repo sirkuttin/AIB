@@ -2,7 +2,7 @@
 
 Run `deno run -A server/main.ts --open` from this folder (Deno 2.x). The default address is **http://127.0.0.1:8767**. Node.js and the agent adapters you want to use are required (see Installing the agents below). No editor or other agent app needs to be running. The desktop app (a native window, tray icon and updater around the same server) is described in [docs/DESKTOP.md](docs/DESKTOP.md).
 
-The home page is the unified chat interface. Its sidebar lists saved OMP and Claude Code conversations alongside Studio-owned connections, with a Ctrl+K quick switcher for search. Select a saved conversation to view its history, agents, and background commands in place. Resume in Studio loads an idle saved chat when the agent supports it. New conversation starts a fresh chat. Existing sign-ins and agent configuration are used.
+The home page is the unified chat interface. Its sidebar lists saved Claude Code conversations (and read-only OMP history) alongside Studio-owned connections, with a Ctrl+K quick switcher for search. Select a saved conversation to view its history, agents, and background commands in place. Resume in Studio loads an idle saved chat when the agent supports it. New conversation starts a fresh chat. Existing sign-ins and agent configuration are used.
 
 Connected in Studio and Working in Studio are confirmed connection states. Saved sessions show their latest saved activity; that does not prove whether another client is still running them. Stop a chat in its other client before using Resume in Studio. Browsing saved history never connects to or interrupts that agent.
 
@@ -21,14 +21,14 @@ Unknown flags fail with usage. Run from `outputs/agent-studio`:
 
 ```text
 deno run -A server/main.ts --port 8767 --open                      the web server (it starts the agent host)
-deno run -A server/main.ts --omp-command C:\path\to\omp.exe --node-command C:\path\to\node.exe --claude-launcher C:\path\to\claude-agent-acp\dist\index.js
+deno run -A server/main.ts --node-command C:\path\to\node.exe --claude-launcher C:\path\to\claude-agent-acp\dist\index.js
 deno run -A server/main.ts --in-process                            web server and agents in one process (tests, debugging)
 deno run -A server/main.ts --stop-host [--force]                   ask the agent host to stop
 deno run -A server/main.ts deploy [--host] [--wait]                restart a running server without cutting off a turn
 deno task build                                                    the desktop packages (tools/build.ts; see docs/DESKTOP.md)
 ```
 
-Flags: `--port`, `--state-dir`, `--omp-sessions`, `--claude-projects`, `--owners-dir`, `--omp-command`, `--node-command`, `--claude-launcher`, `--codex-launcher`, `--mcp-config`, `--enable-client-terminal`, `--enable-client-fs[=read]`, `--no-artifact-tool`, `--no-auto-reconnect`, `--no-owner-announcements`, `--host-idle-minutes`, `--log-level`, `--migrate-from`, `--open`, `--in-process`, `--stop-host`, `--force`.
+Flags: `--port`, `--state-dir`, `--omp-sessions`, `--claude-projects`, `--owners-dir`, `--node-command`, `--claude-launcher`, `--codex-launcher`, `--mcp-config`, `--enable-client-terminal`, `--enable-client-fs[=read]`, `--no-artifact-tool`, `--no-auto-reconnect`, `--no-owner-announcements`, `--host-idle-minutes`, `--log-level`, `--migrate-from`, `--open`, `--in-process`, `--stop-host`, `--force`.
 
 ### Installing the agents
 
@@ -36,7 +36,7 @@ Studio talks to each agent through a small adapter program and looks for it on t
 
 - **Claude Code:** run `npm i -g @agentclientprotocol/claude-agent-acp`. Studio finds the installed package in npm's global folder and runs its `dist/index.js` with Node. Sign in once with Claude Code's own tools.
 - **Codex:** run `npm i -g @zed-industries/codex-acp`. A `codex-acp` program on PATH also works. Until it is installed, Codex shows "Not installed" in Settings and in the agent list instead of failing.
-- **OMP:** install OMP so `omp` is on PATH. On Windows Studio also checks `%LOCALAPPDATA%\omp\omp.exe`.
+- **OMP:** no longer an AIB agent (2026-11-23). Saved OMP chats stay in the list as read-only history; `--omp-sessions` still points at where they are read from.
 
 For Claude Code and Codex the launcher is chosen in this order: the `--claude-launcher` / `--codex-launcher` flag, then a launcher saved in Settings (`launchers` in the settings file), then the installed adapter. A launcher is a JavaScript file that Node runs. Settings, under Agents, shows which launcher each agent uses.
 
@@ -86,7 +86,7 @@ Use the sidebar's three-dot button or Rename in the chat header for a custom dis
 
 Open it with the gear at the bottom of the chat list, **Ctrl+,** or *Settings* in the Ctrl+K command bar; **Esc** or the × closes it. Search on the left filters across sections. Every change applies at once (no Save button) and is stored on the server in `studio-settings.json` in `--state-dir` (validated, written atomically; `GET`/`POST /api/live/settings` with the same token and same-origin checks as the other routes, and a revision so other windows refresh).
 
-* **Agents.** Built-in Claude Code and OMP can be turned off but not removed. *Add an ACP agent* takes a name, a command (an existing executable file, or a bare name found on PATH), arguments (one per line) and environment variables (`NAME=value` lines). The command is started directly with that argument list, never through a shell. Studio gives each added agent a provider id `custom-<slug>`. Environment values are stored as plain text in the state folder and hidden on the page until you choose *Show values*. Saved-session discovery and transcript lookup exist for Claude Code and OMP only; a chat with an added agent is listed while it is open here and after a restart through Studio's own recovery list.
+* **Agents.** Built-in Claude Code and Codex can be turned off but not removed. *Add an ACP agent* takes a name, a command (an existing executable file, or a bare name found on PATH), arguments (one per line) and environment variables (`NAME=value` lines). The command is started directly with that argument list, never through a shell. Studio gives each added agent a provider id `custom-<slug>`. Environment values are stored as plain text in the state folder and hidden on the page until you choose *Show values*. Saved-session discovery and transcript lookup exist for Claude Code and OMP only; a chat with an added agent is listed while it is open here and after a restart through Studio's own recovery list.
 * **Defaults.** Default agent, model and mode for new chats, global and per project. Starting a chat in a project records that project's agent here (the old browser-only memory is carried over once).
 * **Notifications.** The block that used to live in the inbox popover; the popover keeps a *Notification settings…* link. In a browser these stay per browser (desktop permission is per browser); in the desktop app they are AIB's own, saved in the data folder, and the app shows the notifications itself (on by default, for Needs you).
 * **Keyboard.** The same list as the `?` sheet, read-only. **Editors** and **Appearance > Text size** are placeholders until those features exist.

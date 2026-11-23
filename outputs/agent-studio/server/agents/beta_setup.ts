@@ -320,7 +320,7 @@ export async function setupView(
   };
 }
 
-/** The built-in agents AIB installs with npm (Claude Code, Codex): they need Node.js, like the Beta npm agents. OMP has no npm install. */
+/** The built-in agents AIB installs with npm (Claude Code, Codex): they need Node.js, like the Beta npm agents. */
 export const BUILTIN_NPM: readonly string[] = ['claude', 'codex'];
 
 /** A built-in npm agent's card setup when it is not installed: Node.js (MIN_NODE_MAJOR) is its one prerequisite. */

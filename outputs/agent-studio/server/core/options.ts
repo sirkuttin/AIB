@@ -4,14 +4,12 @@
  * `--flag=value`, unambiguous prefixes are NOT accepted (Studio's scripts always spell flags out), unknown flags are an error.
  */
 import { defaultLevel } from './log.ts';
-import { defaultOmpCommand } from '../agents/adapters.ts';
 
 export interface Options {
   port: number;
   stateDir: string | null;
   ompSessions: string;
   claudeProjects: string;
-  ompCommand: string;
   nodeCommand: string;
   claudeLauncher: string;
   codexLauncher: string;
@@ -74,9 +72,6 @@ export function which(name: string): string | null {
   return null;
 }
 
-/** adapters.default_omp_command, from server/agents/adapters.ts. */
-export { defaultOmpCommand };
-
 /** ownership_probe.default_owners_dir: the well-known per-user folder for owner announcements. */
 export function defaultOwnersDir(): string {
   if (isWindows) return `${Deno.env.get('LOCALAPPDATA') || `${homeDir()}\\AppData\\Local`}\\agent-sessions\\owners`;
@@ -89,7 +84,6 @@ const FLAGS: Record<string, [keyof Options, Kind]> = {
   '--state-dir': ['stateDir', 'path'],
   '--omp-sessions': ['ompSessions', 'path'],
   '--claude-projects': ['claudeProjects', 'path'],
-  '--omp-command': ['ompCommand', 'str'],
   '--node-command': ['nodeCommand', 'str'],
   '--claude-launcher': ['claudeLauncher', 'str'],
   '--codex-launcher': ['codexLauncher', 'str'],
@@ -113,7 +107,7 @@ const FLAGS: Record<string, [keyof Options, Kind]> = {
 
 /** agent_host.py's flags: the agent flags (add_agent_arguments), --log-level, --host-port and --idle-exit-minutes. */
 const AGENT_FLAGS = [
-  '--state-dir', '--omp-sessions', '--claude-projects', '--omp-command', '--node-command', '--claude-launcher', '--codex-launcher',
+  '--state-dir', '--omp-sessions', '--claude-projects', '--node-command', '--claude-launcher', '--codex-launcher',
   '--owners-dir', '--no-auto-reconnect', '--no-owner-announcements', '--enable-client-terminal', '--enable-client-fs',
   '--no-artifact-tool', '--mcp-config', '--log-level', '--host-port',
 ];
@@ -132,7 +126,6 @@ export function defaults(): Options {
     stateDir: null,
     ompSessions: [home, '.omp', 'agent', 'sessions'].join(sep),
     claudeProjects: [home, '.claude', 'projects'].join(sep),
-    ompCommand: defaultOmpCommand(),
     nodeCommand: which('node') ?? 'node',
     claudeLauncher: '',
     codexLauncher: '',

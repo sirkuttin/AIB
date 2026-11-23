@@ -170,7 +170,7 @@ export class FakeWslHost implements WslHost {
     }
     if (method === 'agents.detect') {
       return {
-        agents: ['claude', 'codex', 'omp'].map((id) =>
+        agents: ['claude', 'codex'].map((id) =>
           id === 'claude'
             ? { id, found: true, command: ['node', '/usr/lib/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js'], version: '1.0.0' }
             : { id, found: false }

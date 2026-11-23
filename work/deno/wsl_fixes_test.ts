@@ -324,7 +324,7 @@ Deno.test({
   async fn() {
     assertEquals(REFRESH_SECONDS, 60);
     const dir = Deno.makeTempDirSync({ prefix: 'aib-limits-timer-' });
-    const studio = new Studio({ ompCommand: 'unused', stateDir: dir, port: 0, ownersDir: null }, { keeper: null, limitsEveryMs: 40 });
+    const studio = new Studio({ stateDir: dir, port: 0, ownersDir: null }, { keeper: null, limitsEveryMs: 40 });
     try {
       const refreshed: string[] = [];
       studio.limits = { refresh: (c: { id: string }) => (refreshed.push(c.id), Promise.resolve()) } as unknown as Studio['limits'];

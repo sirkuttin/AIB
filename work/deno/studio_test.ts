@@ -19,7 +19,7 @@ class Lab {
   readonly studios: Studio[] = [];
 
   manager(flags: string[] = [], options: Partial<StudioOptions> = {}): Studio {
-    const studio = new Studio({ ompCommand: 'unused', stateDir: this.state, port: 0, ...options });
+    const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ...options });
     studio.ownerProbe = () => null;
     studio.connectionFactory = (_command, cwd, provider) => new Connection(fake(...flags), cwd, provider);
     this.studios.push(studio);
@@ -42,7 +42,7 @@ class Lab {
 /** Just enough of a Connection for the lease tests (Python used a Mock). */
 class FakeConnection {
   id: string;
-  provider = 'omp';
+  provider = 'claude';
   closed = false;
   ready: boolean;
   sessionId: string | null = null;
@@ -79,20 +79,20 @@ Deno.test({
     let made = 0;
     const conn = new FakeConnection('owned-connection');
     manager.connectionFactory = () => (made++, conn as never);
-    const first = await manager.connect('omp', lab.dir, 'saved-session');
-    assert(await manager.connect('omp', lab.dir, 'saved-session') === first);
+    const first = await manager.connect('claude', lab.dir, 'saved-session');
+    assert(await manager.connect('claude', lab.dir, 'saved-session') === first);
     assertEquals(made, 1);
     const other = lab.manager();
-    await assertRejects(() => other.connect('omp', lab.dir, 'saved-session'), OwnershipConflict);
+    await assertRejects(() => other.connect('claude', lab.dir, 'saved-session'), OwnershipConflict);
     await manager.close();
     const external = lab.manager();
     external.ownerProbe = () => 999;
     let called = 0;
     external.connectionFactory = () => (called++, conn as never);
-    const error = await assertRejects(() => external.connect('omp', lab.dir, 'saved-session'), OwnershipConflict);
+    const error = await assertRejects(() => external.connect('claude', lab.dir, 'saved-session'), OwnershipConflict);
     assert(error.message.includes('PID 999'), error.message);
     assertEquals(called, 0);
-    (await new SessionLease(lab.state, 'omp', 'saved-session').acquire()).release(); // the refused connect released its lease
+    (await new SessionLease(lab.state, 'claude', 'saved-session').acquire()).release(); // the refused connect released its lease
   },
 });
 
@@ -111,9 +111,9 @@ Deno.test({
       conn.ready = true;
     };
     manager.connectionFactory = () => conn as never;
-    const opening = manager.connect('omp', lab.dir, 'opening-session');
+    const opening = manager.connect('claude', lab.dir, 'opening-session');
     assert(await started.wait(2000));
-    const error = await assertRejects(() => manager.connect('omp', lab.dir, 'opening-session'), OwnershipConflict);
+    const error = await assertRejects(() => manager.connect('claude', lab.dir, 'opening-session'), OwnershipConflict);
     assert(error.message.includes('already opening'), error.message);
     release.set();
     await opening;
@@ -126,7 +126,7 @@ Deno.test({
   async fn() {
     await using lab = new Lab();
     const manager = lab.manager(['--setup-question']);
-    const connection = await manager.connect('omp', lab.dir, null, { background: true });
+    const connection = await manager.connect('claude', lab.dir, null, { background: true });
     await until(() => connection.elicitations.size > 0, 'setup question');
     assert(!connection.ready);
     assertEquals(connection.public().state, 'input_needed');
@@ -144,13 +144,13 @@ Deno.test({
   async fn() {
     await using lab = new Lab();
     const manager = lab.manager(['--setup-question', '--setup-fail']);
-    const connection = await manager.connect('omp', lab.dir, 'resume-during-setup', { background: true });
+    const connection = await manager.connect('claude', lab.dir, 'resume-during-setup', { background: true });
     await until(() => connection.elicitations.size > 0, 'setup question');
     connection.answerElicitation([...connection.elicitations.keys()][0], 'accept', { label: 'Failure fixture' });
     await until(() => connection.closed, 'closed');
     assert(await connection.openDone.wait(3000));
     assert(connection.error.includes('Fixture setup failure'), connection.error);
-    (await new SessionLease(lab.state, 'omp', 'resume-during-setup').acquire()).release();
+    (await new SessionLease(lab.state, 'claude', 'resume-during-setup').acquire()).release();
   },
 });
 
@@ -160,27 +160,27 @@ Deno.test({
   async fn() {
     await using lab = new Lab();
     const manager = lab.manager(['--setup-question']);
-    const first = await manager.connect('omp', lab.dir, 'same-resume', { background: true });
+    const first = await manager.connect('claude', lab.dir, 'same-resume', { background: true });
     await until(() => first.elicitations.size > 0, 'setup question');
-    const error = await assertRejects(() => manager.connect('omp', lab.dir, 'same-resume', { background: true }), OwnershipConflict);
+    const error = await assertRejects(() => manager.connect('claude', lab.dir, 'same-resume', { background: true }), OwnershipConflict);
     assert(error.message.includes('already opening'));
     first.answerElicitation([...first.elicitations.keys()][0], 'accept', { label: 'Resume' });
     await until(() => first.ready, 'ready');
 
     const auth = lab.manager(['--auth-required']);
-    const connection = await auth.connect('omp', lab.dir, 'auth-lease', { background: true });
+    const connection = await auth.connect('claude', lab.dir, 'auth-lease', { background: true });
     await until(() => connection.auth !== null, 'sign-in prompt');
     connection.answerAuth('cancel');
     await until(() => connection.closed, 'closed');
     assert(connection.error.includes('Sign-in was cancelled'), connection.error);
-    (await new SessionLease(lab.state, 'omp', 'auth-lease').acquire()).release();
+    (await new SessionLease(lab.state, 'claude', 'auth-lease').acquire()).release();
   },
 });
 
 // ---- automatic reconnect (test_auto_reconnect.py, in-process half) -----------------------------------------------------------
 async function previousRun(lab: Lab): Promise<void> {
   const first = lab.manager();
-  await first.connect('omp', lab.dir);
+  await first.connect('claude', lab.dir);
   await first.close();
 }
 
@@ -198,7 +198,7 @@ Deno.test({
     await until(() => live(second).length, 'reconnected chat');
     await until(() => second.recovered().length === 0 && second.reconnectPending.size === 0, 'recovery list cleared');
     const connection = live(second)[0];
-    assertEquals([connection.provider, connection.sessionId], ['omp', 'fake-session']);
+    assertEquals([connection.provider, connection.sessionId], ['claude', 'fake-session']);
     assertEquals((connection.public().events as Json[]).filter((e) => e.kind === 'user'), [], 'reconnecting must not send anything');
     assert(!connection.busy);
     const listed = await second.liveList();
@@ -214,7 +214,7 @@ Deno.test({
     await using lab = new Lab();
     await previousRun(lab);
     const second = lab.manager();
-    second.reconnectPending.add(reconnectKey('omp', 'fake-session'));
+    second.reconnectPending.add(reconnectKey('claude', 'fake-session'));
     assert(second.recovered()[0].reconnecting);
     assert(((await second.liveList()).recovered as Json[])[0].reconnecting);
     second.reconnectPending.clear();
@@ -294,8 +294,8 @@ Deno.test({
     assertEquals(attempts, [false, false, false], 'three tries, ownership check never bypassed');
     // the chat says why it is not running (the page shows "Couldn't reopen" with the reason), until it runs again
     const failed = (await second.liveList()).reconnectFailed as Json[];
-    assertEquals(failed.map((f) => [f.provider, f.sessionId, f.error]), [['omp', 'fake-session', 'agent failed to load the conversation']]);
-    assert(second.forgetRecovered('omp', 'fake-session'), 'Forget clears it');
+    assertEquals(failed.map((f) => [f.provider, f.sessionId, f.error]), [['claude', 'fake-session', 'agent failed to load the conversation']]);
+    assert(second.forgetRecovered('claude', 'fake-session'), 'Forget clears it');
     assertEquals(second.reconnectFailed(), []);
     assertEquals(lab.manager().recovered(), []);
 
@@ -323,7 +323,7 @@ Deno.test({
     assertEquals(off.recovered().length, 1);
     assertEquals((await off.liveList()).autoReconnect, false);
 
-    const bare = new Studio({ ompCommand: 'unused' });
+    const bare = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node' });
     assertEquals(bare.startAutoReconnect(), 0);
     await bare.close();
 
@@ -331,7 +331,7 @@ Deno.test({
     for (let n = 0; n < 4; n++) {
       const folder = `${lab.dir}/w${n}`;
       Deno.mkdirSync(folder);
-      first.store!.rememberConversation('omp', `session-${n}`, folder);
+      first.store!.rememberConversation('claude', `session-${n}`, folder);
     }
     await first.close();
     const second = lab.manager();
@@ -375,7 +375,7 @@ Deno.test({
     };
     const exe = Deno.build.os === 'windows' ? '.exe' : '';
     let procs: ProcInfo[] = [];
-    const studio = new Studio({ ompCommand: 'unused', stateDir: lab.state, port: 0, claudeProjects: claude, ownersDir: owners });
+    const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: lab.state, port: 0, claudeProjects: claude, ownersDir: owners });
     lab.studios.push(studio); // its own ownerProbe: the real command-line check over the stand-in process list
     studio.connectionFactory = (_command, cwd, provider) => new Connection(fake(), cwd, provider);
     studio.probe.processes = new ProcessSource(() => procs.map((p) => ({ ...p })), 0);
@@ -446,7 +446,7 @@ Deno.test({
   async fn() {
     await using lab = new Lab();
     const manager = lab.manager(['--breadth', '--embedded-context', '--subagent']);
-    const c = await manager.connect('omp', lab.dir);
+    const c = await manager.connect('claude', lab.dir);
     const listed = await manager.liveList();
     const entry = (listed.connections as Json[]).find((x) => x.id === c.id)!;
     assertEquals(Object.keys(entry.attention as Json).sort(), [
@@ -511,11 +511,11 @@ Deno.test({
     assertEquals(await manager.liveCall('permission', {}), [400, { error: "'id'" }]);
     assertEquals(await manager.liveCall('nonsense', {}), [404, { error: 'Not found' }]);
     assertEquals(await manager.liveCall('connect', []), [400, { error: 'Invalid request' }]);
-    assertEquals(await manager.liveCall('connect', { provider: 'omp', cwd: lab.dir, background: 'yes' }), [400, {
+    assertEquals(await manager.liveCall('connect', { provider: 'claude', cwd: lab.dir, background: 'yes' }), [400, {
       error: 'background must be a boolean',
     }]);
     assertEquals(await manager.liveCall('dismiss-unknown', {}), [400, { error: 'provider, sessionId and clientMessageId are required' }]);
-    assertEquals(await manager.liveCall('forget', { provider: 'omp', sessionId: 'never' }), [200, { ok: true, forgotten: false }]);
+    assertEquals(await manager.liveCall('forget', { provider: 'claude', sessionId: 'never' }), [200, { ok: true, forgotten: false }]);
 
     // The internal worktree note: only Studio's two buttons, clipped labels.
     await manager.liveCall('worktree-note', {
@@ -547,9 +547,9 @@ Deno.test({
     const hints = await manager.ownershipQuery() as Json;
     assert('hints' in hints && 'certainty' in hints);
     await assertRejects(() => manager.ownershipQuery('nope', 'x'));
-    const error = await assertRejects(() => manager.ownershipQuery('omp', 'x', '\\\\server\\share'));
+    const error = await assertRejects(() => manager.ownershipQuery('claude', 'x', '\\\\server\\share'));
     assertEquals(error.name, 'ValueError');
-    const verdict = await manager.ownershipQuery('omp', 'not-a-session', lab.dir) as Json;
+    const verdict = await manager.ownershipQuery('claude', 'not-a-session', lab.dir) as Json;
     assertEquals(verdict.verdict, 'no_evidence');
   },
 });
@@ -596,7 +596,7 @@ Deno.test({
     const [argv, env] = await manager.agentLaunch('claude');
     assert(argv.includes(Deno.realPathSync(launcher)), argv.join(' '));
     assertEquals(env, expected);
-    assertEquals((await manager.agentLaunch('omp'))[1], {});
+    assertEquals((await manager.agentLaunch('claude'))[1], {});
     const c = await manager.connect('claude', lab.dir);
     await until(() => c.ready, 'claude chat ready');
     assertEquals(seen.at(-1), { provider: 'claude', env: preset === undefined ? expected : null });

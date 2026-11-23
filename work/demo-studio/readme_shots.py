@@ -233,7 +233,6 @@ def command(port, demo_root):
     return [demo.deno_executable(), 'run', '-A', '--quiet', str(demo.MAIN), 'serve', '--port', str(port), '--state-dir', str(demo_root / 'state'),
             '--omp-sessions', str(demo_root / 'omp'), '--claude-projects', str(demo_root / 'claude'), '--owners-dir', str(demo_root / 'owners'),
             '--in-process', '--no-auto-reconnect', '--no-owner-announcements', '--node-command', sys.executable,
-            '--omp-command', str(bin_dir / ('omp.cmd' if os.name == 'nt' else 'omp')),
             '--claude-launcher', str(bin_dir / 'claude_agent.py'), '--codex-launcher', str(bin_dir / 'codex_agent.py')]
 
 

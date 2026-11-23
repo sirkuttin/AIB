@@ -27,7 +27,7 @@ class ShellLab extends Lab {
 const turnEnds = (c: Connection) => events(c, 'turn_end').map((e) => (e.data as Json).stopReason);
 
 async function withHost(lab: ShellLab, fn: (host: AgentHost) => Promise<void>): Promise<void> {
-  const host = new AgentHost({ ompCommand: 'unused', stateDir: lab.dir, port: 0 } as never, 30, 0, { exitUnattachedSeconds: 10 });
+  const host = new AgentHost({ stateDir: lab.dir, port: 0 } as never, 30, 0, { exitUnattachedSeconds: 10 });
   try {
     await fn(host);
   } finally {

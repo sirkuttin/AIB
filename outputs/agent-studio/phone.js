@@ -1859,7 +1859,7 @@
       S.chatEvents = page.events;
       S.keepMin = page.events.length;
     } else {
-      S.saved = { cached: true, key: rec.key, title: rec.title, agent: rec.agent, history: true, events: page.events, firstSeq: page.firstSeq, truncated: page.truncated };
+      S.saved = { cached: true, key: rec.key, title: rec.title, agent: rec.agent, readOnly: rec.agent === 'OMP', history: true, events: page.events, firstSeq: page.firstSeq, truncated: page.truncated };
     }
     if (!S.chatMeta && rec.project) S.chatMeta = { project: rec.project, agent: rec.agent };
     S.scrollTo = 'end';
@@ -3959,6 +3959,11 @@
       const err = el('p', 'ph-error', S.actError);
       err.setAttribute('role', 'alert');
       bar.append(err);
+    }
+    // An agent AIB no longer runs (OMP): history only, a plain line instead of Continue (the PC refuses a Continue too)
+    if (S.saved && S.saved.readOnly) {
+      bar.append(el('p', 'ph-note', S.saved.note || 'OMP is no longer supported in AIB. This chat is read-only.'));
+      return bar;
     }
     if (!abilities(S.scopes).send) {
       bar.append(

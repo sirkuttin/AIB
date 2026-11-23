@@ -106,7 +106,6 @@ function phase2Helper(host: FakeWslHost, prereqs: EnvPrereqs = PREREQS_OK): void
         bundledCli: true,
       },
       { id: 'codex', found: true, command: ['codex-acp'], version: '2.6.0', source: 'global', bundledCli: true },
-      { id: 'omp', found: false },
     ],
   });
 }
@@ -205,40 +204,40 @@ Deno.test({
     const dir = tempDir();
     const host = new FakeWslHost(dir + SEP + 'linux-keeper', 'Ubuntu');
     host.handlers['agents.detect'] = (p) => ({
-      agents: ((p.ids as string[]) ?? []).map((id) => ({ id, found: true, command: [id === 'omp' ? '/usr/bin/omp' : 'node', 'acp'] })),
+      agents: ((p.ids as string[]) ?? []).map((id) => ({ id, found: true, command: [id === 'claude' ? '/usr/bin/claude-acp' : 'node', 'acp'] })),
     });
     withHost(host);
-    const studio = new Studio({ ompCommand: 'C:\\fake\\omp.exe', stateDir: dir + SEP + 'state', port: 0, ownersDir: null });
+    const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: dir + SEP + 'state', port: 0, ownersDir: null });
     const wsl = { distro: 'ubuntu', linuxPath: '/home/u/app' };
     try {
       // Windows off, Ubuntu on (unset): the Windows chat is refused, the WSL chat starts in Ubuntu
-      await studio.settings.update({ agents: { builtin: { omp: false } } });
+      await studio.settings.update({ agents: { builtin: { claude: false } } });
       let windows = '';
-      await studio.agentLaunch('omp', true).catch((e) => (windows = e.message));
-      assertEquals(windows, 'OMP is turned off in Settings');
-      const launched = await studio.wslLaunch('omp', wsl, true);
-      assertEquals(launched.command, ['/usr/bin/omp', 'acp']);
+      await studio.agentLaunch('claude', true).catch((e) => (windows = e.message));
+      assertEquals(windows, 'Claude Code is turned off in Settings');
+      const launched = await studio.wslLaunch('claude', wsl, true);
+      assertEquals(launched.command, ['/usr/bin/claude-acp', 'acp']);
       // Windows on, Ubuntu off: Windows starts, the WSL chat is refused with the distro's line, before the distro is even asked
-      await studio.settings.update({ agents: { builtin: { omp: true } }, agentsByDistro: { ubuntu: { omp: false } } });
-      assertEquals((await studio.agentLaunch('omp', true))[0], ['C:\\fake\\omp.exe', 'acp']);
-      const line = 'OMP is turned off for Ubuntu in Settings > AIB Linking (WSL)';
+      await studio.settings.update({ agents: { builtin: { claude: true } }, agentsByDistro: { ubuntu: { claude: false } } });
+      assertEquals((await studio.agentLaunch('claude', true))[0].at(-1), Deno.realPathSync(import.meta.filename!));
+      const line = 'Claude Code is turned off for Ubuntu in Settings > AIB Linking (WSL)';
       host.calls.length = 0;
       for (const [fresh, continued] of [[true, false], [false, true]]) {
         let refused = '';
-        await studio.wslLaunch('omp', wsl, fresh, continued).catch((e) => (refused = e.message));
+        await studio.wslLaunch('claude', wsl, fresh, continued).catch((e) => (refused = e.message));
         assertEquals(refused, line, `fresh ${fresh}, continued ${continued}`);
       }
       assertEquals(host.calls.length, 0, 'refused before the distro was asked anything');
       // the automatic reconnect at start (neither) is not refused: a running chat is never cut off by the switch
-      assertEquals((await studio.wslLaunch('omp', wsl, false, false)).command, ['/usr/bin/omp', 'acp']);
+      assertEquals((await studio.wslLaunch('claude', wsl, false, false)).command, ['/usr/bin/claude-acp', 'acp']);
       // connect() itself: a new WSL chat and the person's Continue are refused with the same line
       for (const resume of [null, 'sess-1']) {
         let refused = '';
-        await studio.connect('omp', 'wsl://ubuntu/home/u/app', resume).catch((e) => (refused = e.message));
+        await studio.connect('claude', 'wsl://ubuntu/home/u/app', resume).catch((e) => (refused = e.message));
         assertEquals(refused, line, `connect resume=${resume}`);
       }
       // another distro with no saved value is on
-      assertEquals(studio.settings.distroAgentEnabled('debian', 'omp'), true);
+      assertEquals(studio.settings.distroAgentEnabled('debian', 'claude'), true);
       // a custom agent's own name in the line
       assertEquals(
         wslAgentOffLine('custom-x', 'Ubuntu', { customAgent: () => ({ name: 'My agent' }) }),
@@ -277,16 +276,16 @@ Deno.test(
       assertEquals([status, body.state, body.line], [200, 'ready', '']);
       const rows = Object.fromEntries((body.agents as Json[]).map((r) => [r.id, r]));
       assertEquals(
-        [rows.claude.enabled, rows.codex.enabled, rows.omp.enabled],
-        [true, false, true],
+        [rows.claude.enabled, rows.codex.enabled],
+        [true, false],
         'the distro switch, not the Windows one',
       );
       assertEquals(rows.claude.signin, { state: 'signed_in', account: 'u@example.com' });
-      assertEquals([rows.codex.signin, rows.omp.signin], [{ state: 'signed_out' }, { state: 'unknown' }]);
-      assertEquals([rows.claude.canUninstall, rows.codex.canUninstall, rows.omp.canUninstall], [true, false, false]);
+      assertEquals([rows.codex.signin], [{ state: 'signed_out' }]);
+      assertEquals([rows.claude.canUninstall, rows.codex.canUninstall], [true, false]);
       const limits = rows.codex.limits as Json;
       assertEquals([limits.agent, limits.source, (limits.windows as Json[]).length], ['codex', 'codex-rollout', 2]);
-      assert(!('limits' in rows.claude) && !('limits' in rows.omp), 'limits only on the Codex row');
+      assert(!('limits' in rows.claude), 'limits only on the Codex row');
       assertEquals(
         host.calls.find(([m]) => m === 'codex.limits'),
         ['codex.limits', { codexDir: TEST_ROOT + '/home/.codex' }],

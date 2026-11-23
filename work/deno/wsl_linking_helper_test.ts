@@ -386,7 +386,6 @@ Deno.test({
       assertEquals(await status(), [
         { id: 'claude', state: 'signed_out' },
         { id: 'codex', state: 'signed_out' },
-        { id: 'omp', state: 'unknown', note: 'AIB cannot tell whether OMP is signed in.' },
       ]);
 
       Deno.writeTextFileSync(

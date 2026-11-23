@@ -4,7 +4,6 @@
   // and the editable hand-off text used when a conversation is continued in the other agent. No DOM, no network.
   // The built-ins are always known (the page works before the server list arrives, and when it cannot be read).
   const BUILTINS = [
-    { id: 'omp', name: 'OMP', letter: 'O', builtin: true, enabled: true },
     { id: 'claude', name: 'Claude Code', letter: 'C', builtin: true, enabled: true },
     { id: 'codex', name: 'Codex', letter: 'X', builtin: true, enabled: true },
   ];
@@ -150,10 +149,14 @@
   // ONE registry (built-ins + the agents added in Settings, read from the server). The New chat dropdown, the Agent chip, the
   // remembered choice and the cached model / mode lists all read it.
   const isAgent = (id) => AGENTS.some((a) => a.id === id);
+  // OMP is no longer an AIB agent (owner decision 2026-11-23). Its saved chats stay in the list as read-only history, still named OMP.
+  const RETIRED = { omp: 'OMP' };
+  const isRetired = (id) => Object.prototype.hasOwnProperty.call(RETIRED, id);
+  const RETIRED_NOTE = 'OMP is no longer supported in AIB. This chat is read-only.';
   const info = (id) =>
     ALL.find((a) => a.id === id) || {
       id: String(id || ''),
-      name: String(id || 'Agent'),
+      name: isRetired(id) ? RETIRED[id] : String(id || 'Agent'),
       letter: String(id || '?')
         .charAt(0)
         .toUpperCase(),
@@ -161,7 +164,7 @@
   const nameOf = (id) => info(id).name;
   const other = (id) => (AGENTS.find((a) => a.id !== id) || AGENTS[0]).id; // used by the hand-off: the next enabled agent
 
-  // The agent a new chat starts with: the remembered pick when valid, else the first agent (OMP, as in the setup form).
+  // The agent a new chat starts with: the remembered pick when valid, else the first agent (Claude Code).
   function resolveAgent(stored) {
     return isAgent(stored) ? stored : AGENTS[0].id;
   }
@@ -200,7 +203,7 @@
       const map = readJson(storage, PROJECT_KEY); // the global "last used" stays a browser fallback in loadChoice
       const projects = {}; // the server takes at most 50 project changes per request
       for (const k of Object.keys(map).slice(-50))
-        if (typeof map[k] === 'string' && /^(omp|claude|codex|custom-[a-z0-9-]+|claude@[a-z0-9-]+)$/.test(map[k]))
+        if (typeof map[k] === 'string' && /^(claude|codex|custom-[a-z0-9-]+|claude@[a-z0-9-]+)$/.test(map[k]))
           projects[k] = { agent: map[k] };
       const patch = { migrated: true };
       if (Object.keys(projects).length) patch.projects = projects;
@@ -443,6 +446,8 @@
     nameOf,
     other,
     isAgent,
+    isRetired,
+    RETIRED_NOTE,
     resolveAgent,
     projectKey,
     loadChoice,

@@ -56,7 +56,7 @@ class WslLab {
 
   studio(flags: string[] = []): Studio {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
-    const studio = new Studio({ ompCommand: 'unused', stateDir: this.state, port: 0, ownersDir: null }, { keeper });
+    const studio = new Studio({ claudeLauncher: import.meta.filename!, codexLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper });
     studio.ownerProbe = () => null;
     studio.connectionFactory = (command, cwd, provider, options) => {
       this.made.push({ command, cwd, options: { ...(options ?? {}) } as Json });
@@ -625,7 +625,7 @@ Deno.test({
     const text = JSON.stringify(rest);
     assert(!text.includes(JSON.stringify(lab.state).slice(1, -1)) && !text.includes('scratch'), text.slice(0, 400));
     // a Windows chat of the same AIB still gets its scratch folder
-    const win = await studio.connect('omp', lab.work);
+    const win = await studio.connect('codex', lab.work);
     assert(win.scratchDir && win.scratchDir.startsWith(lab.state), String(win.scratchDir));
   },
 });
@@ -639,7 +639,7 @@ Deno.test({
     await keeperBinary();
     await using lab = new WslLab();
     const a = lab.studio();
-    const w = await a.connect('omp', lab.work);
+    const w = await a.connect('codex', lab.work);
     const c = await a.connect('claude', REF);
     assert(w.channel && c.channel && w.keeper !== lab.host.link, 'one chat in each keeper');
     lab.crash(a);

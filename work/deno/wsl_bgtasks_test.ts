@@ -269,7 +269,7 @@ class Lab {
 
   studio(flags: string[] = []): Studio {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
-    const studio = new Studio({ ompCommand: 'unused', stateDir: this.state, port: 0, ownersDir: null }, { keeper });
+    const studio = new Studio({ stateDir: this.state, port: 0, ownersDir: null }, { keeper });
     studio.ownerProbe = () => {
       throw new Error('a WSL chat never asks Windows for its owner');
     };

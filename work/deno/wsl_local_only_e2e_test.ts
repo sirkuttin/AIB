@@ -32,7 +32,7 @@ type Json = Record<string, unknown>;
 const NL = '\\n';
 
 function studioIn(state: string): Studio {
-  const studio = new Studio({ ompCommand: 'unused', stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
+  const studio = new Studio({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
   studio.ownerProbe = () => null;
   // env sets FAKE_ACP_LOG for the fake agent: every line it receives goes there (session/new's params)
   studio.connectionFactory = (_command, cwd, provider, options) =>

@@ -16,7 +16,7 @@
 import * as Y from 'yjs';
 import * as awarenessProtocol from 'y-protocols/awareness';
 import { DocRefusal, type LiveDoc, type Op } from './live_doc.ts';
-import { BUILTIN_NAMES } from '../agents/agent_registry.ts';
+import { BUILTIN_NAMES, RETIRED_NAMES } from '../agents/agent_registry.ts';
 
 type Json = Record<string, unknown>;
 
@@ -26,7 +26,7 @@ export function agentName(who: string): string {
   if (who === 'file') return 'File edit';
   if (who === 'system') return 'AIB';
   const provider = who.includes(':') ? who.slice(0, who.indexOf(':')) : who;
-  return BUILTIN_NAMES[provider] ?? provider;
+  return BUILTIN_NAMES[provider] ?? RETIRED_NAMES[provider] ?? provider;
 }
 
 /** A history version's `by` ("user+claude:s1") as names: ["You", "Claude Code"]. */

@@ -20,8 +20,9 @@ const AC = (globalThis as unknown as { AgentChoice: Choice }).AgentChoice;
 const signin = { state: 'signin' };
 const ROWS: (Json | null)[][] = [
   [],
-  [{ id: 'claude', enabled: true, found: true }, { id: 'codex', enabled: false, found: true }, { id: 'omp', found: false }],
-  [{ id: 'claude', found: true, signin }, { id: 'omp', enabled: true, found: true, signin: { state: 'ok' } }],
+  [{ id: 'claude', enabled: true, found: true }, { id: 'codex', enabled: false, found: true }],
+  [{ id: 'claude', found: true, signin }, { id: 'codex', enabled: true, found: true, signin: { state: 'ok' } }],
+  [{ id: 'omp', enabled: true, found: true }], // OMP is retired: a row from an old settings list is ignored by both lists
   [
     { id: 'gemini', beta: true, enabled: true, found: true, name: 'Gemini' },
     { id: 'kimi', beta: true, enabled: true, found: true, signin },

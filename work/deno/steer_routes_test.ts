@@ -19,7 +19,7 @@ Deno.test('T26 (B11): steer and tool-stop are live calls of the Studio and route
     assert(ROUTE_LIST.some(([m, path, scope, kind]) => m === 'POST' && path === `/api/live/${op}` && scope === 'write' && kind === 'body'));
   }
   await using lab = new SteerLab();
-  const host = new AgentHost({ ompCommand: 'unused', stateDir: lab.dir, port: 0 } as never, 30, 0, { exitUnattachedSeconds: 10 });
+  const host = new AgentHost({ stateDir: lab.dir, port: 0 } as never, 30, 0, { exitUnattachedSeconds: 10 });
   try {
     const studio = host.studio;
     const { c, p } = await lab.chat('claude');

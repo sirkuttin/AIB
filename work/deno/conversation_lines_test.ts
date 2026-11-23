@@ -31,7 +31,7 @@ class Lab {
   }
   studio(): Studio {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
-    const studio = new Studio({ ompCommand: 'unused', stateDir: this.state, port: 0, ownersDir: null }, { keeper, keeperForNew: true });
+    const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper, keeperForNew: true });
     studio.ownerProbe = () => null;
     studio.connectionFactory = (_command, cwd, provider, options) =>
       new Connection(fake('--replay-file', this.transcript), cwd, provider, options ?? {});
@@ -111,7 +111,7 @@ Deno.test({
     await keeperBinary();
     await using lab = new Lab();
     const a = lab.studio();
-    const c = await a.connect('omp', lab.work);
+    const c = await a.connect('claude', lab.work);
     await say(a, c, 'one', 'm1');
     c.recordedEvent('studio_note', { message: 'Merged subagent “Docs” into main', kind: 'swarm-merge', sessionId: c.sessionId });
     await say(a, c, 'two', 'm2');
@@ -128,7 +128,7 @@ Deno.test({
     ]);
     const times = timesOf(c.events);
     const session = c.sessionId!;
-    const ledger = a.conversationLines!.read('omp', session);
+    const ledger = a.conversationLines!.read('claude', session);
     assertEquals(ledger.length, 4, 'three turn ends and the note are kept by conversation');
     // The chat goes, and its store with it (since 0.12.1 only deleting the chat removes a store: this is a chat whose store an
     // older build deleted); the agent's transcript is all that is left of the conversation.
@@ -139,12 +139,12 @@ Deno.test({
       lab.transcript,
       JSON.stringify(['one', 'two', 'three'].flatMap((t) => [{ role: 'user', text: `say:${t}` }, { role: 'agent', text: t }])),
     );
-    const r = await a.connect('omp', lab.work, session);
+    const r = await a.connect('claude', lab.work, session);
     assert(r.id !== c.id, 'a new chat id');
     assertEquals(story(r.events), before, 'every turn end and note back in place');
     assertEquals(timesOf(r.events), times, 'with their own times');
     assert(r.events.filter((e) => e.kind === 'turn_end').every((e) => (e.data as Json).restored === true));
-    assertEquals(a.conversationLines!.read('omp', session).length, 4, 'lines put back are not kept twice');
+    assertEquals(a.conversationLines!.read('claude', session).length, 4, 'lines put back are not kept twice');
     // A keeper take-over of the new chat rebuilds them from its record, same numbers.
     // (right away: before its first checkpoint the take-over rebuilds everything from the record)
     const shape = (events: Json[]) => events.map((e) => JSON.stringify([e.seq, e.kind, e.time]));
@@ -158,7 +158,7 @@ Deno.test({
     assertEquals(shape(back.events), kept, 'same events, same numbers, same times');
     // A new turn's end is kept again, after the turn it ends.
     await say(b, back, 'four', 'm4');
-    const last = b.conversationLines!.read('omp', session).at(-1)!;
+    const last = b.conversationLines!.read('claude', session).at(-1)!;
     assertEquals([last.kind, last.after], ['turn_end', 'say:four']);
   },
 });

@@ -48,7 +48,6 @@ const beta = (id, name, extra = {}) => ({
   ...extra,
 });
 const LIST = () => [
-  builtin('omp', 'OMP'),
   builtin('claude', 'Claude Code'),
   builtin('codex', 'Codex'),
   beta('copilot', 'GitHub Copilot CLI', {
@@ -121,7 +120,7 @@ test('AIB Linking has a "Beta agents" card with its one-line note, under the tes
   const tested = names(card('Agents'));
   assert.deepEqual(
     tested,
-    ['Claude Code', 'Codex', 'OMP'],
+    ['Claude Code', 'Codex'],
     'the tested agents stay on top, as they are, and no Beta agent is among them',
   );
 });
@@ -135,7 +134,7 @@ test('Beta agents start Off, and an Off Beta agent is not offered for new chats'
     assert.equal(inside(row, '.st-toggle', 'span').textContent, 'Off');
   }
   const AC = ctx.AgentChoice;
-  assert.deepEqual(plain(AC.AGENTS.map((a) => a.id)), ['omp', 'claude', 'codex']);
+  assert.deepEqual(plain(AC.AGENTS.map((a) => a.id)), ['claude', 'codex']);
   assert.ok(
     AC.ALL.some((a) => a.id === 'copilot' && a.beta),
     'known (old chats keep their name), just not offered',
@@ -230,21 +229,21 @@ function setupList() {
       setup,
     },
   });
-  list[4] = withSetup(
-    list[4],
+  list[3] = withSetup(
+    list[3],
     setupOf('npm', 'npm install -g @opencode/cli', [{ ...NODE_MISSING, state: 'found', version: '26.13.1' }]),
     {
       installable: true,
     },
   );
-  list[5] = withSetup(
-    list[5],
+  list[4] = withSetup(
+    list[4],
     setupOf('npm', 'npm install -g @google/gemini-cli', [NODE_MISSING], 'Install Node.js first'),
     {
       installable: true,
     },
   );
-  list[6] = withSetup(list[6], setupOf('terminal', CURSOR_CMD));
+  list[5] = withSetup(list[5], setupOf('terminal', CURSOR_CMD));
   list.push(
     withSetup(
       beta('vibe', 'Mistral Vibe'),
@@ -344,7 +343,7 @@ test('Install of a vendor agent runs in the card terminal; exit 0 checks again, 
   buttonOf(betaRow('Cursor CLI'), 'Install').click();
   await flush();
   const before = gets.length;
-  list[6] = { ...list[6], found: true, launcherSource: 'path', problem: '', launcher: 'cursor-agent.cmd' };
+  list[5] = { ...list[5], found: true, launcherSource: 'path', problem: '', launcher: 'cursor-agent.cmd' };
   runs[1][2].onExit(0);
   await flush();
   await flush();
@@ -403,7 +402,7 @@ test('a prerequisite that installed but is not seen yet: the panel says to resta
 
 test("a card with an API key box links to the provider's key page, opened in the browser; no key box, no link", async () => {
   const list = LIST();
-  list[5] = beta('gemini', 'Gemini CLI', {
+  list[4] = beta('gemini', 'Gemini CLI', {
     betaInfo: {
       ...beta('gemini', 'x').betaInfo,
       signin: 'agent',
@@ -423,11 +422,11 @@ test("a card with an API key box links to the provider's key page, opened in the
 
 test('a Ready Copilot card offers GitHub sign-in without an API token field', async () => {
   const list = LIST();
-  list[3] = {
-    ...list[3],
+  list[2] = {
+    ...list[2],
     found: true,
     signin: { state: 'ready' },
-    betaInfo: { ...list[3].betaInfo, keyEnv: 'COPILOT_GITHUB_TOKEN' },
+    betaInfo: { ...list[2].betaInfo, keyEnv: 'COPILOT_GITHUB_TOKEN' },
   };
   const { betaRow, ctx, posts } = await openSettings(list);
   const launches = [];
@@ -452,11 +451,11 @@ test('the New chat agent menu and the composer agent chip list Beta agents last,
   );
   assert.deepEqual(
     plain(AC.AGENTS.map((a) => a.id)),
-    ['omp', 'claude', 'codex', 'gemini', 'cursor'],
+    ['claude', 'codex', 'gemini', 'cursor'],
     'only turned-on agents, Beta ones after the tested ones',
   );
   const items = AC.menuItems(AC.AGENTS);
-  assert.deepEqual(plain(items.map((i) => i.group)), ['', '', '', 'Beta', 'Beta']);
+  assert.deepEqual(plain(items.map((i) => i.group)), ['', '', 'Beta', 'Beta']);
   const box = shell.document.createElement('div');
   shell.body.append(box);
   ctx.AgentComposerChips.render(
@@ -464,8 +463,8 @@ test('the New chat agent menu and the composer agent chip list Beta agents last,
     {
       id: 'new-chat',
       settings: {},
-      agent: 'OMP',
-      agentId: 'omp',
+      agent: 'Claude Code',
+      agentId: 'claude',
       agents: AC.AGENTS.map((a) => ({ id: a.id, name: a.name, group: a.beta ? AC.BETA_GROUP : '' })),
     },
     { onAgent() {} },
@@ -477,7 +476,7 @@ test('the New chat agent menu and the composer agent chip list Beta agents last,
   const seq = list.children.map((n) =>
     n._class.has('chip-menu-group') ? '[' + n.textContent + ']' : n.querySelector('.chip-menu-name').textContent,
   );
-  assert.deepEqual(plain(seq), ['OMP', 'Claude Code', 'Codex', '[Beta]', 'Gemini CLI', 'Cursor CLI']);
+  assert.deepEqual(plain(seq), ['Claude Code', 'Codex', '[Beta]', 'Gemini CLI', 'Cursor CLI']);
   assert.equal(menu.querySelectorAll('.chip-menu-tag').length, 0, 'no per-agent tag in the menu either');
 });
 

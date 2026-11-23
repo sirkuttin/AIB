@@ -15,7 +15,7 @@ import { refOf } from '../../outputs/agent-studio/server/platform/location.ts';
 type Json = Record<string, unknown>;
 
 function studioIn(state: string): Studio {
-  const studio = new Studio({ ompCommand: 'unused', stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
+  const studio = new Studio({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
   studio.ownerProbe = () => null;
   studio.connectionFactory = (_command, cwd, provider, options) =>
     new Connection(['python3', `${ROOT}/fake_acp.py`, '--cancel-aware'], cwd, provider, {

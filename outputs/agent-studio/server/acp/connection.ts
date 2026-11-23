@@ -800,7 +800,7 @@ const PROMPT_UNKNOWN = 'This message was being sent when AIB stopped, so AIB can
 // ---- steer-on-send (messages sent while the agent works) -------------------------------------------------------------------------
 
 /** The agents whose steering behaviour AIB knows (the page picks its hint copy by this); any other agent that steers gets the fallback. */
-export const STEER_AGENTS: ReadonlySet<string> = new Set(['claude', 'codex', 'omp']);
+export const STEER_AGENTS: ReadonlySet<string> = new Set(['claude', 'codex']);
 /** A request's failure as an RpcError (request() throws a RuntimeError carrying the agent's code and data), or null. */
 function asRpcError(error: unknown): RpcError | null {
   if (error instanceof RpcError) return error;
@@ -818,7 +818,7 @@ export const TERMINAL_SIGNIN_PROVIDERS: ReadonlySet<string> = new Set(['claude']
  */
 export const steerTiming = { settleMs: 3000, steerTimeoutSeconds: 30, steerLateSeconds: 300 };
 
-/** OMP's refusal of a prompt while its agent still works ("Agent is already processing. Use steer() or followUp()..."). */
+/** An agent's refusal of a prompt while it still works ("Agent is already processing. Use steer() or followUp()..."). Any agent may say it. */
 export function isAgentBusyError(error: unknown): boolean {
   return /already processing/i.test(errorText(error));
 }
@@ -5159,8 +5159,8 @@ export class Connection {
             note: (id) => receipt ? { t: 'receipt', rpc: id, ...receipt } : null,
             once: clientMessageId ? `prompt:${clientMessageId}${attempt ? ':' + attempt : ''}` : undefined,
           });
-        // OMP still works on something AIB thinks is over (a steer it answered promptRequired, the end of a cancelled turn) and refuses
-        // the prompt with "Agent is already processing...". That is no failure: the message waits and goes the moment OMP is free.
+        // An agent still works on something AIB thinks is over (a steer it answered promptRequired, the end of a cancelled turn) and refuses
+        // the prompt with "Agent is already processing...". That is no failure: the message waits and goes the moment the agent is free.
         const sendWhenFree = async (): Promise<unknown> => {
           const until = Date.now() + busyRetry.maxSeconds * 1000;
           for (let attempt = 0;; attempt++) {

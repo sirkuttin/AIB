@@ -103,7 +103,7 @@ Deno.test({
     const studios: Studio[] = [];
     const studio = () => {
       const keeper = new KeeperLink({ dataDir: state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
-      const s = new Studio({ ompCommand: 'unused', stateDir: state, port: 0, ownersDir: null }, { keeper });
+      const s = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: state, port: 0, ownersDir: null }, { keeper });
       s.ownerProbe = () => null;
       s.connectionFactory = (_command, cwd, provider, options) =>
         new Connection(fake('--cancel-aware'), cwd, provider, { ...options, env: { FAKE_ACP_LOG: dir + SEP + 'agent.log' } });
@@ -113,7 +113,7 @@ Deno.test({
     const log = capture();
     try {
       const a = studio();
-      const c = await a.connect('omp', work);
+      const c = await a.connect('claude', work);
       // A crash: the keeper connection goes, the agent and its record stay.
       a.keeper!.disconnect();
       for (const conn of a.connections.values()) conn.sessionLease?.release();
@@ -126,7 +126,7 @@ Deno.test({
       const lines = log.lines.filter((l) => l.includes('keeper: take-over timing'));
       assertEquals(lines.length, 1, log.lines.join('\n'));
       const line = lines[0];
-      assert(line.includes(' INFO studio: keeper: take-over timing omp fake-session ' + c.id + ': '), line);
+      assert(line.includes(' INFO studio: keeper: take-over timing claude fake-session ' + c.id + ': '), line);
       for (
         const phase of ['note', 'setup', 'attach/read', 'replay', 'rebuild', 'lease', 'queue and announce', 'live sync', 'duplicate check']
       ) {

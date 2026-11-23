@@ -17,7 +17,7 @@
   ];
   let wasShown = false;
 
-  // The built-in agents, in Settings' order (Claude Code, Codex, OMP). Custom agents are added from Settings.
+  // The built-in agents, in Settings' order (Claude Code, Codex). Custom agents are added from Settings.
   const builtinRows = (list) => settings().orderAgents((Array.isArray(list) ? list : []).filter((a) => a && a.builtin));
   // True when every agent row is stuck (see AgentSettingsUI.trouble): the page then offers a way out that needs no Install button.
   const allStuck = (rows, trouble) => rows.length > 0 && rows.every((a) => !!trouble(a));

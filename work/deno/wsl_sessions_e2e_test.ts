@@ -64,7 +64,7 @@ Deno.test({
       assertEquals(await wslTranscriptGet('/api/transcript', parseQs('key=claude/x.jsonl')), null, 'Windows keys are not WSL ones');
 
       // Continue: the agent starts in the distro with session/load of that id (the fake agent stands in for Claude).
-      studio = new Studio({ ompCommand: 'unused', stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
+      studio = new Studio({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
       studio.ownerProbe = () => null;
       studio.connectionFactory = (_command, cwd, provider, options) =>
         new Connection(['python3', `${ROOT}/fake_acp.py`], cwd, provider, {

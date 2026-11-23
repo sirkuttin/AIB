@@ -8,17 +8,35 @@ const A = require(path.join(APP_DIR, 'agent-choice.js'));
 test('agents match the setup form values', () => {
   assert.deepEqual(
     A.AGENTS.map((a) => a.id),
-    ['omp', 'claude', 'codex'],
+    ['claude', 'codex'],
   );
   assert.equal(A.nameOf('claude'), 'Claude Code');
-  assert.equal(A.other('omp'), 'claude');
-  assert.equal(A.other('claude'), 'omp');
+  assert.equal(A.other('codex'), 'claude');
+  assert.equal(A.other('claude'), 'codex');
 });
 
-test('resolveAgent falls back to OMP for anything unknown', () => {
+test('OMP is not an agent any more: not offered, but its saved chats keep the name OMP and a read-only note', () => {
+  assert.equal(A.isAgent('omp'), false);
+  assert.ok(!A.AGENTS.some((a) => a.id === 'omp') && !A.ALL.some((a) => a.id === 'omp'));
+  assert.equal(A.isRetired('omp'), true);
+  assert.equal(A.isRetired('claude'), false);
+  assert.equal(A.nameOf('omp'), 'OMP');
+  assert.equal(A.RETIRED_NOTE, 'OMP is no longer supported in AIB. This chat is read-only.');
+  assert.equal(A.menuRows().some((r) => r.value === 'omp'), false, 'not in the New chat menu');
+});
+
+test('resolveAgent falls back to Claude Code for anything unknown, OMP included', () => {
   assert.equal(A.resolveAgent('claude'), 'claude');
-  assert.equal(A.resolveAgent('nope'), 'omp');
-  assert.equal(A.resolveAgent(null), 'omp');
+  assert.equal(A.resolveAgent('nope'), 'claude');
+  assert.equal(A.resolveAgent('omp'), 'claude');
+  assert.equal(A.resolveAgent(null), 'claude');
+});
+
+test('a default agent of omp (Settings) or a remembered omp falls back to Claude Code', () => {
+  A.setDefaults({ agent: 'omp', byAgent: {}, projects: { 'w:c:/repos/app': { agent: 'omp' } } });
+  assert.equal(A.loadChoice(memory(), 'C:\\Repos\\App'), 'claude');
+  A.setDefaults({ agent: '', byAgent: {}, projects: {} });
+  assert.equal(A.loadChoice({ getItem: () => 'omp', setItem() {} }), 'claude');
 });
 
 test('remembered choice survives and storage failures are tolerated', () => {
@@ -29,11 +47,12 @@ test('remembered choice survives and storage failures are tolerated', () => {
       mem[k] = v;
     },
   };
-  assert.equal(A.loadChoice(store), 'omp');
-  assert.equal(A.saveChoice(store, 'claude'), true);
   assert.equal(A.loadChoice(store), 'claude');
+  assert.equal(A.saveChoice(store, 'codex'), true);
+  assert.equal(A.loadChoice(store), 'codex');
   assert.equal(A.saveChoice(store, 'bogus'), false);
-  assert.equal(A.loadChoice(store), 'claude');
+  assert.equal(A.saveChoice(store, 'omp'), false);
+  assert.equal(A.loadChoice(store), 'codex');
   const broken = {
     getItem() {
       throw new Error('x');
@@ -42,9 +61,9 @@ test('remembered choice survives and storage failures are tolerated', () => {
       throw new Error('x');
     },
   };
-  assert.equal(A.loadChoice(broken), 'omp');
+  assert.equal(A.loadChoice(broken), 'claude');
   assert.equal(A.saveChoice(broken, 'claude'), false);
-  assert.equal(A.loadChoice(null), 'omp');
+  assert.equal(A.loadChoice(null), 'claude');
 });
 
 test('folder: active project wins, then typed input, then none', () => {
@@ -117,7 +136,7 @@ test('the registry is the single source: every agent has id, name and letter; ot
     assert.equal(A.nameOf(a.id), a.name);
     assert.equal(A.isAgent(a.id), true);
   }
-  assert.notEqual(A.other('omp'), 'omp');
+  assert.notEqual(A.other('claude'), 'claude');
   assert.equal(A.info('mystery').name, 'mystery', 'an unknown id still has a name');
 });
 
@@ -125,11 +144,11 @@ test('default agent: this project\u2019s last, else the last used anywhere, else
   const store = memory();
   assert.equal(A.loadChoice(store, 'C:\\Repos\\App'), A.AGENTS[0].id, 'nothing remembered: the first agent');
   A.saveChoice(store, 'claude', 'C:\\Repos\\App');
-  A.saveChoice(store, 'omp', 'C:\\Repos\\Other');
+  A.saveChoice(store, 'codex', 'C:\\Repos\\Other');
   assert.equal(A.loadChoice(store, 'c:/repos/app/'), 'claude', 'same folder written differently');
-  assert.equal(A.loadChoice(store, 'C:\\Repos\\Other'), 'omp');
-  assert.equal(A.loadChoice(store, 'C:\\Repos\\Never'), 'omp', 'unknown project: the last choice anywhere');
-  assert.equal(A.loadChoice(store), 'omp', 'no project: the last choice anywhere');
+  assert.equal(A.loadChoice(store, 'C:\\Repos\\Other'), 'codex');
+  assert.equal(A.loadChoice(store, 'C:\\Repos\\Never'), 'codex', 'unknown project: the last choice anywhere');
+  assert.equal(A.loadChoice(store), 'codex', 'no project: the last choice anywhere');
   assert.equal(A.projectKey(''), '');
   assert.equal(A.saveChoice(store, 'bogus', 'C:\\Repos\\App'), false);
   assert.equal(A.loadChoice(store, 'C:\\Repos\\App'), 'claude');
@@ -209,7 +228,7 @@ test('model and mode lists are cached per agent from any session that reports th
     A.pickList(o.model).map((c) => c.value),
     ['', 'opus', 'sonnet'],
   );
-  assert.deepEqual(A.loadOptions(store, 'omp'), { model: null, mode: null }, 'per agent');
+  assert.deepEqual(A.loadOptions(store, 'codex'), { model: null, mode: null }, 'per agent');
   // a later session of the same agent that only reports a model keeps the cached modes
   A.saveOptions(store, 'claude', {
     configOptions: [{ id: 'model', category: 'model', type: 'select', options: [{ value: 'haiku', name: 'Haiku' }] }],
@@ -221,7 +240,7 @@ test('model and mode lists are cached per agent from any session that reports th
 
 test('a mode advertised as a config option is cached with its config id; junk is ignored', () => {
   const store = memory();
-  A.saveOptions(store, 'omp', {
+  A.saveOptions(store, 'codex', {
     configOptions: [
       {
         id: 'mode',
@@ -233,7 +252,7 @@ test('a mode advertised as a config option is cached with its config id; junk is
       },
     ],
   });
-  assert.deepEqual(A.loadOptions(store, 'omp').mode, {
+  assert.deepEqual(A.loadOptions(store, 'codex').mode, {
     kind: 'config',
     configId: 'mode',
     choices: [
@@ -242,7 +261,7 @@ test('a mode advertised as a config option is cached with its config id; junk is
     ],
   });
   for (const bad of [null, undefined, {}, { configOptions: 'x' }, { modes: { availableModes: [] } }])
-    assert.equal(A.saveOptions(memory(), 'omp', bad), false);
+    assert.equal(A.saveOptions(memory(), 'codex', bad), false);
   assert.equal(A.saveOptions(memory(), 'bogus', settingsOf()), false, 'unknown agent');
   assert.equal(
     A.saveOptions(
@@ -254,12 +273,12 @@ test('a mode advertised as a config option is cached with its config id; junk is
           throw new Error('x');
         },
       },
-      'omp',
+      'codex',
       settingsOf(),
     ),
     false,
   );
-  assert.deepEqual(A.loadOptions({ getItem: () => '{not json' }, 'omp'), { model: null, mode: null });
+  assert.deepEqual(A.loadOptions({ getItem: () => '{not json' }, 'codex'), { model: null, mode: null });
 });
 
 test('applyPlan: the chosen model and mode become the calls made right after the session starts', () => {
@@ -290,26 +309,26 @@ test('agents that are not installed are not offered for new chats', () => {
     { id: 'custom-x', name: 'X', found: false },
     { id: 'custom-y', name: 'Y', found: true },
   ]);
-  assert.deepEqual(ids(), ['omp', 'claude', 'custom-y']);
+  assert.deepEqual(ids(), ['claude', 'custom-y']);
+  assert.ok(!A.ALL.some((a) => a.id === 'omp'), 'a row for OMP in an old list is ignored');
   assert.ok(
     A.ALL.some((a) => a.id === 'codex') && A.ALL.some((a) => a.id === 'custom-x'),
     'Settings still sees every agent',
   );
   assert.equal(A.isAgent('codex'), false);
   // a saved choice pointing at a hidden agent falls back to the first usable one
-  assert.equal(A.resolveAgent('codex'), 'omp');
+  assert.equal(A.resolveAgent('codex'), 'claude');
   const store = { getItem: () => 'codex', setItem() {} };
-  assert.equal(A.loadChoice(store), 'omp');
-  assert.equal(A.other('codex'), 'omp');
+  assert.equal(A.loadChoice(store), 'claude');
+  assert.equal(A.other('codex'), 'claude');
   // nothing usable: the first built-in stays so the form is never empty
   A.setRegistry([
-    { id: 'omp', found: false },
     { id: 'claude', found: false },
     { id: 'codex', found: false },
   ]);
-  assert.deepEqual(ids(), ['omp']);
+  assert.deepEqual(ids(), ['claude']);
   A.setRegistry([]);
-  assert.deepEqual(ids(), ['omp', 'claude', 'codex']);
+  assert.deepEqual(ids(), ['claude', 'codex']);
 });
 
 // ---- Beta agents in New chat: Ready ones are offered unless turned Off; the others are listed greyed with the reason ----------------
@@ -327,7 +346,7 @@ test('a Ready Beta agent (found, signed in, no explicit Off) is offered in New c
 test('a Ready Beta agent the person turned Off is not offered; it is listed greyed as "Turned off in Settings"', () => {
   A.setRegistry([betaRow('kimi', { name: 'Kimi Code', enabled: false })]);
   assert.equal(A.isAgent('kimi'), false);
-  assert.equal(A.resolveAgent('kimi'), 'omp');
+  assert.equal(A.resolveAgent('kimi'), 'claude');
   const row = A.menuRows().find((r) => r.value === 'kimi');
   assert.deepEqual([row.disabled, row.reason], [true, 'Turned off in Settings']);
 });

@@ -22,8 +22,8 @@ desktop app, and Studio uses port+1 for its artifact server. The demo needs `<po
 The server is the Deno app: `deno run -A outputs/agent-studio/server/main.ts serve`, started in the background with no
 console window. `start.py` finds Deno as `AIB_DENO`, else `deno` on PATH, and stops with a message when there is none.
 Studio runs in-process (`--in-process --no-auto-reconnect --no-owner-announcements`). The fixture agent
-(`work/demo-studio/agent.py`) is both the Claude launcher (`--node-command` is the current Python) and the OMP command
-(a tiny `omp.cmd` / `omp` launcher in the demo folder), so either agent in "New chat" works.
+(`work/demo-studio/agent.py`) is the Claude launcher (`--node-command` is the current Python),
+so Claude Code in "New chat" works.
 
 Set `AIB_DEMO_MODELS=1` before starting to give the fixture agent a long model list (16 models), three modes with
 descriptions and an effort setting, for checking the composer chip menus.

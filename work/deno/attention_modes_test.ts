@@ -264,7 +264,7 @@ function studioMode(name: string, withKeeper: boolean): Mode & { studios: Studio
     const keeper = withKeeper
       ? new KeeperLink({ dataDir: state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '60s'] })
       : undefined;
-    const studio = new Studio({ ompCommand: 'unused', stateDir: state, port: 0, ownersDir: null }, keeper ? { keeper } : {});
+    const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: state, port: 0, ownersDir: null }, keeper ? { keeper } : {});
     studio.ownerProbe = () => null;
     studio.connectionFactory = (_command, cwd, provider, options) => new Connection(fake('--held-turn'), cwd, provider, options);
     studios.push(studio);
@@ -278,8 +278,8 @@ function studioMode(name: string, withKeeper: boolean): Mode & { studios: Studio
     studios,
     host: make() as LiveBackend,
     async connect(cwd = work) {
-      const c = await (mode.host as unknown as Studio).connect('omp', cwd);
-      return { id: c.id, key: `omp:${c.sessionId || c.id}` };
+      const c = await (mode.host as unknown as Studio).connect('claude', cwd);
+      return { id: c.id, key: `claude:${c.sessionId || c.id}` };
     },
     restartAround: withKeeper
       ? async (meanwhile: () => Promise<void>) => {

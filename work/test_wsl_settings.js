@@ -23,14 +23,12 @@ const status = (distros, extra = {}) => Object.assign({ available: distros.lengt
 
 const CLAUDE = { id: 'claude', found: true, version: '0.102.0', installable: true, pinned: '0.102.0', managed: true, bundledCli: true };
 const CODEX = { id: 'codex', found: true, version: '2.6.0', installable: true, pinned: '2.6.0', managed: false, bundledCli: false };
-const OMP = { id: 'omp', found: false };
-const READY_AGENTS = { distro: 'ubuntu', name: 'Ubuntu', agents: [CLAUDE, CODEX, OMP] };
+const READY_AGENTS = { distro: 'ubuntu', name: 'Ubuntu', agents: [CLAUDE, CODEX] };
 
 // The Windows agents of AIB Linking (the On/Off switch every distro row follows).
 const WIN = [
   { id: 'claude', name: 'Claude Code', letter: 'C', builtin: true, enabled: true, found: false, launcher: 'Not installed', launcherSource: 'missing', installable: true, packageBytes: 400000000 },
   { id: 'codex', name: 'Codex', letter: 'X', builtin: true, enabled: false, found: true, launcher: 'codex-acp', launcherSource: 'installed' },
-  { id: 'omp', name: 'OMP', letter: 'O', builtin: true, enabled: true, found: false, launcher: 'Not installed', launcherSource: 'missing' },
 ];
 
 /**
@@ -205,7 +203,7 @@ test('a peek answer for a distro that is not ready never fills the new-chat pane
   const r = setup();
   await settle();
   await r.ctx.AIBWsl.peekAgents('ubuntu');
-  assert.equal(r.ctx.AIBWsl._agentCache.get('ubuntu').value.agents.length, 3, 'a ready answer does');
+  assert.equal(r.ctx.AIBWsl._agentCache.get('ubuntu').value.agents.length, 2, 'a ready answer does');
 });
 
 // ---- the mockup's states ---------------------------------------------------------------------------------------------------
@@ -228,7 +226,7 @@ test('all good: the overview lists Ubuntu (WSL default, Ready) and docker-deskto
   assert.deepEqual(card.querySelectorAll('dd').map((n) => n.textContent), ['Ready', '0.1.0-ab12cd34', '/home/u']);
   assert.deepEqual(buttons(card), [], 'no Repair or Open terminal buttons that would do nothing');
   const agents = t.cardOf('Agents in Ubuntu');
-  assert.deepEqual(agents.querySelectorAll('.st-agent').map((r) => r.dataset.agent), ['wsl:ubuntu:claude', 'wsl:ubuntu:codex', 'wsl:ubuntu:omp']);
+  assert.deepEqual(agents.querySelectorAll('.st-agent').map((r) => r.dataset.agent), ['wsl:ubuntu:claude', 'wsl:ubuntu:codex']);
   const claude = t.rowOf('wsl:ubuntu:claude');
   assert.equal(claude.querySelector('.st-tag').textContent, 'Installed by AIB');
   assert.equal(claude.querySelector('.st-status').textContent, 'Installed', 'AIB\'s own copy, no sign-in answer: Installed');
@@ -243,16 +241,11 @@ test('all good: the overview lists Ubuntu (WSL default, Ready) and docker-deskto
   assert.ok(codex.querySelectorAll('code').some((c) => c.textContent === 'npm install -g @openai/codex'));
   assert.equal(codex.querySelector('a').href, 'https://developers.openai.com/codex/cli');
   assert.ok(!buttons(codex).includes('Install in Ubuntu'), 'never an install button for the vendor command');
-  const omp = t.rowOf('wsl:ubuntu:omp');
-  assert.equal(omp.querySelector('.st-status').textContent, 'Not installed');
-  assert.ok(omp.textContent.includes('AIB does not install OMP.'));
-  assert.ok(!buttons(omp).some((b) => /^Install/.test(b)));
-  assert.ok(buttons(omp).includes('Check again'));
   assert.ok(agents.querySelector('.wl-foot').textContent.includes('Your Windows agents are in AIB Linking.'));
 });
 
 test('each distro card has its own switch "Use in Ubuntu" from rows[].enabled, apart from the Windows one (Codex off on Windows, on in Ubuntu)', async () => {
-  const t = setup({ agents: () => ({ distro: 'ubuntu', name: 'Ubuntu', agents: [Object.assign({ enabled: false }, CLAUDE), Object.assign({ enabled: true }, CODEX), OMP] }) });
+  const t = setup({ agents: () => ({ distro: 'ubuntu', name: 'Ubuntu', agents: [Object.assign({ enabled: false }, CLAUDE), Object.assign({ enabled: true }, CODEX)] }) });
   await openWsl(t);
   const claude = t.rowOf('wsl:ubuntu:claude');
   const box = claude.querySelector('.st-actions').querySelector('input');
@@ -263,7 +256,6 @@ test('each distro card has its own switch "Use in Ubuntu" from rows[].enabled, a
   const codex = t.rowOf('wsl:ubuntu:codex');
   assert.equal(codex.querySelector('.st-actions').querySelector('input').checked, true, 'on in Ubuntu although off in Windows');
   assert.ok(!codex.className.includes('off'));
-  assert.equal(t.rowOf('wsl:ubuntu:omp').querySelector('.st-actions').querySelector('input').checked, true, 'no saved value: on');
   assert.ok(!t.content().textContent.includes('uses the Windows switch'), 'the phase 1 line is gone');
 });
 
@@ -564,7 +556,7 @@ test('Settings > About: the WSL lines link to AIB Linking (WSL)', async () => {
 
 // ==== phase 2 (docs/wsl/linking-design.md section 12) ========================================================================
 const DEBIAN_READY = Object.assign({}, UBUNTU, { name: 'Debian', key: 'debian', home: '/home/d', isDefault: false });
-const listOf = (q) => ({ distro: q.distro, name: q.distro === 'debian' ? 'Debian' : 'Ubuntu', agents: [CLAUDE, CODEX, OMP] });
+const listOf = (q) => ({ distro: q.distro, name: q.distro === 'debian' ? 'Debian' : 'Ubuntu', agents: [CLAUDE, CODEX] });
 const heads = (card) => card.querySelectorAll('.dv-check-head').map((h) => [h.children[1].textContent, h.children[2].textContent]);
 const noStart = (t) => [...t.agentCalls(), ...t.needCalls()].every((q) => !('start' in q));
 
@@ -672,7 +664,7 @@ test('Node.js missing: Install Node.js opens the card\'s terminal with setup=wsl
   let p = withNode({ state: 'missing' }, { nvm: { present: false } });
   const t = setup({
     prereqs: (q) => needsOf(p, q.distro),
-    agents: () => ({ distro: 'ubuntu', name: 'Ubuntu', agents: [{ id: 'claude', found: false, installable: true, pinned: '0.102.0', nodeInstall: 'curl … nvm' }, CODEX, OMP] }),
+    agents: () => ({ distro: 'ubuntu', name: 'Ubuntu', agents: [{ id: 'claude', found: false, installable: true, pinned: '0.102.0', nodeInstall: 'curl … nvm' }, CODEX] }),
   });
   await openWsl(t);
   let card = t.cardOf('What Ubuntu needs');
@@ -861,7 +853,7 @@ test('sign-in states: Signed in (with the account), Not signed in (Sign in), unk
       agents: [
         Object.assign({}, CLAUDE, { signin: { state: 'signed_in', account: 'me@example.com' } }),
         Object.assign({}, CODEX, { signin: { state: 'signed_out' } }),
-        Object.assign({}, OMP, { found: true, version: '1.2.0', signin: { state: 'unknown', note: 'AIB has no sign-in check for OMP.' } }),
+        { id: 'gemini', found: true, version: '1.2.0', signin: { state: 'unknown', note: 'AIB has no sign-in check for Gemini.' } },
       ],
     }),
   });
@@ -875,10 +867,10 @@ test('sign-in states: Signed in (with the account), Not signed in (Sign in), unk
   assert.equal(codex.querySelector('.st-status').className, 'st-status warn');
   assert.ok(codex.querySelector('.wl-signin').textContent.startsWith('Not signed in to Codex in Ubuntu yet. Sign in runs Codex\'s own sign-in in a Ubuntu terminal here'));
   assert.ok(buttons(codex).includes('Sign in'));
-  const omp = t.rowOf('wsl:ubuntu:omp');
-  assert.equal(omp.querySelector('.st-status').textContent, 'Found');
-  assert.equal(omp.querySelector('.wl-signin').textContent, 'Sign-in in Ubuntu: unknown (AIB has no sign-in check for OMP).');
-  assert.ok(!buttons(omp).includes('Sign in'), 'no Sign in AIB cannot run');
+  const other = t.rowOf('wsl:ubuntu:gemini');
+  assert.equal(other.querySelector('.st-status').textContent, 'Found');
+  assert.equal(other.querySelector('.wl-signin').textContent, 'Sign-in in Ubuntu: unknown (AIB has no sign-in check for Gemini).');
+  assert.ok(!buttons(other).includes('Sign in'), 'no Sign in AIB cannot run');
   const foot = t.cardOf('Agents in Ubuntu').querySelector('.wl-foot').textContent;
   assert.ok(!foot.includes('"Found" means'), foot);
   assert.ok(foot.includes('Sign-in is checked in Ubuntu each time this page reads its agents.'));
@@ -950,13 +942,12 @@ test('Sign in for a distro that stopped running since the page was drawn: start=
 test('Uninstall only where canUninstall; the question says exactly what goes; No does nothing; Yes posts {distro, id} and reads the list again', async () => {
   const asked = [];
   let yes = false;
-  const t = setup({ agents: () => ({ distro: 'ubuntu', name: 'Ubuntu', agents: [Object.assign({}, CLAUDE, { canUninstall: true }), Object.assign({}, CODEX, { canUninstall: false }), OMP] }) });
+  const t = setup({ agents: () => ({ distro: 'ubuntu', name: 'Ubuntu', agents: [Object.assign({}, CLAUDE, { canUninstall: true }), Object.assign({}, CODEX, { canUninstall: false })] }) });
   t.ctx.confirm = (q) => (asked.push(q), yes);
   await openWsl(t);
   assert.ok(buttons(t.rowOf('wsl:ubuntu:claude')).includes('Uninstall'));
   assert.equal(t.rowOf('wsl:ubuntu:claude').querySelectorAll('button').find((b) => b.textContent === 'Uninstall').className, 'st-danger');
   assert.ok(!buttons(t.rowOf('wsl:ubuntu:codex')).includes('Uninstall'), 'your own install: never');
-  assert.ok(!buttons(t.rowOf('wsl:ubuntu:omp')).includes('Uninstall'));
   const click = () => t.rowOf('wsl:ubuntu:claude').querySelectorAll('button').find((b) => b.textContent === 'Uninstall').click();
   click();
   await settle();
@@ -1000,7 +991,7 @@ test('Codex limits: the distro\'s own usage line in the Windows Limits chip\'s w
     ],
     updatedAt: now - 240,
   };
-  const t = setup({ agents: () => ({ distro: 'ubuntu', name: 'Ubuntu', agents: [Object.assign({}, CLAUDE, { limits }), Object.assign({}, CODEX, { limits, signin: { state: 'signed_in' } }), OMP] }) });
+  const t = setup({ agents: () => ({ distro: 'ubuntu', name: 'Ubuntu', agents: [Object.assign({}, CLAUDE, { limits }), Object.assign({}, CODEX, { limits, signin: { state: 'signed_in' } })] }) });
   await openWsl(t);
   const line = t.rowOf('wsl:ubuntu:codex').querySelector('.wl-limits');
   assert.equal(line.textContent, 'Usage limits of Ubuntu\'s Codex sign-in: 5h 32% · wk 10% (updated 4 min ago). Same ChatGPT account as on Windows means the same limits.');
@@ -1429,7 +1420,7 @@ test('unknown agent ids: the row own name, and no Install for ids the install ro
 test('status chips on the page are announced politely', async () => {
   const t = setup({ status: status([UBUNTU], { skipped: [DOCKER] }), agents: listOf });
   await openWsl(t);
-  const chips = [t.cardOf('WSL on this PC').querySelectorAll('.wl-distro')[0].querySelector('.st-status'), t.rowOf('wsl:ubuntu:claude').querySelector('.st-status'), t.rowOf('wsl:ubuntu:omp').querySelector('.st-status')];
+  const chips = [t.cardOf('WSL on this PC').querySelectorAll('.wl-distro')[0].querySelector('.st-status'), t.rowOf('wsl:ubuntu:claude').querySelector('.st-status'), t.rowOf('wsl:ubuntu:codex').querySelector('.st-status')];
   assert.equal(chips.filter(Boolean).length, 3);
   for (const c of chips) {
     assert.equal(c.getAttribute('role'), 'status');

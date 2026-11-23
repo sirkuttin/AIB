@@ -172,7 +172,7 @@ function get(value: unknown, key: string): unknown {
 
 Deno.test('held turn: a chat whose helpers still run keeps the agent host alive and the quit warning, without being busy', async () => {
   await using lab = new HeldLab();
-  const host = new AgentHost({ ompCommand: 'unused', stateDir: lab.dir, port: 0 } as never, 30, 0, { exitUnattachedSeconds: 10 });
+  const host = new AgentHost({ stateDir: lab.dir, port: 0 } as never, 30, 0, { exitUnattachedSeconds: 10 });
   const studio = host.studio;
   try {
     const c = await lab.open(['--held-turn']);

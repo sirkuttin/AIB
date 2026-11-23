@@ -46,7 +46,7 @@ function makeHost(o: { exit?: number; busy?: number } = {}) {
   const menu: { open: () => void; stop: () => void } = { open: () => {}, stop: () => {} };
   const spawned: string[][] = [];
   let made = 0;
-  const host = new AgentHost({ ompCommand: 'unused', stateDir: dir, port: 0 } as never, 30, 0, {
+  const host = new AgentHost({ stateDir: dir, port: 0 } as never, 30, 0, {
     tray: (onOpen, onStop) => {
       made++;
       menu.open = onOpen;
@@ -174,7 +174,7 @@ t('exit: no app and nothing working for the grace period; an open but idle chat 
 
 t('working, exactly: queued prompts and agent install or sign-in jobs count; an open idle chat does not', async () => {
   const dir = Deno.makeTempDirSync({ prefix: 'aib-lifecycle-' });
-  const host = new AgentHost({ ompCommand: 'unused', stateDir: dir, port: 0 } as never, 30, 0, { exitUnattachedSeconds: 10 });
+  const host = new AgentHost({ stateDir: dir, port: 0 } as never, 30, 0, { exitUnattachedSeconds: 10 });
   const studio = host.studio;
   try {
     const idle = { id: 'a', provider: 'claude', cwd: dir, closed: false, queue: { items: [] }, attention: () => ({ state: 'idle' }) };
@@ -229,7 +229,7 @@ t('a stop that hangs in an agent still ends the process (hard exit after the dea
   const exits: number[] = [];
   const saved = AgentHost.STOP_DEADLINE_SECONDS;
   AgentHost.STOP_DEADLINE_SECONDS = 0.6;
-  const host = new AgentHost({ ompCommand: 'unused', stateDir: dir, port: 0 } as never, 30, 0, { hardExit: () => void exits.push(1) });
+  const host = new AgentHost({ stateDir: dir, port: 0 } as never, 30, 0, { hardExit: () => void exits.push(1) });
   const close = host.studio.close.bind(host.studio);
   try {
     host.studio.close = () => sleep(1500).then(close); // an agent that takes too long to close
@@ -347,7 +347,7 @@ t('Linux AppImage: the built app starts its host as $APPIMAGE host (its own moun
 t('a forced stop (the app\'s "stop them and quit") and the tray\'s Stop chats and quit mark the stop as deliberate; a plain stop does not (QA 4 #8)', async () => {
   for (const [how, want] of [['plain', false], ['force', true], ['tray', true]] as const) {
     const dir = Deno.makeTempDirSync({ prefix: 'aib-lifecycle-' });
-    const host = new AgentHost({ ompCommand: 'unused', stateDir: dir, port: 0 } as never, 30, 0, {});
+    const host = new AgentHost({ stateDir: dir, port: 0 } as never, 30, 0, {});
     try {
       if (how === 'tray') host.stopAll('tray');
       else host.opStop({ by: 'test', force: how === 'force' });

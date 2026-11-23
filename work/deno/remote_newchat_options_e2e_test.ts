@@ -80,7 +80,7 @@ Deno.test({
       let t = performance.now();
       const stale = await Promise.all([1, 2, 3].map(() => agentsNow(s.ctx, { stale: true, clock: later })));
       assert(performance.now() - t < 200, 'served at once');
-      assertEquals(stale[0].map((a) => a.id), ['omp', 'claude', 'codex', 'kimi']);
+      assertEquals(stale[0].map((a) => a.id), ['claude', 'codex', 'kimi']);
       assertEquals(seen.builds, 2, 'one build behind them');
       // a Start (no stale) waits for a list at most AGENTS_MS old: the build already running, not another one
       t = performance.now();

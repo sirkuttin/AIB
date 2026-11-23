@@ -52,6 +52,7 @@ function norm(value: unknown, key = ''): unknown {
     // the Python reference has no such keys. Nothing else is dropped.
     const server = 'autoReconnect' in value;
     for (const [k, v] of Object.entries(value)) {
+      if (k === 'omp' && typeof v === 'boolean') continue; // OMP is retired in Deno (2026-11-23): the Python reference still has its switch
       if (k === 'savedAt' || (server && (k === 'getTestBuilds' || k === 'commitIdentity'))) continue;
       out[k] = norm(v, k);
     }
@@ -261,12 +262,12 @@ Deno.test('parity: SettingsStore sequences and errors', async () => {
     c('update', { agents: 'x' }),
     c('update', { agents: { other: 1 } }),
     c('update', { agents: { enabled: { 'custom-nope': true } } }),
-    c('update', { agents: { enabled: { omp: 'yes' } } }),
+    c('update', { agents: { enabled: { codex: 'yes' } } }),
     c('update', { agents: { builtin: { gemini: true } } }),
-    c('update', { agents: { remove: 'omp' } }),
+    c('update', { agents: { remove: 'codex' } }),
     c('update', { agents: { remove: 'custom-nope' } }),
     c('update', { agents: { upsert: 'x' } }),
-    c('update', { agents: { upsert: agent('OMP') } }),
+    c('update', { agents: { upsert: agent('Codex') } }),
     c('update', { agents: { upsert: agent('second') } }),
     c('update', { agents: { upsert: agent('Three', { command: 'no-such-program-xyz' }) } }),
     c('update', { agents: { upsert: agent('Three', { command: 'rel/dir/prog' }) } }),
@@ -279,14 +280,14 @@ Deno.test('parity: SettingsStore sequences and errors', async () => {
     c('update', { defaults: { agent: 'nonesuch' } }), // not 'gemini': that is a Beta agent in the Deno port (beta_catalog.ts)
     c('update', { defaults: { migrated: 'yes' } }),
     c('update', { defaults: { byAgent: { zzz: { model: 'm' } } } }),
-    c('update', { defaults: { byAgent: { omp: { model: 5 } } } }),
+    c('update', { defaults: { byAgent: { codex: { model: 5 } } } }),
     c('update', { defaults: { projects: { k: { agent: 'nope' } } } }),
     c('update', { defaults: { projects: { '': {} } } }),
     c('update', { defaults: { unknown: 1 } }),
     c('update', { editors: { default: 'notepad' } }),
     c('update', { editors: { other: 1 } }),
     c('update', { appearance: { defaultView: 'prompts' } }),
-    c('update', { launchers: { omp: 'x' } }),
+    c('update', { launchers: { bogus: 'x' } }),
     c('update', { launchers: { claude: 'relative.js' } }),
     c('update', { server: { autoReconnect: 'yes' } }),
     c('update', { server: { worktreePerChat: 1 } }),
@@ -389,7 +390,7 @@ Deno.test('parity: hand-edited and odd files load the same', async () => {
       JSON.stringify({
         version: 1,
         agents: {
-          builtin: { omp: 'no', claude: false },
+          builtin: { codex: 'no', claude: false },
           custom: [{ id: 'custom-ok', name: 'Ok', command: 'prog  x', args: ['a'], env: [{ name: 'A', value: '1' }] }, {
             id: 'custom-ok',
             name: 'Dup',
@@ -398,7 +399,7 @@ Deno.test('parity: hand-edited and odd files load the same', async () => {
         },
         defaults: {
           agent: 'custom-ok',
-          byAgent: { omp: { model: 'm' }, bad: { model: 'm' } },
+          byAgent: { codex: { model: 'm' }, bad: { model: 'm' } },
           projects: { k: { agent: 'custom-ok', model: 5 }, j: {} },
         },
         server: { autoReconnect: 'x', worktreePerChat: true },
@@ -496,8 +497,8 @@ Deno.test("interop: a running store picks up the other process's writes (reload 
   };
   assertEquals(Object.keys(seen.public.entries), ['claude:from-deno'], 'Python kept the Deno mark while changing its own');
   const settings = new SettingsStore(dir);
-  await py.call('state_store_shim', 'run', ['settings', dir, [c('update', { agents: { builtin: { omp: false } } })]]);
-  assertEquals(settings.builtinEnabled('omp'), false);
+  await py.call('state_store_shim', 'run', ['settings', dir, [c('update', { agents: { builtin: { codex: false } } })]]);
+  assertEquals(settings.builtinEnabled('codex'), false);
 });
 
 Deno.test('interop: one Python and one Deno writer, 50 entries each, lose nothing (every locked store)', async () => {

@@ -98,9 +98,17 @@ class StudioContract(unittest.TestCase):
         # to the built-in cards too): the Python reference has no such key, so drop it from the subject's agent rows.
         beta = {'copilot', 'opencode', 'gemini', 'qwen', 'cursor', 'goose', 'vibe', 'cline', 'kimi', 'kilo', 'maki', 'antigravity'}
 
+        def drop_omp(v):
+            # OMP is no longer an AIB agent (2026-11-23): the Python reference still lists its card and its switch, the subject does not
+            if isinstance(v, dict):
+                return {k: drop_omp(x) for k, x in v.items() if not (k == 'omp' and isinstance(x, bool))}
+            if isinstance(v, list):
+                return [drop_omp(x) for x in v if not (isinstance(x, dict) and x.get('id') == 'omp')]
+            return v
+
         def no_beta(data, server):
             if server is not self.subject:
-                return data
+                return drop_omp(data)
             # "Keep the PC awake while AIB runs" (phone remote, Settings > AIB server) is Deno-only: the reference has no such key.
             if isinstance(data, dict):
                 data = {k: v for k, v in data.items() if k not in ('keepAwake', 'swarm')}  # swarm: Deno-only experimental switch
@@ -112,16 +120,16 @@ class StudioContract(unittest.TestCase):
                 if isinstance(v, list):
                     return [walk(x) for x in v if not (isinstance(x, dict) and x.get('id') in beta)]
                 return v
-            return walk(data)
+            return drop_omp(walk(data))
         same_get = lambda path: self.same_get(path, no_beta)
         same_post = lambda path, body: self.same_post(path, body, no_beta)
         same_get('/api/live/settings')
         same_get('/api/live/settings?recheck=0')
         for body in ({}, {'editors': {'default': 'nope'}}, {'appearance': {'defaultView': 'transcript'}}, {'appearance': 5},
-                     {'agents': {'builtin': {'omp': False}}}, {'agents': {'custom': 'x'}}, {'launchers': {'claude': 7}}):
+                     {'agents': {'builtin': {'codex': False}}}, {'agents': {'custom': 'x'}}, {'launchers': {'claude': 7}}):
             same_post('/api/live/settings', body)
         same_get('/api/live/settings')
-        same_post('/api/live/settings', {'agents': {'builtin': {'omp': True}}})
+        same_post('/api/live/settings', {'agents': {'builtin': {'codex': True}}})
 
     def test_conversation_marks(self):
         for body in ({'action': 'pin', 'provider': 'claude', 'sessionId': 'mark-1', 'title': 'T', 'cwd': str(self.root)},

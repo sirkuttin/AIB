@@ -203,7 +203,6 @@ export class AgentHost {
   startedWith(): Json {
     const o = this.options;
     return {
-      ompCommand: o.ompCommand ?? null,
       nodeCommand: o.nodeCommand ?? null,
       claudeLauncher: o.claudeLauncher ?? null,
       ownersDir: o.ownersDir ? String(o.ownersDir) : null,
@@ -522,7 +521,6 @@ export function studioOptions(o: Options, mcpServers: StudioOptions['mcpServers'
     port: o.port,
     ompSessions: o.ompSessions,
     claudeProjects: o.claudeProjects,
-    ompCommand: o.ompCommand,
     nodeCommand: o.nodeCommand,
     claudeLauncher: o.claudeLauncher,
     codexLauncher: o.codexLauncher,

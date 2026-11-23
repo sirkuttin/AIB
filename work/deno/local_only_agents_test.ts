@@ -32,7 +32,7 @@ const SHARED = join(MAIN, 'aib-shared');
 const NOTES = join(MAIN, 'notes');
 
 function connection(initial: unknown, worktree: boolean, localOnly: Connection['localOnly']): Connection {
-  const c = new Connection([`${TESTS_DIR}${SEP}combined-fixture${SEP}agent.py`], Deno.cwd(), 'omp', { start: false } as never);
+  const c = new Connection([`${TESTS_DIR}${SEP}combined-fixture${SEP}agent.py`], Deno.cwd(), 'claude', { start: false } as never);
   c.initial = initial;
   if (worktree) c.worktree = { branch: 'studio/chat-1', base: 'main' };
   c.localOnly = localOnly;
@@ -94,7 +94,7 @@ class Host {
   readonly #restore = withEnv({ FAKE_ACP_LOG: this.log });
 
   studio(flags: string[]): Studio {
-    const studio = new Studio({ ompCommand: 'unused', stateDir: this.box.state, port: 0 });
+    const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.box.state, port: 0 });
     studio.ownerProbe = () => null;
     studio.settings.worktreePerChat = () => true;
     studio.connectionFactory = (_command, cwd, provider, options) => new Connection(fake(...flags), cwd, provider, options);
@@ -136,7 +136,7 @@ Deno.test({
     const p = host.box.project;
     write(p, 'aib-shared/old.md', 'notes made before AIB\n'); // must not reach the copy's snapshot: the exclude comes first
     const studio = host.studio(['--extra-dirs']);
-    const c = await studio.connect('omp', p, null, { ownCopy: true });
+    const c = await studio.connect('claude', p, null, { ownCopy: true });
     await until(() => c.ready, 'the chat is ready', 30);
     assert(c.worktree, 'a worktree chat');
     assert(host.exclude().includes(BLOCK_START) && host.exclude().includes('\n/aib-shared\n'), host.exclude());
@@ -158,7 +158,7 @@ Deno.test({
     await studio.close();
 
     const again = host.studio(['--extra-dirs']);
-    const reopened = await again.connect('omp', p, sessionId);
+    const reopened = await again.connect('claude', p, sessionId);
     await until(() => reopened.ready, 'the chat is reopened', 30);
     const loaded = host.received('session/load');
     assertEquals(loaded.length, 1);
@@ -173,7 +173,7 @@ Deno.test({
   ...T,
   async fn() {
     await using host = new Host();
-    const plain = await host.studio([]).connect('omp', host.box.project);
+    const plain = await host.studio([]).connect('claude', host.box.project);
     await until(() => plain.ready, 'the chat is ready', 30);
     const params = host.received('session/new')[0];
     assert(!('additionalDirectories' in params) && !('systemPrompt' in params), JSON.stringify(params));
@@ -181,7 +181,7 @@ Deno.test({
 
     const inPlace = host.studio(['--extra-dirs']);
     inPlace.settings.worktreePerChat = () => false;
-    const c = await inPlace.connect('omp', host.box.project);
+    const c = await inPlace.connect('claude', host.box.project);
     await until(() => c.ready, 'the chat is ready', 30);
     assertEquals(c.worktree, null);
     const second = host.received('session/new')[1];
@@ -200,7 +200,7 @@ Deno.test({
     runGit(p, 'add', '-A');
     runGit(p, 'commit', '-q', '-m', 'aib-shared is part of this project');
     const before = host.exclude();
-    const c = await host.studio(['--extra-dirs']).connect('omp', p);
+    const c = await host.studio(['--extra-dirs']).connect('claude', p);
     await until(() => c.ready, 'the chat is ready', 30);
     assertEquals(host.exclude(), before, 'the exclude file is untouched');
     const params = host.received('session/new')[0];

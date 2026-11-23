@@ -10,7 +10,7 @@
  * - Codex: `<CODEX_HOME or ~/.codex>/auth.json` with a `tokens` object (ChatGPT sign-in) or a non-empty `OPENAI_API_KEY` = signed
  *   in; missing or both empty = signed out. When config.toml keeps the credentials in the system keyring the file says nothing:
  *   'unknown'.
- * - OMP and anything else: 'unknown' (AIB does not know where they keep a sign-in).
+ * - anything else: 'unknown' (AIB does not know where they keep a sign-in).
  * A file that cannot be read, is too big or is not the expected JSON is 'unknown'.
  */
 import { isDict } from '../../core/py.ts';
@@ -113,7 +113,7 @@ export function signinStatus(ids: string[], env: Record<string, string>, home: s
     return {
       id,
       state: 'unknown' as const,
-      note: id === 'omp' ? 'AIB cannot tell whether OMP is signed in.' : 'AIB cannot check this agent.',
+      note: 'AIB cannot check this agent.',
     };
   });
 }

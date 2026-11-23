@@ -135,7 +135,7 @@ class Lab {
       ],
     });
     const studio = new Studio({
-      ompCommand: 'unused',
+      claudeLauncher: import.meta.filename!, nodeCommand: 'node',
       stateDir: this.state,
       port: 0,
       ownersDir: null,
@@ -302,7 +302,7 @@ Deno.test({
     );
     const { app, windows, quits, leaves, closed } = lab.app(a);
     await app.start();
-    const c = await a.connect('omp', lab.work);
+    const c = await a.connect('claude', lab.work);
     assert(c.channel !== null, 'the agent runs in the keeper');
     const agentPid = c.process!.pid;
     await until(
@@ -450,7 +450,7 @@ Deno.test({
     const a = lab.studio(['--held-turn', '--child-pid-file', childFile], true);
     const { app, windows, quits, leaves, closed } = lab.app(a);
     await app.start();
-    const c = await a.connect('omp', lab.work);
+    const c = await a.connect('claude', lab.work);
     await until(() => Deno.statSync(childFile).size > 0, 'the agent child', 10);
     const childPid = Number(Deno.readTextFileSync(childFile));
     const agentPid = c.process!.pid;
@@ -500,7 +500,7 @@ Deno.test({
     const a = lab.studio(['--held-turn', '--child-pid-file', childFile], true);
     const { app, quits, leaves, closed } = lab.app(a);
     await app.start();
-    const c = await a.connect('omp', lab.work);
+    const c = await a.connect('claude', lab.work);
     await until(() => Deno.statSync(childFile).size > 0, 'the agent child', 10);
     const agentPid = c.process!.pid;
     const gate = lab.gate();
@@ -543,7 +543,7 @@ Deno.test({
     const studio = lab.studio(['--cancel-aware']);
     const { app, quits, closed } = lab.app(studio);
     await app.start();
-    const c = await studio.connect('omp', lab.work);
+    const c = await studio.connect('claude', lab.work);
     await studio.liveCall('prompt', {
       id: c.id,
       text: 'stream:4:200',
@@ -577,7 +577,7 @@ Deno.test({
     const studio = lab.studio(['--cancel-aware'], true);
     const { app, quits, leaves, closed } = lab.app(studio);
     await app.start();
-    const c = await studio.connect('omp', lab.work);
+    const c = await studio.connect('claude', lab.work);
     const agentPid = c.process!.pid;
     const keeperPid = lab.keeperPid();
     assert(pidAlive(keeperPid));
@@ -604,7 +604,7 @@ Deno.test({
     ]);
     const { app, updates, quits, closed } = lab.app(studio);
     await app.start();
-    const c = await studio.connect('omp', lab.work);
+    const c = await studio.connect('claude', lab.work);
     await until(() => Deno.statSync(childFile).size > 0, 'the agent child', 10);
     const childPid = Number(Deno.readTextFileSync(childFile));
     const agentPid = c.process!.pid;
@@ -641,7 +641,7 @@ Deno.test({
     await keeperBinary();
     await using lab = new Lab();
     const a = lab.studio(['--cancel-aware']);
-    const c = await a.connect('omp', lab.work);
+    const c = await a.connect('claude', lab.work);
     const agentPid = c.process!.pid;
     await a.liveCall('prompt', {
       id: c.id,
@@ -781,7 +781,7 @@ Deno.test({
     await keeperBinary();
     await using lab = new Lab();
     const a = lab.studio(['--cancel-aware']);
-    const c = await a.connect('omp', lab.work);
+    const c = await a.connect('claude', lab.work);
     const agentPid = c.process!.pid;
     assertEquals(await a.release({ hold: true }), 1);
     lab.studios.splice(lab.studios.indexOf(a), 1);

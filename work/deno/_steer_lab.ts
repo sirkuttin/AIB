@@ -3,10 +3,10 @@
  * separate agent host (so the routes go through the host proxy and its allow list), a temp state folder, a free port (never 8767,
  * 8768, 8777, 8778) and, for the page tests, a headless Chrome/Edge (no window).
  *
- * The agents are work/fake_acp.py --steer <claude|codex|omp>, which replays the real recordings of work/steer-recordings (see the
+ * The agents are work/fake_acp.py --steer <claude|codex>, which replays the real recordings of work/steer-recordings (see the
  * flag's help for the prompts: steer-bash:<gate>, steer-helper:<gate>, steer-perm, steer-wait:<gate>, steer-drop:<gate>,
- * steer-late:<gate>). Claude and Codex start through launcher scripts the lab writes, OMP through a one-line program that ignores
- * its `acp` argument. A provider listed in `plain` runs without --steer: an agent that cannot steer. Every line an agent receives
+ * steer-late:<gate>). Claude and Codex start through launcher scripts the lab writes.
+ * A provider listed in `plain` runs without --steer: an agent that cannot steer. Every line an agent receives
  * is logged (FAKE_ACP_LOG), so a test can see what reached it and in which order.
  *
  * The contract names (build-brief-beta9.md) live in ROUTES and SNAPSHOT below; the lead reconciles them when A and B land.
@@ -20,7 +20,7 @@ export { assert, assertEquals, browserPath, sleep, until };
 export type { Json, Page };
 
 export const FAKE_ACP = nativePath(new URL('fake_acp.py', WORK));
-export type Who = 'claude' | 'codex' | 'omp';
+export type Who = 'claude' | 'codex';
 const WIN = Deno.build.os === 'windows';
 
 /** Route names of the shared contract. `steer` is a live op (POST /api/live/steer {id, text, clientMessageId, attachments?}); the
@@ -86,13 +86,12 @@ export class SteerLab extends Fixture {
     // the launchers are fixtures under work/ (the test guard of connection.ts only starts those); what each runs is in <root>/steer-agents/<who>.json
     this.configDir = this.root + SEP + 'steer-agents';
     Deno.mkdirSync(this.configDir);
-    for (const who of ['claude', 'codex', 'omp'] as const) {
+    for (const who of ['claude', 'codex'] as const) {
       const flags = [...(options.plain?.includes(who) ? [] : ['--steer', who]), ...(options.extra?.[who] ?? [])];
       Deno.writeTextFileSync(`${this.configDir}${SEP}${who}.json`, JSON.stringify({ flags, log: this.logOf(who) }));
     }
     const at = (name: string) => nativePath(new URL(`steer-fixture/${name}`, WORK));
-    // OMP is started as `<omp-command> acp`: a program that ignores its arguments
-    this.launchers = { claude: at('claude.py'), codex: at('codex.py'), omp: at(WIN ? 'omp.cmd' : 'omp') };
+    this.launchers = { claude: at('claude.py'), codex: at('codex.py') };
   }
 
   override get env(): Record<string, string> {
@@ -109,8 +108,6 @@ export class SteerLab extends Fixture {
       this.launchers.claude,
       '--codex-launcher',
       this.launchers.codex,
-      '--omp-command',
-      this.launchers.omp,
     ];
   }
 

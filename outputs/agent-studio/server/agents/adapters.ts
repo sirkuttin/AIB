@@ -4,7 +4,6 @@
  *   Claude Code   the installed `@agentclientprotocol/claude-agent-acp` package (dist/index.js, run with node)
  *   Codex         the installed `@zed-industries/codex-acp` or `@agentclientprotocol/codex-acp` package (run with node) or `codex-acp`
  *                 on PATH (on macOS / Linux an asdf / mise shim or npm bin link of the package is run as [node, entry])
- *   OMP           `omp` on PATH; on Windows also %LOCALAPPDATA%\omp\omp.exe
  *
  * Lookup order for Claude Code and Codex: the command-line flag, then a launcher saved in Settings, then Studio's own install
  * (`<state_dir>/agents/<id>/<version>/`, only a version folder that has a `.complete` marker, newest first), then the globally
@@ -690,34 +689,4 @@ export async function resolveCodex(options: ResolveCodexOptions = {}): Promise<L
   const present = (options.codexPresent ?? adapterHooks.codexPresent ?? (() => codexLooksInstalled()))();
   const problem = present ? CODEX_NEEDS_ADAPTER : 'Not installed. Install the adapter with: ' + CODEX_INSTALL;
   return row([], 'missing', '', problem, 'Not installed');
-}
-
-export interface OmpLookOptions {
-  which?: (name: string) => string | null | undefined;
-  systemWindows?: boolean;
-  home?: string;
-  localAppdata?: string;
-}
-
-/** The OMP program: `omp` on PATH; on Windows also %LOCALAPPDATA%\omp\omp.exe. '' when not installed. */
-export function defaultOmpCommand(options: OmpLookOptions = {}): string {
-  const look = options.which ?? which;
-  const windows = options.systemWindows ?? WIN;
-  for (const name of windows ? ['omp.exe', 'omp'] : ['omp']) {
-    const found = look(name);
-    if (found) return found;
-  }
-  if (windows) {
-    const base = options.localAppdata || Deno.env.get('LOCALAPPDATA') || pathOf(options.home || homeDir(), 'AppData', 'Local');
-    const fallback = pathOf(base, 'omp', 'omp.exe');
-    if (isFile(fallback)) return fallback;
-  }
-  return '';
-}
-
-export function resolveOmp(command: string): LaunchRow {
-  if (!command) return row([], 'missing', '', 'Not installed. OMP was not found on PATH.', 'Not installed');
-  const [found, problem] = commandStatus(command);
-  if (!found) return row([], 'flag', String(command), problem, `${command} acp`);
-  return row([found, 'acp'], 'path', found, '', `${found} acp`);
 }

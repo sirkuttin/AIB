@@ -8,7 +8,6 @@
 type Json = Record<string, unknown>;
 
 export const BUILTIN_AGENTS: readonly { id: string; name: string }[] = [
-  { id: 'omp', name: 'OMP' },
   { id: 'claude', name: 'Claude Code' },
   { id: 'codex', name: 'Codex' },
 ];

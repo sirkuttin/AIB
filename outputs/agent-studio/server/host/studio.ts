@@ -256,7 +256,6 @@ export interface StudioOptions {
   port?: number | null;
   ompSessions?: string | null;
   claudeProjects?: string | null;
-  ompCommand?: string;
   nodeCommand?: string;
   claudeLauncher?: string;
   codexLauncher?: string;
@@ -774,8 +773,8 @@ export class Studio {
   startAutoReconnect(concurrency = 2, stagger = 1.0, tries: number | null = null, retryDelay = 5.0): number {
     if (!this.store || !this.autoReconnect || this.reconnectStarted) return 0;
     this.reconnectStarted = true;
+    const items = this.recovered().filter((r) => !agentRegistry.isRetired(r.provider)).map((r) => [r.provider, r.sessionId, r.cwd] as [string, string, string]); // a retired agent's chat is never started
     const attempts = tries || RECONNECT_TRIES;
-    const items = this.recovered().map((r) => [r.provider, r.sessionId, r.cwd] as [string, string, string]);
     if (!items.length) return 0;
     for (const [p, i] of items) this.reconnectPending.add(pairKey(p, i));
     const work = [...items];
@@ -924,13 +923,10 @@ export class Studio {
    * Settings is refused there, but its saved chats can still be reopened.
    */
   async agentLaunch(provider: string, fresh = false): Promise<[string[], Record<string, string>]> {
+    if (agentRegistry.isRetired(provider)) throw new ValueError(agentRegistry.RETIRED_NOTE); // read-only history: no adapter ever starts
     if ((agentRegistry.BUILTIN_IDS as readonly string[]).includes(provider)) {
       if (fresh && !this.settings.builtinEnabled(provider)) {
         throw new ValueError(`${agentRegistry.BUILTIN_NAMES[provider]} is turned off in Settings`);
-      }
-      if (provider === 'omp') {
-        if (!this.options.ompCommand) throw new ValueError('OMP is not installed: it was not found on PATH');
-        return [[this.options.ompCommand, 'acp'], {}];
       }
       const row = await builtinLaunch(this.#agentOptions(), this.settings, provider);
       if (!row.found) throw new ValueError(`${agentRegistry.BUILTIN_NAMES[provider]} is not available: ${row.problem}`);
@@ -1193,7 +1189,7 @@ export class Studio {
     } else {
       const server = isModelServerId(provider) ? this.#modelServerOf(provider) : null;
       const detectId = server ? 'claude' : provider; // a model server runs the distro's Claude adapter
-      const label = server ? 'Claude Code' : isBeta(provider) ? betaAgent(provider)!.name : agentRegistry.BUILTIN_NAMES[provider] ?? provider;
+      const label = server ? 'Claude Code' : isBeta(provider) ? betaAgent(provider)!.name : agentRegistry.agentName(provider);
       const detected = await host.call('agents.detect', { ids: [detectId] });
       const row = detected.agents.find((a) => a.id === detectId);
       if (!row?.found || !row.command?.length) throw new ValueError(`${label} is not installed in ${name}`);
@@ -1247,8 +1243,8 @@ export class Studio {
 
   /** Protocol-native session discovery (session/list). Never loads or prompts a session. */
   async listAgentSessions(provider: unknown, cwd: unknown = null, cursor: unknown = null): Promise<Json> {
-    if (!isStr(provider) || (provider !== 'omp' && !isClaudeFamily(provider))) {
-      throw new ValueError('Finding saved chats through the agent works for Claude Code and OMP only');
+    if (!isStr(provider) || !isClaudeFamily(provider)) {
+      throw new ValueError('Finding saved chats through the agent works for Claude Code only');
     }
     const [command, launchEnv] = await this.agentLaunch(provider); // a model-server chat is asked with its own address, key and model
     if (cursor !== null && cursor !== undefined && (!isStr(cursor) || !(pyLen(cursor) > 0 && pyLen(cursor) <= 1024))) {
@@ -1302,7 +1298,7 @@ export class Studio {
       sameAgent(c.provider, provider) && c.ready && !c.closed && c.wsl?.distro.toLowerCase() === loc.distro
     );
     if (!live) {
-      const note = `Open a ${isClaudeFamily(provider) ? 'Claude Code' : 'OMP'} chat in ${distroName(loc.distro)} first: ` +
+      const note = `Open a Claude Code chat in ${distroName(loc.distro)} first: ` +
         'AIB asks a running agent there and never starts one to list chats.';
       return { supported: true, sessions: [], nextCursor: null, via: 'none', note };
     }
@@ -1337,7 +1333,7 @@ export class Studio {
    */
   async agentOptionsFor(body: Json): Promise<Json> {
     const agent = body.agent;
-    if (!isStr(agent) || !agentRegistry.isProvider(agent)) throw new ValueError('Choose an agent');
+    if (!isStr(agent) || !agentRegistry.isChoosable(agent)) throw new ValueError('Choose an agent');
     const cwd = isStr(body.cwd) && pyLen(body.cwd) <= 1024 ? body.cwd : '';
     for (const c of this.connections.values()) {
       if (c.provider === agent && c.ready && !c.closed) this.rememberOptions(c);
@@ -1418,6 +1414,7 @@ export class Studio {
       throw new ValueError('Invalid saved session ID');
     }
     resume = resume || null;
+    if (agentRegistry.isRetired(provider)) throw new ValueError(agentRegistry.RETIRED_NOTE); // OMP chats are read-only history
     await this.ready;
     this.evictClosed();
     if (!isStr(cwd)) throw new TypeError(`expected str, bytes or os.PathLike object, not ${cwd === null ? 'NoneType' : typeof cwd}`);

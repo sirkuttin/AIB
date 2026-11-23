@@ -58,7 +58,7 @@ class Box {
     setSwarmEnabled(this.state, true);
     runGit(this.project, 'config', 'user.name', 't');
     runGit(this.project, 'config', 'user.email', 't@t');
-    const studio = new Studio({ ompCommand: 'unused', stateDir: this.state, port: 0 }, { keeper: null });
+    const studio = new Studio({ stateDir: this.state, port: 0 }, { keeper: null });
     studio.ownerProbe = () => null;
     studio.agentLaunch = () => Promise.resolve([['unused'], {}]);
     studio.connectionFactory = (_command, cwd, provider, options) => {

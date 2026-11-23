@@ -105,7 +105,7 @@ Deno.test("inbox facts: Claude Code's helpers keep the chat working, then the fo
 
 Deno.test('inbox facts: the agent host counts the chats blocked on you like the badge does (failed + asks; not a finished one)', async () => {
   await using lab = new Lab();
-  const host = new AgentHost({ ompCommand: 'unused', stateDir: lab.dir, port: 0 } as never, 30, 0, { exitUnattachedSeconds: 10 });
+  const host = new AgentHost({ stateDir: lab.dir, port: 0 } as never, 30, 0, { exitUnattachedSeconds: 10 });
   try {
     const studio = host.studio;
     const failed = await lab.open(['--limits', '--held-turn']);

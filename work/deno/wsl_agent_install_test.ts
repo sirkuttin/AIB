@@ -276,11 +276,9 @@ Deno.test('wslInstallCall and installFacts: start, status, a Node.js refusal wit
     const facts = await installFacts(host, 'ubuntu', 'Ubuntu', [
       { id: 'claude', found: true, version: '0.0.9', source: 'studio' },
       { id: 'codex', found: true, version: ALLOW.codex.version, source: 'studio' },
-      { id: 'omp', found: false },
     ]);
     assertEquals(facts.claude, { installable: true, pinned: ALLOW.claude.version, managed: true, update: true });
     assertEquals(facts.codex, { installable: true, pinned: ALLOW.codex.version, managed: true });
-    assertEquals(facts.omp, undefined);
 
     // Node.js missing: the row says so with the command; Install answers 409 with the line, the code and the command
     adapterHooks.findNode = () => '';

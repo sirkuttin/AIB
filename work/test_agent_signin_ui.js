@@ -188,18 +188,18 @@ test('nothing is checked when no installed agent reports a sign-in state', async
 test('new chats offer installed agents that are Ready or Not checked, never Needs sign-in', () => {
   const ids = () => AC.AGENTS.map((a) => a.id);
   const row = (id, found, state) => ({ id, found, signin: state ? { state } : null });
-  AC.setRegistry([row('omp', true), row('claude', true, 'signin'), row('codex', true, 'unknown')]);
-  assert.deepEqual(ids(), ['omp', 'codex'], 'Needs sign-in is hidden, Not checked stays');
+  AC.setRegistry([row('claude', true, 'signin'), row('codex', true, 'unknown')]);
+  assert.deepEqual(ids(), ['codex'], 'Needs sign-in is hidden, Not checked stays');
   assert.ok(
     AC.ALL.some((a) => a.id === 'claude'),
     'Settings still lists it',
   );
   assert.equal(AC.isAgent('claude'), false);
-  AC.setRegistry([row('omp', true), row('claude', true, 'ready'), row('codex', true, 'ready')]);
-  assert.deepEqual(ids(), ['omp', 'claude', 'codex']);
-  AC.setRegistry([row('omp', true), row('claude', false, 'ready'), row('codex', true, 'signin')]);
-  assert.deepEqual(ids(), ['omp'], 'not installed and Needs sign-in are both hidden');
-  AC.setRegistry([row('omp', true), row('claude', true), row('codex', true)]);
-  assert.deepEqual(ids(), ['omp', 'claude', 'codex'], 'an agent with no status at all is offered');
+  AC.setRegistry([row('claude', true, 'ready'), row('codex', true, 'ready')]);
+  assert.deepEqual(ids(), ['claude', 'codex']);
+  AC.setRegistry([row('claude', false, 'ready'), row('codex', true, 'signin')]);
+  assert.deepEqual(ids(), ['claude'], 'not installed and Needs sign-in are both hidden (the first built-in stays so the form is never empty)');
+  AC.setRegistry([row('claude', true), row('codex', true)]);
+  assert.deepEqual(ids(), ['claude', 'codex'], 'an agent with no status at all is offered');
   AC.setRegistry([]);
 });

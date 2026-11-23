@@ -18,7 +18,7 @@ import * as outside from '../../worktrees/outside_files.ts';
 import { checkPath, checkProject, createFolder, createProject, GIT_TIMEOUT, gitPath, runCommand } from '../../desktop/folders.ts';
 import { repoBranch } from '../../worktrees/chat_folders.ts';
 import { readRepoIdentity } from '../../pcsync/repo_id.ts';
-import { defaultOmpCommand, type LaunchRow, resolveClaude, resolveCodex, resolveOmp } from '../../agents/adapters.ts';
+import { type LaunchRow, resolveClaude, resolveCodex } from '../../agents/adapters.ts';
 import { latestRolloutLimits } from '../../agents/codex_limits.ts';
 import { findSessionFile, Store } from '../../transcripts/store.ts';
 import { handleGet } from '../../transcripts/monitor.ts';
@@ -45,7 +45,7 @@ export const LIST_DIRS_DEFAULT = 500, LIST_DIRS_MAX = 2000;
 export const SESSIONS_DEFAULT = 500, SESSIONS_MAX = 5000;
 /** The /api/transcript arguments transcripts.read passes on (the page's paging; nothing else reaches handleGet). */
 const TRANSCRIPT_ARGS = ['limit', 'after', 'before', 'thinking', 'q', 'kind'];
-export const DEFAULT_AGENTS = ['claude', 'codex', 'omp'];
+export const DEFAULT_AGENTS = ['claude', 'codex'];
 /** files.readBytes: the largest piece per call (base64 keeps each answer line near 1.4 MB) and the default whole-file cap. */
 export const READ_BYTES_CHUNK = 1024 * 1024;
 export const READ_BYTES_MAX = 25 * 1024 * 1024;
@@ -298,7 +298,6 @@ function phaseOne(ctx: HelperContext): Handlers {
         const stateDir = ctx.root ?? null;
         if (id === 'claude') agents.push(await agentRow(id, await resolveClaude({ stateDir })));
         else if (id === 'codex') agents.push(await agentRow(id, await resolveCodex({ stateDir })));
-        else if (id === 'omp') agents.push(await agentRow(id, resolveOmp(defaultOmpCommand())));
         else if (id === 'antigravity') agents.push(await agentRow(id, await resolveAntigravity(stateDir, await ctx.env())));
         else agents.push({ id, found: false, note: 'AIB does not look for this agent in WSL yet' });
       }

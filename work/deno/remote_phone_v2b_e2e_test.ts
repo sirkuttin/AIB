@@ -383,7 +383,7 @@ Deno.test({
       );
       assert(await page.eval('document.querySelector(\'.ph-pick[data-agent="kimi"]\').disabled'), 'greyed');
       assert(String(await page.eval('document.querySelector(\'.ph-pick[data-agent="kimi"]\').textContent')).includes('Needs sign-in'));
-      assertEquals(await page.eval('document.querySelector(".ph-pick[aria-pressed=true]").dataset.agent'), 'omp', 'the default agent');
+      assertEquals(await page.eval('document.querySelector(".ph-pick[aria-pressed=true]").dataset.agent'), 'claude', 'the default agent');
       await page.click('.ph-pick[data-agent="claude"]');
       await page.waitFor('!!document.querySelector(\'.ph-pill[data-mode="bypassPermissions"]\')', 15000, 'modes');
       await page.click('.ph-pill[data-model="opus"]');

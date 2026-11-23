@@ -234,7 +234,7 @@
       when: (ctx) => can(ctx, 'popOutDoc'),
       run: (ctx) => ctx.do.popOutDoc(),
     },
-    chatAction('handoff', 'Continue with another agent…', { keywords: ['handoff', 'switch agent', 'claude', 'omp'] }),
+    chatAction('handoff', 'Continue with another agent…', { keywords: ['handoff', 'switch agent', 'claude'] }),
     chatAction('end', "End this chat's session", {
       keywords: ['stop', 'disconnect', 'close', 'end session', 'studio session'],
       danger: true,

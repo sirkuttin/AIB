@@ -32,7 +32,7 @@ class Lab {
   }
   studio(): Studio {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
-    const studio = new Studio({ ompCommand: 'unused', stateDir: this.state, port: 0, ownersDir: null }, { keeper, keeperForNew: true });
+    const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper, keeperForNew: true });
     studio.ownerProbe = () => null;
     studio.connectionFactory = (_command, cwd, provider, options) =>
       new Connection(fake('--replay-file', this.transcript), cwd, provider, options ?? {});
@@ -108,7 +108,7 @@ Deno.test({
     await using lab = new Lab();
     // The old chat: two turns and an AIB note; then a take-over stops its agent (the bug), leaving its store behind.
     const a = lab.studio();
-    const old = await a.connect('omp', lab.work);
+    const old = await a.connect('claude', lab.work);
     await say(a, old, 'one');
     old.recordedEvent('studio_note', { message: 'Merged subagent “Docs” into main', kind: 'swarm-merge' });
     await say(a, old, 'two');
@@ -132,7 +132,7 @@ Deno.test({
     // (an older build: the earlier store was not found, so it came back under a new id; hidden here, put back after)
     const hidden = hide(lab, old.id);
     const b = lab.studio();
-    const now = await b.connect('omp', lab.work, session);
+    const now = await b.connect('claude', lab.work, session);
     hidden();
     assert(now.id !== old.id, 'a new chat id (the bug)');
     await say(b, now, 'three');
@@ -143,13 +143,13 @@ Deno.test({
 
     // AIB quit; the repair runs.
     const chain = `${old.id},${now.id}`;
-    const dry = await run(['--data', lab.state, '--chain', chain, '--session', session, '--provider', 'omp']);
+    const dry = await run(['--data', lab.state, '--chain', chain, '--session', session, '--provider', 'claude']);
     assertEquals(dry.code, 0, dry.out);
     assert(dry.out.includes('Dry run: nothing was changed.'), dry.out);
-    const applied = await run(['--data', lab.state, '--chain', chain, '--session', session, '--provider', 'omp', '--apply']);
+    const applied = await run(['--data', lab.state, '--chain', chain, '--session', session, '--provider', 'claude', '--apply']);
     assertEquals(applied.code, 0, applied.out);
     assert([...Deno.readDirSync(lab.state + SEP + 'repair-backups')].length === 1, 'a backup folder');
-    const again = await run(['--data', lab.state, '--chain', chain, '--session', session, '--provider', 'omp', '--apply']);
+    const again = await run(['--data', lab.state, '--chain', chain, '--session', session, '--provider', 'claude', '--apply']);
     assert(again.out.includes('Already repaired'), again.out);
 
     // AIB starts: the running chat is taken over with the whole history.
@@ -175,7 +175,7 @@ Deno.test({
     assert(seqs.every((s, i) => i === 0 || s > seqs[i - 1]), 'in order');
     await say(c, r, 'four');
     assert(r.events.at(-1)!.seq as number > seqs.at(-1)!, 'the next turn follows on');
-    const kept = Deno.readTextFileSync(lab.state + SEP + 'conversation-lines' + SEP + `omp_${session}.jsonl`).trim().split('\n');
+    const kept = Deno.readTextFileSync(lab.state + SEP + 'conversation-lines' + SEP + `claude_${session}.jsonl`).trim().split('\n');
     assertEquals(kept.length, 5, 'the three earlier turn ends and the note, then the new turn end');
   },
 });
@@ -200,7 +200,7 @@ Deno.test({
       Deno.writeTextFileSync(lab.transcript, JSON.stringify(turns.flatMap((t) => [{ role: 'user', text: `say:${t}` }, { role: 'agent', text: t }])));
     // A: the first chat, with an AIB note; AIB quits (idle)
     const a = lab.studio();
-    const first = await a.connect('omp', lab.work);
+    const first = await a.connect('claude', lab.work);
     await say(a, first, 'one');
     first.recordedEvent('studio_note', { message: 'Merged subagent “Docs” into main', kind: 'swarm-merge', sessionId: first.sessionId });
     turns.push('one');
@@ -210,7 +210,7 @@ Deno.test({
     const backFirst = hide(lab, first.id);
     transcript();
     const b = lab.studio();
-    const middle = await b.connect('omp', lab.work, session);
+    const middle = await b.connect('claude', lab.work, session);
     assert(middle.id !== first.id);
     await say(b, middle, 'two');
     turns.push('two');
@@ -219,7 +219,7 @@ Deno.test({
     const backMiddle = hide(lab, middle.id);
     transcript();
     const c = lab.studio();
-    const gone = await c.connect('omp', lab.work, session);
+    const gone = await c.connect('claude', lab.work, session);
     await say(c, gone, 'three');
     turns.push('three');
     await c.close();
@@ -227,7 +227,7 @@ Deno.test({
     // T: the chat in use now (a new id once more): its replay holds C's turn; one turn of its own; AIB quits idle (the fix: kept)
     transcript();
     const d = lab.studio();
-    const target = await d.connect('omp', lab.work, session);
+    const target = await d.connect('claude', lab.work, session);
     assert(target.id !== gone.id && target.id !== middle.id && target.id !== first.id);
     await say(d, target, 'four');
     turns.push('four');
@@ -240,21 +240,21 @@ Deno.test({
     const chain = `${first.id},${middle.id},${target.id}`;
     const targetFile = lab.state + SEP + 'history' + SEP + `${target.id}.sqlite`;
     Deno.renameSync(targetFile, targetFile + '.away');
-    const refused = await run(['--data', lab.state, '--chain', chain, '--session', session, '--provider', 'omp', '--apply']);
+    const refused = await run(['--data', lab.state, '--chain', chain, '--session', session, '--provider', 'claude', '--apply']);
     assertEquals(refused.code, 5, refused.out);
     assert(refused.out.includes('Refused: the target store') && refused.out.includes('Nothing was changed'), refused.out);
     assert(!exists(lab.state + SEP + 'repair-backups'), 'nothing was written');
     Deno.renameSync(targetFile + '.away', targetFile);
 
-    const dry = await run(['--data', lab.state, '--chain', chain, '--session', session, '--provider', 'omp']);
+    const dry = await run(['--data', lab.state, '--chain', chain, '--session', session, '--provider', 'claude']);
     assertEquals(dry.code, 0, dry.out);
     assert(dry.out.includes('1 turn(s) no earlier store has'), dry.out);
-    const applied = await run(['--data', lab.state, '--chain', chain, '--session', session, '--provider', 'omp', '--apply']);
+    const applied = await run(['--data', lab.state, '--chain', chain, '--session', session, '--provider', 'claude', '--apply']);
     assertEquals(applied.code, 0, applied.out);
 
     // AIB starts: the conversation reopens as the target chat (the newest store of it), with the whole history, once
     const e = lab.studio();
-    const r = await e.connect('omp', lab.work, session);
+    const r = await e.connect('claude', lab.work, session);
     assertEquals(r.id, target.id, 'the chat in use, same id');
     const page = await e.liveEvents(r.id, { before: r.sequence + 1, bytes: 50_000_000 }) as Json;
     const all = page.events as Json[];

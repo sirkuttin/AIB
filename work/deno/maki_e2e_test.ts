@@ -191,8 +191,7 @@ Deno.test({
     );
     const stub = new StubApi(pathOf(root, 'stub.log'), script);
     const studio = new Studio({
-      ompCommand: 'unused',
-      stateDir: state,
+            stateDir: state,
       port: 0,
       ownersDir: null,
     });

@@ -6,7 +6,7 @@ import { Lab as BaseLab, until } from './_connection.ts';
 import type { Connection, ConnectionOptions } from '../../outputs/agent-studio/server/acp/connection.ts';
 
 export type Json = Record<string, unknown>;
-export type Kind = 'claude' | 'codex' | 'omp' | 'plain';
+export type Kind = 'claude' | 'codex' | 'plain';
 
 function nativePath(url: URL): string {
   const path = decodeURIComponent(url.pathname);

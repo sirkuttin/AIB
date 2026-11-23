@@ -31,7 +31,7 @@ class Lab {
   studio(): Studio {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '60s'] });
     const studio = new Studio(
-      { ompCommand: 'unused', stateDir: this.state, port: 0, ownersDir: null, enableClientTerminal: true } as never,
+      { claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null, enableClientTerminal: true } as never,
       { keeper },
     );
     studio.ownerProbe = () => null;
@@ -103,7 +103,7 @@ Deno.test({
     await keeperBinary();
     await using lab = new Lab();
     const a = lab.studio();
-    const c = await a.connect('omp', lab.work);
+    const c = await a.connect('claude', lab.work);
     assert(c.channel, 'the agent runs in the keeper');
     // 40 lines, 100 ms apart, then exit 3; its pid goes into a file (it must be started exactly once).
     const script = `Deno.writeTextFileSync(${JSON.stringify(lab.pids)}, Deno.pid + '\\n', { append: true }); let i = 0; ` +
@@ -167,7 +167,7 @@ Deno.test({
     await keeperBinary();
     await using lab = new Lab();
     const a = lab.studio();
-    const c = await a.connect('omp', lab.work);
+    const c = await a.connect('claude', lab.work);
     const caps = c.caps as ClientCaps;
     // The old AIB dies right after its note: its backend writes the note, then "crashes" before the keeper spawn.
     const realBackend = caps.terminalBackend!;

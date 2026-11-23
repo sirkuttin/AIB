@@ -24,7 +24,7 @@ class Lab {
   }
 
   manager(flags: string[] = ['--models']): Studio {
-    const studio = new Studio({ ompCommand: 'unused', stateDir: this.state, port: 0, autoReconnect: false });
+    const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, autoReconnect: false });
     studio.ownerProbe = () => null;
     studio.connectionFactory = (_command, cwd, provider) => (this.made++, new Connection(fake(...flags), cwd, provider));
     this.studios.push(studio);
@@ -120,7 +120,7 @@ Deno.test({
   async fn() {
     await using lab = new Lab();
     const studio = lab.manager();
-    const c = await studio.connect('omp', lab.work, null, { picks: { model: 'luna-4', mode: 'full', effort: 'high' } });
+    const c = await studio.connect('claude', lab.work, null, { picks: { model: 'luna-4', mode: 'full', effort: 'high' } });
     assert(c.ready);
     assertEquals([modelOf(c), modeOf(c), effortOf(c)], ['luna-4', 'full', 'high']);
     assertEquals(c.pickResults.map((r) => [r.kind, r.ok]), [['model', true], ['mode', true], ['effort', true]]);
@@ -129,7 +129,7 @@ Deno.test({
     await until(() => !c.busy && texts(c).includes('Fixture settings'));
     assert(texts(c).includes('model=luna-4 mode=full effort=high sessions=1'), texts(c));
     // The lists were remembered, with the agent's own defaults (from the reply before the picks) as "current".
-    const hit = studio.agentOptions.lookup('omp', lab.work)!;
+    const hit = studio.agentOptions.lookup('claude', lab.work)!;
     assertEquals(hit.source, 'folder');
     assertEquals([hit.model!.current, hit.mode!.current, hit.effort!.current], ['sol-6-1', 'auto', 'medium']);
     assertEquals(hit.model!.choices.length, 16);
@@ -143,14 +143,14 @@ Deno.test({
   ...T,
   async fn() {
     await using lab = new Lab();
-    const gone = await lab.manager().connect('omp', lab.work, null, { picks: { model: 'retired-model', effort: 'low' } });
+    const gone = await lab.manager().connect('claude', lab.work, null, { picks: { model: 'retired-model', effort: 'low' } });
     assert(gone.ready);
     assertEquals(modelOf(gone), 'sol-6-1');
     assertEquals(effortOf(gone), 'low', 'the other pick still applies');
     assertEquals(gone.pickResults[0].ok, false);
     assertEquals(gone.pickResults[0].message, 'No longer offered by the agent');
     await gone.close(); // the fixture's session id is always the same: one chat at a time
-    const refused = await lab.manager(['--models', '--reject-config']).connect('omp', lab.work, null, {
+    const refused = await lab.manager(['--models', '--reject-config']).connect('claude', lab.work, null, {
       picks: { model: 'luna-4', mode: 'ask' },
     });
     assert(refused.ready);
@@ -159,7 +159,7 @@ Deno.test({
     assert(String(refused.pickResults[0].message).includes('Fixture refuses this setting'), String(refused.pickResults[0].message));
     await refused.close();
     // A reopened chat never gets picks.
-    const plain = await lab.manager().connect('omp', lab.work, null, {});
+    const plain = await lab.manager().connect('claude', lab.work, null, {});
     assertEquals(plain.pickResults, []);
   },
 });
@@ -185,12 +185,12 @@ Deno.test({
   async fn() {
     await using lab = new Lab();
     const studio = lab.manager();
-    const [status0, none] = await studio.liveCall('agent-options', { agent: 'omp', cwd: lab.work });
+    const [status0, none] = await studio.liveCall('agent-options', { agent: 'claude', cwd: lab.work });
     assertEquals([status0, (none as Json).options, (none as Json).probed], [200, null, false]);
     assertEquals(lab.made, 0, 'no probe unless asked');
     const both = await Promise.all([
-      studio.liveCall('agent-options', { agent: 'omp', cwd: lab.work, probe: true }),
-      studio.liveCall('agent-options', { agent: 'omp', cwd: lab.work, probe: true }),
+      studio.liveCall('agent-options', { agent: 'claude', cwd: lab.work, probe: true }),
+      studio.liveCall('agent-options', { agent: 'claude', cwd: lab.work, probe: true }),
     ]);
     assertEquals(lab.made, 1, 'two pages asking at once share one probe');
     const [status, body] = both[0] as [number, Json];
@@ -199,11 +199,11 @@ Deno.test({
     assertEquals(((options.model as Json).choices as unknown[]).length, 16);
     assertEquals((options.model as Json).current, 'sol-6-1');
     assertEquals(studio.connections.size, 0, 'the probe is not a chat');
-    const [, cached] = await studio.liveCall('agent-options', { agent: 'omp', cwd: lab.work, probe: true });
+    const [, cached] = await studio.liveCall('agent-options', { agent: 'claude', cwd: lab.work, probe: true });
     assertEquals([(cached as Json).probed, lab.made], [false, 1], 'from memory now');
     // A later Studio (an app restart) reads the same memory.
     const later = lab.manager();
-    const [, after] = await later.liveCall('agent-options', { agent: 'omp', cwd: 'C:\\elsewhere', probe: true });
+    const [, after] = await later.liveCall('agent-options', { agent: 'claude', cwd: 'C:\\elsewhere', probe: true });
     assertEquals([(after as Json).probed, ((after as Json).options as Json).source, lab.made], [false, 'agent', 1]);
     const [bad] = await studio.liveCall('agent-options', { agent: 'nope' });
     assertEquals(bad, 400);
@@ -216,13 +216,13 @@ Deno.test({
   async fn() {
     await using lab = new Lab();
     const studio = lab.manager(['--auth-required']);
-    const [, first] = await studio.liveCall('agent-options', { agent: 'omp', cwd: lab.work, probe: true });
+    const [, first] = await studio.liveCall('agent-options', { agent: 'claude', cwd: lab.work, probe: true });
     assertEquals([(first as Json).options, (first as Json).probed], [null, true]);
     assert(String((first as Json).probeError).length > 0);
-    const [, second] = await studio.liveCall('agent-options', { agent: 'omp', cwd: lab.work, probe: true });
+    const [, second] = await studio.liveCall('agent-options', { agent: 'claude', cwd: lab.work, probe: true });
     assertEquals([(second as Json).probed, (second as Json).probeError, lab.made], [false, 'tried recently', 1]);
     studio.clock = () => Date.now() / 1000 + 3600;
-    await studio.liveCall('agent-options', { agent: 'omp', cwd: lab.work, probe: true });
+    await studio.liveCall('agent-options', { agent: 'claude', cwd: lab.work, probe: true });
     assertEquals(lab.made, 2, 'tried again after the cool-down');
   },
 });
@@ -233,10 +233,10 @@ Deno.test({
   async fn() {
     await using lab = new Lab();
     const studio = lab.manager();
-    const c = await studio.connect('omp', lab.work, null, {});
+    const c = await studio.connect('claude', lab.work, null, {});
     const [, body] = await studio.liveCall('config', { id: c.id, configId: 'model', value: 'terra-5' });
     assertEquals((body as Json).ok, true);
-    const hit = studio.agentOptions.lookup('omp', lab.work)!;
+    const hit = studio.agentOptions.lookup('claude', lab.work)!;
     assertEquals(hit.model!.current, 'sol-6-1', '"Default" stays the session/new value');
     const text = Deno.readTextFileSync(lab.state + SEP + FILE);
     assert(text.includes('terra-5') && text.includes('"version":1'));

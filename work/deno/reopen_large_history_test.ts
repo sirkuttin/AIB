@@ -48,7 +48,7 @@ class Lab {
       extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'],
     });
     const studio = new Studio({
-      ompCommand: 'unused',
+      claudeLauncher: import.meta.filename!, nodeCommand: 'node',
       stateDir: this.state,
       port: 0,
       ownersDir: null,
@@ -278,7 +278,7 @@ Deno.test({
     await using lab = new Lab();
     const transcripts = new Map<string, string>();
     const a = lab.studio(transcripts);
-    const c = await a.connect('omp', lab.work);
+    const c = await a.connect('claude', lab.work);
     await send(a, c, 'say:question 0', 'm1');
     await send(a, c, INTERRUPTED, 'm2');
     const session = c.sessionId!;
@@ -289,7 +289,7 @@ Deno.test({
     writeTranscript(file, BIG ? 8000 : 4000, BIG ? 4000 : 400);
     transcripts.set(lab.work, file);
     const b = lab.studio(transcripts);
-    const { result: r, heapMb, rssMb, baseHeapMb } = await peakDuring(() => b.connect('omp', lab.work, session));
+    const { result: r, heapMb, rssMb, baseHeapMb } = await peakDuring(() => b.connect('claude', lab.work, session));
     console.log(
       `reopen of a ${BIG ? 8000 : 4000}-turn transcript: heap ${baseHeapMb} -> peak ${heapMb} MB, rss peak ${rssMb} MB`,
     );
@@ -317,7 +317,7 @@ Deno.test({
     for (let i = 0; i < 3; i++) {
       const cwd = lab.work + SEP + `p${i}`;
       Deno.mkdirSync(cwd, { recursive: true });
-      const c = await a.connect('omp', cwd);
+      const c = await a.connect('claude', cwd);
       await send(a, c, `say:hello ${i}`, `m${i}`);
       chats.push({ id: c.id, session: c.sessionId!, cwd });
     }
@@ -343,7 +343,7 @@ Deno.test({
     }
     const b = lab.studio(transcripts);
     const { result, heapMb, rssMb, baseHeapMb } = await peakDuring(() =>
-      Promise.all(chats.map((ch) => b.connect('omp', ch.cwd, ch.session)))
+      Promise.all(chats.map((ch) => b.connect('claude', ch.cwd, ch.session)))
     );
     console.log(
       `3 reopens at once: heap ${baseHeapMb} -> peak ${heapMb} MB, rss peak ${rssMb} MB`,

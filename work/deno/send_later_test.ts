@@ -251,11 +251,11 @@ Deno.test('send later: Studio routes schedule, schedule-edit, schedule-send-now 
   assert(['schedule', 'schedule-edit', 'schedule-cancel', 'schedule-send-now'].every((op) => LIVE_POST_OPS.has(op)));
   const dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-later-studio-' }));
   const state = dir + (Deno.build.os === 'windows' ? '\\' : '/') + 'state';
-  const studio = new Studio({ ompCommand: 'unused', stateDir: state, port: 0, ownersDir: null, noArtifactTool: true });
+  const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: state, port: 0, ownersDir: null, noArtifactTool: true });
   studio.ownerProbe = () => null;
   studio.connectionFactory = (_command, cwd, provider) => new Connection(fake(), cwd, provider);
   try {
-    const c = await studio.connect('omp', dir);
+    const c = await studio.connect('claude', dir);
     const at = Date.now() + 3_600_000;
     const [status, body] = await studio.liveCall('schedule', { id: c.id, text: 'via route', clientMessageId: 'r1', at });
     assertEquals([status, (body as Json).ok], [200, true]);
@@ -308,7 +308,7 @@ function tempDir(): string {
   return Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-later-scan-' }));
 }
 function studioAt(dir: string, factory?: () => Connection): Studio {
-  const studio = new Studio({ ompCommand: 'unused', stateDir: dir + SEP + 'state', port: 0, ownersDir: null, noArtifactTool: true });
+  const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: dir + SEP + 'state', port: 0, ownersDir: null, noArtifactTool: true });
   studio.ownerProbe = () => null;
   studio.connectionFactory = factory ? () => factory() : (_command, cwd, provider) => new Connection(fake(), cwd, provider);
   return studio;
@@ -326,7 +326,7 @@ async function cleanup(dir: string): Promise<void> {
 /** A previous AIB run: one chat with a message scheduled `inMs` from now; it ends with the chat closed (saved, not open). */
 async function previousRunWithSchedule(dir: string, inMs: number): Promise<string> {
   const first = studioAt(dir);
-  const c = await first.connect('omp', dir);
+  const c = await first.connect('claude', dir);
   await c.scheduleAdd('mcp', Date.now() + inMs, 's1');
   const path = first.recovery!.queues!.path;
   await first.close();
@@ -386,12 +386,12 @@ Deno.test('send later: a chat that cannot be reopened keeps the scheduled card w
     });
     await second.scheduleScan();
     assertEquals(opened(second), []);
-    const saved = new QueueStore(dir + SEP + 'state', 'queues-0').get('omp', 'fake-session');
+    const saved = new QueueStore(dir + SEP + 'state', 'queues-0').get('claude', 'fake-session');
     assertEquals(saved.length, 1, 'the message is not lost');
     assert(String(saved[0].error).includes('could not reopen'), String(saved[0].error));
     // later the agent is back: opening the chat sends it
     const third = studioAt(dir);
-    const c = await third.connect('omp', dir, 'fake-session');
+    const c = await third.connect('claude', dir, 'fake-session');
     await until(() => texts(c).join() === 'mcp', 'sent once the chat opens', LONG);
     await third.close();
   } finally {

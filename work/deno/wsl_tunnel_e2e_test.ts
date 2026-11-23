@@ -23,7 +23,7 @@ type Json = Record<string, unknown>;
 
 function studioIn(state: string, keeper: KeeperLink | null = null): Studio {
   // the artifact tool is on (no noArtifactTool): the chat gets its studio_artifact entry
-  const studio = new Studio({ ompCommand: 'unused', stateDir: state, port: 0, ownersDir: null }, { keeper });
+  const studio = new Studio({ stateDir: state, port: 0, ownersDir: null }, { keeper });
   studio.ownerProbe = () => null;
   studio.connectionFactory = (_command, cwd, provider, options) =>
     new Connection(['python3', `${ROOT}/fake_acp.py`, '--cancel-aware'], cwd, provider, {

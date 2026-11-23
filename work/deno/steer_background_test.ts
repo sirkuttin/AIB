@@ -1,6 +1,6 @@
 /**
  * Background commands after a steer (server/acp/connection.ts toolBackground / stopBackgroundTool, platform/kill_verified.ts):
- * the row is marked from each agent's own signal (Claude Code's meta and text, OMP's details.async, a Codex command still open at
+ * the row is marked from each agent's own signal (Claude Code's meta and text, a details.async result, a Codex command still open at
  * its turn's end), and Stop kills only processes AIB can prove are that command's: noted as (pid, start time) when it moved, still
  * the agent's descendants with the same start time at the kill, and what they started since; leaf first. T19, T20, T21 (B5, B6).
  * The commands are real processes the puppet agent starts (_steer_puppet.ts #spawn).
@@ -230,11 +230,11 @@ Deno.test({
 });
 
 Deno.test({
-  name: 'OMP: a command backgrounded for a steer (details.async) runs on; a later completed without it ends it',
+  name: 'Details.async: a command backgrounded for a steer runs on; a later completed without it ends it',
   ...T,
   async fn() {
     await using lab = new SteerLab();
-    const { c, p } = await lab.chat('omp');
+    const { c, p } = await lab.chat('plain');
     await c.prompt('run it', 'm1');
     const prompt = await p.take('session/prompt');
     await p.update({ sessionUpdate: 'tool_call', toolCallId: 'toolu_1', kind: 'execute', title: '$ for i in ...', status: 'pending' });

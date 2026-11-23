@@ -31,8 +31,8 @@ Deno.test('phone New chat: a WSL project offers agents by its distro switch; Win
   const dir = Deno.makeTempDirSync({ prefix: 'aib-phone-wsl-' });
   const host = new FakeWslHost('unused', 'Ubuntu');
   setWslHostResolver((d) => (d === 'ubuntu' ? host : null));
-  // Windows: Codex turned off; Claude Code and OMP on
-  setAgentRows(() => Promise.resolve([{ id: 'omp', enabled: true }, { id: 'claude', enabled: true }, { id: 'codex', enabled: false }]));
+  // Windows: Codex turned off; Claude Code on
+  setAgentRows(() => Promise.resolve([{ id: 'claude', enabled: true }, { id: 'codex', enabled: false }]));
   try {
     const settings = new SettingsStore(dir);
     // Ubuntu: Claude Code off, Codex on (it has no Windows dependence)
@@ -40,11 +40,11 @@ Deno.test('phone New chat: a WSL project offers agents by its distro switch; Win
     const ctx = fakeCtx(settings);
     const out = await newChatOptions(ctx, []);
     const ok = (list: Json[]) => list.map((a) => [a.id, a.ok]);
-    assertEquals(ok(out.agents as unknown as Json[]), [['omp', true], ['claude', true], ['codex', false]], 'the top-level list: Windows switches');
+    assertEquals(ok(out.agents as unknown as Json[]), [['claude', true], ['codex', false]], 'the top-level list: Windows switches');
     const win = out.projects.find((p) => p.name === 'shop')!;
     const wsl = out.projects.find((p) => p.name === 'app')!;
     assertEquals('agents' in win, false, 'a Windows project uses the top-level list');
-    assertEquals(ok(wsl.agents as unknown as Json[]), [['omp', true], ['claude', false], ['codex', true]]);
+    assertEquals(ok(wsl.agents as unknown as Json[]), [['claude', false], ['codex', true]]);
     const claude = wsl.agents!.find((a) => a.id === 'claude')!;
     assertEquals(claude.why, 'Turned off for Ubuntu in Settings on your PC (AIB Linking (WSL)).');
     assertEquals(wsl.agents!.find((a) => a.id === 'codex')!.why, '');

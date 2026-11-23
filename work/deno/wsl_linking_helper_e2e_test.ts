@@ -318,11 +318,6 @@ Deno.test({
       assertEquals(after.agents, [
         { id: 'claude', state: 'signed_in', account: 'e2e@example.com' },
         { id: 'codex', state: 'signed_in' },
-        {
-          id: 'omp',
-          state: 'unknown',
-          note: 'AIB cannot tell whether OMP is signed in.',
-        },
       ]);
     } finally {
       await cleanRoot();

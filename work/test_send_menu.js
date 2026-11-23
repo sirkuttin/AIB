@@ -109,10 +109,6 @@ test('the grey line under Send now, per agent, in the brief words', () => {
     now('codex', 'Codex'),
     "Codex answers right away. A command it is running keeps going in the background, and Codex isn't told when it ends.",
   );
-  assert.equal(
-    now('omp', 'OMP'),
-    'OMP answers right away. A command it is running moves to the background, and OMP stops it after 2 minutes in total.',
-  );
   assert.equal(now('newagent', 'NewAgent'), 'NewAgent reads it during this turn.');
 });
 
@@ -301,7 +297,7 @@ test('queue box: a held row names the card it waits for, a subagent’s by name,
     box,
     connection: 'c2',
     busy: true,
-    agentId: 'omp',
+    agentId: 'claude',
     names: { 'sub-1': 'Explore' },
     post: async () => ({}),
     refresh: async () => {},
@@ -311,7 +307,7 @@ test('queue box: a held row names the card it waits for, a subagent’s by name,
   Q.render(ctx, { items: [], reason: '' }, held({ card: 'approval', title: 'npm test', sessionId: 's', route: 'main' }));
   const note = () => box.querySelector('.q-lane-note').textContent;
   assert.equal(note(), 'Held until you answer the approval “npm test” above · then it goes in at once');
-  assert.match(box.querySelector('.q-lane-held').title, /OMP would cancel that card/);
+  assert.match(box.querySelector('.q-lane-held').title, /reads it once the card is answered/);
   Q.render(ctx, { items: [], reason: '' }, held({ card: 'approval', title: 'rm -rf build', sessionId: 'sub-1', route: 'subagent' }));
   assert.equal(note(), 'Held until you answer Explore’s approval “rm -rf build” above · then it goes in at once');
   Q.render(ctx, { items: [], reason: '' }, held({ card: 'question', title: 'Which branch?', sessionId: 'sub-9', route: 'subagent' }));

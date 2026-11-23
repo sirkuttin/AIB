@@ -142,7 +142,6 @@
     stopArmed = false,
     stopArmTimer = null;
   const agentListed = {
-      omp: { sessions: [], cursor: null, loaded: false, busy: false, note: '' },
       claude: { sessions: [], cursor: null, loaded: false, busy: false, note: '' },
     },
     historyWindows = new Map(),
@@ -1081,7 +1080,7 @@
         subagentCount: 0,
       });
     }
-    for (const p of ['omp', 'claude'])
+    for (const p of ['claude'])
       for (const item of agentListed[p].sessions) {
         const id = p + ':' + item.sessionId;
         if (known.has(id)) continue;
@@ -1373,7 +1372,10 @@
   }
   function renderHeader() {
     syncChatPanels();
-    if (!selected) return;
+    if (!selected) {
+      document.body.classList.remove('chat-retired');
+      return;
+    }
     window.AgentBreadth?.sync(current ? snapshot : null, breadthContext());
     renderHeaderBody();
   }
@@ -1462,9 +1464,14 @@
       hasContent = !!$('prompt').value.trim() || images > 0;
     const opening = continuingKey === aliasKey(selected),
       sending = sendingKey === aliasKey(selected),
-      gone = isDiscarded(selected);
+      retired = AgentChoice.isRetired(selected.provider),
+      gone = isDiscarded(selected) || retired;
     // While a message is on its way the box takes no typing (read-only), but it keeps the focus: a disabled box lost it, and after
     // Enter you had to click back into it to type the next message.
+    // An agent AIB no longer runs (OMP): the composer is replaced by one plain line; the chat is read-only history.
+    document.body.classList[retired ? 'add' : 'remove']('chat-retired');
+    $('retiredNote').hidden = !retired;
+    if (retired) $('retiredNote').textContent = AgentChoice.RETIRED_NOTE;
     $('prompt').disabled = opening || gone;
     $('prompt').readOnly = sending;
     $('prompt').placeholder = gone ? DISCARDED_NOTE : 'Message ' + nameOf(selected.provider) + '… Enter to send';
@@ -6069,7 +6076,7 @@
       empty.textContent =
         'No chat in ' +
         (name || 'this project') +
-        ' is working. Working chats, their subagents and processes show here, from every agent: Claude Code, Codex, Gemini, Antigravity, OMP and Maki. All on this PC.';
+        ' is working. Working chats, their subagents and processes show here, from every agent: Claude Code, Codex, Gemini, Antigravity and Maki. All on this PC.';
       want.push(empty);
     }
     const idleGroup = renderIdleGroup(nowS, focus);

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- OMP is no longer an AIB agent. It is gone from New chat (PC and phone) and from Settings, and AIB never starts it. Your saved OMP
+  chats stay in the list as read-only history: you can read them, rename, archive and delete them, and the message box is replaced by
+  one line, "OMP is no longer supported in AIB. This chat is read-only." The phone and a paired PC show the same line instead of
+  Continue. Continue with another agent still starts a new chat from an OMP chat's last messages. A default agent set to OMP
+  falls back to Claude Code. AIB does not touch your OMP install, `~/.omp` or OMP's own session files.
+
 - The message box keeps the caret when a queued message's line goes away. **✕** remove, the **✎** editor (Escape) and **↑**
   send now each left the focus on the page: the queue card was not one of the popups `focus-return.js` watches, so nothing gave the
   caret back. The first message of a new chat lost it the same way (Enter on the New chat page): starting the chat disables the box

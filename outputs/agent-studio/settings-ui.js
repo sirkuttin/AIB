@@ -44,7 +44,6 @@
         'disable',
         'turn off',
         'claude code',
-        'omp',
         'codex',
         'launcher',
         'not installed',
@@ -115,7 +114,6 @@
         'update',
         'claude code',
         'codex',
-        'omp',
         'node',
         'helper',
         'wsl --install',
@@ -164,7 +162,7 @@
       id: 'default-agent',
       section: 'defaults',
       label: 'Default agent for new chats',
-      keywords: ['agent', 'start with', 'new chat', 'claude', 'omp'],
+      keywords: ['agent', 'start with', 'new chat', 'claude'],
     },
     {
       id: 'default-picks',
@@ -610,8 +608,8 @@
     sel.addEventListener('change', () => onChange(sel.value));
     return sel;
   }
-  // One order everywhere: Claude Code, Codex, OMP, then the agents you added (in the order the server lists them).
-  const AGENT_ORDER = ['claude', 'codex', 'omp'];
+  // One order everywhere: Claude Code, Codex, then the agents you added (in the order the server lists them).
+  const AGENT_ORDER = ['claude', 'codex'];
   const orderAgents = (list) =>
     (Array.isArray(list) ? list : [])
       .map((a, i) => ({ a, i, r: AGENT_ORDER.includes(a.id) ? AGENT_ORDER.indexOf(a.id) : AGENT_ORDER.length }))
@@ -739,9 +737,9 @@
         },
       );
   }
-  // What the confirm question promises about saved chats: AIB lists saved Claude Code and OMP chats from their transcripts; other
+  // What the confirm question promises about saved chats: AIB lists saved Claude Code chats from their transcripts; other
   // agents' chats show only once opened here, so their promise is narrower.
-  const LISTS_SAVED_CHATS = ['claude', 'omp'];
+  const LISTS_SAVED_CHATS = ['claude'];
   function uninstallQuestion(a) {
     const chats = LISTS_SAVED_CHATS.includes(a.id)
       ? ' Saved chats stay in the list.'
@@ -1370,7 +1368,7 @@
       box.append(agentRow(a, { sharedBlock: true, uninstall: true })); // Settings only, not the start page
     box.append(
       note(
-        '"Found" means the program exists. Sign-in state comes from a quick status check AIB runs when Settings opens and after an install or sign-in; agents with no status check show Not checked. Saved chats and transcripts are found for Claude Code and OMP only; chats with agents you add appear in the list once opened here.',
+        '"Found" means the program exists. Sign-in state comes from a quick status check AIB runs when Settings opens and after an install or sign-in; agents with no status check show Not checked. Saved chats and transcripts are found for Claude Code only; chats with agents you add appear in the list once opened here.',
       ),
     );
   }

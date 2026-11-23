@@ -28,7 +28,7 @@ const PROJECT = `${ROOT}/repo`;
 const REF = WSL_E2E ? refOf({ kind: 'wsl', distro: KEY, linuxPath: PROJECT }) : '';
 
 function studioIn(state: string): Studio {
-  const studio = new Studio({ ompCommand: 'unused', stateDir: state, port: 0, ownersDir: null }, { keeper: null });
+  const studio = new Studio({ stateDir: state, port: 0, ownersDir: null }, { keeper: null });
   studio.ownerProbe = () => null;
   studio.connectionFactory = (_command, cwd, provider, options) =>
     new Connection(['python3', `${ROOT}/fake_acp.py`, '--cancel-aware'], cwd, provider, {

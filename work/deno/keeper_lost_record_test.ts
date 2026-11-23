@@ -39,7 +39,7 @@ class Lab {
       orphan: null,
       extraArgs: ['--exit-after', '2s', '--orphan-after', '30s', '--segment-bytes', '65536'],
     });
-    const studio = new Studio({ ompCommand: 'unused', stateDir: this.state, port: 0, ownersDir: null }, { keeper, keeperForNew: true });
+    const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper, keeperForNew: true });
     studio.ownerProbe = () => null;
     studio.connectionFactory = (_command, cwd, provider, options) => new Connection(fake('--cancel-aware'), cwd, provider, options ?? {});
     this.studios.push(studio);
@@ -103,7 +103,7 @@ async function notesOf(client: KeeperClient, channel: string): Promise<string[]>
 /** A chat whose journal, after its second checkpoint, starts with a steer note written before that checkpoint's snapshot. */
 async function steerFirst(lab: Lab): Promise<{ c: Connection; pid: number; channel: string }> {
   const a = lab.studio();
-  const c = await a.connect('omp', lab.work);
+  const c = await a.connect('claude', lab.work);
   await turn(a, c, 2, 'm1');
   await until(() => c.historyCkpt !== null && !c.busy, 'a first checkpoint', 10);
   const first = c.historyCkpt!.record;

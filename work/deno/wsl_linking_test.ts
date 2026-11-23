@@ -88,7 +88,7 @@ Deno.test({
       host.begun = false;
       host.state = 'starting';
       const [s1, started] = await agentsRoute('distro=ubuntu&peek=1&start=1');
-      assertEquals([s1, started.state, started.line, (started.agents as Json[]).map((a) => a.id)], [200, 'ready', '', ['claude', 'codex', 'omp']]);
+      assertEquals([s1, started.state, started.line, (started.agents as Json[]).map((a) => a.id)], [200, 'ready', '', ['claude', 'codex']]);
       assertEquals(host.starts, 1);
 
       // ready: peek answers the rows (with state), and never starts again
@@ -96,13 +96,12 @@ Deno.test({
         agents: [
           { id: 'claude', found: true, command: ['/usr/bin/node', '/x/node_modules/a/dist/index.js'], version: '1.0.0', bundledCli: true },
           { id: 'codex', found: false, bundledCli: false },
-          { id: 'omp', found: false },
         ],
       });
       const [s2, ready] = await agentsRoute('distro=ubuntu&peek=1');
       assertEquals([s2, ready.state, ready.line], [200, 'ready', '']);
       const rows = ready.agents as Json[];
-      assertEquals(rows.map((a) => [a.id, a.found, a.bundledCli]), [['claude', true, true], ['codex', false, false], ['omp', false, undefined]]);
+      assertEquals(rows.map((a) => [a.id, a.found, a.bundledCli]), [['claude', true, true], ['codex', false, false]]);
       assertEquals(rows[1].install, 'npm i -g @agentclientprotocol/codex-acp');
       assertEquals(host.starts, 1, 'peek on a ready distro starts nothing');
 

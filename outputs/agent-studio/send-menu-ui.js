@@ -6,12 +6,11 @@
   'use strict';
 
   const COPY = {
-    // Grey line under "Send now", per agent. claude / codex / omp are the agent ids; anything else uses nowHintOther.
+    // Grey line under "Send now", per agent. claude / codex are the agent ids; anything else uses nowHintOther.
     nowHint: {
       claude: 'Claude Code answers right away. A command or subagent it is running keeps going in the background.',
       codex:
         "Codex answers right away. A command it is running keeps going in the background, and Codex isn't told when it ends.",
-      omp: 'OMP answers right away. A command it is running moves to the background, and OMP stops it after 2 minutes in total.',
     },
     nowHintOther: (agent) => agent + ' reads it during this turn.',
     cantSteerMenu: (agent) =>
@@ -45,9 +44,7 @@
     heldOn: (what) => 'Held until you answer ' + what + ' above · then it goes in at once',
     heldWhat: (card, who, title) =>
       (who ? who + '’s ' : 'the ') + (card === 'question' ? 'question' : 'approval') + (title ? ' “' + title + '”' : ''),
-    heldWhy: {
-      omp: 'OMP would cancel that card if the message went in now.',
-    },
+    heldWhy: {},
     heldWhyOther: 'The agent reads it once the card is answered.',
     heldHead: 'Held until you answer the card above',
     // Claude Code's own cycle (it started a turn itself, e.g. a background task ended): Send now joins it, nothing stops.

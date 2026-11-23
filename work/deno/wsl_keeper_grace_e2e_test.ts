@@ -22,7 +22,7 @@ const GRACE_S = 50;
 Deno.env.set('AIB_WSL_ORPHAN_GRACE', `${GRACE_S}s`); // before any host starts (they start on first use)
 
 function studioIn(state: string, keeper: KeeperLink): Studio {
-  const studio = new Studio({ ompCommand: 'unused', stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper });
+  const studio = new Studio({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper });
   studio.ownerProbe = () => null;
   studio.connectionFactory = (_command, cwd, provider, options) =>
     new Connection(['python3', `${ROOT}/fake_acp.py`, '--cancel-aware'], cwd, provider, {

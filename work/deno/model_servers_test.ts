@@ -88,7 +88,7 @@ class Lab {
 
   studio(flags: string[] = []): Studio {
     const studio = new Studio(
-      { ompCommand: 'unused', stateDir: this.state, port: 0, ownersDir: null, noArtifactTool: true, claudeLauncher: this.launcher, nodeCommand: Deno.execPath() },
+      { stateDir: this.state, port: 0, ownersDir: null, noArtifactTool: true, claudeLauncher: this.launcher, nodeCommand: Deno.execPath() },
       { keeper: null },
     );
     studio.ownerProbe = () => null;
@@ -117,7 +117,7 @@ const launched: { provider: string; env: Record<string, string> | null }[] = [];
 
 Deno.test('the Claude family: claude and every claude@<slug>, nothing else', () => {
   for (const id of ['claude', 'claude@strata', 'claude@my-server-2']) assert(isClaudeFamily(id), id);
-  for (const id of ['codex', 'omp', 'custom-claude', 'claude@', 'claude@Bad Id', 'claude@a--', '', null, undefined, 3]) assert(!isClaudeFamily(id), String(id));
+  for (const id of ['codex', 'custom-claude', 'claude@', 'claude@Bad Id', 'claude@a--', '', null, undefined, 3]) assert(!isClaudeFamily(id), String(id));
   assert(isModelServerId('claude@strata') && !isModelServerId('claude'));
   assertEquals([claudeBase('claude@strata'), claudeBase('claude'), claudeBase('codex')], ['claude', 'claude', 'codex']);
   assert(isProvider('claude@strata') && !isProvider('claude@'), 'the stores accept a model-server id as an agent id');
@@ -249,10 +249,10 @@ Deno.test('the agent row, New chat on the PC and New chat on the phone list "Cla
   const store = new SettingsStore(lab.state);
   Deno.mkdirSync(lab.state, { recursive: true });
   await store.update({ agents: { modelServer: { upsert: { name: 'strata', url: 'http://127.0.0.1:8080', model: 'm', key: KEY } } } });
-  const rows = await describeAgents({ ompCommand: '', claudeLauncher: lab.launcher, nodeCommand: Deno.execPath(), stateDir: lab.state }, store);
+  const rows = await describeAgents({ claudeLauncher: lab.launcher, nodeCommand: Deno.execPath(), stateDir: lab.state }, store);
   const row = rows.find((r) => r.id === 'claude@strata')!;
   assertEquals([row.name, row.builtin, row.modelServer, row.enabled, row.signin], ['Claude Code \u00b7 strata', false, true, true, null]);
-  assertEquals(rows.slice(0, 4).map((r) => r.id), ['omp', 'claude', 'codex', 'claude@strata']);
+  assertEquals(rows.slice(0, 3).map((r) => r.id), ['claude', 'codex', 'claude@strata']);
   const info = row.modelServerInfo as Json;
   assertEquals([info.url, info.model, info.keySet, info.wslNote], ['http://127.0.0.1:8080', 'm', true, WSL_LOOPBACK_NOTE]);
   assert(!JSON.stringify(rows).includes(KEY), 'no key in the agent list');
@@ -265,7 +265,7 @@ Deno.test('the agent row, New chat on the PC and New chat on the phone list "Cla
   assertEquals(phone.map((a) => [a.id, a.ok]), AC.mergeRegistry(rows).all.map((a) => [a.id, a.enabled]));
   assertEquals(phone.find((a) => a.id === 'claude@strata')!.name, 'Claude Code \u00b7 strata');
   // the adapter missing: the entry says so like Claude Code does
-  const noAdapter = eligibleAgents(await describeAgents({ ompCommand: '', claudeLauncher: lab.dir + SEP + 'nope.js', nodeCommand: Deno.execPath(), stateDir: lab.state }, store));
+  const noAdapter = eligibleAgents(await describeAgents({ claudeLauncher: lab.dir + SEP + 'nope.js', nodeCommand: Deno.execPath(), stateDir: lab.state }, store));
   assertEquals(noAdapter.find((a) => a.id === 'claude@strata')!.reason, noAdapter.find((a) => a.id === 'claude')!.reason);
 });
 
@@ -369,7 +369,7 @@ Deno.test('a server has its own id; agent entries and their label are built from
   await store.update({ agents: { modelServer: { upsert: { name: 'gemini', url: 'http://127.0.0.1:2' } } } });
   assertEquals(store.modelServers().map((s) => s.id), ['claude-2', 'gemini-2']);
   assertEquals(typeof JSON.parse(Deno.readTextFileSync(lab.state + SEP + 'studio-settings.json')).agents.betaKeys['claude-2'], 'string');
-  const options = { ompCommand: '', claudeLauncher: lab.launcher, nodeCommand: Deno.execPath(), stateDir: lab.state };
+  const options = { claudeLauncher: lab.launcher, nodeCommand: Deno.execPath(), stateDir: lab.state };
   const row = (await describeAgents(options, store)).find((r) => r.id === 'claude@claude-2')!;
   assertEquals([row.name, row.serverId, (row.modelServerInfo as Json).id], ['Claude Code · Claude', 'claude-2', 'claude-2']);
   assertEquals(modelServerLabel('claude', 'strata'), 'Claude Code · strata');

@@ -32,8 +32,8 @@
   const NO_DISTRO =
     'WSL is on this PC, but it has no Linux distro yet. Install Ubuntu in PowerShell, then open it once to make your Linux user:';
   const WSL_DOCS = 'https://learn.microsoft.com/windows/wsl/install';
-  const NAMES = { claude: ['Claude Code', 'C'], codex: ['Codex', 'X'], omp: ['OMP', 'O'] };
-  const ORDER = ['claude', 'codex', 'omp'];
+  const NAMES = { claude: ['Claude Code', 'C'], codex: ['Codex', 'X'] };
+  const ORDER = ['claude', 'codex'];
   const INSTALL_IDS = ['claude', 'codex']; // the ids POST /api/live/wsl/agents/install accepts
   // The vendors' own terminal commands (owner decision 3a): shown to copy with their docs, never installed by AIB.
   const CLI = {

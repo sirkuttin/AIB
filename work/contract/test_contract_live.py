@@ -56,7 +56,10 @@ class LiveContract(unittest.TestCase):
         self.assertEqual(reply.status, 400)
 
     def test_live_ops_refuse_bad_requests_the_same_way(self):
-        for name, body in (('discover', {'provider': 'nope'}), ('connect', {}), ('prompt', {'id': 'missing', 'text': 'hi'}), ('cancel', {'id': 'missing'}),
+        # discover: the reference's refusal still says "Claude Code and OMP only" (OMP is retired in Deno, 2026-11-23): same status only
+        a, b = self.subject.post('/api/live/discover', {'provider': 'nope'}), self.reference.post('/api/live/discover', {'provider': 'nope'})
+        self.assertEqual((a.status, sorted(a.json())), (b.status, sorted(b.json())))
+        for name, body in (('connect', {}), ('prompt', {'id': 'missing', 'text': 'hi'}), ('cancel', {'id': 'missing'}),
                            ('queue', {'id': 'missing'}), ('disconnect', {'id': 'missing'}), ('session-op', {'id': 'missing', 'op': 'x'}),
                            ('forget', {'provider': 'claude', 'sessionId': ''})):
             self.same_post(f'/api/live/{name}', body)

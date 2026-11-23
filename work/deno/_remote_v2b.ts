@@ -14,7 +14,6 @@ import { type FakeChat, fakeTailscale, pc, phoneHeaders, raw, type RemoteStudio,
 type Json = Record<string, unknown>;
 
 export const AGENT_ROWS = [
-  { id: 'omp', enabled: true, found: true },
   { id: 'claude', enabled: true, found: true },
   { id: 'codex', enabled: false, found: true },
   { id: 'kimi', beta: true, name: 'Kimi', enabled: true, found: true, signin: { state: 'signin' } },

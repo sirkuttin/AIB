@@ -1,6 +1,6 @@
 /**
  * Steer-on-send, end to end (beta.9): a real Studio (web server + separate agent host, so every route goes through the host proxy and
- * its allow list), the fake agents of work/fake_acp.py --steer <claude|codex|omp> that replay the real recordings of
+ * its allow list), the fake agents of work/fake_acp.py --steer <claude|codex> that replay the real recordings of
  * work/steer-recordings (C1-C4, X1-X4, O1-O2), and for the page tests a headless Chrome/Edge (no window). The commands the fake
  * "runs" are real child processes (a parent with a child), so a Stop can be checked to kill exactly those and nothing else.
  * The contract names are in _steer_lab.ts (ROUTES) and in the snapshot fields used below: steerable, steerAgent, steerLane,
@@ -9,7 +9,7 @@
  * Which side a test needs (the tests fail until it has landed; they were written against the contract, build-brief-beta9.md):
  *   [A] server (feat/steer-server): routes, snapshot, queues, Stop.      [B] page (feat/steer-page): composer, menu, rows.
  * Owner decisions: 1 keep "Send after this turn" (S2, P2, P7); 2 Stop on a backgrounded command kills its processes (S6-S8, P5);
- * 3 OMP is steered too (S1, S8); 4 an agent that cannot steer: "Send" + hint (S2, P3); 5 held while a card is open, no
+ * 4 an agent that cannot steer: "Send" + hint (S2, P3); 5 held while a card is open, no
  * "Deny and send" (S9-S11, P4). Architect tests: T15 S5, T16/T17 S4, T18 P6, T19/T20 S6/S7/S5, T22 S12, T23 S10, T24 S11/S3, T26 S3,
  * T27 S13/P8, T25 S14 (with the unit tests of merge.ts / docs_routes.ts). Not end to end here: T21 (steer_background_test.ts,
  * steer_transcript_test.ts), T28 (the <studio-context> note: needs a worktree sync; steer_lane_test.ts).
@@ -37,7 +37,7 @@ import {
 } from './_steer_lab.ts';
 
 const LONG = 45; // a deadline, not a delay
-const WHO: Who[] = ['claude', 'codex', 'omp'];
+const WHO: Who[] = ['claude', 'codex'];
 
 async function started(options?: ConstructorParameters<typeof SteerLab>[0]): Promise<SteerLab> {
   const lab = new SteerLab(options);
@@ -343,36 +343,9 @@ Deno.test({
   },
 });
 
-// ---- S8: OMP -----------------------------------------------------------------------------------------------------------------------
-
-Deno.test({
-  name: 'S8 [A] OMP O1: the command is backgrounded (details.async), stopReason end_turn is not read as an interrupt, Stop kills it',
-  ...TEST_OPTIONS,
-  async fn() {
-    await using lab = await started();
-    const chat = await lab.chat('omp');
-    const gate = lab.gate();
-    await chat.prompt(`steer-bash:${gate}`, 'first');
-    const [parent, leaf] = await chat.pids(gate);
-    await working(chat);
-    await chat.steer('what is 2+2?', 'o-1');
-    await waitText(chat, 'Steered reply: what is 2+2?');
-    await idle(chat);
-    await until(async () => (await backgroundOf(chat, 'toolu_steer_bash'))?.state === 'running', 'running in the background (card completed, then in_progress with details.async)', LONG);
-    const ends = await chat.events('turn_end');
-    assertEquals(ends.length, 1);
-    assertEquals((ends[0].data as Json).stopReason, 'end_turn');
-    assert(!/interrupt/i.test(JSON.stringify((await chat.state()).attention)), 'not read as a user interrupt');
-    const [status, body] = await chat.stopTool('toolu_steer_bash');
-    assertEquals(status, 200, JSON.stringify(body));
-    await until(() => !pidAlive(parent) && !pidAlive(leaf), 'the command and its child are gone', LONG);
-    await until(async () => (await backgroundOf(chat, 'toolu_steer_bash'))?.state === 'stopped', 'stopped', LONG);
-  },
-});
-
 // ---- S9-S11: held while an approval card is open (owner decision 5) ----------------------------------------------------------------
 
-for (const who of ['claude', 'omp'] as const) {
+for (const who of ['claude'] as const) {
   Deno.test({
     name: `S9 [A] ${who}: a message typed while an approval card is open is held (nothing reaches the agent, the card is not cancelled) and sent when the card is answered`,
     ...TEST_OPTIONS,
@@ -390,7 +363,7 @@ for (const who of ['claude', 'omp'] as const) {
       assertEquals(held[0].heldReason, 'approval');
       assertEquals(held[0].text, 'also 5+5?');
       await none(1500, 'the held message reached the agent', () => lab.steersReceived(chat).length > 0 || lab.promptsReceived(chat).length > 1);
-      assertEquals(((await chat.state()).permissions as Json[]).length, 1, 'the card is still open (OMP would have cancelled it on a steer)');
+      assertEquals(((await chat.state()).permissions as Json[]).length, 1, 'the card is still open (a steer could have cancelled it)');
       assert(!chat.received().some((m) => m.method === '$/cancel_request'), 'nothing was withdrawn');
       await answerCard(lab, chat);
       await until(async () => (await chat.agentText()).includes('also 5+5?'), 'the held message was answered', LONG);
@@ -426,7 +399,7 @@ Deno.test({
   },
 });
 
-for (const who of ['claude', 'omp'] as const) {
+for (const who of ['claude'] as const) {
   Deno.test({
     name: `S9c [A] ${who}: a held message names the card it waits for (heldFor: approval, its title, the main agent's)`,
     ...TEST_OPTIONS,
@@ -608,7 +581,6 @@ const INTERRUPT = 'Interrupt and send';
 const HINTS: Record<Who, RegExp> = {
   claude: /Claude Code answers right away\. A command or subagent it is running keeps going in the background\./,
   codex: /Codex answers right away\. A command it is running keeps going in the background, and Codex isn't told when it ends\./,
-  omp: /OMP answers right away\. A command it is running moves to the background, and OMP stops it after 2 minutes in total\./,
 };
 
 for (const who of WHO) {
@@ -695,7 +667,7 @@ pageTest('P3 [B] an agent that cannot steer: the button still says "Send", "Send
 
 pageTest('P4 [B] owner decision 5: a message typed while a card is open shows a held row, there is no "Deny and send", answering the card sends it', async () => {
   await using lab = await started();
-  const chat = await lab.chat('omp');
+  const chat = await lab.chat('claude');
   const page = await openPage(lab, chat);
   try {
     await chat.prompt('steer-perm', 'first');
@@ -708,7 +680,7 @@ pageTest('P4 [B] owner decision 5: a message typed while a card is open shows a 
     assertEquals(note.text, 'Held until you answer the approval “echo hello > note.txt” above · then it goes in at once');
     assert((note.w as number) > 0 && (note.h as number) > 0 && !note.cut, `visible and not cut off: ${JSON.stringify(note)}`);
     assert(!(await page.eval<boolean>(`/Deny and send/i.test(document.body.innerText)`)), 'no "Deny and send" (owner decision 5)');
-    assertEquals(lab.steersReceived(chat).length, 0, 'nothing reached OMP, so it did not cancel the card');
+    assertEquals(lab.steersReceived(chat).length, 0, 'nothing reached the agent, so it did not cancel the card');
     await clickByText(page, 'Allow once');
     await waitText(chat, 'hold on');
     await page.waitFor(`!/until you answer/i.test(document.body.innerText)`, 8000, 'the held row is gone');
@@ -720,7 +692,7 @@ pageTest('P4 [B] owner decision 5: a message typed while a card is open shows a 
 // QA beta.9: the page chose its route from its last poll (up to 1.5 s old). Typed right after a turn began (here: the approval card's
 // turn, started without the page), it saw the chat idle, posted a prompt and the server refused it ("Wait for the current turn...",
 // the draft kept, no held row): 6 of 8 tries before the fix. Each try types 0-300 ms after the card opened, before the page polls.
-for (const [who, tries] of [['claude', 20], ['omp', 10]] as const) {
+for (const [who, tries] of [['claude', 20]] as const) {
   pageTest(`P4b [B] ${who}: typed right after an approval card opened (the page has not polled since), the message is held every time (${tries} tries)`, async () => {
     await using lab = await started();
     const chat = await lab.chat(who);

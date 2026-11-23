@@ -140,8 +140,7 @@ Deno.test({
     Deno.mkdirSync(project);
     Deno.writeTextFileSync(pathOf(project, "README.md"), "a test project\n");
     const studio = new Studio({
-      ompCommand: "unused",
-      stateDir: state,
+            stateDir: state,
       port: 0,
       ownersDir: null,
     });

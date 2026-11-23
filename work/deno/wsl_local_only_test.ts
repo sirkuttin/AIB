@@ -315,7 +315,7 @@ class StudioLab {
 
   studio(): Studio {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
-    const studio = new Studio({ ompCommand: 'unused', stateDir: this.state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper });
+    const studio = new Studio({ stateDir: this.state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper });
     studio.ownerProbe = () => null;
     studio.connectionFactory = (_command, cwd, provider, options) => {
       const wsl = options?.wsl ? { ...options.wsl, program: undefined } : options?.wsl;

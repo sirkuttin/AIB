@@ -462,10 +462,9 @@ def deno_executable():
 
 
 def studio_command(options, demo):
-    launcher = demo / 'bin' / ('omp.cmd' if os.name == 'nt' else 'omp')
     return [deno_executable(), 'run', '-A', '--quiet', str(MAIN), 'serve', '--port', str(options.port), '--state-dir', str(demo / 'state'), '--omp-sessions', str(demo / 'omp'),
             '--claude-projects', str(demo / 'claude'), '--owners-dir', str(demo / 'owners'), '--in-process', '--no-auto-reconnect', '--no-owner-announcements',
-            '--node-command', sys.executable, '--claude-launcher', str(AGENT), '--omp-command', str(launcher)]
+            '--node-command', sys.executable, '--claude-launcher', str(AGENT)]
 
 
 def http(url, body=None, headers=None, timeout=5):

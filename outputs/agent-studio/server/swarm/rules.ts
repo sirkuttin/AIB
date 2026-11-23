@@ -16,8 +16,8 @@ export interface Rule {
 }
 
 export const DEFAULT_RULES: readonly Rule[] = [
-  { job: 'search', label: 'Read-only search, find usages, summarise', provider: 'gemini', model: 'flash', fallback: ['codex', 'omp'] },
-  { job: 'tests', label: 'Tests and bulk or mechanical edits', provider: 'codex', model: '', fallback: ['omp', 'claude'] },
+  { job: 'search', label: 'Read-only search, find usages, summarise', provider: 'gemini', model: 'flash', fallback: ['codex', 'claude'] },
+  { job: 'tests', label: 'Tests and bulk or mechanical edits', provider: 'codex', model: '', fallback: ['claude'] },
   { job: 'ui', label: 'UI, front-end and copy', provider: 'claude', model: 'sonnet', fallback: ['codex'] },
   { job: 'debug', label: 'Hard debugging and design', provider: 'claude', model: 'opus', fallback: ['codex'] },
   { job: 'other', label: 'Anything else', provider: 'codex', model: '', fallback: ['claude'] },

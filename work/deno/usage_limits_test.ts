@@ -1,7 +1,7 @@
 /**
  * Subscription usage limits for the composer's Limits chip: the parsers (samples from outputs/usage-limits/usage-limits-research.md),
  * the per-account store and its persistence, the Codex session-file reader and its app-server fallback, the once-a-minute throttle,
- * and the Studio end to end with fake agents (Claude's rateLimit meta, Qwen's quota error, Vibe's _account/read; OMP gets none).
+ * and the Studio end to end with fake agents (Claude's rateLimit meta, Qwen's quota error, Vibe's _account/read).
  * Never reads the owner's ~/.codex: every Codex home here is a temp folder.
  */
 import { assert, assertEquals } from './_assert.ts';
@@ -118,11 +118,11 @@ Deno.test("Vibe and Qwen: _account/read's monthly budget; Qwen's quota error is 
   assertEquals(parseQwenQuota({}, 20), null);
 });
 
-Deno.test('accounts: one key per agent and config folder; agents with no official source (OMP, Kimi) have none', () => {
+Deno.test('accounts: one key per agent and config folder; agents with no official source (Kimi) have none', () => {
   assertEquals(accountKey('claude', {}), Deno.env.get('CLAUDE_CONFIG_DIR') ? accountKey('claude', null) : 'claude');
   assertEquals(accountKey('claude', { CLAUDE_CONFIG_DIR: 'C:\\Users\\Me\\.claude-work\\' }), 'claude|w:c:/users/me/.claude-work');
   assertEquals(accountKey('codex', { CODEX_HOME: '/home/me/.codex-b' }), 'codex|p:/home/me/.codex-b');
-  for (const agent of ['omp', 'kimi', 'gemini', 'copilot', 'goose']) assertEquals(accountKey(agent, {}), '');
+  for (const agent of ['kimi', 'gemini', 'copilot', 'goose']) assertEquals(accountKey(agent, {}), '');
 });
 
 Deno.test('the store: Claude windows merge per account, older readings never win, and it survives a restart', () => {
@@ -243,7 +243,7 @@ function fakeConnection(provider: string, extra: Partial<LimitsConnection> = {})
 }
 
 Deno.test({
-  name: 'the feed: Codex reads session files first, else the app-server; at most once a minute per account; OMP never',
+  name: 'the feed: Codex reads session files first, else the app-server; at most once a minute per account',
   ...T,
   async fn() {
     const home = codexHomeFixture();
@@ -279,11 +279,6 @@ Deno.test({
       // Two refreshes at once share one read.
       clock += 61;
       await Promise.all([feed.refresh(codex), feed.refresh(codex)]);
-      // OMP: nothing is read and nothing is shown, whatever the agent sends.
-      const omp = fakeConnection('omp');
-      feed.fromAgent(omp, 'claude-rate-limit', CLAUDE_META, clock);
-      await feed.refresh(omp);
-      assertEquals(feed.view(omp), null);
       // Claude: pushed only, never read.
       const claude = fakeConnection('claude');
       await feed.refresh(claude);
@@ -317,7 +312,7 @@ class Lab {
     Deno.mkdirSync(this.work, { recursive: true });
   }
   manager(): Studio {
-    const studio = new Studio({ ompCommand: 'unused', stateDir: this.state, port: 0, autoReconnect: false });
+    const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, autoReconnect: false });
     studio.ownerProbe = () => null;
     studio.agentLaunch = () => Promise.resolve([['fixture'], {}]);
     studio.connectionFactory = (_command, cwd, provider) => new Connection([PYTHON, FAKE_UNIQUE, '--limits'], cwd, provider);
@@ -340,7 +335,7 @@ class Lab {
 const limitsOf = async (studio: Studio, c: Connection) => ((await studio.liveState(c.id, 0)) as Json).limits as LimitsSnapshot | null;
 
 Deno.test({
-  name: "Studio: Claude's rateLimit reaches every chat on the account and survives a restart; OMP chats get no limits",
+  name: "Studio: Claude's rateLimit reaches every chat on the account and survives a restart",
   ...T,
   async fn() {
     await using lab = new Lab();
@@ -353,10 +348,6 @@ Deno.test({
     // A second chat on the same account shows them before it ever got an event.
     const second = await studio.connect('claude', lab.work, null, {});
     assertEquals((await limitsOf(studio, second))!.windows[0].usedPercent, 23);
-    const omp = await studio.connect('omp', lab.work, null, {});
-    await omp.prompt('ratelimit:' + JSON.stringify(CLAUDE_META));
-    await until(() => !omp.busy, 'the OMP turn to end');
-    assertEquals(await limitsOf(studio, omp), null);
     await studio.close();
     // After a restart the account's last numbers are still there.
     const later = lab.manager();

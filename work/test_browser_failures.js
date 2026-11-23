@@ -600,7 +600,7 @@ test('agent-listed sessions merge by session ID, paginate, and skip saved or liv
   const cursors = [];
   const h = harness({
     '/api/live/bootstrap': () => ({ body: { token: 't', instanceId: 'A', features: { sessionDiscovery: true } } }),
-    '/api/sessions': () => ({ body: { sessions: [savedSession()] } }),
+    '/api/sessions': () => ({ body: { sessions: [savedSession({ provider: 'claude', key: 'claude/p/s.jsonl' })] } }),
     '/api/live/list': () => ({ body: liveList({ instanceId: 'A' }) }),
     '/api/live/discover': (q, body) => {
       cursors.push(body.cursor);
@@ -609,15 +609,15 @@ test('agent-listed sessions merge by session ID, paginate, and skip saved or liv
   });
   await h.run('refreshToken()');
   h.run('discoveryEnabled=true');
-  h.run("provider='omp'");
+  h.run("provider='claude'");
   await h.run('listConversations()');
   await h.run('discoverSessions()');
   let keys = [...h.run('conversations.map(c=>c.key)')];
-  assert.deepEqual(keys, ['omp/p/s.jsonl', 'agent:omp:only-agent-1']);
+  assert.deepEqual(keys, ['claude/p/s.jsonl', 'agent:claude:only-agent-1']);
   assert.equal(h.element('discoverSessions').textContent, 'Load more from agent');
   await h.run('discoverSessions()');
   keys = [...h.run('conversations.map(c=>c.key)')];
-  assert.deepEqual(keys, ['omp/p/s.jsonl', 'agent:omp:only-agent-1', 'agent:omp:only-agent-2']);
+  assert.deepEqual(keys, ['claude/p/s.jsonl', 'agent:claude:only-agent-1', 'agent:claude:only-agent-2']);
   assert.deepEqual(cursors, [undefined, 'offset:2']);
   assert.equal(h.element('discoverSessions').disabled, true);
   await h.run('discoverSessions()');
@@ -634,4 +634,23 @@ test('selecting an agent-listed chat without a transcript shows an explanation i
   await h.run('refresh()');
   assert.match(flat(h.element('messages')), /no local transcript/i);
   assert.equal(h.calls.filter((c) => c.url === '/api/transcript').length, 0);
+});
+
+test('an OMP chat opens read-only: the composer is replaced by one plain line and sending is off (OMP is no longer an AIB agent)', async () => {
+  const h = harness({
+    '/api/live/bootstrap': () => ({ body: { token: 't', instanceId: 'A' } }),
+    '/api/sessions': () => ({ body: { sessions: [savedSession()] } }),
+    '/api/live/list': () => ({ body: liveList({ instanceId: 'A' }) }),
+  });
+  h.run("selected={key:'omp/p/s.jsonl',provider:'omp',id:'sess-1',cwd:'C:/proj',title:'Old OMP chat'};current=''");
+  h.run('renderHeader()');
+  assert.equal(h.element('retiredNote').hidden, false);
+  assert.equal(h.element('retiredNote').textContent, 'OMP is no longer supported in AIB. This chat is read-only.');
+  assert.equal(h.element('prompt').disabled, true);
+  assert.equal(h.element('send').disabled, true);
+  // a Claude Code chat keeps its composer
+  h.run("selected={key:'claude/p/s.jsonl',provider:'claude',id:'sess-2',cwd:'C:/proj',title:'Claude chat'};current=''");
+  h.run('renderHeader()');
+  assert.equal(h.element('retiredNote').hidden, true);
+  assert.equal(h.element('prompt').disabled, false);
 });

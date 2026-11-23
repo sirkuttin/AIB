@@ -1,5 +1,5 @@
 /**
- * The agent registry (agent_registry.py): built-in agents (OMP, Claude Code, Codex) plus ACP agents the user added in Settings.
+ * The agent registry (agent_registry.py): built-in agents (Claude Code, Codex) plus ACP agents the user added in Settings.
  *
  * Pure helpers, no I/O beyond looking a command up on disk / PATH. A user agent is {id, name, command, args, env, enabled}:
  *   id       "custom-<slug>", made once from the name and never changed (conversations are stored under it)
@@ -14,14 +14,25 @@ import { executable, expandUser, isAbsolute, isFile, resolvePath, which } from '
 import { BETA_IDS, BETA_NAMES, isBeta } from './beta_catalog.ts';
 import { isModelServerId } from './claude_family.ts';
 
-export const BUILTIN_IDS = ['omp', 'claude', 'codex'] as const;
-export const BUILTIN_NAMES: Record<string, string> = { omp: 'OMP', claude: 'Claude Code', codex: 'Codex' };
+export const BUILTIN_IDS = ['claude', 'codex'] as const;
+export const BUILTIN_NAMES: Record<string, string> = { claude: 'Claude Code', codex: 'Codex' };
+/**
+ * Agents AIB no longer runs (owner decision 2026-11-23: OMP). Their saved chats stay in the list as read-only history: never started,
+ * never offered in New chat or Settings, but still known ids, so Rename, Archive and Delete keep working on them.
+ */
+export const RETIRED_IDS = ['omp'] as const;
+export const RETIRED_NAMES: Record<string, string> = { omp: 'OMP' };
+/** What a retired agent's chat says where its composer was (and what the server answers to a message or a Continue). */
+export const RETIRED_NOTE = 'OMP is no longer supported in AIB. This chat is read-only.';
+export function isRetired(value: unknown): boolean {
+  return isStr(value) && (RETIRED_IDS as readonly string[]).includes(value);
+}
 /** The Beta agents (beta_catalog.ts): known to AIB like the built-ins, off until turned on. */
 export { BETA_IDS, BETA_NAMES, isBeta };
 
 /** The name people know an agent id by (built-in or Beta), else the id itself. */
 export function agentName(id: string): string {
-  return BUILTIN_NAMES[id] ?? BETA_NAMES[id] ?? id;
+  return BUILTIN_NAMES[id] ?? BETA_NAMES[id] ?? RETIRED_NAMES[id] ?? id;
 }
 export const CUSTOM_PREFIX = 'custom-';
 /** re.match(r'^custom-[a-z0-9]+(?:-[a-z0-9]+)*$'): Python's '$' also matches before one final newline. */
@@ -53,9 +64,14 @@ export function isBuiltin(value: unknown): boolean {
   return isStr(value) && (BUILTIN_IDS as readonly string[]).includes(value);
 }
 
-/** A provider id Studio can store and launch: a built-in or a well-formed user-agent id. */
+/** A provider id Studio can store (a saved chat's, so a retired agent's too): a built-in or a well-formed user-agent id. */
 export function isProvider(value: unknown): value is string {
-  return isStr(value) && (isBuiltin(value) || isBeta(value) || isModelServerId(value) || (pyLen(value) <= 48 && ID_RE.test(value)));
+  return isStr(value) && (isBuiltin(value) || isRetired(value) || isBeta(value) || isModelServerId(value) || (pyLen(value) <= 48 && ID_RE.test(value)));
+}
+
+/** A provider id a new chat, a default or a switch may name: isProvider without the retired agents. */
+export function isChoosable(value: unknown): value is string {
+  return isProvider(value) && !isRetired(value);
 }
 
 export function isCustom(value: unknown): value is string {

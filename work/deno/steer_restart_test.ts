@@ -23,7 +23,7 @@ class KeeperLab {
   readonly state = this.dir + SEP + 'state';
   readonly work = this.dir + SEP + 'work';
   readonly studios: Studio[] = [];
-  readonly puppet = new Puppet('omp');
+  readonly puppet = new Puppet('claude');
 
   constructor() {
     Deno.mkdirSync(this.work, { recursive: true });
@@ -31,7 +31,7 @@ class KeeperLab {
 
   studio(): Studio {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
-    const studio = new Studio({ ompCommand: 'unused', stateDir: this.state, port: 0, ownersDir: null }, { keeper, keeperForNew: true });
+    const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper, keeperForNew: true });
     studio.ownerProbe = () => null;
     studio.connectionFactory = (_command, cwd, provider, options) =>
       new Connection(puppetCommand(this.puppet.port), cwd, provider, options);
@@ -78,7 +78,7 @@ Deno.test({
     await using lab = new KeeperLab();
     const p = lab.puppet;
     const a = lab.studio();
-    const c = await a.connect('omp', lab.work);
+    const c = await a.connect('claude', lab.work);
     assertEquals((await a.liveCall('prompt', { id: c.id, text: 'go', clientMessageId: 'm1' }))[0], 200);
     const prompt = await p.take('session/prompt');
     void a.liveCall('steer', { id: c.id, text: 'while you work', clientMessageId: 's1' });

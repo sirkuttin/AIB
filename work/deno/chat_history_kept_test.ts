@@ -41,7 +41,7 @@ class Lab {
   }
   studio(): Studio {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
-    const studio = new Studio({ ompCommand: 'unused', stateDir: this.state, port: 0, ownersDir: null }, { keeper, keeperForNew: true });
+    const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper, keeperForNew: true });
     studio.ownerProbe = () => null;
     studio.connectionFactory = (_command, cwd, provider, options) =>
       new Connection(fake('--replay-file', this.transcript), cwd, provider, options ?? {});
@@ -134,7 +134,7 @@ Deno.test({
     await keeperBinary();
     await using lab = new Lab();
     const a = lab.studio();
-    const c = await a.connect('omp', lab.work);
+    const c = await a.connect('claude', lab.work);
     await say(a, c, 'one', 'm1');
     c.recordedEvent('studio_note', { message: 'Merged subagent “Docs” into main', sessionId: c.sessionId });
     await say(a, c, 'two', 'm2');
@@ -154,7 +154,7 @@ Deno.test({
     lab.transcriptOf(['one', 'two', 'outside']);
     // The next start reopens it (the automatic reconnect: the same connect() Continue uses)
     const b = lab.studio();
-    await b.reconnectOne(['omp', session, lab.work], 1, 0);
+    await b.reconnectOne(['claude', session, lab.work], 1, 0);
     const r = [...b.connections.values()].find((x) => x.sessionId === session && !x.closed)!;
     assert(r, 'reopened');
     assertEquals(r.id, id, 'the SAME chat id');
@@ -195,13 +195,13 @@ Deno.test({
     await keeperBinary();
     await using lab = new Lab();
     const a = lab.studio();
-    const c = await a.connect('omp', lab.work);
+    const c = await a.connect('claude', lab.work);
     await say(a, c, 'one', 'm1');
     const session = c.sessionId!;
     await a.close();
     lab.transcriptOf(['one', 'elsewhere']);
     const b = lab.studio();
-    const r = await b.connect('omp', lab.work, session);
+    const r = await b.connect('claude', lab.work, session);
     assertEquals(r.id, c.id);
     await until(() => r.historyState === 'claimed', 'the store claimed', 10);
     await r.historySettled();
@@ -231,7 +231,7 @@ Deno.test({
     await keeperBinary();
     await using lab = new Lab();
     const a = lab.studio();
-    const c = await a.connect('omp', lab.work);
+    const c = await a.connect('claude', lab.work);
     await say(a, c, 'one', 'm1');
     await say(a, c, 'two', 'm2');
     await until(() => c.historyCkpt !== null && c.historyWrittenSeq === c.sequence, 'the store caught up', 10);
@@ -246,7 +246,7 @@ Deno.test({
     lab.transcriptOf(['one', 'two']);
     const b = lab.studio();
     assertEquals(await b.adoptKeeper(), 0, 'nothing runs in the keeper any more');
-    const r = await b.connect('omp', lab.work, session);
+    const r = await b.connect('claude', lab.work, session);
     assertEquals(r.id, c.id, 'the same chat id');
     assertEquals(shape(r.events.slice(0, before.length)), before, 'its history, from its store');
     assertEquals(replayed(r.events), []);
@@ -263,7 +263,7 @@ Deno.test({
     await keeperBinary();
     await using lab = new Lab();
     const a = lab.studio();
-    const c = await a.connect('omp', lab.work);
+    const c = await a.connect('claude', lab.work);
     await say(a, c, 'one', 'm1');
     const session = c.sessionId!;
     await a.close();
@@ -280,14 +280,14 @@ Deno.test({
     }
     lab.transcriptOf(['one']);
     const b = lab.studio();
-    const r = await b.connect('omp', lab.work, session);
+    const r = await b.connect('claude', lab.work, session);
     assertEquals(r.id, newerId, 'the newest store goes on');
     assert(story(r.events).includes('AIB: the newer store'));
     await r.close();
     await r.historySettled();
     assert(lab.exists(lab.storeFile(newerId)) && lab.exists(older), 'closing a chat keeps its stores');
     // the person deletes the chat (web/shared.ts conversationAction -> history-forget): every store of it goes
-    const [status, answer] = await b.liveCall('history-forget', { provider: 'omp', sessionId: session });
+    const [status, answer] = await b.liveCall('history-forget', { provider: 'claude', sessionId: session });
     assertEquals(status, 200);
     assertEquals(((answer as Json).removed as string[]).sort(), [c.id, newerId].sort());
     assert(!lab.exists(lab.storeFile(newerId)) && !lab.exists(older), 'the deleted chat\'s stores are removed');

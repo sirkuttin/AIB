@@ -115,7 +115,7 @@ const CONTRAST = (pattern: string) =>
     return { ratio, problems: ratio < 4.5 ? ['hint contrast ' + ratio.toFixed(2) + ':1 is below 4.5:1'] : [] };
   })(new RegExp(${JSON.stringify(pattern)}))`;
 
-const HINT_START: Record<Who, string> = { claude: 'Claude Code answers right away', codex: 'Codex answers right away', omp: 'OMP answers right away' };
+const HINT_START: Record<Who, string> = { claude: 'Claude Code answers right away', codex: 'Codex answers right away' };
 
 async function check(page: Page, what: string, expression: string): Promise<void> {
   const r = await page.eval<Json>(expression);
@@ -149,7 +149,7 @@ async function slashTip(page: Page): Promise<string> {
   return tip;
 }
 
-for (const who of ['claude', 'codex', 'omp'] as const) {
+for (const who of ['claude', 'codex'] as const) {
   for (const theme of THEMES) {
     Deno.test({
       name: `LY1 [B] ${who}, ${theme}: the working composer (Send and its menu button, open menu, the Send tooltip) fits and keeps its idle height at ${WIDTHS.join(', ')} px`,
@@ -242,7 +242,7 @@ for (const theme of THEMES) {
 const steersOf = (chat: SteerChat) =>
   chat.received().filter((m) => m.method === '_session/steering').map((m) => JSON.stringify(m.params));
 
-for (const who of ['claude', 'codex', 'omp'] as const) {
+for (const who of ['claude', 'codex'] as const) {
   Deno.test({
     name: `LY3 [B] ${who}: "Send now" (1600 px, dark) and "Interrupt and send" (860 px, light) clicked with the mouse in the open menu`,
     ignore: !hasBrowser,

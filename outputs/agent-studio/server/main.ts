@@ -76,8 +76,6 @@ export function hostCommand(o: Options, compiled = isCompiled(), env: Record<str
     o.ompSessions,
     '--claude-projects',
     o.claudeProjects,
-    '--omp-command',
-    o.ompCommand,
     '--node-command',
     o.nodeCommand,
     '--claude-launcher',

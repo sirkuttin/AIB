@@ -39,7 +39,7 @@ class KeeperStudioLab {
 
   studio(flags: string[] = ['--cancel-aware']): Studio {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
-    const studio = new Studio({ ompCommand: 'unused', stateDir: this.state, port: 0, ownersDir: null }, { keeper });
+    const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper });
     studio.ownerProbe = () => null;
     studio.connectionFactory = (_command, cwd, provider, options) =>
       new Connection(fake(...flags), cwd, provider, { ...options, env: { FAKE_ACP_LOG: this.agentLog } });
@@ -104,7 +104,7 @@ Deno.test({
     await keeperBinary();
     await using lab = new KeeperStudioLab();
     const studio = lab.studio();
-    const c = await studio.connect('omp', lab.work);
+    const c = await studio.connect('claude', lab.work);
     assert(c.channel !== null, 'the agent runs in the keeper');
     const [status] = await studio.liveCall('prompt', { id: c.id, text: 'stream:6:20', clientMessageId: 'm1' });
     assertEquals(status, 200);
@@ -126,7 +126,7 @@ async function crashAt(when: 'streaming' | 'question' | 'answered' | 'idle'): Pr
   await keeperBinary();
   await using lab = new KeeperStudioLab();
   const a = lab.studio();
-  const c = await a.connect('omp', lab.work);
+  const c = await a.connect('claude', lab.work);
   // The turn ends only once the gate file exists: after "answered" it used to have ~900 ms of chunks left, and a rebuild on a loaded
   // machine (the history store's Worker starting, other tests running) sometimes came after the turn end ("finished", not "working").
   const gate = lab.dir + SEP + 'turn-gate';
@@ -155,7 +155,7 @@ async function crashAt(when: 'streaming' | 'question' | 'answered' | 'idle'): Pr
   assertEquals(r.sessionId, 'fake-session');
   assertEquals(r.events.filter((e) => e.kind === 'user').length, 1);
   assertEquals((r.events.find((e) => e.kind === 'user')!.data as Json).text, text);
-  assertEquals(b.store!.receipt('omp', 'fake-session', 'm1')!.state, when === 'idle' ? 'finished' : 'working');
+  assertEquals(b.store!.receipt('claude', 'fake-session', 'm1')!.state, when === 'idle' ? 'finished' : 'working');
   Deno.writeTextFileSync(gate, ''); // the turn may end now
   if (when === 'streaming' || when === 'question') {
     await until(() => r.permissions.size === 1, 'the question, shown once', 10);
@@ -167,7 +167,7 @@ async function crashAt(when: 'streaming' | 'question' | 'answered' | 'idle'): Pr
   await until(() => !r.busy, 'turn end on the new Studio', 15);
   assertEquals(said(r), 'chunk0 chunk1 chunk2 chunk3 answer=yes chunk4 chunk5 chunk6 chunk7 '); // every chunk once, in order
   assertEquals(r.events.filter((e) => e.kind === 'turn_end').length, 1);
-  assertEquals(b.store!.receipt('omp', 'fake-session', 'm1')!.state, 'finished');
+  assertEquals(b.store!.receipt('claude', 'fake-session', 'm1')!.state, 'finished');
   const got = lab.received();
   assertEquals(prompts(got).length, 1); // the prompt reached the agent once
   assertEquals(answers(got, 'stream-ask').length, 1); // and the question was answered once
@@ -198,7 +198,7 @@ Deno.test({
     await using lab = new KeeperStudioLab();
     const flags = ['--held-turn'];
     const a = lab.studio(flags);
-    const c = await a.connect('omp', lab.work);
+    const c = await a.connect('claude', lab.work);
     const gate = lab.dir + SEP + 'helper-gate';
     await a.liveCall('prompt', { id: c.id, text: `helper:${gate}`, clientMessageId: 'm1' });
     await until(() => !c.busy && c.events.some((e) => e.kind === 'turn_end'), 'the reply ended', 10);
@@ -212,7 +212,7 @@ Deno.test({
     assert(r && !r.closed && r.ready && !r.rebuildError, 'rebuilt under the same id');
     assert(!r.busy, 'the ended turn stays ended');
     assertEquals(r.events.filter((e) => e.kind === 'turn_end').length, 1);
-    assertEquals(b.store!.receipt('omp', 'fake-session', 'm1')!.state, 'finished');
+    assertEquals(b.store!.receipt('claude', 'fake-session', 'm1')!.state, 'finished');
     assertEquals(r.subagents.get('helper-1')?.state, 'running');
     Deno.writeTextFileSync(gate, 'go');
     await until(() => r.busy && r.autonomous, 'the follow-up working', 10);
@@ -233,7 +233,7 @@ Deno.test({
     await using lab = new KeeperStudioLab();
     const flags = ['--cancel-aware', '--models'];
     const a = lab.studio(flags);
-    const c = await a.connect('omp', lab.work, null, { picks: { model: 'luna-4', mode: 'full', effort: 'high' } });
+    const c = await a.connect('claude', lab.work, null, { picks: { model: 'luna-4', mode: 'full', effort: 'high' } });
     assert(c.channel !== null, 'the agent runs in the keeper');
     assertEquals(c.pickResults.map((p) => p.ok), [true, true, true]);
     const optionsFile = lab.state + SEP + 'agent-options.json';
@@ -268,7 +268,7 @@ Deno.test({
     await keeperBinary();
     await using lab = new KeeperStudioLab();
     const studio = lab.studio();
-    const c = await studio.connect('omp', lab.work);
+    const c = await studio.connect('claude', lab.work);
     await studio.liveCall('prompt', { id: c.id, text: 'stream:40:200', clientMessageId: 'm1' });
     await until(() => said(c).includes('chunk1 '), 'streaming', 10);
     const agentPid = c.process!.pid;
@@ -277,7 +277,7 @@ Deno.test({
     assertEquals(c.error, KEEPER_LOST);
     assert(c.interrupted);
     await until(() => !pidAlive(agentPid), 'agent ended with the keeper', 10);
-    assertEquals(studio.store!.receipt('omp', 'fake-session', 'm1')!.state, 'error'); // never offered for an automatic resend
+    assertEquals(studio.store!.receipt('claude', 'fake-session', 'm1')!.state, 'error'); // never offered for an automatic resend
     // It comes back: a new connection for the same session, by session/load, with a new keeper. Nothing is sent again.
     await until(
       () => [...studio.connections.values()].some((x) => x !== c && x.sessionId === 'fake-session' && x.ready),
@@ -297,7 +297,7 @@ Deno.test({
     await keeperBinary();
     await using lab = new KeeperStudioLab();
     const a = lab.studio();
-    const c = await a.connect('omp', lab.work);
+    const c = await a.connect('claude', lab.work);
     const [session, pid] = [c.sessionId!, c.process!.pid];
     lab.crash(a);
     // the next Studio's take-over did not run (or failed): only the auto-reconnect of the recovery list
@@ -319,7 +319,7 @@ Deno.test({
     await keeperBinary();
     await using lab = new KeeperStudioLab();
     const a = lab.studio();
-    const c = await a.connect('omp', lab.work);
+    const c = await a.connect('claude', lab.work);
     await a.liveCall('prompt', { id: c.id, text: 'stream:10:150', clientMessageId: 'm1' });
     await until(() => said(c).includes('chunk1 '), 'streaming', 10);
     assertEquals(a.keeperHandover(), '', 'every working chat runs in the keeper');
@@ -327,7 +327,7 @@ Deno.test({
     assertEquals(await a.release(), 1);
     lab.studios.splice(lab.studios.indexOf(a), 1); // released, not to be closed again
     assert(pidAlive(agentPid), 'the agent keeps running');
-    assertEquals(a.store!.receipt('omp', 'fake-session', 'm1')!.state, 'working', 'not marked unknown: the turn goes on');
+    assertEquals(a.store!.receipt('claude', 'fake-session', 'm1')!.state, 'working', 'not marked unknown: the turn goes on');
 
     const b = lab.studio();
     assertEquals(b.instanceId, a.instanceId, 'the same keeper: open pages keep their connection ids');

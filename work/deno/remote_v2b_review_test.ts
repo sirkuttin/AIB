@@ -197,9 +197,9 @@ Deno.test({
   async fn() {
     const s = await v2Studio();
     try {
-      setAgentRows(() => Promise.resolve([...AGENT_ROWS.filter((r) => r.id !== 'omp'), { id: 'omp', enabled: true, found: false }]));
+      setAgentRows(() => Promise.resolve([...AGENT_ROWS, { id: 'custom-gone', name: 'Gone', enabled: true, found: false }]));
       const phone = await pairPhone(s);
-      for (const [agent, why] of [['codex', 'Turned off'], ['omp', 'Not installed'], ['kimi', 'Needs sign-in']]) {
+      for (const [agent, why] of [['codex', 'Turned off'], ['custom-gone', 'Not installed'], ['kimi', 'Needs sign-in']]) {
         const r = await phoneCall(s, phone.token, 'GET', `/api/remote/new/options?project=${s.projectId}&agent=${agent}`);
         assertEquals(r.status, 403, agent);
         assertEquals(r.json.code, 'agent_unavailable');

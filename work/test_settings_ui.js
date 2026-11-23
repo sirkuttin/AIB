@@ -123,7 +123,7 @@ test('before the server answers, the built-ins are the registry', () => {
   reset();
   assert.deepEqual(
     AC.AGENTS.map((a) => a.id),
-    ['omp', 'claude', 'codex'],
+    ['claude', 'codex'],
   );
   assert.equal(AC.nameOf('claude'), 'Claude Code');
 });
@@ -141,30 +141,30 @@ test('mergeRegistry: built-ins first, user agents appended, junk skipped, built-
   ]);
   assert.deepEqual(
     m.all.map((a) => a.id),
-    ['omp', 'claude', 'codex', 'custom-codex'],
+    ['claude', 'codex', 'custom-codex'],
   );
   assert.deepEqual(
     m.enabled.map((a) => a.id),
     ['claude', 'codex', 'custom-codex'],
   );
-  assert.equal(m.all[3].letter, 'C');
+  assert.equal(m.all[2].letter, 'C');
   const bare = AC.mergeRegistry([custom('custom-a', 'A')]);
   assert.deepEqual(
     bare.all.map((a) => a.id),
-    ['omp', 'claude', 'codex', 'custom-a'],
+    ['claude', 'codex', 'custom-a'],
     'a list that omits the built-ins keeps them, on',
   );
   for (const bad of [null, undefined, 'x', {}, 42])
     assert.deepEqual(
       AC.mergeRegistry(bad).enabled.map((a) => a.id),
-      ['omp', 'claude', 'codex'],
+      ['claude', 'codex'],
     );
 });
 
 test('mergeRegistry: a user agent cannot take over a built-in id or its name display', () => {
   const m = AC.mergeRegistry([{ id: 'claude', name: 'Totally Claude', builtin: false, enabled: true }]);
   assert.equal(m.all.find((a) => a.id === 'claude').name, 'Claude Code');
-  assert.equal(m.all.length, 3);
+  assert.equal(m.all.length, 2);
 });
 
 test('setRegistry updates AGENTS in place; disabled agents leave the list but keep their name', () => {
@@ -174,27 +174,26 @@ test('setRegistry updates AGENTS in place; disabled agents leave the list but ke
   assert.equal(held, AC.AGENTS, 'other modules can hold the array');
   assert.deepEqual(
     AC.AGENTS.map((a) => a.id),
-    ['omp', 'codex', 'custom-codex'],
+    ['codex', 'custom-codex'],
   );
   assert.equal(AC.isAgent('claude'), false);
   assert.equal(AC.nameOf('claude'), 'Claude Code', 'an old chat with a turned-off agent still shows its name');
   assert.equal(AC.nameOf('custom-codex'), 'Codex');
   assert.equal(AC.nameOf('custom-removed'), 'custom-removed');
-  assert.equal(AC.other('omp'), 'codex');
-  assert.equal(AC.resolveAgent('claude'), 'omp');
+  assert.equal(AC.other('codex'), 'custom-codex');
+  assert.equal(AC.resolveAgent('claude'), 'codex');
   reset();
 });
 
 test('with every agent turned off the New chat list is never empty', () => {
   reset();
   AC.setRegistry([
-    { id: 'omp', enabled: false },
     { id: 'claude', enabled: false },
     { id: 'codex', enabled: false },
   ]);
   assert.deepEqual(
     AC.AGENTS.map((a) => a.id),
-    ['omp'],
+    ['claude'],
   );
   reset();
 });
@@ -209,8 +208,8 @@ test('a project default beats the global default, which beats the browser memory
   assert.equal(AC.loadChoice(store, proj), 'claude', 'browser memory is still the fallback');
   AC.setDefaults({ agent: 'custom-codex' });
   assert.equal(AC.loadChoice(store, proj), 'custom-codex', 'the global default wins over memory');
-  AC.setDefaults({ agent: 'custom-codex', projects: { [AC.projectKey(proj)]: { agent: 'omp' } } });
-  assert.equal(AC.loadChoice(store, proj), 'omp');
+  AC.setDefaults({ agent: 'custom-codex', projects: { [AC.projectKey(proj)]: { agent: 'codex' } } });
+  assert.equal(AC.loadChoice(store, proj), 'codex');
   assert.equal(AC.loadChoice(store, 'C:\\Other'), 'custom-codex');
   AC.setDefaults({ agent: 'custom-gone', projects: { [AC.projectKey(proj)]: { agent: 'custom-gone' } } });
   assert.equal(AC.loadChoice(store, proj), 'claude', 'a default naming an agent that is gone is ignored');
@@ -221,24 +220,24 @@ test('defaultPicks: project pick when it names this agent, else the agent defaul
   reset();
   const key = AC.projectKey('C:/Repos/App');
   AC.setDefaults({
-    byAgent: { omp: { model: 'gm', mode: 'gmode' } },
+    byAgent: { codex: { model: 'gm', mode: 'gmode' } },
     projects: { [key]: { agent: 'claude', model: 'opus', mode: '' } },
   });
   assert.deepEqual(AC.defaultPicks('C:/Repos/App', 'claude'), { model: 'opus', mode: '' });
   assert.deepEqual(
-    AC.defaultPicks('C:/Repos/App', 'omp'),
+    AC.defaultPicks('C:/Repos/App', 'codex'),
     { model: 'gm', mode: 'gmode' },
     'the project pick belongs to another agent',
   );
-  assert.deepEqual(AC.defaultPicks('', 'omp'), { model: 'gm', mode: 'gmode' });
+  assert.deepEqual(AC.defaultPicks('', 'codex'), { model: 'gm', mode: 'gmode' });
   AC.setDefaults({ projects: { [key]: { agent: '', model: 'any' } } });
   assert.equal(
-    AC.defaultPicks('C:/Repos/App', 'omp').model,
+    AC.defaultPicks('C:/Repos/App', 'codex').model,
     'any',
     'a project pick with no agent applies to whichever agent is chosen',
   );
   AC.setDefaults('junk');
-  assert.deepEqual(AC.defaultPicks('x', 'omp'), { model: '', mode: '' });
+  assert.deepEqual(AC.defaultPicks('x', 'codex'), { model: '', mode: '' });
   reset();
 });
 
@@ -248,13 +247,13 @@ test('saveChoice reports the project agent to Settings; a failing sink does not 
   AC.setSink((id, key) => seen.push([id, key]));
   const store = memory();
   AC.saveChoice(store, 'claude', 'C:/Repos/App');
-  AC.saveChoice(store, 'omp', '');
+  AC.saveChoice(store, 'codex', '');
   assert.deepEqual(seen, [['claude', AC.projectKey('C:/Repos/App')]], 'no folder, nothing to remember per project');
   AC.setSink(() => {
     throw new Error('offline');
   });
-  assert.equal(AC.saveChoice(store, 'omp', 'C:/Repos/App'), true);
-  assert.equal(store.getItem(AC.STORAGE_KEY), 'omp');
+  assert.equal(AC.saveChoice(store, 'codex', 'C:/Repos/App'), true);
+  assert.equal(store.getItem(AC.STORAGE_KEY), 'codex');
   reset();
 });
 
@@ -308,7 +307,6 @@ const payload = (over = {}) => ({
     agents: {},
   },
   agents: [
-    { id: 'omp', enabled: true, builtin: true },
     { id: 'claude', enabled: true, builtin: true },
     custom('custom-codex', 'Codex'),
   ],
@@ -325,7 +323,7 @@ test('load applies the server list and defaults to the page registry', async () 
   assert.equal(data.revision, 'r1');
   assert.deepEqual(
     AC.AGENTS.map((a) => a.id),
-    ['omp', 'claude', 'codex', 'custom-codex'],
+    ['claude', 'codex', 'custom-codex'],
   );
   assert.equal(AC.getDefaults().agent, 'claude');
   assert.equal(calls.changed, 1, 'the page redraws its New chat form');
@@ -338,7 +336,7 @@ test('load keeps the built-ins when the server cannot be read', async () => {
   assert.equal(await S.load(), null);
   assert.deepEqual(
     AC.AGENTS.map((a) => a.id),
-    ['omp', 'claude', 'codex'],
+    ['claude', 'codex'],
   );
   assert.match(S._state.loadError, /offline/);
   assert.equal(calls.post.length, 0);

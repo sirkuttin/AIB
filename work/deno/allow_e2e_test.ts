@@ -30,7 +30,7 @@ class AllowLab {
 
   studio(unique = false): Studio {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
-    const studio = new Studio({ ompCommand: 'unused', stateDir: this.state, port: 0, ownersDir: null }, { keeper });
+    const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper });
     studio.ownerProbe = () => null;
     studio.connectionFactory = (_command, cwd, provider, options) =>
       new Connection(
@@ -97,7 +97,7 @@ Deno.test({
     await keeperBinary();
     await using lab = new AllowLab();
     const a = lab.studio();
-    const c = await a.connect('omp', lab.work);
+    const c = await a.connect('claude', lab.work);
     assert(c.scratchDir && !c.scratchDir.startsWith(lab.work), 'scratch folder outside the chat folder');
 
     // 1. A safe read: AIB answers with the agent's allow-once; no card, one green line.
@@ -165,7 +165,7 @@ Deno.test({
     await keeperBinary();
     await using lab = new AllowLab();
     const a = lab.studio();
-    const c = await a.connect('omp', lab.work);
+    const c = await a.connect('claude', lab.work);
     const file = lab.state + SEP + 'allow-rules.json';
     await a.liveCall('allow-enable', { on: true });
     Deno.writeTextFileSync(file, Deno.readTextFileSync(file).replace('"enabled": true', '"enabled": true '));
@@ -194,8 +194,8 @@ Deno.test({
     await using lab = new AllowLab();
     const a = lab.studio(true);
     a.settings.worktreePerChat = () => false;
-    const c1 = await a.connect('omp', lab.work);
-    const c2 = await a.connect('omp', lab.work);
+    const c1 = await a.connect('claude', lab.work);
+    const c2 = await a.connect('claude', lab.work);
     await a.liveCall('prompt', { id: c1.id, text: 'allow:npm run lint', clientMessageId: 'm1' });
     await a.liveCall('prompt', { id: c2.id, text: 'allow:npm run lint', clientMessageId: 'm2' });
     await until(() => c1.permissions.size === 1 && c2.permissions.size === 1, 'two waiting cards', 10);

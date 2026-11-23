@@ -78,7 +78,7 @@ Deno.test('T16/T17 (B2, B3): promptRequired while AIB still finishes the turn is
 
 Deno.test('T23 (B8): held while a card is open; released by the answer, by the agent withdrawing it, and by the turn end', async () => {
   await using lab = new SteerLab();
-  const { c, p } = await lab.chat('omp');
+  const { c, p } = await lab.chat('plain');
   await c.prompt('go', 'm1');
   const prompt = await p.take('session/prompt');
   await p.permission(7);
@@ -86,7 +86,7 @@ Deno.test('T23 (B8): held while a card is open; released by the answer, by the a
   assertEquals((await c.steer('also this', 's1')).state, 'held');
   assertEquals(lane(c), [['also this', 'held', 'approval']]);
   await pause(200);
-  assertEquals(p.all('_session/steering').length, 0, 'never steered while the card is open (OMP would cancel it)');
+  assertEquals(p.all('_session/steering').length, 0, 'never steered while the card is open');
   c.permission([...c.permissions.keys()][0], 'allow_once');
   const answer = await p.answer(7);
   const steer = await p.take('_session/steering');
@@ -132,7 +132,7 @@ Deno.test('T23 (B8): held while a card is open; released by the answer, by the a
 
 Deno.test('T24 (B9): messages held at the turn end: the first goes as a prompt, the rest are steered into its turn', async () => {
   await using lab = new SteerLab();
-  const { c, p } = await lab.chat('omp');
+  const { c, p } = await lab.chat('plain');
   await c.prompt('go', 'm1');
   const prompt = await p.take('session/prompt');
   await p.permission(3);
@@ -196,9 +196,9 @@ Deno.test("T22 (B7, B8): Interrupt keeps a background helper's card, withdraws t
   assertEquals([p.all('session/prompt').length, p.all('_session/steering').length], [2, 0], 'nothing sent: paused');
 });
 
-Deno.test('B14: a cancelled stopReason the agent reports on its own (OMP after a steer) is no Interrupt: the queue goes on', async () => {
+Deno.test('B14: a cancelled stopReason the agent reports on its own (seen after a steer) is no Interrupt: the queue goes on', async () => {
   await using lab = new SteerLab();
-  const { c, p } = await lab.chat('omp');
+  const { c, p } = await lab.chat('plain');
   await c.prompt('go', 'm1');
   const prompt = await p.take('session/prompt');
   await c.queueAdd('next', 'q1');
@@ -287,7 +287,7 @@ Deno.test('T28 (B12): a steer carries the <studio-context> note like a prompt, w
 
 Deno.test('a steer the agent refuses waits in the after-turn queue with a note, and goes then with the same id', async () => {
   await using lab = new SteerLab();
-  const { c, p } = await lab.chat('omp');
+  const { c, p } = await lab.chat('plain');
   await c.prompt('go', 'm1');
   const prompt = await p.take('session/prompt');
   const sending = c.steer('please', 's1');

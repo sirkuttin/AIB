@@ -60,7 +60,7 @@ class Lab {
       orphan: null,
       extraArgs: ['--exit-after', '2s', '--orphan-after', '30s', ...this.keeperArgs],
     });
-    const studio = new Studio({ ompCommand: 'unused', stateDir: this.state, port: 0, ownersDir: null }, { keeper, keeperForNew });
+    const studio = new Studio({ claudeLauncher: import.meta.filename!, codexLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper, keeperForNew });
     studio.ownerProbe = () => null;
     studio.connectionFactory = (_command, cwd, provider, options) =>
       new Connection(fake('--cancel-aware'), cwd, provider, { ...options, env: { FAKE_ACP_LOG: this.agentLog } });
@@ -168,7 +168,7 @@ Deno.test('keeper decision: a keeper that cannot run falls back (off) and says w
     assertEquals(await decideKeeper(dir, { env, binary: () => Promise.resolve(`${dir}${SEP}no-such-keeper.exe`) }), false);
     assert(keeperProblem().includes('could not be run'), keeperProblem());
     // A Studio built after the fallback: no keeper link, agents are its children.
-    const studio = new Studio({ ompCommand: 'unused', stateDir: dir, port: 0, ownersDir: null });
+    const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: dir, port: 0, ownersDir: null });
     assertEquals([studio.keeper, studio.keeperForNew, studio.hostMode], [null, false, 'in-process']);
     await studio.close();
   } finally {
@@ -183,11 +183,11 @@ Deno.test({
   async fn() {
     await using lab = new Lab();
     const keeper = new KeeperLink({ dataDir: lab.state, orphan: null, binary: `${lab.dir}${SEP}no-such-keeper.exe`, waitSeconds: 2 });
-    const studio = new Studio({ ompCommand: 'unused', stateDir: lab.state, port: 0, ownersDir: null }, { keeper });
+    const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: lab.state, port: 0, ownersDir: null }, { keeper });
     studio.ownerProbe = () => null;
     studio.connectionFactory = (_command, cwd, provider, options) => new Connection(fake(), cwd, provider, options);
     lab.studios.push(studio);
-    const c = await studio.connect('omp', lab.work);
+    const c = await studio.connect('claude', lab.work);
     assertEquals([c.channel, c.ready], [null, true], 'the chat works, outside the keeper');
     assert(keeperProblem() !== '', 'the reason is kept for Settings > About');
     setKeeperDecision(null);
@@ -201,7 +201,7 @@ Deno.test({
     await keeperBinary();
     await using lab = new Lab();
     const a = lab.studio(); // the keeper on (a test link)
-    const c = await a.connect('omp', lab.work);
+    const c = await a.connect('codex', lab.work);
     assert(c.channel, 'started in the keeper');
     await turn(a, c, 2, 'm1');
     const keeperPid = readKeeperInfo(lab.state)!.pid;
@@ -209,12 +209,12 @@ Deno.test({
     lab.crash(a);
 
     // What a fallback start (the keeper not decided on) builds while a keeper still runs (no link passed: the Studio decides).
-    const plain = new Studio({ ompCommand: 'unused', stateDir: lab.state, port: 0, ownersDir: null });
+    const plain = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: lab.state, port: 0, ownersDir: null });
     assert(plain.keeper !== null, 'a keeper runs: a link to take its chats over');
     assertEquals([plain.keeperForNew, plain.hostMode], [false, 'in-process']);
     await plain.close();
     setKeeperDecision(true); // what main.ts decides when the keeper can run
-    const on = new Studio({ ompCommand: 'unused', stateDir: lab.state, port: 0, ownersDir: null });
+    const on = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: lab.state, port: 0, ownersDir: null });
     setKeeperDecision(null);
     assertEquals([on.keeper !== null, on.keeperForNew, on.hostMode], [true, true, 'keeper']);
     await on.close();
@@ -273,7 +273,7 @@ Deno.test({
     const keeperProgram = await keeperBinary();
     await using lab = new Lab();
     const a = lab.studio();
-    const c = await a.connect('omp', lab.work);
+    const c = await a.connect('claude', lab.work);
     const entry = c.mcpServers.find((m) => (m as unknown as Json).name === 'studio_artifact') as unknown as Json;
     assert(entry, 'the artifact tool is offered');
     assertEquals(entry.command, keeperProgram, 'the keeper program, never AIB\'s own (its files may be replaced by an update)');
@@ -367,7 +367,7 @@ Deno.test({
     await keeperBinary();
     await using lab = new Lab();
     const a = lab.studio();
-    const c = await a.connect('omp', lab.work);
+    const c = await a.connect('claude', lab.work);
     await turn(a, c, 4, 'm1');
     await turn(a, c, 4, 'm2');
     await until(() => c.snapshots >= 2, 'a snapshot at each turn end', 10);
@@ -394,7 +394,7 @@ Deno.test({
     assertEquals([page.events, page.reset, page.eventsId], [[], false, eventsId], 'the page goes on from its cursor');
     const stale = r.public(cursor + 50);
     assertEquals([stale.reset, (stale.events as Json[]).length], [true, r.events.length], 'a cursor from another numbering: all again');
-    assertEquals(b.store!.receipt('omp', 'fake-session', 'm2')!.state, 'finished');
+    assertEquals(b.store!.receipt('claude', 'fake-session', 'm2')!.state, 'finished');
 
     // It goes on: ids and once-keys continue where the old AIB left them (nothing refused, nothing sent twice).
     await turn(b, r, 2, 'm3');
@@ -413,7 +413,7 @@ Deno.test({
     await keeperBinary();
     await using lab = new Lab(['--segment-bytes', '2048']);
     const a = lab.studio();
-    const c = await a.connect('omp', lab.work);
+    const c = await a.connect('claude', lab.work);
     for (let i = 1; i <= 4; i++) await turn(a, c, 6, `m${i}`);
     await until(() => c.snapshots >= 4, 'snapshots', 10);
     const client = (await a.keeper!.client(false))!;
@@ -437,7 +437,7 @@ Deno.test({
     await keeperBinary();
     await using lab = new Lab();
     const a = lab.studio();
-    const c = await a.connect('omp', lab.work);
+    const c = await a.connect('claude', lab.work);
     await a.liveCall('prompt', { id: c.id, text: 'stream:6:80', clientMessageId: 'm1' });
     await until(() => c.permissions.size === 1, 'the question', 10);
     assertEquals(c.snapshots, 0, 'mid-turn: nothing quiet to snapshot yet');
@@ -484,7 +484,7 @@ Deno.test({
     await keeperBinary();
     await using lab = new Lab();
     const a = lab.studio();
-    const c = await a.connect('omp', lab.work);
+    const c = await a.connect('claude', lab.work);
     // 1000 tool outputs of 50 KiB: far beyond the 12 MiB a snapshot note may hold (beta.8 then stopped writing snapshots).
     assertEquals((await a.liveCall('prompt', { id: c.id, text: 'bulk:1000:50', clientMessageId: 'm0' }))[0], 200);
     await until(() => !c.busy && c.snapshots >= 1, 'the bulk turn ended and a snapshot was written', 180);
@@ -539,7 +539,7 @@ Deno.test({
     await keeperBinary();
     await using lab = new Lab(['--segment-bytes', String(1 << 20)]);
     const a = lab.studio();
-    const c = await a.connect('omp', lab.work);
+    const c = await a.connect('claude', lab.work);
     // 3 x 4000 events of 2 KiB: twice what the history keeps (MAX_EVENTS), ~25 MB through the record.
     let peak = 0;
     for (let i = 1; i <= 3; i++) {
@@ -577,7 +577,7 @@ Deno.test({
     await keeperBinary();
     await using lab = new Lab();
     const a = lab.studio();
-    const c = await a.connect('omp', lab.work);
+    const c = await a.connect('claude', lab.work);
     await turn(a, c, 4, 'm1');
     await until(() => c.snapshots >= 1, 'a snapshot', 10);
     // What beta.8 wrote: sv 1, the whole event list inside the state.

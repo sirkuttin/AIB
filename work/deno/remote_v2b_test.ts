@@ -95,7 +95,7 @@ Deno.test({
       assertEquals(projects[0].agent, 'claude');
       assert(!r.text.includes(s.project.replaceAll('\\', '\\\\')) && !r.text.includes('projects\\\\shop'), 'no folder path');
       const agents = r.json.agents as Json[];
-      assertEquals(agents.map((a) => [a.id, a.ok]), [['omp', true], ['claude', true], ['codex', false], ['kimi', false]]);
+      assertEquals(agents.map((a) => [a.id, a.ok]), [['claude', true], ['codex', false], ['kimi', false]]);
       assertEquals(agents.find((a) => a.id === 'codex')!.why, 'Turned off in Settings on your PC.');
       assertEquals(agents.find((a) => a.id === 'kimi')!.why, 'Needs sign-in. Sign in on your PC.');
       r = await phoneCall(s, phone.token, 'GET', `/api/remote/new/options?project=${s.projectId}&agent=claude`);
@@ -115,25 +115,33 @@ Deno.test({
       assertEquals(r.json.code, 'agent_unavailable');
       r = await phoneCall(s, phone.token, 'POST', '/api/remote/new', {
         project: s.projectId,
-        agent: 'omp',
+        agent: 'claude',
         text: '/doc x',
         clientMessageId: 'k2',
       });
       assertEquals(r.status, 403);
+      // OMP is no longer an AIB agent (owner decision 2026-11-23): the phone's New chat refuses it, and nothing starts
+      r = await phoneCall(s, phone.token, 'POST', '/api/remote/new', {
+        project: s.projectId,
+        agent: 'omp',
+        text: 'hi',
+        clientMessageId: 'k-omp',
+      });
+      assertEquals(r.status, 400, 'an agent AIB does not know: refused before anything starts');
       r = await phoneCall(s, phone.token, 'POST', '/api/remote/new', {
         project: 'ffffffffffff',
-        agent: 'omp',
+        agent: 'claude',
         text: 'x',
         clientMessageId: 'k3',
       });
       assertEquals(r.status, 404);
       assert(!s.liveCalls.some(([n]) => n === 'connect'), 'nothing started');
 
-      // OMP with Bypass permissions: picks go with connect; the first message goes once it is ready
+      // Claude Code with Bypass permissions: picks go with connect; the first message goes once it is ready
       const secret = 'Please refactor the payment step 🙂';
       r = await phoneCall(s, phone.token, 'POST', '/api/remote/new', {
         project: s.projectId,
-        agent: 'omp',
+        agent: 'claude',
         model: 'opus',
         mode: 'bypassPermissions',
         text: secret,
@@ -143,7 +151,7 @@ Deno.test({
       const id = r.json.id as string;
       const connect = s.liveCalls.find(([n]) => n === 'connect')![1];
       assertEquals(connect, {
-        provider: 'omp',
+        provider: 'claude',
         cwd: s.project,
         resume: '',
         background: true,
@@ -153,9 +161,9 @@ Deno.test({
       assertEquals(s.liveCalls.find(([n]) => n === 'prompt')![1], { id, text: secret, clientMessageId: 'first-1' });
       r = await phoneCall(s, phone.token, 'GET', `/api/remote/new?id=${id}`);
       assertEquals(r.json.state, 'sent');
-      // the project's default agent is now OMP; Claude's model and mode went with it; the global defaults did not change
+      // the project's default agent stays Claude Code (the same agent: its model and mode stay; the next test covers a change of agent)
       const defaults = (s.ctx.settings.public().settings as Json).defaults as Json;
-      assertEquals(clean((defaults.projects as Json)[folderKeyOf(s.project)]), { agent: 'omp' });
+      assertEquals(clean((defaults.projects as Json)[folderKeyOf(s.project)]), { model: 'opus', mode: 'default', agent: 'claude' });
       assertEquals(defaults.byAgent, {});
       // another phone cannot read this phone's new chat
       const other = await pairPhone(s, 'Other');
@@ -194,7 +202,7 @@ Deno.test({
       assert(String(r.json.warning).includes('the model Opus: Gone'), String(r.json.warning));
 
       const log = JSON.stringify(s.ctx.phone.audit.tail(500));
-      assert(log.includes('started on the PC with OMP'), log);
+      assert(log.includes('started on the PC with Claude Code'), log);
       assert(!log.includes(secret) && !log.includes('held one'), 'no message text in the activity log');
     } finally {
       setAgentRows(null);

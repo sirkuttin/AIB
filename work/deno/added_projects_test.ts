@@ -211,11 +211,11 @@ Deno.test({
     const root = await tempRoot();
     const state = j(root, 'state'), folder = j(root, 'work', 'Delta');
     Deno.mkdirSync(folder, { recursive: true });
-    const studio = new Studio({ ompCommand: 'unused', stateDir: state, port: 0 });
+    const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: state, port: 0 });
     studio.ownerProbe = () => null;
     studio.connectionFactory = (_command, cwd, provider) => new Connection(fake(), cwd, provider);
     try {
-      await studio.connect('omp', folder, null);
+      await studio.connect('claude', folder, null);
       for (let i = 0; i < 50 && !new AddedProjects(state).added.size; i++) await pause(20);
       assertEquals([...new AddedProjects(state).added.values()].map((a) => a.path), [folder]);
     } finally {

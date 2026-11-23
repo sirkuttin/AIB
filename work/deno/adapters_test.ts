@@ -121,28 +121,6 @@ Deno.test('Codex is found in the npm global folder, then on PATH', async () => {
   assertEquals([row.found, row.source, row.argv], [true, 'path', [native]]);
 });
 
-// ---- OMP (test_adapters.OmpLookupTests) ----------------------------------------------------------------------------------
-
-Deno.test('the OMP Windows fallback is used only on Windows', () => {
-  using f = fixture();
-  const exe = touch(join(f.root, 'omp', 'omp.exe'));
-  assertEquals(adapters.defaultOmpCommand({ which: () => null, systemWindows: true, localAppdata: f.root }), exe);
-  assertEquals(
-    adapters.defaultOmpCommand({ which: () => null, systemWindows: false, localAppdata: f.root }),
-    '',
-    'elsewhere: PATH or not installed',
-  );
-  assertEquals(adapters.defaultOmpCommand({ which: (n) => (n === 'omp' ? '/usr/bin/omp' : null), systemWindows: false }), '/usr/bin/omp');
-  assertEquals(adapters.defaultOmpCommand({ which: () => null, systemWindows: true, localAppdata: join(f.root, 'none') }), '');
-});
-
-Deno.test('a missing OMP is not installed', () => {
-  const row = adapters.resolveOmp('');
-  assertEquals([row.found, row.text], [false, 'Not installed']);
-  assert(adapters.resolveOmp(PY).found);
-  assertEquals(adapters.resolveOmp(PY).argv.slice(1), ['acp']);
-});
-
 // ---- login-shell PATH (test_adapters.LoginShellPathTests) ----------------------------------------------------------------
 
 const S = adapters.PATH_START, E = adapters.PATH_END;
@@ -399,9 +377,6 @@ Deno.test('resolveClaude and resolveCodex give the rows Python gives on the same
     const mine = kind === 'claude' ? await adapters.resolveClaude(options) : await adapters.resolveCodex(options);
     assertEquals(mine, await py.call('agents_shim', 'resolve', [kind, '', '', PY, null, [f.modules], '', present]));
   }
-  if (WIN) assertEquals(adapters.resolveOmp(PY), await py.call('adapters', 'resolve_omp', [PY]));
-  assertEquals(adapters.resolveOmp(''), await py.call('adapters', 'resolve_omp', ['']));
-  assertEquals(adapters.resolveOmp('no-such-omp-xyz'), await py.call('adapters', 'resolve_omp', ['no-such-omp-xyz']));
 });
 
 // ---- the Claude adapter's environment ------------------------------------------------------------------------------------

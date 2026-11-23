@@ -39,7 +39,7 @@ class Lab {
   }
   studio(): Studio {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s', ...this.keeperArgs] });
-    const studio = new Studio({ ompCommand: 'unused', stateDir: this.state, port: 0, ownersDir: null }, { keeper, keeperForNew: true });
+    const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper, keeperForNew: true });
     studio.ownerProbe = () => null;
     studio.connectionFactory = (_command, cwd, provider, options) => new Connection(fake('--cancel-aware'), cwd, provider, options ?? {});
     this.studios.push(studio);
@@ -114,7 +114,7 @@ Deno.test({
     await keeperBinary();
     await using lab = new Lab();
     const a = lab.studio();
-    const c = await a.connect('omp', lab.work);
+    const c = await a.connect('claude', lab.work);
     await turn(a, c, 4, 'm1');
     await turn(a, c, 4, 'm2');
     await until(() => c.historyCkpt !== null && !c.busy, 'a checkpoint at the turn end', 10);
@@ -153,7 +153,7 @@ for (const step of ['flush', 'note', 'commit'] as const) {
       await keeperBinary();
       await using lab = new Lab();
       const a = lab.studio();
-      const c = await a.connect('omp', lab.work);
+      const c = await a.connect('claude', lab.work);
       await turn(a, c, 3, 'm1');
       await until(() => c.historyCkpt !== null && !c.busy, 'a first checkpoint', 10);
       const first = c.historyCkpt!;
@@ -189,7 +189,7 @@ Deno.test({
     await keeperBinary();
     await using lab = new Lab();
     const a = lab.studio();
-    const c = await a.connect('omp', lab.work);
+    const c = await a.connect('claude', lab.work);
     await turn(a, c, 2, 'm1');
     await until(() => c.historyCkpt !== null && !c.busy, 'a checkpoint', 10);
     await lab.crash(a, true);
@@ -211,7 +211,7 @@ Deno.test({
     await keeperBinary();
     await using lab = new Lab();
     const a = lab.studio();
-    const c = await a.connect('omp', lab.work);
+    const c = await a.connect('claude', lab.work);
     await turn(a, c, 3, 'm1');
     await until(() => c.historyCkpt !== null && !c.busy, 'a checkpoint', 10);
     const firstEvents = shape(c.events);
@@ -249,7 +249,7 @@ Deno.test({
     await using lab = new Lab();
     // A store-on build: two turns, a checkpoint (chunk-less sv:2 note), the journal truncated before it.
     const a = lab.studio();
-    const c = await a.connect('omp', lab.work);
+    const c = await a.connect('claude', lab.work);
     await turn(a, c, 4, 'm1');
     await turn(a, c, 4, 'm2');
     await until(() => c.historyCkpt !== null && !c.busy, 'a checkpoint at the turn end', 10);
@@ -288,7 +288,7 @@ Deno.test({
     await using lab = new Lab();
     const { a, c } = await withV2Off(async () => {
       const a = lab.studio();
-      const c = await a.connect('omp', lab.work);
+      const c = await a.connect('claude', lab.work);
       await turn(a, c, 3, 'm1');
       await until(() => c.snapshots >= 1 && c.snapshotChunkBytes + c.snapshotBytes > 0, 'a chunked snapshot', 10);
       return { a, c };
@@ -312,7 +312,7 @@ Deno.test({
     await keeperBinary();
     await using lab = new Lab();
     const a = lab.studio();
-    const c = await a.connect('omp', lab.work);
+    const c = await a.connect('claude', lab.work);
     await turn(a, c, 2, 'm1');
     await until(() => c.historyCkpt !== null && !c.busy, 'a checkpoint', 10);
     const before = shape(c.events);

@@ -20,6 +20,7 @@ import { CLIP_NOTE } from '../transcripts/pycompat.ts';
 import { keptLinesIn } from '../history/lines.ts';
 import { pathStr } from '../platform/pypath.ts';
 import { agentName, plainTitle, withArtifactOrigin } from './payloads.ts';
+import { isRetired, RETIRED_NOTE } from '../agents/agent_registry.ts';
 
 type Json = Record<string, unknown>;
 const obj = (v: unknown): Json => (v && typeof v === 'object' && !Array.isArray(v) ? v as Json : {});
@@ -42,6 +43,8 @@ export interface SavedChat {
   folder: string;
   /** when it was last active (ISO), '' when unknown */
   lastActive: string;
+  /** an agent AIB no longer runs (OMP): the chat is history only, with a note where Continue was (RETIRED_NOTE) */
+  readOnly?: boolean;
 }
 
 interface SavedEntry extends SavedChat {
@@ -127,6 +130,7 @@ export class SavedChats {
         agent,
         folder,
         lastActive: isoOf(when),
+        ...(isRetired(provider) ? { readOnly: true } : {}),
       });
     };
     let sessions: unknown[] = [];
@@ -155,7 +159,14 @@ export class SavedChats {
 
 /** What the phone gets for its home list (never the folder path or the transcript key). */
 export function publicSaved(c: SavedEntry): SavedChat {
-  return { key: c.key, title: c.title, agent: c.agent, folder: c.folder, lastActive: c.lastActive };
+  return {
+    key: c.key,
+    title: c.title,
+    agent: c.agent,
+    folder: c.folder,
+    lastActive: c.lastActive,
+    ...(c.readOnly ? { readOnly: true, note: RETIRED_NOTE } : {}),
+  };
 }
 
 // ---- the saved history, as live events ---------------------------------------------------------------------------------------
@@ -326,6 +337,7 @@ export const CONTINUE_FIELDS = new Set(['key']);
  * opens). The ownership check refuses a chat another app has or may have open.
  */
 export async function continueSaved(ctx: WebContext, chat: SavedEntry): Promise<ContinueResult> {
+  if (isRetired(chat.provider)) return { status: 409, code: 'read_only', error: RETIRED_NOTE };
   const body = { provider: chat.provider, cwd: chat.cwd, resume: chat.sessionId, background: true };
   const [status, payload] = await ctx.host.liveCall('connect', body);
   const answer = obj(payload);

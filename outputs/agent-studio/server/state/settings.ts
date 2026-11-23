@@ -11,7 +11,7 @@
  * A Beta agent's API address (Qwen's OPENAI_BASE_URL, betaUrls) is kept the same way, in the same store, as `<agentId>-address`.
  *
  *   {"version":1,
- *    "agents":   {"builtin": {"omp": true, "claude": true, "codex": true}, "custom": [{id,name,command,args,env,enabled}]},
+ *    "agents":   {"builtin": {"claude": true, "codex": true}, "custom": [{id,name,command,args,env,enabled}]},
  *    "defaults": {"agent": "", "byAgent": {id: {model, mode}}, "projects": {projectKey: {agent, model, mode}}, "migrated": false},
  *    "server":   {"autoReconnect": true, "worktreePerChat": true, "autoUpdateCheck": true, "keepAwake": false},
  *    "editors":  {"default": "" | "code" | "cursor" | "windsurf" | "devin"},
@@ -33,7 +33,7 @@ import {
   isBeta,
   isBuiltin,
   isCustom,
-  isProvider,
+  isChoosable,
   MAX_AGENTS,
   MAX_COMMAND,
   MAX_ENV_VALUE,
@@ -99,7 +99,7 @@ export const MAX_DISTROS = 32;
 
 /** An agent id a distro switch may name: a built-in, a Beta or a custom agent id (one line). */
 export function distroAgentId(value: unknown): value is string {
-  return isProvider(value) && !value.includes('\n');
+  return isChoosable(value) && !value.includes('\n');
 }
 
 type Dict = Record<string, unknown>;
@@ -194,7 +194,7 @@ export class SettingsStore extends JsonFileStore {
 
   static blank(): Settings {
     return {
-      agents: { builtin: { omp: true, claude: true, codex: true }, custom: [] },
+      agents: { builtin: { claude: true, codex: true }, custom: [] },
       defaults: { agent: '', byAgent: {}, projects: {}, migrated: false },
       // worktreePerChat: on by default; hidden, never shown by public(), and no longer read: every new chat works in the project
       // folder (owner decision 2026-11-16, no per-chat Own copy; only helpers get copies). Kept so old settings files load. The keeper has no setting (it is always on): an old saved
@@ -222,7 +222,7 @@ export class SettingsStore extends JsonFileStore {
     const out: Choice = { model: this.value(source.model), mode: this.value(source.mode) };
     if (withAgent) {
       const agent = source.agent;
-      out.agent = agent === '' || isProvider(agent) ? agent as string : '';
+      out.agent = agent === '' || isChoosable(agent) ? agent as string : '';
     }
     return out.model || out.mode || out.agent ? out : null;
   }
@@ -275,11 +275,11 @@ export class SettingsStore extends JsonFileStore {
     }
     const defaults = isDict(raw.defaults) ? raw.defaults : {};
     const agent = defaults.agent;
-    doc.defaults.agent = agent === '' || isProvider(agent) ? agent as string : '';
+    doc.defaults.agent = agent === '' || isChoosable(agent) ? agent as string : '';
     doc.defaults.migrated = defaults.migrated === true;
     for (const [key, item] of entriesOf(isDict(defaults.byAgent) ? defaults.byAgent : {})) {
       const choice = this.choice(item, false);
-      if (isProvider(key) && choice) put(doc.defaults.byAgent, key, choice);
+      if (isChoosable(key) && choice) put(doc.defaults.byAgent, key, choice);
     }
     for (const [key, item] of entriesOf(isDict(defaults.projects) ? defaults.projects : {}).slice(0, this.MAX_PROJECTS)) {
       const choice = this.choice(item, true);
@@ -525,7 +525,7 @@ export class SettingsStore extends JsonFileStore {
 
   // ---- writing ----
   /**
-   * Apply a patch: {agents: {builtin: {omp: bool}, enabled: {id: bool}, upsert: {id?, name, command, args, env, enabled},
+   * Apply a patch: {agents: {builtin: {claude: bool}, enabled: {id: bool}, upsert: {id?, name, command, args, env, enabled},
    * remove: id}, defaults: {agent, migrated, byAgent: {id: {model, mode} | null}, projects: {key: {agent, model, mode} | null}},
    * server: {...}, editors: {default}, appearance: {defaultView}, launchers: {claude, codex}}. Nothing is saved unless the whole
    * patch is valid. Resolves true when something changed.
@@ -742,7 +742,7 @@ export class SettingsStore extends JsonFileStore {
     if (unknownKeys(patch, ['agent', 'byAgent', 'projects', 'migrated'])) throw new ValueError('Unknown defaults setting');
     const target = work.defaults;
     if ('agent' in patch) {
-      if (!isStr(patch.agent) || (patch.agent !== '' && !isProvider(patch.agent))) throw new ValueError('Choose an agent');
+      if (!isStr(patch.agent) || (patch.agent !== '' && !isChoosable(patch.agent))) throw new ValueError('Choose an agent');
       target.agent = patch.agent;
     }
     if ('migrated' in patch) {
@@ -750,7 +750,7 @@ export class SettingsStore extends JsonFileStore {
       target.migrated = patch.migrated;
     }
     for (const [key, choice] of entriesOf(section(patch.byAgent, 'defaults'))) {
-      if (!isProvider(key) || !(choice === null || isDict(choice))) throw new ValueError('Invalid agent default');
+      if (!isChoosable(key) || !(choice === null || isDict(choice))) throw new ValueError('Invalid agent default');
       this.#mergeChoice(target.byAgent, key, choice, false);
     }
     const projects = section(patch.projects, 'defaults');
@@ -780,7 +780,7 @@ export class SettingsStore extends JsonFileStore {
     for (const field of withAgent ? ['model', 'mode', 'agent'] : ['model', 'mode']) {
       if (field in value) {
         if (!isStr(value[field])) throw new ValueError(`Invalid ${field}`);
-        if (field === 'agent' && value[field] !== '' && !isProvider(value[field])) throw new ValueError('Choose an agent');
+        if (field === 'agent' && value[field] !== '' && !isChoosable(value[field])) throw new ValueError('Choose an agent');
         current[field] = value[field];
       }
     }

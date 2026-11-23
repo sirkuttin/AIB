@@ -46,7 +46,7 @@ async function transcript(id: string, rows: Json[], age = 0): Promise<string> {
 }
 
 function studioWith(state: string, command: (ref: string) => string[], program: string): Studio {
-  const studio = new Studio({ ompCommand: 'unused', stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
+  const studio = new Studio({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
   studio.ownerProbe = () => {
     throw new Error('a WSL chat never asks Windows for its owner');
   };

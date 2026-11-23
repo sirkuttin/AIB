@@ -18,7 +18,7 @@ import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts'
 type Json = Record<string, unknown>;
 
 function studioIn(state: string, keeper: KeeperLink | null = null): Studio {
-  const studio = new Studio({ ompCommand: 'unused', stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper });
+  const studio = new Studio({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper });
   studio.ownerProbe = () => null;
   studio.connectionFactory = (_command, cwd, provider, options) =>
     new Connection(['python3', `${ROOT}/fake_acp.py`, '--cancel-aware'], cwd, provider, {

@@ -4025,3 +4025,7 @@ span.chip-static:hover {
 .allow-rule { display: block; margin: 4px 0; }
 .allow-master { display: block; margin: 6px 0 10px; }
 .answered-line .answered-rule { margin-left: 8px; font-size: .85em; }
+
+/* An agent AIB no longer runs (OMP): its saved chats are read-only history, one plain line instead of the composer. */
+.retired-note { max-width: 1250px; margin: 8px auto; padding: 10px 14px; color: var(--muted, #6b7280); text-align: center; }
+.chat-retired #promptForm, .chat-retired .composer-row, .chat-retired #queueBox { display: none; }

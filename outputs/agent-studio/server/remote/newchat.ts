@@ -192,7 +192,7 @@ export function defaultAgent(ctx: WebContext, folder: string, agents: Eligible[]
   if (ok(defaults.agent)) return defaults.agent as string;
   const last = ctx.viewPrefs.public().prefs['studio-new-chat-agent'];
   if (ok(last)) return last as string;
-  return agents.find((a) => a.ok)?.id ?? 'omp';
+  return agents.find((a) => a.ok)?.id ?? 'claude';
 }
 
 /** The model and mode a new chat starts with for this agent in this folder (agent-choice.js defaultPicks). */

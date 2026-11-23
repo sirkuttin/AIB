@@ -183,7 +183,7 @@ class Box {
     if (swarmOn) setSwarmEnabled(this.state, true); // phase 1 is off by default (swarm/settings.ts): the slice tests turn it on first
     runGit(this.project, 'config', 'user.name', 't');
     runGit(this.project, 'config', 'user.email', 't@t');
-    const studio = new Studio({ ompCommand: 'unused', stateDir: this.state, port: 0 }, { keeper: null });
+    const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0 }, { keeper: null });
     studio.ownerProbe = () => null;
     studio.agentLaunch = () => Promise.resolve([['unused'], {}]);
     studio.connectionFactory = (_command, cwd, provider, options) =>

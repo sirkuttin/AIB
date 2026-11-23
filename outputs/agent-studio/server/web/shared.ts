@@ -27,7 +27,6 @@ import { logWorkerError } from '../core/crash_trail.ts';
 export interface AgentOptions {
   stateDir?: string | null;
   nodeCommand?: string;
-  ompCommand?: string;
   claudeLauncher?: string;
   codexLauncher?: string;
   migration?: Record<string, unknown> | null;
@@ -88,7 +87,6 @@ export async function builtinLaunch(
   agentId: string,
 ): Promise<adapters.LaunchRow> {
   const node = options.nodeCommand || '';
-  if (agentId === 'omp') return adapters.resolveOmp(options.ompCommand || '');
   const flag = String((agentId === 'claude' ? options.claudeLauncher : agentId === 'codex' ? options.codexLauncher : '') || '');
   const saved = settings !== null ? settings.launcher(agentId) : '';
   const stateDir = options.stateDir ?? null; // Studio's own installs live under it; read fresh on every call
@@ -166,7 +164,7 @@ export async function describeAgents(
   }
   const probe = defaultProbe(options.nodeCommand || '', recheck);
   let claudeRow: adapters.LaunchRow | null = null;
-  for (const [agentId, letter] of [['omp', 'O'], ['claude', 'C'], ['codex', 'X']] as const) {
+  for (const [agentId, letter] of [['claude', 'C'], ['codex', 'X']] as const) {
     const row = await builtinLaunch(options, settings, agentId);
     if (agentId === 'claude') claudeRow = row;
     const installable = hasOwn(adapters.STUDIO_PACKAGES, agentId);
@@ -516,7 +514,6 @@ export function agentListOffThread(
     options: {
       stateDir: options.stateDir ?? null,
       nodeCommand: options.nodeCommand ?? '',
-      ompCommand: options.ompCommand ?? '',
       claudeLauncher: options.claudeLauncher ?? '',
       codexLauncher: options.codexLauncher ?? '',
     },

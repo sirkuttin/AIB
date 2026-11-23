@@ -58,7 +58,7 @@ Deno.test('builtinLaunch uses the flag, then Settings, then the installed adapte
   const installed = touch(join(m.modules, '@agentclientprotocol', 'claude-agent-acp', 'dist', 'index.js'));
   const flag = touch(join(m.root, 'flag.js'));
   const saved = touch(join(m.root, 'saved.js'));
-  const options = { ompCommand: '', claudeLauncher: '', nodeCommand: PY, stateDir: m.state };
+  const options = { claudeLauncher: '', nodeCommand: PY, stateDir: m.state };
   const settings = new SettingsStore(m.state);
   assertEquals((await shared.builtinLaunch(options, settings, 'claude')).argv, [PY_REAL, installed]);
   await settings.update({ launchers: { claude: saved } });
@@ -71,7 +71,6 @@ Deno.test('builtinLaunch uses the flag, then Settings, then the installed adapte
   options.claudeLauncher = '';
   assertEquals((await shared.builtinLaunch(options, settings, 'claude')).argv, [PY_REAL, installed]);
   assertEquals((await shared.builtinLaunch(options, null, 'claude')).source, 'installed');
-  assertEquals((await shared.builtinLaunch({ ompCommand: PY }, null, 'omp')).argv.slice(1), ['acp']);
   assertEquals((await shared.builtinLaunch({ codexLauncher: flag, nodeCommand: PY }, null, 'codex')).source, 'flag');
 });
 
@@ -82,26 +81,25 @@ Deno.test('the list: built-ins first, status from open chats, found and hidden e
   const store = new SettingsStore(m.root);
   await store.update({ agents: { upsert: agent() } });
   await store.update({ agents: { upsert: agent('Missing one') } });
-  const options = { ompCommand: 'nothing-here-xyz', claudeLauncher: join(m.root, 'x.js'), nodeCommand: PY };
+  const options = { claudeLauncher: join(m.root, 'x.js'), nodeCommand: PY };
   const listed = await shared.describeAgents(options, store, [
     { provider: 'custom-fake-agent', ready: true },
     { provider: 'custom-missing-one', auth: { x: 1 }, ready: false },
-    { provider: 'omp', closed: true, ready: true },
+    { provider: 'claude', closed: true, ready: true },
   ]);
   const by = Object.fromEntries(listed.map((a) => [a.id, a]));
-  assertEquals(listed.slice(0, 3).map((a) => a.id), ['omp', 'claude', 'codex']);
-  assert(!by.omp.found && by.omp.problem);
+  assertEquals(listed.slice(0, 2).map((a) => a.id), ['claude', 'codex']);
   assert(!by.claude.found);
-  assertEquals(by.omp.status, '', 'a closed chat tells nothing');
+  assertEquals(by.claude.status, '', 'a closed chat tells nothing');
   assert(by['custom-fake-agent'].found);
   assertEquals([by['custom-fake-agent'].status, by['custom-missing-one'].status], ['running', 'signin']);
   assertEquals(by['custom-fake-agent'].env, [{ name: 'FAKE_TOKEN', set: true }]);
-  assert(by.omp.builtin && !by['custom-fake-agent'].builtin);
+  assert(by.claude.builtin && !by['custom-fake-agent'].builtin);
 });
 
 Deno.test('Codex shows not installed when missing', async () => {
   using m = machine();
-  const options = { ompCommand: '', claudeLauncher: '', nodeCommand: PY, stateDir: m.state };
+  const options = { claudeLauncher: '', nodeCommand: PY, stateDir: m.state };
   const listed = Object.fromEntries((await shared.describeAgents(options, new SettingsStore(m.state))).map((a) => [a.id, a]));
   const codex = listed.codex;
   assert(codex.builtin && !codex.found);
@@ -116,13 +114,12 @@ Deno.test('Node.js missing: the block line on missing agents and the npm hint fo
   const listed = Object.fromEntries((await shared.describeAgents({ stateDir: m.state }, new SettingsStore(m.state))).map((a) => [a.id, a]));
   assertEquals(listed.claude.installBlock, 'Node.js 22 or newer is needed to install this agent.');
   assertEquals(listed.codex.installHint, 'Or install it yourself with: npm i -g @agentclientprotocol/codex-acp');
-  assertEquals([listed.omp.installBlock, listed.omp.installable], ['', false]);
 });
 
 Deno.test('Codex adapter found but no Codex program: the row says to install it; with the program, it says nothing', async () => {
   using m = machine();
   makeInstall(m.state, 'codex', '2.6.0', '@agentclientprotocol/codex-acp', { bin: { 'codex-acp': 'dist/index.js' } });
-  const options = { stateDir: m.state, nodeCommand: PY, claudeLauncher: '', codexLauncher: '', ompCommand: '' };
+  const options = { stateDir: m.state, nodeCommand: PY, claudeLauncher: '', codexLauncher: '' };
   const row = async () => (await shared.describeAgents(options, new SettingsStore(m.state))).find((a) => a.id === 'codex')!;
   try {
     shared.describeHooks.codexCli = () => Promise.resolve(null);
@@ -147,7 +144,7 @@ Deno.test('Codex adapter found but no Codex program: the row says to install it;
 
 Deno.test('a new install is seen by the next lookup with no restart (WebServerAndHostReadFresh)', async () => {
   using m = machine();
-  const options = { stateDir: m.state, nodeCommand: PY, claudeLauncher: '', codexLauncher: '', ompCommand: '' };
+  const options = { stateDir: m.state, nodeCommand: PY, claudeLauncher: '', codexLauncher: '' };
   const settings = new SettingsStore(join(m.root, 'settings-state'));
   const claudeRow = async () => (await shared.describeAgents(options, settings)).find((a) => a.id === 'claude')!;
   const first = await claudeRow();
@@ -171,7 +168,6 @@ Deno.test('describeAgents reads only the cache and the job files, and never runs
     const settings = new SettingsStore(m.state);
     let rows = Object.fromEntries((await shared.describeAgents(options, settings, [])).map((a) => [a.id, a]));
     assertEquals((rows.claude.signin as shared.SigninView).state, 'unknown');
-    assertEquals(rows.omp.signin, null);
     const folder = join(m.state, 'agents', 'claude');
     installer.writeJson(join(folder, signin.CACHE_NAME), { state: 'signin', checkedAt: 7 });
     installer.writeJson(join(folder, signin.JOB_NAME), { state: 'manual', message: 'Run this', command: 'x', pid: Deno.pid, updatedAt: 1 });
@@ -231,9 +227,9 @@ Deno.test('the agent list matches Python on the same fixture', async () => {
     closed: true,
   }];
   const cases: [Record<string, string>, [string, boolean]][] = [
-    [{ node_command: PY, omp_command: PY, claude_launcher: '', codex_launcher: '' }, ['', true]],
-    [{ node_command: PY, omp_command: 'nothing-here-xyz', claude_launcher: flag, codex_launcher: join(m.root, 'gone.js') }, ['', true]],
-    [{ node_command: 'no-node-xyz', omp_command: '', claude_launcher: '', codex_launcher: '' }, [
+    [{ node_command: PY, claude_launcher: '', codex_launcher: '' }, ['', true]],
+    [{ node_command: PY, claude_launcher: flag, codex_launcher: join(m.root, 'gone.js') }, ['', true]],
+    [{ node_command: 'no-node-xyz', claude_launcher: '', codex_launcher: '' }, [
       'Node.js 22 or newer is needed to install this agent.',
       false,
     ]],
@@ -243,7 +239,6 @@ Deno.test('the agent list matches Python on the same fixture', async () => {
     const options = {
       stateDir: m.state,
       nodeCommand: opts.node_command,
-      ompCommand: opts.omp_command,
       claudeLauncher: opts.claude_launcher,
       codexLauncher: opts.codex_launcher,
     };
@@ -251,8 +246,9 @@ Deno.test('the agent list matches Python on the same fixture', async () => {
     // cliHint (Codex's adapter without the Codex program) is Deno only too.
     const mine = (await shared.describeAgents(options, new SettingsStore(settingsDir), connections)).filter((r) => !r.beta)
       .map(({ cliHint: _cliHint, ...row }) => row);
-    const theirs = await py.call('agents_shim', 'describe', [m.state, settingsDir, opts, connections, [m.modules], '', false, block]);
-    assertEquals(mine, theirs, JSON.stringify(opts));
+    const theirs = await py.call('agents_shim', 'describe', [m.state, settingsDir, { ...opts, omp_command: '' }, connections, [m.modules], '', false, block]);
+    // the Python reference still lists OMP (retired in Deno, 2026-11-23)
+    assertEquals(mine, (theirs as { id: string }[]).filter((r) => r.id !== 'omp'), JSON.stringify(opts));
   }
 });
 
@@ -280,7 +276,7 @@ Deno.test('settingsView: the stored settings, the list and the notices; an unrea
     waitingChats: 2,
   });
   const view = await shared.settingsView(ctx);
-  assertEquals((view.agents as { id: string }[]).map((a) => a.id), ['omp', 'claude', 'codex', ...BETA_IDS]);
+  assertEquals((view.agents as { id: string }[]).map((a) => a.id), ['claude', 'codex', ...BETA_IDS]);
   assert(typeof view.revision === 'string' && 'settings' in view && 'warning' in view);
   assertEquals(view.migration, { state: 'none' });
   assertEquals(view.hostTakeoverWaiting, 2);

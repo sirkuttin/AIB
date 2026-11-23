@@ -653,7 +653,7 @@ Deno.test('settings: defaults when no file; the hidden flag never reaches the pa
   const dir = tempDir();
   const store = new SettingsStore(dir);
   const data = store.snapshot();
-  assertEquals(data.agents, { builtin: { omp: true, claude: true, codex: true }, custom: [] });
+  assertEquals(data.agents, { builtin: { claude: true, codex: true }, custom: [] });
   assertEquals(data.server, { autoReconnect: true, worktreePerChat: true, autoUpdateCheck: true, keepAwake: false, getTestBuilds: false, commitIdentity: '' });
   assertEquals((store.public().settings as { server: unknown }).server, {
     autoReconnect: true,
@@ -699,8 +699,8 @@ Deno.test('settings: other writers are picked up', async () => {
   const a = new SettingsStore(dir);
   const b = new SettingsStore(dir);
   const before = a.revision();
-  await b.update({ agents: { builtin: { omp: false } } });
-  assertEquals(a.builtinEnabled('omp'), false);
+  await b.update({ agents: { builtin: { codex: false } } });
+  assertEquals(a.builtinEnabled('codex'), false);
   assert(a.revision() !== before);
 });
 
@@ -739,9 +739,9 @@ Deno.test('settings: built-ins can be turned off but not removed or clobbered', 
   await store.update({ agents: { builtin: { claude: false } } });
   assertEquals(store.builtinEnabled('claude'), false);
   for (
-    const body of [{ agents: { remove: 'omp' } }, { agents: { builtin: { gemini: true } } }, { agents: { builtin: { omp: 'no' } } }, {
-      agents: { upsert: agent('OMP') },
-    }, { agents: { upsert: agent('claude code') } }]
+    const body of [{ agents: { remove: 'omp' } }, { agents: { builtin: { gemini: true } } }, { agents: { builtin: { omp: 'no' } } }, { agents: { builtin: { omp: true } } }, {
+      agents: { upsert: agent('claude code') },
+    }]
   ) await assertRejects(() => store.update(body), ValueError);
   await store.update({ agents: { enabled: { codex: false } } });
   assertEquals(store.builtinEnabled('codex'), false);
@@ -797,8 +797,8 @@ Deno.test('settings: defaults merge and clear', async () => {
   assertEquals(store.snapshot().defaults.projects['w:c/a'], { agent: 'claude', model: 'opus', mode: 'plan' });
   await store.update({ defaults: { projects: { 'w:c/a': { agent: '', model: '', mode: '' } } } });
   assertEquals(store.snapshot().defaults.projects, {});
-  await store.update({ defaults: { byAgent: { omp: { model: 'm' } }, migrated: true } });
-  await store.update({ defaults: { byAgent: { omp: null } } });
+  await store.update({ defaults: { byAgent: { codex: { model: 'm' } }, migrated: true } });
+  await store.update({ defaults: { byAgent: { codex: null } } });
   assertEquals(store.snapshot().defaults.byAgent, {});
   assertEquals(store.snapshot().defaults.migrated, true);
 });
@@ -833,7 +833,7 @@ Deno.test('settings: corrupt, unknown and hand-edited files', () => {
     }),
   );
   const data = new SettingsStore(dir).snapshot();
-  assertEquals(data.agents.builtin, { omp: true, claude: false, codex: true });
+  assertEquals(data.agents.builtin, { claude: false, codex: true });
   assertEquals(data.agents.custom.map((a) => a.id), ['custom-ok']);
   assertEquals([data.defaults.agent, data.defaults.projects], ['', { k: { model: '', mode: '', agent: 'custom-ok' } }]);
   assertEquals(data.server.autoReconnect, true);

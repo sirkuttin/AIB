@@ -360,7 +360,7 @@ Deno.test({
       s.pick.caps = { image: true, embeddedContext: true };
       let r = await phoneCall(s, phone.token, 'POST', '/api/remote/new', {
         project: s.projectId,
-        agent: 'omp',
+        agent: 'claude',
         text: '',
         clientMessageId: 'nf1',
         attachments: [PNG, NOTES],
