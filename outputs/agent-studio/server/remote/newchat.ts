@@ -34,6 +34,7 @@ import { type Eligible, eligibleAgents, reasonWords } from '../agents/eligibilit
 import { projectId, projectsFor } from './projects.ts';
 import { projectKey } from '../desktop/project_delete.ts';
 import { agentLabel, MAX_TEXT, phoneAttachments, Refusal, REFUSALS, takesOf } from './actions.ts';
+import { resolveMode } from '../agents/mode_ids.ts';
 import { getLogger } from '../core/log.ts';
 import { wslLocOf } from '../platform/location.ts';
 import { distroName } from '../wsl/access.ts';
@@ -239,14 +240,14 @@ export async function newChatOptions(
 const probedAt = new Map<string, number>();
 
 /** One option list as the phone shows it. */
-function listOf(option: unknown, fallbackDefault: string): PickList | null {
+function listOf(option: unknown, fallbackDefault: string, renamed = false): PickList | null {
   const o = obj(option);
   const choices = (Array.isArray(o.choices) ? o.choices : []).map(obj)
     .filter((c) => typeof c.value === 'string' && c.value)
     .map((c) => ({ value: str(c.value), name: str(c.name, 80) || str(c.value) }))
     .slice(0, 200);
   if (!choices.length) return null;
-  const saved = fallbackDefault && choices.some((c) => c.value === fallbackDefault) ? fallbackDefault : '';
+  const saved = fallbackDefault ? resolveMode(choices.map((c) => c.value), fallbackDefault, renamed) : ''; // renamed: a saved codex 'auto' marks 'workspace-write'
   const current = choices.some((c) => c.value === str(o.current)) ? str(o.current) : '';
   return { choices, default: saved, current };
 }
@@ -265,7 +266,7 @@ export async function pickLists(
   const options = status === 200 ? obj(obj(payload).options) : {};
   const defaults = defaultPicks(ctx, folder, agent);
   const model = listOf(options.model, defaults.model);
-  const mode = listOf(options.mode, defaults.mode);
+  const mode = listOf(options.mode, defaults.mode, true);
   if (model || mode) return { model, mode, loading: false, problem: '' };
   const key = `${agent}|${folderKey(folder)}`;
   const last = probedAt.get(key) ?? 0;

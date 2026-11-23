@@ -38,6 +38,7 @@ parser.add_argument('--models', action='store_true', help="A long model list, th
 parser.add_argument('--beta-auth', action='store_true', help="With --auth-required: the Beta agents' sign-in shapes instead of the fixture ones: a terminal-type method (args ['--fixture-login']), offered only to a client that sends clientCapabilities.auth.terminal, and an agent-type API key method 'gemini-api-key' that takes the key in _meta['api-key']. A successful sign-in writes --auth-file, as a real agent keeps its login")
 parser.add_argument('--acp-models', action='store_true', help="Gemini's model shape: session/new carries models {availableModels: [{modelId, name, description}], currentModelId} and no model config option; session/set_model (unstable_setSessionModel) changes it; a prompt 'model?' replies with the current model id")
 parser.add_argument('--claude-modes', action='store_true', help="Claude Code's mode ids (default, acceptEdits, plan, bypassPermissions) with the long model list (implies --models), for a Claude helper's edit-in-workspace pick")
+parser.add_argument('--codex-modes', choices=['v2.6', 'old', 'neither'], help="Codex's mode lists with the long model list (implies --models): v2.6 = codex-acp 2.6.0 (read-only, workspace-write, agent, agent-full-access), old = before 2.6 (read-only, auto, full-access), neither = only ask and full-access")
 parser.add_argument('--fixture-login', action='store_true', help='The terminal sign-in itself: write --auth-file, print a line and exit 0 (no ACP)')
 parser.add_argument('--prompt-auth', action='store_true', help="An expired login mid-session (claude-agent-acp's shape): until --auth-file exists, every session/prompt sends the agent text 'Failed to authenticate: OAuth session expired and could not be refreshed' and fails with -32000 'Authentication required'. initialize advertises an agent method 'fixture-login' (authenticate writes --auth-file) and, to a client that sends clientCapabilities.auth.terminal, a terminal method 'claude-ai-login' (args ['--fixture-login']) and 'console-login' (args ['--fixture-login', '--fail-login'] with --fail-login: exits 3)")
 parser.add_argument('--fail-login', action='store_true', help='With --fixture-login: print a line and exit 3 without signing in')
@@ -105,6 +106,8 @@ MODEL_NAMES = ['Sol 6.1', 'Sol 6.1 Mini', 'Terra 5', 'Terra 5 Fast', 'Luna 4', '
                'Orion 2', 'Orion 2 Vision', 'Atlas 1', 'Atlas 1 Max', 'Nova 7', 'Nova 7 Lite', 'Pulsar 9', 'Quasar 8']
 modes = {'currentModeId': 'code', 'availableModes': [{'id': 'code', 'name': 'Code'}]}
 session_news = 0
+if args.codex_modes:
+    args.models = True
 if args.models:
     args.breadth = True
     config_options = [
@@ -125,6 +128,17 @@ if args.claude_modes:
     modes = {'currentModeId': 'default', 'availableModes': [
         {'id': 'default', 'name': 'Default'}, {'id': 'acceptEdits', 'name': 'Accept edits'},
         {'id': 'plan', 'name': 'Plan'}, {'id': 'bypassPermissions', 'name': 'Bypass permissions'}]}
+
+if args.codex_modes:
+    _CODEX_MODES = {
+        'v2.6': ['read-only', 'workspace-write', 'agent', 'agent-full-access'],
+        'old': ['read-only', 'auto', 'full-access'],
+        'neither': ['read-only', 'agent', 'agent-full-access'],
+    }[args.codex_modes]
+    modes = {'currentModeId': _CODEX_MODES[0], 'availableModes': [{'id': i, 'name': i} for i in _CODEX_MODES]}
+    if args.codex_modes == 'v2.6':  # the real list, names and descriptions, recorded from the installed adapter
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'deno', 'codex_acp_2_6_0_modes.json'), encoding='utf8') as _f:
+            modes['availableModes'] = json.load(_f)['availableModes']
 
 
 def current_settings_text():

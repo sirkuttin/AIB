@@ -245,7 +245,8 @@ export function rulesHere(rules: AllowRule[], project: string): AllowRule[] {
 }
 
 const BYPASS = new Set(['bypassPermissions']);
-const CODEX_SANDBOXED = new Set(['auto', 'read-only']);
+// codex-acp before 2.6 called its workspace-write mode `auto`; 2.6 calls it `workspace-write` (`agent`, Auto review, is not listed)
+const CODEX_SANDBOXED = new Set(['auto', 'workspace-write', 'read-only']);
 
 export type MatchResult = { allow: true; ruleId: string; label: string; flagged: boolean } | { allow: false; reason: string };
 

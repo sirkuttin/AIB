@@ -88,7 +88,8 @@ export const REFUSALS = {
 
 /** Option ids that switch a chat's permission mode (Claude Code's plan exit and mode names; other agents' mode words). */
 const MODE_IDS = new Set(
-  ['default', 'acceptedits', 'bypasspermissions', 'plan', 'dontask', 'auto', 'autoedit', 'auto_edit', 'yolo', 'full-access', 'readonly']
+  ['default', 'acceptedits', 'bypasspermissions', 'plan', 'dontask', 'auto', 'autoedit', 'auto_edit', 'yolo', 'full-access', 'readonly',
+    'workspace-write', 'agent', 'agent-full-access']
     .map((s) => s.toLowerCase()),
 );
 const LASTING = /always|don'?t ask|do not ask|never ask|session|remember|auto[- ]?accept|bypass|for all|every time|from now on/i;

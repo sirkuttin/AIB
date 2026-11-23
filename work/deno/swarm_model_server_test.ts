@@ -112,7 +112,7 @@ Deno.test({
     const claude = on.find((p) => p.id === 'claude@strata')!;
     const codex = on.find((p) => p.id === 'codex@strata')!;
     assertEquals([claude.name, claude.ok, claude.reason, claude.workspaceMode], ['Claude Code · strata', true, '', 'acceptEdits']);
-    assertEquals([codex.name, codex.ok, codex.workspaceMode], ['Codex · strata', true, 'auto']);
+    assertEquals([codex.name, codex.ok, codex.workspaceMode], ['Codex · strata', true, 'workspace-write']);
     assert(on.some((p) => p.id === 'claude') && on.some((p) => p.id === 'gemini'), 'the built-ins stay');
     assert(!on.some((p) => p.id === 'maki@strata' || p.id === 'qwen@strata'), 'agents with no helper mode are not listed');
     await box.server(box.serve(), ['codex']);

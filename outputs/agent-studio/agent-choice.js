@@ -197,6 +197,14 @@
     const str = (v) => (typeof v === 'string' ? v : '');
     return { model: str(pick && pick.model) || str(glob.model), mode: str(pick && pick.mode) || str(glob.mode) };
   }
+  // Codex mode ids renamed by codex-acp 2.6 (server/agents/mode_ids.ts has the same table): a saved old id maps to its same-breadth twin.
+  const RENAMED_MODES = {
+    auto: 'workspace-write',
+    'workspace-write': 'auto',
+    'full-access': 'agent-full-access',
+    'agent-full-access': 'full-access',
+  };
+  const renamedMode = (id) => (Object.prototype.hasOwnProperty.call(RENAMED_MODES, id) ? RENAMED_MODES[id] : '');
   // One-time carry-over of the old browser-only memory (last agent per project) into Settings. Pure: returns the patch or null.
   function legacyPatch(storage) {
     try {
@@ -439,6 +447,7 @@
     getDefaults,
     setSink,
     defaultPicks,
+    renamedMode,
     legacyPatch,
     STORAGE_KEY: KEY,
     MAX_HANDOFF,

@@ -3878,6 +3878,11 @@
       efforts = named(lists.effort);
     // A pick the agent no longer lists (or one for another agent) goes back to Default; nothing is dropped while still loading.
     if (!lists.loading || lists.model) if (!models.some((m) => m.value === newDraft.model)) newDraft.model = '';
+    // A saved Codex mode from before codex-acp 2.6 (auto, full-access) shows as its renamed twin (workspace-write, agent-full-access).
+    if (newDraft.mode && !modes.some((m) => m.value === newDraft.mode)) {
+      const twin = AgentChoice.renamedMode(newDraft.mode);
+      if (twin && modes.some((m) => m.value === twin)) newDraft.mode = twin;
+    }
     if (!lists.loading || lists.mode) if (!modes.some((m) => m.value === newDraft.mode)) newDraft.mode = '';
     if (!lists.loading || lists.effort) if (!efforts.some((m) => m.value === newDraft.effort)) newDraft.effort = '';
     fillSelect($('ncAgent'), wslAgentRows(AgentChoice.menuRows(), f.cwd), newDraft.provider);

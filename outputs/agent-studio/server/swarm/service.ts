@@ -22,7 +22,7 @@ import { type Helper, helperOf, HOLDING_STATES, type Landing, newHelperId, readH
 import { lockChats, newLockId } from '../worktrees/landing_lock.ts';
 import { CopyMergeQueue } from '../worktrees/merge_queue.ts';
 import { BriefError, briefPrompt, overlaps, owned, readBrief, wrapReport } from './brief.ts';
-import { DEFAULT_RULES, pickProvider, WORKSPACE_MODE, workspaceModeOf } from './rules.ts';
+import { DEFAULT_RULES, pickProvider, WORKSPACE_MODE, workspaceModeOf, workspaceModesOf } from './rules.ts';
 import { baseAgent, isServerEntry, serverIdOf } from '../agents/claude_family.ts';
 import { type ModelServer, modelServerLabel } from '../agents/model_servers.ts';
 import { MODEL_SERVER_AGENTS } from '../agents/claude_family.ts';
@@ -276,7 +276,7 @@ export class Swarm {
     const out: { id: string; label: string }[] = [];
     for (const server of this.ctx.settings.modelServers?.() ?? []) {
       for (const agent of MODEL_SERVER_AGENTS) {
-        if (WORKSPACE_MODE[agent] && server.useWith.includes(agent)) out.push({ id: `${agent}@${server.id}`, label: modelServerLabel(agent, server.name) });
+        if (WORKSPACE_MODE[agent]?.length && server.useWith.includes(agent)) out.push({ id: `${agent}@${server.id}`, label: modelServerLabel(agent, server.name) });
       }
     }
     return out;
@@ -319,7 +319,7 @@ export class Swarm {
     const builtins = await Promise.all(ids.filter((id) => WORKSPACE_MODE[id]).map(async (id) => {
       const why = (id === 'claude' && !claude ? 'Claude helpers are turned off in Settings' : this.#usable(id)) ||
         await this.#agentProblem(id);
-      return { id, name: providerName(id), ok: !why, reason: why, workspaceMode: WORKSPACE_MODE[id] };
+      return { id, name: providerName(id), ok: !why, reason: why, workspaceMode: WORKSPACE_MODE[id][0] };
     }));
     const entries = await Promise.all(this.#serverEntries().map(async (e) => {
       const why = this.#usable(e.id) || await this.#serverDown(e.id) || await this.#agentProblem(e.id);
@@ -398,7 +398,8 @@ export class Swarm {
       notes: [],
     };
     await this.registry.update(id, () => record);
-    const picks: Json = { mode, ...(picked.model ? { model: picked.model } : {}) };
+    // `mode` is the preferred id; `modeAnyOf` is the whole list: the connection takes the first one the agent offers, never a broader one
+    const picks: Json = { mode, modeAnyOf: [...workspaceModesOf(picked.provider)], ...(picked.model ? { model: picked.model } : {}) };
     const [code, payload] = await this.ctx.host.liveCall('connect', {
       provider: picked.provider,
       cwd: project,
@@ -469,8 +470,14 @@ export class Swarm {
       const modePick = picks.find((p) => p.kind === 'mode');
       if (!modePick || modePick.ok !== true) { // review break 7: never fall back to the agent's or the user's default mode
         await this.ctx.host.liveCall('disconnect', { id: h.chat.live });
-        return await this.#fail(id, `Could not set ${chatName(h)}'s edit-in-workspace mode (${h.chat.mode})`);
+        const offered = Array.isArray(modePick?.offered) ? (modePick.offered as unknown[]).map(String) : [];
+        const said = offered.length ? `it offers: ${offered.join(', ')}` : s(modePick?.message) || 'it offers no modes';
+        return await this.#fail(
+          id,
+          `Could not set ${chatName(h)}'s edit-in-workspace mode (wanted ${workspaceModesOf(h.chat.provider).join(' or ')}; ${said})`,
+        );
       }
+      const usedMode = s(modePick.value) || h.chat.mode; // the id the agent actually took (an older adapter names it differently)
       const worktree = {
         path: s(record.path),
         branch: s(record.branch),
@@ -478,7 +485,7 @@ export class Swarm {
         start: s(record.snapshot),
         ...(s(record.landOn) ? { landOn: s(record.landOn) } : {}), // a folder chat's helper (build plan 2.4)
       };
-      await this.registry.patch(id, { chat: { ...h.chat, lasting: lasting(state) }, worktree, cursor: Number(state.cursor) || 0 });
+      await this.registry.patch(id, { chat: { ...h.chat, mode: usedMode, lasting: lasting(state) }, worktree, cursor: Number(state.cursor) || 0 });
       const [code, payload] = await this.ctx.host.liveCall('prompt', {
         id: h.chat.live,
         text: briefPrompt(h.title, h.brief, worktree.branch),

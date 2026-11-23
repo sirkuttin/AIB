@@ -28,17 +28,22 @@ export const DEFAULT_RULES: readonly Rule[] = [
 export const JOBS: readonly string[] = DEFAULT_RULES.map((r) => r.job);
 
 /**
- * The mode id that lets each agent edit files in its own folder without asking while installs, network and writes outside still ask.
- * Checked against the agent's live mode list when the helper opens; a provider not listed here cannot be a helper.
+ * The mode ids, most wanted first, that let each agent edit files in its own folder without asking while installs, network and writes
+ * outside still ask. The first one the agent's live mode list offers is used (older and newer adapters name it differently); none
+ * offered means the helper is refused, never a broader mode. A provider not listed here cannot be a helper.
  */
-export const WORKSPACE_MODE: Readonly<Record<string, string>> = {
-  claude: 'acceptEdits', // claude-agent-acp
-  codex: 'auto', // codex-acp: read-only / auto (workspace-write) / full-access
-  gemini: 'autoEdit', // gemini --experimental-acp: default / autoEdit / yolo
+export const WORKSPACE_MODE: Readonly<Record<string, readonly string[]>> = {
+  claude: ['acceptEdits'], // claude-agent-acp
+  // codex-acp 2.6+: read-only / workspace-write / agent (Auto review) / agent-full-access; older: read-only / auto / full-access
+  codex: ['workspace-write', 'auto'],
+  gemini: ['autoEdit'], // gemini --experimental-acp: default / autoEdit / yolo
 };
 
-/** The edit-in-workspace mode of an agent or of a model-server entry (`claude@strata` works like `claude`); '' when AIB knows none. */
-export const workspaceModeOf = (provider: string): string => WORKSPACE_MODE[baseAgent(provider)] ?? '';
+/** The edit-in-workspace modes of an agent or of a model-server entry (`claude@strata` works like `claude`), best first; [] when AIB knows none. */
+export const workspaceModesOf = (provider: string): readonly string[] => WORKSPACE_MODE[baseAgent(provider)] ?? [];
+
+/** The preferred edit-in-workspace mode (display and the helper's first record); '' when AIB knows none. */
+export const workspaceModeOf = (provider: string): string => workspaceModesOf(provider)[0] ?? '';
 
 export interface Pick {
   provider: string;
@@ -62,7 +67,7 @@ export function pickProvider(
 ): Pick | { error: string } {
   const allowed = (p: string) => {
     if (p === 'claude' && !claudeHelpers) return 'Claude helpers are turned off in Settings';
-    if (!WORKSPACE_MODE[baseAgent(p)]) return 'AIB knows no edit-in-workspace mode for it';
+    if (!workspaceModesOf(p).length) return 'AIB knows no edit-in-workspace mode for it';
     return usable(p);
   };
   if (named) {

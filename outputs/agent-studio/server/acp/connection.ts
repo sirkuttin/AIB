@@ -56,6 +56,7 @@ import {
 import { WriteTracker } from '../artifacts/artifacts.ts';
 import { findOption as findPickOption } from '../state/agent_options.ts';
 import { betaAgent } from '../agents/beta_catalog.ts';
+import { offeredModeIds, resolveMode } from '../agents/mode_ids.ts';
 import { claudeBase, isClaudeFamily, isCodexFamily } from '../agents/claude_family.ts';
 import { artifactToolCommand } from '../artifacts/mcp.ts';
 import { isOwnForwardEntry, isOwnMcpUrl } from '../artifacts/mcp_http.ts';
@@ -1273,7 +1274,7 @@ export class Connection {
    * The model / mode / effort the person picked on the New chat page: {model?, mode?, effort?} (values, not config ids). Applied by
    * setup() right after session/new and before the connection is ready, so the first prompt already runs with them.
    */
-  startPicks: Partial<Record<'model' | 'mode' | 'effort', string>> | null = null;
+  startPicks: (Partial<Record<'model' | 'mode' | 'effort', string>> & { modeAnyOf?: string[] }) | null = null;
   /** What happened to each start pick: {kind, value, ok, message?}. Sent to the page in public(). */
   pickResults: Json[] = [];
   /** The session/new reply's settings before any pick was applied (the agent's defaults); null for a reopened chat. */
@@ -4573,8 +4574,18 @@ export class Connection {
       try {
         const modes = isDict(this.settings.modes) ? this.settings.modes : null;
         if (kind === 'mode' && modes && Array.isArray(modes.availableModes) && modes.availableModes.length) {
-          checkMode(this.settings, value);
-          if (modes.currentModeId !== value) await this.setMode(value);
+          const offered = offeredModeIds(modes);
+          // A helper names a list of acceptable ids (first offered wins, never a broader one); a remembered default that holds a
+          // renamed id (codex `auto` -> `workspace-write`) is matched to its twin. Neither offered: refused, naming what is offered.
+          const want = picks.modeAnyOf?.length ? picks.modeAnyOf : [value];
+          const use = resolveMode(offered, want, !picks.modeAnyOf?.length);
+          if (!use) {
+            entry.offered = offered;
+            throw new ValueError(`${want.join(' or ')} is not one of the modes this agent offers (${offered.join(', ')})`);
+          }
+          entry.value = use;
+          checkMode(this.settings, use);
+          if (modes.currentModeId !== use) await this.setMode(use);
         } else {
           const option = findPickOption(this.settings, kind);
           if (!option) throw new ValueError(`This agent does not offer a ${kind} setting in this chat`);

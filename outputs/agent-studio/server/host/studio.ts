@@ -292,7 +292,7 @@ export interface ConnectOptions {
   background?: boolean;
   continueAnyway?: boolean;
   /** The New chat page's picks, applied before the first prompt (Connection.startPicks). New chats only. */
-  picks?: Partial<Record<'model' | 'mode' | 'effort', string>> | null;
+  picks?: (Partial<Record<'model' | 'mode' | 'effort', string>> & { modeAnyOf?: string[] }) | null;
   /** Swarm: this new chat is a helper of that main chat (swarm/service.ts). Its role is decided here, before its tools are (review break 1). */
   helperOf?: { helperId: string; parent: string } | null;
   /** The automatic reconnect at start (reconnectOne), not the person's Continue: a WSL agent turned off for its distro is not refused then. */
@@ -341,12 +341,20 @@ export const PROBE_TIMEOUT_SECONDS = 40;
 export function readPicks(value: unknown): ConnectOptions['picks'] {
   if (value === undefined || value === null) return null;
   if (!isDict(value)) throw new ValueError('picks must be an object');
-  const out: Partial<Record<'model' | 'mode' | 'effort', string>> = {};
+  const out: Partial<Record<'model' | 'mode' | 'effort', string>> & { modeAnyOf?: string[] } = {};
   for (const kind of ['model', 'mode', 'effort'] as const) {
     const v = value[kind];
     if (v === undefined || v === null || v === '') continue;
     if (!isStr(v) || pyLen(v) > 300) throw new ValueError(`picks.${kind} must be a short string`);
     out[kind] = v;
+  }
+  // modeAnyOf: mode ids in order of preference (AIB's helpers); the first one the agent offers is used, else the mode pick fails
+  const any = value.modeAnyOf;
+  if (any !== undefined && any !== null) {
+    if (!Array.isArray(any) || any.length > 8 || !any.every((v) => isStr(v) && v && pyLen(v) <= 300)) {
+      throw new ValueError('picks.modeAnyOf must be a short list of mode ids');
+    }
+    out.modeAnyOf = [...any] as string[];
   }
   return Object.keys(out).length ? out : null;
 }
