@@ -236,7 +236,7 @@ export class Swarm {
     try {
       const subagentMerge = action === 'merge_helper' && s(obj(args).helper).startsWith('sa_'); // a subagent's: not a swarm tool
       if (!swarmEnabled(this.ctx.stateDir) && !subagentMerge) {
-        return [403, { ok: false, code: 'swarm-off', error: 'Helpers from other agents are turned off. Turn them on in Settings (Helpers from other agents, experimental), then start a new chat.' }];
+        return [403, { ok: false, code: 'swarm-off', error: 'Helpers from other agents are turned off. Turn them on in Settings › AIB Linking (Helpers from other agents), then start a new chat.' }];
       }
       const caller = await this.mainChat(conversationId);
       const a = obj(args);

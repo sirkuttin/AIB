@@ -1,12 +1,15 @@
 'use strict';
-// Settings > Agents > "Helpers from other agents (experimental)" (settings-ui.js renderSwarmHelpers): off by default, the help line,
+// Settings > AIB Linking > "Helper agents" card (settings-ui.js renderSwarmHelpers): shows what the server says, the help line,
 // and a save of swarm.enabled on change (the server keeps it in swarm-settings.json).
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { page, load } = require('./fake_dom.js');
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 5));
-const HELP = "Lets a chat's agent start helper agents from other providers. Off by default while it's being finished.";
+const HELP =
+  'Let a chat start helper agents (Codex, Gemini, Claude Code, or a model server like strata), each in its own copy of the project. You merge their work.';
+
+const shellText = (n) => n.textContent || '';
 
 async function open(swarm) {
   const shell = page();
@@ -38,14 +41,25 @@ async function open(swarm) {
   return { UI, posts, card };
 }
 
-test('the switch is off by default, labelled, with the help line', async () => {
-  const { card, UI } = await open(undefined);
+test('the card is in AIB Linking, not Experimental: label, help line, search keywords, switch follows the server', async () => {
+  const { card, UI } = await open({ enabled: true });
   const c = card();
   assert.ok(c, 'a "Helper agents" card');
-  assert.equal(c.querySelector('.st-toggle').querySelector('span').textContent, 'Helpers from other agents (experimental)');
-  assert.equal(c.querySelector('.st-toggle').querySelector('input').checked, false);
+  assert.equal(c.querySelector('.st-toggle').querySelector('span').textContent, 'Helpers from other agents');
+  assert.equal(c.querySelector('.st-toggle').querySelector('input').checked, true, 'the server default (on) shows on');
   assert.ok(c.querySelectorAll('.st-note').some((n) => n.textContent === HELP));
-  assert.ok(UI.INDEX.some((e) => e.id === 'swarm-helpers'));
+  const entry = UI.INDEX.find((e) => e.id === 'swarm-helpers');
+  assert.ok(entry);
+  assert.equal(entry.section, 'agents');
+  assert.ok(!/experimental/i.test(entry.label + ' ' + entry.keywords.join(' ')));
+  for (const k of ['helpers', 'swarm', 'subagent', 'other agents']) assert.ok(entry.keywords.includes(k) || entry.keywords.includes(k.replace(/s$/, '')), k);
+  assert.ok(!UI.SECTIONS || !UI.SECTIONS.some((s) => /experimental/i.test(s.label)));
+  assert.ok(!/experimental/i.test(shellText(c)));
+});
+
+test('a saved off shows the switch off', async () => {
+  const { card } = await open({ enabled: false });
+  assert.equal(card().querySelector('.st-toggle').querySelector('input').checked, false);
 });
 
 test('turning it on saves swarm.enabled', async () => {

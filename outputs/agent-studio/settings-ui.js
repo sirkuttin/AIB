@@ -97,8 +97,8 @@
     {
       id: 'swarm-helpers',
       section: 'agents',
-      label: 'Helpers from other agents (experimental)',
-      keywords: ['helper', 'helpers', 'swarm', 'subagent', 'other providers', 'experimental', 'start_helper'],
+      label: 'Helpers from other agents',
+      keywords: ['helper', 'helpers', 'swarm', 'subagent', 'other providers', 'other agents', 'codex', 'gemini', 'claude code', 'strata', 'model server', 'start_helper'],
     },
     {
       id: 'wsl-linking',
@@ -2240,10 +2240,10 @@
   }
   function renderSwarmHelpers(box) {
     const on = !!(S.data && S.data.swarm && S.data.swarm.enabled);
-    box.append(toggle('Helpers from other agents (experimental)', on, (v) => saveQuiet({ swarm: { enabled: v } })));
+    box.append(toggle('Helpers from other agents', on, (v) => saveQuiet({ swarm: { enabled: v } })));
     box.append(
       note(
-        "Lets a chat's agent start helper agents from other providers. Off by default while it's being finished.",
+        'Let a chat start helper agents (Codex, Gemini, Claude Code, or a model server like strata), each in its own copy of the project. You merge their work.',
       ),
     );
     box.append(note('Applies to chats started or reopened after you change it.'));

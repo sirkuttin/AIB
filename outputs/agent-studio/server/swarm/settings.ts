@@ -1,7 +1,7 @@
 /**
  * Swarm settings (<state>/swarm-settings.json), apart from Settings (state/settings.ts keeps the Python reference's exact shape). Phase 1
- * has one: whether the main agent may start Claude Code helpers. The Settings › Helpers page comes in phase 2; until then the file is the
- * switch ({"claudeHelpers": false} turns them off).
+ * has one: whether the main agent may start Claude Code helpers. The Settings › AIB Linking › Helper agents card switches `enabled`;
+ * {"claudeHelpers": false} turns Claude helpers off.
  */
 import { readJsonFile, saveJson } from '../state/json.ts';
 import { pathOf } from '../state/paths.ts';
@@ -20,8 +20,8 @@ export function claudeHelpers(stateDir: string | null): boolean {
   return CLAUDE_HELPERS_DEFAULT;
 }
 
-/** Swarm phase 1 is off by default for the public beta (it is still being finished): the main agent is offered no helper tools. */
-export const SWARM_ENABLED_DEFAULT = false;
+/** Helpers from other agents are on by default (owner decision 2026-11-23); a saved enabled:false wins and keeps them off. */
+export const SWARM_ENABLED_DEFAULT = true;
 
 function readAll(stateDir: string): Record<string, unknown> {
   try {

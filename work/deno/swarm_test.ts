@@ -18,7 +18,7 @@ import { BriefError, overlaps, readBrief, wrapReport } from '../../outputs/agent
 import { pickProvider } from '../../outputs/agent-studio/server/swarm/rules.ts';
 import { Registry } from '../../outputs/agent-studio/server/swarm/registry.ts';
 import { Swarm } from '../../outputs/agent-studio/server/swarm/service.ts';
-import { CLAUDE_HELPERS_DEFAULT, claudeHelpers, setClaudeHelpers, setSwarmEnabled, swarmEnabled } from '../../outputs/agent-studio/server/swarm/settings.ts';
+import { CLAUDE_HELPERS_DEFAULT, SWARM_ENABLED_DEFAULT, claudeHelpers, setClaudeHelpers, setSwarmEnabled, swarmEnabled } from '../../outputs/agent-studio/server/swarm/settings.ts';
 import { pathOf } from '../../outputs/agent-studio/server/state/paths.ts';
 
 type Json = Record<string, unknown>;
@@ -106,12 +106,17 @@ Deno.test('rules: Claude helpers are on by default (a setting); off, no rule pic
   }
 });
 
-Deno.test('swarm.enabled: off by default, kept next to claudeHelpers in the same file', () => {
+Deno.test('swarm.enabled: on by default, a saved false stays off, kept next to claudeHelpers in the same file', () => {
   const dir = Deno.makeTempDirSync({ prefix: 'aib-swarm-enabled-' });
   try {
-    assertEquals(swarmEnabled(dir), false, 'no file: off');
+    assertEquals(SWARM_ENABLED_DEFAULT, true);
+    assertEquals(swarmEnabled(dir), true, 'no file: on');
+    assertEquals(swarmEnabled(null), true, 'no state dir: on');
     setClaudeHelpers(dir, false);
-    assertEquals(swarmEnabled(dir), false, 'a file without the key: off');
+    assertEquals(swarmEnabled(dir), true, 'a file without the key: on');
+    setSwarmEnabled(dir, false);
+    assertEquals(swarmEnabled(dir), false, 'a saved false stays off');
+    assertEquals(claudeHelpers(dir), false);
     setSwarmEnabled(dir, true);
     assertEquals(swarmEnabled(dir), true);
     assertEquals(claudeHelpers(dir), false, 'turning swarm on keeps claudeHelpers');
@@ -124,7 +129,7 @@ Deno.test('swarm.enabled: off by default, kept next to claudeHelpers in the same
 
 Deno.test({
   ...T,
-  name: 'swarm.enabled off (the default): a main chat is not offered the helper tools and the route refuses; on: offered',
+  name: 'swarm.enabled saved off: a main chat is not offered the helper tools and the route refuses; on: offered',
   async fn() {
     await using box = new Box(false);
     const off = await box.studio.connect('claude', box.project);
@@ -180,7 +185,7 @@ class Box {
   readonly swarm: Swarm;
 
   constructor(swarmOn = true) {
-    if (swarmOn) setSwarmEnabled(this.state, true); // phase 1 is off by default (swarm/settings.ts): the slice tests turn it on first
+    setSwarmEnabled(this.state, swarmOn); // on by default (swarm/settings.ts); Box(false) saves the owner's explicit off
     runGit(this.project, 'config', 'user.name', 't');
     runGit(this.project, 'config', 'user.email', 't@t');
     const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0 }, { keeper: null });
@@ -461,7 +466,7 @@ Deno.test({
       const main = await off.studio.connect('claude', off.project);
       assert(main.helpersOffHint);
       assert(promptOf(main).includes(HELPERS_OFF_PROMPT.slice(0, 60)), 'off: told');
-      assert(HELPERS_OFF_PROMPT.includes('Settings › Experimental') && HELPERS_OFF_PROMPT.includes('Codex, Gemini, Claude Code on a model server'));
+      assert(HELPERS_OFF_PROMPT.includes('Settings › AIB Linking') && !HELPERS_OFF_PROMPT.includes('Experimental') && HELPERS_OFF_PROMPT.includes('Codex, Gemini, Claude Code on a model server'));
     }
     {
       await using on = new Box(true);

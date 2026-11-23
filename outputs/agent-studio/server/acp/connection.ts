@@ -719,12 +719,12 @@ export const WSL_ARTIFACT_PROMPT =
   'version. AIB helper tools are not available in WSL projects. ' + TOOLS_LOADING + ' ' + COMMANDS_RULE.replace(' (powershell on Windows)', '');
 
 /**
- * Said only to a main chat while "Helpers from other agents" is off (Settings › Experimental): it has no helper tools, and without
+ * Said only to a main chat while "Helpers from other agents" is off (Settings › AIB Linking): it has no helper tools, and without
  * this line it would quietly do the work itself. It tells the owner instead.
  */
 export const HELPERS_OFF_PROMPT =
   'AIB can start helper agents (Codex, Gemini, Claude Code on a model server), but the owner has them switched off in Settings › ' +
-  'Experimental. If the owner asks for a helper, say so and tell them where the switch is; do not work around it.';
+  'AIB Linking (Helpers from other agents). If the owner asks for a helper, say so and tell them where the switch is; do not work around it.';
 
 export const WORKTREE_PROMPT =
   'In this chat you work in your own copy of the project, on the git branch {branch} (it started from {base}). ' +
