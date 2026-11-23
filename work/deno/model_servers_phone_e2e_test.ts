@@ -38,7 +38,7 @@ Deno.test({
       const r = await phoneCall(s, phone.token, 'GET', '/api/remote/new/options');
       assertEquals(r.status, 200);
       const agents = r.json.agents as { id: string; ok: boolean; group?: string; why: string; reason: string }[];
-      assertEquals(agents.map((a) => a.id), ['omp', 'claude', 'codex', 'claude@strata', 'claude@dead', 'kimi']);
+      assertEquals(agents.map((a) => a.id), ['claude', 'codex', 'claude@strata', 'claude@dead', 'kimi']);
       const strata = agents.find((a) => a.id === 'claude@strata')!;
       const dead = agents.find((a) => a.id === 'claude@dead')!;
       assertEquals([strata.ok, strata.group, strata.why], [true, 'Model servers', '']);
@@ -81,7 +81,7 @@ Deno.test({
       const order = await page.eval<string[]>(
         '[...document.querySelectorAll(".ph-pick[data-agent], .ph-group")].map((n) => n.dataset.agent || n.textContent)',
       );
-      assertEquals(order, ['omp', 'claude', 'codex', 'Model servers', 'claude@strata', 'claude@dead', 'kimi']);
+      assertEquals(order, ['claude', 'codex', 'Model servers', 'claude@strata', 'claude@dead', 'kimi']);
       assert(await page.eval('document.querySelector(\'.ph-pick[data-agent="claude@dead"]\').disabled'), 'greyed');
       assert(
         String(await page.eval('document.querySelector(\'.ph-pick[data-agent="claude@dead"]\').textContent')).includes(DOWN + '. Start it on your PC.'),

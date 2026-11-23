@@ -87,7 +87,7 @@ class Lab {
   }
 
   options() {
-    return { ompCommand: '', claudeLauncher: this.launcher, nodeCommand: Deno.execPath(), stateDir: this.state };
+    return { claudeLauncher: this.launcher, nodeCommand: Deno.execPath(), stateDir: this.state };
   }
 
   /** What a route gets: the settings store, the agent options, and a host with no chats. */
@@ -114,7 +114,7 @@ class Lab {
 
   studio(launched: { provider: string; env: Record<string, string> | null }[], flags: string[] = []): Studio {
     const studio = new Studio(
-      { ompCommand: 'unused', stateDir: this.state, port: 0, ownersDir: null, noArtifactTool: true, claudeLauncher: this.launcher, nodeCommand: Deno.execPath() },
+      { stateDir: this.state, port: 0, ownersDir: null, noArtifactTool: true, claudeLauncher: this.launcher, nodeCommand: Deno.execPath() },
       { keeper: null },
     );
     studio.ownerProbe = () => null;
