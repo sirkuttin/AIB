@@ -60,6 +60,17 @@ export interface SwarmHost {
     /** A model-server entry's server health (the kept 30 s answer): '' when it answers, else "strata is not answering at 127.0.0.1:8080". */
     modelServerDown?(provider: string): Promise<string>;
   };
+  /**
+   * '' when the agent can start now; else the plain reason ("Codex isn't signed in on this PC: sign in from Settings › AIB Linking").
+   * Installed and signed in (the sign-in cache, refreshed when older than a minute); a model-server entry needs no sign-in. Without it
+   * (tests) nothing is checked up front and a missing sign-in shows while the helper opens, as before.
+   */
+  agentProblem?(provider: string): Promise<string>;
+  /**
+   * Helper news that goes where a chat's news goes (desktop notification, phone push; attention/watcher.ts announce): the web server
+   * sets it. Never called with a chat's own turn end or request: those are announced by the chat's own watcher look.
+   */
+  announce?(news: HelperNews): void;
   settings: { builtinEnabled?(id: string): boolean; betaEnabled?(id: string): boolean; modelServer?(id: string): ModelServer | null; modelServers?(): ModelServer[] };
 }
 
@@ -137,6 +148,20 @@ const titleOf = (rec: SubagentRecord) => (rec.description || rec.agentType || 's
 const shown = (files: string[], limit = 6) => files.slice(0, limit).join(', ') + (files.length > limit ? ' and more' : '');
 const baseName = (p: string) => p.slice(Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\')) + 1);
 const lower = (t: string) => (t ? t[0].toLowerCase() + t.slice(1) : t).replace(/[.\s]+$/, '');
+
+/** How a notification names a helper chat: “Helper “Login bug” (Codex)”, never the brief's first words. */
+export const helperTitle = (h: Helper) => `Helper “${h.title}” (${chatName(h)})`;
+
+/** One piece of helper news for the notification paths (SwarmHost.announce). `parent` is the main chat's live id. */
+export interface HelperNews {
+  fk: string;
+  parent: string;
+  parentLasting: string;
+  title: string;
+  kind: 'needs' | 'turn';
+  reason: 'failed' | 'finished' | 'approval' | 'question' | 'signin' | 'asks';
+  what: string;
+}
 
 /** How a line names a helper or a subagent entry. */
 export const label = (h: Helper) => (h.kind === 'subagent' ? `subagent “${h.title}”` : `“${h.title}” (${chatName(h)})`);
@@ -259,6 +284,12 @@ export class Swarm {
     return server ? modelServerLabel(baseAgent(provider), server.name) : providerName(provider);
   }
 
+  /** '' when the agent is installed and signed in (ctx.agentProblem); a check that cannot run says nothing. */
+  async #agentProblem(provider: string): Promise<string> {
+    if (!this.ctx.agentProblem) return '';
+    return await this.ctx.agentProblem(provider).catch(() => '');
+  }
+
   /** '' when the entry's server answers (the kept 30 s health check); else the plain line naming it and its address. */
   async #serverDown(provider: string): Promise<string> {
     if (!isServerEntry(provider) || !this.ctx.host.modelServerDown) return '';
@@ -273,12 +304,13 @@ export class Swarm {
   async providers(caller: Json): Promise<Json> {
     const ids = [...agentRegistry.BUILTIN_IDS, ...agentRegistry.BETA_IDS];
     const claude = claudeHelpers(this.ctx.stateDir);
-    const builtins = ids.filter((id) => WORKSPACE_MODE[id]).map((id) => {
-      const why = id === 'claude' && !claude ? 'Claude helpers are turned off in Settings' : this.#usable(id);
+    const builtins = await Promise.all(ids.filter((id) => WORKSPACE_MODE[id]).map(async (id) => {
+      const why = (id === 'claude' && !claude ? 'Claude helpers are turned off in Settings' : this.#usable(id)) ||
+        await this.#agentProblem(id);
       return { id, name: providerName(id), ok: !why, reason: why, workspaceMode: WORKSPACE_MODE[id] };
-    });
+    }));
     const entries = await Promise.all(this.#serverEntries().map(async (e) => {
-      const why = this.#usable(e.id) || await this.#serverDown(e.id);
+      const why = this.#usable(e.id) || await this.#serverDown(e.id) || await this.#agentProblem(e.id);
       return { id: e.id, name: e.label, ok: !why, reason: why, workspaceMode: workspaceModeOf(e.id), modelServer: true };
     }));
     return {
@@ -310,8 +342,16 @@ export class Swarm {
         }
       }
     }
-    const picked = pickProvider(job, (p) => this.#usable(p), claudeHelpers(this.ctx.stateDir), named, model);
+    // Installed and signed in, asked up front for every provider the pick may take, so a rule skips one that is not ready.
+    const rule = DEFAULT_RULES.find((r) => r.job === job) ?? DEFAULT_RULES[DEFAULT_RULES.length - 1];
+    const ready = new Map<string, string>();
+    for (const p of named ? [named] : [rule.provider, ...rule.fallback]) {
+      if (!this.#usable(p) && WORKSPACE_MODE[baseAgent(p)]) ready.set(p, await this.#agentProblem(p));
+    }
+    const picked = pickProvider(job, (p) => this.#usable(p) || (named ? '' : ready.get(p) ?? ''), claudeHelpers(this.ctx.stateDir), named, model);
     if ('error' in picked) throw new Refusal('provider_unavailable', picked.error);
+    const notReady = named ? ready.get(named) ?? '' : '';
+    if (notReady) throw new Refusal('provider_unavailable', notReady);
     const down = await this.#serverDown(picked.provider); // never a helper that waits on a server that does not answer
     if (down) throw new Refusal('provider_unavailable', down);
     const mode = workspaceModeOf(picked.provider);
@@ -433,7 +473,18 @@ export class Swarm {
 
   async #fail(id: string, reason: string): Promise<void> {
     const h = await this.registry.patch(id, { state: 'failed', reason, endedAt: Date.now() / 1000 });
-    if (h) await this.note(id, 'swarm-fail', `Helper “${h.title}” (${chatName(h)}) failed: ${reason}`);
+    if (!h) return;
+    await this.note(id, 'swarm-fail', `Helper “${h.title}” (${chatName(h)}) failed: ${reason}`);
+    // The helper never got to run, so its chat says nothing of its own: the failure is announced here, once, as a failed chat is.
+    this.#announce({ fk: `helper-failed|${id}`, parent: h.parent.live, parentLasting: h.parent.lasting, title: helperTitle(h), kind: 'needs', reason: 'failed', what: reason });
+  }
+
+  #announce(news: HelperNews): void {
+    try {
+      this.ctx.announce?.(news);
+    } catch (error) {
+      log.exception(error, 'Announcing helper news failed');
+    }
   }
 
   status(caller: Json, helper: string): Json {

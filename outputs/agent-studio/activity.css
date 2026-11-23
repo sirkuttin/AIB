@@ -142,6 +142,10 @@ body {
   border: 1.5px solid var(--status-working);
   animation: none;
 }
+.sa-waiting .sa-dot {
+  background: var(--status-needs);
+  animation: none;
+}
 .sa-working .sa-title {
   color: var(--title-active-text);
   font-weight: 550;

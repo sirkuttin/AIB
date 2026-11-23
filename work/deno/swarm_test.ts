@@ -384,3 +384,218 @@ Deno.test({
     assertEquals(env(again).STUDIO_WORKTREE, undefined);
   },
 });
+
+// ---- swarm items, 2026-11-23 --------------------------------------------------------------------------------------------------------
+
+Deno.test('auto-approval: the shape recorded from codex-acp 2.6.0 (kind execute, title "mcp.studio_artifact.<tool>", is_mcp_tool_call)', () => {
+  // work/test_tool_details.js CODEX_MCP_DOC_CREATE, a real Codex run in AIB
+  const recorded = { kind: 'execute', title: 'mcp.studio_artifact.start_helper', _meta: { is_mcp_tool_call: true } };
+  assertEquals(ownToolName(recorded), 'start_helper');
+  assertEquals(ownToolName({ ...recorded, rawInput: { server: 'studio_artifact', tool: 'merge_helper', arguments: {} } }), 'merge_helper');
+  assertEquals(ownToolName({ kind: 'execute', title: 'mcp.studio_artifact.start_helper' }), '', 'a shell command titled alike has no MCP mark');
+  assertEquals(ownToolName({ ...recorded, title: 'mcp.studio_artifact.rm_rf' }), '', 'only AIB tools');
+  assertEquals(ownToolName({ ...recorded, title: 'mcp.rea.start_helper' }), '', 'only studio_artifact');
+});
+
+Deno.test({
+  ...T,
+  name: 'start_helper: refuses at once, with a plain reason, when the agent is not signed in; a rule skips it; helper_providers says so',
+  async fn() {
+    await using box = new Box();
+    const reason = "Codex isn't signed in on this PC: sign in from Settings › AIB Linking";
+    box.swarm.ctx.agentProblem = (provider) => Promise.resolve(provider === 'codex' ? reason : '');
+    const main = await box.studio.connect('claude', box.project);
+    const named = await box.swarm.tool(main.id, 'start_helper', { ...BRIEF, provider: 'codex', why: 'the user asked for Codex' });
+    assertEquals(named[0], 409);
+    assertEquals([(named[1] as Json).code, (named[1] as Json).error], ['provider_unavailable', reason]);
+    assertEquals(box.swarm.registry.all().length, 0, 'no record, no chat: it never started');
+    const providers = (await box.swarm.tool(main.id, 'helper_providers', {}))[1] as { providers: Json[] };
+    const codex = providers.providers.find((p) => p.id === 'codex')!;
+    assertEquals([codex.ok, codex.reason], [false, reason]);
+    assertEquals(providers.providers.find((p) => p.id === 'claude')!.ok, true);
+    // no name: the "tests" rule would take Codex; it is skipped and the next provider in the rule is used
+    const ruled = await box.swarm.tool(main.id, 'start_helper', BRIEF);
+    assertEquals(ruled[0], 200, JSON.stringify(ruled[1]));
+    assertEquals((ruled[1] as Json).provider, 'claude');
+    assert(((ruled[1] as Json).skipped as string[]).some((s) => s.includes("Codex isn't signed in")), JSON.stringify(ruled[1]));
+  },
+});
+
+Deno.test({
+  ...T,
+  name: 'agentProblem: signed out is refused with the Settings pointer; ready and unknown pass; a model-server entry needs no sign-in',
+  async fn() {
+    const { agentProblem } = await import('../../outputs/agent-studio/server/swarm/ready.ts');
+    const dir = Deno.makeTempDirSync({ prefix: 'aib-swarm-ready-' });
+    try {
+      let state = 'signin';
+      const ctx = {
+        agentOptions: { stateDir: dir, nodeCommand: 'node', claudeLauncher: import.meta.filename!, codexLauncher: import.meta.filename! },
+        settings: { launcher: () => '' },
+        host: { signinCall: (_a: string, id: string) => Promise.resolve([200, { agent: id, state }] as [number, unknown]) },
+      };
+      assertEquals(await agentProblem(ctx as never, 'codex'), "Codex isn't signed in on this PC: sign in from Settings › AIB Linking");
+      assertEquals(await agentProblem(ctx as never, 'claude'), "Claude Code isn't signed in on this PC: sign in from Settings › AIB Linking");
+      assertEquals(await agentProblem(ctx as never, 'claude@strata'), '', 'a model server needs no sign-in');
+      state = 'unknown';
+      assertEquals(await agentProblem(ctx as never, 'codex'), '', 'not checked: the open step still checks');
+      state = 'ready';
+      assertEquals(await agentProblem(ctx as never, 'codex'), '');
+    } finally {
+      Deno.removeSync(dir, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  ...T,
+  name: 'helpers off: the main chat\'s AIB prompt says the owner switched them off (only then); on, it says nothing of it',
+  async fn() {
+    const { HELPERS_OFF_PROMPT } = await import('../../outputs/agent-studio/server/acp/connection.ts');
+    const promptOf = (c: Connection) => {
+      c.initial = { agentCapabilities: { sessionCapabilities: { systemPrompt: {} } } } as never; // an agent that takes a client system prompt
+      return JSON.stringify(c.artifactPrompt(c.mcpServers as never));
+    };
+    {
+      await using off = new Box(false);
+      const main = await off.studio.connect('claude', off.project);
+      assert(main.helpersOffHint);
+      assert(promptOf(main).includes(HELPERS_OFF_PROMPT.slice(0, 60)), 'off: told');
+      assert(HELPERS_OFF_PROMPT.includes('Settings › Experimental') && HELPERS_OFF_PROMPT.includes('Codex, Gemini, Claude Code on a model server'));
+    }
+    {
+      await using on = new Box(true);
+      const main = await on.studio.connect('claude', on.project);
+      assert(!main.helpersOffHint);
+      assert(!promptOf(main).includes('switched off'), 'on: not told');
+    }
+  },
+});
+
+Deno.test({
+  ...T,
+  name: 'swarm: stop, then merge: the stopped helper\'s uncommitted work is kept on its branch and lands through merge_helper',
+  async fn() {
+    await using box = new Box();
+    const main = await box.studio.connect('claude', box.project, null, { ownCopy: true });
+    const [, out] = await box.swarm.tool(main.id, 'start_helper', BRIEF);
+    const id = String((out as Json).helper);
+    await until(() => box.swarm.registry.get(id)?.state === 'working', 'the helper working', 30);
+    const h = box.swarm.registry.get(id)!;
+    const helper = box.studio.connections.get(h.chat.live)!;
+    write(h.worktree.path, 'test/login/half.txt', 'half done\n'); // work in progress: never committed by the helper
+    const stopped = await box.swarm.tool(main.id, 'stop_helper', { helper: id, reason: 'taking too long' });
+    assertEquals(stopped[0], 200, JSON.stringify(stopped[1]));
+    const kept = ((stopped[1] as Json).kept as Json[])[0];
+    assertEquals(kept.commits, 1, 'the half-done file was committed on its branch');
+    assertEquals(box.swarm.registry.get(id)!.state, 'stopped');
+    assert(String(notes(main).findLast((n) => n.kind === 'swarm-stop')?.message).startsWith('Stopped “Login tests” (Codex). Work kept: 1 commit(s)'));
+    await until(() => !helper.busy, 'the cancelled turn ended', 15);
+    const merged = await box.swarm.tool(main.id, 'merge_helper', { helper: id });
+    assertEquals((merged[1] as Json).state, 'merged', JSON.stringify(merged[1]));
+    assertEquals(read(box.project, 'test/login/half.txt'), 'half done\n');
+    assertEquals(box.swarm.registry.get(id)!.state, 'merged');
+  },
+});
+
+Deno.test({
+  ...T,
+  name: 'swarm restart: AIB closes while a helper works and its chats come back under new live ids: found by lasting names, reported once',
+  async fn() {
+    await using box = new Box();
+    const main = await box.studio.connect('claude', box.project, null, { ownCopy: true });
+    const [, out] = await box.swarm.tool(main.id, 'start_helper', BRIEF);
+    const id = String((out as Json).helper);
+    await until(() => box.swarm.registry.get(id)?.state === 'working', 'the helper working', 30);
+    const h = box.swarm.registry.get(id)!;
+    const helper = box.studio.connections.get(h.chat.live)!;
+    assert(h.chat.lasting.startsWith('codex:'), `the helper's lasting name is kept: ${h.chat.lasting}`);
+    assert(h.parent.lasting.startsWith('claude:'), `and its parent's: ${h.parent.lasting}`);
+    await box.swarm.stopWatching(); // AIB closes ...
+    await answerApprovals(helper); // ... the helper (kept by the keeper) goes on and finishes
+    await until(() => !helper.busy, 'the helper turn ended', 15);
+    commit(h.worktree.path, 'test/login/a.test.txt', 'fixed\n', 'fix the login tests');
+    // ... and comes back: the live ids are not the ones the registry has
+    await box.swarm.registry.patch(id, { parent: { ...h.parent, live: 'old-live-id' }, chat: { ...h.chat, live: 'old-live-id' } });
+    const again = new Swarm({ stateDir: box.state, host: box.studio, settings: box.studio.settings });
+    await again.poll();
+    await until(() => (again.registry.get(id)?.reports ?? []).length === 1 && again.registry.get(id)!.reports[0].delivered, 'the report, once', 15);
+    const back = again.registry.get(id)!;
+    assertEquals([back.parent.live, back.chat.live], [main.id, helper.id], 'live ids found again by their lasting names');
+    assertEquals(back.state, 'done');
+    await again.poll();
+    assertEquals(again.registry.get(id)!.reports.length, 1, 'no second report for the same turn');
+    const merged = await again.tool(main.id, 'merge_helper', { helper: id });
+    assertEquals((merged[1] as Json).state, 'merged', JSON.stringify(merged[1]));
+  },
+});
+
+// ---- report delivery modes: a fake host, one helper with a report waiting ------------------------------------------------------------
+
+Deno.test({
+  ...T,
+  name: 'report delivery: steered while the main chat works, a prompt when idle, queued (paused) after Stop, held while it is closed',
+  async fn() {
+    const dir = Deno.makeTempDirSync({ prefix: 'aib-swarm-delivery-' });
+    try {
+      let parent: Json | null = null;
+      const calls: [string, Json][] = [];
+      let steered = true;
+      const host = {
+        liveList: () => Promise.resolve({ instanceId: 'x', connections: parent ? [parent] : [] }),
+        liveState: () => Promise.resolve(null),
+        liveCall: (name: string, body: unknown) => {
+          calls.push([name, body as Json]);
+          return Promise.resolve([200, name === 'steer' ? { steered } : { ok: true }] as [number, unknown]);
+        },
+      };
+      const swarm = new Swarm({ stateDir: dir, host: host as never, settings: {} });
+      const seed = (n: number) =>
+        swarm.registry.update('h_deliver1', (cur) =>
+          <never> {
+            ...(cur ?? {
+              id: 'h_deliver1',
+              title: 'T',
+              project: dir,
+              parent: { live: 'main-1', lasting: 'claude:sm' },
+              chat: { live: '', lasting: '', provider: 'codex', model: '', mode: 'auto' },
+              brief: { goal: '', owns: [], avoid: [], done_when: '', reply_with: '', test_cmd: '', read_only: false, context_files: [] },
+              state: 'done',
+              notes: [],
+            }),
+            reports: [...(cur?.reports ?? []), { n: n, at: 1, text: `report ${n}`, delivered: false, how: '' }],
+          });
+      const how = () => swarm.registry.get('h_deliver1')!.reports.map((r) => r.how);
+      const main = (extra: Json = {}) => ({ id: 'main-1', provider: 'claude', sessionId: 'sm', closed: false, attention: { state: 'working' }, queue: { items: [], paused: false }, ...extra });
+
+      await seed(1); // the main chat is closed: the report waits in the registry
+      await swarm.poll();
+      assertEquals(how(), ['']);
+      assertEquals(calls.length, 0);
+
+      parent = main(); // open and working: steered into the turn
+      await swarm.poll();
+      assertEquals(how(), ['steer']);
+      assertEquals(calls.at(-1)![0], 'steer');
+
+      await seed(2); // idle: the agent did not steer it, so it became an ordinary prompt
+      steered = false;
+      parent = main({ attention: { state: 'idle' } });
+      await swarm.poll();
+      assertEquals(how(), ['steer', 'prompt']);
+
+      await seed(3); // the user pressed Stop: it sits in the paused queue and never restarts work
+      parent = main({ attention: { state: 'idle' }, queue: { items: [], paused: true } });
+      await swarm.poll();
+      assertEquals(how(), ['steer', 'prompt', 'queued']);
+      assertEquals(calls.at(-1)![0], 'queue');
+      assertEquals(calls.at(-1)![1].clientMessageId, 'swarm-report-h_deliver1-3');
+      assertEquals(calls.at(-1)![1].text, 'report 3');
+      const sent = calls.length;
+      await swarm.poll();
+      assertEquals(calls.length, sent, 'a delivered report is never sent twice');
+    } finally {
+      Deno.removeSync(dir, { recursive: true });
+    }
+  },
+});

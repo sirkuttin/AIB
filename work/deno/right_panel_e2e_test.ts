@@ -181,7 +181,7 @@ panelTest('right panel: 3 working chats and 1 idle give 3 sections in the order 
   for (const x of [a, c, d]) x.end();
   await page.waitFor(`!!document.querySelector('#projectActivity > .sp-empty')`, 20000, 'nothing working: the note');
   const note = await page.eval<string>(`document.querySelector('#projectActivity > .sp-empty').textContent`);
-  assert(/^No chat in .+ is working\. .*Claude Code, Codex, Gemini, Antigravity, OMP and Maki\. All on this PC\.$/.test(note), note);
+  assert(/^No chat in .+ is working\. .*Claude Code, Codex, Gemini, Antigravity and Maki\. All on this PC\.$/.test(note), note);
   assertEquals((await sections(page)).badge, '', 'no count when nothing works');
   await waitIdle(page, 'i.keys.length === 5', 'all five idle, below the note');
   i = await idles(page);

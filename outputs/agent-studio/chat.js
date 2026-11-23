@@ -306,6 +306,9 @@
     stopped: new Map(),
     idleBox: null,
   };
+  /* Helpers from other agents (swarm), as /api/live/swarm lists them: each shows as a row in its MAIN chat's Activity section, in the
+     same list as that chat's subagents, and never as a section of its own (helperRows, projectActivityKeys). */
+  const swarm = { list: [], at: 0, busy: false };
   const paneAct = new Map(); // alias key -> what its section shows: { kids: Map, rows, commands, snap, at, cmdAt, histAt }
   const liveCache = (id = current) => chatCache.entry(id || '');
   const liveLoaded = () => liveCache().loaded();
@@ -2811,11 +2814,11 @@
   function subCtx() {
     const selKey = selected ? aliasKey(selected) : '';
     if (!subOwner || subOwner === selKey)
-      return { own: true, key: selKey, id: current, entry: liveCache(), snap: snapshot, rows: allAgentRows(), cmds: commands, session: selected?.key || '' };
+      return { own: true, key: selKey, id: current, entry: liveCache(), snap: snapshot, rows: withHelpers(selKey, allAgentRows()), cmds: commands, session: selected?.key || '' };
     const c = conversations.find((x) => aliasKey(x) === subOwner),
       a = paneAct.get(subOwner) || null,
       id = c?.live && !c.live.closed ? c.live.id : '';
-    return { own: false, key: subOwner, id, entry: id ? chatCache.entry(id) : null, snap: a?.snap || null, rows: a ? a.rows : [], cmds: a?.commands || [], session: c?.key || '', pane: a };
+    return { own: false, key: subOwner, id, entry: id ? chatCache.entry(id) : null, snap: a?.snap || null, rows: withHelpers(subOwner, a ? a.rows : []), cmds: a?.commands || [], session: c?.key || '', pane: a };
   }
   function pushTrail() {
     if (subSelection) subTrail.push({ agent: subSelection });
@@ -2832,7 +2835,7 @@
     selectedCommand = null;
     $('commandDetails').hidden = true;
     $('submessages').hidden = false;
-    $('inspectorEyebrow').textContent = 'SUBAGENT HISTORY';
+    $('inspectorEyebrow').textContent = agent?.helper ? 'HELPER HISTORY' : 'SUBAGENT HISTORY';
     $('inspectorNote').textContent = 'Read-only history. Messages are sent through the main agent.';
     subSelection = agent;
     managed($('submessages'))?.switchTo(agent.key, () => window.ScrollController.FOLLOW); // each subagent keeps its own place
@@ -2970,7 +2973,7 @@
       return;
     }
     const x = subCtx();
-    if (subSelection.live && !x.snap) {
+    if (subSelection.live && !x.snap && !subSelection.helper) {
       /* No state yet: the other pane's chat gets it with the panel's next read; the open chat with its own first read, which
          Activity (reading the chat on its own) can show a helper row before: then wait for that read (refresh() calls this
          again), do not close. Close only when the open chat is no longer live. */
@@ -2986,7 +2989,7 @@
     }
     renderSubagentControls();
     renderSubHead();
-    if (subSelection.live) {
+    if (subSelection.live && !subSelection.helper) {
       /* a helper's events are not in the opening page (design 4.4): fetched when it is opened, then its deltas ride the poll */
       const entry = x.entry,
         id = x.id;
@@ -3011,6 +3014,7 @@
       return;
     }
     const working = window.SubagentsUI?.classify(subSelection).group === 'working';
+    // A helper's history is its own chat's saved transcript (the same read as any saved chat)
     // Polite polling: a working subagent is re-read every 3 s, a finished one every 10 s.
     if (subSignature && subFetch.key === target && Date.now() - subFetch.at < (working ? 3000 : 10000)) return;
     const w = await pollHistory(target);
@@ -5898,13 +5902,15 @@
     const seen = new Set(),
       working = [],
       idle = [],
-      O = window.AgentOrganizeUI;
+      O = window.AgentOrganizeUI,
+      helperKeys = helperChatKeys();
     for (const c of conversations) {
       const k = aliasKey(c);
       if (seen.has(k)) continue;
       seen.add(k);
       if (projectOfChat(c) !== p.key) continue;
-      if (chatWorking(c)) working.push(c);
+      if (helperKeys.has(k)) continue; // a helper is a row in its main chat's section, not a section
+      if (chatWorking(c) || helperRows(k).some((r) => r.state === 'working' || r.state === 'waiting')) working.push(c);
       else {
         const e = (O?.entryOf && O.entryOf(c)) || {};
         if (!e.archivedAt && !(e.deletedAt && !(c.live && !c.live.closed))) idle.push(c);
@@ -5969,6 +5975,80 @@
       localStorage.setItem(idleOpenKey(), JSON.stringify(o));
     } catch {}
   }
+  /* ---- Helpers from other agents in their main chat's section (owner, 2026-11-23) ---- */
+  function helperChat(h) {
+    return conversations.find(
+      (c) => (h.chatKey && aliasKey(c) === h.chatKey) || (h.chat && c.live && c.live.id === h.chat) || c.live?.swarm?.helperId === h.id,
+    ) || null;
+  }
+  function helperParent(h) {
+    return (
+      conversations.find((c) => (h.parentKey && aliasKey(c) === h.parentKey) || (h.parent && c.live && c.live.id === h.parent)) || null
+    );
+  }
+  /* The chats that are helpers (not sections of their own): by the live chat's own role, and by the helper list for a closed one. */
+  function helperChatKeys() {
+    const keys = new Set();
+    for (const c of conversations) if (c.live?.swarm?.role === 'helper' && !c.live.closed) keys.add(aliasKey(c));
+    for (const h of swarm.list) {
+      const c = helperChat(h);
+      if (c) keys.add(aliasKey(c));
+      if (h.chatKey) keys.add(h.chatKey);
+    }
+    return keys;
+  }
+  /* A helper as a subagent row: the same card and states. state: working | waiting (the helper's chat needs you) | completed |
+     failed | stopped. A click opens the helper chat's saved history in the panel (refreshSubagent), never the chat itself. */
+  function helperRow(h) {
+    const c = helperChat(h),
+      needs = c?.live?.attention?.state === 'needs_you',
+      busy = !!c && chatWorking(c),
+      running = ['starting', 'working', 'waiting'].includes(h.state) || (busy && ['done', 'stopped'].includes(h.state));
+    const state = h.state === 'failed' ? 'failed' : needs ? 'waiting' : running ? 'working' : h.state === 'stopped' ? 'stopped' : 'completed';
+    const saved = c && !/^live:/.test(c.key || '') ? c.key : h.chatKey;
+    return {
+      key: saved || 'helper:' + h.id,
+      helper: true,
+      helperId: h.id,
+      name: h.title,
+      description: '',
+      agentType: h.label || h.provider,
+      model: h.model || '',
+      live: true,
+      state,
+      created: Number(h.createdAt) || 0,
+      since: state === 'working' || state === 'waiting' ? 0 : Number(h.endedAt) || Number(h.createdAt) || 0,
+      tokens: 0,
+      activity: state === 'waiting' ? 'Waiting on you' : '',
+      launchedOnly: !saved,
+    };
+  }
+  function helperRows(key) {
+    const out = [];
+    for (const h of swarm.list) {
+      if (h.kind === 'subagent') continue;
+      const p = helperParent(h);
+      if (p && aliasKey(p) === key) out.push(helperRow(h));
+    }
+    return out;
+  }
+  function withHelpers(key, rows) {
+    const extra = helperRows(key);
+    return extra.length ? sortAgents([...rows, ...extra]) : rows;
+  }
+  async function loadSwarmHelpers() {
+    if (swarm.busy) return;
+    swarm.busy = true;
+    try {
+      const r = await get('/api/live/swarm', {});
+      swarm.list = Array.isArray(r?.helpers) ? r.helpers : [];
+    } catch {
+      /* an older server, or the helper switch is off: no helper rows */
+    } finally {
+      swarm.busy = false;
+      swarm.at = Date.now();
+    }
+  }
   const IDLE_READS = 3; // idle chats read per tick
   function projectSection(key) {
     let sec = projAct.secs.get(key);
@@ -6005,7 +6085,8 @@
     const want = [];
     for (const key of keys) {
       const sec = projectSection(key),
-        a = paneAct.get(key) || { rows: [], commands: [] },
+        a0 = paneAct.get(key) || { rows: [], commands: [] },
+        a = { ...a0, rows: withHelpers(key, a0.rows) },
         conv = conversations.find((x) => aliasKey(x) === key) || null,
         info = { key, conv, title: conv ? titleOf(conv) : 'Conversation', dot: () => window.AgentWorkspaceUI?.dotForKey(key) || null };
       let counts = { working: 0, failed: 0, subagents: a.rows.length };
@@ -6037,7 +6118,7 @@
         sec.head.append(sec.tag);
       }
       sec.root.className = 'sp-grp' + (key === focus ? ' sp-focus' : '');
-      const iso = isolationWords(a.snap?.subagentIsolation);
+      const iso = isolationWords(a0.snap?.subagentIsolation);
       sec.note.hidden = !iso;
       if (iso) {
         sec.note.textContent = iso.text;
@@ -6137,7 +6218,7 @@
       const sec = idleSection(key),
         a = paneAct.get(key),
         conv = conversations.find((x) => aliasKey(x) === key) || null,
-        rows = a?.rows || [],
+        rows = withHelpers(key, a?.rows || []),
         done = (a?.commands || []).filter((t) => !isRunningCommand(t)),
         n = rows.length + done.length,
         open = n > 0 && idleOpen(projAct.pk, key);
@@ -6208,6 +6289,7 @@
     if (projAct.busy) return;
     projAct.busy = true;
     try {
+      if (!swarm.at || Date.now() - swarm.at > pollEvery(1500, 5000) - 100) await loadSwarmHelpers();
       const keys = projectActivityKeys().slice();
       // an open history of a chat that just stopped working keeps being read until you close it
       if (subOwner && inspectorOpen() && !keys.includes(subOwner)) keys.push(subOwner);
