@@ -465,6 +465,7 @@ export const PC_ROUTES: Readonly<Record<string, RemoteEntry>> = {
   // ---- settings, editors, desktop ----
   'GET /api/live/settings': SETTINGS, // phase 1b: an allowlisted remote settings view
   'POST /api/live/settings': SETTINGS,
+  'POST /api/live/model-servers/check': SETTINGS,
   'GET /api/live/editors': never("Editors are the PC's programs; computers download instead"),
   'POST /api/live/open': DESK_SCREEN,
   'POST /api/live/view-prefs': never("the PC's own layout; computers get a per-device variant (phase 1b)"),

@@ -10,6 +10,7 @@
  *          URLs of the PC's artifact origin, in live events and in the history a chat replays) point at the phone's artifact
  *          origin https://<name>:8443 instead (Phase D); what is stored is never changed.
  */
+import { claudeBase } from '../agents/claude_family.ts';
 import { createHash } from 'node:crypto';
 import type { WebContext } from '../web/server.ts';
 import { permissionDetail, type PhoneOption, phoneOptions } from './actions.ts';
@@ -37,7 +38,7 @@ export const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'ima
 const AGENT_NAMES: Record<string, string> = { claude: 'Claude Code', omp: 'OMP', codex: 'Codex', gemini: 'Gemini' };
 
 export function agentName(provider: unknown): string {
-  const p = str(provider, 60);
+  const p = claudeBase(str(provider, 60));
   return AGENT_NAMES[p] ?? (p ? p.charAt(0).toUpperCase() + p.slice(1) : 'Agent');
 }
 
@@ -737,7 +738,7 @@ export async function chatPayload(
   if (state.auth) {
     // The chat's sign-in card (the same one the PC shows); the sign-in itself runs on the PC (a terminal or the agent's browser page).
     const auth = obj(state.auth);
-    const name = AGENT_NAMES[str(state.provider, 40)] ?? 'An agent';
+    const name = AGENT_NAMES[claudeBase(str(state.provider, 40))] ?? 'An agent';
     waiting.push({
       kind: 'sign-in',
       title: `${name} needs you to sign in${auth.during === 'prompt' ? ' again' : ''}`,

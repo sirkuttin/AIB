@@ -280,6 +280,30 @@ export function withModelsOption<T>(settings: T): T {
   return settings;
 }
 
+/**
+ * A model-server chat (agents/model_servers.ts): the model option lists the server's models, not the adapter's (Anthropic's). The
+ * adapter's own model option keeps its id and the way it is set (session/set_config_option); only its choices and current value change.
+ * An adapter that reports no model option gets the models shape instead (set through session/set_model). Changes `settings` in place.
+ */
+export function withServerModels<T>(settings: T, models: readonly string[], current: string): T {
+  if (!isDict(settings) || !models.length) return settings;
+  const s = settings as Dict;
+  const value = models.includes(current) ? current : models[0];
+  const options = models.map((m) => ({ value: m, name: m }));
+  const list = Array.isArray(s.configOptions) ? s.configOptions : [];
+  const own = list.find((o): o is Dict => isDict(o) && (o.category === 'model' || o.id === 'model'));
+  if (own && own._aibSource !== MODELS_SOURCE) {
+    own.options = options;
+    own.currentValue = value;
+    own.type = 'select';
+    own._aibServer = true;
+    delete s.models;
+    return settings;
+  }
+  s.models = { availableModels: models.map((m) => ({ modelId: m, name: m })), currentModelId: value };
+  return withModelsOption(settings);
+}
+
 /** True when this config option is the one withModelsOption made (it is set through session/set_model). */
 export function isModelsOption(settings: unknown, configId: unknown): boolean {
   const option = isDict(settings) ? findOption(settings, configId) : undefined;

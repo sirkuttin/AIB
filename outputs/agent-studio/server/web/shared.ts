@@ -11,6 +11,8 @@ import { BUILTIN_NAMES, commandStatus, type CustomAgent, hiddenEnv, letterOf } f
 import * as installer from '../agents/installer.ts';
 import * as signin from '../agents/signin.ts';
 import { BETA_AGENTS, betaAgent } from '../agents/beta_catalog.ts';
+import { isLoopbackAddress, modelServerLabel, WSL_LOOPBACK_NOTE } from '../agents/model_servers.ts';
+import { MODEL_SERVER_AGENTS, modelServerAgentId } from '../agents/claude_family.ts';
 import { releaseAsset } from '../agents/release_install.ts';
 import { resolveBeta } from '../agents/beta_agents.ts';
 import { BUILTIN_NPM, builtinSetup, defaultProbe, refreshWindowsPath, type SetupProbe, setupView } from '../agents/beta_setup.ts';
@@ -41,6 +43,7 @@ export interface SettingsLike {
       betaOff?: Record<string, boolean>;
       betaKeys?: Record<string, string>;
       betaUrls?: Record<string, string>;
+      modelServers?: import('../agents/model_servers.ts').ModelServer[];
     };
   };
   public(): Record<string, unknown>;
@@ -162,8 +165,10 @@ export async function describeAgents(
     }
   }
   const probe = defaultProbe(options.nodeCommand || '', recheck);
+  let claudeRow: adapters.LaunchRow | null = null;
   for (const [agentId, letter] of [['omp', 'O'], ['claude', 'C'], ['codex', 'X']] as const) {
     const row = await builtinLaunch(options, settings, agentId);
+    if (agentId === 'claude') claudeRow = row;
     const installable = hasOwn(adapters.STUDIO_PACKAGES, agentId);
     // Not installed and AIB installs it (npm): the card lists Node.js under "Needs first:" when it is missing or too old.
     const setup = installable && row.source === 'missing' && BUILTIN_NPM.includes(agentId) ? await builtinSetup(probe) : null;
@@ -199,6 +204,43 @@ export async function describeAgents(
       ...(setup ? { setup } : {}), // only on a card that still needs installing: the row keeps the Python reference's shape otherwise
       ...(cliHint ? { cliHint } : {}), // likewise: only a Codex adapter that has no Codex program to ask about the sign-in
     });
+  }
+  // Model servers (agents/model_servers.ts): agent entries are built from each server, `<agent>@<server id>`, labelled
+  // "<agent label> · <server name>". The Claude entry runs the same adapter as claude and never needs a claude.ai sign-in.
+  const keyNote = options.stateDir ? keyStoreFor(options.stateDir).note : '';
+  const adapterRow = claudeRow as adapters.LaunchRow | null;
+  for (const s of snap.agents.modelServers ?? []) {
+    for (const base of MODEL_SERVER_AGENTS) {
+      const id = modelServerAgentId(base, s.id);
+      out.push({
+        id,
+        name: modelServerLabel(base, s.name),
+        letter: 'C',
+        builtin: false,
+        modelServer: true,
+        serverId: s.id,
+        enabled: true,
+        command: adapterRow?.text ?? '',
+        launcher: adapterRow?.text ?? '',
+        launcherSource: 'model-server',
+        args: [],
+        env: [],
+        found: !!adapterRow?.found,
+        resolved: adapterRow?.found ? adapterRow.path : '',
+        problem: adapterRow?.problem ?? '',
+        status: state[id] ?? '',
+        signin: null,
+        modelServerInfo: {
+          id: s.id,
+          name: s.name,
+          url: s.url,
+          model: s.model,
+          keySet: !!(snap.agents.betaKeys ?? {})[s.id],
+          keyStorage: keyNote,
+          wslNote: isLoopbackAddress(s.url) ? WSL_LOOPBACK_NOTE : '',
+        },
+      });
+    }
   }
   out.push(...(await describeBeta(options, snap, state, block, sizes, probe)));
   for (const a of snap.agents.custom) {

@@ -4,6 +4,7 @@
  * for the card's "Always allow" choice.
  */
 import { join } from 'node:path';
+import { isClaudeFamily } from '../agents/claude_family.ts';
 import { type AllowRule, type Builtins, type Draft, match, type MatchContext, type MatchResult, ruleFor } from './matcher.ts';
 import { AllowStore, DecisionLog } from './store.ts';
 import { claudeFacts } from './agent_config.ts';
@@ -93,7 +94,7 @@ export class AllowGate {
 
   /** Claude chats: its own ask rules and env blocks (agent_config.ts). */
   #withFacts(ctx: MatchContext): MatchContext {
-    if (ctx.facts !== undefined || ctx.provider !== 'claude') return ctx;
+    if (ctx.facts !== undefined || !isClaudeFamily(ctx.provider)) return ctx;
     try {
       return { ...ctx, facts: claudeFacts(ctx.cwd) };
     } catch {

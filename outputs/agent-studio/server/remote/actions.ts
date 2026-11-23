@@ -16,6 +16,7 @@
  * A chat that is not running on the PC is refused with "tap Continue this chat" (owner decision 3b: the phone starts it again with
  * POST /api/remote/continue, remote/saved.ts; an action never starts a chat by itself).
  */
+import { claudeBase } from '../agents/claude_family.ts';
 import type { WebContext } from '../web/server.ts';
 import {
   MAX_FILES,
@@ -187,7 +188,7 @@ export function takesOf(state: Json): Takes {
 
 const AGENT_LABELS: Record<string, string> = { claude: 'Claude Code', omp: 'OMP', codex: 'Codex', gemini: 'Gemini' };
 export const agentLabel = (provider: unknown): string =>
-  (isStr(provider) && provider && (AGENT_LABELS[provider] ?? provider.slice(0, 40))) || 'This agent';
+  (isStr(provider) && provider && (AGENT_LABELS[claudeBase(provider)] ?? provider.slice(0, 40))) || 'This agent';
 
 /**
  * The pictures and files of a phone message: bytes only (base64 `data`, a display name and a type; never a path, a link or any

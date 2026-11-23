@@ -10,7 +10,7 @@
     MAX_CACHE = 2000,
     MAX_SET = 500,
     MAX_TIME = 4102444800000;
-  const KEY_OK = /^[a-z0-9][a-z0-9_-]*:.+$/;
+  const KEY_OK = /^[a-z0-9][a-z0-9@_-]*:.+$/;
   let host = null,
     chats = {}, // key -> {seenAt (ms), seenIndex?}
     marks = {}, // key -> markedUnreadAt (ms): "Mark as unread" from a phone, until the chat is looked at again (the server's)

@@ -32,6 +32,7 @@ Deno.test('the route table is exactly the Python web server\'s (paths, scopes an
     'POST /api/live/terminal/end',
     'POST /api/live/view-prefs',
     'POST /api/live/agent-options',
+    'POST /api/live/model-servers/check', // model servers: ask a server for its models
     'POST /api/live/desktop/notify',
     'GET /api/live/update/notes',
     'POST /api/live/update/notes',
@@ -102,6 +103,17 @@ Deno.test('the route table is exactly the Python web server\'s (paths, scopes an
     'POST /api/live/devices/tailscale/run',
     'GET /api/live/devices/tailscale/job',
     'POST /api/live/devices/tailscale/cancel',
+    // Settings > Sync (pair your PCs; sync V1)
+    'GET /api/live/pcsync',
+    'GET /api/live/pcsync/devices',
+    'POST /api/live/pcsync/on',
+    'POST /api/live/pcsync/start',
+    'POST /api/live/pcsync/cancel',
+    'POST /api/live/pcsync/approve',
+    'POST /api/live/pcsync/reject',
+    'POST /api/live/pcsync/join',
+    'POST /api/live/pcsync/share',
+    'POST /api/live/pcsync/remove',
     'POST /api/live/presence',
     'POST /api/live/desktop/windows', // multi-window K3
     'POST /api/live/artifacts/archive',

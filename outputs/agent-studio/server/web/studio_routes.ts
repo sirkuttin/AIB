@@ -6,6 +6,7 @@
  */
 import { isDict, ValueError } from '../core/py.ts';
 import { conversationAction, settingsView, type StudioContext } from './shared.ts';
+import { checkModelServer, cleanServerUrl, isLoopbackAddress, WSL_LOOPBACK_NOTE } from '../agents/model_servers.ts';
 import { EditorError, knownRoots, Launcher } from '../desktop/editors.ts';
 import * as folders from '../desktop/folders.ts';
 import { presence } from '../desktop/folder_presence.ts';
@@ -193,6 +194,25 @@ export function studioRoutes(): Map<string, StudioHandler> {
     if (!(rest !== body && isDict(rest) && !Object.keys(rest).length)) await ctx.settings.update(rest);
     ctx.keepAwake.apply(ctx.settings.keepAwake()); // on or off takes effect now; a refusal comes back as keepAwake.error
     return [200, { ...(await settingsView(studioOf(ctx), false, { offThread: true })), keepAwake: ctx.keepAwake.status(), swarm: { enabled: swarmEnabled(ctx.stateDir) }, ok: true }];
+  });
+  // Model servers (agents/model_servers.ts): the list and its edits go through POST /api/live/settings {agents: {modelServer: {upsert |
+  // remove}}} and GET /api/live/settings (settings.agents.modelServers, no keys; agents[] rows with modelServer: true and
+  // modelServerInfo). This asks a server for its models: {id} for a saved server, or {url, key?} for one being typed.
+  routes.set('POST /api/live/model-servers/check', async (ctx, _url, body) => {
+    if (!isDict(body)) return [400, { error: 'Invalid request' }];
+    let url = '', key = '';
+    if (typeof body.id === 'string' && body.id) {
+      const server = ctx.settings.modelServer(body.id);
+      if (!server) return [404, { error: 'That model server is not in Settings (it may have been removed)', code: 'not_found' }];
+      url = server.url;
+      key = typeof body.key === 'string' && body.key ? body.key : ctx.settings.betaKey(server.id);
+    } else {
+      url = cleanServerUrl(body.url);
+      key = typeof body.key === 'string' ? body.key.trim() : '';
+      if (!url) return [400, { error: 'The address must be one http:// or https:// address', code: 'bad_address' }];
+    }
+    const result = await checkModelServer(url, key);
+    return [200, { ...result, address: url, wslNote: isLoopbackAddress(url) ? WSL_LOOPBACK_NOTE : '' }];
   });
   routes.set('POST /api/live/conversation-state', async (ctx, _url, body) => {
     const folders = restoreFolders(ctx.conversations, body);

@@ -1,5 +1,6 @@
 /** Errors and sign-in descriptions from the agent's JSON-RPC replies (rpc_errors.py). */
 import { clip, dictOr, isDict, isStr, listOr, pyJsonDumps, pyLen } from '../core/py.ts';
+import { isClaudeFamily } from '../agents/claude_family.ts';
 
 /** A JSON-RPC error response from the agent, keeping its code and data. */
 export class RpcError extends Error {
@@ -71,7 +72,7 @@ export function describeAuthMethods(methods: unknown, provider = ''): AuthMethod
       const parts = [...(isStr(src.command) ? [src.command] : []), ...args.filter(isStr)];
       const command = text(parts.slice(0, 20).join(' '), 300);
       if (command) instructions = `Run \`${command}\` in a terminal, complete the sign-in, then choose Retry.`;
-      else if (provider === 'claude') instructions = 'Run `claude /login` in a terminal, complete the sign-in, then choose Retry.';
+      else if (isClaudeFamily(provider)) instructions = 'Run `claude /login` in a terminal, complete the sign-in, then choose Retry.';
       else instructions = "Complete this sign-in in the agent's own command-line tool, then choose Retry.";
     } else if (mtype === 'env_var') {
       kind = 'env_var';

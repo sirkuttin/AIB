@@ -39,6 +39,8 @@ import {
   MAX_ENV_VALUE,
 } from '../agents/agent_registry.ts';
 import { betaAgent } from '../agents/beta_catalog.ts';
+import { cleanModelServer, cleanServerUrl, defaultServerName, makeModelServerId, MAX_MODEL, MAX_MODEL_SERVERS, type ModelServer } from '../agents/model_servers.ts';
+import { isServerId, MODEL_SERVER_AGENTS, modelServerAgentId } from '../agents/claude_family.ts';
 import { expandUser, isAbsolute, isFile, pathStr } from '../platform/pypath.ts';
 import { deepCopy, errorText, inDir, isOSError, JsonFileStore, sameJson, VERSION } from './base.ts';
 import { entriesOf, now, put, quarantine, readJsonFile, saveJson } from './json.ts';
@@ -73,6 +75,9 @@ export interface Settings {
     /** The API address typed for a Beta agent that takes one (Qwen: OPENAI_BASE_URL). Present only when not empty; sealed on disk
      * like betaKeys (key store id `<agentId>-address`). */
     betaUrls?: Record<string, string>;
+    /** Model servers (agents/model_servers.ts): each is a record with its own id (`strata`); agent entries (`claude@strata`) are built
+     * from it. Present only when not empty. A server's key is stored in betaKeys under the SERVER's id (sealed like every key) and never appears here. */
+    modelServers?: ModelServer[];
   };
   defaults: { agent: string; byAgent: Record<string, Choice>; projects: Record<string, Choice>; migrated: boolean };
   server: { autoReconnect: boolean; worktreePerChat: boolean; autoUpdateCheck: boolean; keepAwake: boolean; getTestBuilds: boolean; commitIdentity: string };
@@ -245,6 +250,15 @@ export class SettingsStore extends JsonFileStore {
     for (const agentId of BETA_IDS) {
       const url = this.betaUrlValue(urls[agentId]);
       if (url && betaAgent(agentId)?.signin.baseUrlEnv) (doc.agents.betaUrls ??= {})[agentId] = url;
+    }
+    const seenServers = new Set<string>();
+    for (const item of (Array.isArray(agents.modelServers) ? agents.modelServers : []).slice(0, MAX_MODEL_SERVERS)) {
+      const server = cleanModelServer(item);
+      if (!server || seenServers.has(server.id)) continue;
+      seenServers.add(server.id);
+      (doc.agents.modelServers ??= []).push(server);
+      const key = this.betaKeyValue(keys[server.id]);
+      if (key) (doc.agents.betaKeys ??= {})[server.id] = key;
     }
     const taken = new Set<string>();
     for (const item of (Array.isArray(agents.custom) ? agents.custom : []).slice(0, MAX_AGENTS)) {
@@ -437,6 +451,16 @@ export class SettingsStore extends JsonFileStore {
     return Object.prototype.hasOwnProperty.call(urls, agentId) ? urls[agentId] : '';
   }
 
+  /** The model servers (each has its own id; agent entries such as `claude@<id>` are built from it). */
+  modelServers(): ModelServer[] {
+    return this.snapshot().agents.modelServers ?? [];
+  }
+
+  /** One server by its own id (`strata`), not by an agent id. */
+  modelServer(serverId: string): ModelServer | null {
+    return this.modelServers().find((s) => s.id === serverId) ?? null;
+  }
+
   builtinEnabled(agentId: string): boolean {
     const builtin = this.snapshot().agents.builtin;
     return Object.prototype.hasOwnProperty.call(builtin, agentId) ? builtin[agentId] : true;
@@ -516,7 +540,19 @@ export class SettingsStore extends JsonFileStore {
         if (cleaned && betaAgent(agentId)?.signin.baseUrlEnv) await this.keys.prepare(agentId + ADDRESS_SUFFIX, cleaned);
       }
     }
-    return this.#update(body);
+    // A model server's key (agents.modelServer.upsert.key) goes to the key store under the server's id; a new server gets its id now.
+    const ms = isDict(body.agents) && isDict(body.agents.modelServer) ? body.agents.modelServer : null;
+    if (ms && isDict(ms.upsert)) {
+      let upsert: Dict = ms.upsert;
+      if (upsert.id === undefined || upsert.id === null) {
+        const name = this.#cls().value(upsert.name) || defaultServerName(cleanServerUrl(upsert.url));
+        upsert = { ...upsert, id: makeModelServerId(name, this.modelServers().map((s) => s.id)) };
+        body = { ...body, agents: { ...(body.agents as Dict), modelServer: { ...ms, upsert } } };
+      }
+      const cleaned = isStr(upsert.key) ? this.#cls().betaKeyValue(upsert.key) : '';
+      if (this.keys && cleaned && isServerId(upsert.id)) await this.keys.prepare(upsert.id, cleaned);
+    }
+    return this.#update(body as Dict);
   }
 
   #update(body: Dict): Promise<boolean> {
@@ -553,11 +589,65 @@ export class SettingsStore extends JsonFileStore {
     });
   }
 
+  /**
+   * agents.modelServer: {upsert: {id?, name?, url, model?, key?}, remove: id}. A new server (no id) gets its slug as id; name defaults to
+   * the address's host; key '' or null clears the stored key, a missing key keeps it. Removing a server forgets its key, its defaults
+   * and any default agent that named it.
+   */
+  #applyModelServer(work: Settings, value: unknown): void {
+    const patch = section(value, 'modelServer');
+    if (unknownKeys(patch, ['upsert', 'remove'])) throw new ValueError('Unknown model server setting');
+    if ('remove' in patch) {
+      const target = patch.remove;
+      const list = work.agents.modelServers ?? [];
+      if (!isStr(target) || !list.some((s) => s.id === target)) throw new ValueError('That model server is not in the list');
+      work.agents.modelServers = list.filter((s) => s.id !== target);
+      if (!work.agents.modelServers.length) delete work.agents.modelServers;
+      if (work.agents.betaKeys) delete work.agents.betaKeys[target];
+      for (const base of MODEL_SERVER_AGENTS) { // the agent entries built from it
+        const agentId = modelServerAgentId(base, target);
+        for (const choice of Object.values(work.defaults.projects)) if (choice.agent === agentId) choice.agent = '';
+        delete work.defaults.byAgent[agentId];
+        if (work.defaults.agent === agentId) work.defaults.agent = '';
+      }
+    }
+    if ('upsert' in patch) {
+      const raw = patch.upsert;
+      if (!isDict(raw)) throw new ValueError('Invalid model server');
+      const list = work.agents.modelServers ?? [];
+      const existing = isStr(raw.id) ? list.find((s) => s.id === raw.id) ?? null : null;
+      if (isStr(raw.id) && !isServerId(raw.id)) throw new ValueError('Invalid model server');
+      if (!existing && list.length >= MAX_MODEL_SERVERS) throw new ValueError(`At most ${MAX_MODEL_SERVERS} model servers`);
+      const url = 'url' in raw || !existing ? cleanServerUrl(raw.url) : existing.url;
+      if (!url) throw new ValueError('The address must be one http:// or https:// address');
+      const name = this.#cls().value('name' in raw ? raw.name : existing?.name) || defaultServerName(url);
+      if (list.some((s) => s !== existing && s.name.toLowerCase() === name.toLowerCase())) {
+        throw new ValueError('Another model server already has that name');
+      }
+      const model = 'model' in raw ? this.#cls().value(raw.model).slice(0, MAX_MODEL) : existing?.model ?? '';
+      const id = existing?.id ?? (isStr(raw.id) ? raw.id : makeModelServerId(name, list.map((s) => s.id)));
+      const server: ModelServer = { id, name, url, model };
+      if (existing) list[list.indexOf(existing)] = server;
+      else list.push(server);
+      work.agents.modelServers = list;
+      if ('key' in raw) {
+        if (raw.key === null || raw.key === '') {
+          if (work.agents.betaKeys) delete work.agents.betaKeys[id];
+        } else {
+          const key = this.#cls().betaKeyValue(raw.key);
+          if (!key) throw new ValueError('The key must be one line of text');
+          (work.agents.betaKeys ??= {})[id] = key;
+        }
+      }
+    }
+  }
+
   #applyAgents(work: Settings, value: unknown): void {
     const patch = section(value, 'agents');
-    if (unknownKeys(patch, ['builtin', 'enabled', 'upsert', 'remove', 'betaKey', 'betaUrl'])) {
+    if (unknownKeys(patch, ['builtin', 'enabled', 'upsert', 'remove', 'betaKey', 'betaUrl', 'modelServer'])) {
       throw new ValueError('Unknown agents setting');
     }
+    this.#applyModelServer(work, patch.modelServer);
     for (const [agentId, enabled] of Object.entries(section(patch.enabled, 'agents'))) { // on/off only: nothing else is touched
       if (typeof enabled !== 'boolean') throw new ValueError('Agents can only be turned on or off');
       if (isBuiltin(agentId)) {

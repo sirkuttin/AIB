@@ -27,6 +27,7 @@
  *
  * Never throws out of a timer; costs one readdir and a few small reads per scan, and nothing while no Claude or Codex chat is open.
  */
+import { isClaudeFamily } from '../agents/claude_family.ts';
 import type { Connection } from '../acp/connection.ts';
 import { isFixture, testHomeEnv } from '../acp/connection.ts';
 import { getLogger } from '../core/log.ts';
@@ -46,7 +47,7 @@ export const DEBOUNCE_MS = 300;
 export const PENDING_MS = 1_000;
 
 /** Providers whose agent is Claude Code (they write the registry). */
-const CLAUDE_PROVIDERS = new Set(['claude']);
+const CLAUDE_PROVIDERS = { has: (p: string) => isClaudeFamily(p) };
 /** Providers whose agent is Codex (one writer per thread: codex_threads.ts). */
 const CODEX_PROVIDERS = new Set(['codex']);
 

@@ -35,6 +35,9 @@ import * as adapters from '../agents/adapters.ts';
 import { Installer, InstallRefused } from '../agents/installer.ts';
 import { readCached as readSignIn, Signer, SignInRefused } from '../agents/signin.ts';
 import { betaAgent, isBeta } from '../agents/beta_catalog.ts';
+import { claudeBase, isClaudeFamily, isModelServerId, serverIdOf } from '../agents/claude_family.ts';
+import { checkModelServer, modelServerEnv, type ServerCheck } from '../agents/model_servers.ts';
+import { withServerModels } from '../acp/breadth.ts';
 import { resolveBeta, withKeyHome } from '../agents/beta_agents.ts';
 import { BetaSigner } from '../agents/beta_signin.ts';
 import { AgentOptionsCache } from '../state/agent_options.ts';
@@ -580,7 +583,7 @@ export class Studio {
     // stream shows as ended is settled (a killed one, or one whose SubagentStop never reached AIB)
     this.geminiSubagents?.turnOver(connection.id); // a Gemini subagent call whose end never came is stopped
     if (this.subagents) {
-      if (connection.provider === 'claude') {
+      if (isClaudeFamily(connection.provider)) {
         await this.subagents.reconcileEnded(connection.id, connection.endedSubagents()).catch((error) => log.exception(error, 'Subagent turn end check failed'));
       }
       await this.subagents.turnEnded(connection.id).catch((error) => log.exception(error, 'Subagent turn end failed'));
@@ -599,7 +602,7 @@ export class Studio {
   }
 
   #studioOwns(provider: string, sessionId: string): boolean {
-    return [...this.connections.values()].some((c) => c.provider === provider && c.sessionId === sessionId && !c.closed);
+    return [...this.connections.values()].some((c) => claudeBase(c.provider) === claudeBase(provider) && c.sessionId === sessionId && !c.closed);
   }
 
   /** Windows pids of this Studio's agents (a WSL chat's pid is the distro's: wslOwnPids). */
@@ -933,6 +936,7 @@ export class Studio {
       if (!row.found) throw new ValueError(`${agentRegistry.BUILTIN_NAMES[provider]} is not available: ${row.problem}`);
       return [row.argv, provider === 'claude' ? adapters.claudeEnv(Deno.env.toObject()) : {}];
     }
+    if (isModelServerId(provider)) return await this.#modelServerLaunch(provider);
     if (isBeta(provider)) return await this.#betaLaunch(provider, fresh);
     const agent = agentRegistry.isCustom(provider) ? this.settings.customAgent(provider) : null;
     if (agent === null) throw new ValueError('That agent is not in Settings (it may have been removed)');
@@ -940,6 +944,49 @@ export class Studio {
     for (const e of agent.env) registerSecret(e.value); // custom agent env values (often API keys) never reach a log line
     return [[agentRegistry.checkCommand(agent.command), ...agent.args], Object.fromEntries(agent.env.map((e) => [e.name, e.value]))];
   }
+
+  /** The model server behind a `claude@<slug>` agent, or a ValueError (it may have been removed in Settings). */
+  #modelServerOf(provider: string) {
+    const server = this.settings.modelServer(serverIdOf(provider) ?? '');
+    if (!server) throw new ValueError('That model server is not in Settings (it may have been removed)');
+    return server;
+  }
+
+  /** The environment a `claude@<slug>` agent gets on top of `claude`'s: the server's address, key (or a dummy) and model. */
+  modelServerEnv(provider: string): Record<string, string> {
+    const server = this.#modelServerOf(provider);
+    const key = this.settings.betaKey(server.id); // stored under the server's id
+    if (key) registerSecret(key); // never in a log line
+    return modelServerEnv(server, key);
+  }
+
+  /**
+   * A model-server agent starts the SAME Claude adapter as `claude`, with its server's environment. The server is asked once first
+   * (GET /v1/models, a few seconds at most): a server that is down gives one plain line naming the address instead of a chat that waits.
+   */
+  async #modelServerLaunch(provider: string): Promise<[string[], Record<string, string>]> {
+    const server = this.#modelServerOf(provider);
+    const row = await builtinLaunch(this.#agentOptions(), this.settings, 'claude');
+    if (!row.found) throw new ValueError(`Claude Code is not available: ${row.problem}`);
+    const env = this.modelServerEnv(provider);
+    const result = await this.modelServerCheck(server.url, this.settings.betaKey(server.id));
+    if (!result.reachable) throw new ValueError(result.error);
+    if (result.models.length) this.#serverModels.set(server.id, result.models);
+    return [row.argv, { ...adapters.claudeEnv(Deno.env.toObject()), ...env }];
+  }
+
+  /** The models each model server (by its own id) listed the last time a chat of it started. */
+  readonly #serverModels = new Map<string, string[]>();
+
+  /** What a model-server chat's model picker offers: the server's list (the configured model first, kept even if unlisted). */
+  #serverModelsFor(server: { id: string; model: string }): { models: string[]; model: string } {
+    const listed = this.#serverModels.get(server.id) ?? [];
+    const models = [...new Set([...(server.model ? [server.model] : []), ...listed])];
+    return { models, model: server.model || models[0] || '' };
+  }
+
+  /** Test seam: how a model server is asked (default GET <address>/v1/models). */
+  modelServerCheck: (url: string, key: string) => Promise<ServerCheck> = (url, key) => checkModelServer(url, key);
 
   /** A Beta agent (beta_catalog.ts): refused for a new chat while it is off; its API key, when one is stored, goes in its environment. */
   async #betaLaunch(provider: string, fresh: boolean): Promise<[string[], Record<string, string>]> {
@@ -1139,15 +1186,18 @@ export class Studio {
       command = [agent.command, ...agent.args];
       extra = Object.fromEntries(agent.env.map((e) => [e.name, e.value]));
     } else {
-      const label = isBeta(provider) ? betaAgent(provider)!.name : agentRegistry.BUILTIN_NAMES[provider] ?? provider;
-      const detected = await host.call('agents.detect', { ids: [provider] });
-      const row = detected.agents.find((a) => a.id === provider);
+      const server = isModelServerId(provider) ? this.#modelServerOf(provider) : null;
+      const detectId = server ? 'claude' : provider; // a model server runs the distro's Claude adapter
+      const label = server ? 'Claude Code' : isBeta(provider) ? betaAgent(provider)!.name : agentRegistry.BUILTIN_NAMES[provider] ?? provider;
+      const detected = await host.call('agents.detect', { ids: [detectId] });
+      const row = detected.agents.find((a) => a.id === detectId);
       if (!row?.found || !row.command?.length) throw new ValueError(`${label} is not installed in ${name}`);
       command = row.command.map(String);
       if (isBeta(provider)) extra = this.betaEnv(provider);
+      if (server) extra = this.modelServerEnv(provider); // same env as a Windows chat; no reachability test from here (see WSL_LOOPBACK_NOTE)
     }
     const env = await host.env();
-    if (provider === 'claude') extra = { ...adapters.claudeEnv(env), ...extra };
+    if (isClaudeFamily(provider)) extra = { ...adapters.claudeEnv(env), ...extra };
     const which = async (program: string) => (await host.call('which', { name: program })).path;
     const program = command[0].includes('/') ? command[0] : await which(command[0]);
     if (!program) throw new ValueError(`${command[0]} was not found in ${name}`);
@@ -1192,7 +1242,7 @@ export class Studio {
 
   /** Protocol-native session discovery (session/list). Never loads or prompts a session. */
   async listAgentSessions(provider: unknown, cwd: unknown = null, cursor: unknown = null): Promise<Json> {
-    if (provider !== 'omp' && provider !== 'claude') {
+    if (!isStr(provider) || (provider !== 'omp' && !isClaudeFamily(provider))) {
       throw new ValueError('Finding saved chats through the agent works for Claude Code and OMP only');
     }
     const command = await this.agentCommand(provider);
@@ -1247,7 +1297,7 @@ export class Studio {
       c.provider === provider && c.ready && !c.closed && c.wsl?.distro.toLowerCase() === loc.distro
     );
     if (!live) {
-      const note = `Open a ${provider === 'claude' ? 'Claude Code' : 'OMP'} chat in ${distroName(loc.distro)} first: ` +
+      const note = `Open a ${isClaudeFamily(provider) ? 'Claude Code' : 'OMP'} chat in ${distroName(loc.distro)} first: ` +
         'AIB asks a running agent there and never starts one to list chats.';
       return { supported: true, sessions: [], nextCursor: null, via: 'none', note };
     }
@@ -1342,6 +1392,11 @@ export class Studio {
           timer = setTimeout(() => reject(new ValueError('The agent did not answer in time')), PROBE_TIMEOUT_SECONDS * 1000);
         }),
       ]);
+      const server = this.settings.modelServer(serverIdOf(agent) ?? '');
+      if (server) {
+        const own = this.#serverModelsFor(server);
+        if (own.models.length) withServerModels(settings as Json, own.models, own.model);
+      }
       this.agentOptions.record(agent, folder, settings, true);
       log.info('Read the model lists of %s with a quiet probe', agent);
     } finally {
@@ -1470,7 +1525,7 @@ export class Studio {
       // Subagent worktrees (subagents/): a Claude chat in a git project gets command hooks through the keeper's forwarder; its key and
       // id go in the agent's environment (never in settings, a command line or a URL). A WSL chat gets none yet (they'd fail open).
       // Codex (subagents/codex.ts): its hooks go in CODEX_CONFIG; hooks off or unavailable turn its subagents off instead.
-      const subagent = provider === 'claude'
+      const subagent = isClaudeFamily(provider)
         ? await this.#subagentHooks(command, plan ? plan.path : workspace, workspace, !!plan, env, !!wsl, chatId)
         : provider === 'codex'
         ? await this.#codexSubagentHooks(
@@ -1556,7 +1611,7 @@ export class Studio {
           const warming = wsl && this.allow ? c.allowWarm() : null;
           await c.setup(resume || null);
           if (warming) await warming; // bounded by the helper call's own time limit; never throws
-          if (c.provider === 'claude' && c.subagentHooks?.off === HOOKS_OFF) { // design 2.6: said up front, before a subagent edits the folder (P0 A7)
+          if (isClaudeFamily(c.provider) && c.subagentHooks?.off === HOOKS_OFF) { // design 2.6: said up front, before a subagent edits the folder (P0 A7)
             c.recordedEvent('studio_note', {
               message: `Subagents that edit files are off in this chat: hooks are off in your Claude Code settings ` +
                 `(${c.subagentHooks.detail}), so AIB can't give them their own worktree. Read-only subagents (Explore, Plan) still work.`,
@@ -1663,7 +1718,11 @@ export class Studio {
       c.onTurnCancelled = (conn) => subagents.turnCancelled(conn.id);
       c.subagentActivity = () => subagents.activity(c.id); // P3's Activity line (codex-acp's child session id is the agent_id)
     }
-    if (c.provider === 'claude' && this.subagents) { // subagent worktrees P2: what the parent's stream says of its subagents
+    if (isModelServerId(c.provider)) { // the model picker lists the server's models, not Anthropic's
+      const server = this.settings.modelServer(serverIdOf(c.provider) ?? '');
+      if (server) c.serverModels = this.#serverModelsFor(server);
+    }
+    if (isClaudeFamily(c.provider) && this.subagents) { // subagent worktrees P2: what the parent's stream says of its subagents
       const subagents = this.subagents;
       // a stopped turn stops only the subagents it was waiting on: background ones run on and land (owner, 2026-11-16)
       c.onTurnCancelled = (conn) => subagents.turnCancelled(conn.id, 'claude');
@@ -2199,7 +2258,7 @@ export class Studio {
     const c = this.connectionFactory(command, cwd, provider, options);
     if (isDict(note.worktree)) c.worktree = { branch: String(note.worktree.branch ?? ''), base: String(note.worktree.base ?? '') };
     c.projectRoot = isStr(note.projectRoot) && note.projectRoot ? note.projectRoot : cwd;
-    if (provider === 'claude' || provider === 'codex') c.subagentHooks = hooksFromNote(note.subagentHooks); // as the chat started (should-fix 6)
+    if (isClaudeFamily(provider) || provider === 'codex') c.subagentHooks = hooksFromNote(note.subagentHooks); // as the chat started (should-fix 6)
     if (provider === 'gemini' && this.hasStateDir && this.worktrees) { // its fence and redirect as launched (subagents/gemini.ts)
       c.geminiSubagents = gemini.restore(this.stateDir, this.worktrees.registry.root, c.id, c.projectRoot || cwd);
     }
@@ -2225,7 +2284,7 @@ export class Studio {
     } catch { /* read-only (rebuildError says why) or the keeper went away */ }
     // subagent worktrees P3: a subagent that ended while AIB was down (its SubagentStop hook failed open) is settled from the replayed
     // stream, so it never stays "running"
-    if (provider === 'claude' && this.subagents) {
+    if (isClaudeFamily(provider) && this.subagents) {
       await this.subagents.reconcileEnded(c.id, c.endedSubagents()).catch((error) => log.exception(error, 'Subagent take-over check failed'));
     }
     rebuildPhases(timer, c.rebuildTimes);
@@ -2415,7 +2474,7 @@ export class Studio {
       return await this.geminiSubagents.beforeTool(conversation, body);
     }
     // each route answers its own agent's chats only (a Codex chat's key can't drive the Claude routes)
-    if (this.connections.get(conversation)?.provider !== 'claude') return { status: 503, body: 'This chat is not open in AIB', type: 'text/plain' };
+    if (!isClaudeFamily(this.connections.get(conversation)?.provider)) return { status: 503, body: 'This chat is not open in AIB', type: 'text/plain' };
     if (event !== 'pre-tool') return await this.subagents.hook(event, conversation, body);
     const waiting = this.#preToolWaiting.get(conversation) ?? 0;
     if (waiting >= MAX_PRE_TOOL_WAITING) return denyHook(SUBAGENT_BUSY);
@@ -2546,7 +2605,7 @@ export class Studio {
       const lasting = c.sessionId ? `${c.provider}:${c.sessionId}` : '';
       return { id: c.id, provider: c.provider, lasting, folder: c.cwd, project: c.projectRoot || c.cwd, hooks: null, subFolder: c.geminiSubagents.subFolder };
     }
-    if (!c || c.closed || (c.provider !== 'claude' && c.provider !== 'codex') || c.wsl) return null;
+    if (!c || c.closed || (!isClaudeFamily(c.provider) && c.provider !== 'codex') || c.wsl) return null;
     if (!c.subagentHooks && c.provider === 'codex') return null; // a Codex chat without a hooks record was given none
     if (!c.subagentHooks) {
       // a chat taken over from a keeper note older than the hooks record (newer notes carry it: hooksFromNote)
@@ -3815,7 +3874,7 @@ const SUBAGENT_BUSY = 'AIB is still preparing worktrees for other subagents of t
  */
 function recheckSubagentHooks(c: Connection): void {
   const h = c.subagentHooks;
-  if (!h || c.provider !== 'claude' || !(h.settings?.hooks || h.adopted)) return;
+  if (!h || !isClaudeFamily(c.provider) || !(h.settings?.hooks || h.adopted)) return;
   if (h.off && h.off !== HOOKS_OFF) return;
   try {
     const now = readClaudeSetup(c.projectRoot || c.cwd, h.configDir ? { CLAUDE_CONFIG_DIR: h.configDir } : Deno.env.toObject()).hooksOff;

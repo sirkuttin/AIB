@@ -3,6 +3,7 @@
  * parsed transcripts (LRU within a byte budget, never evicting one in use), background commands per chat, and the model a live
  * conversation really runs on. Paths are native strings; keys are POSIX paths relative to a root, prefixed by provider in a Catalog.
  */
+import { claudeBase } from '../agents/claude_family.ts';
 import { clip, isDict, pyIsPrintable, pyStr, pyStrip, ValueError } from '../core/py.ts';
 import { isNetworkPath } from '../web/security.ts';
 import { isForeignPath } from '../platform/location.ts';
@@ -779,6 +780,7 @@ export async function modelInUse(
   claudeRoot: string | null = null,
   ompRoot: string | null = null,
 ): Promise<Dict | null> {
+  provider = claudeBase(provider);
   const root = provider === 'claude' ? claudeRoot : provider === 'omp' ? ompRoot : null;
   const path = await findSessionFile(provider, root, sessionId);
   if (path === null) return null;

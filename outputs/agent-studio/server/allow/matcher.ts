@@ -4,6 +4,7 @@
  * `ruleFor` drafts the rule the card's "Always allow" would save (or says why it can't: floor and never items are greyed out).
  */
 import { basename, isAbsolute, relative, resolve } from 'node:path';
+import { isClaudeFamily } from '../agents/claude_family.ts';
 import {
   batArgProblem,
   downloadAndRun,
@@ -126,7 +127,7 @@ export function readRequest(params: unknown, ctx: MatchContext): Request {
   const locations = (Array.isArray(call.locations) ? call.locations : []).map((l) => (isDict(l) && isStr(l.path) ? l.path : '')).filter(
     Boolean,
   );
-  if (ctx.provider === 'claude' || tool) {
+  if (isClaudeFamily(ctx.provider) || tool) {
     if (tool === 'Bash' || tool === 'PowerShell') {
       if (!isStr(raw.command)) return { kind: 'unknown', reason: 'no command' };
       if (tool === 'PowerShell' && ctx.linux) return { kind: 'unknown', reason: 'PowerShell in a WSL chat has no rules' };
@@ -281,11 +282,11 @@ function partContext(ctx: MatchContext, cwd: string, shell: 'bash' | 'pwsh'): Pa
 
 function matchInner(params: unknown, ctx: MatchContext, rules: AllowRule[], builtins: Builtins, tick: () => void): MatchResult {
   if (ctx.facts?.riskyEnv) return { allow: false, reason: `rules are off for this chat: ${ctx.facts.riskyEnv}` };
-  if (ctx.linux && ctx.provider === 'claude' && !ctx.facts) return { allow: false, reason: LINUX_NO_FACTS };
+  if (ctx.linux && isClaudeFamily(ctx.provider) && !ctx.facts) return { allow: false, reason: LINUX_NO_FACTS };
   const ops = opsOf(ctx);
   const req = readRequest(params, ctx);
   const here = rulesHere(rules, ctx.project);
-  const flagged = ctx.provider === 'claude' && BYPASS.has(ctx.mode ?? '');
+  const flagged = isClaudeFamily(ctx.provider) && BYPASS.has(ctx.mode ?? '');
   if (req.kind === 'special' || req.kind === 'unknown') {
     return { allow: false, reason: req.kind === 'special' ? 'answered by you' : req.reason };
   }
@@ -553,7 +554,7 @@ export function ruleFor(params: unknown, ctx: MatchContext, scope: 'project' | '
   const base = { scope, ...(scope === 'project' ? { project: projectKey(ctx.project) } : {}) } as const;
   if (req.kind === 'special') return { ...no(''), offer: false, hideAgentAlways: false };
   // a WSL chat whose distro facts AIB could not read: AIB can't match, so the agent's own Always stays (audit F1, F9)
-  if (ctx.linux && ctx.provider === 'claude' && !ctx.facts) return no(`Not available: ${LINUX_NO_FACTS}.`, false, false);
+  if (ctx.linux && isClaudeFamily(ctx.provider) && !ctx.facts) return no(`Not available: ${LINUX_NO_FACTS}.`, false, false);
   const ops = opsOf(ctx);
   if (ctx.facts?.riskyEnv) return no(`Not available: allow rules are off for this chat because ${ctx.facts.riskyEnv}.`);
   const askedTool = toolAsked(req, ctx);
@@ -566,7 +567,7 @@ export function ruleFor(params: unknown, ctx: MatchContext, scope: 'project' | '
       /^(Bash|PowerShell|WebFetch|Edit|Write|MultiEdit|NotebookEdit|mcp__)/.test(tool);
     return no(`Not available: ${req.reason}.`, false, hide);
   }
-  const flagged = ctx.provider === 'claude' && BYPASS.has(ctx.mode ?? '');
+  const flagged = isClaudeFamily(ctx.provider) && BYPASS.has(ctx.mode ?? '');
   if (flagged) return no('Not available: Claude flagged this request in bypass mode; your rules never answer those.');
   if (req.kind === 'mcp') {
     const label = `${req.server} · ${req.tool}`;

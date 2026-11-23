@@ -32,6 +32,7 @@ import {
   sessionCapabilities,
   isModelsOption,
   withModelsOption,
+  withServerModels,
 } from './breadth.ts';
 import { validateContent, validateSchema, validateUrlRequest } from './elicitation.ts';
 import { arraySource, type Ev, type EventSource, page, type Page, type PageQuery } from './event_pages.ts';
@@ -55,6 +56,7 @@ import {
 import { WriteTracker } from '../artifacts/artifacts.ts';
 import { findOption as findPickOption } from '../state/agent_options.ts';
 import { betaAgent } from '../agents/beta_catalog.ts';
+import { claudeBase, isClaudeFamily } from '../agents/claude_family.ts';
 import { artifactToolCommand } from '../artifacts/mcp.ts';
 import { isOwnForwardEntry, isOwnMcpUrl } from '../artifacts/mcp_http.ts';
 import { type Killable, ProcessTree, treeSpawnOptions } from '../platform/process_tree.ts';
@@ -1886,7 +1888,7 @@ export class Connection {
         this.#modes().currentModeId = get(params, 'modeId');
       } else if (method === 'session/set_config_option' && isDict(result)) {
         Object.assign(this.settings, result);
-        withModelsOption(this.settings);
+        this.#withModels(this.settings);
       } else if (method === 'session/set_model') {
         this.#modelSet(get(params, 'modelId'));
       }
@@ -4023,7 +4025,7 @@ export class Connection {
       const own = this.sessionId === null || sid === null || sid === this.sessionId;
       if (own && get(update, 'sessionUpdate') === 'config_option_update') {
         this.settings.configOptions = get(update, 'configOptions', []);
-        withModelsOption(this.settings); // an agent's models list stays offered as the model option
+        this.#withModels(this.settings); // an agent's models list stays offered as the model option
       }
       if (own && get(update, 'sessionUpdate') === 'current_mode_update') {
         this.#modes().currentModeId = get(update, 'currentModeId');
@@ -4393,7 +4395,7 @@ export class Connection {
         // agent may offer its terminal-type methods (ACP auth.terminal); the chat's sign-in card then has a Sign in button.
         // Claude Code too (Deno only): its "claude-ai-login" / "console-login" terminal methods run in an AIB terminal from the chat's
         // sign-in card (terminal_routes.ts builtinSigninCommand), never a separate console window.
-        ...(betaAgent(this.provider)?.signin.kind === 'terminal' || TERMINAL_SIGNIN_PROVIDERS.has(this.provider)
+        ...(betaAgent(this.provider)?.signin.kind === 'terminal' || (TERMINAL_SIGNIN_PROVIDERS.has(this.provider) && !isClaudeFamily(this.provider) || this.provider === 'claude')
           ? { auth: { terminal: true } }
           : {}),
       },
@@ -4512,9 +4514,9 @@ export class Connection {
     if (!isDict(result) || !isStr(this.sessionId) || !this.sessionId) {
       throw new ValueError('The agent returned an invalid session response');
     }
-    withModelsOption(result); // ACP `models` (Gemini): shown, and remembered through startSettings, as the model option
+    this.#withModels(result); // ACP `models` (Gemini): shown, and remembered through startSettings, as the model option
     Object.assign(this.settings, result);
-    withModelsOption(this.settings);
+    this.#withModels(this.settings);
     this.knownSessions.add(this.sessionId);
   }
 
@@ -4740,9 +4742,9 @@ export class Connection {
     }
     const updates = replay.updates;
     if (isDict(result)) {
-      withModelsOption(result);
+      this.#withModels(result);
       Object.assign(this.settings, result);
-      withModelsOption(this.settings);
+      this.#withModels(this.settings);
     }
     const outside = outsideTurns(updates, this.#lastUserText);
     for (const params of outside.updates) {
@@ -4789,7 +4791,7 @@ export class Connection {
     await this.initializeForDiscovery();
     const result = await this.request('session/new', { cwd: this.agentCwd, mcpServers: [] }, timeoutSeconds);
     if (!isDict(result)) throw new ValueError('The agent returned an invalid session response');
-    withModelsOption(result); // the remembered lists (agent-options.json) keep an agent's models list as its model option
+    this.#withModels(result); // the remembered lists (agent-options.json) keep an agent's models list as its model option
     const sid = get(result, 'sessionId');
     const caps = sessionCapabilities(this.initial);
     if (isStr(sid) && sid && caps.ops.includes('close')) {
@@ -5057,7 +5059,7 @@ export class Connection {
    * subagents off), AIB doesn't send it: the chat line saying why, else null. Reads the skill files only; never throws.
    */
   forkSkillRefusal(text: unknown): string | null {
-    if (this.provider !== 'claude' || !isStr(text)) return null;
+    if (!isClaudeFamily(this.provider) || !isStr(text)) return null;
     const h = this.subagentHooks;
     if (!h || !(isDict(h.settings?.hooks) || isDict(h.deny) || h.adopted === true)) return null;
     const m = /^\/(\S+)/.exec(pyStrip(text));
@@ -5324,13 +5326,30 @@ export class Connection {
       throw new TypeError(`'${pyTypeName(result)}' object is not iterable`);
     }
     Object.assign(this.settings, result);
+    if (this.serverModels) {
+      const all = Array.isArray(this.settings.configOptions) ? this.settings.configOptions : [];
+      const option = all.find((o) => isDict(o) && o.id === configId) as Json | undefined;
+      if (option && (option.category === 'model' || option.id === 'model') && isStr(value)) this.#serverCurrent = value;
+      this.#withModels(this.settings);
+    }
+  }
+
+  /** A model-server chat (set by Studio): the server's models, and the model a new chat starts with. null for every other chat. */
+  serverModels: { models: string[]; model: string } | null = null;
+  #serverCurrent = '';
+
+  /** withModelsOption, then (model-server chat) the server's models in place of the adapter's. */
+  #withModels(settings: unknown): void {
+    withModelsOption(settings);
+    if (this.serverModels) withServerModels(settings, this.serverModels.models, this.#serverCurrent || this.serverModels.model);
   }
 
   /** The model the agent took through session/set_model: its models reply and the model option AIB made from it. */
   #modelSet(modelId: unknown): void {
     if (!isStr(modelId)) return;
+    this.#serverCurrent = modelId;
     if (isDict(this.settings.models)) (this.settings.models as Json).currentModelId = modelId;
-    withModelsOption(this.settings);
+    this.#withModels(this.settings);
   }
 
   /** Validated session/set_mode, applied now. */
@@ -6585,7 +6604,7 @@ export class Connection {
     // a WSL chat gets no subagent hooks yet (they'd fail open), so no subagent worktree either
     if (this.wsl) {
       const view = new LinuxView(this.#linuxFacts, { since: linux.since ?? 0, needs: linux.needs ?? null, distro: this.wsl.distro });
-      const claude = this.provider === 'claude' ? view.base()?.claude ?? (view.recording ? COLLECT_FACTS : null) : undefined;
+      const claude = isClaudeFamily(this.provider) ? view.base()?.claude ?? (view.recording ? COLLECT_FACTS : null) : undefined;
       return {
         provider: this.provider,
         toolName: seen?.toolName ?? null,
@@ -6682,7 +6701,7 @@ export class Connection {
         return host && host.state === 'ready' ? host : null;
       },
       cwd: () => this.agentCwd,
-      claude: this.provider === 'claude',
+      claude: isClaudeFamily(this.provider),
       claudeDir: () => {
         const env = agentEnv();
         return env.CLAUDE_CONFIG_DIR || (env.HOME?.startsWith('/') ? `${env.HOME.replace(/\/+$/, '')}/.claude` : undefined);
@@ -7345,7 +7364,7 @@ export class Connection {
       // Claude Code's own follow-up cycle (busy, but no turn of ours). It takes a message in (steerable, owner 2026-11-17): Send now
       // prompts it into the cycle; another agent's (not expected) is not steerable and the queue box says why.
       autonomous: this.busy && this.autonomous,
-      steerAgent: STEER_AGENTS.has(this.provider) ? this.provider : null,
+      steerAgent: STEER_AGENTS.has(claudeBase(this.provider)) ? claudeBase(this.provider) : null,
       steerLane: this.queue.steerPublic(light),
       toolBackground: this.toolBackground(),
       // Subagent worktrees (P1; Activity's chips are P3): on, or why not ("hooks are off", "not a git project", "WSL, coming", ...)

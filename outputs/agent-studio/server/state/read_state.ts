@@ -23,7 +23,7 @@ export interface ReadPosition {
   markedUnreadAt?: number;
 }
 
-const PROVIDER = /^[a-z0-9][a-z0-9_-]*$/;
+const PROVIDER = /^[a-z0-9][a-z0-9@_-]*$/;
 
 function hasControl(value: string): boolean {
   for (const ch of value) if (ch.codePointAt(0)! < 32) return true;

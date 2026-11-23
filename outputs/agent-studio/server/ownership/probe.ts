@@ -19,6 +19,7 @@
  * platform/process_info.ts, POSIX from `ps` and /proc), so assess() can be called from a request handler without awaiting.
  */
 import { createHash } from 'node:crypto';
+import { claudeBase } from '../agents/claude_family.ts';
 import { getLogger } from '../core/log.ts';
 import { clip, isDict, PY_SPACE, pyIsPrintable, pyLen, pyStr, pyStrip, pyTruthy } from '../core/py.ts';
 import { basename, home, join, normcase, normpath, WIN } from '../platform/ospath.ts';
@@ -47,7 +48,7 @@ export const SNAPSHOT_TTL_SECONDS = 4.0;
 export const HINT_TTL_SECONDS = 3.0;
 export const STATE_ORDER: Record<string, number> = { no_evidence: 0, possibly_active: 1, owned_elsewhere: 2, owned_by_studio: 3 };
 export const SESSION_ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
-export const PROVIDER_RE = /^[a-z0-9_-]{1,32}$/;
+export const PROVIDER_RE = /^[a-z0-9@_-]{1,48}$/;
 
 export const NO_EVIDENCE_NOTE = 'AIB found no sign of another app using this conversation, but it cannot see every client ' +
   '(for example an idle session open in another app writes nothing). This is not proof that it is free.';
@@ -597,7 +598,7 @@ interface Claim {
   state: string;
 }
 
-const claimKey = (provider: string, sessionId: string) => JSON.stringify([provider, sessionId]);
+const claimKey = (provider: string, sessionId: string) => JSON.stringify([claudeBase(provider), sessionId]);
 
 /**
  * Writes announcements for sessions this client owns and reads everyone's. One file per (session, instance):
@@ -924,6 +925,7 @@ export class OwnershipProbe {
 
   // -- transcripts -------------------------------------------------------------------------
   findTranscript(provider: string, sessionId: unknown): string | null {
+    provider = claudeBase(provider);
     const root = this.roots[provider] ?? null;
     if (root === null || typeof sessionId !== 'string' || !SESSION_ID_RE.test(sessionId)) return null;
     try {
@@ -1151,6 +1153,7 @@ export class OwnershipProbe {
   // -- the verdict -------------------------------------------------------------------------
   /** Full evidence for one conversation. deep=true also asks Windows who holds the transcript open. */
   assess(provider: string, sessionId: string, options: AssessOptions = {}): Assessment {
+    provider = claudeBase(provider); // a model-server entry (claude@x) is Claude here: same transcripts, same processes
     const { cwd = null, deep = true, skipCmdline = false, fresh = false, projectRoot = null } = options;
     const started = this.clock();
     const reasons: Reason[] = [];

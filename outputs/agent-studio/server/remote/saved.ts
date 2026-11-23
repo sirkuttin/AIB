@@ -66,7 +66,7 @@ function isoOf(seconds: unknown): string {
   }
 }
 
-export const SAVED_KEY = /^[a-z0-9][a-z0-9_-]{0,59}:[^\s:][^\s]{0,299}$/;
+export const SAVED_KEY = /^[a-z0-9][a-z0-9@_-]{0,59}:[^\s:][^\s]{0,299}$/;
 
 /** The phone's list of chats that are not running (cached LIST_MS). */
 export class SavedChats {

@@ -5,6 +5,7 @@
  * (sha256 of the compact JSON [provider, session] under <state>/session-leases/; msvcrt byte-0 lock on Windows, flock elsewhere,
  * through platform/lock.ts tryLockNow), so a Python host and a Deno host exclude each other.
  */
+import { claudeBase } from '../agents/claude_family.ts';
 import { createHash } from 'node:crypto';
 import { LockHeld, tryLockNow } from '../platform/lock.ts';
 import { basename, join, WIN } from '../platform/ospath.ts';
@@ -27,7 +28,7 @@ export class SessionLease {
     this.stateDir = String(stateDir);
     this.provider = String(provider);
     this.sessionId = String(sessionId);
-    const key = JSON.stringify([this.provider, this.sessionId]); // json.dumps(..., ensure_ascii=False, separators=(",", ":"))
+    const key = JSON.stringify([claudeBase(this.provider), this.sessionId]); // json.dumps(..., ensure_ascii=False, separators=(",", ":"))
     const digest = createHash('sha256').update(new TextEncoder().encode(key)).digest('hex');
     this.path = join(this.stateDir, 'session-leases', digest + '.lock');
   }
@@ -227,7 +228,7 @@ export function findExternalOwner(
   excludedPids: Iterable<unknown> = [],
 ): number | null {
   const providerKey = String(provider).toLowerCase();
-  if (providerKey !== 'claude' && providerKey !== 'omp') return null;
+  if (claudeBase(providerKey) !== 'claude' && providerKey !== 'omp') return null;
   const excluded = new Set<number>();
   for (const pid of excludedPids) {
     const value = pyInt(pid);
@@ -256,7 +257,7 @@ export async function probeExternalOwner(
   sessionId: unknown,
   excludedPids: Iterable<unknown> = [],
 ): Promise<number | null> {
-  if (!WIN || !['claude', 'omp'].includes(String(provider).toLowerCase())) return null;
+  if (!WIN || !['claude', 'omp'].includes(claudeBase(String(provider).toLowerCase()))) return null;
   const script =
     "Get-CimInstance Win32_Process | Where-Object { $_.Name -in @('claude.exe','omp.exe') } | Select-Object ProcessId,Name,CommandLine | " +
     'ConvertTo-Json -Compress';

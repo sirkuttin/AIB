@@ -20,7 +20,7 @@ const obj = (v: unknown): Json => (v && typeof v === 'object' && !Array.isArray(
 
 /** The furthest a snooze may reach (the two choices are 1 hour and tomorrow 9:00). */
 export const SNOOZE_MAX_SECONDS = 48 * 3600;
-const KEY = /^[a-z0-9][a-z0-9_-]*:[^\s]{1,500}$/;
+const KEY = /^[a-z0-9][a-z0-9@_-]*:[^\s]{1,500}$/;
 
 export type InboxActContext = Pick<WebContext, 'inbox' | 'conversations' | 'host'>;
 

@@ -14,6 +14,7 @@
  * A cleared name (Rename to nothing) changes nothing in the agent. The newest name wins; an older one still waiting is dropped.
  */
 import { getLogger } from '../core/log.ts';
+import { claudeBase } from '../agents/claude_family.ts';
 
 const log = getLogger('agent-titles');
 
@@ -60,7 +61,7 @@ export class AgentTitles {
   /** The user named this chat in AIB: give the agent's own session the same name (now, or when its turn ends). */
   request(provider: string, sessionId: string, title: string, cwd = ''): boolean {
     const name = String(title ?? '').replace(/\s+/g, ' ').trim();
-    if (!TITLED_PROVIDERS.has(provider) || !sessionId || !name) return false;
+    if (!TITLED_PROVIDERS.has(claudeBase(provider)) || !sessionId || !name) return false;
     const key = `${provider}:${sessionId}`;
     this.#wanted.set(key, { provider, sessionId, title: name, cwd: cwd || '', notFound: 0 });
     void this.#try(key);

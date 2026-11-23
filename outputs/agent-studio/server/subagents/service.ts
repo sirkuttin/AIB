@@ -25,6 +25,7 @@
  * parent's ACP stream continues (SendMessage) or stops (TaskStop, a failed Agent call, a stopped turn) them; once landed, empty or
  * discarded, the web process asks this side to release it (`subagent-release`): worktree, branch and record go, junction-safe.
  */
+import { isClaudeFamily } from '../agents/claude_family.ts';
 import { getLogger } from '../core/log.ts';
 import { isDict, pyStrip } from '../core/py.ts';
 import { readJsonFile, saveJson } from '../state/json.ts';
@@ -726,7 +727,7 @@ export class SubagentWorktrees {
     await this.adoptPrevious(chatId);
     await this.#lockOf(chatId).run(async () => {
       for (const r of this.ofChat(chatId).filter((x) => x.state === 'running' || (x.state === 'user-hook' && x.agentId))) {
-        if (provider === 'claude' && inBackground(r)) continue;
+        if (isClaudeFamily(provider) && inBackground(r)) continue;
         await this.#stop(r, 'the turn was stopped');
       }
     });

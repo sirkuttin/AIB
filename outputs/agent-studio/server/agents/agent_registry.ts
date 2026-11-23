@@ -12,6 +12,7 @@
 import { clip, isDict, isStr, pyLen, pySplit, pyStr, pyStrip, ValueError } from '../core/py.ts';
 import { executable, expandUser, isAbsolute, isFile, resolvePath, which } from '../platform/pypath.ts';
 import { BETA_IDS, BETA_NAMES, isBeta } from './beta_catalog.ts';
+import { isModelServerId } from './claude_family.ts';
 
 export const BUILTIN_IDS = ['omp', 'claude', 'codex'] as const;
 export const BUILTIN_NAMES: Record<string, string> = { omp: 'OMP', claude: 'Claude Code', codex: 'Codex' };
@@ -54,7 +55,7 @@ export function isBuiltin(value: unknown): boolean {
 
 /** A provider id Studio can store and launch: a built-in or a well-formed user-agent id. */
 export function isProvider(value: unknown): value is string {
-  return isStr(value) && (isBuiltin(value) || isBeta(value) || (pyLen(value) <= 48 && ID_RE.test(value)));
+  return isStr(value) && (isBuiltin(value) || isBeta(value) || isModelServerId(value) || (pyLen(value) <= 48 && ID_RE.test(value)));
 }
 
 export function isCustom(value: unknown): value is string {
