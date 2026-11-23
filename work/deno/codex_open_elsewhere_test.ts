@@ -119,3 +119,29 @@ Deno.test('probe: a saved Codex thread another app holds is a strong codex-write
   assertEquals(a.reasons[0].pid, undefined);
   assertEquals(probe.assess('codex', '01a1ecea-0000-7323-90b9-9bdf77fa9bf4', { deep: false }).verdict, 'no_evidence');
 });
+
+Deno.test('a model-server Codex entry (codex@strata) is checked in its own CODEX_HOME, never the default Codex home', async () => {
+  if (Deno.build.os !== 'windows' && Deno.build.os !== 'linux') return;
+  const { Handoff } = await import('../../outputs/agent-studio/server/ownership/handoff.ts');
+  const entryHome = home();
+  const path = writerLockPath(entryHome, TID);
+  Deno.writeFileSync(path, new Uint8Array());
+  const handoff = new Handoff({
+    connections: () => [],
+    codexHomeOf: (p) => (p === 'codex@strata' ? entryHome : null),
+  });
+  const before = Deno.env.get('STUDIO_REAL_ADAPTER_TESTS');
+  Deno.env.set('STUDIO_REAL_ADAPTER_TESTS', '1'); // fixtures are skipped under test otherwise; plain codex reads a throwaway home
+  const writer = await Deno.open(path, { read: true, write: true });
+  try {
+    assertEquals(handoff.savedHolder('codex@strata', TID), null, 'unlocked leftover is free');
+    await writer.lock(true);
+    assertEquals(handoff.savedHolder('codex@strata', TID)?.entrypoint, 'codex-writer-lock');
+    assertEquals(handoff.savedHolder('codex', TID), null, 'plain Codex looks in its own home, not the entry one');
+  } finally {
+    writer.close();
+    if (before === undefined) Deno.env.delete('STUDIO_REAL_ADAPTER_TESTS');
+    else Deno.env.set('STUDIO_REAL_ADAPTER_TESTS', before);
+    Deno.removeSync(entryHome, { recursive: true });
+  }
+});

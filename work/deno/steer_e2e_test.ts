@@ -583,17 +583,32 @@ const HINTS: Record<Who, RegExp> = {
   codex: /Codex answers right away\. A command it is running keeps going in the background, and Codex isn't told when it ends\./,
 };
 
+/** Send later made the ▾ permanent (owner, 2026-11-23): idle, its menu holds only "Send later…", never the ways to send into a turn. */
+async function idleMenuHoldsOnlyLater(page: Awaited<ReturnType<typeof openPage>>, when: string): Promise<void> {
+  const more = `[...document.querySelectorAll('#promptForm [aria-haspopup]')].some((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; })`;
+  await page.waitFor(`${more} && !document.getElementById('cancel').offsetParent`, 8000, `${when}: the ▾ shows and the turn is over`);
+  await page.eval(`document.querySelector('#promptForm .send-more').focus()`);
+  await page.key('ArrowDown');
+  await page.waitFor(`document.querySelector('#promptForm [aria-haspopup]')?.getAttribute('aria-expanded') === 'true'`, 4000, `${when}: menu opened`);
+  assert(await visibleByText(page, 'Send later'), `${when}: "Send later…" is in the menu`);
+  for (const item of [SEND_NOW, AFTER, INTERRUPT]) assert(!(await visibleByText(page, item)), `${when}: no "${item}" in the menu`);
+  await page.key('Escape');
+  await page.waitFor(`document.querySelector('#promptForm [aria-haspopup]')?.getAttribute('aria-expanded') !== 'true'`, 4000, `${when}: menu closed`);
+}
+
 for (const who of WHO) {
-  pageTest(`P1 [B] ${who}: the composer shows "Send ▾" only while it works; the menu has the three sends and this agent's hint; keyboard works`, async () => {
+  pageTest(`P1 [B] ${who}: the ▾ menu holds only "Send later…" while idle; while the agent works it adds the three sends and this agent's hint; keyboard works`, async () => {
     await using lab = await started();
     const chat = await lab.chat(who);
     const page = await openPage(lab, chat);
     try {
-            assert(await page.eval<boolean>(`![...document.querySelectorAll('#promptForm [aria-haspopup]')].some((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; })`), 'idle composer: no ▾');
+      await idleMenuHoldsOnlyLater(page, 'idle composer');
       const gate = lab.gate();
       await chat.prompt(`steer-wait:${gate}`, 'first');
       await working(chat);
       await page.waitFor(`[...document.querySelectorAll('#promptForm [aria-haspopup]')].some((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; })`, 8000, 'the ▾ while working');
+      // the ▾ is always there now (Send later): wait until the page knows the agent works, or the menu opens with the idle list
+      await page.waitFor(`!document.getElementById('cancel').hidden`, 8000, 'the page shows the agent working (Interrupt)');
       await page.eval(`document.querySelector('#promptForm .send-more').focus()`); // B wires ↓ on the menu button (Send is disabled while the box is empty) and in the menu, not in the message box
       await page.key('ArrowDown'); // ↓ opens the menu from the keyboard
       await page.waitFor(`document.querySelector('#promptForm [aria-haspopup]')?.getAttribute('aria-expanded') === 'true'`, 4000, 'menu opened by ↓');
@@ -603,7 +618,7 @@ for (const who of WHO) {
       await page.waitFor(`document.querySelector('#promptForm [aria-haspopup]')?.getAttribute('aria-expanded') !== 'true'`, 4000, 'menu closed by Esc');
       chat.open(gate);
       await idle(chat);
-      await page.waitFor(`!([...document.querySelectorAll('#promptForm [aria-haspopup]')].some((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; }))`, 8000, 'the ▾ is gone when the turn ended');
+      await idleMenuHoldsOnlyLater(page, 'after the turn ended');
     } finally {
       await page.close();
     }

@@ -505,6 +505,9 @@ Deno.test('Maki and Qwen Code entries start their normal adapter with the server
     assertEquals(launched.map((l) => l.provider), ['qwen@strata', 'maki@strata']);
     assertEquals(launched[0].env, { OPENAI_BASE_URL: up.url, OPENAI_API_KEY: KEY, OPENAI_MODEL: 'm-b' });
     assertEquals(launched[1].env, { ANTHROPIC_BASE_URL: up.url, ANTHROPIC_API_KEY: KEY });
+    const [qwenArgv] = await studio.agentLaunch('qwen@strata');
+    assertEquals(qwenArgv.slice(-2), ['--auth-type', 'openai'], 'Qwen Code is told to use OpenAI auth (a stale selectedType in its settings cannot win)');
+    assert(!(await studio.agentLaunch('qwen').then(([a]) => a.includes('--auth-type'), () => false)), 'the normal Qwen entry is unchanged');
     assertEquals(betaServerEnv('qwen', studio.settings.modelServer('strata')!, ''), { OPENAI_BASE_URL: up.url, OPENAI_API_KEY: DUMMY_KEY, OPENAI_MODEL: 'm-b' });
   } finally {
     Deno.env.set('PATH', before);
@@ -538,7 +541,7 @@ Deno.test({
     assertEquals(codex.extra[CODEX_KEY_ENV], KEY);
     assertEquals(written, [{ id: 'strata', toml: codexConfigToml(server, 'responses') }], 'the same generated config.toml as on Windows');
     const qwen = await studio.wslLaunch('qwen@strata', wsl, true);
-    assertEquals(qwen.command, ['/usr/bin/qwen-acp']);
+    assertEquals(qwen.command, ['/usr/bin/qwen-acp', '--auth-type', 'openai'], 'OpenAI auth by flag, whatever the distro settings say');
     for (const [name, value] of Object.entries(betaServerEnv('qwen', server, KEY))) assertEquals(qwen.extra[name], value, name);
     const maki = await studio.wslLaunch('maki@strata', wsl, true);
     for (const [name, value] of Object.entries(betaServerEnv('maki', server, KEY))) assertEquals(maki.extra[name], value, name);

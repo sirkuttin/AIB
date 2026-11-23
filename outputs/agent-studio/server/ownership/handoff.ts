@@ -27,7 +27,7 @@
  *
  * Never throws out of a timer; costs one readdir and a few small reads per scan, and nothing while no Claude or Codex chat is open.
  */
-import { isClaudeFamily } from '../agents/claude_family.ts';
+import { isClaudeFamily, isCodexFamily } from '../agents/claude_family.ts';
 import type { Connection } from '../acp/connection.ts';
 import { isFixture, testHomeEnv } from '../acp/connection.ts';
 import { getLogger } from '../core/log.ts';
@@ -49,7 +49,7 @@ export const PENDING_MS = 1_000;
 /** Providers whose agent is Claude Code (they write the registry). */
 const CLAUDE_PROVIDERS = { has: (p: string) => isClaudeFamily(p) };
 /** Providers whose agent is Codex (one writer per thread: codex_threads.ts). */
-const CODEX_PROVIDERS = new Set(['codex']);
+const CODEX_PROVIDERS = { has: (p: string) => isCodexFamily(p) };
 
 const isCodex = (c: Connection) => CODEX_PROVIDERS.has(c.provider);
 
@@ -58,7 +58,9 @@ export interface HandoffHost {
   /** WSL: who else holds these sessions in the distro (its helper's answer); {} when it cannot tell. */
   wslHeld?(distro: string, sessionIds: string[], chatPids: number[]): Promise<Record<string, Holder>>;
   /** WSL Codex: the distro's helper's answer (codex.scan); null when it cannot tell. */
-  wslCodex?(distro: string, sessionIds: string[], chatPids: number[]): Promise<WslCodexScan | null>;
+  wslCodex?(distro: string, sessionIds: string[], chatPids: number[], codexHome?: string): Promise<WslCodexScan | null>;
+  /** A model-server Codex entry's own CODEX_HOME on this PC (`codex@strata`: <data folder>/codex-home/strata); null for plain Codex. */
+  codexHomeOf?(provider: string): string | null;
 }
 
 /** What the distro's helper sees for Codex chats: a CLI naming a thread, a thread's writer lock held, and the app-servers there. */
@@ -148,7 +150,7 @@ export class Handoff {
 
   /** A saved conversation's holder other than this AIB (Windows: the default Claude config folder AIB's agents get); null: none. */
   savedHolder(provider: string, sessionId: string): Holder | null {
-    if (CODEX_PROVIDERS.has(provider)) return this.#savedCodexHolder(sessionId);
+    if (CODEX_PROVIDERS.has(provider)) return this.#savedCodexHolder(sessionId, this.host.codexHomeOf?.(provider) ?? null);
     if (!CLAUDE_PROVIDERS.has(provider) || !WIN || fixtureUnderTest([provider])) return null;
     const dir = claudeConfigDir({ ...Deno.env.toObject(), ...testHomeEnv([provider]) });
     const records = liveRecords(dir);
@@ -160,11 +162,11 @@ export class Handoff {
    * A saved Codex thread another app has open (the default Codex home AIB's agents get): a Codex CLI naming it, or its writer lock
    * held (AIB holds no saved conversation: the probe asks only for those). Codex would refuse to open it here.
    */
-  #savedCodexHolder(threadId: string): Holder | null {
+  #savedCodexHolder(threadId: string, entryHome: string | null = null): Holder | null {
     if (fixtureUnderTest(['codex'])) return null;
     const cli = cliHolder(this.#codexProcesses(), threadId, this.#ownPids(true));
     if (cli) return cli;
-    const home = codexHome({ ...Deno.env.toObject(), ...testHomeEnv(['codex']) });
+    const home = entryHome ?? codexHome({ ...Deno.env.toObject(), ...testHomeEnv(['codex']) });
     const lock = writerLockState(writerLockPath(home, threadId));
     return lock.state === 'held' ? { pid: lock.pid, entrypoint: 'codex-writer-lock', status: '', app: 'another app' } : null;
   }
@@ -271,7 +273,7 @@ export class Handoff {
   async #codexHolderNow(c: Connection): Promise<Holder | null> {
     if (c.wsl) {
       // inside the distro: its helper reads the process list and /proc/locks (codex.scan)
-      const found = await this.host.wslCodex?.(c.wsl.distro, [c.sessionId!], this.#wslChatPids(c.wsl.distro));
+      const found = await this.host.wslCodex?.(c.wsl.distro, [c.sessionId!], this.#wslChatPids(c.wsl.distro), c.env?.CODEX_HOME);
       return found?.cli[c.sessionId!] ?? (c.elsewhere?.released ? found?.locked[c.sessionId!] : null) ?? null;
     }
     const cli = this.#codexCliHolder(c, this.#codexProcesses(true));
@@ -347,10 +349,12 @@ export class Handoff {
         if (!c.elsewhere.released) await c.tryRelease();
         continue;
       }
+      // a model-server Codex entry has its own CODEX_HOME in the distro: its writer locks are looked up there
+      const key = isCodex(c) ? `${c.wsl.distro}|${c.env?.CODEX_HOME ?? ''}` : c.wsl.distro;
       const groups = isCodex(c) ? codexByDistro : byDistro;
-      const list = groups.get(c.wsl.distro) ?? [];
+      const list = groups.get(key) ?? [];
       list.push(c);
-      groups.set(c.wsl.distro, list);
+      groups.set(key, list);
     }
     if (this.host.wslHeld) {
       for (const [distro, chats] of byDistro) {
@@ -365,8 +369,9 @@ export class Handoff {
       }
     }
     if (this.host.wslCodex) {
-      for (const [distro, chats] of codexByDistro) {
-        const found = await this.host.wslCodex(distro, chats.map((c) => c.sessionId!), this.#wslChatPids(distro));
+      for (const chats of codexByDistro.values()) {
+        const distro = chats[0].wsl!.distro;
+        const found = await this.host.wslCodex(distro, chats.map((c) => c.sessionId!), this.#wslChatPids(distro), chats[0].env?.CODEX_HOME);
         if (!found) continue; // the helper cannot tell (an older one): no sign is no hand-off
         const rest: Connection[] = [];
         for (const c of chats) {

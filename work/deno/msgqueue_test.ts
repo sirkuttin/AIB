@@ -522,7 +522,8 @@ Deno.test('a QueueStore file written by Deno is read by Python, and the other wa
     const pyFile = JSON.parse(Deno.readTextFileSync(`${dir}/studio-queues-py.json`));
     const denoFile = JSON.parse(Deno.readTextFileSync(`${dir}/studio-queues-deno.json`));
     assertEquals(Object.keys(pyFile), ['version', 'savedAt', 'sessions']);
-    assertEquals(Object.keys(denoFile), Object.keys(pyFile));
+    // `meta` (each chat's folder for the Send-later schedule scan) is Deno-only: Python reads the file and ignores it
+    assertEquals(Object.keys(denoFile).filter((k) => k !== 'meta'), Object.keys(pyFile));
     assert(Math.abs(denoFile.savedAt - pyFile.savedAt) < 60, 'savedAt is seconds on both sides');
 
     // the same puts on the Deno side give the same sessions as Python wrote

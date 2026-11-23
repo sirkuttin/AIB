@@ -172,6 +172,9 @@ export function betaServerEnv(agent: string, server: ModelServer, key: string): 
   return env;
 }
 
+/** Qwen Code on a model server: use the OpenAI-compatible auth from OPENAI_BASE_URL / OPENAI_API_KEY / OPENAI_MODEL, whatever its settings say. */
+export const QWEN_AUTH_ARGS = ['--auth-type', 'openai'];
+
 /** The environment variable that carries the key to codex-acp (named in the generated config.toml as env_key). */
 export const CODEX_KEY_ENV = 'AIB_MODEL_SERVER_KEY';
 

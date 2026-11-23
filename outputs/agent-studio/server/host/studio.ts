@@ -40,6 +40,7 @@ import {
   betaServerEnv,
   checkModelServer,
   CODEX_KEY_ENV,
+  QWEN_AUTH_ARGS,
   codexConfigToml,
   codexWireApi,
   DUMMY_KEY,
@@ -477,10 +478,13 @@ export class Studio {
     this.handoff = new Handoff({
       connections: () => this.connections.values(),
       wslHeld: (distro, sessionIds, chatPids) => this.#wslHeld(distro, sessionIds, chatPids),
-      wslCodex: async (distro, sessionIds, chatPids) => {
+      codexHomeOf: (provider) => isModelServerId(provider) && isCodexFamily(provider) && this.hasStateDir
+        ? join(this.stateDir, 'codex-home', serverIdOf(provider)!)
+        : null,
+      wslCodex: async (distro, sessionIds, chatPids, codexHome) => {
         try {
           const host = readyHost(distro);
-          return await wslCodexScan(host, sessionIds, await wslOwnPids(host, chatPids));
+          return await wslCodexScan(host, sessionIds, await wslOwnPids(host, chatPids), codexHome);
         } catch {
           return null;
         }
@@ -1016,7 +1020,10 @@ export class Studio {
       if (!this.hasStateDir) throw new ValueError('Codex on a model server needs AIB\'s data folder');
       env.CODEX_HOME = await this.#codexHomeFor(server, key);
     }
-    return [row.argv, { ...(base === 'claude' ? adapters.claudeEnv(Deno.env.toObject()) : {}), ...env }];
+    // Qwen Code reads OPENAI_* only when its auth type is openai: a stale selectedType in the owner's ~/.qwen/settings.json (the ended
+    // qwen-oauth) would answer "Authentication required" (tested 0.27.2). The flag wins over settings and touches no file.
+    const argv = base === 'qwen' ? [...row.argv, ...QWEN_AUTH_ARGS] : row.argv;
+    return [argv, { ...(base === 'claude' ? adapters.claudeEnv(Deno.env.toObject()) : {}), ...env }];
   }
 
   /** Test seam: how a model server is inspected for its API kinds (default: the kept health answer, 30 s). */
@@ -1242,6 +1249,7 @@ export class Studio {
       const row = detected.agents.find((a) => a.id === detectId);
       if (!row?.found || !row.command?.length) throw new ValueError(`${label} is not installed in ${name}`);
       command = row.command.map(String);
+      if (server && detectId === 'qwen') command = [...command, ...QWEN_AUTH_ARGS];
       if (isBeta(provider)) extra = this.betaEnv(provider);
       if (server) { // same env as a Windows chat; no reachability test from here (see WSL_LOOPBACK_NOTE)
         extra = this.modelServerEnv(provider);

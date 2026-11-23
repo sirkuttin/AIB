@@ -110,10 +110,10 @@ export async function wslSessionsHeld(host: WslHost, sessionIds: string[], exclu
  * the app-servers and who started them) and the writer locks. null when the helper cannot tell (an older one without the method): the
  * chats just stay attached.
  */
-export async function wslCodexScan(host: WslHost, sessionIds: string[], exclude: number[]): Promise<WslCodexScan | null> {
+export async function wslCodexScan(host: WslHost, sessionIds: string[], exclude: number[], codexHome?: string): Promise<WslCodexScan | null> {
   if (!sessionIds.length) return null;
   try {
-    const home = wslTestHomeEnv().CODEX_HOME;
+    const home = codexHome || wslTestHomeEnv().CODEX_HOME;
     const answer = await host.call('codex.scan', { sessionIds: sessionIds.slice(0, 200), exclude, ...(home ? { codexHome: home } : {}) }, {
       timeoutMs: 10_000,
     });
