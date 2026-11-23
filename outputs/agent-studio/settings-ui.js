@@ -15,6 +15,7 @@
   const SECTIONS = [
     { id: 'agents', label: 'AIB Linking' },
     { id: 'wsl', label: 'AIB Linking (WSL)', windowsOnly: true }, // drawn by wsl-settings-ui.js; only when AIB runs on Windows
+    { id: 'servers', label: 'Model servers' }, // addresses agents talk to: a local model server, a gateway
     { id: 'defaults', label: 'Defaults' },
     { id: 'notifications', label: 'Notifications' },
     { id: 'devices', label: 'Remote control' }, // id kept: old links to #devices still open it
@@ -128,6 +129,35 @@
         'remove',
         'disk space',
         'aib-server',
+      ],
+    },
+    {
+      id: 'model-servers',
+      section: 'servers',
+      label: 'Model servers',
+      keywords: [
+        'model server',
+        'server',
+        'strata',
+        'local model',
+        'ollama',
+        'lm studio',
+        'llama.cpp',
+        'openrouter',
+        'gateway',
+        'base url',
+        'api address',
+        'address',
+        'openai compatible',
+        'anthropic compatible',
+        'use with',
+        'key',
+        'check',
+        'claude code',
+        'maki',
+        'qwen',
+        'qwen code',
+        'migrate',
       ],
     },
     {
@@ -425,7 +455,7 @@
     recheckUninstallRefusals();
     const AC = root.AgentChoice;
     if (AC) {
-      if (AC.setRegistry) AC.setRegistry(data.agents);
+      if (AC.setRegistry) AC.setRegistry(agentsWithHealth(data.agents));
       if (AC.setDefaults) AC.setDefaults(data.settings && data.settings.defaults);
     }
     if (S.host && S.host.registryChanged) S.host.registryChanged();
@@ -1090,6 +1120,12 @@
         row.append(note(a.problem, E.canInstall(a) || (a.installable && a.launcherSource === 'missing') ? 'dim' : 'bad'));
     }
     if (E.extraLines) E.extraLines(a, row, { job, running });
+    // Servers are set up in Settings > Model servers; a card only says which ones this agent is also on (read only).
+    if (E === WIN_ENV && Array.isArray(a.alsoOnServers) && a.alsoOnServers.length) {
+      const also = note('Also on model servers: ' + a.alsoOnServers.join(' · ') + ' ', 'dim st-also-servers');
+      also.append(button('Model servers', () => goSection('servers'), 'st-link'));
+      row.append(also);
+    }
     if (a.beta) betaLines(a, row, E);
     else if (E.terminal(a)) row.append(E.terminal(a).node); // a built-in's Node.js install runs in the card's terminal
     if (!a.builtin && !a.beta) {
@@ -1320,7 +1356,7 @@
     const list = agents();
     if (!list.length)
       box.append(note(S.loadError ? 'The agent list could not be read from the server: ' + S.loadError : 'Loading…'));
-    const blocked = list.find((a) => !a.beta && installBlock(a) && !setupOf(a)); // a card with setup says it itself
+    const blocked = list.find((a) => !a.beta && !a.modelServer && installBlock(a) && !setupOf(a)); // a card with setup says it itself
     if (blocked) {
       const line = note(blocked.installBlock + (blocked.installHint ? ' ' + blocked.installHint : ''), 'dim');
       line.append(
@@ -1330,7 +1366,7 @@
       box.append(line);
     }
     // The tested agents and the ones you added; the Beta agents have their own card (renderAgentsBeta).
-    for (const a of orderAgents(list.filter((x) => !x.beta)))
+    for (const a of orderAgents(list.filter((x) => !x.beta && !x.modelServer))) // model-server entries are set up under Model servers
       box.append(agentRow(a, { sharedBlock: true, uninstall: true })); // Settings only, not the start page
     box.append(
       note(
@@ -1593,51 +1629,21 @@
         'st-hint',
       ),
     );
-    if (info.baseUrlEnv) wrap.append(urlBox(a, info));
+    if (info.baseUrlEnv) wrap.append(serverLine(a, info));
     return wrap;
   }
-  // The optional API address under the key box (Qwen: OPENAI_BASE_URL): saved with the settings like the key, passed to the agent as
-  // its variable. Empty: the agent's own default address.
-  const urlDrafts = {};
-  function urlBox(a, info) {
+  // The agent's address is a Model servers setting (Settings > Model servers, "Use with"); the card says where it comes from and links
+  // there. An address saved on the card before that move (not yet moved by the migration script) is shown, read only.
+  function serverLine(a, info) {
     const box = el('div', null, 'st-beta-url');
-    const label = el('span', 'API address (' + info.baseUrlEnv + ', optional)', 'st-label');
-    const line = el('div', null, 'st-beta-row');
-    const input = el('input');
-    input.type = 'url';
-    input.spellcheck = false;
-    input.value = Object.prototype.hasOwnProperty.call(urlDrafts, a.id) ? urlDrafts[a.id] : info.baseUrl || '';
-    input.placeholder = info.baseUrlHint || '';
-    input.setAttribute('aria-label', 'API address for ' + a.name);
-    input.addEventListener('input', () => {
-      urlDrafts[a.id] = input.value;
-    });
-    const store = button(
-      'Save address',
-      () => {
-        const value = (Object.prototype.hasOwnProperty.call(urlDrafts, a.id) ? urlDrafts[a.id] : input.value).trim();
-        save({ agents: { betaUrl: { [a.id]: value || null } } }).then(
-          () => {
-            delete urlDrafts[a.id];
-            if (a.enabled) checkOne(a);
-          },
-          () => {},
-        );
-      },
-      'st-primary',
-    );
-    line.append(input, store);
-    box.append(
-      label,
-      line,
-      el(
-        'span',
-        'Leave empty for OpenAI. For an Alibaba Cloud Model Studio key use ' +
-          (info.baseUrlHint || '') +
-          ' (your workspace ID is on the workspace details page in the Model Studio console).',
-        'st-hint',
-      ),
-    );
+    let text;
+    if (info.server) text = 'Address: from model server ' + info.server.name + ' (' + info.server.url + ').';
+    else if (info.baseUrl)
+      text = 'Address: ' + info.baseUrl + ' (saved here before addresses moved to Model servers; the migration script moves it).';
+    else text = 'Use another server (a local model, a gateway) instead of ' + a.name + "'s own address:";
+    const line = el('span', text + ' ', 'st-hint');
+    line.append(button('Model servers', () => goSection('servers'), 'st-link'));
+    box.append(line);
     return box;
   }
   // One agent's sign-in check (force), then the list again.
@@ -2453,10 +2459,378 @@
     }, 1500);
   }
 
+  // ---- Model servers ----------------------------------------------------------------------------------------------------------
+  // An address agents talk to (a local model server such as strata, Ollama or LM Studio, or a gateway): its own section, apart from the
+  // agent cards. Each server has a name, an address, an optional key (never shown back) and a model from the server's /v1/models.
+  // "Use with" has one switch per agent the server's API kinds support; Claude Code's switch adds a New chat entry ("Claude Code ·
+  // strata"), Maki's and Qwen Code's make the agent read its address from the server. The row icons (Check, Edit, Remove) are always
+  // visible: no hover or right-click menus, no popups. The server side: /api/live/model-servers (list with health) and
+  // /api/live/model-servers/check; edits go through POST /api/live/settings {agents: {modelServer: {upsert | remove}}}.
+  const MS = { health: {}, at: 0, busy: null, form: null, confirm: '', drafts: {}, error: '', checking: {} };
+  const MS_USE = [
+    { agent: 'claude', label: 'Claude Code', kind: 'anthropic', entry: true },
+    { agent: 'maki', label: 'Maki', kind: 'anthropic', entry: false },
+    { agent: 'qwen', label: 'Qwen Code', kind: 'chat', entry: false },
+  ];
+  const MS_KINDS = { anthropic: 'Anthropic Messages', responses: 'OpenAI Responses', chat: 'Chat Completions' };
+  const serversList = () => (S.data && Array.isArray(S.data.modelServers) ? S.data.modelServers : []);
+  // The agent list with each model server's last answer: a server that did not answer greys its New chat entries ("down").
+  function agentsWithHealth(list) {
+    return (Array.isArray(list) ? list : []).map((a) => {
+      const h = a && a.modelServer ? MS.health[a.serverId] : null;
+      return h && h.down ? Object.assign({}, a, { down: h.down }) : a;
+    });
+  }
+  // Ask the server for every server's health (it keeps an answer 30 s; fresh asks again), then grey or ungrey the New chat entries.
+  function loadServerHealth(fresh) {
+    if (MS.busy) return MS.busy;
+    MS.busy = Promise.resolve()
+      .then(() => S.host.get('/api/live/model-servers', fresh ? { fresh: '1' } : undefined))
+      .then(
+        (r) => {
+          const map = {};
+          for (const s of (r && r.servers) || []) map[s.id] = s;
+          MS.health = map;
+        },
+        () => {},
+      )
+      .then(() => {
+        MS.at = Date.now();
+        MS.busy = null;
+        const AC = root.AgentChoice;
+        if (AC && AC.setRegistry && S.data) {
+          AC.setRegistry(agentsWithHealth(S.data.agents));
+          if (S.host && S.host.registryChanged) S.host.registryChanged();
+        }
+        if (S.open) renderAll();
+      });
+    return MS.busy;
+  }
+  // New chat asks when it opens (kept 30 s on the server): nothing else polls.
+  function checkServers(fresh) {
+    if (!S.host) return Promise.resolve();
+    return Promise.resolve(S.data ? S.data : load()).then(() => (serversList().length ? loadServerHealth(fresh) : undefined));
+  }
+  function msStatus(srv, h) {
+    if (MS.checking[srv.id] || !h) return { text: 'Checking…', cls: 'dim' };
+    if (!h.reachable) return { text: 'Not answering', cls: 'warn' };
+    if (h.keyRefused) return { text: 'Key refused', cls: 'warn' };
+    if (h.needsKey && !srv.keySet) return { text: 'Needs a key', cls: 'warn' };
+    return { text: 'Answering', cls: 'ok' };
+  }
+  // A small always-visible icon button (createElementNS: no markup is parsed). paths: SVG path data in a 16x16 box.
+  function msIcon(label, paths, onClick, cls) {
+    const b = el('button', null, 'ms-icon' + (cls ? ' ' + cls : ''));
+    b.type = 'button';
+    b.title = label;
+    b.setAttribute('aria-label', label);
+    const NS = 'http://www.w3.org/2000/svg';
+    const svg = doc().createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 16 16');
+    svg.setAttribute('width', '16');
+    svg.setAttribute('height', '16');
+    svg.setAttribute('aria-hidden', 'true');
+    for (const d of paths) {
+      const p = doc().createElementNS(NS, 'path');
+      p.setAttribute('d', d);
+      p.setAttribute('fill', 'none');
+      p.setAttribute('stroke', 'currentColor');
+      p.setAttribute('stroke-width', '1.3');
+      p.setAttribute('stroke-linecap', 'round');
+      p.setAttribute('stroke-linejoin', 'round');
+      svg.append(p);
+    }
+    b.append(svg);
+    b.addEventListener('click', onClick);
+    return b;
+  }
+  const MS_ICON_CHECK = ['M13 8a5 5 0 1 1-1.5-3.5', 'M13 2.5v3h-3'];
+  const MS_ICON_EDIT = ['M3 13l.7-3L10.5 3.2a1.4 1.4 0 0 1 2 2L5.7 12.3 3 13z', 'M9.5 4.2l2.3 2.3'];
+  const MS_ICON_REMOVE = ['M3 4.5h10', 'M6.5 4.5V3h3v1.5', 'M4.5 4.5l.6 8.5h5.8l.6-8.5', 'M6.8 7v4M9.2 7v4'];
+  function msSave(patch) {
+    return save(patch).then(
+      () => {
+        MS.error = '';
+        S.error = '';
+      },
+      (error) => {
+        MS.error = (error && error.message) || 'Could not save.';
+        S.error = '';
+        if (S.open) renderAll();
+      },
+    );
+  }
+  const msUpsert = (id, fields) => msSave({ agents: { modelServer: { upsert: Object.assign({ id }, fields) } } });
+  // Check again: the server asks the model server now (no model output is generated), then the list is read from the kept answer.
+  function checkServer(srv) {
+    MS.checking[srv.id] = true;
+    renderAll();
+    return Promise.resolve()
+      .then(() => S.host.post('model-servers/check', { id: srv.id }))
+      .catch(() => {})
+      .then(() => {
+        delete MS.checking[srv.id];
+        MS.busy = null;
+        return loadServerHealth(false);
+      });
+  }
+  function msUseLine(srv, h) {
+    const box = el('div', null, 'st-field ms-use');
+    box.append(el('span', 'Use with', 'st-label'));
+    for (const u of MS_USE) {
+      const on = (srv.useWith || []).includes(u.agent);
+      const speaks = !h || !h.reachable || (h.kinds || []).includes(u.kind);
+      const row = el('div', null, 'ms-use-row');
+      const sw = toggle(u.label, on, (checked) => {
+        const next = MS_USE.filter((x) => (x.agent === u.agent ? checked : (srv.useWith || []).includes(x.agent))).map((x) => x.agent);
+        msUpsert(srv.id, { useWith: next });
+      });
+      const cb = sw.querySelector('input');
+      cb.dataset.useWith = u.agent;
+      cb.setAttribute('aria-label', 'Use ' + srv.name + ' with ' + u.label);
+      if (!speaks && !on) {
+        cb.disabled = true;
+        row.append(sw, el('span', u.label + ' needs a server that speaks ' + MS_KINDS[u.kind] + '.', 'st-hint'));
+      } else {
+        row.append(
+          sw,
+          el(
+            'span',
+            u.entry
+              ? 'Adds "' + u.label + ' · ' + srv.name + '" to New chat.'
+              : u.label + ' reads its address from this server (one server at a time).',
+            'st-hint',
+          ),
+        );
+      }
+      box.append(row);
+    }
+    return box;
+  }
+  function msKeyLine(srv) {
+    const wrap = el('div', null, 'st-field st-beta-key');
+    wrap.append(el('span', 'Key (optional)', 'st-label'));
+    const line = el('div', null, 'st-beta-row');
+    const input = el('input');
+    input.type = 'password';
+    input.autocomplete = 'new-password';
+    input.spellcheck = false;
+    input.value = MS.drafts[srv.id] || '';
+    input.placeholder = srv.keySet ? '•••• (stored)' : 'Paste a key';
+    input.setAttribute('aria-label', 'Key for ' + srv.name);
+    input.addEventListener('input', () => {
+      MS.drafts[srv.id] = input.value;
+    });
+    line.append(
+      input,
+      button(
+        'Save key',
+        () => {
+          const value = (MS.drafts[srv.id] || '').trim();
+          if (!value) return;
+          msUpsert(srv.id, { key: value }).then(() => {
+            delete MS.drafts[srv.id];
+            checkServer(srv);
+          });
+        },
+        'st-primary',
+      ),
+    );
+    if (srv.keySet) line.append(button('Remove key', () => msUpsert(srv.id, { key: null }).then(() => checkServer(srv)), 'st-danger'));
+    wrap.append(
+      line,
+      el(
+        'span',
+        (srv.keyStorage ? String(srv.keyStorage).replace(/\.?$/, '') : 'Saved in the data folder') +
+          '. Sent to the agents you switch on below; never shown again here.',
+        'st-hint',
+      ),
+    );
+    return wrap;
+  }
+  function msModelLine(srv, h) {
+    const models = (h && h.models) || [];
+    const line = el('div', null, 'st-field ms-model');
+    line.append(el('span', 'Model', 'st-label'));
+    if (models.length > 1 || (models.length === 1 && srv.model && srv.model !== models[0])) {
+      const opts = [['', 'First model listed (' + models[0] + ')']].concat(models.map((m) => [m, m]));
+      if (srv.model && !models.includes(srv.model)) opts.push([srv.model, srv.model + ' (not listed)']);
+      const sel = select(opts, srv.model || '', (value) => msUpsert(srv.id, { model: value }), 'Model for ' + srv.name);
+      sel.dataset.serverModel = srv.id;
+      line.append(sel);
+    } else {
+      line.append(el('span', srv.model || models[0] || (h && h.reachable ? 'The server lists no models' : 'Not known yet'), 'ms-model-text'));
+    }
+    return line;
+  }
+  function msRow(srv) {
+    const h = MS.health[srv.id] || null;
+    const row = el('div', null, 'st-agent ms-row');
+    row.dataset.server = srv.id;
+    const head = el('div', null, 'st-agent-head');
+    head.append(el('span', (srv.name || '?').charAt(0).toUpperCase(), 'st-letter'), el('strong', srv.name), el('span', srv.url, 'st-tag'));
+    const st = msStatus(srv, h);
+    head.append(
+      el('span', st.text, 'st-status ' + st.cls),
+      msIcon('Check ' + srv.name + ' again', MS_ICON_CHECK, () => checkServer(srv), 'ms-check'),
+      msIcon('Edit ' + srv.name, MS_ICON_EDIT, () => {
+        MS.form = { id: srv.id, name: srv.name, url: srv.url };
+        MS.confirm = '';
+        renderAll();
+      }, 'ms-edit'),
+      msIcon('Remove ' + srv.name, MS_ICON_REMOVE, () => {
+        MS.confirm = srv.id;
+        renderAll();
+      }, 'ms-remove'),
+    );
+    row.append(head);
+    if (MS.confirm === srv.id) {
+      const ask = note('Remove ' + srv.name + '? Its key and its New chat entries go too. The server itself is not touched. ', 'bad');
+      ask.append(
+        button('Remove', () => {
+          MS.confirm = '';
+          msSave({ agents: { modelServer: { remove: srv.id } } });
+        }, 'st-danger'),
+        ' ',
+        button('Keep', () => {
+          MS.confirm = '';
+          renderAll();
+        }, 'st-link'),
+      );
+      row.append(ask);
+    }
+    if (MS.form && MS.form.id === srv.id) {
+      row.append(msForm(MS.form));
+      return row;
+    }
+    if (h && !h.reachable) {
+      row.append(note(h.down + '. ' + (h.error || '') + ' AIB never starts or stops your server: start it, then choose Check.', 'dim ms-down'));
+    } else if (h) {
+      const speaks = (h.kinds || []).map((k) => MS_KINDS[k]).filter(Boolean);
+      row.append(note('Speaks: ' + (speaks.length ? speaks.join(' · ') : 'no API AIB knows') + (h.needsKey ? ' (wants a key)' : ''), 'dim ms-speaks'));
+    }
+    row.append(msModelLine(srv, h), msKeyLine(srv), msUseLine(srv, h));
+    if (srv.wslNote) row.append(note(srv.wslNote, 'dim ms-wsl'));
+    return row;
+  }
+  // The add / edit form: name, address (and a key when adding). Adding asks the server once (no model output) to pick the first
+  // model and switch Claude Code on when the server speaks Anthropic Messages.
+  function msForm(form) {
+    const adding = !form.id;
+    const box = el('div', null, 'ms-form');
+    const name = el('input');
+    name.type = 'text';
+    name.spellcheck = false;
+    name.value = form.name || '';
+    name.placeholder = 'strata';
+    name.setAttribute('aria-label', 'Name');
+    name.addEventListener('input', () => (form.name = name.value));
+    const url = el('input');
+    url.type = 'url';
+    url.spellcheck = false;
+    url.value = form.url || '';
+    url.placeholder = 'http://127.0.0.1:8080';
+    url.setAttribute('aria-label', 'Address');
+    url.addEventListener('input', () => (form.url = url.value));
+    box.append(field('Name (optional)', name, 'Shown in New chat, for example "Claude Code · strata". Empty: the address.'), field('Address', url, 'A local server (127.0.0.1) or a gateway. AIB does not start it.'));
+    let key = null;
+    if (adding) {
+      key = el('input');
+      key.type = 'password';
+      key.autocomplete = 'new-password';
+      key.spellcheck = false;
+      key.placeholder = 'Paste a key';
+      key.setAttribute('aria-label', 'Key (optional)');
+      key.addEventListener('input', () => (form.key = key.value));
+      key.value = form.key || '';
+      box.append(field('Key (optional)', key, 'Most local servers need none.'));
+    }
+    const actions = el('div', null, 'st-beta-row');
+    const go = button(
+      adding ? 'Add' : 'Save',
+      () => {
+        const address = (form.url || '').trim();
+        if (!address) {
+          MS.error = 'Type the server address, for example http://127.0.0.1:8080';
+          renderAll();
+          return;
+        }
+        go.disabled = true;
+        const fields = { url: address };
+        if ((form.name || '').trim() || !adding) fields.name = (form.name || '').trim();
+        if (!adding) {
+          msUpsert(form.id, fields).then(() => {
+            MS.form = null;
+            if (!MS.error) checkServer({ id: form.id });
+            else renderAll();
+          });
+          return;
+        }
+        if ((form.key || '').trim()) fields.key = form.key.trim();
+        Promise.resolve()
+          .then(() => S.host.post('model-servers/check', { url: address, key: (form.key || '').trim() }))
+          .catch(() => null)
+          .then((r) => {
+            const speaksClaude = !r || !r.reachable || (r.kinds || []).includes('anthropic');
+            fields.useWith = speaksClaude ? ['claude'] : [];
+            if (r && r.models && r.models.length) fields.model = r.models[0];
+            return msSave({ agents: { modelServer: { upsert: fields } } });
+          })
+          .then(() => {
+            if (!MS.error) MS.form = null;
+            MS.busy = null;
+            return loadServerHealth(true);
+          });
+      },
+      'st-primary',
+    );
+    actions.append(
+      go,
+      button(
+        'Cancel',
+        () => {
+          MS.form = null;
+          MS.error = '';
+          renderAll();
+        },
+        'st-link',
+      ),
+    );
+    box.append(actions);
+    return box;
+  }
+  function renderModelServers(box) {
+    box.append(
+      note(
+        'A model server is an address an agent talks to: a local model server such as strata, Ollama or LM Studio, or a gateway. It stays on your PC, and any agent that speaks its API can use it. Each agent you switch on below gets its own entry in New chat.',
+        'ms-lead',
+      ),
+    );
+    if (MS.error) box.append(note(MS.error, 'bad st-error ms-error'));
+    const list = serversList();
+    if (S.data && !MS.busy && Date.now() - MS.at > 5000 && list.length) loadServerHealth(false);
+    if (!list.length && !(MS.form && !MS.form.id)) box.append(note('No model servers yet.', 'dim ms-none'));
+    for (const srv of list) box.append(msRow(srv));
+    if (MS.form && !MS.form.id) box.append(msForm(MS.form));
+    else
+      box.append(
+        button(
+          'Add a model server',
+          () => {
+            MS.form = { id: '', name: '', url: '', key: '' };
+            MS.error = '';
+            renderAll();
+          },
+          'st-primary ms-add',
+        ),
+      );
+  }
+
   const RENDER = {
     'agents-list': renderAgentsList,
     'agents-beta': renderAgentsBeta,
     'agents-add': renderAgentsAdd,
+    'model-servers': renderModelServers,
     'wsl-linking': (box) =>
       root.AIBWslSettings
         ? root.AIBWslSettings.render(box)
@@ -2490,6 +2864,7 @@
     'agents-list': 'Agents',
     'agents-beta': 'Beta agents',
     'agents-add': 'Add an ACP agent',
+    'model-servers': 'Model servers',
     'default-agent': 'Default agent',
     'default-picks': 'Default model and mode',
     'default-projects': 'Per project',
@@ -2941,6 +3316,7 @@
     filterIndex,
     sectionCounts,
     checkSignins, // refresh the cached sign-in status (once per Settings open; force for "Check again")
+    checkServers, // the model servers' health (New chat asks when it opens; the server keeps an answer 30 s)
     openAddAgent,
     trouble,
     onChange,

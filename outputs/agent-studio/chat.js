@@ -3718,6 +3718,7 @@
     renderConversations();
     renderNewChat();
     renderAgents();
+    window.AgentSettingsUI?.checkServers?.(); // a model server that does not answer greys its entries (the server keeps an answer 30 s)
     $('prompt').focus();
   }
   // The new chat's folder and its branch as GET /api/live/branch answered. Every new chat works in the project folder (owner
@@ -3866,7 +3867,7 @@
     if (!lists.loading || lists.mode) if (!modes.some((m) => m.value === newDraft.mode)) newDraft.mode = '';
     if (!lists.loading || lists.effort) if (!efforts.some((m) => m.value === newDraft.effort)) newDraft.effort = '';
     fillSelect($('ncAgent'), wslAgentRows(AgentChoice.menuRows(), f.cwd), newDraft.provider);
-    $('ncSetup').hidden = !AgentChoice.UNAVAILABLE.length;
+    $('ncSetup').hidden = !AgentChoice.UNAVAILABLE.some((a) => !a.server);
     fillSelect($('ncModel'), models, newDraft.model);
     fillSelect($('ncMode'), modes, newDraft.mode);
     for (const id of ['ncAgent', 'ncModel', 'ncMode']) $(id).disabled = startingNew;
@@ -4090,6 +4091,7 @@
           group: a.group,
           disabled: !!a.disabled,
           reason: a.reason || '',
+          server: !!a.server,
         })),
         extraChips,
       },

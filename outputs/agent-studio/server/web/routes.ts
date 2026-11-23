@@ -18,6 +18,7 @@ export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
  *   POST /api/live/view-prefs                 save the page's view and appearance preferences (state/view_prefs.ts)
  *   POST /api/live/agent-options              the model / mode / effort lists a new chat can offer (state/agent_options.ts)
  *   POST /api/live/model-servers/check        ask a model server (saved id, or typed url) for its models: reachable, models, error
+ *   GET  /api/live/model-servers              the Model servers list with each one's health: reachable, models, API kinds, down
  *   POST /api/live/desktop/notify             the desktop app shows a notification natively (desktop/notify.ts)
  *   GET  /api/live/update/notes               the release notes to show once after an update ("What's new in AIB <version>")
  *   POST /api/live/update/notes               the page showed them: not offered again
@@ -139,6 +140,7 @@ export const DENO_ONLY: readonly [string, string, string, RouteKind][] = [
   ['POST', '/api/live/view-prefs', 'write', 'body'],
   ['POST', '/api/live/agent-options', 'write', 'body'],
   ['POST', '/api/live/model-servers/check', 'write', 'body'], // asks a model server for its models (GET <address>/v1/models)
+  ['GET', '/api/live/model-servers', 'read', 'get'], // the Model servers list with each server's health (cached 30 s)
   ['POST', '/api/live/desktop/notify', 'write', 'body'],
   ['GET', '/api/live/update/notes', 'read', 'get'],
   ['POST', '/api/live/update/notes', 'write', 'body'],

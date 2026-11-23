@@ -39,7 +39,7 @@ import {
   MAX_ENV_VALUE,
 } from '../agents/agent_registry.ts';
 import { betaAgent } from '../agents/beta_catalog.ts';
-import { cleanModelServer, cleanServerUrl, defaultServerName, makeModelServerId, MAX_MODEL, MAX_MODEL_SERVERS, type ModelServer } from '../agents/model_servers.ts';
+import { cleanModelServer, cleanServerUrl, cleanUseWith, USE_WITH, defaultServerName, makeModelServerId, MAX_MODEL, MAX_MODEL_SERVERS, type ModelServer } from '../agents/model_servers.ts';
 import { isServerId, MODEL_SERVER_AGENTS, modelServerAgentId } from '../agents/claude_family.ts';
 import { expandUser, isAbsolute, isFile, pathStr } from '../platform/pypath.ts';
 import { deepCopy, errorText, inDir, isOSError, JsonFileStore, sameJson, VERSION } from './base.ts';
@@ -461,6 +461,11 @@ export class SettingsStore extends JsonFileStore {
     return this.modelServers().find((s) => s.id === serverId) ?? null;
   }
 
+  /** The server an agent without entries of its own (Maki, Qwen Code) reads its address from: the first one switched on for it, or null. */
+  modelServerFor(agent: string): ModelServer | null {
+    return this.modelServers().find((s) => s.useWith.includes(agent)) ?? null;
+  }
+
   builtinEnabled(agentId: string): boolean {
     const builtin = this.snapshot().agents.builtin;
     return Object.prototype.hasOwnProperty.call(builtin, agentId) ? builtin[agentId] : true;
@@ -626,7 +631,11 @@ export class SettingsStore extends JsonFileStore {
       }
       const model = 'model' in raw ? this.#cls().value(raw.model).slice(0, MAX_MODEL) : existing?.model ?? '';
       const id = existing?.id ?? (isStr(raw.id) ? raw.id : makeModelServerId(name, list.map((s) => s.id)));
-      const server: ModelServer = { id, name, url, model };
+      const useWith = 'useWith' in raw ? cleanUseWith(raw.useWith) : existing?.useWith ?? ['claude'];
+      const server: ModelServer = { id, name, url, model, useWith };
+      for (const other of list) { // Maki and Qwen Code read their address from ONE server: switching one on here switches it off elsewhere
+        if (other !== existing) other.useWith = other.useWith.filter((a) => !USE_WITH.some((u) => u.agent === a && !u.entry) || !useWith.includes(a));
+      }
       if (existing) list[list.indexOf(existing)] = server;
       else list.push(server);
       work.agents.modelServers = list;

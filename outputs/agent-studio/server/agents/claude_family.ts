@@ -42,3 +42,8 @@ export function modelServerAgentId(agent: string, serverId: string): string {
 export function serverIdOf(agentId: unknown): string | null {
   return isModelServerId(agentId) ? agentId.slice(agentId.indexOf('@') + 1) : null;
 }
+
+/** The same agent for session listing: Claude Code and its model-server entries share one saved-chat folder, so any of them can list it. */
+export function sameAgent(a: unknown, b: unknown): boolean {
+  return a === b || (isClaudeFamily(a) && isClaudeFamily(b));
+}

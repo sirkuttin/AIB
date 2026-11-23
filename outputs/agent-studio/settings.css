@@ -1349,3 +1349,47 @@ html[data-ui-scaled] .st-page {
 .ps-linkto select {
   max-width: 180px;
 }
+/* Settings > Model servers (settings-ui.js): the always-visible row icons (Check, Edit, Remove), the Use with switches and the add form. */
+.ms-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.st-agent-head button.ms-icon {
+  padding: 0;
+}
+.ms-icon:hover,
+.ms-icon:focus-visible {
+  color: var(--text);
+  border-color: var(--line-control);
+}
+.ms-use-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  margin: 4px 0;
+}
+.ms-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 0 0;
+}
+.ms-form input {
+  max-width: 100%;
+}
+.ms-add {
+  margin-top: 4px;
+}
+.ms-model select {
+  max-width: 100%;
+}

@@ -5,8 +5,8 @@
  * the body is read). Payloads and messages are Python's.
  */
 import { isDict, ValueError } from '../core/py.ts';
-import { conversationAction, settingsView, type StudioContext } from './shared.ts';
-import { checkModelServer, cleanServerUrl, isLoopbackAddress, WSL_LOOPBACK_NOTE } from '../agents/model_servers.ts';
+import { conversationAction, modelServersView, settingsView, type StudioContext } from './shared.ts';
+import { cleanServerUrl, inspectModelServer, isLoopbackAddress, serverHealth, WSL_LOOPBACK_NOTE } from '../agents/model_servers.ts';
 import { EditorError, knownRoots, Launcher } from '../desktop/editors.ts';
 import * as folders from '../desktop/folders.ts';
 import { presence } from '../desktop/folder_presence.ts';
@@ -201,9 +201,11 @@ export function studioRoutes(): Map<string, StudioHandler> {
   routes.set('POST /api/live/model-servers/check', async (ctx, _url, body) => {
     if (!isDict(body)) return [400, { error: 'Invalid request' }];
     let url = '', key = '';
+    let saved: { id: string; url: string } | null = null;
     if (typeof body.id === 'string' && body.id) {
       const server = ctx.settings.modelServer(body.id);
       if (!server) return [404, { error: 'That model server is not in Settings (it may have been removed)', code: 'not_found' }];
+      saved = server;
       url = server.url;
       key = typeof body.key === 'string' && body.key ? body.key : ctx.settings.betaKey(server.id);
     } else {
@@ -211,9 +213,24 @@ export function studioRoutes(): Map<string, StudioHandler> {
       key = typeof body.key === 'string' ? body.key.trim() : '';
       if (!url) return [400, { error: 'The address must be one http:// or https:// address', code: 'bad_address' }];
     }
-    const result = await checkModelServer(url, key);
-    return [200, { ...result, address: url, wslNote: isLoopbackAddress(url) ? WSL_LOOPBACK_NOTE : '' }];
+    // Check again always asks the server (and refreshes what New chat keeps for 30 seconds); no model output is generated
+    const result = saved && !(typeof body.key === 'string' && body.key) ? await serverHealth.check(saved, key, true) : await inspectModelServer(url, key);
+    return [200, {
+      reachable: result.reachable,
+      models: result.models,
+      error: result.error,
+      status: result.status,
+      kinds: result.kinds.filter((k) => k.speaks).map((k) => k.kind),
+      needsKey: result.needsKey,
+      keyRefused: result.status === 401 || result.status === 403,
+      address: url,
+      wslNote: isLoopbackAddress(url) ? WSL_LOOPBACK_NOTE : '',
+    }];
   });
+  // The Model servers section's list with each server's health (asked now, or kept up to 30 s: the same cache New chat reads).
+  routes.set('GET /api/live/model-servers', async (ctx, url) => [200, {
+    servers: await modelServersView(studioOf(ctx), { health: true, fresh: one(argsOf(url), 'fresh') === '1' }),
+  }]);
   routes.set('POST /api/live/conversation-state', async (ctx, _url, body) => {
     const folders = restoreFolders(ctx.conversations, body);
     const reply = await conversationAction(studioOf(ctx), body);

@@ -599,10 +599,8 @@ test('closing Settings during a sign-in a chat started ends it: the chat button 
   assert.deepEqual(plain(posts.find((p) => p[0] === 'terminal/end')), ['terminal/end', { key: 'signin:opencode' }]);
 });
 
-test('Qwen: an optional API address under the key box, saved like the key; empty clears it (Qwen then uses OpenAI)', async () => {
-  const HINT = 'https://<workspace ID>.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1';
-  const list = LIST();
-  list.push(
+test('Qwen: no API address box on the card any more; the address is a Model servers setting and the card says so', async () => {
+  const qwen = (baseUrl, server) =>
     beta('qwen', 'Qwen Code', {
       betaInfo: {
         ...beta('qwen', 'x').betaInfo,
@@ -610,49 +608,40 @@ test('Qwen: an optional API address under the key box, saved like the key; empty
         keyEnv: 'OPENAI_API_KEY',
         keyUrl: 'https://modelstudio.console.alibabacloud.com/ap-southeast-1/settings/api-key',
         baseUrlEnv: 'OPENAI_BASE_URL',
-        baseUrlHint: HINT,
-        baseUrl: '',
+        baseUrlHint: 'https://<workspace ID>.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1',
+        baseUrl,
+        ...(server ? { server } : {}),
       },
-    }),
-  );
-  const { betaRow, posts } = await openSettings(list);
+    });
+  const list = LIST();
+  list.push(qwen(''));
+  const { betaRow, UI } = await openSettings(list);
   const row = betaRow('Qwen Code');
   const box = row.querySelector('.st-beta-url');
-  assert.equal(box.querySelector('.st-label').textContent, 'API address (OPENAI_BASE_URL, optional)');
-  const input = box.querySelector('input');
-  assert.equal(input.placeholder, HINT);
-  assert.equal(
-    box.querySelector('.st-hint').textContent,
-    'Leave empty for OpenAI. For an Alibaba Cloud Model Studio key use ' +
-      HINT +
-      ' (your workspace ID is on the workspace details page in the Model Studio console).',
-  );
+  assert.equal(box.querySelector('input'), null, 'no address input on the card');
+  assert.ok(!/Save address/.test(row.textContent), 'no Save address button');
+  assert.ok(/Use another server \(a local model, a gateway\)/.test(box.textContent), box.textContent);
+  assert.equal(box.querySelector('button').textContent, 'Model servers');
+  assert.equal(inside(row, '.st-beta-key', 'input').type, 'password', 'the key box stays on the card');
   assert.equal(
     row.querySelector('.st-beta-keylink').href,
     'https://modelstudio.console.alibabacloud.com/ap-southeast-1/settings/api-key',
     'the key comes from the same (Singapore) Model Studio console',
   );
-  input.value = 'https://ws-1.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1';
-  input.dispatch('input');
-  box
-    .querySelectorAll('button')
-    .find((b) => b.textContent === 'Save address')
-    .click();
-  await flush();
-  assert.deepEqual(plain(posts.at(-1)), [
-    'settings',
-    { agents: { betaUrl: { qwen: 'https://ws-1.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1' } } },
-  ]);
-  const again = betaRow('Qwen Code').querySelector('.st-beta-url');
-  again.querySelector('input').value = '';
-  again.querySelector('input').dispatch('input');
-  again
-    .querySelectorAll('button')
-    .find((b) => b.textContent === 'Save address')
-    .click();
-  await flush();
-  assert.deepEqual(plain(posts.at(-1)), ['settings', { agents: { betaUrl: { qwen: null } } }]);
   assert.equal(betaRow('Gemini CLI').querySelector('.st-beta-url'), null, 'only agents that take an address');
+  // an address saved before the move is shown read only; a server switched on is named
+  const old = LIST();
+  old.push(qwen('https://ws-1.example.invalid/compatible-mode/v1'));
+  const s1 = await openSettings(old);
+  assert.ok(/ws-1\.example\.invalid/.test(s1.betaRow('Qwen Code').querySelector('.st-beta-url').textContent));
+  assert.equal(inside(s1.betaRow('Qwen Code'), '.st-beta-url', 'input'), null);
+  const on = LIST();
+  on.push(qwen('', { id: 'strata', name: 'strata', url: 'http://127.0.0.1:8080' }));
+  const s2 = await openSettings(on);
+  assert.ok(
+    /from model server strata \(http:\/\/127\.0\.0\.1:8080\)/.test(s2.betaRow('Qwen Code').querySelector('.st-beta-url').textContent),
+  );
+  void UI;
 });
 
 test('"Install … first" is a line under the header, so Install and the badge keep the same place on every card', async () => {

@@ -35,8 +35,8 @@ import * as adapters from '../agents/adapters.ts';
 import { Installer, InstallRefused } from '../agents/installer.ts';
 import { readCached as readSignIn, Signer, SignInRefused } from '../agents/signin.ts';
 import { betaAgent, isBeta } from '../agents/beta_catalog.ts';
-import { claudeBase, isClaudeFamily, isModelServerId, serverIdOf } from '../agents/claude_family.ts';
-import { checkModelServer, modelServerEnv, type ServerCheck } from '../agents/model_servers.ts';
+import { claudeBase, isClaudeFamily, isModelServerId, sameAgent, serverIdOf } from '../agents/claude_family.ts';
+import { checkModelServer, DUMMY_KEY, modelServerEnv, type ServerCheck } from '../agents/model_servers.ts';
 import { withServerModels } from '../acp/breadth.ts';
 import { resolveBeta, withKeyHome } from '../agents/beta_agents.ts';
 import { BetaSigner } from '../agents/beta_signin.ts';
@@ -1012,13 +1012,18 @@ export class Studio {
   betaEnv(provider: string): Record<string, string> {
     const agent = betaAgent(provider);
     const out: Record<string, string> = {};
-    const key = agent?.signin.keyEnv ? this.settings.betaKey(provider) : '';
+    // A Model server switched on for this agent ("Use with", Settings > Model servers) gives the address (and its key and model when
+    // the agent's own key box is empty). An address saved on the card before that move still applies when no server is switched on.
+    const server = agent?.signin.baseUrlEnv ? this.settings.modelServerFor(provider) : null;
+    let key = agent?.signin.keyEnv ? this.settings.betaKey(provider) : '';
+    if (server && agent?.signin.keyEnv && !key) key = this.settings.betaKey(server.id) || DUMMY_KEY;
     if (agent?.signin.keyEnv && key) {
       registerSecret(key); // never in a log line
       out[agent.signin.keyEnv] = key;
     }
-    const url = agent?.signin.baseUrlEnv ? this.settings.betaUrl(provider) : '';
+    const url = server ? server.url : agent?.signin.baseUrlEnv ? this.settings.betaUrl(provider) : '';
     if (agent?.signin.baseUrlEnv && url) out[agent.signin.baseUrlEnv] = url;
+    if (server && server.model && provider === 'qwen') out.OPENAI_MODEL = server.model;
     return out;
   }
 
@@ -1245,7 +1250,7 @@ export class Studio {
     if (!isStr(provider) || (provider !== 'omp' && !isClaudeFamily(provider))) {
       throw new ValueError('Finding saved chats through the agent works for Claude Code and OMP only');
     }
-    const command = await this.agentCommand(provider);
+    const [command, launchEnv] = await this.agentLaunch(provider); // a model-server chat is asked with its own address, key and model
     if (cursor !== null && cursor !== undefined && (!isStr(cursor) || !(pyLen(cursor) > 0 && pyLen(cursor) <= 1024))) {
       throw new ValueError('Invalid session list cursor');
     }
@@ -1254,9 +1259,9 @@ export class Studio {
     // projects, and a WSL project is asked only of a running agent in its own distro (its sessions' cwds become refs again).
     const wslLoc = wslLocOf(cwd);
     if (wslLoc) return await this.#listWslSessions(provider, wslLoc, (cursor as string) || null);
-    const live = [...this.connections.values()].find((c) => c.provider === provider && c.ready && !c.closed && !c.wsl);
+    const live = [...this.connections.values()].find((c) => sameAgent(c.provider, provider) && c.ready && !c.closed && !c.wsl);
     if (live) return { ...(await live.listSessions((cwd as string) || null, (cursor as string) || null)), via: 'studio-connection' };
-    const probe = this.connectionFactory(command, home(), provider);
+    const probe = isModelServerId(provider) && Object.keys(launchEnv).length ? this.connectionFactory(command, home(), provider, { env: launchEnv }) : this.connectionFactory(command, home(), provider);
     try {
       await probe.initializeForDiscovery();
       return { ...(await probe.listSessions((cwd as string) || null, (cursor as string) || null)), via: 'temporary-process' };
@@ -1294,7 +1299,7 @@ export class Studio {
   /** "Find more chats via agent" for a WSL project: a running chat of the agent in that distro, else a clean empty answer. */
   async #listWslSessions(provider: string, loc: WslLoc, cursor: string | null): Promise<Json> {
     const live = [...this.connections.values()].find((c) =>
-      c.provider === provider && c.ready && !c.closed && c.wsl?.distro.toLowerCase() === loc.distro
+      sameAgent(c.provider, provider) && c.ready && !c.closed && c.wsl?.distro.toLowerCase() === loc.distro
     );
     if (!live) {
       const note = `Open a ${isClaudeFamily(provider) ? 'Claude Code' : 'OMP'} chat in ${distroName(loc.distro)} first: ` +

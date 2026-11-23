@@ -82,9 +82,9 @@ export interface PickList {
 }
 
 /** Settings' agent rows (what Settings shows: found, signed in, on). Tests in this process swap it (setAgentRows). */
-let agentRows = async (ctx: WebContext): Promise<unknown> => (await settingsView(studioOf(ctx), false, { offThread: true })).agents;
+let agentRows = async (ctx: WebContext): Promise<unknown> => (await settingsView(studioOf(ctx), false, { offThread: true, health: true })).agents;
 export function setAgentRows(fn: ((ctx: WebContext) => Promise<unknown>) | null): void {
-  agentRows = fn ?? (async (ctx: WebContext) => (await settingsView(studioOf(ctx), false, { offThread: true })).agents);
+  agentRows = fn ?? (async (ctx: WebContext) => (await settingsView(studioOf(ctx), false, { offThread: true, health: true })).agents);
   agentCache = new WeakMap();
 }
 
@@ -171,7 +171,7 @@ export function folderOfProject(ctx: WebContext, id: unknown): string | null {
  */
 export function agentsFor(ctx: WebContext, folder: string, agents: Eligible[]): (Eligible & { why: string })[] {
   const wsl = wslLocOf(folder);
-  if (!wsl) return agents.map((a) => ({ ...a, why: reasonWords(a.reason) }));
+  if (!wsl) return agents.map((a) => ({ ...a, why: reasonWords(a.reason, a.detail) }));
   const on = (id: string) => {
     try {
       return ctx.settings.distroAgentEnabled(wsl.distro, id);
@@ -180,7 +180,7 @@ export function agentsFor(ctx: WebContext, folder: string, agents: Eligible[]): 
     }
   };
   const off = `Turned off for ${distroName(wsl.distro)} in Settings on your PC (AIB Linking (WSL)).`;
-  return agents.map((a) => on(a.id) ? { ...a, ok: true, reason: '' as const, why: '' } : { ...a, ok: false, reason: 'Turned off in Settings' as const, why: off });
+  return agents.map((a) => on(a.id) ? (a.reason === 'Not answering' ? { ...a, why: reasonWords(a.reason, a.detail) } : { ...a, ok: true, reason: '' as const, why: '' }) : { ...a, ok: false, reason: 'Turned off in Settings' as const, why: off });
 }
 
 /** The default agent for a new chat in this folder (agent-choice.js loadChoice, without the PC browser's own memory). */
@@ -233,7 +233,7 @@ export async function newChatOptions(
     };
   });
   projects.sort((a, b) => (stats.get(b.id)?.at ?? 0) - (stats.get(a.id)?.at ?? 0) || a.name.localeCompare(b.name));
-  return { projects, agents: agents.map((a) => ({ ...a, why: reasonWords(a.reason) })) };
+  return { projects, agents: agents.map((a) => ({ ...a, why: reasonWords(a.reason, a.detail) })) };
 }
 
 const probedAt = new Map<string, number>();

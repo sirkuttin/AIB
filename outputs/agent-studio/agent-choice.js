@@ -13,6 +13,7 @@
   // the tested agents (and the ones you added), under a "Beta" group label in the agent menus.
   const BETA_IDS = ['copilot', 'opencode', 'gemini', 'qwen', 'cursor', 'goose', 'vibe', 'cline', 'kimi', 'kilo', 'maki', 'antigravity'];
   const BETA_GROUP = 'Beta';
+  const SERVER_GROUP = 'Model servers'; // entries built from a model server (Settings > Model servers)
   const isBeta = (id) => BETA_IDS.includes(id);
   // AGENTS: the agents a new chat can use (enabled ones). ALL: every agent Studio knows, including ones turned off in Settings,
   // so existing chats still show the right name. Both are updated IN PLACE by setRegistry, so other modules can hold them.
@@ -29,6 +30,7 @@
   function mergeRegistry(serverAgents) {
     const all = BUILTINS.map((a) => Object.assign({}, a));
     const beta = [],
+      servers = [],
       unavailable = [];
     for (const row of Array.isArray(serverAgents) ? serverAgents : []) {
       if (!row || typeof row.id !== 'string') continue;
@@ -71,7 +73,7 @@
         String(row.name == null ? '' : row.name)
           .trim()
           .slice(0, 40) || row.id;
-      all.push({
+      const entry = {
         id: row.id,
         name,
         letter: String(row.letter || name.charAt(0) || '?')
@@ -79,9 +81,22 @@
           .toUpperCase(),
         builtin: false,
         enabled: row.enabled !== false && row.found !== false && !needsSignIn(row),
-      });
+      };
+      if (row.modelServer === true) {
+        // An entry built from a model server ("Claude Code · strata"): its own group in the menu; a server that does not answer
+        // (row.down, "strata is not answering at 127.0.0.1:8080") is listed greyed with that line, never pickable.
+        entry.group = SERVER_GROUP;
+        entry.server = true;
+        if (entry.enabled && typeof row.down === 'string' && row.down) {
+          entry.enabled = false;
+          unavailable.push({ id: row.id, name, group: SERVER_GROUP, found: true, server: true, reason: row.down });
+        }
+        servers.push(entry);
+        continue;
+      }
+      all.push(entry);
     }
-    all.push(...beta); // after the tested agents and the ones you added
+    all.push(...servers, ...beta); // after the tested agents and the ones you added: model servers, then Beta
     return { all, enabled: all.filter((a) => a.enabled), unavailable };
   }
   // The rows an agent menu lists, with the Beta group label on the Beta agents ({value, name, group}).
@@ -89,17 +104,26 @@
     return (Array.isArray(list) ? list : []).map((a) => ({
       value: a.id,
       name: a.name,
-      group: a.beta ? BETA_GROUP : '',
+      group: a.group || (a.beta ? BETA_GROUP : ''),
     }));
   }
+  // Menu order: tested agents, then the Model servers group, then Beta.
+  const GROUP_RANK = { '': 0, [SERVER_GROUP]: 1, [BETA_GROUP]: 2 };
   // The rows an agent menu lists: the agents a chat can start with, then (Beta group) the ones that cannot yet, disabled, with their reason.
   function menuRows() {
-    return menuItems(AGENTS).concat(
-      UNAVAILABLE.map((a) => ({ value: a.id, name: a.name, group: BETA_GROUP, disabled: true, reason: a.reason })),
-    );
+    return menuItems(AGENTS)
+      .concat(
+        UNAVAILABLE.map((a) => ({ value: a.id, name: a.name, group: a.group || BETA_GROUP, disabled: true, reason: a.reason, server: !!a.server })),
+      )
+      .map((r, i) => ({ r, i }))
+      .sort((x, y) => (GROUP_RANK[x.r.group] || 0) - (GROUP_RANK[y.r.group] || 0) || x.i - y.i)
+      .map((x) => x.r);
   }
   // The agent the "Set up in Settings" link opens: an installed one that still needs setting up first, else the first listed.
-  const setupTarget = () => (UNAVAILABLE.find((a) => a.found) || UNAVAILABLE[0] || {}).id || '';
+  const setupTarget = () => {
+    const agents = UNAVAILABLE.filter((a) => !a.server); // a server that does not answer is fixed by starting it, not in Settings
+    return (agents.find((a) => a.found) || agents[0] || {}).id || '';
+  };
   // True when at least one enabled agent in the server's list can start a chat: found, and not "Needs sign-in". "Not checked" is ready.
   // An unreadable or empty list says true, so the first-run start page never shows for a list nobody could read.
   function anyReady(serverAgents) {

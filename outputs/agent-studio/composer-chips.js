@@ -661,7 +661,7 @@
 
   // "Set up in Settings ›" at the end of the agent menu when some agents are listed greyed.
   function setupLink(doc, chip, o) {
-    if (!o.onSetup || !chip.agents.some((a) => a.disabled)) return null;
+    if (!o.onSetup || !chip.agents.some((a) => a.disabled && !a.server)) return null;
     const link = el(doc, 'button', 'Set up in Settings ›', 'chip-insert chip-setup');
     link.type = 'button';
     link.addEventListener('click', () => {
@@ -688,7 +688,7 @@
     const staticSig = JSON.stringify(d.chips.filter(isStatic).map((c) => [c.id, c.value, c.title, c.tone, c.details]));
     const signature = JSON.stringify([
       d.chips.map((c) =>
-        isStatic(c) ? [c.id] : [c.id, c.kind, c.agentId, c.value, c.title, c.warn, c.pending && c.pending.value],
+        isStatic(c) ? [c.id] : [c.id, c.kind, c.agentId, c.value, c.title, c.warn, c.pending && c.pending.value, c.agents && c.agents.map((a) => a.id + (a.disabled ? '!' + a.reason : '')).join()],
       ),
       d.hasPanel,
       !!o.disabled,

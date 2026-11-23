@@ -436,6 +436,10 @@ button.ph-chip::after {
   color: var(--muted);
   font-size: 13px;
 }
+.ph-group {
+  margin-top: 14px;
+  font-weight: 600;
+}
 .ph-center {
   text-align: center;
 }

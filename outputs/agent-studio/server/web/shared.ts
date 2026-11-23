@@ -11,7 +11,7 @@ import { BUILTIN_NAMES, commandStatus, type CustomAgent, hiddenEnv, letterOf } f
 import * as installer from '../agents/installer.ts';
 import * as signin from '../agents/signin.ts';
 import { BETA_AGENTS, betaAgent } from '../agents/beta_catalog.ts';
-import { isLoopbackAddress, modelServerLabel, WSL_LOOPBACK_NOTE } from '../agents/model_servers.ts';
+import { isLoopbackAddress, modelServerLabel, notAnsweringLine, serverHealth, USE_WITH, WSL_LOOPBACK_NOTE } from '../agents/model_servers.ts';
 import { MODEL_SERVER_AGENTS, modelServerAgentId } from '../agents/claude_family.ts';
 import { releaseAsset } from '../agents/release_install.ts';
 import { resolveBeta } from '../agents/beta_agents.ts';
@@ -211,6 +211,7 @@ export async function describeAgents(
   const adapterRow = claudeRow as adapters.LaunchRow | null;
   for (const s of snap.agents.modelServers ?? []) {
     for (const base of MODEL_SERVER_AGENTS) {
+      if (!s.useWith.includes(base)) continue; // the "Use with" switch of the Model servers section
       const id = modelServerAgentId(base, s.id);
       out.push({
         id,
@@ -242,7 +243,20 @@ export async function describeAgents(
       });
     }
   }
-  out.push(...(await describeBeta(options, snap, state, block, sizes, probe)));
+  const beta = await describeBeta(options, snap, state, block, sizes, probe);
+  // Model servers on the agents' own cards: a read-only line ("Also on model servers: strata") and, for the agents that read their
+  // address from a server (Maki, Qwen Code), which server that is. Nothing is configured on a card.
+  const servers = snap.agents.modelServers ?? [];
+  for (const row of out) {
+    const names = servers.filter((s) => s.useWith.includes(String(row.id))).map((s) => s.name);
+    if (names.length && USE_WITH.some((u) => u.agent === row.id && u.entry)) row.alsoOnServers = names;
+  }
+  for (const row of beta) {
+    const s = servers.find((x) => x.useWith.includes(String(row.id)));
+    const info = row.betaInfo as Record<string, unknown> | undefined;
+    if (s && info) info.server = { id: s.id, name: s.name, url: s.url };
+  }
+  out.push(...beta);
   for (const a of snap.agents.custom) {
     const [found, problem] = commandStatus(a.command);
     out.push({
@@ -359,10 +373,48 @@ function quietError(error: unknown): boolean {
 
 /** GET /api/live/settings: the stored settings, the agent list with live status, and the revision other windows compare.
  *  `offThread`: build the agent list in the agent-list Worker (agentListOffThread), so the server keeps answering meanwhile. */
+/**
+ * The Model servers section's rows (no key ever: only whether one is set). With `health`, each row also carries the server's check
+ * (cached 30 s, `fresh` asks again): reachable, models, the API kinds it speaks, and `down`, the line New chat greys its entries with.
+ */
+export async function modelServersView(
+  self: Pick<StudioContext, 'options' | 'settings'>,
+  opts: { health?: boolean; fresh?: boolean } = {},
+): Promise<Record<string, unknown>[]> {
+  const snap = self.settings.snapshot();
+  const keys = snap.agents.betaKeys ?? {};
+  const keyStorage = self.options.stateDir ? keyStoreFor(self.options.stateDir).note : '';
+  return await Promise.all((snap.agents.modelServers ?? []).map(async (s) => {
+    const row: Record<string, unknown> = {
+      id: s.id,
+      name: s.name,
+      url: s.url,
+      model: s.model,
+      useWith: [...s.useWith],
+      keySet: !!keys[s.id],
+      keyStorage,
+      wslNote: isLoopbackAddress(s.url) ? WSL_LOOPBACK_NOTE : '',
+    };
+    if (!opts.health) return row;
+    const r = await serverHealth.check(s, keys[s.id] ?? '', opts.fresh);
+    return {
+      ...row,
+      reachable: r.reachable,
+      models: r.models,
+      kinds: r.kinds.filter((k) => k.speaks).map((k) => k.kind),
+      needsKey: r.needsKey,
+      keyRefused: r.status === 401 || r.status === 403,
+      error: r.error,
+      down: r.reachable ? '' : notAnsweringLine(s.name, s.url),
+      checkedAt: r.at,
+    };
+  }));
+}
+
 export async function settingsView(
   self: StudioContext,
   recheck = false,
-  opts: { offThread?: boolean } = {},
+  opts: { offThread?: boolean; health?: boolean; fresh?: boolean } = {},
 ): Promise<Record<string, unknown>> {
   let connections: unknown[] = [];
   try {
@@ -372,11 +424,20 @@ export async function settingsView(
     if (!quietError(error)) throw error;
     connections = [];
   }
+  const agents = opts.offThread
+    ? await agentListOffThread(self.options, self.settings, connections, recheck)
+    : await describeAgents(self.options, self.settings, connections, recheck);
+  const modelServers = await modelServersView(self, { health: opts.health, fresh: opts.fresh });
+  if (opts.health) { // New chat greys the entries of a server that does not answer
+    for (const row of agents) {
+      const server = row.modelServer === true ? modelServers.find((s) => s.id === row.serverId) : null;
+      if (server && server.down) row.down = server.down;
+    }
+  }
   return {
     ...self.settings.public(),
-    agents: opts.offThread
-      ? await agentListOffThread(self.options, self.settings, connections, recheck)
-      : await describeAgents(self.options, self.settings, connections, recheck),
+    agents,
+    modelServers,
     ...(await notices(self)),
   };
 }

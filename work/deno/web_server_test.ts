@@ -33,6 +33,7 @@ Deno.test('the route table is exactly the Python web server\'s (paths, scopes an
     'POST /api/live/view-prefs',
     'POST /api/live/agent-options',
     'POST /api/live/model-servers/check', // model servers: ask a server for its models
+    'GET /api/live/model-servers', // model servers: the list with each one's health
     'POST /api/live/desktop/notify',
     'GET /api/live/update/notes',
     'POST /api/live/update/notes',

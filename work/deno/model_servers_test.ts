@@ -174,7 +174,7 @@ Deno.test('settings: add, edit and remove a server; the key is sealed in the dat
   const store = new SettingsStore(lab.state);
   Deno.mkdirSync(lab.state, { recursive: true });
   await store.update({ agents: { modelServer: { upsert: { name: 'strata', url: ' http://127.0.0.1:8080/ ', model: 'qwen3.8-flash-next-iq3_s', key: KEY } } } });
-  assertEquals(store.modelServers(), [{ id: 'strata', name: 'strata', url: 'http://127.0.0.1:8080', model: 'qwen3.8-flash-next-iq3_s' }]);
+  assertEquals(store.modelServers(), [{ id: 'strata', name: 'strata', url: 'http://127.0.0.1:8080', model: 'qwen3.8-flash-next-iq3_s', useWith: ['claude'] }]);
   assertEquals(store.betaKey('strata'), KEY);
   // at rest: never plain text, sealed with DPAPI on Windows (an owner-only file elsewhere)
   const file = Deno.readTextFileSync(lab.state + SEP + 'studio-settings.json');
@@ -286,7 +286,7 @@ Deno.test('the launch env: the same adapter as claude, with the server address, 
   assert(!('ANTHROPIC_BASE_URL' in (await studio.agentLaunch('claude'))[1]));
   const [, plainEnv] = await studio.agentLaunch('claude@plain');
   assertEquals([plainEnv.ANTHROPIC_AUTH_TOKEN, plainEnv.ANTHROPIC_API_KEY, 'ANTHROPIC_MODEL' in plainEnv], [DUMMY_KEY, DUMMY_KEY, false]);
-  assertEquals(modelServerEnv({ id: 'x', name: 'x', url: 'http://h', model: '' }, ''), { ANTHROPIC_BASE_URL: 'http://h', ANTHROPIC_AUTH_TOKEN: DUMMY_KEY, ANTHROPIC_API_KEY: DUMMY_KEY });
+  assertEquals(modelServerEnv({ id: 'x', name: 'x', url: 'http://h', model: '', useWith: ['claude'] }, ''), { ANTHROPIC_BASE_URL: 'http://h', ANTHROPIC_AUTH_TOKEN: DUMMY_KEY, ANTHROPIC_API_KEY: DUMMY_KEY });
   // a removed server is a plain error, not a launch
   await studio.settings.update({ agents: { modelServer: { remove: 'plain' } } });
   await assertRejects(() => studio.agentLaunch('claude@plain'));

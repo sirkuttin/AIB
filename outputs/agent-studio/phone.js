@@ -2966,7 +2966,10 @@
       change.id = 'phNcChange';
       chosen.append(dot, t, change);
       body.append(chosen, el('p', 'ph-ncs', '2 · Agent'));
+      let lastGroup = '';
       for (const a of nc.agents) {
+        if (a.group && a.group !== lastGroup) body.append(el('p', 'ph-note ph-group', a.group)); // "Model servers"
+        lastGroup = a.group || '';
         const b = button('ph-pick', '', () => pickAgent(a));
         b.dataset.agent = a.id;
         b.disabled = !a.ok;

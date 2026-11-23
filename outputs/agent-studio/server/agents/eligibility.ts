@@ -29,7 +29,7 @@ export const BETA_IDS: readonly string[] = [
 ];
 const CUSTOM_ID = /^(?:custom-|claude@)[a-z0-9]+(?:-[a-z0-9]+)*$/; // user-added agents and model servers (claude@<slug>)
 
-export type Reason = '' | 'Not installed' | 'Needs sign-in' | 'Turned off in Settings';
+export type Reason = '' | 'Not installed' | 'Needs sign-in' | 'Turned off in Settings' | 'Not answering';
 
 export interface Eligible {
   id: string;
@@ -39,6 +39,10 @@ export interface Eligible {
   ok: boolean;
   /** why not ('' when ok) */
   reason: Reason;
+  /** a model-server entry: the group label New chat lists it under */
+  group?: string;
+  /** for Not answering: the line that says which server and where ("strata is not answering at 127.0.0.1:8080") */
+  detail?: string;
 }
 
 const needsSignIn = (row: Json): boolean => {
@@ -49,6 +53,7 @@ const needsSignIn = (row: Json): boolean => {
 /** One row's verdict (agent-choice.js: enabled, and the Beta agents' reason, given here for every agent). */
 export function verdict(row: Json): { ok: boolean; reason: Reason } {
   const ok = row.enabled !== false && row.found !== false && !needsSignIn(row);
+  if (ok && typeof row.down === 'string' && row.down) return { ok: false, reason: 'Not answering' }; // a model server that does not answer
   if (ok) return { ok, reason: '' };
   const reason: Reason = row.found === false
     ? 'Not installed'
@@ -81,13 +86,22 @@ export function eligibleAgents(rows: unknown): Eligible[] {
       continue;
     }
     if (!CUSTOM_ID.test(id) || id.length > 48) continue;
-    all.push({ id, name: nameOf(row, id), beta: false, ...verdict(row) });
+    const entry: Eligible = { id, name: nameOf(row, id), beta: false, ...verdict(row) };
+    if (row.modelServer === true) {
+      entry.group = MODEL_SERVERS_GROUP;
+      if (entry.reason === 'Not answering') entry.detail = String(row.down).slice(0, 200);
+    }
+    all.push(entry);
   }
   return [...all, ...beta];
 }
 
-/** The words the phone shows under an agent that cannot start a chat. */
-export function reasonWords(reason: Reason): string {
+/** The group label New chat lists model-server entries under (PC menu and phone). */
+export const MODEL_SERVERS_GROUP = 'Model servers';
+
+/** The words the phone shows under an agent that cannot start a chat. `detail`: the model server's own line. */
+export function reasonWords(reason: Reason, detail = ''): string {
+  if (reason === 'Not answering') return (detail || 'The model server is not answering') + '. Start it on your PC.';
   if (reason === 'Not installed') return 'Not installed on your PC. Install it in AIB on your PC: Settings.';
   if (reason === 'Needs sign-in') return 'Needs sign-in. Sign in on your PC.';
   if (reason === 'Turned off in Settings') return 'Turned off in Settings on your PC.';

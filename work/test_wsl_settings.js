@@ -144,7 +144,7 @@ async function openWsl(t) {
 test('the section is listed right under AIB Linking on a Windows AIB, and found by searching "ubuntu"', async () => {
   const t = setup();
   await openWsl(t);
-  assert.deepEqual(t.nav().slice(0, 3), ['AIB Linking', 'AIB Linking (WSL)', 'Defaults']);
+  assert.deepEqual(t.nav().slice(0, 4), ['AIB Linking', 'AIB Linking (WSL)', 'Model servers', 'Defaults']);
   assert.equal(t.shell.document.querySelector('h2').textContent, 'AIB Linking (WSL)');
   assert.ok(t.UI.filterIndex(t.UI.INDEX, 'ubuntu').some((e) => e.id === 'wsl-linking'));
   assert.ok(t.UI.filterIndex(t.UI.INDEX, 'distro').some((e) => e.id === 'wsl-linking'));

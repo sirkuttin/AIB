@@ -25,6 +25,45 @@ export interface ModelServer {
   url: string;
   /** The model id new chats use ('' = the first model the server lists). */
   model: string;
+  /** The agents this server is switched on for ("Use with", ids from USE_WITH). Claude Code makes the entry `claude@<id>`. */
+  useWith: string[];
+}
+
+/** The API kinds a server can speak, as the detection reports them. */
+export type ApiKind = 'anthropic' | 'responses' | 'chat';
+export const API_KIND_PATHS: Record<ApiKind, string> = {
+  anthropic: '/v1/messages',
+  responses: '/v1/responses',
+  chat: '/v1/chat/completions',
+};
+export const API_KIND_NAMES: Record<ApiKind, string> = {
+  anthropic: 'Anthropic Messages',
+  responses: 'OpenAI Responses',
+  chat: 'Chat Completions',
+};
+
+/**
+ * The agents a server can be switched on for. `entry`: the switch adds its own New chat entry (`claude@strata`, "Claude Code · strata").
+ * The others (Maki, Qwen Code) do not get an entry: with the switch on, the agent's own address comes from the server (one server at
+ * a time per agent). Codex joins when codex@ entries exist.
+ */
+export interface UseWith {
+  agent: string;
+  label: string;
+  kind: ApiKind;
+  entry: boolean;
+}
+export const USE_WITH: readonly UseWith[] = [
+  { agent: 'claude', label: 'Claude Code', kind: 'anthropic', entry: true },
+  { agent: 'maki', label: 'Maki', kind: 'anthropic', entry: false },
+  { agent: 'qwen', label: 'Qwen Code', kind: 'chat', entry: false },
+];
+export const USE_WITH_IDS: readonly string[] = USE_WITH.map((u) => u.agent);
+
+/** Keep only known "Use with" agents, once each, in the catalogue's order. */
+export function cleanUseWith(value: unknown): string[] {
+  const list = Array.isArray(value) ? value : [];
+  return USE_WITH_IDS.filter((id) => list.includes(id));
 }
 
 /** The label of an agent entry built from a server, in New chat and every list: "<agent label> · <server name>". */
@@ -80,7 +119,9 @@ export function cleanModelServer(raw: unknown): ModelServer | null {
   const url = cleanServerUrl(raw.url);
   const name = oneLine(raw.name, MAX_SERVER_NAME) || (url ? defaultServerName(url) : '');
   if (!url || !name) return null;
-  return { id: raw.id, name, url, model: oneLine(raw.model, MAX_MODEL) };
+  // a server saved before the switches existed was Claude Code's entry: that stays on
+  const useWith = Array.isArray(raw.useWith) ? cleanUseWith(raw.useWith) : ['claude'];
+  return { id: raw.id, name, url, model: oneLine(raw.model, MAX_MODEL), useWith };
 }
 
 /**
@@ -167,3 +208,102 @@ export function isLoopbackAddress(url: string): boolean {
 export const WSL_LOOPBACK_NOTE =
   'This address points at this PC. Inside a WSL project, 127.0.0.1 is the WSL distro itself, so the chat may not reach the server. ' +
   'Use an address the distro can reach (this PC’s network address) if it does not connect.';
+
+/** One API kind's verdict from an empty POST: does the server speak it, and does it want a key for it. */
+export interface KindResult {
+  kind: ApiKind;
+  speaks: boolean;
+  needsKey: boolean;
+}
+
+/** A server's full check: the models list (GET /v1/models) plus the API kinds (empty POSTs). */
+export interface ServerInspection extends ServerCheck {
+  kinds: KindResult[];
+  /** true when any kind answered 401/403 (the server wants a key) */
+  needsKey: boolean;
+  /** When this was asked (ms since the epoch). */
+  at: number;
+}
+
+/**
+ * POST {} to the API path of one kind. The server rejects an empty body (400 or 422: it speaks the kind), wants a key (401 or 403:
+ * it speaks it, with a key), or has no such route (404, 405, 501). No model output is generated: nothing is ever sent that a model
+ * could answer. Never throws.
+ */
+export async function probeApiKind(
+  url: string,
+  kind: ApiKind,
+  key = '',
+  timeoutMs = 3000,
+  fetcher: typeof fetch = fetch,
+): Promise<KindResult> {
+  const base = url.replace(/\/+$/, '').replace(/\/v1$/, '');
+  const headers: Record<string, string> = { 'content-type': 'application/json', accept: 'application/json' };
+  if (key) {
+    headers.authorization = `Bearer ${key}`;
+    headers['x-api-key'] = key;
+  }
+  if (kind === 'anthropic') headers['anthropic-version'] = '2023-06-01';
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  try {
+    const res = await fetcher(base + API_KIND_PATHS[kind], { method: 'POST', headers, body: '{}', signal: ctl.signal });
+    await res.body?.cancel().catch(() => {});
+    if (res.status === 401 || res.status === 403) return { kind, speaks: true, needsKey: true };
+    if (res.status === 404 || res.status === 405 || res.status === 501) return { kind, speaks: false, needsKey: false };
+    return { kind, speaks: true, needsKey: false };
+  } catch {
+    return { kind, speaks: false, needsKey: false };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** The full check: all four asks in parallel with a 3 s limit each and no retries. */
+export async function inspectModelServer(url: string, key = '', timeoutMs = 3000, fetcher: typeof fetch = fetch): Promise<ServerInspection> {
+  const [models, ...kinds] = await Promise.all([
+    checkModelServer(url, key, timeoutMs, fetcher),
+    ...(Object.keys(API_KIND_PATHS) as ApiKind[]).map((k) => probeApiKind(url, k, key, timeoutMs, fetcher)),
+  ]);
+  return { ...models, kinds, needsKey: kinds.some((k) => k.needsKey) || models.status === 401 || models.status === 403, at: Date.now() };
+}
+
+/** The words for a server that does not answer, as New chat greys its entries: "strata is not answering at 127.0.0.1:8080". */
+export function notAnsweringLine(name: string, url: string): string {
+  let where = url;
+  try {
+    const u = new URL(url);
+    where = u.host + (u.pathname.replace(/\/+$/, '') || '');
+  } catch { /* the address as typed */ }
+  return `${name} is not answering at ${where}`;
+}
+
+/**
+ * One cached health answer per server (30 s; New chat asks when it opens). The key of the cache includes the address and the key, so
+ * an edit is never answered from an older address. AIB never polls: nothing here runs on a timer.
+ */
+export const HEALTH_MS = 30_000;
+export class ServerHealth {
+  readonly #cache = new Map<string, { sig: string; at: number; value: Promise<ServerInspection> }>();
+  constructor(
+    private readonly ask: (url: string, key: string) => Promise<ServerInspection> = (url, key) => inspectModelServer(url, key),
+    private readonly clock: () => number = Date.now,
+  ) {}
+
+  /** The check of a server: the kept one when it is younger than HEALTH_MS (and `fresh` is not asked for), else a new one. */
+  check(server: { id: string; url: string }, key: string, fresh = false): Promise<ServerInspection> {
+    const sig = `${server.url}\n${key}`;
+    const kept = this.#cache.get(server.id);
+    if (!fresh && kept && kept.sig === sig && this.clock() - kept.at < HEALTH_MS) return kept.value;
+    const value = this.ask(server.url, key);
+    this.#cache.set(server.id, { sig, at: this.clock(), value });
+    return value;
+  }
+
+  forget(id: string): void {
+    this.#cache.delete(id);
+  }
+}
+
+/** The one health cache of this process (Settings, the New chat lists on the PC and the phone share it). */
+export const serverHealth = new ServerHealth();
