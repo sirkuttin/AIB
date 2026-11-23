@@ -236,6 +236,23 @@ export interface HelperMethods {
   'merge.resolveClash': { params: { chat: string; state: Record<string, unknown>; action: string; fromTool?: boolean }; result: WslMergeAnswer };
   'merge.clashStatus': { params: { project: string }; result: { result: Record<string, unknown> } };
   /**
+   * Subagent worktrees of WSL projects (helper/subagents.ts: subagents/service.ts run natively over the same `<data>`; records in
+   * `<data>/subagent-worktrees.json`, worktrees under `<data>/worktrees`). Offered with worktree.*. `chat` is the open chat's facts
+   * (WslSubagentChat, Linux paths). `land` is the landing steps every subagent lands by (worktrees/subagent_land.ts): AIB holds the
+   * folder's chats first and sends their states; the outcome is an answer, not an error. Protocol 2.
+   */
+  'subagent.prepare': { params: { chat: WslSubagentChat; meta: { toolUseId?: string; agentType?: string; description?: string; background?: boolean } }; result: { record?: WslSubagentRecord; deny?: string } };
+  'subagent.bind': { params: { chat: WslSubagentChat; agentId: string; agentType?: string }; result: { record: WslSubagentRecord | null } };
+  'subagent.end': { params: { chat: WslSubagentChat; agentId: string }; result: { ok: boolean } };
+  'subagent.hook': { params: { chat: WslSubagentChat; event: string; body?: Record<string, unknown> }; result: { status: number; body: string; type: string } };
+  'subagent.records': { params: { chat?: string }; result: { records: WslSubagentRecord[] } };
+  'subagent.chatClosed': { params: { chat: string }; result: { ok: boolean } };
+  'subagent.land': {
+    params: { id: string; parent: string; target: string; title?: string; held?: string[]; states?: Record<string, unknown>; landKept?: string[] | null; landScratch?: boolean };
+    result: { outcome: Record<string, unknown>; journal: { stage: string; data: Record<string, unknown> }[]; actions: WslMergeAnswer['actions'] };
+  };
+  'subagent.release': { params: { id: string }; result: { outcome: 'removed' | 'kept' | 'running' | 'gone' } };
+  /**
    * Live sync of WSL chats' worktrees (helper/sync.ts: worktrees/sync.ts run natively over the same `<data>`, its folder watcher
    * inotify). Offered with worktree.*. `sync.chats` is the whole set of open WSL chats in their own copy (cwd: the worktree's Linux
    * path), sent in order; the helper keeps it in `<data>/wsl-sync-chats.json` and watches them again after a restart. The turn hooks
@@ -440,6 +457,19 @@ export interface WorktreePlanJson {
   folderBranch: string;
   note: string;
 }
+
+/** A chat's facts for subagent.* (Linux paths: `folder` where it works, `project` the project folder). */
+export interface WslSubagentChat {
+  id: string;
+  provider: string;
+  lasting: string;
+  folder: string;
+  project: string;
+  readOnly?: string[];
+}
+
+/** A subagent worktree record as the distro's helper keeps it (subagents/service.ts SubagentRecord; Linux paths). */
+export type WslSubagentRecord = Record<string, unknown> & { id: string; chat: string; folder: string; branch: string; path: string; snapshot: string; state: string };
 
 /**
  * What a merge.* call did. `actions`: the live calls merge.ts made (op 'prompt' | 'worktree-note' | 'queue', payload as merge.ts built

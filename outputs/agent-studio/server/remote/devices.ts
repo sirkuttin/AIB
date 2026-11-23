@@ -180,9 +180,16 @@ export function cleanName(value: unknown): string {
   return text.slice(0, 40) || 'Phone';
 }
 
+/** A computer's page session token: kept in the page's memory only, renewed through the pairing cookie (remote/server.ts
+ * POST /api/remote/pc/session). It lives in the PC's memory too: AIB restarting ends every session, and the page asks for a new one. */
+export const SESSION_SECONDS = 12 * 3600;
+const MAX_SESSIONS_PER_DEVICE = 16;
+
 export class DeviceStore extends JsonFileStore {
   static FILE = 'devices.json';
   devices = new Map<string, Device>();
+  /** sha256(session token) -> device id and expiry (seconds). Never written to the file. */
+  #sessions = new Map<string, { id: string; until: number }>();
   /** When last-seen times were last written. */
   #seenWritten = 0;
   #seenDirty = false;
@@ -433,7 +440,61 @@ export class DeviceStore extends JsonFileStore {
 
   /** The phone with this device token (header), or null. Every record is compared, so the time does not say which one matched. */
   byToken(token: string | null): Device | null {
+    return this.#find('tokenHash', token) ?? this.#bySession(token);
+  }
+
+  /** The device key itself (the long-lived token), never a session token: the one-time migration of a computer's old pairing. */
+  byPermanentToken(token: string | null): Device | null {
     return this.#find('tokenHash', token);
+  }
+
+  /** A computer's session token (see SESSION_SECONDS). Only a computer has them; a phone's key is its long-lived token. */
+  #bySession(token: string | null): Device | null {
+    if (!token || token.length > 200 || !this.#sessions.size) return null;
+    const hash = sha256Hex(token);
+    const found = this.#sessions.get(hash);
+    if (!found) return null;
+    if (found.until <= this.clock()) {
+      this.#sessions.delete(hash);
+      return null;
+    }
+    this.sync();
+    const d = this.devices.get(found.id);
+    return d && d.kind === 'computer' ? d : null;
+  }
+
+  /** A new session token for this computer (null for anything else). The oldest ones go past a small cap. */
+  issueSession(id: string): string | null {
+    this.sync();
+    const d = this.devices.get(id);
+    if (!d || d.kind !== 'computer') return null;
+    const at = this.clock();
+    for (const [h, v] of this.#sessions) if (v.until <= at) this.#sessions.delete(h);
+    const mine = [...this.#sessions].filter(([, v]) => v.id === id);
+    for (const [h] of mine.slice(0, Math.max(0, mine.length - MAX_SESSIONS_PER_DEVICE + 1))) this.#sessions.delete(h);
+    const token = randomToken();
+    this.#sessions.set(sha256Hex(token), { id, until: at + SESSION_SECONDS });
+    return token;
+  }
+
+  /**
+   * A computer keeps no long-lived key in its browser profile (the profile is readable by any program on that computer): its
+   * permanent key is made unusable here, and a new pairing cookie (HttpOnly, so page scripts and profile readers cannot lift it)
+   * replaces the old one. The page works from short sessions (issueSession) renewed through that cookie. Returns the new raw cookie.
+   */
+  retireKey(id: string): Promise<string | null> {
+    return this.locked(() => {
+      this.sync();
+      this.requireReadable();
+      const d = this.devices.get(id);
+      if (!d || d.kind !== 'computer') return null;
+      d.tokenHash = sha256Hex(randomToken()); // nobody holds this one: the old key stops working
+      const cookie = randomToken();
+      d.cookieHash = sha256Hex(cookie);
+      this.counter++;
+      this.#save();
+      return cookie;
+    });
   }
 
   /** The phone with this id (a signed artifact link names it; remote/artifact_server.ts), or null: a removed phone is gone. */

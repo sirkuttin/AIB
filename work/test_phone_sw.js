@@ -255,6 +255,11 @@ test('worker: a button goes to AIB with the phone key; refusals and offline come
   const before = sent.length;
   assert.deepEqual(await SW.sendAct(plan, answer(200, {}), ''), { ok: false, code: 'unknown' }, 'not paired: nothing sent');
   assert.equal(sent.length, before);
+  // a computer keeps no key in its profile: the button goes with its HttpOnly cookie, and no device header
+  assert.deepEqual(await SW.sendAct(plan, answer(200, { ok: true }), SW.COOKIE_ONLY), { ok: true });
+  const last = sent[sent.length - 1][1];
+  assert.equal(last.credentials, 'same-origin');
+  assert.equal(Object.keys(last.headers).some((k) => k.toLowerCase() === 'x-aib-device'), false);
 });
 
 test('phone: a notification link with Reply or a note; notes in words; notifications of answered chats are found', () => {

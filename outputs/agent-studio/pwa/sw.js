@@ -172,7 +172,15 @@
         };
         try {
           const get = d.transaction('kv', 'readonly').objectStore('kv').get('device');
-          get.onsuccess = () => done(get.result && typeof get.result.token === 'string' ? get.result.token : '');
+          // a computer's record has no key (its HttpOnly pairing cookie is what stays): its button press goes with the cookie
+          get.onsuccess = () =>
+            done(
+              get.result && typeof get.result.token === 'string' && get.result.token
+                ? get.result.token
+                : get.result && get.result.device && get.result.device.kind === 'computer'
+                  ? COOKIE_ONLY
+                  : '',
+            );
           get.onerror = () => done('');
         } catch {
           done('');
@@ -182,6 +190,7 @@
   }
 
   /* Sends a button to AIB: {ok: true} or {ok: false, code} ("offline" when AIB could not be reached). */
+  const COOKIE_ONLY = 'cookie-only';
   async function sendAct(plan, fetcher, token) {
     if (!token) return { ok: false, code: 'unknown' };
     let r;
@@ -189,7 +198,7 @@
       r = await fetcher('/api/remote/notify-act', {
         method: 'POST',
         credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json', 'X-AIB-Device': token },
+        headers: token === COOKIE_ONLY ? { 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json', 'X-AIB-Device': token },
         body: JSON.stringify({ key: plan.key, act: plan.act, code: plan.code }),
       });
     } catch {
@@ -207,7 +216,7 @@
     return { ok: false, code };
   }
 
-  const api = { SHELL, SHELL_FILES, PC_FILES, TAG, MAX_ACTIONS, shellPath, notificationOf, openUrl, clickPlan, chatUrl, sendAct };
+  const api = { SHELL, SHELL_FILES, PC_FILES, TAG, MAX_ACTIONS, COOKIE_ONLY, shellPath, notificationOf, openUrl, clickPlan, chatUrl, sendAct };
   if (typeof module === 'object' && module.exports) {
     module.exports = api;
     return;

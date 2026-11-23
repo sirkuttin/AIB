@@ -382,6 +382,10 @@ async function serveAll(
     refused: string[];
     requests: number;
     bridged: number[];
+    /** every X-AIB-Device value the page sent (a session token, or the old key once while it is traded) */
+    tokens?: string[];
+    /** true: the next request that carries the device header carries a dead one (a session that ended), once */
+    expireNext?: boolean;
   },
 ) {
   await page.send('Network.enable');
@@ -419,6 +423,18 @@ async function serveAll(
         method === 'POST' &&
         !Object.keys(headers).some((k) => k.toLowerCase() === 'origin')
       ) headers.Origin = `https://${NAME}`;
+      const deviceKey = Object.keys(headers).find((k) => k.toLowerCase() === 'x-aib-device');
+      if (deviceKey) {
+        seen.tokens?.push(headers[deviceKey]);
+        if (seen.expireNext) {
+          headers[deviceKey] = 'a-session-that-ended';
+          seen.expireNext = false;
+        }
+      }
+      // the browser's own cookies go with the request, as they do through Tailscale Serve (the pairing cookie is HttpOnly)
+      const jar = await page.send('Network.getCookies', { urls: [url.href] });
+      const cookies = (jar.cookies as Json[]).map((c) => `${c.name}=${c.value}`).join('; ');
+      if (cookies) headers.Cookie = cookies;
       if (kind === 'Document') {
         Object.assign(headers, {
           'Sec-Fetch-Site': 'none',
@@ -562,7 +578,11 @@ Deno.test({
         refused: [] as string[],
         requests: 0,
         bridged: [] as number[],
+        tokens: [] as string[],
       };
+      // the key the page works with now: this computer was paired before sessions, so its stored key was traded for the cookie and a
+      // session when the page opened (remote_pc_session below); the page's own session token is the last one it sent
+      const live = () => seen.tokens[seen.tokens.length - 1]!;
       const page = await browser.open('about:blank', 1280, 860);
       await serveAll(page, s, seen);
       // not paired yet: the loader opens the pairing page, which says "computer" in a computer's browser
@@ -682,7 +702,7 @@ Deno.test({
       );
       let mine: Record<string, string> = {};
       for (let i = 0; i < 40; i++) {
-        mine = (await get(s, '/api/remote/pc/view-prefs', computer.token)).json
+        mine = (await get(s, '/api/remote/pc/view-prefs', live())).json
           .prefs as Record<string, string>;
         if (Object.keys(mine).some((k) => k.startsWith('studio-layout-v1:'))) {
           break;
@@ -790,12 +810,12 @@ Deno.test({
       );
       // a saved chat's picture (/api/transcript/image) is fetched with the device key and shown from memory; any other API address
       // in an <img> (agent-written content can put one there) is never fetched with the key (security review SF7)
-      const sessions = await get(s, '/api/sessions', computer.token);
+      const sessions = await get(s, '/api/sessions', live());
       assertEquals(sessions.status, 200, sessions.text);
       const shotKey = String(
         (sessions.json.sessions as Json[]).map((x) => x.key).find((k) => String(k).endsWith('pictured-1.jsonl')),
       );
-      const shown = await get(s, `/api/transcript?key=${encodeURIComponent(shotKey)}`, computer.token);
+      const shown = await get(s, `/api/transcript?key=${encodeURIComponent(shotKey)}`, live());
       assertEquals(shown.status, 200, shown.text);
       const im = (JSON.stringify(shown.json).match(/"images":\[\{"n":(\d+),"i":(\d+)/) ?? []).slice(1);
       assertEquals(im.length, 2, 'the saved chat has a picture');
@@ -829,6 +849,121 @@ Deno.test({
         'the page never asks for what a computer may not do (no 401 / 403)',
       );
       assertEquals(seen.limited, [], 'still nothing rate limited');
+    } finally {
+      await browser.close().catch(() => {});
+      await s.close();
+    }
+  },
+});
+
+// ---- the device key never sits in the browser profile (security fix 2026-11-23) ------------------------------------------------
+
+const COOKIE = '__Host-aib-phone';
+/** Every string this origin keeps in the browser profile: localStorage, sessionStorage and the device record in IndexedDB. */
+const profileText = (page: Page) =>
+  page.eval<string>(`(async () => {
+    const out = [];
+    for (const st of [localStorage, sessionStorage]) for (let i = 0; i < st.length; i++) out.push(st.key(i) + '=' + st.getItem(st.key(i)));
+    const rec = await new Promise((resolve) => {
+      const req = indexedDB.open('aib-phone');
+      req.onerror = () => resolve(null);
+      req.onsuccess = () => {
+        try { const g = req.result.transaction('kv', 'readonly').objectStore('kv').get('device'); g.onsuccess = () => resolve(g.result || null); g.onerror = () => resolve(null); }
+        catch { resolve(null); }
+      };
+    });
+    out.push('device=' + JSON.stringify(rec));
+    out.push('cookie=' + document.cookie);
+    return out.join('\\n');
+  })()`);
+const deviceRecord = (page: Page) =>
+  page.eval<Json | null>(`new Promise((resolve) => {
+    const req = indexedDB.open('aib-phone');
+    req.onerror = () => resolve(null);
+    req.onsuccess = () => {
+      try { const g = req.result.transaction('kv', 'readonly').objectStore('kv').get('device'); g.onsuccess = () => resolve(g.result || null); g.onerror = () => resolve(null); }
+      catch { resolve(null); }
+    };
+  })`);
+const pairingCookie = async (page: Page) =>
+  ((await page.send('Network.getCookies', { urls: [`https://${NAME}/`] })).cookies as Json[]).find((c) => c.name === COOKIE);
+
+Deno.test({
+  ...OPTS,
+  name: 'computer page: no device key in the browser profile; an old pairing is migrated; it stays paired across restarts; a lost cookie says pair again',
+  ignore: !browserPath,
+  async fn() {
+    const s = await remoteOn();
+    const browser = await Browser.launch();
+    try {
+      // a computer paired before sessions: its long-lived key is in IndexedDB, as the old page stored it, and its cookie is in the jar
+      const old = await pairPhone(s, 'Laptop (Edge)', undefined, 'computer');
+      const seen = { credential: [] as string[], limited: [] as string[], refused: [] as string[], requests: 0, bridged: [] as number[], tokens: [] as string[], expireNext: false };
+      const page = await browser.open('about:blank', 1280, 860);
+      await serveAll(page, s, seen);
+      await page.goto(`https://${NAME}/remote.css`);
+      await page.send('Network.setCookie', { name: COOKIE, value: old.cookie, url: `https://${NAME}/`, secure: true, httpOnly: true, sameSite: 'Strict', path: '/' });
+      await page.eval(`new Promise((resolve, reject) => {
+        const req = indexedDB.open('aib-phone', 2);
+        req.onupgradeneeded = () => { req.result.createObjectStore('kv'); req.result.createObjectStore('chats', { keyPath: 'key' }); };
+        req.onsuccess = () => {
+          const tx = req.result.transaction('kv', 'readwrite');
+          tx.objectStore('kv').put({ token: ${JSON.stringify(old.token)}, device: { id: ${JSON.stringify(old.id)} } }, 'device');
+          tx.oncomplete = () => { req.result.close(); resolve(true); };
+          tx.onerror = () => reject(tx.error);
+        };
+        req.onerror = () => reject(req.error);
+      })`);
+      const drawn = 'document.getElementById("appVersion") && document.getElementById("appVersion").textContent.length > 0';
+
+      // 1. migration: the page opens, with no "pair again", and the old key is gone from the profile and dead on the PC
+      await page.goto(`https://${NAME}/`);
+      await page.waitFor('location.pathname === "/pc.html"', 15000, 'the computer page');
+      await page.waitFor(drawn, 20000, 'the page draws');
+      assert(seen.tokens.includes(old.token), 'the old key was sent once, to be traded');
+      const record = await deviceRecord(page);
+      assert(record && !('token' in record) && (record.device as Json).id === old.id, `the record has the device and no key: ${JSON.stringify(record)}`);
+      assertEquals((await get(s, '/api/remote/bootstrap', old.token)).status, 401, 'the old key stopped working');
+      const tokens = [...new Set(seen.tokens)];
+      assert(tokens.length >= 2, 'the page works from a session token');
+      const jar = await pairingCookie(page);
+      assert(jar && jar.httpOnly === true && jar.sameSite === 'Strict' && jar.secure === true, `the pairing cookie: ${JSON.stringify(jar)}`);
+      assert(jar!.value !== old.cookie, 'the cookie was renewed in the trade');
+
+      // 2. nothing the profile keeps (or a script can read) holds a key or the cookie
+      let kept = await profileText(page);
+      for (const secret of [...tokens.filter((t) => t !== old.token), String(jar!.value)]) assert(!kept.includes(secret), 'a secret is in the profile or readable by script');
+      assert(!kept.includes(old.token) && !kept.includes(old.cookie), 'the old key and cookie are gone from the profile');
+      assert(!kept.includes(COOKIE), 'document.cookie does not show the pairing cookie');
+
+      // 3. the session ends (AIB restarted, or 12 h): the page asks for a new one with the cookie and the request goes again
+      const before = new Set(seen.tokens);
+      seen.expireNext = true;
+      const status = await page.eval<number>(`fetch('/api/live/list').then((r) => r.status)`);
+      assertEquals(status, 200, 'the request that met a dead session went again with a new one');
+      assert(seen.tokens.some((t) => !before.has(t) && t !== 'a-session-that-ended'), 'a new session token was made');
+      assertEquals(page.errors.filter((e) => !/Failed to load resource|fetching the script/.test(e)), [], 'no page errors');
+      await page.close();
+
+      // 4. a browser restart (a new page, no memory): paired still, from the cookie alone
+      const again = await browser.open('about:blank', 1280, 860);
+      await serveAll(again, s, seen);
+      seen.tokens.length = 0;
+      await again.goto(`https://${NAME}/`);
+      await again.waitFor('location.pathname === "/pc.html"', 15000, 'the computer page after a restart');
+      await again.waitFor(drawn, 20000, 'the page draws after a restart');
+      assert(seen.tokens.length > 0 && !seen.tokens.includes(old.token), 'a new session, not the old key');
+      kept = await profileText(again);
+      for (const secret of [...seen.tokens, old.cookie]) assert(!kept.includes(secret), 'still nothing in the profile');
+
+      // 5. the cookie is gone (browser data cleared): a plain "pair again", the record goes
+      await again.send('Network.deleteCookies', { name: COOKIE, url: `https://${NAME}/` });
+      await again.goto(`https://${NAME}/`);
+      await again.waitFor('location.pathname === "/phone.html" && document.getElementById("app") && document.getElementById("app").dataset.screen === "removed"', 20000, 'the pair-again screen');
+      const text = await again.eval<string>(`document.getElementById('app').innerText`);
+      assert(text.includes('no longer paired') && text.includes('Pair again'), text);
+      assertEquals(await deviceRecord(again), null, 'the record went');
+      await again.close();
     } finally {
       await browser.close().catch(() => {});
       await s.close();

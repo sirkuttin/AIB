@@ -1126,6 +1126,18 @@ export class Connection {
     subFolder?: string;
   } | null = null;
 
+  /**
+   * Antigravity (subagents/antigravity.ts): the rule its subagents are asked to follow (their own workspace). It can only be asked
+   * for, never enforced: it goes in the ACP system prompt when the agent advertises one, else in front of the chat's next prompt
+   * (host/studio.ts). '' for every other agent.
+   */
+  subagentRule = '';
+
+  /** The agent advertised the ACP client system prompt capability (an object, as codex-acp's `{}`): artifactPrompt() can send text. */
+  supportsSystemPrompt(): boolean {
+    return isDict(this.#sessionCaps()?.systemPrompt);
+  }
+
   /** Isolation is on: AIB's hooks run in this chat (given at the start, or a taken-over chat that had them) and are not off now. */
   subagentIsolationOn(): boolean {
     const h = this.subagentHooks;
@@ -6531,7 +6543,7 @@ export class Connection {
     // hooks off at the start (settings, or no Git Bash): they are turned off (P2)
     const subagents = this.subagentHooks?.prompt ? this.subagentHooks.prompt : isDict(this.subagentHooks?.settings?.hooks) ? SUBAGENT_PROMPT : this.subagentHooks?.deny
       ? (this.subagentHooks.off === 'Git Bash not found' ? SUBAGENTS_OFF_NO_BASH_PROMPT : SUBAGENTS_OFF_PROMPT)
-      : '';
+      : this.subagentRule; // Antigravity: asked for, not enforced
     if (!own && !local && !brief && !subagents) return {};
     const out: Json = {};
     // Presence is support (ACP capability objects): codex-acp advertises `systemPrompt: {}`, which a truthiness test missed.

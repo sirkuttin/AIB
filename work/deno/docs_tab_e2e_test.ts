@@ -168,6 +168,36 @@ e2e('the doc is editable in the Docs tab: type, it saves, an agent edit merges; 
   chat.end();
 });
 
+e2e('the Docs tab header has an always-visible pop-out: the doc moves to its own window and leaves the panel', async (lab) => {
+  const page = lab.page;
+  const chat = await openChat(lab);
+  const name = await makeDoc(lab, chat, 'Pop plan', 'Pop text.\n');
+  // the app's window route (K3) answered by a stand-in: record the ask, hand back window w2 (as the fake desktop windows do in doc_popout_e2e)
+  await page.eval(`(() => { window.__asks = []; const f = window.fetch; window.fetch = (u, o) => {
+    if (String(u).includes('/api/live/desktop/windows')) { window.__asks.push(JSON.parse(o.body)); return Promise.resolve(new Response(JSON.stringify({ ok: true, w: 'w2' }), { status: 200, headers: { 'Content-Type': 'application/json' } })); }
+    return f.call(window, u, o); }; })()`);
+  await tab(page, 'docs');
+  await page.waitFor(`document.querySelectorAll('#docsPane .dt-row').length === 1`, 15000, 'the doc row');
+  await page.click('#docsPane .dt-row');
+  await frameReady(page);
+  assert(
+    await page.eval<boolean>(`(() => { const n = document.querySelector('#docsPane .dt-pop'); const r = n && n.getBoundingClientRect(); return !!r && r.width > 0 && !n.closest('[hidden]'); })()`),
+    'the pop-out button is visible without hovering',
+  );
+  assertEquals(await page.eval<string>(`document.querySelector('#docsPane .dt-pop').title`), 'Pop out this doc into its own window');
+  await page.click('#docsPane .dt-pop');
+  await page.waitFor(`window.__asks.length === 1`, 10000, 'the doc window was asked for');
+  const ask = await page.eval<Record<string, unknown>>(`window.__asks[0]`);
+  assertEquals(ask.op, 'popout');
+  assertEquals((ask.doc as Record<string, unknown>).name, name, 'by the doc name');
+  assert(typeof (ask.doc as Record<string, unknown>).project === 'string' && (ask.doc as Record<string, unknown>).project !== '', 'and the project key');
+  await page.waitFor(`AgentDocsTabUI.state().doc === null`, 10000, 'the doc left the panel');
+  assertEquals(await openName(page), '', 'the Docs tab shows its list again');
+  assertEquals(await page.eval<number>(`document.querySelectorAll('#docsPane iframe').length`), 0, 'no copy left in the panel');
+  assert(await noMiddleTab(page), 'no middle tab either');
+  chat.end();
+});
+
 e2e('the Docs list is newest edited first, "+ New doc" makes and opens one, and a writing chip is live while an agent writes', async (lab) => {
   const page = lab.page;
   const chat = await openChat(lab);

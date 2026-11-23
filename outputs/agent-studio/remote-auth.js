@@ -2,9 +2,13 @@
    in place of page-auth.js (server/remote/pc_page.ts pcShell): the page's own scripts run unchanged, and this file makes them talk
    to the PC as a paired computer.
 
-   * The device key: where the phone page keeps it (IndexedDB 'aib-phone', store 'kv', key 'device'), the same record for phones
-     and computers. Never the page token: no request from this page carries X-Studio-Token or any other page credential (the
-     server refuses them); every API call carries X-AIB-Device, every socket the subprotocol aib-device.<key>.
+   * The device key: a computer keeps NO long-lived key in its browser profile (any program on that computer can read the profile).
+     What stays across browser restarts is the pairing's HttpOnly cookie (page scripts cannot read it); with it this file asks the PC
+     for a short session token (POST /api/remote/pc/session; 12 h, renewed here) and keeps that in memory only. The record in
+     IndexedDB ('aib-phone', store 'kv', key 'device') holds the device's name and id, never a key. A computer paired before this
+     still has its key there: it is traded once for the cookie (POST /api/remote/pc/adopt, the old key stops working) and removed.
+     Never the page token: no request from this page carries X-Studio-Token or any other page credential (the
+     server refuses them); every API call carries X-AIB-Device (the session token), every socket the subprotocol aib-device.<it>.
    * Start: the page's scripts come in the shell as <script type="text/x-aib-later" data-src>; this file first reads the key, the
      remote bootstrap (GET /api/remote/pc/bootstrap: no token, launch key, state folder, process ids or loopback addresses) and
      this computer's own layout (GET /api/remote/pc/view-prefs), puts the layout where view-prefs.js reads it, then runs the
@@ -28,7 +32,7 @@
     'X-Agent-Host-Token',
   ]; // the bridge's REFUSED_HEADERS (server/remote/pc_bridge.ts): never sent from here
   const NAME_KEY = 'aib-remote-pc-name'; // the PC's name, for the "Can't reach" line before the PC answers (not a secret)
-  const S = { token: '', boot: null, pushOn: false, pushKey: '', install: null, installed: false, started: false };
+  const S = { token: '', session: false, timer: 0, boot: null, pushOn: false, pushKey: '', install: null, installed: false, started: false };
   const realFetch = root.fetch.bind(root);
   const RealSocket = root.WebSocket;
 
@@ -105,6 +109,85 @@
         }
       };
     });
+  }
+
+  /* The device record without any key: what a computer keeps in the profile (its name and id are not secrets). */
+  function keepRecord(saved) {
+    return new Promise((resolve) => {
+      try {
+        const req = root.indexedDB.open('aib-phone');
+        req.onerror = () => resolve(false);
+        req.onsuccess = () => {
+          try {
+            const tx = req.result.transaction('kv', 'readwrite');
+            const device = Object.assign({}, saved && saved.device, { kind: 'computer' });
+            tx.objectStore('kv').put({ device }, 'device');
+            tx.oncomplete = () => {
+              req.result.close();
+              resolve(true);
+            };
+            tx.onerror = () => resolve(false);
+          } catch {
+            resolve(false);
+          }
+        };
+      } catch {
+        resolve(false);
+      }
+    });
+  }
+  /* A session token from the HttpOnly pairing cookie (a cross-site page cannot send the X-AIB-Session header). One call at a time.
+     Resolves true with S.token set; false when the PC does not know this cookie (removed, or the cookie is gone: pair again). */
+  let renewing = null;
+  let renewGone = false;
+  const SESSION_RENEW_MS = 3 * 3600 * 1000; // the PC's sessions last 12 h
+  function renew() {
+    if (renewing) return renewing;
+    renewing = (async () => {
+      try {
+        const r = await realFetch('/api/remote/pc/session', {
+          method: 'POST',
+          headers: { 'X-AIB-Session': '1', 'Content-Type': 'application/json' },
+          body: '{}',
+          cache: 'no-store',
+          credentials: 'same-origin',
+        });
+        renewGone = r.status === 401 || r.status === 403; // the PC does not know this cookie (not: it did not answer)
+        if (!r.ok) return false;
+        const b = await r.json();
+        if (!b || typeof b.token !== 'string' || !b.token) return false;
+        S.token = b.token;
+        return true;
+      } catch {
+        return false;
+      }
+    })().finally(() => {
+      renewing = null;
+    });
+    return renewing;
+  }
+  /* A computer paired before sessions: its stored key is traded once for the cookie and a session, then dropped from the profile. */
+  async function adopt(saved) {
+    let r;
+    try {
+      r = await realFetch('/api/remote/pc/adopt', {
+        method: 'POST',
+        headers: { 'X-AIB-Device': saved.token, 'Content-Type': 'application/json' },
+        body: '{}',
+        cache: 'no-store',
+        credentials: 'same-origin',
+      });
+    } catch {
+      return 'offline';
+    }
+    if (r.status === 401) return 'gone';
+    if (r.status === 403) return 'phone';
+    if (!r.ok) return 'offline';
+    const b = await r.json().catch(() => null);
+    if (!b || typeof b.token !== 'string' || !b.token) return 'offline';
+    S.token = b.token;
+    await keepRecord(saved);
+    return 'ok';
   }
 
   // ---- answers made here ----
@@ -193,6 +276,16 @@
       if (!(error && error.name === 'AbortError')) lost('unreachable');
       throw error;
     }
+    if (response.status === 401 && S.session && (await renew())) {
+      // the session ended (AIB restarted, or 12 h passed): the cookie asked for a new one, and this request goes again once
+      headers.set('X-AIB-Device', S.token);
+      try {
+        response = await realFetch(url.pathname + url.search, Object.assign({}, options, { headers }));
+      } catch (error) {
+        if (!(error && error.name === 'AbortError')) lost('unreachable');
+        throw error;
+      }
+    }
     if (response.status === 401) removed(response.clone());
     // Tailscale Serve answers 502/503/504 itself (not JSON) when nothing listens behind it: AIB is closed on the PC
     if (response.status >= 502 && response.status <= 504 && !/json/i.test(response.headers.get('content-type') || '')) {
@@ -244,6 +337,29 @@
   /* Removed on the PC (401 not_paired): this page's storage and the cached shell go now (drafts, layout picks); the phone page then
      says so and forgets the key (one place for both kinds: phone.js removed() also wipes the origin). */
   let leaving = false;
+  function dropRecord() {
+    return new Promise((resolve) => {
+      try {
+        const req = root.indexedDB.open('aib-phone');
+        req.onerror = () => resolve(false);
+        req.onsuccess = () => {
+          try {
+            const tx = req.result.transaction('kv', 'readwrite');
+            tx.objectStore('kv').delete('device');
+            tx.oncomplete = () => {
+              req.result.close();
+              resolve(true);
+            };
+            tx.onerror = () => resolve(false);
+          } catch {
+            resolve(false);
+          }
+        };
+      } catch {
+        resolve(false);
+      }
+    });
+  }
   async function wipe() {
     try {
       root.localStorage.clear();
@@ -269,12 +385,11 @@
   }
 
   // ---- start ----
+  const bootCall = () =>
+    realFetch('/api/remote/pc/bootstrap', { headers: { 'X-AIB-Device': S.token }, cache: 'no-store', credentials: 'same-origin' });
   async function refreshBoot() {
-    const r = await realFetch('/api/remote/pc/bootstrap', {
-      headers: { 'X-AIB-Device': S.token },
-      cache: 'no-store',
-      credentials: 'same-origin',
-    });
+    let r = await bootCall();
+    if (r.status === 401 && S.session && (await renew())) r = await bootCall();
     if (r.status === 401 || r.status === 403) {
       removed(r.clone());
       const b = await r.json().catch(() => ({}));
@@ -373,11 +488,8 @@
     probing = (async () => {
       let why = '';
       try {
-        const r = await realFetch('/api/remote/pc/bootstrap', {
-          headers: { 'X-AIB-Device': S.token },
-          cache: 'no-store',
-          credentials: 'same-origin',
-        });
+        let r = await bootCall();
+        if (r.status === 401 && S.session && (await renew())) r = await bootCall();
         if (r.status === 401 || r.status === 403) {
           removed(r.clone());
           return;
@@ -416,11 +528,56 @@
   }
   async function start() {
     const saved = await record();
-    if (!saved || typeof saved.token !== 'string' || !saved.token) {
+    if (!saved) {
       root.location.replace('/'); // not paired here: the loader goes on to pairing
       return;
     }
-    S.token = saved.token;
+    S.session = true;
+    if (typeof saved.token === 'string' && saved.token) {
+      const how = await adopt(saved);
+      // another window of this computer may have traded the key a moment ago: its cookie is ours too
+      if (how === 'gone' && (await renew())) await keepRecord(saved);
+      else if (how === 'gone' && !renewGone) {
+        goOffline('unreachable');
+        showBar();
+        retryIn();
+        return;
+      } else if (how === 'gone' && !leaving) {
+        leaving = true;
+        await wipe();
+        root.location.replace('/phone.html');
+        return;
+      }
+      if (how === 'phone' && !leaving) {
+        leaving = true;
+        root.location.replace('/phone.html');
+        return;
+      }
+      if (how === 'offline') {
+        // the PC can't be reached: the old key stays where it was until the PC answers (nothing is lost)
+        goOffline('unreachable');
+        showBar();
+        retryIn();
+        return;
+      }
+    } else if (!S.token && !(await renew())) {
+      if (!renewGone) {
+        // the PC did not answer (asleep, AIB restarting): say so and try again; nothing is forgotten
+        goOffline('unreachable');
+        showBar();
+        retryIn();
+        return;
+      }
+      // the cookie is gone (browser data cleared) or this computer was removed on the PC: pair again
+      if (!leaving) {
+        leaving = true;
+        await wipe();
+        await dropRecord();
+        root.location.replace('/phone.html#unpaired'); // the phone page's "no longer paired" screen with Pair again
+      }
+      return;
+    }
+    if (!S.timer) S.timer = root.setInterval(() => renew(), SESSION_RENEW_MS);
     let prefs;
     try {
       const both = await Promise.all([

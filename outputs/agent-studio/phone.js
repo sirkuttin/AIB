@@ -5721,9 +5721,11 @@
       r = null; // keep waiting through a short drop
     }
     if (r && r.status === 200 && r.data.state === 'approved' && r.data.token) {
-      S.token = r.data.token;
+      S.token = r.data.token; // for a computer this is a short session, kept in memory only
       S.device = r.data.device;
-      await stored('device', { token: r.data.token, device: r.data.device });
+      // a computer is not given a key to keep in this browser profile: its HttpOnly cookie is what stays (remote/server.ts #pair)
+      if (r.data.session === true) await stored('device', { device: Object.assign({}, r.data.device, { kind: 'computer' }) });
+      else await stored('device', { token: r.data.token, device: r.data.device });
       S.pairing = null;
       S.pairSecret = '';
       await loadCopies(); // an earlier pairing's copies go (they belong to another device)
@@ -5732,7 +5734,7 @@
         const boot = await call('GET', '/api/remote/bootstrap'); // now paired: the push key
         if (boot.status === 200 && boot.data.layout === 'pc') {
           // approved as a computer on the PC: the computer page (it reads the same record)
-          await stored('device', { token: r.data.token, device: Object.assign({}, r.data.device, { kind: 'computer' }) });
+          if (r.data.session !== true) await stored('device', { token: r.data.token, device: Object.assign({}, r.data.device, { kind: 'computer' }) });
           root.location.replace('/pc.html');
           return;
         }
@@ -6177,10 +6179,20 @@
   async function start() {
     const m = /^#p=([0-9a-f]{12})$/i.exec(root.location.hash || '');
     if (m) S.pairSecret = m[1].toLowerCase();
+    const unpaired = (root.location.hash || '') === '#unpaired'; // the computer page lost its pairing cookie (remote-auth.js)
     S.openOnStart = openTarget(root.location.hash) || S.openOnStart;
     navStart(); // the secret leaves the address bar
     registerWorker();
     const saved = await stored('device');
+    if (unpaired) {
+      await removed();
+      return;
+    }
+    // a computer keeps no key here (its pairing cookie is HttpOnly): its page asks the PC for a session
+    if (saved && !saved.token && saved.device && saved.device.kind === 'computer') {
+      root.location.replace('/pc.html');
+      return;
+    }
     if (saved && saved.token) {
       S.token = saved.token;
       S.device = saved.device || null;

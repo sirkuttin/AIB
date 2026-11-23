@@ -48,7 +48,7 @@ import { studioOf, swarmOf } from '../web/studio_routes.ts';
 import { bringBack, restoreFolders } from '../web/project_routes.ts';
 import { isDeleted, isDocHistory } from '../artifacts/artifacts.ts';
 import { SAVED_KEY } from './saved.ts';
-import { cleanPushSub, PUSH_HOSTS, PUSH_HOST_SUFFIXES, pushSubProblem, scopesForPhone } from './devices.ts';
+import { cleanPushSub, SESSION_SECONDS, PUSH_HOSTS, PUSH_HOST_SUFFIXES, pushSubProblem, scopesForPhone } from './devices.ts';
 import type { PushSender, VapidKeys } from './push.ts';
 import type { ToastCodes } from '../desktop/toast.ts';
 import { onceOptions } from '../desktop/toast.ts';
@@ -169,6 +169,10 @@ export const REMOTE_ROUTES: readonly [string, string, RemoteAuth][] = [
   ['GET', '/api/remote/pc/wsl-status', 'pc'],
   // Phase 2: where this computer's AIB tabs are (attention/presence.ts reportDevice: the server makes the slot ids)
   ['POST', '/api/remote/pc/presence', 'pc'],
+  // A computer keeps no long-lived key in its browser profile: a short session token (page memory only) comes from the HttpOnly
+  // pairing cookie (session), and a computer paired before that trades its stored key for the cookie once (adopt).
+  ['POST', '/api/remote/pc/session', 'pc'],
+  ['POST', '/api/remote/pc/adopt', 'pc'],
   ['GET', '/api/remote/bootstrap', 'bootstrap'],
   ['POST', '/api/remote/pair/claim', 'pair'],
   ['POST', '/api/remote/pair/status', 'pair'],
@@ -282,6 +286,8 @@ export const ROUTE_SCOPE: Readonly<Record<string, PhoneScope>> = {
   'GET /api/remote/pc/settings': 'phone.read',
   'GET /api/remote/pc/wsl-status': 'phone.read',
   'POST /api/remote/pc/presence': 'phone.read',
+  'POST /api/remote/pc/session': 'phone.read',
+  'POST /api/remote/pc/adopt': 'phone.read',
   // updates: anyone paired sees and checks; restarting AIB to install needs Send (full control of the chats)
   'GET /api/remote/update': 'phone.read',
   'POST /api/remote/update/check': 'phone.read',
@@ -480,9 +486,14 @@ export class RemoteServer {
   }
 
   /** The device of an API request: its header token, the login it was paired with, and the scope this route needs. */
-  #device(request: Request, scope: PhoneScope | null, viaCookie = false): Device | Response {
+  #device(request: Request, scope: PhoneScope | null, viaCookie = false, computerCookie = false): Device | Response {
     const headers = request.headers;
-    const device = viaCookie ? this.host.devices.byCookie(cookieOf(headers)) : this.host.devices.byToken(headers.get(DEVICE_HEADER));
+    let device = viaCookie ? this.host.devices.byCookie(cookieOf(headers)) : this.host.devices.byToken(headers.get(DEVICE_HEADER));
+    if (!device && computerCookie && !headers.has(DEVICE_HEADER)) {
+      // a computer keeps no key a page or the service worker could read: the notification buttons go with its HttpOnly cookie
+      const byCookie = this.host.devices.byCookie(cookieOf(headers));
+      if (byCookie?.kind === 'computer') device = byCookie;
+    }
     if (!device) {
       return this.json(401, { error: 'This phone is not paired with this PC.', code: 'not_paired' });
     }
@@ -723,11 +734,45 @@ export class RemoteServer {
   }
 
   /**
+   * A computer's page session (security review 2026-11-23): the long-lived device key never sits in the browser profile, where any
+   * program on that computer could read it. The pairing's HttpOnly cookie (page scripts cannot read it) stays across browser
+   * restarts; with it the page asks here for a short session token (12 h, memory only, ended by an AIB restart) and renews it.
+   *   POST /api/remote/pc/session   the cookie (and the X-AIB-Session header, which a cross-site page cannot send) -> a new session token
+   *   POST /api/remote/pc/adopt     a computer paired before this: its stored key, once -> the cookie and a session; the key stops working
+   */
+  async #pcSession(request: Request, path: string): Promise<Response> {
+    if (request.method.toUpperCase() !== 'POST') return this.json(404, { error: 'Not found' });
+    await drain(request);
+    const adopt = path === '/api/remote/pc/adopt';
+    const device = adopt ? this.#device(request, null) : this.#device(request, null, true);
+    if (device instanceof Response) return device;
+    if (!adopt && request.headers.get('X-AIB-Session') !== '1') return this.json(400, { error: 'Invalid request', code: 'invalid' });
+    if (adopt && !this.host.devices.byPermanentToken(request.headers.get(DEVICE_HEADER))) {
+      return this.json(401, { error: 'This computer is not paired with this PC.', code: 'not_paired' });
+    }
+    if (device.kind !== 'computer') {
+      return this.json(403, { error: 'A phone uses the phone page. This needs a device paired as a computer.', code: 'not_computer' });
+    }
+    if (!this.bridge.limit.take(device.id)) {
+      return this.json(429, { error: 'Too many requests from this computer. Try again in a moment.', code: 'rate_limited' }, { 'Retry-After': '1' });
+    }
+    let cookie = cookieOf(request.headers);
+    if (adopt) {
+      cookie = await this.host.devices.retireKey(device.id);
+      this.host.audit.write({ device: device.id, name: device.name, action: 'session', result: 'stored key replaced by the pairing cookie' });
+    }
+    const token = this.host.devices.issueSession(device.id);
+    if (!token || !cookie) return this.json(401, { error: 'This computer is not paired with this PC.', code: 'not_paired' });
+    return this.json(200, { token, expiresIn: SESSION_SECONDS }, { 'Set-Cookie': setCookie(cookie) });
+  }
+
+  /**
    * Phase 1b: the computer page's own routes (remote/pc_page.ts): the allowlisted bootstrap, this device's layout, the Settings view
    * without commands, keys or paths, the WSL status without URLs. A computer only (a phone gets 403 not_computer).
    */
   async #pcRoute(request: Request, url: URL, path: string): Promise<Response> {
     const post = request.method.toUpperCase() === 'POST';
+    if (path === '/api/remote/pc/session' || path === '/api/remote/pc/adopt') return await this.#pcSession(request, path);
     const body = post ? await this.#body(request, 1_000_000) : null;
     const device = this.#device(request, ROUTE_SCOPE[`${post ? 'POST' : 'GET'} ${path}`]);
     if (device instanceof Response) return device;
@@ -849,6 +894,16 @@ export class RemoteServer {
     if (claim.state === 'pending') return this.json(200, { state: 'pending' });
     if (claim.state === 'rejected') return this.json(200, { state: 'rejected' });
     const handover = claim.handover!;
+    if (this.host.devices.byId(handover.device.id)?.kind === 'computer') {
+      // a computer never gets a long-lived key to keep: its session comes from the cookie, which page scripts cannot read
+      const cookie = await this.host.devices.retireKey(handover.device.id);
+      const session = cookie ? this.host.devices.issueSession(handover.device.id) : null;
+      if (cookie && session) {
+        return this.json(200, { state: 'approved', token: session, session: true, device: handover.device }, {
+          'Set-Cookie': setCookie(cookie),
+        });
+      }
+    }
     return this.json(200, { state: 'approved', token: handover.token, device: handover.device }, {
       'Set-Cookie': setCookie(handover.cookie),
     });
@@ -1080,7 +1135,7 @@ export class RemoteServer {
    */
   async #notifyAct(request: Request): Promise<Response> {
     const body = await this.#body(request);
-    const device = this.#device(request, ROUTE_SCOPE['POST /api/remote/notify-act']);
+    const device = this.#device(request, ROUTE_SCOPE['POST /api/remote/notify-act'], false, true);
     if (device instanceof Response) return device;
     const key = typeof body?.key === 'string' ? body.key.slice(0, 600) : '';
     const act = typeof body?.act === 'string' ? body.act : '';

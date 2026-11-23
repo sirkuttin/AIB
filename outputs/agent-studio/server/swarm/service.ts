@@ -27,6 +27,8 @@ import { baseAgent, isServerEntry, serverIdOf } from '../agents/claude_family.ts
 import { type ModelServer, modelServerLabel } from '../agents/model_servers.ts';
 import { MODEL_SERVER_AGENTS } from '../agents/claude_family.ts';
 import { applyChange, changedFiles } from './undo.ts';
+import { ignoredFiles, landSubagentWork, protectedPath, SCRATCH_EXT, scratchFiles } from '../worktrees/subagent_land.ts';
+export { ignoredFiles, protectedPath, SCRATCH_EXT, scratchFiles };
 import { claudeHelpers, swarmEnabled } from './settings.ts';
 import { readSubagents, type SubagentRecord } from '../subagents/service.ts';
 import { canonicalName } from '../allow/paths.ts';
@@ -96,50 +98,8 @@ export async function subagentUnchanged(rec: { path: string; folder: string; bra
   return status.returncode === 0 && pyStr(status.stdout).trim() === '' && !(await ignoredFiles(rec.path)).length;
 }
 
-/** Folders a build or an install makes again on its own: never a reason to keep a subagent's worktree (ignoredFiles). */
-const GENERATED = new Set([
-  'node_modules', '.venv', 'venv', '__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache', 'dist', 'build', 'target', 'coverage',
-  '.cache', '.next', '.turbo', '.parcel-cache', '.gradle', '.deno',
-]);
 /** How long a subagent worktree that holds files AIB did not land is kept before AIB removes it (the parent is told the date). */
 export const KEPT_DAYS = 7;
-
-/**
- * Files a subagent made that git ignores (a draft in a git-ignored folder: 2026-11-17, its worktree looked empty, was removed and the
- * draft was lost), as worktree-relative paths: never landed by git, so the worktree that holds them is kept. A worktree starts as a
- * plain `git worktree add` of S plus its `aib-shared` link (no ignored files), so every one is the subagent's; generated folders
- * (GENERATED), compiled Python files and anything reached through a link (the `aib-shared` link: those files are already in the main
- * folder) don't count. At most 200 are named.
- */
-export async function ignoredFiles(path: string): Promise<string[]> {
-  if (!path || !wt.lexists(path)) return [];
-  const list = async (extra: string[]) =>
-    pyStr((await wt.git(['ls-files', '-z', '--others', '--ignored', '--exclude-standard', ...extra], path, { check: false })).stdout)
-      .split('\0').filter((n) => n);
-  const generated = (f: string) =>
-    f.replace(/\/$/, '').split('/').some((part) => GENERATED.has(part)) || /\.py[co]$/.test(f) || throughLink(path, f);
-  const out: string[] = [];
-  for (const entry of await list(['--directory'])) {
-    if (out.length >= 200) break;
-    if (generated(entry)) continue;
-    if (!entry.endsWith('/')) out.push(entry);
-    else for (const f of await list(['--', entry])) if (!generated(f) && out.length < 200) out.push(f);
-  }
-  return out;
-}
-
-/** True when `rel` (worktree-relative, git's form) is a link or lies under one: the `aib-shared` link and what git lists through it. */
-function throughLink(path: string, rel: string): boolean {
-  const parts = rel.replace(/\/$/, '').split('/').filter(Boolean);
-  for (let i = 1; i <= parts.length; i++) {
-    try {
-      if (Deno.lstatSync(pathOf(path, ...parts.slice(0, i))).isSymlink) return true;
-    } catch {
-      return false;
-    }
-  }
-  return false;
-}
 
 /** A helper of a chat that works in the project folder: it lands on the folder's branch, queued, with no stash (build plan 2b). */
 export const folderParent = (h: Helper) => !!h.worktree?.landOn;
@@ -178,51 +138,8 @@ const shown = (files: string[], limit = 6) => files.slice(0, limit).join(', ') +
 const baseName = (p: string) => p.slice(Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\')) + 1);
 const lower = (t: string) => (t ? t[0].toLowerCase() + t.slice(1) : t).replace(/[.\s]+$/, '');
 
-/**
- * Pages, notes and pictures: what a read-only or design subagent writes for the main agent to read (a mockup, a review), not a change
- * to the project. Plain .txt and code are never scratch.
- */
-export const SCRATCH_EXT = /\.(html?|md|markdown|png|jpe?g|gif|webp|svg|pdf|log)$/i;
-
-/**
- * Bug 2026-11-16 (scratch files landed: inbox-v31-design.html, hidden-actions-audit.html, architect-review-v2.md, file-editor-design-v2.md
- * went into the project's main as "AIB: subagent ..." commits). Of a subagent's changes (`changed`, S to its head), the scratch files:
- * new since S, at the top of its worktree (no folder), with a page / note / picture extension (SCRATCH_EXT), and never committed by
- * the subagent (a file it committed is work it meant to keep). They never land by themselves and are never lost: they stay in its
- * worktree, which is kept while they are there, and the main agent is told (copy them, or merge_helper lands them too).
- */
-export async function scratchFiles(path: string, start: string, changed: string[]): Promise<string[]> {
-  const top = changed.filter((f) => !f.includes('/') && SCRATCH_EXT.test(f));
-  if (!top.length) return [];
-  const listed = async (rev: string) =>
-    new Set(pyStr((await wt.git(['ls-tree', '--name-only', '-z', rev, '--', ...top], path, { check: false })).stdout).split('\0').filter((n) => n));
-  const inStart = await listed(start), committed = await listed('HEAD');
-  return top.filter((f) => !inStart.has(f) && !committed.has(f));
-}
-
-/** `head` without `paths` (a commit on the same parent, built in a temporary index): what lands when scratch files stay behind. */
-async function withoutPaths(path: string, head: string, paths: string[], scratchDir: string): Promise<string> {
-  const env = { GIT_INDEX_FILE: pathOf(scratchDir, 'scratch-index') };
-  await wt.git(['read-tree', head], path, { env });
-  await wt.git(['update-index', '--force-remove', '--', ...paths], path, { env });
-  const tree = pyStr((await wt.git(['write-tree'], path, { env })).stdout).trim();
-  return pyStr((await wt.git(['commit-tree', tree, '-p', `${head}^`, '-m', 'AIB snapshot'], path, { env, identity: true })).stdout).trim();
-}
-
 /** How a line names a helper or a subagent entry. */
 export const label = (h: Helper) => (h.kind === 'subagent' ? `subagent “${h.title}”` : `“${h.title}” (${chatName(h)})`);
-
-/**
- * Design 2.4: paths a subagent's landing never carries by itself (git hooks, agent and editor configs; a Bash redirect could plant
- * one): any folder segment named so, or a git attributes / modules / config file at any depth.
- */
-const PROTECTED_DIRS = new Set(['.git', '.claude', '.husky', '.githooks', '.vscode', '.codex', '.gemini', '.cursor', '.idea']);
-const PROTECTED_FILES = new Set(['.gitattributes', '.gitmodules', '.gitconfig']);
-export function protectedPath(path: string): boolean {
-  const parts = path.split(/[\\/]/).map(canonicalName);
-  const last = parts[parts.length - 1];
-  return parts.slice(0, -1).some((p) => PROTECTED_DIRS.has(p)) || PROTECTED_DIRS.has(last) || PROTECTED_FILES.has(last);
-}
 
 const NO_BRIEF = { goal: '', owns: [], avoid: [], done_when: '', reply_with: '', test_cmd: '', read_only: false, context_files: [] };
 
@@ -1126,104 +1043,47 @@ export class Swarm {
   async #landSubagent(h: Helper, held: string[]): Promise<Json> {
     const rec = readSubagents(this.ctx.stateDir)[h.sub?.record ?? ''];
     const path = h.worktree.path;
-    if (!rec || !path || !wt.lexists(path)) return { state: 'refused', code: 'gone', message: 'its worktree is gone' };
-    const folder = h.sub!.folder;
-    const target = h.worktree.landOn!;
-    const scratch = Deno.makeTempDirSync({ prefix: '.subagent-land-', dir: this.ctx.stateDir });
-    let head: string;
-    let start = h.worktree.start;
-    let changed: string[];
-    let kept: string[] = [];
-    let ignored: string[] = []; // files it made that git ignores: they can't land, so its worktree is kept for them
+    if (!rec || !path) return { state: 'refused', code: 'gone', message: 'its worktree is gone' };
+    const spec = {
+      scratchDir: this.ctx.stateDir,
+      path,
+      folder: h.sub!.folder,
+      target: h.worktree.landOn!,
+      branch: h.worktree.branch,
+      parent: held[0] ?? h.parent.live,
+      key: `subagent:${h.id}`,
+      title: h.title,
+      start: h.worktree.start,
+      held,
+      // merge_helper asked for the scratch files an earlier landing left behind: only they land now
+      landKept: h.sub?.landScratch && h.merge && !h.merge.undo && h.sub.kept?.length ? h.sub.kept : null,
+      landScratch: !!h.sub?.landScratch,
+    };
+    let out: Json;
     try {
-      head = await wt.snapshotCommit(path, scratch);
-      const diff = async (from: string) =>
-        (await wt.git(['diff', '--name-only', '-z', '--no-renames', from, head], path)).stdout.split('\0').filter((n) => n);
-      changed = await diff(start);
-      if (h.sub?.landScratch && h.merge && !h.merge.undo && h.sub.kept?.length) {
-        // its work landed already and its scratch files stayed behind; merge_helper asked for them: only they land now
-        start = await withoutPaths(path, head, h.sub.kept.filter((f) => changed.includes(f)), scratch);
-        changed = await diff(start);
-      } else if (!h.sub?.landScratch) {
-        ignored = await ignoredFiles(path);
-        kept = await scratchFiles(path, start, changed);
-        if (kept.length && kept.length === changed.length) return { state: 'scratch', files: [...kept, ...ignored] };
-        if (kept.length) {
-          head = await withoutPaths(path, head, kept, scratch);
-          changed = changed.filter((f) => !kept.includes(f));
-        }
-      }
-    } finally {
-      try {
-        Deno.removeSync(scratch, { recursive: true });
-      } catch { /* gone */ }
-    }
-    // Work already in the target (the main agent merged the branch by hand, or made the same change): nothing to land, no conflict to
-    // report. A branch tip that is an ancestor of the target is landed already, so only what the worktree added after it can still land.
-    const branchTip = h.worktree.branch ? await merge.rev(folder, `refs/heads/${h.worktree.branch}`) : '';
-    if (branchTip && (await merge.isAncestor(folder, branchTip, `refs/heads/${target}`))) {
-      start = branchTip;
-      changed = (await wt.git(['diff', '--name-only', '-z', '--no-renames', start, head], path)).stdout.split('\0').filter((n) => n);
-    }
-    if (changed.length) {
-      const blob = async (rev: string, f: string) => pyStr((await wt.git(['rev-parse', '-q', '--verify', `${rev}:${f}`], folder, { check: false })).stdout).trim();
-      let same = true;
-      for (const f of changed) {
-        if ((await blob(head, f)) !== (await blob(`refs/heads/${target}`, f))) {
-          same = false;
-          break;
-        }
-      }
-      if (same) changed = [];
-    }
-    if (!changed.length) return { state: 'empty', kept: [...kept, ...ignored] };
-    const hit = changed.filter(protectedPath);
-    if (hit.length) return { state: 'refused', code: 'protected', message: 'it changed protected files', files: hit };
-    // design 3.5: it changed a file the folder has uncommitted (changed, staged or untracked): nothing lands, nothing is stashed. Checked
-    // by merge.ts landHeld on what would really land (touchedDirty, tip to landed): files that only came from the folder's own
-    // uncommitted state (the worktree's snapshot, a builder branch it merged) are left out of the landing and are not a reason to refuse.
-    const tipBefore = await merge.rev(folder, `refs/heads/${target}`);
-    let result: Json;
-    try {
-      result = await merge.landWorktree(
+      out = await landSubagentWork(
         this.#mergeStudio(),
-        { parent: held[0] ?? h.parent.live, key: `subagent:${h.id}`, worktree: path, project: folder, start, head, landOn: target },
-        h.title,
-        {
-          held,
-          journal: (stage, data) =>
-            this.#patchLanding(h.id, {
-              stage: stage as 'built' | 'moved',
-              ...(typeof data.landed === 'string' ? { landed: data.landed, tipBefore: s(data.tipBefore) } : {}),
-            }),
+        spec,
+        async (stage, data) => {
+          await this.#patchLanding(h.id, {
+            stage: stage as 'built' | 'moved',
+            ...(typeof data.landed === 'string' ? { landed: data.landed, tipBefore: s(data.tipBefore) } : {}),
+          });
         },
       );
     } catch (error) {
-      if (error instanceof merge.Refused) {
-        if (error.code === 'empty') return { state: 'empty', kept: [...kept, ...ignored] };
-        const files = error instanceof merge.TouchedDirty ? error.files : undefined;
-        return { state: 'refused', code: error.code, message: error.message, ...(files ? { files } : {}) };
-      }
+      log.exception(error, 'Landing subagent %s failed', h.id);
       throw error;
     }
-    if (result.state === 'conflicts') {
-      // the main agent merges it by hand: the builder's own branch starts with a snapshot of the folder's uncommitted files, so a
-      // clean branch of only its own changes is made for that
-      const landable = h.worktree.branch
-        ? await merge.landableBranch({ project: folder, worktree: path, start, head, branch: h.worktree.branch }, h.title).catch((error) => {
-          log.exception(error, 'Making the landable branch of subagent %s failed', h.id);
-          return '';
-        })
-        : '';
-      return { state: 'conflicts', files: result.files, target, landable };
+    if (out.state === 'merged') {
+      await this.registry.patch(h.id, {
+        state: 'merged',
+        merge: { tipBefore: s(out.tipBefore), landed: s(out.landed), commits: 1, at: this.clock() / 1000, undo: null, again: null },
+      });
+      delete out.tipBefore;
+      delete out.landed;
     }
-    const landed = s(result.tip);
-    const files = tipBefore && landed ? await changedFiles(folder, tipBefore, landed) : [];
-    await this.registry.patch(h.id, {
-      state: 'merged',
-      merge: { tipBefore, landed, commits: 1, at: this.clock() / 1000, undo: null, again: null },
-    });
-    return { state: 'merged', commits: 1, range: [tipBefore, landed], target, files, kept: [...kept, ...ignored] };
+    return out;
   }
 
   /** A subagent landing's outcome: the line in the parent chat, the parent's next-prompt line, and its worktree removed when done. */

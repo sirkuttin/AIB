@@ -21,6 +21,7 @@ import { makeMethods } from './helper/methods.ts';
 import { type EnvMode, envModeOf } from './helper/prereqs.ts';
 import { serveOpenFifo, shimScript } from './helper/browser.ts';
 import { worktreeStartup } from './helper/worktrees.ts';
+import { subagentStartup } from './helper/subagents.ts';
 import { HelperSync } from './helper/sync.ts';
 import { McpTunnel, SOCKET_NAME, spawnKeeperRelay } from './helper/mcp_tunnel.ts';
 import { importMain } from './helper/import.ts';
@@ -248,7 +249,7 @@ async function helperMain(args: string[]): Promise<number> {
   }
   const methods = tunnel ? withTouch({ ...own, ...tunnel.methods() }, tunnel) : own;
   // git needs the login PATH first; then the chats the last helper synced are watched again and caught up
-  if (named) void captured.then(() => worktreeStartup(named)).then(() => sync?.resumeSaved()).catch(() => {});
+  if (named) void captured.then(() => worktreeStartup(named)).then(() => subagentStartup(named)).then(() => sync?.resumeSaved()).catch(() => {});
   if (COMPILED && exeDir) {
     const keep = exeDir.slice(exeDir.lastIndexOf('/') + 1);
     setTimeout(() => void cleanOldVersions(root, keep, Deno.execPath()).catch(() => {}), 30_000);

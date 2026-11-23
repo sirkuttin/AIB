@@ -402,13 +402,19 @@ export function nonce(): string {
   return [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-/** Pair a fake phone end to end through the HTTP routes; returns its device token and cookie. */
+/**
+ * Pair a fake phone end to end through the HTTP routes; returns its device token and cookie.
+ *
+ * kind 'computer' makes a computer paired the way it was before computers got sessions: a phone pairing whose kind the owner then
+ * switched (Settings > Devices), so its `token` is the long-lived device key, as an older computer's was. (A computer approved as a
+ * computer is given a session instead: pairComputer.) Scopes, when given, are set after the switch.
+ */
 export async function pairPhone(
   s: RemoteStudio,
   name = 'Pixel 9',
   scopes?: string[],
-  kind?: 'phone' | 'computer',
-): Promise<{ token: string; cookie: string; id: string }> {
+  kind?: 'phone' | 'computer' | 'computer-session',
+): Promise<{ token: string; cookie: string; id: string; session: boolean }> {
   const port = s.phonePort();
   const [pairStatus, code] = await pc(s, 'POST', '/api/live/devices/pair', {});
   // say why when there is no code (e.g. 409 not_ready: the phone port did not listen), not a TypeError on `words`
@@ -424,7 +430,12 @@ export async function pairPhone(
   if (claim.status !== 200) throw new Error(`claim: ${claim.status} ${claim.text}`);
   const [, view] = await pc(s, 'GET', '/api/live/devices');
   const pending = ((view.pairing as Json).pending as Json[]).find((p) => p.id === claim.json.claim)!;
-  const [status] = await pc(s, 'POST', '/api/live/devices/approve', { claim: pending.id, ...(scopes ? { scopes } : {}), ...(kind ? { kind } : {}) });
+  const legacyComputer = kind === 'computer';
+  const [status] = await pc(s, 'POST', '/api/live/devices/approve', {
+    claim: pending.id,
+    ...(scopes ? { scopes } : {}),
+    ...(kind && !legacyComputer ? { kind: kind === 'computer-session' ? 'computer' : kind } : {}),
+  });
   if (status !== 200) throw new Error('approve');
   const done = await raw(
     port,
@@ -434,5 +445,16 @@ export async function pairPhone(
     JSON.stringify({ claim: claim.json.claim, claimSecret: claim.json.claimSecret }),
   );
   const cookie = (done.headers.get('set-cookie') ?? '').match(/__Host-aib-phone=([^;]+)/)?.[1] ?? '';
-  return { token: done.json.token as string, cookie, id: (done.json.device as Json).id as string };
+  const id = (done.json.device as Json).id as string;
+  if (legacyComputer) {
+    const [kindStatus] = await pc(s, 'POST', '/api/live/devices/kind', { id, kind: 'computer' });
+    if (kindStatus !== 200) throw new Error('kind');
+    if (scopes) await pc(s, 'POST', '/api/live/devices/scopes', { id, scopes });
+  }
+  return { token: done.json.token as string, cookie, id, session: done.json.session === true };
+}
+
+/** A computer approved as a computer on the PC: the pairing gives it a short session token (and the HttpOnly cookie), no long-lived key. */
+export function pairComputer(s: RemoteStudio, name = 'Laptop (Edge)', scopes?: string[]) {
+  return pairPhone(s, name, scopes, 'computer-session');
 }

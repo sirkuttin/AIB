@@ -27,6 +27,7 @@ import { Refused } from '../../desktop/project_delete.ts';
 import { BAD_PARAMS, type Handlers, int, RpcError, str } from './rpc.ts';
 import { worktreeMethods } from './worktrees.ts';
 import { mergeMethods } from './merge.ts';
+import { subagentMethods } from './subagents.ts';
 import { HelperSync, syncMethods } from './sync.ts';
 import { ProjectResolver } from '../../worktrees/worktrees.ts';
 import { bundledClaudeCli, bundledCodexCli, findCodexCli } from '../../agents/signin.ts';
@@ -234,7 +235,7 @@ export function makeMethods(ctx: HelperContext): Handlers {
     // allow rules of WSL chats: what the matcher needs to know of the distro (helper/allow_facts.ts, read only)
     ...allowFactsMethods({ env: ctx.env, own: async () => [...await ownFolders(ctx), ...(data ? [data] : [])] }),
     ...localOnlyMethods(data), // local-only files from the main folder (helper/local_only.ts); chat copies only under <data>/worktrees
-    ...(data ? { ...worktreeMethods(data), ...mergeMethods(data), ...syncMethods(ctx.sync ?? new HelperSync(data)) } : {}),
+    ...(data ? { ...worktreeMethods(data), ...mergeMethods(data), ...subagentMethods(data), ...syncMethods(ctx.sync ?? new HelperSync(data)) } : {}),
     ...(ctx.root ? installMethods({ root: ctx.root, notify: ctx.notify ?? (() => {}), refreshPath: ctx.refreshPath }) : {}),
     // Linking (WSL) phase 3: disk use and Remove AIB from this distro (helper/aib_remove.ts), only with both folders known
     ...(ctx.root && data

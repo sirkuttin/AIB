@@ -69,6 +69,7 @@ import { deny as denyHook, type HookAnswer, SubagentWorktrees, type SubagentChat
 import { claudeConfigDir, gitBashPath, hookSettings, readClaudeSetup, subagentsOffSettings } from '../subagents/claude_config.ts';
 import * as codexSub from '../subagents/codex.ts';
 import * as gemini from '../subagents/gemini.ts';
+import { ANTIGRAVITY_SUBAGENT_NOTE, ANTIGRAVITY_SUBAGENT_PROMPT, isAntigravity } from '../subagents/antigravity.ts';
 import { isCompiled, isDesktopApp, selfCommand, TESTS_DIR } from '../core/app.ts';
 import { type ChannelInfo, type KeeperClient, KeeperError, missingFeatures, type OrphanCommand, readKeeperInfo } from '../keeper/client.ts';
 import { pidAlive } from './host_client.ts';
@@ -1643,6 +1644,8 @@ export class Studio {
           c.geminiSubagents = { ...gem.setup, home: '', subFolder: '', off: 'it was not set up' };
         } else c.geminiSubagents = gem.setup;
       }
+      // Antigravity: AIB can't hold its subagents in a worktree; it asks for it in the chat's instructions (subagents/antigravity.ts)
+      if (isAntigravity(provider)) c.subagentRule = ANTIGRAVITY_SUBAGENT_PROMPT;
       // a factory that gave the chat another id: its hooks' key would not check, so it gets none (it would fail closed otherwise)
       if (subagent) c.subagentHooks = !subagent.id || c.id === subagent.id ? subagent.hooks : offHooks('not set up');
       if (plan || record) {
@@ -1698,6 +1701,11 @@ export class Studio {
             c.recordedEvent('studio_note', { message: SUBAGENTS_OFF_NO_BASH, sessionId: c.sessionId });
           } else if (subagent && 'note' in subagent && subagent.note) { // Codex: its subagents are off (hooks off or unavailable)
             c.recordedEvent('studio_note', { message: subagent.note, sessionId: c.sessionId });
+          }
+          if (isAntigravity(provider)) {
+            // no system prompt capability (session/new could not carry the rule): it goes in front of the next prompt, once per opening
+            if (!c.supportsSystemPrompt()) this.addPromptContext(c, ANTIGRAVITY_SUBAGENT_PROMPT);
+            if (!resume) c.recordedEvent('studio_note', { message: ANTIGRAVITY_SUBAGENT_NOTE, sessionId: c.sessionId });
           }
           if (c.geminiSubagents?.off) { // the fence only: said up front (owner rule: refused, never in the folder)
             c.recordedEvent('studio_note', { message: gemini.GEMINI_TEXTS.off(c.geminiSubagents.off), sessionId: c.sessionId });

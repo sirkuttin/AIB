@@ -750,6 +750,7 @@
   border-bottom: 1px solid var(--line);
 }
 .dt-back,
+.dt-pop,
 .dt-wide {
   flex: 0 0 auto;
   height: 26px;
@@ -761,6 +762,7 @@
   font-size: 12.5px;
   font-weight: 550;
 }
+.dt-pop,
 .dt-wide {
   width: 28px;
   padding: 0;
@@ -768,11 +770,13 @@
   line-height: 1;
 }
 .dt-back:hover,
+.dt-pop:hover,
 .dt-wide:hover {
   color: var(--text);
   background: var(--hover-2);
 }
 .dt-back:focus-visible,
+.dt-pop:focus-visible,
 .dt-wide:focus-visible,
 .dt-row:focus-visible,
 .dt-newrow:focus-visible {

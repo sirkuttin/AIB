@@ -246,6 +246,10 @@ async function serveBrowser(browser: Browser, s: RemoteStudio) {
             "Sec-Fetch-Dest": kind.toLowerCase(),
           },
       );
+      // the browser's own cookies go with the request, as through Tailscale Serve (the pairing cookie is HttpOnly)
+      const jar = await cdp.send("Network.getCookies", { urls: [url.href] }, session);
+      const cookies = ((jar.cookies ?? []) as Json[]).map((c) => `${c.name}=${c.value}`).join("; ");
+      if (cookies) headers.Cookie = cookies;
       let answer = null;
       try {
         answer = await raw(

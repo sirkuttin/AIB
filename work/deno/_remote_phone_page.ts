@@ -18,7 +18,7 @@ export async function serveFor(page: Page, s: RemoteStudio, gate?: { down: boole
       const kind = p.resourceType as string;
       const headers: Record<string, string> = { Host: NAME, 'Tailscale-User-Login': LOGIN, 'X-Forwarded-For': '100.64.0.7' };
       for (const [k, v] of Object.entries(request.headers as Record<string, string>)) {
-        if (/^(content-type|x-aib-device|accept|origin)$/i.test(k)) headers[k] = v;
+        if (/^(content-type|x-aib-device|x-aib-session|accept|origin)$/i.test(k)) headers[k] = v;
       }
       if (method === 'POST' && !Object.keys(headers).some((k) => k.toLowerCase() === 'origin')) headers.Origin = `https://${NAME}`;
       if (kind === 'Document') {

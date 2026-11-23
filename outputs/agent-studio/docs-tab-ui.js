@@ -102,7 +102,11 @@
     wide.type = 'button';
     wide.title = 'Open this doc as a tab in the middle';
     wide.setAttribute('aria-label', 'Open this doc as a tab in the middle');
-    bar.append(back, title, wide);
+    const pop = el('button', 'dt-pop', '↗');
+    pop.type = 'button';
+    pop.title = 'Pop out this doc into its own window';
+    pop.setAttribute('aria-label', 'Pop out this doc into its own window');
+    bar.append(back, title, pop, wide);
     const list = el('div', 'dt-list');
     list.setAttribute('role', 'list');
     const stage = el('div', 'dt-stage');
@@ -350,6 +354,22 @@
       const D = DL();
       closeDoc();
       if (D && D.openDoc) D.openDoc(Object.assign({}, d, { where: 'tab', from: 'chat', chat: { id: docsId() } }));
+    });
+    // Same move as "Pop out this doc" on a middle tab (doc-links popOut): the doc goes to its own window and leaves this panel.
+    pop.addEventListener('click', () => {
+      const D = DL();
+      if (!cur || !project || !D || !D.popOut) return;
+      const d = cur;
+      D.popOut({
+        project,
+        name: d.name,
+        title: d.title || d.name,
+        scope: null, // worked out again when the window closes (files-ui docScopeFor)
+        closeHere: () => {
+          if (cur && cur.name === d.name) closeDoc();
+          refresh(true);
+        },
+      });
     });
     list.addEventListener('scroll', () => {
       if (cur || restore) return; // a repaint that clamps the scroll is not the owner's scroll
