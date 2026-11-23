@@ -51,7 +51,8 @@ export interface Helper {
   /** The repository root: caps are per project. */
   project: string;
   parent: { live: string; lasting: string };
-  chat: { live: string; lasting: string; provider: string; model: string; mode: string };
+  /** `label`: how a model-server entry reads ("Claude Code · strata"), kept so a later rename or removal of the server doesn't change the lines. */
+  chat: { live: string; lasting: string; provider: string; model: string; mode: string; label?: string };
   brief: Brief;
   picked_by: 'rule' | 'main agent';
   rule: string;

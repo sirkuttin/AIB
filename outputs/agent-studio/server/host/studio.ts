@@ -45,6 +45,7 @@ import {
   codexWireApi,
   DUMMY_KEY,
   modelServerEnv,
+  notAnsweringLine,
   serverHealth,
   type ModelServer,
   type ServerCheck,
@@ -1028,6 +1029,17 @@ export class Studio {
 
   /** Test seam: how a model server is inspected for its API kinds (default: the kept health answer, 30 s). */
   modelServerInspect: (server: ModelServer, key: string) => Promise<ServerInspection> = (server, key) => serverHealth.check(server, key);
+
+  /**
+   * Swarm: '' when the server behind an `<agent>@<server id>` entry answers (the kept 30 s health answer, never a new probe per
+   * helper), else the plain line "strata is not answering at 127.0.0.1:8080".
+   */
+  async modelServerDown(provider: string): Promise<string> {
+    const server = this.settings.modelServer(serverIdOf(provider) ?? '');
+    if (!server) return '';
+    const check = await this.modelServerInspect(server, this.settings.betaKey(server.id)).catch(() => null);
+    return check && check.reachable ? '' : notAnsweringLine(server.name, server.url);
+  }
 
   /** The models each model server (by its own id) listed the last time a chat of it started. */
   readonly #serverModels = new Map<string, string[]>();

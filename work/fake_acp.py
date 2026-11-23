@@ -37,6 +37,7 @@ parser.add_argument('--demo', action='store_true', help='Demo triggers: stream, 
 parser.add_argument('--models', action='store_true', help="A long model list, three modes with descriptions and an effort setting (implies --breadth's config options); a prompt 'settings?' replies with the current model, mode and effort; session/new calls are counted in the reply too")
 parser.add_argument('--beta-auth', action='store_true', help="With --auth-required: the Beta agents' sign-in shapes instead of the fixture ones: a terminal-type method (args ['--fixture-login']), offered only to a client that sends clientCapabilities.auth.terminal, and an agent-type API key method 'gemini-api-key' that takes the key in _meta['api-key']. A successful sign-in writes --auth-file, as a real agent keeps its login")
 parser.add_argument('--acp-models', action='store_true', help="Gemini's model shape: session/new carries models {availableModels: [{modelId, name, description}], currentModelId} and no model config option; session/set_model (unstable_setSessionModel) changes it; a prompt 'model?' replies with the current model id")
+parser.add_argument('--claude-modes', action='store_true', help="Claude Code's mode ids (default, acceptEdits, plan, bypassPermissions) with the long model list (implies --models), for a Claude helper's edit-in-workspace pick")
 parser.add_argument('--fixture-login', action='store_true', help='The terminal sign-in itself: write --auth-file, print a line and exit 0 (no ACP)')
 parser.add_argument('--prompt-auth', action='store_true', help="An expired login mid-session (claude-agent-acp's shape): until --auth-file exists, every session/prompt sends the agent text 'Failed to authenticate: OAuth session expired and could not be refreshed' and fails with -32000 'Authentication required'. initialize advertises an agent method 'fixture-login' (authenticate writes --auth-file) and, to a client that sends clientCapabilities.auth.terminal, a terminal method 'claude-ai-login' (args ['--fixture-login']) and 'console-login' (args ['--fixture-login', '--fail-login'] with --fail-login: exits 3)")
 parser.add_argument('--fail-login', action='store_true', help='With --fixture-login: print a line and exit 3 without signing in')
@@ -118,6 +119,12 @@ if args.models:
         {'id': 'ask', 'name': 'Ask first', 'description': 'Asks before every edit and command'},
         {'id': 'auto', 'name': 'Auto review', 'description': 'Edits files; asks before commands outside the folder'},
         {'id': 'full', 'name': 'Full access', 'description': 'Edits and runs anything without asking'}]}
+
+
+if args.claude_modes:
+    modes = {'currentModeId': 'default', 'availableModes': [
+        {'id': 'default', 'name': 'Default'}, {'id': 'acceptEdits', 'name': 'Accept edits'},
+        {'id': 'plan', 'name': 'Plan'}, {'id': 'bypassPermissions', 'name': 'Bypass permissions'}]}
 
 
 def current_settings_text():

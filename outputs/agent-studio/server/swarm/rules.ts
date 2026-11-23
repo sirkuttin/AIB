@@ -6,6 +6,8 @@
  * Claude Code helpers are on by default (owner 2026-11-13) and follow swarm/settings.ts (CLAUDE_HELPERS_DEFAULT, swarm-settings.json):
  * off, every Claude row is skipped and a main agent naming Claude is refused.
  */
+import { baseAgent } from '../agents/claude_family.ts';
+
 export interface Rule {
   job: string;
   label: string;
@@ -35,6 +37,9 @@ export const WORKSPACE_MODE: Readonly<Record<string, string>> = {
   gemini: 'autoEdit', // gemini --experimental-acp: default / autoEdit / yolo
 };
 
+/** The edit-in-workspace mode of an agent or of a model-server entry (`claude@strata` works like `claude`); '' when AIB knows none. */
+export const workspaceModeOf = (provider: string): string => WORKSPACE_MODE[baseAgent(provider)] ?? '';
+
 export interface Pick {
   provider: string;
   model: string;
@@ -57,7 +62,7 @@ export function pickProvider(
 ): Pick | { error: string } {
   const allowed = (p: string) => {
     if (p === 'claude' && !claudeHelpers) return 'Claude helpers are turned off in Settings';
-    if (!WORKSPACE_MODE[p]) return 'AIB knows no edit-in-workspace mode for it';
+    if (!WORKSPACE_MODE[baseAgent(p)]) return 'AIB knows no edit-in-workspace mode for it';
     return usable(p);
   };
   if (named) {

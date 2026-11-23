@@ -22,7 +22,10 @@ import { type Helper, helperOf, type Landing, newHelperId, readHelpers, Registry
 import { lockChats, newLockId } from '../worktrees/landing_lock.ts';
 import { CopyMergeQueue } from '../worktrees/merge_queue.ts';
 import { BriefError, briefPrompt, overlaps, owned, readBrief, wrapReport } from './brief.ts';
-import { DEFAULT_RULES, pickProvider, WORKSPACE_MODE } from './rules.ts';
+import { DEFAULT_RULES, pickProvider, WORKSPACE_MODE, workspaceModeOf } from './rules.ts';
+import { baseAgent, isServerEntry, serverIdOf } from '../agents/claude_family.ts';
+import { type ModelServer, modelServerLabel } from '../agents/model_servers.ts';
+import { MODEL_SERVER_AGENTS } from '../agents/claude_family.ts';
 import { applyChange, changedFiles } from './undo.ts';
 import { claudeHelpers, swarmEnabled } from './settings.ts';
 import { readSubagents, type SubagentRecord } from '../subagents/service.ts';
@@ -52,15 +55,21 @@ export interface SwarmHost {
     liveList(): Promise<unknown>;
     liveState(id: unknown, after?: unknown): Promise<unknown>;
     liveCall(name: string, body: unknown): Promise<[number, unknown]>;
+    /** A model-server entry's server health (the kept 30 s answer): '' when it answers, else "strata is not answering at 127.0.0.1:8080". */
+    modelServerDown?(provider: string): Promise<string>;
   };
-  settings: { builtinEnabled?(id: string): boolean; betaEnabled?(id: string): boolean };
+  settings: { builtinEnabled?(id: string): boolean; betaEnabled?(id: string): boolean; modelServer?(id: string): ModelServer | null; modelServers?(): ModelServer[] };
 }
 
 const obj = (v: unknown): Json => (isDict(v) ? v : {});
 const s = (v: unknown) => (typeof v === 'string' ? v : '');
 const lasting = (c: Json) => (s(c.provider) && s(c.sessionId) ? `${s(c.provider)}:${s(c.sessionId)}` : '');
 export const providerName = (id: string) =>
-  agentRegistry.BUILTIN_NAMES[id] ?? (agentRegistry.BETA_NAMES as Record<string, string>)[id] ?? id;
+  isServerEntry(id)
+    ? modelServerLabel(baseAgent(id), serverIdOf(id) ?? '')
+    : agentRegistry.BUILTIN_NAMES[id] ?? (agentRegistry.BETA_NAMES as Record<string, string>)[id] ?? id;
+/** How a helper's agent reads in every line: the kept label of a model-server entry ("Claude Code · strata"), else its name. */
+export const chatName = (h: Helper) => h.chat.label || providerName(h.chat.provider);
 
 /** Build plan 2.2: after this many refusals (busy, locked, moving) the chat gets one line; after this long queued, another. */
 export const LANDING_TRIES_NOTE = 3;
@@ -140,7 +149,7 @@ export function queuedLine(h: Helper): string {
   if (h.kind === 'subagent') {
     return `Subagent “${h.title}” lands in the project folder when your turn ends. Finish your turn; the result is in your next message.`;
   }
-  return `“${h.title}” (${providerName(h.chat.provider)}) lands in the project folder when your turn ends. Finish your turn; the result is ` +
+  return `“${h.title}” (${chatName(h)}) lands in the project folder when your turn ends. Finish your turn; the result is ` +
     'in your next message.';
 }
 
@@ -201,7 +210,7 @@ async function withoutPaths(path: string, head: string, paths: string[], scratch
 }
 
 /** How a line names a helper or a subagent entry. */
-export const label = (h: Helper) => (h.kind === 'subagent' ? `subagent “${h.title}”` : `“${h.title}” (${providerName(h.chat.provider)})`);
+export const label = (h: Helper) => (h.kind === 'subagent' ? `subagent “${h.title}”` : `“${h.title}” (${chatName(h)})`);
 
 /**
  * Design 2.4: paths a subagent's landing never carries by itself (git hooks, agent and editor configs; a Bash redirect could plant
@@ -285,7 +294,7 @@ export class Swarm {
       }
       const caller = await this.mainChat(conversationId);
       const a = obj(args);
-      if (action === 'helper_providers') return [200, this.providers(caller)];
+      if (action === 'helper_providers') return [200, await this.providers(caller)];
       if (action === 'start_helper') return [200, await this.startHelper(caller, a)];
       if (action === 'helper_status') return [200, this.status(caller, s(a.helper))];
       if (action === 'stop_helper') return [200, await this.stop(caller, s(a.helper), s(a.reason))];
@@ -300,6 +309,13 @@ export class Swarm {
 
   #usable(provider: string): string {
     const st = this.ctx.settings;
+    if (isServerEntry(provider)) { // `claude@strata`: its server's "Use with" switch is on and its base agent is usable
+      const base = baseAgent(provider);
+      const server = st.modelServer?.(serverIdOf(provider) ?? '') ?? null;
+      if (!server) return 'that model server is not in Settings';
+      if (!server.useWith.includes(base)) return `${server.name} is not switched on for ${providerName(base)} in Settings`;
+      return this.#usable(base);
+    }
     if ((agentRegistry.BUILTIN_IDS as readonly string[]).includes(provider)) {
       return st.builtinEnabled && !st.builtinEnabled(provider) ? 'turned off in Settings' : '';
     }
@@ -309,19 +325,50 @@ export class Swarm {
     return 'not an agent AIB knows';
   }
 
+  /** Every model-server entry that is switched on ("Use with") for an agent AIB can run as a helper, as `<agent>@<server id>`. */
+  #serverEntries(): { id: string; label: string }[] {
+    const out: { id: string; label: string }[] = [];
+    for (const server of this.ctx.settings.modelServers?.() ?? []) {
+      for (const agent of MODEL_SERVER_AGENTS) {
+        if (WORKSPACE_MODE[agent] && server.useWith.includes(agent)) out.push({ id: `${agent}@${server.id}`, label: modelServerLabel(agent, server.name) });
+      }
+    }
+    return out;
+  }
+
+  /** The label of an entry from its server's name; the id's own form when the server is gone. */
+  #entryLabel(provider: string): string {
+    const server = this.ctx.settings.modelServer?.(serverIdOf(provider) ?? '');
+    return server ? modelServerLabel(baseAgent(provider), server.name) : providerName(provider);
+  }
+
+  /** '' when the entry's server answers (the kept 30 s health check); else the plain line naming it and its address. */
+  async #serverDown(provider: string): Promise<string> {
+    if (!isServerEntry(provider) || !this.ctx.host.modelServerDown) return '';
+    return await this.ctx.host.modelServerDown(provider).catch(() => '');
+  }
+
   #runningIn(project: string): Helper[] {
     const key = (p: string) => p.replaceAll('\\', '/').toLowerCase();
     return this.registry.all().filter((h) => key(h.project) === key(project) && RUNNING_STATES.has(h.state));
   }
 
-  providers(caller: Json): Json {
+  async providers(caller: Json): Promise<Json> {
     const ids = [...agentRegistry.BUILTIN_IDS, ...agentRegistry.BETA_IDS];
     const claude = claudeHelpers(this.ctx.stateDir);
+    const builtins = ids.filter((id) => WORKSPACE_MODE[id]).map((id) => {
+      const why = id === 'claude' && !claude ? 'Claude helpers are turned off in Settings' : this.#usable(id);
+      return { id, name: providerName(id), ok: !why, reason: why, workspaceMode: WORKSPACE_MODE[id] };
+    });
+    const entries = await Promise.all(this.#serverEntries().map(async (e) => {
+      const why = this.#usable(e.id) || await this.#serverDown(e.id);
+      return { id: e.id, name: e.label, ok: !why, reason: why, workspaceMode: workspaceModeOf(e.id), modelServer: true };
+    }));
     return {
-      providers: ids.filter((id) => WORKSPACE_MODE[id]).map((id) => {
-        const why = id === 'claude' && !claude ? 'Claude helpers are turned off in Settings' : this.#usable(id);
-        return { id, name: providerName(id), ok: !why, reason: why, workspaceMode: WORKSPACE_MODE[id] };
-      }),
+      providers: [...builtins, ...entries],
+      ...(entries.length
+        ? { note: 'Entries marked modelServer run on a model server the user set up (local or private). Name one in start_helper `provider` (with `why`) for jobs that should stay local, private or cheap.' }
+        : {}),
       rules: DEFAULT_RULES.map((r) => ({ job: r.job, label: r.label, provider: r.provider, model: r.model, fallback: r.fallback })),
       caps: { running: this.#runningIn(s(caller.projectRoot)).length, max: MAX_RUNNING, project: s(caller.projectRoot) },
       claudeHelpers: claude,
@@ -348,14 +395,17 @@ export class Swarm {
     }
     const picked = pickProvider(job, (p) => this.#usable(p), claudeHelpers(this.ctx.stateDir), named, model);
     if ('error' in picked) throw new Refusal('provider_unavailable', picked.error);
-    const mode = WORKSPACE_MODE[picked.provider];
+    const down = await this.#serverDown(picked.provider); // never a helper that waits on a server that does not answer
+    if (down) throw new Refusal('provider_unavailable', down);
+    const mode = workspaceModeOf(picked.provider);
+    const entryLabel = isServerEntry(picked.provider) ? this.#entryLabel(picked.provider) : '';
     const id = newHelperId();
     const record: Helper = {
       id,
       title,
       project,
       parent: { live: s(caller.id), lasting: lasting(caller) },
-      chat: { live: '', lasting: '', provider: picked.provider, model: picked.model, mode },
+      chat: { live: '', lasting: '', provider: picked.provider, model: picked.model, mode, ...(entryLabel ? { label: entryLabel } : {}) },
       brief,
       picked_by: picked.picked_by,
       rule: picked.rule,
@@ -381,7 +431,7 @@ export class Swarm {
     });
     if (code !== 200 || !isDict(payload) || !s(payload.id)) {
       const reason = isDict(payload) ? s(payload.error) : 'it did not start';
-      await this.#fail(id, `${providerName(picked.provider)} didn't start: ${reason}`);
+      await this.#fail(id, `${entryLabel || providerName(picked.provider)} didn't start: ${reason}`);
       throw new Refusal(/worktree/i.test(reason) ? 'no_worktree' : 'provider_unavailable', `Could not start the helper: ${reason}`);
     }
     await this.registry.patch(id, { chat: { ...record.chat, live: s(payload.id) } });
@@ -389,7 +439,7 @@ export class Swarm {
     await this.note(
       id,
       'swarm-start',
-      `Started helper “${title}” · ${providerName(picked.provider)}${picked.model ? ` · ${picked.model}` : ''} · ${pickedText}`,
+      `Started helper “${title}” · ${entryLabel || providerName(picked.provider)}${picked.model ? ` · ${picked.model}` : ''} · ${pickedText}`,
       [
         'swarm-open',
       ],
@@ -423,7 +473,7 @@ export class Swarm {
         if (!state.id || state.closed) return await this.#fail(id, `The helper could not open: ${s(state.error) || 'it closed'}`);
         if (state.auth) {
           await this.ctx.host.liveCall('disconnect', { id: h.chat.live });
-          return await this.#fail(id, `${providerName(h.chat.provider)} isn't signed in`);
+          return await this.#fail(id, `${chatName(h)} isn't signed in`);
         }
         if (state.setupDone && state.ready) break;
         await new Promise((r) => setTimeout(r, 200));
@@ -442,7 +492,7 @@ export class Swarm {
       const modePick = picks.find((p) => p.kind === 'mode');
       if (!modePick || modePick.ok !== true) { // review break 7: never fall back to the agent's or the user's default mode
         await this.ctx.host.liveCall('disconnect', { id: h.chat.live });
-        return await this.#fail(id, `Could not set ${providerName(h.chat.provider)}'s edit-in-workspace mode (${h.chat.mode})`);
+        return await this.#fail(id, `Could not set ${chatName(h)}'s edit-in-workspace mode (${h.chat.mode})`);
       }
       const worktree = {
         path: s(record.path),
@@ -466,7 +516,7 @@ export class Swarm {
 
   async #fail(id: string, reason: string): Promise<void> {
     const h = await this.registry.patch(id, { state: 'failed', reason, endedAt: Date.now() / 1000 });
-    if (h) await this.note(id, 'swarm-fail', `Helper “${h.title}” (${providerName(h.chat.provider)}) failed: ${reason}`);
+    if (h) await this.note(id, 'swarm-fail', `Helper “${h.title}” (${chatName(h)}) failed: ${reason}`);
   }
 
   status(caller: Json, helper: string): Json {
@@ -519,7 +569,7 @@ export class Swarm {
       await this.note(
         h.id,
         'swarm-stop',
-        `Stopped “${h.title}” (${providerName(h.chat.provider)}). Work kept: ${commits} commit(s) on ${h.worktree.branch || 'its branch'}.`,
+        `Stopped “${h.title}” (${chatName(h)}). Work kept: ${commits} commit(s) on ${h.worktree.branch || 'its branch'}.`,
       );
     }
     return { stopped, kept };
@@ -612,7 +662,7 @@ export class Swarm {
           await this.note(
             id,
             'swarm-merge',
-            `Merged “${h.title}” (${providerName(h.chat.provider)}) into ${target} · nothing to land (read-only helper, report only)`,
+            `Merged “${h.title}” (${chatName(h)}) into ${target} · nothing to land (read-only helper, report only)`,
           );
           return { state: 'merged', commits: 0, files: [], target };
         }
@@ -638,7 +688,7 @@ export class Swarm {
     await this.note(
       id,
       'swarm-merge',
-      `Merged “${h.title}” (${providerName(h.chat.provider)}) into ${target} · ${commits} commit${commits === 1 ? '' : 's'}`,
+      `Merged “${h.title}” (${chatName(h)}) into ${target} · ${commits} commit${commits === 1 ? '' : 's'}`,
       ['swarm-undo'],
     );
     const files = tipBefore && landed ? await changedFiles(h.project, tipBefore, landed) : [];
@@ -794,7 +844,7 @@ export class Swarm {
           'swarm-merge',
           h.kind === 'subagent'
             ? `Merged subagent “${h.title}” into ${target} · ${files.length} file${files.length === 1 ? '' : 's'} · finished after a restart`
-            : `Merged “${h.title}” (${providerName(h.chat.provider)}) into ${target} · ${commits} commit${commits === 1 ? '' : 's'} · finished after a restart`,
+            : `Merged “${h.title}” (${chatName(h)}) into ${target} · ${commits} commit${commits === 1 ? '' : 's'} · finished after a restart`,
           ['swarm-undo'],
         );
         if (folderParent(h) && parentLive) {
@@ -1449,7 +1499,7 @@ export class Swarm {
     const text = wrapReport({
       id: h.id,
       title: h.title,
-      providerName: providerName(h.chat.provider),
+      providerName: chatName(h),
       model: h.chat.model,
       state: done ? 'done' : h.state,
       minutes: Math.max(0, Math.round((this.clock() / 1000 - h.createdAt) / 60)),
@@ -1476,7 +1526,7 @@ export class Swarm {
       h.id,
       'swarm-report',
       `Report from “${h.title}” (${
-        providerName(h.chat.provider)
+        chatName(h)
       }): ${files.length} file(s) changed, +${insertions} −${deletions}, ${commits} commit(s)`,
       ['swarm-open'],
     );

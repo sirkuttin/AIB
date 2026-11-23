@@ -202,7 +202,7 @@ const BRIEF_PROPS: Json = {
   avoid: { type: 'array', items: { type: 'string' }, description: "Optional. Files or folders the helper must not touch." },
   context_files: { type: 'array', items: { type: 'string' }, description: 'Optional. Files the helper should read first.' },
   read_only: { type: 'boolean', description: 'Optional. A search or review job that changes no files.' },
-  provider: { type: 'string', description: "Optional. Override the rule's provider (claude, codex, gemini...); needs `why`." },
+  provider: { type: 'string', description: "Optional. Override the rule's provider (claude, codex, gemini, or a model-server entry such as claude@strata from helper_providers); needs `why`." },
   model: { type: 'string', description: "Optional. A model id from the provider's own list." },
   why: { type: 'string', description: 'Required with `provider`: why you override the rule (the user sees it).' },
 };
@@ -213,7 +213,7 @@ export const SWARM_TOOLS: Json[] = [
     name: 'helper_providers',
     title: 'List helper providers',
     description:
-      'Which agents (Codex, Gemini CLI, Claude Code...) can be started as helpers in this project, the built-in rules that pick a provider by job, and the caps left. Read it before start_helper.',
+      'Which agents (Codex, Gemini CLI, Claude Code...) can be started as helpers in this project, the built-in rules that pick a provider by job, and the caps left. Read it before start_helper. Entries like claude@strata or codex@strata run on a local or private model server the user set up: pick one for jobs that should stay local, private or cheap.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
