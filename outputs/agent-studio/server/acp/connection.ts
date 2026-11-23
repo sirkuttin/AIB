@@ -5668,7 +5668,10 @@ export class Connection {
       item.text = text;
       item.fingerprint = fingerprint;
     }
-    if (at !== null && at !== undefined) item.at = this.#scheduleTime(at);
+    if (at !== null && at !== undefined) {
+      item.at = this.#scheduleTime(at);
+      delete item.error;
+    }
     q.scheduled.sort((a, b) => a.at - b.at);
     this.#queueChanged();
     this.#scheduleArm();

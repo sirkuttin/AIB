@@ -4667,6 +4667,7 @@
       row.dataset.scheduled = item.id;
       row.setAttribute('data-rk', 's:' + item.id);
       row.append(el('p', 'ph-queued-text', item.text.length > 400 ? item.text.slice(0, 400) + '…' : item.text));
+      if (item.error) row.append(el('p', 'ph-note ph-sched-error', item.error));
       row.append(el('p', 'ph-note', 'Scheduled for ' + new Date(item.at).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })));
       if (can.send && !S.offline) {
         const acts = el('div', 'ph-qa');
@@ -4686,7 +4687,7 @@
       resume.dataset.act = 'resume';
       row.append(resume); // a Stop (or a failed turn) paused the queue: it goes on from here too
       box.append(row);
-    } else if (actions && c.busy) box.append(el('p', 'ph-note ph-qnote', 'Send now stops the current turn and sends that message first.'));
+    } else if (actions && c.busy) box.append(el('p', 'ph-note ph-qnote', 'Send now never stops the current turn: the message goes in now, or first when this turn ends.'));
     return box;
   }
 

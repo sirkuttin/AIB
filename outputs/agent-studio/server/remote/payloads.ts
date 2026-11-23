@@ -653,6 +653,8 @@ export interface ScheduledView {
   id: string;
   text: string;
   at: number;
+  /** Why AIB could not send it at its time (its chat could not be reopened); the card stays. */
+  error?: string;
 }
 
 export interface QueuedItem {
@@ -755,6 +757,7 @@ export async function chatPayload(
     id: str(i.id, 128),
     text: typeof i.text === 'string' ? i.text.slice(0, 8000) : '',
     at: Number(i.at) || 0,
+    ...(typeof i.error === 'string' && i.error ? { error: i.error.slice(0, 300) } : {}),
   }));
   const unknown = (Array.isArray(state.unknownReceipts) ? state.unknownReceipts : []).map(obj)
     .filter((r) => typeof r.clientMessageId === 'string')

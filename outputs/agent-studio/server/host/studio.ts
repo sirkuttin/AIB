@@ -796,6 +796,79 @@ export class Studio {
     return items.length;
   }
 
+  // ---- Send later for chats nobody opened -------------------------------------------------------------------------------------
+  /** The time source of the schedule scan (a test moves it). */
+  scheduleClock: () => number = () => Date.now();
+  #scanTimer: ReturnType<typeof setTimeout> | null = null;
+  #scanning = false;
+  /** Chats the scan could not reopen: not tried again for a while (their cards stay, with a plain error line). */
+  readonly #scanFailed = new Map<string, number>();
+  static readonly SCAN_RETRY_MS = 5 * 60_000;
+
+  /**
+   * Owner, 2026-11-23: a scheduled message goes out at its time even if nobody opens the chat. Looks at the saved schedules of every
+   * chat (the queue file keeps where each runs). A chat whose time has come is reopened in the background, like the automatic
+   * reconnect does, and its own timer sends the message ("Sent late (scheduled ...)" when AIB was away). Later times wait on one
+   * timer. A chat that cannot be reopened keeps its message as a scheduled card with the reason on it.
+   */
+  startScheduleScan(): void {
+    if (!this.recovery?.queues || this.#closed) return;
+    void this.scheduleScan();
+  }
+
+  async scheduleScan(): Promise<void> {
+    const queues = this.recovery?.queues;
+    if (!queues || this.#closed || this.#scanning) return;
+    this.#scanning = true;
+    try {
+      const open = new Set([...this.connections.values()].filter((c) => !c.closed).map((c) => pairKey(c.provider, c.sessionId)));
+      const now = this.scheduleClock();
+      for (const chat of queues.scheduledChats()) {
+        if (this.#closed || this.reconnectStop.isSet()) return;
+        const key = pairKey(chat.provider, chat.sessionId);
+        if (open.has(key) || this.reconnectPending.has(key) || chat.at > now) continue; // an open chat sends its own
+        const failedAt = this.#scanFailed.get(key);
+        if (failedAt !== undefined && now - failedAt < Studio.SCAN_RETRY_MS) continue;
+        try {
+          await this.connect(chat.provider, chat.cwd, chat.sessionId, { background: false, continueAnyway: false, auto: true });
+          this.#scanFailed.delete(key);
+          console.error(`Send later: reopened ${chat.provider} ${chat.sessionId} to send its scheduled message`);
+        } catch (error) {
+          const why = error instanceof OwnershipConflict
+            ? 'Another app is using this chat, so AIB could not send this at its time. Open the chat to send it.'
+            : `AIB could not reopen this chat to send this at its time (${errorText(error).slice(0, 160)}). It is kept here.`;
+          this.#scanFailed.set(key, now);
+          queues.markScheduleError(chat.provider, chat.sessionId, why, now);
+          log.warning('Send later: could not reopen %s %s: %s', chat.provider, chat.sessionId, errorText(error));
+        }
+      }
+    } finally {
+      this.#scanning = false;
+      this.#scanArm();
+    }
+  }
+
+  #scanArm(): void {
+    if (this.#scanTimer !== null) clearTimeout(this.#scanTimer);
+    this.#scanTimer = null;
+    const queues = this.recovery?.queues;
+    if (!queues || this.#closed || this.reconnectStop.isSet()) return;
+    const open = new Set([...this.connections.values()].filter((c) => !c.closed).map((c) => pairKey(c.provider, c.sessionId)));
+    const now = this.scheduleClock();
+    let next = Infinity;
+    for (const chat of queues.scheduledChats()) {
+      if (open.has(pairKey(chat.provider, chat.sessionId))) continue;
+      next = Math.min(next, Math.max(chat.at, now));
+    }
+    if (next === Infinity) return;
+    const timer = setTimeout(() => {
+      this.#scanTimer = null;
+      void this.scheduleScan();
+    }, Math.min(Math.max(next - now, 0) + 50, 30_000));
+    Deno.unrefTimer(timer as unknown as number);
+    this.#scanTimer = timer;
+  }
+
   async reconnectOne(item: [string, string, string], tries: number, retryDelay: number): Promise<void> {
     const [provider, sessionId, cwd] = item;
     const label = `${provider} ${sessionId} in ${cwd}`;
@@ -3596,6 +3669,8 @@ export class Studio {
     if (this.#limitsTimer !== null) clearInterval(this.#limitsTimer);
     this.#limitsTimer = null;
     this.reconnectStop.set();
+    if (this.#scanTimer !== null) clearTimeout(this.#scanTimer);
+    this.#scanTimer = null;
     if (this.recovery) this.recovery.shuttingDown = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     await Promise.race([
@@ -3649,6 +3724,8 @@ export class Studio {
     if (this.#limitsTimer !== null) clearInterval(this.#limitsTimer);
     this.#limitsTimer = null;
     this.reconnectStop.set();
+    if (this.#scanTimer !== null) clearTimeout(this.#scanTimer);
+    this.#scanTimer = null;
     if (this.recovery) this.recovery.shuttingDown = true;
     // A reconnect that is opening right now finishes (or fails) first, so its connection is closed below too. Bounded: an agent
     // that hangs in setup must not keep the host from stopping.

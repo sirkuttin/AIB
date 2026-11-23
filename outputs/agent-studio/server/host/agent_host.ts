@@ -423,6 +423,7 @@ export class AgentHost {
     });
     await this.studio.adoptKeeper(); // chats whose agents still run in the keeper go on where they are
     this.studio.startAutoReconnect(); // chats that were open before the restart; nothing is sent
+    this.studio.startScheduleScan(); // scheduled messages (Send later) of chats nobody opens go at their time
     return this.port;
   }
 

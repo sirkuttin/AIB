@@ -63,6 +63,8 @@ export interface ScheduledItem {
   fingerprint: unknown;
   queuedAt: number;
   at: number;
+  /** Plain words why AIB could not send it at its time (its chat could not be reopened); the card stays so nothing is lost. */
+  error?: string;
 }
 
 /**
@@ -287,6 +289,7 @@ export class MessageQueue {
         attachments: MessageQueue.attachmentSummary(item.attachments),
         queuedAt: item.queuedAt,
         at: item.at,
+        ...(item.error ? { error: item.error } : {}),
       }));
     }
     if (this.landing) { // only while a landing holds the chat, so every other answer stays as it was
@@ -340,6 +343,7 @@ export class MessageQueue {
       note: '',
       lane: 'scheduled',
       at: item.at,
+      ...(item.error ? { error: item.error } : {}),
     }));
     return [...later, ...lane, ...[...(this.inflight ? [this.inflight] : []), ...this.items].map((item) => ({ ...item, lease: null }))];
   }
@@ -375,6 +379,7 @@ export class MessageQueue {
               fingerprint: item.fingerprint,
               queuedAt: item.queuedAt,
               at,
+              ...(isStr(raw.error) && raw.error ? { error: clip(raw.error, 300) } : {}),
             });
           }
           continue;
@@ -418,6 +423,8 @@ export class QueueStore {
   readonly path: string;
   /** 'provider:sessionId' -> saved items, oldest first (a Map keeps insertion order for any key). */
   sessions = new Map<string, unknown[]>();
+  /** 'provider:sessionId' -> where the chat runs, so a schedule can reopen it at its time with no window open. */
+  meta = new Map<string, { cwd: string; projectRoot: string | null }>();
   warning = '';
 
   constructor(directory: string, name: string) {
@@ -435,6 +442,13 @@ export class QueueStore {
       if (isDict(raw) && raw.version === VERSION && isDict(raw.sessions)) {
         for (const [key, items] of Object.entries(raw.sessions).slice(0, MAX_SESSIONS)) {
           if (Array.isArray(items) && items.length) this.sessions.set(key, items);
+        }
+        if (isDict(raw.meta)) {
+          for (const [key, m] of Object.entries(raw.meta)) {
+            if (this.sessions.has(key) && isDict(m) && isStr(m.cwd) && m.cwd) {
+              this.meta.set(key, { cwd: m.cwd, projectRoot: isStr(m.projectRoot) ? m.projectRoot : null });
+            }
+          }
         }
       }
     } catch {
@@ -454,16 +468,52 @@ export class QueueStore {
   }
 
   /** Save one chat's items (empty forgets it); the chat moves to the newest end and the oldest chats fall off past MAX_SESSIONS. */
-  put(provider: string, sessionId: string, saved: unknown[] | null | undefined): void {
+  put(
+    provider: string,
+    sessionId: string,
+    saved: unknown[] | null | undefined,
+    where?: { cwd: string; projectRoot?: string | null },
+  ): void {
     const key = QueueStore.key(provider, sessionId);
     if (saved && saved.length) {
       this.sessions.delete(key);
       this.sessions.set(key, saved);
+      if (where?.cwd) this.meta.set(key, { cwd: where.cwd, projectRoot: where.projectRoot ?? null });
       while (this.sessions.size > MAX_SESSIONS) this.sessions.delete(this.sessions.keys().next().value as string);
+      for (const k of [...this.meta.keys()]) if (!this.sessions.has(k)) this.meta.delete(k);
     } else if (!this.sessions.delete(key)) {
       return;
+    } else {
+      this.meta.delete(key);
     }
     this.#save();
+  }
+
+  /** The chats that have a scheduled message saved and a known folder: where each runs and the time of its first one. */
+  scheduledChats(): { provider: string; sessionId: string; cwd: string; projectRoot: string | null; at: number }[] {
+    const out: { provider: string; sessionId: string; cwd: string; projectRoot: string | null; at: number }[] = [];
+    for (const [key, items] of this.sessions) {
+      const where = this.meta.get(key);
+      const times = items.filter((i) => isDict(i) && i.lane === 'scheduled' && typeof i.at === 'number' && i.at > 0).map((i) => (i as { at: number }).at);
+      if (!where || !times.length) continue;
+      const cut = key.indexOf(':');
+      out.push({ provider: key.slice(0, cut), sessionId: key.slice(cut + 1), cwd: where.cwd, projectRoot: where.projectRoot, at: Math.min(...times) });
+    }
+    return out;
+  }
+
+  /** Put a plain error line on this chat's scheduled messages that are due (its chat could not be reopened). The cards stay. */
+  markScheduleError(provider: string, sessionId: string, error: string, now: number): void {
+    const items = this.sessions.get(QueueStore.key(provider, sessionId));
+    if (!items) return;
+    let changed = false;
+    for (const i of items) {
+      if (isDict(i) && i.lane === 'scheduled' && typeof i.at === 'number' && i.at <= now && i.error !== error) {
+        i.error = error;
+        changed = true;
+      }
+    }
+    if (changed) this.#save();
   }
 
   forget(provider: string, sessionId: string): void {
@@ -472,7 +522,7 @@ export class QueueStore {
 
   #save(): void {
     try {
-      writeJsonAtomic(this.path, { version: VERSION, savedAt: wallClock(), sessions: Object.fromEntries(this.sessions) }, {
+      writeJsonAtomic(this.path, { version: VERSION, savedAt: wallClock(), sessions: Object.fromEntries(this.sessions), meta: Object.fromEntries(this.meta) }, {
         prefix: '.studio-queues-',
         suffix: '.tmp',
       });

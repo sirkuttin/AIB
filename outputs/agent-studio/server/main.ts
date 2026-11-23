@@ -413,7 +413,10 @@ export async function main(argv: string[]): Promise<void> {
     const s = studio;
     void s.adoptKeeperWindows().then((n) => {
       startup.mark(`take-over done (${n} chat(s) from the keeper)`);
-      if (!closing) s.startAutoReconnect();
+      if (!closing) {
+        s.startAutoReconnect();
+        s.startScheduleScan(); // scheduled messages of chats nobody opens still go at their time
+      }
     });
     void s.adoptKeeper().then(() => {
       startup.mark('WSL ready (take-over of the WSL keepers done)');

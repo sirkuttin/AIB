@@ -329,7 +329,7 @@ test('inbox quick reply: a typed reply steers while the agent works and can stee
   assert.equal(R.sendRoute({ busy: false, queue: { items: [{ id: 'a' }] } }, 'yes'), 'queue');
 });
 
-test('queue row up-arrow tooltip: Send now (steers), Interrupt and send only for an agent that cannot steer', () => {
+test('queue row up-arrow tooltip: Send now (steers), Send next for an agent that cannot steer', () => {
   assert.equal(Q.TEXT.sendNow, 'Send now - nothing running stops');
-  assert.equal(Q.TEXT.sendNowInterrupt, 'Interrupt and send');
+  assert.equal(Q.TEXT.sendNext, 'Send next - goes first when this turn ends');
 });

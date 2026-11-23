@@ -239,6 +239,11 @@
     const words = scheduledWords(item);
     line.title = item.text + '\n\n' + words;
     row.append(el(doc, 'span', 'q-num', '◷'), line, el(doc, 'span', 'q-lane-note q-when-note', words));
+    if (item.error) { // its chat could not be reopened at the time: the card stays, with the reason
+      const why = el(doc, 'span', 'q-lane-note q-sched-error', item.error);
+      why.title = item.error;
+      row.append(why);
+    }
     const act = el(doc, 'span', 'q-actions');
     const run = (path) => async () => {
       try {
@@ -257,7 +262,7 @@
       iconButton(
         doc,
         '↑',
-        ctx.busy && !ctx.steerable ? T.sendNowInterrupt : C ? C.scheduleSendNow : 'Send now',
+        ctx.busy && !ctx.steerable ? T.sendNext : C ? C.scheduleSendNow : 'Send now',
         run('schedule-send-now'),
       ),
       iconButton(doc, '✕', C ? C.scheduleCancel : 'Cancel', run('schedule-cancel')),

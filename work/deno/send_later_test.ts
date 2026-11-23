@@ -280,3 +280,121 @@ Deno.test('send later: Studio routes schedule, schedule-edit, schedule-send-now 
     }
   }
 });
+
+Deno.test('send later: the up-arrow on a scheduled card never cancels a busy non-steering agent; the message goes first after the turn', async () => {
+  await using lab = new SendLab();
+  const c = await lab.open();
+  const clock = clockOf(c);
+  const g = lab.gate();
+  await busyTurn(c, g);
+  assert(!c.steerable(), 'the fake agent cannot steer');
+  await c.queueAdd('mcp', 'q1');
+  await c.scheduleAdd('mcp', clock.now + 3 * 60 * MIN, 's1');
+  await c.scheduleSendNow('s1');
+  await pause(300);
+  assert(c.busy && !c.interrupted, 'the running turn was not cancelled');
+  assertEquals(queued(c), ['s1', 'q1'], 'it moved to the front of the after-turn queue');
+  assertEquals(scheduled(c), []);
+  assertEquals(texts(c), [g]);
+  lab.release(g);
+  await until(() => texts(c).length === 3, 'sent after the turn, in order', LONG);
+  assertEquals(events(c, 'user').map((e) => (e.data as Json).clientMessageId), [null, 's1', 'q1']);
+  assertEquals(events(c, 'turn_end').filter((e) => JSON.stringify(e.data).includes('cancelled')), [], 'nothing was cancelled');
+});
+
+// ---- a chat nobody opened: the host scans the saved schedules --------------------------------------------------------------
+const SEP = Deno.build.os === 'windows' ? '\\' : '/';
+function tempDir(): string {
+  return Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-later-scan-' }));
+}
+function studioAt(dir: string, factory?: () => Connection): Studio {
+  const studio = new Studio({ ompCommand: 'unused', stateDir: dir + SEP + 'state', port: 0, ownersDir: null, noArtifactTool: true });
+  studio.ownerProbe = () => null;
+  studio.connectionFactory = factory ? () => factory() : (_command, cwd, provider) => new Connection(fake(), cwd, provider);
+  return studio;
+}
+async function cleanup(dir: string): Promise<void> {
+  for (let i = 0; i < 20; i++) {
+    try {
+      Deno.removeSync(dir, { recursive: true });
+      return;
+    } catch {
+      await pause(200);
+    }
+  }
+}
+/** A previous AIB run: one chat with a message scheduled `inMs` from now; it ends with the chat closed (saved, not open). */
+async function previousRunWithSchedule(dir: string, inMs: number): Promise<string> {
+  const first = studioAt(dir);
+  const c = await first.connect('omp', dir);
+  await c.scheduleAdd('mcp', Date.now() + inMs, 's1');
+  const path = first.recovery!.queues!.path;
+  await first.close();
+  return path;
+}
+function moveScheduleBack(path: string, ms: number): void {
+  const file = JSON.parse(Deno.readTextFileSync(path));
+  for (const items of Object.values(file.sessions) as Json[][]) for (const i of items) if (i.lane === 'scheduled') i.at = (i.at as number) - ms;
+  Deno.writeTextFileSync(path, JSON.stringify(file));
+}
+const opened = (s: Studio) => [...s.connections.values()].filter((c) => !c.closed);
+
+Deno.test('send later: a time missed while AIB was off goes at the next start even when nobody opens the chat', async () => {
+  const dir = tempDir();
+  try {
+    const path = await previousRunWithSchedule(dir, 5 * MIN);
+    moveScheduleBack(path, 3 * 60 * MIN);
+    const second = studioAt(dir);
+    assertEquals(opened(second), [], 'nothing is open');
+    second.startScheduleScan();
+    await until(() => opened(second).some((c) => texts(c).join() === 'mcp'), 'sent without anyone opening the chat', LONG);
+    const c = opened(second)[0];
+    const note = events(c, 'studio_note').map((e) => String((e.data as Json).message)).find((m) => m.startsWith('Sent late'));
+    assert(note && /^Sent late \(scheduled .+\)$/.test(note), `the chat says so: ${note}`);
+    await idle(c);
+    assertEquals(scheduled(c), []);
+    await second.close();
+  } finally {
+    await cleanup(dir);
+  }
+});
+
+Deno.test('send later: a future schedule in an unopened chat fires at its time, not before', async () => {
+  const dir = tempDir();
+  try {
+    await previousRunWithSchedule(dir, 2500);
+    const second = studioAt(dir);
+    second.startScheduleScan();
+    await pause(500);
+    assertEquals(opened(second), [], 'not opened before its time');
+    await until(() => opened(second).some((c) => texts(c).join() === 'mcp'), 'fired at its time', LONG);
+    const c = opened(second)[0];
+    assertEquals(events(c, 'studio_note').filter((e) => String((e.data as Json).message).startsWith('Sent late')), [], 'on time, not late');
+    await second.close();
+  } finally {
+    await cleanup(dir);
+  }
+});
+
+Deno.test('send later: a chat that cannot be reopened keeps the scheduled card with a plain error line', async () => {
+  const dir = tempDir();
+  try {
+    const path = await previousRunWithSchedule(dir, 5 * MIN);
+    moveScheduleBack(path, 3 * 60 * MIN);
+    const second = studioAt(dir, () => {
+      throw new Error('the agent is not installed');
+    });
+    await second.scheduleScan();
+    assertEquals(opened(second), []);
+    const saved = new QueueStore(dir + SEP + 'state', 'queues-0').get('omp', 'fake-session');
+    assertEquals(saved.length, 1, 'the message is not lost');
+    assert(String(saved[0].error).includes('could not reopen'), String(saved[0].error));
+    // later the agent is back: opening the chat sends it
+    const third = studioAt(dir);
+    const c = await third.connect('omp', dir, 'fake-session');
+    await until(() => texts(c).join() === 'mcp', 'sent once the chat opens', LONG);
+    await third.close();
+  } finally {
+    await cleanup(dir);
+  }
+});

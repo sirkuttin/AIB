@@ -268,13 +268,20 @@ export class Recovery {
     this.store.rememberConversation(connection.provider, connection.sessionId, connection.cwd, '', connection.projectRoot ?? null);
     if (this.queues) {
       const saved = this.queues.get(connection.provider, connection.sessionId);
-      if (saved.length) connection.queueRestore(saved);
+      if (saved.length) {
+        // keep where the chat runs next to its saved messages, so a schedule can reopen it by itself (older files had no folder)
+        this.queues.put(connection.provider, connection.sessionId, this.queues.sessions.get(`${connection.provider}:${connection.sessionId}`), {
+          cwd: connection.cwd,
+          projectRoot: connection.projectRoot ?? null,
+        });
+        connection.queueRestore(saved);
+      }
     }
   }
 
   queueChanged(connection: RecoverableConnection): void {
     if (this.queues && !this.shuttingDown && connection.sessionId) {
-      this.queues.put(connection.provider, connection.sessionId, connection.queue.toSaved());
+      this.queues.put(connection.provider, connection.sessionId, connection.queue.toSaved(), { cwd: connection.cwd, projectRoot: connection.projectRoot ?? null });
     }
   }
 

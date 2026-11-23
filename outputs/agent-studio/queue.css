@@ -198,3 +198,7 @@
   white-space: normal;
   font-weight: 600;
 }
+
+.q-sched-error {
+  color: var(--danger, #c0392b);
+}
