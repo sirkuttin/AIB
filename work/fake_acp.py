@@ -260,6 +260,17 @@ def allow_prompt(key, params):
     """Allow rules: 'allow:<command>' asks like claude-agent-acp's Bash (a tool_call naming the tool, then request_permission with
     Yes / Always / No); 'allowcodex:<command>' asks like codex-acp (kind execute, rawInput.command, no tool name)."""
     text = next((b.get('text', '') for b in params.get('prompt', []) if b.get('type') == 'text'), '')
+    if text.startswith('allowraw:'):
+        # 'allowraw:<json>' replays a request recorded from a real agent (work/deno/gemini_acp_permission_shapes.json and the
+        # Antigravity one): {"toolCall": ..., "options": [...], "update": <the earlier tool_call update, optional>}
+        raw_req = json.loads(text.split(':', 1)[1])
+        allow_count[0] += 1
+        rid = 'allow-%d' % allow_count[0]
+        waiting[rid] = key
+        if raw_req.get('update'):
+            update(raw_req['update'])
+        emit({'id': rid, 'method': 'session/request_permission', 'params': {'sessionId': SID(), 'toolCall': raw_req['toolCall'], 'options': raw_req['options']}})
+        return True
     if not (text.startswith('allow:') or text.startswith('allowcodex:') or text.startswith('allowedit:') or text.startswith('allowcodexedit:')):
         return False
     claude = text.startswith('allow:') or text.startswith('allowedit:')

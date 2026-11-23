@@ -28,6 +28,7 @@ const opt = (name, dflt) => {
 const PORT = Number(opt('--port', '0'));
 const LOG = opt('--log', null);
 const SCRIPT = opt('--script', null);
+const DUMP_TOOLS = opt('--dump-tools', null); // write the first request's tool declarations (names and schemas) to this file
 const rules = SCRIPT ? (JSON.parse(fs.readFileSync(SCRIPT, 'utf8')).rules || []) : [];
 const used = new Set();
 
@@ -83,6 +84,7 @@ const server = http.createServer((req, res) => {
       res.end(JSON.stringify({ error: { code: 404, message: 'stub: unknown path', status: 'NOT_FOUND' } }));
       return;
     }
+    if (DUMP_TOOLS && offered(body).length && !fs.existsSync(DUMP_TOOLS)) fs.writeFileSync(DUMP_TOOLS, JSON.stringify(body.tools, null, 1));
     const { index, reply } = pick(body, raw);
     const contents = body.contents || [];
     if (LOG) {

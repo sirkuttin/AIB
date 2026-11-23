@@ -20,7 +20,7 @@ import {
   scratchWrite,
   syntaxCheck,
 } from './catalogue.ts';
-import { checkPath, fromGitBash, type PathOps, WIN_OPS } from './paths.ts';
+import { checkPath, fromGitBash, looksSecret, type PathOps, WIN_OPS } from './paths.ts';
 import type { LinuxView } from './linux.ts';
 import { isWslRef, locKey, wslLocOf } from '../platform/location.ts';
 import { pinHash } from './pin.ts';
@@ -101,6 +101,7 @@ const LINUX_NO_FACTS = 'AIB could not read the Claude settings in the distro';
 export type Request =
   | { kind: 'shell'; shell: 'bash' | 'pwsh'; command: string; cwd: string; escalation: string }
   | { kind: 'edit'; paths: string[] }
+  | { kind: 'read'; paths: string[] }
   | { kind: 'mcp'; server: string; tool: string }
   | { kind: 'fetch'; host: string; url: string }
   | { kind: 'special'; what: string }
@@ -157,6 +158,9 @@ export function readRequest(params: unknown, ctx: MatchContext): Request {
     if (mcp) return { kind: 'mcp', server: mcp[1], tool: mcp[2] };
     return { kind: 'unknown', reason: tool ? `${tool} requests have no rules yet` : 'unknown tool' };
   }
+  // Gemini CLI and Antigravity CLI: shapes recorded from the real programs (work/deno/gemini_acp_permission_shapes.json, antigravity_...)
+  if (ctx.provider === 'gemini') return geminiRequest(call, locations, options, ctx);
+  if (ctx.provider === 'antigravity') return antigravityRequest(call, raw, locations, ctx);
   const invocation = isDict(raw.invocation) ? raw.invocation : raw;
   if (isStr(invocation.server) && isStr(invocation.tool)) return { kind: 'mcp', server: invocation.server, tool: invocation.tool };
   if (call.kind === 'edit' || call.kind === 'delete' || call.kind === 'move') {
@@ -201,6 +205,107 @@ export function readRequest(params: unknown, ctx: MatchContext): Request {
     return { kind: 'shell', shell: 'bash', command, cwd, escalation };
   }
   return { kind: 'unknown', reason: `AIB can't read ${ctx.provider || 'this agent'}'s requests yet` };
+}
+
+/** The shell a Google agent runs commands in: PowerShell on Windows (both recorded there), bash on Linux and in a WSL distro. */
+const googleShell = (ctx: MatchContext): 'bash' | 'pwsh' => (Deno.build.os === 'windows' && !ctx.linux ? 'pwsh' : 'bash');
+
+function diffsOf(call: Json): Json[] | null {
+  const content = Array.isArray(call.content) ? call.content : [];
+  const diffs: Json[] = [];
+  for (const c of content) {
+    if (!isDict(c)) return null;
+    if (c.type === 'diff') diffs.push(c);
+  }
+  return diffs;
+}
+
+const slashes = (p: string) => p.replaceAll('\\', '/');
+
+/** The files a Google agent's edit card names: its locations, diff paths (and the tool's own path) must be the same files. */
+function googleEditPaths(call: Json, locations: string[], extra: string[]): string[] | string {
+  const diffs = diffsOf(call);
+  if (!diffs || !diffs.length) return 'no diff to read';
+  const paths: string[] = [];
+  for (const d of diffs) {
+    if (!isStr(d.path) || !d.path) return 'unreadable diff';
+    paths.push(d.path);
+  }
+  const shown = new Set(paths.map(slashes));
+  if (!locations.length || [...locations, ...extra].some((p) => !shown.has(slashes(p)))) return 'the card names different files in different places';
+  return [...new Set([...paths, ...locations, ...extra])];
+}
+
+/**
+ * Gemini CLI (0.70.0, packages/cli/src/acp runTool; shapes in work/deno/gemini_acp_permission_shapes.json): no rawInput. The tool is the
+ * part of the toolCallId before `__` (write_file__write_file_<time>_0). kind edit: diff content + locations. kind execute: the command
+ * is the title; the one text content is `[in <dir>]` or `[current working directory <dir>]`, then ` (description)` and ` [background]`.
+ * Options: proceed_always (allow_always), proceed_once (allow_once), cancel; a sandbox-expansion card has no allow_always (never answered).
+ */
+function geminiRequest(call: Json, locations: string[], options: unknown[], ctx: MatchContext): Request {
+  const id = isStr(call.toolCallId) ? call.toolCallId : '';
+  const name = id.includes('__') ? id.slice(0, id.indexOf('__')) : '';
+  const unknown = (reason: string): Request => ({ kind: 'unknown', reason });
+  if (call.kind === 'edit') {
+    if (name !== 'write_file' && name !== 'replace') return unknown(`${name || 'this'} edit tool has no rules yet`);
+    if (diffsOf(call)?.some((d) => isDict(d._meta) && d._meta.kind === 'delete')) return unknown('deletes or empties a file');
+    const paths = googleEditPaths(call, locations, []);
+    return typeof paths === 'string' ? unknown(paths) : { kind: 'edit', paths };
+  }
+  if (call.kind === 'execute') {
+    if (name !== 'run_shell_command') return unknown(`${name || 'this'} has no rules yet`);
+    if (!isStr(call.title) || !call.title.trim()) return unknown('no command');
+    if (!options.some((o) => isDict(o) && o.kind === 'allow_always')) return unknown('a sandbox or restricted request');
+    const content = Array.isArray(call.content) ? call.content : [];
+    const inner = content.length === 1 && isDict(content[0]) && isDict(content[0].content) ? content[0].content : null;
+    const text = inner && inner.type === 'text' && isStr(inner.text) ? inner.text : '';
+    const m = /^\[(?:in ([^\]\[]+)|current working directory ([^\]\[]+))\]( \(.*\))?( \[background\])?$/s.exec(text);
+    if (!m) return unknown("can't read where the command runs");
+    const dir = m[1] ?? m[2];
+    if (/(^|[\\/])\.\.([\\/]|$)/.test(dir)) return unknown('command folder with ..');
+    return {
+      kind: 'shell',
+      shell: googleShell(ctx),
+      command: call.title,
+      cwd: isAbsolute(dir) || /^[A-Za-z]:|^\//.test(dir) ? dir : resolve(ctx.cwd, dir),
+      escalation: m[4] ? 'runs in the background' : '',
+    };
+  }
+  return unknown(`${call.kind ?? 'this'} requests have no rules yet`);
+}
+
+/**
+ * Antigravity CLI (1.5.11, closed source; shapes in work/deno/antigravity_acp_permission_shapes.json): rawInput holds the tool's own
+ * (PascalCase) arguments and the toolCall has `name`. write_file / edit_file: kind edit, locations, diff. run_command: kind execute,
+ * title = CommandLine, no folder (it runs in the session's). read_file: kind read. Options: allow (allow_once), deny.
+ */
+function antigravityRequest(call: Json, raw: Json, locations: string[], ctx: MatchContext): Request {
+  const name = isStr(call.name) ? call.name : '';
+  const unknown = (reason: string): Request => ({ kind: 'unknown', reason });
+  if (call.kind === 'edit' && (name === 'write_file' || name === 'edit_file')) {
+    if (!isStr(raw.Path) || !raw.Path) return unknown('no file path');
+    const paths = googleEditPaths(call, locations, [raw.Path]);
+    return typeof paths === 'string' ? unknown(paths) : { kind: 'edit', paths };
+  }
+  if (call.kind === 'execute' && name === 'run_command') {
+    if (!isStr(raw.CommandLine) || !raw.CommandLine.trim()) return unknown('no command');
+    if (Object.keys(raw).some((k) => !['CommandLine', 'toolSummary', 'WaitMsBeforeAsync', 'IsDaemon'].includes(k))) {
+      return unknown('a command setting AIB does not know');
+    }
+    if (call.title !== raw.CommandLine) return unknown('the card shows a different command than it runs');
+    return {
+      kind: 'shell',
+      shell: googleShell(ctx),
+      command: raw.CommandLine,
+      cwd: ctx.cwd,
+      escalation: raw.IsDaemon === true ? 'runs in the background' : '',
+    };
+  }
+  if (call.kind === 'read' && name === 'read_file') {
+    if (!isStr(raw.Path) || !raw.Path || locations.length !== 1 || slashes(locations[0]) !== slashes(raw.Path)) return unknown('no single file path');
+    return { kind: 'read', paths: [raw.Path] };
+  }
+  return unknown(`${name || call.kind || 'this'} requests have no rules yet`);
 }
 
 function fetchOf(url: string): Request {
@@ -318,6 +423,13 @@ function matchInner(params: unknown, ctx: MatchContext, rules: AllowRule[], buil
     if (flagged) return { allow: false, reason: 'Claude flagged it in bypass mode' };
     const r = here.find((x) => x.kind === 'fetch' && x.host === req.host);
     return r ? { allow: true, ruleId: r.id, label: r.label, flagged } : { allow: false, reason: 'no rule' };
+  }
+  if (req.kind === 'read') {
+    // Antigravity's read_file card: a file inside the chat's folder that isn't a secrets file; Safe reads covers it
+    const readable = req.paths.every((p) => checkPath(p, ctx.cwd, ctx.cwd, {}, ops).ok && !looksSecret(p));
+    if (readable && ctx.helper) return { allow: true, ruleId: BUILTIN.helperCopy.id, label: BUILTIN.helperCopy.label, flagged };
+    if (readable && builtins.safeReads) return { allow: true, ruleId: BUILTIN.safeReads.id, label: BUILTIN.safeReads.label, flagged };
+    return { allow: false, reason: readable ? 'no rule' : 'a file outside the chat folder or a secrets file' };
   }
   if (req.kind === 'edit') {
     if (flagged) return { allow: false, reason: 'Claude flagged it in bypass mode' };
@@ -591,6 +703,9 @@ export function ruleFor(params: unknown, ctx: MatchContext, scope: 'project' | '
   }
   const flagged = isClaudeFamily(ctx.provider) && BYPASS.has(ctx.mode ?? '');
   if (flagged) return no('Not available: Claude flagged this request in bypass mode; your rules never answer those.');
+  if (req.kind === 'read') {
+    return no('Not available: reads inside the project are answered by the Safe reads built-in rule; others always ask.', false, false);
+  }
   if (req.kind === 'mcp') {
     const label = `${req.server} · ${req.tool}`;
     return {

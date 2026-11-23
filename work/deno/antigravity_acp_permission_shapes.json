@@ -1,0 +1,744 @@
+{
+ "agy": "1.5.11 (pinned build)",
+ "platform": "win32",
+ "launch": [
+  "agy",
+  "acp",
+  "--disable-telemetry",
+  "--gemini-dir",
+  "<GDIR>"
+ ],
+ "recorded_with": "work/antigravity_record_permissions.py (stub model, dummy key, temp HOME and --gemini-dir)",
+ "agent_info": {
+  "name": "Antigravity ACP Server",
+  "version": "1.5.11"
+ },
+ "auth_methods": [
+  "oauth-personal",
+  "oauth-business",
+  "gemini-api-key",
+  "agent-platform"
+ ],
+ "shell_on_windows": "PowerShell 7 (checked: run_command output showed \\System.Management.Automation.PSVersionHashTable 7 and a literal %OS%)",
+ "not_asked_in_default_mode": [
+  "read_inside (agy read_file inside the workspace)",
+  "search_web"
+ ],
+ "shapes": [
+  {
+   "label": "write_new_file",
+   "request": {
+    "sessionId": "3d48f999-ac7b-42c8-a2f3-0aea7a04a9cd",
+    "toolCall": {
+     "sessionUpdate": "tool_call",
+     "toolCallId": "428b24d1-bd01-42b3-8895-ae42b6d97af4",
+     "name": "write_file",
+     "args": {
+      "Content": "created by the model\n",
+      "Path": "<PROJECT>/src/new_file.txt"
+     },
+     "status": "pending",
+     "kind": "edit",
+     "title": "File src/new_file.txt",
+     "locations": [
+      {
+       "path": "<PROJECT>/src/new_file.txt"
+      }
+     ],
+     "rawInput": {
+      "Content": "created by the model\n",
+      "Path": "<PROJECT>/src/new_file.txt"
+     },
+     "content": [
+      {
+       "type": "diff",
+       "path": "<PROJECT>/src/new_file.txt",
+       "newText": "created by the model\n"
+      }
+     ]
+    },
+    "options": [
+     {
+      "optionId": "allow",
+      "name": "Allow",
+      "kind": "allow_once"
+     },
+     {
+      "optionId": "deny",
+      "name": "Deny",
+      "kind": "reject_once"
+     }
+    ]
+   }
+  },
+  {
+   "label": "write_overwrite_existing",
+   "request": {
+    "sessionId": "3d48f999-ac7b-42c8-a2f3-0aea7a04a9cd",
+    "toolCall": {
+     "sessionUpdate": "tool_call",
+     "toolCallId": "699a6d7b-1905-4411-ab48-2237d7be06d6",
+     "name": "write_file",
+     "args": {
+      "Content": "# notes\nchanged\n",
+      "Overwrite": true,
+      "Path": "<PROJECT>/notes.md"
+     },
+     "status": "pending",
+     "kind": "edit",
+     "title": "File notes.md",
+     "locations": [
+      {
+       "path": "<PROJECT>/notes.md"
+      }
+     ],
+     "rawInput": {
+      "Content": "# notes\nchanged\n",
+      "Overwrite": true,
+      "Path": "<PROJECT>/notes.md"
+     },
+     "content": [
+      {
+       "type": "diff",
+       "path": "<PROJECT>/notes.md",
+       "newText": "# notes\nchanged\n"
+      }
+     ]
+    },
+    "options": [
+     {
+      "optionId": "allow",
+      "name": "Allow",
+      "kind": "allow_once"
+     },
+     {
+      "optionId": "deny",
+      "name": "Deny",
+      "kind": "reject_once"
+     }
+    ]
+   }
+  },
+  {
+   "label": "write_append",
+   "request": {
+    "sessionId": "3d48f999-ac7b-42c8-a2f3-0aea7a04a9cd",
+    "toolCall": {
+     "sessionUpdate": "tool_call",
+     "toolCallId": "be69c467-66e7-47aa-8c24-05b1dd329de6",
+     "name": "write_file",
+     "args": {
+      "Append": true,
+      "Content": "more\n",
+      "Path": "<PROJECT>/notes.md"
+     },
+     "status": "pending",
+     "kind": "edit",
+     "title": "File notes.md",
+     "locations": [
+      {
+       "path": "<PROJECT>/notes.md"
+      }
+     ],
+     "rawInput": {
+      "Append": true,
+      "Content": "more\n",
+      "Path": "<PROJECT>/notes.md"
+     },
+     "content": [
+      {
+       "type": "diff",
+       "path": "<PROJECT>/notes.md",
+       "newText": "more\n"
+      }
+     ]
+    },
+    "options": [
+     {
+      "optionId": "allow",
+      "name": "Allow",
+      "kind": "allow_once"
+     },
+     {
+      "optionId": "deny",
+      "name": "Deny",
+      "kind": "reject_once"
+     }
+    ]
+   }
+  },
+  {
+   "label": "edit_in_file",
+   "request": {
+    "sessionId": "3d48f999-ac7b-42c8-a2f3-0aea7a04a9cd",
+    "toolCall": {
+     "sessionUpdate": "tool_call",
+     "toolCallId": "5d2346d7-538a-4989-ab4b-130e699eba61",
+     "name": "edit_file",
+     "args": {
+      "Path": "<PROJECT>/src/app.txt",
+      "Replacement": "hello agy",
+      "Target": "hello world"
+     },
+     "status": "pending",
+     "kind": "edit",
+     "title": "File src/app.txt",
+     "locations": [
+      {
+       "path": "<PROJECT>/src/app.txt"
+      }
+     ],
+     "rawInput": {
+      "Path": "<PROJECT>/src/app.txt",
+      "Replacement": "hello agy",
+      "Target": "hello world"
+     },
+     "content": [
+      {
+       "type": "diff",
+       "path": "<PROJECT>/src/app.txt",
+       "newText": "hello agy",
+       "oldText": "hello world"
+      }
+     ]
+    },
+    "options": [
+     {
+      "optionId": "allow",
+      "name": "Allow",
+      "kind": "allow_once"
+     },
+     {
+      "optionId": "deny",
+      "name": "Deny",
+      "kind": "reject_once"
+     }
+    ]
+   }
+  },
+  {
+   "label": "edit_delete_text",
+   "request": {
+    "sessionId": "3d48f999-ac7b-42c8-a2f3-0aea7a04a9cd",
+    "toolCall": {
+     "sessionUpdate": "tool_call",
+     "toolCallId": "4cafdf8b-f6c6-4a65-a291-c7b71814139d",
+     "name": "edit_file",
+     "args": {
+      "Path": "<PROJECT>/src/app.txt",
+      "Replacement": "",
+      "Target": "line two\n"
+     },
+     "status": "pending",
+     "kind": "edit",
+     "title": "File src/app.txt",
+     "locations": [
+      {
+       "path": "<PROJECT>/src/app.txt"
+      }
+     ],
+     "rawInput": {
+      "Path": "<PROJECT>/src/app.txt",
+      "Replacement": "",
+      "Target": "line two\n"
+     },
+     "content": [
+      {
+       "type": "diff",
+       "path": "<PROJECT>/src/app.txt",
+       "newText": "",
+       "oldText": "line two\n"
+      }
+     ]
+    },
+    "options": [
+     {
+      "optionId": "allow",
+      "name": "Allow",
+      "kind": "allow_once"
+     },
+     {
+      "optionId": "deny",
+      "name": "Deny",
+      "kind": "reject_once"
+     }
+    ]
+   }
+  },
+  {
+   "label": "write_dot_git_hook",
+   "request": {
+    "sessionId": "3d48f999-ac7b-42c8-a2f3-0aea7a04a9cd",
+    "toolCall": {
+     "sessionUpdate": "tool_call",
+     "toolCallId": "4062649f-543c-4d63-9ba4-ed2787e9d1a3",
+     "name": "write_file",
+     "args": {
+      "Content": "echo hi\n",
+      "Path": "<PROJECT>/.git/hooks/pre-commit"
+     },
+     "status": "pending",
+     "kind": "edit",
+     "title": "File .git/hooks/pre-commit",
+     "locations": [
+      {
+       "path": "<PROJECT>/.git/hooks/pre-commit"
+      }
+     ],
+     "rawInput": {
+      "Content": "echo hi\n",
+      "Path": "<PROJECT>/.git/hooks/pre-commit"
+     },
+     "content": [
+      {
+       "type": "diff",
+       "path": "<PROJECT>/.git/hooks/pre-commit",
+       "newText": "echo hi\n"
+      }
+     ]
+    },
+    "options": [
+     {
+      "optionId": "allow",
+      "name": "Allow",
+      "kind": "allow_once"
+     },
+     {
+      "optionId": "deny",
+      "name": "Deny",
+      "kind": "reject_once"
+     }
+    ]
+   }
+  },
+  {
+   "label": "write_dot_gemini",
+   "request": {
+    "sessionId": "3d48f999-ac7b-42c8-a2f3-0aea7a04a9cd",
+    "toolCall": {
+     "sessionUpdate": "tool_call",
+     "toolCallId": "af43a928-f5fa-4100-9da2-944d8b89792e",
+     "name": "write_file",
+     "args": {
+      "Content": "{}\n",
+      "Path": "<PROJECT>/.gemini/settings.json"
+     },
+     "status": "pending",
+     "kind": "edit",
+     "title": "File .gemini/settings.json",
+     "locations": [
+      {
+       "path": "<PROJECT>/.gemini/settings.json"
+      }
+     ],
+     "rawInput": {
+      "Content": "{}\n",
+      "Path": "<PROJECT>/.gemini/settings.json"
+     },
+     "content": [
+      {
+       "type": "diff",
+       "path": "<PROJECT>/.gemini/settings.json",
+       "newText": "{}\n"
+      }
+     ]
+    },
+    "options": [
+     {
+      "optionId": "allow",
+      "name": "Allow",
+      "kind": "allow_once"
+     },
+     {
+      "optionId": "deny",
+      "name": "Deny",
+      "kind": "reject_once"
+     }
+    ]
+   }
+  },
+  {
+   "label": "write_outside_project",
+   "request": {
+    "sessionId": "3d48f999-ac7b-42c8-a2f3-0aea7a04a9cd",
+    "toolCall": {
+     "sessionUpdate": "tool_call",
+     "toolCallId": "6d90a877-1592-4755-aee4-32095e57faa0",
+     "name": "write_file",
+     "args": {
+      "Content": "outside\n",
+      "Path": "<OUTSIDE>/other.txt"
+     },
+     "status": "pending",
+     "kind": "edit",
+     "title": "File ../outside/other.txt",
+     "locations": [
+      {
+       "path": "<OUTSIDE>/other.txt"
+      }
+     ],
+     "rawInput": {
+      "Content": "outside\n",
+      "Path": "<OUTSIDE>/other.txt"
+     },
+     "content": [
+      {
+       "type": "diff",
+       "path": "<OUTSIDE>/other.txt",
+       "newText": "outside\n"
+      }
+     ]
+    },
+    "options": [
+     {
+      "optionId": "allow",
+      "name": "Allow",
+      "kind": "allow_once"
+     },
+     {
+      "optionId": "deny",
+      "name": "Deny",
+      "kind": "reject_once"
+     }
+    ]
+   }
+  },
+  {
+   "label": "write_dotdot_escape",
+   "request": {
+    "sessionId": "3d48f999-ac7b-42c8-a2f3-0aea7a04a9cd",
+    "toolCall": {
+     "sessionUpdate": "tool_call",
+     "toolCallId": "448b8b61-76b1-4c0e-b1ba-967975828486",
+     "name": "write_file",
+     "args": {
+      "Content": "escape\n",
+      "Path": "<PROJECT>/../escaped.txt"
+     },
+     "status": "pending",
+     "kind": "edit",
+     "title": "File ../escaped.txt",
+     "locations": [
+      {
+       "path": "<BASE>/escaped.txt"
+      }
+     ],
+     "rawInput": {
+      "Content": "escape\n",
+      "Path": "<PROJECT>/../escaped.txt"
+     },
+     "content": [
+      {
+       "type": "diff",
+       "path": "<PROJECT>/../escaped.txt",
+       "newText": "escape\n"
+      }
+     ]
+    },
+    "options": [
+     {
+      "optionId": "allow",
+      "name": "Allow",
+      "kind": "allow_once"
+     },
+     {
+      "optionId": "deny",
+      "name": "Deny",
+      "kind": "reject_once"
+     }
+    ]
+   }
+  },
+  {
+   "label": "run_test",
+   "request": {
+    "sessionId": "3d48f999-ac7b-42c8-a2f3-0aea7a04a9cd",
+    "toolCall": {
+     "sessionUpdate": "tool_call",
+     "toolCallId": "53504f6c-ac74-4457-b19b-634f8bebae89",
+     "name": "run_command",
+     "args": {
+      "CommandLine": "npm test",
+      "WaitMsBeforeAsync": 5000,
+      "toolSummary": "Run tests"
+     },
+     "status": "pending",
+     "kind": "execute",
+     "title": "npm test",
+     "rawInput": {
+      "CommandLine": "npm test",
+      "WaitMsBeforeAsync": 5000,
+      "toolSummary": "Run tests"
+     }
+    },
+    "options": [
+     {
+      "optionId": "allow",
+      "name": "Allow",
+      "kind": "allow_once"
+     },
+     {
+      "optionId": "deny",
+      "name": "Deny",
+      "kind": "reject_once"
+     }
+    ]
+   }
+  },
+  {
+   "label": "run_git_status",
+   "request": {
+    "sessionId": "3d48f999-ac7b-42c8-a2f3-0aea7a04a9cd",
+    "toolCall": {
+     "sessionUpdate": "tool_call",
+     "toolCallId": "a0d43620-d76a-4036-ae07-e7e366e8177b",
+     "name": "run_command",
+     "args": {
+      "CommandLine": "git status --short",
+      "WaitMsBeforeAsync": 5000,
+      "toolSummary": "Git status"
+     },
+     "status": "pending",
+     "kind": "execute",
+     "title": "git status --short",
+     "rawInput": {
+      "CommandLine": "git status --short",
+      "WaitMsBeforeAsync": 5000,
+      "toolSummary": "Git status"
+     }
+    },
+    "options": [
+     {
+      "optionId": "allow",
+      "name": "Allow",
+      "kind": "allow_once"
+     },
+     {
+      "optionId": "deny",
+      "name": "Deny",
+      "kind": "reject_once"
+     }
+    ]
+   }
+  },
+  {
+   "label": "run_git_push",
+   "request": {
+    "sessionId": "3d48f999-ac7b-42c8-a2f3-0aea7a04a9cd",
+    "toolCall": {
+     "sessionUpdate": "tool_call",
+     "toolCallId": "40dc7073-dc4d-4eaa-8e9f-bf6088cb361f",
+     "name": "run_command",
+     "args": {
+      "CommandLine": "git push origin main",
+      "WaitMsBeforeAsync": 5000,
+      "toolSummary": "Push"
+     },
+     "status": "pending",
+     "kind": "execute",
+     "title": "git push origin main",
+     "rawInput": {
+      "CommandLine": "git push origin main",
+      "WaitMsBeforeAsync": 5000,
+      "toolSummary": "Push"
+     }
+    },
+    "options": [
+     {
+      "optionId": "allow",
+      "name": "Allow",
+      "kind": "allow_once"
+     },
+     {
+      "optionId": "deny",
+      "name": "Deny",
+      "kind": "reject_once"
+     }
+    ]
+   }
+  },
+  {
+   "label": "run_npm_install",
+   "request": {
+    "sessionId": "3d48f999-ac7b-42c8-a2f3-0aea7a04a9cd",
+    "toolCall": {
+     "sessionUpdate": "tool_call",
+     "toolCallId": "b8195718-5605-42f5-b076-7d62f1300b84",
+     "name": "run_command",
+     "args": {
+      "CommandLine": "npm install left-pad",
+      "WaitMsBeforeAsync": 5000,
+      "toolSummary": "Install package"
+     },
+     "status": "pending",
+     "kind": "execute",
+     "title": "npm install left-pad",
+     "rawInput": {
+      "CommandLine": "npm install left-pad",
+      "WaitMsBeforeAsync": 5000,
+      "toolSummary": "Install package"
+     }
+    },
+    "options": [
+     {
+      "optionId": "allow",
+      "name": "Allow",
+      "kind": "allow_once"
+     },
+     {
+      "optionId": "deny",
+      "name": "Deny",
+      "kind": "reject_once"
+     }
+    ]
+   }
+  },
+  {
+   "label": "run_chain",
+   "request": {
+    "sessionId": "3d48f999-ac7b-42c8-a2f3-0aea7a04a9cd",
+    "toolCall": {
+     "sessionUpdate": "tool_call",
+     "toolCallId": "d6c43220-77e0-4b2c-9ec4-fd975f01e47e",
+     "name": "run_command",
+     "args": {
+      "CommandLine": "npm test && git diff --stat",
+      "WaitMsBeforeAsync": 5000,
+      "toolSummary": "Test and diff"
+     },
+     "status": "pending",
+     "kind": "execute",
+     "title": "npm test && git diff --stat",
+     "rawInput": {
+      "CommandLine": "npm test && git diff --stat",
+      "WaitMsBeforeAsync": 5000,
+      "toolSummary": "Test and diff"
+     }
+    },
+    "options": [
+     {
+      "optionId": "allow",
+      "name": "Allow",
+      "kind": "allow_once"
+     },
+     {
+      "optionId": "deny",
+      "name": "Deny",
+      "kind": "reject_once"
+     }
+    ]
+   }
+  },
+  {
+   "label": "run_daemon",
+   "request": {
+    "sessionId": "3d48f999-ac7b-42c8-a2f3-0aea7a04a9cd",
+    "toolCall": {
+     "sessionUpdate": "tool_call",
+     "toolCallId": "afef65ae-0664-4ed7-b0f7-8ef2be2126d3",
+     "name": "run_command",
+     "args": {
+      "CommandLine": "npm run dev",
+      "IsDaemon": true,
+      "WaitMsBeforeAsync": 500,
+      "toolSummary": "Dev server"
+     },
+     "status": "pending",
+     "kind": "execute",
+     "title": "npm run dev",
+     "rawInput": {
+      "CommandLine": "npm run dev",
+      "IsDaemon": true,
+      "WaitMsBeforeAsync": 500,
+      "toolSummary": "Dev server"
+     }
+    },
+    "options": [
+     {
+      "optionId": "allow",
+      "name": "Allow",
+      "kind": "allow_once"
+     },
+     {
+      "optionId": "deny",
+      "name": "Deny",
+      "kind": "reject_once"
+     }
+    ]
+   }
+  },
+  {
+   "label": "run_remove",
+   "request": {
+    "sessionId": "3d48f999-ac7b-42c8-a2f3-0aea7a04a9cd",
+    "toolCall": {
+     "sessionUpdate": "tool_call",
+     "toolCallId": "233dd77d-607a-4ed7-890b-0a4adf9fd087",
+     "name": "run_command",
+     "args": {
+      "CommandLine": "rm -rf src",
+      "WaitMsBeforeAsync": 5000,
+      "toolSummary": "Delete src"
+     },
+     "status": "pending",
+     "kind": "execute",
+     "title": "rm -rf src",
+     "rawInput": {
+      "CommandLine": "rm -rf src",
+      "WaitMsBeforeAsync": 5000,
+      "toolSummary": "Delete src"
+     }
+    },
+    "options": [
+     {
+      "optionId": "allow",
+      "name": "Allow",
+      "kind": "allow_once"
+     },
+     {
+      "optionId": "deny",
+      "name": "Deny",
+      "kind": "reject_once"
+     }
+    ]
+   }
+  },
+  {
+   "label": "read_outside",
+   "request": {
+    "sessionId": "3d48f999-ac7b-42c8-a2f3-0aea7a04a9cd",
+    "toolCall": {
+     "sessionUpdate": "tool_call",
+     "toolCallId": "3e98896b-ea69-4e81-8464-c2e08cceb661",
+     "name": "read_file",
+     "args": {
+      "Path": "<OUTSIDE>/secret.txt"
+     },
+     "status": "pending",
+     "kind": "read",
+     "title": "File ../outside/secret.txt",
+     "locations": [
+      {
+       "path": "<OUTSIDE>/secret.txt"
+      }
+     ],
+     "rawInput": {
+      "Path": "<OUTSIDE>/secret.txt"
+     }
+    },
+    "options": [
+     {
+      "optionId": "allow",
+      "name": "Allow",
+      "kind": "allow_once"
+     },
+     {
+      "optionId": "deny",
+      "name": "Deny",
+      "kind": "reject_once"
+     }
+    ]
+   }
+  }
+ ]
+}

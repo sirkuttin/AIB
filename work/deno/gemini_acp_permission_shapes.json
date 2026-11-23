@@ -1,0 +1,2190 @@
+{
+ "gemini_cli": "0.70.0",
+ "platform": "win32",
+ "args": [
+  "gemini",
+  "-m",
+  "gemini-2.5-flash",
+  "--skip-trust",
+  "--acp"
+ ],
+ "initialize": {
+  "protocolVersion": 1,
+  "authMethods": [
+   {
+    "id": "oauth-personal",
+    "name": "Log in with Google",
+    "description": "Log in with your Google account"
+   },
+   {
+    "id": "gemini-api-key",
+    "name": "Gemini API key",
+    "description": "Use an API key with Gemini Developer API",
+    "_meta": {
+     "api-key": {
+      "provider": "google"
+     }
+    }
+   },
+   {
+    "id": "vertex-ai",
+    "name": "Vertex AI",
+    "description": "Use an API key with Vertex AI GenAI API"
+   },
+   {
+    "id": "gateway",
+    "name": "AI API Gateway",
+    "description": "Use a custom AI API Gateway",
+    "_meta": {
+     "gateway": {
+      "protocol": "google",
+      "restartRequired": "false"
+     }
+    }
+   }
+  ],
+  "agentInfo": {
+   "name": "gemini-cli",
+   "title": "Gemini CLI",
+   "version": "0.70.0"
+  },
+  "agentCapabilities": {
+   "loadSession": true,
+   "promptCapabilities": {
+    "image": true,
+    "audio": true,
+    "embeddedContext": true
+   },
+   "mcpCapabilities": {
+    "http": true,
+    "sse": true
+   }
+  }
+ },
+ "session_new": {
+  "sessionId": "0b3d26a4-3e91-4e68-92c8-c6a879d6c69f",
+  "modes": {
+   "availableModes": [
+    {
+     "id": "default",
+     "name": "Default",
+     "description": "Prompts for approval"
+    },
+    {
+     "id": "autoEdit",
+     "name": "Auto Edit",
+     "description": "Auto-approves edit tools"
+    },
+    {
+     "id": "yolo",
+     "name": "YOLO",
+     "description": "Auto-approves all tools"
+    },
+    {
+     "id": "plan",
+     "name": "Plan",
+     "description": "Read-only mode"
+    }
+   ],
+   "currentModeId": "default"
+  },
+  "models": {
+   "availableModels": [
+    {
+     "modelId": "auto",
+     "name": "Auto",
+     "description": "Let Gemini CLI decide the best model for the task: gemini-3.1-pro-preview, gemini-3.8-flash"
+    },
+    {
+     "modelId": "gemini-3.1-pro-preview-customtools",
+     "name": "gemini-3.1-pro-preview"
+    },
+    {
+     "modelId": "gemini-3-flash-preview",
+     "name": "gemini-3-flash-preview"
+    },
+    {
+     "modelId": "gemini-2.5-pro",
+     "name": "gemini-2.5-pro"
+    },
+    {
+     "modelId": "gemini-3.8-flash",
+     "name": "gemini-3.8-flash"
+    },
+    {
+     "modelId": "gemini-3.5-flash-lite",
+     "name": "gemini-3.5-flash-lite"
+    }
+   ],
+   "currentModelId": "gemini-2.5-flash"
+  }
+ },
+ "prompt_result": {
+  "jsonrpc": "2.0",
+  "id": 3,
+  "result": {
+   "stopReason": "end_turn",
+   "usage": {
+    "inputTokens": 280,
+    "outputTokens": 140,
+    "totalTokens": 420
+   },
+   "_meta": {
+    "quota": {
+     "token_count": {
+      "input_tokens": 280,
+      "output_tokens": 140
+     },
+     "model_usage": [
+      {
+       "model": "gemini-2.5-flash",
+       "token_count": {
+        "input_tokens": 280,
+        "output_tokens": 140
+       }
+      }
+     ]
+    }
+   }
+  }
+ },
+ "permission_request_count": 15,
+ "shapes": [
+  {
+   "label": "write_new_file",
+   "tool": "write_file",
+   "args": {
+    "file_path": "src/new_file.txt",
+    "content": "created by the model\n"
+   },
+   "asked": true,
+   "tool_call_update": {
+    "sessionUpdate": "tool_call",
+    "toolCallId": "write_file__write_file_1795476806041_0",
+    "status": "pending",
+    "title": "Writing to src\\new_file.txt",
+    "content": [
+     {
+      "type": "diff",
+      "path": "<PROJECT>\\src\\new_file.txt",
+      "oldText": "",
+      "newText": "created by the model\n",
+      "_meta": {
+       "kind": "add"
+      }
+     }
+    ],
+    "locations": [
+     {
+      "path": "<PROJECT>\\src\\new_file.txt"
+     }
+    ],
+    "kind": "edit"
+   },
+   "request": {
+    "sessionId": "0b3d26a4-3e91-4e68-92c8-c6a879d6c69f",
+    "options": [
+     {
+      "optionId": "proceed_always",
+      "name": "Allow for this session",
+      "kind": "allow_always"
+     },
+     {
+      "optionId": "proceed_once",
+      "name": "Allow",
+      "kind": "allow_once"
+     },
+     {
+      "optionId": "cancel",
+      "name": "Reject",
+      "kind": "reject_once"
+     }
+    ],
+    "toolCall": {
+     "toolCallId": "write_file__write_file_1795476806041_0",
+     "status": "pending",
+     "title": "Writing to src\\new_file.txt",
+     "content": [
+      {
+       "type": "diff",
+       "path": "<PROJECT>\\src\\new_file.txt",
+       "oldText": "",
+       "newText": "created by the model\n",
+       "_meta": {
+        "kind": "add"
+       }
+      }
+     ],
+     "locations": [
+      {
+       "path": "<PROJECT>\\src\\new_file.txt"
+      }
+     ],
+     "kind": "edit"
+    }
+   }
+  },
+  {
+   "label": "write_existing_file",
+   "tool": "write_file",
+   "args": {
+    "file_path": "notes.md",
+    "content": "# notes\nchanged\n"
+   },
+   "asked": true,
+   "tool_call_update": {
+    "sessionUpdate": "tool_call",
+    "toolCallId": "write_file__write_file_1795476806565_0",
+    "status": "pending",
+    "title": "Writing to notes.md",
+    "content": [
+     {
+      "type": "diff",
+      "path": "<PROJECT>\\notes.md",
+      "oldText": "# notes\r\noriginal\r\n",
+      "newText": "# notes\nchanged\n",
+      "_meta": {
+       "kind": "modify"
+      }
+     }
+    ],
+    "locations": [
+     {
+      "path": "<PROJECT>\\notes.md"
+     }
+    ],
+    "kind": "edit"
+   },
+   "request": {
+    "sessionId": "0b3d26a4-3e91-4e68-92c8-c6a879d6c69f",
+    "options": [
+     {
+      "optionId": "proceed_always",
+      "name": "Allow for this session",
+      "kind": "allow_always"
+     },
+     {
+      "optionId": "proceed_once",
+      "name": "Allow",
+      "kind": "allow_once"
+     },
+     {
+      "optionId": "cancel",
+      "name": "Reject",
+      "kind": "reject_once"
+     }
+    ],
+    "toolCall": {
+     "toolCallId": "write_file__write_file_1795476806565_0",
+     "status": "pending",
+     "title": "Writing to notes.md",
+     "content": [
+      {
+       "type": "diff",
+       "path": "<PROJECT>\\notes.md",
+       "oldText": "# notes\r\noriginal\r\n",
+       "newText": "# notes\nchanged\n",
+       "_meta": {
+        "kind": "modify"
+       }
+      }
+     ],
+     "locations": [
+      {
+       "path": "<PROJECT>\\notes.md"
+      }
+     ],
+     "kind": "edit"
+    }
+   }
+  },
+  {
+   "label": "write_absolute_inside",
+   "tool": "write_file",
+   "args": {
+    "file_path": "<PROJECT>/src/abs_inside.txt",
+    "content": "abs\n"
+   },
+   "asked": true,
+   "tool_call_update": {
+    "sessionUpdate": "tool_call",
+    "toolCallId": "write_file__write_file_1795476806573_0",
+    "status": "pending",
+    "title": "Writing to src\\abs_inside.txt",
+    "content": [
+     {
+      "type": "diff",
+      "path": "<PROJECT>\\src\\abs_inside.txt",
+      "oldText": "",
+      "newText": "abs\n",
+      "_meta": {
+       "kind": "add"
+      }
+     }
+    ],
+    "locations": [
+     {
+      "path": "<PROJECT>\\src\\abs_inside.txt"
+     }
+    ],
+    "kind": "edit"
+   },
+   "request": {
+    "sessionId": "0b3d26a4-3e91-4e68-92c8-c6a879d6c69f",
+    "options": [
+     {
+      "optionId": "proceed_always",
+      "name": "Allow for this session",
+      "kind": "allow_always"
+     },
+     {
+      "optionId": "proceed_once",
+      "name": "Allow",
+      "kind": "allow_once"
+     },
+     {
+      "optionId": "cancel",
+      "name": "Reject",
+      "kind": "reject_once"
+     }
+    ],
+    "toolCall": {
+     "toolCallId": "write_file__write_file_1795476806573_0",
+     "status": "pending",
+     "title": "Writing to src\\abs_inside.txt",
+     "content": [
+      {
+       "type": "diff",
+       "path": "<PROJECT>\\src\\abs_inside.txt",
+       "oldText": "",
+       "newText": "abs\n",
+       "_meta": {
+        "kind": "add"
+       }
+      }
+     ],
+     "locations": [
+      {
+       "path": "<PROJECT>\\src\\abs_inside.txt"
+      }
+     ],
+     "kind": "edit"
+    }
+   }
+  },
+  {
+   "label": "replace_in_file",
+   "tool": "replace",
+   "args": {
+    "file_path": "src/app.txt",
+    "old_string": "hello world",
+    "new_string": "hello gemini",
+    "instruction": "Change the greeting",
+    "allow_multiple": false
+   },
+   "asked": true,
+   "tool_call_update": {
+    "sessionUpdate": "tool_call",
+    "toolCallId": "replace__replace_1795476806581_0",
+    "status": "pending",
+    "title": "src\\app.txt: hello world => hello gemini",
+    "content": [
+     {
+      "type": "diff",
+      "path": "<PROJECT>\\src\\app.txt",
+      "oldText": "hello world\nline two\n",
+      "newText": "hello gemini\nline two\n",
+      "_meta": {
+       "kind": "modify"
+      }
+     }
+    ],
+    "locations": [
+     {
+      "path": "<PROJECT>\\src\\app.txt"
+     }
+    ],
+    "kind": "edit"
+   },
+   "request": {
+    "sessionId": "0b3d26a4-3e91-4e68-92c8-c6a879d6c69f",
+    "options": [
+     {
+      "optionId": "proceed_always",
+      "name": "Allow for this session",
+      "kind": "allow_always"
+     },
+     {
+      "optionId": "proceed_once",
+      "name": "Allow",
+      "kind": "allow_once"
+     },
+     {
+      "optionId": "cancel",
+      "name": "Reject",
+      "kind": "reject_once"
+     }
+    ],
+    "toolCall": {
+     "toolCallId": "replace__replace_1795476806581_0",
+     "status": "pending",
+     "title": "src\\app.txt: hello world => hello gemini",
+     "content": [
+      {
+       "type": "diff",
+       "path": "<PROJECT>\\src\\app.txt",
+       "oldText": "hello world\nline two\n",
+       "newText": "hello gemini\nline two\n",
+       "_meta": {
+        "kind": "modify"
+       }
+      }
+     ],
+     "locations": [
+      {
+       "path": "<PROJECT>\\src\\app.txt"
+      }
+     ],
+     "kind": "edit"
+    }
+   }
+  },
+  {
+   "label": "write_empty_content",
+   "tool": "write_file",
+   "args": {
+    "file_path": "src/emptied.txt",
+    "content": ""
+   },
+   "asked": true,
+   "tool_call_update": {
+    "sessionUpdate": "tool_call",
+    "toolCallId": "write_file__write_file_1795476806591_0",
+    "status": "pending",
+    "title": "Writing to src\\emptied.txt",
+    "content": [
+     {
+      "type": "diff",
+      "path": "<PROJECT>\\src\\emptied.txt",
+      "oldText": "had content\r\n",
+      "newText": "",
+      "_meta": {
+       "kind": "delete"
+      }
+     }
+    ],
+    "locations": [
+     {
+      "path": "<PROJECT>\\src\\emptied.txt"
+     }
+    ],
+    "kind": "edit"
+   },
+   "request": {
+    "sessionId": "0b3d26a4-3e91-4e68-92c8-c6a879d6c69f",
+    "options": [
+     {
+      "optionId": "proceed_always",
+      "name": "Allow for this session",
+      "kind": "allow_always"
+     },
+     {
+      "optionId": "proceed_once",
+      "name": "Allow",
+      "kind": "allow_once"
+     },
+     {
+      "optionId": "cancel",
+      "name": "Reject",
+      "kind": "reject_once"
+     }
+    ],
+    "toolCall": {
+     "toolCallId": "write_file__write_file_1795476806591_0",
+     "status": "pending",
+     "title": "Writing to src\\emptied.txt",
+     "content": [
+      {
+       "type": "diff",
+       "path": "<PROJECT>\\src\\emptied.txt",
+       "oldText": "had content\r\n",
+       "newText": "",
+       "_meta": {
+        "kind": "delete"
+       }
+      }
+     ],
+     "locations": [
+      {
+       "path": "<PROJECT>\\src\\emptied.txt"
+      }
+     ],
+     "kind": "edit"
+    }
+   }
+  },
+  {
+   "label": "write_dot_git_hook",
+   "tool": "write_file",
+   "args": {
+    "file_path": ".git/hooks/pre-commit",
+    "content": "echo hi\n"
+   },
+   "asked": false,
+   "tool_call_update": null,
+   "request": null
+  },
+  {
+   "label": "write_dot_gemini",
+   "tool": "write_file",
+   "args": {
+    "file_path": ".gemini/settings.json",
+    "content": "{}\n"
+   },
+   "asked": true,
+   "tool_call_update": {
+    "sessionUpdate": "tool_call",
+    "toolCallId": "write_file__write_file_1795476806609_0",
+    "status": "pending",
+    "title": "Writing to .gemini\\settings.json",
+    "content": [
+     {
+      "type": "diff",
+      "path": "<PROJECT>\\.gemini\\settings.json",
+      "oldText": "",
+      "newText": "{}\n",
+      "_meta": {
+       "kind": "add"
+      }
+     }
+    ],
+    "locations": [
+     {
+      "path": "<PROJECT>\\.gemini\\settings.json"
+     }
+    ],
+    "kind": "edit"
+   },
+   "request": {
+    "sessionId": "0b3d26a4-3e91-4e68-92c8-c6a879d6c69f",
+    "options": [
+     {
+      "optionId": "proceed_always",
+      "name": "Allow for this session",
+      "kind": "allow_always"
+     },
+     {
+      "optionId": "proceed_once",
+      "name": "Allow",
+      "kind": "allow_once"
+     },
+     {
+      "optionId": "cancel",
+      "name": "Reject",
+      "kind": "reject_once"
+     }
+    ],
+    "toolCall": {
+     "toolCallId": "write_file__write_file_1795476806609_0",
+     "status": "pending",
+     "title": "Writing to .gemini\\settings.json",
+     "content": [
+      {
+       "type": "diff",
+       "path": "<PROJECT>\\.gemini\\settings.json",
+       "oldText": "",
+       "newText": "{}\n",
+       "_meta": {
+        "kind": "add"
+       }
+      }
+     ],
+     "locations": [
+      {
+       "path": "<PROJECT>\\.gemini\\settings.json"
+      }
+     ],
+     "kind": "edit"
+    }
+   }
+  },
+  {
+   "label": "write_outside_project",
+   "tool": "write_file",
+   "args": {
+    "file_path": "<OUTSIDE>/other.txt",
+    "content": "outside\n"
+   },
+   "asked": false,
+   "tool_call_update": null,
+   "request": null
+  },
+  {
+   "label": "write_dotdot_escape",
+   "tool": "write_file",
+   "args": {
+    "file_path": "../escaped.txt",
+    "content": "escape\n"
+   },
+   "asked": false,
+   "tool_call_update": null,
+   "request": null
+  },
+  {
+   "label": "shell_test",
+   "tool": "run_shell_command",
+   "args": {
+    "command": "npm test",
+    "description": "Run the tests"
+   },
+   "asked": true,
+   "tool_call_update": {
+    "sessionUpdate": "tool_call",
+    "toolCallId": "run_shell_command__run_shell_command_1795476806630_0",
+    "status": "pending",
+    "title": "npm test",
+    "content": [
+     {
+      "type": "content",
+      "content": {
+       "type": "text",
+       "text": "[current working directory <PROJECT>] (Run the tests)"
+      }
+     }
+    ],
+    "locations": [],
+    "kind": "execute"
+   },
+   "request": {
+    "sessionId": "0b3d26a4-3e91-4e68-92c8-c6a879d6c69f",
+    "options": [
+     {
+      "optionId": "proceed_always",
+      "name": "Allow for this session",
+      "kind": "allow_always"
+     },
+     {
+      "optionId": "proceed_once",
+      "name": "Allow",
+      "kind": "allow_once"
+     },
+     {
+      "optionId": "cancel",
+      "name": "Reject",
+      "kind": "reject_once"
+     }
+    ],
+    "toolCall": {
+     "toolCallId": "run_shell_command__run_shell_command_1795476806630_0",
+     "status": "pending",
+     "title": "npm test",
+     "content": [
+      {
+       "type": "content",
+       "content": {
+        "type": "text",
+        "text": "[current working directory <PROJECT>] (Run the tests)"
+       }
+      }
+     ],
+     "locations": [],
+     "kind": "execute"
+    }
+   }
+  },
+  {
+   "label": "shell_test_dir_path",
+   "tool": "run_shell_command",
+   "args": {
+    "command": "node --test tests/",
+    "description": "Run the tests",
+    "dir_path": "src"
+   },
+   "asked": true,
+   "tool_call_update": {
+    "sessionUpdate": "tool_call",
+    "toolCallId": "run_shell_command__run_shell_command_1795476809058_0",
+    "status": "pending",
+    "title": "node --test tests/",
+    "content": [
+     {
+      "type": "content",
+      "content": {
+       "type": "text",
+       "text": "[in src] (Run the tests)"
+      }
+     }
+    ],
+    "locations": [],
+    "kind": "execute"
+   },
+   "request": {
+    "sessionId": "0b3d26a4-3e91-4e68-92c8-c6a879d6c69f",
+    "options": [
+     {
+      "optionId": "proceed_always",
+      "name": "Allow for this session",
+      "kind": "allow_always"
+     },
+     {
+      "optionId": "proceed_once",
+      "name": "Allow",
+      "kind": "allow_once"
+     },
+     {
+      "optionId": "cancel",
+      "name": "Reject",
+      "kind": "reject_once"
+     }
+    ],
+    "toolCall": {
+     "toolCallId": "run_shell_command__run_shell_command_1795476809058_0",
+     "status": "pending",
+     "title": "node --test tests/",
+     "content": [
+      {
+       "type": "content",
+       "content": {
+        "type": "text",
+        "text": "[in src] (Run the tests)"
+       }
+      }
+     ],
+     "locations": [],
+     "kind": "execute"
+    }
+   }
+  },
+  {
+   "label": "shell_git_status",
+   "tool": "run_shell_command",
+   "args": {
+    "command": "git status --short"
+   },
+   "asked": false,
+   "tool_call_update": null,
+   "request": null
+  },
+  {
+   "label": "shell_git_push",
+   "tool": "run_shell_command",
+   "args": {
+    "command": "git push origin main",
+    "description": "Push"
+   },
+   "asked": true,
+   "tool_call_update": {
+    "sessionUpdate": "tool_call",
+    "toolCallId": "run_shell_command__run_shell_command_1795476813698_0",
+    "status": "pending",
+    "title": "git push origin main",
+    "content": [
+     {
+      "type": "content",
+      "content": {
+       "type": "text",
+       "text": "[current working directory <PROJECT>] (Push)"
+      }
+     }
+    ],
+    "locations": [],
+    "kind": "execute"
+   },
+   "request": {
+    "sessionId": "0b3d26a4-3e91-4e68-92c8-c6a879d6c69f",
+    "options": [
+     {
+      "optionId": "proceed_always",
+      "name": "Allow for this session",
+      "kind": "allow_always"
+     },
+     {
+      "optionId": "proceed_once",
+      "name": "Allow",
+      "kind": "allow_once"
+     },
+     {
+      "optionId": "cancel",
+      "name": "Reject",
+      "kind": "reject_once"
+     }
+    ],
+    "toolCall": {
+     "toolCallId": "run_shell_command__run_shell_command_1795476813698_0",
+     "status": "pending",
+     "title": "git push origin main",
+     "content": [
+      {
+       "type": "content",
+       "content": {
+        "type": "text",
+        "text": "[current working directory <PROJECT>] (Push)"
+       }
+      }
+     ],
+     "locations": [],
+     "kind": "execute"
+    }
+   }
+  },
+  {
+   "label": "shell_npm_install",
+   "tool": "run_shell_command",
+   "args": {
+    "command": "npm install left-pad",
+    "description": "Install a package"
+   },
+   "asked": true,
+   "tool_call_update": {
+    "sessionUpdate": "tool_call",
+    "toolCallId": "run_shell_command__run_shell_command_1795476816897_0",
+    "status": "pending",
+    "title": "npm install left-pad",
+    "content": [
+     {
+      "type": "content",
+      "content": {
+       "type": "text",
+       "text": "[current working directory <PROJECT>] (Install a package)"
+      }
+     }
+    ],
+    "locations": [],
+    "kind": "execute"
+   },
+   "request": {
+    "sessionId": "0b3d26a4-3e91-4e68-92c8-c6a879d6c69f",
+    "options": [
+     {
+      "optionId": "proceed_always",
+      "name": "Allow for this session",
+      "kind": "allow_always"
+     },
+     {
+      "optionId": "proceed_once",
+      "name": "Allow",
+      "kind": "allow_once"
+     },
+     {
+      "optionId": "cancel",
+      "name": "Reject",
+      "kind": "reject_once"
+     }
+    ],
+    "toolCall": {
+     "toolCallId": "run_shell_command__run_shell_command_1795476816897_0",
+     "status": "pending",
+     "title": "npm install left-pad",
+     "content": [
+      {
+       "type": "content",
+       "content": {
+        "type": "text",
+        "text": "[current working directory <PROJECT>] (Install a package)"
+       }
+      }
+     ],
+     "locations": [],
+     "kind": "execute"
+    }
+   }
+  },
+  {
+   "label": "shell_chain",
+   "tool": "run_shell_command",
+   "args": {
+    "command": "npm test && git diff --stat",
+    "description": "Test then diff"
+   },
+   "asked": true,
+   "tool_call_update": {
+    "sessionUpdate": "tool_call",
+    "toolCallId": "run_shell_command__run_shell_command_1795476820090_0",
+    "status": "pending",
+    "title": "npm test && git diff --stat",
+    "content": [
+     {
+      "type": "content",
+      "content": {
+       "type": "text",
+       "text": "[current working directory <PROJECT>] (Test then diff)"
+      }
+     }
+    ],
+    "locations": [],
+    "kind": "execute"
+   },
+   "request": {
+    "sessionId": "0b3d26a4-3e91-4e68-92c8-c6a879d6c69f",
+    "options": [
+     {
+      "optionId": "proceed_always",
+      "name": "Allow for this session",
+      "kind": "allow_always"
+     },
+     {
+      "optionId": "proceed_once",
+      "name": "Allow",
+      "kind": "allow_once"
+     },
+     {
+      "optionId": "cancel",
+      "name": "Reject",
+      "kind": "reject_once"
+     }
+    ],
+    "toolCall": {
+     "toolCallId": "run_shell_command__run_shell_command_1795476820090_0",
+     "status": "pending",
+     "title": "npm test && git diff --stat",
+     "content": [
+      {
+       "type": "content",
+       "content": {
+        "type": "text",
+        "text": "[current working directory <PROJECT>] (Test then diff)"
+       }
+      }
+     ],
+     "locations": [],
+     "kind": "execute"
+    }
+   }
+  },
+  {
+   "label": "shell_background",
+   "tool": "run_shell_command",
+   "args": {
+    "command": "npm run dev",
+    "description": "Start the dev server",
+    "is_background": true
+   },
+   "asked": true,
+   "tool_call_update": {
+    "sessionUpdate": "tool_call",
+    "toolCallId": "run_shell_command__run_shell_command_1795476824462_0",
+    "status": "pending",
+    "title": "npm run dev",
+    "content": [
+     {
+      "type": "content",
+      "content": {
+       "type": "text",
+       "text": "[current working directory <PROJECT>] (Start the dev server) [background]"
+      }
+     }
+    ],
+    "locations": [],
+    "kind": "execute"
+   },
+   "request": {
+    "sessionId": "0b3d26a4-3e91-4e68-92c8-c6a879d6c69f",
+    "options": [
+     {
+      "optionId": "proceed_always",
+      "name": "Allow for this session",
+      "kind": "allow_always"
+     },
+     {
+      "optionId": "proceed_once",
+      "name": "Allow",
+      "kind": "allow_once"
+     },
+     {
+      "optionId": "cancel",
+      "name": "Reject",
+      "kind": "reject_once"
+     }
+    ],
+    "toolCall": {
+     "toolCallId": "run_shell_command__run_shell_command_1795476824462_0",
+     "status": "pending",
+     "title": "npm run dev",
+     "content": [
+      {
+       "type": "content",
+       "content": {
+        "type": "text",
+        "text": "[current working directory <PROJECT>] (Start the dev server) [background]"
+       }
+      }
+     ],
+     "locations": [],
+     "kind": "execute"
+    }
+   }
+  },
+  {
+   "label": "shell_dir_outside",
+   "tool": "run_shell_command",
+   "args": {
+    "command": "git status",
+    "dir_path": "<OUTSIDE>"
+   },
+   "asked": false,
+   "tool_call_update": null,
+   "request": null
+  },
+  {
+   "label": "shell_remove",
+   "tool": "run_shell_command",
+   "args": {
+    "command": "rm -rf src",
+    "description": "Delete src"
+   },
+   "asked": true,
+   "tool_call_update": {
+    "sessionUpdate": "tool_call",
+    "toolCallId": "run_shell_command__run_shell_command_1795476827470_0",
+    "status": "pending",
+    "title": "rm -rf src",
+    "content": [
+     {
+      "type": "content",
+      "content": {
+       "type": "text",
+       "text": "[current working directory <PROJECT>] (Delete src)"
+      }
+     }
+    ],
+    "locations": [],
+    "kind": "execute"
+   },
+   "request": {
+    "sessionId": "0b3d26a4-3e91-4e68-92c8-c6a879d6c69f",
+    "options": [
+     {
+      "optionId": "proceed_always",
+      "name": "Allow for this session",
+      "kind": "allow_always"
+     },
+     {
+      "optionId": "proceed_once",
+      "name": "Allow",
+      "kind": "allow_once"
+     },
+     {
+      "optionId": "cancel",
+      "name": "Reject",
+      "kind": "reject_once"
+     }
+    ],
+    "toolCall": {
+     "toolCallId": "run_shell_command__run_shell_command_1795476827470_0",
+     "status": "pending",
+     "title": "rm -rf src",
+     "content": [
+      {
+       "type": "content",
+       "content": {
+        "type": "text",
+        "text": "[current working directory <PROJECT>] (Delete src)"
+       }
+      }
+     ],
+     "locations": [],
+     "kind": "execute"
+    }
+   }
+  },
+  {
+   "label": "shell_long_command",
+   "tool": "run_shell_command",
+   "args": {
+    "command": "node --test tests/some_long_test_name_0.js tests/some_long_test_name_1.js tests/some_long_test_name_2.js tests/some_long_test_name_3.js tests/some_long_test_name_4.js tests/some_long_test_name_5.js tests/some_long_test_name_6.js tests/some_long_test_name_7.js tests/some_long_test_name_8.js tests/some_long_test_name_9.js tests/some_long_test_name_10.js tests/some_long_test_name_11.js",
+    "description": "Run the long list of tests"
+   },
+   "asked": true,
+   "tool_call_update": {
+    "sessionUpdate": "tool_call",
+    "toolCallId": "run_shell_command__run_shell_command_1795476830423_0",
+    "status": "pending",
+    "title": "node --test tests/some_long_test_name_0.js tests/some_long_test_name_1.js tests/some_long_test_name_2.js tests/some_long_test_name_3.js tests/some_long_test_name_4.js tests/some_long_test_name_5.js tests/some_long_test_name_6.js tests/some_long_test_name_7.js tests/some_long_test_name_8.js tests/some_long_test_name_9.js tests/some_long_test_name_10.js tests/some_long_test_name_11.js",
+    "content": [
+     {
+      "type": "content",
+      "content": {
+       "type": "text",
+       "text": "[current working directory <PROJECT>] (Run the long list of tests)"
+      }
+     }
+    ],
+    "locations": [],
+    "kind": "execute"
+   },
+   "request": {
+    "sessionId": "0b3d26a4-3e91-4e68-92c8-c6a879d6c69f",
+    "options": [
+     {
+      "optionId": "proceed_always",
+      "name": "Allow for this session",
+      "kind": "allow_always"
+     },
+     {
+      "optionId": "proceed_once",
+      "name": "Allow",
+      "kind": "allow_once"
+     },
+     {
+      "optionId": "cancel",
+      "name": "Reject",
+      "kind": "reject_once"
+     }
+    ],
+    "toolCall": {
+     "toolCallId": "run_shell_command__run_shell_command_1795476830423_0",
+     "status": "pending",
+     "title": "node --test tests/some_long_test_name_0.js tests/some_long_test_name_1.js tests/some_long_test_name_2.js tests/some_long_test_name_3.js tests/some_long_test_name_4.js tests/some_long_test_name_5.js tests/some_long_test_name_6.js tests/some_long_test_name_7.js tests/some_long_test_name_8.js tests/some_long_test_name_9.js tests/some_long_test_name_10.js tests/some_long_test_name_11.js",
+     "content": [
+      {
+       "type": "content",
+       "content": {
+        "type": "text",
+        "text": "[current working directory <PROJECT>] (Run the long list of tests)"
+       }
+      }
+     ],
+     "locations": [],
+     "kind": "execute"
+    }
+   }
+  },
+  {
+   "label": "read_inside",
+   "tool": "read_file",
+   "args": {
+    "file_path": "notes.md"
+   },
+   "asked": false,
+   "tool_call_update": null,
+   "request": null
+  },
+  {
+   "label": "read_outside",
+   "tool": "read_file",
+   "args": {
+    "file_path": "<OUTSIDE>/secret.txt"
+   },
+   "asked": false,
+   "tool_call_update": null,
+   "request": null
+  },
+  {
+   "label": "list_directory",
+   "tool": "list_directory",
+   "args": {
+    "dir_path": "src"
+   },
+   "asked": false,
+   "tool_call_update": null,
+   "request": null
+  },
+  {
+   "label": "glob",
+   "tool": "glob",
+   "args": {
+    "pattern": "**/*.txt"
+   },
+   "asked": false,
+   "tool_call_update": null,
+   "request": null
+  },
+  {
+   "label": "grep_search",
+   "tool": "grep_search",
+   "args": {
+    "pattern": "hello"
+   },
+   "asked": false,
+   "tool_call_update": null,
+   "request": null
+  },
+  {
+   "label": "web_fetch",
+   "tool": "web_fetch",
+   "args": {
+    "prompt": "Summarize https://example.com/page"
+   },
+   "asked": true,
+   "tool_call_update": {
+    "sessionUpdate": "tool_call",
+    "toolCallId": "web_fetch__web_fetch_1795476833627_0",
+    "status": "pending",
+    "title": "Processing URLs and instructions from prompt: \"Summarize https://example.com/page\"",
+    "content": [],
+    "locations": [],
+    "kind": "fetch"
+   },
+   "request": {
+    "sessionId": "0b3d26a4-3e91-4e68-92c8-c6a879d6c69f",
+    "options": [
+     {
+      "optionId": "proceed_always",
+      "name": "Allow for this session",
+      "kind": "allow_always"
+     },
+     {
+      "optionId": "proceed_once",
+      "name": "Allow",
+      "kind": "allow_once"
+     },
+     {
+      "optionId": "cancel",
+      "name": "Reject",
+      "kind": "reject_once"
+     }
+    ],
+    "toolCall": {
+     "toolCallId": "web_fetch__web_fetch_1795476833627_0",
+     "status": "pending",
+     "title": "Processing URLs and instructions from prompt: \"Summarize https://example.com/page\"",
+     "content": [],
+     "locations": [],
+     "kind": "fetch"
+    }
+   }
+  },
+  {
+   "label": "google_web_search",
+   "tool": "google_web_search",
+   "args": {
+    "query": "gemini cli acp"
+   },
+   "asked": false,
+   "tool_call_update": null,
+   "request": null
+  },
+  {
+   "label": "save_memory",
+   "tool": "save_memory",
+   "args": {
+    "fact": "the owner likes tabs"
+   },
+   "asked": false,
+   "tool_call_update": null,
+   "request": null
+  }
+ ],
+ "all_requests_in_order": [
+  {
+   "sessionId": "0b3d26a4-3e91-4e68-92c8-c6a879d6c69f",
+   "options": [
+    {
+     "optionId": "proceed_always",
+     "name": "Allow for this session",
+     "kind": "allow_always"
+    },
+    {
+     "optionId": "proceed_once",
+     "name": "Allow",
+     "kind": "allow_once"
+    },
+    {
+     "optionId": "cancel",
+     "name": "Reject",
+     "kind": "reject_once"
+    }
+   ],
+   "toolCall": {
+    "toolCallId": "write_file__write_file_1795476806041_0",
+    "status": "pending",
+    "title": "Writing to src\\new_file.txt",
+    "content": [
+     {
+      "type": "diff",
+      "path": "<PROJECT>\\src\\new_file.txt",
+      "oldText": "",
+      "newText": "created by the model\n",
+      "_meta": {
+       "kind": "add"
+      }
+     }
+    ],
+    "locations": [
+     {
+      "path": "<PROJECT>\\src\\new_file.txt"
+     }
+    ],
+    "kind": "edit"
+   }
+  },
+  {
+   "sessionId": "0b3d26a4-3e91-4e68-92c8-c6a879d6c69f",
+   "options": [
+    {
+     "optionId": "proceed_always",
+     "name": "Allow for this session",
+     "kind": "allow_always"
+    },
+    {
+     "optionId": "proceed_once",
+     "name": "Allow",
+     "kind": "allow_once"
+    },
+    {
+     "optionId": "cancel",
+     "name": "Reject",
+     "kind": "reject_once"
+    }
+   ],
+   "toolCall": {
+    "toolCallId": "write_file__write_file_1795476806565_0",
+    "status": "pending",
+    "title": "Writing to notes.md",
+    "content": [
+     {
+      "type": "diff",
+      "path": "<PROJECT>\\notes.md",
+      "oldText": "# notes\r\noriginal\r\n",
+      "newText": "# notes\nchanged\n",
+      "_meta": {
+       "kind": "modify"
+      }
+     }
+    ],
+    "locations": [
+     {
+      "path": "<PROJECT>\\notes.md"
+     }
+    ],
+    "kind": "edit"
+   }
+  },
+  {
+   "sessionId": "0b3d26a4-3e91-4e68-92c8-c6a879d6c69f",
+   "options": [
+    {
+     "optionId": "proceed_always",
+     "name": "Allow for this session",
+     "kind": "allow_always"
+    },
+    {
+     "optionId": "proceed_once",
+     "name": "Allow",
+     "kind": "allow_once"
+    },
+    {
+     "optionId": "cancel",
+     "name": "Reject",
+     "kind": "reject_once"
+    }
+   ],
+   "toolCall": {
+    "toolCallId": "write_file__write_file_1795476806573_0",
+    "status": "pending",
+    "title": "Writing to src\\abs_inside.txt",
+    "content": [
+     {
+      "type": "diff",
+      "path": "<PROJECT>\\src\\abs_inside.txt",
+      "oldText": "",
+      "newText": "abs\n",
+      "_meta": {
+       "kind": "add"
+      }
+     }
+    ],
+    "locations": [
+     {
+      "path": "<PROJECT>\\src\\abs_inside.txt"
+     }
+    ],
+    "kind": "edit"
+   }
+  },
+  {
+   "sessionId": "0b3d26a4-3e91-4e68-92c8-c6a879d6c69f",
+   "options": [
+    {
+     "optionId": "proceed_always",
+     "name": "Allow for this session",
+     "kind": "allow_always"
+    },
+    {
+     "optionId": "proceed_once",
+     "name": "Allow",
+     "kind": "allow_once"
+    },
+    {
+     "optionId": "cancel",
+     "name": "Reject",
+     "kind": "reject_once"
+    }
+   ],
+   "toolCall": {
+    "toolCallId": "replace__replace_1795476806581_0",
+    "status": "pending",
+    "title": "src\\app.txt: hello world => hello gemini",
+    "content": [
+     {
+      "type": "diff",
+      "path": "<PROJECT>\\src\\app.txt",
+      "oldText": "hello world\nline two\n",
+      "newText": "hello gemini\nline two\n",
+      "_meta": {
+       "kind": "modify"
+      }
+     }
+    ],
+    "locations": [
+     {
+      "path": "<PROJECT>\\src\\app.txt"
+     }
+    ],
+    "kind": "edit"
+   }
+  },
+  {
+   "sessionId": "0b3d26a4-3e91-4e68-92c8-c6a879d6c69f",
+   "options": [
+    {
+     "optionId": "proceed_always",
+     "name": "Allow for this session",
+     "kind": "allow_always"
+    },
+    {
+     "optionId": "proceed_once",
+     "name": "Allow",
+     "kind": "allow_once"
+    },
+    {
+     "optionId": "cancel",
+     "name": "Reject",
+     "kind": "reject_once"
+    }
+   ],
+   "toolCall": {
+    "toolCallId": "write_file__write_file_1795476806591_0",
+    "status": "pending",
+    "title": "Writing to src\\emptied.txt",
+    "content": [
+     {
+      "type": "diff",
+      "path": "<PROJECT>\\src\\emptied.txt",
+      "oldText": "had content\r\n",
+      "newText": "",
+      "_meta": {
+       "kind": "delete"
+      }
+     }
+    ],
+    "locations": [
+     {
+      "path": "<PROJECT>\\src\\emptied.txt"
+     }
+    ],
+    "kind": "edit"
+   }
+  },
+  {
+   "sessionId": "0b3d26a4-3e91-4e68-92c8-c6a879d6c69f",
+   "options": [
+    {
+     "optionId": "proceed_always",
+     "name": "Allow for this session",
+     "kind": "allow_always"
+    },
+    {
+     "optionId": "proceed_once",
+     "name": "Allow",
+     "kind": "allow_once"
+    },
+    {
+     "optionId": "cancel",
+     "name": "Reject",
+     "kind": "reject_once"
+    }
+   ],
+   "toolCall": {
+    "toolCallId": "write_file__write_file_1795476806609_0",
+    "status": "pending",
+    "title": "Writing to .gemini\\settings.json",
+    "content": [
+     {
+      "type": "diff",
+      "path": "<PROJECT>\\.gemini\\settings.json",
+      "oldText": "",
+      "newText": "{}\n",
+      "_meta": {
+       "kind": "add"
+      }
+     }
+    ],
+    "locations": [
+     {
+      "path": "<PROJECT>\\.gemini\\settings.json"
+     }
+    ],
+    "kind": "edit"
+   }
+  },
+  {
+   "sessionId": "0b3d26a4-3e91-4e68-92c8-c6a879d6c69f",
+   "options": [
+    {
+     "optionId": "proceed_always",
+     "name": "Allow for this session",
+     "kind": "allow_always"
+    },
+    {
+     "optionId": "proceed_once",
+     "name": "Allow",
+     "kind": "allow_once"
+    },
+    {
+     "optionId": "cancel",
+     "name": "Reject",
+     "kind": "reject_once"
+    }
+   ],
+   "toolCall": {
+    "toolCallId": "run_shell_command__run_shell_command_1795476806630_0",
+    "status": "pending",
+    "title": "npm test",
+    "content": [
+     {
+      "type": "content",
+      "content": {
+       "type": "text",
+       "text": "[current working directory <PROJECT>] (Run the tests)"
+      }
+     }
+    ],
+    "locations": [],
+    "kind": "execute"
+   }
+  },
+  {
+   "sessionId": "0b3d26a4-3e91-4e68-92c8-c6a879d6c69f",
+   "options": [
+    {
+     "optionId": "proceed_always",
+     "name": "Allow for this session",
+     "kind": "allow_always"
+    },
+    {
+     "optionId": "proceed_once",
+     "name": "Allow",
+     "kind": "allow_once"
+    },
+    {
+     "optionId": "cancel",
+     "name": "Reject",
+     "kind": "reject_once"
+    }
+   ],
+   "toolCall": {
+    "toolCallId": "run_shell_command__run_shell_command_1795476809058_0",
+    "status": "pending",
+    "title": "node --test tests/",
+    "content": [
+     {
+      "type": "content",
+      "content": {
+       "type": "text",
+       "text": "[in src] (Run the tests)"
+      }
+     }
+    ],
+    "locations": [],
+    "kind": "execute"
+   }
+  },
+  {
+   "sessionId": "0b3d26a4-3e91-4e68-92c8-c6a879d6c69f",
+   "options": [
+    {
+     "optionId": "proceed_always",
+     "name": "Allow for this session",
+     "kind": "allow_always"
+    },
+    {
+     "optionId": "proceed_once",
+     "name": "Allow",
+     "kind": "allow_once"
+    },
+    {
+     "optionId": "cancel",
+     "name": "Reject",
+     "kind": "reject_once"
+    }
+   ],
+   "toolCall": {
+    "toolCallId": "run_shell_command__run_shell_command_1795476813698_0",
+    "status": "pending",
+    "title": "git push origin main",
+    "content": [
+     {
+      "type": "content",
+      "content": {
+       "type": "text",
+       "text": "[current working directory <PROJECT>] (Push)"
+      }
+     }
+    ],
+    "locations": [],
+    "kind": "execute"
+   }
+  },
+  {
+   "sessionId": "0b3d26a4-3e91-4e68-92c8-c6a879d6c69f",
+   "options": [
+    {
+     "optionId": "proceed_always",
+     "name": "Allow for this session",
+     "kind": "allow_always"
+    },
+    {
+     "optionId": "proceed_once",
+     "name": "Allow",
+     "kind": "allow_once"
+    },
+    {
+     "optionId": "cancel",
+     "name": "Reject",
+     "kind": "reject_once"
+    }
+   ],
+   "toolCall": {
+    "toolCallId": "run_shell_command__run_shell_command_1795476816897_0",
+    "status": "pending",
+    "title": "npm install left-pad",
+    "content": [
+     {
+      "type": "content",
+      "content": {
+       "type": "text",
+       "text": "[current working directory <PROJECT>] (Install a package)"
+      }
+     }
+    ],
+    "locations": [],
+    "kind": "execute"
+   }
+  },
+  {
+   "sessionId": "0b3d26a4-3e91-4e68-92c8-c6a879d6c69f",
+   "options": [
+    {
+     "optionId": "proceed_always",
+     "name": "Allow for this session",
+     "kind": "allow_always"
+    },
+    {
+     "optionId": "proceed_once",
+     "name": "Allow",
+     "kind": "allow_once"
+    },
+    {
+     "optionId": "cancel",
+     "name": "Reject",
+     "kind": "reject_once"
+    }
+   ],
+   "toolCall": {
+    "toolCallId": "run_shell_command__run_shell_command_1795476820090_0",
+    "status": "pending",
+    "title": "npm test && git diff --stat",
+    "content": [
+     {
+      "type": "content",
+      "content": {
+       "type": "text",
+       "text": "[current working directory <PROJECT>] (Test then diff)"
+      }
+     }
+    ],
+    "locations": [],
+    "kind": "execute"
+   }
+  },
+  {
+   "sessionId": "0b3d26a4-3e91-4e68-92c8-c6a879d6c69f",
+   "options": [
+    {
+     "optionId": "proceed_always",
+     "name": "Allow for this session",
+     "kind": "allow_always"
+    },
+    {
+     "optionId": "proceed_once",
+     "name": "Allow",
+     "kind": "allow_once"
+    },
+    {
+     "optionId": "cancel",
+     "name": "Reject",
+     "kind": "reject_once"
+    }
+   ],
+   "toolCall": {
+    "toolCallId": "run_shell_command__run_shell_command_1795476824462_0",
+    "status": "pending",
+    "title": "npm run dev",
+    "content": [
+     {
+      "type": "content",
+      "content": {
+       "type": "text",
+       "text": "[current working directory <PROJECT>] (Start the dev server) [background]"
+      }
+     }
+    ],
+    "locations": [],
+    "kind": "execute"
+   }
+  },
+  {
+   "sessionId": "0b3d26a4-3e91-4e68-92c8-c6a879d6c69f",
+   "options": [
+    {
+     "optionId": "proceed_always",
+     "name": "Allow for this session",
+     "kind": "allow_always"
+    },
+    {
+     "optionId": "proceed_once",
+     "name": "Allow",
+     "kind": "allow_once"
+    },
+    {
+     "optionId": "cancel",
+     "name": "Reject",
+     "kind": "reject_once"
+    }
+   ],
+   "toolCall": {
+    "toolCallId": "run_shell_command__run_shell_command_1795476827470_0",
+    "status": "pending",
+    "title": "rm -rf src",
+    "content": [
+     {
+      "type": "content",
+      "content": {
+       "type": "text",
+       "text": "[current working directory <PROJECT>] (Delete src)"
+      }
+     }
+    ],
+    "locations": [],
+    "kind": "execute"
+   }
+  },
+  {
+   "sessionId": "0b3d26a4-3e91-4e68-92c8-c6a879d6c69f",
+   "options": [
+    {
+     "optionId": "proceed_always",
+     "name": "Allow for this session",
+     "kind": "allow_always"
+    },
+    {
+     "optionId": "proceed_once",
+     "name": "Allow",
+     "kind": "allow_once"
+    },
+    {
+     "optionId": "cancel",
+     "name": "Reject",
+     "kind": "reject_once"
+    }
+   ],
+   "toolCall": {
+    "toolCallId": "run_shell_command__run_shell_command_1795476830423_0",
+    "status": "pending",
+    "title": "node --test tests/some_long_test_name_0.js tests/some_long_test_name_1.js tests/some_long_test_name_2.js tests/some_long_test_name_3.js tests/some_long_test_name_4.js tests/some_long_test_name_5.js tests/some_long_test_name_6.js tests/some_long_test_name_7.js tests/some_long_test_name_8.js tests/some_long_test_name_9.js tests/some_long_test_name_10.js tests/some_long_test_name_11.js",
+    "content": [
+     {
+      "type": "content",
+      "content": {
+       "type": "text",
+       "text": "[current working directory <PROJECT>] (Run the long list of tests)"
+      }
+     }
+    ],
+    "locations": [],
+    "kind": "execute"
+   }
+  },
+  {
+   "sessionId": "0b3d26a4-3e91-4e68-92c8-c6a879d6c69f",
+   "options": [
+    {
+     "optionId": "proceed_always",
+     "name": "Allow for this session",
+     "kind": "allow_always"
+    },
+    {
+     "optionId": "proceed_once",
+     "name": "Allow",
+     "kind": "allow_once"
+    },
+    {
+     "optionId": "cancel",
+     "name": "Reject",
+     "kind": "reject_once"
+    }
+   ],
+   "toolCall": {
+    "toolCallId": "web_fetch__web_fetch_1795476833627_0",
+    "status": "pending",
+    "title": "Processing URLs and instructions from prompt: \"Summarize https://example.com/page\"",
+    "content": [],
+    "locations": [],
+    "kind": "fetch"
+   }
+  }
+ ],
+ "tool_call_updates": [
+  {
+   "sessionUpdate": "tool_call",
+   "toolCallId": "write_file__write_file_1795476806041_0",
+   "status": "pending",
+   "title": "Writing to src\\new_file.txt",
+   "content": [
+    {
+     "type": "diff",
+     "path": "<PROJECT>\\src\\new_file.txt",
+     "oldText": "",
+     "newText": "created by the model\n",
+     "_meta": {
+      "kind": "add"
+     }
+    }
+   ],
+   "locations": [
+    {
+     "path": "<PROJECT>\\src\\new_file.txt"
+    }
+   ],
+   "kind": "edit"
+  },
+  {
+   "sessionUpdate": "tool_call",
+   "toolCallId": "write_file__write_file_1795476806565_0",
+   "status": "pending",
+   "title": "Writing to notes.md",
+   "content": [
+    {
+     "type": "diff",
+     "path": "<PROJECT>\\notes.md",
+     "oldText": "# notes\r\noriginal\r\n",
+     "newText": "# notes\nchanged\n",
+     "_meta": {
+      "kind": "modify"
+     }
+    }
+   ],
+   "locations": [
+    {
+     "path": "<PROJECT>\\notes.md"
+    }
+   ],
+   "kind": "edit"
+  },
+  {
+   "sessionUpdate": "tool_call",
+   "toolCallId": "write_file__write_file_1795476806573_0",
+   "status": "pending",
+   "title": "Writing to src\\abs_inside.txt",
+   "content": [
+    {
+     "type": "diff",
+     "path": "<PROJECT>\\src\\abs_inside.txt",
+     "oldText": "",
+     "newText": "abs\n",
+     "_meta": {
+      "kind": "add"
+     }
+    }
+   ],
+   "locations": [
+    {
+     "path": "<PROJECT>\\src\\abs_inside.txt"
+    }
+   ],
+   "kind": "edit"
+  },
+  {
+   "sessionUpdate": "tool_call",
+   "toolCallId": "replace__replace_1795476806581_0",
+   "status": "pending",
+   "title": "src\\app.txt: hello world => hello gemini",
+   "content": [
+    {
+     "type": "diff",
+     "path": "<PROJECT>\\src\\app.txt",
+     "oldText": "hello world\nline two\n",
+     "newText": "hello gemini\nline two\n",
+     "_meta": {
+      "kind": "modify"
+     }
+    }
+   ],
+   "locations": [
+    {
+     "path": "<PROJECT>\\src\\app.txt"
+    }
+   ],
+   "kind": "edit"
+  },
+  {
+   "sessionUpdate": "tool_call",
+   "toolCallId": "write_file__write_file_1795476806591_0",
+   "status": "pending",
+   "title": "Writing to src\\emptied.txt",
+   "content": [
+    {
+     "type": "diff",
+     "path": "<PROJECT>\\src\\emptied.txt",
+     "oldText": "had content\r\n",
+     "newText": "",
+     "_meta": {
+      "kind": "delete"
+     }
+    }
+   ],
+   "locations": [
+    {
+     "path": "<PROJECT>\\src\\emptied.txt"
+    }
+   ],
+   "kind": "edit"
+  },
+  {
+   "sessionUpdate": "tool_call",
+   "toolCallId": "write_file__write_file_1795476806609_0",
+   "status": "pending",
+   "title": "Writing to .gemini\\settings.json",
+   "content": [
+    {
+     "type": "diff",
+     "path": "<PROJECT>\\.gemini\\settings.json",
+     "oldText": "",
+     "newText": "{}\n",
+     "_meta": {
+      "kind": "add"
+     }
+    }
+   ],
+   "locations": [
+    {
+     "path": "<PROJECT>\\.gemini\\settings.json"
+    }
+   ],
+   "kind": "edit"
+  },
+  {
+   "sessionUpdate": "tool_call",
+   "toolCallId": "run_shell_command__run_shell_command_1795476806630_0",
+   "status": "pending",
+   "title": "npm test",
+   "content": [
+    {
+     "type": "content",
+     "content": {
+      "type": "text",
+      "text": "[current working directory <PROJECT>] (Run the tests)"
+     }
+    }
+   ],
+   "locations": [],
+   "kind": "execute"
+  },
+  {
+   "sessionUpdate": "tool_call",
+   "toolCallId": "run_shell_command__run_shell_command_1795476809058_0",
+   "status": "pending",
+   "title": "node --test tests/",
+   "content": [
+    {
+     "type": "content",
+     "content": {
+      "type": "text",
+      "text": "[in src] (Run the tests)"
+     }
+    }
+   ],
+   "locations": [],
+   "kind": "execute"
+  },
+  {
+   "sessionUpdate": "tool_call",
+   "toolCallId": "run_shell_command__run_shell_command_1795476811468_0",
+   "status": "in_progress",
+   "title": "git status --short",
+   "content": [
+    {
+     "type": "content",
+     "content": {
+      "type": "text",
+      "text": "[current working directory <PROJECT>]"
+     }
+    }
+   ],
+   "locations": [],
+   "kind": "execute"
+  },
+  {
+   "sessionUpdate": "tool_call",
+   "toolCallId": "run_shell_command__run_shell_command_1795476813698_0",
+   "status": "pending",
+   "title": "git push origin main",
+   "content": [
+    {
+     "type": "content",
+     "content": {
+      "type": "text",
+      "text": "[current working directory <PROJECT>] (Push)"
+     }
+    }
+   ],
+   "locations": [],
+   "kind": "execute"
+  },
+  {
+   "sessionUpdate": "tool_call",
+   "toolCallId": "run_shell_command__run_shell_command_1795476816897_0",
+   "status": "pending",
+   "title": "npm install left-pad",
+   "content": [
+    {
+     "type": "content",
+     "content": {
+      "type": "text",
+      "text": "[current working directory <PROJECT>] (Install a package)"
+     }
+    }
+   ],
+   "locations": [],
+   "kind": "execute"
+  },
+  {
+   "sessionUpdate": "tool_call",
+   "toolCallId": "run_shell_command__run_shell_command_1795476820090_0",
+   "status": "pending",
+   "title": "npm test && git diff --stat",
+   "content": [
+    {
+     "type": "content",
+     "content": {
+      "type": "text",
+      "text": "[current working directory <PROJECT>] (Test then diff)"
+     }
+    }
+   ],
+   "locations": [],
+   "kind": "execute"
+  },
+  {
+   "sessionUpdate": "tool_call",
+   "toolCallId": "run_shell_command__run_shell_command_1795476824462_0",
+   "status": "pending",
+   "title": "npm run dev",
+   "content": [
+    {
+     "type": "content",
+     "content": {
+      "type": "text",
+      "text": "[current working directory <PROJECT>] (Start the dev server) [background]"
+     }
+    }
+   ],
+   "locations": [],
+   "kind": "execute"
+  },
+  {
+   "sessionUpdate": "tool_call",
+   "toolCallId": "run_shell_command__run_shell_command_1795476827470_0",
+   "status": "pending",
+   "title": "rm -rf src",
+   "content": [
+    {
+     "type": "content",
+     "content": {
+      "type": "text",
+      "text": "[current working directory <PROJECT>] (Delete src)"
+     }
+    }
+   ],
+   "locations": [],
+   "kind": "execute"
+  },
+  {
+   "sessionUpdate": "tool_call",
+   "toolCallId": "run_shell_command__run_shell_command_1795476830423_0",
+   "status": "pending",
+   "title": "node --test tests/some_long_test_name_0.js tests/some_long_test_name_1.js tests/some_long_test_name_2.js tests/some_long_test_name_3.js tests/some_long_test_name_4.js tests/some_long_test_name_5.js tests/some_long_test_name_6.js tests/some_long_test_name_7.js tests/some_long_test_name_8.js tests/some_long_test_name_9.js tests/some_long_test_name_10.js tests/some_long_test_name_11.js",
+   "content": [
+    {
+     "type": "content",
+     "content": {
+      "type": "text",
+      "text": "[current working directory <PROJECT>] (Run the long list of tests)"
+     }
+    }
+   ],
+   "locations": [],
+   "kind": "execute"
+  },
+  {
+   "sessionUpdate": "tool_call",
+   "toolCallId": "read_file__read_file_1795476833490_0",
+   "status": "in_progress",
+   "title": "notes.md",
+   "content": [],
+   "locations": [
+    {
+     "path": "<PROJECT>\\notes.md"
+    }
+   ],
+   "kind": "read"
+  },
+  {
+   "sessionUpdate": "tool_call",
+   "toolCallId": "list_directory__list_directory_1795476833507_0",
+   "status": "in_progress",
+   "title": "src",
+   "content": [],
+   "locations": [],
+   "kind": "search"
+  },
+  {
+   "sessionUpdate": "tool_call",
+   "toolCallId": "glob__glob_1795476833515_0",
+   "status": "in_progress",
+   "title": "'**/*.txt'",
+   "content": [],
+   "locations": [],
+   "kind": "search"
+  },
+  {
+   "sessionUpdate": "tool_call",
+   "toolCallId": "grep_search__grep_search_1795476833523_0",
+   "status": "in_progress",
+   "title": "'hello'",
+   "content": [],
+   "locations": [],
+   "kind": "search"
+  },
+  {
+   "sessionUpdate": "tool_call",
+   "toolCallId": "web_fetch__web_fetch_1795476833627_0",
+   "status": "pending",
+   "title": "Processing URLs and instructions from prompt: \"Summarize https://example.com/page\"",
+   "content": [],
+   "locations": [],
+   "kind": "fetch"
+  },
+  {
+   "sessionUpdate": "tool_call",
+   "toolCallId": "google_web_search__google_web_search_1795476833634_0",
+   "status": "in_progress",
+   "title": "Searching the web for: \"gemini cli acp\"",
+   "content": [],
+   "locations": [],
+   "kind": "search"
+  }
+ ],
+ "stderr_tail": "er:2108:10)\n    at Module.load (node:internal/modules/cjs/loader:1690:32)\n    at Module._load (node:internal/modules/cjs/loader:1480:12)\n    at wrapModuleLoad (node:internal/modules/cjs/loader:261:19)\n    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:171:5)\n    at node:internal/main/run_main_module:33:47\n\nNode.js v26.13.0\nRipgrep is not available. Falling back to GrepTool.\nRipgrep is not available. Falling back to GrepTool.\n[STARTUP] Phase 'cli_startup' was started but never ended. Skipping metrics.\n(node:39288) [DEP0190] DeprecationWarning: Passing args to a child process with shell option true can lead to security vulnerabilities, as the arguments are not escaped, only concatenated.\n(Use `node --trace-deprecation ...` to show where the warning was created)\n"
+}
