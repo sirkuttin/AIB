@@ -242,6 +242,23 @@ panelTest('right panel: an idle chat with finished helpers is collapsed below ("
   w.end();
 });
 
+panelTest('right panel: helpers that appear after an idle chat was first read are picked up (no new turn needed to refresh it)', async (lab) => {
+  const page = lab.page;
+  const w = await working(lab, 'WORKEND', [['Find rounding bug', 'running']]);
+  await lab.select(w);
+  await joined(page, w);
+  const late = await idleChat(lab, 'LATEEND'); // read first with no helpers
+  await waitIdle(page, `i.heads[0] === '||Claude Code|off'`, 'late: read, no caret, no count');
+  await settle(4500); // longer than the settle window after its turn end: only a change in its helpers can refresh it now
+  const [s, body] = await lab.web.post('prompt', { id: late.id, text: late.nextPrompt(), clientMessageId: 'late-2' });
+  assertEquals(s, 200, JSON.stringify(body));
+  helpers(late, 'lateend', [['Late helper one', 'completed'], ['Late helper two', 'completed']]);
+  late.end();
+  await turnWritten(lab, late, ['Late helper one', 'Late helper two']);
+  await waitIdle(page, `i.heads[0] === '▸|2 finished|Claude Code|on'`, 'late: the helpers that came after the first read show as "2 finished"');
+  w.end();
+});
+
 panelTest('right panel: opening an idle chat moves only the accent: it does not expand, nothing moves or resizes', async (lab) => {
   const page = lab.page;
   const w = await working(lab, 'WORKEND', [['Find rounding bug', 'running']]);

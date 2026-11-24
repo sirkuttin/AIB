@@ -5925,6 +5925,7 @@
       } catch {}
     }
     a.at = now;
+    a.hsig = helperSigOf(key);
   }
   /* Which chats Activity lists: the sidebar's own status words (status-words.js) say Working. */
   function chatWorking(c) {
@@ -6198,6 +6199,16 @@
     }
   }
   const IDLE_READS = 3; // idle chats read per tick
+  const IDLE_REREAD_MS = 10000; // an idle chat on screen is re-read at most this often when nothing signalled a change
+  /* What the swarm list says about the helpers and subagents of chat `key`: changes when one is added, ends or is renamed. */
+  function helperSigOf(key) {
+    const out = [];
+    for (const h of swarm.list) {
+      const p = helperParent(h);
+      if (p && aliasKey(p) === key) out.push(`${h.id}:${h.kind || ''}:${h.state || ''}`);
+    }
+    return out.join('|');
+  }
   function projectSection(key) {
     let sec = projAct.secs.get(key);
     if (sec) return sec;
@@ -6450,12 +6461,15 @@
          An expanded one is NOT re-read at the poll pace: it is idle, nothing changes (it is read when it is expanded, if it
          was never read). At most IDLE_READS idle chats are read per tick, expanded ones first, so Activity never reads
          every idle chat at once; the rest follow at the next ticks (see below). */
-      const due = [];
+      const due = [],
+        now = Date.now();
       for (const key of projAct.idle) {
         if (keys.includes(key)) continue;
         const a = paneAct.get(key),
           c = conversations.find((x) => aliasKey(x) === key);
-        if (!a?.at || (c && a.at < lastActiveOf(c))) due.push(key);
+        /* Re-read when the chat was active since, when its helpers/subagents changed in the swarm list this page already polls
+           (a read made before the helper records existed would otherwise stay empty), and at a slow pace as a backstop. */
+        if (!a?.at || (c && a.at < lastActiveOf(c)) || a.hsig !== helperSigOf(key) || now - a.at > IDLE_REREAD_MS) due.push(key);
       }
       due.sort((x, y) => Number(idleOpen(projAct.pk, y)) - Number(idleOpen(projAct.pk, x)));
       keys.push(...due.slice(0, IDLE_READS));
