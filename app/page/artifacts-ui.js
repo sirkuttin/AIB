@@ -589,13 +589,21 @@
       hit = names.find(isArtifactTool);
     if (!hit) return null;
     let op = '';
-    for (const n of names) {
+    /* The merged tools: `artifacts` + action list, `publish` with an `id` (the old `update`). Old names keep working below. */
+    const merged = names.find((n) => /(?:^|__|\W)artifacts\s*$/i.test(n) && isArtifactTool(n));
+    if (merged) {
+      const act = String(inputOf(row).action || '').toLowerCase();
+      op = act === 'list' ? 'list' : '';
+      if (!op) return null;
+    }
+    for (const n of op ? [] : names) {
       const m = /(publish|update|list)\s*$/i.exec(n) || /studio_artifact\W+(publish|update|list)/i.exec(n);
       if (m) {
         op = m[1].toLowerCase();
         break;
       }
     }
+    if (op === 'publish' && inputOf(row).id) op = 'update'; // the merged publish with an id is the old update
     if (!op) {
       const all = names.join(' ').toLowerCase();
       op = /publish/.test(all) ? 'publish' : /update/.test(all) ? 'update' : /list/.test(all) ? 'list' : '';

@@ -64,6 +64,7 @@ import { artifactToolCommand } from '../artifacts/mcp.ts';
 import { ArtifactMcpHttp, FORWARD_FILE, forwardEntry, HOOK_EVENT_HEADER, HOOK_KEY_HEADER, HOOK_NONCE_HEADER, httpEntry, ownForwardFile, ownTunnelEntry, tunnelEntry } from '../artifacts/mcp_http.ts';
 import { toolSignatures, WSL_TOOL_GROUPS } from '../artifacts/mcp.ts';
 import { ServedRecord, staleReasons } from '../artifacts/served.ts';
+import { setServedNames } from '../artifacts/tool_ref.ts';
 import { GEMINI_TRUST_ENV, GEMINI_TRUST_FILE, trustFolders } from '../agents/gemini_trust.ts';
 import { headerOf, mcpTunnelGate, type TunnelAnswer } from '../wsl/mcp_tunnel.ts';
 import { wslRemote, wslSubagentChatClosed } from '../wsl/subagents.ts';
@@ -478,6 +479,8 @@ export class Aib {
     this.hasStateDir = options.stateDir !== undefined && options.stateDir !== null;
     this.stateDir = this.hasStateDir ? String(options.stateDir) : join(TESTS_DIR, 'agent-studio-state');
     this.served = this.hasStateDir ? new ServedRecord(this.stateDir, APP_VERSION) : null;
+    const served = this.served;
+    if (served) setServedNames((id) => served.get(id)?.tools?.names); // toolRef: name AIB tools the way each chat knows them
     const withKeeper = construct.keeper !== undefined ? !!construct.keeper : this.hasStateDir && keeperWanted(this.stateDir);
     this.instanceId = withKeeper && this.hasStateDir ? keeperInstanceId(this.stateDir) : crypto.randomUUID().replaceAll('-', '');
     this.ownerProbe = (provider, sessionId, excluded) => this.#cmdlineOwner(provider, sessionId, excluded);

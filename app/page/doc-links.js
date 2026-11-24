@@ -188,6 +188,9 @@
     }
     return null;
   };
+  /* The merged tools (`doc` / `drawing` + action) read as the old per-action names, so one reader serves both shapes. Transcripts keep the
+     old names (doc_edit, drawing_create) for good, so both stay. */
+  const MERGED_TOOL = /(?:^|__|[^a-z_])(doc|drawing)$/i;
   function toolNameOf(row) {
     const names = [];
     if (row && row.raw) {
@@ -198,6 +201,13 @@
     for (const n of names) {
       const m = typeof n === 'string' ? DOC_TOOL.exec(n.trim()) : null;
       if (m) return m[1].toLowerCase();
+    }
+    for (const n of names) {
+      const m = typeof n === 'string' ? MERGED_TOOL.exec(n.trim()) : null;
+      if (!m) continue;
+      const inp = (row.raw ? asObj(row.raw.rawInput) : asObj(row.call && row.call.input)) || {};
+      const act = typeof inp.action === 'string' ? inp.action.toLowerCase() : '';
+      return /^[a-z_]{2,24}$/.test(act) ? m[1].toLowerCase() + '_' + act : '';
     }
     return '';
   }
@@ -288,7 +298,7 @@
       case 'doc_undo':
         return 'Undid its last edit in ' + title;
       case 'doc_page': {
-        const a = String(inp.action || ''),
+        const a = String(inp.change || inp.action || ''),
           t = String(inp.title || res.title || page || '');
         if (a === 'add') return 'Added page ' + t + ' to ' + title;
         if (a === 'rename') return 'Renamed a page to ' + t + ' in ' + title;
@@ -304,6 +314,8 @@
         return 'Replied to a comment in ' + title;
       case 'doc_resolve':
         return 'Resolved a comment in ' + title;
+      case 'doc_help':
+        return 'Read the doc help';
       case 'doc_history':
         return 'Looked at the history of ' + title;
       case 'doc_restore':

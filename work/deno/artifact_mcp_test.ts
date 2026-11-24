@@ -281,7 +281,7 @@ Deno.test('a "doc" means an AIB doc: the MCP instructions, doc_create and publis
   assertEquals(result.instructions, INSTRUCTIONS);
   const instructions = result.instructions as string;
   assert(instructions.includes(DOCS_RULE), 'the doc rule is in the instructions');
-  for (const words of ['AIB doc', 'doc_create', 'claude.ai Docs', 'Google Docs', 'unless the user names', 'Artifacts panel']) {
+  for (const words of ['AIB doc', 'the `doc` tool', 'claude.ai Docs', 'Google Docs', 'unless the user names', 'Artifacts panel']) {
     assert(instructions.includes(words), words);
   }
   const tools = ((await shim.request('tools/list')).result as Json).tools as Json[];
@@ -295,7 +295,7 @@ Deno.test('a "doc" means an AIB doc: the MCP instructions, doc_create and publis
 
 Deno.test('the ACP system prompt says the same about docs as the MCP instructions', () => {
   assert(ARTIFACT_PROMPT.includes(DOCS_RULE));
-  assert(ARTIFACT_PROMPT.includes('mcp__studio_artifact__doc_create'), 'names the full tool, for agents whose tools load late');
+  assert(ARTIFACT_PROMPT.includes('mcp__studio_artifact__doc'), 'names the full tool, for agents whose tools load late');
   assert(!ARTIFACT_PROMPT.includes('Markdown document'), 'a Markdown document is a doc now, not something to publish');
 });
 

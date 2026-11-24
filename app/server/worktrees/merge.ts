@@ -30,6 +30,7 @@ import { GitError, type WorktreeRecord } from './worktrees.ts';
 import { isdir, join, normcase } from '../platform/ospath.ts';
 import { pathStr } from '../platform/pypath.ts';
 import { pathOf, realpath } from '../state/paths.ts';
+import { toolRef } from '../artifacts/tool_ref.ts';
 import { entriesOf, readJsonFile, saveJson } from '../state/json.ts';
 import { clip, isDict, PY_SPACE, pyStr, pyStrip, pyTruthy } from '../core/py.ts';
 import { getLogger } from '../core/log.ts';
@@ -1508,7 +1509,7 @@ export function clashNote(files: string[], stashName: string): string {
   return `Your edits clash with the merge in: ${shownList(files, 6)}. They are saved in the stash named ${stashName}`;
 }
 
-export function clashGuidance(chat: { base: string; project: string }, files: string[], stashName: string, canEdit: boolean): string {
+export function clashGuidance(chat: { base: string; project: string; id?: string }, files: string[], stashName: string, canEdit: boolean): string {
   const shown = shownList(files, 12);
   let text =
     `AIB merged this chat into ${chat.base}, but the user also had unsaved edits in the project folder, and they clash with the merge in: ${shown}. ` +
@@ -1516,11 +1517,11 @@ export function clashGuidance(chat: { base: string; project: string }, files: st
   if (canEdit) {
     text +=
       `Offer to combine the two versions. If the user agrees, edit those files in the project folder (${chat.project}) so they keep what both sides ` +
-      'intended and contain no conflict markers (<<<<<<<, =======, >>>>>>>), show the user the result, then call the resolve_edit_clash tool with action "check". ';
+      `intended and contain no conflict markers (<<<<<<<, =======, >>>>>>>), show the user the result, then call ${toolRef(chat.id, 'resolve_edit_clash', 'check').replace(/^resolve_edit_clash/, 'the resolve_edit_clash tool')}. `;
   }
   text +=
-    'Otherwise the user can choose "Keep my version" (their edits win in those files; call resolve_edit_clash with action "keep_mine" only when they say so) ' +
-    'or "I\'ll sort it myself" (change nothing; call resolve_edit_clash with action "leave" and tell them the stash name). Do not choose for them.';
+    `Otherwise the user can choose "Keep my version" (their edits win in those files; call ${toolRef(chat.id, 'resolve_edit_clash', 'keep_mine')} only when they say so) ` +
+    `or "I'll sort it myself" (change nothing; call ${toolRef(chat.id, 'resolve_edit_clash', 'leave')} and tell them the stash name). Do not choose for them.`;
   return text;
 }
 

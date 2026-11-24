@@ -895,6 +895,18 @@
     publish: 'Publish',
     update: 'Update artifact',
   };
+  /* The merged tools (doc, drawing, publish, artifacts, helper, merge_into_project) + action: "Doc · edit", "Published page".
+     Old names keep their labels above, for good (old transcripts). */
+  const MERGED_AIB = { doc: 'Doc', drawing: 'Drawing', artifacts: 'Artifacts', helper: 'Helper', merge_into_project: 'Merge' };
+  function mergedLabel(name, input) {
+    const m = /^mcp__studio[-_]artifact__(\w+)$/.exec(String(name || ''));
+    if (!m) return '';
+    const tool = m[1];
+    if (tool === 'publish') return input && input.id ? 'Published a new version' : 'Published page';
+    if (!MERGED_AIB[tool]) return '';
+    const act = input && typeof input.action === 'string' && /^[a-z_]{1,24}$/.test(input.action) ? input.action.replace(/_/g, ' ') : '';
+    return MERGED_AIB[tool] + (act ? ' · ' + act : '');
+  }
   const aibTool = (name) => {
     const m = /^mcp__studio_artifact__(\w+)$/.exec(String(name || ''));
     return m ? m[1] : '';
@@ -978,6 +990,9 @@
       if (['agent', 'task', 'subagent'].includes(n)) {
         label = 'task';
         text = (n === 'agent' ? 'Agent' : 'Task') + ': ' + (firstText(input) || 'launched');
+      } else if (mergedLabel(name, input)) {
+        const what = oneLine(strOf(input, ['docTitle', 'doc', 'title', 'id']));
+        text = mergedLabel(name, input) + (what ? ': ' + what : '');
       } else if (AIB_TOOLS[aibTool(name)]) {
         const what = oneLine(strOf(input, ['docTitle', 'doc', 'title', 'id']));
         text = AIB_TOOLS[aibTool(name)] + (what ? ': ' + what : '');

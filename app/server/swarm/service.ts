@@ -41,6 +41,7 @@ import { canonicalName } from '../allow/paths.ts';
 import { WSL_TOOL_GROUPS } from '../artifacts/mcp.ts';
 import { isWslRef } from '../platform/location.ts';
 import { pathOf } from '../state/paths.ts';
+import { toolRef } from '../artifacts/tool_ref.ts';
 
 const log = getLogger('swarm');
 
@@ -1806,7 +1807,7 @@ export class Swarm {
           ? `${w.label} finished, but the chat that started it is gone, so its work did not land${count}.`
           : `${w.label} did not land${count}.`;
         const text = `${what}${to.own || why === 'orphan' ? '' : ' The chat that started it is gone, so it comes to you.'} ` +
-          `Land it, merge it by hand, or discard it. Call unlanded_work with work "${w.id}" and action land, diff or discard (discard needs a reason).`;
+          `Land it, merge it by hand, or discard it. Call ${toolRef(s(to.chat.id), 'unlanded_work')} with work "${w.id}" and action land, diff or discard (discard needs a reason).`;
         if (await this.#wakeParent({ id: w.id }, s(to.chat.id), 'handoff', text)) this.#recordHandoff(w.id, to.chat, why, n);
       } catch (error) {
         log.exception(error, 'Handing unlanded work %s to the main agent failed', w.id);

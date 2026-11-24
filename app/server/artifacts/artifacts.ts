@@ -19,6 +19,7 @@ import { isOSError, OSError } from '../state/base.ts';
 import { abspath, pathOf, realpath } from '../state/paths.ts';
 import { pageAllowed, type Principal } from '../web/security.ts';
 import { check as checkArtifactKey } from './keys.ts';
+import { toolRef } from './tool_ref.ts';
 
 const log = getLogger('artifacts');
 
@@ -1831,8 +1832,8 @@ export class Service {
       }
       if (isStr(existing.becameDoc) && existing.becameDoc) {
         throw new ArtifactError(
-          `This artifact is now the doc "${existing.becameDoc}": the user edits it there. Read it with doc_read and change it with ` +
-            'doc_edit (the never-overwrite guards keep what the user typed); do not publish it again.',
+          `This artifact is now the doc "${existing.becameDoc}": the user edits it there. Read it with ${toolRef(conversationId, 'doc_read')} and change it with ` +
+            `${toolRef(conversationId, 'doc_edit')} (the never-overwrite guards keep what the user typed); do not publish it again.`,
           409,
           'became_doc',
         );

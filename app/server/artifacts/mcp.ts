@@ -33,6 +33,7 @@ import {
   toolPlan,
   WSL_PATH_NOTE,
 } from './mcp_tools.ts';
+import { newNames } from './tool_ref.ts';
 import { openText } from '../state/sealed.ts';
 
 type Json = Record<string, unknown>;
@@ -42,7 +43,7 @@ export const SERVER_VERSION = APP_VERSION;
 export const SUPPORTED_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
 const HTTP_TIMEOUT_MS = 60_000;
 
-export const INSTRUCTIONS = "These are AIB's own tools, for the app the user is chatting in. " + DOCS_RULE + ' Use publish to show the ' +
+export const INSTRUCTIONS = "These are AIB's own tools, for the app the user is chatting in. " + DOCS_RULE + ' Use `publish` to show the ' +
   "user an HTML page, diagram, chart, image or one-off report in AIB's Artifacts panel; not for source code. When you mention an " +
   'artifact in a reply, write it as a Markdown link [Title](studio-artifact://<id>).';
 
@@ -520,6 +521,33 @@ async function docTool(ctx: ToolContext, name: string, args: Json): Promise<Json
   return { content: [{ type: 'text', text: JSON.stringify(result) }], ...(ok ? {} : { isError: true }) };
 }
 
+/**
+ * A tool result with the tool names in its words (message, note, error, help) in the new names: the tool was called by its new name,
+ * so its caller knows only those. Document content in the result is left alone.
+ */
+const WORD_FIELDS = new Set(['message', 'note', 'error', 'help']);
+function namedForNew(result: Json): Json {
+  const content = result.content;
+  if (!Array.isArray(content)) return result;
+  const fix = (text: string): string => {
+    try {
+      const data = JSON.parse(text);
+      if (!isDict(data)) return text;
+      let changed = false;
+      for (const [k, v] of Object.entries(data)) {
+        if (WORD_FIELDS.has(k) && typeof v === 'string') {
+          const n = newNames(v);
+          if (n !== v) { data[k] = n; changed = true; }
+        }
+      }
+      return changed ? JSON.stringify(data) : text;
+    } catch {
+      return result.isError ? newNames(text) : text; // a plain-text refusal
+    }
+  };
+  return { ...result, content: content.map((c) => (isDict(c) && typeof c.text === 'string' ? { ...c, text: fix(c.text) } : c)) };
+}
+
 /** The refusals that say the op itself was malformed: the edit rules come back with them (an agent that skipped doc help learns them here). */
 const EDIT_GRAMMAR_REFUSALS = new Set(['bad_op', 'missing_guard']);
 function withEditHelp(result: Json): Json {
@@ -610,9 +638,10 @@ function consolidatedHandlers(ctx: ToolContext): Record<string, Handler> {
       if (name === 'merge_into_project') return worktreeCall(c, action);
       if (name === 'doc' && action === 'help') return { content: [{ type: 'text', text: helpText(clean.topic) }] };
       const call = legacyCall(name, action, clean);
-      if (name === 'helper') return swarmTool(c, call.tool, call.args);
+      // refusals and notes are written with the old names: a caller of the new names is told the new ones
+      if (name === 'helper') return namedForNew(await swarmTool(c, call.tool, call.args));
       const result = await docTool(c, call.tool, call.args);
-      return name === 'doc' && action === 'edit' ? withEditHelp(result) : result;
+      return namedForNew(name === 'doc' && action === 'edit' ? withEditHelp(result) : result);
     };
   }
   return out;

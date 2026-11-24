@@ -682,11 +682,11 @@ export function resolveProgram(program: string, env: Record<string, string>): st
  * Codex connects to MCP servers in the background: a first prompt sent as the chat opens can find no studio_artifact tools yet
  * (seen in real runs: an ALL_TOOLS search 1 s into the turn came back empty, the same search a second later listed them).
  */
-export const TOOLS_LOADING = 'The studio_artifact tools (full names like mcp__studio_artifact__doc_create) can take a few seconds to ' +
+export const TOOLS_LOADING = 'The studio_artifact tools (full names like mcp__studio_artifact__doc) can take a few seconds to ' +
   'appear at the start of a chat: if you do not see them yet, wait a few seconds and look again (more than once) before telling ' +
   'the user they are missing. In Codex they are never listed in your tool list: they are deferred nested tools of `exec`, so run ' +
   '`text(JSON.stringify(ALL_TOOLS.filter(t => t.name.startsWith("mcp__studio_artifact__")).map(t => t.name)))` in `exec` to see them, ' +
-  'then call one as `await tools.mcp__studio_artifact__publish({...})` (the same for doc_create, doc_read, doc_edit and the rest).';
+  'then call one as `await tools.mcp__studio_artifact__publish({...})` (the same for doc, artifacts, drawing and the rest, each with its `action`).';
 
 /**
  * How the agent writes a command for the user to run. AIB puts a "Run in terminal" button on a fenced shell block in a reply
@@ -703,8 +703,8 @@ export const ARTIFACT_PROMPT =
   'mean this viewer and its studio_artifact tool. ' + DOCS_RULE + ' When you make something else the user ' +
   'should look at rather than source code (an HTML page, one-off report, chart, diagram, SVG or image), ' +
   "save its file under the project's outputs/ folder (for example outputs/report.html), never in the project root " +
-  'or among source files, then publish it with the studio_artifact publish tool (pass a file path or the content) and mention it in your reply ' +
-  'as the Markdown link the tool returns. When you change it, use the studio_artifact update tool so it gets a new ' +
+  'or among source files, then publish it with the `publish` tool (pass a file path or the content) and mention it in your reply ' +
+  'as the Markdown link the tool returns. When you change it, call `publish` again with its `id` so it gets a new ' +
   'version, and do not tell the user to open the file by hand. Only publish to claude.ai (or any other web ' +
   'artifact or sharing service) when the user explicitly asks for a claude.ai page or a shareable link. ' + TOOLS_LOADING + ' ' + COMMANDS_RULE;
 
@@ -716,10 +716,10 @@ export const ARTIFACT_PROMPT =
 export const WSL_ARTIFACT_PROMPT =
   'You are running inside AIB, which shows artifacts beside the chat; when the user says "artifact" they ' +
   'mean this viewer and its studio_artifact tool. This project is in WSL. When you make something the user should look at rather ' +
-  'than source code (an HTML page, one-off report, chart, diagram, SVG, image or PDF), publish it with the studio_artifact publish ' +
+  'than source code (an HTML page, one-off report, chart, diagram, SVG, image or PDF), publish it with the `publish` ' +
   'tool, by its content or by its Linux `path` (relative to the chat folder, or absolute inside the chat or project folder; any ' +
   'kind up to 25 MB, PNG and other images included), and mention it in your reply as the Markdown link the tool returns. AIB copies ' +
-  'a file when you publish it: after changing the file, call update with the same path (or the new content) to publish the new ' +
+  'a file when you publish it: after changing the file, call `publish` with its `id` and the same path (or the new content) to publish the new ' +
   'version. AIB helper tools are not available in WSL projects. ' + TOOLS_LOADING + ' ' + COMMANDS_RULE.replace(' (powershell on Windows)', '');
 
 /** How long codex-acp waits for AIB's tool server before the first turn (architect review S5: 10 s, the forwarder retries 15 s itself). */
@@ -729,7 +729,7 @@ export const WORKTREE_PROMPT =
   'In this chat you work in your own copy of the project, on the git branch {branch} (it started from {base}). ' +
   'Helpers you start work in their own copies: when one finishes, merge its branch into yours with `git merge <branch>`. ' +
   "When your work is done and tested (for example before a release), merge it into the project's main branch yourself with the " +
-  "merge_into_project tool; you don't need to ask first. If main has moved, the tool brings main into your copy: resolve any " +
+  "merge_into_project tool (action merge); you don't need to ask first. If main has moved, the tool brings main into your copy: resolve any " +
   'conflicts there, commit, and call it again.';
 
 /**

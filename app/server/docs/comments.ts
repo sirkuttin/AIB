@@ -16,6 +16,7 @@
 import * as Y from 'yjs';
 import { DocRefusal } from './live_doc.ts';
 import { idOf, textOf } from './blocks.ts';
+import { toolRef } from '../artifacts/tool_ref.ts';
 
 export const COMMENTS = 'comments';
 export const DETACHED_NOTE = 'Text removed';
@@ -423,7 +424,7 @@ export class Comments {
 }
 
 /** A thread as a chat message for the doc's linked chat ("Send to agent"). */
-export function commentMessage(docName: string, file: string, v: ThreadView): string {
+export function commentMessage(docName: string, file: string, v: ThreadView, chatId?: string): string {
   const where = v.on === 'doc'
     ? 'a note on the whole doc'
     : `a comment on the words "${v.quote}"${v.detached ? ' (those words have since been removed)' : ''}`;
@@ -432,7 +433,7 @@ export function commentMessage(docName: string, file: string, v: ThreadView): st
     '',
     ...v.replies.map((r) => `${r.by === 'user' ? 'User' : r.by}: ${r.text}`),
     '',
-    `Make the change it asks for with doc_edit on "${docName}" (if it asks for one), then answer in the thread with doc_reply ` +
+    `Make the change it asks for with ${toolRef(chatId, 'doc_edit')} on "${docName}" (if it asks for one), then answer in the thread with ${toolRef(chatId, 'doc_reply')} ` +
     `{"doc":"${docName}","thread":"${v.thread}"}: say what you changed, or why not. Do not resolve it unless the user asks.`,
   ];
   return lines.join('\n');

@@ -10,10 +10,10 @@ export const DOC_INSTRUCTIONS = 'Docs are shared with the user, who may be typin
   'target ({"kind":"find","text":"<the exact words as they stand>"}, no guard needed); a whole-block replace, delete, move or set ' +
   'needs "ifHash" = its h and "ifRev" = the rev of the read that showed it (several ids: "ifRev" alone). `guard_mismatch` or ' +
   '`find_none` means the user changed it after your read: their edit wins; redo yours from what stands, never over their text, ' +
-  'never with force. Later turns start with doc_changes {sinceRev: <your last rev>}, not a full read. The user comments on words; ' +
-  'doc_comments {since: <your last seq>} shows the threads; answer with doc_reply. An edit that would remove words a comment hangs ' +
+  'never with force. Later turns start with doc action changes {sinceRev: <your last rev>}, not a full read. The user comments on words; ' +
+  'doc action comments {since: <your last seq>} shows the threads; answer with action reply. An edit that would remove words a comment hangs ' +
   'on is refused `anchors_affected`: keep them. To point the user at a doc or a page in your reply, write a Markdown link ' +
-  '[<doc title> › <page title>](aib-doc://<doc name>/<page id>) (page ids: doc_read outline; [<doc title>](aib-doc://<doc name>) for ' +
+  '[<doc title> › <page title>](aib-doc://<doc name>/<page id>) (page ids: doc read, mode outline; [<doc title>](aib-doc://<doc name>) for ' +
   'the whole doc): AIB shows it as a chip that opens the page, even after a rename. Never name the doc files or aib-docs/ paths.';
 
 /**
@@ -23,7 +23,7 @@ export const DOC_INSTRUCTIONS = 'Docs are shared with the user, who may be typin
  */
 export const DOCS_RULE = 'In AIB, a "doc" or "document" means an AIB doc: a shared, editable document in the project that the user ' +
   'opens in the Docs tab. When the user asks for a doc or a document (to make, write, draft, read or edit one), use the doc tools of ' +
-  'the studio_artifact server: doc_create to make one; doc_list, doc_read and doc_edit for the ones that exist. Do not use any other ' +
+  'the studio_artifact server: the `doc` tool (action create to make one; list, read and edit for the ones that exist). Do not use any other ' +
   'docs skill, plugin or connector for it (such as a "docs" skill for claude.ai Docs, or Google Docs) unless the user names that ' +
   'service, and do not go looking for a skill file first: the doc tools need nothing else.';
 

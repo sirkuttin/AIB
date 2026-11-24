@@ -564,7 +564,7 @@ export async function sendComment(ctx: WebContext, doc: OpenDoc, thread: unknown
   await ctx.artifacts.refresh().catch(() => {});
   const connection = ctx.artifacts.connectionOf(chat);
   if (!connection) return [409, { error: 'That chat is not open: open it, then send again.', code: 'chat_not_open', chat }];
-  const text = commentMessage(doc.name, linuxPath(doc.file), view); // a WSL doc: the path the agent in the distro can open
+  const text = commentMessage(doc.name, linuxPath(doc.file), view, ctx.artifacts.chatOf(connection)); // a WSL doc: the path the agent in the distro can open
   const clientMessageId = `doc-comment-${doc.id}-${view.thread}-${view.replies.length}`;
   const [status, payload] = await ctx.host.liveCall('queue', { id: connection, text, clientMessageId });
   if (status !== 200) return [status, payload];
