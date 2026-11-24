@@ -105,6 +105,24 @@ export interface SubagentRecord {
   background?: boolean;
   /** The live chat id it was started under, when a later chat of the same conversation adopted it (a restart: adoptPrevious). */
   adoptedFrom?: string;
+  /**
+   * A WSL chat's subagent (owner 2026-11-23): the distro's helper owns the real record, its worktree and branch (wsl/helper/
+   * subagents.ts); this one is the mirror AIB keeps (mirror) so Activity, Changes and the swarm see it. `path`, `folder` and `project`
+   * are refs of the distro (wsl://...), `linux` the Linux paths. Nothing on the Windows side ever touches such a path.
+   */
+  wsl?: { distro: string; linux: { path: string; folder: string } };
+}
+
+/**
+ * The distro's side of a WSL chat's subagents (wsl/subagents.ts WslRemote): every call that changes a record goes there, then the
+ * mirror is read back. A failure is never an edit in the project folder: a hook is answered with a refusal.
+ */
+export interface RemoteSubagents {
+  hook(chat: SubagentChat, event: string, body: unknown): Promise<HookAnswer>;
+  event(chat: SubagentChat, op: string, args: Record<string, unknown>): Promise<void>;
+  release(rec: SubagentRecord): Promise<'removed' | 'kept' | 'running' | 'gone'>;
+  /** The distro's records as refs, or null when it can't be asked now (it is never started for this). */
+  records(distro: string): Promise<SubagentRecord[] | null>;
 }
 
 /** The fields that describe one Agent call (not the worktree): they move together when AIB fixes which worktree runs which call. */
@@ -134,6 +152,8 @@ export interface SubagentChat {
    * of its sandbox (subagents/codex.ts subagentFolder).
    */
   subFolder?: string;
+  /** A chat in a WSL folder: its distro. Its folder and project are refs; the service hands every call to the distro (RemoteSubagents). */
+  wsl?: { distro: string };
 }
 
 export interface HookAnswer {
@@ -216,8 +236,58 @@ export class SubagentWorktrees {
     readonly chat: (id: string) => SubagentChat | null,
   ) {}
 
+  /** The distros' side of WSL chats' subagents (Studio sets it; the helper's own service has none). */
+  remote: RemoteSubagents | null = null;
+
   all(): SubagentRecord[] {
     return Object.values(readSubagents(this.stateDir));
+  }
+
+  /**
+   * The distro's records, kept here as mirrors (SubagentRecord.wsl): the distro's own are replaced as a set, so a record the distro
+   * dropped (landed, released) goes here too. Does nothing when the distro can't be asked (the mirror stays as it was).
+   */
+  async refreshWsl(distro: string): Promise<void> {
+    const records = await this.remote?.records(distro).catch(() => null);
+    if (!records) return;
+    await this.#file.run(() => {
+      const all = readSubagents(this.stateDir);
+      let changed = false;
+      for (const [id, r] of Object.entries(all)) {
+        if (r.wsl?.distro === distro) {
+          delete all[id];
+          changed = true;
+        }
+      }
+      for (const r of records) {
+        const { linux, ...rest } = r as SubagentRecord & { linux?: { path: string; folder: string } };
+        all[r.id] = { ...rest, wsl: { distro, linux: linux ?? { path: '', folder: '' } } };
+        changed = true;
+      }
+      if (changed) saveJson(pathOf(this.stateDir, FILE), { version: 1, subagents: all }, '.subagent-worktrees-');
+    });
+  }
+
+  /** Run a call in the chat's distro, then read its records back. */
+  async #viaRemote<T>(chat: SubagentChat, run: (remote: RemoteSubagents) => Promise<T>): Promise<T> {
+    try {
+      return await run(this.remote!);
+    } finally {
+      await this.refreshWsl(chat.wsl!.distro).catch((error) => log.warning('Could not read the distro %s subagent records: %s', chat.wsl!.distro, error));
+    }
+  }
+
+  /** A WSL chat's stream event, handed to its distro (the chat is open here; its records follow). */
+  async #wslEvent(chatId: string, op: string, args: Record<string, unknown>): Promise<boolean> {
+    const chat = this.chat(chatId);
+    if (!chat?.wsl) return false;
+    if (!this.remote || !chat.hooks) return true; // nothing to tell: no hooks were given, or no distro side
+    try {
+      await this.#viaRemote(chat, (r) => r.event(chat, op, args));
+    } catch (error) {
+      log.warning('wsl: subagent event %s of %s was not delivered: %s', op, chatId, error instanceof Error ? error.message : error);
+    }
+    return true;
   }
 
   ofChat(chatId: string): SubagentRecord[] {
@@ -252,6 +322,18 @@ export class SubagentWorktrees {
     const chat = this.chat(chatId);
     // not open here (a keeper-held chat before its take-over) or given no hooks: the forwarder fails closed ("AIB is restarting")
     if (!chat || !chat.hooks || !isDict(body)) return text('This chat is not open in AIB', 503);
+    if (chat.wsl) { // the distro makes and keeps the worktree (wsl/helper/subagents.ts); nothing here ever edits a Windows or Linux folder
+      if (!this.remote) return text('This chat is not open in AIB', 503);
+      try {
+        return await this.#viaRemote(chat, (r) => r.hook(chat, event, body));
+      } catch (error) {
+        const why = error instanceof Error ? error.message : String(error);
+        log.warning('wsl: subagent hook %s failed: %s', event, why);
+        return event === 'pre-tool' || event === 'codex-pre-tool'
+          ? deny(`AIB couldn't make a worktree for this subagent in the distro: ${why.slice(0, 300)}`)
+          : text('AIB could not answer this hook', 500);
+      }
+    }
     try {
       await this.adoptPrevious(chat.id);
       switch (event) {
@@ -619,6 +701,7 @@ export class SubagentWorktrees {
     agentId = '',
   ): Promise<void> {
     const target = (v: unknown) => (typeof v === 'string' ? v : '');
+    if (await this.#wslEvent(chatId, 'claudeTool', { tool, toolUseId, input, status, agentId })) return;
     await this.adoptPrevious(chatId);
     await this.#lockOf(chatId).run(async () => {
       const mine = this.ofChat(chatId);
@@ -671,6 +754,7 @@ export class SubagentWorktrees {
    */
   async acpEnded(chatId: string, agentId: string, how: string | null): Promise<void> {
     if (!agentId) return;
+    if (await this.#wslEvent(chatId, 'acpEnded', { agentId, how })) return;
     await this.adoptPrevious(chatId);
     await this.#lockOf(chatId).run(async () => {
       const rec = this.ofChat(chatId).find((r) => r.agentId === agentId);
@@ -686,6 +770,7 @@ export class SubagentWorktrees {
 
   /** P3: at the parent's turn end and when AIB takes a chat over: every record of the chat the stream shows as ended is settled. */
   async reconcileEnded(chatId: string, ended: Map<string, string>): Promise<void> {
+    if (await this.#wslEvent(chatId, 'reconcileEnded', { ended: [...ended] })) return;
     await this.adoptPrevious(chatId);
     if (!ended.size) return;
     await this.#lockOf(chatId).run(async () => {
@@ -724,6 +809,7 @@ export class SubagentWorktrees {
    * stream says so (acpEnded 'cancelled') and that settles it. Codex and Gemini subagents run inside the turn: all are stopped.
    */
   async turnCancelled(chatId: string, provider = ''): Promise<void> {
+    if (await this.#wslEvent(chatId, 'turnCancelled', { provider })) return;
     await this.adoptPrevious(chatId);
     await this.#lockOf(chatId).run(async () => {
       for (const r of this.ofChat(chatId).filter((x) => x.state === 'running' || (x.state === 'user-hook' && x.agentId))) {
@@ -748,6 +834,12 @@ export class SubagentWorktrees {
   async release(id: string): Promise<'removed' | 'kept' | 'running' | 'gone'> {
     const rec = readSubagents(this.stateDir)[id];
     if (!rec) return 'gone';
+    if (rec.wsl) { // the distro's worktree: removed there (never from under a running subagent), then the mirror follows
+      if (!this.remote) return 'gone';
+      const outcome = await this.remote.release(rec);
+      await this.refreshWsl(rec.wsl.distro).catch(() => {});
+      return outcome;
+    }
     return await this.#lockOf(rec.chat).run(async () => {
       const cur = readSubagents(this.stateDir)[id];
       if (!cur) return 'gone';
@@ -810,7 +902,7 @@ export class SubagentWorktrees {
     const key = (p: string) => normcase(p).replace(/[\\/]+$/, '');
     const all = this.all();
     const theirs = all.filter((r) =>
-      r.chat !== chat.id && r.lasting === chat.lasting && ADOPT_STATES.has(r.state) &&
+      r.chat !== chat.id && !r.wsl && r.lasting === chat.lasting && ADOPT_STATES.has(r.state) &&
       (!r.project || key(r.project) === key(chat.project)) && !this.chat(r.chat)
     );
     const lost = all.some((r) => r.chat === chat.id && r.adoptedFrom && r.state === 'running' && !r.userHook);
@@ -915,6 +1007,7 @@ export class SubagentWorktrees {
    * Bound ones stay for landing (P2).
    */
   async turnEnded(chatId: string): Promise<void> {
+    if (await this.#wslEvent(chatId, 'turnEnded', {})) return;
     await this.adoptPrevious(chatId);
     await this.#lockOf(chatId).run(async () => {
       // user-hook records whose Agent call never showed a worktree (refused, failed, forged) go (security review MF 4)
@@ -932,7 +1025,7 @@ export class SubagentWorktrees {
   /** The chat closed: its spare and unused prepared worktrees go. Bound ones stay for landing (P2). */
   async chatClosed(chatId: string): Promise<void> {
     await this.#lockOf(chatId).run(async () => {
-      for (const r of this.ofChat(chatId).filter((x) => x.state === 'spare' || x.state === 'prepared')) await this.#remove(r);
+      for (const r of this.ofChat(chatId).filter((x) => !x.wsl && (x.state === 'spare' || x.state === 'prepared'))) await this.#remove(r); // a WSL chat's: its distro's (wslSubagentChatClosed)
     });
     this.#chats.delete(chatId);
   }
@@ -942,12 +1035,12 @@ export class SubagentWorktrees {
     // a subagent that finished while AIB was down or its chat was gone (its SubagentStop answered 503): done, it lands when its
     // conversation is open again (swarm/service.ts finds the parent by its lasting name)
     for (const r of this.all()) {
-      if (r.state !== 'running' || r.userHook || this.chat(r.chat)) continue;
+      if (r.state !== 'running' || r.userHook || r.wsl || this.chat(r.chat)) continue; // a WSL record is the distro's (its helper sweeps it)
       await this.#lockOf(r.chat).run(() => this.#settleFromTranscript(r, undefined, false))
         .catch((error) => log.exception(error, 'Reading the end of subagent %s failed', r.id));
     }
     for (const r of this.all()) {
-      if (!['spare', 'prepared', 'preparing'].includes(r.state) || this.chat(r.chat) || now() - r.createdAt < STALE_S) continue;
+      if (r.wsl || !['spare', 'prepared', 'preparing'].includes(r.state) || this.chat(r.chat) || now() - r.createdAt < STALE_S) continue;
       await this.#remove(r).catch((error) => log.exception(error, 'Removing subagent worktree %s failed', r.path));
     }
   }

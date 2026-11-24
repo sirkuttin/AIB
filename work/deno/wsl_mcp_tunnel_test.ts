@@ -178,7 +178,7 @@ Deno.test({
     const unset = gate.set((r) => (seen.push(r), Promise.resolve({ status: 200, body: '{"ok":true}' })));
     await gate.handle(host, { rid: 'b', headers: { 'x-studio-artifact-key': 'K', 'X-STUDIO-CONVERSATION-ID': 'C' }, body: '{"id":1}' });
     assertEquals(calls.map((c) => c[0]), ['mcp.accept', 'mcp.reply']);
-    assertEquals(seen[0], { distro: 'Ubuntu', key: 'K', conversation: 'C', body: '{"id":1}' });
+    assertEquals(seen[0], { distro: 'Ubuntu', key: 'K', conversation: 'C', body: '{"id":1}', headers: { 'x-studio-artifact-key': 'K', 'X-STUDIO-CONVERSATION-ID': 'C' } }); // the headers go on too (a hook's event, key and nonce)
     assertEquals(calls[1][1], { rid: 'b', status: 200, body: '{"ok":true}' });
     accept = false;
     calls.length = 0;

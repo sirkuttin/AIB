@@ -31,6 +31,7 @@ import { ignoredFiles, landSubagentWork, protectedPath, SCRATCH_EXT, scratchFile
 export { ignoredFiles, protectedPath, SCRATCH_EXT, scratchFiles };
 import { claudeHelpers, swarmEnabled } from './settings.ts';
 import { readSubagents, type SubagentRecord } from '../subagents/service.ts';
+import { wslFolderBranch, wslLandSubagent } from '../wsl/subagents.ts';
 import { canonicalName } from '../allow/paths.ts';
 import { WSL_TOOL_GROUPS } from '../artifacts/mcp.ts';
 import { isWslRef } from '../platform/location.ts';
@@ -1241,7 +1242,8 @@ export class Swarm {
     const userHook = !!rec.userHook;
     const path = userHook ? rec.adopted?.path ?? '' : rec.path;
     const folder = rec.folder;
-    const branch = pyStr((await wt.git(['symbolic-ref', '--short', '-q', 'HEAD'], folder, { check: false })).stdout).trim();
+    // a WSL record's folder is a ref: its distro says which branch it is on (wsl/subagents.ts; throws when it can't answer: tried again)
+    const branch = rec.wsl ? await wslFolderBranch(rec) : pyStr((await wt.git(['symbolic-ref', '--short', '-q', 'HEAD'], folder, { check: false })).stdout).trim();
     // a user-hook worktree started at the folder's HEAD (Claude Code's own worktrees have no uncommitted edits: P0): its branch point
     let start = rec.snapshot;
     if (userHook && path && rec.state === 'done') {
@@ -1337,16 +1339,23 @@ export class Swarm {
     };
     let out: Json;
     try {
-      out = await landSubagentWork(
-        this.#mergeStudio(),
-        spec,
-        async (stage, data) => {
-          await this.#patchLanding(h.id, {
-            stage: stage as 'built' | 'moved',
-            ...(typeof data.landed === 'string' ? { landed: data.landed, tipBefore: s(data.tipBefore) } : {}),
-          });
-        },
-      );
+      const onStage = async (stage: string, data: Json) => {
+        await this.#patchLanding(h.id, {
+          stage: stage as 'built' | 'moved',
+          ...(typeof data.landed === 'string' ? { landed: data.landed, tipBefore: s(data.tipBefore) } : {}),
+        });
+      };
+      // a WSL chat's subagent (owner 2026-11-23): its distro lands it, by the same steps (wsl/subagents.ts)
+      out = rec.wsl
+        ? await wslLandSubagent(this.#mergeStudio(), rec, {
+          parent: spec.parent,
+          target: spec.target,
+          title: spec.title,
+          held: spec.held,
+          landKept: spec.landKept,
+          landScratch: spec.landScratch,
+        }, onStage)
+        : await landSubagentWork(this.#mergeStudio(), spec, onStage);
     } catch (error) {
       log.exception(error, 'Landing subagent %s failed', h.id);
       throw error;

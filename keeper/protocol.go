@@ -45,7 +45,8 @@ const (
 // bridge starts the Linux keeper with 2h. `orphanGrace` in status and keeper.json, `orphanSince`/`orphanStopAt` in keeper.json.
 // 1.7.0: keeper.json seals its token with DPAPI on Windows ("tokenSealed"); on Linux a hello from a process under one of the
 // keeper's channels is refused (bad_peer); mcp-forward and hook open DPAPI-sealed keys ("--check" says "sealed").
-var keeperVersion = "1.7.0"
+// 1.8.0: WSL subagent hooks: `hook <event> --helper-socket <socket>` (a hook through the helper's tunnel; no protocol change).
+var keeperVersion = "1.8.0"
 
 // features are advertised in hello. Additions only.
 var features = []string{"pty", "notes", "truncate", "orphan", "signal", "once", "channel-ids", "scrollback", "labels", "hold", "orphan-grace"}

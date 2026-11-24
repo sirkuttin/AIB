@@ -203,6 +203,8 @@ interface Ready {
 
 /** The helper methods the MCP tunnel needs besides the ready line's socket. */
 export const MCP_TUNNEL_METHODS = ['mcp.accept', 'mcp.reply'] as const;
+/** The helper methods a subagent hook through the tunnel needs besides the tunnel (a Linux keeper of the same build has `hook --helper-socket`). */
+export const HOOK_TUNNEL_METHODS = ['subagent.hook', 'subagent.setup', 'subagent.event', 'subagent.records', 'subagent.release'] as const;
 
 export class WslHostImpl implements WslHost {
   readonly distro: string;
@@ -669,6 +671,13 @@ export class WslHostImpl implements WslHost {
     const install = this.#install;
     if (!ready?.mcpSocket || !install || !MCP_TUNNEL_METHODS.every((m) => ready.methods.includes(m))) return null;
     return { forwarder: install.keeper, socket: ready.mcpSocket };
+  }
+
+  /** The same tunnel for subagent hooks, when the helper has the methods they need (see HOOK_TUNNEL_METHODS). */
+  get hookTunnel(): { forwarder: string; socket: string } | null {
+    const tunnel = this.mcpTunnel;
+    const ready = this.#readyValue;
+    return tunnel && ready && HOOK_TUNNEL_METHODS.every((m) => ready.methods.includes(m)) ? tunnel : null;
   }
 
   onMcpRequest(handler: (request: HelperMcpRequest['params']) => void): () => void {

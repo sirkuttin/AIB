@@ -16,7 +16,7 @@ const log = getLogger('wsl');
 
 /** What the Studio does with one tunneled message: an HTTP-like status and body. */
 export type TunnelServe = (
-  request: { distro: string; key: string; conversation: string; body: string },
+  request: { distro: string; key: string; conversation: string; body: string; headers: Record<string, string> },
 ) => Promise<TunnelAnswer>;
 /** status as HTTP; `error` with 503: AIB cannot take it (the forwarder says so at once, as a tool result for a tools/call). */
 export type TunnelAnswer = { status: number; body: string; error?: string };
@@ -75,6 +75,7 @@ export class McpTunnelGate {
         key: headerOf(request.headers ?? {}, KEY_HEADER),
         conversation: headerOf(request.headers ?? {}, CONVERSATION_HEADER),
         body: String(request.body ?? ''),
+        headers: Object.fromEntries(Object.entries(request.headers ?? {}).filter(([, v]) => typeof v === 'string')) as Record<string, string>,
       });
     } catch (error) {
       log.exception(error, 'A tool call from WSL failed');

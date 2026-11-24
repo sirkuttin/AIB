@@ -15,7 +15,10 @@ import * as osp from '../../platform/ospath.ts';
 import * as wt from '../../worktrees/worktrees.ts';
 import * as merge from '../../worktrees/merge.ts';
 import { landSubagentWork } from '../../worktrees/subagent_land.ts';
-import { ownSubagentPath, type SubagentChat, SubagentWorktrees } from '../../subagents/service.ts';
+import { deny, ownSubagentPath, type SubagentChat, SubagentWorktrees } from '../../subagents/service.ts';
+import { claudeConfigDir, readClaudeSetup, subagentsOffSettings } from '../../subagents/claude_config.ts';
+import * as codexSub from '../../subagents/codex.ts';
+import { isCodexFamily } from '../../agents/claude_family.ts';
 import { isDict } from '../../core/py.ts';
 import { onWindowsDrive } from './worktrees.ts';
 import { BAD_PARAMS, type Handlers, RpcError, str } from './rpc.ts';
@@ -24,6 +27,8 @@ import type { WslMergeAnswer } from '../contract.ts';
 type Json = Record<string, unknown>;
 
 const ID = /^[A-Za-z0-9_-]{1,200}$/;
+const CLAUDE_EVENTS = ['pre-tool', 'worktree-create', 'post-agent', 'subagent-stop'];
+const CODEX_EVENTS = ['codex-pre-tool', 'codex-subagent-start', 'codex-subagent-stop'];
 
 function absPath(value: unknown, name: string): string {
   if (typeof value !== 'string' || !value || value.length > 4096 || value.includes('\0') || !osp.isabs(value)) {
@@ -47,14 +52,28 @@ function chatOf(raw: unknown): SubagentChat {
   for (const [p, why] of [[folder, 'the chat'], [project, 'the project']]) {
     if (onWindowsDrive(p)) throw new RpcError(`${why} is on a Windows drive: its subagents work in the project folder`, BAD_PARAMS);
   }
-  return {
-    id: idOf(raw.id, 'chat.id'),
+  const id = idOf(raw.id, 'chat.id');
+  const configDir = typeof raw.configDir === 'string' && raw.configDir && osp.isabs(raw.configDir) && raw.configDir.length < 4096 && !raw.configDir.includes('\0')
+    ? osp.normpath(raw.configDir)
+    : '';
+  const chat: SubagentChat = {
+    id,
     provider: text(raw.provider, 40),
     lasting: text(raw.lasting, 600),
     folder,
     project,
-    hooks: { readOnly: new Set(Array.isArray(raw.readOnly) ? raw.readOnly.filter((x): x is string => typeof x === 'string').slice(0, 200) : []), userWorktreeHook: false },
+    hooks: {
+      readOnly: new Set(Array.isArray(raw.readOnly) ? raw.readOnly.filter((x): x is string => typeof x === 'string').slice(0, 200) : []),
+      userWorktreeHook: raw.userWorktreeHook === true,
+      ...(configDir ? { configDir } : {}),
+    },
   };
+  return chat;
+}
+
+/** The Codex chat's own subagent folder, `<root>/<repo hash>/.cx-<chat>`: named here, never taken from the channel. */
+function codexFolderOf(root: string, chat: SubagentChat): string {
+  return codexSub.subagentFolder(root, chat.project, chat.id);
 }
 
 /** A MergeStudio over the states AIB sent: every chat of the folder, by id (a landing holds and checks them); live calls are recorded. */
@@ -80,6 +99,11 @@ export function subagentMethods(data: string): Handlers {
   const service = new SubagentWorktrees(data, root, (id) => chats.get(id) ?? null);
   const remember = (raw: unknown): SubagentChat => {
     const chat = chatOf(raw);
+    if (isDict(raw) && raw.codexFolder === true && isCodexFamily(chat.provider)) {
+      // a Codex chat's subagent worktrees go in its own folder (a writable root of its sandbox), made here, named here
+      chat.subFolder = codexFolderOf(root, chat);
+      Deno.mkdirSync(chat.subFolder, { recursive: true });
+    }
     chats.set(chat.id, chat);
     return chat;
   };
@@ -111,12 +135,131 @@ export function subagentMethods(data: string): Handlers {
       return { ok: true };
     },
 
-    /** One hook call as the Windows route gets it (event: pre-tool, worktree-create, post-agent, subagent-stop): {status, body, type}. */
+    /**
+     * One hook call as the Windows route gets it (event: pre-tool, worktree-create, post-agent, subagent-stop; or a Codex chat's
+     * codex-pre-tool, codex-subagent-start, codex-subagent-stop): {status, body, type}. Never throws for the hook's own failure: its
+     * answer is the refusal (a pre-tool deny, a 500 that the forwarder turns into "AIB is restarting").
+     */
     'subagent.hook': async (p) => {
       const chat = remember(p.chat);
       const event = str(p, 'event');
-      if (!['pre-tool', 'worktree-create', 'post-agent', 'subagent-stop'].includes(event)) throw new RpcError('event is not a hook event', BAD_PARAMS);
-      return { ...(await service.hook(event, chat.id, isDict(p.body) ? p.body : {})) };
+      const body = isDict(p.body) ? p.body : {};
+      if (CODEX_EVENTS.includes(event)) {
+        if (!isCodexFamily(chat.provider)) return { status: 503, body: 'This chat is not open in AIB', type: 'text/plain' };
+        try {
+          return { ...(await codexSub.codexHook(service, event, chat, body)) };
+        } catch (error) {
+          return event === 'codex-pre-tool'
+            ? { ...deny(`AIB couldn't check this call against the subagent's worktree: ${error instanceof Error ? error.message : error}`) }
+            : { status: 500, body: 'AIB could not answer this hook', type: 'text/plain' };
+        }
+      }
+      if (!CLAUDE_EVENTS.includes(event)) throw new RpcError('event is not a hook event', BAD_PARAMS);
+      return { ...(await service.hook(event, chat.id, body)) };
+    },
+
+    /**
+     * What AIB reads of the distro's own agent setup for a chat (it can't read the distro's files): is the folder a git project with a
+     * commit, which agent types are read-only, whether the user's own settings turn hooks off or make their own worktree. Claude
+     * reads Claude Code's settings tiers and managed files, Codex its config.toml files and requirements; both natively here, as
+     * on Windows. `deny` is the per-session permission rules AIB gives a Claude chat whose hooks are off.
+     */
+    'subagent.setup': async (p) => {
+      const agent = str(p, 'agent');
+      if (agent !== 'claude' && agent !== 'codex') throw new RpcError('agent must be claude or codex', BAD_PARAMS);
+      const project = absPath(p.project, 'project');
+      const folder = absPath(p.folder ?? p.project, 'folder');
+      for (const [path, why] of [[project, 'the project'], [folder, 'the chat']]) {
+        if (onWindowsDrive(path)) throw new RpcError(`${why} is on a Windows drive: its subagents work in the project folder`, BAD_PARAMS);
+      }
+      const env: Record<string, string> = { ...Deno.env.toObject() };
+      if (isDict(p.env)) {
+        for (const name of ['CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'CODEX_CONFIG']) {
+          const v = (p.env as Json)[name];
+          if (typeof v === 'string' && v.length < 200_000 && !v.includes('\0')) env[name] = v;
+        }
+      }
+      let git = '';
+      if (p.aibWorktree !== true) {
+        const top = await wt.git(['rev-parse', '--show-toplevel'], folder, { check: false });
+        if (top.returncode !== 0 || !wt.same(top.stdout.trim(), folder)) git = 'not a git project';
+        else if ((await wt.git(['rev-parse', '--verify', '-q', 'HEAD'], folder, { check: false })).returncode !== 0) git = 'the repository has no commits yet';
+      }
+      if (agent === 'codex') {
+        const setup = codexSub.readCodexSetup(project, env, 'linux');
+        // the chat's own folder for its subagents' worktrees (a writable root of its sandbox): named and made here
+        let subFolder = '';
+        if (typeof p.chatId === 'string' && ID.test(p.chatId) && !git && !setup.hooksOff && !setup.configError) {
+          subFolder = codexSub.subagentFolder(root, project, p.chatId);
+          Deno.mkdirSync(subFolder, { recursive: true });
+        }
+        return {
+          git,
+          readOnly: [],
+          userWorktreeHook: '',
+          hooksOff: setup.hooksOff,
+          configError: setup.configError,
+          configDir: codexSub.codexHome(env),
+          deny: null,
+          config: setup.config,
+          subFolder,
+        };
+      }
+      const setup = readClaudeSetup(project, env);
+      return {
+        git,
+        readOnly: setup.readOnly,
+        userWorktreeHook: setup.userWorktreeHook,
+        hooksOff: setup.hooksOff,
+        configError: '',
+        configDir: claudeConfigDir(env),
+        deny: setup.hooksOff ? subagentsOffSettings(project, env, setup.readOnly) : null,
+        config: null,
+        subFolder: '',
+      };
+    },
+
+    /**
+     * What the parent's own ACP stream says of its subagents (never forged by an agent's hook calls), handed on by AIB as the Windows
+     * service gets it: claudeTool, acpEnded, reconcileEnded, turnEnded, turnCancelled.
+     */
+    'subagent.event': async (p) => {
+      const chat = remember(p.chat);
+      const op = str(p, 'op');
+      const a = isDict(p.args) ? p.args : {};
+      const s = (v: unknown, max = 300) => (typeof v === 'string' ? v.slice(0, max) : '');
+      switch (op) {
+        case 'claudeTool':
+          await service.claudeTool(chat.id, s(a.tool, 100), s(a.toolUseId, 200), isDict(a.input) ? a.input : {}, s(a.status, 40), s(a.agentId, 64));
+          break;
+        case 'acpEnded':
+          await service.acpEnded(chat.id, s(a.agentId, 64), a.how === null ? null : s(a.how, 40));
+          break;
+        case 'reconcileEnded': {
+          const ended = new Map<string, string>();
+          for (const row of Array.isArray(a.ended) ? a.ended.slice(0, 500) : []) {
+            if (Array.isArray(row) && typeof row[0] === 'string' && typeof row[1] === 'string') ended.set(row[0].slice(0, 64), row[1].slice(0, 40));
+          }
+          await service.reconcileEnded(chat.id, ended);
+          break;
+        }
+        case 'turnEnded':
+          await service.turnEnded(chat.id);
+          break;
+        case 'turnCancelled':
+          await service.turnCancelled(chat.id, s(a.provider, 40));
+          break;
+        default:
+          throw new RpcError('op is not a subagent event', BAD_PARAMS);
+      }
+      return { ok: true };
+    },
+
+    /** The branch the subagent's folder is on (what its work lands on), '' when the folder is on none. */
+    'subagent.folderBranch': async (p) => {
+      const rec = service.all().find((r) => r.id === idOf(p.id, 'id'));
+      if (!rec || !rec.folder || !ownSubagentPath(root, rec)) return { branch: '' };
+      return { branch: (await wt.git(['symbolic-ref', '--short', '-q', 'HEAD'], rec.folder, { check: false })).stdout.trim() };
     },
 
     /** The records of one chat (every chat when none is named): what AIB mirrors to track and land them. */
@@ -129,6 +272,8 @@ export function subagentMethods(data: string): Handlers {
     'subagent.chatClosed': async (p) => {
       const id = idOf(p.chat, 'chat');
       await service.chatClosed(id);
+      const sub = chats.get(id)?.subFolder;
+      if (sub) codexSub.removeSubagentFolder(sub); // a Codex chat's own folder, when empty (a worktree still in it is landing's)
       chats.delete(id);
       return { ok: true };
     },

@@ -61,9 +61,10 @@ import { AgentTitles } from './agent_titles.ts';
 import * as artifactKeys from '../artifacts/keys.ts';
 import { sealOrPlain } from '../state/sealed.ts';
 import { artifactToolCommand } from '../artifacts/mcp.ts';
-import { ArtifactMcpHttp, FORWARD_FILE, forwardEntry, httpEntry, ownForwardFile, ownTunnelEntry, tunnelEntry } from '../artifacts/mcp_http.ts';
+import { ArtifactMcpHttp, FORWARD_FILE, forwardEntry, HOOK_EVENT_HEADER, HOOK_KEY_HEADER, HOOK_NONCE_HEADER, httpEntry, ownForwardFile, ownTunnelEntry, tunnelEntry } from '../artifacts/mcp_http.ts';
 import { WSL_TOOL_GROUPS } from '../artifacts/mcp.ts';
-import { mcpTunnelGate, type TunnelAnswer } from '../wsl/mcp_tunnel.ts';
+import { headerOf, mcpTunnelGate, type TunnelAnswer } from '../wsl/mcp_tunnel.ts';
+import { wslRemote, wslSubagentChatClosed } from '../wsl/subagents.ts';
 import { forwarderOf, hookForwarderOf, keeperBinary, keyForForwarder, programVersion } from '../keeper/client.ts';
 import { deny as denyHook, type HookAnswer, SubagentWorktrees, type SubagentChat } from '../subagents/service.ts';
 import { claudeConfigDir, gitBashPath, hookSettings, readClaudeSetup, subagentsOffSettings } from '../subagents/claude_config.ts';
@@ -532,6 +533,7 @@ export class Studio {
     this.worktrees = manager;
     const subagents = manager ? new SubagentWorktrees(this.stateDir, manager.registry.root, (id) => this.#subagentChat(id)) : null;
     this.subagents = subagents;
+    if (subagents) subagents.remote = wslRemote; // a WSL chat's subagents are made, kept and landed by its distro's helper
     this.geminiSubagents = subagents ? new gemini.GeminiSubagents(subagents, (id) => this.#geminiChat(id)) : null;
     this.ready = (async () => {
       if (!manager) return;
@@ -1227,14 +1229,46 @@ export class Studio {
    * One tool call from an agent in a WSL distro, through the tunnel (wsl/mcp_tunnel.ts): only for a live chat of this AIB in that same
    * distro, then the HTTP endpoint's own key check and reply (ArtifactMcpHttp.tunneled).
    */
-  async wslToolCall(request: { distro: string; key: string; conversation: string; body: string }): Promise<TunnelAnswer> {
+  async wslToolCall(request: { distro: string; key: string; conversation: string; body: string; headers?: Record<string, string> }): Promise<TunnelAnswer> {
     if (this.#closed) return { status: 503, body: '', error: 'AIB is closed, so this tool cannot answer now. Try again later, once AIB is open again.' };
     const c = this.connections.get(request.conversation);
     if (!c || c.closed || !c.wsl || c.wsl.distro.toLowerCase() !== request.distro.toLowerCase()) {
       const refused = { jsonrpc: '2.0', id: null, error: { code: -32000, message: 'AIB refused the artifact key for this conversation' } };
       return { status: 401, body: JSON.stringify(refused) };
     }
+    const hookEvent = headerOf(request.headers ?? {}, HOOK_EVENT_HEADER);
+    if (hookEvent) return await this.#wslHookCall(hookEvent, request);
     return await this.artifactMcpHttp().tunneled(request.key, request.conversation, request.body);
+  }
+
+  /**
+   * A subagent hook from an agent in a WSL distro, through the same tunnel (`AIB-keeper hook <event> --helper-socket <socket>`,
+   * keeper/hooksocket.go). The chat is a live WSL chat of that distro (wslToolCall checked); the hook key is its own (not the artifact
+   * key) and is checked before the body is read, exactly as the HTTP route does (artifacts/mcp_http.ts #hook). The answer goes back as
+   * an envelope {status, body, proof}: the tunnel carries no headers, and the proof is the HTTP form's X-Studio-Hook-Proof, which the
+   * forwarder checks with the chat's key, so an answer that is not AIB's blocks the call.
+   */
+  async #wslHookCall(event: string, request: { conversation: string; body: string; headers?: Record<string, string> }): Promise<TunnelAnswer> {
+    const headers = request.headers ?? {};
+    const key = headerOf(headers, HOOK_KEY_HEADER);
+    const nonce = headerOf(headers, HOOK_NONCE_HEADER);
+    let signed = false;
+    const answer = (status: number, text: string): TunnelAnswer => {
+      const proof = signed && /^[0-9a-f]{16,128}$/.test(nonce) ? artifactKeys.hookProof(key, nonce, status, new TextEncoder().encode(text)) : '';
+      return { status: 200, body: JSON.stringify({ status, body: text, proof }) };
+    };
+    if (!artifactKeys.checkHookKey(key, request.conversation)) return answer(401, 'AIB refused the hook key for this conversation');
+    signed = true;
+    if (!WSL_HOOK_EVENTS.test(event)) return answer(404, 'Not found');
+    if (request.body.length > 4 * 1024 * 1024) return answer(413, 'Request too large');
+    let body: unknown;
+    try {
+      body = JSON.parse(request.body);
+    } catch {
+      return answer(400, 'The hook input is not JSON');
+    }
+    const result = await this.#hookCall(event, request.conversation, body);
+    return answer(result.status, result.body);
   }
 
   /**
@@ -1609,10 +1643,10 @@ export class Studio {
       const reopen = resume && chatKeeper && !asHelper ? await this.#storeToContinue(provider, resume, chatKeeper) : null;
       const chatId = reopen?.id ?? null;
       // Subagent worktrees (subagents/): a Claude chat in a git project gets command hooks through the keeper's forwarder; its key and
-      // id go in the agent's environment (never in settings, a command line or a URL). A WSL chat gets none yet (they'd fail open).
+      // id go in the agent's environment (never in settings, a command line or a URL). A WSL chat's run in its distro (#wslClaudeHooks).
       // Codex (subagents/codex.ts): its hooks go in CODEX_CONFIG; hooks off or unavailable turn its subagents off instead.
       const subagent = isClaudeFamily(provider)
-        ? await this.#subagentHooks(command, plan ? plan.path : workspace, workspace, !!plan, env, !!wsl, chatId)
+        ? await this.#subagentHooks(command, plan ? plan.path : workspace, workspace, !!plan, env, wsl ? wsl.distro : null, chatId)
         : isCodexFamily(provider)
         ? await this.#codexSubagentHooks(
           command,
@@ -1622,6 +1656,7 @@ export class Studio {
           env,
           launch ? launch.spawn.env ?? {} : null,
           chatId,
+          wsl ? wsl.distro : null,
         )
         : null;
       // Gemini (subagents/gemini.ts): every chat gets the fence (an admin policy); an API-key chat in a git project also the redirect
@@ -1704,6 +1739,11 @@ export class Studio {
             c.recordedEvent('studio_note', {
               message: `Subagents that edit files are off in this chat: hooks are off in your Claude Code settings ` +
                 `(${c.subagentHooks.detail}), so AIB can't give them their own worktree. Read-only subagents (Explore, Plan) still work.`,
+              sessionId: c.sessionId,
+            });
+          } else if (isClaudeFamily(c.provider) && c.subagentHooks?.off === WSL_HOOKS_UNAVAILABLE) { // WSL: said up front, never unisolated
+            c.recordedEvent('studio_note', {
+              message: `Subagents are off in this chat: AIB could not set up their own worktree in this WSL distro (${c.subagentHooks.detail}).`,
               sessionId: c.sessionId,
             });
           } else if (c.subagentHooks?.off === NO_GIT_BASH) {
@@ -1793,6 +1833,10 @@ export class Studio {
     }
     c.onRelease = (conn) => {
       this.withdraw(conn);
+      if (conn.wsl && this.subagents) { // its distro removes the chat's spare and unused worktrees; bound ones stay for landing
+        const distro = conn.wsl.distro, subagents = this.subagents;
+        void wslSubagentChatClosed(distro, conn.id).then(() => subagents.refreshWsl(distro)).catch((error) => log.exception(error, 'Removing a WSL chat\'s spare subagent worktrees failed'));
+      }
       void this.subagents?.chatClosed(conn.id).catch((error) => log.exception(error, 'Removing spare subagent worktrees failed'))
         .then(() => { // after its spare went: the Gemini chat's home (junctions unlinked first), policy and empty subagent folder
           this.geminiSubagents?.chatClosed(conn.id);
@@ -2447,14 +2491,14 @@ export class Studio {
     project: string,
     aibWorktree: boolean,
     env: Record<string, string>,
-    wsl = false,
+    wslDistro: string | null = null,
     chatId: string | null = null, // a reopened chat keeps its id (its hook key is bound to it)
   ): Promise<{ id?: string; env?: Record<string, string>; hooks: NonNullable<Connection['subagentHooks']> } | null> {
     if (!this.subagents || !this.hasStateDir) return { hooks: offHooks('AIB has no state folder') };
     // under test only a real agent the run allowed gets hooks (a fixture or a test's own factory runs none, and must not pay for them)
     const realAllowed = Deno.env.get('STUDIO_REAL_ADAPTER_TESTS') === '1' || Deno.env.get('AGENT_STUDIO_ALLOW_REAL_AGENT') === '1';
     if (Deno.env.get('AGENT_STUDIO_TEST') === '1' && (isFixture(command) || !realAllowed)) return null;
-    if (wsl) return { hooks: offHooks('WSL, coming') }; // through an unreachable host they would fail open (design 2.8)
+    if (wslDistro) return await this.#wslClaudeHooks(wslDistro, folder, project, aibWorktree, env, chatId);
     try {
       if (!aibWorktree) {
         const top = await wt.git(['rev-parse', '--show-toplevel'], folder, { check: false });
@@ -2492,6 +2536,57 @@ export class Studio {
     } catch (error) {
       log.exception(error, 'Could not set up subagent hooks; the chat runs without them');
       return { hooks: offHooks(`AIB could not set up its hooks (${errorText(error)})`) };
+    }
+  }
+
+  /**
+   * The hooks a new Claude chat in a WSL project gets (owner 2026-11-23): the same command hooks, run in the distro by the Linux keeper
+   * program (`<keeper> hook <event> --helper-socket <socket>`), reaching this Studio through the helper's tunnel (#wslHookCall). What
+   * AIB can't read from Windows (the distro's Claude settings, agents, git) the distro's helper reads (`subagent.setup`). Fails closed:
+   * when the hooks can't be set up (a helper without them, a setup call that fails), the chat's subagents are turned off by permission
+   * rules instead, never left to edit the project folder; hooks off in the user's own settings do the same, as on Windows.
+   */
+  async #wslClaudeHooks(
+    distro: string,
+    folder: string,
+    project: string,
+    aibWorktree: boolean,
+    env: Record<string, string>,
+    chatId: string | null,
+  ): Promise<{ id?: string; env?: Record<string, string>; hooks: NonNullable<Connection['subagentHooks']> }> {
+    const unavailable = (detail: string) => ({
+      hooks: { ...offHooks(WSL_HOOKS_UNAVAILABLE, detail), deny: WSL_SUBAGENTS_OFF, prompt: WSL_SUBAGENTS_OFF_PROMPT },
+    });
+    try {
+      const host = wslHost(distro);
+      const tunnel = host?.hookTunnel ?? null;
+      if (!host || !tunnel) return unavailable("this distro's AIB helper can't give subagents their own worktree yet");
+      const where = wslLoc(folder), home = wslLoc(project);
+      if (!where || !home) return { hooks: offHooks('not a git project') };
+      const setup = await host.call('subagent.setup', {
+        agent: 'claude',
+        project: home.linuxPath,
+        folder: where.linuxPath,
+        aibWorktree,
+        env: env.CLAUDE_CONFIG_DIR ? { CLAUDE_CONFIG_DIR: env.CLAUDE_CONFIG_DIR } : {},
+      }, { timeoutMs: 60_000 });
+      if (setup.git) return { hooks: offHooks(setup.git) };
+      if (setup.hooksOff) {
+        return { hooks: { ...offHooks(HOOKS_OFF, setup.hooksOff), configDir: setup.configDir, deny: setup.deny ?? WSL_SUBAGENTS_OFF } };
+      }
+      const settings = hookSettings(tunnel.forwarder, tunnel.socket, { worktreeCreate: !setup.userWorktreeHook, viaSocket: true });
+      if (!settings) return unavailable("the keeper's folder in the distro can't be named in a hook command");
+      const id = chatId ?? crypto.randomUUID().replaceAll('-', '');
+      const key = artifactKeys.issueHookKey(id);
+      if (!key) return unavailable('AIB has no key secret');
+      return {
+        id,
+        env: { AIB_HOOK_KEY: key, AIB_HOOK_CHAT: id, AIB_HOOK_READONLY: setup.readOnly.join(',') }, // a Linux process: nothing is sealed or crosses interop
+        hooks: { settings, readOnly: setup.readOnly, userWorktreeHook: setup.userWorktreeHook, off: '', configDir: setup.configDir },
+      };
+    } catch (error) {
+      log.exception(error, 'Could not set up subagent hooks in the distro; the chat\'s subagents are off');
+      return unavailable(`the distro could not be asked (${errorText(error)})`);
     }
   }
 
@@ -2603,6 +2698,8 @@ export class Studio {
     if (spawn && waiting >= MAX_PRE_TOOL_WAITING) return denyHook(SUBAGENT_BUSY);
     if (spawn) this.#preToolWaiting.set(conversation, waiting + 1);
     try {
+      // a WSL chat's hook runs in its distro (the helper runs codexHook over its own records; SubagentWorktrees.hook hands it over)
+      if (chat.wsl) return await this.subagents!.hook(event, conversation, body);
       return await codexSub.codexHook(this.subagents!, event, chat, body as Record<string, unknown>);
     } catch (error) {
       log.exception(error, 'Codex subagent hook %s failed', event);
@@ -2632,8 +2729,9 @@ export class Studio {
     env: Record<string, string>,
     wslEnv: Record<string, string> | null,
     chatId: string | null = null, // a reopened chat keeps its id (its hook key and subagent folder are bound to it)
+    wslDistro: string | null = null,
   ): Promise<{ id?: string; env?: Record<string, string>; hooks: NonNullable<Connection['subagentHooks']>; note?: string } | null> {
-    const result = await this.#codexHooksFor(command, folder, project, aibWorktree, env, wslEnv, chatId);
+    const result = await this.#codexHooksFor(command, folder, project, aibWorktree, env, wslEnv, chatId, wslDistro);
     if (!result) return null;
     // open elsewhere (ownership/handoff.ts): its threads unload as soon as AIB lets go of them, so another app can open them at once
     const agentEnv = wslEnv ? { ...wslEnv, ...env } : { ...Deno.env.toObject(), ...env };
@@ -2649,6 +2747,7 @@ export class Studio {
     env: Record<string, string>,
     wslEnv: Record<string, string> | null,
     chatId: string | null,
+    wslDistro: string | null = null,
   ): Promise<{ id?: string; env?: Record<string, string>; hooks: NonNullable<Connection['subagentHooks']>; note?: string } | null> {
     const realAllowed = Deno.env.get('STUDIO_REAL_ADAPTER_TESTS') === '1' || Deno.env.get('AGENT_STUDIO_ALLOW_REAL_AGENT') === '1';
     if (Deno.env.get('AGENT_STUDIO_TEST') === '1' && (isFixture(command) || !realAllowed)) return null;
@@ -2663,8 +2762,40 @@ export class Studio {
       hooks: { ...offHooks(why, detail), prompt: codexSub.CODEX_SUBAGENTS_OFF_PROMPT },
       note: `Subagents are off in this chat: ${detail}, so AIB can't give them their own worktree.`,
     });
-    if (wslEnv) return off('WSL, coming', "AIB's subagent rule doesn't reach Codex in WSL yet");
     if (!this.subagents || !this.hasStateDir) return off('AIB has no state folder', 'AIB has no state folder');
+    if (wslEnv) { // its hooks run in the distro through the helper's tunnel; what AIB can't read of the distro's Codex setup, the helper does
+      try {
+        const host = wslDistro ? wslHost(wslDistro) : null;
+        const tunnel = host?.hookTunnel ?? null;
+        const where = wslLoc(folder), home = wslLoc(project);
+        if (!host || !tunnel || !where || !home) return off('WSL hooks unavailable', "this distro's AIB helper can't give subagents their own worktree yet");
+        const id = chatId ?? crypto.randomUUID().replaceAll('-', '');
+        const remote = await host.call('subagent.setup', {
+          agent: 'codex',
+          project: home.linuxPath,
+          folder: where.linuxPath,
+          aibWorktree,
+          chatId: id,
+          env: { ...(agentEnv.CODEX_CONFIG ? { CODEX_CONFIG: agentEnv.CODEX_CONFIG } : {}), ...(agentEnv.CODEX_HOME ? { CODEX_HOME: agentEnv.CODEX_HOME } : {}) },
+        }, { timeoutMs: 60_000 });
+        if (remote.configError) return { hooks: offHooks(remote.configError) };
+        if (remote.git) return { hooks: offHooks(remote.git) };
+        if (remote.hooksOff) return off(HOOKS_OFF, remote.hooksOff);
+        const hooks = codexSub.codexHooks(tunnel.forwarder, tunnel.socket, where.linuxPath, remote.config?.hooks, 'linux', true);
+        if (!hooks) return off("AIB's keeper folder can't be named in a hook command", "the keeper's folder in the distro has a quote or a line break Codex hooks can't run from");
+        const key = artifactKeys.issueHookKey(id);
+        if (!key) return off('AIB has no key secret', 'AIB has no key secret');
+        if (!remote.subFolder) return off('no subagent folder', "the distro could not make the folder for the subagents' worktrees");
+        return {
+          id,
+          env: { AIB_HOOK_KEY: key, AIB_HOOK_CHAT: id, CODEX_CONFIG: JSON.stringify(codexSub.withCodexHooks(remote.config, hooks)) },
+          hooks: { ...offHooks(''), adopted: true, prompt: codexSub.CODEX_SUBAGENT_PROMPT, subFolder: remote.subFolder },
+        };
+      } catch (error) {
+        log.exception(error, 'Could not set up Codex subagent hooks in the distro; its subagents are off');
+        return off('AIB could not set up its hooks', `AIB could not set up its hooks (${errorText(error)})`);
+      }
+    }
     try {
       if (!aibWorktree) { // as Claude's: no worktree can be made outside git (nothing changes for its subagents)
         const top = await wt.git(['rev-parse', '--show-toplevel'], folder, { check: false });
@@ -2706,7 +2837,22 @@ export class Studio {
       const lasting = c.sessionId ? `${c.provider}:${c.sessionId}` : '';
       return { id: c.id, provider: c.provider, lasting, folder: c.cwd, project: c.projectRoot || c.cwd, hooks: null, subFolder: c.geminiSubagents.subFolder };
     }
-    if (!c || c.closed || (!isClaudeFamily(c.provider) && !isCodexFamily(c.provider)) || c.wsl) return null;
+    if (!c || c.closed || (!isClaudeFamily(c.provider) && !isCodexFamily(c.provider))) return null;
+    if (c.wsl) { // its distro's helper holds its subagents (SubagentWorktrees.remote); only the facts it needs are named here
+      const h = c.subagentHooks;
+      if (!h) return null; // a WSL chat without a hooks record was given none (the forwarder fails closed)
+      const on = !!h.settings?.hooks || h.adopted === true;
+      return {
+        id: c.id,
+        provider: c.provider,
+        lasting: c.sessionId ? `${c.provider}:${c.sessionId}` : '',
+        folder: c.cwd,
+        project: c.projectRoot || c.cwd,
+        hooks: on ? { readOnly: new Set(h.readOnly), userWorktreeHook: !!h.userWorktreeHook, ...(h.configDir ? { configDir: h.configDir } : {}) } : null,
+        wsl: { distro: c.wsl.distro },
+        ...(isCodexFamily(c.provider) && on && h.subFolder ? { subFolder: h.subFolder } : {}),
+      };
+    }
     if (!c.subagentHooks && isCodexFamily(c.provider)) return null; // a Codex chat without a hooks record was given none
     if (!c.subagentHooks) {
       // a chat taken over from a keeper note older than the hooks record (newer notes carry it: hooksFromNote)
@@ -3981,7 +4127,14 @@ const SUBAGENTS_OFF_NO_BASH = "Subagents that edit files are off: Git Bash is ne
  * usually starts, well under the cap of worktrees per chat.
  */
 const MAX_PRE_TOOL_WAITING = 4;
-const SUBAGENT_BUSY = 'AIB is still preparing worktrees for other subagents of this chat; try this subagent again in a moment.';
+/** The hook events a WSL chat's forwarder may send through the tunnel (the HTTP routes' set). */
+const WSL_HOOK_EVENTS = /^(pre-tool|worktree-create|post-agent|subagent-stop|codex-pre-tool|codex-subagent-start|codex-subagent-stop|gemini-before-tool)$/;
+/** A WSL chat whose subagent hooks can't be set up: its editing subagents are turned off (never run unisolated in the folder). */
+const WSL_HOOKS_UNAVAILABLE = 'WSL hooks unavailable';
+const WSL_SUBAGENTS_OFF = { permissions: { deny: ['Agent', 'Task', 'Workflow', 'EnterWorktree'] } };
+const WSL_SUBAGENTS_OFF_PROMPT = 'In this chat, subagents are turned off, because AIB could not give them their own worktree in this WSL ' +
+  'distro. Do the work yourself.';
+const SUBAGENT_BUSY ='AIB is still preparing worktrees for other subagents of this chat; try this subagent again in a moment.';
 
 /**
  * At each turn start (security review P1, should-fix 7): a chat that was given hooks reads its Claude settings again. When they now

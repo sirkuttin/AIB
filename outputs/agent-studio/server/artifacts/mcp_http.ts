@@ -39,6 +39,8 @@ export const HOOK_KEY_HEADER = 'X-Studio-Hook-Key';
 /** The forwarder's fresh random nonce for this call; AIB's answer carries HOOK_PROOF_HEADER over it (artifacts/keys.ts hookProof). */
 export const HOOK_NONCE_HEADER = 'X-Studio-Hook-Nonce';
 export const HOOK_PROOF_HEADER = 'X-Studio-Hook-Proof';
+/** Through the WSL tunnel a hook says which event it is in this header (keeper/hooksocket.go); the HTTP form has it in the path. */
+export const HOOK_EVENT_HEADER = 'X-Studio-Hook-Event';
 const HOOK_PATH = /^\/hooks\/claude\/(pre-tool|worktree-create|post-agent|subagent-stop)$/;
 /** Codex command hooks (subagents/codex.ts): POST /hooks/codex/<event>, handed on as event `codex-<event>`. */
 const CODEX_HOOK_PATH = /^\/hooks\/codex\/(pre-tool|subagent-start|subagent-stop)$/;

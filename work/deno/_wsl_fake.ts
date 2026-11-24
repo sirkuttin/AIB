@@ -139,6 +139,8 @@ export class FakeWslHost implements WslHost {
 
   /** The helper's MCP tunnel (null: none, the interop entry is used); tests set it. */
   mcpTunnel: { forwarder: string; socket: string } | null = null;
+  /** The same tunnel for subagent hooks (null: the helper lacks the subagent.* methods the hooks need). */
+  hookTunnel: { forwarder: string; socket: string } | null = null;
   #mcp = new Set<(request: { rid: string; headers: Record<string, string>; body: string }) => void>();
 
   onMcpRequest(handler: (request: { rid: string; headers: Record<string, string>; body: string }) => void): () => void {

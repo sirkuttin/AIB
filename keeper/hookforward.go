@@ -88,13 +88,20 @@ func hookMain(args []string) int {
 		fmt.Println(checkLine("hook 1"))
 		return 0
 	}
+	socket := ""
+	if len(args) == 3 && args[1] == "--helper-socket" && args[2] != "" {
+		// WSL form (keeper 1.8.0): the helper's tunnel socket instead of an address file (hooksocket.go)
+		socket = args[2]
+		args = []string{args[0], socket}
+	}
 	if len(args) != 2 || !hookEvents[args[0]] || args[1] == "" {
-		fmt.Fprintln(os.Stderr, "usage: AIB-keeper hook pre-tool|worktree-create|post-agent|subagent-stop|codex-pre-tool|codex-subagent-start|codex-subagent-stop|gemini-before-tool <address file>")
+		fmt.Fprintln(os.Stderr, "usage: AIB-keeper hook pre-tool|worktree-create|post-agent|subagent-stop|codex-pre-tool|codex-subagent-start|codex-subagent-stop|gemini-before-tool <address file> | hook <event> --helper-socket <unix socket>")
 		return 2
 	}
 	h := &hookForwarder{
 		event:       args[0],
 		addressFile: args[1],
+		socket:      socket,
 		key:         openedEnv(sealHookKey, "AIB_HOOK_KEY"),
 		chat:        os.Getenv("AIB_HOOK_CHAT"),
 		readOnly:    splitList(os.Getenv("AIB_HOOK_READONLY")),
@@ -106,6 +113,7 @@ func hookMain(args []string) int {
 type hookForwarder struct {
 	event       string
 	addressFile string
+	socket      string // --helper-socket: the WSL helper's tunnel socket (hooksocket.go); addressFile then holds the same path
 	key, chat   string
 	readOnly    map[string]bool
 	deadline    time.Duration
@@ -347,6 +355,9 @@ var (
 
 // worktreesRoot: AIB's worktrees folder, beside the address file in AIB's state folder (never taken from the environment).
 func (h *hookForwarder) worktreesRoot() string {
+	if h.socket != "" { // <data>/helper/mcp.sock: the distro's worktrees are <data>/worktrees
+		return filepath.Join(filepath.Dir(filepath.Dir(filepath.Clean(h.socket))), "worktrees")
+	}
 	return filepath.Join(filepath.Dir(filepath.Clean(filepath.FromSlash(h.addressFile))), "worktrees")
 }
 
@@ -425,6 +436,9 @@ func (h *hookForwarder) endpoint() (string, error) {
 func (h *hookForwarder) post(ctx context.Context, input []byte, nonce string) (int, []byte, string, error) {
 	transport := &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: 2 * time.Second}).DialContext}
 	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	if h.socket != "" {
+		return h.postSocket(ctx, input, nonce)
+	}
 	for {
 		target, err := h.endpoint()
 		if err == nil {

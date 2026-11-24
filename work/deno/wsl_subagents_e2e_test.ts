@@ -6,9 +6,14 @@
  *     the repo's uncommitted file, which does not land;
  *   - the subagent's commit lands on main (one "AIB: subagent" commit), and the worktree, branch and record go on release.
  * Everything is inside AIB_WSL_ROOT=/tmp/aib-wsl-test-<random>.
+ * The second test is the full flow through the agent's own hooks: the hook commands AIB gave the chat run in the distro (the Linux keeper's
+ * `hook <event> --helper-socket`), reach AIB through the helper's relay and channel, and the subagent works in a worktree there and lands.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { cleanRoot, inDistro, KEY, newAib, prepareRoot, ROOT, T } from './_wsl_e2e.ts';
+import { cleanRoot, inDistro, KEY, newAib, prepareRoot, readyHost, ROOT, T } from './_wsl_e2e.ts';
+import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
+import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
+import { Swarm } from '../../outputs/agent-studio/server/swarm/service.ts';
 import { refOf } from '../../outputs/agent-studio/server/platform/location.ts';
 import * as ws from '../../outputs/agent-studio/server/wsl/subagents.ts';
 
@@ -58,6 +63,99 @@ Deno.test({
     } finally {
       await cleanRoot();
       newAib();
+    }
+  },
+});
+
+// ---- the full flow, through the agent's own hooks (the Linux keeper's `hook <event> --helper-socket`) ---------------------------------
+
+type Hook = { type: string; command: string };
+const commandsOf = (settings: unknown) =>
+  Object.fromEntries(
+    Object.entries((settings as { hooks: Record<string, { hooks: Hook[] }[]> }).hooks).flatMap(([event, groups]) => groups.flatMap((g) => g.hooks.map((h) => [event, h.command] as const))),
+  );
+
+Deno.test({
+  name: 'wsl e2e: the agent\'s hooks in the distro reach AIB through the helper (Linux keeper, relay, helper channel); the subagent works in a worktree there and lands',
+  ...T,
+  async fn() {
+    await prepareRoot();
+    const state = Deno.makeTempDirSync({ prefix: 'aib-wsl-subagent-hooks-e2e-' });
+    Deno.env.set('AGENT_STUDIO_ALLOW_REAL_AGENT', '1'); // hooks are set up for a non-fixture agent (the factory below runs the fake agent)
+    const studio = new Studio({ stateDir: state, port: 0, ownersDir: null }, { keeper: null });
+    studio.ownerProbe = () => null;
+    studio.connectionFactory = (_command, cwd, provider, options) =>
+      new Connection(['python3', `${ROOT}/fake_acp.py`, '--cancel-aware'], cwd, provider, {
+        ...options,
+        wsl: options?.wsl ? { ...options.wsl, program: '/usr/bin/python3' } : options?.wsl,
+      });
+    const swarm = new Swarm({ stateDir: state, host: studio, settings: studio.settings });
+    try {
+      const repo = `${ROOT}/repo`;
+      await sh('git -C "$1" branch -M main', repo);
+      await sh('cd "$1" && git config core.autocrlf false && echo "my own unsaved work" > mine.txt', repo);
+      const host = await readyHost();
+      if (!host.hookTunnel) {
+        console.log("(the distro's AIB helper has no subagent hook support: nothing to check)");
+        return;
+      }
+      const c = await studio.connect('claude', refOf({ kind: 'wsl', distro: KEY, linuxPath: repo }));
+      for (let i = 0; i < 100 && c.busy; i++) await new Promise((r) => setTimeout(r, 100));
+      // hooks on, running the distro's own keeper program on the helper's socket
+      assertEquals(c.subagentHooks!.off, '', JSON.stringify(c.subagentHooks));
+      const commands = commandsOf(c.subagentHooks!.settings);
+      assert(commands.PreToolUse.startsWith(`"${host.hookTunnel.forwarder}" hook pre-tool --helper-socket "${host.hookTunnel.socket}"`), commands.PreToolUse);
+      const env = (c as unknown as { env: Record<string, string> }).env;
+      assertEquals(env.AIB_HOOK_CHAT, c.id);
+      /** Run one hook command the way Claude Code does: a shell, the hook's JSON on stdin, the chat's environment. */
+      const run = (command: string, input: unknown, key = env.AIB_HOOK_KEY) =>
+        inDistro(
+          'export AIB_HOOK_KEY="$1" AIB_HOOK_CHAT="$2" AIB_HOOK_READONLY="$3"; exec sh -c "$4"',
+          [key, c.id, env.AIB_HOOK_READONLY ?? '', command],
+          new TextEncoder().encode(JSON.stringify(input)),
+        );
+
+      // PreToolUse(Agent): AIB makes the worktree in the distro and the forwarder (which checked AIB's proof) prints the isolated call
+      const pre = await run(commands.PreToolUse, { hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: 'toolu_1', tool_input: { subagent_type: 'general-purpose', description: 'Make the docs', prompt: 'x' } });
+      assertEquals(pre.code, 0, pre.err);
+      assertEquals(JSON.parse(pre.out).hookSpecificOutput.updatedInput.isolation, 'worktree');
+      // WorktreeCreate: the bare path of a worktree the forwarder checked (under the distro's data folder, a real folder, no link)
+      const created = await run(commands.WorktreeCreate, { hook_event_name: 'WorktreeCreate', name: 'agent-a1' });
+      assertEquals(created.code, 0, created.err);
+      const worktree = created.out.trim();
+      assert(new RegExp(`^${ROOT}/data-[0-9a-f]{12}/worktrees/[0-9a-f]{10}/sub-${c.id.slice(0, 8)}-1$`).test(worktree), worktree);
+      assertEquals(await sh('git -C "$1" show-ref --verify --quiet "refs/heads/studio/sub-$2-1" && echo yes', repo, c.id.slice(0, 8)), 'yes');
+      assertEquals(await sh('cat "$1/mine.txt"', worktree), 'my own unsaved work', "the snapshot holds the repo's uncommitted file");
+      // its edits stay in the worktree
+      await sh('cd "$1" && echo "from the subagent" > sub.txt && git add sub.txt && git -c user.name=t -c user.email=t@e commit -qm "subagent work"', worktree);
+      assertEquals(await sh('git -C "$1" status --porcelain | grep -c sub.txt || true', repo), '0', 'the repo has none of it yet');
+      // SubagentStop
+      const stop = await run(commands.SubagentStop, { hook_event_name: 'SubagentStop', agent_id: 'a1', agent_type: 'general-purpose' });
+      assertEquals(stop.code, 0, stop.err);
+      // a wrong hook key: AIB's answer is unsigned for it, so the call is blocked (exit 2), and nothing is made
+      const wrong = await run(commands.PreToolUse, { hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: 'toolu_2', tool_input: { subagent_type: 'general-purpose', description: 'x', prompt: 'x' } }, 'wrong-key');
+      assertEquals(wrong.code, 2, wrong.out + wrong.err);
+      // the parent is idle: the swarm lands it into the repo's branch in the distro
+      await swarm.poll();
+      let landed = '';
+      for (let i = 0; i < 100 && !landed.includes('AIB: subagent Make the docs'); i++) {
+        landed = await sh('git -C "$1" log --format=%s -n 5 main', repo);
+        if (!landed.includes('AIB: subagent')) await new Promise((r) => setTimeout(r, 300));
+      }
+      assert(landed.includes('AIB: subagent Make the docs'), landed);
+      assertEquals(await sh('git -C "$1" show main:sub.txt', repo), 'from the subagent');
+      assertEquals(await sh('git -C "$1" ls-tree --name-only main | grep -c "^mine.txt$" || true', repo), '0', "the repo's uncommitted file did not land");
+      assertEquals(await sh('cat "$1/mine.txt"', repo), 'my own unsaved work');
+      // released: the worktree and its branch go
+      for (let i = 0; i < 100 && (await sh('test -e "$1" && echo there || echo gone', worktree)) === 'there'; i++) await new Promise((r) => setTimeout(r, 300));
+      assertEquals(await sh('test -e "$1" && echo there || echo gone', worktree), 'gone');
+      assertEquals(await sh('git -C "$1" branch --list "studio/sub-*"', repo), '');
+    } finally {
+      await swarm.stopWatching().catch(() => {});
+      await studio.close().catch(() => {});
+      await cleanRoot();
+      newAib();
+      Deno.removeSync(state, { recursive: true });
     }
   },
 });

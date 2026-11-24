@@ -61,13 +61,14 @@ export const CODEX_EVENTS: readonly (readonly [string, string, string])[] = [
  * run), and Codex runs a call whose hook exits 2 anyway; the forwarder refuses with a JSON deny itself. Elsewhere `$SHELL -lc`:
  * both single-quoted, `|| exit 2` kept.
  */
-export function codexHookCommand(forwarder: string, addressFile: string, event: string, os: string = Deno.build.os): string | null {
+export function codexHookCommand(forwarder: string, addressFile: string, event: string, os: string = Deno.build.os, viaSocket = false): string | null {
   if (os === 'windows') {
     if (!/^[A-Za-z]:\\[^\s"'&|<>^%!(),;=`$@{}]+$/.test(forwarder) || /["%!$`\r\n]/.test(addressFile)) return null;
     return `${forwarder} hook ${event} "${addressFile}"`;
   }
   if (/['\r\n]/.test(forwarder + addressFile)) return null;
-  return `'${forwarder}' hook ${event} '${addressFile}' || exit 2`;
+  // viaSocket (a WSL chat): the helper's tunnel socket instead of an address file
+  return `'${forwarder}' hook ${event} ${viaSocket ? '--helper-socket ' : ''}'${addressFile}' || exit 2`;
 }
 
 function sortKeys(value: unknown): unknown {
@@ -123,12 +124,13 @@ export function codexHooks(
   cwd: string,
   userHooks: unknown,
   os: string = Deno.build.os,
+  viaSocket = false,
 ): Json | null {
   const theirs: Json = isDict(userHooks) ? structuredClone(userHooks) as Json : {};
   const state: Json = isDict(theirs.state) ? { ...theirs.state as Json } : {};
   const out: Json = { ...theirs };
   for (const [event, label, forwarded] of CODEX_EVENTS) {
-    const command = codexHookCommand(forwarder, addressFile, forwarded, os);
+    const command = codexHookCommand(forwarder, addressFile, forwarded, os, viaSocket);
     if (!command) return null;
     const handler = { type: 'command', command, timeout: CODEX_HOOK_TIMEOUT_S };
     const groups = Array.isArray(theirs[event]) ? [...theirs[event] as unknown[]] : [];

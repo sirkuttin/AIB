@@ -19,7 +19,8 @@ Last audit: 2026-11-17 (0.13.0 item 1).
 | Terminal | works | `terminal/sessions.ts` attachWsl | `wsl_terminal_e2e_test.ts` |
 | Chat worktrees, merge/landing, live sync | works | `wsl/worktrees.ts`, `wsl/merge.ts`, `wsl/sync.ts` | `wsl_worktrees_e2e_test.ts`, `wsl_merge_e2e_test.ts`, `wsl_sync_e2e_test.ts` |
 | Swarm helpers | **not** | `swarm/service.ts` Refusal('wsl'), `artifacts/mcp.ts` WSL_TOOL_GROUPS.swarm = false | `audit_wsl_swarm_test.ts` (the refusal) |
-| Subagent worktrees and landing (Claude, Codex, Gemini) | **partly** (2026-11-23): the engine runs in the distro (worktree from a snapshot, own-commits-only landing, release) but the agents' hooks are still off in WSL, so no WSL subagent is isolated yet | `wsl/helper/subagents.ts` `subagent.*`, `wsl/subagents.ts`, `worktrees/subagent_land.ts`; `host/studio.ts` (WSL hooks off) | `wsl_subagents_test.ts`, `wsl_subagents_e2e_test.ts` (real distro; skips without AIB_WSL_E2E) |
+| Subagent worktrees and landing (Claude, Codex) | works (2026-11-23, keeper 1.8.0): the agent's hooks run `AIB-keeper hook <event> --helper-socket` in the distro, reach AIB through the helper's tunnel, the distro's helper makes the worktree and lands it (own commits only), the swarm lands the mirror record, a failed landing wakes the parent. Hooks that can't be set up (helper too old, setup fails) or hooks off in the user's settings turn the chat's editing subagents off by permission rules, never unisolated. Real distro not yet run | `keeper/hooksocket.go`, `wsl/helper/subagents.ts` `subagent.*`, `wsl/subagents.ts` (wslRemote, wslLandSubagent), `subagents/service.ts` (remote, refreshWsl), `host/studio.ts` (#wslClaudeHooks, #wslHookCall, Codex branch), `swarm/service.ts` | `keeper/hooksocket_test.go`, `wsl_subagent_hooks_test.ts` (Claude and Codex, fake helper over real git), `wsl_subagents_test.ts`, `wsl_subagents_e2e_test.ts` (real distro; skips without AIB_WSL_E2E) |
+| Subagent worktrees, Gemini | **not** (fence only: its subagents' edits are denied; the redirect needs the distro's GEMINI_CLI_HOME and policy files) | `subagents/gemini.ts` (`wsl: 'WSL chats come later'`) | `subagent_gemini_test.ts` |
 | Rename sync | works | `host/studio.ts` `_session/rename` in the distro | none for WSL |
 | Open in... (editors) | partly: VS Code, Cursor, Explorer only; no workspace files | `desktop/editors.ts` | `audit_wsl_files_test.ts`, `wsl_gates_test.ts` |
 | Inbox and stalled | works | `attention/watcher.ts`, `acp/connection.ts` | `audit_wsl_inbox_test.ts`, `inbox_wsl_handled_e2e_test.ts` |
@@ -41,10 +42,9 @@ Last audit: 2026-11-17 (0.13.0 item 1).
 ## Known big gaps (not parity yet)
 
 - Swarm helpers in WSL: big (the swarm's tools and registry in the distro).
-- Subagent worktrees in WSL, what is left after 2026-11-23 (the engine is in the helper): a hook path from the distro to AIB (Claude's
-  command hooks, Codex's CODEX_CONFIG hooks and Gemini's BeforeTool hook run AIB-keeper hook in the distro, which needs a helper-socket mode
-  like mcp-forward's: Go, keeper rebuild), AIB's SubagentWorktrees mirroring the distro's records as refs, and the swarm landing a WSL
-  record through wsl/subagents.ts (then the failed-landing wake-up applies as on Windows). Until then WSL chats' hooks stay off.
+- Subagent worktrees in WSL, what is left after the hook path (2026-11-23): Gemini (BeforeTool hook, the fence policy and GEMINI_CLI_HOME
+  made in the distro), the real-distro run of `wsl_subagents_e2e_test.ts` (AIB_WSL_E2E), and a finished empty subagent of a closed WSL
+  chat (the swarm's #dropEmptyOrphan skips WSL records: its worktree goes when the chat is opened again and it lands as empty).
 - Open in... for other editors (JetBrains etc.) and workspace files in WSL: medium.
 - Pictures of saved WSL chats: medium (a helper `transcripts.image` method plus the route branch).
 - "Open in new window" for a WSL project in the real desktop app: the owner reports it fails; the page and route layers pass for WSL

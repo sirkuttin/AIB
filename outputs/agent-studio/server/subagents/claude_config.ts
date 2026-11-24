@@ -318,12 +318,14 @@ export function bashPath(path: string): string | null {
  * The per-session settings: command hooks through the keeper's forwarder. `|| exit 2` makes a missing or broken program block the
  * call too (bash's 127 would otherwise be a non-blocking error: the subagent would run unisolated). Null when a path can't be quoted.
  */
-export function hookSettings(forwarder: string, addressFile: string, options: { worktreeCreate: boolean }): Json | null {
+export function hookSettings(forwarder: string, addressFile: string, options: { worktreeCreate: boolean; viaSocket?: boolean }): Json | null {
   const program = bashPath(forwarder), file = bashPath(addressFile);
   if (!program || !file) return null;
+  // viaSocket (a WSL chat): `hook <event> --helper-socket "<the helper's tunnel socket>"` instead of the address file
+  const target = options.viaSocket ? `--helper-socket "${file}"` : `"${file}"`;
   const hook = (event: string, blocking: boolean) => ({
     type: 'command',
-    command: `"${program}" hook ${event} "${file}"${blocking ? ' || exit 2' : ''}`,
+    command: `"${program}" hook ${event} ${target}${blocking ? ' || exit 2' : ''}`,
     timeout: HOOK_TIMEOUT_S,
   });
   const hooks: Json = {

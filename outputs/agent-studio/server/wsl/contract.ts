@@ -36,6 +36,12 @@ export interface WslHost {
    * paths), or null when this helper has no tunnel (older helper, or its relay did not start: AIB falls back to the interop entry).
    */
   readonly mcpTunnel?: { forwarder: string; socket: string } | null;
+  /**
+   * Subagent hooks through the tunnel (keeper 1.8.0: `<forwarder> hook <event> --helper-socket <socket>`): the same forwarder and
+   * socket as mcpTunnel, only when the helper also has the subagent.* methods the hooks need; null otherwise (a chat of that distro
+   * then gets its editing subagents turned off, never unisolated ones).
+   */
+  readonly hookTunnel?: { forwarder: string; socket: string } | null;
   /** Called for each tool call an agent in the distro sends through the tunnel (HelperMcpRequest), once, never for a replayed one. */
   onMcpRequest?(handler: (request: HelperMcpRequest['params']) => void): () => void;
 }
@@ -261,6 +267,29 @@ export interface HelperMethods {
   };
   'subagent.release': { params: { id: string }; result: { outcome: 'removed' | 'kept' | 'running' | 'gone' } };
   /**
+   * The distro's own agent setup for a chat (it can't be read from Windows): `git` is '' or why the folder can't have subagent
+   * worktrees; `hooksOff` why the user's own settings turn hooks off ('' when on); `deny` a Claude chat's per-session permission rules
+   * for hooks off. `config` is a Codex chat's parsed CODEX_CONFIG. `subagent.event` hands on what the chat's ACP stream says
+   * (claudeTool, acpEnded, reconcileEnded, turnEnded, turnCancelled); `subagent.folderBranch` is the branch a record lands on.
+   */
+  'subagent.setup': {
+    params: { agent: 'claude' | 'codex'; project: string; folder?: string; aibWorktree?: boolean; env?: Record<string, string>; chatId?: string };
+    result: {
+      /** A Codex chat's own folder for its subagents' worktrees (made by the helper), '' otherwise. */
+      subFolder: string;
+      git: string;
+      readOnly: string[];
+      userWorktreeHook: string;
+      hooksOff: string;
+      configError: string;
+      configDir: string;
+      deny: Record<string, unknown> | null;
+      config: Record<string, unknown> | null;
+    };
+  };
+  'subagent.event': { params: { chat: WslSubagentChat; op: string; args?: Record<string, unknown> }; result: { ok: boolean } };
+  'subagent.folderBranch': { params: { id: string }; result: { branch: string } };
+  /**
    * Live sync of WSL chats' worktrees (helper/sync.ts: worktrees/sync.ts run natively over the same `<data>`, its folder watcher
    * inotify). Offered with worktree.*. `sync.chats` is the whole set of open WSL chats in their own copy (cwd: the worktree's Linux
    * path), sent in order; the helper keeps it in `<data>/wsl-sync-chats.json` and watches them again after a restart. The turn hooks
@@ -474,6 +503,10 @@ export interface WslSubagentChat {
   folder: string;
   project: string;
   readOnly?: string[];
+  /** The user's own WorktreeCreate hook makes the worktrees (Claude); the distro's Claude config folder; a Codex chat's own folder. */
+  userWorktreeHook?: boolean;
+  configDir?: string;
+  codexFolder?: boolean;
 }
 
 /** A subagent worktree record as the distro's helper keeps it (subagents/service.ts SubagentRecord; Linux paths). */
