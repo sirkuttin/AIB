@@ -4,7 +4,7 @@
  * and a second process writing under the shared file lock loses nothing). Only temp folders are used.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { PyParity } from './_frozen.ts';
+import { Frozen } from './_frozen.ts';
 import {
   ConversationState,
   ProjectPrefs,
@@ -134,12 +134,12 @@ async function runDeno(kind: Kind, dir: string | null, steps: Step[], name = 're
 
 let runs = 0;
 
-async function same(py: PyParity, kind: Kind, steps: Step[], label: string) {
-  const expected = await py.frozen(`run-${runs++}`, async () => norm(await py.call('state_store_shim', 'run', [kind, tempDir(), steps])));
+async function same(py: Frozen, kind: Kind, steps: Step[], label: string) {
+  const expected = await py.frozen(`run-${runs++}`);
   const actual = await runDeno(kind, tempDir(), steps);
   assertEquals(norm(actual), expected, label);
   if (kind === 'recovery') return;
-  const memoryExpected = await py.frozen(`run-${runs++}`, async () => norm(await py.call('state_store_shim', 'run', [kind, null, steps])));
+  const memoryExpected = await py.frozen(`run-${runs++}`);
   assertEquals(norm(await runDeno(kind, null, steps)), memoryExpected, `${label} (in memory)`);
 }
 
@@ -150,7 +150,7 @@ const REOPEN: Step = { reopen: true };
 // ---- parity ------------------------------------------------------------------------------------------
 
 Deno.test('parity: ConversationState sequences, errors and reloads', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   await same(py, 'conversations', [
     c('apply', 'pin', 'claude', 's1'),
     c('apply', 'pin', 'claude', 's1'),
@@ -184,7 +184,7 @@ Deno.test('parity: ConversationState sequences, errors and reloads', async () =>
 });
 
 Deno.test('parity: ProjectPrefs sequences and errors', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   const many = Object.fromEntries(Array.from({ length: 51 }, (_, i) => [`k${i}`, { name: 'x' }]));
   await same(py, 'projects', [
     c('update', { set: { 'w:c/a': { name: '  My \x01  app ', color: 'blue' } } }),
@@ -211,7 +211,7 @@ Deno.test('parity: ProjectPrefs sequences and errors', async () => {
 });
 
 Deno.test('parity: ReadState sequences and errors', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   const many = Object.fromEntries(Array.from({ length: 501 }, (_, i) => [`a:${i}`, { seenAt: 1 }]));
   await same(py, 'read', [
     c('update', { set: { 'claude:abc': { seenAt: 1000, seenIndex: 4 } } }),
@@ -236,7 +236,7 @@ Deno.test('parity: ReadState sequences and errors', async () => {
 });
 
 Deno.test('parity: SettingsStore sequences and errors', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   const python = WIN ? 'python' : 'python3'; // a bare name: both look it up on PATH and keep what was typed
   const agent = (name: string, extra: Record<string, unknown> = {}) => ({
     name,
@@ -305,14 +305,14 @@ Deno.test('parity: SettingsStore sequences and errors', async () => {
 });
 
 Deno.test('parity: worktree per chat is on by default (fresh store, hidden from the page)', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   await same(py, 'settings', [c('worktree_per_chat'), c('snapshot'), c('public'), REOPEN, c('worktree_per_chat')], 'settings default');
   const store = new SettingsStore(tempDir());
   assertEquals(store.worktreePerChat(), true);
 });
 
 Deno.test('parity: StateStore recovery sequences', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   const receipts = Array.from({ length: 205 }, (_, i) => c('set_receipt', 'claude', 's', `${i}`, 'f', 'finished'));
   const conversations = Array.from({ length: 53 }, (_, i) => c('remember_conversation', 'omp', `session-${i}`, 'C:/x'));
   await same(py, 'recovery', [
@@ -341,7 +341,7 @@ Deno.test('parity: StateStore recovery sequences', async () => {
 });
 
 Deno.test('parity: hand-edited and odd files load the same', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   const files: [Kind, string, string][] = [
     [
       'conversations',
@@ -431,11 +431,7 @@ Deno.test('parity: hand-edited and odd files load the same', async () => {
     const dir = tempDir();
     Deno.writeTextFileSync(`${dir}${SEP}${name}`, text);
     const actual = norm(final(open(kind, dir)));
-    const expected = await py.frozen(`odd-${kind}-${oddRuns++}`, async () => {
-      const pyDir = tempDir();
-      Deno.writeTextFileSync(`${pyDir}${SEP}${name}`, text);
-      return norm(await py.call('state_store_shim', 'public', [kind, pyDir]));
-    });
+    const expected = await py.frozen(`odd-${kind}-${oddRuns++}`);
     assertEquals(actual, expected, `${kind}: ${text.slice(0, 60)}`);
   }
 });
@@ -460,20 +456,17 @@ const WRITES: Record<Exclude<Kind, 'recovery'>, Step[]> = {
 };
 
 Deno.test('every store reads back what a fresh store wrote, as Python read the same files', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   for (const [kind, steps] of Object.entries(WRITES) as [Kind, Step[]][]) {
     // a Deno store writes; Python's reader gave the same public view of that folder
     const dir = tempDir();
     const written = await runDeno(kind, dir, steps);
-    const pythonRead = await py.frozen(`read-${kind}`, async () => content(await py.call('state_store_shim', 'public', [kind, dir])));
+    const pythonRead = await py.frozen(`read-${kind}`);
     assertEquals(content(written.public), pythonRead, `${kind}: what Python read of the Deno file`);
     // another store reads the folder fresh and gets what the writer saw (and what Python's own writes gave)
     const other = tempDir();
     await runDeno(kind, other, steps);
-    const pythonWrote = await py.frozen(`wrote-${kind}`, async () => {
-      const own = tempDir();
-      return content(((await py.call('state_store_shim', 'run', [kind, own, steps])) as { public: unknown }).public);
-    });
+    const pythonWrote = await py.frozen(`wrote-${kind}`);
     assertEquals(content(final(open(kind, other))), pythonWrote, `${kind}: a fresh read of the written folder`);
   }
   const dir = tempDir();
@@ -483,7 +476,7 @@ Deno.test('every store reads back what a fresh store wrote, as Python read the s
     c('set_receipt', 'omp', 'a', '1', 'g', 'finished'),
   ];
   await runDeno('recovery', dir, steps);
-  const pythonRecovery = await py.frozen('read-recovery', async () => content(await py.call('state_store_shim', 'public', ['recovery', dir])));
+  const pythonRecovery = await py.frozen('read-recovery');
   assertEquals(pythonRecovery, content(final(open('recovery', dir))), 'recovery: working became unknown on both');
   const other = tempDir();
   await runDeno('recovery', other, steps);

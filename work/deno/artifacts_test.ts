@@ -1,14 +1,14 @@
 /**
  * server/artifacts/artifacts.ts (artifacts.py): the cases of work/test_artifacts.py (StoreTests, the RouteTests that only need the
  * Service, WatcherTests, WriteTrackerTests) and work/test_artifacts_followups.py (ChatKeyed), parity with Python through
- * work/parity/artifacts_shim.py, and interop both ways on one store folder (Python and Deno share the state folder).
+ * the retired artifacts_shim.py, and interop both ways on one store folder (Python and Deno share the state folder).
  *
  * Not ported here (they need a whole Studio): bootstrap's artifactOrigin, the Studio page CSP framing the origin, the Origin-header
  * gate on the routes (security.authorize, covered by security_test.ts), events reaching the conversation event list and
  * /api/live/state, SplitModeTests / InProcessModeTests (real web server + agent host), OwnToolApproval (studio.Connection).
  */
 import { assert, assertEquals, assertThrows } from './_assert.ts';
-import { PyParity } from './_frozen.ts';
+import { Frozen } from './_frozen.ts';
 import { FrozenDigest } from './_digest.ts';
 import {
   ArtifactError,
@@ -36,7 +36,7 @@ const WIN = Deno.build.os === 'windows';
 const SEP = WIN ? '\\' : '/';
 const enc = (text: string) => new TextEncoder().encode(text);
 const join = (...parts: string[]) => parts.join(SEP);
-const py = new PyParity();
+const py = new Frozen();
 
 class Clock {
   constructor(public t = 1000.0) {}
@@ -814,12 +814,7 @@ async function sameStoreRun(steps: Step[]): Promise<{ deno: string }> {
     messages: results.map((r) => (r.error ? r.message : null)),
     manifests: order(root, text(root)), // the manifests on disk are byte-identical (ids aside)
   });
-  const theirs = await py.frozen(`store-run-${storeRuns++}`, async () => {
-    using b = temp();
-    const pyRoot = join(b.dir, 'artifacts');
-    const results = await py.call('artifacts_shim', 'store_run', [pyRoot, steps]) as Result[];
-    return seen(results, pyRoot);
-  });
+  const theirs = await py.frozen(`store-run-${storeRuns++}`);
   assertSame(JSON.parse(JSON.stringify(seen(mine, denoRoot))), theirs);
   return { deno: denoRoot };
 }
@@ -1046,8 +1041,7 @@ Deno.test('parity: the routes answer as Python does', async () => {
   const denoProject = join(a.dir, 'proj'), pyProject = join(c.dir, 'proj');
   const live = { conn: 'claude:S' };
   const mine = serviceRun(join(a.dir, 'artifacts'), denoProject, steps, live);
-  const theirs = await py.frozen('service-run', async () =>
-    normalize(await py.call('artifacts_shim', 'service_run', [join(c.dir, 'artifacts'), pyProject, steps, live]), [c.dir]));
+  const theirs = await py.frozen('service-run');
   assertSame(normalize(mine, [a.dir]), theirs);
 });
 
@@ -1123,8 +1117,7 @@ Deno.test('parity: the watcher does what Python does for the same writes', async
     { tick: 0.8 },
   ];
   const mine = watcherRun(join(a.dir, 'artifacts'), join(a.dir, 'proj'), steps);
-  const theirs = await py.frozen('watcher-run', async () =>
-    normalize(await py.call('artifacts_shim', 'watcher_run', [join(c.dir, 'artifacts'), join(c.dir, 'proj'), steps]), [c.dir]));
+  const theirs = await py.frozen('watcher-run');
   assertSame(normalize(mine, [a.dir]), theirs);
 });
 
@@ -1275,7 +1268,6 @@ Deno.test('interop: archivedAt, deletedAt and deletedSource (Deno only) survive 
 });
 
 Deno.test('parity teardown', async () => {
-  await py.close();
 });
 
 // ---- the web server's wiring (web/artifact_wiring.ts) ----------------------------------------------------------------------

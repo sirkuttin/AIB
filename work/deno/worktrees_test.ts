@@ -11,7 +11,7 @@
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
 import { createHash } from 'node:crypto';
-import { PyParity } from './_frozen.ts';
+import { Frozen } from './_frozen.ts';
 import {
   commit,
   exists,
@@ -581,7 +581,7 @@ Deno.test('the pause and worktree locks exclude another process and the other wa
 
 // ---- the registry file: interop both ways -----------------------------------------------------------------------------
 Deno.test('registry: find, update and removal keep the file format; the same writes give the bytes Python wrote', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   using box = new Sandbox();
   const { manager, plan, path } = await made(box);
   await manager.setSession(plan.key, 'omp', 's1');
@@ -613,13 +613,7 @@ Deno.test('registry: find, update and removal keep the file format; the same wri
   for (const [key, record] of records) await fresh.put(key, record);
   await fresh.update('12', { syncMerged: new Map([['9', 'a'], ['10', 'b']]) as unknown as Record<string, unknown>, user: 'u' });
   await fresh.remove('k1');
-  const pythonBytes = await py.frozen('registry-bytes', async () => {
-    const pyState = pathOf(box.base, 'py-state');
-    for (const [key, record] of records) await py.call('worktrees_shim', 'registry', [pyState, 'put', [key, record]]);
-    await py.call('worktrees_shim', 'registry', [pyState, 'update', ['12'], { syncMerged: { '9': 'a', '10': 'b' }, user: 'u' }]);
-    await py.call('worktrees_shim', 'registry', [pyState, 'remove', ['k1']]);
-    return Deno.readTextFileSync(pathOf(pyState, 'studio-worktrees.json'));
-  });
+  const pythonBytes = await py.frozen('registry-bytes');
   assertEquals(Deno.readTextFileSync(pathOf(denoState, 'studio-worktrees.json')), pythonBytes);
   // a corrupt or odd file reads as empty
   Deno.writeTextFileSync(pathOf(denoState, 'studio-worktrees.json'), '{"version":1,"worktrees":{"a":1,"b":{"x":1}},"removed":[]}');
@@ -630,7 +624,7 @@ Deno.test('registry: find, update and removal keep the file format; the same wri
 
 // ---- parity: the same repo state in, the same answers out ----------------------------------------------------------------
 Deno.test('path helpers, the repo hash, the diff base and the user ref give what Python gave', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   using box = new Sandbox();
   const call = (name: string, args: unknown[]) => py.call('worktrees_shim', 'call', [name, args]);
   // repoHash: sha1 of the normalised real path, ten hex characters (the folder name under <state>/worktrees)
@@ -683,10 +677,9 @@ Deno.test('path helpers, the repo hash, the diff base and the user ref give what
 });
 
 Deno.test('create, snapshot commit, user base and removal give the commits and records Python gave', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   using box = new Sandbox(false);
   setFixedDates(true);
-  if (Deno.env.get('AIB_FREEZE') === '1') await py.call('worktrees_shim', 'set_env', [FIXED_DATES]);
   try {
     const repos = ['py', 'deno'].map((side) => {
       const project = makeRepo(pathOf(box.base, side, 'proj'));
@@ -745,10 +738,9 @@ Deno.test('create, snapshot commit, user base and removal give the commits and r
         refs: runGit(pySide.project, 'for-each-ref'),
       };
     };
-    assertEquals(JSON.parse(JSON.stringify(mine)), await py.frozen('create-snapshot-remove', theirs));
+    assertEquals(JSON.parse(JSON.stringify(mine)), await py.frozen('create-snapshot-remove'));
   } finally {
     setFixedDates(false);
-    if (Deno.env.get('AIB_FREEZE') === '1') await py.call('worktrees_shim', 'set_env', [{ GIT_AUTHOR_DATE: null, GIT_COMMITTER_DATE: null }]);
   }
 });
 

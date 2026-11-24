@@ -24,6 +24,34 @@ function tempPattern(): RegExp {
  */
 export const hideTemp = (jsonText: string): string => jsonText.replace(tempPattern(), '<TMP>').replace(/([A-Za-z0-9_]-)[0-9a-f]{16}(?![0-9A-Za-z])/g, '$1<R>');
 
+let localRes: [RegExp, string][] | null = null;
+/** The repo checkout and the home folder as patterns over JSON text (any separator style, any case), each with its token. */
+function localPatterns(): [RegExp, string][] {
+  if (localRes) return localRes;
+  const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const sep = String.raw`(?:\\\\|/)+`;
+  const make = (path: string) => {
+    const parts = path.split(/[\\/]+/).filter(Boolean);
+    // what follows the folder in the same path is written with slashes whatever the platform (hideLocal does that)
+    return new RegExp(parts.map(escape).join(sep) + String.raw`((?:(?:\\\\|/)+[^\\/"]+)*)`, 'gi');
+  };
+  const repo = decodeURIComponent(new URL('../../', import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1');
+  const out: [RegExp, string][] = [[make(repo), '<REPO>']];
+  const home = Deno.env.get('USERPROFILE') ?? Deno.env.get('HOME');
+  if (home) out.push([make(home), '<HOME>']);
+  return localRes = out;
+}
+
+/**
+ * The checkout the tests run from and the home folder written as <REPO> and <HOME> (what follows them in the path with slashes), so
+ * a fingerprint is the same in a worktree, in the main checkout and on another machine. Temp folders are hidden first (they sit under home).
+ */
+export const hideLocal = (jsonText: string): string => {
+  let text = hideTemp(jsonText);
+  for (const [re, token] of localPatterns()) text = text.replace(re, (_whole, rest: string) => token + rest.replace(/(?:\\\\|\/)+/g, '/'));
+  return text;
+};
+
 function sorted(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sorted);
   if (value && typeof value === 'object') {
@@ -35,7 +63,7 @@ function sorted(value: unknown): unknown {
 /** sha1 (8 hex characters) of the JSON of value, keys sorted, temp folders hidden; undefined and a missing value are null. */
 export function digestOf(value: unknown): string {
   const plain = JSON.parse(JSON.stringify(value ?? null));
-  return createHash('sha1').update(hideTemp(JSON.stringify(sorted(plain)))).digest('hex').slice(0, 8);
+  return createHash('sha1').update(hideLocal(JSON.stringify(sorted(plain)))).digest('hex').slice(0, 8);
 }
 
 export class FrozenDigest {

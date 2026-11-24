@@ -5,7 +5,7 @@
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
 import { python } from './_work.ts';
-import { PyParity } from './_frozen.ts';
+import { Frozen } from './_frozen.ts';
 import {
   CapError,
   ClientCaps,
@@ -245,7 +245,7 @@ capsTest('dispatch answers in JSON-RPC and checks the session', async (t) => {
 });
 
 capsTest('path checks and fs requests match Python', async (t) => {
-  await using py = new PyParity();
+  const py = new Frozen();
   const secret = join(t.out, 'secret.txt');
   Deno.writeTextFileSync(secret, 'top secret');
   Deno.mkdirSync(join(t.ws, 'sub'));
@@ -353,7 +353,7 @@ capsTest('path checks and fs requests match Python', async (t) => {
   }
 });
 
-function pyCall(py: PyParity, init: unknown[], method: string, params: Record<string, unknown>) {
+function pyCall(py: Frozen, init: unknown[], method: string, params: Record<string, unknown>) {
   return py.call('client_caps_shim', 'call', [...init, method, { sessionId: 's', ...params }]);
 }
 

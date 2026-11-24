@@ -4,9 +4,7 @@
  * reply lines and the requests Studio receives must be byte-identical), and the mcpServers entry the Deno Studio gives agents.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { python } from './_work.ts';
-import { PY_REF_DIR } from './_parity.ts';
-import { PyParity } from './_frozen.ts';
+import { Frozen } from './_frozen.ts';
 import { APP_ROOT, TESTS_DIR } from '../../outputs/agent-studio/server/core/app.ts';
 import * as artifactKeys from '../../outputs/agent-studio/server/artifacts/keys.ts';
 import { artifactToolCommand, INSTRUCTIONS, OFFLINE_LIBS_NOTE } from '../../outputs/agent-studio/server/artifacts/mcp.ts';
@@ -24,8 +22,7 @@ const WIN = Deno.build.os === 'windows';
 const SEP = WIN ? '\\' : '/';
 const MAIN = `${APP_ROOT}${SEP}server${SEP}main.ts`;
 const DENO_TOOL = [Deno.execPath(), 'run', '-A', '--quiet', MAIN, 'mcp-artifact'];
-const frozenPy = new PyParity();
-const PY_TOOL = [python(), `${PY_REF_DIR}${SEP}artifact_mcp.py`]; // the Python reference's tool
+const frozenPy = new Frozen();
 Deno.env.set('AGENT_STUDIO_TEST', '1');
 /** A Deno reply line with the Deno-only part taken out: the bundled-libraries sentence of publish's description (no /_lib/ in Python). */
 const masked = (line: string) => line.replace(JSON.stringify(OFFLINE_LIBS_NOTE).slice(1, -1), '');
@@ -615,9 +612,8 @@ Deno.test('differential: artifact_mcp.py and the Deno server give the same repli
   Deno.writeTextFileSync(`${lab.dir}${SEP}outputs${SEP}page.html`, '<p>hi</p>');
   const env = { STUDIO_WORKTREE: '1' };
   // The reply lines and requests of the retired Python tool on the same script, kept as answers (fixtures/frozen/artifact_mcp.json).
-  const pyLive = () => runScript(PY_TOOL, lab.dir, lab.fake, env);
-  const pyLines = await frozenPy.frozenList('script-lines', async () => (await pyLive())[0]) as string[];
-  const pyRequests = await frozenPy.frozenList('script-requests', async () => (await pyLive())[1]) as Recorded[];
+  const pyLines = await frozenPy.frozenList('script-lines') as string[];
+  const pyRequests = await frozenPy.frozenList('script-requests') as Recorded[];
   const [denoLines, denoRequests] = await runScript(DENO_TOOL, lab.dir, lab.fake, env);
   assertEquals(denoLines.length, pyLines.length);
   for (let i = 0; i < pyLines.length; i++) assertEquals(maskDenoOnly(masked(denoLines[i])), pyLines[i], `reply ${i + 1}`);
@@ -667,7 +663,7 @@ Deno.test('differential: tools/list without a worktree, unreachable Studio, URL 
     // without response" or WinError 10053), in either tool; the sentence around it must match.
     const reason = (l: string) => l.replace(/Could not reach AIB \((?:Remote end closed connection without response|\[WinError 1005[34]\][^)]*)\)/, 'Could not reach AIB (hang-up)');
     // what the retired Python tool answered, with the hang-up reason normalised (fixtures/frozen/artifact_mcp.json)
-    const theirs = await frozenPy.frozenList(`unreachable-${i}`, async () => (await twoLines(PY_TOOL)).map(reason));
+    const theirs = await frozenPy.frozenList(`unreachable-${i}`);
     const mine = await twoLines(DENO_TOOL);
     assertEquals(mine.map((l) => reason(maskDenoOnly(masked(l)))), theirs, JSON.stringify([url, extra, key, conversation]));
   }

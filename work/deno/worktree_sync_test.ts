@@ -10,7 +10,7 @@
  * worktree_merge_clash_test.ts).
  */
 import { assert, assertEquals } from './_assert.ts';
-import { PyParity } from './_frozen.ts';
+import { Frozen } from './_frozen.ts';
 import { commit, runGit, Sandbox, write } from './_worktree_fixtures.ts';
 import { BOTH, CHAT_EDIT, type Ctx, exists, list, LINES, note, setup, show, text, touched, USER_EDIT } from './_sync_fixtures.ts';
 import * as wt from '../../outputs/agent-studio/server/worktrees/worktrees.ts';
@@ -130,7 +130,7 @@ Deno.test('editor temp files are never synced and a temp-rename save is', async 
 });
 
 Deno.test('temp names and env names match Python', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   for (const name of ['a/.b.swp', 'b.swx', 'c~', '.#d', '4913', 'e.tmp', 'f.tmp.123', '#g#']) assert(sync.isTemp(name), name);
   for (const name of ['swp.py', 'a.txt', 'tmp/x.py', 'f4913.txt', '.env']) assert(!sync.isTemp(name), name);
   const names = [

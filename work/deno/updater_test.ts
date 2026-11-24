@@ -14,7 +14,7 @@ import {
   assertRejects,
   assertThrows,
 } from "./_assert.ts";
-import { PyParity } from "./_frozen.ts";
+import { Frozen } from "./_frozen.ts";
 import {
   BASE_ENV,
   checksumFor,
@@ -236,7 +236,7 @@ Deno.test("parseVersion and compare match test_updater and Python", async () => 
   assertEquals(c("v0.2.0-beta.1", "0.1.9"), 1);
   assertThrows(() => c("nope", "0.1.0"), ValueError);
 
-  await using py = new PyParity();
+  const py = new Frozen();
   const texts = [
     "v0.1.0-beta.2",
     "1.2.3",
@@ -286,7 +286,7 @@ Deno.test("platformKey matches Python for Python names, and reads Deno names", a
   assertEquals(platformKey("windows", "x86_64"), ["windows", "x64"]);
   assertEquals(platformKey("darwin", "aarch64"), ["macos", "arm64"]);
   assert(platformKey() !== null, "this machine is supported");
-  await using py = new PyParity();
+  const py = new Frozen();
   const inputs = [
     ["win32", "AMD64"],
     ["cygwin", "x86_64"],
@@ -399,7 +399,7 @@ Deno.test("checksum lines (test_updater + Python parity)", async () => {
     ) as UpdateError;
     assertEquals(error.code, "no_checksum");
   }
-  await using py = new PyParity();
+  const py = new Frozen();
   const texts = [
     `${h}  file.exe\n`,
     `${h}  file.exe   \t\n`,
@@ -456,7 +456,7 @@ Deno.test("only GitHub hosts are followed (and the test hook host)", async () =>
       UpdateError,
     );
   }
-  await using py = new PyParity();
+  const py = new Frozen();
   const urls = [
     ...bads,
     "https://api.github.com/x",
@@ -499,7 +499,7 @@ Deno.test("instructions for each package kind, and parentOf", () => {
   assertEquals(parentOf(WINDOWS ? "C:\\a\\b.exe" : "/a/b.exe"), WINDOWS ? "C:\\a" : "/a");
 });
 
-/** Env with async disposal, for tests that also hold a PyParity. */
+/** Env with async disposal, for tests that also hold a Frozen. */
 class AsyncEnv {
   e = new Env();
   [Symbol.asyncDispose]() {
@@ -1145,7 +1145,7 @@ function pyView(status: object): Record<string, unknown> {
 }
 
 Deno.test("state.json: refusals and odd files read the way Python read them", async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   await using fake = await FakeGitHub.start();
   {
     // Refusals and odd files read the same way.
@@ -1154,10 +1154,7 @@ Deno.test("state.json: refusals and odd files read the way Python read them", as
     try {
       a.e.base(bad.base);
       await a.e.service().check();
-      const [, refusedStatus] = await py.frozenList("state-refusal", async () => {
-        const r = await py.call("updater_shim", "service", [a.e.dir, null], { base: bad.base }) as PyService;
-        return [r.state, r.status];
-      });
+      const [, refusedStatus] = await py.frozenList("state-refusal");
       assertEquals(refusedStatus, pyView(a.e.service().status()));
     } finally {
       await bad.server.shutdown();
@@ -1174,10 +1171,7 @@ Deno.test("state.json: refusals and odd files read the way Python read them", as
     for (const [i, text] of odd.entries()) {
       Deno.mkdirSync(a.e.dir + "/updates", { recursive: true });
       Deno.writeTextFileSync(a.e.dir + "/updates/state.json", text);
-      const [theirState, theirStatus] = await py.frozenList(`state-odd-${i}`, async () => {
-        const r = await py.call("updater_shim", "service", [a.e.dir, null], { base: fake.base }) as PyService;
-        return [r.state, r.status];
-      });
+      const [theirState, theirStatus] = await py.frozenList(`state-odd-${i}`);
       const mine = a.e.service();
       const { notified: _notified, ...mineState } = mine.state; // Deno only: the "update ready" notification went out for it
       assertEquals(mineState, theirState, text);

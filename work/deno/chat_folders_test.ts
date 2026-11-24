@@ -6,7 +6,7 @@
  * other modules); test_project_root.py (state_store, monitor and artifacts only, nothing of these modules).
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
-import { PyParity } from './_frozen.ts';
+import { Frozen } from './_frozen.ts';
 import { git, HAVE_GIT, TempRepo, write } from './_git_repo.ts';
 import {
   artifactFolder,
@@ -89,7 +89,7 @@ test('repoBranch reads HEAD: a branch, a detached commit, a linked worktree; giv
   const plain = osp.join(r.root, 'plain');
   Deno.mkdirSync(plain);
   for (const bad of ['', null, '\\\\server\\share', '//server/share']) assertEquals(repoBranch(bad), '');
-  await using py = new PyParity();
+  const py = new Frozen();
   // on a branch (a detached HEAD is a commit hash, which differs on every run: asserted below)
   for (const cwd of [r.repo, r.p('sub'), wt, plain, osp.join(r.root, 'missing'), '']) {
     assertEquals(repoBranch(cwd), await py.call('chat_folders', 'repo_branch', [cwd]), cwd);

@@ -3,7 +3,7 @@
  * launched: every Launcher gets a recording popen. Skipped: SettingsAndPrefsTests (state_store, covered by the settings port tests).
  */
 import { assert, assertEquals, assertThrows } from './_assert.ts';
-import { PyParity } from './_frozen.ts';
+import { Frozen } from './_frozen.ts';
 import {
   buildCommand,
   defaultEditor,
@@ -161,7 +161,7 @@ Deno.test('default order and public entry; settings uses the same ids', () => {
 });
 
 Deno.test('detection matches Python', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   const local = osp.join(LOCAL, 'Programs');
   const cases: [string[], Record<string, string>, boolean, string, string[]][] = [
     [[osp.join(local, 'Microsoft VS Code', 'Code.exe'), osp.join(local, 'Devin', 'Devin.exe')], {}, true, 'win32', []],
@@ -305,7 +305,7 @@ Deno.test('a linked worktree of a project is allowed, a fake one is not', () => 
 
 Deno.test('resolveInside matches Python', async () => {
   using f = new Fixture();
-  await using py = new PyParity();
+  const py = new Frozen();
   const roots = [f.project];
   const cases: [unknown, string[], string | null][] = [
     [osp.join(f.project, 'src', 'a.py'), roots, null],
@@ -495,7 +495,7 @@ Deno.test('the listing default prefers the saved setting', () => {
 });
 
 Deno.test('buildCommand matches Python for every program and kind', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   const entries: Entry[] = [
     ...fakeEntries('code', 'devin', 'cmdcode', 'explorer', 'wt', 'ps'),
     {
@@ -574,7 +574,7 @@ Deno.test('comments and trailing commas are stripped, strings kept', async () =>
   const data = JSON.parse(stripJsonc(text));
   assertEquals(data.settings.a, 'b // not a comment');
   assertEquals(data.folders.length, 2);
-  await using py = new PyParity();
+  const py = new Frozen();
   for (const t of [text, '{"a": "\\"//x", // y\n "b": [1,2,],}', '/* open', '"unterminated', '[1, /* c */ ,]']) {
     assertEquals(stripJsonc(t), await py.call('editors', 'strip_jsonc', [t]));
   }
@@ -595,7 +595,7 @@ Deno.test('workspaces match in the project and its parents', async () => {
   assertEquals(found.map((m) => m.name).sort(), ['abs', 'bom', 'here', 'up']);
   const here = found.find((m) => m.name === 'here')!;
   assertEquals([here.folders, here.others], [2, 1]);
-  await using py = new PyParity();
+  const py = new Frozen();
   assertEquals(findWorkspaces(f.project), await py.call('editors', 'find_workspaces', [f.project]));
 });
 

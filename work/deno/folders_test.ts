@@ -4,7 +4,7 @@
  * checked as data. Skipped: RouteTests and KindsRouteTests (HTTP routes, not ported here).
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
-import { PyParity } from './_frozen.ts';
+import { Frozen } from './_frozen.ts';
 import {
   checkPath,
   createFolder,
@@ -89,7 +89,7 @@ Deno.test('normalised parts', () => {
 });
 
 Deno.test('validatePath matches Python, messages included', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   const extra = [
     'C:\\a\\<b>?',
     'C:\\' + 'x'.repeat(256),
@@ -132,7 +132,7 @@ Deno.test({ name: 'check states (Windows)', ignore: !WIN }, async () => {
     assertEquals(typeof fresh.gitAvailable, 'boolean');
     Deno.writeTextFileSync(dir + '\\f.txt', 'x');
     assertEquals(checkPath(dir + '\\f.txt').reason, 'not_a_folder');
-    await using py = new PyParity();
+    const py = new Frozen();
     for (const raw of [dir + '\\fresh', dir, dir + '\\nope\\child', dir + '\\', dir + '\\f.txt', '\\\\srv\\x', '//srv/x', 'rel', 7]) {
       assertEquals(checkPath(raw), await py.call('folders', 'check_path', [raw]), String(raw));
     }
@@ -224,7 +224,7 @@ Deno.test({ name: 'start folder: home until a project is opened, then its parent
       Deno.readTextFileSync(osp.join(dir, 'studio-folders.json')),
       pyJsonDumps({ version: 1, lastParent: osp.join(dir, 'sub') }),
     );
-    await using py = new PyParity();
+    const py = new Frozen();
     assertEquals(startFolder(null, 'H'), await py.call('folders', 'start_folder', [null, 'H']));
   } finally {
     Deno.removeSync(dir, { recursive: true });
@@ -321,7 +321,7 @@ Deno.test('the start folder is data, for an existing folder only', async () => {
     assertEquals(startDir(osp.join(dir, 'not', 'yet')), dir);
     assertEquals(startDir('   '), '');
     assertEquals(startDir('x'.repeat(401)), '');
-    await using py = new PyParity();
+    const py = new Frozen();
     for (const raw of [osp.join(dir, 'not', 'yet'), dir, '', 5, 'C:\\', '; rm -rf / \x00', osp.join(dir, 'a\tb')]) {
       assertEquals(startDir(raw), await py.call('folders', '_start_dir', [raw]), String(raw));
     }
@@ -403,7 +403,7 @@ Deno.test('kinds are bounded and ignore junk; match Python', async () => {
   assertEquals(Object.keys(kinds), ['C:\\a\\scratch-1']);
   assertEquals(kinds['C:\\a\\scratch-1'], { worktree: false, scratch: true });
   assertEquals(Object.keys(folderKinds(Array.from({ length: 1000 }, (_, i) => `/p${i}`))).length, MAX_KINDS);
-  await using py = new PyParity();
+  const py = new Frozen();
   const paths = [
     'C:\\a\\scratch-9',
     'C:\\a\\.claude\\worktrees\\w',

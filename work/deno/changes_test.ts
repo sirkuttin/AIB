@@ -3,7 +3,7 @@
  * same repositories. Skipped: ChangesRouteTests (HTTP routes; the response logic is covered in chat_folders_test.ts).
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
-import { PyParity } from './_frozen.ts';
+import { Frozen } from './_frozen.ts';
 import { git, HAVE_GIT, TempRepo, write, writeBytes } from './_git_repo.ts';
 import {
   ChangesError,
@@ -78,7 +78,7 @@ test('every kind of change, and Python sees the same', async () => {
   assertEquals(data.totals!.files, 7);
   assertEquals(data.totals!.added, data.files!.reduce((s, f) => s + f.added, 0));
   assert(osp.isdir(data.root!));
-  await using py = new PyParity();
+  const py = new Frozen();
   assertEquals(data, await py.call('changes', 'get_changes', [r.repo]));
   for (const path of ['mod.txt', 'gone.txt', 'new.txt', 'loose.txt', 'pic.bin', 'bin-new.dat', 'renamed.txt', 'sub/in.txt', 'nope']) {
     let mine: unknown;
@@ -153,7 +153,7 @@ test('the file cap marks the listing truncated', async () => {
   for (let i = 0; i < MAX_FILES + 5; i++) write(r.p(`f${String(i).padStart(4, '0')}.txt`), 'y\n');
   const tracked = await getChanges(r.repo);
   assertEquals(tracked.totals, { files: MAX_FILES + 5, added: MAX_FILES + 5, removed: MAX_FILES + 5 }); // numstat counts them all
-  await using py = new PyParity();
+  const py = new Frozen();
   assertEquals(await getChanges(r.repo, null, MAX_FILES), await py.call('changes', 'get_changes', [r.repo, null, MAX_FILES]));
 });
 
@@ -167,7 +167,7 @@ test('the diff size cap', async () => {
   const big = await getFileDiff(r.repo, 'huge.txt');
   assert(big.truncated);
   assert((await listing(r.repo))['huge.txt'].partial);
-  await using py = new PyParity();
+  const py = new Frozen();
   assertEquals(big, await py.call('changes', 'get_file_diff', [r.repo, 'huge.txt']));
   assertEquals(diff, await py.call('changes', 'get_file_diff', [r.repo, 'mod.txt']));
 });
@@ -213,7 +213,7 @@ test('a repo without commits diffs against the empty tree', async () => {
   const files = await listing(fresh);
   assertEquals([files['a.txt'].status, files['a.txt'].added], ['A', 2]);
   assertEquals(files['b.txt'].status, 'U');
-  await using py = new PyParity();
+  const py = new Frozen();
   assertEquals(await getChanges(fresh), await py.call('changes', 'get_changes', [fresh]));
 });
 
@@ -246,7 +246,7 @@ Deno.test('parsers', async () => {
   ]);
   const hunks = parseHunks('diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n \n@@ -9 +9 @@\n+z\n\\ No newline at end of file\n');
   assertEquals(hunks.map((h) => h.lines), [['-a', '+b', ' '], ['+z', '\\ No newline at end of file']]);
-  await using py = new PyParity();
+  const py = new Frozen();
   const status = ' M a b.txt\0R  new\0old\0?? u\0C  c2\0c1\0x\0UU ü😀\0';
   assertEquals(parseStatus(enc(status)), await py.call('desktop_shim', 'changes_parse', ['parse_status', status]));
   const names = 'M\0a\0R100\0old\0new\0C075\0src\0copy\0D\0gone\0U\0both\0A\0added\0T\0typ\0R100\0cut';

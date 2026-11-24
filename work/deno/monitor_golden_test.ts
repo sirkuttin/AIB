@@ -1,61 +1,59 @@
 /**
  * Golden parity for server/transcripts/monitor.ts: every GET the viewer answers (sessions, agents, commands, command,
- * transcript pages with before/after/limit/kind/q/thinking, plan context, meta, revision, images, errors) is asked of the Python
- * handler (work/parity/monitor_shim.py) and of the port over the same fixture folders, in the same order (so both caches see
- * the same history), and the JSON must be identical. Fixtures: work/subagents-fixture and work/design-fixture (generated in temp
+ * transcript pages with before/after/limit/kind/q/thinking, plan context, meta, revision, images, errors) is asked of the port over
+ * the fixture folders, in the same order (so the cache sees the same history), and the JSON must be what the retired Python handler
+ * answered then. Each answer is kept as a fingerprint of the JSON (fixtures/frozen/monitor_golden.json) with the times that come
+ * from files (created, idle seconds, revision stamps) and the Deno-only keys taken out. Fixtures: work/subagents-fixture and work/design-fixture (generated in temp
  * copies), the record shapes of the Python tests, an edge-case transcript, file growth and replacement, and a large synthetic chat.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { PyParity } from './_parity.ts';
+import { Frozen } from './_frozen.ts';
+import { digestOf } from './_digest.ts';
 import { handleGet, openSource, type Source, Transcript } from '../../outputs/agent-studio/server/transcripts/monitor.ts';
 import { join } from '../../outputs/agent-studio/server/transcripts/purepath.ts';
 import * as fx from './_monitor_fixtures.ts';
 
-const py = new PyParity();
+const py = new Frozen();
 const TMP = Deno.makeTempDirSync({ prefix: 'aib-monitor-golden-' });
-// `created` is the file's change time on Linux, and Deno reports that one in whole seconds (its birth and modification times carry
-// milliseconds), while Python's st_ctime has nanoseconds: up to a second apart there. Windows and macOS use the birth time.
-const WHOLE_SECOND_CTIME = Deno.build.os === 'linux';
-const TOLERANCE: Record<string, number> = { created: WHOLE_SECOND_CTIME ? 1.001 : 0.0015, transcriptIdleSeconds: 2 };
+const TMP_SLASH = TMP.replaceAll('\\', '/').toLowerCase();
+const TMP_RE = new RegExp(TMP_SLASH.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
 // steered: a message Claude Code saved as sent while it worked (normalize.ts, B15, beta.9) is Deno only; the Python reference never had it
 const IGNORED = new Set(['now', 'steered']);
+
+/**
+ * The JSON with the Deno-only keys out and what comes from the clock or from file times written as 0 / 'T': a number within three
+ * days of now (seconds, milliseconds or nanoseconds: created, modified, idle seconds, revision stamps, `now`) and an ISO instant
+ * within three days of now (the generated fixtures stamp their records when they are made); sessions lists are sorted. This is what the fingerprints are made of.
+ */
+function norm(value: unknown, key = ''): unknown {
+  if (Array.isArray(value)) {
+    const items = value.map((v) => norm(v));
+    // sessions listed by file time: files made in the same instant come in a different order on every run, so the list is sorted
+    return key === 'sessions' || key === 'agents' ? items.sort((x, y) => (JSON.stringify(x) < JSON.stringify(y) ? -1 : 1)) : items;
+  }
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).filter(([k]) => !IGNORED.has(k)).map(([k, v]) => [k, norm(v, k)]));
+  }
+  const now = Date.now();
+  const window = 3 * 86_400_000;
+  if (typeof value === 'number') {
+    if (key === 'transcriptIdleSeconds') return 0;
+    for (const scale of [1e-3, 1, 1e6]) if (Math.abs(value / scale - now) < window) return 0; // seconds, ms, ns
+    return value;
+  }
+  // a path under the temp folder (random name, and a slash or backslash style) is written as <TMP>
+  if (typeof value === 'string' && value.replaceAll('\\', '/').toLowerCase().includes(TMP_SLASH)) return value.replaceAll('\\', '/').replace(TMP_RE, '<TMP>');
+  if (typeof value === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:\d\d)$/.test(value)) {
+    const at = Date.parse(value);
+    if (Math.abs(at - now) < window) return 'T';
+  }
+  return value;
+}
 
 function b64(bytes: Uint8Array): string {
   let text = '';
   for (let i = 0; i < bytes.length; i += 8192) text += String.fromCharCode(...bytes.subarray(i, i + 8192));
   return btoa(text);
-}
-
-/** First difference between two JSON trees, or null. */
-function diff(a: unknown, b: unknown, path = '$'): string | null {
-  if (typeof a === 'number' && typeof b === 'number') {
-    const key = path.slice(path.lastIndexOf('.') + 1);
-    const tolerance = TOLERANCE[key] ?? 0;
-    return Math.abs(a - b) <= tolerance || Object.is(a, b) ? null : `${path}: ${a} != ${b}`;
-  }
-  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) {
-    return Object.is(a, b) ? null : `${path}: ${JSON.stringify(a)?.slice(0, 200)} != ${JSON.stringify(b)?.slice(0, 200)}`;
-  }
-  if (Array.isArray(a) !== Array.isArray(b)) return `${path}: array vs object`;
-  if (Array.isArray(a)) {
-    const bb = b as unknown[];
-    if (a.length !== bb.length) return `${path}: length ${a.length} != ${bb.length}`;
-    for (let i = 0; i < a.length; i++) {
-      const d = diff(a[i], bb[i], `${path}[${i}]`);
-      if (d) return d;
-    }
-    return null;
-  }
-  const ra = a as Record<string, unknown>;
-  const rb = b as Record<string, unknown>;
-  const ka = Object.keys(ra).filter((k) => !IGNORED.has(k)).sort();
-  const kb = Object.keys(rb).filter((k) => !IGNORED.has(k)).sort();
-  if (ka.join('\u0000') !== kb.join('\u0000')) return `${path}: keys ${JSON.stringify(ka)} != ${JSON.stringify(kb)}`;
-  for (const k of ka) {
-    const d = diff(ra[k], rb[k], `${path}.${k}`);
-    if (d) return d;
-  }
-  return null;
 }
 
 interface Root {
@@ -72,10 +70,13 @@ let compared = 0;
 const tally = new Map<string, number>();
 const count = (what: string) => tally.set(what, (tally.get(what) ?? 0) + 1);
 
-/** Ask both servers; returns the (plain JSON) body both agreed on, or null when both raised the same Python error. */
+/** The answers Python gave, in the order they were asked: 5 hex characters of the fingerprint of each (3,900 of them fit in 40 KB). */
+const golden: string[] = (await py.frozenWhole<string>('golden-answers')).split(' ');
+const short = (value: unknown) => digestOf(value).slice(0, 5);
+
+/** Ask the port; the answer must be the one Python gave (a fingerprint). Returns the (plain JSON) body, or null when both raised. */
 async function same(r: Root, path: string, query = ''): Promise<unknown> {
-  const reply = await py.raw('monitor_shim', 'handle', [r.omp, r.claude, path, query]);
-  let ts: unknown;
+  let ts: { status: number; body: unknown };
   try {
     const got = await handleGet(r.source, path, query);
     const body = got.body instanceof Uint8Array
@@ -83,24 +84,18 @@ async function same(r: Root, path: string, query = ''): Promise<unknown> {
       : JSON.parse(JSON.stringify(got.body));
     ts = { status: got.status, body };
   } catch (error) {
-    if ('error' in reply) {
-      assertEquals((error as Error).name, reply.error, `${path}?${query}: both raise`);
-      compared++;
-      count('raised ' + reply.error);
-      return null;
-    }
-    throw error;
+    // Python raised too: its answer was the name of the error
+    assertEquals(short({ error: (error as Error).name }), golden[compared], `${path}?${query}: both raise (answer ${compared})`);
+    compared++;
+    count('raised ' + (error as Error).name);
+    return null;
   }
-  if ('error' in reply) {
-    throw new Error(`${path}?${query}: Python raised ${reply.error}: ${reply.message}; Deno answered ${JSON.stringify(ts).slice(0, 300)}`);
-  }
-  const d = diff(ts, reply.ok);
-  if (d) throw new Error(`${path}?${query}: ${d}`);
+  assertEquals(short(norm(ts)), golden[compared], `${path}?${query} (answer ${compared}) is not what Python answered: ${JSON.stringify(ts).slice(0, 300)}`);
   compared++;
-  const status = (ts as { status: number; body: unknown }).status;
+  const status = ts.status;
   count(`${status} ${path}`);
-  if (status === 400) count('400: ' + (ts as { body: { error: string } }).body.error.slice(0, 60));
-  return (reply.ok as { body: unknown }).body;
+  if (status === 400) count('400: ' + (ts.body as { error: string }).error.slice(0, 60));
+  return ts.body;
 }
 
 const PAGE_QUERIES = (total: number) => [
@@ -134,19 +129,22 @@ const PAGE_QUERIES = (total: number) => [
   'before=3&before=9',
 ];
 
+/** Files written in the same instant are listed in a different order on every run, so the sweep walks them by key. */
+const byKey = <T extends { key: string }>(items: T[]): T[] => [...items].sort((x, y) => (x.key < y.key ? -1 : 1));
+
 /** Every route over every chat and agent of a root. */
 async function sweep(r: Root, deep = true): Promise<void> {
   const sessions = await same(r, '/api/sessions') as { sessions: { key: string }[] } | null;
   assert(sessions === null || sessions.sessions.length > 0, 'a root with chats lists them');
   count('sessions listed: ' + (sessions?.sessions.length ?? 0));
-  for (const session of sessions?.sessions ?? []) {
+  for (const session of byKey(sessions?.sessions ?? [])) {
     const q = 'session=' + encodeURIComponent(session.key);
     const agents = await same(r, '/api/agents', q) as { agents: { key: string }[] } | null;
     const commands = await same(r, '/api/commands', q) as { commands: { id: string }[] } | null;
     await same(r, '/api/commands', q + '&running=1');
     for (const command of commands?.commands ?? []) await same(r, '/api/command', `${q}&id=${encodeURIComponent(command.id)}`);
     await same(r, '/api/command', `${q}&id=nope`);
-    for (const agent of agents?.agents ?? []) {
+    for (const agent of byKey(agents?.agents ?? [])) {
       const key = 'key=' + encodeURIComponent(agent.key);
       const first = await same(r, '/api/transcript', key + '&thinking=1&limit=500') as {
         total: number;
@@ -278,7 +276,7 @@ Deno.test('golden: growth in odd pieces, a larger replacement, shrinking, and a 
   await sweep(r, false);
 });
 
-Deno.test('golden: a large synthetic chat (and parse time against Python)', async () => {
+Deno.test('golden: a large synthetic chat (and parse time)', async () => {
   const claude = join(TMP, 'big', 'claude');
   const path = fx.write(join(claude, 'C--repo-app', 'big.jsonl'), fx.bigRows(9000));
   const lineCount = (await Deno.readTextFile(path)).split('\n').length - 1;
@@ -293,7 +291,7 @@ Deno.test('golden: a large synthetic chat (and parse time against Python)', asyn
   await same(r, '/api/sessions');
   await same(r, '/api/commands', 'session=claude/C--repo-app/big.jsonl');
   // The whole parse state, event for event.
-  const expected = await py.call('monitor_shim', 'snapshot', [path]) as Record<string, unknown>;
+  const expected = await py.frozen<unknown>('snapshot');
   const t = await new Transcript(path).refresh();
   const actual = JSON.parse(JSON.stringify({
     events: t.events,
@@ -308,8 +306,7 @@ Deno.test('golden: a large synthetic chat (and parse time against Python)', asyn
     jobs: Object.fromEntries(t.jobCalls),
     signature: [t.signature![0], Number(t.signature![1])],
   }));
-  const d = diff(actual, expected);
-  assert(d === null, d ?? '');
+  assertEquals(norm(actual), expected, 'the whole parse state');
   // Timing: best of three cold parses each.
   const timings: number[] = [];
   for (let i = 0; i < 3; i++) {
@@ -318,18 +315,14 @@ Deno.test('golden: a large synthetic chat (and parse time against Python)', asyn
     timings.push((performance.now() - start) / 1000);
   }
   const deno = Math.min(...timings);
-  const python = await py.call('monitor_shim', 'time_parse', [path]) as number;
   const size = (await Deno.stat(path)).size;
   console.log(
-    `big transcript: ${lineCount} lines, ${(size / 1048576).toFixed(1)} MB, ${t.events.length} events; parse Deno ${
-      deno.toFixed(3)
-    } s, Python ${python.toFixed(3)} s (${(python / deno).toFixed(2)}x)`,
+    `big transcript: ${lineCount} lines, ${(size / 1048576).toFixed(1)} MB, ${t.events.length} events; parse ${deno.toFixed(3)} s`,
   );
 });
 
-Deno.test('golden: summary', async () => {
-  await py.call('monitor_shim', 'reset');
-  await py.close();
+Deno.test('golden: summary', () => {
+  assertEquals(golden.length, compared, 'every answer Python gave was compared');
   console.log(`golden replies compared: ${compared}`);
   console.log([...tally].sort().map(([k, v]) => `  ${v}  ${k}`).join('\n'));
   try {

@@ -1,12 +1,12 @@
 /**
  * server/state/paths.ts: the state_paths cases of work/test_state_migration.py and work/test_package_context.py, parity with Python
- * through work/parity/state_paths_shim.py, and interop (an owner-only folder made by one side passes the other's check; Python's
+ * through the retired state_paths_shim.py, and interop (an owner-only folder made by one side passes the other's check; Python's
  * migrate does the move inside Deno's prepare). Temp folders and fake environments only: the real per-user folder is never resolved
  * except to prove the hard block refuses it.
  */
 import { createHash } from 'node:crypto';
 import { assert, assertEquals, assertRejects, assertThrows } from './_assert.ts';
-import { PyParity } from './_frozen.ts';
+import { Frozen } from './_frozen.ts';
 import {
   aclProblems,
   adoptSandboxCopy,
@@ -106,7 +106,7 @@ const denoMigrate: MigrateFn = async (source, target, say) => {
 
 // ---- locations ---------------------------------------------------------------------------------
 Deno.test('per-user folder per platform, same as Python', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   const env = { LOCALAPPDATA: 'C:/Users/x/AppData/Local', XDG_STATE_HOME: '/state' };
   assertEquals(userStateDir(env, 'win32', 'C:/Users/x'), pathOf('C:/Users/x/AppData/Local', 'AgentStudio'));
   assertEquals(userStateDir({}, 'darwin', '/Users/x'), pathOf('/Users/x/Library/Application Support/AgentStudio'));
@@ -127,7 +127,7 @@ Deno.test('per-user folder per platform, same as Python', async () => {
 });
 
 Deno.test('worktree detection, same as Python', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   using tmp = tempRoot();
   const wt = checkout(tmp.root, 'wt', true);
   const main = checkout(tmp.root, 'main', false);
@@ -147,7 +147,7 @@ Deno.test('worktree detection, same as Python', async () => {
 });
 
 Deno.test('precedence: --state-dir, then the environment, then the default; same as Python', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   using tmp = tempRoot();
   const main = checkout(tmp.root, 'main', false);
   const wt = checkout(tmp.root, 'wt', true);
@@ -268,7 +268,7 @@ Deno.test({
   name: 'package detection: the real GetCurrentPackageFullName binding agrees with Python',
   ignore: !WIN,
   async fn() {
-    await using py = new PyParity();
+    const py = new Frozen();
     using tmp = tempRoot();
     const env = { LOCALAPPDATA: tmp.root };
     assertEquals(packageContext({ env }), await py.call('state_paths', 'package_context', [env]));
@@ -288,7 +288,7 @@ function makeSandbox(local: string, family = FAMILY, text = 'chats'): string {
 }
 
 Deno.test('sandbox copies: Claude packages only, unless exactly one other has data; same as Python', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   using tmp = tempRoot();
   const local = pathOf(tmp.root, 'Local');
   const env = { LOCALAPPDATA: local };
@@ -311,7 +311,7 @@ Deno.test('sandbox copies: Claude packages only, unless exactly one other has da
 });
 
 Deno.test('adoptSandboxCopy: none, conflict, waiting; same as Python', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   using tmp = tempRoot();
   const local = pathOf(tmp.root, 'Local');
   const env = { LOCALAPPDATA: local };
@@ -462,7 +462,7 @@ Deno.test('prepare: not attempted runs on the old folder; without a migrate the 
 });
 
 Deno.test('prepare: worktree and explicit folders never migrate unless asked; as Python answered', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   using tmp = tempRoot();
   const wt = checkout(tmp.root, 'wt', true);
   const main = checkout(tmp.root, 'main', false);

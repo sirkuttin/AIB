@@ -1,8 +1,6 @@
 /** server/acp/breadth.ts: the pure cases of work/test_breadth.py, test_pending_settings.py and test_adapters.py, plus parity with Python. */
 import { assert, assertEquals, assertRejects, assertThrows } from './_assert.ts';
-import { python } from './_work.ts';
-import { labelOf, PyParity } from './_frozen.ts';
-import { PY_REF_DIR } from './_parity.ts';
+import { labelOf, Frozen } from './_frozen.ts';
 import {
   applyUpdate,
   augmentInitialize,
@@ -27,7 +25,7 @@ import { ValueError } from '../../outputs/agent-studio/server/core/py.ts';
 
 type Dict = Record<string, unknown>;
 
-/** {ok} or {error, message} like PyParity.raw, for the port. */
+/** {ok} or {error, message} like Frozen.raw, for the port. */
 function outcome(fn: () => unknown): unknown {
   try {
     return { ok: JSON.parse(JSON.stringify(fn() ?? null)) };
@@ -37,23 +35,10 @@ function outcome(fn: () => unknown): unknown {
   }
 }
 
-/** Runs a Python snippet with the server folder importable; `data` arrives as DATA, the snippet sets OUT. */
-const frozenPy = new PyParity();
+/** The Python snippets below only name the frozen answers (their text is part of the label); nothing runs them any more. */
+const frozenPy = new Frozen();
 /** The answers Python gave to these snippets (list of one result per scenario), kept in fixtures/frozen/breadth.json. */
-const pyRun = (code: string, data: unknown): Promise<unknown[]> => frozenPy.frozenList(`breadth-${labelOf(code, data)}`, () => pyRunLive(code, data));
-
-async function pyRunLive(code: string, data: unknown): Promise<unknown[]> {
-  const script = `import json, sys\nsys.path.insert(0, ${JSON.stringify(PY_REF_DIR)})\n` +
-    `DATA = json.loads(sys.stdin.read())\n${code}\nsys.stdout.write(json.dumps(OUT))\n`;
-  const child = new Deno.Command(python(), { args: ['-X', 'utf8', '-c', script], stdin: 'piped', stdout: 'piped', stderr: 'inherit' })
-    .spawn();
-  const writer = child.stdin.getWriter();
-  await writer.write(new TextEncoder().encode(JSON.stringify(data)));
-  await writer.close();
-  const { code: status, stdout } = await child.output();
-  assertEquals(status, 0, 'python snippet failed');
-  return JSON.parse(new TextDecoder().decode(stdout)) as unknown[];
-}
+const pyRun = (code: string, data: unknown): Promise<unknown[]> => frozenPy.frozenList(`breadth-${labelOf(code, data)}`);
 
 const plainState = (state: BreadthState) => ({ ...state, compaction: Object.fromEntries(state.compaction) });
 
@@ -382,7 +367,7 @@ for updates in DATA['scenarios']:
 });
 
 Deno.test('cleanCommands, sessionCapabilities and augmentInitialize match Python', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   await py.same(
     'breadth',
     'clean_commands',
@@ -399,7 +384,7 @@ Deno.test('cleanCommands, sessionCapabilities and augmentInitialize match Python
 });
 
 Deno.test('config helpers match Python, errors included', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   const settingsList: unknown[] = [
     SETTINGS,
     null,
@@ -455,7 +440,7 @@ Deno.test('config helpers match Python, errors included', async () => {
 });
 
 Deno.test('validateMcpServers and selectMcpServers match Python, messages included', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   const cases: unknown[] = [
     SERVERS,
     { mcpServers: SERVERS },

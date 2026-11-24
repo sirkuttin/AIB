@@ -1,6 +1,6 @@
 /** server/acp/attachments.ts: the pure cases of work/test_attachments.py and test_studio.py, plus parity with Python. */
 import { assert, assertEquals, assertThrows } from './_assert.ts';
-import { PyParity } from './_frozen.ts';
+import { Frozen } from './_frozen.ts';
 import {
   eventImageSize,
   type FileRecord,
@@ -57,7 +57,7 @@ function outcome(fn: () => unknown): unknown {
 }
 
 Deno.test('constants match Python', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   const names = [
     ['MAX_IMAGES', MAX_IMAGES],
     ['MAX_IMAGE_BYTES', MAX_IMAGE_BYTES],
@@ -239,7 +239,7 @@ Deno.test('eventImageSize counts stored image data (test_image_history_event_bud
 // ---- parity with Python -----------------------------------------------------------------------
 
 Deno.test('pyB64Decode accepts and refuses exactly what base64.b64decode(validate=True) does', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   const inputs = [
     '',
     '=',
@@ -329,7 +329,7 @@ const NAMES: unknown[] = [
 ];
 
 Deno.test('validateAttachmentName matches Python, repr in messages included', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   for (const name of NAMES) {
     assertEquals(
       outcome(() => validateAttachmentName(name)),
@@ -389,7 +389,7 @@ const FILE_CASES: unknown[] = [
 ];
 
 Deno.test('validateFileAttachments matches Python (records, sha256, errors)', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   for (const items of FILE_CASES) {
     const clean = JSON.parse(JSON.stringify(items ?? null));
     assertEquals(
@@ -401,7 +401,7 @@ Deno.test('validateFileAttachments matches Python (records, sha256, errors)', as
 });
 
 Deno.test('validateImageAttachments and splitAttachments match Python', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   const gif = b64('GIF89a....');
   const webp = b64('RIFF\x00\x00\x00\x00WEBPVP8 ');
   const cases: unknown[] = [
@@ -438,7 +438,7 @@ Deno.test('validateImageAttachments and splitAttachments match Python', async ()
 });
 
 Deno.test('formatSize matches Python, half-way cases included', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   const counts = [
     0,
     1,
@@ -468,7 +468,7 @@ Deno.test('formatSize matches Python, half-way cases included', async () => {
 });
 
 Deno.test('mapFileAttachments matches Python for every capability set', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   const items = [
     fileItem('notes.md', '# Title\n', 'text/markdown'),
     fileItem("it's (1) !~ [x].txt", 'line\n````\nx', ''),
@@ -479,7 +479,7 @@ Deno.test('mapFileAttachments matches Python for every capability set', async ()
   ];
   const records = validateFileAttachments(items)[0] as FileRecord[];
   // the records Python made of the same items (they are also the inputs of the capability cases below)
-  assertEquals(records, await py.frozen('file-records', async () => (await py.call('attachments', 'validate_file_attachments', [items]) as [FileRecord[], number])[0]));
+  assertEquals(records, await py.frozen('file-records'));
   const capsList: unknown[] = [{}, null, 'x', { embeddedContext: true }, { audio: true }, { audio: true, embeddedContext: true }, {
     embeddedContext: 1,
   }];
@@ -496,7 +496,7 @@ Deno.test('mapFileAttachments matches Python for every capability set', async ()
 });
 
 Deno.test('eventImageSize matches Python', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   const events: Dict[] = [
     { data: { attachments: [{ data: 'x'.repeat(10) }, { data: 5 }, 'x', { data: '😀é' }] } },
     { data: 'x' },

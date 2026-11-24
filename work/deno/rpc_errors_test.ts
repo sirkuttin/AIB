@@ -1,6 +1,6 @@
 /** server/acp/rpc_errors.ts: the cases of work/test_runtime.py and test_studio.py that cover rpc_errors.py, plus parity with Python. */
 import { assert, assertEquals } from './_assert.ts';
-import { PyParity } from './_frozen.ts';
+import { Frozen } from './_frozen.ts';
 import { describeAuthMethods, isAuthRequired, RpcError } from '../../outputs/agent-studio/server/acp/rpc_errors.ts';
 import { clip, pyJsonDumps } from '../../outputs/agent-studio/server/core/py.ts';
 
@@ -18,7 +18,7 @@ const methods = [
 ];
 
 Deno.test('describeAuthMethods matches Python for every kind of method', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   for (const provider of ['', 'claude', 'codex']) {
     for (const list of methods) {
       assertEquals(
@@ -32,7 +32,7 @@ Deno.test('describeAuthMethods matches Python for every kind of method', async (
 });
 
 Deno.test('isAuthRequired matches Python', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   const errors = [
     { code: -32000, message: 'Authentication required' },
     { code: -32000, message: 'Something else' },
@@ -64,7 +64,7 @@ Deno.test('clip counts code points like Python slicing', () => {
 });
 
 Deno.test('pyJsonDumps matches json.dumps', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   for (const value of [{ a: 1, b: [1, 2, { c: 'd: e, f' }] }, [], {}, 'ü😀"\\', null, [{ 'k"': ['x', true, false, null] }], 1.5]) {
     assertEquals(pyJsonDumps(value), await py.call('json', 'dumps', [value]), JSON.stringify(value));
   }

@@ -5,7 +5,7 @@
  * live calls).
  */
 import { assert, assertEquals, assertRejects } from "./_assert.ts";
-import { PyParity } from "./_frozen.ts";
+import { Frozen } from "./_frozen.ts";
 import * as sync from "../../outputs/agent-studio/server/worktrees/sync.ts";
 import { commit, FakeStudio, FIXED_DATES, makeRepo, foreignHolds, foreignProbe, read, runGit, Sandbox, setFixedDates, write } from "./_worktree_fixtures.ts";
 import { chat, type Ctx, main, merge, record, refused, Refused, show, tree, WAITING } from "./_merge_fixtures.ts";
@@ -446,7 +446,7 @@ Deno.test("the storm pause shows on the amber line", () => {
 
 // ---- small pieces vs Python -------------------------------------------------------------------------------------------
 Deno.test("commit messages, conflict lines, markers and idle reasons give what Python gave", async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   for (
     const title of [
       "",
@@ -527,10 +527,9 @@ Deno.test("commit messages, conflict lines, markers and idle reasons give what P
 
 // ---- parity: the same merges on identical repos ----------------------------------------------------------------------------
 Deno.test("merges, conflicts, tree landing and clashes give the results, commits and records Python gave at every step", async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   using box = new Sandbox(false);
   setFixedDates(true);
-  if (Deno.env.get("AIB_FREEZE") === "1") await py.call("worktrees_shim", "set_env", [FIXED_DATES]);
   try {
     const key = "0123456789abcdef0123456789abcdef";
     const sides = ["py", "deno"].map((name) => {
@@ -626,7 +625,7 @@ Deno.test("merges, conflicts, tree landing and clashes give the results, commits
           record: scrub(strip(pyRecord)),
         };
       };
-      assertEquals(mine, await py.frozen(`merge-step-${stepNo++}`, theirs), `${op} ${JSON.stringify(args)}`);
+      assertEquals(mine, await py.frozen(`merge-step-${stepNo++}`), `${op} ${JSON.stringify(args)}`);
       const result = fromDeno.result as Record<string, unknown> | undefined;
       trail.push(
         fromDeno.refused
@@ -673,13 +672,7 @@ Deno.test("merges, conflicts, tree landing and clashes give the results, commits
     const denoU = await wt.advanceUserBase(record({ manager, key } as Ctx), [
       "f.txt",
     ], manager.registry);
-    const pyU = await py.frozen("advance-user-base", async () => {
-      await ensurePy();
-      const pyRec = await py.call("worktrees_shim", "registry", [pySide.state, "get", [key]]) as Record<string, unknown>;
-      const advanced = await py.call("worktrees_shim", "call", ["advance_user_base", [{ ...pyRec, key }, ["f.txt"]]]);
-      await py.call("worktrees_shim", "registry", [pySide.state, "update", [key], { user: advanced, diffBase: advanced }]);
-      return advanced;
-    });
+    const pyU = await py.frozen("advance-user-base");
     assertEquals(denoU, pyU);
     await both((s) => {
       write(s.wt, "f.txt", "A-user\nb\nc\nd\ne\nf-chat2\n");
@@ -705,9 +698,6 @@ Deno.test("merges, conflicts, tree landing and clashes give the results, commits
     ]);
   } finally {
     setFixedDates(false);
-    if (Deno.env.get("AIB_FREEZE") === "1") {
-      await py.call("worktrees_shim", "set_env", [{ GIT_AUTHOR_DATE: null, GIT_COMMITTER_DATE: null }]);
-    }
   }
 });
 

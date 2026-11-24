@@ -6,7 +6,7 @@
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
 import { python } from './_work.ts';
-import { PyParity } from './_frozen.ts';
+import { Frozen } from './_frozen.ts';
 import { FIXED_DATES, foreignHolds, foreignProbe, makeRepo, runGit, Sandbox, setFixedDates, write } from './_worktree_fixtures.ts';
 import { BOTH, CHAT_EDIT, Conn, list, LiveSync, LINES, ProjectSync, setup, text, until, USER_EDIT, WIN } from './_sync_fixtures.ts';
 import * as wt from '../../outputs/agent-studio/server/worktrees/worktrees.ts';
@@ -14,7 +14,7 @@ import * as sync from '../../outputs/agent-studio/server/worktrees/sync.ts';
 import { pathOf } from '../../outputs/agent-studio/server/state/paths.ts';
 
 Deno.test('three_way gives what Python gave on every kind', async () => {
-  const py = new PyParity();
+  const py = new Frozen();
   const scratch = Deno.makeTempDirSync({ prefix: 'studio-3way-' });
   try {
     const enc = (s: string | null) => (s === null ? null : new TextEncoder().encode(s));
@@ -36,40 +36,13 @@ Deno.test('three_way gives what Python gave on every kind', async () => {
     ];
     for (const [base, current, other] of cases) {
       const [kind, data] = await sync.threeWay(enc(base), enc(current), enc(other), scratch);
-      const [pyKind, pyData] = await py.frozenList(`three-way-${JSON.stringify([base, current, other])}`, async () => await pyThreeWay(base, current, other, scratch)) as [string, string | null];
+      const [pyKind, pyData] = await py.frozenList(`three-way-${JSON.stringify([base, current, other])}`) as [string, string | null];
       assertEquals([kind, data === null ? null : new TextDecoder().decode(data)], [pyKind, pyData], JSON.stringify([base, current, other]));
     }
   } finally {
     Deno.removeSync(scratch, { recursive: true });
   }
 });
-
-/** worktree_sync.three_way through a one-off Python process (bytes in and out as latin-1 text). */
-async function pyThreeWay(
-  base: string | null,
-  current: string | null,
-  other: string | null,
-  scratch: string,
-): Promise<[string, string | null]> {
-  const script = `
-import json, sys
-sys.path.insert(0, sys.argv[1])
-import worktree_sync
-args = json.loads(sys.argv[2])
-b = lambda s: None if s is None else s.encode('utf-8')
-kind, data = worktree_sync.three_way(b(args[0]), b(args[1]), b(args[2]), args[3])
-print(json.dumps([kind, None if data is None else data.decode('utf-8')]))
-`;
-  const done = await new Deno.Command(python(), {
-    args: ['-X', 'utf8', '-c', script, APP_DIR, JSON.stringify([base, current, other, scratch])],
-    stdout: 'piped',
-    stderr: 'inherit',
-    env: { AGENT_STUDIO_TEST: '1' },
-  }).output();
-  return JSON.parse(new TextDecoder().decode(done.stdout));
-}
-
-const APP_DIR = new URL('../python-reference/', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'); // the Python reference
 
 // ---- the real loop and the folder watcher (LifecycleTests) ---------------------------------------------------------------
 Deno.test({
@@ -223,10 +196,9 @@ Deno.test('the pause-flag lock (sync-state.lock) excludes another process and th
 
 // ---- parity: the same edits on identical repos ----------------------------------------------------------------------------
 Deno.test('the same user and chat edits give the worktrees, commits, records, notes and pause state Python gave at every step', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   using box = new Sandbox(false);
   setFixedDates(true);
-  if (Deno.env.get('AIB_FREEZE') === '1') await py.call('worktrees_shim', 'set_env', [FIXED_DATES]);
   const key = '0123456789abcdef0123456789abcdef';
   try {
     const sides = ['py', 'deno'].map((name) => {
@@ -342,7 +314,7 @@ Deno.test('the same user and chat edits give the worktrees, commits, records, no
           pySide.project,
         );
       };
-      assertEquals(mine, await py.frozen(`parity-${label}`, theirs), label);
+      assertEquals(mine, await py.frozen(`parity-${label}`), label);
     };
 
     await both('baseline', () => {}, [['scan'], ['catch_up']]);
@@ -382,9 +354,5 @@ Deno.test('the same user and chat edits give the worktrees, commits, records, no
     assert(trail.some((t) => t === 'ok'), 'the steps did something');
   } finally {
     setFixedDates(false);
-    if (Deno.env.get('AIB_FREEZE') === '1') {
-      await py.call('worktrees_shim', 'set_env', [{ GIT_AUTHOR_DATE: null, GIT_COMMITTER_DATE: null }]);
-      await py.call('worktree_sync_shim', 'close', ['parity']);
-    }
   }
 });

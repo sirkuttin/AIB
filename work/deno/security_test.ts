@@ -1,6 +1,6 @@
 /** server/web/security.ts against security.py: the gate's every branch, loopback names, route scopes, network paths. */
 import { assert, assertEquals, assertThrows } from './_assert.ts';
-import { PyParity } from './_frozen.ts';
+import { Frozen } from './_frozen.ts';
 import {
   authorize,
   Gate,
@@ -53,7 +53,7 @@ const cases: [string, string, Record<string, string>, string | null][] = [
 ];
 
 Deno.test('authorize matches security.authorize on every branch', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   for (const [method, path, headers, scope] of cases) {
     for (const artifactPorts of [[], [PORT + 1]]) {
       const expected = await py.call('shims', 'authorize', [method, path, headers, scope, PORT, TOKEN, null, [], artifactPorts, null]);
@@ -86,7 +86,7 @@ Deno.test('a valid agent key is the tool principal for its conversation only', (
 });
 
 Deno.test('Gate hosts and origins match Python, including configured names and the artifact port', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   const variants: [string[] | null, string[], number[]][] = [
     [null, [], []],
     [['::1', 'example.com', '127.0.0.2', '[::1]'], [], []],
@@ -105,7 +105,7 @@ Deno.test('Gate hosts and origins match Python, including configured names and t
 });
 
 Deno.test('loopbackName matches ipaddress', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   const names = [
     'localhost',
     'LOCALHOST',
@@ -131,7 +131,7 @@ Deno.test('loopbackName matches ipaddress', async () => {
 });
 
 Deno.test('RouteTable.scopeFor matches Python', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   const entries: [string, string, string][] = [['GET', '/api/a', 'read'], ['post', '/api/b', 'write'], ['GET', '/x.html', 'bootstrap']];
   const table = new RouteTable();
   for (const [m, p, s] of entries) table.add(m, p, s);
@@ -146,7 +146,7 @@ Deno.test('RouteTable.scopeFor matches Python', async () => {
 });
 
 Deno.test('tokens and network paths', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   for (const [a, b] of [['x', 'x'], ['x', 'y'], ['', ''], ['abc', 'abcd'], ['ü', 'ü'], ['a', '']]) {
     assertEquals(tokenMatches(a, b), await py.call('security', 'token_matches', [a, b]), `${a}|${b}`);
   }

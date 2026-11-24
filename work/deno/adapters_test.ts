@@ -3,7 +3,7 @@
  * parity with adapters.py on the same temp fixtures. No real npm folder or machine install decides a result.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { PyParity } from './_frozen.ts';
+import { Frozen } from './_frozen.ts';
 import { join, makeInstall, PY, PY_REAL, SEP, tempDir, touch } from './_agents.ts';
 import * as adapters from '../../outputs/agent-studio/server/agents/adapters.ts';
 
@@ -314,7 +314,7 @@ Deno.test('the constants the page and the installer rely on', () => {
 // ---- parity with adapters.py ---------------------------------------------------------------------------------------------
 
 Deno.test('parseMarkedPath, mergePaths and the version order match Python', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   const texts = [`Welcome\n${S}/usr/local/bin:/usr/bin${E}\n`, `${S}/old${E} x ${S}/new:/bin${E}`, `${S}  /padded  ${E}`, ...BAD_MARKED];
   for (const text of texts) {
     assertEquals(adapters.parseMarkedPath(text), await py.call('adapters', 'parse_marked_path', [text]), String(text));
@@ -348,7 +348,7 @@ Deno.test('parseMarkedPath, mergePaths and the version order match Python', asyn
 });
 
 Deno.test('resolveClaude and resolveCodex give the rows Python gives on the same fixture', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   using f = fixture();
   const flag = touch(join(f.root, 'flag.js'));
   const saved = touch(join(f.root, 'saved.js'));

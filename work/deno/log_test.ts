@@ -1,6 +1,6 @@
 /** server/core/log.ts: the cases of work/test_log_setup.py that exercise log_setup.py directly, plus parity and same-file interop with Python. */
 import { assert, assertEquals } from './_assert.ts';
-import { PyParity } from './_frozen.ts';
+import { Frozen } from './_frozen.ts';
 import {
   addHandler,
   DEBUG,
@@ -97,7 +97,7 @@ Deno.test('setup respects the level, and setting up again replaces the handlers'
 });
 
 Deno.test('level parsing, default and environment; same as Python', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   assertEquals(parseLevel(null), WARNING);
   assertEquals(parseLevel('info'), INFO);
   assertEquals(parseLevel('nonsense'), WARNING);
@@ -169,7 +169,7 @@ Deno.test('header and field patterns are redacted without registration; ordinary
 });
 
 Deno.test('redact matches Python', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   const samples = [
     'X-Studio-Token: abcDEF123456 and X-Studio-Artifact-Key=kkkkkkkkkkkkkkkkkkkk',
     'Authorization: Bearer abcdefghijklmnop',
@@ -237,19 +237,14 @@ Deno.test('rotation keeps two old files, like RotatingFileHandler', () => {
 });
 
 Deno.test('a Deno line in studio.log looks like the line Python wrote (format and line ends)', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   const folder = Deno.makeTempDirSync();
   try {
     const path = `${folder}${Deno.build.os === 'windows' ? '\\' : '/'}studio.log`;
     const shape = (text: string) =>
       text.split('\n').filter(Boolean).map((line) => line.replace(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d{3} /, 'T ')).filter((l) => !l.includes('log_setup'));
     // the line (time aside) Python's logger wrote for the same record
-    const pythonLines = await py.frozen('studio-log-line', async () => {
-      const written = await py.call('log_shim', 'write_line', [folder, 'studio.log', 'artifacts', 'WARNING', 'watcher failed for %s', 'conv-1']) as string;
-      const text = Deno.readTextFileSync(written);
-      Deno.removeSync(written);
-      return shape(text);
-    });
+    const pythonLines = await py.frozen('studio-log-line');
     setup('studio', { level: 'WARNING', stateDir: folder, filename: 'studio.log', stream: false });
     getLogger('artifacts').warning('watcher failed for %s', 'conv-1');
     reset();

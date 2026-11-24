@@ -1,7 +1,7 @@
 /** server/transcripts/prompts.ts: the cases of work/test_prompts.py that exercise prompts.py directly, plus parity with Python. */
 import { assert, assertEquals } from './_assert.ts';
 import { WORK } from './_work.ts';
-import { PyParity } from './_frozen.ts';
+import { Frozen } from './_frozen.ts';
 import { findPrompts, isPrompt, isWrapper, stripInjected, stripViewContext } from '../../outputs/agent-studio/server/transcripts/prompts.ts';
 
 interface Fixture {
@@ -127,14 +127,14 @@ const EXTRA_EVENTS: unknown[] = [
 ];
 
 Deno.test('isPrompt matches Python on fixtures and odd events', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   for (const event of [...FIXTURES.map(eventOf), ...EXTRA_EVENTS]) {
     assertEquals(isPrompt(event), await py.call('prompts', 'is_prompt', [event]), JSON.stringify(event).slice(0, 80));
   }
 });
 
 Deno.test('isWrapper and stripViewContext match Python', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   for (const text of [...EXTRA_TEXTS, ...FIXTURES.map(fixtureText)]) {
     const label = JSON.stringify(text).slice(0, 80);
     assertEquals(isWrapper(text), await py.call('prompts', 'is_wrapper', [text]), label);
@@ -145,7 +145,7 @@ Deno.test('isWrapper and stripViewContext match Python', async () => {
 });
 
 Deno.test('findPrompts matches Python for queries and limits', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   const events = [
     ...EVENTS,
     { kind: 'user', text: 'Over the STRASSE', time: null },

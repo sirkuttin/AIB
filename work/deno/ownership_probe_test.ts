@@ -1,12 +1,12 @@
 /**
  * server/ownership/probe.ts: the cases of work/test_ownership_probe.py (and the ps cases of test_portability.py) that exercise
- * ownership_probe.py directly, each run against the Python probe too (work/parity/ownership_shim.py run_probe) and compared field by
+ * ownership_probe.py directly, each run against the Python probe too (the retired ownership_shim.py run_probe) and compared field by
  * field; plus interop: announcements written by one side are read by the other, and a real process holding a transcript open and
  * naming the session on its command line is reported the same by both probes. Temp folders only; never the real owners folder.
  */
 import { assert, assertEquals } from './_assert.ts';
 import { python } from './_work.ts';
-import { PyParity } from './_frozen.ts';
+import { Frozen } from './_frozen.ts';
 import {
   announcementPrefix,
   classify,
@@ -43,8 +43,8 @@ const proc = (pid: number, name: string, cmdline: string | null = '', cwd: strin
   cwd,
 });
 
-let current: PyParity | null = null;
-function py(): PyParity {
+let current: Frozen | null = null;
+function py(): Frozen {
   if (!current) throw new Error('no Python parity process: use pyTest/probeTest');
   return current;
 }
@@ -52,11 +52,10 @@ function py(): PyParity {
 /** A test with its own Python parity process (a process shared across tests would trip Deno's resource sanitizer). */
 function pyTest(name: string, fn: () => Promise<void> | void) {
   Deno.test(name, async () => {
-    current = new PyParity();
+    current = new Frozen();
     try {
       await fn();
     } finally {
-      await current.close();
       current = null;
     }
   });
@@ -235,16 +234,7 @@ let probeRuns = 0;
 /** Run the fixture on the port; the answer must be the one Python gave for it (kept as a fingerprint). Returns the Deno step results. */
 async function both(tree: Tree, fixture: Fixture): Promise<Record<string, unknown>[]> {
   tree.reset();
-  const expected = await py().frozen(`probe-${probeRuns++}`, async () =>
-    pidless(
-      await py().call('ownership_shim', 'run_probe', [{
-        now: NOW,
-        ...fixture,
-        omp: tree.omp,
-        claude: tree.claude,
-        owners: fixture.owners === false ? null : tree.owners,
-      }]),
-    ));
+  const expected = await py().frozen(`probe-${probeRuns++}`);
   tree.reset();
   const actual = runDeno(tree, fixture);
   assertEquals(pidless(actual), expected, JSON.stringify(fixture.steps).slice(0, 120));
@@ -774,8 +764,7 @@ probeTest('the process snapshot is cached and hints never start a scan', async (
   };
   tree.reset();
   assertEquals(
-    await py().frozen('fetches-of-four-assessments', async () =>
-      (await py().call('ownership_shim', 'run_probe', [{ claude: tree.claude, now: NOW, ...steps }]) as { fetches: number }).fetches),
+    await py().frozen('fetches-of-four-assessments'),
     2,
   );
 });
@@ -861,10 +850,7 @@ pyTest('ps output becomes process entries, as in Python', async () => {
   ];
   for (const [i, [names, commands, f1, f2, code]] of cases.entries()) {
     // what Python's reader gave; an error that says ps is not available is kept as that sentence only (the cause's text differs)
-    const expected = await py().frozen(`fetch-ps-${i}`, async () => {
-      const answer = await py().call('ownership_shim', 'fetch_ps', [names, commands, f1, f2, code]) as Record<string, unknown>;
-      return 'error' in answer && String(answer.message).startsWith('ps is not available') ? { ...answer, message: 'ps is not available' } : answer;
-    }) as Record<string, unknown>;
+    const expected = await py().frozen(`fetch-ps-${i}`) as Record<string, unknown>;
     let actual: unknown;
     try {
       actual = { ok: fetchProcessesPs(psRunner(names, commands, f1, f2, code)) };
@@ -969,12 +955,7 @@ probeTest('a real agent-named process holding the transcript open is reported th
     });
     const unpid = (value: unknown) => JSON.parse(JSON.stringify(value).replaceAll(String(pid), '0'));
     // what Python's probe made of the same process (its id, which differs on every run, written as 0)
-    const wanted = await py().frozen('real-process', async () => {
-      const expected = await py().call('ownership_shim', 'run_probe', [{ omp: tree.omp, claude: tree.claude, owners: null, ...fixture }]) as {
-        steps: Record<string, unknown>[];
-      };
-      return unpid(pick(expected.steps[0]));
-    });
+    const wanted = await py().frozen('real-process');
     assertEquals(unpid(pick(actual)), wanted);
     const reasons = actual.reasons as Record<string, unknown>[];
     assertEquals(actual.verdict, 'owned_elsewhere');

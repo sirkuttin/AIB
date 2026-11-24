@@ -7,7 +7,7 @@
  * ignored), and the auth gate refusing the artifact origin as a page origin (security_test.ts covers Gate).
  */
 import { assert, assertEquals } from './_assert.ts';
-import { PyParity } from './_frozen.ts';
+import { Frozen } from './_frozen.ts';
 import { heldPort } from './_ports.ts';
 import { ArtifactStore } from '../../outputs/agent-studio/server/artifacts/artifacts.ts';
 import { injectScroll, markdownPage, OriginServer, renderMarkdown } from '../../outputs/agent-studio/server/artifacts/origin.ts';
@@ -17,7 +17,7 @@ const WIN = Deno.build.os === 'windows';
 const SEP = WIN ? '\\' : '/';
 const join = (...parts: string[]) => parts.join(SEP);
 const enc = (text: string) => new TextEncoder().encode(text);
-const py = new PyParity();
+const py = new Frozen();
 
 type Reply = { status: number; headers: Record<string, string>; body: Uint8Array };
 
@@ -66,8 +66,6 @@ const html = store.create('c1', 'P', 'html', 'p.html', enc('<html><body><h1>x</h
 const md = store.create('c1', 'M', 'md', 'n.md', enc(MD));
 const png = store.create('c1', 'I', 'image', 'i.png', new Uint8Array([0x89, 0x50, 0x4e, 0x47, 13, 10]));
 const odd = store.create('c1', 'O', 'text', 'we ird é.txt', enc('odd name'));
-// while freezing only: the retired Python listener on the same store
-const pyPort = Deno.env.get('AIB_FREEZE') === '1' ? await py.call('artifacts_shim', 'origin_start', [store.root, studioPort]) as number : 0;
 const get = (path: string, host: string | null = `127.0.0.1:${origin.port}`, method = 'GET') => raw(origin.port, path, host, method);
 
 Deno.test('origin: listens on 127.0.0.1, Studio port + 1 when free', () => {
@@ -180,7 +178,6 @@ Deno.test('origin: a symlink out of the snapshot is refused', async () => {
     return;
   }
   assertEquals((await get(`/a/${html.id}/v1/link.txt`)).status, 404);
-  assertEquals((await raw(pyPort, `/a/${html.id}/v1/link.txt`, `127.0.0.1:${pyPort}`)).status, 404);
   Deno.removeSync(link);
 });
 
@@ -248,10 +245,7 @@ async function compare(target: string, method = 'GET', host?: (port: number) => 
     body: method === 'HEAD' ? null : [...r.body].join(),
   });
   // what Python's listener answered for the same request on the same store (kept: status, the compared headers, CSP, body fingerprint)
-  const theirs = await py.frozen(`origin-${compared++}`, async () => {
-    const t = await raw(pyPort, target, host ? host(pyPort) : `127.0.0.1:${pyPort}`, method);
-    return seen(t, t.headers['content-security-policy']);
-  });
+  const theirs = await py.frozen(`origin-${compared++}`);
   assertEquals(seen(mine, maskCsp(mine.headers['content-security-policy'])), theirs, `${method} ${target}`);
 }
 
@@ -487,9 +481,7 @@ Deno.test('libs: CDN URL shapes and versions', () => {
 });
 
 Deno.test('origin teardown', async () => {
-  if (Deno.env.get('AIB_FREEZE') === '1') await py.call('artifacts_shim', 'origin_stop', [pyPort]);
   await origin.stop();
-  await py.close();
   studioHold.close();
   Deno.removeSync(tmp, { recursive: true });
 });

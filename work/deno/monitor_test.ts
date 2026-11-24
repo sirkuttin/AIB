@@ -5,7 +5,7 @@
  * with Python over a corpus. The HTTP-level golden comparison is monitor_golden_test.ts.
  */
 import { assert, assertEquals, assertRejects } from "./_assert.ts";
-import { PyParity } from "./_frozen.ts";
+import { Frozen } from "./_frozen.ts";
 import * as m from "../../outputs/agent-studio/server/transcripts/monitor.ts";
 import {
   join,
@@ -23,7 +23,7 @@ import { parseNotice } from "../../outputs/agent-studio/server/transcripts/xml_n
 import { ValueError } from "../../outputs/agent-studio/server/core/py.ts";
 import * as fx from "./_monitor_fixtures.ts";
 
-const py = new PyParity();
+const py = new Frozen();
 const enc = new TextEncoder();
 const made: string[] = [];
 const tmp = (prefix: string) => {
@@ -331,10 +331,7 @@ Deno.test("skipped rows: a notice inside a snapshot still completes its command 
   );
   assert(t.events.some((e) => String(e.text).startsWith("quote")));
   // what Python's parser made of the same file: events, commands, meta, number, offset (one fingerprint each)
-  const [events, commands, meta, number, offset] = await py.frozenList("skipped-rows-snapshot", async () => {
-    const snap = await py.call("monitor_shim", "snapshot", [path]) as Record<string, unknown>;
-    return [snap.events, snap.commands, untimed(snap.meta), snap.number, snap.offset];
-  });
+  const [events, commands, meta, number, offset] = await py.frozenList("skipped-rows-snapshot");
   const mine = plain({
     events: t.events,
     commands: [...t.commands.values()],
@@ -1579,16 +1576,12 @@ Deno.test("parity: project_match and project folders of summaries", async () => 
     ]
   ) {
     const ts = await (await m.Store.open(root)).summary(join(root, p));
-    const want = await py.frozen(`summary-${p}`, async () => {
-      const w = await py.call("monitor_shim", "summary", [root, join(root, p)]) as m.Dict;
-      return [w.cwd, w.projectRoot, w.title, w.key, w.hasMessages];
-    });
+    const want = await py.frozen(`summary-${p}`);
     assertEquals([ts.cwd, ts.projectRoot, ts.title, ts.key, ts.hasMessages], want, p);
   }
 });
 
 Deno.test("parity: close the Python bridge and remove the temp folders", async () => {
-  await py.close();
   for (const dir of made) {
     try {
       Deno.removeSync(dir, { recursive: true });

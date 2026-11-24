@@ -4,7 +4,7 @@
  * installs anything, and every folder is a temp folder.
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
-import { PyParity } from './_frozen.ts';
+import { Frozen } from './_frozen.ts';
 import { deadPid, exists, FAKE_NPM, join, makeInstall, PY, tempDir, waitFor, withEnv } from './_agents.ts';
 import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
 import * as adapters from '../../outputs/agent-studio/server/agents/adapters.ts';
@@ -309,7 +309,7 @@ Deno.test('failure lines match Python', async () => {
       'npm said: something odd',
     ),
   );
-  await using py = new PyParity();
+  const py = new Frozen();
   for (const [text, code] of FAILURE_LOGS) {
     assertEquals(installer.failureLine(text, code), await py.call('agent_installer', 'failure_line', [text, code]), text);
   }
@@ -524,7 +524,7 @@ Deno.test({
   name: 'the job files keep the format and answers the Python installer gave',
   ...sanitize,
   fn: async () => {
-    await using py = new PyParity();
+    const py = new Frozen();
     await using t = base();
     // Deno runs a job; Python reads its state file
     await t.installer.start('codex');
@@ -540,10 +540,7 @@ Deno.test({
     const ours = Deno.readTextFileSync(path);
     const strip = (text: string) => text.replace(/"updatedAt": [0-9.e+-]+/, '"updatedAt": 0').replace(/"pid": \d+/, '"pid": 0');
     // the file Python's installer wrote for the same record
-    const theirs = await py.frozen('installer-state-file', async () => {
-      await py.call('agents_shim', 'installer_save', [t.state, 'claude', 'running', 'downloading', 40.7, '', '0.102.0', Deno.pid]);
-      return strip(Deno.readTextFileSync(path));
-    });
+    const theirs = await py.frozen('installer-state-file');
     assertEquals(strip(ours), theirs);
     // a job record of a live process reads as running; a dead pid is interrupted
     assertEquals(installer.readStatus(t.state, 'claude'), await py.call('agent_installer', 'read_status', [t.state, 'claude']));

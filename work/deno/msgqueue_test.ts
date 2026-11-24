@@ -3,12 +3,10 @@
  *
  * work/test_queue.py drives a whole Connection with a fake agent, so its cases are re-expressed here against MessageQueue alone
  * (the sending itself belongs to the Connection port). Parity: the same scripted operation sequences run on a Python
- * MessageQueue (a small driver below) and on the port, and each side's QueueStore reads the other's file.
+ * MessageQueue (answers frozen in fixtures/frozen/msgqueue.json) and on the port, and each side's QueueStore reads the other's file.
  */
 import { assert, assertEquals, assertThrows } from './_assert.ts';
-import { python } from './_work.ts';
-import { PyParity, labelOf } from './_frozen.ts';
-import { PY_REF_DIR } from './_parity.ts';
+import { Frozen, labelOf } from './_frozen.ts';
 import {
   HOLD_MESSAGES,
   MAX_ITEMS,
@@ -251,81 +249,11 @@ Deno.test('writeJsonAtomic replaces an existing file and creates the folder', ()
 
 // ---- parity with msgqueue.py ---------------------------------------------------------------------
 
-/** Runs an operation script on a Python MessageQueue / QueueStore. No backslashes: it travels as a -c argument. */
-const DRIVER = `
-import json, sys
-sys.path.insert(0, sys.argv[1])
-import msgqueue
-
-class Clock:
-    now = 1000.0
-    def __call__(self):
-        return self.now
-
-def run(ops):
-    clock = Clock()
-    q = msgqueue.MessageQueue(None, clock)
-    out = []
-    for op in ops:
-        name, args = op[0], op[1:]
-        try:
-            if name == 'advance':
-                clock.now += args[0]; result = None
-            elif name == 'hold':
-                q.hold = args[0]; result = None
-            elif name == 'send':
-                q.inflight = q.items.pop(0); result = None
-            elif name == 'sent':
-                q.inflight = None; result = None
-            elif name == 'pause_reason':
-                result = q.pause_reason()
-            elif name == 'public':
-                result = q.public(*args)
-            elif name == 'to_saved':
-                result = q.to_saved()
-            elif name == 'summary':
-                result = msgqueue.MessageQueue.attachment_summary(*args)
-            else:
-                result = getattr(q, name)(*args)
-            out.append({'ok': result})
-        except Exception as error:
-            out.append({'error': type(error).__name__, 'message': str(error)})
-    return out
-
-request = json.loads(sys.stdin.read())
-if request['kind'] == 'queue':
-    print(json.dumps([run(ops) for ops in request['scripts']]))
-elif request['kind'] == 'store_read':
-    store = msgqueue.QueueStore(request['dir'], request['name'])
-    print(json.dumps({'warning': store.warning, 'sessions': store.sessions, 'gets': [store.get(*k) for k in request['keys']]}))
-elif request['kind'] == 'store_write':
-    store = msgqueue.QueueStore(request['dir'], request['name'])
-    for provider, session, saved in request['puts']:
-        store.put(provider, session, saved)
-    print(json.dumps({'warning': store.warning}))
-`;
-
-const frozenPy = new PyParity();
-const runPython = (request: unknown): Promise<unknown> => frozenPy.frozen(`msgqueue-${labelOf(request)}`, () => runPythonLive(request));
+const frozenPy = new Frozen();
+const runPython = (request: unknown): Promise<unknown> => frozenPy.frozen(`msgqueue-${labelOf(request)}`);
 /** The scripted sequences: one answer per step of each script, so a test can index them. */
 const runScripts = (scripts: unknown): Promise<unknown[][]> =>
-  frozenPy.frozenList(`msgqueue-scripts-${labelOf(scripts)}`, async () => normalize(await runPythonLive({ kind: 'queue', scripts })) as unknown[], 2) as Promise<unknown[][]>;
-
-async function runPythonLive(request: unknown): Promise<unknown> {
-  const child = new Deno.Command(python(), {
-    args: ['-X', 'utf8', '-I', '-c', DRIVER, PY_REF_DIR],
-    stdin: 'piped',
-    stdout: 'piped',
-    stderr: 'piped',
-    env: { PYTHONDONTWRITEBYTECODE: '1' },
-  }).spawn();
-  const writer = child.stdin.getWriter();
-  await writer.write(new TextEncoder().encode(JSON.stringify(request)));
-  await writer.close();
-  const { code, stdout, stderr } = await child.output();
-  if (code !== 0) throw new Error(`python driver failed: ${new TextDecoder().decode(stderr)}`);
-  return JSON.parse(new TextDecoder().decode(stdout));
-}
+  frozenPy.frozenList(`msgqueue-scripts-${labelOf(scripts)}`) as Promise<unknown[][]>;
 
 type Op = [string, ...unknown[]];
 
@@ -531,11 +459,7 @@ Deno.test('a QueueStore file written by Deno reads back the way Python read it, 
     const file = JSON.parse(Deno.readTextFileSync(`${dir}/studio-queues-py.json`));
     const denoFile = JSON.parse(Deno.readTextFileSync(`${dir}/studio-queues-deno.json`));
     // the file Python wrote for the same puts (kept as fingerprints): its keys and sessions
-    const pythonFile = await frozenPy.frozenList('queue-file-python', async () => {
-      await runPythonLive({ kind: 'store_write', dir, name: 'queues-py2', puts });
-      const written = JSON.parse(Deno.readTextFileSync(`${dir}/studio-queues-py2.json`));
-      return [Object.keys(written), written.sessions];
-    }) as unknown[];
+    const pythonFile = await frozenPy.frozenList('queue-file-python') as unknown[];
     // `meta` (each chat's folder for the Send-later schedule scan) is a key of the Deno file that Python's file never had
     assertEquals(Object.keys(file).filter((k) => k !== 'meta'), pythonFile[0]);
     assertEquals(Object.keys(file).filter((k) => k !== 'meta'), ['version', 'savedAt', 'sessions']);

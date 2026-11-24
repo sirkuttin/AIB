@@ -4,7 +4,7 @@
  * the deploy logs in that test's own temp folder. Never port 8767/8768 and never the real data folder.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { PyParity } from './_frozen.ts';
+import { Frozen } from './_frozen.ts';
 import { DENO, Fixture, MAIN, SEP, until } from './_host_fixture.ts';
 import { refusedPort } from './_ports.ts';
 import { pidAlive, readInfo } from '../../outputs/agent-studio/server/host/host_client.ts';
@@ -40,7 +40,7 @@ Deno.test('busy reasons: older servers without attention', () => {
 });
 
 Deno.test('busy reasons and the restart plan match deploy.py', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   const listings = [
     {},
     { connections: [] },

@@ -1,12 +1,12 @@
 /**
  * server/state/migrate.ts: the migrate cases of work/test_state_migration.py and work/test_package_context.py, and differential runs
- * against Python's migrate.py (work/parity/migrate_shim.py): the same source tree moved by each side gives the same target tree,
+ * against Python's migrate.py (the retired migrate_shim.py): the same source tree moved by each side gives the same target tree,
  * MIGRATED-TO.txt, record, result and messages; a lease or a live process of either side blocks both the same way.
  * Temp folders and fake environments only (AGENT_STUDIO_TEST=1): the real per-user folder is never resolved.
  */
 import { createHash } from 'node:crypto';
 import { assert, assertEquals } from './_assert.ts';
-import { PyParity } from './_frozen.ts';
+import { Frozen } from './_frozen.ts';
 import { StateStore } from '../../outputs/agent-studio/server/state/recovery.ts';
 import { QueueStore } from '../../outputs/agent-studio/server/acp/msgqueue.ts';
 import { ArtifactStore } from '../../outputs/agent-studio/server/artifacts/artifacts.ts';
@@ -578,7 +578,7 @@ Deno.test('the sandbox move (worktrees left behind) reports the left-behind name
 });
 
 Deno.test('planFiles and the path rewrite give what the retired Python migrate gave', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   using tmp = tempRoot();
   const old = pathOf(tmp.root, 'Old State');
   buildRich(old);

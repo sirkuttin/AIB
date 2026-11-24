@@ -4,7 +4,7 @@
  * status command, touches the network or uses an account, and every folder is a temp folder.
  */
 import { assert, assertEquals, assertRejects, assertThrows } from './_assert.ts';
-import { PyParity } from './_frozen.ts';
+import { Frozen } from './_frozen.ts';
 import { deadPid, exists, FAKE_SIGNIN, join, PY, tempDir, touch, waitFor, withEnv } from './_agents.ts';
 import * as signin from '../../outputs/agent-studio/server/agents/signin.ts';
 import { Signer, type SignerOptions, SignInRefused, type Spawned } from '../../outputs/agent-studio/server/agents/signin.ts';
@@ -111,7 +111,7 @@ const STATUS_TABLE: [string, string][] = [
 ];
 
 Deno.test('signed in, signed out and unknown, as Python reads them', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   for (const [text, expected] of STATUS_TABLE) {
     assertEquals(signin.parseStatus(text), expected, text);
     assertEquals(await py.call('agent_signin', 'parse_status', [text]), expected, text);
@@ -124,7 +124,7 @@ Deno.test('the effective state prefers an open chat', async () => {
   assertEquals(signin.effectiveState('signin', ''), 'signin');
   assertEquals(signin.effectiveState('', ''), 'unknown');
   assertEquals(signin.effectiveState('bogus', ''), 'unknown');
-  await using py = new PyParity();
+  const py = new Frozen();
   for (const cached of ['ready', 'signin', 'unknown', '', 'bogus']) {
     for (const live of ['', 'signin', 'running', 'x']) {
       assertEquals(signin.effectiveState(cached, live), await py.call('agent_signin', 'effective_state', [cached, live]));
@@ -537,7 +537,7 @@ Deno.test('advertised methods are normalised and hostile args dropped, as Python
     'terminal',
     [],
   ]]);
-  await using py = new PyParity();
+  const py = new Frozen();
   const more = [
     raw,
     [{ id: 'x', type: null, name: '' }, { id: 'y', type: 'agent', args: ['a'], name: 'N'.repeat(100) }, { id: 'z'.repeat(257) }, {
@@ -606,7 +606,7 @@ Deno.test({
   name: 'the cache and job files keep the format and give the answers the Python signer gave',
   ...sanitize,
   fn: async () => {
-    await using py = new PyParity();
+    const py = new Frozen();
     await using t = base();
     const noTime = (cache: unknown) => ({ ...(cache as Record<string, unknown>), checkedAt: 0 });
     // Deno writes (a check, a manual job); what Python's readers made of those files
@@ -614,7 +614,7 @@ Deno.test({
     const made = t.make(true, { systemIsWindows: false });
     await made.start('claude');
     await t.finish('claude', made);
-    assertEquals(noTime(await py.frozen('cached-claude', async () => noTime(await py.call('agent_signin', 'read_cached', [t.state, 'claude'])))), noTime(signin.readCached(t.state, 'claude')));
+    assertEquals(noTime(await py.frozen('cached-claude')), noTime(signin.readCached(t.state, 'claude')));
     assertEquals(await py.call('agent_signin', 'read_job', [t.state, 'claude']), signin.readJob(t.state, 'claude'));
     const ours = {
       cache: Deno.readTextFileSync(join(t.state, 'agents', 'claude', signin.CACHE_NAME)),
@@ -622,18 +622,7 @@ Deno.test({
     };
     // the bytes Python wrote for the same records match apart from the times and the pid
     const strip = (text: string) => text.replace(/"(checkedAt|updatedAt)": [0-9.e+-]+/g, '"$1": 0').replace(/"pid": \d+/, '"pid": 0');
-    const theirs = await py.frozen('signer-files', async () => {
-      await py.call('agents_shim', 'signer_write', [t.state, 'claude', 'signin', [
-        'manual',
-        signin.readJob(t.state, 'claude').message,
-        signin.readJob(t.state, 'claude').command,
-        Deno.pid,
-      ]]);
-      return {
-        cache: strip(Deno.readTextFileSync(join(t.state, 'agents', 'claude', signin.CACHE_NAME))),
-        job: strip(Deno.readTextFileSync(join(t.state, 'agents', 'claude', signin.JOB_NAME))),
-      };
-    });
+    const theirs = await py.frozen('signer-files');
     assertEquals({ cache: strip(ours.cache), job: strip(ours.job) }, theirs);
     // job records of every state: a waiting job of a dead process is interrupted, the others are read as written
     for (
@@ -641,7 +630,7 @@ Deno.test({
     ) {
       writeRecords(t.state, 'codex', 'ready', job);
       assertEquals(signin.readJob(t.state, 'codex'), await py.call('agent_signin', 'read_job', [t.state, 'codex']), job[0]);
-      assertEquals(signin.readCached(t.state, 'codex'), await py.frozen(`cached-codex-${job[0]}-${job[3] === 1 ? 'x' : 'p'}`, async () => await py.call('agent_signin', 'read_cached', [t.state, 'codex'])));
+      assertEquals(signin.readCached(t.state, 'codex'), await py.frozen(`cached-codex-${job[0]}-${job[3] === 1 ? 'x' : 'p'}`));
       assertEquals(
         signinView({ stateDir: t.state }, 'codex', 'signin'),
         await py.call('agents_shim', 'signin_view', [t.state, 'codex', 'signin']),

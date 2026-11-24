@@ -10,7 +10,7 @@ function nativePath(url: URL): string {
 }
 
 export const FAKE = nativePath(new URL('fake_acp.py', WORK));
-export const STREAM_AGENT = nativePath(new URL('parity/stream_agent.py', WORK));
+export const STREAM_AGENT = nativePath(new URL('stream_agent.py', WORK));
 export const PYTHON = python();
 
 export function fake(...flags: string[]): string[] {

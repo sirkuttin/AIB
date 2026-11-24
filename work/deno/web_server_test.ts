@@ -1,6 +1,6 @@
 /** server/web: the route table equals Python's, page-file mapping equals web_handler.studio_asset, CLI parsing matches studio.py. */
 import { assert, assertEquals, assertThrows } from './_assert.ts';
-import { PyParity } from './_frozen.ts';
+import { Frozen } from './_frozen.ts';
 import { DENO_ONLY, ROUTE_LIST } from '../../outputs/agent-studio/server/web/routes.ts';
 import { studioAsset } from '../../outputs/agent-studio/server/web/server.ts';
 import { parseOptions, UsageError } from '../../outputs/agent-studio/server/core/options.ts';
@@ -9,7 +9,7 @@ import { REMOTE_ROUTES, REMOTE_STATIC } from '../../outputs/agent-studio/server/
 import { LOADER } from '../../outputs/agent-studio/server/remote/pc_page.ts';
 
 Deno.test('the route table is exactly the Python web server\'s (paths, scopes and kinds)', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   const routes = await py.callItems('shims', 'studio_routes') as [string, string, string][];
   // The one documented exception: routes the Python server does not have (routes.ts DENO_ONLY). Kept to exactly this list.
   assertEquals(DENO_ONLY.map(([m, p]) => `${m} ${p}`), [
@@ -159,7 +159,7 @@ Deno.test('the route table is exactly the Python web server\'s (paths, scopes an
 });
 
 Deno.test('studioAsset maps the same paths as web_handler.studio_asset', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   const paths = ['/', '/chat.html', '/chat.js', '/style.css', '/app.js', '/sidebar.js', '/theme.css', '/missing.js', '/Chat.js', '/../x.js', '/a/b.js',
     '/.hidden.js', '/chat.py', '/index.html', '/conversation.html', '/-x.js', '/chat.js?x=1'];
   for (const path of paths) assertEquals(studioAsset(path), await py.call('web_handler', 'studio_asset', [path]), path);
@@ -178,7 +178,7 @@ Deno.test('CLI flags parse like studio.py', () => {
 });
 
 Deno.test('LIVE_POST_OPS equals Studio.LIVE_POST_OPS', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   // Steer-on-send's two calls are Deno only (routes.ts DENO_ONLY lists their routes); everything else is Python's set.
   const denoOnly = ['steer', 'tool-stop', 'schedule', 'schedule-edit', 'schedule-cancel', 'schedule-send-now']; // Send later too
   assert(denoOnly.every((op) => (LIVE_POST_OPS as readonly string[]).includes(op)));

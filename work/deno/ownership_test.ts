@@ -4,7 +4,7 @@
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
 import { python } from './_work.ts';
-import { PyParity } from './_frozen.ts';
+import { Frozen } from './_frozen.ts';
 import { findExternalOwner, OwnershipConflict, SessionLease, shlexSplit } from '../../outputs/agent-studio/server/ownership/ownership.ts';
 import { join } from '../../outputs/agent-studio/server/platform/ospath.ts';
 
@@ -53,7 +53,7 @@ Deno.test('atPath with create=false never creates the file and reports a missing
   }));
 
 Deno.test('lease file names match Python for every kind of id', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   const dir = Deno.makeTempDirSync({ prefix: 'lease-names-' });
   try {
     for (
@@ -151,7 +151,7 @@ Deno.test('exact session matching, provider, exclusions (test_ownership.py)', ()
 });
 
 Deno.test('findExternalOwner and shlex.split match Python', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   const lists: unknown[][] = [
     processes,
     [{ pid: '40', Name: 'OMP.EXE', commandline: 'omp --resume=x1' }],

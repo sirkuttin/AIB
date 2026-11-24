@@ -1,6 +1,6 @@
 /** server/acp/acp_schema.ts: the cases of work/test_conformance.py that cover acp_schema.py, plus parity with Python. */
 import { assert, assertEquals } from './_assert.ts';
-import { PyParity } from './_frozen.ts';
+import { Frozen } from './_frozen.ts';
 import {
   MAX_PROTOCOL_EVENTS,
   messageKind,
@@ -52,7 +52,7 @@ class StubConnection implements ScreenConnection {
 
 const line = (value: Json) => JSON.stringify({ jsonrpc: '2.0', ...value });
 
-/** The TS twin of work/parity/acp_schema_shim.py's screen_session. */
+/** The TS twin of the retired acp_schema_shim.py's screen_session. */
 function screenSession(steps: unknown[]) {
   const connection = new StubConnection();
   const results: unknown[] = [];
@@ -161,7 +161,7 @@ Deno.test('required fields and types are enforced', () => {
 });
 
 Deno.test('validateSessionUpdate matches Python', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   const params: unknown[] = [
     ...[...validUpdates, ...invalidUpdates, ...extraUpdates].map((update) => ({ sessionId: 's', update })),
     { update: { sessionUpdate: 'plan', entries: [] } },
@@ -259,7 +259,7 @@ const results: [string, unknown][] = [
 ];
 
 Deno.test('request, notification and result validators match Python', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   for (const [method, params] of requests) {
     assertEquals(outcome(() => validateRequest(method, params)), await py.raw('acp_schema', 'validate_request', [method, params]), method);
   }
@@ -323,7 +323,7 @@ const envelopes: unknown[] = [
 ];
 
 Deno.test('envelope classification matches Python', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   assertEquals(messageKind({ jsonrpc: '2.0', id: 1, method: 'm' }), 'request');
   assertEquals(messageKind({ jsonrpc: '2.0', method: 'm', params: {} }), 'notification');
   assertEquals(messageKind({ jsonrpc: '2.0', id: 'a', result: null }), 'response');
@@ -389,7 +389,7 @@ Deno.test('elicitation request envelope gets an error reply', () => {
 });
 
 Deno.test('screen() matches Python: events, replies, waiters and results', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   const update = (body: Json, extra: Json = {}) => line({ method: 'session/update', params: { sessionId: 's1', update: body, ...extra } });
   const sessions: unknown[][] = [
     // junk lines and envelopes

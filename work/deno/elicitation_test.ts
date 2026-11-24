@@ -1,6 +1,6 @@
 /** server/acp/elicitation.ts: the cases of work/test_elicitation.py, plus parity with Python's elicitation.py. */
 import { assertEquals, AssertionError } from './_assert.ts';
-import { PyParity } from './_frozen.ts';
+import { Frozen } from './_frozen.ts';
 import {
   validateContent,
   validateSchema,
@@ -272,7 +272,7 @@ const schemas: unknown[] = [
 ];
 
 Deno.test('validateSchema matches Python', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   for (const schema of schemas) {
     assertEquals(
       outcome(() => validateSchema(schema)),
@@ -320,7 +320,7 @@ const contents: unknown[] = [
 ];
 
 Deno.test('validateContent matches Python', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   for (const content of contents) {
     const expected = await py.raw('elicitation', 'validate_content', [contentSchema, content]);
     assertEquals(outcome(() => validateContent(contentSchema, content)), expected, JSON.stringify(content));
@@ -436,7 +436,7 @@ const emailTemplates = [
 const alphabet = [...'0123456789-:T+Z.,W @/?#[]Ze\u0000\t', 'é', '😀', '\u3000', '\ud800', '\u0661'];
 
 Deno.test('string formats match Python (fuzzed)', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   const cases: [string, string[]][] = [
     ['date', [...dateTemplates, ...fuzz(1, 600, dateTemplates, alphabet)]],
     ['date-time', [...dateTimeTemplates, ...fuzz(2, 1200, dateTimeTemplates, alphabet)]],
@@ -489,7 +489,7 @@ const urlTemplates = [
 ];
 
 Deno.test('validateUrl and validateUrlRequest match Python', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   const urls: unknown[] = [...urlTemplates, ...badUrls, ...fuzz(5, 400, urlTemplates, [...alphabet, ':', '%', 'é'])];
   for (const url of urls) {
     const ours = outcome(() => validateUrl(url));

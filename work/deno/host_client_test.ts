@@ -4,7 +4,7 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { APP, python } from './_work.ts';
-import { PyParity } from './_frozen.ts';
+import { Frozen } from './_frozen.ts';
 import {
   APP_ID,
   appIdFor,
@@ -85,7 +85,7 @@ Deno.test('restart hints name the Deno app, never the Python programs', async ()
 });
 
 Deno.test('quoteWindowsArg matches subprocess.list2cmdline', async () => {
-  await using py = new PyParity();
+  const py = new Frozen();
   const args = [
     'plain',
     '',

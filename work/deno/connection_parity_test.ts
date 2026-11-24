@@ -1,6 +1,6 @@
 /**
  * Differential test of server/acp/connection.ts: each script runs once through Python's acp_connection.Connection
- * (work/parity/connection_shim.py) and once through the port, against the same fake agent, and both must give the same
+ * (the retired connection_shim.py) and once through the port, against the same fake agent, and both must give the same
  * results (replies and refusals with their messages), the same event list, the same messages written to the agent, the same
  * stderr tail and the same written-file list. Times, random keys and the temp folder are scrubbed from both.
  *
@@ -11,7 +11,7 @@
  * public {after, light}, attention, write_file {name, text}, kill, close. '<cwd>' in a step is the temp folder (with /).
  */
 import { assertEquals } from './_assert.ts';
-import { PyParity } from './_frozen.ts';
+import { Frozen } from './_frozen.ts';
 import { FAKE, type Json, PYTHON, STREAM_AGENT, until } from './_connection.ts';
 import { Connection, errorName } from '../../outputs/agent-studio/server/acp/connection.ts';
 
@@ -246,6 +246,8 @@ const DROP = new Set([
   'steerAgent',
   'steerLane',
   'toolBackground',
+  // set when the owner typed into a chat (the end-of-helper sweep leaves such a helper alone): Deno only, Python never had it
+  'ownerTouched',
 ]);
 
 /**
@@ -939,16 +941,13 @@ const SCRIPTS: Script[] = [
 
 for (const script of SCRIPTS) {
   Deno.test(`${script.name}: the events, results, writes, stderr and files give what Python gave`, async () => {
-    await using py = new PyParity();
+    const py = new Frozen();
     const agent = script.agent ?? 'fake';
     const flags = script.flags ?? [];
     const provider = script.provider ?? 'gemini';
     const options = script.options ?? {};
     // what Python's Connection did with the same script: events (any order when the script says so), results, writes, stderr, files
-    const [events, results, writes, stderr, written] = await py.frozenList(`script-${script.name}`, async () => {
-      const run = scrub(await py.call('connection_shim', 'run_script', [agent, flags, script.steps, provider, options]) as Json);
-      return [script.ordered === false ? unordered(run.events) : run.events, run.results, run.writes, run.stderr, run.written];
-    });
+    const [events, results, writes, stderr, written] = await py.frozenList(`script-${script.name}`);
     const actual = scrub(await runPort(agent, flags, script.steps, provider, options));
     assertEquals(script.ordered === false ? unordered(actual.events) : actual.events, events, script.ordered === false ? 'events (any order)' : 'events');
     assertEquals(actual.results, results, 'results');
