@@ -220,3 +220,50 @@ Deno.test({
     assertEquals(anyway[0], 200, JSON.stringify(anyway[1]));
   },
 });
+
+Deno.test({
+  name: 'allow rules e2e: a command with AIB\'s cookie prefix is judged, shown and saved as the plain command (a subagent\'s tagged call)',
+  ...T,
+  async fn() {
+    await keeperBinary();
+    await using lab = new AllowLab();
+    const a = lab.studio();
+    const c = await a.connect('claude', lab.work);
+    const tag = (command: string, call = 't1') => `export AIB_PROC='${c.id}.agent7.${call}'; ${command}`;
+
+    // an allowed command still auto-allows when tagged, and the line names the rule, not the prefix
+    await a.liveCall('prompt', { id: c.id, text: 'allow:' + tag('ls src'), clientMessageId: 'm1' });
+    await until(() => said(c).includes('allow outcome=yes;'), 'auto-allowed while tagged', 10);
+    await until(() => !c.busy, 'turn end', 10);
+    assertEquals(kinds(c, 'permission').length, 0);
+    assertEquals(kinds(c, 'permission_auto').map((e) => (e.data as Json).label), ['Safe reads']);
+
+    // a command that asks: the card shows the plain command; "always allow" saves the plain command
+    await a.liveCall('prompt', { id: c.id, text: 'allow:' + tag('npm test', 't2'), clientMessageId: 'm2' });
+    await until(() => c.permissions.size === 1, 'the tagged npm test card', 10);
+    const card = (c.public() as Json).permissions as Json[];
+    assert(!JSON.stringify(card).includes('AIB_PROC'), 'the approval card never shows the prefix: ' + JSON.stringify(card).slice(0, 400));
+    assert(String(((card[0].allow as Json).project as Json).preview).includes('npm test'));
+    const [status, saved] = await a.liveCall('allow-answer', { id: c.id, key: card[0].key as string, option: 'yes', scope: 'project' });
+    assertEquals(status, 200, JSON.stringify(saved));
+    assertEquals(((saved as Json).rules as Json[])[0].label, 'npm test');
+    await until(() => !c.busy, 'turn end', 10);
+    const rules = JSON.stringify((await a.liveCall('allow-rules', {}))[1]);
+    assert(!rules.includes('AIB_PROC'), 'the saved rule is the untagged command: ' + rules);
+    assert(!Deno.readTextFileSync(lab.state + SEP + 'allow-rules.json').includes('AIB_PROC'), 'nothing tagged is written to the rules file');
+
+    // the saved rule answers the plain command, and the same command with another call's prefix
+    for (const [n, text] of [['m3', 'allow:npm test'], ['m4', 'allow:' + tag('npm test', 't3')]]) {
+      await a.liveCall('prompt', { id: c.id, text, clientMessageId: n });
+      await until(() => !c.busy, 'turn end ' + n, 10);
+    }
+    assertEquals(kinds(c, 'permission_auto').map((e) => (e.data as Json).label), ['Safe reads', 'npm test', 'npm test']);
+    // no event of the chat (Activity, history, the card) carries the prefix
+    // (the prompts' own text is the test's way of telling the fake agent what to ask: not the agent's tool calls)
+    const leaked = c.events.filter((e) => e.kind !== 'prompt' && e.kind !== 'user' && JSON.stringify(e).includes('AIB_PROC'));
+    assert(!leaked.length, 'the stream is stripped where it comes in: ' + JSON.stringify(leaked).slice(0, 600));
+    // the agent got its allow answers for all four requests
+    const got = lab.received();
+    for (const id of ['allow-1', 'allow-2', 'allow-3', 'allow-4']) assertEquals(answersTo(got, id).length, 1, id);
+  },
+});

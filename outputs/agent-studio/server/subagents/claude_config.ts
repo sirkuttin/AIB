@@ -36,6 +36,8 @@ export const READ_ONLY_TOOLS = new Set([
 export const PRE_TOOL_MATCHER = 'Agent|Task|EnterWorktree|Workflow|Skill';
 /** Claude Code's timeout for each hook, seconds: well above the forwarder's own 10 s deadline (P0b R2c: a timed-out hook fails open). */
 export const HOOK_TIMEOUT_S = 30;
+/** The shell hook's matcher (hook 2): Claude Code's two shell tools. */
+export const SHELL_MATCHER = 'Bash|PowerShell';
 
 export interface ClaudeSetup {
   /** Agent types the forwarder passes without a worktree. */
@@ -318,7 +320,7 @@ export function bashPath(path: string): string | null {
  * The per-session settings: command hooks through the keeper's forwarder. `|| exit 2` makes a missing or broken program block the
  * call too (bash's 127 would otherwise be a non-blocking error: the subagent would run unisolated). Null when a path can't be quoted.
  */
-export function hookSettings(forwarder: string, addressFile: string, options: { worktreeCreate: boolean; viaSocket?: boolean }): Json | null {
+export function hookSettings(forwarder: string, addressFile: string, options: { worktreeCreate: boolean; viaSocket?: boolean; shellTag?: boolean }): Json | null {
   const program = bashPath(forwarder), file = bashPath(addressFile);
   if (!program || !file) return null;
   // viaSocket (a WSL chat): `hook <event> --helper-socket "<the helper's tunnel socket>"` instead of the address file
@@ -333,6 +335,9 @@ export function hookSettings(forwarder: string, addressFile: string, options: { 
     PostToolUse: [{ matcher: 'Agent|Task', hooks: [hook('post-agent', false)] }],
     SubagentStop: [{ hooks: [hook('subagent-stop', false)] }],
   };
+  // hook 2 (keeper/hookshell.go): its own PreToolUse entry (so it never counts against the chat's waiting Agent hooks), never blocking: no
+  // `|| exit 2`, so a missing or failing program lets the shell call run untagged. Only for a forwarder that answers hook 2.
+  if (options.shellTag) (hooks.PreToolUse as Json[]).push({ matcher: SHELL_MATCHER, hooks: [hook('pre-shell', false)] });
   if (options.worktreeCreate) hooks.WorktreeCreate = [{ hooks: [hook('worktree-create', true)] }];
   return { hooks };
 }

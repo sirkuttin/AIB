@@ -25,6 +25,7 @@ import type { LinuxView } from './linux.ts';
 import { isWslRef, locKey, wslLocOf } from '../platform/location.ts';
 import { pinHash } from './pin.ts';
 import { parseBash, parsePwsh, type Part, unwrapCodexPowershell } from './shell.ts';
+import { stripAibPrefix } from './aib_prefix.ts';
 
 type Json = Record<string, unknown>;
 const isDict = (v: unknown): v is Json => !!v && typeof v === 'object' && !Array.isArray(v);
@@ -143,7 +144,7 @@ export function readRequest(params: unknown, ctx: MatchContext): Request {
       return {
         kind: 'shell',
         shell: tool === 'Bash' ? 'bash' : 'pwsh',
-        command: raw.command,
+        command: stripAibPrefix(raw.command), // AIB's cookie prefix (a subagent's call) is not part of what the agent meant
         cwd: ctx.cwd,
         escalation: raw.dangerouslyDisableSandbox === true ? 'asks to leave the sandbox' : '',
       };
@@ -198,11 +199,11 @@ export function readRequest(params: unknown, ctx: MatchContext): Request {
     } else return { kind: 'unknown', reason: 'no command' };
     const inner = unwrapCodexPowershell(command);
     if (inner !== null && ctx.linux) return { kind: 'unknown', reason: 'PowerShell in a WSL chat has no rules' };
-    if (inner !== null) return { kind: 'shell', shell: 'pwsh', command: inner, cwd, escalation };
+    if (inner !== null) return { kind: 'shell', shell: 'pwsh', command: stripAibPrefix(inner), cwd, escalation };
     if (/^\s*"?[^\s"]*(powershell|pwsh|cmd)(\.exe)?"?\s/i.test(command)) return { kind: 'unknown', reason: 'a shell inside a shell' };
     // On Windows Codex runs commands through PowerShell: a string without its wrapper can't be read as bash (review H10).
     if (Deno.build.os === 'windows' && !ctx.linux && !Array.isArray(raw.command)) return { kind: 'unknown', reason: 'Codex command without its shell' };
-    return { kind: 'shell', shell: 'bash', command, cwd, escalation };
+    return { kind: 'shell', shell: 'bash', command: stripAibPrefix(command), cwd, escalation };
   }
   return { kind: 'unknown', reason: `AIB can't read ${ctx.provider || 'this agent'}'s requests yet` };
 }

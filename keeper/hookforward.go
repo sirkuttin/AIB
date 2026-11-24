@@ -9,6 +9,7 @@ package main
 //	WorktreeCreate                                 -> hook worktree-create AIB answers the worktree's bare path (text/plain)
 //	PostToolUse(Agent|Task)                        -> hook post-agent      a hint only
 //	SubagentStop                                   -> hook subagent-stop   a hint only
+//	PreToolUse(Bash|PowerShell)                    -> hook pre-shell       hook 2, never blocking: tags a subagent's shell call (hookshell.go)
 //
 // It lives in the keeper's folder (never an AIB version folder) and reads AIB's current address from <address file> (the MCP forwarder's
 // artifact-mcp.json), so a chat kept running across an AIB restart or update reaches whichever AIB runs now.
@@ -60,20 +61,24 @@ import (
 )
 
 const (
-	hookDeadline    = 10 * time.Second
-	hookMaxInput    = 4 << 20
-	hookRestarting  = "AIB is restarting; try the subagent again in a moment."
-	hookUnconfirmed = "AIB could not confirm this hook's answer, so the subagent was blocked; try again in a moment."
-	hookKeyHeader   = "X-Studio-Hook-Key"
-	hookChatHeader  = "X-Studio-Conversation-Id"
-	hookNonceHeader = "X-Studio-Hook-Nonce"
-	hookProofHeader = "X-Studio-Hook-Proof"
-	hookProofLabel  = "studio-hook-proof/v1\x00"
+	hookDeadline = 10 * time.Second
+	// preShellDeadline: pre-shell sits in front of every shell call of a subagent and never blocks, so AIB gets only this long (the call
+	// goes through untagged after it) instead of hookDeadline's retry-until-restarted wait.
+	preShellDeadline = 2 * time.Second
+	hookMaxInput     = 4 << 20
+	hookRestarting   = "AIB is restarting; try the subagent again in a moment."
+	hookUnconfirmed  = "AIB could not confirm this hook's answer, so the subagent was blocked; try again in a moment."
+	hookKeyHeader    = "X-Studio-Hook-Key"
+	hookChatHeader   = "X-Studio-Conversation-Id"
+	hookNonceHeader  = "X-Studio-Hook-Nonce"
+	hookProofHeader  = "X-Studio-Hook-Proof"
+	hookProofLabel   = "studio-hook-proof/v1\x00"
 )
 
 var hookEvents = map[string]bool{"pre-tool": true, "worktree-create": true, "post-agent": true, "subagent-stop": true,
 	"codex-pre-tool": true, "codex-subagent-start": true, "codex-subagent-stop": true, // codex-*: hookforward_codex.go
-	"gemini-before-tool": true} // Gemini CLI's BeforeTool (hookgemini.go)
+	"gemini-before-tool": true, // Gemini CLI's BeforeTool (hookgemini.go)
+	"pre-shell":          true} // hook 2: a subagent's Bash/PowerShell call, never blocking (hookshell.go)
 
 // blocking: the events whose failure must block the call (exit 2).
 func hookBlocking(event string) bool {
@@ -85,7 +90,8 @@ var errAIBGone = errors.New("the AIB named in the address file is not running")
 
 func hookMain(args []string) int {
 	if len(args) == 1 && args[0] == "--check" {
-		fmt.Println(checkLine("hook 1"))
+		// hook 2 (no-stuck-processes) adds the non-blocking pre-shell event; everything hook 1 does is unchanged, so AIB runs both.
+		fmt.Println(checkLine("hook 2"))
 		return 0
 	}
 	socket := ""
@@ -95,8 +101,12 @@ func hookMain(args []string) int {
 		args = []string{args[0], socket}
 	}
 	if len(args) != 2 || !hookEvents[args[0]] || args[1] == "" {
-		fmt.Fprintln(os.Stderr, "usage: AIB-keeper hook pre-tool|worktree-create|post-agent|subagent-stop|codex-pre-tool|codex-subagent-start|codex-subagent-stop|gemini-before-tool <address file> | hook <event> --helper-socket <unix socket>")
+		fmt.Fprintln(os.Stderr, "usage: AIB-keeper hook pre-tool|pre-shell|worktree-create|post-agent|subagent-stop|codex-pre-tool|codex-subagent-start|codex-subagent-stop|gemini-before-tool <address file> | hook <event> --helper-socket <unix socket>")
 		return 2
+	}
+	deadline := hookDeadline
+	if args[0] == "pre-shell" {
+		deadline = preShellDeadline
 	}
 	h := &hookForwarder{
 		event:       args[0],
@@ -105,7 +115,7 @@ func hookMain(args []string) int {
 		key:         openedEnv(sealHookKey, "AIB_HOOK_KEY"),
 		chat:        os.Getenv("AIB_HOOK_CHAT"),
 		readOnly:    splitList(os.Getenv("AIB_HOOK_READONLY")),
-		deadline:    hookDeadline,
+		deadline:    deadline,
 	}
 	return h.run(os.Stdin, os.Stdout, os.Stderr)
 }
@@ -153,6 +163,9 @@ func (h *hookForwarder) run(in io.Reader, stdout, stderr io.Writer) int {
 	if h.event == "pre-tool" && h.passesLocally(input) {
 		return 0
 	}
+	if h.event == "pre-shell" && !h.preShellWants(input) {
+		return 0 // the main agent's call, another tool or a command that must stay untagged: nothing to ask AIB
+	}
 	if h.event == "codex-pre-tool" && codexPassesLocally(input) {
 		return 0 // the main Codex agent's own tool call (not spawn_agent): nothing to ask AIB
 	}
@@ -169,6 +182,10 @@ func (h *hookForwarder) run(in io.Reader, stdout, stderr io.Writer) int {
 	}
 	if !hmac.Equal([]byte(strings.ToLower(proof)), []byte(hookProof(h.key, nonce, status, body))) {
 		return fail(hookUnconfirmed) // not AIB's answer (another program on the port), or changed on the way
+	}
+	if h.event == "pre-shell" {
+		h.preShellAnswer(input, status, body, stdout)
+		return 0
 	}
 	if strings.HasPrefix(h.event, "codex-") {
 		return h.codexAnswer(input, status, body, stdout, stderr)

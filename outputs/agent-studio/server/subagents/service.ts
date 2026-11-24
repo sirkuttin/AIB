@@ -35,6 +35,7 @@ import * as wt from '../worktrees/worktrees.ts';
 import { pathFormProblem } from '../allow/paths.ts';
 import { readHelpers } from '../swarm/registry.ts';
 import { claudeConfigDir, isForkSkill } from './claude_config.ts';
+import { preShell } from './shell_tag.ts';
 
 const log = getLogger('subagents');
 
@@ -145,7 +146,7 @@ export interface SubagentChat {
   /** The project folder (worktrees go under <root>/<its repo hash>/, with the project's other copies). */
   project: string;
   /** Hooks were given to this chat: on, its read-only types, and whether the user's WorktreeCreate hook makes the worktrees. */
-  hooks: { readOnly: Set<string>; userWorktreeHook: boolean; configDir?: string } | null;
+  hooks: { readOnly: Set<string>; userWorktreeHook: boolean; configDir?: string; shellTag?: boolean } | null;
   /**
    * Where this chat's subagent worktrees go when not <root>/<repo hash>/: a Gemini chat's own <root>/<repo hash>/.gem-<chat> folder,
    * the one folder its agent was given with --include-directories (subagents/gemini.ts); a Codex chat's .cx-<chat>, a writable root
@@ -337,6 +338,8 @@ export class SubagentWorktrees {
     try {
       await this.adoptPrevious(chat.id);
       switch (event) {
+        case 'pre-shell': // hook 2: a subagent's shell call, tagged for the process reap; never blocks, never denies (shellhook.ts)
+          return preShell(chat, body as Record<string, unknown>);
         case 'pre-tool':
           return await this.#preTool(chat, body as Record<string, unknown>);
         case 'worktree-create':

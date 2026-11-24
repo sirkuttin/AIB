@@ -63,7 +63,7 @@ func (h *hookForwarder) codexAnswer(input []byte, status int, body []byte, stdou
 			stdout.Write(codexDeny(hookRestarting))
 			return 0
 		}
-		out, ok := checkCodexPreToolAnswer(input, body, h.worktreesRoot())
+		out, ok := checkCodexPreToolAnswer(input, body, h.worktreesRoot(), h.chat)
 		if !ok {
 			fmt.Fprintln(stderr, hookUnconfirmed)
 			stdout.Write(codexDeny(hookUnconfirmed))
@@ -108,7 +108,7 @@ func checkCodexStartAnswer(body []byte) ([]byte, bool) {
 }
 
 // checkCodexPreToolAnswer: what to print for AIB's signed pre-tool answer (see the file comment), or false.
-func checkCodexPreToolAnswer(input, body []byte, root string) ([]byte, bool) {
+func checkCodexPreToolAnswer(input, body []byte, root, chat string) ([]byte, bool) {
 	var call struct {
 		ToolName  string `json:"tool_name"`
 		AgentID   string `json:"agent_id"`
@@ -164,7 +164,16 @@ func checkCodexPreToolAnswer(input, body []byte, root string) ([]byte, bool) {
 		if !ok || len(updated) != 1 || json.Unmarshal(updated["command"], &command) != nil {
 			return nil, false
 		}
-		folder, rest, ok := cutCdPrefix(command)
+		// hook 2: AIB's exact cookie prefix may stand in front of the cd (hookshell.go): the shell form of the call's own shell, the
+		// cookie's chat this forwarder's own. An answer with any other prefix is refused as before.
+		tagged := command
+		if shell, cookie, after, found := cutAibTag(command); found {
+			if !cookieIsMine(cookie, chat) || !checkTaggable(shell, *call.ToolInput.Command) {
+				return nil, false
+			}
+			tagged = after
+		}
+		folder, rest, ok := cutCdPrefix(tagged)
 		if !ok || rest != *call.ToolInput.Command || checkCodexWorktreePath(filepath.FromSlash(folder), root) != nil {
 			return nil, false
 		}

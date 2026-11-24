@@ -65,7 +65,7 @@ import { ArtifactMcpHttp, FORWARD_FILE, forwardEntry, HOOK_EVENT_HEADER, HOOK_KE
 import { WSL_TOOL_GROUPS } from '../artifacts/mcp.ts';
 import { headerOf, mcpTunnelGate, type TunnelAnswer } from '../wsl/mcp_tunnel.ts';
 import { wslRemote, wslSubagentChatClosed } from '../wsl/subagents.ts';
-import { forwarderOf, hookForwarderOf, keeperBinary, keyForForwarder, programVersion } from '../keeper/client.ts';
+import { forwarderOf, hookForwarderOf, hookForwarderTagsShells, keeperBinary, keyForForwarder, programVersion } from '../keeper/client.ts';
 import { deny as denyHook, type HookAnswer, SubagentWorktrees, type SubagentChat } from '../subagents/service.ts';
 import { claudeConfigDir, gitBashPath, hookSettings, readClaudeSetup, subagentsOffSettings } from '../subagents/claude_config.ts';
 import * as codexSub from '../subagents/codex.ts';
@@ -2522,7 +2522,8 @@ export class Studio {
       if (setup.hooksOff) { // owner rule: its editing subagents are turned off instead (per-session permission deny, not hooks)
         return { hooks: { ...offHooks(HOOKS_OFF, setup.hooksOff), configDir, deny: subagentsOffSettings(project, agentEnv, setup.readOnly) } };
       }
-      const settings = hookSettings(forwarder, join(this.stateDir, FORWARD_FILE), { worktreeCreate: !setup.userWorktreeHook });
+      const shellTag = hookForwarderTagsShells(forwarder); // hook 2: a subagent's shell calls get AIB's cookie prefix (subagents/shell_tag.ts)
+      const settings = hookSettings(forwarder, join(this.stateDir, FORWARD_FILE), { worktreeCreate: !setup.userWorktreeHook, shellTag });
       if (!settings) return { hooks: offHooks("AIB's folder can't be named in a hook command") };
       this.artifactMcpHttp(); // listening, with its address published, before the agent's first hook
       const id = chatId ?? crypto.randomUUID().replaceAll('-', '');
@@ -2531,7 +2532,7 @@ export class Studio {
       return {
         id,
         env: { AIB_HOOK_KEY: keyForForwarder(forwarder, 'hook-key', key), AIB_HOOK_CHAT: id, AIB_HOOK_READONLY: setup.readOnly.join(',') },
-        hooks: { settings, readOnly: setup.readOnly, userWorktreeHook: setup.userWorktreeHook, off: '', configDir },
+        hooks: { settings, readOnly: setup.readOnly, userWorktreeHook: setup.userWorktreeHook, off: '', configDir, ...(shellTag ? { shellTag } : {}) },
       };
     } catch (error) {
       log.exception(error, 'Could not set up subagent hooks; the chat runs without them');
@@ -2819,7 +2820,7 @@ export class Studio {
       return {
         id,
         env: { AIB_HOOK_KEY: keyForForwarder(forwarder, 'hook-key', key), AIB_HOOK_CHAT: id, CODEX_CONFIG: JSON.stringify(codexSub.withCodexHooks(setup.config, hooks)) },
-        hooks: { ...offHooks(''), adopted: true, prompt: codexSub.CODEX_SUBAGENT_PROMPT, subFolder },
+        hooks: { ...offHooks(''), adopted: true, prompt: codexSub.CODEX_SUBAGENT_PROMPT, subFolder, ...(hookForwarderTagsShells(forwarder) ? { shellTag: true } : {}) },
       };
     } catch (error) {
       log.exception(error, 'Could not set up Codex subagent hooks; its subagents are off');
@@ -2848,7 +2849,7 @@ export class Studio {
         lasting: c.sessionId ? `${c.provider}:${c.sessionId}` : '',
         folder: c.cwd,
         project: c.projectRoot || c.cwd,
-        hooks: on ? { readOnly: new Set(h.readOnly), userWorktreeHook: !!h.userWorktreeHook, ...(h.configDir ? { configDir: h.configDir } : {}) } : null,
+        hooks: on ? { readOnly: new Set(h.readOnly), userWorktreeHook: !!h.userWorktreeHook, ...(h.configDir ? { configDir: h.configDir } : {}), ...(h.shellTag ? { shellTag: true } : {}) } : null,
         wsl: { distro: c.wsl.distro },
         ...(isCodexFamily(c.provider) && on && h.subFolder ? { subFolder: h.subFolder } : {}),
       };
@@ -2871,7 +2872,7 @@ export class Studio {
       lasting: c.sessionId ? `${c.provider}:${c.sessionId}` : '',
       folder: c.cwd,
       project,
-      hooks: on ? { readOnly: new Set(h.readOnly), userWorktreeHook: !!h.userWorktreeHook, ...(h.configDir ? { configDir: h.configDir } : {}) } : null,
+      hooks: on ? { readOnly: new Set(h.readOnly), userWorktreeHook: !!h.userWorktreeHook, ...(h.configDir ? { configDir: h.configDir } : {}), ...(h.shellTag ? { shellTag: true } : {}) } : null,
       ...(subFolder ? { subFolder } : {}),
     };
   }
@@ -4195,6 +4196,7 @@ function hooksFromNote(raw: unknown): Connection['subagentHooks'] {
     adopted: raw.given === true, // its agent runs AIB's hooks
     ...(text(raw.prompt, 2000) ? { prompt: text(raw.prompt, 2000) } : {}), // Codex: the system prompt line a reopen sends again
     ...(isDict(raw.deny) ? { deny: raw.deny as Json } : {}),
+    ...(raw.shellTag === true ? { shellTag: true } : {}), // given a hook 2 forwarder: its subagents' shell calls are tagged (a taken-over chat keeps it)
   };
 }
 

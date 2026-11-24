@@ -3,6 +3,7 @@
  * marks, and which project folder a chat belongs to. Every function gives what the Python one gives for the same record.
  */
 import { clip, isDict, isStr, pyLen, pyStr, pyStrip } from '../core/py.ts';
+import { stripAibInput } from '../allow/aib_prefix.ts';
 import {
   clipped,
   D,
@@ -273,7 +274,7 @@ export function normalize(row: Dict, number: number): Event[] {
           kind: 'tool',
           label: dget(block, 'name', 'Tool'),
           time: stamp,
-          text: clipped(Object.hasOwn(block, 'arguments') ? block.arguments : dget(block, 'input', {})),
+          text: clipped(stripAibInput(Object.hasOwn(block, 'arguments') ? block.arguments : dget(block, 'input', {}))),
           callId: dget(block, 'id'),
           intent: dget(block, 'intent', ''),
         });

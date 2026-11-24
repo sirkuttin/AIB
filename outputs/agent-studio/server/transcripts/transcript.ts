@@ -4,6 +4,7 @@
  * still continues the bytes already read.
  */
 import { isDict, pyStr, ValueError } from '../core/py.ts';
+import { stripAibPrefix } from '../allow/aib_prefix.ts';
 import {
   asMessage,
   BG_ID,
@@ -125,6 +126,8 @@ const BACKGROUND_LEAD = new RegExp(`^(?:Command running in background|Background
 const NOTICE = /<task-notification>[\s\S]*?<\/task-notification>/gu;
 
 const toolNameOf = (task: Task) => pyStr(or(task.tool, '')).toLowerCase();
+/** A command as shown: without AIB's cookie prefix (allow/aib_prefix.ts). */
+const shown = (command: unknown): unknown => (typeof command === 'string' ? stripAibPrefix(command) : command);
 
 /** isinstance(details.get('jobs', []), ...) iteration: Python iterates a str by character and a dict by key. */
 function iterate(value: Json): Json[] {
@@ -197,8 +200,8 @@ export class Transcript {
         if (!isDict(args)) continue;
         const call = dget(block, 'id');
         if (!truthy(call)) continue;
-        const command = Object.hasOwn(args, 'command') ? args.command : dget(args, 'cmd', '');
-        const fallback = Object.hasOwn(args, 'command') ? args.command : dget(args, 'cmd', 'Shell command');
+        const command = shown(Object.hasOwn(args, 'command') ? args.command : dget(args, 'cmd', ''));
+        const fallback = shown(Object.hasOwn(args, 'command') ? args.command : dget(args, 'cmd', 'Shell command'));
         const timeout = dget(args, 'timeout_ms');
         const task: Task = {
           callId: call,

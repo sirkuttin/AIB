@@ -38,6 +38,7 @@ import { join } from '../platform/path.ts';
 import { pathOf } from '../state/paths.ts';
 import * as wt from '../worktrees/worktrees.ts';
 import { deny, type HookAnswer, type SubagentChat, type SubagentWorktrees } from './service.ts';
+import { codexTagPrefix } from './shell_tag.ts';
 
 type Json = Record<string, unknown>;
 
@@ -373,7 +374,8 @@ async function subagentCall(service: SubagentWorktrees, chat: SubagentChat, agen
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',
         permissionDecision: 'allow', // with updatedInput only (Codex refuses a bare allow); its approval flow still applies
-        updatedInput: { command: `cd '${forward(rec.path)}'; ${command}` },
+        // hook 2: AIB's cookie prefix in front of the cd, only for a subagent's call whose shell is known (shell_tag.ts); '' otherwise
+        updatedInput: { command: `${codexTagPrefix(chat, agentId, body, command)}cd '${forward(rec.path)}'; ${command}` },
       },
     });
   }

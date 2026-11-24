@@ -273,6 +273,51 @@ Deno.test('allow: Codex on Windows is unwrapped as Codex does; sandboxed modes g
   assert(!match(codex('git status', { cwd: l.base }), full, [], ALL).allow, 'cwd outside the chat folder');
 });
 
+Deno.test("allow: AIB's cookie prefix on a subagent's command is stripped before the gate, the strict readers and a saved rule", () => {
+  using l = lab();
+  const cookie = 'c0ffee00aa11bb22cc33dd44ee55ff66.agent7.toolu_01abc';
+  const sh = (c: string) => `export AIB_PROC='${cookie}'; ${c}`;
+  const ps = (c: string) => `$env:AIB_PROC='${cookie}'; ${c}`;
+  // an allowed command still auto-allows when tagged
+  for (const cmd of ['git status && git diff --stat', 'ls -la src']) {
+    assertEquals(match(bash(sh(cmd)), l.ctx(), [], ALL), match(bash(cmd), l.ctx(), [], ALL), cmd);
+    assert(match(bash(sh(cmd)), l.ctx(), [], ALL).allow, cmd);
+  }
+  // a command that asks asks the same tagged or not, and never matches because of the prefix
+  for (const cmd of ['git status; rm -rf dist', 'npm test', 'cat x > y']) {
+    assertEquals(match(bash(sh(cmd)), l.ctx(), [], ALL), match(bash(cmd), l.ctx(), [], ALL), cmd);
+  }
+  assert(!match(bash(sh('git status; rm -rf dist')), l.ctx(), [], ALL).allow);
+  // PowerShell: the prefix is an assignment the strict reader would refuse; stripped, the command reads as it is
+  const pwshCall = (c: string) => ({ ...bash(c), toolCall: { toolCallId: 't', kind: 'execute', rawInput: { command: c }, _meta: { claudeCode: { toolName: 'PowerShell' } } } });
+  assertEquals(match(pwshCall(ps('Get-Content src/cart/total.js')), l.ctx({ toolName: 'PowerShell' }), [], ALL).allow, match(pwshCall('Get-Content src/cart/total.js'), l.ctx({ toolName: 'PowerShell' }), [], ALL).allow);
+  assert(parsePwsh(ps('Get-Content a.txt')).ok && !parsePwsh('$env:X=\'1\'; Get-Content a.txt').ok, 'only AIB\'s exact prefix is read past');
+  assert(!match(bash(`ls; ${sh('ls')}`), l.ctx(), [], ALL).allow, 'a prefix in the middle is not stripped: export is an unknown program');
+  // "always allow" on a tagged card drafts the same untagged rule
+  const tagged = ruleFor(bash(sh('npm test')), l.ctx(), 'project', ALL);
+  const plain = ruleFor(bash('npm test'), l.ctx(), 'project', ALL);
+  assertEquals(tagged, plain);
+  assert(tagged.available && !JSON.stringify(tagged).includes('AIB_PROC'), JSON.stringify(tagged));
+  // and a saved rule answers a tagged command
+  const rules: AllowRule[] = plain.rules.map((r, i) => ({ ...r, id: `r${i}`, added: 0, from: 'card' } as AllowRule));
+  assert(match(bash('npm test'), l.ctx(), rules, ALL).allow, 'the saved rule answers the plain command');
+  assert(match(bash(sh('npm test')), l.ctx(), rules, ALL).allow, 'and the tagged one');
+  assert(!match(bash(sh('npm test; rm -rf dist')), l.ctx(), rules, ALL).allow);
+  // Codex: the prefix before the cd, bash form and the PowerShell wrapper
+  const codex = (command: string) => ({
+    sessionId: 's',
+    toolCall: { toolCallId: 'c', kind: 'execute', rawInput: { command, cwd: l.project } },
+    options: [{ optionId: 'approved', kind: 'allow_once' }, { optionId: 'approved-always', kind: 'allow_always' }],
+  });
+  const full = l.ctx({ provider: 'codex', toolName: null, mode: 'full-access' });
+  const cd = (c: string) => `cd '${l.project.replaceAll('\\', '/')}'; ${c}`;
+  assertEquals(
+    ruleFor(codex(Deno.build.os === 'windows' ? `powershell.exe -Command "${ps(cd('npm test'))}"` : sh(cd('npm test'))), full, 'project', ALL),
+    ruleFor(codex(Deno.build.os === 'windows' ? `powershell.exe -Command "${cd('npm test')}"` : cd('npm test')), full, 'project', ALL),
+    "Codex's tagged command drafts what the plain one does",
+  );
+});
+
 Deno.test('allow: the floor and the never list grey out Always with the reason', () => {
   using l = lab();
   const draft = (cmd: string) => ruleFor(bash(cmd), l.ctx(), 'project', ALL);

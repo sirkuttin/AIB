@@ -802,7 +802,20 @@ export async function forwarderOf(binary: string | null, dataDir: string): Promi
  */
 export async function hookForwarderOf(binary: string | null, dataDir: string): Promise<string | null> {
   const program = binary ?? await keeperBinary(dataDir);
-  return (await checkLine(program, 'hook')).startsWith('hook 1') ? program : null;
+  return /^hook [12]\b/.test(await checkLine(program, 'hook')) ? program : null; // hook 2 does everything hook 1 does, and more
+}
+
+/** The `hook` version a forwarder program answered (`hook <n>`): 0 when it was not asked, or answers nothing AIB knows. */
+export function hookForwarderVersion(program: string): number {
+  return Number(/^hook (\d+)\b/.exec(checkedLines.get(`hook\0${program}`) ?? '')?.[1] ?? 0);
+}
+
+/**
+ * True when this forwarder (already asked by hookForwarderOf) knows hook 2: the non-blocking `pre-shell` event and the cookie prefix in
+ * a Codex subagent's Bash answer (keeper/hookshell.go). An older program refuses both, so a chat given one is never tagged.
+ */
+export function hookForwarderTagsShells(program: string): boolean {
+  return hookForwarderVersion(program) >= 2;
 }
 
 /**

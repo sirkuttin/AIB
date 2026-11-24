@@ -11,6 +11,7 @@
 import type { AllowGate } from '../allow/gate.ts';
 import { houseRules } from '../allow/brief.ts';
 import type { MatchContext } from '../allow/matcher.ts';
+import { stripAibMessage } from '../allow/aib_prefix.ts';
 import { factsNow, LinuxFacts, type LinuxNeeds, LinuxView } from '../allow/linux.ts';
 import { COLLECT_FACTS, prefetch as prefetchWslFacts, warm as warmWslFacts, type WslFactsSource } from '../allow/wsl_facts.ts';
 import { createHash } from 'node:crypto';
@@ -1139,6 +1140,11 @@ export class Connection {
      * ACP additionalDirectories entry so its sandbox (Workspace mode) may write there as in the chat's folder, without a prompt.
      */
     subFolder?: string;
+    /**
+     * Given a forwarder that answers `hook 2` (keeper/hookshell.go): AIB tags the shell calls of this chat's subagents with its cookie prefix
+     * (subagents/shell_tag.ts). Absent: an older forwarder, which would refuse the answer, or a chat taken over from an older note: untagged.
+     */
+    shellTag?: boolean;
   } | null = null;
 
   /**
@@ -1673,6 +1679,7 @@ export class Connection {
       ...(h.configDir ? { configDir: h.configDir } : {}),
       ...(h.deny ? { deny: h.deny } : {}), // the editing-subagent deny rules a reopen must send again
       ...(h.prompt ? { prompt: h.prompt } : {}),
+      ...(h.shellTag ? { shellTag: true } : {}),
     };
   }
 
@@ -3964,6 +3971,9 @@ export class Connection {
   #handleLine(line: string): Promise<void> | void {
     const message = screen(this, line) as Json | null;
     if (message === null) return;
+    // AIB's cookie prefix on a subagent's shell command is AIB's, not the agent's: everything below (the allow gate, the approval card, Activity,
+    // history, notifications) sees the command the agent meant (allow/aib_prefix.ts). The cheap text test keeps every other line untouched.
+    if (line.includes('AIB_PROC=')) stripAibMessage(message, this.id);
     if (!Object.hasOwn(message, 'method')) {
       const waiting = this.pending.get(get(message, 'id'));
       if (waiting) {

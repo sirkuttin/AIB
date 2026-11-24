@@ -10,6 +10,8 @@
  * blocks, $vars, Unicode dashes and smart quotes) is refused rather than understood.
  */
 
+import { stripAibPrefix } from './aib_prefix.ts';
+
 export interface Part {
   /** The words of one simple command, quotes removed. */
   words: string[];
@@ -23,6 +25,7 @@ const fail = (reason: string): Parsed => ({ ok: false, reason });
 
 /** Bash: the parts of a command, or why it can't be read. */
 export function parseBash(source: string): Parsed {
+  source = stripAibPrefix(source); // AIB's own cookie prefix is not the agent's command (aib_prefix.ts)
   if (source.length > 4000) return fail('command too long');
   // deno-lint-ignore no-control-regex -- refusing control characters is the point
   if (/[\x00-\x08\x0b-\x1f\x7f]/.test(source)) return fail('control characters');
@@ -160,6 +163,7 @@ export function parseBash(source: string): Parsed {
 
 /** PowerShell (strict reader, see the file comment): the parts, or why it can't be read. */
 export function parsePwsh(source: string): Parsed {
+  source = stripAibPrefix(source);
   if (source.length > 4000) return fail('command too long');
   // deno-lint-ignore no-control-regex -- refusing control characters is the point
   if (/[^\x09\x0a\x0d\x20-\x7e]/.test(source)) return fail('non-ASCII characters (PowerShell reads some as dashes or quotes)');
