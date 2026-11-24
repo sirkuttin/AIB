@@ -3,7 +3,7 @@
  * Deno agent hosts started as real processes, the fake ACP agent (combined-fixture) as "Claude Code". Every process a fixture starts
  * is stopped in cleanup: hosts are asked to stop, then killed by the exact PID their own host file reported, as a last resort.
  */
-import { python, WORK } from './_parity.ts';
+import { python, WORK } from './_work.ts';
 import { PAGE_KEY } from './_page_key.ts';
 import { HostClient, pidAlive, readInfo, stopHost } from '../../outputs/agent-studio/server/host/host_client.ts';
 import { APP_ROOT } from '../../outputs/agent-studio/server/core/app.ts';

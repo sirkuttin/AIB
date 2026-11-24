@@ -1,6 +1,6 @@
 /** server/acp/acp_schema.ts: the cases of work/test_conformance.py that cover acp_schema.py, plus parity with Python. */
 import { assert, assertEquals } from './_assert.ts';
-import { PyParity } from './_parity.ts';
+import { PyParity } from './_frozen.ts';
 import {
   MAX_PROTOCOL_EVENTS,
   messageKind,

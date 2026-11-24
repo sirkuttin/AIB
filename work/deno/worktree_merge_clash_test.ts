@@ -5,8 +5,9 @@
  * live calls).
  */
 import { assert, assertEquals, assertRejects } from "./_assert.ts";
-import { PyParity } from "./_parity.ts";
-import { commit, FakeStudio, FIXED_DATES, makeRepo, pythonHolds, pythonProbe, read, runGit, Sandbox, setFixedDates, write } from "./_worktree_fixtures.ts";
+import { PyParity } from "./_frozen.ts";
+import * as sync from "../../outputs/agent-studio/server/worktrees/sync.ts";
+import { commit, FakeStudio, FIXED_DATES, makeRepo, foreignHolds, foreignProbe, read, runGit, Sandbox, setFixedDates, write } from "./_worktree_fixtures.ts";
 import { chat, type Ctx, main, merge, record, refused, Refused, show, tree, WAITING } from "./_merge_fixtures.ts";
 import * as wt from "../../outputs/agent-studio/server/worktrees/worktrees.ts";
 import * as m from "../../outputs/agent-studio/server/worktrees/merge.ts";
@@ -333,7 +334,7 @@ Deno.test("another process holding the locks stops merge; merge holds both while
   const rec = record(ctx);
   const saved = m.settings.LOCK_WAIT;
   m.settings.LOCK_WAIT = 0.3;
-  const holder = await pythonHolds(box.state, box.project, rec);
+  const holder = await foreignHolds(box.state, box.project, rec);
   try {
     assert(await wt.syncPaused(box.state, box.project));
     assertEquals(
@@ -347,7 +348,7 @@ Deno.test("another process holding the locks stops merge; merge holds both while
   }
   let seen: unknown = null;
   m.HOOKS.before_ff = async () => {
-    seen = await pythonProbe(box.state, box.project, rec, "probe");
+    seen = await foreignProbe(box.state, box.project, rec, "probe");
   };
   try {
     assertEquals((await merge(ctx.studio, ctx.id, "T")).state, "merged");
@@ -355,7 +356,7 @@ Deno.test("another process holding the locks stops merge; merge holds both while
     delete m.HOOKS.before_ff;
   }
   assertEquals(seen, { pause: "held", worktree: "held", paused: true });
-  assertEquals(await pythonProbe(box.state, box.project, rec, "probe"), {
+  assertEquals(await foreignProbe(box.state, box.project, rec, "probe"), {
     pause: "free",
     worktree: "free",
     paused: false,
@@ -444,7 +445,7 @@ Deno.test("the storm pause shows on the amber line", () => {
 });
 
 // ---- small pieces vs Python -------------------------------------------------------------------------------------------
-Deno.test("commit messages, conflict lines, markers and idle reasons match Python", async () => {
+Deno.test("commit messages, conflict lines, markers and idle reasons give what Python gave", async () => {
   await using py = new PyParity();
   for (
     const title of [
@@ -525,11 +526,11 @@ Deno.test("commit messages, conflict lines, markers and idle reasons match Pytho
 });
 
 // ---- parity: the same merges on identical repos ----------------------------------------------------------------------------
-Deno.test("parity: merges, conflicts, tree landing and clashes give the same results, commits and records as Python", async () => {
+Deno.test("merges, conflicts, tree landing and clashes give the results, commits and records Python gave at every step", async () => {
   await using py = new PyParity();
   using box = new Sandbox(false);
   setFixedDates(true);
-  await py.call("worktrees_shim", "set_env", [FIXED_DATES]);
+  if (Deno.env.get("AIB_FREEZE") === "1") await py.call("worktrees_shim", "set_env", [FIXED_DATES]);
   try {
     const key = "0123456789abcdef0123456789abcdef";
     const sides = ["py", "deno"].map((name) => {
@@ -541,27 +542,21 @@ Deno.test("parity: merges, conflicts, tree landing and clashes give the same res
       return { name, project, state: pathOf(box.base, name, "state"), wt: "" };
     });
     const [pySide, denoSide] = sides;
-    const pyPlan = await py.call("worktrees_shim", "manager", [
-      pySide.state,
-      "plan",
-      [pySide.project, key],
-    ]) as Record<string, unknown>;
-    await py.call("worktrees_shim", "manager", [pySide.state, "create", [
-      pyPlan,
-    ]]);
-    pySide.wt = pyPlan.path as string;
+    // Python's side is made lazily, only while freezing (the first step that asks it)
+    let pyReady: Promise<void> | null = null;
+    const ensurePy = () =>
+      pyReady ??= (async () => {
+        const pyPlan = await py.call("worktrees_shim", "manager", [pySide.state, "plan", [pySide.project, key]]) as Record<string, unknown>;
+        await py.call("worktrees_shim", "manager", [pySide.state, "create", [pyPlan]]);
+        pySide.wt = pyPlan.path as string;
+      })();
     const manager = new wt.Manager(denoSide.state);
     const plan = (await manager.plan(denoSide.project, key))!;
     await manager.create(plan);
     denoSide.wt = plan.path;
     const studio = new FakeStudio(denoSide.state);
     studio.add("c1", denoSide.wt);
-    const pyState = {
-      state: "ready",
-      busy: false,
-      cwd: pySide.wt,
-      provider: "claude",
-    };
+    const pyStateOf = () => ({ state: "ready", busy: false, cwd: pySide.wt, provider: "claude" });
     const scrub = (value: unknown): unknown =>
       JSON.parse(
         JSON.stringify(value).replace(
@@ -574,19 +569,13 @@ Deno.test("parity: merges, conflicts, tree landing and clashes give the same res
           .replaceAll(JSON.stringify(pySide.project).slice(1, -1), "PROJ")
           .replaceAll(JSON.stringify(denoSide.project).slice(1, -1), "PROJ"),
       );
+    let stepNo = 0;
     const both = async (
       step: (side: typeof pySide) => void,
       op = "merge",
       args: unknown[] = ["T"],
     ) => {
-      for (const side of sides) step(side);
-      const fromPy = await py.call("worktrees_shim", "merge", [
-        pySide.state,
-        "c1",
-        pyState,
-        op,
-        args,
-      ]) as Record<string, unknown>;
+      step(denoSide);
       studio.calls.length = 0;
       let fromDeno: Record<string, unknown>;
       try {
@@ -607,30 +596,37 @@ Deno.test("parity: merges, conflicts, tree landing and clashes give the same res
         fromDeno = { refused: [error.code, error.status, error.message] };
       }
       fromDeno.calls = studio.calls.map(([o, p]) => [o, p]);
-      assertEquals(
-        scrub(fromDeno),
-        scrub(fromPy),
-        `${op} ${JSON.stringify(args)}`,
-      );
-      assertEquals(
-        runGit(denoSide.project, "rev-parse", "main"),
-        runGit(pySide.project, "rev-parse", "main"),
-        "same main",
-      );
       const strip = (r: Record<string, unknown>) => {
         const { path: _p, project: _q, pid: _i, created: _c, editsFrom: _e, mergedAt: _m, ...rest } = r; // editsFrom, mergedAt (copy retirement, folder chats P4b): Deno only
         return rest;
       };
-      const pyRecord = await py.call("worktrees_shim", "registry", [
-        pySide.state,
-        "get",
-        [key],
-      ]) as Record<string, unknown>;
-      assertEquals(
-        strip(manager.registry.get(key)!),
-        strip(pyRecord),
-        "same record",
-      );
+      const mine = {
+        result: scrub(fromDeno),
+        main: runGit(denoSide.project, "rev-parse", "main"),
+        record: scrub(strip(manager.registry.get(key)!)),
+      };
+      const theirs = async () => {
+        await ensurePy();
+        step(pySide);
+        const fromPy = await py.call("worktrees_shim", "merge", [
+          pySide.state,
+          "c1",
+          pyStateOf(),
+          op,
+          args,
+        ]) as Record<string, unknown>;
+        const pyRecord = await py.call("worktrees_shim", "registry", [
+          pySide.state,
+          "get",
+          [key],
+        ]) as Record<string, unknown>;
+        return {
+          result: scrub(fromPy),
+          main: runGit(pySide.project, "rev-parse", "main"),
+          record: scrub(strip(pyRecord)),
+        };
+      };
+      assertEquals(mine, await py.frozen(`merge-step-${stepNo++}`, theirs), `${op} ${JSON.stringify(args)}`);
       const result = fromDeno.result as Record<string, unknown> | undefined;
       trail.push(
         fromDeno.refused
@@ -674,24 +670,16 @@ Deno.test("parity: merges, conflicts, tree landing and clashes give the same res
     for (const side of sides) {
       write(side.project, "f.txt", "A-user\nb\nc\nd\ne\nf-both\n");
     }
-    const pyRec = await py.call("worktrees_shim", "registry", [
-      pySide.state,
-      "get",
-      [key],
-    ]) as Record<string, unknown>;
-    const pyU = await py.call("worktrees_shim", "call", ["advance_user_base", [{
-      ...pyRec,
-      key,
-    }, ["f.txt"]]]);
-    await py.call("worktrees_shim", "registry", [
-      pySide.state,
-      "update",
-      [key],
-      { user: pyU, diffBase: pyU },
-    ]);
     const denoU = await wt.advanceUserBase(record({ manager, key } as Ctx), [
       "f.txt",
     ], manager.registry);
+    const pyU = await py.frozen("advance-user-base", async () => {
+      await ensurePy();
+      const pyRec = await py.call("worktrees_shim", "registry", [pySide.state, "get", [key]]) as Record<string, unknown>;
+      const advanced = await py.call("worktrees_shim", "call", ["advance_user_base", [{ ...pyRec, key }, ["f.txt"]]]);
+      await py.call("worktrees_shim", "registry", [pySide.state, "update", [key], { user: advanced, diffBase: advanced }]);
+      return advanced;
+    });
     assertEquals(denoU, pyU);
     await both((s) => {
       write(s.wt, "f.txt", "A-user\nb\nc\nd\ne\nf-chat2\n");
@@ -717,38 +705,29 @@ Deno.test("parity: merges, conflicts, tree landing and clashes give the same res
     ]);
   } finally {
     setFixedDates(false);
-    await py.call("worktrees_shim", "set_env", [{
-      GIT_AUTHOR_DATE: null,
-      GIT_COMMITTER_DATE: null,
-    }]);
+    if (Deno.env.get("AIB_FREEZE") === "1") {
+      await py.call("worktrees_shim", "set_env", [{ GIT_AUTHOR_DATE: null, GIT_COMMITTER_DATE: null }]);
+    }
   }
 });
 
-Deno.test("resumeSync clears the pause flag worktree_sync.set_paused wrote, in the same file and format (interop)", async () => {
-  await using py = new PyParity();
+Deno.test("resumeSync clears the pause flag setPaused wrote and leaves another project's flag", async () => {
   const state = Deno.makeTempDirSync({ prefix: "studio-sync-flags-" });
   const project = Deno.makeTempDirSync({ prefix: "studio-sync-project-" });
   const other = Deno.makeTempDirSync({ prefix: "studio-sync-other-" });
   try {
-    await py.call("worktree_sync", "set_paused", [state, project, 3]);
-    await py.call("worktree_sync", "set_paused", [state, other, 5]);
-    assert(m.pauseInfo(state, project) !== null);
+    await sync.setPaused(state, project, 3);
+    await sync.setPaused(state, other, 5);
+    assertEquals(m.pauseInfo(state, project)?.count, 3);
+    assertEquals(m.pauseInfo(state, other)?.count, 5);
     assertEquals(await m.resumeSync(state, project), true);
-    assertEquals(
-      await py.call("worktree_sync", "pause_info", [state, project]),
-      null,
-    );
-    assert(
-      await py.call("worktree_sync", "pause_info", [state, other]) !== null,
-      "another project stays paused",
-    );
+    assertEquals(m.pauseInfo(state, project), null);
+    assert(m.pauseInfo(state, other) !== null, "another project stays paused");
     assertEquals(await m.resumeSync(state, project), false);
     assertEquals(await m.resumeSync(state, ""), false);
     assertEquals(await m.resumeSync(state, 5), false);
-    assertEquals(
-      await py.call("worktree_sync", "resume", [state, other]),
-      true,
-    ); // Python reads what Deno wrote
+    assertEquals(await m.resumeSync(state, other), true);
+    assertEquals(m.pauseInfo(state, other), null);
   } finally {
     for (const dir of [state, project, other]) {
       Deno.removeSync(dir, { recursive: true });

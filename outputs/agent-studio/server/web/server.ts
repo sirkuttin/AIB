@@ -2,7 +2,7 @@
  * The Deno web server (studio.py's web side, web_handler.py's dispatch). One gate for every request (security.ts), then the route:
  * the live routes answered by the agent host (live_routes.ts), the Studio routes (studio_routes.ts), the transcript viewer
  * (transcripts/monitor.ts), the page files and bootstrap below. Every route is served here; stage B's private Python web server is gone.
- * The HTTP API is identical to the Python server's; work/contract/ checks it against both servers.
+ * The HTTP API is the Python server's (retired 2026-11-23); work/deno/contract_*_test.ts check it over HTTP.
  */
 import { type Backend, KeepAwake, realBackend } from '../platform/keep_awake.ts';
 import { ABOUT_LINE, APP_ROOT, APP_VERSION, VERSION_LABEL } from '../core/app.ts';

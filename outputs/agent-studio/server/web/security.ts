@@ -8,7 +8,7 @@
  *   agent_tool  the artifact MCP shim (no browser): X-Studio-Artifact-Key valid for one conversation, and no Origin or Sec-Fetch-*
  *               headers (a browser must never be able to use a key).
  *
- * Messages and status codes are part of the HTTP contract (work/contract/test_contract_gate.py).
+ * Messages and status codes are part of the HTTP contract (work/deno/contract_gate_test.ts).
  */
 
 export const TOKEN_HEADER = 'X-Studio-Token';

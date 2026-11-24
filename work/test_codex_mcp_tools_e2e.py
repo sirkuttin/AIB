@@ -24,7 +24,6 @@ import sys
 import threading
 import unittest
 
-sys.path.insert(0, str(_isolation.TESTS / 'contract'))
 from test_subagent_codex_e2e import CODEX_ACP  # noqa: E402
 from test_folder_chat_listing_e2e import NODE  # noqa: E402
 

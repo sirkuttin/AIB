@@ -4,7 +4,8 @@
  * connection port. Child processes are the test's own Python one-liners; every terminal is released or shut down.
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
-import { PyParity, python } from './_parity.ts';
+import { python } from './_work.ts';
+import { PyParity } from './_frozen.ts';
 import {
   CapError,
   ClientCaps,
@@ -48,8 +49,12 @@ interface Ctx {
 
 function capsTest(name: string, fn: (t: Ctx) => Promise<void>) {
   Deno.test(name, async () => {
-    const ws = realpath(Deno.makeTempDirSync({ prefix: 'caps-ws-' }));
-    const out = realpath(Deno.makeTempDirSync({ prefix: 'caps-out-' }));
+    // one temp folder holds both, so the paths the answers name are the same text on every run (see _frozen.ts)
+    const root = realpath(Deno.makeTempDirSync({ prefix: 'caps-' }));
+    const ws = join(root, 'ws');
+    const out = join(root, 'out');
+    Deno.mkdirSync(ws);
+    Deno.mkdirSync(out);
     const made: ClientCaps[] = [];
     const t: Ctx = {
       ws,
@@ -67,7 +72,7 @@ function capsTest(name: string, fn: (t: Ctx) => Promise<void>) {
       await fn(t);
     } finally {
       for (const c of made) await c.shutdown();
-      for (const dir of [ws, out]) await removeWithRetry(dir);
+      await removeWithRetry(root);
     }
   });
 }

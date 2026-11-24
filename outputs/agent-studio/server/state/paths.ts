@@ -556,7 +556,7 @@ export interface PrepareOptions {
   env?: Env;
   attemptMigration?: boolean;
   say?: Say;
-  /** Instead of the registered migrate (tests; Python's migrate through the parity bridge). */
+  /** Instead of the registered migrate (tests). */
   migrate?: MigrateFn;
   /** Instead of packageContext (tests: Python mocks state_paths.package_context). */
   packageContext?: (options: PackageOptions) => string | null;

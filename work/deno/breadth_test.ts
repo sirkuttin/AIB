@@ -1,6 +1,8 @@
 /** server/acp/breadth.ts: the pure cases of work/test_breadth.py, test_pending_settings.py and test_adapters.py, plus parity with Python. */
 import { assert, assertEquals, assertRejects, assertThrows } from './_assert.ts';
-import { oracleIs313, PY_REF_DIR, PyParity, python } from './_parity.ts';
+import { python } from './_work.ts';
+import { labelOf, PyParity } from './_frozen.ts';
+import { PY_REF_DIR } from './_parity.ts';
 import {
   applyUpdate,
   augmentInitialize,
@@ -36,7 +38,11 @@ function outcome(fn: () => unknown): unknown {
 }
 
 /** Runs a Python snippet with the server folder importable; `data` arrives as DATA, the snippet sets OUT. */
-async function pyRun(code: string, data: unknown): Promise<unknown> {
+const frozenPy = new PyParity();
+/** The answers Python gave to these snippets (list of one result per scenario), kept in fixtures/frozen/breadth.json. */
+const pyRun = (code: string, data: unknown): Promise<unknown[]> => frozenPy.frozenList(`breadth-${labelOf(code, data)}`, () => pyRunLive(code, data));
+
+async function pyRunLive(code: string, data: unknown): Promise<unknown[]> {
   const script = `import json, sys\nsys.path.insert(0, ${JSON.stringify(PY_REF_DIR)})\n` +
     `DATA = json.loads(sys.stdin.read())\n${code}\nsys.stdout.write(json.dumps(OUT))\n`;
   const child = new Deno.Command(python(), { args: ['-X', 'utf8', '-c', script], stdin: 'piped', stdout: 'piped', stderr: 'inherit' })
@@ -46,7 +52,7 @@ async function pyRun(code: string, data: unknown): Promise<unknown> {
   await writer.close();
   const { code: status, stdout } = await child.output();
   assertEquals(status, 0, 'python snippet failed');
-  return JSON.parse(new TextDecoder().decode(stdout));
+  return JSON.parse(new TextDecoder().decode(stdout)) as unknown[];
 }
 
 const plainState = (state: BreadthState) => ({ ...state, compaction: Object.fromEntries(state.compaction) });
@@ -486,7 +492,7 @@ Deno.test('validateMcpServers and selectMcpServers match Python, messages includ
       '//h',
       'h',
       // newer Pythons' urlsplit drops a leading space and any tab or newline, so a 3.13+ oracle accepts these three; AIB refuses them
-      ...(oracleIs313 ? [] : [' http://h', 'ht\ttp://h', 'http://h\n/x']),
+      ...[' http://h', 'ht\ttp://h', 'http://h\n/x'],
       'http://[::1]/x',
       'http://[::1/x',
       'http://::1]/x',

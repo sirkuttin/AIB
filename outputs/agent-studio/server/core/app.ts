@@ -1,6 +1,6 @@
 /**
  * Where the app lives and which version it is. APP_ROOT is the app folder: outputs/agent-studio in the private repo, aib/ in the
- * public one. APP_VERSION is the one version number; the Python reference server (work/python-reference/version.py) must match it,
+ * public one. APP_VERSION is the one version number; the Python reference server (retired 2026-11-23) matched it,
  * which host_client_test.ts checks, so a Python host reports the same version.
  */
 

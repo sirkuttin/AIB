@@ -4,7 +4,9 @@
  * reply lines and the requests Studio receives must be byte-identical), and the mcpServers entry the Deno Studio gives agents.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { PY_REF_DIR, python } from './_parity.ts';
+import { python } from './_work.ts';
+import { PY_REF_DIR } from './_parity.ts';
+import { PyParity } from './_frozen.ts';
 import { APP_ROOT, TESTS_DIR } from '../../outputs/agent-studio/server/core/app.ts';
 import * as artifactKeys from '../../outputs/agent-studio/server/artifacts/keys.ts';
 import { artifactToolCommand, INSTRUCTIONS, OFFLINE_LIBS_NOTE } from '../../outputs/agent-studio/server/artifacts/mcp.ts';
@@ -22,6 +24,7 @@ const WIN = Deno.build.os === 'windows';
 const SEP = WIN ? '\\' : '/';
 const MAIN = `${APP_ROOT}${SEP}server${SEP}main.ts`;
 const DENO_TOOL = [Deno.execPath(), 'run', '-A', '--quiet', MAIN, 'mcp-artifact'];
+const frozenPy = new PyParity();
 const PY_TOOL = [python(), `${PY_REF_DIR}${SEP}artifact_mcp.py`]; // the Python reference's tool
 Deno.env.set('AGENT_STUDIO_TEST', '1');
 /** A Deno reply line with the Deno-only part taken out: the bundled-libraries sentence of publish's description (no /_lib/ in Python). */
@@ -611,11 +614,15 @@ Deno.test('differential: artifact_mcp.py and the Deno server give the same repli
   Deno.mkdirSync(`${lab.dir}${SEP}outputs`);
   Deno.writeTextFileSync(`${lab.dir}${SEP}outputs${SEP}page.html`, '<p>hi</p>');
   const env = { STUDIO_WORKTREE: '1' };
-  const [pyLines, pyRequests] = await runScript(PY_TOOL, lab.dir, lab.fake, env);
+  // The reply lines and requests of the retired Python tool on the same script, kept as answers (fixtures/frozen/artifact_mcp.json).
+  const pyLive = () => runScript(PY_TOOL, lab.dir, lab.fake, env);
+  const pyLines = await frozenPy.frozenList('script-lines', async () => (await pyLive())[0]) as string[];
+  const pyRequests = await frozenPy.frozenList('script-requests', async () => (await pyLive())[1]) as Recorded[];
   const [denoLines, denoRequests] = await runScript(DENO_TOOL, lab.dir, lab.fake, env);
   assertEquals(denoLines.length, pyLines.length);
   for (let i = 0; i < pyLines.length; i++) assertEquals(maskDenoOnly(masked(denoLines[i])), pyLines[i], `reply ${i + 1}`);
-  assertEquals(denoRequests, pyRequests);
+  assertEquals(denoRequests.length, pyRequests.length);
+  denoRequests.forEach((request, i) => assertEquals(request, pyRequests[i], `request ${i + 1}`));
   assert(pyRequests.length > 30, 'the script reached the fake Studio');
 });
 
@@ -646,21 +653,23 @@ Deno.test('differential: tools/list without a worktree, unreachable Studio, URL 
     [lab.fake.url, {}, '', 'conv1'],
     [lab.fake.url, {}, 'k1', ''],
   ];
-  for (const [url, extra, key, conversation] of cases) {
-    const replies: string[][] = [];
-    for (const command of [PY_TOOL, DENO_TOOL]) {
+  for (const [i, [url, extra, key, conversation]] of cases.entries()) {
+    const twoLines = async (command: string[]) => {
       const shim = new Shim(command, url, lab.dir, extra, key, conversation);
       try {
         await shim.sendRaw(rpc(1, 'tools/list') + '\n' + call(2, 'list', {}) + '\n');
-        replies.push([await shim.line(), await shim.line()]);
+        return [await shim.line(), await shim.line()];
       } finally {
         await shim.close();
       }
-    }
+    };
     // The OS reason for a hang-up is a race (the close lands before or after the request is sent: "Remote end closed connection
     // without response" or WinError 10053), in either tool; the sentence around it must match.
     const reason = (l: string) => l.replace(/Could not reach AIB \((?:Remote end closed connection without response|\[WinError 1005[34]\][^)]*)\)/, 'Could not reach AIB (hang-up)');
-    assertEquals(replies[1].map((l) => reason(maskDenoOnly(masked(l)))), replies[0].map(reason), JSON.stringify([url, extra, key, conversation]));
+    // what the retired Python tool answered, with the hang-up reason normalised (fixtures/frozen/artifact_mcp.json)
+    const theirs = await frozenPy.frozenList(`unreachable-${i}`, async () => (await twoLines(PY_TOOL)).map(reason));
+    const mine = await twoLines(DENO_TOOL);
+    assertEquals(mine.map((l) => reason(maskDenoOnly(masked(l)))), theirs, JSON.stringify([url, extra, key, conversation]));
   }
 });
 

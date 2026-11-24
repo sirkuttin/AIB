@@ -3,7 +3,8 @@
  * file names), and interop: a lease held by Python blocks Deno and one held by Deno blocks Python (same file, same lock).
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
-import { PyParity } from './_parity.ts';
+import { python } from './_work.ts';
+import { PyParity } from './_frozen.ts';
 import { findExternalOwner, OwnershipConflict, SessionLease, shlexSplit } from '../../outputs/agent-studio/server/ownership/ownership.ts';
 import { join } from '../../outputs/agent-studio/server/platform/ospath.ts';
 
@@ -76,28 +77,56 @@ Deno.test('lease file names match Python for every kind of id', async () => {
   }
 });
 
-Deno.test('a Python lease blocks Deno and a Deno lease blocks Python', async () => {
-  await using py = new PyParity();
+const LOCK_HELPER = decodeURIComponent(new URL('../lock_helper.py', import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1');
+
+/** A foreign process (work/lock_helper.py) holds the lock on `path` until its stdin closes; resolves once it does. */
+async function foreignHolds(path: string) {
+  const child = new Deno.Command(python(), { args: ['-I', LOCK_HELPER, 'hold', path], stdin: 'piped', stdout: 'piped' }).spawn();
+  const reader = child.stdout.pipeThrough(new TextDecoderStream()).getReader();
+  const { value } = await reader.read();
+  assert(value?.includes('locked'), `the helper did not lock: ${value}`);
+  return {
+    async release() {
+      await child.stdin.close();
+      reader.releaseLock();
+      await child.stdout.cancel().catch(() => {});
+      await child.status;
+    },
+  };
+}
+
+/** A foreign process tries the lock for a short time; true if it got it. */
+async function foreignCanLock(path: string): Promise<boolean> {
+  const out = await new Deno.Command(python(), { args: ['-I', LOCK_HELPER, 'try', path] }).output();
+  return new TextDecoder().decode(out.stdout).trim() === 'yes';
+}
+
+Deno.test('a lease held by another process blocks Deno and a Deno lease blocks another process', async () => {
   await withDir(async (dir) => {
-    assertEquals(Object.keys(await py.call('ownership_shim', 'hold_lease', [dir, 'claude', 'shared']) as object), ['held']);
+    const path = new SessionLease(dir, 'claude', 'shared').path;
+    await new SessionLease(dir, 'claude', 'shared').acquire().then((l) => l.release()); // creates the lease file
+    const held = await foreignHolds(path);
     try {
       const error = await assertRejects(() => new SessionLease(dir, 'claude', 'shared').acquire(), OwnershipConflict);
       assert(error.message.includes("'shared'"));
-      await assertRejects(() => SessionLease.atPath(new SessionLease(dir, 'claude', 'shared').path).acquire(false), OwnershipConflict);
+      await assertRejects(() => SessionLease.atPath(path).acquire(false), OwnershipConflict);
     } finally {
-      await py.call('ownership_shim', 'release_leases');
+      await held.release();
     }
     const lease = await new SessionLease(dir, 'claude', 'shared').acquire();
     try {
-      assertEquals(await py.call('ownership_shim', 'try_lease', [dir, 'claude', 'shared']), {
-        conflict: "Session 'shared' is already owned for provider 'claude'",
-      });
-      assertEquals(await py.call('ownership_shim', 'try_lease_at', [lease.path]), 'conflict');
-      assertEquals(await py.call('ownership_shim', 'try_lease', [dir, 'omp', 'shared']), { ok: true });
+      const again = await assertRejects(() => new SessionLease(dir, 'claude', 'shared').acquire(), OwnershipConflict);
+      assertEquals(again.message, "Session 'shared' is already owned for provider 'claude'");
+      assertEquals(await foreignCanLock(path), false, 'another process got a lease Deno holds');
+      await assertRejects(() => SessionLease.atPath(path).acquire(false), OwnershipConflict);
+      // a lease of another provider is another file
+      const other = await new SessionLease(dir, 'omp', 'shared').acquire();
+      other.release();
     } finally {
       lease.release();
     }
-    assertEquals(await py.call('ownership_shim', 'try_lease', [dir, 'claude', 'shared']), { ok: true });
+    assertEquals(await foreignCanLock(path), true, 'another process could not lock after Deno released');
+    (await new SessionLease(dir, 'claude', 'shared').acquire()).release();
   });
 });
 

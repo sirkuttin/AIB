@@ -29,7 +29,7 @@ The desktop app and a source run share one data folder. Run one at a time, or gi
 
 ## Run the tests
 
-You need Deno 2.9.8, Node.js 20 or newer for the page tests, and Python 3.10 or newer for the parity, contract and end-to-end
+You need Deno 2.9.8, Node.js 20 or newer for the page tests, and Python 3.10 or newer for the fake agents and the end-to-end
 tests. Tests use temporary data folders and fake agents; they never touch your real data folder or `~/.claude`.
 
 **While you work:** run only the tests that cover what you changed.
@@ -57,7 +57,6 @@ npm test
 cd outputs/agent-studio
 deno task test
 cd ../..
-python work/run_parallel.py contract
 python work/run_parallel.py e2e
 ```
 
@@ -81,7 +80,7 @@ serves the page. Releases are built this way and uploaded by hand.
 | `outputs/agent-studio/docs/` | Design notes: desktop app, agent host and keeper, themes, ACP capabilities. |
 | `keeper/` | The keeper (Go) and its protocol. |
 | `tools/` | `build.ts` (the six-target build) and the test runner. |
-| `work/` | Page tests, the worktree end-to-end suite, contract tests and the fake ACP agents the tests use. |
+| `work/` | Page tests, the worktree end-to-end suite and the fake ACP agents the tests use. |
 | `site/` | This website (Astro Starlight). |
 
 ## Send a change

@@ -5,7 +5,7 @@
  * Studio, plus parity of the agent list and notices with studio_shared.py on the same temp fixture.
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
-import { PyParity } from './_parity.ts';
+import { PyParity } from './_frozen.ts';
 import { FAKE_SIGNIN, join, makeInstall, PY, PY_REAL, tempDir, touch } from './_agents.ts';
 import * as adapters from '../../outputs/agent-studio/server/agents/adapters.ts';
 import * as installer from '../../outputs/agent-studio/server/agents/installer.ts';
@@ -201,7 +201,9 @@ Deno.test('describeAgents reads only the cache and the job files, and never runs
   }
 });
 
-Deno.test('the agent list matches Python on the same fixture', async () => {
+let describeRuns = 0;
+
+Deno.test('the agent list gives what Python listed on the same fixture', async () => {
   await using py = new PyParity();
   using m = machine();
   const settingsDir = join(m.root, 'settings');
@@ -246,9 +248,11 @@ Deno.test('the agent list matches Python on the same fixture', async () => {
     // cliHint (Codex's adapter without the Codex program) is Deno only too.
     const mine = (await shared.describeAgents(options, new SettingsStore(settingsDir), connections)).filter((r) => !r.beta)
       .map(({ cliHint: _cliHint, ...row }) => row);
-    const theirs = await py.call('agents_shim', 'describe', [m.state, settingsDir, { ...opts, omp_command: '' }, connections, [m.modules], '', false, block]);
-    // the Python reference still lists OMP (retired in Deno, 2026-11-23)
-    assertEquals(mine, (theirs as { id: string }[]).filter((r) => r.id !== 'omp'), JSON.stringify(opts));
+    // the rows Python listed for the same fixture (it still listed OMP, retired in Deno 2026-11-23, so that row is left out)
+    const theirs = await py.frozenList(`describe-${describeRuns++}`, async () =>
+      ((await py.call('agents_shim', 'describe', [m.state, settingsDir, { ...opts, omp_command: '' }, connections, [m.modules], '', false, block])) as { id: string }[])
+        .filter((r) => r.id !== 'omp'));
+    assertEquals(mine, theirs, JSON.stringify(opts));
   }
 });
 

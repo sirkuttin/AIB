@@ -115,4 +115,3 @@ TESTS_NAME = 'work'                       # the folder holding the tests and fix
 APP_REL = pathlib.Path(*APP_PARTS)   # for building a fake checkout in a temp folder: base / _isolation.APP_REL
 APP = REPO.joinpath(*APP_PARTS)
 TESTS = REPO / TESTS_NAME
-PY_REF = TESTS / 'python-reference'   # the Python server: the reference the contract and e2e tests compare the Deno server with

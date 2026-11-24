@@ -24,7 +24,6 @@ import time
 import unittest
 import uuid
 
-sys.path.insert(0, str(_isolation.TESTS / 'contract'))
 from _e2e_support import make_repo, run_git  # noqa: E402
 from test_worktree_e2e import Chat, wait_for  # noqa: E402
 from test_folder_chat_listing_e2e import (  # noqa: E402

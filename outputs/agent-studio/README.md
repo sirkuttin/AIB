@@ -113,11 +113,11 @@ This remains partial protocol coverage. Questions during connection setup, URL e
 
 ## Tests
 
-The Deno server is the app. The Python server in `work/python-reference/` is kept only as the reference the tests compare it with
-(same HTTP API, host protocol and files); it is never shipped or started by the app. From `outputs/agent-studio`:
+The Deno server is the app. The old Python reference server was retired on 2026-11-23: the tests that compared the Deno server with it
+now compare with the answers it gave then (small fixtures in `work/deno/fixtures/frozen/`, see `work/deno/_frozen.ts`). From `outputs/agent-studio`:
 
 ```text
-deno task test        the Deno unit and parity tests (work/deno/)
+deno task test        the Deno tests (work/deno/)
 deno task check       type-check server/, the tests and tools/build.ts
 deno task lint        lint the same
 ```
@@ -127,8 +127,7 @@ From the repository root:
 ```text
 npm test                                               the page tests (node --test work/test_*.js)
 npm run lint                                           ESLint over the page code
-python -m unittest discover -s work/contract           the HTTP contract suite (AIB_SERVER=deno-split by default; deno, python)
-python -m unittest test_worktree_e2e                   worktree-per-chat end to end, run from work/ (same AIB_SERVER choices)
+python -m unittest test_worktree_e2e                   worktree-per-chat end to end, run from work/ (AIB_SERVER=deno-split by default; deno)
 ```
 
 `AIB_DENO` names the deno executable when it is not on PATH. Every test runs on temp state folders and free ports, never on the

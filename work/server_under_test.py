@@ -1,23 +1,22 @@
-"""The server a contract test talks to: the Deno server (the app) by default, or the Python reference server.
+"""The server the Python end-to-end tests talk to: the Deno server (the app).
 
-Contract tests (work/contract/test_*.py) speak only HTTP, so the same file checks both servers
+These tests speak only HTTP (and files), so they do not care how the server is started.
 Which server: the AIB_SERVER environment variable.
 
     AIB_SERVER=deno-split (default)  deno run -A outputs/agent-studio/server/main.ts serve ...   (Deno web server + Deno agent host;
                                      AIB_KEEPER=0 is set for it: the split host is the fallback when the keeper cannot run)
     AIB_SERVER=deno                  deno run -A outputs/agent-studio/server/main.ts serve --in-process ...   (agents in the keeper,
-                                     always on; AIB_KEEPER=0 in the environment gives the plain in-process Python parity path)
-    AIB_SERVER=python                python work/python-reference/studio.py --in-process ...   (the reference)
+                                     always on; AIB_KEEPER=0 in the environment gives the plain in-process path)
     AIB_SERVER_CMD='["prog", "arg"]'  any other command (JSON list); the standard flags below are appended
 
 A server started without --in-process starts a detached agent host for its temp state folder; the harness stops it (--stop-host
 --force) when the test ends.
 
-Every server is started with the same flags as the Python CLI: a private temp --state-dir, empty transcript folders, --port 0,
+Every server is started with these flags: a private temp --state-dir, empty transcript folders, --port 0,
 no auto-reconnect and no owner announcements, and must print "AIB: http://127.0.0.1:<port>" on stdout once listening.
 AGENT_STUDIO_TEST=1 is set, so neither server can reach the real data folder, and the ports 8767/8768 are never used.
 
-Run: python -m unittest discover -s work/contract     (AIB_SERVER=python to check the reference)
+Run: python work/run_parallel.py e2e
 """
 import http.client
 import json
@@ -32,9 +31,8 @@ import tempfile
 import threading
 import time
 
-WORK = pathlib.Path(__file__).resolve().parent.parent
+WORK = pathlib.Path(__file__).resolve().parent
 APP = WORK.parent / 'outputs' / 'agent-studio'
-PY_REF = WORK / 'python-reference'   # the Python reference server
 READY = re.compile(r'AIB: http://127\.0\.0\.1:(\d+)')
 FORBIDDEN_PORTS = {8767, 8768}
 TOKEN_HEADER = 'X-Studio-Token'
@@ -50,13 +48,11 @@ def base_command():
     if custom:
         return json.loads(custom)
     kind = os.environ.get('AIB_SERVER', 'deno-split')
-    if kind == 'python':
-        return [sys.executable, '-X', 'utf8', str(PY_REF / 'studio.py'), '--in-process']
     if kind == 'deno':
         return [deno_executable(), 'run', '-A', '--quiet', str(APP / 'server' / 'main.ts'), 'serve', '--in-process']
     if kind == 'deno-split':
         return [deno_executable(), 'run', '-A', '--quiet', str(APP / 'server' / 'main.ts'), 'serve']
-    raise SystemExit(f'AIB_SERVER must be python, deno or deno-split, not {kind!r}')
+    raise SystemExit(f'AIB_SERVER must be deno or deno-split, not {kind!r}')
 
 
 def server_kind():
@@ -150,8 +146,7 @@ class Server:
     """Start with `with Server() as s:`; s.get('/api/...') and s.post(...) send page-like requests with the token."""
 
     def __init__(self, extra_args=(), env=None, start_timeout=60, omp_dir=None, claude_dir=None, kind=None):
-        """omp_dir/claude_dir: transcript folders to show (default: empty temp folders). kind='python' forces the Python server
-        (the reference in differential tests), whatever AIB_SERVER says."""
+        """omp_dir/claude_dir: transcript folders to show (default: empty temp folders)."""
         self.extra_args, self.env_extra, self.start_timeout = list(extra_args), dict(env or {}), start_timeout
         self.omp_override, self.claude_override, self.kind = omp_dir, claude_dir, kind
         self.process = None
@@ -215,7 +210,7 @@ class Server:
     def __exit__(self, *_):
         # A server whose agents run in the keeper: quit it the normal way first (POST /api/live/shutdown closes its chats, so the
         # keeper exits by itself). Killed hard, its keeper would start it again after 5 s (the orphan command).
-        if self.process and self.process.poll() is None and self.port and self.token and self.effective_kind() != 'python':
+        if self.process and self.process.poll() is None and self.port and self.token:
             try:
                 self.request('POST', '/api/live/shutdown', self.page_headers(), b'{}', timeout=10)
                 self.process.wait(15)
@@ -246,8 +241,6 @@ class Server:
         return self.kind or server_kind()
 
     def command(self):
-        if self.kind == 'python':
-            return [sys.executable, '-X', 'utf8', str(PY_REF / 'studio.py'), '--in-process']
         return base_command()
 
     # ---- requests ----

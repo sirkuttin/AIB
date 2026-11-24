@@ -15,7 +15,7 @@
  *   deno run -A work/deno/keeper_restart_timing.ts [runs]
  */
 import { DENO, Fixture, MAIN, nativePath, openConversation, SEP, sleep, until, Web } from './_host_fixture.ts';
-import { WORK } from './_parity.ts';
+import { WORK } from './_work.ts';
 import { keeperBinary, readKeeperInfo } from '../../outputs/agent-studio/server/keeper/client.ts';
 import { pidAlive, readInfo } from '../../outputs/agent-studio/server/host/host_client.ts';
 

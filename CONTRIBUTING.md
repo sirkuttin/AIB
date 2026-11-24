@@ -7,7 +7,7 @@ Thanks for looking. AIB (Agent Integration Bay) is beta software and the first r
 - `outputs/agent-studio/server/` the app: TypeScript on Deno (`main.ts` is the entry point). All OS-specific code lives in `server/platform/`.
 - `outputs/agent-studio/*.js, *.css, *.html` the page: plain browser JavaScript and CSS, served as they are.
 - `tools/build.ts` builds the desktop app for all six targets.
-- `work/` the tests and the fixtures that generate their own data (fake agents, demo data). `work/python-reference/` is the original Python server, kept only as the reference the parity and contract tests compare against.
+- `work/` the tests and the fixtures that generate their own data (fake agents, demo data). The old Python server and its parity and contract tests are retired (2026-11-23): Python is only for the fake agents and a few end-to-end helpers.
 
 ## No build step for the page
 
@@ -15,7 +15,7 @@ The page is plain classic scripts. There is no bundler or transpiler for it. See
 
 ## Tests
 
-You need Deno 2.9.8, Node.js 20+ and Python 3.10+ (Python only for the tests: the parity bridge, the contract runner and the fake agents).
+You need Deno 2.9.8, Node.js 20+ and Python 3.10+ (Python only for the tests: the fake agents, the lock helper and the end-to-end suite).
 
 There are four levels besides `test:affected`. Times are for a 24-core Windows machine, `--jobs 3`.
 
@@ -84,9 +84,9 @@ deno task test:prerelease   # the full suite (all three attention modes), then p
 - Ports: a test never names a port. Everything it starts binds port 0 and the test reads the port back (`work/deno/_ports.ts`);
   `port_guard_test.ts` fails on a fixed or guessed port. Each test gets its own temp data folder.
 - When a file fails while others run, only its failed tests run once more on their own (see above). A test that fails alone too fails the run. `--no-rerun` turns the second try off.
-- `run_parallel.py` runs one `python -m unittest` process per contract file or per end-to-end test class, each with its own temp state folder and servers. `test_contract_artifacts` runs after the others because it checks that the artifact origin is on the Studio port + 1. `--serial` is the plain unittest run (contract ~40 s, end-to-end ~2 min). The plain `python -m unittest discover -s work/contract` and `cd work && python -m unittest test_worktree_e2e` still work.
+- `run_parallel.py e2e` runs one `python -m unittest` process per end-to-end test class, each with its own temp state folder and servers. `--serial` is the plain unittest run (~2 min). The plain `cd work && python -m unittest test_worktree_e2e` still works. The HTTP contract checks (the auth gate, the routes, the artifact origin) are Deno tests: `work/deno/contract_*_test.ts`.
 
-`AIB_SERVER` picks the server the contract and end-to-end tests start (`deno-split` by default, `deno` for in-process, `python` for the reference). Tests use temporary data folders and fake agents only; they never touch your real data folder or `~/.claude`.
+`AIB_SERVER` picks the server the end-to-end tests start (`deno-split` by default, `deno` for in-process). Tests use temporary data folders and fake agents only; they never touch your real data folder or `~/.claude`.
 
 ## Lint and formatting
 

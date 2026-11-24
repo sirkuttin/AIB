@@ -4,7 +4,7 @@
  * installs anything, and every folder is a temp folder.
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
-import { PyParity } from './_parity.ts';
+import { PyParity } from './_frozen.ts';
 import { deadPid, exists, FAKE_NPM, join, makeInstall, PY, tempDir, waitFor, withEnv } from './_agents.ts';
 import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
 import * as adapters from '../../outputs/agent-studio/server/agents/adapters.ts';
@@ -521,7 +521,7 @@ Deno.test('nodeVersion reads `node --version` and gives nothing when it does not
 // ---- interop with agent_installer.py ---------------------------------------------------------------------------------
 
 Deno.test({
-  name: 'the job files are interchangeable with the Python installer, both ways',
+  name: 'the job files keep the format and answers the Python installer gave',
   ...sanitize,
   fn: async () => {
     await using py = new PyParity();
@@ -538,13 +538,16 @@ Deno.test({
     const path = join(t.state, 'agents', 'claude', installer.STATE_NAME);
     t.installer.save('claude', 'running', 'downloading', 40.7, '', '0.102.0', Deno.pid);
     const ours = Deno.readTextFileSync(path);
-    await py.call('agents_shim', 'installer_save', [t.state, 'claude', 'running', 'downloading', 40.7, '', '0.102.0', Deno.pid]);
-    const theirs = Deno.readTextFileSync(path);
-    const strip = (text: string) => text.replace(/"updatedAt": [0-9.e+-]+/, '"updatedAt": 0');
-    assertEquals(strip(ours), strip(theirs));
-    // a Python job record (alive: this process's pid) reads the same on both sides; a dead pid is interrupted on both sides
+    const strip = (text: string) => text.replace(/"updatedAt": [0-9.e+-]+/, '"updatedAt": 0').replace(/"pid": \d+/, '"pid": 0');
+    // the file Python's installer wrote for the same record
+    const theirs = await py.frozen('installer-state-file', async () => {
+      await py.call('agents_shim', 'installer_save', [t.state, 'claude', 'running', 'downloading', 40.7, '', '0.102.0', Deno.pid]);
+      return strip(Deno.readTextFileSync(path));
+    });
+    assertEquals(strip(ours), theirs);
+    // a job record of a live process reads as running; a dead pid is interrupted
     assertEquals(installer.readStatus(t.state, 'claude'), await py.call('agent_installer', 'read_status', [t.state, 'claude']));
-    await py.call('agents_shim', 'installer_save', [t.state, 'claude', 'running', 'downloading', 40, '', '0.102.0', await deadPid()]);
+    t.installer.save('claude', 'running', 'downloading', 40, '', '0.102.0', await deadPid());
     const dead = installer.readStatus(t.state, 'claude');
     assertEquals(dead, await py.call('agent_installer', 'read_status', [t.state, 'claude']));
     assertEquals([dead.state, dead.interrupted], ['failed', true]);
@@ -556,28 +559,32 @@ Deno.test({
 });
 
 Deno.test({
-  name: 'the lock file is honoured across Python and Deno',
+  name: 'the lock file of a live process is honoured, and a running Deno job holds it',
   ...sanitize,
   fn: async () => {
-    await using py = new PyParity();
     await using t = base();
     const folder = join(t.state, 'agents', 'claude');
-    // Python takes the lock (its own live pid) and records a running job: a Deno start joins it instead of running npm
-    assertEquals(await py.call('agents_shim', 'installer_lock', [t.state, 'claude', 'take']), true);
-    const pyPid = JSON.parse(Deno.readTextFileSync(join(folder, installer.LOCK_NAME))).pid;
-    assert(pyPid !== Deno.pid && pidAlive(pyPid));
-    await py.call('agents_shim', 'installer_save', [t.state, 'claude', 'running', 'downloading', 33, '', '0.102.0', pyPid]);
-    const joined = await t.installer.start('claude');
-    assertEquals([joined.attached, joined.state, joined.percent], [true, 'running', 33]);
-    assertEquals(t.runs(), []);
-    assertEquals(await py.call('agents_shim', 'installer_lock', [t.state, 'claude', 'drop']), true);
-    assert(!exists(join(folder, installer.LOCK_NAME)));
-    // Deno runs a job and holds the lock: Python cannot take it
+    // another live process holds the lock and records a running job: a start joins it instead of running npm
+    const other = new Deno.Command(Deno.execPath(), { args: ['eval', 'setTimeout(() => {}, 60000)'], stdin: 'null', stdout: 'null', stderr: 'null' }).spawn();
+    try {
+      await new Promise((r) => setTimeout(r, 300));
+      Deno.mkdirSync(folder, { recursive: true });
+      Deno.writeTextFileSync(join(folder, installer.LOCK_NAME), JSON.stringify({ pid: other.pid, at: Date.now() / 1000 }));
+      assert(other.pid !== Deno.pid && pidAlive(other.pid));
+      t.installer.save('claude', 'running', 'downloading', 33, '', '0.102.0', other.pid);
+      const joined = await t.installer.start('claude');
+      assertEquals([joined.attached, joined.state, joined.percent], [true, 'running', 33]);
+      assertEquals(t.runs(), []);
+      Deno.removeSync(join(folder, installer.LOCK_NAME));
+    } finally {
+      other.kill();
+      await other.status;
+    }
+    // Deno runs a job and holds the lock with its own pid
     Deno.env.set('FAKE_NPM_MODE', 'slow');
     Deno.env.set('FAKE_NPM_DELAY', '2');
     assertEquals((await t.installer.start('codex')).attached, false);
     assertEquals(JSON.parse(Deno.readTextFileSync(join(t.state, 'agents', 'codex', installer.LOCK_NAME))).pid, Deno.pid);
-    assertEquals(await py.call('agents_shim', 'installer_lock', [t.state, 'codex', 'take']), false);
     assertEquals((await t.finish('codex'))!.state, 'done');
     Deno.env.delete('FAKE_NPM_DELAY');
   },

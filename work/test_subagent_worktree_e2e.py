@@ -42,7 +42,6 @@ import urllib.error
 import urllib.request
 import uuid
 
-sys.path.insert(0, str(_isolation.TESTS / 'contract'))
 import server_under_test  # noqa: E402
 from _e2e_support import make_repo, run_git  # noqa: E402
 from test_worktree_e2e import Chat, wait_for  # noqa: E402

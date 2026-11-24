@@ -206,24 +206,22 @@ serves the page. Releases are built this way and uploaded by hand; no CI.
 | `outputs/agent-studio/icons/` | The app icon in every size the packages need, made by `tools/make_icons.ts` from the masters in `icons/src/` (hand-drawn pixel grids for 16-32 px, an SVG for the rest). |
 | `keeper/` | The keeper (Go) and its protocol. |
 | `tools/` | `build.ts` (the six-target build) and `linux_package.ts`. |
-| `work/deno/` | Deno unit tests, and parity tests that compare against the Python reference. |
-| `work/contract/` | HTTP-only contract tests. |
-| `work/python-reference/` | The original Python server, kept only as the reference the parity and contract tests compare against. |
+| `work/deno/` | Deno tests, including the HTTP contract tests (`contract_*_test.ts`) and tests that check the answers the retired Python reference server gave (`fixtures/frozen/`). |
 | `work/` | Node page tests, the worktree end-to-end suite, and the fake ACP agents the tests use. |
 
 ## Develop
 
 ```text
 cd outputs/agent-studio
-deno task test        # unit and parity tests (parity needs Python)
+deno task test        # the Deno tests (some start small Python fake agents)
 deno task check       # type check
 deno task lint
 ```
 
 From the repository root: `npm test` and `npm run lint` for the page, and
-`python -m unittest discover -s work/contract` for the contract tests. The worktree end-to-end suite runs from `work/`:
-`python -m unittest test_worktree_e2e`. `AIB_SERVER` picks the server for both (`deno-split` by default, `deno` for
-in-process, `python` for the reference). Tests use temporary data folders and never touch your real one or your
+The worktree end-to-end suite runs from `work/`:
+`python -m unittest test_worktree_e2e`. `AIB_SERVER` picks the server (`deno-split` by default, `deno` for
+in-process). Tests use temporary data folders and never touch your real one or your
 `~/.claude`.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md) and [CHANGELOG.md](CHANGELOG.md).

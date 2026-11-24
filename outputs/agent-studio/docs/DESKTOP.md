@@ -143,7 +143,7 @@ field in its file):
 
 A web server that already lost its host to another version does not take it back (two versions would fight); it reports it and must
 be restarted. The Deno server never starts a Python host. Code: `server/host/host_client.ts` (`findOrStart`, `HostBusy`); tests:
-`work/deno/host_takeover_test.ts` (including a real Python host from `work/python-reference/`).
+`work/deno/host_takeover_test.ts` (including a host with no runtime field, as the old Python host wrote, and a Python client of the real Deno host).
 
 ## Automatic updates
 

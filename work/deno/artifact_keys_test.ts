@@ -3,7 +3,6 @@
  * interop with Python both ways (the two servers share the state folder, so a key issued by either must check in the other).
  */
 import { assert, assertEquals } from './_assert.ts';
-import { PyParity } from './_parity.ts';
 import { check, configure, issue, SECRET_FILE, secretOfFile } from '../../outputs/agent-studio/server/artifacts/keys.ts';
 import { join } from '../../outputs/agent-studio/server/platform/path.ts';
 import { sealingOn } from '../../outputs/agent-studio/server/state/sealed.ts';
@@ -91,48 +90,34 @@ Deno.test('a key issued before a move still checks after the secret file was cop
   assertEquals(check(key, 'conv-1'), false, 'another folder means another secret');
 });
 
-Deno.test('a secret file that never reaches 32 bytes means no keys, as in Python', async () => {
-  await using py = new PyParity();
+Deno.test('a secret file that never reaches 32 bytes means no keys', () => {
   using _plain = plainSecrets();
   using tmp = temp();
   Deno.writeFileSync(join(tmp.dir, SECRET_FILE), new Uint8Array(5));
   assertEquals(configure(tmp.dir), false);
   assertEquals(issue('conv-1'), null);
-  assertEquals(await py.call('artifact_keys', 'configure', [tmp.dir]), false);
-  await py.call('artifact_keys', 'configure', [null]);
+  configure(null);
 });
 
-Deno.test('interop: a secret made by Python, keys issued by either side check in the other', async () => {
-  await using py = new PyParity();
+Deno.test('the plain secret file is 32 random bytes and keys are the HMAC every other program computes from it', async () => {
+  // The formula is the contract with any other reader of the file (the retired Python server computed the same): HMAC-SHA256 of the
+  // conversation id, hex, with the 32 raw bytes of artifact-key-secret.
   using _plain = plainSecrets();
   using tmp = temp();
-  assertEquals(await py.call('artifact_keys', 'configure', [tmp.dir]), true);
   assertEquals(configure(tmp.dir), true);
+  const secret = Deno.readFileSync(join(tmp.dir, SECRET_FILE)) as Uint8Array<ArrayBuffer>;
+  assertEquals(secret.length, 32);
   for (const conversation of CONVERSATIONS) {
     const mine = issue(conversation);
-    assertEquals(mine, await py.call('artifact_keys', 'issue', [conversation]), conversation);
-    assertEquals(await py.call('artifact_keys', 'check', [mine, conversation]), true);
-    assertEquals(await py.call('artifact_keys', 'check', [mine, conversation + '!']), false);
+    assertEquals(mine, await hmacHex(secret, conversation), conversation);
+    assertEquals(check(mine, conversation), true);
+    assertEquals(check(mine, conversation + '!'), false);
   }
-  const theirs = await py.call('artifact_keys', 'issue', ['omp:s1']);
+  const theirs = await hmacHex(secret, 'omp:s1'); // a key another program made from the same file
   assertEquals(check(theirs, 'omp:s1'), true);
   assertEquals(check(theirs, 'omp:s2'), false);
-  await py.call('artifact_keys', 'configure', [null]);
-});
-
-Deno.test('interop: a secret made by Deno is read by Python', async () => {
-  await using py = new PyParity();
-  using _plain = plainSecrets();
-  using tmp = temp();
-  assertEquals(configure(tmp.dir), true);
-  const secret = Deno.readFileSync(join(tmp.dir, SECRET_FILE));
-  assertEquals(await py.call('artifact_keys', 'configure', [tmp.dir]), true);
-  for (const conversation of CONVERSATIONS) {
-    assertEquals(await py.call('artifact_keys', 'issue', [conversation]), issue(conversation), conversation);
-  }
-  assertEquals(await py.call('artifact_keys', 'check', [issue('conv-1'), 'conv-1']), true);
-  assertEquals(Deno.readFileSync(join(tmp.dir, SECRET_FILE)), secret, 'Python did not rewrite the secret');
-  await py.call('artifact_keys', 'configure', [null]);
+  assertEquals(Deno.readFileSync(join(tmp.dir, SECRET_FILE)), secret, 'issuing and checking never rewrite the secret');
+  configure(null);
 });
 
 Deno.test('migration: a plain secret from an older AIB is sealed in place on Windows, and its keys keep checking', async () => {

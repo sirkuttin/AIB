@@ -16,7 +16,7 @@ import { DENO, Fixture, nativePath, SEP, until } from './_host_fixture.ts';
 import { HiddenDesktop } from './_hidden_desktop.ts';
 import { builtDist } from './_build_cache.ts';
 import { ownerPort, pickPort, refusedPort } from './_ports.ts';
-import { WORK } from './_parity.ts';
+import { WORK } from './_work.ts';
 import { phoneHeaders, raw, serveStatus, tailscaleStatus } from './_remote_fixture.ts';
 import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
 import { APP_VERSION } from '../../outputs/agent-studio/server/core/app.ts';

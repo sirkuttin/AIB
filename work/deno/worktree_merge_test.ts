@@ -9,7 +9,7 @@
  * .env notes). The sync helpers Merge itself calls (settle_conflicts, open_clashes, clash_line, paused_status) are covered here.
  */
 import { assert, assertEquals, assertRejects } from "./_assert.ts";
-import { commit, pythonProbe, read, runGit, Sandbox, write } from "./_worktree_fixtures.ts";
+import { commit, foreignProbe, read, runGit, Sandbox, write } from "./_worktree_fixtures.ts";
 import { chat, main, merge, record, refused, Refused, show, tree, WAITING } from "./_merge_fixtures.ts";
 import * as wt from "../../outputs/agent-studio/server/worktrees/worktrees.ts";
 import * as m from "../../outputs/agent-studio/server/worktrees/merge.ts";
@@ -302,7 +302,7 @@ Deno.test("a failure before the merge lands restores the user's edits exactly", 
     "refs/heads/studio/chat-aaaaaaaa",
   );
   assertEquals(
-    await pythonProbe(box.state, box.project, record(ctx), "settle"),
+    await foreignProbe(box.state, box.project, record(ctx), "settle"),
     { pause: "free", worktree: "free", paused: false },
   );
 });

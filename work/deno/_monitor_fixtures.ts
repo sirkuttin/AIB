@@ -5,7 +5,7 @@
  * Every file's mtime is set to a whole millisecond so Python (100 ns) and Deno (1 ms) read the same st_mtime.
  */
 import { join } from '../../outputs/agent-studio/server/transcripts/purepath.ts';
-import { python, WORK } from './_parity.ts';
+import { python, WORK } from './_work.ts';
 
 type Row = Record<string, unknown>;
 const enc = new TextEncoder();

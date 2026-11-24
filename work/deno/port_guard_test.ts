@@ -110,7 +110,6 @@ export function guardedFiles(): string[] {
     'work/',
     (n) => /^(?:test_.*|_.*|chat_harness|fake_.*|run_parallel)\.(?:js|py)$/.test(n),
   );
-  add('work/contract/', (n) => n.endsWith('.py'));
   add('keeper/', (n) => n.endsWith('_test.go'));
   files.push('tools/build.ts', 'tools/test.ts');
   return files.sort();

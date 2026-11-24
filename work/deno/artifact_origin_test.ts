@@ -7,7 +7,7 @@
  * ignored), and the auth gate refusing the artifact origin as a page origin (security_test.ts covers Gate).
  */
 import { assert, assertEquals } from './_assert.ts';
-import { PyParity } from './_parity.ts';
+import { PyParity } from './_frozen.ts';
 import { heldPort } from './_ports.ts';
 import { ArtifactStore } from '../../outputs/agent-studio/server/artifacts/artifacts.ts';
 import { injectScroll, markdownPage, OriginServer, renderMarkdown } from '../../outputs/agent-studio/server/artifacts/origin.ts';
@@ -66,7 +66,8 @@ const html = store.create('c1', 'P', 'html', 'p.html', enc('<html><body><h1>x</h
 const md = store.create('c1', 'M', 'md', 'n.md', enc(MD));
 const png = store.create('c1', 'I', 'image', 'i.png', new Uint8Array([0x89, 0x50, 0x4e, 0x47, 13, 10]));
 const odd = store.create('c1', 'O', 'text', 'we ird é.txt', enc('odd name'));
-const pyPort = await py.call('artifacts_shim', 'origin_start', [store.root, studioPort]) as number;
+// while freezing only: the retired Python listener on the same store
+const pyPort = Deno.env.get('AIB_FREEZE') === '1' ? await py.call('artifacts_shim', 'origin_start', [store.root, studioPort]) as number : 0;
 const get = (path: string, host: string | null = `127.0.0.1:${origin.port}`, method = 'GET') => raw(origin.port, path, host, method);
 
 Deno.test('origin: listens on 127.0.0.1, Studio port + 1 when free', () => {
@@ -231,17 +232,27 @@ const COMPARED = [
 const maskCsp = (policy: string | undefined) =>
   policy?.replace(` http://127.0.0.1:${origin.port}/_lib/ http://localhost:${origin.port}/_lib/`, '');
 
+let compared = 0;
+
 async function compare(target: string, method = 'GET', host?: (port: number) => string | null) {
   const mine = await raw(origin.port, target, host ? host(origin.port) : `127.0.0.1:${origin.port}`, method);
-  const theirs = await raw(pyPort, target, host ? host(pyPort) : `127.0.0.1:${pyPort}`, method);
   // The Python server asks the system for a file type: Windows says text/xml for .xml, a Linux mime.types says application/xml. They are
   // the same type to a browser, and AIB's own table answers text/xml everywhere.
   const type = (k: string, v: string) => (k === 'content-type' && v === 'application/xml' ? 'text/xml' : v);
   const pick = (r: Reply) => Object.fromEntries(COMPARED.filter((k) => k in r.headers).map((k) => [k, type(k, r.headers[k])]));
-  assertEquals(mine.status, theirs.status, `${method} ${target}: status`);
-  assertEquals(pick(mine), pick(theirs), `${method} ${target}: headers`);
-  assertEquals(maskCsp(mine.headers['content-security-policy']), theirs.headers['content-security-policy'], `${method} ${target}: CSP`);
-  if (method !== 'HEAD') assertEquals([...mine.body].join(), [...theirs.body].join(), `${method} ${target}: body`);
+  const ports = (text: string | undefined) => text?.replace(/(127\.0\.0\.1|localhost):\d+/g, '$1:PORT'); // the Studio's and the origin's ports differ per run
+  const seen = (r: Reply, csp: string | undefined) => ({
+    status: r.status,
+    headers: pick(r),
+    csp: ports(csp),
+    body: method === 'HEAD' ? null : [...r.body].join(),
+  });
+  // what Python's listener answered for the same request on the same store (kept: status, the compared headers, CSP, body fingerprint)
+  const theirs = await py.frozen(`origin-${compared++}`, async () => {
+    const t = await raw(pyPort, target, host ? host(pyPort) : `127.0.0.1:${pyPort}`, method);
+    return seen(t, t.headers['content-security-policy']);
+  });
+  assertEquals(seen(mine, maskCsp(mine.headers['content-security-policy'])), theirs, `${method} ${target}`);
 }
 
 Deno.test('parity: the same answers as Python for the same store', async () => {
@@ -476,7 +487,7 @@ Deno.test('libs: CDN URL shapes and versions', () => {
 });
 
 Deno.test('origin teardown', async () => {
-  await py.call('artifacts_shim', 'origin_stop', [pyPort]);
+  if (Deno.env.get('AIB_FREEZE') === '1') await py.call('artifacts_shim', 'origin_stop', [pyPort]);
   await origin.stop();
   await py.close();
   studioHold.close();

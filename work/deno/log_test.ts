@@ -1,6 +1,6 @@
 /** server/core/log.ts: the cases of work/test_log_setup.py that exercise log_setup.py directly, plus parity and same-file interop with Python. */
 import { assert, assertEquals } from './_assert.ts';
-import { PyParity } from './_parity.ts';
+import { PyParity } from './_frozen.ts';
 import {
   addHandler,
   DEBUG,
@@ -236,32 +236,27 @@ Deno.test('rotation keeps two old files, like RotatingFileHandler', () => {
   Deno.removeSync(folder, { recursive: true });
 });
 
-Deno.test('Python and Deno lines in one studio.log look the same (format and line ends)', async () => {
+Deno.test('a Deno line in studio.log looks like the line Python wrote (format and line ends)', async () => {
   await using py = new PyParity();
   const folder = Deno.makeTempDirSync();
   try {
-    const path = await py.call('log_shim', 'write_line', [
-      folder,
-      'studio.log',
-      'artifacts',
-      'WARNING',
-      'watcher failed for %s',
-      'conv-1',
-    ]) as string;
-    const pythonBytes = Deno.readFileSync(path).length;
+    const path = `${folder}${Deno.build.os === 'windows' ? '\\' : '/'}studio.log`;
+    const shape = (text: string) =>
+      text.split('\n').filter(Boolean).map((line) => line.replace(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d{3} /, 'T ')).filter((l) => !l.includes('log_setup'));
+    // the line (time aside) Python's logger wrote for the same record
+    const pythonLines = await py.frozen('studio-log-line', async () => {
+      const written = await py.call('log_shim', 'write_line', [folder, 'studio.log', 'artifacts', 'WARNING', 'watcher failed for %s', 'conv-1']) as string;
+      const text = Deno.readTextFileSync(written);
+      Deno.removeSync(written);
+      return shape(text);
+    });
     setup('studio', { level: 'WARNING', stateDir: folder, filename: 'studio.log', stream: false });
     getLogger('artifacts').warning('watcher failed for %s', 'conv-1');
     reset();
     const raw = Deno.readTextFileSync(path);
-    const lines = raw.split('\n').filter(Boolean);
-    const shaped = lines.map((line) => line.replace(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d{3} /, 'T '));
     const expected = 'T WARNING artifacts: watcher failed for conv-1' + (Deno.build.os === 'windows' ? '\r' : '');
-    assertEquals(
-      shaped.filter((l) => !l.includes('log_setup')),
-      [expected, expected],
-      'Python line, then Deno line: identical apart from the time',
-    );
-    assert(raw.length > pythonBytes);
+    assertEquals(shape(raw), [expected]);
+    assertEquals(pythonLines, [expected], "Python's line: identical apart from the time");
   } finally {
     reset();
     Deno.removeSync(folder, { recursive: true });

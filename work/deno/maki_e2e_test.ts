@@ -14,7 +14,7 @@
 import { assert, assertEquals } from './_assert.ts';
 import { agentTempDirSync } from './_agent_tmp.ts';
 import { pause, until } from './_connection.ts';
-import { WORK } from './_parity.ts';
+import { WORK } from './_work.ts';
 import type { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
 import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
 import { pathOf } from '../../outputs/agent-studio/server/state/paths.ts';

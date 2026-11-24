@@ -1,11 +1,10 @@
 /**
- * server/state against state_store.py: parity (the same update sequences give the same public() output and the same error
- * messages) and interop (a Deno store reads what Python wrote and the other way round, a running store picks up the other
- * process's writes, and concurrent Python and Deno writers under the shared file lock lose nothing).
- * Python runs through work/parity/state_store_shim.py; only temp folders are used.
+ * server/state: the same update sequences give the public() output and the error messages Python's state_store.py gave (kept as
+ * fingerprints, fixtures/frozen), and the stores work across stores and processes (a running store picks up another store's writes,
+ * and a second process writing under the shared file lock loses nothing). Only temp folders are used.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { PyParity } from './_parity.ts';
+import { PyParity } from './_frozen.ts';
 import {
   ConversationState,
   ProjectPrefs,
@@ -133,12 +132,15 @@ async function runDeno(kind: Kind, dir: string | null, steps: Step[], name = 're
   return { results, public: final(store) };
 }
 
+let runs = 0;
+
 async function same(py: PyParity, kind: Kind, steps: Step[], label: string) {
-  const expected = await py.call('state_store_shim', 'run', [kind, tempDir(), steps]);
+  const expected = await py.frozen(`run-${runs++}`, async () => norm(await py.call('state_store_shim', 'run', [kind, tempDir(), steps])));
   const actual = await runDeno(kind, tempDir(), steps);
-  assertEquals(norm(actual), norm(expected), label);
-  const memoryExpected = kind === 'recovery' ? null : await py.call('state_store_shim', 'run', [kind, null, steps]);
-  if (memoryExpected) assertEquals(norm(await runDeno(kind, null, steps)), norm(memoryExpected), `${label} (in memory)`);
+  assertEquals(norm(actual), expected, label);
+  if (kind === 'recovery') return;
+  const memoryExpected = await py.frozen(`run-${runs++}`, async () => norm(await py.call('state_store_shim', 'run', [kind, null, steps])));
+  assertEquals(norm(await runDeno(kind, null, steps)), memoryExpected, `${label} (in memory)`);
 }
 
 const c = (call: string, ...args: unknown[]): Step => ({ call, args });
@@ -424,13 +426,17 @@ Deno.test('parity: hand-edited and odd files load the same', async () => {
       }),
     ],
   ];
+  let oddRuns = 0;
   for (const [kind, name, text] of files) {
     const dir = tempDir();
     Deno.writeTextFileSync(`${dir}${SEP}${name}`, text);
     const actual = norm(final(open(kind, dir)));
-    const pyDir = tempDir();
-    Deno.writeTextFileSync(`${pyDir}${SEP}${name}`, text);
-    assertEquals(actual, norm(await py.call('state_store_shim', 'public', [kind, pyDir])), `${kind}: ${text.slice(0, 60)}`);
+    const expected = await py.frozen(`odd-${kind}-${oddRuns++}`, async () => {
+      const pyDir = tempDir();
+      Deno.writeTextFileSync(`${pyDir}${SEP}${name}`, text);
+      return norm(await py.call('state_store_shim', 'public', [kind, pyDir]));
+    });
+    assertEquals(actual, expected, `${kind}: ${text.slice(0, 60)}`);
   }
 });
 
@@ -453,15 +459,22 @@ const WRITES: Record<Exclude<Kind, 'recovery'>, Step[]> = {
   })],
 };
 
-Deno.test('interop: Deno writes, Python reads; Python writes, Deno reads (every store)', async () => {
+Deno.test('every store reads back what a fresh store wrote, as Python read the same files', async () => {
   await using py = new PyParity();
   for (const [kind, steps] of Object.entries(WRITES) as [Kind, Step[]][]) {
+    // a Deno store writes; Python's reader gave the same public view of that folder
     const dir = tempDir();
     const written = await runDeno(kind, dir, steps);
-    assertEquals(content(await py.call('state_store_shim', 'public', [kind, dir])), content(written.public), `${kind}: Deno -> Python`);
+    const pythonRead = await py.frozen(`read-${kind}`, async () => content(await py.call('state_store_shim', 'public', [kind, dir])));
+    assertEquals(content(written.public), pythonRead, `${kind}: what Python read of the Deno file`);
+    // another store reads the folder fresh and gets what the writer saw (and what Python's own writes gave)
     const other = tempDir();
-    const pyWritten = (await py.call('state_store_shim', 'run', [kind, other, steps])) as { public: unknown };
-    assertEquals(content(final(open(kind, other))), content(pyWritten.public), `${kind}: Python -> Deno`);
+    await runDeno(kind, other, steps);
+    const pythonWrote = await py.frozen(`wrote-${kind}`, async () => {
+      const own = tempDir();
+      return content(((await py.call('state_store_shim', 'run', [kind, own, steps])) as { public: unknown }).public);
+    });
+    assertEquals(content(final(open(kind, other))), pythonWrote, `${kind}: a fresh read of the written folder`);
   }
   const dir = tempDir();
   const steps = [
@@ -470,49 +483,48 @@ Deno.test('interop: Deno writes, Python reads; Python writes, Deno reads (every 
     c('set_receipt', 'omp', 'a', '1', 'g', 'finished'),
   ];
   await runDeno('recovery', dir, steps);
-  const pyRead = await py.call('state_store_shim', 'public', ['recovery', dir]);
-  assertEquals(content(pyRead), content(final(open('recovery', dir))), 'recovery: Deno -> Python (working became unknown on both)');
+  const pythonRecovery = await py.frozen('read-recovery', async () => content(await py.call('state_store_shim', 'public', ['recovery', dir])));
+  assertEquals(pythonRecovery, content(final(open('recovery', dir))), 'recovery: working became unknown on both');
   const other = tempDir();
-  await py.call('state_store_shim', 'run', ['recovery', other, steps]);
+  await runDeno('recovery', other, steps);
   const store = open('recovery', other) as StateStore;
   assertEquals([...store.receipts.get('omp:a')!.keys()], ['3', '1'], 'receipt order kept across processes');
-  assertEquals(
-    content(final(store)),
-    content(await py.call('state_store_shim', 'public', ['recovery', other])),
-    'recovery: Python -> Deno',
-  );
+  assertEquals(content(final(store)), pythonRecovery, 'recovery: a fresh read');
 });
 
-Deno.test("interop: a running store picks up the other process's writes (reload on change)", async () => {
-  await using py = new PyParity();
+Deno.test("a running store picks up the writes of another store on the same folder (reload on change)", async () => {
   const dir = tempDir();
   const deno = new ConversationState(dir);
   const before = deno.revision();
-  await py.call('state_store_shim', 'run', ['conversations', dir, [c('apply', 'pin', 'omp', 'from-python')]]);
-  assert('omp:from-python' in deno.public().entries);
+  await runDeno('conversations', dir, [c('apply', 'pin', 'omp', 'from-other')]); // its own store, the other writer
+  assert('omp:from-other' in deno.public().entries);
   assert(deno.revision() !== before);
   await deno.apply('archive', 'claude', 'from-deno');
-  const seen = (await py.call('state_store_shim', 'run', ['conversations', dir, [c('apply', 'unpin', 'omp', 'from-python')]])) as {
-    public: { entries: Record<string, unknown> };
-  };
-  assertEquals(Object.keys(seen.public.entries), ['claude:from-deno'], 'Python kept the Deno mark while changing its own');
+  const seen = await runDeno('conversations', dir, [c('apply', 'unpin', 'omp', 'from-other')]);
+  assertEquals(Object.keys((seen.public as { entries: Record<string, unknown> }).entries), ['claude:from-deno'], 'the other writer kept the mark while changing its own');
   const settings = new SettingsStore(dir);
-  await py.call('state_store_shim', 'run', ['settings', dir, [c('update', { agents: { builtin: { codex: false } } })]]);
+  await runDeno('settings', dir, [c('update', { agents: { builtin: { codex: false } } })]);
   assertEquals(settings.builtinEnabled('codex'), false);
 });
 
-Deno.test('interop: one Python and one Deno writer, 50 entries each, lose nothing (every locked store)', async () => {
-  await using py = new PyParity();
+const WRITER = new URL('_state_writer.ts', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
+
+Deno.test('one other process and this one, 50 entries each, lose nothing (every locked store)', async () => {
   for (const kind of ['conversations', 'projects', 'read', 'settings'] as const) {
     const dir = tempDir();
-    const pythonDone = py.call('state_store_shim', 'add_many', [kind, dir, 'py', 50, 0.004]);
+    const child = new Deno.Command(Deno.execPath(), {
+      args: ['run', '-A', '--quiet', WRITER, kind, dir, 'py', '50', '0.004'],
+      stdout: 'piped',
+      stderr: 'inherit',
+      env: { AGENT_STUDIO_TEST: '1' },
+    }).spawn();
     const names = {
       conversations: ConversationState.FILE,
       projects: ProjectPrefs.FILE,
       read: ReadState.FILE,
       settings: SettingsStore.FILE,
     };
-    for (let wait = 0; wait < 500; wait++) { // start once Python is writing
+    for (let wait = 0; wait < 1500; wait++) { // start once the other process is writing
       try {
         Deno.statSync(`${dir}${SEP}${names[kind]}`);
         break;
@@ -528,8 +540,9 @@ Deno.test('interop: one Python and one Deno writer, 50 entries each, lose nothin
       else if (store instanceof ReadState) await store.update({ set: { [`omp:deno-${i}`]: { seenAt: i + 1 } } });
       else if (store instanceof SettingsStore) await store.update({ defaults: { projects: { [`deno-${i}`]: { model: 'm' } } } });
     }
-    assertEquals(await pythonDone, 50);
-    const pub = (await py.call('state_store_shim', 'public', [kind, dir])) as Record<string, Record<string, unknown>>;
+    const done = await child.output();
+    assertEquals(new TextDecoder().decode(done.stdout).trim(), '50');
+    const pub = final(open(kind, dir)) as Record<string, Record<string, unknown>>;
     const keys = kind === 'conversations'
       ? Object.keys(pub.entries)
       : kind === 'projects'
@@ -541,6 +554,5 @@ Deno.test('interop: one Python and one Deno writer, 50 entries each, lose nothin
     assertEquals(keys.filter((k) => k.includes('py-')).length, 50, kind);
     const switches = keys.slice(1).filter((k, i) => k.includes('py-') !== keys[i].includes('py-')).length;
     assert(switches > 1, `${kind}: the two writers really ran at the same time (${switches} switches)`);
-    assertEquals(content(final(open(kind, dir))), content(pub), `${kind}: both readers agree`);
   }
 });

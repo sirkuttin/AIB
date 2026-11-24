@@ -6,7 +6,7 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { pause, PYTHON, until } from './_connection.ts';
-import { WORK } from './_parity.ts';
+import { WORK } from './_work.ts';
 import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
 import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
 import { type LimitsConnection, LimitsFeed } from '../../outputs/agent-studio/server/host/usage_limits_feed.ts';

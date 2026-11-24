@@ -1,5 +1,5 @@
 /** Fixtures shared by the agent tests (adapters, installer, signin, shared): temp folders, fake installs, the Python program. */
-import { python, WORK } from './_parity.ts';
+import { python, WORK } from './_work.ts';
 
 const WIN = Deno.build.os === 'windows';
 export const SEP = WIN ? '\\' : '/';

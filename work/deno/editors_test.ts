@@ -3,7 +3,7 @@
  * launched: every Launcher gets a recording popen. Skipped: SettingsAndPrefsTests (state_store, covered by the settings port tests).
  */
 import { assert, assertEquals, assertThrows } from './_assert.ts';
-import { PyParity } from './_parity.ts';
+import { PyParity } from './_frozen.ts';
 import {
   buildCommand,
   defaultEditor,

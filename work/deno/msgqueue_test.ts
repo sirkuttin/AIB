@@ -6,7 +6,9 @@
  * MessageQueue (a small driver below) and on the port, and each side's QueueStore reads the other's file.
  */
 import { assert, assertEquals, assertThrows } from './_assert.ts';
-import { PY_REF_DIR, python } from './_parity.ts';
+import { python } from './_work.ts';
+import { PyParity, labelOf } from './_frozen.ts';
+import { PY_REF_DIR } from './_parity.ts';
 import {
   HOLD_MESSAGES,
   MAX_ITEMS,
@@ -303,7 +305,13 @@ elif request['kind'] == 'store_write':
     print(json.dumps({'warning': store.warning}))
 `;
 
-async function runPython(request: unknown): Promise<unknown> {
+const frozenPy = new PyParity();
+const runPython = (request: unknown): Promise<unknown> => frozenPy.frozen(`msgqueue-${labelOf(request)}`, () => runPythonLive(request));
+/** The scripted sequences: one answer per step of each script, so a test can index them. */
+const runScripts = (scripts: unknown): Promise<unknown[][]> =>
+  frozenPy.frozenList(`msgqueue-scripts-${labelOf(scripts)}`, async () => normalize(await runPythonLive({ kind: 'queue', scripts })) as unknown[], 2) as Promise<unknown[][]>;
+
+async function runPythonLive(request: unknown): Promise<unknown> {
   const child = new Deno.Command(python(), {
     args: ['-X', 'utf8', '-I', '-c', DRIVER, PY_REF_DIR],
     stdin: 'piped',
@@ -475,11 +483,11 @@ const SCRIPTS: Op[][] = [
 ];
 
 Deno.test('scripted MessageQueue sequences give what Python gives', async () => {
-  const expected = await runPython({ kind: 'queue', scripts: SCRIPTS }) as unknown[][];
+  const expected = await runScripts(SCRIPTS);
   SCRIPTS.forEach((ops, s) => {
     const actual = runPort(ops);
     ops.forEach((op, i) =>
-      assertEquals(normalize(actual[i]), normalize(expected[s][i]), `script ${s} step ${i} ${JSON.stringify(op).slice(0, 60)}`)
+      assertEquals(normalize(actual[i]), expected[s][i], `script ${s} step ${i} ${JSON.stringify(op).slice(0, 60)}`)
     );
   });
 });
@@ -495,11 +503,11 @@ const SAVED_A = [{
 }];
 const SAVED_B = [{ id: 'b', text: 'two', attachments: [], fingerprint: '', queuedAt: 5.5, lease: null, note: 'n' }];
 
-Deno.test('a QueueStore file written by Deno is read by Python, and the other way round', async () => {
+Deno.test('a QueueStore file written by Deno reads back the way Python read it, and the same puts give the file Python wrote', async () => {
   const dir = Deno.makeTempDirSync({ prefix: 'aib-queue-' });
   try {
     const keys = [['omp', 's1'], ['claude', 'x:y'], ['omp', 'gone']];
-    // Deno writes, Python reads
+    // Deno writes; what Python's QueueStore made of that file
     const store = new QueueStore(dir, 'queues-deno');
     store.put('omp', 's1', SAVED_A);
     store.put('claude', 'x:y', SAVED_B);
@@ -508,37 +516,38 @@ Deno.test('a QueueStore file written by Deno is read by Python, and the other wa
     const py = await runPython({ kind: 'store_read', dir, name: 'queues-deno', keys }) as Record<string, unknown>;
     assertEquals(py, { warning: '', sessions: Object.fromEntries(store.sessions), gets: keys.map(([p, s]) => store.get(p, s)) });
 
-    // Python writes, Deno reads
+    // the same puts, written by Deno to another file, read back by a fresh store
     const puts = [['omp', 's1', SAVED_A], ['claude', 'x:y', SAVED_B], ['omp', 'gone', SAVED_B], ['omp', 'gone', []], [
       'omp',
       's1',
       SAVED_A,
     ]];
-    assertEquals(await runPython({ kind: 'store_write', dir, name: 'queues-py', puts }), { warning: '' });
-    const fromPy = new QueueStore(dir, 'queues-py');
-    assertEquals(fromPy.warning, '');
-    assertEquals([...fromPy.sessions.keys()], ['claude:x:y', 'omp:s1']);
-    assertEquals(fromPy.get('omp', 's1'), SAVED_A);
-    const pyFile = JSON.parse(Deno.readTextFileSync(`${dir}/studio-queues-py.json`));
+    const writer = new QueueStore(dir, 'queues-py');
+    for (const [p, s, saved] of puts) writer.put(p as string, s as string, saved as unknown[]);
+    const fromFile = new QueueStore(dir, 'queues-py');
+    assertEquals(fromFile.warning, '');
+    assertEquals([...fromFile.sessions.keys()], ['claude:x:y', 'omp:s1']);
+    assertEquals(fromFile.get('omp', 's1'), SAVED_A);
+    const file = JSON.parse(Deno.readTextFileSync(`${dir}/studio-queues-py.json`));
     const denoFile = JSON.parse(Deno.readTextFileSync(`${dir}/studio-queues-deno.json`));
-    assertEquals(Object.keys(pyFile), ['version', 'savedAt', 'sessions']);
-    // `meta` (each chat's folder for the Send-later schedule scan) is Deno-only: Python reads the file and ignores it
-    assertEquals(Object.keys(denoFile).filter((k) => k !== 'meta'), Object.keys(pyFile));
-    assert(Math.abs(denoFile.savedAt - pyFile.savedAt) < 60, 'savedAt is seconds on both sides');
+    // the file Python wrote for the same puts (kept as fingerprints): its keys and sessions
+    const pythonFile = await frozenPy.frozenList('queue-file-python', async () => {
+      await runPythonLive({ kind: 'store_write', dir, name: 'queues-py2', puts });
+      const written = JSON.parse(Deno.readTextFileSync(`${dir}/studio-queues-py2.json`));
+      return [Object.keys(written), written.sessions];
+    }) as unknown[];
+    // `meta` (each chat's folder for the Send-later schedule scan) is a key of the Deno file that Python's file never had
+    assertEquals(Object.keys(file).filter((k) => k !== 'meta'), pythonFile[0]);
+    assertEquals(Object.keys(file).filter((k) => k !== 'meta'), ['version', 'savedAt', 'sessions']);
+    assertEquals(Object.keys(denoFile).filter((k) => k !== 'meta'), ['version', 'savedAt', 'sessions']);
+    assertEquals(file.sessions, pythonFile[1]);
+    assert(Math.abs(Date.now() / 1000 - file.savedAt) < 60, 'savedAt is seconds');
 
-    // the same puts on the Deno side give the same sessions as Python wrote
-    const mirror = new QueueStore(dir, 'queues-mirror');
-    for (const [p, s, saved] of puts) mirror.put(p as string, s as string, saved as unknown[]);
-    assertEquals(Object.fromEntries(mirror.sessions), pyFile.sessions);
-
-    // a Deno-restored queue from a Python file matches a Python-restored one
+    // a restored queue gives the public view and saved form Python gave
     const q = new MessageQueue();
-    q.load(fromPy.get('omp', 's1'));
-    const expected = await runPython({
-      kind: 'queue',
-      scripts: [[['load', fromPy.get('omp', 's1')], ['public'], ['to_saved']]],
-    }) as unknown[][];
-    assertEquals([{ ok: null }, { ok: q.public() }, { ok: q.toSaved() }], expected[0]);
+    q.load(fromFile.get('omp', 's1'));
+    const expected = await runScripts([[['load', fromFile.get('omp', 's1')], ['public'], ['to_saved']]]);
+    assertEquals(normalize([{ ok: null }, { ok: q.public() }, { ok: q.toSaved() }]), expected[0]);
   } finally {
     Deno.removeSync(dir, { recursive: true });
   }

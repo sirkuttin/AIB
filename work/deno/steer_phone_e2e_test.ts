@@ -20,7 +20,7 @@ import {
   until,
   type Web,
 } from "./_host_fixture.ts";
-import { WORK } from "./_parity.ts";
+import { WORK } from "./_work.ts";
 import { pickPort } from "./_ports.ts";
 import {
   nonce,

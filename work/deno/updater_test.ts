@@ -14,7 +14,7 @@ import {
   assertRejects,
   assertThrows,
 } from "./_assert.ts";
-import { PyParity } from "./_parity.ts";
+import { PyParity } from "./_frozen.ts";
 import {
   BASE_ENV,
   checksumFor,
@@ -1144,7 +1144,7 @@ function pyView(status: object): Record<string, unknown> {
   return rest;
 }
 
-Deno.test("state.json: refusals and odd files read the same in Deno and Python", async () => {
+Deno.test("state.json: refusals and odd files read the way Python read them", async () => {
   await using py = new PyParity();
   await using fake = await FakeGitHub.start();
   {
@@ -1154,12 +1154,11 @@ Deno.test("state.json: refusals and odd files read the same in Deno and Python",
     try {
       a.e.base(bad.base);
       await a.e.service().check();
-      assertEquals(
-        ((await py.call("updater_shim", "service", [a.e.dir, null], {
-          base: bad.base,
-        })) as PyService).status,
-        pyView(a.e.service().status()),
-      );
+      const [, refusedStatus] = await py.frozenList("state-refusal", async () => {
+        const r = await py.call("updater_shim", "service", [a.e.dir, null], { base: bad.base }) as PyService;
+        return [r.state, r.status];
+      });
+      assertEquals(refusedStatus, pyView(a.e.service().status()));
     } finally {
       await bad.server.shutdown();
     }
@@ -1172,16 +1171,17 @@ Deno.test("state.json: refusals and odd files read the same in Deno and Python",
       '{"found": {"version": "0.1.0", "tag": "v0.1.0", "page": ""}}',
       '{"found": {"version": "9.0.0", "tag": "v9.0.0", "page": "p", "prerelease": null}}',
     ];
-    for (const text of odd) {
+    for (const [i, text] of odd.entries()) {
       Deno.mkdirSync(a.e.dir + "/updates", { recursive: true });
       Deno.writeTextFileSync(a.e.dir + "/updates/state.json", text);
-      const theirs = await py.call("updater_shim", "service", [a.e.dir, null], {
-        base: fake.base,
-      }) as PyService;
+      const [theirState, theirStatus] = await py.frozenList(`state-odd-${i}`, async () => {
+        const r = await py.call("updater_shim", "service", [a.e.dir, null], { base: fake.base }) as PyService;
+        return [r.state, r.status];
+      });
       const mine = a.e.service();
       const { notified: _notified, ...mineState } = mine.state; // Deno only: the "update ready" notification went out for it
-      assertEquals(mineState, theirs.state, text);
-      assertEquals(pyView(mine.status()), theirs.status, text);
+      assertEquals(mineState, theirState, text);
+      assertEquals(pyView(mine.status()), theirStatus, text);
     }
   }
 });

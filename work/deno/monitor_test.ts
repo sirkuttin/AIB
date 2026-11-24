@@ -5,7 +5,7 @@
  * with Python over a corpus. The HTTP-level golden comparison is monitor_golden_test.ts.
  */
 import { assert, assertEquals, assertRejects } from "./_assert.ts";
-import { excessPadding, PyParity } from "./_parity.ts";
+import { PyParity } from "./_frozen.ts";
 import * as m from "../../outputs/agent-studio/server/transcripts/monitor.ts";
 import {
   join,
@@ -300,7 +300,16 @@ Deno.test("skipped rows: known row starts only, never one carrying a task-notifi
   );
 });
 
-Deno.test("skipped rows: a notice inside a snapshot still completes its command (parity with Python)", async () => {
+/** A parse snapshot with the file-time fields zeroed (they differ on every run). */
+function untimed(value: unknown, key = ""): unknown {
+  if (Array.isArray(value)) return value.map((v) => untimed(v));
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, untimed(v, k)]));
+  }
+  return key === "created" && typeof value === "number" ? 0 : value;
+}
+
+Deno.test("skipped rows: a notice inside a snapshot still completes its command (as Python read it)", async () => {
   const root = tmp("skip");
   const path = join(root, "a.jsonl");
   const notice =
@@ -321,26 +330,23 @@ Deno.test("skipped rows: a notice inside a snapshot still completes its command 
     1,
   );
   assert(t.events.some((e) => String(e.text).startsWith("quote")));
-  const snap = await py.call("monitor_shim", "snapshot", [path]) as Record<
-    string,
-    unknown
-  >;
-  assertEquals(
-    plain({
-      events: t.events,
-      commands: [...t.commands.values()],
-      meta: t.meta,
-      number: t.number,
-      offset: t.offset,
-    }),
-    {
-      events: snap.events,
-      commands: snap.commands,
-      meta: snap.meta,
-      number: snap.number,
-      offset: snap.offset,
-    },
-  );
+  // what Python's parser made of the same file: events, commands, meta, number, offset (one fingerprint each)
+  const [events, commands, meta, number, offset] = await py.frozenList("skipped-rows-snapshot", async () => {
+    const snap = await py.call("monitor_shim", "snapshot", [path]) as Record<string, unknown>;
+    return [snap.events, snap.commands, untimed(snap.meta), snap.number, snap.offset];
+  });
+  const mine = plain({
+    events: t.events,
+    commands: [...t.commands.values()],
+    meta: untimed(t.meta),
+    number: t.number,
+    offset: t.offset,
+  }) as Record<string, unknown>;
+  assertEquals(mine.events, events);
+  assertEquals(mine.commands, commands);
+  assertEquals(mine.meta, meta);
+  assertEquals(mine.number, number);
+  assertEquals(mine.offset, offset);
 });
 
 // ---- test_subagent_history / test_subagent_roster ----
@@ -1479,7 +1485,6 @@ Deno.test("parity: fromisoformat timestamps, base64 strict decode, int() and par
       "QUJD==",
     ]
   ) {
-    if (excessPadding(s)) continue; // the oracle's Python changed on this one (see _parity.ts)
     let got: unknown;
     try {
       got = [...b64decodeStrict(s)];
@@ -1574,17 +1579,11 @@ Deno.test("parity: project_match and project folders of summaries", async () => 
     ]
   ) {
     const ts = await (await m.Store.open(root)).summary(join(root, p));
-    const want = await py.call("monitor_shim", "summary", [
-      root,
-      join(root, p),
-    ]) as m.Dict;
-    assertEquals([ts.cwd, ts.projectRoot, ts.title, ts.key, ts.hasMessages], [
-      want.cwd,
-      want.projectRoot,
-      want.title,
-      want.key,
-      want.hasMessages,
-    ], p);
+    const want = await py.frozen(`summary-${p}`, async () => {
+      const w = await py.call("monitor_shim", "summary", [root, join(root, p)]) as m.Dict;
+      return [w.cwd, w.projectRoot, w.title, w.key, w.hasMessages];
+    });
+    assertEquals([ts.cwd, ts.projectRoot, ts.title, ts.key, ts.hasMessages], want, p);
   }
 });
 

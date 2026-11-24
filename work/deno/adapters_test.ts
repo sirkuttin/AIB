@@ -3,7 +3,7 @@
  * parity with adapters.py on the same temp fixtures. No real npm folder or machine install decides a result.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { PyParity } from './_parity.ts';
+import { PyParity } from './_frozen.ts';
 import { join, makeInstall, PY, PY_REAL, SEP, tempDir, touch } from './_agents.ts';
 import * as adapters from '../../outputs/agent-studio/server/agents/adapters.ts';
 

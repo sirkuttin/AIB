@@ -1,6 +1,6 @@
 /** server/web/security.ts against security.py: the gate's every branch, loopback names, route scopes, network paths. */
 import { assert, assertEquals, assertThrows } from './_assert.ts';
-import { oracleIs313, PyParity } from './_parity.ts';
+import { PyParity } from './_frozen.ts';
 import {
   authorize,
   Gate,
@@ -127,7 +127,7 @@ Deno.test('loopbackName matches ipaddress', async () => {
   ];
   // Python 3.13's ipaddress calls ::ffff:127.0.0.1 loopback; AIB keeps the stricter older answer (an IPv4-mapped name is not a host name
   // AIB's own page uses), so that one name is not compared against a 3.13 oracle.
-  for (const name of names.filter((n) => !(oracleIs313 && n === '::ffff:127.0.0.1'))) assertEquals(loopbackName(name), await py.call('security', 'loopback_name', [name]), name);
+  for (const name of names) assertEquals(loopbackName(name), await py.call('security', 'loopback_name', [name]), name);
 });
 
 Deno.test('RouteTable.scopeFor matches Python', async () => {

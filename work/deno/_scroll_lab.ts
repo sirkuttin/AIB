@@ -11,7 +11,7 @@
  */
 import { Fixture, nativePath, PY, sleep, until, type Web } from './_host_fixture.ts';
 import { Browser, browserPath, type Page } from './_doc_browser.ts';
-import { WORK } from './_parity.ts';
+import { WORK } from './_work.ts';
 
 export { browserPath, sleep };
 export type { Page };

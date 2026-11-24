@@ -1,6 +1,6 @@
-/** server/host/host_proxy.ts against the real Python agent host (work/python-reference): attach, list, a clean stop (host_stopped), and a crash (restart). */
+/** server/host/host_proxy.ts against the real Deno agent host: attach, list, a clean stop (host_stopped), and a crash (restart). */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
-import { PY_REF_DIR, python } from './_parity.ts';
+import { APP_ROOT } from '../../outputs/agent-studio/server/core/app.ts';
 import { attachHost, HostProxy } from '../../outputs/agent-studio/server/host/host_proxy.ts';
 import { HostUnavailable, readInfo, stopHost } from '../../outputs/agent-studio/server/host/host_client.ts';
 import { join } from '../../outputs/agent-studio/server/platform/path.ts';
@@ -12,9 +12,8 @@ async function setup() {
   Deno.env.set('AGENT_STUDIO_TEST', '1');
   Deno.env.set('AGENT_STUDIO_STATE_DIR', state);
   const command = [
-    python(), join(PY_REF_DIR, 'agent_host.py'), '--state-dir', state, '--omp-sessions', join(root, 'omp'), '--claude-projects', join(root, 'claude'),
-    '--omp-command', 'omp', '--node-command', 'node', '--claude-launcher', '', '--codex-launcher', '', '--no-auto-reconnect',
-    '--no-owner-announcements', '--host-port', '0', '--idle-exit-minutes', '2',
+    Deno.execPath(), 'run', '-A', '--quiet', join(APP_ROOT, 'server', 'main.ts'), 'host', '--state-dir', state, '--omp-sessions', join(root, 'omp'),
+    '--claude-projects', join(root, 'claude'), '--host-port', '0', '--idle-exit-minutes', '2',
   ];
   return { root, state, command };
 }

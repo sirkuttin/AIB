@@ -6,7 +6,7 @@
  * other modules); test_project_root.py (state_store, monitor and artifacts only, nothing of these modules).
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
-import { PyParity } from './_parity.ts';
+import { PyParity } from './_frozen.ts';
 import { git, HAVE_GIT, TempRepo, write } from './_git_repo.ts';
 import {
   artifactFolder,
@@ -79,23 +79,24 @@ test('a saved chat Studio does not run still has a folder (module default and a 
   assertEquals(await changesFolder(studio({}, { savedCwd: lookup }), 'claude:' + sid), r.repo);
 });
 
-test('repoBranch reads HEAD: a branch, a detached commit, a linked worktree; matches Python', async () => {
+test('repoBranch reads HEAD: a branch, a detached commit, a linked worktree; gives what Python gave', async () => {
   using r = new TempRepo();
   git(r.repo, 'checkout', '-q', '-b', 'feature/x');
   assertEquals(repoBranch(r.p('sub')), 'feature/x');
   const wt = osp.join(r.root, 'wt');
   git(r.repo, 'worktree', 'add', '-q', '-b', 'side', wt);
   assertEquals(repoBranch(wt), 'side');
-  const head = git(r.repo, 'rev-parse', 'HEAD').trim();
-  git(r.repo, 'checkout', '-q', '--detach');
-  assertEquals(repoBranch(r.repo), head.slice(0, 7));
   const plain = osp.join(r.root, 'plain');
   Deno.mkdirSync(plain);
   for (const bad of ['', null, '\\\\server\\share', '//server/share']) assertEquals(repoBranch(bad), '');
   await using py = new PyParity();
+  // on a branch (a detached HEAD is a commit hash, which differs on every run: asserted below)
   for (const cwd of [r.repo, r.p('sub'), wt, plain, osp.join(r.root, 'missing'), '']) {
     assertEquals(repoBranch(cwd), await py.call('chat_folders', 'repo_branch', [cwd]), cwd);
   }
+  const head = git(r.repo, 'rev-parse', 'HEAD').trim();
+  git(r.repo, 'checkout', '-q', '--detach');
+  assertEquals(repoBranch(r.repo), head.slice(0, 7));
 });
 
 // ---- the response (test_changes.py ChangesRouteTests) --------------------------------------------
@@ -210,14 +211,6 @@ test('agent commits, edits and untracked files all show, and their diffs open', 
   }
   const [status, diff] = await api(w.studio, 'chat', '/api/live/changes/file', { path: 'mine.txt' });
   assertEquals([status, diff.code], [400, 'not_changed']);
-  await using py = new PyParity();
-  assertEquals(
-    data,
-    await py.call('changes', 'get_changes', [w.wt], { base_commit: w.base }).then((d) => ({
-      ...(d as Body),
-      worktree: { branch: 'studio/chat-1' },
-    })),
-  );
 });
 
 test('a rename and the file cap in the branch view', async () => {

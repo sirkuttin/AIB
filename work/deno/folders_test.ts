@@ -4,7 +4,7 @@
  * checked as data. Skipped: RouteTests and KindsRouteTests (HTTP routes, not ported here).
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
-import { PyParity } from './_parity.ts';
+import { PyParity } from './_frozen.ts';
 import {
   checkPath,
   createFolder,

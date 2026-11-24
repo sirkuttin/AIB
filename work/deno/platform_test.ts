@@ -1,6 +1,6 @@
 /** server/platform: locks (also against the Python server's locks), process trees, process facts, console, paths. */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
-import { PY_REF_DIR, python } from './_parity.ts';
+import { python } from './_work.ts';
 import { FileLock, LockHeld, LockTimeout, tryLockNow } from '../../outputs/agent-studio/server/platform/lock.ts';
 import { ProcessTree, treeSpawnOptions } from '../../outputs/agent-studio/server/platform/process_tree.ts';
 import {
@@ -16,24 +16,12 @@ import { basename, dirname, join } from '../../outputs/agent-studio/server/platf
 import { hkcuSubkeys, hkcuValue } from '../../outputs/agent-studio/server/platform/registry.ts';
 
 const win = Deno.build.os === 'windows';
-const appDir = PY_REF_DIR; // the Python reference (state_store.FileLock)
+const LOCK_HELPER = decodeURIComponent(new URL('../lock_helper.py', import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1');
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Python holds a state_store.FileLock on `path` until its stdin closes; resolves once it holds it. */
+/** A Python process holds an advisory lock on `path` (work/lock_helper.py) until its stdin closes; resolves once it holds it. */
 async function pythonHolds(path: string) {
-  const code = [
-    'import sys; sys.path.insert(0, sys.argv[1])',
-    'import state_store',
-    'lock = state_store.FileLock(sys.argv[2], timeout=5); lock.acquire()',
-    'print("locked", flush=True); sys.stdin.read(); lock.release()',
-  ].join('\n');
-  const child = new Deno.Command(python(), {
-    args: ['-c', code, appDir, path],
-    stdin: 'piped',
-    stdout: 'piped',
-    env: { AGENT_STUDIO_TEST: '1' },
-  })
-    .spawn();
+  const child = new Deno.Command(python(), { args: ['-I', LOCK_HELPER, 'hold', path], stdin: 'piped', stdout: 'piped' }).spawn();
   const reader = child.stdout.pipeThrough(new TextDecoderStream()).getReader();
   const { value } = await reader.read();
   assert(value?.includes('locked'), `python did not lock: ${value}`);
@@ -49,13 +37,7 @@ async function pythonHolds(path: string) {
 
 /** Python tries the lock with a short timeout; returns true if it got it. */
 async function pythonCanLock(path: string): Promise<boolean> {
-  const code = [
-    'import sys; sys.path.insert(0, sys.argv[1])',
-    'import state_store',
-    'lock = state_store.FileLock(sys.argv[2], timeout=0.3)',
-    'try:\n    lock.acquire(); lock.release(); print("yes")\nexcept OSError:\n    print("no")',
-  ].join('\n');
-  const out = await new Deno.Command(python(), { args: ['-c', code, appDir, path], env: { AGENT_STUDIO_TEST: '1' } }).output();
+  const out = await new Deno.Command(python(), { args: ['-I', LOCK_HELPER, 'try', path] }).output();
   return new TextDecoder().decode(out.stdout).trim() === 'yes';
 }
 

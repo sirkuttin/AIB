@@ -26,7 +26,7 @@ import { ViewPrefs } from '../../outputs/agent-studio/server/state/view_prefs.ts
 import { AttentionWatcher, type Fire } from '../../outputs/agent-studio/server/attention/watcher.ts';
 import { RULES } from '../../outputs/agent-studio/server/attention/rules.ts';
 import { DENO, Fixture, MAIN, nativePath } from './_host_fixture.ts';
-import { WORK } from './_parity.ts';
+import { WORK } from './_work.ts';
 
 // The watcher's settle before "finished" is 20 s (usage study); these whole-AIB runs use 1.5 s (watcher.ts).
 Deno.env.set('AIB_TEST_SETTLE_MS', '1500');

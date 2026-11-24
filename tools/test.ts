@@ -30,7 +30,7 @@ const HELP = `Usage (from outputs/agent-studio):
                                 page tests. Run it after every step
   deno task test:prerelease     before a feed build or a release: the full suite, then the perf files alone, then test:update-e2e
   deno task test:affected       only the tests that cover what you changed, in every suite (Deno, node page tests, the
-                                keeper's Go tests, the Python contract and worktree e2e runs): use this while you build
+                                keeper's Go tests, the Python worktree e2e run): use this while you build
   deno task test:serial         the old way: one process, one file after another
   deno task test worktree host_ the files whose name contains either word
 
@@ -1006,16 +1006,10 @@ async function mainAffected(options: Options): Promise<number> {
     ok &&= r.ok;
     lines.push(r.line);
   }
-  for (
-    const [kind, suite] of [['python-contract', 'contract'], [
-      'python-e2e',
-      'e2e',
-    ]] as const
-  ) {
-    if (!a.run.get(kind)) continue;
+  if (a.run.get('python-e2e')) {
     const r = await runCommand(
-      kind,
-      [python(), 'work/run_parallel.py', suite],
+      'python-e2e',
+      [python(), 'work/run_parallel.py', 'e2e'],
       ROOT,
       log,
     );

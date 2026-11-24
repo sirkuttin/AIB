@@ -33,7 +33,7 @@ import {
   type Web,
 } from "./_host_fixture.ts";
 import { nativePath } from "./_host_fixture.ts";
-import { WORK } from "./_parity.ts";
+import { WORK } from "./_work.ts";
 import { pickPort } from "./_ports.ts";
 import { Browser, browserPath, type Page } from "./_doc_browser.ts";
 import {

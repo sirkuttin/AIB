@@ -8,7 +8,7 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { Fixture, nativePath, openConversation, SEP, TEST_OPTIONS, until, type Web } from './_host_fixture.ts';
-import { WORK } from './_parity.ts';
+import { WORK } from './_work.ts';
 import { keeperBinary, KeeperClient, readKeeperInfo } from '../../outputs/agent-studio/server/keeper/client.ts';
 import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
 

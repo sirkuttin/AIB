@@ -3,7 +3,7 @@
  * same repositories. Skipped: ChangesRouteTests (HTTP routes; the response logic is covered in chat_folders_test.ts).
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
-import { PyParity } from './_parity.ts';
+import { PyParity } from './_frozen.ts';
 import { git, HAVE_GIT, TempRepo, write, writeBytes } from './_git_repo.ts';
 import {
   ChangesError,

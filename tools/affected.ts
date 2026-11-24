@@ -4,8 +4,8 @@
  *
  * Nodes are tracked files (git ls-files, plus untracked ones). A file depends on:
  *   - what it imports or requires (static and dynamic imports, require(), Python `import x` / `from x import`), resolved to files;
- *   - files it names in a string: page files ('chat.js', '/chat.html'), work/ helpers and fixtures ('combined-fixture/agent.py'),
- *     Python reference modules it calls through the parity bridge (py.call('attachments', ...)), tools ('build.ts');
+ *   - files it names in a string: page files ('chat.js', '/chat.html'), work/ helpers and fixtures ('combined-fixture/agent.py',
+ *     'lock_helper.py'), tools ('build.ts');
  *   - for an HTML page: every script and stylesheet its tags load (the node harness loads chat.html's scripts that way);
  *   - EXTRA_EDGES: links no import shows (keeper/client.ts builds the Go keeper; build.ts bundles the whole app).
  * Two edges are BROAD: a test that starts the whole server (names main.ts) depends on everything main.ts imports, and a test that
@@ -23,7 +23,7 @@ const EXTRA_EDGES: Record<string, string[]> = {
   'tools/build.ts': [`${APP}/server/main.ts`, 'keeper/', '@ui'], // bundles the server, the keeper and every page file
 };
 
-export type Kind = 'deno' | 'node' | 'go' | 'python-e2e' | 'python-contract';
+export type Kind = 'deno' | 'node' | 'go' | 'python-e2e';
 export interface Graph {
   files: Set<string>;
   precise: Map<string, Set<string>>;
@@ -79,7 +79,6 @@ export function buildGraph(files = allFiles()): Graph {
   // Name indexes for mentions.
   const byName = new Map<string, string[]>(); // 'chat.js' -> [outputs/agent-studio/chat.js]
   const index = (name: string, file: string) => byName.set(name, [...(byName.get(name) ?? []), file]);
-  const pyRef = new Map<string, string>(); // 'attachments' -> work/python-reference/attachments.py
   const workDirs = new Map<string, string>(); // 'combined-fixture' -> 'work/combined-fixture/'
   const ui: string[] = [];
   for (const f of files) {
@@ -91,9 +90,6 @@ export function buildGraph(files = allFiles()): Graph {
     if (/^tools\/[^/]+\.ts$/.test(f)) index(base, f);
     const m = f.match(/^work\/([^/]+)\//);
     if (m && m[1].endsWith('-fixture')) workDirs.set(m[1], `work/${m[1]}/`); // a fixture folder: named, it is used whole
-    // Python modules the parity bridge calls by name (py.call('shims', ...)): the parity shims first, then the reference.
-    const py = f.match(/^work\/(?:python-reference|parity)\/([A-Za-z_]\w*)\.py$/);
-    if (py && !(pyRef.get(py[1]) ?? '').startsWith('work/parity/')) pyRef.set(py[1], f);
   }
   index('main.ts', `${APP}/server/main.ts`);
   const prefixed = (prefix: string) => [...files].filter((f) => f.startsWith(prefix));
@@ -121,9 +117,7 @@ export function buildGraph(files = allFiles()): Graph {
         for (const name of (m[1] ?? m[2]).split(',').map((s) => s.trim().split(/\s+/)[0].split('.')[0])) {
           const sibling = `${dir}/${name}.py`;
           if (files.has(sibling)) add(precise, f, sibling);
-          else if (pyRef.has(name)) add(precise, f, pyRef.get(name)!);
           else if (files.has(`work/${name}.py`)) add(precise, f, `work/${name}.py`);
-          else if (files.has(`work/contract/${name}.py`)) add(precise, f, `work/contract/${name}.py`);
         }
       }
     }
@@ -135,9 +129,8 @@ export function buildGraph(files = allFiles()): Graph {
     }
     if (f.endsWith('.go')) continue;
     // Mentions: names inside string literals of tests, helpers and tools (not the app's own modules: their imports say it all).
-    const isTestSide = (f.startsWith('work/') && !f.startsWith('work/python-reference/')) || f.startsWith('tools/');
+    const isTestSide = f.startsWith('work/') || f.startsWith('tools/');
     if (!isTestSide) continue;
-    const parity = /py\.call|PyParity|python-reference|_parity/.test(text);
     // keeperBinary() builds the Go keeper from keeper/ when no built one is next to the app: only files that call it run it.
     if (/\bkeeperBinary\(/.test(text)) for (const to of prefixed('keeper/')) if (!to.endsWith('_test.go')) add(precise, f, to);
     for (const lit of text.matchAll(/'([^'\n]{1,300})'|"([^"\n]{1,300})"|`([^`]{1,600})`/g)) {
@@ -147,7 +140,6 @@ export function buildGraph(files = allFiles()): Graph {
         if (token === 'main.ts') continue; // starting the whole server: decided below
         for (const to of byName.get(token) ?? []) add(precise, f, to);
         if (workDirs.has(token)) for (const to of prefixed(workDirs.get(token)!)) add(precise, f, to);
-        if (parity && pyRef.has(token)) add(precise, f, pyRef.get(token)!);
       }
     }
     // Starts the whole server as a process: names main.ts or uses MAIN, or calls a fixture method that does. _host_fixture.ts itself
@@ -199,7 +191,6 @@ export function suites(files: Set<string>): Suite[] {
     { kind: 'node', tests: all.filter((f) => /^work\/test_[^/]+\.js$/.test(f)) },
     { kind: 'go', tests: all.filter((f) => /^keeper\/.*_test\.go$/.test(f)) },
     { kind: 'python-e2e', tests: all.filter((f) => f === 'work/test_worktree_e2e.py') },
-    { kind: 'python-contract', tests: all.filter((f) => /^work\/contract\/test_[^/]+\.py$/.test(f)) },
   ];
 }
 

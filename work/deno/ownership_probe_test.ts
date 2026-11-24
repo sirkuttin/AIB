@@ -5,7 +5,8 @@
  * naming the session on its command line is reported the same by both probes. Temp folders only; never the real owners folder.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { PyParity, python } from './_parity.ts';
+import { python } from './_work.ts';
+import { PyParity } from './_frozen.ts';
 import {
   announcementPrefix,
   classify,
@@ -226,19 +227,27 @@ function runDeno(tree: Tree, fixture: Fixture) {
   return { steps: out, fetches: source.fetches };
 }
 
-/** Run the fixture on Python, rebuild the tree, run it on Deno; both must agree. Returns the Deno step results. */
+/** The JSON without this process's id (it differs on every run and is what the fixtures' live announcements name). */
+const pidless = (value: unknown): unknown => JSON.parse(JSON.stringify(value ?? null).replaceAll(String(Deno.pid), '0'));
+
+let probeRuns = 0;
+
+/** Run the fixture on the port; the answer must be the one Python gave for it (kept as a fingerprint). Returns the Deno step results. */
 async function both(tree: Tree, fixture: Fixture): Promise<Record<string, unknown>[]> {
   tree.reset();
-  const expected = await py().call('ownership_shim', 'run_probe', [{
-    now: NOW,
-    ...fixture,
-    omp: tree.omp,
-    claude: tree.claude,
-    owners: fixture.owners === false ? null : tree.owners,
-  }]);
+  const expected = await py().frozen(`probe-${probeRuns++}`, async () =>
+    pidless(
+      await py().call('ownership_shim', 'run_probe', [{
+        now: NOW,
+        ...fixture,
+        omp: tree.omp,
+        claude: tree.claude,
+        owners: fixture.owners === false ? null : tree.owners,
+      }]),
+    ));
   tree.reset();
   const actual = runDeno(tree, fixture);
-  assertEquals(JSON.parse(JSON.stringify(actual)), expected, JSON.stringify(fixture.steps).slice(0, 120));
+  assertEquals(pidless(actual), expected, JSON.stringify(fixture.steps).slice(0, 120));
   return actual.steps as Record<string, unknown>[];
 }
 
@@ -765,7 +774,8 @@ probeTest('the process snapshot is cached and hints never start a scan', async (
   };
   tree.reset();
   assertEquals(
-    (await py().call('ownership_shim', 'run_probe', [{ claude: tree.claude, now: NOW, ...steps }]) as { fetches: number }).fetches,
+    await py().frozen('fetches-of-four-assessments', async () =>
+      (await py().call('ownership_shim', 'run_probe', [{ claude: tree.claude, now: NOW, ...steps }]) as { fetches: number }).fetches),
     2,
   );
 });
@@ -849,15 +859,19 @@ pyTest('ps output becomes process entries, as in Python', async () => {
     ['garbage\n', '', null, null, 0],
     ['', '', null, null, 0],
   ];
-  for (const [names, commands, f1, f2, code] of cases) {
-    const expected = await py().call('ownership_shim', 'fetch_ps', [names, commands, f1, f2, code]) as Record<string, unknown>;
+  for (const [i, [names, commands, f1, f2, code]] of cases.entries()) {
+    // what Python's reader gave; an error that says ps is not available is kept as that sentence only (the cause's text differs)
+    const expected = await py().frozen(`fetch-ps-${i}`, async () => {
+      const answer = await py().call('ownership_shim', 'fetch_ps', [names, commands, f1, f2, code]) as Record<string, unknown>;
+      return 'error' in answer && String(answer.message).startsWith('ps is not available') ? { ...answer, message: 'ps is not available' } : answer;
+    }) as Record<string, unknown>;
     let actual: unknown;
     try {
       actual = { ok: fetchProcessesPs(psRunner(names, commands, f1, f2, code)) };
     } catch (error) {
       actual = { error: 'OSError', message: (error as Error).message };
     }
-    if ('error' in expected && (expected.message as string).startsWith('ps is not available')) {
+    if ('error' in expected && expected.message === 'ps is not available') {
       assert((actual as { message: string }).message.startsWith('ps is not available'), JSON.stringify(actual)); // the cause's text differs
       continue;
     }
@@ -865,43 +879,46 @@ pyTest('ps output becomes process entries, as in Python', async () => {
   }
 });
 
-// --- interop with a Python peer ---------------------------------------------------------------------------------------------------
+// --- a second process announcing on this computer ---------------------------------------------------------------------------------
 
-probeTest('an announcement written by Deno is read by Python and one written by Python is read by Deno', async (tree) => {
-  const peer = await py().call('ownership_shim', 'identity') as { pid: number; hostname: string; start: number | null };
-  assertEquals(peer.hostname.toLowerCase(), Deno.hostname().toLowerCase(), 'both sides must name this computer the same');
-  const deno = new OwnerRegistry(tree.owners, { instanceId: 'denoside' });
-  assert(deno.announce('claude', 'shared-1', 'C:/w', 'working'));
-  const read = await py().call('ownership_shim', 'registry_read', [tree.owners, 'pyside', 'claude', 'shared-1']) as {
-    entries: Record<string, unknown>[];
-    problems: number;
-  };
-  assertEquals(read.problems, 0);
-  assertEquals([read.entries.length, read.entries[0].status, read.entries[0].pid, read.entries[0].own], [1, 'live', Deno.pid, false]);
-  assertEquals([read.entries[0].clientName, read.entries[0].instanceId, read.entries[0].state], ['agent-studio', 'denoside', 'working']);
-  if (WINDOWS) assert(Math.abs((read.entries[0].pidStart as number) - processStartTime(Deno.pid)!) <= 1);
+probeTest('an announcement from another process on this computer is read as live, and each registry knows which one is its own', async (tree) => {
+  // The peer is a live process of its own (a sleeping Deno child) announcing under another client name, as another program would.
+  const child = new Deno.Command(Deno.execPath(), { args: ['eval', 'setTimeout(() => {}, 60000)'], stdin: 'null', stdout: 'null', stderr: 'null' }).spawn();
+  try {
+    await new Promise((r) => setTimeout(r, 300));
+    const deno = new OwnerRegistry(tree.owners, { instanceId: 'denoside' });
+    assert(deno.announce('claude', 'shared-1', 'C:/w', 'working'));
+    const [seen, seenProblems] = deno.read('claude', 'shared-1');
+    assertEquals(seenProblems, 0);
+    assertEquals([seen.length, seen[0].status, seen[0].pid, seen[0].own], [1, 'live', Deno.pid, true]);
+    assertEquals([seen[0].clientName, seen[0].instanceId, seen[0].state], ['agent-studio', 'denoside', 'working']);
+    if (WINDOWS) assert(Math.abs(seen[0].pidStart! - processStartTime(Deno.pid)!) <= 1);
 
-  assert(await py().call('ownership_shim', 'registry_announce', [tree.owners, 'pyside', 'omp', 'shared-2', 'C:/p', 'ready']));
-  const [entries, problems] = deno.read('omp', 'shared-2');
-  assertEquals(problems, 0);
-  assertEquals([entries.length, entries[0].status, entries[0].pid, entries[0].clientName, entries[0].own], [
-    1,
-    'live',
-    peer.pid,
-    'python-peer',
-    false,
-  ]);
-  if (WINDOWS) assert(Math.abs(entries[0].pidStart! - processStartTime(peer.pid)!) <= 1);
-  // Both see both, each knowing which one is its own; the probes call the other one strong evidence.
-  const all = await py().call('ownership_shim', 'registry_read', [tree.owners, 'pyside']) as { entries: Record<string, unknown>[] };
-  assertEquals(all.entries.map((e) => [e.sessionId, e.own]).sort(), [['shared-1', false], ['shared-2', true]]);
-  const probe = new OwnershipProbe({ registry: deno, processes: new ProcessSource(() => []), lockProbe: () => [] });
-  assertEquals(probe.assess('omp', 'shared-2').verdict, 'owned_elsewhere');
-  assertEquals(probe.assess('claude', 'shared-1').verdict, 'no_evidence');
-  await py().call('ownership_shim', 'registry_withdraw', [tree.owners, 'pyside', 'omp', 'shared-2']);
-  assertEquals(deno.read('omp', 'shared-2')[0], []);
-  deno.withdrawAll();
-  assertEquals([...Deno.readDirSync(tree.owners)], []);
+    const peer = new OwnerRegistry(tree.owners, { instanceId: 'peerside', clientName: 'python-peer', pid: child.pid });
+    assert(peer.announce('omp', 'shared-2', 'C:/p', 'ready'));
+    const [entries, problems] = deno.read('omp', 'shared-2');
+    assertEquals(problems, 0);
+    assertEquals([entries.length, entries[0].status, entries[0].pid, entries[0].clientName, entries[0].own], [1, 'live', child.pid, 'python-peer', false]);
+    // Both see both, each knowing which one is its own; the probes call the other one strong evidence.
+    assertEquals(
+      peer.read()[0].map((e) => [e.sessionId, e.own]).sort(),
+      [['shared-1', false], ['shared-2', true]],
+    );
+    assertEquals(
+      deno.read()[0].map((e) => [e.sessionId, e.own]).sort(),
+      [['shared-1', true], ['shared-2', false]],
+    );
+    const probe = new OwnershipProbe({ registry: deno, processes: new ProcessSource(() => []), lockProbe: () => [] });
+    assertEquals(probe.assess('omp', 'shared-2').verdict, 'owned_elsewhere');
+    assertEquals(probe.assess('claude', 'shared-1').verdict, 'no_evidence');
+    peer.withdraw('omp', 'shared-2');
+    assertEquals(deno.read('omp', 'shared-2')[0], []);
+    deno.withdrawAll();
+    assertEquals([...Deno.readDirSync(tree.owners)], []);
+  } finally {
+    child.kill();
+    await child.status;
+  }
 });
 
 Deno.test('processAlive: this process, a finished one, nonsense', async () => {
@@ -943,18 +960,22 @@ probeTest('a real agent-named process holding the transcript open is reported th
       owners: false,
       steps: [assess('omp', session, { cwd: tree.project, fresh: true })],
     };
-    const expected = await py().call('ownership_shim', 'run_probe', [{ omp: tree.omp, claude: tree.claude, owners: null, ...fixture }]) as {
-      steps: Record<string, unknown>[];
-    };
     const actual = runDeno(tree, fixture).steps[0] as Record<string, unknown>;
-    const py0 = expected.steps[0];
     const pick = (r: Record<string, unknown>) => ({
       verdict: r.verdict,
       reasons: r.reasons,
       unavailable: r.unavailable,
       notes: (r.notes as string[]).filter((n) => !n.includes('could not be inspected')), // other users' processes may come and go
     });
-    assertEquals(JSON.parse(JSON.stringify(pick(actual))), pick(py0));
+    const unpid = (value: unknown) => JSON.parse(JSON.stringify(value).replaceAll(String(pid), '0'));
+    // what Python's probe made of the same process (its id, which differs on every run, written as 0)
+    const wanted = await py().frozen('real-process', async () => {
+      const expected = await py().call('ownership_shim', 'run_probe', [{ omp: tree.omp, claude: tree.claude, owners: null, ...fixture }]) as {
+        steps: Record<string, unknown>[];
+      };
+      return unpid(pick(expected.steps[0]));
+    });
+    assertEquals(unpid(pick(actual)), wanted);
     const reasons = actual.reasons as Record<string, unknown>[];
     assertEquals(actual.verdict, 'owned_elsewhere');
     assertEquals(reasons.filter((r) => r.pid).map((r) => [r.signal, r.pid]), [['command-line', pid], ['process-folder', pid], [

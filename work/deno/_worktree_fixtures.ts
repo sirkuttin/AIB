@@ -5,9 +5,10 @@
 import { pathOf } from '../../outputs/agent-studio/server/state/paths.ts';
 import { dirname } from '../../outputs/agent-studio/server/platform/ospath.ts';
 import type { MergeStudio } from '../../outputs/agent-studio/server/worktrees/merge.ts';
-import { python, WORK } from './_parity.ts';
+import { python, WORK } from './_work.ts';
+import * as wt from '../../outputs/agent-studio/server/worktrees/worktrees.ts';
 
-/** Fixed git dates: Python and Deno make byte-identical commits from identical repos. */
+/** Fixed git dates: identical repos give byte-identical commits. */
 export const FIXED_DATES = { GIT_AUTHOR_DATE: '2026-01-02T03:04:05Z', GIT_COMMITTER_DATE: '2026-01-02T03:04:05Z' };
 
 export function setFixedDates(on: boolean): void {
@@ -151,86 +152,57 @@ export class FakeStudio implements MergeStudio {
   }
 }
 
-/** Python's HOLDER script of test_worktree_userbase.py: holds or probes the pause and worktree locks from another process. */
-export const HOLDER = `
-import json, sys
-sys.path.insert(0, sys.argv[1])
-import worktrees
-state, project, record = sys.argv[2], sys.argv[3], json.loads(sys.argv[4])
-which = sys.argv[5]
-if which == 'hold':
-    locks = [worktrees.pause_lock(state, project, 5), worktrees.worktree_lock(state, record, 5)]
-    for lock in locks:
-        lock.acquire()
-    print('held', flush=True)
-    sys.stdin.readline()
-else:
-    import time
-    deadline = time.monotonic() + (60 if which == 'settle' else 0)
+const LOCK_HELPER = decodeURIComponent(new URL('lock_helper.py', WORK).pathname).replace(/^\/([A-Za-z]:)/, '$1');
 
-    def free(make):
-        while True:
-            lock = make()
-            try:
-                lock.acquire()
-                lock.release()
-                return True
-            except OSError:
-                if time.monotonic() >= deadline:
-                    return False
-                time.sleep(0.05)
-    out = {'pause': 'free' if free(lambda: worktrees.pause_lock(state, project, 0)) else 'held',
-           'worktree': 'free' if free(lambda: worktrees.worktree_lock(state, record, 0)) else 'held'}
-    while True:
-        out['paused'] = worktrees.sync_paused(state, project)
-        if not out['paused'] or time.monotonic() >= deadline:
-            break
-        time.sleep(0.05)
-    print(json.dumps(out), flush=True)
-`;
+/** The two lock files a merge or a live sync takes for a worktree: the project's pause flag and the worktree's own lock. */
+function lockPaths(state: string, project: string, record: Record<string, unknown>): { pause: string; worktree: string } {
+  return {
+    pause: wt.pauseLock(state, project, 0).path,
+    worktree: wt.worktreeLock(state, record as unknown as wt.WorktreeRecord, 0).path,
+  };
+}
 
-const APP_DIR = new URL('python-reference/', WORK).pathname.replace(/^\/([A-Za-z]:)/, '$1'); // the Python reference
+/** Another process (work/lock_helper.py, no Studio code) takes the lock on `path` and keeps it until stdin closes. */
+async function holdOne(path: string): Promise<() => Promise<void>> {
+  const child = new Deno.Command(python(), { args: ['-I', LOCK_HELPER, 'hold', path], stdin: 'piped', stdout: 'piped' }).spawn();
+  const reader = child.stdout.pipeThrough(new TextDecoderStream()).getReader();
+  const { value } = await reader.read();
+  if (!value?.includes('locked')) throw new Error(`the lock helper did not lock ${path}: ${value}`);
+  return async () => {
+    await child.stdin.close();
+    reader.releaseLock();
+    await child.stdout.cancel().catch(() => {});
+    await child.status;
+  };
+}
 
-/** Starts the holder in 'hold' mode; resolves once it holds both locks. release() lets it go. */
-export async function pythonHolds(
+/** Another process holds the project's pause lock and the worktree's lock; resolves once it holds both. release() lets them go. */
+export async function foreignHolds(
   state: string,
   project: string,
   record: Record<string, unknown>,
 ): Promise<{ release: () => Promise<void> }> {
-  const child = new Deno.Command(python(), {
-    args: ['-c', HOLDER, APP_DIR, state, project, JSON.stringify(record), 'hold'],
-    stdin: 'piped',
-    stdout: 'piped',
-    stderr: 'inherit',
-    env: { AGENT_STUDIO_TEST: '1' },
-  }).spawn();
-  const reader = child.stdout.pipeThrough(new TextDecoderStream()).getReader();
-  let text = '';
-  while (!text.includes('held')) {
-    const { value, done } = await reader.read();
-    if (done) throw new Error('holder exited');
-    text += value;
-  }
-  return {
-    release: async () => {
-      const writer = child.stdin.getWriter();
-      await writer.write(new TextEncoder().encode('\n'));
-      await writer.close();
-      reader.releaseLock();
-      await child.stdout.cancel().catch(() => {});
-      await child.status;
-    },
-  };
+  const paths = lockPaths(state, project, record);
+  const releasePause = await holdOne(paths.pause);
+  const releaseWorktree = await holdOne(paths.worktree);
+  return { release: async () => (await releaseWorktree(), await releasePause()) };
 }
 
-/** Runs the holder in 'probe' (look once) or 'settle' mode: {pause, worktree, paused}. */
-export async function pythonProbe(state: string, project: string, record: Record<string, unknown>, mode: 'probe' | 'settle') {
-  const done = await new Deno.Command(python(), {
-    args: ['-c', HOLDER, APP_DIR, state, project, JSON.stringify(record), mode],
-    stdin: 'null',
-    stdout: 'piped',
-    stderr: 'inherit',
-    env: { AGENT_STUDIO_TEST: '1' },
-  }).output();
-  return JSON.parse(new TextDecoder().decode(done.stdout));
+/** Whether another process can take a lock on `path` within `seconds`. */
+async function foreignCanLock(path: string, seconds: number): Promise<boolean> {
+  const out = await new Deno.Command(python(), { args: ['-I', LOCK_HELPER, 'try', path, String(seconds)], stdout: 'piped' }).output();
+  return new TextDecoder().decode(out.stdout).trim() === 'yes';
+}
+
+/**
+ * What another process sees of the two locks: {pause, worktree, paused}. 'probe' looks once; 'settle' waits up to 60 s for each to
+ * be free (a merge still holding them). paused is true while the pause lock is held (the "sync paused" flag).
+ */
+export async function foreignProbe(state: string, project: string, record: Record<string, unknown>, mode: 'probe' | 'settle') {
+  const paths = lockPaths(state, project, record);
+  const seconds = mode === 'settle' ? 60 : 0.05;
+  const pause = (await foreignCanLock(paths.pause, seconds)) ? 'free' : 'held';
+  const worktree = (await foreignCanLock(paths.worktree, seconds)) ? 'free' : 'held';
+  const paused = !(await foreignCanLock(paths.pause, mode === 'settle' ? 60 : 0.05));
+  return { pause, worktree, paused };
 }

@@ -1,6 +1,6 @@
 /** server/acp/attachments.ts: the pure cases of work/test_attachments.py and test_studio.py, plus parity with Python. */
 import { assert, assertEquals, assertThrows } from './_assert.ts';
-import { excessPadding, PyParity } from './_parity.ts';
+import { PyParity } from './_frozen.ts';
 import {
   eventImageSize,
   type FileRecord,
@@ -276,7 +276,6 @@ Deno.test('pyB64Decode accepts and refuses exactly what base64.b64decode(validat
     'QUJDRAB==',
   ];
   for (const input of inputs) {
-    if (excessPadding(input)) continue; // the oracle's Python changed on this one (see _parity.ts)
     const reply = await py.raw('base64', 'b64decode', [input], { validate: true });
     const ours = pyB64Decode(input);
     if ('error' in reply) assertEquals(ours, null, input);
@@ -392,7 +391,6 @@ const FILE_CASES: unknown[] = [
 Deno.test('validateFileAttachments matches Python (records, sha256, errors)', async () => {
   await using py = new PyParity();
   for (const items of FILE_CASES) {
-    if (Array.isArray(items) && items.some((i) => excessPadding((i as { data?: unknown })?.data))) continue;
     const clean = JSON.parse(JSON.stringify(items ?? null));
     assertEquals(
       outcome(() => validateFileAttachments(clean)),
@@ -479,8 +477,9 @@ Deno.test('mapFileAttachments matches Python for every capability set', async ()
     fileItem('s.wav', 'RIFFxxxxWAVE', 'audio/wav'),
     fileItem('big.txt', new Uint8Array(1300).fill(97)),
   ];
-  const records = (await py.call('attachments', 'validate_file_attachments', [items]) as [FileRecord[], number])[0];
-  assertEquals(validateFileAttachments(items)[0], records);
+  const records = validateFileAttachments(items)[0] as FileRecord[];
+  // the records Python made of the same items (they are also the inputs of the capability cases below)
+  assertEquals(records, await py.frozen('file-records', async () => (await py.call('attachments', 'validate_file_attachments', [items]) as [FileRecord[], number])[0]));
   const capsList: unknown[] = [{}, null, 'x', { embeddedContext: true }, { audio: true }, { audio: true, embeddedContext: true }, {
     embeddedContext: 1,
   }];

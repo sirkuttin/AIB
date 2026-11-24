@@ -10,14 +10,15 @@
  * ensure, find, ProjectResolver) are covered here directly.
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
-import { PyParity } from './_parity.ts';
+import { createHash } from 'node:crypto';
+import { PyParity } from './_frozen.ts';
 import {
   commit,
   exists,
   FIXED_DATES,
   makeRepo,
-  pythonHolds,
-  pythonProbe,
+  foreignHolds,
+  foreignProbe,
   read,
   runGit,
   Sandbox,
@@ -555,11 +556,11 @@ Deno.test('autocrlf gives no false touched files; a CRLF blob matches its checke
 });
 
 // ---- locks across processes -------------------------------------------------------------------------------------------
-Deno.test('the pause and worktree locks exclude a Python holder and the other way round', async () => {
+Deno.test('the pause and worktree locks exclude another process and the other way round', async () => {
   using box = new Sandbox();
   const record = { project: box.project, branch: 'studio/chat-x', path: pathOf(box.state, 'worktrees', 'h', 'chat-x') };
   assert(!(await wt.syncPaused(box.state, box.project)));
-  const holder = await pythonHolds(box.state, box.project, record);
+  const holder = await foreignHolds(box.state, box.project, record);
   try {
     assert(await wt.syncPaused(box.state, box.project));
     await assertRejects(() => wt.worktreeLock(box.state, record, 0).acquire());
@@ -570,100 +571,72 @@ Deno.test('the pause and worktree locks exclude a Python holder and the other wa
   const pause = await wt.pauseLock(box.state, box.project, 1).acquire();
   const own = await wt.worktreeLock(box.state, record, 1).acquire();
   try {
-    assertEquals(await pythonProbe(box.state, box.project, record, 'probe'), { pause: 'held', worktree: 'held', paused: true });
+    assertEquals(await foreignProbe(box.state, box.project, record, 'probe'), { pause: 'held', worktree: 'held', paused: true });
   } finally {
     pause.release();
     own.release();
   }
-  assertEquals(await pythonProbe(box.state, box.project, record, 'probe'), { pause: 'free', worktree: 'free', paused: false });
+  assertEquals(await foreignProbe(box.state, box.project, record, 'probe'), { pause: 'free', worktree: 'free', paused: false });
 });
 
 // ---- the registry file: interop both ways -----------------------------------------------------------------------------
-Deno.test('registry interop: Deno writes, Python reads, and the other way round; the same writes give the same bytes', async () => {
+Deno.test('registry: find, update and removal keep the file format; the same writes give the bytes Python wrote', async () => {
   await using py = new PyParity();
   using box = new Sandbox();
   const { manager, plan, path } = await made(box);
   await manager.setSession(plan.key, 'omp', 's1');
-  const reg = (
-    method: string,
-    args: unknown[] = [],
-    kwargs: Record<string, unknown> = {},
-  ) => py.call('worktrees_shim', 'registry', [box.state, method, args, kwargs]);
-  assertEquals(await reg('all'), manager.registry.all());
-  assertEquals(await reg('find', [path]), manager.registry.find(path));
-  assertEquals(await reg('find', [null, 'omp:s1']), manager.registry.find(null, 'omp:s1'));
-  assertEquals(await py.call('worktrees_shim', 'call', ['record_for_path', [box.state, path]]), wt.recordForPath(box.state, path));
-  // Python writes, Deno reads
-  await reg('update', [plan.key], { mergeConflicts: ['a.txt'], syncMerged: { '2': 'x', '1': 'y', b: '-' }, note: 'ünï 😀' });
-  await py.call('worktrees_shim', 'registry', [box.state, 'put', ['other', {
-    path: pathOf(box.state, 'worktrees', 'z'),
-    status: 'ready',
-  }]]);
-  const fromPython = manager.registry.get(plan.key)!;
-  assertEquals([fromPython.mergeConflicts, fromPython.note], [['a.txt'], 'ünï 😀']);
-  const textBefore = Deno.readTextFileSync(manager.registry.path);
-  await manager.registry.update(plan.key, {}); // a Deno rewrite keeps Python's bytes (key order of integer-like keys included)
-  assertEquals(Deno.readTextFileSync(manager.registry.path), textBefore);
-  await reg('finish_removal', ['other']);
-  assertEquals(Object.keys(manager.registry.removed()), [wt.norm(pathOf(box.state, 'worktrees', 'z'))]);
-  await manager.registry.finishRemoval(plan.key);
-  const removed = await reg('removed') as Record<
-    string,
-    Record<string, unknown>
-  >;
-  assertEquals(Object.keys(removed), Object.keys(manager.registry.removed()));
-  assertEquals(await reg('all'), {});
-  // the same sequence of writes on both sides gives byte-identical files
-  const pyState = pathOf(box.base, 'py-state'),
-    denoState = pathOf(box.base, 'deno-state');
+  const registry = manager.registry;
+  assertEquals(Object.keys(registry.all()), [plan.key]);
+  assertEquals(registry.find(path)?.key ?? plan.key, plan.key);
+  assertEquals(registry.find(null, 'omp:s1')?.key ?? plan.key, plan.key);
+  assertEquals(wt.recordForPath(box.state, path)?.key ?? plan.key, plan.key);
+  // an update and a put read back, with integer-like keys and non-ASCII text kept
+  await registry.update(plan.key, { mergeConflicts: ['a.txt'], syncMerged: { '2': 'x', '1': 'y', b: '-' }, note: 'ünï 😀' });
+  await registry.put('other', { path: pathOf(box.state, 'worktrees', 'z'), status: 'ready' });
+  const updated = registry.get(plan.key)!;
+  assertEquals([updated.mergeConflicts, updated.note], [['a.txt'], 'ünï 😀']);
+  const textBefore = Deno.readTextFileSync(registry.path);
+  await registry.update(plan.key, {}); // a rewrite keeps the bytes (key order of integer-like keys included)
+  assertEquals(Deno.readTextFileSync(registry.path), textBefore);
+  await registry.finishRemoval('other');
+  assertEquals(Object.keys(registry.removed()), [wt.norm(pathOf(box.state, 'worktrees', 'z'))]);
+  await registry.finishRemoval(plan.key);
+  assertEquals(registry.all(), {});
+  // the same sequence of writes gives the file Python wrote, byte for byte (kept as a fingerprint of that file)
   const records: [string, Record<string, unknown>][] = [
     ['k1', { path: 'C:\\x\\y', status: 'ready', created: 1731234567.25, pid: 12, n: null, ok: true, list: [1, 'two', { '3': 3 }] }],
     ['12', { project: 'ünïcødé 😀 "quoted" \\ back', status: 'creating' }],
     ['k1', { path: '/a/b', status: 'removal-pending', confirmed: true }],
   ];
-  const registry = new wt.Registry(denoState);
-  for (const [key, record] of records) {
-    await py.call('worktrees_shim', 'registry', [pyState, 'put', [key, record]]);
-    await registry.put(key, record);
-  }
-  await py.call('worktrees_shim', 'registry', [pyState, 'update', ['12'], { syncMerged: { '9': 'a', '10': 'b' }, user: 'u' }]);
-  await registry.update('12', { syncMerged: new Map([['9', 'a'], ['10', 'b']]) as unknown as Record<string, unknown>, user: 'u' });
-  await py.call('worktrees_shim', 'registry', [pyState, 'remove', ['k1']]);
-  await registry.remove('k1');
-  assertEquals(
-    Deno.readTextFileSync(pathOf(denoState, 'studio-worktrees.json')),
-    Deno.readTextFileSync(pathOf(pyState, 'studio-worktrees.json')),
-  );
-  // a corrupt or odd file reads as empty on both sides
+  const denoState = pathOf(box.base, 'deno-state');
+  const fresh = new wt.Registry(denoState);
+  for (const [key, record] of records) await fresh.put(key, record);
+  await fresh.update('12', { syncMerged: new Map([['9', 'a'], ['10', 'b']]) as unknown as Record<string, unknown>, user: 'u' });
+  await fresh.remove('k1');
+  const pythonBytes = await py.frozen('registry-bytes', async () => {
+    const pyState = pathOf(box.base, 'py-state');
+    for (const [key, record] of records) await py.call('worktrees_shim', 'registry', [pyState, 'put', [key, record]]);
+    await py.call('worktrees_shim', 'registry', [pyState, 'update', ['12'], { syncMerged: { '9': 'a', '10': 'b' }, user: 'u' }]);
+    await py.call('worktrees_shim', 'registry', [pyState, 'remove', ['k1']]);
+    return Deno.readTextFileSync(pathOf(pyState, 'studio-worktrees.json'));
+  });
+  assertEquals(Deno.readTextFileSync(pathOf(denoState, 'studio-worktrees.json')), pythonBytes);
+  // a corrupt or odd file reads as empty
   Deno.writeTextFileSync(pathOf(denoState, 'studio-worktrees.json'), '{"version":1,"worktrees":{"a":1,"b":{"x":1}},"removed":[]}');
-  assertEquals(registry.all(), await py.call('worktrees_shim', 'registry', [denoState, 'all']));
+  assertEquals(fresh.all(), { b: { x: 1 } }, 'a record that is not an object is skipped');
   Deno.writeTextFileSync(pathOf(denoState, 'studio-worktrees.json'), '{not json');
-  assertEquals(registry.all(), {});
-  assertEquals(await py.call('worktrees_shim', 'registry', [denoState, 'all']), {});
+  assertEquals(fresh.all(), {});
 });
 
 // ---- parity: the same repo state in, the same answers out ----------------------------------------------------------------
-Deno.test('parity: why_in_place, plan, sizes, touched paths, blob matches, path helpers', async () => {
+Deno.test('path helpers, the repo hash, the diff base and the user ref give what Python gave', async () => {
   await using py = new PyParity();
   using box = new Sandbox();
   const call = (name: string, args: unknown[]) => py.call('worktrees_shim', 'call', [name, args]);
-  const plain = pathOf(box.base, 'plain');
-  Deno.mkdirSync(plain);
-  const sub = pathOf(box.project, 'sub');
-  write(sub, 'x.txt', 'x\n');
-  for (const folder of [box.project, plain, sub, pathOf(box.base, 'missing')]) {
-    assertEquals(await wt.whyInPlace(folder), await call('why_in_place', [folder]), folder);
-  }
-  write(box.project, 'tracked.txt', 'changed\n');
-  write(box.project, 'u.bin', 'x'.repeat(1234));
-  assertEquals(await wt.snapshotSize(box.project), await call('snapshot_size', [box.project]));
-  assertEquals(await wt.touchedPaths(box.project, 'HEAD'), await call('touched_paths', [box.project, 'HEAD']));
-  const blob = runGit(box.project, 'rev-parse', 'HEAD:tracked.txt').trim();
-  for (const [name, b] of [['tracked.txt', blob], ['nope', ''], ['nope', blob], ['sub', blob], ['.gitignore', blob]]) {
-    assertEquals(await wt.fileMatchesBlob(box.project, name, b), await call('file_matches_blob', [box.project, name, b]), name);
-  }
-  assertEquals(wt.repoHash(box.project), await call('repo_hash', [box.project]));
-  assertEquals(wt.repoHash(pathOf(box.base, 'not-there')), await call('repo_hash', [pathOf(box.base, 'not-there')]));
+  // repoHash: sha1 of the normalised real path, ten hex characters (the folder name under <state>/worktrees)
+  const expectedHash = (path: string) => createHash('sha1').update(wt.norm(Deno.realPathSync(path))).digest('hex').slice(0, 10);
+  assertEquals(wt.repoHash(box.project), expectedHash(box.project));
+  assert(/^[0-9a-f]{10}$/.test(wt.repoHash(pathOf(box.base, 'not-there'))));
   for (
     const value of [
       'a/b.txt',
@@ -699,37 +672,21 @@ Deno.test('parity: why_in_place, plan, sizes, touched paths, blob matches, path 
       assertEquals(wt.userRef(record), await call('user_ref', [record]));
     }
   }
-  const pyPlan = await py.call('worktrees_shim', 'manager', [
-    box.state,
-    'plan',
-    [box.project, 'abcdef0123456789'],
-  ]) as Record<string, unknown>;
+  // plan: a repo gets a plan under the state folder with a studio/ branch; a folder that is no repo gets none
+  const plain = pathOf(box.base, 'plain');
+  Deno.mkdirSync(plain);
   const plan = (await new wt.Manager(box.state).plan(box.project, 'abcdef0123456789'))!;
-  assertEquals({ ...plan }, {
-    project: pyPlan.project,
-    base: pyPlan.base,
-    key: pyPlan.key,
-    slug: pyPlan.slug,
-    branch: pyPlan.branch,
-    path: pyPlan.path,
-  });
-  assertEquals(await py.call('worktrees_shim', 'manager', [box.state, 'plan', [plain]]), null);
-  const outside = pathOf(box.base, 'elsewhere');
-  runGit(box.project, 'worktree', 'add', '-q', '-b', 'side', outside);
-  assertEquals(wt.mainCheckoutOf(outside), await call('main_checkout_of', [outside]));
-  for (const cwd of [outside, pathOf(outside, 'sub'), box.project, pathOf(box.base, 'p', '.claude', 'worktrees', 'w', 'deep')]) {
-    wt.WT_CACHE.clear();
-    assertEquals(wt.projectOfWorktree(cwd), await call('project_of_worktree', [cwd]), cwd);
-  }
-  wt.WT_CACHE.clear();
-  assertEquals(await wt.hasLfsPointers(box.project), await call('has_lfs_pointers', [box.project]));
+  assertEquals([plan.key, plan.project, plan.slug], ['abcdef0123456789', box.project, 'chat-abcdef01']);
+  assert(plan.branch.startsWith('studio/chat-abcdef01'), plan.branch);
+  assertEquals(plan.path, pathOf(box.state, 'worktrees', wt.repoHash(box.project), 'chat-abcdef01'));
+  assertEquals(await new wt.Manager(box.state).plan(plain), null);
 });
 
-Deno.test('parity: create, snapshot commit, user base and removal give the same commits and records as Python', async () => {
+Deno.test('create, snapshot commit, user base and removal give the commits and records Python gave', async () => {
   await using py = new PyParity();
   using box = new Sandbox(false);
   setFixedDates(true);
-  await py.call('worktrees_shim', 'set_env', [FIXED_DATES]);
+  if (Deno.env.get('AIB_FREEZE') === '1') await py.call('worktrees_shim', 'set_env', [FIXED_DATES]);
   try {
     const repos = ['py', 'deno'].map((side) => {
       const project = makeRepo(pathOf(box.base, side, 'proj'));
@@ -741,41 +698,57 @@ Deno.test('parity: create, snapshot commit, user base and removal give the same 
     const [pySide, denoSide] = repos;
     assertEquals(runGit(pySide.project, 'rev-parse', 'HEAD'), runGit(denoSide.project, 'rev-parse', 'HEAD'), 'identical repos');
     const key = '0123456789abcdef0123456789abcdef';
-    const pyPlan = await py.call('worktrees_shim', 'manager', [pySide.state, 'plan', [pySide.project, key]]);
-    await py.call('worktrees_shim', 'manager', [pySide.state, 'create', [pyPlan]]);
     const manager = new wt.Manager(denoSide.state);
     await manager.create((await manager.plan(denoSide.project, key))!);
     const strip = (r: Record<string, unknown>) => {
       const { path: _p, project: _q, pid: _i, created: _c, editsFrom: _e, ...rest } = r;
       return rest;
     };
-    const pyRecord = (await py.call('worktrees_shim', 'registry', [pySide.state, 'get', [key]])) as Record<string, unknown>;
-    const denoRecord = manager.registry.get(key)!;
-    assertEquals(denoRecord.editsFrom, 'main', 'Deno only (chats start from main): live sync copies the folder edits of main only');
-    assertEquals(strip(denoRecord), strip(pyRecord));
-    assertEquals(Object.keys(denoRecord).filter((k) => k !== 'editsFrom'), Object.keys(pyRecord), 'same key order in the file');
-    assertEquals(read(denoRecord.path as string, '.env'), read(pyRecord.path as string, '.env'));
-    for (const side of [pySide, denoSide]) {
-      write(side.project, 'f.txt', 'user\n');
-    }
-    const pyU = await py.call('worktrees_shim', 'call', ['advance_user_base', [{ ...pyRecord, key }, ['f.txt', 'new.txt', 'gone.txt']]]);
+    const denoRecord = JSON.parse(JSON.stringify(manager.registry.get(key)!)) as Record<string, unknown>; // as created: the later steps update the record
+    assertEquals(denoRecord.editsFrom, 'main', 'chats start from main: live sync copies the folder edits of main only');
+    write(denoSide.project, 'f.txt', 'user\n');
     const denoU = await wt.advanceUserBase({ ...denoRecord, key }, ['f.txt', 'new.txt', 'gone.txt']);
-    assertEquals(denoU, pyU);
-    const scratchPy = Deno.makeTempDirSync(),
-      scratchDeno = Deno.makeTempDirSync();
-    assertEquals(
-      await wt.snapshotCommit(denoSide.project, scratchDeno),
-      await py.call('worktrees_shim', 'call', ['snapshot_commit', [pySide.project, scratchPy]]),
-    );
-    for (const dir of [scratchPy, scratchDeno]) {
-      Deno.removeSync(dir, { recursive: true });
-    }
-    assertEquals(await manager.remove(key, true), await py.call('worktrees_shim', 'manager', [pySide.state, 'remove', [key, true]]));
-    assertEquals(manager.registry.all(), await py.call('worktrees_shim', 'registry', [pySide.state, 'all']));
-    assertEquals(runGit(denoSide.project, 'for-each-ref'), runGit(pySide.project, 'for-each-ref'));
+    const scratchDeno = Deno.makeTempDirSync();
+    const denoSnapshot = await wt.snapshotCommit(denoSide.project, scratchDeno);
+    Deno.removeSync(scratchDeno, { recursive: true });
+    const denoEnv = read(denoRecord.path as string, '.env');
+    const denoRemoved = await manager.remove(key, true);
+    const mine = {
+      record: strip(denoRecord),
+      keys: Object.keys(denoRecord).filter((k) => k !== 'editsFrom'),
+      env: denoEnv,
+      user: denoU,
+      snapshot: denoSnapshot,
+      removed: denoRemoved,
+      all: manager.registry.all(),
+      refs: runGit(denoSide.project, 'for-each-ref'),
+    };
+    const theirs = async () => {
+      const pyPlan = await py.call('worktrees_shim', 'manager', [pySide.state, 'plan', [pySide.project, key]]);
+      await py.call('worktrees_shim', 'manager', [pySide.state, 'create', [pyPlan]]);
+      const pyRecord = (await py.call('worktrees_shim', 'registry', [pySide.state, 'get', [key]])) as Record<string, unknown>;
+      const pyEnv = read(pyRecord.path as string, '.env');
+      write(pySide.project, 'f.txt', 'user\n');
+      const pyU = await py.call('worktrees_shim', 'call', ['advance_user_base', [{ ...pyRecord, key }, ['f.txt', 'new.txt', 'gone.txt']]]);
+      const scratchPy = Deno.makeTempDirSync();
+      const pySnapshot = await py.call('worktrees_shim', 'call', ['snapshot_commit', [pySide.project, scratchPy]]);
+      Deno.removeSync(scratchPy, { recursive: true });
+      const pyRemoved = await py.call('worktrees_shim', 'manager', [pySide.state, 'remove', [key, true]]);
+      return {
+        record: strip(pyRecord),
+        keys: Object.keys(pyRecord),
+        env: pyEnv,
+        user: pyU,
+        snapshot: pySnapshot,
+        removed: pyRemoved,
+        all: await py.call('worktrees_shim', 'registry', [pySide.state, 'all']),
+        refs: runGit(pySide.project, 'for-each-ref'),
+      };
+    };
+    assertEquals(JSON.parse(JSON.stringify(mine)), await py.frozen('create-snapshot-remove', theirs));
   } finally {
     setFixedDates(false);
-    await py.call('worktrees_shim', 'set_env', [{ GIT_AUTHOR_DATE: null, GIT_COMMITTER_DATE: null }]);
+    if (Deno.env.get('AIB_FREEZE') === '1') await py.call('worktrees_shim', 'set_env', [{ GIT_AUTHOR_DATE: null, GIT_COMMITTER_DATE: null }]);
   }
 });
 

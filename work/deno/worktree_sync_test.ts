@@ -10,7 +10,7 @@
  * worktree_merge_clash_test.ts).
  */
 import { assert, assertEquals } from './_assert.ts';
-import { PyParity } from './_parity.ts';
+import { PyParity } from './_frozen.ts';
 import { commit, runGit, Sandbox, write } from './_worktree_fixtures.ts';
 import { BOTH, CHAT_EDIT, type Ctx, exists, list, LINES, note, setup, show, text, touched, USER_EDIT } from './_sync_fixtures.ts';
 import * as wt from '../../outputs/agent-studio/server/worktrees/worktrees.ts';

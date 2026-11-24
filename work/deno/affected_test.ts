@@ -46,8 +46,10 @@ Deno.test('affected: Go keeper changes run the Go tests and the Deno tests that 
   assert(!t.has('worktree_sync_test.ts'));
 });
 
-Deno.test('affected: a parity module reaches the tests that call it by name', () => {
-  assert(tests(['work/python-reference/attachments.py']).out.has('attachments_test.ts'));
+Deno.test('affected: a Python helper in work/ reaches the tests that name it', () => {
+  const t = tests(['work/lock_helper.py']).out;
+  assert(t.has('platform_test.ts'), 'platform_test.ts starts lock_helper.py');
+  assert(t.has('ownership_test.ts'), 'ownership_test.ts starts lock_helper.py');
 });
 
 Deno.test('affected: a slow file reached only through a broad rule is listed, not run, unless --all-slow', () => {

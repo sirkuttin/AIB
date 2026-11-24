@@ -2,8 +2,7 @@
 test_worktree_chat.py, which were removed with the Python app): a temp state folder and workspace whose web servers and agent
 hosts are cleaned up, a web server handle, a fake agent host for the takeover tests, and git helpers.
 
-Speaks to agent hosts through the Python reference's host_client (work/python-reference), which reads and writes the same
-agent-host.json as the Deno server. Every child process is started without a console window."""
+Speaks to agent hosts through host_support.py, which reads and writes the same agent-host.json as the Deno server. Every child process is started without a console window."""
 import _isolation  # noqa: F401  (test isolation: temp state folder, real per-user folder blocked)
 from _isolation import agent_tempdir
 import http.server
@@ -19,8 +18,7 @@ import time
 import urllib.error
 import urllib.request
 
-sys.path.insert(0, str(_isolation.PY_REF))
-import host_client  # noqa: E402
+import host_support as host_client  # noqa: E402
 
 FAKE_LAUNCHER = _isolation.TESTS / 'combined-fixture/agent.py'
 NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)

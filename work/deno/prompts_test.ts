@@ -1,6 +1,7 @@
 /** server/transcripts/prompts.ts: the cases of work/test_prompts.py that exercise prompts.py directly, plus parity with Python. */
 import { assert, assertEquals } from './_assert.ts';
-import { PyParity, WORK } from './_parity.ts';
+import { WORK } from './_work.ts';
+import { PyParity } from './_frozen.ts';
 import { findPrompts, isPrompt, isWrapper, stripInjected, stripViewContext } from '../../outputs/agent-studio/server/transcripts/prompts.ts';
 
 interface Fixture {

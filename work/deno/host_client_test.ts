@@ -1,9 +1,10 @@
 /**
- * server/host/host_client.ts and server/platform/spawn_detached.ts: parity with host_client.py, a detached start with its log, and
- * the stage B seam itself: the Deno client starting, attaching to and stopping the real Python agent host.
+ * server/host/host_client.ts and server/platform/spawn_detached.ts: the host file, a detached start with its log, and
+ * the Deno client starting, attaching to and stopping the real Deno agent host.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { APP, PY_REF_DIR, PyParity, python } from './_parity.ts';
+import { APP, python } from './_work.ts';
+import { PyParity } from './_frozen.ts';
 import {
   APP_ID,
   appIdFor,
@@ -45,16 +46,16 @@ const win = Deno.build.os === 'windows';
 const appDir = APP.pathname.replace(/^\/([A-Za-z]:)/, '$1').replace(/\/$/, '');
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-Deno.test('app constants, code root and source hash match Python', async () => {
-  await using py = new PyParity();
-  assertEquals(APP_VERSION, await py.call('version', '__version__.__str__'));
-  assertEquals(VERSION_LABEL, await py.call('version', 'VERSION_LABEL.__str__'));
-  assertEquals(ABOUT_LINE, await py.call('version', 'ABOUT_LINE.__str__'));
-  assertEquals(normcase(APP_ROOT), await py.call('host_client', '_code_root'));
-  assertEquals(CODE_ROOT, await py.call('host_client', '_code_root'));
-  assertEquals(normcase(REPO_ROOT), normcase(String(await py.call('app_paths', 'REPO_ROOT.__str__'))));
-  assertEquals(normcase(TESTS_DIR), normcase(String(await py.call('app_paths', 'TESTS_DIR.__str__'))));
-  assertEquals(await sourceHash(), await py.call('host_client', '_source_hash')); // the .py digest over the app folder, as a Python host reports it
+Deno.test('app constants, code root and source hash', async () => {
+  assert(/^\d+\.\d+\.\d+(-[a-z]+\.\d+)?$/.test(APP_VERSION), APP_VERSION);
+  assert(VERSION_LABEL.startsWith(`AIB ${APP_VERSION.split('-')[0]}`), VERSION_LABEL);
+  assertEquals(ABOUT_LINE, 'All your agents. One place. Nothing hidden.');
+  assertEquals(CODE_ROOT, normcase(APP_ROOT));
+  assertEquals(normcase(join(REPO_ROOT, 'outputs', 'agent-studio')), normcase(APP_ROOT));
+  assertEquals(normcase(TESTS_DIR), normcase(join(REPO_ROOT, 'work')));
+  const hash = await sourceHash();
+  assert(/^[0-9a-f]{16,64}$/.test(hash), `a hex digest of the app folder: ${hash}`);
+  assertEquals(await sourceHash(), hash, 'stable for unchanged code');
   assertEquals(await codeWarning({ pid: 1, sourceHash: await sourceHash() }), '');
   assert((await codeWarning({ pid: 1, sourceHash: 'x' })).includes('older code'));
   assert((await codeWarning({ pid: 1 })).includes('older version'));
@@ -162,7 +163,7 @@ Deno.test('readInfo accepts only a well-formed host file; a stale file is not a 
 });
 
 Deno.test({
-  name: 'stage B seam: the Deno client starts, attaches to and stops the real Python agent host',
+  name: 'the Deno client starts, attaches to and stops the real Deno agent host',
   sanitizeResources: false,
   sanitizeOps: false,
   async fn() {
@@ -172,24 +173,18 @@ Deno.test({
     Deno.env.set('AGENT_STUDIO_TEST', '1');
     Deno.env.set('AGENT_STUDIO_STATE_DIR', state);
     const command = [
-      python(),
-      join(PY_REF_DIR, 'agent_host.py'),
+      Deno.execPath(),
+      'run',
+      '-A',
+      '--quiet',
+      join(APP_ROOT, 'server', 'main.ts'),
+      'host',
       '--state-dir',
       state,
       '--omp-sessions',
       join(root, 'omp'),
       '--claude-projects',
       join(root, 'claude'),
-      '--omp-command',
-      'omp',
-      '--node-command',
-      'node',
-      '--claude-launcher',
-      '',
-      '--codex-launcher',
-      '',
-      '--no-auto-reconnect',
-      '--no-owner-announcements',
       '--host-port',
       '0',
       '--idle-exit-minutes',
@@ -202,7 +197,7 @@ Deno.test({
       assert(said.some((m) => m.startsWith('Started agent host process')), said.join('\n'));
       const info = await client.call('info') as Record<string, unknown>;
       assertEquals(info.protocol, PROTOCOL_VERSION);
-      assertEquals(await codeWarning(info), '', 'Python host and Deno client disagree about the code hash');
+      assertEquals(await codeWarning(info), '', 'the host and the client disagree about the code hash');
       assertEquals(await client.call('list'), await client.call('list'));
       const again = await findHost(state);
       assert(again && again[0].port === client.port, 'second attach found another host');

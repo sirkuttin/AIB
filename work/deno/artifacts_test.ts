@@ -8,7 +8,8 @@
  * /api/live/state, SplitModeTests / InProcessModeTests (real web server + agent host), OwnToolApproval (studio.Connection).
  */
 import { assert, assertEquals, assertThrows } from './_assert.ts';
-import { PyParity } from './_parity.ts';
+import { PyParity } from './_frozen.ts';
+import { FrozenDigest } from './_digest.ts';
 import {
   ArtifactError,
   ArtifactStore,
@@ -798,25 +799,34 @@ function errorKinds(results: Result[]): Result[] {
   ) => (r.error ? { error: r.error === 'ArtifactError' ? 'ArtifactError' : 'OSError', status: r.status, code: r.code } : r));
 }
 
-async function sameStoreRun(steps: Step[]): Promise<{ deno: string; python: string }> {
+let storeRuns = 0;
+
+/** The same steps on a fresh store: what Deno gives must be what Python gave (results, error messages, manifests on disk, ids aside). */
+async function sameStoreRun(steps: Step[]): Promise<{ deno: string }> {
   using a = temp();
-  using b = temp();
   const denoRoot = join(a.dir, 'artifacts');
-  const pyRoot = join(b.dir, 'artifacts');
   const mine = storeRun(denoRoot, steps);
-  const theirs = await py.call('artifacts_shim', 'store_run', [pyRoot, steps]) as Result[];
-  assertSame(normalize(errorKinds(mine), [denoRoot]), normalize(errorKinds(theirs), [pyRoot]));
-  for (const [i, r] of theirs.entries()) if (r.error) assertEquals(mine[i].message, r.message, `message of step ${i}`);
-  // the manifests on disk are byte-identical (ids aside)
   const text = (root: string) =>
     [...Deno.readDirSync(root)].filter((e) => e.isDirectory).map((e) => Deno.readTextFileSync(join(root, e.name, 'manifest.json')));
   const order = (root: string, texts: string[]) => texts.map((t) => normalize(t, [root]) as string).sort();
-  assertEquals(order(denoRoot, text(denoRoot)), order(pyRoot, text(pyRoot)));
-  return { deno: denoRoot, python: pyRoot };
+  const seen = (results: Result[], root: string) => ({
+    results: normalize(errorKinds(results), [root]),
+    messages: results.map((r) => (r.error ? r.message : null)),
+    manifests: order(root, text(root)), // the manifests on disk are byte-identical (ids aside)
+  });
+  const theirs = await py.frozen(`store-run-${storeRuns++}`, async () => {
+    using b = temp();
+    const pyRoot = join(b.dir, 'artifacts');
+    const results = await py.call('artifacts_shim', 'store_run', [pyRoot, steps]) as Result[];
+    return seen(results, pyRoot);
+  });
+  assertSame(JSON.parse(JSON.stringify(seen(mine, denoRoot))), theirs);
+  return { deno: denoRoot };
 }
 
 /** assertEquals that names the first differing path (the values here are long). */
 function assertSame(actual: unknown, expected: unknown, path = '$'): void {
+  if (expected instanceof FrozenDigest) return assertEquals(actual, expected, path);
   if (JSON.stringify(actual) === JSON.stringify(expected)) return;
   if (actual && expected && typeof actual === 'object' && typeof expected === 'object') {
     const keys = new Set([...Object.keys(actual), ...Object.keys(expected)]);
@@ -1036,8 +1046,9 @@ Deno.test('parity: the routes answer as Python does', async () => {
   const denoProject = join(a.dir, 'proj'), pyProject = join(c.dir, 'proj');
   const live = { conn: 'claude:S' };
   const mine = serviceRun(join(a.dir, 'artifacts'), denoProject, steps, live);
-  const theirs = await py.call('artifacts_shim', 'service_run', [join(c.dir, 'artifacts'), pyProject, steps, live]);
-  assertSame(normalize(mine, [a.dir]), normalize(theirs, [c.dir]));
+  const theirs = await py.frozen('service-run', async () =>
+    normalize(await py.call('artifacts_shim', 'service_run', [join(c.dir, 'artifacts'), pyProject, steps, live]), [c.dir]));
+  assertSame(normalize(mine, [a.dir]), theirs);
 });
 
 /** artifacts_shim.watcher_run for the Deno watcher. */
@@ -1112,8 +1123,9 @@ Deno.test('parity: the watcher does what Python does for the same writes', async
     { tick: 0.8 },
   ];
   const mine = watcherRun(join(a.dir, 'artifacts'), join(a.dir, 'proj'), steps);
-  const theirs = await py.call('artifacts_shim', 'watcher_run', [join(c.dir, 'artifacts'), join(c.dir, 'proj'), steps]);
-  assertSame(normalize(mine, [a.dir]), normalize(theirs, [c.dir]));
+  const theirs = await py.frozen('watcher-run', async () =>
+    normalize(await py.call('artifacts_shim', 'watcher_run', [join(c.dir, 'artifacts'), join(c.dir, 'proj'), steps]), [c.dir]));
+  assertSame(normalize(mine, [a.dir]), theirs);
 });
 
 Deno.test('parity: the write tracker records the same paths', async () => {
@@ -1144,10 +1156,10 @@ Deno.test('parity: the write tracker records the same paths', async () => {
 
 // ---- interop: one store folder, both servers ----------------------------------------------------------
 
-Deno.test('interop: Python writes, Deno reads and extends; Python reads that back', async () => {
+Deno.test('a second store on the same folder: one writes, the other reads and extends, and the first reads that back', () => {
   using tmp = temp();
   const root = join(tmp.dir, 'artifacts');
-  const made = await py.call('artifacts_shim', 'store_run', [root, [
+  const made = storeRun(root, [
     {
       call: 'create',
       args: ['c1', 'From Python é', 'html', 'p.html', b('<p>py</p>\n')],
@@ -1157,15 +1169,15 @@ Deno.test('interop: Python writes, Deno reads and extends; Python reads that bac
     { call: 'add_version', args: [{ ref: 0 }, b('<p>py two</p>\n')], kwargs: { note: 'second' } },
     { call: 'set_pinned', args: [{ ref: 0 }, true] },
     { call: 'create', args: ['c1', 'Notes', 'md', 'n.md', b('# n')] },
-  ]]) as Result[];
+  ]);
   const id = (made[0].ok as Manifest).id;
   const clock = new Clock(1020.75);
   const store = new ArtifactStore(root, clock.now);
   store.origin = 'http://127.0.0.1:1';
-  const pyView = await py.call('artifacts_shim', 'store_run', [root, [{ call: 'item', args: [id] }, { call: 'list', args: ['c1'] }, {
+  const pyView = storeRun(root, [{ call: 'item', args: [id] }, { call: 'list', args: ['c1'] }, {
     call: 'diff',
     args: [id, 1, 2],
-  }]]) as Result[];
+  }]);
   assertEquals(JSON.parse(JSON.stringify(store.item(id))), pyView[0].ok);
   assertEquals(store.list('c1'), pyView[1].ok);
   assertEquals(store.diff(id, 1, 2), pyView[2].ok);
@@ -1176,22 +1188,22 @@ Deno.test('interop: Python writes, Deno reads and extends; Python reads that bac
   const [m] = store.addVersion(id, enc('<p>deno three</p>\n'), { by: 'tool', toolCallId: 'd1', note: 'from deno' });
   assertEquals(m.versions.map((v) => v.n), [1, 2, 3]);
   const mine = JSON.parse(JSON.stringify(store.get(id)));
-  const back = await py.call('artifacts_shim', 'store_run', [root, [
+  const back = storeRun(root, [
     { call: 'get', args: [id] },
     { call: 'source', args: [id, 3] },
     { clock: 1030.0 },
     { call: 'add_version', args: [id, b('<p>py four</p>\n')], kwargs: { by: 'watch' } },
     { call: 'diff', args: [id, 3, 4] },
-  ]]) as Result[];
+  ]);
   assertEquals(back[0].ok, mine);
   assertEquals(back[1].ok, { text: '<p>deno three</p>\n', truncated: false });
   assertEquals(back[4].ok, store.diff(id, 3, 4));
   const final = store.get(id);
   assertEquals(final.versions.map((v) => [v.n, v.by]), [[1, 'tool'], [2, 'tool'], [3, 'tool'], [4, 'watch']]);
-  assertEquals(dumpManifest(final), Deno.readTextFileSync(join(root, id, 'manifest.json')), 'Python file == our serialization of it');
+  assertEquals(dumpManifest(final), Deno.readTextFileSync(join(root, id, 'manifest.json')), 'the file on disk is our serialization of it');
 });
 
-Deno.test('interop: Deno writes, Python reads and extends; Deno reads that back', async () => {
+Deno.test('a second store on the same folder reads what the first wrote and extends it; the first reads that back', () => {
   using tmp = temp();
   const root = join(tmp.dir, 'artifacts');
   const clock = new Clock(1000.0);
@@ -1203,14 +1215,14 @@ Deno.test('interop: Deno writes, Python reads and extends; Deno reads that back'
   store.setSourceMissing(m.id, true);
   const denoItem = JSON.parse(JSON.stringify(store.item(m.id)));
   const denoList = store.list();
-  const result = await py.call('artifacts_shim', 'store_run', [root, [
+  const result = storeRun(root, [
     { call: 'item', args: [m.id] },
     { call: 'list', args: [] },
     { call: 'find_by_source', args: ['c1', join(tmp.dir, 'D.TXT')] },
     { clock: 1006.0 },
     { call: 'add_version', args: [m.id, b('three\n')], kwargs: { by: 'watch' } },
     { call: 'restore', args: [m.id, 1] },
-  ], 1006.0]) as Result[];
+  ], 1006.0);
   assertEquals(result[0].ok, denoItem);
   assertEquals(result[1].ok, denoList);
   assertEquals((result[2].ok as Manifest | null)?.id ?? null, WIN ? m.id : null, 'paths compare case-insensitively on Windows only');
@@ -1221,7 +1233,7 @@ Deno.test('interop: Deno writes, Python reads and extends; Deno reads that back'
   assertEquals(store.source(m.id, 3).text, 'one\n');
 });
 
-Deno.test('interop: a "built from" link (fromDoc) and becameDoc (Deno only) survive Python rewriting the manifest', async () => {
+Deno.test('interop: a "built from" link (fromDoc) and becameDoc (Deno only) survive another store rewriting the manifest', () => {
   using tmp = temp();
   const root = join(tmp.dir, 'artifacts');
   const clock = new Clock(1000.0);
@@ -1231,10 +1243,10 @@ Deno.test('interop: a "built from" link (fromDoc) and becameDoc (Deno only) surv
   const fromDoc = { doc: 'release-plan', title: 'Release plan', page: 'p2', pageTitle: 'Rollout', rev: 7 };
   store.setFromDoc(m.id, fromDoc);
   store.setBecameDoc(m.id, 'timeline', 3);
-  await py.call('artifacts_shim', 'store_run', [root, [
+  storeRun(root, [
     { call: 'add_version', args: [m.id, b('<p>two</p>')], kwargs: { by: 'tool', title: 'Timeline v2' } },
     { call: 'set_pinned', args: [m.id, true] },
-  ], 1006.0]);
+  ], 1006.0);
   const after = store.get(m.id);
   assertEquals(after.versions.length, 2);
   assertEquals(after.title, 'Timeline v2');
@@ -1243,7 +1255,7 @@ Deno.test('interop: a "built from" link (fromDoc) and becameDoc (Deno only) surv
   assertEquals([after.becameDoc, after.becameDocRev, store.summary(after).becameDoc], ['timeline', 3, 'timeline'], 'Edit made it a doc: kept too');
 });
 
-Deno.test('interop: archivedAt, deletedAt and deletedSource (Deno only) survive Python rewriting the manifest', async () => {
+Deno.test('interop: archivedAt, deletedAt and deletedSource (Deno only) survive another store rewriting the manifest', () => {
   using tmp = temp();
   const root = join(tmp.dir, 'artifacts');
   const clock = new Clock(1000.0);
@@ -1254,9 +1266,9 @@ Deno.test('interop: archivedAt, deletedAt and deletedSource (Deno only) survive 
   const deletedSource = { path: 'P/r.html', rel: 'r.html', bin: 'deleted-source/r.html', hash: 'ab', size: 10, mtime: 1700000000000 };
   store.save({ ...store.get(m.id), deletedAt: 1003.0, deletedSource });
   assert(/"archivedAt": 1000\.0/.test(Deno.readTextFileSync(join(root, m.id, 'manifest.json'))), 'times are Python floats');
-  await py.call('artifacts_shim', 'store_run', [root, [{ call: 'set_pinned', args: [m.id, true] }], 1006.0]);
+  storeRun(root, [{ call: 'set_pinned', args: [m.id, true] }], 1006.0);
   const after = store.get(m.id);
-  assertEquals(after.pinned, true, 'Python did write it');
+  assertEquals(after.pinned, true, 'the other store did write it');
   assertEquals([after.archivedAt, after.deletedAt, after.deletedSource], [1000.0, 1003.0, deletedSource]);
   const s = store.summary(after);
   assertEquals([s.archivedAt, s.deletedAt, s.deletedFile], [1000.0, 1003.0, { path: 'r.html' }]);

@@ -1,7 +1,7 @@
 /**
  * Host takeover (test_host_takeover.py) and the cross-language rule: a web server that finds a live agent host from another code
  * folder, or a host of the other language (a Python host met by a Deno web server), takes it over when no chat is working there,
- * waits (banner) while one is, and never stops a busy host. Fake hosts in temp folders (_fake_host.ts), plus one real Python host.
+ * waits (banner) while one is, and never stops a busy host. Fake hosts in temp folders (_fake_host.ts), plus a Python client of the real Deno host.
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
 import { DENO, FAKE_HOST, Fixture, PY, TEST_OPTIONS, until } from './_host_fixture.ts';
@@ -18,7 +18,9 @@ import {
 } from '../../outputs/agent-studio/server/host/host_client.ts';
 import { attachHost } from '../../outputs/agent-studio/server/host/host_proxy.ts';
 import { codeWarning, DENO_SOURCE_HASH } from '../../outputs/agent-studio/server/host/host_client.ts';
-import { PY_REF_DIR } from './_parity.ts';
+import { WORK } from './_work.ts';
+
+const WORK_DIR = decodeURIComponent(WORK.pathname).replace(/^\/([A-Za-z]:)/, '$1').replace(/\/$/, '');
 
 const t = (name: string, fn: () => Promise<void>) => Deno.test({ name, ...TEST_OPTIONS, fn });
 
@@ -133,31 +135,31 @@ t('the web server waits with a banner, then switches over', async () => {
   }
 });
 
-t('cross-language for real: a Deno web server takes over an idle Python agent host, and a Python client drives the Deno host', async () => {
+t('cross-language for real: a Deno web server takes over an idle host with no runtime (an older host), and a Python client drives the Deno host', async () => {
   await using fx = new Fixture();
-  const [py] = fx.spawn([PY, `${PY_REF_DIR}/agent_host.py`, ...fx.agentFlags(), '--idle-exit-minutes', '2'], 'python-host');
-  fx.hostPids.add(py.pid);
-  const pyInfo = await until(async () => await readInfo(fx.state), 'python host file', 30);
-  assertEquals(pyInfo.runtime, undefined);
+  const old = await oldHost(fx, 0, CODE_ROOT, APP_ID, 'none'); // no runtime field: the hosts that ran before the runtime was published
+  const pyInfo = (await readInfo(fx.state))!;
+  assertEquals(pyInfo.pid, old.pid);
+  assertEquals(pyInfo.runtime, undefined, 'no runtime field: an older host');
   // AIB_SEAL=off: on Windows a Deno host seals its token in agent-host.json with DPAPI (security item 7, state/sealed.ts). The
-  // Python reference client below never learned that form (it is not shipped); this compares the plain protocol, as the other
-  // Python interop tests do. secret_files_test.ts proves the sealed file.
+  // Python client below (work/host_support.py, stdlib only) never learned that form; this compares the plain protocol.
+  // secret_files_test.ts proves the sealed file.
   const web = await fx.startWeb([], { env: { AIB_SEAL: 'off' } });
-  await until(() => !pidAlive(pyInfo.pid), 'python host stopped');
+  await until(() => !pidAlive(pyInfo.pid), 'old host stopped');
   const info = (await readInfo(fx.state))!;
   assertEquals(info.runtime, 'deno');
   assertEquals(web.boot.hostPid, info.pid);
   assertEquals(web.boot.hostCodeWarning, '', 'a Deno web server and a Deno host agree about the code hash');
-  // The Python client (host_client.py) attaches to the Deno host: same protocol, same file.
+  // A Python client (work/host_support.py) attaches to the Deno host: same protocol, same file.
   const out = await new Deno.Command(PY, {
     args: [
       '-c',
       [
-        'import sys, json; sys.path.insert(0, sys.argv[1]); import host_client',
+        'import sys, json; sys.path.insert(0, sys.argv[1]); import host_support as host_client',
         'c = host_client.HostClient(host_client.read_info(sys.argv[2]))',
         "i = c.call('info'); print(json.dumps([i['protocol'], i['runtime'], c.call('list')['connections']]))",
       ].join('\n'),
-      PY_REF_DIR,
+      WORK_DIR,
       fx.state,
     ],
     env: fx.env,

@@ -1,6 +1,6 @@
 /** server/acp/elicitation.ts: the cases of work/test_elicitation.py, plus parity with Python's elicitation.py. */
 import { assertEquals, AssertionError } from './_assert.ts';
-import { oracleIs313, PyParity } from './_parity.ts';
+import { PyParity } from './_frozen.ts';
 import {
   validateContent,
   validateSchema,
@@ -18,7 +18,7 @@ type Json = Record<string, unknown>;
  */
 function sameAsOracle(ours: unknown, theirs: unknown): boolean {
   if (JSON.stringify(ours) === JSON.stringify(theirs)) return true;
-  return oracleIs313 && !!ours && typeof ours === 'object' && 'ok' in ours && !!theirs && typeof theirs === 'object' && 'error' in theirs;
+  return false;
 }
 
 function outcome(fn: () => unknown) {

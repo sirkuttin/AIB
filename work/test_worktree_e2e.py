@@ -4,9 +4,8 @@ Every test drives a real Studio the way the page does: a real agent host and a r
 over a temp state folder with server.worktreePerChat on, real temp git repos, and the fake ACP agent (fake_acp.py, which edits
 files and commits in its folder on command). Everything goes through the HTTP API with the page token. No browser, no real agent.
 
-Which server: AIB_SERVER, as for the contract suite (work/contract/server_under_test.py): deno-split (default: the Deno web server
-and Deno agent host), deno (Deno, --in-process: the restart and takeover tests are skipped, there is no host to restart) or python
-(the reference server in work/python-reference).
+Which server: AIB_SERVER (work/server_under_test.py): deno-split (default: the Deno web server
+and Deno agent host) or deno (Deno, --in-process: the restart and takeover tests are skipped, there is no host to restart).
 AIB_DENO names the deno executable if it is not on PATH. The registry is read from its file, as the page's side does, so no test
 reaches into the server's own code.
 
@@ -27,14 +26,12 @@ import urllib.parse
 import urllib.request
 import uuid
 
-sys.path.insert(0, str(_isolation.PY_REF))
-sys.path.insert(0, str(_isolation.TESTS / 'contract'))
-import host_client
+import host_support as host_client
 import server_under_test
-import worktrees
+import host_support as worktrees
 from _e2e_support import FakeHost, Fixture, Web, make_repo, run_git
 
-SERVER_KIND = server_under_test.server_kind()   # AIB_SERVER: deno-split (default), deno or python
+SERVER_KIND = server_under_test.server_kind()   # AIB_SERVER: deno-split (default) or deno
 LAUNCHER = _isolation.TESTS / 'worktree-e2e-agent.py'
 LINES = 'a\nb\nc\nd\ne\nf\n'
 WAIT = 90   # seconds: a deadline, not a delay
@@ -62,8 +59,8 @@ def split_only(reason):
 
 class E2EFixture(Fixture):
     """The e2e fixture (_e2e_support.Fixture), with the plain fake agent as the `claude` launcher. The web server is the one
-    AIB_SERVER names (work/contract/server_under_test.py): deno-split (default; main.ts serve, which starts the Deno agent host),
-    deno (main.ts serve --in-process) or python (the reference, work/python-reference/studio.py, split mode). Each web server gets its own temp state folder and port; cleanup stops the
+    AIB_SERVER names (work/server_under_test.py): deno-split (default; main.ts serve, which starts the Deno agent host),
+    or deno (main.ts serve --in-process). Each web server gets its own temp state folder and port; cleanup stops the
     host it started (host_client.stop_host, then its exact PID) and kills the web servers."""
 
     def agent_flags(self):
@@ -76,23 +73,22 @@ class E2EFixture(Fixture):
         unless AIB_KEEPER=0 is set where the tests run."""
         # AIB_TEST_COPY_CHATS: connect's ownCopy makes a chat in its own copy, as AIB did before 2026-11-16 (owner decision: new chats
         # always work in the project folder; a copy chat made before keeps its copy, Merge and Discard, which is what these tests cover)
-        env = dict(os.environ, AGENT_STUDIO_TEST='1', AIB_TEST_COPY_CHATS='1')
+        # AIB_SEAL=off: the host's token is written in plain form, so host_support.py (stdlib only, no DPAPI) can read agent-host.json
+        env = dict(os.environ, AGENT_STUDIO_TEST='1', AIB_TEST_COPY_CHATS='1', AIB_SEAL='off')
         if SERVER_KIND == 'deno-split':
             env.setdefault('AIB_KEEPER', '0')
         return env
 
     def program(self):
-        if SERVER_KIND == 'python':
-            return [sys.executable, str(_isolation.PY_REF / 'studio.py')]
         if SERVER_KIND in ('deno', 'deno-split'):
             return [server_under_test.deno_executable(), 'run', '-A', '--quiet', str(_isolation.APP / 'server' / 'main.ts')]
-        raise unittest.SkipTest(f'test_worktree_e2e runs against AIB_SERVER=python, deno or deno-split, not {SERVER_KIND!r}')
+        raise unittest.SkipTest(f'test_worktree_e2e runs against AIB_SERVER=deno or deno-split, not {SERVER_KIND!r}')
 
     def start_web(self, *extra, wait=True):
         """A web server on a port the OS picks (`--port 0`); Web.wait_ready reads it back from the server's log."""
         log = open(self.root / f'web-{len(self.logs)}.log', 'wb')
         self.logs.append(log)
-        serve = ['serve', '--in-process'] if SERVER_KIND == 'deno' else (['serve'] if SERVER_KIND == 'deno-split' else [])
+        serve = ['serve', '--in-process'] if SERVER_KIND == 'deno' else ['serve']
         process = subprocess.Popen([*self.program(), *serve, '--port', '0', *self.agent_flags(), '--host-idle-minutes', '0', *extra],
                                    cwd=str(_isolation.APP), stdin=subprocess.DEVNULL, stdout=log, stderr=log,
                                    env=self.env(), creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
@@ -267,7 +263,7 @@ class Env:
 
     # ---- the registry (the host owns it; reading the file is what the page's side does too) ----
     def records(self):
-        return worktrees.Registry(self.state).all()
+        return worktrees.worktree_records(self.state)
 
     def record(self, chat_or_path):
         path = chat_or_path if isinstance(chat_or_path, (str, pathlib.Path)) else chat_or_path.cwd
@@ -822,7 +818,7 @@ class RestartTests(unittest.TestCase):
             if not os.path.exists(wt):
                 return True
             try:
-                shutil.rmtree(worktrees._fs(wt), onerror=force)
+                shutil.rmtree(worktrees.long_path(wt), onerror=force)
             except OSError:
                 return False
             return not os.path.exists(wt)

@@ -1,6 +1,6 @@
 /** server/acp/rpc_errors.ts: the cases of work/test_runtime.py and test_studio.py that cover rpc_errors.py, plus parity with Python. */
 import { assert, assertEquals } from './_assert.ts';
-import { PyParity } from './_parity.ts';
+import { PyParity } from './_frozen.ts';
 import { describeAuthMethods, isAuthRequired, RpcError } from '../../outputs/agent-studio/server/acp/rpc_errors.ts';
 import { clip, pyJsonDumps } from '../../outputs/agent-studio/server/core/py.ts';
 

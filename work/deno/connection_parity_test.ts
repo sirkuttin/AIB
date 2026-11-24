@@ -11,7 +11,7 @@
  * public {after, light}, attention, write_file {name, text}, kill, close. '<cwd>' in a step is the temp folder (with /).
  */
 import { assertEquals } from './_assert.ts';
-import { PyParity } from './_parity.ts';
+import { PyParity } from './_frozen.ts';
 import { FAKE, type Json, PYTHON, STREAM_AGENT, until } from './_connection.ts';
 import { Connection, errorName } from '../../outputs/agent-studio/server/acp/connection.ts';
 
@@ -938,36 +938,22 @@ const SCRIPTS: Script[] = [
 ];
 
 for (const script of SCRIPTS) {
-  Deno.test(`parity: ${script.name}`, async () => {
+  Deno.test(`${script.name}: the events, results, writes, stderr and files give what Python gave`, async () => {
     await using py = new PyParity();
     const agent = script.agent ?? 'fake';
     const flags = script.flags ?? [];
     const provider = script.provider ?? 'gemini';
     const options = script.options ?? {};
-    const expected = scrub(
-      await py.call('connection_shim', 'run_script', [
-        agent,
-        flags,
-        script.steps,
-        provider,
-        options,
-      ]) as Json,
-    );
-    const actual = scrub(
-      await runPort(agent, flags, script.steps, provider, options),
-    );
-    if (script.ordered === false) {
-      assertEquals(
-        unordered(actual.events),
-        unordered(expected.events),
-        'events (any order)',
-      );
-    } else {
-      assertEquals(actual.events, expected.events, 'events');
-    }
-    assertEquals(actual.results, expected.results, 'results');
-    assertEquals(actual.writes, expected.writes, 'writes to the agent');
-    assertEquals(actual.stderr, expected.stderr, 'stderr tail');
-    assertEquals(actual.written, expected.written, 'files written');
+    // what Python's Connection did with the same script: events (any order when the script says so), results, writes, stderr, files
+    const [events, results, writes, stderr, written] = await py.frozenList(`script-${script.name}`, async () => {
+      const run = scrub(await py.call('connection_shim', 'run_script', [agent, flags, script.steps, provider, options]) as Json);
+      return [script.ordered === false ? unordered(run.events) : run.events, run.results, run.writes, run.stderr, run.written];
+    });
+    const actual = scrub(await runPort(agent, flags, script.steps, provider, options));
+    assertEquals(script.ordered === false ? unordered(actual.events) : actual.events, events, script.ordered === false ? 'events (any order)' : 'events');
+    assertEquals(actual.results, results, 'results');
+    assertEquals(actual.writes, writes, 'writes to the agent');
+    assertEquals(actual.stderr, stderr, 'stderr tail');
+    assertEquals(actual.written, written, 'files written');
   });
 }

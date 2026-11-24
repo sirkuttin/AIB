@@ -1,5 +1,5 @@
 /** Shared helpers for the Connection tests: fake agents from work/ run with Python, temp folders, polling. */
-import { python, WORK } from './_parity.ts';
+import { python, WORK } from './_work.ts';
 import { Connection, type ConnectionOptions } from '../../outputs/agent-studio/server/acp/connection.ts';
 
 Deno.env.set('AGENT_STUDIO_TEST', '1'); // the test guard: only fixtures under work/ may be started

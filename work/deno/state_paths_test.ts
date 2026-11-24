@@ -6,7 +6,7 @@
  */
 import { createHash } from 'node:crypto';
 import { assert, assertEquals, assertRejects, assertThrows } from './_assert.ts';
-import { PyParity } from './_parity.ts';
+import { PyParity } from './_frozen.ts';
 import {
   aclProblems,
   adoptSandboxCopy,
@@ -26,6 +26,7 @@ import {
   prepare,
   RealFolderBlocked,
   realUserStateDir,
+  registerMigrate,
   resolve,
   samePath,
   sandboxCopies,
@@ -95,14 +96,13 @@ const exists = (path: string) => {
   }
 };
 
-/** Python's migrate.migrate, through the parity bridge, as the migrate function of Deno's prepare/adoptSandboxCopy. */
-function pythonMigrate(py: PyParity): MigrateFn {
-  return async (source, target, say) => {
-    const reply = await py.call(SHIM, 'migrate', [source, target]) as { result: Migration; messages: string[] };
-    reply.messages.forEach(say);
-    return reply.result;
-  };
-}
+/** Deno's migrate as the migrate function of prepare/adoptSandboxCopy. Importing migrate.ts registers it for every call; this file
+ *  chooses per call, so it is taken back out of the registry at once. */
+const denoMigrate: MigrateFn = async (source, target, say) => {
+  const { migrate } = await import('../../outputs/agent-studio/server/state/migrate.ts');
+  registerMigrate(null);
+  return migrate(source, target, { say });
+};
 
 // ---- locations ---------------------------------------------------------------------------------
 Deno.test('per-user folder per platform, same as Python', async () => {
@@ -180,19 +180,15 @@ Deno.test('precedence: --state-dir, then the environment, then the default; same
   }
 });
 
-Deno.test('hard block: the real per-user folder is refused under test, with the same message as Python', async () => {
-  await using py = new PyParity();
+Deno.test('hard block: the real per-user folder is refused under test, with the message Python gave', () => {
   using tmp = tempRoot();
   const main = checkout(tmp.root, 'main', false);
   const env = realEnv();
   const first = assertThrows(() => resolve(null, env, main), RealFolderBlocked);
   const second = assertThrows(() => realUserStateDir(env), RealFolderBlocked);
   const third = assertThrows(() => resolve(userStateDir(), env, main), RealFolderBlocked); // even when asked for by --state-dir
-  const pyFirst = await py.raw(SHIM, 'resolve', [null, env, main]);
-  const pyThird = await py.raw(SHIM, 'resolve', [userStateDir(), env, main]);
-  assertEquals(pyFirst, { error: 'RealFolderBlocked', message: first.message });
   assertEquals(second.message, first.message);
-  assertEquals(pyThird, { error: 'RealFolderBlocked', message: third.message });
+  assert(third.message.startsWith('Refusing to use the real per-user AIB folder'), third.message);
   assert(first.message.includes('AGENT_STUDIO_TEST=1'));
   assert(!exists(pathOf(tmp.root, 'local')), 'nothing created');
 });
@@ -341,8 +337,7 @@ Deno.test('adoptSandboxCopy: none, conflict, waiting; same as Python', async () 
   assertEquals([snapshot(sandbox), snapshot(real)], before, 'nothing merged or overwritten');
 });
 
-Deno.test('adoptSandboxCopy moves the copy with Python migrate (interop): byte for byte, source kept, not offered again', async () => {
-  await using py = new PyParity();
+Deno.test('adoptSandboxCopy moves the copy with Deno migrate: byte for byte, source kept, not offered again', async () => {
   using tmp = tempRoot();
   const local = pathOf(tmp.root, 'Local');
   const env = { LOCALAPPDATA: local };
@@ -351,7 +346,7 @@ Deno.test('adoptSandboxCopy moves the copy with Python migrate (interop): byte f
   Deno.mkdirSync(pathOf(sandbox, 'worktrees', 'chat1'), { recursive: true });
   Deno.mkdirSync(pathOf(sandbox, 'worktrees', 'chat2'));
   const before = snapshot(sandbox);
-  const [use, result] = await adoptSandboxCopy(real, { env, platform: 'win32', say: () => {}, migrate: pythonMigrate(py) });
+  const [use, result] = await adoptSandboxCopy(real, { env, platform: 'win32', say: () => {}, migrate: denoMigrate });
   assertEquals([use, result.state, result.kind, result.package, result.worktreesLeft], [real, 'done', 'sandbox', FAMILY, 2]);
   const copied = snapshot(real);
   for (const [name, digest] of Object.entries(before)) assertEquals(copied[name], digest, name);
@@ -364,7 +359,6 @@ Deno.test('adoptSandboxCopy moves the copy with Python migrate (interop): byte f
 });
 
 Deno.test('adoptSandboxCopy: waits while the sandbox host runs; several copies take the newest and say so', async () => {
-  await using py = new PyParity();
   using tmp = tempRoot();
   const local = pathOf(tmp.root, 'Local');
   const env = { LOCALAPPDATA: local };
@@ -376,7 +370,7 @@ Deno.test('adoptSandboxCopy: waits while the sandbox host runs; several copies t
   Deno.writeTextFileSync(pathOf(fresh, 'agent-host.json'), JSON.stringify({ pid: Deno.pid })); // a live process
   const messages: string[] = [];
   const before = snapshot(fresh);
-  const [use, result] = await adoptSandboxCopy(real, { env, platform: 'win32', say: (m) => messages.push(m), migrate: pythonMigrate(py) });
+  const [use, result] = await adoptSandboxCopy(real, { env, platform: 'win32', say: (m) => messages.push(m), migrate: denoMigrate });
   assertEquals([use, result.state, result.source], [fresh, 'waiting', fresh]);
   assert(String(result.reason).includes('agent host'), String(result.reason));
   assert(messages.some((m) => m.includes('Several sandbox copies')), messages.join('\n'));
@@ -390,7 +384,6 @@ Deno.test({
   name: 'prepare moves the sandbox copy when unpackaged and leaves it when packaged',
   ignore: !WIN, // prepare() resolves %LOCALAPPDATA% only on Windows
   async fn() {
-    await using py = new PyParity();
     for (const packaged of [false, true]) {
       using tmp = tempRoot();
       const local = pathOf(tmp.root, 'Local');
@@ -402,7 +395,7 @@ Deno.test({
         env,
         codeRoot: code,
         say: () => {},
-        migrate: pythonMigrate(py),
+        migrate: denoMigrate,
         packageContext: () => (packaged ? FAMILY : null),
       });
       assertEquals(plan.stateDir, pathOf(local, 'AgentStudio'));
@@ -429,14 +422,13 @@ function buildOld(old: string): Record<string, string> {
   return snapshot(old);
 }
 
-Deno.test('prepare: a main checkout moves its old default into the user folder once (Python migrate)', async () => {
-  await using py = new PyParity();
+Deno.test('prepare: a main checkout moves its old default into the user folder once (Deno migrate)', async () => {
   using tmp = tempRoot();
   const code = checkout(tmp.root, 'main', false);
   const old = pathOf(tmp.root, 'main', 'work', 'agent-studio-state');
   const before = buildOld(old);
   const env = { LOCALAPPDATA: pathOf(tmp.root, 'local'), XDG_STATE_HOME: pathOf(tmp.root, 'local'), [ENV_TEST]: '1' };
-  const options = { env, codeRoot: code, say: () => {}, migrate: pythonMigrate(py), packageContext: () => null };
+  const options = { env, codeRoot: code, say: () => {}, migrate: denoMigrate, packageContext: () => null };
   const plan = await prepare(options);
   const user = userStateDir(env);
   assertEquals([plan.stateDir, plan.migration.state], [user, 'done']);
@@ -469,7 +461,7 @@ Deno.test('prepare: not attempted runs on the old folder; without a migrate the 
   );
 });
 
-Deno.test('prepare: worktree and explicit folders never migrate unless asked; same as Python', async () => {
+Deno.test('prepare: worktree and explicit folders never migrate unless asked; as Python answered', async () => {
   await using py = new PyParity();
   using tmp = tempRoot();
   const wt = checkout(tmp.root, 'wt', true);
@@ -493,7 +485,7 @@ Deno.test('prepare: worktree and explicit folders never migrate unless asked; sa
   assert(!exists(pathOf(tmp.root, 'local')));
   for (const [cli, code] of [[null, wt], [chosen, main]] as const) {
     const mine = plain(await prepare({ cliStateDir: cli, env, codeRoot: code, say: () => {} }));
-    const theirs = await py.call(SHIM, 'prepare', [cli, null, code, env]) as Record<string, unknown>;
+    const theirs = await py.callFields(SHIM, 'prepare', [cli, null, code, env]);
     assertEquals(mine, { stateDir: theirs.stateDir, migration: theirs.migration, warnings: theirs.warnings }, String(cli));
   }
   assertEquals(snapshot(wtOld), wtBefore);
@@ -505,34 +497,29 @@ Deno.test('prepare: worktree and explicit folders never migrate unless asked; sa
     env,
     codeRoot: wt,
     say: () => {},
-    migrate: pythonMigrate(py),
+    migrate: denoMigrate,
   });
   assertEquals(requested.migration.state, 'done');
   assert(exists(pathOf(peruser, MIGRATED_MARKER)));
 });
 
 // ---- owner-only access -------------------------------------------------------------------------
-Deno.test('a fresh private folder passes, and passes Python check too (and the other way round)', async () => {
-  await using py = new PyParity();
+Deno.test('a fresh private folder passes the check, existing or newly made, with the same owner-only access list', () => {
   using tmp = tempRoot();
   const mine = pathOf(tmp.root, 'private');
   assertEquals(ensurePrivateDir(mine), true);
   assertEquals(aclProblems(mine), []);
   assertEquals(ensurePrivateDir(mine), false, 'existing and private: still fine');
-  assertEquals(await py.call(SHIM, 'acl_problems', [mine]), [], 'python accepts the folder Deno restricted');
-  const theirs = pathOf(tmp.root, 'python-private');
-  assertEquals(await py.call(SHIM, 'ensure_private_dir', [theirs]), { created: true, messages: [] });
-  assertEquals(aclProblems(theirs), [], 'deno accepts the folder Python restricted');
-  if (WIN) {
-    assertEquals(windowsDacl(mine), await py.call(SHIM, 'windows_dacl', [theirs]), 'the same owner-only DACL from both');
-  }
+  const other = pathOf(tmp.root, 'second-private');
+  assertEquals(ensurePrivateDir(other), true);
+  assertEquals(aclProblems(other), []);
+  if (WIN) assertEquals(windowsDacl(mine), windowsDacl(other), 'the same owner-only DACL for every folder made');
 });
 
 Deno.test({
   name: 'Windows: Everyone, Users or Authenticated Users with write access fail, same as Python',
   ignore: !WIN,
-  async fn() {
-    await using py = new PyParity();
+  fn() {
     using tmp = tempRoot();
     for (const [sid, name] of [['S-1-1-0', 'Everyone'], ['S-1-5-32-545', 'Users'], ['S-1-5-11', 'Authenticated Users']]) {
       const folder = pathOf(tmp.root, 'open-' + name.replaceAll(' ', ''));
@@ -541,20 +528,17 @@ Deno.test({
       assertEquals(out.code, 0);
       const problems = aclProblems(folder);
       assert(problems.some((p) => p.includes(name)), `${name}: ${problems}`);
-      assertEquals(problems, await py.call(SHIM, 'acl_problems', [folder]));
-      assertEquals(windowsDacl(folder), await py.call(SHIM, 'windows_dacl', [folder]), 'same ACEs read by SID');
+      assert(JSON.stringify(windowsDacl(folder)).includes(sid), `the open entry ${sid} is in the access list`);
       const error = assertThrows(() => ensurePrivateDir(folder, true), StateDirInsecure);
-      assertEquals(await py.raw(SHIM, 'ensure_private_dir', [folder, true]), { error: 'StateDirInsecure', message: error.message });
+      assert(error.message.includes(name), error.message);
       const warnings: string[] = [];
       ensurePrivateDir(folder, false, (m) => warnings.push(m));
-      assertEquals(warnings, (await py.call(SHIM, 'ensure_private_dir', [folder, false]) as { messages: string[] }).messages);
       assertEquals(warnings.length, 1);
     }
     const readable = pathOf(tmp.root, 'readable');
     Deno.mkdirSync(readable);
     new Deno.Command('icacls', { args: [readable, '/grant', '*S-1-5-32-545:(OI)(CI)R'], stdout: 'null' }).outputSync();
     assertEquals(aclProblems(readable), []);
-    assertEquals(windowsCurrentUserSid(), await py.call(SHIM, 'windows_current_user_sid'));
     assert(windowsCurrentUserSid().startsWith('S-1-5-'));
   },
 });
@@ -562,15 +546,14 @@ Deno.test({
 Deno.test({
   name: 'POSIX: mode 0700, and a group-writable folder is refused',
   ignore: WIN,
-  async fn() {
-    await using py = new PyParity();
+  fn() {
     using tmp = tempRoot();
     const folder = pathOf(tmp.root, 'private');
     ensurePrivateDir(folder);
     assertEquals(Deno.statSync(folder).mode! & 0o777, 0o700);
     Deno.chmodSync(folder, 0o770);
     const error = assertThrows(() => ensurePrivateDir(folder), StateDirInsecure);
-    assertEquals(await py.raw(SHIM, 'ensure_private_dir', [folder, true]), { error: 'StateDirInsecure', message: error.message });
+    assert(error.message.includes(folder), error.message);
   },
 });
 

@@ -64,12 +64,24 @@ def append(session):
 
 
 def announce(session):
-    sys.path.insert(0, str(HERE.parent.parent / 'python-reference'))   # ownership_probe of the Python reference
-    import ownership_probe as op
-    registry = op.OwnerRegistry(DATA / 'owners', client_name='fixture-other-client', client_version='0', instance_id='fixture-other')
+    """Write the announcement file the way an owner registry does (agent-session-owner v1), refreshed every 5 seconds."""
+    import datetime
+    import hashlib
+    owners = DATA / 'owners'
+    owners.mkdir(parents=True, exist_ok=True)
+    prefix = hashlib.sha256(('claude' + chr(0) + session).encode('utf-8')).hexdigest()[:32]
+    path = owners / f'{prefix}--fixtureother.json'
+    stamp = lambda: datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    first = stamp()
     print('announcing', session, 'as PID', os.getpid(), 'host', socket.gethostname(), flush=True)
     while True:
-        registry.announce('claude', session, str(WORKSPACE), 'working')
+        body = {'format': 'agent-session-owner', 'version': 1, 'provider': 'claude', 'sessionId': session,
+                'client': {'name': 'fixture-other-client', 'version': '0', 'instanceId': 'fixture-other'},
+                'pid': os.getpid(), 'pidStart': None, 'hostname': socket.gethostname(), 'cwd': str(WORKSPACE), 'state': 'working',
+                'announcedAt': first, 'heartbeatAt': stamp(), 'ttlSeconds': 30}
+        temporary = path.with_suffix(f'.{os.getpid()}.tmp')
+        temporary.write_text(json.dumps(body), encoding='utf-8')
+        os.replace(temporary, path)
         time.sleep(5)
 
 
