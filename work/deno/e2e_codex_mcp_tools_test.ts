@@ -144,11 +144,16 @@ Deno.test({
   },
 });
 
-/** What AIB tells the chat (same text for every agent) says how Codex finds the tools. */
-Deno.test('PromptNamesTheRecipeTest test_artifact_prompt_has_the_all_tools_recipe', () => {
+/**
+ * What AIB tells the chat (same text for every agent) no longer has the Codex ALL_TOOLS recipe: AIB hands Codex its studio_artifact
+ * entry in CODEX_CONFIG with omit_tools_from (acp/codex_mcp.ts), so the tools are listed directly (e2e_codex_direct_tools_test.ts).
+ * The ACP-listed entry above is what a plain codex-acp does and stays a guard for that shape.
+ */
+Deno.test('PromptNamesTheRecipeTest test_artifact_prompt_has_no_all_tools_recipe', () => {
   const text = Deno.readTextFileSync(join(REPO_DIR, 'app', 'server', 'acp', 'connection.ts')).replace(/\r\n/g, '\n');
   const match = /export const TOOLS_LOADING = ([\s\S]*?);\n/.exec(text);
   assert(match);
-  assert(match[1].includes('ALL_TOOLS'));
-  assert(match[1].includes('await tools.mcp__studio_artifact__publish'));
+  assert(!match[1].includes('ALL_TOOLS'));
+  assert(!match[1].includes('await tools.mcp__studio_artifact__'));
 });
+

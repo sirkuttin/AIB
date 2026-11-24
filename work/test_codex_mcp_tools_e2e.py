@@ -118,14 +118,16 @@ class CodexMcpToolsTest(unittest.TestCase):
 
 
 class PromptNamesTheRecipeTest(unittest.TestCase):
-    """What AIB tells the chat (same text for every agent) says how Codex finds the tools."""
+    """What AIB tells the chat (same text for every agent) has no Codex ALL_TOOLS recipe: AIB gives Codex its studio_artifact entry in
+    CODEX_CONFIG with omit_tools_from (acp/codex_mcp.ts), so the tools are listed directly (e2e_codex_direct_tools_test.ts)."""
 
-    def test_artifact_prompt_has_the_all_tools_recipe(self):
+    def test_artifact_prompt_has_no_all_tools_recipe(self):
         text = (_isolation.APP / 'server' / 'acp' / 'connection.ts').read_text(encoding='utf-8')
-        match = re.search(r"export const TOOLS_LOADING = (.*?);\n", text, re.S)
+        match = re.search(r"export const TOOLS_LOADING = (.*?);
+", text, re.S)
         self.assertTrue(match)
-        self.assertIn('ALL_TOOLS', match.group(1))
-        self.assertIn('await tools.mcp__studio_artifact__publish', match.group(1))
+        self.assertNotIn('ALL_TOOLS', match.group(1))
+        self.assertNotIn('await tools.mcp__studio_artifact__', match.group(1))
 
 
 if __name__ == '__main__':

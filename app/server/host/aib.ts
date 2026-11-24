@@ -1169,7 +1169,10 @@ export class Aib {
             ? { cwd: c.cwd, worktree: !!c.worktree && c.swarm?.role !== 'helper', restricted: !!c.wsl, main: this.#isMain(c) }
             : null;
         },
-        servedTools: (id, names) => this.served?.tools(id, names),
+        servedTools: (id, names) => {
+          this.#toolsAnsweredAt.set(id, Date.now()); // a Codex chat waits for its first tools/list (Connection.toolsServed)
+          this.served?.tools(id, names);
+        },
         baseUrl: () => this.artifactBaseUrl(),
         urlFile: join(this.stateDir, ARTIFACT_URL_FILE),
         // the keeper's MCP forwarder reads it, and every Claude chat's hook forwarder (subagent worktrees), in the keeper or not
@@ -1732,6 +1735,9 @@ export class Aib {
       if (connectionOptions.keeper) connectionOptions.history = this.historyClient();
       if (reopen && connectionOptions.history) connectionOptions.continueStore = reopen.store;
       if (plan) connectionOptions.start = false; // the agent starts in finishSetup, once its worktree exists
+      // A Codex agent starts once the chat's MCP servers are known: they go in its CODEX_CONFIG (acp/codex_mcp.ts), read at its start
+      const codexLate = !plan && isCodexFamily(provider);
+      if (codexLate) connectionOptions.start = false;
       connection = Object.keys(connectionOptions).length
         ? this.connectionFactory(launchCommand, plan ? plan.path : workspace, provider, connectionOptions)
         : this.connectionFactory(launchCommand, plan ? plan.path : workspace, provider);
@@ -1765,6 +1771,7 @@ export class Aib {
         const helper = c.swarm?.role === 'helper'; // a helper gets neither the merge tools (review break 3) nor the swarm tools
         c.mcpServers = [...(this.options.mcpServers ?? []), ...this.artifactMcpServers(c.id, !!c.worktree && !helper, forwarder, this.#isMain(c))];
       }
+      if (codexLate) c.startProcess();
       c.sessionId = resume || null;
       if (!resume && options.picks) c.startPicks = { ...options.picks };
       c.recovery = this.recovery as never;
@@ -1876,6 +1883,7 @@ export class Aib {
   #wire(c: Connection): void {
     c.lines = this.conversationLines;
     c.promptServed = (prompt, base) => this.served?.prompt(c.id, prompt, base);
+    c.toolsServed = (since) => (this.#toolsAnsweredAt.get(c.id) ?? 0) >= since;
     c.beforeQueuedSend = () => this.restartIfStale(c, 'before-send');
     if (this.allow) {
       c.allowGate = this.allow;
@@ -3158,6 +3166,8 @@ export class Aib {
   /** What the restart line says in the chat afterwards. */
   static readonly RESTARTED_NOTE = 'Restarted to pick up new AIB tools';
   readonly #restarting = new Set<string>();
+  /** When AIB's tool server last answered each chat's tools/list (ms; this process only). */
+  readonly #toolsAnsweredAt = new Map<string, number>();
   #staleTimer: ReturnType<typeof setInterval> | null = null;
 
   /**

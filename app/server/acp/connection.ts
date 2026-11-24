@@ -18,6 +18,7 @@ import { factsNow, LinuxFacts, type LinuxNeeds, LinuxView } from '../allow/linux
 import { COLLECT_FACTS, prefetch as prefetchWslFacts, warm as warmWslFacts, type WslFactsSource } from '../allow/wsl_facts.ts';
 import { createHash } from 'node:crypto';
 import { screen } from './acp_schema.ts';
+import { codexUsable, withCodexMcp } from './codex_mcp.ts';
 import { CapError, ClientCaps, type FsMode, type TerminalBackend, type TerminalBase, type TerminalPlan } from './client_caps.ts';
 import { clientTerminalChannel, clientTerminalNote, clientTerminalProblem, KeeperClientTerminal } from './keeper_terminal.ts';
 import {
@@ -679,14 +680,11 @@ export function resolveProgram(program: string, env: Record<string, string>): st
 // ---- the connection -----------------------------------------------------------------------------------------------------------
 
 /**
- * Codex connects to MCP servers in the background: a first prompt sent as the chat opens can find no studio_artifact tools yet
- * (seen in real runs: an ALL_TOOLS search 1 s into the turn came back empty, the same search a second later listed them).
+ * An agent connects to MCP servers in the background: a first prompt sent as the chat opens can find no studio_artifact tools yet.
+ * Codex lists them directly (acp/codex_mcp.ts: omit_tools_from), so it needs no recipe to find them.
  */
-export const TOOLS_LOADING = 'The studio_artifact tools (full names like mcp__studio_artifact__doc) can take a few seconds to ' +
-  'appear at the start of a chat: if you do not see them yet, wait a few seconds and look again (more than once) before telling ' +
-  'the user they are missing. In Codex they are never listed in your tool list: they are deferred nested tools of `exec`, so run ' +
-  '`text(JSON.stringify(ALL_TOOLS.filter(t => t.name.startsWith("mcp__studio_artifact__")).map(t => t.name)))` in `exec` to see them, ' +
-  'then call one as `await tools.mcp__studio_artifact__publish({...})` (the same for doc, artifacts, drawing and the rest, each with its `action`).';
+export const TOOLS_LOADING = 'The studio_artifact tools can take a few seconds to appear at the start of a chat: if you do not see them yet, ' +
+  'wait a few seconds and look again (more than once) before telling the user they are missing.';
 
 /**
  * How the agent writes a command for the user to run. AIB puts a "Run in terminal" button on a fenced shell block in a reply
@@ -703,8 +701,8 @@ export const ARTIFACT_PROMPT =
   'mean this viewer and its studio_artifact tool. ' + DOCS_RULE + ' When you make something else the user ' +
   'should look at rather than source code (an HTML page, one-off report, chart, diagram, SVG or image), ' +
   "save its file under the project's outputs/ folder (for example outputs/report.html), never in the project root " +
-  'or among source files, then publish it with the `publish` tool (pass a file path or the content) and mention it in your reply ' +
-  'as the Markdown link the tool returns. When you change it, call `publish` again with its `id` so it gets a new ' +
+  'or among source files, then publish it with the studio_artifact publish tool (pass a file path or the content) and mention it in your reply ' +
+  'as the Markdown link the tool returns. When you change it, use the studio_artifact update tool so it gets a new ' +
   'version, and do not tell the user to open the file by hand. Only publish to claude.ai (or any other web ' +
   'artifact or sharing service) when the user explicitly asks for a claude.ai page or a shareable link. ' + TOOLS_LOADING + ' ' + COMMANDS_RULE;
 
@@ -716,10 +714,10 @@ export const ARTIFACT_PROMPT =
 export const WSL_ARTIFACT_PROMPT =
   'You are running inside AIB, which shows artifacts beside the chat; when the user says "artifact" they ' +
   'mean this viewer and its studio_artifact tool. This project is in WSL. When you make something the user should look at rather ' +
-  'than source code (an HTML page, one-off report, chart, diagram, SVG, image or PDF), publish it with the `publish` ' +
+  'than source code (an HTML page, one-off report, chart, diagram, SVG, image or PDF), publish it with the studio_artifact publish ' +
   'tool, by its content or by its Linux `path` (relative to the chat folder, or absolute inside the chat or project folder; any ' +
   'kind up to 25 MB, PNG and other images included), and mention it in your reply as the Markdown link the tool returns. AIB copies ' +
-  'a file when you publish it: after changing the file, call `publish` with its `id` and the same path (or the new content) to publish the new ' +
+  'a file when you publish it: after changing the file, call update with the same path (or the new content) to publish the new ' +
   'version. AIB helper tools are not available in WSL projects. ' + TOOLS_LOADING + ' ' + COMMANDS_RULE.replace(' (powershell on Windows)', '');
 
 /** How long codex-acp waits for AIB's tool server before the first turn (architect review S5: 10 s, the forwarder retries 15 s itself). */
@@ -729,7 +727,7 @@ export const WORKTREE_PROMPT =
   'In this chat you work in your own copy of the project, on the git branch {branch} (it started from {base}). ' +
   'Helpers you start work in their own copies: when one finishes, merge its branch into yours with `git merge <branch>`. ' +
   "When your work is done and tested (for example before a release), merge it into the project's main branch yourself with the " +
-  "merge_into_project tool (action merge); you don't need to ask first. If main has moved, the tool brings main into your copy: resolve any " +
+  "merge_into_project tool; you don't need to ask first. If main has moved, the tool brings main into your copy: resolve any " +
   'conflicts there, commit, and call it again.';
 
 /**
@@ -1201,6 +1199,10 @@ export class Connection {
    * per chat which prompt it served (artifacts/served.ts). Never called for a keeper replay: nothing is sent then.
    */
   promptServed: ((prompt: string, base: string) => void) | null = null;
+  /** True once AIB's tool server has answered this chat's tools/list at or after `since` (ms): set by the host for Codex chats. */
+  toolsServed: ((since: number) => boolean) | null = null;
+  /** When this agent process started (ms), for toolsServed. */
+  processStartedAt = Date.now();
   /**
    * Set by AIB: called right before the queue sends a message to the agent (a queued or a scheduled one). True = AIB replaced this
    * connection (restarted a stale chat); the new connection sends the queue, so this one sends nothing.
@@ -1600,11 +1602,40 @@ export class Connection {
     this.writes = new WriteTracker(this.cwd); // nothing was observed yet: the same as changing its folder
   }
 
+  /** CODEX_CONFIG could not take the MCP servers (not a JSON object): the chat keeps the ACP route. */
+  #codexConfigRefused = false;
+
+  /**
+   * Does this chat's agent get its MCP servers in CODEX_CONFIG instead of session/new (codex-acp 2.6)? Codex family with a server it
+   * can run. See acp/codex_mcp.ts: this is what puts AIB's tools straight into the model request, and it never replaces the user's
+   * own servers. `mcpServers` stays the record (prompt, approvals, take-over).
+   */
+  mcpInConfig(): boolean {
+    return isCodexFamily(this.provider) && !this.#codexConfigRefused && codexUsable(this.mcpServers).length > 0;
+  }
+
+  /** What session/new, session/load and session/resume list as `mcpServers`: nothing when the servers are in CODEX_CONFIG. */
+  #acpMcp(servers: McpServer[]): McpServer[] {
+    return this.mcpInConfig() ? [] : servers;
+  }
+
+  /** The agent's environment with the chat's MCP servers merged into its CODEX_CONFIG (Codex family; `inherited`: the server's own). */
+  #withMcpConfig(env: Record<string, string>, inherited: string | undefined): Record<string, string> {
+    if (!this.mcpInConfig()) return env;
+    const merged = withCodexMcp(env.CODEX_CONFIG ?? inherited, this.mcpServers, (server) => isOwnArtifactEntry(server));
+    if (merged === null) {
+      this.#codexConfigRefused = true;
+      return env;
+    }
+    return { ...env, CODEX_CONFIG: merged };
+  }
+
   startProcess(): void {
+    this.processStartedAt = Date.now();
     if (this.wsl) return this.#startInWsl();
     if (this.keeper) return this.#startInKeeper();
     const [program, ...args] = this.command;
-    const extra = { ...testHomeEnv(this.command), ...(this.env ?? {}) };
+    const extra = this.#withMcpConfig({ ...testHomeEnv(this.command), ...(this.env ?? {}) }, Deno.env.get('CODEX_CONFIG'));
     const child = new Deno.Command(program, {
       args,
       cwd: this.cwd,
@@ -1630,7 +1661,7 @@ export class Connection {
   /** Start the agent as a keeper channel. Writes made before the keeper answers wait for it, in order. */
   #startInKeeper(): void {
     const [program, ...args] = this.command;
-    const env: Record<string, string> = { ...Deno.env.toObject(), ...testHomeEnv(this.command), ...(this.env ?? {}) };
+    const env: Record<string, string> = this.#withMcpConfig({ ...Deno.env.toObject(), ...testHomeEnv(this.command), ...(this.env ?? {}) }, undefined);
     delete env.DENO_SERVE_ADDRESS;
     const channel = this.keeper!.spawn(
       { channel: `chat-${this.id}`, command: resolveProgram(program, env), args, cwd: this.cwd, env },
@@ -1647,7 +1678,7 @@ export class Connection {
   #startInWsl(): void {
     const wsl = this.wsl!;
     const [program, ...args] = this.command;
-    const env: Record<string, string> = { ...(wsl.env ?? {}), ...wslTestHomeEnv(), ...(this.env ?? {}) };
+    const env: Record<string, string> = this.#withMcpConfig({ ...(wsl.env ?? {}), ...wslTestHomeEnv(), ...(this.env ?? {}) }, undefined);
     const channel = this.keeper!.spawn(
       { channel: `chat-${this.id}`, command: wsl.program || program, args, cwd: this.agentCwd, env },
       this.#keeperListener(),
@@ -4523,8 +4554,8 @@ export class Connection {
           {
             sessionId: resume,
             cwd: this.agentCwd,
-            mcpServers,
-            ...this.artifactPrompt(mcpServers),
+            mcpServers: this.#acpMcp(mcpServers),
+            ...this.artifactPrompt(this.mcpInConfig() ? this.mcpServers : mcpServers),
             ...this.extraFolders(),
             ...this.claudeMeta(),
             ...this.codexMeta(),
@@ -4540,8 +4571,8 @@ export class Connection {
     } else {
       result = await this.#setupSessionCall('session/new', {
         cwd: this.agentCwd,
-        mcpServers,
-        ...this.artifactPrompt(mcpServers),
+        mcpServers: this.#acpMcp(mcpServers),
+        ...this.artifactPrompt(this.mcpInConfig() ? this.mcpServers : mcpServers),
         ...this.extraFolders(),
         ...this.claudeMeta(),
         ...this.codexMeta(),
@@ -4557,8 +4588,24 @@ export class Connection {
       await this.applyModelQuirk();
       this.#checkSetupAbort();
     }
+    await this.#awaitToolsServed();
     this.#markReady();
     if (continuedUpdates) this.#showOutsideTurns(continuedUpdates);
+  }
+
+  /**
+   * Codex family, servers in CODEX_CONFIG: codex-acp's startup wait (`_meta.mcpStartupAwaitTimeoutMs`) covers only servers listed in
+   * session/new, so AIB waits itself, up to the same time, until AIB's tool server has answered this chat's first tools/list (the
+   * chat shows "starting" meanwhile). Without it a first prompt can find no studio_artifact tools yet (a slow forwarder start).
+   * Best effort: no hook, a chat whose tool server leaves no record (dev stdio) or a late server just ends the wait.
+   */
+  async #awaitToolsServed(): Promise<void> {
+    const served = this.toolsServed;
+    // only the keeper forwarder's and the WSL tunnel's tools/list leave a record (artifacts/served.ts)
+    const forwarded = this.mcpServers.some((s) => isOwnArtifactEntry(s) && 'args' in s && s.args[0] === 'mcp-forward');
+    if (!served || !this.mcpInConfig() || !forwarded) return;
+    const until = Date.now() + CODEX_MCP_STARTUP_WAIT_MS;
+    while (!served(this.processStartedAt) && Date.now() < until && !this.closed) await new Promise((r) => setTimeout(r, 50));
   }
 
   /** What the `initialize` result (this.initial) sets; returns the MCP servers this agent gets. Live setup and replay share it. */
@@ -4836,8 +4883,8 @@ export class Connection {
       result = await this.request('session/load', {
         sessionId: this.sessionId,
         cwd: this.agentCwd,
-        mcpServers: this.#sessionMcp,
-        ...this.artifactPrompt(this.#sessionMcp),
+        mcpServers: this.#acpMcp(this.#sessionMcp),
+        ...this.artifactPrompt(this.mcpInConfig() ? this.mcpServers : this.#sessionMcp),
         ...this.extraFolders(),
         ...this.claudeMeta(),
         ...this.codexMeta(),

@@ -660,7 +660,7 @@ export const execCall = (tid: string, cmd: string) => ({ id: tid, name: 'exec_co
 /** A real AIB with one Codex chat in a temp git project, driven turn by turn. */
 export class AibCodex {
   temp!: Temp;
-  cards: { title: string; raw: string }[] = [];
+  cards: { title: string; raw: string; id?: string; label?: string }[] = [];
   seen = new Set<string>();
   mark = `srcx${uuid().slice(0, 6)}`;
   project!: string;
@@ -672,7 +672,7 @@ export class AibCodex {
   skipped = false;
 
   /** rules: a list, or a function of the project folder (known only once this made it). userConfig: merged into CODEX_CONFIG. */
-  static async start(rules: unknown[] | ((project: string) => unknown[]), userConfig: Record<string, unknown> = {}): Promise<AibCodex> {
+  static async start(rules: unknown[] | ((project: string) => unknown[]), userConfig: Record<string, unknown> = {}, options: { keeper?: boolean } = {}): Promise<AibCodex> {
     const aib = new AibCodex();
     aib.temp = new Temp('aib-srcx-');
     if (aib.temp.path.includes(' ')) throw new Error('the temp folder has a space: Codex hooks cannot name the keeper there (TEMP=a scratch folder)');
@@ -691,7 +691,7 @@ export class AibCodex {
     const config = { ...provider, ...userConfig };
     aib.temp.mkdir('tmp');
     const tmp = aib.temp.join('tmp');
-    aib.fx = new CodexFixture(agentTempRoot(), {
+    aib.fx = new CodexFixture(options.keeper === true, agentTempRoot(), {
       AGENT_STUDIO_ALLOW_REAL_AGENT: '1',
       AIB_KEEPER_BIN: keeper,
       CODEX_CONFIG: JSON.stringify(config),
@@ -720,7 +720,8 @@ export class AibCodex {
       const call = ((item.params as Json | undefined)?.toolCall as Json | undefined) ?? {};
       if (!this.seen.has(item.key as string)) {
         this.seen.add(item.key as string);
-        this.cards.push({ title: String(call.title), raw: JSON.stringify(call.rawInput ?? null).slice(0, 600) });
+        const rule = ((((item.allow as Json | undefined)?.project as Json | undefined)?.rules as Json[] | undefined) ?? [])[0];
+        this.cards.push({ title: String(call.title), raw: JSON.stringify(call.rawInput ?? null).slice(0, 600), id: String(call.toolCallId), label: rule ? String(rule.label) : '' });
       }
     }
     await approveAll(this.chat);
@@ -779,8 +780,14 @@ export class AibCodex {
 }
 
 class CodexFixture extends E2EFixture {
-  constructor(parent: string, extraEnv: Record<string, string>) {
+  constructor(readonly keeper: boolean, parent: string, extraEnv: Record<string, string>) {
     super('worktree-e2e-agent.py', parent, extraEnv);
+  }
+  /** keeper: the chat's agent runs in the keeper (AIB's MCP forwarder entry), as in a real build; else the split agent host. */
+  override get env(): Record<string, string> {
+    const env = { ...super.env };
+    if (this.keeper) delete env.AIB_KEEPER;
+    return env;
   }
   override agentFlags(): string[] {
     return [...super.agentFlags(), '--codex-launcher', CODEX_ACP!, '--node-command', NODE_EXE!];
