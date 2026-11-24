@@ -1,0 +1,27 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "deno run --quiet --no-prompt --no-config --no-lock --allow-read --allow-write --allow-env --allow-run=git \"$CLAUDE_PROJECT_DIR/.claude/hooks/aib-guard.ts\" pre",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "deno run --quiet --no-prompt --no-config --no-lock --allow-read --allow-write --allow-env --allow-run=git \"$CLAUDE_PROJECT_DIR/.claude/hooks/aib-guard.ts\" stop",
+            "timeout": 20
+          }
+        ]
+      }
+    ]
+  }
+}

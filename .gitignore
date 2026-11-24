@@ -6,7 +6,9 @@ work/*-fixture/state/
 work/*-fixture/claude/
 work/*-fixture/omp/
 node_modules/
-.claude/
+.claude/*
+!.claude/settings.json
+!.claude/hooks/
 work/ownership-fixture/data/
 work/deploy-fixture/
 # Pages and files agents make for viewing (artifacts) land loose in outputs/; Studio's artifact store keeps their versions.
