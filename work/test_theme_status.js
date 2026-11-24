@@ -98,7 +98,7 @@ test('status chips and dots paint with the status tokens', () => {
   assert.equal(colour(declarationsFor(chat, '.st-needs_you').background), tokens['--status-needs']);
   const activity = sheet('activity.css');
   assert.equal(declarationsFor(activity, '.sa-working .sa-dot').background, 'var(--status-working)');
-  assert.equal(declarationsFor(activity, '.sa-completed .sa-dot').background, 'var(--status-done)');
+  assert.equal(declarationsFor(activity, '.sa-completed .sa-dot').background, 'var(--activity-dot-bg)'); // owner: finished dots are grey
 });
 
 test('Activity: subagent dots are round, process dots are small squares', () => {

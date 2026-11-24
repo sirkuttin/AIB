@@ -290,8 +290,9 @@ body {
 .subagent-card.sa-failed .sa-when {
   color: var(--text-muted);
 }
+/* owner 2026-11-24: a finished row's dot is grey, the same for helpers and subagents; green belongs to nothing finished */
 .sa-completed .sa-dot {
-  background: var(--status-done);
+  background: var(--activity-dot-bg);
 }
 .sa-failed .sa-dot,
 .proc-failed .sa-dot {
