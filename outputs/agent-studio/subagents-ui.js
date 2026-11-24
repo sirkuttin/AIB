@@ -574,11 +574,12 @@
     return id ? rows.filter((r) => r !== a && r.parentAgentId === id) : [];
   }
   const storeKey = (k) => 'studio-subagents-finished:' + k;
-  function expanded(convKey) {
+  function expanded(convKey, dflt) {
     try {
-      return localStorage.getItem(storeKey(convKey)) === '1';
+      const v = localStorage.getItem(storeKey(convKey));
+      return v === null ? !!dflt : v === '1';
     } catch (e) {
-      return false;
+      return !!dflt;
     }
   }
   function remember(convKey, open) {
@@ -671,10 +672,11 @@
   }
   /* One chat's subagents in its Activity section (chat.js renderProjectActivity), no heading of its own (the section's SUBAGENTS
      label). Finished helpers fold into "N finished", remembered per chat, so a section never changes when the open chat changes.
-     Every section, working or idle, folds its finished rows the same way. */
+     Every section, working or idle, folds its finished rows the same way; ctx.openDefault: open until the owner closes it (an idle
+     chat's section, whose own head already says "N finished"). */
   function render(ctx) {
     const m = model(ctx.rows, ctx.now, ctx.chatModel),
-      open = expanded(ctx.convKey);
+      open = expanded(ctx.convKey, ctx.openDefault);
     if (ctx.onModel) ctx.onModel(m);
     const sig = JSON.stringify([
       ctx.convKey,

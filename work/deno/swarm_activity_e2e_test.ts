@@ -179,11 +179,16 @@ Deno.test({
       const boxes = { idle: `${IDLE(idle.key)} .sp-subs`, busy: `${SEC(busy.key)} .sp-subs` };
       const seen: Record<string, Rows> = {};
       for (const [where, box] of Object.entries(boxes)) {
-        await page.waitFor(`(${rows(box)})?.fold === '▸ 2 finished'`, 20000, `${where}: the fold row "2 finished"`).catch(async (e) => {
+        // a working section starts folded (one click on its fold); an idle one is open by default: its head's one click shows the rows
+        const first = where === 'idle' ? '▾ 2 finished' : '▸ 2 finished';
+        await page.waitFor(`(${rows(box)})?.fold === ${JSON.stringify(first)}`, 20000, `${where}: the fold row "2 finished"`).catch(async (e) => {
           throw new Error(`${e.message}: ${JSON.stringify(await page.eval(rows(box)))}`);
         });
-        assertEquals((await page.eval<Rows>(rows(box))).cards.length, 0, `${where}: folded rows are not listed flat`);
-        await page.click(`${box} .sa-toggle`);
+        if (where === 'idle') assertEquals((await page.eval<Rows>(rows(box))).cards.length, 2, 'idle: one click on the head shows both rows');
+        else {
+          assertEquals((await page.eval<Rows>(rows(box))).cards.length, 0, `${where}: folded rows are not listed flat`);
+          await page.click(`${box} .sa-toggle`);
+        }
         await page.waitFor(`(${rows(box)})?.cards.length === 2`, 10000, `${where}: both finished rows under the fold`);
         seen[where] = await page.eval<Rows>(rows(box));
         assertEquals(seen[where].working, 0, `${where}: nothing shows as working`);
@@ -195,6 +200,15 @@ Deno.test({
       }
       assertEquals(seen.idle.cards[0].cls, seen.busy.cards[0].cls, 'the same row look in both sections');
       assertEquals(seen.idle.cards[0].dot, seen.busy.cards[0].dot, 'the same done dot in both sections');
+      // closing the idle chat's own fold is remembered across collapsing and expanding the chat
+      await page.click(`${boxes.idle} .sa-toggle`);
+      await page.waitFor(`(${rows(boxes.idle)})?.cards.length === 0`, 10000, 'idle: the fold closes');
+      await page.click(IDLE_HEAD);
+      await page.waitFor(`document.querySelector(${JSON.stringify(IDLE(idle.key))}).classList.contains('sp-open') === false`, 10000, 'idle: collapsed');
+      await page.click(IDLE_HEAD);
+      await page.waitFor(`(${rows(boxes.idle)})?.fold === '▸ 2 finished'`, 10000, 'idle: reopened with its fold still closed');
+      await page.click(`${boxes.idle} .sa-toggle`);
+      await page.waitFor(`(${rows(boxes.idle)})?.cards.length === 2`, 10000, 'idle: the fold opens again');
       // clicking a merged helper row opens its own history in the panel, with no error banner
       const openRow = (box: string, title: string) => page.eval<boolean>(`(() => { const c = [...document.querySelectorAll(${JSON.stringify(box + ' .subagent-card')})]
         .find((n) => n.querySelector('.sa-title')?.textContent === ${JSON.stringify(title)}); if (!c) return false; c.click(); return true; })()`);

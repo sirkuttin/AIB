@@ -219,8 +219,6 @@ panelTest('right panel: an idle chat with finished helpers is collapsed below ("
   assertEquals((await sections(page)).badge, '1', 'the tab counts working chats only');
   const w0 = (await sections(page)).panelW;
   await page.click(`${IDLE_SEC(done.key)} .sp-ihead`);
-  await page.waitFor(`!!document.querySelector(${JSON.stringify(IDLE_SEC(done.key) + ' .sa-toggle')})`, 10000, 'the finished fold in the idle section');
-  await page.click(`${IDLE_SEC(done.key)} .sa-toggle`); // the idle section folds its finished rows into "N finished", as a working one does
   await waitIdle(page, `i.open.length === 1 && i.titles[0].length === 3`, 'expanded: the three finished helpers');
   i = await idles(page);
   assertEquals(i.heads[0], '▾|3 finished|Claude Code|on');
@@ -254,8 +252,6 @@ panelTest('right panel: opening an idle chat moves only the accent: it does not 
   const two = await idleChat(lab, 'TWOEND', [['Second helper', 'completed'], ['Third helper', 'completed']]);
   await waitIdle(page, `JSON.stringify(i.heads) === '["▸|2 finished|Claude Code|on","▸|1 finished|Claude Code|on"]'`, 'both idle with counts');
   await page.click(`${IDLE_SEC(two.key)} .sp-ihead`); // one expanded, one collapsed
-  await page.waitFor(`!!document.querySelector(${JSON.stringify(IDLE_SEC(two.key) + ' .sa-toggle')})`, 10000, 'the finished fold in the idle section');
-  await page.click(`${IDLE_SEC(two.key)} .sa-toggle`); // the idle section folds its finished rows into "N finished", as a working one does
   await waitIdle(page, `i.open.length === 1 && i.titles[0].length === 2`, 'two expanded');
   await settle(2500);
   const s0 = await sections(page), i0 = await idles(page);

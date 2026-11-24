@@ -6409,6 +6409,7 @@
           rows,
           now: nowS,
           convKey: key,
+          openDefault: true,
           selectedKey: key === subOwner ? subSelection?.key : undefined,
           chatModel: '',
           empty: '',

@@ -115,8 +115,6 @@ panelTest('S1: an expanded idle chat is read once, not at the poll pace', async 
   const done = await idleChat(lab, 'DONEEND', [['Port the parser', 'completed'], ['Check the docs', 'completed']]);
   await waitIdle(page, `i.heads[0] === '▸|2 finished|Claude Code|on'`, 'done: caret and "2 finished"');
   await page.click(`${IDLE_SEC(done.key)} .sp-ihead`);
-  await page.waitFor(`!!document.querySelector(${JSON.stringify(IDLE_SEC(done.key) + ' .sa-toggle')})`, 10000, 'the finished fold');
-  await page.click(`${IDLE_SEC(done.key)} .sa-toggle`); // the idle section folds its finished rows like a working one
   await waitIdle(page, `i.open.length === 1 && i.titles[0].length === 2`, 'expanded');
   await settle(800); // its read on expanding is done (the page polls 5x faster here: POLL_SCALE)
   const mine = `(n.includes(${JSON.stringify(done.id)}) || n.includes(${JSON.stringify(done.sid)}))`;

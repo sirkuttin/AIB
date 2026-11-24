@@ -135,7 +135,6 @@ Deno.test({
       assertEquals(i.heads[i.keys.indexOf('claude:sess-5')], '||off', 'nothing finished: no caret, no count');
       assertEquals([i.open, i.focus], [[], ['claude:sess-5']], 'collapsed; the open idle chat has the accent');
       await page.click(`#projectActivity > .sp-idle-list > .sp-idle[data-key="claude:sess-7"] .sp-ihead`);
-      await page.click(`#projectActivity > .sp-idle-list > .sp-idle[data-key="claude:sess-7"] .sa-toggle`); // the fold of finished rows
       await waitIdle(`i.open[0] === 'claude:sess-7' && i.titles[i.keys.indexOf('claude:sess-7')].length === 2`, 'expanded: the two finished helpers');
       await open('claude:sess-1');
       await page.waitFor(`(${SECTIONS}).focus[0] === 'claude:sess-1'`, 15000, 'the accent on the open chat');
