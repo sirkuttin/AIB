@@ -287,6 +287,26 @@ export interface HandlerOptions {
   tempDir?: string;
   /** AIB's own lines of a conversation (history/lines.ts: turn ends, AIB notes), merged into its saved transcript's pages. */
   keptLines?: (provider: string, sessionId: string) => KeptLine[];
+  /**
+   * Why a chat's commands stopped for good (by transcript key): '' when they did not. AIB ended a finished helper's chat, so its saved
+   * transcript never says its background commands ended: they read as stopped ("stopped: helper finished"), never as running.
+   */
+  stoppedWhy?: (key: string) => string;
+}
+
+/** The commands of a chat AIB stopped (HandlerOptions.stoppedWhy): running or unknown ones become `killed` with the reason. */
+function withStopped(tasks: Task[], options: HandlerOptions): Task[] {
+  if (!options.stoppedWhy) return tasks;
+  const why = new Map<string, string>();
+  return tasks.map((task) => {
+    if (!RUNNING.includes(task.status as string) && task.status !== 'unknown') return task;
+    const key = typeof task.agentKey === 'string' ? task.agentKey : '';
+    if (!why.has(key)) why.set(key, key ? options.stoppedWhy!(key) : '');
+    const reason = why.get(key)!;
+    return reason
+      ? { ...task, status: 'killed', stoppedReason: reason, completionSummary: `Stopped: ${reason}.` }
+      : task;
+  });
 }
 
 /** JSON.rawJSON (V8): a number written with exactly these digits (a nanosecond mtime exceeds a double's precision). */
@@ -398,7 +418,7 @@ export async function handleGet(source: Source, path: string, query: string, opt
     }
     if (path === '/api/commands') {
       const quick = await commandListQuick(source, arg('session'));
-      let commands = quick.tasks;
+      let commands = withStopped(quick.tasks, options);
       const running = commands.filter((t) => RUNNING.includes(t.status as string)).length;
       if (arg('running') === '1') commands = commands.filter((t) => RUNNING.includes(t.status as string));
       const shown = commands.slice(0, 200).map((task) =>
@@ -408,7 +428,7 @@ export async function handleGet(source: Source, path: string, query: string, opt
       return json(200, { commands: shown, running, total: commands.length, ...(quick.pending ? { pending: true } : {}), ...(quick.stale ? { stale: true } : {}) });
     }
     if (path === '/api/command') {
-      const commands = await commandList(source, arg('session'));
+      const commands = withStopped(await commandList(source, arg('session')), options);
       const task = commands.find((t) => t.id === arg('id'));
       if (task === undefined) throw new ValueError('Unknown background command');
       return json(200, { ...task, output: await commandOutput(arg('session'), task, options.tempDir) });

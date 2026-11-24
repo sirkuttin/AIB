@@ -76,6 +76,11 @@ export interface Helper {
   turnEndedAt: string;
   cursor: number;
   reports: Report[];
+  /**
+   * When AIB ended this finished helper's chat, so its agent and every process under it stopped (service.ts #endHelper): the Activity
+   * rows of its processes read "stopped: helper finished" from then on (stoppedWhyIn). `processes`: how many ran under it.
+   */
+  ended?: { at: number; why: string; processes: number };
   /** When its worktree and branch were removed (cleanup: after a merge, once its chat is closed). */
   cleanedAt?: number;
   /** The chat's name ("<title> (<agent>)") was written to the chat names once; an owner's rename or clear is never put back. */
@@ -305,4 +310,22 @@ export class Registry {
 
 export function newHelperId(): string {
   return 'h_' + crypto.randomUUID().replaceAll('-', '').slice(0, 8);
+}
+
+/**
+ * Why a saved chat's background commands stopped, by transcript key ("claude/<folder>/<sessionId>.jsonl"): "helper finished" when the
+ * key is the chat of a helper AIB ended (Helper.ended), else ''. The Activity rows of such a chat turn grey (transcripts/monitor.ts).
+ */
+export function stoppedWhyIn(stateDir: string): (key: string) => string {
+  return (key: string) => {
+    for (const h of Object.values(readHelpers(stateDir))) {
+      if (!h.ended || !h.chat.lasting) continue;
+      const at = h.chat.lasting.indexOf(':');
+      if (at < 1) continue;
+      const provider = h.chat.lasting.slice(0, at).split('@')[0];
+      const session = h.chat.lasting.slice(at + 1);
+      if (session && key.startsWith(provider + '/') && key.includes(session)) return 'helper finished';
+    }
+    return '';
+  };
 }

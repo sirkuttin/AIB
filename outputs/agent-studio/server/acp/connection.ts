@@ -1348,6 +1348,11 @@ export class Connection {
   onWritesDone: ((connection: Connection, paths: string[]) => void) | null = null;
   /** Number of the latest prompt() accepted. */
   promptSeq = 0;
+  /**
+   * The owner (or anything but AIB's own swarm and merge messages) sent this chat a message: a helper the owner typed into is left
+   * alone by the end-of-helper sweep (swarm/service.ts #endable). Kept in the snapshot, so it survives a rebuild.
+   */
+  ownerTouched = false;
   /** cancel() cancels every prompt up to this number (one still before its send is dropped; later ones go through). */
   cancelSeq = 0;
   /** Studio hook (worktree live sync): called before the prompt is sent. */
@@ -2263,6 +2268,7 @@ export class Connection {
     this.knownSessions = new Set(Array.isArray(s.knownSessions) ? s.knownSessions.filter(isStr) : []);
     this.counter = isInt(s.counter) ? s.counter : 0;
     this.promptSeq = isInt(s.promptSeq) ? s.promptSeq : 0;
+    this.ownerTouched = s.ownerTouched === true;
     this.cancelSeq = isInt(s.cancelSeq) ? s.cancelSeq : 0;
     this.changeSeq = isInt(s.changeSeq) ? s.changeSeq : 0;
     this.changeFailures = Array.isArray(s.changeFailures) ? s.changeFailures.filter(isDict) as Json[] : [];
@@ -2378,6 +2384,7 @@ export class Connection {
       knownSessions: [...this.knownSessions],
       counter: this.counter,
       promptSeq: this.promptSeq,
+      ownerTouched: this.ownerTouched,
       cancelSeq: this.cancelSeq,
       changeSeq: this.changeSeq,
       changeFailures: this.changeFailures,
@@ -3228,6 +3235,11 @@ export class Connection {
       }
     }
     return this.#bgShells.size > 0;
+  }
+
+  /** How many processes run under the agent right now (what ending a finished helper's chat takes down); 0 when they cannot be listed. */
+  processCount(): number {
+    return this.#descendants(true)?.length ?? 0;
   }
 
   /** The background shells this chat counts as running now (task ids), for tests and the log. */
@@ -4943,6 +4955,7 @@ export class Connection {
     if (!isStr(text) || pyLen(text) > 200000) {
       throw new ValueError('Prompt text must be at most 200,000 characters');
     }
+    if (!(isStr(clientMessageId) && /^(swarm|merge)-/.test(clientMessageId))) this.ownerTouched = true;
     let imageBlocks: ImageBlock[] = [];
     let fileBlocks: Json[] = [];
     let fileSummaries: FileSummary[] = [];
@@ -7404,6 +7417,7 @@ export class Connection {
       sessionId: this.sessionId,
       busy: this.busy,
       closed: this.closed,
+      ownerTouched: this.ownerTouched,
       error: this.error,
       // open elsewhere: another app holds this chat; `released` once AIB let go of it (ownership/handoff.ts)
       ...(this.elsewhere ? { elsewhere: { app: this.elsewhere.app, released: this.elsewhere.released } } : {}),

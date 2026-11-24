@@ -51,7 +51,7 @@ export const OPEN_MS = 120_000;
 /** helper_status calls within this time get the same answer plus a reminder that reports come on their own (review 28). */
 export const STATUS_THROTTLE_MS = 60_000;
 export const TOOL_NAMES = ['helper_providers', 'start_helper', 'helper_status', 'stop_helper', 'merge_helper'] as const;
-export const NOTE_KINDS = ['swarm-start', 'swarm-report', 'swarm-merge', 'swarm-undo', 'swarm-stop', 'swarm-fail'];
+export const NOTE_KINDS = ['swarm-start', 'swarm-report', 'swarm-merge', 'swarm-undo', 'swarm-stop', 'swarm-fail', 'swarm-ended'];
 export const NOTE_ACTIONS = ['swarm-undo', 'swarm-merge-again', 'swarm-open'];
 
 export interface SwarmHost {
@@ -106,6 +106,13 @@ export const LANDING_REMIND_S = 1800;
 export const LANDING_DIRTY_RETRY_S = 300;
 /** Merge refusals a later try may not meet (git busy, the branch moving, a chat in the folder working). */
 const RETRY_CODES = new Set(['busy', 'locked', 'moving', 'ff_failed', 'folder_busy', 'running', 'stash_failed', 'failed']);
+
+/**
+ * A finished helper's chat is ended (its agent and every process under it stop) this long after it was done or stopped and idle
+ * (owner 2026-11-23: nothing a helper started may outlive it). Merged, discarded and failed helpers are ended at once. Tests set
+ * `Swarm.endIdleMs`.
+ */
+export const END_IDLE_MS = 30 * 60_000;
 
 /** A finished subagent with no changes whose chat is not open goes this long after its end (#dropEmptyOrphan). */
 export const ORPHAN_EMPTY_S = 30 * 60;
@@ -208,6 +215,8 @@ export class Swarm {
   #sweepAt = 0;
   clock: () => number = Date.now;
   openMs = OPEN_MS;
+  /** How long a done or stopped helper idles before its chat is ended (END_IDLE_MS; tests make it short). */
+  endIdleMs = END_IDLE_MS;
 
   /** Own-copy chats' merges that wait for the chats in the project folder (build plan 2.3), run by the same watcher. */
   readonly copyMerges: CopyMergeQueue;
@@ -1595,6 +1604,82 @@ export class Swarm {
     for (const h of this.registry.all()) if (h.kind !== 'subagent') await this.#cleanup(h.id, chats);
   }
 
+  // ---- ending a finished helper (owner 2026-11-23: "if they are done we need to make sure we shut down any processes that they started") ----
+  /**
+   * Every helper that is finished has its chat ended: its keeper channel closes, so its agent and every process under it stop (on
+   * Windows the channel is a job with no breakaway; exact for every provider). Right away once its work is merged, discarded or it
+   * failed; after endIdleMs once it is done or stopped and idle. Never while it lands, works, waits for the person or has been typed
+   * into by the owner (#endable). Not before the take-over at start has finished (poll skips this), and always after a fresh look at
+   * the chat. Its parent gets one line; its processes' rows in Activity read "stopped: helper finished" (stoppedWhyIn).
+   */
+  async #endFinished(chats: Json[], byLasting: Map<string, Json>): Promise<void> {
+    for (const h of this.registry.all()) {
+      if (h.kind === 'subagent' || !h.chat.lasting && !h.chat.live) continue;
+      const chat = (h.chat.lasting ? byLasting.get(h.chat.lasting) : undefined) ?? chats.find((c) => c.id === h.chat.live);
+      if (!chat) continue; // not open: nothing runs under it
+      if (h.ended) {
+        // the chat was opened again (a new live id): its agent runs now, so its processes are live rows again and the rules apply anew
+        if (s(chat.id) !== h.chat.live) await this.registry.update(h.id, (cur) => (cur ? { ...cur, ended: undefined } : null));
+        continue;
+      }
+      if (!this.#due(h, chat)) continue;
+      await this.#endHelper(h, s(chat.id));
+    }
+  }
+
+  /** True when the helper is finished and its time has come: at once (merged, discarded, failed) or after the idle limit (done, stopped). */
+  #due(h: Helper, chat: Json): boolean {
+    if (this.#working.has(h.id) || h.landing) return false;
+    if (h.state === 'merged') return !h.merge?.undo; // an undone merge may need the helper again
+    if (h.state === 'discarded' || h.state === 'failed') return true;
+    if (h.state !== 'done' && h.state !== 'stopped') return false; // starting, working, waiting: still in use
+    const turnEnd = Date.parse(s(obj(chat.attention).turnEndedAt)) / 1000 || 0;
+    const since = Math.max(h.endedAt ?? 0, h.reports.length ? h.reports[h.reports.length - 1].at : 0, turnEnd);
+    return since > 0 && this.clock() - since * 1000 >= this.endIdleMs;
+  }
+
+  /** The guards, read from a fresh look at the chat: idle, nothing queued, no open approval or question, never typed into by the owner. */
+  async #endable(h: Helper, id: string): Promise<boolean> {
+    const state = obj(await this.ctx.host.liveState(id, 0).catch(() => null));
+    if (!state.id || state.closed) return false;
+    const attention = obj(state.attention);
+    const queue = obj(state.queue);
+    if (attention.state !== 'idle' || state.busy === true) return false; // a turn runs, or an approval, question or sign-in is open
+    if (Array.isArray(queue.items) && queue.items.length) return false;
+    if (Array.isArray(state.elicitations) && state.elicitations.length) return false;
+    // the owner typed into this chat: it is his now (merged, discarded and failed helpers included: he may be reading or continuing it)
+    if (state.ownerTouched === true) return false;
+    return !this.registry.get(h.id)?.landing;
+  }
+
+  async #endHelper(h: Helper, id: string): Promise<void> {
+    this.#working.add(h.id);
+    try {
+      if (!(await this.#endable(h, id))) return;
+      const why = h.state === 'done' || h.state === 'stopped' ? `idle for ${Math.round(this.endIdleMs / 60_000)} min` : h.state;
+      const [code, payload] = await this.ctx.host.liveCall('helper-end', { id }).catch((error) => [500, { error: String(error) }] as [number, unknown]);
+      if (code !== 200) {
+        log.info('swarm: could not end helper %s (%s)', h.id, pyStr(obj(payload).error ?? code));
+        return;
+      }
+      const processes = Number(obj(payload).processes) || 0;
+      await this.registry.patch(h.id, { ended: { at: this.clock() / 1000, why, processes } });
+      log.info('swarm: ended finished helper %s (%s); %d processes were running under it', h.id, why, processes);
+      await this.note(
+        h.id,
+        'swarm-ended',
+        processes
+          ? `${helperTitle(h)} finished; its processes were shut down (${processes}).`
+          : `${helperTitle(h)} finished; nothing was left running.`,
+      );
+    } catch (error) {
+      log.exception(error, 'Ending helper %s failed', h.id);
+    } finally {
+      this.#working.delete(h.id);
+    }
+    await this.#cleanup(h.id); // a merged helper's copy goes now that its chat is closed
+  }
+
   // ---- lines in the main chat ------------------------------------------------------------------------------------------------
   /** A line in the parent chat; kept in the record and posted when the parent is open (now or later). */
   async note(id: string, kind: string, text: string, actions: string[] = []): Promise<void> {
@@ -1669,6 +1754,7 @@ export class Swarm {
     const byLasting = new Map(chats.filter((c) => lasting(c)).map((c) => [lasting(c), c]));
     if (subs.length) await this.#reconcileSubagents(subs, chats, byLasting);
     await this.#sweep(chats);
+    if (!listing.takingOver) await this.#endFinished(chats, byLasting);
     const helpers = this.registry.all().filter(pending);
     for (const h0 of helpers) {
       let h = h0;

@@ -161,7 +161,7 @@ export const RECONNECT_TRIES = 3;
 export const ADOPT_WAIT_MS = 20_000;
 
 /** Swarm lines in a main chat (studio_note kinds) and the buttons they may carry (swarm/service.ts). */
-const SWARM_NOTE_KINDS = ['swarm-start', 'swarm-report', 'swarm-merge', 'swarm-undo', 'swarm-stop', 'swarm-fail'];
+const SWARM_NOTE_KINDS = ['swarm-start', 'swarm-report', 'swarm-merge', 'swarm-undo', 'swarm-stop', 'swarm-fail', 'swarm-ended'];
 const SWARM_NOTE_ACTIONS = ['swarm-undo', 'swarm-merge-again', 'swarm-open'];
 const SWARM_ACTION_LABELS: Record<string, string> = { 'swarm-undo': 'Undo', 'swarm-merge-again': 'Merge again', 'swarm-open': 'Open chat' };
 
@@ -3160,6 +3160,7 @@ export class Studio {
       reconnectFailed: this.reconnectFailed(),
       recoveryWarning: this.store ? this.store.warning : '',
       instanceId: this.instanceId,
+      takingOver: this.takingOver(), // the swarm ends no finished helper's chat before the take-over at start has finished
       allowRulesTampered: this.allow ? this.allow.tampered() : false, // the page's "Allow rules are off" banner
     };
   }
@@ -3798,6 +3799,13 @@ export class Studio {
     if (name === 'subagent-release') { // internal (swarm/service.ts): a landed / empty / discarded subagent's worktree goes (P2)
       if (!this.subagents) return [404, { error: 'No subagent worktrees here' }];
       return [200, { ok: true, result: await this.subagents.release(String(need(body, 'subagent'))) }];
+    }
+    if (name === 'helper-end') { // internal (swarm/service.ts #endHelper): a finished helper's chat ends, so its agent and everything under it stop
+      const connection = this.#connection(body);
+      const processes = connection.processCount();
+      await connection.close(); // the keeper channel's job (Windows) or process group is killed: exact for every provider
+      if (connection.worktree) void this.retireMerged().catch((error) => log.exception(error, 'Removing merged copies failed'));
+      return [200, { ok: true, processes }];
     }
     if (name === 'helper-release') { // internal (swarm/service.ts #cleanup): a merged helper's worktree and branch go (the swarm checked it is merged and clean)
       const path = String(body.path ?? '');

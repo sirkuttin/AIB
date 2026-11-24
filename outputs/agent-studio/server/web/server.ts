@@ -16,6 +16,7 @@ import { KEY_FIELD, listedForComputer, PcTranscripts } from '../remote/pc_transc
 import { routeKind, ROUTES } from './routes.ts';
 import { handleGet as monitorGet, type Source } from '../transcripts/monitor.ts';
 import { keptLinesIn } from '../history/lines.ts';
+import { stoppedWhyIn } from '../swarm/registry.ts';
 import { liveRoutes } from './live_routes.ts';
 import { chatStudioOf, makeLauncher, ownGatePost, savedFolders, type StudioHandler, studioOf, studioRoutes } from './studio_routes.ts';
 import { type AgentOptions, notices } from './shared.ts';
@@ -705,7 +706,10 @@ export class WebServer {
       return this.json(403, { error: 'This chat is not in a project added to AIB.', code: 'not_listed' });
     }
     // a saved chat's pages carry AIB's own lines of it (turn ends, AIB notes: history/lines.ts)
-    const reply = await monitorGet(this.ctx.transcripts, path, url.search.slice(1), { keptLines: keptLinesIn(pathStr(this.ctx.stateDir)) });
+    const reply = await monitorGet(this.ctx.transcripts, path, url.search.slice(1), {
+      keptLines: keptLinesIn(pathStr(this.ctx.stateDir)),
+      stoppedWhy: stoppedWhyIn(pathStr(this.ctx.stateDir)),
+    });
     // Saved chats of folders that are not added projects are not shown anywhere in AIB (nothing on disk changes).
     if (path === '/api/sessions' && reply.status === 200 && reply.body && typeof reply.body === 'object') {
       const listed = reply.body as { sessions?: unknown };

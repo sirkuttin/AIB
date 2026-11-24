@@ -4896,6 +4896,7 @@
         : Math.floor(n / 3600) + 'h ' + Math.floor((n % 3600) / 60) + 'm';
   }
   function commandState(task) {
+    if (task.stoppedReason) return 'Stopped: ' + task.stoppedReason; /* AIB ended the chat that started it (a finished helper) */
     const idle =
       task.transcriptIdleSeconds > 600 ? ' · transcript idle ' + formatDuration(task.transcriptIdleSeconds) : '';
     return (
@@ -4936,6 +4937,7 @@
       button.replaceChildren(
         text('span', '', 'sa-dot'),
         text('span', window.ActivityUI ? window.ActivityUI.processTitle(task) : task.title, 'proc-title'),
+        ...(task.stoppedReason ? [text('span', 'stopped: ' + task.stoppedReason, 'sa-when proc-why')] : []),
         ...(dur ? [text('span', dur, 'sa-when proc-dur')] : []),
       );
     }
