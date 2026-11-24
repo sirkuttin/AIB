@@ -1,6 +1,7 @@
 // Deterministic ACP test agent. Does not call a model or execute tools. (The node port of work/fake_acp.py: same flags, same lines on stdout.)
 // Run as `node fake_acp.mjs [flags]`, or import run(argv) from a launcher (work/*-fixture/agent.mjs).
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -435,11 +436,21 @@ print("hello")
       let base = senv.STUDIO_ARTIFACT_URL || '';
       if (!base && senv.STUDIO_ARTIFACT_URL_FILE) base = fs.readFileSync(senv.STUDIO_ARTIFACT_URL_FILE, 'utf8').trim();
       const body = pyDumps({ conversationId: other || senv.STUDIO_CONVERSATION_ID || '', action });
-      const response = await fetch(base.replace(/\/+$/, '') + '/api/live/worktree/tool', {
-        method: 'POST', body, headers: { 'Content-Type': 'application/json', 'X-Studio-Artifact-Key': senv.STUDIO_ARTIFACT_KEY || '' },
-        signal: AbortSignal.timeout(120000),
+      // node:http, not fetch: fetch adds Sec-Fetch-* headers, which the agent-tool routes refuse (the Python fake's urllib sent none)
+      const [status, reply] = await new Promise((resolve, reject) => {
+        const request = http.request(base.replace(/\/+$/, '') + '/api/live/worktree/tool', {
+          method: 'POST', timeout: 120000,
+          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body), 'X-Studio-Artifact-Key': senv.STUDIO_ARTIFACT_KEY || '' },
+        }, (res) => {
+          const chunks = [];
+          res.on('data', (c) => chunks.push(c));
+          res.on('end', () => resolve([res.statusCode, Buffer.concat(chunks).toString('utf8')]));
+        });
+        request.on('timeout', () => request.destroy(new Error('timed out')));
+        request.on('error', reject);
+        request.end(body);
       });
-      say(`TOOL ${response.status} ${await response.text()}`);
+      say(`TOOL ${status} ${reply}`);
     }
     result(key, { stopReason: 'end_turn' });
   }
