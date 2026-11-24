@@ -173,3 +173,80 @@ Deno.test('landed: a hand-resolved cherry-pick that main edited since is landed 
     r.done();
   }
 });
+
+Deno.test('landed: a branch landed before a folder rename counts as landed afterwards', async () => {
+  const r = repo();
+  try {
+    r.write('outputs/old/server/x.ts', lines(20, 'x'));
+    r.write('outputs/old/page.js', lines(20, 'p'));
+    r.commit('add old folder');
+    builder(r, 'studio/sub-10', () => {
+      r.write('outputs/old/server/x.ts', lines(20, 'x') + 'builder line\n');
+      r.write('outputs/old/page.js', lines(20, 'p') + 'builder page line\n');
+      r.commit('builder edit');
+    });
+    git(r.dir, 'merge', '--squash', 'studio/sub-10', '-q');
+    git(r.dir, 'reset', '-q', '--', 'aib-docs');
+    Deno.removeSync(`${r.dir}/aib-docs`, { recursive: true });
+    r.write('b.txt', lines(20, 'b') + 'landed together\n'); // another change in the landing: its patch-id differs from the builder
+    git(r.dir, 'add', '-A');
+    git(r.dir, 'commit', '-q', '-m', 'AIB: subagent Edit old');
+    // main then moves the folder: the branch's paths no longer exist
+    Deno.mkdirSync(`${r.dir}/app/page`, { recursive: true });
+    git(r.dir, 'mv', 'outputs/old/server', 'app/server');
+    git(r.dir, 'mv', 'outputs/old/page.js', 'app/page/page.js');
+    git(r.dir, 'commit', '-q', '-m', 'move');
+    const v = await branchLanded(r.dir, 'studio/sub-10', 'main');
+    assertEquals([v.landed, v.why], [true, 'content'], JSON.stringify(v));
+    // main edited the moved file afterwards: still landed
+    r.write('app/server/x.ts', lines(20, 'x') + 'builder line\nmore\n');
+    r.commit('later edit');
+    assertEquals((await branchLanded(r.dir, 'studio/sub-10', 'main')).landed, true);
+  } finally {
+    r.done();
+  }
+});
+
+Deno.test('landed: a subject match after a rename counts as landed', async () => {
+  const r = repo();
+  try {
+    r.write('outputs/old/sync.ts', lines(20, 's'));
+    r.commit('add sync');
+    builder(r, 'studio/sub-11', () => {
+      r.write('outputs/old/sync.ts', lines(20, 's') + 'original sync text\n');
+      r.commit('Sync V3: match projects');
+    });
+    Deno.mkdirSync(`${r.dir}/app/page`, { recursive: true });
+    git(r.dir, 'mv', 'outputs/old/sync.ts', 'app/page/sync.ts');
+    git(r.dir, 'commit', '-q', '-m', 'move');
+    // landed by hand with the same subject, and the text differs
+    r.write('app/page/sync.ts', 'other header\nreworked\n' + lines(5, 'zz'));
+    r.commit('Sync V3: match projects');
+    const v = await branchLanded(r.dir, 'studio/sub-11', 'main');
+    assertEquals([v.landed, v.why], [true, 'rewritten'], JSON.stringify(v));
+  } finally {
+    r.done();
+  }
+});
+
+Deno.test('landed: a truly unlanded branch still counts as unlanded after a rename', async () => {
+  const r = repo();
+  try {
+    r.write('outputs/old/y.ts', lines(20, 'y'));
+    r.commit('add y');
+    builder(r, 'studio/sub-12', () => {
+      r.write('outputs/old/y.ts', lines(20, 'y') + 'never landed\n');
+      r.write('outputs/old/new_file.ts', 'brand new\n');
+      r.commit('unlanded after move');
+    });
+    Deno.mkdirSync(`${r.dir}/app`, { recursive: true });
+    git(r.dir, 'mv', 'outputs/old/y.ts', 'app/y.ts');
+    git(r.dir, 'commit', '-q', '-m', 'move');
+    r.write('app/y.ts', lines(20, 'y') + 'other work\n');
+    r.commit('AIB: subagent Something else');
+    const v = await branchLanded(r.dir, 'studio/sub-12', 'main', { title: 'Unrelated' });
+    assertEquals([v.landed, v.why], [false, 'unlanded'], JSON.stringify(v));
+  } finally {
+    r.done();
+  }
+});
