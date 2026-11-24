@@ -102,6 +102,8 @@ Deno.test('contract: a full conversation with a fake agent over HTTP', async () 
   });
   const queued = await s.post('/api/live/queue', { id, text: 'queued', clientMessageId: 'q-1' });
   assertEquals([queued.status, queued.json.accepted, queued.json.queued, queued.json.queue.items], [200, true, false, []]); // idle: sent at once
+  // The message starts a turn at once; the chat is idle again when that turn ends.
+  await s.until('the queued message turn ends', async () => (await s.get('/api/live/list')).json.connections[0].attention.state === 'idle');
   assertEquals((await s.get('/api/live/list')).json.connections[0].attention.state, 'idle');
 
   // Disconnect: the chat is listed as closed, then a prompt is refused.
