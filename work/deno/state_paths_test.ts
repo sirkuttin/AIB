@@ -314,26 +314,35 @@ Deno.test("a fake environment or home is not the real folder, so it resolves", (
 });
 
 // ---- the data folder rename (2026-11-24, work/migrate/rename_data_folder.ts) ----------------------
-Deno.test("data folder: the old one whenever it exists (the new name may be the install folder), else the new name; never both", () => {
+const mark = (dir: string) => {
+  Deno.mkdirSync(dir, { recursive: true });
+  Deno.writeTextFileSync(
+    pathOf(dir, "aib-data.json"),
+    JSON.stringify({ kind: "aib-data", created: "2026-11-24T00:00:00.000Z" }),
+  );
+};
+const fakeInstall = (dir: string) => {
+  Deno.mkdirSync(pathOf(dir, "app"), { recursive: true });
+  for (const f of ["aib.exe", "uninstall.exe", "BUILD_ID"]) {
+    Deno.writeTextFileSync(pathOf(dir, f), "x");
+  }
+};
+
+Deno.test("data folder: the new name only with the marker, else the old one, else a fresh new one", () => {
   using tmp = tempRoot();
   const main = checkout(tmp.root, "main", false);
   const env = fakeEnv(tmp.root);
   const local = pathOf(tmp.root, "local");
   const xdg = pathOf(tmp.root, "xdg");
-  // neither: a fresh install uses the new name
+  const home = pathOf(tmp.root, "h");
+  // neither: a fresh PC uses the new name
   assertEquals(userStateDir(env, "win32"), pathOf(local, "AIB"));
-  assertEquals(
-    userStateDir(env, "linux", pathOf(tmp.root, "h")),
-    pathOf(xdg, "aib"),
-  );
+  assertEquals(userStateDir(env, "linux", home), pathOf(xdg, "aib"));
   // only the old one: it is used as it is
   Deno.mkdirSync(pathOf(local, "AgentStudio"), { recursive: true });
   Deno.mkdirSync(pathOf(xdg, "agent-studio"), { recursive: true });
   assertEquals(userStateDir(env, "win32"), pathOf(local, "AgentStudio"));
-  assertEquals(
-    userStateDir(env, "linux", pathOf(tmp.root, "h")),
-    pathOf(xdg, "agent-studio"),
-  );
+  assertEquals(userStateDir(env, "linux", home), pathOf(xdg, "agent-studio"));
   if (WIN) {
     const r = resolve(null, env, main);
     assertEquals([r.path, r.source, r.isUserFolder], [
@@ -348,35 +357,80 @@ Deno.test("data folder: the old one whenever it exists (the new name may be the 
     );
     assertEquals(resolve(pathOf(local, "AIB"), env, main).isUserFolder, true);
   }
-  // both (on Windows %LOCALAPPDATA%\AIB is also the install folder): the old one, never the new
-  Deno.mkdirSync(pathOf(local, "AIB"), { recursive: true });
-  Deno.mkdirSync(pathOf(xdg, "aib"), { recursive: true });
-  Deno.writeTextFileSync(pathOf(local, "AgentStudio", "old.txt"), "old");
+  // the new name without the marker (an old install): ignored while the old one exists
+  fakeInstall(pathOf(local, "AIB"));
+  fakeInstall(pathOf(xdg, "aib"));
   assertEquals(userStateDir(env, "win32"), pathOf(local, "AgentStudio"));
-  assertEquals(
-    userStateDir(env, "linux", pathOf(tmp.root, "h")),
-    pathOf(xdg, "agent-studio"),
-  );
-  // the old one gone (renamed away): the new one
-  Deno.renameSync(pathOf(local, "AgentStudio"), pathOf(local, "AgentStudio.old"));
-  Deno.renameSync(pathOf(xdg, "agent-studio"), pathOf(xdg, "agent-studio.old"));
+  assertEquals(userStateDir(env, "linux", home), pathOf(xdg, "agent-studio"));
+  // the new name WITH the marker wins over the old one
+  mark(pathOf(local, "AIB"));
+  mark(pathOf(xdg, "aib"));
   assertEquals(userStateDir(env, "win32"), pathOf(local, "AIB"));
-  assertEquals(
-    userStateDir(env, "linux", pathOf(tmp.root, "h")),
-    pathOf(xdg, "aib"),
-  );
+  assertEquals(userStateDir(env, "linux", home), pathOf(xdg, "aib"));
   assertEquals(
     userStateDir(env, "darwin", pathOf(tmp.root, "mac")),
     pathOf(tmp.root, "mac", "Library", "Application Support", "AIB"),
   );
-  if (WIN) assertEquals(resolve(null, env, main).path, pathOf(local, "AIB"));
   assertEquals(userStateDirCandidates(env, "win32"), [
     pathOf(local, "AIB"),
     pathOf(local, "AgentStudio"),
   ]);
-  // nothing was created or copied by choosing
-  assertEquals([...Deno.readDirSync(pathOf(local, "AIB"))].length, 0);
-  assertEquals(exists(pathOf(local, "AIB", "old.txt")), false);
+});
+
+Deno.test("data folder: an unmarked AIB folder with aib.exe, uninstall.exe or BUILD_ID is never data, even with no old folder", async () => {
+  using tmp = tempRoot();
+  const env = fakeEnv(tmp.root);
+  const main = checkout(tmp.root, "main", false);
+  const local = pathOf(tmp.root, "local");
+  const xdg = pathOf(tmp.root, "xdg");
+  const home = pathOf(tmp.root, "h");
+  fakeInstall(pathOf(local, "AIB"));
+  fakeInstall(pathOf(xdg, "aib"));
+  // no marker, no old folder: not the install folder; a fresh old-named one is used and the install is left alone
+  assertEquals(userStateDir(env, "win32"), pathOf(local, "AgentStudio"));
+  assertEquals(userStateDir(env, "linux", home), pathOf(xdg, "agent-studio"));
+  for (const f of ["aib.exe", "uninstall.exe", "BUILD_ID"]) {
+    const parent = pathOf(tmp.root, "only-" + f);
+    Deno.mkdirSync(pathOf(parent, "AIB"), { recursive: true });
+    Deno.writeTextFileSync(pathOf(parent, "AIB", f), "x");
+    assertEquals(
+      userStateDir({ ...env, LOCALAPPDATA: parent }, "win32"),
+      pathOf(parent, "AgentStudio"),
+      f,
+    );
+  }
+  if (WIN) {
+    const plan = await prepare({ env, codeRoot: main });
+    assertEquals(plan.stateDir, pathOf(local, "AgentStudio"));
+    assert(!exists(pathOf(local, "AIB", "aib-data.json")), "install untouched");
+  }
+});
+
+Deno.test("data folder: a fresh PC creates AIB and writes the marker; a marked one is reused", async () => {
+  using tmp = tempRoot();
+  const main = checkout(tmp.root, "main", false);
+  const env = fakeEnv(tmp.root);
+  const fresh = pathOf(tmp.root, "local", "AIB");
+  const plan = await prepare({ env, codeRoot: main });
+  if (WIN) {
+    assertEquals(plan.stateDir, fresh);
+    const marker = JSON.parse(
+      Deno.readTextFileSync(pathOf(fresh, "aib-data.json")),
+    );
+    assertEquals(marker.kind, "aib-data");
+    assert(typeof marker.created === "string" && marker.created.length > 0);
+    // the next start picks it by the marker
+    assertEquals(userStateDir(env, "win32"), fresh);
+    assertEquals((await prepare({ env, codeRoot: main })).stateDir, fresh);
+  } else {
+    // POSIX: the same, through the XDG folder
+    const posix = pathOf(tmp.root, "xdg", "aib");
+    assertEquals(plan.stateDir, posix);
+    assertEquals(
+      JSON.parse(Deno.readTextFileSync(pathOf(posix, "aib-data.json"))).kind,
+      "aib-data",
+    );
+  }
 });
 
 // ---- packaged parent app -----------------------------------------------------------------------

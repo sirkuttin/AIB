@@ -211,10 +211,93 @@ Deno.test("refuses for AIB and keeper programs by name, and when the new folder 
   );
   assert(!text.includes("4444"), text);
   Deno.mkdirSync(pathOf(t.parent, "AIB"));
+  Deno.writeTextFileSync(
+    pathOf(t.parent, "AIB", "aib-data.json"),
+    JSON.stringify({ kind: "aib-data" }),
+  ); // a MARKED new folder is real data: never overwritten
   const r2 = await run(opts(t.parent), deps());
   assertEquals(r2.code, 1);
   assert(r2.lines.join("\n").includes("already exists"));
   assert(exists(old));
+});
+
+/** The stale old install test build 13 left at %LOCALAPPDATA%\AIB: install files plus a few state files, no marker. */
+function fakeInstall(parent: string): string {
+  const dir = pathOf(parent, "AIB");
+  Deno.mkdirSync(pathOf(dir, "app"), { recursive: true });
+  Deno.mkdirSync(pathOf(dir, "python"), { recursive: true });
+  for (const f of ["aib.exe", "uninstall.exe", "BUILD_ID", "settings.json"]) {
+    Deno.writeTextFileSync(pathOf(dir, f), "install " + f);
+  }
+  return dir;
+}
+
+Deno.test("an unmarked AIB folder (old install) is moved aside, the data is migrated and marked; undo restores both", async () => {
+  using t = temp();
+  const { old } = await fakeData(t.parent, false);
+  const install = fakeInstall(t.parent);
+  const installBefore = treeStats(install);
+  const before = treeStats(old);
+  // dry run: plans the move, changes nothing
+  const dry = await run(opts(t.parent, { dryRun: true }), deps());
+  const dtext = dry.lines.join("\n");
+  assertEquals(dry.code, 0, dtext);
+  assert(dtext.includes("AIB.old-install-2026-11-24"), dtext);
+  assertEquals(treeStats(install), installBefore);
+  assert(!exists(pathOf(t.parent, "AIB.old-install-2026-11-24")));
+  // for real
+  const r = await run(opts(t.parent), deps());
+  const text = r.lines.join("\n");
+  assertEquals(r.code, 0, text);
+  const aside = pathOf(t.parent, "AIB.old-install-2026-11-24");
+  assert(exists(pathOf(aside, "aib.exe")), "the old install is kept, not deleted");
+  assertEquals(treeStats(aside), installBefore);
+  assert(text.includes("Moved it to") && text.includes("aib.exe"), text);
+  const fresh = pathOf(t.parent, "AIB");
+  assert(!exists(pathOf(fresh, "aib.exe")), "no install files in the new data folder");
+  assert(exists(pathOf(fresh, "chats", "c1.json")), "the data is there");
+  const marker = JSON.parse(Deno.readTextFileSync(pathOf(fresh, "aib-data.json")));
+  assertEquals(marker.kind, "aib-data");
+  assert(exists(pathOf(t.parent, "AgentStudio.old-2026-11-24")));
+  assert(!exists(old));
+  // a second run has nothing to do (no old data folder left), and moves nothing
+  const again = await run(opts(t.parent), deps());
+  assertEquals(again.code, 0);
+  assert(exists(pathOf(aside, "aib.exe")) && exists(pathOf(fresh, "aib-data.json")));
+
+  // undo: old data back, the new data folder set aside, the old install back at AIB
+  const u = await run(opts(t.parent, { undo: true }), deps());
+  const utext = u.lines.join("\n");
+  assertEquals(u.code, 0, utext);
+  assertEquals(treeStats(old), before, "the old data folder is back");
+  assertEquals(treeStats(fresh), installBefore, "the old install is back as AIB");
+  assert(exists(pathOf(fresh, "uninstall.exe")) && !exists(pathOf(fresh, "aib-data.json")));
+  assert(!exists(aside), "the install-aside name is gone");
+  const undone = [...Deno.readDirSync(t.parent)].map((e) => e.name).filter((n) =>
+    n.startsWith("AIB.undone-")
+  );
+  assertEquals(undone.length, 1, utext);
+  assert(exists(pathOf(t.parent, undone[0], "aib-data.json")), "the migrated data is kept aside");
+});
+
+Deno.test("a process running from the old install refuses before anything moves", async () => {
+  using t = temp();
+  await fakeData(t.parent, false);
+  const install = fakeInstall(t.parent);
+  const installBefore = treeStats(install);
+  // a process that holds the old install folder refuses before anything moves
+  const procs: ProcInfo[] = [{
+    pid: 777,
+    name: "aib.exe",
+    exe: pathOf(install, "aib.exe"),
+    cmd: "",
+    cwd: "",
+  }];
+  const r = await run(opts(t.parent), deps({ list: () => Promise.resolve(procs) }));
+  assertEquals(r.code, 1, r.lines.join("\n"));
+  assert(r.lines.join("\n").includes("PID 777"));
+  assertEquals(treeStats(install), installBefore, "nothing moved");
+  assert(!exists(pathOf(t.parent, "AIB.old-install-2026-11-24")));
 });
 
 Deno.test("copies, verifies, rewrites paths, repairs worktrees, renames the old folder; then undo puts it back", async () => {
@@ -238,11 +321,12 @@ Deno.test("copies, verifies, rewrites paths, repairs worktrees, renames the old 
   const backup = pathOf(t.parent, "AgentStudio.old-2026-11-24");
   const copied = treeStats(fresh); // the script compared size right after the copy; rewriting the shorter name then makes files smaller
   assertEquals([copied.files, copied.dirs, copied.links], [
-    before.files,
+    before.files + 1, // + the marker aib-data.json
     before.dirs,
     before.links,
   ], "file count matches");
-  assert(copied.bytes < before.bytes, "rewritten paths are shorter");
+  const markerBytes = Deno.statSync(pathOf(fresh, "aib-data.json")).size;
+  assert(copied.bytes - markerBytes < before.bytes, "rewritten paths are shorter");
   assert(text.includes("copied and verified"), text);
   assert(!exists(old) && exists(backup), "old folder renamed, not deleted");
   assertEquals(treeStats(backup), before);

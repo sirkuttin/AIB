@@ -4,7 +4,8 @@
  *   macOS    ~/Library/Application Support/AgentStudio -> ~/Library/Application Support/AIB
  *   Linux    $XDG_STATE_HOME/agent-studio              -> $XDG_STATE_HOME/aib   (default ~/.local/state/...)
  * The app never does this itself (owner rule: one-time migrations are scripts he runs). Until you run it, AIB keeps using the old
- * folder as it is; once the new folder exists AIB uses only that one.
+ * folder as it is. The new folder is AIB's data only when it holds the marker file aib-data.json ({"kind":"aib-data"}), because on
+ * Windows %LOCALAPPDATA%\AIB can be a stale OLD INSTALL (aib.exe, uninstall.exe, BUILD_ID, app/, python/) that is not data.
  *
  * HOW TO RUN IT (once on each PC; Windows, macOS or Linux):
  *   1. Quit AIB (its window, and the tray icon), then wait a few seconds. Chats keep running in the keeper only while it runs, so
@@ -13,15 +14,21 @@
  *        deno run -A work/migrate/rename_data_folder.ts --dry-run
  *   3. Do it:
  *        deno run -A work/migrate/rename_data_folder.ts
- *   4. Start AIB. It opens the new folder. Keep AgentStudio.old-<date> next to it for a while; delete it by hand when you are happy.
- *   Undo (puts the old folder back, sets the new one aside as AIB.undone-<time>; anything done in AIB since is in that folder):
+ *      If %LOCALAPPDATA%\AIB exists without the marker (the old install), the script first renames it to AIB.old-install-<date>
+ *      (never deletes it, and prints what it moved), then copies AgentStudio to AIB and writes the marker into the new folder.
+ *   4. Start AIB. It opens the new folder (the Start Menu shortcut is repaired by AIB on that start). Keep AgentStudio.old-<date> and
+ *      AIB.old-install-<date> next to it for a while; delete them by hand when you are happy.
+ *   Undo (puts the old folder back, sets the new one aside as AIB.undone-<time>, and puts AIB.old-install-<date> back as AIB;
+ *   anything done in AIB since is in the AIB.undone folder):
  *        deno run -A work/migrate/rename_data_folder.ts --undo
  *
  * What it does, in order (it prints each step and what it did):
- *   - refuses while AIB, its keeper, or any process that runs from or names the folder is alive (name and PID are shown; it never
- *     kills anything). Also refuses when the new folder already exists, or when the old folder is held open (rename probe).
+ *   - refuses while AIB, its keeper, or any process that runs from or names either folder is alive (name and PID are shown; it never
+ *     kills anything). Also refuses when the new folder already exists WITH the marker, or when a folder is held open (rename probe).
+ *   - if the new name exists without the marker (the old install plus a few state files an earlier test build wrote), renames it to
+ *     AIB.old-install-<date>.
  *   - copies the old folder to the new name (robocopy on Windows, cp -a elsewhere; the new folder is owner-only like AIB makes it),
- *     then checks file count and total size against the original.
+ *     then checks file count and total size against the original, then writes the marker file aib-data.json into the new folder.
  *   - rewrites the old folder path inside AIB's small state files in the copy (*.json, *.jsonl, *.toml; not worktrees/, agents/,
  *     keeper/, keeper-bin/, scratch/), so chats and worktree records point at the new location.
  *   - runs `git worktree repair` for every AIB worktree in the copy so each repository points at the new worktree folder.
@@ -37,9 +44,11 @@
  */
 import { dataDirName } from "../../app/server/wsl/install.ts";
 import {
+  hasDataMarker,
   makeOwnerOnly,
   pathOf,
   userStateDirNames,
+  writeDataMarker,
 } from "../../app/server/state/paths.ts";
 
 const WIN = Deno.build.os === "windows";
@@ -488,6 +497,16 @@ const dateOf = (d: Date) =>
 const timeOf = (d: Date) =>
   `${two(d.getHours())}${two(d.getMinutes())}${two(d.getSeconds())}`;
 
+/** A short list of what is at the top of a folder (for the lines the script prints). */
+function listTop(dir: string): string {
+  const names = [...Deno.readDirSync(dir)].map((e) =>
+    e.name + (e.isDirectory ? "/" : "")
+  ).sort();
+  const shown = names.slice(0, 12).join(", ");
+  return (shown || "(empty)") +
+    (names.length > 12 ? `, ... (${names.length} entries)` : "");
+}
+
 function holdersLines(holders: { p: ProcInfo; why: string }[]): string[] {
   const out = [
     "REFUSED: these processes use the AIB data folder (the script never ends processes):",
@@ -535,16 +554,25 @@ export async function run(opts: Opts, deps: Deps): Promise<Result> {
     );
     return { code: 0, lines };
   }
-  if (lstat(newPath)) {
+  // %LOCALAPPDATA%\AIB without the marker is the stale old install (plus state files an earlier test build wrote): set it aside.
+  const stale = lstat(newPath) !== null && !hasDataMarker(newPath);
+  if (lstat(newPath) && (!stale || !isDir(newPath))) {
     say(
-      `REFUSED: ${newPath} already exists. AIB would use it and ignore ${opts.legacy}. Move or delete it yourself if it is not wanted, then run again.`,
+      `REFUSED: ${newPath} already exists${
+        stale
+          ? " (and is not a folder)"
+          : " and is AIB's data folder (it has the marker)"
+      }. AIB would use it and ignore ${opts.legacy}. Move or delete it yourself if it is not wanted, then run again.`,
     );
     return fail();
   }
-
-  const holders = findHolders(await deps.list(), oldPath, deps.checkNames, [
-    Deno.pid,
-  ]);
+  const procs = await deps.list();
+  const holders = findHolders(procs, oldPath, deps.checkNames, [Deno.pid]);
+  if (stale) {
+    for (const h of findHolders(procs, newPath, false, [Deno.pid])) {
+      if (!holders.some((x) => x.p.pid === h.p.pid)) holders.push(h);
+    }
+  }
   if (holders.length) {
     for (const l of holdersLines(holders)) say(l);
     if (!opts.dryRun) return fail();
@@ -559,11 +587,29 @@ export async function run(opts: Opts, deps: Deps): Promise<Result> {
     backup = pathOf(opts.parent, `${opts.legacy}.old-${stamp}-${timeOf(now)}`);
   }
 
+  let installAside = "";
+  if (stale) {
+    installAside = pathOf(opts.parent, `${opts.current}.old-install-${stamp}`);
+    if (lstat(installAside)) {
+      installAside = pathOf(
+        opts.parent,
+        `${opts.current}.old-install-${stamp}-${timeOf(now)}`,
+      );
+    }
+  }
+
   const wslLines: string[] = [];
   const wsl = await wslStep(opts, deps, oldPath, newPath, wslLines);
 
   if (opts.dryRun) {
     say("Plan:");
+    if (stale) {
+      say(
+        `  0. ${newPath} has no aib-data.json marker (an old install: ${
+          listTop(newPath)
+        }): rename it to ${installAside}`,
+      );
+    }
     say(`  1. copy ${oldPath} -> ${newPath} and compare file count and size`);
     say(
       `  2. rewrite the old folder path inside *.json / *.jsonl / *.toml state files of the copy (not worktrees/, agents/, keeper/, scratch/)`,
@@ -574,6 +620,7 @@ export async function run(opts: Opts, deps: Deps): Promise<Result> {
       } AIB worktree(s)`,
     );
     say(`  4. rename ${oldPath} -> ${backup}`);
+    say(`  5. write the marker aib-data.json into ${newPath}`);
     for (const l of wslLines) say("  WSL: " + l);
     say("Nothing was changed. Run without --dry-run to do it.");
     return { code: wsl.refused ? 1 : 0, lines };
@@ -598,6 +645,36 @@ export async function run(opts: Opts, deps: Deps): Promise<Result> {
     return fail();
   }
 
+  if (stale) {
+    const probe2 = pathOf(opts.parent, `${opts.current}.probe-${Deno.pid}`);
+    try {
+      Deno.renameSync(newPath, probe2);
+      Deno.renameSync(probe2, newPath);
+    } catch (error) {
+      if (isDir(probe2) && !isDir(newPath)) Deno.renameSync(probe2, newPath);
+      say(
+        `REFUSED: ${newPath} cannot be renamed right now (${
+          (error as Error).message
+        }). Something still has it open. Nothing was changed.`,
+      );
+      return fail();
+    }
+    const held = listTop(newPath);
+    try {
+      Deno.renameSync(newPath, installAside);
+    } catch (error) {
+      say(
+        `REFUSED: could not move ${newPath} aside (${
+          (error as Error).message
+        }). Nothing was changed.`,
+      );
+      return fail();
+    }
+    say(
+      `0. ${newPath} had no marker (an old install, not data). Moved it to ${installAside} (nothing deleted). It held: ${held}`,
+    );
+  }
+
   let created = false;
   try {
     Deno.mkdirSync(newPath, { mode: 0o700 });
@@ -617,6 +694,8 @@ export async function run(opts: Opts, deps: Deps): Promise<Result> {
       );
     }
     say(`   copied and verified: ${fmtStats(after)}`);
+    writeDataMarker(newPath);
+    say(`   wrote the marker ${newPath}${SEP}aib-data.json`);
     say("2. Rewriting the old folder path in state files of the copy...");
     const changed = rewritePaths(newPath, oldPath, newPath);
     say(`   ${changed.length} file(s) changed`);
@@ -632,6 +711,10 @@ export async function run(opts: Opts, deps: Deps): Promise<Result> {
         say(
           `The partial copy ${newPath} was removed. ${oldPath} is untouched. Nothing else changed.`,
         );
+        if (installAside && isDir(installAside)) {
+          Deno.renameSync(installAside, newPath);
+          say(`The old install was put back as ${newPath}.`);
+        }
       } catch (e) {
         say(
           `Could not remove the partial copy ${newPath} (${
@@ -662,8 +745,18 @@ export async function run(opts: Opts, deps: Deps): Promise<Result> {
     }), verified, paths rewritten, worktrees repaired.`,
   );
   say(`  - the old folder is now ${backup} (nothing was deleted).`);
+  if (installAside) {
+    say(
+      `  - the old install that sat at ${newPath} is now ${installAside} (nothing was deleted).`,
+    );
+  }
+  say(`  - ${newPath} carries the marker aib-data.json, so AIB uses it.`);
   say(`To undo: deno run -A work/migrate/rename_data_folder.ts --undo`);
-  say(`When you are happy with the new folder, delete ${backup} by hand.`);
+  say(
+    `When you are happy with the new folder, delete ${backup}${
+      installAside ? ` and ${installAside}` : ""
+    } by hand.`,
+  );
   return { code: 0, lines };
 }
 
@@ -713,6 +806,13 @@ async function undo(
     for (const l of holdersLines(holders)) say(l);
     if (!opts.dryRun) return fail();
   }
+  const installPrefix = `${opts.current}.old-install-`;
+  const installs = [...Deno.readDirSync(opts.parent)].filter((e) =>
+    e.isDirectory && e.name.startsWith(installPrefix)
+  ).map((e) => e.name).sort();
+  const installBack = installs.length
+    ? pathOf(opts.parent, installs[installs.length - 1])
+    : "";
   const aside = pathOf(
     opts.parent,
     `${opts.current}.undone-${dateOf(deps.now())}-${timeOf(deps.now())}`,
@@ -721,6 +821,9 @@ async function undo(
   const wsl = await wslStep(opts, deps, newPath, oldPath, wslLines);
   say(`  1. rename ${newPath} -> ${aside}`);
   say(`  2. rename ${backup} -> ${oldPath}`);
+  if (installBack) {
+    say(`  2b. rename ${installBack} -> ${newPath} (the old install comes back)`);
+  }
   say("  3. git worktree repair for the worktrees in the restored folder");
   for (const l of wslLines) say("  WSL: " + l);
   if (opts.dryRun) {
@@ -737,6 +840,18 @@ async function undo(
       Deno.renameSync(aside, newPath);
     }
     return fail();
+  }
+  if (installBack) {
+    try {
+      Deno.renameSync(installBack, newPath);
+      say(`Put the old install back: ${installBack} -> ${newPath}`);
+    } catch (error) {
+      say(
+        `WARNING: could not put ${installBack} back as ${newPath} (${
+          (error as Error).message
+        }). Rename it by hand if you want it there.`,
+      );
+    }
   }
   say(
     `Restored ${oldPath}; the new folder is kept as ${aside} (it holds anything done in AIB since the rename).`,
@@ -807,11 +922,6 @@ export function parseArgs(argv: string[]): Opts | string {
   };
 }
 
-if (import.meta.main && !Deno.env.get("AIB_RENAME_TEST")) {
-  // ON HOLD 2026-11-24: on Windows the new name %LOCALAPPDATA%\AIB is the app's install folder; a new data-folder name is pending.
-  console.error("This script is on hold: the new data-folder name collides with AIB's install folder. Nothing was changed.");
-  Deno.exit(2);
-}
 if (import.meta.main) {
   const opts = parseArgs(Deno.args);
   if (typeof opts === "string") {

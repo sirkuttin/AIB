@@ -5,8 +5,9 @@
  *   Windows  %LOCALAPPDATA%\AIB
  *   macOS    ~/Library/Application Support/AIB
  *   Linux    $XDG_STATE_HOME/aib, else ~/.local/state/aib
- * Until a PC runs work/migrate/rename_data_folder.ts, its old folder (AgentStudio / agent-studio) is used as it is: the new name wins
- * when it exists, the old name is used only when the new one does not exist. The app never moves or copies data by itself.
+ * The new-named folder is data only when it carries the marker file aib-data.json ({"kind":"aib-data"}): on Windows %LOCALAPPDATA%\AIB
+ * can be an old install folder. Until a PC runs work/migrate/rename_data_folder.ts, its old folder (AgentStudio / agent-studio) is used
+ * as it is. A fresh PC gets the new folder plus the marker. The app never moves or copies data by itself.
  *
  * Which folder a run uses, first match wins: 1. --state-dir PATH; 2. AGENT_STUDIO_STATE_DIR; 3. default: a git WORKTREE keeps the old
  * folder next to its code (<repo>/work/agent-studio-state); anything else (the main checkout, the installed app) uses the per-user
@@ -227,9 +228,48 @@ export function userStateDirNames(
   return { current: pathOf(parent, current), legacy: pathOf(parent, legacy) };
 }
 
+/** The file that makes a folder AIB's data folder (%LOCALAPPDATA%\AIB can also be an old install folder, so existing is not enough). */
+export const DATA_MARKER = "aib-data.json";
+/** Files (lower case) that say a folder is an AIB install, not data. */
+const INSTALL_FILES = ["aib.exe", "uninstall.exe", "build_id"];
+
+/** True when `dir` carries the data marker ({"kind":"aib-data"}). */
+export function hasDataMarker(dir: string): boolean {
+  try {
+    const parsed = JSON.parse(Deno.readTextFileSync(pathOf(dir, DATA_MARKER)));
+    return parsed?.kind === "aib-data";
+  } catch {
+    return false;
+  }
+}
+
+/** Writes the data marker into `dir` (keeps an existing valid one). */
+export function writeDataMarker(dir: string, now: Date = new Date()): void {
+  if (hasDataMarker(dir)) return;
+  Deno.writeTextFileSync(
+    pathOf(dir, DATA_MARKER),
+    JSON.stringify({ kind: "aib-data", created: now.toISOString() }, null, 2) +
+      "\n",
+  );
+}
+
+/** True when `dir` holds an AIB install (aib.exe, uninstall.exe or BUILD_ID, any letter case). Such a folder is never data. */
+export function isInstallFolder(dir: string): boolean {
+  try {
+    for (const e of Deno.readDirSync(dir)) {
+      if (INSTALL_FILES.includes(e.name.toLowerCase())) return true;
+    }
+  } catch { /* not a folder */ }
+  return false;
+}
+
 /**
- * The per-user folder for this OS: the new name, unless only the old-named folder exists (a PC that has not run the rename script),
- * then the old one. Never both: the new folder wins as soon as it exists. No test guard (realUserStateDir() is the guarded one).
+ * The per-user folder for this OS, first match wins:
+ *   1. the new name (AIB / aib) when it carries the data marker;
+ *   2. the old name (AgentStudio / agent-studio) when it exists;
+ *   3. the old name (made fresh) when the new name is an unmarked install folder (aib.exe, uninstall.exe, BUILD_ID: never data);
+ *   4. otherwise the new name (a fresh PC: prepare() creates it and writes the marker).
+ * No test guard (realUserStateDir() is the guarded one). Never moves or copies anything.
  */
 export function userStateDir(
   env?: Env,
@@ -237,9 +277,10 @@ export function userStateDir(
   homeDir?: string,
 ): string {
   const { current, legacy } = userStateDirNames(env, platform, homeDir);
-  // HOTFIX 2026-11-24: on Windows %LOCALAPPDATA%\AIB is the app's own install folder (aib.exe, app/), so its existence says
-  // nothing about the data. The old-named folder wins whenever it exists; the new name is used only by a PC that has no old one.
-  return isDir(legacy) ? legacy : current;
+  if (hasDataMarker(current)) return current;
+  if (isDir(legacy)) return legacy;
+  if (isDir(current) && isInstallFolder(current)) return legacy;
+  return current;
 }
 
 /** Both possible names of the per-user folder (for "never touch AIB's own data" guards, which must cover the old and the new name). */
@@ -588,6 +629,10 @@ export async function prepare(options: PrepareOptions = {}): Promise<Plan> {
   const target = resolved.path;
   if (resolved.isUserFolder) {
     ensurePrivateDir(target, true);
+    if (
+      resolved.source === "user" &&
+      samePath(target, userStateDirNames(env).current)
+    ) writeDataMarker(target); // a fresh PC (or an adopted folder with no install files): from now on it is AIB's data
   } else if (exists(target)) {
     let problems: string[] = [];
     try {
