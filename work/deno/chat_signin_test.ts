@@ -5,7 +5,7 @@
  * the advertised args. Fake agents only (work/fake_acp.py); no real CLI and no real credentials.
  */
 import { assert, assertEquals, assertThrows } from './_assert.ts';
-import { events, FAKE, type Json, Lab, PYTHON, until, updateTexts } from './_connection.ts';
+import { events, FAKE, type Json, Lab, NODE, until, updateTexts } from './_connection.ts';
 import { ValueError } from '../../app/server/core/py.ts';
 import { builtinSigninCommand } from '../../app/server/web/terminal_routes.ts';
 import type { AgentOptions } from '../../app/server/web/shared.ts';
@@ -39,7 +39,7 @@ Deno.test('after the terminal sign-in succeeds, retry sends the failed message a
   await c.prompt('hello again');
   await until(() => c.auth !== null && !c.busy);
   // what the terminal runs: the agent's own launcher + the method's args (here the fake's --fixture-login writes the marker)
-  const login = new Deno.Command(PYTHON, { args: [FAKE, '--auth-file', marker, '--fixture-login'], stdout: 'null', stderr: 'null' });
+  const login = new Deno.Command(NODE, { args: [FAKE, '--auth-file', marker, '--fixture-login'], stdout: 'null', stderr: 'null' });
   assertEquals((await login.output()).code, 0);
   c.answerAuth('retry');
   await until(() => replies(c).some((t) => t.includes('hello again')) && !c.busy);
@@ -91,13 +91,13 @@ Deno.test('setup-time: Claude Code is offered its terminal method with args (aut
 });
 
 Deno.test("the sign-in terminal runs the agent's own launcher with the advertised args; unsafe args are refused", async () => {
-  const options = { claudeLauncher: FAKE, codexLauncher: "", ompCommand: "", nodeCommand: PYTHON, stateDir: null } as unknown as AgentOptions;
+  const options = { claudeLauncher: FAKE, codexLauncher: "", ompCommand: "", nodeCommand: NODE, stateDir: null } as unknown as AgentOptions;
   const ctx = { agentOptions: options, settings: { launcher: () => '' } } as never;
   const spec = await builtinSigninCommand(ctx, 'claude', ['--fixture-login']);
   assert(typeof spec !== 'string', String(spec));
   const all = [spec.file, ...spec.args];
   assertEquals(all.slice(-1), ['--fixture-login']);
-  assert(all.some((a) => a.endsWith('fake_acp.py')), all.join(' '));
+  assert(all.some((a) => a.endsWith('fake_acp.mjs')), all.join(' '));
   assert(typeof (await builtinSigninCommand(ctx, 'claude', ['login & calc'])) === 'string');
   assert(typeof (await builtinSigninCommand(ctx, 'claude', [])) === 'string');
 });

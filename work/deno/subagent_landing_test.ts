@@ -11,7 +11,7 @@
  *   ownSubagentPath (security review SF 9): only <root>\<repo hash>\sub-*, never the hash folder, never outside the root
  */
 import { assert, assertEquals } from './_assert.ts';
-import { FAKE, pause, PYTHON, until } from './_connection.ts';
+import { FAKE, FAKE_UNIQUE, pause, NODE, until } from './_connection.ts';
 import { makeRepo, read, runGit, write } from './_worktree_fixtures.ts';
 import { Connection } from '../../app/server/acp/connection.ts';
 import { Aib } from '../../app/server/host/aib.ts';
@@ -22,7 +22,7 @@ import * as wt from '../../app/server/worktrees/worktrees.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
-const UNIQUE = FAKE.replace(/fake_acp.py$/, 'fake_acp_unique.py');
+const UNIQUE = FAKE_UNIQUE;
 
 class Box {
   readonly dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-sub-landing-' }));
@@ -40,7 +40,7 @@ class Box {
     aib.ownerProbe = () => null;
     aib.agentLaunch = () => Promise.resolve([['unused'], {}]);
     aib.connectionFactory = (_command, cwd, provider, options) =>
-      new Connection([PYTHON, UNIQUE, '--models'], cwd, provider, { ...(options ?? {}), env: { ...(options?.env ?? {}), PYTHONUTF8: '1' } });
+      new Connection([NODE, UNIQUE, '--models'], cwd, provider, { ...(options ?? {}), env: { ...(options?.env ?? {}), PYTHONUTF8: '1' } });
     this.aib = aib;
     this.swarm = this.newSwarm();
   }

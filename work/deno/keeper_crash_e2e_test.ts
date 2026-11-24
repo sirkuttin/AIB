@@ -16,7 +16,7 @@ import { pidAlive, readInfo } from '../../app/server/host/host_client.ts';
 import { KEEPER_LOST } from '../../app/server/acp/connection.ts';
 
 type Json = Record<string, unknown>;
-const KEEPER_AGENT = nativePath(new URL('keeper-fixture/agent.py', WORK));
+const KEEPER_AGENT = nativePath(new URL('keeper-fixture/agent.mjs', WORK));
 const DEC = new TextDecoder();
 
 class KeeperFixture extends Fixture {

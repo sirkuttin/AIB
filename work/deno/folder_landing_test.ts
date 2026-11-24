@@ -17,7 +17,7 @@
  * - 25  (server and box text) the queue says "Sends after "…" lands (a few seconds)." while the lock is held.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { FAKE, pause, PYTHON, until } from './_connection.ts';
+import { FAKE, FAKE_UNIQUE, pause, NODE, until } from './_connection.ts';
 import { makeRepo, read, runGit, write } from './_worktree_fixtures.ts';
 import { Connection } from '../../app/server/acp/connection.ts';
 import { landingMessage } from '../../app/server/acp/msgqueue.ts';
@@ -33,7 +33,7 @@ import '../../app/page/queue-ui.js';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
-const UNIQUE = FAKE.replace(/fake_acp.py$/, 'fake_acp_unique.py'); // every chat its own session id
+const UNIQUE = FAKE_UNIQUE; // every chat its own session id
 
 const BRIEF: Json = {
   title: 'Login tests',
@@ -66,7 +66,7 @@ class Box {
       this.logs.push(log);
       // PYTHONUTF8: the fake agent logs what it reads; the landing lines have curly quotes (a real agent reads UTF-8 anyway)
       const env = { ...(options?.env ?? {}), FAKE_ACP_LOG: log, PYTHONUTF8: '1' };
-      return new Connection([PYTHON, UNIQUE, '--models'], cwd, provider, { ...(options ?? {}), env });
+      return new Connection([NODE, UNIQUE, '--models'], cwd, provider, { ...(options ?? {}), env });
     };
     this.aib = aib;
     this.swarm = this.newSwarm();

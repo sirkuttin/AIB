@@ -61,9 +61,9 @@ function aibIn(state: string): Aib {
   const aib = new Aib({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
   aib.ownerProbe = () => null;
   aib.connectionFactory = (_command, cwd, provider, options) =>
-    new Connection(['python3', `${ROOT}/fake_acp.py`, '--cancel-aware'], cwd, provider, {
+    new Connection(['node', `${ROOT}/fake_acp.mjs`, '--cancel-aware'], cwd, provider, {
       ...options,
-      wsl: options?.wsl ? { ...options.wsl, program: '/usr/bin/python3' } : options?.wsl,
+      wsl: options?.wsl ? { ...options.wsl, program: '/usr/bin/node' } : options?.wsl,
     });
   return aib;
 }
@@ -124,7 +124,7 @@ Deno.test({
         old,
       );
       // a program that names the running chat's id (as `claude --resume <id>` does), working outside the project
-      await sh('cd "$1" && setsid -f python3 -c "import time,sys; time.sleep(900)" "$2" </dev/null >/dev/null 2>&1', ROOT, ID.running);
+      await sh('cd "$1" && setsid -f node -e "setTimeout(()=>{},900000)" "$2" </dev/null >/dev/null 2>&1', ROOT, ID.running);
 
       const files = () =>
         sh(

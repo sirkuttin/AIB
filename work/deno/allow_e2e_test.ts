@@ -5,7 +5,7 @@
  * shows the same lines and never answers again. Real keeper (built from keeper/ with Go), temp state folder.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { FAKE, fake, pause, PYTHON, until } from './_connection.ts';
+import { FAKE, FAKE_UNIQUE, fake, pause, NODE, until } from './_connection.ts';
 import { Connection } from '../../app/server/acp/connection.ts';
 import { Aib } from '../../app/server/host/aib.ts';
 import { KeeperLink } from '../../app/server/keeper/link.ts';
@@ -34,7 +34,7 @@ class AllowLab {
     aib.ownerProbe = () => null;
     aib.connectionFactory = (_command, cwd, provider, options) =>
       new Connection(
-        unique ? [PYTHON, FAKE.replace(/fake_acp\.py$/, 'fake_acp_unique.py'), '--cancel-aware'] : fake('--cancel-aware'),
+        unique ? [NODE, FAKE_UNIQUE, '--cancel-aware'] : fake('--cancel-aware'),
         cwd,
         provider,
         { ...options, env: { FAKE_ACP_LOG: this.agentLog } },

@@ -4,7 +4,7 @@
  * Nothing here installs or runs a real agent: work/fake_acp.py stands in, every program file is a temp file, every folder a temp folder.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { exists, join, PY, tempDir, touch, waitFor, withEnv } from './_agents.ts';
+import { exists, join, NODE, tempDir, touch, waitFor, withEnv } from './_agents.ts';
 import { FAKE, Lab } from './_connection.ts';
 import { BETA_AGENTS, BETA_IDS, betaAgent } from '../../app/server/agents/beta_catalog.ts';
 import {
@@ -298,7 +298,7 @@ Deno.test(
 // ---- ACP terminal auth, end to end with the fake agent -----------------------------------------------------------------
 
 function fakeLaunch(authFile: string, id = 'opencode'): BetaLaunch {
-  const base = [PY, FAKE, '--auth-required', '--beta-auth', '--auth-file', authFile];
+  const base = [NODE, FAKE, '--auth-required', '--beta-auth', '--auth-file', authFile];
   return { argv: base, base, source: 'path', path: FAKE, found: true, problem: '', text: id, shim: false };
 }
 
@@ -397,8 +397,8 @@ Deno.test(
     const authFile = join(dir.root, 'auth.flag');
     // Like a real agent: base is the program only; argv adds what starts its ACP mode (here the fake's flags, which the login needs).
     const launch: BetaLaunch = {
-      argv: [PY, FAKE, '--auth-required', '--beta-auth', '--auth-file', authFile, '--terminal-env'],
-      base: [PY, FAKE],
+      argv: [NODE, FAKE, '--auth-required', '--beta-auth', '--auth-file', authFile, '--terminal-env'],
+      base: [NODE, FAKE],
       source: 'path',
       path: FAKE,
       found: true,
@@ -486,10 +486,10 @@ Deno.test('a key-type agent has no Sign in job; an unknown id is refused', async
 
 Deno.test('a chat with a Beta agent sends the key method the stored key (connection authenticateParams)', sanitize, async () => {
   await using lab = new Lab();
-  const c = lab.connection([PY, FAKE], { env: { GEMINI_API_KEY: 'test-key-not-real' } }, lab.dir, 'gemini');
+  const c = lab.connection([NODE, FAKE], { env: { GEMINI_API_KEY: 'test-key-not-real' } }, lab.dir, 'gemini');
   assertEquals(c.authenticateParams('gemini-api-key'), { methodId: 'gemini-api-key', _meta: { 'api-key': 'test-key-not-real' } });
   assertEquals(c.authenticateParams('oauth-personal'), { methodId: 'oauth-personal' });
-  const other = lab.connection([PY, FAKE], { env: { GEMINI_API_KEY: 'k' } }, lab.dir, 'omp');
+  const other = lab.connection([NODE, FAKE], { env: { GEMINI_API_KEY: 'k' } }, lab.dir, 'omp');
   assertEquals(other.authenticateParams('gemini-api-key'), { methodId: 'gemini-api-key' });
 });
 
@@ -574,7 +574,7 @@ Deno.test(
     const restore = withEnv({ FAKE_ACP_LOG: log });
     try {
       const c = lab.connection(
-        [PY, FAKE, '--acp-models'],
+        [NODE, FAKE, '--acp-models'],
         {},
         lab.dir,
         'gemini',
@@ -614,7 +614,7 @@ Deno.test('the probe of a `models` agent records its Model list; an agent with i
   assertEquals('configOptions' in none, false);
   await using lab = new Lab();
   const probe = lab.connection(
-    [PY, FAKE, '--acp-models'],
+    [NODE, FAKE, '--acp-models'],
     {},
     lab.dir,
     'gemini',
@@ -668,7 +668,7 @@ Deno.test(
       const log = lab.path(`${provider}-auth.log`);
       const restore = withEnv({ FAKE_ACP_LOG: log });
       try {
-        const c = lab.connection([PY, FAKE, ...flags], {}, lab.dir, provider);
+        const c = lab.connection([NODE, FAKE, ...flags], {}, lab.dir, provider);
         c.setup(null).catch(() => {});
         await waitFor(() => c.auth, 15);
         const init = received(log).find((m) => m.method === 'initialize')!;

@@ -5,7 +5,7 @@
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
 import { Frozen } from './_frozen.ts';
-import { deadPid, exists, FAKE_NPM, join, makeInstall, PY, tempDir, waitFor, withEnv } from './_agents.ts';
+import { deadPid, exists, FAKE_NPM, join, makeInstall, NODE, tempDir, waitFor, withEnv } from './_agents.ts';
 import { Aib } from '../../app/server/host/aib.ts';
 import * as adapters from '../../app/server/agents/adapters.ts';
 import * as installer from '../../app/server/agents/installer.ts';
@@ -32,7 +32,7 @@ function base() {
     state: join(root, 'state'),
     make(options: InstallerOptions = {}): Installer {
       const made = new Installer(ctx.state, {
-        nodeCommand: PY,
+        nodeCommand: NODE,
         allowList: clone(ALLOW),
         nodeProbe: () => '22.4.0',
         npmCli: FAKE_NPM,
@@ -98,7 +98,7 @@ Deno.test({
     assert(Deno.statSync(marker).mtime!.getTime() >= newest, 'the marker is written after every other file');
     adapters.adapterHooks.globalRoots = () => [];
     try {
-      const row = await adapters.resolveClaude({ nodeCommand: PY, stateDir: t.state });
+      const row = await adapters.resolveClaude({ nodeCommand: NODE, stateDir: t.state });
       assertEquals([row.found, row.source], [true, 'studio']);
       assert(row.path.replaceAll('\\', '/').endsWith('claude-agent-acp/dist/index.js'));
     } finally {
@@ -211,7 +211,7 @@ Deno.test({
   ...sanitize,
   fn: async () => {
     await using t = base();
-    const holder = new Deno.Command(PY, { args: ['-c', 'import time; time.sleep(60)'] }).spawn();
+    const holder = new Deno.Command(NODE, { args: ['-e', 'setTimeout(()=>{},60000)'] }).spawn();
     try {
       const folder = join(t.state, 'agents', 'claude');
       Deno.mkdirSync(folder, { recursive: true });
@@ -422,7 +422,7 @@ Deno.test({
     Deno.env.set('FAKE_NPM_DELAY', '2.5');
     await t.installer.start('claude');
     await waitFor(() => exists(join(t.versionDir(), 'node_modules')));
-    const options = { stateDir: t.state, nodeCommand: PY, claudeLauncher: '', codexLauncher: '', ompCommand: '' };
+    const options = { stateDir: t.state, nodeCommand: NODE, claudeLauncher: '', codexLauncher: '', ompCommand: '' };
     const row = installState(options, 'claude')!;
     assertEquals(row.state, 'running');
     assert(['preparing', 'downloading'].includes(row.stage));

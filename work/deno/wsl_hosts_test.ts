@@ -7,7 +7,7 @@
  * wsl_install_e2e_test.ts and wsl_reconnect_e2e_test.ts. Temp folders only; every keeper started here is shut down.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { pause, PYTHON, until } from './_connection.ts';
+import { pause, NODE, until } from './_connection.ts';
 import {
   ensureKeeper,
   KeeperClient,
@@ -33,9 +33,9 @@ const T = { sanitizeResources: false, sanitizeOps: false };
 const ENC = new TextEncoder();
 const DEC = new TextDecoder();
 const FAST = ['--exit-after', '3s', '--orphan-after', '60s'];
-const HELPER = new URL('../wsl_fake_helper.py', import.meta.url).pathname
+const HELPER = new URL('../fakes/wsl_fake_helper.mjs', import.meta.url).pathname
   .replace(/^\/([A-Za-z]:)/, '$1');
-const ECHO = 'import sys\nfor line in sys.stdin:\n    sys.stdout.write("got:" + line)\n    sys.stdout.flush()\n';
+const ECHO = 'require("readline").createInterface({ input: process.stdin }).on("line", (l) => process.stdout.write("got:" + l + "\\n"));';
 
 async function stopKeeper(dir: string): Promise<void> {
   const info = readKeeperInfo(dir);
@@ -164,7 +164,7 @@ class Lab {
       reconnect: { delaysMs: [100, 200, 400], totalMs: 8000 },
       connectTimeoutMs: 20_000,
       helperCommand: (install) => ({
-        command: PYTHON,
+        command: NODE,
         args: ['-u', HELPER, install.version],
       }),
       helperEnv: () => Deno.env.toObject(),
@@ -207,8 +207,8 @@ function agent(host: WslHostImpl, id: string) {
   const channel = host.link.spawn(
     {
       channel: id,
-      command: PYTHON,
-      args: ['-u', '-c', ECHO],
+      command: NODE,
+      args: ['-e', ECHO],
       env: Deno.env.toObject(),
     },
     { record: (r) => records.push(r), lost: (e) => lost.push(e) },
@@ -391,7 +391,7 @@ Deno.test({
   ...T,
   async fn() {
     await using lab = new Lab();
-    const withMcp = { helperCommand: (install: { version: string }) => ({ command: PYTHON, args: ['-u', HELPER, install.version, 'mcp'] }) };
+    const withMcp = { helperCommand: (install: { version: string }) => ({ command: NODE, args: [HELPER, install.version, 'mcp'] }) };
     const first = lab.host(withMcp);
     await first.start();
     assertEquals(first.mcpTunnel, {
@@ -486,8 +486,8 @@ Deno.test({
         holdCommand: (wslExe, distro, install) => {
           holdArgs.push([wslExe, distro, install.keeper]);
           return {
-            command: PYTHON,
-            args: ['-c', 'import time; time.sleep(600)'],
+            command: NODE,
+            args: ['-e', 'setTimeout(()=>{},600000)'],
           };
         },
       }),

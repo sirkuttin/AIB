@@ -5,7 +5,7 @@
  * here is shut down or killed by the PID its own keeper.json reported.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { FAKE, pause, PYTHON, until } from './_connection.ts';
+import { FAKE, pause, NODE, until } from './_connection.ts';
 import {
   encodeFrame,
   ensureKeeper,
@@ -133,10 +133,10 @@ Deno.test({
     assert(a.has('once') && a.has('channel-ids') && a.has('notes') && a.has('truncate'), a.features.join(','));
     assertEquals(await a.list(), []);
 
-    const spawned = await a.spawn({ channel: 'chat-test1', command: PYTHON, args: [FAKE], cwd: lab.dir });
+    const spawned = await a.spawn({ channel: 'chat-test1', command: NODE, args: [FAKE], cwd: lab.dir });
     assertEquals([spawned.channel, spawned.epoch], ['chat-test1', 1]);
     assert(pidAlive(spawned.pid));
-    const again = await a.spawn({ channel: 'chat-test1', command: PYTHON, args: [FAKE] }).catch((e) => e);
+    const again = await a.spawn({ channel: 'chat-test1', command: NODE, args: [FAKE] }).catch((e) => e);
     assert(again instanceof KeeperError && again.code === 'exists', String(again)); // never a second process
 
     const live = recorder();
@@ -176,7 +176,7 @@ Deno.test({
     assertEquals(await b.list(), []);
 
     // kill takes the whole tree down with an exit record (reason killed).
-    const k = await b.spawn({ channel: 'chat-test2', command: PYTHON, args: [FAKE], cwd: lab.dir });
+    const k = await b.spawn({ channel: 'chat-test2', command: NODE, args: [FAKE], cwd: lab.dir });
     const killed = recorder();
     await b.attach('chat-test2', 0, killed.listener);
     await b.kill('chat-test2', k.epoch);
@@ -195,7 +195,7 @@ Deno.test({
     const first = await lab.keeper();
     const second = await lab.keeper(); // finds the running one
     assertEquals(first.keeperPid, second.keeperPid);
-    const agent = await first.spawn({ channel: 'chat-x', command: PYTHON, args: [FAKE], cwd: lab.dir });
+    const agent = await first.spawn({ channel: 'chat-x', command: NODE, args: [FAKE], cwd: lab.dir });
     let lost: Error | null | undefined;
     first.onClose = (error) => (lost = error);
     Deno.kill(first.keeperPid, 'SIGKILL');

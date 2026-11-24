@@ -5,7 +5,9 @@
  * Every wait has a time limit.
  */
 import { request as httpRequest } from 'node:http';
+import { NODE } from './_fakes.ts';
 import { PAGE_KEY } from './_page_key.ts';
+export { NODE };
 import { waitListenedPort } from './_ports.ts';
 
 export const WORK = new URL('../', import.meta.url);
@@ -13,11 +15,6 @@ export const APP = new URL('../app/', WORK);
 const native = (url: URL) => decodeURIComponent(url.pathname).replace(/^\/([A-Za-z]:)/, '$1');
 export const APP_DIR = native(APP).replace(/\/$/, '');
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-/** The Python that runs fixture writers and the fake agent (never the retired reference server). */
-export function python(): string {
-  return Deno.env.get('AIB_PYTHON') ?? (Deno.build.os === 'windows' ? 'python' : 'python3');
-}
 
 export interface Reply {
   status: number;
@@ -287,11 +284,11 @@ export function writeAddedProjects(stateDir: string, roots: string[]) {
   Deno.writeTextFileSync(`${stateDir}/studio-added-projects.json`, JSON.stringify({ version: 1, savedAt: 1, added }));
 }
 
-/** Run work/<name>/make_fixture.py (a fixture writer, not the reference) in a temp copy; returns the copy's folder. */
+/** Run work/<name>/make_fixture.mjs (a fixture writer, not the reference) in a temp copy; returns the copy's folder. */
 export async function generateFixture(name: string): Promise<string> {
   const folder = Deno.makeTempDirSync({ prefix: `aib-${name}-` });
-  Deno.copyFileSync(new URL(`${name}/make_fixture.py`, WORK), `${folder}/make_fixture.py`);
-  const out = await new Deno.Command(python(), { args: ['-I', `${folder}/make_fixture.py`], cwd: folder, stdout: 'piped', stderr: 'piped' }).output();
+  Deno.copyFileSync(new URL(`${name}/make_fixture.mjs`, WORK), `${folder}/make_fixture.mjs`);
+  const out = await new Deno.Command(NODE, { args: [`${folder}/make_fixture.mjs`], cwd: folder, stdout: 'piped', stderr: 'piped' }).output();
   if (!out.success) throw new Error(`make_fixture ${name}: ${new TextDecoder().decode(out.stderr)}`);
   return folder;
 }

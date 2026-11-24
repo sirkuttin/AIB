@@ -4,7 +4,7 @@
  * test builds, every folder is a temp folder. The real binary is driven by maki_e2e_test.ts.
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
-import { join, PY, tempDir, touch } from './_agents.ts';
+import { join, NODE, tempDir, touch } from './_agents.ts';
 import { BETA_AGENTS, type BetaAgent, betaAgent } from '../../app/server/agents/beta_catalog.ts';
 import { resolveBeta, signinArgv } from '../../app/server/agents/beta_agents.ts';
 import {
@@ -605,13 +605,13 @@ Deno.test(
     using dir = tempDir();
     // a program that exits at once, like `maki acp` with no API key and no saved sign-in
     const quits = {
-      argv: [PY, '-c', 'pass'],
-      base: [PY],
+      argv: [NODE, '-e', '0'],
+      base: [NODE],
       found: true,
       source: 'path',
-      path: PY,
+      path: NODE,
       problem: '',
-      text: PY,
+      text: NODE,
       shim: false,
     };
     const signer = new BetaSigner(dir.root, () => quits, () => ({}), {

@@ -5,7 +5,7 @@
  * naming the session on its command line is reported the same by both probes. Temp folders only; never the real owners folder.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { python } from './_work.ts';
+import { NODE } from './_fakes.ts';
 import { Frozen } from './_frozen.ts';
 import {
   announcementPrefix,
@@ -255,7 +255,7 @@ function probeTest(name: string, fn: (tree: Tree) => Promise<void> | void) {
 }
 
 async function deadPidAsync(): Promise<number> {
-  const child = new Deno.Command(python(), { args: ['-c', 'pass'], stdout: 'null', stderr: 'null' }).spawn();
+  const child = new Deno.Command(NODE, { args: ['-e', '0'], stdout: 'null', stderr: 'null' }).spawn();
   await child.status;
   return child.pid;
 }
@@ -924,12 +924,11 @@ probeTest('a real agent-named process holding the transcript open is reported th
   Deno.copyFileSync(Deno.execPath(), omp);
   const holdCode = `const f = Deno.openSync(${JSON.stringify(transcript)}, { read: true }); setTimeout(() => f.close(), 60000);`;
   const launcher = [
-    'import subprocess, sys',
-    'p = subprocess.Popen([sys.argv[1], "eval", sys.argv[2], "acp", "--resume", sys.argv[3]], cwd=sys.argv[4],',
-    '    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=0x08000000)',
-    'print(p.pid, flush=True)',
+    'const p = require("child_process").spawn(process.argv[1], ["eval", process.argv[2], "acp", "--resume", process.argv[3]], { cwd: process.argv[4], stdio: "ignore", windowsHide: true });',
+    'p.unref();',
+    'console.log(p.pid);',
   ].join('\n');
-  const out = await new Deno.Command(python(), { args: ['-c', launcher, omp, holdCode, session, tree.project], stdout: 'piped' }).output();
+  const out = await new Deno.Command(NODE, { args: ['-e', launcher, omp, holdCode, session, tree.project], stdout: 'piped' }).output();
   const pid = Number(new TextDecoder().decode(out.stdout).trim());
   assert(pid > 0, 'launcher gave no pid');
   try {

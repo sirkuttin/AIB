@@ -32,7 +32,7 @@ const SHARED = join(MAIN, 'aib-shared');
 const NOTES = join(MAIN, 'notes');
 
 function connection(initial: unknown, worktree: boolean, localOnly: Connection['localOnly']): Connection {
-  const c = new Connection([`${TESTS_DIR}${SEP}combined-fixture${SEP}agent.py`], Deno.cwd(), 'claude', { start: false } as never);
+  const c = new Connection([`${TESTS_DIR}${SEP}combined-fixture${SEP}agent.mjs`], Deno.cwd(), 'claude', { start: false } as never);
   c.initial = initial;
   if (worktree) c.worktree = { branch: 'studio/chat-1', base: 'main' };
   c.localOnly = localOnly;

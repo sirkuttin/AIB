@@ -35,7 +35,7 @@ type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
 const SEP = Deno.build.os === 'windows' ? '\\' : '/';
 /** fake_acp.py --held-turn as "Claude Code" (the agent host only starts agent fixtures under work/). */
-const HELD_LAUNCHER = nativePath(new URL('held-turn-fixture/agent.py', WORK));
+const HELD_LAUNCHER = nativePath(new URL('held-turn-fixture/agent.mjs', WORK));
 
 /** The watcher's side: the web server's stores in their own folder, and every announcement it makes. */
 class Watch {

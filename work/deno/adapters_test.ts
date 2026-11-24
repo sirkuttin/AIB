@@ -4,7 +4,7 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { Frozen } from './_frozen.ts';
-import { join, makeInstall, PY, PY_REAL, SEP, tempDir, touch } from './_agents.ts';
+import { join, makeInstall, NODE, NODE_REAL, SEP, tempDir, touch } from './_agents.ts';
 import * as adapters from '../../app/server/agents/adapters.ts';
 
 const CLAUDE = '@agentclientprotocol/claude-agent-acp';
@@ -32,7 +32,7 @@ function fixture() {
   };
 }
 
-const claude = (flag = '', saved = '', node = PY, stateDir: string | null = null) =>
+const claude = (flag = '', saved = '', node = NODE, stateDir: string | null = null) =>
   adapters.resolveClaude({ flag, saved, nodeCommand: node, stateDir, onPath: () => '' }); // no claude-agent-acp on this machine's PATH decides a result
 
 // ---- launcher precedence (test_adapters.LauncherPrecedenceTests) ---------------------------------------------------------
@@ -41,7 +41,7 @@ Deno.test('the installed adapter is run with node from its dist/index.js', async
   using f = fixture();
   const row = await claude();
   assert(row.found, JSON.stringify(row));
-  assertEquals([row.source, row.argv], ['installed', [PY_REAL, f.installed]]);
+  assertEquals([row.source, row.argv], ['installed', [NODE_REAL, f.installed]]);
   assert(row.argv[1].endsWith('index.js'), 'the .cmd shim is never started');
 });
 
@@ -75,10 +75,10 @@ Deno.test('nothing installed says not installed with the install command', async
 
 Deno.test('the Codex problem text depends on signs of Codex', async () => {
   using _f = fixture();
-  const withCodex = await adapters.resolveCodex({ nodeCommand: PY, onPath: () => '', codexPresent: () => true });
+  const withCodex = await adapters.resolveCodex({ nodeCommand: NODE, onPath: () => '', codexPresent: () => true });
   assertEquals(withCodex.problem, 'The Codex app is on this PC, but AIB needs its ACP adapter.');
   assertEquals([withCodex.found, withCodex.text], [false, 'Not installed']);
-  const without = await adapters.resolveCodex({ nodeCommand: PY, onPath: () => '', codexPresent: () => false });
+  const without = await adapters.resolveCodex({ nodeCommand: NODE, onPath: () => '', codexPresent: () => false });
   assert(without.problem.startsWith('Not installed.'));
 });
 
@@ -105,19 +105,19 @@ Deno.test('signs that Codex itself is installed', () => {
 
 Deno.test('Codex shows not installed when missing', async () => {
   using _f = fixture();
-  const row = await adapters.resolveCodex({ nodeCommand: PY, onPath: () => '' });
+  const row = await adapters.resolveCodex({ nodeCommand: NODE, onPath: () => '' });
   assertEquals([row.found, row.source, row.text], [false, 'missing', 'Not installed']);
 });
 
 Deno.test('Codex is found in the npm global folder, then on PATH', async () => {
   using f = fixture();
   touch(f.codexInstalled);
-  let row = await adapters.resolveCodex({ nodeCommand: PY, onPath: () => '/nope/codex-acp' });
+  let row = await adapters.resolveCodex({ nodeCommand: NODE, onPath: () => '/nope/codex-acp' });
   assertEquals([row.found, row.source], [true, 'installed']);
-  assertEquals(row.argv, [PY_REAL, f.codexInstalled]);
+  assertEquals(row.argv, [NODE_REAL, f.codexInstalled]);
   Deno.removeSync(f.codexInstalled);
   const native = touch(join(f.root, 'bin', 'codex-acp'));
-  row = await adapters.resolveCodex({ nodeCommand: PY, onPath: () => native });
+  row = await adapters.resolveCodex({ nodeCommand: NODE, onPath: () => native });
   assertEquals([row.found, row.source, row.argv], [true, 'path', [native]]);
 });
 
@@ -153,8 +153,8 @@ Deno.test('the login shell runs interactive (-ilc), with a 5 s timeout and no st
     Object.assign(seen, { argv, options });
     return Promise.resolve({ stdout: `banner\n${S}/opt/x/bin:/usr/bin${E}` });
   };
-  assertEquals(await adapters.loginShellPath({ SHELL: PY, PATH: '/usr/bin' }, 'Linux', run), '/opt/x/bin:/usr/bin');
-  assertEquals(seen.argv!.slice(0, 2), [PY, '-ilc']);
+  assertEquals(await adapters.loginShellPath({ SHELL: NODE, PATH: '/usr/bin' }, 'Linux', run), '/opt/x/bin:/usr/bin');
+  assertEquals(seen.argv!.slice(0, 2), [NODE, '-ilc']);
   assert(seen.argv![2].includes('printf %s "$PATH"'));
   assertEquals(seen.options!.timeout, 5.0);
   assertEquals(seen.options!.stdin, 'null');
@@ -165,7 +165,7 @@ Deno.test('a timeout, a failure or a bad shell gives nothing', async () => {
   const never: adapters.RunFn = () => {
     throw new Error('must not run');
   };
-  assertEquals(await adapters.loginShellPath({ SHELL: PY }, 'Linux', failing), '');
+  assertEquals(await adapters.loginShellPath({ SHELL: NODE }, 'Linux', failing), '');
   for (const shell of ['', 'bash', '/no/such/shell']) assertEquals(await adapters.loginShellPath({ SHELL: shell }, 'Linux', never), '');
   assertEquals(await adapters.loginShellPath({}, 'Linux', never), '');
 });
@@ -174,20 +174,20 @@ Deno.test('Windows is a no-op', async () => {
   const never: adapters.RunFn = () => {
     throw new Error('must not run');
   };
-  const env = { SHELL: PY, PATH: 'C:\\x' };
+  const env = { SHELL: NODE, PATH: 'C:\\x' };
   assertEquals(await adapters.loginShellPath(env, 'Windows', never), '');
   assertEquals(await adapters.initEnvironment(env, 'Windows', never), '');
   assertEquals(env.PATH, 'C:\\x');
 });
 
 Deno.test('initEnvironment merges into the given environment', async () => {
-  const env: Record<string, string> = { SHELL: PY, PATH: '/usr/bin:/bin' };
+  const env: Record<string, string> = { SHELL: NODE, PATH: '/usr/bin:/bin' };
   const run: adapters.RunFn = () => Promise.resolve({ stdout: `${S}/opt/homebrew/bin:/usr/bin${E}` });
   const added = await adapters.initEnvironment(env, 'Darwin', run);
   assertEquals(env.PATH, '/opt/homebrew/bin:/usr/bin:/bin');
   assertEquals(added, env.PATH);
   assertEquals(await adapters.initEnvironment(env, 'Darwin', run), '', 'nothing new the second time');
-  const env2: Record<string, string> = { SHELL: PY, PATH: '/usr/bin' };
+  const env2: Record<string, string> = { SHELL: NODE, PATH: '/usr/bin' };
   assertEquals(await adapters.initEnvironment(env2, 'Darwin', () => Promise.resolve({ stdout: '' })), '');
   assertEquals(env2.PATH, '/usr/bin', 'a failed shell leaves PATH alone');
 });
@@ -198,17 +198,17 @@ Deno.test('a complete install is found and run with node', async () => {
   using f = fixture();
   Deno.removeSync(join(f.modules, '@agentclientprotocol'), { recursive: true });
   const [, pkg] = makeInstall(f.state, 'claude', '0.102.0', CLAUDE);
-  const row = await claude('', '', PY, f.state);
+  const row = await claude('', '', NODE, f.state);
   assert(row.found, JSON.stringify(row));
   assertEquals(row.source, 'studio');
-  assertEquals(row.argv, [PY_REAL, Deno.realPathSync(join(pkg, 'dist', 'index.js'))]);
+  assertEquals(row.argv, [NODE_REAL, Deno.realPathSync(join(pkg, 'dist', 'index.js'))]);
 });
 
 Deno.test('a folder without the complete marker is ignored', async () => {
   using f = fixture();
   Deno.removeSync(join(f.modules, '@agentclientprotocol'), { recursive: true });
   makeInstall(f.state, 'claude', '0.102.0', CLAUDE, { complete: false });
-  const row = await claude('', '', PY, f.state);
+  const row = await claude('', '', NODE, f.state);
   assertEquals([row.found, row.source], [false, 'missing']);
 });
 
@@ -216,7 +216,7 @@ Deno.test('a half-made newer folder does not hide an older complete one', async 
   using f = fixture();
   makeInstall(f.state, 'claude', '0.101.0', CLAUDE);
   makeInstall(f.state, 'claude', '0.102.0', CLAUDE, { complete: false });
-  assert((await claude('', '', PY, f.state)).path.includes('0.101.0'));
+  assert((await claude('', '', NODE, f.state)).path.includes('0.101.0'));
 });
 
 Deno.test('the newest complete version wins by number, not by text', () => {
@@ -233,19 +233,19 @@ Deno.test('order: flag, then Settings, then AIB, then global, then missing', asy
   const flag = touch(join(f.root, 'flag.js'), '//');
   const saved = touch(join(f.root, 'saved.js'), '//');
   makeInstall(f.state, 'claude', '0.102.0', CLAUDE);
-  const order = async (fl: string, sv: string) => (await claude(fl, sv, PY, f.state)).source;
+  const order = async (fl: string, sv: string) => (await claude(fl, sv, NODE, f.state)).source;
   assertEquals(await order(flag, saved), 'flag');
   assertEquals(await order('', saved), 'settings');
   assertEquals(await order('', ''), 'studio');
-  assertEquals((await claude('', '', PY, join(f.root, 'nowhere'))).source, 'installed');
-  assertEquals((await claude('', '', PY)).source, 'installed');
+  assertEquals((await claude('', '', NODE, join(f.root, 'nowhere'))).source, 'installed');
+  assertEquals((await claude('', '', NODE)).source, 'installed');
   Deno.renameSync(join(f.modules, '@agentclientprotocol'), join(f.root, 'gone'));
-  assertEquals((await claude('', '', PY, join(f.root, 'nowhere'))).source, 'missing');
+  assertEquals((await claude('', '', NODE, join(f.root, 'nowhere'))).source, 'missing');
 });
 
 Deno.test('Codex order and both package names', async () => {
   using f = fixture();
-  const options = { nodeCommand: PY, onPath: () => '', codexPresent: () => false, stateDir: f.state };
+  const options = { nodeCommand: NODE, onPath: () => '', codexPresent: () => false, stateDir: f.state };
   assertEquals((await adapters.resolveCodex(options)).source, 'missing');
   makeInstall(f.state, 'codex', '1.0.0', '@zed-industries/codex-acp', { bin: null, files: ['bin/codex-acp.js'] });
   let row = await adapters.resolveCodex(options);
@@ -272,7 +272,7 @@ Deno.test('a bin that escapes the version folder is refused', async () => {
     for (const hostile of ['../../../../../../outside.js', secret, { 'claude-agent-acp': '../../../../../../outside.js' }]) {
       const [folder] = makeInstall(f.state, 'claude', '9.9.9', CLAUDE, { bin: hostile, files: [] });
       assertEquals(adapters.findAibInstall('claude', f.state), null, JSON.stringify(hostile));
-      assertEquals((await claude('', '', PY, f.state)).source, 'missing');
+      assertEquals((await claude('', '', NODE, f.state)).source, 'missing');
       Deno.removeSync(folder, { recursive: true });
     }
   } finally {
@@ -355,15 +355,15 @@ Deno.test('resolveClaude and resolveCodex give the rows the frozen answers hold 
   makeInstall(f.state, 'claude', '0.101.0', CLAUDE);
   makeInstall(f.state, 'codex', '2.6.0', '@agentclientprotocol/codex-acp', { bin: { 'codex-acp': 'dist/index.js' } });
   const cases: [string, string, string, string, string | null][] = [
-    ['claude', '', '', PY, null],
-    ['claude', flag, saved, PY, f.state],
-    ['claude', '', saved, PY, f.state],
-    ['claude', join(f.root, 'gone.js'), '', PY, null],
-    ['claude', '', '', PY, f.state],
+    ['claude', '', '', NODE, null],
+    ['claude', flag, saved, NODE, f.state],
+    ['claude', '', saved, NODE, f.state],
+    ['claude', join(f.root, 'gone.js'), '', NODE, null],
+    ['claude', '', '', NODE, f.state],
     ['claude', '', '', 'no-such-node-xyz', f.state],
-    ['codex', '', '', PY, null],
-    ['codex', '', '', PY, f.state],
-    ['codex', flag, '', PY, null],
+    ['codex', '', '', NODE, null],
+    ['codex', '', '', NODE, f.state],
+    ['codex', flag, '', NODE, null],
   ];
   for (const [kind, fl, sv, node, state] of cases) {
     const options = { flag: fl, saved: sv, nodeCommand: node, stateDir: state, onPath: () => '', codexPresent: () => false };
@@ -373,9 +373,9 @@ Deno.test('resolveClaude and resolveCodex give the rows the frozen answers hold 
   }
   Deno.removeSync(f.installed);
   for (const [present, kind] of [[true, 'codex'], [false, 'codex'], [false, 'claude']] as const) {
-    const options = { nodeCommand: PY, onPath: () => '', codexPresent: () => present };
+    const options = { nodeCommand: NODE, onPath: () => '', codexPresent: () => present };
     const mine = kind === 'claude' ? await adapters.resolveClaude(options) : await adapters.resolveCodex(options);
-    assertEquals(mine, await py.call('agents_shim', 'resolve', [kind, '', '', PY, null, [f.modules], '', present]));
+    assertEquals(mine, await py.call('agents_shim', 'resolve', [kind, '', '', NODE, null, [f.modules], '', present]));
   }
 });
 

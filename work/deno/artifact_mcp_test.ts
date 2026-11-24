@@ -748,7 +748,7 @@ Deno.test('host URL provider wins and can fail; the tool can be turned off', asy
 const ADVERTISED = { agentCapabilities: { sessionCapabilities: { systemPrompt: { mode: { override: {} } } } } };
 
 function connection(initial: unknown): Connection {
-  const c = new Connection([`${TESTS_DIR}${SEP}combined-fixture${SEP}agent.py`], Deno.cwd(), 'omp', { start: false } as never);
+  const c = new Connection([`${TESTS_DIR}${SEP}combined-fixture${SEP}agent.mjs`], Deno.cwd(), 'omp', { start: false } as never);
   c.initial = initial;
   return c;
 }

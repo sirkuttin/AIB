@@ -10,8 +10,8 @@
  *   7 merged helpers' worktrees and branches are removed (never unmerged work, never an unresolved -landable branch), a sweep at start.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { FAKE, pause, PYTHON, until } from './_connection.ts';
-const UNIQUE = FAKE.replace(/fake_acp.py$/, 'fake_acp_unique.py'); // every chat its own session id
+import { FAKE, FAKE_UNIQUE, pause, NODE, until } from './_connection.ts';
+const UNIQUE = FAKE_UNIQUE; // every chat its own session id
 import { commit, makeRepo, read, runGit, tryGit, write } from './_worktree_fixtures.ts';
 import { Connection } from '../../app/server/acp/connection.ts';
 import { Aib } from '../../app/server/host/aib.ts';
@@ -216,7 +216,7 @@ class Box {
     const aib = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0 }, { keeper: null });
     aib.ownerProbe = () => null;
     aib.agentLaunch = () => Promise.resolve([['unused'], {}]);
-    aib.connectionFactory = (_command, cwd, provider, options) => new Connection([PYTHON, UNIQUE, '--models'], cwd, provider, options ?? {});
+    aib.connectionFactory = (_command, cwd, provider, options) => new Connection([NODE, UNIQUE, '--models'], cwd, provider, options ?? {});
     const live = aib.liveCall.bind(aib);
     aib.liveCall = (name: string, body: unknown) => {
       this.calls.push([name, body as Json]);

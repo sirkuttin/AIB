@@ -5,7 +5,7 @@
  * Switching artifacts never changes the row's height or the panel's width.
  *
  * A real AIB (Deno web server + in-process agent host, temp state folder and workspace, free port; never the live ports), the
- * scripted agent work/scroll-fixture/agent.py, and a headless Chrome/Edge on chat.html (no window).
+ * scripted agent work/scroll-fixture/agent.mjs, and a headless Chrome/Edge on chat.html (no window).
  * AIB_TOOLBAR_LOG=1 prints every measurement.
  *
  * Run (from app): deno test -A ../../work/deno/artifact_toolbar_e2e_test.ts

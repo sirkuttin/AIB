@@ -3,7 +3,7 @@
  * the Deno client starting, attaching to and stopping the real Deno agent host.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { APP, python } from './_work.ts';
+import { APP } from './_work.ts';
 import { Frozen } from './_frozen.ts';
 import {
   APP_ID,
@@ -104,16 +104,19 @@ Deno.test('quoteWindowsArg matches subprocess.list2cmdline', async () => {
 Deno.test('spawnDetached: output goes to the log, exit code is seen, no console window, arguments arrive intact', async () => {
   const dir = await Deno.makeTempDir();
   const log = join(dir, 'logs', 'child.log');
-  const code = [
-    'import sys, os',
-    'print("args", sys.argv[1:], flush=True)',
-    'print("err line", file=sys.stderr, flush=True)',
-    'if os.name == "nt":',
-    '    import ctypes; print("console", bool(ctypes.windll.kernel32.GetConsoleWindow()), flush=True)',
-    'sys.exit(3)',
-  ].join('\n');
+  // the child is a Deno script (no Python): it asks Windows whether it has a console window
+  const script = join(dir, 'child.ts');
+  Deno.writeTextFileSync(script, [
+    'console.log("args", JSON.stringify(Deno.args));',
+    'console.error("err line");',
+    'if (Deno.build.os === "windows") {',
+    '  const k = Deno.dlopen("kernel32.dll", { GetConsoleWindow: { parameters: [], result: "pointer" } });',
+    '  console.log("console", k.symbols.GetConsoleWindow() !== null);',
+    '}',
+    'Deno.exit(3);',
+  ].join('\n'));
   const args = ['two words', 'q"uote', 'C:\\dir\\'];
-  const child = await spawnDetached([python(), '-c', code, ...args], log, dir);
+  const child = await spawnDetached([Deno.execPath(), 'run', '-A', script, ...args], log, dir);
   assert(child.pid > 0);
   let exit: number | null = null;
   for (let i = 0; i < 100 && exit === null; i++) {
@@ -123,9 +126,9 @@ Deno.test('spawnDetached: output goes to the log, exit code is seen, no console 
   child.close();
   assertEquals(exit, win ? 3 : exit); // POSIX reports the sh wrapper's status asynchronously
   const text = await Deno.readTextFile(log);
-  assert(text.includes(`args ['two words', 'q"uote', 'C:\\\\dir\\\\']`), text);
+  assert(text.includes(`args ${JSON.stringify(args)}`), text);
   assert(text.includes('err line'), text);
-  if (win) assert(text.includes('console False'), text);
+  if (win) assert(text.includes('console false'), text);
   await Deno.remove(dir, { recursive: true });
 });
 

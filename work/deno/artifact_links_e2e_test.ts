@@ -7,7 +7,7 @@
  *   - A path link to an HTML file that is no artifact opens the file on Preview, not Source.
  *
  * A real AIB (Deno web server + in-process agent host, temp state folder and workspace, free port; never the live ports), the
- * scripted agent work/scroll-fixture/agent.py, and a headless Chrome/Edge on chat.html (no window).
+ * scripted agent work/scroll-fixture/agent.mjs, and a headless Chrome/Edge on chat.html (no window).
  *
  * Run (from app): deno test -A ../../work/deno/artifact_links_e2e_test.ts
  */

@@ -6,7 +6,8 @@
 import { projectKey } from '../../app/server/desktop/project_delete.ts';
 import { assert, assertEquals } from './_assert.ts';
 import { HAVE_GIT } from './_git_repo.ts';
-import { PYTHON } from './_connection.ts';
+// work/demo-studio/start.py is still a Python program (a later step ports it): this test is the one that still needs Python.
+const PYTHON = Deno.env.get('AIB_PYTHON') ?? (Deno.build.os === 'windows' ? 'python' : 'python3');
 import { SEP as sep } from './_host_fixture.ts';
 
 Deno.test({

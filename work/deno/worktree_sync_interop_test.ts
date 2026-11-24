@@ -1,11 +1,11 @@
 /**
  * server/worktrees/sync.ts, second half of worktree_sync_test.ts (split so the two halves run in parallel): three_way against
  * the answers the retired the frozen answers hold, the real loop with the folder watcher, the cross-process locks in both directions (the other
- * process is work/lock_helper.py), and the same sequence of user and chat edits on identical repos giving the worktree files,
+ * process is work/fakes/lock_helper.ts), and the same sequence of user and chat edits on identical repos giving the worktree files,
  * commits, records, notes and pause state the retired the frozen answers hold at every step (kept as fingerprints, fixtures/frozen).
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
-import { python } from './_work.ts';
+import { lockHelperArgs } from './_fakes.ts';
 import { Frozen } from './_frozen.ts';
 import { FIXED_DATES, foreignHolds, foreignProbe, makeRepo, runGit, Sandbox, setFixedDates, write } from './_worktree_fixtures.ts';
 import { BOTH, CHAT_EDIT, Conn, list, LiveSync, LINES, ProjectSync, setup, text, until, USER_EDIT, WIN } from './_sync_fixtures.ts';
@@ -108,7 +108,7 @@ Deno.test('the project folder is free right after stopAll', async () => {
   assertEquals(await live.catchUp(ctx.keys[0]), 'paused', 'closed');
 });
 
-// ---- cross-process locks (the other process is work/lock_helper.py) --------------------------------------------------------
+// ---- cross-process locks (the other process is work/fakes/lock_helper.ts) --------------------------------------------------------
 Deno.test("another process's pause and worktree locks stop the port's sync, and the port's locks stop another process", async () => {
   using box = new Sandbox();
   const ctx = await setup(box, 1, true);
@@ -152,15 +152,13 @@ Deno.test("another process's pause and worktree locks stop the port's sync, and 
   }
 });
 
-const LOCK_HELPER = decodeURIComponent(new URL('../lock_helper.py', import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1');
-
 Deno.test('the pause-flag lock (sync-state.lock) excludes another process and the port both ways', async () => {
   using box = new Sandbox(false);
   const project = pathOf(box.base, 'proj');
   Deno.mkdirSync(project, { recursive: true });
   const flagLock = sync.syncFlagLock(box.state);
   const foreignCanLock = async (seconds: number) =>
-    new TextDecoder().decode((await new Deno.Command(python(), { args: ['-I', LOCK_HELPER, 'try', flagLock.path, String(seconds)] }).output()).stdout)
+    new TextDecoder().decode((await new Deno.Command(Deno.execPath(), { args: lockHelperArgs('try', flagLock.path, String(seconds)) }).output()).stdout)
       .trim() === 'yes';
   await flagLock.acquire();
   try {
@@ -171,8 +169,8 @@ Deno.test('the pause-flag lock (sync-state.lock) excludes another process and th
   assertEquals(await foreignCanLock(0.3), true);
   await sync.setPaused(box.state, project, 7);
   assertEquals(sync.pauseInfo(box.state, project)!.count, 7);
-  const child = new Deno.Command(python(), {
-    args: ['-I', LOCK_HELPER, 'hold', flagLock.path],
+  const child = new Deno.Command(Deno.execPath(), {
+    args: lockHelperArgs('hold', flagLock.path),
     stdin: 'piped',
     stdout: 'piped',
     stderr: 'inherit',

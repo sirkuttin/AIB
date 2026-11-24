@@ -12,7 +12,7 @@
  */
 import { assertEquals } from './_assert.ts';
 import { Frozen } from './_frozen.ts';
-import { FAKE, type Json, PYTHON, STREAM_AGENT, until } from './_connection.ts';
+import { FAKE, type Json, NODE, STREAM_AGENT, until } from './_connection.ts';
 import { Connection, errorName } from '../../app/server/acp/connection.ts';
 
 type Step = Json & { op: string };
@@ -191,7 +191,7 @@ async function runPort(
   const results: Json[] = [];
   const state: Json = { folder, writes };
   const c = new Connection(
-    [PYTHON, AGENTS[agent], ...flags],
+    [NODE, AGENTS[agent], ...flags],
     folder,
     provider,
     {

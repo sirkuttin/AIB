@@ -6,7 +6,7 @@
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
 import { Frozen } from './_frozen.ts';
-import { FAKE_SIGNIN, join, makeInstall, PY, PY_REAL, tempDir, touch } from './_agents.ts';
+import { FAKE_SIGNIN, join, makeInstall, NODE, NODE_REAL, tempDir, touch } from './_agents.ts';
 import * as adapters from '../../app/server/agents/adapters.ts';
 import * as installer from '../../app/server/agents/installer.ts';
 import * as signin from '../../app/server/agents/signin.ts';
@@ -19,7 +19,7 @@ import { ValueError } from '../../app/server/core/py.ts';
 const CLAUDE = '@agentclientprotocol/claude-agent-acp';
 const agent = (name = 'Fake agent', extra: Record<string, unknown> = {}) => ({
   name,
-  command: PY,
+  command: NODE,
   args: [FAKE_SIGNIN],
   env: [{ name: 'FAKE_TOKEN', value: 'abc' }],
   enabled: true,
@@ -58,20 +58,20 @@ Deno.test('builtinLaunch uses the flag, then Settings, then the installed adapte
   const installed = touch(join(m.modules, '@agentclientprotocol', 'claude-agent-acp', 'dist', 'index.js'));
   const flag = touch(join(m.root, 'flag.js'));
   const saved = touch(join(m.root, 'saved.js'));
-  const options = { claudeLauncher: '', nodeCommand: PY, stateDir: m.state };
+  const options = { claudeLauncher: '', nodeCommand: NODE, stateDir: m.state };
   const settings = new SettingsStore(m.state);
-  assertEquals((await shared.builtinLaunch(options, settings, 'claude')).argv, [PY_REAL, installed]);
+  assertEquals((await shared.builtinLaunch(options, settings, 'claude')).argv, [NODE_REAL, installed]);
   await settings.update({ launchers: { claude: saved } });
-  assertEquals((await shared.builtinLaunch(options, settings, 'claude')).argv, [PY_REAL, Deno.realPathSync(saved)]);
+  assertEquals((await shared.builtinLaunch(options, settings, 'claude')).argv, [NODE_REAL, Deno.realPathSync(saved)]);
   options.claudeLauncher = flag;
-  assertEquals((await shared.builtinLaunch(options, settings, 'claude')).argv, [PY_REAL, Deno.realPathSync(flag)]);
+  assertEquals((await shared.builtinLaunch(options, settings, 'claude')).argv, [NODE_REAL, Deno.realPathSync(flag)]);
   await assertRejects(() => settings.update({ launchers: { claude: 'relative.js' } }), ValueError);
   await assertRejects(() => settings.update({ launchers: { bogus: saved } }), ValueError);
   await settings.update({ launchers: { claude: null } });
   options.claudeLauncher = '';
-  assertEquals((await shared.builtinLaunch(options, settings, 'claude')).argv, [PY_REAL, installed]);
+  assertEquals((await shared.builtinLaunch(options, settings, 'claude')).argv, [NODE_REAL, installed]);
   assertEquals((await shared.builtinLaunch(options, null, 'claude')).source, 'installed');
-  assertEquals((await shared.builtinLaunch({ codexLauncher: flag, nodeCommand: PY }, null, 'codex')).source, 'flag');
+  assertEquals((await shared.builtinLaunch({ codexLauncher: flag, nodeCommand: NODE }, null, 'codex')).source, 'flag');
 });
 
 // ---- describeAgents ------------------------------------------------------------------------------------------------------
@@ -81,7 +81,7 @@ Deno.test('the list: built-ins first, status from open chats, found and hidden e
   const store = new SettingsStore(m.root);
   await store.update({ agents: { upsert: agent() } });
   await store.update({ agents: { upsert: agent('Missing one') } });
-  const options = { claudeLauncher: join(m.root, 'x.js'), nodeCommand: PY };
+  const options = { claudeLauncher: join(m.root, 'x.js'), nodeCommand: NODE };
   const listed = await shared.describeAgents(options, store, [
     { provider: 'custom-fake-agent', ready: true },
     { provider: 'custom-missing-one', auth: { x: 1 }, ready: false },
@@ -99,7 +99,7 @@ Deno.test('the list: built-ins first, status from open chats, found and hidden e
 
 Deno.test('Codex shows not installed when missing', async () => {
   using m = machine();
-  const options = { claudeLauncher: '', nodeCommand: PY, stateDir: m.state };
+  const options = { claudeLauncher: '', nodeCommand: NODE, stateDir: m.state };
   const listed = Object.fromEntries((await shared.describeAgents(options, new SettingsStore(m.state))).map((a) => [a.id, a]));
   const codex = listed.codex;
   assert(codex.builtin && !codex.found);
@@ -119,7 +119,7 @@ Deno.test('Node.js missing: the block line on missing agents and the npm hint fo
 Deno.test('Codex adapter found but no Codex program: the row says to install it; with the program, it says nothing', async () => {
   using m = machine();
   makeInstall(m.state, 'codex', '2.6.0', '@agentclientprotocol/codex-acp', { bin: { 'codex-acp': 'dist/index.js' } });
-  const options = { stateDir: m.state, nodeCommand: PY, claudeLauncher: '', codexLauncher: '' };
+  const options = { stateDir: m.state, nodeCommand: NODE, claudeLauncher: '', codexLauncher: '' };
   const row = async () => (await shared.describeAgents(options, new SettingsStore(m.state))).find((a) => a.id === 'codex')!;
   try {
     shared.describeHooks.codexCli = () => Promise.resolve(null);
@@ -144,7 +144,7 @@ Deno.test('Codex adapter found but no Codex program: the row says to install it;
 
 Deno.test('a new install is seen by the next lookup with no restart (WebServerAndHostReadFresh)', async () => {
   using m = machine();
-  const options = { stateDir: m.state, nodeCommand: PY, claudeLauncher: '', codexLauncher: '' };
+  const options = { stateDir: m.state, nodeCommand: NODE, claudeLauncher: '', codexLauncher: '' };
   const settings = new SettingsStore(join(m.root, 'settings-state'));
   const claudeRow = async () => (await shared.describeAgents(options, settings)).find((a) => a.id === 'claude')!;
   const first = await claudeRow();
@@ -164,7 +164,7 @@ Deno.test('describeAgents reads only the cache and the job files, and never runs
   const log = join(m.root, 'fake.log');
   Deno.env.set('FAKE_SIGNIN_LOG', log);
   try {
-    const options = { stateDir: m.state, nodeCommand: PY };
+    const options = { stateDir: m.state, nodeCommand: NODE };
     const settings = new SettingsStore(m.state);
     let rows = Object.fromEntries((await shared.describeAgents(options, settings, [])).map((a) => [a.id, a]));
     assertEquals((rows.claude.signin as shared.SigninView).state, 'unknown');
@@ -229,8 +229,8 @@ Deno.test('the agent list gives what the frozen answers listed for the same fixt
     closed: true,
   }];
   const cases: [Record<string, string>, [string, boolean]][] = [
-    [{ node_command: PY, claude_launcher: '', codex_launcher: '' }, ['', true]],
-    [{ node_command: PY, claude_launcher: flag, codex_launcher: join(m.root, 'gone.js') }, ['', true]],
+    [{ node_command: NODE, claude_launcher: '', codex_launcher: '' }, ['', true]],
+    [{ node_command: NODE, claude_launcher: flag, codex_launcher: join(m.root, 'gone.js') }, ['', true]],
     [{ node_command: 'no-node-xyz', claude_launcher: '', codex_launcher: '' }, [
       'Node.js 22 or newer is needed to install this agent.',
       false,
@@ -258,7 +258,7 @@ Deno.test('the agent list gives what the frozen answers listed for the same fixt
 
 function context(root: string, overrides: Partial<shared.AibContext> = {}): shared.AibContext {
   return {
-    options: { stateDir: root, nodeCommand: PY },
+    options: { stateDir: root, nodeCommand: NODE },
     settings: new SettingsStore(root),
     conversations: new ConversationState(root),
     liveList: () => ({ connections: [] }),

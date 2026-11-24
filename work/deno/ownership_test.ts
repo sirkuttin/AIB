@@ -3,7 +3,7 @@
  * file names), and interop: a lease held by the python lock helper blocks Deno and one held by Deno blocks it (same file, same lock).
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
-import { python } from './_work.ts';
+import { lockHelperArgs } from './_fakes.ts';
 import { Frozen } from './_frozen.ts';
 import { findExternalOwner, OwnershipConflict, SessionLease, shlexSplit } from '../../app/server/ownership/ownership.ts';
 import { join } from '../../app/server/platform/ospath.ts';
@@ -77,11 +77,9 @@ Deno.test('lease file names match the frozen answers for every kind of id', asyn
   }
 });
 
-const LOCK_HELPER = decodeURIComponent(new URL('../lock_helper.py', import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1');
-
-/** A foreign process (work/lock_helper.py) holds the lock on `path` until its stdin closes; resolves once it does. */
+/** A foreign process (work/fakes/lock_helper.ts) holds the lock on `path` until its stdin closes; resolves once it does. */
 async function foreignHolds(path: string) {
-  const child = new Deno.Command(python(), { args: ['-I', LOCK_HELPER, 'hold', path], stdin: 'piped', stdout: 'piped' }).spawn();
+  const child = new Deno.Command(Deno.execPath(), { args: lockHelperArgs('hold', path), stdin: 'piped', stdout: 'piped' }).spawn();
   const reader = child.stdout.pipeThrough(new TextDecoderStream()).getReader();
   const { value } = await reader.read();
   assert(value?.includes('locked'), `the helper did not lock: ${value}`);
@@ -97,7 +95,7 @@ async function foreignHolds(path: string) {
 
 /** A foreign process tries the lock for a short time; true if it got it. */
 async function foreignCanLock(path: string): Promise<boolean> {
-  const out = await new Deno.Command(python(), { args: ['-I', LOCK_HELPER, 'try', path] }).output();
+  const out = await new Deno.Command(Deno.execPath(), { args: lockHelperArgs('try', path) }).output();
   return new TextDecoder().decode(out.stdout).trim() === 'yes';
 }
 

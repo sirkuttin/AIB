@@ -20,7 +20,7 @@ import { keeperBinary, readKeeperInfo } from '../../app/server/keeper/client.ts'
 import { pidAlive, readInfo } from '../../app/server/host/host_client.ts';
 
 type Json = Record<string, unknown>;
-const KEEPER_AGENT = nativePath(new URL('keeper-fixture/agent.py', WORK));
+const KEEPER_AGENT = nativePath(new URL('keeper-fixture/agent.mjs', WORK));
 const RUNS = Number(Deno.args[0] ?? 5);
 
 function chunks(state: Json): number {

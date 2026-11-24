@@ -6,7 +6,7 @@
  * Temp folders only; never a real distro.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { FAKE, pause, PYTHON, until } from './_connection.ts';
+import { FAKE, FAKE_UNIQUE, pause, NODE, until } from './_connection.ts';
 import { FakeWslHost } from './_wsl_fake.ts';
 import { Connection } from '../../app/server/acp/connection.ts';
 import { Aib } from '../../app/server/host/aib.ts';
@@ -42,7 +42,7 @@ class Lab {
     aib.connectionFactory = (_command, cwd, provider, options) => {
       const wsl = options?.wsl ? { ...options.wsl, program: undefined } : options?.wsl;
       // every agent names its session differently (two chats of one project at once)
-      return new Connection([PYTHON, FAKE.replace(/fake_acp\.py$/, 'fake_acp_unique.py'), '--cancel-aware'], cwd, provider, {
+      return new Connection([NODE, FAKE_UNIQUE, '--cancel-aware'], cwd, provider, {
         ...options,
         wsl,
       });

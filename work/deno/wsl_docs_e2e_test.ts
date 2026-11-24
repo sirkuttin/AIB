@@ -4,7 +4,7 @@
  *     channel, AIB's MCP endpoint, the doc tool's HTTP call): doc_create, doc_read, doc_edit. The answers name Linux paths. The tool's
  *     HTTP call lands on a small stand-in for AIB's /api/live/docs/tool that runs the real runDocTool on the real store (the route's
  *     own folder lookup is tested elsewhere).
- *   - The files are in the distro: doc.aibdoc is valid JSON there (python3 reads it), the page copy has AIB's note, README.md, no
+ *   - The files are in the distro: doc.aibdoc is valid JSON there (node reads it), the page copy has AIB's note, README.md, no
  *     temp files; a big doc (over one request line) is written whole in chunks.
  *   - The user edits through the doc routes (POST /api/live/docs/edit, /page) and types through the live sync link while an agent's
  *     stale rewrite is refused; a file edit made in the distro is taken in; history lists versions; Changes rows the doc in the distro.
@@ -37,9 +37,9 @@ function aibIn(state: string): Aib {
   const aib = new Aib({ stateDir: state, port: 0, ownersDir: null }, { keeper: null });
   aib.ownerProbe = () => null;
   aib.connectionFactory = (_command, cwd, provider, options) =>
-    new Connection(['python3', `${ROOT}/fake_acp.py`, '--cancel-aware'], cwd, provider, {
+    new Connection(['node', `${ROOT}/fake_acp.mjs`, '--cancel-aware'], cwd, provider, {
       ...options,
-      wsl: options?.wsl ? { ...options.wsl, program: '/usr/bin/python3' } : options?.wsl,
+      wsl: options?.wsl ? { ...options.wsl, program: '/usr/bin/node' } : options?.wsl,
     });
   return aib;
 }
@@ -128,7 +128,7 @@ Deno.test({
       await store.flush(doc);
       // the files, in the distro: valid JSON, the page copy with AIB's note, README, no temp file
       const check = await inDistro(
-        'python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d[\'format\'], len(d[\'pages\']))" "$1/aib-docs/plan/doc.aibdoc" && ' +
+        'node -e "const d=JSON.parse(require(\'fs\').readFileSync(process.argv[1],\'utf8\'));console.log(d.format, d.pages.length)" "$1/aib-docs/plan/doc.aibdoc" && ' +
           'head -1 "$1/aib-docs/plan/01-page-1.md" && test -f "$1/aib-docs/README.md" && ls -a "$1/aib-docs/plan"',
         [PROJECT],
       );
@@ -184,7 +184,7 @@ Deno.test({
       const big = '# Big\n\n' + Array.from({ length: 9000 }, (_, i) => `Paragraph ${i} ${'x'.repeat(60)}.`).join('\n\n') + '\n';
       const bigDoc = await store.open(REF, 'big', big, 'user');
       await store.flush(bigDoc);
-      const size = await inDistro('python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(len(d[\'pages\'][0][\'content\']))" "$1/aib-docs/big/doc.aibdoc"', [PROJECT]);
+      const size = await inDistro('node -e "const d=JSON.parse(require(\'fs\').readFileSync(process.argv[1],\'utf8\'));console.log(d.pages[0].content.length)" "$1/aib-docs/big/doc.aibdoc"', [PROJECT]);
       assertEquals([size.code, size.out.trim()], [0, '9001'], size.err);
       assert(bigDoc.aib.text.length > 512 * 1024, `the doc.aibdoc is ${bigDoc.aib.text.length} characters: more than one chunk`);
 

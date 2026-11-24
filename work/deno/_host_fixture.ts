@@ -3,7 +3,8 @@
  * Deno agent hosts started as real processes, the fake ACP agent (combined-fixture) as "Claude Code". Every process a fixture starts
  * is stopped in cleanup: hosts are asked to stop, then killed by the exact PID their own host file reported, as a last resort.
  */
-import { python, WORK } from './_work.ts';
+import { NODE } from './_fakes.ts';
+import { WORK } from './_work.ts';
 import { PAGE_KEY } from './_page_key.ts';
 import { HostClient, pidAlive, readInfo, stopHost } from '../../app/server/host/host_client.ts';
 import { APP_ROOT } from '../../app/server/core/app.ts';
@@ -24,12 +25,9 @@ export function nativePath(url: URL): string {
 
 export const DENO = Deno.execPath();
 export const MAIN = `${APP_ROOT}${SEP}server${SEP}main.ts`;
-export const FAKE_LAUNCHER = nativePath(new URL('combined-fixture/agent.py', WORK));
+export const FAKE_LAUNCHER = nativePath(new URL('combined-fixture/agent.mjs', WORK));
 export const FAKE_HOST = nativePath(new URL('deno/_fake_host.ts', WORK));
-export const PY: string = (() => {
-  const out = new Deno.Command(python(), { args: ['-c', 'import sys; print(sys.executable)'], stdout: 'piped' }).outputSync();
-  return new TextDecoder().decode(out.stdout).trim();
-})();
+export { NODE };
 
 Deno.env.set('AGENT_STUDIO_TEST', '1');
 
@@ -183,7 +181,7 @@ export class Fixture {
       '--owners-dir',
       this.owners,
       '--node-command',
-      PY,
+      NODE,
       '--claude-launcher',
       FAKE_LAUNCHER,
     ];

@@ -1,11 +1,11 @@
 /**
- * Contract (ported from work/contract/test_contract_agent.py): a fake ACP agent (work/combined-fixture/agent.py, run as "Claude
+ * Contract (ported from work/contract/test_contract_agent.py): a fake ACP agent (work/combined-fixture/agent.mjs, run as "Claude
  * Code") driven over HTTP through the real server, step for step: connect, state polling, a prompt that asks for approval, the
  * approval, a long turn that is retried (receipt) and cancelled, the live list, a settings change, disconnect. The old version
  * compared every reply with the reference; here each reply is asserted. The fake agent is a fixture, not the reference server.
  */
 import { assertEquals } from './_assert.ts';
-import { ContractServer, python, WORK } from './_contract_server.ts';
+import { ContractServer, NODE, WORK } from './_contract_server.ts';
 
 const native = (url: URL) => decodeURIComponent(url.pathname).replace(/^\/([A-Za-z]:)/, '$1');
 
@@ -13,7 +13,7 @@ type Evt = { kind: string; data?: { stopReason?: string; update?: { sessionUpdat
 
 Deno.test('contract: a full conversation with a fake agent over HTTP', async () => {
   await using s = await ContractServer.start({
-    extraArgs: ['--node-command', python(), '--claude-launcher', native(new URL('combined-fixture/agent.py', WORK))],
+    extraArgs: ['--node-command', NODE, '--claude-launcher', native(new URL('combined-fixture/agent.mjs', WORK))],
   });
   const workspace = s.workspace;
   const connected = await s.post('/api/live/connect', { provider: 'claude', background: true, cwd: workspace });

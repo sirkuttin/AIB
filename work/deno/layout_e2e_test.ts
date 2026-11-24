@@ -2,7 +2,7 @@
  * Layout audit, end to end: every scroll container and resizable pane against the events that change sizes (the window, text
  * size, panes opening and closing, the right column widening for a doc or artifact, tabs, the composer, pinned cards, the queue,
  * switching chats, views and themes). A real AIB (Deno web server + in-process agent host, temp state folder, free port; never
- * the live ports), the scripted agent work/scroll-fixture/agent.py, and a headless Chrome/Edge on chat.html (no window), the same
+ * the live ports), the scripted agent work/scroll-fixture/agent.mjs, and a headless Chrome/Edge on chat.html (no window), the same
  * harness as scroll_e2e_test.ts (_scroll_lab.ts).
  *
  * Rules every test checks:

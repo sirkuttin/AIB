@@ -107,7 +107,7 @@ cp -R "${ROOT}/registry/claude" "$prefix/node_modules/${CLAUDE.pkg}"
     `${ROOT}/registry/claude/package.json`,
     JSON.stringify({ name: CLAUDE.pkg, version: CLAUDE.version, bin: { 'claude-agent-acp': 'dist/index.js' } }),
   );
-  await put(`${ROOT}/registry/claude/dist/index.js`, `exec python3 "${ROOT}/fake_acp.py" "$@"\n`);
+  await put(`${ROOT}/registry/claude/dist/index.js`, `exec node "${ROOT}/fake_acp.mjs" "$@"\n`);
 }
 
 const STUB_NODE = `#!/bin/sh

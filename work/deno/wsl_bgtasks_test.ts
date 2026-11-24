@@ -420,7 +420,7 @@ Deno.test('helper proc.stop: refuses bad params; a pid that is not below the age
     await assertRejects(() => Promise.resolve(m['proc.stop'](bad)));
   }
   const python = fake()[0];
-  const spawn = () => new Deno.Command(python, { args: ['-c', 'import time; time.sleep(60)'], stdin: 'null', stdout: 'null', stderr: 'null' }).spawn();
+  const spawn = () => new Deno.Command(python, { args: ['-e', 'setTimeout(()=>{},60000)'], stdin: 'null', stdout: 'null', stderr: 'null' }).spawn();
   const root = spawn(), unrelated = spawn();
   const sent: number[] = [];
   const watched = bgtaskMethods({ env: () => Promise.resolve({ env: {}, home: '/' }), store: () => Promise.resolve(null), killer: (t) => (sent.push(t.pid), true) });

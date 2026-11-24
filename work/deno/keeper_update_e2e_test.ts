@@ -7,7 +7,7 @@
  *
  *   1. Build AIB at APP_VERSION (A) and at NEXT_VERSION (B), each with its keeper; install A from its zip into a temp folder.
  *   2. Start A (no --port: it reuses desktop-port.json). One process, no agent host (hostMode 'keeper'). A chat with the fake agent
- *      (work/keeper-fixture/agent.py) streams 40 chunks, 150 ms apart, and asks a question after chunk 19.
+ *      (work/keeper-fixture/agent.mjs) streams 40 chunks, 150 ms apart, and asks a question after chunk 19.
  *   3. Check for updates against a local fake GitHub releases API serving B (zip, SHA256SUMS, release.json) and click Install now
  *      mid-turn: A leaves the chat in the keeper and quits, the update helper (with its tray presence) stays connected to the keeper
  *      while it swaps the files, starts B and waits for B's start confirmation.
@@ -38,7 +38,7 @@ let PORT = 0;
 const NEXT = NEXT_VERSION; // one B for every update test: one cached build
 const CHUNKS = 40;
 type Json = Record<string, unknown>;
-const KEEPER_AGENT = nativePath(new URL('keeper-fixture/agent.py', WORK));
+const KEEPER_AGENT = nativePath(new URL('keeper-fixture/agent.mjs', WORK));
 const DEC = new TextDecoder();
 /** The app folder: WebView2 keeps its profile next to the exe (AIB.exe.WebView2); its DevToolsActivePort names the CDP port, new
  * after every restart. */

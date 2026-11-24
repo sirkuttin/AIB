@@ -5,7 +5,8 @@
 import { pathOf } from '../../app/server/state/paths.ts';
 import { dirname } from '../../app/server/platform/ospath.ts';
 import type { MergeHost } from '../../app/server/worktrees/merge.ts';
-import { python, WORK } from './_work.ts';
+import { WORK } from './_work.ts';
+import { lockHelperArgs } from './_fakes.ts';
 import * as wt from '../../app/server/worktrees/worktrees.ts';
 
 /** Fixed git dates: identical repos give byte-identical commits. */
@@ -152,8 +153,6 @@ export class FakeAib implements MergeHost {
   }
 }
 
-const LOCK_HELPER = decodeURIComponent(new URL('lock_helper.py', WORK).pathname).replace(/^\/([A-Za-z]:)/, '$1');
-
 /** The two lock files a merge or a live sync takes for a worktree: the project's pause flag and the worktree's own lock. */
 function lockPaths(state: string, project: string, record: Record<string, unknown>): { pause: string; worktree: string } {
   return {
@@ -162,9 +161,9 @@ function lockPaths(state: string, project: string, record: Record<string, unknow
   };
 }
 
-/** Another process (work/lock_helper.py, no AIB code) takes the lock on `path` and keeps it until stdin closes. */
+/** Another process (work/fakes/lock_helper.ts, no AIB code) takes the lock on `path` and keeps it until stdin closes. */
 async function holdOne(path: string): Promise<() => Promise<void>> {
-  const child = new Deno.Command(python(), { args: ['-I', LOCK_HELPER, 'hold', path], stdin: 'piped', stdout: 'piped' }).spawn();
+  const child = new Deno.Command(Deno.execPath(), { args: lockHelperArgs('hold', path), stdin: 'piped', stdout: 'piped' }).spawn();
   const reader = child.stdout.pipeThrough(new TextDecoderStream()).getReader();
   const { value } = await reader.read();
   if (!value?.includes('locked')) throw new Error(`the lock helper did not lock ${path}: ${value}`);
@@ -190,7 +189,7 @@ export async function foreignHolds(
 
 /** Whether another process can take a lock on `path` within `seconds`. */
 async function foreignCanLock(path: string, seconds: number): Promise<boolean> {
-  const out = await new Deno.Command(python(), { args: ['-I', LOCK_HELPER, 'try', path, String(seconds)], stdout: 'piped' }).output();
+  const out = await new Deno.Command(Deno.execPath(), { args: lockHelperArgs('try', path, String(seconds)), stdout: 'piped' }).output();
   return new TextDecoder().decode(out.stdout).trim() === 'yes';
 }
 

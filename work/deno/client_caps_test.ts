@@ -4,7 +4,7 @@
  * connection port. Child processes are the test's own one-liners; every terminal is released or shut down.
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
-import { python } from './_work.ts';
+import { NODE } from './_fakes.ts';
 import { Frozen } from './_frozen.ts';
 import {
   CapError,
@@ -25,10 +25,6 @@ import { basename, exists, join, normcase, realpath } from '../../app/server/pla
 import { processAlive } from '../../app/server/platform/process_info.ts';
 
 const WINDOWS = Deno.build.os === 'windows';
-const PY = (() => {
-  const out = new Deno.Command(python(), { args: ['-c', 'import sys; print(sys.executable)'], stdout: 'piped' }).outputSync();
-  return new TextDecoder().decode(out.stdout).trim();
-})();
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function until(condition: () => boolean, seconds = 10) {
@@ -208,7 +204,7 @@ capsTest('nothing is handled by default', async (t) => {
   const c = t.caps();
   assertEquals(c.capabilities(), { fs: { readTextFile: false, writeTextFile: false }, terminal: false });
   for (const method of [...TERMINAL_METHODS, ...FS_READ_METHODS, ...FS_WRITE_METHODS]) assertEquals(c.handles(method), false);
-  assertEquals((await t.err(c, 'terminal/create', { command: PY })).code, -32601);
+  assertEquals((await t.err(c, 'terminal/create', { command: NODE })).code, -32601);
   let threw = false;
   try {
     new ClientCaps(t.ws, { fs: 'write' as never });
@@ -232,7 +228,7 @@ capsTest('dispatch answers in JSON-RPC and checks the session', async (t) => {
   await c.dispatch({ id: 2, method: 'fs/read_text_file', params: { sessionId: 'mine', path: target } });
   await c.dispatch({ id: 3, method: 'fs/read_text_file', params: { sessionId: 'not-mine', path: target } });
   await c.dispatch({ id: 4, method: 'fs/read_text_file', params: 'x' });
-  await c.dispatch({ id: 5, method: 'terminal/create', params: { sessionId: 'mine', command: PY } });
+  await c.dispatch({ id: 5, method: 'terminal/create', params: { sessionId: 'mine', command: NODE } });
   assertEquals(replies, [
     { jsonrpc: '2.0', id: 1, result: null },
     { jsonrpc: '2.0', id: 2, result: { content: 'from agent' } },
@@ -326,20 +322,20 @@ capsTest('path checks and fs requests match the frozen answers', async (t) => {
     { command: '' },
     { command: '   ' },
     { command: 5 },
-    { command: PY, args: '-c pass' },
-    { command: PY, args: [1] },
-    { command: PY, args: ['a\0b'] },
-    { command: PY, cwd: t.out },
-    { command: PY, cwd: join(t.ws, 'missing') },
-    { command: PY, cwd: 'relative' },
-    { command: PY, outputByteLimit: -1 },
-    { command: PY, outputByteLimit: 'x' },
-    { command: PY, outputByteLimit: 1.5 },
-    { command: PY, env: 'A=B' },
-    { command: PY, env: [{ name: 'bad name', value: 'x' }] },
-    { command: PY, env: [{ name: 'A', value: 1 }] },
-    { command: PY, env: [{ name: 'A', value: 'x\0' }] },
-    { command: PY, env: Array.from({ length: 65 }, () => ({ name: 'A', value: 'x' })) },
+    { command: NODE, args: '-c pass' },
+    { command: NODE, args: [1] },
+    { command: NODE, args: ['a\0b'] },
+    { command: NODE, cwd: t.out },
+    { command: NODE, cwd: join(t.ws, 'missing') },
+    { command: NODE, cwd: 'relative' },
+    { command: NODE, outputByteLimit: -1 },
+    { command: NODE, outputByteLimit: 'x' },
+    { command: NODE, outputByteLimit: 1.5 },
+    { command: NODE, env: 'A=B' },
+    { command: NODE, env: [{ name: 'bad name', value: 'x' }] },
+    { command: NODE, env: [{ name: 'A', value: 1 }] },
+    { command: NODE, env: [{ name: 'A', value: 'x\0' }] },
+    { command: NODE, env: Array.from({ length: 65 }, () => ({ name: 'A', value: 'x' })) },
     { command: 'definitely-not-a-real-command-xyz' },
     { command: join(t.ws, 'missing.exe') },
   ];
@@ -369,7 +365,7 @@ async function portCall(caps: ClientCaps, method: string, params: Record<string,
 // --- terminals --------------------------------------------------------------------------------------------------------------------
 
 async function create(c: ClientCaps, args: string[], extra: Record<string, unknown> = {}): Promise<string> {
-  return ((await c.call('terminal/create', { sessionId: 's', command: PY, args, ...extra })) as { terminalId: string }).terminalId;
+  return ((await c.call('terminal/create', { sessionId: 's', command: NODE, args, ...extra })) as { terminalId: string }).terminalId;
 }
 const wait = (c: ClientCaps, terminalId: string) => c.call('terminal/wait_for_exit', { sessionId: 's', terminalId });
 const output = async (c: ClientCaps, terminalId: string) =>
@@ -381,7 +377,7 @@ const output = async (c: ClientCaps, terminalId: string) =>
 
 capsTest('run, collect output and exit code', async (t) => {
   const c = t.caps({ terminal: true });
-  const id = await create(c, ['-c', 'import sys;print("hello");sys.exit(3)']);
+  const id = await create(c, ['-e', 'console.log("hello");process.exit(3)']);
   assertEquals(await wait(c, id), { exitCode: 3, signal: null });
   const out = await output(c, id);
   assertEquals([out.output.trim(), out.truncated, out.exitStatus?.exitCode], ['hello', false, 3]);
@@ -392,7 +388,7 @@ capsTest('run, collect output and exit code', async (t) => {
 capsTest('argv is not shell-interpolated', async (t) => {
   const c = t.caps({ terminal: true });
   const nasty = 'a; echo PWNED & echo $HOME %PATH% `x` "q"';
-  const id = await create(c, ['-c', 'import sys;print(sys.argv[1])', nasty]);
+  const id = await create(c, ['-e', 'console.log(process.argv[1])', nasty]);
   await wait(c, id);
   assertEquals((await output(c, id)).output.trim(), nasty);
 });
@@ -401,11 +397,11 @@ capsTest('cwd must stay in the workspace', async (t) => {
   const c = t.caps({ terminal: true });
   const sub = join(t.ws, 'sub');
   Deno.mkdirSync(sub);
-  const id = await create(c, ['-c', 'import os;print(os.getcwd())'], { cwd: sub });
+  const id = await create(c, ['-e', 'console.log(process.cwd())'], { cwd: sub });
   await wait(c, id);
   assertEquals(normcase(realpath((await output(c, id)).output.trim())), normcase(sub));
   for (const bad of [t.out, join(t.ws, '..'), 'relative', '\\\\server\\share', join(t.ws, 'missing')]) {
-    await t.err(c, 'terminal/create', { command: PY, args: ['-c', 'pass'], cwd: bad });
+    await t.err(c, 'terminal/create', { command: NODE, args: ['-c', 'pass'], cwd: bad });
   }
   assertEquals(c.terminals.size, 1);
   if (WINDOWS) {
@@ -413,7 +409,7 @@ capsTest('cwd must stay in the workspace', async (t) => {
     if (
       (await new Deno.Command('cmd', { args: ['/c', 'mklink', '/J', junction, t.out], stdout: 'null', stderr: 'null' }).output()).success
     ) {
-      await t.err(c, 'terminal/create', { command: PY, args: ['-c', 'pass'], cwd: junction });
+      await t.err(c, 'terminal/create', { command: NODE, args: ['-c', 'pass'], cwd: junction });
       Deno.removeSync(junction);
     }
   }
@@ -421,15 +417,15 @@ capsTest('cwd must stay in the workspace', async (t) => {
 
 capsTest('the output limit keeps the end and flags truncation', async (t) => {
   const c = t.caps({ terminal: true });
-  const id = await create(c, ['-c', 'print("A"*5000);print("END")'], { outputByteLimit: 100 });
+  const id = await create(c, ['-e', 'console.log("A".repeat(5000));console.log("END")'], { outputByteLimit: 100 });
   await wait(c, id);
   const out = await output(c, id);
   assert(out.truncated);
   assert(new TextEncoder().encode(out.output).length <= 100);
   assert(out.output.trim().endsWith('END'));
-  const id2 = await create(c, ['-c', 'print(1)'], { outputByteLimit: 10 ** 12 });
+  const id2 = await create(c, ['-e', 'console.log(1)'], { outputByteLimit: 10 ** 12 });
   assertEquals(c.terminals.get(id2)!.limit, MAX_OUTPUT_LIMIT);
-  for (const bad of [-1, 'x', true, 1.5]) await t.err(c, 'terminal/create', { command: PY, args: ['-c', 'pass'], outputByteLimit: bad });
+  for (const bad of [-1, 'x', true, 1.5]) await t.err(c, 'terminal/create', { command: NODE, args: ['-c', 'pass'], outputByteLimit: bad });
 });
 
 Deno.test('trimming keeps whole UTF-8 characters', () => {
@@ -442,11 +438,11 @@ capsTest('the environment holds only what was asked for', async (t) => {
   const c = t.caps({ terminal: true });
   Deno.env.set('STUDIO_CAPS_SECRET', 'leak');
   try {
-    const id = await create(c, ['-c', 'import os;print(os.environ.get("STUDIO_CAPS_SECRET"), os.environ.get("ASKED"))'], {
+    const id = await create(c, ['-e', 'console.log(process.env.STUDIO_CAPS_SECRET, process.env.ASKED)'], {
       env: [{ name: 'ASKED', value: 'yes' }],
     });
     await wait(c, id);
-    assertEquals((await output(c, id)).output.trim(), 'None yes');
+    assertEquals((await output(c, id)).output.trim(), 'undefined yes');
   } finally {
     Deno.env.delete('STUDIO_CAPS_SECRET');
   }
@@ -456,7 +452,7 @@ capsTest('the environment holds only what was asked for', async (t) => {
       value: 'x\0',
     }]]
   ) {
-    await t.err(c, 'terminal/create', { command: PY, args: ['-c', 'pass'], env: bad });
+    await t.err(c, 'terminal/create', { command: NODE, args: ['-c', 'pass'], env: bad });
   }
 });
 
@@ -467,15 +463,15 @@ capsTest('batch files, missing commands and bad args are refused', async (t) => 
   if (WINDOWS) await t.err(c, 'terminal/create', { command: bat });
   await t.err(c, 'terminal/create', { command: 'definitely-not-a-real-command-xyz' });
   await t.err(c, 'terminal/create', { command: '' });
-  await t.err(c, 'terminal/create', { command: PY, args: '-c pass' });
-  await t.err(c, 'terminal/create', { command: PY, args: [1] });
-  await t.err(c, 'terminal/create', { command: PY, args: ['a\0b'] });
+  await t.err(c, 'terminal/create', { command: NODE, args: '-c pass' });
+  await t.err(c, 'terminal/create', { command: NODE, args: [1] });
+  await t.err(c, 'terminal/create', { command: NODE, args: ['a\0b'] });
   assertEquals(c.terminals.size, 0);
 });
 
 capsTest('kill, then release, cleans up', async (t) => {
   const c = t.caps({ terminal: true });
-  const id = await create(c, ['-c', 'import time;print("up", flush=True);time.sleep(120)']);
+  const id = await create(c, ['-e', 'console.log("up");setTimeout(()=>{},120000)']);
   const pid = (c.terminals.get(id) as Terminal).process.pid;
   for (let i = 0; i < 500 && !(await output(c, id)).output.includes('up'); i++) await sleep(20);
   assertEquals((c.public().terminals as Record<string, unknown>[])[0].status, 'running');
@@ -490,7 +486,7 @@ capsTest('kill, then release, cleans up', async (t) => {
 
 capsTest('release kills a running process and unblocks wait_for_exit', async (t) => {
   const c = t.caps({ terminal: true });
-  const id = await create(c, ['-c', 'import time;time.sleep(120)']);
+  const id = await create(c, ['-e', 'setTimeout(()=>{},120000)']);
   const replies: Record<string, unknown>[] = [];
   c.writeResponse = (r) => replies.push(r);
   const waiting = c.dispatch({ id: 9, method: 'terminal/wait_for_exit', params: { sessionId: 's', terminalId: id } });
@@ -504,26 +500,26 @@ capsTest('release kills a running process and unblocks wait_for_exit', async (t)
 
 capsTest('shutdown and closeSession kill everything', async (t) => {
   const c = t.caps({ terminal: true });
-  const a = await create(c, ['-c', 'import time;time.sleep(120)']);
-  const b = await create(c, ['-c', 'import time;time.sleep(120)']);
+  const a = await create(c, ['-e', 'setTimeout(()=>{},120000)']);
+  const b = await create(c, ['-e', 'setTimeout(()=>{},120000)']);
   const [ta, tb] = [c.terminals.get(a)!, c.terminals.get(b)!];
   await c.closeSession('s');
   assert(ta.isExited && tb.isExited);
   assertEquals(c.public().terminals, []);
-  const d = await create(c, ['-c', 'import time;time.sleep(120)']);
+  const d = await create(c, ['-e', 'setTimeout(()=>{},120000)']);
   const td = c.terminals.get(d)!;
   await c.shutdown();
   assert(td.isExited);
-  const error = await t.err(c, 'terminal/create', { command: PY, args: ['-c', 'pass'] });
+  const error = await t.err(c, 'terminal/create', { command: NODE, args: ['-c', 'pass'] });
   assertEquals([error.code, error.message], [-32603, 'Connection is closing']);
 });
 
 capsTest('child processes are killed too', async (t) => {
   const c = t.caps({ terminal: true });
   const marker = join(t.ws, 'child.pid');
-  const script = 'import subprocess,sys,time;p=subprocess.Popen([sys.executable,"-c","import time;time.sleep(120)"]);' +
-    `open(${JSON.stringify(marker)},"w").write(str(p.pid));time.sleep(120)`;
-  const id = await create(c, ['-c', script]);
+  const script = 'const p=require("child_process").spawn(process.execPath,["-e","setTimeout(()=>{},120000)"],{stdio:"ignore"});' +
+    `require("fs").writeFileSync(${JSON.stringify(marker)},String(p.pid));setTimeout(()=>{},120000)`;
+  const id = await create(c, ['-e', script]);
   const read = () => {
     try {
       return Deno.readTextFileSync(marker).trim();
@@ -548,8 +544,8 @@ capsTest('child processes are killed too', async (t) => {
 capsTest('the terminal limit, and terminal ids of another session', async (t) => {
   const c = t.caps({ terminal: true });
   const ids: string[] = [];
-  for (let i = 0; i < MAX_TERMINALS; i++) ids.push(await create(c, ['-c', 'import time;time.sleep(60)']));
-  assert((await t.err(c, 'terminal/create', { command: PY, args: ['-c', 'pass'] })).message.includes('At most 8'));
+  for (let i = 0; i < MAX_TERMINALS; i++) ids.push(await create(c, ['-e', 'setTimeout(()=>{},60000)']));
+  assert((await t.err(c, 'terminal/create', { command: NODE, args: ['-c', 'pass'] })).message.includes('At most 8'));
   await assertRejects(() => c.call('terminal/output', { sessionId: 'other-session', terminalId: ids[0] }), CapError);
   await t.err(c, 'terminal/output', { terminalId: 'term_nope' });
   await t.err(c, 'terminal/output', { terminalId: 5 });

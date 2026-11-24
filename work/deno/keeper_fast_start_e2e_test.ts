@@ -13,7 +13,7 @@ import { keeperBinary, KeeperClient, readKeeperInfo } from '../../app/server/kee
 import { pidAlive } from '../../app/server/host/host_client.ts';
 
 type Json = Record<string, unknown>;
-const KEEPER_AGENT = nativePath(new URL('keeper-fixture/agent.py', WORK));
+const KEEPER_AGENT = nativePath(new URL('keeper-fixture/agent.mjs', WORK));
 const DELAY_MS = 8000;
 
 class KeeperFixture extends Fixture {

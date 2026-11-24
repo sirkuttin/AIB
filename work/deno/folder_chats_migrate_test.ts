@@ -11,7 +11,7 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { FAKE } from './_connection.ts';
-import { PY } from './_agents.ts'; // the interpreter's real path: a version-manager shim (asdf, pyenv) breaks once HOME is a temp folder
+import { NODE } from './_agents.ts'; // the interpreter's real path: a version-manager shim (asdf, pyenv) breaks once HOME is a temp folder
 import { exists, makeRepo, runGit, write } from './_worktree_fixtures.ts';
 import { pathOf } from '../../app/server/state/paths.ts';
 import * as wt from '../../app/server/worktrees/worktrees.ts';
@@ -80,7 +80,7 @@ class Box {
       args: [
         'run', '-A', '--quiet', '--config', native(CONFIG), native(SCRIPT),
         '--data', this.state, '--claude-dir', this.claudeDir, '--codex-home', this.codex,
-        '--codex-adapter', JSON.stringify([PY, FAKE]),
+        '--codex-adapter', JSON.stringify([NODE, FAKE]),
         ...extra,
       ],
       env,

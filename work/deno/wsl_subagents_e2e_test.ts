@@ -86,9 +86,9 @@ Deno.test({
     const aib = new Aib({ stateDir: state, port: 0, ownersDir: null }, { keeper: null });
     aib.ownerProbe = () => null;
     aib.connectionFactory = (_command, cwd, provider, options) =>
-      new Connection(['python3', `${ROOT}/fake_acp.py`, '--cancel-aware'], cwd, provider, {
+      new Connection(['node', `${ROOT}/fake_acp.mjs`, '--cancel-aware'], cwd, provider, {
         ...options,
-        wsl: options?.wsl ? { ...options.wsl, program: '/usr/bin/python3' } : options?.wsl,
+        wsl: options?.wsl ? { ...options.wsl, program: '/usr/bin/node' } : options?.wsl,
       });
     const swarm = new Swarm({ stateDir: state, host: aib, settings: aib.settings });
     try {

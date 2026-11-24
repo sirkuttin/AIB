@@ -47,9 +47,9 @@ Deno.test('affected: Go keeper changes run the Go tests and the Deno tests that 
 });
 
 Deno.test('affected: a helper script in work/ reaches the tests that name it', () => {
-  const t = tests(['work/lock_helper.py']).out;
-  assert(t.has('platform_test.ts'), 'platform_test.ts starts lock_helper.py');
-  assert(t.has('ownership_test.ts'), 'ownership_test.ts starts lock_helper.py');
+  const t = tests(['work/fakes/lock_helper.ts']).out;
+  assert(t.has('platform_test.ts'), 'platform_test.ts starts lock_helper.ts');
+  assert(t.has('ownership_test.ts'), 'ownership_test.ts starts lock_helper.ts');
 });
 
 Deno.test('affected: a slow file reached only through a broad rule is listed, not run, unless --all-slow', () => {

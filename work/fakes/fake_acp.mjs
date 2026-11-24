@@ -588,7 +588,7 @@ print("hello")
     'const gate=process.argv[1];',
     'const deadline=Date.now()+300000;',
     'if(process.argv.length<3){',
-    "  const leaf=cp.spawn(process.execPath,['-e',fs.readFileSync(gate+'.waiter.js','utf8'),gate,'leaf'],{stdio:'ignore',windowsHide:true});",
+    "  const leaf=cp.spawn(process.execPath,['-e',fs.readFileSync(gate+'.waiter.js','utf8'),gate,'leaf'],{stdio:'ignore',windowsHide:true,detached:process.platform==='win32'});",
     "  fs.writeFileSync(gate+'.pids',process.pid+' '+leaf.pid);",
     '}',
     'while(!fs.existsSync(gate)&&Date.now()<deadline)Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,50);',

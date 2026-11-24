@@ -1,10 +1,10 @@
 /**
  * server/worktrees/local_backup.ts: the daily zip of local-only folders (owner decision 7: one zip, replaced daily; Q1 b: no size
- * cap). A fake clock moves the days. The zips are opened by Python's zipfile (an independent reader: CRCs, UTF-8 names, bytes).
+ * cap). A fake clock moves the days. The zips are opened by a small reader written here from the zip format (an independent reader: CRCs, UTF-8 names, bytes).
  * Temp repos and temp state folders only.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { PYTHON } from './_connection.ts';
+import { inflateRawSync } from 'node:zlib';
 import { runGit, Sandbox, write } from './_worktree_fixtures.ts';
 import * as backup from '../../app/server/worktrees/local_backup.ts';
 import { addEntry, ensureDefault } from '../../app/server/worktrees/local_only.ts';
@@ -14,23 +14,54 @@ import { join } from '../../app/server/platform/ospath.ts';
 const DAY = backup.DAY_MS;
 const T0 = Date.UTC(2026, 10, 12, 9, 0, 0);
 
-const READER = `
-import json, sys, zipfile
-with zipfile.ZipFile(sys.argv[1]) as z:
-    bad = z.testzip()
-    out = {'bad': bad, 'files': {i.filename: [i.file_size, i.compress_type, z.read(i.filename).hex()] for i in z.infolist()}}
-print(json.dumps(out))
-`;
-
 interface Opened {
   bad: string | null;
   files: Record<string, [number, number, string]>;
 }
 
-async function openZip(path: string): Promise<Opened> {
-  const out = await new Deno.Command(PYTHON, { args: ['-I', '-c', READER, path], stdout: 'piped', stderr: 'piped' }).output();
-  assertEquals(out.code, 0, new TextDecoder().decode(out.stderr));
-  return JSON.parse(new TextDecoder().decode(out.stdout));
+const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
+  let c = n;
+  for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  return c >>> 0;
+});
+function crc32(data: Uint8Array): number {
+  let c = 0xffffffff;
+  for (const byte of data) c = CRC_TABLE[(c ^ byte) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+/** zipfile.ZipFile + testzip(): the central directory, each entry's size, method and bytes (CRC checked, names UTF-8). */
+function openZip(path: string): Opened {
+  const data = Deno.readFileSync(path);
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  let end = data.length - 22;
+  while (end >= 0 && view.getUint32(end, true) !== 0x06054b50) end--;
+  if (end < 0) throw new Error('no end of central directory');
+  const count = view.getUint16(end + 10, true);
+  let at = view.getUint32(end + 16, true);
+  const out: Opened = { bad: null, files: {} };
+  const utf8 = new TextDecoder('utf-8', { fatal: true });
+  for (let i = 0; i < count; i++) {
+    if (view.getUint32(at, true) !== 0x02014b50) throw new Error('bad central directory');
+    const method = view.getUint16(at + 10, true);
+    const crc = view.getUint32(at + 16, true);
+    const packed = view.getUint32(at + 20, true);
+    const size = view.getUint32(at + 24, true);
+    const nameLength = view.getUint16(at + 28, true);
+    const extraLength = view.getUint16(at + 30, true);
+    const commentLength = view.getUint16(at + 32, true);
+    const local = view.getUint32(at + 42, true);
+    const name = utf8.decode(data.subarray(at + 46, at + 46 + nameLength));
+    if (view.getUint32(local, true) !== 0x04034b50) throw new Error('bad local header');
+    const bodyAt = local + 30 + view.getUint16(local + 26, true) + view.getUint16(local + 28, true);
+    const body = data.subarray(bodyAt, bodyAt + packed);
+    const bytes = method === 0 ? body : method === 8 ? new Uint8Array(inflateRawSync(body)) : null;
+    if (!bytes) throw new Error(`unsupported method ${method}`);
+    if ((bytes.length !== size || crc32(bytes) !== crc) && out.bad === null) out.bad = name;
+    out.files[name] = [size, method, [...bytes].map((x) => x.toString(16).padStart(2, '0')).join('')];
+    at += 46 + nameLength + extraLength + commentLength;
+  }
+  return out;
 }
 
 const hex = (b: string | Uint8Array) => [...(typeof b === 'string' ? new TextEncoder().encode(b) : b)].map((x) => x.toString(16).padStart(2, '0')).join('');

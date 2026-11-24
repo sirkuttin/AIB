@@ -12,7 +12,7 @@
  * Never a real distro, never the owner's homes.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { fake, PYTHON, until, pause } from './_connection.ts';
+import { fake, NODE, until, pause } from './_connection.ts';
 import { FakeWslHost } from './_wsl_fake.ts';
 import { Connection } from '../../app/server/acp/connection.ts';
 import { Aib } from '../../app/server/host/aib.ts';
@@ -280,8 +280,8 @@ Deno.test({
     const hold = a.keeper!.spawn(
       {
         channel: 'wsl-hold-ubuntu',
-        command: PYTHON,
-        args: ['-c', 'import time; time.sleep(60)'],
+        command: NODE,
+        args: ['-e', 'setTimeout(()=>{},60000)'],
         label: JSON.stringify({ aib: 'wsl-hold', distro: 'ubuntu' }),
       },
       { record() {} },
@@ -302,8 +302,8 @@ async function holdFor(aib: Aib): Promise<void> {
   const hold = aib.keeper!.spawn(
     {
       channel: 'wsl-hold-ubuntu',
-      command: PYTHON,
-      args: ['-c', 'import time; time.sleep(60)'],
+      command: NODE,
+      args: ['-e', 'setTimeout(()=>{},60000)'],
       label: JSON.stringify({ aib: 'wsl-hold', distro: 'ubuntu' }),
     },
     { record() {} },
@@ -445,9 +445,9 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new WslLab();
-    const script = 'import os,sys,time\nprint("CWD=" + os.getcwd())\nprint("LINUX=" + os.environ.get("AIB_FAKE_LINUX_ENV", ""))\n' +
-      'print("WIN=" + os.environ.get("AIB_WINDOWS_ONLY_SENTINEL", "-"))\nsys.stdout.flush()\ntime.sleep(30)\n';
-    lab.host.link.programs.set('/bin/bash', { command: PYTHON, args: ['-u', '-c', script] });
+    const script = 'console.log("CWD=" + process.cwd());console.log("LINUX=" + (process.env.AIB_FAKE_LINUX_ENV ?? ""));\n' +
+      'console.log("WIN=" + (process.env.AIB_WINDOWS_ONLY_SENTINEL ?? "-"));setTimeout(() => {}, 30000);\n';
+    lab.host.link.programs.set('/bin/bash', { command: NODE, args: ['-e', script] });
     const sessions = new TerminalSessions({ keeper: null, spawn: () => { throw new Error('never a child of AIB'); } });
     const link = new FakeLink();
     assertEquals(sessions.attach(link, 'claude:wsl1', REF, 90, 20), null); // answered once the distro has
@@ -479,7 +479,7 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new WslLab();
-    lab.host.link.programs.set('/bin/sh', { command: PYTHON, args: ['-u', '-c', 'import time\nprint("RUNNING", flush=True)\ntime.sleep(60)\n'] });
+    lab.host.link.programs.set('/bin/sh', { command: NODE, args: ['-e', 'console.log("RUNNING");setTimeout(() => {}, 60000);\n'] });
     const sessions = new TerminalSessions({ keeper: null, spawn: () => { throw new Error('never a child of AIB'); } });
     const end = terminalRoutes().get('POST /api/live/terminal/end')!;
     const ctx = { terminals: sessions } as unknown as WebContext;

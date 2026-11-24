@@ -1,6 +1,6 @@
 /**
  * Archive and delete artifacts, end to end (owner decisions 2026-11-12): a real AIB (Deno web server + in-process agent host,
- * temp state folder and workspace, free port; never the live ports), the scripted agent work/scroll-fixture/agent.py, and a headless
+ * temp state folder and workspace, free port; never the live ports), the scripted agent work/scroll-fixture/agent.mjs, and a headless
  * Chrome/Edge on chat.html (no window). Every file this test deletes is in the fixture's temp workspace.
  *
  *  - The picker's row ⋯ and right-click: Archive moves an artifact to "Archived 1", Unarchive brings it back (row and viewer menu).

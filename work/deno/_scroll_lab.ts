@@ -1,6 +1,6 @@
 /**
  * The scroll e2e harness (scroll_e2e_test.ts): a real AIB web server (Deno, in-process agent host, its own temp state folder,
- * a free port; never 8767/8768/8777/8778), the scripted agent work/scroll-fixture/agent.py as "Claude Code", and a headless
+ * a free port; never 8767/8768/8777/8778), the scripted agent work/scroll-fixture/agent.mjs as "Claude Code", and a headless
  * Chrome or Edge (no window) on chat.html. A test appends one line per step to a chat's script file and the agent sends it at
  * once, so what arrives and when is decided by the test, not a timer.
  *
@@ -9,14 +9,15 @@
  * Measuring: `m(page, box)` reads the list's scrollTop / scrollHeight / clientHeight, its distance from the bottom (gap), whether
  * it is paused, and the newest row's box against the list's box. `frames(page, box, ms)` records the same every animation frame.
  */
-import { Fixture, nativePath, PY, sleep, until, type Web } from './_host_fixture.ts';
+import { Fixture, nativePath, NODE, sleep, until, type Web } from './_host_fixture.ts';
+export { NODE };
 import { Browser, browserPath, type Page } from './_doc_browser.ts';
 import { WORK } from './_work.ts';
 
 export { browserPath, sleep };
 export type { Page };
 
-export const SCROLL_AGENT = nativePath(new URL('scroll-fixture/agent.py', WORK));
+export const SCROLL_AGENT = nativePath(new URL('scroll-fixture/agent.mjs', WORK));
 
 /** Fixture with the scripted agent as the Claude launcher. */
 export class ScrollFixture extends Fixture {
@@ -68,7 +69,7 @@ export interface Chat {
   tool(id: string, title: string, status?: string, extra?: Record<string, unknown>): void;
   toolDone(id: string, output?: string): void;
   end(): void;
-  /** What the agent was answered to its permission requests and questions (scroll-fixture/agent.py: <script>.answers). */
+  /** What the agent was answered to its permission requests and questions (scroll-fixture/agent.mjs: <script>.answers). */
   answers(): { id: string; result: Record<string, unknown> | null }[];
 }
 
@@ -379,7 +380,7 @@ export async function wheel(page: Page, dy: number, box = 'messages'): Promise<v
   await sleep(150);
 }
 
-export const PYTHON = PY;
+
 
 /** The first row at the top of the list's view: its text and its offset from the list's top (what must not move while you read). */
 export function anchor(page: Page, box = 'messages'): Promise<{ text: string; off: number } | null> {

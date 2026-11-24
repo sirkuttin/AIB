@@ -1,5 +1,8 @@
-/** Fixtures shared by the agent tests (adapters, installer, signin, shared): temp folders, fake installs, the Python program. */
-import { python, WORK } from './_work.ts';
+/** Fixtures shared by the agent tests (adapters, installer, signin, shared): temp folders, fake installs, the node program. */
+import { NODE } from './_fakes.ts';
+import { WORK } from './_work.ts';
+
+export { NODE };
 
 const WIN = Deno.build.os === 'windows';
 export const SEP = WIN ? '\\' : '/';
@@ -9,15 +12,11 @@ function nativePath(url: URL): string {
   return WIN ? path.replace(/^\/([A-Za-z]:)/, '$1').replaceAll('/', '\\') : path;
 }
 
-/** The Python program as an absolute path (the tests use it as "node"). */
-export const PY: string = (() => {
-  const out = new Deno.Command(python(), { args: ['-c', 'import sys; print(sys.executable)'], stdout: 'piped' }).outputSync();
-  return new TextDecoder().decode(out.stdout).trim();
-})();
-export const PY_REAL: string = Deno.realPathSync(PY);
+/** The node program as an absolute real path (the tests use it as "node"). */
+export const NODE_REAL: string = Deno.realPathSync(NODE);
 
-export const FAKE_NPM = nativePath(new URL('fake_npm.py', WORK));
-export const FAKE_SIGNIN = nativePath(new URL('fake_signin_agent.py', WORK));
+export const FAKE_NPM = nativePath(new URL('fakes/fake_npm.mjs', WORK));
+export const FAKE_SIGNIN = nativePath(new URL('fakes/fake_signin_agent.mjs', WORK));
 
 export function join(...parts: string[]): string {
   return parts.join(SEP);
@@ -89,7 +88,7 @@ export async function waitFor<T>(check: () => T | Promise<T>, seconds = 25): Pro
 
 /** A process that is certainly dead: its pid. */
 export async function deadPid(): Promise<number> {
-  const child = new Deno.Command(PY, { args: ['-c', 'pass'] }).spawn();
+  const child = new Deno.Command(NODE, { args: ['-e', '0'] }).spawn();
   await child.status;
   return child.pid;
 }

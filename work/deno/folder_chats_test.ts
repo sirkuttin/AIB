@@ -13,8 +13,8 @@
  * Also: readOwnCopy (connect's ownCopy ignored, with a log line).
  */
 import { assert, assertEquals } from './_assert.ts';
-import { PYTHON, pause, until } from './_connection.ts';
-import { FAKE } from './_connection.ts';
+import { NODE, pause, until } from './_connection.ts';
+import { FAKE, FAKE_UNIQUE } from './_connection.ts';
 import { makeRepo, read, runGit, write } from './_worktree_fixtures.ts';
 import { Connection, SHARED_FOLDER_CONTEXT, sharedFolderNote } from '../../app/server/acp/connection.ts';
 import { readOwnCopy, Aib } from '../../app/server/host/aib.ts';
@@ -25,7 +25,7 @@ import * as merge from '../../app/server/worktrees/merge.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
-const UNIQUE = FAKE.replace(/fake_acp.py$/, 'fake_acp_unique.py'); // every chat its own session id
+const UNIQUE = FAKE_UNIQUE; // every chat its own session id
 
 class Box {
   readonly dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-folder-chats-' }));
@@ -47,7 +47,7 @@ class Box {
       const log = pathOf(this.dir, `agent-${this.logs.length + 1}.log`);
       this.logs.push(log);
       const env = { ...(options?.env ?? {}), FAKE_ACP_LOG: log };
-      return new Connection([PYTHON, UNIQUE, '--models'], cwd, provider, { ...(options ?? {}), env });
+      return new Connection([NODE, UNIQUE, '--models'], cwd, provider, { ...(options ?? {}), env });
     };
     this.aib = aib;
     this.swarm = new Swarm({ stateDir: this.state, host: aib, settings: aib.settings });

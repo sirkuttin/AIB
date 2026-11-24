@@ -11,7 +11,7 @@
  * Quitting AIB keeping working helpers is the keeper's own test (keeper_quit_e2e_test.ts, unchanged).
  */
 import { assert, assertEquals } from './_assert.ts';
-import { FAKE, pause, PYTHON, until } from './_connection.ts';
+import { FAKE, FAKE_UNIQUE, pause, NODE, until } from './_connection.ts';
 import { commit, makeRepo, runGit } from './_worktree_fixtures.ts';
 import * as fx from './_monitor_fixtures.ts';
 import { Connection } from '../../app/server/acp/connection.ts';
@@ -25,7 +25,7 @@ import * as m from '../../app/server/transcripts/monitor.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
-const UNIQUE = FAKE.replace(/fake_acp.py$/, 'fake_acp_unique.py');
+const UNIQUE = FAKE_UNIQUE;
 
 const BRIEF: Json = {
   title: 'Login tests',
@@ -34,7 +34,7 @@ const BRIEF: Json = {
   owns: ['test/login/**'],
   done_when: 'the login tests pass',
   reply_with: 'cause in one line',
-  test_cmd: "python -c \"open('AIB_RAN_TEST_CMD','w')\"",
+  test_cmd: "node -e \"require('fs').writeFileSync('AIB_RAN_TEST_CMD','')\"",
 };
 
 function alive(pid: number): boolean {
@@ -83,7 +83,7 @@ class Box {
     aib.agentLaunch = () => Promise.resolve([['unused'], {}]);
     aib.connectionFactory = (_command, cwd, provider, options) =>
       new Connection(
-        [PYTHON, UNIQUE, '--models', '--held-turn', '--not-claude', ...(provider === 'codex' ? ['--child-pid-file', this.childFile] : [])],
+        [NODE, UNIQUE, '--models', '--held-turn', '--not-claude', ...(provider === 'codex' ? ['--child-pid-file', this.childFile] : [])],
         cwd,
         provider,
         options ?? {},

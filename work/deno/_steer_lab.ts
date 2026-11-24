@@ -3,7 +3,7 @@
  * separate agent host (so the routes go through the host proxy and its allow list), a temp state folder, a free port (never 8767,
  * 8768, 8777, 8778) and, for the page tests, a headless Chrome/Edge (no window).
  *
- * The agents are work/fake_acp.py --steer <claude|codex>, which replays the real recordings of work/steer-recordings (see the
+ * The agents are work/fakes/fake_acp.mjs --steer <claude|codex>, which replays the real recordings of work/steer-recordings (see the
  * flag's help for the prompts: steer-bash:<gate>, steer-helper:<gate>, steer-perm, steer-wait:<gate>, steer-drop:<gate>,
  * steer-late:<gate>). Claude and Codex start through launcher scripts the lab writes.
  * A provider listed in `plain` runs without --steer: an agent that cannot steer. Every line an agent receives
@@ -12,14 +12,14 @@
  * The contract names (build-brief-beta9.md) live in ROUTES and SNAPSHOT below; the lead reconciles them when A and B land.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { Fixture, httpJson, type Json, nativePath, PY, SEP, sleep, until, type Web } from './_host_fixture.ts';
+import { Fixture, httpJson, type Json, nativePath, NODE, SEP, sleep, until, type Web } from './_host_fixture.ts';
 import { Browser, browserPath, type Page } from './_doc_browser.ts';
 import { WORK } from './_work.ts';
 
 export { assert, assertEquals, browserPath, sleep, until };
 export type { Json, Page };
 
-export const FAKE_ACP = nativePath(new URL('fake_acp.py', WORK));
+export const FAKE_ACP = nativePath(new URL('fakes/fake_acp.mjs', WORK));
 export type Who = 'claude' | 'codex';
 const WIN = Deno.build.os === 'windows';
 
@@ -33,7 +33,7 @@ export const ROUTES = {
 export interface LabOptions {
   /** Providers that run WITHOUT --steer (an agent that cannot steer). */
   plain?: Who[];
-  /** Extra fake_acp.py flags per provider (e.g. --child-pid-file <path>). */
+  /** Extra fake_acp.mjs flags per provider (e.g. --child-pid-file <path>). */
   extra?: Partial<Record<Who, string[]>>;
 }
 
@@ -91,11 +91,11 @@ export class SteerLab extends Fixture {
       Deno.writeTextFileSync(`${this.configDir}${SEP}${who}.json`, JSON.stringify({ flags, log: this.logOf(who) }));
     }
     const at = (name: string) => nativePath(new URL(`steer-fixture/${name}`, WORK));
-    this.launchers = { claude: at('claude.py'), codex: at('codex.py') };
+    this.launchers = { claude: at('claude.mjs'), codex: at('codex.mjs') };
   }
 
   override get env(): Record<string, string> {
-    return { ...super.env, AIB_STEER_LAB: this.configDir, AIB_STEER_PY: PY };
+    return { ...super.env, AIB_STEER_LAB: this.configDir, AIB_STEER_NODE: NODE };
   }
 
   logOf(who: Who): string {

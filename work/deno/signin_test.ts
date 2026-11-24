@@ -5,7 +5,7 @@
  */
 import { assert, assertEquals, assertRejects, assertThrows } from './_assert.ts';
 import { Frozen } from './_frozen.ts';
-import { deadPid, exists, FAKE_SIGNIN, join, PY, tempDir, touch, waitFor, withEnv } from './_agents.ts';
+import { deadPid, exists, FAKE_SIGNIN, join, NODE, tempDir, touch, waitFor, withEnv } from './_agents.ts';
 import * as signin from '../../app/server/agents/signin.ts';
 import { Signer, type SignerOptions, SignInRefused, type Spawned } from '../../app/server/agents/signin.ts';
 import { signinView } from '../../app/server/web/shared.ts';
@@ -55,7 +55,7 @@ function base() {
     consoles,
     make(found = true, options: SignerOptions = {}): Signer {
       const launch = found
-        ? () => ({ argv: [PY, FAKE_SIGNIN], found: true, problem: '' })
+        ? () => ({ argv: [NODE, FAKE_SIGNIN], found: true, problem: '' })
         : () => ({ argv: [] as string[], found: false, problem: 'Not installed' });
       const made = new Signer(ctx.state, launch, { spawnConsole: quietConsole(consoles), systemIsWindows: true, ...options });
       signers.push(made);
@@ -207,21 +207,20 @@ Deno.test({
 
 /** A fake `codex` CLI: records its args, prints a line that must never be read, exits with the code in <root>/codex-exit. */
 function fakeCodex(root: string): { argv: string[]; exit(code: number): void; runs(): string[][] } {
-  const script = join(root, 'fake_codex.py');
+  const script = join(root, 'fake_codex.cjs');
   Deno.writeTextFileSync(
     script,
     [
-      'import json, os, sys',
-      'root = os.path.dirname(os.path.abspath(__file__))',
-      "open(os.path.join(root, 'codex-runs.log'), 'a').write(json.dumps(sys.argv[1:]) + '\\n')",
-      "print('Logged in using ChatGPT: placeholder-account')",
-      "sys.exit(int(open(os.path.join(root, 'codex-exit')).read()))",
+      "const fs = require('fs'), path = require('path');",
+      "fs.appendFileSync(path.join(__dirname, 'codex-runs.log'), JSON.stringify(process.argv.slice(2)) + '\\n');",
+      "console.log('Logged in using ChatGPT: placeholder-account');",
+      "process.exit(parseInt(fs.readFileSync(path.join(__dirname, 'codex-exit'), 'utf8')));",
     ].join('\n'),
   );
   const exitFile = join(root, 'codex-exit');
   Deno.writeTextFileSync(exitFile, '0');
   return {
-    argv: [PY, script],
+    argv: [NODE, script],
     exit: (code) => Deno.writeTextFileSync(exitFile, String(code)),
     runs: () => {
       const log = join(root, 'codex-runs.log');
@@ -241,7 +240,7 @@ Deno.test({
     const first = await signer.check('codex', true);
     assertEquals([first.state, first.checked], ['ready', true]);
     assertEquals(codex.runs(), [['login', 'status']]);
-    assertEquals(asked[0], [PY, FAKE_SIGNIN], 'the CLI is looked up from the adapter launch');
+    assertEquals(asked[0], [NODE, FAKE_SIGNIN], 'the CLI is looked up from the adapter launch');
     assertEquals(t.events(), [], 'the adapter itself is not started for a status check');
     codex.exit(1);
     assertEquals((await signer.check('codex')).checked, false, 'within a minute Settings reuses the answer');
@@ -359,7 +358,7 @@ Deno.test({
     await t.signer.start('claude');
     const job = (await t.finish())!;
     assertEquals(job.state, 'done', JSON.stringify(job));
-    assertEquals(t.consoles, [[PY, FAKE_SIGNIN, '--cli', 'auth', 'login', '--claudeai', '--custom-flag']]);
+    assertEquals(t.consoles, [[NODE, FAKE_SIGNIN, '--cli', 'auth', 'login', '--claudeai', '--custom-flag']]);
     const inits = t.events('initialize');
     assertEquals(inits.length, 1);
     assert((inits[0].caps as { auth: { terminal: boolean } }).auth.terminal, 'AIB says it can run terminal sign-ins');
@@ -376,7 +375,7 @@ Deno.test({
     Deno.env.set('FAKE_SIGNIN_METHODS', 'none');
     await t.signer.start('claude');
     assertEquals((await t.finish())!.state, 'done');
-    assertEquals(t.consoles, [[PY, FAKE_SIGNIN, '--cli', 'auth', 'login', '--claudeai']]);
+    assertEquals(t.consoles, [[NODE, FAKE_SIGNIN, '--cli', 'auth', 'login', '--claudeai']]);
     assertEquals(t.events('authenticate'), []);
   },
 });
@@ -457,7 +456,7 @@ Deno.test({
     const job = (await t.finish('claude', made))!;
     assertEquals(job.state, 'manual');
     assert(job.command.includes('--cli auth login --claudeai'), job.command);
-    assert(job.command.startsWith(PY.includes(' ') ? `"${PY}"` : PY), 'a part with a space is quoted');
+    assert(job.command.startsWith(NODE.includes(' ') ? `"${NODE}"` : NODE), 'a part with a space is quoted');
     assertEquals(t.consoles, []);
     await made.check('claude', true); // "Check again" clears the instruction
     assertEquals(made.status('claude').job.state, 'idle');
@@ -606,7 +605,7 @@ Deno.test({
   name: 'the cache and job files keep the format and give the answers the frozen answers hold',
   ...sanitize,
   fn: async () => {
-    const py = new Frozen();
+    const py = new Frozen(true);
     await using t = base();
     const noTime = (cache: unknown) => ({ ...(cache as Record<string, unknown>), checkedAt: 0 });
     // Deno writes (a check, a manual job); what the retired readers made of those files

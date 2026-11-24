@@ -5,7 +5,7 @@
  * `auto` maps to `workspace-write`. The 2.6.0 list is the one recorded from the installed adapter (codex_acp_2_6_0_modes.json).
  */
 import { assert, assertEquals } from './_assert.ts';
-import { FAKE, PYTHON, until } from './_connection.ts';
+import { FAKE, FAKE_UNIQUE, NODE, until } from './_connection.ts';
 import { makeRepo, runGit } from './_worktree_fixtures.ts';
 import { Connection } from '../../app/server/acp/connection.ts';
 import { Aib } from '../../app/server/host/aib.ts';
@@ -17,7 +17,7 @@ import { pathOf } from '../../app/server/state/paths.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
-const UNIQUE = FAKE.replace(/fake_acp.py$/, 'fake_acp_unique.py');
+const UNIQUE = FAKE_UNIQUE;
 const REAL = JSON.parse(Deno.readTextFileSync(new URL('./codex_acp_2_6_0_modes.json', import.meta.url))) as { availableModes: Json[] };
 const BRIEF: Json = {
   title: 'Login tests',
@@ -26,7 +26,7 @@ const BRIEF: Json = {
   owns: ['test/login/**'],
   done_when: 'the login tests pass',
   reply_with: 'cause in one line',
-  test_cmd: "python -c \"open('AIB_RAN_TEST_CMD','w')\"",
+  test_cmd: "node -e \"require('fs').writeFileSync('AIB_RAN_TEST_CMD','')\"",
 };
 
 class Box {
@@ -45,7 +45,7 @@ class Box {
     aib.ownerProbe = () => null;
     aib.agentLaunch = () => Promise.resolve([['unused'], {}]);
     aib.connectionFactory = (_command, cwd, provider, options) =>
-      new Connection([PYTHON, UNIQUE, ...(provider === 'codex' ? ['--codex-modes', codexModes] : ['--models'])], cwd, provider, options ?? {});
+      new Connection([NODE, UNIQUE, ...(provider === 'codex' ? ['--codex-modes', codexModes] : ['--models'])], cwd, provider, options ?? {});
     this.aib = aib;
     this.swarm = new Swarm({ stateDir: this.state, host: aib, settings: aib.settings });
     this.swarm.openMs = 30_000;

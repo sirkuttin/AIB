@@ -7,8 +7,8 @@
  * helpers, and keep their role when reopened. AIB never runs the brief's test command.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { FAKE, pause, PYTHON, until } from './_connection.ts';
-const UNIQUE = FAKE.replace(/fake_acp.py$/, 'fake_acp_unique.py'); // every chat its own session id
+import { FAKE, FAKE_UNIQUE, pause, NODE, until } from './_connection.ts';
+const UNIQUE = FAKE_UNIQUE; // every chat its own session id
 import { commit, makeRepo, read, runGit, write } from './_worktree_fixtures.ts';
 import { Connection } from '../../app/server/acp/connection.ts';
 import { ownToolName } from '../../app/server/acp/connection.ts';
@@ -31,7 +31,7 @@ const BRIEF: Json = {
   owns: ['test/login/**'],
   done_when: 'the login tests pass',
   reply_with: 'cause in one line',
-  test_cmd: "python -c \"open('AIB_RAN_TEST_CMD','w')\"",
+  test_cmd: "node -e \"require('fs').writeFileSync('AIB_RAN_TEST_CMD','')\"",
 };
 
 Deno.test('brief: required fields, no mode input, a provider needs why, owns overlap by prefix', () => {
@@ -193,7 +193,7 @@ class Box {
     aib.ownerProbe = () => null;
     aib.agentLaunch = () => Promise.resolve([['unused'], {}]);
     aib.connectionFactory = (_command, cwd, provider, options) =>
-      new Connection([PYTHON, UNIQUE, '--models'], cwd, provider, options ?? {});
+      new Connection([NODE, UNIQUE, '--models'], cwd, provider, options ?? {});
     this.aib = aib;
     this.swarm = new Swarm({ stateDir: this.state, host: aib, settings: aib.settings });
     this.swarm.openMs = 30_000;

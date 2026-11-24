@@ -1,6 +1,6 @@
 /**
  * Scrolling in the chat, end to end: a real AIB (Deno web server + in-process agent host, temp state folder, free port), the
- * scripted agent work/scroll-fixture/agent.py, and a headless Chrome/Edge on chat.html (no window). The test appends each step to
+ * scripted agent work/scroll-fixture/agent.mjs, and a headless Chrome/Edge on chat.html (no window). The test appends each step to
  * the chat's script and waits until the page draws it, then measures the list: scrollTop, scrollHeight, clientHeight, the gap to
  * the bottom, the follow flag (data-paused), the newest row's box against the list's box, and the row at the top of the view.
  * Where an update could flash, it also records the same numbers on every animation frame.

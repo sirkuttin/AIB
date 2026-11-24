@@ -82,7 +82,9 @@ export function thread(fn) {
 
 /** A child process with Popen's poll/wait/kill/pid/returncode. */
 export function popen(command, args, options = {}) {
-  const proc = spawn(command, args, { windowsHide: true, ...options });
+  // Python's Popen children are plain children: they outlive a killed parent, and on POSIX stay in its process group. node on Windows
+  // puts its children in a kill-on-close job unless they are detached, so detach there (only there: a POSIX detached child leaves the group).
+  const proc = spawn(command, args, { windowsHide: true, detached: process.platform === 'win32', ...options });
   const handle = {
     proc,
     pid: proc.pid,

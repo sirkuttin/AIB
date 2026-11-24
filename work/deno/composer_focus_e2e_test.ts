@@ -1,6 +1,6 @@
 /**
  * The message box keeps the keyboard focus, end to end (owner, beta.9 test build): a real AIB with the scripted agent
- * (work/scroll-fixture/agent.py) and a headless Chrome/Edge on chat.html (no window), as in scroll_e2e_test.ts.
+ * (work/scroll-fixture/agent.mjs) and a headless Chrome/Edge on chat.html (no window), as in scroll_e2e_test.ts.
  *
  *   C1  every way of sending leaves you in the message box: Enter (idle), Enter while the agent works, Alt+Enter, the Send button,
  *       the Send ▾ menu's items (after this turn, Interrupt and send). Was: the box was disabled while the message

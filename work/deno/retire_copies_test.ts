@@ -9,8 +9,8 @@
  * update: a worktree record with a saved session, continued through Aib.connect.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { PYTHON, pause } from './_connection.ts';
-import { FAKE } from './_connection.ts';
+import { NODE, pause } from './_connection.ts';
+import { FAKE, FAKE_UNIQUE } from './_connection.ts';
 import { makeRepo, read, runGit, write } from './_worktree_fixtures.ts';
 import { Connection } from '../../app/server/acp/connection.ts';
 import { Aib } from '../../app/server/host/aib.ts';
@@ -22,7 +22,7 @@ import { claudeEncode } from '../migrate/refile_core.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
-const UNIQUE = FAKE.replace(/fake_acp.py$/, 'fake_acp_unique.py');
+const UNIQUE = FAKE_UNIQUE;
 const exists = (p: string) => {
   try {
     Deno.statSync(p);
@@ -50,7 +50,7 @@ class Box {
     aib.agentLaunch = () => Promise.resolve([['unused'], {}]);
     aib.connectionFactory = (_command, cwd, provider, options) => {
       const env = { ...(options?.env ?? {}), FAKE_ACP_LOG: pathOf(this.dir, `agent-${++this.#n}.log`) };
-      return new Connection([PYTHON, UNIQUE, '--models'], cwd, provider, { ...(options ?? {}), env });
+      return new Connection([NODE, UNIQUE, '--models'], cwd, provider, { ...(options ?? {}), env });
     };
     this.aib = aib;
   }

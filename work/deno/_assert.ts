@@ -11,7 +11,7 @@ function equal(a: unknown, b: unknown): boolean {
   if (Object.is(a, b)) return true;
   // a stored fingerprint (_frozen.ts), at any depth, stands for the value it was made from
   if (a instanceof FrozenDigest || b instanceof FrozenDigest) {
-    return digestOf(a instanceof FrozenDigest ? b : a) === (a instanceof FrozenDigest ? a : (b as FrozenDigest)).hash ||
+    return digestOf(a instanceof FrozenDigest ? b : a, (a instanceof FrozenDigest ? a : (b as FrozenDigest)).recorded) === (a instanceof FrozenDigest ? a : (b as FrozenDigest)).hash ||
       (a instanceof FrozenDigest && b instanceof FrozenDigest && a.hash === b.hash);
   }
   if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
@@ -27,7 +27,7 @@ export function assertEquals(actual: unknown, expected: unknown, message = ''): 
   if (expected instanceof FrozenDigest || actual instanceof FrozenDigest) {
     const digest = (expected instanceof FrozenDigest ? expected : actual) as FrozenDigest;
     const other = expected instanceof FrozenDigest ? actual : expected;
-    const got = other instanceof FrozenDigest ? other.hash : digestOf(other);
+    const got = other instanceof FrozenDigest ? other.hash : digestOf(other, digest.recorded);
     if (got !== digest.hash) {
       throw new AssertionError(
         `${message ? message + ': ' : ''}\ndiffers from the stored answer (fingerprint ${digest.hash}, got ${got}); value: ${

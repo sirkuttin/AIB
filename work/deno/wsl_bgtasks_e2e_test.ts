@@ -72,7 +72,7 @@ Deno.test({
       // "another client": a program named claude (a shell script, so its comm is `claude`) started with --resume <id>, and AIB's own
       // agent stand-in, also named claude with --resume <id> in its command line, which runs the fake agent
       const otherScript = '#!/bin/sh\necho $$ > "$AIB_TEST_PID"\ntrap \'kill $!; exit 0\' TERM\nsleep 600 &\nwait\n';
-      const agentScript = `#!/bin/sh\n/usr/bin/python3 "${ROOT}/fake_acp.py"\n`; // the distro's python3, not a version manager's shim
+      const agentScript = `#!/bin/sh\n/usr/bin/node "${ROOT}/fake_acp.mjs"\n`; // the distro's node, not a version manager's shim
       for (const [path, text] of [[`${ROOT}/other/claude`, otherScript], [`${ROOT}/agent/claude`, agentScript]]) {
         const made = await inDistro('mkdir -p "$(dirname "$1")" && cat > "$1" && chmod +x "$1"', [path], new TextEncoder().encode(text));
         assertEquals(made.code, 0, made.err);
@@ -161,7 +161,7 @@ Deno.test({
       const ref = refOf({ kind: 'wsl', distro: KEY, linuxPath: repo });
       const id = crypto.randomUUID();
       await transcript(id, [{ type: 'user', sessionId: id, cwd: repo, timestamp: '2026-11-14T10:00:00Z', message: { role: 'user', content: 'hi' } }], 3600);
-      const agentScript = `#!/bin/sh\n/usr/bin/python3 "${ROOT}/fake_acp.py"\n`;
+      const agentScript = `#!/bin/sh\n/usr/bin/node "${ROOT}/fake_acp.mjs"\n`;
       const made = await inDistro('mkdir -p "$(dirname "$1")" && cat > "$1" && chmod +x "$1"', [`${ROOT}/agent/claude`], new TextEncoder().encode(agentScript));
       assertEquals(made.code, 0, made.err);
 
@@ -254,7 +254,7 @@ Deno.test({
       const repo = `${ROOT}/repo`;
       const ref = refOf({ kind: 'wsl', distro: KEY, linuxPath: repo });
       await readyHost();
-      aib = aibWith(state, () => ['python3', `${ROOT}/fake_acp.py`, '--held-turn'], '/usr/bin/python3');
+      aib = aibWith(state, () => ['node', `${ROOT}/fake_acp.mjs`, '--held-turn'], '/usr/bin/node');
       const c = await aib.connect('claude', ref);
       const gate = `${ROOT}/gate`;
       assertEquals((await aib.liveCall('prompt', { id: c.id, text: `bgshell:${gate}`, clientMessageId: 'm1' }))[0], 200);
@@ -301,7 +301,7 @@ Deno.test({
       await until(async () => (unrelated = await pidOf(`${ROOT}/sleeper.pid`)) > 0, 'the unrelated process');
       assert(await alive(unrelated));
       const host = await readyHost();
-      aib = aibWith(state, () => ['python3', `${ROOT}/fake_acp.py`, '--held-turn', '--child-pid-file', `${ROOT}/child`], '/usr/bin/python3');
+      aib = aibWith(state, () => ['node', `${ROOT}/fake_acp.mjs`, '--held-turn', '--child-pid-file', `${ROOT}/child`], '/usr/bin/node');
       const c = await aib.connect('claude', ref);
       assertEquals((await aib.liveCall('prompt', { id: c.id, text: `bgshell:${ROOT}/gate`, clientMessageId: 'm1' }))[0], 200);
       await until(() => Object.values(c.toolBackground())[0]?.stoppable, 'Stop offered (the distro named its processes)');

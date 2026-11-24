@@ -18,7 +18,7 @@
 import { createHash } from 'node:crypto';
 import { WORK } from './_work.ts';
 import { assertEquals } from './_assert.ts';
-import { digestOf, FrozenDigest, hideLocal } from './_digest.ts';
+import { digestOf, FrozenDigest, hideLocal, namesNode } from './_digest.ts';
 
 /** A label for Frozen.frozen from what the run was given: a short fingerprint of the parts (temp folders hidden). */
 export function labelOf(...parts: unknown[]): string {
@@ -61,7 +61,7 @@ function canonical(value: unknown, folders: Map<string, number>): string {
   });
   // the folder name on its own (a `name` field) is the same random text
   for (const [segment, index] of folders) text = text.replaceAll(segment, `<SEGN#${index}>`);
-  return hideLocal(text);
+  return hideLocal(text, true); // as the recording had it (the interpreter and fake agent names, see _digest.ts recordedForm)
 }
 
 /** The text of a stored answer with its temp-folder tokens turned back into this run's folder names. */
@@ -83,13 +83,16 @@ export function keyOf(request: { module: string; func: string; args: unknown[]; 
   return createHash('sha1').update(text).digest('hex').slice(0, 8);
 }
 
-function fromItems(answer: Answer, folders: Map<string, number>): unknown {
-  if (typeof answer === 'string') return new FrozenDigest(answer);
-  if ('list' in answer) return answer.list.map((item) => fromItems(item, folders));
+function fromItems(answer: Answer, folders: Map<string, number>, recorded = false): unknown {
+  if (typeof answer === 'string') return new FrozenDigest(answer, recorded);
+  if ('list' in answer) return answer.list.map((item) => fromItems(item, folders, recorded));
   return (JSON.parse(restore(JSON.stringify(answer), folders)) as { ok: unknown }).ok;
 }
 
 export class Frozen {
+  /** recorded: every fingerprint is compared as the recording had it (a test whose values name node where the recording named Python). */
+  constructor(readonly recorded = false) {}
+
   static #files = new Map<string, Stored>();
   static #counters = new Map<string, number>();
 
@@ -117,7 +120,7 @@ export class Frozen {
     const at = Frozen.#counters.get(counterKey) ?? 0;
     Frozen.#counters.set(counterKey, at + 1);
     const answer = answers[Math.min(at, answers.length - 1)];
-    if (typeof answer === 'string') return Promise.resolve({ ok: new FrozenDigest(answer) });
+    if (typeof answer === 'string') return Promise.resolve({ ok: new FrozenDigest(answer, this.recorded || namesNode(JSON.stringify(args))) });
     return Promise.resolve(JSON.parse(restore(JSON.stringify(answer), folders)) as PyReply);
   }
 
@@ -137,7 +140,7 @@ export class Frozen {
     const at = Frozen.#counters.get(counterKey) ?? 0;
     Frozen.#counters.set(counterKey, at + 1);
     const answer = answers[Math.min(at, answers.length - 1)];
-    if (typeof answer === 'string') return Promise.resolve(new FrozenDigest(answer) as T);
+    if (typeof answer === 'string') return Promise.resolve(new FrozenDigest(answer, this.recorded) as T);
     return Promise.resolve((JSON.parse(restore(JSON.stringify(answer), new Map())) as { ok: T }).ok);
   }
 
@@ -161,7 +164,7 @@ export class Frozen {
     const key = keyOf({ module, func, args, kwargs }, folders);
     const answers = Frozen.#stored()[key];
     if (!answers) throw new Error(`No frozen answer for ${key} ${JSON.stringify(args).slice(0, 200)} in fixtures/frozen/${fixtureName()}`);
-    return Promise.resolve(fromItems(answers[0], folders) as unknown[]);
+    return Promise.resolve(fromItems(answers[0], folders, this.recorded || namesNode(JSON.stringify(args))) as unknown[]);
   }
 
   /** Like frozen(), for a run that gave an array: each item was kept on its own, so the test can index it. */
@@ -170,7 +173,7 @@ export class Frozen {
     const key = createHash('sha1').update('frozenlist:' + label).digest('hex').slice(0, 8);
     const answers = Frozen.#stored()[key];
     if (!answers) throw new Error(`No frozen answer for ${label} in fixtures/frozen/${fixtureName()}`);
-    return Promise.resolve(fromItems(answers[0], folders) as T[]);
+    return Promise.resolve(fromItems(answers[0], folders, this.recorded) as T[]);
   }
 
   /** Assert the port give what the frozen answers hold for each input. `port` returns the same plain JSON shape. */

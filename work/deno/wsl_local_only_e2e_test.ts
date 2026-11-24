@@ -36,7 +36,7 @@ function aibIn(state: string): Aib {
   aib.ownerProbe = () => null;
   // env sets FAKE_ACP_LOG for the fake agent: every line it receives goes there (session/new's params)
   aib.connectionFactory = (_command, cwd, provider, options) =>
-    new Connection(['env', `FAKE_ACP_LOG=${ROOT}/acp.log`, '/usr/bin/python3', `${ROOT}/fake_acp.py`, '--cancel-aware', '--extra-dirs'], cwd, provider, {
+    new Connection(['env', `FAKE_ACP_LOG=${ROOT}/acp.log`, '/usr/bin/node', `${ROOT}/fake_acp.mjs`, '--cancel-aware', '--extra-dirs'], cwd, provider, {
       ...options,
       wsl: options?.wsl ? { ...options.wsl, program: '/usr/bin/env' } : options?.wsl,
     });

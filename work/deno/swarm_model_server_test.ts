@@ -7,7 +7,7 @@
  * every helper gets there. A fake Anthropic-compatible model server, the fake ACP agent, temp folders and git only.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { FAKE, PYTHON, pause, until } from './_connection.ts';
+import { FAKE, FAKE_UNIQUE, NODE, pause, until } from './_connection.ts';
 import { FakeWslHost } from './_wsl_fake.ts';
 import { makeRepo, runGit } from './_worktree_fixtures.ts';
 import { Connection } from '../../app/server/acp/connection.ts';
@@ -20,7 +20,7 @@ import { pathOf } from '../../app/server/state/paths.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
-const UNIQUE = FAKE.replace(/fake_acp.py$/, 'fake_acp_unique.py');
+const UNIQUE = FAKE_UNIQUE;
 const KEY = 'test-key-not-real-55cc12';
 Deno.env.set('AGENT_STUDIO_TEST', '1');
 
@@ -58,7 +58,7 @@ class Box {
     aib.ownerProbe = () => null;
     aib.connectionFactory = (command, cwd, provider, options) => {
       this.launched.push({ provider, command, cwd, env: options?.env ?? null });
-      return new Connection([PYTHON, UNIQUE, '--models', ...(provider.startsWith('claude') ? ['--claude-modes'] : [])], cwd, provider, options ?? {});
+      return new Connection([NODE, UNIQUE, '--models', ...(provider.startsWith('claude') ? ['--claude-modes'] : [])], cwd, provider, options ?? {});
     };
     this.aib = aib;
     this.swarm = new Swarm({ stateDir: this.state, host: aib, settings: aib.settings });

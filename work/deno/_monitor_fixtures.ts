@@ -5,7 +5,8 @@
  * Every file's mtime is set to a whole millisecond so the recorded runs (100 ns) and Deno (1 ms) read the same st_mtime.
  */
 import { join } from '../../app/server/transcripts/purepath.ts';
-import { python, WORK } from './_work.ts';
+import { NODE } from './_fakes.ts';
+import { WORK } from './_work.ts';
 
 type Row = Record<string, unknown>;
 const enc = new TextEncoder();
@@ -790,9 +791,9 @@ export function edgeFixture(folder: string): string {
 export async function runGenerator(name: string, into: string): Promise<string> {
   const folder = join(into, name);
   Deno.mkdirSync(folder, { recursive: true });
-  const source = new URL(`${name}/make_fixture.py`, WORK);
-  Deno.copyFileSync(source, join(folder, 'make_fixture.py'));
-  const out = await new Deno.Command(python(), { args: ['-X', 'utf8', 'make_fixture.py'], cwd: folder, stdout: 'null', stderr: 'piped' })
+  const source = new URL(`${name}/make_fixture.mjs`, WORK);
+  Deno.copyFileSync(source, join(folder, 'make_fixture.mjs'));
+  const out = await new Deno.Command(NODE, { args: ['make_fixture.mjs'], cwd: folder, stdout: 'null', stderr: 'piped' })
     .output();
   if (!out.success) throw new Error(new TextDecoder().decode(out.stderr));
   alignTimes(folder);

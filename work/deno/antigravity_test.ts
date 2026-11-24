@@ -5,7 +5,7 @@
  * a fake fetch serves the bytes, every folder is a temp folder. The real binary is driven by antigravity_e2e_test.ts.
  */
 import { assert, assertEquals, assertRejects } from "./_assert.ts";
-import { join, PY, tempDir, touch } from "./_agents.ts";
+import { join, NODE, tempDir, touch } from "./_agents.ts";
 import {
   BETA_AGENTS,
   type BetaAgent,
@@ -478,22 +478,26 @@ Deno.test("Sign in: agy's advertised terminal-login runs `agy acp --disable-tele
 /** A tiny ACP agent: answers initialize, then session/new with this error (or a session). */
 function fakeAgent(error: { code: number; message: string } | null): string[] {
   const reply = error
-    ? `{"jsonrpc":"2.0","id":m["id"],"error":${JSON.stringify(error)}}`
-    : `{"jsonrpc":"2.0","id":m["id"],"result":{"sessionId":"s1"}}`;
+    ? `{jsonrpc:"2.0",id:m.id,error:${JSON.stringify(error)}}`
+    : `{jsonrpc:"2.0",id:m.id,result:{sessionId:"s1"}}`;
   const script = [
-    "import sys, json",
-    "for line in sys.stdin:",
-    "    m = json.loads(line)",
-    '    if "id" not in m: continue',
-    '    if m.get("method") == "initialize":',
-    '        out = {"jsonrpc":"2.0","id":m["id"],"result":{"protocolVersion":1,"authMethods":[]}}',
-    '    elif m.get("method") == "session/new":',
-    `        out = json.loads('${reply}'.replace('m["id"]', str(m["id"])))`,
-    "    else:",
-    '        out = {"jsonrpc":"2.0","id":m["id"],"result":{}}',
-    '    sys.stdout.write(json.dumps(out) + "\\n"); sys.stdout.flush()',
+    'let buf = "";',
+    'process.stdin.on("data", (d) => {',
+    '  buf += d;',
+    '  let i;',
+    '  while ((i = buf.indexOf("\\n")) >= 0) {',
+    '    const m = JSON.parse(buf.slice(0, i));',
+    '    buf = buf.slice(i + 1);',
+    '    if (!("id" in m)) continue;',
+    '    let out;',
+    '    if (m.method === "initialize") out = {jsonrpc:"2.0",id:m.id,result:{protocolVersion:1,authMethods:[]}};',
+    `    else if (m.method === "session/new") out = ${reply};`,
+    '    else out = {jsonrpc:"2.0",id:m.id,result:{}};',
+    '    process.stdout.write(JSON.stringify(out) + "\\n");',
+    '  }',
+    '});',
   ].join("\n");
-  return [PY, "-c", script];
+  return [NODE, "-e", script];
 }
 
 Deno.test(
@@ -518,7 +522,7 @@ Deno.test(
     );
     assertEquals(await signer.probe("antigravity", fakeAgent(null)), "ready");
     assertEquals(
-      await signer.probe("antigravity", [PY, "-c", "pass"]),
+      await signer.probe("antigravity", [NODE, "-e", "0"]),
       "unknown",
       "a crash is not a sign-in answer",
     );

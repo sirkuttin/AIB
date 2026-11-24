@@ -6,7 +6,7 @@
  * temp APPDATA/LOCALAPPDATA and a page port the OS picked; only processes this test started are killed.
  *
  *   1. Build AIB at APP_VERSION (A) and at NEXT_VERSION (B), each with its keeper; unzip A into one folder and B into another.
- *   2. Start A. A chat with the fake agent (work/keeper-fixture/agent.py) streams 40 chunks, 300 ms apart, and asks a question
+ *   2. Start A. A chat with the fake agent (work/keeper-fixture/agent.mjs) streams 40 chunks, 300 ms apart, and asks a question
  *      halfway.
  *   3. Close A's window mid-turn (WM_CLOSE: the person's close button): A leaves the chat in the keeper and exits. AIB.exe is gone;
  *      the keeper says it holds the chat, the agent goes on (the question arrives, the keeper records it), and the keeper does NOT
@@ -33,7 +33,7 @@ const NEXT = NEXT_VERSION; // one B for every update test: one cached build
 const CHUNKS = 40;
 const WM_CLOSE = 0x0010;
 type Json = Record<string, unknown>;
-const KEEPER_AGENT = nativePath(new URL('keeper-fixture/agent.py', WORK));
+const KEEPER_AGENT = nativePath(new URL('keeper-fixture/agent.mjs', WORK));
 const DEC = new TextDecoder();
 
 

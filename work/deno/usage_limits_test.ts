@@ -5,7 +5,7 @@
  * Never reads the owner's ~/.codex: every Codex home here is a temp folder.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { pause, PYTHON, until } from './_connection.ts';
+import { pause, NODE, until } from './_connection.ts';
 import { WORK } from './_work.ts';
 import { Connection } from '../../app/server/acp/connection.ts';
 import { Aib } from '../../app/server/host/aib.ts';
@@ -32,8 +32,8 @@ const nativePath = (url: URL) => {
   const path = decodeURIComponent(url.pathname);
   return Deno.build.os === 'windows' ? path.replace(/^\/([A-Za-z]:)/, '$1').replaceAll('/', '\\') : path;
 };
-const FAKE_APP_SERVER = nativePath(new URL('fake_codex_app_server.py', WORK));
-const FAKE_UNIQUE = nativePath(new URL('fake_acp_unique.py', WORK)); // two chats open at once need different session ids
+const FAKE_APP_SERVER = nativePath(new URL('fakes/fake_codex_app_server.mjs', WORK));
+const FAKE_UNIQUE = nativePath(new URL('fakes/fake_acp_unique.mjs', WORK)); // two chats open at once need different session ids
 const lines = (path: string) => Deno.readTextFileSync(path).trim().split(/\r?\n/);
 
 // ---- samples from the research report -----------------------------------------------------------------------------------
@@ -208,11 +208,11 @@ Deno.test({
     const dir = Deno.makeTempDirSync({ prefix: 'aib-codex-app-' });
     try {
       const log = dir + SEP + 'methods.log';
-      const result = await appServerLimits([PYTHON, FAKE_APP_SERVER, 'app-server', '--log', log]);
+      const result = await appServerLimits([NODE, FAKE_APP_SERVER, 'app-server', '--log', log]);
       const s = parseCodexAppServer(result, 1)!;
       assertEquals(brief(s), [['primary', '5h', 12, 4000000000, 'allowed'], ['secondary', 'wk', 86, 4000500000, 'allowed']]);
       assertEquals(lines(log), ['initialize', 'initialized', 'account/rateLimits/read']);
-      assertEquals(await appServerLimits([PYTHON, FAKE_APP_SERVER, '--fail']), null);
+      assertEquals(await appServerLimits([NODE, FAKE_APP_SERVER, '--fail']), null);
       // Under test only fixtures may start: the real codex is refused, not run.
       assertEquals(await appServerLimits(['codex', 'app-server']), null);
       // The command: CODEX_PATH, else @openai/codex next to codex-acp.
@@ -253,7 +253,7 @@ Deno.test({
       const feed = new LimitsFeed(new UsageLimitsStore(null), {
         now: () => clock,
         codexHome: () => home,
-        appServer: () => [PYTHON, FAKE_APP_SERVER, 'app-server', '--log', log],
+        appServer: () => [NODE, FAKE_APP_SERVER, 'app-server', '--log', log],
       });
       const codex = fakeConnection('codex');
       // No session file: the app-server answers.
@@ -315,7 +315,7 @@ class Lab {
     const aib = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, autoReconnect: false });
     aib.ownerProbe = () => null;
     aib.agentLaunch = () => Promise.resolve([['fixture'], {}]);
-    aib.connectionFactory = (_command, cwd, provider) => new Connection([PYTHON, FAKE_UNIQUE, '--limits'], cwd, provider);
+    aib.connectionFactory = (_command, cwd, provider) => new Connection([NODE, FAKE_UNIQUE, '--limits'], cwd, provider);
     this.aibs.push(aib);
     return aib;
   }

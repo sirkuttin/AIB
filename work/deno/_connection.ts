@@ -1,20 +1,16 @@
-/** Shared helpers for the Connection tests: fake agents from work/ run with Python, temp folders, polling. */
-import { python, WORK } from './_work.ts';
+/** Shared helpers for the Connection tests: fake agents from work/fakes run with node, temp folders, polling. */
+import { fakePath, NODE } from './_fakes.ts';
 import { Connection, type ConnectionOptions } from '../../app/server/acp/connection.ts';
 
 Deno.env.set('AGENT_STUDIO_TEST', '1'); // the test guard: only fixtures under work/ may be started
 
-function nativePath(url: URL): string {
-  const path = decodeURIComponent(url.pathname);
-  return Deno.build.os === 'windows' ? path.replace(/^\/([A-Za-z]:)/, '$1').replaceAll('/', '\\') : path;
-}
-
-export const FAKE = nativePath(new URL('fake_acp.py', WORK));
-export const STREAM_AGENT = nativePath(new URL('stream_agent.py', WORK));
-export const PYTHON = python();
+export { NODE };
+export const FAKE = fakePath('fake_acp.mjs');
+export const FAKE_UNIQUE = fakePath('fake_acp_unique.mjs');
+export const STREAM_AGENT = fakePath('stream_agent.mjs');
 
 export function fake(...flags: string[]): string[] {
-  return [PYTHON, FAKE, ...flags];
+  return [NODE, FAKE, ...flags];
 }
 
 export async function until(condition: () => unknown, what = 'expected state', seconds = 8): Promise<void> {
@@ -41,7 +37,7 @@ export class Lab {
     return c;
   }
 
-  /** A connection to fake_acp.py with these flags, set up (session/new) unless setup is false. */
+  /** A connection to fake_acp.mjs with these flags, set up (session/new) unless setup is false. */
   async open(flags: string[] = [], { setup = true, provider = 'gemini' } = {}): Promise<Connection> {
     const c = this.connection(fake(...flags), {}, this.dir, provider);
     if (setup) await c.setup(null);

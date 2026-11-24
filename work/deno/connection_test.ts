@@ -3,7 +3,7 @@
  * test_robustness.py (the queue, settings and recovery cases are in connection_queue_test.ts).
  */
 import { assert, assertEquals, assertRejects, assertThrows } from './_assert.ts';
-import { events, FAKE, type Json, Lab, pause, PYTHON, until, updateTexts } from './_connection.ts';
+import { events, FAKE, type Json, Lab, pause, NODE, until, updateTexts } from './_connection.ts';
 import { Connection, PyTextLines, ThreadEvent } from '../../app/server/acp/connection.ts';
 import { MAX_EVENT_IMAGE_BYTES, MAX_IMAGE_BYTES } from '../../app/server/acp/attachments.ts';
 import { ValueError } from '../../app/server/core/py.ts';
@@ -263,7 +263,7 @@ Deno.test('a setup question: accepting it continues setup', async () => {
 
 Deno.test('initialize advertises form and url elicitation', async () => {
   await using lab = new Lab();
-  const c = lab.connection([PYTHON, FAKE]);
+  const c = lab.connection([NODE, FAKE]);
   const seen: [string, Json][] = [];
   const original = c.setupRequest.bind(c);
   c.setupRequest = (method, params, timeout) => (seen.push([method, params as Json]), original(method, params, timeout));
@@ -730,7 +730,7 @@ Deno.test('the test guard refuses a real agent', () => {
 
 Deno.test('a connection started later can be retargeted, and not after it started', async () => {
   await using lab = new Lab();
-  const c = lab.connection([PYTHON, FAKE], { start: false });
+  const c = lab.connection([NODE, FAKE], { start: false });
   const other = Deno.makeTempDirSync({ prefix: 'aib-conn-retarget-' });
   try {
     c.retarget(other);
@@ -760,7 +760,7 @@ Deno.test('own studio_artifact permission requests are approved without asking',
 
 Deno.test('a WSL chat: the ref is its folder, the Linux path is where its agent works; no fs capabilities, no artifact writes, no Windows child', () => {
   const keeper = {} as unknown as import('../../app/server/keeper/link.ts').KeeperLink; // never used: start false
-  const c = new Connection([PYTHON, FAKE], 'wsl://ubuntu/home/u/app', 'claude', {
+  const c = new Connection([NODE, FAKE], 'wsl://ubuntu/home/u/app', 'claude', {
     keeper,
     start: false,
     enableFs: 'readwrite',
@@ -772,5 +772,5 @@ Deno.test('a WSL chat: the ref is its folder, the Linux path is where its agent 
   assertEquals(c.caps.workspace, '/home/u/app');
   assertEquals(c.writes.observe({ update: { sessionUpdate: 'tool_call', kind: 'edit', locations: [{ path: 'C:/x.html' }] } }), []);
   assertThrows(() => c.retarget('C:/elsewhere'));
-  assertThrows(() => new Connection([PYTHON, FAKE], 'wsl://ubuntu/home/u/app', 'claude', { wsl: { distro: 'ubuntu', linuxPath: '/home/u/app' } }));
+  assertThrows(() => new Connection([NODE, FAKE], 'wsl://ubuntu/home/u/app', 'claude', { wsl: { distro: 'ubuntu', linuxPath: '/home/u/app' } }));
 });

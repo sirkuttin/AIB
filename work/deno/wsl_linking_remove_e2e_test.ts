@@ -94,7 +94,7 @@ async function startHeld(script: string, args: string[], pidFile: string): Promi
   };
 }
 
-const FAKE_KEEPER = 'import socket,sys\ns=socket.socket(socket.AF_UNIX)\ns.bind(sys.argv[1])\ns.listen(8)\nwhile True:\n  c,_=s.accept()\n  c.close()\n'; // port-guard: not bound (listen(8) is the backlog of a Unix socket)
+const FAKE_KEEPER = "require('net').createServer((c) => c.destroy()).listen(process.argv[1])"; // port-guard: a listening Unix socket that is not a keeper
 
 async function survivors(): Promise<void> {
   for (const path of [`${CANARY}/keep.txt`, `${HOME}/.claude/sentinel`, `${HOME}/.codex/sentinel`, `${REPO}/a.txt`]) {
@@ -123,7 +123,7 @@ Deno.test({
 
       // the fakes: an old <ver>, an agent install with its npm cache, a second AIB's data folder with a live stand-in keeper
       await sh('mkdir -p "$1/$2" "$3/bin" "$1/agents/.npm-cache" "$4/keeper" && echo k > "$1/$2/AIB-keeper" && echo b > "$1/agents/.npm-cache/blob" && cp /bin/sleep "$3/bin/fake-agent"', [ROOT, OLD, AGENT, OTHER]);
-      held.push(await startHeld('echo $$ > "$2"; exec python3 -c "$3" "$1"', [`${OTHER}/keeper/keeper.sock`, `${OUT}/keeper.pid`, FAKE_KEEPER], `${OUT}/keeper.pid`));
+      held.push(await startHeld('echo $$ > "$2"; exec node -e "$3" "$1"', [`${OTHER}/keeper/keeper.sock`, `${OUT}/keeper.pid`, FAKE_KEEPER], `${OUT}/keeper.pid`));
       // one chat copy of the project, with an untracked file
       const plan = (await host.call('worktree.plan', { project: REPO })).plan!;
       await host.call('worktree.create', { plan }, { timeoutMs: 120_000 });

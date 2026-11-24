@@ -1,6 +1,6 @@
 /** server/platform: locks (also against the python lock helper), process trees, process facts, console, paths. */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
-import { python } from './_work.ts';
+import { lockHelperArgs } from './_fakes.ts';
 import { FileLock, LockHeld, LockTimeout, tryLockNow } from '../../app/server/platform/lock.ts';
 import { ProcessTree, treeSpawnOptions } from '../../app/server/platform/process_tree.ts';
 import {
@@ -16,15 +16,14 @@ import { basename, dirname, join } from '../../app/server/platform/path.ts';
 import { hkcuSubkeys, hkcuValue } from '../../app/server/platform/registry.ts';
 
 const win = Deno.build.os === 'windows';
-const LOCK_HELPER = decodeURIComponent(new URL('../lock_helper.py', import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1');
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** A python process holds an advisory lock on `path` (work/lock_helper.py) until its stdin closes; resolves once it holds it. */
-async function pythonHolds(path: string) {
-  const child = new Deno.Command(python(), { args: ['-I', LOCK_HELPER, 'hold', path], stdin: 'piped', stdout: 'piped' }).spawn();
+/** A foreign process holds an advisory lock on `path` (work/fakes/lock_helper.ts) until its stdin closes; resolves once it holds it. */
+async function foreignHolds(path: string) {
+  const child = new Deno.Command(Deno.execPath(), { args: lockHelperArgs('hold', path), stdin: 'piped', stdout: 'piped' }).spawn();
   const reader = child.stdout.pipeThrough(new TextDecoderStream()).getReader();
   const { value } = await reader.read();
-  assert(value?.includes('locked'), `python did not lock: ${value}`);
+  assert(value?.includes('locked'), `the helper did not lock: ${value}`);
   return {
     async release() {
       await child.stdin.close();
@@ -35,21 +34,21 @@ async function pythonHolds(path: string) {
   };
 }
 
-/** A python process tries the lock with a short timeout; returns true if it got it. */
-async function pythonCanLock(path: string): Promise<boolean> {
-  const out = await new Deno.Command(python(), { args: ['-I', LOCK_HELPER, 'try', path] }).output();
+/** A foreign process tries the lock with a short timeout; returns true if it got it. */
+async function foreignCanLock(path: string): Promise<boolean> {
+  const out = await new Deno.Command(Deno.execPath(), { args: lockHelperArgs('try', path) }).output();
   return new TextDecoder().decode(out.stdout).trim() === 'yes';
 }
 
-Deno.test('FileLock and a python-held lock exclude each other, both ways', async () => {
+Deno.test('FileLock and a foreign-held lock exclude each other, both ways', async () => {
   const dir = await Deno.makeTempDir();
   const path = join(dir, 'state.json.lock');
   const lock = await new FileLock(path, 2000).acquire();
-  assertEquals(await pythonCanLock(path), false, 'python got a lock deno holds');
+  assertEquals(await foreignCanLock(path), false, 'a foreign process got a lock deno holds');
   lock.release();
-  assertEquals(await pythonCanLock(path), true, 'python could not lock after deno released');
+  assertEquals(await foreignCanLock(path), true, 'a foreign process could not lock after deno released');
 
-  const held = await pythonHolds(path);
+  const held = await foreignHolds(path);
   await assertRejects(() => tryLockNow(path), LockHeld);
   await assertRejects(() => new FileLock(path, 150).acquire(), LockTimeout);
   await held.release();

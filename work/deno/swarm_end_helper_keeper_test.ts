@@ -6,7 +6,7 @@
  * The no-keeper cases are swarm_end_helper_test.ts.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { FAKE, pause, PYTHON, until } from './_connection.ts';
+import { FAKE, FAKE_UNIQUE, pause, NODE, until } from './_connection.ts';
 import { commit, makeRepo, runGit } from './_worktree_fixtures.ts';
 import { Connection } from '../../app/server/acp/connection.ts';
 import { Aib } from '../../app/server/host/aib.ts';
@@ -20,7 +20,7 @@ import { processList } from '../../app/server/platform/process_info.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
-const UNIQUE = FAKE.replace(/fake_acp.py$/, 'fake_acp_unique.py');
+const UNIQUE = FAKE_UNIQUE;
 const BRIEF: Json = {
   title: 'Login tests',
   job: 'tests',
@@ -28,7 +28,7 @@ const BRIEF: Json = {
   owns: ['test/login/**'],
   done_when: 'the login tests pass',
   reply_with: 'cause in one line',
-  test_cmd: "python -c \"open('AIB_RAN_TEST_CMD','w')\"",
+  test_cmd: "node -e \"require('fs').writeFileSync('AIB_RAN_TEST_CMD','')\"",
 };
 
 const alive = (pid: number) => (Deno.build.os === 'windows' ? processList().some((p) => p.pid === pid) : pidAlive(pid));
@@ -69,7 +69,7 @@ class Lab {
     aib.agentLaunch = () => Promise.resolve([['unused'], {}]);
     aib.connectionFactory = (_command, cwd, provider, options) =>
       new Connection(
-        [PYTHON, UNIQUE, '--models', '--held-turn', '--not-claude', ...(provider === 'codex' ? ['--child-pid-file', this.childFile] : [])],
+        [NODE, UNIQUE, '--models', '--held-turn', '--not-claude', ...(provider === 'codex' ? ['--child-pid-file', this.childFile] : [])],
         cwd,
         provider,
         options ?? {},

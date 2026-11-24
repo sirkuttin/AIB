@@ -4,6 +4,7 @@
  * test_runtime StateStoreTests, test_project_root, test_editors / test_prompts / test_updater / test_adapters store cases),
  * plus the JSON reader and the agent registry. The frozen answers and the old-file interop are in state_store_parity_test.ts.
  */
+import { NODE } from './_fakes.ts';
 import { assert, assertEquals, assertRejects, assertThrows } from './_assert.ts';
 import {
   ConversationState,
@@ -27,14 +28,7 @@ import { QueueStore } from '../../app/server/acp/msgqueue.ts';
 timing.readBackoffMs = 0; // READ_BACKOFF is patched to 0
 const WIN = Deno.build.os === 'windows';
 const SEP = WIN ? '\\' : '/';
-const PY = (() => {
-  const out = new Deno.Command(Deno.env.get('AIB_PYTHON') ?? (WIN ? 'python' : 'python3'), {
-    args: ['-c', 'import sys; print(sys.executable)'],
-    env: { AGENT_STUDIO_TEST: '1' },
-  }).outputSync();
-  return new TextDecoder().decode(out.stdout).trim();
-})();
-const FAKE = new URL('../fake_acp.py', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1').replaceAll('/', SEP);
+const FAKE = new URL('../fakes/fake_acp.mjs', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1').replaceAll('/', SEP);
 
 const created: string[] = [];
 globalThis.addEventListener('unload', () => {
@@ -613,9 +607,9 @@ Deno.test('registry: ids are slugs and unique', () => {
 });
 
 Deno.test('registry: the command must exist', () => {
-  assertEquals(registry.checkCommand(PY).toLowerCase(), Deno.realPathSync(PY).toLowerCase());
-  assert(registry.checkCommand(PY.split(SEP).pop()!));
-  const parent = PY.slice(0, PY.lastIndexOf(SEP));
+  assertEquals(registry.checkCommand(NODE).toLowerCase(), Deno.realPathSync(NODE).toLowerCase());
+  assert(registry.checkCommand(NODE.split(SEP).pop()!));
+  const parent = NODE.slice(0, NODE.lastIndexOf(SEP));
   for (const bad of ['', '   ', 'no-such-program-xyz', parent, `${parent}${SEP}nope.exe`, 'rel/dir/prog', 'a\nb', null, 5]) {
     assertThrows(() => registry.checkCommand(bad), ValueError);
   }
@@ -636,7 +630,7 @@ Deno.test('registry: args and env parsing', () => {
 });
 
 function agent(name = 'Fake agent', extra: Record<string, unknown> = {}): Record<string, unknown> {
-  return { name, command: PY, args: [FAKE], env: [{ name: 'FAKE_TOKEN', value: 'abc' }], enabled: true, ...extra };
+  return { name, command: NODE, args: [FAKE], env: [{ name: 'FAKE_TOKEN', value: 'abc' }], enabled: true, ...extra };
 }
 
 Deno.test('registry: cleanAgent normalizes and keeps the id when editing', () => {

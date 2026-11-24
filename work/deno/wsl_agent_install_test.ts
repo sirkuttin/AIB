@@ -6,7 +6,7 @@
  * thing in a distro.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { exists, FAKE_NPM, join, makeInstall, PY, tempDir, waitFor, withEnv } from './_agents.ts';
+import { exists, FAKE_NPM, join, makeInstall, NODE, tempDir, waitFor, withEnv } from './_agents.ts';
 import { checkLock, checkRequest, installMethods, type InstallContext } from '../../app/server/wsl/helper/agent_install.ts';
 import { makeMethods } from '../../app/server/wsl/helper/methods.ts';
 import { handleLine, type Handlers } from '../../app/server/wsl/helper/rpc.ts';
@@ -35,7 +35,7 @@ function helper(root: string, extra: Partial<InstallContext> = {}) {
   const handlers = installMethods({
     root,
     notify: (method, p) => notes.push({ method, ...p }),
-    nodeCommand: PY,
+    nodeCommand: NODE,
     nodeProbe: () => '22.11.0',
     npmCli: FAKE_NPM,
     diskFree: () => 10 ** 12,
@@ -191,7 +191,7 @@ Deno.test('agents.installCheck and install: Node.js missing, too old, npm missin
     const refused = await h.call('agents.install', params());
     assertEquals(refused.error?.data?.code, 'node_missing');
     assert(!exists(join(root, 'agents', 'claude', ALLOW.claude.version)), 'nothing was created');
-    adapterHooks.findNode = () => PY;
+    adapterHooks.findNode = () => NODE;
     assertEquals((await helper(root, { nodeProbe: () => '18.19.1' }).call('agents.installCheck', {})).result?.code, 'node_old');
     assertEquals((await helper(root, { nodeProbe: () => '' }).call('agents.installCheck', {})).result?.code, 'node_broken');
     assertEquals((await helper(root, { npmCli: join(dir.root, 'none.js') }).call('agents.installCheck', {})).result?.code, 'npm_missing');
@@ -210,7 +210,7 @@ Deno.test("agents.detect with the helper's root: AIB's own install is found firs
   Deno.writeTextFileSync(join(root, 'agents', 'codex', '2.6.0', 'node_modules', '@openai', 'codex', 'bin', 'codex.js'), '//');
   const before = adapterHooks.findNode;
   try {
-    adapterHooks.findNode = () => PY;
+    adapterHooks.findNode = () => NODE;
     const methods = makeMethods({ env: () => Promise.resolve({ env: {}, shell: '/bin/sh', home: dir.root, arch: 'amd64' }), root });
     assert('agents.install' in methods && 'agents.installCheck' in methods, 'a helper with a root offers the install methods');
     const found = (await rpc(methods, 'agents.detect', { ids: ['claude', 'codex'] })).result!.agents as Record<string, unknown>[];
@@ -218,7 +218,7 @@ Deno.test("agents.detect with the helper's root: AIB's own install is found firs
     assertEquals([claude.found, claude.source, claude.version], [true, 'studio', '0.101.0']);
     assert(String((claude.command as string[])[1]).startsWith(join(root, 'agents', 'claude', '0.101.0')));
     assertEquals([codex.source, codex.version], ['studio', '2.6.0']);
-    assertEquals((codex.signin as string[])[0], PY, 'the CLI runs with the same node');
+    assertEquals((codex.signin as string[])[0], NODE, 'the CLI runs with the same node');
     assert(String((codex.signin as string[])[1]).endsWith(join('@openai', 'codex', 'bin', 'codex.js')), String(codex.signin));
     const plain = makeMethods({ env: () => Promise.resolve({ env: {}, shell: '/bin/sh', home: dir.root, arch: 'amd64' }) });
     assert(!('agents.install' in plain), 'without a root: no install methods');

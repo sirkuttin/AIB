@@ -82,11 +82,14 @@ export async function inDistro(script: string, args: string[] = [], stdin?: Uint
   return { code: done.code, out: new TextDecoder().decode(done.stdout), err: new TextDecoder().decode(done.stderr) };
 }
 
-/** The test root with the fake agent in it (and python3 present), plus a git repo at ROOT/repo. */
+/** The test root with the fake agent in it (and /usr/bin/node present: the fake is a node program), plus a git repo at ROOT/repo. */
 export async function prepareRoot(): Promise<void> {
-  const fake = Deno.readFileSync(new URL('fake_acp.py', WORK));
-  const made = await inDistro('mkdir -p "$1/repo" && chmod 700 "$1" && cat > "$1/fake_acp.py" && command -v python3', [ROOT], fake);
-  if (made.code !== 0) throw new Error(`could not prepare ${ROOT} in ${DISTRO}: ${made.err}`);
+  const fake = Deno.readFileSync(new URL('fakes/fake_acp.mjs', WORK));
+  const helpers = Deno.readFileSync(new URL('fakes/_py.mjs', WORK));
+  const made = await inDistro('mkdir -p "$1/repo" && chmod 700 "$1" && cat > "$1/fake_acp.mjs" && test -x /usr/bin/node', [ROOT], fake);
+  if (made.code !== 0) throw new Error(`could not prepare ${ROOT} in ${DISTRO} (the fake agent needs /usr/bin/node there): ${made.err}`);
+  const more = await inDistro('cat > "$1/_py.mjs"', [ROOT], helpers);
+  if (more.code !== 0) throw new Error(`could not prepare ${ROOT} in ${DISTRO}: ${more.err}`);
   const git = await inDistro('cd "$1/repo" && git init -q && git config user.email t@e && git config user.name t && echo one > a.txt && git add a.txt && git commit -qm one', [ROOT]);
   if (git.code !== 0) throw new Error(`git in ${DISTRO}: ${git.err}`);
 }
