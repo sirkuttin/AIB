@@ -18,9 +18,7 @@ import {
 } from '../../app/server/host/host_client.ts';
 import { attachHost } from '../../app/server/host/host_proxy.ts';
 import { codeWarning, DENO_SOURCE_HASH } from '../../app/server/host/host_client.ts';
-import { WORK } from './_work.ts';
 
-const WORK_DIR = decodeURIComponent(WORK.pathname).replace(/^\/([A-Za-z]:)/, '$1').replace(/\/$/, '');
 
 const t = (name: string, fn: () => Promise<void>) => Deno.test({ name, ...TEST_OPTIONS, fn });
 
@@ -142,7 +140,7 @@ t('cross-language for real: a Deno web server takes over an idle host with no ru
   assertEquals(pyInfo.pid, old.pid);
   assertEquals(pyInfo.runtime, undefined, 'no runtime field: an older host');
   // AIB_SEAL=off: on Windows a Deno host seals its token in agent-host.json with DPAPI (security item 7, state/sealed.ts). The
-  // client below (work/host_support.py, stdlib only) never learned that form; this compares the plain protocol.
+  // client below (a plain HTTP client) never learned that form; this compares the plain protocol.
   // secret_files_test.ts proves the sealed file.
   const web = await fx.startWeb([], { env: { AIB_SEAL: 'off' } });
   await until(() => !pidAlive(pyInfo.pid), 'old host stopped');
@@ -150,23 +148,19 @@ t('cross-language for real: a Deno web server takes over an idle host with no ru
   assertEquals(info.runtime, 'deno');
   assertEquals(web.boot.hostPid, info.pid);
   assertEquals(web.boot.hostCodeWarning, '', 'a Deno web server and a Deno host agree about the code hash');
-  // A client script (work/host_support.py) attaches to the Deno host: same protocol, same file.
-  const out = await new Deno.Command(Deno.env.get('AIB_PYTHON') ?? (Deno.build.os === 'windows' ? 'python' : 'python3'), { // work/host_support.py is a Python client: this one test still needs Python until it is ported or dropped
-    args: [
-      '-c',
-      [
-        'import sys, json; sys.path.insert(0, sys.argv[1]); import host_support as host_client',
-        'c = host_client.HostClient(host_client.read_info(sys.argv[2]))',
-        "i = c.call('info'); print(json.dumps([i['protocol'], i['runtime'], c.call('list')['connections']]))",
-      ].join('\n'),
-      WORK_DIR,
-      fx.state,
-    ],
-    env: fx.env,
-    stdout: 'piped',
-    stderr: 'piped',
-  }).output();
-  assertEquals(JSON.parse(new TextDecoder().decode(out.stdout)), [PROTOCOL_VERSION, 'deno', []], new TextDecoder().decode(out.stderr));
+  // A plain HTTP client (stdlib only, as the retired Python one was) attaches to the Deno host: same protocol, same file.
+  const rpc = async (op: string): Promise<any> => {
+    const res = await fetch(`http://127.0.0.1:${info.port}/rpc`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Agent-Host-Token': String(info.token) },
+      body: JSON.stringify({ op, args: {} }),
+    });
+    const payload = await res.json();
+    assertEquals(res.status, 200, JSON.stringify(payload));
+    return payload.result;
+  };
+  const i = await rpc('info');
+  assertEquals([i.protocol, i.runtime, (await rpc('list')).connections], [PROTOCOL_VERSION, 'deno', []]);
 });
 
 t('a server whose host was taken over yields and never takes it back', async () => {

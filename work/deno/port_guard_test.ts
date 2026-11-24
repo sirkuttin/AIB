@@ -108,7 +108,7 @@ export function guardedFiles(): string[] {
   add('work/deno/', (n) => n.endsWith('.ts'));
   add(
     'work/',
-    (n) => /^(?:test_.*|_.*|chat_harness|fake_.*|run_parallel)\.(?:js|py)$/.test(n),
+    (n) => /^(?:test_.*|_.*|chat_harness|fake_.*)\.(?:js|py)$/.test(n),
   );
   add('keeper/', (n) => n.endsWith('_test.go'));
   files.push('tools/build.ts', 'tools/test.ts');

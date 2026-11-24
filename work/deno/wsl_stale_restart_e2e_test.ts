@@ -1,6 +1,6 @@
 /**
  * Real WSL (AIB_WSL_E2E=<distro>; see _wsl_e2e.ts; skipped without it): the stale-chat restart (0.15 slice 3) for a chat whose agent
- * runs in the distro's Linux keeper. A fake agent (work/fake_acp.py with the distro's python3) answers one prompt; the chat is then
+ * runs in the distro's Linux keeper. A fake agent (work/fakes/fake_acp.mjs with the distro's node) answers one prompt; the chat is then
  * made stale (another tool list served) and AIB restarts it through the Continue path: same chat id and conversation, history kept,
  * one agent in the distro (never a second), the plain line "Restarted to pick up new AIB tools".
  */
@@ -28,9 +28,9 @@ Deno.test({
       a = new Aib({ stateDir: state, port: 0, ownersDir: null });
       a.ownerProbe = () => null;
       a.connectionFactory = (_command, cwd, provider, options) =>
-        new Connection(['python3', `${ROOT}/fake_acp.py`, '--cancel-aware', '--held-turn', '--not-claude'], cwd, provider, {
+        new Connection(['node', `${ROOT}/fake_acp.mjs`, '--cancel-aware', '--held-turn', '--not-claude'], cwd, provider, {
           ...options,
-          wsl: options?.wsl ? { ...options.wsl, program: '/usr/bin/python3' } : options?.wsl,
+          wsl: options?.wsl ? { ...options.wsl, program: '/usr/bin/node' } : options?.wsl,
         });
       const c = await a.connect('claude', ref);
       const sent = await a.liveCall('prompt', { id: c.id, text: 'hello before the restart', clientMessageId: 'm1' });

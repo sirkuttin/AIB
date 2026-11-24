@@ -1,5 +1,5 @@
 /**
- * Open elsewhere for Codex, below the e2e test (work/test_codex_open_elsewhere_e2e.py runs the real Codex): the detector in
+ * Open elsewhere for Codex, below the e2e test (work/deno/e2e_codex_open_elsewhere_test.ts runs the real Codex): the detector in
  * ownership/codex_threads.ts. The writer-lock check reads without locking: a file another handle holds with an exclusive OS lock (what
  * Codex's writer_lock.rs takes) reads as held, an unlocked leftover as free, and the check never takes the lock itself.
  */

@@ -1,6 +1,6 @@
 /**
  * Subagent worktrees, Codex (server/subagents/codex.ts), without an agent. The real codex-acp end to end is
- * work/test_subagent_codex_e2e.py.
+ * work/deno/e2e_subagent_codex_test.ts.
  *   the hook commands: a bare program first, the address file quoted (cmd.exe, pwsh and PowerShell 5.1 read it alike: no `||` on
  *        Windows); null for a path they can't hold
  *   the trust hashes match what a real codex app-server 0.166 listed for the same hooks (hooks/list currentHash)

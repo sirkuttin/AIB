@@ -107,8 +107,8 @@ export const SLOW: Record<string, number> = {
   'deb_update_e2e_test.ts': 10, // the .deb self-update in the Ubuntu WSL distro: a throwaway user, test packages installed with apt, then purged
   'remote_setup_page_test.ts': 55, // Settings > Remote control's setup steps in a headless Chrome with a fake Tailscale
   'attention_modes_test.ts': 60, // the attention watcher through the real agent hosts: in-process, the keeper (Go) and a split host
-  'e2e_worktree_test.ts': 100, // worktree-per-chat end to end (port of work/test_worktree_e2e.py): real web servers and agent hosts, real git, the fake agent
-  // the ports of work/test_*_e2e.py that run a REAL adapter (Claude Code, Codex, Gemini) against a stub model API: ignored without the adapter, Go (keeper) or the CLI
+  'e2e_worktree_test.ts': 100, // worktree-per-chat end to end (port of the retired Python test_worktree_e2e): real web servers and agent hosts, real git, the fake agent
+  // the ports of the retired Python test_*_e2e.py that run a REAL adapter (Claude Code, Codex, Gemini) against a stub model API: ignored without the adapter, Go (keeper) or the CLI
   'e2e_folder_chat_listing_test.ts': 40,
   'e2e_agent_title_test.ts': 40,
   'e2e_refile_test.ts': 40,
@@ -153,7 +153,7 @@ export const SHARDS: Record<string, number> = {
   'worktree_sync_interop_test.ts': 3,
   'worktree_sync_test.ts': 3,
   'worktree_merge_clash_test.ts': 2,
-  'e2e_worktree_test.ts': 3, // 11 tests (the classes of test_worktree_e2e.py), each with its own host and web server
+  'e2e_worktree_test.ts': 3, // 11 tests (the classes of the retired test_worktree_e2e.py), each with its own host and web server
 };
 /** The perf files: long soaks that measure CPU and memory, so they need a quiet machine. They run alone, in test:prerelease. */
 export const PERF = ['perf_e2e_test.ts', 'perf_reading_e2e_test.ts'];
@@ -903,7 +903,6 @@ async function runCommand(
   return { ok: out.success, line };
 }
 
-const python = () => Deno.build.os === 'windows' ? 'python' : 'python3';
 const relApp = (f: string) => f.startsWith('app/') ? f.slice('app/'.length) : f;
 
 /** Repo-relative paths for the files named on the command line (from the repo root, from app, or absolute). */
@@ -1016,16 +1015,6 @@ async function mainAffected(options: Options): Promise<number> {
       'go',
       ['go', 'test', '-count=1', './...'],
       `${ROOT}/keeper`,
-      log,
-    );
-    ok &&= r.ok;
-    lines.push(r.line);
-  }
-  if (a.run.get('python-e2e')) {
-    const r = await runCommand(
-      'python-e2e',
-      [python(), 'work/run_parallel.py', 'e2e'],
-      ROOT,
       log,
     );
     ok &&= r.ok;

@@ -1,7 +1,7 @@
 /**
  * Open elsewhere for Codex, the app-server half (ownership/codex_apps.ts, handoff.ts, the WSL helper's `codex.scan`): who started a
  * `codex app-server` (VS Code, Codex Desktop, AIB's own, anything else), when AIB lets go because of one, and the distro's shell
- * scripts against a real WSL distro (skipped without one). The real Codex runs in work/test_codex_open_elsewhere_e2e.py.
+ * scripts against a real WSL distro (skipped without one). The real Codex runs in work/deno/e2e_codex_open_elsewhere_test.ts.
  */
 import { assert, assertEquals } from './_assert.ts';
 import {

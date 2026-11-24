@@ -393,7 +393,7 @@ WORKTREE_COMMANDS = ('edit:', 'delete:', 'commit:', 'say:', 'context', 'call-too
 
 
 def worktree_turn(key, prompt_text, blocks):
-    """Turn commands that act in the session folder (the chat's worktree), used by work/test_worktree_e2e.py:
+    """Turn commands that act in the session folder (the chat's worktree), used by work/deno/e2e_worktree_test.ts:
     edit:<relpath>|<text>   write the file (a literal \\n in the text is a newline; a relative path is inside the session folder)
     delete:<relpath>        remove the file
     commit:<message>        git add -A, git commit in the session folder (reports the new HEAD)

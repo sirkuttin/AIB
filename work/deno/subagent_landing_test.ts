@@ -1,7 +1,7 @@
 /**
  * Subagent worktrees P2 (landing), without a real agent: a real AIB with the fake agent as the parent chat, subagent records and
  * worktrees made the way subagents/service.ts makes them, and the web process's swarm landing (swarm/service.ts). The real Claude
- * adapter end to end is work/test_subagent_landing_e2e.py.
+ * adapter end to end is work/deno/e2e_subagent_landing_test.ts.
  *   a done subagent lands when its parent is idle: one "AIB: subagent <description>" commit on the folder's branch, its file only
  *       (never the folder's uncommitted edit), the "Merged subagent" line with Undo, its worktree, branch and record gone, and a
  *       junction inside it (an `npm link`) removed without emptying its target (P0b R11, security review MF 6)

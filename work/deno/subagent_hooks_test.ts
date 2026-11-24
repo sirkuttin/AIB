@@ -1,6 +1,6 @@
 /**
  * Subagent worktrees P1 (server/subagents/): the hook settings, the reading of the user's Claude setup, the hook key and the route
- * rules, without an agent. The real adapter end to end is work/test_subagent_worktree_e2e.py.
+ * rules, without an agent. The real adapter end to end is work/deno/e2e_subagent_worktree_test.ts.
  *   B12  the settings object is the same bytes every time (a reopen sends it again; a change would rebuild the session) and holds
  *        no port and no key
  *   hooks off / user WorktreeCreate hook / custom read-only agents are read from temp config folders only
@@ -327,7 +327,7 @@ Deno.test('stopping the parent turn stops only the subagents it waits on: backgr
     assertEquals(stateOf('cg1').state, 'running', 'a background subagent is not part of the stopped turn');
     assertEquals([stateOf('cg2').state, stateOf('cg2').stoppedWhy], ['stopped', 'the turn was stopped']);
     assertEquals(stateOf('cg3').state, 'running', 'moved to the background: runs on');
-    // it ends later: done, so it lands as usual (the landing itself: work/test_subagent_cancel_e2e.py)
+    // it ends later: done, so it lands as usual (the landing itself: work/deno/e2e_subagent_cancel_test.ts)
     await service.hook('subagent-stop', chat.id, { agent_id: 'cg1', agent_type: 'general-purpose' });
     assertEquals(stateOf('cg1').state, 'done');
     assertEquals(service.activity(chat.id).cg1, { where: 'Own worktree', landing: 'Lands when the turn ends' });

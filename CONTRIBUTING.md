@@ -7,7 +7,7 @@ Thanks for looking. AIB (Agent Integration Bay) is beta software and the first r
 - `app/server/` the app: TypeScript on Deno (`main.ts` is the entry point). All OS-specific code lives in `server/platform/`.
 - `app/page/*.js, *.css, *.html` the page: plain browser JavaScript and CSS, served as they are.
 - `tools/build.ts` builds the desktop app for all six targets.
-- `work/` the tests and the fixtures that generate their own data (fake agents, demo data). Python is only for the fake agents and a few end-to-end helpers.
+- `work/` the tests and the fixtures that generate their own data (fake agents, demo data). The fake agents are node scripts (`work/fakes/`); Python is left only for the demo Studio and one-off recording tools.
 
 ## No build step for the page
 
@@ -15,7 +15,7 @@ The page is plain classic scripts. There is no bundler or transpiler for it. See
 
 ## Tests
 
-You need Deno 2.9.8, Node.js 20+ and Python 3.10+ (Python only for the tests: the fake agents, the lock helper and the end-to-end suite).
+You need Deno 2.9.8, Node.js 20+ (Python 3.10+ only for the demo Studio and one-off scripts, not the test suites).
 
 There are four levels besides `test:affected`. Times are for a 24-core Windows machine, `--jobs 3`.
 
@@ -31,7 +31,7 @@ deno task test:affected stream-ui.js server/x.ts      # these files instead of t
 
 It reads the changes since your base branch (committed, staged, unstaged and untracked; the base is `main` or the
 `integration/*` branch you have the fewest commits since, or `--base REF`) and runs the Deno files, node page tests, keeper Go
-tests and Python contract/end-to-end runs that cover them. The map is built from the code every time (`tools/affected.ts`):
+tests runs that cover them. The map is built from the code every time (`tools/affected.ts`):
 imports and requires, files a test names (page files, fixtures, parity modules), the scripts an HTML page loads, and two broad
 rules: a test that starts the whole server covers all of `server/`, a browser test covers every page file. A slow file that only
 a broad rule reaches is listed, not run (`--all-slow` runs it). A change to `deno.json`, `deno.lock`, `package-lock.json` or
@@ -52,10 +52,7 @@ The files are chosen from data, not a list: `tools/test.ts` reads per-file secon
 
 ```text
 cd app
-deno task test        # every Deno file except the two perf files (~30 min at --jobs 3)
 cd ../..
-python work/run_parallel.py contract   # HTTP contract tests (~15 s)
-python work/run_parallel.py e2e        # worktree end-to-end suite (~2 min)
 ```
 
 **Pre-release: before a feed build or a release (the full suite plus about 8 minutes).**
@@ -84,7 +81,7 @@ deno task test:prerelease   # the full suite (all three attention modes), then p
 - Ports: a test never names a port. Everything it starts binds port 0 and the test reads the port back (`work/deno/_ports.ts`);
   `port_guard_test.ts` fails on a fixed or guessed port. Each test gets its own temp data folder.
 - When a file fails while others run, only its failed tests run once more on their own (see above). A test that fails alone too fails the run. `--no-rerun` turns the second try off.
-- `run_parallel.py e2e` runs one `python -m unittest` process per end-to-end test class, each with its own temp state folder and servers. `--serial` is the plain unittest run (~2 min). The plain `cd work && python -m unittest test_worktree_e2e` still works. The HTTP contract checks (the auth gate, the routes, the artifact origin) are Deno tests: `work/deno/contract_*_test.ts`.
+- The worktree end-to-end suite is Deno too: `work/deno/e2e_*_test.ts` (each test class with its own temp state folder and servers). `AIB_SERVER` picks the server (`deno-split` by default, `deno` for in-process). The HTTP contract checks (the auth gate, the routes, the artifact origin) are `work/deno/contract_*_test.ts`.
 
 `AIB_SERVER` picks the server the end-to-end tests start (`deno-split` by default, `deno` for in-process). Tests use temporary data folders and fake agents only; they never touch your real data folder or `~/.claude`.
 

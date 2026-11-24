@@ -215,14 +215,13 @@ serves the page. Releases are built this way and uploaded by hand; no CI.
 
 ```text
 cd app
-deno task test        # the Deno tests (some start small Python fake agents)
+deno task test        # the Deno tests (fake agents are node scripts)
 deno task check       # type check
 deno task lint
 ```
 
-From the repository root: `npm test` and `npm run lint` for the page, and
-The worktree end-to-end suite runs from `work/`:
-`python -m unittest test_worktree_e2e`. `AIB_SERVER` picks the server (`deno-split` by default, `deno` for
+From the repository root: `npm test` and `npm run lint` for the page.
+The worktree end-to-end suite is `work/deno/e2e_worktree_test.ts`; `AIB_SERVER` picks the server (`deno-split` by default, `deno` for
 in-process). Tests use temporary data folders and never touch your real one or your
 `~/.claude`.
 

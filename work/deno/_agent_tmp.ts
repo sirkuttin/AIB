@@ -1,6 +1,6 @@
 /**
- * Where a Deno test puts the project folders of a REAL agent: outside the user's home folder (the twin of work/_isolation.py
- * agent_mkdtemp). Claude Code walks the parent folders of its working folder for CLAUDE.md, so a project under the user's temp
+ * Where a Deno test puts the project folders of a REAL agent: outside the user's home folder (the Python helper this replaced was
+ * agent_mkdtemp, now retired). Claude Code walks the parent folders of its working folder for CLAUDE.md, so a project under the user's temp
  * folder would load the owner's ~/.claude/CLAUDE.md. C:/aib-test-tmp on Windows, /tmp elsewhere (AIB_TEST_AGENT_TMP overrides).
  */
 export function agentTempRoot(): string {

@@ -127,7 +127,6 @@ From the repository root:
 ```text
 npm test                                               the page tests (node --test work/test_*.js)
 npm run lint                                           ESLint over the page code
-python -m unittest test_worktree_e2e                   worktree-per-chat end to end, run from work/ (AIB_SERVER=deno-split by default; deno)
 ```
 
 `AIB_DENO` names the deno executable when it is not on PATH. Every test runs on temp state folders and free ports, never on the

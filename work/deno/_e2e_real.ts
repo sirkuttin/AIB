@@ -1,10 +1,10 @@
 /**
- * What the Python e2e tests that run a REAL agent adapter (Claude Code, Codex) against the local stub model API shared
+ * What the (retired) Python e2e tests that run a REAL agent adapter (Claude Code, Codex) against the local stub model API shared
  * (test_folder_chat_listing_e2e.py, test_subagent_worktree_e2e.py, test_subagent_landing_e2e.py ...), for the Deno e2e_*_test.ts files:
  * the adapter lookup, the stub model API, the ACP probe, the guards on the owner's real agent folders, the keeper program build,
  * a fixture with the real adapter as the `claude` launcher, and the Aib harness (a real AIB with one Claude chat in a temp project).
  *
- * Isolation (the rules of work/_isolation.py agent_mkdtemp): every project folder is made under _agent_tmp.ts (outside the home
+ * Isolation (the rules of the retired Python agent_mkdtemp): every project folder is made under _agent_tmp.ts (outside the home
  * folder), the agent gets a throwaway HOME / CLAUDE_CONFIG_DIR / CODEX_HOME, the stub keeps it off the network, and the guards check
  * that nothing reached the owner's ~/.claude or ~/.codex.
  */

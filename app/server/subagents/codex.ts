@@ -81,7 +81,7 @@ function sortKeys(value: unknown): unknown {
 /**
  * The trust hash Codex computes for one command hook (0.166 discovery.rs hook_hash + config fingerprint.rs version_for_toml): sha256
  * of the sorted, compact JSON of {event_name, matcher?, hooks: [{type, command, timeout, async}]}. Checked against a real
- * `hooks/list` (work/test_subagent_codex_e2e.py): when it differs, Codex skips AIB's hooks and its subagents run unisolated, so
+ * `hooks/list` (work/deno/e2e_subagent_codex_test.ts): when it differs, Codex skips AIB's hooks and its subagents run unisolated, so
  * the e2e is the guard for each codex-acp bump.
  */
 export function codexHookHash(label: string, matcher: string | null, handler: { command: string; timeout: number }): string {

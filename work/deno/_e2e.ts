@@ -1,5 +1,5 @@
 /**
- * What the Python end-to-end tests (work/test_*_e2e.py, with _e2e_support.py, _isolation.py, host_support.py and server_under_test.py)
+ * What the retired Python end-to-end tests (test_*_e2e.py and their support modules)
  * shared, for the Deno e2e_*_test.ts files: a fixture whose web server and agent host are real processes, a Chat seen through the
  * page's HTTP API, an Env with projects and chats, git helpers, and the fake agent launch.
  *

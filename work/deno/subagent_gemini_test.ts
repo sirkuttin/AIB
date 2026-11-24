@@ -1,6 +1,6 @@
 /**
  * Subagent worktrees, Gemini part (server/subagents/gemini.ts), without an agent. The real Gemini CLI end to end is
- * work/test_gemini_subagent_e2e.py.
+ * work/deno/e2e_gemini_subagent_test.ts.
  *   the fence: per subagent name, the policy denies write_file/replace outside the chat's subagent folder (and any `..`), always
  *     the shell and MCP tools; matched the way Gemini 0.68 matches (its argsPattern RegExp over the stable JSON of the arguments)
  *   sign-in: only an API key with no other method picked gets the redirect; a Google login gets the fence only

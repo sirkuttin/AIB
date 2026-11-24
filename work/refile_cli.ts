@@ -1,5 +1,5 @@
 /**
- * Test helper for work/test_refile_e2e.py: runs the folder-chats migration's re-file core (work/migrate/refile_core.ts) and its Codex
+ * Test helper for work/deno/e2e_refile_test.ts: runs the folder-chats migration's re-file core (work/migrate/refile_core.ts) and its Codex
  * opener (folder_chats_migrate.ts codexLoad) once, on the folders given, and prints the result as one JSON line. Only temp folders
  * a test made are passed; anything outside the system temp folder is refused.
  *

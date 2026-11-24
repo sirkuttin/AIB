@@ -4,8 +4,8 @@
  *
  * Nodes are tracked files (git ls-files, plus untracked ones). A file depends on:
  *   - what it imports or requires (static and dynamic imports, require(), Python `import x` / `from x import`), resolved to files;
- *   - files it names in a string: page files ('chat.js', '/chat.html'), work/ helpers and fixtures ('combined-fixture/agent.py',
- *     'lock_helper.py'), tools ('build.ts');
+ *   - files it names in a string: page files ('chat.js', '/chat.html'), work/ helpers and fixtures ('combined-fixture/agent.mjs',
+ *     'fakes/fake_acp.mjs'), tools ('build.ts');
  *   - for an HTML page: every script and stylesheet its tags load (the node harness loads chat.html's scripts that way);
  *   - EXTRA_EDGES: links no import shows (keeper/client.ts builds the Go keeper; build.ts bundles the whole app).
  * Two edges are BROAD: a test that starts the whole server (names main.ts) depends on everything main.ts imports, and a test that
@@ -23,7 +23,7 @@ const EXTRA_EDGES: Record<string, string[]> = {
   'tools/build.ts': [`${APP}/server/main.ts`, 'keeper/', '@ui'], // bundles the server, the keeper and every page file
 };
 
-export type Kind = 'deno' | 'node' | 'go' | 'python-e2e';
+export type Kind = 'deno' | 'node' | 'go';
 export interface Graph {
   files: Set<string>;
   precise: Map<string, Set<string>>;
@@ -191,7 +191,6 @@ export function suites(files: Set<string>): Suite[] {
     { kind: 'deno', tests: all.filter((f) => /^work\/deno\/[^/]+_test\.ts$/.test(f)) },
     { kind: 'node', tests: all.filter((f) => /^work\/test_[^/]+\.js$/.test(f)) },
     { kind: 'go', tests: all.filter((f) => /^keeper\/.*_test\.go$/.test(f)) },
-    { kind: 'python-e2e', tests: all.filter((f) => f === 'work/test_worktree_e2e.py') },
   ];
 }
 

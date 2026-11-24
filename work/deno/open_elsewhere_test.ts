@@ -1,5 +1,5 @@
 /**
- * Open elsewhere, the parts below the e2e test (work/test_open_elsewhere_e2e.py runs the real CLI): Claude Code's session registry
+ * Open elsewhere, the parts below the e2e test (work/deno/e2e_open_elsewhere_test.ts runs the real CLI): Claude Code's session registry
  * reader (ownership/claude_sessions.ts), which of a session/load's history is outside (acp/connection.ts outsideTurns), the WSL
  * helper's `sessions.held` and the probe's strong reason.
  */
