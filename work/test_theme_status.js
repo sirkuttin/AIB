@@ -101,6 +101,12 @@ test('status chips and dots paint with the status tokens', () => {
   assert.equal(declarationsFor(activity, '.sa-completed .sa-dot').background, 'var(--status-done)');
 });
 
+test('Activity: subagent dots are round, process dots are small squares', () => {
+  const activity = sheet('activity.css');
+  assert.equal(declarationsFor(activity, '.sa-dot')['border-radius'], '50%');
+  assert.equal(declarationsFor(activity, '.proc-row.sa-card .sa-dot')['border-radius'], '1.5px');
+});
+
 test('disabled and focused primary buttons, spinners and cards follow the design review', () => {
   const chat = sheet('chat.css');
   const disabled = declarationsFor(chat, '.primary:disabled');

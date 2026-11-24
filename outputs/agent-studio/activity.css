@@ -349,6 +349,7 @@ body {
 }
 .proc-row.sa-card .sa-dot {
   margin-left: 0;
+  border-radius: 1.5px; /* processes get a square, subagents a round dot */
 }
 .sa-card:focus-visible,
 .activity-hide:focus-visible,
