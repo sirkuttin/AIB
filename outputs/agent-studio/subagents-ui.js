@@ -671,14 +671,13 @@
   }
   /* One chat's subagents in its Activity section (chat.js renderProjectActivity), no heading of its own (the section's SUBAGENTS
      label). Finished helpers fold into "N finished", remembered per chat, so a section never changes when the open chat changes.
-     ctx.flat: no fold row, every row shown (an idle chat's section, which folds as a whole: chat.js renderIdleSection). */
+     Every section, working or idle, folds its finished rows the same way. */
   function render(ctx) {
     const m = model(ctx.rows, ctx.now, ctx.chatModel),
-      open = ctx.flat ? true : expanded(ctx.convKey);
+      open = expanded(ctx.convKey);
     if (ctx.onModel) ctx.onModel(m);
     const sig = JSON.stringify([
       ctx.convKey,
-      !!ctx.flat,
       ctx.empty,
       ctx.selectedKey,
       open,
@@ -719,8 +718,7 @@
       const list = el('div', 'sa-scroll');
       for (const i of m.top) list.append(card(i, ctx));
       if (!m.top.length && !m.done.length) list.append(el('p', 'sa-none', 'Nothing running right now.'));
-      if (m.done.length && ctx.flat) for (const i of m.done) list.append(card(i, ctx));
-      else if (m.done.length) {
+      if (m.done.length) {
         const t = el('button', 'sa-toggle sa-card');
         t.type = 'button';
         t.setAttribute('aria-expanded', open ? 'true' : 'false');

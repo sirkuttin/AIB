@@ -2969,6 +2969,37 @@
     }
     return extra.length ? [...(list || []), ...extra] : list;
   }
+  /* A helper is a whole chat. Without a saved transcript its history is the live chat's own events; a merged or ended helper whose
+     chat is gone has nothing to read: say so in the panel. */
+  async function showHelperLive(a, target) {
+    let rows = null;
+    if (a.liveId) {
+      try {
+        const st = (await pullLive(a.liveId, { fresh: 3000 })).state,
+          entry = chatCache.entry(a.liveId);
+        if (subSelection?.key !== target) return;
+        rows = liveRows(st.sessionId, entry.loaded(), st, false, 0, entry.edge);
+      } catch (error) {
+        if (error?.code !== 'connection_not_found') throw error;
+      }
+    }
+    if (subSelection?.key !== target) return;
+    if (rows) {
+      subSignature = '';
+      showRows($('submessages'), rows, 'sub');
+    } else if (subSignature !== target + '#none') {
+      subSignature = target + '#none';
+      $('submessages').replaceChildren(text('p', 'AIB has no saved history of this helper chat to show here.', 'empty-state'));
+    }
+  }
+  /* A failed read of a history shows inside the panel (it goes away with the panel and is retried by the next read), never as the
+     page-wide banner. */
+  function subError(error) {
+    if (!subSelection) return;
+    subSignature = '';
+    subFetch = { key: '', at: 0 };
+    $('submessages').replaceChildren(text('p', 'Could not load this history: ' + (error?.message || error), 'empty-state sub-error'));
+  }
   async function refreshSubagent() {
     if (!subSelection) return;
     const target = subSelection.key;
@@ -3023,11 +3054,15 @@
       );
       return;
     }
+    if (subSelection.helper && !subSelection.transcript) {
+      await showHelperLive(subSelection, target);
+      return;
+    }
     const working = window.SubagentsUI?.classify(subSelection).group === 'working';
     // A helper's history is its own chat's saved transcript (the same read as any saved chat)
     // Polite polling: a working subagent is re-read every 3 s, a finished one every 10 s.
     if (subSignature && subFetch.key === target && Date.now() - subFetch.at < (working ? 3000 : 10000)) return;
-    const w = await pollHistory(target);
+    const w = await pollHistory(subSelection.helper ? subSelection.transcript : target);
     subFetch = { key: target, at: Date.now() };
     if (subSelection?.key === target) {
       showRows($('submessages'), normalized({ events: w.events, context: w.context, start: w.start, lines: w.lines }, target), 'sub');
@@ -3312,7 +3347,7 @@
       renderHeader();
       renderAgents();
       await refreshCommands();
-      await refreshSubagent().catch((error) => fail(Error('Subagent transcript unavailable: ' + error.message)));
+      await refreshSubagent().catch(subError);
     } catch (error) {
       if (error.code === 'connection_not_found') {
         current = '';
@@ -5047,7 +5082,7 @@
       closeInspector();
       return Promise.resolve();
     }
-    return openSubagent(agent, false, who).catch(fail);
+    return openSubagent(agent, false, who).catch(subError);
   }
   function toggleCommand(id, owner) {
     const who = owner || (selected ? aliasKey(selected) : '');
@@ -6072,6 +6107,9 @@
     const state = h.state === 'failed' ? 'failed' : needs ? 'waiting' : running ? 'working' : h.state === 'stopped' ? 'stopped' : 'completed';
     const saved = c && !/^live:/.test(c.key || '') ? c.key : h.chatKey;
     return {
+      /* where its own history is read from: a saved transcript (claude/ or omp/ key), else the live chat; never the lasting key */
+      transcript: c && /^(claude|omp)\//.test(c.key || '') ? c.key : '',
+      liveId: c?.live && !c.live.closed ? c.live.id : c ? '' : h.chat || '',
       key: saved || 'helper:' + h.id,
       helper: true,
       helperId: h.id,
@@ -6365,21 +6403,23 @@
       sec.root.className = 'sp-idle' + (open ? ' sp-open' : '') + (key === focus ? ' sp-focus' : '');
       sec.body.hidden = !open;
       if (open) {
+        let working = 0;
         window.SubagentsUI?.render({
           box: sec.subBox,
           rows,
           now: nowS,
           convKey: key,
-          flat: true,
           selectedKey: key === subOwner ? subSelection?.key : undefined,
           chatModel: '',
           empty: '',
+          onModel: (m) => (working = m.working.length),
           onOpen: (agent) => toggleSubagent(agent, key),
           onAsk: (agent, act) => (act === 'open' ? toggleSubagent(agent, key) : answerHelperAsk(agent, act)),
           rerender: renderProjectActivity,
         });
         sec.subLabel.hidden = sec.subBox.hidden = !rows.length;
-        sec.subLabel.replaceChildren('Subagents', text('span', String(rows.length)));
+        // the same heading as a working chat's section; the finished rows fold into "N finished" below it, as there
+        sec.subLabel.replaceChildren('Subagents', text('span', working + ' working'));
         sec.procLabel.hidden = sec.procBox.hidden = !done.length;
         sec.procLabel.replaceChildren('Processes', text('span', String(done.length)));
         const seen = new Set();

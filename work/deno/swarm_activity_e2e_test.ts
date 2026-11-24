@@ -13,7 +13,7 @@
  * Run (from outputs/agent-studio): deno test -A ../../work/deno/swarm_activity_e2e_test.ts   (ignored without Chrome or Edge)
  */
 import { assert, assertEquals } from './_assert.ts';
-import { browserPath, type Chat, Lab, ownerProblems } from './_scroll_lab.ts';
+import { browserPath, type Chat, Lab, ownerProblems, settle, sleep } from './_scroll_lab.ts';
 import { Registry } from '../../outputs/agent-studio/server/swarm/registry.ts';
 
 type Json = Record<string, unknown>;
@@ -113,6 +113,116 @@ Deno.test({
         width: Math.round(document.getElementById('subagentsPane').getBoundingClientRect().width),
         focus: document.querySelector('#projectActivity > .sp-focus')?.dataset.key })`);
       assertEquals(after, before, 'the open chat, the accent and the panel width did not change');
+      assert(page.errors.length === 0, `console errors: ${page.errors.join(' | ')}`);
+      const owner = await ownerProblems(page);
+      assert(!owner, owner);
+    } finally {
+      await lab.close();
+    }
+  },
+});
+
+/* A finished helper and a finished subagent look and fold the same everywhere (owner, 2026-11-23: "the helper never went into the
+   finished list"): one "N finished" fold with the same row look and the same done dot, in a working chat's section and in an idle
+   chat's expanded section. */
+Deno.test({
+  name: 'swarm activity: a merged helper and a finished subagent fold together into "2 finished", the same dot, in a working and in an idle section',
+  ignore: !browserPath,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const lab = await Lab.open(1600, 900, undefined, { fastList: true });
+    try {
+      const page = lab.page;
+      const project = lab.fx.workspace;
+      const registry = new Registry(lab.fx.state);
+      const sub = (c: Chat, tag: string, desc: string) =>
+        c.step({ u: { sessionUpdate: 'subagent_update', subagent: { sessionId: `${tag}-sub`, description: desc, state: 'completed' } } });
+      // the idle main chat: a finished subagent, a merged helper, then its turn ends
+      const idle = await lab.chat();
+      await idle.start();
+      idle.say('IDLEEND');
+      sub(idle, 'idle', 'Idle subagent job');
+      idle.end();
+      for (let i = 0; i < 300; i++) {
+        const s = await lab.web.state(idle.id);
+        if (!s.busy && JSON.stringify(s.events || []).includes('Idle subagent job')) break;
+        await sleep(50);
+      }
+      // the working main chat: the same, its turn stays open
+      const busy = await lab.chat();
+      await busy.start();
+      busy.say('BUSYEND');
+      sub(busy, 'busy', 'Busy subagent job');
+      const hIdle = await lab.chat(), hBusy = await lab.chat();
+      for (const h of [hIdle, hBusy]) {
+        await h.start();
+        h.say('HELPEREND');
+        h.end();
+      }
+      await lab.select(busy);
+      await page.waitFor(`!!document.querySelector(${JSON.stringify(SEC(busy.key))})`, 20000, 'the working chat has its section');
+      await registry.update('h_idle0001', () => <never> record('h_idle0001', 'Idle helper job', hIdle, idle, 'merged', 'codex', 'Codex', project));
+      await registry.update('h_busy0001', () => <never> record('h_busy0001', 'Busy helper job', hBusy, busy, 'merged', 'codex', 'Codex', project));
+      const IDLE_HEAD = `${IDLE(idle.key)} > .sp-ihead`;
+      await page.waitFor(`document.querySelector(${JSON.stringify(IDLE_HEAD + ' .sp-count')})?.textContent === '2 finished'`, 25000, 'the idle head counts "2 finished"');
+      await page.click(IDLE_HEAD);
+
+      // every card of a box: title, class list, and the colour of its dot
+      const rows = (box: string) => `(() => { const b = document.querySelector(${JSON.stringify(box)}); if (!b) return null;
+        const t = b.querySelector('.sa-toggle');
+        return { fold: t ? t.innerText.replace(/\\s+/g, ' ').trim() : '', open: t?.getAttribute('aria-expanded') || '',
+          working: [...b.querySelectorAll('.subagent-card.sa-working')].length,
+          cards: [...b.querySelectorAll('.subagent-card')].map((c) => ({ title: c.querySelector('.sa-title')?.textContent || '', cls: c.className.replace(/ ?selected/, ''),
+            dot: getComputedStyle(c.querySelector('.sa-dot')).backgroundColor + '|' + getComputedStyle(c.querySelector('.sa-dot')).borderTopColor })) }; })()`;
+      type Rows = { fold: string; open: string; working: number; cards: { title: string; cls: string; dot: string }[] };
+      const boxes = { idle: `${IDLE(idle.key)} .sp-subs`, busy: `${SEC(busy.key)} .sp-subs` };
+      const seen: Record<string, Rows> = {};
+      for (const [where, box] of Object.entries(boxes)) {
+        await page.waitFor(`(${rows(box)})?.fold === '▸ 2 finished'`, 20000, `${where}: the fold row "2 finished"`).catch(async (e) => {
+          throw new Error(`${e.message}: ${JSON.stringify(await page.eval(rows(box)))}`);
+        });
+        assertEquals((await page.eval<Rows>(rows(box))).cards.length, 0, `${where}: folded rows are not listed flat`);
+        await page.click(`${box} .sa-toggle`);
+        await page.waitFor(`(${rows(box)})?.cards.length === 2`, 10000, `${where}: both finished rows under the fold`);
+        seen[where] = await page.eval<Rows>(rows(box));
+        assertEquals(seen[where].working, 0, `${where}: nothing shows as working`);
+        assertEquals(seen[where].cards.map((c) => c.title).sort(), where === 'idle' ? ['Idle helper job', 'Idle subagent job'] : ['Busy helper job', 'Busy subagent job']);
+        const [a, b] = seen[where].cards;
+        assertEquals(a.cls, b.cls, `${where}: helper and subagent rows have the same classes`);
+        assertEquals(a.dot, b.dot, `${where}: the same done dot`);
+        assert(/sa-finished/.test(a.cls) && /sa-completed/.test(a.cls) && !/sa-working/.test(a.cls), `${where}: a done row: ${a.cls}`);
+      }
+      assertEquals(seen.idle.cards[0].cls, seen.busy.cards[0].cls, 'the same row look in both sections');
+      assertEquals(seen.idle.cards[0].dot, seen.busy.cards[0].dot, 'the same done dot in both sections');
+      // clicking a merged helper row opens its own history in the panel, with no error banner
+      const openRow = (box: string, title: string) => page.eval<boolean>(`(() => { const c = [...document.querySelectorAll(${JSON.stringify(box + ' .subagent-card')})]
+        .find((n) => n.querySelector('.sa-title')?.textContent === ${JSON.stringify(title)}); if (!c) return false; c.click(); return true; })()`);
+      const banner = () => page.eval<string>(`document.getElementById('error').hidden ? '' : document.getElementById('error').textContent`);
+      assert(await openRow(boxes.busy, 'Busy helper job'), 'the merged helper row is there');
+      await page.waitFor(`!document.getElementById('subchatPane').hidden && document.getElementById('inspectorEyebrow').textContent === 'HELPER HISTORY' && /Busy helper job/.test(document.getElementById('subchatTitle').textContent)`, 10000, 'the merged helper history opens');
+      await page.waitFor(`document.getElementById('submessages').textContent.includes('HELPEREND')`, 10000, "the helper's own messages show").catch(async (e) => {
+        throw new Error(`${e.message}: ${await page.eval<string>(`document.getElementById('submessages').textContent`)}`);
+      });
+      await settle(1500);
+      assertEquals(await banner(), '', 'no error banner after opening a merged helper');
+      // a forced failure of that read shows inside the panel, not as the page banner, and clears when the read works again
+      assert(await openRow(boxes.busy, 'Busy helper job'), 'the open row toggles closed');
+      await page.waitFor(`document.getElementById('subchatPane').hidden`, 10000, 'the history closes');
+      const sess = hBusy.key.split(':')[1];
+      await page.eval(`(() => { window.__realFetch = window.fetch; window.fetch = (u, ...r) => { const t = decodeURIComponent(String(u?.url || u));
+        return /api.(transcript|live.events|live.state)/.test(t) && (t.includes(${JSON.stringify(sess)}) || t.includes('id=' + ${JSON.stringify(hBusy.id)}))
+          ? Promise.resolve(new Response('{"error":"forced"}', { status: 500 })) : window.__realFetch(u, ...r); }; })()`);
+      assert(await openRow(boxes.busy, 'Busy helper job'), 'the row opens again');
+      await page.waitFor(`!!document.querySelector('#submessages .sub-error')`, 20000, 'the forced failure shows inside the panel').catch(async (e) => {
+        throw new Error(`${e.message}: ${await page.eval<string>(`document.getElementById('submessages').textContent`)}`);
+      });
+      assertEquals(await banner(), '', 'a failed read never becomes the page banner');
+      await page.eval(`window.fetch = window.__realFetch`);
+      await page.waitFor(`!document.querySelector('#submessages .sub-error')`, 20000, 'the inline error clears once the read works');
+      assertEquals(await banner(), '', 'still no banner');
+      // the idle section's heading counts the working ones, as in a working section
+      assertEquals(await page.eval<string>(`document.querySelector(${JSON.stringify(IDLE(idle.key) + ' .sp-label')}).textContent`), 'Subagents0 working');
       assert(page.errors.length === 0, `console errors: ${page.errors.join(' | ')}`);
       const owner = await ownerProblems(page);
       assert(!owner, owner);
