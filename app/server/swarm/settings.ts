@@ -1,5 +1,5 @@
 /**
- * Swarm settings (<state>/swarm-settings.json), apart from Settings (state/settings.ts keeps the Python reference's exact shape). Phase 1
+ * Swarm settings (<state>/swarm-settings.json), apart from Settings (state/settings.ts keeps its exact shape). Phase 1
  * has one: whether the main agent may start Claude Code helpers. The Settings › AIB Linking › Helper agents card switches `enabled`;
  * {"claudeHelpers": false} turns Claude helpers off.
  */

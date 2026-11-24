@@ -7,7 +7,7 @@
  *   args     list of strings (one per line in the form)
  *   env      list of {name, value}; names match [A-Za-z_][A-Za-z0-9_]*. Values are stored as plain text in the state folder and
  *            are never sent to the page (hiddenEnv); an edit that leaves a value out keeps the stored one.
- * Error messages are Python's exactly: they reach the HTTP API.
+ * Error messages are fixed: they reach the HTTP API.
  */
 import { clip, isDict, isStr, pyLen, pySplit, pyStr, pyStrip, ValueError } from '../core/py.ts';
 import { executable, expandUser, isAbsolute, isFile, resolvePath, which } from '../platform/pypath.ts';
@@ -35,7 +35,7 @@ export function agentName(id: string): string {
   return BUILTIN_NAMES[id] ?? BETA_NAMES[id] ?? RETIRED_NAMES[id] ?? id;
 }
 export const CUSTOM_PREFIX = 'custom-';
-/** re.match(r'^custom-[a-z0-9]+(?:-[a-z0-9]+)*$'): Python's '$' also matches before one final newline. */
+/** re.match(r'^custom-[a-z0-9]+(?:-[a-z0-9]+)*$'): '$' also matches before one final newline. */
 export const ID_RE = /^custom-[a-z0-9]+(?:-[a-z0-9]+)*\n?$/;
 export const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*\n?$/;
 export const MAX_AGENTS = 20;
@@ -108,7 +108,7 @@ function hasControl(text: string, below = 32): boolean {
   return false;
 }
 
-/** text[1] == ':' with Python's code point indexing. */
+/** text[1] == ':' by code point indexing. */
 function secondIsColon(text: string): boolean {
   const chars = [...text];
   return chars.length > 1 && chars[1] === ':';

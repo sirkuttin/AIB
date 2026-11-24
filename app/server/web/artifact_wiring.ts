@@ -3,8 +3,7 @@
  * origin (AIB port + 1), the Service behind /api/live/artifacts* and the Watcher that turns files a chat's agent wrote into its
  * artifacts. A chat's artifacts are keyed by its lasting id ("provider:sessionId"), not the live connection id.
  *
- * Python asks the agent host for the connection list synchronously inside chat_of/connection_of; the Service and Watcher here are
- * synchronous too, so they read a cached list (and the agents' write lists) that is refreshed before each artifact request and on
+ * The Service and Watcher are synchronous, so they read a cached list (and the agents' write lists) that is refreshed before each artifact request and on
  * the watcher's tick. A chat's project folder (cwdFor) is looked up asynchronously before the request and read from a small cache.
  */
 import { ArtifactStore, Service, type WatchedConversation, Watcher } from '../artifacts/artifacts.ts';
@@ -185,9 +184,9 @@ export class Artifacts {
   }
 
   /**
-   * Before a request: refresh the connection list, and for a POST naming a chat look up that chat's project folder (Python's
-   * cwd_for: artifact_folder(studio, connection_of(ident) or ident), called with the lasting chat id). `strict`: a host failure
-   * fails the request (503), as it does in Python for the routes that list connections; otherwise the cached list is kept.
+   * Before a request: refresh the connection list, and for a POST naming a chat look up that chat's project folder (artifact_folder(aib,
+   * connection_of(ident) or ident), called with the lasting chat id). `strict`: a host failure
+   * fails the request (503), for the routes that list connections; otherwise the cached list is kept.
    */
   async prepare(strict: boolean, conversationId: unknown): Promise<void> {
     try {

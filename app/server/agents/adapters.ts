@@ -9,12 +9,12 @@
  * (`<state_dir>/agents/<id>/<version>/`, only a version folder that has a `.complete` marker, newest first), then the globally
  * installed adapter, then missing. A launcher from the flag or Settings is a script file that node runs. The adapter is never
  * started through the npm `.cmd` shim. AIB's own install is read fresh on every lookup, so a new install is seen by the next
- * call in any process (Python or Deno).
+ * call in any process.
  *
  * On macOS and Linux, apps started from the desktop have a short PATH. initEnvironment() asks the user's login shell for the real
  * one once at startup and merges it into the environment. It does nothing on Windows.
  *
- * The lookups are async only because `npm root -g` runs a program (with a timeout). Rows and messages are Python's exactly.
+ * The lookups are async only because `npm root -g` runs a program (with a timeout). Rows and messages are fixed.
  */
 import { commandStatus } from './agent_registry.ts';
 import { BETA_AGENTS } from './beta_catalog.ts';
@@ -39,7 +39,7 @@ export const STUDIO_PACKAGES: Readonly<Record<string, readonly Package[]>> = {
   codex: [CODEX_ACP_PACKAGE, CODEX_PACKAGE],
 };
 /** The Beta agents that ship on npm (beta_catalog.ts): installed into the same folders as the built-ins; `bin` says which of the
- * package's programs runs. Kept apart from STUDIO_PACKAGES, which stays the built-in list (sign-in checks, the Python port). */
+ * package's programs runs. Kept apart from STUDIO_PACKAGES, which stays the built-in list (sign-in checks). */
 export const BETA_PACKAGES: Readonly<Record<string, readonly Package[]>> = Object.fromEntries(
   BETA_AGENTS.filter((a) => a.npm).map((a) => [a.id, [[a.npm!.package, a.npm!.entry, a.npm!.bin] as Package]]),
 );
@@ -74,7 +74,7 @@ export function isWindows(): boolean {
 }
 
 /**
- * Test seams (the Python tests mock.patch these functions): when set, they replace the machine lookups. Never set in the app.
+ * Test seams: when set, they replace the machine lookups. Never set in the app.
  */
 export const adapterHooks: {
   globalRoots?: (node?: string, npmRoot?: NpmRoot) => string[] | Promise<string[]>;
@@ -439,7 +439,7 @@ type VersionKey = [number, number[], number, string];
 
 /** Sort key for version folder names: 1.10.0 above 1.9.0, a release above its prerelease, anything unparsable lowest. */
 export function versionKey(name: string): VersionKey {
-  // Python's re.match with '$' also matches before one final newline.
+  // '$' also matches before one final newline.
   const match = /^v?(\d+(?:\.\d+)*)(?:-(.*))?\n?$/.exec(name);
   if (!match) return [0, [], 0, name];
   return [1, match[1].split('.').map((part) => parseInt(part, 10)), match[2] !== undefined && match[2] !== '' ? 0 : 1, match[2] ?? ''];

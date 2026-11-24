@@ -7,19 +7,18 @@
  *   setup('studio', { level: options.logLevel, stateDir: options.stateDir, filename: 'studio.log' });
  *
  * Output goes to stderr and, when a file name is given, to a rotating file in the state folder (studio.log, 5 MB, 2 old files kept:
- * studio.log.1, studio.log.2), the same files the Python server writes. Line format, as Python's '%(asctime)s %(levelname)s
+ * studio.log.1, studio.log.2), the same files every version writes. Line format '%(asctime)s %(levelname)s
  * %(name)s: %(message)s':  2026-11-10 14:03:07,412 WARNING artifacts: something odd
  *
- * Where it differs from log_setup.py:
- * - An exception is followed by the JavaScript stack (error.stack) instead of a Python traceback.
- * - Before setup() nothing is printed at all (Python's "last resort" handler would print bare WARNING+ messages of modules without
- *   a NullHandler to stderr).
- * - One level for every logger (the root's); Python loggers could have their own (none of the programs set one).
- * - The rotation check counts bytes for both the file and the new line (Python: file bytes + line characters).
+ * Behaviour:
+ * - An exception is followed by the JavaScript stack (error.stack).
+ * - Before setup() nothing is printed at all.
+ * - One level for every logger (the root's).
+ * - The rotation check counts bytes for both the file and the new line.
  *
  * Secrets never reach a log line: values registered with registerSecret() (page token, host token, artifact keys, custom agent env
  * values) and anything that looks like `token=...`, `X-Studio-Token: ...`, `Authorization: Bearer ...` or a 64-hex key are
- * blanked in the message and in the stack (same patterns as Python; a parity test keeps redact() equal).
+ * blanked in the message and in the stack (same patterns; a parity test keeps redact() equal).
  */
 import { PY_SPACE, pyLen, pyRepr } from './py.ts';
 import { join } from '../platform/path.ts';
@@ -54,7 +53,7 @@ const LEVEL_TO_NAME: Record<number, string> = { 50: 'CRITICAL', 40: 'ERROR', 30:
 // ---- redaction ---------------------------------------------------------------------------------
 const secrets = new Set<string>();
 
-// Python's re with str patterns: \w is Unicode letters, digits and '_'; \b is the edge between \w and not-\w; \s is Python whitespace.
+// Unicode patterns: \w is Unicode letters, digits and '_'; \b is the edge between \w and not-\w; \s is Unicode whitespace.
 const W = '[\\p{L}\\p{N}_]';
 const B = `(?:(?<=${W})(?!${W})|(?<!${W})(?=${W}))`;
 const S = `[${PY_SPACE}]`;
@@ -122,7 +121,7 @@ function pad(n: number, width = 2): string {
   return String(n).padStart(width, '0');
 }
 
-/** Python's default asctime: local time 'YYYY-MM-DD HH:MM:SS,mmm'. */
+/** The log timestamp: local time 'YYYY-MM-DD HH:MM:SS,mmm'. */
 export function asctime(date = new Date()): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:` +
     `${pad(date.getSeconds())},${pad(date.getMilliseconds(), 3)}`;
@@ -135,7 +134,7 @@ function asText(value: unknown): string {
   return String(value);
 }
 
-/** msg % args for the conversions the code uses (%s %r %d %i %f %%); with no args the message is left as it is (as Python). */
+/** msg % args for the conversions the code uses (%s %r %d %i %f %%); with no args the message is left as it is. */
 export function formatMessage(message: string, args: unknown[]): string {
   if (!args.length) return message;
   let index = 0;
@@ -211,7 +210,7 @@ export class Logger {
   critical(message: string, ...args: unknown[]): void {
     dispatch(this.name, CRITICAL, message, args);
   }
-  /** log.exception(): ERROR with the error's stack after the message (Python: the current traceback). */
+  /** log.exception(): ERROR with the error's stack after the message. */
   exception(error: unknown, message: string, ...args: unknown[]): void {
     dispatch(this.name, ERROR, message, args, error);
   }
@@ -251,7 +250,7 @@ export class StderrHandler implements Handler {
   close(): void {}
 }
 
-/** Python writes its log files in text mode: '\r\n' line ends on Windows. Kept so both servers' lines look the same in one file. */
+/** Log files are written in text mode: '\r\n' line ends on Windows. Kept so every version's lines look the same in one file. */
 const EOL = Deno.build.os === 'windows' ? '\r\n' : '\n';
 
 /** logging.handlers.RotatingFileHandler(path, maxBytes, backupCount, encoding='utf-8'): opened at once, appends. */

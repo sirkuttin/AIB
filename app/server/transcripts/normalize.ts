@@ -1,6 +1,6 @@
 /**
  * Pure transcript record handling from monitor.py: readable titles, record -> display events, card metadata, the plan-fold
- * marks, and which project folder a chat belongs to. Every function gives what the Python one gives for the same record.
+ * marks, and which project folder a chat belongs to. Every function gives the same answer for the same record in every version.
  */
 import { clip, isDict, isStr, pyLen, pyStr, pyStrip } from '../core/py.ts';
 import { stripAibInput } from '../allow/aib_prefix.ts';
@@ -333,7 +333,7 @@ export function normalize(row: Dict, number: number): Event[] {
     events = events.filter((e) => !Object.hasOwn(e, 'images') || e === text);
   }
   // B15: a message Claude Code saved as sent while it worked (a queued_command attachment, what a steer becomes) carries `steered`, so
-  // the history shows "Sent while working" like the live chat. Deno only: the Python reference never had it.
+  // the history shows "Sent while working" like the live chat. Deno only.
   if (truthy(dget(row, 'queued'))) for (const event of events) if (event.kind === 'user') event.steered = true;
   events.forEach((event, i) => (event.id = `${number}-${i}`));
   return events;

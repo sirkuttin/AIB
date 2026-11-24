@@ -2,7 +2,7 @@
  * The rest of web_handler.py's routes, served by the Deno web server: settings and the conversation marks (studio_shared.py), the
  * editor launcher, the folder routes, the Prompts find box, the Changes view and branch, the worktree Merge / clash routes (Resume of
  * a paused live sync included), the update routes, and the artifact routes with their own gate order (the agent key is checked after
- * the body is read). Payloads and messages are Python's.
+ * the body is read). Payloads and messages are fixed.
  */
 import { isDict, ValueError } from '../core/py.ts';
 import { conversationAction, modelServersView, settingsView, type AibContext } from './shared.ts';
@@ -263,7 +263,7 @@ export function aibRoutes(): Map<string, AibHandler> {
     try { // the page sends one JSON list in `paths`; repeated `path` parameters work too
       const extra = JSON.parse(one(args, 'paths', '[]'));
       if (Array.isArray(extra)) wanted.push(...extra);
-    } catch { /* ignored, as Python's ValueError */ }
+    } catch { /* ignored: a ValueError */ }
     return Promise.resolve([200, { kinds: folders.folderKinds(wanted, one(args, 'parents') === '1') }]);
   });
   // Project folders that no longer exist (cached on the server, read-only): the page leaves their projects out of the list.
@@ -568,7 +568,7 @@ export function swarmOf(ctx: WebContext): Swarm {
   return swarm;
 }
 
-/** artifact_route's error mapping: Python answers KeyError/ValueError/TypeError/OSError/RuntimeError with 400 (the Service already maps its own). */
+/** artifact_route's error mapping: KeyError/ValueError/TypeError/OSError/RuntimeError are answered with 400 (the Service already maps its own). */
 /**
  * The Changes view for a remote computer (security review MF1 audit): the chat's folder can hold a blocked folder (a project that
  * is a home folder), so a diff is refused by the file it RESOLVES to (its `abs`, real path checked too), and the list leaves out the
@@ -616,7 +616,7 @@ function artifactCall(work: () => Reply): Reply {
   }
 }
 
-/** Python's json.loads error for a body that is not JSON (only the status is a contract; the text is close). */
+/** The JSON parse error for a body that is not JSON (only the status is a contract; the text is close). */
 function jsonError(error: unknown): string {
   return `Expecting value: ${error instanceof Error ? error.message : String(error)}`;
 }

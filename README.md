@@ -207,7 +207,7 @@ serves the page. Releases are built this way and uploaded by hand; no CI.
 | `app/icons/` | The app icon in every size the packages need, made by `tools/make_icons.ts` from the masters in `icons/src/` (hand-drawn pixel grids for 16-32 px, an SVG for the rest). |
 | `keeper/` | The keeper (Go) and its protocol. |
 | `tools/` | `build.ts` (the six-target build) and `linux_package.ts`. |
-| `work/deno/` | Deno tests, including the HTTP contract tests (`contract_*_test.ts`) and tests that check the answers the retired Python reference server gave (`fixtures/frozen/`). |
+| `work/deno/` | Deno tests, including the HTTP contract tests (`contract_*_test.ts`) and tests that check frozen answers (`fixtures/frozen/`). |
 | `work/` | Node page tests, the worktree end-to-end suite, and the fake ACP agents the tests use. |
 
 ## Develop

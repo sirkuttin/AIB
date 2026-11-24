@@ -121,7 +121,7 @@ export async function runGit(
     return [data.slice(0, cap), true, status.code];
   }
   reader.releaseLock();
-  let waitKilled = false; // Python: proc.wait(timeout=5) raised TimeoutExpired, the child was killed and no code is reported
+  let waitKilled = false; // the wait timed out after 5 s: the child was killed and no code is reported
   const waitTimer = setTimeout(() => {
     waitKilled = true;
     kill();

@@ -7,7 +7,7 @@ Thanks for looking. AIB (Agent Integration Bay) is beta software and the first r
 - `app/server/` the app: TypeScript on Deno (`main.ts` is the entry point). All OS-specific code lives in `server/platform/`.
 - `app/page/*.js, *.css, *.html` the page: plain browser JavaScript and CSS, served as they are.
 - `tools/build.ts` builds the desktop app for all six targets.
-- `work/` the tests and the fixtures that generate their own data (fake agents, demo data). The old Python server and its parity and contract tests are retired (2026-11-23): Python is only for the fake agents and a few end-to-end helpers.
+- `work/` the tests and the fixtures that generate their own data (fake agents, demo data). Python is only for the fake agents and a few end-to-end helpers.
 
 ## No build step for the page
 

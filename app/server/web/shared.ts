@@ -3,7 +3,7 @@
  * dropdown, the install and sign-in rows read from their job files, the banner notices, and the validated conversation action.
  *
  * The "studio" argument is a small interface (StudioContext) so server/web/server.ts can pass its own context: the options, the
- * settings and conversation stores, the agent host's live list and calls, and a worktree lookup. JSON keys and messages are Python's.
+ * settings and conversation stores, the agent host's live list and calls, and a worktree lookup. JSON keys and messages are fixed.
  */
 import { keyStoreFor } from '../state/secrets.ts';
 import * as adapters from '../agents/adapters.ts';
@@ -196,7 +196,7 @@ export async function describeAgents(
         : '',
       packageBytes: sizes[agentId] || 0,
       signin: row.found ? signinView(options, agentId, state[agentId] ?? '') : null,
-      ...(setup ? { setup } : {}), // only on a card that still needs installing: the row keeps the Python reference's shape otherwise
+      ...(setup ? { setup } : {}), // only on a card that still needs installing: the row keeps its shape otherwise
       ...(cliHint ? { cliHint } : {}), // likewise: only a Codex adapter that has no Codex program to ask about the sign-in
     });
   }

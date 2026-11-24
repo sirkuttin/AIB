@@ -3,7 +3,7 @@
  *
  * Normally started for you by the web server (detached, `main.ts host ...`); run it by hand only to debug. It listens on a random
  * 127.0.0.1 port and publishes the port and a random token in <state-dir>/agent-host.json (readable by your user only). Stop it
- * with `main.ts --stop-host`. Same RPC, host file, token header, protocol number and reply shapes as the Python host, so a web
+ * with `main.ts --stop-host`. Same RPC, host file, token header, protocol number and reply shapes, so a web
  * server of either language can drive it (docs/agent-host.md). The host file also carries `runtime: "deno"`: see host_client.ts
  * findHost for how a web server treats a host of the other language.
  */

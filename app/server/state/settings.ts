@@ -2,8 +2,8 @@
  * AIB settings (state_store.SettingsStore): the agent list (built-in switches + user-added ACP agents), New chat defaults,
  * editor, appearance, launchers and server options.
  *
- * One small validated JSON file in the state folder, shared by the web server and the agent host (either may be Python or Deno
- * during the transition; each re-reads it when the file changes, so a new agent is launchable without restarting anything).
+ * One small validated JSON file in the state folder, shared by the web server and the agent host (either may be of a different version
+ * during an update; each re-reads it when the file changes, so a new agent is launchable without restarting anything).
  * Writes are atomic. `revision` changes on every save, in this process or another, so other windows know to refresh. Agent
  * environment values are stored as plain text: ACP adapters need them. The file is the user's own and lives in the state folder.
  * Beta agents' API keys are not: on disk each is sealed (secrets.ts: DPAPI on Windows, the Keychain on macOS, the Secret Service
@@ -62,7 +62,7 @@ export const ADDRESS_SUFFIX = '-address';
 
 export interface Settings {
   /** beta / betaKeys: the Beta agents (beta_catalog.ts) turned on, and the API keys typed for them. Present only when not empty (a
-   * fresh store matches the Python one), hidden from public(). */
+   * fresh store matches older ones), hidden from public(). */
   agents: {
     builtin: Record<string, boolean>;
     custom: CustomAgent[];

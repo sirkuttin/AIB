@@ -15,7 +15,7 @@
  * that common case; it names no session and says nothing about this conversation.
  *
  * Every signal is read-only. Nothing here writes to transcripts, kills processes or opens a file for writing outside AIB's own
- * announcement files. See docs/ownership-design.md. Everything is synchronous, as in Python (the Windows facts come from FFI in
+ * announcement files. See docs/ownership-design.md. Everything is synchronous (the Windows facts come from FFI in
  * platform/process_info.ts, POSIX from `ps` and /proc), so assess() can be called from a request handler without awaiting.
  */
 import { createHash } from 'node:crypto';
@@ -78,7 +78,7 @@ export function cleanText(value: unknown, limit = 120): string {
   return pyLen(text) <= limit ? text : clip(text, limit - 1) + '…';
 }
 
-/** Python's round() of a float: half to even. */
+/** Rounds a float: half to even. */
 export function pyRound(value: number): number {
   const floor = Math.floor(value);
   const rest = value - floor;
@@ -115,7 +115,7 @@ const ISO_RE = new RegExp(
   'u',
 );
 
-/** datetime.fromisoformat(str(value).replace('Z', '+00:00')).timestamp(), naive times taken as UTC; null where Python raises. */
+/** datetime.fromisoformat(str(value).replace('Z', '+00:00')).timestamp(), naive times taken as UTC; null where it fails to parse. */
 export function parseIso(value: unknown): number | null {
   const text = pyStr(value).replaceAll('Z', '+00:00');
   const m = ISO_RE.exec(text);
@@ -144,7 +144,7 @@ export function parseIso(value: unknown): number | null {
 // Process facts. Windows: FFI (platform/process_info.ts). POSIX: os.kill(pid, 0) equivalents; no start times.
 // ---------------------------------------------------------------------------------------------
 
-/** Process creation time as epoch seconds, or null (always null off Windows, as in Python). */
+/** Process creation time as epoch seconds, or null (always null off Windows). */
 export function processStartTime(pid: number): number | null {
   if (!WIN) return null;
   try {
@@ -534,7 +534,7 @@ export class AnnouncementError extends Error {
 
 const isInt = (value: unknown): value is number => typeof value === 'number' && Number.isInteger(value);
 
-/** A normalized announcement, or throws AnnouncementError (Python: ValueError). Every field is untrusted. */
+/** A normalized announcement, or throws AnnouncementError. Every field is untrusted. */
 export function validateAnnouncement(data: unknown, prefix: string | null = null): Announcement {
   if (!isDict(data) || data.format !== FORMAT_NAME) throw new AnnouncementError('not an owner announcement');
   const version = data.version;

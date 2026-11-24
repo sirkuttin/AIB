@@ -4,7 +4,7 @@
  *
  * It is a different origin from AIB on purpose: artifact pages are untrusted, so nothing here knows AIB token, sends CORS
  * headers or shares code paths with AIB server. Pages are meant to be shown in a sandboxed iframe without allow-same-origin.
- * Answers (status, body, the headers below) are those of the Python listener for the same store; work/deno/artifact_origin_test.ts
+ * Answers (status, body, the headers below) are fixed for the same store; work/deno/artifact_origin_test.ts
  * runs both on the same folder and compares them.
  *
  *   const origin = OriginServer.start(store.root, studioPort);   // origin.url -> store.origin
@@ -29,7 +29,7 @@ export const CSP_TEMPLATE =
 
 /**
  * The page CSP. With `ownPort` (Deno only) script-src also allows this origin's /_lib/ folder, the vendored libraries (libs.ts), and
- * nothing else of it; the rest is Python's policy unchanged.
+ * nothing else of it; the rest is unchanged.
  */
 export function csp(aibPort: number, ownPort = 0): string {
   const policy = CSP_TEMPLATE.replaceAll('{port}', String(aibPort));
@@ -59,7 +59,7 @@ export const MIME: Readonly<Record<string, string>> = {
   '.js': 'text/javascript; charset=utf-8',
 };
 /**
- * Python falls back to mimetypes.guess_type() for other extensions: on Windows the registry's "Content Type" of HKCR\<ext>
+ * Other extensions fall back to mimetypes.guess_type(): on Windows the registry's "Content Type" of HKCR\<ext>
  * wins (read here with reg.exe, once per extension), else its built-in table, of which this is the part a snapshot can hold.
  * A snapshot holds only its entry file, whose extension is always in MIME, so this matters only for files put there by hand.
  */
@@ -106,22 +106,22 @@ export function guessType(name: string): string | null {
   return registryType(ext) ?? (Object.hasOwn(BUILTIN_TYPES, ext) ? BUILTIN_TYPES[ext] : null);
 }
 
-/** Python's PATH_RE (`.` matches anything but a newline; `$` also matches before one trailing newline). */
+/** The path pattern (`.` matches anything but a newline; `$` also matches before one trailing newline). */
 export const PATH_RE = /^\/a\/([0-9a-f]{16})\/v([0-9]{1,6})\/([^\n]+)\n?$/;
 
 // Injected into every artifact page: it reports the scroll position and Ctrl+wheel zoom to the viewer, and turns a click on a link to
 // another artifact (studio-artifact://<id>), which the sandboxed page cannot open, into an ask to the viewer (artifacts-ui.js takes it
-// only from the frame that shows the artifact). The retired Python reference (artifact_origin.py) had the same text.
+// only from the frame that shows the artifact).
 export const SCROLL_SCRIPT = `<script>(function(){try{var m=/studio-scroll=(-?[0-9.]+),(-?[0-9.]+)/.exec(location.hash);
 function go(){if(m)window.scrollTo(+m[1],+m[2]);}
 if(m){go();window.addEventListener('load',function(){go();setTimeout(go,60);});}
 var t=0;window.addEventListener('scroll',function(){if(t)return;t=requestAnimationFrame(function(){t=0;
 try{parent.postMessage({type:'studio-artifact-scroll',x:window.scrollX,y:window.scrollY,f:Math.max(0,document.documentElement.scrollHeight-innerHeight)?window.scrollY/Math.max(1,document.documentElement.scrollHeight-innerHeight):0},'*');}catch(e){}});},{passive:true});var z=0;window.addEventListener('wheel',function(e){if(!e.ctrlKey)return;e.preventDefault();var n=Date.now();if(n-z<80)return;z=n;try{parent.postMessage({type:'studio-artifact-zoom',d:e.deltaY<0?1:-1},'*');}catch(_){}},{passive:false});document.addEventListener('click',function(e){var a=e.target&&e.target.closest?e.target.closest('a'):null;if(!a)return;var k=/^studio-artifact:[/][/]([0-9a-f]{8,64})[/]?$/i.exec(String(a.getAttribute('href')||a.getAttribute('xlink:href')||'').trim());if(!k)return;e.preventDefault();try{parent.postMessage({type:'studio-artifact-open',id:k[1].toLowerCase()},'*');}catch(_){}},true);}catch(e){}})();</script>`;
 
-const S = `[${PY_SPACE}]`; // Python's \s
-const NS = `[^${PY_SPACE}]`; // Python's \S
-const W = '[\\p{L}\\p{N}_]'; // Python's \w (str.isalnum() or '_')
-const D = '\\p{Nd}'; // Python's \d
+const S = `[${PY_SPACE}]`; // \s
+const NS = `[^${PY_SPACE}]`; // \S
+const W = '[\\p{L}\\p{N}_]'; // \w (str.isalnum() or '_')
+const D = '\\p{Nd}'; // \d
 
 const BODY_CLOSE = new RegExp(`</body${S}*>`, 'gi');
 
@@ -134,7 +134,7 @@ export function injectScroll(data: Uint8Array): Uint8Array {
   return new TextEncoder().encode(text);
 }
 
-// ---- small Python stand-ins ---------------------------------------------------------------------
+// ---- small stand-ins for string helpers ---------------------------------------------------------------------
 
 /** html.escape(text, quote) */
 export function htmlEscape(text: string, quote = true): string {
@@ -145,7 +145,7 @@ export function htmlEscape(text: string, quote = true): string {
 
 /**
  * html.unescape for the text it sees here: every '&' of the source was escaped first, so only the references html.escape writes
- * (and numeric ones) can occur. Single pass, left to right, as Python's.
+ * (and numeric ones) can occur. Single pass, left to right.
  */
 export function htmlUnescape(text: string): string {
   if (!text.includes('&')) return text;
@@ -161,7 +161,7 @@ export function htmlUnescape(text: string): string {
 /** urllib.parse.unquote(text) (UTF-8, errors='replace'; text outside ASCII runs is kept as it is). */
 export function pyUnquote(text: string): string {
   if (!text.includes('%')) return text;
-  // deno-lint-ignore no-control-regex -- Python matches these exact characters
+  // deno-lint-ignore no-control-regex -- these exact characters are matched
   return text.replace(/[\x00-\x7f]+/g, (run) => {
     if (!run.includes('%')) return run;
     const bytes: number[] = [];
@@ -250,10 +250,10 @@ function inline(source: string): string {
   text = text.replace(EM_STAR, (_m, a: string) => `<em>${a}</em>`);
   text = text.replace(EM_UNDER, (_m, a: string) => `<em>${a}</em>`);
   text = text.replace(STRIKE, (_m, a: string) => `<del>${a}</del>`);
-  // deno-lint-ignore no-control-regex -- Python matches these exact characters
+  // deno-lint-ignore no-control-regex -- these exact characters are matched
   return text.replace(/\x00([0-9]+)\x00/g, (_m, index: string) => {
     const code = codes[Number(index)];
-    if (code === undefined) throw new RangeError('list index out of range'); // Python raises IndexError here too
+    if (code === undefined) throw new RangeError('list index out of range');
     return code;
   });
 }

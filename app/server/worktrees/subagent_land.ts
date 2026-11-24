@@ -24,7 +24,7 @@ export const GENERATED_DIRS = new Set([
  * Files a subagent made that git ignores (a draft in a git-ignored folder: 2026-11-17, its worktree looked empty, was removed and the
  * draft was lost), as worktree-relative paths: never landed by git, so the worktree that holds them is kept. A worktree starts as a
  * plain `git worktree add` of S plus its `aib-shared` link (no ignored files), so every one is the subagent's; generated folders
- * (GENERATED_DIRS), compiled Python files and anything reached through a link (the `aib-shared` link: those files are already in the main
+ * (GENERATED_DIRS), compiled .pyc files and anything reached through a link (the `aib-shared` link: those files are already in the main
  * folder) don't count. At most 200 are named.
  */
 export async function ignoredFiles(path: string): Promise<string[]> {

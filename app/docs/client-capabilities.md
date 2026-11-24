@@ -39,11 +39,11 @@ Without a flag, the matching requests receive the same JSON-RPC error as before 
 Use a spare port and a throwaway state folder, for example:
 
 ```
-python app/studio.py --port 8796 --state-dir work/caps-fixture/state --enable-client-fs=read
+deno run -A server/main.ts --port 8796 --state-dir work/caps-fixture/state --enable-client-fs=read
 ```
 
 Do not restart a server you are using for a live conversation just to try this.
 
 ## Tests
 
-`python -m unittest work/test_client_caps.py` covers disabled-by-default behaviour, path escapes (including a junction), output limits, kill/release and close cleanup, and read-only mode, using the deterministic fake agent (`work/fake_acp.py --client-caps`). `node --test work/test_terminals_ui.js` checks the UI renders untrusted text safely. `work/test_real_adapters.py` is a separate opt-in suite against the real OMP and Claude adapters (it uses real model usage; see its docstring).
+`work/deno/client_caps_test.ts` covers disabled-by-default behaviour, path escapes (including a junction), output limits, kill/release and close cleanup, and read-only mode, using the deterministic fake agent (`work/fake_acp.py --client-caps`). `node --test work/test_terminals_ui.js` checks the UI renders untrusted text safely.

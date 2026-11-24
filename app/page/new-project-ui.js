@@ -385,8 +385,8 @@
     );
   }
 
-  // Resolves {path: string|null} (null: cancelled). The desktop app has its own native dialog (its bundled Python has no tkinter); a
-  // browser asks the server's tkinter picker. If the desktop dialog fails (not granted, no window), the server's picker is the fallback.
+  // Resolves {path: string|null} (null: cancelled). The desktop app has its own native dialog ; a
+  // browser asks the server's picker. If the desktop dialog fails (not granted, no window), the server's picker is the fallback.
   function pickFolder(start) {
     const viaServer = () => Promise.resolve(host.postJson('folders/pick', { start }));
     const desktop = root.AibDesktop && root.AibDesktop.available() ? root.AibDesktop : null;

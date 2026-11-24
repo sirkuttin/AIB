@@ -1,6 +1,6 @@
 /**
- * os.path as Python 3.11 does it (ntpath on Windows, posixpath elsewhere), for the ported modules that compare, join and resolve
- * request paths the way the Python server does: normpath, normcase, isabs, splitdrive, dirname, basename, join, abspath, realpath
+ * os.path semantics (ntpath on Windows, posixpath elsewhere), for the modules that compare, join and resolve
+ * request paths: normpath, normcase, isabs, splitdrive, dirname, basename, join, abspath, realpath
  * (non-strict: resolves what exists and keeps the missing tail), and the stat helpers that answer false instead of throwing.
  *
  * A foreign path (location.ts isForeignPath: a `wsl://` ref, or `/home/u` on Windows) is never looked up on this PC: the stat
@@ -32,7 +32,7 @@ export function splitdrive(path: string): [string, string] {
   return ['', path];
 }
 
-/** os.path.isabs (Python 3.11 on Windows: needs a drive and a root, as pathlib). */
+/** os.path.isabs. */
 export function isabs(path: string): boolean {
   return isAbsolute(path);
 }
@@ -195,7 +195,7 @@ export function islink(path: string): boolean {
   return stat(path, false)?.isSymlink ?? false;
 }
 
-/** os.path.getsize; throws like Python when the file is missing. */
+/** os.path.getsize; throws when the file is missing. */
 export function getsize(path: string): number {
   if (WIN && isForeignPath(path)) throw new Deno.errors.NotFound(`not a path of this PC: ${path}`);
   return Deno.statSync(path).size;

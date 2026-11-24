@@ -1,5 +1,5 @@
 /**
- * The page's view and appearance preferences (Deno only, no Python counterpart): sidebar mode and grouping, open and collapsed
+ * The page's view and appearance preferences (new in the Deno rewrite): sidebar mode and grouping, open and collapsed
  * groups, panel widths, text size, code font, spacing, chat views, chat display names and the like. The page keeps them in its
  * localStorage, which in the desktop app belongs to the WebView2 profile next to AIB.exe, so every new copy of the app started
  * at the defaults. Kept here, in the state folder, they follow the user's data instead.

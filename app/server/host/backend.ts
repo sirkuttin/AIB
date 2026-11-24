@@ -1,7 +1,7 @@
 /**
  * What the web server needs from the side that runs the agents: the HostProxy (split mode, the agents run in the agent host) or the
- * AIB itself (--in-process, the agents run inside the web server). Python's web handler called the same methods on RemoteStudio
- * or AIB; this interface is that common surface.
+ * AIB itself (--in-process, the agents run inside the web server). The web handler calls the same methods on a HostProxy
+ * or an Aib; this interface is that common surface.
  */
 export type Live = Record<string, unknown>;
 

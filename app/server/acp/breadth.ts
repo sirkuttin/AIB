@@ -47,7 +47,7 @@ export interface BreadthState {
   usage: Usage | null;
   sessionInfo: Record<string, string>;
   notices: Notice[];
-  /** Insertion-ordered like the Python dict (a plain object would put integer-like ids first). */
+  /** Insertion-ordered (a plain object would put integer-like ids first). */
   compaction: Map<string, Compaction>;
   skippedMcp: string[];
   notice_seq: number;
@@ -66,14 +66,14 @@ const text = (value: unknown, limit: number): string | null => (isStr(value) ? c
 
 const count = (value: unknown): number | null => (isInt(value) && value >= 0 ? value : null);
 
-/** Python's iteration over `value or []` for JSON: lists give items, strings and dicts give nothing usable here, scalars raise. */
+/** Iteration over `value or []` for JSON: lists give items, strings and dicts give nothing usable here, scalars raise. */
 function items(value: unknown): unknown[] {
   if (Array.isArray(value)) return value;
   if (!value || isStr(value) || isDict(value)) return [];
   throw new TypeError(`'${typeof value === 'boolean' ? 'bool' : isInt(value) ? 'int' : 'float'}' object is not iterable`);
 }
 
-/** Python == for parsed JSON values (True == 1, lists and dicts compared by content). */
+/** Equality of parsed JSON values (true == 1, lists and dicts compared by content). */
 function pyEq(a: unknown, b: unknown): boolean {
   if ((typeof a === 'boolean' || typeof a === 'number') && (typeof b === 'boolean' || typeof b === 'number')) {
     return Number(a) === Number(b);
@@ -441,7 +441,7 @@ function pairs(value: unknown, label: string): NameValue[] {
 
 const SCHEME_CHARS = /^[A-Za-z0-9+\-.]+$/;
 
-/** The scheme and netloc of urllib.parse.urlparse (Python 3.11), including the ValueErrors it raises. */
+/** The scheme and netloc of urllib.parse.urlparse, including the ValueErrors it raises. */
 function urlSchemeNetloc(url: string): { scheme: string; netloc: string } {
   url = url.replace(/[\t\r\n]/g, '');
   let scheme = '';
@@ -509,7 +509,7 @@ export function validateMcpServers(data: unknown): McpServer[] {
   return servers;
 }
 
-/** Read and validate an MCP config file (at most 1 MB of UTF-8 JSON). OS and JSON error details are Deno's, not Python's. */
+/** Read and validate an MCP config file (at most 1 MB of UTF-8 JSON). OS and JSON error details are Deno's. */
 export function loadMcpConfig(path: string): McpServer[] {
   let data: unknown;
   let raw: Uint8Array;

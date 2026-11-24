@@ -1,8 +1,8 @@
 /**
- * Cross-process advisory file locks, compatible with the Python server's (state_store.FileLock and ownership.SessionLease use
- * msvcrt.locking on byte 0 on Windows and flock elsewhere). Deno's FsFile.tryLock is LockFileEx over the whole file on Windows and
- * flock elsewhere, so a Deno holder and a Python holder exclude each other; work/deno/platform_test.ts checks both directions.
- * Python writes one NUL byte into an empty lock file on Windows (msvcrt cannot lock past the end); this does the same.
+ * Cross-process advisory file locks, compatible with older versions' (msvcrt.locking on byte 0 on Windows and flock elsewhere).
+ * Deno's FsFile.tryLock is LockFileEx over the whole file on Windows and flock elsewhere, so holders of every version exclude each
+ * other; work/deno/platform_test.ts checks both directions. One NUL byte is written into an empty lock file on Windows (msvcrt
+ * cannot lock past the end).
  */
 import { dirname } from './path.ts';
 

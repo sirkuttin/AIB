@@ -1,6 +1,6 @@
 /**
- * `aib deploy` (deploy.py): restart a running AIB server (and optionally its agent host) without cutting off a turn.
- * Same flags, plan and messages as deploy.py; it restarts a Deno server (main.ts serve) or a Python one (studio.py) the same way:
+ * `aib deploy`: restart a running AIB server (and optionally its agent host) without cutting off a turn.
+ * It restarts a server (main.ts serve) as follows:
  * the new server is started with exactly the command line the old one had.
  */
 import { APP_ROOT, selfCommand } from '../core/app.ts';
@@ -42,7 +42,7 @@ restarted at once and the new process continues every chat where it was (--host 
 changes do not need this: refresh the page instead.
 `;
 
-/** Python's urllib errors as deploy.py prints them ("<urlopen error ...>", "HTTP Error 500: ..."). */
+/** urllib-style errors as deploy prints them ("<urlopen error ...>", "HTTP Error 500: ..."). */
 export class UrlError extends Error {}
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));

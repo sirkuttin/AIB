@@ -3,7 +3,7 @@
  *
  * Implements the flat primitive/enum subset documented by ACP's linked MCP 2026-07-28 elicitation schema: strings,
  * numbers, integers, booleans, and arrays of enum strings. Nested objects and general JSON Schema are rejected.
- * Error messages are Python's word for word (they reach the HTTP API).
+ * Error messages are fixed (they reach the HTTP API).
  */
 import { isDict, isInt, isStr, PY_SPACE, pyLen, pyRepr, pyStrip, ValueError } from '../core/py.ts';
 
@@ -29,7 +29,7 @@ const get = (obj: Json, key: string): unknown => (has(obj, key) ? obj[key] : und
 const getOr = <T>(obj: Json, key: string, fallback: T): unknown => (has(obj, key) ? obj[key] : fallback);
 const isNumber = (value: unknown): value is number => typeof value === 'number';
 
-/** `value in {set of str}` raises TypeError for a list or dict, as Python does. */
+/** `value in {set of str}` raises TypeError for a list or dict. */
 function inSet(set: Set<string>, value: unknown): boolean {
   if (Array.isArray(value) || isDict(value)) throw new TypeError(`unhashable type: '${Array.isArray(value) ? 'list' : 'dict'}'`);
   return isStr(value) && set.has(value);
@@ -147,7 +147,7 @@ interface SplitResult {
 
 const SCHEME_CHARS = /^[A-Za-z0-9+\-.]*$/;
 
-/** urllib.parse.urlsplit (Python 3.11.0) as far as these checks need it: scheme and netloc, with its ValueErrors. */
+/** urllib.parse.urlsplit as far as these checks need it: scheme and netloc, with its ValueErrors. */
 function urlsplit(input: string): SplitResult {
   let url = input.replace(/[\t\r\n]/g, '');
   let scheme = '';
@@ -206,7 +206,7 @@ function hostAndPort(netloc: string): { host: string | null; portOk: boolean } {
 
 const PY_INT = new RegExp(`^[${PY_SPACE}]*[+-]?\\p{Nd}(?:_?\\p{Nd})*[${PY_SPACE}]*$`, 'u');
 
-/** int(text, 10) in Python (spaces, sign, underscores and any Unicode decimal digits), or null where Python raises. */
+/** int(text, 10) (spaces, sign, underscores and any Unicode decimal digits), or null where it raises. */
 function pyInt(text: string): number | null {
   if (!PY_INT.test(text)) return null;
   const body = pyStrip(text);
@@ -377,7 +377,7 @@ export function validateContent(schema: unknown, raw: unknown): Json {
   return result;
 }
 
-// ---- ISO dates: CPython 3.11's C date/datetime.fromisoformat, byte for byte ----
+// ---- ISO dates: date/datetime.fromisoformat, byte for byte ----
 
 const DAYS_IN_MONTH = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 const isLeap = (y: number) => y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0);
@@ -532,7 +532,7 @@ function parseTime(b: Bytes, start: number, end: number): { rv: number; vals: nu
 function isoDateTime(input: string): boolean {
   const points = Array.from(input);
   if (points.length < 7) return false;
-  // CPython allows a lone surrogate only as the separator (positions 7, 8 or 10) and treats it as 'T'.
+  // A lone surrogate is allowed only as the separator (positions 7, 8 or 10) and treats it as 'T'.
   for (const pos of [7, 8, 10]) {
     if (pos > points.length) break;
     if (pos < points.length && /^[\ud800-\udfff]$/.test(points[pos])) {

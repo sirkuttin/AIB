@@ -124,7 +124,7 @@ export function loopbackName(name: unknown): boolean {
 function isIpv6Loopback(text: string): boolean {
   if (!text.includes(':') || !/^[0-9a-f:.]+$/.test(text)) return false;
   const v4 = text.match(/^(?:0{0,4}:){0,5}(?:ffff:)?(127\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
-  if (v4 && text.includes('ffff')) return false; // IPv4-mapped ::ffff:127.0.0.1 is not loopback for Python's ipaddress
+  if (v4 && text.includes('ffff')) return false; // IPv4-mapped ::ffff:127.0.0.1 is not loopback
   const halves = text.split('::');
   if (halves.length > 2) return false;
   const groups = (part: string) => (part ? part.split(':') : []);

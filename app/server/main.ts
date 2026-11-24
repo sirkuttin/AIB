@@ -1,17 +1,16 @@
 /**
- * AIB's Deno entry point: the web server (studio.py's main) and the agent host (agent_host.py). Same flags as the Python programs.
+ * AIB's Deno entry point: the web server and the agent host.
  *
  *   deno run -A server/main.ts [serve] [--port N] [--state-dir D] ...      the web server, attached to (or starting) the agent host
  *   deno run -A server/main.ts [serve] --in-process ...                     the web server with the agents inside it (tests, debugging)
  *   deno run -A server/main.ts --stop-host [--force]                       ask the agent host to stop
  *   deno run -A server/main.ts host [--state-dir D] ...                    the agent host itself (normally started by the web server)
- *   deno run -A server/main.ts mcp-artifact                                the studio_artifact stdio MCP server agents run (artifact_mcp.py)
- *   deno run -A server/main.ts deploy [--port N] [--host] [--wait] ...     restart a running server without cutting off a turn (deploy.py)
+ *   deno run -A server/main.ts mcp-artifact                                the studio_artifact stdio MCP server agents run
+ *   deno run -A server/main.ts deploy [--port N] [--host] [--wait] ...     restart a running server without cutting off a turn
  *   AIB [--port N] ...                    in a `deno desktop` build with no subcommand: the web server plus the native window, tray
  *                                         and single-instance lock (desktop/window.ts). `AIB serve` and every subcommand open no window.
  *
- * The web server starts the Deno agent host (`main.ts host`, or `<binary> host` for a compiled build). A Python agent host (the
- * old app) already running for the state folder is recognised and taken over once no chat works there (host_client.ts findHost);
+ * The web server starts the Deno agent host (`main.ts host`, or `<binary> host` for a compiled build). An older agent host already running for the state folder is recognised and taken over once no chat works there (host_client.ts findHost);
  * this program never starts one.
  */
 import { retireAtStart } from './web/cleanup_routes.ts';
@@ -427,7 +426,7 @@ export async function main(argv: string[]): Promise<void> {
   }
   try { // artifact tool: agents re-read this when AIB restarts on another port (json.dumps spacing, like studio.py)
     await Deno.writeTextFile(`${stateDir}${sep}artifact-web.json`, `{"url": ${JSON.stringify(url)}, "pid": ${Deno.pid}}`);
-  } catch { /* as Python: not fatal */ }
+  } catch { /* not fatal */ }
   if (aib) {
     console.log(`AIB: ${url}\nIn-process mode: keep this process running while agents work. Ctrl+C stops owned ACP connections.`);
   } else {

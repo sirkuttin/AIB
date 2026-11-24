@@ -16,7 +16,7 @@ function takingOver(ctx: WebContext): boolean {
 }
 import { afterConnect, discoverAdded } from './project_routes.ts';
 
-/** Aib.LIVE_POST_OPS: the generic POST /api/live/<name> calls. A test keeps this equal to Python's set. */
+/** Aib.LIVE_POST_OPS: the generic POST /api/live/<name> calls. A test keeps this equal to the frozen set. */
 export const LIVE_POST_OPS = [
   'connect', 'discover', 'forget', 'prompt', 'cancel', 'permission', 'authenticate', 'elicitation', 'config', 'mode', 'cancel-pending',
   'session-op', 'disconnect', 'queue', 'queue-edit', 'queue-remove', 'queue-move', 'queue-resume', 'queue-send-now', 'steer', 'tool-stop',
@@ -126,7 +126,7 @@ export function liveRoutes(): Map<string, LiveHandler> {
   routes.set('GET /api/live/agents/install', (ctx, url) => ctx.host.installCall('status', arg(url, 'agent')));
   routes.set('POST /api/live/agents/install', (ctx, _url, body) => ctx.host.installCall('start', installAgent(body)));
   routes.set('POST /api/live/agents/install/cancel', (ctx, _url, body) => ctx.host.installCall('cancel', installAgent(body)));
-  // Deno only (routes.ts DENO_ONLY): a Python agent host answers the unknown action with 404, so nothing is removed there.
+  // Deno only (routes.ts DENO_ONLY): an older agent host answers the unknown action with 404, so nothing is removed there.
   // {check: true}: every refusal, nothing removed (the page asks this before its confirm question).
   routes.set(
     'POST /api/live/agents/install/uninstall',

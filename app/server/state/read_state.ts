@@ -117,7 +117,7 @@ export class ReadState extends JsonFileStore {
   #prune(): void {
     const extra = this.chats.size - this.#cls().MAX_CHATS;
     if (extra > 0) {
-      const sorted = [...this.chats].sort((a, b) => a[1].at - b[1].at); // stable, like Python's sorted
+      const sorted = [...this.chats].sort((a, b) => a[1].at - b[1].at); // stable sort
       for (const [key] of sorted.slice(0, extra)) this.chats.delete(key);
     }
   }

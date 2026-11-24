@@ -1,16 +1,15 @@
 /**
- * The web server's full route table: every (method, path, scope) the Python web server answers (studio.ROUTES), and its kind
- * (web_handler.route_specs: 'get', 'body', 'bare', 'own-gate'; 'monitor' for monitor.py's routes). work/deno/web_server_test.ts
- * checks this list equals Python's, so a route added on one side cannot be missed on the other. Whether a route is served by the Deno
- * port or still forwarded to the Python web server is decided in server.ts (NATIVE).
+ * The web server's full route table: every (method, path, scope) the web server answers, and its kind
+ * ('get', 'body', 'bare', 'own-gate'; 'monitor' for the transcript viewer's routes). work/deno/web_server_test.ts
+ * checks this list equals the frozen list, so a route cannot be added or dropped unnoticed.
  */
 import { RouteTable } from './security.ts';
 
 export type RouteKind = 'get' | 'body' | 'bare' | 'own-gate' | 'monitor';
 
 /**
- * Routes the Deno server has and the Python web server does not: the ONLY allowed difference from Python's table. The parity test
- * (web_server_test.ts) compares ROUTE_LIST minus these with Python's, and checks this list stays exactly this.
+ * Routes added after the frozen route list was recorded: the ONLY allowed difference from it. The test
+ * (web_server_test.ts) compares ROUTE_LIST minus these with the frozen list, and checks this list stays exactly this.
  *   POST /api/live/agents/install/uninstall   remove AIB's own install of an agent (installer.ts Installer.uninstall)
  *   GET  /api/live/terminal                   the chat terminal's WebSocket (terminal_routes.ts)
  *   GET  /api/live/terminal/list              running chat terminals

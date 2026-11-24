@@ -1,7 +1,7 @@
 /**
- * state_store.py, ported: the stores that keep AIB's small JSON files in the state folder. Python and Deno processes share
- * these files during the transition, so names, JSON layout, versions, locking, reload-on-change, quarantine and pruning are
- * Python's exactly.
+ * The stores that keep AIB's small JSON files in the state folder. Processes of different versions share
+ * these files, so names, JSON layout, versions, locking, reload-on-change, quarantine and pruning are
+ * fixed.
  *
  *   recovery.ts       StateStore (studio-<name>.json: owned conversations and prompt receipts) and Recovery
  *   conversations.ts  ConversationState (studio-conversations.json: pin / hold / archive / delete / your-turn marks)

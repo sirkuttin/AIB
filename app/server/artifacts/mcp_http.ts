@@ -7,7 +7,7 @@
  * "Runtime started" to stdout before our code runs, which corrupts the JSON-RPC stream. So when AIB runs from a built binary it
  * gives agents that advertise `mcpCapabilities.http` this entry instead (ACP McpServerHttp: {type: 'http', name, url, headers}),
  * keeping the stdio entry as the fallback for agents that do not (see artifactMcpEntries). Under `deno run` agents keep getting the
- * stdio entry, exactly as the Python AIB gives them artifact_mcp.py.
+ * stdio entry, exactly as the stdio entry gets them.
  *
  * Access: a listener of its own on 127.0.0.1 (random port), never the page's or the artifact origin's port. Every request must
  *   - come from a loopback address with Host exactly 127.0.0.1:<port> or localhost:<port> (no DNS rebinding),

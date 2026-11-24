@@ -1,14 +1,14 @@
 /**
  * File helpers shared by the stores in the state folder.
  *
- * writeJsonAtomic replaces a JSON file so a reader (this process, or a Python process sharing the folder during the transition)
+ * writeJsonAtomic replaces a JSON file so a reader (this process, or another AIB sharing the folder)
  * only ever sees the old file or the complete new one: write a temp file in the same folder, fsync it, then rename it over the
- * target (Python: tempfile.mkstemp + os.fsync + os.replace). It is synchronous on purpose: the Python stores save under a lock
+ * target. It is synchronous on purpose: the stores save under a lock
  * and their callers rely on the file being on disk when the call returns.
  */
 
 export interface AtomicWriteOptions {
-  /** Temp file name prefix (Python's mkstemp prefix), e.g. '.studio-queues-'. */
+  /** Temp file name prefix, e.g. '.studio-queues-'. */
   prefix?: string;
   /** Temp file name suffix. */
   suffix?: string;

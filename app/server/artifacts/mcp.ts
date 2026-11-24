@@ -7,7 +7,7 @@
  *   STUDIO_CONVERSATION_ID     AIB conversation this agent belongs to
  *   STUDIO_WORKTREE            '1': also offer the worktree merge tools
  *   STUDIO_MAIN                '1': also offer the swarm tools (a main chat; the route checks the role again on every call)
- * JSON-RPC 2.0 over stdin/stdout, one JSON message per line, replies byte-identical to the Python server's.
+ * JSON-RPC 2.0 over stdin/stdout, one JSON message per line, with fixed reply bytes.
  *
  * HTTP goes over a plain socket to the loopback URL only: never through a proxy (the key is for this machine only) and never
  * following a redirect (it would carry the key header to wherever it points).
@@ -34,8 +34,8 @@ export const INSTRUCTIONS = "These are AIB's own tools, for the app the user is 
   'artifact in a reply, write it as a Markdown link [Title](studio-artifact://<id>).';
 
 /**
- * Deno only (the Python reference has no /_lib/): the libraries the artifact origin bundles (libs.ts), appended to publish's
- * description. artifact_mcp_test.ts takes it out before comparing tools/list with Python.
+ * Deno only: the libraries the artifact origin bundles (libs.ts), appended to publish's
+ * description. artifact_mcp_test.ts takes it out before comparing tools/list with the frozen answer.
  */
 export const OFFLINE_LIBS_NOTE = ' Pages should work offline, and AIB bundles these libraries for charts and diagrams: Mermaid 11, ' +
   'Chart.js 4, Vega 6, Vega-Lite 6 and vega-embed 7. Load them by their usual jsDelivr, unpkg or cdnjs URL (e.g. ' +
@@ -335,7 +335,7 @@ export function envContext(): ToolContext {
 /** A failure to report to the agent as an MCP tool error (isError), not a protocol error. */
 export class ToolError extends Error {}
 
-/** An exception Python would raise with this type name (shown as "Artifact tool failed: <Type>: <message>"). */
+/** An exception with this type name (shown as "Artifact tool failed: <Type>: <message>"). */
 class PyError extends Error {
   constructor(readonly pyType: string, message: string) {
     super(message);
@@ -347,7 +347,7 @@ function pyGet(value: unknown, key: string): unknown {
   return Object.hasOwn(value, key) ? value[key] : null;
 }
 
-/** Python's str(value) for a non-str truthy value used as `str(value or '')`. */
+/** str(value) for a non-str truthy value used as `str(value or '')`. */
 function loose(value: unknown): string {
   return truthy(value) ? pyStr(value) : '';
 }
@@ -406,7 +406,7 @@ function urlencode(query: Record<string, string>): string {
   return Object.entries(query).map(([k, v]) => quote(k) + '=' + quote(v)).join('&');
 }
 
-/** Python's text for an OSError from a socket: "[WinError N] message" (Windows) or "[Errno N] message". */
+/** The text for an OSError from a socket: "[WinError N] message" (Windows) or "[Errno N] message". */
 function socketReason(error: unknown): string {
   const text = error instanceof Error ? error.message : String(error);
   const found = /^(.*?)\.? \(os error (\d+)\)$/s.exec(text);
@@ -414,7 +414,7 @@ function socketReason(error: unknown): string {
   return Deno.build.os === 'windows' ? `[WinError ${found[2]}] ${found[1]}` : `[Errno ${found[2]}] ${found[1]}`;
 }
 
-/** A connection-level failure (Python: URLError / OSError), with Python's reason text. */
+/** A connection-level failure, with its reason text. */
 export class NetError extends Error {}
 
 export interface RawResponse {
@@ -654,7 +654,7 @@ async function toolUpdate(ctx: ToolContext, args: Json): Promise<Json> {
   return textResult(`Updated "${pyStr(truthy(title) ? title : identifier)}" (artifact ${pyStr(out.id)}), now v${pyStr(out.version)}.`, out);
 }
 
-/** Python's iteration of `reply.get('artifacts') or []`: a list's items, a str's characters, a dict's keys; a number raises. */
+/** Iteration of `reply.get('artifacts') or []`: a list's items, a str's characters, a dict's keys; a number raises. */
 function iterate(value: unknown): unknown[] {
   if (!truthy(value)) return [];
   if (Array.isArray(value)) return value;
@@ -665,7 +665,7 @@ function iterate(value: unknown): unknown[] {
 
 async function toolList(ctx: ToolContext, _args: Json): Promise<Json> {
   const reply = await http(ctx, 'GET', '/api/live/artifacts', { conversationId: ctx.conversation });
-  // archived ones carry archived: true (Deno only; the key stays out otherwise, so the reply matches Python's)
+  // archived ones carry archived: true (Deno only; the key stays out otherwise, so the reply stays as before)
   const items = iterate(pyGet(reply, 'artifacts')).filter(isDict).map((a) => ({
     ...pick(a, ['id', 'title', 'kind', 'version', 'link']),
     ...(a.archivedAt !== undefined && a.archivedAt !== null ? { archived: true } : {}),
@@ -926,7 +926,7 @@ function writeAll(data: Uint8Array): void {
 
 /** `aib mcp-artifact`: serve stdin until it closes. Returns the exit code. */
 export async function main(): Promise<number> {
-  const decoder = new TextDecoder('utf-8', { ignoreBOM: true }); // errors='replace', a BOM kept (Python then fails to parse)
+  const decoder = new TextDecoder('utf-8', { ignoreBOM: true }); // errors='replace', a BOM kept
   const encoder = new TextEncoder();
   let pending = new Uint8Array(0);
   const serveLine = async (raw: Uint8Array) => {

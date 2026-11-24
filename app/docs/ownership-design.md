@@ -14,7 +14,7 @@ Absence of evidence is therefore not safety.
 
 ## What shipped
 
-Code: `ownership_probe.py` (evidence, announcements), wiring in `studio.py` (`Aib.check_ownership`, heartbeat), UI in `ownership-ui.js`. Tests: `work/test_ownership_probe.py` (41 Python tests), `work/test_ownership_ui.js` (8 Node tests). Command line: `python ownership_probe.py --provider claude --session ID --cwd DIR` prints the evidence for one conversation and changes nothing.
+Code: `server/ownership/probe.ts` (evidence, announcements), wiring in `server/host/aib.ts` (`Aib.ownershipQuery`, heartbeat), UI in `ownership-ui.js`. Tests: `work/deno/ownership_probe_test.ts`, `work/test_ownership_ui.js` (8 Node tests). Command line: `deno run -A server/ownership/probe.ts --provider claude --session ID --cwd DIR` prints the evidence for one conversation and changes nothing.
 
 ### Verdicts
 

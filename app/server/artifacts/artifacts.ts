@@ -3,13 +3,13 @@
  * snapshots.
  *
  * Layout: <state_dir>/artifacts/<id>/manifest.json plus v1/, v2/... (each a snapshot of the artifact's entry file). The layout, the
- * file names, the manifest JSON (json.dumps(ensure_ascii=False, indent=1), times written as Python floats) and the versioning rules
- * are those of the Python server byte for byte, so a store written by either server is read and extended by the other while both
+ * file names, the manifest JSON (json.dumps(ensure_ascii=False, indent=1), times written as floats) and the versioning rules
+ * are fixed byte for byte, so a store written by any version is read and extended by another while both
  * share the state folder (interop tests in work/deno/artifacts_test.ts).
  * The pages themselves are served by origin.ts on a separate origin; nothing here runs artifact content.
  *
  * Everything that touches the disk is synchronous on purpose: an operation then runs to the end without yielding, which gives the
- * same atomicity the Python store gets from its RLock.
+ * atomicity a lock would give.
  */
 import { createHash } from 'node:crypto';
 import { getLogger } from '../core/log.ts';
@@ -61,7 +61,7 @@ export const MAX_SOURCE_BYTES = 2 * 1024 * 1024;
 export const MAX_DIFF_CHARS = 1024 * 1024;
 export const MAX_BODY_BYTES = 40 * 1024 * 1024;
 export const MAX_TRACKED_WRITES = 500;
-/** Python's ID_RE (`$` there also matches before one trailing newline). */
+/** The id pattern (`$` also matches before one trailing newline). */
 export const ID_RE = /^[0-9a-f]{16}\n?$/;
 export const WRITE_TOOLS = ['write', 'edit', 'multiedit', 'notebookedit']; // Claude Code's own tool names (lower case)
 export const PATH_KEYS = ['file_path', 'notebook_path', 'path', 'filePath', 'filename'];
@@ -70,7 +70,7 @@ export const PATH_KEYS = ['file_path', 'notebook_path', 'path', 'filePath', 'fil
 export const DOC_HISTORY_SECONDS = 30 * 24 * 3600;
 /** Recently deleted: an artifact the user deleted is removed for good this long after (owner decision 2a, 2026-11-12). */
 export const PURGE_SECONDS = 30 * 24 * 3600;
-/** The retention limits, mutable so tests can lower them (the Python tests patch artifacts.MAX_VERSIONS / MAX_BYTES). */
+/** The retention limits, mutable so tests can lower them. */
 export const limits = { maxVersions: MAX_VERSIONS, maxBytes: MAX_BYTES, docHistorySeconds: DOC_HISTORY_SECONDS, purgeSeconds: PURGE_SECONDS };
 /** At most this many ids in one archive call or one states lookup. */
 export const MAX_ARCHIVE_IDS = 100;
@@ -105,7 +105,7 @@ export class ArtifactError extends Error {
   }
 }
 
-// ---- Python path helpers (pathlib / os.path on this OS) -------------------------------------------
+// ---- Path helpers (pathlib / os.path semantics on this OS) -------------------------------------------
 
 function normcase(path: string): string {
   return WIN ? path.replaceAll('/', '\\').toLowerCase() : path;
@@ -146,7 +146,7 @@ export function osBasename(path: string): string {
   return text.slice(index + 1);
 }
 
-/** os.path.isabs (Python 3.11: on Windows a path starting with a slash counts too). */
+/** os.path.isabs. */
 export function osIsAbs(path: string): boolean {
   if (!WIN) return path.startsWith('/');
   const head = path.slice(0, 3).replaceAll('/', '\\');
@@ -240,7 +240,7 @@ function rmtree(path: string): void {
   } catch { /* shutil.rmtree(ignore_errors=True) */ }
 }
 
-/** The text Python's str(OSError) gives for a failed open() / os.stat() of `path` (the HTTP routes answer it with a 400). */
+/** The text of an OSError for a failed open() / os.stat() of `path` (the HTTP routes answer it with a 400). */
 export function pyOSError(error: unknown, path: string, op: 'open' | 'stat' = 'open'): OSError {
   const name = pyRepr(path);
   let text: string;
@@ -290,7 +290,7 @@ function readPrefix(path: string, limit: number): Uint8Array {
   }
 }
 
-/** bytes.decode('utf-8', 'replace') (a BOM is kept, as Python keeps it). */
+/** bytes.decode('utf-8', 'replace') (a BOM is kept). */
 export function decodeReplace(data: Uint8Array): string {
   return new TextDecoder('utf-8', { ignoreBOM: true }).decode(data);
 }
@@ -352,7 +352,7 @@ export function pyQuote(text: string): string {
 
 // ---- the manifest's JSON, as json.dumps(manifest, ensure_ascii=False, indent=1) writes it ---------------------------------
 
-const FLOAT_KEYS = new Set(['at', 'createdAt', 'updatedAt', 'archivedAt', 'deletedAt']); // time.time() values: always Python floats in a Python-written file
+const FLOAT_KEYS = new Set(['at', 'createdAt', 'updatedAt', 'archivedAt', 'deletedAt']); // time.time() values: always floats in the file
 
 function pyNumber(value: number, float: boolean): string {
   if (Number.isNaN(value)) return 'NaN';
@@ -452,7 +452,7 @@ export class ArtifactStore {
     Deno.mkdirSync(this.root, { recursive: true });
   }
 
-  /** Kept for callers ported from Python (`with store.lock:`); every operation here is synchronous, so it is a no-op. */
+  /** Kept for older callers (`with store.lock:`); every operation here is synchronous, so it is a no-op. */
   readonly lock = { run: <T>(work: () => T): T => work() };
 
   // ---- reading -------------------------------------------------------------------------------
@@ -553,7 +553,7 @@ export class ArtifactStore {
 
   /**
    * Edit on a Markdown artifact: it became the doc `name` (made at doc rev `rev`, so Undo knows nobody typed since), or null when
-   * Undo took it back. An extra manifest field, like fromDoc: the Python server keeps it when it rewrites the manifest.
+   * Undo took it back. An extra manifest field, like fromDoc: an older AIB keeps it when it rewrites the manifest.
    */
   setBecameDoc(artifactId: unknown, name: string | null, rev = 0): Manifest {
     const manifest = this.get(artifactId);
@@ -570,7 +570,7 @@ export class ArtifactStore {
 
   /**
    * "Built from <doc › page>": the doc page an artifact shows (`fromDoc`: {doc, title, page, pageTitle, rev}, the page's rev when it
-   * was published), or null to drop the link. An extra manifest field: the Python server keeps it when it rewrites the manifest.
+   * was published), or null to drop the link. An extra manifest field: an older AIB keeps it when it rewrites the manifest.
    */
   setFromDoc(artifactId: unknown, fromDoc: Json | null): Manifest {
     const manifest = this.get(artifactId);
@@ -936,7 +936,7 @@ export class ArtifactStore {
   }
 }
 
-// ---- difflib (Python 3.11's SequenceMatcher with autojunk, and unified_diff) ----------------------
+// ---- difflib ----------------------
 
 const BREAKS = '\n\r\v\f\x1c-\x1e\x85' + String.fromCharCode(0x2028, 0x2029); // what str.splitlines() splits on
 const LINE_BREAKS = new RegExp(`[^${BREAKS}]*(?:\r\n|[${BREAKS}])?`, 'g');
@@ -952,7 +952,7 @@ const ENDS_WITH_BREAK = new RegExp(`[${BREAKS}]$`);
 
 /**
  * A last line without a line break gets one, followed by the "\ No newline at end of file" line, as `diff -u` writes it. Without
- * this the old and the new last line were glued into one line ("-old+new") and the counts were wrong (Python: the same in diff()).
+ * this the old and the new last line were glued into one line ("-old+new") and the counts were wrong.
  */
 export function withNoEolMarkers(lines: string[]): string[] {
   return lines.map((line) => (line && !ENDS_WITH_BREAK.test(line) ? line + '\n\\ No newline at end of file\n' : line));
@@ -1114,7 +1114,7 @@ export function unifiedDiff(a: string[], b: string[], fromfile: string, tofile: 
 
 // ---- agent tool key hook ---------------------------------------------------------------------------
 
-/** Request headers, case-insensitive like Python's message headers (a Fetch `Headers` works). */
+/** Request headers, case-insensitive (a Fetch `Headers` works). */
 export interface HeaderBag {
   get(name: string): string | null | undefined;
 }
@@ -1982,7 +1982,7 @@ export class WriteTracker {
     const update = isDict(params) ? params.update : null;
     if (!isDict(update) || (update.sessionUpdate !== 'tool_call' && update.sessionUpdate !== 'tool_call_update')) return [];
     let callId = update.toolCallId as unknown;
-    if (typeof callId === 'boolean') callId = callId ? 1 : 0; // Python: True == 1 as a dict key
+    if (typeof callId === 'boolean') callId = callId ? 1 : 0; // true == 1 as a dict key
     let write = WriteTracker.isWrite(update);
     if (typeof callId === 'string' || isInt(callId)) {
       const id = callId as string | number;
@@ -2064,8 +2064,7 @@ interface Seen {
  *
  * A file becomes an artifact of conversation C only when C's agent wrote it (conversations() gives each open chat as
  * {id, cwd, writes: [paths its agent wrote]}) and it lies in <cwd>/outputs/. Nothing else attaches a file to a chat. Artifacts that
- * already have a sourcePath get a new version when that file changes, about once a second. It polls (Python's watcher thread does
- * the same, every `interval` seconds); a tick is synchronous, so it never interleaves with a route.
+ * already have a sourcePath get a new version when that file changes, about once a second. It polls every `interval` seconds; a tick is synchronous, so it never interleaves with a route.
  */
 export class Watcher {
   readonly seen = new Map<string, Seen>(); // conversation id + path key -> record
@@ -2093,7 +2092,7 @@ export class Watcher {
     return this.options.clock ? this.options.clock() : performance.now() / 1000;
   }
 
-  /** True while the poll loop runs (Python: thread.is_alive()). */
+  /** True while the poll loop runs. */
   get alive(): boolean {
     return this.#running;
   }

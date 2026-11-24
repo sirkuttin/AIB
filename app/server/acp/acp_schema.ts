@@ -48,7 +48,7 @@ class Dropped extends ProtocolError {
 const has = (obj: Json, key: string) => Object.hasOwn(obj, key);
 const get = (obj: Json, key: string): unknown => (has(obj, key) ? obj[key] : undefined);
 const isNone = (value: unknown) => value === null || value === undefined;
-/** Python truthiness of a parsed JSON value ([] and {} are false, unlike JS). */
+/** Truthiness of a parsed JSON value: [] and {} are false (unlike JS). */
 const truthy = (value: unknown) => Array.isArray(value) ? value.length > 0 : isDict(value) ? Object.keys(value).length > 0 : Boolean(value);
 const isId = (value: unknown): value is string | number => isStr(value) || isInt(value);
 
@@ -299,7 +299,7 @@ export interface PendingRequest {
   response?: unknown;
 }
 
-/** What screen() needs from a connection. JS is single-threaded, so Python's connection.lock has no counterpart. */
+/** What screen() needs from a connection. JS is single-threaded, so no lock is needed. */
 export interface ScreenConnection {
   pending: Map<unknown, PendingRequest>;
   event(kind: string, data: Json): void;

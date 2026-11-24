@@ -10,7 +10,7 @@ Status values: **supported**, **partial**, **not supported**, **deliberately dis
 | --- | --- | --- | --- |
 | `fs.readTextFile` / `fs.writeTextFile` | `false` / `false` | deliberately disabled | AIB does not expose the workspace to agents through the client; agents use their own file access. See TRACKER milestone 5 (optional filesystem with access boundaries). |
 | `terminal` | `false` | deliberately disabled | No ACP terminal lifecycle yet (TRACKER milestone 4). |
-| `elicitation.form` | `{}` | supported | Form mode, request- and session-scoped; schema and typed answers validated by `elicitation.py`. |
+| `elicitation.form` | `{}` | supported | Form mode, request- and session-scoped; schema and typed answers validated by `server/acp/elicitation.ts`. |
 | `elicitation.url` | not sent | in progress - see tracker | URL elicitation is rejected with -32602 until implemented. |
 | `subagents` | `{}` | partial | Non-standard extension some adapters use; AIB tracks subagent session IDs and reads `subagent_update` / `session_message` updates. Not part of ACP v1. |
 | `auth.*` / `positionEncoding` etc. | not sent | not supported | Authentication capabilities in progress - see tracker. |
@@ -24,7 +24,7 @@ Status values: **supported**, **partial**, **not supported**, **deliberately dis
 | `session/new` | supported | `cwd` and empty `mcpServers`. Result must carry a non-empty `sessionId`; `modes` and `configOptions` are stored as settings. |
 | `session/load` | supported | Used to continue saved conversations; requires `agentCapabilities.loadSession`, otherwise refused. History replay arrives as normal `session/update` notifications. |
 | `session/resume`, `session/close`, `session/delete` | not supported | Not gated on `sessionCapabilities`; AIB never sends them. |
-| `session/list` | in progress - see tracker | Protocol-native session discovery; today AIB discovers saved sessions from local transcripts (`monitor.py`). |
+| `session/list` | in progress - see tracker | Protocol-native session discovery; today AIB discovers saved sessions from local transcripts (`server/transcripts/monitor.ts`). |
 | `session/prompt` | supported | Text plus attachments: up to 4 images (PNG/JPEG/GIF/WebP, `promptCapabilities.image`) and up to 8 files, mapped as in "Prompt content blocks" below (20 MiB total). One turn at a time; duplicate client message IDs are deduplicated. Result `stopReason` is validated (`end_turn`, `max_tokens`, `max_turn_requests`, `refusal`, `cancelled`; unknown strings are tolerated with a logged warning). |
 | `session/cancel` (notification) | supported | Pending permission requests are answered with outcome `cancelled` first, then `session/cancel` is sent; pending session-scoped elicitations are answered `cancel`. The agent is expected to end the turn with `stopReason: cancelled` (verified against the conformance fixture). A permission request that arrives after the cancel is not auto-cancelled (gap). |
 | `session/set_mode` | supported | Mode picker from `modes.availableModes`; `current_mode_update` keeps it in sync. |

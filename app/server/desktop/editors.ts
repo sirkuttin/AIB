@@ -602,7 +602,7 @@ export interface WorkspaceMatch {
 function sortedNames(folder: string): string[] {
   const names: string[] = [];
   for (const entry of Deno.readDirSync(folder)) names.push(entry.name);
-  // Python sorts str by code point; JS default sort compares UTF-16 units (same for the BMP).
+  // Strings sort by code point; JS default sort compares UTF-16 units (same for the BMP).
   return names.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 }
 
@@ -691,7 +691,7 @@ export function buildCommand(entry: Entry, kind: Kind, path: string, line: numbe
   throw new EditorError('Unknown program', 'unsupported', 400);
 }
 
-/** What Launcher passes to popen next to the argument list (subprocess.Popen keyword arguments of the Python server). */
+/** What Launcher passes to popen next to the argument list (subprocess.Popen keyword arguments). */
 export interface PopenOptions {
   stdin: 'null';
   stdout: 'null';

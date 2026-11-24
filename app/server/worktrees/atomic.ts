@@ -44,7 +44,7 @@ export function copyMode(source: string, target: string): void {
   if (WIN) return;
   try {
     Deno.chmodSync(target, (Deno.statSync(source).mode ?? 0o644) & 0o7777);
-  } catch { /* ignored, as Python's OSError */ }
+  } catch { /* ignored: an OSError */ }
 }
 
 export interface AtomicOptions {

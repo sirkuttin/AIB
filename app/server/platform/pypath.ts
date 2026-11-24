@@ -1,7 +1,7 @@
 /**
- * The few pathlib / shutil behaviours the ported stores rely on, so a value the Python server would store is stored the same:
+ * The few pathlib / shutil behaviours the stores rely on, so a stored value stays the same as in older versions:
  * Path.expanduser(), Path.is_absolute(), str(Path(...)) (separator and '.' normalisation), Path.is_file(), Path.resolve() of an
- * existing file, os.access(X_OK) and shutil.which() as Python 3.11 does them (Windows: current folder first, PATHEXT).
+ * existing file, os.access(X_OK) and shutil.which() with the usual semantics (Windows: current folder first, PATHEXT).
  * A foreign path (location.ts isForeignPath) is never looked up on this PC: pyStat and resolvePath throw NotFound (so the
  * predicates answer false) and which() finds nothing.
  */
@@ -54,7 +54,7 @@ function home(): string | undefined {
 }
 
 /**
- * Path.expanduser(): a leading '~' (or '~user' on Windows, as ntpath does it) becomes the home folder. Python raises RuntimeError
+ * Path.expanduser(): a leading '~' (or '~user' on Windows, as ntpath does it) becomes the home folder. It raises RuntimeError
  * when no home folder is known or for '~user' on POSIX (it looks the user up); here the path is then returned unchanged.
  */
 export function expandUser(path: string): string {
@@ -74,7 +74,7 @@ export function expandUser(path: string): string {
 
 /**
  * os.stat(path): follows links, except that on Windows a reparse point the system cannot follow (an app execution alias such as
- * WindowsApps\wt.exe, os error 1920) gives the link's own stat, as Python's os.stat does.
+ * WindowsApps\wt.exe, os error 1920) gives the link's own stat.
  */
 export function pyStat(path: string): Deno.FileInfo {
   if (WIN && isForeignPath(path)) throw new Deno.errors.NotFound(`not a path of this PC: ${path}`);
@@ -125,7 +125,7 @@ function ntJoin(dir: string, file: string): string {
   return dir.endsWith('/') ? dir + file : `${dir}/${file}`;
 }
 
-/** shutil.which(cmd) of Python 3.11 (mode F_OK | X_OK). */
+/** shutil.which(cmd) (mode F_OK | X_OK). */
 export function which(cmd: string): string | null {
   if (WIN && isForeignPath(cmd)) return null;
   const access = (name: string) => executable(name) && !isDir(name);

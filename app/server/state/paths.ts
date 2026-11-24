@@ -12,7 +12,7 @@
  * DIRECTORY or no ".git" at all counts as main.
  *
  * Tests never reach the real per-user folder: with AGENT_STUDIO_TEST=1 (or when a Deno test file is the main module, the analogue of
- * Python's "unittest/pytest is loaded") resolving it throws RealFolderBlocked.
+ * the older "test runner is loaded" rule) resolving it throws RealFolderBlocked.
  *
  * The per-user folder is created owner-only and an AIB refuses to start if Users, Everyone or Authenticated Users can write to it
  * (Windows: the DACL is read with GetNamedSecurityInfoW and compared by SID, server/platform/acl.ts; POSIX: mode 0700 and no
@@ -62,7 +62,7 @@ export class StateDirInsecure extends StateDirError {
 export type Env = Record<string, string | undefined>;
 export type Say = (message: string) => void;
 
-// ---- paths (Python's os.path / pathlib on this OS) ---------------------------------------------
+// ---- paths ---------------------------------------------
 const WIN = Deno.build.os === 'windows';
 const SEP = WIN ? '\\' : '/';
 
@@ -188,7 +188,7 @@ export function userStateDir(env?: Env, platform?: string, homeDir?: string): st
   return pathOf(env.XDG_STATE_HOME || pathOf(base, '.local', 'state'), APP_DIR_POSIX);
 }
 
-/** A Deno test file is the main module: the analogue of Python's "unittest or pytest is loaded". */
+/** A Deno test file is the main module: the signal that a test runner is loaded. */
 function testRunnerLoaded(): boolean {
   return /[._]test\.[cm]?[jt]sx?$/.test(Deno.mainModule);
 }

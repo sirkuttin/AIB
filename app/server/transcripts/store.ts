@@ -386,7 +386,7 @@ export class Store {
     const folders: string[] = [];
     for await (const entry of Deno.readDir(this.root)) folders.push(join(this.root, entry.name));
     // Folders and their chats are read concurrently (the file system answers many stats at once); order is kept for the sort,
-    // and a record that fails the whole listing fails it as Python does: the first failure in folder order, not the first to finish.
+    // and a record that fails the whole listing fails it: the first failure in folder order, not the first to finish.
     const perFolder = await allInOrder(folders.map(async (folder) => {
       if (!(await isDir(folder))) return [];
       const real = await resolve(folder);
@@ -661,7 +661,7 @@ export class Catalog {
     return (await store.agents(rest)).map((item) => this.decorate(provider, item));
   }
 
-  /** The command-list memo of a Catalog lives on the Catalog (as in Python). */
+  /** The command-list memo of a Catalog lives on the Catalog. */
   commandMemo = new Map<string, [string, number, Task[]]>();
   commandLocks = new Map<string, Mutex>();
 }

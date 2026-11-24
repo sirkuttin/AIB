@@ -1,5 +1,5 @@
 /**
- * Libraries for artifact pages that work offline (Deno only; the Python reference origin has none).
+ * Libraries for artifact pages that work offline (offline).
  *
  * The artifact origin serves pinned copies of Mermaid, Chart.js and Vega / Vega-Lite / vega-embed from vendor/artifact-libs/ at
  * /_lib/<file>, and HTML pages that load them by their usual CDN URL (jsDelivr, unpkg, cdnjs) are served with that URL changed to

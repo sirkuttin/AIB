@@ -13,12 +13,12 @@
  * that cannot safely get a worktree is used in place, and the reason is logged. Every worktree AIB makes is recorded in
  * <state dir>/studio-worktrees.json (chat key -> path, branch, base branch, snapshot commit) and only those are ever cleaned up.
  *
- * Python and Deno share the registry during the transition: it is re-read from disk on every access (as Python does), written whole
- * with writeJsonAtomic in Python's exact layout (json.dump ensure_ascii=False, compact separators, the '.studio-worktrees-' temp
+ * Versions share the registry: it is re-read from disk on every access, written whole
+ * with writeJsonAtomic in a fixed layout (json.dump ensure_ascii=False, compact separators, the '.studio-worktrees-' temp
  * prefix), and every read-modify-write holds the in-process queue plus the cross-process lock '<file>.lock' (server/platform/lock.ts;
- * the Python Registry only has a thread lock, so this guards Deno against Deno). git runs as a subprocess with Python's arguments and
+ * an older registry only has a thread lock). git runs as a subprocess with fixed arguments and
  * environment: GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE/GIT_COMMON_DIR removed, GIT_OPTIONAL_LOCKS=0, GIT_TERMINAL_PROMPT=0,
- * `-c core.longpaths=true`, and AIB's identity only where Python passes it. Text output gets Python's universal-newline
+ * `-c core.longpaths=true`, and AIB's identity only where it is needed. Text output gets universal-newline
  * translation. (CREATE_NO_WINDOW cannot be passed by Deno.Command; server/platform/console.ts gives the process a hidden console.)
  */
 import { FileLock, LOCK_TIMEOUT_MS, LockTimeout } from '../platform/lock.ts';
@@ -36,7 +36,7 @@ import { WSL_REF_PREFIX } from '../wsl/contract.ts';
 
 const log = getLogger('worktrees');
 
-/** Mutable so tests can lower them (Python's tests patch the module constants). */
+/** Mutable so tests can lower them. */
 export const limits = {
   MAX_SNAPSHOT_BYTES: 200 * 1024 * 1024, // what the snapshot would add beyond HEAD; more and the chat works in place
   MAX_UNTRACKED_FILES: 5000,
@@ -93,14 +93,14 @@ export interface GitResult {
   /** Decoded output (UTF-8, errors replaced; universal newlines unless binary). */
   stdout: string;
   stderr: string;
-  /** The raw stdout bytes (Python's binary=True stdout). */
+  /** The raw stdout bytes. */
   out: Uint8Array;
 }
 
 export interface GitOptions {
   env?: Record<string, string>;
   check?: boolean;
-  /** Seconds (Python's timeout=600). */
+  /** Seconds. */
   timeout?: number;
   identity?: boolean;
   /** Bytes in, bytes out: no newline translation either way. */
@@ -110,7 +110,7 @@ export interface GitOptions {
 
 export type GitFn = (args: string[], cwd: string, options?: GitOptions) => Promise<GitResult>;
 
-/** Test seams (Python's tests patch worktrees.git and worktrees._rmtree). */
+/** Test seams. */
 export const testing: {
   git: GitFn | null;
   rmtree: ((path: string) => void) | null;
@@ -209,7 +209,7 @@ export function git(args: string[], cwd: string, options: GitOptions = {}): Prom
   return (testing.git ?? realGit)(args, cwd, options);
 }
 
-/** A plain `git` subprocess with the inherited environment and no -c options (Python's direct subprocess.run calls). */
+/** A plain `git` subprocess with the inherited environment and no -c options. */
 export async function rawGit(args: string[], cwd: string, env: Record<string, string> = {}, input?: Uint8Array): Promise<GitResult> {
   const merged = Object.keys(env).length ? Object.assign(Deno.env.toObject(), env) : null;
   const done = await runProcess('git', args, cwd, merged, input ?? null, null);
@@ -234,7 +234,7 @@ export function same(a: string, b: string): boolean {
   }
 }
 
-/** Python's _fs: Deno (Rust std) already opens paths beyond 260 characters on Windows, so the path is used as it is. */
+/** Deno (Rust std) already opens paths beyond 260 characters on Windows, so the path is used as it is. */
 export function fsPath(path: string): string {
   return String(path);
 }
@@ -283,7 +283,7 @@ export function rmtree(path: string): void {
       try {
         if (!WIN) Deno.chmodSync(target, 0o700);
         Deno.removeSync(target, { recursive });
-      } catch { /* moves on, as Python's onerror */ }
+      } catch { /* moves on */ }
     }
   };
   let info: Deno.FileInfo;
@@ -371,7 +371,7 @@ export class Registry {
     return run;
   }
 
-  /** Read, change and save under the lock (Python: `with registry.lock:` around get + update). `work` returns false to skip saving. */
+  /** Read, change and save under the lock. `work` returns false to skip saving. */
   mutate(work: (items: Map<string, WorktreeRecord>) => boolean): Promise<boolean> {
     return this.locked(() => {
       const items = this.read()[0];
@@ -556,7 +556,7 @@ export function mainCheckoutOf(path: string): [string, string] | null {
 const PATTERN = /^(.+?)[\\/]\.claude[\\/]worktrees[\\/][^\\/]+(?:[\\/][\s\S]*)?$/i;
 /** cwd -> [project, branch, relative location inside the worktree] or null. */
 export const WT_CACHE = new Map<string, [string, string, string] | null>();
-/** A callable returning the folders AIB knows as projects; set by the server at startup (Python: KNOWN_PROJECTS). */
+/** A callable returning the folders AIB knows as projects; set by the server at startup. */
 export const known: { projects: (() => string[]) | null } = { projects: null };
 
 /** pathlib's Path(cwd) and its first 12 parents. */
@@ -718,7 +718,7 @@ export class Plan {
   ) {
     this.project = String(project);
     this.path = String(path);
-    // Not enumerable: a Plan spreads to the six fields Python's Plan has (the parity tests compare them).
+    // Not enumerable: a Plan spreads to the six fields of a Plan (the tests compare them).
     Object.defineProperty(this, 'folderBranch', { value: folderBranch || base, enumerable: false });
     Object.defineProperty(this, 'note', { value: note, enumerable: false, writable: true });
     Object.defineProperty(this, 'landOn', { value: '', enumerable: false, writable: true });
@@ -1650,7 +1650,7 @@ export class Manager {
   }
 }
 
-/** Tests only: thrown from a hook, it is not caught by create() (Python: a BaseException, the process dying). */
+/** Tests only: thrown from a hook, it is not caught by create(). */
 export class Died extends Error {}
 
 /** Swappable pieces (tests). */

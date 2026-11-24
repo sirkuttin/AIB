@@ -1,9 +1,9 @@
 /**
  * Cross-process session ownership and conservative external-process detection (ownership.py).
  *
- * SessionLease is an advisory, nonblocking lease per (provider, session id). The lease file name and the lock are the Python server's
+ * SessionLease is an advisory, nonblocking lease per (provider, session id). The lease file name and the lock are fixed in every version
  * (sha256 of the compact JSON [provider, session] under <state>/session-leases/; msvcrt byte-0 lock on Windows, flock elsewhere,
- * through platform/lock.ts tryLockNow), so a Python host and a Deno host exclude each other.
+ * through platform/lock.ts tryLockNow), so hosts of different versions exclude each other.
  */
 import { claudeBase } from '../agents/claude_family.ts';
 import { createHash } from 'node:crypto';
@@ -78,7 +78,7 @@ export class SessionLease {
   }
 }
 
-/** Python's shlex.split(command, posix=...) (comments off, whitespace split). Throws on an unclosed quote or a trailing escape. */
+/** shlex.split(command, posix=...) (comments off, whitespace split). Throws on an unclosed quote or a trailing escape. */
 export function shlexSplit(text: string, posix: boolean): string[] {
   const WHITESPACE = ' \t\r\n';
   const QUOTES = `'"`;
@@ -163,7 +163,7 @@ function get(proc: Mapping, key: string, fallback: unknown): unknown {
   return Object.hasOwn(proc, key) ? proc[key] : fallback;
 }
 
-/** int(value) for the values a process list holds; null where Python raises. */
+/** int(value) for the values a process list holds; null where int() raises. */
 export function pyInt(value: unknown): number | null {
   if (typeof value === 'boolean') return value ? 1 : 0;
   if (typeof value === 'number') return Number.isFinite(value) ? Math.trunc(value) : null;

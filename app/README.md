@@ -46,7 +46,7 @@ Environment values you give an added agent are kept in the state folder and are 
 
 ## Lifecycle and limits
 
-**Two processes.** `deno run -A server/main.ts` serves the page and APIs (the *web server*) and finds or starts a separate, long-lived *agent host* for the same `--state-dir`; the host owns the adapter processes, event history, approvals, leases and owner announcements. Restarting the web server (to deploy a code change) therefore does not affect a running turn: reload the page and the same conversations are still there, streaming. Restart the host only when the agent-side code changes: `main.ts deploy --host` waits until nothing is working, stops the host and restarts the web server, while plain `main.ts deploy` restarts just the web server and does not wait. `main.ts --stop-host` stops the host (it refuses while turns are running unless `--force`); a host with no conversations and no web server attached exits by itself after 30 minutes (`--host-idle-minutes`). `--in-process` runs everything in one process (tests, debugging). A Python agent host left by an older AIB version is taken over once no chat works in it; this server never starts one. Design, security and failure modes: [docs/agent-host.md](docs/agent-host.md).
+**Two processes.** `deno run -A server/main.ts` serves the page and APIs (the *web server*) and finds or starts a separate, long-lived *agent host* for the same `--state-dir`; the host owns the adapter processes, event history, approvals, leases and owner announcements. Restarting the web server (to deploy a code change) therefore does not affect a running turn: reload the page and the same conversations are still there, streaming. Restart the host only when the agent-side code changes: `main.ts deploy --host` waits until nothing is working, stops the host and restarts the web server, while plain `main.ts deploy` restarts just the web server and does not wait. `main.ts --stop-host` stops the host (it refuses while turns are running unless `--force`); a host with no conversations and no web server attached exits by itself after 30 minutes (`--host-idle-minutes`). `--in-process` runs everything in one process (tests, debugging). An agent host left by an older AIB version is taken over once no chat works in it; this server never starts one. Design, security and failure modes: [docs/agent-host.md](docs/agent-host.md).
 
 Ctrl+C on the web server leaves the agents running in the host; stopping the host (or Ctrl+C in `--in-process` mode) shuts down owned ACP connections. Disconnect/Interrupt do not guarantee that background commands or background subagents are stopped; ACP adapters can leave background work running. Saved conversations remain in the agent's own storage. After a host restart, conversations that were open in AIB reconnect automatically in the background (status "Reconnecting…"; chats another app may be using are skipped; `--no-auto-reconnect` disables it); a message whose delivery could not be confirmed is never resent automatically. Recovery is kept per host (per `--state-dir`; per `--port` with `--in-process`).
 
@@ -113,8 +113,8 @@ This remains partial protocol coverage. Questions during connection setup, URL e
 
 ## Tests
 
-The Deno server is the app. The old Python reference server was retired on 2026-11-23: the tests that compared the Deno server with it
-now compare with the answers it gave then (small fixtures in `work/deno/fixtures/frozen/`, see `work/deno/_frozen.ts`). From `app`:
+Some tests compare the server with frozen answers
+(small fixtures in `work/deno/fixtures/frozen/`, see `work/deno/_frozen.ts`). From `app`:
 
 ```text
 deno task test        the Deno tests (work/deno/)

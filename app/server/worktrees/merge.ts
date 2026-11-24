@@ -45,7 +45,7 @@ export const MAX_ROUNDS = 6;
 export const settings = { LOCK_WAIT: 30 };
 export const WAITING = 'Waiting for the chat to resolve conflicts';
 export const NOTE_OP = 'worktree-note'; // internal AIB call (not a page route): posts the "Merged into ..." line in the chat
-/** Python: re.compile(r'^(?:<{7}|>{7})(?: |\r?$)', re.M). JS's multiline ^/$ also break at \r and U+2028/9, so lines are spelled out. */
+/** The conflict-marker line pattern ^(?:<{7}|>{7})(?: |\r?$) with multiline anchors. JS's multiline ^/$ also break at \r and U+2028/9, so lines are spelled out. */
 export const MARKER = /(?:^|\n)(?:<{7}|>{7})(?: |\r?(?=\n|$))/;
 export const GIT_STATES = wt.GIT_STATES;
 /** Tests only: name -> function, run at fixed points ('before_lock', 'before_ff'). */

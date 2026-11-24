@@ -497,7 +497,7 @@ async function runFile(
     env,
   }).spawn();
   // A file fails, never hangs: one stuck past its deadline (a blocked event loop no timer inside can catch) is killed, with its
-  // whole process tree (the Python, Go or agent processes it started).
+  // whole process tree.
   const limit = Math.max(FILE_DEADLINE_SECONDS, 5 * (SLOW[file] ?? 0));
   let timedOut = false;
   const deadline = setTimeout(() => {

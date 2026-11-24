@@ -242,14 +242,14 @@ restarts, updates and crashes of AIB; after a crash AIB comes back in the tray.
 * **Host unreachable but alive** (hung or starting). The web server returns 503 `host_unreachable` and does not start a second host.
 * **State dir without a host and without the web server's permission to spawn** (for example a locked-down job object): the spawn error is shown and live features are unavailable. `--in-process` still works.
 
-## Deno rewrite: a Python host and a Deno host (stage C)
+## Older hosts and the current host
 
-The Deno web server (`server/main.ts`) starts the Deno agent host (`server/main.ts host`, or `<binary> host` for a compiled build) with the flags, RPC, host file, token, lock and protocol number of the old Python host (`agent_host.py`, retired 2026-11-23 with the Python reference server). It takes over a running host of that older kind. `--in-process` works in the Deno server too.
+The Deno web server (`server/main.ts`) starts the Deno agent host (`server/main.ts host`, or `<binary> host` for a compiled build) with the flags, RPC, host file, token, lock and protocol number that older hosts use. It takes over a running host of that older kind. `--in-process` works in the Deno server too.
 
-* The Deno host writes `runtime: "deno"` into `agent-host.json` and its `info`; the older Python host wrote no runtime, which means Python. Its `sourceHash` covers the `.ts` files under `server/` (names relative to the app folder), so a Deno web server and a Deno host from the same folder agree; the "older code" warning compares a host's hash with the hash of the code of that host's runtime.
-* **Deno web server, Python host from the same folder:** treated like a host from another code folder (`HostForeignRoot`). With no chat working, it is asked to stop and a Deno host is started ("Took over from ..."); with chats working, it is left running and the page shows the waiting banner (`hostTakeoverWaiting`) until they finish. So one runtime owns the host file at a time; the one-host OS lock (the same lease file in both languages) makes two hosts for one state folder impossible anyway.
-* **Python web server, Deno host:** the Python client has no runtime rule; it sees the same folder and protocol and simply attaches (all operations and reply shapes are the same). Its banner then says the host runs older code, because it compares the `.py` hash with the Deno host's `.ts` hash; harmless.
-* The artifact tool agents start is the same program's `mcp-artifact` subcommand (`server/artifacts/mcp.ts`); no Python is needed.
+* The Deno host writes `runtime: "deno"` into `agent-host.json` and its `info`; an older host wrote no runtime, which is recorded as `python`. Its `sourceHash` covers the `.ts` files under `server/` (names relative to the app folder), so a Deno web server and a Deno host from the same folder agree; the "older code" warning compares a host's hash with the hash of the code of that host's runtime.
+* **Web server, older host from the same folder:** treated like a host from another code folder (`HostForeignRoot`). With no chat working, it is asked to stop and a Deno host is started ("Took over from ..."); with chats working, it is left running and the page shows the waiting banner (`hostTakeoverWaiting`) until they finish. So one runtime owns the host file at a time; the one-host OS lock (the same lease file in every version) makes two hosts for one state folder impossible anyway.
+* **Older web server, current host:** an older client has no runtime rule; it sees the same folder and protocol and simply attaches (all operations and reply shapes are the same). Its banner then says the host runs older code, because it compares its own source hash with the host's; harmless.
+* The artifact tool agents start is the same program's `mcp-artifact` subcommand (`server/artifacts/mcp.ts`).
 
 ## Security notes
 

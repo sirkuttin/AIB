@@ -134,7 +134,7 @@ handshake and framing for the desktop binary's node:http listeners), `terminal-u
 
 The dev server and the desktop app (and any two code folders) share one agent host per data folder, recorded in
 `<data>/agent-host.json` with `appId` (`dev.aib.app` for the app, `studio-dev` otherwise), `version`, `codeRoot` and `runtime`. When a
-web server finds a live host started from a different code folder, or a Python agent host left by the old Python app (no `runtime`
+web server finds a live host started from a different code folder, or an older agent host (no `runtime`
 field in its file):
 
 - no chat working there: it asks that host to stop, waits for it to exit, and starts its own;
@@ -142,8 +142,8 @@ field in its file):
   it will switch over when they finish.".
 
 A web server that already lost its host to another version does not take it back (two versions would fight); it reports it and must
-be restarted. The Deno server never starts a Python host. Code: `server/host/host_client.ts` (`findOrStart`, `HostBusy`); tests:
-`work/deno/host_takeover_test.ts` (including a host with no runtime field, as the old Python host wrote, and a Python client of the real Deno host).
+be restarted. AIB never starts an older host. Code: `server/host/host_client.ts` (`findOrStart`, `HostBusy`); tests:
+`work/deno/host_takeover_test.ts` (including a host with no runtime field, as older hosts wrote).
 
 ## Automatic updates
 

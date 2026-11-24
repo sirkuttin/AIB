@@ -3,7 +3,7 @@
  * (adapters.ts finds the result).
  *
  * The job runs in the agent host process. Everything the page needs to survive a web-server restart is on disk, in the same files
- * and the same JSON as the Python installer, so a Python host and a Deno web server (or the reverse) read each other's job:
+ * and the same JSON in every version, so a host and a web server of different versions read each other's job:
  *
  *   <state_dir>/agents/<id>/install.json   the job's state {state, stage, percent, message, version, pid, updatedAt}; written atomically
  *   <state_dir>/agents/<id>/install.lock   exclusive lock file holding {pid, at} of the process that runs the job (one install per agent)
@@ -98,7 +98,7 @@ export class Flag {
   }
 }
 
-/** One caller at a time (the Python RLock around start/status). */
+/** One caller at a time. */
 export class Mutex {
   #tail: Promise<unknown> = Promise.resolve();
   run<T>(fn: () => Promise<T> | T): Promise<T> {
@@ -112,7 +112,7 @@ export function agentDir(stateDir: string, agentId: string): string {
   return pathOf(adapters.agentsRoot(stateDir), agentId);
 }
 
-/** json.dumps(data) written atomically (Python's spacing, so the bytes match a file the Python job wrote). */
+/** json.dumps(data) written atomically. */
 export function writeJson(path: string, data: unknown): void {
   writeJsonAtomic(path, null, { text: pyJsonDumps(data), prefix: '.studio-agent-', suffix: '.tmp' });
 }
@@ -139,7 +139,7 @@ export function clearNodeCache(): void {
   nodeCache.clear();
 }
 
-/** Test seam (Python tests mock.patch agent_installer.node_block): replaces nodeBlock when set. Never set in the app. */
+/** Test seam: replaces nodeBlock when set. Never set in the app. */
 export const installerHooks: { nodeBlock?: (nodeCommand: string, force: boolean) => [string, boolean] | Promise<[string, boolean]> } = {};
 
 /**
@@ -309,7 +309,7 @@ export async function nodeVersion(node: string, run?: adapters.RunFn): Promise<s
   return match ? match[1] : '';
 }
 
-/** Python's round(): halves go to the even neighbour. */
+/** Rounding where halves go to the even neighbour. */
 function pyRound(x: number): number {
   const floor = Math.floor(x);
   const diff = x - floor;
@@ -320,7 +320,7 @@ function pyRound(x: number): number {
 
 export function sizeText(num: number): string {
   if (num < GIB) return `${Math.max(1, pyRound(num / 1024 ** 2))} MB`;
-  // f'{num / GIB:.1f}': num / GIB is exact (GIB is a power of two), and Python rounds an exact half to even
+  // f'{num / GIB:.1f}': num / GIB is exact (GIB is a power of two), and an exact half rounds to even
   const scaled = Math.trunc(num) * 10;
   let tenths = Math.floor(scaled / GIB);
   const twice = 2 * (scaled - tenths * GIB);
@@ -483,7 +483,6 @@ export class Installer {
     const known = typeof agentId === 'string' && adapters.installPackages(agentId) !== null;
     const found = known ? this.allowList()[agentId as string] : null;
     if (!isDict(found) || !found.package || !found.version) {
-      // (Python's wording for an install; an uninstall says what was asked.)
       throw new InstallRefused(verb ? `AIB cannot ${verb} that agent.` : 'AIB cannot install that agent.');
     }
     return found as AllowEntry;
@@ -643,7 +642,6 @@ export class Installer {
    * package, a launcher in Settings) is never looked at. Refused, with one plain line, while chats with the agent are open
    * (`openChats`, counted by the caller), while its sign-in runs (`signinRunning`), or while an install of it runs.
    * `check`: run every refusal but remove nothing (the page asks first, so a refusal it can know shows before its confirm question).
-   * (No Python counterpart: the Python server has no uninstall.)
    */
   uninstall(agentId: unknown, openChats = 0, signinRunning = false, check = false): Promise<InstallView & { removed: string[] }> {
     try {

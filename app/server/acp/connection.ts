@@ -1,12 +1,11 @@
 /**
- * The ACP side of the agent host (acp_connection.py): Connection, one agent process spoken to over JSON-RPC on stdio.
+ * The ACP side of the agent host: Connection, one agent process spoken to over JSON-RPC on stdio.
  *
- * Python ran a reader thread, a stderr thread and one thread per prompt turn, guarded by an RLock. Here they are async tasks on one
- * event loop. Every Python `with self.lock:` block does no blocking work, so each becomes a stretch of synchronous code with no
- * `await` inside; the orderings the lock gave (one prompt at a time, receipts before the turn starts, events in arrival order,
+ * The reader, the stderr reader and each prompt turn are async tasks on one event loop. Nothing that needs ordering does blocking
+ * work, so each such step is a stretch of synchronous code with no `await` inside; the orderings it gives (one prompt at a time, receipts before the turn starts, events in arrival order,
  * queued settings applied before `busy` clears) hold because nothing can run in between.
  *
- * JSON keys, event kinds and error messages are Python's word for word: they reach the page through the host RPC.
+ * JSON keys, event kinds and error messages are fixed: they reach the page through the host RPC.
  */
 import type { AllowGate } from '../allow/gate.ts';
 import { houseRules } from '../allow/brief.ts';
@@ -104,7 +103,7 @@ const SEP = Deno.build.os === 'windows' ? '\\' : '/';
 
 type Json = Record<string, unknown>;
 
-// ---- Python's exceptions, by name (the host RPC and the tests tell them apart by class name) ----------------------------------
+// ---- Exception classes, by name (the host RPC and the tests tell them apart by class name) ----------------------------------
 
 export class RuntimeError extends Error {
   override name = 'RuntimeError';
@@ -112,7 +111,7 @@ export class RuntimeError extends Error {
 export class TimeoutError extends Error {
   override name = 'TimeoutError';
 }
-/** Writing to an agent whose stdin is gone (Python: BrokenPipeError / OSError). */
+/** Writing to an agent whose stdin is gone. */
 export class BrokenPipeError extends Error {
   override name = 'BrokenPipeError';
 }
@@ -148,7 +147,7 @@ function isOsError(error: unknown): boolean {
       error.name === 'BrokenPipeError');
 }
 
-/** dict.get on something Python would call .get on: raises AttributeError when it is not a dict. */
+/** dict.get on a value that must be a dict: raises AttributeError when it is not a dict. */
 function pget(value: unknown, key: string, fallback: unknown = null): unknown {
   if (!isDict(value)) {
     throw new AttributeError(
@@ -163,7 +162,7 @@ function get(value: Json, key: string, fallback: unknown = null): unknown {
   return Object.hasOwn(value, key) ? value[key] : fallback;
 }
 
-/** Python == between JSON values (1 == 1.0 == True, dicts and lists by content). */
+/** Equality between JSON values (1 == 1.0 == true, dicts and lists by content). */
 export function pyEq(a: unknown, b: unknown): boolean {
   if (
     (typeof a === 'number' || typeof a === 'boolean') &&
@@ -284,7 +283,7 @@ export class ThreadEvent {
   }
 }
 
-// ---- text lines the way Python's text-mode pipe gives them -------------------------------------------------------------------
+// ---- text lines the way a text-mode pipe gives them -------------------------------------------------------------------
 
 /**
  * Bytes in, lines out, as `for line in process.stdout` does with text=True, encoding='utf-8', errors='replace': invalid UTF-8
@@ -764,7 +763,7 @@ export function sharedFolderNote(title: string): string {
   return `Another chat (“${title}”) is working in this same folder. Its edits show up here as it makes them.`;
 }
 
-/** Python's re.match with `$`: also matches before one trailing newline. */
+/** Match with `$` that also matches before one trailing newline. */
 export const OWN_ARTIFACT_TOOL = /^mcp__studio_artifact__(?:publish|update|list|merge_into_project|resolve_edit_clash)\n?$/;
 /** Swarm: AIB's helper tools (artifacts/mcp.ts SWARM_TOOLS); auto-approved like the artifact tools. */
 export const SWARM_TOOL_NAMES = ['helper_providers', 'start_helper', 'helper_status', 'stop_helper', 'merge_helper', 'unlanded_work'];
@@ -929,7 +928,7 @@ export class NotStoppable extends Error {
   override name = 'NotStoppable';
 }
 
-/** str(a) for each item of `e.get('args') or []` (a string iterates its characters, as in Python). */
+/** str(a) for each item of `e.get('args') or []` (a string iterates its characters). */
 function argStrings(args: unknown): string[] {
   if (!pyTruthy(args)) return [];
   if (Array.isArray(args)) return args.map((a) => pyStr(a));
@@ -941,7 +940,7 @@ function argStrings(args: unknown): string[] {
 /**
  * True for the `studio_artifact` entry AIB itself gave the chat: the Deno tool (artifacts/mcp.ts: this program with the
  * mcp-artifact subcommand) or the HTTP one this process serves (artifacts/mcp_http.ts). The Deno host builds every chat's entries
- * itself, so the Python tool (artifact_mcp.py) never needs recognising.
+ * itself, so no other tool entry needs recognising.
  */
 function isOwnArtifactEntry(entry: unknown): boolean {
   if (!isDict(entry) || entry.name !== 'studio_artifact') return false;
@@ -3849,7 +3848,7 @@ export class Connection {
         this.#pushStderr(clip(line.replace(RSTRIP, ''), 2000));
       }
     } catch {
-      /* the pipe went away: as Python's thread, just stop */
+      /* the pipe went away: just stop */
     } finally {
       reader.releaseLock();
     }
@@ -3935,7 +3934,7 @@ export class Connection {
       const message = failure ||
         'ACP connection closed. ' + this.stderr.slice(-3).join('\n');
       for (const entry of this.pending.values()) {
-        // An answer that already arrived is kept (Python could overwrite it here when the agent exited right after replying).
+        // An answer that already arrived is kept.
         if (entry.done.isSet()) continue;
         entry.response = { error: { message } };
         entry.done.set();
@@ -3966,7 +3965,7 @@ export class Connection {
       if (waiting) {
         waiting.response = message;
         waiting.done.set();
-        // Let the caller that waited on this reply run before the next line is read, as Python's waiting thread wakes at once:
+        // Let the caller that waited on this reply run before the next line is read, so the waiter wakes at once:
         // a repeated reply then finds no pending request, and a turn's end is recorded before what the agent sent after it.
         return new Promise((resolve) => setTimeout(resolve, 0));
       }
@@ -4007,8 +4006,8 @@ export class Connection {
           return;
         }
         const answered = this.#dispatchCaps(message);
-        // terminal/wait_for_exit can take as long as the command runs: answered on its own (Python: a worker thread). Everything
-        // else is answered before the next line is read, as Python's reader thread does.
+        // terminal/wait_for_exit can take as long as the command runs: answered on its own. Everything
+        // else is answered before the next line is read.
         if (method !== 'terminal/wait_for_exit') return answered;
         answered?.catch((error) => log.exception(error, 'Client capability request failed'));
       } else if (method === 'elicitation/create') {
@@ -4088,7 +4087,7 @@ export class Connection {
     }
   }
 
-  /** self.settings.setdefault('modes', {}): a non-dict value fails as item assignment does in Python. */
+  /** self.settings.setdefault('modes', {}): a non-dict value fails as item assignment does. */
   #modes(): Json {
     if (!Object.hasOwn(this.settings, 'modes')) this.settings.modes = {};
     const modes = this.settings.modes;

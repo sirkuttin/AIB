@@ -52,7 +52,7 @@ const SHELL_TOOLS = ['bash', 'powershell', 'shell', 'exec_command', 'run_termina
 const READ_CHUNK = 4 << 20;
 const YIELD_EVERY = 4000;
 
-/** Serializes async work on one object (Python's per-transcript RLock). */
+/** Serializes async work on one object. */
 export class Mutex {
   #tail: Promise<unknown> = Promise.resolve();
   run<T>(fn: () => T | Promise<T>): Promise<T> {
@@ -92,7 +92,7 @@ export function skippableRow(line: Uint8Array): boolean {
 
 const isBlank = (line: Uint8Array) => line.every((b) => b === 32 || (b >= 9 && b <= 13));
 
-/** json.loads(bytes): the value, or undefined where Python raises ValueError/UnicodeError. */
+/** json.loads(bytes): the value, or undefined where parsing fails (ValueError/UnicodeError). */
 export function loadsBytes(line: Uint8Array): Json | undefined {
   try {
     return JSON.parse(UTF8.decode(line));
@@ -129,7 +129,7 @@ const toolNameOf = (task: Task) => pyStr(or(task.tool, '')).toLowerCase();
 /** A command as shown: without AIB's cookie prefix (allow/aib_prefix.ts). */
 const shown = (command: unknown): unknown => (typeof command === 'string' ? stripAibPrefix(command) : command);
 
-/** isinstance(details.get('jobs', []), ...) iteration: Python iterates a str by character and a dict by key. */
+/** isinstance(details.get('jobs', []), ...) iteration: a str is iterated by character and a dict by key. */
 function iterate(value: Json): Json[] {
   if (Array.isArray(value)) return value;
   if (typeof value === 'string') return [...value];
@@ -152,7 +152,7 @@ export class Transcript {
   anchor: Uint8Array = new Uint8Array(0); // the last bytes before `offset`, to notice a file replaced under us
   meta: Dict = {};
   signature: [number, bigint] | null = null;
-  /** call id (hkey) -> task; Python's dict keyed by the call id. */
+  /** call id (hkey) -> task. */
   commands = new Map<string, Task>();
   jobCalls = new Map<string, Json>(); // str(job) -> call id
   stopCalls = new Map<string, string>();

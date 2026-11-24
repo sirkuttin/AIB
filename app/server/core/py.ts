@@ -1,9 +1,9 @@
 /**
- * Small helpers that reproduce Python behaviour the HTTP API depends on, so ported code gives byte-identical answers:
- * string slicing by code point (Python) rather than UTF-16 unit (JS), dict/list type checks, and Python's json.dumps spacing.
+ * Small helpers whose behaviour the HTTP API and the files on disk depend on, so answers stay byte-identical:
+ * string slicing by code point rather than UTF-16 unit (JS), dict/list type checks, and json.dumps spacing.
  */
 
-/** Python's s[:n] for a str: counts code points, so an emoji is never cut in half. */
+/** s[:n] for a str: counts code points, so an emoji is never cut in half. */
 export function clip(value: string, limit: number): string {
   if (value.length <= limit) return value; // fast path: UTF-16 length >= code point count
   let count = 0;
@@ -16,7 +16,7 @@ export function clip(value: string, limit: number): string {
   return value.slice(0, index);
 }
 
-/** len(s) in Python: code points. */
+/** len(s): code points. */
 export function pyLen(value: string): number {
   let count = 0;
   for (const _ of value) count++;
@@ -33,12 +33,12 @@ export function isStr(value: unknown): value is string {
   return typeof value === 'string';
 }
 
-/** isinstance(value, int) for parsed JSON (bool is excluded; Python's bool is an int but JSON true never reaches these checks as int). */
+/** isinstance(value, int) for parsed JSON (bool is excluded: JSON true never reaches these checks as int). */
 export function isInt(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value);
 }
 
-/** The value if it is a dict, else {} (Python: x if isinstance(x, dict) else {}). */
+/** The value if it is a dict, else {}. */
 export function dictOr(value: unknown): Record<string, unknown> {
   return isDict(value) ? value : {};
 }
@@ -48,11 +48,11 @@ export function listOr(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
 }
 
-/** json.dumps(value) with Python's default separators (', ' and ': ') and ensure_ascii=True (or ensure_ascii=False). */
+/** json.dumps(value) with the default separators (', ' and ': ') and ensure_ascii=True (or ensure_ascii=False). */
 export function pyJsonDumps(value: unknown, ensureAscii = true): string {
   const text = JSON.stringify(value, null, 1);
   if (text === undefined) return 'null';
-  // Re-join JSON.stringify's indented output into Python's one-line spacing without touching string contents.
+  // Re-join JSON.stringify's indented output into one-line spacing without touching string contents.
   let out = '';
   let inString = false;
   for (let i = 0; i < text.length; i++) {
@@ -78,21 +78,21 @@ export function pyJsonDumps(value: unknown, ensureAscii = true): string {
   return out.replace(/[\u007f-￿]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
 }
 
-/** Python's ValueError. Ported modules throw it with Python's exact message; the HTTP layer answers it with a 400. */
+/** ValueError. Modules throw it with a fixed message; the HTTP layer answers it with a 400. */
 export class ValueError extends Error {
   override name = 'ValueError';
 }
 
-/** The characters Python's str.isspace(), str.strip() and re's \s treat as whitespace (JS \s has U+FEFF, lacks U+001C-1F and U+0085). */
+/** The characters str.isspace(), str.strip() and \s treat as whitespace (JS \s has U+FEFF, lacks U+001C-1F and U+0085). */
 export const PY_SPACE = '\t\n\v\f\r\x1c-\x20\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000';
 const SPACE = new RegExp(`[${PY_SPACE}]`);
 
-/** True when the string contains a character for which Python's str.isspace() is true. */
+/** True when the string contains a character for which str.isspace() is true. */
 export function pyHasSpace(value: string): boolean {
   return SPACE.test(value);
 }
 
-/** Python's s.strip() (Python whitespace) or s.strip(chars) for BMP chars. */
+/** s.strip() or s.strip(chars) for BMP chars. */
 export function pyStrip(value: string, chars?: string): string {
   const strip = chars === undefined ? (c: string) => SPACE.test(c) : (c: string) => chars.includes(c);
   let start = 0;
@@ -104,7 +104,7 @@ export function pyStrip(value: string, chars?: string): string {
 
 const NOT_PRINTABLE = /(?! )[\p{C}\p{Z}]/u;
 
-/** Python's str.isprintable(): no control, format, surrogate, private, unassigned or separator characters except the plain space. */
+/** str.isprintable(): no control, format, surrogate, private, unassigned or separator characters except the plain space. */
 export function pyIsPrintable(value: string): boolean {
   return !NOT_PRINTABLE.test(value);
 }
@@ -146,8 +146,8 @@ function floatRepr(n: number): string {
 }
 
 /**
- * repr() of a parsed JSON value as Python prints it ({'k': [1, True, None]}). JSON numbers that are whole are
- * printed as Python ints (JSON.parse cannot tell 1 from 1.0), other numbers as Python floats.
+ * repr() of a parsed JSON value ({'k': [1, True, None]}). JSON numbers that are whole are
+ * printed as ints (JSON.parse cannot tell 1 from 1.0), other numbers as floats.
  */
 export function pyRepr(value: unknown): string {
   if (value === null || value === undefined) return 'None';
@@ -160,7 +160,7 @@ export function pyRepr(value: unknown): string {
   return String(value);
 }
 
-/** Python's str() of a parsed JSON value (f'{value}'). */
+/** str() of a parsed JSON value (f'{value}'). */
 export function pyStr(value: unknown): string {
   return typeof value === 'string' ? value : pyRepr(value);
 }
@@ -173,7 +173,7 @@ const B64_TABLE = (() => {
 })();
 
 /**
- * Python's base64.b64decode(value, validate=True) for a str: the bytes, or null where Python raises. validate=True is
+ * base64.b64decode(value, validate=True) for a str: the bytes, or null where it raises. validate=True is
  * binascii's strict mode: only alphabet characters then '=' padding; no padding without data; exactly the padding a short
  * last quad needs (2 or 1); any number of '=' after a complete quad; a data length of 4n+1 is refused.
  */
@@ -208,7 +208,7 @@ export function pyB64Decode(value: string): Uint8Array | null {
   return out;
 }
 
-/** Python truthiness of a JSON value: None, False, 0, '', [] and {} are false. */
+/** Truthiness of a JSON value: null, false, 0, '', [] and {} are false. */
 export function pyTruthy(value: unknown): boolean {
   if (Array.isArray(value)) return value.length > 0;
   if (value instanceof Map) return value.size > 0;
@@ -216,7 +216,7 @@ export function pyTruthy(value: unknown): boolean {
   return !!value;
 }
 
-/** Python's `a or b`. */
+/** `a or b`: b when a is falsy. */
 export function pyOr<A, B>(a: A, b: B): A | B {
   return pyTruthy(a) ? a : b;
 }
@@ -235,7 +235,7 @@ const FLOAT_TEXT = new RegExp(
   'i',
 );
 
-/** float() of a parsed JSON value: throws ValueError / TypeError (with Python's messages) where Python raises. */
+/** float() of a parsed JSON value: throws ValueError / TypeError (with fixed messages) where float() raises. */
 export function pyFloat(value: unknown): number {
   if (typeof value === 'boolean') return value ? 1 : 0;
   if (typeof value === 'number') return value;
@@ -250,12 +250,12 @@ export function pyFloat(value: unknown): number {
   throw new TypeError(`float() argument must be a string or a real number, not '${pyTypeName(value)}'`);
 }
 
-/** Python's s.split() with no argument: split on runs of Python whitespace, no empty pieces. */
+/** s.split() with no argument: split on runs of whitespace, no empty pieces. */
 export function pySplit(value: string): string[] {
   return value.split(new RegExp(`[${PY_SPACE}]+`)).filter((part) => part !== '');
 }
 
-/** Python's sorted() order for str: by code point (JS's default sort compares UTF-16 units). */
+/** sorted() order for str: by code point (JS's default sort compares UTF-16 units). */
 export function pyCompare(a: string, b: string): number {
   const x = [...a];
   const y = [...b];

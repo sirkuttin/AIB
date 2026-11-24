@@ -7,7 +7,7 @@
  *            Codex: `codex login status` when a Codex CLI can be found (the @openai/codex that ships next to the adapter, a global
  *            npm install, or a native codex.exe / codex on PATH), hidden, with a timeout; ONLY its exit code is used (0 = signed in),
  *            its output is never read. Without a CLI (or when it cannot run): whether <CODEX_HOME or ~/.codex>/auth.json exists,
- *            existence only, never opened. "Not checked" only when neither is possible. (Python still leaves Codex unchecked.)
+ *            existence only, never opened. "Not checked" only when neither is possible.
  *   Cache    <state_dir>/agents/<id>/signin.json {state: ready|signin|unknown, checkedAt}. Settings reads it from disk; it is refreshed
  *            when Settings opens (at most once a minute) and by "Check again", never on every settings poll.
  *   Sign in  A one-off `initialize` (no session) reads the methods the agent advertises. A `terminal` method is run by AIB itself:
@@ -16,7 +16,7 @@
  *            on that same one-off process. On macOS / Linux the terminal command is shown instead of started.
  *   Job      <state_dir>/agents/<id>/signin-job.json {state: waiting|failed|done|manual, message, command, pid, updatedAt}.
  *
- * Same files and JSON as the Python module, so a Python agent host and a Deno web server read each other's cache and job.
+ * Same files and JSON in every version, so an agent host and a web server of different versions read each other's cache and job.
  */
 import * as adapters from './adapters.ts';
 import { agentDir, Flag, Mutex, readJson, writeJson } from './installer.ts';
@@ -156,7 +156,7 @@ export function normalizeMethods(raw: unknown): Method[] {
       name: clip(pyStr(pyTruthy(item.name) ? item.name : item.id), 80),
       kind,
       args: ok && kind === 'terminal' ? [...args as string[]] : [],
-      ...(Object.keys(env).length ? { env } : {}), // only when advertised: the shape stays the Python reference's otherwise
+      ...(Object.keys(env).length ? { env } : {}), // only when advertised: the shape stays the same otherwise
     });
   }
   return out;

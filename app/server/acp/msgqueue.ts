@@ -32,7 +32,7 @@ export const HOLD_MESSAGES: Record<string, string> = {
   manual: 'Paused',
 };
 
-/** Python's ValueError: the queue's refusals, whose messages reach the HTTP API unchanged. */
+/** ValueError: the queue's refusals, whose messages reach the HTTP API unchanged. */
 export class ValueError extends Error {
   override name = 'ValueError';
 }
@@ -42,7 +42,7 @@ export interface Lease {
   expires: number;
 }
 
-/** A queued message. Key order is Python's, so saved files and API answers are byte-identical. */
+/** A queued message. Key order is fixed, so saved files and API answers are byte-identical. */
 export interface QueueItem {
   id: string;
   text: string;
@@ -150,7 +150,7 @@ export class MessageQueue {
 
   add(itemId: string, text: string, attachments: unknown[] | null | undefined, fingerprint: unknown): QueueItem {
     if (this.items.length >= MAX_ITEMS) throw new ValueError(`At most ${MAX_ITEMS} messages can wait in the queue`);
-    // queuedAt is wall time even with an injected clock, as in Python (the clock only drives leases).
+    // queuedAt is wall time even with an injected clock (the clock only drives leases).
     const item: QueueItem = {
       id: itemId,
       text,
@@ -176,7 +176,7 @@ export class MessageQueue {
     const item = this.find(itemId);
     if (item === null) throw new ValueError('That message is no longer queued');
     this.items.splice(this.items.indexOf(item), 1);
-    // As in Python, the item is taken out before the index is converted, so a non-numeric index drops it (a known quirk).
+    // The item is taken out before the index is converted, so a non-numeric index drops it (a known quirk).
     this.items.splice(Math.max(0, Math.min(pyInt(toIndex), this.items.length)), 0, item);
     return item;
   }
@@ -319,7 +319,7 @@ export class MessageQueue {
   // ---- persistence ---------------------------------------------------------------------------
   /**
    * Every item without its edit lease: what the store keeps. Steer-lane items come first, marked `lane: 'steer'` with their state
-   * (a Python host, or an older AIB, reads them as ordinary queued messages, which is what they become after a restart anyway).
+   * (an older AIB reads them as ordinary queued messages, which is what they become after a restart anyway).
    */
   toSaved(): SavedItem[] {
     const lane: SavedItem[] = this.steer.map((item) => ({
@@ -414,9 +414,9 @@ export class MessageQueue {
 }
 
 /**
- * studio-<name>.json in the state dir (Python names it studio-queues-<port>.json). Unlike the recovery file this holds message
+ * studio-<name>.json in the state dir. Unlike the recovery file this holds message
  * text (and attachment data), because the whole point is to send it later; it is only readable by your user and an entry is
- * deleted as soon as the message is sent. Python and Deno hosts read each other's files.
+ * deleted as soon as the message is sent. Hosts of different versions read each other's files.
  */
 export class QueueStore {
   readonly directory: string;
@@ -462,7 +462,7 @@ export class QueueStore {
 
   /** A copy of the saved items of one chat ([] when none). */
   get(provider: string, sessionId: string): SavedItem[] {
-    // Python copies each item with dict(item); a non-object item (only possible in a hand-edited file) is passed through here
+    // Each item is copied as a dict; a non-object item (only possible in a hand-edited file) is passed through here
     // instead of raising, and MessageQueue.load drops it.
     return (this.sessions.get(QueueStore.key(provider, sessionId)) ?? []).map((item) => (isDict(item) ? { ...item } : item) as SavedItem);
   }
@@ -533,16 +533,16 @@ export class QueueStore {
   }
 }
 
-// ---- Python conversions the queue relies on ---------------------------------------------------
+// ---- Conversions the queue relies on ---------------------------------------------------
 
-/** Python truthiness of a JSON value: None, False, 0, '', [] and {} are false. */
+/** Truthiness of a JSON value: null, false, 0, '', [] and {} are false. */
 function pyTruthy(value: unknown): boolean {
   if (Array.isArray(value)) return value.length > 0;
   if (isDict(value)) return Object.keys(value).length > 0;
   return !!value;
 }
 
-/** Python's `a or b`. */
+/** `a or b`: b when a is falsy. */
 function pyOr(a: unknown, b: unknown): unknown {
   return pyTruthy(a) ? a : b;
 }
@@ -572,7 +572,7 @@ function pyStrRepr(value: string): string {
   return quote + out + quote;
 }
 
-/** repr() of a float from JSON: Python switches to exponent form at 1e16 and below 1e-4, with a two-digit exponent. */
+/** repr() of a float from JSON: exponent form starts at 1e16 and below 1e-4, with a two-digit exponent. */
 function pyNumberRepr(value: number): string {
   if (Number.isInteger(value) && Math.abs(value) < 1e21) return String(value);
   if (!Number.isFinite(value)) return Number.isNaN(value) ? 'nan' : value > 0 ? 'inf' : '-inf';
@@ -599,10 +599,10 @@ function pyStr(value: unknown): string {
   return typeof value === 'string' ? value : pyRepr(value);
 }
 
-/** Python's str.strip() whitespace (also what int() and float() skip around a number). */
+/** The whitespace str.strip() removes (also what int() and float() skip around a number). */
 const PY_SPACE = '[\\t\\n\\x0b\\x0c\\r\\x1c-\\x1f \\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]*';
 
-/** int() of a JSON value: truncates floats, parses decimal strings, raises Python's ValueError/TypeError otherwise. */
+/** int() of a JSON value: truncates floats, parses decimal strings, raises ValueError/TypeError otherwise. */
 function pyInt(value: unknown): number {
   if (typeof value === 'boolean') return value ? 1 : 0;
   if (typeof value === 'number') {
@@ -618,7 +618,7 @@ function pyInt(value: unknown): number {
   throw new TypeError(`int() argument must be a string, a bytes-like object or a real number, not '${pyTypeName(value)}'`);
 }
 
-/** float() of a JSON value: raises Python's ValueError/TypeError for what Python refuses. */
+/** float() of a JSON value: raises ValueError/TypeError for what float() refuses. */
 function pyFloat(value: unknown): number {
   if (typeof value === 'boolean') return value ? 1 : 0;
   if (typeof value === 'number') return value;

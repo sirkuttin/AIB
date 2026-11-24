@@ -24,7 +24,7 @@ const extraKeys = (item: Dict, allowed: string[]) => Object.keys(item).some((k) 
 /** len(s) > limit in code points, without walking strings that are clearly short. */
 const longer = (value: string, limit: number) => value.length > limit && pyLen(value) > limit;
 
-/** Python's `x in some_dict_or_set` raises TypeError for an unhashable list or dict. */
+/** `x in some_dict_or_set` raises TypeError for an unhashable list or dict. */
 function hashable(value: unknown): void {
   if (Array.isArray(value)) throw new TypeError("unhashable type: 'list'");
   if (isDict(value)) throw new TypeError("unhashable type: 'dict'");
@@ -299,7 +299,7 @@ export function splitAttachments(attachments: unknown): [Dict[], Dict[]] {
   return [images, files];
 }
 
-/** One decimal like Python's f'{x:.1f}': ties on the exact binary value round to even (toFixed rounds them up). */
+/** One decimal (f'{x:.1f}'): ties on the exact binary value round to even (toFixed rounds them up). */
 function oneDecimal(x: number): string {
   const tenths = x * 10;
   const floor = Math.floor(tenths);

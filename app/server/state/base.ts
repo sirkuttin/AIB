@@ -1,10 +1,10 @@
 /**
  * JsonFileStore (state_store.JsonFileStore): shared plumbing for the stores that keep one JSON file in the state folder.
  *
- * Every update holds the cross-process lock '<file>.lock' (server/platform/lock.ts, interoperable with Python's msvcrt/flock
- * lock) for the whole reload -> modify -> save, so a Python and a Deno process on the same folder never lose each other's
+ * Every update holds the cross-process lock '<file>.lock' (server/platform/lock.ts, interoperable with the msvcrt/flock
+ * lock of older versions) for the whole reload -> modify -> save, so processes of different versions on the same folder never lose each other's
  * changes. Acquiring the lock is the only await: once it is held the reload, the change and the atomic save run synchronously,
- * and an in-process queue keeps two updates of the same store from interleaving (Python's threading.RLock).
+ * and an in-process queue keeps two updates of the same store from interleaving.
  * A file that could not be read (as opposed to one that is corrupt) is never overwritten.
  */
 import { FileLock, LockTimeout } from '../platform/lock.ts';
@@ -16,14 +16,14 @@ export { FileLock, LOCK_TIMEOUT_MS, LockTimeout } from '../platform/lock.ts';
 
 export const VERSION = 1;
 
-/** Python's OSError: what a failed save raises inside a store (turned into a ValueError 'could not save' by the callers). */
+/** OSError: what a failed save raises inside a store (turned into a ValueError 'could not save' by the callers). */
 export class OSError extends Error {
   override name = 'OSError';
 }
 
 const DENO_ERRORS = Object.values(Deno.errors) as (new (...args: never[]) => Error)[];
 
-/** True for errors Python would raise as OSError (file system and lock errors). */
+/** True for OSError-like errors (file system and lock errors). */
 export function isOSError(error: unknown): error is Error {
   return error instanceof OSError || error instanceof LockTimeout || DENO_ERRORS.some((type) => error instanceof type);
 }
@@ -53,7 +53,7 @@ export abstract class JsonFileStore {
 
   protected abstract reload(): void;
 
-  /** Pick up changes written by another AIB (Python or Deno); costs one stat() when nothing changed. */
+  /** Pick up changes written by another AIB; costs one stat() when nothing changed. */
   protected sync(): void {
     if (this.path !== null && fileStamp(this.path) !== this.seen) this.reload();
   }
@@ -106,10 +106,10 @@ export abstract class JsonFileStore {
   }
 }
 
-/** Deep equality of plain JSON values (dict key order ignored, as Python's ==). */
+/** Deep equality of plain JSON values (dict key order ignored). */
 export function sameJson(a: unknown, b: unknown): boolean {
   if (a === b) return true;
-  if (typeof a === 'number' && typeof b === 'number') return Number.isNaN(a) && Number.isNaN(b); // the same float object: Python's == is True by identity
+  if (typeof a === 'number' && typeof b === 'number') return Number.isNaN(a) && Number.isNaN(b); // the same float object is equal to itself
   if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
   if (Array.isArray(a) || Array.isArray(b)) {
     return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((v, i) => sameJson(v, b[i]));

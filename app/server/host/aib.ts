@@ -5,10 +5,10 @@
  * environment. The agent host (agent_host.ts) runs one; `--in-process` puts one inside the web server instead.
  *
  * Its live_* methods are the same interface HostProxy offers (LiveBackend), so the web server calls either one without knowing
- * which it has. JSON in, JSON out; status codes, payloads and messages are Python's.
+ * which it has. JSON in, JSON out; status codes, payloads and messages are fixed.
  *
- * Python ran connect's setup, the reconnect workers and the heartbeat on threads under an RLock; here they are async tasks. Every
- * Python `with self.lock:` block does no blocking work, so it is a stretch of synchronous code here.
+ * Connect's setup, the reconnect workers and the heartbeat are async tasks. Every locked block does no blocking work, so it is a
+ * stretch of synchronous code.
  */
 import { AddedProjects } from '../desktop/added_projects.ts';
 import {
@@ -197,7 +197,7 @@ export const LIVE_POST_OPS: ReadonlySet<string> = new Set([
   'worktree-archive',
 ]);
 
-/** Python's KeyError: str() of it is the repr of the key, which is what the page sees as the error text. */
+/** KeyError: str() of it is the repr of the key, which is what the page sees as the error text. */
 export class KeyError extends Error {
   override name = 'KeyError';
   constructor(key: unknown) {
@@ -205,15 +205,15 @@ export class KeyError extends Error {
   }
 }
 
-/** body[key], or KeyError like a Python dict lookup. */
+/** body[key], or KeyError like a dict lookup. */
 export function need(body: Json, key: string): unknown {
   if (!Object.prototype.hasOwnProperty.call(body, key)) throw new KeyError(key);
   return body[key];
 }
 
 /**
- * The errors Python's `except (KeyError, ValueError, TypeError, OSError, RuntimeError, TimeoutError)` catches, by the name the
- * ported modules give their Python exception classes. JavaScript's own engine errors (a ReferenceError, a RangeError from a bug)
+ * The request errors (KeyError, ValueError, TypeError, OSError, RuntimeError, TimeoutError), by the name the
+ * modules give their exception classes. JavaScript's own engine errors (a ReferenceError, a RangeError from a bug)
  * are not request errors, except the RangeError security.refuseNetworkPath throws for a refused path.
  */
 const REQUEST_ERROR_NAMES = new Set([
@@ -257,7 +257,7 @@ export function isRequestError(error: unknown): error is Error {
   return REQUEST_ERROR_NAMES.has(error.name) || error.constructor.name.endsWith('ValueError');
 }
 
-/** The Python class name a request error reports as errorType on the host RPC. */
+/** The class name a request error reports as errorType on the host RPC. */
 export function pythonErrorType(error: Error): string {
   if (error instanceof Deno.errors.NotFound) return 'FileNotFoundError';
   if (error instanceof Deno.errors.PermissionDenied) return 'PermissionError';
@@ -268,7 +268,7 @@ export function pythonErrorType(error: Error): string {
 
 /** The agent options an AIB reads (the command-line flags of studio.py / agent_host.py; server/core/options.ts has them all). */
 export interface AibOptions {
-  /** undefined/null: no state folder was configured (Python: the namespace has no state_dir), so nothing durable is kept. */
+  /** undefined/null: no state folder was configured, so nothing durable is kept. */
   stateDir?: string | null;
   port?: number | null;
   ompSessions?: string | null;
@@ -439,7 +439,7 @@ export class Aib {
   /** The in-process AIB has no separate host: no code warning, nobody to wait for. */
   readonly hostInfo: unknown = undefined;
   readonly waitingChats = 0;
-  /** Cleaning up half-made worktrees (Python does it in __init__); connect waits for it. */
+  /** Cleaning up half-made worktrees; connect waits for it. */
   readonly ready: Promise<void>;
   /** The model / mode / effort lists each agent reported (state/agent_options.ts). */
   readonly agentOptions: AgentOptionsCache;
