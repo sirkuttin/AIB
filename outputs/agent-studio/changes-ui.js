@@ -205,6 +205,8 @@
     refused: 'Its work did not land',
     kept: 'Files kept in its worktree',
   };
+  /* A "Left over" list longer than this starts folded (newest first, as the server sends it). */
+  const LEFT_OPEN_MAX = 5;
   const LEFT_HINT = 'Work these agents left that never reached the project folder. Ask the agent in chat to land or undo it.';
   /* Poll every 10 s, only while you are looking at the Changes tab (the badge and chips refresh when a turn ends instead). */
   const shouldPoll = (o) => !!(o && o.tab === 'changes' && o.visible);
@@ -368,7 +370,7 @@
       loading = false;
     let fold = new Set(),
       unfold = new Set(),
-      leftOpen = false,
+      leftOpen = null /* null: the default (open for a short list, folded for a long one); true / false: the user's choice */,
       open = new Map(),
       cache = new Map(),
       detailSeq = 0,
@@ -848,23 +850,24 @@
       return root_;
     }
     function leftNode(list) {
+      const isOpen = leftOpen === null ? list.length <= LEFT_OPEN_MAX : leftOpen;
       const g = el('section', 'cg-left');
       g.dataset.sec = 'left';
       g.setAttribute('role', 'listitem');
       const head = el('button', 'cg-sec-head cg-left-head');
       head.type = 'button';
       head.dataset.fk = 'h:left';
-      head.setAttribute('aria-expanded', leftOpen ? 'true' : 'false');
-      head.title = (leftOpen ? 'Fold' : 'Unfold') + ' Left over';
-      const caret = el('span', 'cg-caret', leftOpen ? '▾' : '▸');
+      head.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+      head.title = (isOpen ? 'Fold' : 'Unfold') + ' Left over';
+      const caret = el('span', 'cg-caret', isOpen ? '▾' : '▸');
       caret.setAttribute('aria-hidden', 'true');
       head.append(caret, el('span', 'cg-sec-name', 'Left over (' + list.length + ')'));
       head.onclick = () => {
-        leftOpen = !leftOpen;
+        leftOpen = !isOpen;
         paintList();
       };
       g.append(head);
-      if (leftOpen) {
+      if (isOpen) {
         g.append(el('div', 'cg-sec-sub', LEFT_HINT));
         for (const sec of list) g.append(sectionNode(sec));
       }
@@ -1142,7 +1145,7 @@
       error = '';
       fold = new Set();
       unfold = new Set();
-      leftOpen = false;
+      leftOpen = null;
       open = new Map();
       cache = new Map();
       pages = 1;

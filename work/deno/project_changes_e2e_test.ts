@@ -52,7 +52,7 @@ interface Fixture {
  * is made from the snapshot S (HEAD + those edits, committed on the worktree's own branch), then the subagent's own edits are added
  * in it. Records: sub-a and sub-b running (2 and 1 files), sub-spare (a spare), sub-left (stopped, 1 file, never landed).
  */
-async function project(): Promise<Fixture> {
+async function project(moreLeft = 0): Promise<Fixture> {
   const s = await remoteStudio();
   const repo = `${s.root}${SEP}projects${SEP}app`;
   Deno.mkdirSync(repo, { recursive: true });
@@ -85,6 +85,28 @@ async function project(): Promise<Fixture> {
   make('sub-spare', 'spare', { 'ignored.txt': 'a spare holds no work\n' }, { description: '', createdAt: 3 });
   // its chat is not open (so nothing here adopts or removes it): a worktree whose work never landed
   make('sub-left', 'stopped', { 'old/refactor.ts': lines(4, 'old') }, { description: 'Old refactor', chat: 'ghost', lasting: 'claude:ghost', createdAt: 4, stoppedWhy: 'the turn was stopped' });
+  if (moreLeft) {
+    // a long "Left over" list: more worktrees whose work never landed (newer ones last), plus one whose work DID land in main as a
+    // cherry-pick (its branch starts with an "AIB snapshot" commit that never lands): that one is not left over
+    for (let n = 1; n <= moreLeft; n++) {
+      make(`left-${n}`, 'stopped', { [`old/part-${n}.ts`]: lines(2, 'part' + n) }, { description: `Unlanded ${n}`, chat: 'ghost', lasting: 'claude:ghost', createdAt: 10 + n });
+    }
+    const path = `${s.root}${SEP}worktrees${SEP}sub-landed`;
+    git(repo, 'worktree', 'add', '-q', '-b', 'studio/sub-landed', path, 'HEAD');
+    write(`${path}/aib-docs/notes.md`, 'copied from the folder by the snapshot\n');
+    git(path, 'add', '-A');
+    git(path, 'commit', '-q', '-m', 'AIB snapshot');
+    const snapshot = git(path, 'rev-parse', 'HEAD');
+    write(`${path}/landed.txt`, lines(3, 'landed'));
+    git(path, 'add', '-A');
+    git(path, 'commit', '-q', '-m', 'Landed by hand');
+    git(repo, 'cherry-pick', 'studio/sub-landed'); // the lead's own cherry-pick: another commit id, the same change
+    trees['sub-landed'] = path;
+    records['sub-landed'] = {
+      id: 'sub-landed', kind: 'subagent', chat: 'ghost', lasting: 'claude:ghost', project: repo, folder: repo, slug: 'sub-landed', branch: 'studio/sub-landed', path,
+      snapshot, tree: '', state: 'stopped', toolUseId: 't-landed', agentId: 'a-landed', agentType: 'general-purpose', description: 'Landed by hand', createdAt: 99,
+    };
+  }
   Deno.writeTextFileSync(`${s.state}${SEP}subagent-worktrees.json`, JSON.stringify({ version: 1, subagents: records }));
   return { s, repo, trees };
 }
@@ -112,8 +134,8 @@ const reads = (page: Page, what = '/api/live/project/changes?') =>
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** pollScale: the page's poll periods are divided by it (window.__aibTestPollScale, read by changes-ui.js; the app default is 1). */
-async function withPanel(fn: (page: Page, fx: Fixture) => Promise<void>, pollScale = 1) {
-  const fx = await project();
+async function withPanel(fn: (page: Page, fx: Fixture) => Promise<void>, pollScale = 1, moreLeft = 0) {
+  const fx = await project(moreLeft);
   // no saved transcripts: the chats are live only (the page lists them from the agent host)
   fx.s.ctx.transcripts = {
     root: fx.s.state,
@@ -174,8 +196,7 @@ Deno.test({
         const g = document.querySelector('#projectChanges > .cg-left'), h = g.querySelector('.cg-left-head');
         return { head: h.textContent, open: h.getAttribute('aria-expanded'), below: g.querySelectorAll('.cg-sec').length };
       })()`);
-      assertEquals(left, { head: '▸Left over (1)', open: 'false', below: 0 });
-      await page.click('#projectChanges > .cg-left .cg-left-head');
+      assertEquals(left, { head: '▾Left over (1)', open: 'true', below: 1 }, 'a short list (5 or fewer) is open by default');
       await page.waitFor(`!!document.querySelector('#projectChanges > .cg-left .cg-sec[data-sec="sub-left"]')`, 10000, 'the left-over section');
       const sec = await page.eval<{ head: string; sub: string; expanded: string; files: number }>(`(() => {
         const s = document.querySelector('#projectChanges > .cg-left .cg-sec'), h = s.querySelector('.cg-sec-head');
@@ -192,6 +213,38 @@ Deno.test({
       );
       assertEquals(await page.eval<string>(`document.querySelector('#paneTab-changes .pane-badge').textContent`), '5', 'left-over work is not in the count');
     });
+  },
+});
+
+Deno.test({
+  name: 'project Changes: a long Left over list starts folded, lists newest first, and leaves out work that already landed in main',
+  ignore: !browserPath,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    await withPanel(async (page) => {
+      await page.eval(`document.getElementById('paneTab-changes').click()`);
+      await page.waitFor(`!!document.querySelector('#projectChanges > .cg-left')`, 30000, 'the Left over group');
+      // 8 stopped worktrees: 7 never landed, 1 was cherry-picked into main by hand (it is not left over)
+      const head = () =>
+        page.eval<{ head: string; open: string; rows: string[] }>(`(() => {
+          const g = document.querySelector('#projectChanges > .cg-left'), h = g.querySelector('.cg-left-head');
+          return { head: h.textContent, open: h.getAttribute('aria-expanded'), rows: [...g.querySelectorAll('.cg-sec')].map((n) => n.dataset.sec) };
+        })()`);
+      assertEquals(await head(), { head: '▸Left over (7)', open: 'false', rows: [] }, 'more than 5 entries: folded by default');
+      await page.click('#projectChanges > .cg-left .cg-left-head');
+      await page.waitFor(`document.querySelectorAll('#projectChanges > .cg-left .cg-sec').length === 7`, 10000, 'seven rows after unfolding');
+      assertEquals((await head()).rows, ['left-6', 'left-5', 'left-4', 'left-3', 'left-2', 'left-1', 'sub-left'], 'newest first; the landed worktree is not listed');
+      assert(!(await page.eval<boolean>(`/Landed by hand|sub-landed/.test(document.getElementById('projectChanges').innerText)`)), 'landed work is not shown');
+      // the caret folds it again
+      await page.click('#projectChanges > .cg-left .cg-left-head');
+      await page.waitFor(`document.querySelectorAll('#projectChanges > .cg-left .cg-sec').length === 0`, 10000, 'folded again');
+      assertEquals(
+        await page.eval<number>(`[...document.querySelectorAll('#changesPane button')].filter((b) => /merge|discard|commit|undo/i.test(b.textContent + b.title)).length`),
+        0,
+        'no Merge, Discard or Commit button',
+      );
+    }, 1, 6);
   },
 });
 

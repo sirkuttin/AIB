@@ -651,7 +651,7 @@ test('folding: a folded section keeps only its head, the next read asks for coun
   assert.equal(secRows(t.secs()[1]).length, 2);
   assert.ok(!/fold=s1/.test(reads(t).at(-1)));
 });
-test('Left over: a folded group, only when there is left-over work; unfold the group, then a section, to see its files', async () => {
+test('Left over: a group only when there is left-over work, open for a short list, folded for a long one; unfold a section to see its files', async () => {
   const none = setup({ sections: SUBS });
   none.ui().show('changes');
   await flush();
@@ -663,11 +663,20 @@ test('Left over: a folded group, only when there is left-over work; unfold the g
   const group = t.list().querySelector('.cg-left');
   assert.ok(group);
   const gh = group.querySelector('.cg-left-head');
-  assert.equal(gh.textContent, '▸Left over (1)');
-  assert.equal(gh.attrs['aria-expanded'], 'false');
-  assert.equal(group.querySelectorAll('.cg-sec').length, 0, 'folded: nothing below the head');
-  assert.equal(t.secs().length, 3, 'the left-over work is not one of the sections');
-  gh.click();
+  assert.equal(gh.textContent, '▾Left over (1)');
+  assert.equal(gh.attrs['aria-expanded'], 'true');
+  assert.equal(group.querySelectorAll('.cg-sec').length, 1, 'a short list is open: its rows show');
+  assert.equal(t.secs().length, 4, 'the 3 sections plus the one left-over row');
+  const many = Array.from({ length: 6 }, (_, i) => ({ id: 'm' + i, name: 'Old ' + i, files: [{ path: 'o' + i + '.js', status: 'M', added: 1, removed: 0 }], why: 'stopped' }));
+  const long = setup({ sections: SUBS, left: many });
+  long.ui().show('changes');
+  await flush();
+  const lh = long.list().querySelector('.cg-left').querySelector('.cg-left-head');
+  assert.equal(lh.textContent, '▸Left over (6)');
+  assert.equal(lh.attrs['aria-expanded'], 'false');
+  assert.equal(long.list().querySelector('.cg-left').querySelectorAll('.cg-sec').length, 0, 'a long list is folded: nothing below the head');
+  lh.click();
+  assert.equal(long.list().querySelector('.cg-left').querySelectorAll('.cg-sec').length, 6, 'the caret unfolds it');
   const sec = t.list().querySelector('.cg-left').querySelector('.cg-sec');
   assert.ok(sec);
   assert.equal(sec.querySelector('.cg-sec-head').attrs['aria-expanded'], 'false', 'its section is folded too');

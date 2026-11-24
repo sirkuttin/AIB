@@ -24,6 +24,9 @@ import { notReady, wslHost, wslLoc } from '../wsl/access.ts';
 import { WslHelperError } from '../wsl/contract.ts';
 import { branchOf, repoBranch } from './chat_folders.ts';
 import * as changes from './changes.ts';
+import { branchLanded } from './landed.ts';
+import * as wt from './worktrees.ts';
+import { porcelainPaths } from './merge.ts';
 
 type Json = Record<string, unknown>;
 
@@ -196,6 +199,35 @@ export function leftSignature(path: string): string {
   }
 }
 
+/** Landed verdicts of left-over worktrees, by worktree path: valid while its signature and main's tip stay. */
+const LANDED = new Map<string, { sig: string; tip: string; landed: boolean }>();
+/** Landed checks made for left-over worktrees (a test reads it: an unchanged one is not checked again). */
+export const landedChecked = { n: 0 };
+
+/**
+ * True when a left-over worktree's work is provably in the project's main branch (landed.ts: by content, never by ancestry) and its
+ * folder holds nothing more: a landed one is not "left over". A folder with edits of its own (uncommitted or untracked) is never
+ * judged landed. `top`: the repository's top folder.
+ */
+export async function leftIsLanded(t: Target, top: string): Promise<boolean> {
+  if (!top || !t.branch || t.why === 'kept') return false;
+  const target = await wt.mainBranch(top, '');
+  if (!target) return false;
+  const sig = leftSignature(t.path);
+  const tip = ((await wt.git(['rev-parse', '--verify', '-q', `refs/heads/${target}`], top, { check: false })).stdout || '').trim();
+  const hit = LANDED.get(t.path);
+  if (sig && tip && hit && hit.sig === sig && hit.tip === tip) return hit.landed;
+  landedChecked.n++;
+  let landed = false;
+  try {
+    const verdict = await branchLanded(top, t.branch, target, { title: t.name });
+    landed = verdict.landed && (await porcelainPaths(t.path)).size === 0;
+  } catch { /* cannot tell: it stays listed */ }
+  if (sig && tip) LANDED.set(t.path, { sig, tip, landed });
+  while (LANDED.size > 400) LANDED.delete(LANDED.keys().next().value as string);
+  return landed;
+}
+
 async function leftCounts(t: Target) {
   const sig = leftSignature(t.path);
   const hit = LEFT.get(t.path);
@@ -226,6 +258,7 @@ export async function projectChanges(args: Args, offset = 0): Promise<Json> {
   if (args.onlyMain) return { git: !!main.git, main: mainSection, sections: [], left: [] };
   const sections: Json[] = [], left: Json[] = [];
   for (const t of worktreeTargets([args.folder, top], args.subs, args.helpers)) {
+    if (t.state === 'left' && (await leftIsLanded(t, top))) continue; // its work is in main already: not left over
     const open = t.state === 'active' ? !args.fold.has(t.id) : args.unfold.has(t.id);
     // one at a time: the git runs of a project never overlap
     const result = open
@@ -238,6 +271,7 @@ export async function projectChanges(args: Args, offset = 0): Promise<Json> {
     if (!c.files && !t.working) continue; // nothing in it: finished and nothing to land, or nothing to lose
     (t.state === 'active' ? sections : left).push(sec);
   }
+  left.reverse(); // newest first (worktreeTargets lists the oldest first)
   return { git: !!main.git, main: mainSection, sections, left };
 }
 

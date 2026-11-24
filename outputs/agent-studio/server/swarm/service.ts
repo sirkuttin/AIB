@@ -16,6 +16,7 @@
 import { isDict, pyStr } from '../core/py.ts';
 import { getLogger } from '../core/log.ts';
 import * as merge from '../worktrees/merge.ts';
+import { branchLanded } from '../worktrees/landed.ts';
 import * as wt from '../worktrees/worktrees.ts';
 import * as agentRegistry from '../agents/agent_registry.ts';
 import { type Helper, helperOf, HOLDING_STATES, type Landing, newHelperId, readHelpers, Registry, RUNNING_STATES } from './registry.ts';
@@ -213,6 +214,9 @@ export class Swarm {
   #working = new Set<string>();
   /** When the cleanup sweep last ran (0: not yet, so the first look after start sweeps the leftovers). */
   #sweepAt = 0;
+  /** When each subagent's work was last checked against the target (landed.ts), seconds: not again before SWEEP_MS. */
+  #landedAt = new Map<string, number>();
+  #landedBudget = 0;
   clock: () => number = Date.now;
   openMs = OPEN_MS;
   /** How long a done or stopped helper idles before its chat is ended (END_IDLE_MS; tests make it short). */
@@ -1188,10 +1192,15 @@ export class Swarm {
    * and it is idempotent. A landing refused for touched-dirty files is tried again at the parent's next turn end (design 3.5).
    */
   async #reconcileSubagents(subs: SubagentRecord[], chats: Json[], byLasting: Map<string, Json>): Promise<void> {
+    this.#landedBudget = 6;
     for (const rec of subs) {
       const parent = chats.find((c) => c.id === rec.chat) ?? (rec.lasting ? byLasting.get(rec.lasting) : undefined);
       if (!parent) { // its chat is not open here: it waits (keeper-held chats are listed once taken over); one with no changes goes
         await this.#dropEmptyOrphan(rec).catch((error) => log.exception(error, 'Removing empty subagent %s failed', rec.id));
+        const own = this.registry.get(rec.id);
+        if (!own ? rec.state === 'stopped' : !own.landing && (own.state === 'failed' || own.state === 'stopped') && !own.sub?.kept?.length) {
+          await this.#dropLanded(rec, own ?? undefined);
+        }
         continue;
       }
       const ended = s(obj(parent.attention).turnEndedAt);
@@ -1207,6 +1216,8 @@ export class Swarm {
         if (h.title !== title && h.state !== 'merged' && (!h.landing || h.landing.stage === 'queued')) await this.registry.patch(h.id, { title });
         // landed, but its worktree could not go then (the agent host was busy or restarting): again now. Not while it keeps scratch files.
         if (h.state === 'merged' && !h.landing && (rec.state === 'done' || rec.state === 'stopped') && !h.sub?.kept?.length) await this.#release(h);
+        // ended without a landing record, yet its work is in the target (landed by hand, or squashed): its worktree goes like any landed one's
+        if (!h.landing && (h.state === 'failed' || h.state === 'stopped') && !h.sub?.kept?.length) await this.#dropLanded(rec, h);
         // files it left that AIB did not land: kept KEPT_DAYS (the parent was told the date), then its worktree goes
         if (h.sub?.kept?.length && !h.landing && (this.clock() / 1000 - (h.sub.keptAt ?? h.createdAt)) > KEPT_DAYS * 86400) {
           log.info('swarm: subagent %s kept files for %d days; removing its worktree', h.id, KEPT_DAYS);
@@ -1224,6 +1235,35 @@ export class Swarm {
       } catch (error) {
         log.exception(error, 'Taking up subagent %s for landing failed', rec.id);
       }
+    }
+  }
+
+  /**
+   * A subagent that ended unmerged (its landing refused, or it was stopped) whose work is nevertheless in the target: the main agent
+   * cherry-picked it, or AIB landed it squashed and the record was lost (owner 2026-11-24: 80 such builders sat under "Left over").
+   * Decided by content (worktrees/landed.ts), and only for a clean worktree: edits of its own are never judged. It then counts as
+   * landed and goes through the normal release (worktree, branch and record). At most a few checks per poll, each worktree every SWEEP_MS.
+   */
+  async #dropLanded(rec: SubagentRecord, h0: Helper | undefined): Promise<void> {
+    const h = h0 ?? ({ id: rec.id, title: titleOf(rec), sub: { record: rec.id } } as unknown as Helper);
+    if ((rec.state !== 'done' && rec.state !== 'stopped') || rec.userHook || rec.wsl || !rec.branch || !rec.path) return;
+    const now = this.clock() / 1000;
+    if (now - (this.#landedAt.get(rec.id) ?? 0) < SWEEP_MS / 1000 * 10 || this.#working.has(rec.id)) return;
+    if (this.#landedBudget <= 0) return;
+    this.#landedBudget--;
+    this.#landedAt.set(rec.id, now);
+    const folder = rec.project || rec.folder;
+    if (!folder || !wt.lexists(folder) || !wt.lexists(rec.path)) return;
+    try {
+      const target = await wt.mainBranch(folder, '');
+      if (!target) return;
+      const verdict = await branchLanded(folder, rec.branch, target, { title: h.title });
+      if (!verdict.landed || (await merge.porcelainPaths(rec.path)).size) return;
+      log.info('swarm: subagent %s (%s) ended unmerged but its work is in %s (%s); removing its worktree', h.id, rec.branch, target, verdict.why);
+      if (h0) await this.registry.update(h.id, (cur) => (cur ? { ...cur, landing: null, state: 'merged', sub: { ...cur.sub!, empty: true, files: 0 } } : null));
+      await this.#release(h);
+    } catch (error) {
+      log.exception(error, 'Checking whether subagent %s landed failed', h.id);
     }
   }
 
