@@ -11,7 +11,7 @@
  *   - Maki's hyphenated tool names are AIB's own tools (no approval asked)
  */
 import { assert, assertEquals } from './_assert.ts';
-import { fake, PYTHON, pause, until } from './_connection.ts';
+import { fake, NODE, pause, until } from './_connection.ts';
 import { Connection, ownToolName } from '../../app/server/acp/connection.ts';
 import { Aib } from '../../app/server/host/aib.ts';
 import { KeeperLink } from '../../app/server/keeper/link.ts';
@@ -46,7 +46,7 @@ class Lab {
     aib.ownerProbe = () => null;
     aib.connectionFactory = (_command, cwd, provider, options) => {
       const flags = this.flags[Math.min(this.started++, this.flags.length - 1)];
-      const command = flags[0] === '!die' ? [PYTHON, '-c', 'raise SystemExit(3)'] : fake(...flags); // '!die': an agent that exits at once
+      const command = flags[0] === '!die' ? [NODE, '-e', 'process.exit(3)'] : fake(...flags); // '!die': an agent that exits at once
       return new Connection(command, cwd, provider, { ...options, env: { FAKE_ACP_LOG: this.log } });
     };
     this.aibs.push(aib);

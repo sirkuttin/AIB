@@ -7,7 +7,9 @@
  * that stop or replace the host are skipped). Everything goes through the HTTP API with the page token, as the page does.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { FAKE_HOST, Fixture, httpJson, Json, PY, SEP, sleep, until, Web } from './_host_fixture.ts';
+import { FAKE_HOST, Fixture, httpJson, Json, SEP, sleep, until, Web } from './_host_fixture.ts';
+/** The e2e fakes under work/ that are not ported to work/fakes yet still run on Python. */
+const PY = Deno.build.os === 'windows' ? 'python' : 'python3';
 import { WORK } from './_work.ts';
 import { APP_ROOT } from '../../app/server/core/app.ts';
 import { CODE_ROOT, HostClient, pidAlive, PROTOCOL_VERSION, readInfo } from '../../app/server/host/host_client.ts';

@@ -26,6 +26,7 @@
  * Needs node, the Claude Code ACP adapter (AIB_CLAUDE_ACP or a global npm install) and Go (to build the keeper program from keeper/,
  * into this test's temp folder; AIB_TEST_KEEPER_BIN names a built one instead). Run with TEMP/TMP pointed at a scratch folder.
  */
+import { refusedPort } from './_ports.ts';
 import { acpProbe, assert, assertEquals, Chat, git, isDir, Json, normcase, realPath, waitFor } from './_e2e.ts';
 import {
   agentTempRoot,
@@ -302,19 +303,13 @@ async function runProbe(addressDoc: Json, options: { refused?: string | false; s
   return took;
 }
 
-function freePort(): number {
-  const l = Deno.listen({ hostname: '127.0.0.1', port: 0 }); // port-guard: the OS picks it
-  const port = (l.addr as Deno.NetAddr).port;
-  l.close();
-  return port;
-}
 
 Deno.test({
   name: 'AdapterFailClosedTest test_aib_unreachable_refuses_editing_subagent',
   ignore: !ok,
   ...T,
   fn: async () => {
-    await runProbe({ url: `http://127.0.0.1:${freePort()}/mcp`, pid: 1 });
+    await runProbe({ url: `http://127.0.0.1:${refusedPort()}/mcp`, pid: 1 });
   },
 });
 
