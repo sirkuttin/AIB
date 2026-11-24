@@ -37,6 +37,7 @@ import { readHelpers } from '../swarm/registry.ts';
 import { claudeConfigDir, isForkSkill } from './claude_config.ts';
 import { callTimeOf, preShell } from './shell_tag.ts';
 import { type ProcessReaper, recordReaped } from './reap.ts';
+import type { WslReap } from '../wsl/contract.ts';
 
 const log = getLogger('subagents');
 
@@ -125,6 +126,8 @@ export interface RemoteSubagents {
   release(rec: SubagentRecord): Promise<'removed' | 'kept' | 'running' | 'gone'>;
   /** The distro's records as refs, or null when it can't be asked now (it is never started for this). */
   records(distro: string): Promise<SubagentRecord[] | null>;
+  /** What the distro's helper shut down since it started (a helper without it: none). Each report is posted once (refreshWsl). */
+  reaps?(distro: string): Promise<WslReap[]>;
 }
 
 /** The fields that describe one Agent call (not the worktree): they move together when AIB fixes which worktree runs which call. */
@@ -252,6 +255,7 @@ export class SubagentWorktrees {
   async refreshWsl(distro: string): Promise<void> {
     const records = await this.remote?.records(distro).catch(() => null);
     if (!records) return;
+    await this.#postWslReaps(distro).catch((error) => log.warning('Could not read what the distro %s shut down: %s', distro, error));
     await this.#file.run(() => {
       const all = readSubagents(this.stateDir);
       let changed = false;
@@ -270,11 +274,53 @@ export class SubagentWorktrees {
     });
   }
 
+  /** Reports of the distro already posted (by key), and when this AIB started: an older report is from before it and is not posted. */
+  readonly #wslReapsSeen = new Set<string>();
+  readonly #startedAt = now();
+
+  /**
+   * What the distro's helper shut down: the calls are saved for Activity ("stopped: subagent finished") and the parent chat gets its one
+   * line, once per report. A helper without `subagent.reaps` (older) has nothing to report: its subagents' shell calls were never tagged.
+   */
+  async #postWslReaps(distro: string): Promise<void> {
+    const reaps = await this.remote?.reaps?.(distro);
+    if (!reaps?.length) return;
+    for (const r of reaps) {
+      if (this.#wslReapsSeen.has(r.key) || r.at < this.#startedAt - 120) continue;
+      this.#wslReapsSeen.add(r.key);
+      while (this.#wslReapsSeen.size > 1000) this.#wslReapsSeen.delete(this.#wslReapsSeen.values().next().value!);
+      this.#reaped(r.chat, r.who, { killed: r.killed, calls: r.calls }, r.why);
+    }
+  }
+
+  readonly #wslReapPolls = new Set<string>();
+
+  /**
+   * The distro shuts a subagent's processes down by itself a few seconds after the subagent ended, and tells no one: AIB looks again just
+   * after that, and once more later (the scan can take a moment). One pending look per distro, only when its helper reports reaps.
+   */
+  #pollWslReaps(distro: string): void {
+    if (!this.reaper || !this.remote?.reaps || this.#wslReapPolls.has(distro)) return;
+    this.#wslReapPolls.add(distro);
+    let n = 0;
+    const next = () => {
+      const timer = setTimeout(() => {
+        void this.refreshWsl(distro).catch(() => {}).then(() => {
+          if (++n < 2) next();
+          else this.#wslReapPolls.delete(distro);
+        });
+      }, n === 0 ? this.reapDelayMs + 1500 : 5000);
+      Deno.unrefTimer(timer as unknown as number);
+    };
+    next();
+  }
+
   /** Run a call in the chat's distro, then read its records back. */
   async #viaRemote<T>(chat: SubagentChat, run: (remote: RemoteSubagents) => Promise<T>): Promise<T> {
     try {
       return await run(this.remote!);
     } finally {
+      this.#pollWslReaps(chat.wsl!.distro);
       await this.refreshWsl(chat.wsl!.distro).catch((error) => log.warning('Could not read the distro %s subagent records: %s', chat.wsl!.distro, error));
     }
   }
@@ -319,20 +365,28 @@ export class SubagentWorktrees {
   /** How long after a subagent finished its processes are shut down (its last output flushes; a continued subagent is skipped). */
   reapDelayMs = 5000;
   /** One line for the parent chat when something was shut down: the subagent's record (null for one stopped call) and how many. */
-  onReaped: ((chatId: string, rec: SubagentRecord | null, killed: number) => void) | null = null;
+  onReaped: ((chatId: string, who: { id?: string; description?: string; agentType?: string } | null, killed: number, calls: string[], why: string) => void) | null = null;
   readonly #reapTimers = new Map<string, number>();
+  /** The record as it was when its reap was set up: a landing can remove the record before the delay is over, the processes still go. */
+  readonly #reapRecords = new Map<string, SubagentRecord>();
   readonly #stopsSeen = new Set<string>();
   /** Claude Code's background task id of each call (chat + task id -> tool_use_id), so a TaskStop of the task finds its call. */
   readonly #taskCalls = new Map<string, string>();
 
   /** Connection.onBackgroundTask: the call `callId` of the chat went to the background as `task`. */
   noteTask(chatId: string, task: string, callId: string): void {
+    if (this.chat(chatId)?.wsl) { // the distro's service reaps that call (its shell tags are the distro's)
+      if (this.remote && this.chat(chatId)!.hooks) void this.#wslEvent(chatId, 'noteTask', { task, callId });
+      return;
+    }
     this.#taskCalls.set(`${chatId}\0${task}`, callId);
     while (this.#taskCalls.size > 500) this.#taskCalls.delete(this.#taskCalls.keys().next().value!);
   }
 
   #reapLater(id: string): void {
     if (!this.reaper || this.#reapTimers.has(id)) return;
+    const was = readSubagents(this.stateDir)[id];
+    if (was) this.#reapRecords.set(id, was);
     const timer = setTimeout(() => {
       this.#reapTimers.delete(id);
       void this.#reapRecord(id).catch((error) => log.exception(error, 'Shutting down a finished subagent\'s processes failed'));
@@ -343,7 +397,8 @@ export class SubagentWorktrees {
 
   /** Shut down the processes of the finished subagent `id` (not when it runs again, or its chat is gone: that chat's own end takes them). */
   async #reapRecord(id: string): Promise<void> {
-    const rec = readSubagents(this.stateDir)[id];
+    const rec = readSubagents(this.stateDir)[id] ?? this.#reapRecords.get(id); // gone (landed and released) in the meantime: it ended, so reap
+    this.#reapRecords.delete(id);
     const chat = rec ? this.chat(rec.chat) : null;
     if (!rec || !chat || !this.reaper || !rec.agentId || chat.provider === 'gemini') return; // Gemini's fence denies subagent shells
     if (rec.state !== 'done' && rec.state !== 'stopped') return;
@@ -371,7 +426,7 @@ export class SubagentWorktrees {
     this.#reaped(chatId, null, result, 'its task was stopped');
   }
 
-  #reaped(chatId: string, rec: SubagentRecord | null, result: { killed: number; calls: string[] }, why: string): void {
+  #reaped(chatId: string, rec: { id?: string; description?: string; agentType?: string } | null, result: { killed: number; calls: string[] }, why: string): void {
     if (!result.killed && !result.calls.length) return;
     try {
       recordReaped(this.stateDir, result.calls, why);
@@ -379,7 +434,7 @@ export class SubagentWorktrees {
       log.exception(error, 'Could not save which calls were shut down');
     }
     log.info('subagent %s (%s): %d processes shut down, calls %s', rec?.id ?? 'call', why, result.killed, result.calls.join(','));
-    if (result.killed) this.onReaped?.(chatId, rec, result.killed);
+    if (result.killed) this.onReaped?.(chatId, rec, result.killed, result.calls, why);
   }
 
   #patch(id: string, fields: Partial<SubagentRecord>): Promise<SubagentRecord | null> {
@@ -402,6 +457,8 @@ export class SubagentWorktrees {
     if (chat.wsl) { // the distro makes and keeps the worktree (wsl/helper/subagents.ts); nothing here ever edits a Windows or Linux folder
       if (!this.remote) return text('This chat is not open in AIB', 503);
       try {
+        // a shell call's tag sits on the latency path of every call a subagent makes: no records read after it
+        if (event === 'pre-shell') return await this.remote.hook(chat, event, body);
         return await this.#viaRemote(chat, (r) => r.hook(chat, event, body));
       } catch (error) {
         const why = error instanceof Error ? error.message : String(error);

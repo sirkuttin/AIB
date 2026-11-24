@@ -22,12 +22,13 @@ import { isCodexFamily } from '../../agents/claude_family.ts';
 import { isDict } from '../../core/py.ts';
 import { onWindowsDrive } from './worktrees.ts';
 import { BAD_PARAMS, type Handlers, RpcError, str } from './rpc.ts';
-import type { WslMergeAnswer } from '../contract.ts';
+import { ProcessReaper } from '../../subagents/reap.ts';
+import type { WslMergeAnswer, WslReap } from '../contract.ts';
 
 type Json = Record<string, unknown>;
 
 const ID = /^[A-Za-z0-9_-]{1,200}$/;
-const CLAUDE_EVENTS = ['pre-tool', 'worktree-create', 'post-agent', 'subagent-stop'];
+const CLAUDE_EVENTS = ['pre-tool', 'pre-shell', 'worktree-create', 'post-agent', 'subagent-stop'];
 const CODEX_EVENTS = ['codex-pre-tool', 'codex-subagent-start', 'codex-subagent-stop'];
 
 function absPath(value: unknown, name: string): string {
@@ -66,6 +67,7 @@ function chatOf(raw: unknown): SubagentChat {
       readOnly: new Set(Array.isArray(raw.readOnly) ? raw.readOnly.filter((x): x is string => typeof x === 'string').slice(0, 200) : []),
       userWorktreeHook: raw.userWorktreeHook === true,
       ...(configDir ? { configDir } : {}),
+      ...(raw.shellTag === true ? { shellTag: true } : {}),
     },
   };
   return chat;
@@ -97,6 +99,16 @@ export function subagentMethods(data: string): Handlers {
   const chats = new Map<string, SubagentChat>();
   const root = new wt.Registry(data).root;
   const service = new SubagentWorktrees(data, root, (id) => chats.get(id) ?? null);
+  // what a finished subagent left running is shut down HERE, over the distro's own /proc (subagents/reap.ts); AIB reads what was
+  // done through `subagent.reaps` and posts the line in the parent chat (a restarted helper forgets old reports: only the line is lost)
+  service.reaper = new ProcessReaper();
+  const reaps: WslReap[] = [];
+  const run = crypto.randomUUID().replaceAll('-', '').slice(0, 8);
+  let counter = 0;
+  service.onReaped = (chatId, who, killed, calls, why) => {
+    reaps.push({ key: `${run}-${++counter}`, chat: chatId, at: Date.now() / 1000, why, killed, calls: calls.slice(0, 200), who: who ? { description: who.description ?? '', agentType: who.agentType ?? '' } : null });
+    while (reaps.length > 100) reaps.shift();
+  };
   const remember = (raw: unknown): SubagentChat => {
     const chat = chatOf(raw);
     if (isDict(raw) && raw.codexFolder === true && isCodexFamily(chat.provider)) {
@@ -243,6 +255,9 @@ export function subagentMethods(data: string): Handlers {
           await service.reconcileEnded(chat.id, ended);
           break;
         }
+        case 'noteTask': // Claude Code's background task id of a call: a TaskStop of the task finds the call's processes
+          service.noteTask(chat.id, s(a.task, 200), s(a.callId, 200));
+          break;
         case 'turnEnded':
           await service.turnEnded(chat.id);
           break;
@@ -267,6 +282,9 @@ export function subagentMethods(data: string): Handlers {
       const chat = p.chat === undefined ? null : idOf(p.chat, 'chat');
       return { records: (chat ? service.ofChat(chat) : service.all()).map((r) => ({ ...r })) };
     },
+
+    /** What this helper shut down (a finished subagent's processes, a stopped call's), oldest first. */
+    'subagent.reaps': () => ({ reaps: reaps.map((r) => ({ ...r })) }),
 
     /** The chat closed: its spare and unused prepared worktrees go; bound ones stay for landing. */
     'subagent.chatClosed': async (p) => {

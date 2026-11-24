@@ -8,7 +8,8 @@
  *   a pid reused between the scan and the kill (or a process older than the subagent) is left alone
  *   Codex subagent: the same as the first
  *   the Activity rows of calls AIB shut down read "stopped: subagent finished"
- *   WSL: skipped without AIB_WSL_E2E
+ *   WSL (real distro, AIB_WSL_E2E=<distro>; skipped without it): hook 2 tags the subagent's call through the Linux keeper, the helper's reaper
+ *     shuts its processes down over /proc, AIB posts the line once; another subagent's cookie is left alone
  */
 import { assert, assertEquals } from './_assert.ts';
 import { configure, issueHookKey } from '../../outputs/agent-studio/server/artifacts/keys.ts';
@@ -452,9 +453,169 @@ Deno.test({
   name: 'WSL: a finished subagent of a WSL chat has its processes shut down inside the distro (needs AIB_WSL_E2E)',
   ignore: !Deno.env.get('AIB_WSL_E2E'),
   ...T,
-  fn() {
-    // The distro's helper runs this same service and reaper natively (subagents/reap.ts over /proc); see wsl_subagents_e2e_test.ts for
-    // the real-distro harness this variant joins once the helper reports reaped calls back (not built yet).
-    throw new Error('WSL variant not built: the helper does not tag or reap yet');
+  async fn() {
+    // the real distro: the Linux keeper's `hook pre-shell --helper-socket` tags the subagent's shell call, the helper's reaper (the same
+    // service and reaper, natively over the distro's /proc) shuts the process down after the subagent ends, and AIB posts the line
+    const e = await import('./_wsl_e2e.ts');
+    if (!e.WSL_E2E) {
+      console.log('(no WSL 2 distro named by AIB_WSL_E2E here: nothing to check)');
+      return;
+    }
+    const { Connection } = await import('../../outputs/agent-studio/server/acp/connection.ts');
+    const { Studio } = await import('../../outputs/agent-studio/server/host/studio.ts');
+    const { refOf } = await import('../../outputs/agent-studio/server/platform/location.ts');
+    const { inDistro, ROOT, KEY } = e;
+    const sh = async (script: string, ...args: string[]) => (await inDistro(script, args)).out.trim();
+    await e.prepareRoot();
+    const state = Deno.makeTempDirSync({ prefix: 'aib-wsl-reap-e2e-' });
+    Deno.env.set('AGENT_STUDIO_ALLOW_REAL_AGENT', '1'); // hooks are set up for a non-fixture agent (the factory below runs the fake agent)
+    const studio = new Studio({ stateDir: state, port: 0, ownersDir: null }, { keeper: null });
+    studio.ownerProbe = () => null;
+    studio.connectionFactory = (_command, cwd, provider, options) =>
+      new Connection(['python3', `${ROOT}/fake_acp.py`, '--cancel-aware'], cwd, provider, {
+        ...options,
+        wsl: options?.wsl ? { ...options.wsl, program: '/usr/bin/python3' } : options?.wsl,
+      });
+    const started: string[] = []; // the pids this test started in the distro (the only ones it ever signals)
+    /**
+     * ONE long-lived wsl.exe session that starts the test's processes: a process started in a wsl.exe call that has ended does not
+     * outlive it (checked), so the processes live in this session, as a subagent's live in its agent's. Each command runs in a subshell.
+     */
+    const SYS = Deno.env.get('SystemRoot') ?? 'C:\\Windows';
+    const child = new Deno.Command(`${SYS}\\System32\\wsl.exe`, {
+      args: ['--distribution', e.DISTRO, '--cd', '~', '--exec', 'sh', '-c', 'while IFS= read -r l; do ( eval "$l" ); echo "@@done"; done'],
+      env: { SystemRoot: SYS, WSL_UTF8: '1', WSLENV: '' },
+      clearEnv: true,
+      stdin: 'piped',
+      stdout: 'piped',
+      stderr: 'null',
+    }).spawn();
+    const writer = child.stdin.getWriter();
+    const reader = child.stdout.getReader();
+    let pending = '';
+    const session = {
+      async run(line: string, limitMs = 20_000): Promise<string> {
+        await writer.write(new TextEncoder().encode(line.replaceAll('\n', ' ') + '\n'));
+        const end = Date.now() + limitMs;
+        while (!pending.includes('@@done\n')) {
+          if (Date.now() > end) throw new Error(`the distro session gave no answer to: ${line.slice(0, 80)}`);
+          const got = await Promise.race([reader.read(), sleep(1000).then(() => null)]);
+          if (got && !got.done) pending += new TextDecoder().decode(got.value);
+          else if (got?.done) throw new Error('the distro session ended');
+        }
+        const at = pending.indexOf('@@done\n');
+        const out = pending.slice(0, at).replaceAll('\r', '').trim();
+        pending = pending.slice(at + 7);
+        return out;
+      },
+      async close(): Promise<void> {
+        try {
+          await writer.close();
+        } catch { /* gone */ }
+        try {
+          await Promise.race([child.status, sleep(10_000)]);
+        } catch { /* gone */ }
+      },
+    };
+    const A = NUM, B = NUM + 1, C = NUM + 2;
+    try {
+      const repo = `${ROOT}/repo`;
+      await sh('git -C "$1" branch -M main', repo);
+      const host = await e.readyHost();
+      if (!host.hookShellTag) {
+        console.log("(the distro's AIB helper predates shell tagging: nothing to check)");
+        return;
+      }
+      const c = await studio.connect('claude', refOf({ kind: 'wsl', distro: KEY, linuxPath: repo }));
+      for (let i = 0; i < 100 && c.busy; i++) await sleep(100);
+      assertEquals(c.subagentHooks!.off, '', JSON.stringify(c.subagentHooks));
+      assertEquals(c.subagentHooks!.shellTag, true, 'a WSL chat on a helper of this build tags its subagents\' shell calls');
+      const hooks = (c.subagentHooks!.settings as { hooks: Record<string, { hooks: { command: string }[] }[]> }).hooks;
+      const shellHook = hooks.PreToolUse.flatMap((g) => g.hooks.map((h) => h.command)).find((cmd) => cmd.includes(' hook pre-shell '))!;
+      assert(shellHook && shellHook.includes('--helper-socket') && !shellHook.includes('|| exit 2'), String(shellHook));
+      const preTool = hooks.PreToolUse[0].hooks[0].command;
+      const create = hooks.WorktreeCreate[0].hooks[0].command;
+      const stopHook = hooks.SubagentStop[0].hooks[0].command;
+      const env = (c as unknown as { env: Record<string, string> }).env;
+      const run = (command: string, input: unknown) =>
+        inDistro(
+          'export AIB_HOOK_KEY="$1" AIB_HOOK_CHAT="$2" AIB_HOOK_READONLY="$3"; exec sh -c "$4"',
+          [env.AIB_HOOK_KEY, c.id, env.AIB_HOOK_READONLY ?? '', command],
+          new TextEncoder().encode(JSON.stringify(input)),
+        );
+      const seen: string[] = [];
+      const record = c.recordedEvent.bind(c);
+      c.recordedEvent = (kind: string, data: unknown, time?: number) => {
+        if (kind === 'studio_note') seen.push(String((data as Json).message));
+        record(kind, data, time);
+      };
+
+      // a subagent with its own worktree (the same path as wsl_subagents_e2e_test.ts)
+      const pre = await run(preTool, { hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_use_id: 'toolu_1', tool_input: { subagent_type: 'general-purpose', description: 'Run the dev server', prompt: 'x' } });
+      assertEquals(pre.code, 0, pre.err);
+      const made = await run(create, { hook_event_name: 'WorktreeCreate', name: 'agent-a1' });
+      assertEquals(made.code, 0, made.err);
+
+      // the main agent's own shell call is never tagged
+      const main = await run(shellHook, { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'toolu_m', tool_input: { command: 'echo hi' } });
+      assertEquals(main.code, 0, main.err);
+      assertEquals(main.out.trim(), '');
+      // the subagent's: the cookie goes in front of the command, nothing else changes
+      const body = (call: string, agent: string, command: string) => ({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: call, agent_id: agent, tool_input: { command, description: 'd' } });
+      const background = (secs: number) => `setsid sleep ${secs} >/dev/null 2>&1 < /dev/null & echo $!`;
+      const tagged = await run(shellHook, body('toolu_sh1', 'a1', background(A)));
+      assertEquals(tagged.code, 0, tagged.err);
+      const updated = JSON.parse(tagged.out).hookSpecificOutput.updatedInput as { command: string; description: string };
+      assertEquals(updated.command, `export AIB_PROC='${c.id}.a1.toolu_sh1'; ${background(A)}`);
+      assertEquals(updated.description, 'd');
+      // a second call of the subagent, another subagent's cookie and an untagged lookalike
+      const second = JSON.parse((await run(shellHook, body('toolu_sh2', 'a1', `setsid sleep ${B} >/dev/null 2>&1 < /dev/null & echo $!`))).out).hookSpecificOutput.updatedInput.command;
+      const otherAgent = `export AIB_PROC='${c.id}.a2.toolu_x'; ${background(C)}`;
+      const pids = async (command: string) => {
+        const out = await session.run(command);
+        const pid = out.split('\n').pop()!.trim();
+        assert(/^\d+$/.test(pid), `not a pid: ${out}`);
+        started.push(pid);
+        return pid;
+      };
+      const pidA = await pids(updated.command);
+      const pidB = await pids(second);
+      const pidC = await pids(otherAgent);
+      const alive = async (pid: string) => (await session.run(`kill -0 ${Number(pid)} 2>/dev/null && echo up || echo down`)) === 'up';
+      assert(await alive(pidA) && await alive(pidB) && await alive(pidC), 'the three processes are running');
+
+      // the subagent ends: ITS two processes go within seconds; another subagent's cookie is left alone
+      const stop = await run(stopHook, { hook_event_name: 'SubagentStop', agent_id: 'a1', agent_type: 'general-purpose' });
+      assertEquals(stop.code, 0, stop.err);
+      await until('the subagent\'s tagged processes are shut down in the distro', async () => !(await alive(pidA)) && !(await alive(pidB)), 60_000);
+      assert(await alive(pidC), "another subagent's process is never touched");
+      // Windows learns of it through subagent.reaps: the parent chat's line, and the Activity rows' reason
+      await until('the line in the parent chat', () => seen.some((m) => /finished; its processes were shut down \(2\)/.test(m)), 60_000);
+      const why = reapedWhyIn(state);
+      assertEquals(why('toolu_sh1'), 'subagent finished');
+      assertEquals(why('toolu_sh2'), 'subagent finished');
+      assertEquals(why('toolu_x'), '');
+      assertEquals(seen.filter((m) => /its processes were shut down/.test(m)).length, 1, 'one line, posted once');
+
+      // TaskStop of ONE background call of a WSL chat: the stream's task id (noteTask) is handed to the distro, which shuts down only that call
+      const call4 = JSON.parse((await run(shellHook, body('toolu_sh4', 'a1', background(NUM + 3)))).out).hookSpecificOutput.updatedInput.command;
+      const call5 = JSON.parse((await run(shellHook, body('toolu_sh5', 'a1', background(NUM + 4)))).out).hookSpecificOutput.updatedInput.command;
+      const pid4 = await pids(call4);
+      const pid5 = await pids(call5);
+      c.onBackgroundTask?.(c, 'task-4', 'toolu_sh4');
+      await sleep(500); // the distro learns the task id before the stop
+      await studio.subagents!.claudeTool(c.id, 'TaskStop', 'toolu_stop4', { task_id: 'task-4' }, 'completed');
+      await until("the stopped call's process is shut down in the distro", async () => !(await alive(pid4)), 60_000);
+      assert(await alive(pid5), "the subagent's other call keeps running");
+      await until('the line for the stopped call', () => seen.some((m) => /A stopped background command left processes running; they were shut down \(1\)/.test(m)), 60_000);
+      assertEquals(reapedWhyIn(state)('toolu_sh4'), 'its task was stopped');
+    } finally {
+      for (const pid of started) await session.run(`kill ${Number(pid)} 2>/dev/null; true`).catch(() => {}); // only the pids this test started
+      await session.close();
+      await studio.close().catch(() => {});
+      await e.cleanRoot();
+      e.newAib();
+      Deno.removeSync(state, { recursive: true });
+    }
   },
 });

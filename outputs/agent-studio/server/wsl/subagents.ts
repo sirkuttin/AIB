@@ -18,7 +18,7 @@ import { helperState, wslMergeChat } from './merge.ts';
 import { isCodexFamily } from '../agents/claude_family.ts';
 import type { HookAnswer, RemoteSubagents, SubagentChat, SubagentRecord } from '../subagents/service.ts';
 import { hostWhenReady, peekWslHost, wslLoc } from './access.ts';
-import { type HelperMethods, WslHelperError, type WslSubagentChat, type WslSubagentRecord } from './contract.ts';
+import { type HelperMethods, WslHelperError, type WslReap, type WslSubagentChat, type WslSubagentRecord } from './contract.ts';
 
 const log = getLogger('wsl_subagents');
 
@@ -38,6 +38,7 @@ export function wslSubagentChat(chat: {
   userWorktreeHook?: boolean;
   configDir?: string;
   codexFolder?: boolean;
+  shellTag?: boolean;
 }): { distro: string; facts: WslSubagentChat } | null {
   const folder = wslLoc(chat.folder);
   const project = wslLoc(chat.project);
@@ -54,6 +55,7 @@ export function wslSubagentChat(chat: {
       ...(chat.userWorktreeHook ? { userWorktreeHook: true } : {}),
       ...(chat.configDir ? { configDir: chat.configDir } : {}),
       ...(chat.codexFolder ? { codexFolder: true } : {}),
+      ...(chat.shellTag ? { shellTag: true } : {}),
     },
   };
 }
@@ -66,7 +68,14 @@ export function factsOfServiceChat(chat: SubagentChat) {
     lasting: chat.lasting,
     folder: chat.folder,
     project: chat.project,
-    ...(chat.hooks ? { readOnly: chat.hooks.readOnly, userWorktreeHook: chat.hooks.userWorktreeHook, ...(chat.hooks.configDir ? { configDir: chat.hooks.configDir } : {}) } : {}),
+    ...(chat.hooks
+      ? {
+        readOnly: chat.hooks.readOnly,
+        userWorktreeHook: chat.hooks.userWorktreeHook,
+        ...(chat.hooks.configDir ? { configDir: chat.hooks.configDir } : {}),
+        ...(chat.hooks.shellTag ? { shellTag: true } : {}),
+      }
+      : {}),
     codexFolder: !!chat.subFolder && isCodexFamily(chat.provider),
   });
 }
@@ -245,6 +254,16 @@ export const wslRemote: RemoteSubagents = {
     return rec.wsl ? wslSubagentRelease(rec.wsl.distro, rec.id) : Promise.resolve('gone');
   },
   records: recordsOrNull,
+  async reaps(distro: string): Promise<WslReap[]> {
+    const host = peekWslHost(distro);
+    if (!host || host.state !== 'ready') return [];
+    try {
+      return (await host.call('subagent.reaps', {}, { timeoutMs: CALL_MS })).reaps;
+    } catch (error) {
+      if (!missing(error)) log.warning('wsl: what the distro shut down could not be read: %s', why(error));
+      return []; // a helper without it: its subagents' shell calls were never tagged
+    }
+  },
 };
 
 /**

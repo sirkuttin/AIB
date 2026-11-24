@@ -445,3 +445,42 @@ Deno.test({
     assertEquals(hookProof('k-123', 'abcdef0123456789', 200, new TextEncoder().encode('{}')), '8499c10f781827e1c0c1f5c0f017ff99d1d934efaab9c083690ce1cc5bafe6f3');
   },
 });
+
+Deno.test({
+  name: 'wsl subagent hooks: a helper that reports reaps gets hook 2 (pre-shell) and tags only a subagent\'s shell call; an older helper gets neither',
+  ...T,
+  async fn() {
+    await keeperBinary();
+    const commandsOf = (c: Connection) =>
+      Object.values((c.subagentHooks!.settings as { hooks: Record<string, { hooks: { command: string }[] }[]> }).hooks).flatMap((g) => g.flatMap((x) => x.hooks.map((h) => h.command)));
+    { // older helper (no subagent.reaps): no pre-shell entry in the chat's hooks, its shell calls are never tagged
+      await using lab = new Lab();
+      const { c } = await openChat(lab);
+      assert(!commandsOf(c).some((x) => x.includes('hook pre-shell')), 'no pre-shell hook for an older helper');
+      assertEquals(c.subagentHooks!.shellTag, undefined);
+    }
+    await using lab = new Lab();
+    lab.host.hookShellTag = true;
+    const { studio, c, hook } = await openChat(lab);
+    assertEquals(c.subagentHooks!.shellTag, true);
+    const shell = commandsOf(c).find((x) => x.includes('hook pre-shell'))!;
+    assert(shell && shell.includes(`--helper-socket "${SOCKET}"`) && !shell.includes('|| exit 2'), String(shell));
+    const call = (agent: string | null, command: string) => ({
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Bash',
+      tool_use_id: 'toolu_s1',
+      ...(agent ? { agent_id: agent } : {}),
+      tool_input: { command },
+    });
+    // a subagent's call: the helper (Linux rules) answers with the cookie in front of the command; the proof is AIB's
+    const tagged = await hook('pre-shell', call('a1', 'npm run dev'));
+    assertEquals([tagged.tunnel, tagged.status, tagged.proofOk], [200, 200, true]);
+    // (this lab's helper runs on Windows, which adds its PATH marker; in a real distro the prefix is the export alone: subagent_reap_test.ts)
+    const command = JSON.parse(tagged.body).hookSpecificOutput.updatedInput.command as string;
+    assert(command.startsWith(`export AIB_PROC='${c.id}.a1.toolu_s1'; `) && command.endsWith('; npm run dev'), command);
+    // the main agent's own call is not tagged
+    assertEquals(JSON.parse((await hook('pre-shell', call(null, 'npm run dev'))).body), {});
+    // the shell hook is on every call's latency path: it never reads the records back
+    assertEquals(studio.subagents!.ofChat(c.id).length, 0);
+  },
+});

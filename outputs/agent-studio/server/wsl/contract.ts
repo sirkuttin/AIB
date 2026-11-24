@@ -42,6 +42,11 @@ export interface WslHost {
    * then gets its editing subagents turned off, never unisolated ones).
    */
   readonly hookTunnel?: { forwarder: string; socket: string } | null;
+  /**
+   * True when the distro's helper tags and shuts down a subagent's shell calls (it has `subagent.reaps`; the keeper of the same build
+   * knows hook 2's `pre-shell`). False for an older helper: the chat's shell calls stay untagged.
+   */
+  readonly hookShellTag?: boolean;
   /** Called for each tool call an agent in the distro sends through the tunnel (HelperMcpRequest), once, never for a replayed one. */
   onMcpRequest?(handler: (request: HelperMcpRequest['params']) => void): () => void;
 }
@@ -289,6 +294,8 @@ export interface HelperMethods {
   };
   'subagent.event': { params: { chat: WslSubagentChat; op: string; args?: Record<string, unknown> }; result: { ok: boolean } };
   'subagent.folderBranch': { params: { id: string }; result: { branch: string } };
+  /** What the helper shut down (subagents/reap.ts, run natively over the distro's /proc), oldest first, at most 100. Its presence = shell tagging. */
+  'subagent.reaps': { params: Record<string, never>; result: { reaps: WslReap[] } };
   /**
    * Live sync of WSL chats' worktrees (helper/sync.ts: worktrees/sync.ts run natively over the same `<data>`, its folder watcher
    * inotify). Offered with worktree.*. `sync.chats` is the whole set of open WSL chats in their own copy (cwd: the worktree's Linux
@@ -507,6 +514,23 @@ export interface WslSubagentChat {
   userWorktreeHook?: boolean;
   configDir?: string;
   codexFolder?: boolean;
+  /** The distro's keeper forwards hook 2's `pre-shell`: this chat's subagent shell calls are tagged (subagents/shell_tag.ts). */
+  shellTag?: boolean;
+}
+
+/** What the distro's helper shut down for a finished subagent or a stopped call (helper/subagents.ts 'subagent.reaps'). */
+export interface WslReap {
+  /** Unique per report (the helper's run and a counter): AIB posts each one once. */
+  key: string;
+  chat: string;
+  /** Epoch seconds. */
+  at: number;
+  why: string;
+  killed: number;
+  /** The calls (tool_use_ids) whose processes were shut down. */
+  calls: string[];
+  /** The subagent's name for the line in the parent chat; null for a stopped call. */
+  who: { description: string; agentType: string } | null;
 }
 
 /** A subagent worktree record as the distro's helper keeps it (subagents/service.ts SubagentRecord; Linux paths). */

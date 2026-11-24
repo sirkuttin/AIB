@@ -70,9 +70,10 @@ Deno.test({
 // ---- the full flow, through the agent's own hooks (the Linux keeper's `hook <event> --helper-socket`) ---------------------------------
 
 type Hook = { type: string; command: string };
+// the first command of each event (PreToolUse also has hook 2's pre-shell entry after the pre-tool one)
 const commandsOf = (settings: unknown) =>
   Object.fromEntries(
-    Object.entries((settings as { hooks: Record<string, { hooks: Hook[] }[]> }).hooks).flatMap(([event, groups]) => groups.flatMap((g) => g.hooks.map((h) => [event, h.command] as const))),
+    Object.entries((settings as { hooks: Record<string, { hooks: Hook[] }[]> }).hooks).map(([event, groups]) => [event, groups[0].hooks[0].command] as const),
   );
 
 Deno.test({
@@ -149,7 +150,8 @@ Deno.test({
       // released: the worktree and its branch go
       for (let i = 0; i < 100 && (await sh('test -e "$1" && echo there || echo gone', worktree)) === 'there'; i++) await new Promise((r) => setTimeout(r, 300));
       assertEquals(await sh('test -e "$1" && echo there || echo gone', worktree), 'gone');
-      assertEquals(await sh('git -C "$1" branch --list "studio/sub-*"', repo), '');
+      // (the chat's next spare worktree, studio/sub-<id>-2, is made in the background and goes when the chat closes: only the landed one is checked)
+      assertEquals(await sh('git -C "$1" branch --list "studio/sub-*-1"', repo), '');
     } finally {
       await swarm.stopWatching().catch(() => {});
       await studio.close().catch(() => {});

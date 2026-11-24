@@ -2593,7 +2593,9 @@ export class Studio {
       if (setup.hooksOff) {
         return { hooks: { ...offHooks(HOOKS_OFF, setup.hooksOff), configDir: setup.configDir, deny: setup.deny ?? WSL_SUBAGENTS_OFF } };
       }
-      const settings = hookSettings(tunnel.forwarder, tunnel.socket, { worktreeCreate: !setup.userWorktreeHook, viaSocket: true });
+      // hook 2: a subagent's shell calls get AIB's cookie, and the distro's helper shuts down what they left (a helper of this build)
+      const shellTag = host.hookShellTag === true;
+      const settings = hookSettings(tunnel.forwarder, tunnel.socket, { worktreeCreate: !setup.userWorktreeHook, viaSocket: true, shellTag });
       if (!settings) return unavailable("the keeper's folder in the distro can't be named in a hook command");
       const id = chatId ?? crypto.randomUUID().replaceAll('-', '');
       const key = artifactKeys.issueHookKey(id);
@@ -2601,7 +2603,7 @@ export class Studio {
       return {
         id,
         env: { AIB_HOOK_KEY: key, AIB_HOOK_CHAT: id, AIB_HOOK_READONLY: setup.readOnly.join(',') }, // a Linux process: nothing is sealed or crosses interop
-        hooks: { settings, readOnly: setup.readOnly, userWorktreeHook: setup.userWorktreeHook, off: '', configDir: setup.configDir },
+        hooks: { settings, readOnly: setup.readOnly, userWorktreeHook: setup.userWorktreeHook, off: '', configDir: setup.configDir, ...(shellTag ? { shellTag } : {}) },
       };
     } catch (error) {
       log.exception(error, 'Could not set up subagent hooks in the distro; the chat\'s subagents are off');
@@ -4155,7 +4157,7 @@ const SUBAGENTS_OFF_NO_BASH = "Subagents that edit files are off: Git Bash is ne
  */
 const MAX_PRE_TOOL_WAITING = 4;
 /** The hook events a WSL chat's forwarder may send through the tunnel (the HTTP routes' set). */
-const WSL_HOOK_EVENTS = /^(pre-tool|worktree-create|post-agent|subagent-stop|codex-pre-tool|codex-subagent-start|codex-subagent-stop|gemini-before-tool)$/;
+const WSL_HOOK_EVENTS = /^(pre-tool|pre-shell|worktree-create|post-agent|subagent-stop|codex-pre-tool|codex-subagent-start|codex-subagent-stop|gemini-before-tool)$/;
 /** A WSL chat whose subagent hooks can't be set up: its editing subagents are turned off (never run unisolated in the folder). */
 const WSL_HOOKS_UNAVAILABLE = 'WSL hooks unavailable';
 const WSL_SUBAGENTS_OFF = { permissions: { deny: ['Agent', 'Task', 'Workflow', 'EnterWorktree'] } };

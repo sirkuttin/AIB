@@ -680,6 +680,11 @@ export class WslHostImpl implements WslHost {
     return tunnel && ready && HOOK_TUNNEL_METHODS.every((m) => ready.methods.includes(m)) ? tunnel : null;
   }
 
+  /** True when the helper reaps (a helper of this build): its keeper knows hook 2, so a subagent's shell calls can be tagged. */
+  get hookShellTag(): boolean {
+    return !!this.hookTunnel && !!this.#readyValue?.methods.includes('subagent.reaps');
+  }
+
   onMcpRequest(handler: (request: HelperMcpRequest['params']) => void): () => void {
     this.#mcpHandlers.add(handler);
     return () => this.#mcpHandlers.delete(handler);

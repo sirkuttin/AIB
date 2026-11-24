@@ -141,6 +141,8 @@ export class FakeWslHost implements WslHost {
   mcpTunnel: { forwarder: string; socket: string } | null = null;
   /** The same tunnel for subagent hooks (null: the helper lacks the subagent.* methods the hooks need). */
   hookTunnel: { forwarder: string; socket: string } | null = null;
+  /** The helper of this build (it has subagent.reaps): its keeper knows hook 2, so a subagent's shell calls are tagged. */
+  hookShellTag = false;
   #mcp = new Set<(request: { rid: string; headers: Record<string, string>; body: string }) => void>();
 
   onMcpRequest(handler: (request: { rid: string; headers: Record<string, string>; body: string }) => void): () => void {
