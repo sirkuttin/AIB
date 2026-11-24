@@ -174,14 +174,10 @@ Deno.test({
     assert(isFile(join(rec[0].path as string, 'so-design.html')), 'the page stays in its worktree');
     assert(!exists(join(p, 'so-design.html')));
     assert(!gitLog(p).includes('AIB: subagent so design'));
-    await aib.turn('SO-NEXT go');
+    // unlanded work: the hand-over tells the main agent ONE plain line with the unlanded_work tool (no other landing messages)
+    await aib.wait('the hand-over line', async () => dumped(aib.stub).includes('so design') && dumped(aib.stub).includes('did not land'), 120);
     const sent = dumped(aib.stub);
-    const at = sent.indexOf('left new files in its worktree');
-    assert(at > -1, 'the main agent was told');
-    const told = sent.slice(at, at + 900);
-    assert(told.includes('so-design.html'));
-    assert(told.includes('so-review.md'));
-    assert(told.includes('merge_helper'));
+    assert(sent.includes('unlanded_work'), 'the main agent was told what to do');
   },
 });
 

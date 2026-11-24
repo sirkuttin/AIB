@@ -297,22 +297,23 @@ Deno.test({
     await using box = new Box();
     const main = await box.aib.connect('claude', box.project, null, {});
     await settle(main);
-    const told = contextLines(box);
+    const woke = wakes(box);
     const { id, path } = box.subagent(main.id, 'inbox-v31-design.html', '<p>mockup</p>\n', 'done', {
       description: 'Inbox v3.1: design',
       files: { 'architect-review-v2.md': '# review\n' },
     });
+    for (let i = 0; i < 4 && !woke.length; i++) await box.swarm.poll(); // unlanded work: ONE line, from the hand-over
+    await until(() => woke.length > 0, 'the parent told', 15);
     await box.swarm.poll();
-    await until(() => told.some((l) => l.includes('Subagent “Inbox v3.1: design” left new files')), 'the parent told', 15);
     await box.swarm.poll();
+    assertEquals(woke.length, 1, JSON.stringify(woke));
     assert(!log(box.project).includes('AIB: subagent Inbox v3.1: design'), 'scratch files landed');
     assert(!exists(pathOf(box.project, 'inbox-v31-design.html')));
     assert(readSubagents(box.state)[id], 'its record is kept');
     assert(exists(pathOf(path, 'inbox-v31-design.html')) && exists(pathOf(path, 'architect-review-v2.md')), 'the files stay in its worktree');
-    const line = told.find((l) => l.includes('left new files'))!;
-    assert(line.includes('inbox-v31-design.html') && line.includes('architect-review-v2.md') && line.includes(path), line);
-    assert(line.includes(`merge_helper with id ${id}`) && line.includes('in 7 days'), line);
+    assert(woke[0].text.includes('Inbox v3.1: design') && woke[0].text.includes('unlanded_work'), woke[0].text);
     assert(notes(main).some((n) => n.startsWith('Didn\'t land subagent “Inbox v3.1: design”: it only left new files')), notes(main).join('\n'));
+    await settle(main); // the hand-over woke the chat (a turn): a landing waits for it to be idle
     // the main agent wants them after all
     const [code, out] = await box.swarm.tool(main.id, 'merge_helper', { helper: id });
     assertEquals(code, 200, JSON.stringify(out));
@@ -340,7 +341,7 @@ Deno.test({
     assertEquals(runGit(box.project, 'show', '--name-only', '--format=', 'HEAD').trim(), 'src/editor.js');
     assert(!exists(pathOf(box.project, 'file-editor-design-v2.md')), 'the scratch note stayed out of the project');
     assert(exists(pathOf(mixed.path, 'file-editor-design-v2.md')) && readSubagents(box.state)[mixed.id], 'kept with its worktree');
-    assert(told.some((l) => l.includes('landed in this folder') && l.includes('file-editor-design-v2.md')), told.join('\n'));
+    assert(told.length === 1 && told[0].includes('landed in this folder') && !told[0].includes('file-editor-design-v2.md'), told.join(' | ')); // the success line only
     assert(notes(main).some((n) => n.includes('1 new file kept in its worktree (file-editor-design-v2.md)')), notes(main).join('\n'));
     await box.swarm.poll();
     assert(exists(mixed.path), 'not released by a later poll while it keeps the file');
@@ -372,15 +373,13 @@ Deno.test({
     const main = await box.aib.connect('claude', box.project, null, {});
     await settle(main);
     const told = contextLines(box);
+    const woke = wakes(box);
     const { id, path } = box.subagent(main.id, 'private/release/beta12-release-notes-draft.md', '# Beta 12\n', 'done', {
       description: 'Release notes draft',
       files: { 'node_modules/pkg/index.js': 'x\n' }, // an install's folder never counts
     });
-    await box.swarm.poll();
-    await until(() => told.some((l) => l.includes('private/release/beta12-release-notes-draft.md')), 'the parent told the path', 15);
-    const line = told.find((l) => l.includes('beta12-release-notes-draft.md'))!;
-    assert(!line.includes('node_modules'), line);
-    await box.swarm.poll();
+    for (let i = 0; i < 4; i++) await box.swarm.poll();
+    assertEquals([woke.length, told.length], [0, 0], 'ignored leftovers post nothing: ' + JSON.stringify([woke, told]));
     assert(exists(pathOf(path, 'private', 'release', 'beta12-release-notes-draft.md')), 'the draft was removed with its worktree');
     assert(readSubagents(box.state)[id], 'its record is kept (it can be resumed)');
     // seven days on: the worktree goes
@@ -498,6 +497,8 @@ Deno.test({
       notes(main).join('\n'),
     );
     // the parent is woken now (a turn of its own), not at the owner's next message (no held next-prompt line)
+    await box.swarm.poll();
+    await box.swarm.poll();
     assertEquals(woke.length, 1, JSON.stringify(woke));
     assert(woke[0].op === 'steer' && woke[0].text.includes('did not land') && woke[0].text.includes('shared.txt'), woke[0].text);
     assert(woke[0].text.includes('studio/sub-test1-landable') && woke[0].text.includes('by hand'), woke[0].text);
@@ -604,7 +605,7 @@ Deno.test({
 
 Deno.test({
   ...T,
-  name: '2026-11-23: a parent that stays busy keeps the landing queued: it says why, wakes the parent once, and lands when the parent is idle',
+  name: '2026-11-24: a parent that stays busy keeps the landing queued: Activity says why, nothing is posted, and it lands when the parent is idle',
   async fn() {
     await using box = new Box();
     const main = await box.aib.connect('claude', box.project, null, {});
@@ -621,16 +622,11 @@ Deno.test({
     const at = Date.now();
     box.swarm.clock = () => at + (LANDING_BUSY_WAKE_S + 5) * 1000;
     await box.swarm.poll();
-    assertEquals(woke.length, 1, JSON.stringify(woke));
-    assert(woke[0].text.includes('has not landed yet: a turn is running') && woke[0].text.includes('studio/sub-test1'), woke[0].text);
-    assert(notes(main).some((n) => n.includes('is waiting to land: a turn is running')), notes(main).join('\n'));
-    await box.swarm.poll();
-    assertEquals(woke.length, 1, 'once, not at every poll');
-    // a long wait is reminded again
+    assertEquals(woke.length, 0, 'waiting for the turn never posts: ' + JSON.stringify(woke));
+    assert(!notes(main).some((n) => n.includes('waiting to land')), notes(main).join(' | '));
     box.swarm.clock = () => at + (LANDING_REMIND_S + LANDING_BUSY_WAKE_S) * 1000;
     await box.swarm.poll();
-    assertEquals(woke.length, 2, JSON.stringify(woke));
-    // the wake is a turn of the parent's own (it steers the held turn to its end); once that turn is over the landing goes
+    assertEquals(woke.length, 0, JSON.stringify(woke));
     await release().catch(() => {});
     await settle(main);
     for (let i = 0; i < 20 && !log(box.project).includes('AIB: subagent sub 1'); i++) {
@@ -676,7 +672,7 @@ Deno.test({
     await until(() => notes(main).some((n) => n.includes('already landed by hand')), 'said plainly: ' + notes(main).join(' | ') + JSON.stringify(woke) + runGit(box.project, 'log', '--oneline', '-n', '4'), 15);
     assertEquals(runGit(box.project, 'rev-parse', 'main').trim(), before, 'nothing new landed');
     assert(!notes(main).some((n) => n.includes("couldn't land")), notes(main).join('\n'));
-    assertEquals(woke.filter((w) => w.text.includes('conflict')).length, 0, JSON.stringify(woke));
+    assertEquals(woke.length, 0, 'landed by hand posts nothing: ' + JSON.stringify(woke));
     assertEquals(runGit(box.project, 'branch', '--list', 'studio/sub-test1-landable').trim(), '');
     await until(() => !readSubagents(box.state)[a.id], 'its worktree released', 15);
   },

@@ -881,10 +881,7 @@ export class Swarm {
   async #landingStep(h: Helper, parentId: string): Promise<void> {
     const L = h.landing;
     if (!L || L.stage !== 'queued') return;
-    if (!L.toldWait && this.clock() / 1000 - L.queuedAt > LANDING_WAIT_NOTE_S) {
-      await this.#patchLanding(h.id, { toldWait: true });
-      await this.note(h.id, 'swarm-merge', `Still waiting for this chat to pause to land “${h.title}”.`);
-    }
+    // waiting for the chat's turn: never posted; Activity shows "Waiting to land: <reason>" and it lands as soon as it can
     if (L.waitsFor) {
       // the user's files may be committed by now: try again now and then, not only when the parent's turn ends (never wait forever)
       if (h.kind === 'subagent' && L.waitsFor === 'touched-dirty' && this.clock() / 1000 - (L.retriedAt ?? L.queuedAt) > LANDING_DIRTY_RETRY_S) {
@@ -928,22 +925,7 @@ export class Swarm {
       log.info('swarm: landing of subagent %s waits: %s', h.id, reason);
       await this.#patchLanding(h.id, { lastRefusal: reason });
     }
-    const waited = this.clock() / 1000 - L.queuedAt;
-    if (waited < LANDING_BUSY_WAKE_S) return;
-    const key = `busy:${Math.floor(waited / LANDING_REMIND_S)}`;
-    if (L.told === key) return;
-    await this.#patchLanding(h.id, { told: key });
-    const branch = h.worktree.branch || '';
-    await this.note(h.id, 'swarm-merge', `Subagent “${h.title}” is waiting to land: ${reason}. It lands when the chat is idle.`);
-    await this.#wakeParent(
-      h,
-      parentId,
-      `waiting-${key.replace(':', '-')}`,
-      `Subagent “${h.title}” finished but has not landed yet: ${reason}. AIB lands it as soon as this chat is idle (no turn, no queued ` +
-        `messages), so finish or pause your turn. ` +
-        (branch ? `Its work is on branch ${branch} (it starts with a snapshot of this folder's uncommitted files, so check it before merging by hand) ` : '') +
-        `in ${h.worktree.path}.`,
-    );
+    // never posted to the chat (owner 2026-11-24): the main agent has nothing to do; Activity shows "Waiting to land: <reason>"
   }
 
   /** The parent is woken for a refusal once per distinct reason (`key`): a retry that refuses the same way says nothing new. */
@@ -1475,19 +1457,14 @@ export class Swarm {
       ? `then call merge_helper with id ${h.id}; AIB also tries again when your next turn ends.`
       : 'AIB tries again when your next turn ends.';
     const kept = Array.isArray(out.kept) ? out.kept.map(String) : [];
-    const until = new Date(this.clock() + KEPT_DAYS * 86400_000).toISOString().slice(0, 10);
-    const keptLine = (lead: string, left = kept) =>
-      `${lead} left new files in its worktree ${h.worktree.path} that AIB did not merge into this folder (pages or notes it wrote at ` +
-      `the top, or files git ignores): ${shown(left, 12)}. Copy them if you want them. Call merge_helper with id ${h.id} when you are ` +
-      `done: it lands the ones git can track and removes the worktree. Otherwise AIB removes it on ${until} (in ${KEPT_DAYS} days).`;
-    if (state === 'scratch' || (state === 'empty' && kept.length)) {
-      // only scratch files (scratchFiles): nothing lands, its worktree stays with them, the main agent is told
-      const left = state === 'scratch' ? files : kept;
+    if (state === 'scratch') {
+      // only scratch pages/notes (scratchFiles): nothing lands, its worktree stays with them. This is unlanded work: #handOff tells the
+      // main agent ONE line (with the unlanded_work tool). Only git-ignored leftovers would not be (they never reach this branch).
+      const left = files;
       await this.registry.update(h.id, (cur) =>
         cur ? { ...cur, landing: null, state: 'failed', reason: 'scratch', sub: { ...cur.sub!, kept: left, keptAt: this.clock() / 1000, landScratch: false } } : null
       );
       await this.note(h.id, 'swarm-merge', `Didn't land subagent “${h.title}”: it only left new files in its worktree (${shown(left)}). They are kept there for ${KEPT_DAYS} days.`);
-      await context(keptLine(`Subagent “${h.title}”`, left));
       return;
     }
     if (state === 'merged') {
@@ -1503,19 +1480,21 @@ export class Swarm {
       );
       await context(
         `While you were idle, your subagent “${h.title}” landed in this folder as one commit on ${target} (files: ${shown(files) || 'none'}). ` +
-          'Re-read those files before editing them.' + (kept.length ? ' ' + keptLine('It also') : ''),
+          'Re-read those files before editing them.',
       );
       if (!kept.length) await this.#release(h);
       return;
     }
     if (state === 'empty') { // no changes (line-ending churn included): its worktree goes, no line (design B4); Activity says "No changes"
       await this.registry.update(h.id, (cur) =>
-        cur ? { ...cur, landing: null, state: 'merged', sub: { ...cur.sub!, empty: !cur.merge, files: cur.merge ? cur.sub!.files : 0, kept: [], landScratch: false } } : null
+        cur
+          ? { ...cur, landing: null, state: 'merged', sub: { ...cur.sub!, empty: !cur.merge, files: cur.merge ? cur.sub!.files : 0, kept, ...(kept.length ? { keptAt: this.clock() / 1000 } : {}), landScratch: false } }
+          : null
       );
-      await this.#release(h);
-      if (out.alreadyLanded) { // its changes are on the branch already (landed by hand): said plainly, not a conflict
+      // leftover git-ignored files (test logs, fixtures): the worktree stays and goes through the normal KEPT_DAYS cleanup, no line
+      if (!kept.length) await this.#release(h);
+      if (out.alreadyLanded) { // its changes are on the branch already (landed by hand): recorded quietly, never posted to the chat
         await this.note(h.id, 'swarm-merge', `Subagent “${h.title}” was already landed by hand: its changes are on ${target}. Nothing to do.`);
-        await context(`Subagent “${h.title}” was already landed by hand: its changes are on ${target} (same patch). Nothing to do.`);
       }
       return;
     }
@@ -1555,14 +1534,7 @@ export class Swarm {
       const tell = tries >= LANDING_TRIES_NOTE && !h.landing?.toldTries;
       await this.#patchLanding(h.id,{ stage: 'queued', lockId: '', tries, lastRefusal: s(out.message), ...(tell ? { toldTries: true } : {}) });
       if (tell) await this.note(h.id, 'swarm-merge', `Couldn't land subagent “${h.title}” yet: ${lower(s(out.message))}. It will try again when the chat is next idle.`);
-      // woken at the first refusal (once per reason): a try that keeps failing is never silent
-      await this.#tellOnce(
-        h,
-        parentId,
-        'retry',
-        `retry:${s(out.code)}`,
-        `Subagent “${h.title}” has not landed yet: ${lower(s(out.message))}. AIB tries again when this chat is next idle; ${retry}`,
-      );
+      // a retryable refusal is waiting, not a failure: never posted (Activity shows "Waiting to land: <reason>"); AIB tries again
       return;
     }
     await clear();
@@ -1795,9 +1767,9 @@ export class Swarm {
       this.#workCheckedAt.set(w.id, now);
       try {
         const status = await this.#workStatus(w);
-        const kept = w.h?.sub?.kept?.length ?? 0;
-        if (!status || status.landed || (!status.files.length && !kept)) continue;
-        const n = status.files.length || kept;
+        // only leftover (git-ignored) files, nothing changed: not unlanded work, no line; the worktree goes by the KEPT_DAYS cleanup
+        if (!status || status.landed || !status.files.length) continue;
+        const n = status.files.length;
         const count = ` (${n} file${n === 1 ? '' : 's'})`;
         const what = why === 'stopped'
           ? `${w.label} stopped before its work landed${count}.`

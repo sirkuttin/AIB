@@ -183,7 +183,7 @@ export async function landSubagentWork(
     } else if (!spec.landScratch) {
       ignored = await ignoredFiles(path);
       kept = await scratchFiles(path, start, changed);
-      if (kept.length && kept.length === changed.length) return { state: 'scratch', files: [...kept, ...ignored] };
+      if (kept.length && kept.length === changed.length) return { state: 'scratch', files: [...kept, ...ignored], pages: kept };
       if (kept.length) {
         head = await withoutPaths(path, head, kept, scratch);
         changed = changed.filter((f) => !kept.includes(f));
