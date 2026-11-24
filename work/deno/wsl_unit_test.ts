@@ -270,7 +270,7 @@ Deno.test('wsl saved sessions: a helper with transcripts.sessions lists them wit
 Deno.test('mcp restricted (a WSL chat): the artifact tools (publish by content or Linux path) and the doc and drawing tools', async () => {
   const ctx = { key: 'k', conversation: 'c', worktree: false, restricted: true, cwd: null, roots: () => [] };
   const listed = await handle({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, ctx) as Json;
-  assertEquals(((listed.result as Json).tools as Json[]).map((t) => t.name), ['publish', 'update', 'list', 'archive', ...DOC_TOOL_NAMES, ...DRAWING_TOOL_NAMES]);
+  assertEquals(((listed.result as Json).tools as Json[]).map((t) => t.name), ['publish', 'update', 'list', 'archive', 'unlanded_work', ...DOC_TOOL_NAMES, ...DRAWING_TOOL_NAMES]);
   const doc = await handle({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'doc_create', arguments: {} } }, ctx) as Json;
   assert(doc.result && !doc.error, 'the doc tool is there (it fails here only because no AIB answers)');
   const full = await handle({ jsonrpc: '2.0', id: 4, method: 'tools/list' }, { ...ctx, restricted: false }) as Json;
@@ -329,6 +329,7 @@ Deno.test('mcp restricted: a WSL chat in its own worktree also gets the merge to
     'archive',
     'merge_into_project',
     'resolve_edit_clash',
+    'unlanded_work', // a WSL chat hands unlanded work like any main chat
     ...DOC_TOOL_NAMES,
     ...DRAWING_TOOL_NAMES,
   ]);
@@ -340,10 +341,10 @@ Deno.test('mcp restricted: a WSL chat in its own worktree also gets the merge to
   }
 });
 
-Deno.test('mcp restricted: a WSL chat never gets the swarm helper tools, even marked main; a Windows main chat does', async () => {
+Deno.test('mcp restricted: a WSL chat never gets the swarm helper tools (only unlanded_work), even marked main; a Windows main chat does', async () => {
   const ctx = { key: 'k', conversation: 'c', worktree: false, restricted: true, main: true, cwd: null, roots: () => [] };
   const listed = await handle({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, ctx) as Json;
-  assertEquals(((listed.result as Json).tools as Json[]).map((t) => t.name), ['publish', 'update', 'list', 'archive', ...DOC_TOOL_NAMES, ...DRAWING_TOOL_NAMES]);
+  assertEquals(((listed.result as Json).tools as Json[]).map((t) => t.name), ['publish', 'update', 'list', 'archive', 'unlanded_work', ...DOC_TOOL_NAMES, ...DRAWING_TOOL_NAMES]);
   const call = await handle({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'start_helper', arguments: {} } }, ctx) as Json;
   assertEquals((call.error as Json).code, -32602);
   const main = await handle({ jsonrpc: '2.0', id: 3, method: 'tools/list' }, { ...ctx, restricted: false, worktree: true }) as Json;

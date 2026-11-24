@@ -260,6 +260,7 @@ Deno.test({
     await box.swarm.poll();
     assert(!log(box.project).includes('AIB: subagent sub 1'), 'a stopped subagent landed');
     assert(notes(main).some((n) => n.startsWith('Subagent “sub 1” was stopped before it finished')), notes(main).join('\n'));
+    await settle(main); // the hand-over woke the chat (a turn): a landing waits for it to be idle
     const [code, out] = await box.swarm.tool(main.id, 'merge_helper', { helper: id }); // swarm off: still accepted for a subagent id
     assertEquals(code, 200, JSON.stringify(out));
     await box.swarm.poll();

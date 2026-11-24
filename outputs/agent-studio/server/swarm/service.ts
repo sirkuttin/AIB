@@ -1768,7 +1768,7 @@ export class Swarm {
       const to = this.#handTo(w, chats, byLasting);
       if (!to) continue; // no chat of the project is open: it waits
       if (orphanOf && to.own) continue; // its chat is open: the landing queue takes it up
-      if (orphanOf && now - w.endedAt < this.handoffOrphanS) continue;
+      if (!to.own && now - w.endedAt < this.handoffOrphanS) continue; // its chat is closed: it may come back first
       if (!this.#seenWork.has(w.id)) {
         this.#seenWork.add(w.id);
         continue;
