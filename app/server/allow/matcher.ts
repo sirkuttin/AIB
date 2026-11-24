@@ -26,6 +26,7 @@ import { isWslRef, locKey, wslLocOf } from '../platform/location.ts';
 import { pinHash } from './pin.ts';
 import { parseBash, parsePwsh, type Part, unwrapCodexPowershell } from './shell.ts';
 import { stripAibPrefix } from './aib_prefix.ts';
+import { askNames, canonicalTool, ruleCovers, toolLabel } from './own_tools.ts';
 
 type Json = Record<string, unknown>;
 const isDict = (v: unknown): v is Json => !!v && typeof v === 'object' && !Array.isArray(v);
@@ -47,6 +48,8 @@ export interface AllowRule {
   folder?: string;
   server?: string;
   tool?: string;
+  /** mcp, AIB's own tools: the action the rule covers (none = every action of the tool). */
+  action?: string;
   host?: string;
   label: string;
   added: number;
@@ -93,6 +96,8 @@ export interface MatchContext {
    * and the common runners), are answered by the built-in "helper copy" rule; nothing else changes for it.
    */
   helper?: { testCmd: string } | null;
+  /** The MCP call from the agent's earlier tool_call with this toolCallId (Codex's permission request carries none of it). */
+  mcp?: { server: string; tool: string; action: string } | null;
 }
 
 const opsOf = (ctx: MatchContext): PathOps => ctx.linux ?? WIN_OPS;
@@ -103,7 +108,8 @@ export type Request =
   | { kind: 'shell'; shell: 'bash' | 'pwsh'; command: string; cwd: string; escalation: string }
   | { kind: 'edit'; paths: string[] }
   | { kind: 'read'; paths: string[] }
-  | { kind: 'mcp'; server: string; tool: string }
+  /** `action`: the `action` field of AIB's own tool call input, '' when the agent's request doesn't show it (fail closed). */
+  | { kind: 'mcp'; server: string; tool: string; action: string }
   | { kind: 'fetch'; host: string; url: string }
   | { kind: 'special'; what: string }
   | { kind: 'unknown'; reason: string };
@@ -124,6 +130,9 @@ export function claudeToolName(params: unknown, seen: string | null): string | n
   const claude = isDict(meta.claudeCode) ? meta.claudeCode : {};
   return isStr(claude.toolName) ? claude.toolName : seen;
 }
+
+/** The `action` of an MCP tool call's input ('' when there is none). */
+const actionOf = (input: Json): string => (isStr(input.action) ? input.action.trim() : '');
 
 /** What a request asks for, by provider (architect review 2.1, 1.1, 4.4). */
 export function readRequest(params: unknown, ctx: MatchContext): Request {
@@ -156,14 +165,19 @@ export function readRequest(params: unknown, ctx: MatchContext): Request {
     }
     if (tool === 'WebFetch' && isStr(raw.url)) return fetchOf(raw.url);
     const mcp = tool ? /^mcp__([^_].*?)__(.+)$/.exec(tool) : null;
-    if (mcp) return { kind: 'mcp', server: mcp[1], tool: mcp[2] };
+    if (mcp) return { kind: 'mcp', server: mcp[1], tool: mcp[2], action: actionOf(raw) };
     return { kind: 'unknown', reason: tool ? `${tool} requests have no rules yet` : 'unknown tool' };
   }
   // Gemini CLI and Antigravity CLI: shapes recorded from the real programs (work/deno/gemini_acp_permission_shapes.json, antigravity_...)
   if (ctx.provider === 'gemini') return geminiRequest(call, locations, options, ctx);
   if (ctx.provider === 'antigravity') return antigravityRequest(call, raw, locations, ctx);
   const invocation = isDict(raw.invocation) ? raw.invocation : raw;
-  if (isStr(invocation.server) && isStr(invocation.tool)) return { kind: 'mcp', server: invocation.server, tool: invocation.tool };
+  if (isStr(invocation.server) && isStr(invocation.tool)) {
+    return { kind: 'mcp', server: invocation.server, tool: invocation.tool, action: actionOf(isDict(invocation.arguments) ? invocation.arguments : {}) };
+  }
+  // codex-acp 2.6.0: the permission request has only {toolCallId, kind: 'execute'} and _meta.is_mcp_tool_approval (recorded in
+  // work/deno/codex_acp_mcp_permission_shape.json); the server, tool and arguments are on the earlier tool_call (ctx.mcp)
+  if (ctx.mcp && !isStr(invocation.server)) return { kind: 'mcp', server: ctx.mcp.server, tool: ctx.mcp.tool, action: ctx.mcp.action };
   if (call.kind === 'edit' || call.kind === 'delete' || call.kind === 'move') {
     if (call.kind !== 'edit') return { kind: 'unknown', reason: `${call.kind} requests have no rules yet` };
     const changes = isDict(raw.changes) ? raw.changes : {};
@@ -366,6 +380,10 @@ export type MatchResult = { allow: true; ruleId: string; label: string; flagged:
 
 class TooSlow extends Error {}
 
+/** The tools whose rules are per action (the whole-tool ones, publish and helper, are auto-approved anyway). */
+const NEW_ACTION_TOOLS = new Set(['artifacts', 'doc', 'drawing']);
+const isOwnServer = (server: string) => server === 'studio_artifact' || server === 'studio-artifact';
+
 /** A Claude ask rule for Edit/Write, WebFetch or this MCP tool (agent_config.ts askTools), or ''. */
 function toolAsked(req: Request, ctx: MatchContext): string {
   const tools = ctx.facts?.askTools;
@@ -374,6 +392,14 @@ function toolAsked(req: Request, ctx: MatchContext): string {
   if (req.kind === 'fetch' && tools.has('fetch')) return 'your Claude settings ask before web fetches';
   if (req.kind === 'mcp' && (tools.has('mcp:*') || tools.has(`mcp:${req.server}`) || tools.has(`mcp:${req.server}__${req.tool}`))) {
     return 'your Claude settings ask before this tool';
+  }
+  // AIB's own tools: an ask rule on an old name (doc_restore) names the new tool + action, and the other way round (own_tools.ts)
+  const own = req.kind === 'mcp' && isOwnServer(req.server) ? canonicalTool(req.tool, req.action) : null;
+  if (own) {
+    for (const t of tools) {
+      const m = /^mcp:studio[-_]artifact__(.+)$/.exec(t);
+      if (m && askNames(m[1], own)) return 'your Claude settings ask before this tool';
+    }
   }
   return '';
 }
@@ -417,7 +443,10 @@ function matchInner(params: unknown, ctx: MatchContext, rules: AllowRule[], buil
   if (askedTool) return { allow: false, reason: askedTool };
   if (req.kind === 'mcp') {
     if (flagged) return { allow: false, reason: 'Claude flagged it in bypass mode' };
-    const r = here.find((x) => x.kind === 'mcp' && x.server === req.server && x.tool === req.tool);
+    const own = isOwnServer(req.server) ? canonicalTool(req.tool, req.action) : null;
+    const r = here.find((x) =>
+      x.kind === 'mcp' && x.server === req.server && (own ? ruleCovers(x, own) : x.tool === req.tool && !x.action)
+    );
     return r ? { allow: true, ruleId: r.id, label: r.label, flagged } : { allow: false, reason: 'no rule' };
   }
   if (req.kind === 'fetch') {
@@ -708,6 +737,23 @@ export function ruleFor(params: unknown, ctx: MatchContext, scope: 'project' | '
     return no('Not available: reads inside the project are answered by the Safe reads built-in rule; others always ask.', false, false);
   }
   if (req.kind === 'mcp') {
+    const own = isOwnServer(req.server) ? canonicalTool(req.tool, req.action) : null;
+    // AIB's own tool: the rule is tool + action ("allow doc read" never allows doc restore). With no readable action no rule can be
+    // saved, and the agent's own Always stays hidden: the card asks every time.
+    if (own && NEW_ACTION_TOOLS.has(own.tool) && !own.action) {
+      return no(`Not available: this agent doesn't show which action of ${own.tool} it asks for.`);
+    }
+    if (own && own.action) {
+      return {
+        offer: true,
+        hideAgentAlways: true,
+        available: true,
+        reason: '',
+        floor: false,
+        rules: [{ ...base, kind: 'mcp', server: req.server, tool: own.tool, action: own.action, label: `${req.server} · ${toolLabel(own)}` }],
+        preview: `Rule: MCP server ${req.server}, tool ${own.tool}, action ${own.action}, any other input, ${where}.`,
+      };
+    }
     const label = `${req.server} · ${req.tool}`;
     return {
       offer: true,

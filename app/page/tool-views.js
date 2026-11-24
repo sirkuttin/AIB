@@ -1075,6 +1075,9 @@
     } else {
       target = title || (name ? prettyName(name) : '');
       code = false;
+      // AIB's own merged tools: the card names the action ("doc · restore"), the thing the owner is really approving
+      const own = /^mcp__studio[-_]artifact__(artifacts|doc|drawing|helper|publish|merge_into_project)$/.exec(String(name || ''));
+      if (own && typeof input.action === 'string' && /^[a-z_]{1,24}$/.test(input.action)) target = own[1] + ' · ' + input.action;
     }
     target = String(target || '').replace(/\s+$/, '');
     if (!target) {

@@ -11,6 +11,7 @@ import type { AllowGate } from '../allow/gate.ts';
 import { promptHash } from '../artifacts/served.ts';
 import { houseRules } from '../allow/brief.ts';
 import type { MatchContext } from '../allow/matcher.ts';
+import { ALL_OWN_NAMES, canonicalTool, isAutoApproved, type ToolAction } from '../allow/own_tools.ts';
 import { stripAibMessage } from '../allow/aib_prefix.ts';
 import { KILL_BY_NAME_REASON, permissionKillsByName } from '../allow/kill_by_name.ts';
 import { factsNow, LinuxFacts, type LinuxNeeds, LinuxView } from '../allow/linux.ts';
@@ -764,7 +765,8 @@ export function sharedFolderNote(title: string): string {
 export const OWN_ARTIFACT_TOOL = /^(?:mcp__)?studio[-_]artifact__(?:publish|update|list|merge_into_project|resolve_edit_clash)\n?$/;
 /** Swarm: AIB's helper tools (artifacts/mcp.ts SWARM_TOOLS); auto-approved like the artifact tools. */
 export const SWARM_TOOL_NAMES = ['helper_providers', 'start_helper', 'helper_status', 'stop_helper', 'merge_helper', 'unlanded_work'];
-const OWN_TOOL_NAMES = new Set(['publish', 'update', 'list', 'merge_into_project', 'resolve_edit_clash', ...SWARM_TOOL_NAMES]);
+/** Every studio_artifact tool name a request can carry, old and new (allow/own_tools.ts). Which of them need no card: isAutoApproved. */
+const OWN_TOOL_NAMES = ALL_OWN_NAMES;
 
 /**
  * The studio_artifact tool a permission request is for, by the adapter's own shape, or ''. Claude Code names it in
@@ -773,7 +775,7 @@ const OWN_TOOL_NAMES = new Set(['publish', 'update', 'list', 'merge_into_project
  * An agent-written title alone counts only for an MCP-shaped call: a command (kind execute) titled like the tool is not AIB's tool
  * (review break 4).
  */
-export function ownToolName(call: Json): string {
+export function ownToolName(call: Json, mcp?: ToolSeen['mcp']): string {
   const meta = isDict(call._meta) ? call._meta : {};
   const claude = isDict(meta.claudeCode) ? meta.claudeCode : {};
   const fromClaude = isStr(claude.toolName) ? claude.toolName : isStr(call.name) ? call.name : '';
@@ -791,6 +793,11 @@ export function ownToolName(call: Json): string {
     const recorded = /^mcp\.studio[-_]artifact\.([a-z_]+)$/.exec(call.title.trim());
     if (recorded && OWN_TOOL_NAMES.has(recorded[1])) return recorded[1];
   }
+  // codex-acp 2.6.0 permission request (recorded: work/deno/codex_acp_mcp_permission_shape.json): only {toolCallId, kind 'execute'} and
+  // _meta.is_mcp_tool_approval (on the request, not the toolCall). The tool is the one on the tool_call with the same toolCallId (`mcp`).
+  if (mcp && (mcp.server === 'studio_artifact' || mcp.server === 'studio-artifact')) {
+    return OWN_TOOL_NAMES.has(mcp.tool) ? mcp.tool : '';
+  }
   if (call.kind === 'execute' || call.kind === 'edit' || call.kind === 'delete' || call.kind === 'move') return '';
   const title = isStr(call.title) ? call.title.trim() : '';
   const codex = /^Tool: studio[-_]artifact\/([a-z_]+)$/.exec(title);
@@ -801,6 +808,26 @@ export function ownToolName(call: Json): string {
   const maki = /^studio[-_]artifact\.([a-z_]+)(?::|$)/.exec(title);
   if (maki && OWN_TOOL_NAMES.has(maki[1])) return maki[1];
   return prefixed(title);
+}
+
+/**
+ * The tool + action of an AIB tool request (allow/own_tools.ts), or null. The action is the `action` field of the call's input, which AIB
+ * reads from Claude's rawInput, from Codex's tool_call (`mcp`), and from Maki's rawInput. Gemini and unknown agents show none: action ''.
+ */
+export function ownToolAction(call: Json, mcp?: ToolSeen['mcp']): ToolAction | null {
+  const name = ownToolName(call, mcp);
+  if (!name) return null;
+  const raw = isDict(call.rawInput) ? call.rawInput : {};
+  const args = isDict(raw.arguments) ? raw.arguments : raw;
+  const action = isStr(args.action) ? args.action : mcp?.action;
+  return canonicalTool(name, action);
+}
+
+/** {server, tool, action} of a Codex MCP tool_call's rawInput ({server, tool, arguments}), or null. */
+function mcpOf(raw: unknown): ToolSeen['mcp'] {
+  if (!isDict(raw) || !isStr(raw.server) || !isStr(raw.tool)) return null;
+  const args = isDict(raw.arguments) ? raw.arguments : {};
+  return { server: raw.server, tool: raw.tool, action: isStr(args.action) ? args.action.trim() : '' };
 }
 
 /** The `_claude/origin` kinds of a cycle Claude Code started on its own (claude-agent-acp's AUTONOMOUS_RESULT_ORIGINS). */
@@ -899,6 +926,8 @@ interface ToolSeen {
   turn: number;
   /** Claude Code: the Agent call this one runs under (_meta.claudeCode.parentToolUseId), or null for the main agent's own. */
   parent?: string | null;
+  /** An MCP call (Codex: the tool_call's rawInput {server, tool, arguments}); its permission request names none of it. */
+  mcp?: { server: string; tool: string; action: string } | null;
 }
 
 /** A tool call that moved to the background (any of the three signals): what the page shows and what Stop may kill. */
@@ -3353,6 +3382,7 @@ export class Connection {
         main,
         turn: this.promptSeq,
         parent: isStr(parent) ? parent : null,
+        mcp: mcpOf(get(update, 'rawInput')),
       };
       this.#tools.set(id, seen);
       while (this.#tools.size > 300) this.#tools.delete(this.#tools.keys().next().value!);
@@ -6747,6 +6777,7 @@ export class Connection {
       return {
         provider: this.provider,
         toolName: seen?.toolName ?? null,
+        mcp: seen?.mcp ?? null,
         mode: isStr(mode) ? mode : null,
         cwd: this.agentCwd,
         project: this.projectRoot || this.cwd,
@@ -6762,6 +6793,7 @@ export class Connection {
     return {
       provider: this.provider,
       toolName: seen?.toolName ?? null,
+      mcp: seen?.mcp ?? null,
       mode: isStr(mode) ? mode : null,
       cwd: worktree ?? this.cwd,
       project: this.projectRoot || this.cwd,
@@ -6986,7 +7018,8 @@ export class Connection {
     if (!(this.mcpServers ?? []).some(isOwnArtifactEntry)) return false;
     const call = isDict(params) ? get(params, 'toolCall') : null;
     if (!isDict(call)) return false;
-    return !!ownToolName(call);
+    const id = get(call, 'toolCallId');
+    return isAutoApproved(ownToolAction(call, isStr(id) ? this.#tools.get(id)?.mcp : null));
   }
 
   permission(key: unknown, option: unknown): void {

@@ -141,7 +141,7 @@ export class AllowStore {
     const same = this.#data.rules.find((r) =>
       r.kind === rule.kind && r.scope === rule.scope && (r.project ?? '') === (rule.project ?? '') &&
       JSON.stringify(r.words ?? null) === JSON.stringify(rule.words ?? null) && (r.folder ?? null) === (rule.folder ?? null) &&
-      (r.server ?? null) === (rule.server ?? null) && (r.tool ?? null) === (rule.tool ?? null) && (r.host ?? null) === (rule.host ?? null)
+      (r.server ?? null) === (rule.server ?? null) && (r.tool ?? null) === (rule.tool ?? null) && (r.action ?? null) === (rule.action ?? null) && (r.host ?? null) === (rule.host ?? null)
     );
     if (same) {
       if (rule.pins) same.pins = { ...same.pins, ...rule.pins };

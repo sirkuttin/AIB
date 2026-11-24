@@ -72,6 +72,11 @@ test('1. an approval names the action plainly: verb, the command / path / URL in
     [{ kind: 'switch_mode', title: 'Leave plan mode', rawInput: { mode: 'default' } }, 'Switch mode default'],
     [{ kind: 'think', title: 'Plan the change' }, 'Think Plan the change'],
     [{ kind: 'other', title: 'mcp__linear__create_issue' }, 'mcp__linear__create_issue'],
+    // AIB's own merged tools: the card names the action
+    [
+      { kind: 'other', title: 'mcp__studio_artifact__doc', rawInput: { action: 'restore', id: 'd' }, _meta: { claudeCode: { toolName: 'mcp__studio_artifact__doc' } } },
+      'doc · restore',
+    ],
     [{}, 'A tool'],
   ];
   for (const [call, line] of cases) assert.equal(TV.actionOf(call).line, line, JSON.stringify(call));
