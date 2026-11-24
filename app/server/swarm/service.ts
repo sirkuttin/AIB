@@ -1837,7 +1837,7 @@ export class Swarm {
       const told = readHandoffs(this.ctx.stateDir);
       const items = Object.values(told).map((t) => ({ t, w: this.#workOf(t.id) })).filter((x) => x.w && !x.t.discarded && here(x.w!))
         .map(({ t }) => ({ work: t.id, title: t.title, why: t.why, files: t.files }));
-      return { items, message: items.length ? 'Land, diff or discard each with unlanded_work.' : 'No unlanded work is waiting.' };
+      return { items, message: items.length ? 'Land, diff or discard each with unlanded_work with action land, unlanded_work with action diff, or unlanded_work with action discard (with a reason).' : 'No unlanded work is waiting.' };
     }
     const id = s(a.work);
     const w = this.#workOf(id);
