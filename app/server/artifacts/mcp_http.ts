@@ -22,6 +22,7 @@
  */
 import * as artifactKeys from './keys.ts';
 import { reply, SERVER_NAME, type ToolContext, urlFromFile } from './mcp.ts';
+import { toolSignature } from './mcp_tools.ts';
 import { isDict, pyJsonDumps, pyStrip } from '../core/py.ts';
 import { getLogger } from '../core/log.ts';
 import { serve, type Server as HttpServer } from '../platform/http_serve.ts';
@@ -385,7 +386,7 @@ export class ArtifactMcpHttp {
       const result = answer.result;
       const message = JSON.parse(text);
       if (!isDict(result) || !Array.isArray(result.tools) || !isDict(message) || message.method !== 'tools/list') return;
-      this.aib.servedTools(conversation, result.tools.map((t) => String(isDict(t) ? t.name : '')));
+      this.aib.servedTools(conversation, result.tools.map((t) => (isDict(t) ? toolSignature(t) : '')));
     } catch (error) {
       log.exception(error, 'Recording the served tools failed');
     }

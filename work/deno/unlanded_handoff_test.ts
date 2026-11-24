@@ -23,7 +23,7 @@ import { readHandoffs } from '../../app/server/swarm/handoff.ts';
 import { pathOf } from '../../app/server/state/paths.ts';
 import { readSubagents, type SubagentRecord } from '../../app/server/subagents/service.ts';
 import { projectChanges } from '../../app/server/worktrees/project_changes.ts';
-import { UNLANDED_TOOLS } from '../../app/server/artifacts/mcp.ts';
+import { servedToolList } from '../../app/server/artifacts/mcp.ts';
 import * as wt from '../../app/server/worktrees/worktrees.ts';
 
 type Json = Record<string, unknown>;
@@ -337,10 +337,16 @@ Deno.test({
   ...T,
   name: 'the tool is offered to main chats and to WSL chats, with one definition for every agent',
   fn() {
-    assertEquals(UNLANDED_TOOLS.map((t) => t.name), ['unlanded_work']);
-    const schema = UNLANDED_TOOLS[0].inputSchema as { properties: Json; required: string[] };
-    assertEquals(Object.keys(schema.properties).sort(), ['action', 'reason', 'work']);
-    assertEquals(schema.required, ['action']);
+    // one definition for every agent: the work_* actions of `helper` (the old unlanded_work answers as a hidden alias)
+    const work = ['work_diff', 'work_discard', 'work_land', 'work_list'];
+    for (const ctx of [{ main: true }, { restricted: true }, { restricted: true, main: true }]) {
+      const helper = servedToolList(ctx).find((t) => t.name === 'helper')!;
+      const schema = helper.inputSchema as { properties: { action: { enum: string[] } } & Json; required: string[] };
+      assert(work.every((a) => schema.properties.action.enum.includes(a)), JSON.stringify(ctx));
+      assertEquals(schema.required, ['action']);
+      assert('work' in schema.properties && 'reason' in schema.properties);
+    }
+    assert(!servedToolList({}).some((t) => t.name === 'helper'), 'a plain chat has no helper tool');
   },
 });
 

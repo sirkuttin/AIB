@@ -33,7 +33,7 @@ const DOC = {
 };
 const PAGE = { type: 'string', description: 'The page: its id or title (doc_read outline lists pages). Default: the first page.' };
 
-const EDIT_HELP = 'Ops, applied in order, all or nothing (a refused call changed nothing):\n' +
+export const EDIT_HELP = 'Ops, applied in order, all or nothing (a refused call changed nothing):\n' +
   '- insert: {"op":"insert","target":{"kind":"blocks","ids":["<id>"]},"side":"after"|"before"|"start"|"end","source":{"from":{"kind":"inline","content":"<markdown>"},"as":"markdown"}}' +
   ' ("start"/"end" = inside a list, item, quote, table or cell; {"kind":"root"} + "start"/"end" = top/bottom of the doc). Into a list give "- item" ' +
   'lines; into a table "| a | b |" rows.\n' +

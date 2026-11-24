@@ -213,8 +213,7 @@ Deno.test({
     const ok = await server.tunneled('good', 'c1', list);
     assertEquals(ok.status, 200);
     const names = ((JSON.parse(ok.body).result as Json).tools as Json[]).map((t) => t.name);
-    assertEquals(names.slice(0, 4), ['publish', 'update', 'list', 'archive']);
-    for (const name of ['doc_create', 'doc_list', 'doc_read', 'doc_edit', 'doc_history', 'drawing_create']) assert(names.includes(name), name);
+    assertEquals(names.slice(0, 4), ['publish', 'artifacts', 'doc', 'drawing']);
     assert(!names.includes('start_helper') && !names.includes('merge_into_project'), 'no swarm tools; merge only in its own copy');
     assertEquals(await server.tunneled('good', 'c1', '{"jsonrpc":"2.0","method":"notifications/initialized"}'), { status: 202, body: '' });
     const entry = tunnelEntry('/r/v/AIB-keeper', '/r/data-x/helper/mcp.sock', 'good', 'c1');

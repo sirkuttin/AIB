@@ -113,7 +113,7 @@ Deno.test({
       ]);
       assertEquals(run.code, 0, run.err);
       const names = (((run.answers.get(2)?.result as Json)?.tools as Json[]) ?? []).map((t) => String(t.name));
-      assert(names.includes('doc_create') && names.includes('drawing_create'), names.join());
+      assert(names.includes('doc') && names.includes('drawing'), names.join());
       const created = toolResult(run.answers.get(3));
       assertEquals(created.isError, false, JSON.stringify(created.data));
       assertEquals(created.data.file, `${PROJECT}/aib-docs/plan/doc.aibdoc`, 'the agent reads a Linux path');

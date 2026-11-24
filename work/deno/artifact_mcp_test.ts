@@ -25,18 +25,16 @@ const DENO_TOOL = [Deno.execPath(), 'run', '-A', '--quiet', MAIN, 'mcp-artifact'
 const frozenPy = new Frozen();
 Deno.env.set('AGENT_STUDIO_TEST', '1');
 /** A Deno reply line with the Deno-only part taken out: the bundled-libraries sentence of publish's description (no /_lib/ in the frozen line). */
-const masked = (line: string) => line.replace(JSON.stringify(OFFLINE_LIBS_NOTE).slice(1, -1), '');
+const masked = (line: string) => line;
 
 type Json = Record<string, unknown>;
 
-/** The doc tools (doc_*) and drawing tools (drawing_*) are Deno only. */
+/** The old doc tools (doc_*) and drawing tools (drawing_*): hidden aliases now (mcp_tools.ts TODO), answered but not listed. */
 const DOCS = [...DOC_TOOL_NAMES, ...DRAWING_TOOL_NAMES];
-/** archive (archive / unarchive this chat's artifacts) is Deno only too. */
-const DENO_ONLY_TOOLS = new Set(['archive', ...DOCS]);
 
 /**
- * A Deno reply line with the Deno-only tools taken out of a tools/list result, re-dumped the way the server dumps it, so it can be
- * compared byte for byte with the frozen line.
+ * A reply line with the tools/list answer blanked, re-dumped the way the server dumps it: the list is not the retired tool's any more
+ * (six consolidated tools; the frozen test below holds the new list), every other line must still be the recorded one byte for byte.
  */
 function maskDenoOnly(line: string): string {
   let reply: Json;
@@ -47,9 +45,10 @@ function maskDenoOnly(line: string): string {
   }
   const tools = (reply?.result as Json | undefined)?.tools;
   if (!Array.isArray(tools)) return line;
-  (reply.result as Json).tools = tools.filter((t) => !DENO_ONLY_TOOLS.has((t as Json).name as string));
+  (reply.result as Json).tools = [];
   return pyJsonDumps(reply, false);
 }
+const isToolList = (line: string) => Array.isArray(((JSON.parse(line)?.result ?? {}) as Json).tools);
 
 interface Recorded {
   method: string;
@@ -261,18 +260,17 @@ Deno.test('initialize negotiation and tools/list', async () => {
   await shim.send({ jsonrpc: '2.0', method: 'notifications/initialized' }); // no reply expected
   assertEquals((await shim.request('ping')).result, {});
   const tools = ((await shim.request('tools/list')).result as Json).tools as Json[];
-  assertEquals(tools.map((t) => t.name), ['publish', 'update', 'list', 'archive', ...DOCS]);
+  assertEquals(tools.map((t) => t.name), ['publish', 'artifacts', 'doc', 'drawing']);
   for (const tool of tools) {
     assertEquals((tool.inputSchema as Json).type, 'object');
     assert((tool.description as string).length > 40);
   }
-  assertEquals((tools[0].inputSchema as Json).required, ['title']);
+  assertEquals((tools[0].inputSchema as Json).required, undefined); // publish has no action; the server asks for title, or id
   assert((tools[0].description as string).includes('studio-artifact://<id>'));
   assert((tools[0].description as string).includes('source code'));
-  for (const path of ['/_lib/mermaid.min.js', '/_lib/chart.umd.min.js', '/_lib/vega-embed.min.js', 'does not load offline']) {
-    assert((tools[0].description as string).includes(path), path); // agents learn the bundled libraries here
+  for (const words of ['Mermaid 11', 'Chart.js 4', 'Vega-Lite 6', 'do not load']) {
+    assert((tools[0].description as string).includes(words), words); // agents learn the bundled libraries here
   }
-  assertEquals((tools[1].inputSchema as Json).required, ['id']);
 });
 
 Deno.test('a "doc" means an AIB doc: the MCP instructions, doc_create and publish say so to any MCP client', async () => {
@@ -288,11 +286,11 @@ Deno.test('a "doc" means an AIB doc: the MCP instructions, doc_create and publis
   }
   const tools = ((await shim.request('tools/list')).result as Json).tools as Json[];
   const describe = (name: string) => tools.find((t) => t.name === name)!.description as string;
-  for (const words of ['AIB doc', 'whenever the user asks for a doc or a document', 'claude.ai Docs', 'Google Docs', 'docs skill']) {
-    assert(describe('doc_create').includes(words), `doc_create: ${words}`);
+  for (const words of ['AIB doc', 'any doc or document the user asks for', 'claude.ai Docs', 'Google Docs', 'docs skill']) {
+    assert(describe('doc').includes(words), `doc: ${words}`);
   }
-  assert(describe('publish').includes('Do NOT use it when the user asks for a doc or a document'), 'publish sends docs to doc_create');
-  assert(describe('publish').includes('make an AIB doc with doc_create'));
+  assert(describe('doc').startsWith('AIB doc'), 'the words agents search for come first');
+  assert(describe('publish').includes('Not for docs, plans, specs or notes (use doc)'), 'publish sends docs to doc');
 });
 
 Deno.test('the ACP system prompt says the same about docs as the MCP instructions', () => {
@@ -429,12 +427,12 @@ Deno.test('a non-loopback URL is never called', async () => {
 Deno.test('worktree tools are offered only to a worktree chat', async () => {
   await using lab = new Lab();
   const plain = lab.shim();
-  assertEquals((((await plain.request('tools/list')).result as Json).tools as Json[]).length, 4 + DOCS.length);
+  assertEquals((((await plain.request('tools/list')).result as Json).tools as Json[]).length, 4);
   assertEquals(((await plain.request('tools/call', { name: 'merge_into_project', arguments: {} })).error as Json).code, -32602);
   const shim = lab.shim(lab.fake.url, { STUDIO_WORKTREE: '1' });
   const names = (((await shim.request('tools/list')).result as Json).tools as Json[]).map((t) => t.name);
-  assertEquals(names, ['publish', 'update', 'list', 'archive', 'merge_into_project', 'resolve_edit_clash', ...DOCS]);
-  const merged = await shim.call('merge_into_project', {});
+  assertEquals(names, ['publish', 'artifacts', 'doc', 'drawing', 'merge_into_project']);
+  const merged = await shim.call('merge_into_project', { action: 'merge' });
   assertEquals(firstText(merged), 'Merged 2 commits into main. Your copy now continues from the new main.\nTell the user.');
   assertEquals(lab.fake.requests.at(-1)!.body, { conversationId: 'conv1', action: 'merge' });
   lab.fake.reply = [409, { error: 'The chat is busy' }];
@@ -463,8 +461,11 @@ Deno.test('worktree tools are offered only to a worktree chat', async () => {
   );
   const listedTools = ((await shim.request('tools/list')).result as Json).tools as Json[];
   const description = String(listedTools.find((t) => t.name === 'merge_into_project')!.description);
-  assert(description.includes('merge on your own, without asking') && !description.includes('Merge into main?'), 'the agent merges on its own, no ask');
-  assert((await shim.call('resolve_edit_clash', { action: 'nope' })).isError);
+  assert(description.includes('no need to ask') && !description.includes('Merge into main?'), 'the agent merges on its own, no ask');
+  assert((await shim.call('resolve_edit_clash', { action: 'nope' })).isError); // the old name still answers
+  assert((await shim.call('merge_into_project', { action: 'nope' })).isError);
+  lab.fake.reply = [200, { message: 'No markers left.' }];
+  assertEquals(firstText(await shim.call('merge_into_project', { action: 'check' })), 'No markers left.');
 });
 
 // ---- frozen answers: the server answers the same lines as the recorded ones ------------------------------------
@@ -616,7 +617,10 @@ Deno.test('differential: artifact_mcp.py and the Deno server give the same repli
   const pyRequests = await frozenPy.frozenList('script-requests') as Recorded[];
   const [denoLines, denoRequests] = await runScript(DENO_TOOL, lab.dir, lab.fake, env);
   assertEquals(denoLines.length, pyLines.length);
-  for (let i = 0; i < pyLines.length; i++) assertEquals(maskDenoOnly(masked(denoLines[i])), pyLines[i], `reply ${i + 1}`);
+  for (let i = 0; i < pyLines.length; i++) {
+    if (isToolList(denoLines[i])) continue; // the recorded list is the retired tool's (a fingerprint): the new lists are held below
+    assertEquals(maskDenoOnly(masked(denoLines[i])), pyLines[i], `reply ${i + 1}`);
+  }
   assertEquals(denoRequests.length, pyRequests.length);
   denoRequests.forEach((request, i) => assertEquals(request, pyRequests[i], `request ${i + 1}`));
   assert(pyRequests.length > 30, 'the script reached the fake AIB');
@@ -665,7 +669,7 @@ Deno.test('differential: tools/list without a worktree, unreachable AIB, URL fil
     // what the retired tool answered, with the hang-up reason normalised (fixtures/frozen/artifact_mcp.json)
     const theirs = await frozenPy.frozenList(`unreachable-${i}`);
     const mine = await twoLines(DENO_TOOL);
-    assertEquals(mine.map((l) => reason(maskDenoOnly(masked(l)))), theirs, JSON.stringify([url, extra, key, conversation]));
+    assertEquals(mine.slice(1).map((l) => reason(maskDenoOnly(masked(l)))), (theirs as unknown[]).slice(1), JSON.stringify([url, extra, key, conversation]));
   }
 });
 
@@ -868,10 +872,10 @@ Deno.test('HTTP tool: initialize, tools/list without a worktree, relative paths 
   const notified = await post(plain.url, JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }));
   assertEquals([notified.status, await notified.text()], [202, '']);
   const tools = (await (await post(plain.url, rpc(2, 'tools/list'))).json()).result.tools as Json[];
-  assertEquals(tools.map((t) => t.name), ['publish', 'update', 'list', 'archive', ...DOCS]);
+  assertEquals(tools.map((t) => t.name), ['publish', 'artifacts', 'doc', 'drawing']);
   const closed = httpTool(lab, null); // the conversation is not open here: no session folder, no worktree tools
   const listed = (await (await post(closed.url, rpc(3, 'tools/list'))).json()).result.tools as Json[];
-  assertEquals(listed.length, 4 + DOCS.length);
+  assertEquals(listed.length, 4);
   const relative = (await (await post(closed.url, call(4, 'publish', { title: 'x', path: 'page.html' }))).json()).result;
   assertEquals(relative.isError, true);
   assert(firstText(relative).includes('absolute'), firstText(relative));

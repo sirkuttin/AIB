@@ -23,6 +23,7 @@ import {
 import { pidAlive } from '../../app/server/host/host_client.ts';
 import * as artifactKeys from '../../app/server/artifacts/keys.ts';
 import { ServedRecord, toolsHash } from '../../app/server/artifacts/served.ts';
+import { toolSignature } from '../../app/server/artifacts/mcp_tools.ts';
 import { setSwarmEnabled } from '../../app/server/swarm/settings.ts';
 import { APP_VERSION } from '../../app/server/core/app.ts';
 
@@ -419,7 +420,7 @@ async function toolNames(aib: Aib, id: string): Promise<string[]> {
   const key = artifactKeys.issue(id)!;
   const answer = await aib.artifactMcpHttp().tunneled(key, id, JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }));
   assertEquals(answer.status, 200);
-  return (((JSON.parse(answer.body).result as Json).tools) as Json[]).map((t) => String(t.name));
+  return (((JSON.parse(answer.body).result as Json).tools) as Json[]).map(toolSignature); // name:actions, what the served record keeps
 }
 
 Deno.test({
@@ -440,13 +441,14 @@ Deno.test({
     assert(r && r.ready && !r.worktree);
     assertEquals(r.swarm?.role, 'main', 'the taken-over chat is main again (it was not, outside a worktree)');
     let names = await toolNames(b, r.id);
-    for (const tool of ['start_helper', 'helper_status', 'stop_helper', 'merge_helper', 'unlanded_work']) assert(names.includes(tool), `${tool} listed`);
-    assert(!names.includes('merge_into_project'), 'no worktree: no merge tool, as before');
+    const helperActions = (list: string[]) => list.find((n) => n.startsWith('helper:'))?.slice('helper:'.length).split(',') ?? [];
+    for (const action of ['start', 'status', 'stop', 'merge', 'work_land']) assert(helperActions(names).includes(action), `helper ${action} listed`);
+    assert(!names.some((n) => n.startsWith('merge_into_project')), 'no worktree: no merge tool, as before');
 
     // Owner rule: helpers are never turned off. A main chat lists the tools whatever the setting; the route refuses the call.
     setSwarmEnabled(lab.state, false);
     names = await toolNames(b, r.id);
-    assert(names.includes('start_helper'), 'listed with the setting off: the list never changes under a chat');
+    assert(helperActions(names).includes('start'), 'listed with the setting off: the list never changes under a chat');
   },
 });
 

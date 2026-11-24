@@ -12,12 +12,12 @@ const DRAWING = {
     '![caption](assets/<id>.excalidraw.svg).',
 };
 
-const GUARDS = 'The user may be drawing at the same time. Every change to an existing shape needs "ifV" = its v from drawing_read; ' +
+export const GUARDS = 'The user may be drawing at the same time. Every change to an existing shape needs "ifV" = its v from drawing_read; ' +
   'stale (the shape changed since your read: their change wins, re-read and decide again), user_editing (the user has it selected, ' +
   'is dragging it or typing in it: leave it, try later or pick another), needs_allowDetach (the user made it, or their arrows are ' +
   'attached: delete only when the user asked). A refused call changed nothing.';
 
-const OPS_HELP = 'Ops, applied in order, all or nothing:\n' +
+export const OPS_HELP = 'Ops, applied in order, all or nothing:\n' +
   '- {"op":"add_box","text":"Build","near":"<id>"|"in":"<frame id>"|"at":{"x":0,"y":0},"shape":"rectangle"|"ellipse"|"diamond",' +
   '"style":{...}} (placed by the server in free space: never on top of the user\'s shapes; with no place given, to the right of the rest)\n' +
   '- {"op":"add_arrow","from":"<id>","to":"<id>","label":"then"} (bound: it follows the boxes when they move)\n' +

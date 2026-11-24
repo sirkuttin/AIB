@@ -101,8 +101,8 @@ Deno.test({
       assertEquals(run.code, 0, run.err);
       assertEquals(((run.answers.get(1)?.result as Json)?.serverInfo as Json)?.name, 'studio_artifact', JSON.stringify([...run.answers]));
       const names = toolNames(run.answers.get(2));
-      assert(names.includes('publish') && names.includes('archive'), names.join());
-      assert(names.includes('doc_create') && !names.includes('start_helper'), 'the doc tools are on in WSL; helper chats stay off');
+      assert(names.includes('publish') && names.includes('artifacts'), names.join());
+      assert(names.includes('doc') && !names.includes('start_helper'), 'the doc tools are on in WSL; helper chats stay off');
       if (c.worktree) assert(names.includes('merge_into_project'), 'a chat in its own copy can merge');
 
       // interop off for the forwarder alone: no Windows program can start there, and the tunnel still answers

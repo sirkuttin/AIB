@@ -62,7 +62,7 @@ import * as artifactKeys from '../artifacts/keys.ts';
 import { sealOrPlain } from '../state/sealed.ts';
 import { artifactToolCommand } from '../artifacts/mcp.ts';
 import { ArtifactMcpHttp, FORWARD_FILE, forwardEntry, HOOK_EVENT_HEADER, HOOK_KEY_HEADER, HOOK_NONCE_HEADER, httpEntry, ownForwardFile, ownTunnelEntry, tunnelEntry } from '../artifacts/mcp_http.ts';
-import { toolNames, WSL_TOOL_GROUPS } from '../artifacts/mcp.ts';
+import { toolSignatures, WSL_TOOL_GROUPS } from '../artifacts/mcp.ts';
 import { ServedRecord, staleReasons } from '../artifacts/served.ts';
 import { GEMINI_TRUST_ENV, GEMINI_TRUST_FILE, trustFolders } from '../agents/gemini_trust.ts';
 import { headerOf, mcpTunnelGate, type TunnelAnswer } from '../wsl/mcp_tunnel.ts';
@@ -3165,7 +3165,7 @@ export class Aib {
     if (!this.served || c.closed || c.swarm?.role === 'helper' || !c.keeper) return [];
     if (!this.options.noArtifactTool && !this.#closed) this.artifactMcpHttp(); // its entries count as AIB's own only once this AIB serves them
     const own = (c.mcpServers ?? []).some(isOwnArtifactEntry);
-    const tools = own ? toolNames({ restricted: !!c.wsl, worktree: !!c.worktree, main: this.#isMain(c) }) : null;
+    const tools = own ? toolSignatures({ restricted: !!c.wsl, worktree: !!c.worktree, main: this.#isMain(c) }) : null;
     return staleReasons(this.served.get(c.id), { tools, promptBase: own ? c.promptBase() || null : null }, c.adopted);
   }
 

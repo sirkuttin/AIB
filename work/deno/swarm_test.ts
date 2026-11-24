@@ -166,9 +166,12 @@ Deno.test('tools/list: the swarm tools only for a main chat', async () => {
   const names = async (c: ToolContext) =>
     (((await handle({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, c))!.result as Json).tools as Json[]).map((t) => t.name);
   const main = await names(ctx(true, true));
-  for (const t of ['helper_providers', 'start_helper', 'helper_status', 'stop_helper', 'merge_helper']) assert(main.includes(t), t);
+  assert(main.includes('helper') && main.includes('merge_into_project'), main.join());
   const helper = await names(ctx(false, false));
-  assert(!helper.includes('start_helper') && !helper.includes('merge_into_project'));
+  assert(!helper.includes('helper') && !helper.includes('merge_into_project'));
+  const listed = (await handle({ jsonrpc: '2.0', id: 3, method: 'tools/list' }, ctx(true, true)))!.result as Json;
+  const actions = ((((listed.tools as Json[]).find((t) => t.name === 'helper')!.inputSchema as Json).properties as Json).action as Json).enum;
+  for (const a of ['providers', 'start', 'status', 'stop', 'merge']) assert((actions as string[]).includes(a), a);
   const call = await handle(
     { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'start_helper', arguments: BRIEF } },
     ctx(false, false),

@@ -220,7 +220,7 @@ Deno.test({
     await until(() => replies.length === 1, 'the reply', 10);
     assertEquals([replies[0].rid, replies[0].status], ['r1', 200]);
     const names = ((JSON.parse(String(replies[0].body)).result as Json).tools as Json[]).map((t) => t.name);
-    assert(names.includes('publish') && names.includes('archive') && names.includes('doc_create') && !names.includes('start_helper'), names.join());
+    assert(names.includes('publish') && names.includes('artifacts') && names.includes('doc') && !names.includes('start_helper') && !names.includes('doc_create'), names.join());
 
     // A wrong key, or the key of a chat in another distro, is refused (401), and no tool runs.
     lab.host.mcpRequest({ rid: 'r2', headers: { ...headers, 'X-Studio-Artifact-Key': 'wrong' }, body });

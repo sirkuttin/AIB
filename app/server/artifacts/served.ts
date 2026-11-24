@@ -29,7 +29,9 @@ export interface Served {
   app: string;
 }
 
-/** A short stable hash of the sorted tool names. */
+export { toolSignature } from './mcp_tools.ts';
+
+/** A short stable hash of the sorted tool signatures: each tool's name and its action list (toolSignature in mcp_tools.ts; review M6). */
 export function toolsHash(names: readonly string[]): string {
   return createHash('sha256').update([...names].sort().join('\n')).digest('hex').slice(0, 16);
 }
