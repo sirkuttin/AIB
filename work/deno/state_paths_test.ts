@@ -314,7 +314,7 @@ Deno.test("a fake environment or home is not the real folder, so it resolves", (
 });
 
 // ---- the data folder rename (2026-11-24, work/migrate/rename_data_folder.ts) ----------------------
-Deno.test("data folder: the new name when it exists, the old one when only it exists, never both", () => {
+Deno.test("data folder: the old one whenever it exists (the new name may be the install folder), else the new name; never both", () => {
   using tmp = tempRoot();
   const main = checkout(tmp.root, "main", false);
   const env = fakeEnv(tmp.root);
@@ -348,10 +348,18 @@ Deno.test("data folder: the new name when it exists, the old one when only it ex
     );
     assertEquals(resolve(pathOf(local, "AIB"), env, main).isUserFolder, true);
   }
-  // both: the new one only
+  // both (on Windows %LOCALAPPDATA%\AIB is also the install folder): the old one, never the new
   Deno.mkdirSync(pathOf(local, "AIB"), { recursive: true });
   Deno.mkdirSync(pathOf(xdg, "aib"), { recursive: true });
   Deno.writeTextFileSync(pathOf(local, "AgentStudio", "old.txt"), "old");
+  assertEquals(userStateDir(env, "win32"), pathOf(local, "AgentStudio"));
+  assertEquals(
+    userStateDir(env, "linux", pathOf(tmp.root, "h")),
+    pathOf(xdg, "agent-studio"),
+  );
+  // the old one gone (renamed away): the new one
+  Deno.renameSync(pathOf(local, "AgentStudio"), pathOf(local, "AgentStudio.old"));
+  Deno.renameSync(pathOf(xdg, "agent-studio"), pathOf(xdg, "agent-studio.old"));
   assertEquals(userStateDir(env, "win32"), pathOf(local, "AIB"));
   assertEquals(
     userStateDir(env, "linux", pathOf(tmp.root, "h")),

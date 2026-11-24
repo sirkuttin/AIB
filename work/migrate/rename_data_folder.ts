@@ -807,6 +807,11 @@ export function parseArgs(argv: string[]): Opts | string {
   };
 }
 
+if (import.meta.main && !Deno.env.get("AIB_RENAME_TEST")) {
+  // ON HOLD 2026-11-24: on Windows the new name %LOCALAPPDATA%\AIB is the app's install folder; a new data-folder name is pending.
+  console.error("This script is on hold: the new data-folder name collides with AIB's install folder. Nothing was changed.");
+  Deno.exit(2);
+}
 if (import.meta.main) {
   const opts = parseArgs(Deno.args);
   if (typeof opts === "string") {

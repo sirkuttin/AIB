@@ -237,7 +237,9 @@ export function userStateDir(
   homeDir?: string,
 ): string {
   const { current, legacy } = userStateDirNames(env, platform, homeDir);
-  return !exists(current) && isDir(legacy) ? legacy : current;
+  // HOTFIX 2026-11-24: on Windows %LOCALAPPDATA%\AIB is the app's own install folder (aib.exe, app/), so its existence says
+  // nothing about the data. The old-named folder wins whenever it exists; the new name is used only by a PC that has no old one.
+  return isDir(legacy) ? legacy : current;
 }
 
 /** Both possible names of the per-user folder (for "never touch AIB's own data" guards, which must cover the old and the new name). */
