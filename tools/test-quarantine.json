@@ -1,0 +1,4 @@
+{
+ "_about": "A quarantined test still runs and is reported, but a failure does not fail the run. Entry: {\"file\": \"x_test.ts\", \"test\": \"exact test name, or * for the whole file\", \"reason\": \"why\", \"since\": \"YYYY-MM-DD\"}. The summary lists what failed here.",
+ "tests": []
+}

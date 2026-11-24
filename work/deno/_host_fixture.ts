@@ -9,6 +9,10 @@ import { HostClient, pidAlive, readInfo, stopHost } from '../../outputs/agent-st
 import { APP_ROOT } from '../../outputs/agent-studio/server/core/app.ts';
 import { refusedPort, waitListenedPort } from './_ports.ts';
 import { projectKey } from '../../outputs/agent-studio/server/desktop/project_delete.ts';
+import { ensureHiddenConsole } from '../../outputs/agent-studio/server/platform/console.ts';
+
+// A test process with no console must not flash one when the fixture starts its helper programs: windowless, never visible.
+ensureHiddenConsole({ visibleFallback: false });
 
 const WIN = Deno.build.os === 'windows';
 export const SEP = WIN ? '\\' : '/';

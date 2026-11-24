@@ -19,6 +19,8 @@
     "test": "deno run -A ../../tools/test.ts",
     "test:fast": "deno run -A ../../tools/test.ts --fast",
     "test:slow": "deno run -A ../../tools/test.ts --slow",
+    "test:smoke": "deno run -A ../../tools/test.ts --smoke",
+    "test:prerelease": "deno run -A ../../tools/test.ts --prerelease",
     "test:affected": "deno run -A ../../tools/test.ts --affected",
     "test:serial": "deno test -A ../../work/deno/",
     "test:update-e2e": "AIB_SLOW_TESTS=1 deno test -A ../../work/deno/keeper_update_e2e_test.ts",

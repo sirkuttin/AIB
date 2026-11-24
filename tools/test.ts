@@ -10,7 +10,12 @@
  * processes and sockets and can miss a deadline when every core is busy; such a file passing alone is listed as
  * "timing-sensitive" in the summary (look at it, it is a latent race), and a file failing alone too fails the run.
  */
-import { affected, type Affected, buildGraph, changedFiles, defaultBase, ROOT, why } from './affected.ts';
+import { ensureHiddenConsole } from '../outputs/agent-studio/server/platform/console.ts';
+import { type Affected, affected, buildGraph, changedFiles, defaultBase, ROOT, why } from './affected.ts';
+
+// No console (a runner started by an agent, a service or a hidden launcher): give it a windowless one, so git, python, taskkill, deno
+// and wsl.exe start without flashing a window. Never a visible fallback.
+if (import.meta.main) ensureHiddenConsole({ visibleFallback: false });
 
 const HERE = new URL('.', import.meta.url);
 const TESTS = new URL('../work/deno/', HERE);
@@ -21,6 +26,9 @@ const HELP = `Usage (from outputs/agent-studio):
   deno task test                every Deno test file: the full suite, for a merge or a release batch
   deno task test:fast           without the slow tier (SLOW in tools/test.ts)
   deno task test:slow           only the slow tier
+  deno task test:smoke          the quick check (about 2 min): every Deno file that takes under 5 s in the recent logs, plus the node
+                                page tests. Run it after every step
+  deno task test:prerelease     before a feed build or a release: the full suite, then the perf files alone, then test:update-e2e
   deno task test:affected       only the tests that cover what you changed, in every suite (Deno, node page tests, the
                                 keeper's Go tests, the Python contract and worktree e2e runs): use this while you build
   deno task test:serial         the old way: one process, one file after another
@@ -29,7 +37,9 @@ const HELP = `Usage (from outputs/agent-studio):
 Options:
   --jobs N        files at once (default 3: more parallel load has crashed the owner's PC)
   --junit DIR     a JUnit file per test file
-  --no-rerun      do not run a failed file again on its own
+  --no-rerun      do not run a failed file's failed tests again on their own
+  --logs DIR      read per-file seconds from DIR/*deno-all.log too (default: this worktree's .test-logs and the main checkout's)
+  --write-timings write tools/test-timings.json (the committed fallback weights) from those logs and exit
   --no-log        do not write the log file (see Logs)
   --wsl           also run the WSL test files (their names have "wsl"); on by default on Windows, off elsewhere, where they
                   need a distro and wsl.exe and fail. A word you name that has "wsl" in it runs them too
@@ -51,6 +61,15 @@ Affected tests (--affected):
   file reached only through a broad rule is listed, not run, unless --all-slow. A change to deno.json, deno.lock,
   package-lock.json or go.mod/go.sum runs everything. Full runs stay for release batches.
 
+Timings, reruns, quarantine, tiers:
+  Scheduling weights are per-file seconds (mean of the newest 3 full runs) read from .test-logs/*deno-all.log in this worktree and in
+  the main checkout. Without logs it uses tools/test-timings.json (written by --write-timings), and only then the SLOW/HINT tables.
+  A file that fails in the pool gets only its failed tests run again (deno test --filter), two files at a time. A test that failed
+  in the pool and passed alone is a flake: it is added to .test-logs/flaky.json and listed in the summary. A test listed in
+  tools/test-quarantine.json still runs and is reported, but a failure does not fail the run.
+  The perf files (PERF in tools/test.ts) leave the normal runs: test:prerelease runs them alone, after everything else. Named on the
+  command line they run too. attention_modes_test runs one of its three modes per run, in rotation (--attention-all runs all three).
+
 Logs:
   Every run writes .test-logs/<YYYYMMDD-HHMMSS>-<suite>.log in the worktree (git-ignored through .git/info/exclude): first
   line "commit <HEAD hash> clean=<yes|no>", then the whole output (each file's own output too), and last a one-line summary.`;
@@ -62,6 +81,7 @@ Logs:
 /** A test file still running after this long (or 5x its SLOW seconds) is killed and fails: a hang never stalls a run. */
 const FILE_DEADLINE_SECONDS = 600;
 
+/** Fallback only: files known to be slow, used when there are no timings. Also what `--slow` and `--fast` split on. */
 export const SLOW: Record<string, number> = {
   'scroll_e2e_test.ts': 250, // 31 chat scrolling scenarios, each a Studio + headless Chrome; known-failing ones ignored
   'layout_e2e_test.ts': 200, // layout audit: scroll containers and resizable panes against size changes, each a Studio + headless Chrome
@@ -88,7 +108,7 @@ export const SLOW: Record<string, number> = {
   'remote_setup_page_test.ts': 55, // Settings > Remote control's setup steps in a headless Chrome with a fake Tailscale
   'attention_modes_test.ts': 60, // the attention watcher through the real agent hosts: in-process, the keeper (Go) and a split host
 };
-/** Rough serial seconds of the slower fast-tier files, so they start first too. Unlisted files count as 3 s. */
+/** Fallback only (when there are no logs and no tools/test-timings.json): rough serial seconds of the slower fast-tier files. Unlisted files count as 3 s. */
 const HINT: Record<string, number> = {
   'connection_parity_test.ts': 14,
   'host_lifecycle_test.ts': 14,
@@ -120,20 +140,126 @@ export const SHARDS: Record<string, number> = {
   'worktree_sync_test.ts': 3,
   'worktree_merge_clash_test.ts': 2,
 };
-const weight = (file: string) => (SLOW[file] ?? HINT[file] ?? 3) / (SHARDS[file] ?? 1);
+/** The perf files: long soaks that measure CPU and memory, so they need a quiet machine. They run alone, in test:prerelease. */
+export const PERF = ['perf_e2e_test.ts', 'perf_reading_e2e_test.ts'];
+/** attention_modes_test.ts: three tests, one per host mode. A normal run runs one (rotating); test:prerelease runs all three. */
+const ATTENTION_FILE = 'attention_modes_test.ts';
+const ATTENTION_MODES = ['in-process', 'keeper', 'split agent host'];
+/** A file is in the smoke tier when it takes less than this many seconds. */
+const SMOKE_SECONDS = 5;
+/** Files rerun at a time after the pool. */
+const RERUN_JOBS = 2;
+const TESTS_FROM_APP = '../../work/deno/';
+/** Windows refuses a command line over 32,000 characters; the type check is split before this many. */
+const CHECK_COMMAND_CHARS = 20000;
+const TIMINGS_JSON = new URL('./test-timings.json', HERE);
+const QUARANTINE_JSON = new URL('./test-quarantine.json', HERE);
+
+/** Per-file total seconds (all shards added) from the newest `count` full-run logs: mean over the logs that have the file. */
+export function timingsFromLogs(
+  dirs: string[],
+  count = 3,
+): { seconds: Record<string, number>; logs: string[] } {
+  const logs: { name: string; path: string }[] = [];
+  for (const dir of dirs) {
+    try {
+      for (const e of Deno.readDirSync(dir)) {
+        if (e.isFile && /-deno-all\.log$/.test(e.name)) {
+          logs.push({ name: e.name, path: `${dir}/${e.name}` });
+        }
+      }
+    } catch { /* no such folder */ }
+  }
+  logs.sort((a, b) => b.name.localeCompare(a.name));
+  const sums: Record<string, number[]> = {};
+  const used: string[] = [];
+  for (const log of logs.slice(0, count)) {
+    const perFile: Record<string, number> = {};
+    for (
+      const m of Deno.readTextFileSync(log.path).matchAll(
+        /^ok +([\d.]+) s  (\S+_test\.ts)(?: \[\d+\/\d+\])?  /gm,
+      )
+    ) {
+      perFile[m[2]] = (perFile[m[2]] ?? 0) + Number(m[1]);
+    }
+    used.push(log.name);
+    for (const [f, sec] of Object.entries(perFile)) (sums[f] ??= []).push(sec);
+  }
+  const seconds: Record<string, number> = {};
+  for (const [f, list] of Object.entries(sums)) {
+    seconds[f] = Math.round(
+      list.reduce((a, b) => a + b, 0) / list.length * 10,
+    ) / 10;
+  }
+  return { seconds, logs: used };
+}
+
+/** Folders that may hold logs: this worktree's, then the main checkout's (a fresh worktree has none of its own). */
+function logDirs(extra: string[] = []): string[] {
+  const dirs = [...extra, `${ROOT}/.test-logs`];
+  const main = gitText(['worktree', 'list', '--porcelain']).match(
+    /^worktree (.+)$/m,
+  )?.[1];
+  if (main) dirs.push(`${main}/.test-logs`);
+  return dirs.filter((d, i) => dirs.indexOf(d) === i);
+}
+
+let TIMES: { seconds: Record<string, number>; source: string } | null = null;
+/** Seconds per file: the newest logs, else the committed tools/test-timings.json, else {} (then SLOW/HINT/3 s apply). */
+function times(
+  extraDirs: string[] = [],
+): { seconds: Record<string, number>; source: string } {
+  if (TIMES && !extraDirs.length) return TIMES;
+  const fromLogs = timingsFromLogs(logDirs(extraDirs));
+  if (Object.keys(fromLogs.seconds).length) {
+    return TIMES = {
+      seconds: fromLogs.seconds,
+      source: `logs ${fromLogs.logs.join(', ')}`,
+    };
+  }
+  try {
+    const j = JSON.parse(Deno.readTextFileSync(TIMINGS_JSON));
+    return TIMES = {
+      seconds: j.seconds ?? {},
+      source: `tools/test-timings.json (${j.generated ?? '?'})`,
+    };
+  } catch {
+    return TIMES = {
+      seconds: {},
+      source: 'SLOW/HINT tables (no logs, no tools/test-timings.json)',
+    };
+  }
+}
+/** Total serial seconds of a file: from the timings, else the SLOW/HINT tables, else 3. */
+const seconds = (file: string) => times().seconds[file] ?? SLOW[file] ?? HINT[file] ?? 3;
+const weight = (file: string) => seconds(file) / (SHARDS[file] ?? 1);
 
 /** A pool entry: a file, or one shard of it ("worktree_sync_test.ts [2/3]"). */
 type Entry = { file: string; shard?: [number, number] };
 const label = (e: Entry) => e.shard ? `${e.file} [${e.shard[0]}/${e.shard[1]}]` : e.file;
 const entries = (files: string[], shard: boolean): Entry[] =>
   files.flatMap((file) =>
-    shard && SHARDS[file] ? Array.from({ length: SHARDS[file] }, (_, i) => ({ file, shard: [i + 1, SHARDS[file]] as [number, number] })) : [{ file }]
+    shard && SHARDS[file]
+      ? Array.from(
+        { length: SHARDS[file] },
+        (_, i) => ({ file, shard: [i + 1, SHARDS[file]] as [number, number] }),
+      )
+      : [{ file }]
   );
 
-type Result = { file: string; ok: boolean; seconds: number; summary: string; output: string; entry: Entry };
+type Tier = 'all' | 'fast' | 'slow' | 'smoke' | 'perf';
+
+type Result = {
+  file: string;
+  ok: boolean;
+  seconds: number;
+  summary: string;
+  output: string;
+  entry: Entry;
+};
 
 interface Options {
-  tier: 'all' | 'fast' | 'slow';
+  tier: Tier;
   serial: boolean;
   rerun: boolean;
   jobs: number;
@@ -149,6 +275,10 @@ interface Options {
   allSlow: boolean;
   shard: boolean;
   wsl: boolean;
+  logs: string[];
+  writeTimings: boolean;
+  prerelease: boolean;
+  attentionAll: boolean;
 }
 
 function parseArgs(args: string[]): Options {
@@ -169,6 +299,10 @@ function parseArgs(args: string[]): Options {
     allSlow: false,
     shard: true,
     wsl: Deno.build.os === 'windows',
+    logs: [],
+    writeTimings: false,
+    prerelease: false,
+    attentionAll: false,
   };
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -177,6 +311,13 @@ function parseArgs(args: string[]): Options {
       break;
     } else if (arg === '--fast') options.tier = 'fast';
     else if (arg === '--slow') options.tier = 'slow';
+    else if (arg === '--smoke') options.tier = 'smoke';
+    else if (arg === '--perf') options.tier = 'perf';
+    else if (arg === '--prerelease') {
+      options.prerelease = options.attentionAll = true;
+    } else if (arg === '--attention-all') options.attentionAll = true;
+    else if (arg === '--logs') options.logs.push(args[++i]);
+    else if (arg === '--write-timings') options.writeTimings = true;
     else if (arg === '--serial') options.serial = true;
     else if (arg === '--no-rerun') options.rerun = false;
     else if (arg === '--jobs') options.jobs = Number(args[++i]);
@@ -191,27 +332,77 @@ function parseArgs(args: string[]): Options {
     else if (arg === '--all-slow') options.allSlow = true;
     else if (arg === '--no-shard') options.shard = false;
     else if (arg === '--wsl') options.wsl = true;
-    else if (arg.startsWith('--')) throw new Error(`unknown option ${arg} (--help lists them)`);
-    else options.filters.push(arg);
+    else if (arg.startsWith('--')) {
+      throw new Error(`unknown option ${arg} (--help lists them)`);
+    } else options.filters.push(arg);
   }
   if (!options.jobs) options.jobs = 3; // more at once has blue-screened the owner's PC (0x20001); raise it with --jobs N
   return options;
 }
 
-export function testFiles(tier: 'all' | 'fast' | 'slow', filters: string[] = [], wsl: boolean = Deno.build.os === 'windows'): string[] {
+export function testFiles(
+  tier: Tier,
+  filters: string[] = [],
+  wsl: boolean = Deno.build.os === 'windows',
+): string[] {
   const all = [...Deno.readDirSync(TESTS)].filter((e) => e.isFile && e.name.endsWith('_test.ts')).map((e) => e.name).sort();
+  const named = (f: string) => filters.some((part) => f.includes(part));
   return all
-    .filter((f) => wsl || !/wsl/i.test(f) || filters.some((part) => /wsl/i.test(part) && f.includes(part)))
-    .filter((f) => tier === 'all' || (tier === 'slow') === f in SLOW)
-    .filter((f) => !filters.length || filters.some((part) => f.includes(part)))
+    .filter((f) =>
+      wsl || !/wsl/i.test(f) ||
+      filters.some((part) => /wsl/i.test(part) && f.includes(part))
+    )
+    .filter((f) => {
+      if (tier === 'perf') return PERF.includes(f);
+      if (PERF.includes(f) && !named(f)) return false; // the perf files run alone, in test:prerelease
+      if (tier === 'smoke') return seconds(f) < SMOKE_SECONDS;
+      return tier === 'all' || (tier === 'slow') === f in SLOW;
+    })
+    .filter((f) => !filters.length || named(f))
     .sort((a, b) => weight(b) - weight(a) || a.localeCompare(b));
+}
+
+/**
+ * Windows: kills every AIB-keeper.exe that runs from %TEMP%\aib-keeper-* (a keeper built from source by a test), was started since
+ * `sinceMs` (this run's start: another run's keepers stay) and whose parent process is gone, together with its children (taskkill /T).
+ * A test that fails or is killed mid-way can leave one behind. Returns how many it killed; 0 elsewhere.
+ */
+export function sweepOrphanKeepers(sinceMs: number): number {
+  if (Deno.build.os !== 'windows') return 0;
+  const script =
+    `$t = Join-Path $env:TEMP 'aib-keeper-*'; Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -like "$t" } | ForEach-Object { ` +
+    `$alive = [bool](Get-Process -Id $_.ParentProcessId -ErrorAction SilentlyContinue); ` +
+    `"$($_.ProcessId)|$alive|$([DateTimeOffset]::new($_.CreationDate).ToUnixTimeMilliseconds())" }`;
+  try {
+    const r = new Deno.Command('powershell', {
+      args: ['-NoProfile', '-NonInteractive', '-Command', script],
+      stdout: 'piped',
+      stderr: 'null',
+      stdin: 'null',
+    }).outputSync();
+    let killed = 0;
+    for (const line of new TextDecoder().decode(r.stdout).split(/\r?\n/)) {
+      const [pid, alive, created] = line.trim().split('|');
+      if (!pid || alive !== 'False' || Number(created) < sinceMs - 2000) continue;
+      const k = new Deno.Command('taskkill', { args: ['/PID', pid, '/T', '/F'], stdout: 'null', stderr: 'null', stdin: 'null' })
+        .outputSync();
+      if (k.success) killed++;
+    }
+    return killed;
+  } catch {
+    return 0;
+  }
 }
 
 // ---- the log file --------------------------------------------------------------------------------------------------------
 
 function gitText(args: string[]): string {
   try {
-    const r = new Deno.Command('git', { args: ['-C', ROOT, ...args], stdout: 'piped', stderr: 'null' }).outputSync();
+    const r = new Deno.Command('git', {
+      args: ['-C', ROOT, ...args],
+      stdout: 'piped',
+      stderr: 'null',
+    }).outputSync();
     return r.success ? new TextDecoder().decode(r.stdout).trim() : '';
   } catch {
     return '';
@@ -221,6 +412,7 @@ function gitText(args: string[]): string {
 /** .test-logs/<stamp>-<suite>.log: "commit <hash> clean=<yes|no>", the whole output as it happens, a one-line summary last. */
 export class RunLog {
   readonly path: string;
+  readonly startedMs = Date.now();
   #file: Deno.FsFile | null = null;
   #enc = new TextEncoder();
 
@@ -231,9 +423,15 @@ export class RunLog {
     this.path = `${ROOT}/.test-logs/${stamp}-${suite.replace(/[^\w.-]+/g, '_').slice(0, 60)}.log`;
     if (!enabled) return;
     Deno.mkdirSync(`${ROOT}/.test-logs`, { recursive: true });
-    this.#file = Deno.openSync(this.path, { create: true, write: true, truncate: true });
+    this.#file = Deno.openSync(this.path, {
+      create: true,
+      write: true,
+      truncate: true,
+    });
     const clean = gitText(['status', '--porcelain']) === '' ? 'yes' : 'no';
-    this.raw(`commit ${gitText(['rev-parse', 'HEAD']) || 'unknown'} clean=${clean}\n`);
+    this.raw(
+      `commit ${gitText(['rev-parse', 'HEAD']) || 'unknown'} clean=${clean}\n`,
+    );
   }
 
   /** To the console and the log. */
@@ -248,6 +446,11 @@ export class RunLog {
   }
 
   close(summary: string): void {
+    if (!/\b(?:listed only|nothing to run)\b/.test(summary)) {
+      const n = sweepOrphanKeepers(this.startedMs);
+      summary += ` | orphan keepers swept: ${n}`;
+      if (n) console.log(`swept ${n} orphaned keeper process${n > 1 ? 'es' : ''} (and their children) left under %TEMP%\\aib-keeper-*`);
+    }
     if (!this.#file) return;
     this.raw(`summary: ${summary}\n`);
     this.#file.close();
@@ -258,18 +461,41 @@ export class RunLog {
 
 // ---- running ---------------------------------------------------------------------------------------------------------------
 
-async function runFile(entry: Entry, extra: string[], junit: string): Promise<Result> {
+interface RunExtras {
+  /** Environment variables for this file's process, on top of NO_COLOR. */
+  env?: Record<string, string>;
+  /** Arguments for `deno test`, placed before the file (a --filter). */
+  args?: string[];
+}
+
+async function runFile(
+  entry: Entry,
+  extra: string[],
+  junit: string,
+  more: RunExtras = {},
+): Promise<Result> {
   const started = performance.now();
   const { file, shard } = entry;
-  const args = ['test', '-A', ...extra];
-  const env: Record<string, string> = { NO_COLOR: '1' };
+  const args = ['test', '-A', ...extra, ...(more.args ?? [])];
+  const env: Record<string, string> = { NO_COLOR: '1', ...more.env };
   if (shard) {
     args.push(`--preload=${native(new URL('_shard_preload.ts', TESTS))}`);
     env.AIB_TEST_SHARD = `${shard[0]}/${shard[1]}`;
   }
-  if (junit) args.push(`--junit-path=${junit}/${file.replace(/\.ts$/, shard ? `.${shard[0]}of${shard[1]}.xml` : '.xml')}`);
+  if (junit) {
+    args.push(
+      `--junit-path=${junit}/${file.replace(/\.ts$/, shard ? `.${shard[0]}of${shard[1]}.xml` : '.xml')}`,
+    );
+  }
   args.push(native(new URL(file, TESTS)));
-  const child = new Deno.Command(Deno.execPath(), { args, cwd: native(APP), stdin: 'null', stdout: 'piped', stderr: 'piped', env }).spawn();
+  const child = new Deno.Command(Deno.execPath(), {
+    args,
+    cwd: native(APP),
+    stdin: 'null',
+    stdout: 'piped',
+    stderr: 'piped',
+    env,
+  }).spawn();
   // A file fails, never hangs: one stuck past its deadline (a blocked event loop no timer inside can catch) is killed, with its
   // whole process tree (the Python, Go or agent processes it started).
   const limit = Math.max(FILE_DEADLINE_SECONDS, 5 * (SLOW[file] ?? 0));
@@ -277,101 +503,385 @@ async function runFile(entry: Entry, extra: string[], junit: string): Promise<Re
   const deadline = setTimeout(() => {
     timedOut = true;
     if (Deno.build.os === 'windows') {
-      new Deno.Command('taskkill', { args: ['/PID', String(child.pid), '/T', '/F'], stdout: 'null', stderr: 'null' }).output().catch(() => {});
+      new Deno.Command('taskkill', {
+        args: ['/PID', String(child.pid), '/T', '/F'],
+        stdout: 'null',
+        stderr: 'null',
+      }).output().catch(() => {});
     } else {
       try {
         child.kill('SIGKILL');
       } catch { /* already gone */ }
     }
   }, limit * 1000);
-  const [status, out, err] = await Promise.all([child.status, new Response(child.stdout).text(), new Response(child.stderr).text()])
+  const [status, out, err] = await Promise.all([
+    child.status,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ])
     .finally(() => clearTimeout(deadline));
-  const output = out + err + (timedOut ? `
+  const output = out + err + (timedOut
+    ? `
 KILLED: still running after ${limit} s (tools/test.ts FILE_DEADLINE_SECONDS)
-` : '');
+`
+    : '');
   const summary = timedOut ? `killed after ${limit} s (hung)` : output.match(/^(?:ok|FAILED) \| .*$/m)?.[0] ?? `exit code ${status.code}`;
-  return { file: label(entry), ok: status.success && !timedOut, seconds: (performance.now() - started) / 1000, summary, output, entry };
+  return {
+    file: label(entry),
+    ok: status.success && !timedOut,
+    seconds: (performance.now() - started) / 1000,
+    summary,
+    output,
+    entry,
+  };
 }
 
-/** The Deno pool. Returns the summary line and whether every file passed. */
-async function runDeno(files: string[], options: Options, log: RunLog, tier: string): Promise<{ ok: boolean; line: string }> {
-  const started = performance.now();
-  const pool = entries(files, options.shard);
-  const sharded = pool.length - files.length;
-  log.say(`${files.length} test files (${tier}), ${options.jobs} at a time${sharded ? `; ${pool.filter((e) => e.shard).map((e) => e.file).filter((f, i, a) => a.indexOf(f) === i).join(', ')} in shards` : ''}`);
-  // Type-check every file once, in one process, then run each with --no-check: after an edit, the first files in the pool used to
-  // check the same server modules side by side (up to 5 s each). Same checks, done once. If it fails, each file checks itself as
-  // before, so only the files with the type error fail.
-  let extra = options.extra;
-  if (!extra.some((a) => /^--(?:no-)?check\b/.test(a))) {
-    const t = performance.now();
+/** The names of the tests that failed in a `deno test` output (top-level tests only; steps are indented). */
+export function failedTests(output: string): string[] {
+  const names = [...output.matchAll(/^(\S.*) \.\.\. FAILED \(/gm)].map((m) => m[1]);
+  return names.filter((n, i) => names.indexOf(n) === i);
+}
+const passedIn = (output: string) => Number(output.match(/(\d+) passed/)?.[1] ?? 0);
+const escapeRegex = (text: string) => text.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+/** A `deno test --filter` that matches exactly these test names. */
+export const filterFor = (names: string[]) => `--filter=/^(?:${names.map(escapeRegex).join('|')})$/`;
+
+// ---- flake record and quarantine --------------------------------------------------------------------------------------------
+
+interface Flake {
+  file: string;
+  test: string;
+  count: number;
+  last: string;
+  history: string[];
+}
+const flakePath = () => `${ROOT}/.test-logs/flaky.json`;
+
+function readFlakes(): Record<string, Flake> {
+  try {
+    return JSON.parse(Deno.readTextFileSync(flakePath()));
+  } catch {
+    return {};
+  }
+}
+
+/** Adds one "failed in the pool, passed alone" result per test to .test-logs/flaky.json; returns each test's total count. */
+function recordFlakes(
+  found: { file: string; test: string }[],
+): Map<string, number> {
+  const record = readFlakes();
+  const now = new Date().toISOString();
+  const counts = new Map<string, number>();
+  for (const { file, test } of found) {
+    const key = `${file} :: ${test}`;
+    const f = record[key] ??= { file, test, count: 0, last: now, history: [] };
+    f.count++;
+    f.last = now;
+    f.history = [...f.history, now].slice(-10);
+    counts.set(key, f.count);
+  }
+  if (found.length) {
+    Deno.mkdirSync(`${ROOT}/.test-logs`, { recursive: true });
+    Deno.writeTextFileSync(flakePath(), JSON.stringify(record, null, 2) + '\n');
+  }
+  return counts;
+}
+
+interface Quarantined {
+  file: string;
+  test?: string;
+  reason?: string;
+  since?: string;
+}
+/** tools/test-quarantine.json: { "tests": [{ "file": "x_test.ts", "test": "name, or * for the whole file", "reason", "since" }] } */
+export function readQuarantine(): Quarantined[] {
+  try {
+    return JSON.parse(Deno.readTextFileSync(QUARANTINE_JSON)).tests ?? [];
+  } catch {
+    return [];
+  }
+}
+/** A failed result is quarantined when every test that failed in it is on the list (or its whole file is). */
+export function isQuarantined(
+  list: Quarantined[],
+  file: string,
+  failed: string[],
+): boolean {
+  const mine = list.filter((q) => q.file === file);
+  if (!mine.length) return false;
+  if (mine.some((q) => !q.test || q.test === '*')) return true;
+  return failed.length > 0 &&
+    failed.every((n) => mine.some((q) => q.test === n));
+}
+
+/** Which attention_modes_test mode this run runs: rotates by one on every run that writes a log. */
+function attentionMode(write: boolean): string {
+  const path = `${ROOT}/.test-logs/attention-rotation.json`;
+  let n = 0;
+  try {
+    n = Number(JSON.parse(Deno.readTextFileSync(path)).next) || 0;
+  } catch { /* first run */ }
+  if (write) {
+    Deno.mkdirSync(`${ROOT}/.test-logs`, { recursive: true });
+    Deno.writeTextFileSync(
+      path,
+      JSON.stringify({ next: (n + 1) % ATTENTION_MODES.length }) + '\n',
+    );
+  }
+  return ATTENTION_MODES[n % ATTENTION_MODES.length];
+}
+
+/** Type-checks the files in one process (more when the command line would pass Windows' limit). Returns '' when they pass. */
+async function typeCheck(files: string[]): Promise<string> {
+  const chunks: string[][] = [[]];
+  let size = 0;
+  for (const f of files) {
+    const p = `${TESTS_FROM_APP}${f}`;
+    if (
+      size + p.length + 1 > CHECK_COMMAND_CHARS &&
+      chunks[chunks.length - 1].length
+    ) {
+      chunks.push([]);
+      size = 0;
+    }
+    chunks[chunks.length - 1].push(p);
+    size += p.length + 1;
+  }
+  for (const chunk of chunks) {
     const check = await new Deno.Command(Deno.execPath(), {
-      args: ['check', ...files.map((f) => native(new URL(f, TESTS)))],
+      args: ['check', ...chunk],
       cwd: native(APP),
       stdin: 'null',
       stdout: 'piped',
       stderr: 'piped',
       env: { NO_COLOR: '1' },
     }).output();
-    const seconds = ((performance.now() - t) / 1000).toFixed(1);
-    if (check.success) {
+    if (!check.success) {
+      return new TextDecoder().decode(check.stderr) || 'type check failed';
+    }
+  }
+  return '';
+}
+
+/** The Deno pool. Returns the summary line and whether every file passed. */
+async function runDeno(
+  files: string[],
+  options: Options,
+  log: RunLog,
+  tier: string,
+  env: Record<string, string> = {},
+): Promise<{ ok: boolean; line: string }> {
+  const started = performance.now();
+  const pool = entries(files, options.shard);
+  const sharded = pool.length - files.length;
+  log.say(
+    `${files.length} test files (${tier}), ${options.jobs} at a time${
+      sharded ? `; ${pool.filter((e) => e.shard).map((e) => e.file).filter((f, i, a) => a.indexOf(f) === i).join(', ')} in shards` : ''
+    }`,
+  );
+  log.say(`weights: ${times().source}`);
+  const perFile: Record<string, string[]> = {};
+  if (
+    files.includes(ATTENTION_FILE) && !options.attentionAll &&
+    !options.extra.some((a) => a.startsWith('--filter'))
+  ) {
+    const mode = attentionMode(options.log);
+    perFile[ATTENTION_FILE] = [`--filter=attention watcher, ${mode}`];
+    log.say(
+      `${ATTENTION_FILE}: this run runs one of its ${ATTENTION_MODES.length} modes, "${mode}" (rotates; --attention-all and test:prerelease run all)`,
+    );
+  }
+  // Type-check every file once, in one process, then run each with --no-check: after an edit, the first files in the pool used to
+  // check the same server modules side by side (up to 5 s each). Same checks, done once. If it fails, each file checks itself as
+  // before, so only the files with the type error fail. The paths are relative to outputs/agent-studio and the list is split when it
+  // would pass Windows' 32,000 character command line limit (os error 206).
+  let extra = options.extra;
+  if (!extra.some((a) => /^--(?:no-)?check\b/.test(a))) {
+    const t = performance.now();
+    const failure = await typeCheck(files);
+    const secs = ((performance.now() - t) / 1000).toFixed(1);
+    if (!failure) {
       extra = ['--no-check', ...extra];
-      log.say(`type check: ok in ${seconds} s (each file then runs with --no-check)`);
+      log.say(
+        `type check: ok in ${secs} s (each file then runs with --no-check)`,
+      );
     } else {
-      log.say(`type check failed in ${seconds} s; each file checks itself:\n${new TextDecoder().decode(check.stderr)}`);
+      log.say(
+        `type check failed in ${secs} s; each file checks itself:\n${failure}`,
+      );
     }
   }
   const results: Result[] = [];
   const queue = [...pool];
   const report = (r: Result, alone = '') => {
-    log.say(`${r.ok ? 'ok    ' : 'FAILED'} ${r.seconds.toFixed(1).padStart(6)} s  ${r.file}${alone}  ${r.summary.replace(/^(ok|FAILED) \| /, '')}`);
-    if (!r.ok) log.say(`\n----- ${r.file}${alone} -----\n${r.output}\n----- end of ${r.file}${alone} -----\n`);
-    else log.raw(`----- output of ${r.file} -----\n${r.output}\n----- end of ${r.file} -----\n`);
+    log.say(
+      `${r.ok ? 'ok    ' : 'FAILED'} ${r.seconds.toFixed(1).padStart(6)} s  ${r.file}${alone}  ${
+        r.summary.replace(/^(ok|FAILED) \| /, '')
+      }`,
+    );
+    if (!r.ok) {
+      log.say(
+        `\n----- ${r.file}${alone} -----\n${r.output}\n----- end of ${r.file}${alone} -----\n`,
+      );
+    } else {log.raw(
+        `----- output of ${r.file}${alone} -----\n${r.output}\n----- end of ${r.file}${alone} -----\n`,
+      );}
   };
   const worker = async () => {
     for (let entry = queue.shift(); entry; entry = queue.shift()) {
-      const result = await runFile(entry, extra, options.junit);
+      const result = await runFile(entry, extra, options.junit, {
+        env,
+        args: perFile[entry.file],
+      });
       results.push(result);
       report(result);
     }
   };
-  await Promise.all(Array.from({ length: Math.min(options.jobs, pool.length) }, worker));
-  const sensitive: string[] = [];
+  await Promise.all(
+    Array.from({ length: Math.min(options.jobs, pool.length) }, worker),
+  );
+
+  // Reruns: only the tests that failed (deno test --filter), two files at a time, never sharded. Output we cannot read test names
+  // from (a type error, a hang, a crash) reruns the failed entries whole, as before.
+  const flakes: { file: string; test: string }[] = [];
+  const failedNames = new Map<string, string[]>(); // file -> names of the tests failing at the end
   if (options.rerun) {
-    for (const first of results.filter((r) => !r.ok)) {
-      log.say(`rerunning ${first.file} on its own`);
-      const again = await runFile(first.entry, extra, options.junit);
-      report(again, ' (alone)');
-      if (again.ok) sensitive.push(first.file);
-      results[results.indexOf(first)] = again;
+    const byFile = new Map<string, Result[]>();
+    for (const r of results.filter((x) => !x.ok)) {
+      byFile.set(r.entry.file, [...(byFile.get(r.entry.file) ?? []), r]);
     }
+    const rerunOne = async ([file, firsts]: [string, Result[]]) => {
+      const names = [...new Set(firsts.flatMap((r) => failedTests(r.output)))];
+      const settle = (again: Result[]) => {
+        for (const f of firsts) results.splice(results.indexOf(f), 1);
+        results.push(...again);
+      };
+      if (names.length) {
+        log.say(
+          `rerunning ${names.length} failed test${names.length > 1 ? 's' : ''} of ${file} on their own`,
+        );
+        const again = await runFile({ file }, extra, options.junit, {
+          env,
+          args: [filterFor(names)],
+        });
+        if (
+          (again.ok && passedIn(again.output) > 0) ||
+          (!again.ok && failedTests(again.output).length)
+        ) {
+          report(again, ' (alone)');
+          const still = again.ok ? [] : failedTests(again.output);
+          for (const n of names) {
+            if (!still.includes(n)) flakes.push({ file, test: n });
+          }
+          settle([again]);
+          if (still.length) failedNames.set(file, still);
+          return;
+        }
+        log.say(
+          `${file}: the filtered rerun matched no test; running the whole file again`,
+        );
+      } else {log.say(
+          `rerunning ${file} on its own (no failed test name in its output)`,
+        );}
+      const again: Result[] = [];
+      for (const first of firsts) {
+        log.say(`rerunning ${first.file} on its own`);
+        const r = await runFile(first.entry, extra, options.junit, {
+          env,
+          args: perFile[file],
+        });
+        report(r, ' (alone)');
+        again.push(r);
+        if (r.ok) flakes.push({ file, test: '*' });
+      }
+      settle(again);
+      if (again.some((r) => !r.ok)) {
+        failedNames.set(
+          file,
+          again.filter((r) => !r.ok).flatMap((r) => failedTests(r.output)),
+        );
+      }
+    };
+    const rerunQueue = [...byFile.entries()];
+    await Promise.all(
+      Array.from(
+        { length: Math.min(RERUN_JOBS, rerunQueue.length) },
+        async () => {
+          for (
+            let job = rerunQueue.shift();
+            job;
+            job = rerunQueue.shift()
+          ) await rerunOne(job);
+        },
+      ),
+    );
   }
-  const failed = results.filter((r) => !r.ok);
+
+  const quarantine = readQuarantine();
+  const namesOf = (r: Result) => failedNames.get(r.entry.file) ?? failedTests(r.output);
+  const failedAll = results.filter((r) => !r.ok);
+  const quarantined = failedAll.filter((r) => isQuarantined(quarantine, r.entry.file, namesOf(r)));
+  const failed = failedAll.filter((r) => !quarantined.includes(r));
+  const flakeCounts = options.log ? recordFlakes(flakes) : new Map<string, number>();
   const counts = results.reduce((sum, r) => {
     const n = (word: string) => Number(r.summary.match(new RegExp(`(\\d+) ${word}`))?.[1] ?? 0);
     return [sum[0] + n('passed'), sum[1] + n('failed'), sum[2] + n('ignored')];
   }, [0, 0, 0]);
   log.say('\nslowest files:');
-  for (const r of [...results].sort((a, b) => b.seconds - a.seconds).slice(0, 5)) log.say(`  ${r.seconds.toFixed(1).padStart(6)} s  ${r.file}`);
-  const line = `${failed.length ? 'FAILED' : 'ok'} | ${files.length} files${sharded ? ` (${pool.length} processes)` : ''} | ${counts[0]} passed | ${counts[1]} failed | ${counts[2]} ignored | ` +
-    `${((performance.now() - started) / 1000).toFixed(0)} s`;
+  for (
+    const r of [...results].sort((a, b) => b.seconds - a.seconds).slice(0, 5)
+  ) log.say(`  ${r.seconds.toFixed(1).padStart(6)} s  ${r.file}`);
+  const line =
+    `${failed.length ? 'FAILED' : 'ok'} | ${files.length} files${sharded ? ` (${pool.length} processes)` : ''} | ${counts[0]} passed | ${
+      counts[1]
+    } failed | ${counts[2]} ignored | ` +
+    `${((performance.now() - started) / 1000).toFixed(0)} s${flakes.length ? ` | ${flakes.length} flaky` : ''}${
+      quarantined.length ? ` | ${quarantined.length} quarantined` : ''
+    }`;
   log.say(`\n${line}`);
-  for (const file of sensitive) log.say(`  timing-sensitive: ${file} failed in the pool, passed alone`);
+  for (const f of flakes) {
+    const total = flakeCounts.get(`${f.file} :: ${f.test}`);
+    log.say(
+      `  flaky: ${f.file} :: ${f.test === '*' ? '(whole file)' : f.test} failed in the pool, passed alone${
+        total ? ` (${total} time${total > 1 ? 's' : ''} recorded in .test-logs/flaky.json)` : ''
+      }`,
+    );
+  }
+  for (const r of quarantined) {
+    log.say(
+      `  quarantined (failed, does not fail the run): ${r.file} :: ${namesOf(r).join(' ; ') || '(whole file)'}`,
+    );
+  }
   for (const r of failed) log.say(`  failed: ${r.file}`);
   return { ok: !failed.length, line: `deno ${line}` };
 }
 
 /** Another suite's command (node, go, python): its output goes to the log; to the console only its tail, or all of it on failure. */
-async function runCommand(name: string, cmd: string[], cwd: string, log: RunLog): Promise<{ ok: boolean; line: string }> {
+async function runCommand(
+  name: string,
+  cmd: string[],
+  cwd: string,
+  log: RunLog,
+): Promise<{ ok: boolean; line: string }> {
   const started = performance.now();
   log.say(`\n== ${name}: ${cmd.join(' ')}`);
-  const out = await new Deno.Command(cmd[0], { args: cmd.slice(1), cwd, stdin: 'null', stdout: 'piped', stderr: 'piped', env: { NO_COLOR: '1' } })
+  const out = await new Deno.Command(cmd[0], {
+    args: cmd.slice(1),
+    cwd,
+    stdin: 'null',
+    stdout: 'piped',
+    stderr: 'piped',
+    env: { NO_COLOR: '1' },
+  })
     .output();
-  const text = new TextDecoder().decode(out.stdout) + new TextDecoder().decode(out.stderr);
+  const text = new TextDecoder().decode(out.stdout) +
+    new TextDecoder().decode(out.stderr);
   const seconds = ((performance.now() - started) / 1000).toFixed(0);
   if (out.success) {
     log.raw(text.endsWith('\n') ? text : text + '\n');
-    for (const l of text.trimEnd().split(/\r?\n/).slice(-6)) console.log(`  ${l}`);
+    for (const l of text.trimEnd().split(/\r?\n/).slice(-6)) {
+      console.log(`  ${l}`);
+    }
   } else log.say(text);
   const line = `${name} ${out.success ? 'ok' : 'FAILED'} (exit ${out.code}) ${seconds} s`;
   log.say(line);
@@ -389,7 +899,14 @@ function repoPaths(names: string[]): string[] {
     return a.toLowerCase().startsWith(root.toLowerCase() + '/') ? a.slice(root.length + 1) : null;
   };
   return names.map((n) => {
-    for (const candidate of [n, `${Deno.cwd()}/${n}`, `${ROOT}/${n}`, `${ROOT}/outputs/agent-studio/${n}`]) {
+    for (
+      const candidate of [
+        n,
+        `${Deno.cwd()}/${n}`,
+        `${ROOT}/${n}`,
+        `${ROOT}/outputs/agent-studio/${n}`,
+      ]
+    ) {
       try {
         const rel = inRepo(Deno.realPathSync(candidate));
         if (rel) return rel;
@@ -405,14 +922,22 @@ function describe(a: Affected, log: RunLog): void {
   if (a.everything) log.say('a runner or config file changed: everything runs');
   for (const [kind, tests] of a.run) {
     log.say(`${kind}: ${tests.size} to run`);
-    for (const [test, hit] of tests) log.say(`  ${test.split('/').pop()}  <- ${relApp(hit)}`);
+    for (const [test, hit] of tests) {
+      log.say(`  ${test.split('/').pop()}  <- ${relApp(hit)}`);
+    }
   }
   if (a.broadOnly.size) {
-    log.say(`slow files reached only through a broad rule (not run; --all-slow runs them):`);
-    for (const [test, hit] of a.broadOnly) log.say(`  ${test}  <- ${relApp(hit)}`);
+    log.say(
+      `slow files reached only through a broad rule (not run; --all-slow runs them):`,
+    );
+    for (const [test, hit] of a.broadOnly) {
+      log.say(`  ${test}  <- ${relApp(hit)}`);
+    }
   }
   if (a.uncovered.length) {
-    log.say('changed files no test reaches (add a test, or check the map with --why):');
+    log.say(
+      'changed files no test reaches (add a test, or check the map with --why):',
+    );
     for (const f of a.uncovered) log.say(`  ${f}`);
   }
   if (!a.run.size) log.say('nothing to run');
@@ -421,8 +946,16 @@ function describe(a: Affected, log: RunLog): void {
 async function mainAffected(options: Options): Promise<number> {
   const base = options.filters.length ? '' : (options.base || defaultBase());
   const changed = options.filters.length ? repoPaths(options.filters) : changedFiles(base);
-  const log = new RunLog('affected', options.log && !options.list && !options.why);
-  const a = affected(changed, new Set(Object.keys(SLOW)), base, options.allSlow);
+  const log = new RunLog(
+    'affected',
+    options.log && !options.list && !options.why,
+  );
+  const a = affected(
+    changed,
+    new Set(Object.keys(SLOW)),
+    base,
+    options.allSlow,
+  );
   describe(a, log);
   if (options.why) {
     const graph = buildGraph();
@@ -444,25 +977,48 @@ async function mainAffected(options: Options): Promise<number> {
   let ok = true;
   const deno = a.run.get('deno');
   if (deno) {
-    const files = [...deno.keys()].map((f) => f.split('/').pop()!).sort((x, y) => weight(y) - weight(x) || x.localeCompare(y));
+    const files = [...deno.keys()].map((f) => f.split('/').pop()!).sort((
+      x,
+      y,
+    ) => weight(y) - weight(x) || x.localeCompare(y));
     const r = await runDeno(files, options, log, 'affected');
     ok &&= r.ok;
     lines.push(r.line);
   }
   const node = a.run.get('node');
   if (node) {
-    const r = await runCommand('node', ['node', '--test', ...node.keys()], ROOT, log);
+    const r = await runCommand(
+      'node',
+      ['node', '--test', ...node.keys()],
+      ROOT,
+      log,
+    );
     ok &&= r.ok;
     lines.push(r.line);
   }
   if (a.run.get('go')) {
-    const r = await runCommand('go', ['go', 'test', '-count=1', './...'], `${ROOT}/keeper`, log);
+    const r = await runCommand(
+      'go',
+      ['go', 'test', '-count=1', './...'],
+      `${ROOT}/keeper`,
+      log,
+    );
     ok &&= r.ok;
     lines.push(r.line);
   }
-  for (const [kind, suite] of [['python-contract', 'contract'], ['python-e2e', 'e2e']] as const) {
+  for (
+    const [kind, suite] of [['python-contract', 'contract'], [
+      'python-e2e',
+      'e2e',
+    ]] as const
+  ) {
     if (!a.run.get(kind)) continue;
-    const r = await runCommand(kind, [python(), 'work/run_parallel.py', suite], ROOT, log);
+    const r = await runCommand(
+      kind,
+      [python(), 'work/run_parallel.py', suite],
+      ROOT,
+      log,
+    );
     ok &&= r.ok;
     lines.push(r.line);
   }
@@ -478,8 +1034,36 @@ async function main(): Promise<number> {
     console.log(HELP);
     return 0;
   }
+  if (options.logs.length) times(options.logs);
+  if (options.writeTimings) {
+    const { seconds, logs } = timingsFromLogs(logDirs(options.logs));
+    if (!logs.length) {
+      console.error('no *deno-all.log found (give a folder with --logs DIR)');
+      return 1;
+    }
+    const sorted = Object.fromEntries(
+      Object.entries(seconds).sort(([x], [y]) => x.localeCompare(y)),
+    );
+    Deno.writeTextFileSync(
+      TIMINGS_JSON,
+      JSON.stringify(
+        {
+          generated: new Date().toISOString().slice(0, 10),
+          from: logs,
+          seconds: sorted,
+        },
+        null,
+        1,
+      ) + '\n',
+    );
+    console.log(
+      `wrote tools/test-timings.json: ${Object.keys(sorted).length} files from ${logs.join(', ')}`,
+    );
+    return 0;
+  }
   if (options.affected) return await mainAffected(options);
   if (options.junit) Deno.mkdirSync(options.junit, { recursive: true });
+  if (options.prerelease) return await mainPrerelease(options);
   const files = testFiles(options.tier, options.filters, options.wsl);
   if (!files.length) {
     console.error('no test files match');
@@ -489,24 +1073,95 @@ async function main(): Promise<number> {
   const log = new RunLog(suite, options.log);
   if (options.serial) {
     const started = performance.now();
-    const args = ['test', '-A', ...options.extra, ...files.map((f) => native(new URL(f, TESTS)))];
-    const out = await new Deno.Command(Deno.execPath(), { args, cwd: native(APP), stdin: 'null', stdout: 'piped', stderr: 'piped' }).spawn();
-    const pump = async (stream: ReadableStream<Uint8Array>, to: typeof Deno.stdout) => {
+    const args = [
+      'test',
+      '-A',
+      ...options.extra,
+      ...files.map((f) => native(new URL(f, TESTS))),
+    ];
+    const out = await new Deno.Command(Deno.execPath(), {
+      args,
+      cwd: native(APP),
+      stdin: 'null',
+      stdout: 'piped',
+      stderr: 'piped',
+    }).spawn();
+    const pump = async (
+      stream: ReadableStream<Uint8Array>,
+      to: typeof Deno.stdout,
+    ) => {
       for await (const chunk of stream) {
         to.writeSync(chunk);
         log.raw(new TextDecoder().decode(chunk));
       }
     };
-    await Promise.all([pump(out.stdout, Deno.stdout), pump(out.stderr, Deno.stderr)]);
+    await Promise.all([
+      pump(out.stdout, Deno.stdout),
+      pump(out.stderr, Deno.stderr),
+    ]);
     const status = await out.status;
-    const line = `${status.success ? 'ok' : 'FAILED'} | ${files.length} files in one process | ${((performance.now() - started) / 1000).toFixed(0)} s`;
+    const line = `${status.success ? 'ok' : 'FAILED'} | ${files.length} files in one process | ${
+      ((performance.now() - started) / 1000).toFixed(0)
+    } s`;
     log.say(`\n${line}`);
     log.close(line);
     return status.code;
   }
   const r = await runDeno(files, options, log, options.tier);
-  log.close(r.line.replace(/^deno /, ''));
-  return r.ok ? 0 : 1;
+  let ok = r.ok;
+  let line = r.line.replace(/^deno /, '');
+  if (options.tier === 'smoke' && !options.filters.length) {
+    const n = await runNodePageTests(log);
+    ok &&= n.ok;
+    line += ` ; ${n.line}`;
+  }
+  log.close(line);
+  return ok ? 0 : 1;
+}
+
+/** The node page tests (work/test_*.js), the same files as `npm test`. */
+function runNodePageTests(log: RunLog): Promise<{ ok: boolean; line: string }> {
+  const work = `${ROOT}/work`;
+  const tests = [...Deno.readDirSync(work)].filter((e) => e.isFile && /^test_.*\.js$/.test(e.name)).map((e) => `work/${e.name}`).sort();
+  return runCommand('node', ['node', '--test', ...tests], ROOT, log);
+}
+
+/** test:prerelease: the full suite (all three attention modes, no perf files), then the perf files alone, then the update e2e. */
+async function mainPrerelease(options: Options): Promise<number> {
+  const log = new RunLog('prerelease', options.log);
+  const lines: string[] = [];
+  let ok = true;
+  const full = await runDeno(
+    testFiles('all', options.filters, options.wsl),
+    options,
+    log,
+    'full',
+  );
+  lines.push(full.line);
+  ok &&= full.ok;
+  const alone = { ...options, jobs: 1 };
+  const perf = await runDeno(
+    testFiles('perf', [], options.wsl),
+    alone,
+    log,
+    'perf, alone',
+  );
+  lines.push(perf.line.replace(/^deno /, 'perf '));
+  ok &&= perf.ok;
+  const update = await runDeno(
+    ['keeper_update_e2e_test.ts'],
+    alone,
+    log,
+    'update e2e (AIB_SLOW_TESTS=1)',
+    { AIB_SLOW_TESTS: '1' },
+  );
+  lines.push(update.line.replace(/^deno /, 'update-e2e '));
+  ok &&= update.ok;
+  const summary = `${ok ? 'ok' : 'FAILED'} | prerelease | ${lines.join(' ; ')}`;
+  log.say(`
+${summary}`);
+  log.close(summary);
+  return ok ? 0 : 1;
 }
 
 if (import.meta.main) Deno.exit(await main());
