@@ -493,10 +493,8 @@
         (data) => {
           applyData(data);
           S.loadError = '';
-          return migrate(data).then(() => {
-            if (S.open) renderAll();
-            return S.data;
-          });
+          if (S.open) renderAll();
+          return S.data;
         },
         (error) => {
           S.loadError = error && error.message ? error.message : 'Settings could not be loaded.';
@@ -508,29 +506,6 @@
         S.loading = null;
       });
     return S.loading;
-  }
-  // The first time: carry the old browser-only "agent last used per project" memory into Settings.
-  let migrateTried = false;
-  function migrate(data) {
-    const AC = root.AgentChoice;
-    if (
-      migrateTried ||
-      !AC ||
-      !AC.legacyPatch ||
-      (data.settings && data.settings.defaults && data.settings.defaults.migrated)
-    )
-      return Promise.resolve();
-    migrateTried = true;
-    let patch;
-    try {
-      patch = AC.legacyPatch(root.localStorage);
-    } catch (e) {
-      patch = { migrated: true };
-    }
-    return save({ defaults: patch }, true).then(
-      () => {},
-      () => {},
-    );
   }
   function sync(revision) {
     if (revision && S.data && revision !== S.rev && !S.busy) return load();

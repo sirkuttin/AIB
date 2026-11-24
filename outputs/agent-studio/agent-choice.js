@@ -205,22 +205,6 @@
     'agent-full-access': 'full-access',
   };
   const renamedMode = (id) => (Object.prototype.hasOwnProperty.call(RENAMED_MODES, id) ? RENAMED_MODES[id] : '');
-  // One-time carry-over of the old browser-only memory (last agent per project) into Settings. Pure: returns the patch or null.
-  function legacyPatch(storage) {
-    try {
-      const map = readJson(storage, PROJECT_KEY); // the global "last used" stays a browser fallback in loadChoice
-      const projects = {}; // the server takes at most 50 project changes per request
-      for (const k of Object.keys(map).slice(-50))
-        if (typeof map[k] === 'string' && /^(claude|codex|custom-[a-z0-9-]+|(?:claude|codex|maki|qwen)@[a-z0-9-]+)$/.test(map[k]))
-          projects[k] = { agent: map[k] };
-      const patch = { migrated: true };
-      if (Object.keys(projects).length) patch.projects = projects;
-      return patch;
-    } catch (e) {
-      return { migrated: true };
-    }
-  }
-
   // "C:\\Repos\\App\\", "c:/repos/app" -> one key; POSIX paths keep their case. Empty for no folder.
   function projectKey(cwd) {
     const raw = String(cwd == null ? '' : cwd).trim();
@@ -448,7 +432,6 @@
     setSink,
     defaultPicks,
     renamedMode,
-    legacyPatch,
     STORAGE_KEY: KEY,
     MAX_HANDOFF,
     info,

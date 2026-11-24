@@ -839,21 +839,11 @@
     if (response.body.instanceId) instanceId = response.body.instanceId;
     showStudioNotice(response.body);
   }
-  /* Server notices from bootstrap: a data move that is waiting, or an agent host still running older code. Dismissed per page load. */
+  /* Server notices from bootstrap: AIB inside a packaged app's sandbox, or an agent host still running older code. Dismissed per page load. */
   let noticeDismissed = '';
   function studioNoticeText(b) {
-    const m = b && b.migration,
-      parts = [];
+    const parts = [];
     if (b && b.packageNotice) parts.push(b.packageNotice);
-    if (b && b.sandboxNotice) parts.push(b.sandboxNotice);
-    if (m && m.kind !== 'sandbox' && (m.state === 'waiting' || m.state === 'failed' || m.state === 'blocked'))
-      parts.push(
-        (m.state === 'waiting'
-          ? 'Moving AIB’s data to its new folder is waiting'
-          : 'Moving AIB’s data to its new folder did not happen') +
-          (m.reason ? ': ' + m.reason : '') +
-          '. AIB keeps using the old folder for now and tries again the next time it starts with no chats running.',
-      );
     if (b && b.hostTakeoverWaiting > 0)
       parts.push(
         'Another AIB version is running ' + b.hostTakeoverWaiting + ' chat(s); it will switch over when they finish.',
@@ -1030,16 +1020,6 @@
     syncNames(live);
     window.AgentOrganizeUI?.sync(live.conversationRevision);
     await window.AgentReadState?.sync(live.readStateRevision);
-    if (!readMigrated && window.AgentReadState) {
-      readMigrated = true;
-      /* Old browser-only read positions: keys that were a live connection id become provider:sessionId. */
-      const stable = new Map(
-        live.connections
-          .filter((l) => l.sessionId && l.id)
-          .map((l) => [l.provider + ':' + l.id, l.provider + ':' + l.sessionId]),
-      );
-      window.AgentReadState.migrate((k) => stable.get(k) || k);
-    }
     window.AgentWorkspaceUI?.syncPrefs?.(live.projectsRevision);
     window.AgentSettingsUI?.sync(live.settingsRevision);
     window.AllowRulesUI?.banner?.(!!live.allowRulesTampered);
@@ -3070,7 +3050,6 @@
       managed($('submessages'))?.afterRedraw(); // the "Load earlier" button came in after the draw
     }
   }
-  let readMigrated = false;
   // One read of the open chat at a time. The 1.5 s poll skips a beat while one runs ({poll: true}); any other caller (after a send,
   // an answer, a switch) gets one more read after the running one, which may have left before the change: so the working composer
   // (Interrupt, Send ▾) shows as soon as the send is answered, not a poll later (QA beta.9).

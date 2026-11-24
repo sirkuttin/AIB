@@ -18,14 +18,8 @@
  * (Windows: the DACL is read with GetNamedSecurityInfoW and compared by SID, server/platform/acl.ts; POSIX: mode 0700 and no
  * group/other write). A folder chosen with --state-dir or the environment only produces a warning.
  *
- * Moving old data into the per-user folder is server/state/migrate.ts (migrate.py): prepare() and adoptSandboxCopy() call the function
- * given to registerMigrate() (or options.migrate) at exactly the places Python calls migrate.migrate(). Importing migrate.ts registers
- * it (main.ts does); without one (a test that imports only this module) the move reports 'failed' and the run keeps using the old
- * folder, so nothing is lost.
- *
- * Packaged parent apps (Windows): a Studio started from the Claude desktop app (MSIX) has its %LOCALAPPDATA% writes virtualized into
- * %LOCALAPPDATA%\Packages\Claude_*\LocalCache\Local. packageContext() detects that; adoptSandboxCopy() moves such a copy to the real
- * folder when Studio runs outside the package.
+ * Packaged parent apps (Windows): an AIB started from the Claude desktop app (MSIX) has its %LOCALAPPDATA% writes virtualized into
+ * %LOCALAPPDATA%\Packages\Claude_*\LocalCache\Local. packageContext() detects that so the page can say so.
  */
 import { APP_ROOT, testsDir } from '../core/app.ts';
 import { type AceEntry, type PackageKernel, packageKernel, windowsCurrentUserSid, windowsDacl } from '../platform/acl.ts';
@@ -34,7 +28,6 @@ export const APP_DIR_WINDOWS = 'AgentStudio';
 export const APP_DIR_POSIX = 'agent-studio';
 export const ENV_STATE_DIR = 'AGENT_STUDIO_STATE_DIR';
 export const ENV_TEST = 'AGENT_STUDIO_TEST';
-export const MIGRATED_MARKER = '.migrated';
 
 // Well-known SIDs (locale independent).
 export const SID_EVERYONE = 'S-1-1-0';
@@ -170,7 +163,6 @@ function stat(path: string): Deno.FileInfo | null {
 }
 
 const exists = (path: string) => stat(path) !== null;
-const isFile = (path: string) => stat(path)?.isFile === true;
 const isDir = (path: string) => stat(path)?.isDirectory === true;
 
 function key(path: string): string {
@@ -270,8 +262,6 @@ export function resolve(cliStateDir?: string | null, env?: Env, codeRoot?: strin
 // ---- packaged parent app (Windows) -------------------------------------------------------------
 export const NO_PACKAGE = 15700; // APPMODEL_ERROR_NO_PACKAGE
 export const ERROR_INSUFFICIENT_BUFFER = 122; // the expected answer to a size query
-export const SANDBOX_TAIL = ['LocalCache', 'Local', APP_DIR_WINDOWS] as const;
-export const SANDBOX_NOTE = 'MIGRATED-TO.txt'; // migrate.NOTE_NAME
 
 /** The family name of the package this very process belongs to (GetCurrentPackageFullName), or null. Children of a packaged app get NO_PACKAGE. */
 function packageFamilyFromApi(kernel?: PackageKernel): string | null {
@@ -350,119 +340,7 @@ export function packageLabel(family: string | null | undefined): string {
   return family ? String(family).split('_')[0] : '';
 }
 
-function hasData(folder: string): boolean {
-  return isFile(pathOf(folder, 'studio-settings.json')) || isFile(pathOf(folder, 'studio-conversations.json'));
-}
-
-/**
- * Sandbox copies of the Studio folder that hold user data: [family, folder] newest first. Only Claude_* packages count, or, when no
- * Claude package has one, any package if exactly one does. Copies already moved (note MIGRATED-TO.txt) are ignored.
- */
-export function sandboxCopies(env?: Env, platform?: string): [string, string][] {
-  env ??= Deno.env.toObject();
-  platform ||= currentPlatform();
-  const base = env.LOCALAPPDATA;
-  if (!platform.startsWith('win') || !base) return [];
-  const found: [number, string, string][] = [];
-  try {
-    for (const entry of Deno.readDirSync(pathOf(base, 'Packages'))) {
-      const folder = pathOf(base, 'Packages', entry.name, ...SANDBOX_TAIL);
-      if (isDir(folder) && hasData(folder) && !exists(pathOf(folder, SANDBOX_NOTE))) {
-        const times = ['studio-settings.json', 'studio-conversations.json'].map((n) => pathOf(folder, n)).filter(isFile)
-          .map((p) => Deno.statSync(p).mtime?.getTime() ?? 0);
-        found.push([Math.max(...times), entry.name, folder]);
-      }
-    }
-  } catch {
-    return [];
-  }
-  found.sort((a, b) => b[0] - a[0]);
-  const claude = found.filter((row) => row[1].toLowerCase().startsWith('claude_'));
-  const chosen = claude.length ? claude : found.length === 1 ? found : [];
-  return chosen.map(([, family, folder]) => [family, folder]);
-}
-
-function countWorktrees(source: string): number {
-  try {
-    return [...Deno.readDirSync(pathOf(source, 'worktrees'))].filter((e) => e.isDirectory || isDir(pathOf(source, 'worktrees', e.name)))
-      .length;
-  } catch {
-    return 0;
-  }
-}
-
-/** migrate.migrate's result: {state: 'done'|'waiting'|'blocked'|'failed'|..., reason, source, ...}. */
-export type Migration = { state: string; reason: string; source: string | null; [key: string]: unknown };
-/** migrate.migrate(source, target, say). */
-export type MigrateFn = (source: string, target: string, say: Say) => Migration | Promise<Migration>;
-
-let registeredMigrate: MigrateFn | null = null;
-
-/** server/state/migrate.ts registers its migrate() here when it is imported (migrate imports this module, so no import back). */
-export function registerMigrate(fn: MigrateFn | null): void {
-  registeredMigrate = fn;
-}
-
-function notPorted(source: string): Migration {
-  return { state: 'failed', reason: 'moving the data is not available in this build yet (migrate is not ported)', source };
-}
-
-function runMigrate(fn: MigrateFn | undefined, source: string, target: string, say: Say): Promise<Migration> {
-  const migrate = fn ?? registeredMigrate;
-  return Promise.resolve(migrate ? migrate(source, target, say) : notPorted(source));
-}
-
-const sayOut: Say = (message) => console.log(message);
 const sayErr: Say = (message) => console.error(message);
-
-export interface AdoptOptions {
-  env?: Env;
-  platform?: string;
-  say?: Say;
-  attempt?: boolean;
-  migrate?: MigrateFn;
-}
-
-/**
- * Studio runs OUTSIDE any package and `target` is the real per-user folder: decide what to do about a sandbox copy. Returns
- * [folder to use, migration] where migration.state is
- *   none      no sandbox copy (or already moved): nothing changes.
- *   conflict  target already has user data AND a sandbox copy exists: nothing is merged or overwritten; the owner decides.
- *   done      the copy was moved to target (migrate: copy, verify, note in the sandbox copy, source kept).
- *   waiting   a host or chat in the sandbox copy is still running (or attempt is false): this run keeps using the sandbox copy.
- *   blocked/failed  migrate refused: keep using target.
- */
-export async function adoptSandboxCopy(target: string, options: AdoptOptions = {}): Promise<[string, Migration]> {
-  const say = options.say ?? sayOut;
-  const copies = sandboxCopies(options.env, options.platform);
-  if (!copies.length) return [target, { state: 'none', reason: '', source: null, kind: 'sandbox' }];
-  const [packageName, source] = copies[0];
-  let extra = '';
-  if (copies.length > 1) {
-    extra = ` (${copies.length} copies were found in app sandboxes; using the newest, from ${packageName})`;
-    say(`Several sandbox copies of the AIB data exist; using the newest: ${source}`);
-  }
-  if (hasData(target) || exists(pathOf(target, MIGRATED_MARKER))) {
-    return [target, {
-      state: 'conflict',
-      reason: `${target} and ${source} both hold AIB data` + extra,
-      source,
-      package: packageName,
-      kind: 'sandbox',
-    }];
-  }
-  if (!(options.attempt ?? true)) {
-    return [source, { state: 'waiting', reason: 'not attempted by this command' + extra, source, package: packageName, kind: 'sandbox' }];
-  }
-  // Python: migrate.migrate(source, target, say=say)
-  const result: Migration = { ...(await runMigrate(options.migrate, source, target, say)), kind: 'sandbox', package: packageName };
-  result.worktreesLeft = countWorktrees(source); // never moved: a moved git worktree loses its link to the repository
-  if (result.state === 'waiting') {
-    say(`AIB data will move from ${source} to ${target} at a later start. This run keeps using ${source}: ${result.reason}`);
-    return [source, result];
-  }
-  return [target, result];
-}
 
 // ---- owner-only access -------------------------------------------------------------------------
 /** List of reasons somebody other than the owner can write to path (empty = private). Throws when it cannot be read. */
@@ -544,63 +422,26 @@ export function ensurePrivateDir(path: string, strict = true, say: Say = sayErr)
 }
 
 // ---- choosing the folder for this run ----------------------------------------------------------
-/** stateDir: the folder to run on. migration: {state: 'none'|'done'|'waiting'|'blocked'|'failed'|'conflict', reason, source}. */
+/** stateDir: the folder to run on. */
 export class Plan {
-  constructor(readonly stateDir: string, readonly resolved: Resolved, readonly migration: Migration, readonly warnings: string[]) {}
+  constructor(readonly stateDir: string, readonly resolved: Resolved, readonly warnings: string[]) {}
 }
 
 export interface PrepareOptions {
   cliStateDir?: string | null;
-  migrateFrom?: string | null;
   codeRoot?: string | null;
   env?: Env;
-  attemptMigration?: boolean;
-  say?: Say;
-  /** Instead of the registered migrate (tests). */
-  migrate?: MigrateFn;
-  /** Instead of packageContext (tests: Python mocks state_paths.package_context). */
-  packageContext?: (options: PackageOptions) => string | null;
 }
 
-/** Decide the state folder for this run, moving the old data first when that is due. Throws StateDirError on a refusal. */
+/** Decide the state folder for this run and check that it is private. Throws StateDirError on a refusal. */
+// deno-lint-ignore require-await -- stays async: callers await it
 export async function prepare(options: PrepareOptions = {}): Promise<Plan> {
-  const say = options.say ?? sayOut;
   const env = options.env;
   const codeRoot = options.codeRoot || APP_ROOT;
-  const attempt = options.attemptMigration ?? true;
   const resolved = resolve(options.cliStateDir, env, codeRoot);
   const warnings: string[] = [];
-  let target = resolved.path;
-  let migration: Migration = { state: 'none', reason: '', source: null };
-  const explicitOverride = resolved.source === 'cli' || resolved.source === 'env';
-  const wants = resolved.isUserFolder || (options.migrateFrom !== null && options.migrateFrom !== undefined && explicitOverride);
-  if (resolved.source === 'user' && (options.packageContext ?? packageContext)({ env }) === null) {
-    // outside any package: take over a copy the Claude app's sandbox holds
-    const [use, sandbox] = await adoptSandboxCopy(target, { env, attempt, say, migrate: options.migrate });
-    target = use;
-    if (sandbox.state !== 'none') migration = sandbox;
-  }
-  if (wants && !exists(pathOf(target, MIGRATED_MARKER)) && migration.kind !== 'sandbox') {
-    const source = options.migrateFrom ? abspath(options.migrateFrom) : oldDefaultDir(codeRoot);
-    if (samePath(source, target)) {
-      // nothing to move
-    } else if (hasData(source)) {
-      migration.source = source;
-      if (!attempt) { // e.g. --stop-host: just look where the data still is
-        migration = { ...migration, state: 'waiting', reason: 'migration not attempted by this command' };
-        target = source;
-      } else {
-        // Python: migrate.migrate(source, target, say=say)
-        migration = await runMigrate(options.migrate, source, target, say);
-        if (migration.state !== 'done') {
-          say(`AIB data will move to ${target} at a later start. This run uses ${source}: ${migration.reason}`);
-          target = source;
-        }
-      }
-    }
-  }
-  const finalIsUser = samePath(target, resolved.path) && resolved.isUserFolder;
-  if (finalIsUser) {
+  const target = resolved.path;
+  if (resolved.isUserFolder) {
     ensurePrivateDir(target, true);
   } else if (exists(target)) {
     let problems: string[] = [];
@@ -611,36 +452,32 @@ export async function prepare(options: PrepareOptions = {}): Promise<Plan> {
     }
     if (problems.length) warnings.push(`${target} is not private: ` + problems.join('; ') + '.');
   }
-  return new Plan(target, resolved, migration, warnings);
+  return new Plan(target, resolved, warnings);
 }
 
-/** What apply() reads and fills in (Python: the argparse namespace). */
+/** What apply() reads and fills in. */
 export interface StateOptions {
   stateDir?: string | null;
-  migrateFrom?: string | null;
-  migration?: Migration;
   stateWarnings?: string[];
 }
 
 /**
- * Resolve options.stateDir (null means the default) and set options.stateDir, options.migration and options.stateWarnings.
- * A refusal goes to `fail` (Python: parser.error, which prints the message and exits with code 2).
+ * Resolve options.stateDir (null means the default) and set options.stateDir and options.stateWarnings.
+ * A refusal goes to `fail` (it prints the message and exits with code 2).
  */
 export async function apply(
   options: StateOptions,
   fail: (message: string) => never,
   codeRoot?: string | null,
-  attemptMigration = true,
 ): Promise<Plan> {
   let plan: Plan;
   try {
-    plan = await prepare({ cliStateDir: options.stateDir, migrateFrom: options.migrateFrom, codeRoot, attemptMigration });
+    plan = await prepare({ cliStateDir: options.stateDir, codeRoot });
   } catch (error) {
     if (error instanceof StateDirError) fail(error.message);
     throw error;
   }
   options.stateDir = plan.stateDir;
-  options.migration = plan.migration;
   options.stateWarnings = plan.warnings;
   for (const line of plan.warnings) console.error('WARNING: ' + line);
   return plan;

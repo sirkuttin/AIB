@@ -27,7 +27,6 @@ export interface Options {
   force: boolean;
   hostPort: number;
   hostIdleMinutes: number;
-  migrateFrom: string | null;
   /** The agent host's own flag (agent_host.py --idle-exit-minutes); the web server passes --host-idle-minutes as this. */
   idleExitMinutes: number;
   /** The agent host's --tray: its own tray icon while chats work with no app attached (the built app's host). */
@@ -101,7 +100,6 @@ const FLAGS: Record<string, [keyof Options, Kind]> = {
   '--force': ['force', 'true'],
   '--host-port': ['hostPort', 'int'],
   '--host-idle-minutes': ['hostIdleMinutes', 'float'],
-  '--migrate-from': ['migrateFrom', 'path'],
   '--start-in-tray': ['startInTray', 'true'],
 };
 
@@ -143,7 +141,6 @@ export function defaults(): Options {
     force: false,
     hostPort: 0,
     hostIdleMinutes: 30,
-    migrateFrom: null,
     idleExitMinutes: 30,
     tray: false,
     exitUnattachedSeconds: 0,

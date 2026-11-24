@@ -284,7 +284,6 @@ export interface StudioOptions {
   /** How agents get the artifact tool; default 'http' from a built binary, else 'stdio' (see artifactMcpServers). */
   artifactTransport?: 'stdio' | 'http';
   mcpServers?: McpServer[];
-  migration?: Record<string, unknown> | null;
 }
 
 export type ConnectionFactory = (command: string[], cwd: string, provider: string, options?: ConnectionOptions) => Connection;

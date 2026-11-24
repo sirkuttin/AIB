@@ -33,9 +33,7 @@ Deno.test('contract: the auth gate, page files and bootstrap', async (t) => {
         'server',
         'features',
         'connections',
-        'migration',
         'hostTakeoverWaiting',
-        'sandboxNotice',
         'hostCodeWarning',
         'packageContext',
       ]

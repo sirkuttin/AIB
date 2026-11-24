@@ -95,17 +95,6 @@ button {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.ph-subs-go {
-  display: flex;
-  align-items: center;
-  min-height: 44px;
-  margin: -10px 0 -12px;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--accent);
-  font-size: 13px;
-}
 .ph-back {
   display: inline-flex;
   align-items: center;

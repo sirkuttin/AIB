@@ -23,13 +23,12 @@ import { packageContext, packageLabel } from '../state/paths.ts';
 import { Registry } from '../worktrees/worktrees.ts';
 import { logWorkerError } from '../core/crash_trail.ts';
 
-/** The command-line options these helpers read (server/core/options.ts has them all; migration comes from the state-folder setup). */
+/** The command-line options these helpers read (server/core/options.ts has them all). */
 export interface AgentOptions {
   stateDir?: string | null;
   nodeCommand?: string;
   claudeLauncher?: string;
   codexLauncher?: string;
-  migration?: Record<string, unknown> | null;
 }
 
 export interface SettingsLike {
@@ -556,59 +555,19 @@ export function packageNotice(pkg: string | null | undefined, stateDir: unknown)
     'Restart AIB from outside that app to use your normal data folder.';
 }
 
-/** The line for a data folder held in a packaged app's sandbox that this (unpackaged) Studio did not move: waiting, conflict, or refused. */
-export function sandboxNotice(migration: Record<string, unknown> | null | undefined): string {
-  const m = migration || {};
-  if (m.kind !== 'sandbox' || m.state === undefined || m.state === null || m.state === 'none') return '';
-  const left = (m.worktreesLeft as number) || 0;
-  if (m.state === 'done') {
-    return left
-      ? `${left} chat worktree${left !== 1 ? 's' : ''} stay${left !== 1 ? '' : 's'} in the old folder (${
-        pyText(m.source)
-      }): moving a git worktree would break its link to the repository. ` +
-        'Nothing was deleted there.'
-      : '';
-  }
-  const source = m.source ? pyText(m.source) : "the Claude app's private folder";
-  if (m.state === 'conflict') {
-    return `AIB data exists in two places: your normal folder and the Claude app's private folder (${source}). AIB is using the normal folder ` +
-      'and has not merged or overwritten anything. Decide which one to keep and move the other aside; AIB will not choose for you.';
-  }
-  if (m.state === 'waiting') {
-    return `Waiting to move your data from the Claude app's private folder (${source}): ${
-      m.reason ? pyText(m.reason) : 'something there is still running'
-    }. ` +
-      'AIB keeps using that folder for now and tries again at its next start, once no chat is working and the agent host there has stopped.';
-  }
-  return `Moving your data from the Claude app's private folder (${source}) did not happen: ${
-    m.reason ? pyText(m.reason) : pyText(m.state)
-  }. AIB is using your normal folder.`;
-}
-
-/** f'{value}' for the values a migration record holds (strings, numbers, None). */
-function pyText(value: unknown): string {
-  if (value === null || value === undefined) return 'None';
-  if (value === true) return 'True';
-  if (value === false) return 'False';
-  return String(value);
-}
-
 /**
- * What the page may show as a banner: migration, hostCodeWarning (the running agent host loaded older code than this web server),
- * packageNotice, sandboxNotice, packageContext and hostTakeoverWaiting.
+ * What the page may show as a banner: hostCodeWarning (the running agent host loaded older code than this web server),
+ * packageNotice, packageContext and hostTakeoverWaiting.
  */
 export async function notices(self: Pick<StudioContext, 'options' | 'hostInfo' | 'waitingChats'>): Promise<Record<string, unknown>> {
   packageCache ??= { value: packageContext() };
-  const migration = self.options.migration || { state: 'none' };
   const hostWarning = await codeWarning(self.hostInfo ?? null);
   const takeover = keeperTakeoverProblem();
   return {
-    migration,
     // The keeper's chats this AIB cannot take over (keeperTakeoverProblem) share the host warning's banner line.
     hostCodeWarning: takeover ? [hostWarning, takeover].filter(Boolean).join(' ') : hostWarning,
     packageContext: packageCache.value,
     packageNotice: packageNotice(packageCache.value, self.options.stateDir ?? ''),
-    sandboxNotice: sandboxNotice(migration),
     hostTakeoverWaiting: self.waitingChats || 0,
   };
 }

@@ -257,21 +257,6 @@ test('saveChoice reports the project agent to Settings; a failing sink does not 
   reset();
 });
 
-test('legacyPatch carries the per-project memory over once, bounded and validated', () => {
-  const map = {};
-  for (let i = 0; i < 80; i++) map['p:/proj' + i] = 'claude';
-  map['p:/bad'] = 'rm -rf';
-  const patch = AC.legacyPatch(
-    memory({ 'studio-new-chat-agent-by-project': JSON.stringify(map), 'studio-new-chat-agent': 'claude' }),
-  );
-  assert.equal(patch.migrated, true);
-  assert.ok(Object.keys(patch.projects).length <= 50);
-  assert.ok(!('p:/bad' in patch.projects));
-  assert.ok(!('agent' in patch), 'the browser-wide last pick stays a fallback and is not turned into a fixed default');
-  assert.deepEqual(AC.legacyPatch(memory()), { migrated: true });
-  assert.deepEqual(AC.legacyPatch(null), { migrated: true });
-});
-
 // ---- load / save wiring ----------------------------------------------------------------------------------------------
 function wired(data, seed) {
   reset();
@@ -328,7 +313,7 @@ test('load applies the server list and defaults to the page registry', async () 
   assert.equal(AC.getDefaults().agent, 'claude');
   assert.equal(calls.changed, 1, 'the page redraws its New chat form');
   assert.deepEqual(calls.get, ['/api/live/settings']);
-  assert.deepEqual(calls.post, [], 'already migrated: nothing is written');
+  assert.deepEqual(calls.post, [], 'loading writes nothing');
 });
 
 test('load keeps the built-ins when the server cannot be read', async () => {
@@ -340,24 +325,6 @@ test('load keeps the built-ins when the server cannot be read', async () => {
   );
   assert.match(S._state.loadError, /offline/);
   assert.equal(calls.post.length, 0);
-});
-
-test('the first load moves the old browser memory into Settings, once', async () => {
-  const key = AC.projectKey('C:/Repos/App');
-  const calls = wired(
-    payload({
-      settings: { ...payload().settings, defaults: { agent: '', byAgent: {}, projects: {}, migrated: false } },
-    }),
-    { 'studio-new-chat-agent-by-project': JSON.stringify({ [key]: 'claude' }) },
-  );
-  await S.load();
-  assert.equal(calls.post.length, 1);
-  assert.deepEqual(calls.post[0], [
-    'settings',
-    { defaults: { migrated: true, projects: { [key]: { agent: 'claude' } } } },
-  ]);
-  await S.load();
-  assert.equal(calls.post.length, 1, 'not repeated in this page');
 });
 
 test('sync reloads only when the revision changed', async () => {

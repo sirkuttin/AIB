@@ -78,21 +78,3 @@ test('flush sends only what changed', async () => {
   await rs.flush();
   assert.equal(posts.length, 1);
 });
-
-test('migration maps old keys, sends them once and removes the old entries', async () => {
-  const { rs, posts, store } = setup({
-    'studio-last-seen': JSON.stringify({ 'claude:live-1': 900, 'omp:s2': 50, junk: 5, 'claude:bad': 'x' }),
-    'studio-last-viewed-v1': JSON.stringify({ 'claude:live-1': 1200, 'omp:s2': 10 }),
-  });
-  assert.equal(await rs.migrate((k) => (k === 'claude:live-1' ? 'claude:sess-1' : k)), true);
-  assert.equal(posts.length, 1);
-  assert.deepEqual(JSON.parse(JSON.stringify(posts[0][1].set)), {
-    'claude:sess-1': { seenAt: 1200 },
-    'omp:s2': { seenAt: 50 },
-  });
-  assert.equal(rs.seenAt('claude:sess-1'), 1200);
-  assert.equal(store['studio-last-seen'], undefined);
-  assert.equal(store['studio-last-viewed-v1'], undefined);
-  assert.equal(await rs.migrate(), false, 'only once');
-  assert.equal(posts.length, 1);
-});

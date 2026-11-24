@@ -348,43 +348,13 @@ aside .project-group {
   border-radius: 8px;
   box-shadow: 0 8px 24px var(--shadow-strong);
 }
-.ws-pop-empty {
-  margin: 0;
-  padding: 8px 8px 12px;
-  font-size: 13px;
-  color: var(--muted);
-}
 .ws-inbox-row:hover,
-.ws-pop-row:hover,
-.ws-inbox-row:focus-visible,
-.ws-pop-row:focus-visible {
+.ws-inbox-row:focus-visible {
   background: var(--accent-wash);
 }
-.ws-inbox-row:focus-visible,
-.ws-pop-row:focus-visible {
+.ws-inbox-row:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
-}
-.ws-inbox-text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  flex: 1;
-}
-.ws-inbox-title {
-  font-size: 13px;
-  line-height: 20px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.ws-inbox-sub {
-  font-size: 12px;
-  line-height: 16px;
-  color: var(--muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .ws-scrim {
   display: none;
@@ -597,45 +567,6 @@ body.show-composer-help .composer-note {
   color: var(--chip-icon-text);
   font-size: 10px;
   font-weight: 600;
-}
-.chip-agent-picker {
-  flex-direction: row;
-  align-items: center;
-  margin: 0;
-  padding: 2px 4px 2px 9px;
-  cursor: pointer;
-}
-.chip-agent-select {
-  width: auto;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  padding: 1px 2px;
-  margin: 0;
-  cursor: pointer;
-  max-width: 130px;
-}
-.chip-agent-select option {
-  background: var(--select-option-bg);
-  color: var(--text);
-}
-.chip-pop-agent {
-  min-width: 300px;
-  gap: 6px;
-}
-.chip-pop-agent .chip-handoff {
-  white-space: nowrap;
-  margin: 0;
-}
-.chip-handoff-summary {
-  flex-direction: row;
-  margin: 0;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  cursor: pointer;
 }
 .new-chat-bar {
   display: flex;
@@ -1288,42 +1219,7 @@ aside .connection .hold-note {
   border-radius: 10px;
   box-shadow: 0 8px 24px var(--shadow-strong);
 }
-.ws-pop-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 36px;
-  padding: 0 8px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-.ws-pop-head .n {
-  margin-left: auto;
-  font-weight: 400;
-  letter-spacing: 0;
-}
-.ws-pop-group {
-  height: 28px;
-  display: flex;
-  align-items: center;
-  padding: 0 8px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-.ws-pop-foot {
-  padding: 8px;
-  margin-top: 4px;
-  border-top: 1px solid var(--line-strong);
-  font-size: 12px;
-  color: var(--muted);
-}
-.ws-inbox-row,
-.ws-pop-row {
+.ws-inbox-row {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -1346,16 +1242,6 @@ aside .connection .hold-note {
   padding: 0 8px;
   color: var(--muted);
   cursor: pointer;
-}
-.ws-notify-body {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 4px 8px 8px;
-}
-.ws-notify-body .note {
-  margin: 0;
-  font-size: 11px;
 }
 @media (max-width: 1100px) {
   body > aside {
@@ -1521,17 +1407,6 @@ aside .connection .row-agent {
   font-size: 12px;
   font-weight: 400;
   color: var(--row-agent-text);
-}
-aside .connection .row-chip {
-  flex: none;
-  margin-left: 6px;
-  padding: 0 6px;
-  border-radius: 8px;
-  background: var(--row-chip-bg);
-  color: var(--text-3);
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 16px;
 }
 aside .connection .row-status.tone-need .row-phrase {
   color: var(--need);
@@ -1788,35 +1663,10 @@ aside .connection.attn-unread:not(.selected) {
 .ws-inbox-item:hover {
   background: var(--accent-wash);
 }
-.ws-inbox-top {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  min-width: 0;
-}
-.ws-inbox-top .ws-inbox-title {
-  flex: 1;
-  min-width: 0;
-}
 .ws-inbox-age {
   flex: none;
   font-size: 12px;
   color: var(--muted);
-}
-.ws-inbox-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 20px;
-  font-size: 12px;
-  color: var(--muted);
-}
-.ws-inbox-proj {
-  flex: 1;
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .ws-inbox-handled {
   position: absolute;
@@ -1835,9 +1685,6 @@ aside .connection.attn-unread:not(.selected) {
 .ws-inbox-handled:hover,
 .ws-inbox-handled:focus-visible {
   background: var(--accent-wash-2);
-}
-.ws-inbox-item.turn .ws-inbox-proj {
-  padding-right: 84px;
 }
 
 /* ---- conversation menu (right-click on a card or a tab, the card's three dots) --------------------------------- */
@@ -2289,40 +2136,6 @@ aside .list-heading .list-add {
   color: var(--text-faint);
   opacity: 0.6;
 }
-.ws-notify-body .notify-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: 12px;
-}
-.ws-notify-body .notify-row select {
-  max-width: 60%;
-  font-size: 12px;
-}
-.ws-notify-body .note.warn {
-  color: var(--note-warn-text);
-}
-.ws-notify-body .notify-muted-head {
-  font-size: 12px;
-  margin-top: 4px;
-}
-.ws-notify-body .notify-muted {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-.ws-notify-body .notify-muted-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-}
-.ws-notify-body .notify-muted button {
-  font-size: 11px;
-  padding: 3px 8px;
-}
 
 /* Beta marker: sits in the sidebar's top padding (absolutely placed, so nothing else moves). */
 aside {
@@ -2724,10 +2537,7 @@ body.aib-mode-chat #chatTabs,
 body.aib-mode-chat #subagentsPane,
 body.aib-mode-chat #activityReveal,
 body.aib-mode-chat #startPage,
-body.aib-mode-chat .ws-scrim,
-body.aib-mode-chat .split-root,
-body.aib-mode-chat .side-resize,
-body.aib-mode-chat .panel-resize {
+body.aib-mode-chat .ws-scrim {
   display: none !important;
 }
 body.aib-mode-chat > main {

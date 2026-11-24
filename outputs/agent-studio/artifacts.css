@@ -419,15 +419,6 @@
   color: var(--muted);
   font-size: 11px;
 }
-/* A row that arrived while you were not looking (an agent made a doc, a new artifact): a 6 px accent dot at its end. */
-.ar-newdot {
-  flex: 0 0 auto;
-  width: 6px;
-  height: 6px;
-  margin: 0 4px;
-  border-radius: 50%;
-  background: var(--accent);
-}
 .ar-sep {
   height: 1px;
   margin: 4px 2px;

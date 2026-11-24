@@ -230,7 +230,7 @@ export interface WebContext {
   shutdown: () => void;
   /** The state folder (worktree registry, clash and sync files, folder memory, artifacts). */
   stateDir: string;
-  /** The agent options the Settings agent list reads (launchers, node, state folder, migration). */
+  /** The agent options the Settings agent list reads (launchers, node, state folder). */
   agentOptions: AgentOptions;
   launcher: Launcher;
   folderMemory: FolderMemory;

@@ -504,11 +504,16 @@ export function stagedName(name: string, isDir: boolean): boolean {
   return /\.(js|css|html)$/.test(name) || name === 'agent_versions.json';
 }
 
-async function copyTree(from: string, to: string): Promise<void> {
+/** Files that live in the source tree for development and tests only; no build ships them (paths relative to the app folder). */
+export const DEV_ONLY_FILES: readonly string[] = ['server/docs/drawing/demo_server.ts'];
+
+async function copyTree(from: string, to: string, rel = ''): Promise<void> {
   await Deno.mkdir(to, { recursive: true });
   for await (const e of Deno.readDir(from)) {
     if (e.name === '__pycache__' || e.name === 'node_modules') continue;
-    if (e.isDirectory) await copyTree(`${from}/${e.name}`, `${to}/${e.name}`);
+    const path = rel ? `${rel}/${e.name}` : e.name;
+    if (DEV_ONLY_FILES.includes(path)) continue;
+    if (e.isDirectory) await copyTree(`${from}/${e.name}`, `${to}/${e.name}`, path);
     else if (e.isFile) await Deno.copyFile(`${from}/${e.name}`, `${to}/${e.name}`);
   }
 }
@@ -562,7 +567,7 @@ export async function stage(stageDir: string, version: string): Promise<string[]
   const included: string[] = [];
   for await (const e of Deno.readDir(APP_DIR)) {
     if (!stagedName(e.name, e.isDirectory)) continue;
-    if (e.isDirectory) await copyTree(`${APP_DIR}/${e.name}`, `${stageDir}/${e.name}`);
+    if (e.isDirectory) await copyTree(`${APP_DIR}/${e.name}`, `${stageDir}/${e.name}`, e.name);
     else await Deno.copyFile(`${APP_DIR}/${e.name}`, `${stageDir}/${e.name}`);
     included.push(e.name);
   }

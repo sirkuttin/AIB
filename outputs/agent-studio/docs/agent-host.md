@@ -274,11 +274,4 @@ Explorer is used because it registers nothing on the machine. Everything else in
 
 **Banner.** A Studio that is itself inside a package shows the amber `studioNotice` line "Studio is running inside Claude's sandbox, so its data is stored in that app's private folder (...). Restart Studio from outside that app to use your normal data folder." (`notices()` in `server/web/shared.ts`, field `packageNotice`, next to `hostCodeWarning`).
 
-**One-time move** (`adoptSandboxCopy()` in `server/state/paths.ts`, called by `prepare()` when Studio runs outside any package with the default per-user folder). Only the `Claude_*` package is searched, or any other package when exactly one holds a copy; with several Claude copies the newest is taken and the console says so. A copy that already has `MIGRATED-TO.txt` is ignored.
-
-* Real folder has no user data and a copy exists: `migrate.migrate()` copies it, verifies byte for byte, writes `.migrated` in the new folder and `MIGRATED-TO.txt` in the sandbox copy. The sandbox copy is never deleted. As with every migration, only the `studio-*` files, `artifacts/` and the artifact key move; worktrees and the adapter folder stay in the old copy and are recreated or reinstalled.
-* An agent host from the sandbox copy is still running, or a chat there holds its lease: nothing is moved. This run keeps using the sandbox folder, which holds the same files the packaged server used and so reaches the same running host. Banner: "Waiting to move your data from the Claude app's private folder (...)". The move is retried at the next start (after `AIB deploy --host`, once nothing is working).
-* Both folders hold user data: nothing is merged or overwritten, Studio uses the real folder, and a banner names both folders; the owner decides which to keep and moves the other aside.
-* Nothing in a sandbox: nothing changes.
-
 Tests: `work/deno/state_paths_test.ts` (stubbed Windows calls and temp folders only).

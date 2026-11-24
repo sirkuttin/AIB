@@ -745,6 +745,22 @@ Deno.test("release.json names the version, the agent-host protocol and what it n
   }
 });
 
+Deno.test("a build stages the server but leaves out the dev-only drawing demo server, which stays in the source tree", async () => {
+  const { stage, APP_DIR, DEV_ONLY_FILES } = await import("../../tools/build.ts");
+  const dir = Deno.makeTempDirSync({ prefix: "aib-stage-devonly-" });
+  try {
+    await stage(`${dir}/stage`, "0.1.0-test.1");
+    assertEquals(DEV_ONLY_FILES, ["server/docs/drawing/demo_server.ts"]);
+    for (const file of DEV_ONLY_FILES) {
+      Deno.statSync(`${APP_DIR}/${file}`); // still runnable from source
+      assertEquals(await Deno.stat(`${dir}/stage/${file}`).then(() => true, () => false), false, file);
+    }
+    Deno.statSync(`${dir}/stage/server/docs/drawing/tools.ts`); // its neighbours are staged
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+  }
+});
+
 // ---- the keeper step -----------------------------------------------------------------------------------------------------
 
 Deno.test("keeper: Go target, file name and build flags for each of the six targets", () => {

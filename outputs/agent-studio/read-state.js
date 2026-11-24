@@ -4,9 +4,6 @@
   // stable identity "provider:sessionId", so it survives restarts and is the same in every browser. Browser storage is only a
   // fast cache so the first paint is right before the server has answered. Positions only move forward.
   const CACHE = 'studio-read-state-v2',
-    OLD_LAST_SEEN = 'studio-last-seen',
-    OLD_VIEWED = 'studio-last-viewed-v1',
-    MIGRATED = 'studio-read-state-migrated',
     MAX_CACHE = 2000,
     MAX_SET = 500,
     MAX_TIME = 4102444800000;
@@ -131,39 +128,6 @@
       syncing = false;
     }
   }
-  // Once per browser: send what older versions kept in this browser to the server. resolve(oldKey) maps a key that was a live
-  // connection id to the chat's stable key (or returns it unchanged / null to drop it).
-  async function migrate(resolve) {
-    const s = store();
-    if (!host || !s) return false;
-    try {
-      if (s.getItem(MIGRATED)) return false;
-    } catch (e) {
-      return false;
-    }
-    const set = {};
-    for (const name of [OLD_LAST_SEEN, OLD_VIEWED]) {
-      const old = readJson(name);
-      if (!old || typeof old !== 'object' || Array.isArray(old)) continue;
-      for (const k of Object.keys(old)) {
-        const key = resolve ? resolve(k) : k;
-        const t = Number(old[k]);
-        if (key && validKey(key) && validTime(t)) merge(set, key, { seenAt: t });
-      }
-    }
-    try {
-      await sync();
-      for (const k of Object.keys(set)) merge(chats, k, set[k]);
-      saveCache();
-      if (Object.keys(set).length) await post(set);
-      s.setItem(MIGRATED, '1');
-      s.removeItem(OLD_LAST_SEEN);
-      s.removeItem(OLD_VIEWED);
-      return true;
-    } catch (e) {
-      return false; // the old entries stay; the next page load tries again
-    }
-  }
   function init(h) {
     host = h;
     if (root.document && root.document.addEventListener)
@@ -171,7 +135,7 @@
         if (root.document.visibilityState === 'hidden') flush();
       });
   }
-  const api = { init, seenAt, seenIndex, markedUnread, mark, sync, flush, migrate, _merge: merge, _reset: loadCache };
+  const api = { init, seenAt, seenIndex, markedUnread, mark, sync, flush, _merge: merge, _reset: loadCache };
   root.AgentReadState = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

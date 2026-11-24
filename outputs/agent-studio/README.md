@@ -28,7 +28,7 @@ deno run -A server/main.ts deploy [--host] [--wait]                restart a run
 deno task build                                                    the desktop packages (tools/build.ts; see docs/DESKTOP.md)
 ```
 
-Flags: `--port`, `--state-dir`, `--omp-sessions`, `--claude-projects`, `--owners-dir`, `--node-command`, `--claude-launcher`, `--codex-launcher`, `--mcp-config`, `--enable-client-terminal`, `--enable-client-fs[=read]`, `--no-artifact-tool`, `--no-auto-reconnect`, `--no-owner-announcements`, `--host-idle-minutes`, `--log-level`, `--migrate-from`, `--open`, `--in-process`, `--stop-host`, `--force`.
+Flags: `--port`, `--state-dir`, `--omp-sessions`, `--claude-projects`, `--owners-dir`, `--node-command`, `--claude-launcher`, `--codex-launcher`, `--mcp-config`, `--enable-client-terminal`, `--enable-client-fs[=read]`, `--no-artifact-tool`, `--no-auto-reconnect`, `--no-owner-announcements`, `--host-idle-minutes`, `--log-level`, `--open`, `--in-process`, `--stop-host`, `--force`.
 
 ### Installing the agents
 

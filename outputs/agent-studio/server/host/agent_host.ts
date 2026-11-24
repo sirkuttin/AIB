@@ -530,7 +530,6 @@ export function studioOptions(o: Options, mcpServers: StudioOptions['mcpServers'
     enableClientFs: o.enableClientFs,
     noArtifactTool: o.noArtifactTool,
     mcpServers,
-    migration: (o as unknown as { migration?: Record<string, unknown> | null }).migration ?? null,
   };
 }
 
@@ -562,7 +561,7 @@ export async function hostMain(argv: string[]): Promise<number> {
     throw error;
   }
   const mcpServers = loadMcp(options, usage);
-  await applyStatePaths(options as never, usage, APP_ROOT, false); // normally --state-dir is given by the web server
+  await applyStatePaths(options as never, usage, APP_ROOT); // normally --state-dir is given by the web server
   // stderr only: the web server starts the host with stdout and stderr going to <state>/agent-host.log, which is rotated by
   // copy-and-truncate, so a second handle on that file would fight the rotation.
   log.setup('agent-host', { level: options.logLevel });

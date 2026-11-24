@@ -951,13 +951,6 @@ a.doc-chip.gone {
   font-size: 12px;
   white-space: nowrap;
 }
-/* the Artifacts picker's doc rows, and the doc list when the chat has no artifacts */
-.ar-docs-empty {
-  margin: 12px 0 0;
-}
-.ar-docs-empty .ar-it {
-  width: 100%;
-}
 
 /* ---- the file editor (file-editor-ui.js) ---- */
 /* The tools row of an editable file: one row that never wraps (44 px); long state text is cut with an ellipsis. */

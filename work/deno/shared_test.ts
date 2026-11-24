@@ -280,9 +280,8 @@ Deno.test('settingsView: the stored settings, the list and the notices; an unrea
   const view = await shared.settingsView(ctx);
   assertEquals((view.agents as { id: string }[]).map((a) => a.id), ['claude', 'codex', ...BETA_IDS]);
   assert(typeof view.revision === 'string' && 'settings' in view && 'warning' in view);
-  assertEquals(view.migration, { state: 'none' });
   assertEquals(view.hostTakeoverWaiting, 2);
-  assertEquals([view.hostCodeWarning, view.sandboxNotice], ['', '']);
+  assertEquals(view.hostCodeWarning, '');
   assert('packageContext' in view && 'packageNotice' in view);
   const live = await shared.settingsView(
     context(m.state, { liveList: () => Promise.resolve({ connections: [{ provider: 'codex', auth: {} }] }) }),
@@ -299,27 +298,8 @@ Deno.test('the notice lines match Python', async () => {
   for (const pkg of [null, '', 'Claude_pzs8sxrjxfjjc', 'Other']) {
     assertEquals(shared.packageNotice(pkg, 'C:\\state'), await py.call('studio_shared', 'package_notice', [pkg, 'C:\\state']));
   }
-  const migrations = [
-    null,
-    {},
-    { kind: 'local', state: 'waiting' },
-    { kind: 'sandbox', state: 'none' },
-    { kind: 'sandbox', state: 'done' },
-    { kind: 'sandbox', state: 'done', worktreesLeft: 1, source: 'C:\\old' },
-    { kind: 'sandbox', state: 'done', worktreesLeft: 3, source: 'C:\\old' },
-    { kind: 'sandbox', state: 'conflict', source: 'C:\\pkg' },
-    { kind: 'sandbox', state: 'conflict' },
-    { kind: 'sandbox', state: 'waiting', reason: 'a chat is working' },
-    { kind: 'sandbox', state: 'waiting' },
-    { kind: 'sandbox', state: 'refused', reason: 'no space' },
-    { kind: 'sandbox', state: 'failed' },
-  ];
-  for (const m of migrations) {
-    assertEquals(shared.sandboxNotice(m), await py.call('studio_shared', 'sandbox_notice', [m]), JSON.stringify(m));
-  }
-  const notices = await shared.notices({ options: { stateDir: 'x', migration: { kind: 'sandbox', state: 'conflict' } }, hostInfo: null });
-  assertEquals(notices.migration, { kind: 'sandbox', state: 'conflict' });
-  assert(String(notices.sandboxNotice).startsWith('AIB data exists in two places'));
+  const notices = await shared.notices({ options: { stateDir: 'x' }, hostInfo: null });
+  assert(!('migration' in notices) && !('sandboxNotice' in notices));
   assertEquals(notices.hostTakeoverWaiting, 0);
 });
 

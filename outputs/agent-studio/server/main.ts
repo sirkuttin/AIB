@@ -19,7 +19,6 @@ import { APP_ROOT, APP_VERSION, isCompiled, isDesktopApp, launchDir, selfCommand
 import * as log from './core/log.ts';
 import { Options, parseOptions, UsageError } from './core/options.ts';
 import { apply as applyStatePaths } from './state/paths.ts';
-import './state/migrate.ts'; // registers the data move with paths.ts
 import { leaveSplitHost, pidAlive, readInfo, SOURCE_COMMAND, stopHost } from './host/host_client.ts';
 import { decideKeeper, KeeperLink } from './keeper/link.ts';
 import { keeperBinary, keeperRunning, PROTOCOL as KEEPER_PROTOCOL } from './keeper/client.ts';
@@ -206,7 +205,7 @@ export async function main(argv: string[]): Promise<void> {
     throw error;
   }
   const mcpServers = loadMcp(options, usage); // studio.finish_agent_options: an invalid --mcp-config is a usage error
-  await applyStatePaths(options as never, usage, APP_ROOT, !options.stopHost);
+  await applyStatePaths(options as never, usage, APP_ROOT);
   const stateDir = String(options.stateDir);
   startup.mark('data folder ready');
   // One AIB per data folder, whatever the mode: a second desktop launch shows the running app's window and exits; anything else
