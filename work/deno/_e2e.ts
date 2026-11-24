@@ -8,9 +8,8 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { FAKE_HOST, Fixture, httpJson, Json, SEP, sleep, until, Web } from './_host_fixture.ts';
-/** The e2e fakes under work/ that are not ported to work/fakes yet still run on Python. */
-const PY = Deno.build.os === 'windows' ? 'python' : 'python3';
 import { WORK } from './_work.ts';
+import { NODE } from './_fakes.ts';
 import { APP_ROOT } from '../../app/server/core/app.ts';
 import { CODE_ROOT, HostClient, pidAlive, PROTOCOL_VERSION, readInfo } from '../../app/server/host/host_client.ts';
 import { repoHash } from '../../app/server/worktrees/worktrees.ts';
@@ -34,12 +33,11 @@ export const acpProbe = `${WORK_DIR}${SEP}acp_probe.js`;
 
 // ---- the fake agent launch: the ONE place the e2e tests start a fake agent --------------------------------------------------
 /**
- * TEMP (fork B, until work/fakes/*.mjs land): the Python fakes, started with python as the "node command". After the merge of the
- * fake-agent port, flip this one function to `{ node: NODE, script: fakePath('<name>.mjs') }` (work/deno/_fakes.ts).
- * `name` is the Python launcher's file under work/ (for example 'worktree-e2e-agent.py').
+ * The fake agents are node programs (work/fakes, work/*-fixture/agent.mjs); no Python.
+ * `name` is the launcher's file under work/ (for example 'worktree-e2e-agent.mjs').
  */
 export function fakeLaunch(name: string): { node: string; script: string } {
-  return { node: PY, script: `${WORK_DIR}${SEP}${name.replaceAll('/', SEP)}` };
+  return { node: NODE, script: `${WORK_DIR}${SEP}${name.replaceAll('/', SEP)}` };
 }
 
 // ---- waits and git -----------------------------------------------------------------------------------------------------------
@@ -149,7 +147,7 @@ export const SPLIT = SERVER_KIND !== 'deno';
  * what the worktree tests cover).
  */
 export class E2EFixture extends Fixture {
-  constructor(readonly launcher = 'worktree-e2e-agent.py', parent?: string, readonly extraEnv: Record<string, string> = {}) {
+  constructor(readonly launcher = 'worktree-e2e-agent.mjs', parent?: string, readonly extraEnv: Record<string, string> = {}) {
     super(parent);
   }
 

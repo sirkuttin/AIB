@@ -176,7 +176,7 @@ function unlinkJunction(link: string) {
 
 class GeminiFixture extends E2EFixture {
   constructor(parent: string, extraEnv: Record<string, string>) {
-    super('worktree-e2e-agent.py', parent, extraEnv);
+    super('worktree-e2e-agent.mjs', parent, extraEnv);
     this.scrub = ['GOOGLE_API_KEY', 'GOOGLE_CLOUD_PROJECT', 'GOOGLE_APPLICATION_CREDENTIALS', 'GOOGLE_GENAI_USE_VERTEXAI'];
   }
   override agentFlags(): string[] {

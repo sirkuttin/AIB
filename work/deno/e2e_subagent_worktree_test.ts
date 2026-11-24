@@ -205,6 +205,9 @@ Deno.test({
     assertEquals(after[rec.id as string].state, rec.state);
     assertEquals(after[rec.id as string].path, rec.path);
     // the cap: forged editing Agent calls are prepared until the chat holds 8, then refused
+    const turnEnds = async () => (await chat.state()).events.filter((e) => e.kind === 'turn_end').length;
+    // Claude Code runs a second cycle on its own when the helper finishes; its turn end removes prepared worktrees no call took
+    await waitFor(async () => !(await chat.state()).busy && (await turnEnds()) >= 2, 'the second cycle to end', 60).catch(() => {});
     const answers: string[] = [];
     for (let i = 0; i < 9; i++) {
       answers.push((await hookPost(fx.state, 'pre-tool', chat.id, key, { tool_name: 'Agent', tool_use_id: `toolu_f${i}`, tool_input: { subagent_type: 'general-purpose', prompt: 'x' } }))[1]);
@@ -212,7 +215,7 @@ Deno.test({
     const denied = answers.filter((a) => a.includes('permissionDecision'));
     assert(denied.length && denied[denied.length - 1].includes('already has 8 subagents'), JSON.stringify(answers.slice(-3)));
     assertEquals(answers.filter((a) => a.includes('"allow"')), [], 'a hook route answered allow');
-    const held = Object.values(readSubagents(fx.state)).filter((r) => r.chat === chat.id && ['preparing', 'prepared', 'running', 'done', 'stopped'].includes(String(r.state)));
+    const held = Object.values(readSubagents(fx.state)).filter((r) => r.chat === chat.id && ['preparing', 'prepared', 'running'].includes(String(r.state))); // the slots the cap counts (the done one is not one)
     assertEquals(held.length, 8);
 
     // B15: not on the web server (the page and the phone use it)

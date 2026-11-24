@@ -781,7 +781,7 @@ export class AibCodex {
 
 class CodexFixture extends E2EFixture {
   constructor(readonly keeper: boolean, parent: string, extraEnv: Record<string, string>) {
-    super('worktree-e2e-agent.py', parent, extraEnv);
+    super('worktree-e2e-agent.mjs', parent, extraEnv);
   }
   /** keeper: the chat's agent runs in the keeper (AIB's MCP forwarder entry), as in a real build; else the split agent host. */
   override get env(): Record<string, string> {
