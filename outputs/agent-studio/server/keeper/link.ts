@@ -801,6 +801,11 @@ export class KeeperChannel {
     }).catch((error) => log.warning('keeper truncate on %s failed: %s', this.id, error instanceof Error ? error.message : error));
   }
 
+  /** No operation can reach the agent any more: the channel was lost, or its connection ended and no reconnect is waiting. */
+  get unreachable(): boolean {
+    return this.lost || (!this.#suspended && this.client !== null && this.client.closed);
+  }
+
   closeStdin(): Promise<void> {
     return this.#op((c) => c.closeStdin(this.id, this.epoch)).catch(() => {});
   }

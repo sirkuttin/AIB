@@ -7213,13 +7213,20 @@ export class Connection {
     if (this.#scheduleTimer !== null) clearTimeout(this.#scheduleTimer);
     this.#scheduleTimer = null;
     let stop = false;
+    let deadChannel = false;
     try {
       for (const key of [...this.permissions.keys()]) {
         if (!this.rebuildError) this.permission(key, null);
       }
       this.#clearElicitations({});
       if (this.busy && !this.rebuildError) this.cancel();
-      if (this.channel !== null) {
+      if (this.channel !== null && this.channel.unreachable) {
+        // The keeper connection is already gone: nothing can answer a stdin close, so waiting for the exit would only run out the
+        // clock. Go straight to the kill step below (one short wait).
+        this.#stdinClosed = true;
+        stop = true;
+        deadChannel = true;
+      } else if (this.channel !== null) {
         if (this.rebuildError) await this.channel.claim().catch(() => 0); // read-only until now: take it over to stop it
         this.#stdinClosed = true;
         void this.channel.closeStdin(); // ACP adapters exit on it, as on a closed pipe
@@ -7233,7 +7240,7 @@ export class Connection {
       if (!isOsError(error) && !(error instanceof ValueError)) throw error;
       stop = true;
     }
-    if (stop && this.process !== null) {
+    if (stop && !deadChannel && this.process !== null) {
       try {
         this.process.kill('SIGTERM');
       } catch { /* already gone */ }
@@ -7242,7 +7249,7 @@ export class Connection {
     // The adapter had its chance to exit cleanly; now take down whatever it left running (claude CLI, MCP servers, ...).
     if (this.process !== null) {
       this.tree!.kill();
-      await this.#waitExit(3000);
+      await this.#waitExit(deadChannel ? 300 : 3000);
     }
     if (this.channel) this.channelRemoved = this.channel.remove(); // closed: its keeper record is not needed any more
     // its history store is kept (owner rule 2026-11-17): reopening the conversation goes on in it under this chat id
