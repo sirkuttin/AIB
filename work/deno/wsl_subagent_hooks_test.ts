@@ -484,3 +484,36 @@ Deno.test({
     assertEquals(studio.subagents!.ofChat(c.id).length, 0);
   },
 });
+
+Deno.test({
+  name: "wsl subagent hooks: a WSL Codex chat on a helper that reports reaps is tagged (a subagent's Bash call only); an older helper leaves it untagged",
+  ...T,
+  async fn() {
+    await keeperBinary();
+    const agents = [{ id: 'codex', found: true, command: ['node', '/usr/lib/node_modules/@zed-industries/codex-acp/bin/codex-acp.js'], version: '1.0.0' }];
+    const bashOf = (hook: Awaited<ReturnType<typeof openChat>>['hook'], agent: string | null, command: string) =>
+      hook('codex-pre-tool', { tool_name: 'Bash', ...(agent ? { agent_id: agent } : {}), tool_use_id: 'call_b', tool_input: { command } });
+    { // older helper (no subagent.reaps): no tagging, the cd prefix alone
+      await using lab = new Lab();
+      lab.host.handlers['agents.detect'] = () => ({ agents });
+      const { c, hook } = await openChat(lab, 'codex');
+      assertEquals(c.subagentHooks!.shellTag, undefined);
+      await hook('codex-pre-tool', { tool_name: 'spawn_agent', tool_use_id: 'call_1', tool_input: { message: 'serve' } });
+      await hook('codex-subagent-start', { agent_id: 'cx1', agent_type: 'default' });
+      const bash = await bashOf(hook, 'cx1', 'npm run dev');
+      assert(!JSON.parse(bash.body).hookSpecificOutput.updatedInput.command.includes('AIB_PROC'), bash.body);
+    }
+    await using lab = new Lab();
+    lab.host.hookShellTag = true;
+    lab.host.handlers['agents.detect'] = () => ({ agents });
+    const { c, hook } = await openChat(lab, 'codex');
+    assertEquals(c.subagentHooks!.shellTag, true);
+    await hook('codex-pre-tool', { tool_name: 'spawn_agent', tool_use_id: 'call_1', tool_input: { message: 'serve' } });
+    await hook('codex-subagent-start', { agent_id: 'cx1', agent_type: 'default' });
+    // the subagent's call carries the cookie (this lab's helper runs on Windows: the PowerShell form; a real distro: the bash form, subagent_reap_test.ts)
+    const tagged = JSON.parse((await bashOf(hook, 'cx1', 'npm run dev')).body).hookSpecificOutput.updatedInput.command as string;
+    assert(tagged.includes('AIB_PROC') && tagged.includes(`${c.id}.cx1.call_b`) && tagged.endsWith('; npm run dev'), tagged);
+    // the main thread's own call is never tagged
+    assertEquals((await bashOf(hook, null, 'npm run dev')).body, '{}');
+  },
+});

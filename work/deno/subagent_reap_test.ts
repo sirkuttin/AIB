@@ -449,13 +449,13 @@ Deno.test('Windows Git Bash: the cookie is also read from the PATH marker (MSYS 
   assertEquals(stripAibPrefix(other, CHAT), `export PATH="$PATH:/aibproc/${CHAT}.agent7.toolu_9"; npm test`);
 });
 
-Deno.test({
-  name: 'WSL: a finished subagent of a WSL chat has its processes shut down inside the distro (needs AIB_WSL_E2E)',
-  ignore: !Deno.env.get('AIB_WSL_E2E'),
-  ...T,
-  async fn() {
-    // the real distro: the Linux keeper's `hook pre-shell --helper-socket` tags the subagent's shell call, the helper's reaper (the same
-    // service and reaper, natively over the distro's /proc) shuts the process down after the subagent ends, and AIB posts the line
+/**
+ * The real distro: the Linux keeper's hook tags the subagent's shell call (Claude: `hook pre-shell`; Codex: the cookie in its
+ * `codex-pre-tool` answer), the helper's reaper (the same service and reaper, natively over the distro's /proc) shuts the process down
+ * after the subagent ends, and AIB posts the line.
+ */
+async function wslReap(provider: 'claude' | 'codex') {
+  {
     const e = await import('./_wsl_e2e.ts');
     if (!e.WSL_E2E) {
       console.log('(no WSL 2 distro named by AIB_WSL_E2E here: nothing to check)');
@@ -524,6 +524,70 @@ Deno.test({
       const host = await e.readyHost();
       if (!host.hookShellTag) {
         console.log("(the distro's AIB helper predates shell tagging: nothing to check)");
+        return;
+      }
+      if (provider === 'codex') {
+        // a Codex-shaped subagent: spawn_agent from the main thread, SubagentStart, Bash calls with the subagent's agent_id (the codex-pre-tool
+        // answer carries the cookie, bash form), SubagentStop
+        const cx = await studio.connect('codex', refOf({ kind: 'wsl', distro: KEY, linuxPath: repo }));
+        for (let i = 0; i < 100 && cx.busy; i++) await sleep(100);
+        assertEquals(cx.subagentHooks!.off, '', JSON.stringify(cx.subagentHooks));
+        assertEquals(cx.subagentHooks!.shellTag, true, "a WSL Codex chat on a helper of this build tags its subagents' shell calls");
+        const cxEnv = (cx as unknown as { env: Record<string, string> }).env;
+        const cfg = JSON.parse(cxEnv.CODEX_CONFIG) as { hooks: Record<string, { hooks: { command: string }[] }[]> };
+        const cmdOf = (event: string) => cfg.hooks[event].at(-1)!.hooks[0].command;
+        const runCx = (command: string, input: unknown) =>
+          inDistro(
+            'export AIB_HOOK_KEY="$1" AIB_HOOK_CHAT="$2"; exec sh -c "$3"',
+            [cxEnv.AIB_HOOK_KEY, cx.id, command],
+            new TextEncoder().encode(JSON.stringify(input)),
+          );
+        const seenCx: string[] = [];
+        const recordCx = cx.recordedEvent.bind(cx);
+        cx.recordedEvent = (kind: string, data: unknown, time?: number) => {
+          if (kind === 'studio_note') seenCx.push(String((data as Json).message));
+          recordCx(kind, data, time);
+        };
+        const spawn = await runCx(cmdOf('PreToolUse'), { tool_name: 'spawn_agent', tool_use_id: 'call_1', tool_input: { message: 'run the dev server' } });
+        assertEquals(spawn.code, 0, spawn.err);
+        const start = await runCx(cmdOf('SubagentStart'), { agent_id: 'cx1', agent_type: 'default' });
+        assertEquals(start.code, 0, start.err);
+        const callBody = (call: string, agent: string | null, command: string) => ({ tool_name: 'Bash', tool_use_id: call, ...(agent ? { agent_id: agent } : {}), tool_input: { command } });
+        const bg = (secs: number) => `setsid sleep ${secs} >/dev/null 2>&1 < /dev/null & echo $!`;
+        // the main thread's own call is not tagged; the subagent's gets the cookie in front of AIB's cd
+        const mainCall = await runCx(cmdOf('PreToolUse'), callBody('call_m', null, 'echo hi'));
+        assertEquals(mainCall.code, 0, mainCall.err);
+        assert(!mainCall.out.includes('AIB_PROC'), mainCall.out);
+        const tagCx = async (call: string, agent: string, command: string) => {
+          const a = await runCx(cmdOf('PreToolUse'), callBody(call, agent, command));
+          assertEquals(a.code, 0, a.err);
+          return JSON.parse(a.out).hookSpecificOutput.updatedInput.command as string;
+        };
+        const first = await tagCx('call_t1', 'cx1', bg(A));
+        assert(first.startsWith(`export AIB_PROC='${cx.id}.cx1.call_t1'; cd '`) && first.endsWith(`; ${bg(A)}`), first);
+        const second = await tagCx('call_t2', 'cx1', bg(B));
+        const startOther = await runCx(cmdOf('SubagentStart'), { agent_id: 'cx2', agent_type: 'default' }); // another subagent (no spawn call: bound on its first call)
+        assertEquals(startOther.code, 0, startOther.err);
+        const other = `export AIB_PROC='${cx.id}.cx2.call_x'; ${bg(C)}`;
+        const startedPid = async (command: string) => {
+          const out = await session.run(command);
+          const pid = out.split('\n').pop()!.trim();
+          assert(/^\d+$/.test(pid), `not a pid: ${out}`);
+          started.push(pid);
+          return pid;
+        };
+        const pA = await startedPid(first), pB = await startedPid(second), pC = await startedPid(other);
+        const up = async (pid: string) => (await session.run(`kill -0 ${Number(pid)} 2>/dev/null && echo up || echo down`)) === 'up';
+        assert(await up(pA) && await up(pB) && await up(pC), 'the three processes are running');
+        const stopped = await runCx(cmdOf('SubagentStop'), { agent_id: 'cx1', agent_type: 'default' });
+        assertEquals(stopped.code, 0, stopped.err);
+        await until("the Codex subagent's tagged processes are shut down in the distro", async () => !(await up(pA)) && !(await up(pB)), 60_000);
+        assert(await up(pC), "another subagent's process is never touched");
+        await until('the line in the parent chat', () => seenCx.some((m) => /finished; its processes were shut down \(2\)/.test(m)), 60_000);
+        const whyCx = reapedWhyIn(state);
+        assertEquals(whyCx('call_t1'), 'subagent finished');
+        assertEquals(whyCx('call_t2'), 'subagent finished');
+        assertEquals(whyCx('call_x'), '');
         return;
       }
       const c = await studio.connect('claude', refOf({ kind: 'wsl', distro: KEY, linuxPath: repo }));
@@ -617,5 +681,19 @@ Deno.test({
       e.newAib();
       Deno.removeSync(state, { recursive: true });
     }
-  },
+  }
+}
+
+Deno.test({
+  name: 'WSL: a finished subagent of a WSL chat has its processes shut down inside the distro (needs AIB_WSL_E2E)',
+  ignore: !Deno.env.get('AIB_WSL_E2E'),
+  ...T,
+  fn: () => wslReap('claude'),
+});
+
+Deno.test({
+  name: 'WSL: a finished Codex subagent of a WSL chat has its processes shut down inside the distro (needs AIB_WSL_E2E)',
+  ignore: !Deno.env.get('AIB_WSL_E2E'),
+  ...T,
+  fn: () => wslReap('codex'),
 });

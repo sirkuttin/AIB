@@ -2810,7 +2810,8 @@ export class Studio {
         return {
           id,
           env: { AIB_HOOK_KEY: key, AIB_HOOK_CHAT: id, CODEX_CONFIG: JSON.stringify(codexSub.withCodexHooks(remote.config, hooks)) },
-          hooks: { ...offHooks(''), adopted: true, prompt: codexSub.CODEX_SUBAGENT_PROMPT, subFolder: remote.subFolder },
+          // a subagent's shell calls get AIB's cookie and the distro's helper shuts down what they left (a helper without subagent.reaps: untagged)
+          hooks: { ...offHooks(''), adopted: true, prompt: codexSub.CODEX_SUBAGENT_PROMPT, subFolder: remote.subFolder, ...(host.hookShellTag === true ? { shellTag: true } : {}) },
         };
       } catch (error) {
         log.exception(error, 'Could not set up Codex subagent hooks in the distro; its subagents are off');
