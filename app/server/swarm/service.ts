@@ -28,6 +28,7 @@ import { baseAgent, isServerEntry, serverIdOf } from '../agents/claude_family.ts
 import { type ModelServer, modelServerLabel } from '../agents/model_servers.ts';
 import { MODEL_SERVER_AGENTS } from '../agents/claude_family.ts';
 import { applyChange, changedFiles } from './undo.ts';
+import { ownWorkReason } from '../subagents/own_work.ts';
 import { ignoredFiles, landSubagentWork, protectedPath, SCRATCH_EXT, scratchFiles } from '../worktrees/subagent_land.ts';
 export { ignoredFiles, protectedPath, SCRATCH_EXT, scratchFiles };
 import { claudeHelpers, swarmEnabled } from './settings.ts';
@@ -900,6 +901,15 @@ export class Swarm {
         await this.#toldStopped(h.id, h.title, rec, parentId);
         return;
       }
+      // its turn ended but its own tests (a background run, a Monitor) still run: it lands when it is quiet, without taking the parent's lock
+      const own = rec && !rec.wsl ? ownWorkReason(rec) : '';
+      if (own) {
+        if (L.lastRefusal !== own) {
+          log.info('swarm: landing of subagent %s waits: %s', h.id, own);
+          await this.#patchLanding(h.id, { lastRefusal: own });
+        }
+        return;
+      }
     }
     await this.#runLanding(h, parentId);
   }
@@ -929,7 +939,7 @@ export class Swarm {
       parentId,
       `waiting-${key.replace(':', '-')}`,
       `Subagent “${h.title}” finished but has not landed yet: ${reason}. AIB lands it as soon as this chat is idle (no turn, no queued ` +
-        `messages, no subagent at work in this folder), so finish or pause your turn. ` +
+        `messages), so finish or pause your turn. ` +
         (branch ? `Its work is on branch ${branch} (it starts with a snapshot of this folder's uncommitted files, so check it before merging by hand) ` : '') +
         `in ${h.worktree.path}.`,
     );
@@ -1417,6 +1427,7 @@ export class Swarm {
       // merge_helper asked for the scratch files an earlier landing left behind: only they land now
       landKept: h.sub?.landScratch && h.merge && !h.merge.undo && h.sub.kept?.length ? h.sub.kept : null,
       landScratch: !!h.sub?.landScratch,
+      own: rec.wsl ? undefined : rec,
     };
     let out: Json;
     try {
@@ -1534,10 +1545,14 @@ export class Swarm {
       );
       return;
     }
+    if (state === 'refused' && out.code === 'own_work') { // its distro saw its tests still running: no try used, no line; tried at every poll
+      await this.#patchLanding(h.id, { stage: 'queued', lockId: '', lastRefusal: s(out.message) });
+      return;
+    }
     if (state === 'refused' && RETRY_CODES.has(s(out.code))) {
       const tries = (h.landing?.tries ?? 0) + 1;
       const tell = tries >= LANDING_TRIES_NOTE && !h.landing?.toldTries;
-      await this.#patchLanding(h.id, { stage: 'queued', lockId: '', tries, lastRefusal: s(out.message), ...(tell ? { toldTries: true } : {}) });
+      await this.#patchLanding(h.id,{ stage: 'queued', lockId: '', tries, lastRefusal: s(out.message), ...(tell ? { toldTries: true } : {}) });
       if (tell) await this.note(h.id, 'swarm-merge', `Couldn't land subagent “${h.title}” yet: ${lower(s(out.message))}. It will try again when the chat is next idle.`);
       // woken at the first refusal (once per reason): a try that keeps failing is never silent
       await this.#tellOnce(

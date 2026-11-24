@@ -24,6 +24,7 @@ import { processStrings } from '../../app/server/platform/process_info.ts';
 import { killProcesses } from '../../app/server/platform/kill_verified.ts';
 import { cookieIn } from '../../app/server/platform/proc_env.ts';
 import { cookieOf, stripAibPrefix, stripAibPrefixes, tagPrefix } from '../../app/server/allow/aib_prefix.ts';
+import { OWN_WORK } from '../../app/server/subagents/own_work.ts';
 import { parseCookie } from '../../app/server/subagents/shell_tag.ts';
 import { join } from '../../app/server/platform/path.ts';
 import * as m from '../../app/server/transcripts/monitor.ts';
@@ -39,6 +40,10 @@ const OTHER_CHAT = 'deadbeef00112233445566778899aabb';
 /** This run's own sleep durations: the sweep at the end of a test finds its leftovers by them and touches nothing else. */
 const NUM = 30000 + Math.floor(Math.random() * 20000);
 const PAIR = `sleep ${NUM} & sleep ${NUM + 1}`;
+
+// A finished subagent that still has processes is left alone until its ceiling (subagents/own_work.ts, 2026-11-24: builders landed under
+// their running tests). These tests are about the shutdown itself, which is what happens at the ceiling: it is zero here.
+OWN_WORK.ceilingS = 0;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -393,7 +398,7 @@ Deno.test({
     for (const p of mine) assert(!alive(p.pid, p.started), `process ${p.pid} was shut down`);
     assert(!!realProcesses.list(0)?.some((p) => p.pid === main.pid), "the main thread's process was left alone");
     await until('the row is marked', () => reapedWhyIn(lab.state)('call_9') !== '');
-    assertEquals(reapedWhyIn(lab.state)('call_9'), 'subagent finished');
+    assert(reapedWhyIn(lab.state)('call_9').startsWith('it was still running'));
     await until('the parent is told', () => lab.reaped.length === 1);
   },
 });

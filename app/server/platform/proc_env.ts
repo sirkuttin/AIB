@@ -9,7 +9,7 @@
  * Never throws: null when the processes can't be listed.
  */
 import { readTable, refreshDescendants } from './descendants.ts';
-import { processEnvironment, processStartTime } from './process_info.ts';
+import { processEnvironment, processStartTime, processStrings } from './process_info.ts';
 
 export interface Seen {
   pid: number;
@@ -29,6 +29,8 @@ export interface ProcSource {
   list(since: number): Seen[] | null;
   /** The AIB_PROC of each pid that has one. */
   cookies(pids: number[]): Map<number, string>;
+  /** The current folder of each pid that can be read (absent: this source cannot tell). */
+  cwds?(pids: number[]): Map<number, string>;
 }
 
 const NAME = 'AIB_PROC';
@@ -112,7 +114,22 @@ function readCookies(pids: number[]): Map<number, string> {
   return out;
 }
 
-export const realProcesses: ProcSource = { list: listProcesses, cookies: readCookies };
+function readCwds(pids: number[]): Map<number, string> {
+  const out = new Map<number, string>();
+  for (const pid of pids) {
+    try {
+      if (Deno.build.os === 'windows') {
+        const cwd = processStrings(pid)?.cwd;
+        if (cwd) out.set(pid, cwd);
+      } else if (Deno.build.os === 'linux') {
+        out.set(pid, Deno.readLinkSync(`/proc/${pid}/cwd`));
+      }
+    } catch { /* unreadable */ }
+  }
+  return out;
+}
+
+export const realProcesses: ProcSource = { list: listProcesses, cookies: readCookies, cwds: readCwds };
 
 /** The processes that started at or after `since` and carry a cookie, from one snapshot; null when the processes can't be listed. */
 export function taggedSince(since: number, source: ProcSource = realProcesses): { all: Seen[]; tagged: Tagged[] } | null {

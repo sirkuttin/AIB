@@ -37,6 +37,7 @@ import { readHelpers } from '../swarm/registry.ts';
 import { claudeConfigDir, isForkSkill } from './claude_config.ts';
 import { callTimeOf, preShell } from './shell_tag.ts';
 import { type ProcessReaper, recordReaped } from './reap.ts';
+import { OWN_WORK, ownWorkReason, ownWorkStuck } from './own_work.ts';
 import type { WslReap } from '../wsl/contract.ts';
 
 const log = getLogger('subagents');
@@ -403,13 +404,29 @@ export class SubagentWorktrees {
     if (!rec || !chat || !this.reaper || !rec.agentId || chat.provider === 'gemini') return; // Gemini's fence denies subagent shells
     if (rec.state !== 'done' && rec.state !== 'stopped') return;
     if ((rec.continuedAt ?? 0) > (rec.doneAt ?? rec.stoppedAt ?? 0)) return;
+    // a finished (not stopped) subagent that still has its own background work (a test run, a Monitor) is left alone and looked at
+    // again; at the ceiling it is stuck: shut down below, with a line that says why
+    let why = 'subagent finished';
+    if (rec.state === 'done') {
+      if (ownWorkReason(rec)) {
+        this.#reapRecords.set(id, rec);
+        const timer = setTimeout(() => {
+          this.#reapTimers.delete(id);
+          void this.#reapRecord(id).catch((error) => log.exception(error, 'Shutting down a finished subagent\'s processes failed'));
+        }, OWN_WORK.recheckS * 1000);
+        Deno.unrefTimer(timer as unknown as number);
+        this.#reapTimers.set(id, timer as unknown as number);
+        return;
+      }
+      if (ownWorkStuck(rec)) why = `it was still running ${Math.round(OWN_WORK.ceilingS / 360) / 10} hours after it finished (stuck)`;
+    }
     const result = await this.reaper.reap({
       chat: chat.id,
       owner: rec.agentId,
       since: rec.boundAt ?? rec.createdAt,
       callTime: (call) => callTimeOf(chat.id, call),
     });
-    this.#reaped(chat.id, rec, result, 'subagent finished');
+    this.#reaped(chat.id, rec, result, why);
   }
 
   /** A TaskStop of one background call: only that call's processes (the call field), whoever started it. */
@@ -986,6 +1003,8 @@ export class SubagentWorktrees {
       const cur = readSubagents(this.stateDir)[id];
       if (!cur) return 'gone';
       if (cur.state !== 'done' && cur.state !== 'stopped') return 'running';
+      // never under its own running tests: its worktree stays until it is quiet (or the ceiling passes)
+      if (cur.state === 'done' && ownWorkReason(cur)) return 'running';
       if (cur.userHook) {
         await this.#update(id, () => null);
         return 'kept';

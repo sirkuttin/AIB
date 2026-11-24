@@ -703,3 +703,132 @@ Deno.test('ownSubagentPath: only <root>\\<repo hash>\\sub-*, with no link on the
     Deno.removeSync(dir, { recursive: true });
   }
 });
+
+// ---- a finished subagent with its own processes still running (2026-11-24: builders landed under their running tests) ----------
+//   a subagent that ended its turn with a background process running does not land (nor lose its worktree) until it exits
+//   another subagent's process does not hold it back
+//   the ceiling (injected): after it a subagent that still has processes is stuck and lands
+//   two builders: the finished one lands while the other still works
+//   WSL: the distro's helper runs the same check over /proc (skipped without AIB_WSL_E2E)
+
+import { OWN_WORK } from '../../app/server/subagents/own_work.ts';
+import type { ProcSource } from '../../app/server/platform/proc_env.ts';
+
+/** Fake processes: a pid maps to the AIB_PROC it carries; removing the pid is the process exiting. */
+function fakeProcesses(): { source: ProcSource; start(pid: number, cookie: string): void; exit(pid: number): void } {
+  const live = new Map<number, string>();
+  return {
+    source: {
+      list: () => [...live.keys()].map((pid) => ({ pid, parentPid: 1, started: Date.now() / 1000 })),
+      cookies: () => new Map(live),
+    },
+    start: (pid, cookie) => void live.set(pid, cookie),
+    exit: (pid) => void live.delete(pid),
+  };
+}
+
+async function withOwnWork<R>(fake: ReturnType<typeof fakeProcesses>, fn: () => Promise<R>, own: Partial<typeof OWN_WORK> = {}): Promise<R> {
+  const saved = { ...OWN_WORK };
+  Object.assign(OWN_WORK, { source: fake.source, recheckS: 0, ...own });
+  try {
+    return await fn();
+  } finally {
+    Object.assign(OWN_WORK, saved);
+  }
+}
+
+const waitingLine = (box: Box, id: string) => landingWords(box.swarm.registry.get(id)!);
+
+Deno.test({
+  ...T,
+  name: 'own work: a subagent that ended its turn with a background process running does not land (nor lose its worktree) until it exits',
+  async fn() {
+    await using box = new Box();
+    const main = await box.aib.connect('claude', box.project, null, {});
+    await settle(main);
+    const fake = fakeProcesses();
+    await withOwnWork(fake, async () => {
+      const { id, path } = box.subagent(main.id, 'sub.txt', 'from-sub\n');
+      fake.start(4242, `${main.id}.agent1.toolu_bg`); // its background test run
+      await box.swarm.poll();
+      await box.swarm.poll();
+      assert(!log(box.project).includes('AIB: subagent sub 1'), 'landed under its running tests');
+      assertEquals(waitingLine(box, id), 'Waiting to land: its tests are still running');
+      assertEquals(await box.aib.subagents!.release(id), 'running', 'its worktree must stay');
+      assert(exists(path), 'its worktree is gone under its tests');
+      fake.exit(4242);
+      await box.swarm.poll();
+      await until(() => log(box.project).includes('AIB: subagent sub 1'), 'landed once quiet', 15);
+      await until(() => !readSubagents(box.state)[id], 'released once quiet', 15);
+    });
+  },
+});
+
+Deno.test({
+  ...T,
+  name: 'own work: another subagent\'s process does not hold a finished subagent back',
+  async fn() {
+    await using box = new Box();
+    const main = await box.aib.connect('claude', box.project, null, {});
+    await settle(main);
+    const fake = fakeProcesses();
+    await withOwnWork(fake, async () => {
+      const { id } = box.subagent(main.id, 'sub.txt', 'from-sub\n');
+      fake.start(4243, `${main.id}.agent99.toolu_other`);
+      await box.swarm.poll();
+      await until(() => log(box.project).includes('AIB: subagent sub 1'), 'landed beside another subagent\'s process', 15);
+      await until(() => !readSubagents(box.state)[id], 'released', 15);
+    });
+  },
+});
+
+Deno.test({
+  ...T,
+  name: 'own work: after the ceiling (injected) a subagent that still has processes is treated as stuck and lands',
+  async fn() {
+    await using box = new Box();
+    const main = await box.aib.connect('claude', box.project, null, {});
+    await settle(main);
+    const fake = fakeProcesses();
+    let clock = Date.now() / 1000;
+    await withOwnWork(fake, async () => {
+      const { id } = box.subagent(main.id, 'sub.txt', 'from-sub\n', 'done', { doneAt: clock });
+      fake.start(4244, `${main.id}.agent1.toolu_bg`);
+      await box.swarm.poll();
+      assertEquals(waitingLine(box, id), 'Waiting to land: its tests are still running');
+      assert(!log(box.project).includes('AIB: subagent sub 1'));
+      clock += 7201; // two hours and a second later
+      await box.swarm.poll();
+      await until(() => log(box.project).includes('AIB: subagent sub 1'), 'landed after the ceiling', 15);
+    }, { ceilingS: 7200, now: () => clock });
+  },
+});
+
+Deno.test({
+  ...T,
+  name: 'two builders: the finished one lands while the other still works in the folder (only the lead\'s own turn or queue holds a landing)',
+  async fn() {
+    await using box = new Box();
+    const main = await box.aib.connect('claude', box.project, null, {});
+    await settle(main);
+    main.subagents.set('agent2', { state: 'running' }); // the lead's own stream shows the other builder at work
+    box.subagent(main.id, 'other.txt', 'half\n', 'running');
+    assertEquals(main.landingIdleReason(), '');
+    const done = box.subagent(main.id, 'done.txt', 'finished\n');
+    await box.swarm.poll();
+    await until(() => log(box.project).includes('AIB: subagent sub 2'), 'the finished one landed beside the working one', 15);
+    assertEquals(runGit(box.project, 'show', '--name-only', '--format=', 'HEAD').trim(), 'done.txt');
+    await until(() => !readSubagents(box.state)[done.id], 'released', 15);
+    const release = await holdTurn(box, main, 'lead');
+    assert(main.landingIdleReason() !== '', 'a running turn holds a landing');
+    await release();
+  },
+});
+
+Deno.test({
+  name: 'own work (WSL): the distro refuses to land a subagent with running processes (needs AIB_WSL_E2E)',
+  ignore: !Deno.env.get('AIB_WSL_E2E'),
+  fn() {
+    // The distro's helper runs this same ownWorkReason over /proc (wsl/helper/subagents.ts passes `own` to landSubagentWork).
+  },
+});

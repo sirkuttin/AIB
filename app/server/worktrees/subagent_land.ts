@@ -12,6 +12,7 @@ import * as wt from './worktrees.ts';
 import { pyStr } from '../core/py.ts';
 import { pathOf } from '../state/paths.ts';
 import { canonicalName } from '../allow/paths.ts';
+import { type OwnWorkRecord, ownWorkReason } from '../subagents/own_work.ts';
 
 type Json = Record<string, unknown>;
 
@@ -147,6 +148,8 @@ export interface LandSpec {
   /** Its scratch files that an earlier landing left behind and merge_helper asked for: only they land now (null: the normal landing). */
   landKept: string[] | null;
   landScratch: boolean;
+  /** Its record: while it has processes of its own running (its tests), nothing lands (subagents/own_work.ts). */
+  own?: OwnWorkRecord;
 }
 
 /**
@@ -160,6 +163,8 @@ export async function landSubagentWork(
 ): Promise<Json> {
   const { path, folder, target } = spec;
   if (!path || !wt.lexists(path)) return { state: 'refused', code: 'gone', message: 'its worktree is gone' };
+  const own = spec.own ? ownWorkReason(spec.own) : '';
+  if (own) return { state: 'refused', code: 'own_work', message: own };
   Deno.mkdirSync(spec.scratchDir, { recursive: true });
   const scratch = Deno.makeTempDirSync({ prefix: '.subagent-land-', dir: spec.scratchDir });
   let head: string;

@@ -328,6 +328,7 @@ export function subagentMethods(data: string): Handlers {
           held,
           landKept,
           landScratch: p.landScratch === true,
+          own: rec,
         },
         (stage, d) => {
           journal.push({ stage, data: { ...d } });

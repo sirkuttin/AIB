@@ -5603,25 +5603,16 @@ export class Connection {
   subagentInBackground: ((child: string) => boolean) | null = null;
 
   /**
-   * '' when nothing runs in this chat (no turn, nothing queued or being sent, no running subagent that works in the folder), else why
-   * not. A subagent in its own worktree doesn't count: a lead that always has one background subagent at work would otherwise never be
-   * idle, and the finished ones would never land or go (beta 11).
+   * '' when nothing runs in this chat (no turn, nothing queued or being sent), else why not. Running subagents don't count: a lead that
+   * always has one background subagent at work would otherwise never be idle, and the finished ones would never land or go.
    */
   landingIdleReason(): string {
     if (this.closed || !this.ready) return 'the chat is not open';
     if (this.busy) return 'a turn is running';
     const q = this.queue;
     if (q.inflight || q.items.length || q.steer.length) return 'messages are queued';
-    const isolated = (child: string) => {
-      try {
-        return !!this.subagentIsolated?.(child);
-      } catch {
-        return false;
-      }
-    };
-    for (const [child, entry] of this.subagents) {
-      if ((entry.state === 'running' || entry.state === 'requires_action') && !isolated(child)) return 'a subagent is running';
-    }
+    // Other subagents at work (in their own worktrees or not) never hold a landing back (owner 2026-11-24): a finished builder whose
+    // commits apply cleanly lands while the others work. Only this chat's own turn and queue count; conflicts are the landing's own.
     return '';
   }
 
