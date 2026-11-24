@@ -5,7 +5,7 @@
  * --ignore-scripts, and npm's cache in `<root>/agents/.npm-cache`: nothing is written outside AIB's folder, never `npm i -g`.
  * agents.detect then finds it first (adapters.ts findStudioInstall with the same root).
  *
- * What may be installed comes from AIB (its agent_versions.json entry and lockfile text, sent with every call); the helper still only
+ * What may be installed comes from AIB (its agents/versions.json entry and lockfile text, sent with every call); the helper still only
  * takes a known agent id, one of that agent's own package names, an exact version, and a lockfile that pins that very package and has
  * an integrity hash for every download. The job's state is on disk (install.json, install.lock with the helper's pid), so it outlives
  * AIB and a helper restart reads it back (a job whose helper died reads as interrupted, as on Windows). Each saved state is also sent

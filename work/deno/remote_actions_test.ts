@@ -1,5 +1,5 @@
 /**
- * Phone actions (phase B, server/remote/actions.ts) in a Studio in this process with a fake agent host and a fake Tailscale CLI:
+ * Phone actions (phase B, server/remote/actions.ts) in an AIB in this process with a fake agent host and a fake Tailscale CLI:
  *  - every new phone route is listed explicitly with the switch it needs; authenticate is always refused;
  *  - approve: only allow_once / reject_once options; allow_always, reject_always, plan-exit mode switches (acceptEdits,
  *    bypassPermissions, default), an option named "always", an unknown option and AIB's merge tool are refused; the agent host gets
@@ -22,8 +22,8 @@ import {
   pc,
   phoneHeaders,
   raw,
-  type RemoteStudio,
-  remoteStudio,
+  type RemoteAib,
+  remoteAib,
   serveStatus,
 } from './_remote_fixture.ts';
 
@@ -31,9 +31,9 @@ const OPTS = { sanitizeResources: false, sanitizeOps: false };
 type Json = Record<string, unknown>;
 const SEP = Deno.build.os === 'windows' ? '\\' : '/';
 
-async function phoneOn(): Promise<RemoteStudio> {
+async function phoneOn(): Promise<RemoteAib> {
   const fake = fakeTailscale();
-  const s = await remoteStudio({ runner: fake.runner });
+  const s = await remoteAib({ runner: fake.runner });
   fake.state.serve = serveStatus(readRemotePort(s.state)!);
   assertEquals((await pc(s, 'POST', '/api/live/devices/access', { on: true }))[0], 200);
   return s;
@@ -56,7 +56,7 @@ function chat(id: string, over: Partial<FakeChat> = {}): FakeChat {
   };
 }
 
-const post = (s: RemoteStudio, token: string, path: string, body: Json) =>
+const post = (s: RemoteAib, token: string, path: string, body: Json) =>
   raw(s.phonePort(), 'POST', path, phoneHeaders({ [DEVICE_HEADER]: token }, 'POST'), JSON.stringify(body));
 
 const OPTIONS = [

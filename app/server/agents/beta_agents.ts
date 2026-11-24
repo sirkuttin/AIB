@@ -160,13 +160,13 @@ export async function resolveBeta(id: string, options: BetaLookOptions = {}): Pr
   if (agent.npm?.native) {
     // A package whose bin is a postinstall placeholder (OpenCode): AIB's own install runs its platform binary, no node involved. A
     // global `npm i -g` ran the postinstall, so its PATH program is the real one (step 3 finds it).
-    const own = adapters.findStudioInstall(id, options.stateDir);
+    const own = adapters.findAibInstall(id, options.stateDir);
     const program = own ? nativeProgram(agent, own.dir, options.platform) : '';
     if (program) return row(agent, [program], 'studio', program, false, `AIB's own install ${own!.version}: ${program}`);
   }
   const node = agent.npm && !agent.npm.native ? (options.findNode ?? adapters.findNode)(options.nodeCommand || '') : '';
   if (agent.npm && !agent.npm.native) {
-    const own = adapters.findStudioInstall(id, options.stateDir);
+    const own = adapters.findAibInstall(id, options.stateDir);
     if (own && node) {
       return row(agent, [node, own.entry], 'studio', own.entry, false, `AIB's own install ${own.version}: ${own.entry} (run with node)`);
     }

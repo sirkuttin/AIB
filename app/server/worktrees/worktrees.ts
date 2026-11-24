@@ -1,5 +1,5 @@
 /**
- * Worktree per chat (worktrees.py): a new chat in a git project may run in its own git worktree, made under the Studio state folder
+ * Worktree per chat (worktrees.py): a new chat in a git project may run in its own git worktree, made under AIB state folder
  * (never inside the repo):
  *
  *     <state dir>/worktrees/<repo-hash>/<chat-slug>        branch studio/<chat-slug>, started from a snapshot commit S
@@ -10,15 +10,15 @@
  * on another branch, S is main's tip: the folder's uncommitted edits belong to that other branch and are not copied (Plan.note says
  * so in the chat), and live sync only copies the user's edits into the chat while the folder has the chat's base checked out
  * (record.editsFrom). `.env*` files (usually ignored) are copied over afterwards. A project
- * that cannot safely get a worktree is used in place, and the reason is logged. Every worktree Studio makes is recorded in
+ * that cannot safely get a worktree is used in place, and the reason is logged. Every worktree AIB makes is recorded in
  * <state dir>/studio-worktrees.json (chat key -> path, branch, base branch, snapshot commit) and only those are ever cleaned up.
  *
- * Python and Deno share the registry during the transition: it is re-read from disk on every access (as Python does), written whole
- * with writeJsonAtomic in Python's exact layout (json.dump ensure_ascii=False, compact separators, the '.studio-worktrees-' temp
+ * Versions share the registry: it is re-read from disk on every access, written whole
+ * with writeJsonAtomic in a fixed layout (json.dump ensure_ascii=False, compact separators, the '.studio-worktrees-' temp
  * prefix), and every read-modify-write holds the in-process queue plus the cross-process lock '<file>.lock' (server/platform/lock.ts;
- * the Python Registry only has a thread lock, so this guards Deno against Deno). git runs as a subprocess with Python's arguments and
+ * an older registry only has a thread lock). git runs as a subprocess with fixed arguments and
  * environment: GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE/GIT_COMMON_DIR removed, GIT_OPTIONAL_LOCKS=0, GIT_TERMINAL_PROMPT=0,
- * `-c core.longpaths=true`, and Studio's identity only where Python passes it. Text output gets Python's universal-newline
+ * `-c core.longpaths=true`, and AIB's identity only where it is needed. Text output gets universal-newline
  * translation. (CREATE_NO_WINDOW cannot be passed by Deno.Command; server/platform/console.ts gives the process a hidden console.)
  */
 import { FileLock, LOCK_TIMEOUT_MS, LockTimeout } from '../platform/lock.ts';
@@ -36,7 +36,7 @@ import { WSL_REF_PREFIX } from '../wsl/contract.ts';
 
 const log = getLogger('worktrees');
 
-/** Mutable so tests can lower them (Python's tests patch the module constants). */
+/** Mutable so tests can lower them. */
 export const limits = {
   MAX_SNAPSHOT_BYTES: 200 * 1024 * 1024, // what the snapshot would add beyond HEAD; more and the chat works in place
   MAX_UNTRACKED_FILES: 5000,
@@ -93,14 +93,14 @@ export interface GitResult {
   /** Decoded output (UTF-8, errors replaced; universal newlines unless binary). */
   stdout: string;
   stderr: string;
-  /** The raw stdout bytes (Python's binary=True stdout). */
+  /** The raw stdout bytes. */
   out: Uint8Array;
 }
 
 export interface GitOptions {
   env?: Record<string, string>;
   check?: boolean;
-  /** Seconds (Python's timeout=600). */
+  /** Seconds. */
   timeout?: number;
   identity?: boolean;
   /** Bytes in, bytes out: no newline translation either way. */
@@ -110,7 +110,7 @@ export interface GitOptions {
 
 export type GitFn = (args: string[], cwd: string, options?: GitOptions) => Promise<GitResult>;
 
-/** Test seams (Python's tests patch worktrees.git and worktrees._rmtree). */
+/** Test seams. */
 export const testing: {
   git: GitFn | null;
   rmtree: ((path: string) => void) | null;
@@ -209,7 +209,7 @@ export function git(args: string[], cwd: string, options: GitOptions = {}): Prom
   return (testing.git ?? realGit)(args, cwd, options);
 }
 
-/** A plain `git` subprocess with the inherited environment and no -c options (Python's direct subprocess.run calls). */
+/** A plain `git` subprocess with the inherited environment and no -c options. */
 export async function rawGit(args: string[], cwd: string, env: Record<string, string> = {}, input?: Uint8Array): Promise<GitResult> {
   const merged = Object.keys(env).length ? Object.assign(Deno.env.toObject(), env) : null;
   const done = await runProcess('git', args, cwd, merged, input ?? null, null);
@@ -234,7 +234,7 @@ export function same(a: string, b: string): boolean {
   }
 }
 
-/** Python's _fs: Deno (Rust std) already opens paths beyond 260 characters on Windows, so the path is used as it is. */
+/** Deno (Rust std) already opens paths beyond 260 characters on Windows, so the path is used as it is. */
 export function fsPath(path: string): string {
   return String(path);
 }
@@ -283,7 +283,7 @@ export function rmtree(path: string): void {
       try {
         if (!WIN) Deno.chmodSync(target, 0o700);
         Deno.removeSync(target, { recursive });
-      } catch { /* moves on, as Python's onerror */ }
+      } catch { /* moves on */ }
     }
   };
   let info: Deno.FileInfo;
@@ -371,7 +371,7 @@ export class Registry {
     return run;
   }
 
-  /** Read, change and save under the lock (Python: `with registry.lock:` around get + update). `work` returns false to skip saving. */
+  /** Read, change and save under the lock. `work` returns false to skip saving. */
   mutate(work: (items: Map<string, WorktreeRecord>) => boolean): Promise<boolean> {
     return this.locked(() => {
       const items = this.read()[0];
@@ -382,7 +382,7 @@ export class Registry {
   }
 
   /**
-   * Worktrees Studio removed on purpose: {normalised path: {project, branch, base}}. Only so the chat can say "workspace removed" and
+   * Worktrees AIB removed on purpose: {normalised path: {project, branch, base}}. Only so the chat can say "workspace removed" and
    * stay under its project; nothing here points at a folder.
    */
   removed(): Record<string, WorktreeRecord> {
@@ -500,7 +500,7 @@ export async function unpinUserBase(project: string, record: unknown): Promise<v
   }
 }
 
-/** The finished registry record of the Studio worktree at `path` (with its key), or null. Read only. */
+/** The finished registry record of AIB worktree at `path` (with its key), or null. Read only. */
 export function recordForPath(stateDir: string | null | undefined, path: unknown): (WorktreeRecord & { key: string }) | null {
   if (!stateDir || !path || typeof path !== 'string') return null;
   return new Registry(stateDir).find(path);
@@ -556,7 +556,7 @@ export function mainCheckoutOf(path: string): [string, string] | null {
 const PATTERN = /^(.+?)[\\/]\.claude[\\/]worktrees[\\/][^\\/]+(?:[\\/][\s\S]*)?$/i;
 /** cwd -> [project, branch, relative location inside the worktree] or null. */
 export const WT_CACHE = new Map<string, [string, string, string] | null>();
-/** A callable returning the folders Studio knows as projects; set by the server at startup (Python: KNOWN_PROJECTS). */
+/** A callable returning the folders AIB knows as projects; set by the server at startup. */
 export const known: { projects: (() => string[]) | null } = { projects: null };
 
 /** pathlib's Path(cwd) and its first 12 parents. */
@@ -604,7 +604,7 @@ function cachedLookup(cwd: string): [string, string, string] | null {
   } catch {
     result = null;
   }
-  if (result === null && !present) return null; // not cached: a worktree folder Studio is about to create must be found once it exists
+  if (result === null && !present) return null; // not cached: a worktree folder AIB is about to create must be found once it exists
   if (WT_CACHE.size > 5000) WT_CACHE.clear();
   WT_CACHE.set(cwd, result);
   return result;
@@ -617,7 +617,7 @@ export interface ProjectInfo {
 }
 
 /**
- * {project, branch, base} when cwd lies in a git worktree made by any app (the main checkout is the project; a known Studio project
+ * {project, branch, base} when cwd lies in a git worktree made by any app (the main checkout is the project; a known AIB project
  * folder inside the repo that holds the worktree's relative location wins); null for anything else. Cached per cwd.
  */
 export function projectOfWorktree(cwd: unknown): ProjectInfo | null {
@@ -652,7 +652,7 @@ export function projectOfWorktree(cwd: unknown): ProjectInfo | null {
 }
 
 /**
- * cwd -> {project, branch, base} when `cwd` is a worktree Studio made (registry entry, else a removed one, else any app's worktree),
+ * cwd -> {project, branch, base} when `cwd` is a worktree AIB made (registry entry, else a removed one, else any app's worktree),
  * else null. Used for saved chats, which only know their cwd.
  */
 export class ProjectResolver {
@@ -688,7 +688,7 @@ export class ProjectResolver {
     }
     const here = normcase(realpath(cwd));
     const removed = this.registry.removed();
-    const gone = Object.hasOwn(removed, here) ? removed[here] : undefined; // a worktree Studio removed: the chat stays under its project
+    const gone = Object.hasOwn(removed, here) ? removed[here] : undefined; // a worktree AIB removed: the chat stays under its project
     if (gone && gone.project) {
       return { project: str(gone.project), branch: str(gone.branch), base: str(gone.base) };
     }
@@ -718,7 +718,7 @@ export class Plan {
   ) {
     this.project = String(project);
     this.path = String(path);
-    // Not enumerable: a Plan spreads to the six fields Python's Plan has (the parity tests compare them).
+    // Not enumerable: a Plan spreads to the six fields of a Plan (the tests compare them).
     Object.defineProperty(this, 'folderBranch', { value: folderBranch || base, enumerable: false });
     Object.defineProperty(this, 'note', { value: note, enumerable: false, writable: true });
     Object.defineProperty(this, 'landOn', { value: '', enumerable: false, writable: true });
@@ -1288,7 +1288,7 @@ export async function dropSharedLink(record: WorktreeRecord): Promise<boolean> {
 // ---- the manager -------------------------------------------------------------------------------------------------
 export type RemoveOutcome = 'removed' | 'pending' | 'gone';
 
-/** planWithReason's reason for a WSL ref handed to the Windows manager (a missed route: Studio asks the distro's helper instead). */
+/** planWithReason's reason for a WSL ref handed to the Windows manager (a missed route: AIB asks the distro's helper instead). */
 export const WSL_PLANNED_THERE = "a WSL project's worktree is made in its distro";
 
 export class Manager {
@@ -1310,7 +1310,7 @@ export class Manager {
     kind: 'chat' | 'helper' = 'chat',
     options: { onFolderBranch?: boolean } = {},
   ): Promise<{ plan: Plan | null; reason: string }> {
-    // A WSL project (its ref, wsl://...) gets its worktree from its distro's helper (Studio routes it to wsl/worktrees.ts, where this
+    // A WSL project (its ref, wsl://...) gets its worktree from its distro's helper (AIB routes it to wsl/worktrees.ts, where this
     // same Manager runs natively); this Windows manager never runs git for it and never records it.
     if (String(projectIn).startsWith(WSL_REF_PREFIX)) {
       say(`Worktree: ${projectIn} is planned in its distro, not here`);
@@ -1420,7 +1420,7 @@ export class Manager {
   }
 
   /**
-   * Remove a worktree Studio made, its branch and its git registration. Refuses anything outside Studio's own worktrees folder.
+   * Remove a worktree AIB made, its branch and its git registration. Refuses anything outside AIB's own worktrees folder.
    * Its `aib-shared` link is removed first; false when it could not be (nothing was removed then).
    */
   async #discard(record: WorktreeRecord): Promise<boolean> {
@@ -1478,7 +1478,7 @@ export class Manager {
       if (record.status !== 'creating') continue;
       if (ACTIVE.has(key)) continue;
       const pid = record.pid;
-      if (pid !== Deno.pid && hooks.pidAlive(pid)) continue; // another running Studio is making it
+      if (pid !== Deno.pid && hooks.pidAlive(pid)) continue; // another running AIB is making it
       if (!(await this.#discardOrKeep(key, record))) continue;
       done.push(key);
       say(`Worktree: removed a half-made worktree of an earlier run: ${record.path ?? 'None'}`);
@@ -1514,7 +1514,7 @@ export class Manager {
       branch = str(record.branch);
     if (!this.insideRoot(path)) {
       log.warning('Not removing %s: it is not under the AIB worktrees folder', path);
-      return true; // nothing of Studio's to remove; do not keep a record forever
+      return true; // nothing of AIB's to remove; do not keep a record forever
     }
     const projectOk = !!project && isdir(project) &&
       (await git(['rev-parse', '--git-dir'], project, { check: false }))
@@ -1569,7 +1569,7 @@ export class Manager {
     return 'pending';
   }
 
-  /** At startup: finish pending removals, then `git worktree prune` for every project Studio keeps worktrees of. */
+  /** At startup: finish pending removals, then `git worktree prune` for every project AIB keeps worktrees of. */
   async retryPending(): Promise<string[]> {
     const done: string[] = [];
     const projects = new Set<string>();
@@ -1597,7 +1597,7 @@ export class Manager {
     return done;
   }
 
-  /** True when `workspace` (or the saved chat `session`) belongs to a Studio worktree that was removed or is being removed. */
+  /** True when `workspace` (or the saved chat `session`) belongs to an AIB worktree that was removed or is being removed. */
   isRemoved(workspace: string, session?: string | null): boolean {
     const here = norm(workspace);
     const removed = this.registry.removed();
@@ -1616,7 +1616,7 @@ export class Manager {
   }
 
   /**
-   * The folder of a recorded worktree, made again from its branch when it was deleted outside Studio. Throws WorktreeGone when the
+   * The folder of a recorded worktree, made again from its branch when it was deleted outside AIB. Throws WorktreeGone when the
    * branch is gone as well. Never returns another folder.
    */
   async ensure(record: WorktreeRecord): Promise<string> {
@@ -1650,7 +1650,7 @@ export class Manager {
   }
 }
 
-/** Tests only: thrown from a hook, it is not caught by create() (Python: a BaseException, the process dying). */
+/** Tests only: thrown from a hook, it is not caught by create(). */
 export class Died extends Error {}
 
 /** Swappable pieces (tests). */

@@ -1,12 +1,12 @@
 /**
- * The doc page in a real headless browser against a throwaway Studio (work/deno/_doc_browser.ts: its own free port, state folder
+ * The doc page in a real headless browser against a throwaway AIB (work/deno/_doc_browser.ts: its own free port, state folder
  * and project; a fake agent host whose turns the test ends; no window on the screen): what the user sees while agents work, and
- * what the page sends back. One browser, one Studio; each step uses its own doc. The last step restarts the Studio.
+ * what the page sends back. One browser, one AIB; each step uses its own doc. The last step restarts AIB.
  * Skipped when no Chrome or Edge is installed. AIB_DOCPAGE_SHOTS=<folder> keeps a screenshot per step.
  */
 import { assert, assertEquals } from './_assert.ts';
 import { docId } from '../../app/server/docs/store.ts';
-import { Browser, browserPath, type Page, sleep, type Studio, studio, temp } from './_doc_browser.ts';
+import { Browser, browserPath, type Page, sleep, type Aib, aib, temp } from './_doc_browser.ts';
 
 type Json = Record<string, unknown>;
 const inline = (content: string | string[], as = 'markdown') => ({
@@ -19,7 +19,7 @@ const CTRL = 2, ALT = 1;
 /** Open the doc page for a doc and wait until its editor is there. */
 async function openDoc(
   b: Browser,
-  s: Studio,
+  s: Aib,
   name: string,
   extra = '',
   width = 1280,
@@ -53,7 +53,7 @@ const shows = (p: Page, words: string) =>
     8000,
     `"${words}" on the page`,
   );
-const live = async (s: Studio, name: string) => s.ctx.docs.get(await docId(s.project, name))!;
+const live = async (s: Aib, name: string) => s.ctx.docs.get(await docId(s.project, name))!;
 type Doc = Awaited<ReturnType<typeof live>>;
 const mdOf = (doc: Doc, page?: string) => doc.live.topBlocks(page).map((b) => doc.live.markdownOf(b.id));
 async function until(
@@ -78,7 +78,7 @@ const caretAfter = (needle: string, select = false) =>
   v.dispatch(v.state.tr.setSelection(${select} ? S.create(v.state.doc, at, at + n.length) : S.create(v.state.doc, at + n.length)));
   return true;
 })()`;
-async function read(s: Studio, chat: string, doc: string, page?: string) {
+async function read(s: Aib, chat: string, doc: string, page?: string) {
   const [, r] = await s.tool(chat, 'doc_read', page ? { doc, page } : { doc });
   return r as { rev: number; blocks: { id: string; h: string; md?: string }[] };
 }
@@ -106,7 +106,7 @@ Deno.test({
   async fn(t) {
     const downloads = await temp('aib-docpage-downloads-');
     Deno.env.set('AIB_DOWNLOADS_DIR', downloads);
-    let s = await studio();
+    let s = await aib();
     const b = await Browser.launch();
     const pages: Page[] = [];
     const open = async (name: string, extra = '', width = 1280) => {
@@ -1278,7 +1278,7 @@ Deno.test({
             `document.querySelector('#docStatusText').textContent === 'Offline · not saved yet'`,
           );
           // AIB comes back on its own data folder: the page's session (memory only, its hash in the folder) still works there
-          s = await studio(root, port, state);
+          s = await aib(root, port, state);
           await p.waitFor(
             `!document.querySelector('#docBanner').hidden && document.querySelector('#docBanner').textContent.includes('Not saved')`,
             20000,

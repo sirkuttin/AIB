@@ -9,7 +9,7 @@
                                                                             never used silently, when cwd is gone)
                              titleOf(key): string                           a chat's name (the "too many terminals" list)
                              token(): Promise<string>                       the page token (fetched when there is none yet)
-                             refreshToken(): Promise<void>                  after a refused socket (Studio restarted)
+                             refreshToken(): Promise<void>                  after a refused socket (AIB restarted)
                              get(path): Promise<object>                     GET /api/live/<path> with the token
                              post(path, body): Promise<object>              POST /api/live/<path> with the token
                              select(key): Promise<boolean>                  make that chat the open one (split panes: focus its pane)
@@ -1006,7 +1006,7 @@
             e.ws = null;
             if (!attached) {
               if (refused) return;
-              // Refused before attaching: most likely a stale page token after a Studio restart. Try once with a fresh one.
+              // Refused before attaching: most likely a stale page token after an AIB restart. Try once with a fresh one.
               if (retry && host.refreshToken) {
                 Promise.resolve(host.refreshToken())
                   .then(() => connect(e, false, resume))

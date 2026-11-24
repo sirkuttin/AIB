@@ -33,7 +33,7 @@ class Box {
   readonly dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-codexmodes-test-' }));
   readonly state = pathOf(this.dir, 'state');
   readonly project = makeRepo(pathOf(this.dir, 'proj'));
-  readonly studio: Aib;
+  readonly aib: Aib;
   readonly swarm: Swarm;
   readonly connections: Connection[] = [];
 
@@ -41,29 +41,29 @@ class Box {
     setSwarmEnabled(this.state, true);
     runGit(this.project, 'config', 'user.name', 't');
     runGit(this.project, 'config', 'user.email', 't@t');
-    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0 }, { keeper: null });
-    studio.ownerProbe = () => null;
-    studio.agentLaunch = () => Promise.resolve([['unused'], {}]);
-    studio.connectionFactory = (_command, cwd, provider, options) =>
+    const aib = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0 }, { keeper: null });
+    aib.ownerProbe = () => null;
+    aib.agentLaunch = () => Promise.resolve([['unused'], {}]);
+    aib.connectionFactory = (_command, cwd, provider, options) =>
       new Connection([PYTHON, UNIQUE, ...(provider === 'codex' ? ['--codex-modes', codexModes] : ['--models'])], cwd, provider, options ?? {});
-    this.studio = studio;
-    this.swarm = new Swarm({ stateDir: this.state, host: studio, settings: studio.settings });
+    this.aib = aib;
+    this.swarm = new Swarm({ stateDir: this.state, host: aib, settings: aib.settings });
     this.swarm.openMs = 30_000;
   }
 
   async helper(): Promise<{ id: string; record: ReturnType<Swarm['registry']['get']>; chat: Connection | undefined }> {
-    const main = await this.studio.connect('claude', this.project, null, { ownCopy: true });
+    const main = await this.aib.connect('claude', this.project, null, { ownCopy: true });
     const [code, out] = await this.swarm.tool(main.id, 'start_helper', BRIEF);
     assertEquals(code, 200, JSON.stringify(out));
     const id = String((out as Json).helper);
     await until(() => this.swarm.registry.get(id)?.state !== 'starting', 'the helper opened or failed', 30);
     const record = this.swarm.registry.get(id);
-    return { id, record, chat: record ? this.studio.connections.get(record.chat.live) : undefined };
+    return { id, record, chat: record ? this.aib.connections.get(record.chat.live) : undefined };
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
     await this.swarm.stopWatching();
-    await this.studio.close().catch(() => {});
+    await this.aib.close().catch(() => {});
     try {
       Deno.removeSync(this.dir, { recursive: true });
     } catch { /* a process may still hold it */ }
@@ -138,17 +138,17 @@ Deno.test({
   name: 'new chat: a saved default of auto maps to workspace-write on a 2.6.0 agent; a saved workspace-write maps to auto on an old one',
   async fn() {
     await using box = new Box('v2.6');
-    const c = await box.studio.connect('codex', box.project, null, { picks: { mode: 'auto' } });
+    const c = await box.aib.connect('codex', box.project, null, { picks: { mode: 'auto' } });
     assertEquals(modeOf(c), 'workspace-write');
     assertEquals(c.pickResults.map((r) => [r.kind, r.ok, r.value]), [['mode', true, 'workspace-write']]);
     await c.close();
     await using old = new Box('old');
-    const o = await old.studio.connect('codex', old.project, null, { picks: { mode: 'workspace-write' } });
+    const o = await old.aib.connect('codex', old.project, null, { picks: { mode: 'workspace-write' } });
     assertEquals(modeOf(o), 'auto');
     await o.close();
     // a pick the agent does not offer and has no twin for is still refused (never silently another mode)
     await using other = new Box('neither');
-    const n = await other.studio.connect('codex', other.project, null, { picks: { mode: 'auto' } });
+    const n = await other.aib.connect('codex', other.project, null, { picks: { mode: 'auto' } });
     assertEquals(n.pickResults.map((r) => r.ok), [false]);
     assert(String(n.pickResults[0].message).includes('read-only, agent, agent-full-access'), String(n.pickResults[0].message));
     await n.close();

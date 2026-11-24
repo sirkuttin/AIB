@@ -9,7 +9,7 @@
  *     frames; KeeperClient runs over its pipes. The KeeperLink reconnects when it ends (keeper/link.ts transport-loss rules).
  *   - the keep-alive, a pipe channel in the WINDOWS keeper, label {"aib":"wsl-hold","distro":d}: the same command with `--hold`. It
  *     keeps the distro running and the WSL agents alive after AIB quits. It is AIB's own channel (isAibInternalLabel): never a chat,
- *     never counted as work. On quit (WslHosts.quit) it is killed unless a WSL agent is live (Studio then sends the Windows `hold`).
+ *     never counted as work. On quit (WslHosts.quit) it is killed unless a WSL agent is live (AIB then sends the Windows `hold`).
  *
  * The helper is a channel in the Linux keeper (label {"aib":"wsl-helper","v":ver}, scrollback 1 MiB) speaking JSON-RPC 2.0 lines:
  * its first line is `helper.ready {helper, protocol, methods}` and call() refuses a method it did not list. It starts with a fixed
@@ -172,7 +172,7 @@ export interface WslHostOptions {
   spawnTransport?: TransportSpawner;
   /**
    * The Linux keeper version this AIB ships (a running older one with no live agent is replaced); null: never replaced for age. The
-   * Linux keeper is built from the same source as the Windows one, so Studio passes the Windows keeper's version (asked lazily).
+   * Linux keeper is built from the same source as the Windows one, so AIB passes the Windows keeper's version (asked lazily).
    */
   keeperVersion?: string | null | (() => Promise<string | null>);
   reconnect?: ReconnectPolicy;
@@ -962,7 +962,7 @@ export class WslHosts {
 
   /**
    * AIB quits (design section 11 item 1): per distro, the keep-alive is killed unless a WSL agent is live; then the transport ends.
-   * `live`: the WSL agents left running, held by their keep-alive. When it is above 0, Studio sends the Windows keeper `hold` (so
+   * `live`: the WSL agents left running, held by their keep-alive. When it is above 0, AIB sends the Windows keeper `hold` (so
    * the keep-alive is never stopped as orphaned and AIB is not started again in the tray). `settleMs`: a quit that just stopped every
    * chat waits up to this long for their channels to end, so agents on their way out do not keep the distro held.
    */
@@ -995,7 +995,7 @@ let sharedOptions: WslHostsOptions | null = null;
 let shared: WslHosts | null = null;
 
 /**
- * Say how this AIB's hosts are made (Studio at start: its data folder and the Windows keeper link). Cheap: nothing is detected or
+ * Say how this AIB's hosts are made (AIB at start: its data folder and the Windows keeper link). Cheap: nothing is detected or
  * started until a WSL project needs its distro (wslHosts().get). `replace` false: only when nothing was set up yet (a test's own
  * set-up wins over the Studios it makes). Replacing starts a new set of hosts; the ones made so far are left as they are (tests stop
  * them first). null forgets the options.

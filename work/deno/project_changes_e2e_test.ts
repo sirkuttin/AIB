@@ -1,7 +1,7 @@
 /**
  * The project right panel's Changes tab (design project-right-panel, slice S2; owner 2026-11-18): VS Code Source Control style.
  *
- * chat.html in a real headless Chrome against a Studio in this process (a fake agent host, one project that is a real Git
+ * chat.html in a real headless Chrome against an AIB in this process (a fake agent host, one project that is a real Git
  * repository). The project folder has uncommitted edits; two running subagents work in real Git worktrees made from a snapshot S
  * (HEAD plus those edits, as AIB makes them); a spare worktree and one that holds work that never landed sit in
  * subagent-worktrees.json too.
@@ -22,7 +22,7 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { Browser, browserPath, type Page } from './_doc_browser.ts';
-import { pc, remoteStudio, type RemoteStudio } from './_remote_fixture.ts';
+import { pc, remoteAib, type RemoteAib } from './_remote_fixture.ts';
 import { FakeWslHost } from './_wsl_fake.ts';
 import { setWslHostResolver } from '../../app/server/wsl/access.ts';
 
@@ -42,7 +42,7 @@ function write(path: string, text: string) {
 const lines = (n: number, tag: string) => Array.from({ length: n }, (_, i) => `${tag} ${i + 1}`).join('\n') + '\n';
 
 interface Fixture {
-  s: RemoteStudio;
+  s: RemoteAib;
   repo: string;
   /** Worktree folders by record id. */
   trees: Record<string, string>;
@@ -54,7 +54,7 @@ interface Fixture {
  * in it. Records: sub-a and sub-b running (2 and 1 files), sub-spare (a spare), sub-left (stopped, 1 file, never landed).
  */
 async function project(moreLeft = 0): Promise<Fixture> {
-  const s = await remoteStudio();
+  const s = await remoteAib();
   const repo = `${s.root}${SEP}projects${SEP}app`;
   Deno.mkdirSync(repo, { recursive: true });
   git(repo, 'init', '-q', '-b', 'main');
@@ -113,7 +113,7 @@ async function project(moreLeft = 0): Promise<Fixture> {
 }
 
 const attention = (state: string, busySince: string | null = null, turnEndedAt: string | null = null) => ({ state, needs: 0, turnEndedAt, busySince });
-function addChat(s: RemoteStudio, n: number, title: string, cwd: string, working: boolean) {
+function addChat(s: RemoteAib, n: number, title: string, cwd: string, working: boolean) {
   s.chats.push({
     id: 'c' + n, provider: 'claude', sessionId: 'sess-' + n, cwd, busy: working, closed: false,
     attention: working ? attention('working', new Date(Date.now() - n * 60_000).toISOString()) : attention('idle'),
@@ -351,7 +351,7 @@ Deno.test({
   sanitizeResources: false,
   sanitizeOps: false,
   async fn() {
-    const s = await remoteStudio();
+    const s = await remoteAib();
     const dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-pc-wsl-' }));
     const host = new FakeWslHost(dir + SEP + 'linux-keeper', 'Ubuntu', {});
     setWslHostResolver((d) => (d === 'ubuntu' ? host : null));

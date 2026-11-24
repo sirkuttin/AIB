@@ -362,7 +362,7 @@ Deno.test({
     assertEquals(t.consoles, [[PY, FAKE_SIGNIN, '--cli', 'auth', 'login', '--claudeai', '--custom-flag']]);
     const inits = t.events('initialize');
     assertEquals(inits.length, 1);
-    assert((inits[0].caps as { auth: { terminal: boolean } }).auth.terminal, 'Studio says it can run terminal sign-ins');
+    assert((inits[0].caps as { auth: { terminal: boolean } }).auth.terminal, 'AIB says it can run terminal sign-ins');
     assertEquals(t.events('authenticate'), [], 'ACP authenticate is never sent for a terminal method');
     assertEquals(t.events('session'), [], 'and no session is created');
   },

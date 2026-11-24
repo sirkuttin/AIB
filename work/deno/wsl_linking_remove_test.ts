@@ -2,7 +2,7 @@
  * Remove AIB from a distro, the Windows side (wsl/remove.ts, wsl/removed.ts, web/wsl_routes.ts; docs/wsl/linking-design.md section
  * 13), with no distro: FakeWslHost (work/deno/_wsl_fake.ts) answers aib.usage / aib.remove, and a RecordingHost adds what a real host
  * has (keep-alive, keeper shutdown, stop) and writes down every step in order.
- *   1. GET /api/live/wsl/aib: the two shapes, peek never starts a distro, start=1 does, chatsWorking from Studio's busy chats, an old
+ *   1. GET /api/live/wsl/aib: the two shapes, peek never starts a distro, start=1 does, chatsWorking from AIB's busy chats, an old
  *      helper's line.
  *   2. POST /api/live/wsl/aib/remove: 400s (distro, mode, confirm), 409 when not running (never a start), 'check' (the page's shape:
  *      no helper-only `final`), 'apply' in the exact order: check, flag, keep-alive, apply, keeper, stop, last step, chat copies.

@@ -1,5 +1,5 @@
 /**
- * Studio with agents in the keeper (always on), in one process: a chat runs through the keeper; a Studio that
+ * AIB with agents in the keeper (always on), in one process: a chat runs through the keeper; an AIB that
  * "crashes" (drops its keeper connection without touching the agent) is replaced by a new Aib that rebuilds the chat from the
  * keeper's record at several points of a turn (streaming, a question waiting, after the answer, idle) and goes on live; the keeper
  * dying ends the agent and the chat comes back "Interrupted" without anything sent twice. Real keeper (built from keeper/ with
@@ -26,33 +26,33 @@ type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
 const SEP = Deno.build.os === 'windows' ? '\\' : '/';
 
-class KeeperStudioLab {
+class KeeperAibLab {
   readonly dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-keeper-studio-' }));
   readonly state = this.dir + SEP + 'state';
   readonly work = this.dir + SEP + 'work';
   readonly agentLog = this.dir + SEP + 'agent-received.log';
-  readonly studios: Aib[] = [];
+  readonly aibs: Aib[] = [];
 
   constructor() {
     Deno.mkdirSync(this.work, { recursive: true });
   }
 
-  studio(flags: string[] = ['--cancel-aware']): Aib {
+  aib(flags: string[] = ['--cancel-aware']): Aib {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
-    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper });
-    studio.ownerProbe = () => null;
-    studio.connectionFactory = (_command, cwd, provider, options) =>
+    const aib = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper });
+    aib.ownerProbe = () => null;
+    aib.connectionFactory = (_command, cwd, provider, options) =>
       new Connection(fake(...flags), cwd, provider, { ...options, env: { FAKE_ACP_LOG: this.agentLog } });
-    this.studios.push(studio);
-    return studio;
+    this.aibs.push(aib);
+    return aib;
   }
 
   /** What a crashed AIB leaves: its keeper connection gone, its agents untouched, its session leases released by the OS. */
-  crash(studio: Aib): void {
-    studio.keeper!.disconnect();
-    for (const c of studio.connections.values()) c.sessionLease?.release();
-    studio.reconnectStop.set();
-    this.studios.splice(this.studios.indexOf(studio), 1); // never closed: a crashed process closes nothing
+  crash(aib: Aib): void {
+    aib.keeper!.disconnect();
+    for (const c of aib.connections.values()) c.sessionLease?.release();
+    aib.reconnectStop.set();
+    this.aibs.splice(this.aibs.indexOf(aib), 1); // never closed: a crashed process closes nothing
   }
 
   /** Every line the agent(s) received, parsed. */
@@ -65,7 +65,7 @@ class KeeperStudioLab {
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
-    for (const s of this.studios.reverse()) await s.close().catch(() => {});
+    for (const s of this.aibs.reverse()) await s.close().catch(() => {});
     const info = readKeeperInfo(this.state);
     if (info && pidAlive(info.pid)) {
       try {
@@ -102,30 +102,30 @@ Deno.test({
   ...T,
   async fn() {
     await keeperBinary();
-    await using lab = new KeeperStudioLab();
-    const studio = lab.studio();
-    const c = await studio.connect('claude', lab.work);
+    await using lab = new KeeperAibLab();
+    const aib = lab.aib();
+    const c = await aib.connect('claude', lab.work);
     assert(c.channel !== null, 'the agent runs in the keeper');
-    const [status] = await studio.liveCall('prompt', { id: c.id, text: 'stream:6:20', clientMessageId: 'm1' });
+    const [status] = await aib.liveCall('prompt', { id: c.id, text: 'stream:6:20', clientMessageId: 'm1' });
     assertEquals(status, 200);
     await until(() => c.permissions.size === 1, 'the question', 10);
     const key = [...c.permissions.keys()][0];
-    assertEquals((await studio.liveCall('permission', { id: c.id, key, option: 'yes' }))[0], 200);
+    assertEquals((await aib.liveCall('permission', { id: c.id, key, option: 'yes' }))[0], 200);
     await until(() => !c.busy, 'turn end', 10);
     assertEquals(said(c), 'chunk0 chunk1 chunk2 answer=yes chunk3 chunk4 chunk5 ');
     assertEquals(prompts(lab.received()).length, 1);
-    const client = (await studio.keeper!.client(false))!;
+    const client = (await aib.keeper!.client(false))!;
     assertEquals((await client.list()).map((ch) => ch.channel), [`chat-${c.id}`]);
-    await studio.liveCall('disconnect', { id: c.id });
+    await aib.liveCall('disconnect', { id: c.id });
     await until(async () => (await client.list()).length === 0, 'channel removed', 10);
   },
 });
 
-/** One crash point: run the turn on Studio A until `when` holds, crash A, rebuild on Studio B, finish the turn there. */
+/** One crash point: run the turn on AIB A until `when` holds, crash A, rebuild on AIB B, finish the turn there. */
 async function crashAt(when: 'streaming' | 'question' | 'answered' | 'idle'): Promise<void> {
   await keeperBinary();
-  await using lab = new KeeperStudioLab();
-  const a = lab.studio();
+  await using lab = new KeeperAibLab();
+  const a = lab.aib();
   const c = await a.connect('claude', lab.work);
   // The turn ends only once the gate file exists: after "answered" it used to have ~900 ms of chunks left, and a rebuild on a loaded
   // machine (the history store's Worker starting, other tests running) sometimes came after the turn end ("finished", not "working").
@@ -146,7 +146,7 @@ async function crashAt(when: 'streaming' | 'question' | 'answered' | 'idle'): Pr
   lab.crash(a);
   await pause(300); // the agent keeps streaming into the keeper meanwhile
 
-  const b = lab.studio();
+  const b = lab.aib();
   assertEquals(await b.adoptKeeper(), 1);
   const r = b.connections.get(c.id)!;
   assert(r && !r.closed && r.ready, 'rebuilt under the same id');
@@ -164,7 +164,7 @@ async function crashAt(when: 'streaming' | 'question' | 'answered' | 'idle'): Pr
     const key = [...r.permissions.keys()][0];
     assertEquals((await b.liveCall('permission', { id: r.id, key, option: 'yes' }))[0], 200);
   }
-  await until(() => !r.busy, 'turn end on the new Studio', 15);
+  await until(() => !r.busy, 'turn end on the new AIB', 15);
   assertEquals(said(r), 'chunk0 chunk1 chunk2 chunk3 answer=yes chunk4 chunk5 chunk6 chunk7 '); // every chunk once, in order
   assertEquals(r.events.filter((e) => e.kind === 'turn_end').length, 1);
   assertEquals(b.store!.receipt('claude', 'fake-session', 'm1')!.state, 'finished');
@@ -184,7 +184,7 @@ async function crashAt(when: 'streaming' | 'question' | 'answered' | 'idle'): Pr
 
 for (const when of ['streaming', 'question', 'answered', 'idle'] as const) {
   Deno.test({
-    name: `keeper studio: crash while ${when}: the next Studio rebuilds the chat and nothing is sent twice`,
+    name: `keeper studio: crash while ${when}: the next AIB rebuilds the chat and nothing is sent twice`,
     ...T,
     fn: () => crashAt(when),
   });
@@ -195,9 +195,9 @@ Deno.test({
   ...T,
   async fn() {
     await keeperBinary();
-    await using lab = new KeeperStudioLab();
+    await using lab = new KeeperAibLab();
     const flags = ['--held-turn'];
-    const a = lab.studio(flags);
+    const a = lab.aib(flags);
     const c = await a.connect('claude', lab.work);
     const gate = lab.dir + SEP + 'helper-gate';
     await a.liveCall('prompt', { id: c.id, text: `helper:${gate}`, clientMessageId: 'm1' });
@@ -206,7 +206,7 @@ Deno.test({
     lab.crash(a);
     await pause(300);
 
-    const b = lab.studio(flags);
+    const b = lab.aib(flags);
     assertEquals(await b.adoptKeeper(), 1);
     const r = b.connections.get(c.id)!;
     assert(r && !r.closed && r.ready && !r.rebuildError, 'rebuilt under the same id');
@@ -230,9 +230,9 @@ Deno.test({
   ...T,
   async fn() {
     await keeperBinary();
-    await using lab = new KeeperStudioLab();
+    await using lab = new KeeperAibLab();
     const flags = ['--cancel-aware', '--models'];
-    const a = lab.studio(flags);
+    const a = lab.aib(flags);
     const c = await a.connect('claude', lab.work, null, { picks: { model: 'luna-4', mode: 'full', effort: 'high' } });
     assert(c.channel !== null, 'the agent runs in the keeper');
     assertEquals(c.pickResults.map((p) => p.ok), [true, true, true]);
@@ -243,7 +243,7 @@ Deno.test({
     lab.crash(a);
     await pause(300);
 
-    const b = lab.studio(flags);
+    const b = lab.aib(flags);
     assertEquals(await b.adoptKeeper(), 1);
     const r = b.connections.get(c.id)!;
     assert(r && !r.closed && r.ready && !r.rebuildError, 'rebuilt under the same id');
@@ -266,10 +266,10 @@ Deno.test({
   ...T,
   async fn() {
     await keeperBinary();
-    await using lab = new KeeperStudioLab();
-    const studio = lab.studio();
-    const c = await studio.connect('claude', lab.work);
-    await studio.liveCall('prompt', { id: c.id, text: 'stream:40:200', clientMessageId: 'm1' });
+    await using lab = new KeeperAibLab();
+    const aib = lab.aib();
+    const c = await aib.connect('claude', lab.work);
+    await aib.liveCall('prompt', { id: c.id, text: 'stream:40:200', clientMessageId: 'm1' });
     await until(() => said(c).includes('chunk1 '), 'streaming', 10);
     const agentPid = c.process!.pid;
     Deno.kill(readKeeperInfo(lab.state)!.pid, 'SIGKILL');
@@ -277,10 +277,10 @@ Deno.test({
     assertEquals(c.error, KEEPER_LOST);
     assert(c.interrupted);
     await until(() => !pidAlive(agentPid), 'agent ended with the keeper', 10);
-    assertEquals(studio.store!.receipt('claude', 'fake-session', 'm1')!.state, 'error'); // never offered for an automatic resend
+    assertEquals(aib.store!.receipt('claude', 'fake-session', 'm1')!.state, 'error'); // never offered for an automatic resend
     // It comes back: a new connection for the same session, by session/load, with a new keeper. Nothing is sent again.
     await until(
-      () => [...studio.connections.values()].some((x) => x !== c && x.sessionId === 'fake-session' && x.ready),
+      () => [...aib.connections.values()].some((x) => x !== c && x.sessionId === 'fake-session' && x.ready),
       'reconnected',
       30,
     );
@@ -295,13 +295,13 @@ Deno.test({
   ...T,
   async fn() {
     await keeperBinary();
-    await using lab = new KeeperStudioLab();
-    const a = lab.studio();
+    await using lab = new KeeperAibLab();
+    const a = lab.aib();
     const c = await a.connect('claude', lab.work);
     const [session, pid] = [c.sessionId!, c.process!.pid];
     lab.crash(a);
-    // the next Studio's take-over did not run (or failed): only the auto-reconnect of the recovery list
-    const b = lab.studio();
+    // the next AIB's take-over did not run (or failed): only the auto-reconnect of the recovery list
+    const b = lab.aib();
     assertEquals(b.startAutoReconnect(1, 0, 1, 0), 1);
     await Promise.all(b.reconnectWorkers);
     const open = [...b.connections.values()].filter((x) => !x.closed && x.sessionId === session);
@@ -313,23 +313,23 @@ Deno.test({
 });
 
 Deno.test({
-  name: 'keeper studio: release() for an update leaves the chat running in the keeper; the next Studio takes it over under the same ids',
+  name: 'keeper studio: release() for an update leaves the chat running in the keeper; the next AIB takes it over under the same ids',
   ...T,
   async fn() {
     await keeperBinary();
-    await using lab = new KeeperStudioLab();
-    const a = lab.studio();
+    await using lab = new KeeperAibLab();
+    const a = lab.aib();
     const c = await a.connect('claude', lab.work);
     await a.liveCall('prompt', { id: c.id, text: 'stream:10:150', clientMessageId: 'm1' });
     await until(() => said(c).includes('chunk1 '), 'streaming', 10);
     assertEquals(a.keeperHandover(), '', 'every working chat runs in the keeper');
     const agentPid = c.process!.pid;
     assertEquals(await a.release(), 1);
-    lab.studios.splice(lab.studios.indexOf(a), 1); // released, not to be closed again
+    lab.aibs.splice(lab.aibs.indexOf(a), 1); // released, not to be closed again
     assert(pidAlive(agentPid), 'the agent keeps running');
     assertEquals(a.store!.receipt('claude', 'fake-session', 'm1')!.state, 'working', 'not marked unknown: the turn goes on');
 
-    const b = lab.studio();
+    const b = lab.aib();
     assertEquals(b.instanceId, a.instanceId, 'the same keeper: open pages keep their connection ids');
     assertEquals(await b.adoptKeeper(), 1);
     const r = b.connections.get(c.id)!;
@@ -337,7 +337,7 @@ Deno.test({
     await until(() => r.permissions.size === 1, 'the question, shown once', 10);
     assertEquals(r.events.filter((e) => e.kind === 'permission').length, 1);
     assertEquals((await b.liveCall('permission', { id: r.id, key: [...r.permissions.keys()][0], option: 'yes' }))[0], 200);
-    await until(() => !r.busy, 'turn end on the new Studio', 15);
+    await until(() => !r.busy, 'turn end on the new AIB', 15);
     assertEquals(said(r), 'chunk0 chunk1 chunk2 chunk3 chunk4 answer=yes chunk5 chunk6 chunk7 chunk8 chunk9 ');
     assertEquals(prompts(lab.received()).length, 1);
     assertEquals(answers(lab.received(), 'stream-ask').length, 1);
@@ -364,7 +364,7 @@ Deno.test({
   name: 'keeper versions: a newer keeper shipped with AIB is used only once the running one holds no chats; then it replaces it',
   ...T,
   async fn() {
-    await using lab = new KeeperStudioLab();
+    await using lab = new KeeperAibLab();
     const older = await keeperBinary();
     const old = (await programVersion(older))!; // the keeper of this checkout
     const next = old.replace(/\d+$/, (patch) => String(Number(patch) + 1)); // the "updated AIB" ships one patch newer

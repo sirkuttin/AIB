@@ -1,9 +1,9 @@
 /**
  * Open a project folder, a file at a line, or a workspace in an editor installed on this PC (editors.py).
  *
- * Safety rules (this module is the only place Studio starts a desktop program on request):
+ * Safety rules (this module is the only place AIB starts a desktop program on request):
  *   - the program comes from a fixed table of known editors, found on disk (never from request text);
- *   - the only request data that reaches a command line is a path that was resolved and found inside a folder Studio already knows
+ *   - the only request data that reaches a command line is a path that was resolved and found inside a folder AIB already knows
  *     as a project (or a git worktree of one), or a .code-workspace file that sits next to such a project;
  *   - programs start with a list of arguments, never through a shell; the one exception is a vendor .cmd launcher, which Windows
  *     runs through cmd.exe, so paths with cmd metacharacters are refused in that case;
@@ -376,7 +376,7 @@ function wslEntry(entry: Entry): Entry | null {
   return null;
 }
 
-/** The WSL roots among Studio's known project folders. */
+/** The WSL roots among AIB's known project folders. */
 function wslRoots(roots: unknown[]): WslLoc[] {
   return roots.map((r) => wslLocOf(r)).filter((r): r is WslLoc => r !== null);
 }
@@ -602,7 +602,7 @@ export interface WorkspaceMatch {
 function sortedNames(folder: string): string[] {
   const names: string[] = [];
   for (const entry of Deno.readDirSync(folder)) names.push(entry.name);
-  // Python sorts str by code point; JS default sort compares UTF-16 units (same for the BMP).
+  // Strings sort by code point; JS default sort compares UTF-16 units (same for the BMP).
   return names.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 }
 
@@ -691,14 +691,14 @@ export function buildCommand(entry: Entry, kind: Kind, path: string, line: numbe
   throw new EditorError('Unknown program', 'unsupported', 400);
 }
 
-/** What Launcher passes to popen next to the argument list (subprocess.Popen keyword arguments of the Python server). */
+/** What Launcher passes to popen next to the argument list (subprocess.Popen keyword arguments). */
 export interface PopenOptions {
   stdin: 'null';
   stdout: 'null';
   stderr: 'null';
   /** Windows: CREATE_NEW_CONSOLE (0x10) for PowerShell, DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP (0x208) for others, 0 for Explorer. */
   creationflags?: number;
-  /** POSIX: the program gets its own session so it outlives Studio. */
+  /** POSIX: the program gets its own session so it outlives AIB. */
   start_new_session?: boolean;
   cwd?: string;
   /** Extra environment variables (wsl.exe gets WSL_UTF8=1). */
@@ -760,7 +760,7 @@ export class Launcher {
   #cache: Entry[] = [];
   #at = 0;
 
-  /** roots: returns the folders Studio knows as projects. preferred: the default editor id saved in Settings. */
+  /** roots: returns the folders AIB knows as projects. preferred: the default editor id saved in Settings. */
   constructor(roots: () => unknown[], options: LauncherOptions = {}) {
     this.#roots = roots;
     this.#preferred = options.preferred ?? (() => '');
@@ -870,7 +870,7 @@ export class Launcher {
       else if (entry.kind !== 'explorer') flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP;
       options.creationflags = flags;
     } else {
-      options.start_new_session = true; // the program must outlive Studio and not share its process group
+      options.start_new_session = true; // the program must outlive AIB and not share its process group
     }
     if (cwd) options.cwd = cwd;
     try {
@@ -881,7 +881,7 @@ export class Launcher {
   }
 }
 
-/** The parts of Studio known_roots reads (all optional, so a partial Studio still gives the roots it has). */
+/** The parts of AIB known_roots reads (all optional, so a partial AIB still gives the roots it has). */
 export interface RootsSource {
   liveList?: () => { connections?: unknown[]; recovered?: unknown[] } | Record<string, unknown>;
   conversations?: { entries?: Record<string, Record<string, unknown>> | Map<string, Record<string, unknown>> };
@@ -898,8 +898,8 @@ function keysOf(value: Record<string, unknown> | Map<string, unknown> | undefine
   return value ? Object.keys(value) : [];
 }
 
-/** Folders Studio knows as projects: open and recovered chats, saved conversation marks, and projects with saved prefs. */
-export function knownRoots(studio: RootsSource): string[] {
+/** Folders AIB knows as projects: open and recovered chats, saved conversation marks, and projects with saved prefs. */
+export function knownRoots(aib: RootsSource): string[] {
   const roots: string[] = [];
   const add = (value: unknown) => {
     if (!isStr(value) || !value || roots.includes(value)) return;
@@ -907,7 +907,7 @@ export function knownRoots(studio: RootsSource): string[] {
     else if (wslLocOf(value)) roots.push(value); // a WSL project's ref
   };
   try {
-    const listed = studio.liveList?.() ?? {};
+    const listed = aib.liveList?.() ?? {};
     const items = [
       ...(Array.isArray(listed.connections) ? listed.connections : []),
       ...(Array.isArray(listed.recovered) ? listed.recovered : []),
@@ -917,12 +917,12 @@ export function knownRoots(studio: RootsSource): string[] {
     log.exception(error, 'Listing live conversations for editor roots failed');
   }
   try {
-    for (const entry of valuesOf(studio.conversations?.entries)) add(isDict(entry) ? entry.cwd : null);
+    for (const entry of valuesOf(aib.conversations?.entries)) add(isDict(entry) ? entry.cwd : null);
   } catch (error) {
     log.exception(error, 'Reading saved conversation folders for editor roots failed');
   }
   try {
-    for (const key of keysOf(studio.projectPrefs?.projects)) {
+    for (const key of keysOf(aib.projectPrefs?.projects)) {
       if (key.startsWith('w:')) add(key.slice(2));
       else if (key.startsWith('p:wsl:/')) add(`wsl://${key.slice('p:wsl:/'.length)}`); // projectKey of a WSL ref
     }

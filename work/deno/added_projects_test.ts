@@ -60,11 +60,11 @@ function ompChat(omp: string, id: string, cwd: string): void {
 }
 
 /**
- * A Studio web server on a temp state folder with fake agent history in three folders (Alpha: Claude, Beta: Claude, Gamma: OMP)
+ * An AIB web server on a temp state folder with fake agent history in three folders (Alpha: Claude, Beta: Claude, Gamma: OMP)
  * and a stub agent host: connect answers like a real one, discover lists `pages` (one page per cursor), the live list carries
  * `recovered`.
  */
-async function studio(options: { root?: string } = {}) {
+async function aib(options: { root?: string } = {}) {
   const root = options.root ?? await tempRoot();
   const state = j(root, 'state'), claude = j(root, 'claude'), omp = j(root, 'omp');
   const alpha = j(root, 'work', 'Alpha'), beta = j(root, 'work', 'Beta'), gamma = j(root, 'work', 'Gamma');
@@ -143,7 +143,7 @@ async function studio(options: { root?: string } = {}) {
 }
 
 Deno.test('a data folder with agent history in three folders: no projects and no chats are shown', async () => {
-  const s = await studio();
+  const s = await aib();
   try {
     assertEquals(await s.listed(), []);
     assertEquals(await s.added(), []);
@@ -160,7 +160,7 @@ Deno.test('a data folder with agent history in three folders: no projects and no
 });
 
 Deno.test('adding one project shows it and its saved chats; the other two folders stay out', async () => {
-  const s = await studio();
+  const s = await aib();
   try {
     const reply = await s.post('project-add', { path: s.alpha });
     assertEquals(Object.keys(reply.added as Json), [projectKey(s.alpha)]);
@@ -176,7 +176,7 @@ Deno.test('adding one project shows it and its saved chats; the other two folder
 });
 
 Deno.test('"Find more chats via agent" skips pages with no chat of an added project, up to five pages a click', async () => {
-  const s = await studio();
+  const s = await aib();
   try {
     await s.post('project-add', { path: s.alpha });
     const elsewhere = (n: number) => [{ sessionId: `b-${n}`, cwd: s.beta }];
@@ -194,7 +194,7 @@ Deno.test('"Find more chats via agent" skips pages with no chat of an added proj
 });
 
 Deno.test('starting a chat in a new folder adds it as a project', async () => {
-  const s = await studio();
+  const s = await aib();
   try {
     await s.post('connect', { provider: 'claude', cwd: s.beta });
     assertEquals(await s.added(), [s.beta]);
@@ -205,28 +205,28 @@ Deno.test('starting a chat in a new folder adds it as a project', async () => {
 });
 
 Deno.test({
-  name: 'a chat the agent host opens by itself (auto-reconnect, take-over, an agent) adds its folder too: Studio.connect',
+  name: 'a chat the agent host opens by itself (auto-reconnect, take-over, an agent) adds its folder too: Aib.connect',
   ...T,
   async fn() {
     const root = await tempRoot();
     const state = j(root, 'state'), folder = j(root, 'work', 'Delta');
     Deno.mkdirSync(folder, { recursive: true });
-    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: state, port: 0 });
-    studio.ownerProbe = () => null;
-    studio.connectionFactory = (_command, cwd, provider) => new Connection(fake(), cwd, provider);
+    const aib = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: state, port: 0 });
+    aib.ownerProbe = () => null;
+    aib.connectionFactory = (_command, cwd, provider) => new Connection(fake(), cwd, provider);
     try {
-      await studio.connect('claude', folder, null);
+      await aib.connect('claude', folder, null);
       for (let i = 0; i < 50 && !new AddedProjects(state).added.size; i++) await pause(20);
       assertEquals([...new AddedProjects(state).added.values()].map((a) => a.path), [folder]);
     } finally {
-      await studio.close().catch(() => {});
+      await aib.close().catch(() => {});
       await Deno.remove(root, { recursive: true }).catch(() => {});
     }
   },
 });
 
 Deno.test('recovered chats (open before a restart) of folders that are not added are not listed', async () => {
-  const s = await studio();
+  const s = await aib();
   try {
     s.recovered.push({ provider: 'claude', sessionId: 'r1', cwd: s.alpha }, { provider: 'claude', sessionId: 'r2', cwd: s.beta });
     await s.post('project-add', { path: s.alpha });
@@ -237,13 +237,13 @@ Deno.test('recovered chats (open before a restart) of folders that are not added
 });
 
 Deno.test('removing a project takes it off the list, and its saved chats do not bring it back', async () => {
-  const s = await studio();
+  const s = await aib();
   try {
     await s.post('project-add', { paths: [s.alpha, s.beta] });
     await s.post('project-remove', { path: s.beta, disk: false, projects: [s.alpha] });
     assertEquals([await s.added(), await s.listed()], [[s.alpha], [s.alpha]]);
     await s.close(true); // a restart: the same data folder, nothing comes back
-    const again = await studio({ root: s.root });
+    const again = await aib({ root: s.root });
     try {
       assertEquals([await again.added(), await again.listed()], [[s.alpha], [s.alpha]]);
       assert(Deno.statSync(s.beta).isDirectory, 'the folder itself is kept (Delete project without the disk box)');
@@ -259,7 +259,7 @@ Deno.test('removing a project takes it off the list, and its saved chats do not 
 });
 
 Deno.test('an added project whose folder is gone is flagged (with fix/drop-gone-projects\' check) and comes back with its folder', async () => {
-  const s = await studio();
+  const s = await aib();
   try {
     await s.post('project-add', { paths: [s.alpha, s.beta] });
     const before = (await s.get('/api/live/list')).projectsRevision;
@@ -362,7 +362,7 @@ Deno.test({
   name: 'worktree chats under an added project show; a worktree folder adds, and removes, its main checkout',
   ignore: !HAVE_GIT,
   async fn() {
-    const s = await studio();
+    const s = await aib();
     try {
       git(s.alpha, 'init', '-q');
       Deno.writeTextFileSync(j(s.alpha, 'a.txt'), 'a\n');

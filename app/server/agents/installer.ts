@@ -1,23 +1,23 @@
 /**
- * Studio's own agent installs (agent_installer.py): one npm install per agent into <state_dir>/agents/<id>/<version>/
+ * AIB's own agent installs (agent_installer.py): one npm install per agent into <state_dir>/agents/<id>/<version>/
  * (adapters.ts finds the result).
  *
  * The job runs in the agent host process. Everything the page needs to survive a web-server restart is on disk, in the same files
- * and the same JSON as the Python installer, so a Python host and a Deno web server (or the reverse) read each other's job:
+ * and the same JSON in every version, so a host and a web server of different versions read each other's job:
  *
  *   <state_dir>/agents/<id>/install.json   the job's state {state, stage, percent, message, version, pid, updatedAt}; written atomically
  *   <state_dir>/agents/<id>/install.lock   exclusive lock file holding {pid, at} of the process that runs the job (one install per agent)
  *   <state_dir>/agents/<id>/install.log    npm's own output of the last run (kept for the failure line, never shown whole)
  *   <state_dir>/agents/<id>/<version>/     the install; `.complete` is written last, and only a folder that has it is ever used
  *
- * What may be installed is the allow-list agent_versions.json (package, exact reviewed version, lockfile). With a lockfile the job runs
+ * What may be installed is the allow-list agents/versions.json (package, exact reviewed version, lockfile). With a lockfile the job runs
  * `npm ci`, otherwise `npm install <package>@<exact>`; both with --ignore-scripts --omit=dev --no-audit --no-fund. npm is started as
  * `node <npm-cli.js>` (never through npm.cmd), so cancel can kill the whole process tree. Before anything is started the job is
  * refused, with one plain line, when it is bound to fail: Node missing or older than 22, too little disk space, or a path too long.
  *
  * A Beta agent with a GitHub `release` (beta_catalog.ts, Maki) uses the same job, lock and folders, but no npm: the archive for this
  * computer is downloaded from github.com, checked against the SHA-256 pinned in the catalog, and only its program is unpacked
- * (release_install.ts). Its pinned version and checksums live in the catalog, not in agent_versions.json.
+ * (release_install.ts). Its pinned version and checksums live in the catalog, not in agents/versions.json.
  */
 import * as adapters from './adapters.ts';
 import { agentName } from './agent_registry.ts';
@@ -34,7 +34,7 @@ import { abspath, pathOf, realpath } from '../state/paths.ts';
 
 export const MIN_NODE_MAJOR = 22; // the adapters' `engines` field
 export const MAX_PATH_CHARS = 240; // Windows stops at 260; leave room for the files npm puts inside
-export const ALLOW_LIST = pathOf(APP_ROOT, 'agent_versions.json');
+export const ALLOW_LIST = pathOf(APP_ROOT, 'agents', 'versions.json');
 export const STATE_NAME = 'install.json';
 export const LOCK_NAME = 'install.lock';
 export const LOG_NAME = 'install.log';
@@ -60,7 +60,7 @@ function exists(path: string): boolean {
   }
 }
 
-/** int() of a stored number (the files are written by Studio itself). */
+/** int() of a stored number (the files are written by AIB itself). */
 function toInt(value: unknown): number {
   const n = Math.trunc(Number(value));
   return Number.isFinite(n) ? n : 0;
@@ -98,7 +98,7 @@ export class Flag {
   }
 }
 
-/** One caller at a time (the Python RLock around start/status). */
+/** One caller at a time. */
 export class Mutex {
   #tail: Promise<unknown> = Promise.resolve();
   run<T>(fn: () => Promise<T> | T): Promise<T> {
@@ -112,7 +112,7 @@ export function agentDir(stateDir: string, agentId: string): string {
   return pathOf(adapters.agentsRoot(stateDir), agentId);
 }
 
-/** json.dumps(data) written atomically (Python's spacing, so the bytes match a file the Python job wrote). */
+/** json.dumps(data) written atomically. */
 export function writeJson(path: string, data: unknown): void {
   writeJsonAtomic(path, null, { text: pyJsonDumps(data), prefix: '.studio-agent-', suffix: '.tmp' });
 }
@@ -139,7 +139,7 @@ export function clearNodeCache(): void {
   nodeCache.clear();
 }
 
-/** Test seam (Python tests mock.patch agent_installer.node_block): replaces nodeBlock when set. Never set in the app. */
+/** Test seam: replaces nodeBlock when set. Never set in the app. */
 export const installerHooks: { nodeBlock?: (nodeCommand: string, force: boolean) => [string, boolean] | Promise<[string, boolean]> } = {};
 
 /**
@@ -187,7 +187,7 @@ export interface AllowEntry {
   [key: string]: unknown;
 }
 
-/** {agent id: {package, version, lockfile?, packageBytes, minFreeBytes}} from agent_versions.json. Throws ValueError when unreadable. */
+/** {agent id: {package, version, lockfile?, packageBytes, minFreeBytes}} from agents/versions.json. Throws ValueError when unreadable. */
 export function loadAllowList(path?: string): Record<string, unknown> {
   let data: unknown;
   try {
@@ -201,7 +201,7 @@ export function loadAllowList(path?: string): Record<string, unknown> {
 }
 
 /**
- * The Beta agents' entries ({id: {package, version}}) from the `betaAgents` section of agent_versions.json, or {}. They are pinned to
+ * The Beta agents' entries ({id: {package, version}}) from the `betaAgents` section of agents/versions.json, or {}. They are pinned to
  * the exact version the ACP registry lists but have NO lockfile (not reviewed, see beta_catalog.ts): npm checks the package's own
  * checksum, its dependencies resolve within their ranges. Only ids of the Beta catalog that ship on npm are kept.
  */
@@ -309,7 +309,7 @@ export async function nodeVersion(node: string, run?: adapters.RunFn): Promise<s
   return match ? match[1] : '';
 }
 
-/** Python's round(): halves go to the even neighbour. */
+/** Rounding where halves go to the even neighbour. */
 function pyRound(x: number): number {
   const floor = Math.floor(x);
   const diff = x - floor;
@@ -320,7 +320,7 @@ function pyRound(x: number): number {
 
 export function sizeText(num: number): string {
   if (num < GIB) return `${Math.max(1, pyRound(num / 1024 ** 2))} MB`;
-  // f'{num / GIB:.1f}': num / GIB is exact (GIB is a power of two), and Python rounds an exact half to even
+  // f'{num / GIB:.1f}': num / GIB is exact (GIB is a power of two), and an exact half rounds to even
   const scaled = Math.trunc(num) * 10;
   let tenths = Math.floor(scaled / GIB);
   const twice = 2 * (scaled - tenths * GIB);
@@ -436,7 +436,7 @@ export interface InstallerOptions {
 
 type Outcome = 'done' | 'cancelled' | 'failed';
 
-/** One per process that runs installs (the agent host; the in-process Studio of tests and demos). */
+/** One per process that runs installs (the agent host; the in-process AIB of tests and demos). */
 export class Installer {
   readonly stateDir: string;
   readonly nodeCommand: string;
@@ -483,7 +483,6 @@ export class Installer {
     const known = typeof agentId === 'string' && adapters.installPackages(agentId) !== null;
     const found = known ? this.allowList()[agentId as string] : null;
     if (!isDict(found) || !found.package || !found.version) {
-      // (Python's wording for an install; an uninstall says what was asked.)
       throw new InstallRefused(verb ? `AIB cannot ${verb} that agent.` : 'AIB cannot install that agent.');
     }
     return found as AllowEntry;
@@ -643,7 +642,6 @@ export class Installer {
    * package, a launcher in Settings) is never looked at. Refused, with one plain line, while chats with the agent are open
    * (`openChats`, counted by the caller), while its sign-in runs (`signinRunning`), or while an install of it runs.
    * `check`: run every refusal but remove nothing (the page asks first, so a refusal it can know shows before its confirm question).
-   * (No Python counterpart: the Python server has no uninstall.)
    */
   uninstall(agentId: unknown, openChats = 0, signinRunning = false, check = false): Promise<InstallView & { removed: string[] }> {
     try {

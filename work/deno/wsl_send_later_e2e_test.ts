@@ -15,15 +15,15 @@ import { refOf } from '../../app/server/platform/location.ts';
 type Json = Record<string, unknown>;
 const MIN = 60_000;
 
-function studioIn(state: string): Aib {
-  const studio = new Aib({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
-  studio.ownerProbe = () => null;
-  studio.connectionFactory = (_command, cwd, provider, options) =>
+function aibIn(state: string): Aib {
+  const aib = new Aib({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
+  aib.ownerProbe = () => null;
+  aib.connectionFactory = (_command, cwd, provider, options) =>
     new Connection(['python3', `${ROOT}/fake_acp.py`, '--cancel-aware'], cwd, provider, {
       ...options,
       wsl: options?.wsl ? { ...options.wsl, program: '/usr/bin/python3' } : options?.wsl,
     });
-  return studio;
+  return aib;
 }
 
 const users = (c: Connection) => c.events.filter((e) => e.kind === 'user').map((e) => (e.data as Json).text);
@@ -35,12 +35,12 @@ Deno.test({
   async fn() {
     const state = Deno.makeTempDirSync({ prefix: 'aib-wsl-later-e2e-' });
     await prepareRoot();
-    const studios: Aib[] = [];
+    const aibs: Aib[] = [];
     try {
       await readyHost();
       const ref = refOf({ kind: 'wsl', distro: KEY, linuxPath: `${ROOT}/repo` });
-      const a = studioIn(state);
-      studios.push(a);
+      const a = aibIn(state);
+      aibs.push(a);
       const c = await a.connect('claude', ref, null, { ownCopy: true });
       assert(c.wsl, 'a WSL chat');
       const at = Date.now() + 3600_000;
@@ -55,7 +55,7 @@ Deno.test({
       await until(() => !c.busy, 'turn end', 60);
       assertEquals(waiting(c), []);
     } finally {
-      for (const s of studios) await s.close().catch(() => {});
+      for (const s of aibs) await s.close().catch(() => {});
       await cleanRoot();
       Deno.removeSync(state, { recursive: true });
     }
@@ -68,22 +68,22 @@ Deno.test({
   async fn() {
     const state = Deno.makeTempDirSync({ prefix: 'aib-wsl-later-late-e2e-' });
     await prepareRoot();
-    const studios: Aib[] = [];
+    const aibs: Aib[] = [];
     try {
       await readyHost();
       const ref = refOf({ kind: 'wsl', distro: KEY, linuxPath: `${ROOT}/repo` });
-      const a = studioIn(state);
-      studios.push(a);
+      const a = aibIn(state);
+      aibs.push(a);
       const c = await a.connect('claude', ref, null, { ownCopy: true });
       const soon = Date.now() + 2_000;
       assertEquals((await a.liveCall('schedule', { id: c.id, text: 'mcp', clientMessageId: 'w1', at: soon + 60 * MIN }))[0], 200);
       assertEquals(waiting(c).length, 1);
       // AIB quits (orderly: the saved queue file keeps the schedule); a new AIB opens the same chat three hours later
       await a.close();
-      studios.pop();
+      aibs.pop();
       newAib();
-      const b = studioIn(state);
-      studios.push(b);
+      const b = aibIn(state);
+      aibs.push(b);
       const r = await b.connect('claude', ref, c.sessionId, { ownCopy: true });
       const clock = Date.now();
       r.scheduleNow = () => clock + 4 * 60 * MIN;
@@ -92,7 +92,7 @@ Deno.test({
       const note = r.events.map((e) => (e.data as Json)?.message).find((m) => typeof m === 'string' && m.startsWith('Sent late (scheduled '));
       assert(note, 'the chat says it was sent late');
     } finally {
-      for (const s of studios) await s.close().catch(() => {});
+      for (const s of aibs) await s.close().catch(() => {});
       await cleanRoot();
       Deno.removeSync(state, { recursive: true });
     }

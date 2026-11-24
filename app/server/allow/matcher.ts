@@ -335,7 +335,7 @@ export function projectKey(p: string): string {
   return isWslRef(p) ? locKey(p) : resolve(p);
 }
 
-/** Two project folders are one: WSL refs exactly (Linux paths are case-sensitive), Windows paths case-folded (Studio's sweep). */
+/** Two project folders are one: WSL refs exactly (Linux paths are case-sensitive), Windows paths case-folded (AIB's sweep). */
 export function sameProject(a: string, b: string): boolean {
   if (isWslRef(a) || isWslRef(b)) return isWslRef(a) && isWslRef(b) && locKey(a) === locKey(b);
   return a.toLowerCase() === b.toLowerCase();

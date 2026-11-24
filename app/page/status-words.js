@@ -9,9 +9,9 @@
   // Pure: no DOM, no clock except facts.now, no network.
   //
   // facts (every field optional):
-  //   issue            the open chat lost its connection and Studio is retrying            -> Reconnecting…
+  //   issue            the open chat lost its connection and AIB is retrying            -> Reconnecting…
   //   failed, error    the live connection reports an error and nothing is waiting          -> Failed (not part of the seven words)
-  //   connected        an agent is attached in this Studio (a live, not-closed connection)
+  //   connected        an agent is attached in this AIB (a live, not-closed connection)
   //   opening          the agent is still starting                                           -> Opening… (transitional)
   //   needs, needsKind how many requests wait (approval / question / sign-in) and the first kind
   //   busy, busySince  the agent is working; busySince is when it started (ms)
@@ -24,7 +24,7 @@
   //                    event log (a turn_end after the last user message), list cards use "finished, not viewed".
   //   verdict          ownership verdict of a chat that is not attached here (owned_elsewhere / possibly_active)
   //   elsewhereWorking the other app is visibly working (recent writes, running subagents or processes)
-  //   reconnecting     Studio is reloading this chat by itself after a restart (server-side fact)   -> Reconnecting…
+  //   reconnecting     AIB is reloading this chat by itself after a restart (server-side fact)   -> Reconnecting…
   //   recovered, recent, agentList   why a chat is not attached (only changes the tooltip)
   //   reconnectError   the automatic reopen after a restart gave up (string, the reason) -> Couldn't reopen
   //   now              current time in ms

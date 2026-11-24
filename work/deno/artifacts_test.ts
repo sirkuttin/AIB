@@ -3,7 +3,7 @@
  * Service, WatcherTests, WriteTrackerTests) and work/test_artifacts_followups.py (ChatKeyed), parity with Python through
  * the retired artifacts_shim.py, and interop both ways on one store folder (Python and Deno share the state folder).
  *
- * Not ported here (they need a whole Studio): bootstrap's artifactOrigin, the Studio page CSP framing the origin, the Origin-header
+ * Not ported here (they need a whole AIB): bootstrap's artifactOrigin, AIB page CSP framing the origin, the Origin-header
  * gate on the routes (security.authorize, covered by security_test.ts), events reaching the conversation event list and
  * /api/live/state, SplitModeTests / InProcessModeTests (real web server + agent host), OwnToolApproval (studio.Connection).
  */
@@ -304,7 +304,7 @@ Deno.test('store: kind derivation', () => {
   for (const [name, kind] of cases) assertEquals(kindFor(name), kind, name);
 });
 
-// ---- Service routes (RouteTests without a whole Studio) ----------------------------------------------
+// ---- Service routes (RouteTests without a whole AIB) ----------------------------------------------
 
 function serviceFixture(live: Record<string, string> = {}) {
   const tmp = temp();

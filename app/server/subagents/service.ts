@@ -19,7 +19,7 @@
  * the body to act on (folders come from AIB's chat record; a body path is only checked against git for adoption), act only on
  * records of that chat, and cap the chat's worktrees.
  *
- * Records: <state>/subagent-worktrees.json, written by the Studio process only (the swarm registry is the web process's), each record
+ * Records: <state>/subagent-worktrees.json, written by AIB process only (the swarm registry is the web process's), each record
  * written BEFORE its branch or worktree exists, so a crash always leaves an owned, findable item. P2: the web process's swarm reads
  * them (never writes them) and lands each done one through the helper landing (its own registry entry, journal and recovery); the
  * parent's ACP stream continues (SendMessage) or stops (TaskStop, a failed Agent call, a stopped turn) them; once landed, empty or
@@ -241,7 +241,7 @@ export class SubagentWorktrees {
     readonly chat: (id: string) => SubagentChat | null,
   ) {}
 
-  /** The distros' side of WSL chats' subagents (Studio sets it; the helper's own service has none). */
+  /** The distros' side of WSL chats' subagents (AIB sets it; the helper's own service has none). */
   remote: RemoteSubagents | null = null;
 
   all(): SubagentRecord[] {
@@ -360,7 +360,7 @@ export class SubagentWorktrees {
 
   // ---- shutting down what a finished subagent left running (no-stuck-processes, Slice 0, step 6) -------------------------------
 
-  /** Shuts down processes by their shell cookie (subagents/reap.ts); Studio sets it. None: nothing is ever killed. */
+  /** Shuts down processes by their shell cookie (subagents/reap.ts); AIB sets it. None: nothing is ever killed. */
   reaper: ProcessReaper | null = null;
   /** How long after a subagent finished its processes are shut down (its last output flushes; a continued subagent is skipped). */
   reapDelayMs = 5000;

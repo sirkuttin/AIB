@@ -1,21 +1,21 @@
-# Agent Studio: ACP v1 capability matrix
+# AIB: ACP v1 capability matrix
 
-Studio speaks **ACP protocol version 1** only (`initialize` sends `protocolVersion: 1`; any other negotiated version is rejected). Reference: [agentclientprotocol.com](https://agentclientprotocol.com) and `schema.json` from the `agent-client-protocol` repository (schema-v1.29.x checked 2026-11-07). Source of truth for Studio's behavior is `studio.py` (`Connection`); incoming messages are checked by `acp_schema.py`.
+AIB speaks **ACP protocol version 1** only (`initialize` sends `protocolVersion: 1`; any other negotiated version is rejected). Reference: [agentclientprotocol.com](https://agentclientprotocol.com) and `schema.json` from the `agent-client-protocol` repository (schema-v1.29.x checked 2026-11-07). Source of truth for AIB's behavior is `studio.py` (`Connection`); incoming messages are checked by `acp_schema.py`.
 
 Status values: **supported**, **partial**, **not supported**, **deliberately disabled** (advertised as off so agents do not call it), **in progress** (another work package is adding it; see `TRACKER.md`).
 
-## Capabilities Studio advertises (`initialize` -> `clientCapabilities`)
+## Capabilities AIB advertises (`initialize` -> `clientCapabilities`)
 
 | Capability | Sent | Status | Notes |
 | --- | --- | --- | --- |
-| `fs.readTextFile` / `fs.writeTextFile` | `false` / `false` | deliberately disabled | Studio does not expose the workspace to agents through the client; agents use their own file access. See TRACKER milestone 5 (optional filesystem with access boundaries). |
+| `fs.readTextFile` / `fs.writeTextFile` | `false` / `false` | deliberately disabled | AIB does not expose the workspace to agents through the client; agents use their own file access. See TRACKER milestone 5 (optional filesystem with access boundaries). |
 | `terminal` | `false` | deliberately disabled | No ACP terminal lifecycle yet (TRACKER milestone 4). |
-| `elicitation.form` | `{}` | supported | Form mode, request- and session-scoped; schema and typed answers validated by `elicitation.py`. |
+| `elicitation.form` | `{}` | supported | Form mode, request- and session-scoped; schema and typed answers validated by `server/acp/elicitation.ts`. |
 | `elicitation.url` | not sent | in progress - see tracker | URL elicitation is rejected with -32602 until implemented. |
-| `subagents` | `{}` | partial | Non-standard extension some adapters use; Studio tracks subagent session IDs and reads `subagent_update` / `session_message` updates. Not part of ACP v1. |
+| `subagents` | `{}` | partial | Non-standard extension some adapters use; AIB tracks subagent session IDs and reads `subagent_update` / `session_message` updates. Not part of ACP v1. |
 | `auth.*` / `positionEncoding` etc. | not sent | not supported | Authentication capabilities in progress - see tracker. |
 
-## Agent methods (Studio is the caller)
+## Agent methods (AIB is the caller)
 
 | Method | Status | Notes |
 | --- | --- | --- |
@@ -23,15 +23,15 @@ Status values: **supported**, **partial**, **not supported**, **deliberately dis
 | `authenticate` / `logout` | in progress - see tracker | Authentication discovery and sign-in flows are a milestone 2 item. |
 | `session/new` | supported | `cwd` and empty `mcpServers`. Result must carry a non-empty `sessionId`; `modes` and `configOptions` are stored as settings. |
 | `session/load` | supported | Used to continue saved conversations; requires `agentCapabilities.loadSession`, otherwise refused. History replay arrives as normal `session/update` notifications. |
-| `session/resume`, `session/close`, `session/delete` | not supported | Not gated on `sessionCapabilities`; Studio never sends them. |
-| `session/list` | in progress - see tracker | Protocol-native session discovery; today Studio discovers saved sessions from local transcripts (`monitor.py`). |
+| `session/resume`, `session/close`, `session/delete` | not supported | Not gated on `sessionCapabilities`; AIB never sends them. |
+| `session/list` | in progress - see tracker | Protocol-native session discovery; today AIB discovers saved sessions from local transcripts (`server/transcripts/monitor.ts`). |
 | `session/prompt` | supported | Text plus attachments: up to 4 images (PNG/JPEG/GIF/WebP, `promptCapabilities.image`) and up to 8 files, mapped as in "Prompt content blocks" below (20 MiB total). One turn at a time; duplicate client message IDs are deduplicated. Result `stopReason` is validated (`end_turn`, `max_tokens`, `max_turn_requests`, `refusal`, `cancelled`; unknown strings are tolerated with a logged warning). |
 | `session/cancel` (notification) | supported | Pending permission requests are answered with outcome `cancelled` first, then `session/cancel` is sent; pending session-scoped elicitations are answered `cancel`. The agent is expected to end the turn with `stopReason: cancelled` (verified against the conformance fixture). A permission request that arrives after the cancel is not auto-cancelled (gap). |
 | `session/set_mode` | supported | Mode picker from `modes.availableModes`; `current_mode_update` keeps it in sync. |
 | `session/set_config_option` | partial | Select-style options from `configOptions` are settable; result `configOptions` replaces the stored list. Boolean/other option types: more configuration types are on the TRACKER. |
-| `$/cancel_request` (notification) | partial | Received from the agent: withdraws the matching pending permission/elicitation UI. Studio never sends it. |
+| `$/cancel_request` (notification) | partial | Received from the agent: withdraws the matching pending permission/elicitation UI. AIB never sends it. |
 
-## Client methods (the agent calls Studio)
+## Client methods (the agent calls AIB)
 
 | Method | Status | Notes |
 | --- | --- | --- |
@@ -42,7 +42,7 @@ Status values: **supported**, **partial**, **not supported**, **deliberately dis
 | `terminal/create`, `terminal/output`, `terminal/wait_for_exit`, `terminal/kill`, `terminal/release` | deliberately disabled | Same -32601 reply. |
 | Unknown methods with an `id` | supported | Answered with -32601; unknown notifications are logged as `notice` events. |
 
-## `session/update` variants (agent -> Studio)
+## `session/update` variants (agent -> AIB)
 
 All variants are schema-checked for their required fields and types; wrong-typed or session-less updates are dropped and reported as a `protocol` error event. Unknown `sessionUpdate` values are kept in history and reported once per kind.
 
@@ -65,7 +65,7 @@ All variants are schema-checked for their required fields and types; wrong-typed
 
 ## Prompt content blocks
 
-| Block | Sent by Studio | Received and rendered |
+| Block | Sent by AIB | Received and rendered |
 | --- | --- | --- |
 | `text` | yes | yes |
 | `image` | yes (capability-gated) | yes (safe MIME types only) |
@@ -75,7 +75,7 @@ All variants are schema-checked for their required fields and types; wrong-typed
 
 ### File (non-image) attachments
 
-Chosen with ＋ Attach, pasted, or dropped on the composer. Names are display-only labels: Studio never opens, reads or writes a path from them, and refuses names with path separators, `:`, `< > " | ? *`, control/invisible/direction characters, dot-only names or more than 200 characters. A file is **text** when its bytes are valid UTF-8 with no NUL bytes and its MIME type is text-like (`text/*`, JSON, XML, JavaScript, YAML, SQL, `+json`/`+xml`...), unknown (`''`/`application/octet-stream`) or its extension is a known text extension; a text MIME type with binary content is treated as binary, and `application/pdf`/archives are always binary. Everything else is **binary**; `audio/*` is **audio**. PNG/JPEG/GIF/WebP must be attached as images.
+Chosen with ＋ Attach, pasted, or dropped on the composer. Names are display-only labels: AIB never opens, reads or writes a path from them, and refuses names with path separators, `:`, `< > " | ? *`, control/invisible/direction characters, dot-only names or more than 200 characters. A file is **text** when its bytes are valid UTF-8 with no NUL bytes and its MIME type is text-like (`text/*`, JSON, XML, JavaScript, YAML, SQL, `+json`/`+xml`...), unknown (`''`/`application/octet-stream`) or its extension is a known text extension; a text MIME type with binary content is treated as binary, and `application/pdf`/archives are always binary. Everything else is **binary**; `audio/*` is **audio**. PNG/JPEG/GIF/WebP must be attached as images.
 
 | Kind | `embeddedContext` advertised | not advertised |
 | --- | --- | --- |
@@ -94,7 +94,7 @@ Limits (server-validated, mirrored in the browser): 8 files, 2 MiB per text file
 | JSON-RPC envelope checks (`jsonrpc: "2.0"`, id types, exactly one of `result`/`error`, params object) | supported; violations logged as `error` events with `data.protocol = true` (capped at 25 per connection) |
 | Non-JSON stdout lines | supported; logged and skipped |
 | Malformed agent requests | supported; answered with -32600/-32602, never dispatched |
-| Malformed responses to Studio requests (`initialize`, `session/new|load|prompt|set_mode|set_config_option`) | supported; the waiting call fails immediately with "Malformed ... response" instead of hanging or accepting bad data |
+| Malformed responses to AIB requests (`initialize`, `session/new|load|prompt|set_mode|set_config_option`) | supported; the waiting call fails immediately with "Malformed ... response" instead of hanging or accepting bad data |
 | Unknown or duplicate response IDs | supported; ignored and logged |
 | Out-of-order responses | supported; matched by request ID |
 | Agent exit mid-turn | supported; waiters released, approvals/elicitations cleared, lease released, `disconnected` event |

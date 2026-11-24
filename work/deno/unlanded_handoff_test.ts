@@ -1,6 +1,6 @@
 /**
  * Owner rule 2026-11-24: "the main agent should take care of 100% of this". Unlanded subagent work goes to a main chat, never to the
- * owner. Fake agent, headless: a real Studio with the fake agent as the parent chat, subagent records and worktrees made the way
+ * owner. Fake agent, headless: a real AIB with the fake agent as the parent chat, subagent records and worktrees made the way
  * subagents/service.ts makes them (as in subagent_landing_test.ts), and the web process's swarm (swarm/service.ts #handOff, the
  * unlanded_work tool).
  *   - a stopped subagent with unlanded work wakes its starting chat exactly once, with the one plain line and the tool
@@ -34,7 +34,7 @@ class Box {
   readonly dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-unlanded-' }));
   readonly state = pathOf(this.dir, 'state');
   readonly project = makeRepo(pathOf(this.dir, 'proj'));
-  readonly studio: Aib;
+  readonly aib: Aib;
   swarm: Swarm;
   n = 0;
 
@@ -42,17 +42,17 @@ class Box {
     runGit(this.project, 'config', 'user.name', 't');
     runGit(this.project, 'config', 'user.email', 't@t');
     runGit(this.project, 'config', 'core.autocrlf', 'false');
-    const studio = new Aib({ stateDir: this.state, port: 0 }, { keeper: null });
-    studio.ownerProbe = () => null;
-    studio.agentLaunch = () => Promise.resolve([['unused'], {}]);
-    studio.connectionFactory = (_command, cwd, provider, options) =>
+    const aib = new Aib({ stateDir: this.state, port: 0 }, { keeper: null });
+    aib.ownerProbe = () => null;
+    aib.agentLaunch = () => Promise.resolve([['unused'], {}]);
+    aib.connectionFactory = (_command, cwd, provider, options) =>
       new Connection([PYTHON, UNIQUE, '--models'], cwd, provider, { ...(options ?? {}), env: { ...(options?.env ?? {}), PYTHONUTF8: '1' } });
-    this.studio = studio;
+    this.aib = aib;
     this.swarm = this.newSwarm();
   }
 
   newSwarm(): Swarm {
-    return new Swarm({ stateDir: this.state, host: this.studio, settings: this.studio.settings });
+    return new Swarm({ stateDir: this.state, host: this.aib, settings: this.aib.settings });
   }
 
   /** A subagent's worktree and record as subagents/service.ts makes them (S = the folder's HEAD), with `file` changed in it. */
@@ -64,7 +64,7 @@ class Box {
     more: Partial<SubagentRecord> & { commit?: boolean } = {},
   ): { id: string; path: string; branch: string } {
     const n = ++this.n;
-    const root = this.studio.subagents!.root;
+    const root = this.aib.subagents!.root;
     const hash = wt.repoHash(this.project);
     const slug = `sub-test${n}`;
     const path = pathOf(root, hash, slug);
@@ -107,7 +107,7 @@ class Box {
 
   async [Symbol.asyncDispose](): Promise<void> {
     await this.swarm.stopWatching();
-    await this.studio.close().catch(() => {});
+    await this.aib.close().catch(() => {});
     for (let i = 0; i < 20; i++) {
       try {
         Deno.removeSync(this.dir, { recursive: true });
@@ -141,8 +141,8 @@ async function settle(c: Connection): Promise<void> {
 /** Every line that reaches a chat: steer / queue wakes and next-prompt lines. */
 function told(box: Box): { op: string; id: string; text: string }[] {
   const out: { op: string; id: string; text: string }[] = [];
-  const own = box.studio.liveCall.bind(box.studio);
-  box.studio.liveCall = (name, body) => {
+  const own = box.aib.liveCall.bind(box.aib);
+  box.aib.liveCall = (name, body) => {
     if (name === 'steer' || name === 'queue') out.push({ op: name, id: String((body as Json).id), text: String((body as Json).text) });
     if (name === 'prompt-context') out.push({ op: name, id: String((body as Json).id), text: String((body as Json).line) });
     return own(name, body);
@@ -161,7 +161,7 @@ Deno.test({
   name: 'a stopped subagent with unlanded work wakes its starting chat once, with the plain line; a restart does not wake again',
   async fn() {
     await using box = new Box();
-    const main = await box.studio.connect('claude', box.project, null, {});
+    const main = await box.aib.connect('claude', box.project, null, {});
     await settle(main);
     const lines = told(box);
     const { id } = box.subagent(main.id, 'half.txt', 'half\nmore\n', 'stopped', { description: 'Fix login' });
@@ -189,7 +189,7 @@ Deno.test({
   name: 'unlanded_work: land lands it, diff gives a patch that applies by hand and the copy then goes, discard needs a reason and keeps the branch',
   async fn() {
     await using box = new Box();
-    const main = await box.studio.connect('claude', box.project, null, {});
+    const main = await box.aib.connect('claude', box.project, null, {});
     await settle(main);
     const tool = (id: string, args: Json) => box.swarm.tool(main.id, 'unlanded_work', { work: id, ...args });
 
@@ -254,7 +254,7 @@ Deno.test({
   name: 'a starting chat that is gone hands the work to the project\'s main chat, which can land it',
   async fn() {
     await using box = new Box();
-    const main = await box.studio.connect('claude', box.project, null, {});
+    const main = await box.aib.connect('claude', box.project, null, {});
     await settle(main);
     const lines = told(box);
     // started by a chat that no longer exists
@@ -285,7 +285,7 @@ Deno.test({
   name: 'work that is in main already never wakes anyone',
   async fn() {
     await using box = new Box();
-    const main = await box.studio.connect('claude', box.project, null, {});
+    const main = await box.aib.connect('claude', box.project, null, {});
     await settle(main);
     const lines = told(box);
     // the subagent committed a.txt; the main agent made the same file by hand
@@ -304,7 +304,7 @@ Deno.test({
   name: 'the Changes tab: left-over work names the chat handling it, and has no owner buttons',
   async fn() {
     await using box = new Box();
-    const main = await box.studio.connect('claude', box.project, null, {});
+    const main = await box.aib.connect('claude', box.project, null, {});
     await settle(main);
     const { id } = box.subagent(main.id, 'pending.txt', 'x\n', 'stopped', { description: 'Pending work' });
     await polls(box, 3);
@@ -349,7 +349,7 @@ Deno.test({
   name: 'a landing that failed (conflict) wakes once through its own line; the hand-over does not say it again',
   async fn() {
     await using box = new Box();
-    const main = await box.studio.connect('claude', box.project, null, {});
+    const main = await box.aib.connect('claude', box.project, null, {});
     await settle(main);
     const lines = told(box);
     const { id } = box.subagent(main.id, 'tracked.txt', 'the subagent version\n', 'done', { description: 'Clash' });

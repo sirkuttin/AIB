@@ -1,5 +1,5 @@
 /**
- * Archive and delete artifacts, end to end (owner decisions 2026-11-12): a real Studio (Deno web server + in-process agent host,
+ * Archive and delete artifacts, end to end (owner decisions 2026-11-12): a real AIB (Deno web server + in-process agent host,
  * temp state folder and workspace, free port; never the live ports), the scripted agent work/scroll-fixture/agent.py, and a headless
  * Chrome/Edge on chat.html (no window). Every file this test deletes is in the fixture's temp workspace.
  *

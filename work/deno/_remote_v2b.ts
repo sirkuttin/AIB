@@ -9,7 +9,7 @@ import { projectId } from '../../app/server/remote/projects.ts';
 import { DEVICE_HEADER } from '../../app/server/remote/server.ts';
 import { setAgentRows } from '../../app/server/remote/newchat.ts';
 import { readRemotePort } from '../../app/server/remote/port.ts';
-import { type FakeChat, fakeTailscale, pc, phoneHeaders, raw, type RemoteStudio, remoteStudio, serveStatus } from './_remote_fixture.ts';
+import { type FakeChat, fakeTailscale, pc, phoneHeaders, raw, type RemoteAib, remoteAib, serveStatus } from './_remote_fixture.ts';
 
 type Json = Record<string, unknown>;
 
@@ -63,10 +63,10 @@ export interface FakeNext {
 
 /** Phone access on, an added project with saved transcripts, the fake agent host answering connect / prompt / disconnect /
  * agent-options; `pick` sets what the next new chat's start picks report (and the rest of FakeNext). */
-export async function v2Studio(): Promise<RemoteStudio & { pick: FakeNext; projectId: string }> {
+export async function v2Aib(): Promise<RemoteAib & { pick: FakeNext; projectId: string }> {
   setAgentRows(() => Promise.resolve(AGENT_ROWS));
   const fake = fakeTailscale();
-  const s = await remoteStudio({ runner: fake.runner }, undefined, { saved: true });
+  const s = await remoteAib({ runner: fake.runner }, undefined, { saved: true });
   fake.state.serve = serveStatus(readRemotePort(s.state)!);
   const [status] = await pc(s, 'POST', '/api/live/devices/access', { on: true });
   assertEquals(status, 200);
@@ -103,7 +103,7 @@ export async function v2Studio(): Promise<RemoteStudio & { pick: FakeNext; proje
 }
 
 /** Connection.prompt, as the fake agent host answers it (status 400 for its ValueErrors, as the real host). */
-function fakePrompt(s: RemoteStudio, receipts: Map<string, string>, pick: FakeNext, body: Json): [number, unknown] {
+function fakePrompt(s: RemoteAib, receipts: Map<string, string>, pick: FakeNext, body: Json): [number, unknown] {
   const c = s.chats.find((x) => x.id === body.id);
   const text = String(body.text ?? '');
   const mid = typeof body.clientMessageId === 'string' ? body.clientMessageId : '';
@@ -123,7 +123,7 @@ function fakePrompt(s: RemoteStudio, receipts: Map<string, string>, pick: FakeNe
   return [200, { accepted: true, duplicate: false, clientMessageId: mid || null, turnState: 'working' }];
 }
 
-export function phoneCall(s: RemoteStudio, token: string, method: string, path: string, body?: unknown) {
+export function phoneCall(s: RemoteAib, token: string, method: string, path: string, body?: unknown) {
   return raw(
     s.phonePort(),
     method,

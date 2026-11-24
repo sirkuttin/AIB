@@ -413,7 +413,7 @@ Deno.test({
     await pause(200);
     assertEquals(seen2, ['r2'], 'the replayed r1 is not run again');
     assertEquals(seen, ['r1']);
-    // a helper without the tunnel: no entry for it (Studio falls back to the interop entry)
+    // a helper without the tunnel: no entry for it (AIB falls back to the interop entry)
     second.stop();
     const plain = lab.host({}, 't-3');
     await plain.start();

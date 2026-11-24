@@ -33,15 +33,15 @@ const PROJECT = `${ROOT}/repo`;
 // Only built when the distro is there: refOf throws on the empty name the ignored run has.
 const REF = WSL_E2E ? refOf({ kind: 'wsl', distro: KEY, linuxPath: PROJECT }) : '';
 
-function studioIn(state: string): Aib {
-  const studio = new Aib({ stateDir: state, port: 0, ownersDir: null }, { keeper: null });
-  studio.ownerProbe = () => null;
-  studio.connectionFactory = (_command, cwd, provider, options) =>
+function aibIn(state: string): Aib {
+  const aib = new Aib({ stateDir: state, port: 0, ownersDir: null }, { keeper: null });
+  aib.ownerProbe = () => null;
+  aib.connectionFactory = (_command, cwd, provider, options) =>
     new Connection(['python3', `${ROOT}/fake_acp.py`, '--cancel-aware'], cwd, provider, {
       ...options,
       wsl: options?.wsl ? { ...options.wsl, program: '/usr/bin/python3' } : options?.wsl,
     });
-  return studio;
+  return aib;
 }
 
 /** Run the chat's MCP entry inside the distro as its agent would, with these messages; the answers by id. */
@@ -85,7 +85,7 @@ Deno.test({
     const artifacts = new ArtifactStore(`${state}\\artifacts`);
     const newStore = () => new DocStore(`${state}\\docs-state`, { idleMs: 60_000, snapshotIdleMs: 60_000, history: new ArtifactHistory(() => artifacts) });
     let store = newStore();
-    const studios: Aib[] = [];
+    const aibs: Aib[] = [];
     const seen: Json[] = [];
     // AIB's /api/live/docs/tool for this test: the real doc tools on the real store, the answer as the route gives it (Linux paths)
     const server = Deno.serve({ hostname: '127.0.0.1', port: 0, onListen() {} }, async (request) => {
@@ -98,10 +98,10 @@ Deno.test({
     try {
       const host = await readyHost();
       assert(host.mcpTunnel, 'the helper runs the tunnel');
-      const studio = studioIn(state);
-      studios.push(studio);
-      studio.artifactUrlProvider = () => `http://127.0.0.1:${server.addr.port}`;
-      const c = await studio.connect('claude', REF);
+      const aib = aibIn(state);
+      aibs.push(aib);
+      aib.artifactUrlProvider = () => `http://127.0.0.1:${server.addr.port}`;
+      const c = await aib.connect('claude', REF);
       const entry = c.mcpServers[0] as unknown as Entry;
       const headers = entry.env.find((e) => e.name === 'MCP_FORWARD_HEADERS')!.value;
 
@@ -199,7 +199,7 @@ Deno.test({
       const text = store.pageMarkdown(doc);
       const rev = doc.live.rev;
       await store.close();
-      for (const s of studios.splice(0)) await s.close().catch(() => {});
+      for (const s of aibs.splice(0)) await s.close().catch(() => {});
       newAib();
       await readyHost();
       store = newStore();
@@ -223,7 +223,7 @@ Deno.test({
       assert(where.out.includes('plan') && where.out.includes(`Path=${PROJECT}/aib-docs/plan`), where.out);
     } finally {
       await store.close().catch(() => {});
-      for (const s of studios) await s.close().catch(() => {});
+      for (const s of aibs) await s.close().catch(() => {});
       await server.shutdown();
       await cleanRoot();
       for (let i = 0; i < 20; i++) {

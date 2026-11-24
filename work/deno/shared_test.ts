@@ -2,7 +2,7 @@
  * server/web/shared.ts: builtinLaunch, describeAgents, settingsView, the notices and conversationAction. The cases of
  * work/test_adapters.py, test_settings.py (DescribeTests, LaunchTests), test_studio_install_lookup.py (WebServerAndHostReadFresh),
  * test_agent_signin.py (SettingsListAndGating) and test_conversation_state.py (the conversation_action parts) that need no whole
- * Studio, plus parity of the agent list and notices with studio_shared.py on the same temp fixture.
+ * AIB, plus parity of the agent list and notices with studio_shared.py on the same temp fixture.
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
 import { Frozen } from './_frozen.ts';
@@ -256,14 +256,14 @@ Deno.test('the agent list gives what Python listed on the same fixture', async (
 
 // ---- settingsView and the notices ----------------------------------------------------------------------------------------
 
-function context(root: string, overrides: Partial<shared.StudioContext> = {}): shared.StudioContext {
+function context(root: string, overrides: Partial<shared.AibContext> = {}): shared.AibContext {
   return {
     options: { stateDir: root, nodeCommand: PY },
     settings: new SettingsStore(root),
     conversations: new ConversationState(root),
     liveList: () => ({ connections: [] }),
     liveCall: () => [200, {}],
-    studioOwns: () => false,
+    aibOwns: () => false,
     findWorktree: () => null,
     ...overrides,
   };
@@ -352,11 +352,11 @@ Deno.test('invalid requests are a ValueError; odd but valid input is stored as d
   assertEquals([(payload.entry as { title: string }).title, (payload.entry as { cwd: string }).cwd], ['', '']);
 });
 
-Deno.test('a Studio delete of a live conversation is refused until it is ended; archive is allowed', async () => {
+Deno.test('an AIB delete of a live conversation is refused until it is ended; archive is allowed', async () => {
   using dir = tempDir();
   let live = true;
   const ctx = context(dir.root, {
-    studioOwns: (provider, sessionId) => Promise.resolve(live && provider === 'omp' && sessionId === 'live-1'),
+    aibOwns: (provider, sessionId) => Promise.resolve(live && provider === 'omp' && sessionId === 'live-1'),
   });
   const body = { action: 'delete', provider: 'omp', sessionId: 'live-1' };
   const [status, payload] = await shared.conversationAction(ctx, body);

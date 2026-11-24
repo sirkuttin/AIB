@@ -2,7 +2,7 @@
  * Best-effort, read-only evidence that another client is using a saved conversation (ownership_probe.py).
  *
  * Verdicts (never "safe"):
- *   owned_by_studio  this Studio holds the conversation (authoritative)
+ *   owned_by_studio  this AIB holds the conversation (authoritative)
  *   owned_elsewhere  strong evidence another client holds it: a live owner announcement, or a native agent process whose command
  *                    line names the session ID
  *   possibly_active  weak evidence only: transcript written moments ago by someone else, a process holding the transcript open, an
@@ -10,12 +10,12 @@
  *   no_evidence      nothing was found; this is NOT proof the conversation is free
  *
  * Folder-only evidence (folderOnlyEvidence): when the ONLY reasons are agent processes of that provider in the chat's folder and the
- * transcript has been quiet (nothing but AIB wrote it) for QUIET_TRANSCRIPT_SECONDS, the verdict stays possibly_active but Studio does
+ * transcript has been quiet (nothing but AIB wrote it) for QUIET_TRANSCRIPT_SECONDS, the verdict stays possibly_active but AIB does
  * not ask: it continues and leaves one note in the chat (folderOnlyNote). A VS Code panel or a terminal session in the same folder is
  * that common case; it names no session and says nothing about this conversation.
  *
- * Every signal is read-only. Nothing here writes to transcripts, kills processes or opens a file for writing outside Studio's own
- * announcement files. See docs/ownership-design.md. Everything is synchronous, as in Python (the Windows facts come from FFI in
+ * Every signal is read-only. Nothing here writes to transcripts, kills processes or opens a file for writing outside AIB's own
+ * announcement files. See docs/ownership-design.md. Everything is synchronous (the Windows facts come from FFI in
  * platform/process_info.ts, POSIX from `ps` and /proc), so assess() can be called from a request handler without awaiting.
  */
 import { createHash } from 'node:crypto';
@@ -43,7 +43,7 @@ export const ACTIVE_WINDOW_SECONDS = 120; // a transcript written this recently 
 export const RECENT_WINDOW_SECONDS = 900; // hint scans look only at transcripts this fresh
 /** Agent processes in the chat's folder are only noted, never asked about, once nobody but AIB wrote the transcript for this long. */
 export const QUIET_TRANSCRIPT_SECONDS = 30 * 60;
-export const RELEASE_GRACE_SECONDS = 3.0; // writes this soon after Studio released it are Studio's own
+export const RELEASE_GRACE_SECONDS = 3.0; // writes this soon after AIB released it are AIB's own
 export const SNAPSHOT_TTL_SECONDS = 4.0;
 export const HINT_TTL_SECONDS = 3.0;
 export const STATE_ORDER: Record<string, number> = { no_evidence: 0, possibly_active: 1, owned_elsewhere: 2, owned_by_studio: 3 };
@@ -78,7 +78,7 @@ export function cleanText(value: unknown, limit = 120): string {
   return pyLen(text) <= limit ? text : clip(text, limit - 1) + '…';
 }
 
-/** Python's round() of a float: half to even. */
+/** Rounds a float: half to even. */
 export function pyRound(value: number): number {
   const floor = Math.floor(value);
   const rest = value - floor;
@@ -115,7 +115,7 @@ const ISO_RE = new RegExp(
   'u',
 );
 
-/** datetime.fromisoformat(str(value).replace('Z', '+00:00')).timestamp(), naive times taken as UTC; null where Python raises. */
+/** datetime.fromisoformat(str(value).replace('Z', '+00:00')).timestamp(), naive times taken as UTC; null where it fails to parse. */
 export function parseIso(value: unknown): number | null {
   const text = pyStr(value).replaceAll('Z', '+00:00');
   const m = ISO_RE.exec(text);
@@ -144,7 +144,7 @@ export function parseIso(value: unknown): number | null {
 // Process facts. Windows: FFI (platform/process_info.ts). POSIX: os.kill(pid, 0) equivalents; no start times.
 // ---------------------------------------------------------------------------------------------
 
-/** Process creation time as epoch seconds, or null (always null off Windows, as in Python). */
+/** Process creation time as epoch seconds, or null (always null off Windows). */
 export function processStartTime(pid: number): number | null {
   if (!WIN) return null;
   try {
@@ -534,7 +534,7 @@ export class AnnouncementError extends Error {
 
 const isInt = (value: unknown): value is number => typeof value === 'number' && Number.isInteger(value);
 
-/** A normalized announcement, or throws AnnouncementError (Python: ValueError). Every field is untrusted. */
+/** A normalized announcement, or throws AnnouncementError. Every field is untrusted. */
 export function validateAnnouncement(data: unknown, prefix: string | null = null): Announcement {
   if (!isDict(data) || data.format !== FORMAT_NAME) throw new AnnouncementError('not an owner announcement');
   const version = data.version;
@@ -791,7 +791,7 @@ export interface ProbeOptions {
   claudeRoot?: string | null;
   registry?: OwnerRegistry | null;
   processes?: ProcessSource | null;
-  ownedByStudio?: (provider: string, sessionId: string) => boolean;
+  ownedByAib?: (provider: string, sessionId: string) => boolean;
   ownPids?: () => Iterable<unknown> | null | undefined;
   lockProbe?: LockProbe;
   clock?: () => number;
@@ -811,7 +811,7 @@ export const SUMMARIES: Record<Exclude<Verdict, 'owned_by_studio'>, string> = {
 
 /**
  * The reasons of an assessment whose only evidence is agent processes in the chat's folder, with a transcript nobody but AIB wrote for
- * QUIET_TRANSCRIPT_SECONDS; null for anything else. Studio continues such a chat without asking (and notes it: folderOnlyNote). Every
+ * QUIET_TRANSCRIPT_SECONDS; null for anything else. AIB continues such a chat without asking (and notes it: folderOnlyNote). Every
  * other sign still asks or refuses: a process naming the session, a process holding the transcript open, a transcript another app
  * wrote in the last QUIET_TRANSCRIPT_SECONDS (or none found), any owner announcement. Takes any value (a WSL helper's answer).
  */
@@ -886,7 +886,7 @@ export class OwnershipProbe {
   readonly roots: Record<string, string | null>;
   registry: OwnerRegistry | null;
   processes: ProcessSource;
-  ownedByStudio: (provider: string, sessionId: string) => boolean;
+  ownedByAib: (provider: string, sessionId: string) => boolean;
   ownPids: () => Iterable<unknown> | null | undefined;
   lockProbe: LockProbe;
   clock: () => number;
@@ -900,7 +900,7 @@ export class OwnershipProbe {
     this.roots = { omp: options.ompRoot ? String(options.ompRoot) : null, claude: options.claudeRoot ? String(options.claudeRoot) : null };
     this.registry = options.registry ?? null;
     this.processes = options.processes ?? new ProcessSource();
-    this.ownedByStudio = options.ownedByStudio ?? (() => false);
+    this.ownedByAib = options.ownedByAib ?? (() => false);
     this.ownPids = options.ownPids ?? (() => []);
     this.lockProbe = options.lockProbe ?? lockHolders;
     this.clock = options.clock ?? (() => Date.now() / 1000);
@@ -909,7 +909,7 @@ export class OwnershipProbe {
   }
 
   // -- bookkeeping -------------------------------------------------------------------------
-  /** Studio just stopped running this conversation: transcript writes up to now are Studio's own. */
+  /** AIB just stopped running this conversation: transcript writes up to now are AIB's own. */
   noteReleased(provider: string, sessionId: string): void {
     this.#released.set(claimKey(provider, sessionId), this.clock());
     if (this.#released.size > 256) {
@@ -955,8 +955,8 @@ export class OwnershipProbe {
   }
 
   /**
-   * Weak reason when the transcript was written moments ago by someone other than Studio; a note otherwise. The third value: nobody
-   * but Studio wrote it for QUIET_TRANSCRIPT_SECONDS (Assessment.transcriptQuiet).
+   * Weak reason when the transcript was written moments ago by someone other than AIB; a note otherwise. The third value: nobody
+   * but AIB wrote it for QUIET_TRANSCRIPT_SECONDS (Assessment.transcriptQuiet).
    */
   #transcriptSignal(provider: string, sessionId: string, path: string, deep: boolean): [Reason | null, string | null, boolean] {
     let stat: Deno.FileInfo;
@@ -1160,7 +1160,7 @@ export class OwnershipProbe {
     const notes: string[] = [];
     const unavailable: string[] = [];
     const base = { provider, sessionId, reasons, notes, unavailable, checkedAt: started };
-    if (this.ownedByStudio(provider, sessionId)) {
+    if (this.ownedByAib(provider, sessionId)) {
       return { ...base, verdict: 'owned_by_studio', summary: 'This conversation is running in this AIB.' };
     }
     let holder: { pid: number; app: string } | null = null;
@@ -1296,7 +1296,7 @@ export class OwnershipProbe {
           }
           if (now - modified > ACTIVE_WINDOW_SECONDS) continue;
           const sessionId = OwnershipProbe.stemToId(provider, entry.name);
-          if (this.ownedByStudio(provider, sessionId)) continue;
+          if (this.ownedByAib(provider, sessionId)) continue;
           const [reason] = this.#transcriptSignal(provider, sessionId, entry.path, false);
           if (reason) add(provider, sessionId, reason);
         }
@@ -1330,7 +1330,7 @@ export class OwnershipProbe {
     const hints: Record<string, Hint> = {};
     for (const [key, reasons] of found) {
       const [provider, sessionId] = JSON.parse(key) as [string, string];
-      if (this.ownedByStudio(provider, sessionId)) continue;
+      if (this.ownedByAib(provider, sessionId)) continue;
       const verdict = reasons.some((r) => r.strength === 'strong') ? 'owned_elsewhere' : 'possibly_active';
       hints[`${provider}:${sessionId}`] = { verdict, reasons: reasons.slice(0, 3) };
     }

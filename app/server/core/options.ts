@@ -1,7 +1,7 @@
 /**
  * Command-line options, with the same flags, defaults and messages as studio.py (add_agent_arguments, log_setup.add_arguments, main),
  * so scripts, the desktop app and the contract tests start either server the same way. argparse rules kept: `--flag value` and
- * `--flag=value`, unambiguous prefixes are NOT accepted (Studio's scripts always spell flags out), unknown flags are an error.
+ * `--flag=value`, unambiguous prefixes are NOT accepted (AIB's scripts always spell flags out), unknown flags are an error.
  */
 import { defaultLevel } from './log.ts';
 

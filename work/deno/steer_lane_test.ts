@@ -386,7 +386,7 @@ Deno.test('B13: Codex ends its turn with no answer after a steer: the message co
 Deno.test('Interrupt keeps the approval of a helper THIS turn launched in the background (owner, 2026-11-16)', async () => {
   await using lab = new SteerLab();
   const { c, p } = await lab.chat('claude');
-  c.subagentInBackground = (child) => child === 'bg-1'; // the Studio's subagents service: run_in_background (or moved there)
+  c.subagentInBackground = (child) => child === 'bg-1'; // AIB's subagents service: run_in_background (or moved there)
   await c.prompt('go', 'm1');
   const prompt = await p.take('session/prompt');
   await p.update({ sessionUpdate: 'subagent_update', sessionId: 'bg-1', title: 'general-purpose', state: { state: 'running' } });

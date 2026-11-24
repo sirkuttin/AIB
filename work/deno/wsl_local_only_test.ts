@@ -5,7 +5,7 @@
  *     from a chat copy (a git worktree under <data>/worktrees) show the main folder's aib-shared/, exclude writes the repo's
  *     .git/info/exclude and its Undo takes it back, refusals (the project, .git, '..', a tracked file), a root outside AIB's copies is
  *     refused, and the daily backup zips into <data>/local-only-backups;
- *   - Studio with a FakeWslHost: a WSL chat in its own copy is granted the main folder's local-only folders (Linux paths, ACP
+ *   - AIB with a FakeWslHost: a WSL chat in its own copy is granted the main folder's local-only folders (Linux paths, ACP
  *     additionalDirectories) and told where they are; a test AIB never sets the default up in a project outside /tmp; an older helper
  *     (no localOnly.*) leaves the chat as before;
  *   - files_routes.ts for a WSL chat: the list's localOnly part and the exclude POST go to the helper with the project's Linux main
@@ -261,7 +261,7 @@ Deno.test('wsl local-only: a test AIB sets the default up only in projects under
   }
 });
 
-// ---- Studio and Files with a fake distro --------------------------------------------------------------------------------
+// ---- AIB and Files with a fake distro --------------------------------------------------------------------------------
 const REF = 'wsl://ubuntu/home/u/app';
 const DATA = '/home/u/.aib-server/data-000000000000';
 const WT_LINUX = `${DATA}/worktrees/h1/chat-abcd1234`;
@@ -270,12 +270,12 @@ const PRIV = '/home/u/app/aib-shared';
 const GAME = '/home/u/app/game/review';
 const ENV = '/home/u/app/.env';
 
-class StudioLab {
+class AibLab {
   readonly dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-wsl-lo-' }));
   readonly state = this.dir + SEP + 'state';
   readonly log = this.dir + SEP + 'acp.log';
   readonly host: FakeWslHost;
-  readonly studios: Aib[] = [];
+  readonly aibs: Aib[] = [];
   readonly records = new Map<string, Json>();
 
   constructor(localOnly = true) {
@@ -313,16 +313,16 @@ class StudioLab {
     }
   }
 
-  studio(): Aib {
+  aib(): Aib {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
-    const studio = new Aib({ stateDir: this.state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper });
-    studio.ownerProbe = () => null;
-    studio.connectionFactory = (_command, cwd, provider, options) => {
+    const aib = new Aib({ stateDir: this.state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper });
+    aib.ownerProbe = () => null;
+    aib.connectionFactory = (_command, cwd, provider, options) => {
       const wsl = options?.wsl ? { ...options.wsl, program: undefined } : options?.wsl;
       return new Connection(fake('--cancel-aware', '--extra-dirs'), cwd, provider, { ...options, wsl });
     };
-    this.studios.push(studio);
-    return studio;
+    this.aibs.push(aib);
+    return aib;
   }
 
   called(method: string): Json[] {
@@ -338,7 +338,7 @@ class StudioLab {
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
-    for (const s of this.studios.reverse()) await s.close().catch(() => {});
+    for (const s of this.aibs.reverse()) await s.close().catch(() => {});
     setWslHostResolver(null);
     await this.host.stopKeeper();
     const info = readKeeperInfo(this.state);
@@ -366,8 +366,8 @@ const systemTexts = (params: Json) =>
 
 Deno.test({ name: 'wsl studio local-only: a chat in its own copy is granted and told the main folder aib-shared/ (Linux paths)', ...T, async fn() {
   await keeperBinary();
-  await using lab = new StudioLab();
-  const c = await lab.studio().connect('claude', REF, null, { ownCopy: true });
+  await using lab = new AibLab();
+  const c = await lab.aib().connect('claude', REF, null, { ownCopy: true });
   await until(() => c.ready, 'ready', 30);
   assertEquals([c.cwd, c.agentCwd, c.projectRoot], [WT_REF, WT_LINUX, REF]);
   assertEquals(c.localOnly, { entries: [PRIV], dirs: [PRIV], shared: PRIV, ignored: { dirs: [GAME], files: [ENV] } });
@@ -385,9 +385,9 @@ Deno.test({ name: 'wsl studio local-only: a chat in its own copy is granted and 
 Deno.test({ name: 'wsl studio local-only: a project under /tmp gets the default first; an older helper leaves the chat as before', ...T, async fn() {
   await keeperBinary();
   {
-    await using lab = new StudioLab();
+    await using lab = new AibLab();
     lab.host.folders.set('/tmp/aib-wsl-test-fake', lab.dir);
-    const c = await lab.studio().connect('claude', 'wsl://ubuntu/tmp/aib-wsl-test-fake/app', null, { ownCopy: true });
+    const c = await lab.aib().connect('claude', 'wsl://ubuntu/tmp/aib-wsl-test-fake/app', null, { ownCopy: true });
     await until(() => c.ready, 'ready', 30);
     assertEquals(lab.called('localOnly.ensure'), [{ project: '/tmp/aib-wsl-test-fake/app' }]);
     const ensureAt = lab.host.calls.findIndex(([m]) => m === 'localOnly.ensure');
@@ -395,8 +395,8 @@ Deno.test({ name: 'wsl studio local-only: a project under /tmp gets the default 
     assert(ensureAt >= 0 && ensureAt < createAt, 'the exclude is in force before the copy is made');
   }
   {
-    await using lab = new StudioLab(false); // the fake helper answers localOnly.* with no_method
-    const c = await lab.studio().connect('claude', REF, null, { ownCopy: true });
+    await using lab = new AibLab(false); // the fake helper answers localOnly.* with no_method
+    const c = await lab.aib().connect('claude', REF, null, { ownCopy: true });
     await until(() => c.ready, 'ready', 30);
     assertEquals([c.cwd, c.localOnly], [WT_REF, null]);
     assert(!('additionalDirectories' in lab.received('session/new')[0]));
@@ -405,15 +405,15 @@ Deno.test({ name: 'wsl studio local-only: a project under /tmp gets the default 
 
 Deno.test({ name: 'wsl files local-only: list and exclude of a WSL chat copy go to the helper with the project main folder', ...T, async fn() {
   await keeperBinary();
-  await using lab = new StudioLab();
-  const studio = lab.studio();
-  const c = await studio.connect('claude', REF, null, { ownCopy: true });
+  await using lab = new AibLab();
+  const aib = lab.aib();
+  const c = await aib.connect('claude', REF, null, { ownCopy: true });
   await until(() => c.ready, 'ready', 30);
   const routes = filesRoutes();
   const ctx = {
     token: 't',
     stateDir: lab.state,
-    host: studio,
+    host: aib,
     artifacts: { connectionOf: () => '', conversations: () => [], store: { origin: '' } },
     transcripts: { stores: new Map() },
   } as unknown as WebContext;

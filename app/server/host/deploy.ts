@@ -1,6 +1,6 @@
 /**
- * `aib deploy` (deploy.py): restart a running Agent Studio server (and optionally its agent host) without cutting off a turn.
- * Same flags, plan and messages as deploy.py; it restarts a Deno server (main.ts serve) or a Python one (studio.py) the same way:
+ * `aib deploy`: restart a running AIB server (and optionally its agent host) without cutting off a turn.
+ * It restarts a server (main.ts serve) as follows:
  * the new server is started with exactly the command line the old one had.
  */
 import { APP_ROOT, selfCommand } from '../core/app.ts';
@@ -42,7 +42,7 @@ restarted at once and the new process continues every chat where it was (--host 
 changes do not need this: refresh the page instead.
 `;
 
-/** Python's urllib errors as deploy.py prints them ("<urlopen error ...>", "HTTP Error 500: ..."). */
+/** urllib-style errors as deploy prints them ("<urlopen error ...>", "HTTP Error 500: ..."). */
 export class UrlError extends Error {}
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -66,7 +66,7 @@ async function fetchJson(port: number, path: string, headers: Record<string, str
   return JSON.parse(new TextDecoder().decode(response.body));
 }
 
-/** GET a Studio route as JSON with the token bootstrap hands out (an older server's; a current one gives it only to the page). */
+/** GET an AIB route as JSON with the token bootstrap hands out (an older server's; a current one gives it only to the page). */
 export async function get(port: number, path: string, timeout = 5): Promise<Json> {
   const headers: Record<string, string> = {};
   if (path !== '/api/live/bootstrap') {
@@ -119,7 +119,7 @@ export function commandLineOf(pid: number): string {
   return line;
 }
 
-/** PID of the Studio server on this port: from bootstrap when it reports one, else by command line. */
+/** PID of AIB server on this port: from bootstrap when it reports one, else by command line. */
 export async function findPid(port: number): Promise<[number, Json]> {
   const boot = await get(port, '/api/live/bootstrap');
   if (isInt(boot.pid)) return [boot.pid, boot];
@@ -247,13 +247,13 @@ export async function restart(
   await Deno.mkdir(logs, { recursive: true });
   const pkg = (hooks.packageContext ?? (() => packageContext()))();
   let process: DetachedProcess | null;
-  if (pkg) { // started from inside a packaged app (the Claude desktop app): Studio must not inherit its sandbox
+  if (pkg) { // started from inside a packaged app (the Claude desktop app): AIB must not inherit its sandbox
     say(`This deploy runs inside ${pkg}'s sandbox; starting AIB through Explorer so it runs outside it.`);
     process = await launchOutsidePackage(commandLine, logs);
   } else {
     process = await launchDirect(commandLine, logs);
   }
-  const errLog = `${logs}${SEP}agent-studio.stderr.log`;
+  const errLog = `${logs}${SEP}aib.stderr.log`;
   try {
     for (let i = 0; i < 60; i++) {
       try {
@@ -274,11 +274,11 @@ export async function restart(
 }
 
 export function launchDirect(commandLine: string, logs = LOGS): Promise<DetachedProcess> {
-  return spawnDetachedLine(commandLine, `${logs}${SEP}agent-studio.stdout.log`, `${logs}${SEP}agent-studio.stderr.log`, HERE);
+  return spawnDetachedLine(commandLine, `${logs}${SEP}aib.stdout.log`, `${logs}${SEP}aib.stderr.log`, HERE);
 }
 
 /**
- * [launcher .cmd, run .cmd]. The launcher is what Explorer opens: it starts the run script hidden, and the run script starts Studio
+ * [launcher .cmd, run .cmd]. The launcher is what Explorer opens: it starts the run script hidden, and the run script starts AIB
  * with its output appended to the two logs. Both run from the user's shell, not as children of the packaged app.
  */
 export function launcherTexts(
@@ -301,13 +301,13 @@ function asciiBytes(text: string): Uint8Array {
 }
 
 /**
- * Start Studio through explorer.exe running a one-shot .cmd. Measured (docs/DESKTOP.md): a process started this way reports no
+ * Start AIB through explorer.exe running a one-shot .cmd. Measured (docs/DESKTOP.md): a process started this way reports no
  * package and writes to the real %LOCALAPPDATA%, while a direct child of the packaged app inherits the redirection. Returns null:
  * Explorer's own process ends at once.
  */
 export async function launchOutsidePackage(commandLine: string, logs = LOGS): Promise<null> {
-  const outLog = `${logs}${SEP}agent-studio.stdout.log`, errLog = `${logs}${SEP}agent-studio.stderr.log`;
-  const launcher = `${logs}${SEP}agent-studio-launch.cmd`, run = `${logs}${SEP}agent-studio-run.cmd`;
+  const outLog = `${logs}${SEP}aib.stdout.log`, errLog = `${logs}${SEP}aib.stderr.log`;
+  const launcher = `${logs}${SEP}aib-launch.cmd`, run = `${logs}${SEP}aib-run.cmd`;
   const [launcherText, runText] = launcherTexts(commandLine, outLog, errLog, run);
   await Deno.writeFile(run, asciiBytes(runText));
   await Deno.writeFile(launcher, asciiBytes(launcherText));

@@ -1,17 +1,17 @@
 # Agent host and web server
 
-Agent Studio runs as two processes so that deploying a code change does not cut off a running turn.
+AIB runs as two processes so that deploying a code change does not cut off a running turn.
 
 | Process | Module | Changes | Owns |
 | --- | --- | --- | --- |
-| **Agent host** | `server/host/agent_host.ts` (+ `Connection`, `Studio` in `server/host/aib.ts`), run as `AIB host` | rarely | every ACP adapter subprocess and its stdio pipes; event buffers and cursors; prompt receipts; settings changes queued during a turn (see models-and-settings.md); pending approvals, questions and sign-ins; client capabilities (terminal / fs); session leases; owner announcements and their heartbeat; the recovery list ("Was open in Studio before restart"); the ownership probe |
+| **Agent host** | `server/host/agent_host.ts` (+ `Connection`, `AIB` in `server/host/aib.ts`), run as `AIB host` | rarely | every ACP adapter subprocess and its stdio pipes; event buffers and cursors; prompt receipts; settings changes queued during a turn (see models-and-settings.md); pending approvals, questions and sign-ins; client capabilities (terminal / fs); session leases; owner announcements and their heartbeat; the recovery list ("Was open in AIB before restart"); the ownership probe |
 | **Web server** | `server/web/server.ts`, `server/transcripts/monitor.ts`, page files | often | the UI and the transcript/monitor APIs; the page token and same-origin checks; pin / archive / delete marks (`studio-conversations.json`); a thin `RemoteStudio` that forwards live-connection calls to the host |
 
-The web server (`AIB` / `AIB serve` in a built app, `deno run -A server/main.ts [serve]` from the source folder) finds or starts the host for its `--state-dir` and serves the HTTP API on `--port`. `--in-process` keeps the single-process behaviour (agents are children of the web server; restarting it ends them). Tests and debugging use that mode; `Connection` and `Studio` (`server/host/aib.ts`) are the same classes in both modes, the host simply runs a `Studio`.
+The web server (`AIB` / `AIB serve` in a built app, `deno run -A server/main.ts [serve]` from the source folder) finds or starts the host for its `--state-dir` and serves the HTTP API on `--port`. `--in-process` keeps the single-process behaviour (agents are children of the web server; restarting it ends them). Tests and debugging use that mode; `Connection` and `AIB` (`server/host/aib.ts`) are the same classes in both modes, the host simply runs a `AIB`.
 
 ## Why the ownership probe lives in the host
 
-`Studio.connect` has to run the ownership check (lease, command-line probe, announcements) before it opens an adapter, and the probe needs the host's own connection list and PIDs to avoid flagging Studio's own agents. Keeping `assess` next to `connect` means the host never makes a callback into the web server. The web server's `/api/live/ownership` just forwards. Pin/archive marks stay in the web server: they are a small file keyed by provider and session that every Studio sharing the state dir already reads, and the only host knowledge they need (is this conversation live?) is one list call.
+`Aib.connect` has to run the ownership check (lease, command-line probe, announcements) before it opens an adapter, and the probe needs the host's own connection list and PIDs to avoid flagging AIB's own agents. Keeping `assess` next to `connect` means the host never makes a callback into the web server. The web server's `/api/live/ownership` just forwards. Pin/archive marks stay in the web server: they are a small file keyed by provider and session that every AIB sharing the state dir already reads, and the only host knowledge they need (is this conversation live?) is one list call.
 
 ## The RPC
 
@@ -23,9 +23,9 @@ The web server (`AIB` / `AIB serve` in a built app, `deno run -A server/main.ts 
 
 ## Behaviour
 
-**Web server restart.** The host is untouched. The new web server reads `agent-host.json`, checks the protocol, and attaches. `/api/live/bootstrap` and `/api/live/list` report `instanceId` = the *host's* id, which does not change, so the open page does not treat connection IDs as void and keeps showing the running conversation; `webInstanceId` is the web server's own new id. The page token is per web process, so a write made with the old token gets 403 and the page refreshes its token (the existing "Studio session refreshed, retry" path). Bootstrap gives the token only to the page: a request with the launch key from the page's link (`#aib-key=`, in memory per process: the app's window, `serve --open`, or the link `serve` prints to a console) or a page session made with it (kept in the page origin's localStorage; only its SHA-256 is in `page-sessions.json`), so the refresh after a restart needs no new link. Any other caller gets an empty token (`server/web/page_access.ts`). Cursors, event history, prompt receipts and pending approvals are the host's and remain valid. Starting a web server while the host is idle changes nothing else.
+**Web server restart.** The host is untouched. The new web server reads `agent-host.json`, checks the protocol, and attaches. `/api/live/bootstrap` and `/api/live/list` report `instanceId` = the *host's* id, which does not change, so the open page does not treat connection IDs as void and keeps showing the running conversation; `webInstanceId` is the web server's own new id. The page token is per web process, so a write made with the old token gets 403 and the page refreshes its token (the existing "AIB session refreshed, retry" path). Bootstrap gives the token only to the page: a request with the launch key from the page's link (`#aib-key=`, in memory per process: the app's window, `serve --open`, or the link `serve` prints to a console) or a page session made with it (kept in the page origin's localStorage; only its SHA-256 is in `page-sessions.json`), so the refresh after a restart needs no new link. Any other caller gets an empty token (`server/web/page_access.ts`). Cursors, event history, prompt receipts and pending approvals are the host's and remain valid. Starting a web server while the host is idle changes nothing else.
 
-**Host restart** (deploy of agent-side code, `--stop-host`, crash, reboot). Adapters end, as before. The next host loads the recovery list and reconnects those conversations by itself in the background (status "Reconnecting…", two at a time, never sending anything, skipping any another app may be using; a chat that fails three times is dropped and stays "Ready" (or "Couldn't reopen" when a reconnect failed); `--no-auto-reconnect` turns this off); receipts for turns that were running become "unknown" and are never resent automatically. `instanceId` changes, so open pages say Studio was restarted. Recovery is kept per host in `studio-recovery-host.json` in the state dir.
+**Host restart** (deploy of agent-side code, `--stop-host`, crash, reboot). Adapters end, as before. The next host loads the recovery list and reconnects those conversations by itself in the background (status "Reconnecting…", two at a time, never sending anything, skipping any another app may be using; a chat that fails three times is dropped and stays "Ready" (or "Couldn't reopen" when a reconnect failed); `--no-auto-reconnect` turns this off); receipts for turns that were running become "unknown" and are never resent automatically. `instanceId` changes, so open pages say AIB was restarted. Recovery is kept per host in `studio-recovery-host.json` in the state dir.
 
 **Stopping.** `AIB --stop-host [--state-dir D]` (from source: `deno run -A server/main.ts --stop-host`) asks the host to stop. It refuses (exit code 2, listing each conversation) while any conversation is working, opening or waiting for you, unless `--force`. A clean stop removes the host file first, so a running web server can tell "stopped" from "crashed": it then shows an empty live list with a warning and live calls answer 503 `host_stopped`; it does not start another host. `AIB deploy --host` (`deno run -A server/main.ts deploy --host`, Windows) does wait-until-idle, stop, restart the web server (which starts a new host).
 
@@ -35,7 +35,7 @@ The web server (`AIB` / `AIB serve` in a built app, `deno run -A server/main.ts 
 
 The built app starts its host with `--tray --exit-unattached-seconds 10` (`main.ts hostCommand`; a source run passes neither).
 
-* **Working** (`Studio.workingList`): a turn running, an agent opening, a chat waiting for the person (approval, question, sign-in), queued prompts, or an agent install or sign-in job. A chat that is open but idle is **not** working.
+* **Working** (`Aib.workingList`): a turn running, an agent opening, a chat waiting for the person (approval, question, sign-in), queued prompts, or an agent install or sign-in job. A chat that is open but idle is **not** working.
 * **Attached**: an app that heartbeats (every 10 s) and has not detached; one that stops heartbeating counts as gone after **25 s** (was 45).
 * **Exit**: no app attached and nothing working for **10 s** → the host exits (idle chats go to the recovery list and are reconnected by the next app). Root cause of the host left behind before: the idle rule counted any *open* chat, so a host whose app went away (update, Ctrl+C, crash, or a quit whose stop request failed) lived on, window-less and tray-less, as long as one chat was open.
 * **Tray**: while no app is attached and something works, the host shows its own icon (`desktop/host_tray.ts`): tooltip "AIB · 2 chats running" (with "(data: <folder>)" for a non-default data folder), the attention image (amber dot) and "1 chat needs you" while a chat waits for the person; menu Open AIB (starts the app the way it was last started, `attach.launch`), a greyed status line, Stop chats and quit (asks first on Windows). It goes away within a second of an app attaching. Windows: the worker-thread tray of `tray_win.ts`, no window of the host's own. macOS/Linux: `Deno.Tray`, **not yet run inside the window-less `AIB host` on a real Mac or Linux desktop**; if it is missing or fails the host logs it and relies on the 10 s exit (a chat that needs the person then keeps an icon-less host: check on a real machine).
@@ -58,14 +58,14 @@ restarts, updates and crashes of AIB; after a crash AIB comes back in the tray.
   app, no Go in a source run; or it does not answer `version`). Then AIB **falls back**: the split agent host described above
   (`--in-process`: agents as children of the web server), the reason is logged ("keeper: cannot run the keeper (...); falling back
   ...") and Settings > About AIB shows one quiet line (bootstrap `server.keeperProblem`, present only then). A chat whose keeper
-  fails to start later (`Studio.#keeperUsable`) runs as a child of AIB and sets the same line. `AIB_KEEPER=0` in the environment
+  fails to start later (`Aib.#keeperUsable`) runs as a child of AIB and sets the same line. `AIB_KEEPER=0` in the environment
   turns the keeper off: an internal escape hatch for tests and debugging, shown nowhere in the page (the split-host test fixtures
-  and `AIB_SERVER=deno-split` set it). A Studio constructed without a decision (unit tests; an agent host started without
+  and `AIB_SERVER=deno-split` set it). An AIB constructed without a decision (unit tests; an agent host started without
   `--keeper`) starts no new chat in the keeper but still takes over chats a keeper already holds (`keeperWanted`), which stay there
-  until they end (`Studio.keeperForNew` false); then the Studio lets go of the keeper, which exits by itself.
+  until they end (`Aib.keeperForNew` false); then AIB lets go of the keeper, which exits by itself.
 
 * **One process with the keeper** (owner decision D3, keeper step 2). The agent host existed so the web server could restart without
-  stopping agents; the keeper now does that, so with the keeper the web server runs the `Studio` itself (`main.ts`, like
+  stopping agents; the keeper now does that, so with the keeper the web server runs the `AIB` itself (`main.ts`, like
   `--in-process`; bootstrap `hostMode` is `keeper`, Settings > About says "One process; running agents are held by the keeper"). It
   keeps the host's recovery and queue files (`studio-recovery-host.json`, `studio-queues-host.json`). An agent host that still runs for
   the folder (an older version such as beta.3, or a fallback start) is attached to as before and drained the usual way; the next
@@ -73,12 +73,12 @@ restarts, updates and crashes of AIB; after a crash AIB comes back in the tray.
   streams again; 5 runs each): web server restart without the keeper 546-561 ms (median 554), one process with the keeper 522-529 ms
   (median 525); keeper step 1's host restart took about 6.4 s. `AIB deploy` restarts it at once (no waiting, never `taskkill /T`,
   which would end the keeper it started).
-* **Start.** The Studio starts the keeper for its data folder on the first chat (`<data>/keeper/`; program: `$AIB_KEEPER_BIN`; in a
+* **Start.** AIB starts the keeper for its data folder on the first chat (`<data>/keeper/`; program: `$AIB_KEEPER_BIN`; in a
   built app `AIB-keeper` from next to the app's program, **copied to `<data>/keeper-bin/<hash>/` and run from there**, so a keeper that
   outlives the app never runs from files an update renames or replaces (Windows `.old-*` files, the macOS bundle, the Linux AppImage
   mount); in a source run a binary built from `keeper/` with Go into the temp folder). Its orphan command is AIB's own command line, so
   with no AIB attached for 5 s the keeper starts one (in the desktop app that opens the window). Code: `server/keeper/client.ts` (the
-  protocol), `server/keeper/link.ts` (one connection per Studio, one channel per chat, id `chat-<connection id>`).
+  protocol), `server/keeper/link.ts` (one connection per AIB, one channel per chat, id `chat-<connection id>`).
 * **The record.** The keeper journals everything the agent says and everything AIB writes. AIB adds notes before acting: `chat` (right
   after the spawn: provider, folder, worktree, command, MCP list), `receipt` (before each `session/prompt`: the page's message id,
   fingerprint, text), `fsWrite` and `clientTerminal` (before those client capability calls). Every write carries a once-key
@@ -88,7 +88,7 @@ restarts, updates and crashes of AIB; after a crash AIB comes back in the tray.
   hooks, the saved queue untouched), claims the channel and goes on live under the same connection id: the turn, a question waiting
   for the person, receipts and the queue (unpaused) come back; answers the old AIB never sent are sent once. The instance id open pages
   compare stays the same while the keeper does (`studio-instance-keeper.json`: the id and the keeper's pid and start time), so a page
-  keeps the open chat instead of saying "Studio was restarted". A chat the code cannot rebuild stays listed read-only (`readOnly`,
+  keeps the open chat instead of saying "AIB was restarted". A chat the code cannot rebuild stays listed read-only (`readOnly`,
   `error` says why) and nothing is sent to it; one that was still opening is stopped.
 * **Install now with the keeper** (`updater.ts` `keeperHandover`). It goes ahead while chats work when every working chat runs in the
   keeper this AIB is connected to and the new version's `release.json` says it can drive this keeper (`keeper: {protocols, needs}`:
@@ -96,7 +96,7 @@ restarts, updates and crashes of AIB; after a crash AIB comes back in the tray.
   1. The app starts the update helper with `keeper: <data folder>`; the helper connects to the keeper **first** and stays connected
      until a version has started (the new one, or the old one after a rollback), so the keeper always has a client and never runs its
      orphan command from a half-swapped folder.
-  2. The app quits with `Studio.release()` instead of `close()`: chats in the keeper are left running (leases released, receipts not
+  2. The app quits with `Aib.release()` instead of `close()`: chats in the keeper are left running (leases released, receipts not
      marked unknown, the recovery list kept); anything outside the keeper is closed. Logged: "closing (installing an update); leaving
      the chats in the keeper", "released N chat(s) to the keeper".
   3. The helper swaps the files and starts the new version with the same arguments and `AIB_KEEPER` (the only `AIB_*` variable it
@@ -116,7 +116,7 @@ restarts, updates and crashes of AIB; after a crash AIB comes back in the tray.
   chats go to the running one ("the newer keeper 1.0.1 is used once the running one (1.0.0) holds no chats"). Test builds stamp a
   version with `go build -ldflags "-X main.keeperVersion=1.0.1"`.
 * **Quit with work running** (owner's decision 2026-11-11). The same release as Install now, minus the helper and the new version:
-  the app sends `hold` (keeper 1.3.0, feature `hold`), releases its chats and terminal shells (`Studio.release({ hold: true })`) and
+  the app sends `hold` (keeper 1.3.0, feature `hold`), releases its chats and terminal shells (`Aib.release({ hold: true })`) and
   exits. The held keeper runs no orphan command and never stops its channels as orphaned until a client claims or spawns a channel (the next AIB taking over), so nothing
   restarts AIB in the tray; the agents keep running and the keeper records them. Whichever AIB is started next on the data folder
   takes the chats over (`adoptKeeper`), from any folder and any version that can drive the keeper (`KEEPER_NEEDS`); one that cannot
@@ -134,14 +134,14 @@ restarts, updates and crashes of AIB; after a crash AIB comes back in the tray.
   in a tray-only AIB leaves the chats to the keeper like any other quit. If the data
   folder is already taken (another AIB came back first) it exits quietly: no "show your window" signal, no message box. An update
   started from such an AIB drops the flag (`updater.ts` appArgs), so the new version opens its window. Code: `window.ts`
-  (`startInTray`, `TRAY_ITEMS`, `trayTick`), `native.ts` (`updateTray`), `studio.ts` `orphanCommand`, `single_instance.ts` `quiet`.
+  (`startInTray`, `TRAY_ITEMS`, `trayTick`), `native.ts` (`updateTray`), `aib.ts` `orphanCommand`, `single_instance.ts` `quiet`.
 * **The artifact tool through the keeper's forwarder** (design 3.7). A chat started in the keeper gets one `studio_artifact` stdio
   entry: `<keeper program> mcp-forward <data>/artifact-mcp.json`, with the conversation's key and id in `MCP_FORWARD_HEADERS`. The
   keeper program is the copy in `<data>/keeper-bin/<hash>/` (built app) that no update touches, so no agent child runs from the old
   version's folder and its `.old-*` files are removed at the next start while chats run. The forwarder (`keeper/mcpforward.go`, generic:
-  it knows nothing of artifacts) posts each line to the loopback URL in that file, which the Studio's HTTP artifact server
+  it knows nothing of artifacts) posts each line to the loopback URL in that file, which AIB's HTTP artifact server
   (`ArtifactMcpHttp`, `addressFile`) writes when it starts and removes when it closes; while no AIB answers (a restart, an update) it
-  retries a refused connection for 15 s, never a message that may have been delivered. A Studio that takes keeper chats over starts its
+  retries a refused connection for 15 s, never a message that may have been delivered. An AIB that takes keeper chats over starts its
   HTTP server so their forwarders find it. The forwarder needs keeper 1.1.0 (`mcp-forward --check`; older programs: the usual entries).
 * **A split host from an older version** (beta.3 and earlier have no keeper, or this one in a fallback or with `AIB_KEEPER=0`):
   if nothing works there (an unforced stop is not refused; this is the beta.3 Install now with an idle chat), it is stopped at once and this AIB runs as one process with the keeper; its idle chats come back by the
@@ -167,11 +167,11 @@ restarts, updates and crashes of AIB; after a crash AIB comes back in the tray.
   finds a snapshot's copy of the chat note when the original was truncated away. A state over 12 MiB (not the history) is not
   written; one agent message over 12 MiB is stored as a `studio_note` saying it was left out. Mid-turn there is no snapshot: a long
   turn is replayed from the last turn end.
-* **Stable event ids.** Studio's own events (artifact, Studio note) go into the record as `event` notes (`Connection.recordedEvent`),
+* **Stable event ids.** AIB's own events (artifact, AIB note) go into the record as `event` notes (`Connection.recordedEvent`),
   so a rebuild numbers every event exactly as before. Each state carries `eventsId`, the id of the chat's numbering, kept across a
   rebuild when the record gives the same numbering (a snapshot, or a chat note with `ev: 1`); while a chat is being rebuilt its state
   has no events and keeps the page's cursor (`rebuilding: true`); a cursor past the end gets every event again with `reset`. The
-  page (`chat.js`) starts its event list again only when `eventsId` changes. While the Studio takes chats over from the keeper at start
+  page (`chat.js`) starts its event list again only when `eventsId` changes. While AIB takes chats over from the keeper at start
   (now begun before the web server listens), `/api/live/state` for a chat it does not know yet waits for that (at most 20 s) instead
   of answering "connection not found", so an open page keeps its chat without reloading the list.
 * **Chat terminals in the keeper** (keeper step 3, test K9; keeper 1.2.0). A chat's terminal shell runs in the keeper as a `pty`
@@ -209,11 +209,11 @@ restarts, updates and crashes of AIB; after a crash AIB comes back in the tray.
   once under the noted id when the old AIB stopped between note and spawn (the keeper refuses a second spawn of a channel id), and
   answered "The terminal was lost when AIB restarted" only for notes without a channel (a terminal inside AIB, or beta.4's notes).
   `release` writes a `clientTerminalReleased` note, kills the terminal and removes its channel; closing the chat does the same for all
-  of them. Studio's takeover skips `ct-` channels and afterwards stops and removes those whose chat is gone.
+  of them. AIB's takeover skips `ct-` channels and afterwards stops and removes those whose chat is gone.
 * **WSL projects** (`docs/WSL.md`). A WSL project's agents and terminals run in a second keeper, the Linux keeper inside the
   distro, reached over a `wsl.exe … bridge` transport instead of a socket (`keeper/link.ts` `connector`, with transport-loss
-  reconnect); its chats are rebuilt from there after a restart (`Studio.adoptWslKeeper`). The Windows keeper holds one keep-alive
-  channel per distro (label `wsl-hold`) and the Linux keeper one helper channel (`wsl-helper`). Neither is a chat or work: Studio's
+  reconnect); its chats are rebuilt from there after a restart (`Aib.adoptWslKeeper`). The Windows keeper holds one keep-alive
+  channel per distro (label `wsl-hold`) and the Linux keeper one helper channel (`wsl-helper`). Neither is a chat or work: AIB's
   rebuild, orphan-terminal cleanup, live counts and keeper upgrades skip them, and in the keeper's lifetime rules alone they never
   start AIB in the tray. Quit with WSL work running keeps the keep-alive and sends the Windows keeper `hold`.
 * **Not yet:** real runs on macOS and Linux (the keeper, the forwarder, the tray-only start, terminals in the keeper); snapshots
@@ -224,7 +224,7 @@ restarts, updates and crashes of AIB; after a crash AIB comes back in the tray.
   beta.4 keeper built from git), `keeper_client_terminal_test.ts`, `keeper_terminal_e2e_test.ts` (K9, `AIB_SLOW_TESTS=1`).
 * Tests: `work/deno/keeper_client_test.ts`, `keeper_studio_test.ts` (rebuild at four points of a turn, keeper death, release for an
   update, newer and older keepers), `keeper_gaps_test.ts` (the start decision, `AIB_KEEPER=0`, an old saved setting
-  ignored, the fallback when the keeper cannot run, chats kept by a Studio without the keeper, the
+  ignored, the fallback when the keeper cannot run, chats kept by an AIB without the keeper, the
   forwarder across a switch, the split host stopped or drained, snapshots, truncation and stable event ids), `desktop_window_test.ts`
   (the tray-only start), `keeper/mcpforward_test.go`, `keeper_crash_e2e_test.ts` (real web server and keeper, on by default with an old
   saved `server.keeper: false` ignored; AIB killed, then keeper killed), `keeper_update_e2e_test.ts` also checks the forwarder, the `.old-*` cleanup while the chat
@@ -242,26 +242,26 @@ restarts, updates and crashes of AIB; after a crash AIB comes back in the tray.
 * **Host unreachable but alive** (hung or starting). The web server returns 503 `host_unreachable` and does not start a second host.
 * **State dir without a host and without the web server's permission to spawn** (for example a locked-down job object): the spawn error is shown and live features are unavailable. `--in-process` still works.
 
-## Deno rewrite: a Python host and a Deno host (stage C)
+## Older hosts and the current host
 
-The Deno web server (`server/main.ts`) starts the Deno agent host (`server/main.ts host`, or `<binary> host` for a compiled build) with the flags, RPC, host file, token, lock and protocol number of the old Python host (`agent_host.py`, retired 2026-11-23 with the Python reference server). It takes over a running host of that older kind. `--in-process` works in the Deno server too.
+The Deno web server (`server/main.ts`) starts the Deno agent host (`server/main.ts host`, or `<binary> host` for a compiled build) with the flags, RPC, host file, token, lock and protocol number that older hosts use. It takes over a running host of that older kind. `--in-process` works in the Deno server too.
 
-* The Deno host writes `runtime: "deno"` into `agent-host.json` and its `info`; the older Python host wrote no runtime, which means Python. Its `sourceHash` covers the `.ts` files under `server/` (names relative to the app folder), so a Deno web server and a Deno host from the same folder agree; the "older code" warning compares a host's hash with the hash of the code of that host's runtime.
-* **Deno web server, Python host from the same folder:** treated like a host from another code folder (`HostForeignRoot`). With no chat working, it is asked to stop and a Deno host is started ("Took over from ..."); with chats working, it is left running and the page shows the waiting banner (`hostTakeoverWaiting`) until they finish. So one runtime owns the host file at a time; the one-host OS lock (the same lease file in both languages) makes two hosts for one state folder impossible anyway.
-* **Python web server, Deno host:** the Python client has no runtime rule; it sees the same folder and protocol and simply attaches (all operations and reply shapes are the same). Its banner then says the host runs older code, because it compares the `.py` hash with the Deno host's `.ts` hash; harmless.
-* The artifact tool agents start is the same program's `mcp-artifact` subcommand (`server/artifacts/mcp.ts`); no Python is needed.
+* The Deno host writes `runtime: "deno"` into `agent-host.json` and its `info`; an older host wrote no runtime, which is recorded as `python`. Its `sourceHash` covers the `.ts` files under `server/` (names relative to the app folder), so a Deno web server and a Deno host from the same folder agree; the "older code" warning compares a host's hash with the hash of the code of that host's runtime.
+* **Web server, older host from the same folder:** treated like a host from another code folder (`HostForeignRoot`). With no chat working, it is asked to stop and a Deno host is started ("Took over from ..."); with chats working, it is left running and the page shows the waiting banner (`hostTakeoverWaiting`) until they finish. So one runtime owns the host file at a time; the one-host OS lock (the same lease file in every version) makes two hosts for one state folder impossible anyway.
+* **Older web server, current host:** an older client has no runtime rule; it sees the same folder and protocol and simply attaches (all operations and reply shapes are the same). Its banner then says the host runs older code, because it compares its own source hash with the host's; harmless.
+* The artifact tool agents start is the same program's `mcp-artifact` subcommand (`server/artifacts/mcp.ts`).
 
 ## Security notes
 
 The host trusts only its token file. Anyone who can read your state dir can drive your agents, as before (they could already read the transcripts and leases). Do not put `--state-dir` on a shared or synced folder. The host exposes no file, command or terminal API of its own beyond what the web server could already ask `Connection` to do. The browser only ever talks to the web server, which keeps the per-process token and same-origin checks.
 
-## Studio started from inside a packaged app (Windows)
+## AIB started from inside a packaged app (Windows)
 
-The Claude desktop app is a packaged (MSIX) app. Windows redirects the `%LOCALAPPDATA%` writes of everything it starts, so a Studio launched by `AIB deploy` from a Claude session kept its whole state folder (chats, settings, read state, artifacts, worktrees, the installed Codex adapter) in `%LOCALAPPDATA%\Packages\Claude_<id>\LocalCache\Local\AgentStudio`. Windows deletes that folder when the Claude app is reset or uninstalled. The desktop AIB app is not packaged and uses the real `%LOCALAPPDATA%\AgentStudio`.
+The Claude desktop app is a packaged (MSIX) app. Windows redirects the `%LOCALAPPDATA%` writes of everything it starts, so an AIB launched by `AIB deploy` from a Claude session kept its whole state folder (chats, settings, read state, artifacts, worktrees, the installed Codex adapter) in `%LOCALAPPDATA%\Packages\Claude_<id>\LocalCache\Local\AgentStudio`. Windows deletes that folder when the Claude app is reset or uninstalled. The desktop AIB app is not packaged and uses the real `%LOCALAPPDATA%\AgentStudio`.
 
 **Detection** (`packageContext()` in `server/state/paths.ts`, returns the package family name such as `Claude_pzs8sxrjxfjjc`, or null). Measured on this machine: `GetCurrentPackageFullName` answers `APPMODEL_ERROR_NO_PACKAGE` (15700) in the Claude app's *child* processes (a shell, Python, `claude.exe`), although their writes are still redirected. So the function asks the API first (right for the packaged process itself) and then proves redirection directly: it writes an empty marker file into `%LOCALAPPDATA%`, looks for it under `Packages\*\LocalCache\Local`, and deletes it.
 
-**Broker.** When `packageContext()` is set, `AIB deploy` starts the new Studio through `explorer.exe` opening a small one-shot `.cmd` (`work/agent-studio-launch.cmd`, which starts `agent-studio-run.cmd` hidden; the run script appends to the usual two logs). Otherwise it starts it directly as before. Measured from inside the Claude package, what the child reports for `packageContext()`:
+**Broker.** When `packageContext()` is set, `AIB deploy` starts the new AIB through `explorer.exe` opening a small one-shot `.cmd` (`work/aib-launch.cmd`, which starts `aib-run.cmd` hidden; the run script appends to the usual two logs). Otherwise it starts it directly as before. Measured from inside the Claude package, what the child reports for `packageContext()`:
 
 | Launch method | Child reports |
 |---|---|
@@ -270,8 +270,8 @@ The Claude desktop app is a packaged (MSIX) app. Windows redirects the `%LOCALAP
 | `explorer.exe launcher.cmd` | None (parent is the user's shell) |
 | `schtasks /create` + `/run` (one-shot) | None (parent is the Task Scheduler service) |
 
-Explorer is used because it registers nothing on the machine. Everything else in deploy is unchanged (idle wait, `--host`, the restart message, reconnection). The new Studio reports its own `packageContext` through `/api/live/settings`; deploy prints a warning when it is still inside a package.
+Explorer is used because it registers nothing on the machine. Everything else in deploy is unchanged (idle wait, `--host`, the restart message, reconnection). The new AIB reports its own `packageContext` through `/api/live/settings`; deploy prints a warning when it is still inside a package.
 
-**Banner.** A Studio that is itself inside a package shows the amber `studioNotice` line "Studio is running inside Claude's sandbox, so its data is stored in that app's private folder (...). Restart Studio from outside that app to use your normal data folder." (`notices()` in `server/web/shared.ts`, field `packageNotice`, next to `hostCodeWarning`).
+**Banner.** An AIB that is itself inside a package shows the amber `studioNotice` line "AIB is running inside Claude's sandbox, so its data is stored in that app's private folder (...). Restart AIB from outside that app to use your normal data folder." (`notices()` in `server/web/shared.ts`, field `packageNotice`, next to `hostCodeWarning`).
 
 Tests: `work/deno/state_paths_test.ts` (stubbed Windows calls and temp folders only).

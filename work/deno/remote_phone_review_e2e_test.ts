@@ -12,7 +12,7 @@
 import { assert, assertEquals } from './_assert.ts';
 import { Browser, browserPath, type Page } from './_doc_browser.ts';
 import { pairPhone } from './_remote_fixture.ts';
-import { liveChat, v2Studio } from './_remote_v2b.ts';
+import { liveChat, v2Aib } from './_remote_v2b.ts';
 import { phonePage, tap } from './_remote_phone_page.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
@@ -56,7 +56,7 @@ Deno.test({
   ignore: !browserPath,
   async fn() {
     const shotsDir = Deno.env.get('AIB_DOCPAGE_SHOTS');
-    const s = await v2Studio();
+    const s = await v2Aib();
     const browser = await Browser.launch();
     try {
       const { subagents, worktrees } = thirty();

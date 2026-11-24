@@ -246,7 +246,7 @@ export async function rglobTail(folder: string, tail: string): Promise<string[]>
   return out;
 }
 
-/** (size, mtime_ns, st_mtime, st_ctime-or-birthtime) of a file, the values Python's os.stat gives (to the millisecond). */
+/** (size, mtime_ns, st_mtime, st_ctime-or-birthtime) of a file, the values os.stat gives (to the millisecond). */
 export interface StatSig {
   size: number;
   mtimeNs: bigint;

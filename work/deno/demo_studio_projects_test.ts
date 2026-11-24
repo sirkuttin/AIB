@@ -1,7 +1,7 @@
 /**
- * work/demo-studio/start.py adds its demo projects (QA polish 8): Studio lists saved chats only for projects the user added, so a
+ * work/demo-studio/start.py adds its demo projects (QA polish 8): AIB lists saved chats only for projects the user added, so a
  * fresh demo used to open with "No project yet" although its README promises chats. The demo writes studio-added-projects.json for
- * alpha, alpha/docs and beta (the folders its chats work in), under the keys Studio itself files them under.
+ * alpha, alpha/docs and beta (the folders its chats work in), under the keys AIB itself files them under.
  */
 import { projectKey } from '../../app/server/desktop/project_delete.ts';
 import { assert, assertEquals } from './_assert.ts';
@@ -10,7 +10,7 @@ import { PYTHON } from './_connection.ts';
 import { SEP as sep } from './_host_fixture.ts';
 
 Deno.test({
-  name: 'the demo Studio adds its demo projects, so the sidebar shows the demo chats',
+  name: 'the demo AIB adds its demo projects, so the sidebar shows the demo chats',
   ignore: !HAVE_GIT,
   async fn() {
     const demo = Deno.makeTempDirSync({ prefix: 'aib-demo-gen-' });

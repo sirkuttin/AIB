@@ -24,29 +24,29 @@ class Lab {
   readonly state = this.dir + SEP + 'state';
   readonly work = this.dir + SEP + 'work';
   readonly pids = this.dir + SEP + 'terminal-pids.txt';
-  readonly studios: Aib[] = [];
+  readonly aibs: Aib[] = [];
   constructor() {
     Deno.mkdirSync(this.work, { recursive: true });
   }
-  studio(): Aib {
+  aib(): Aib {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '60s'] });
-    const studio = new Aib(
+    const aib = new Aib(
       { claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null, enableClientTerminal: true } as never,
       { keeper },
     );
-    studio.ownerProbe = () => null;
-    studio.connectionFactory = (_command, cwd, provider, options) => new Connection(fake('--client-caps'), cwd, provider, options);
-    this.studios.push(studio);
-    return studio;
+    aib.ownerProbe = () => null;
+    aib.connectionFactory = (_command, cwd, provider, options) => new Connection(fake('--client-caps'), cwd, provider, options);
+    this.aibs.push(aib);
+    return aib;
   }
-  crash(studio: Aib): void {
-    studio.keeper!.disconnect();
-    for (const c of studio.connections.values()) c.sessionLease?.release();
-    studio.reconnectStop.set();
-    this.studios.splice(this.studios.indexOf(studio), 1);
+  crash(aib: Aib): void {
+    aib.keeper!.disconnect();
+    for (const c of aib.connections.values()) c.sessionLease?.release();
+    aib.reconnectStop.set();
+    this.aibs.splice(this.aibs.indexOf(aib), 1);
   }
   async [Symbol.asyncDispose](): Promise<void> {
-    for (const s of this.studios.reverse()) await s.close().catch(() => {});
+    for (const s of this.aibs.reverse()) await s.close().catch(() => {});
     const info = readKeeperInfo(this.state);
     if (info && pidAlive(info.pid)) {
       try {
@@ -102,7 +102,7 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new Lab();
-    const a = lab.studio();
+    const a = lab.aib();
     const c = await a.connect('claude', lab.work);
     assert(c.channel, 'the agent runs in the keeper');
     // 40 lines, 100 ms apart, then exit 3; its pid goes into a file (it must be started exactly once).
@@ -133,7 +133,7 @@ Deno.test({
     lab.crash(a); // wait_for_exit is pending; the terminal keeps printing into the keeper
     await pause(700);
 
-    const b = lab.studio();
+    const b = lab.aib();
     assertEquals(await b.adoptKeeper(), 1);
     const back = b.connections.get(c.id)!;
     assertEquals(back.rebuildError, '');
@@ -166,7 +166,7 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new Lab();
-    const a = lab.studio();
+    const a = lab.aib();
     const c = await a.connect('claude', lab.work);
     const caps = c.caps as ClientCaps;
     // The old AIB dies right after its note: its backend writes the note, then "crashes" before the keeper spawn.
@@ -202,7 +202,7 @@ Deno.test({
       n?.t === 'clientTerminal'
     )!;
     lab.crash(a);
-    const b = lab.studio();
+    const b = lab.aib();
     assertEquals(await b.adoptKeeper(), 1);
     const back = b.connections.get(c.id)!;
     await until(() => capsResults(back), 'answers', 30);

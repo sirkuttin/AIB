@@ -1,5 +1,5 @@
 /**
- * The local docs' routes (Deno only: routes.ts DENO_ONLY). A doc belongs to a project: the folder is always the one Studio
+ * The local docs' routes (Deno only: routes.ts DENO_ONLY). A doc belongs to a project: the folder is always the one AIB
  * knows for the chat (files_routes.rootFor, the main checkout for a worktree chat), never a folder named in the request. All POSTs
  * take the page token; the user's own changes run with the user's origin. A refusal is 400 (409 for "not now") {error, code}.
  *

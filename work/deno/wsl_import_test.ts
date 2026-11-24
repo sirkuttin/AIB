@@ -305,7 +305,7 @@ Deno.test({
     );
     const registry = new wt.Registry(f.data);
     for (const [provider, id] of [['claude', ID.plain], ['claude', ID.sub], ['codex', ID.codex]]) {
-      const record = registry.find(null, `${provider}:${id}`); // what Studio.connect's wslRecord asks the helper
+      const record = registry.find(null, `${provider}:${id}`); // what Aib.connect's wslRecord asks the helper
       assert(record, `${provider}:${id} has a record`);
       assertEquals([record.status, record.project, record.branch], ['ready', f.repo, `studio/chat-${id.slice(0, 8)}`]);
       assert(osp.isdir(String(record.path)), 'its worktree exists');

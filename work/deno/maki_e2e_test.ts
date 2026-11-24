@@ -1,7 +1,7 @@
 /**
  * Maki end to end with the real program: AIB installs Maki from its GitHub release (the real download, SHA-256 checked) into a temp
  * state folder, then runs it against the local stub model API (work/stub_model_api.js, which speaks the Anthropic API) through the
- * key and address saved in Settings (ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL). In-process Studio, no keeper, no window.
+ * key and address saved in Settings (ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL). In-process AIB, no keeper, no window.
  *
  *   sign-in check   no key: Needs sign-in (Maki exits before initialize); with the key: Ready
  *   chat            a reply; a write outside the project asks for approval, AIB's card answers Allow once and the file is written;
@@ -190,18 +190,18 @@ Deno.test({
       }),
     );
     const stub = new StubApi(pathOf(root, 'stub.log'), script);
-    const studio = new Aib({
+    const aib = new Aib({
             stateDir: state,
       port: 0,
       ownersDir: null,
     });
-    studio.ownerProbe = () => null;
+    aib.ownerProbe = () => null;
     try {
       // ---- 1. Install: the real archive from github.com, checked against the pinned SHA-256 ----
-      const [status, started] = await studio.installCall('start', 'maki');
+      const [status, started] = await aib.installCall('start', 'maki');
       assertEquals(status, 200, JSON.stringify(started));
-      await studio.installer!.jobs.get('maki')?.done;
-      const view = (await studio.installCall('status', 'maki'))[1] as Json;
+      await aib.installer!.jobs.get('maki')?.done;
+      const view = (await aib.installCall('status', 'maki'))[1] as Json;
       if (
         view.state === 'failed' &&
         /reach github|answered \d+|part way/.test(String(view.message))
@@ -231,24 +231,24 @@ Deno.test({
       ]]);
 
       // ---- 2. Sign-in check: no key at all = Needs sign-in; the key and address from Settings = Ready ----
-      let check = (await studio.signinCall('check', 'maki', true))[1] as Json;
+      let check = (await aib.signinCall('check', 'maki', true))[1] as Json;
       assertEquals(check.state, 'signin', JSON.stringify(check));
       await stub.start();
-      await studio.settings.update({
+      await aib.settings.update({
         agents: {
           betaKey: { maki: 'stub-key-not-real' },
           betaUrl: { maki: `http://127.0.0.1:${stub.port}` },
         },
       });
-      assertEquals(studio.betaEnv('maki'), {
+      assertEquals(aib.betaEnv('maki'), {
         ANTHROPIC_API_KEY: 'stub-key-not-real',
         ANTHROPIC_BASE_URL: `http://127.0.0.1:${stub.port}`,
       });
-      check = (await studio.signinCall('check', 'maki', true))[1] as Json;
+      check = (await aib.signinCall('check', 'maki', true))[1] as Json;
       assertEquals(check.state, 'ready', JSON.stringify(check));
 
       // ---- 3. A chat: reply, models list and modes ----
-      const c = await studio.connect('maki', project);
+      const c = await aib.connect('maki', project);
       assert(c.sessionId, 'session/new answered');
       const pub = c.public() as Json;
       const config = JSON.stringify(pub.configOptions ?? pub);
@@ -257,7 +257,7 @@ Deno.test({
         'its models arrive as the model config option: ' + config.slice(0, 300),
       );
       assert(JSON.stringify(pub).includes('"plan"'), 'its modes (build, plan)');
-      await studio.liveCall('prompt', {
+      await aib.liveCall('prompt', {
         id: c.id,
         text: 'hello, the codeword is KIWI-7',
         clientMessageId: 'm1',
@@ -269,7 +269,7 @@ Deno.test({
       );
 
       // ---- 4. A tool call that needs approval: AIB shows the card, Allow once, Maki writes the file ----
-      await studio.liveCall('prompt', {
+      await aib.liveCall('prompt', {
         id: c.id,
         text: 'please write the file',
         clientMessageId: 'm2',
@@ -283,7 +283,7 @@ Deno.test({
         'reject_once',
         'reject_always',
       ]);
-      await studio.liveCall('permission', {
+      await aib.liveCall('permission', {
         id: c.id,
         key,
         option: 'allow_once',
@@ -296,7 +296,7 @@ Deno.test({
       assertEquals(Deno.readTextFileSync(outside), 'MAKI_WROTE');
 
       // ---- 5. Stop: a turn the model holds for 40 s ends at once ----
-      await studio.liveCall('prompt', {
+      await aib.liveCall('prompt', {
         id: c.id,
         text: 'take your time STUB_WAIT=40',
         clientMessageId: 'm3',
@@ -309,7 +309,7 @@ Deno.test({
         60,
       );
       const stopAt = Date.now();
-      await studio.liveCall('cancel', { id: c.id });
+      await aib.liveCall('cancel', { id: c.id });
       await until(() => !c.busy, 'the turn to stop', 20);
       assert(
         Date.now() - stopAt < 20000,
@@ -320,11 +320,11 @@ Deno.test({
       const session = c.sessionId!;
       await pause(500); // Maki saves its session right after a turn
       await c.close();
-      const again = await studio.connect('maki', project, session);
+      const again = await aib.connect('maki', project, session);
       assertEquals(again.sessionId, session);
       const calls = stub.calls().length;
       const replayed = said(again).length; // Maki replays the history on session/load
-      await studio.liveCall('prompt', { id: again.id, text: 'what was it again?', clientMessageId: 'm4' });
+      await aib.liveCall('prompt', { id: again.id, text: 'what was it again?', clientMessageId: 'm4' });
       await until(() => !again.busy && stub.calls().length > calls, 'the resumed turn', 120);
       // the model was sent the old history (the stub answers with the codeword it finds there)
       await until(() => said(again).slice(replayed).includes('STUB codeword=KIWI-7'), 'the resumed reply', 30);
@@ -333,7 +333,7 @@ Deno.test({
         true,
       );
     } finally {
-      await studio.close().catch(() => {});
+      await aib.close().catch(() => {});
       await stub.stop();
       for (const [k, v] of Object.entries(saved)) {
         v === undefined ? Deno.env.delete(k) : Deno.env.set(k, v);

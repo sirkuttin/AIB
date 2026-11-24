@@ -1,6 +1,6 @@
 /**
- * The doc page's end-to-end harness: a throwaway Studio web server in this process (its own state folder and project, a fake agent
- * host whose chats the test drives, a free port; never the live Studio's ports) and a headless Chrome or Edge (--headless=new, its
+ * The doc page's end-to-end harness: a throwaway AIB web server in this process (its own state folder and project, a fake agent
+ * host whose chats the test drives, a free port; never the live AIB's ports) and a headless Chrome or Edge (--headless=new, its
  * own temporary profile: no window on the screen) driven over the DevTools protocol. Each page records its console errors and every
  * Content Security Policy violation.
  */
@@ -48,12 +48,12 @@ export async function temp(prefix: string): Promise<string> {
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** A Studio on a free port whose chats all work in one project; `chat()` sets what the agent host lists (the turn signal). */
+/** An AIB on a free port whose chats all work in one project; `chat()` sets what the agent host lists (the turn signal). */
 /**
- * A test Studio. `state`: the data folder of an earlier Studio, for a restart that keeps it as AIB's own restart does (the page
+ * A test AIB. `state`: the data folder of an earlier AIB, for a restart that keeps it as AIB's own restart does (the page
  * sessions it knows are in it, server/web/page_access.ts); otherwise a fresh one.
  */
-export async function studio(root?: string, port = 0, state?: string) {
+export async function aib(root?: string, port = 0, state?: string) {
   root ??= await temp('aib-docpage-');
   const project = `${root}${sep}project`;
   state ??= `${root}${sep}state-${Math.random().toString(36).slice(2, 7)}`;
@@ -155,12 +155,12 @@ export async function studio(root?: string, port = 0, state?: string) {
     },
   };
 }
-export type Studio = Awaited<ReturnType<typeof studio>>;
+export type Aib = Awaited<ReturnType<typeof aib>>;
 
 /**
- * What a page of a test Studio gets in place of the app window's key handover (server/desktop/window.ts): the app's binding
+ * What a page of a test AIB gets in place of the app window's key handover (server/desktop/window.ts): the app's binding
  * (bindings.aibPageKey), answered with the run's fixed launch key through AIBPageAuth.accept, as the desktop side answers with a
- * fresh one-time key. Only on the test Studio's own origin (127.0.0.1 / localhost) in a top frame, never in another origin's frame.
+ * fresh one-time key. Only on the test AIB's own origin (127.0.0.1 / localhost) in a top frame, never in another origin's frame.
  */
 export function fakeAppBinding(key: string = PAGE_KEY): string {
   return `(() => { if (!/^https?:[/][/](127[.]0[.]0[.]1|localhost)(:|[/]|$)/.test(location.href) || window.top !== window) return;

@@ -13,24 +13,24 @@ import { assert, assertEquals } from './_assert.ts';
 import { DEVICE_HEADER, COOKIE_NAME } from '../../app/server/remote/server.ts';
 import { DeviceStore, SESSION_SECONDS } from '../../app/server/remote/devices.ts';
 import { readRemotePort } from '../../app/server/remote/port.ts';
-import { fakeTailscale, pairComputer, pairPhone, pc, phoneHeaders, raw, type RemoteStudio, remoteStudio, serveStatus } from './_remote_fixture.ts';
+import { fakeTailscale, pairComputer, pairPhone, pc, phoneHeaders, raw, type RemoteAib, remoteAib, serveStatus } from './_remote_fixture.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
 type Json = Record<string, unknown>;
 
-async function remoteOn(): Promise<RemoteStudio> {
+async function remoteOn(): Promise<RemoteAib> {
   const fake = fakeTailscale();
-  const s = await remoteStudio({ runner: fake.runner }, undefined, { saved: true });
+  const s = await remoteAib({ runner: fake.runner }, undefined, { saved: true });
   fake.state.serve = serveStatus(readRemotePort(s.state)!);
   const [status] = await pc(s, 'POST', '/api/live/devices/access', { on: true });
   assertEquals(status, 200);
   return s;
 }
-const bootstrap = (s: RemoteStudio, token: string) =>
+const bootstrap = (s: RemoteAib, token: string) =>
   raw(s.phonePort(), 'GET', '/api/remote/pc/bootstrap', { ...phoneHeaders({}, 'GET'), [DEVICE_HEADER]: token });
-const sessionCall = (s: RemoteStudio, headers: Record<string, string>) =>
+const sessionCall = (s: RemoteAib, headers: Record<string, string>) =>
   raw(s.phonePort(), 'POST', '/api/remote/pc/session', { ...phoneHeaders({}, 'POST'), ...headers }, '{}');
-const adoptCall = (s: RemoteStudio, token: string) =>
+const adoptCall = (s: RemoteAib, token: string) =>
   raw(s.phonePort(), 'POST', '/api/remote/pc/adopt', { ...phoneHeaders({}, 'POST'), [DEVICE_HEADER]: token }, '{}');
 const cookieOf = (r: { headers: Headers }) => (r.headers.get('set-cookie') ?? '').match(/__Host-aib-phone=([^;]+)/)?.[1] ?? '';
 const cookieHeader = (value: string) => ({ Cookie: `${COOKIE_NAME}=${value}` });

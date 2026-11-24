@@ -9,7 +9,7 @@
  *    while AIB was quit (toast-inbox.jsonl) is applied after start-up.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { liveChat, v2Studio } from './_remote_v2b.ts';
+import { liveChat, v2Aib } from './_remote_v2b.ts';
 import type { InboxRow } from '../../app/server/attention/inbox_rules.ts';
 import { answersOf } from '../../app/server/attention/answers.ts';
 import { DesktopNotifications, type NotifyTarget, type OsNotify } from '../../app/server/desktop/notify.ts';
@@ -255,7 +255,7 @@ Deno.test({
   ...OPTS,
   name: 'linux route on a fake AIB: Allow answers once as "desktop notification"; a click from while AIB was quit is applied',
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     const dir = await Deno.makeTempDir({ prefix: 'aib-linux-notify-' });
     const stops: (() => void)[] = [];
     try {

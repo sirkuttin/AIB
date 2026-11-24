@@ -9,7 +9,7 @@
 import { assert, assertEquals } from './_assert.ts';
 import { Browser, browserPath, type Page } from './_doc_browser.ts';
 import { pairPhone } from './_remote_fixture.ts';
-import { liveChat, v2Studio } from './_remote_v2b.ts';
+import { liveChat, v2Aib } from './_remote_v2b.ts';
 import { phonePage, tap } from './_remote_phone_page.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
@@ -36,7 +36,7 @@ Deno.test({
   name: 'phone history: a 5,000-character streamed reply shows whole; Load earlier (button and scroll) keeps your place',
   ignore: !browserPath,
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     const browser = await Browser.launch();
     try {
       // c-one: one prompt and a 5,000-character reply in 1,000 chunks of 5 characters
@@ -130,7 +130,7 @@ Deno.test({
   name: 'phone history: polls while a long reply streams in never trim its front (older whole turns go)',
   ignore: !browserPath,
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     const browser = await Browser.launch();
     try {
       // an earlier turn, then a reply streaming in: 1,600 chunks so far (the open page holds it all); polls keep ~2,000 events

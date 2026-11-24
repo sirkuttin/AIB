@@ -1,13 +1,13 @@
 /**
  * Desktop notifications in the app come from the server's AttentionWatcher, never also from the page (phase C): chat.html runs in a
- * headless Chrome as the desktop app's page (the app's bridge function bound, the window not in front), with a Studio in this
+ * headless Chrome as the desktop app's page (the app's bridge function bound, the window not in front), with an AIB in this
  * process whose desktop notifications go to a test notifier (nothing is shown on the screen). A chat that comes to need you gives
  * exactly one desktop notification, and the page never posts /api/live/desktop/notify; the page still reports whether AIB is in
  * front (POST /api/live/presence).
  */
 import { assert, assertEquals } from './_assert.ts';
 import { Browser, browserPath } from './_doc_browser.ts';
-import { remoteStudio } from './_remote_fixture.ts';
+import { remoteAib } from './_remote_fixture.ts';
 import { DesktopNotifications } from '../../app/server/desktop/notify.ts';
 import { startAttention } from '../../app/server/attention/watcher.ts';
 import { blockedCount } from '../../app/server/attention/inbox_rules.ts';
@@ -21,7 +21,7 @@ Deno.test({
   name: 'desktop app: a chat that needs you gives one desktop notification (the server); the page sends none of its own',
   ignore: !browserPath,
   async fn() {
-    const s = await remoteStudio();
+    const s = await remoteAib();
     // no saved transcripts in this data folder (the page's /api/sessions)
     s.ctx.transcripts = {
       root: s.state,
@@ -109,7 +109,7 @@ Deno.test({
     'notifications; switching to another chat brings it back',
   ignore: !browserPath,
   async fn() {
-    const s = await remoteStudio();
+    const s = await remoteAib();
     s.ctx.transcripts = {
       root: s.state,
       sessions: () => Promise.resolve([]),

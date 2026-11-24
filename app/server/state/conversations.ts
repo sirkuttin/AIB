@@ -1,9 +1,9 @@
 /**
  * Studio-side pin / hold / archive / delete / your-turn marks (state_store.ConversationState), shared by every browser and
- * every Studio (Python or Deno) on the state folder.
+ * every AIB on the state folder.
  *
  * One small JSON file keyed by 'provider:sessionId'. Nothing here touches the agent's own transcripts: "delete" is a tombstone
- * that hides a conversation from Studio and can be undone. Only entries that carry a mark are kept, and the file is bounded.
+ * that hides a conversation from AIB and can be undone. Only entries that carry a mark are kept, and the file is bounded.
  */
 import { isDict, isStr, pyFloat, pyLen, pyStrip, pyTruthy, ValueError } from '../core/py.ts';
 import { isProvider } from '../agents/agent_registry.ts';
@@ -59,10 +59,10 @@ export class ConversationState extends JsonFileStore {
   static ACTIONS: readonly string[] = ACTIONS;
   static MAX_NOTE = 120;
 
-  /** 'provider:sessionId' -> marks (a Map: insertion order breaks pruning ties as Python's dict does). */
+  /** 'provider:sessionId' -> marks (a Map: insertion order breaks pruning ties). */
   entries = new Map<string, Marks>();
 
-  /** No directory means in-memory only (used when a Studio is built without --state-dir). */
+  /** No directory means in-memory only (used when an AIB is built without --state-dir). */
   constructor(stateDir: string | null = null) {
     super();
     this.path = stateDir ? inDir(stateDir, (this.constructor as typeof ConversationState).FILE) : null;

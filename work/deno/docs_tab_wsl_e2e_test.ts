@@ -1,6 +1,6 @@
 /**
  * The Docs tab for a WSL project (owner rule: WSL parity; design project-right-panel S4): chat.html in a real headless Chrome against
- * a Studio in this process whose fake agent host lists a WSL chat (cwd `wsl://ubuntu/home/u/app`) and whose docs live "in the distro"
+ * An AIB in this process whose fake agent host lists a WSL chat (cwd `wsl://ubuntu/home/u/app`) and whose docs live "in the distro"
  * through the fake WSL helper (FakeWslHost with the real helper's docs.fs on a temp folder; needs no WSL, no distro and no
  * wsl.exe). The same rules as docs_tab_e2e_test.ts: the project's docs are listed newest edited first, a doc opens in the Docs tab
  * (never as a middle tab), in the full editor with the text the distro holds, and ⤢ moves it to a middle tab.
@@ -9,7 +9,7 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { Browser, browserPath, type Page } from './_doc_browser.ts';
-import { remoteStudio } from './_remote_fixture.ts';
+import { remoteAib } from './_remote_fixture.ts';
 import { FakeWslHost } from './_wsl_fake.ts';
 import { setWslHostResolver } from '../../app/server/wsl/access.ts';
 import { installWslDocFs } from '../../app/server/wsl/docs.ts';
@@ -27,7 +27,7 @@ Deno.test({
   name: 'Docs tab, WSL project: the distro\'s docs are listed, open in the Docs tab (editable, the distro\'s text), and ⤢ moves one to a middle tab',
   ignore: !browserPath,
   async fn() {
-    const s = await remoteStudio();
+    const s = await remoteAib();
     const folder = `${s.root}${Deno.build.os === 'windows' ? '\\' : '/'}distro-app`;
     await Deno.mkdir(folder, { recursive: true });
     const host = new FakeWslHost('unused', 'Ubuntu');

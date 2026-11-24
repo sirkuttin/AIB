@@ -4,7 +4,7 @@ AIB is beta software that runs on your own computer and starts coding agents tha
 
 ## Reporting a vulnerability
 
-Please do **not** open a public issue for a security problem. Use this repository's **Security** tab and choose **Report a vulnerability** (GitHub private vulnerability reporting). Include the version (Settings, then Studio server), your operating system, and steps to reproduce. You will get an answer as soon as the maintainer can; this is a one-person project, so please allow some days.
+Please do **not** open a public issue for a security problem. Use this repository's **Security** tab and choose **Report a vulnerability** (GitHub private vulnerability reporting). Include the version (Settings, then AIB server), your operating system, and steps to reproduce. You will get an answer as soon as the maintainer can; this is a one-person project, so please allow some days.
 
 ## Scope
 

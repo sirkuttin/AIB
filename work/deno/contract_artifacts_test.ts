@@ -117,7 +117,7 @@ Deno.test('contract: artifact routes and the artifact origin', async (t) => {
     assertEquals((await s.agent('GET', `/api/live/artifacts/item?id=${page}`, key)).json, refuse);
   });
 
-  await t.step('the artifact origin serves the files, on the Studio port + 1, and is not a Studio address', async () => {
+  await t.step('the artifact origin serves the files, on AIB port + 1, and is not an AIB address', async () => {
     const boot = (await s.bootstrap()).json;
     const originPort = Number(boot.artifactOrigin.split(':').pop());
     assertEquals(originPort, s.port + 1);
@@ -140,7 +140,7 @@ Deno.test('contract: artifact routes and the artifact origin', async (t) => {
     for (const path of [`/a/${page}/v9/page.html`, `/a/${page}/v1/other.html`, '/a/zz/v1/x.html', '/', '/a/..%2F/x']) {
       assertEquals((await get(path)).status, 404, path);
     }
-    assertEquals((await get(`/a/${page}/v1/page.html`, `127.0.0.1:${s.port}`)).status, 403); // the Studio's own Host is refused here
+    assertEquals((await get(`/a/${page}/v1/page.html`, `127.0.0.1:${s.port}`)).status, 403); // AIB's own Host is refused here
     const asHost = await s.request('GET', '/api/live/list', s.pageHeaders(true, { Host: boot.artifactOrigin.slice('http://'.length) }));
     assertEquals([asHost.status, asHost.json], [403, { error: 'Not an AIB address' }]);
     const asOrigin = await s.request('GET', '/api/live/list', s.pageHeaders(true, { Origin: boot.artifactOrigin }));

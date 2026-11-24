@@ -3,7 +3,7 @@
  * server (files/live_files.ts). Two kinds of writers tell it when files on disk changed:
  *   - landings and Undo (worktrees/merge.ts landHeld, swarm/undo.ts applyChange) run in the web server too: they call
  *     emitFilesChanged here after the folder moved and the pause lock is let go;
- *   - an agent's own write tool calls happen in the agent host (Studio): the web server polls them with liveCall('files-changed')
+ *   - an agent's own write tool calls happen in the agent host (AIB): the web server polls them with liveCall('files-changed')
  *     (host/aib.ts) and feeds them in through the same emit.
  * A listener reads the named files when they have settled (live_files.ts). Nothing here throws into the writer.
  */

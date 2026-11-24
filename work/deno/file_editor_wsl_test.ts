@@ -117,7 +117,7 @@ class FakeHost implements WslHost {
   }
 }
 
-class StudioHost {
+class AibHost {
   liveCall(name: string): Promise<[number, unknown]> {
     if (name === 'files-changed') return Promise.resolve([200, { instance: 'i', seq: 0, events: [] }]);
     if (name === 'folder-chats') return Promise.resolve([200, { chats: [] }]);
@@ -136,9 +136,9 @@ function setup() {
   const host = new FakeHost(d);
   setWslHostResolver((key) => (key === 'ubuntu' ? host : null));
   const state = Deno.makeTempDirSync({ prefix: 'aib-fe-wsl-state-' });
-  const studio = new StudioHost();
+  const aib = new AibHost();
   const files = new LiveFiles(
-    { stateDir: state, liveCall: (n) => studio.liveCall(n), conversations: () => [], connectionOf: () => null },
+    { stateDir: state, liveCall: (n) => aib.liveCall(n), conversations: () => [], connectionOf: () => null },
     FAST,
   );
   files.start();

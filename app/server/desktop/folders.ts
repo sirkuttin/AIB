@@ -6,7 +6,7 @@
  * with a fixed argument list inside the new folder, the picker is a fixed script that gets the start folder as plain data (an
  * environment variable or a separate argument, never part of the script text).
  *
- * The picker: Python used tkinter in a child process. Deno has no GUI toolkit, so it is a platform dialog in a child process:
+ * The picker: Deno has no GUI toolkit, so it is a platform dialog in a child process:
  * Windows: a hidden PowerShell running System.Windows.Forms.FolderBrowserDialog (it inherits the server's windowless console,
  * server/platform/console.ts); macOS: osascript `choose folder`; Linux: zenity, else kdialog. Same (status, payload) contract.
  *
@@ -49,7 +49,7 @@ export class FolderError extends Error {
   }
 }
 
-/** Replaceable lookups (tests swap them, as the Python tests patch folders.git_path). */
+/** Replaceable lookups (tests swap them). */
 export const hooks = {
   gitPath: (): string | null => which('git'),
 };
@@ -436,7 +436,7 @@ export async function createProject(
   }
 }
 
-/** Python's error.strerror: the OS message without Deno's "(os error N)" and call details. */
+/** error.strerror: the OS message without Deno's "(os error N)" and call details. */
 function osErrorText(error: unknown): string {
   const message = String((error as Error)?.message ?? error);
   return message.replace(/\s*\(os error \d+\).*$/s, '').replace(/:\s*mkdir\s.*$/s, '') || message;

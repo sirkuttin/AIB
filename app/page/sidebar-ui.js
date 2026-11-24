@@ -75,7 +75,7 @@
   function setWorktreeHook(fn) {
     worktreeHook = typeof fn === 'function' ? fn : null;
   }
-  // The branch of a chat that runs in its own Studio worktree ('' for every other chat): a live chat reports it, a saved one carries it from the server.
+  // The branch of a chat that runs in its own AIB worktree ('' for every other chat): a live chat reports it, a saved one carries it from the server.
   function branchOf(c) {
     if (!c) return '';
     const w = c.worktree || (c.live && c.live.worktree) || (c.recovered && c.recovered.worktree);

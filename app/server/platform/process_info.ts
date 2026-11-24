@@ -169,7 +169,7 @@ export function restartManagerHolders(path: string, max = 32): [number, string][
     const count = new Uint32Array([max]);
     const infos = new Uint8Array(max * RM_PROCESS_INFO_SIZE);
     const status = rm.RmGetList(session[0], needed, count, infos, new Uint32Array(1));
-    if (status !== 0) return null; // 234 = ERROR_MORE_DATA: more holders than max; treated as unknown, like Python
+    if (status !== 0) return null; // 234 = ERROR_MORE_DATA: more holders than max; treated as unknown
     const out: [number, string][] = [];
     for (let i = 0; i < count[0]; i++) {
       const item = infos.subarray(i * RM_PROCESS_INFO_SIZE, (i + 1) * RM_PROCESS_INFO_SIZE);

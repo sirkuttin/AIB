@@ -14,16 +14,16 @@ import { readRemotePort } from '../../app/server/remote/port.ts';
 import { DEVICE_HEADER, RateLimit } from '../../app/server/remote/pc_bridge.ts';
 import { startAttention } from '../../app/server/attention/watcher.ts';
 import { Browser, browserPath } from './_doc_browser.ts';
-import { type FakeChat, fakeTailscale, pairPhone, pc, phoneHeaders, raw, type RemoteStudio, remoteStudio, serveStatus } from './_remote_fixture.ts';
+import { type FakeChat, fakeTailscale, pairPhone, pc, phoneHeaders, raw, type RemoteAib, remoteAib, serveStatus } from './_remote_fixture.ts';
 
 Deno.env.set('AIB_TEST_SETTLE_MS', '0');
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
 type Json = Record<string, unknown>;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function remoteOn(): Promise<RemoteStudio> {
+async function remoteOn(): Promise<RemoteAib> {
   const fake = fakeTailscale();
-  const s = await remoteStudio({ runner: fake.runner }, undefined, { saved: true });
+  const s = await remoteAib({ runner: fake.runner }, undefined, { saved: true });
   fake.state.serve = serveStatus(readRemotePort(s.state)!);
   assertEquals((await pc(s, 'POST', '/api/live/devices/access', { on: true }))[0], 200);
   (s.ctx.phone.server!.bridge as unknown as { limit: RateLimit }).limit = new RateLimit(1e6, 1e6);
@@ -61,7 +61,7 @@ function ask(c: FakeChat, key: string) {
 }
 
 /** The agent host takes one answer per request: the first one goes, a later one is "no longer pending" (acp/connection.ts). */
-function firstAnswerWins(s: RemoteStudio) {
+function firstAnswerWins(s: RemoteAib) {
   s.answerLive((name, body) => {
     if (name !== 'permission') return [200, { ok: true }];
     const c = s.chats.find((x) => x.id === body.id)!;
@@ -73,7 +73,7 @@ function firstAnswerWins(s: RemoteStudio) {
   });
 }
 
-function call(s: RemoteStudio, token: string, method: string, path: string, body?: Json) {
+function call(s: RemoteAib, token: string, method: string, path: string, body?: Json) {
   return raw(
     s.phonePort(),
     method,

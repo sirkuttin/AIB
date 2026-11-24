@@ -1,5 +1,5 @@
 /** Phone page shots: a headless phone-sized browser (412x915, device scale 2.625, Android Chrome UA) playing Tailscale Serve in front of an
- *  in-process Studio with phone access on, a paired fake phone and fake live chats (the remote e2e tests' harness: work/deno/_remote_v2b.ts,
+ *  in-process AIB with phone access on, a paired fake phone and fake live chats (the remote e2e tests' harness: work/deno/_remote_v2b.ts,
  *  _remote_phone_page.ts). No real Tailscale, nothing real runs. Run with TEMP=C:\aib-demo\tmp. */
 import { Browser } from '../deno/_doc_browser.ts';
 import { pairPhone } from '../deno/_remote_fixture.ts';

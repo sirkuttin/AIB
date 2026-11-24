@@ -73,11 +73,11 @@ to the `aib-open` shim), never the Windows one. A URL the shim hands over reache
 2 KiB and 3 a minute; it opens directly within 5 minutes of a sign-in in that distro (or with "Always allow" for the distro), and
 otherwise the page asks first.
 
-**Quit and restart** (`Studio.#quitWsl`, `WslHosts.quit`): per distro the keep-alive is stopped unless WSL agents or shells still
+**Quit and restart** (`Aib.#quitWsl`, `WslHosts.quit`): per distro the keep-alive is stopped unless WSL agents or shells still
 run; then the transports end. With some left running, the Windows keeper is sent `hold`, so it neither starts AIB again in the tray
 nor stops them as orphaned. AIB's own channels never count as work in either keeper (`keeper/link.ts liveUserChannels`; the Go
 keeper's lifetime rules, PROTOCOL.md section 6). The next AIB starts the distros of the chats on its recovery list, rebuilds those
-chats from the Linux keeper (`Studio.adoptWslKeeper`) and claims the keep-alive. A crashed AIB leaves its WSL agents running under
+chats from the Linux keeper (`Aib.adoptWslKeeper`) and claims the keep-alive. A crashed AIB leaves its WSL agents running under
 the keep-alive the same way.
 
 **AIB away with no keep-alive** (an older AIB build stopped it as an unknown channel, the Windows keeper died, the keeper is off):
@@ -92,7 +92,7 @@ hours alone does it stop them (reason `orphaned`). Before 1.6.0 that took about 
 
 **One agent per chat:** before AIB starts an agent for a saved chat (the auto-reconnect, Continue), it asks the keeper that agent
 would run in (a WSL chat: its distro's Linux keeper) for a live channel of that session and takes it over instead
-(`Studio.#runningInKeeper`). So a take-over at start that gave up (the distro answered after `adoptWslKeeper`'s 120 s) or a link that
+(`Aib.#runningInKeeper`). So a take-over at start that gave up (the distro answered after `adoptWslKeeper`'s 120 s) or a link that
 was given up while its agents kept running never leads to a second agent for the same session. A distro whose keeper cannot be
 asked refuses the start (the reconnect tries again). If a keeper still holds two agents for one session (from an older AIB), the
 take-over keeps the working one and stops the idle one.
@@ -148,7 +148,7 @@ modules natively (`wsl/helper/local_only.ts`, the `localOnly.*` methods), with L
   `.git`; any ignored folder holding or inside another worktree of the repository (`git worktree list`, for example
   `.claude/worktrees/`); AIB's own folders in the distro (the data folder with its chat copies, and the AIB root unless the project
   is inside it, as tests are). At most 60 folders and 60 files. Windows chats are unchanged (a few lines in `files_routes.ts` and
-  `studio.ts`: one call for the list, a read fallback, one for the grant, would turn the same on for them).
+  `aib.ts`: one call for the list, a read fallback, one for the grant, would turn the same on for them).
 - **Permissions.** ACP `additionalDirectories` is what the Claude Code and Codex adapters take to widen where the agent may read
   and write (assumed from the adapters' documented session capability, which the Windows flow already uses; not re-verified against
   each adapter's sandbox here). An absolute path outside both the copy and the granted folders (an ignored file) goes through the
@@ -246,7 +246,7 @@ failure is reported and the rest go on):
    checks its size.
 3. It makes the copy, branch and record with the helper's own `Manager`. That means the same naming, the same snapshot of main, the
    same registry lock (`studio-worktrees.json.lock`) and atomic write as AIB's running helper, so it is safe while AIB runs. It then
-   sets the record's `session: "<provider>:<id>"` (what `Studio.connect`'s `wslRecord` finds) and `imported: {at, from, backup}`.
+   sets the record's `session: "<provider>:<id>"` (what `Aib.connect`'s `wslRecord` finds) and `imported: {at, from, backup}`.
 4. For Claude Code it **moves** `<id>.jsonl` and its `<id>/` folder (subagents, tool results) into
    `~/.claude/projects/<encoded copy path>/`. If the move fails, the copy is removed again.
 
@@ -298,7 +298,7 @@ WSL chat's `studio_artifact` MCP entry is the distro's own keeper program:
 | forwarder (`keeper/mcpforward.go`) | the agent's MCP server: one connection per message to the socket, `{"headers","body"}` in, `{"status","body"\|"error"}` out; retries only a failed dial, for 15 s |
 | relay (`keeper/mcprelay.go`) | `AIB-keeper mcp-relay --socket <data>/helper/mcp.sock`, the helper's child: the socket (0600, folder 0700) is listened on in Go, because a compiled Deno program can only use a unix socket path fixed at build time; lines pass through its stdio |
 | helper (`wsl/helper/mcp_tunnel.ts`) | sends each message to AIB as the notification `mcp.request {rid, headers, body}` on the helper channel; `mcp.accept`, `mcp.reply`, `mcp.closed` (contract.ts) |
-| AIB (`wsl/mcp_tunnel.ts`, `Studio.wslToolCall`) | takes it with `mcp.accept`, checks that the conversation is a live chat in that distro, then the HTTP endpoint's own key check and reply (`artifacts/mcp_http.ts tunneled`), and answers with `mcp.reply` |
+| AIB (`wsl/mcp_tunnel.ts`, `Aib.wslToolCall`) | takes it with `mcp.accept`, checks that the conversation is a live chat in that distro, then the HTTP endpoint's own key check and reply (`artifacts/mcp_http.ts tunneled`), and answers with `mcp.reply` |
 
 - **Security.** The per-conversation key is checked exactly as for the HTTP endpoint (`artifacts/keys.ts`); a chat of another distro
   or a closed chat is refused the same way. The key is in the forwarder's environment and passes the helper channel (the Linux
@@ -311,7 +311,7 @@ WSL chat's `studio_artifact` MCP entry is the distro's own keeper program:
   closed; try again later" at once; any call from the next AIB clears it.
 - **Limits.** A message is at most 8 MB (the relay refuses lines over 16 MB) and an answer at most 3 MB.
 - **Which tools.** One switchboard, `artifacts/mcp.ts WSL_TOOL_GROUPS`: `artifacts`, `docs` and `merge` on; `swarm` (no helper chats
-  in WSL projects yet) off. Switching a group on there changes the tool list, Studio's
+  in WSL projects yet) off. Switching a group on there changes the tool list, AIB's
   main-chat role (swarm), the swarm service's own role check (`swarm/service.ts mainChat` refuses a WSL chat with code `wsl`,
   "Helpers are not available in WSL projects yet") and the chat's note (`wsl/access.ts wslToolsNotice`). Publish and update take
   `content` or a Linux `path` (see the next section).
@@ -377,7 +377,7 @@ the 3-way merges and the lost-update guard all run in the distro, with Linux git
 `watchHere`, so `Deno.watchFs` (inotify) wakes a project's scan; the 2 s poll runs next to it as on Windows (`watchHere` stays off
 everywhere else, so Windows is unchanged). There are no per-file calls between AIB and the distro.
 
-- AIB (`wsl/sync.ts`, wired in `Studio`) sends each distro's helper the whole set of open WSL chats in their own copy (`sync.chats`,
+- AIB (`wsl/sync.ts`, wired in `AIB`) sends each distro's helper the whole set of open WSL chats in their own copy (`sync.chats`,
   one call at a time per distro) when a chat opens, is taken over from the keeper or closes, and every 10 s while there are any. The
   turn hooks go to the helper with the chat's public state (no message text): `sync.turnStarted`, `sync.contextFor` (the
   `<studio-context>` note for the prompt or a steer), `sync.contextSent`, `sync.turnEnded`. A Windows chat never goes there.
@@ -440,7 +440,7 @@ helper (`wsl/helper/bgtasks.ts`), unchanged, and AIB asks it through five method
   output are read through the same route again. These reads are polled, so they never start a distro: a distro that is not ready,
   or a helper without the method, answers "Command updates unavailable: Ubuntu stopped. Reconnect" (no subagents for `/api/agents`)
   instead of "No commands running".
-- **Busy children.** Whether a chat is really idle (quit, update, idle exit: `Studio.busyList` 'background'; the inbox's working state)
+- **Busy children.** Whether a chat is really idle (quit, update, idle exit: `Aib.busyList` 'background'; the inbox's working state)
   depends on whether the processes a background shell started still run. A WSL agent's pid is a Linux pid, so `Connection` asks
   `wsl/procs.ts`, which keeps a per-distro snapshot of the processes below the WSL agents (`proc.tree`: `platform/descendants.ts`, i.e.
   `ps`, in the distro) at most 3 s old and fetches a new one in the background. Until an answer is in, or while the helper is away, the
@@ -552,8 +552,8 @@ when AIB's own copy there is older than the version AIB pins now (the old copy k
 the Windows installer (`agents/installer.ts`) run natively by the helper (`wsl/helper/agent_install.ts`):
 
 - Into `~/.aib-server/agents/<id>/<version>/` only: `npm ci --prefix <that folder> --ignore-scripts --omit=dev` with AIB's reviewed
-  lockfile (`agent_locks/<id>.package-lock.json`, every package pinned with its integrity hash) and the version of
-  `agent_versions.json`; npm's cache is `~/.aib-server/agents/.npm-cache`. Never `npm i -g`, nothing outside `~/.aib-server`. AIB
+  lockfile (`agents/locks/<id>.package-lock.json`, every package pinned with its integrity hash) and the version of
+  `agents/versions.json`; npm's cache is `~/.aib-server/agents/.npm-cache`. Never `npm i -g`, nothing outside `~/.aib-server`. AIB
   sends the entry and the lockfile text with each call; the helper still takes only a known agent, one of its own package names, an
   exact version, and a lockfile that pins that package and has an integrity hash for every download. `.complete` is written last.
 - `agents.detect` looks in `~/.aib-server/agents` first (`adapters.ts findStudioInstall`), so chats and the Claude sign-in start AIB's
@@ -796,7 +796,7 @@ Windows: `server/wsl/remove.ts` (the order and the last step), `server/wsl/remov
   worktrees: {count, dirty}, chatsWorking, partial?}`. Part keys in order: `versions` (every `<ver>/`), `agents` (agents/ without
   the cache), `npmCache` (`agents/.npm-cache`), `data` (this AIB's `data-<hash>/` without its worktrees and keeper), `worktrees`
   (`<data>/worktrees`), `logs` (`<data>/keeper`: the keeper's chat journals and log), `other` (other data folders, an old
-  root-level `helper/`, anything else). `chatsWorking` is Studio's busy chats in that distro (`LiveBackend.busyConnections`).
+  root-level `helper/`, anything else). `chatsWorking` is AIB's busy chats in that distro (`LiveBackend.busyConnections`).
   `partial: true` when the walk ran out of time (10 s) or entries (1,000,000): the sizes are then at least these. An older helper:
   `usage: null` with "The AIB helper in Ubuntu is too old to show this. Restart AIB."
 - `POST /api/live/wsl/aib/remove {distro, mode: 'check'|'apply', confirm?: boolean}` -> 200 `{ok, mode, blocked: string[],

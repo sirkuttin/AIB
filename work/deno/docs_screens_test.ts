@@ -35,8 +35,8 @@ async function temp(prefix: string): Promise<string> {
   return Deno.realPathSync(await Deno.makeTempDir({ prefix })).replace(/^\\\\\?\\/, '');
 }
 
-/** A Studio context whose chats all work in `project`; `connections` is what the agent host lists (the turn signal reads it). */
-async function studio() {
+/** An AIB context whose chats all work in `project`; `connections` is what the agent host lists (the turn signal reads it). */
+async function aib() {
   const root = await temp('aib-screens-');
   const project = `${root}${sep}project`, state = `${root}${sep}state`;
   await Deno.mkdir(`${project}${sep}docs`, { recursive: true });
@@ -96,7 +96,7 @@ const presence = (ctx: WebContext, doc: string) =>
   [...ctx.docs.get(doc)!.live.awareness.getStates().values()].map((s) => s.agent as Json).filter(Boolean);
 
 Deno.test("the project's own docs/ is never touched: not listed, not opened, never moved; a doc never goes into a folder it did not make", async () => {
-  const s = await studio();
+  const s = await aib();
   try {
     await Deno.mkdir(`${s.project}${sep}docs`, { recursive: true });
     const readme = `${s.project}${sep}docs${sep}README.md`;
@@ -137,7 +137,7 @@ Deno.test("the project's own docs/ is never touched: not listed, not opened, nev
 });
 
 Deno.test('aib-docs/README.md is written once, with the first doc, and an edit to it stays', async () => {
-  const s = await studio();
+  const s = await aib();
   try {
     await s.call('POST /api/live/docs/open', { id: 'claude:a', name: 'Plan', create: '' });
     const path = `${s.project}${sep}aib-docs${sep}README.md`;
@@ -194,7 +194,7 @@ Deno.test('docs AIB made in docs/ move to aib-docs/ on first use: pages, cache a
 });
 
 Deno.test('opening a doc from chat B keeps its link to chat A; the link route moves it', async () => {
-  const s = await studio();
+  const s = await aib();
   try {
     const [, made] = await s.call('POST /api/live/docs/open', { id: 'claude:a', name: 'Plan', create: '# Plan\n' });
     assertEquals(made.chat, 'claude:a');
@@ -209,7 +209,7 @@ Deno.test('opening a doc from chat B keeps its link to chat A; the link route mo
 });
 
 Deno.test("two Claude chats in one doc: each doc_undo takes back only its own chat's edit", async () => {
-  const s = await studio();
+  const s = await aib();
   try {
     await s.tool('claude:a', 'doc_create', { doc: 'plan', markdown: 'Start.\n' });
     const end = (text: string) => ({ doc: 'plan', ops: [{ op: 'insert', target: { kind: 'root' }, side: 'end', source: inline(text) }] });
@@ -229,7 +229,7 @@ Deno.test("two Claude chats in one doc: each doc_undo takes back only its own ch
 });
 
 Deno.test("an agent's page move and the user's rename at the same time: the user's title stays; an agent rename over it is refused", async () => {
-  const s = await studio();
+  const s = await aib();
   try {
     await s.tool('claude:a', 'doc_create', { doc: 'plan', markdown: 'One.\n', title: 'Overview' });
     await s.tool('claude:a', 'doc_page', { doc: 'plan', action: 'add', title: 'Risks' });
@@ -266,7 +266,7 @@ Deno.test('pasted or dropped HTML never carries the agent mark; align and column
 });
 
 Deno.test('docs/list: "Claude Code is writing <section>" while it works, then "edited by Claude Code"; most recent first', async () => {
-  const s = await studio();
+  const s = await aib();
   try {
     s.chat('c1', 'claude', 'a', '2026-11-11T10:00:00Z');
     await s.ctx.artifacts.refresh();
@@ -296,7 +296,7 @@ Deno.test('docs/list: "Claude Code is writing <section>" while it works, then "e
 });
 
 Deno.test('"Built from <doc › page>": publish with fromDoc keeps the page and its rev; the page changes; Rebuild = update; the doc chip finds it', async () => {
-  const s = await studio();
+  const s = await aib();
   configureKeys(s.state);
   s.ctx.gate = new Gate(9, () => 'token');
   try {
@@ -361,7 +361,7 @@ Deno.test('"Built from <doc › page>": publish with fromDoc keeps the page and 
 });
 
 Deno.test('Edit on a Markdown artifact: a doc named after it (" (2)" when taken), linked; update refused became_doc; the live text; Undo while untouched', async () => {
-  const s = await studio();
+  const s = await aib();
   configureKeys(s.state);
   s.ctx.gate = new Gate(9, () => 'token');
   try {
@@ -433,7 +433,7 @@ Deno.test('Edit on a Markdown artifact: a doc named after it (" (2)" when taken)
 });
 
 Deno.test('artifact Delete through the real routes: the owner chat\'s folder, page only; doc routes refuse a deleted artifact; "Shown in" leaves it out', async () => {
-  const s = await studio();
+  const s = await aib();
   configureKeys(s.state);
   s.ctx.gate = new Gate(9, () => s.ctx.token);
   try {
@@ -489,7 +489,7 @@ Deno.test('artifact Delete through the real routes: the owner chat\'s folder, pa
 });
 
 Deno.test('the turn signal: a turn under 2 s and a cancelled turn both leave the refused note; one made good leaves none; presence and claims go', async () => {
-  const s = await studio();
+  const s = await aib();
   try {
     s.chat('c1', 'claude', 'a', '2026-11-11T10:00:00Z');
     s.chat('c2', 'codex', 'b', '2026-11-11T10:00:00Z');
@@ -543,7 +543,7 @@ Deno.test('the turn signal: a turn under 2 s and a cancelled turn both leave the
 });
 
 Deno.test('claims: shown in the doc state, released by the replacing edit or the turn end; the user takes one back; two chats never share a block', async () => {
-  const s = await studio();
+  const s = await aib();
   try {
     s.chat('c1', 'claude', 'a', null);
     s.chat('c2', 'codex', 'b', null);
@@ -587,7 +587,7 @@ Deno.test('claims: shown in the doc state, released by the replacing edit or the
 });
 
 Deno.test("an agent's page delete waits for the user: Delete snapshots then deletes the page as it stands, Keep tells the chat", async () => {
-  const s = await studio();
+  const s = await aib();
   try {
     await s.tool('claude:a', 'doc_create', { doc: 'plan', markdown: 'One.\n', title: 'Overview' });
     await s.tool('claude:a', 'doc_page', { doc: 'plan', action: 'add', title: 'Metrics', markdown: 'Agent numbers.' });
@@ -627,7 +627,7 @@ Deno.test("an agent's page delete waits for the user: Delete snapshots then dele
 });
 
 Deno.test('history for the page: authors by name, pages changed; restore is refused while keystrokes are in flight or an agent writes', async () => {
-  const s = await studio();
+  const s = await aib();
   try {
     s.chat('c1', 'claude', 'a', null);
     await s.ctx.artifacts.refresh();
@@ -663,7 +663,7 @@ Deno.test('history for the page: authors by name, pages changed; restore is refu
 });
 
 Deno.test('the user through the server: page add/rename/move/duplicate, comments, chart from a table; Markdown export never overwrites', async () => {
-  const s = await studio();
+  const s = await aib();
   const downloads = await temp('aib-downloads-');
   Deno.env.set('AIB_DOWNLOADS_DIR', downloads);
   try {

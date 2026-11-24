@@ -1,9 +1,9 @@
 /**
- * Helpers the web server and the in-process Studio both use (studio_shared.py): the agent list of the Settings page and the New chat
+ * Helpers the web server and the in-process AIB both use (studio_shared.py): the agent list of the Settings page and the New chat
  * dropdown, the install and sign-in rows read from their job files, the banner notices, and the validated conversation action.
  *
  * The "studio" argument is a small interface (StudioContext) so server/web/server.ts can pass its own context: the options, the
- * settings and conversation stores, the agent host's live list and calls, and a worktree lookup. JSON keys and messages are Python's.
+ * settings and conversation stores, the agent host's live list and calls, and a worktree lookup. JSON keys and messages are fixed.
  */
 import { keyStoreFor } from '../state/secrets.ts';
 import * as adapters from '../agents/adapters.ts';
@@ -61,25 +61,25 @@ export interface ConversationsLike {
   revision(): string;
 }
 
-/** What the web server (or an in-process Studio) passes as `self`. */
-export interface StudioContext {
+/** What the web server (or an in-process AIB) passes as `self`. */
+export interface AibContext {
   options: AgentOptions;
   settings: SettingsLike;
   conversations: ConversationsLike;
   liveList(): Promise<Record<string, unknown>> | Record<string, unknown>;
   liveCall(name: string, body: unknown): Promise<[number, unknown]> | [number, unknown];
-  studioOwns(provider: unknown, sessionId: unknown): Promise<boolean> | boolean;
+  aibOwns(provider: unknown, sessionId: unknown): Promise<boolean> | boolean;
   /** The agent host's info (its code hash and version), for the "older code" warning. */
   hostInfo?: unknown;
   /** Chats another AIB version still has working: this one switches over when they finish. */
   waitingChats?: number;
-  /** The chat's own Studio worktree, or null/undefined. Default: worktrees Registry(options.stateDir).find(null, session). */
+  /** The chat's own AIB worktree, or null/undefined. Default: worktrees Registry(options.stateDir).find(null, session). */
   findWorktree?(session: string): unknown | Promise<unknown>;
 }
 
 const hasOwn = (object: object, key: string) => Object.prototype.hasOwnProperty.call(object, key);
 
-/** The adapters lookup for one built-in agent: flag, then Settings, then Studio's own install, then the global adapter. */
+/** The adapters lookup for one built-in agent: flag, then Settings, then AIB's own install, then the global adapter. */
 export async function builtinLaunch(
   options: AgentOptions,
   settings: Pick<SettingsLike, 'launcher'> | null,
@@ -88,12 +88,12 @@ export async function builtinLaunch(
   const node = options.nodeCommand || '';
   const flag = String((agentId === 'claude' ? options.claudeLauncher : agentId === 'codex' ? options.codexLauncher : '') || '');
   const saved = settings !== null ? settings.launcher(agentId) : '';
-  const stateDir = options.stateDir ?? null; // Studio's own installs live under it; read fresh on every call
+  const stateDir = options.stateDir ?? null; // AIB's own installs live under it; read fresh on every call
   const resolve = agentId === 'claude' ? adapters.resolveClaude : adapters.resolveCodex;
   return await resolve({ flag, saved, nodeCommand: node, stateDir });
 }
 
-/** The Studio install job of a built-in agent while it is running or has failed, else null. Read from the job's state file. */
+/** AIB install job of a built-in agent while it is running or has failed, else null. Read from the job's state file. */
 export function installState(options: AgentOptions, agentId: string): installer.InstallView | null {
   const stateDir = options.stateDir;
   if (!stateDir || !hasOwn(adapters.STUDIO_PACKAGES, agentId)) return null;
@@ -196,7 +196,7 @@ export async function describeAgents(
         : '',
       packageBytes: sizes[agentId] || 0,
       signin: row.found ? signinView(options, agentId, state[agentId] ?? '') : null,
-      ...(setup ? { setup } : {}), // only on a card that still needs installing: the row keeps the Python reference's shape otherwise
+      ...(setup ? { setup } : {}), // only on a card that still needs installing: the row keeps its shape otherwise
       ...(cliHint ? { cliHint } : {}), // likewise: only a Codex adapter that has no Codex program to ask about the sign-in
     });
   }
@@ -373,7 +373,7 @@ function quietError(error: unknown): boolean {
  * (cached 30 s, `fresh` asks again): reachable, models, the API kinds it speaks, and `down`, the line New chat greys its entries with.
  */
 export async function modelServersView(
-  self: Pick<StudioContext, 'options' | 'settings'>,
+  self: Pick<AibContext, 'options' | 'settings'>,
   opts: { health?: boolean; fresh?: boolean } = {},
 ): Promise<Record<string, unknown>[]> {
   const snap = self.settings.snapshot();
@@ -407,7 +407,7 @@ export async function modelServersView(
 }
 
 export async function settingsView(
-  self: StudioContext,
+  self: AibContext,
   recheck = false,
   opts: { offThread?: boolean; health?: boolean; fresh?: boolean } = {},
 ): Promise<Record<string, unknown>> {
@@ -548,7 +548,7 @@ export function agentListOffThread(
 
 let packageCache: { value: string | null } | null = null; // packageContext() of this process (it cannot change while running)
 
-/** The amber line when Studio itself runs inside a packaged app's sandbox (its data is then in that app's private folder). */
+/** The amber line when AIB itself runs inside a packaged app's sandbox (its data is then in that app's private folder). */
 export function packageNotice(pkg: string | null | undefined, stateDir: unknown): string {
   if (!pkg) return '';
   return `AIB is running inside ${packageLabel(pkg)}'s sandbox, so its data is stored in that app's private folder (${stateDir}). ` +
@@ -559,7 +559,7 @@ export function packageNotice(pkg: string | null | undefined, stateDir: unknown)
  * What the page may show as a banner: hostCodeWarning (the running agent host loaded older code than this web server),
  * packageNotice, packageContext and hostTakeoverWaiting.
  */
-export async function notices(self: Pick<StudioContext, 'options' | 'hostInfo' | 'waitingChats'>): Promise<Record<string, unknown>> {
+export async function notices(self: Pick<AibContext, 'options' | 'hostInfo' | 'waitingChats'>): Promise<Record<string, unknown>> {
   packageCache ??= { value: packageContext() };
   const hostWarning = await codeWarning(self.hostInfo ?? null);
   const takeover = keeperTakeoverProblem();
@@ -573,10 +573,10 @@ export async function notices(self: Pick<StudioContext, 'options' | 'hostInfo' |
 }
 
 /** Validated pin/archive/delete/restore request. Returns [status, payload]. Throws ValueError (a 400) for a bad request. */
-export async function conversationAction(self: StudioContext, body: unknown): Promise<[number, Record<string, unknown>]> {
+export async function conversationAction(self: AibContext, body: unknown): Promise<[number, Record<string, unknown>]> {
   if (!isDict(body)) throw new ValueError('Invalid request');
   const { action, provider, sessionId } = body;
-  if (action === 'delete' && await self.studioOwns(provider, sessionId)) {
+  if (action === 'delete' && await self.aibOwns(provider, sessionId)) {
     return [409, {
       error: 'This conversation is live in AIB. End the AIB session first; nothing was deleted.',
       code: 'session_live',
@@ -610,11 +610,11 @@ export async function conversationAction(self: StudioContext, body: unknown): Pr
 }
 
 /**
- * A chat in its own Studio worktree that is archived or deleted: ask the side that owns the agents to remove a worktree without
+ * A chat in its own AIB worktree that is archived or deleted: ask the side that owns the agents to remove a worktree without
  * changes; one with changes is kept. null for every other chat (nothing is called). Never fails the action.
  */
 export async function worktreeAfter(
-  self: Pick<StudioContext, 'findWorktree' | 'liveCall' | 'options'>,
+  self: Pick<AibContext, 'findWorktree' | 'liveCall' | 'options'>,
   provider: string,
   sessionId: string,
 ): Promise<unknown> {

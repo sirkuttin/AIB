@@ -234,7 +234,7 @@ Deno.test('request-scoped form and close cleanup', async () => {
 });
 
 Deno.test('close releases the session lease and calls the release hook', async () => {
-  // test_owned_connection_releases_lease_on_close, with a stand-in lease (SessionLease is the Studio's).
+  // test_owned_connection_releases_lease_on_close, with a stand-in lease (SessionLease is AIB's).
   await using lab = new Lab();
   const c = await lab.open();
   const released: string[] = [];

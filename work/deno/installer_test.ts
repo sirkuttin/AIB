@@ -82,7 +82,7 @@ Deno.test({
     const folder = t.versionDir();
     assert(await waitFor(() => exists(join(folder, 'node_modules'))));
     assert(!exists(join(folder, adapters.COMPLETE_MARKER)));
-    assertEquals(adapters.findStudioInstall('claude', t.state), null);
+    assertEquals(adapters.findAibInstall('claude', t.state), null);
     const done = await t.finish();
     assertEquals([done!.state, done!.percent, done!.stage], ['done', 100, 'done'], JSON.stringify(done));
     const marker = join(folder, adapters.COMPLETE_MARKER);
@@ -152,7 +152,7 @@ Deno.test({
     await using t = base();
     await t.installer.start('codex');
     assertEquals((await t.finish('codex'))!.state, 'done');
-    const found = adapters.findStudioInstall('codex', t.state)!;
+    const found = adapters.findAibInstall('codex', t.state)!;
     assertEquals([found.package, found.version], ['@agentclientprotocol/codex-acp', '2.6.0']);
   },
 });
@@ -169,7 +169,7 @@ Deno.test({
       assertEquals(done.state, 'failed');
       assert(done.message.includes('9.9.9'), done.message);
       assert(!exists(t.versionDir()));
-      assertEquals(adapters.findStudioInstall('claude', t.state), null);
+      assertEquals(adapters.findAibInstall('claude', t.state), null);
     } finally {
       restore();
       Deno.env.delete('FAKE_NPM_VERSION');
@@ -261,7 +261,7 @@ Deno.test({
     assert(await waitFor(() => !pidAlive(child), 15), 'the grandchild of npm was killed too');
     assert(!exists(t.versionDir()), 'the half-made folder is deleted');
     assert(!exists(join(t.state, 'agents', 'claude', installer.LOCK_NAME)));
-    assertEquals(adapters.findStudioInstall('claude', t.state), null);
+    assertEquals(adapters.findAibInstall('claude', t.state), null);
     Deno.env.set('FAKE_NPM_MODE', 'ok'); // and a new install can start right away
     assertEquals((await t.installer.start('claude')).attached, false);
     assertEquals((await t.finish())!.state, 'done');
@@ -532,7 +532,7 @@ Deno.test({
     const mine = installer.readStatus(t.state, 'codex');
     assertEquals(await py.call('agent_installer', 'read_status', [t.state, 'codex']), mine);
     assertEquals(mine, { agent: 'codex', state: 'done', stage: 'done', percent: 100, message: '', version: '2.6.0' });
-    assertEquals(await py.call('adapters', 'find_studio_install', ['codex', t.state]), adapters.findStudioInstall('codex', t.state));
+    assertEquals(await py.call('adapters', 'find_studio_install', ['codex', t.state]), adapters.findAibInstall('codex', t.state));
 
     // the same keys in the same order with the same spacing; only updatedAt differs
     const path = join(t.state, 'agents', 'claude', installer.STATE_NAME);
@@ -602,14 +602,14 @@ Deno.test({
     const [claude] = makeInstall(t.state, 'claude', '0.102.0', '@agentclientprotocol/claude-agent-acp');
     const agentFolder = join(t.state, 'agents', 'codex');
     for (const name of [installer.STATE_NAME, installer.LOG_NAME, 'signin.json']) Deno.writeTextFileSync(join(agentFolder, name), '{}');
-    assert(adapters.findStudioInstall('codex', t.state));
+    assert(adapters.findAibInstall('codex', t.state));
     const view = await t.installer.uninstall('codex');
     assertEquals([view.state, view.agent], ['idle', 'codex']);
     assertEquals([...view.removed].sort(), ['2.5.0', '2.6.0', '2.7.0-beta']);
     for (const gone of [current, older, leftover, join(agentFolder, installer.STATE_NAME), join(agentFolder, 'signin.json')]) {
       assert(!exists(gone), gone);
     }
-    assertEquals(adapters.findStudioInstall('codex', t.state), null, 'the row falls back to another install, or Install');
+    assertEquals(adapters.findAibInstall('codex', t.state), null, 'the row falls back to another install, or Install');
     assert(exists(join(claude, '.complete')), 'another agent is never touched');
     assertEquals((await t.installer.status('codex')).state, 'idle');
     const again = await assertRejects(() => t.installer.uninstall('codex'), InstallRefused);
@@ -672,27 +672,27 @@ Deno.test({
     using dir = tempDir();
     const state = join(dir.root, 'state');
     const [folder] = makeInstall(state, 'codex', '2.6.0', CODEX_PKG);
-    const studio = new Aib({ ompCommand: 'unused', stateDir: state, port: 0 } as never);
+    const aib = new Aib({ ompCommand: 'unused', stateDir: state, port: 0 } as never);
     try {
       const chat = { id: 'c1', provider: 'codex', closed: false };
-      studio.connections.set('c1', chat as never);
-      studio.connections.set('c2', { id: 'c2', provider: 'claude', closed: false } as never);
-      const [code, refused] = await studio.installCall('uninstall', 'codex') as [number, Record<string, unknown>];
+      aib.connections.set('c1', chat as never);
+      aib.connections.set('c2', { id: 'c2', provider: 'claude', closed: false } as never);
+      const [code, refused] = await aib.installCall('uninstall', 'codex') as [number, Record<string, unknown>];
       assertEquals([code, refused.code], [409, 'install_refused']);
       assert(String(refused.error).includes('Codex has a chat open'), String(refused.error));
       assert(exists(folder));
-      const [checkCode, checked] = await studio.installCall('uninstall-check', 'codex') as [number, Record<string, unknown>];
+      const [checkCode, checked] = await aib.installCall('uninstall-check', 'codex') as [number, Record<string, unknown>];
       assertEquals([checkCode, checked.code], [409, 'install_refused'], 'the check runs the same refusals');
       chat.closed = true;
-      const [fine, check] = await studio.installCall('uninstall-check', 'codex') as [number, Record<string, unknown>];
+      const [fine, check] = await aib.installCall('uninstall-check', 'codex') as [number, Record<string, unknown>];
       assertEquals([fine, check.ok, check.removed], [200, true, []]);
       assert(exists(folder), 'a check removes nothing');
-      const [ok, done] = await studio.installCall('uninstall', 'codex') as [number, Record<string, unknown>];
+      const [ok, done] = await aib.installCall('uninstall', 'codex') as [number, Record<string, unknown>];
       assertEquals([ok, done.ok, done.removed], [200, true, ['2.6.0']]);
       assert(!exists(folder));
-      studio.connections.clear();
+      aib.connections.clear();
     } finally {
-      await studio.close().catch(() => {});
+      await aib.close().catch(() => {});
     }
   },
 });
@@ -704,19 +704,19 @@ Deno.test({
     for (const deliberate of [true, false]) {
       using dir = tempDir();
       const state = join(dir.root, 'state');
-      const studio = new Aib({ ompCommand: 'unused', stateDir: state, port: 0 } as never);
+      const aib = new Aib({ ompCommand: 'unused', stateDir: state, port: 0 } as never);
       const receipts = new Map([
         ['sent-1', { fingerprint: 'f1', state: 'working', sent: true }],
         ['queued-2', { fingerprint: 'f2', state: 'working' }], // still before session/prompt: the agent never had it
       ]);
-      studio.store!.setReceipt('claude', 's1', 'sent-1', 'f1', 'working');
-      studio.store!.setReceipt('claude', 's1', 'queued-2', 'f2', 'working');
-      studio.connections.set('c1', { id: 'c1', provider: 'claude', sessionId: 's1', closed: false, promptReceipts: receipts, close: async () => {} } as never);
-      studio.deliberateStop = deliberate;
-      await studio.close();
-      const unknown = studio.store!.unknownReceipts('claude', 's1').map((u) => u.clientMessageId).sort();
+      aib.store!.setReceipt('claude', 's1', 'sent-1', 'f1', 'working');
+      aib.store!.setReceipt('claude', 's1', 'queued-2', 'f2', 'working');
+      aib.connections.set('c1', { id: 'c1', provider: 'claude', sessionId: 's1', closed: false, promptReceipts: receipts, close: async () => {} } as never);
+      aib.deliberateStop = deliberate;
+      await aib.close();
+      const unknown = aib.store!.unknownReceipts('claude', 's1').map((u) => u.clientMessageId).sort();
       assertEquals(unknown, deliberate ? ['queued-2'] : ['queued-2', 'sent-1'], deliberate ? 'stopped on purpose' : 'any other stop');
-      if (deliberate) assertEquals(studio.store!.receipt('claude', 's1', 'sent-1')?.state, 'finished');
+      if (deliberate) assertEquals(aib.store!.receipt('claude', 's1', 'sent-1')?.state, 'finished');
     }
   },
 });

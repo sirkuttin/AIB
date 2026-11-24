@@ -4,9 +4,9 @@
   // The workspace code (workspace-ui.js) feeds it the same normalized chats the inbox and tabs use, after every list refresh, so
   // the words and the rules (hidden projects, worktree and scratch folders) match the list. Everything here is decided from
   // TRANSITIONS: a chat newly entering needs-you or your-turn is announced once, never again for the same transition.
-  //   * Studio in front (visible and focused): no desktop notification and no sound; the badge and the sidebar show it.
+  //   * AIB in front (visible and focused): no desktop notification and no sound; the badge and the sidebar show it.
   //     Chats other than the one you are looking at get a small in-page toast (it saves a trip to the inbox).
-  //   * Studio away (hidden or not focused): a desktop notification (if turned on) and a sound (per setting).
+  //   * AIB away (hidden or not focused): a desktop notification (if turned on) and a sound (per setting).
   //   * Transitions within about a minute merge into ONE notification ("3 agents are waiting for you") that replaces the older.
   //   * Muted projects (server-side project prefs) never notify or sound; the inbox still lists them.
   // In the AIB desktop app the SERVER shows desktop notifications (server/attention/watcher.ts, through server/desktop/notify.ts):
@@ -136,7 +136,7 @@
   const supported = () => native() || typeof root.Notification === 'function';
   const permission = () => (native() ? 'granted' : supported() ? root.Notification.permission : 'unsupported');
   const desktopReady = () => S.prefs.desktop && permission() === 'granted';
-  // Studio is "in front" only when the page is visible AND has focus; otherwise you are away.
+  // AIB is "in front" only when the page is visible AND has focus; otherwise you are away.
   const away = () => {
     const d = doc();
     return (
@@ -240,7 +240,7 @@
     }
   }
 
-  // ---- in-page toasts (Studio in front, a chat other than the one you are looking at) ----
+  // ---- in-page toasts (AIB in front, a chat other than the one you are looking at) ----
   // The toast is where you answer (inbox prototype v3): the same card as the inbox. Line 1 is the thing itself (the command,
   // file, question or error), line 2 "chat · project" and the wait; ONE row of actions: the agent's own once-options (Allow /
   // Deny), the choices, Reply with the box in place, Retry. Risky commands (push, force push, delete) show Review first, then
@@ -600,7 +600,7 @@
     }
   }
 
-  // Studio came back to the front: the notification has done its job.
+  // AIB came back to the front: the notification has done its job.
   function comeBack() {
     if (!away()) {
       closeShown();

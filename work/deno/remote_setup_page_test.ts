@@ -9,8 +9,8 @@ import { assert, assertEquals } from "./_assert.ts";
 import { Browser, browserPath, type Page } from "./_doc_browser.ts";
 import {
   pc,
-  type RemoteStudio,
-  remoteStudio,
+  type RemoteAib,
+  remoteAib,
   tempDir,
 } from "./_remote_fixture.ts";
 import { assertSafe, LOGIN_URL, tailscaleSim } from "./_tailscale_sim.ts";
@@ -24,7 +24,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function openRemote(
   page: Page,
-  s: RemoteStudio,
+  s: RemoteAib,
   width = 1280,
 ): Promise<void> {
   await page.viewport(width, 900);
@@ -77,7 +77,7 @@ Deno.test({
         };
       }
     });
-    const s = await remoteStudio({
+    const s = await remoteAib({
       runner: sim.runner,
       setupEnv: sim.env(),
       bindRetryMs: 300,
@@ -174,7 +174,7 @@ Deno.test({
     "Remote control re-check: every 3 s while a step waits; none while another section is shown or Settings is closed",
   async fn() {
     const sim = tailscaleSim({ https: false });
-    const s = await remoteStudio({
+    const s = await remoteAib({
       runner: sim.runner,
       setupEnv: sim.env(),
       bindRetryMs: 300,
@@ -254,7 +254,7 @@ Deno.test({
         "8443": "tcp://127.0.0.1:22",
       },
     });
-    const s = await remoteStudio({
+    const s = await remoteAib({
       runner: sim.runner,
       setupEnv: sim.env({ os: () => "linux" }),
       bindRetryMs: 300,
@@ -389,7 +389,7 @@ Deno.test({
       `${root}/state/phone-access.json`,
       JSON.stringify({ version: 1, on: true, via: "tailscale", shared: true }),
     );
-    const s = await remoteStudio({
+    const s = await remoteAib({
       runner: sim.runner,
       setupEnv: sim.env(),
       bindRetryMs: 300,

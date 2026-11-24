@@ -49,7 +49,7 @@ async function until(check: () => boolean | Promise<boolean>, what: string, ms =
 }
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Studio's side, faked: the live calls the file editor makes. */
+/** AIB's side, faked: the live calls the file editor makes. */
 class FakeHost {
   calls: { name: string; body: Json }[] = [];
   events: { seq: number; paths: string[]; who: string; chat: string }[] = [];

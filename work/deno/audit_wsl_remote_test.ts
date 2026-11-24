@@ -19,7 +19,7 @@ import { folderKey } from '../../app/server/state/agent_options.ts';
 import { permissionDetail } from '../../app/server/remote/actions.ts';
 import { setDistroSource, setWslHostResolver } from '../../app/server/wsl/access.ts';
 import { pairPhone } from './_remote_fixture.ts';
-import { liveChat, phoneCall, v2Studio } from './_remote_v2b.ts';
+import { liveChat, phoneCall, v2Aib } from './_remote_v2b.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
 type Json = Record<string, unknown>;
@@ -30,7 +30,7 @@ Deno.env.set('AGENT_STUDIO_TEST', '1');
 Deno.env.set('AIB_WSL_ROOT', '/tmp/aib-wsl-test-audit-remote');
 
 /** The fake host's liveList with each chat's projectRoot from `roots` (the fixture files every chat under its cwd). */
-function withRoots(s: Awaited<ReturnType<typeof v2Studio>>, roots: Record<string, string>, recovered: Json[] = []): void {
+function withRoots(s: Awaited<ReturnType<typeof v2Aib>>, roots: Record<string, string>, recovered: Json[] = []): void {
   const host = s.ctx.host as unknown as { liveList: () => Promise<Json>; liveState: (id: string, after?: number) => Promise<Json | null> };
   const list = host.liveList.bind(host), state = host.liveState.bind(host);
   host.liveList = async () => {
@@ -51,7 +51,7 @@ Deno.test({
   ...OPTS,
   name: 'phone + WSL project: home files WSL chats (and a WSL worktree chat) under the project, New chat starts with the ref, no path sent',
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     try {
       await s.ctx.addedProjects.add(REF);
       const phone = await pairPhone(s);
@@ -105,7 +105,7 @@ Deno.test({
   ...OPTS,
   name: 'phone + WSL saved chats: a recovered WSL worktree chat and a distro session are listed; history via the distro; Continue keeps the ref',
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     const host = new FakeWslHost('unused', 'Ubuntu');
     host.handlers['transcripts.sessions'] = (p) => ({
       sessions: p.provider === 'claude'

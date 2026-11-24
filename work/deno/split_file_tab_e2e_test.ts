@@ -4,7 +4,7 @@
  * went, with no way back. Now the file shows inside the first pane (the one whose strip holds the file tab), the other pane and both
  * strips stay, and the first pane's chat tab brings the chat back.
  *
- * A real Studio (temp state and workspace, free port; never the live ports), the scripted agent, a headless Chrome/Edge.
+ * A real AIB (temp state and workspace, free port; never the live ports), the scripted agent, a headless Chrome/Edge.
  * Run (from app): deno task test --jobs 1 split_file_tab
  */
 import { assert, assertEquals } from './_assert.ts';

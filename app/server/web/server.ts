@@ -1,8 +1,8 @@
 /**
  * The Deno web server (studio.py's web side, web_handler.py's dispatch). One gate for every request (security.ts), then the route:
- * the live routes answered by the agent host (live_routes.ts), the Studio routes (studio_routes.ts), the transcript viewer
- * (transcripts/monitor.ts), the page files and bootstrap below. Every route is served here; stage B's private Python web server is gone.
- * The HTTP API is the Python server's (retired 2026-11-23); work/deno/contract_*_test.ts check it over HTTP.
+ * the live routes answered by the agent host (live_routes.ts), AIB routes (studio_routes.ts), the transcript viewer
+ * (transcripts/monitor.ts), the page files and bootstrap below. Every route is served here.
+ * work/deno/contract_*_test.ts check the HTTP API over HTTP.
  */
 import { type Backend, KeepAwake, realBackend } from '../platform/keep_awake.ts';
 import { ABOUT_LINE, APP_ROOT, APP_VERSION, servedFile, VERSION_LABEL } from '../core/app.ts';
@@ -19,7 +19,7 @@ import { keptLinesIn } from '../history/lines.ts';
 import { stoppedWhyIn } from '../swarm/registry.ts';
 import { reapedWhyIn } from '../subagents/reap.ts';
 import { liveRoutes } from './live_routes.ts';
-import { chatStudioOf, makeLauncher, ownGatePost, savedFolders, type AibHandler, studioOf, aibRoutes } from './aib_routes.ts';
+import { chatAibOf, makeLauncher, ownGatePost, savedFolders, type AibHandler, aibOf, aibRoutes } from './aib_routes.ts';
 import { type AgentOptions, notices } from './shared.ts';
 import { check as checkArtifactKey } from '../artifacts/keys.ts';
 import { Artifacts } from './artifact_wiring.ts';
@@ -70,7 +70,7 @@ const PROMPT_ROUTES = new Set(['/api/live/prompt', '/api/live/steer', '/api/live
 /** Routes with a smaller body limit than MAX_BODY (bytes; counted as read, not only as declared). */
 const SMALL_BODY = new Map([['/api/live/desktop/windows', MAX_WINDOWS_BODY]]);
 
-/** Vendored libraries (Deno only; the Python reference server has none): vendor/xterm|docs|code/<name>.js|css (code: the file
+/** Vendored libraries: vendor/xterm|docs|code/<name>.js|css (code: the file
  * editor's CodeMirror bundle, tools/code-vendor/build.mjs). */
 const VENDOR_ASSET = /^\/vendor\/(xterm|docs|code)\/([a-z0-9][a-z0-9-]*\.(?:js|css))$/;
 /** The drawing page's Excalidraw bundle (tools/drawing/build.mjs): its code-split chunks, its CSS and its fonts. The server-only
@@ -206,7 +206,7 @@ export interface WebContext {
   pageAccess: PageAccess;
   webInstanceId: string;
   port: number;
-  /** The --port flag as given (bootstrap reports it as webPort, like Python: 0 when any free port was asked for). */
+  /** The --port flag as given (bootstrap reports it as webPort: 0 when any free port was asked for). */
   cliPort: number;
   host: LiveBackend;
   /** The update checker and installer (updater.ts), started by main.ts. */
@@ -461,7 +461,7 @@ export class WebServer {
     this.native.set('GET /api/live/bootstrap', async (c, _url, _body, request) => {
       const boot = await this.bootstrap(c);
       // The token only for the page: a page session (or a launcher's fixed key) (page_access.ts). Anyone else (a program on this PC,
-      // an agent's shell command) gets every other field and an empty token, so the keys stay those of the Python reference.
+      // an agent's shell command) gets every other field and an empty token, so the keys stay the same.
       if (!c.pageAccess.allows(request.headers)) boot.token = '';
       return this.json(200, boot);
     });
@@ -494,8 +494,7 @@ export class WebServer {
   }
 
   /**
-   * web_handler.get_bootstrap, key for key. server.python (sys.version in Python) is kept as '' so the keys match; this server runs
-   * no Python of its own.
+   * The bootstrap answer, key for key. server.python is kept as '' so the keys match older pages; this server runs no Python.
    */
   async bootstrap(c: WebContext): Promise<Record<string, unknown>> {
     const info = await c.host.liveInfo();
@@ -520,8 +519,7 @@ export class WebServer {
         hostStartedAt: info.startedAt ?? null,
         webStartedAt: WEB_STARTED,
         hostAutoReconnect: startedWith.autoReconnect ?? null,
-        // Settings > About: why the keeper is not used although it should be (it could not run; AIB fell back). Only present then:
-        // the Python reference has no keeper and no such key.
+        // Settings > About: why the keeper is not used although it should be (it could not run; AIB fell back). Only present then.
         ...(keeperProblem() ? { keeperProblem: keeperProblem() } : {}),
         python: '',
         webPort: c.cliPort,
@@ -547,7 +545,7 @@ export class WebServer {
         conversationOrganize: true,
       },
       connections: info.connections,
-      ...(await notices(studioOf(c))),
+      ...(await notices(aibOf(c))),
       ...(info.unavailable ? { hostProblem: info.unavailable } : {}),
     };
   }
@@ -795,7 +793,7 @@ async function drain(request: Request): Promise<void> {
   } catch { /* nothing to read */ }
 }
 
-/** Python's json.loads error text is shown for a broken body; close enough for a person, and only `error` is a contract. */
+/** The JSON parse error text is shown for a broken body; close enough for a person, and only `error` is a contract. */
 function pythonJsonError(error: unknown): string {
   return `Expecting value: ${error instanceof Error ? error.message : String(error)}`;
 }
@@ -814,7 +812,7 @@ export function makeContext(
     agentOptions?: AgentOptions;
     /** Run the chats' terminal shells in the keeper (null or absent: as children of this process). */
     terminalKeeper?: KeeperLink | null;
-    /** Stores to share (an --in-process Studio passes its own, so one instance of each file is read and written). */
+    /** Stores to share (an --in-process AIB passes its own, so one instance of each file is read and written). */
     stores?: { conversations?: ConversationState; projectPrefs?: ProjectPrefs; readState?: ReadState; settings?: SettingsStore };
     /** Phone access options (tests: a fake Tailscale CLI, a short bind retry). */
     phone?: AccessOptions;
@@ -898,7 +896,7 @@ export function makeContext(
     options.stateDir,
     options.host,
     () => ctx.token,
-    async (chat) => chatStudioOf(ctx, await savedFolders(ctx, chat)),
+    async (chat) => chatAibOf(ctx, await savedFolders(ctx, chat)),
   );
   ctx.liveFiles = new LiveFiles({
     stateDir: options.stateDir,

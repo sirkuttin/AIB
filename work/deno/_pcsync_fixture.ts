@@ -10,12 +10,12 @@ import { readRemotePort } from '../../app/server/remote/port.ts';
 import type { Runner } from '../../app/server/remote/tailscale.ts';
 import type { LinkTimings } from '../../app/server/pcsync/link.ts';
 import type { FileTimings } from '../../app/server/pcsync/files.ts';
-import { LOGIN, pc, raw, type RemoteStudio, remoteStudio, tailscaleStatus, tempDir } from './_remote_fixture.ts';
+import { LOGIN, pc, raw, type RemoteAib, remoteAib, tailscaleStatus, tempDir } from './_remote_fixture.ts';
 
 export type Json = Record<string, unknown>;
 
 export interface Node {
-  s: RemoteStudio;
+  s: RemoteAib;
   name: string;
   machine: string;
   shared: boolean;
@@ -102,7 +102,7 @@ export async function twoNodes(link: Partial<LinkTimings> = TEST_LINK, files: Pa
       return Promise.resolve({ code: 1, stdout: '' });
     };
     const start = async (root?: string) => {
-      node.s = await remoteStudio({ runner }, root, {
+      node.s = await remoteAib({ runner }, root, {
         saved: true,
         pcsync: { runner, port: 0, pollMs: 50, link, files, peerUrl: (host) => urls.get(host) ?? 'http://127.0.0.1:1' },
       });

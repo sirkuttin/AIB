@@ -2,7 +2,7 @@
   'use strict';
   // Split view, the page side. split-tree.js decides what a layout is; this file draws it and takes the gestures.
   //
-  // One pane is the Studio of today: nothing here touches the page until a second pane exists. With two or more, the chat
+  // One pane is AIB of today: nothing here touches the page until a second pane exists. With two or more, the chat
   // view that already exists (header, message list, message box, Activity feed) is moved into the FOCUSED pane. Every other
   // pane shows a live read-only copy of its chat (a "mirror": title, messages, a message box that focuses the pane when
   // clicked). Focusing a pane opens its chat in the real view, so the Activity column, Changes, Artifacts, Ctrl+K and

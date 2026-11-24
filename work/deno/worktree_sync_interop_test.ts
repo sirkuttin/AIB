@@ -52,7 +52,7 @@ Deno.test({
   fn: async () => {
     using box = new Sandbox();
     const ctx = await setup(box);
-    const live = new LiveSync(ctx.studio, 0.1, 0.3, true);
+    const live = new LiveSync(ctx.aib, 0.1, 0.3, true);
     live.maxSettle = 30;
     try {
       await live.chatOpened(ctx.conns[0]);
@@ -91,7 +91,7 @@ Deno.test({
 Deno.test('the project folder is free right after stopAll', async () => {
   using box = new Sandbox();
   const ctx = await setup(box);
-  const live = new LiveSync(ctx.studio, 0.1, 60, true); // a 60 s poll: on Windows only the folder watcher can be this quick
+  const live = new LiveSync(ctx.aib, 0.1, 60, true); // a 60 s poll: on Windows only the folder watcher can be this quick
   await live.chatOpened(ctx.conns[0]);
   const running = [...live.projects.values()][0];
   await until(() => running.baselined.isSet(), 'baseline');
@@ -229,13 +229,13 @@ Deno.test('the same user and chat edits give the worktrees, commits, records, no
     await manager.create(plan);
     denoSide.wt = plan.path;
     const conn = new Conn(denoSide.wt);
-    const studio = {
+    const aib = {
       stateDir: denoSide.state,
       worktrees: manager,
       settings: { worktreePerChat: () => true },
       connections: new Map([['c1', conn]]),
     };
-    const live = new LiveSync(studio, sync.settings.SETTLE, sync.settings.POLL, false);
+    const live = new LiveSync(aib, sync.settings.SETTLE, sync.settings.POLL, false);
     const ps = new ProjectSync(live, denoSide.project);
 
     const files = (root: string): Record<string, string> => {

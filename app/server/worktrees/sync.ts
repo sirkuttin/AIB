@@ -4,8 +4,8 @@
  * Runs next to the connections (the agent host). For every project that has at least one open, Studio-owned worktree chat there is
  * one watcher task:
  *
- *   trigger    Deno.watchFs (recursive; ReadDirectoryChangesW underneath on Windows, where Python used ctypes) pokes the task; a 2 s
- *              poll runs as well, and is the only trigger elsewhere (as in Python, the folder watcher is used on Windows only), except
+ *   trigger    Deno.watchFs (recursive; ReadDirectoryChangesW underneath on Windows, where it is the native directory-change API) pokes the task; a 2 s
+ *              poll runs as well, and is the only trigger elsewhere (the folder watcher is used on Windows only), except
  *              in the WSL helper, whose LiveSync is made with watchHere (inotify underneath: wsl/helper/sync.ts). A burst of events is
  *              debounced for 400 ms.
  *   candidates `git status --porcelain -z -uall` in the project folder (GIT_OPTIONAL_LOCKS=0). `.env*` files are listed by a small walk.
@@ -14,16 +14,15 @@
  *   no echoes  nothing happens while Merge holds the project's "sync paused" flag; a scan whose project HEAD moved takes a new
  *              baseline and catches the chats up (dirty files only, so a save just after the move is not lost in the baseline); more than 200 changed files in one scan pause the project until the user presses Resume (worktree-sync.json).
  *
- * Per chat worktree, under its worktree lock (a cross-process lock file shared with Python's worktrees.worktree_lock, so a Python host
- * and a Deno process never write into the same worktree at once): a changed file the chat has not touched is written through a temp
+ * Per chat worktree, under its worktree lock (a cross-process lock file shared by every version, so hosts of different versions
+ * never write into the same worktree at once): a changed file the chat has not touched is written through a temp
  * file plus rename, then U moves (worktrees.advanceUserBase). A file the chat has touched goes to pendingSync and is merged with
  * `git merge-file` at a turn boundary (stage G3). `.env*` files are only copied into a chat that has not changed them, never merged.
  * A chat whose record names `editsFrom` (every chat made since chats start from main) takes nothing while the project folder has
  * another branch checked out: those edits belong to that branch. It waits as stale and catches up once the folder is back on it.
  *
- * Python's threads are async tasks here: the per-project RLock is an async mutex (the scan's own catch-ups pass it as `held`, which is
- * what re-entrancy gave Python), the turn hooks share one mutex that stopAll waits for, and registry read-modify-writes go through
- * Registry.mutate (Python: `with registry.lock`). catchUp() is the one restart function.
+ * The per-project lock is an async mutex (the scan's own catch-ups pass it as `held`, which gives re-entrancy), the turn hooks share one mutex that stopAll waits for, and registry read-modify-writes go through
+ * Registry.mutate. catchUp() is the one restart function.
  *
  * The pause-flag helpers (pauseInfo, resumeSync, pausedStatus) and the read-mostly helpers Merge calls (settleConflicts, openClashes,
  * clashLine) live here; merge.ts re-exports them.
@@ -44,7 +43,7 @@ import { copyAtomic, writeAtomic } from './atomic.ts';
 
 const log = getLogger('worktree_sync');
 
-/** Python's module constants, mutable so tests can lower them (the Python tests patch the module or the LiveSync instance). */
+/** Module constants, mutable so tests can lower them. */
 export const settings = {
   SETTLE: 0.4, // seconds of quiet before a scan
   MAX_SETTLE: 2.0, // a steady stream of events cannot postpone the scan for longer than this
@@ -61,7 +60,7 @@ export const MAX_NOTE_PATHS = 50;
 export const MAX_STORED_PATHS = 200;
 export const SYNC_FILE = 'worktree-sync.json';
 export const UNMERGED = new Set(['DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU']);
-/** Python: re.compile(r'(?:\.sw[a-z]$|~$|^\.#|^4913$|\.tmp$|\.tmp\.|^#.*#$|^\.~lock\.|\.crswap$|\.part$|^\.goutputstream-)', re.I) */
+/** Editor temp file pattern: (?:\.sw[a-z]$|~$|^\.#|^4913$|\.tmp$|\.tmp\.|^#.*#$|^\.~lock\.|\.crswap$|\.part$|^\.goutputstream-)', re.I) */
 const TEMP_NAME = /(?:\.sw[a-z]$|~$|^\.#|^4913$|\.tmp$|\.tmp\.|^#.*#$|^\.~lock\.|\.crswap$|\.part$|^\.goutputstream-)/i;
 
 function lastName(path: unknown): string {
@@ -89,14 +88,14 @@ const strings = (value: unknown): string[] => list(value).filter((p): p is strin
 const unique = <T>(items: T[]): T[] => [...new Set(items)];
 const nowMono = () => performance.now() / 1000;
 
-/** A dict field of a record as a Map in file order (a Map keeps every key's place, as Python's dict does). */
+/** A dict field of a record as a Map in file order (a Map keeps every key's place). */
 function dictOf(value: unknown): Map<string, unknown> {
   const out = new Map<string, unknown>();
   if (isDict(value)) { for (const [k, v] of entriesOf(value)) out.set(k, v); }
   return out;
 }
 
-/** Python OSError: any Deno I/O error, or a lock wait that timed out (Python's TimeoutError). */
+/** OSError: any Deno I/O error, or a lock wait that timed out. */
 function isOSError(error: unknown): boolean {
   if (error instanceof LockTimeout) return true;
   return Object.values(Deno.errors).some((type) => typeof type === 'function' && error instanceof type);
@@ -163,7 +162,7 @@ export async function setPaused(stateDir: string, project: string, count: number
 
 /**
  * worktree_sync.resume: the user pressed Resume on the amber line. True when the project was paused. The host's watcher sees the flag
- * go and catches up. A lock wait that times out is an OSError (Python's TimeoutError), so the route answers 400.
+ * go and catches up. A lock wait that times out is an OSError, so the route answers 400.
  */
 export async function resumeSync(stateDir: string, project: unknown): Promise<boolean> {
   if (typeof project !== 'string' || !project) return false;
@@ -215,7 +214,7 @@ export function sigOf(project: string, path: string): Sig | null {
   return [kind, info.size, info.mtime?.getTime() ?? 0];
 }
 
-/** Python's `a != b` for two signatures; undefined is "absent" (never equal to anything). */
+/** `a != b` for two signatures; undefined is "absent" (never equal to anything). */
 function sameSig(a: Sig | null | undefined, b: Sig | null | undefined): boolean {
   if (a === undefined || b === undefined) return false;
   if (a === null || b === null) return a === b;
@@ -486,7 +485,7 @@ export function clashLine(files: string[]): string {
 }
 
 /**
- * Registry update under its lock (Python: `with registry.lock: now = registry.get(key) or {}; ...; registry.update(key, **fields)`).
+ * Registry update under its lock.
  * `build` gets the current record and returns the fields to set ({} or null: nothing to save). A missing record is left alone.
  */
 async function amend(
@@ -547,7 +546,7 @@ export const NOTE_TEXT: Record<string, string> = {
   env: 'The user changed these .env files, which you also changed. Env files are never merged, so your version was kept',
 };
 
-// ---- small async primitives (Python's threading.Event and RLock) -------------------------------------------------------
+// ---- small async primitives -------------------------------------------------------
 /** threading.Event: set / clear / isSet / wait(seconds) -> whether it is set. */
 export class Flag {
   #set = false;
@@ -649,7 +648,7 @@ export class DirWatcher {
             this.poke('');
             continue;
           }
-          if (event.kind === 'access') continue; // Python's filter: names, size, last write, creation
+          if (event.kind === 'access') continue; // the filter: names, size, last write, creation
           this.events++;
           for (const path of event.paths) this.poke(relative(path));
         }
@@ -729,7 +728,7 @@ export class ProjectSync {
   async close(wait = true): Promise<void> {
     this.stop.set();
     this.event.set();
-    this.baselined.set(); // a chat-open catch-up waiting for the baseline goes on (Python: its 10 s wait ran out)
+    this.baselined.set(); // a chat-open catch-up waiting for the baseline goes on
     await this.releaseNotifier();
     if (wait) await within(this.done, settings.CLOSE_WAIT);
   }
@@ -882,8 +881,8 @@ export interface SyncConnection {
   public(since?: number): unknown;
 }
 
-/** What live sync needs from the Studio of the agent host. */
-export interface SyncStudio {
+/** What live sync needs from AIB of the agent host. */
+export interface SyncHost {
   stateDir: string;
   worktrees: { registry: wt.Registry } | null;
   settings: { worktreePerChat(): boolean };
@@ -915,10 +914,10 @@ export class LiveSync {
   readonly stale = new Set<string>(); // chat keys that could not take a sync (a merge in progress, a lock): caught up later
   closed = false;
   readonly hooks = new Mutex(); // the turn hooks run under it; stopAll waits for the ones in flight
-  /** Whether the folder watcher is used on this OS: Windows only (as in Python), unless told (the WSL helper: inotify). */
+  /** Whether the folder watcher is used on this OS: Windows only, unless told (the WSL helper: inotify). */
   readonly watchHere: boolean;
 
-  constructor(readonly studio: SyncStudio, settle = settings.SETTLE, poll = settings.POLL, watchFolders = true, watchHere = WIN) {
+  constructor(readonly aib: SyncHost, settle = settings.SETTLE, poll = settings.POLL, watchFolders = true, watchHere = WIN) {
     this.settle = settle;
     this.poll = poll;
     this.watchFolders = watchFolders;
@@ -927,24 +926,24 @@ export class LiveSync {
 
   // -- who is watched
   get stateDir(): string {
-    return this.studio.stateDir;
+    return this.aib.stateDir;
   }
 
   get registry(): wt.Registry {
-    return this.studio.worktrees!.registry;
+    return this.aib.worktrees!.registry;
   }
 
   /** On for every chat in its own copy (a helper, or a chat made before 2026-11-16); not gated on the hidden worktreePerChat flag. */
   enabled(): boolean {
-    return !!(this.studio.worktrees && !this.closed);
+    return !!(this.aib.worktrees && !this.closed);
   }
 
   /** [key, record] of the open, Studio-owned worktree chats (of one project). */
   chats(project: string | null = null): [string, WorktreeRecord & { key: string }][] {
     const found: [string, WorktreeRecord & { key: string }][] = [];
     const seen = new Set<string>();
-    if (!this.studio.worktrees) return found;
-    const connections = [...this.studio.connections.values()].filter((c) => !c.closed && pyTruthy(c.worktree ?? null));
+    if (!this.aib.worktrees) return found;
+    const connections = [...this.aib.connections.values()].filter((c) => !c.closed && pyTruthy(c.worktree ?? null));
     for (const connection of connections) {
       const record = this.registry.find(connection.cwd);
       if (!record || seen.has(record.key) || (project !== null && !wt.same(str(record.project), project))) continue;
@@ -999,14 +998,14 @@ export class LiveSync {
     for (const worker of [...this.workers]) await within(worker, 5);
   }
 
-  /** Run `work` under the project's scan lock (Python's RLock: `held` is the lock the caller already holds). */
+  /** Run `work` under the project's scan lock. */
   async underProjectLock<T>(project: string, work: () => Promise<T>, held: Mutex | null = null): Promise<T> {
     const sync = this.projects.get(projectKey(project));
     if (!sync || sync.lock === held) return await work();
     return await sync.lock.run(work);
   }
 
-  // -- hooks from Studio
+  // -- hooks from AIB
   /**
    * A worktree chat is ready (new, resumed or reconnected at host start): watch its project and catch it up on what the user saved
    * while it was closed (in the background: opening a chat never waits for this).
@@ -1326,7 +1325,7 @@ export class LiveSync {
   }
 
   async contextSent(connection: SyncConnection, tokenIn: unknown): Promise<void> {
-    const record = this.studio.worktrees ? this.registry.find(connection.cwd) : null;
+    const record = this.aib.worktrees ? this.registry.find(connection.cwd) : null;
     if (!record) return;
     const token = isDict(tokenIn) ? tokenIn : { paths: tokenIn, notes: [] };
     const sent = new Set(strings(token.paths));

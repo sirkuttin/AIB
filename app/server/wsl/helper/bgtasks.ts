@@ -243,7 +243,7 @@ export function bgtaskMethods(ctx: BgtaskContext): Handlers {
         probe.clock = clock;
       }
       probe.ownPids = () => exclude;
-      // the strong check (Studio.#cmdlineOwner on Windows): a claude/omp process whose command line names this exact session
+      // the strong check (Aib.#cmdlineOwner on Windows): a claude/omp process whose command line names this exact session
       const [snapshot] = probe.processes.get(0);
       let owner: number | null = null;
       if (snapshot) {

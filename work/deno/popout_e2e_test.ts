@@ -1,5 +1,5 @@
 /**
- * T12 (multi-window design section 11, Phase 2.5A): the chat pop-out, headless, against a Studio in this process with the fake
+ * T12 (multi-window design section 11, Phase 2.5A): the chat pop-out, headless, against an AIB in this process with the fake
  * K4 (work/deno/_fake_desktop_windows.ts) standing in for the desktop app's windows. No window is shown on screen.
  *
  *  - The pop-out page (/?w=&kind=chat&mode=chat&chat=<lasting key>&project=) opens its chat by the lasting key (provider:session,
@@ -21,7 +21,7 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { Browser, browserPath, type Page } from './_doc_browser.ts';
-import { remoteStudio } from './_remote_fixture.ts';
+import { remoteAib } from './_remote_fixture.ts';
 import { FakeDesktopWindows } from './_fake_desktop_windows.ts';
 import { projectKey } from '../../app/server/desktop/project_delete.ts';
 import { windowPath } from '../../app/server/desktop/windows_contract.ts';
@@ -47,7 +47,7 @@ const K1 = 'claude:sess-1',
   K2 = 'claude:sess-2';
 
 async function lab() {
-  const s = await remoteStudio({}, undefined, { saved: true }); // the project is an added one
+  const s = await remoteAib({}, undefined, { saved: true }); // the project is an added one
   const dw = new FakeDesktopWindows();
   s.ctx.desktopWindows = dw;
   s.ctx.transcripts = {

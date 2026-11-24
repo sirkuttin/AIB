@@ -34,8 +34,8 @@ import {
   pc,
   phoneHeaders,
   raw,
-  type RemoteStudio,
-  remoteStudio,
+  type RemoteAib,
+  remoteAib,
   serveStatus,
   writeSavedChat,
 } from './_remote_fixture.ts';
@@ -47,9 +47,9 @@ const APP = new URL('../../app/', import.meta.url);
 const servedUrl = (name: string) => new URL(/^(pwa|vendor|icons)[\\/]/.test(name) ? name.replaceAll('\\', '/') : 'page/' + name, APP);
 const read = (name: string) => Deno.readTextFileSync(servedUrl(name));
 
-async function remoteOn(): Promise<RemoteStudio> {
+async function remoteOn(): Promise<RemoteAib> {
   const fake = fakeTailscale();
-  const s = await remoteStudio({ runner: fake.runner }, undefined, {
+  const s = await remoteAib({ runner: fake.runner }, undefined, {
     saved: true,
   });
   fake.state.serve = serveStatus(readRemotePort(s.state)!);
@@ -61,7 +61,7 @@ async function remoteOn(): Promise<RemoteStudio> {
 }
 
 function get(
-  s: RemoteStudio,
+  s: RemoteAib,
   path: string,
   token?: string,
   extra: Record<string, string> = {},
@@ -72,7 +72,7 @@ function get(
     ...extra,
   });
 }
-function post(s: RemoteStudio, path: string, token: string, body: Json) {
+function post(s: RemoteAib, path: string, token: string, body: Json) {
   return raw(s.phonePort(), 'POST', path, {
     ...phoneHeaders({}, 'POST'),
     [DEVICE_HEADER]: token,
@@ -338,7 +338,7 @@ Deno.test({
   name: 'computer page: artifacts open from the artifact port (signed links, its CSP frames :8443), never the loopback origin',
   async fn() {
     const fake = fakeTailscale();
-    const s = await remoteStudio({ runner: fake.runner });
+    const s = await remoteAib({ runner: fake.runner });
     try {
       s.ctx.artifacts.start(s.port);
       fake.state.serve = serveStatus(readRemotePort(s.state)!, false, readRemoteArtifactPort(s.state)!);
@@ -377,7 +377,7 @@ Deno.test({
  * recording what it saw. */
 async function serveAll(
   page: Page,
-  s: RemoteStudio,
+  s: RemoteAib,
   seen: {
     credential: string[];
     limited: string[];

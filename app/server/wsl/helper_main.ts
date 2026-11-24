@@ -8,7 +8,7 @@
  * With `--data` it also keeps the WSL projects' worktrees (helper/worktrees.ts: `<data>/worktrees`, registry in `<data>`).
  * It installs AIB's own copies of agents into <root>/agents (helper/agent_install.ts).
  * It runs the MCP tunnel (helper/mcp_tunnel.ts): `<keeper> mcp-relay` serves <data>/helper/mcp.sock for agents' forwarders (the keeper
- * program from --keeper, else the AIB-keeper next to this program); helper.ready then carries `mcp: {socket}`. It refuses to start (one `helper.failed {code, message}` line, exit 1) on a musl distro, or when the AIB folder or its own folder
+ * program from --keeper, else the AIB-keeper next to this program); helper.ready then carries `mcp: {socket}`.
  * It writes the aib-open script next to itself (BROWSER for agents) and serves <data>/helper/open.fifo (helper/browser.ts). It refuses to start (one `helper.failed {code, message}` line, exit 1) on a musl distro, or when the AIB folder or its own folder
  * can be written by group or others. Its state is in files (the worktree registry, the live sync records and the list of chats live sync
  * watches, helper/sync.ts): AIB may kill and respawn it at any time, and a new helper watches the same chats again at its start.

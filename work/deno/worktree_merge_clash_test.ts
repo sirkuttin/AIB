@@ -7,7 +7,7 @@
 import { assert, assertEquals, assertRejects } from "./_assert.ts";
 import { Frozen } from "./_frozen.ts";
 import * as sync from "../../app/server/worktrees/sync.ts";
-import { commit, FakeStudio, FIXED_DATES, makeRepo, foreignHolds, foreignProbe, read, runGit, Sandbox, setFixedDates, write } from "./_worktree_fixtures.ts";
+import { commit, FakeAib, FIXED_DATES, makeRepo, foreignHolds, foreignProbe, read, runGit, Sandbox, setFixedDates, write } from "./_worktree_fixtures.ts";
 import { chat, type Ctx, main, merge, record, refused, Refused, show, tree, WAITING } from "./_merge_fixtures.ts";
 import * as wt from "../../app/server/worktrees/worktrees.ts";
 import * as m from "../../app/server/worktrees/merge.ts";
@@ -18,9 +18,9 @@ async function clashed(box: Sandbox, provider = "claude") {
   write(box.project, "tracked.txt", "user line\n"); // in S, uncommitted in main
   write(box.project, "mine.txt", "user only\n"); // a clean edit of the user: applies without a clash
   const ctx = await chat(box);
-  ctx.studio.states.get(ctx.id)!.provider = provider;
+  ctx.aib.states.get(ctx.id)!.provider = provider;
   commit(ctx.wt, "tracked.txt", "chat line\n", "chat edit");
-  const result = await merge(ctx.studio, ctx.id, "T");
+  const result = await merge(ctx.aib, ctx.id, "T");
   assertEquals([result.state, result.clash], ["merged", ["tracked.txt"]]);
   return { ctx, result };
 }
@@ -43,7 +43,7 @@ Deno.test("overlapping edits clash: the stash is kept, the note names it with tw
     read(box.project, "tracked.txt").includes("<<<<<<<"),
     "git's own conflict state is left for the user",
   );
-  const notes = ctx.studio.calls.filter(([op]) => op === m.NOTE_OP).map((
+  const notes = ctx.aib.calls.filter(([op]) => op === m.NOTE_OP).map((
     [, p],
   ) => p);
   assertEquals(notes[0], {
@@ -58,7 +58,7 @@ Deno.test("overlapping edits clash: the stash is kept, the note names it with tw
     { id: "keep-mine", label: "Keep my version" },
     { id: "leave", label: "I'll sort it myself" },
   ]);
-  const told = ctx.studio.prompts().at(-1)!;
+  const told = ctx.aib.prompts().at(-1)!;
   for (
     const word of [
       "tracked.txt",
@@ -70,14 +70,14 @@ Deno.test("overlapping edits clash: the stash is kept, the note names it with tw
     ]
   ) assert(told.includes(word), word);
   assertEquals(told, result.guidance);
-  const status = await m.clashStatus(ctx.studio, box.project);
+  const status = await m.clashStatus(ctx.aib, box.project);
   assertEquals(status, {
     unresolved: true,
     line: "tracked.txt has unresolved edits. Ask the chat to fix it.",
     files: ["tracked.txt"],
     stash: result.stash,
   });
-  assertEquals(await m.clashStatus(ctx.studio, pathOf(box.base, "elsewhere")), {
+  assertEquals(await m.clashStatus(ctx.aib, pathOf(box.base, "elsewhere")), {
     unresolved: false,
   });
   const saved = JSON.parse(
@@ -109,15 +109,15 @@ Deno.test('the amber line clears when the chat combines the files ("check")', as
   using box = new Sandbox();
   const { ctx } = await clashed(box);
   const error = await assertRejects(
-    () => m.resolveClash(ctx.studio, ctx.id, "check"),
+    () => m.resolveClash(ctx.aib, ctx.id, "check"),
     Refused,
   ) as m.Refused;
   assertEquals(error.code, "markers");
-  assert((await m.clashStatus(ctx.studio, box.project)).unresolved);
+  assert((await m.clashStatus(ctx.aib, box.project)).unresolved);
   write(box.project, "tracked.txt", "chat line\nuser line\n");
-  const done = await m.resolveClash(ctx.studio, ctx.id, "check");
+  const done = await m.resolveClash(ctx.aib, ctx.id, "check");
   assert((done.message as string).includes("tracked.txt"));
-  assertEquals(await m.clashStatus(ctx.studio, box.project), {
+  assertEquals(await m.clashStatus(ctx.aib, box.project), {
     unresolved: false,
   });
   assertEquals(runGit(box.project, "ls-files", "-u"), "");
@@ -127,13 +127,13 @@ Deno.test('the amber line clears when the chat combines the files ("check")', as
     1,
     "combining keeps the stash as a backup",
   );
-  assertEquals(ctx.studio.notes().at(-1), done.message);
+  assertEquals(ctx.aib.notes().at(-1), done.message);
 });
 
 Deno.test("keep my version restores the user's side and drops the stash when fully applied", async () => {
   using box = new Sandbox();
   const { ctx, result } = await clashed(box);
-  const done = await m.resolveClash(ctx.studio, ctx.id, "keep_mine");
+  const done = await m.resolveClash(ctx.aib, ctx.id, "keep_mine");
   assertEquals([done.dropped, done.files, done.message], [
     true,
     ["tracked.txt"],
@@ -152,11 +152,11 @@ Deno.test("keep my version restores the user's side and drops the stash when ful
     "chat line\n",
     "main itself holds the merged work",
   );
-  assertEquals(await m.clashStatus(ctx.studio, box.project), {
+  assertEquals(await m.clashStatus(ctx.aib, box.project), {
     unresolved: false,
   });
   const error = await assertRejects(
-    () => m.resolveClash(ctx.studio, ctx.id, "keep-mine"),
+    () => m.resolveClash(ctx.aib, ctx.id, "keep-mine"),
     Refused,
   ) as m.Refused;
   assertEquals([error.code, error.message], [
@@ -175,11 +175,11 @@ Deno.test("keep my version keeps the stash when it is not fully applied; leave c
     main(ctx),
   ];
   const before = snapshot();
-  const left = await m.resolveClash(ctx.studio, ctx.id, "leave");
+  const left = await m.resolveClash(ctx.aib, ctx.id, "leave");
   assert((left.message as string).includes(result.stash as string));
   assertEquals(snapshot(), before);
   assert(
-    (await m.clashStatus(ctx.studio, box.project)).unresolved,
+    (await m.clashStatus(ctx.aib, box.project)).unresolved,
     "the amber line stays until it is really resolved",
   );
   wt.testing.git = (args, cwd, options) =>
@@ -192,25 +192,25 @@ Deno.test("keep my version keeps the stash when it is not fully applied; leave c
       })
       : wt.realGit(args, cwd, options);
   try {
-    const done = await m.resolveClash(ctx.studio, ctx.id, "keep-mine");
+    const done = await m.resolveClash(ctx.aib, ctx.id, "keep-mine");
     assertEquals(done.dropped, false);
   } finally {
     wt.testing.git = null;
   }
   assertEquals(box.stashes().length, 1);
-  assert((await m.clashStatus(ctx.studio, box.project)).unresolved);
+  assert((await m.clashStatus(ctx.aib, box.project)).unresolved);
   const bad = await assertRejects(
-    () => m.resolveClash(ctx.studio, ctx.id, "nope"),
+    () => m.resolveClash(ctx.aib, ctx.id, "nope"),
     Refused,
   ) as m.Refused;
   assertEquals([bad.code, bad.status], ["bad_request", 400]);
   write(box.project, "tracked.txt", "by hand\n"); // the user resolves it by hand
   assert(
-    (await m.clashStatus(ctx.studio, box.project)).unresolved,
+    (await m.clashStatus(ctx.aib, box.project)).unresolved,
     "git still has an unmerged entry",
   );
   runGit(box.project, "add", "tracked.txt");
-  assertEquals(await m.clashStatus(ctx.studio, box.project), {
+  assertEquals(await m.clashStatus(ctx.aib, box.project), {
     unresolved: false,
   });
 });
@@ -220,9 +220,9 @@ Deno.test("a clash from a merge by the tool returns the guidance and posts no se
   write(box.project, "tracked.txt", "user line\n");
   const ctx = await chat(box);
   commit(ctx.wt, "tracked.txt", "chat line\n", "chat edit");
-  const result = await merge(ctx.studio, ctx.id, "T", true);
+  const result = await merge(ctx.aib, ctx.id, "T", true);
   assert((result.guidance as string).includes("Offer to combine"));
-  assertEquals(ctx.studio.prompts(), []);
+  assertEquals(ctx.aib.prompts(), []);
 });
 
 // ---- the user base U and tree landing (test_worktree_userbase.py) ---------------------------------------------------------
@@ -240,14 +240,14 @@ async function syncedChat(box: Sandbox): Promise<Ctx> {
 Deno.test("synced edits are not changes; only the chat's lines land and the folder keeps the user's edit", async () => {
   using box = new Sandbox();
   const ctx = await syncedChat(box);
-  const state = await m.status(ctx.studio, ctx.id);
+  const state = await m.status(ctx.aib, ctx.id);
   assertEquals([state.enabled, state.state], [false, "nochanges"]);
   assert(!(await ctx.manager.hasChanges(record(ctx))), "Archive may remove it");
   await refused(ctx, "empty"); // Merge commits the synced line itself; it is U's, so nothing of the chat's lands
   write(ctx.wt, "f.txt", "A-user\nb\nc\nd\ne\nf-chat\n");
   runGit(ctx.wt, "commit", "-a", "-m", "chat edits f");
   const statusBefore = box.status();
-  const result = await merge(ctx.studio, ctx.id, "My chat");
+  const result = await merge(ctx.aib, ctx.id, "My chat");
   assertEquals([result.state, result.commits], ["merged", 2]); // that commit and the chat's, landed as one
   assertEquals(
     show(ctx, "main:f.txt"),
@@ -279,7 +279,7 @@ Deno.test("synced edits are not changes; only the chat's lines land and the fold
   );
   assertEquals(read(ctx.wt, "f.txt"), "A-user\nb\nc\nd\ne\nf-chat\n");
   commit(ctx.wt, "g.txt", "second\n", "more");
-  assertEquals((await merge(ctx.studio, ctx.id, "T")).state, "merged");
+  assertEquals((await merge(ctx.aib, ctx.id, "T")).state, "merged");
   assertEquals([show(ctx, "main:f.txt"), show(ctx, "main:g.txt")], [
     "a\nb\nc\nd\ne\nf-chat\n",
     "second\n",
@@ -292,12 +292,12 @@ Deno.test("a merge-tree conflict refuses cleanly and tells the chat", async () =
   write(ctx.wt, "f.txt", "a-chat\nb\nc\nd\ne\nf\n"); // the same line the user edited
   runGit(ctx.wt, "commit", "-a", "-m", "chat edits a");
   const [mainBefore, statusBefore] = [main(ctx), box.status()];
-  const result = await merge(ctx.studio, ctx.id, "T");
+  const result = await merge(ctx.aib, ctx.id, "T");
   assertEquals([result.state, result.files, result.message], ["conflicts", [
     "f.txt",
   ], WAITING]);
   assertEquals(
-    ctx.studio.prompts().at(-1),
+    ctx.aib.prompts().at(-1),
     m.treeConflictLine(null, ["f.txt"]),
   );
   assertEquals([
@@ -306,12 +306,12 @@ Deno.test("a merge-tree conflict refuses cleanly and tells the chat", async () =
     read(box.project, "f.txt"),
     box.stashes(),
   ], [mainBefore, statusBefore, "A-user\nb\nc\nd\ne\nf\n", []]);
-  const answer = await merge(ctx.studio, ctx.id, "T", true);
+  const answer = await merge(ctx.aib, ctx.id, "T", true);
   assertEquals(answer.state, "conflicts");
   assert((answer.message as string).includes("f.txt"));
   write(ctx.wt, "f.txt", "A-user\nb\nc\nd\ne\nf-chat\n");
   runGit(ctx.wt, "commit", "-a", "-m", "rework");
-  assertEquals((await merge(ctx.studio, ctx.id, "T")).state, "merged");
+  assertEquals((await merge(ctx.aib, ctx.id, "T")).state, "merged");
   assertEquals(show(ctx, "main:f.txt"), "a\nb\nc\nd\ne\nf-chat\n");
 });
 
@@ -322,8 +322,8 @@ Deno.test("autocrlf noise is nothing to merge and nothing to commit", async () =
   runGit(box.project, "config", "core.autocrlf", "true");
   write(ctx.wt, "tracked.txt", "one\r\n");
   write(ctx.wt, "f.txt", LINES.replaceAll("\n", "\r\n"));
-  assertEquals((await m.status(ctx.studio, ctx.id)).state, "nochanges");
-  assert(!(await m.commitPending(await m.Chat.open(ctx.studio, ctx.id), "T")));
+  assertEquals((await m.status(ctx.aib, ctx.id)).state, "nochanges");
+  assert(!(await m.commitPending(await m.Chat.open(ctx.aib, ctx.id), "T")));
 });
 
 // ---- locks across processes ----------------------------------------------------------------------------------------------
@@ -351,7 +351,7 @@ Deno.test("another process holding the locks stops merge; merge holds both while
     seen = await foreignProbe(box.state, box.project, rec, "probe");
   };
   try {
-    assertEquals((await merge(ctx.studio, ctx.id, "T")).state, "merged");
+    assertEquals((await merge(ctx.aib, ctx.id, "T")).state, "merged");
   } finally {
     delete m.HOOKS.before_ff;
   }
@@ -382,7 +382,7 @@ Deno.test("an unresolved sync clash blocks Merge; resolving it advances U and cl
     pendingSync: ["p.txt"],
   });
   assertEquals(m.openClashes(record(ctx)), ["f.txt"]);
-  const status = await m.status(ctx.studio, ctx.id);
+  const status = await m.status(ctx.aib, ctx.id);
   assertEquals([status.enabled, status.state, status.message], [
     false,
     "conflicts",
@@ -395,7 +395,7 @@ Deno.test("an unresolved sync clash blocks Merge; resolving it advances U and cl
     "U moves only when the clash is resolved",
   );
   write(ctx.wt, "f.txt", "a\nb\nc\nd\ne\nf-both\n");
-  assertEquals((await m.status(ctx.studio, ctx.id)).state, "ready");
+  assertEquals((await m.status(ctx.aib, ctx.id)).state, "ready");
   assertEquals(await m.settleConflicts(ctx.manager.registry, record(ctx)), []);
   const rec = record(ctx);
   assertEquals([rec.syncConflicts, rec.syncMerged, rec.pendingSync], [[], {
@@ -403,7 +403,7 @@ Deno.test("an unresolved sync clash blocks Merge; resolving it advances U and cl
   }, ["p.txt"]]);
   assert(rec.user !== before);
   assertEquals(show(ctx, `${rec.user}:f.txt`), "a\nb\nc\nd\ne\nf-user\n");
-  const after = await merge(ctx.studio, ctx.id, "T"); // f-both rewrote the user's line: landing it may clash (stage E2), never a sync clash
+  const after = await merge(ctx.aib, ctx.id, "T"); // f-both rewrote the user's line: landing it may clash (stage E2), never a sync clash
   assert(["merged", "conflicts"].includes(after.state as string));
   assertEquals(record(ctx).syncConflicts, []);
 });
@@ -553,8 +553,8 @@ Deno.test("merges, conflicts, tree landing and clashes give the results, commits
     const plan = (await manager.plan(denoSide.project, key))!;
     await manager.create(plan);
     denoSide.wt = plan.path;
-    const studio = new FakeStudio(denoSide.state);
-    studio.add("c1", denoSide.wt);
+    const aib = new FakeAib(denoSide.state);
+    aib.add("c1", denoSide.wt);
     const pyStateOf = () => ({ state: "ready", busy: false, cwd: pySide.wt, provider: "claude" });
     const scrub = (value: unknown): unknown =>
       JSON.parse(
@@ -575,7 +575,7 @@ Deno.test("merges, conflicts, tree landing and clashes give the results, commits
       args: unknown[] = ["T"],
     ) => {
       step(denoSide);
-      studio.calls.length = 0;
+      aib.calls.length = 0;
       let fromDeno: Record<string, unknown>;
       try {
         const fn = op === "merge"
@@ -585,7 +585,7 @@ Deno.test("merges, conflicts, tree landing and clashes give the results, commits
           : m.resolveClash;
         fromDeno = {
           result: await (fn as (...a: unknown[]) => Promise<unknown>)(
-            studio,
+            aib,
             "c1",
             ...args,
           ),
@@ -594,7 +594,7 @@ Deno.test("merges, conflicts, tree landing and clashes give the results, commits
         if (!(error instanceof Refused)) throw error;
         fromDeno = { refused: [error.code, error.status, error.message] };
       }
-      fromDeno.calls = studio.calls.map(([o, p]) => [o, p]);
+      fromDeno.calls = aib.calls.map(([o, p]) => [o, p]);
       const strip = (r: Record<string, unknown>) => {
         const { path: _p, project: _q, pid: _i, created: _c, editsFrom: _e, mergedAt: _m, ...rest } = r; // editsFrom, mergedAt (copy retirement, folder chats P4b): Deno only
         return rest;

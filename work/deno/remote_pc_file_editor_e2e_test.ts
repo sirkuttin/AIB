@@ -25,8 +25,8 @@ import {
   pc,
   phoneHeaders,
   raw,
-  type RemoteStudio,
-  remoteStudio,
+  type RemoteAib,
+  remoteAib,
   serveStatus,
 } from './_remote_fixture.ts';
 
@@ -34,16 +34,16 @@ const OPTS = { sanitizeResources: false, sanitizeOps: false };
 type Json = Record<string, unknown>;
 const sep = Deno.build.os === 'windows' ? '\\' : '/';
 
-async function remoteOn(): Promise<RemoteStudio> {
+async function remoteOn(): Promise<RemoteAib> {
   const fake = fakeTailscale();
-  const s = await remoteStudio({ runner: fake.runner }, undefined, { saved: true });
+  const s = await remoteAib({ runner: fake.runner }, undefined, { saved: true });
   fake.state.serve = serveStatus(readRemotePort(s.state)!);
   const [status] = await pc(s, 'POST', '/api/live/devices/access', { on: true });
   assertEquals(status, 200);
   return s;
 }
 
-function call(s: RemoteStudio, token: string, method: string, path: string, body?: Json) {
+function call(s: RemoteAib, token: string, method: string, path: string, body?: Json) {
   return raw(
     s.phonePort(),
     method,
@@ -54,7 +54,7 @@ function call(s: RemoteStudio, token: string, method: string, path: string, body
 }
 
 /** A WebSocket handshake to the phone port (refusals answer before any upgrade). */
-function socket(s: RemoteStudio, path: string, protocols: string) {
+function socket(s: RemoteAib, path: string, protocols: string) {
   return raw(
     s.phonePort(),
     'GET',
@@ -150,7 +150,7 @@ const SOCKET_SHIM = (relayPort: number) => `(() => {
 
 /** Serve for the page's requests (Fetch interception): Serve's headers in, the phone port's answer out. The only change to an
  * answer: the relay's address is added to the CSP's connect-src (the real page connects to its own origin, 'self'). */
-async function serveAll(page: Page, s: RemoteStudio, relayPort: number, seen: { credential: string[]; refused: string[] }) {
+async function serveAll(page: Page, s: RemoteAib, relayPort: number, seen: { credential: string[]; refused: string[] }) {
   await page.send('Network.enable');
   await page.send('Fetch.enable', { patterns: [{ urlPattern: `https://${NAME}/*`, requestStage: 'Request' }] });
   page.listeners.set('Fetch.requestPaused', (p) => {

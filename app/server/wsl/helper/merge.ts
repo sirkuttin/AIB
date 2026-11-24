@@ -21,7 +21,7 @@ import type { WslMergeAnswer } from '../contract.ts';
 type Action = WslMergeAnswer['actions'][number];
 
 /** A MergeStudio over the state AIB sent; every live call is recorded (and accepted) for AIB to make. */
-export class RecordingStudio implements merge.MergeStudio {
+export class RecordingHost implements merge.MergeHost {
   readonly actions: Action[] = [];
   constructor(readonly stateDir: string, readonly state: Record<string, unknown>) {}
 
@@ -65,13 +65,13 @@ function marked(actions: Action[], result: Record<string, unknown> | undefined):
   });
 }
 
-async function answer(studio: RecordingStudio, work: () => Promise<Record<string, unknown>>): Promise<WslMergeAnswer> {
+async function answer(aib: RecordingHost, work: () => Promise<Record<string, unknown>>): Promise<WslMergeAnswer> {
   try {
     const result = await work();
-    return { result, actions: marked(studio.actions, result) };
+    return { result, actions: marked(aib.actions, result) };
   } catch (error) {
     if (error instanceof merge.Refused) {
-      return { refused: { message: error.message, code: error.code, status: error.status, extra: { ...error.extra } }, actions: studio.actions };
+      return { refused: { message: error.message, code: error.code, status: error.status, extra: { ...error.extra } }, actions: aib.actions };
     }
     throw error;
   }
@@ -79,22 +79,22 @@ async function answer(studio: RecordingStudio, work: () => Promise<Record<string
 
 /** The `merge.*` helper methods over `data` (the Linux keeper's data folder: the worktree registry's folder). */
 export function mergeMethods(data: string): Handlers {
-  const studio = (p: Record<string, unknown>) => new RecordingStudio(data, stateOf(p));
+  const aib = (p: Record<string, unknown>) => new RecordingHost(data, stateOf(p));
   return {
     'merge.status': async (p) => {
       const id = chatId(p);
-      return { result: await merge.status(studio(p), id) };
+      return { result: await merge.status(aib(p), id) };
     },
 
     /** The Merge itself: the agent's merge_into_project (fromTool), or the direct merge route. */
     'merge.run': async (p) => {
-      const id = chatId(p), s = studio(p);
+      const id = chatId(p), s = aib(p);
       const title = str(p, 'title', true).slice(0, 500);
       return await answer(s, () => p.fromTool === true ? merge.mergeFromTool(s, id) : merge.merge(s, id, title, false));
     },
 
     'merge.resolveClash': async (p) => {
-      const id = chatId(p), s = studio(p);
+      const id = chatId(p), s = aib(p);
       return await answer(s, () => merge.resolveClash(s, id, str(p, 'action'), p.fromTool === true));
     },
 

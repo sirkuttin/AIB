@@ -30,7 +30,7 @@ class WslLab {
   readonly work = this.dir + SEP + 'app';
   readonly agentLog = this.dir + SEP + 'agent-received.log';
   readonly host: FakeWslHost;
-  readonly studios: Aib[] = [];
+  readonly aibs: Aib[] = [];
 
   constructor() {
     Deno.mkdirSync(this.work, { recursive: true });
@@ -40,24 +40,24 @@ class WslLab {
     setWslHostResolver((d) => (d === 'ubuntu' ? this.host : null));
   }
 
-  studio(): Aib {
+  aib(): Aib {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
-    const studio = new Aib({ stateDir: this.state, port: 0, ownersDir: null }, { keeper });
-    studio.ownerProbe = () => null;
-    studio.connectionFactory = (_command, cwd, provider, options) => {
+    const aib = new Aib({ stateDir: this.state, port: 0, ownersDir: null }, { keeper });
+    aib.ownerProbe = () => null;
+    aib.connectionFactory = (_command, cwd, provider, options) => {
       const wsl = options?.wsl ? { ...options.wsl, program: undefined } : options?.wsl;
       return new Connection(fake('--cancel-aware', '--breadth'), cwd, provider, { ...options, wsl });
     };
-    this.studios.push(studio);
-    return studio;
+    this.aibs.push(aib);
+    return aib;
   }
 
-  crash(studio: Aib): void {
-    studio.keeper!.disconnect();
+  crash(aib: Aib): void {
+    aib.keeper!.disconnect();
     this.host.link.disconnect();
-    for (const c of studio.connections.values()) c.sessionLease?.release();
-    studio.reconnectStop.set();
-    this.studios.splice(this.studios.indexOf(studio), 1);
+    for (const c of aib.connections.values()) c.sessionLease?.release();
+    aib.reconnectStop.set();
+    this.aibs.splice(this.aibs.indexOf(aib), 1);
     this.host.renewLink();
   }
 
@@ -70,7 +70,7 @@ class WslLab {
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
-    for (const s of this.studios.reverse()) await s.close().catch(() => {});
+    for (const s of this.aibs.reverse()) await s.close().catch(() => {});
     setWslHostResolver(null);
     await this.host.stopKeeper();
     const info = readKeeperInfo(this.state);
@@ -100,10 +100,10 @@ function said(c: Connection): string {
   }).join('');
 }
 
-async function turn(studio: Aib, c: Connection, id = 'm1'): Promise<void> {
-  assertEquals((await studio.liveCall('prompt', { id: c.id, text: 'stream:4:20', clientMessageId: id }))[0], 200);
+async function turn(aib: Aib, c: Connection, id = 'm1'): Promise<void> {
+  assertEquals((await aib.liveCall('prompt', { id: c.id, text: 'stream:4:20', clientMessageId: id }))[0], 200);
   await until(() => c.permissions.size === 1, 'the question', 15);
-  await studio.liveCall('permission', { id: c.id, key: [...c.permissions.keys()][0], option: 'yes' });
+  await aib.liveCall('permission', { id: c.id, key: [...c.permissions.keys()][0], option: 'yes' });
   await until(() => !c.busy, 'turn end', 15);
 }
 
@@ -113,7 +113,7 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new WslLab();
-    const a = lab.studio();
+    const a = lab.aib();
     const c = await a.connect('claude', REF);
     assertEquals(c.historyState === 'off', false, 'a keeper chat in a distro gets the history store too');
     await turn(a, c);
@@ -124,7 +124,7 @@ Deno.test({
     // nothing named after the ref (a wsl: path used as a Windows file name would be a bug)
     for (const e of Deno.readDirSync(`${lab.state}${SEP}history`)) assert(!/wsl|ubuntu/i.test(e.name), e.name);
     lab.crash(a);
-    const b = lab.studio();
+    const b = lab.aib();
     assertEquals(await b.adoptKeeper(), 1);
     const r = b.connections.get(c.id)!;
     assert(r && r.ready && !r.closed, 'rebuilt');
@@ -146,7 +146,7 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new WslLab();
-    const a = lab.studio();
+    const a = lab.aib();
     const c = await a.connect('claude', REF);
     await turn(a, c);
     const sid = c.sessionId!;
@@ -155,7 +155,7 @@ Deno.test({
     lab.crash(a);
     await lab.host.stopKeeper(); // the distro's keeper and its agent are gone (a WSL restart)
     lab.host.renewLink();
-    const b = lab.studio();
+    const b = lab.aib();
     assertEquals(await b.adoptKeeper(), 0);
     assertEquals(b.recovered().map((x) => x.cwd), [REF]);
     assertEquals(b.startAutoReconnect(1, 0, 1, 0), 1);
@@ -181,13 +181,13 @@ Deno.test({
     // reconnect must wait for its distro's take-over (connect -> #wslTakeOverFirst) instead of starting a second agent.
     await keeperBinary();
     await using lab = new WslLab();
-    const a = lab.studio();
+    const a = lab.aib();
     const c = await a.connect('claude', REF);
     await turn(a, c);
     const pid = c.process!.pid;
     lab.crash(a);
     const spawnsBefore = lab.host.link.spawned.length;
-    const b = lab.studio();
+    const b = lab.aib();
     await b.adoptKeeperWindows();
     b.startAutoReconnect(2, 0, 1, 0);
     await until(() => b.connections.get(c.id)?.ready, 'the chat taken over', 30);
@@ -204,12 +204,12 @@ Deno.test({
   name: 'KNOWN-BROKEN: audit wsl discover: "Find more chats via agent" is never answered by a WSL chat\'s Linux agent',
   ...T,
   async fn() {
-    // Studio.listAgentSessions picks ANY live chat of the provider (studio.ts:991). With a WSL Claude chat open, the Windows
+    // Aib.listAgentSessions picks ANY live chat of the provider (aib.ts:991). With a WSL Claude chat open, the Windows
     // "Find more chats via agent" button asks the agent inside the distro: it lists the distro's sessions (Linux cwds, filtered
     // out by filterSessions as not an added project) and never the Windows ones.
     await keeperBinary();
     await using lab = new WslLab();
-    const a = lab.studio();
+    const a = lab.aib();
     await a.connect('claude', REF);
     const [status, payload] = await a.liveCall('discover', { provider: 'claude' });
     const asked = lab.received().filter((m) => m.method === 'session/list');
@@ -223,7 +223,7 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new WslLab();
-    const a = lab.studio();
+    const a = lab.aib();
     a.connectionFactory = (_command, cwd, provider, options) => { // the fake agent's session/list answers Linux cwds (/fixture/project)
       const wsl = options?.wsl ? { ...options.wsl, program: undefined } : options?.wsl;
       return new Connection(fake('--cancel-aware', '--list-sessions'), cwd, provider, { ...options, wsl });
@@ -247,7 +247,7 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new WslLab();
-    const a = lab.studio();
+    const a = lab.aib();
     const spawned = lab.host.link.spawned.length;
     const [status, payload] = await a.liveCall('discover', { provider: 'claude', cwd: 'wsl://debian/home/u/app' });
     assertEquals(status, 200);
@@ -263,16 +263,16 @@ Deno.test({
   name: "F8 (not reproduced): a WSL worktree chat's keeper note carries projectRoot = the project ref (what a rebuild files it under)",
   ...T,
   async fn() {
-    // Studio.connect sets worktree/projectRoot right after the factory (studio.ts; the `record` path starts the agent at once).
+    // Aib.connect sets worktree/projectRoot right after the factory (aib.ts; the `record` path starts the agent at once).
     // The keeper writes the chat note only after its spawn answers (keeper/link.ts spawn: `first` runs after awaits), so the note
-    // has the project ref, and a rebuild (studio.ts #rebuildChat: c.projectRoot = note.projectRoot) files the chat under its project.
+    // has the project ref, and a rebuild (aib.ts #rebuildChat: c.projectRoot = note.projectRoot) files the chat under its project.
     await keeperBinary();
     await using lab = new WslLab();
     const WT = '/home/u/.aib-server/data-x/worktrees/app-abc';
     const wtDir = lab.dir + SEP + 'wt';
     Deno.mkdirSync(wtDir);
     lab.host.folders.set(WT, wtDir);
-    const a = lab.studio();
+    const a = lab.aib();
     const c = a.connectionFactory(['unused'], 'wsl://ubuntu' + WT, 'claude', {
       keeper: lab.host.link,
       wsl: { distro: 'ubuntu', linuxPath: WT },

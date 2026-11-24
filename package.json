@@ -1,5 +1,5 @@
 {
-  "name": "agent-studio",
+  "name": "aib",
   "private": true,
   "description": "Agent Studio page checks. The app has no build step; this file only runs the Node tests and the linter.",
   "scripts": {

@@ -1,5 +1,5 @@
 /**
- * Owner decision (steer-on-send, final): "Inbox and phone replies the owner types steer too." End to end for the phone: a real Studio
+ * Owner decision (steer-on-send, final): "Inbox and phone replies the owner types steer too." End to end for the phone: a real AIB
  * (web server + separate agent host) with phone access on (a fake Tailscale CLI) and the steer fakes of work/fake_acp.py. A paired
  * phone's POST /api/remote/steer (what its Send button calls while the chat works and the snapshot says `steerable`):
  *  - goes in at once during the turn on a steerable agent, shown once as the user's bubble tagged `steered`;

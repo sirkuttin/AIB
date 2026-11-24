@@ -6,7 +6,7 @@
  *      folder.createProject) with the Linux path, and every Linux path in the answer comes back as a ref.
  *   3. Files tab of a WSL project: rootFor takes a WSL project with no chat and a chat whose folder is a ref; the Files routes wait for
  *      a distro that is still starting; a saved (old) WSL chat finds its folder through the distro's session list.
- *   6. Usage limits: Studio's usage checker runs on its own for every open chat (the interval is a seam; the default stays a minute).
+ *   6. Usage limits: AIB's usage checker runs on its own for every open chat (the interval is a seam; the default stays a minute).
  * Never a real distro, never the owner's homes.
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
@@ -301,12 +301,12 @@ Deno.test({
     withHost(host);
     setDistroSource(() => Promise.resolve([{ name: 'Ubuntu', version: 2, state: 1 }]));
     try {
-      const studio = { liveState: () => Promise.resolve(null), conversations: { entries: {} }, store: null, savedCwd: null, token: 't', stateDir: null };
-      assertEquals(await changesFolder(studio, 'claude:fix-claude-1'), REF);
-      assertEquals(await changesFolder(studio, 'wsl.ubuntu.claude/-home-u-app/fix-claude-1.jsonl'), REF);
-      assertEquals(await changesFolder(studio, 'codex:fix-codex-1'), 'wsl://ubuntu/home/u/app2');
-      assertEquals(await changesFolder(studio, 'wsl.ubuntu.codex/2026/11/14/rollout-2026-11-14T10-00-00-fix-codex-1.jsonl'), 'wsl://ubuntu/home/u/app2');
-      assertEquals(await changesFolder(studio, 'claude:fix-unknown'), null);
+      const aib = { liveState: () => Promise.resolve(null), conversations: { entries: {} }, store: null, savedCwd: null, token: 't', stateDir: null };
+      assertEquals(await changesFolder(aib, 'claude:fix-claude-1'), REF);
+      assertEquals(await changesFolder(aib, 'wsl.ubuntu.claude/-home-u-app/fix-claude-1.jsonl'), REF);
+      assertEquals(await changesFolder(aib, 'codex:fix-codex-1'), 'wsl://ubuntu/home/u/app2');
+      assertEquals(await changesFolder(aib, 'wsl.ubuntu.codex/2026/11/14/rollout-2026-11-14T10-00-00-fix-codex-1.jsonl'), 'wsl://ubuntu/home/u/app2');
+      assertEquals(await changesFolder(aib, 'claude:fix-unknown'), null);
       assert(asked.every((p) => String(p.claudeDir ?? '').startsWith('/tmp/aib-wsl-test-fixes/')), 'the test Claude folder, never the owner\'s');
       // the Files tab of that saved chat: the same lookup behind rootFor
       assertEquals(await rootFor(filesCtx({}), { id: ['claude:fix-claude-1'] }), REF);
@@ -319,27 +319,27 @@ Deno.test({
 
 // ---- 6. usage limits refresh on their own ---------------------------------------------------------------------------------------
 Deno.test({
-  name: "usage limits: Studio's checker runs on its own for every open chat (not closed ones) until Studio closes; default once a minute",
+  name: "usage limits: AIB's checker runs on its own for every open chat (not closed ones) until AIB closes; default once a minute",
   ...T,
   async fn() {
     assertEquals(REFRESH_SECONDS, 60);
     const dir = Deno.makeTempDirSync({ prefix: 'aib-limits-timer-' });
-    const studio = new Aib({ stateDir: dir, port: 0, ownersDir: null }, { keeper: null, limitsEveryMs: 40 });
+    const aib = new Aib({ stateDir: dir, port: 0, ownersDir: null }, { keeper: null, limitsEveryMs: 40 });
     try {
       const refreshed: string[] = [];
-      studio.limits = { refresh: (c: { id: string }) => (refreshed.push(c.id), Promise.resolve()) } as unknown as Aib['limits'];
+      aib.limits = { refresh: (c: { id: string }) => (refreshed.push(c.id), Promise.resolve()) } as unknown as Aib['limits'];
       const fakes = [{ id: 'open', closed: false }, { id: 'ended', closed: true }];
-      for (const f of fakes) studio.connections.set(f.id, f as never);
+      for (const f of fakes) aib.connections.set(f.id, f as never);
       await pause(400);
       assert(refreshed.filter((id) => id === 'open').length >= 3, refreshed.join());
       assertEquals(refreshed.filter((id) => id === 'ended'), []);
-      for (const f of fakes) studio.connections.delete(f.id);
-      await studio.close();
+      for (const f of fakes) aib.connections.delete(f.id);
+      await aib.close();
       const after = refreshed.length;
       await pause(200);
-      assertEquals(refreshed.length, after, 'stopped with Studio');
+      assertEquals(refreshed.length, after, 'stopped with AIB');
     } finally {
-      await studio.close().catch(() => {});
+      await aib.close().catch(() => {});
       Deno.removeSync(dir, { recursive: true });
     }
   },

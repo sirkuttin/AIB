@@ -21,24 +21,24 @@ import { aibRoutes } from '../../app/server/web/aib_routes.ts';
 
 type Json = Record<string, unknown>;
 
-function studioIn(state: string): Aib {
-  const studio = new Aib({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
-  studio.ownerProbe = () => null;
-  studio.connectionFactory = (_command, cwd, provider, options) =>
+function aibIn(state: string): Aib {
+  const aib = new Aib({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
+  aib.ownerProbe = () => null;
+  aib.connectionFactory = (_command, cwd, provider, options) =>
     new Connection(['python3', `${ROOT}/fake_acp.py`, '--cancel-aware'], cwd, provider, {
       ...options,
       wsl: options?.wsl ? { ...options.wsl, program: '/usr/bin/python3' } : options?.wsl,
     });
-  return studio;
+  return aib;
 }
 
 const sh = async (script: string, ...args: string[]) => (await inDistro(script, args)).out.trim();
 const notes = (c: Connection) => c.events.filter((e) => e.kind === 'studio_note').map((e) => String((e.data as Json).message));
 const NL = '\\n'; // the fake agent's edit: turns write a literal \n as a newline
 
-/** AIB's merge routes over a Studio (the web server's context, the parts the routes read). */
-function routesOf(studio: Aib) {
-  const ctx = { stateDir: studio.stateDir, host: studio, conversations: { public: () => ({ entries: {} }) } } as never;
+/** AIB's merge routes over an AIB (the web server's context, the parts the routes read). */
+function routesOf(aib: Aib) {
+  const ctx = { stateDir: aib.stateDir, host: aib, conversations: { public: () => ({ entries: {} }) } } as never;
   const routes = aibRoutes();
   const request = new Request('http://127.0.0.1/');
   const url = (path: string) => new URL(`http://127.0.0.1${path}`);
@@ -54,15 +54,15 @@ function routesOf(studio: Aib) {
  * The turn merge.ts's own prompt started (a conflict to resolve, a clash to explain): the fake agent does not act on such text, so
  * the test answers its question or stops the turn, and the chat is idle again.
  */
-async function quiet(studio: Aib, c: Connection): Promise<void> {
+async function quiet(aib: Aib, c: Connection): Promise<void> {
   await until(() => !c.busy || c.permissions.size > 0, 'the prompt turn', 60);
-  if (c.busy) await studio.liveCall('cancel', { id: c.id });
+  if (c.busy) await aib.liveCall('cancel', { id: c.id });
   await until(() => !c.busy, 'the prompt turn to end', 60);
 }
 
 /** One turn of the fake agent (edit:<path>|<text>, commit:<message>), answered when it ends. */
-async function turn(studio: Aib, c: Connection, text: string): Promise<void> {
-  await studio.liveCall('prompt', { id: c.id, text, clientMessageId: crypto.randomUUID() });
+async function turn(aib: Aib, c: Connection, text: string): Promise<void> {
+  await aib.liveCall('prompt', { id: c.id, text, clientMessageId: crypto.randomUUID() });
   await until(() => !c.busy, `the turn "${text}"`, 60);
 }
 
@@ -72,14 +72,14 @@ Deno.test({
   async fn() {
     const state = Deno.makeTempDirSync({ prefix: 'aib-wsl-merge-e2e-' });
     await prepareRoot();
-    const studios: Aib[] = [];
+    const aibs: Aib[] = [];
     try {
       await readyHost();
       const repo = `${ROOT}/repo`;
       const ref = refOf({ kind: 'wsl', distro: KEY, linuxPath: repo });
       await sh('git -C "$1" branch -M main', repo); // the distro's git may default to master; the temp repo uses main
-      const a = studioIn(state);
-      studios.push(a);
+      const a = aibIn(state);
+      aibs.push(a);
       const c = await a.connect('claude', ref, null, { ownCopy: true });
       const linux = c.agentCwd;
       assert(c.worktree?.branch.startsWith('studio/chat-'), 'the chat works in its own copy');
@@ -131,9 +131,9 @@ Deno.test({
       for (const conn of a.connections.values()) conn.sessionLease?.release();
       // a crashed AIB's files are closed by the OS (Windows cannot delete a file a live handle holds): its history stores too
       await a.historyClient()?.shutdown().catch(() => {});
-      studios.pop();
-      const b = studioIn(state);
-      studios.push(b);
+      aibs.pop();
+      const b = aibIn(state);
+      aibs.push(b);
       assertEquals(await b.adoptKeeper(), 1);
       const r = b.connections.get(c.id)!;
       assert(r?.ready && !r.closed, 'adopted');
@@ -171,7 +171,7 @@ Deno.test({
       assertEquals(await sh('cat "$1/a.txt" "$1/mine.txt"', repo), 'one\nuser\nmine', "the user's edits are back, not overwritten");
       assertEquals(await sh('git -C "$1" stash list | wc -l', repo), '0');
     } finally {
-      for (const s of studios) await s.close().catch(() => {});
+      for (const s of aibs) await s.close().catch(() => {});
       await cleanRoot();
       Deno.removeSync(state, { recursive: true });
     }

@@ -1,4 +1,4 @@
-/** Settings > Remote control, step by step: the in-process Studio of work/deno/remote_setup_page_test.ts with the stateful fake Tailscale
+/** Settings > Remote control, step by step: the in-process AIB of work/deno/remote_setup_page_test.ts with the stateful fake Tailscale
  *  (_tailscale_sim.ts; nothing real runs) in a 1600x900 headless browser at device scale 2. Run with TEMP=C:\aib-demo\tmp. */
 import { Browser } from '../deno/_doc_browser.ts';
 import { nonce, pc, phoneHeaders, raw, remoteStudio } from '../deno/_remote_fixture.ts';

@@ -1,10 +1,10 @@
 /**
- * Reading and writing the JSON state files exactly as state_store.py does, so Python and Deno processes can share them.
+ * Reading and writing the JSON state files exactly as every version does, so processes of different versions can share them.
  *
  * parseJson is json.loads: it also accepts NaN / Infinity / -Infinity, and it remembers each object's key order as written
- * (a plain JS object would move integer-like keys such as "12" first; Python keeps file order, which decides what is pruned).
+ * (a plain JS object would move integer-like keys such as "12" first; file order decides what is pruned).
  * keysOf / entriesOf give that order back. dumpJson is json.dump(ensure_ascii=False, separators=(',', ':')) for plain values
- * and Maps (a Map keeps insertion order for every key), writing NaN / Infinity as Python does.
+ * and Maps (a Map keeps insertion order for every key), writing NaN / Infinity.
  */
 import { writeJsonAtomic } from '../core/fs.ts';
 
@@ -28,7 +28,7 @@ export function entriesOf(value: Record<string, unknown>): [string, unknown][] {
 
 class ParseError extends Error {}
 
-/** json.loads(text). Throws on what Python refuses (also a BOM, control characters in strings and extra data). */
+/** json.loads(text). Throws on invalid JSON (also a BOM, control characters in strings and extra data). */
 export function parseJson(text: string): unknown {
   let i = 0;
   const fail = (): never => {
@@ -174,7 +174,7 @@ export function dumpJson(value: unknown): string {
 // ---- files ---------------------------------------------------------------------------------------
 
 export const READ_ATTEMPTS = 5;
-/** state_store.READ_BACKOFF in ms (doubled each retry, at most 500 ms). Tests set it to 0, as the Python tests patch it. */
+/** state_store.READ_BACKOFF in ms (doubled each retry, at most 500 ms). Tests set it to 0. */
 export const timing = { readBackoffMs: 50 };
 
 export function sleepSync(ms: number): void {
@@ -185,7 +185,7 @@ export type ReadStatus = 'ok' | 'missing' | 'corrupt' | 'busy';
 
 /**
  * read_json_file: 'ok' with the value, 'missing', 'corrupt' (a real parse or UTF-8 error) or 'busy' (still unreadable after
- * retries: antivirus, an indexer or another process holding it). Synchronous, like Python's, so a store's reads stay atomic.
+ * retries: antivirus, an indexer or another process holding it). Synchronous, so a store's reads stay atomic.
  */
 export function readJsonFile(path: string): [ReadStatus, unknown] {
   let delay = timing.readBackoffMs;
@@ -231,7 +231,7 @@ export function quarantine(path: string): void {
   } catch { /* left where it is */ }
 }
 
-/** Atomic compact JSON write with Python's mkstemp prefix (tempfile + fsync + replace with retries). */
+/** Atomic compact JSON write with a temp-file prefix (tempfile + fsync + replace with retries). */
 export function saveJson(path: string, payload: unknown, prefix: string): void {
   writeJsonAtomic(path, null, { prefix, suffix: '.tmp', text: dumpJson(payload) });
 }

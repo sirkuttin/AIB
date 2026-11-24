@@ -1,12 +1,11 @@
 /**
- * The ACP side of the agent host (acp_connection.py): Connection, one agent process spoken to over JSON-RPC on stdio.
+ * The ACP side of the agent host: Connection, one agent process spoken to over JSON-RPC on stdio.
  *
- * Python ran a reader thread, a stderr thread and one thread per prompt turn, guarded by an RLock. Here they are async tasks on one
- * event loop. Every Python `with self.lock:` block does no blocking work, so each becomes a stretch of synchronous code with no
- * `await` inside; the orderings the lock gave (one prompt at a time, receipts before the turn starts, events in arrival order,
+ * The reader, the stderr reader and each prompt turn are async tasks on one event loop. Nothing that needs ordering does blocking
+ * work, so each such step is a stretch of synchronous code with no `await` inside; the orderings it gives (one prompt at a time, receipts before the turn starts, events in arrival order,
  * queued settings applied before `busy` clears) hold because nothing can run in between.
  *
- * JSON keys, event kinds and error messages are Python's word for word: they reach the page through the host RPC.
+ * JSON keys, event kinds and error messages are fixed: they reach the page through the host RPC.
  */
 import type { AllowGate } from '../allow/gate.ts';
 import { houseRules } from '../allow/brief.ts';
@@ -104,7 +103,7 @@ const SEP = Deno.build.os === 'windows' ? '\\' : '/';
 
 type Json = Record<string, unknown>;
 
-// ---- Python's exceptions, by name (the host RPC and the tests tell them apart by class name) ----------------------------------
+// ---- Exception classes, by name (the host RPC and the tests tell them apart by class name) ----------------------------------
 
 export class RuntimeError extends Error {
   override name = 'RuntimeError';
@@ -112,7 +111,7 @@ export class RuntimeError extends Error {
 export class TimeoutError extends Error {
   override name = 'TimeoutError';
 }
-/** Writing to an agent whose stdin is gone (Python: BrokenPipeError / OSError). */
+/** Writing to an agent whose stdin is gone. */
 export class BrokenPipeError extends Error {
   override name = 'BrokenPipeError';
 }
@@ -148,7 +147,7 @@ function isOsError(error: unknown): boolean {
       error.name === 'BrokenPipeError');
 }
 
-/** dict.get on something Python would call .get on: raises AttributeError when it is not a dict. */
+/** dict.get on a value that must be a dict: raises AttributeError when it is not a dict. */
 function pget(value: unknown, key: string, fallback: unknown = null): unknown {
   if (!isDict(value)) {
     throw new AttributeError(
@@ -163,7 +162,7 @@ function get(value: Json, key: string, fallback: unknown = null): unknown {
   return Object.hasOwn(value, key) ? value[key] : fallback;
 }
 
-/** Python == between JSON values (1 == 1.0 == True, dicts and lists by content). */
+/** Equality between JSON values (1 == 1.0 == true, dicts and lists by content). */
 export function pyEq(a: unknown, b: unknown): boolean {
   if (
     (typeof a === 'number' || typeof a === 'boolean') &&
@@ -284,7 +283,7 @@ export class ThreadEvent {
   }
 }
 
-// ---- text lines the way Python's text-mode pipe gives them -------------------------------------------------------------------
+// ---- text lines the way a text-mode pipe gives them -------------------------------------------------------------------
 
 /**
  * Bytes in, lines out, as `for line in process.stdout` does with text=True, encoding='utf-8', errors='replace': invalid UTF-8
@@ -381,7 +380,7 @@ export interface Receipt {
   sent?: boolean;
 }
 
-/** The Recovery hook Studio installs (state/recovery.ts). Never throws into the caller. */
+/** The Recovery hook AIB installs (state/recovery.ts). Never throws into the caller. */
 export interface ConnectionRecovery {
   receipt(connection: Connection, messageId: string): Receipt | null;
   receiptChanged(
@@ -461,7 +460,7 @@ export interface ConnectionOptions {
   id?: string;
   /** Rebuild this chat from a live keeper channel instead of starting an agent (needs `keeper`). */
   rebuild?: ChannelInfo | null;
-  /** A chat in a WSL project (needs `keeper`: the distro's Linux keeper). Studio resolves it through the distro's WSL host. */
+  /** A chat in a WSL project (needs `keeper`: the distro's Linux keeper). AIB resolves it through the distro's WSL host. */
   wsl?: WslSpawn | null;
   /** The agent host's history Worker (needs `keeper`): this chat's events go into its store; take-over starts at its checkpoint. */
   history?: HistoryClient | null;
@@ -473,7 +472,7 @@ export interface ConnectionOptions {
   continueStore?: ContinueStore | null;
 }
 
-/** What a reopened chat continues from (Studio reads it from the chat's history store). */
+/** What a reopened chat continues from (AIB reads it from the chat's history store). */
 export interface ContinueStore {
   eventsId: string;
   /** The newest event seq in the store: the chat's next event is this + 1. */
@@ -484,7 +483,7 @@ export interface ContinueStore {
 
 /**
  * Where and how a WSL chat's agent runs in its distro (docs/wsl/design.md sections 2 and 5). The Connection's `cwd` stays the project
- * ref (`wsl://ubuntu/home/u/app`: what Studio, the page and the records key on); the agent gets `linuxPath`. `env` is the distro's
+ * ref (`wsl://ubuntu/home/u/app`: what AIB, the page and the records key on); the agent gets `linuxPath`. `env` is the distro's
  * login environment (never AIB's own), `program` the helper's `which` of the command's program; `caps` the helper calls the agent's
  * client terminals need. A rebuilt chat has none of the three: it starts nothing.
  */
@@ -538,7 +537,7 @@ export const HISTORY_HELPER_TAIL = 200;
 /**
  * The `aib-history-v2` switch, server side: ON by default (AIB_HISTORY_V2=0 turns it off, for one release). Off: new chats get no
  * store and snapshots carry the history in chunk notes as in beta.10 (a chat that already has a store keeps it: see
- * Studio.historyClient). On since fix/history-store-on: the mid-turn crash take-over (keeper_crash_e2e) holds under parallel load.
+ * Aib.historyClient). On since fix/history-store-on: the mid-turn crash take-over (keeper_crash_e2e) holds under parallel load.
  */
 export function historyV2(): boolean {
   try {
@@ -607,7 +606,7 @@ export function guardRealAgent(command: string[]): void {
   throw new RuntimeError(
     `Test guard: refusing to start a real agent process: ${
       pyRepr(command)
-    }. Pass connection_factory= to Studio, or use a fixture under work/.`,
+    }. Pass connection_factory= to AIB, or use a fixture under work/.`,
   );
 }
 
@@ -764,7 +763,7 @@ export function sharedFolderNote(title: string): string {
   return `Another chat (“${title}”) is working in this same folder. Its edits show up here as it makes them.`;
 }
 
-/** Python's re.match with `$`: also matches before one trailing newline. */
+/** Match with `$` that also matches before one trailing newline. */
 export const OWN_ARTIFACT_TOOL = /^mcp__studio_artifact__(?:publish|update|list|merge_into_project|resolve_edit_clash)\n?$/;
 /** Swarm: AIB's helper tools (artifacts/mcp.ts SWARM_TOOLS); auto-approved like the artifact tools. */
 export const SWARM_TOOL_NAMES = ['helper_providers', 'start_helper', 'helper_status', 'stop_helper', 'merge_helper', 'unlanded_work'];
@@ -848,8 +847,8 @@ export const CODEX_UNREAD_NOTE = "Codex may not have read this: it ended its tur
 
 /**
  * Background-command phrases in a tool result (B6). Claude Code: its run_in_background, and the moves of a running command (a steer,
- * its timeout, Ctrl+B). OMP: its job. The id is the task (or job) id. Claude Code's are read from the result's start only (a command
- * that printed this would have to print it first).
+ * its timeout, Ctrl+B). The id is the task id. They are read from the result's start only (a command that printed this would have
+ * to print it first).
  */
 const CLAUDE_BACKGROUND_TEXT = [
   /^Command running in background with ID: (\S+?)\.(?:\s|$)/,
@@ -857,40 +856,25 @@ const CLAUDE_BACKGROUND_TEXT = [
   /^[^\n]*?timeout and was moved to the background \(ID: ([^)\s]+)\)/,
   /^[^\n]*?manually backgrounded by user with ID: ([^\s.]+)/,
 ];
-const OMP_BACKGROUND_TEXT = [/(?:^|\n)Backgrounded as job (\S+?)[\s(.]/];
-
-/** The text of a tool result: Claude Code's string rawOutput, or the text blocks of OMP's {content: [...]}. */
-function rawOutputText(raw: unknown): string {
-  if (isStr(raw)) return raw;
-  if (isDict(raw) && Array.isArray(raw.content)) {
-    return raw.content.map((b) => (isDict(b) && isStr(b.text) ? b.text : '')).join('');
-  }
-  return '';
-}
 
 /**
  * A tool result's background task id, from the agent's own signal: Claude Code's meta (toolResponse.backgroundTaskId, with
- * backgroundedToDeliverMessage for a steer) or its result text; any other agent: OMP's details.async {state: running, jobId} or its
- * "Backgrounded as job" text. (A Codex command that outlives its turn is found at the turn's end instead.)
+ * backgroundedToDeliverMessage for a steer) or its result text. Any other agent: none. (A Codex command that outlives its turn is
+ * found at the turn's end instead.)
  */
 /** The main agent's tools whose calls say a subagent started, continued or was stopped (subagent worktrees P2). */
 const CLAUDE_SUBAGENT_TOOLS = new Set(['Agent', 'Task', 'SendMessage', 'TaskStop', 'KillShell']);
 
 export function backgroundTask(update: Json, claude: boolean): string | null {
+  if (!claude) return null;
+  const meta = get(update, '_meta');
+  const code = isDict(meta) ? get(meta, 'claudeCode') : null;
+  const response = isDict(code) ? get(code, 'toolResponse') : null;
+  const task = isDict(response) ? get(response, 'backgroundTaskId') : null;
+  if (isStr(task) && task) return task;
   const raw = get(update, 'rawOutput');
-  if (claude) {
-    const meta = get(update, '_meta');
-    const code = isDict(meta) ? get(meta, 'claudeCode') : null;
-    const response = isDict(code) ? get(code, 'toolResponse') : null;
-    const task = isDict(response) ? get(response, 'backgroundTaskId') : null;
-    if (isStr(task) && task) return task;
-  } else {
-    const details = isDict(raw) ? get(raw, 'details') : null;
-    const job = isDict(details) && isDict(details.async) ? details.async : null;
-    if (job && job.state === 'running' && isStr(job.jobId) && job.jobId) return job.jobId;
-  }
-  const text = rawOutputText(raw).replace(/^\s+/, '');
-  for (const pattern of claude ? CLAUDE_BACKGROUND_TEXT : OMP_BACKGROUND_TEXT) {
+  const text = (isStr(raw) ? raw : '').replace(/^\s+/, '');
+  for (const pattern of CLAUDE_BACKGROUND_TEXT) {
     const m = pattern.exec(text);
     if (m) return m[1];
   }
@@ -900,12 +884,7 @@ export function backgroundTask(update: Json, claude: boolean): string | null {
 /** A tool update that says the tool is over (completed / failed) and does not say it keeps running in the background. */
 function toolEnded(update: Json, claude: boolean): boolean {
   const status = get(update, 'status');
-  if (status !== 'completed' && status !== 'failed') {
-    const raw = get(update, 'rawOutput');
-    const details = isDict(raw) ? get(raw, 'details') : null;
-    const job = isDict(details) && isDict(details.async) ? details.async : null;
-    return !!job && isStr(job.state) && ['completed', 'failed', 'killed', 'cancelled', 'stopped'].includes(job.state);
-  }
+  if (status !== 'completed' && status !== 'failed') return false;
   return backgroundTask(update, claude) === null;
 }
 
@@ -949,7 +928,7 @@ export class NotStoppable extends Error {
   override name = 'NotStoppable';
 }
 
-/** str(a) for each item of `e.get('args') or []` (a string iterates its characters, as in Python). */
+/** str(a) for each item of `e.get('args') or []` (a string iterates its characters). */
 function argStrings(args: unknown): string[] {
   if (!pyTruthy(args)) return [];
   if (Array.isArray(args)) return args.map((a) => pyStr(a));
@@ -959,15 +938,15 @@ function argStrings(args: unknown): string[] {
 }
 
 /**
- * True for the `studio_artifact` entry Studio itself gave the chat: the Deno tool (artifacts/mcp.ts: this program with the
+ * True for the `studio_artifact` entry AIB itself gave the chat: the Deno tool (artifacts/mcp.ts: this program with the
  * mcp-artifact subcommand) or the HTTP one this process serves (artifacts/mcp_http.ts). The Deno host builds every chat's entries
- * itself, so the Python tool (artifact_mcp.py) never needs recognising.
+ * itself, so no other tool entry needs recognising.
  */
 function isOwnArtifactEntry(entry: unknown): boolean {
   if (!isDict(entry) || entry.name !== 'studio_artifact') return false;
   if (entry.type === 'http') return isOwnMcpUrl(entry.url);
   const args = argStrings(get(entry, 'args'));
-  if (isOwnForwardEntry(entry.command, args)) return true; // the keeper's forwarder to this Studio's HTTP tool
+  if (isOwnForwardEntry(entry.command, args)) return true; // the keeper's forwarder to this AIB's HTTP tool
   const own = artifactToolCommand();
   return entry.command === own.command && args.length === own.args.length && args.every((a, i) => a === own.args[i]);
 }
@@ -1164,7 +1143,7 @@ export class Connection {
     const h = this.subagentHooks;
     return !!h && !h.off && (isDict(h.settings?.hooks) || h.adopted === true);
   }
-  /** The worktree a subagent works in, by its Agent call's tool_use_id (allow-rule parity); set by the Studio. */
+  /** The worktree a subagent works in, by its Agent call's tool_use_id (allow-rule parity); set by AIB. */
   subagentWorktree: ((toolUseId: string) => string | null) | null = null;
   /** Subagent worktrees, Gemini (subagents/gemini.ts): the fence and, when on, the redirect this Gemini chat was launched with. */
   geminiSubagents: { policyDir: string; home: string; subFolder: string; off: string; dir: string } | null = null;
@@ -1186,11 +1165,11 @@ export class Connection {
   busy = false;
   /** Wall-clock time of the last turn_end event (attention summary). */
   turnEndedAt: number | null = null;
-  /** Swarm: this chat's role, set by the Studio when it is made (a helper's own record says whose); null outside a worktree. */
+  /** Swarm: this chat's role, set by AIB when it is made (a helper's own record says whose); null outside a worktree. */
   swarm: { role: 'main' | 'helper'; helperId?: string; parent?: string } | null = null;
   /** True: this main chat started while "Helpers from other agents" was off, so its AIB prompt says so (HELPERS_OFF_PROMPT). */
   helpersOffHint = false;
-  /** Swarm: this helper's brief test command (allow rules: the built-in "helper copy" rule answers its runs); set by the Studio. */
+  /** Swarm: this helper's brief test command (allow rules: the built-in "helper copy" rule answers its runs); set by AIB. */
   helperTestCmd: () => string = () => '';
   /** Wall-clock time the current prompt turn started (attention.busySince, so a reloaded page keeps "Working · 12m"). */
   turnStartedAt: number | null = null;
@@ -1299,7 +1278,7 @@ export class Connection {
   promptReceipts = new Map<string, Receipt>();
   /** Messages written while the agent works; the host owns it (see msgqueue.ts). */
   queue = new MessageQueue();
-  /** Recovery hook installed by Studio; null in standalone use. */
+  /** Recovery hook installed by AIB; null in standalone use. */
   recovery: ConnectionRecovery | null = null;
   /** True once this connection is in the durable recovery list. */
   persisted = false;
@@ -1308,7 +1287,7 @@ export class Connection {
   /** Child sessionId -> latest announcement (title, description, capabilities, state). */
   subagents = new Map<string, Json>();
   sessionLease: SessionLease | null = null;
-  /** Studio hook: the agent finished a turn, so it is the user's turn. */
+  /** AIB hook: the agent finished a turn, so it is the user's turn. */
   onTurnEnd: Hook | null = null;
   /** The user stopped a turn (stopReason cancelled; onTurnEnd does not run for it). */
   onTurnCancelled: Hook | null = null;
@@ -1327,7 +1306,7 @@ export class Connection {
    */
   onSubagentEnded: ((c: Connection, agentId: string, how: string | null) => void) | null = null;
 
-  /** Subagent worktrees P3: Activity's words per subagent by agentId ({where, landing}); set by the Studio. */
+  /** Subagent worktrees P3: Activity's words per subagent by agentId ({where, landing}); set by AIB. */
   subagentActivity: (() => Record<string, unknown>) | null = null;
   #subagentActivitySafe(): Record<string, unknown> {
     try {
@@ -1348,7 +1327,7 @@ export class Connection {
     return out;
   }
   /**
-   * Studio hook: the agent sent subscription limit data on its own (server/host/usage_limits_feed.ts). kind 'claude-rate-limit'
+   * AIB hook: the agent sent subscription limit data on its own (server/host/usage_limits_feed.ts). kind 'claude-rate-limit'
    * (usage_update._meta._claude/rateLimit) or 'qwen-quota' (a prompt error's data.subscriptionQuota); at = when, in seconds.
    */
   onLimits: ((connection: Connection, kind: string, raw: unknown, at: number) => void) | null = null;
@@ -1363,15 +1342,15 @@ export class Connection {
   ownerTouched = false;
   /** cancel() cancels every prompt up to this number (one still before its send is dropped; later ones go through). */
   cancelSeq = 0;
-  /** Studio hook (worktree live sync): called before the prompt is sent. */
+  /** AIB hook (worktree live sync): called before the prompt is sent. */
   onTurnStart: Hook | null = null;
-  /** Studio hook: connection -> [text, token] or null, a note sent as an extra text block in front of the prompt. */
+  /** AIB hook: connection -> [text, token] or null, a note sent as an extra text block in front of the prompt. */
   contextForPrompt: ((connection: Connection) => unknown) | null = null;
-  /** Studio hook: (connection, token) once the prompt went through; the note is not sent again. */
+  /** AIB hook: (connection, token) once the prompt went through; the note is not sent again. */
   contextSent: ((connection: Connection, token: unknown) => unknown) | null = null;
-  /** Studio hook: a prompt is about to reach the agent (text and clientMessageId as given); the merge permission ends on the user's own. */
+  /** AIB hook: a prompt is about to reach the agent (text and clientMessageId as given); the merge permission ends on the user's own. */
   onUserPrompt: ((connection: Connection, text: unknown, clientMessageId: string | null) => unknown) | null = null;
-  /** Studio hook: withdraw the owner announcement when the conversation stops. */
+  /** AIB hook: withdraw the owner announcement when the conversation stops. */
   onRelease: Hook | null = null;
   /** The agent's last stderr lines (at most 30, each at most 2000 characters). */
   stderr: string[] = [];
@@ -1392,7 +1371,7 @@ export class Connection {
   /** Why this chat could not be rebuilt from the keeper's record ('' when it was, or was never rebuilt). It is then read-only. */
   rebuildError = '';
   #replaying = false;
-  /** AIB's own lines of this conversation, kept by provider + session (history/lines.ts); set by Studio. */
+  /** AIB's own lines of this conversation, kept by provider + session (history/lines.ts); set by AIB. */
   lines: ConversationLines | null = null;
   /** While a session/load replays the transcript (live only): puts the kept lines back after their turns. */
   #merger: LineMerger | null = null;
@@ -1456,7 +1435,7 @@ export class Connection {
   /** A rebuild: the seq of the snapshot it started from (0: the start of the record) and how many records it replayed after it. */
   replayedFrom = 0;
   replayedRecords = 0;
-  /** performance.now() at the take-over's steps (studio.ts logs each chat's take-over timing from them); 0: not reached. */
+  /** performance.now() at the take-over's steps (aib.ts logs each chat's take-over timing from them); 0: not reached. */
   rebuildTimes = { adopt: 0, live: 0, replayed: 0, settled: 0 };
   // ---- the history store (design 3.1-3.5) ----
   #history: HistoryClient | null = null;
@@ -1518,7 +1497,7 @@ export class Connection {
     this.cwd = String(cwd);
     this.agentCwd = this.wsl ? this.wsl.linuxPath : this.cwd;
     if (this.wsl && !this.keeper) throw new ValueError('A WSL chat runs in its distro, and AIB has no connection to it');
-    // a chat in any app's git worktree belongs to the main checkout (a WSL chat: no Windows lookup for its ref; Studio sets
+    // a chat in any app's git worktree belongs to the main checkout (a WSL chat: no Windows lookup for its ref; AIB sets
     // projectRoot to the project's ref when the chat has a worktree in the distro)
     const found = this.wsl ? null : projectOfWorktree(this.cwd);
     this.projectRoot = found ? found.project : this.cwd;
@@ -1621,7 +1600,7 @@ export class Connection {
   }
 
   /**
-   * Start the agent of a WSL chat as a channel of its distro's Linux keeper: the distro's login environment (Studio read it from the WSL
+   * Start the agent of a WSL chat as a channel of its distro's Linux keeper: the distro's login environment (AIB read it from the WSL
    * host; never Deno.env), the program the helper's `which` found, the Linux folder as cwd. Nothing of Windows is resolved here.
    */
   #startInWsl(): void {
@@ -1702,7 +1681,7 @@ export class Connection {
       app: APP_VERSION,
       // subagent worktrees: whether its agent runs AIB's hooks, or why not, so a take-over shows the same (should-fix 6). No key.
       ...(this.subagentHooks ? { subagentHooks: this.#hooksNote() } : {}),
-      // Every event of this chat is rebuilt from this record (Studio's own events go in as `event` notes), so a rebuild numbers
+      // Every event of this chat is rebuilt from this record (AIB's own events go in as `event` notes), so a rebuild numbers
       // them exactly as now and an open page keeps its cursor.
       ev: 1,
       // a reopened chat that goes on in its store from this seq: a rebuild drops its setup session/load's replay, as live did
@@ -1896,7 +1875,7 @@ export class Connection {
     this.pending.set(id, entry);
     if (method === 'session/prompt') return this.#replayTurn(id, entry, params);
     if (method === '_session/steering') return this.#replaySteer(id, entry, params);
-    // open elsewhere: a session/load after a hand-off (the chat was ready): the outside turns it showed are Studio events in the
+    // open elsewhere: a session/load after a hand-off (the chat was ready): the outside turns it showed are AIB events in the
     // record already, so the history it brought back is dropped again
     // A reopened chat's setup session/load: the transcript it replays is in the store; the outside turns live showed are `event`
     // notes in the record (#showOutsideTurns).
@@ -2002,7 +1981,7 @@ export class Connection {
   }
 
   #replayNote(note: Json | null): void {
-    if (note && note.t === 'event' && isStr(note.kind)) { // Studio's own event (a line put back from the conversation keeps its time)
+    if (note && note.t === 'event' && isStr(note.kind)) { // AIB's own event (a line put back from the conversation keeps its time)
       return this.event(note.kind, note.data ?? null, typeof note.time === 'number' ? note.time : undefined);
     }
     if (note && note.t === 'chat') { // a record that has every event: the rebuild numbers them as before
@@ -2618,7 +2597,7 @@ export class Connection {
 
   /**
    * Stop writing and close the store. Never deletes it (owner rule 2026-11-17: the chat history is permanent; only deleting the
-   * chat removes it: Studio.forgetHistory). A fenced writer leaves the new owner's store alone.
+   * chat removes it: Aib.forgetHistory). A fenced writer leaves the new owner's store alone.
    */
   #historyEnd(_how: 'close' = 'close'): void {
     const h = this.#history;
@@ -2635,7 +2614,7 @@ export class Connection {
 
   /**
    * The chat stopped (its agent exited, the chat was closed, AIB quit with it idle): what is queued is written, then the store is
-   * closed and KEPT, so reopening the conversation goes on in it under the same chat id (Studio.connect). A store with no event at
+   * closed and KEPT, so reopening the conversation goes on in it under the same chat id (Aib.connect). A store with no event at
    * all (a chat that never began) is removed: it holds no history.
    */
   #historyFinish(): Promise<void> {
@@ -2646,7 +2625,7 @@ export class Connection {
   #historyFinishing: Promise<void> | null = null;
 
   /**
-   * This chat's store is no longer this connection's: written to the end, closed, kept (Studio, before a reopened chat with the same
+   * This chat's store is no longer this connection's: written to the end, closed, kept (AIB, before a reopened chat with the same
    * id opens it: one store is never written by two connections). Never throws.
    */
   async historyDetach(): Promise<void> {
@@ -2678,7 +2657,7 @@ export class Connection {
   }
 
   /**
-   * A reopened conversation goes on in its chat's store (Studio found it): the same numbering, the next seq after the newest stored
+   * A reopened conversation goes on in its chat's store (AIB found it): the same numbering, the next seq after the newest stored
    * one, the stored tail in RAM, and the checkpoint a later take-over of the new channel starts from (record 0: this state, before
    * the channel's first record). The setup session/load's replay is dropped (it is in the store); turns made outside AIB meanwhile
    * are shown (#showOutsideTurns).
@@ -3017,7 +2996,7 @@ export class Connection {
 
   /**
    * History pages (event_pages.ts): seqs up to here keep their number across a host restart (saved with the last snapshot); above
-   * it a rebuild may number Studio's own events differently. A chat outside the keeper is not rebuilt: every seq is stable.
+   * it a rebuild may number AIB's own events differently. A chat outside the keeper is not rebuilt: every seq is stable.
    */
   get stableSeq(): number {
     return this.channel ? Math.min(this.#eventsSaved, this.sequence) : this.sequence;
@@ -3039,7 +3018,7 @@ export class Connection {
   }
 
   /**
-   * An event Studio makes itself (not from the agent: an artifact, a Studio note, a session op). In the keeper it also goes into the
+   * An event AIB makes itself (not from the agent: an artifact, an AIB note, a session op). In the keeper it also goes into the
    * record as an `event` note, so a rebuild has it in the same place and numbers every later event the same.
    */
   recordedEvent(kind: string, data: unknown, time?: number): void {
@@ -3217,7 +3196,7 @@ export class Connection {
 
   /**
    * Background helpers of this chat still run although no turn may be working (Claude Code's held turns): the chat must not be cut
-   * off (Studio.busyList), but it is not busy for the page or the queue.
+   * off (Aib.busyList), but it is not busy for the page or the queue.
    */
   helpersRunning(): boolean {
     return !this.closed && this.#liveHelpers.size > 0;
@@ -3225,7 +3204,7 @@ export class Connection {
 
   /**
    * A Claude Code background shell of this chat still runs (a long test run started with Bash run_in_background, its reply long
-   * ended): like helpersRunning, the chat must not be cut off on quit, update or idle exit (Studio.busyList 'background'), but it is
+   * ended): like helpersRunning, the chat must not be cut off on quit, update or idle exit (Aib.busyList 'background'), but it is
    * not busy for the page or the queue. Claude Code tells a client like AIB only that the command went to the background (the Bash
    * result's `_meta.claudeCode.toolResponse.backgroundTaskId`), never that it ended, so the end is read from the OS: the agent's
    * processes that started with the command are gone (platform/descendants.ts). A shell whose processes could not be listed counts
@@ -3304,7 +3283,7 @@ export class Connection {
 
   /**
    * Every agent's tool calls (any session: a helper's shells run in the same agent): which are shell commands, their status, and
-   * which moved to the background (Claude Code's backgroundTaskId, OMP's details.async, the result text; see backgroundTask), so the
+   * which moved to the background (Claude Code's backgroundTaskId, the result text; see backgroundTask), so the
    * page can mark the row and Stop can end it. Also notes main-session output for the steer rules (B1, B13).
    */
   #watchTools(params: Json): void {
@@ -3350,7 +3329,7 @@ export class Connection {
     const toolName = isDict(claude) ? get(claude, 'toolName') : null;
     let seen = this.#tools.get(id);
     if (kind === 'tool_call' && !seen) {
-      // A shell command: Claude Code's Bash or PowerShell; for the other agents an `execute` tool (Codex exec_command, OMP bash).
+      // A shell command: Claude Code's Bash or PowerShell; for the other agents an `execute` tool (Codex exec_command).
       // Never an MCP tool or WebFetch, whatever kind it reports.
       const shell = isStr(toolName) ? toolName === 'Bash' || toolName === 'PowerShell' : get(update, 'kind') === 'execute';
       const parent = isDict(claude) ? get(claude, 'parentToolUseId') : null;
@@ -3398,7 +3377,7 @@ export class Connection {
     if (kind !== 'tool_call_update') return;
     const background = this.#bgTools.get(id);
     if (background) {
-      // Codex: the command's completed update comes after the turn; OMP: a second completed on the old card, or the job's end.
+      // Codex: the command's completed update comes after the turn.
       if (background.state === 'running' && toolEnded(update, this.#claudeHolds())) this.#backgroundEnded(id, background, 'done');
       return;
     }
@@ -3504,7 +3483,7 @@ export class Connection {
     const sender = get(update, 'senderSessionId');
     if (!isStr(messageId) || !messageId.endsWith(':reply') || !isStr(sender) || sender === this.sessionId) return;
     const content = get(update, 'content');
-    const text = rawOutputText({ content: Array.isArray(content) ? content : [] });
+    const text = (Array.isArray(content) ? content : []).map((b) => (isDict(b) && isStr(b.text) ? b.text : '')).join('');
     if (!HELPER_BACKGROUND_TEXT.test(text)) return;
     const id = messageId.slice(0, -':reply'.length);
     if (!id || this.#bgTools.has(id) || !this.#liveHelpers.has(sender)) return;
@@ -3869,7 +3848,7 @@ export class Connection {
         this.#pushStderr(clip(line.replace(RSTRIP, ''), 2000));
       }
     } catch {
-      /* the pipe went away: as Python's thread, just stop */
+      /* the pipe went away: just stop */
     } finally {
       reader.releaseLock();
     }
@@ -3955,7 +3934,7 @@ export class Connection {
       const message = failure ||
         'ACP connection closed. ' + this.stderr.slice(-3).join('\n');
       for (const entry of this.pending.values()) {
-        // An answer that already arrived is kept (Python could overwrite it here when the agent exited right after replying).
+        // An answer that already arrived is kept.
         if (entry.done.isSet()) continue;
         entry.response = { error: { message } };
         entry.done.set();
@@ -3986,7 +3965,7 @@ export class Connection {
       if (waiting) {
         waiting.response = message;
         waiting.done.set();
-        // Let the caller that waited on this reply run before the next line is read, as Python's waiting thread wakes at once:
+        // Let the caller that waited on this reply run before the next line is read, so the waiter wakes at once:
         // a repeated reply then finds no pending request, and a turn's end is recorded before what the agent sent after it.
         return new Promise((resolve) => setTimeout(resolve, 0));
       }
@@ -4000,7 +3979,7 @@ export class Connection {
       if (
         method === 'session/request_permission' && this.ownArtifactTool(params)
       ) {
-        // Studio's own artifact tool only publishes into this chat; never make the user approve it.
+        // AIB's own artifact tool only publishes into this chat; never make the user approve it.
         const options = get(params, 'options', []);
         const allow = (Array.isArray(options) ? options : []).find((o) => isDict(o) && o.kind === 'allow_once') as Json | undefined;
         if (allow && isStr(allow.optionId)) {
@@ -4027,8 +4006,8 @@ export class Connection {
           return;
         }
         const answered = this.#dispatchCaps(message);
-        // terminal/wait_for_exit can take as long as the command runs: answered on its own (Python: a worker thread). Everything
-        // else is answered before the next line is read, as Python's reader thread does.
+        // terminal/wait_for_exit can take as long as the command runs: answered on its own. Everything
+        // else is answered before the next line is read.
         if (method !== 'terminal/wait_for_exit') return answered;
         answered?.catch((error) => log.exception(error, 'Client capability request failed'));
       } else if (method === 'elicitation/create') {
@@ -4108,7 +4087,7 @@ export class Connection {
     }
   }
 
-  /** self.settings.setdefault('modes', {}): a non-dict value fails as item assignment does in Python. */
+  /** self.settings.setdefault('modes', {}): a non-dict value fails as item assignment does. */
   #modes(): Json {
     if (!Object.hasOwn(this.settings, 'modes')) this.settings.modes = {};
     const modes = this.settings.modes;
@@ -4652,9 +4631,9 @@ export class Connection {
    * person comes back. null: AIB holds the session.
    */
   elsewhere: { app: string; pid: number; entrypoint: string; since: number; released: boolean; heldNoted?: boolean; line?: string } | null = null;
-  /** Studio hook (handoff.ts): who else holds this chat's session now; null when nobody does (or AIB cannot tell). */
+  /** AIB hook (handoff.ts): who else holds this chat's session now; null when nobody does (or AIB cannot tell). */
   holderNow: (() => Promise<Holder | null>) | null = null;
-  /** Studio hook: this chat let go of its session ('released') or took it back ('back'). */
+  /** AIB hook: this chat let go of its session ('released') or took it back ('back'). */
   onElsewhere: ((connection: Connection, what: 'released' | 'back') => void) | null = null;
   /** Processes the person chose Open here anyway over: their holding no longer makes this chat let go. */
   readonly overriddenHolders = new Set<number>();
@@ -5201,7 +5180,7 @@ export class Connection {
     replayed: { entry: Pending; id: unknown } | null = null,
   ): Promise<void> {
     try {
-      const context = replayed ? null : await this.#studioContext();
+      const context = replayed ? null : await this.#aibContext();
       const blocks = [
         ...(context ? [{ type: 'text', text: context[0] }] : []),
         ...(pyStrip(text) ? [{ type: 'text', text }] : []),
@@ -5248,7 +5227,7 @@ export class Connection {
         const response = sendWhenFree();
         this.#promptOut.set(); // written: a steer from now on reaches this turn
         result = await this.#untilReplyEnds(seq, response);
-        await this.#studioContextSent(context);
+        await this.#aibContextSent(context);
       }
       this.#clearSettle();
       this.turnEndedAt = this.#now();
@@ -5345,7 +5324,7 @@ export class Connection {
   }
 
   /** [text, token] of the note to put in front of this prompt (kept out of the user event and the fingerprint), or null. */
-  async #studioContext(): Promise<[string, unknown] | null> {
+  async #aibContext(): Promise<[string, unknown] | null> {
     const start = this.onTurnStart;
     const provider = this.contextForPrompt;
     if (start) {
@@ -5365,7 +5344,7 @@ export class Connection {
     }
   }
 
-  async #studioContextSent(context: [string, unknown] | null): Promise<void> {
+  async #aibContextSent(context: [string, unknown] | null): Promise<void> {
     const done = this.contextSent;
     if (context && done) {
       try {
@@ -5405,7 +5384,7 @@ export class Connection {
     }
   }
 
-  /** A model-server chat (set by Studio): the server's models, and the model a new chat starts with. null for every other chat. */
+  /** A model-server chat (set by AIB): the server's models, and the model a new chat starts with. null for every other chat. */
   serverModels: { models: string[]; model: string } | null = null;
   #serverCurrent = '';
 
@@ -5599,13 +5578,13 @@ export class Connection {
   #landingTimer: ReturnType<typeof setTimeout> | null = null;
 
   /**
-   * Studio hook (subagent worktrees): this child (its agentId) works in its own worktree AIB made, so a landing in this chat's folder
+   * AIB hook (subagent worktrees): this child (its agentId) works in its own worktree AIB made, so a landing in this chat's folder
    * can't change anything under it. Null: none is.
    */
   subagentIsolated: ((child: string) => boolean) | null = null;
   /**
    * Claude Code: child session `child` (its agentId) is a background subagent of this chat (subagents/service.ts inBackground): a
-   * stopped turn leaves its open approvals and questions alone, as for a helper from an earlier turn. Set by the Studio.
+   * stopped turn leaves its open approvals and questions alone, as for a helper from an earlier turn. Set by AIB.
    */
   subagentInBackground: ((child: string) => boolean) | null = null;
 
@@ -5897,7 +5876,7 @@ export class Connection {
    * agent that can steer; or a cycle Claude Code started on its own (a background task ended): `_session/steering` would answer
    * promptRequired there (claude-agent-acp steers only a prompt's turn, and the cycle is none), but a session/prompt is folded into
    * the cycle, which it takes over ("A prompt folded into an autonomous turn owns that turn now"), and nothing running stops. So
-   * Send now prompts it (steer(), #steerLane). Codex and OMP start no cycles of their own; one seen anyway is not steered.
+   * Send now prompts it (steer(), #steerLane). Codex starts no cycles of its own; one seen anyway is not steered.
    */
   steerable(): boolean {
     if (!this.busy || !this.ready || this.closed || this.rebuildError) return false;
@@ -5926,8 +5905,7 @@ export class Connection {
   }
 
   /**
-   * The open cards a message sent now waits for (owner decision 5), oldest first; none: it may go in. OMP withdraws an open card
-   * on a steer (recording O2), so every card holds there; Codex is not recorded with a card open: every card holds. Claude Code
+   * The open cards a message sent now waits for (owner decision 5), oldest first; none: it may go in. Codex is not recorded with a card open: every card holds. Claude Code
    * (claude-agent-acp) delivers a steer at priority `later` while the SDK awaits an answer, which leaves the card open (recording
    * C4, IJAI-1191): a subagent's card does not hold it (owner, 2026-11-17), the main agent's own still does (decision 5).
    */
@@ -6078,7 +6056,7 @@ export class Connection {
       if (head.state === 'fallback') return; // B2: the agent's turn is over; it goes as a prompt once AIB has finished that turn
       const holds = this.#steerHolds();
       if (holds.length) {
-        // Owner decision 5 (B8): never steered while an approval or question is open (OMP would cancel the card), except a Claude
+        // Owner decision 5 (B8): never steered while an approval or question is open except a Claude
         // Code subagent's (#steerHolds). The row names the card it waits for. Released by any close of the last card that holds it
         // (#cardsChanged), and by the turn's end (#queueAfterTurn).
         const first = holds[0];
@@ -6207,7 +6185,7 @@ export class Connection {
     if (outcome === 'injected' || outcome === 'startedNewTurn') {
       if (outcome === 'startedNewTurn') log.warning('chat %s: the agent started a turn of its own for a steer', this.id);
       this.#steerLanded(item.id, item.text, images, files, String(item.fingerprint), item);
-      void this.#studioContextSent(context);
+      void this.#aibContextSent(context);
       return 'injected';
     }
     if (outcome === 'promptRequired') return 'promptRequired';
@@ -6237,7 +6215,7 @@ export class Connection {
         if (at >= 0) q.items.splice(at, 1);
         log.info('chat %s: the agent took message %s late; it is not sent again', this.id, item.id);
         this.#steerLanded(item.id, item.text, images, files, String(item.fingerprint), item);
-        void this.#studioContextSent(context);
+        void this.#aibContextSent(context);
       } else {
         log.info('chat %s: the late answer to message %s: not taken (%s)', this.id, item.id, pyRepr(outcome));
       }
@@ -6582,7 +6560,7 @@ export class Connection {
   }
 
   /**
-   * {systemPrompt: ...} that tells the agent about Studio's artifact tool, or {} when this chat has no such tool or the agent does
+   * {systemPrompt: ...} that tells the agent about AIB's artifact tool, or {} when this chat has no such tool or the agent does
    * not advertise client system prompts (ACP unstable `systemPrompt`; appended after the agent's own).
    */
   /**
@@ -6757,7 +6735,7 @@ export class Connection {
   // ---- allow rules in a WSL chat (allow/linux.ts, allow/wsl_facts.ts) ---------------------------------------------------------
   /** What AIB has learnt of this WSL chat's distro for the matcher. */
   #linuxFacts = new LinuxFacts();
-  /** The start's fetch of the chat folder and the base facts (Studio waits for it briefly). */
+  /** The start's fetch of the chat folder and the base facts (AIB waits for it briefly). */
   allowWarming: Promise<void> | null = null;
 
   #wslFactsSource(): WslFactsSource {
@@ -6915,7 +6893,7 @@ export class Connection {
     return true;
   }
 
-  /** True when a permission request is for Studio's studio_artifact tool on a chat Studio gave that tool to. */
+  /** True when a permission request is for AIB's studio_artifact tool on a chat AIB gave that tool to. */
   ownArtifactTool(params: unknown): boolean {
     if (!(this.mcpServers ?? []).some(isOwnArtifactEntry)) return false;
     const call = isDict(params) ? get(params, 'toolCall') : null;
@@ -7422,7 +7400,7 @@ export class Connection {
     const events = this.events;
     // Being rebuilt from the keeper's record: no events yet, and the page keeps its cursor (the rebuilt chat numbers them the same).
     const rebuilding = this.#replaying && !this.rebuildError && !this.closed;
-    // A cursor past the end belongs to another numbering (an older record without its Studio events): send everything again.
+    // A cursor past the end belongs to another numbering (an older record without its AIB events): send everything again.
     const stale = !rebuilding && after > this.sequence;
     const data: Json = {
       attention: this.attention(),
@@ -7510,7 +7488,7 @@ export class Connection {
     return data;
   }
 
-  /** Messages that were mid-send when Studio last restarted and are still unresolved (see state_store). */
+  /** Messages that were mid-send when AIB last restarted and are still unresolved (see state_store). */
   unknownReceipts(): unknown[] {
     const store = this.recovery?.store ?? null;
     return store && this.sessionId ? store.unknownReceipts(this.provider, this.sessionId) : [];

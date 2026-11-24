@@ -1,6 +1,6 @@
 /**
  * Multi-window Phase 2B (design section 3 "entry points", K3, owner decision 1a): the page's ways to open a project in its own
- * window, headless chat.html pages against a Studio in this process with the fake K4 (_fake_desktop_windows.ts). Nothing is shown.
+ * window, headless chat.html pages against an AIB in this process with the fake K4 (_fake_desktop_windows.ts). Nothing is shown.
  *
  *   menu      the project menu's "Open in new window" sends K3 {op:'open', from, project:{key,name,path}}; a second time the
  *             project's window is brought forward (existed), no second window.
@@ -14,7 +14,7 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { Browser, browserPath, type Page } from './_doc_browser.ts';
-import { remoteStudio } from './_remote_fixture.ts';
+import { remoteAib } from './_remote_fixture.ts';
 import { FakeDesktopWindows } from './_fake_desktop_windows.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
@@ -35,7 +35,7 @@ const SPY = [
 const APP = 'window.bindings = { aibDesktop() {} };\n' + SPY;
 
 async function lab() {
-  const s = await remoteStudio();
+  const s = await remoteAib();
   s.ctx.transcripts = {
     root: s.state,
     sessions: () => Promise.resolve([]),

@@ -1,5 +1,5 @@
 'use strict';
-/* "Studio restarted while this was being sent": a quiet warning under a message whose delivery receipt is unknown.
+/* "AIB restarted while this was being sent": a quiet warning under a message whose delivery receipt is unknown.
    plan() is pure (tested in node); build() is the small DOM builder. The server keeps only a fingerprint of each message,
    so the text comes from this browser's own record of what it sent (pending-sends in localStorage). */
 (function (root) {

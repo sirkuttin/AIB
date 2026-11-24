@@ -29,7 +29,7 @@ Deno.test('a worktree chat\'s doc tools and routes use the main checkout\'s aib-
   await git(main, 'add', '.');
   await git(main, 'commit', '-q', '-m', 'init');
   await git(main, 'worktree', 'add', '-q', '-b', 'feat', wt);
-  // The host knows the live connection's folder; asked by the lasting id it knows nothing (as in the real Studio).
+  // The host knows the live connection's folder; asked by the lasting id it knows nothing (as in the real AIB).
   const connections: Json[] = [{ id: 'c1', provider: 'claude', sessionId: 's1', cwd: wt, projectRoot: main, busy: false, closed: false }];
   const host = {
     liveList: () => Promise.resolve({ connections }),

@@ -4,7 +4,7 @@
  * the reply (JSON bodies may hold JSON.rawJSON values: the transcript revision's nanosecond mtime does not fit a double).
  *
  * Split by concern: normalize.ts (records -> events, titles, metadata), transcript.ts (one file read incrementally),
- * store.ts (folders, cards, agents, cache, model in use), pycompat.ts / purepath.ts / xml_notice.ts (Python behaviour).
+ * store.ts (folders, cards, agents, cache, model in use), pycompat.ts / purepath.ts / xml_notice.ts.
  */
 import { pyStr, pyStrip, ValueError } from '../core/py.ts';
 import { RouteTable, SCOPE_IMAGE, SCOPE_READ } from '../web/security.ts';
@@ -399,7 +399,7 @@ export async function transcriptPage(
 
 /**
  * One GET request of the viewer, after authorization: `path` without the query, `query` the raw query string (no '?').
- * Errors Python answers with 400 (ValueError, TypeError, OSError) come back as {status: 400, body: {error}}; others throw.
+ * Errors answered with 400 (ValueError, TypeError, OSError) come back as {status: 400, body: {error}}; others throw.
  */
 export async function handleGet(source: Source, path: string, query: string, options: HandlerOptions = {}): Promise<Reply> {
   const json = (status: number, body: unknown): Reply => ({ status, body, contentType: JSON_TYPE });

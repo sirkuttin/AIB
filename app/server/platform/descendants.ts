@@ -3,7 +3,7 @@
  * still runs. Claude Code sends no update when such a shell ends to a client like AIB (only JetBrains AIR gets that lifecycle), so
  * AIB notes the agent's processes that started with the command and asks the OS whether they still run. Windows: a Toolhelp snapshot
  * (process_info.ts) and each process's creation time. Linux: /proc (procTable); other POSIX: `ps -A -o pid=,ppid=,etime=`. One snapshot serves every call for a
- * second (Studio.busyList runs every second and asks each chat). Never throws: null when the processes cannot be listed.
+ * second (Aib.busyList runs every second and asks each chat). Never throws: null when the processes cannot be listed.
  */
 import { processList, processStartTime } from './process_info.ts';
 

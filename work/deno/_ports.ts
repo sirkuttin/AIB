@@ -1,6 +1,6 @@
 /**
  * Ports in tests: the OS picks every one. A test never names a port number and never guesses a free one and hopes it is still free a
- * moment later (another test, builder or demo Studio may take it in between). Instead:
+ * moment later (another test, builder or demo AIB may take it in between). Instead:
  *
  * - In this process: listen on port 0 and read the port back (`Deno.serve({ port: 0 })`, `server.listen(0)`, `startRedirect(0, ...)`).
  * - A child process (AIB `serve`, the desktop binary, the agent host, headless Chrome): start it with port 0 and read the port it

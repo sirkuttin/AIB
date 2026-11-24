@@ -31,5 +31,5 @@
   },
   "fmt": { "lineWidth": 140, "singleQuote": true, "include": ["server/", "../work/deno/", "../tools/build.ts", "../tools/wsl-import.ts", "../tools/make_icons.ts", "../tools/test.ts", "../tools/affected.ts"] },
   "lint": { "include": ["server/", "../work/deno/", "../tools/build.ts", "../tools/wsl-import.ts", "../tools/make_icons.ts", "../tools/test.ts", "../tools/affected.ts"] },
-  "exclude": ["node_modules/", "public/", "agent_locks/", "docs/", "server/vendor/"]
+  "exclude": ["node_modules/", "public/", "agents/locks/", "docs/", "server/vendor/"]
 }

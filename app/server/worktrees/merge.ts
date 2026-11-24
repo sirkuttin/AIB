@@ -8,8 +8,8 @@
  * The target is the project's main branch (main, else master, else the branch the chat started from): `chat.base`.
  *
  *   1. refuse while the chat is busy, has queued messages, running terminals, or subagents that work inside its worktree
- *   2. commit what is uncommitted in the worktree ("Studio: work from chat <title>")
- *   3. base moved past the branch: `git merge <base>` in the worktree; conflicts go to the chat as a prompt, and Studio checks the
+ *   2. commit what is uncommitted in the worktree ("AIB: work from chat <title>")
+ *   3. base moved past the branch: `git merge <base>` in the worktree; conflicts go to the chat as a prompt, and AIB checks the
  *      answer itself (no unmerged entries, no conflict markers in the files that conflicted, base is an ancestor of HEAD)
  *   4. under one lock per repository: re-read base's tip (moved: back to 3), refuse on index.lock or a merge/rebase in the folder
  *      that has base checked out; the user's uncommitted edits there are stashed (by SHA, never popped) and re-applied after
@@ -44,8 +44,8 @@ export const MAX_ROUNDS = 6;
 /** Seconds to wait for another process's lock on the chat's worktree or the project's sync flag (tests lower it). */
 export const settings = { LOCK_WAIT: 30 };
 export const WAITING = 'Waiting for the chat to resolve conflicts';
-export const NOTE_OP = 'worktree-note'; // internal Studio call (not a page route): posts the "Merged into ..." line in the chat
-/** Python: re.compile(r'^(?:<{7}|>{7})(?: |\r?$)', re.M). JS's multiline ^/$ also break at \r and U+2028/9, so lines are spelled out. */
+export const NOTE_OP = 'worktree-note'; // internal AIB call (not a page route): posts the "Merged into ..." line in the chat
+/** The conflict-marker line pattern ^(?:<{7}|>{7})(?: |\r?$) with multiline anchors. JS's multiline ^/$ also break at \r and U+2028/9, so lines are spelled out. */
 export const MARKER = /(?:^|\n)(?:<{7}|>{7})(?: |\r?(?=\n|$))/;
 export const GIT_STATES = wt.GIT_STATES;
 /** Tests only: name -> function, run at fixed points ('before_lock', 'before_ff'). */
@@ -59,7 +59,7 @@ export function mergesRunning(): number {
 }
 
 /** What Merge needs from the server: the state folder, a chat's live state, and the live ops (prompt, worktree-note). */
-export interface MergeStudio {
+export interface MergeHost {
   stateDir: string;
   liveState(chatId: string): unknown;
   liveCall(op: string, payload: Record<string, unknown>): [number, unknown] | Promise<[number, unknown]>;
@@ -133,7 +133,7 @@ async function configured(cwd: string): Promise<boolean> {
   return true;
 }
 
-/** git that may commit: the Settings identity for AIB's commits when set, else Studio's own only when the user has none configured. */
+/** git that may commit: the Settings identity for AIB's commits when set, else AIB's own only when the user has none configured. */
 export async function gitc(args: string[], cwd: string, options: wt.GitOptions = {}): Promise<wt.GitResult> {
   return git(args, cwd, { ...options, identity: await needsIdentity(cwd) });
 }
@@ -374,28 +374,28 @@ export class Chat {
   detached = false;
   head = '';
 
-  private constructor(readonly studio: MergeStudio, readonly id: string, readonly fromTool: boolean) {}
+  private constructor(readonly aib: MergeHost, readonly id: string, readonly fromTool: boolean) {}
 
-  static async open(studio: MergeStudio, chatId: unknown, fromTool = false): Promise<Chat> {
+  static async open(aib: MergeHost, chatId: unknown, fromTool = false): Promise<Chat> {
     if (typeof chatId !== 'string' || !chatId) {
       throw new Refused('Choose a chat', 'bad_request', 400);
     }
     let state: unknown;
     try {
-      state = await studio.liveState(chatId);
+      state = await aib.liveState(chatId);
     } catch {
       state = null;
     }
     if (!isDict(state)) {
       throw new Refused('Open the chat to merge its work', 'unknown_chat', 404);
     }
-    const chat = new Chat(studio, chatId, fromTool);
+    const chat = new Chat(aib, chatId, fromTool);
     chat.state = state;
-    const record = wt.recordForPath(studio.stateDir, state.cwd);
+    const record = wt.recordForPath(aib.stateDir, state.cwd);
     if (!record) {
       throw new Refused('This chat does not work in its own worktree', 'no_worktree', 404);
     }
-    chat.registry = new wt.Registry(studio.stateDir);
+    chat.registry = new wt.Registry(aib.stateDir);
     chat.key = record.key;
     chat.reload();
     chat.target = await targetBranch(chat.project, chat.startBase, chat.record);
@@ -408,10 +408,10 @@ export class Chat {
    * folder's branch, with no stash; `id` is the parent chat (its landing lock is already held by the caller).
    */
   static detachedOf(
-    studio: MergeStudio,
+    aib: MergeHost,
     spec: { id: string; key: string; worktree: string; project: string; start: string; head: string; landOn: string },
   ): Chat {
-    const chat = new Chat(studio, spec.id, true);
+    const chat = new Chat(aib, spec.id, true);
     chat.detached = true;
     chat.key = spec.key;
     chat.wt = spec.worktree;
@@ -448,7 +448,7 @@ export class Chat {
   async refreshState(): Promise<Record<string, unknown>> {
     let state: unknown;
     try {
-      state = await this.studio.liveState(this.id);
+      state = await this.aib.liveState(this.id);
     } catch {
       state = null;
     }
@@ -498,7 +498,7 @@ function isFile(path: string): boolean {
   }
 }
 
-/** '' when the conflicts are resolved for real, else the line to show. Studio looks itself; the agent's word is not taken. */
+/** '' when the conflicts are resolved for real, else the line to show. AIB looks itself; the agent's word is not taken. */
 export async function checkResolution(chat: Chat, files: string[]): Promise<string> {
   if ((await unmerged(chat.wt)).length) return WAITING;
   for (const name of files) {
@@ -559,7 +559,7 @@ export function payloadError(payload: unknown, fallback: string): string {
 
 async function askChatToResolve(chat: Chat, files: string[]): Promise<void> {
   const text = conflictLine(chat, files);
-  const [status, payload] = await chat.studio.liveCall('prompt', { id: chat.id, text, clientMessageId: 'merge-' + newId() });
+  const [status, payload] = await chat.aib.liveCall('prompt', { id: chat.id, text, clientMessageId: 'merge-' + newId() });
   if (status !== 200) {
     throw new Refused(
       'Could not ask the chat to resolve the conflicts: ' +
@@ -714,19 +714,19 @@ export type MergeResult = Record<string, unknown>;
 
 /** Merge a worktree chat into its base branch: {ok, state: 'merged'|'conflicts', message, ...}; throws Refused with the line to show. */
 export async function merge(
-  studio: MergeStudio,
+  aib: MergeHost,
   chatId: unknown,
   title: unknown = '',
   fromTool = false,
   options: MergeOptions = {},
 ): Promise<MergeResult> {
-  const chat = await Chat.open(studio, chatId, fromTool);
+  const chat = await Chat.open(aib, chatId, fromTool);
   chat.options = options;
   if (RUNNING.has(chat.key)) {
     throw new Refused('A merge of this chat is already running', 'running');
   }
   RUNNING.add(chat.key);
-  const lock = wt.worktreeLock(chat.studio.stateDir, chat.record, settings.LOCK_WAIT);
+  const lock = wt.worktreeLock(chat.aib.stateDir, chat.record, settings.LOCK_WAIT);
   try {
     try {
       await lock.acquire();
@@ -811,12 +811,12 @@ async function mergeRounds(chat: Chat, title: unknown): Promise<MergeResult> {
  * (swarm/service.ts) holds the parent's landing lock and passes it in `options.held`. Throws Refused like merge().
  */
 export async function landWorktree(
-  studio: MergeStudio,
+  aib: MergeHost,
   spec: { parent: string; key: string; worktree: string; project: string; start: string; head: string; landOn: string },
   title: unknown,
   options: MergeOptions = {},
 ): Promise<MergeResult> {
-  const chat = Chat.detachedOf(studio, { id: spec.parent, ...spec });
+  const chat = Chat.detachedOf(aib, { id: spec.parent, ...spec });
   chat.options = options;
   if (RUNNING.has(chat.key)) throw new Refused('A landing of this subagent is already running', 'running');
   RUNNING.add(chat.key);
@@ -1280,7 +1280,7 @@ async function land(chat: Chat, tip: string, title: unknown): Promise<MergeResul
       if (chat.fromTool) {
         return { ok: true, state: 'conflicts', message: line, files: built[1] };
       }
-      const [code, payload] = await chat.studio.liveCall('prompt', { id: chat.id, text: line, clientMessageId: 'merge-' + newId() });
+      const [code, payload] = await chat.aib.liveCall('prompt', { id: chat.id, text: line, clientMessageId: 'merge-' + newId() });
       if (code !== 200) {
         throw new Refused(
           'Could not ask the chat to rework its change: ' +
@@ -1301,7 +1301,7 @@ async function land(chat: Chat, tip: string, title: unknown): Promise<MergeResul
     }
   }
   // Build plan 2.3: no chat that works in the folder may start a turn while it changes; one that works now means this waits.
-  const holds = folder ? await holdFolderChats(chat.studio, folder, title, [chat.id, ...(chat.options.held ?? [])], `merge:${chat.key}`) : null;
+  const holds = folder ? await holdFolderChats(chat.aib, folder, title, [chat.id, ...(chat.options.held ?? [])], `merge:${chat.key}`) : null;
   try {
     const out = await landHeld(chat, folder, tip, head, byTree, files, landed, count, title);
     if (holds && out.state === 'merged') await toldFilesChanged(chat, holds, tip, str(out.tip), title);
@@ -1313,7 +1313,7 @@ async function land(chat: Chat, tip: string, title: unknown): Promise<MergeResul
 
 /** Hold the landing lock of every open chat that works in `folder` (but those the caller holds); refused when one is working. */
 export async function holdFolderChats(
-  host: MergeStudio,
+  host: MergeHost,
   folder: string,
   title: unknown,
   skip: string[],
@@ -1343,7 +1343,7 @@ async function toldFilesChanged(chat: Chat, holds: Held, tip: string, landed: st
   const files = nul((await git(['diff', '--name-only', '-z', '--no-renames', tip, landed], chat.project, { check: false })).stdout);
   const line = filesChangedLine(pyStrip(pyStr(title || '')) || 'another chat', files);
   for (const id of holds.ids) {
-    await Promise.resolve(chat.studio.liveCall('prompt-context', { id, line })).catch(() => {});
+    await Promise.resolve(chat.aib.liveCall('prompt-context', { id, line })).catch(() => {});
   }
 }
 
@@ -1354,17 +1354,17 @@ export function filesChangedLine(title: string, files: string[]): string {
 }
 
 /** A MergeStudio over the live host (the web process): its live calls, plus the folder chats for the landing lock. */
-export function liveMergeStudio(
+export function liveMergeAib(
   stateDir: string,
   host: { liveState(id: unknown, after?: unknown): unknown; liveCall(name: string, body: unknown): Promise<[number, unknown]> },
-): MergeStudio {
-  const studio: MergeStudio = {
+): MergeHost {
+  const aib: MergeHost = {
     stateDir,
     liveState: (chatId) => host.liveState(chatId, 0),
     liveCall: (op, payload) => host.liveCall(op, payload),
-    folderChats: (folder) => folderChats(studio, folder),
+    folderChats: (folder) => folderChats(aib, folder),
   };
-  return studio;
+  return aib;
 }
 
 /** A folder chat's helper changes files the folder has uncommitted (build plan 2.5): nothing lands, nothing is stashed. */
@@ -1395,7 +1395,7 @@ async function landHeld(
   count: number,
   title: unknown,
 ): Promise<MergeResult> {
-  const pause = wt.pauseLock(chat.studio.stateDir, chat.project, settings.LOCK_WAIT);
+  const pause = wt.pauseLock(chat.aib.stateDir, chat.project, settings.LOCK_WAIT);
   try {
     await pause.acquire(); // "sync paused": nothing copies the user's edits into a worktree while the project folder is being changed
   } catch {
@@ -1474,14 +1474,14 @@ async function landHeld(
   }
   for (const item of chat.detached ? [] : notes) { // a subagent's lines are the swarm's, in its parent chat
     try {
-      await chat.studio.liveCall(NOTE_OP, { ...item, id: chat.id });
+      await chat.aib.liveCall(NOTE_OP, { ...item, id: chat.id });
     } catch (error) {
       log.exception(error, 'Could not post the merge note');
     }
   }
   if (clash.length && !chat.fromTool) { // the chat is idle: tell it, so it explains and offers to combine
     try {
-      await chat.studio.liveCall('prompt', { id: chat.id, text: out.guidance, clientMessageId: 'merge-clash-' + newId() });
+      await chat.aib.liveCall('prompt', { id: chat.id, text: out.guidance, clientMessageId: 'merge-clash-' + newId() });
     } catch (error) {
       log.exception(error, 'Could not tell the chat about the clash');
     }
@@ -1546,7 +1546,7 @@ function projectKey(project: string): string {
 }
 
 function recordClash(chat: Chat, folder: string, files: string[], stash: StashRef): void {
-  const items = clashRead(chat.studio.stateDir);
+  const items = clashRead(chat.aib.stateDir);
   items.set(projectKey(chat.project), {
     project: chat.project,
     folder,
@@ -1556,7 +1556,7 @@ function recordClash(chat: Chat, folder: string, files: string[], stash: StashRe
     chat: chat.id,
     time: Date.now() / 1000,
   });
-  clashWrite(chat.studio.stateDir, items);
+  clashWrite(chat.aib.stateDir, items);
 }
 
 function clashDrop(stateDir: string, project: string): void {
@@ -1611,11 +1611,11 @@ export async function unresolved(stateDir: string, project: string): Promise<Unr
 }
 
 /** What the amber line shows for a project folder: {unresolved, line, files, stash} plus syncPaused/syncLine. Read only. */
-export async function clashStatus(studio: { stateDir: string }, project: unknown): Promise<Record<string, unknown>> {
+export async function clashStatus(aib: { stateDir: string }, project: unknown): Promise<Record<string, unknown>> {
   if (typeof project !== 'string' || !project) return { unresolved: false };
   if (project.startsWith('wsl://')) return { unresolved: false }; // a WSL project: its clashes are in the distro (wsl/merge.ts asks there)
-  const found = await unresolved(studio.stateDir, project);
-  const paused = pausedStatus(studio.stateDir, project);
+  const found = await unresolved(aib.stateDir, project);
+  const paused = pausedStatus(aib.stateDir, project);
   if (!found) return { unresolved: false, ...paused };
   return { unresolved: true, line: found.line, files: found.files, stash: found.stash, ...paused };
 }
@@ -1637,7 +1637,7 @@ const ACTIONS: Record<string, string> = { keep_mine: KEEP_MINE, 'keep-mine': KEE
  * Returns {ok, message, ...}; throws Refused.
  */
 export async function resolveClash(
-  studio: MergeStudio,
+  aib: MergeHost,
   chatId: unknown,
   actionIn: unknown,
   fromTool = false,
@@ -1646,8 +1646,8 @@ export async function resolveClash(
   if (!action) {
     throw new Refused('The action must be keep_mine, leave or check', 'bad_request', 400);
   }
-  const chat = await Chat.open(studio, chatId, fromTool);
-  const found = await unresolved(studio.stateDir, chat.project);
+  const chat = await Chat.open(aib, chatId, fromTool);
+  const found = await unresolved(aib.stateDir, chat.project);
   if (!found) {
     throw new Refused('There are no unresolved edits in this project', 'no_clash', 404);
   }
@@ -1687,7 +1687,7 @@ async function keepMine(chat: Chat, found: Unresolved): Promise<Record<string, u
       if (step.returncode === 0) done.push(path);
     }
     const all = done.length === files.length &&
-      !(await unresolved(chat.studio.stateDir, chat.project));
+      !(await unresolved(chat.aib.stateDir, chat.project));
     if (all) {
       const ref = await stashRefOf(folder, stash);
       if (ref) await git(['stash', 'drop', ref], folder, { check: false });
@@ -1702,7 +1702,7 @@ async function keepMine(chat: Chat, found: Unresolved): Promise<Record<string, u
   return { ok: true, message, files: done, stash: name, dropped: fully };
 }
 
-/** The chat says it combined the files in the project folder. Studio looks for itself: no markers, no unmerged entries. */
+/** The chat says it combined the files in the project folder. AIB looks for itself: no markers, no unmerged entries. */
 async function checkCombined(chat: Chat, found: Unresolved): Promise<Record<string, unknown>> {
   const folder = found.folder;
   const left = found.files.filter((n) => hasMarkers(folder, n));
@@ -1714,7 +1714,7 @@ async function checkCombined(chat: Chat, found: Unresolved): Promise<Record<stri
   if (stuck.length) {
     await git(['reset', '-q', '--', ...stuck], folder, { check: false }); // marks them resolved; content stays
   }
-  const still = await unresolved(chat.studio.stateDir, chat.project);
+  const still = await unresolved(chat.aib.stateDir, chat.project);
   if (still) {
     throw new Refused('Still unresolved: ' + still.files.join(', '), 'unresolved');
   }
@@ -1725,7 +1725,7 @@ async function checkCombined(chat: Chat, found: Unresolved): Promise<Record<stri
 
 async function note(chat: Chat, message: string): Promise<void> {
   try {
-    await chat.studio.liveCall(NOTE_OP, { id: chat.id, message });
+    await chat.aib.liveCall(NOTE_OP, { id: chat.id, message });
   } catch (error) {
     log.exception(error, 'Could not post the note');
   }
@@ -1744,10 +1744,10 @@ export function queuedCopyMerge(stateDir: string, key: string): Record<string, u
 }
 
 /** {worktree, enabled, state, message, base, label}: the Merge button's state for a chat. Read only. */
-export async function status(studio: MergeStudio, chatId: unknown): Promise<Record<string, unknown>> {
+export async function status(aib: MergeHost, chatId: unknown): Promise<Record<string, unknown>> {
   let chat: Chat;
   try {
-    chat = await Chat.open(studio, chatId);
+    chat = await Chat.open(aib, chatId);
   } catch (error) {
     if (!(error instanceof Refused)) throw error;
     if (error.code === 'no_worktree' || error.code === 'unknown_chat') {
@@ -1760,7 +1760,7 @@ export async function status(studio: MergeStudio, chatId: unknown): Promise<Reco
     if (RUNNING.has(chat.key)) {
       return { ...out, enabled: false, state: 'merging', message: 'Merging…' };
     }
-    const queued = queuedCopyMerge(studio.stateDir, chat.key);
+    const queued = queuedCopyMerge(aib.stateDir, chat.key);
     if (queued) { // merge_queue.ts: merge_into_project waits for the chats in the project folder
       const who = pyStr(queued.waitsFor || '') || 'the chat in the project folder';
       return { ...out, enabled: false, state: 'queued', message: `Merges into ${chat.base} when “${who}” pauses` };
@@ -1807,11 +1807,11 @@ export function requestBlocked(state: Record<string, unknown>): string {
  * refusal) names the target branch (`target`) and the branch the chat started from (`started`); a merged reply also names running
  * helpers Merge did not wait for because they did not say where they work (`helpers`).
  */
-export async function mergeFromTool(studio: MergeStudio, chatId: unknown): Promise<MergeResult> {
+export async function mergeFromTool(aib: MergeHost, chatId: unknown): Promise<MergeResult> {
   let chat: Chat | null = null;
   try {
-    chat = await Chat.open(studio, chatId, true);
-    const result = await merge(studio, chatId, '', true);
+    chat = await Chat.open(aib, chatId, true);
+    const result = await merge(aib, chatId, '', true);
     const out: MergeResult = { ...result, target: chat.base, started: chat.startBase };
     const helpers = unplacedHelpers(await chat.refreshState());
     if (helpers.length) out.helpers = helpers;

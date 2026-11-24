@@ -209,14 +209,13 @@ Deno.test("icns, what is staged, and the staged deno.json", () => {
     ["server", true, true],
     ["icons", true, true], // the phone page's manifest icons (remote/server.ts REMOTE_STATIC)
     ["pwa", true, true], // the phone page's service worker
-    ["agent_locks", true, true],
+    ["agents", true, true], // the agent allow-list (agents/versions.json) and its lockfiles (agents/locks/)
     ["vendor", true, true],
     ["docs", true, false],
     ["public", true, false],
     ["__pycache__", true, false],
     ["page", true, true], // the browser files (app/page/): served at the top level, staged as page/
     ["chat.html", false, false], // page files sit in page/, never at the top of app
-    ["agent_versions.json", false, true],
     ["studio.py", false, false],
     ["deno.json", false, false],
     ["README.md", false, false],

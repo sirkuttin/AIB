@@ -2,7 +2,7 @@
  * A chat's history is permanent and a conversation is one chat (owner rules, 2026-11-17; the 0.12.1 blocker: an idle Quit AIB
  * deleted the lead chat's history store and the next start brought the conversation back under a new chat id):
  *
- *   - quitting AIB with an idle chat (Studio.close: what tray > Quit AIB runs when nothing works) keeps its store; the next start
+ *   - quitting AIB with an idle chat (Aib.close: what tray > Quit AIB runs when nothing works) keeps its store; the next start
  *     reopens the conversation as the SAME chat id, going on in the SAME store with every event, turn ends and AIB notes included;
  *     the agent's replay of the transcript is not shown again, a turn made outside AIB meanwhile is; a keeper take-over of the reopened
  *     chat numbers everything the same
@@ -31,7 +31,7 @@ class Lab {
   readonly state = this.dir + SEP + 'state';
   readonly work = this.dir + SEP + 'work';
   readonly transcript = this.dir + SEP + 'transcript.json';
-  readonly studios: Aib[] = [];
+  readonly aibs: Aib[] = [];
   constructor() {
     Deno.mkdirSync(this.work, { recursive: true });
     Deno.writeTextFileSync(this.transcript, '[]');
@@ -39,14 +39,14 @@ class Lab {
   get historyDir(): string {
     return this.state + SEP + 'history';
   }
-  studio(): Aib {
+  aib(): Aib {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
-    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper, keeperForNew: true });
-    studio.ownerProbe = () => null;
-    studio.connectionFactory = (_command, cwd, provider, options) =>
+    const aib = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper, keeperForNew: true });
+    aib.ownerProbe = () => null;
+    aib.connectionFactory = (_command, cwd, provider, options) =>
       new Connection(fake('--replay-file', this.transcript), cwd, provider, options ?? {});
-    this.studios.push(studio);
-    return studio;
+    this.aibs.push(aib);
+    return aib;
   }
   /** The agent's transcript as session/load replays it. */
   transcriptOf(turns: string[]): void {
@@ -89,7 +89,7 @@ class Lab {
     await until(() => !pidAlive(info.pid), 'keeper exit', 10).catch(() => Deno.kill(info.pid, 'SIGKILL'));
   }
   async [Symbol.asyncDispose](): Promise<void> {
-    for (const s of this.studios.reverse()) await s.close().catch(() => {});
+    for (const s of this.aibs.reverse()) await s.close().catch(() => {});
     await this.killKeeper();
     for (let i = 0; i < 20; i++) {
       try {
@@ -102,9 +102,9 @@ class Lab {
   }
 }
 
-async function say(studio: Aib, c: Connection, text: string, id: string): Promise<void> {
+async function say(aib: Aib, c: Connection, text: string, id: string): Promise<void> {
   const ends = c.events.filter((e) => e.kind === 'turn_end').length;
-  assertEquals((await studio.liveCall('prompt', { id: c.id, text: `say:${text}`, clientMessageId: id }))[0], 200);
+  assertEquals((await aib.liveCall('prompt', { id: c.id, text: `say:${text}`, clientMessageId: id }))[0], 200);
   await until(() => !c.busy && c.events.filter((e) => e.kind === 'turn_end').length > ends, `the end of ${id}`, 10);
 }
 
@@ -133,7 +133,7 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new Lab();
-    const a = lab.studio();
+    const a = lab.aib();
     const c = await a.connect('claude', lab.work);
     await say(a, c, 'one', 'm1');
     c.recordedEvent('studio_note', { message: 'Merged subagent “Docs” into main', sessionId: c.sessionId });
@@ -141,7 +141,7 @@ Deno.test({
     const id = c.id;
     const session = c.sessionId!;
     assertEquals(c.events.filter((e) => e.kind === 'turn_end').length, 2);
-    // Quit AIB with nothing working (tray > Quit AIB: main.ts close() -> Studio.close()): every chat closes...
+    // Quit AIB with nothing working (tray > Quit AIB: main.ts close() -> Aib.close()): every chat closes...
     await a.close();
     const before = shape(c.events);
     const sequence = c.sequence;
@@ -153,7 +153,7 @@ Deno.test({
     // Meanwhile the conversation went on in another app (the transcript has one more turn than AIB saw).
     lab.transcriptOf(['one', 'two', 'outside']);
     // The next start reopens it (the automatic reconnect: the same connect() Continue uses)
-    const b = lab.studio();
+    const b = lab.aib();
     await b.reconnectOne(['claude', session, lab.work], 1, 0);
     const r = [...b.connections.values()].find((x) => x.sessionId === session && !x.closed)!;
     assert(r, 'reopened');
@@ -177,7 +177,7 @@ Deno.test({
     for (const x of b.connections.values()) x.sessionLease?.release();
     b.reconnectStop.set();
     await b.historyClient()?.shutdown().catch(() => {});
-    const t = lab.studio();
+    const t = lab.aib();
     assertEquals(await t.adoptKeeper(), 1);
     const back = t.connections.get(id)!;
     await until(() => back.historyState === 'claimed' || back.historyState === 'dead', 'the store claimed', 10);
@@ -194,13 +194,13 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new Lab();
-    const a = lab.studio();
+    const a = lab.aib();
     const c = await a.connect('claude', lab.work);
     await say(a, c, 'one', 'm1');
     const session = c.sessionId!;
     await a.close();
     lab.transcriptOf(['one', 'elsewhere']);
-    const b = lab.studio();
+    const b = lab.aib();
     const r = await b.connect('claude', lab.work, session);
     assertEquals(r.id, c.id);
     await until(() => r.historyState === 'claimed', 'the store claimed', 10);
@@ -212,7 +212,7 @@ Deno.test({
     for (const x of b.connections.values()) x.sessionLease?.release();
     b.reconnectStop.set();
     await b.historyClient()?.shutdown().catch(() => {});
-    const t = lab.studio();
+    const t = lab.aib();
     assertEquals(await t.adoptKeeper(), 1);
     const back = t.connections.get(c.id)!;
     await until(() => back.historyState === 'claimed' || back.historyState === 'dead', 'the store claimed', 10);
@@ -230,7 +230,7 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new Lab();
-    const a = lab.studio();
+    const a = lab.aib();
     const c = await a.connect('claude', lab.work);
     await say(a, c, 'one', 'm1');
     await say(a, c, 'two', 'm2');
@@ -244,7 +244,7 @@ Deno.test({
     await a.historyClient()?.shutdown().catch(() => {});
     await lab.killKeeper();
     lab.transcriptOf(['one', 'two']);
-    const b = lab.studio();
+    const b = lab.aib();
     assertEquals(await b.adoptKeeper(), 0, 'nothing runs in the keeper any more');
     const r = await b.connect('claude', lab.work, session);
     assertEquals(r.id, c.id, 'the same chat id');
@@ -262,7 +262,7 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new Lab();
-    const a = lab.studio();
+    const a = lab.aib();
     const c = await a.connect('claude', lab.work);
     await say(a, c, 'one', 'm1');
     const session = c.sessionId!;
@@ -279,7 +279,7 @@ Deno.test({
       store.close();
     }
     lab.transcriptOf(['one']);
-    const b = lab.studio();
+    const b = lab.aib();
     const r = await b.connect('claude', lab.work, session);
     assertEquals(r.id, newerId, 'the newest store goes on');
     assert(story(r.events).includes('AIB: the newer store'));

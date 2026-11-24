@@ -321,7 +321,7 @@ Deno.test('a file-tool edit of the .excalidraw JSON is taken in element by eleme
   }
 });
 
-Deno.test('Studio serves the Excalidraw bundle (code, chunks, CSS, fonts), not the server-only Mermaid converter', () => {
+Deno.test('AIB serves the Excalidraw bundle (code, chunks, CSS, fonts), not the server-only Mermaid converter', () => {
   for (
     const path of [
       'drawing.js',

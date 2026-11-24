@@ -9,7 +9,7 @@
 import { assert, assertEquals } from './_assert.ts';
 import { Browser, browserPath, type Page } from './_doc_browser.ts';
 import { pairPhone } from './_remote_fixture.ts';
-import { liveChat, v2Studio } from './_remote_v2b.ts';
+import { liveChat, v2Aib } from './_remote_v2b.ts';
 import { phonePage, tap } from './_remote_phone_page.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
@@ -120,7 +120,7 @@ Deno.test({
   name: 'phone: an AIB note is one line at 360 px, the Undo word a 44 px tap area, a long name cut, the warning tinted',
   ignore: !browserPath,
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     const browser = await Browser.launch();
     try {
       const T = Date.now() / 1000 - 60;

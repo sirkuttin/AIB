@@ -441,7 +441,7 @@
   }
   /* ---- the live line (Chat) ----
      working: the AI is on the newest prompt right now. live: what it is doing (liveStatus reads the RAW events: thinking rows
-     exist only with Show thinking on) and since when (the prompt's own time, so a Studio restart does not reset the clock).
+     exist only with Show thinking on) and since when (the prompt's own time, so an AIB restart does not reset the clock).
      Neither goes into the change signature except the working flag: the step and the clock are updated in place (views-ui.js). */
   const liveSince = new Map(); // chat key -> when this page first saw it working, for a prompt that carries no time
   function liveOf(status, key, extra) {
@@ -803,7 +803,7 @@
     error.body = response.body; // the whole answer (the file editor's save reads who and overlaps)
     return error;
   }
-  // Every /api/ GET except bootstrap carries the page token. A 403 means the token is stale (Studio restarted): fetch a fresh one and retry once; a GET is safe to repeat.
+  // Every /api/ GET except bootstrap carries the page token. A 403 means the token is stale (AIB restarted): fetch a fresh one and retry once; a GET is safe to repeat.
   // Bootstrap carries the page's own proof instead (page-auth.js: the page session it traded its one-time launch key for, kept in
   // memory only); without it AIB answers with an empty token.
   const pageAuth = () => (window.AIBPageAuth ? window.AIBPageAuth.headers() : {});
@@ -862,7 +862,7 @@
       box.hidden = true;
     };
   }
-  // What this browser sent, kept so a message that was mid-send at a Studio restart can be shown and sent again (the server keeps only a fingerprint).
+  // What this browser sent, kept so a message that was mid-send at an AIB restart can be shown and sent again (the server keeps only a fingerprint).
   const pendingKey = 'studio-pending-sends-v1';
   function pendingRecords() {
     const v = stored(pendingKey, {});
@@ -987,7 +987,7 @@
         : ownership.hints || {};
     if (ownership) ownershipCertainty = ownership.certainty === 'unknown' ? 'unknown' : 'checked';
     if (live.instanceId && instanceId && live.instanceId !== instanceId) {
-      // A different Studio process is answering: the old token and every old connection ID are void.
+      // A different AIB process is answering: the old token and every old connection ID are void.
       try {
         await refreshToken();
       } catch {
@@ -1090,7 +1090,7 @@
         have.discarded = true;
         have.worktree = null;
       } else if (d && d.row && d.row.provider) {
-        // Studio still holds the closed connection for a while: its messages are readable. After that, only a note.
+        // AIB still holds the closed connection for a while: its messages are readable. After that, only a note.
         const held = d.row.live && live.connections.find((l) => l.id === d.row.live.id);
         conversations.push(
           held
@@ -1665,7 +1665,7 @@
     }
     return bubbleFull(row);
   }
-  // Studio's note after a merge whose re-applied user edits clash: "Keep my version" / "I'll sort it myself" (worktree_merge.resolve_clash).
+  // AIB's note after a merge whose re-applied user edits clash: "Keep my version" / "I'll sort it myself" (worktree_merge.resolve_clash).
   function clashButtons(actions) {
     const box = text('div', '', 'note-actions');
     const result = text('span', '', 'note-actions-result');
@@ -2920,7 +2920,7 @@
     }
     box.replaceChildren(frag);
   }
-  /* QA m11: a saved chat whose transcript launched a subagent (an Agent / Task call) lists it even when Studio found no transcript
+  /* QA m11: a saved chat whose transcript launched a subagent (an Agent / Task call) lists it even when AIB found no transcript
      file of its own for it (the roster only knows subagents with a file). Such a row opens to a note, not a history. */
   function withLaunched(list, evs, key) {
     const have = (list || []).filter((a) => !a.main),
@@ -6752,7 +6752,7 @@
     return null;
   }
   // Contract: conversation.elsewhere = {working, confirmed, verdict} exists only for a chat another app owns or may own (stable
-  // ownership verdict, two agreeing checks) that this Studio is not running. working = its transcript is changing or Activity
+  // ownership verdict, two agreeing checks) that this AIB is not running. working = its transcript is changing or Activity
   // shows subagents/processes working (also two agreeing checks); confirmed = strong evidence (the only case that may be red).
   function annotateElsewhere() {
     window.AgentOwnershipUI?.annotate?.(conversations, ownershipHints, {
@@ -6778,7 +6778,7 @@
     if (box.id === 'messages') syncJump();
     return false;
   }
-  /* Unread messages. When you scroll up in the main chat, Studio remembers how many
+  /* Unread messages. When you scroll up in the main chat, AIB remembers how many
    messages (your and the agent's bubbles; not tool steps or notes) were there. Messages that arrive after that are unread: a
    "New" line goes above the first one, the button counts them and takes you to the line, then reads "↓ Latest". */
   /* Read state is kept against the chat's underlying message rows (all: their keys and times, in order), never against the

@@ -41,7 +41,7 @@ class Box {
   readonly state = pathOf(this.dir, 'state');
   readonly project = makeRepo(pathOf(this.dir, 'proj'));
   readonly launcher = pathOf(this.dir, 'launcher.js');
-  readonly studio: Aib;
+  readonly aib: Aib;
   readonly swarm: Swarm;
   readonly launched: { provider: string; command: string[]; cwd: string; env: Record<string, string> | null }[] = [];
   readonly servers: Deno.HttpServer[] = [];
@@ -51,17 +51,17 @@ class Box {
     Deno.writeTextFileSync(this.launcher, '');
     runGit(this.project, 'config', 'user.name', 't');
     runGit(this.project, 'config', 'user.email', 't@t');
-    const studio = new Aib(
+    const aib = new Aib(
       { stateDir: this.state, port: 0, ownersDir: null, noArtifactTool: false, claudeLauncher: this.launcher, codexLauncher: this.launcher, nodeCommand: Deno.execPath() },
       { keeper: null },
     );
-    studio.ownerProbe = () => null;
-    studio.connectionFactory = (command, cwd, provider, options) => {
+    aib.ownerProbe = () => null;
+    aib.connectionFactory = (command, cwd, provider, options) => {
       this.launched.push({ provider, command, cwd, env: options?.env ?? null });
       return new Connection([PYTHON, UNIQUE, '--models', ...(provider.startsWith('claude') ? ['--claude-modes'] : [])], cwd, provider, options ?? {});
     };
-    this.studio = studio;
-    this.swarm = new Swarm({ stateDir: this.state, host: studio, settings: studio.settings });
+    this.aib = aib;
+    this.swarm = new Swarm({ stateDir: this.state, host: aib, settings: aib.settings });
     this.swarm.openMs = 30_000;
   }
 
@@ -80,12 +80,12 @@ class Box {
   }
 
   async server(url: string, useWith: string[], name = 'strata'): Promise<void> {
-    await this.studio.settings.update({ agents: { modelServer: { upsert: { id: 'strata', name, url, model: 'srv-two', key: KEY, useWith } } } });
+    await this.aib.settings.update({ agents: { modelServer: { upsert: { id: 'strata', name, url, model: 'srv-two', key: KEY, useWith } } } });
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
     await this.swarm.stopWatching();
-    await this.studio.close().catch(() => {});
+    await this.aib.close().catch(() => {});
     for (const s of this.servers) await s.shutdown().catch(() => {});
     for (let i = 0; i < 20; i++) {
       try {
@@ -105,7 +105,7 @@ Deno.test({
   name: 'helper_providers lists claude@strata and codex@strata when their Use with is on, with label and base mode; not when off',
   async fn() {
     await using box = new Box();
-    const main = await box.studio.connect('claude', box.project, null, { ownCopy: true });
+    const main = await box.aib.connect('claude', box.project, null, { ownCopy: true });
     assert(!(await providers(box, main.id)).some((p) => String(p.id).includes('@')), 'no server: no entries');
     await box.server(box.serve(), ['claude', 'codex']);
     const on = await providers(box, main.id);
@@ -134,8 +134,8 @@ Deno.test({
     await using box = new Box();
     const url = box.serve();
     await box.server(url, ['claude']);
-    const main = await box.studio.connect('claude', box.project, null, { ownCopy: true });
-    const [newChatArgv, newChatEnv] = await box.studio.agentLaunch('claude@strata');
+    const main = await box.aib.connect('claude', box.project, null, { ownCopy: true });
+    const [newChatArgv, newChatEnv] = await box.aib.agentLaunch('claude@strata');
     box.launched.length = 0;
     const [code, out] = await box.swarm.tool(main.id, 'start_helper', BRIEF);
     assertEquals(code, 200, JSON.stringify(out));
@@ -146,9 +146,9 @@ Deno.test({
     const launch = box.launched.find((l) => l.provider === 'claude@strata')!;
     assertEquals(launch.command, newChatArgv, 'the same adapter argv as a New chat');
     assertEquals(launch.env, newChatEnv, 'the same env as a New chat');
-    for (const [name, value] of Object.entries(modelServerEnv(box.studio.settings.modelServer('strata')!, KEY))) assertEquals(launch.env![name], value, name);
+    for (const [name, value] of Object.entries(modelServerEnv(box.aib.settings.modelServer('strata')!, KEY))) assertEquals(launch.env![name], value, name);
     assertEquals(launch.env!.ANTHROPIC_BASE_URL, url);
-    const helper = box.studio.connections.get(h.chat.live)!;
+    const helper = box.aib.connections.get(h.chat.live)!;
     assert(h.worktree.branch.startsWith('studio/helper-') && helper.cwd !== box.project && helper.worktree, 'its own worktree, never the project folder');
     assertEquals(helper.swarm?.role, 'helper');
     assertEquals(h.chat.mode, 'acceptEdits', "Claude Code's edit-in-workspace mode");
@@ -170,8 +170,8 @@ Deno.test({
   async fn() {
     await using box = new Box();
     await box.server(box.serve(), ['codex']);
-    const main = await box.studio.connect('claude', box.project, null, { ownCopy: true });
-    const [, newChatEnv] = await box.studio.agentLaunch('codex@strata');
+    const main = await box.aib.connect('claude', box.project, null, { ownCopy: true });
+    const [, newChatEnv] = await box.aib.agentLaunch('codex@strata');
     assert(newChatEnv.CODEX_HOME?.includes('strata'), JSON.stringify(newChatEnv));
     box.launched.length = 0;
     const [code, out] = await box.swarm.tool(main.id, 'start_helper', { ...BRIEF, provider: 'codex@strata' });
@@ -191,7 +191,7 @@ Deno.test({
     await using box = new Box();
     const dead = box.deadAddress();
     await box.server(dead, ['claude']);
-    const main = await box.studio.connect('claude', box.project, null, { ownCopy: true });
+    const main = await box.aib.connect('claude', box.project, null, { ownCopy: true });
     box.launched.length = 0;
     const started = Date.now();
     const [code, out] = await box.swarm.tool(main.id, 'start_helper', BRIEF);
@@ -216,8 +216,8 @@ Deno.test({
     host.handlers['agents.detect'] = (p) => ({ agents: ((p.ids as string[]) ?? []).map((id) => ({ id, found: true, command: ['/usr/bin/claude-agent-acp'] })) });
     setWslHostResolver((d) => (d === 'ubuntu' ? host : null));
     setDistroSource(() => Promise.resolve([{ name: 'Ubuntu', version: 2, isDefault: true }]));
-    const launch = await box.studio.wslLaunch('claude@strata', { distro: 'ubuntu', linuxPath: '/home/u/app' }, true);
-    const [, windowsEnv] = await box.studio.agentLaunch('claude@strata');
+    const launch = await box.aib.wslLaunch('claude@strata', { distro: 'ubuntu', linuxPath: '/home/u/app' }, true);
+    const [, windowsEnv] = await box.aib.agentLaunch('claude@strata');
     for (const name of ['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_MODEL']) assertEquals(launch.extra[name], windowsEnv[name], name);
     // the swarm service refuses a WSL chat before it looks at the provider (Swarm.mainChat), so no helper starts there
     const state: Json = {
@@ -233,7 +233,7 @@ Deno.test({
         liveState: () => Promise.resolve(state),
         liveCall: (name) => (calls.push(name), Promise.resolve([500, { error: 'stub' }] as [number, unknown])),
       },
-      settings: box.studio.settings,
+      settings: box.aib.settings,
     });
     const [status, payload] = await swarm.tool('wslchat1', 'start_helper', BRIEF);
     assert(status >= 400 && (payload as Json).code === 'wsl', JSON.stringify(payload));

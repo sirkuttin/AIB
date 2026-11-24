@@ -1,7 +1,7 @@
 /**
  * xml.etree.ElementTree.fromstring() for the small <task-notification> documents agents write (monitor.apply_notifications):
  * a strict, expat-like well-formedness check (undefined entities, stray '<' or '&', ']]>' in text, mismatched or unbound
- * names make it fail, as ParseError does in Python) and the root's direct children with their ElementTree tag and text.
+ * names make it fail, as a ParseError) and the root's direct children with their ElementTree tag and text.
  */
 
 export interface XmlChild {

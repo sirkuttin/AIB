@@ -20,17 +20,17 @@ import {
   pairPhone,
   pc,
   raw,
-  type RemoteStudio,
-  remoteStudio,
+  type RemoteAib,
+  remoteAib,
   serveStatus,
 } from "./_remote_fixture.ts";
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
 type Json = Record<string, unknown>;
 
-async function remoteOn(): Promise<RemoteStudio> {
+async function remoteOn(): Promise<RemoteAib> {
   const fake = fakeTailscale();
-  const s = await remoteStudio({ runner: fake.runner }, undefined, {
+  const s = await remoteAib({ runner: fake.runner }, undefined, {
     saved: true,
   });
   fake.state.serve = serveStatus(readRemotePort(s.state)!);
@@ -119,7 +119,7 @@ class Cdp {
 type Win = { session: string; target: string; url: string; errors: string[] };
 
 /** Tailscale Serve for every window of the browser, with the PC's state switchable. */
-async function serveBrowser(browser: Browser, s: RemoteStudio) {
+async function serveBrowser(browser: Browser, s: RemoteAib) {
   const info =
     await (await fetch(`http://127.0.0.1:${browser.port}/json/version`)).json();
   const cdp = new Cdp(info.webSocketDebuggerUrl);

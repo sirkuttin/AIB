@@ -13,7 +13,7 @@
 import { assert, assertEquals } from './_assert.ts';
 import { Browser, browserPath } from './_doc_browser.ts';
 import { pairPhone } from './_remote_fixture.ts';
-import { liveChat, v2Studio } from './_remote_v2b.ts';
+import { liveChat, v2Aib } from './_remote_v2b.ts';
 import { phonePage, tap } from './_remote_phone_page.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
@@ -31,7 +31,7 @@ Deno.test({
   name: 'phone inbox: envelope with the count next to the picker; the server rows in one list, no project split; one action row; Allow once',
   ignore: !browserPath,
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     // a second folder inside the fixture's own temp folder (removed with it): another project
     const other = s.project.replace(/[\\/]shop$/, (m) => m.slice(0, 1) + 'blog');
     await Deno.mkdir(other, { recursive: true });

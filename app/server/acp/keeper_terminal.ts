@@ -9,7 +9,7 @@
  * request whose note has no channel (an older AIB, or a terminal that ran inside AIB) is answered "lost" as before. A released
  * terminal gets a `clientTerminalReleased` note first, then is killed and its channel removed.
  *
- * Channel ids: `ct-<16 hex>`, from the terminal id `term_<16 hex>`. The keeper label says which chat owns it (Studio removes the
+ * Channel ids: `ct-<16 hex>`, from the terminal id `term_<16 hex>`. The keeper label says which chat owns it (AIB removes the
  * terminals of chats that are gone).
  */
 import { getLogger } from '../core/log.ts';

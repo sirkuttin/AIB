@@ -9,7 +9,7 @@
  * quietly (the running app polls for that file, deletes it and shows its window); a desktop launch whose owner is a server shows a
  * native message box and exits with code 2; a `serve`/`--in-process` start prints one line and exits with code 2. The agent host
  * and the commands that talk to a running AIB (--stop-host, deploy, mcp-artifact, update-helper) never take the lock.
- * No HTTP route is involved (the HTTP API stays identical to Python's).
+ * No HTTP route is involved (the HTTP API is unchanged).
  */
 import { LockHeld, tryLockNow } from '../platform/lock.ts';
 import { processAlive } from '../platform/process_info.ts';

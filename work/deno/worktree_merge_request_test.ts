@@ -14,32 +14,32 @@ import { pathOf } from '../../app/server/state/paths.ts';
 import { LiveSync } from '../../app/server/worktrees/sync.ts';
 
 async function toolRefused(ctx: Ctx, code: string): Promise<m.Refused> {
-  const error = await assertRejects(() => m.mergeFromTool(ctx.studio, ctx.id), m.Refused) as m.Refused;
+  const error = await assertRejects(() => m.mergeFromTool(ctx.aib, ctx.id), m.Refused) as m.Refused;
   assertEquals(error.code, code, error.message);
   return error;
 }
 
 function queued(ctx: Ctx): Record<string, unknown>[] {
-  return ctx.studio.calls.filter(([op]) => op === 'queue').map(([, p]) => p);
+  return ctx.aib.calls.filter(([op]) => op === 'queue').map(([, p]) => p);
 }
 
 function setState(ctx: Ctx, extra: Record<string, unknown>): void {
-  ctx.studio.states.set(ctx.id, { ...ctx.studio.states.get(ctx.id)!, ...extra });
+  ctx.aib.states.set(ctx.id, { ...ctx.aib.states.get(ctx.id)!, ...extra });
 }
 
 Deno.test('the agent merges without a button press; every merge posts the Merged line and names the target', async () => {
   using box = new Sandbox();
   const ctx = await chat(box);
   commit(ctx.wt, 'work.txt', 'a\n', 'agent work');
-  const result = await m.mergeFromTool(ctx.studio, ctx.id);
+  const result = await m.mergeFromTool(ctx.aib, ctx.id);
   assertEquals([result.state, result.target, result.started], ['merged', 'main', 'main']);
   assertEquals(show(ctx, 'main:work.txt'), 'a\n');
-  assertEquals(ctx.studio.notes(), ['Merged into main (1 commit)']);
+  assertEquals(ctx.aib.notes(), ['Merged into main (1 commit)']);
   assertEquals(queued(ctx), [], 'nothing is queued in the chat');
   commit(ctx.wt, 'more.txt', 'b\n', 'more work'); // no one-shot permission: the next "yes" merges again
-  assertEquals((await m.mergeFromTool(ctx.studio, ctx.id)).state, 'merged');
+  assertEquals((await m.mergeFromTool(ctx.aib, ctx.id)).state, 'merged');
   assertEquals(show(ctx, 'main:more.txt'), 'b\n');
-  assertEquals(ctx.studio.notes(), ['Merged into main (1 commit)', 'Merged into main (1 commit)']);
+  assertEquals(ctx.aib.notes(), ['Merged into main (1 commit)', 'Merged into main (1 commit)']);
 });
 
 Deno.test('a chat made while the folder is on another branch starts from main and merges into main, not into that branch', async () => {
@@ -50,14 +50,14 @@ Deno.test('a chat made while the folder is on another branch starts from main an
   assertEquals(record(ctx).base, 'main'); // chats start from main (worktree_from_main_test.ts covers the chats made before)
   commit(ctx.wt, 'work.txt', 'chat work\n', 'agent work');
   const sideBefore = runGit(box.project, 'rev-parse', 'claude/pensive-ritchie').trim();
-  const state = await m.status(ctx.studio, ctx.id);
+  const state = await m.status(ctx.aib, ctx.id);
   assertEquals([state.base, state.label], ['main', 'Merge into main']);
-  const result = await m.mergeFromTool(ctx.studio, ctx.id);
+  const result = await m.mergeFromTool(ctx.aib, ctx.id);
   assertEquals([result.state, result.target, result.started, result.base], ['merged', 'main', 'main', 'main']);
   assertEquals(show(ctx, 'main:work.txt'), 'chat work\n');
   assertEquals(runGit(box.project, 'ls-tree', '--name-only', 'main').split('\n').includes('side.txt'), false, "only the chat's own work");
   assertEquals(runGit(box.project, 'rev-parse', 'claude/pensive-ritchie').trim(), sideBefore, 'the start branch is untouched');
-  assertEquals(ctx.studio.notes(), ['Merged into main (1 commit)']);
+  assertEquals(ctx.aib.notes(), ['Merged into main (1 commit)']);
 });
 
 Deno.test('main moved with a conflict: reported, nothing lands; resolved in the worktree, the second call lands', async () => {
@@ -67,7 +67,7 @@ Deno.test('main moved with a conflict: reported, nothing lands; resolved in the 
   commit(ctx.wt, 'f.txt', 'one\nchat\nthree\n', 'chat edits f');
   commit(box.project, 'f.txt', 'one\nmain\nthree\n', 'main edits f');
   const mainBefore = main(ctx);
-  const first = await m.mergeFromTool(ctx.studio, ctx.id);
+  const first = await m.mergeFromTool(ctx.aib, ctx.id);
   assertEquals([first.state, first.files, first.target], ['conflicts', ['f.txt'], 'main']);
   assert((first.message as string).startsWith('Bringing main into this branch left merge conflicts in: f.txt.'));
   assertEquals(main(ctx), mainBefore, 'nothing landed on main');
@@ -77,7 +77,7 @@ Deno.test('main moved with a conflict: reported, nothing lands; resolved in the 
   write(ctx.wt, 'f.txt', 'one\nmain and chat\nthree\n');
   runGit(ctx.wt, 'add', 'f.txt');
   runGit(ctx.wt, 'commit', '--no-edit');
-  const second = await m.mergeFromTool(ctx.studio, ctx.id);
+  const second = await m.mergeFromTool(ctx.aib, ctx.id);
   assertEquals(second.state, 'merged');
   assertEquals(show(ctx, 'main:f.txt'), 'one\nmain and chat\nthree\n');
 });
@@ -88,7 +88,7 @@ Deno.test("the user's uncommitted edits in the main checkout survive a merge", a
   commit(ctx.wt, 'work.txt', 'chat\n', 'agent work');
   write(box.project, 'tracked.txt', 'one\nuser edit, not committed\n');
   write(box.project, 'notes.txt', 'new user file\n');
-  assertEquals((await m.mergeFromTool(ctx.studio, ctx.id)).state, 'merged');
+  assertEquals((await m.mergeFromTool(ctx.aib, ctx.id)).state, 'merged');
   assertEquals(show(ctx, 'main:work.txt'), 'chat\n');
   assertEquals(read(box.project, 'tracked.txt'), 'one\nuser edit, not committed\n');
   assertEquals(read(box.project, 'notes.txt'), 'new user file\n');
@@ -135,7 +135,7 @@ Deno.test('helpers: one in another worktree or of unknown place never blocks; on
       s2: { state: 'running', title: 'test runner' },
     },
   });
-  const result = await m.mergeFromTool(ctx.studio, ctx.id);
+  const result = await m.mergeFromTool(ctx.aib, ctx.id);
   assertEquals([result.state, result.helpers], ['merged', ['test runner']], 'the unknown one is named in the reply');
   assertEquals(show(ctx, 'main:work.txt'), 'a\n');
   const sync = m.stateIdleReason({ state: 'ready', subagents: { a: { state: 'running', cwd: elsewhere } } });
@@ -150,7 +150,7 @@ Deno.test("a helper's branch merged into the chat's worktree with plain git land
   runGit(box.project, 'worktree', 'add', '-q', '-b', 'helper/one', helper, 'main');
   commit(helper, 'helper.txt', 'from the helper\n', 'helper work');
   runGit(ctx.wt, 'merge', '--no-edit', 'helper/one');
-  assertEquals((await m.mergeFromTool(ctx.studio, ctx.id)).state, 'merged');
+  assertEquals((await m.mergeFromTool(ctx.aib, ctx.id)).state, 'merged');
   assertEquals([show(ctx, 'main:work.txt'), show(ctx, 'main:helper.txt')], ['chat\n', 'from the helper\n']);
 });
 
@@ -159,7 +159,7 @@ Deno.test('the tool merges while messages are queued and while its own turn runs
   const ctx = await chat(box);
   commit(ctx.wt, 'work.txt', 'a\n', 'agent work');
   setState(ctx, { state: 'prompting', busy: true, queue: { items: [{ id: 'q1', text: 'next thing' }] } });
-  assertEquals((await m.mergeFromTool(ctx.studio, ctx.id)).state, 'merged');
+  assertEquals((await m.mergeFromTool(ctx.aib, ctx.id)).state, 'merged');
   assertEquals(show(ctx, 'main:work.txt'), 'a\n');
 });
 
@@ -171,7 +171,7 @@ Deno.test('a live-synced user edit never lands', async () => {
   write(box.project, 'f.txt', 'A-user\nb\nc\nd\ne\nf\n'); // what live sync does: U moves and the worktree gets the file
   await wt.advanceUserBase(record(ctx), ['f.txt'], ctx.manager.registry);
   write(ctx.wt, 'f.txt', 'A-user\nb\nc\nd\ne\nf\n');
-  assertEquals((await m.mergeFromTool(ctx.studio, ctx.id)).state, 'merged');
+  assertEquals((await m.mergeFromTool(ctx.aib, ctx.id)).state, 'merged');
   assertEquals(show(ctx, 'main:work.txt'), 'a\n');
   assertEquals(show(ctx, 'main:f.txt'), 'a\nb\nc\nd\ne\nf\n', "the user's synced line never lands");
 });
@@ -184,7 +184,7 @@ Deno.test('a tree-landing conflict records mergeConflicts (live sync pauses) unt
   await wt.advanceUserBase(record(ctx), ['f.txt'], ctx.manager.registry);
   write(ctx.wt, 'f.txt', 'a-chat\nb\nc\nd\ne\nf\n'); // the same line the user edited
   runGit(ctx.wt, 'commit', '-a', '-m', 'chat edits a');
-  const answer = await m.mergeFromTool(ctx.studio, ctx.id);
+  const answer = await m.mergeFromTool(ctx.aib, ctx.id);
   assertEquals([answer.state, answer.files], ['conflicts', ['f.txt']]);
   assertEquals(answer.message, m.treeConflictLine(null, ['f.txt']));
   assertEquals(record(ctx).mergeConflicts, ['f.txt']);
@@ -196,7 +196,7 @@ Deno.test('a tree-landing conflict records mergeConflicts (live sync pauses) unt
   );
   assertEquals(await live.blocked(record(ctx)), 'conflicts to resolve', 'live sync waits while the chat reworks');
   write(ctx.wt, 'f.txt', 'A-user\nb\nc\nd\ne\nf-chat\n'); // the rework, left uncommitted: the next call commits it
-  assertEquals((await m.mergeFromTool(ctx.studio, ctx.id)).state, 'merged');
+  assertEquals((await m.mergeFromTool(ctx.aib, ctx.id)).state, 'merged');
   assertEquals(show(ctx, 'main:f.txt'), 'a\nb\nc\nd\ne\nf-chat\n');
   assertEquals(record(ctx).mergeConflicts, []);
 });
@@ -206,13 +206,13 @@ Deno.test('the merge status of a closed or read-only chat says why it cannot mer
   const ctx = await chat(box);
   commit(ctx.wt, 'work.txt', 'a\n', 'agent work');
   setState(ctx, { closed: true });
-  let state = await m.status(ctx.studio, ctx.id);
+  let state = await m.status(ctx.aib, ctx.id);
   assertEquals([state.enabled, state.message], [false, 'This chat is closed. Continue it to merge its work']);
   setState(ctx, { closed: false, readOnly: true });
-  state = await m.status(ctx.studio, ctx.id);
+  state = await m.status(ctx.aib, ctx.id);
   assertEquals([state.enabled, state.message], [false, "This chat is read only, so it can't merge"]);
   setState(ctx, { readOnly: false, state: 'prompting', busy: true });
-  state = await m.status(ctx.studio, ctx.id);
+  state = await m.status(ctx.aib, ctx.id);
   assertEquals([state.enabled, state.state], [true, 'ready']);
   assertEquals(queued(ctx), []);
 });

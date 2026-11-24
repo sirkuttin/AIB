@@ -7,8 +7,8 @@ import { assert, assertEquals } from "./_assert.ts";
 import {
   NAME,
   pc,
-  type RemoteStudio,
-  remoteStudio,
+  type RemoteAib,
+  remoteAib,
   tempDir,
 } from "./_remote_fixture.ts";
 import {
@@ -86,12 +86,12 @@ async function sha(bytes: Uint8Array<ArrayBuffer>): Promise<string> {
 }
 
 /** An AIB with phone access on and the sim; `files` gets the pkgs.tailscale.com answers. */
-async function setupStudio(
+async function setupAib(
   sim: ReturnType<typeof tailscaleSim>,
   over: Parameters<ReturnType<typeof tailscaleSim>["env"]>[0] = {},
   on = true,
 ) {
-  const s = await remoteStudio({
+  const s = await remoteAib({
     runner: sim.runner,
     setupEnv: sim.env(over),
     bindRetryMs: 300,
@@ -99,11 +99,11 @@ async function setupStudio(
   if (on) await pc(s, "POST", "/api/live/devices/access", { on: true });
   return s;
 }
-async function view(s: RemoteStudio): Promise<Json> {
+async function view(s: RemoteAib): Promise<Json> {
   return (await pc(s, "GET", "/api/live/devices"))[1];
 }
 async function run(
-  s: RemoteStudio,
+  s: RemoteAib,
   action: string,
   flags: Json = {},
 ): Promise<[number, Json]> {
@@ -112,7 +112,7 @@ async function run(
     ...flags,
   });
 }
-async function jobEnds(s: RemoteStudio, what = "the job ends"): Promise<Json> {
+async function jobEnds(s: RemoteAib, what = "the job ends"): Promise<Json> {
   let job: Json = {};
   await until(async () => {
     job = (await pc(s, "GET", "/api/live/devices/tailscale/job"))[1]
@@ -373,7 +373,7 @@ Deno.test("AGENT_STUDIO_TEST=1 without a fake: every changing program is refused
     );
     defaultOpenUrl(LOGIN_URL); // must not open anything (nothing to assert beyond not throwing; no hook means no spawn)
     // and through the real route: an AIB with no fakes at all refuses Install
-    const s = await remoteStudio({
+    const s = await remoteAib({
       setupEnv: { os: () => "windows", hasWinget: () => true },
     });
     try {
@@ -434,7 +434,7 @@ Deno.test({
         }
         : undefined),
     );
-    const s = await setupStudio(sim);
+    const s = await setupAib(sim);
     try {
       let v = await view(s);
       assertEquals([ts(v).installed, setup(v).installMode], [false, "winget"]);
@@ -487,7 +487,7 @@ Deno.test({
         ? { code: 0x8A150006, lines: ["Installer failed with exit code: 1602"] }
         : undefined),
     );
-    const s = await setupStudio(sim);
+    const s = await setupAib(sim);
     try {
       await run(s, "install");
       const job = await jobEnds(s);
@@ -542,7 +542,7 @@ Deno.test({
       }
     });
     await servePkgs(sim, "tailscale-setup-1.104.7-arm64.msi");
-    const s = await setupStudio(sim, {
+    const s = await setupAib(sim, {
       hasWinget: () => false,
       env: (n) =>
         ({ PROCESSOR_ARCHITECTURE: "ARM64" } as Record<string, string>)[n],
@@ -606,7 +606,7 @@ for (
       const dirs: string[] = [];
       const sim = tailscaleSim({ installed: false });
       await servePkgs(sim, MSI, opts);
-      const s = await setupStudio(sim, {
+      const s = await setupAib(sim, {
         hasWinget: () => false,
         tempDir: async () => {
           const d = await tempDir("aib-ts-dl-");
@@ -658,7 +658,7 @@ Deno.test({
       if (c.tool === "msiexec") return { code: msiCode };
     });
     await servePkgs(sim, MSI);
-    const s = await setupStudio(sim, { hasWinget: () => false });
+    const s = await setupAib(sim, { hasWinget: () => false });
     try {
       await run(s, "install");
       let job = await jobEnds(s);
@@ -694,7 +694,7 @@ Deno.test({
       if (c.tool === "open") return { code: 0 };
     });
     await servePkgs(sim, PKG);
-    const s = await setupStudio(sim, { os: () => "darwin" });
+    const s = await setupAib(sim, { os: () => "darwin" });
     try {
       const v = await view(s);
       assertEquals(setup(v).installMode, "pkg");
@@ -739,7 +739,7 @@ Deno.test({
     "Sign in: the link Tailscale prints is opened exactly; green on Running (the login process is stopped); the link never leaks",
   async fn() {
     const sim = tailscaleSim({ backend: "NeedsLogin" });
-    const s = await setupStudio(sim);
+    const s = await setupAib(sim);
     try {
       assertEquals((await run(s, "login"))[0], 202);
       await until(() => sim.opened.length === 1, "the browser opens");
@@ -803,7 +803,7 @@ Deno.test({
         ],
       };
     });
-    const s = await setupStudio(sim);
+    const s = await setupAib(sim);
     try {
       await run(s, "login");
       await until(
@@ -841,7 +841,7 @@ Deno.test({
     "Tailscale switched off later: the state says Stopped, Turn Tailscale on runs tailscale up",
   async fn() {
     const sim = tailscaleSim({ backend: "Stopped" });
-    const s = await setupStudio(sim);
+    const s = await setupAib(sim);
     try {
       assertEquals(ts(await view(s)).problem, "stopped");
       await run(s, "up");
@@ -862,7 +862,7 @@ Deno.test({
     "Turn on HTTPS: the /f/serve link the serve command prints is opened (the command is stopped); green once CertDomains has the PC",
   async fn() {
     const sim = tailscaleSim({ https: false });
-    const s = await setupStudio(sim);
+    const s = await setupAib(sim);
     try {
       const [status] = await run(s, "https");
       assertEquals(status, 202);
@@ -898,7 +898,7 @@ Deno.test({
     "Share AIB: 8443 then 443 with the saved ports; HTTPS off waits and shares by itself once it is on; Stop sharing only ours",
   async fn() {
     const sim = tailscaleSim({ https: false });
-    const s = await setupStudio(sim);
+    const s = await setupAib(sim);
     try {
       const port = readRemotePort(s.state)!;
       const aport = readRemoteArtifactPort(s.state)!;
@@ -956,7 +956,7 @@ Deno.test({
     const sim = tailscaleSim({
       serve: { "443": "http://127.0.0.1:3000", "8443": "tcp://127.0.0.1:22" },
     });
-    const s = await setupStudio(sim);
+    const s = await setupAib(sim);
     try {
       const [status, body] = await run(s, "share");
       assertEquals([status, body.code], [409, "replace_needed"]);
@@ -995,7 +995,7 @@ Deno.test({
       funnel: [443],
       serve: { "443": "http://127.0.0.1:3000" },
     });
-    const s = await setupStudio(sim);
+    const s = await setupAib(sim);
     try {
       let v = await view(s);
       assertEquals([(v.problem as Json).code, v.listening], ["funnel", false]);
@@ -1052,7 +1052,7 @@ Deno.test({
         ? { code: 1, lines: ["error: listener already exists for port 8443"] }
         : undefined),
     );
-    const s = await setupStudio(sim);
+    const s = await setupAib(sim);
     try {
       await run(s, "share");
       const job = await jobEnds(s);
@@ -1080,7 +1080,7 @@ Deno.test({
     "Switching off stops sharing; switched off while Tailscale is stopped: remembered and done once it runs; switching on shares again",
   async fn() {
     const sim = tailscaleSim();
-    const s = await setupStudio(sim);
+    const s = await setupAib(sim);
     try {
       await run(s, "share");
       await jobEnds(s);
@@ -1132,7 +1132,7 @@ Deno.test({
       `${root}/state/phone-access.json`,
       JSON.stringify({ version: 1, on: true, via: "tailscale", shared: true }),
     );
-    const s = await remoteStudio({
+    const s = await remoteAib({
       runner: sim.runner,
       setupEnv: sim.env(),
       bindRetryMs: 300,
@@ -1164,7 +1164,7 @@ Deno.test({
     "the page re-check: one Tailscale read serves calls within 2.5 s; nothing is read while phone access is off and nobody asks",
   async fn() {
     const sim = tailscaleSim();
-    const s = await setupStudio(sim);
+    const s = await setupAib(sim);
     try {
       await new Promise((r) => setTimeout(r, 2600));
       const before = sim.reads.filter((r) => r[0] === "status").length;
@@ -1194,7 +1194,7 @@ Deno.test({
     "Saved copies of chats: per phone, on when missing (phone.cache in its scopes), saved at once, one activity line",
   async fn() {
     const sim = tailscaleSim();
-    const s = await setupStudio(sim);
+    const s = await setupAib(sim);
     try {
       const added = await s.ctx.phone.devices.add({
         name: "Pixel 9",
@@ -1231,7 +1231,7 @@ Deno.test({
     "Silent reminders: per phone, on when missing, saved at once, one activity line; an unknown phone is 404",
   async fn() {
     const sim = tailscaleSim();
-    const s = await setupStudio(sim);
+    const s = await setupAib(sim);
     try {
       const added = await s.ctx.phone.devices.add({
         name: "Pixel 9",
@@ -1290,7 +1290,7 @@ Deno.test({
   name: "the setup routes need the page token and take only fixed action names",
   async fn() {
     const sim = tailscaleSim();
-    const s = await setupStudio(sim);
+    const s = await setupAib(sim);
     try {
       for (
         const [m, p] of [["POST", "/api/live/devices/tailscale/run"], [

@@ -29,34 +29,34 @@ class Lab {
   readonly dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-lost-record-' }));
   readonly state = this.dir + SEP + 'state';
   readonly work = this.dir + SEP + 'work';
-  readonly studios: Aib[] = [];
+  readonly aibs: Aib[] = [];
   constructor() {
     Deno.mkdirSync(this.work, { recursive: true });
   }
-  studio(): Aib {
+  aib(): Aib {
     const keeper = new KeeperLink({
       dataDir: this.state,
       orphan: null,
       extraArgs: ['--exit-after', '2s', '--orphan-after', '30s', '--segment-bytes', '65536'],
     });
-    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper, keeperForNew: true });
-    studio.ownerProbe = () => null;
-    studio.connectionFactory = (_command, cwd, provider, options) => new Connection(fake('--cancel-aware'), cwd, provider, options ?? {});
-    this.studios.push(studio);
-    return studio;
+    const aib = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper, keeperForNew: true });
+    aib.ownerProbe = () => null;
+    aib.connectionFactory = (_command, cwd, provider, options) => new Connection(fake('--cancel-aware'), cwd, provider, options ?? {});
+    this.aibs.push(aib);
+    return aib;
   }
   /** The AIB goes away the way an update leaves it: its chats keep running in the keeper. */
-  async leave(studio: Aib): Promise<void> {
-    studio.keeper!.disconnect();
-    for (const c of studio.connections.values()) c.sessionLease?.release();
-    studio.reconnectStop.set();
-    await studio.historyClient()?.shutdown().catch(() => {});
+  async leave(aib: Aib): Promise<void> {
+    aib.keeper!.disconnect();
+    for (const c of aib.connections.values()) c.sessionLease?.release();
+    aib.reconnectStop.set();
+    await aib.historyClient()?.shutdown().catch(() => {});
   }
   async client(): Promise<KeeperClient> {
     return await KeeperClient.connect(readKeeperInfo(this.state)!);
   }
   async [Symbol.asyncDispose](): Promise<void> {
-    for (const s of this.studios.reverse()) await s.close().catch(() => {});
+    for (const s of this.aibs.reverse()) await s.close().catch(() => {});
     const info = readKeeperInfo(this.state);
     if (info && pidAlive(info.pid)) {
       try {
@@ -77,10 +77,10 @@ class Lab {
   }
 }
 
-async function turn(studio: Aib, c: Connection, n: number, messageId: string): Promise<void> {
-  assertEquals((await studio.liveCall('prompt', { id: c.id, text: `stream:${n}:10`, clientMessageId: messageId }))[0], 200);
+async function turn(aib: Aib, c: Connection, n: number, messageId: string): Promise<void> {
+  assertEquals((await aib.liveCall('prompt', { id: c.id, text: `stream:${n}:10`, clientMessageId: messageId }))[0], 200);
   await until(() => c.permissions.size === 1, `the question of ${messageId}`, 10);
-  assertEquals((await studio.liveCall('permission', { id: c.id, key: [...c.permissions.keys()][0], option: 'yes' }))[0], 200);
+  assertEquals((await aib.liveCall('permission', { id: c.id, key: [...c.permissions.keys()][0], option: 'yes' }))[0], 200);
   await until(() => !c.busy, `the end of ${messageId}`, 10);
 }
 
@@ -102,7 +102,7 @@ async function notesOf(client: KeeperClient, channel: string): Promise<string[]>
 
 /** A chat whose journal, after its second checkpoint, starts with a steer note written before that checkpoint's snapshot. */
 async function steerFirst(lab: Lab): Promise<{ c: Connection; pid: number; channel: string }> {
-  const a = lab.studio();
+  const a = lab.aib();
   const c = await a.connect('claude', lab.work);
   await turn(a, c, 2, 'm1');
   await until(() => c.historyCkpt !== null && !c.busy, 'a first checkpoint', 10);
@@ -136,7 +136,7 @@ Deno.test({
     await keeperBinary();
     await using lab = new Lab();
     const { c, pid } = await steerFirst(lab);
-    const b = lab.studio();
+    const b = lab.aib();
     assertEquals(await b.adoptKeeper(), 1, 'taken over');
     const r = b.connections.get(c.id)!;
     assertEquals(r.rebuildError, '');
@@ -153,7 +153,7 @@ Deno.test({
     await keeperBinary();
     await using lab = new Lab();
     const { c, pid, channel } = await steerFirst(lab);
-    const b = lab.studio();
+    const b = lab.aib();
     // As if the record were gone: the reader finds no chat note (the session it reads from the agent's lines is still real).
     const link = b.keeper!;
     const real = link.channelFacts.bind(link);

@@ -6,7 +6,7 @@
  * next to it, exactly as on Windows. Nothing in sync.ts changes for this; its file rules, locks and records are the Windows ones.
  *
  * AIB tells the helper which WSL chats are open in their own copy (`sync.chats`, the whole set, sent in order per distro) and calls the
- * turn hooks with the chat's public state, as Studio calls them for a Windows chat: `sync.turnStarted`, `sync.contextFor`,
+ * turn hooks with the chat's public state, as AIB calls them for a Windows chat: `sync.turnStarted`, `sync.contextFor`,
  * `sync.contextSent`, `sync.turnEnded`. There are no per-file calls: the scans, the copies, the 3-way merges and the lost-update guard
  * all run here. What live sync shows on Windows comes back the way it does there: the <studio-context> note for the chat's next prompt
  * (sync.contextFor), the clash line from the records (merge.status) and the storm pause line (merge.clashStatus; Resume is
@@ -73,13 +73,13 @@ export class HelperSync {
 
   constructor(readonly data: string, options: HelperSyncOptions = {}) {
     this.registry = new wt.Registry(data);
-    const studio = {
+    const aib = {
       stateDir: data,
       worktrees: { registry: this.registry },
       settings: { worktreePerChat: () => true },
       connections: this.chats,
     };
-    this.live = new LiveSync(studio, options.settle ?? settings.SETTLE, options.poll ?? settings.POLL, true, options.watch ?? true);
+    this.live = new LiveSync(aib, options.settle ?? settings.SETTLE, options.poll ?? settings.POLL, true, options.watch ?? true);
   }
 
   get file(): string {
@@ -109,7 +109,7 @@ export class HelperSync {
 
   /**
    * The open chats are exactly `wanted` from now on: the new ones are watched and caught up on what the user saved meanwhile (in the
-   * background, as Studio's chatOpened), the ones that went stop being synced. Returns the ids added and removed.
+   * background, as AIB's chatOpened), the ones that went stop being synced. Returns the ids added and removed.
    */
   setChats(wanted: { chat: string; cwd: string }[]): Promise<{ chats: number; added: string[]; removed: string[] }> {
     return this.#lock.run(async () => {
@@ -194,13 +194,13 @@ export function syncMethods(sync: HelperSync): Handlers {
       return await sync.setChats(wanted);
     },
 
-    /** A prompt is about to go to the chat's agent (Studio's onTurnStart). */
+    /** A prompt is about to go to the chat's agent (AIB's onTurnStart). */
     'sync.turnStarted': async (p) => {
       await sync.live.turnStarted(await sync.chat(p));
       return { ok: true };
     },
 
-    /** The agent finished a turn (Studio's turnEnded): the lost-update guard, then the files both sides changed. */
+    /** The agent finished a turn (AIB's turnEnded): the lost-update guard, then the files both sides changed. */
     'sync.turnEnded': async (p) => {
       await sync.live.turnEnded(await sync.chat(p));
       return { ok: true };

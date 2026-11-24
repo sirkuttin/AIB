@@ -10,7 +10,7 @@
 import { assert, assertEquals } from './_assert.ts';
 import { Browser, browserPath } from './_doc_browser.ts';
 import { pairPhone, pc } from './_remote_fixture.ts';
-import { phoneCall, v2Studio } from './_remote_v2b.ts';
+import { phoneCall, v2Aib } from './_remote_v2b.ts';
 import { phonePage, tap } from './_remote_phone_page.ts';
 import { placeLines } from '../../app/server/history/lines.ts';
 import { withKeptLines } from '../../app/server/remote/saved.ts';
@@ -22,7 +22,7 @@ const SID = 'sess-closed-1';
 const T0 = Math.floor(Date.now() / 1000) - 3600;
 
 /** A closed chat of three turns, and AIB's lines of it as the ledger keeps them (each after the user message of its turn). */
-function seed(s: Awaited<ReturnType<typeof v2Studio>>): void {
+function seed(s: Awaited<ReturnType<typeof v2Aib>>): void {
   const at = (m: number) => new Date((T0 + m * 60) * 1000).toISOString();
   const base = { sessionId: SID, cwd: s.project };
   const user = (text: string, m: number) => ({ type: 'user', ...base, timestamp: at(m), message: { role: 'user', content: text } });
@@ -118,7 +118,7 @@ Deno.test({
   name: 'a closed chat shows its turn ends and AIB notes from the ledger, in order, on the PC and on the phone',
   ignore: !browserPath,
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     const browser = await Browser.launch();
     try {
       seed(s);

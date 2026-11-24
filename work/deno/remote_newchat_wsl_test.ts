@@ -1,7 +1,7 @@
 /**
  * The phone's New chat in a WSL project (docs/wsl/linking-design.md section 12): the agents offered for a WSL project follow that
  * distro's own On/Off switch (settings agentsByDistro), never the Windows one; a Windows project and the top-level list stay as they
- * were. In-process with a fake context (a real SettingsStore in a temp folder), no Studio and no distro.
+ * were. In-process with a fake context (a real SettingsStore in a temp folder), no AIB and no distro.
  */
 import { assert, assertEquals } from './_assert.ts';
 import { FakeWslHost } from './_wsl_fake.ts';

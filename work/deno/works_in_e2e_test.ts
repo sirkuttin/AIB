@@ -1,7 +1,7 @@
 /**
  * Chats work in the project folder, the page part (build plan 1b, sections 1.2-1.4; owner decision 2026-11-16: no per-chat Own copy).
  *
- * A real Studio (the scroll lab: temp state folder, free port; never the live ports), scripted live chats, headless Chrome or
+ * A real AIB (the scroll lab: temp state folder, free port; never the live ports), scripted live chats, headless Chrome or
  * Edge. The Changes replies are answered in the page by a fetch stub installed before the page's own scripts run; connect
  * requests are recorded and passed on.
  *

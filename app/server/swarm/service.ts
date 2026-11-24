@@ -5,7 +5,7 @@
  *
  * Runs in the web process, beside Merge (worktrees/merge.ts): the agent's tool calls come in on POST /api/live/swarm/tool with its
  * per-chat key, the page's Undo / Merge again on page-token routes. Helpers are opened through the live backend's connect (in-process,
- * keeper or split host alike) with `helperOf`, so the Studio gives them their role at creation (review break 1). A loop reads the chat
+ * keeper or split host alike) with `helperOf`, so AIB gives them their role at creation (review break 1). A loop reads the chat
  * list every 2 s, as the attention watcher does, to see helper turn ends (break 17), keep live ids current after a restart and deliver
  * what waits for a closed main chat (breaks 16b, 20).
  *
@@ -735,7 +735,7 @@ export class Swarm {
     let lockedTip = '';
     let result: Json;
     try {
-      result = await merge.merge(this.#mergeStudio(), h.chat.live, h.title, false, { // fromTool=false: the helper must be idle
+      result = await merge.merge(this.#mergeAib(), h.chat.live, h.title, false, { // fromTool=false: the helper must be idle
         held,
         journal: (stage, data) => {
           if (typeof data.tipBefore === 'string' && data.tipBefore) lockedTip = data.tipBefore;
@@ -809,7 +809,7 @@ export class Swarm {
     if (!path || !wt.lexists(path)) return { state: 'refused', code: 'gone', message: 'its worktree is gone' };
     await this.#keepWork(h, 'AIB: helper work kept', false);
     let lockedTip = '';
-    const out = await landSubagentWork(this.#mergeStudio(), {
+    const out = await landSubagentWork(this.#mergeAib(), {
       scratchDir: this.ctx.stateDir,
       path,
       folder: h.project,
@@ -946,7 +946,7 @@ export class Swarm {
   async #runLanding(h: Helper, parentId: string): Promise<Json | null> {
     const L = h.landing!;
     const lockId = newLockId();
-    const got = await lockChats(this.#mergeStudio(), [parentId], h.title, `swarm:${h.id}`, lockId);
+    const got = await lockChats(this.#mergeAib(), [parentId], h.title, `swarm:${h.id}`, lockId);
     if (!got.held) {
       if (h.kind === 'subagent' && L.what === 'merge') await this.#landingBusy(h, parentId, got.busy[1]).catch((e) => log.exception(e, 'Telling a waiting landing failed'));
       return null;
@@ -1095,8 +1095,8 @@ export class Swarm {
     await this.#patchLanding(h.id, { stashSha: '', stashName: '', stashFolder: '' });
   }
 
-  #mergeStudio(): merge.MergeStudio {
-    return merge.liveMergeStudio(this.ctx.stateDir, this.ctx.host);
+  #mergeAib(): merge.MergeHost {
+    return merge.liveMergeAib(this.ctx.stateDir, this.ctx.host);
   }
 
   // ---- the page's Undo and Merge again (page token only; never the agent's key: review break 14) -------------------------------
@@ -1140,7 +1140,7 @@ export class Swarm {
   async #applyUndo(h: Helper, what: 'undo' | 'again', held: string[]): Promise<Json> {
     if (!h.merge) return { state: 'refused', code: 'gone', message: 'That helper has no merge' };
     const target = await this.#target(h);
-    const options = { noStash: folderParent(h), host: this.#mergeStudio(), held, title: h.title };
+    const options = { noStash: folderParent(h), host: this.#mergeAib(), held, title: h.title };
     if (what === 'undo') {
       if (h.merge.undo && !h.merge.again) return { state: 'refused', code: 'done', message: 'Already undone' };
       const done = await applyChange(
@@ -1217,7 +1217,7 @@ export class Swarm {
 
   // ---- subagent landings (subagent worktrees P2) -----------------------------------------------------------------------------
   /**
-   * The Studio's subagent records (subagent-worktrees.json, its file: this side only reads it) joined to the landing queue. An ended
+   * AIB's subagent records (subagent-worktrees.json, its file: this side only reads it) joined to the landing queue. An ended
    * record (done: its SubagentStop came; stopped: the user stopped the turn, the main agent stopped it, its Agent call failed) of an
    * open parent gets one entry here, keyed by the record's id, the first time it is seen: a done one queued to land (it lands when the
    * parent is idle, under its landing lock), a stopped one only told (never landed by itself). Runs at every poll, so at start too,
@@ -1428,7 +1428,7 @@ export class Swarm {
       };
       // a WSL chat's subagent (owner 2026-11-23): its distro lands it, by the same steps (wsl/subagents.ts)
       out = rec.wsl
-        ? await wslLandSubagent(this.#mergeStudio(), rec, {
+        ? await wslLandSubagent(this.#mergeAib(), rec, {
           parent: spec.parent,
           target: spec.target,
           title: spec.title,
@@ -1436,7 +1436,7 @@ export class Swarm {
           landKept: spec.landKept,
           landScratch: spec.landScratch,
         }, onStage)
-        : await landSubagentWork(this.#mergeStudio(), spec, onStage);
+        : await landSubagentWork(this.#mergeAib(), spec, onStage);
     } catch (error) {
       log.exception(error, 'Landing subagent %s failed', h.id);
       throw error;
@@ -1616,7 +1616,7 @@ export class Swarm {
     });
   }
 
-  /** Its worktree, branch and record go (the Studio owns subagent-worktrees.json); tried again at the next poll when it can't now. */
+  /** Its worktree, branch and record go (AIB owns subagent-worktrees.json); tried again at the next poll when it can't now. */
   async #release(h: Helper): Promise<void> {
     const [code, payload] = await this.ctx.host.liveCall('subagent-release', { subagent: h.sub?.record ?? h.id }).catch(() => [500, null] as [number, unknown]);
     if (code !== 200) log.info('swarm: the worktree of subagent %s stays for now (%s)', h.id, pyStr(obj(payload).error ?? code));
@@ -1911,7 +1911,7 @@ export class Swarm {
 
   // ---- cleanup (owner 2026-11-23: helper worktrees and branches were never removed) -------------------------------------------------
   /**
-   * A merged helper's worktree and branch go once its chat is closed, as a subagent's go after landing (Studio's own retire does it the
+   * A merged helper's worktree and branch go once its chat is closed, as a subagent's go after landing (AIB's own retire does it the
    * moment a merged copy's chat closes; this covers the rest: a helper merged by record, one merged before this existed, one whose chat
    * closed while AIB was away). Never unmerged work: it needs state merged (not undone), the branch still at the tip the merge left it
    * (or its changes all in the target), and a clean worktree. A `-landable` branch goes only once its commit is in the target (the

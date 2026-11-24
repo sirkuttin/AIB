@@ -1,16 +1,16 @@
 /**
- * Per-conversation keys for Studio's artifact tool (artifact_keys.py).
+ * Per-conversation keys for AIB's artifact tool (artifact_keys.py).
  *
  * The agent's MCP shim authenticates to the artifact routes with the header X-Studio-Artifact-Key instead of the page token; a key
  * only works for the conversation it was issued to. A key is HMAC-SHA256(secret, 'studio-artifact-key/v1\0' + conversation id as
  * UTF-8), lowercase hex, where the secret is the whole content (32 random bytes when created) of the file artifact-key-secret in the
- * shared state folder, created once with O_EXCL and mode 0600. The file and the key are byte-for-byte those of the Python server, so
- * a key issued by either server checks in the other while both share the state folder (interop tests in work/deno/artifact_keys_test.ts).
+ * shared state folder, created once with O_EXCL and mode 0600. The file and the key are byte-for-byte the same in every version, so
+ * a key issued by one checks in another while both share the state folder (interop tests in work/deno/artifact_keys_test.ts).
  *
  * Security item 7: on Windows the file holds the secret sealed with DPAPI for this user ("dpapi:v1:<base64>", state/sealed.ts), so
  * an agent that reads the data folder cannot compute another chat's key; a plain file from an older AIB is sealed in place at the
- * next start (same secret: keys already issued keep checking). Elsewhere it stays plain, mode 0600. (The Python server cannot read
- * a sealed file; it is retired, and AIB_SEAL=off keeps the plain form for the interop tests.)
+ * next start (same secret: keys already issued keep checking). Elsewhere it stays plain, mode 0600. (AIB_SEAL=off keeps the plain form
+ * for the interop tests.)
  *
  *   configure(stateDir)             // once per process
  *   const key = issue(conversationId)

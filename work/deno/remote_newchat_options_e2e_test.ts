@@ -15,11 +15,11 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { Browser, browserPath } from './_doc_browser.ts';
-import { pairPhone, type RemoteStudio } from './_remote_fixture.ts';
+import { pairPhone, type RemoteAib } from './_remote_fixture.ts';
 import { phonePage, tap } from './_remote_phone_page.ts';
 import { AGENTS_MS, agentsNow, setAgentRows } from '../../app/server/remote/newchat.ts';
 import { HostUnavailable } from '../../app/server/host/host_client.ts';
-import { AGENT_ROWS, liveChat, phoneCall, v2Studio } from './_remote_v2b.ts';
+import { AGENT_ROWS, liveChat, phoneCall, v2Aib } from './_remote_v2b.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
 const sep = Deno.build.os === 'windows' ? '\\' : '/';
@@ -37,7 +37,7 @@ function slowRows(ms: number): { builds: number } {
 }
 
 /** More added projects: every third folder is gone. */
-async function moreProjects(s: RemoteStudio, n: number): Promise<number> {
+async function moreProjects(s: RemoteAib, n: number): Promise<number> {
   let there = 0;
   const paths: string[] = [];
   for (let i = 0; i < n; i++) {
@@ -57,7 +57,7 @@ Deno.test({
   ...OPTS,
   name: 'phone New chat options: a slow agent list is built once and kept; older served while rebuilt; Start fresh; settings key',
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     try {
       const seen = slowRows(400);
       const phone = await pairPhone(s);
@@ -113,7 +113,7 @@ Deno.test({
   name: 'phone page at 375 px: New chat from All projects 50 times with a slow agent list and gone folders; a failed load has Try again',
   ignore: !browserPath,
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     const browser = await Browser.launch();
     try {
       const seen = slowRows(1500);

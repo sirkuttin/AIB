@@ -4,7 +4,7 @@
  *   main      the project folder: its uncommitted changes (what the old per-chat tab showed for a folder chat).
  *   sections  one per worktree in use by an ACTIVE subagent or helper of the project (a running one, or one that finished and waits to
  *             land). The diff base is the worktree's own snapshot S (HEAD plus main's uncommitted edits at the moment it was made), so
- *             main's edits are not repeated in every section. Sources: <state>/subagent-worktrees.json (the Studio's records) and the
+ *             main's edits are not repeated in every section. Sources: <state>/subagent-worktrees.json (AIB's records) and the
  *             swarm registry (swarm-helpers.json: helpers and the landing state of subagents). Spare, preparing and prepared worktrees
  *             hold no work and are never listed; a landed one is gone.
  *   left      worktrees whose work never landed (stopped, refused landing, files kept), only with changes in them. The OWNER does
@@ -108,7 +108,7 @@ export function worktreeTargets(
   return out.map(({ at: _at, ...t }) => t);
 }
 
-/** Active, left over, or neither (landed / nothing there). `recState`: the Studio record's state; h: the swarm entry. */
+/** Active, left over, or neither (landed / nothing there). `recState`: AIB record's state; h: the swarm entry. */
 function classify(recState: string, h: Helper | undefined): Pick<Target, 'state' | 'why' | 'working'> | null {
   const kept = !!h?.sub?.kept?.length;
   if (h?.state === 'merged') return kept ? { state: 'left', why: 'kept', working: false } : null; // landed: gone

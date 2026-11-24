@@ -614,11 +614,11 @@
     }
     if (a.status === 'signin') return { text: 'Found · sign-in needed', cls: 'warn' };
     if (a.status === 'running') return { text: 'Found · running', cls: 'ok' };
-    if (a.launcherSource === 'studio') return { text: 'Ready', cls: 'ok' }; // Studio's own install
+    if (a.launcherSource === 'studio') return { text: 'Ready', cls: 'ok' }; // AIB's own install
     return { text: 'Found', cls: 'ok' };
   }
 
-  // ---- Installing Studio's own copy of an agent's adapter (Claude Code, Codex) -------------------------------------------
+  // ---- Installing AIB's own copy of an agent's adapter (Claude Code, Codex) -------------------------------------------
   // The job runs in the agent host; the server reports it as agent.install ({state: running|failed, stage, percent, message}) and
   // through GET /api/live/agents/install. Here: Install / Cancel / Retry, a progress bar, and polling while a job runs.
   const installs = {}; // agent id -> latest job state; {state: 'idle'} = no job; {state: 'refused', message} = refused before starting
@@ -642,7 +642,7 @@
   };
   const installBlock = (a) => (a.installable && !a.found && a.launcherSource === 'missing' && a.installBlock) || '';
   const canInstall = (a) => !!a.installable && !a.found && a.launcherSource === 'missing' && !installBlock(a);
-  // Uninstall only for the copy AIB installed itself (Studio's own install is what this row runs), never for one the person made.
+  // Uninstall only for the copy AIB installed itself (AIB's own install is what this row runs), never for one the person made.
   const canUninstall = (a) => (!!a.builtin || !!a.beta) && !!a.installable && a.launcherSource === 'studio';
   const repaint = () => {
     if (S.open) renderAll();
@@ -796,7 +796,7 @@
       );
   }
   // ---- Sign-in: the Status column, the Sign in button, and "Waiting for sign-in…" ---------------------------------------------
-  // The agent's own login runs in a visible console window (Windows), started by the agent host; Studio never sees what it produces.
+  // The agent's own login runs in a visible console window (Windows), started by the agent host; AIB never sees what it produces.
   // The server reports the job as agent.signin.job ({state: waiting|failed|done|manual, message, command}) and through GET /api/live/agents/signin.
   const signins = {}; // agent id -> latest job; {state: 'idle'} = none
   const signinTimers = {};
@@ -2151,7 +2151,7 @@
     );
   }
 
-  // ---- Studio server ---------------------------------------------------------------------------------------------
+  // ---- AIB server ---------------------------------------------------------------------------------------------
   const when = (seconds) => {
     if (!seconds) return 'unknown';
     try {
@@ -3151,7 +3151,7 @@
     focusForm();
   }
   // Why an agent row is stuck, for the start page: 'node' (installs cannot run), 'failed' (the install or sign-in failed), 'missing'
-  // (not installed and Studio cannot install it), or '' (still usable: an Install or Sign in button works, or a job is running).
+  // (not installed and AIB cannot install it), or '' (still usable: an Install or Sign in button works, or a job is running).
   function trouble(a) {
     if (installBlock(a)) return 'node';
     const job = installOf(a),

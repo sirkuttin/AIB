@@ -1,6 +1,6 @@
 /**
  * A finished helper leaves nothing running (owner 2026-11-23: "for any sub agent or helper, if they are done we need to make sure we
- * shut down any processes that they started"). Through a real Studio with fake agents that start real processes (a background shell
+ * shut down any processes that they started"). Through a real AIB with fake agents that start real processes (a background shell
  * and a child "dev server"), real git in temp folders, no windows, no real CLI:
  *  - a helper that is merged: both processes are gone within seconds, the registry says it ended, the parent chat gets one line, and
  *    the saved chat's process rows read "stopped: helper finished";
@@ -69,7 +69,7 @@ class Box {
   readonly project = makeRepo(pathOf(this.dir, 'proj'));
   readonly childFile = pathOf(this.dir, 'child.pid');
   readonly gate = pathOf(this.dir, 'bg.gate');
-  readonly studio: Aib;
+  readonly aib: Aib;
   swarm: Swarm;
   /** What the poll's list says about the take-over at start (a restart test turns it on). */
   takingOver = false;
@@ -78,22 +78,22 @@ class Box {
     setSwarmEnabled(this.state, true);
     runGit(this.project, 'config', 'user.name', 't');
     runGit(this.project, 'config', 'user.email', 't@t');
-    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0 }, { keeper: null });
-    studio.ownerProbe = () => null;
-    studio.agentLaunch = () => Promise.resolve([['unused'], {}]);
-    studio.connectionFactory = (_command, cwd, provider, options) =>
+    const aib = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0 }, { keeper: null });
+    aib.ownerProbe = () => null;
+    aib.agentLaunch = () => Promise.resolve([['unused'], {}]);
+    aib.connectionFactory = (_command, cwd, provider, options) =>
       new Connection(
         [PYTHON, UNIQUE, '--models', '--held-turn', '--not-claude', ...(provider === 'codex' ? ['--child-pid-file', this.childFile] : [])],
         cwd,
         provider,
         options ?? {},
       );
-    this.studio = studio;
+    this.aib = aib;
     this.swarm = this.#swarm();
   }
 
   #swarm(): Swarm {
-    const host = this.studio;
+    const host = this.aib;
     const swarm = new Swarm({
       stateDir: this.state,
       host: {
@@ -101,7 +101,7 @@ class Box {
         liveState: (id, after) => host.liveState(id, after),
         liveCall: (name, body) => host.liveCall(name, body),
       },
-      settings: this.studio.settings,
+      settings: this.aib.settings,
     });
     swarm.openMs = 30_000;
     return swarm;
@@ -114,12 +114,12 @@ class Box {
 
   /** A main chat starts a helper; the helper's brief turn ends; its commit is made; the report is delivered (state done). */
   async helper(): Promise<{ id: string; main: Connection; helper: Connection }> {
-    const main = await this.studio.connect('claude', this.project, null, { ownCopy: true });
+    const main = await this.aib.connect('claude', this.project, null, { ownCopy: true });
     const [, out] = await this.swarm.tool(main.id, 'start_helper', BRIEF);
     const id = String((out as Json).helper);
     await until(() => this.swarm.registry.get(id)?.state === 'working', 'the helper working', 30);
     const h = this.swarm.registry.get(id)!;
-    const helper = this.studio.connections.get(h.chat.live)!;
+    const helper = this.aib.connections.get(h.chat.live)!;
     await until(() => !helper.busy, 'the brief turn ended', 15);
     commit(h.worktree.path, 'test/login/a.test.txt', 'fixed\n', 'fix the login tests');
     await this.swarm.poll();
@@ -141,7 +141,7 @@ class Box {
     try {
       Deno.writeTextFileSync(this.gate, 'x'); // lets any waiter end
     } catch { /* gone */ }
-    await this.studio.close().catch(() => {});
+    await this.aib.close().catch(() => {});
     for (let i = 0; i < 20; i++) {
       try {
         Deno.removeSync(this.dir, { recursive: true });
@@ -227,7 +227,7 @@ Deno.test({
     a.helper.permission([...a.helper.permissions.keys()][0], 'yes');
     await until(() => !a.helper.busy, 'answered', 10);
     // the owner types into it (an id that is not AIB's): it is his now
-    await box.studio.liveCall('prompt', { id: a.helper.id, text: 'one more thing please', clientMessageId: 'page-typed-1' });
+    await box.aib.liveCall('prompt', { id: a.helper.id, text: 'one more thing please', clientMessageId: 'page-typed-1' });
     await until(() => !a.helper.busy, 'the owner turn ended', 15);
     assertEquals(a.helper.ownerTouched, true);
     for (let i = 0; i < 3; i++) await box.swarm.poll();
@@ -285,7 +285,7 @@ Deno.test({
     // reopening it now: readable but not continuable, said plainly (WorktreeGone), never a crash into the removed folder
     let said = '';
     try {
-      await box.studio.connect('codex', box.project, session);
+      await box.aib.connect('codex', box.project, session);
     } catch (error) {
       assertEquals((error as Error).name, 'WorktreeGone');
       said = (error as Error).message;
@@ -352,7 +352,7 @@ Deno.test({
     const session = helper.sessionId!;
     await until(async () => (await box.swarm.poll(), ended(box, id)), 'ended after the limit', 20);
     assert(helper.closed);
-    const again = await box.studio.connect('codex', box.project, session);
+    const again = await box.aib.connect('codex', box.project, session);
     assertEquals(again.swarm?.role, 'helper');
     assert(!again.closed && again.process && alive(again.process.pid), 'a live agent again');
     box.swarm.endIdleMs = 60_000;

@@ -13,7 +13,7 @@ import { DEVICE_HEADER } from '../../app/server/remote/server.ts';
 import { readRemotePort } from '../../app/server/remote/port.ts';
 import { PUSH_KEYS_FILE, TOPIC, TTL_FINISHED, TTL_NEEDS, VapidKeys } from '../../app/server/remote/push.ts';
 import { startAttention } from '../../app/server/attention/watcher.ts';
-import { fakeTailscale, pairPhone, pc, phoneHeaders, raw, type RemoteStudio, remoteStudio, serveStatus } from './_remote_fixture.ts';
+import { fakeTailscale, pairPhone, pc, phoneHeaders, raw, type RemoteAib, remoteAib, serveStatus } from './_remote_fixture.ts';
 
 // the fake push service below listens on https://127.0.0.1 (only known push services are taken otherwise: devices.ts PUSH_HOSTS)
 Deno.env.set('AIB_TEST_PUSH_LOOPBACK', '1');
@@ -116,15 +116,15 @@ function pushService() {
   return { got, answer, port, fetcher, endpoint: (p: string) => `https://127.0.0.1:${port}${p}`, close: () => server.shutdown() };
 }
 
-async function phoneOn(fetcher: typeof fetch): Promise<RemoteStudio> {
+async function phoneOn(fetcher: typeof fetch): Promise<RemoteAib> {
   const fake = fakeTailscale();
-  const s = await remoteStudio({ runner: fake.runner, pushFetch: fetcher });
+  const s = await remoteAib({ runner: fake.runner, pushFetch: fetcher });
   fake.state.serve = serveStatus(readRemotePort(s.state)!);
   assertEquals((await pc(s, 'POST', '/api/live/devices/access', { on: true }))[0], 200);
   return s;
 }
 
-const subscribe = (s: RemoteStudio, token: string, subscription: unknown) =>
+const subscribe = (s: RemoteAib, token: string, subscription: unknown) =>
   raw(
     s.phonePort(),
     'POST',

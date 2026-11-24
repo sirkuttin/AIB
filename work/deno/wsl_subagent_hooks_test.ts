@@ -1,8 +1,8 @@
 /**
- * Subagent worktrees for WSL chats, end to end without a distro (owner 2026-11-23, "oq3 a"): a real Studio with a FakeWslHost (the
+ * Subagent worktrees for WSL chats, end to end without a distro (owner 2026-11-23, "oq3 a"): a real AIB with a FakeWslHost (the
  * fake agent stands in for the distro's) whose `subagent.*` answers come from the REAL helper methods (wsl/helper/subagents.ts: the same
  * SubagentWorktrees and landing steps, real git on temp repos, Linux paths mapped to the temp folders at the last step), a real swarm,
- * and the hook path of AIB-keeper hook --helper-socket: a hook arrives through the tunnel (Studio.wslToolCall with the forwarder's
+ * and the hook path of AIB-keeper hook --helper-socket: a hook arrives through the tunnel (Aib.wslToolCall with the forwarder's
  * headers) and is answered, signed, inside an envelope. The Go side of the same envelope is keeper/hooksocket_test.go.
  *   - a WSL Claude chat gets command hooks that run the distro's keeper program on the helper's socket (never an address file), its
  *     hook key in its environment, and the distro's own read-only agent list;
@@ -49,7 +49,7 @@ class Lab {
   readonly work = makeRepo(this.dir + SEP + 'app');
   readonly host: FakeWslHost;
   readonly helper = subagentMethods(this.data);
-  readonly studios: Aib[] = [];
+  readonly aibs: Aib[] = [];
   readonly swarms: Swarm[] = [];
 
   constructor(tunnel = true) {
@@ -96,17 +96,17 @@ class Lab {
     return this.host.windowsFor(linux);
   }
 
-  studio(): Aib {
+  aib(): Aib {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
-    const studio = new Aib({ claudeLauncher: import.meta.filename!, codexLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper });
-    studio.ownerProbe = () => null;
-    studio.connectionFactory = (_command, cwd, provider, options) => {
+    const aib = new Aib({ claudeLauncher: import.meta.filename!, codexLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper });
+    aib.ownerProbe = () => null;
+    aib.connectionFactory = (_command, cwd, provider, options) => {
       const wsl = options?.wsl ? { ...options.wsl, program: undefined } : options?.wsl;
       return new Connection(fake('--cancel-aware'), cwd, provider, { ...options, wsl });
     };
-    this.studios.push(studio);
-    this.swarms.push(new Swarm({ stateDir: this.state, host: studio, settings: studio.settings }));
-    return studio;
+    this.aibs.push(aib);
+    this.swarms.push(new Swarm({ stateDir: this.state, host: aib, settings: aib.settings }));
+    return aib;
   }
 
   get swarm(): Swarm {
@@ -115,7 +115,7 @@ class Lab {
 
   async [Symbol.asyncDispose](): Promise<void> {
     for (const s of this.swarms) await s.stopWatching().catch(() => {});
-    for (const s of this.studios.reverse()) await s.close().catch(() => {});
+    for (const s of this.aibs.reverse()) await s.close().catch(() => {});
     setWslHostResolver(null);
     await this.host.stopKeeper();
     for (let i = 0; i < 20; i++) {
@@ -139,8 +139,8 @@ async function idle(c: Connection): Promise<void> {
 
 /** A chat in the lab's WSL project, with a way to call its hooks as the distro's forwarder does (through the tunnel). */
 async function openChat(lab: Lab, provider = 'claude') {
-  const studio = lab.studio();
-  const c = await studio.connect(provider, REF);
+  const aib = lab.aib();
+  const c = await aib.connect(provider, REF);
   await idle(c);
   const spec = lab.host.link.spawned.find((s) => String(s.channel).startsWith('chat-'))!;
   const env = spec.env as Record<string, string>;
@@ -148,7 +148,7 @@ async function openChat(lab: Lab, provider = 'claude') {
   /** One hook call: the envelope AIB answers with, its proof checked here with the chat's key (as the forwarder does). */
   const hook = async (event: string, input: unknown, headers: Record<string, string> = {}) => {
     const nonce = [...crypto.getRandomValues(new Uint8Array(32))].map((b) => b.toString(16).padStart(2, '0')).join('');
-    const answer = await studio.wslToolCall({
+    const answer = await aib.wslToolCall({
       distro: 'Ubuntu',
       key: '',
       conversation: c.id,
@@ -160,7 +160,7 @@ async function openChat(lab: Lab, provider = 'claude') {
     const proofOk = envelope.proof === hookProof(key, nonce, envelope.status, new TextEncoder().encode(envelope.body));
     return { tunnel: 200, status: envelope.status, body: envelope.body, proofOk, proof: envelope.proof };
   };
-  return { studio, c, env, key, hook };
+  return { aib, c, env, key, hook };
 }
 
 const agentCall = (id: string, description = 'Make the docs') => ({
@@ -179,7 +179,7 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new Lab();
-    const { studio, c, env, key, hook } = await openChat(lab);
+    const { aib, c, env, key, hook } = await openChat(lab);
     // the hooks: the distro's keeper program on the helper's socket (never an address file), with the chat's own key in its environment
     const hooks = c.subagentHooks!;
     assertEquals(hooks.off, '');
@@ -239,7 +239,7 @@ Deno.test({
     assert(!exists(worktree), 'its worktree is gone');
     assertEquals(runGit(lab.work, 'branch', '--list', 'studio/sub-*').trim().split('\n').filter((l) => l.includes(String(rec.branch))), []);
     assertEquals(runGit(lab.work, 'stash', 'list').trim(), '', 'nothing was stashed');
-    void studio;
+    void aib;
   },
 });
 
@@ -249,10 +249,10 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new Lab();
-    const { studio, c, hook } = await openChat(lab);
+    const { aib, c, hook } = await openChat(lab);
     const woke: { op: string; text: string }[] = [];
-    const own = studio.liveCall.bind(studio);
-    studio.liveCall = (name, body) => {
+    const own = aib.liveCall.bind(aib);
+    aib.liveCall = (name, body) => {
       if (name === 'steer' || name === 'queue') woke.push({ op: name, text: String((body as Json).text) });
       return own(name, body);
     };
@@ -292,7 +292,7 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new Lab();
-    const { studio, c, key, hook } = await openChat(lab);
+    const { aib, c, key, hook } = await openChat(lab);
     // the helper fails: the Agent call is denied with a plain reason, and nothing was made
     lab.host.handlers['subagent.hook'] = () => {
       throw new WslHelperError('the helper crashed', 'internal');
@@ -331,17 +331,17 @@ Deno.test({
     assertEquals((await hook('rm -rf', {})).status, 404);
     // not JSON
     const nonce = 'ab'.repeat(16);
-    const bad = await studio.wslToolCall({ distro: 'Ubuntu', key: '', conversation: c.id, body: 'not json', headers: { [HOOK_KEY_HEADER]: key, [CONVERSATION_HEADER]: c.id, [HOOK_NONCE_HEADER]: nonce, [HOOK_EVENT_HEADER]: 'pre-tool' } });
+    const bad = await aib.wslToolCall({ distro: 'Ubuntu', key: '', conversation: c.id, body: 'not json', headers: { [HOOK_KEY_HEADER]: key, [CONVERSATION_HEADER]: c.id, [HOOK_NONCE_HEADER]: nonce, [HOOK_EVENT_HEADER]: 'pre-tool' } });
     assertEquals(JSON.parse(bad.body).status, 400);
     // another distro's call, and a chat that is not open here
-    const other = await studio.wslToolCall({ distro: 'Debian', key: '', conversation: c.id, body: '{}', headers: { [HOOK_KEY_HEADER]: key, [CONVERSATION_HEADER]: c.id, [HOOK_NONCE_HEADER]: nonce, [HOOK_EVENT_HEADER]: 'pre-tool' } });
+    const other = await aib.wslToolCall({ distro: 'Debian', key: '', conversation: c.id, body: '{}', headers: { [HOOK_KEY_HEADER]: key, [CONVERSATION_HEADER]: c.id, [HOOK_NONCE_HEADER]: nonce, [HOOK_EVENT_HEADER]: 'pre-tool' } });
     assertEquals(other.status, 401);
-    const unknown = await studio.wslToolCall({ distro: 'Ubuntu', key: '', conversation: 'f'.repeat(32), body: '{}', headers: { [HOOK_KEY_HEADER]: key, [CONVERSATION_HEADER]: 'f'.repeat(32), [HOOK_NONCE_HEADER]: nonce, [HOOK_EVENT_HEADER]: 'pre-tool' } });
+    const unknown = await aib.wslToolCall({ distro: 'Ubuntu', key: '', conversation: 'f'.repeat(32), body: '{}', headers: { [HOOK_KEY_HEADER]: key, [CONVERSATION_HEADER]: 'f'.repeat(32), [HOOK_NONCE_HEADER]: nonce, [HOOK_EVENT_HEADER]: 'pre-tool' } });
     assertEquals(unknown.status, 401);
     // a closed AIB answers at once
-    await studio.close();
-    lab.studios.splice(lab.studios.indexOf(studio), 1);
-    const closed = await studio.wslToolCall({ distro: 'Ubuntu', key: '', conversation: c.id, body: '{}', headers: { [HOOK_KEY_HEADER]: key, [HOOK_EVENT_HEADER]: 'pre-tool' } });
+    await aib.close();
+    lab.aibs.splice(lab.aibs.indexOf(aib), 1);
+    const closed = await aib.wslToolCall({ distro: 'Ubuntu', key: '', conversation: c.id, body: '{}', headers: { [HOOK_KEY_HEADER]: key, [HOOK_EVENT_HEADER]: 'pre-tool' } });
     assertEquals(closed.status, 503);
   },
 });
@@ -355,8 +355,8 @@ Deno.test({
     {
       await using lab = new Lab(true);
       lab.host.hookTunnel = null;
-      const studio = lab.studio();
-      const c = await studio.connect('claude', REF);
+      const aib = lab.aib();
+      const c = await aib.connect('claude', REF);
       await idle(c);
       const hooks = c.subagentHooks!;
       assertEquals(hooks.off, 'WSL hooks unavailable');
@@ -374,8 +374,8 @@ Deno.test({
       lab.host.handlers['subagent.setup'] = () => {
         throw new WslHelperError('the distro stopped', 'stopped');
       };
-      const studio = lab.studio();
-      const c = await studio.connect('claude', REF);
+      const aib = lab.aib();
+      const c = await aib.connect('claude', REF);
       await idle(c);
       assertEquals(c.subagentHooks!.off, 'WSL hooks unavailable');
       assert(c.subagentHooks!.detail!.includes('the distro stopped'));
@@ -389,8 +389,8 @@ Deno.test({
       lab.host.loginEnv.CLAUDE_CONFIG_DIR = '/home/u/claude-config';
       const base = lab.helper['subagent.setup'];
       lab.host.handlers['subagent.setup'] = async (p) => lab.out(await base({ ...(lab.into(p) as Json), env: { CLAUDE_CONFIG_DIR: claude } }));
-      const studio = lab.studio();
-      const c = await studio.connect('claude', REF);
+      const aib = lab.aib();
+      const c = await aib.connect('claude', REF);
       await idle(c);
       assertEquals(c.subagentHooks!.off, 'hooks are off');
       assert(c.subagentHooks!.detail!.includes('disableAllHooks'), c.subagentHooks!.detail);
@@ -461,7 +461,7 @@ Deno.test({
     }
     await using lab = new Lab();
     lab.host.hookShellTag = true;
-    const { studio, c, hook } = await openChat(lab);
+    const { aib, c, hook } = await openChat(lab);
     assertEquals(c.subagentHooks!.shellTag, true);
     const shell = commandsOf(c).find((x) => x.includes('hook pre-shell'))!;
     assert(shell && shell.includes(`--helper-socket "${SOCKET}"`) && !shell.includes('|| exit 2'), String(shell));
@@ -481,7 +481,7 @@ Deno.test({
     // the main agent's own call is not tagged
     assertEquals(JSON.parse((await hook('pre-shell', call(null, 'npm run dev'))).body), {});
     // the shell hook is on every call's latency path: it never reads the records back
-    assertEquals(studio.subagents!.ofChat(c.id).length, 0);
+    assertEquals(aib.subagents!.ofChat(c.id).length, 0);
   },
 });
 

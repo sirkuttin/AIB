@@ -1,10 +1,10 @@
 /**
- * The artifact origin (artifact_origin.py): a second, separate HTTP listener (Studio port + 1) that serves artifact snapshots, GET
+ * The artifact origin (artifact_origin.py): a second, separate HTTP listener (AIB port + 1) that serves artifact snapshots, GET
  * only.
  *
- * It is a different origin from Studio on purpose: artifact pages are untrusted, so nothing here knows the Studio token, sends CORS
- * headers or shares code paths with the Studio server. Pages are meant to be shown in a sandboxed iframe without allow-same-origin.
- * Answers (status, body, the headers below) are those of the Python listener for the same store; work/deno/artifact_origin_test.ts
+ * It is a different origin from AIB on purpose: artifact pages are untrusted, so nothing here knows AIB token, sends CORS
+ * headers or shares code paths with AIB server. Pages are meant to be shown in a sandboxed iframe without allow-same-origin.
+ * Answers (status, body, the headers below) are fixed for the same store; work/deno/artifact_origin_test.ts
  * runs both on the same folder and compares them.
  *
  *   const origin = OriginServer.start(store.root, studioPort);   // origin.url -> store.origin
@@ -25,14 +25,14 @@ export const CSP_TEMPLATE =
   "style-src 'unsafe-inline' https://fonts.googleapis.com; font-src data: https://fonts.gstatic.com; img-src data: blob: 'self'; " +
   "media-src data: blob: 'self'; connect-src 'none'; form-action 'none'; base-uri 'none'; " +
   'frame-ancestors http://127.0.0.1:{port} http://localhost:{port}; ' +
-  'sandbox allow-scripts allow-forms allow-popups allow-downloads'; // same flags as the Studio viewer frame; never allow-same-origin
+  'sandbox allow-scripts allow-forms allow-popups allow-downloads'; // same flags as AIB viewer frame; never allow-same-origin
 
 /**
  * The page CSP. With `ownPort` (Deno only) script-src also allows this origin's /_lib/ folder, the vendored libraries (libs.ts), and
- * nothing else of it; the rest is Python's policy unchanged.
+ * nothing else of it; the rest is unchanged.
  */
-export function csp(studioPort: number, ownPort = 0): string {
-  const policy = CSP_TEMPLATE.replaceAll('{port}', String(studioPort));
+export function csp(aibPort: number, ownPort = 0): string {
+  const policy = CSP_TEMPLATE.replaceAll('{port}', String(aibPort));
   if (!ownPort) return policy;
   const libs = `http://127.0.0.1:${ownPort}${LIB_PREFIX} http://localhost:${ownPort}${LIB_PREFIX}`;
   return policy.replace('https://unpkg.com;', `https://unpkg.com ${libs};`);
@@ -59,7 +59,7 @@ export const MIME: Readonly<Record<string, string>> = {
   '.js': 'text/javascript; charset=utf-8',
 };
 /**
- * Python falls back to mimetypes.guess_type() for other extensions: on Windows the registry's "Content Type" of HKCR\<ext>
+ * Other extensions fall back to mimetypes.guess_type(): on Windows the registry's "Content Type" of HKCR\<ext>
  * wins (read here with reg.exe, once per extension), else its built-in table, of which this is the part a snapshot can hold.
  * A snapshot holds only its entry file, whose extension is always in MIME, so this matters only for files put there by hand.
  */
@@ -106,22 +106,22 @@ export function guessType(name: string): string | null {
   return registryType(ext) ?? (Object.hasOwn(BUILTIN_TYPES, ext) ? BUILTIN_TYPES[ext] : null);
 }
 
-/** Python's PATH_RE (`.` matches anything but a newline; `$` also matches before one trailing newline). */
+/** The path pattern (`.` matches anything but a newline; `$` also matches before one trailing newline). */
 export const PATH_RE = /^\/a\/([0-9a-f]{16})\/v([0-9]{1,6})\/([^\n]+)\n?$/;
 
 // Injected into every artifact page: it reports the scroll position and Ctrl+wheel zoom to the viewer, and turns a click on a link to
 // another artifact (studio-artifact://<id>), which the sandboxed page cannot open, into an ask to the viewer (artifacts-ui.js takes it
-// only from the frame that shows the artifact). The retired Python reference (artifact_origin.py) had the same text.
+// only from the frame that shows the artifact).
 export const SCROLL_SCRIPT = `<script>(function(){try{var m=/studio-scroll=(-?[0-9.]+),(-?[0-9.]+)/.exec(location.hash);
 function go(){if(m)window.scrollTo(+m[1],+m[2]);}
 if(m){go();window.addEventListener('load',function(){go();setTimeout(go,60);});}
 var t=0;window.addEventListener('scroll',function(){if(t)return;t=requestAnimationFrame(function(){t=0;
 try{parent.postMessage({type:'studio-artifact-scroll',x:window.scrollX,y:window.scrollY,f:Math.max(0,document.documentElement.scrollHeight-innerHeight)?window.scrollY/Math.max(1,document.documentElement.scrollHeight-innerHeight):0},'*');}catch(e){}});},{passive:true});var z=0;window.addEventListener('wheel',function(e){if(!e.ctrlKey)return;e.preventDefault();var n=Date.now();if(n-z<80)return;z=n;try{parent.postMessage({type:'studio-artifact-zoom',d:e.deltaY<0?1:-1},'*');}catch(_){}},{passive:false});document.addEventListener('click',function(e){var a=e.target&&e.target.closest?e.target.closest('a'):null;if(!a)return;var k=/^studio-artifact:[/][/]([0-9a-f]{8,64})[/]?$/i.exec(String(a.getAttribute('href')||a.getAttribute('xlink:href')||'').trim());if(!k)return;e.preventDefault();try{parent.postMessage({type:'studio-artifact-open',id:k[1].toLowerCase()},'*');}catch(_){}},true);}catch(e){}})();</script>`;
 
-const S = `[${PY_SPACE}]`; // Python's \s
-const NS = `[^${PY_SPACE}]`; // Python's \S
-const W = '[\\p{L}\\p{N}_]'; // Python's \w (str.isalnum() or '_')
-const D = '\\p{Nd}'; // Python's \d
+const S = `[${PY_SPACE}]`; // \s
+const NS = `[^${PY_SPACE}]`; // \S
+const W = '[\\p{L}\\p{N}_]'; // \w (str.isalnum() or '_')
+const D = '\\p{Nd}'; // \d
 
 const BODY_CLOSE = new RegExp(`</body${S}*>`, 'gi');
 
@@ -134,7 +134,7 @@ export function injectScroll(data: Uint8Array): Uint8Array {
   return new TextEncoder().encode(text);
 }
 
-// ---- small Python stand-ins ---------------------------------------------------------------------
+// ---- small stand-ins for string helpers ---------------------------------------------------------------------
 
 /** html.escape(text, quote) */
 export function htmlEscape(text: string, quote = true): string {
@@ -145,7 +145,7 @@ export function htmlEscape(text: string, quote = true): string {
 
 /**
  * html.unescape for the text it sees here: every '&' of the source was escaped first, so only the references html.escape writes
- * (and numeric ones) can occur. Single pass, left to right, as Python's.
+ * (and numeric ones) can occur. Single pass, left to right.
  */
 export function htmlUnescape(text: string): string {
   if (!text.includes('&')) return text;
@@ -161,7 +161,7 @@ export function htmlUnescape(text: string): string {
 /** urllib.parse.unquote(text) (UTF-8, errors='replace'; text outside ASCII runs is kept as it is). */
 export function pyUnquote(text: string): string {
   if (!text.includes('%')) return text;
-  // deno-lint-ignore no-control-regex -- Python matches these exact characters
+  // deno-lint-ignore no-control-regex -- these exact characters are matched
   return text.replace(/[\x00-\x7f]+/g, (run) => {
     if (!run.includes('%')) return run;
     const bytes: number[] = [];
@@ -250,10 +250,10 @@ function inline(source: string): string {
   text = text.replace(EM_STAR, (_m, a: string) => `<em>${a}</em>`);
   text = text.replace(EM_UNDER, (_m, a: string) => `<em>${a}</em>`);
   text = text.replace(STRIKE, (_m, a: string) => `<del>${a}</del>`);
-  // deno-lint-ignore no-control-regex -- Python matches these exact characters
+  // deno-lint-ignore no-control-regex -- these exact characters are matched
   return text.replace(/\x00([0-9]+)\x00/g, (_m, index: string) => {
     const code = codes[Number(index)];
-    if (code === undefined) throw new RangeError('list index out of range'); // Python raises IndexError here too
+    if (code === undefined) throw new RangeError('list index out of range');
     return code;
   });
 }
@@ -439,7 +439,7 @@ function respond(
   status: number,
   body: Uint8Array | string,
   mime: string,
-  studioPort: number,
+  aibPort: number,
   extra: Record<string, string> = {},
   withCsp = false,
   ownPort = 0,
@@ -449,7 +449,7 @@ function respond(
   headers.set('X-Content-Type-Options', 'nosniff');
   headers.set('Referrer-Policy', 'no-referrer');
   headers.set('Cache-Control', 'no-store');
-  if (withCsp) headers.set('Content-Security-Policy', csp(studioPort, ownPort));
+  if (withCsp) headers.set('Content-Security-Policy', csp(aibPort, ownPort));
   for (const [name, value] of Object.entries(extra)) headers.set(name, value);
   const bytes = typeof body === 'string' ? new TextEncoder().encode(body) : body;
   return new Response(bytes as Uint8Array<ArrayBuffer>, { status, headers });
@@ -464,12 +464,12 @@ export type Send = (
   withCsp?: boolean,
 ) => Response;
 
-/** The request handler for an origin serving `root` (the artifact store folder), framed by Studio on `studioPort`. */
-export function makeHandler(root: string, studioPort: number, ownPort: () => number): (request: Request) => Response {
+/** The request handler for an origin serving `root` (the artifact store folder), framed by AIB on `studioPort`. */
+export function makeHandler(root: string, aibPort: number, ownPort: () => number): (request: Request) => Response {
   const base = pathOf(String(root));
   const text = 'text/plain; charset=utf-8';
   const send: Send = (status, body, mime = text, extra = {}, withCsp = false) =>
-    respond(status, body, mime, studioPort, extra, withCsp, ownPort());
+    respond(status, body, mime, aibPort, extra, withCsp, ownPort());
   return (request: Request): Response => {
     if (request.method !== 'GET') {
       if (REFUSED.has(request.method)) return send(405, 'Method not allowed', text, { Allow: 'GET' });
@@ -502,7 +502,7 @@ export function artifactAnswer(base: string, target: string, send: Send, tickets
     if (!asset) return send(404, 'Not found');
     return send(200, asset, 'text/javascript; charset=utf-8', { 'Access-Control-Allow-Origin': '*' });
   }
-  // Deno only: a project file the Files view shows (Page view, images), by a ticket the Studio route issued (web/file_tickets.ts).
+  // Deno only: a project file the Files view shows (Page view, images), by a ticket AIB route issued (web/file_tickets.ts).
   const ticket = tickets && !rawPath.includes('%00') && !unquoted.includes('\\') ? TICKET_PATH.exec(unquoted) : null;
   if (ticket) return serveTicket(ticket[1], query, send);
   const match = !rawPath.includes('%00') && !unquoted.includes('\\') ? PATH_RE.exec(unquoted) : null;
@@ -571,7 +571,7 @@ function serveTicket(id: string, query: Record<string, string[]>, send: Send): R
   return send(200, data, mime, {}, true);
 }
 
-/** The listener: tries Studio port + 1, then any free port. GET only, 127.0.0.1 only. */
+/** The listener: tries AIB port + 1, then any free port. GET only, 127.0.0.1 only. */
 export class OriginServer {
   private constructor(readonly server: HttpServer, readonly port: number) {}
 
@@ -579,10 +579,10 @@ export class OriginServer {
     return `http://127.0.0.1:${this.port}`;
   }
 
-  static start(root: string, studioPort: number): OriginServer {
-    const ports = studioPort && studioPort < 65535 ? [studioPort + 1, 0] : [0];
+  static start(root: string, aibPort: number): OriginServer {
+    const ports = aibPort && aibPort < 65535 ? [aibPort + 1, 0] : [0];
     let bound = 0;
-    const handler = makeHandler(root, studioPort, () => bound);
+    const handler = makeHandler(root, aibPort, () => bound);
     for (const port of ports) {
       let server: HttpServer;
       try {

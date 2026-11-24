@@ -210,7 +210,7 @@ Deno.test('conversations: revision changes only on change, other writers are see
   assert(changed !== rev);
   await a.apply('pin', 'claude', 's1');
   assertEquals(a.revision(), changed, 'a no-op does not bump the revision');
-  assert('claude:s1' in b.public().entries, 'a second Studio on the same state dir sees the change');
+  assert('claude:s1' in b.public().entries, 'a second AIB on the same state dir sees the change');
   await b.apply('archive', 'omp', 's2');
   assert('omp:s2' in a.public().entries);
   assert('claude:s1' in a.public().entries, "a stale writer does not lose the other writer's marks");

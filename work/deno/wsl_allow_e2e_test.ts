@@ -14,15 +14,15 @@ import { refOf } from '../../app/server/platform/location.ts';
 
 type Json = Record<string, unknown>;
 
-function studioIn(state: string): Aib {
-  const studio = new Aib({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
-  studio.ownerProbe = () => null;
-  studio.connectionFactory = (_command, cwd, provider, options) =>
+function aibIn(state: string): Aib {
+  const aib = new Aib({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
+  aib.ownerProbe = () => null;
+  aib.connectionFactory = (_command, cwd, provider, options) =>
     new Connection(['python3', `${ROOT}/fake_acp.py`, '--cancel-aware'], cwd, provider, {
       ...options,
       wsl: options?.wsl ? { ...options.wsl, program: '/usr/bin/python3' } : options?.wsl,
     });
-  return studio;
+  return aib;
 }
 
 const said = (c: Connection) =>
@@ -39,7 +39,7 @@ Deno.test({
   async fn() {
     const state = Deno.makeTempDirSync({ prefix: 'aib-wsl-allow-e2e-' });
     await prepareRoot();
-    const studios: Aib[] = [];
+    const aibs: Aib[] = [];
     try {
       // a plain (not git) project folder, so the chat works in it; `link` inside it points to a folder outside the project
       const made = await inDistro(
@@ -51,8 +51,8 @@ Deno.test({
       assert(host.helperVersion !== null, 'the helper is ready');
       const proj = `${ROOT}/proj`;
       const ref = refOf({ kind: 'wsl', distro: KEY, linuxPath: proj });
-      const a = studioIn(state);
-      studios.push(a);
+      const a = aibIn(state);
+      aibs.push(a);
       a.allow!.store.setEnabled(true);
       const c = await a.connect('claude', ref);
       assertEquals([c.cwd, c.agentCwd], [ref, proj]);
@@ -92,7 +92,7 @@ Deno.test({
       assertEquals(autos(c).length, 2, 'the link out was never auto-allowed');
       assert(said(c).includes('allow outcome=no;'), said(c));
     } finally {
-      for (const s of studios) await s.close().catch(() => {});
+      for (const s of aibs) await s.close().catch(() => {});
       await cleanRoot();
       Deno.removeSync(state, { recursive: true });
     }

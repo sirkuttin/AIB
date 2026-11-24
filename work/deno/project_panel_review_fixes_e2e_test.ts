@@ -1,6 +1,6 @@
 /**
  * The fixes of the project right panel code review (aib-shared/reviews/project-right-panel-code-review.md), in the real page. A real
- * Studio (the scroll lab: temp state folder, free port; never the live ports), the scripted agent, headless Chrome or Edge.
+ * AIB (the scroll lab: temp state folder, free port; never the live ports), the scripted agent, headless Chrome or Edge.
  *
  *   S1  An expanded idle chat is read once, not at the poll pace; every idle chat is listed and read a few at a time.
  *   S4  Every idle chat has the same neutral dot, never the sidebar's amber needs-you dot.

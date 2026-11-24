@@ -3,15 +3,15 @@
  * ACP agent (work/fake_acp.py) and temp state folders:
  *
  *   1. The start decision (always on; no setting; AIB_KEEPER=0 an internal off switch; a keeper that cannot run falls back with
- *      the reason for Settings > About): a Studio with it on starts chats in the keeper; without it but with a keeper holding
+ *      the reason for Settings > About): an AIB with it on starts chats in the keeper; without it but with a keeper holding
  *      chats, those are taken over and stay in the keeper until they end (then the keeper is let go), while new chats run as
  *      children.
  *   3. The MCP forwarder (`AIB-keeper mcp-forward`): an agent in the keeper gets the keeper's program as its artifact tool, never
- *      AIB's own, and the tool answers from whichever AIB runs now (it survives a switch to another Studio on another port).
+ *      AIB's own, and the tool answers from whichever AIB runs now (it survives a switch to another AIB on another port).
  *   4. A split agent host left by an older version: stopped at once when nothing works there (one process now), drained otherwise,
  *      with the reason in the page's banner.
  *   5. Snapshots and truncation: a turn end writes a snapshot and lets the keeper drop older segments; a rebuild starts at the
- *      snapshot, numbers every event as before (Studio's own events included), keeps the page's cursor, and goes on without
+ *      snapshot, numbers every event as before (AIB's own events included), keeps the page's cursor, and goes on without
  *      sending anything twice. The page's state call waits while chats are being taken over.
  *
  * Item 2 (the tray-only start) is in desktop_window_test.ts.
@@ -46,33 +46,33 @@ class Lab {
   readonly state = this.dir + SEP + 'state';
   readonly work = this.dir + SEP + 'work';
   readonly agentLog = this.dir + SEP + 'agent-received.log';
-  readonly studios: Aib[] = [];
+  readonly aibs: Aib[] = [];
   readonly children: Deno.ChildProcess[] = [];
 
   constructor(readonly keeperArgs: string[] = []) {
     Deno.mkdirSync(this.work, { recursive: true });
   }
 
-  /** A Studio with its own keeper link (no orphan command: a test never starts AIB again). */
-  studio(keeperForNew = true): Aib {
+  /** An AIB with its own keeper link (no orphan command: a test never starts AIB again). */
+  aib(keeperForNew = true): Aib {
     const keeper = new KeeperLink({
       dataDir: this.state,
       orphan: null,
       extraArgs: ['--exit-after', '2s', '--orphan-after', '30s', ...this.keeperArgs],
     });
-    const studio = new Aib({ claudeLauncher: import.meta.filename!, codexLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper, keeperForNew });
-    studio.ownerProbe = () => null;
-    studio.connectionFactory = (_command, cwd, provider, options) =>
+    const aib = new Aib({ claudeLauncher: import.meta.filename!, codexLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper, keeperForNew });
+    aib.ownerProbe = () => null;
+    aib.connectionFactory = (_command, cwd, provider, options) =>
       new Connection(fake('--cancel-aware'), cwd, provider, { ...options, env: { FAKE_ACP_LOG: this.agentLog } });
-    this.studios.push(studio);
-    return studio;
+    this.aibs.push(aib);
+    return aib;
   }
 
-  crash(studio: Aib): void {
-    studio.keeper!.disconnect();
-    for (const c of studio.connections.values()) c.sessionLease?.release();
-    studio.reconnectStop.set();
-    this.studios.splice(this.studios.indexOf(studio), 1);
+  crash(aib: Aib): void {
+    aib.keeper!.disconnect();
+    for (const c of aib.connections.values()) c.sessionLease?.release();
+    aib.reconnectStop.set();
+    this.aibs.splice(this.aibs.indexOf(aib), 1);
   }
 
   received(): Json[] {
@@ -89,7 +89,7 @@ class Lab {
         child.kill();
       } catch { /* gone */ }
     }
-    for (const s of this.studios.reverse()) await s.close().catch(() => {});
+    for (const s of this.aibs.reverse()) await s.close().catch(() => {});
     const info = readKeeperInfo(this.state);
     if (info && pidAlive(info.pid)) {
       try {
@@ -121,10 +121,10 @@ const answers = (lines: Json[], id: string) => lines.filter((m) => m.id === id &
 const shape = (events: Json[]) => events.map((e) => JSON.stringify([e.seq, e.kind, e.data]));
 
 /** One whole turn: `stream:<n>:10`, the question halfway answered yes, until the turn ends. */
-async function turn(studio: Aib, c: Connection, n: number, messageId: string): Promise<void> {
-  assertEquals((await studio.liveCall('prompt', { id: c.id, text: `stream:${n}:10`, clientMessageId: messageId }))[0], 200);
+async function turn(aib: Aib, c: Connection, n: number, messageId: string): Promise<void> {
+  assertEquals((await aib.liveCall('prompt', { id: c.id, text: `stream:${n}:10`, clientMessageId: messageId }))[0], 200);
   await until(() => c.permissions.size === 1, `the question of ${messageId}`, 10);
-  assertEquals((await studio.liveCall('permission', { id: c.id, key: [...c.permissions.keys()][0], option: 'yes' }))[0], 200);
+  assertEquals((await aib.liveCall('permission', { id: c.id, key: [...c.permissions.keys()][0], option: 'yes' }))[0], 200);
   await until(() => !c.busy, `the end of ${messageId}`, 10);
 }
 
@@ -167,10 +167,10 @@ Deno.test('keeper decision: a keeper that cannot run falls back (off) and says w
     // The program is there but does not run (spawn fails).
     assertEquals(await decideKeeper(dir, { env, binary: () => Promise.resolve(`${dir}${SEP}no-such-keeper.exe`) }), false);
     assert(keeperProblem().includes('could not be run'), keeperProblem());
-    // A Studio built after the fallback: no keeper link, agents are its children.
-    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: dir, port: 0, ownersDir: null });
-    assertEquals([studio.keeper, studio.keeperForNew, studio.hostMode], [null, false, 'in-process']);
-    await studio.close();
+    // an AIB built after the fallback: no keeper link, agents are its children.
+    const aib = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: dir, port: 0, ownersDir: null });
+    assertEquals([aib.keeper, aib.keeperForNew, aib.hostMode], [null, false, 'in-process']);
+    await aib.close();
   } finally {
     setKeeperDecision(null);
     Deno.removeSync(dir, { recursive: true });
@@ -183,11 +183,11 @@ Deno.test({
   async fn() {
     await using lab = new Lab();
     const keeper = new KeeperLink({ dataDir: lab.state, orphan: null, binary: `${lab.dir}${SEP}no-such-keeper.exe`, waitSeconds: 2 });
-    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: lab.state, port: 0, ownersDir: null }, { keeper });
-    studio.ownerProbe = () => null;
-    studio.connectionFactory = (_command, cwd, provider, options) => new Connection(fake(), cwd, provider, options);
-    lab.studios.push(studio);
-    const c = await studio.connect('claude', lab.work);
+    const aib = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: lab.state, port: 0, ownersDir: null }, { keeper });
+    aib.ownerProbe = () => null;
+    aib.connectionFactory = (_command, cwd, provider, options) => new Connection(fake(), cwd, provider, options);
+    lab.aibs.push(aib);
+    const c = await aib.connect('claude', lab.work);
     assertEquals([c.channel, c.ready], [null, true], 'the chat works, outside the keeper');
     assert(keeperProblem() !== '', 'the reason is kept for Settings > About');
     setKeeperDecision(null);
@@ -195,12 +195,12 @@ Deno.test({
 });
 
 Deno.test({
-  name: 'keeper fallback: a Studio started without the keeper takes over the chats a keeper holds; they stay there until they end; new chats run as children',
+  name: 'keeper fallback: an AIB started without the keeper takes over the chats a keeper holds; they stay there until they end; new chats run as children',
   ...T,
   async fn() {
     await keeperBinary();
     await using lab = new Lab();
-    const a = lab.studio(); // the keeper on (a test link)
+    const a = lab.aib(); // the keeper on (a test link)
     const c = await a.connect('codex', lab.work);
     assert(c.channel, 'started in the keeper');
     await turn(a, c, 2, 'm1');
@@ -208,7 +208,7 @@ Deno.test({
     const agentPid = c.process!.pid;
     lab.crash(a);
 
-    // What a fallback start (the keeper not decided on) builds while a keeper still runs (no link passed: the Studio decides).
+    // What a fallback start (the keeper not decided on) builds while a keeper still runs (no link passed: AIB decides).
     const plain = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: lab.state, port: 0, ownersDir: null });
     assert(plain.keeper !== null, 'a keeper runs: a link to take its chats over');
     assertEquals([plain.keeperForNew, plain.hostMode], [false, 'in-process']);
@@ -219,7 +219,7 @@ Deno.test({
     assertEquals([on.keeper !== null, on.keeperForNew, on.hostMode], [true, true, 'keeper']);
     await on.close();
 
-    const b = lab.studio(false);
+    const b = lab.aib(false);
     assertEquals(await b.adoptKeeper(), 1, 'taken over although new chats run without the keeper');
     const r = b.connections.get(c.id)!;
     assertEquals([r.ready, r.process!.pid, r.channel !== null], [true, agentPid, true]);
@@ -272,14 +272,14 @@ Deno.test({
   async fn() {
     const keeperProgram = await keeperBinary();
     await using lab = new Lab();
-    const a = lab.studio();
+    const a = lab.aib();
     const c = await a.connect('claude', lab.work);
     const entry = c.mcpServers.find((m) => (m as unknown as Json).name === 'studio_artifact') as unknown as Json;
     assert(entry, 'the artifact tool is offered');
     assertEquals(entry.command, keeperProgram, 'the keeper program, never AIB\'s own (its files may be replaced by an update)');
     assertEquals(entry.args, ['mcp-forward', `${lab.state}${SEP}${FORWARD_FILE}`]);
     assert(!JSON.stringify(c.mcpServers).includes('mcp-artifact'), 'no AIB mcp-artifact child for an agent in the keeper');
-    assert(c.ownArtifactTool({ toolCall: { title: 'mcp__studio_artifact__publish' } }), 'still recognised as Studio\'s own tool');
+    assert(c.ownArtifactTool({ toolCall: { title: 'mcp__studio_artifact__publish' } }), 'still recognised as AIB\'s own tool');
     const note = JSON.parse(Deno.readTextFileSync(`${lab.state}${SEP}${FORWARD_FILE}`));
     assertEquals(note.pid, Deno.pid);
 
@@ -300,7 +300,7 @@ Deno.test({
 
     // AIB exits for an update (release: the chat stays in the keeper); the tool waits for the next AIB, then answers from it.
     assertEquals(await a.release(), 1);
-    lab.studios.splice(lab.studios.indexOf(a), 1);
+    lab.aibs.splice(lab.aibs.indexOf(a), 1);
     let gone = false;
     try {
       Deno.statSync(`${lab.state}${SEP}${FORWARD_FILE}`);
@@ -310,7 +310,7 @@ Deno.test({
     assert(gone, 'the old address is withdrawn');
     const pending = ask(writer, lines, { jsonrpc: '2.0', id: 2, method: 'tools/list' });
     await pause(500);
-    const b = lab.studio();
+    const b = lab.aib();
     assertEquals(await b.adoptKeeper(), 1);
     const second = await pending;
     assertEquals(second.id, 2);
@@ -361,24 +361,24 @@ Deno.test({
 // ---- 5. snapshots, truncation and stable event ids --------------------------------------------------------------------------
 
 Deno.test({
-  name: 'snapshots: a turn end writes one; a rebuild starts there, numbers every event as before (Studio events too) and sends nothing twice',
+  name: 'snapshots: a turn end writes one; a rebuild starts there, numbers every event as before (AIB events too) and sends nothing twice',
   ...T,
   async fn() {
     await keeperBinary();
     await using lab = new Lab();
-    const a = lab.studio();
+    const a = lab.aib();
     const c = await a.connect('claude', lab.work);
     await turn(a, c, 4, 'm1');
     await turn(a, c, 4, 'm2');
     await until(() => c.snapshots >= 2, 'a snapshot at each turn end', 10);
-    assert(await a.emitArtifact(c.id, { type: 'artifact', name: 'page.html', version: 1 }), 'Studio\'s own event');
+    assert(await a.emitArtifact(c.id, { type: 'artifact', name: 'page.html', version: 1 }), 'AIB\'s own event');
     await pause(300); // its note reaches the record
     const before = shape(c.events);
     const cursor = c.sequence;
     const eventsId = c.eventsId;
     lab.crash(a);
 
-    const b = lab.studio();
+    const b = lab.aib();
     const adopting = b.adoptKeeper();
     // An open page polls meanwhile: its state call waits for the take-over instead of "connection not found".
     const state = await b.liveState(c.id, cursor) as Json;
@@ -412,7 +412,7 @@ Deno.test({
     using _v1 = historyV1();
     await keeperBinary();
     await using lab = new Lab(['--segment-bytes', '2048']);
-    const a = lab.studio();
+    const a = lab.aib();
     const c = await a.connect('claude', lab.work);
     for (let i = 1; i <= 4; i++) await turn(a, c, 6, `m${i}`);
     await until(() => c.snapshots >= 4, 'snapshots', 10);
@@ -420,7 +420,7 @@ Deno.test({
     await until(async () => ((await client.list()).find((ch) => ch.channel === `chat-${c.id}`)?.first ?? 1) > 1, 'old segments gone', 10);
     const before = shape(c.events);
     lab.crash(a);
-    const b = lab.studio();
+    const b = lab.aib();
     assertEquals(await b.adoptKeeper(), 1, 'found by the snapshot\'s copy of the chat note');
     const r = b.connections.get(c.id)!;
     assertEquals(r.rebuildError, '');
@@ -436,13 +436,13 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new Lab();
-    const a = lab.studio();
+    const a = lab.aib();
     const c = await a.connect('claude', lab.work);
     await a.liveCall('prompt', { id: c.id, text: 'stream:6:80', clientMessageId: 'm1' });
     await until(() => c.permissions.size === 1, 'the question', 10);
     assertEquals(c.snapshots, 0, 'mid-turn: nothing quiet to snapshot yet');
     lab.crash(a);
-    const b = lab.studio();
+    const b = lab.aib();
     assertEquals(await b.adoptKeeper(), 1);
     const r = b.connections.get(c.id)!;
     assertEquals([r.replayedFrom, r.rebuildError], [0, '']);
@@ -483,7 +483,7 @@ Deno.test({
     using _v1 = historyV1();
     await keeperBinary();
     await using lab = new Lab();
-    const a = lab.studio();
+    const a = lab.aib();
     const c = await a.connect('claude', lab.work);
     // 1000 tool outputs of 50 KiB: far beyond the 12 MiB a snapshot note may hold (beta.8 then stopped writing snapshots).
     assertEquals((await a.liveCall('prompt', { id: c.id, text: 'bulk:1000:50', clientMessageId: 'm0' }))[0], 200);
@@ -509,7 +509,7 @@ Deno.test({
     const cursor = c.sequence;
     lab.crash(a);
 
-    const b = lab.studio();
+    const b = lab.aib();
     const started = performance.now();
     assertEquals(await b.adoptKeeper(), 1);
     const took = performance.now() - started;
@@ -538,7 +538,7 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new Lab(['--segment-bytes', String(1 << 20)]);
-    const a = lab.studio();
+    const a = lab.aib();
     const c = await a.connect('claude', lab.work);
     // 3 x 4000 events of 2 KiB: twice what the history keeps (MAX_EVENTS), ~25 MB through the record.
     let peak = 0;
@@ -560,7 +560,7 @@ Deno.test({
 
     const before = shape(c.events);
     lab.crash(a);
-    const b = lab.studio();
+    const b = lab.aib();
     assertEquals(await b.adoptKeeper(), 1, 'found by the snapshot\'s copy of the chat note');
     const r = b.connections.get(c.id)!;
     assertEquals(r.rebuildError, '');
@@ -576,7 +576,7 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new Lab();
-    const a = lab.studio();
+    const a = lab.aib();
     const c = await a.connect('claude', lab.work);
     await turn(a, c, 4, 'm1');
     await until(() => c.snapshots >= 1, 'a snapshot', 10);
@@ -590,7 +590,7 @@ Deno.test({
     const before = shape(c.events);
     lab.crash(a);
 
-    const b = lab.studio();
+    const b = lab.aib();
     assertEquals(await b.adoptKeeper(), 1);
     const r = b.connections.get(c.id)!;
     assertEquals(r.rebuildError, '');
@@ -601,7 +601,7 @@ Deno.test({
     const after = shape(r.events);
     lab.crash(b);
 
-    const d = lab.studio();
+    const d = lab.aib();
     assertEquals(await d.adoptKeeper(), 1);
     const s = d.connections.get(c.id)!;
     assertEquals(s.rebuildError, '');

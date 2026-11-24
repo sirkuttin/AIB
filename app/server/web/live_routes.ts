@@ -10,13 +10,13 @@ import { assertWindowsLocal, locOf } from '../platform/location.ts';
 import type { WebContext } from './server.ts';
 import { answeredElsewhere, answerOf, answersOf } from '../attention/answers.ts';
 
-/** True while the take-over from the keeper at start runs (an in-process Studio; a split agent host never says so). */
+/** True while the take-over from the keeper at start runs (an in-process AIB; a split agent host never says so). */
 function takingOver(ctx: WebContext): boolean {
   return !!(ctx.host as { takingOver?: () => boolean }).takingOver?.();
 }
 import { afterConnect, discoverAdded } from './project_routes.ts';
 
-/** Studio.LIVE_POST_OPS: the generic POST /api/live/<name> calls. A test keeps this equal to Python's set. */
+/** Aib.LIVE_POST_OPS: the generic POST /api/live/<name> calls. A test keeps this equal to the frozen set. */
 export const LIVE_POST_OPS = [
   'connect', 'discover', 'forget', 'prompt', 'cancel', 'permission', 'authenticate', 'elicitation', 'config', 'mode', 'cancel-pending',
   'session-op', 'disconnect', 'queue', 'queue-edit', 'queue-remove', 'queue-move', 'queue-resume', 'queue-send-now', 'steer', 'tool-stop',
@@ -116,7 +116,7 @@ export function liveRoutes(): Map<string, LiveHandler> {
     let cwd: string;
     try {
       cwd = refuseNetworkPath(arg(url, 'cwd'));
-      // a WSL project's folder is checked in its distro (Studio.ownershipQuery); anything else foreign is refused
+      // a WSL project's folder is checked in its distro (Aib.ownershipQuery); anything else foreign is refused
       if (locOf(cwd)?.kind !== 'wsl') assertWindowsLocal(cwd, 'folder');
     } catch (error) {
       throw new ValueError((error as Error).message);
@@ -126,7 +126,7 @@ export function liveRoutes(): Map<string, LiveHandler> {
   routes.set('GET /api/live/agents/install', (ctx, url) => ctx.host.installCall('status', arg(url, 'agent')));
   routes.set('POST /api/live/agents/install', (ctx, _url, body) => ctx.host.installCall('start', installAgent(body)));
   routes.set('POST /api/live/agents/install/cancel', (ctx, _url, body) => ctx.host.installCall('cancel', installAgent(body)));
-  // Deno only (routes.ts DENO_ONLY): a Python agent host answers the unknown action with 404, so nothing is removed there.
+  // Deno only (routes.ts DENO_ONLY): an older agent host answers the unknown action with 404, so nothing is removed there.
   // {check: true}: every refusal, nothing removed (the page asks this before its confirm question).
   routes.set(
     'POST /api/live/agents/install/uninstall',
@@ -163,7 +163,7 @@ export function liveRoutes(): Map<string, LiveHandler> {
         const deleted = p._deleted;
         delete p._deleted;
         if (Array.isArray(deleted) && deleted.length >= 2) {
-          // The agent really deleted its copy: leave a Studio tombstone so the row cannot linger.
+          // The agent really deleted its copy: leave an AIB tombstone so the row cannot linger.
           const title = typeof body?.title === 'string' ? body.title : '';
           try {
             await ctx.conversations.apply('delete', deleted[0], deleted[1], title, '', true);

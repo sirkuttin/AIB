@@ -1,5 +1,5 @@
 /**
- * Paths outside the project in a reply, end to end: a real Studio (Deno web server + in-process agent host, temp state folder, free
+ * Paths outside the project in a reply, end to end: a real AIB (Deno web server + in-process agent host, temp state folder, free
  * port; never the live ports), the scripted agent, and a headless Chrome/Edge on chat.html (no window).
  *
  * The agent's reply names a screenshot, a text file and a binary file in a temp folder that is not the chat's folder, and a file

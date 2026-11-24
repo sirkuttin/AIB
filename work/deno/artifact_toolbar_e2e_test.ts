@@ -4,7 +4,7 @@
  * "Request a change" is the first item of ⋯. A wider panel shows "Request a change" as a button again, still on one row.
  * Switching artifacts never changes the row's height or the panel's width.
  *
- * A real Studio (Deno web server + in-process agent host, temp state folder and workspace, free port; never the live ports), the
+ * A real AIB (Deno web server + in-process agent host, temp state folder and workspace, free port; never the live ports), the
  * scripted agent work/scroll-fixture/agent.py, and a headless Chrome/Edge on chat.html (no window).
  * AIB_TOOLBAR_LOG=1 prints every measurement.
  *

@@ -1,5 +1,5 @@
 /**
- * WSL projects on the page (docs/wsl/design.md sections 4 and 8; Deno only: routes.ts DENO_ONLY). Every route needs the Studio token, like
+ * WSL projects on the page (docs/wsl/design.md sections 4 and 8; Deno only: routes.ts DENO_ONLY). Every route needs AIB token, like
  * the Files routes, and reaches a distro only through wsl/access.ts.
  *   GET  /api/live/wsl/status                      {available, distros: [{name, key, state, line, home, helper, problem, alwaysAllow,
  *                                                   isDefault, removed}], openRequests: [{id, distro, name, url, at}], wsl: {exe, problem},
@@ -9,7 +9,7 @@
  *                                                   from that distro (state 'off' until the next explicit start: wsl/removed.ts)
  *   GET  /api/live/wsl/aib?distro[&peek=1[&start=1]][&force=1]  "AIB in <distro>" (phase 3, linking-design section 13): not ready
  *                                                   -> {distro, name, state, line, usage: null}; ready -> {distro, name, state: 'ready',
- *                                                   line: '', usage: AibUsage} (helper aib.usage; chatsWorking from Studio's busy chats)
+ *                                                   line: '', usage: AibUsage} (helper aib.usage; chatsWorking from AIB's busy chats)
  *   POST /api/live/wsl/aib/remove {distro, mode: 'check'|'apply', confirm?}  Remove AIB from the distro (wsl/remove.ts): {ok, mode,
  *                                                   blocked, wouldRemove, kept, removed, left, message?}; 'apply' needs confirm: true
  *                                                   (400 confirm_needed). Never starts the distro (409 wsl_unavailable)

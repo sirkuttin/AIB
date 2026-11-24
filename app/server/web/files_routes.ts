@@ -1,7 +1,7 @@
 /**
  * The Files view's routes (Deno only: routes.ts DENO_ONLY). All three take the chat (`id`: a live connection id or a
  * 'provider:sessionId' key) and which of its folders (`root`: 'chat', its own folder or worktree; 'main', the main checkout of a
- * worktree chat). The folder is the one Studio already knows for that chat (chat_folders.changesFolder): nothing from the request is
+ * worktree chat). The folder is the one AIB already knows for that chat (chat_folders.changesFolder): nothing from the request is
  * used as a folder, and the paths it sends are relative to that folder and checked to stay inside it (worktrees/files.ts).
  *   GET /api/live/files/list?id&root&dir      one folder: entries with ignored flag, change letter, changed count
  *   GET /api/live/files/search?id&root&q      the best 200 file names from a cached index (rebuilt when the agent writes files)
@@ -16,7 +16,7 @@
  * a chat's copy (files.listLocal), and every list and search reply carries `localOnly: {main, entries, defaultState, sig}`.
  *   POST /api/live/files/exclude {id|project, root, path, action: 'add'|'undo', undo?}   "Git exclude" on a row, and its Undo
 
- * Needs the Studio token, like the Changes routes.
+ * Needs AIB token, like the Changes routes.
  *
  * A WSL project (its folder is a ref, wsl://<distro>/<path>; docs/wsl/design.md section 4): list, search and read come from the
  * distro's helper (wsl_routes.ts wslFiles); a chat in its own worktree (made in the distro, wsl/worktrees.ts) has the project as its
@@ -39,7 +39,7 @@ import { isNetworkPath, pageAllowed, type Principal, REMOTE_PC } from './securit
 import { BLOCKED_MESSAGE, isBlocked, linuxBlocked } from '../remote/path_guard.ts';
 import { isForeignPath } from '../platform/location.ts';
 import { issue } from './file_tickets.ts';
-import { chatStudioOf, savedFolders } from './aib_routes.ts';
+import { chatAibOf, savedFolders } from './aib_routes.ts';
 import * as outside from '../worktrees/outside_files.ts';
 import { findSessionFile } from '../transcripts/store.ts';
 import type { WebContext } from './server.ts';
@@ -81,8 +81,8 @@ export async function rootFor(ctx: WebContext, args: Record<string, string[]>): 
     // A lasting 'provider:session' id (the doc tools name the chat that way) is looked up by the live connection behind it: only that
     // knows a chat that works in its own worktree (its transcript may not be filed yet).
     const live = ctx.artifacts?.connectionOf?.(id) || id;
-    cwd = await changesFolder(chatStudioOf(ctx, await savedFolders(ctx, id)), live);
-    if (!cwd && live !== id) cwd = await changesFolder(chatStudioOf(ctx, await savedFolders(ctx, id)), id);
+    cwd = await changesFolder(chatAibOf(ctx, await savedFolders(ctx, id)), live);
+    if (!cwd && live !== id) cwd = await changesFolder(chatAibOf(ctx, await savedFolders(ctx, id)), id);
   } catch {
     return [400, { error: 'Choose a chat', code: 'bad_chat' }];
   }

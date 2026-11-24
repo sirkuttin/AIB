@@ -97,7 +97,7 @@ export function startDemo(hub: DrawingHost, port: number, signal?: AbortSignal) 
 if (import.meta.main) {
   const i = Deno.args.indexOf('--port');
   const port = i >= 0 ? Number(Deno.args[i + 1]) : 8791;
-  if ([8767, 8768, 8777, 8778].includes(port)) throw new Error(`Port ${port} belongs to a live Studio.`);
+  if ([8767, 8768, 8777, 8778].includes(port)) throw new Error(`Port ${port} belongs to a live AIB.`);
   startDemo(new LiveDoc(), port);
   console.log(`drawing demo on http://127.0.0.1:${port}/?drawing=d1`);
 }

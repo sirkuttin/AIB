@@ -34,7 +34,7 @@
  * -linux-x64.AppImage, -linux-arm64.AppImage, -linux-x64.deb, -linux-arm64.deb, and SHA256SUMS. There is no upgrade path from the
  * Tauri beta (its -setup.exe / .dmg names are not offered).
  *
- * The state file (<state dir>/updates/state.json) has the same name and JSON as Python's.
+ * The state file (<state dir>/updates/state.json) has a fixed name and JSON in every version.
  */
 import { createHash } from 'node:crypto';
 import { isDict, pyFloat, pyOr, pyStr, pyStrip, pyTruthy, ValueError } from '../core/py.ts';
@@ -252,7 +252,7 @@ export function mergeNotes(...lists: ReleaseNote[][]): ReleaseNote[] {
 // ---- which installer is ours ----------------------------------------------------------------------------------------
 export type PlatformKey = [string, string];
 
-/** ['windows'|'linux'|'macos', 'x64'|'arm64'] for this machine, or null. Takes Python's names (win32, AMD64) or Deno's (windows, x86_64). */
+/** ['windows'|'linux'|'macos', 'x64'|'arm64'] for this machine, or null. Takes platform.system() names (win32, AMD64) or Deno's (windows, x86_64). */
 export function platformKey(system?: string, machine?: string): PlatformKey | null {
   const s = (system || Deno.build.os).toLowerCase();
   const m = (machine || Deno.build.arch).toLowerCase();
@@ -344,7 +344,7 @@ export interface Found {
   feed?: boolean;
 }
 
-/** int() of a JSON value (Python truncates floats and parses digit strings; anything else raises). */
+/** int() of a JSON value. */
 function pyInt(value: unknown): number {
   if (typeof value === 'boolean') return value ? 1 : 0;
   if (typeof value === 'number' && Number.isFinite(value)) return Math.trunc(value);
@@ -547,7 +547,7 @@ export async function fileSha256(path: string): Promise<string> {
 // ---- network --------------------------------------------------------------------------------------------------------
 export type FetchFn = (input: string, init: RequestInit) => Promise<Response>;
 
-/** [base, overridden]: the AIB_UPDATE_API_BASE override (read on every call, as Python reads os.environ) or GitHub's API. */
+/** [base, overridden]: the AIB_UPDATE_API_BASE override (read on every call) or GitHub's API. */
 export function apiBase(): [string, boolean] {
   const override = (envGet(BASE_ENV) ?? '').trim().replace(/\/+$/, '');
   return [override || API_BASE, !!override];
@@ -699,7 +699,7 @@ export async function downloadTo(url: string, dest: string, limit: number, fetch
   return hash.digest('hex');
 }
 
-// ---- paths (pathlib's spelling, so state.json paths match what Python writes) ---------------------------------------
+// ---- paths (pathlib's spelling, so state.json paths match older files) ---------------------------------------
 const WINDOWS = Deno.build.os === 'windows';
 const SEP = WINDOWS ? '\\' : '/';
 
@@ -755,7 +755,7 @@ function isFile(path: unknown): boolean {
 
 /**
  * AIB_UPDATE_REPO when set; else the real repository for the desktop app and the placeholder (no checks, state 'unconfigured') for
- * `deno run`, so a dev or test server never calls GitHub and stays equal to the Python server in the contract tests.
+ * `deno run`, so a dev or test server never calls GitHub and stays stable in the contract tests.
  */
 export function defaultRepo(desktop: boolean): string {
   const override = (envGet(REPO_ENV) ?? '').trim();
@@ -807,7 +807,7 @@ export interface UpdateServiceOptions {
   busyChats?: () => number | Promise<number>;
   /**
    * Ends this web server so the helper can run the installer. The route answers first; the caller defers the real shutdown. `release`
-   * true: the chats run in the keeper and the new version takes them over, so this app leaves them running (Studio.release) instead
+   * true: the chats run in the keeper and the new version takes them over, so this app leaves them running (Aib.release) instead
    * of stopping them.
    */
   quit?: ((release?: boolean) => void) | null;
@@ -844,7 +844,7 @@ export interface UpdateServiceOptions {
   /** A .deb install: the pkexec arguments for a downloaded file and the home folder, or null (default debInstallArgs). Tests. */
   debArgs?: (path: string, home: string, version: string) => string[] | null;
   current?: string;
-  /** null or undefined: this machine (Python: key if key is not None else platform_key()). */
+  /** null or undefined: this machine. */
   key?: PlatformKey | null;
   env?: Env;
   /** Seconds since the epoch (time.time). */
@@ -1040,7 +1040,7 @@ function emptyState(): UpdateState {
   return { lastCheck: 0, found: null, downloaded: null, error: '', code: '', installWhenIdle: false, notified: '' };
 }
 
-/** Owns the update state for one Studio web server (updater.UpdateService). */
+/** Owns the update state for one AIB web server (updater.UpdateService). */
 export class UpdateService {
   readonly root: string;
   autoCheck: () => boolean;
@@ -1138,14 +1138,14 @@ export class UpdateService {
           notified: typeof data.notified === 'string' ? data.notified : '',
         };
       }
-    } catch { /* missing or unreadable: start empty (Python: OSError, ValueError) */ }
+    } catch { /* missing or unreadable: start empty */ }
     return emptyState();
   }
 
   #save(): void {
     try {
       writeJsonAtomic(this.statePath, this.state, { prefix: 'state.json.', suffix: '.tmp' });
-    } catch { /* Python: OSError is ignored */ }
+    } catch { /* ignored */ }
   }
 
   // -- what the page shows
@@ -1328,7 +1328,7 @@ export class UpdateService {
   /**
    * Look for a newer release, download and verify its installer. Automatic checks stop (no network at all) when the setting is off,
    * the repository is still the placeholder, or a check already happened in the last day. A second call while one runs returns at
-   * once (Python's non-blocking lock). Resolves to status().
+   * once. Resolves to status().
    */
   async check(manual = false): Promise<UpdateStatus> {
     if (!this.configured()) return this.status();
@@ -1968,7 +1968,7 @@ const INSTALL_STATUS: Record<string, number> = { chats_working: 409, not_ready: 
 
 /**
  * POST /api/live/update/install: install now or, with whenIdle, once no chat is working; cancelWait drops the second. Throws
- * ValueError (the HTTP layer's 400) for a whenIdle that is not a boolean, as Python does. The route must send the reply before the
+ * ValueError (the HTTP layer's 400) for a whenIdle that is not a boolean. The route must send the reply before the
  * service's quit callback ends the server.
  */
 export async function postUpdateInstall(

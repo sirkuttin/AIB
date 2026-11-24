@@ -31,22 +31,22 @@ import type { WebContext } from '../../app/server/web/server.ts';
 type Json = Record<string, unknown>;
 const NL = '\\n';
 
-function studioIn(state: string): Aib {
-  const studio = new Aib({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
-  studio.ownerProbe = () => null;
+function aibIn(state: string): Aib {
+  const aib = new Aib({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
+  aib.ownerProbe = () => null;
   // env sets FAKE_ACP_LOG for the fake agent: every line it receives goes there (session/new's params)
-  studio.connectionFactory = (_command, cwd, provider, options) =>
+  aib.connectionFactory = (_command, cwd, provider, options) =>
     new Connection(['env', `FAKE_ACP_LOG=${ROOT}/acp.log`, '/usr/bin/python3', `${ROOT}/fake_acp.py`, '--cancel-aware', '--extra-dirs'], cwd, provider, {
       ...options,
       wsl: options?.wsl ? { ...options.wsl, program: '/usr/bin/env' } : options?.wsl,
     });
-  return studio;
+  return aib;
 }
 
 const sh = async (script: string, ...args: string[]) => (await inDistro(script, args)).out.trim();
 
-async function turn(studio: Aib, c: Connection, text: string): Promise<void> {
-  await studio.liveCall('prompt', { id: c.id, text, clientMessageId: crypto.randomUUID() });
+async function turn(aib: Aib, c: Connection, text: string): Promise<void> {
+  await aib.liveCall('prompt', { id: c.id, text, clientMessageId: crypto.randomUUID() });
   await until(() => !c.busy, `the turn "${text}"`, 60);
 }
 
@@ -65,7 +65,7 @@ Deno.test({
   async fn() {
     const state = Deno.makeTempDirSync({ prefix: 'aib-wsl-lo-e2e-' });
     await prepareRoot();
-    let studio: Aib | null = null;
+    let aib: Aib | null = null;
     try {
       const host = await readyHost();
       const repo = `${ROOT}/repo`;
@@ -78,8 +78,8 @@ Deno.test({
       );
       assertEquals(await sh('git -C "$1" status --porcelain', repo), '', 'aib-shared/ and game/review/ are ignored');
       const gitignore = await sh('cat "$1/.gitignore"', repo);
-      studio = studioIn(state);
-      const c = await studio.connect('claude', ref, null, { ownCopy: true }); // a copy chat (new chats work in the folder: test-only ownCopy)
+      aib = aibIn(state);
+      const c = await aib.connect('claude', ref, null, { ownCopy: true }); // a copy chat (new chats work in the folder: test-only ownCopy)
       await until(() => c.ready, 'ready', 60);
       const linux = c.agentCwd;
       assert(c.worktree?.branch.startsWith('studio/chat-'), 'the chat works in its own copy');
@@ -88,7 +88,7 @@ Deno.test({
       const exclude = await sh('cat "$1/.git/info/exclude"', repo);
       assert(exclude.includes('/aib-shared/') && exclude.includes(BLOCK_START) && exclude.includes('\n/aib-shared\n'), exclude);
       assertEquals(await sh('test -L "$1/aib-shared" && readlink "$1/aib-shared"', linux), `${repo}/aib-shared`, 'the copy has a symlink to the main folder');
-      await turn(studio, c, `edit:aib-shared/through-link.md|via the link${NL}`);
+      await turn(aib, c, `edit:aib-shared/through-link.md|via the link${NL}`);
       assertEquals(await sh('cat "$1/aib-shared/through-link.md"', repo), 'via the link', 'written through the link: in the main folder at once');
       assertEquals(await sh('git -C "$1" status --porcelain', linux), '', 'git in the copy shows nothing of it');
       assertEquals(await sh('git -C "$1" status --porcelain', repo), '', 'nor in the main folder');
@@ -107,8 +107,8 @@ Deno.test({
       });
       assert(!JSON.stringify(made[0].additionalDirectories).includes('/data-'), "AIB's data folder (the copies) is never granted");
       // the agent edits files in the main folder's aib-shared/ and game/review/ by the granted full paths: they land there only
-      await turn(studio, c, `edit:${repo}/aib-shared/review/notes.md|from the chat${NL}`);
-      await turn(studio, c, `edit:${repo}/game/review/level1/notes.md|game notes${NL}`);
+      await turn(aib, c, `edit:${repo}/aib-shared/review/notes.md|from the chat${NL}`);
+      await turn(aib, c, `edit:${repo}/game/review/level1/notes.md|game notes${NL}`);
       assertEquals(await sh('cat "$1/aib-shared/review/notes.md"', repo), 'from the chat');
       assertEquals(await sh('cat "$1/game/review/level1/notes.md"', repo), 'game notes');
       assertEquals(await sh('test -e "$1/game/review" && echo there || echo absent', linux), 'absent', 'nothing leaks into the copy');
@@ -119,7 +119,7 @@ Deno.test({
       const ctx = {
         token: 't',
         stateDir: state,
-        host: studio,
+        host: aib,
         artifacts: { connectionOf: () => '', conversations: () => [], store: { origin: '' } },
         transcripts: { stores: new Map() },
       } as unknown as WebContext;
@@ -168,12 +168,12 @@ Deno.test({
       assertEquals(await sh('test -e "$1/game/review" && echo there || echo absent', linux), 'absent', 'nor game/review/');
 
       // ---- merge: the chat's own commit lands; an aib-shared/ file the chat writes through its link is in the main folder, never in a commit
-      await turn(studio, c, `edit:chat.txt|from the chat${NL}`);
-      await turn(studio, c, `edit:aib-shared/inchat.md|copy only${NL}`);
+      await turn(aib, c, `edit:chat.txt|from the chat${NL}`);
+      await turn(aib, c, `edit:aib-shared/inchat.md|copy only${NL}`);
       assertEquals(await sh('cat "$1/aib-shared/inchat.md"', repo), 'copy only');
-      await turn(studio, c, 'commit:chat work');
+      await turn(aib, c, 'commit:chat work');
       assertEquals(await sh('git -C "$1" ls-files aib-shared', linux), '', 'git never adds aib-shared/ in the copy');
-      const ctx2 = { stateDir: studio.stateDir, host: studio, conversations: { public: () => ({ entries: {} }) } } as never;
+      const ctx2 = { stateDir: aib.stateDir, host: aib, conversations: { public: () => ({ entries: {} }) } } as never;
       const [code, merged] = await aibRoutes().get('POST /api/live/worktree/merge')!(ctx2, new URL('http://127.0.0.1/api/live/worktree/merge'), { id: c.id }, new Request('http://127.0.0.1/')) as [number, Json];
       assertEquals([code, merged.state], [200, 'merged'], JSON.stringify(merged));
       assertEquals(await sh('git -C "$1" show main:chat.txt', repo), 'from the chat');
@@ -190,7 +190,7 @@ Deno.test({
       assertEquals(await sh('test -e "$1" && echo there || echo gone', linux), 'gone');
       assertEquals(await sh('ls "$1/aib-shared" | sort | tr "\\n" " "', repo), 'inchat.md new.md review through-link.md', 'every file stays');
     } finally {
-      await studio?.close().catch(() => {});
+      await aib?.close().catch(() => {});
       await cleanRoot();
       Deno.removeSync(state, { recursive: true });
     }

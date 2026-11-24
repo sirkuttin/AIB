@@ -1,6 +1,6 @@
 (function (root) {
   'use strict';
-  // What you have seen in each chat. The server keeps it (studio-read-state.json in Studio's state folder), keyed by the chat's
+  // What you have seen in each chat. The server keeps it (studio-read-state.json in AIB's state folder), keyed by the chat's
   // stable identity "provider:sessionId", so it survives restarts and is the same in every browser. Browser storage is only a
   // fast cache so the first paint is right before the server has answered. Positions only move forward.
   const CACHE = 'studio-read-state-v2',

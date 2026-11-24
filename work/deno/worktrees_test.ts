@@ -3,8 +3,8 @@
  * test_worktree_userbase.py that exercise worktrees.py directly, parity with Python on the same repo states, registry interop both
  * ways and the cross-process locks. Real git in temp repos and temp state folders only.
  *
- * Skipped (they need a whole Studio, a live connection or the host-side live sync): the flag tests and connection.public() checks,
- * live_list sidebar roots, resume through Studio.connect, the worktree-archive live op and conversation_action
+ * Skipped (they need a whole AIB, a live connection or the host-side live sync): the flag tests and connection.public() checks,
+ * live_list sidebar roots, resume through Aib.connect, the worktree-archive live op and conversation_action
  * (agent kill order, read-only chats, routes and tokens), changes_response, the live connection projectRoot mapping, the real-adapter
  * HOME isolation and state_paths checks. Their worktrees.py parts (plan, create, remove, retry_pending, is_removed, has_changes,
  * ensure, find, ProjectResolver) are covered here directly.
@@ -223,7 +223,7 @@ Deno.test('a restart in the middle of creating is cleaned up; finished and forei
   assert(exists(plan.path));
   assertEquals(box.branches().sort(), [finished.plan.branch, plan.branch].sort());
   assertEquals(manager.registry.get(plan.key)!.status, 'creating');
-  assertEquals(await new wt.Manager(box.state).cleanupIncomplete(), [plan.key]); // a new Studio on the same state folder
+  assertEquals(await new wt.Manager(box.state).cleanupIncomplete(), [plan.key]); // a new AIB on the same state folder
   assert(!exists(plan.path));
   assertEquals(box.branches(), [finished.plan.branch]);
   assertEquals(Object.keys(manager.registry.all()), [finished.plan.key]);
@@ -398,14 +398,14 @@ Deno.test('hasChanges: a commit counts, line-ending noise and a missing folder d
   assertEquals(manager.registry.get(plan.key)!.status, 'ready');
 });
 
-Deno.test('nothing outside the Studio worktrees folder is ever removed', async () => {
+Deno.test('nothing outside AIB worktrees folder is ever removed', async () => {
   using box = new Sandbox();
   const foreign = pathOf(box.base, 'foreign');
   runGit(box.project, 'worktree', 'add', '-q', '-b', 'mine', foreign);
   const registry = new wt.Registry(box.state);
   await registry.put('k', { path: foreign, project: box.project, branch: 'mine', status: 'ready' });
   const manager = new wt.Manager(box.state);
-  assertEquals(await manager.remove('k', true), 'removed'); // nothing of Studio's to remove: the record goes
+  assertEquals(await manager.remove('k', true), 'removed'); // nothing of AIB's to remove: the record goes
   assert(exists(foreign));
   assert(runGit(box.project, 'branch', '--list', 'mine').includes('mine'));
   await registry.put('k2', { path: foreign, project: box.project, branch: 'studio/x', status: 'creating', pid: 0 });
@@ -955,12 +955,12 @@ Deno.test('local only: .env files inside a local-only folder are never copied in
   assertEquals(read(box.project, 'aib-shared/.env'), 'SECRET=1\n');
 });
 
-Deno.test('local only: defaults are written only by a real Studio, or for projects under the temp folder', () => {
+Deno.test('local only: defaults are written only by a real AIB, or for projects under the temp folder', () => {
   using box = new Sandbox();
   const here = decodeURIComponent(new URL('.', import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1'); // work/deno of this repo
-  assert(localOnly.defaultsAllowed(box.state, box.project), 'a temp Studio and a temp project');
-  assert(!localOnly.defaultsAllowed(box.state, here), 'a temp Studio never writes a real repository');
-  assert(!localOnly.defaultsAllowed('', here), 'neither does a Studio without a state folder');
+  assert(localOnly.defaultsAllowed(box.state, box.project), 'a temp AIB and a temp project');
+  assert(!localOnly.defaultsAllowed(box.state, here), 'a temp AIB never writes a real repository');
+  assert(!localOnly.defaultsAllowed('', here), 'neither does an AIB without a state folder');
   assert(localOnly.defaultsAllowed('', box.project));
 });
 
@@ -968,7 +968,7 @@ Deno.test('planWithReason: the Windows manager never plans a WSL project (its re
   const dir = Deno.makeTempDirSync({ prefix: 'aib-wsl-plan-' });
   try {
     const manager = new wt.Manager(dir);
-    // Studio routes WSL projects to their distro's helper (wsl/worktrees.ts); a missed route is refused here, not run
+    // AIB routes WSL projects to their distro's helper (wsl/worktrees.ts); a missed route is refused here, not run
     assertEquals(await manager.planWithReason('wsl://ubuntu/home/u/app'), { plan: null, reason: wt.WSL_PLANNED_THERE });
     assertEquals(await manager.plan('wsl://ubuntu/home/u/app'), null);
     assertEquals(Object.keys(manager.registry.all()), []);

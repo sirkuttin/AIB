@@ -22,7 +22,7 @@ Deno.test({
   async fn() {
     const state = Deno.makeTempDirSync({ prefix: 'aib-wsl-sessions-e2e-' });
     await prepareRoot();
-    let studio: Aib | null = null;
+    let aib: Aib | null = null;
     try {
       const repo = `${ROOT}/repo`;
       const id = crypto.randomUUID();
@@ -64,18 +64,18 @@ Deno.test({
       assertEquals(await wslTranscriptGet('/api/transcript', parseQs('key=claude/x.jsonl')), null, 'Windows keys are not WSL ones');
 
       // Continue: the agent starts in the distro with session/load of that id (the fake agent stands in for Claude).
-      studio = new Aib({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
-      studio.ownerProbe = () => null;
-      studio.connectionFactory = (_command, cwd, provider, options) =>
+      aib = new Aib({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
+      aib.ownerProbe = () => null;
+      aib.connectionFactory = (_command, cwd, provider, options) =>
         new Connection(['python3', `${ROOT}/fake_acp.py`], cwd, provider, {
           ...options,
           wsl: options?.wsl ? { ...options.wsl, program: '/usr/bin/python3' } : options?.wsl,
         });
-      const c = await studio.connect('claude', ref, id);
+      const c = await aib.connect('claude', ref, id);
       assert(c.ready && !c.closed, 'continued');
       assertEquals([c.cwd, c.agentCwd], [ref, repo]);
     } finally {
-      await studio?.close().catch(() => {});
+      await aib?.close().catch(() => {});
       await cleanRoot();
       Deno.removeSync(state, { recursive: true });
     }

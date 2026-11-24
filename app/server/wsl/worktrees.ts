@@ -2,7 +2,7 @@
  * The worktree per chat of a WSL project, Windows side (docs/wsl/design.md section 4 phase 2, section 5 item 3). The worktree manager
  * runs whole in the distro's helper (wsl/helper/worktrees.ts, `worktree.*`): the records, the root (`<data>/worktrees` in the Linux
  * keeper's data folder of this AIB) and every git call and removal are there. Here the helper's Linux paths become refs
- * (`wsl://<distro><linuxPath>`), so Studio, the page and the chat notes key on refs exactly as before, and the agent gets the Linux path.
+ * (`wsl://<distro><linuxPath>`), so AIB, the page and the chat notes key on refs exactly as before, and the agent gets the Linux path.
  *
  * A helper that does not offer the methods (older, or started without its data folder), or a distro that is not ready, means the chat
  * works in the project folder, as phase 1 did; nothing about a WSL project ever reaches the Windows worktree registry.
@@ -13,7 +13,7 @@ import { hostWhenReady, wslLoc } from './access.ts';
 import { type WorktreePlanJson, type WslCleanupScan, type WslHost, WslHelperError } from './contract.ts';
 import { worktreeRemovedByRemove } from './removed.ts';
 
-/** A WSL chat's plan: path and project are refs (what Studio uses); `linuxPath` is the worktree folder the agent gets. */
+/** A WSL chat's plan: path and project are refs (what AIB uses); `linuxPath` is the worktree folder the agent gets. */
 export class WslPlan extends wt.Plan {
   constructor(readonly distro: string, readonly raw: WorktreePlanJson) {
     super(
@@ -33,7 +33,7 @@ export class WslPlan extends wt.Plan {
   }
 }
 
-/** A record of a WSL worktree with refs for `path` and `project` (as Studio reads records), and the Linux folder. */
+/** A record of a WSL worktree with refs for `path` and `project` (as AIB reads records), and the Linux folder. */
 export type WslRecord = wt.WorktreeRecord & { key: string; path: string; project: string; linuxPath: string; distro: string };
 
 export function isWslRecord(record: unknown): record is WslRecord {

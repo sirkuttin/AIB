@@ -50,8 +50,8 @@ Request flow:
   - `locKey`: case-folds only Windows paths.
   - Joins in WSL refs use `transcripts/purepath.ts purePath(text, false)`.
 - **Fail-closed guard:** `assertWindowsLocal(path)` in the I/O functions of `ospath.ts` (exists, isdir, isfile, realpath, abspath) and `pypath.ts` (pyStat, resolvePath, which). It also goes in `worktrees.ts runProcess`, `changes.ts runGit`, `files.ts` (resolveInside, check-ignore), `folders.ts runCommand` and `connection.ts startProcess`. It throws on `wsl://` and on drive-less absolute paths (`/home/…`). Without it, `/home/u` on Windows resolves to `C:\home\u`.
-- **Routing:** `Studio.connect`, `files_routes.rootFor`, `chat_folders.changesFolder`, `terminal/sessions.checkCwd` and `folders.checkProject` call `locOf` first. They send WSL work to `wsl/hosts.ts`, and never to Windows fs.
-- **Chat records and chat notes** carry `loc`, so the rebuild in studio.ts:994-1060 knows which keeper holds a chat. ACP `session/new` and `session/load` get `cwd = linuxPath`.
+- **Routing:** `Aib.connect`, `files_routes.rootFor`, `chat_folders.changesFolder`, `terminal/sessions.checkCwd` and `folders.checkProject` call `locOf` first. They send WSL work to `wsl/hosts.ts`, and never to Windows fs.
+- **Chat records and chat notes** carry `loc`, so the rebuild in aib.ts:994-1060 knows which keeper holds a chat. ACP `session/new` and `session/load` get `cwd = linuxPath`.
 - **Distro detection** (`wsl/detect.ts`) uses no console and does not boot the VM. It checks that `%SystemRoot%\System32\wsl.exe` exists and reads `HKCU\…\Lxss\*` (DistributionName, Version, State) through `platform/win32.ts`. Only WSL2 distros are offered in phase 1.
 
 ## 3. Helper protocol additions
@@ -106,7 +106,7 @@ Request flow:
 | P1.2 Go: `bridge.go`, `--hold`, `--unix-only`, Linux builds in `tools/build.ts`, Go tests on Linux | 1.5-2 |
 | P1.3 `wsl/detect.ts`, `wsl/install.ts`, `wsl/hosts.ts` (transport, hold channel, preamble, KeeperStream, reconnect, version matching) | 3 |
 | P1.4 Helper: `server/wsl/helper_main.ts` + `wsl/helper/*.ts`, the methods above, `aib-open` shim + `open.sock` | 2-3 |
-| P1.5 Agents: `connection.ts #startInKeeper` uses the WSL link, the Linux env and the helper's `which`; `Studio.connect` routing; `planWithReason` returns in-place with reason `wsl`; studio_artifact MCP left out with a visible notice; ACP fs caps off; client terminals as Linux-keeper PTYs | 2-3 |
+| P1.5 Agents: `connection.ts #startInKeeper` uses the WSL link, the Linux env and the helper's `which`; `Aib.connect` routing; `planWithReason` returns in-place with reason `wsl`; studio_artifact MCP left out with a visible notice; ACP fs caps off; client terminals as Linux-keeper PTYs | 2-3 |
 | P1.6 Terminals: project terminal and agent sign-in terminal in the distro (`terminal/sessions.ts`, `terminal_routes.ts`) | 1 |
 | P1.7 UI (section 8), VS Code / Cursor `--remote wsl+D`, Reveal | 1 |
 | P1.8 Tests (section 7) | 2 |
@@ -223,11 +223,11 @@ Off for WSL projects in phase 1:
 ## 11. Architect review addendum (required changes; these override sections above)
 
 Required before building (from the Opus architect review):
-1. **Hold/helper lifecycle spec.** Studio rebuild (`host/aib.ts:984-997`, `link.stopUnknown`), `#dropOrphanTerminals` and `terminal/sessions.ts:430-446` must skip labels `wsl-hold` and `wsl-helper`. AIB kills the hold channel on quit unless a WSL agent is live (then sends Windows `hold`); hold channels are excluded from live counts (else V2 idle exit never runs, V1 relaunches AIB in the tray, keeper upgrade blocks forever). `bridge --hold` polls `list` and exits when only the helper is live; AIB kills the helper before a Linux-keeper `shutdown` (`server.go:207-211`).
-2. **Transport-loss semantics in KeeperLink.** `#lost` (`link.ts:266-283`) + `#keeperLost` → `reconnectOne` (`studio.ts:1145-1162`) would start duplicate agents. Add a "transport lost" state: suspend, re-attach from `last` seq, fire `onLost` only when `list` shows the channel ended (~2 days).
+1. **Hold/helper lifecycle spec.** AIB rebuild (`host/aib.ts:984-997`, `link.stopUnknown`), `#dropOrphanTerminals` and `terminal/sessions.ts:430-446` must skip labels `wsl-hold` and `wsl-helper`. AIB kills the hold channel on quit unless a WSL agent is live (then sends Windows `hold`); hold channels are excluded from live counts (else V2 idle exit never runs, V1 relaunches AIB in the tray, keeper upgrade blocks forever). `bridge --hold` polls `list` and exits when only the helper is live; AIB kills the helper before a Linux-keeper `shutdown` (`server.go:207-211`).
+2. **Transport-loss semantics in KeeperLink.** `#lost` (`link.ts:266-283`) + `#keeperLost` → `reconnectOne` (`aib.ts:1145-1162`) would start duplicate agents. Add a "transport lost" state: suspend, re-attach from `last` seq, fire `onLost` only when `list` shows the channel ended (~2 days).
 3. **Guards at the 26 `isNetworkPath` gates**, not throwing in ospath. Add `isForeignPath` (`wsl:` prefix, or drive-less absolute on Windows); predicates return false; throw only in spawn/write/delete. `folder_presence.ts`, `editors.ts:507,532`, `connection.ts:435,530,1301` use raw `Deno.*` and need explicit handling. The guard is a no-op when `!WIN` (the helper imports the same modules).
 4. **`Connection.cwd` split** into `cwd` (the ref) and `agentCwd` (Linux path); WriteTracker off for WSL chats (`connection.ts:785-823,852-861`).
-5. **Phase 1 additions:** transcripts Store/Catalog for WSL in the helper (list, read, `findSessionFile`) so ended WSL chats survive restart and can resume (+3-4 days); probe, sign-in state and usage limits routed through the WSL host (`studio.ts:743,763-767`, `usage_limits_feed.ts:70`).
+5. **Phase 1 additions:** transcripts Store/Catalog for WSL in the helper (list, read, `findSessionFile`) so ended WSL chats survive restart and can resume (+3-4 days); probe, sign-in state and usage limits routed through the WSL host (`aib.ts:743,763-767`, `usage_limits_feed.ts:70`).
 6. **Corrected argv:** `--exec` does no `~` expansion; use `--cd ~` and a relative path, or read `$HOME` first.
 7. **One-day spike** (stdio over `--exec`; EOF reaches Linux when `wsl.exe` is killed; stdio over a Windows exe via WSL interop).
 8. **Refs are never URL-parsed** (`new URL` lowercases hosts and encodes spaces); add a lint. Fold the distro when the ref is built (`projectKey` is case-sensitive, `project_delete.ts:21-32`), page `pathKey` agrees.

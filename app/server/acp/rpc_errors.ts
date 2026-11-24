@@ -14,7 +14,7 @@ export class RpcError extends Error {
   }
 }
 
-/** str(dict) is only used when an error has no message; good enough to be readable (exact Python repr is not part of any contract). */
+/** str(dict) is only used when an error has no message; good enough to be readable (the exact text is not part of any contract). */
 function pyDictRepr(value: Record<string, unknown>): string {
   return '{' + Object.entries(value).map(([k, v]) => `'${k}': ${typeof v === 'string' ? `'${v}'` : JSON.stringify(v)}`).join(', ') + '}';
 }
@@ -54,7 +54,7 @@ const text = (value: unknown, limit = 500) => (isStr(value) ? clip(value, limit)
 
 /**
  * Normalize initialize.authMethods. kind 'agent' = the client can call authenticate;
- * anything else is shown as instructions and never executed by Studio.
+ * anything else is shown as instructions and never executed by AIB.
  */
 export function describeAuthMethods(methods: unknown, provider = ''): AuthMethod[] {
   const out: AuthMethod[] = [];

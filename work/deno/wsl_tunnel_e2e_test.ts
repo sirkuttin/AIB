@@ -21,16 +21,16 @@ import { KeeperLink } from '../../app/server/keeper/link.ts';
 
 type Json = Record<string, unknown>;
 
-function studioIn(state: string, keeper: KeeperLink | null = null): Aib {
+function aibIn(state: string, keeper: KeeperLink | null = null): Aib {
   // the artifact tool is on (no noArtifactTool): the chat gets its studio_artifact entry
-  const studio = new Aib({ stateDir: state, port: 0, ownersDir: null }, { keeper });
-  studio.ownerProbe = () => null;
-  studio.connectionFactory = (_command, cwd, provider, options) =>
+  const aib = new Aib({ stateDir: state, port: 0, ownersDir: null }, { keeper });
+  aib.ownerProbe = () => null;
+  aib.connectionFactory = (_command, cwd, provider, options) =>
     new Connection(['python3', `${ROOT}/fake_acp.py`, '--cancel-aware'], cwd, provider, {
       ...options,
       wsl: options?.wsl ? { ...options.wsl, program: '/usr/bin/python3' } : options?.wsl,
     });
-  return studio;
+  return aib;
 }
 
 const notes = (c: Connection) => c.events.filter((e) => e.kind === 'studio_note').map((e) => String((e.data as Json).message));
@@ -78,7 +78,7 @@ Deno.test({
   async fn() {
     const state = Deno.makeTempDirSync({ prefix: 'aib-wsl-tunnel-e2e-' });
     await prepareRoot();
-    const studios: Aib[] = [];
+    const aibs: Aib[] = [];
     try {
       const host = await readyHost();
       const tunnel = host.mcpTunnel;
@@ -88,9 +88,9 @@ Deno.test({
       const socketMode = await inDistro('stat -c %a "$1"; stat -c %a "$(dirname "$1")"', [tunnel.socket]);
       assertEquals(socketMode.out.trim().split('\n'), ['600', '700']);
 
-      const studio = studioIn(state);
-      studios.push(studio);
-      const c = await studio.connect('claude', refOf({ kind: 'wsl', distro: KEY, linuxPath: `${ROOT}/repo` }));
+      const aib = aibIn(state);
+      aibs.push(aib);
+      const c = await aib.connect('claude', refOf({ kind: 'wsl', distro: KEY, linuxPath: `${ROOT}/repo` }));
       const entry = c.mcpServers[0] as unknown as Entry;
       assertEquals([entry.command, ...entry.args], [tunnel.forwarder, 'mcp-forward', '--helper-socket', tunnel.socket]);
       assert(!entry.env.some((e) => e.name === 'WSLENV'), 'nothing crosses interop');
@@ -120,7 +120,7 @@ Deno.test({
       const error = (refused.answers.get(2)?.error ?? {}) as Json;
       assert(String(error.message).includes('HTTP 401') && String(error.message).includes('refused the artifact key'), JSON.stringify(error));
     } finally {
-      for (const s of studios) await s.close().catch(() => {});
+      for (const s of aibs) await s.close().catch(() => {});
       await cleanRoot();
       Deno.removeSync(state, { recursive: true });
     }
@@ -135,15 +135,15 @@ Deno.test({
     // the helper is told a keeper program that is not there: it starts without the tunnel (as an older helper would)
     newAib({ helperCommand: (install: WslInstall) => ({ command: install.helper, args: ['--data', install.data, '--keeper', `${ROOT}/none/AIB-keeper`] }) });
     await prepareRoot();
-    const studios: Aib[] = [];
+    const aibs: Aib[] = [];
     // a Windows keeper, as AIB always has: the interop forwarder finds AIB through the address file it publishes for the keeper
     const windows = new KeeperLink({ dataDir: state, orphan: null, extraArgs: ['--exit-after', '2s'] });
     try {
       const host = await readyHost();
       assertEquals(host.mcpTunnel ?? null, null);
-      const studio = studioIn(state, windows);
-      studios.push(studio);
-      const c = await studio.connect('claude', refOf({ kind: 'wsl', distro: KEY, linuxPath: `${ROOT}/repo` }));
+      const aib = aibIn(state, windows);
+      aibs.push(aib);
+      const c = await aib.connect('claude', refOf({ kind: 'wsl', distro: KEY, linuxPath: `${ROOT}/repo` }));
       const entry = c.mcpServers[0] as unknown as Entry | undefined;
       assert(entry, `an entry, or the notice: ${notes(c).join(' | ')}`);
       assert(entry.command.startsWith('/mnt/') && /AIB-keeper\.exe$/i.test(entry.command), entry.command);
@@ -158,7 +158,7 @@ Deno.test({
         assertEquals(off.answers.size, 0, JSON.stringify([...off.answers]));
       }
     } finally {
-      for (const s of studios) await s.close().catch(() => {});
+      for (const s of aibs) await s.close().catch(() => {});
       try {
         await (await windows.client(false))?.shutdown(true);
       } catch { /* not running */ }

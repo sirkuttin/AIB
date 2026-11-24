@@ -1,7 +1,7 @@
 /**
- * Client side of the agent host protocol: find, start, call and stop the long-lived agent host (host_client.py, docs/agent-host.md).
- * Same file (agent-host.json), token header, protocol number, takeover rules and messages as the Python client, so during the
- * rewrite a Deno web server attaches to the Python agent host and vice versa.
+ * Client side of the agent host protocol: find, start, call and stop the long-lived agent host (docs/agent-host.md).
+ * Same file (agent-host.json), token header, protocol number, takeover rules and messages in every version, so a web server
+ * attaches to an agent host of another version and vice versa.
  */
 import { spawnDetached } from '../platform/spawn_detached.ts';
 import { processAlive } from '../platform/process_info.ts';
@@ -50,7 +50,7 @@ export const CODE_ROOT = codeRootFor();
 const HASH_SKIP_DIRS = new Set(['__pycache__', 'docs', 'node_modules', '.git']);
 
 /**
- * Every file ending in `ext` under root/<under> outside HASH_SKIP_DIRS as (posix name relative to root, path), sorted like Python's
+ * Every file ending in `ext` under root/<under> outside HASH_SKIP_DIRS as (posix name relative to root, path), sorted by code point
  * sorted() on the names.
  */
 async function sourceFiles(root: string, ext = '.py', under: string[] = []): Promise<[string, string][]> {
@@ -71,8 +71,8 @@ async function sourceFiles(root: string, ext = '.py', under: string[] = []): Pro
 }
 
 /**
- * sha256 over the relative names and bytes of the .py files under the app folder: identifies the code a Python host loaded. A Deno
- * web server that meets a Python host computes the same value, so code_warning compares like with like.
+ * sha256 over the relative names and bytes of the .py files under the app folder: identifies the code an older host loaded. A web
+ * server that meets such a host computes the same value, so code_warning compares like with like.
  */
 export function sourceHash(root = APP_ROOT): Promise<string> {
   return hashFiles(sourceFiles(root));
@@ -104,7 +104,7 @@ async function hashFiles(listing: Promise<[string, string][]>): Promise<string> 
 
 let sourceHashCache: Promise<string> | null = null;
 let denoHashCache: Promise<string> | null = null;
-/** The .py digest (what a Python host reports), computed once per process. */
+/** The .py digest (what an older host reports), computed once per process. */
 export function SOURCE_HASH(): Promise<string> {
   return (sourceHashCache ??= sourceHash());
 }
@@ -131,8 +131,8 @@ export function DENO_SOURCE_HASH(): Promise<string> {
 }
 
 /**
- * Which program an agent host is. A Deno host writes `runtime: "deno"` into agent-host.json and its info; the Python host
- * (agent_host.py) writes no runtime field, so a missing one means Python. A host of the other runtime from the same folder is
+ * Which program an agent host is. A Deno host writes `runtime: "deno"` into agent-host.json and its info; an older host
+ * writes no runtime field, so a missing one means 'python'. A host of the other runtime from the same folder is
  * treated like a host from another code folder (HostForeignRoot): taken over when no chat works there, waited for otherwise.
  */
 export const RUNTIME = 'deno';
@@ -171,7 +171,7 @@ export class HostBusy extends HostUnavailable {
   }
 }
 
-/** Errors the host reports by Python exception type, mapped like host_client.HostClient.call. */
+/** Errors the host reports by Python exception type, mapped by name. */
 export class HostValueError extends Error {}
 export class HostOSError extends Error {}
 
@@ -378,7 +378,7 @@ export class HostClient {
   }
 
   /**
-   * One RPC. Like http.client in the Python client, connecting and sending are separate steps: a failure while connecting means the
+   * One RPC. Like http.client, connecting and sending are separate steps: a failure while connecting means the
    * request never left (delivered=false, safe to retry), a failure after that may have reached the host (delivered=true).
    * Raw HTTP/1.0 over TCP: the host answers one request per connection and closes it.
    */
@@ -481,7 +481,7 @@ function incompatible(live: Record<string, unknown>, info: HostInfo): HostIncomp
   );
 }
 
-/** str() of a JSON value the way Python prints it in these messages (None for null/missing). */
+/** str() of a JSON value the way these messages print it (None for null/missing). */
 function pyStr(value: unknown): string {
   return value === undefined || value === null ? 'None' : String(value);
 }
@@ -747,5 +747,5 @@ export async function stopHost(stateDir: string, force = false, waitSeconds = 20
   };
 }
 
-// Kept for callers that log the JSON exactly as Python would.
+// Kept for callers that log the JSON in the older spacing.
 export { pyJsonDumps };

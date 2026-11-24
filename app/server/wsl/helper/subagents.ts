@@ -80,7 +80,7 @@ function codexFolderOf(root: string, chat: SubagentChat): string {
 }
 
 /** A MergeStudio over the states AIB sent: every chat of the folder, by id (a landing holds and checks them); live calls are recorded. */
-class StatesStudio implements merge.MergeStudio {
+class StatesHost implements merge.MergeHost {
   readonly actions: WslMergeAnswer['actions'] = [];
   constructor(readonly stateDir: string, readonly states: Json) {}
 
@@ -311,10 +311,10 @@ export function subagentMethods(data: string): Handlers {
       if (!/^[A-Za-z0-9._/-]{1,200}$/.test(target) || target.startsWith('-')) throw new RpcError('target must be a branch name', BAD_PARAMS);
       const held = Array.isArray(p.held) ? p.held.filter((x): x is string => typeof x === 'string' && ID.test(x)).slice(0, 50) : [];
       const landKept = Array.isArray(p.landKept) ? p.landKept.filter((x): x is string => typeof x === 'string' && x.length < 4096).slice(0, 500) : null;
-      const studio = new StatesStudio(data, isDict(p.states) ? p.states : {});
+      const aib = new StatesHost(data, isDict(p.states) ? p.states : {});
       const journal: { stage: string; data: Json }[] = [];
       const outcome = await landSubagentWork(
-        studio,
+        aib,
         {
           scratchDir: data,
           path: rec.path,
@@ -333,7 +333,7 @@ export function subagentMethods(data: string): Handlers {
           journal.push({ stage, data: { ...d } });
         },
       );
-      return { outcome, journal, actions: studio.actions };
+      return { outcome, journal, actions: aib.actions };
     },
 
     /** Unlanded work handed to the main agent: its files, a patch of it, or a branch that keeps it (worktrees/subagent_work.ts). */

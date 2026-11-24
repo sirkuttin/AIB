@@ -177,7 +177,7 @@ Deno.test('CLI flags parse like studio.py', () => {
   assertThrows(() => parseOptions(['--state-dir']), UsageError);
 });
 
-Deno.test('LIVE_POST_OPS equals Studio.LIVE_POST_OPS', async () => {
+Deno.test('LIVE_POST_OPS equals Aib.LIVE_POST_OPS', async () => {
   const py = new Frozen();
   // Steer-on-send's two calls are Deno only (routes.ts DENO_ONLY lists their routes); everything else is Python's set.
   const denoOnly = ['steer', 'tool-stop', 'schedule', 'schedule-edit', 'schedule-cancel', 'schedule-send-now']; // Send later too

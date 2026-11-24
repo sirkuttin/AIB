@@ -66,13 +66,13 @@ function readText(path: string): string {
 
 type Entries = Record<string, Record<string, unknown>> | Map<string, Record<string, unknown>>;
 
-/** The parts of a Studio these lookups read. */
-export interface ChatStudio {
+/** The parts of an AIB these lookups read. */
+export interface ChatHost {
   /** studio.live_state(ident, limit): a live connection's state ({cwd, ...}); {} or null for an unknown id. */
   liveState(ident: string, limit: number): unknown;
   conversations?: { entries?: Entries } | null;
   store?: { conversations?: Entries } | null;
-  /** A Studio's own saved-transcript lookup: (provider, sessionId) -> project folder or ''. */
+  /** An AIB's own saved-transcript lookup: (provider, sessionId) -> project folder or ''. */
   savedCwd?: ((provider: string, sessionId: string) => string) | null;
   token?: string;
   stateDir?: string | null;
@@ -89,20 +89,20 @@ export const defaults: { savedCwd: ((provider: string, sessionId: string) => str
 
 /**
  * The folder behind a chat id for the Changes view: a live connection id, or a 'provider:sessionId' conversation key. Only folders
- * Studio already knows from its own connections and saved conversations qualify; nothing from the request is used as a path.
+ * AIB already knows from its own connections and saved conversations qualify; nothing from the request is used as a path.
  */
-export async function changesFolder(studio: ChatStudio, ident: unknown): Promise<string | null> {
+export async function changesFolder(aib: ChatHost, ident: unknown): Promise<string | null> {
   if (!isStr(ident) || !ident || ident.length > 600) throw new ValueError('Choose a chat');
-  const state = await studio.liveState(ident, 10 ** 9);
+  const state = await aib.liveState(ident, 10 ** 9);
   let cwd = isDict(state) && isStr(state.cwd) ? state.cwd : '';
   if (!cwd) {
-    const fromMarks = entryOf(studio.conversations?.entries, ident).cwd;
-    const fromStore = entryOf(studio.store?.conversations, ident).cwd;
+    const fromMarks = entryOf(aib.conversations?.entries, ident).cwd;
+    const fromStore = entryOf(aib.store?.conversations, ident).cwd;
     cwd = (isStr(fromMarks) && fromMarks) || (isStr(fromStore) && fromStore) || '';
   }
-  const lookup = studio.savedCwd || defaults.savedCwd; // a Studio's own lookup, else the module default
+  const lookup = aib.savedCwd || defaults.savedCwd; // an AIB's own lookup, else the module default
   if (!cwd && lookup && /^[a-z0-9_-]+:/.test(ident)) {
-    // A saved chat Studio only reads (not one it runs): the folder its transcript is filed under, as the chat list shows.
+    // A saved chat AIB only reads (not one it runs): the folder its transcript is filed under, as the chat list shows.
     const at = ident.indexOf(':');
     cwd = lookup(ident.slice(0, at), ident.slice(at + 1)) || '';
   }
@@ -120,9 +120,9 @@ export async function changesFolder(studio: ChatStudio, ident: unknown): Promise
 }
 
 /** Project folder of a chat for artifacts (same rule as the Changes view); null when unknown. */
-export async function artifactFolder(studio: ChatStudio, ident: unknown): Promise<string | null> {
+export async function artifactFolder(aib: ChatHost, ident: unknown): Promise<string | null> {
   try {
-    const folder = await changesFolder(studio, ident);
+    const folder = await changesFolder(aib, ident);
     return folder && wslLoc(folder) ? null : folder; // phase 1: no artifacts from a WSL project's files
   } catch (error) {
     if (error instanceof ValueError) return null;
@@ -141,28 +141,28 @@ function header(headers: HeaderSource, name: string): string {
 const first = (args: Record<string, string[] | undefined>, name: string, fallback: string) => args[name]?.[0] ?? fallback;
 
 /**
- * GET /api/live/changes and /api/live/changes/file: [status, payload]. Needs the Studio token like a POST. `args` is the parsed
+ * GET /api/live/changes and /api/live/changes/file: [status, payload]. Needs AIB token like a POST. `args` is the parsed
  * query string (name -> values, as parse_qs). Throws ValueError for a missing chat id (the route answers 400).
  */
 export async function changesResponse(
-  studio: ChatStudio,
+  aib: ChatHost,
   path: string,
   args: Record<string, string[] | undefined>,
   headers: HeaderSource,
   principal: Principal | null = null,
 ): Promise<[number, unknown]> {
-  if (!pageAllowed(principal, { get: (name: string) => header(headers, name) }, studio.token ?? '')) {
+  if (!pageAllowed(principal, { get: (name: string) => header(headers, name) }, aib.token ?? '')) {
     return [403, { error: 'Invalid local session token' }];
   }
-  const cwd = await changesFolder(studio, first(args, 'id', ''));
+  const cwd = await changesFolder(aib, first(args, 'id', ''));
   if (cwd === null) return [404, { error: 'This chat has no known project folder.', code: 'unknown_folder' }];
   const scope = first(args, 'scope', 'uncommitted');
   if (scope !== 'uncommitted' && scope !== 'branch') {
     return [400, { error: 'Only the uncommitted and branch scopes exist.', code: 'bad_scope' }];
   }
   if (wslLoc(cwd)) return await wslChanges(cwd, path, scope, args);
-  // A chat in its own Studio worktree always gets the branch view (its agent commits); every other chat keeps the uncommitted one.
-  const record = worktrees.recordForPath(studio.stateDir ?? null, cwd);
+  // A chat in its own AIB worktree always gets the branch view (its agent commits); every other chat keeps the uncommitted one.
+  const record = worktrees.recordForPath(aib.stateDir ?? null, cwd);
   const base = worktrees.diffBase(record);
   if (scope === 'branch' && !base) return [400, { error: 'This chat has no branch of its own.', code: 'bad_scope' }];
   try {

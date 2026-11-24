@@ -11,7 +11,7 @@
  *    lists the rest.
  * 5. Two chats side by side (split view) see ONE list: the project's, listed once.
  *
- * A real Studio (the scroll lab: temp state folder, free port; never the live ports), scripted live chats, headless Chrome or
+ * A real AIB (the scroll lab: temp state folder, free port; never the live ports), scripted live chats, headless Chrome or
  * Edge, Git.
  *
  * Run (from app): deno test -A ../../work/deno/changes_panel_e2e_test.ts   (ignored without Chrome or Edge)

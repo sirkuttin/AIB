@@ -83,14 +83,14 @@ Deno.test({
     await prepareRoot();
     const state = Deno.makeTempDirSync({ prefix: 'aib-wsl-subagent-hooks-e2e-' });
     Deno.env.set('AGENT_STUDIO_ALLOW_REAL_AGENT', '1'); // hooks are set up for a non-fixture agent (the factory below runs the fake agent)
-    const studio = new Aib({ stateDir: state, port: 0, ownersDir: null }, { keeper: null });
-    studio.ownerProbe = () => null;
-    studio.connectionFactory = (_command, cwd, provider, options) =>
+    const aib = new Aib({ stateDir: state, port: 0, ownersDir: null }, { keeper: null });
+    aib.ownerProbe = () => null;
+    aib.connectionFactory = (_command, cwd, provider, options) =>
       new Connection(['python3', `${ROOT}/fake_acp.py`, '--cancel-aware'], cwd, provider, {
         ...options,
         wsl: options?.wsl ? { ...options.wsl, program: '/usr/bin/python3' } : options?.wsl,
       });
-    const swarm = new Swarm({ stateDir: state, host: studio, settings: studio.settings });
+    const swarm = new Swarm({ stateDir: state, host: aib, settings: aib.settings });
     try {
       const repo = `${ROOT}/repo`;
       await sh('git -C "$1" branch -M main', repo);
@@ -100,7 +100,7 @@ Deno.test({
         console.log("(the distro's AIB helper has no subagent hook support: nothing to check)");
         return;
       }
-      const c = await studio.connect('claude', refOf({ kind: 'wsl', distro: KEY, linuxPath: repo }));
+      const c = await aib.connect('claude', refOf({ kind: 'wsl', distro: KEY, linuxPath: repo }));
       for (let i = 0; i < 100 && c.busy; i++) await new Promise((r) => setTimeout(r, 100));
       // hooks on, running the distro's own keeper program on the helper's socket
       assertEquals(c.subagentHooks!.off, '', JSON.stringify(c.subagentHooks));
@@ -154,7 +154,7 @@ Deno.test({
       assertEquals(await sh('git -C "$1" branch --list "studio/sub-*-1"', repo), '');
     } finally {
       await swarm.stopWatching().catch(() => {});
-      await studio.close().catch(() => {});
+      await aib.close().catch(() => {});
       await cleanRoot();
       newAib();
       Deno.removeSync(state, { recursive: true });

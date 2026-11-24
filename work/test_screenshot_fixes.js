@@ -1,6 +1,6 @@
 'use strict';
 // The bugs the README screenshots showed (branch fix/screenshot-findings), one block per fix. Fake DOM or plain module loads,
-// no browser; the layout fixes (6, 7) were also measured in headless Chrome against a demo Studio.
+// no browser; the layout fixes (6, 7) were also measured in headless Chrome against a demo AIB.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');

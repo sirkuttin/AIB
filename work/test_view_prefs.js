@@ -211,7 +211,7 @@ test('a change made while a save is on its way goes out at once, numbered after 
     if (url === '/api/live/bootstrap') return { ok: true, status: 200, json: async () => ({ token: 't' }) };
     posts.push(JSON.parse(o.body));
     if (posts.length === 1) {
-      await gate; // the first answer is slow (Studio busy listing chats) and then fails
+      await gate; // the first answer is slow (AIB busy listing chats) and then fails
       return { ok: false, status: 503, json: async () => ({}) };
     }
     return { ok: true, status: 200, json: async () => ({}) };
@@ -432,7 +432,7 @@ test('a reload right after a change keeps it: the page answered before the chang
     };
     return { ctl, run, once };
   };
-  // the drag saves 220; the reload comes before its request reached Studio (no timer ran): Studio still has 300
+  // the drag saves 220; the reload comes before its request reached AIB (no timer ran): AIB still has 300
   let p = open({ 'studio-layout-v1:<1400': '{"side":300}' }, 200);
   storage.setItem('studio-layout-v1:<1400', '{"side":220}');
   p.ctl.stop();
@@ -444,7 +444,7 @@ test('a reload right after a change keeps it: the page answered before the chang
   assert.deepEqual(posts.at(-1), { 'studio-layout-v1:<1400': '{"side":220}' });
   assert.equal(session.getItem('aib-view-prefs-unsent'), null, 'confirmed: nothing left to resend');
   p.ctl.stop();
-  // confirmed changes do not linger: the next start seeds what Studio has (here: changed elsewhere, a phone or another copy)
+  // confirmed changes do not linger: the next start seeds what AIB has (here: changed elsewhere, a phone or another copy)
   p = open({ 'studio-layout-v1:<1400': '{"side":260}' }, 200);
   assert.equal(storage.getItem('studio-layout-v1:<1400'), '{"side":260}');
   p.ctl.stop();

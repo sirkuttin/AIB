@@ -1,5 +1,5 @@
 /**
- * QA polish batch, end to end: a real Studio server + headless Chrome/Edge (own temp profile and data folder, free ports, no agent
+ * QA polish batch, end to end: a real AIB server + headless Chrome/Edge (own temp profile and data folder, free ports, no agent
  * runs) on a temp git repo with one saved chat.
  *   Q1  Files: "New doc" makes the doc and aib-docs lists it at once (first doc, then a second), also after collapse/re-expand.
  *   Q2  A doc tab whose chat is gone opens from the project folder (docs belong to the project), after a reload.

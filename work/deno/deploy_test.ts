@@ -258,7 +258,7 @@ Deno.test({
         60,
       );
       fixture.hostPids.add(newHost.pid as number);
-      assert(Deno.readTextFileSync(`${LOGS}${SEP}agent-studio.stdout.log`).includes(`AIB: http://127.0.0.1:${port}`));
+      assert(Deno.readTextFileSync(`${LOGS}${SEP}aib.stdout.log`).includes(`AIB: http://127.0.0.1:${port}`));
     } finally {
       if (keeperEnv === undefined) Deno.env.delete('AIB_KEEPER');
       else Deno.env.set('AIB_KEEPER', keeperEnv);

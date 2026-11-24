@@ -493,7 +493,7 @@ Deno.test('settings: the failures list is bounded', async () => {
 
 // ---- receipts across a restart (test_runtime.py RecoveryTests, test_unknown_receipts.py: the Connection side) -----------------
 
-/** What Studio does around a Connection on start and orderly shutdown, without the Studio. */
+/** What AIB does around a Connection on start and orderly shutdown, without AIB. */
 async function hostRun(lab: Lab, stateDir: string, resume: string | null = null): Promise<[Connection, Recovery]> {
   const c = lab.connection(fake());
   const recovery = new Recovery(new StateStore(stateDir, 'recovery-h'));

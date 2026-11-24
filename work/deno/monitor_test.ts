@@ -1214,7 +1214,7 @@ Deno.test("model in use: session files by provider and id; hostile ids refused",
   void omp;
 });
 
-// ---- test_worktree_sync: Studio's note never shows ----
+// ---- test_worktree_sync: AIB's note never shows ----
 
 Deno.test("studio context is hidden in history and titles", () => {
   const note =

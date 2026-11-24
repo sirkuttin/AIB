@@ -57,10 +57,10 @@ function makeHost(o: { exit?: number; busy?: number } = {}) {
     spawn: (command) => void spawned.push(command),
   });
   const state = { busy: o.busy ?? 0, needs: 0 };
-  host.studio.workingList = () =>
+  host.aib.workingList = () =>
     Array.from({ length: state.busy }, (_, i) => ({ id: `c${i}`, provider: 'claude', cwd: dir, state: i < state.needs ? 'needs_you' : 'working' }));
-  host.studio.busyList = host.studio.workingList;
-  host.studio.blockedChats = () => Math.min(state.needs, state.busy); // the inbox's one number (inbox-rules.js)
+  host.aib.busyList = host.aib.workingList;
+  host.aib.blockedChats = () => Math.min(state.needs, state.busy); // the inbox's one number (inbox-rules.js)
   host.dataNote = () => '';
   return {
     host,
@@ -70,7 +70,7 @@ function makeHost(o: { exit?: number; busy?: number } = {}) {
     state,
     made: () => made,
     done: async () => {
-      await host.studio.close();
+      await host.aib.close();
       Deno.removeSync(dir, { recursive: true });
     },
   };
@@ -175,26 +175,26 @@ t('exit: no app and nothing working for the grace period; an open but idle chat 
 t('working, exactly: queued prompts and agent install or sign-in jobs count; an open idle chat does not', async () => {
   const dir = Deno.makeTempDirSync({ prefix: 'aib-lifecycle-' });
   const host = new AgentHost({ stateDir: dir, port: 0 } as never, 30, 0, { exitUnattachedSeconds: 10 });
-  const studio = host.studio;
+  const aib = host.aib;
   try {
     const idle = { id: 'a', provider: 'claude', cwd: dir, closed: false, queue: { items: [] }, attention: () => ({ state: 'idle' }) };
     const queued = { ...idle, id: 'b', queue: { items: [{ id: 'q' }] } };
-    studio.connections.set('a', idle as never);
-    assertEquals(studio.workingList(), [], 'open but idle');
-    studio.connections.set('b', queued as never);
-    assertEquals(studio.workingList().map((w) => w.state), ['queued']);
-    studio.connections.delete('b');
-    studio.installer = { jobs: new Map([['codex', { alive: true }], ['claude', { alive: false }]]) } as never;
-    assertEquals(studio.workingList().map((w) => [w.state, w.provider]), [['installing', 'codex']]);
-    studio.installer = null;
-    studio.signer = { jobs: new Map([['claude', { alive: true }]]) } as never;
-    assertEquals(studio.workingList().map((w) => w.state), ['needs_you'], 'a sign-in waits for the person');
-    studio.signer = null;
+    aib.connections.set('a', idle as never);
+    assertEquals(aib.workingList(), [], 'open but idle');
+    aib.connections.set('b', queued as never);
+    assertEquals(aib.workingList().map((w) => w.state), ['queued']);
+    aib.connections.delete('b');
+    aib.installer = { jobs: new Map([['codex', { alive: true }], ['claude', { alive: false }]]) } as never;
+    assertEquals(aib.workingList().map((w) => [w.state, w.provider]), [['installing', 'codex']]);
+    aib.installer = null;
+    aib.signer = { jobs: new Map([['claude', { alive: true }]]) } as never;
+    assertEquals(aib.workingList().map((w) => w.state), ['needs_you'], 'a sign-in waits for the person');
+    aib.signer = null;
     assertEquals(host.lifecycleCheck(5000), false);
     assertEquals(host.lifecycleCheck(5010), true, 'only the idle chat: exits after the grace');
   } finally {
-    studio.connections.clear();
-    await studio.close();
+    aib.connections.clear();
+    await aib.close();
     Deno.removeSync(dir, { recursive: true });
   }
   const off = makeHost({ exit: 0 });
@@ -230,13 +230,13 @@ t('a stop that hangs in an agent still ends the process (hard exit after the dea
   const saved = AgentHost.STOP_DEADLINE_SECONDS;
   AgentHost.STOP_DEADLINE_SECONDS = 0.6;
   const host = new AgentHost({ stateDir: dir, port: 0 } as never, 30, 0, { hardExit: () => void exits.push(1) });
-  const close = host.studio.close.bind(host.studio);
+  const close = host.aib.close.bind(host.aib);
   try {
-    host.studio.close = () => sleep(1500).then(close); // an agent that takes too long to close
+    host.aib.close = () => sleep(1500).then(close); // an agent that takes too long to close
     await host.shutdown();
     assertEquals(exits, [1]);
     exits.length = 0;
-    host.studio.close = () => Promise.resolve();
+    host.aib.close = () => Promise.resolve();
     await host.shutdown();
     await sleep(800);
     assertEquals(exits, [], 'a prompt stop never hits the deadline');
@@ -317,9 +317,9 @@ t('process: the web server quits with a chat working: the host keeps it, exits a
   assert(/app detached \(pid \d+\); 1 working/.test(text), text);
   assert(/stop asked by .+ refused: 1 working/.test(text), text);
   assert(text.includes('stopping: no app attached and no chat working for 2 s'), text);
-  const studioLog = logOf(`${fx.state}/studio.log`);
-  assert(/INFO studio: AIB \S+ on http:\/\/127\.0\.0\.1:\d+ \(pid \d+, server/.test(studioLog), studioLog);
-  assert(studioLog.includes('closing (shutdown requested)'), studioLog);
+  const aibLog = logOf(`${fx.state}/studio.log`);
+  assert(/INFO studio: AIB \S+ on http:\/\/127\.0\.0\.1:\d+ \(pid \d+, server/.test(aibLog), aibLog);
+  assert(aibLog.includes('closing (shutdown requested)'), aibLog);
 });
 
 t('log: announce lines reach the file at the default WARNING level', () => {
@@ -351,9 +351,9 @@ t('a forced stop (the app\'s "stop them and quit") and the tray\'s Stop chats an
     try {
       if (how === 'tray') host.stopAll('tray');
       else host.opStop({ by: 'test', force: how === 'force' });
-      assertEquals(host.studio.deliberateStop, want, how);
+      assertEquals(host.aib.deliberateStop, want, how);
     } finally {
-      await host.studio.close();
+      await host.aib.close();
       Deno.removeSync(dir, { recursive: true });
     }
   }

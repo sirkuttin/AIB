@@ -6,19 +6,19 @@
  *   M2  The Docs tab on the New chat page of another project lists THAT project's docs, and "+ New doc" makes the doc in that project
  *       (it used to keep the previous project's chat: wrong list, and the new doc landed in the previous project).
  *
- * A real Studio in this process (fake agent host, temp state folder, free port; never the live ports), headless Chrome or Edge.
+ * A real AIB in this process (fake agent host, temp state folder, free port; never the live ports), headless Chrome or Edge.
  * Project A is a git repository with a real worktree; project B is an added folder. Run (from app):
  *   deno test -A ../../work/deno/project_panel_docs_e2e_test.ts   (ignored without Chrome or Edge or git)
  */
 import { assert, assertEquals } from './_assert.ts';
 import { Browser, browserPath, type Page } from './_doc_browser.ts';
-import { pc, remoteStudio } from './_remote_fixture.ts';
+import { pc, remoteAib } from './_remote_fixture.ts';
 import { git, HAVE_GIT, write } from './_git_repo.ts';
 
 type Json = Record<string, unknown>;
 const SEP = Deno.build.os === 'windows' ? '\\' : '/';
 
-function addChat(s: Awaited<ReturnType<typeof remoteStudio>>, n: number, title: string, cwd: string) {
+function addChat(s: Awaited<ReturnType<typeof remoteAib>>, n: number, title: string, cwd: string) {
   s.chats.push({
     id: 'c' + n, provider: 'claude', sessionId: 'sess-' + n, cwd, busy: false, closed: false,
     attention: { state: 'idle', needs: 0, turnEndedAt: new Date(Date.now() - n * 60_000).toISOString(), busySince: null },
@@ -46,7 +46,7 @@ Deno.test({
   sanitizeResources: false,
   sanitizeOps: false,
   async fn() {
-    const s = await remoteStudio(undefined, undefined, { saved: true });
+    const s = await remoteAib(undefined, undefined, { saved: true });
     const appDir = `${s.root}${SEP}projects${SEP}app`;
     const wt = `${s.root}${SEP}projects${SEP}app-wt`;
     const other = s.project; // an added project

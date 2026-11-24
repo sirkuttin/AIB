@@ -6,10 +6,10 @@
  *
  *   sync.chats         the whole set of open WSL chats in their own copy, per distro, in order: when a chat opens or closes, and every
  *                      KEEP_SECONDS while there are any (a helper that died is started again by the call and watches them again)
- *   sync.turnStarted   Studio's onTurnStart for a WSL chat (the lost-update guard of the last turn, catch-up, the pending merges)
+ *   sync.turnStarted   AIB's onTurnStart for a WSL chat (the lost-update guard of the last turn, catch-up, the pending merges)
  *   sync.contextFor    the <studio-context> note for the prompt (or steer), as sync.ts contextFor makes it
  *   sync.contextSent   the note went out
- *   sync.turnEnded     Studio's turnEnded hook
+ *   sync.turnEnded     AIB's turnEnded hook
  *
  * each with the chat's public state (helperState: no message text crosses). Live sync never starts a distro: a distro that is not
  * ready is skipped, and a helper without the methods means no live sync, as before. Windows chats never come here.
@@ -39,8 +39,8 @@ export interface WslSyncConnection {
   public(since?: number): unknown;
 }
 
-/** What WSL live sync needs from Studio. */
-export interface WslSyncStudio {
+/** What WSL live sync needs from AIB. */
+export interface WslSyncHost {
   connections: { values(): Iterable<WslSyncConnection> };
   settings: { worktreePerChat(): boolean };
 }
@@ -73,7 +73,7 @@ export class WslSync {
   readonly #told = new Set<string>();
   readonly #queues = new Map<string, Promise<void>>();
 
-  constructor(readonly studio: WslSyncStudio) {}
+  constructor(readonly aib: WslSyncHost) {}
 
   /** On for every WSL chat in its own copy (one made before 2026-11-16); not gated on the hidden worktreePerChat flag. */
   enabled(): boolean {
@@ -84,7 +84,7 @@ export class WslSync {
   open(): Map<string, Item[]> {
     const out = new Map<string, Item[]>();
     if (!this.enabled()) return out;
-    for (const c of this.studio.connections.values()) {
+    for (const c of this.aib.connections.values()) {
       const wsl = wslSyncChat(c);
       if (!wsl) continue;
       const items = out.get(wsl.distro) ?? [];
@@ -162,12 +162,12 @@ export class WslSync {
     }
   }
 
-  /** Studio's onTurnStart for a WSL chat. */
+  /** AIB's onTurnStart for a WSL chat. */
   async turnStarted(c: WslSyncConnection): Promise<void> {
     await this.#hook(c, 'sync.turnStarted', {}, wslSyncSettings.TURN_TIMEOUT_MS);
   }
 
-  /** Studio's turn-end hook for a WSL chat. */
+  /** AIB's turn-end hook for a WSL chat. */
   async turnEnded(c: WslSyncConnection): Promise<void> {
     await this.#hook(c, 'sync.turnEnded', {}, wslSyncSettings.TURN_TIMEOUT_MS);
   }

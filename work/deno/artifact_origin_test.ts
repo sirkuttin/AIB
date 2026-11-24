@@ -3,7 +3,7 @@
  * port (never 8767/8768), and the same requests sent to Python's artifact_origin serving the same store folder: status, body and
  * headers must match. Plus the Markdown viewer and the scroll script, compared with Python's output for many inputs.
  *
- * Not ported (needs a whole Studio): the Studio token check (the origin never sees it; here a token header is simply sent and
+ * Not ported (needs a whole AIB): AIB token check (the origin never sees it; here a token header is simply sent and
  * ignored), and the auth gate refusing the artifact origin as a page origin (security_test.ts covers Gate).
  */
 import { assert, assertEquals } from './_assert.ts';
@@ -55,10 +55,10 @@ async function raw(port: number, target: string, host: string | null, method = '
 
 const tmp = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-origin-' })).replace(/^\\\\\?\\/, '');
 const store = new ArtifactStore(join(tmp, 'artifacts'));
-// The "Studio port" the origins are told about: held open by this file until teardown (the OS picked it), so it is certainly ours.
-const studioHold = heldPort();
-const studioPort = studioHold.port;
-const origin = OriginServer.start(store.root, studioPort);
+// The "AIB port" the origins are told about: held open by this file until teardown (the OS picked it), so it is certainly ours.
+const aibHold = heldPort();
+const aibPort = aibHold.port;
+const origin = OriginServer.start(store.root, aibPort);
 store.origin = origin.url;
 const MD =
   '# Title\n\n<script>alert(1)</script> **bold** [l](https://example.com) [bad](javascript:alert(1))\n\n- a\n- b\n\n```\n<b>code</b>\n```\n';
@@ -68,10 +68,10 @@ const png = store.create('c1', 'I', 'image', 'i.png', new Uint8Array([0x89, 0x50
 const odd = store.create('c1', 'O', 'text', 'we ird é.txt', enc('odd name'));
 const get = (path: string, host: string | null = `127.0.0.1:${origin.port}`, method = 'GET') => raw(origin.port, path, host, method);
 
-Deno.test('origin: listens on 127.0.0.1, Studio port + 1 when free', () => {
+Deno.test('origin: listens on 127.0.0.1, AIB port + 1 when free', () => {
   assertEquals(origin.url, `http://127.0.0.1:${origin.port}`);
-  assert(origin.port !== studioPort);
-  assert([studioPort + 1, origin.port].includes(origin.port));
+  assert(origin.port !== aibPort);
+  assert([aibPort + 1, origin.port].includes(origin.port));
 });
 
 Deno.test('origin: HTML headers and the exact CSP; the scroll script goes before </body>', async () => {
@@ -86,7 +86,7 @@ Deno.test('origin: HTML headers and the exact CSP; the scroll script goes before
     "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com " +
     `http://127.0.0.1:${origin.port}/_lib/ http://localhost:${origin.port}/_lib/; ` +
     "style-src 'unsafe-inline' https://fonts.googleapis.com; font-src data: https://fonts.gstatic.com; img-src data: blob: 'self'; media-src data: blob: 'self'; " +
-    `connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors http://127.0.0.1:${studioPort} http://localhost:${studioPort}; ` +
+    `connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors http://127.0.0.1:${aibPort} http://localhost:${aibPort}; ` +
     'sandbox allow-scripts allow-forms allow-popups allow-downloads';
   assertEquals(h['content-security-policy'], expected);
   const text = new TextDecoder().decode(body);
@@ -184,7 +184,7 @@ Deno.test('origin: a symlink out of the snapshot is refused', async () => {
 Deno.test('origin: the Host header must name this origin', async () => {
   const i = html.id;
   assertEquals((await get(`/a/${i}/v1/p.html`, `localhost:${origin.port}`)).status, 200);
-  for (const host of ['evil.example', `evil.example:${origin.port}`, '127.0.0.1', `127.0.0.1:${studioPort}`, '', null]) {
+  for (const host of ['evil.example', `evil.example:${origin.port}`, '127.0.0.1', `127.0.0.1:${aibPort}`, '', null]) {
     const reply = await get(`/a/${i}/v1/p.html`, host);
     assertEquals([reply.status, new TextDecoder().decode(reply.body)], [403, 'Forbidden'], String(host));
   }
@@ -197,7 +197,7 @@ Deno.test('origin: GET only', async () => {
   }
 });
 
-Deno.test('origin: the Studio token means nothing here', async () => {
+Deno.test('origin: AIB token means nothing here', async () => {
   const reply = await raw(origin.port, '/api/live/bootstrap', `127.0.0.1:${origin.port}`, 'GET', { 'X-Studio-Token': 'secret-token' });
   assertEquals(reply.status, 404);
   assert(!new TextDecoder().decode(reply.body).includes('secret-token'));
@@ -237,7 +237,7 @@ async function compare(target: string, method = 'GET', host?: (port: number) => 
   // the same type to a browser, and AIB's own table answers text/xml everywhere.
   const type = (k: string, v: string) => (k === 'content-type' && v === 'application/xml' ? 'text/xml' : v);
   const pick = (r: Reply) => Object.fromEntries(COMPARED.filter((k) => k in r.headers).map((k) => [k, type(k, r.headers[k])]));
-  const ports = (text: string | undefined) => text?.replace(/(127\.0\.0\.1|localhost):\d+/g, '$1:PORT'); // the Studio's and the origin's ports differ per run
+  const ports = (text: string | undefined) => text?.replace(/(127\.0\.0\.1|localhost):\d+/g, '$1:PORT'); // AIB's and the origin's ports differ per run
   const seen = (r: Reply, csp: string | undefined) => ({
     status: r.status,
     headers: pick(r),
@@ -482,6 +482,6 @@ Deno.test('libs: CDN URL shapes and versions', () => {
 
 Deno.test('origin teardown', async () => {
   await origin.stop();
-  studioHold.close();
+  aibHold.close();
   Deno.removeSync(tmp, { recursive: true });
 });

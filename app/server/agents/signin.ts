@@ -1,22 +1,22 @@
 /**
- * Sign-in check and Sign in button of the built-in agents, Claude Code and Codex (agent_signin.py). Studio never reads, copies or
- * stores a credential: the agent's own login runs, and Studio only learns "signed in" / "signed out" from the agent's own status command.
+ * Sign-in check and Sign in button of the built-in agents, Claude Code and Codex (agent_signin.py). AIB never reads, copies or
+ * stores a credential: the agent's own login runs, and AIB only learns "signed in" / "signed out" from the agent's own status command.
  *
  *   Status   Claude: `node <entry> --cli auth status --json`. Only whether a login exists is read (`kind`, or `loggedIn` / `apiKeySource` /
  *            `apiProvider`); the email, plan and organisation in the output are ignored. Never a throwaway `session/new`.
  *            Codex: `codex login status` when a Codex CLI can be found (the @openai/codex that ships next to the adapter, a global
  *            npm install, or a native codex.exe / codex on PATH), hidden, with a timeout; ONLY its exit code is used (0 = signed in),
  *            its output is never read. Without a CLI (or when it cannot run): whether <CODEX_HOME or ~/.codex>/auth.json exists,
- *            existence only, never opened. "Not checked" only when neither is possible. (Python still leaves Codex unchecked.)
+ *            existence only, never opened. "Not checked" only when neither is possible.
  *   Cache    <state_dir>/agents/<id>/signin.json {state: ready|signin|unknown, checkedAt}. Settings reads it from disk; it is refreshed
  *            when Settings opens (at most once a minute) and by "Check again", never on every settings poll.
- *   Sign in  A one-off `initialize` (no session) reads the methods the agent advertises. A `terminal` method is run by Studio itself:
+ *   Sign in  A one-off `initialize` (no session) reads the methods the agent advertises. A `terminal` method is run by AIB itself:
  *            the adapter with the method's args, in a visible console window on Windows, waiting for exit code 0. ACP `authenticate`
  *            is NEVER sent for a terminal method. An `agent` method (Codex's `chatgpt`) is the one case where `authenticate` is sent,
  *            on that same one-off process. On macOS / Linux the terminal command is shown instead of started.
  *   Job      <state_dir>/agents/<id>/signin-job.json {state: waiting|failed|done|manual, message, command, pid, updatedAt}.
  *
- * Same files and JSON as the Python module, so a Python agent host and a Deno web server read each other's cache and job.
+ * Same files and JSON in every version, so an agent host and a web server of different versions read each other's cache and job.
  */
 import * as adapters from './adapters.ts';
 import { agentDir, Flag, Mutex, readJson, writeJson } from './installer.ts';
@@ -139,7 +139,7 @@ export function normalizeMethodEnv(raw: unknown): Record<string, string> {
   return out;
 }
 
-/** [{id, name, kind, args}] from initialize.authMethods; methods Studio cannot start (env vars, unknown types) are dropped. */
+/** [{id, name, kind, args}] from initialize.authMethods; methods AIB cannot start (env vars, unknown types) are dropped. */
 export function normalizeMethods(raw: unknown): Method[] {
   const out: Method[] = [];
   for (const item of Array.isArray(raw) ? raw.slice(0, 20) : []) {
@@ -156,13 +156,13 @@ export function normalizeMethods(raw: unknown): Method[] {
       name: clip(pyStr(pyTruthy(item.name) ? item.name : item.id), 80),
       kind,
       args: ok && kind === 'terminal' ? [...args as string[]] : [],
-      ...(Object.keys(env).length ? { env } : {}), // only when advertised: the shape stays the Python reference's otherwise
+      ...(Object.keys(env).length ? { env } : {}), // only when advertised: the shape stays the same otherwise
     });
   }
   return out;
 }
 
-/** The method the Sign in button runs: the agent's usual one when advertised, else the first one Studio can start. */
+/** The method the Sign in button runs: the agent's usual one when advertised, else the first one AIB can start. */
 export function chooseMethod(agentId: string, methods: Method[]): Method | null {
   for (const method of methods) if (method.id === PREFERRED_METHOD[agentId]) return method;
   return methods[0] ?? null;
@@ -458,7 +458,7 @@ export interface SignerOptions {
 }
 
 /**
- * One per process that runs sign-ins (the agent host; the in-process Studio of tests and demos).
+ * One per process that runs sign-ins (the agent host; the in-process AIB of tests and demos).
  * `launch(agentId)` returns {argv, found, problem} like shared.builtinLaunch.
  */
 export class Signer {

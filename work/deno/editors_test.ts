@@ -334,17 +334,17 @@ Deno.test('resolveInside matches Python', async () => {
 
 Deno.test('knownRoots collects every source and survives a host problem', () => {
   using f = new Fixture();
-  const studio = {
+  const aib = {
     liveList: () => ({ connections: [{ cwd: f.project }], recovered: [{ cwd: f.outside }, { cwd: 'relative' }] }),
     conversations: { entries: { 'omp:1': { cwd: f.p('c') } } },
     projectPrefs: { projects: { 'w:c:/repos/app': {}, 'p:/x': {} } },
   };
-  const got = knownRoots(studio);
+  const got = knownRoots(aib);
   for (const want of [f.project, f.outside, f.p('c')]) assert(got.includes(want), want);
   assert(!got.includes('relative'));
   assert(
     knownRoots({
-      ...studio,
+      ...aib,
       liveList: () =>
         (() => {
           throw new Error('host down');

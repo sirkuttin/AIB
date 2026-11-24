@@ -4,7 +4,7 @@
  */
 import { pathOf } from '../../app/server/state/paths.ts';
 import { dirname } from '../../app/server/platform/ospath.ts';
-import type { MergeStudio } from '../../app/server/worktrees/merge.ts';
+import type { MergeHost } from '../../app/server/worktrees/merge.ts';
 import { python, WORK } from './_work.ts';
 import * as wt from '../../app/server/worktrees/worktrees.ts';
 
@@ -121,7 +121,7 @@ export class Sandbox {
 }
 
 /** A studio for Merge: one or more chats with a public state (ready unless set otherwise); records every live call. */
-export class FakeStudio implements MergeStudio {
+export class FakeAib implements MergeHost {
   readonly calls: [string, Record<string, unknown>][] = [];
   readonly states = new Map<string, Record<string, unknown>>();
   answer: [number, unknown] = [200, {}];
@@ -162,7 +162,7 @@ function lockPaths(state: string, project: string, record: Record<string, unknow
   };
 }
 
-/** Another process (work/lock_helper.py, no Studio code) takes the lock on `path` and keeps it until stdin closes. */
+/** Another process (work/lock_helper.py, no AIB code) takes the lock on `path` and keeps it until stdin closes. */
 async function holdOne(path: string): Promise<() => Promise<void>> {
   const child = new Deno.Command(python(), { args: ['-I', LOCK_HELPER, 'hold', path], stdin: 'piped', stdout: 'piped' }).spawn();
   const reader = child.stdout.pipeThrough(new TextDecoderStream()).getReader();

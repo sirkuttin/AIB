@@ -13,22 +13,22 @@ import { assert, assertEquals } from './_assert.ts';
 import { DEVICE_HEADER, REMOTE_ROUTES, ROUTE_SCOPE } from '../../app/server/remote/server.ts';
 import { MAX_EVENT_TEXT } from '../../app/server/remote/saved.ts';
 import { readRemotePort } from '../../app/server/remote/port.ts';
-import { type FakeChat, fakeTailscale, pairPhone, pc, phoneHeaders, raw, type RemoteStudio, remoteStudio } from './_remote_fixture.ts';
+import { type FakeChat, fakeTailscale, pairPhone, pc, phoneHeaders, raw, type RemoteAib, remoteAib } from './_remote_fixture.ts';
 import { serveStatus } from './_remote_fixture.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
 // deno-lint-ignore no-explicit-any
 type Json = Record<string, any>;
 
-async function phoneOn(): Promise<RemoteStudio> {
+async function phoneOn(): Promise<RemoteAib> {
   const fake = fakeTailscale();
-  const s = await remoteStudio({ runner: fake.runner }, undefined, { saved: true });
+  const s = await remoteAib({ runner: fake.runner }, undefined, { saved: true });
   fake.state.serve = serveStatus(readRemotePort(s.state)!);
   assertEquals((await pc(s, 'POST', '/api/live/devices/access', { on: true }))[0], 200);
   return s;
 }
 
-async function get(s: RemoteStudio, token: string, path: string): Promise<{ status: number; text: string; json: Json }> {
+async function get(s: RemoteAib, token: string, path: string): Promise<{ status: number; text: string; json: Json }> {
   const r = await raw(s.phonePort(), 'GET', path, phoneHeaders({ [DEVICE_HEADER]: token }));
   return { status: r.status, text: r.text, json: r.json as Json };
 }

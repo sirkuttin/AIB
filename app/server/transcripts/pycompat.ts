@@ -1,24 +1,24 @@
 /**
- * Python behaviour the transcript viewer (monitor.py) depends on and that core/py.ts does not cover: Python's regex classes
- * (\s, \w, \d are Unicode in Python, ASCII in JS), str.splitlines/title/split, int(), truthiness and `or`, hashing rules,
+ * String and number behaviour the transcript viewer depends on and that core/py.ts does not cover: regex classes
+ * (\s, \w, \d are Unicode here, ASCII in JS), str.splitlines/title/split, int(), truthiness and `or`, hashing rules,
  * json.dumps(indent=2), urllib.parse.parse_qs, base64.b64decode(validate=True) and datetime.fromisoformat().timestamp().
  * Kept beside monitor.ts because only the transcript port needs them.
  */
 import { clip, isDict, PY_SPACE, pyRepr, pyStr, ValueError } from '../core/py.ts';
 
-/** Python's \s as a character-class body (use inside [...] with the u flag). */
+/** \s as a character-class body (use inside [...] with the u flag). */
 export const S = PY_SPACE;
-/** Python's \w (str patterns) as a character-class body; needs the u flag. */
+/** \w (Unicode) as a character-class body; needs the u flag. */
 export const W = '\\p{L}\\p{N}_';
-/** Python's \d (str patterns): Unicode decimal digits. */
+/** \d (Unicode): decimal digits. */
 export const D = '\\p{Nd}';
 
-/** Python's TypeError (a 400 at the HTTP layer, like ValueError). */
+/** TypeError (a 400 at the HTTP layer, like ValueError). */
 export class PyTypeError extends Error {
   override name = 'TypeError';
 }
 
-/** Python's AttributeError: monitor.py does not catch it, so the request fails (the Python server drops the connection). */
+/** AttributeError: the viewer does not catch it, so the request fails. */
 export class PyAttributeError extends Error {
   override name = 'AttributeError';
 }
@@ -33,7 +33,7 @@ export function pyTypeName(value: unknown): string {
   return 'dict';
 }
 
-/** d.get(key, default) on a dict; AttributeError when `d` is not a dict (as in Python). */
+/** d.get(key, default) on a dict; AttributeError when `d` is not a dict. */
 export function get(d: unknown, key: string, fallback: unknown = null): unknown {
   if (!isDict(d)) throw new PyAttributeError(`'${pyTypeName(d)}' object has no attribute 'get'`);
   return Object.hasOwn(d, key) ? d[key] : fallback;
@@ -44,7 +44,7 @@ export function dget(d: Record<string, unknown>, key: string, fallback: unknown 
   return Object.hasOwn(d, key) ? d[key] : fallback;
 }
 
-/** Python truthiness of a JSON value. */
+/** Truthiness of a JSON value. */
 export function truthy(value: unknown): boolean {
   if (value === null || value === undefined || value === false) return false;
   if (typeof value === 'number') return value !== 0;
@@ -54,13 +54,13 @@ export function truthy(value: unknown): boolean {
   return true;
 }
 
-/** Python's `a or b or c`: the first truthy value, else the last. */
+/** `a or b or c`: the first truthy value, else the last. */
 export function or(...values: unknown[]): unknown {
   for (const value of values) if (truthy(value)) return value;
   return values[values.length - 1];
 }
 
-/** A Map key for a value used as a Python dict key or set member (1 == True == 1.0); TypeError when unhashable. */
+/** A Map key for a value used as a dict key or set member (1 == True == 1.0); TypeError when unhashable. */
 export function hkey(value: unknown): string {
   if (value === null || value === undefined) return 'N';
   if (typeof value === 'string') return 's' + value;
@@ -74,7 +74,7 @@ export function isNumber(value: unknown): value is number {
   return typeof value === 'number';
 }
 
-/** str + value: TypeError unless value is a str (Python does not coerce). */
+/** str + value: TypeError unless value is a str. */
 export function concat(left: string, right: unknown): string {
   if (typeof right !== 'string') throw new PyTypeError(`can only concatenate str (not "${pyTypeName(right)}") to str`);
   return left + right;
@@ -86,8 +86,8 @@ export function needStr(value: unknown): string {
   return value;
 }
 
-/** Python's str.splitlines(). */
-// deno-lint-ignore no-control-regex -- Python's line breaks include the \x1c-\x1e separators
+/** str.splitlines(). */
+// deno-lint-ignore no-control-regex -- the line breaks include the \x1c-\x1e separators
 const LINE_BREAK = /\r\n|[\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029]/;
 export function splitlines(text: string): string[] {
   const parts = text.split(LINE_BREAK);
@@ -95,7 +95,7 @@ export function splitlines(text: string): string[] {
   return parts;
 }
 
-/** Python's bytes.splitlines(): breaks at \n, \r and \r\n only. */
+/** bytes.splitlines(): breaks at \n, \r and \r\n only. */
 export function bytesSplitlines(data: Uint8Array): Uint8Array[] {
   const out: Uint8Array[] = [];
   let start = 0;
@@ -112,18 +112,18 @@ export function bytesSplitlines(data: Uint8Array): Uint8Array[] {
 }
 
 const SPACE_RUN = new RegExp(`[${S}]+`, 'u');
-/** Python's str.split() with no argument. */
+/** str.split() with no argument. */
 export function pySplit(text: string): string[] {
   return text.split(SPACE_RUN).filter((part) => part !== '');
 }
 
-/** Python's str.lstrip(). */
+/** str.lstrip(). */
 const LEADING_SPACE = new RegExp(`^[${S}]+`, 'u');
 export function lstrip(text: string): string {
   return text.replace(LEADING_SPACE, '');
 }
 
-/** Python's str.rstrip(chars) for BMP chars. */
+/** str.rstrip(chars) for BMP chars. */
 export function rstrip(text: string, chars: string): string {
   let end = text.length;
   while (end > 0 && chars.includes(text[end - 1])) end--;
@@ -136,7 +136,7 @@ const TITLE_CASE: Record<string, string> = Object.fromEntries(
   [['Ǆǅǆ', 'ǅ'], ['Ǉǈǉ', 'ǈ'], ['Ǌǋǌ', 'ǋ'], ['Ǳǲǳ', 'ǲ']]
     .flatMap(([group, title]) => [...group].map((c) => [c, title])),
 );
-/** Python's str.title() (title case taken as upper case; ß -> Ss). AttributeError for a non-str, as role.title() would raise. */
+/** str.title() (title case taken as upper case; ß -> Ss). AttributeError for a non-str, as role.title() would raise. */
 export function pyTitle(value: unknown): string {
   if (typeof value !== 'string') throw new PyAttributeError(`'${pyTypeName(value)}' object has no attribute 'title'`);
   let out = '';
@@ -153,12 +153,12 @@ export function pyTitle(value: unknown): string {
   return out;
 }
 
-/** Python's str.casefold(), closely enough for a substring search. */
+/** str.casefold(), closely enough for a substring search. */
 export function casefold(value: string): string {
   return value.toUpperCase().toLowerCase();
 }
 
-/** Compare two strings by code point, as Python does (JS < compares UTF-16 units). */
+/** Compare two strings by code point (JS < compares UTF-16 units). */
 export function strCmp(a: string, b: string): number {
   if (a === b) return 0;
   const n = Math.min(a.length, b.length);
@@ -175,7 +175,7 @@ export function strCmp(a: string, b: string): number {
   return a.length - b.length;
 }
 
-/** Python's value-or-truncated-copy with the viewer's note (monitor.clipped). */
+/** The value or a truncated copy with the viewer's note (monitor.clipped). */
 export const CLIP_NOTE = '\n\n[Display shortened; full text remains in the original transcript.]';
 
 function digitValue(ch: string): number {
@@ -186,7 +186,7 @@ function digitValue(ch: string): number {
   return (cp - start) % 10;
 }
 
-/** int(text) for a str, base 10, with Python's error message. */
+/** int(text) for a str, base 10, with a fixed error message. */
 export function pyInt(text: string): number {
   const stripped = text.replace(new RegExp(`^[${S}]+|[${S}]+$`, 'gu'), '');
   const m = /^([+-]?)(\p{Nd}+(?:_\p{Nd}+)*)$/u.exec(stripped);
@@ -196,14 +196,14 @@ export function pyInt(text: string): number {
   return m[1] === '-' ? -value : value;
 }
 
-/** int(d) for the digits a Python \d+ group matched. */
+/** int(d) for the digits a \d+ group matched. */
 export function digitsInt(text: string): number {
   let value = 0;
   for (const ch of text) value = value * 10 + digitValue(ch);
   return value;
 }
 
-/** json.dumps(value, ensure_ascii=False, indent=2). Numbers print as Python prints them (whole numbers as ints). */
+/** json.dumps(value, ensure_ascii=False, indent=2). Whole numbers print as ints. */
 export function dumpsIndent2(value: unknown, level = 0): string {
   if (value === null || value === undefined) return 'null';
   if (value === true) return 'true';
@@ -232,7 +232,7 @@ export function clipped(value: unknown, limit = 32000): string {
   return cut.length === text.length ? text : cut + CLIP_NOTE;
 }
 
-/** str(value) as Python prints it. */
+/** str(value). */
 export { pyStr };
 
 // ---- urllib.parse.parse_qs ------------------------------------------------------------------
@@ -275,7 +275,7 @@ export function parseQs(query: string): Map<string, string[]> {
   return out;
 }
 
-// ---- base64.b64decode(data, validate=True) (Python 3.11 strict mode) ------------------------
+// ---- base64.b64decode(data, validate=True) ------------------------
 
 const B64 = (() => {
   const table = new Int16Array(256).fill(-1);
@@ -284,7 +284,7 @@ const B64 = (() => {
   return table;
 })();
 
-/** The bytes, or a ValueError with Python's message (binascii.Error is a ValueError). */
+/** The bytes, or a ValueError (binascii.Error is a ValueError). */
 export function b64decodeStrict(text: string): Uint8Array {
   for (let i = 0; i < text.length; i++) {
     if (text.charCodeAt(i) > 127) throw new ValueError('string argument should contain only ASCII characters');
@@ -343,7 +343,7 @@ export function b64decodeStrict(text: string): Uint8Array {
   return out.slice(0, o);
 }
 
-// ---- datetime.fromisoformat(text).timestamp() (CPython 3.11 C implementation) ---------------
+// ---- datetime.fromisoformat(text).timestamp() ---------------
 
 function daysFromCivil(y: number, m: number, d: number): number {
   y -= m <= 2 ? 1 : 0;
@@ -489,7 +489,7 @@ function invalid(text: string): never {
   throw new ValueError(`Invalid isoformat string: ${pyRepr(text)}`);
 }
 
-/** datetime.fromisoformat(text).timestamp(): aware times are exact, naive ones are read as local time. ValueError as Python. */
+/** datetime.fromisoformat(text).timestamp(): aware times are exact, naive ones are read as local time. ValueError. */
 export function isoTimestamp(text: string): number {
   const bytes = new TextEncoder().encode(text);
   const s = new Bytes(bytes);
@@ -545,7 +545,7 @@ export function isoTimestamp(text: string): number {
   return Math.floor(local.getTime() / 1000) + us / 1e6;
 }
 
-/** True for Deno's file-system errors (Python's OSError family). */
+/** True for Deno's file-system errors. */
 export function isOSError(error: unknown): boolean {
   return Object.values(Deno.errors).some((kind) => error instanceof kind);
 }

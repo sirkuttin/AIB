@@ -30,28 +30,28 @@ class Lab {
   readonly dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-history-2a-' }));
   readonly state = this.dir + SEP + 'state';
   readonly work = this.dir + SEP + 'work';
-  readonly studios: Aib[] = [];
+  readonly aibs: Aib[] = [];
   constructor(readonly keeperArgs: string[] = []) {
     Deno.mkdirSync(this.work, { recursive: true });
   }
   get historyDir(): string {
     return this.state + SEP + 'history';
   }
-  studio(): Aib {
+  aib(): Aib {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s', ...this.keeperArgs] });
-    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper, keeperForNew: true });
-    studio.ownerProbe = () => null;
-    studio.connectionFactory = (_command, cwd, provider, options) => new Connection(fake('--cancel-aware'), cwd, provider, options ?? {});
-    this.studios.push(studio);
-    return studio;
+    const aib = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper, keeperForNew: true });
+    aib.ownerProbe = () => null;
+    aib.connectionFactory = (_command, cwd, provider, options) => new Connection(fake('--cancel-aware'), cwd, provider, options ?? {});
+    this.aibs.push(aib);
+    return aib;
   }
   /** The AIB stops without a word (its chats keep running in the keeper). */
-  async crash(studio: Aib, keepStores = false): Promise<void> {
-    studio.keeper!.disconnect();
-    for (const c of studio.connections.values()) c.sessionLease?.release();
-    studio.reconnectStop.set();
+  async crash(aib: Aib, keepStores = false): Promise<void> {
+    aib.keeper!.disconnect();
+    for (const c of aib.connections.values()) c.sessionLease?.release();
+    aib.reconnectStop.set();
     // a crashed host's files are closed by the OS (Windows cannot delete a file a live handle holds)
-    if (!keepStores) await studio.historyClient()?.shutdown().catch(() => {});
+    if (!keepStores) await aib.historyClient()?.shutdown().catch(() => {});
   }
   /** Open the chat's store read-only-ish (a separate handle; never claims). */
   peek(id: string): { last: number | null; first: number | null; ckpt: { sequence: number; record: number } | null } {
@@ -60,7 +60,7 @@ class Lab {
     return { last: info.last, first: info.first, ckpt: info.ckpt };
   }
   async [Symbol.asyncDispose](): Promise<void> {
-    for (const s of this.studios.reverse()) await s.close().catch(() => {});
+    for (const s of this.aibs.reverse()) await s.close().catch(() => {});
     const info = readKeeperInfo(this.state);
     if (info && pidAlive(info.pid)) {
       try {
@@ -86,20 +86,20 @@ const shape = (events: Json[]) => events.map((e) => JSON.stringify([e.seq, e.kin
 const replayShape = (events: Json[]) =>
   events.map((e) => JSON.stringify([e.seq, e.kind, e.kind === 'permission' ? { ...(e.data as Json), key: '' } : e.data]));
 
-async function turn(studio: Aib, c: Connection, n: number, messageId: string): Promise<void> {
-  assertEquals((await studio.liveCall('prompt', { id: c.id, text: `stream:${n}:10`, clientMessageId: messageId }))[0], 200);
+async function turn(aib: Aib, c: Connection, n: number, messageId: string): Promise<void> {
+  assertEquals((await aib.liveCall('prompt', { id: c.id, text: `stream:${n}:10`, clientMessageId: messageId }))[0], 200);
   await until(() => c.permissions.size === 1, `the question of ${messageId}`, 10);
-  assertEquals((await studio.liveCall('permission', { id: c.id, key: [...c.permissions.keys()][0], option: 'yes' }))[0], 200);
+  assertEquals((await aib.liveCall('permission', { id: c.id, key: [...c.permissions.keys()][0], option: 'yes' }))[0], 200);
   await until(() => !c.busy, `the end of ${messageId}`, 10);
 }
 
-async function adopted(lab: Lab, id: string): Promise<{ studio: Aib; r: Connection }> {
-  const studio = lab.studio();
-  assertEquals(await studio.adoptKeeper(), 1);
-  const r = studio.connections.get(id)!;
+async function adopted(lab: Lab, id: string): Promise<{ aib: Aib; r: Connection }> {
+  const aib = lab.aib();
+  assertEquals(await aib.adoptKeeper(), 1);
+  const r = aib.connections.get(id)!;
   await until(() => r.historyState === 'claimed' || r.historyState === 'dead', 'the store claimed', 10);
   await r.historySettled();
-  return { studio, r };
+  return { aib, r };
 }
 
 function withV2Off<T>(fn: () => Promise<T>): Promise<T> {
@@ -113,7 +113,7 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new Lab();
-    const a = lab.studio();
+    const a = lab.aib();
     const c = await a.connect('claude', lab.work);
     await turn(a, c, 4, 'm1');
     await turn(a, c, 4, 'm2');
@@ -123,7 +123,7 @@ Deno.test({
     const before = shape(c.events);
     const ckpt = c.historyCkpt!;
     await lab.crash(a);
-    const { studio: b, r } = await adopted(lab, c.id);
+    const { aib: b, r } = await adopted(lab, c.id);
     assertEquals(r.rebuildError, '');
     assertEquals(r.attachedFrom, ckpt.record + 1, 'attached from the checkpoint, not from 0');
     assert(r.replayedRecords <= 3, `only records after the checkpoint were replayed (${r.replayedRecords})`);
@@ -152,7 +152,7 @@ for (const step of ['flush', 'note', 'commit'] as const) {
     async fn() {
       await keeperBinary();
       await using lab = new Lab();
-      const a = lab.studio();
+      const a = lab.aib();
       const c = await a.connect('claude', lab.work);
       await turn(a, c, 3, 'm1');
       await until(() => c.historyCkpt !== null && !c.busy, 'a first checkpoint', 10);
@@ -188,7 +188,7 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new Lab();
-    const a = lab.studio();
+    const a = lab.aib();
     const c = await a.connect('claude', lab.work);
     await turn(a, c, 2, 'm1');
     await until(() => c.historyCkpt !== null && !c.busy, 'a checkpoint', 10);
@@ -210,7 +210,7 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new Lab();
-    const a = lab.studio();
+    const a = lab.aib();
     const c = await a.connect('claude', lab.work);
     await turn(a, c, 3, 'm1');
     await until(() => c.historyCkpt !== null && !c.busy, 'a checkpoint', 10);
@@ -219,7 +219,7 @@ Deno.test({
     // the older build (no store code at all; this build with the switch off would keep the chat's store: see the next test):
     // opens the chat without its older history, writes chunked snapshots
     const old = await withV2Off(async () => {
-      const b = lab.studio();
+      const b = lab.aib();
       b.historyClient = () => null;
       assertEquals(await b.adoptKeeper(), 1);
       const r = b.connections.get(c.id)!;
@@ -248,7 +248,7 @@ Deno.test({
     await keeperBinary();
     await using lab = new Lab();
     // A store-on build: two turns, a checkpoint (chunk-less sv:2 note), the journal truncated before it.
-    const a = lab.studio();
+    const a = lab.aib();
     const c = await a.connect('claude', lab.work);
     await turn(a, c, 4, 'm1');
     await turn(a, c, 4, 'm2');
@@ -260,7 +260,7 @@ Deno.test({
     await lab.crash(a);
     // The next build has the switch off (AIB_HISTORY_V2=0, or a default-off build).
     await withV2Off(async () => {
-      const b = lab.studio();
+      const b = lab.aib();
       assertEquals(b.historyClient(), null, 'a new chat gets no store with the switch off');
       assertEquals(await b.adoptKeeper(), 1);
       const r = b.connections.get(c.id)!;
@@ -287,7 +287,7 @@ Deno.test({
     await keeperBinary();
     await using lab = new Lab();
     const { a, c } = await withV2Off(async () => {
-      const a = lab.studio();
+      const a = lab.aib();
       const c = await a.connect('claude', lab.work);
       await turn(a, c, 3, 'm1');
       await until(() => c.snapshots >= 1 && c.snapshotChunkBytes + c.snapshotBytes > 0, 'a chunked snapshot', 10);
@@ -296,7 +296,7 @@ Deno.test({
     assertEquals(c.historyState, 'off');
     const before = shape(c.events);
     await lab.crash(a);
-    const { studio: b, r } = await adopted(lab, c.id);
+    const { aib: b, r } = await adopted(lab, c.id);
     assertEquals(shape(r.events), before);
     assertEquals(lab.peek(c.id).last, r.sequence, 'the store was built from the rebuilt events');
     await turn(b, r, 2, 'm2');
@@ -311,7 +311,7 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new Lab();
-    const a = lab.studio();
+    const a = lab.aib();
     const c = await a.connect('claude', lab.work);
     await turn(a, c, 2, 'm1');
     await until(() => c.historyCkpt !== null && !c.busy, 'a checkpoint', 10);

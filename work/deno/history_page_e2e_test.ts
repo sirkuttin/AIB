@@ -1,5 +1,5 @@
 /**
- * History loading phase 2B (the page's data path), end to end: a real Studio (Deno web server + in-process agent host, temp state
+ * History loading phase 2B (the page's data path), end to end: a real AIB (Deno web server + in-process agent host, temp state
  * folder, free port; never 8767/8768/8777/8778), the scripted agent work/scroll-fixture/agent.py, and a headless Chrome/Edge on
  * chat.html (no window). The page's requests are recorded (a fetch wrapper: URL, response size, and the events of
  * /api/live/events pages), so the gates are bytes and request counts; the scroll checks are frame by frame (_scroll_lab.ts).

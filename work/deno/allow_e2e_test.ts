@@ -1,5 +1,5 @@
 /**
- * Allow rules end to end (server/allow, host Studio, keeper, fake ACP agent): a safe read is answered by AIB with the agent's
+ * Allow rules end to end (server/allow, host AIB, keeper, fake ACP agent): a safe read is answered by AIB with the agent's
  * allow-once and a "permission_auto" line; a card offers AIB's Always choice (the agent's own always hidden, decision 2a); answer +
  * rule in one call; the next matching request is answered by the rule; a floor item is greyed out; a rebuilt chat (keeper replay)
  * shows the same lines and never answers again. Real keeper (built from keeper/ with Go), temp state folder.
@@ -21,33 +21,33 @@ class AllowLab {
   readonly state = this.dir + SEP + 'state';
   readonly work = this.dir + SEP + 'work';
   readonly agentLog = this.dir + SEP + 'agent-received.log';
-  readonly studios: Aib[] = [];
+  readonly aibs: Aib[] = [];
 
   constructor() {
     Deno.mkdirSync(this.work + SEP + 'src', { recursive: true });
     Deno.writeTextFileSync(this.work + SEP + 'src' + SEP + 'a.js', 'x\n');
   }
 
-  studio(unique = false): Aib {
+  aib(unique = false): Aib {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
-    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper });
-    studio.ownerProbe = () => null;
-    studio.connectionFactory = (_command, cwd, provider, options) =>
+    const aib = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper });
+    aib.ownerProbe = () => null;
+    aib.connectionFactory = (_command, cwd, provider, options) =>
       new Connection(
         unique ? [PYTHON, FAKE.replace(/fake_acp\.py$/, 'fake_acp_unique.py'), '--cancel-aware'] : fake('--cancel-aware'),
         cwd,
         provider,
         { ...options, env: { FAKE_ACP_LOG: this.agentLog } },
       );
-    this.studios.push(studio);
-    return studio;
+    this.aibs.push(aib);
+    return aib;
   }
 
-  crash(studio: Aib): void {
-    studio.keeper!.disconnect();
-    for (const c of studio.connections.values()) c.sessionLease?.release();
-    studio.reconnectStop.set();
-    this.studios.splice(this.studios.indexOf(studio), 1);
+  crash(aib: Aib): void {
+    aib.keeper!.disconnect();
+    for (const c of aib.connections.values()) c.sessionLease?.release();
+    aib.reconnectStop.set();
+    this.aibs.splice(this.aibs.indexOf(aib), 1);
   }
 
   received(): Json[] {
@@ -59,7 +59,7 @@ class AllowLab {
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
-    for (const s of this.studios.reverse()) await s.close().catch(() => {});
+    for (const s of this.aibs.reverse()) await s.close().catch(() => {});
     const info = readKeeperInfo(this.state);
     if (info && pidAlive(info.pid)) {
       try {
@@ -96,7 +96,7 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new AllowLab();
-    const a = lab.studio();
+    const a = lab.aib();
     const c = await a.connect('claude', lab.work);
     assert(c.scratchDir && !c.scratchDir.startsWith(lab.work), 'scratch folder outside the chat folder');
 
@@ -145,7 +145,7 @@ Deno.test({
     // 5. Keeper replay on a new Aib: the same lines and events, and no request is answered twice.
     lab.crash(a);
     await pause(300);
-    const b = lab.studio();
+    const b = lab.aib();
     assertEquals(await b.adoptKeeper(), 1);
     const r = b.connections.get(c.id)!;
     assert(r && r.ready && r.rebuildError === '', 'rebuilt');
@@ -164,7 +164,7 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new AllowLab();
-    const a = lab.studio();
+    const a = lab.aib();
     const c = await a.connect('claude', lab.work);
     const file = lab.state + SEP + 'allow-rules.json';
     await a.liveCall('allow-enable', { on: true });
@@ -192,7 +192,7 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new AllowLab();
-    const a = lab.studio(true);
+    const a = lab.aib(true);
     a.settings.worktreePerChat = () => false;
     const c1 = await a.connect('claude', lab.work);
     const c2 = await a.connect('claude', lab.work);
@@ -227,7 +227,7 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new AllowLab();
-    const a = lab.studio();
+    const a = lab.aib();
     const c = await a.connect('claude', lab.work);
     const tag = (command: string, call = 't1') => `export AIB_PROC='${c.id}.agent7.${call}'; ${command}`;
 

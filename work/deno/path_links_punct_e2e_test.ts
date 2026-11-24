@@ -1,5 +1,5 @@
 /**
- * Paths in a reply next to sentence punctuation, and outside paths the agent streamed in pieces, end to end: a real Studio (Deno web
+ * Paths in a reply next to sentence punctuation, and outside paths the agent streamed in pieces, end to end: a real AIB (Deno web
  * server + in-process agent host, temp state folder, free port; never the live ports), the scripted agent, and a headless
  * Chrome/Edge on chat.html (no window).
  *

@@ -1,5 +1,5 @@
 /**
- * Where restart and request time goes (server/core/timing.ts): the per-chat take-over timing line Studio logs for each chat it
+ * Where restart and request time goes (server/core/timing.ts): the per-chat take-over timing line AIB logs for each chat it
  * takes over from the keeper (phases and total), and the slow-request line for any HTTP request of 1 s or more (path only).
  */
 import { assert, assertEquals } from './_assert.ts';
@@ -91,7 +91,7 @@ Deno.test('slow requests: 1 s or more is logged with its path only (never the qu
 });
 
 Deno.test({
-  name: 'take-over timing: Studio logs one line per chat it takes over from the keeper, every phase and the total',
+  name: 'take-over timing: AIB logs one line per chat it takes over from the keeper, every phase and the total',
   sanitizeResources: false,
   sanitizeOps: false,
   async fn() {
@@ -100,28 +100,28 @@ Deno.test({
     const state = dir + SEP + 'state';
     const work = dir + SEP + 'work';
     Deno.mkdirSync(work, { recursive: true });
-    const studios: Aib[] = [];
-    const studio = () => {
+    const aibs: Aib[] = [];
+    const aib = () => {
       const keeper = new KeeperLink({ dataDir: state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
       const s = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: state, port: 0, ownersDir: null }, { keeper });
       s.ownerProbe = () => null;
       s.connectionFactory = (_command, cwd, provider, options) =>
         new Connection(fake('--cancel-aware'), cwd, provider, { ...options, env: { FAKE_ACP_LOG: dir + SEP + 'agent.log' } });
-      studios.push(s);
+      aibs.push(s);
       return s;
     };
     const log = capture();
     try {
-      const a = studio();
+      const a = aib();
       const c = await a.connect('claude', work);
       // A crash: the keeper connection goes, the agent and its record stay.
       a.keeper!.disconnect();
       for (const conn of a.connections.values()) conn.sessionLease?.release();
       a.reconnectStop.set();
-      studios.splice(studios.indexOf(a), 1);
+      aibs.splice(aibs.indexOf(a), 1);
       await pause(200);
 
-      const b = studio();
+      const b = aib();
       assertEquals(await b.adoptKeeper(), 1);
       const lines = log.lines.filter((l) => l.includes('keeper: take-over timing'));
       assertEquals(lines.length, 1, log.lines.join('\n'));
@@ -135,7 +135,7 @@ Deno.test({
       assert(/, total \d+ ms$/.test(line), line);
     } finally {
       log.stop();
-      for (const s of studios.reverse()) await s.close().catch(() => {});
+      for (const s of aibs.reverse()) await s.close().catch(() => {});
       const info = readKeeperInfo(state);
       if (info && pidAlive(info.pid)) {
         try {

@@ -10,7 +10,7 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { pc } from './_remote_fixture.ts';
-import { liveChat, v2Studio } from './_remote_v2b.ts';
+import { liveChat, v2Aib } from './_remote_v2b.ts';
 import { DesktopNotifications, type NotifyTarget, type OsNotify } from '../../app/server/desktop/notify.ts';
 import { type SpawnToastHelper, toastTag } from '../../app/server/desktop/toast.ts';
 import { startWindowsToasts } from '../../app/server/desktop/toast_act.ts';
@@ -42,7 +42,7 @@ Deno.test({
   ...OPTS,
   name: 'inbox v3.1 phase 4: Allow on a toast approves an ordinary request; a risky one is refused; answered toasts go',
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     const dir = await Deno.makeTempDir({ prefix: 'aib-toast-e2e-' });
     let stop = () => {};
     try {

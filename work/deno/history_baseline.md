@@ -40,7 +40,7 @@ The biggest chats, as medians of 3 runs. Times are in ms. "Replay" is the raw re
 
 The keeper streams at about 200-240 MB/s over its local socket.
 
-**Take-over replica** (`history_keeper_read.ts --takeover`): Studio's loop, run one chat after another through the real keeper and
+**Take-over replica** (`history_keeper_read.ts --takeover`): AIB's loop, run one chat after another through the real keeper and
 `KeeperLink.adopt`. Every copied channel had ended, so all 30 were rebuilt, against 14 live ones at a real start.
 
 - this lead chat: firstNote 569 ms + rebuild 552 ms = **1.12 s**

@@ -1,5 +1,5 @@
 /**
- * server/agents/adapters.ts: the cases of work/test_adapters.py and test_studio_install_lookup.py that need no whole Studio, plus
+ * server/agents/adapters.ts: the cases of work/test_adapters.py and test_studio_install_lookup.py that need no whole AIB, plus
  * parity with adapters.py on the same temp fixtures. No real npm folder or machine install decides a result.
  */
 import { assert, assertEquals } from './_assert.ts';
@@ -192,7 +192,7 @@ Deno.test('initEnvironment merges into the given environment', async () => {
   assertEquals(env2.PATH, '/usr/bin', 'a failed shell leaves PATH alone');
 });
 
-// ---- Studio's own installs (test_studio_install_lookup.StudioInstallLookup) ----------------------------------------------
+// ---- AIB's own installs (test_studio_install_lookup.StudioInstallLookup) ----------------------------------------------
 
 Deno.test('a complete install is found and run with node', async () => {
   using f = fixture();
@@ -223,12 +223,12 @@ Deno.test('the newest complete version wins by number, not by text', () => {
   using f = fixture();
   for (const version of ['0.9.0', '0.10.0', '0.2.0']) makeInstall(f.state, 'claude', version, CLAUDE);
   makeInstall(f.state, 'claude', '0.11.0-preview.1', CLAUDE);
-  assertEquals(adapters.findStudioInstall('claude', f.state)!.version, '0.11.0-preview.1');
+  assertEquals(adapters.findAibInstall('claude', f.state)!.version, '0.11.0-preview.1');
   makeInstall(f.state, 'claude', '0.11.0', CLAUDE);
-  assertEquals(adapters.findStudioInstall('claude', f.state)!.version, '0.11.0', 'a release beats its own prerelease');
+  assertEquals(adapters.findAibInstall('claude', f.state)!.version, '0.11.0', 'a release beats its own prerelease');
 });
 
-Deno.test('order: flag, then Settings, then Studio, then global, then missing', async () => {
+Deno.test('order: flag, then Settings, then AIB, then global, then missing', async () => {
   using f = fixture();
   const flag = touch(join(f.root, 'flag.js'), '//');
   const saved = touch(join(f.root, 'saved.js'), '//');
@@ -259,7 +259,7 @@ Deno.test('Codex order and both package names', async () => {
 Deno.test('the entry comes from the bin field', () => {
   using f = fixture();
   makeInstall(f.state, 'claude', '0.102.0', CLAUDE, { bin: { 'claude-agent-acp': 'lib/start.js' }, files: ['lib/start.js'] });
-  assert(adapters.findStudioInstall('claude', f.state)!.entry.replaceAll('\\', '/').endsWith('claude-agent-acp/lib/start.js'));
+  assert(adapters.findAibInstall('claude', f.state)!.entry.replaceAll('\\', '/').endsWith('claude-agent-acp/lib/start.js'));
 });
 
 Deno.test('a bin that escapes the version folder is refused', async () => {
@@ -271,7 +271,7 @@ Deno.test('a bin that escapes the version folder is refused', async () => {
   try {
     for (const hostile of ['../../../../../../outside.js', secret, { 'claude-agent-acp': '../../../../../../outside.js' }]) {
       const [folder] = makeInstall(f.state, 'claude', '9.9.9', CLAUDE, { bin: hostile, files: [] });
-      assertEquals(adapters.findStudioInstall('claude', f.state), null, JSON.stringify(hostile));
+      assertEquals(adapters.findAibInstall('claude', f.state), null, JSON.stringify(hostile));
       assertEquals((await claude('', '', PY, f.state)).source, 'missing');
       Deno.removeSync(folder, { recursive: true });
     }
@@ -283,17 +283,17 @@ Deno.test('a bin that escapes the version folder is refused', async () => {
 Deno.test('a missing entry file or package.json is not found', () => {
   using f = fixture();
   makeInstall(f.state, 'claude', '0.1.0', CLAUDE, { files: [] });
-  assertEquals(adapters.findStudioInstall('claude', f.state), null);
+  assertEquals(adapters.findAibInstall('claude', f.state), null);
   const folder = join(f.state, 'agents', 'claude', '0.2.0');
   Deno.mkdirSync(folder, { recursive: true });
   Deno.writeTextFileSync(join(folder, adapters.COMPLETE_MARKER), 'ok');
-  assertEquals(adapters.findStudioInstall('claude', f.state), null);
+  assertEquals(adapters.findAibInstall('claude', f.state), null);
 });
 
-Deno.test('no state dir means no Studio lookup', () => {
+Deno.test('no state dir means no AIB lookup', () => {
   using f = fixture();
-  assertEquals(adapters.findStudioInstall('claude', null), null);
-  assertEquals(adapters.findStudioInstall('omp', f.state), null);
+  assertEquals(adapters.findAibInstall('claude', null), null);
+  assertEquals(adapters.findAibInstall('omp', f.state), null);
 });
 
 Deno.test('Node.js missing is a problem, not a crash', async () => {

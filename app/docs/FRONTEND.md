@@ -1,4 +1,4 @@
-# Agent Studio page code
+# AIB page code
 
 The page (`chat.html`) is plain JavaScript and CSS served as they are. There is **no build step and none may be added**: no bundler, no transpiler, no TypeScript. Every `.js` file next to `chat.html` is a classic script; `chat.html` loads them with `defer`, which runs them in the order they appear in the file. That order is the dependency order, and it is the table below.
 
@@ -21,7 +21,7 @@ The page (`chat.html`) is plain JavaScript and CSS served as they are. There is 
 | 3 | `editors-ui.js` | `AgentEditors` | "Open in editor": which editors the PC has, the default one, and the menu items that open a folder or a file at a line. |
 | 4 | `copy-ui.js` | `CopyUI` | Copy buttons for each message and code block (Markdown, rich HTML, plain text). |
 | 5 | `stream-ui.js` | `StreamUI` | Message-stream helpers: turn-end divider, collapsed cards for injected text, row windowing for the main list and split side panes, the cheap **change signature** (`rowsSignature`) and the logic for **screen-reader announcements** (`newTurns`). |
-| 6 | `unknown-send.js` | `UnknownSend` | The quiet warning under a message whose delivery is unknown after a Studio restart. |
+| 6 | `unknown-send.js` | `UnknownSend` | The quiet warning under a message whose delivery is unknown after an AIB restart. |
 | 7 | `image-viewer.js` | `ImageViewer` | Lightbox for pictures already on the page. |
 | 8 | `attachments-ui.js` | `AttachmentsUI` | Composer attachments: limits, capability checks, drag and drop, retry fingerprints, file cards. |
 | 9 | `commands-ui.js` | `AgentSlashCommands` | Slash-command completion in the message box. |

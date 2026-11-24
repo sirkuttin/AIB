@@ -25,7 +25,7 @@ import { type HelperMethods, WslHelperError, type WslHost } from '../../app/serv
 import { APP_ROOT } from '../../app/server/core/app.ts';
 
 const T = { sanitizeOps: false, sanitizeResources: false }; // install jobs run in the background between awaits
-const ALLOW = JSON.parse(Deno.readTextFileSync(`${APP_ROOT}/agent_versions.json`)).agents;
+const ALLOW = JSON.parse(Deno.readTextFileSync(`${APP_ROOT}/agents/versions.json`)).agents;
 const LOCK = (id: string) => Deno.readTextFileSync(`${APP_ROOT}/${ALLOW[id].lockfile}`);
 const params = (id = 'claude') => ({ agent: id, entry: { package: ALLOW[id].package, version: ALLOW[id].version }, lock: LOCK(id) });
 

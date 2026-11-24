@@ -1,5 +1,5 @@
 /** Capture helpers for the AIB site screenshots: headless Chrome over DevTools (the repo's _doc_browser harness).
- * Run with AIB_PAGE_KEY set to the demo Studio's launch key (<demo>/page-key.txt, work/demo-studio/start.py): the page gets its
+ * Run with AIB_PAGE_KEY set to the demo AIB's launch key (<demo>/page-key.txt, work/demo-studio/start.py): the page gets its
  * token only with it (server/web/page_access.ts), and Page.goto puts it in the link. */
 import { Browser, Page, sleep } from '../deno/_doc_browser.ts';
 export { Browser, Page, sleep };

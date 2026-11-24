@@ -276,7 +276,7 @@ Deno.test('prepare: a worktree keeps its own folder, an explicit folder is used 
   const chosen = pathOf(tmp.root, 'chosen');
   const explicit = await prepare({ cliStateDir: chosen, env, codeRoot: main });
   assertEquals(explicit.stateDir, chosen);
-  assert(!exists(chosen), 'a --state-dir that does not exist yet is left for Studio to create');
+  assert(!exists(chosen), 'a --state-dir that does not exist yet is left for AIB to create');
   assert(!exists(pathOf(tmp.root, 'local')));
   for (const [cli, code] of [[null, wt], [chosen, main]] as const) {
     const mine = await prepare({ cliStateDir: cli, env, codeRoot: code });

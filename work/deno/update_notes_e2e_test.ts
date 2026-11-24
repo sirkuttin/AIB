@@ -1,5 +1,5 @@
 /**
- * The Update button and "What's new in AIB <version>", end to end: a real Studio server (source run, own temp data folder, a port the
+ * The Update button and "What's new in AIB <version>", end to end: a real AIB server (source run, own temp data folder, a port the
  * OS picked) and headless Chrome/Edge; a local fake GitHub releases API (AIB_UPDATE_API_BASE) serves several releases with notes.
  * No real update runs: the version change is the updater's test hook AIB_UPDATE_CURRENT (honoured only with a fake release server).
  *

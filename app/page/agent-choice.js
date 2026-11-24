@@ -14,7 +14,7 @@
   const BETA_GROUP = 'Beta';
   const SERVER_GROUP = 'Model servers'; // entries built from a model server (Settings > Model servers)
   const isBeta = (id) => BETA_IDS.includes(id);
-  // AGENTS: the agents a new chat can use (enabled ones). ALL: every agent Studio knows, including ones turned off in Settings,
+  // AGENTS: the agents a new chat can use (enabled ones). ALL: every agent AIB knows, including ones turned off in Settings,
   // so existing chats still show the right name. Both are updated IN PLACE by setRegistry, so other modules can hold them.
   const AGENTS = BUILTINS.map((a) => Object.assign({}, a));
   const ALL = BUILTINS.map((a) => Object.assign({}, a));

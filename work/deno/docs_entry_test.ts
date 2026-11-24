@@ -13,7 +13,7 @@ import type { Source } from '../../app/server/transcripts/monitor.ts';
 type Json = Record<string, unknown>;
 const sep = Deno.build.os === 'windows' ? '\\' : '/';
 
-async function studio() {
+async function aib() {
   const root = Deno.realPathSync(await Deno.makeTempDir({ prefix: 'aib-entry-' })).replace(/^\\\\\?\\/, '');
   const project = `${root}${sep}project`, state = `${root}${sep}state`;
   await Deno.mkdir(`${project}${sep}docs`, { recursive: true });
@@ -58,7 +58,7 @@ async function studio() {
 }
 
 Deno.test('docs/list: one entry per doc in aib-docs/ with its owned paths, page ids, linked chat and last edit; docs/ is never touched', async () => {
-  const s = await studio();
+  const s = await aib();
   try {
     await Deno.mkdir(`${s.project}${sep}docs`, { recursive: true });
     await Deno.writeTextFile(`${s.project}${sep}docs${sep}README.md`, '# Read me\n');
@@ -86,7 +86,7 @@ Deno.test('docs/list: one entry per doc in aib-docs/ with its owned paths, page 
 });
 
 Deno.test('docs/list: opening the doc from chat B leaves it linked to chat A; a renamed page keeps its id', async () => {
-  const s = await studio();
+  const s = await aib();
   try {
     const [, made] = await s.call('POST /api/live/docs/open', { id: 'claude:a', name: 'Plan', create: '' });
     await s.call('POST /api/live/docs/open', { id: 'claude:b', name: 'plan' });

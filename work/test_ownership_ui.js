@@ -237,7 +237,7 @@ test('header hint says "unknown", not the no-evidence text, when the check could
   ui.renderHint(hint, conversation, false, evidence, 'unknown');
   assert.match(hint.textContent, /^May be active in another app\. Transcript was written 40 seconds ago/);
   assert.equal(hint.attrs['data-verdict'], 'possibly_active');
-  // Still hidden for a conversation this Studio is running, and dismissing "unknown" does not hide a later verdict.
+  // Still hidden for a conversation this AIB is running, and dismissing "unknown" does not hide a later verdict.
   ui.renderHint(hint, conversation, true, undefined, 'unknown');
   assert.equal(hint.hidden, true);
   ui.renderHint(hint, conversation, false, undefined, 'unknown');

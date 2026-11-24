@@ -5,10 +5,10 @@
  */
 import { advapi32, kernel32, wide } from './win32.ts';
 
-/** [sid, aceType, mask, flags] for one ACE, as Python's (sid_string, ace_type, mask, flags). */
+/** [sid, aceType, mask, flags] for one ACE, as (sid_string, ace_type, mask, flags). */
 export type AceEntry = [string, number, number, number];
 
-/** OSError(code, message): str() is '[Errno code] message', which is what Python shows. */
+/** OSError(code, message): str() is '[Errno code] message', which is what the page shows. */
 export class WinApiError extends Error {
   constructor(readonly code: number | null, detail: string) {
     super(code === null ? detail : `[Errno ${code}] ${detail}`);

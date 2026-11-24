@@ -17,7 +17,7 @@ import { assert, assertEquals } from './_assert.ts';
 import { Browser, browserPath, type Page } from './_doc_browser.ts';
 import { until } from './_host_fixture.ts';
 import { readRemotePort } from '../../app/server/remote/port.ts';
-import { fakeTailscale, nonce, pairPhone, pc, phoneHeaders, raw, remoteStudio, serveStatus } from './_remote_fixture.ts';
+import { fakeTailscale, nonce, pairPhone, pc, phoneHeaders, raw, remoteAib, serveStatus } from './_remote_fixture.ts';
 
 type Json = Record<string, unknown>;
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
@@ -37,7 +37,7 @@ Deno.test({
   ignore: !browserPath,
   async fn() {
     const fake = fakeTailscale();
-    const s = await remoteStudio({ runner: fake.runner });
+    const s = await remoteAib({ runner: fake.runner });
     const browser = await Browser.launch();
     try {
       fake.state.serve = serveStatus(readRemotePort(s.state)!);

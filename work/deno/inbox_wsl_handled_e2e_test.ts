@@ -1,13 +1,13 @@
 /**
  * Mark handled in the inbox for a WSL project's chat (owner report 2026-11-16: "I can't mark handled in the inbox notification for a
- * WSL project"). chat.html in a real headless Chrome against a Studio in this process whose fake agent host lists a Windows chat and
+ * WSL project"). chat.html in a real headless Chrome against an AIB in this process whose fake agent host lists a Windows chat and
  * WSL chats (cwd `wsl://ubuntu/...`, listed with their distro and as saved sessions read in the distro): a failed turn, a reply that
  * asks something, and a finished turn. Clicking Mark handled (× on a finished row) clears each row, the mark is saved, and no row
  * comes back over the next polls.
  */
 import { assert, assertEquals } from './_assert.ts';
 import { Browser, browserPath } from './_doc_browser.ts';
-import { remoteStudio } from './_remote_fixture.ts';
+import { remoteAib } from './_remote_fixture.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
 type Json = Record<string, unknown>;
@@ -18,7 +18,7 @@ Deno.test({
   name: 'inbox: Mark handled clears a WSL chat (failed, asks, finished) as it does a Windows chat',
   ignore: !browserPath,
   async fn() {
-    const s = await remoteStudio();
+    const s = await remoteAib();
     // the WSL chats are also saved sessions read in the distro (wsl/transcripts.ts distroSessions: key wsl.<distro>.<provider>/...)
     const saved = (n: number, title: string) => ({
       id: 'sess-' + n,

@@ -43,16 +43,16 @@ const BOILERPLATE = new RegExp(
     '<local-command-|continue from where you left off)',
   'i',
 );
-/** classifyUser ignores longer text (it is then a prompt, as in the page). Counted in code points, as Python's len(). */
+/** classifyUser ignores longer text (it is then a prompt, as in the page). Counted in code points. */
 export const MAX_CLASSIFIED = 500000;
 /** Characters of a prompt the search returns. */
 export const SHOWN = 300;
 
-/** Python's str.strip() with no argument: Unicode whitespace (differs from String.trim at \x1c-\x1f, \x85 and \ufeff). */
+/** str.strip() with no argument: Unicode whitespace (differs from String.trim at \x1c-\x1f, \x85 and \ufeff). */
 const PY_SPACE = '[\\t\\n\\x0b\\x0c\\r\\x1c-\\x1f \\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]';
 const PY_STRIP = new RegExp(`^${PY_SPACE}+|${PY_SPACE}+$`, 'g');
 
-/** Python's str.casefold(), closely enough for a substring search (ß -> ss, ſ -> s, final sigma, ligatures). */
+/** str.casefold(), closely enough for a substring search (ß -> ss, ſ -> s, final sigma, ligatures). */
 function casefold(value: string): string {
   return value.toUpperCase().toLowerCase();
 }
@@ -142,7 +142,7 @@ export interface PromptHit {
   files: number;
 }
 
-/** Python's len() on the JSON values an event's images field can hold. */
+/** len() on the JSON values an event's images field can hold. */
 function pyLenOf(value: unknown): number {
   if (!value) return 0;
   if (Array.isArray(value)) return value.length;

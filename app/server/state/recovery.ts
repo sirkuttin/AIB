@@ -1,10 +1,10 @@
 /**
- * Durable Studio recovery state (state_store.StateStore): owned conversations and prompt receipts.
+ * Durable AIB recovery state (state_store.StateStore): owned conversations and prompt receipts.
  *
- * One JSON file per Studio (studio-<name>.json) in the shared state folder. It never holds transcripts or prompt text. Prompt
+ * One JSON file per AIB (studio-<name>.json) in the shared state folder. It never holds transcripts or prompt text. Prompt
  * receipts keep only a SHA-256 fingerprint and a state, so a retried browser request can be recognised after a server restart.
  * Unlike the other stores this file belongs to one process (its name carries the port or 'host'), so it takes no file lock and
- * saves synchronously, as in Python. Conversations and receipts are Maps: insertion order decides what is pruned first.
+ * saves synchronously. Conversations and receipts are Maps: insertion order decides what is pruned first.
  */
 import { clip, isDict, isStr, pyFloat, pyLen, pyOr, pyStr } from '../core/py.ts';
 import { isProvider } from '../agents/agent_registry.ts';
@@ -15,7 +15,7 @@ import { entriesOf, now, quarantine, readJsonFile, saveJson } from './json.ts';
 export const MAX_CONVERSATIONS = 50;
 export const MAX_RECEIPTS_PER_SESSION = 200;
 export const MAX_SESSIONS_WITH_RECEIPTS = 50;
-/** 'steering' (a steer in flight) and 'injected' (the agent took it) are steer-on-send's; a Python host never wrote them. */
+/** 'steering' (a steer in flight) and 'injected' (the agent took it) are steer-on-send's; an older host never wrote them. */
 export const RECEIPT_STATES = ['working', 'finished', 'error', 'unknown', 'steering', 'injected'] as const;
 export type ReceiptState = typeof RECEIPT_STATES[number];
 
@@ -245,10 +245,10 @@ export interface RecoverableConnection {
   queueRestore(saved: SavedItem[]): void;
 }
 
-/** Hook object a Studio installs on each Connection; never throws into the caller. */
+/** Hook object an AIB installs on each Connection; never throws into the caller. */
 export class Recovery {
   shuttingDown = false;
-  /** msgqueue.QueueStore, set by Studio. */
+  /** msgqueue.QueueStore, set by AIB. */
   queues: QueueStore | null = null;
 
   constructor(readonly store: StateStore) {}
@@ -286,7 +286,7 @@ export class Recovery {
   }
 
   connectionClosed(connection: RecoverableConnection): void {
-    // Orderly Studio shutdown keeps the entry so the next start can offer reconnecting.
+    // Orderly AIB shutdown keeps the entry so the next start can offer reconnecting.
     if (this.shuttingDown || !connection.persisted || !connection.sessionId) return;
     this.store.forgetConversation(connection.provider, connection.sessionId);
     // the user ended this conversation: its queue goes with it

@@ -181,7 +181,7 @@ function runDeno(tree: Tree, fixture: Fixture) {
     claudeRoot: tree.claude,
     registry: fixture.owners === false ? null : new OwnerRegistry(tree.owners, { instanceId: 'mine', clock }),
     processes: source,
-    ownedByStudio: (p, s) => owned.has(JSON.stringify([p, s])),
+    ownedByAib: (p, s) => owned.has(JSON.stringify([p, s])),
     ownPids: () => fixture.own_pids ?? [],
     lockProbe: holders === 'real' ? lockHolders : () => (holders === null ? null : holders.map((h) => [h[0], h[1]] as [number, string])),
     clock,
@@ -407,7 +407,7 @@ probeTest('a Studio-owned conversation is never second-guessed', async (tree) =>
   assertEquals([verdict.verdict, verdict.reasons], ['owned_by_studio', []]);
 });
 
-probeTest('writes just before Studio released it are not blamed on another app', async (tree) => {
+probeTest('writes just before AIB released it are not blamed on another app', async (tree) => {
   const path = tree.transcript('claude', 's1', 2);
   const steps = await both(tree, {
     steps: [{ released: ['claude', 's1'] }, assess('claude', 's1'), { advance: 30 }, { touch: [path, 4, 5] }, assess('claude', 's1')],
@@ -630,7 +630,7 @@ probeTest('helpers and unrelated processes are ignored', async (tree) => {
   assertEquals(steps.map((s) => s.verdict), ['no_evidence', 'no_evidence']);
 });
 
-probeTest("Studio's own agents and their children are not evidence", async (tree) => {
+probeTest("AIB's own agents and their children are not evidence", async (tree) => {
   const processes = [
     proc(700, exe('omp'), `${exe('omp')} acp`, tree.project, 77),
     proc(701, exe('node'), `node ${BIN}claude-agent-acp${SEP}index.js`, tree.project, 700),
@@ -645,7 +645,7 @@ probeTest("Studio's own agents and their children are not evidence", async (tree
     (await both(tree, { processes: single, own_pids: [800], steps: [assess('omp', 'x', { cwd: tree.project })] }))[0].verdict,
     'no_evidence',
   );
-  // This process (Deno.pid) counts as Studio too, with everything below it.
+  // This process (Deno.pid) counts as AIB too, with everything below it.
   const mine = [proc(900, exe('omp'), `${exe('omp')} acp --resume=s-1`, tree.project, Deno.pid)];
   const probe = new OwnershipProbe({ processes: new ProcessSource(() => mine), lockProbe: () => [] });
   assertEquals(probe.assess('omp', 's-1', { cwd: tree.project }).verdict, 'no_evidence');
@@ -1043,7 +1043,7 @@ Deno.test('folder only: a process naming the session, holding the transcript ope
   try {
     tree.transcript('claude', 's1', 3 * 3600);
     const ask = { cwd: tree.project, skipCmdline: true };
-    // named session: refused (the command-line check; Studio runs it before assess as ownerProbe)
+    // named session: refused (the command-line check; AIB runs it before assess as ownerProbe)
     const named = folderProbe(tree, panel(tree.project, ' --resume s1')).assess('claude', 's1', { cwd: tree.project });
     assertEquals([named.verdict, folderOnlyEvidence(named)], ['owned_elsewhere', null]);
     // held-open transcript

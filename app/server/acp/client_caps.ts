@@ -1,8 +1,8 @@
 /**
- * Opt-in ACP client capabilities for Agent Studio: terminals and text-file access (client_caps.py).
+ * Opt-in ACP client capabilities for AIB: terminals and text-file access (client_caps.py).
  *
  * Everything here is OFF by default. A ClientCaps object only answers the methods whose capability was switched on with
- * --enable-client-terminal / --enable-client-fs; any other method is left to Studio's normal "capability not advertised" error.
+ * --enable-client-terminal / --enable-client-fs; any other method is left to AIB's normal "capability not advertised" error.
  *
  * Boundaries (see docs/client-capabilities.md):
  *   * file paths must be absolute and, after realpath (symlinks/junctions followed), inside the connection's workspace folder;
@@ -10,7 +10,7 @@
  *     agent explicitly asks for;
  *   * every process is tracked per connection and killed (with everything it started) on release / connection close.
  *
- * Differences forced by Deno: stdout and stderr arrive on two pipes (Python merges them into one), so the output buffer interleaves
+ * Differences forced by Deno: stdout and stderr arrive on two pipes, so the output buffer interleaves
  * their chunks in arrival order; terminals are killed through platform/process_tree.ts (a Job Object on Windows, the process group
  * elsewhere) instead of taskkill /T; the window is hidden by the server's console (platform/console.ts), not CREATE_NO_WINDOW.
  */
@@ -91,7 +91,7 @@ export class CapError extends Error {
   }
 }
 
-/** os.path.isabs of Python 3.11 (ntpath keeps the legacy rule that '\x' and '/x' are absolute; posixpath: starts with '/'). */
+/** os.path.isabs (on Windows the legacy rule that '\x' and '/x' are absolute; posixpath: starts with '/'). */
 function isabs311(path: string): boolean {
   if (!WIN) return path.startsWith('/');
   const s = path.slice(0, 3).replaceAll('/', '\\');
@@ -317,7 +317,7 @@ export interface TerminalBackend {
   release?(terminal: TerminalBase): Promise<void>;
 }
 
-/** shutil.which(cmd, path=...) of Python 3.11 (Windows: the current folder first, PATHEXT). */
+/** shutil.which(cmd, path=...) (Windows: the current folder first, PATHEXT). */
 export function whichIn(cmd: string, pathVar: string): string | null {
   const access = (name: string) => executable(name) && !isdir(name);
   if (!pathVar) return null;
@@ -424,8 +424,8 @@ export class ClientCaps {
 
   // --- dispatch -----------------------------------------------------------------
   /**
-   * Answer one agent->client request. Requests are answered one after another in arrival order, as Python's reader thread does;
-   * terminal/wait_for_exit runs on its own (Python: a worker thread) so it never holds up the others. Resolves when answered.
+   * Answer one agent->client request. Requests are answered one after another in arrival order;
+   * terminal/wait_for_exit runs on its own so it never holds up the others. Resolves when answered.
    */
   dispatch(message: Params): Promise<void> {
     if (message.method === 'terminal/wait_for_exit') return this.#respond(message);
@@ -558,7 +558,7 @@ export class ClientCaps {
             const rest = data.slice(from);
             pending.push(rest);
             pendingSize += rest.length;
-            // A line longer than every cap is refused as soon as it is known to be too long (Python reads it whole first).
+            // A line longer than every cap is refused as soon as it is known to be too long.
             if (index === 0 && pendingSize >= 8192 && joinPeek(pending).includes(0)) throw new CapError('File looks binary, not text');
             if (index < start && scanned + pendingSize > MAX_SCAN_BYTES) throw new CapError('File is too large to seek to that line');
             if (index >= start && size + pendingSize > MAX_READ_BYTES) {
@@ -616,7 +616,7 @@ export class ClientCaps {
   #environment(requested: unknown): Record<string, string> {
     const env: Record<string, string> = {};
     for (const [key, value] of Object.entries(Deno.env.toObject())) {
-      // Python's os.environ has upper-case names on Windows.
+      // Environment names are upper-case on Windows.
       if (BASE_ENV_NAMES.includes(key.toUpperCase())) env[WIN ? key.toUpperCase() : key] = value;
     }
     if (requested === null || requested === undefined) return env;

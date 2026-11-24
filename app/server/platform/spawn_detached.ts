@@ -2,8 +2,8 @@
  * Start a process that outlives its parent, its console and its job, with stdout and stderr appended to a log file
  * (host_client.spawn_detached). Used to start the agent host.
  *
- * Windows: Deno.Command cannot pass creation flags or redirect to a file, so this calls CreateProcessW directly with the Python
- * server's flags: DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW, first with CREATE_BREAKAWAY_FROM_JOB and, if the
+ * Windows: Deno.Command cannot pass creation flags or redirect to a file, so this calls CreateProcessW directly with these
+ * flags: DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW, first with CREATE_BREAKAWAY_FROM_JOB and, if the
  * launching job does not allow breakaway, without it. Only the log and NUL handles are inherited (PROC_THREAD_ATTRIBUTE_HANDLE_LIST),
  * never whatever else this process has open. POSIX: `sh -c 'exec "$@" >>log 2>&1'` in a new session (Deno's detached option).
  */

@@ -25,7 +25,7 @@
  * is deleted (checked every few polls, at start and on open) or the project is removed; "Don't save" in the last view keeps it and
  * turns the drop into one undo step.
  *
- * Notes to agents (design 3.8 / 3.9). They go out with the chat's next prompt (Studio's prompt-context), one per file, the newest
+ * Notes to agents (design 3.8 / 3.9). They go out with the chat's next prompt (AIB's prompt-context), one per file, the newest
  * ranges only: after an overlap to the chat that wrote (else the folder's busy chats), after a save to the chats whose agent wrote
  * that file and the folder's busy chats.
  *
@@ -55,7 +55,7 @@ export type Json = Record<string, unknown>;
 /** What the registry needs from the rest of AIB (the web server's context; a test passes a fake). */
 export interface LiveFilesHost {
   stateDir: string;
-  /** Studio's live calls: 'files-changed', 'folder-chats', 'prompt-context'. */
+  /** AIB's live calls: 'files-changed', 'folder-chats', 'prompt-context'. */
   liveCall(name: string, body: unknown): Promise<[number, unknown]>;
   /** The open chats by lasting id with the files their agent wrote (absolute paths). */
   conversations(): { id?: string; cwd?: string; writes?: string[] }[];

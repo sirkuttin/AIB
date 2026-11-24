@@ -1144,7 +1144,7 @@
     }
     return mark;
   }
-  /* Pictures a tool returned: saved chats give Studio image addresses (call.result.images); live ACP tool content gives image blocks. */
+  /* Pictures a tool returned: saved chats give AIB image addresses (call.result.images); live ACP tool content gives image blocks. */
   const SAVED_IMAGE = /^\/api\/transcript\/image\?/;
   const liveImageOk = (im) =>
     typeof root.safeImageBlock === 'function'
