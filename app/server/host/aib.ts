@@ -62,8 +62,9 @@ import * as artifactKeys from '../artifacts/keys.ts';
 import { sealOrPlain } from '../state/sealed.ts';
 import { artifactToolCommand } from '../artifacts/mcp.ts';
 import { ArtifactMcpHttp, FORWARD_FILE, forwardEntry, HOOK_EVENT_HEADER, HOOK_KEY_HEADER, HOOK_NONCE_HEADER, httpEntry, ownForwardFile, ownTunnelEntry, tunnelEntry } from '../artifacts/mcp_http.ts';
-import { WSL_TOOL_GROUPS } from '../artifacts/mcp.ts';
-import { ServedRecord } from '../artifacts/served.ts';
+import { toolNames, WSL_TOOL_GROUPS } from '../artifacts/mcp.ts';
+import { ServedRecord, staleReasons } from '../artifacts/served.ts';
+import { GEMINI_TRUST_ENV, GEMINI_TRUST_FILE, trustFolders } from '../agents/gemini_trust.ts';
 import { headerOf, mcpTunnelGate, type TunnelAnswer } from '../wsl/mcp_tunnel.ts';
 import { wslRemote, wslSubagentChatClosed } from '../wsl/subagents.ts';
 import { forwarderOf, hookForwarderOf, hookForwarderTagsShells, keeperBinary, keyForForwarder, programVersion } from '../keeper/client.ts';
@@ -116,7 +117,7 @@ import { LiveSync, Mutex } from '../worktrees/sync.ts';
 import { chatLocalOnly, defaultsAllowed, ensureDefault, type LocalOnly } from '../worktrees/local_only.ts';
 import { wslChatLocalOnly, wslDefaultsAllowed, wslEnsureLocalOnly } from '../wsl/local_only.ts';
 import { helperOf, readHelpers, Registry as HelperRegistry } from '../swarm/registry.ts';
-import { isFixture, testHomeEnv, type WslSpawn } from '../acp/connection.ts';
+import { isFixture, isOwnArtifactEntry, testHomeEnv, type WslSpawn } from '../acp/connection.ts';
 import { normLinuxPath, refOf, type WslLoc, wslLocOf } from '../platform/location.ts';
 import { heldDistro, isAibInternalLabel } from '../keeper/link.ts';
 import {
@@ -1117,6 +1118,12 @@ export class Aib {
     }
     const url = agent?.signin.baseUrlEnv ? this.settings.betaUrl(provider) : '';
     if (agent?.signin.baseUrlEnv && url) out[agent.signin.baseUrlEnv] = url;
+    // Qwen starts MCP discovery in the background and builds the model's tool list before it ends, so AIB's tools never reach the
+    // model. This switch makes it wait (0.15 facts, Qwen Code 0.27.2: the tools are then named in its request).
+    if (baseAgent(provider) === 'qwen') out.QWEN_CODE_LEGACY_MCP_BLOCKING = '1';
+    // Gemini starts no MCP server in a folder it does not trust: it gets AIB's own trust file (agents/gemini_trust.ts). A WSL chat's
+    // is the distro's (wslLaunch sets it again).
+    if (baseAgent(provider) === 'gemini' && this.hasStateDir) out[GEMINI_TRUST_ENV] = join(this.stateDir, GEMINI_TRUST_FILE);
     return out;
   }
 
@@ -1326,6 +1333,14 @@ export class Aib {
       command = row.command.map(String);
       if (server && detectId === 'qwen') command = [...command, ...QWEN_AUTH_ARGS];
       if (isBeta(provider)) extra = this.betaEnv(provider);
+      if (isBeta(provider) && baseAgent(provider) === 'gemini') { // the distro's trust file, with this chat's project folder in it
+        delete extra[GEMINI_TRUST_ENV];
+        try {
+          extra[GEMINI_TRUST_ENV] = (await host.call('geminitrust.write', { folders: [wsl.linuxPath] })).path;
+        } catch (error) {
+          log.warning('Gemini folder trust in %s could not be set up (an older helper?): %s', name, errorText(error)); // Gemini then asks as before
+        }
+      }
       if (server) { // same env as a Windows chat; no reachability test from here (see WSL_LOOPBACK_NOTE)
         extra = this.modelServerEnv(provider);
         if (detectId === 'codex') { // its own CODEX_HOME inside the distro, with the same generated config.toml
@@ -1348,6 +1363,22 @@ export class Aib {
       spawn: { distro: wsl.distro, linuxPath: wsl.linuxPath, env, program, caps: { env: () => host.env(), which } },
       link,
     };
+  }
+
+  /**
+   * Owner decision 2026-11-24: a Gemini chat's project folder and the AIB worktree copy it works in are trusted for Gemini, in AIB's
+   * own trust file (agents/gemini_trust.ts), so Gemini starts AIB's tool server. Only those two folders; never ~/.gemini.
+   */
+  async #trustForGemini(c: Connection, distro: string | null): Promise<void> {
+    try {
+      const folders = [...new Set([c.worktree ? c.projectRoot : c.cwd, c.agentCwd].filter((f) => !!f))];
+      if (distro) {
+        const linux = folders.map((f) => wslLoc(f)?.linuxPath ?? f).filter((f) => f.startsWith('/'));
+        if (linux.length) await readyHost(distro).call('geminitrust.write', { folders: linux });
+      } else if (this.hasStateDir) trustFolders(join(this.stateDir, GEMINI_TRUST_FILE), folders);
+    } catch (error) {
+      log.warning('Gemini folder trust could not be updated for chat %s: %s', c.id, errorText(error));
+    }
   }
 
   /** The Linux keepers whose loss this AIB already follows (the same reconnect rule as the Windows keeper's). */
@@ -1752,6 +1783,7 @@ export class Aib {
           c.localOnly = wsl ? await wslChatLocalOnly(c.worktree ? c.projectRoot : c.cwd, !!c.worktree) : this.#localOnlyFor(c, local);
           // allow rules of a WSL chat: its folder and the distro's base facts, read while the agent starts (allow/wsl_facts.ts)
           const warming = wsl && this.allow ? c.allowWarm() : null;
+          if (isBeta(provider) && baseAgent(provider) === 'gemini') await this.#trustForGemini(c, wsl ? wsl.distro : null);
           await c.setup(resume || null);
           if (warming) await warming; // bounded by the helper call's own time limit; never throws
           if (isClaudeFamily(c.provider) && c.subagentHooks?.off === HOOKS_OFF) { // design 2.6: said up front, before a subagent edits the folder (P0 A7)
@@ -1840,7 +1872,8 @@ export class Aib {
   /** AIB's hooks on one connection (turn start and end, live sync, release) and its client capabilities. */
   #wire(c: Connection): void {
     c.lines = this.conversationLines;
-    c.promptServed = (prompt) => this.served?.prompt(c.id, prompt);
+    c.promptServed = (prompt, base) => this.served?.prompt(c.id, prompt, base);
+    c.beforeQueuedSend = () => this.restartIfStale(c, 'before-send');
     if (this.allow) {
       c.allowGate = this.allow;
       // a helper's test command from its brief (the allow rules answer it; read when asked, the registry lists the helper by then)
@@ -2421,6 +2454,7 @@ export class Aib {
       options.wsl = { distro: wsl.distro, linuxPath: wsl.linuxPath, ...(host ? { caps: { env: () => host.env(), which } } : {}) };
     }
     const c = this.connectionFactory(command, cwd, provider, options);
+    c.adopted = true;
     if (isDict(note.worktree)) c.worktree = { branch: String(note.worktree.branch ?? ''), base: String(note.worktree.base ?? '') };
     c.projectRoot = isStr(note.projectRoot) && note.projectRoot ? note.projectRoot : cwd;
     if (isClaudeFamily(provider) || isCodexFamily(provider)) c.subagentHooks = hooksFromNote(note.subagentHooks); // as the chat started (should-fix 6)
@@ -3115,6 +3149,92 @@ export class Aib {
     c.recordedEvent('studio_note', { message: sharedFolderNote(this.chatTitle(working)), sessionId: c.sessionId });
     this.addPromptContext(c, SHARED_FOLDER_CONTEXT);
     this.addPromptContext(working, SHARED_FOLDER_CONTEXT);
+  }
+
+  // ---- stale chats restart themselves (0.15 slice 3; owner 2026-11-23/24) --------------------------------------------------
+  /** What the restart line says in the chat afterwards. */
+  static readonly RESTARTED_NOTE = 'Restarted to pick up new AIB tools';
+  readonly #restarting = new Set<string>();
+  #staleTimer: ReturnType<typeof setInterval> | null = null;
+
+  /**
+   * Why a chat is stale: the AIB tools or prompt it was served differ from what this AIB would serve it now (artifacts/served.ts).
+   * Empty: fresh, or not known (a helper, a chat without a keeper, a chat that has not asked for its tools yet).
+   */
+  staleWhy(c: Connection): string[] {
+    if (!this.served || c.closed || c.swarm?.role === 'helper' || !c.keeper) return [];
+    if (!this.options.noArtifactTool && !this.#closed) this.artifactMcpHttp(); // its entries count as AIB's own only once this AIB serves them
+    const own = (c.mcpServers ?? []).some(isOwnArtifactEntry);
+    const tools = own ? toolNames({ restricted: !!c.wsl, worktree: !!c.worktree, main: this.#isMain(c) }) : null;
+    return staleReasons(this.served.get(c.id), { tools, promptBase: own ? c.promptBase() || null : null }, c.adopted);
+  }
+
+  /**
+   * Restart the chat if it is stale, may be restarted now (not mid-turn, no background process; a waiting question, a queued or a
+   * scheduled message do not block), and this app version has not tried it yet. True: the chat was replaced by its restarted self.
+   */
+  async restartIfStale(c: Connection, moment: 'scan' | 'before-send' = 'scan'): Promise<boolean> {
+    if (!this.served || this.#closed || this.#restarting.has(c.id)) return false;
+    const why = this.staleWhy(c);
+    if (!why.length || this.served.restartTried(c.id) || c.restartBlocker()) return false;
+    if (!c.canReloadSession()) {
+      log.info('stale chat %s (%s) cannot be restarted: its agent does not advertise session load or resume', c.id, why.join(', '));
+      return false;
+    }
+    this.#restarting.add(c.id);
+    try {
+      return await this.#restartChat(c, why, moment);
+    } finally {
+      this.#restarting.delete(c.id);
+    }
+  }
+
+  /** The existing Continue path: end the agent, then reopen the same conversation as the same chat (id, keys, helper links, history). */
+  async #restartChat(c: Connection, why: string[], moment: string): Promise<boolean> {
+    const { provider, sessionId, cwd } = c;
+    if (!sessionId) return false;
+    const saved = c.queue.toSaved();
+    log.info('chat %s is stale (%s): restarting it (%s)', c.id, why.join(', '), moment);
+    this.served!.restartNoted(c.id, false); // the one try of this app version, written first
+    c.keepRecordOnClose = true; // an ended agent, not an ended chat: its recovery entry and queue stay
+    try {
+      await c.close();
+      const next = await this.connect(provider, cwd, sessionId, { continueAnyway: true, auto: true });
+      if (saved.length) await next.queueContinue(saved); // goes on as it was: not paused
+      next.recordedEvent('studio_note', { message: Aib.RESTARTED_NOTE, sessionId: next.sessionId });
+      this.served!.restartNoted(next.id, true);
+      return true;
+    } catch (error) {
+      const message = errorText(error);
+      log.warning('restarting stale chat %s failed: %s', c.id, message);
+      this.served!.restartNoted(c.id, false, message);
+      c.error = `Couldn't restart to pick up new AIB tools: ${message}`;
+      this.reconnectFailures.set(pairKey(provider, sessionId), { provider, sessionId, cwd, error: c.error.slice(0, 500), at: Date.now() / 1000 });
+      return false;
+    }
+  }
+
+  /** One look at every open chat; stale idle ones restart, one after the other. Returns the chat ids that restarted. */
+  async staleScan(): Promise<string[]> {
+    const done: string[] = [];
+    for (const c of [...this.connections.values()]) {
+      if (c.closed) continue;
+      try {
+        if (await this.restartIfStale(c, 'scan')) done.push(c.id);
+      } catch (error) {
+        log.exception(error, 'Checking whether a chat is stale failed');
+      }
+    }
+    return done;
+  }
+
+  /** The look repeats (a turn or a background process may have ended meanwhile); the first one is after the take-over at start. */
+  startStaleScan(everyMs = 30_000): void {
+    if (!this.served || this.#staleTimer || this.#closed) return;
+    const run = () => void this.staleScan().catch((error) => log.exception(error, 'Stale chat scan failed'));
+    void this.#afterAdopting().then(run, run);
+    this.#staleTimer = setInterval(run, everyMs);
+    Deno.unrefTimer(this.#staleTimer as unknown as number);
   }
 
   /**

@@ -702,11 +702,11 @@ Deno.test("Qwen's optional API address: stored like the key, checked, passed as 
   ]);
   const env = () => Aib.prototype.betaEnv.call({ settings: store } as unknown as Aib, 'qwen');
   await store.update({ agents: { betaKey: { qwen: 'test-key-not-real' } } });
-  assertEquals(env(), { OPENAI_API_KEY: 'test-key-not-real' }, 'no address: Qwen uses its own default (OpenAI)');
+  assertEquals(env(), { OPENAI_API_KEY: 'test-key-not-real', QWEN_CODE_LEGACY_MCP_BLOCKING: '1' }, 'no address: Qwen uses its own default (OpenAI)');
   const address = 'https://ws-test.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1';
   await store.update({ agents: { betaUrl: { qwen: ' ' + address + ' ' } } });
   assertEquals(store.betaUrl('qwen'), address);
-  assertEquals(env(), { OPENAI_API_KEY: 'test-key-not-real', OPENAI_BASE_URL: address });
+  assertEquals(env(), { OPENAI_API_KEY: 'test-key-not-real', OPENAI_BASE_URL: address, QWEN_CODE_LEGACY_MCP_BLOCKING: '1' });
   assertEquals(new SettingsStore(dir.root).betaUrl('qwen'), address, 'read back from the file');
   assert(!JSON.stringify(store.public()).includes('betaUrls'));
   const rows = await describeBeta({ stateDir: dir.root }, store.snapshot());
@@ -730,5 +730,5 @@ Deno.test("Qwen's optional API address: stored like the key, checked, passed as 
   }
   assertEquals(refused, 'That agent does not take an API address');
   await store.update({ agents: { betaUrl: { qwen: null } } });
-  assertEquals([store.betaUrl('qwen'), env()], ['', { OPENAI_API_KEY: 'test-key-not-real' }]);
+  assertEquals([store.betaUrl('qwen'), env()], ['', { OPENAI_API_KEY: 'test-key-not-real', QWEN_CODE_LEGACY_MCP_BLOCKING: '1' }]);
 });

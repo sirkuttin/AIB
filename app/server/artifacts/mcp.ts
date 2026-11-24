@@ -843,7 +843,7 @@ function handlers(ctx: ToolContext): Record<string, Handler> {
 }
 
 /** The tools/list of a WSL chat: the same groups as handlers(). */
-function restrictedTools(ctx: ToolContext): Json[] {
+function restrictedTools(ctx: Pick<ToolContext, 'worktree' | 'main'>): Json[] {
   const g = WSL_TOOL_GROUPS;
   return [
     ...TOOLS.filter((t) => RESTRICTED_TOOLS.has(String(t.name))).map((t) => t.name === 'publish' || t.name === 'update' ? wslPathTool(t) : t),
@@ -864,6 +864,17 @@ async function callTool(ctx: ToolContext, name: string, args: unknown): Promise<
     const message = error instanceof Error ? error.message : String(error);
     return { content: [{ type: 'text', text: `Artifact tool failed: ${type}: ${message}` }], isError: true };
   }
+}
+
+/** The tools/list answer for a chat's context (the stdio server, the HTTP server and AIB's stale-chat check all use it). */
+export function servedToolList(ctx: Pick<ToolContext, 'restricted' | 'worktree' | 'main'>): Json[] {
+  if (ctx.restricted) return restrictedTools(ctx);
+  return [...TOOLS, ...(ctx.worktree ? WORKTREE_TOOLS : []), ...(ctx.main ? [...SWARM_TOOLS, ...UNLANDED_TOOLS] : []), ...DOC_TOOLS, ...DRAWING_TOOLS];
+}
+
+/** The names tools/list would serve a chat now. */
+export function toolNames(ctx: Pick<ToolContext, 'restricted' | 'worktree' | 'main'>): string[] {
+  return servedToolList(ctx).map((t) => String(t.name));
 }
 
 /** The response object for a request, or null for notifications and responses. */
@@ -888,8 +899,7 @@ export async function handle(message: unknown, ctx: ToolContext = envContext()):
   }
   if (method === 'ping') return ok({});
   if (method === 'tools/list') {
-    if (ctx.restricted) return ok({ tools: restrictedTools(ctx) });
-    return ok({ tools: [...TOOLS, ...(ctx.worktree ? WORKTREE_TOOLS : []), ...(ctx.main ? [...SWARM_TOOLS, ...UNLANDED_TOOLS] : []), ...DOC_TOOLS, ...DRAWING_TOOLS] });
+    return ok({ tools: servedToolList(ctx) });
   }
   if (method === 'tools/call') {
     const name = Object.hasOwn(params, 'name') ? params.name : null;

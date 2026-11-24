@@ -8,6 +8,7 @@
  * JSON keys, event kinds and error messages are fixed: they reach the page through the host RPC.
  */
 import type { AllowGate } from '../allow/gate.ts';
+import { promptHash } from '../artifacts/served.ts';
 import { houseRules } from '../allow/brief.ts';
 import type { MatchContext } from '../allow/matcher.ts';
 import { stripAibMessage } from '../allow/aib_prefix.ts';
@@ -759,7 +760,7 @@ export function sharedFolderNote(title: string): string {
 }
 
 /** Match with `$` that also matches before one trailing newline. */
-export const OWN_ARTIFACT_TOOL = /^mcp__studio_artifact__(?:publish|update|list|merge_into_project|resolve_edit_clash)\n?$/;
+export const OWN_ARTIFACT_TOOL = /^(?:mcp__)?studio[-_]artifact__(?:publish|update|list|merge_into_project|resolve_edit_clash)\n?$/;
 /** Swarm: AIB's helper tools (artifacts/mcp.ts SWARM_TOOLS); auto-approved like the artifact tools. */
 export const SWARM_TOOL_NAMES = ['helper_providers', 'start_helper', 'helper_status', 'stop_helper', 'merge_helper', 'unlanded_work'];
 const OWN_TOOL_NAMES = new Set(['publish', 'update', 'list', 'merge_into_project', 'resolve_edit_clash', ...SWARM_TOOL_NAMES]);
@@ -776,25 +777,28 @@ export function ownToolName(call: Json): string {
   const claude = isDict(meta.claudeCode) ? meta.claudeCode : {};
   const fromClaude = isStr(claude.toolName) ? claude.toolName : isStr(call.name) ? call.name : '';
   const prefixed = (n: string) => {
-    const m = /^mcp__studio_artifact__([a-z_]+)\n?$/.exec(n);
+    const m = /^(?:mcp__)?studio[-_]artifact__([a-z_]+)\n?$/.exec(n); // Maki names it studio-artifact__<tool> (hyphen)
     return m && OWN_TOOL_NAMES.has(m[1]) ? m[1] : '';
   };
   if (fromClaude) return prefixed(fromClaude);
   const raw = isDict(call.rawInput) ? call.rawInput : {};
   const invocation = isDict(raw.invocation) ? raw.invocation : raw;
-  if (invocation.server === 'studio_artifact' && isStr(invocation.tool) && OWN_TOOL_NAMES.has(invocation.tool)) return invocation.tool;
+  if ((invocation.server === 'studio_artifact' || invocation.server === 'studio-artifact') && isStr(invocation.tool) && OWN_TOOL_NAMES.has(invocation.tool)) return invocation.tool;
   // codex-acp 2.6.0, recorded from a real Codex run (work/test_tool_details.js CODEX_MCP_DOC_CREATE): kind 'execute', title
   // "mcp.studio_artifact.<tool>", `_meta.is_mcp_tool_call`. Only with that mark: a shell command titled alike never has it.
   if (meta.is_mcp_tool_call === true && isStr(call.title)) {
-    const recorded = /^mcp\.studio_artifact\.([a-z_]+)$/.exec(call.title.trim());
+    const recorded = /^mcp\.studio[-_]artifact\.([a-z_]+)$/.exec(call.title.trim());
     if (recorded && OWN_TOOL_NAMES.has(recorded[1])) return recorded[1];
   }
   if (call.kind === 'execute' || call.kind === 'edit' || call.kind === 'delete' || call.kind === 'move') return '';
   const title = isStr(call.title) ? call.title.trim() : '';
-  const codex = /^Tool: studio_artifact\/([a-z_]+)$/.exec(title);
+  const codex = /^Tool: studio[-_]artifact\/([a-z_]+)$/.exec(title);
   if (codex && OWN_TOOL_NAMES.has(codex[1])) return codex[1];
-  const gemini = /^([a-z_]+) \(studio_artifact MCP Server\)$/.exec(title);
+  const gemini = /^([a-z_]+) \(studio[-_]artifact MCP Server\)$/.exec(title);
   if (gemini && OWN_TOOL_NAMES.has(gemini[1])) return gemini[1];
+  // Maki 0.7.2 (recorded from the real adapter): kind 'other', title "studio-artifact.<tool>: <the arguments as JSON>", no name, no _meta
+  const maki = /^studio[-_]artifact\.([a-z_]+)(?::|$)/.exec(title);
+  if (maki && OWN_TOOL_NAMES.has(maki[1])) return maki[1];
   return prefixed(title);
 }
 
@@ -937,7 +941,7 @@ function argStrings(args: unknown): string[] {
  * mcp-artifact subcommand) or the HTTP one this process serves (artifacts/mcp_http.ts). The Deno host builds every chat's entries
  * itself, so no other tool entry needs recognising.
  */
-function isOwnArtifactEntry(entry: unknown): boolean {
+export function isOwnArtifactEntry(entry: unknown): boolean {
   if (!isDict(entry) || entry.name !== 'studio_artifact') return false;
   if (entry.type === 'http') return isOwnMcpUrl(entry.url);
   const args = argStrings(get(entry, 'args'));
@@ -1166,7 +1170,16 @@ export class Connection {
    * Set by AIB: told the text of the AIB system prompt each time it is sent to the agent (session/new, session/load), so AIB keeps
    * per chat which prompt it served (artifacts/served.ts). Never called for a keeper replay: nothing is sent then.
    */
-  promptServed: ((prompt: string) => void) | null = null;
+  promptServed: ((prompt: string, base: string) => void) | null = null;
+  /**
+   * Set by AIB: called right before the queue sends a message to the agent (a queued or a scheduled one). True = AIB replaced this
+   * connection (restarted a stale chat); the new connection sends the queue, so this one sends nothing.
+   */
+  beforeQueuedSend: (() => Promise<boolean>) | null = null;
+  /** True while AIB restarts this chat: closing it keeps its recovery entry and its saved queue (the chat goes on, it is not ended). */
+  keepRecordOnClose = false;
+  /** Set by AIB: this chat was taken over from the keeper (an update or restart of AIB) rather than started by this AIB process. */
+  adopted = false;
   /** Swarm: this helper's brief test command (allow rules: the built-in "helper copy" rule answers its runs); set by AIB. */
   helperTestCmd: () => string = () => '';
   /** Wall-clock time the current prompt turn started (attention.busySince, so a reloaded page keeps "Working · 12m"). */
@@ -6465,7 +6478,10 @@ export class Connection {
   }
 
   /** Send the first waiting message if nothing stops it: idle, no hold, no edit lease on it, nobody waiting on the user. */
+  #restartAsked = false;
+
   async #queuePump(): Promise<void> {
+    let asked = false;
     while (true) {
       if (this.#replaying || this.rebuildError) return;
       const q = this.queue;
@@ -6475,6 +6491,22 @@ export class Connection {
       ) return;
       if (this.permissions.size || this.elicitations.size || this.auth) return;
       if (this.#steerLate.has(q.items[0].id)) return; // its steer may still land (#steerLateAnswer), which then pumps again
+      // the best moment to restart a stale chat: right before a queued or scheduled message goes out (restart first, then send)
+      if (this.#restartAsked) return; // another pump pass is asking AIB now
+      if (this.beforeQueuedSend && !asked) {
+        asked = true;
+        this.#restartAsked = true;
+        let replaced = false;
+        try {
+          replaced = await this.beforeQueuedSend();
+        } catch (error) {
+          log.exception(error, 'Restarting a stale chat before a queued message failed');
+        } finally {
+          this.#restartAsked = false;
+        }
+        if (replaced || this.closed) return; // the restarted chat sends the queue it was given
+        continue; // re-check every guard: the chat may have changed while it was asked
+      }
       const item = q.items.shift()!;
       q.inflight = item;
       let failure: [string, string] | null = null;
@@ -6592,8 +6624,9 @@ export class Connection {
     const subagents = this.subagentHooks?.prompt ? this.subagentHooks.prompt : isDict(this.subagentHooks?.settings?.hooks) ? SUBAGENT_PROMPT : this.subagentHooks?.deny
       ? (this.subagentHooks.off === 'Git Bash not found' ? SUBAGENTS_OFF_NO_BASH_PROMPT : SUBAGENTS_OFF_PROMPT)
       : this.subagentRule; // Antigravity: asked for, not enforced
+    const base = this.promptBase(servers);
     if (!own && !local && !brief && !subagents) {
-      this.promptServed?.('');
+      this.promptServed?.('', base);
       return {};
     }
     const out: Json = {};
@@ -6613,8 +6646,46 @@ export class Connection {
       if (subagents) content.push({ type: 'text', text: subagents });
       out.systemPrompt = { mode: 'append', content };
     }
-    this.promptServed?.(JSON.stringify(out.systemPrompt ?? null));
+    this.promptServed?.(JSON.stringify(out.systemPrompt ?? null), base);
     return out;
+  }
+
+  /**
+   * The hash of AIB's own fixed prompt texts for this chat (the artifact prompt, the worktree prompt): what a new AIB version can
+   * change. The per-chat facts in the prompt (folders, house rules) are left out: a restart sends them again as they are.
+   */
+  promptBase(servers: unknown[] | null = null): string {
+    const own = (servers ?? (this.#sessionMcp.length ? this.#sessionMcp : this.mcpServers) ?? []).some(isOwnArtifactEntry);
+    if (!own) return '';
+    const parts = [this.wsl ? WSL_ARTIFACT_PROMPT : ARTIFACT_PROMPT];
+    if (this.worktree) parts.push(WORKTREE_PROMPT.replace('{branch}', this.worktree.branch ?? '').replaceAll('{base}', this.worktree.base || 'the project branch'));
+    return promptHash(parts.join(' | '));
+  }
+
+  /** Can the agent reload its session (session/load or session/resume)? Read from its own initialize answer. */
+  canReloadSession(): boolean {
+    const caps = sessionCapabilities(this.initial);
+    return caps.loadSession || caps.resume;
+  }
+
+  /**
+   * Why AIB may not restart this chat right now, or '' when it may. Restarting stops the agent process, so: never mid-turn (a pending
+   * approval is mid-turn too), never while the chat opens or replays, and never while a background process or helper of the chat runs.
+   * Not a blocker: a waiting question, a queued message, a scheduled message.
+   */
+  restartBlocker(): string {
+    if (this.closed || this.#closing) return 'closed';
+    if (this.rebuildError) return 'read-only';
+    if (!this.ready || !this.sessionId || this.#replaying) return 'opening';
+    if (this.busy) return 'mid-turn';
+    if (this.permissions.size || this.elicitations.size) return 'mid-turn';
+    if (this.auth) return 'signing in';
+    if (this.landing) return 'landing';
+    if (this.elsewhere) return 'open elsewhere';
+    if (this.queue.inflight) return 'sending';
+    if (this.helpersRunning()) return 'helpers running';
+    if (this.backgroundShellsRunning()) return 'background process';
+    return '';
   }
 
   /** The agent's `sessionCapabilities` from initialize, or null. */

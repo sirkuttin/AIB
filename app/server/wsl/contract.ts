@@ -154,6 +154,8 @@ export interface HelperMethods {
   /** The newest Codex rate limits in the distro's ~/.codex session files (agents/codex_limits.ts latestRolloutLimits); `codexDir` wins (tests). */
   /** A model-server Codex entry's own CODEX_HOME in the distro: writes <AIB folder>/codex-home/<id>/config.toml, answers the folder. */
   'codexhome.write': { params: { id: string; toml: string }; result: { path: string } };
+  /** Gemini folder trust (agents/gemini_trust.ts): adds these Linux folders to AIB's own trust file in the distro, answers the file's path. */
+  'geminitrust.write': { params: { folders: string[] }; result: { path: string } };
   'codex.limits': { params: { codexDir?: string }; result: { found: { rateLimits: Record<string, unknown>; at: number } | null } };
   /**
    * Project delete inside the distro: `project.inspect` is what the dialog needs (project_delete.ts Inspection: exists, refusal, trash

@@ -42,6 +42,7 @@ import { aibMethods, type RemoveDeps } from './aib_remove.ts';
 import { localOnlyMethods, rawRead } from './local_only.ts';
 import { allowFactsMethods } from './allow_facts.ts';
 import { editorMethods } from './editor.ts';
+import { GEMINI_TRUST_FILE, trustFolders } from '../../agents/gemini_trust.ts';
 
 export const LIST_DIRS_DEFAULT = 500, LIST_DIRS_MAX = 2000;
 export const SESSIONS_DEFAULT = 500, SESSIONS_MAX = 5000;
@@ -470,6 +471,20 @@ function phaseOne(ctx: HelperContext): Handlers {
       } catch { /* not written yet */ }
       if (!same) Deno.writeTextFileSync(file, toml);
       return { path: dir };
+    },
+
+    // Gemini folder trust: AIB's own file (<AIB's folder>/gemini-trusted-folders.json), never the user's ~/.gemini/trustedFolders.json.
+    // Only absolute folders the chat works in (its project folder and its AIB worktree copy).
+    'geminitrust.write': async (p) => {
+      const folders = Array.isArray(p.folders) ? p.folders : [];
+      if (folders.length === 0 || folders.length > 8 || !folders.every((f) => typeof f === 'string' && osp.isabs(f) && f.length < 4096)) {
+        throw new RpcError('folders must be a short list of absolute paths', BAD_PARAMS);
+      }
+      const dir = (await ownFolders(ctx))[0];
+      Deno.mkdirSync(dir, { recursive: true });
+      const file = osp.join(dir, GEMINI_TRUST_FILE);
+      trustFolders(file, folders as string[]);
+      return { path: file };
     },
 
     // Project delete in the distro: the same refusals as a Windows delete, then the distro's trash (gio, else the freedesktop trash).

@@ -22,7 +22,10 @@ export interface ServedTools {
 }
 export interface Served {
   tools?: ServedTools;
-  prompt?: { hash: string; at: number };
+  /** `base`: the hash of AIB's own fixed prompt texts only (the staleness test; the full `hash` also holds per-chat facts). */
+  prompt?: { hash: string; base?: string; at: number };
+  /** The last automatic restart of this chat to pick up new AIB tools: at most one try per app version. */
+  restart?: { app: string; at: number; ok: boolean; error?: string };
   app: string;
 }
 
@@ -60,7 +63,7 @@ export class ServedRecord {
     const all = this.#load();
     const cutoff = this.clock() - KEEP_MS;
     for (const [id, v] of Object.entries(all)) {
-      if (Math.max(v.tools?.at ?? 0, v.prompt?.at ?? 0) < cutoff) delete all[id];
+      if (Math.max(v.tools?.at ?? 0, v.prompt?.at ?? 0, v.restart?.at ?? 0) < cutoff) delete all[id];
     }
     try {
       saveJson(this.#path, all, '.served-tools-');
@@ -86,14 +89,50 @@ export class ServedRecord {
   }
 
   /** The chat was sent this AIB system prompt text ('' = none). */
-  prompt(id: string, text: string): void {
+  prompt(id: string, text: string, base?: string): void {
     this.#all = null;
     const all = this.#load();
     const hash = promptHash(text);
     const entry = all[id] ?? (all[id] = { app: this.app });
-    if (entry.prompt?.hash === hash && entry.app === this.app) return;
-    entry.prompt = { hash, at: this.clock() };
+    if (entry.prompt?.hash === hash && entry.prompt.base === base && entry.app === this.app) return;
+    entry.prompt = { hash, ...(base === undefined ? {} : { base }), at: this.clock() };
     entry.app = this.app;
     this.#save();
   }
+
+  /** True when this app version already tried to restart the chat (it succeeded or not): never tried twice, so never a loop. */
+  restartTried(id: string): boolean {
+    return this.get(id)?.restart?.app === this.app;
+  }
+
+  /** Note a restart attempt (written before it starts, so a crash in it counts as the one try). */
+  restartNoted(id: string, ok: boolean, error?: string): void {
+    this.#all = null;
+    const all = this.#load();
+    const entry = all[id] ?? (all[id] = { app: this.app });
+    entry.restart = { app: this.app, at: this.clock(), ok, ...(error ? { error: error.slice(0, 300) } : {}) };
+    this.#save();
+  }
+}
+
+/** What AIB would serve a chat now (tools: names; promptBase: hash of its fixed prompt texts), null = not known. */
+export interface ServedNow {
+  tools: string[] | null;
+  promptBase: string | null;
+}
+
+/**
+ * Why a chat is stale: what it was served differs from what this AIB serves now. An empty list = fresh, or not known well enough to
+ * say. `adopted`: the chat was taken over from the keeper. One with no tools record at all ran its tool list before AIB recorded
+ * them (an older AIB): stale. A chat with a record that holds no tool list (only its prompt), or one this AIB started, has not asked for its tools yet: not stale.
+ */
+export function staleReasons(served: Served | null, now: ServedNow, adopted: boolean): string[] {
+  const why: string[] = [];
+  if (now.tools) {
+    if (served?.tools) {
+      if (served.tools.hash !== toolsHash(now.tools)) why.push('tools');
+    } else if (adopted && !served) why.push('tools (no record: it started before AIB kept one)');
+  }
+  if (now.promptBase && served?.prompt?.base && served.prompt.base !== now.promptBase) why.push('prompt');
+  return why;
 }

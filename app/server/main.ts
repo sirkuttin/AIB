@@ -413,6 +413,7 @@ export async function main(argv: string[]): Promise<void> {
       startup.mark(`take-over done (${n} chat(s) from the keeper)`);
       if (!closing) {
         s.startAutoReconnect();
+        s.startStaleScan();
         s.startScheduleScan(); // scheduled messages of chats nobody opens still go at their time
       }
     });

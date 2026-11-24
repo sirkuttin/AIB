@@ -241,6 +241,8 @@ export interface RecoverableConnection {
   cwd: string;
   projectRoot?: string | null;
   persisted: boolean;
+  /** AIB is restarting this chat: closing it is not the person ending it, so its entry and queue stay. */
+  keepRecordOnClose?: boolean;
   queue: Pick<MessageQueue, 'toSaved'>;
   queueRestore(saved: SavedItem[]): void;
 }
@@ -287,7 +289,7 @@ export class Recovery {
 
   connectionClosed(connection: RecoverableConnection): void {
     // Orderly AIB shutdown keeps the entry so the next start can offer reconnecting.
-    if (this.shuttingDown || !connection.persisted || !connection.sessionId) return;
+    if (this.shuttingDown || !connection.persisted || !connection.sessionId || connection.keepRecordOnClose) return;
     this.store.forgetConversation(connection.provider, connection.sessionId);
     // the user ended this conversation: its queue goes with it
     if (this.queues) this.queues.forget(connection.provider, connection.sessionId);

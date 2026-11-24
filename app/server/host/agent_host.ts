@@ -422,6 +422,7 @@ export class AgentHost {
     });
     await this.aib.adoptKeeper(); // chats whose agents still run in the keeper go on where they are
     this.aib.startAutoReconnect(); // chats that were open before the restart; nothing is sent
+    this.aib.startStaleScan(); // stale chats restart themselves when idle
     this.aib.startScheduleScan(); // scheduled messages (Send later) of chats nobody opens go at their time
     return this.port;
   }
