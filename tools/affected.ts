@@ -85,7 +85,7 @@ export function buildGraph(files = allFiles()): Graph {
     const base = f.slice(f.lastIndexOf('/') + 1);
     if (isUiFile(f)) ui.push(f);
     if (f.startsWith(`${APP}/page/`) && !f.slice(APP.length + 6).includes('/')) index(base, f);
-    if (/^work\/[^/]+$/.test(f)) index(base, f);
+    if (/^work\/(?:fakes\/)?[^/]+$/.test(f)) index(base, f); // the fake agents live in work/fakes/
     if (/^work\/deno\/_[^/]+\.ts$/.test(f)) index(base, f);
     if (/^tools\/[^/]+\.ts$/.test(f)) index(base, f);
     const m = f.match(/^work\/([^/]+)\//);

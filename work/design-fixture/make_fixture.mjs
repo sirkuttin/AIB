@@ -9,6 +9,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+/** json.dumps as Python writes it (the fixtures were Python's: same bytes, same sizes). */
+const NL = process.platform === 'win32' ? '\r\n' : '\n'; // Path.write_text's text mode
+function dumps(value) {
+  if (value === undefined || value === null) return 'null';
+  if (typeof value === 'string') return JSON.stringify(value).replace(/[^\x20-\x7e]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
+  if (typeof value !== 'object') return String(value);
+  if (Array.isArray(value)) return '[' + value.map(dumps).join(', ') + ']';
+  return '{' + Object.keys(value).map((k) => dumps(k) + ': ' + dumps(value[k])).join(', ') + '}';
+}
+
 const base = path.join(path.dirname(fileURLToPath(import.meta.url)), 'data');
 fs.rmSync(base, { recursive: true, force: true });
 for (const n of ['state', 'omp', 'claude', 'owners']) fs.mkdirSync(path.join(base, n), { recursive: true });
@@ -35,7 +45,7 @@ const S = [
   ['omp', 'o-gw-1', 'gamma', 'Add structured logging', 'Structured logging', 700],
   ['claude', 'c-dot-1', 'notes', 'Set up the PowerShell profile', 'PowerShell profile', 3000],
 ];
-const lines = (rows) => rows.map((r) => JSON.stringify(r) + '\n').join('');
+const lines = (rows) => rows.map((r) => dumps(r) + '\n').join('');
 const stamp = (file, ago) => fs.utimesSync(file, now - ago, now - ago);
 for (const [prov, sid, proj, msg, title, age] of S) {
   const cwd = P[proj];
@@ -72,9 +82,9 @@ function srow(kind, text, ago, x = {}) {
 
 function w(name, rows, ago, meta) {
   const p = path.join(subs, `${name}.jsonl`);
-  fs.writeFileSync(p, rows.map((r) => JSON.stringify(r)).join('\n') + '\n', 'utf8');
+  fs.writeFileSync(p, rows.map((r) => dumps(r)).join('\n') + '\n', 'utf8');
   stamp(p, ago);
-  fs.writeFileSync(path.join(subs, `${name}.meta.json`), JSON.stringify(meta), 'utf8');
+  fs.writeFileSync(path.join(subs, `${name}.meta.json`), dumps(meta), 'utf8');
 }
 
 w('agent-a1', [srow('user', 'Rewrite sidebar rows', 300), srow('assistant', 'Editing sidebar-ui.js', 15)], 15, { description: 'Sidebar rows', agentType: 'general-purpose' });
@@ -93,5 +103,5 @@ const e = {
   'claude:c-dot-1': { archivedAt: t - 1000 },
   'claude:c-demo-4': { archivedAt: t - 2000 },
 };
-fs.writeFileSync(path.join(base, 'state', 'studio-conversations.json'), JSON.stringify({ version: 1, savedAt: t, entries: e }), 'utf8');
+fs.writeFileSync(path.join(base, 'state', 'studio-conversations.json'), dumps({ version: 1, savedAt: t, entries: e }), 'utf8');
 console.log('fixture ready under', base);

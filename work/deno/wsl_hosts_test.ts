@@ -165,7 +165,7 @@ class Lab {
       connectTimeoutMs: 20_000,
       helperCommand: (install) => ({
         command: NODE,
-        args: ['-u', HELPER, install.version],
+        args: [HELPER, install.version],
       }),
       helperEnv: () => Deno.env.toObject(),
       wslExe: null,

@@ -4,7 +4,7 @@
  * waits (banner) while one is, and never stops a busy host. Fake hosts in temp folders (_fake_host.ts), plus a client script of the real Deno host.
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
-import { DENO, FAKE_HOST, Fixture, NODE, TEST_OPTIONS, until } from './_host_fixture.ts';
+import { DENO, FAKE_HOST, Fixture, TEST_OPTIONS, until } from './_host_fixture.ts';
 import {
   APP_ID,
   APP_VERSION,
@@ -151,7 +151,7 @@ t('cross-language for real: a Deno web server takes over an idle host with no ru
   assertEquals(web.boot.hostPid, info.pid);
   assertEquals(web.boot.hostCodeWarning, '', 'a Deno web server and a Deno host agree about the code hash');
   // A client script (work/host_support.py) attaches to the Deno host: same protocol, same file.
-  const out = await new Deno.Command(NODE, {
+  const out = await new Deno.Command(Deno.env.get('AIB_PYTHON') ?? (Deno.build.os === 'windows' ? 'python' : 'python3'), { // work/host_support.py is a Python client: this one test still needs Python until it is ported or dropped
     args: [
       '-c',
       [

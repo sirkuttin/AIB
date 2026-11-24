@@ -924,7 +924,7 @@ probeTest('a real agent-named process holding the transcript open is reported th
   Deno.copyFileSync(Deno.execPath(), omp);
   const holdCode = `const f = Deno.openSync(${JSON.stringify(transcript)}, { read: true }); setTimeout(() => f.close(), 60000);`;
   const launcher = [
-    'const p = require("child_process").spawn(process.argv[1], ["eval", process.argv[2], "acp", "--resume", process.argv[3]], { cwd: process.argv[4], stdio: "ignore", windowsHide: true });',
+    'const p = require("child_process").spawn(process.argv[1], ["eval", process.argv[2], "acp", "--resume", process.argv[3]], { cwd: process.argv[4], stdio: "ignore", windowsHide: true, detached: true });',
     'p.unref();',
     'console.log(p.pid);',
   ].join('\n');
