@@ -111,7 +111,8 @@ export function worktreeTargets(
 /** Active, left over, or neither (landed / nothing there). `recState`: AIB record's state; h: the swarm entry. */
 function classify(recState: string, h: Helper | undefined): Pick<Target, 'state' | 'why' | 'working'> | null {
   const kept = !!h?.sub?.kept?.length;
-  if (h?.state === 'merged') return kept ? { state: 'left', why: 'kept', working: false } : null; // landed: gone
+  // AIB's own landing record is authoritative: landed work is gone, even when scratch files (test logs) stayed in its worktree
+  if (h?.state === 'merged') return null;
   if (recState === 'running' || recState === 'user-hook') return { state: 'active', why: '', working: true };
   if (h?.state === 'failed') return { state: 'left', why: 'refused', working: false };
   if (h?.state === 'stopped' || recState === 'stopped') return { state: 'left', why: 'stopped', working: false };
@@ -203,33 +204,73 @@ export function leftSignature(path: string): string {
   }
 }
 
-/** Landed verdicts of left-over worktrees, by worktree path: valid while its signature and main's tip stay. */
-const LANDED = new Map<string, { sig: string; tip: string; landed: boolean }>();
+/** Definite verdicts of left-over worktrees, by worktree path: valid while its signature and main's tip stay. */
+const LANDED = new Map<string, { sig: string; tip: string; verdict: LeftVerdict }>();
 /** Landed checks made for left-over worktrees (a test reads it: an unchanged one is not checked again). */
 export const landedChecked = { n: 0 };
+/** One check may take this long; a slower one is unknown (and so not listed) until a later poll. */
+export const LANDED_CHECK_MS = 20_000;
+/** One listing may spend this long on NEW checks; the rest stay unlisted until the next poll (cached verdicts cost nothing). */
+export const LISTING_BUDGET_MS = 8_000;
 
 /**
- * True when a left-over worktree's work is provably in the project's main branch (landed.ts: by content, never by ancestry) and its
- * folder holds nothing more: a landed one is not "left over". A folder with edits of its own (uncommitted or untracked) is never
- * judged landed. `top`: the repository's top folder.
+ * landed    its work is in main (a "AIB: subagent <title>" commit, or landed.ts says so): never listed.
+ * unlanded  a positive finding that work is NOT in main: listed.
+ * unknown   not checked yet, errored, timed out, or the branch is gone: NOT listed (owner 2026-11-24: ~50 landed builders were listed).
  */
-export async function leftIsLanded(t: Target, top: string): Promise<boolean> {
-  if (!top || !t.branch || t.why === 'kept') return false;
-  const target = await wt.mainBranch(top, '');
-  if (!target) return false;
-  const sig = leftSignature(t.path);
-  const tip = ((await wt.git(['rev-parse', '--verify', '-q', `refs/heads/${target}`], top, { check: false })).stdout || '').trim();
-  const hit = LANDED.get(t.path);
-  if (sig && tip && hit && hit.sig === sig && hit.tip === tip) return hit.landed;
-  landedChecked.n++;
-  let landed = false;
+export type LeftVerdict = 'landed' | 'unlanded' | 'unknown';
+
+const squash = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase();
+
+/** True when main holds AIB's own squashed landing "AIB: subagent <title>", whatever paths it touched. */
+async function squashedInMain(top: string, target: string, title: string): Promise<boolean> {
+  const want = 'aib: subagent ' + squash(title);
+  if (want.length <= 'aib: subagent '.length) return false;
+  const grep = '--grep=AIB: subagent ' + title.replace(/\s+/g, ' ').trim().slice(0, 100);
+  const text = (await wt.git(['log', '--format=%s', '-i', '--fixed-strings', grep, `refs/heads/${target}`], top, { check: false })).stdout;
+  return text.split('\n').map(squash).some((s) => s === want || s.startsWith(want));
+}
+
+/**
+ * Is a left-over worktree's work in the project's main branch? (landed.ts: by content, never by ancestry.) Only a positive "not in
+ * main" is 'unlanded'; whatever could not be decided is 'unknown'. A folder with edits of its own (uncommitted or untracked) is
+ * 'unlanded' even when its commits landed, except a 'kept' one, whose untracked scratch files are what AIB kept. `top`: the
+ * repository's top folder. `deadline`: no new check starts after this time (unknown).
+ */
+export async function leftVerdict(t: Target, top: string, deadline = Infinity): Promise<LeftVerdict> {
   try {
-    const verdict = await branchLanded(top, t.branch, target, { title: t.name });
-    landed = verdict.landed && (await porcelainPaths(t.path)).size === 0;
-  } catch { /* cannot tell: it stays listed */ }
-  if (sig && tip) LANDED.set(t.path, { sig, tip, landed });
-  while (LANDED.size > 400) LANDED.delete(LANDED.keys().next().value as string);
-  return landed;
+    if (!top || !t.branch) return 'unknown';
+    const target = await wt.mainBranch(top, '');
+    if (!target) return 'unknown';
+    const rev = async (ref: string) => ((await wt.git(['rev-parse', '--verify', '-q', ref], top, { check: false })).stdout || '').trim();
+    const tip = await rev(`refs/heads/${target}`);
+    if (!tip || !(await rev(`refs/heads/${t.branch}^{commit}`))) return 'unknown'; // main or the branch is gone: nothing to show
+    const sig = leftSignature(t.path);
+    const hit = LANDED.get(t.path);
+    if (sig && hit && hit.sig === sig && hit.tip === tip) return hit.verdict;
+    if (Date.now() > deadline) return 'unknown';
+    landedChecked.n++;
+    const decide = async (): Promise<LeftVerdict> => {
+      if (await squashedInMain(top, target, t.name)) return 'landed';
+      const verdict = await branchLanded(top, t.branch, target, { title: t.name });
+      if (verdict.why === 'unknown') return 'unknown';
+      if (!verdict.landed) return 'unlanded';
+      if (t.why === 'kept') return 'landed';
+      return (await porcelainPaths(t.path)).size === 0 ? 'landed' : 'unlanded';
+    };
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const verdict = await Promise.race([
+      decide(),
+      new Promise<LeftVerdict>((resolve) => {
+        timer = setTimeout(() => resolve('unknown'), LANDED_CHECK_MS);
+      }),
+    ]).finally(() => clearTimeout(timer));
+    if (verdict !== 'unknown' && sig) LANDED.set(t.path, { sig, tip, verdict });
+    while (LANDED.size > 400) LANDED.delete(LANDED.keys().next().value as string);
+    return verdict;
+  } catch {
+    return 'unknown'; // cannot tell: not listed
+  }
 }
 
 async function leftCounts(t: Target) {
@@ -261,8 +302,10 @@ export async function projectChanges(args: Args, offset = 0): Promise<Json> {
   );
   if (args.onlyMain) return { git: !!main.git, main: mainSection, sections: [], left: [] };
   const sections: Json[] = [], left: Json[] = [];
+  const deadline = Date.now() + LISTING_BUDGET_MS;
   for (const t of worktreeTargets([args.folder, top], args.subs, args.helpers)) {
-    if (t.state === 'left' && (await leftIsLanded(t, top))) continue; // its work is in main already: not left over
+    // only a positive "this work is not in main" is listed: landed, unknown, errored or timed out are not
+    if (t.state === 'left' && (await leftVerdict(t, top, deadline)) !== 'unlanded') continue;
     const open = t.state === 'active' ? !args.fold.has(t.id) : args.unfold.has(t.id);
     // one at a time: the git runs of a project never overlap
     const result = open

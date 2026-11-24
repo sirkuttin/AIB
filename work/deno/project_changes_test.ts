@@ -32,14 +32,14 @@ Deno.test('worktreeTargets: a running or finished-and-waiting subagent is active
   );
 });
 
-Deno.test('worktreeTargets: landed work is gone; stopped, refused and kept work is left over', () => {
+Deno.test('worktreeTargets: landed work is gone; stopped and refused work is left over', () => {
   const subs = [rec('s1', 'done'), rec('s2', 'stopped'), rec('s3', 'done'), rec('s4', 'done'), rec('s5', 'running')];
   const helpers = [
     entry('s1', 'merged'), // landed: gone
     entry('s3', 'failed'), // a landing that was refused
-    entry('s4', 'merged', { sub: { record: 's4', kept: ['notes.md'] } }), // landed, but scratch files stayed in its worktree
+    entry('s4', 'merged', { sub: { record: 's4', kept: ['.test-logs/x.log'] } }), // landed; test logs stayed in its worktree: still gone
   ];
-  assertEquals(list(subs, helpers), [['s2', 'left', 'stopped', false], ['s3', 'left', 'refused', false], ['s4', 'left', 'kept', false], ['s5', 'active', '', true]]);
+  assertEquals(list(subs, helpers), [['s2', 'left', 'stopped', false], ['s3', 'left', 'refused', false], ['s5', 'active', '', true]]);
 });
 
 Deno.test('worktreeTargets: only this project\'s worktrees; a missing worktree folder is not listed; oldest first', () => {

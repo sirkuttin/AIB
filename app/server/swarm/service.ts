@@ -1693,7 +1693,7 @@ export class Swarm {
         if (h.landing || this.#working.has(h.id)) continue; // landing now, or waiting for its turn: its own rules
         if (h.state === 'stopped') why = 'stopped';
         else if (h.state === 'failed') why = h.sub?.kept?.length ? 'kept' : 'failed';
-        else if (h.state === 'merged' && h.sub?.kept?.length) why = 'kept';
+        // a landed one (state merged) is never handed over, even with scratch files kept in its worktree (test logs): its work is in main
       } else why = rec.state === 'stopped' ? 'stopped' : 'orphan'; // no entry: its chat was never open here (it would have been taken up at the first poll)
       if (why) out.push({ w, why, orphanOf: !h });
     }
