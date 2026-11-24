@@ -32,7 +32,10 @@ import { ignoredFiles, landSubagentWork, protectedPath, SCRATCH_EXT, scratchFile
 export { ignoredFiles, protectedPath, SCRATCH_EXT, scratchFiles };
 import { claudeHelpers, swarmEnabled } from './settings.ts';
 import { readSubagents, type SubagentRecord } from '../subagents/service.ts';
-import { wslFolderBranch, wslLandSubagent } from '../wsl/subagents.ts';
+import { wslFolderBranch, wslLandSubagent, wslSubagentWork } from '../wsl/subagents.ts';
+import { keepWork, workDiff, workStatus } from '../worktrees/subagent_work.ts';
+import { type Handoff, readHandoffs, updateHandoffs } from './handoff.ts';
+import * as osp from '../platform/ospath.ts';
 import { canonicalName } from '../allow/paths.ts';
 import { WSL_TOOL_GROUPS } from '../artifacts/mcp.ts';
 import { isWslRef } from '../platform/location.ts';
@@ -102,6 +105,10 @@ export const LANDING_WAIT_NOTE_S = 600;
  * (2026-11-23: four builders waited hours behind a busy lead, with no line and no wake), and again every LANDING_REMIND_S.
  */
 export const LANDING_BUSY_WAKE_S = 120;
+/** Landing failures whose wake line already hands the work to the main agent (#wakeParent writes the ledger). */
+const HANDED_KINDS = new Set(['conflict', 'protected', 'failed', 'nobranch', 'hook']);
+/** An orphaned piece of work (its starting chat is not open) waits this long before it is handed to the project's main chat: the chat may come back (keeper, restart). */
+export const HANDOFF_ORPHAN_S = 600;
 export const LANDING_REMIND_S = 1800;
 /** A landing that waits for the user's files to be committed is tried again this often (the files may be committed by now). */
 export const LANDING_DIRTY_RETRY_S = 300;
@@ -198,6 +205,26 @@ export const label = (h: Helper) => (h.kind === 'subagent' ? `subagent “${h.ti
 
 const NO_BRIEF = { goal: '', owns: [], avoid: [], done_when: '', reply_with: '', test_cmd: '', read_only: false, context_files: [] };
 
+/** A copy's unlanded work as the hand-over and the unlanded_work tool see it. */
+interface Work {
+  id: string;
+  kind: 'subagent' | 'helper';
+  title: string;
+  /** "Subagent “X”" / "Helper “X” (Codex)". */
+  label: string;
+  project: string;
+  folder: string;
+  parent: { live: string; lasting: string };
+  path: string;
+  start: string;
+  branch: string;
+  wsl: { distro: string } | null;
+  slug: string;
+  endedAt: number;
+  rec: SubagentRecord | null;
+  h: Helper | null;
+}
+
 export class Refusal extends Error {
   constructor(readonly code: string, message: string, readonly status = 409) {
     super(message);
@@ -267,6 +294,8 @@ export class Swarm {
   /** POST /api/live/swarm/tool {conversationId, action, args}: [status, payload]. The key was checked by the route. */
   async tool(conversationId: unknown, action: unknown, args: unknown): Promise<Reply> {
     try {
+      // unlanded_work: any open non-helper chat of the project, helpers on or off, WSL chats too (owner rule 2026-11-24)
+      if (action === 'unlanded_work') return [200, await this.unlandedWork(await this.#anyChat(conversationId), obj(args))];
       const subagentMerge = action === 'merge_helper' && s(obj(args).helper).startsWith('sa_'); // a subagent's: not a swarm tool
       if (!swarmEnabled(this.ctx.stateDir) && !subagentMerge) {
         return [403, { ok: false, code: 'swarm-off', error: 'Helpers from other agents are turned off. Turn them on in Settings › AIB Linking (Helpers from other agents), then start a new chat.' }];
@@ -639,7 +668,10 @@ export class Swarm {
    * parent is idle, under the host's landing lock, on the folder's branch, with no stash.
    */
   async mergeHelper(caller: Json, id: string): Promise<Json> {
-    const h = this.#mine(caller, id);
+    return await this.#mergeOf(this.#mine(caller, id), id);
+  }
+
+  async #mergeOf(h: Helper, id: string): Promise<Json> {
     const keptScratch = h.kind === 'subagent' && !!h.sub?.kept?.length; // its scratch files stayed in its worktree: they land now
     if (h.merge && !h.merge.undo && !keptScratch) throw new Refusal('merged', `“${h.title}” is already merged`);
     if (h.kind === 'subagent') { // design 3.5: a retry after a refusal, or a stopped subagent's work the main agent wants landed
@@ -1194,6 +1226,11 @@ export class Swarm {
   async #reconcileSubagents(subs: SubagentRecord[], chats: Json[], byLasting: Map<string, Json>): Promise<void> {
     this.#landedBudget = 6;
     for (const rec of subs) {
+      const gone = this.registry.get(rec.id);
+      if (gone?.state === 'discarded') { // discarded by the main agent, its copy not removed yet (the agent host was busy): again
+        await this.#release(gone);
+        continue;
+      }
       const parent = chats.find((c) => c.id === rec.chat) ?? (rec.lasting ? byLasting.get(rec.lasting) : undefined);
       if (!parent) { // its chat is not open here: it waits (keeper-held chats are listed once taken over); one with no changes goes
         await this.#dropEmptyOrphan(rec).catch((error) => log.exception(error, 'Removing empty subagent %s failed', rec.id));
@@ -1353,14 +1390,9 @@ export class Swarm {
     await this.#wakeParent(fresh, s(parent.id), 'nobranch', `Subagent “${title}” did not land: this folder isn't on a branch. Its work is kept in ${path}.`);
   }
 
-  /** A stopped subagent: the chat's line and the main agent's next-prompt line (it lands only when the main agent asks: merge_helper). */
-  async #toldStopped(id: string, title: string, rec: SubagentRecord, parentId: string): Promise<void> {
+  /** A stopped subagent: the chat's line. The main agent is woken by #handOff (one plain line, with the tool to land, merge or discard it). */
+  async #toldStopped(id: string, title: string, rec: SubagentRecord, _parentId: string): Promise<void> {
     await this.note(id, 'swarm-stop', `Subagent “${title}” was stopped before it finished (${rec.stoppedWhy || 'stopped'}). AIB didn't land its work.`);
-    await this.ctx.host.liveCall('prompt-context', {
-      id: parentId,
-      line: `Subagent “${title}” was stopped before it finished, so AIB did not merge its work into this folder. If you want what it ` +
-        `did, call merge_helper with id ${rec.id}; AIB then lands it when your turn ends.`,
-    }).catch(() => [500, null]);
   }
 
   /**
@@ -1551,7 +1583,7 @@ export class Swarm {
    * steer lane (an idle chat takes it as its next prompt), into its paused queue after the user pressed Stop. When that is refused
    * (the chat is closed) the text is held as a next-prompt line instead, so it is never lost.
    */
-  async #wakeParent(h: Helper, parentId: string, kind: string, text: string): Promise<void> {
+  async #wakeParent(h: Pick<Helper, 'id'>, parentId: string, kind: string, text: string): Promise<boolean> {
     const state = obj(await this.ctx.host.liveState(parentId, 0).catch(() => null));
     const how = obj(state.queue).paused ? 'queued' : 'steer';
     const [code] = await this.ctx.host.liveCall(how === 'queued' ? 'queue' : 'steer', {
@@ -1559,13 +1591,322 @@ export class Swarm {
       text,
       clientMessageId: `swarm-landing-${kind}-${h.id}-${Math.floor(this.clock() / 1000)}`,
     }).catch(() => [500] as [number]);
-    if (code !== 200) await this.ctx.host.liveCall('prompt-context', { id: parentId, line: text }).catch(() => [500, null]);
+    let told = code === 200;
+    if (!told) told = (await this.ctx.host.liveCall('prompt-context', { id: parentId, line: text }).catch(() => [500, null]))[0] === 200;
+    // a landing that failed is handed over by this very line: #handOff never says it again (one wake per piece of work)
+    if (told && HANDED_KINDS.has(kind) && state.id) this.#recordHandoff(h.id, state, kind, 0, h);
+    return told;
+  }
+
+  /** The ledger entry of work handed to `chat` (live state): written once, never replaced. */
+  #recordHandoff(id: string, chat: Json, why: string, files: number, h?: Pick<Helper, 'id'> & Partial<Helper>): void {
+    updateHandoffs(this.ctx.stateDir, (items) => {
+      if (items[id]) return;
+      const rec = readSubagents(this.ctx.stateDir)[id];
+      const mine = h ?? this.registry.get(id) ?? undefined;
+      items[id] = {
+        id,
+        kind: id.startsWith('sa_') ? 'subagent' : 'helper',
+        title: mine?.title || (rec ? titleOf(rec) : id),
+        to: { live: s(chat.id), lasting: lasting(chat), name: '' },
+        why,
+        files,
+        at: this.clock() / 1000,
+      };
+    });
   }
 
   /** Its worktree, branch and record go (the Studio owns subagent-worktrees.json); tried again at the next poll when it can't now. */
   async #release(h: Helper): Promise<void> {
     const [code, payload] = await this.ctx.host.liveCall('subagent-release', { subagent: h.sub?.record ?? h.id }).catch(() => [500, null] as [number, unknown]);
     if (code !== 200) log.info('swarm: the worktree of subagent %s stays for now (%s)', h.id, pyStr(obj(payload).error ?? code));
+  }
+
+  // ---- unlanded work goes to the main agent (owner rule 2026-11-24: "the main agent should take care of 100% of this") --------------
+  /**
+   * A subagent's or a helper's copy that ended with work that is not in main is handed to a main chat, never to the owner: the chat
+   * that started it, else the project's main chat (the most recent chat of the project that is not a helper). It gets ONE plain line,
+   * through the same wake as a failed landing (#wakeParent: steer, queued after a Stop, or a held next-prompt line), and the ledger
+   * (handoff.ts) remembers it across restarts, so nothing is ever said twice. Work whose landing is queued or running is left alone
+   * (its own wait rules apply); work that is in main already (landed.ts) is never handed over. An orphan (its chat is closed) waits
+   * `handoffOrphanS` first: the chat may open again. A piece seen for the first time waits for the next poll (a failing landing
+   * writes its own wake and ledger entry in between).
+   */
+  handoffOrphanS = HANDOFF_ORPHAN_S;
+  #seenWork = new Set<string>();
+  #workCheckedAt = new Map<string, number>();
+
+  #workOf(id: string): Work | null {
+    const dir = this.ctx.stateDir;
+    if (id.startsWith('sa_')) {
+      const rec = readSubagents(dir)[id];
+      if (!rec || (rec.state !== 'done' && rec.state !== 'stopped') || rec.userHook || !rec.branch || !rec.path) return null;
+      const h = this.registry.get(id);
+      return {
+        id,
+        kind: 'subagent',
+        title: titleOf(rec),
+        label: `Subagent “${titleOf(rec)}”`,
+        project: rec.project || rec.folder,
+        folder: rec.folder,
+        parent: { live: h?.parent.live || rec.chat, lasting: h?.parent.lasting || rec.lasting },
+        path: rec.path,
+        start: rec.snapshot,
+        branch: rec.branch,
+        wsl: rec.wsl ? { distro: rec.wsl.distro } : null,
+        slug: rec.slug || id,
+        endedAt: rec.doneAt ?? rec.stoppedAt ?? rec.createdAt,
+        rec,
+        h,
+      };
+    }
+    const h = this.registry.get(id);
+    if (!h || h.kind === 'subagent' || !h.worktree?.path || !h.worktree.branch || !h.project) return null;
+    return {
+      id,
+      kind: 'helper',
+      title: h.title,
+      label: helperTitle(h),
+      project: h.project,
+      folder: h.project,
+      parent: { ...h.parent },
+      path: h.worktree.path,
+      start: h.worktree.start,
+      branch: h.worktree.branch,
+      wsl: null,
+      slug: h.id,
+      endedAt: h.endedAt ?? h.createdAt,
+      rec: null,
+      h,
+    };
+  }
+
+  /** Every copy that ended and may hold unlanded work, with why it is a candidate. */
+  #candidates(): { w: Work; why: string; orphanOf: boolean }[] {
+    const out: { w: Work; why: string; orphanOf: boolean }[] = [];
+    for (const rec of Object.values(readSubagents(this.ctx.stateDir))) {
+      const w = this.#workOf(rec.id);
+      if (!w) continue;
+      const h = w.h;
+      let why = '';
+      if (h) {
+        if (h.landing || this.#working.has(h.id)) continue; // landing now, or waiting for its turn: its own rules
+        if (h.state === 'stopped') why = 'stopped';
+        else if (h.state === 'failed') why = h.sub?.kept?.length ? 'kept' : 'failed';
+        else if (h.state === 'merged' && h.sub?.kept?.length) why = 'kept';
+      } else why = rec.state === 'stopped' ? 'stopped' : 'orphan'; // no entry: its chat was never open here (it would have been taken up at the first poll)
+      if (why) out.push({ w, why, orphanOf: !h });
+    }
+    for (const h of this.registry.all()) {
+      if (h.kind === 'subagent' || h.landing || this.#working.has(h.id) || h.merge) continue;
+      const w = this.#workOf(h.id);
+      if (!w) continue;
+      if (h.state === 'stopped') out.push({ w, why: 'stopped', orphanOf: false });
+      else if (h.state === 'failed') out.push({ w, why: 'failed', orphanOf: false });
+      else if (h.state === 'done') out.push({ w, why: 'orphan', orphanOf: true }); // a done helper: its report went to the parent; only when that chat is gone
+    }
+    return out;
+  }
+
+  #sameProject(chat: Json, project: string): boolean {
+    const at = s(chat.projectRoot) || s(chat.cwd);
+    if (!at || !project) return false;
+    if (at.startsWith('wsl://') || project.startsWith('wsl://')) return at.replace(/[\\/]+$/, '').toLowerCase() === project.replace(/[\\/]+$/, '').toLowerCase();
+    const a = osp.normcase(osp.normpath(at)), b = osp.normcase(osp.normpath(project));
+    return a === b || a.startsWith(b + (b.includes('\\') ? '\\' : '/'));
+  }
+
+  /** The chat that gets the work: the one that started it, else the project's most recent chat that is not a helper. */
+  #handTo(w: Work, chats: Json[], byLasting: Map<string, Json>): { chat: Json; own: boolean } | null {
+    const notHelper = (c: Json) => !c.closed && !this.isHelper(s(c.id), s(c.cwd));
+    const parent = (w.parent.lasting ? byLasting.get(w.parent.lasting) : undefined) ?? chats.find((c) => c.id === w.parent.live);
+    if (parent && notHelper(parent)) return { chat: parent, own: true };
+    const mine = chats.filter((c) => notHelper(c) && (this.#sameProject(c, w.project) || this.#sameProject(c, w.folder)));
+    if (!mine.length) return null;
+    const turn = (c: Json) => s(obj(c.attention).turnEndedAt);
+    const best = mine.reduce((a, b) => (turn(b) >= turn(a) ? b : a)); // the latest turn end; the later one in the list on a tie
+    return { chat: best, own: false };
+  }
+
+  #spec(w: Work) {
+    return { path: w.path, folder: w.folder, start: w.start, branch: w.branch, title: w.title, scratchDir: this.ctx.stateDir };
+  }
+
+  async #workStatus(w: Work): Promise<{ files: string[]; landed: boolean } | null> {
+    if (w.wsl) return await wslSubagentWork(w.wsl.distro, w.id, 'status');
+    if (!wt.lexists(w.path)) return null;
+    return await workStatus(this.#spec(w));
+  }
+
+  async #handOff(chats: Json[], byLasting: Map<string, Json>): Promise<void> {
+    const dir = this.ctx.stateDir;
+    const now = this.clock() / 1000;
+    // forget what is gone (landed, discarded long ago): the ledger keeps a discard for 30 days
+    const left = readHandoffs(dir);
+    const stale = Object.values(left).filter((t) => !this.#workOf(t.id) && (!t.discarded || now - t.discarded.at > 30 * 86400)).map((t) => t.id);
+    if (stale.length) updateHandoffs(dir, (items) => { for (const id of stale) delete items[id]; });
+    const told = readHandoffs(dir);
+    let budget = 6;
+    // work the main agent merged by hand (its files are in main as the copy holds them): the copy goes like any landed one's
+    for (const t of Object.values(told)) {
+      if (t.discarded || t.kind !== 'subagent' || budget <= 0) continue;
+      const w = this.#workOf(t.id);
+      if (!w?.h || w.h.landing || w.h.state === 'merged' || this.#working.has(t.id) || now - (this.#workCheckedAt.get(t.id) ?? 0) < 60) continue;
+      budget--;
+      this.#workCheckedAt.set(t.id, now);
+      try {
+        if (!(await this.#workStatus(w))?.landed) continue;
+        log.info('swarm: subagent %s was merged by hand; removing its worktree', t.id);
+        await this.registry.update(t.id, (cur) => (cur ? { ...cur, landing: null, state: 'merged', sub: { ...cur.sub!, empty: true, files: 0, kept: [] } } : null));
+        await this.#release(w.h);
+      } catch (error) {
+        log.exception(error, 'Checking whether subagent %s was merged by hand failed', t.id);
+      }
+    }
+    for (const { w, why, orphanOf } of this.#candidates()) {
+      if (told[w.id]) continue;
+      const to = this.#handTo(w, chats, byLasting);
+      if (!to) continue; // no chat of the project is open: it waits
+      if (orphanOf && to.own) continue; // its chat is open: the landing queue takes it up
+      if (orphanOf && now - w.endedAt < this.handoffOrphanS) continue;
+      if (!this.#seenWork.has(w.id)) {
+        this.#seenWork.add(w.id);
+        continue;
+      }
+      if (budget <= 0) break;
+      if (now - (this.#workCheckedAt.get(w.id) ?? 0) < 60) continue;
+      budget--;
+      this.#workCheckedAt.set(w.id, now);
+      try {
+        const status = await this.#workStatus(w);
+        const kept = w.h?.sub?.kept?.length ?? 0;
+        if (!status || status.landed || (!status.files.length && !kept)) continue;
+        const n = status.files.length || kept;
+        const count = ` (${n} file${n === 1 ? '' : 's'})`;
+        const what = why === 'stopped'
+          ? `${w.label} stopped before its work landed${count}.`
+          : why === 'kept'
+          ? `${w.label} left files that did not land${count}.`
+          : why === 'orphan'
+          ? `${w.label} finished, but the chat that started it is gone, so its work did not land${count}.`
+          : `${w.label} did not land${count}.`;
+        const text = `${what}${to.own || why === 'orphan' ? '' : ' The chat that started it is gone, so it comes to you.'} ` +
+          `Land it, merge it by hand, or discard it. Call unlanded_work with work "${w.id}" and action land, diff or discard (discard needs a reason).`;
+        if (await this.#wakeParent({ id: w.id }, s(to.chat.id), 'handoff', text)) this.#recordHandoff(w.id, to.chat, why, n);
+      } catch (error) {
+        log.exception(error, 'Handing unlanded work %s to the main agent failed', w.id);
+      }
+    }
+  }
+
+  async #anyChat(conversationId: unknown): Promise<Json> {
+    if (typeof conversationId !== 'string' || !conversationId) throw new Refusal('bad_request', 'No conversation', 400);
+    const state = obj(await this.ctx.host.liveState(conversationId, 0).catch(() => null));
+    if (!state.id || state.closed) throw new Refusal('not_main', 'This chat is not open in AIB');
+    if (helperOf(readHelpers(this.ctx.stateDir), { live: conversationId, lasting: lasting(state), path: s(state.cwd) })) {
+      throw new Refusal('nested', 'Helpers cannot land or discard work: only a main chat can');
+    }
+    return state;
+  }
+
+  /**
+   * The unlanded_work tool: `list` (what is waiting in this project), `land` (the normal landing: queued, lands when this chat's turn
+   * ends), `diff` (the work as a patch file to apply by hand in this chat's own folder) or `discard` (with a reason: the work is kept on
+   * the branch studio/discarded/<name>, the copy goes through the normal release). The same for every agent and for WSL projects.
+   */
+  async unlandedWork(caller: Json, a: Json): Promise<Json> {
+    const action = s(a.action) || (a.work ? '' : 'list');
+    const here = (w: Work) => this.#sameProject(caller, w.project) || this.#sameProject(caller, w.folder);
+    if (action === 'list') {
+      const told = readHandoffs(this.ctx.stateDir);
+      const items = Object.values(told).map((t) => ({ t, w: this.#workOf(t.id) })).filter((x) => x.w && !x.t.discarded && here(x.w!))
+        .map(({ t }) => ({ work: t.id, title: t.title, why: t.why, files: t.files }));
+      return { items, message: items.length ? 'Land, diff or discard each with unlanded_work.' : 'No unlanded work is waiting.' };
+    }
+    const id = s(a.work);
+    const w = this.#workOf(id);
+    if (!w) {
+      throw new Refusal('gone', `No unlanded work “${id}”: it landed, was discarded, or the id is wrong. Call unlanded_work with action list to see what is waiting.`, 404);
+    }
+    if (!here(w)) throw new Refusal('not_yours', 'That work belongs to another project', 403);
+    if (action === 'land') return await this.#landWork(caller, w);
+    if (action === 'diff') return await this.#diffWork(w);
+    if (action === 'discard') return await this.#discardWork(w, s(a.reason).replace(/\s+/g, ' ').trim().slice(0, 300));
+    throw new Refusal('bad_request', 'action is land, diff, discard or list', 400);
+  }
+
+  async #landWork(caller: Json, w: Work): Promise<Json> {
+    let h = this.registry.get(w.id);
+    if (!h && w.rec) { // never taken up (its chat was not open): the caller leads it now
+      await this.#adoptSubagent(w.rec, caller, '');
+      h = this.registry.get(w.id);
+    }
+    if (!h) throw new Refusal('gone', `${w.label} has nothing left to land`, 404);
+    const listing = obj(await this.ctx.host.liveList());
+    const chats = (Array.isArray(listing.connections) ? listing.connections : []).map(obj).filter((c) => !c.closed);
+    const { live, lasting: lastingName } = h.parent;
+    const parentOpen = chats.some((c) => (!!live && c.id === live) || (!!lastingName && lasting(c) === lastingName));
+    if (!parentOpen) h = (await this.registry.patch(h.id, { parent: { live: s(caller.id), lasting: lasting(caller) } })) ?? h;
+    if (h.kind !== 'subagent' && h.state === 'failed' && h.reason !== 'protected') h = (await this.registry.patch(h.id, { state: 'done', reason: '' })) ?? h;
+    const out = await this.#mergeOf(h, w.id);
+    return { ...out, work: w.id };
+  }
+
+  async #diffWork(w: Work): Promise<Json> {
+    const patchFile = pathOf(this.ctx.stateDir, 'handoff', `${w.id}.patch`);
+    let out: { files: string[]; stat?: string; patch?: string; truncated?: boolean; patchFile?: string; target?: string } | null;
+    if (w.wsl) out = await wslSubagentWork(w.wsl.distro, w.id, 'diff');
+    else {
+      if (!wt.lexists(w.path)) throw new Refusal('gone', `${w.label}'s worktree is gone; nothing to show`, 404);
+      out = await workDiff(this.#spec(w), patchFile);
+    }
+    if (!out) throw new Refusal('wsl_unavailable', "This distro's AIB helper cannot show that work now", 409);
+    const landable = w.wsl ? '' : (await merge.rev(w.folder, `refs/heads/${w.branch}-landable`)) ? `${w.branch}-landable` : '';
+    const file = out.patchFile || patchFile;
+    return {
+      work: w.id,
+      title: w.title,
+      branch: landable || w.branch,
+      worktree: (w.rec as { linux?: { path?: string } } | null)?.linux?.path || w.path,
+      files: out.files,
+      stat: out.stat ?? '',
+      patch: out.patch ?? '',
+      truncated: !!out.truncated,
+      patchFile: file,
+      message: `To merge it by hand, in your own folder run: git apply --3way "${file}" (it holds only this work's own changes), resolve ` +
+        `any conflicts keeping what both sides meant, and commit. When it is in ${out.target || 'main'}, AIB sees it and removes a subagent's copy by itself ` +
+        "(a helper's: call unlanded_work with action discard and the reason \"merged by hand\"). To give it up instead, call unlanded_work with action discard and a reason.",
+    };
+  }
+
+  async #discardWork(w: Work, reason: string): Promise<Json> {
+    if (!reason) throw new Refusal('bad_request', 'Say why in `reason` (a few words): it is kept with the work', 400);
+    if (w.h && RUNNING_STATES.has(w.h.state)) throw new Refusal('busy', `${w.label} is still running`);
+    let branch = '';
+    if (w.wsl) branch = (await wslSubagentWork(w.wsl.distro, w.id, 'keep', w.slug))?.branch ?? '';
+    else if (wt.lexists(w.path)) branch = (await keepWork(this.#spec(w), w.slug)).branch;
+    if (!branch && (w.wsl || wt.lexists(w.path))) throw new Refusal('keep_failed', 'The work could not be kept on a branch, so nothing was discarded', 409);
+    const at = this.clock() / 1000;
+    updateHandoffs(this.ctx.stateDir, (items) => {
+      const cur: Handoff = items[w.id] ?? { id: w.id, kind: w.kind, title: w.title, to: { live: '', lasting: '', name: '' }, why: 'discarded', files: 0, at };
+      items[w.id] = { ...cur, discarded: { branch, reason, at } };
+    });
+    if (w.h) {
+      await this.registry.update(w.id, (cur) =>
+        cur ? { ...cur, landing: null, state: 'discarded', reason: `discarded: ${reason}`, endedAt: at, sub: cur.sub ? { ...cur.sub, kept: [] } : cur.sub } : null
+      );
+      await this.note(w.id, 'swarm-stop', `Discarded ${w.label}: ${reason}.${branch ? ` Its work is kept on branch ${branch}.` : ''}`);
+    }
+    log.info('swarm: %s discarded (%s); its work is kept on %s', w.id, reason, branch || '(no copy)');
+    if (w.kind === 'subagent') await this.#release({ id: w.id, sub: { record: w.id } } as unknown as Helper);
+    else await this.ctx.host.liveCall('helper-release', { path: w.path, branch: w.branch }).catch(() => [500, null]);
+    return {
+      ok: true,
+      state: 'discarded',
+      work: w.id,
+      branch,
+      message: branch ? `Discarded. Its work stays on branch ${branch}; merge or cherry-pick it from there to get it back.` : 'Discarded (its copy was already gone).',
+    };
   }
 
   // ---- cleanup (owner 2026-11-23: helper worktrees and branches were never removed) -------------------------------------------------
@@ -1793,6 +2134,7 @@ export class Swarm {
     const chats = (Array.isArray(listing.connections) ? listing.connections : []).map(obj).filter((c) => !c.closed);
     const byLasting = new Map(chats.filter((c) => lasting(c)).map((c) => [lasting(c), c]));
     if (subs.length) await this.#reconcileSubagents(subs, chats, byLasting);
+    if (!listing.takingOver) await this.#handOff(chats, byLasting);
     await this.#sweep(chats);
     if (!listing.takingOver) await this.#endFinished(chats, byLasting);
     const helpers = this.registry.all().filter(pending);

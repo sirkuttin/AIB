@@ -265,6 +265,34 @@ export const SWARM_TOOLS: Json[] = [
   },
 ];
 
+/**
+ * Unlanded work (owner rule 2026-11-24: the main agent takes care of 100% of it, never the owner). Offered to every main chat, and to
+ * WSL chats too (their swarm tools are off, this is not a helper tool). The same tool and words for every agent.
+ */
+export const UNLANDED_TOOLS: Json[] = [
+  {
+    name: 'unlanded_work',
+    title: 'Land, merge by hand or discard unlanded work',
+    description:
+      'Work a subagent or helper left that never reached the project folder (it stopped, failed, conflicted, or its chat is gone). AIB ' +
+      'tells you in this chat when there is some; you take care of it, the user does not. action "land": the normal landing (it lands ' +
+      'when your turn ends; the result is in your next message). action "diff": the work as a short stat, the start of the patch, and a ' +
+      'patch file you apply by hand in your own folder (git apply --3way <file>), then commit; AIB removes the copy once the work is in ' +
+      'main. action "discard" with a reason: the copy is removed and its work is kept on the branch studio/discarded/<name> so it can ' +
+      'be recovered. action "list" shows what is waiting in this project.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        work: { type: 'string', description: 'The work id from the message (sa_... for a subagent, h_... for a helper). Not needed for list.' },
+        action: { type: 'string', enum: ['land', 'diff', 'discard', 'list'], description: 'What to do with it.' },
+        reason: { type: 'string', description: 'Required for discard: why, in a few words. It is kept with the work.' },
+      },
+      required: ['action'],
+      additionalProperties: false,
+    },
+  },
+];
+
 const env = (name: string) => Deno.env.get(name) ?? '';
 
 /**
@@ -792,6 +820,10 @@ function wslPathTool(tool: Json): Json {
   return { ...tool, description: `${description} ${WSL_PATH_NOTE}`, inputSchema: { ...schema, properties } };
 }
 
+const UNLANDED_HANDLERS: Record<string, Handler> = Object.fromEntries(
+  UNLANDED_TOOLS.map((t) => [String(t.name), (ctx: ToolContext, args: Json) => swarmTool(ctx, String(t.name), args)]),
+);
+
 const SWARM_HANDLERS: Record<string, Handler> = Object.fromEntries(
   SWARM_TOOLS.map((t) => [String(t.name), (ctx: ToolContext, args: Json) => swarmTool(ctx, String(t.name), args)]),
 );
@@ -803,10 +835,11 @@ function handlers(ctx: ToolContext): Record<string, Handler> {
       ...Object.fromEntries(Object.entries(HANDLERS).filter(([name]) => RESTRICTED_TOOLS.has(name))),
       ...(ctx.worktree && g.merge ? WORKTREE_HANDLERS : {}),
       ...(ctx.main && g.swarm ? SWARM_HANDLERS : {}),
+      ...UNLANDED_HANDLERS, // a WSL chat is a main chat for unlanded work
       ...(g.docs ? DOC_HANDLERS : {}),
     };
   }
-  return { ...HANDLERS, ...(ctx.worktree ? WORKTREE_HANDLERS : {}), ...(ctx.main ? SWARM_HANDLERS : {}), ...DOC_HANDLERS };
+  return { ...HANDLERS, ...(ctx.worktree ? WORKTREE_HANDLERS : {}), ...(ctx.main ? { ...SWARM_HANDLERS, ...UNLANDED_HANDLERS } : {}), ...DOC_HANDLERS };
 }
 
 /** The tools/list of a WSL chat: the same groups as handlers(). */
@@ -816,6 +849,7 @@ function restrictedTools(ctx: ToolContext): Json[] {
     ...TOOLS.filter((t) => RESTRICTED_TOOLS.has(String(t.name))).map((t) => t.name === 'publish' || t.name === 'update' ? wslPathTool(t) : t),
     ...(ctx.worktree && g.merge ? WORKTREE_TOOLS : []),
     ...(ctx.main && g.swarm ? SWARM_TOOLS : []),
+    ...UNLANDED_TOOLS,
     ...(g.docs ? [...DOC_TOOLS, ...DRAWING_TOOLS] : []),
   ];
 }
@@ -855,7 +889,7 @@ export async function handle(message: unknown, ctx: ToolContext = envContext()):
   if (method === 'ping') return ok({});
   if (method === 'tools/list') {
     if (ctx.restricted) return ok({ tools: restrictedTools(ctx) });
-    return ok({ tools: [...TOOLS, ...(ctx.worktree ? WORKTREE_TOOLS : []), ...(ctx.main ? SWARM_TOOLS : []), ...DOC_TOOLS, ...DRAWING_TOOLS] });
+    return ok({ tools: [...TOOLS, ...(ctx.worktree ? WORKTREE_TOOLS : []), ...(ctx.main ? [...SWARM_TOOLS, ...UNLANDED_TOOLS] : []), ...DOC_TOOLS, ...DRAWING_TOOLS] });
   }
   if (method === 'tools/call') {
     const name = Object.hasOwn(params, 'name') ? params.name : null;

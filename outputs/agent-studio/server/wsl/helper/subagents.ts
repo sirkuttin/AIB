@@ -15,6 +15,7 @@ import * as osp from '../../platform/ospath.ts';
 import * as wt from '../../worktrees/worktrees.ts';
 import * as merge from '../../worktrees/merge.ts';
 import { landSubagentWork } from '../../worktrees/subagent_land.ts';
+import { keepWork, workDiff, workStatus } from '../../worktrees/subagent_work.ts';
 import { deny, ownSubagentPath, type SubagentChat, SubagentWorktrees } from '../../subagents/service.ts';
 import { claudeConfigDir, readClaudeSetup, subagentsOffSettings } from '../../subagents/claude_config.ts';
 import * as codexSub from '../../subagents/codex.ts';
@@ -333,6 +334,21 @@ export function subagentMethods(data: string): Handlers {
         },
       );
       return { outcome, journal, actions: studio.actions };
+    },
+
+    /** Unlanded work handed to the main agent: its files, a patch of it, or a branch that keeps it (worktrees/subagent_work.ts). */
+    'subagent.work': async (p) => {
+      const id = idOf(p.id, 'id');
+      const rec = service.all().find((r) => r.id === id);
+      if (!rec || !rec.folder || !ownSubagentPath(root, rec)) return { files: [], landed: false, target: '' };
+      const spec = { path: rec.path, folder: rec.folder, start: rec.snapshot, branch: rec.branch, title: String(rec.description ?? ''), scratchDir: data };
+      const op = str(p, 'op');
+      if (op === 'diff') return { landed: false, ...(await workDiff(spec, `${data}/handoff/${id}.patch`)) };
+      if (op === 'keep') {
+        const kept = await keepWork(spec, typeof p.name === 'string' && p.name ? p.name : rec.slug);
+        return { files: [], landed: false, target: '', branch: kept.branch };
+      }
+      return await workStatus(spec);
     },
 
     /** Landed (or nothing to land, or discarded): the worktree, its branch and the record go. 'removed' | 'kept' | 'running' | 'gone'. */

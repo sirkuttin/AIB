@@ -767,7 +767,7 @@ export function sharedFolderNote(title: string): string {
 /** Python's re.match with `$`: also matches before one trailing newline. */
 export const OWN_ARTIFACT_TOOL = /^mcp__studio_artifact__(?:publish|update|list|merge_into_project|resolve_edit_clash)\n?$/;
 /** Swarm: AIB's helper tools (artifacts/mcp.ts SWARM_TOOLS); auto-approved like the artifact tools. */
-export const SWARM_TOOL_NAMES = ['helper_providers', 'start_helper', 'helper_status', 'stop_helper', 'merge_helper'];
+export const SWARM_TOOL_NAMES = ['helper_providers', 'start_helper', 'helper_status', 'stop_helper', 'merge_helper', 'unlanded_work'];
 const OWN_TOOL_NAMES = new Set(['publish', 'update', 'list', 'merge_into_project', 'resolve_edit_clash', ...SWARM_TOOL_NAMES]);
 
 /**

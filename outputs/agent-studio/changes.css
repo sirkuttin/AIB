@@ -721,11 +721,48 @@
 .cg-project .cg-file {
   padding-left: 12px;
 }
-.cg-left > .cg-sec-head {
+/* Work a main agent has not finished with: one quiet line each ("Being handled by <chat>"), no buttons. */
+.cg-left {
   border-top: 1px solid var(--line);
+  padding: 4px 0;
 }
-.cg-leftsec .cg-sec-head {
-  padding-left: 20px;
+.cg-hand {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 2px 12px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+.cg-hand-what {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cg-hand-by {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cg-hand-open {
+  all: unset;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  color: var(--muted);
+  text-decoration: underline dotted;
+}
+.cg-hand-open:hover,
+.cg-hand-open:focus-visible {
+  color: var(--text);
 }
 /* Docs tab (docs-tab-ui.js): the project's doc list, and the open doc in the panel. */
 .docs-tab-pane {

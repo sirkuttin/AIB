@@ -1378,6 +1378,7 @@
             cwd: selected.cwd || '',
             key: selected.key || '',
             titleFor: changesTitleFor,
+            openFor: changesOpenFor,
             tagFor: artifactTagFor,
           }
         : null,
@@ -1387,6 +1388,13 @@
   function changesTitleFor(k) {
     const c = k && conversations.find((x) => x.live?.id === k || x.key === k || aliasKey(x) === k);
     return c ? titleOf(c) : '';
+  }
+  // The Changes tab's "Being handled by <chat>" line opens that chat (its live id or lasting key); false when it is not listed.
+  function changesOpenFor(k) {
+    const c = k && conversations.find((x) => x.live?.id === k || x.key === k || aliasKey(x) === k);
+    if (!c) return false;
+    openConversation(c);
+    return true;
   }
   // A row chip in Artifacts: the chat (live id, lasting id or key) that made the artifact, with its agent's name; null when it is not listed.
   function artifactTagFor(k) {

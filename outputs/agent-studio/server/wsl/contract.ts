@@ -272,6 +272,15 @@ export interface HelperMethods {
   };
   'subagent.release': { params: { id: string }; result: { outcome: 'removed' | 'kept' | 'running' | 'gone' } };
   /**
+   * Unlanded work handed to the main agent (worktrees/subagent_work.ts run natively in the distro): `status` = the files its copy holds
+   * and whether main has them already; `diff` = a stat, the start of the patch and a patch file in the distro's data folder; `keep` =
+   * its work committed on the branch `studio/discarded/<name>` (discard). Protocol 2.
+   */
+  'subagent.work': {
+    params: { id: string; op: 'status' | 'diff' | 'keep'; name?: string };
+    result: { files: string[]; landed: boolean; target: string; stat?: string; patch?: string; truncated?: boolean; patchFile?: string; branch?: string };
+  };
+  /**
    * The distro's own agent setup for a chat (it can't be read from Windows): `git` is '' or why the folder can't have subagent
    * worktrees; `hooksOff` why the user's own settings turn hooks off ('' when on); `deny` a Claude chat's per-session permission rules
    * for hooks off. `config` is a Codex chat's parsed CODEX_CONFIG. `subagent.event` hands on what the chat's ACP stream says

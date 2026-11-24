@@ -7,8 +7,9 @@
  *             main's edits are not repeated in every section. Sources: <state>/subagent-worktrees.json (the Studio's records) and the
  *             swarm registry (swarm-helpers.json: helpers and the landing state of subagents). Spare, preparing and prepared worktrees
  *             hold no work and are never listed; a landed one is gone.
- *   left      worktrees whose work never landed (stopped, refused landing, files kept): shown folded, under "Left over", only with
- *             changes in them. No Merge or Discard: the agent lands or undoes work when asked in chat.
+ *   left      worktrees whose work never landed (stopped, refused landing, files kept), only with changes in them. The OWNER does
+ *             nothing with them (owner rule 2026-11-24): the swarm hands each to a main agent (swarm/handoff.ts), and each entry
+ *             says who has it (`handler`) so the page can show one quiet line "Being handled by <chat>". No buttons.
  *
  * A folded section only reads its numbers (changes.ts getCounts); its file list comes when it is unfolded. The runs of git go one after
  * another, never in parallel. A section is named to the page by its record id, never by a path; the page asks a worktree's diff by
@@ -19,6 +20,7 @@ import { isDict } from '../core/py.ts';
 import * as osp from '../platform/ospath.ts';
 import { docRows } from '../docs/rows.ts';
 import type { Helper } from '../swarm/registry.ts';
+import type { Handoff } from '../swarm/handoff.ts';
 import type { SubagentRecord } from '../subagents/service.ts';
 import { notReady, wslHost, wslLoc } from '../wsl/access.ts';
 import { WslHelperError } from '../wsl/contract.ts';
@@ -128,6 +130,8 @@ export interface Args {
   unfold: Set<string>;
   /** Main only ("Show the next 300" asks for main's next page: no worktree is read). */
   onlyMain?: boolean;
+  /** The hand-over ledger (swarm/handoff.ts): which chat has each left-over piece of work. */
+  handoffs?: Record<string, Handoff>;
 }
 
 interface Counts {
@@ -267,6 +271,10 @@ export async function projectChanges(args: Args, offset = 0): Promise<Json> {
       ? await leftCounts(t) // a left-over worktree rarely changes: counted again only when its HEAD or files' times move
       : await changes.getCounts(t.path, t.base || null).catch(() => null);
     const sec = section(t, open, result as unknown as Json | null);
+    if (t.state === 'left') {
+      const to = args.handoffs?.[t.id]?.to;
+      sec.handler = to ? { live: to.live, lasting: to.lasting, name: to.name } : null; // null: no main chat has it yet
+    }
     const c = sec.counts as Counts;
     if (!c.files && !t.working) continue; // nothing in it: finished and nothing to land, or nothing to lose
     (t.state === 'active' ? sections : left).push(sec);

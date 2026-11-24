@@ -9,7 +9,8 @@
  *  1. Main with uncommitted edits plus 2 active subagent worktrees gives 3 sections; main's edits are NOT repeated in the worktree
  *     sections (their diff starts at the snapshot); each head has the name, parent chat, branch, file count and +/- totals; the
  *     header chip, the tab badge and the bar count the project.
- *  2. A spare worktree is hidden. A left-over worktree shows folded under "Left over", with no Merge or Discard anywhere.
+ *  2. A spare worktree is hidden. Left-over work (owner rule 2026-11-24: the main agent takes care of it) shows as one quiet line per
+ *     piece, "Being handled by <chat>", with no Merge, Discard or Land anywhere and no "Left over" list for the owner.
  *  3. A file row opens its diff (a worktree's is asked by its record id, never by a path; a raw path is refused by the server).
  *  4. A focus change (opening another chat of the project) moves only the accent: the Changes tab does not change at all.
  *  5. The refresh rule: no reads while the Changes tab is hidden; a read at once on showing it and every 10 s after; a read when
@@ -191,25 +192,20 @@ Deno.test({
       assertEquals(await page.eval<string>(`document.getElementById('changesChip').innerText.replace(/\\s+/g, ' ').trim()`), 'Changes · 5 files +12 −0');
       // the spare worktree is not listed anywhere
       assert(!(await page.eval<boolean>(`/ignored\\.txt|spare/i.test(document.getElementById('projectChanges').innerText)`)), 'a spare worktree is hidden');
-      // left over: one folded group, its section folded too, never counted in the project's numbers
-      const left = await page.eval<{ head: string; open: string; below: number }>(`(() => {
-        const g = document.querySelector('#projectChanges > .cg-left'), h = g.querySelector('.cg-left-head');
-        return { head: h.textContent, open: h.getAttribute('aria-expanded'), below: g.querySelectorAll('.cg-sec').length };
+      // left over: one quiet line, never a list of actions for the owner and never counted in the project's numbers
+      await page.waitFor(`!!document.querySelector('#projectChanges > .cg-left .cg-hand[data-sec="sub-left"]')`, 10000, 'the left-over line');
+      const line = await page.eval<{ rows: number; text: string; head: boolean; sections: number; files: number }>(`(() => {
+        const g = document.querySelector('#projectChanges > .cg-left'), r = g.querySelector('.cg-hand');
+        return { rows: g.querySelectorAll('.cg-hand').length, text: r.innerText.replace(/\\s+/g, ' ').trim(), head: !!g.querySelector('.cg-left-head'),
+          sections: g.querySelectorAll('.cg-sec').length, files: g.querySelectorAll('.cg-file').length };
       })()`);
-      assertEquals(left, { head: '▾Left over (1)', open: 'true', below: 1 }, 'a short list (5 or fewer) is open by default');
-      await page.waitFor(`!!document.querySelector('#projectChanges > .cg-left .cg-sec[data-sec="sub-left"]')`, 10000, 'the left-over section');
-      const sec = await page.eval<{ head: string; sub: string; expanded: string; files: number }>(`(() => {
-        const s = document.querySelector('#projectChanges > .cg-left .cg-sec'), h = s.querySelector('.cg-sec-head');
-        return { head: h.innerText.replace(/\\s+/g, ' ').trim(), sub: s.querySelector('.cg-sec-sub').textContent, expanded: h.getAttribute('aria-expanded'), files: s.querySelectorAll('.cg-file').length };
-      })()`);
-      assertEquals(sec, { head: '▸ Old refactor 1 file +4 −0', sub: 'Subagent · studio/sub-left · Stopped before its work landed' /* its chat is not open: no parent title */, expanded: 'false', files: 0 });
-      // unfolding it reads its files (they were counted only until now)
-      await page.click('#projectChanges > .cg-left .cg-sec .cg-sec-head');
-      await page.waitFor(`document.querySelectorAll('#projectChanges > .cg-left .cg-file').length === 1`, 20000, 'its file after unfolding');
+      assertEquals([line.rows, line.head, line.sections, line.files], [1, false, 0, 0], 'one line, no group head, no section, no files for the owner');
+      assert(/^Subagent “Old refactor” (Being handled by .+|Waiting for a main chat to pick it up)$/.test(line.text), line.text);
+      assert(!(await page.eval<boolean>(`/Left over|Ask the agent in chat to land or undo/.test(document.getElementById('projectChanges').innerText)`)), 'the owner-facing text is gone');
       assertEquals(
-        await page.eval<number>(`[...document.querySelectorAll('#changesPane button')].filter((b) => /merge|discard|commit|undo/i.test(b.textContent + b.title)).length`),
+        await page.eval<number>(`[...document.querySelectorAll('#changesPane button')].filter((b) => /merge|discard|commit|undo|land/i.test(b.textContent + b.title)).length`),
         0,
-        'no Merge, Discard or Commit button',
+        'no Merge, Discard, Land or Commit button',
       );
       assertEquals(await page.eval<string>(`document.querySelector('#paneTab-changes .pane-badge').textContent`), '5', 'left-over work is not in the count');
     });
@@ -217,32 +213,27 @@ Deno.test({
 });
 
 Deno.test({
-  name: 'project Changes: a long Left over list starts folded, lists newest first, and leaves out work that already landed in main',
+  name: 'project Changes: a long left-over list is one quiet line each, newest first, and leaves out work that already landed in main',
   ignore: !browserPath,
   sanitizeResources: false,
   sanitizeOps: false,
   async fn() {
     await withPanel(async (page) => {
       await page.eval(`document.getElementById('paneTab-changes').click()`);
-      await page.waitFor(`!!document.querySelector('#projectChanges > .cg-left')`, 30000, 'the Left over group');
+      await page.waitFor(`!!document.querySelector('#projectChanges > .cg-left')`, 30000, 'the left-over lines');
       // 8 stopped worktrees: 7 never landed, 1 was cherry-picked into main by hand (it is not left over)
-      const head = () =>
-        page.eval<{ head: string; open: string; rows: string[] }>(`(() => {
-          const g = document.querySelector('#projectChanges > .cg-left'), h = g.querySelector('.cg-left-head');
-          return { head: h.textContent, open: h.getAttribute('aria-expanded'), rows: [...g.querySelectorAll('.cg-sec')].map((n) => n.dataset.sec) };
-        })()`);
-      assertEquals(await head(), { head: '▸Left over (7)', open: 'false', rows: [] }, 'more than 5 entries: folded by default');
-      await page.click('#projectChanges > .cg-left .cg-left-head');
-      await page.waitFor(`document.querySelectorAll('#projectChanges > .cg-left .cg-sec').length === 7`, 10000, 'seven rows after unfolding');
-      assertEquals((await head()).rows, ['left-6', 'left-5', 'left-4', 'left-3', 'left-2', 'left-1', 'sub-left'], 'newest first; the landed worktree is not listed');
-      assert(!(await page.eval<boolean>(`/Landed by hand|sub-landed/.test(document.getElementById('projectChanges').innerText)`)), 'landed work is not shown');
-      // the caret folds it again
-      await page.click('#projectChanges > .cg-left .cg-left-head');
-      await page.waitFor(`document.querySelectorAll('#projectChanges > .cg-left .cg-sec').length === 0`, 10000, 'folded again');
+      await page.waitFor(`document.querySelectorAll('#projectChanges > .cg-left .cg-hand').length === 7`, 10000, 'seven lines');
       assertEquals(
-        await page.eval<number>(`[...document.querySelectorAll('#changesPane button')].filter((b) => /merge|discard|commit|undo/i.test(b.textContent + b.title)).length`),
+        await page.eval<string[]>(`[...document.querySelectorAll('#projectChanges > .cg-left .cg-hand')].map((n) => n.dataset.sec)`),
+        ['left-6', 'left-5', 'left-4', 'left-3', 'left-2', 'left-1', 'sub-left'],
+        'newest first; the landed worktree is not listed',
+      );
+      assert(!(await page.eval<boolean>(`/Landed by hand|sub-landed/.test(document.getElementById('projectChanges').innerText)`)), 'landed work is not shown');
+      assertEquals(await page.eval<number>(`document.querySelectorAll('#projectChanges > .cg-left .cg-sec, #projectChanges > .cg-left .cg-left-head').length`), 0, 'no fold, no sections');
+      assertEquals(
+        await page.eval<number>(`[...document.querySelectorAll('#changesPane button')].filter((b) => /merge|discard|commit|undo|land/i.test(b.textContent + b.title)).length`),
         0,
-        'no Merge, Discard or Commit button',
+        'no Merge, Discard, Land or Commit button',
       );
     }, 1, 6);
   },

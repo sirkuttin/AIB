@@ -195,19 +195,13 @@
     return s;
   }
   /* The panel is the project's (owner, 2026-11-18): Changes shows the project folder first, then one section per worktree an
-     ACTIVE subagent or helper of any chat of the project works in, and a folded "Left over" group for worktrees whose work never
-     landed. No Merge, no Discard, no Commit (owner, 2026-11-16: "these buttons will never exist for anything anymore"): the agent
-     lands or undoes work when asked in chat. One server read gives all of it (GET /api/live/project/changes). */
+     ACTIVE subagent or helper of any chat of the project works in. Work that never landed is NOT the owner's to deal with (owner,
+     2026-11-24: "the main agent should take care of 100% of this"): the swarm hands it to a main agent, and each piece shows as one
+     quiet line, "Being handled by <chat>", that opens that chat. No Merge, no Discard, no Commit, no list of actions
+     (owner, 2026-11-16: "these buttons will never exist for anything anymore"). One server read gives all of it
+     (GET /api/live/project/changes). */
   const FOLDER_FOOT =
     'Nothing to merge: edits go straight into the project folder, from any chat. Ask the agent to commit or undo.';
-  const WHY = {
-    stopped: 'Stopped before its work landed',
-    refused: 'Its work did not land',
-    kept: 'Files kept in its worktree',
-  };
-  /* A "Left over" list longer than this starts folded (newest first, as the server sends it). */
-  const LEFT_OPEN_MAX = 5;
-  const LEFT_HINT = 'Work these agents left that never reached the project folder. Ask the agent in chat to land or undo it.';
   /* Poll every 10 s, only while you are looking at the Changes tab (the badge and chips refresh when a turn ends instead). */
   const shouldPoll = (o) => !!(o && o.tab === 'changes' && o.visible);
   /* The files of the project: main's (a doc counts once) plus those of each active worktree section. Left-over work is not counted:
@@ -238,7 +232,6 @@
     const who = sec.kind === 'helper' ? 'Helper' + (sec.provider ? ' (' + sec.provider + ')' : '') : 'Subagent';
     const bits = [who + (parentTitle ? ' of “' + parentTitle + '”' : '')];
     if (sec.branch) bits.push(sec.branch);
-    if (sec.state === 'left' && WHY[sec.why]) bits.push(WHY[sec.why]);
     return bits.join(' · ');
   }
   /* Query of a read: the sections the user folded (default open) and the left-over ones unfolded (default folded). */
@@ -325,7 +318,7 @@
     const POLL_MS = 10000 / Math.max(1, Number(root.__aibTestPollScale) || 1), // tests only: see chat.js
       MIN_GAP = 1200;
     let state = { tab: 'activity', expanded: false };
-    let chat = { id: '', busy: false, titleFor: null };
+    let chat = { id: '', busy: false, titleFor: null, openFor: null };
     /* The panel is the project's (owner, 2026-11-18): the tab it shows (Activity / Changes / Artifacts) is remembered per project
        and per window, kept over a restart, and never changes when you open another chat of the same project or move split focus.
        tabProject: the project the panel shows now. */
@@ -370,7 +363,6 @@
       loading = false;
     let fold = new Set(),
       unfold = new Set(),
-      leftOpen = null /* null: the default (open for a short list, folded for a long one); true / false: the user's choice */,
       open = new Map(),
       cache = new Map(),
       detailSeq = 0,
@@ -849,27 +841,37 @@
       }
       return root_;
     }
+    /* Work no main agent has finished with: one quiet, always-visible line per piece, "Being handled by <chat>". The line opens that
+       chat. Never a button to land, merge or discard: that is the main agent's job (swarm/service.ts #handOff). */
     function leftNode(list) {
-      const isOpen = leftOpen === null ? list.length <= LEFT_OPEN_MAX : leftOpen;
       const g = el('section', 'cg-left');
       g.dataset.sec = 'left';
-      g.setAttribute('role', 'listitem');
-      const head = el('button', 'cg-sec-head cg-left-head');
-      head.type = 'button';
-      head.dataset.fk = 'h:left';
-      head.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
-      head.title = (isOpen ? 'Fold' : 'Unfold') + ' Left over';
-      const caret = el('span', 'cg-caret', isOpen ? '▾' : '▸');
-      caret.setAttribute('aria-hidden', 'true');
-      head.append(caret, el('span', 'cg-sec-name', 'Left over (' + list.length + ')'));
-      head.onclick = () => {
-        leftOpen = !isOpen;
-        paintList();
-      };
-      g.append(head);
-      if (isOpen) {
-        g.append(el('div', 'cg-sec-sub', LEFT_HINT));
-        for (const sec of list) g.append(sectionNode(sec));
+      g.setAttribute('role', 'list');
+      for (const sec of list) {
+        const row = el('div', 'cg-hand');
+        row.dataset.sec = sec.id;
+        row.setAttribute('role', 'listitem');
+        const who = sec.kind === 'helper' ? 'Helper' : 'Subagent';
+        row.append(el('span', 'cg-hand-what', who + ' “' + sec.name + '”'));
+        const h = sec.handler;
+        let name = '';
+        try {
+          name = h && chat.titleFor ? chat.titleFor(h.live) || chat.titleFor(h.lasting) || '' : '';
+        } catch (e) {}
+        if (!h) row.append(el('span', 'cg-hand-by', 'Waiting for a main chat to pick it up'));
+        else {
+          const b = el('button', 'cg-hand-by cg-hand-open', 'Being handled by ' + (name || h.name || 'its main chat'));
+          b.type = 'button';
+          b.title = 'Open that chat';
+          b.dataset.fk = 'hand:' + sec.id;
+          b.onclick = () => {
+            try {
+              if (chat.openFor) chat.openFor(h.live) || chat.openFor(h.lasting);
+            } catch (e) {}
+          };
+          row.append(b);
+        }
+        g.append(row);
       }
       return g;
     }
@@ -880,7 +882,7 @@
           resp,
           [...fold],
           [...unfold],
-          leftOpen,
+          !!chat.openFor,
           [...open.entries()],
           [...cache.entries()].map(([k, c]) => [k, c.sig, c.loading ? 1 : 0, c.err, c.d ? 1 : 0]),
           loadingMore,
@@ -1145,7 +1147,6 @@
       error = '';
       fold = new Set();
       unfold = new Set();
-      leftOpen = null;
       open = new Map();
       cache = new Map();
       pages = 1;
@@ -1161,7 +1162,13 @@
         busy = !!(ctx && ctx.busy);
       const changed = id !== chat.id,
         ended = turnEnded(chat.busy, busy);
-      chat = { id, busy, key: ctx && ctx.key ? ctx.key : '', titleFor: ctx && typeof ctx.titleFor === 'function' ? ctx.titleFor : null };
+      chat = {
+        id,
+        busy,
+        key: ctx && ctx.key ? ctx.key : '',
+        titleFor: ctx && typeof ctx.titleFor === 'function' ? ctx.titleFor : null,
+        openFor: ctx && typeof ctx.openFor === 'function' ? ctx.openFor : null,
+      };
       // Artifacts is the project's: it gets the project key (another chat of the same project moves only its accent) and the chat lookup for its row chips
       if (AR())
         AR().sync(

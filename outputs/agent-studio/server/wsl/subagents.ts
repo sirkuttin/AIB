@@ -190,6 +190,19 @@ export async function wslSubagentLand(
   }
 }
 
+/**
+ * Unlanded work of the WSL subagent `id` (helper/subagents.ts `subagent.work`): null when the distro can't answer now or its helper is
+ * too old (the caller says so; nothing is guessed).
+ */
+export async function wslSubagentWork(distro: string, id: string, op: 'status' | 'diff' | 'keep', name = ''): Promise<HelperMethods['subagent.work']['result'] | null> {
+  try {
+    return await call(distro, 'subagent.work', { id, op, ...(name ? { name } : {}) }, LAND_MS);
+  } catch (error) {
+    if (!missing(error)) log.warning('wsl: unlanded work could not be read: %s', why(error));
+    return null;
+  }
+}
+
 /** Landed, empty or discarded: the worktree, branch and record go in the distro. 'gone' when the distro can't be asked now. */
 export async function wslSubagentRelease(distro: string, id: string): Promise<'removed' | 'kept' | 'running' | 'gone'> {
   try {

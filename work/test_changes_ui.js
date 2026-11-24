@@ -177,15 +177,14 @@ test('projectTotals counts main (a doc once) and the active worktree sections, n
   assert.deepEqual(C.projectTotals(null), { files: 0, added: 0, removed: 0 });
   assert.deepEqual(C.projectTotals({ main: { git: false }, sections: [] }), { files: 0, added: 0, removed: 0 });
 });
-test('section heads: counts, the sub-line names the parent chat and branch, a left-over one says why', () => {
+test('section heads: counts, the sub-line names the parent chat and branch, a left-over one has no why text', () => {
   const s = sec('s1', 'subagent', { branch: 'studio/sub-1', counts: { files: 1, added: 4, removed: 0 } });
   assert.deepEqual(C.sectionSum(s), { files: '1 file', added: '+4', removed: '−0', n: 1 });
   assert.equal(C.sectionSub(s, 'Fix login'), 'Subagent of “Fix login” · studio/sub-1');
   assert.equal(C.sectionSub(s, ''), 'Subagent · studio/sub-1');
   assert.equal(C.sectionSub(sec('h1', 'helper', { provider: 'codex', branch: 'studio/helper-1' }), 'Main'), 'Helper (codex) of “Main” · studio/helper-1');
   assert.equal(C.sectionSub(sec('main', 'main', { branch: 'main' }), ''), 'Branch main');
-  assert.match(C.sectionSub(sec('l', 'subagent', { state: 'left', why: 'stopped', branch: 'b' }), 'Chat'), /Stopped before its work landed$/);
-  assert.match(C.sectionSub(sec('l', 'subagent', { state: 'left', why: 'kept' }), ''), /Files kept in its worktree$/);
+  assert.equal(C.sectionSub(sec('l', 'subagent', { state: 'left', why: 'stopped', branch: 'b' }), 'Chat'), 'Subagent of “Chat” · b', 'no "why" text: the owner has nothing to do with it');
 });
 test('folding: a section is open unless folded, a left-over one folded unless unfolded; only real ids are kept', () => {
   const act = sec('s1', 'subagent'),
@@ -368,6 +367,7 @@ function setup(opts) {
       state: s.state || 'active',
       why: s.why || '',
       working: !!s.working,
+      handler: s.handler,
       expanded: open,
       git: true,
       counts: c,
@@ -651,44 +651,35 @@ test('folding: a folded section keeps only its head, the next read asks for coun
   assert.equal(secRows(t.secs()[1]).length, 2);
   assert.ok(!/fold=s1/.test(reads(t).at(-1)));
 });
-test('Left over: a group only when there is left-over work, open for a short list, folded for a long one; unfold a section to see its files', async () => {
+test('Left over: no list for the owner; one quiet line per piece, "Being handled by <chat>", that opens that chat; nothing when empty', async () => {
   const none = setup({ sections: SUBS });
   none.ui().show('changes');
   await flush();
-  assert.equal(none.list().querySelector('.cg-left'), null, 'no group without left-over work');
-  const L = [{ id: 'l1', name: 'Old refactor', files: [{ path: 'old.js', status: 'M', added: 5, removed: 0 }], why: 'stopped' }];
+  assert.equal(none.list().querySelector('.cg-left'), null, 'nothing at all without left-over work');
+  const L = [
+    { id: 'l1', name: 'Old refactor', files: [{ path: 'old.js', status: 'M', added: 5, removed: 0 }], why: 'stopped', handler: { live: 'chat1', lasting: 'claude:one', name: '' } },
+    { id: 'l2', name: 'Orphan', files: [{ path: 'o.js', status: 'M', added: 1, removed: 0 }], why: 'stopped', handler: null },
+  ];
   const t = setup({ sections: SUBS, left: L });
   t.ui().show('changes');
+  const opened = [];
+  C.sync({ id: 'chat1', busy: false, titleFor: (k) => ({ chat1: 'Fix login', 'claude:one': 'Fix login' })[k] || '', openFor: (k) => (opened.push(k), true) });
   await flush();
   const group = t.list().querySelector('.cg-left');
   assert.ok(group);
-  const gh = group.querySelector('.cg-left-head');
-  assert.equal(gh.textContent, '▾Left over (1)');
-  assert.equal(gh.attrs['aria-expanded'], 'true');
-  assert.equal(group.querySelectorAll('.cg-sec').length, 1, 'a short list is open: its rows show');
-  assert.equal(t.secs().length, 4, 'the 3 sections plus the one left-over row');
-  const many = Array.from({ length: 6 }, (_, i) => ({ id: 'm' + i, name: 'Old ' + i, files: [{ path: 'o' + i + '.js', status: 'M', added: 1, removed: 0 }], why: 'stopped' }));
-  const long = setup({ sections: SUBS, left: many });
-  long.ui().show('changes');
-  await flush();
-  const lh = long.list().querySelector('.cg-left').querySelector('.cg-left-head');
-  assert.equal(lh.textContent, '▸Left over (6)');
-  assert.equal(lh.attrs['aria-expanded'], 'false');
-  assert.equal(long.list().querySelector('.cg-left').querySelectorAll('.cg-sec').length, 0, 'a long list is folded: nothing below the head');
-  lh.click();
-  assert.equal(long.list().querySelector('.cg-left').querySelectorAll('.cg-sec').length, 6, 'the caret unfolds it');
-  const sec = t.list().querySelector('.cg-left').querySelector('.cg-sec');
-  assert.ok(sec);
-  assert.equal(sec.querySelector('.cg-sec-head').attrs['aria-expanded'], 'false', 'its section is folded too');
-  assert.match(sec.querySelector('.cg-sec-sub').textContent, /Stopped before its work landed/);
-  assert.equal(secRows(sec).length, 0);
-  assert.match(t.list().querySelector('.cg-left').textContent, /never reached the project folder/);
-  sec.querySelector('.cg-sec-head').click();
-  await flush();
-  assert.ok(/unfold=l1/.test(reads(t).at(-1)), reads(t).at(-1));
-  assert.equal(secRows(t.list().querySelector('.cg-left')).length, 1);
+  assert.equal(group.querySelector('.cg-left-head'), null, 'no group header, no fold');
+  assert.equal(group.querySelectorAll('.cg-sec').length, 0, 'no section with files for the owner');
+  const rows = group.querySelectorAll('.cg-hand');
+  assert.equal(rows.length, 2, 'one line per piece');
+  assert.match(rows[0].textContent, /Subagent “Old refactor”/);
+  const by = rows[0].querySelector('.cg-hand-open');
+  assert.equal(by.textContent, 'Being handled by Fix login');
+  by.click();
+  assert.deepEqual(opened, ['chat1'], 'the line opens that chat');
+  assert.match(rows[1].textContent, /Waiting for a main chat/);
+  assert.doesNotMatch(group.textContent, /never reached the project folder|Ask the agent in chat to land or undo/, 'the owner-facing text is gone');
   assert.equal(C.projectTotals(t.ui().project()).files, 6, 'left-over work is not in the project count');
-  assert.equal(t.list().querySelectorAll('button').filter((b) => /merge|discard|commit/i.test(b.textContent)).length, 0, 'no Merge or Discard');
+  assert.equal(t.list().querySelectorAll('button').filter((b) => /merge|discard|commit|land|undo/i.test(b.textContent)).length, 0, 'no owner buttons');
 });
 test('refresh rule: no timer while the Changes tab is hidden; every 10 s while it shows; a turn that ends reads at once', async () => {
   const t = setup();

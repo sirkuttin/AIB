@@ -23,6 +23,7 @@ import { getUpdate, getUpdateNotes, postUpdateCheck, postUpdateInstall, postUpda
 import { parseQs } from '../artifacts/origin.ts';
 import { authorize, pageAllowed, type Principal, Refusal, REMOTE_PC, SCOPE_ARTIFACTS_TOOL } from './security.ts';
 import { projectChanges, sectionDiff } from '../worktrees/project_changes.ts';
+import { readHandoffs } from '../swarm/handoff.ts';
 import { ChatFolderCache, projectArtifacts } from '../artifacts/project_list.ts';
 import { ProjectResolver } from '../worktrees/worktrees.ts';
 import * as changes from '../worktrees/changes.ts';
@@ -367,6 +368,7 @@ export function studioRoutes(): Map<string, StudioHandler> {
           stateDir: ctx.stateDir ?? null,
           subs: ctx.stateDir ? readSubagents(ctx.stateDir) : {},
           helpers: swarmOf(ctx).registry.all(),
+          handoffs: ctx.stateDir ? readHandoffs(ctx.stateDir) : {},
           fold: list('fold'),
           unfold: list('unfold'),
           onlyMain: one(args, 'only') === 'main',
