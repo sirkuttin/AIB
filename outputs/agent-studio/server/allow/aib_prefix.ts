@@ -20,8 +20,14 @@
 /** <chat>.<owner>.<call id>: each part [A-Za-z0-9_-] (keeper/hookshell.go aibCookieShape). */
 export const COOKIE_SHAPE = /^[A-Za-z0-9_-]{1,100}\.[A-Za-z0-9_-]{1,100}\.[A-Za-z0-9_-]{1,200}$/;
 const COOKIE = '[A-Za-z0-9_-]{1,100}\\.[A-Za-z0-9_-]{1,100}\\.[A-Za-z0-9_-]{1,200}';
-const AT_START = new RegExp(`^(?:export AIB_PROC='(${COOKIE})'; |\\$env:AIB_PROC='(${COOKIE})'; )`);
-const ANYWHERE = new RegExp(`(?:export AIB_PROC='(${COOKIE})'; |\\$env:AIB_PROC='(${COOKIE})'; )`, 'g');
+/**
+ * Windows, bash from Git (MSYS): an exported variable never reaches the Windows environment block of an MSYS process, but PATH does, so
+ * the bash form there carries a second statement: the same cookie as a PATH entry that does not exist (read back by platform/proc_env.ts;
+ * keeper/hookshell.go cutAibTag accepts it). Every reader takes either bash form off.
+ */
+const BASH_FORM = `export AIB_PROC='(${COOKIE})'; (?:export PATH="\\$PATH:/aibproc/\\1"; )?`;
+const AT_START = new RegExp(`^(?:${BASH_FORM}|\\$env:AIB_PROC='(${COOKIE})'; )`);
+const ANYWHERE = new RegExp(`(?:${BASH_FORM}|\\$env:AIB_PROC='(${COOKIE})'; )`, 'g');
 
 export type TagShell = 'bash' | 'pwsh';
 
@@ -38,9 +44,10 @@ export function cookieOf(chat: string, owner: string, callId: string): string | 
 }
 
 /** The exact prefix for a shell and cookie ('' for a cookie of the wrong shape). */
-export function tagPrefix(shell: TagShell, cookie: string): string {
+export function tagPrefix(shell: TagShell, cookie: string, os: string = Deno.build.os): string {
   if (!COOKIE_SHAPE.test(cookie)) return '';
-  return shell === 'bash' ? `export AIB_PROC='${cookie}'; ` : `$env:AIB_PROC='${cookie}'; `;
+  if (shell === 'bash') return `export AIB_PROC='${cookie}'; ` + (os === 'windows' ? `export PATH="$PATH:/aibproc/${cookie}"; ` : '');
+  return `$env:AIB_PROC='${cookie}'; `;
 }
 
 /**
@@ -67,8 +74,8 @@ export function taggable(shell: TagShell, command: string): boolean {
 }
 
 /** The prefixed command, or null when the shell can't be proven to read it (never guessed: the call stays untagged). */
-export function tagged(shell: TagShell, cookie: string, command: string): string | null {
-  return taggable(shell, command) && COOKIE_SHAPE.test(cookie) ? tagPrefix(shell, cookie) + command : null;
+export function tagged(shell: TagShell, cookie: string, command: string, os: string = Deno.build.os): string | null {
+  return taggable(shell, command) && COOKIE_SHAPE.test(cookie) ? tagPrefix(shell, cookie, os) + command : null;
 }
 
 /** `command` without AIB's exact prefix at its start (unchanged when it has none). `chat`: only that chat's cookie counts. */

@@ -35,7 +35,8 @@ import * as wt from '../worktrees/worktrees.ts';
 import { pathFormProblem } from '../allow/paths.ts';
 import { readHelpers } from '../swarm/registry.ts';
 import { claudeConfigDir, isForkSkill } from './claude_config.ts';
-import { preShell } from './shell_tag.ts';
+import { callTimeOf, preShell } from './shell_tag.ts';
+import { type ProcessReaper, recordReaped } from './reap.ts';
 
 const log = getLogger('subagents');
 
@@ -298,12 +299,87 @@ export class SubagentWorktrees {
   #update(id: string, change: (r: SubagentRecord | null) => SubagentRecord | null): Promise<SubagentRecord | null> {
     return this.#file.run(() => {
       const all = readSubagents(this.stateDir);
+      const was = all[id]?.state;
       const next = change(all[id] ? structuredClone(all[id]) : null);
       if (next === null) delete all[id];
       else all[id] = next;
       saveJson(pathOf(this.stateDir, FILE), { version: 1, subagents: all }, '.subagent-worktrees-');
+      // a subagent that finished (done, failed, cancelled, stopped): what it left running is shut down (reap.ts)
+      if (next && next.agentId && !next.wsl && (next.state === 'done' || next.state === 'stopped') && was !== 'done' && was !== 'stopped') {
+        this.#reapLater(next.id);
+      }
       return next;
     });
+  }
+
+  // ---- shutting down what a finished subagent left running (no-stuck-processes, Slice 0, step 6) -------------------------------
+
+  /** Shuts down processes by their shell cookie (subagents/reap.ts); Studio sets it. None: nothing is ever killed. */
+  reaper: ProcessReaper | null = null;
+  /** How long after a subagent finished its processes are shut down (its last output flushes; a continued subagent is skipped). */
+  reapDelayMs = 5000;
+  /** One line for the parent chat when something was shut down: the subagent's record (null for one stopped call) and how many. */
+  onReaped: ((chatId: string, rec: SubagentRecord | null, killed: number) => void) | null = null;
+  readonly #reapTimers = new Map<string, number>();
+  readonly #stopsSeen = new Set<string>();
+  /** Claude Code's background task id of each call (chat + task id -> tool_use_id), so a TaskStop of the task finds its call. */
+  readonly #taskCalls = new Map<string, string>();
+
+  /** Connection.onBackgroundTask: the call `callId` of the chat went to the background as `task`. */
+  noteTask(chatId: string, task: string, callId: string): void {
+    this.#taskCalls.set(`${chatId}\0${task}`, callId);
+    while (this.#taskCalls.size > 500) this.#taskCalls.delete(this.#taskCalls.keys().next().value!);
+  }
+
+  #reapLater(id: string): void {
+    if (!this.reaper || this.#reapTimers.has(id)) return;
+    const timer = setTimeout(() => {
+      this.#reapTimers.delete(id);
+      void this.#reapRecord(id).catch((error) => log.exception(error, 'Shutting down a finished subagent\'s processes failed'));
+    }, this.reapDelayMs);
+    Deno.unrefTimer(timer as unknown as number);
+    this.#reapTimers.set(id, timer as unknown as number);
+  }
+
+  /** Shut down the processes of the finished subagent `id` (not when it runs again, or its chat is gone: that chat's own end takes them). */
+  async #reapRecord(id: string): Promise<void> {
+    const rec = readSubagents(this.stateDir)[id];
+    const chat = rec ? this.chat(rec.chat) : null;
+    if (!rec || !chat || !this.reaper || !rec.agentId || chat.provider === 'gemini') return; // Gemini's fence denies subagent shells
+    if (rec.state !== 'done' && rec.state !== 'stopped') return;
+    if ((rec.continuedAt ?? 0) > (rec.doneAt ?? rec.stoppedAt ?? 0)) return;
+    const result = await this.reaper.reap({
+      chat: chat.id,
+      owner: rec.agentId,
+      since: rec.boundAt ?? rec.createdAt,
+      callTime: (call) => callTimeOf(chat.id, call),
+    });
+    this.#reaped(chat.id, rec, result, 'subagent finished');
+  }
+
+  /** A TaskStop of one background call: only that call's processes (the call field), whoever started it. */
+  async #reapCall(chatId: string, callId: string): Promise<void> {
+    const chat = this.chat(chatId);
+    if (!this.reaper || !chat || chat.wsl) return;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(this.reapDelayMs, 1000))); // the agent's own stop goes first
+    const result = await this.reaper.reap({
+      chat: chatId,
+      call: callId,
+      since: (callTimeOf(chatId, callId) ?? now() - 12 * 3600),
+      callTime: (call) => callTimeOf(chatId, call),
+    });
+    this.#reaped(chatId, null, result, 'its task was stopped');
+  }
+
+  #reaped(chatId: string, rec: SubagentRecord | null, result: { killed: number; calls: string[] }, why: string): void {
+    if (!result.killed && !result.calls.length) return;
+    try {
+      recordReaped(this.stateDir, result.calls, why);
+    } catch (error) {
+      log.exception(error, 'Could not save which calls were shut down');
+    }
+    log.info('subagent %s (%s): %d processes shut down, calls %s', rec?.id ?? 'call', why, result.killed, result.calls.join(','));
+    if (result.killed) this.onReaped?.(chatId, rec, result.killed);
   }
 
   #patch(id: string, fields: Partial<SubagentRecord>): Promise<SubagentRecord | null> {
@@ -727,6 +803,12 @@ export class SubagentWorktrees {
         const id = target(input.task_id) || target(input.shell_id) || target(input.agent_id);
         const rec = id ? mine.find((r) => r.agentId === id && ['running', 'done', 'user-hook'].includes(r.state)) : undefined;
         if (rec) await this.#stop(rec, 'the main agent stopped it');
+        else if (id && status !== 'failed' && !this.#stopsSeen.has(toolUseId || id)) { // a background command's task: just its call's processes
+          this.#stopsSeen.add(toolUseId || id);
+          while (this.#stopsSeen.size > 500) this.#stopsSeen.delete(this.#stopsSeen.values().next().value!);
+          const call = this.#taskCalls.get(`${chatId}\0${id}`) ?? id;
+          void this.#reapCall(chatId, call).catch((error) => log.exception(error, 'Shutting down a stopped call\'s processes failed'));
+        }
       } else if ((tool === 'Agent' || tool === 'Task') && status === 'failed' && toolUseId) {
         const rec = mine.find((r) => r.toolUseId === toolUseId && (r.state === 'running' || r.state === 'user-hook'));
         if (rec) await this.#stop(rec, 'its Agent call failed');

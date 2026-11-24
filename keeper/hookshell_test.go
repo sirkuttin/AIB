@@ -37,6 +37,9 @@ func shellAnswer(tool, command string, extra map[string]any) string {
 
 const cookie = "c-1.agent7.toolu_1"
 
+// marker: the optional second statement of the bash form (Windows, bash from Git: hookshell.go cutAibTag).
+const marker = "export PATH=\"$PATH:/aibproc/" + cookie + "\"; "
+
 func TestPreShellTagsASubagentCallExactly(t *testing.T) {
 	var answer string
 	file := hookServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -51,7 +54,11 @@ func TestPreShellTagsASubagentCallExactly(t *testing.T) {
 	}{
 		{"bash tagged", shellInput("Bash", "agent7", "npm test", extra), shellAnswer("Bash", bash+"npm test", extra), shellAnswer("Bash", bash+"npm test", extra)},
 		{"pwsh tagged", shellInput("PowerShell", "agent7", "Get-Date", nil), shellAnswer("PowerShell", pwsh+"Get-Date", nil), shellAnswer("PowerShell", pwsh+"Get-Date", nil)},
-		{"empty answer", shellInput("Bash", "agent7", "ls", nil), `{}`, ""},
+		{"bash tagged with its PATH marker", shellInput("Bash", "agent7", "npm test", nil), shellAnswer("Bash", bash+marker+"npm test", nil), shellAnswer("Bash", bash+marker+"npm test", nil)},
+			{"the marker of another cookie", shellInput("Bash", "agent7", "ls", nil), shellAnswer("Bash", bash+"export PATH=\"$PATH:/aibproc/c-1.agent7.toolu_2\"; ls", nil), ""},
+			{"the marker on PowerShell", shellInput("PowerShell", "agent7", "ls", nil), shellAnswer("PowerShell", pwsh+marker+"ls", nil), ""},
+			{"another PATH change", shellInput("Bash", "agent7", "ls", nil), shellAnswer("Bash", bash+"export PATH=\"/evil:$PATH\"; ls", nil), ""},
+			{"empty answer", shellInput("Bash", "agent7", "ls", nil), `{}`, ""},
 		{"pwsh form for Bash", shellInput("Bash", "agent7", "ls", nil), shellAnswer("Bash", pwsh+"ls", nil), ""},
 		{"bash form for PowerShell", shellInput("PowerShell", "agent7", "ls", nil), shellAnswer("PowerShell", bash+"ls", nil), ""},
 		{"another chat's cookie", shellInput("Bash", "agent7", "ls", nil), shellAnswer("Bash", "export AIB_PROC='c-2.agent7.toolu_1'; ls", nil), ""},

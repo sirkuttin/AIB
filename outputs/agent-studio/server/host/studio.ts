@@ -71,6 +71,7 @@ import { claudeConfigDir, gitBashPath, hookSettings, readClaudeSetup, subagentsO
 import * as codexSub from '../subagents/codex.ts';
 import * as gemini from '../subagents/gemini.ts';
 import { ANTIGRAVITY_SUBAGENT_NOTE, ANTIGRAVITY_SUBAGENT_PROMPT, isAntigravity } from '../subagents/antigravity.ts';
+import { ProcessReaper } from '../subagents/reap.ts';
 import { isCompiled, isDesktopApp, selfCommand, TESTS_DIR } from '../core/app.ts';
 import { type ChannelInfo, type KeeperClient, KeeperError, missingFeatures, type OrphanCommand, readKeeperInfo } from '../keeper/client.ts';
 import { pidAlive } from './host_client.ts';
@@ -534,6 +535,22 @@ export class Studio {
     const subagents = manager ? new SubagentWorktrees(this.stateDir, manager.registry.root, (id) => this.#subagentChat(id)) : null;
     this.subagents = subagents;
     if (subagents) subagents.remote = wslRemote; // a WSL chat's subagents are made, kept and landed by its distro's helper
+    if (subagents) { // a finished subagent's processes are shut down by their shell cookie (subagents/reap.ts); the parent gets one line
+      subagents.reaper = new ProcessReaper();
+      subagents.onReaped = (chatId, rec, killed) => {
+        const connection = this.connections.get(chatId);
+        if (!connection) return;
+        const name = rec ? (rec.description || rec.agentType || 'subagent').slice(0, 80) : '';
+        connection.recordedEvent('studio_note', {
+          message: rec
+            ? `Subagent “${name}” finished; its processes were shut down (${killed}).`
+            : `A stopped background command left processes running; they were shut down (${killed}).`,
+          sessionId: connection.sessionId,
+          kind: 'swarm-ended',
+          helper: '',
+        });
+      };
+    }
     this.geminiSubagents = subagents ? new gemini.GeminiSubagents(subagents, (id) => this.#geminiChat(id)) : null;
     this.ready = (async () => {
       if (!manager) return;
@@ -1875,6 +1892,7 @@ export class Studio {
         void subagents.claudeTool(conn.id, tool, toolUseId, input, status, agentId).catch((error) => log.exception(error, 'Subagent tool update failed'));
       };
       c.subagentActivity = () => subagents.activity(c.id);
+      c.onBackgroundTask = (conn, task, callId) => subagents.noteTask(conn.id, task, callId);
       c.onSubagentEnded = (conn, agentId, how) => {
         void subagents.acpEnded(conn.id, agentId, how).catch((error) => log.exception(error, 'Subagent end failed'));
       };

@@ -29,6 +29,7 @@ import {
   stripAibMessage,
   stripAibPrefix,
   stripAibPrefixes,
+  tagPrefix,
   taggable,
   tagged,
 } from '../../outputs/agent-studio/server/allow/aib_prefix.ts';
@@ -180,7 +181,7 @@ Deno.test({
     const run = await lab.forward('pre-shell', shellCall('Bash', 'echo "$AIB_PROC"', 'agent7', extra));
     assertEquals([run.code, run.err], [0, '']);
     const command = rewritten(run);
-    assertEquals(command, `export AIB_PROC='${expect}'; echo "$AIB_PROC"`);
+    assertEquals(command, `${tagPrefix('bash', expect)}echo "$AIB_PROC"`);
     const answer = JSON.parse(run.out).hookSpecificOutput.updatedInput;
     assertEquals({ ...answer, command: 'x' }, { ...extra, command: 'x' }, 'only the command changes');
     assertEquals(await bash(command), expect, 'the tagged command still runs, and its processes carry the cookie');
@@ -260,7 +261,7 @@ Deno.test({
     );
     assertEquals(
       codexTagPrefix(codex, 'a1', { tool_use_id: 'call_1' }, 'npm test', 'linux'),
-      `export AIB_PROC='${lab.chat.id}.a1.call_1'; `,
+      tagPrefix('bash', `${lab.chat.id}.a1.call_1`, 'linux'),
     );
     assertEquals(codexTagPrefix(codex, '', { tool_use_id: 'call_1' }, 'npm test', 'linux'), '', 'the main thread is not tagged');
     assertEquals(codexTagPrefix({ ...codex, wsl: { distro: 'Ubuntu' } }, 'a1', {}, 'npm test', 'linux'), '', 'WSL: untagged for now');
@@ -372,7 +373,7 @@ Deno.test({
       const answer = JSON.parse(run.out).hookSpecificOutput;
       assertEquals(answer.permissionDecision, 'allow', run.out);
       const cookie = `${lab.chat.id}.agent-1.call_2`;
-      const prefix = shellTag ? (WIN ? `$env:AIB_PROC='${cookie}'; ` : `export AIB_PROC='${cookie}'; `) : '';
+      const prefix = shellTag ? (WIN ? `$env:AIB_PROC='${cookie}'; ` : tagPrefix('bash', cookie)) : '';
       assertEquals(answer.updatedInput.command, `${prefix}cd '${path}'; echo hi`);
       // the main thread's own Bash call: passes with no request at all
       lab.hits.length = 0;

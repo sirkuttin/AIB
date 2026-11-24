@@ -98,6 +98,43 @@ function terminateWindows(target: ProcId): boolean {
   }
 }
 
+/**
+ * Kill exactly these processes, each one only while it is still the same process (a Windows handle pins it and its creation time is
+ * read through it; POSIX: `stillSame` is asked again just before each signal), in the order given (leaf first). POSIX: SIGTERM, then
+ * SIGKILL after `graceMs` for any still there. For a caller that found the processes by something other than a parent walk (the
+ * shell cookie: subagents/reap.ts). Returns the ones a kill was sent to; never throws.
+ */
+export async function killProcesses(
+  targets: ProcId[],
+  stillSame: (t: ProcId) => boolean = () => true,
+  graceMs = 1500,
+): Promise<ProcId[]> {
+  const killed: ProcId[] = [];
+  if (Deno.build.os === 'windows') {
+    for (const t of targets) {
+      try {
+        if (terminateWindows(t)) killed.push(t);
+      } catch { /* gone */ }
+    }
+    return killed;
+  }
+  const term = signalPosix('SIGTERM'), hard = signalPosix('SIGKILL');
+  for (const t of targets) {
+    try {
+      if (stillSame(t) && term(t) === true) killed.push(t);
+    } catch { /* gone */ }
+  }
+  if (killed.length) {
+    await new Promise((resolve) => setTimeout(resolve, graceMs));
+    for (const t of killed) {
+      try {
+        if (stillSame(t)) hard(t);
+      } catch { /* gone */ }
+    }
+  }
+  return killed;
+}
+
 function signalPosix(signal: Deno.Signal): Killer {
   return (target) => {
     try {

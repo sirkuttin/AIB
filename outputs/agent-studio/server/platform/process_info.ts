@@ -83,6 +83,41 @@ export function processStrings(pid: number): { commandLine: string | null; cwd: 
   }
 }
 
+/** The most of an environment block read (real ones are a few KB). */
+const ENV_LIMIT = 1 << 20;
+
+/**
+ * The process's environment block from its PEB, as "NAME=value" strings; null when it can't be read (no access: another user's,
+ * elevated or protected processes; a 32-bit WOW64 process, whose block is not at the 64-bit offsets, reads as null or fails the
+ * checks below, so it stays untagged and is never killed). Same access as processStrings. x64 RTL_USER_PROCESS_PARAMETERS:
+ * `Environment` at +0x80 and `EnvironmentSize` at +0x3F0 (Windows Vista and later).
+ */
+export function processEnvironment(pid: number): string[] | null {
+  const k = kernel32();
+  const handle = k.OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, 0, pid);
+  if (handle === null) return null;
+  try {
+    const info = new Uint8Array(48); // PROCESS_BASIC_INFORMATION
+    if (ntdll().NtQueryInformationProcess(handle, 0, info, info.byteLength, new Uint32Array(1)) !== 0) return null;
+    const peb = new DataView(info.buffer).getBigUint64(8, true);
+    const pointer = readMemory(handle, peb + 0x20n, 8); // PEB.ProcessParameters
+    if (!pointer || pointer.byteLength < 8) return null;
+    const params = new DataView(pointer.buffer, pointer.byteOffset).getBigUint64(0, true);
+    const at = readMemory(handle, params + 0x80n, 8);
+    const size = readMemory(handle, params + 0x3F0n, 8);
+    if (!at || at.byteLength < 8 || !size || size.byteLength < 8) return null;
+    const address = new DataView(at.buffer, at.byteOffset).getBigUint64(0, true);
+    const bytes = new DataView(size.buffer, size.byteOffset).getBigUint64(0, true);
+    if (!address || bytes < 4n || bytes > BigInt(ENV_LIMIT)) return null;
+    const raw = readMemory(handle, address, Number(bytes));
+    if (!raw || raw.byteLength < 4) return null;
+    const text = new TextDecoder('utf-16le').decode(raw.subarray(0, raw.byteLength - (raw.byteLength % 2)));
+    return text.split('\0').filter((entry) => entry.includes('=') && !entry.startsWith('=')); // "=C:=C:\" drive entries are not variables
+  } finally {
+    k.CloseHandle(handle);
+  }
+}
+
 /** Process creation time as epoch seconds, or null. */
 export function processStartTime(pid: number): number | null {
   const k = kernel32();

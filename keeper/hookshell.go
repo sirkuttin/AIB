@@ -114,9 +114,24 @@ func cutAibTag(command string) (shell, cookie, rest string, ok bool) {
 		if !aibCookieShape.MatchString(cookie) {
 			return "", "", "", false
 		}
-		return form.shell, cookie, after[end+3:], true
+		rest = after[end+3:]
+		// Windows, bash from Git (MSYS): an exported variable never reaches the Windows environment block of an MSYS process (MSYS hands
+		// it to its MSYS children through its own heap), but PATH does. So AIB may add ONE more statement, the same cookie as a PATH
+		// entry that does not exist, and the reader finds the cookie there (server/platform/proc_env.ts). Only after the bash form, and
+		// only with this cookie.
+		if form.shell == "bash" {
+			if more, found := strings.CutPrefix(rest, aibPathMarker(cookie)); found {
+				rest = more
+			}
+		}
+		return form.shell, cookie, rest, true
 	}
 	return "", "", "", false
+}
+
+// aibPathMarker: the optional second statement of the bash form (see cutAibTag), for a cookie of the allowed shape.
+func aibPathMarker(cookie string) string {
+	return "export PATH=\"$PATH:/aibproc/" + cookie + "\"; "
 }
 
 // cookieIsMine: the cookie's chat field is this forwarder's own chat.

@@ -17,6 +17,7 @@ import { routeKind, ROUTES } from './routes.ts';
 import { handleGet as monitorGet, type Source } from '../transcripts/monitor.ts';
 import { keptLinesIn } from '../history/lines.ts';
 import { stoppedWhyIn } from '../swarm/registry.ts';
+import { reapedWhyIn } from '../subagents/reap.ts';
 import { liveRoutes } from './live_routes.ts';
 import { chatStudioOf, makeLauncher, ownGatePost, savedFolders, type StudioHandler, studioOf, studioRoutes } from './studio_routes.ts';
 import { type AgentOptions, notices } from './shared.ts';
@@ -709,6 +710,7 @@ export class WebServer {
     const reply = await monitorGet(this.ctx.transcripts, path, url.search.slice(1), {
       keptLines: keptLinesIn(pathStr(this.ctx.stateDir)),
       stoppedWhy: stoppedWhyIn(pathStr(this.ctx.stateDir)),
+      stoppedCall: reapedWhyIn(pathStr(this.ctx.stateDir)),
     });
     // Saved chats of folders that are not added projects are not shown anywhere in AIB (nothing on disk changes).
     if (path === '/api/sessions' && reply.status === 200 && reply.body && typeof reply.body === 'object') {

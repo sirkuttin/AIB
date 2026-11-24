@@ -35,6 +35,23 @@ function callIdOf(body: Record<string, unknown>): string {
   return /^[A-Za-z0-9_-]{1,200}$/.test(id) ? id : `n${crypto.randomUUID().replaceAll('-', '')}`;
 }
 
+/**
+ * When AIB tagged each call (epoch seconds, by chat and call id), newest 5000. A process that started BEFORE the call that supposedly
+ * tagged it is not that call's (subagents/reap.ts). Kept in memory: after a restart a call is unknown and the reap falls back to the
+ * subagent record's own start (a looser bound; the exact cookie, pid and start time checks still stand).
+ */
+const callTimes = new Map<string, number>();
+
+export function noteCall(chat: string, call: string, at: number = Date.now() / 1000): void {
+  callTimes.set(`${chat}.${call}`, at);
+  while (callTimes.size > 5000) callTimes.delete(callTimes.keys().next().value!);
+}
+
+/** When AIB tagged this call, or undefined when it doesn't know. */
+export function callTimeOf(chat: string, call: string): number | undefined {
+  return callTimes.get(`${chat}.${call}`);
+}
+
 /** The shell a Claude Code tool runs its command in (never guessed: another tool gets none). */
 export function claudeShellOf(tool: string): TagShell | null {
   return tool === 'Bash' ? 'bash' : tool === 'PowerShell' ? 'pwsh' : null;
@@ -51,7 +68,9 @@ export function preShell(chat: SubagentChat, body: Record<string, unknown>): Hoo
   const shell = claudeShellOf(String(body.tool_name ?? ''));
   const input = isDict(body.tool_input) ? body.tool_input as Record<string, unknown> : null;
   if (!shell || !input || typeof input.command !== 'string') return untagged();
-  const cookie = cookieOf(chat.id, agentId, callIdOf(body));
+  const call = callIdOf(body);
+  const cookie = cookieOf(chat.id, agentId, call);
+  if (cookie) noteCall(chat.id, call);
   const command = cookie ? tagged(shell, cookie, input.command) : null;
   if (command === null) return untagged();
   return answer({ hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { ...input, command } } });
@@ -72,9 +91,11 @@ export function codexTagPrefix(
   os: string = Deno.build.os,
 ): string {
   if (!chat.hooks?.shellTag || chat.wsl || !agentId || CODEX_WRAPPER.test(command)) return '';
-  const cookie = cookieOf(chat.id, agentId, callIdOf(body));
+  const call = callIdOf(body);
+  const cookie = cookieOf(chat.id, agentId, call);
+  if (cookie) noteCall(chat.id, call);
   const shell: TagShell = os === 'windows' ? 'pwsh' : 'bash';
-  const full = cookie ? tagged(shell, cookie, command) : null;
+  const full = cookie ? tagged(shell, cookie, command, os) : null;
   return full === null ? '' : full.slice(0, full.length - command.length);
 }
 

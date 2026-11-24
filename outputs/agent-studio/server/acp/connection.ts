@@ -1314,6 +1314,8 @@ export class Connection {
   onTurnCancelled: Hook | null = null;
   /** Claude Code: one of the main agent's Agent / Task / SendMessage / TaskStop calls was seen or updated (subagent worktrees P2). */
   onClaudeTool: ((c: Connection, tool: string, toolUseId: string, input: Json, status: string, agentId: string) => void) | null = null;
+  /** Claude Code: the tool call `callId` went on running in the background as `task` (a TaskStop names the task; the cookie names the call). */
+  onBackgroundTask: ((c: Connection, task: string, callId: string) => void) | null = null;
   /** Gemini: the main session's invoke_agent tool calls (a subagent starts and ends), from the stream the agent can't forge. */
   onGeminiTool: ((c: Connection, toolCallId: string, title: string, status: string) => void) | null = null;
   #geminiCalls = new Set<string>();
@@ -3412,6 +3414,11 @@ export class Connection {
    * to another command (no other shell command running, none started since this one) and whose start times are known.
    */
   #markBackground(id: string, task: string, onlyIfRunning = false): void {
+    try {
+      this.onBackgroundTask?.(this, task, id);
+    } catch (error) {
+      log.exception(error, 'onBackgroundTask failed');
+    }
     if (this.#bgShells.has(task) || this.#bgTools.has(id)) return;
     const since = this.#shellCalls.get(id) ?? this.#tools.get(id)?.since ?? this.#now() - 10;
     const now = this.#descendants(true); // the command started a moment ago: a snapshot from before it would not have it

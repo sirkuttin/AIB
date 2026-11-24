@@ -292,13 +292,22 @@ export interface HandlerOptions {
    * transcript never says its background commands ended: they read as stopped ("stopped: helper finished"), never as running.
    */
   stoppedWhy?: (key: string) => string;
+  /**
+   * Why AIB shut down the processes of one call (by its tool_use_id): '' when it did not. A finished subagent's leftovers are killed by
+   * their shell cookie (subagents/reap.ts), so the rows of those calls read "stopped: subagent finished", never "ended" or running.
+   */
+  stoppedCall?: (callId: string) => string;
 }
 
 /** The commands of a chat AIB stopped (HandlerOptions.stoppedWhy): running or unknown ones become `killed` with the reason. */
 function withStopped(tasks: Task[], options: HandlerOptions): Task[] {
-  if (!options.stoppedWhy) return tasks;
+  if (!options.stoppedWhy && !options.stoppedCall) return tasks;
   const why = new Map<string, string>();
   return tasks.map((task) => {
+    const call = options.stoppedCall && typeof task.callId === 'string' ? options.stoppedCall(task.callId) : '';
+    // a call AIB shut down the processes of: its row reads that, whatever else the saved transcript made of it ("ended with the agent")
+    if (call && task.status !== 'failed') return { ...task, status: 'killed', stoppedReason: call, completionSummary: `Stopped: ${call}.` };
+    if (!options.stoppedWhy) return task;
     if (!RUNNING.includes(task.status as string) && task.status !== 'unknown') return task;
     const key = typeof task.agentKey === 'string' ? task.agentKey : '';
     if (!why.has(key)) why.set(key, key ? options.stoppedWhy!(key) : '');
