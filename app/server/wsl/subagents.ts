@@ -267,6 +267,18 @@ export const wslRemote: RemoteSubagents = {
     return rec.wsl ? wslSubagentRelease(rec.wsl.distro, rec.id) : Promise.resolve('gone');
   },
   records: recordsOrNull,
+  async callsGone(chat: SubagentChat, calls: string[]): Promise<string[]> {
+    const target = factsOfServiceChat(chat);
+    if (!target) return [];
+    const host = peekWslHost(target.distro);
+    if (!host || host.state !== 'ready') return [];
+    try {
+      return (await host.call('subagent.callsGone', { chat: target.facts, calls: calls.slice(0, 200) }, { timeoutMs: CALL_MS })).gone;
+    } catch (error) {
+      if (!missing(error)) throw error;
+      return []; // a helper without it: never judged
+    }
+  },
   async reaps(distro: string): Promise<WslReap[]> {
     const host = peekWslHost(distro);
     if (!host || host.state !== 'ready') return [];

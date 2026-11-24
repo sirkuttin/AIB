@@ -18,6 +18,7 @@ import { handleGet as monitorGet, type Source } from '../transcripts/monitor.ts'
 import { keptLinesIn } from '../history/lines.ts';
 import { stoppedWhyIn } from '../swarm/registry.ts';
 import { reapedWhyIn } from '../subagents/reap.ts';
+import { makeGoneCheck } from '../transcripts/gone.ts';
 import { liveRoutes } from './live_routes.ts';
 import { chatAibOf, makeLauncher, ownGatePost, savedFolders, type AibHandler, aibOf, aibRoutes } from './aib_routes.ts';
 import { type AgentOptions, notices } from './shared.ts';
@@ -697,6 +698,13 @@ export class WebServer {
 
   readonly #pcTranscripts = new PcTranscripts();
 
+  /** Activity's Processes: running rows whose process is gone read ended (transcripts/gone.ts; the host answers from what it knows of the pids). */
+  readonly #gone = makeGoneCheck(async (sessionId, calls) => {
+    const [status, body] = await this.ctx.host.liveCall('bg-gone', { sessionId, calls });
+    const gone = status === 200 && body && typeof body === 'object' ? (body as { gone?: unknown }).gone : [];
+    return Array.isArray(gone) ? gone.filter((c): c is string => typeof c === 'string') : [];
+  });
+
   /** A transcript viewer route (monitor.py): /api/sessions, /api/transcript, /api/transcript/image, /api/agents, /api/command(s). */
   async #monitor(path: string, url: URL, principal: Principal | null = null): Promise<Response> {
     const computer = principal?.kind === REMOTE_PC;
@@ -709,6 +717,7 @@ export class WebServer {
       keptLines: keptLinesIn(pathStr(this.ctx.stateDir)),
       stoppedWhy: stoppedWhyIn(pathStr(this.ctx.stateDir)),
       stoppedCall: reapedWhyIn(pathStr(this.ctx.stateDir)),
+      gone: this.#gone,
     });
     // Saved chats of folders that are not added projects are not shown anywhere in AIB (nothing on disk changes).
     if (path === '/api/sessions' && reply.status === 200 && reply.body && typeof reply.body === 'object') {

@@ -15,6 +15,7 @@ import { wslSavedSessionsQuick, wslTranscriptGet } from '../wsl/transcripts.ts';
 import { type KeptLine, placeLines } from '../history/lines.ts';
 import { Catalog, COMMAND_LIST_TTL, now, QUIET_UNKNOWN_SECONDS, type Resolved, type Source, Store } from './store.ts';
 import { Mutex, readExactly, type Task, type Transcript } from './transcript.ts';
+import type { GoneCheck } from './gone.ts';
 
 export * from './normalize.ts';
 export * from './store.ts';
@@ -202,9 +203,15 @@ function loadKey(source: Source, key: Json): Promise<Transcript> {
 }
 
 /** {agent key: number of background commands still reported running} for one conversation. */
-export async function runningByAgent(source: Source, session: Json, quick = false): Promise<Record<string, number>> {
+export async function runningByAgent(
+  source: Source,
+  session: Json,
+  quick = false,
+  filter?: (tasks: Task[]) => Promise<Task[]>,
+): Promise<Record<string, number>> {
   const counts: Record<string, number> = {};
-  for (const task of quick ? (await commandListQuick(source, session)).tasks : await commandList(source, session)) {
+  const listed = quick ? (await commandListQuick(source, session)).tasks : await commandList(source, session);
+  for (const task of filter ? await filter(listed) : listed) {
     if (RUNNING.includes(task.status as string)) counts[task.agentKey as string] = (counts[task.agentKey as string] ?? 0) + 1;
   }
   return counts;
@@ -297,6 +304,28 @@ export interface HandlerOptions {
    * their shell cookie (subagents/reap.ts), so the rows of those calls read "stopped: subagent finished", never "ended" or running.
    */
   stoppedCall?: (callId: string) => string;
+  /**
+   * Which running rows have no process left (transcripts/gone.ts): the owner or the lead killed the command from outside, and the agent's
+   * own report still says running. Those rows read "Ended (process gone)". Never guesses: absent, slow or failing leaves every row alone.
+   */
+  gone?: GoneCheck;
+}
+
+/** The running rows whose process is gone become ended (status completed, as a row the agent ended itself), with the reason. */
+async function withGone(tasks: Task[], session: string, options: HandlerOptions): Promise<Task[]> {
+  if (!options.gone) return tasks;
+  const running = tasks.filter((t) => RUNNING.includes(t.status as string) && typeof t.callId === 'string' && t.callId);
+  if (!running.length) return tasks;
+  let gone: Set<string>;
+  try {
+    gone = await options.gone(session, running);
+  } catch {
+    return tasks;
+  }
+  if (!gone.size) return tasks;
+  return tasks.map((t) =>
+    gone.has(t.id as string) ? { ...t, status: 'completed', completionSummary: 'Ended (process gone).', endedBecause: 'process gone' } : t
+  );
 }
 
 /** The commands of a chat AIB stopped (HandlerOptions.stoppedWhy): running or unknown ones become `killed` with the reason. */
@@ -407,7 +436,17 @@ export async function handleGet(source: Source, path: string, query: string, opt
   const arg = (key: string, fallback = '') => args.get(key)?.[0] ?? fallback;
   try {
     const wsl = await wslTranscriptGet(path, args); // a saved session of a WSL project: read in its distro
-    if (wsl) return json(wsl.status, wsl.body);
+    if (wsl) {
+      // a WSL chat's rows come from its distro: the same "process gone" check (the host asks the distro's helper)
+      const body = wsl.body as { commands?: unknown; running?: unknown } | null;
+      if (path === '/api/commands' && wsl.status === 200 && body && Array.isArray(body.commands)) {
+        let commands = await withGone(body.commands as Task[], arg('session'), options);
+        const running = commands.filter((t) => RUNNING.includes(t.status as string)).length;
+        if (arg('running') === '1') commands = commands.filter((t) => RUNNING.includes(t.status as string));
+        return json(200, { ...body, commands, running });
+      }
+      return json(wsl.status, wsl.body);
+    }
     if (path === '/api/sessions') {
       // saved chats of WSL projects, read in their distro (wsl/transcripts.ts); none until a distro's helper lists them. Both at once.
       const [sessions, wsl] = await Promise.all([source.sessions(), wslSavedSessionsQuick()]);
@@ -418,7 +457,7 @@ export async function handleGet(source: Source, path: string, query: string, opt
       const agents = await source.agents(arg('session'));
       let running: Record<string, number> = {};
       try {
-        running = await runningByAgent(source, arg('session'), true); // never waits long for the commands (commandListQuick)
+        running = await runningByAgent(source, arg('session'), true, (tasks) => withGone(tasks, arg('session'), options)); // never waits long for the commands (commandListQuick)
       } catch (error) {
         if (!(isOSError(error) || error instanceof ValueError || error instanceof PyTypeError)) throw error;
       }
@@ -427,7 +466,7 @@ export async function handleGet(source: Source, path: string, query: string, opt
     }
     if (path === '/api/commands') {
       const quick = await commandListQuick(source, arg('session'));
-      let commands = withStopped(quick.tasks, options);
+      let commands = await withGone(withStopped(quick.tasks, options), arg('session'), options);
       const running = commands.filter((t) => RUNNING.includes(t.status as string)).length;
       if (arg('running') === '1') commands = commands.filter((t) => RUNNING.includes(t.status as string));
       const shown = commands.slice(0, 200).map((task) =>
@@ -437,7 +476,7 @@ export async function handleGet(source: Source, path: string, query: string, opt
       return json(200, { commands: shown, running, total: commands.length, ...(quick.pending ? { pending: true } : {}), ...(quick.stale ? { stale: true } : {}) });
     }
     if (path === '/api/command') {
-      const commands = withStopped(await commandList(source, arg('session')), options);
+      const commands = await withGone(withStopped(await commandList(source, arg('session')), options), arg('session'), options);
       const task = commands.find((t) => t.id === arg('id'));
       if (task === undefined) throw new ValueError('Unknown background command');
       return json(200, { ...task, output: await commandOutput(arg('session'), task, options.tempDir) });

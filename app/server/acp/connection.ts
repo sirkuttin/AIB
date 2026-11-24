@@ -12,6 +12,7 @@ import { promptHash } from '../artifacts/served.ts';
 import { houseRules } from '../allow/brief.ts';
 import type { MatchContext } from '../allow/matcher.ts';
 import { stripAibMessage } from '../allow/aib_prefix.ts';
+import { KILL_BY_NAME_REASON, permissionKillsByName } from '../allow/kill_by_name.ts';
 import { factsNow, LinuxFacts, type LinuxNeeds, LinuxView } from '../allow/linux.ts';
 import { COLLECT_FACTS, prefetch as prefetchWslFacts, warm as warmWslFacts, type WslFactsSource } from '../allow/wsl_facts.ts';
 import { createHash } from 'node:crypto';
@@ -4003,6 +4004,18 @@ export class Connection {
           });
           return;
         }
+      }
+      // kill by name is refused for every agent (allow/kill_by_name.ts): the fallback for an agent without a hook, or with hooks off
+      if (method === 'session/request_permission' && !this.#replaying && permissionKillsByName(params)) {
+        const options = get(params, 'options', []);
+        const no = (Array.isArray(options) ? options : []).find((o) => isDict(o) && o.kind === 'reject_once') as Json | undefined;
+        this.write({
+          jsonrpc: '2.0',
+          id: message.id,
+          result: { outcome: no && isStr(no.optionId) ? { outcome: 'selected', optionId: no.optionId } : { outcome: 'cancelled' } },
+        });
+        this.recordedEvent('studio_note', { message: `AIB refused a command that kills processes by name: ${KILL_BY_NAME_REASON}`, sessionId: this.sessionId });
+        return;
       }
       // a WSL chat: the distro facts the matcher needs are fetched first (allow/wsl_facts.ts); the next line waits for it
       if (method === 'session/request_permission' && this.allowGate && this.wsl && !this.#replaying) {

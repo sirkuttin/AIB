@@ -117,6 +117,9 @@ export interface SubagentRecord {
   wsl?: { distro: string; linux: { path: string; folder: string } };
 }
 
+/** Seconds a tagged call is given before its missing process counts as gone (the shell takes a moment to start). */
+export const GONE_GRACE_S = 8;
+
 /**
  * The distro's side of a WSL chat's subagents (wsl/subagents.ts WslRemote): every call that changes a record goes there, then the
  * mirror is read back. A failure is never an edit in the project folder: a hook is answered with a refusal.
@@ -129,6 +132,8 @@ export interface RemoteSubagents {
   records(distro: string): Promise<SubagentRecord[] | null>;
   /** What the distro's helper shut down since it started (a helper without it: none). Each report is posted once (refreshWsl). */
   reaps?(distro: string): Promise<WslReap[]>;
+  /** Which of a WSL chat's background calls have no process left in the distro (a helper without it: none known gone). */
+  callsGone?(chat: SubagentChat, calls: string[]): Promise<string[]>;
 }
 
 /** The fields that describe one Agent call (not the worktree): they move together when AIB fixes which worktree runs which call. */
@@ -427,6 +432,35 @@ export class SubagentWorktrees {
       callTime: (call) => callTimeOf(chat.id, call),
     });
     this.#reaped(chat.id, rec, result, why);
+  }
+
+  /**
+   * Which of the chat's subagent calls (tool_use_ids) have no process left: the Activity list shows a background command of a subagent as
+   * running on the agent's own say-so, so it asks (web/server.ts via host 'bg-gone'). Only a call AIB tagged and that is older than
+   * GONE_GRACE_S is judged (a command that has just started may not have its process yet); a call AIB does not know is left alone, and so is
+   * everything while the process list can't be read. One snapshot for all calls. A WSL chat's is the distro's (helper `subagent.callsGone`).
+   */
+  async callsGone(chatId: string, calls: string[]): Promise<string[]> {
+    const chat = this.chat(chatId);
+    if (!chat || !calls.length) return [];
+    if (chat.wsl) {
+      try {
+        return (await this.remote?.callsGone?.(chat, calls)) ?? [];
+      } catch (error) {
+        log.warning('subagent calls in the distro could not be checked: %s', error instanceof Error ? error.message : error);
+        return [];
+      }
+    }
+    if (!this.reaper) return [];
+    const t = now();
+    const known = calls.filter((c) => {
+      const at = callTimeOf(chatId, c);
+      return at !== undefined && t - at > GONE_GRACE_S;
+    });
+    if (!known.length) return [];
+    const since = Math.min(...known.map((c) => callTimeOf(chatId, c)!));
+    const live = this.reaper.live(chatId, known, since, (c) => callTimeOf(chatId, c));
+    return live ? known.filter((c) => !live.has(c)) : [];
   }
 
   /** A TaskStop of one background call: only that call's processes (the call field), whoever started it. */

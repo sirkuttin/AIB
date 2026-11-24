@@ -162,7 +162,7 @@ func TestPreShellNeverBlocksWhenAIBIsDownSlowOrWrong(t *testing.T) {
 }
 
 func TestHookCheckLineIsHook2(t *testing.T) {
-	if line := checkLine("hook 2"); !strings.HasPrefix(line, "hook 2") {
+	if line := checkLine("hook 3"); !strings.HasPrefix(line, "hook 3") {
 		t.Fatalf("check line %q", line)
 	}
 }

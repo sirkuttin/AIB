@@ -802,7 +802,7 @@ export async function forwarderOf(binary: string | null, dataDir: string): Promi
  */
 export async function hookForwarderOf(binary: string | null, dataDir: string): Promise<string | null> {
   const program = binary ?? await keeperBinary(dataDir);
-  return /^hook [12]\b/.test(await checkLine(program, 'hook')) ? program : null; // hook 2 does everything hook 1 does, and more
+  return /^hook [123]\b/.test(await checkLine(program, 'hook')) ? program : null; // hook 3 (kill-by-name refusal) and 2 do everything hook 1 does, and more
 }
 
 /** The `hook` version a forwarder program answered (`hook <n>`): 0 when it was not asked, or answers nothing AIB knows. */

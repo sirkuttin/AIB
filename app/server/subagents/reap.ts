@@ -80,6 +80,23 @@ export class ProcessReaper {
     return { killed: killedPids.size, calls: [...calls] };
   }
 
+  /**
+   * Which of these calls (tool_use_ids) of the chat still have a process carrying their cookie, from one snapshot; null when the
+   * processes can't be listed. Read-only (the Activity list asks, never kills). Same rule as the reap: the cookie's chat equals
+   * `chat`, and the process started at or after the call that tagged it.
+   */
+  live(chat: string, calls: string[], since: number, callTime?: (call: string) => number | undefined): Set<string> | null {
+    const found = taggedSince(Math.max(0, since - this.slack), this.source);
+    if (!found) return null;
+    const out = new Set<string>();
+    for (const p of found.tagged) {
+      const c = COOKIE_SHAPE.test(p.cookie) ? parseCookie(p.cookie) : null;
+      if (!c || c.chat !== chat || !calls.includes(c.call)) continue;
+      if (p.started >= (callTime?.(c.call) ?? since) - this.slack) out.add(c.call);
+    }
+    return out;
+  }
+
   #mine(cookie: string, started: number, req: ReapRequest): boolean {
     if (!COOKIE_SHAPE.test(cookie)) return false;
     const c = parseCookie(cookie);

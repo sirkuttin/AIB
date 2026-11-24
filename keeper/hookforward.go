@@ -90,8 +90,8 @@ var errAIBGone = errors.New("the AIB named in the address file is not running")
 
 func hookMain(args []string) int {
 	if len(args) == 1 && args[0] == "--check" {
-		// hook 2 (no-stuck-processes) adds the non-blocking pre-shell event; everything hook 1 does is unchanged, so AIB runs both.
-		fmt.Println(checkLine("hook 2"))
+		// hook 3 adds the local kill-by-name refusal (hookkill.go); hook 2 (no-stuck-processes) added the non-blocking pre-shell event; everything hook 1 does is unchanged, so AIB runs both.
+		fmt.Println(checkLine("hook 3"))
 		return 0
 	}
 	socket := ""
@@ -159,6 +159,22 @@ func (h *hookForwarder) run(in io.Reader, stdout, stderr io.Writer) int {
 	input, err := readAllWithin(ctx, in, hookMaxInput)
 	if err != nil {
 		return fail(hookRestarting)
+	}
+	// hook 3 (hookkill.go): kill by name is refused here, locally, for the main agent and subagents alike (AIB down or not)
+	if h.event == "pre-shell" || h.event == "codex-pre-tool" {
+		if why := killRefusal(input, h.event == "pre-shell"); why != "" {
+			stdout.Write(codexDeny(why)) // the same PreToolUse deny object for Claude and Codex
+			return 0
+		}
+	}
+	if h.event == "gemini-before-tool" {
+		if why := geminiKillRefusal(input); why != "" {
+			stdout.Write(geminiDeny(why))
+			return 0
+		}
+		if tool := geminiToolName(input); tool == "run_shell_command" {
+			return 0 // nothing else for a shell call: AIB only moves a subagent's edits
+		}
 	}
 	if h.event == "pre-tool" && h.passesLocally(input) {
 		return 0

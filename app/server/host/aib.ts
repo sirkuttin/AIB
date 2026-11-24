@@ -3870,6 +3870,25 @@ export class Aib {
     }
   }
 
+  /**
+   * Activity's "Processes" list (transcripts/gone.ts): which of the background commands the saved transcript calls running have no
+   * process any more. `calls`: [{call, main}], call the tool_use_id, main true for the chat's own agent. The main agent's are read from
+   * the same pid-and-start-time check the chat's "still running" row uses (Connection.toolBackground; a WSL chat's through its helper);
+   * a subagent's by its cookie scan (subagents/service.ts callsGone, a WSL chat's in its distro). A call AIB cannot tell about is never
+   * listed. Read-only and cheap: the caller asks at most every ten seconds.
+   */
+  async backgroundGone(sessionId: string, raw: unknown): Promise<string[]> {
+    const connection = [...this.connections.values()].find((c) => !c.closed && c.sessionId === sessionId);
+    if (!connection || !Array.isArray(raw)) return [];
+    const calls = raw.filter((c): c is { call: string; main: boolean } => isDict(c) && isStr(c.call) && c.call.length <= 200).slice(0, 200);
+    const gone = new Set<string>();
+    const state = calls.some((c) => c.main) ? connection.toolBackground() : {};
+    for (const c of calls) if (c.main === true && state[c.call]?.state === 'done') gone.add(c.call);
+    const subs = calls.filter((c) => c.main !== true).map((c) => c.call);
+    if (this.subagents && subs.length) for (const call of await this.subagents.callsGone(connection.id, subs)) gone.add(call);
+    return [...gone];
+  }
+
   async #liveCall(name: string, body: unknown): Promise<[number, unknown]> {
     if (!isDict(body)) throw new ValueError('Invalid request');
     if (name === 'connect') {
@@ -3896,6 +3915,7 @@ export class Aib {
       return [200, { ok: true, queued }];
     }
     if (name === 'agent-title-state') return [200, { waiting: this.agentTitles.waiting(), done: this.agentTitles.done }]; // internal: tests
+    if (name === 'bg-gone') return [200, { gone: await this.backgroundGone(String(need(body, 'sessionId')), body.calls) }]; // internal: web/server.ts
     if (name === 'forget') return [200, { ok: true, forgotten: this.forgetRecovered(body.provider, body.sessionId) }];
     if (name === 'worktree-note') { // internal (worktrees/merge.ts): not in LIVE_POST_OPS, so no page route reaches it
       const connection = this.#connection(body);

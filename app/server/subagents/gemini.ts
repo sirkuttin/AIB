@@ -25,7 +25,7 @@
  * without an account, and a copied or linked credentials file could leave the user signed out or on stale tokens. They get a chat line.
  */
 import { getLogger } from '../core/log.ts';
-import { keyForForwarder } from '../keeper/client.ts';
+import { hookForwarderVersion, keyForForwarder } from '../keeper/client.ts';
 import { isDict } from '../core/py.ts';
 import { pathOf } from '../state/paths.ts';
 import { normcase, SEP } from '../platform/ospath.ts';
@@ -215,11 +215,11 @@ export function hookCommand(forwarder: string, addressFile: string): string {
 }
 
 /** The user's settings plus AIB's BeforeTool hook (after the user's own), its key and chat id in the hook entry's env. */
-export function mergedSettings(user: Record<string, unknown>, command: string, env: Record<string, string>): Record<string, unknown> {
+export function mergedSettings(user: Record<string, unknown>, command: string, env: Record<string, string>, shellGuard = false): Record<string, unknown> {
   const out = structuredClone(user);
   const hooks = isDict(out.hooks) ? out.hooks as Record<string, unknown> : {};
   const before = Array.isArray(hooks.BeforeTool) ? hooks.BeforeTool : [];
-  const entry = { matcher: EDIT_TOOLS.join('|'), hooks: [{ type: 'command', command, timeout: 15000, env }] };
+  const entry = { matcher: (shellGuard ? [...EDIT_TOOLS, 'run_shell_command'] : EDIT_TOOLS).join('|'), hooks: [{ type: 'command', command, timeout: 15000, env }] };
   out.hooks = { ...hooks, BeforeTool: [...before, entry] };
   return out;
 }
@@ -330,7 +330,7 @@ export function setUp(i: SetupInput): { setup: GeminiSetup; args: string[]; env:
   const home = pathOf(dir, 'home');
   Deno.mkdirSync(subFolder, { recursive: true });
   const command = hookCommand(i.forwarder!, i.addressFile);
-  buildHome(home, realHome, mergedSettings(settings!, command, { AIB_HOOK_KEY: keyForForwarder(i.forwarder!, 'hook-key', i.hookKey!), AIB_HOOK_CHAT: i.chatId }), pathOf(i.stateDir, 'gemini', 'shared'));
+  buildHome(home, realHome, mergedSettings(settings!, command, { AIB_HOOK_KEY: keyForForwarder(i.forwarder!, 'hook-key', i.hookKey!), AIB_HOOK_CHAT: i.chatId }, hookForwarderVersion(i.forwarder!) >= 3), pathOf(i.stateDir, 'gemini', 'shared'));
   return {
     setup: { policyDir, home, subFolder, off: '', dir },
     args: [...args, '--include-directories', subFolder],
