@@ -1,6 +1,6 @@
 /**
  * One-off, run by the owner from the repository: move the existing chats of a WSL project into their own worktree copies (the way a
- * new WSL chat gets one), with a dry run first. See app/docs/WSL.md "Moving existing chats into their own copies".
+ * new WSL chat gets one), with a dry run first. See docs/WSL.md "Moving existing chats into their own copies".
  *
  *   deno run -A tools/wsl-import.ts --distro Ubuntu --project /home/u/app                         dry run (changes nothing)
  *   deno run -A tools/wsl-import.ts --distro Ubuntu --project /home/u/app --apply --confirm-project /home/u/app

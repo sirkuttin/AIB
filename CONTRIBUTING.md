@@ -11,7 +11,7 @@ Thanks for looking. AIB (Agent Integration Bay) is beta software and the first r
 
 ## No build step for the page
 
-The page is plain classic scripts. There is no bundler or transpiler for it. See `app/docs/FRONTEND.md`.
+The page is plain classic scripts. There is no bundler or transpiler for it. See `docs/FRONTEND.md`.
 
 ## Tests
 

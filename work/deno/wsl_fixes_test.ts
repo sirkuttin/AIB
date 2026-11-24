@@ -1,5 +1,5 @@
 /**
- * Tests for WSL fixes that shipped without one (app/docs/WSL.md), each without a distro (a FakeWslHost answers):
+ * Tests for WSL fixes that shipped without one (docs/WSL.md), each without a distro (a FakeWslHost answers):
  *   1. wsl.exe fails with E_INVALIDARG on an empty argument: runWsl refuses one, and the first set-up's probe passes '-' for "no
  *      AIB_WSL_ROOT" (the real probe in a distro: wsl_fixes_e2e_test.ts).
  *   2. New project dialog: the folder check and create of a WSL path go to the distro's helper (folder.project /

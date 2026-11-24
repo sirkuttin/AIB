@@ -52,7 +52,7 @@ Ctrl+C on the web server leaves the agents running in the host; stopping the hos
 
 Supported: text, picture and file prompts (attach, paste or drag; text files are embedded or inlined, PDFs and other binaries only where the agent accepts embedded content; click any picture to view it full size); Markdown replies; tool-call views with diffs; resource links; questions (forms and web-page links), including during connection setup; sign-in method discovery (in-app where the agent supports it, otherwise instructions only); `/` command suggestions; mode and config controls; usage/title/notice status strip; advertised session list/close/delete; agent-side session discovery; subagent Stop where the adapter advertises it; your own MCP servers via `--mcp-config`. Every message from the agent is checked against ACP v1; malformed ones are logged and ignored. See [docs/CAPABILITIES.md](docs/CAPABILITIES.md) for the full matrix.
 
-Not supported: custom extension widgets, voice, and ACP v2 (see [docs/acp-v2-evaluation.md](docs/acp-v2-evaluation.md)). No parity with every IDE client feature is claimed.
+Not supported: custom extension widgets, voice, and ACP v2. No parity with every IDE client feature is claimed.
 
 **Off by default.** By default agents use their own tools, and AIB refuses terminal and file requests. `--enable-client-terminal` and `--enable-client-fs[=read]` let agents run commands and read/write files through AIB, confined to the conversation's workspace folder. Commands still run with your normal permissions and writes are not approved one by one; read [docs/client-capabilities.md](docs/client-capabilities.md) before turning them on.
 

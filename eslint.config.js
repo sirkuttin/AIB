@@ -1,7 +1,7 @@
 'use strict';
 /* Lint for the page code (app/page/*.js). Run: npm run lint. There is no build step; this only reads the files.
    Rules: ESLint's recommended set, plus no assignment to innerHTML / outerHTML (the page builds its DOM from nodes and textContent).
-   Relaxed rules are listed in app/docs/FRONTEND.md as later cleanups. */
+   Relaxed rules are listed in docs/FRONTEND.md as later cleanups. */
 const js = require('@eslint/js');
 
 const read = names => Object.fromEntries(names.map(name => [name, 'readonly']));
@@ -18,7 +18,7 @@ const browser = read([
 
 
 module.exports = [
-  { ignores: ['node_modules/**', '**/*.min.js', 'app/docs/**', 'app/vendor/**'] },   // vendor/: third-party files, unmodified
+  { ignores: ['node_modules/**', '**/*.min.js', 'docs/**', 'app/vendor/**'] },   // vendor/: third-party files, unmodified
   {
     files: ['app/**/*.js'],
     languageOptions: { ecmaVersion: 2022, sourceType: 'script', globals: { ...browser, ...read(['module']) } },   // module: the "also usable from node" line at the end of most scripts

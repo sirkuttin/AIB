@@ -1,5 +1,5 @@
 /**
- * Docs of WSL projects without a distro (docs/wsl/design.md section 4 phase 2; app/docs/WSL.md "Docs"):
+ * Docs of WSL projects without a distro (docs/wsl/design.md section 4 phase 2; docs/WSL.md "Docs"):
  *   1. The helper's docs.fs (wsl/helper/docs.ts) on a temp folder: reads, atomic writes (also in chunks), only <project>/aib-docs/…,
  *      no `..`, no recursive remove of aib-docs/ itself.
  *   2. The whole docs store on a WSL ref (wsl://ubuntu/home/u/app) through a FakeWslHost whose docs.fs is that helper method: the

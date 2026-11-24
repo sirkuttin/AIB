@@ -1,7 +1,7 @@
 # AIB Linking (WSL): design
 
 Status: design only, 2026-11-14 (branch `wsl/linking`). Mockup: `outputs/wsl-linking-mockup.html`. Builds on `docs/wsl/design.md`
-(sections 11-12 override it) and `app/docs/WSL.md` ("Agent installs in the distro").
+(sections 11-12 override it) and `docs/WSL.md` ("Agent installs in the distro").
 
 ## 1. Decisions
 

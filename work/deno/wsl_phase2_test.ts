@@ -1,5 +1,5 @@
 /**
- * WSL phase 2, the small pieces (docs/wsl/design.md section 11; app/docs/WSL.md), without a distro:
+ * WSL phase 2, the small pieces (docs/wsl/design.md section 11; docs/WSL.md), without a distro:
  *   1. Files view previews (images, pages) of a WSL project: the helper's bytes become a read-only ticket the artifact origin serves.
  *   2. Files outside a WSL chat's folder: the helper method files.outside and the route's "the chat named it" guard (Linux rules).
  *   3. Project delete in a distro: the helper's refusals and trash (gio, the freedesktop trash by hand, never a permanent delete) and

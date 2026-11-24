@@ -125,7 +125,7 @@ Off for WSL projects in phase 1:
 - worktrees run whole inside the helper, rooted at `~/.aib-server/data-HASH/worktrees` (4)
 - LiveSync + DirWatcher (Linux `Deno.watchFs` = inotify) and merge with clash flow in the helper (6-8)
 - docs store, charts and drawings (3). Built: the open doc (Y.Doc, editor socket, tools, cache, history) stays in AIB on Windows and
-  only its files' reads and writes go to the helper (`docs.fs`); see app/docs/WSL.md "Docs" for why
+  only its files' reads and writes go to the helper (`docs.fs`); see docs/WSL.md "Docs" for why
 - transcripts, monitor, ownership (the `/proc` variant), Codex limits with per-environment roots (3-4)
 - artifact publish and watcher, file tickets, outside files (2)
 - delete via `gio trash` in the helper, AIB-managed agent install in the distro, busy detection (2-3)

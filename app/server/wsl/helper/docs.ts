@@ -1,5 +1,5 @@
 /**
- * The docs' file work for WSL projects (docs/wsl/design.md section 4 phase 2; app/docs/WSL.md "Docs"): the helper
+ * The docs' file work for WSL projects (docs/wsl/design.md section 4 phase 2; docs/WSL.md "Docs"): the helper
  * end of docs/doc_fs.ts. AIB keeps each open doc (its Y.Doc, the live editing, comments, history and its cache) on Windows, as for a
  * Windows project, and does every read and write of the doc's files in the project folder through `docs.fs` here, natively in the
  * distro. A write is atomic as on Windows: a temp file next to the target, then one rename. A big file comes in chunks (a request

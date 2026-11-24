@@ -203,7 +203,7 @@ serves the page. Releases are built this way and uploaded by hand; no CI.
 | --- | --- |
 | `app/server/` | The app. `main.ts` is the entry point; `web/` routes and security, `host/` the agent host, `acp/` the ACP connection, `keeper/` the keeper client, `state/` the data files, `transcripts/` saved chats, `worktrees/` helpers' worktrees, Changes and landing, `artifacts/`, `agents/`, `ownership/`, `terminal/`, `desktop/` (window, tray, updater), `platform/` all OS-specific code. |
 | `app/page/*.js, *.css, *.html` | The page. |
-| `app/docs/` | Design notes: desktop app, agent host and keeper, themes, ACP capabilities. |
+| `docs/` | Design notes: desktop app, agent host and keeper, themes, ACP capabilities. |
 | `app/icons/` | The app icon in every size the packages need, made by `tools/make_icons.ts` from the masters in `icons/src/` (hand-drawn pixel grids for 16-32 px, an SVG for the rest). |
 | `keeper/` | The keeper (Go) and its protocol. |
 | `tools/` | `build.ts` (the six-target build) and `linux_package.ts`. |

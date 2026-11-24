@@ -1,5 +1,5 @@
 /**
- * Docs of WSL projects, Windows side (docs/wsl/design.md section 4 phase 2; app/docs/WSL.md "Docs"). The open doc
+ * Docs of WSL projects, Windows side (docs/wsl/design.md section 4 phase 2; docs/WSL.md "Docs"). The open doc
  * stays in AIB on Windows exactly as for a Windows project: the Y.Doc, the page's live editing socket, the agents' doc tools, comments,
  * history (AIB's artifact store) and the cache. Only its files in the project (aib-docs/<doc>/doc.aibdoc, the pages' .md copies, the
  * drawings' and charts' assets) live in the distro, so the store's file layer (docs/doc_fs.ts) sends each read and write of a
