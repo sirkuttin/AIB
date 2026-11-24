@@ -222,7 +222,7 @@ Deno.test('folders: checks answer reason "wsl" for a ref; worktree lookups and k
   assertEquals(startDir('\\\\server\\share\\x'), '', 'the picker never stats a share');
   if (WIN) {
     assertEquals(checkPath('/home/u').reason, 'relative');
-    // a drive-less path is judged by its text alone (the page's filter, as the Python server did); nothing is read
+    // a drive-less path is judged by its text alone (the page's filter, as the old server did); nothing is read
     assertEquals(folderKinds(['/home/u', '/r/.git/worktrees/x']), {
       '/home/u': { worktree: false, scratch: false },
       '/r/.git/worktrees/x': { worktree: true, scratch: false },

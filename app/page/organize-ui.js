@@ -405,8 +405,8 @@
     pendingFocus = follow;
     return guarded(() => call('archive', c));
   }
-  // Delete = remove from Studio. Like Archive it is one click with no dialog, and it can be undone from Recently deleted.
-  // The agent's own saved transcript is never touched. A live chat has its Studio session ended first.
+  // Delete = remove from AIB. Like Archive it is one click with no dialog, and it can be undone from Recently deleted.
+  // The agent's own saved transcript is never touched. A live chat has its AIB session ended first.
   async function deleteNow(c, origin) {
     const title = titleOf(c),
       wasSelected = !!(host.getSelected() && keyOf(host.getSelected()) === keyOf(c));

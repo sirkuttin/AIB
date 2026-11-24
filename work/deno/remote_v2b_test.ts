@@ -1,5 +1,5 @@
 /**
- * Phone UI v2 part 2, server side (in-process Studio, fake agent host, forged Serve headers):
+ * Phone UI v2 part 2, server side (in-process AIB, fake agent host, forged Serve headers):
  *  - "Start new chats": a child of Send, on for phones paired before it (missing = on), off with Send; refused without it;
  *  - New chat: options (projects with no paths, agents with reasons), the model/mode lists with defaults, start with the picks for
  *    this chat only, the project's default agent updated (and the old agent's model and mode cleared), an agent that cannot start
@@ -17,7 +17,7 @@ import { DEVICE_HEADER, MAX_BODY, REMOTE_ROUTES, ROUTE_SCOPE } from '../../app/s
 import { setAgentRows } from '../../app/server/remote/newchat.ts';
 import { DeviceStore } from '../../app/server/remote/devices.ts';
 import { NAME, pairPhone, pc, phoneHeaders, raw } from './_remote_fixture.ts';
-import { liveChat, phoneCall, v2Studio } from './_remote_v2b.ts';
+import { liveChat, phoneCall, v2Aib } from './_remote_v2b.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
 type Json = Record<string, unknown>;
@@ -36,7 +36,7 @@ Deno.test({
   ...OPTS,
   name: 'Start new chats: a child of Send, on for phones paired before it (missing = on), off with Send; its routes refused without it',
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     try {
       const phone = await pairPhone(s);
       const [, view] = await pc(s, 'GET', '/api/live/devices');
@@ -81,7 +81,7 @@ Deno.test({
   name:
     'New chat: options (no paths), lists with defaults, picks for this chat only, project default agent (old model/mode cleared), ineligible refused, first message sent / held / said',
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     try {
       const phone = await pairPhone(s);
       // the project's saved default: Codex with a model and mode (they belong to Codex)
@@ -223,7 +223,7 @@ Deno.test({
   ...OPTS,
   name: 'settings: a project default agent that changes clears the old agent’s model and mode (PC and phone); naming them keeps them',
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     try {
       const key = folderKeyOf(s.project);
       await s.ctx.settings.update({ defaults: { projects: { [key]: { agent: 'claude', model: 'opus', mode: 'plan' } } } });
@@ -246,7 +246,7 @@ Deno.test({
   name:
     'card menu: rename shared with the PC, mark unread / read, handled, archive keep / end (end needs Send), delete (running needs Send), Undo',
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     try {
       s.chats.push(liveChat('c1', s.project, { attention: { state: 'idle', needs: 0, turnEndedAt: null, busySince: null } }));
       s.saveChat({ sessionId: 'old-1', prompt: 'Old work' });
@@ -348,7 +348,7 @@ Deno.test({
   name:
     "a chat's artifacts (phone shape), the viewer's versions, an unknown version 404; the PC theme in bootstrap and home; 8000 emoji fit",
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     try {
       s.chats.push(liveChat('c1', s.project));
       const phone = await pairPhone(s);
@@ -403,7 +403,7 @@ Deno.test({
   ...OPTS,
   name: 'contract gate: every REMOTE_ROUTES entry past the page files, bootstrap and pairing needs a paired phone with its switch',
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     try {
       const open = new Set(['static', 'bootstrap', 'pair']);
       const gated = REMOTE_ROUTES.filter(([, , auth]) => !open.has(auth));

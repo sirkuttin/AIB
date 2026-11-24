@@ -34,27 +34,27 @@ class Lab {
   );
   readonly state = this.dir + SEP + 'state';
   readonly work = this.dir + SEP + 'work';
-  readonly studios: Aib[] = [];
+  readonly aibs: Aib[] = [];
   constructor() {
     Deno.mkdirSync(this.work, { recursive: true });
   }
   transcript(name: string): string {
     return this.dir + SEP + name + '.json';
   }
-  studio(transcripts: Map<string, string>): Aib {
+  aib(transcripts: Map<string, string>): Aib {
     const keeper = new KeeperLink({
       dataDir: this.state,
       orphan: null,
       extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'],
     });
-    const studio = new Aib({
+    const aib = new Aib({
       claudeLauncher: import.meta.filename!, nodeCommand: 'node',
       stateDir: this.state,
       port: 0,
       ownersDir: null,
     }, { keeper, keeperForNew: true });
-    studio.ownerProbe = () => null;
-    studio.connectionFactory = (_command, cwd, provider, options) => {
+    aib.ownerProbe = () => null;
+    aib.connectionFactory = (_command, cwd, provider, options) => {
       const file = transcripts.get(cwd) ?? this.transcript('none');
       try {
         Deno.statSync(file);
@@ -70,8 +70,8 @@ class Lab {
         options ?? {},
       );
     };
-    this.studios.push(studio);
-    return studio;
+    this.aibs.push(aib);
+    return aib;
   }
   get historyDir(): string {
     return this.state + SEP + 'history';
@@ -87,7 +87,7 @@ class Lab {
     await until(() => !pidAlive(info.pid), 'keeper exit', 10).catch(() => Deno.kill(info.pid, 'SIGKILL'));
   }
   async [Symbol.asyncDispose](): Promise<void> {
-    for (const s of this.studios.reverse()) await s.close().catch(() => {});
+    for (const s of this.aibs.reverse()) await s.close().catch(() => {});
     await this.killKeeper();
     for (let i = 0; i < 20; i++) {
       try {
@@ -126,14 +126,14 @@ async function peakDuring<T>(
 }
 
 async function send(
-  studio: Aib,
+  aib: Aib,
   c: Connection,
   text: string,
   id: string,
 ): Promise<void> {
   const ends = c.events.filter((e) => e.kind === 'turn_end').length;
   assertEquals(
-    (await studio.liveCall('prompt', { id: c.id, text, clientMessageId: id }))[
+    (await aib.liveCall('prompt', { id: c.id, text, clientMessageId: id }))[
       0
     ],
     200,
@@ -277,7 +277,7 @@ Deno.test({
     await keeperBinary();
     await using lab = new Lab();
     const transcripts = new Map<string, string>();
-    const a = lab.studio(transcripts);
+    const a = lab.aib(transcripts);
     const c = await a.connect('claude', lab.work);
     await send(a, c, 'say:question 0', 'm1');
     await send(a, c, INTERRUPTED, 'm2');
@@ -288,7 +288,7 @@ Deno.test({
     const file = lab.transcript('long');
     writeTranscript(file, BIG ? 8000 : 4000, BIG ? 4000 : 400);
     transcripts.set(lab.work, file);
-    const b = lab.studio(transcripts);
+    const b = lab.aib(transcripts);
     const { result: r, heapMb, rssMb, baseHeapMb } = await peakDuring(() => b.connect('claude', lab.work, session));
     console.log(
       `reopen of a ${BIG ? 8000 : 4000}-turn transcript: heap ${baseHeapMb} -> peak ${heapMb} MB, rss peak ${rssMb} MB`,
@@ -312,7 +312,7 @@ Deno.test({
     await keeperBinary();
     await using lab = new Lab();
     const transcripts = new Map<string, string>();
-    const a = lab.studio(transcripts);
+    const a = lab.aib(transcripts);
     const chats: { id: string; session: string; cwd: string }[] = [];
     for (let i = 0; i < 3; i++) {
       const cwd = lab.work + SEP + `p${i}`;
@@ -341,7 +341,7 @@ Deno.test({
       writeTranscript(file, 3200, 1000); // 6,400 updates replayed per chat (the WSL chat's 6000+)
       transcripts.set(ch.cwd, file);
     }
-    const b = lab.studio(transcripts);
+    const b = lab.aib(transcripts);
     const { result, heapMb, rssMb, baseHeapMb } = await peakDuring(() =>
       Promise.all(chats.map((ch) => b.connect('claude', ch.cwd, ch.session)))
     );

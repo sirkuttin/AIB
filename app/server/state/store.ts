@@ -1,5 +1,5 @@
 /**
- * state_store.py, ported: the stores that keep Studio's small JSON files in the state folder. Python and Deno processes share
+ * state_store.py, ported: the stores that keep AIB's small JSON files in the state folder. Python and Deno processes share
  * these files during the transition, so names, JSON layout, versions, locking, reload-on-change, quarantine and pruning are
  * Python's exactly.
  *

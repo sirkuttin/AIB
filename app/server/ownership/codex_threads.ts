@@ -1,5 +1,5 @@
 /**
- * Open elsewhere for Codex chats (private/designs/open-elsewhere/research.md, section 4; handoff.ts): who else has a Codex thread open.
+ * Open elsewhere for Codex chats (aib-shared/designs/open-elsewhere/research.md, section 4; handoff.ts): who else has a Codex thread open.
  *
  * Codex (0.166, codex-rs/rollout/src/writer_lock.rs) lets one process write a thread at a time: the writer holds an exclusive OS lock
  * on `<CODEX_HOME>/thread-writer-locks/<threadId>.lock` while the thread is loaded, and a second opener is refused ("thread <id>

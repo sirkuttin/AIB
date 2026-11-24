@@ -83,8 +83,8 @@ const FILE_DEADLINE_SECONDS = 600;
 
 /** Fallback only: files known to be slow, used when there are no timings. Also what `--slow` and `--fast` split on. */
 export const SLOW: Record<string, number> = {
-  'scroll_e2e_test.ts': 250, // 31 chat scrolling scenarios, each a Studio + headless Chrome; known-failing ones ignored
-  'layout_e2e_test.ts': 200, // layout audit: scroll containers and resizable panes against size changes, each a Studio + headless Chrome
+  'scroll_e2e_test.ts': 250, // 31 chat scrolling scenarios, each an AIB + headless Chrome; known-failing ones ignored
+  'layout_e2e_test.ts': 200, // layout audit: scroll containers and resizable panes against size changes, each an AIB + headless Chrome
   'perf_e2e_test.ts': 230, // a long chat streaming for 3 min in headless Chrome: memory, DOM nodes, listeners, CPU, typing
   'split_focus_e2e_test.ts': 45, // split view focus switch: two live chats side by side in headless Chrome, every frame watched
   'worktree_sync_interop_test.ts': 103,
@@ -134,7 +134,7 @@ const HINT: Record<string, number> = {
  * (work/deno/_shard_preload.ts, loaded with --preload; the file is unchanged). Together the shards run each test once.
  */
 export const SHARDS: Record<string, number> = {
-  'scroll_e2e_test.ts': 4, // 57 scenarios, each its own Lab (Studio + a tab in the shard's one headless Chrome)
+  'scroll_e2e_test.ts': 4, // 57 scenarios, each its own Lab (AIB + a tab in the shard's one headless Chrome)
   'layout_e2e_test.ts': 3, // 37 scenarios, the same
   'worktree_sync_interop_test.ts': 3,
   'worktree_sync_test.ts': 3,

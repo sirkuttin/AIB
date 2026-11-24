@@ -8,7 +8,7 @@
   //   focus = id of the focused group
   // f is the node's share of its parent split (any positive number; only the ratios matter).
   // Every function returns a new layout (or the same one when nothing changed); arguments are never mutated.
-  // One pane (a single group) is not stored at all: it is the Studio of today, driven by the workspace's own tab list.
+  // One pane (a single group) is not stored at all: it is AIB of today, driven by the workspace's own tab list.
   const MIN_W = 360,
     MIN_H = 200; // the smallest pane, in px
   const NARROW = 900; // under this window width the panes collapse to one

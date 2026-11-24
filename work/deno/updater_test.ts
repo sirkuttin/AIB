@@ -5,7 +5,7 @@
  * real network or a real app (the "new app" the helper starts is a fake).
  *
  * Parity dropped at stage D (updater.py keeps the Tauri packages: -setup.exe, .dmg, NSIS): installer_kinds, pick_asset, pick_release,
- * instructions, Python installing what Deno downloaded, and Deno reading a download Python picked. The helper is no longer an NSIS
+ * instructions, an older installer installing what Deno downloaded, and Deno reading a download an older one picked. The helper is no longer an NSIS
  * runner, so test_updater HelperTests' installer cases are replaced by swap and rollback tests.
  */
 import {
@@ -215,8 +215,8 @@ const DEAD = "http://127.0.0.1:9"; // nothing listens there
 /** The desktop app on Windows (installed in C:\\AIB). */
 const APP = { desktop: true, pid: 4242, exe: "C:\\AIB\\AIB.exe" };
 
-// ---- versions, platforms, release choice (with Python parity) ---------------------------------------------------------
-Deno.test("parseVersion and compare match test_updater and Python", async () => {
+// ---- versions, platforms, release choice (with the frozen answers) ---------------------------------------------------------
+Deno.test("parseVersion and compare match test_updater and the frozen answers", async () => {
   assertEquals(parseVersion("v0.1.0-beta.2"), [0, 1, 0, ["beta", "2"]]);
   assertEquals(parseVersion("1.2.3"), [1, 2, 3, []]);
   for (
@@ -276,7 +276,7 @@ Deno.test("parseVersion and compare match test_updater and Python", async () => 
   );
 });
 
-Deno.test("platformKey matches Python for Python names, and reads Deno names", async () => {
+Deno.test("platformKey matches the frozen answers for Python names, and reads Deno names", async () => {
   assertEquals(platformKey("win32", "AMD64"), ["windows", "x64"]);
   assertEquals(platformKey("win32", "ARM64"), ["windows", "arm64"]);
   assertEquals(platformKey("darwin", "arm64"), ["macos", "arm64"]);
@@ -380,7 +380,7 @@ Deno.test("the asset for this platform and arch, betas, newest wins (test_update
   assertEquals(pickAsset(odd, ["windows", "x64"], {})?.name, "AIB-1-WINDOWS-X64.ZIP");
 });
 
-Deno.test("checksum lines (test_updater + Python parity)", async () => {
+Deno.test("checksum lines (test_updater + the frozen answers)", async () => {
   const h = "a".repeat(64);
   assertEquals(checksumFor(`${h}  file.exe\n`, "file.exe"), h);
   assertEquals(checksumFor(`${h.toUpperCase()} *file.exe\r\n`, "file.exe"), h);
@@ -631,7 +631,7 @@ Deno.test("no newer release; failures are reported; the placeholder repository m
   }
 });
 
-Deno.test("redirects are followed by hand to checked hosts only; errors carry Python codes", async () => {
+Deno.test("redirects are followed by hand to checked hosts only; errors carry the recorded codes", async () => {
   using env = new Env();
   await using fake = await FakeGitHub.start();
   env.base(fake.base);
@@ -658,7 +658,7 @@ Deno.test("redirects are followed by hand to checked hosts only; errors carry Py
   assertEquals(
     [bad.state, bad.errorCode],
     ["ready", "bad_host"],
-    "the earlier verified download is still offered (as Python)",
+    "the earlier verified download is still offered (as before)",
   );
   assert(!seen.some((u) => u.includes("evil")));
   const loop = await env.service({
@@ -1130,7 +1130,7 @@ Deno.test("route functions: status codes and payloads as web_handler", async () 
   assertEquals([c5, none.code], [409, "not_ready"]);
 });
 
-// ---- state file interop with Python ------------------------------------------------------------------------------------
+// ---- state file interop with older files ------------------------------------------------------------------------------------
 type PyService = {
   result: unknown;
   state: Record<string, unknown>;
@@ -1138,13 +1138,13 @@ type PyService = {
   launched: unknown[];
 };
 
-/** status() without the Deno-only fields (retryAt, desktop), for comparing with the Python reference. */
+/** status() without the Deno-only fields (retryAt, desktop), for comparing with the frozen answers. */
 function pyView(status: object): Record<string, unknown> {
   const { retryAt: _r, desktop: _d, ...rest } = status as Record<string, unknown>;
   return rest;
 }
 
-Deno.test("state.json: refusals and odd files read the way Python read them", async () => {
+Deno.test("state.json: refusals and odd files read the way the frozen answers read them", async () => {
   const py = new Frozen();
   await using fake = await FakeGitHub.start();
   {

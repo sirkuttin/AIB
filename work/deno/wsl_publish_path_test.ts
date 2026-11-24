@@ -329,7 +329,7 @@ function routeCtx(cwd: string | null, projectRoot: string | null = null, windows
   return {
     artifacts: {
       service: { chat: (id: string) => id, cwdFor: () => windowsFolder },
-      chatStudio: () => ({ liveState: () => Promise.resolve(cwd ? { cwd } : null), conversations: { entries: {} }, store: { conversations: {} } }),
+      chatAib: () => ({ liveState: () => Promise.resolve(cwd ? { cwd } : null), conversations: { entries: {} }, store: { conversations: {} } }),
       connectionOf: (id: string) => id,
       projectRootOf: () => projectRoot,
     },

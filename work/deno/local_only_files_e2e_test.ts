@@ -1,5 +1,5 @@
 /**
- * Local-only folders in Files (owner decisions 1a, 3, 4a), end to end: a real Studio server + headless Chrome/Edge (own temp profile
+ * Local-only folders in Files (owner decisions 1a, 3, 4a), end to end: a real AIB server + headless Chrome/Edge (own temp profile
  * and data folder, free ports, no agent runs) on a temp git repo whose main folder has a local-only aib-shared/ (AIB's block in
  * .git/info/exclude) and a chat working in its own copy (a git worktree with no aib-shared/ on disk).
  *   E2E-1  the chat copy's Files shows the main folder's aib-shared/ in normal colour with the blue dot and the "local only" pill, and

@@ -12,7 +12,7 @@
 import { assert, assertEquals } from './_assert.ts';
 import { Browser, browserPath } from './_doc_browser.ts';
 import { pairPhone, pc } from './_remote_fixture.ts';
-import { liveChat, v2Studio } from './_remote_v2b.ts';
+import { liveChat, v2Aib } from './_remote_v2b.ts';
 import { phonePage, tap } from './_remote_phone_page.ts';
 import { AttentionWatcher, type Fire } from '../../app/server/attention/watcher.ts';
 
@@ -26,7 +26,7 @@ Deno.test({
   name: 'inbox v3.1 phase 2: each stall signal is a Needs-you row with one notification, and Continue works on the PC',
   ignore: !browserPath,
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     const browser = await Browser.launch();
     try {
       const died = liveChat('c-died', s.project, {
@@ -61,7 +61,7 @@ Deno.test({
           const c = s.chats.find((x) => x.id === body.id)!;
           c.attention = { state: 'working', needs: 0, turnEndedAt: null, busySince: new Date().toISOString() };
           c.busy = true;
-          // sending is acting: the agent host marks the chat handled (studio.ts), so a saved stall is over too
+          // sending is acting: the agent host marks the chat handled (aib.ts), so a saved stall is over too
           void s.ctx.conversations.apply('handled', 'claude', c.sessionId);
         }
         return [200, { ok: true, accepted: true }];

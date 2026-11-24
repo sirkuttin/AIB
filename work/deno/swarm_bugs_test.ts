@@ -199,13 +199,13 @@ Deno.test({
   },
 });
 
-// ---- the real Studio, fake agents, real git (3, 4, 6, 7) ---------------------------------------------------------------------------------
+// ---- the real AIB, fake agents, real git (3, 4, 6, 7) ---------------------------------------------------------------------------------
 
 class Box {
   readonly dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-swarm-bugs-' }));
   readonly state = pathOf(this.dir, 'state');
   readonly project = makeRepo(pathOf(this.dir, 'proj'));
-  readonly studio: Aib;
+  readonly aib: Aib;
   readonly swarm: Swarm;
   readonly calls: [string, Json][] = [];
 
@@ -213,24 +213,24 @@ class Box {
     setSwarmEnabled(this.state, true);
     runGit(this.project, 'config', 'user.name', 't');
     runGit(this.project, 'config', 'user.email', 't@t');
-    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0 }, { keeper: null });
-    studio.ownerProbe = () => null;
-    studio.agentLaunch = () => Promise.resolve([['unused'], {}]);
-    studio.connectionFactory = (_command, cwd, provider, options) => new Connection([PYTHON, UNIQUE, '--models'], cwd, provider, options ?? {});
-    const live = studio.liveCall.bind(studio);
-    studio.liveCall = (name: string, body: unknown) => {
+    const aib = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0 }, { keeper: null });
+    aib.ownerProbe = () => null;
+    aib.agentLaunch = () => Promise.resolve([['unused'], {}]);
+    aib.connectionFactory = (_command, cwd, provider, options) => new Connection([PYTHON, UNIQUE, '--models'], cwd, provider, options ?? {});
+    const live = aib.liveCall.bind(aib);
+    aib.liveCall = (name: string, body: unknown) => {
       this.calls.push([name, body as Json]);
       return live(name, body);
     };
-    this.studio = studio;
-    this.swarm = new Swarm({ stateDir: this.state, host: studio, settings: studio.settings });
+    this.aib = aib;
+    this.swarm = new Swarm({ stateDir: this.state, host: aib, settings: aib.settings });
     this.swarm.openMs = 30_000;
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
     delete HOOKS.before_lock;
     await this.swarm.stopWatching();
-    await this.studio.close().catch(() => {});
+    await this.aib.close().catch(() => {});
     for (let i = 0; i < 20; i++) {
       try {
         Deno.removeSync(this.dir, { recursive: true });
@@ -243,13 +243,13 @@ class Box {
 
   /** An Own-copy main chat with one helper that has finished a change (committed on its branch) and whose report is in. */
   async helperWithWork(file = 'test/login/a.test.txt', text = 'fixed\n', brief: Json = BRIEF) {
-    const main = this.main ??= await this.studio.connect('claude', this.project, null, { ownCopy: true });
+    const main = this.main ??= await this.aib.connect('claude', this.project, null, { ownCopy: true });
     const started = await this.swarm.tool(main.id, 'start_helper', brief);
     assertEquals(started[0], 200, JSON.stringify(started[1]));
     const id = String((started[1] as Json).helper);
     await until(() => this.swarm.registry.get(id)?.state === 'working', 'the helper working', 30);
     const h = this.swarm.registry.get(id)!;
-    const helper = this.studio.connections.get(h.chat.live)!;
+    const helper = this.aib.connections.get(h.chat.live)!;
     await answerApprovals(helper);
     await until(() => !helper.busy, 'the helper turn ended', 15);
     commit(h.worktree.path, file, text, `work of ${id}`);
@@ -280,7 +280,7 @@ Deno.test({
     const { main, id, h, helper } = await box.helperWithWork();
     // work that was never committed is kept too: the helper's last edit
     write(h.worktree.path, 'test/login/b.test.txt', 'second\n');
-    await box.studio.liveCall('disconnect', { id: helper.id }); // the owner closed the helper's chat
+    await box.aib.liveCall('disconnect', { id: helper.id }); // the owner closed the helper's chat
     assert(helper.closed);
     const before = runGit(box.project, 'rev-parse', 'main').trim();
     const merged = await box.swarm.tool(main.id, 'merge_helper', { helper: id });
@@ -380,19 +380,19 @@ Deno.test({
     assertEquals(((await box.swarm.tool(a.main.id, 'merge_helper', { helper: a.id }))[1] as Json).state, 'merged');
     assert(exists(a.h.worktree.path), 'a merged helper whose chat is open keeps its copy');
     // B stays unmerged; its chat is closed: its copy and branch stay (unmerged work)
-    await box.studio.liveCall('disconnect', { id: b.helper.id });
+    await box.aib.liveCall('disconnect', { id: b.helper.id });
     // C is merged, then its chat closes, then the helper does more work on its branch: that is unmerged work too
     assertEquals(((await box.swarm.tool(c.main.id, 'merge_helper', { helper: c.id }))[1] as Json).state, 'merged');
-    await c.helper.close(); // closed without Studio's own retire: only AIB's start sweep can find it
+    await c.helper.close(); // closed without AIB's own retire: only AIB's start sweep can find it
     commit(c.h.worktree.path, 'test/login/after-merge.txt', 'new work\n', 'more work after the merge');
     // an unresolved -landable branch (a conflicting landing's clean branch) and one the main agent merged by hand
     const open = box.swarm.registry.get(b.id)!.worktree.branch;
     runGit(box.project, 'branch', `${open}-landable`, open); // holds B's own commit: not in main
     runGit(box.project, 'branch', `${c.h.worktree.branch}-landable`, 'HEAD'); // equals main: in the target already
 
-    // the owner closes A's chat (Studio retires a merged copy when its chat closes), and a fresh process starts: its first look sweeps
+    // the owner closes A's chat (AIB retires a merged copy when its chat closes), and a fresh process starts: its first look sweeps
     await a.helper.close();
-    const fresh = new Swarm({ stateDir: box.state, host: box.studio, settings: box.studio.settings });
+    const fresh = new Swarm({ stateDir: box.state, host: box.aib, settings: box.aib.settings });
     await fresh.poll();
     assert(!exists(a.h.worktree.path), "merged helper A's worktree is removed");
     assertEquals(branchTip(box, a.h.worktree.branch), '', "and A's branch");

@@ -1,9 +1,9 @@
 /**
  * server/artifacts/origin.ts (artifact_origin.py): the OriginTests of work/test_artifacts.py against the real listener on a random
- * port (never 8767/8768), and the same requests sent to Python's artifact_origin serving the same store folder: status, body and
- * headers must match. Plus the Markdown viewer and the scroll script, compared with Python's output for many inputs.
+ * port (never 8767/8768), and the same requests recorded from the retired artifact_origin serving the same store folder: status, body and
+ * headers must match. Plus the Markdown viewer and the scroll script, compared with the recorded output for many inputs.
  *
- * Not ported (needs a whole Studio): the Studio token check (the origin never sees it; here a token header is simply sent and
+ * Not ported (needs a whole AIB): AIB token check (the origin never sees it; here a token header is simply sent and
  * ignored), and the auth gate refusing the artifact origin as a page origin (security_test.ts covers Gate).
  */
 import { assert, assertEquals } from './_assert.ts';
@@ -55,10 +55,10 @@ async function raw(port: number, target: string, host: string | null, method = '
 
 const tmp = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-origin-' })).replace(/^\\\\\?\\/, '');
 const store = new ArtifactStore(join(tmp, 'artifacts'));
-// The "Studio port" the origins are told about: held open by this file until teardown (the OS picked it), so it is certainly ours.
-const studioHold = heldPort();
-const studioPort = studioHold.port;
-const origin = OriginServer.start(store.root, studioPort);
+// The "AIB port" the origins are told about: held open by this file until teardown (the OS picked it), so it is certainly ours.
+const aibHold = heldPort();
+const aibPort = aibHold.port;
+const origin = OriginServer.start(store.root, aibPort);
 store.origin = origin.url;
 const MD =
   '# Title\n\n<script>alert(1)</script> **bold** [l](https://example.com) [bad](javascript:alert(1))\n\n- a\n- b\n\n```\n<b>code</b>\n```\n';
@@ -68,10 +68,10 @@ const png = store.create('c1', 'I', 'image', 'i.png', new Uint8Array([0x89, 0x50
 const odd = store.create('c1', 'O', 'text', 'we ird é.txt', enc('odd name'));
 const get = (path: string, host: string | null = `127.0.0.1:${origin.port}`, method = 'GET') => raw(origin.port, path, host, method);
 
-Deno.test('origin: listens on 127.0.0.1, Studio port + 1 when free', () => {
+Deno.test('origin: listens on 127.0.0.1, AIB port + 1 when free', () => {
   assertEquals(origin.url, `http://127.0.0.1:${origin.port}`);
-  assert(origin.port !== studioPort);
-  assert([studioPort + 1, origin.port].includes(origin.port));
+  assert(origin.port !== aibPort);
+  assert([aibPort + 1, origin.port].includes(origin.port));
 });
 
 Deno.test('origin: HTML headers and the exact CSP; the scroll script goes before </body>', async () => {
@@ -86,7 +86,7 @@ Deno.test('origin: HTML headers and the exact CSP; the scroll script goes before
     "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com " +
     `http://127.0.0.1:${origin.port}/_lib/ http://localhost:${origin.port}/_lib/; ` +
     "style-src 'unsafe-inline' https://fonts.googleapis.com; font-src data: https://fonts.gstatic.com; img-src data: blob: 'self'; media-src data: blob: 'self'; " +
-    `connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors http://127.0.0.1:${studioPort} http://localhost:${studioPort}; ` +
+    `connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors http://127.0.0.1:${aibPort} http://localhost:${aibPort}; ` +
     'sandbox allow-scripts allow-forms allow-popups allow-downloads';
   assertEquals(h['content-security-policy'], expected);
   const text = new TextDecoder().decode(body);
@@ -161,7 +161,7 @@ const BAD_PATHS = (i: string) => [
 Deno.test('origin: traversal and bad paths are 404 and show nothing', async () => {
   for (const path of BAD_PATHS(html.id)) {
     const { status, body } = await get(path);
-    if (path.includes('/v01/') || path.includes('v1//')) continue; // compared with Python below (both serve or both refuse)
+    if (path.includes('/v01/') || path.includes('v1//')) continue; // compared with the frozen answers below (both serve or both refuse)
     assertEquals(status, 404, path);
     assert(!new TextDecoder().decode(body).includes('versions'), path);
   }
@@ -184,7 +184,7 @@ Deno.test('origin: a symlink out of the snapshot is refused', async () => {
 Deno.test('origin: the Host header must name this origin', async () => {
   const i = html.id;
   assertEquals((await get(`/a/${i}/v1/p.html`, `localhost:${origin.port}`)).status, 200);
-  for (const host of ['evil.example', `evil.example:${origin.port}`, '127.0.0.1', `127.0.0.1:${studioPort}`, '', null]) {
+  for (const host of ['evil.example', `evil.example:${origin.port}`, '127.0.0.1', `127.0.0.1:${aibPort}`, '', null]) {
     const reply = await get(`/a/${i}/v1/p.html`, host);
     assertEquals([reply.status, new TextDecoder().decode(reply.body)], [403, 'Forbidden'], String(host));
   }
@@ -197,7 +197,7 @@ Deno.test('origin: GET only', async () => {
   }
 });
 
-Deno.test('origin: the Studio token means nothing here', async () => {
+Deno.test('origin: AIB token means nothing here', async () => {
   const reply = await raw(origin.port, '/api/live/bootstrap', `127.0.0.1:${origin.port}`, 'GET', { 'X-Studio-Token': 'secret-token' });
   assertEquals(reply.status, 404);
   assert(!new TextDecoder().decode(reply.body).includes('secret-token'));
@@ -213,7 +213,7 @@ Deno.test('origin: a busy port + 1 falls back to a free port', async () => {
   }
 });
 
-// ---- parity with Python's listener on the same store ---------------------------------------------------
+// ---- the frozen answers for the same store ---------------------------------------------------
 
 const COMPARED = [
   'content-type',
@@ -225,7 +225,7 @@ const COMPARED = [
   'allow',
 ];
 
-/** Deno only: script-src also names this origin's /_lib/ (the vendored libraries); Python's policy is the rest. */
+/** Deno only: script-src also names this origin's /_lib/ (the vendored libraries); the rest is the policy as before. */
 const maskCsp = (policy: string | undefined) =>
   policy?.replace(` http://127.0.0.1:${origin.port}/_lib/ http://localhost:${origin.port}/_lib/`, '');
 
@@ -233,23 +233,23 @@ let compared = 0;
 
 async function compare(target: string, method = 'GET', host?: (port: number) => string | null) {
   const mine = await raw(origin.port, target, host ? host(origin.port) : `127.0.0.1:${origin.port}`, method);
-  // The Python server asks the system for a file type: Windows says text/xml for .xml, a Linux mime.types says application/xml. They are
+  // The retired server asked the system for a file type: Windows says text/xml for .xml, a Linux mime.types says application/xml. They are
   // the same type to a browser, and AIB's own table answers text/xml everywhere.
   const type = (k: string, v: string) => (k === 'content-type' && v === 'application/xml' ? 'text/xml' : v);
   const pick = (r: Reply) => Object.fromEntries(COMPARED.filter((k) => k in r.headers).map((k) => [k, type(k, r.headers[k])]));
-  const ports = (text: string | undefined) => text?.replace(/(127\.0\.0\.1|localhost):\d+/g, '$1:PORT'); // the Studio's and the origin's ports differ per run
+  const ports = (text: string | undefined) => text?.replace(/(127\.0\.0\.1|localhost):\d+/g, '$1:PORT'); // AIB's and the origin's ports differ per run
   const seen = (r: Reply, csp: string | undefined) => ({
     status: r.status,
     headers: pick(r),
     csp: ports(csp),
     body: method === 'HEAD' ? null : [...r.body].join(),
   });
-  // what Python's listener answered for the same request on the same store (kept: status, the compared headers, CSP, body fingerprint)
+  // what the retired listener answered for the same request on the same store (kept: status, the compared headers, CSP, body fingerprint)
   const theirs = await py.frozen(`origin-${compared++}`);
   assertEquals(seen(mine, maskCsp(mine.headers['content-security-policy'])), theirs, `${method} ${target}`);
 }
 
-Deno.test('parity: the same answers as Python for the same store', async () => {
+Deno.test('parity: the same answers as the frozen ones for the same store', async () => {
   const targets = [
     `/a/${html.id}/v1/p.html`,
     `/a/${html.id}/v1/p.html?download=1`,
@@ -335,7 +335,7 @@ const MARKDOWN = [
   '#nospace\n# \n#',
 ];
 
-Deno.test('parity: the Markdown viewer renders as Python does', async () => {
+Deno.test('parity: the Markdown viewer renders as the frozen answers say', async () => {
   for (const source of MARKDOWN) {
     let expected: unknown;
     try {
@@ -347,14 +347,14 @@ Deno.test('parity: the Markdown viewer renders as Python does', async () => {
       } catch {
         threw = true;
       }
-      assert(threw, `Python raised (${error}) but Deno rendered ${JSON.stringify(source)}`);
+      assert(threw, `The frozen answer raised (${error}) but Deno rendered ${JSON.stringify(source)}`);
       continue;
     }
     assertEquals(new TextDecoder('utf-8', { ignoreBOM: true }).decode(markdownPage(source, 'T <&> "q"')), expected, JSON.stringify(source));
   }
 });
 
-Deno.test('parity: the scroll script is injected as Python does', async () => {
+Deno.test('parity: the scroll script is injected as the frozen answers say', async () => {
   const pages = ['<html><body>x</body></html>', 'no body', '<BODY>a</Body >b</body\n>c', '﻿bom</body>', '</body></body>', 'é😀</body>'];
   for (const page of pages) {
     assertEquals(
@@ -482,6 +482,6 @@ Deno.test('libs: CDN URL shapes and versions', () => {
 
 Deno.test('origin teardown', async () => {
   await origin.stop();
-  studioHold.close();
+  aibHold.close();
   Deno.removeSync(tmp, { recursive: true });
 });

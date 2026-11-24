@@ -50,7 +50,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * One-time carry-over when switching from the single-process server to the host. The single-process server kept "Was open in
- * Studio before restart" records and prompt receipts in studio-recovery-<port>.json; the host uses studio-recovery-host.json. Each
+ * AIB before restart" records and prompt receipts in studio-recovery-<port>.json; the host uses studio-recovery-host.json. Each
  * old file is merged once (receipts still marked working load as unknown, as after any restart) and renamed *.migrated.
  */
 export function migrateInProcessRecovery(store: StateStore | null): void {
@@ -110,7 +110,7 @@ type Op = (args: Json) => unknown;
 export class AgentHost {
   static ATTACH_FRESH_SECONDS = 25; // a web server that has not called in this long is not "attached" (it heartbeats every 10 s)
   static STOP_DEADLINE_SECONDS = 20;
-  readonly studio: Aib;
+  readonly aib: Aib;
   readonly token: string;
   readonly startedAt = Date.now() / 1000;
   readonly idleExitSeconds: number;
@@ -132,29 +132,29 @@ export class AgentHost {
   readonly ops: Record<string, Op>;
 
   constructor(readonly options: AibOptions, idleExitMinutes = 30, readonly hostPort = 0, readonly lifecycle: HostLifecycle = {}) {
-    this.studio = new Aib(options, { port: 'host' });
+    this.aib = new Aib(options, { port: 'host' });
     this.exitUnattachedSeconds = Math.max(0, Number(lifecycle.exitUnattachedSeconds ?? 0)) || 0;
     this.appLaunch = lifecycle.launch?.length ? [...lifecycle.launch] : null;
-    migrateInProcessRecovery(this.studio.store);
+    migrateInProcessRecovery(this.aib.store);
     this.token = newToken();
     this.idleExitSeconds = Math.max(0, Number(idleExitMinutes)) * 60;
-    this.studio.artifactUrlProvider = () => this.webUrl();
-    const studio = this.studio;
+    this.aib.artifactUrlProvider = () => this.webUrl();
+    const aib = this.aib;
     this.ops = {
       info: () => this.opInfo(),
       attach: (a) => this.opAttach(a),
       detach: (a) => this.opDetach(a),
-      list: () => studio.liveListSync(),
-      state: (a) => studio.liveState(need(a, 'id'), a.after ?? 0),
-      events: (a) => studio.liveEvents(need(a, 'id'), a.query ?? {}), // history loading: one page (event_pages.ts)
-      event: (a) => studio.liveEvent(need(a, 'id'), need(a, 'seq')),
-      live: async (a) => [...await studio.liveCall(need(a, 'name') as string, a.body ?? null)],
-      ownership: (a) => studio.ownershipQuery(str(a.provider), str(a.id), str(a.cwd)),
-      artifact: (a) => studio.emitArtifact(need(a, 'conversationId'), need(a, 'data')),
-      writes: () => studio.liveWrites(),
-      install: async (a) => [...await studio.installCall(need(a, 'action') as string, a.agent ?? null)], // protocol 3: the install job
-      signin: async (a) => [...await studio.signinCall(need(a, 'action') as string, str(a.agent), a.force ?? null)], // protocol 4: sign-in
-      busy: () => ({ busy: studio.busyList() }),
+      list: () => aib.liveListSync(),
+      state: (a) => aib.liveState(need(a, 'id'), a.after ?? 0),
+      events: (a) => aib.liveEvents(need(a, 'id'), a.query ?? {}), // history loading: one page (event_pages.ts)
+      event: (a) => aib.liveEvent(need(a, 'id'), need(a, 'seq')),
+      live: async (a) => [...await aib.liveCall(need(a, 'name') as string, a.body ?? null)],
+      ownership: (a) => aib.ownershipQuery(str(a.provider), str(a.id), str(a.cwd)),
+      artifact: (a) => aib.emitArtifact(need(a, 'conversationId'), need(a, 'data')),
+      writes: () => aib.liveWrites(),
+      install: async (a) => [...await aib.installCall(need(a, 'action') as string, a.agent ?? null)], // protocol 3: the install job
+      signin: async (a) => [...await aib.signinCall(need(a, 'action') as string, str(a.agent), a.force ?? null)], // protocol 4: sign-in
+      busy: () => ({ busy: aib.busyList() }),
       stop: (a) => this.opStop(a),
     };
   }
@@ -177,22 +177,22 @@ export class AgentHost {
   }
 
   async opInfo(): Promise<Json> {
-    const info = await this.studio.liveInfo();
-    const busy = this.studio.busyList();
+    const info = await this.aib.liveInfo();
+    const busy = this.aib.busyList();
     return {
       ...info,
       format: HOST_FORMAT,
       protocol: PROTOCOL_VERSION,
       hostId: info.instanceId,
       startedAt: this.startedAt,
-      stateDir: pathStr(this.studio.stateDir),
+      stateDir: pathStr(this.aib.stateDir),
       codeRoot: CODE_ROOT,
       sourceHash: await DENO_SOURCE_HASH(),
       appId: APP_ID,
       version: APP_VERSION,
       open: (info.connections as unknown[]).length,
       active: busy,
-      working: this.studio.workingList().length,
+      working: this.aib.workingList().length,
       webAttached: this.webAttached(),
       idleExitMinutes: this.idleExitSeconds / 60,
       startedWith: this.startedWith(),
@@ -206,7 +206,7 @@ export class AgentHost {
       nodeCommand: o.nodeCommand ?? null,
       claudeLauncher: o.claudeLauncher ?? null,
       ownersDir: o.ownersDir ? String(o.ownersDir) : null,
-      autoReconnect: !!this.studio.autoReconnect,
+      autoReconnect: !!this.aib.autoReconnect,
       enableClientTerminal: !!o.enableClientTerminal,
       enableClientFs: o.enableClientFs ?? null,
       mcpServers: (o.mcpServers ?? []).length,
@@ -229,7 +229,7 @@ export class AgentHost {
 
   opDetach(args: Json): Json {
     if (this.web.delete(webKey(args))) {
-      log.announce('agent_host', 'app detached (pid %s); %s working', args.pid ?? null, this.studio.workingList().length);
+      log.announce('agent_host', 'app detached (pid %s); %s working', args.pid ?? null, this.aib.workingList().length);
     }
     this.lifecycleCheck(); // the tray icon shows at once when chats are working
     return { detached: true };
@@ -241,8 +241,8 @@ export class AgentHost {
    */
   lifecycleCheck(now = Date.now() / 1000): boolean {
     const attached = this.webAttached() > 0;
-    const working = attached ? [] : this.studio.workingList();
-    const needsYou = attached ? 0 : this.studio.blockedChats(); // the inbox's one number (inbox-rules.js), as the app's tray
+    const working = attached ? [] : this.aib.workingList();
+    const needsYou = attached ? 0 : this.aib.blockedChats(); // the inbox's one number (inbox-rules.js), as the app's tray
     if (this.lifecycle.tray) {
       if (!attached && working.length > 0) {
         this.tray ??= this.lifecycle.tray(() => void this.openApp(), () => this.stopAll('the tray menu'), (m) => logger.warning('%s', m));
@@ -280,7 +280,7 @@ export class AgentHost {
   /** "data: <folder>" for the tooltip when the data folder is not the per-user default (demo and test copies never look real). */
   dataNote(): string {
     try {
-      const dir = String(this.studio.stateDir);
+      const dir = String(this.aib.stateDir);
       return samePath(dir, userStateDir()) ? '' : dir;
     } catch {
       return '';
@@ -298,7 +298,7 @@ export class AgentHost {
       }
       const env = Object.fromEntries(Object.entries(Deno.env.toObject()).filter(([k]) => k !== 'DENO_SERVE_ADDRESS'));
       const folder = command[0].replace(/[\\/][^\\/]*$/, '') || '.';
-      const child = await spawnDetached(command, join(String(this.studio.stateDir), 'app-launch.log'), folder, env);
+      const child = await spawnDetached(command, join(String(this.aib.stateDir), 'app-launch.log'), folder, env);
       child.close();
     } catch (error) {
       logger.exception(error, 'Open AIB: could not start the app');
@@ -307,14 +307,14 @@ export class AgentHost {
 
   /** Tray "Stop chats and quit" (confirmed by the tray): stop every agent and this host. */
   stopAll(by: string): void {
-    log.announce('agent_host', 'forced stop asked by %s (%s working)', by, this.studio.workingList().length);
+    log.announce('agent_host', 'forced stop asked by %s (%s working)', by, this.aib.workingList().length);
     this.stopReason ||= `Stop chats and quit (${by})`;
-    this.studio.deliberateStop = true;
+    this.aib.deliberateStop = true;
     this.stopEvent.set();
   }
 
   opStop(args: Json): Json {
-    const busy = args.force ? this.studio.busyList() : this.studio.workingList();
+    const busy = args.force ? this.aib.busyList() : this.aib.workingList();
     if (busy.length && !args.force) {
       log.announce('agent_host', 'stop asked by %s refused: %s working', typeof args.by === 'string' ? args.by.slice(0, 200) : 'a stop request', busy.length);
       const names = busy.map((b) => `${b.provider} in ${b.cwd} (${b.state})`).join('; ');
@@ -329,7 +329,7 @@ export class AgentHost {
     if (args.force) log.announce('agent_host', 'forced stop asked by %s (%s working)', by, busy.length);
     else log.announce('agent_host', 'stop asked by %s: nothing working, stopping', by);
     this.stopReason ||= `asked to stop by ${by}${args.force ? ' (forced)' : ''}`;
-    if (args.force) this.studio.deliberateStop = true; // the chats were stopped on purpose (the app's "stop them and quit")
+    if (args.force) this.aib.deliberateStop = true; // the chats were stopped on purpose (the app's "stop them and quit")
     this.stopEvent.set();
     return { stopping: true, forced: busy.length > 0, active: busy };
   }
@@ -392,7 +392,7 @@ export class AgentHost {
 
   /** Take the one-host lock, listen, publish the host file, start reconnecting. Returns the port. Throws OwnershipConflict. */
   async start(): Promise<number> {
-    const stateDir = this.studio.stateDir;
+    const stateDir = this.aib.stateDir;
     await Deno.mkdir(stateDir, { recursive: true });
     this.lease = await new SessionLease(stateDir, 'agent-host', 'singleton').acquire(); // one host per state dir; released if we die
     try {
@@ -411,7 +411,7 @@ export class AgentHost {
       pid: Deno.pid,
       port: this.port,
       token: this.token,
-      hostId: this.studio.instanceId,
+      hostId: this.aib.instanceId,
       startedAt: this.startedAt,
       codeRoot: CODE_ROOT,
       sourceHash: await DENO_SOURCE_HASH(),
@@ -420,16 +420,16 @@ export class AgentHost {
       runtime: RUNTIME,
       startedWith: this.startedWith(),
     });
-    await this.studio.adoptKeeper(); // chats whose agents still run in the keeper go on where they are
-    this.studio.startAutoReconnect(); // chats that were open before the restart; nothing is sent
-    this.studio.startScheduleScan(); // scheduled messages (Send later) of chats nobody opens go at their time
+    await this.aib.adoptKeeper(); // chats whose agents still run in the keeper go on where they are
+    this.aib.startAutoReconnect(); // chats that were open before the restart; nothing is sent
+    this.aib.startScheduleScan(); // scheduled messages (Send later) of chats nobody opens go at their time
     return this.port;
   }
 
   /** True when the host should exit: no open conversations and no web server for the whole idle period. */
   idleCheck(): boolean {
     if (!this.idleExitSeconds) return false;
-    const open = [...this.studio.connections.values()].some((c) => !c.closed);
+    const open = [...this.aib.connections.values()].some((c) => !c.closed);
     if (open || this.webAttached()) {
       this.idleSince = null;
       return false;
@@ -439,7 +439,7 @@ export class AgentHost {
   }
 
   async run(): Promise<void> {
-    const path = logPath(this.studio.stateDir);
+    const path = logPath(this.aib.stateDir);
     let checked = 0;
     const tick = this.lifecycle.tray || this.exitUnattachedSeconds ? 1000 : 2000;
     while (!(await this.stopEvent.wait(tick))) {
@@ -461,7 +461,7 @@ export class AgentHost {
   }
 
   async shutdown(): Promise<void> {
-    log.announce('agent_host', 'stopping: %s; %s were working', this.stopReason || 'signal', this.studio.workingList().length);
+    log.announce('agent_host', 'stopping: %s; %s were working', this.stopReason || 'signal', this.aib.workingList().length);
     // Bounded: an agent that never closes must not leave this process running after its host file is gone.
     const hardExit = this.lifecycle.hardExit;
     const guard = hardExit
@@ -475,13 +475,13 @@ export class AgentHost {
     } catch { /* gone */ }
     this.tray = null;
     this.trayShown = false;
-    await removeInfo(this.studio.stateDir, Deno.pid); // first, so web servers see a stop and not a crash
+    await removeInfo(this.aib.stateDir, Deno.pid); // first, so web servers see a stop and not a crash
     await sleep(200); // let the reply to a stop request leave
     if (this.server) {
       // An RPC still running (a connect waiting on its agent) must not hold the stop up: give replies a moment, then go on.
       await Promise.race([this.server.shutdown().catch(() => {}), sleep(1000)]);
     }
-    await this.studio.close();
+    await this.aib.close();
     this.lease?.release();
     clearTimeout(guard);
   }
@@ -514,8 +514,8 @@ function newToken(): string {
   return btoa(String.fromCharCode(...bytes)).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
 }
 
-/** The agent options of a parsed command line, as the Studio reads them (the --mcp-config file loaded). */
-export function studioOptions(o: Options, mcpServers: AibOptions['mcpServers'] = []): AibOptions {
+/** The agent options of a parsed command line, as AIB reads them (the --mcp-config file loaded). */
+export function aibOptions(o: Options, mcpServers: AibOptions['mcpServers'] = []): AibOptions {
   return {
     stateDir: o.stateDir,
     port: o.port,
@@ -568,7 +568,7 @@ export async function hostMain(argv: string[]): Promise<number> {
   // --keeper: the web server drains an older split host and the keeper can run, so this host's new chats start in the keeper.
   if (options.keeper) await decideKeeper(String(options.stateDir));
   const tray = options.tray ? (await import('../desktop/host_tray.ts')).nativeHostTray : null;
-  const host = new AgentHost(studioOptions(options, mcpServers), options.idleExitMinutes, options.hostPort, {
+  const host = new AgentHost(aibOptions(options, mcpServers), options.idleExitMinutes, options.hostPort, {
     tray,
     exitUnattachedSeconds: options.exitUnattachedSeconds,
     hardExit: () => Deno.exit(0),
@@ -580,11 +580,11 @@ export async function hostMain(argv: string[]): Promise<number> {
   } catch (error) {
     if (error instanceof OwnershipConflict) {
       console.log('Agent host: another host already runs for this state dir; exiting.');
-      await host.studio.close();
+      await host.aib.close();
       return 0;
     }
     console.error(`Agent host: could not start: ${error instanceof Error ? error.message : error}`);
-    await host.studio.close();
+    await host.aib.close();
     return 1;
   }
   const signals = (Deno.build.os === 'windows' ? ['SIGINT', 'SIGBREAK'] : ['SIGINT', 'SIGTERM']) as Deno.Signal[];
@@ -593,14 +593,14 @@ export async function hostMain(argv: string[]): Promise<number> {
       Deno.addSignalListener(signal, () => host.stopEvent.set());
     } catch { /* not supported here */ }
   }
-  console.log(`Agent host ${Deno.pid} protocol ${PROTOCOL_VERSION} on 127.0.0.1:${port}, state ${host.studio.stateDir}`);
+  console.log(`Agent host ${Deno.pid} protocol ${PROTOCOL_VERSION} on 127.0.0.1:${port}, state ${host.aib.stateDir}`);
   log.announce(
     'agent_host',
     'AIB %s agent host started (pid %s, program %s, data %s, tray %s, exits %s)',
     APP_VERSION,
     Deno.pid,
     Deno.execPath(),
-    host.studio.stateDir,
+    host.aib.stateDir,
     options.tray ? 'on' : 'off',
     options.exitUnattachedSeconds ? `${options.exitUnattachedSeconds} s after the last app leaves with nothing working` : `after ${options.idleExitMinutes} min idle`,
   );

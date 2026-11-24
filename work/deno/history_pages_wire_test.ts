@@ -1,13 +1,13 @@
 /**
  * History loading phase 1B, the wire: GET /api/live/events and /api/live/event through the web server's routes, HostProxy's
- * fallback to the full state when the agent host is older (no 'events' op), Studio's own page call, and the phone's chat payload
+ * fallback to the full state when the agent host is older (no 'events' op), AIB's own page call, and the phone's chat payload
  * reading one tail page (no helper events, tool output clipped). The page rules themselves: work/test_history_pages.js.
  */
 import { assert, assertEquals } from './_assert.ts';
 import { HostProxy, olderHost } from '../../app/server/host/host_proxy.ts';
 import { HostUnavailable } from '../../app/server/host/host_client.ts';
 import { chatPayload, TitleCache } from '../../app/server/remote/payloads.ts';
-import { type FakeChat, pc, remoteStudio } from './_remote_fixture.ts';
+import { type FakeChat, pc, remoteAib } from './_remote_fixture.ts';
 
 type Json = Record<string, any>;
 const MAIN = 'sess-1';
@@ -77,7 +77,7 @@ function chat(): FakeChat {
 }
 
 Deno.test('routes and phone: /api/live/events pages, /api/live/event gives the whole event, the phone opens on one tail page', async () => {
-  const s = await remoteStudio();
+  const s = await remoteAib();
   try {
     s.chats.push(chat());
     const get = (path: string) => pc(s, 'GET', path) as Promise<[number, Json]>;

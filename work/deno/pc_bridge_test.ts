@@ -29,8 +29,8 @@ import {
   pc,
   phoneHeaders,
   raw,
-  type RemoteStudio,
-  remoteStudio,
+  type RemoteAib,
+  remoteAib,
   serveStatus,
   tempDir,
 } from './_remote_fixture.ts';
@@ -42,9 +42,9 @@ const HOME = (WIN ? Deno.env.get('USERPROFILE') : Deno.env.get('HOME')) ?? '';
 const sep = WIN ? '\\' : '/';
 const inHome = (...parts: string[]) => [HOME, ...parts].join(sep);
 
-async function remoteOn(): Promise<RemoteStudio> {
+async function remoteOn(): Promise<RemoteAib> {
   const fake = fakeTailscale();
-  const s = await remoteStudio({ runner: fake.runner }, undefined, { saved: true });
+  const s = await remoteAib({ runner: fake.runner }, undefined, { saved: true });
   fake.state.serve = serveStatus(readRemotePort(s.state)!);
   const [status] = await pc(s, 'POST', '/api/live/devices/access', { on: true });
   assertEquals(status, 200);
@@ -71,7 +71,7 @@ function chat(id: string, cwd: string, over: Partial<FakeChat> = {}): FakeChat {
 }
 
 /** A bridged API call from a computer (its token in X-AIB-Device). */
-function call(s: RemoteStudio, token: string, method: string, path: string, body?: Json, extra: Record<string, string> = {}) {
+function call(s: RemoteAib, token: string, method: string, path: string, body?: Json, extra: Record<string, string> = {}) {
   return raw(
     s.phonePort(),
     method,
@@ -82,7 +82,7 @@ function call(s: RemoteStudio, token: string, method: string, path: string, body
 }
 
 /** A WebSocket handshake to the phone port (only refusals are awaited: they answer before any upgrade). */
-function socket(s: RemoteStudio, path: string, protocols: string, extra: Record<string, string | null> = {}) {
+function socket(s: RemoteAib, path: string, protocols: string, extra: Record<string, string | null> = {}) {
   const headers = phoneHeaders({
     Origin: `https://${NAME}`,
     Upgrade: 'websocket',

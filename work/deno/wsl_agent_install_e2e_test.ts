@@ -19,7 +19,7 @@ import { Aib } from '../../app/server/host/aib.ts';
 import { APP_ROOT } from '../../app/server/core/app.ts';
 
 type Json = Record<string, unknown>;
-const ALLOW = JSON.parse(Deno.readTextFileSync(`${APP_ROOT}/agent_versions.json`)).agents;
+const ALLOW = JSON.parse(Deno.readTextFileSync(`${APP_ROOT}/agents/versions.json`)).agents;
 const CLAUDE = { pkg: ALLOW.claude.package as string, version: ALLOW.claude.version as string };
 const enc = (s: string) => new TextEncoder().encode(s);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -121,7 +121,7 @@ Deno.test({
   ...T,
   async fn() {
     const state = Deno.makeTempDirSync({ prefix: 'aib-wsl-install-e2e-' });
-    let studio: Aib | null = null;
+    let aib: Aib | null = null;
     try {
       await prepareStubs();
       newAib({ helperEnv: (install) => ({ ...helperEnv(install), SHELL: `${ROOT}/bin/loginsh` }) });
@@ -178,12 +178,12 @@ Deno.test({
       await sh('rm -f "$1/slow"', [ROOT]);
       await wslInstallCall(host, KEY, DISTRO, 'start', 'claude');
       await until('the reinstall', async () => ((await wslInstallCall(host, KEY, DISTRO, 'status', 'claude'))[1] as Json).state === 'done');
-      studio = new Aib({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
-      const launch = await studio.wslLaunch('claude', { distro: KEY, linuxPath: ROOT });
+      aib = new Aib({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
+      const launch = await aib.wslLaunch('claude', { distro: KEY, linuxPath: ROOT });
       assertEquals(launch.command, row.command);
     } finally {
       await cleanRoot();
-      await studio?.close().catch(() => {}); // after: closing a Studio stops its WSL hosts
+      await aib?.close().catch(() => {}); // after: closing an AIB stops its WSL hosts
       Deno.removeSync(state, { recursive: true });
     }
   },

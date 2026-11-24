@@ -1,5 +1,5 @@
 /**
- * The chat's sign-in card on the server side (Deno only; the Python reference has no mid-session sign-in): a prompt that fails because
+ * The chat's sign-in card on the server side (Deno only: no mid-session sign-in existed before): a prompt that fails because
  * the agent's login expired becomes one sign-in state (not two raw errors), AIB resends the message once after the sign-in, a sign-in
  * that did not take says so, Claude Code is offered its terminal methods, and the terminal command is the agent's own launcher plus
  * the advertised args. Fake agents only (work/fake_acp.py); no real CLI and no real credentials.

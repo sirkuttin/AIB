@@ -1,5 +1,5 @@
 /**
- * Steer-on-send, end to end (beta.9): a real Studio (web server + separate agent host, so every route goes through the host proxy and
+ * Steer-on-send, end to end (beta.9): a real AIB (web server + separate agent host, so every route goes through the host proxy and
  * its allow list), the fake agents of work/fake_acp.py --steer <claude|codex> that replay the real recordings of
  * work/steer-recordings (C1-C4, X1-X4, O1-O2), and for the page tests a headless Chrome/Edge (no window). The commands the fake
  * "runs" are real child processes (a parent with a child), so a Stop can be checked to kill exactly those and nothing else.

@@ -82,7 +82,7 @@ Deno.test('remove from AIB is remembered in the data folder and survives a reloa
     assertEquals(payload.disk, 'kept');
     assert(await exists(`${t.project}${SEP}src${SEP}a.txt`), 'the folder is untouched');
     assert(await exists(`${t.state}${SEP}studio-removed-projects.json`), 'saved in the data folder');
-    // A new Studio (a restart, or another window) reading the same data folder: the project is still gone.
+    // A new AIB (a restart, or another window) reading the same data folder: the project is still gone.
     const again = new RemovedProjects(t.state);
     assert(again.has(t.project));
     assertEquals(Object.keys(again.public().removed), [projectKey(t.project)]);

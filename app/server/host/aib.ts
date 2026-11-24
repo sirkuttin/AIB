@@ -1,5 +1,5 @@
 /**
- * The connection manager (studio.py's Studio class): every live agent connection of one process, the ownership check before a
+ * The connection manager (studio.py's AIB class): every live agent connection of one process, the ownership check before a
  * chat opens (lease, command-line probe, announcements), owner announcements and their heartbeat, the recovery list and the
  * automatic reconnect after a restart, the install and sign-in jobs, the worktree per chat and live sync, and the artifact tool's
  * environment. The agent host (agent_host.ts) runs one; `--in-process` puts one inside the web server instead.
@@ -266,7 +266,7 @@ export function pythonErrorType(error: Error): string {
   return error.name === 'Error' ? 'RuntimeError' : error.name;
 }
 
-/** The agent options a Studio reads (the command-line flags of studio.py / agent_host.py; server/core/options.ts has them all). */
+/** The agent options an AIB reads (the command-line flags of studio.py / agent_host.py; server/core/options.ts has them all). */
 export interface AibOptions {
   /** undefined/null: no state folder was configured (Python: the namespace has no state_dir), so nothing durable is kept. */
   stateDir?: string | null;
@@ -307,7 +307,7 @@ export interface ConnectOptions {
   ownCopy?: boolean | null;
 }
 
-/** Marks the token of the combined prompt note (Studio #wire), so a token from elsewhere is never taken for one. */
+/** Marks the token of the combined prompt note (AIB #wire), so a token from elsewhere is never taken for one. */
 const OWN_CONTEXT = '__aibOwnContext';
 /** How long a landing lock lasts without a renewal (build plan 2.3: the web process renews it every 10 s while the merge runs). */
 export const LANDING_TTL_MS = 60_000;
@@ -390,7 +390,7 @@ export class Aib {
   clock: () => number = () => Date.now() / 1000;
   readonly token: string;
   /**
-   * The id open pages compare to tell "the same Studio" (connection ids still valid) from a restart. With the keeper it survives a
+   * The id open pages compare to tell "the same AIB" (connection ids still valid) from a restart. With the keeper it survives a
    * restart or update of this process as long as the keeper does (keeperInstanceId): the chats are rebuilt under the same ids.
    */
   readonly instanceId: string;
@@ -436,7 +436,7 @@ export class Aib {
   get hostMode(): string {
     return this.keeper && this.keeperForNew ? 'keeper' : 'in-process';
   }
-  /** The in-process Studio has no separate host: no code warning, nobody to wait for. */
+  /** The in-process AIB has no separate host: no code warning, nobody to wait for. */
   readonly hostInfo: unknown = undefined;
   readonly waitingChats = 0;
   /** Cleaning up half-made worktrees (Python does it in __init__); connect waits for it. */
@@ -457,14 +457,14 @@ export class Aib {
   readonly keeper: KeeperLink | null;
   /**
    * New chats start in the keeper: decided when AIB started (on unless the keeper cannot run or AIB_KEEPER=0). False with a keeper
-   * link means a keeper still holds chats from before while this Studio runs without it (the fallback, a split agent host): they
+   * link means a keeper still holds chats from before while this AIB runs without it (the fallback, a split agent host): they
    * are taken over and stay there until they end, and new chats run as children.
    */
   readonly keeperForNew: boolean;
   #mcpHttp: ArtifactMcpHttp | null = null;
   /** One-time <studio-context> lines per live chat id (addPromptContext), sent with its next prompt. */
   readonly #ownContext = new Map<string, string[]>();
-  /** Stops this Studio answering WSL agents' tool calls (wsl/mcp_tunnel.ts); null when it never did. */
+  /** Stops this AIB answering WSL agents' tool calls (wsl/mcp_tunnel.ts); null when it never did. */
   #untunnel: (() => void) | null = null;
 
   constructor(options: AibOptions, construct: AibConstruct = {}) {
@@ -482,7 +482,7 @@ export class Aib {
       ompRoot: options.ompSessions ?? null,
       claudeRoot: options.claudeProjects ?? null,
       registry: this.owners,
-      ownedByStudio: (provider, sessionId) => this.#studioOwns(provider, sessionId),
+      ownedByAib: (provider, sessionId) => this.#aibOwns(provider, sessionId),
       ownPids: () => this.#ownAgentPids(),
       liveHolder: (provider, sessionId) => this.handoff.savedHolder(provider, sessionId),
     });
@@ -583,7 +583,7 @@ export class Aib {
     }
     // WSL projects (wsl/hosts.ts): one host per distro, made and started only when a WSL project needs it, so a PC without WSL pays
     // nothing. The Windows keeper holds each distro's keep-alive; the Linux keeper is the same program, so it has the same version.
-    // The first Studio of the process sets this up (a test that set up its own hosts keeps them).
+    // The first AIB of the process sets this up (a test that set up its own hosts keeps them).
     if (this.hasStateDir) {
       const keeper = this.keeper;
       let version: Promise<string | null> | null = null;
@@ -599,7 +599,7 @@ export class Aib {
             }
           })(),
       }, false);
-      // WSL agents' tool calls through the tunnel (wsl/mcp_tunnel.ts) are answered by this Studio.
+      // WSL agents' tool calls through the tunnel (wsl/mcp_tunnel.ts) are answered by this AIB.
       if (!this.options.noArtifactTool) this.#untunnel = mcpTunnelGate.set((request) => this.wslToolCall(request));
     }
     // The chats on the recovery list ran in the previous AIB of this data folder (an app restart, an update, or the split agent
@@ -644,16 +644,16 @@ export class Aib {
     }
   }
 
-  #studioOwns(provider: string, sessionId: string): boolean {
+  #aibOwns(provider: string, sessionId: string): boolean {
     return [...this.connections.values()].some((c) => claudeBase(c.provider) === claudeBase(provider) && c.sessionId === sessionId && !c.closed);
   }
 
-  /** Windows pids of this Studio's agents (a WSL chat's pid is the distro's: wslOwnPids). */
+  /** Windows pids of this AIB's agents (a WSL chat's pid is the distro's: wslOwnPids). */
   #ownAgentPids(): number[] {
     return [...this.connections.values()].filter((c) => !c.closed && c.process !== null && !c.wsl).map((c) => c.process!.pid);
   }
 
-  /** The Linux pids of this Studio's open chats in a distro (wslOwnPids adds every agent channel its Linux keeper lists). */
+  /** The Linux pids of this AIB's open chats in a distro (wslOwnPids adds every agent channel its Linux keeper lists). */
   #wslChatPids(distro: string): number[] {
     return [...this.connections.values()]
       .filter((c) => !c.closed && c.wsl?.distro === distro && c.process !== null)
@@ -664,7 +664,7 @@ export class Aib {
   readonly #registryProbe = (): OwnershipProbe =>
     new OwnershipProbe({
       registry: this.owners,
-      ownedByStudio: (provider, sessionId) => this.#studioOwns(provider, sessionId),
+      ownedByAib: (provider, sessionId) => this.#aibOwns(provider, sessionId),
       inspectProcesses: false,
       lockProbe: () => [],
     });
@@ -789,7 +789,7 @@ export class Aib {
     return verdict;
   }
 
-  /** Conversations the previous Studio process owned and this one does not (yet). */
+  /** Conversations the previous AIB process owned and this one does not (yet). */
   recovered(): Json[] {
     if (!this.store) return [];
     const openNow = new Set([...this.connections.values()].filter((c) => !c.closed).map((c) => pairKey(c.provider, c.sessionId)));
@@ -809,7 +809,7 @@ export class Aib {
 
   // ---- automatic reconnect after a restart -------------------------------------------------------------------------------
   /**
-   * Reload, in the background, every conversation that was live in Studio before the restart. Uses the ordinary resume path of
+   * Reload, in the background, every conversation that was live in AIB before the restart. Uses the ordinary resume path of
    * connect() with continueAnyway=false, so the ownership check runs: a conversation another app owns or may be using is skipped
    * and stays "Ready". Nothing is ever sent to an agent. At most `concurrency` start at once, `stagger` seconds apart; a
    * failure is retried up to `tries` times and then dropped from the recovery list. Returns how many were queued.
@@ -1145,7 +1145,7 @@ export class Aib {
     return this.options.artifactTransport ?? (isCompiled() ? 'http' : 'stdio');
   }
 
-  /** The HTTP artifact server of this Studio, started on first use. */
+  /** The HTTP artifact server of this AIB, started on first use. */
   artifactMcpHttp(): ArtifactMcpHttp {
     if (this.#closed) throw new Error('This AIB is closed');
     if (!this.#mcpHttp) {
@@ -1206,7 +1206,7 @@ export class Aib {
    * mcp.ts WSL_TOOL_GROUPS (artifacts by content or Linux path, docs, merge in its own worktree; no swarm tools yet).
    *   - The tunnel (phase 2), when the distro's helper has one: the Linux keeper program as forwarder
    *     (`<root>/<ver>/AIB-keeper mcp-forward --helper-socket <data>/helper/mcp.sock`), the key in its environment; each message goes
-   *     through the helper channel to this Studio (wslToolCall). Needs no WSL interop and opens no port.
+   *     through the helper channel to this AIB (wslToolCall). Needs no WSL interop and opens no port.
    *   - Else the interop entry (phase 1): the Windows keeper's forwarder as `/mnt/c/.../AIB-keeper.exe mcp-forward <Windows address
    *     file>`, WSLENV handing MCP_FORWARD_HEADERS over to the Windows process.
    *   - Else no entry, and the chat says the tools are missing instead of failing silently.
@@ -1346,7 +1346,7 @@ export class Aib {
     };
   }
 
-  /** The Linux keepers whose loss this Studio already follows (the same reconnect rule as the Windows keeper's). */
+  /** The Linux keepers whose loss this AIB already follows (the same reconnect rule as the Windows keeper's). */
   readonly #wslLinks = new WeakSet<KeeperLink>();
 
   #followWslLink(link: KeeperLink): void {
@@ -1834,7 +1834,7 @@ export class Aib {
     return connection!;
   }
 
-  /** The Studio's hooks on one connection (turn start and end, live sync, release) and its client capabilities. */
+  /** AIB's hooks on one connection (turn start and end, live sync, release) and its client capabilities. */
   #wire(c: Connection): void {
     c.lines = this.conversationLines;
     if (this.allow) {
@@ -2301,7 +2301,7 @@ export class Aib {
     if (!check) await this.#dropOrphanTerminals(client, listed, keeper);
     if (adopted) {
       announce('studio', 'keeper: %s chat(s) taken over from the keeper in %s ms', adopted, Math.round(performance.now() - started));
-      // Their artifact tool is the keeper's forwarder: it needs this Studio's HTTP endpoint and its published address.
+      // Their artifact tool is the keeper's forwarder: it needs this AIB's HTTP endpoint and its published address.
       const forwarded = [...this.connections.values()].some((c) => c.channel && !c.closed && c.mcpServers.some(isForwardEntry));
       if (forwarded && !this.options.noArtifactTool) {
         try {
@@ -2559,7 +2559,7 @@ export class Aib {
 
   /**
    * The hooks a new Claude chat in a WSL project gets (owner 2026-11-23): the same command hooks, run in the distro by the Linux keeper
-   * program (`<keeper> hook <event> --helper-socket <socket>`), reaching this Studio through the helper's tunnel (#wslHookCall). What
+   * program (`<keeper> hook <event> --helper-socket <socket>`), reaching this AIB through the helper's tunnel (#wslHookCall). What
    * AIB can't read from Windows (the distro's Claude settings, agents, git) the distro's helper reads (`subagent.setup`). Fails closed:
    * when the hooks can't be set up (a helper without them, a setup call that fails), the chat's subagents are turned off by permission
    * rules instead, never left to edit the project folder; hooks off in the user's own settings do the same, as on Windows.
@@ -2966,7 +2966,7 @@ export class Aib {
    */
   /**
    * The project's local-only lookup after setting up the default `/aib-shared` exclude (local_only.ensureDefault: idempotent, never
-   * throws). null: not git, or a test Studio and a project outside the temp folder (local_only.defaultsAllowed).
+   * throws). null: not git, or a test AIB and a project outside the temp folder (local_only.defaultsAllowed).
    */
   async #localOnlyDefault(project: string): Promise<LocalOnly | null> {
     if (!project || !defaultsAllowed(this.hasStateDir ? this.stateDir : '', project)) return null;
@@ -3366,8 +3366,8 @@ export class Aib {
     return blockedCount(chats, this.conversations.public().entries as unknown as Record<string, unknown>, Date.now() / 1000, openOnPc);
   }
 
-  studioOwns(provider: unknown, sessionId: unknown): Promise<boolean> {
-    return Promise.resolve(this.#studioOwns(provider as string, sessionId as string));
+  aibOwns(provider: unknown, sessionId: unknown): Promise<boolean> {
+    return Promise.resolve(this.#aibOwns(provider as string, sessionId as string));
   }
 
   ownershipQuery(provider = '', sessionId = '', cwd = ''): Promise<unknown> {
@@ -3382,7 +3382,7 @@ export class Aib {
           const at = key.indexOf(':');
           const [p, s] = [key.slice(0, at), key.slice(at + 1)];
           const released = this.probe.releasedAt(p, s);
-          if (this.#studioOwns(p, s) || (released !== null && this.probe.clock() - released < ACTIVE_WINDOW_SECONDS)) continue;
+          if (this.#aibOwns(p, s) || (released !== null && this.probe.clock() - released < ACTIVE_WINDOW_SECONDS)) continue;
           wsl[key] = hint;
         }
         return Promise.resolve({ hints: { ...wsl, ...this.probe.hints() }, certainty: this.probe.listCertainty() });
@@ -3392,7 +3392,7 @@ export class Aib {
       }
       const wsl = wslLoc(cwd);
       if (wsl) {
-        if (this.#studioOwns(provider, sessionId)) return Promise.resolve(this.probe.assess(provider, sessionId)); // owned_by_studio
+        if (this.#aibOwns(provider, sessionId)) return Promise.resolve(this.probe.assess(provider, sessionId)); // owned_by_studio
         return this.#wslAssess(provider, sessionId, wsl, null).then((answer) => answer.assessment);
       }
       if (isNetworkPath(cwd) || isForeignPath(cwd)) throw new ValueError('Network and device paths are not supported');
@@ -3680,7 +3680,7 @@ export class Aib {
 
   /**
    * The sign-in check and Sign in job: action 'status', 'check', 'start' or 'cancel' for one built-in agent; 'check' with an empty
-   * agent id checks every built-in agent Studio can ask. Returns [HTTP status, payload]; never throws for request errors.
+   * agent id checks every built-in agent AIB can ask. Returns [HTTP status, payload]; never throws for request errors.
    */
   async signinCall(action: string, agentId: unknown, force: unknown = false): Promise<[number, unknown]> {
     this.signer ??= new Signer(this.stateDir, (agent) => builtinLaunch(this.#agentOptions(), this.settings, agent));
@@ -3777,7 +3777,7 @@ export class Aib {
       const connection = this.#connection(body);
       const data: Json = { message: [...String(need(body, 'message'))].slice(0, 300).join(''), sessionId: connection.sessionId };
       const actions = (Array.isArray(body.actions) ? body.actions : [])
-        .filter((a) => isDict(a) && (a.id === 'keep-mine' || a.id === 'leave')) // buttons in the note: only Studio's own two
+        .filter((a) => isDict(a) && (a.id === 'keep-mine' || a.id === 'leave')) // buttons in the note: only AIB's own two
         .map((a) => ({ id: (a as Json).id, label: [...String((a as Json).label || (a as Json).id)].slice(0, 40).join('') }));
       if (actions.length) data.actions = actions;
       connection.recordedEvent('studio_note', data);
@@ -4052,7 +4052,7 @@ export class Aib {
     return kept.length;
   }
 
-  /** Stop everything this Studio runs. The recovery list is kept (orderly shutdown), so the next start can reconnect. */
+  /** Stop everything this AIB runs. The recovery list is kept (orderly shutdown), so the next start can reconnect. */
   async close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
@@ -4244,7 +4244,7 @@ export function providerOfCommand(command: string[]): string {
 const INSTANCE_FILE = 'studio-instance-keeper.json';
 
 /**
- * The instance id of a Studio whose chats run in the keeper: the id the previous Studio of this data folder used, when the keeper it
+ * The instance id of an AIB whose chats run in the keeper: the id the previous AIB of this data folder used, when the keeper it
  * was connected to still runs (same pid and start time), since every chat it had is rebuilt under the same connection id; a new id
  * otherwise (no keeper, or another one: no old connection id can be valid). Never throws.
  */

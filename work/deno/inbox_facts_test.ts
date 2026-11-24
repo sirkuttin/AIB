@@ -5,7 +5,7 @@
  *   - a reply that asks you something in plain text (rule R6) is Asks, with the question; a short reply never is;
  *   - Claude Code's helpers keep the chat working ("2 subagents running"), and so does the follow-up window after the last one ended;
  *     another agent's helpers do not (phase 1 counts Claude Code's only);
- *   - the agent host's tray counts the same chats as the page's badge (Studio.blockedChats).
+ *   - the agent host's tray counts the same chats as the page's badge (Aib.blockedChats).
  */
 import { assert, assertEquals } from './_assert.ts';
 import { events, type Json, Lab, until } from './_connection.ts';
@@ -107,20 +107,20 @@ Deno.test('inbox facts: the agent host counts the chats blocked on you like the 
   await using lab = new Lab();
   const host = new AgentHost({ stateDir: lab.dir, port: 0 } as never, 30, 0, { exitUnattachedSeconds: 10 });
   try {
-    const studio = host.studio;
+    const aib = host.aib;
     const failed = await lab.open(['--limits', '--held-turn']);
     const asks = await lab.open(['--held-turn']);
     const done = await lab.open(['--held-turn']);
-    for (const c of [failed, asks, done]) studio.connections.set(c.id, c);
+    for (const c of [failed, asks, done]) aib.connections.set(c.id, c);
     await failed.prompt('quota:1999999999', 'a');
     await asks.prompt(QUESTION, 'b');
     await done.prompt('all done here', 'c');
     await until(() => [failed, asks, done].every((c) => !c.busy) && turnEnds(asks) === 1 && turnEnds(done) === 1, 'all three', LONG);
-    assertEquals(studio.blockedChats(), 2);
+    assertEquals(aib.blockedChats(), 2);
     const listed = [failed, asks, done].map((c) => ({ attention: c.attention() as Json }));
     assertEquals(INBOX.countBlocked(listed, Date.now() / 1000), 2);
   } finally {
-    host.studio.connections.clear();
-    await host.studio.close();
+    host.aib.connections.clear();
+    await host.aib.close();
   }
 });

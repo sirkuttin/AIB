@@ -7,7 +7,7 @@
  * closes or changes the open doc. The Artifacts tab no longer has a "Docs the chats wrote" group. Four labelled tabs fit at the 320 px
  * default.
  *
- * A real Studio (the scroll lab: temp state folder, free port; never the live ports), the scripted agent, headless Chrome or Edge.
+ * A real AIB (the scroll lab: temp state folder, free port; never the live ports), the scripted agent, headless Chrome or Edge.
  * The WSL variant (a fake distro helper; skips without Chrome or Edge) is docs_tab_wsl_e2e_test.ts.
  *
  * Run (from app): deno test -A ../../work/deno/docs_tab_e2e_test.ts   (ignored without Chrome or Edge)

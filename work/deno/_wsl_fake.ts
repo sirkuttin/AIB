@@ -1,7 +1,7 @@
 /**
  * A FakeWslHost for Track C's WSL tests (docs/wsl/design.md section 10: Track C builds against it until Track B's wsl/hosts.ts lands).
  * It is a real Windows keeper standing in for the distro's Linux keeper: the agent (work/fake_acp.py) and the shells run there, so a
- * test goes through the whole WSL path of Studio, Connection and the terminal sessions (the distro's env, the helper's `which`, the
+ * test goes through the whole WSL path of AIB, Connection and the terminal sessions (the distro's env, the helper's `which`, the
  * Linux folder as the agent's cwd, the ref as AIB's key, records with `loc`), while the Linux paths AIB hands the keeper are mapped to
  * a temp Windows folder at the very last step (MappedKeeperLink.spawn). Helper calls answer from a small table the test can change.
  * Never a real distro, never the owner's homes: temp folders only.

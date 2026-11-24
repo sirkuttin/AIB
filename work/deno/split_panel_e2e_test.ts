@@ -5,7 +5,7 @@
  * pane focus. Artifacts: the one project picker (project_artifacts_e2e_test.ts). Changes: each
  * chat's own read-only summary row, no Merge or Discard (owner, 2026-11-16). One chat (no split): none of it shows.
  *
- * A real Studio (the scroll lab: temp state folder, free port; never the live ports), two scripted live chats, headless Chrome or
+ * A real AIB (the scroll lab: temp state folder, free port; never the live ports), two scripted live chats, headless Chrome or
  * Edge. Changes, the worktree status and the artifact lists are answered in the page (a fetch stub keyed by chat id), so the test
  * needs no git worktrees; the helpers are real (scripted subagent_update events).
  *

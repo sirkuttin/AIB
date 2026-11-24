@@ -1,5 +1,5 @@
 /**
- * The demo Studio (work/demo-studio/start.py) never reads the owner's real agent folders: the server process it starts gets a home
+ * The demo AIB (work/demo-studio/start.py) never reads the owner's real agent folders: the server process it starts gets a home
  * folder and every agent folder (CODEX_HOME, CLAUDE_CONFIG_DIR, VIBE_HOME, XDG_*) inside its own temp folder, so the usage-limits
  * chip (server/agents/codex_limits.ts codexHome, usage_limits.ts accountKey) and the sign-in check read fixture folders only.
  * start() runs for real except that the server process is not started: subprocess.Popen is replaced to capture what it is given.
@@ -38,7 +38,7 @@ print(json.dumps({'code': code, 'env': seen.get('env'), 'command': seen.get('com
 
 Deno.test({
   name:
-    "the demo Studio's server environment points every agent folder at fixture folders in the demo's temp folder",
+    "the demo AIB's server environment points every agent folder at fixture folders in the demo's temp folder",
   ignore: !HAVE_GIT,
   async fn() {
     const parent = Deno.realPathSync(

@@ -9,7 +9,7 @@ function nativePath(url: URL): string {
   return WIN ? path.replace(/^\/([A-Za-z]:)/, '$1').replaceAll('/', '\\') : path;
 }
 
-/** The Python program as an absolute path (the tests use it as "node", as the Python tests do). */
+/** The Python program as an absolute path (the tests use it as "node"). */
 export const PY: string = (() => {
   const out = new Deno.Command(python(), { args: ['-c', 'import sys; print(sys.executable)'], stdout: 'piped' }).outputSync();
   return new TextDecoder().decode(out.stdout).trim();

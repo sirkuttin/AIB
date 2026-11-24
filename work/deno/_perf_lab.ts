@@ -1,5 +1,5 @@
 /**
- * The page performance harness (perf_e2e_test.ts): the scroll lab's Studio + scripted agent + headless Chrome, a long live chat
+ * The page performance harness (perf_e2e_test.ts): the scroll lab's AIB + scripted agent + headless Chrome, a long live chat
  * (hundreds of messages and finished steps with long outputs, ~15 helpers) that keeps streaming, and DevTools measurements of the
  * chat page: JS heap after a forced GC, DOM nodes, event listeners, main-thread busy time (TaskDuration / ScriptDuration per
  * second of wall clock), layouts and style recalcs, and typing latency (a real key press → the next frame).

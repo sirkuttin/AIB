@@ -154,7 +154,7 @@ export interface LandSpec {
  * also carries `tipBefore` and `landed` (the caller records them); `refused` carries the code and message of merge.ts' Refused.
  */
 export async function landSubagentWork(
-  studio: merge.MergeStudio,
+  aib: merge.MergeHost,
   spec: LandSpec,
   journal: (stage: string, data: Record<string, unknown>) => void | Promise<void>,
 ): Promise<Json> {
@@ -219,7 +219,7 @@ export async function landSubagentWork(
   let result: Json;
   try {
     result = await merge.landWorktree(
-      studio,
+      aib,
       { parent: spec.held[0] ?? spec.parent, key: spec.key, worktree: path, project: folder, start, head, landOn: target },
       spec.title,
       {

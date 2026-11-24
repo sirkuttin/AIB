@@ -9,7 +9,7 @@
  *                                                   (ACP terminal auth: beta_signin.ts). The page never names the program: it is the
  *                                                   agent's own launcher with the sign-in args the agent host saved, else the catalog's.
  *   GET  /api/live/terminal?signin=claude&arg=..&arg=..  a built-in agent's terminal sign-in (a chat's "Sign in" card): the agent's own
- *                                                   launcher (Settings / Studio install / global, as a chat starts it) with the args
+ *                                                   launcher (Settings / AIB install / global, as a chat starts it) with the args
  *                                                   of the terminal method the agent advertised (ACP terminal auth). Plain words only.
  *   GET  /api/live/terminal?signin=<agent>&distro=<distro>[&arg=..][&start=1]&cols=&rows=  an agent's own login inside a WSL distro (design section 8 item 4):
  *                                                   a distro terminal in the Linux home running the agent's login command (the

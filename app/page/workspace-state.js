@@ -1,6 +1,6 @@
 (function (root) {
   'use strict';
-  // Pure workspace state for Agent Studio: no DOM, no storage, no clock. Everything here is a function of plain data so
+  // Pure workspace state for AIB: no DOM, no storage, no clock. Everything here is a function of plain data so
   // it can be unit tested in node and reused by other front ends (a project rail + chat tabs today, a mission-control
   // board later) on the same data.
   //
@@ -724,7 +724,7 @@
   }
 
   // Keyboard: a plain description of what a key press means for the tab strip, or null. Ctrl is the primary set; the
-  // Alt variants exist because browsers keep Ctrl+Tab, Ctrl+W and Ctrl+1..9 for themselves when Studio runs in a normal tab.
+  // Alt variants exist because browsers keep Ctrl+Tab, Ctrl+W and Ctrl+1..9 for themselves when AIB runs in a normal tab.
   function shortcutFor(e) {
     if (!e) return null;
     const key = String(e.key || '');

@@ -173,32 +173,32 @@ function get(value: unknown, key: string): unknown {
 Deno.test('held turn: a chat whose helpers still run keeps the agent host alive and the quit warning, without being busy', async () => {
   await using lab = new HeldLab();
   const host = new AgentHost({ stateDir: lab.dir, port: 0 } as never, 30, 0, { exitUnattachedSeconds: 10 });
-  const studio = host.studio;
+  const aib = host.aib;
   try {
     const c = await lab.open(['--held-turn']);
-    studio.connections.set(c.id, c);
+    aib.connections.set(c.id, c);
     const gate = lab.gate();
     await c.prompt(`helper:${gate}`);
     await until(() => !c.busy && turnEnds(c).length === 1, 'the turn ended', LONG);
     assertEquals(c.public().state, 'ready'); // not Working on the page
     assertEquals(c.attention().state, 'idle');
-    assertEquals(studio.busyList().map((b) => b.state), ['helpers']); // the quit dialog and the updater count it
-    assertEquals(studio.workingList().map((w) => w.state), ['helpers']);
+    assertEquals(aib.busyList().map((b) => b.state), ['helpers']); // the quit dialog and the updater count it
+    assertEquals(aib.workingList().map((w) => w.state), ['helpers']);
     assertEquals(host.lifecycleCheck(5000), false);
     assertEquals(host.lifecycleCheck(5100), false, 'the host stays while the helper runs');
     assert(!(await c.queueAdd('next', 'q1')).queued); // the queue does not wait for it
     await until(() => updateTexts(c).includes('Fixture reply: next') && !c.busy, 'the reply', LONG);
-    assertEquals(studio.workingList().map((w) => w.state), ['helpers']);
+    assertEquals(aib.workingList().map((w) => w.state), ['helpers']);
     lab.open_(gate);
     lab.open_(gate + '.end');
     await until(() => helperState(c) === 'idle' && !c.busy, 'the helper ended', LONG);
-    assertEquals(studio.workingList(), []);
-    assertEquals(studio.busyList(), []);
+    assertEquals(aib.workingList(), []);
+    assertEquals(aib.busyList(), []);
     assertEquals(host.lifecycleCheck(6000), false);
     assertEquals(host.lifecycleCheck(6011), true, 'nothing works any more: exits after the grace');
   } finally {
-    studio.connections.clear();
-    await studio.close();
+    aib.connections.clear();
+    await aib.close();
   }
 });
 

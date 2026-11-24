@@ -1,5 +1,5 @@
 /**
- * server/worktrees/changes.ts: the ChangesTests of work/test_changes.py (real git in temp repos), plus parity with Python on the
+ * server/worktrees/changes.ts: the ChangesTests of work/test_changes.py (real git in temp repos), plus the frozen answers on the
  * same repositories. Skipped: ChangesRouteTests (HTTP routes; the response logic is covered in chat_folders_test.ts).
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
@@ -54,7 +54,7 @@ function everyKind(r: TempRepo): void {
   git(r.repo, 'mv', 'old.txt', 'renamed.txt');
 }
 
-test('every kind of change, and Python sees the same', async () => {
+test('every kind of change, and the frozen answers show the same', async () => {
   using r = new TempRepo();
   everyKind(r);
   const files = await listing(r.repo);
@@ -256,7 +256,7 @@ Deno.test('parsers', async () => {
   const text = '@@ -1 +1 @@ ' + 'h'.repeat(400) + '\n-a\r\n+' + 'b'.repeat(3000) + '\n\nnoise\n';
   assertEquals(parseHunks(text), await py.call('changes', 'parse_hunks', [text]));
   for (const path of ['', 'a', 'a/b', '../x', 'a/./b', 'C:/x', 'x:y', '/x', 'a\\b', 'a//b', 'x'.repeat(1025), 'é/😀']) {
-    if (!osp.WIN && path.includes('\\')) { // the Python reference refuses a backslash everywhere; here it is a name character off Windows
+    if (!osp.WIN && path.includes('\\')) { // the frozen answers refuse a backslash everywhere; here it is a name character off Windows
       assertEquals(safeRelpath(path), true, path);
       continue;
     }

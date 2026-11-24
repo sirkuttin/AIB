@@ -1,7 +1,7 @@
 /**
  * Contract (ported from work/contract/test_contract_gate.py, GateContract): the auth gate, page files and bootstrap of the real server,
  * over HTTP only. The phone-port secrets check of that file (PhonePortContract) is work/deno/remote_phone_e2e_test.ts
- * ("no phone-port answer carries the page token, the agent host's token or the artifact key secret"); the Python-only
+ * ("no phone-port answer carries the page token, the agent host's token or the artifact key secret"); the old-only
  * "bootstrap has the reference keys" check is dropped with the reference (bootstrap's keys are asserted below, its values in page_access_test.ts).
  */
 import { assert, assertEquals } from './_assert.ts';

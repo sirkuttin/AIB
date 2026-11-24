@@ -1,9 +1,9 @@
 /**
- * The artifact origin (artifact_origin.py): a second, separate HTTP listener (Studio port + 1) that serves artifact snapshots, GET
+ * The artifact origin (artifact_origin.py): a second, separate HTTP listener (AIB port + 1) that serves artifact snapshots, GET
  * only.
  *
- * It is a different origin from Studio on purpose: artifact pages are untrusted, so nothing here knows the Studio token, sends CORS
- * headers or shares code paths with the Studio server. Pages are meant to be shown in a sandboxed iframe without allow-same-origin.
+ * It is a different origin from AIB on purpose: artifact pages are untrusted, so nothing here knows AIB token, sends CORS
+ * headers or shares code paths with AIB server. Pages are meant to be shown in a sandboxed iframe without allow-same-origin.
  * Answers (status, body, the headers below) are those of the Python listener for the same store; work/deno/artifact_origin_test.ts
  * runs both on the same folder and compares them.
  *
@@ -25,14 +25,14 @@ export const CSP_TEMPLATE =
   "style-src 'unsafe-inline' https://fonts.googleapis.com; font-src data: https://fonts.gstatic.com; img-src data: blob: 'self'; " +
   "media-src data: blob: 'self'; connect-src 'none'; form-action 'none'; base-uri 'none'; " +
   'frame-ancestors http://127.0.0.1:{port} http://localhost:{port}; ' +
-  'sandbox allow-scripts allow-forms allow-popups allow-downloads'; // same flags as the Studio viewer frame; never allow-same-origin
+  'sandbox allow-scripts allow-forms allow-popups allow-downloads'; // same flags as AIB viewer frame; never allow-same-origin
 
 /**
  * The page CSP. With `ownPort` (Deno only) script-src also allows this origin's /_lib/ folder, the vendored libraries (libs.ts), and
  * nothing else of it; the rest is Python's policy unchanged.
  */
-export function csp(studioPort: number, ownPort = 0): string {
-  const policy = CSP_TEMPLATE.replaceAll('{port}', String(studioPort));
+export function csp(aibPort: number, ownPort = 0): string {
+  const policy = CSP_TEMPLATE.replaceAll('{port}', String(aibPort));
   if (!ownPort) return policy;
   const libs = `http://127.0.0.1:${ownPort}${LIB_PREFIX} http://localhost:${ownPort}${LIB_PREFIX}`;
   return policy.replace('https://unpkg.com;', `https://unpkg.com ${libs};`);
@@ -439,7 +439,7 @@ function respond(
   status: number,
   body: Uint8Array | string,
   mime: string,
-  studioPort: number,
+  aibPort: number,
   extra: Record<string, string> = {},
   withCsp = false,
   ownPort = 0,
@@ -449,7 +449,7 @@ function respond(
   headers.set('X-Content-Type-Options', 'nosniff');
   headers.set('Referrer-Policy', 'no-referrer');
   headers.set('Cache-Control', 'no-store');
-  if (withCsp) headers.set('Content-Security-Policy', csp(studioPort, ownPort));
+  if (withCsp) headers.set('Content-Security-Policy', csp(aibPort, ownPort));
   for (const [name, value] of Object.entries(extra)) headers.set(name, value);
   const bytes = typeof body === 'string' ? new TextEncoder().encode(body) : body;
   return new Response(bytes as Uint8Array<ArrayBuffer>, { status, headers });
@@ -464,12 +464,12 @@ export type Send = (
   withCsp?: boolean,
 ) => Response;
 
-/** The request handler for an origin serving `root` (the artifact store folder), framed by Studio on `studioPort`. */
-export function makeHandler(root: string, studioPort: number, ownPort: () => number): (request: Request) => Response {
+/** The request handler for an origin serving `root` (the artifact store folder), framed by AIB on `studioPort`. */
+export function makeHandler(root: string, aibPort: number, ownPort: () => number): (request: Request) => Response {
   const base = pathOf(String(root));
   const text = 'text/plain; charset=utf-8';
   const send: Send = (status, body, mime = text, extra = {}, withCsp = false) =>
-    respond(status, body, mime, studioPort, extra, withCsp, ownPort());
+    respond(status, body, mime, aibPort, extra, withCsp, ownPort());
   return (request: Request): Response => {
     if (request.method !== 'GET') {
       if (REFUSED.has(request.method)) return send(405, 'Method not allowed', text, { Allow: 'GET' });
@@ -502,7 +502,7 @@ export function artifactAnswer(base: string, target: string, send: Send, tickets
     if (!asset) return send(404, 'Not found');
     return send(200, asset, 'text/javascript; charset=utf-8', { 'Access-Control-Allow-Origin': '*' });
   }
-  // Deno only: a project file the Files view shows (Page view, images), by a ticket the Studio route issued (web/file_tickets.ts).
+  // Deno only: a project file the Files view shows (Page view, images), by a ticket AIB route issued (web/file_tickets.ts).
   const ticket = tickets && !rawPath.includes('%00') && !unquoted.includes('\\') ? TICKET_PATH.exec(unquoted) : null;
   if (ticket) return serveTicket(ticket[1], query, send);
   const match = !rawPath.includes('%00') && !unquoted.includes('\\') ? PATH_RE.exec(unquoted) : null;
@@ -571,7 +571,7 @@ function serveTicket(id: string, query: Record<string, string[]>, send: Send): R
   return send(200, data, mime, {}, true);
 }
 
-/** The listener: tries Studio port + 1, then any free port. GET only, 127.0.0.1 only. */
+/** The listener: tries AIB port + 1, then any free port. GET only, 127.0.0.1 only. */
 export class OriginServer {
   private constructor(readonly server: HttpServer, readonly port: number) {}
 
@@ -579,10 +579,10 @@ export class OriginServer {
     return `http://127.0.0.1:${this.port}`;
   }
 
-  static start(root: string, studioPort: number): OriginServer {
-    const ports = studioPort && studioPort < 65535 ? [studioPort + 1, 0] : [0];
+  static start(root: string, aibPort: number): OriginServer {
+    const ports = aibPort && aibPort < 65535 ? [aibPort + 1, 0] : [0];
     let bound = 0;
-    const handler = makeHandler(root, studioPort, () => bound);
+    const handler = makeHandler(root, aibPort, () => bound);
     for (const port of ports) {
       let server: HttpServer;
       try {

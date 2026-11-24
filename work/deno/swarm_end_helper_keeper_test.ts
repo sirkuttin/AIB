@@ -1,7 +1,7 @@
 /**
  * Ending a finished helper through the REAL keeper (keeper/ built with Go, fake agents, temp folders, no windows), and quitting AIB:
  *  - a merged helper's channel is removed from the keeper and its agent, background shell and child process are gone;
- *  - quit keeps a working helper: release() leaves it running in the keeper, the next Studio takes it over, and a swarm that polls
+ *  - quit keeps a working helper: release() leaves it running in the keeper, the next AIB takes it over, and a swarm that polls
  *    with a zero idle limit does not end it while its turn runs; once it is done and idle it is ended.
  * The no-keeper cases are swarm_end_helper_test.ts.
  */
@@ -53,7 +53,7 @@ class Lab {
   readonly project = makeRepo(pathOf(this.dir, 'proj'));
   readonly childFile = pathOf(this.dir, 'child.pid');
   readonly gate = pathOf(this.dir, 'bg.gate');
-  readonly studios: Aib[] = [];
+  readonly aibs: Aib[] = [];
   readonly swarms: Swarm[] = [];
 
   constructor() {
@@ -62,24 +62,24 @@ class Lab {
     runGit(this.project, 'config', 'user.email', 't@t');
   }
 
-  studio(): Aib {
+  aib(): Aib {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
-    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper });
-    studio.ownerProbe = () => null;
-    studio.agentLaunch = () => Promise.resolve([['unused'], {}]);
-    studio.connectionFactory = (_command, cwd, provider, options) =>
+    const aib = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper });
+    aib.ownerProbe = () => null;
+    aib.agentLaunch = () => Promise.resolve([['unused'], {}]);
+    aib.connectionFactory = (_command, cwd, provider, options) =>
       new Connection(
         [PYTHON, UNIQUE, '--models', '--held-turn', '--not-claude', ...(provider === 'codex' ? ['--child-pid-file', this.childFile] : [])],
         cwd,
         provider,
         options ?? {},
       );
-    this.studios.push(studio);
-    return studio;
+    this.aibs.push(aib);
+    return aib;
   }
 
-  swarm(studio: Aib): Swarm {
-    const swarm = new Swarm({ stateDir: this.state, host: studio, settings: studio.settings });
+  swarm(aib: Aib): Swarm {
+    const swarm = new Swarm({ stateDir: this.state, host: aib, settings: aib.settings });
     swarm.openMs = 30_000;
     this.swarms.push(swarm);
     return swarm;
@@ -90,7 +90,7 @@ class Lab {
     try {
       Deno.writeTextFileSync(this.gate, 'x');
     } catch { /* gone */ }
-    for (const s of this.studios.reverse()) await s.close().catch(() => {});
+    for (const s of this.aibs.reverse()) await s.close().catch(() => {});
     const info = readKeeperInfo(this.state);
     if (info && pidAlive(info.pid)) {
       try {
@@ -112,12 +112,12 @@ class Lab {
 }
 
 /** A main chat starts a helper; its brief turn ends. */
-async function start(studio: Aib, swarm: Swarm, lab: Lab) {
-  const main = await studio.connect('claude', lab.project, null, { ownCopy: true });
+async function start(aib: Aib, swarm: Swarm, lab: Lab) {
+  const main = await aib.connect('claude', lab.project, null, { ownCopy: true });
   const [, out] = await swarm.tool(main.id, 'start_helper', BRIEF);
   const id = String((out as Json).helper);
   await until(() => swarm.registry.get(id)?.state === 'working', 'the helper working', 30);
-  const helper = studio.connections.get(swarm.registry.get(id)!.chat.live)!;
+  const helper = aib.connections.get(swarm.registry.get(id)!.chat.live)!;
   await until(() => !helper.busy, 'the brief turn ended', 15);
   return { id, main, helper };
 }
@@ -128,9 +128,9 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new Lab();
-    const studio = lab.studio();
-    const swarm = lab.swarm(studio);
-    const { id, main, helper } = await start(studio, swarm, lab);
+    const aib = lab.aib();
+    const swarm = lab.swarm(aib);
+    const { id, main, helper } = await start(aib, swarm, lab);
     assert(helper.channel !== null, 'the helper runs in the keeper');
     const h = swarm.registry.get(id)!;
     commit(h.worktree.path, 'test/login/a.test.txt', 'fixed\n', 'fix the login tests');
@@ -141,7 +141,7 @@ Deno.test({
     const pids = [Number(Deno.readTextFileSync(lab.childFile)), Number(Deno.readTextFileSync(lab.childFile + '.shell')), helper.process!.pid];
     assert(pids.every(alive), `all run: ${pids}`);
     await until(() => !helper.busy, 'idle', 10);
-    const client = (await studio.keeper!.client(false))!;
+    const client = (await aib.keeper!.client(false))!;
     const channels = async () => (await client.list()).map((c) => c.channel);
     assert((await channels()).includes(`chat-${helper.id}`));
     const merged = await swarm.tool(main.id, 'merge_helper', { helper: id });
@@ -160,7 +160,7 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new Lab();
-    const a = lab.studio();
+    const a = lab.aib();
     const swarmA = lab.swarm(a);
     const { id, helper } = await start(a, swarmA, lab);
     const h = swarmA.registry.get(id)!;
@@ -172,9 +172,9 @@ Deno.test({
     await swarmA.poll();
     assert(!helper.closed, 'working: left alone');
     assertEquals(await a.release(), 2, 'quitting AIB keeps both chats running in the keeper'); // the main chat and the helper
-    lab.studios.splice(lab.studios.indexOf(a), 1);
+    lab.aibs.splice(lab.aibs.indexOf(a), 1);
     assert(alive(agent), 'the helper keeps running after the quit');
-    const b = lab.studio();
+    const b = lab.aib();
     assertEquals(await b.adoptKeeper(), 2);
     const swarmB = lab.swarm(b);
     swarmB.endIdleMs = 0;

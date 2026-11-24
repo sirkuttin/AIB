@@ -1,5 +1,5 @@
 /**
- * "Open in new window" for a WSL project (owner bug report, 0.13.0): headless chat.html pages against a Studio in this process with
+ * "Open in new window" for a WSL project (owner bug report, 0.13.0): headless chat.html pages against an AIB in this process with
  * the fake K4 (_fake_desktop_windows.ts), as multi_window_entry_e2e_test.ts does for a Windows project. Nothing is shown; no distro
  * is needed (the chats carry a wsl:// folder).
  *   - the project menu, Ctrl+K and Ctrl+click on a WSL project send K3 {op:'open'} with its key and its wsl:// path; one window
@@ -8,7 +8,7 @@
  */
 import { assert, assertEquals } from "./_assert.ts";
 import { Browser, browserPath, type Page } from "./_doc_browser.ts";
-import { remoteStudio } from "./_remote_fixture.ts";
+import { remoteAib } from "./_remote_fixture.ts";
 import { FakeDesktopWindows } from "./_fake_desktop_windows.ts";
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
@@ -28,7 +28,7 @@ const SPY = [
 const APP = "window.bindings = { aibDesktop() {} };\n" + SPY;
 
 async function lab() {
-  const s = await remoteStudio();
+  const s = await remoteAib();
   s.ctx.transcripts = {
     root: s.state,
     sessions: () => Promise.resolve([]),

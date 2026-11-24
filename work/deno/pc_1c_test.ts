@@ -47,8 +47,8 @@ import {
   pc,
   phoneHeaders,
   raw,
-  type RemoteStudio,
-  remoteStudio,
+  type RemoteAib,
+  remoteAib,
   serveStatus,
 } from "./_remote_fixture.ts";
 import { Browser, browserPath } from "./_doc_browser.ts";
@@ -198,9 +198,9 @@ function fakeTerminals() {
 
 async function remoteOn(
   withArtifacts = false,
-): Promise<RemoteStudio & { term: ReturnType<typeof fakeTerminals> }> {
+): Promise<RemoteAib & { term: ReturnType<typeof fakeTerminals> }> {
   const fake = fakeTailscale();
-  const s = await remoteStudio({ runner: fake.runner }, undefined, {
+  const s = await remoteAib({ runner: fake.runner }, undefined, {
     saved: true,
   });
   if (withArtifacts) s.ctx.artifacts.start(s.port);
@@ -237,7 +237,7 @@ function chat(id: string, cwd: string): FakeChat {
 }
 
 function call(
-  s: RemoteStudio,
+  s: RemoteAib,
   token: string,
   method: string,
   path: string,
@@ -273,7 +273,7 @@ function clientFrame(opcode: number, payload: Uint8Array): Uint8Array {
 }
 
 /** A WebSocket from a computer to the phone port over raw TCP (exact Host and the Tailscale login, as Serve sends them). */
-async function openSocket(s: RemoteStudio, path: string, token: string) {
+async function openSocket(s: RemoteAib, path: string, token: string) {
   const conn = await Deno.connect({
     hostname: "127.0.0.1",
     port: s.phonePort(),
@@ -381,7 +381,7 @@ async function openSocket(s: RemoteStudio, path: string, token: string) {
   };
 }
 
-async function activity(s: RemoteStudio): Promise<Json[]> {
+async function activity(s: RemoteAib): Promise<Json[]> {
   const [, r] = await pc(s, "GET", "/api/live/devices/activity");
   return (r.entries ?? []) as Json[];
 }

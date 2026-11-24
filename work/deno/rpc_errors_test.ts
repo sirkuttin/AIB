@@ -1,4 +1,4 @@
-/** server/acp/rpc_errors.ts: the cases of work/test_runtime.py and test_studio.py that cover rpc_errors.py, plus parity with Python. */
+/** server/acp/rpc_errors.ts: the cases of work/test_runtime.py and test_studio.py that cover rpc_errors.py, plus the frozen answers. */
 import { assert, assertEquals } from './_assert.ts';
 import { Frozen } from './_frozen.ts';
 import { describeAuthMethods, isAuthRequired, RpcError } from '../../app/server/acp/rpc_errors.ts';
@@ -17,7 +17,7 @@ const methods = [
   [{ id: 'é', name: 'ünïcødé 😀', description: null, type: 'agent' }],
 ];
 
-Deno.test('describeAuthMethods matches Python for every kind of method', async () => {
+Deno.test('describeAuthMethods matches the frozen answers for every kind of method', async () => {
   const py = new Frozen();
   for (const provider of ['', 'claude', 'codex']) {
     for (const list of methods) {
@@ -31,7 +31,7 @@ Deno.test('describeAuthMethods matches Python for every kind of method', async (
   for (const odd of [null, 'x', 5, {}]) assertEquals(describeAuthMethods(odd), await py.call('rpc_errors', 'describe_auth_methods', [odd]));
 });
 
-Deno.test('isAuthRequired matches Python', async () => {
+Deno.test('isAuthRequired matches the frozen answers', async () => {
   const py = new Frozen();
   const errors = [
     { code: -32000, message: 'Authentication required' },
@@ -57,7 +57,7 @@ Deno.test('RpcError keeps message, code and data', () => {
   assert(new RpcError({ code: 5 }).message.includes('5'));
 });
 
-Deno.test('clip counts code points like Python slicing', () => {
+Deno.test('clip counts code points, not UTF-16 units', () => {
   assertEquals(clip('😀😀😀', 2), '😀😀');
   assertEquals(clip('abc', 5), 'abc');
   assertEquals(clip('a😀b', 2), 'a😀');

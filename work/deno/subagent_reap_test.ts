@@ -469,9 +469,9 @@ async function wslReap(provider: 'claude' | 'codex') {
     await e.prepareRoot();
     const state = Deno.makeTempDirSync({ prefix: 'aib-wsl-reap-e2e-' });
     Deno.env.set('AGENT_STUDIO_ALLOW_REAL_AGENT', '1'); // hooks are set up for a non-fixture agent (the factory below runs the fake agent)
-    const studio = new Aib({ stateDir: state, port: 0, ownersDir: null }, { keeper: null });
-    studio.ownerProbe = () => null;
-    studio.connectionFactory = (_command, cwd, provider, options) =>
+    const aib = new Aib({ stateDir: state, port: 0, ownersDir: null }, { keeper: null });
+    aib.ownerProbe = () => null;
+    aib.connectionFactory = (_command, cwd, provider, options) =>
       new Connection(['python3', `${ROOT}/fake_acp.py`, '--cancel-aware'], cwd, provider, {
         ...options,
         wsl: options?.wsl ? { ...options.wsl, program: '/usr/bin/python3' } : options?.wsl,
@@ -529,7 +529,7 @@ async function wslReap(provider: 'claude' | 'codex') {
       if (provider === 'codex') {
         // a Codex-shaped subagent: spawn_agent from the main thread, SubagentStart, Bash calls with the subagent's agent_id (the codex-pre-tool
         // answer carries the cookie, bash form), SubagentStop
-        const cx = await studio.connect('codex', refOf({ kind: 'wsl', distro: KEY, linuxPath: repo }));
+        const cx = await aib.connect('codex', refOf({ kind: 'wsl', distro: KEY, linuxPath: repo }));
         for (let i = 0; i < 100 && cx.busy; i++) await sleep(100);
         assertEquals(cx.subagentHooks!.off, '', JSON.stringify(cx.subagentHooks));
         assertEquals(cx.subagentHooks!.shellTag, true, "a WSL Codex chat on a helper of this build tags its subagents' shell calls");
@@ -590,7 +590,7 @@ async function wslReap(provider: 'claude' | 'codex') {
         assertEquals(whyCx('call_x'), '');
         return;
       }
-      const c = await studio.connect('claude', refOf({ kind: 'wsl', distro: KEY, linuxPath: repo }));
+      const c = await aib.connect('claude', refOf({ kind: 'wsl', distro: KEY, linuxPath: repo }));
       for (let i = 0; i < 100 && c.busy; i++) await sleep(100);
       assertEquals(c.subagentHooks!.off, '', JSON.stringify(c.subagentHooks));
       assertEquals(c.subagentHooks!.shellTag, true, 'a WSL chat on a helper of this build tags its subagents\' shell calls');
@@ -668,7 +668,7 @@ async function wslReap(provider: 'claude' | 'codex') {
       const pid5 = await pids(call5);
       c.onBackgroundTask?.(c, 'task-4', 'toolu_sh4');
       await sleep(500); // the distro learns the task id before the stop
-      await studio.subagents!.claudeTool(c.id, 'TaskStop', 'toolu_stop4', { task_id: 'task-4' }, 'completed');
+      await aib.subagents!.claudeTool(c.id, 'TaskStop', 'toolu_stop4', { task_id: 'task-4' }, 'completed');
       await until("the stopped call's process is shut down in the distro", async () => !(await alive(pid4)), 60_000);
       assert(await alive(pid5), "the subagent's other call keeps running");
       await until('the line for the stopped call', () => seen.some((m) => /A stopped background command left processes running; they were shut down \(1\)/.test(m)), 60_000);
@@ -676,7 +676,7 @@ async function wslReap(provider: 'claude' | 'codex') {
     } finally {
       for (const pid of started) await session.run(`kill ${Number(pid)} 2>/dev/null; true`).catch(() => {}); // only the pids this test started
       await session.close();
-      await studio.close().catch(() => {});
+      await aib.close().catch(() => {});
       await e.cleanRoot();
       e.newAib();
       Deno.removeSync(state, { recursive: true });

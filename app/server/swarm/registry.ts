@@ -1,7 +1,7 @@
 /**
  * Swarm phase 1: the helper registry (<state>/swarm-helpers.json). A chat is a helper if and only if this file says so; every other
  * chat that works in its own worktree is a main chat (architect review 2026-11-13, option C). The web process writes it (swarm/service.ts);
- * the Studio (in-process, the keeper or the split agent host) only reads it, to give a helper its role when it is opened again after a
+ * AIB (in-process, the keeper or the split agent host) only reads it, to give a helper its role when it is opened again after a
  * restart, a keeper take-over or a Continue (review break 1).
  *
  * Records are keyed on lasting names, not live ids: `provider:sessionId` for the parent and the helper, and the helper's worktree path.
@@ -104,7 +104,7 @@ export interface Helper {
   sub?: SubagentLanding;
 }
 
-/** What the swarm knows of a subagent entry (the Studio's subagent-worktrees.json record is the source; this side only reads it). */
+/** What the swarm knows of a subagent entry (AIB's subagent-worktrees.json record is the source; this side only reads it). */
 export interface SubagentLanding {
   /** Its record id in subagent-worktrees.json (also this entry's id). */
   record: string;
@@ -167,7 +167,7 @@ interface Doc {
 
 const same = (a: string, b: string) => !!a && !!b && normcase(realpath(a)) === normcase(realpath(b));
 
-/** The file read fresh (the Studio side reads it this way; small, and read only when a chat opens). Never throws. */
+/** The file read fresh (AIB side reads it this way; small, and read only when a chat opens). Never throws. */
 export function readHelpers(stateDir: string): Record<string, Helper> {
   try {
     const [status, raw] = readJsonFile(pathOf(stateDir, FILE));

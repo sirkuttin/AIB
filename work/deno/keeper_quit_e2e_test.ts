@@ -235,16 +235,16 @@ Deno.test({
         true,
         'the keeper holds the chat for the next AIB',
       );
-      const studioLog = Deno.readTextFileSync(`${fx.state}\\studio.log`);
+      const aibLog = Deno.readTextFileSync(`${fx.state}\\studio.log`);
       assert(
-        studioLog.includes(
+        aibLog.includes(
           'closing (the app was quit with work running); the keeper holds the chats',
         ),
-        studioLog.slice(-3000),
+        aibLog.slice(-3000),
       );
       assert(
-        studioLog.includes('released 1 chat(s) to the keeper'),
-        studioLog.slice(-3000),
+        aibLog.includes('released 1 chat(s) to the keeper'),
+        aibLog.slice(-3000),
       );
 
       // ---- no AIB runs: the agent goes on and the keeper records it; nobody starts AIB again (rule V1 would after 5 s)

@@ -1,5 +1,5 @@
 /**
- * Where Agent Studio keeps its data, and who may touch it (state_paths.py; same rules, same messages).
+ * Where AIB keeps its data, and who may touch it (state_paths.py; same rules, same messages).
  *
  * Per-user folder (owner-only):
  *   Windows  %LOCALAPPDATA%\AgentStudio
@@ -14,7 +14,7 @@
  * Tests never reach the real per-user folder: with AGENT_STUDIO_TEST=1 (or when a Deno test file is the main module, the analogue of
  * Python's "unittest/pytest is loaded") resolving it throws RealFolderBlocked.
  *
- * The per-user folder is created owner-only and a Studio refuses to start if Users, Everyone or Authenticated Users can write to it
+ * The per-user folder is created owner-only and an AIB refuses to start if Users, Everyone or Authenticated Users can write to it
  * (Windows: the DACL is read with GetNamedSecurityInfoW and compared by SID, server/platform/acl.ts; POSIX: mode 0700 and no
  * group/other write). A folder chosen with --state-dir or the environment only produces a warning.
  *
@@ -330,7 +330,7 @@ export function packageContext(options: PackageOptions = {}): string | null {
   if (!platform.startsWith('win')) return null;
   try {
     return packageFamilyFromApi(options.kernel) || packageFamilyFromProbe(options.env, options.probeSuffix);
-  } catch { // never let detection stop Studio from starting
+  } catch { // never let detection stop AIB from starting
     return null;
   }
 }

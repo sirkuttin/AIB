@@ -31,19 +31,19 @@ async function withHost(lab: ShellLab, fn: (host: AgentHost) => Promise<void>): 
   try {
     await fn(host);
   } finally {
-    host.studio.connections.clear();
-    await host.studio.close();
+    host.aib.connections.clear();
+    await host.aib.close();
   }
 }
 
 Deno.test("background shell: counts as 'background' while it runs (quit, update, idle exit), never as working; drops out when it ends", async () => {
   await using lab = new ShellLab();
   await withHost(lab, async (host) => {
-    const studio = host.studio;
+    const aib = host.aib;
     // --child-pid-file: the agent also has a child from its start (as an MCP server is): it must not count as the shell.
     const pidFile = lab.path('child');
     const c = await lab.open(['--held-turn', '--child-pid-file', pidFile]);
-    studio.connections.set(c.id, c);
+    aib.connections.set(c.id, c);
     const gate = lab.gate();
     await c.prompt(`bgshell:${gate}`, 'm1');
     await until(() => !c.busy && turnEnds(c).length === 1, 'the reply ended', LONG);
@@ -54,21 +54,21 @@ Deno.test("background shell: counts as 'background' while it runs (quit, update,
     assertEquals(c.public().state, 'ready'); // not Working on the page
     assertEquals(c.attention().state, 'idle');
     assertEquals(c.promptReceipts.get('m1')?.state, 'finished');
-    assertEquals(studio.busyList().map((b) => b.state), ['background']); // the quit decision and the updater count it
-    assertEquals(studio.workingList().map((w) => w.state), ['background']);
+    assertEquals(aib.busyList().map((b) => b.state), ['background']); // the quit decision and the updater count it
+    assertEquals(aib.workingList().map((w) => w.state), ['background']);
     assertEquals(host.lifecycleCheck(5000), false);
     assertEquals(host.lifecycleCheck(5100), false, 'the host stays while the shell runs');
     assert(!(await c.queueAdd('next', 'q1')).queued, 'the queue does not wait for it');
     await until(() => updateTexts(c).includes('Fixture reply: next') && !c.busy, 'the queued reply', LONG);
-    assertEquals(studio.busyList().map((b) => b.state), ['background']);
+    assertEquals(aib.busyList().map((b) => b.state), ['background']);
 
     lab.open_(gate); // the shell's command ends
     await until(() => !pidAlive(shellPid), 'the shell process ended', LONG);
-    await until(() => studio.busyList().length === 0, 'the chat dropped out of the list', LONG);
+    await until(() => aib.busyList().length === 0, 'the chat dropped out of the list', LONG);
     assertEquals(c.backgroundShells(), []);
     assert(pidAlive(oldChild), "the agent's older child still runs and does not count");
     await until(() => updateTexts(c).includes('The tests finished.') && !c.busy, "Claude Code's own cycle ended", LONG);
-    assertEquals(studio.workingList(), []);
+    assertEquals(aib.workingList(), []);
     assertEquals(host.lifecycleCheck(6000), false);
     assertEquals(host.lifecycleCheck(6011), true, 'nothing works any more: exits after the grace');
   });
@@ -80,14 +80,14 @@ Deno.test('background shell: when the processes cannot be listed, it counts unti
   try {
     await withHost(lab, async (host) => {
       const c = await lab.open(['--held-turn']);
-      host.studio.connections.set(c.id, c);
+      host.aib.connections.set(c.id, c);
       const gate = lab.gate();
       await c.prompt(`bgshell:${gate}`);
       await until(() => !c.busy && turnEnds(c).length === 1, 'the reply ended', LONG);
-      assertEquals(host.studio.busyList().map((b) => b.state), ['background']);
+      assertEquals(host.aib.busyList().map((b) => b.state), ['background']);
       lab.open_(gate);
       await until(() => updateTexts(c).includes('The tests finished.') && !c.busy, "Claude Code's own cycle ended", LONG);
-      assertEquals(host.studio.busyList(), []);
+      assertEquals(host.aib.busyList(), []);
     });
   } finally {
     setTableReader(null);

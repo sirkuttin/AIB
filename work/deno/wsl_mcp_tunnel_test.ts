@@ -197,7 +197,7 @@ Deno.test({
 });
 
 Deno.test({
-  name: 'mcp_http tunneled: the key check and reply of a POST; the tunnel entry is Studio\'s own forwarder entry',
+  name: 'mcp_http tunneled: the key check and reply of a POST; the tunnel entry is AIB\'s own forwarder entry',
   ...T,
   async fn() {
     const server = new ArtifactMcpHttp({

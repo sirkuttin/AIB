@@ -22,15 +22,15 @@ import { WslHelperError } from '../../app/server/wsl/contract.ts';
 
 type Json = Record<string, unknown>;
 
-function studioIn(state: string): Aib {
-  const studio = new Aib({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
-  studio.ownerProbe = () => null;
-  studio.connectionFactory = (_command, cwd, provider, options) =>
+function aibIn(state: string): Aib {
+  const aib = new Aib({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
+  aib.ownerProbe = () => null;
+  aib.connectionFactory = (_command, cwd, provider, options) =>
     new Connection(['python3', `${ROOT}/fake_acp.py`, '--cancel-aware'], cwd, provider, {
       ...options,
       wsl: options?.wsl ? { ...options.wsl, program: '/usr/bin/python3' } : options?.wsl,
     });
-  return studio;
+  return aib;
 }
 
 const sh = async (script: string, ...args: string[]) => {
@@ -44,13 +44,13 @@ Deno.test({
   async fn() {
     const state = Deno.makeTempDirSync({ prefix: 'aib-wsl-wt-e2e-' });
     await prepareRoot();
-    const studios: Aib[] = [];
+    const aibs: Aib[] = [];
     try {
       const host = await readyHost();
       const repo = `${ROOT}/repo`;
       const ref = refOf({ kind: 'wsl', distro: KEY, linuxPath: repo });
-      const a = studioIn(state);
-      studios.push(a);
+      const a = aibIn(state);
+      aibs.push(a);
       const c = await a.connect('claude', ref, null, { ownCopy: true });
       const linux = c.agentCwd;
       assert(new RegExp(`^${ROOT}/data-[0-9a-f]{12}/worktrees/[0-9a-f]{10}/chat-[0-9a-f]{8}$`).test(linux), linux);
@@ -87,9 +87,9 @@ Deno.test({
       for (const conn of a.connections.values()) conn.sessionLease?.release();
       // a crashed AIB's files are closed by the OS (Windows cannot delete a file a live handle holds): its history stores too
       await a.historyClient()?.shutdown().catch(() => {});
-      studios.pop();
-      const b = studioIn(state);
-      studios.push(b);
+      aibs.pop();
+      const b = aibIn(state);
+      aibs.push(b);
       assertEquals(await b.adoptKeeper(), 1);
       const r = b.connections.get(c.id)!;
       assert(r?.ready && !r.closed, 'adopted');
@@ -111,7 +111,7 @@ Deno.test({
       assertEquals(liveUserChannels(await client.list()).length, 0);
       void host;
     } finally {
-      for (const s of studios) await s.close().catch(() => {});
+      for (const s of aibs) await s.close().catch(() => {});
       await cleanRoot();
       Deno.removeSync(state, { recursive: true });
     }
@@ -124,18 +124,18 @@ Deno.test({
   async fn() {
     const state = Deno.makeTempDirSync({ prefix: 'aib-wsl-wt-e2e-' });
     await prepareRoot();
-    const studios: Aib[] = [];
+    const aibs: Aib[] = [];
     try {
       await readyHost();
       await sh('mkdir -p "$1/plain"', ROOT);
       const ref = refOf({ kind: 'wsl', distro: KEY, linuxPath: `${ROOT}/plain` });
-      const a = studioIn(state);
-      studios.push(a);
+      const a = aibIn(state);
+      aibs.push(a);
       const c = await a.connect('claude', ref, null, { ownCopy: true });
       assertEquals([c.cwd, c.agentCwd, c.projectRoot, c.worktree], [ref, `${ROOT}/plain`, ref, null]);
       assertEquals(await sh('ls -A "$1"/data-*/worktrees 2>/dev/null | wc -l', ROOT), '0');
     } finally {
-      for (const s of studios) await s.close().catch(() => {});
+      for (const s of aibs) await s.close().catch(() => {});
       await cleanRoot();
       Deno.removeSync(state, { recursive: true });
     }

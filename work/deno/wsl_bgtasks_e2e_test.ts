@@ -45,14 +45,14 @@ async function transcript(id: string, rows: Json[], age = 0): Promise<string> {
   return folder;
 }
 
-function studioWith(state: string, command: (ref: string) => string[], program: string): Aib {
-  const studio = new Aib({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
-  studio.ownerProbe = () => {
+function aibWith(state: string, command: (ref: string) => string[], program: string): Aib {
+  const aib = new Aib({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
+  aib.ownerProbe = () => {
     throw new Error('a WSL chat never asks Windows for its owner');
   };
-  studio.connectionFactory = (_command, cwd, provider, options) =>
+  aib.connectionFactory = (_command, cwd, provider, options) =>
     new Connection(command(cwd), cwd, provider, { ...options, wsl: options?.wsl ? { ...options.wsl, program } : options?.wsl });
-  return studio;
+  return aib;
 }
 
 Deno.test({
@@ -62,7 +62,7 @@ Deno.test({
     const state = Deno.makeTempDirSync({ prefix: 'aib-wsl-own-e2e-' });
     await prepareRoot();
     let other: Deno.ChildProcess | null = null;
-    let studio: Aib | null = null;
+    let aib: Aib | null = null;
     try {
       const repo = `${ROOT}/repo`;
       const ref = refOf({ kind: 'wsl', distro: KEY, linuxPath: repo });
@@ -89,8 +89,8 @@ Deno.test({
       await until(async () => (otherPid = Number((await inDistro('cat "$1/other.pid" 2>/dev/null', [ROOT])).out.trim())) > 0, 'the other client');
 
       const host = await readyHost();
-      studio = studioWith(state, () => [`${ROOT}/agent/claude`, '--resume', id], `${ROOT}/agent/claude`);
-      const refused = await assertRejects(() => studio!.connect('claude', ref, id), OwnershipConflict);
+      aib = aibWith(state, () => [`${ROOT}/agent/claude`, '--resume', id], `${ROOT}/agent/claude`);
+      const refused = await assertRejects(() => aib!.connect('claude', ref, id), OwnershipConflict);
       assertEquals(
         refused.message,
         `This claude conversation is already open in another agent process (PID ${otherPid}). Stop it in its current client before continuing here.`,
@@ -100,7 +100,7 @@ Deno.test({
       assertEquals((await inDistro('kill "$(cat "$1/other.pid")"', [ROOT])).code, 0);
       await other.status;
       other = null;
-      const c = await studio.connect('claude', ref, id);
+      const c = await aib.connect('claude', ref, id);
       assert(c.ready && !c.closed, 'continued');
       const agentPid = c.process!.pid;
       const own = await wslOwnerCheck(host, 'claude', id, { exclude: await wslOwnPids(host), cwd: repo });
@@ -111,7 +111,7 @@ Deno.test({
       try {
         other?.kill();
       } catch { /* ended */ }
-      await studio?.close().catch(() => {});
+      await aib?.close().catch(() => {});
       await cleanRoot();
       Deno.removeSync(state, { recursive: true });
     }
@@ -155,7 +155,7 @@ Deno.test({
     const state = Deno.makeTempDirSync({ prefix: 'aib-wsl-folder-e2e-' });
     await prepareRoot();
     const running: [string, Deno.ChildProcess][] = [];
-    let studio: Aib | null = null;
+    let aib: Aib | null = null;
     try {
       const repo = `${ROOT}/repo`;
       const ref = refOf({ kind: 'wsl', distro: KEY, linuxPath: repo });
@@ -168,21 +168,21 @@ Deno.test({
       const panel = await startFakeClaude('panel', ['--output-format', 'stream-json', '--verbose']);
       running.push(['panel', panel.child]);
       await readyHost();
-      studio = studioWith(state, () => [`${ROOT}/agent/claude`, '--resume', id], `${ROOT}/agent/claude`);
-      const c = await studio.connect('claude', ref, id);
+      aib = aibWith(state, () => [`${ROOT}/agent/claude`, '--resume', id], `${ROOT}/agent/claude`);
+      const c = await aib.connect('claude', ref, id);
       assert(c.ready && !c.closed, 'continued without asking');
       const notes = (c.public().events as Json[]).filter((e) => e.kind === 'studio_note').map((e) => String((e.data as Json).message));
       const note = notes.find((n) => n.includes('also running in this folder'));
       assertEquals(note, `Claude Code is also running in this folder (PID ${panel.pid}). AIB found nothing that says it holds this conversation.`);
       await c.close();
-      studio.evictClosed();
+      aib.evictClosed();
       await stopFakeClaude('panel', panel.child);
       running.length = 0;
 
       // the same program naming the session: refused with its Linux pid, as before
       const holder = await startFakeClaude('holder', ['--output-format', 'stream-json', '--resume', id]);
       running.push(['holder', holder.child]);
-      const refused = await assertRejects(() => studio!.connect('claude', ref, id), OwnershipConflict);
+      const refused = await assertRejects(() => aib!.connect('claude', ref, id), OwnershipConflict);
       assertEquals(
         refused.message,
         `This claude conversation is already open in another agent process (PID ${holder.pid}). Stop it in its current client before continuing here.`,
@@ -191,7 +191,7 @@ Deno.test({
       for (const [name, child] of running) {
         await stopFakeClaude(name, child).catch(() => {});
       }
-      await studio?.close().catch(() => {});
+      await aib?.close().catch(() => {});
       await cleanRoot();
       Deno.removeSync(state, { recursive: true });
     }
@@ -249,26 +249,26 @@ Deno.test({
   async fn() {
     const state = Deno.makeTempDirSync({ prefix: 'aib-wsl-bgshell-e2e-' });
     await prepareRoot();
-    let studio: Aib | null = null;
+    let aib: Aib | null = null;
     try {
       const repo = `${ROOT}/repo`;
       const ref = refOf({ kind: 'wsl', distro: KEY, linuxPath: repo });
       await readyHost();
-      studio = studioWith(state, () => ['python3', `${ROOT}/fake_acp.py`, '--held-turn'], '/usr/bin/python3');
-      const c = await studio.connect('claude', ref);
+      aib = aibWith(state, () => ['python3', `${ROOT}/fake_acp.py`, '--held-turn'], '/usr/bin/python3');
+      const c = await aib.connect('claude', ref);
       const gate = `${ROOT}/gate`;
-      assertEquals((await studio.liveCall('prompt', { id: c.id, text: `bgshell:${gate}`, clientMessageId: 'm1' }))[0], 200);
+      assertEquals((await aib.liveCall('prompt', { id: c.id, text: `bgshell:${gate}`, clientMessageId: 'm1' }))[0], 200);
       await until(() => !c.busy && c.events.some((e) => e.kind === 'turn_end'), 'the reply ended');
       await until(() => c.backgroundShells().length === 1, 'the shell counts');
-      assertEquals(studio.busyList().map((b) => b.state), ['background']);
+      assertEquals(aib.busyList().map((b) => b.state), ['background']);
       await new Promise((r) => setTimeout(r, FRESH_MS * 2)); // several snapshots of the distro later: still running
-      assertEquals(studio.busyList().map((b) => b.state), ['background']);
+      assertEquals(aib.busyList().map((b) => b.state), ['background']);
       assertEquals(Object.values(c.toolBackground()).map((t) => [t.state, t.stoppable]), [['running', true]], 'Stop offered');
       assertEquals((await inDistro('touch "$1"', [gate])).code, 0); // the command ends
-      await until(() => studio!.busyList().length === 0, 'the chat dropped out of the busy list');
+      await until(() => aib!.busyList().length === 0, 'the chat dropped out of the busy list');
       assertEquals(c.backgroundShells(), []);
     } finally {
-      await studio?.close().catch(() => {});
+      await aib?.close().catch(() => {});
       await cleanRoot();
       Deno.removeSync(state, { recursive: true });
     }
@@ -281,7 +281,7 @@ Deno.test({
   async fn() {
     const state = Deno.makeTempDirSync({ prefix: 'aib-wsl-bgstop-e2e-' });
     await prepareRoot();
-    let studio: Aib | null = null;
+    let aib: Aib | null = null;
     let unrelated = 0;
     let sleeper: Deno.ChildProcess | null = null;
     const alive = async (pid: number) => (await inDistro('kill -0 "$1" 2>/dev/null', [String(pid)])).code === 0;
@@ -301,9 +301,9 @@ Deno.test({
       await until(async () => (unrelated = await pidOf(`${ROOT}/sleeper.pid`)) > 0, 'the unrelated process');
       assert(await alive(unrelated));
       const host = await readyHost();
-      studio = studioWith(state, () => ['python3', `${ROOT}/fake_acp.py`, '--held-turn', '--child-pid-file', `${ROOT}/child`], '/usr/bin/python3');
-      const c = await studio.connect('claude', ref);
-      assertEquals((await studio.liveCall('prompt', { id: c.id, text: `bgshell:${ROOT}/gate`, clientMessageId: 'm1' }))[0], 200);
+      aib = aibWith(state, () => ['python3', `${ROOT}/fake_acp.py`, '--held-turn', '--child-pid-file', `${ROOT}/child`], '/usr/bin/python3');
+      const c = await aib.connect('claude', ref);
+      assertEquals((await aib.liveCall('prompt', { id: c.id, text: `bgshell:${ROOT}/gate`, clientMessageId: 'm1' }))[0], 200);
       await until(() => Object.values(c.toolBackground())[0]?.stoppable, 'Stop offered (the distro named its processes)');
       const [shell, child] = [await pidOf(`${ROOT}/child.shell`), await pidOf(`${ROOT}/child`)];
       assert(shell > 0 && child > 0 && await alive(shell));
@@ -315,17 +315,17 @@ Deno.test({
       assert(await alive(shell) && await alive(unrelated));
 
       const toolId = Object.keys(c.toolBackground())[0];
-      const [status, body] = await studio.liveCall('tool-stop', { id: c.id, toolCallId: toolId }) as [number, Json];
+      const [status, body] = await aib.liveCall('tool-stop', { id: c.id, toolCallId: toolId }) as [number, Json];
       assertEquals([status, body.state, body.killed], [200, 'stopped', 1], JSON.stringify(body));
       await until(async () => !(await alive(shell)), 'the stopped command is gone from the distro', 15);
       assert(await alive(child), "the agent's own child (started before the turn) runs on");
       assert(await alive(unrelated), 'an unrelated process runs on');
       assert(!c.closed && (await inDistro('kill -0 "$1"', [String(agent)])).code === 0, 'the agent runs on');
       assertEquals(Object.values(c.toolBackground())[0], { state: 'stopped', stoppable: false });
-      assertEquals((await studio.liveCall('tool-stop', { id: c.id, toolCallId: toolId }))[0], 409, 'no second stop');
-      await until(() => studio!.busyList().length === 0, 'the chat is idle');
+      assertEquals((await aib.liveCall('tool-stop', { id: c.id, toolCallId: toolId }))[0], 409, 'no second stop');
+      await until(() => aib!.busyList().length === 0, 'the chat is idle');
     } finally {
-      await studio?.close().catch(() => {});
+      await aib?.close().catch(() => {});
       if (unrelated > 0) await inDistro('kill "$1" 2>/dev/null; true', [String(unrelated)]); // only the one this test started
       else {
         try {

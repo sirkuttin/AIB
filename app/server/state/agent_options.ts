@@ -1,6 +1,6 @@
 /**
  * The model, mode and effort lists each agent reported, remembered in the state folder so the New chat page can offer them before
- * a session exists (Deno only, no Python counterpart). Written by the Studio whenever a session reports its settings (a new chat, a
+ * a session exists (Deno only, no Python counterpart). Written by AIB whenever a session reports its settings (a new chat, a
  * reopened one, a settings change, a quiet probe); read through POST /api/live/agent-options.
  *
  * Kept per agent and per (agent, project folder): a folder's own entry wins (project settings can change what an agent offers),

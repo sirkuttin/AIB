@@ -1,7 +1,7 @@
 /**
  * Host takeover (test_host_takeover.py) and the cross-language rule: a web server that finds a live agent host from another code
- * folder, or a host of the other language (a Python host met by a Deno web server), takes it over when no chat is working there,
- * waits (banner) while one is, and never stops a busy host. Fake hosts in temp folders (_fake_host.ts), plus a Python client of the real Deno host.
+ * folder, or a host of the other language (an older host met by a Deno web server), takes it over when no chat is working there,
+ * waits (banner) while one is, and never stops a busy host. Fake hosts in temp folders (_fake_host.ts), plus a client script of the real Deno host.
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
 import { DENO, FAKE_HOST, Fixture, PY, TEST_OPTIONS, until } from './_host_fixture.ts';
@@ -90,10 +90,10 @@ t('a web server that lost its host does not take it back', async () => {
   assert(!calls(fx).includes('stop'));
 });
 
-t('cross-language: a Python host from this same folder is foreign to a Deno web server, never to a client without a runtime', async () => {
+t('cross-language: an old host from this same folder is foreign to a Deno web server, never to a client without a runtime', async () => {
   await using fx = new Fixture();
-  const old = await oldHost(fx, 1, CODE_ROOT, APP_ID, 'none'); // no runtime field: a Python host (agent_host.py)
-  // Without a runtime (the stage-B behaviour, and what the Python web server does) it is simply attached to.
+  const old = await oldHost(fx, 1, CODE_ROOT, APP_ID, 'none'); // no runtime field: an old host (agent_host.py)
+  // Without a runtime (the stage-B behaviour, and what the old web server does) it is simply attached to.
   const [client, live] = await findOrStart(fx.state, ownHost(fx), { waitSeconds: 3 });
   assertEquals([client.pid, live.protocol], [old.pid, PROTOCOL_VERSION]);
   // A Deno web server waits while it works, then takes it over.
@@ -135,14 +135,14 @@ t('the web server waits with a banner, then switches over', async () => {
   }
 });
 
-t('cross-language for real: a Deno web server takes over an idle host with no runtime (an older host), and a Python client drives the Deno host', async () => {
+t('cross-language for real: a Deno web server takes over an idle host with no runtime (an older host), and a client script drives the Deno host', async () => {
   await using fx = new Fixture();
   const old = await oldHost(fx, 0, CODE_ROOT, APP_ID, 'none'); // no runtime field: the hosts that ran before the runtime was published
   const pyInfo = (await readInfo(fx.state))!;
   assertEquals(pyInfo.pid, old.pid);
   assertEquals(pyInfo.runtime, undefined, 'no runtime field: an older host');
   // AIB_SEAL=off: on Windows a Deno host seals its token in agent-host.json with DPAPI (security item 7, state/sealed.ts). The
-  // Python client below (work/host_support.py, stdlib only) never learned that form; this compares the plain protocol.
+  // client below (work/host_support.py, stdlib only) never learned that form; this compares the plain protocol.
   // secret_files_test.ts proves the sealed file.
   const web = await fx.startWeb([], { env: { AIB_SEAL: 'off' } });
   await until(() => !pidAlive(pyInfo.pid), 'old host stopped');
@@ -150,7 +150,7 @@ t('cross-language for real: a Deno web server takes over an idle host with no ru
   assertEquals(info.runtime, 'deno');
   assertEquals(web.boot.hostPid, info.pid);
   assertEquals(web.boot.hostCodeWarning, '', 'a Deno web server and a Deno host agree about the code hash');
-  // A Python client (work/host_support.py) attaches to the Deno host: same protocol, same file.
+  // A client script (work/host_support.py) attaches to the Deno host: same protocol, same file.
   const out = await new Deno.Command(PY, {
     args: [
       '-c',

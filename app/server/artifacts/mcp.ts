@@ -1,10 +1,10 @@
 /**
- * Studio's artifact tool (artifact_mcp.py): the `studio_artifact` stdio MCP server that lets an agent show the user a page.
- * Run as `aib mcp-artifact` (main.ts mcp-artifact). Studio adds it to every session. Environment:
- *   STUDIO_ARTIFACT_URL        Studio base URL, e.g. http://127.0.0.1:8767 (may be empty; see STUDIO_ARTIFACT_URL_FILE)
- *   STUDIO_ARTIFACT_URL_FILE   optional JSON file {"url": ...} that Studio rewrites when it restarts on another port
+ * AIB's artifact tool (artifact_mcp.py): the `studio_artifact` stdio MCP server that lets an agent show the user a page.
+ * Run as `aib mcp-artifact` (main.ts mcp-artifact). AIB adds it to every session. Environment:
+ *   STUDIO_ARTIFACT_URL        AIB base URL, e.g. http://127.0.0.1:8767 (may be empty; see STUDIO_ARTIFACT_URL_FILE)
+ *   STUDIO_ARTIFACT_URL_FILE   optional JSON file {"url": ...} that AIB rewrites when it restarts on another port
  *   STUDIO_ARTIFACT_KEY        per-conversation key sent as X-Studio-Artifact-Key
- *   STUDIO_CONVERSATION_ID     the Studio conversation this agent belongs to
+ *   STUDIO_CONVERSATION_ID     AIB conversation this agent belongs to
  *   STUDIO_WORKTREE            '1': also offer the worktree merge tools
  *   STUDIO_MAIN                '1': also offer the swarm tools (a main chat; the route checks the role again on every call)
  * JSON-RPC 2.0 over stdin/stdout, one JSON message per line, replies byte-identical to the Python server's.
@@ -296,8 +296,8 @@ export const UNLANDED_TOOLS: Json[] = [
 const env = (name: string) => Deno.env.get(name) ?? '';
 
 /**
- * Who is calling and where Studio is. The stdio server reads it from its environment (envContext); the HTTP server
- * (mcp_http.ts) builds it from the verified request headers and the Studio that serves it.
+ * Who is calling and where AIB is. The stdio server reads it from its environment (envContext); the HTTP server
+ * (mcp_http.ts) builds it from the verified request headers and AIB that serves it.
  */
 export interface ToolContext {
   /** The per-conversation key sent as X-Studio-Artifact-Key. */
@@ -316,14 +316,14 @@ export interface ToolContext {
   main?: boolean;
   /** The session folder relative paths are resolved against, or null when unknown (relative paths are then refused). */
   cwd: string | null;
-  /** Studio base URLs to try, in order; each is passed through loopbackUrl before use. */
+  /** AIB base URLs to try, in order; each is passed through loopbackUrl before use. */
   roots(): string[];
 }
 
 /** The stdio server's context: the STUDIO_* environment variables and this process's folder. */
 export function envContext(): ToolContext {
   return {
-    key: openText('artifact-key', env('STUDIO_ARTIFACT_KEY')) ?? '', // studio.ts seals it on Windows (state/sealed.ts)
+    key: openText('artifact-key', env('STUDIO_ARTIFACT_KEY')) ?? '', // aib.ts seals it on Windows (state/sealed.ts)
     conversation: env('STUDIO_CONVERSATION_ID'),
     worktree: Deno.env.get('STUDIO_WORKTREE') === '1',
     main: Deno.env.get('STUDIO_MAIN') === '1',
@@ -356,7 +356,7 @@ const LOOPBACK_URL = /^http:\/\/(?:127\.0\.0\.1|localhost):([0-9]{1,5})$/;
 
 /**
  * The URL when it is exactly http://127.0.0.1:<port> or http://localhost:<port> (no path, userinfo or other host); else ''.
- * The artifact key travels in a header, so it must never be sent anywhere but this machine's Studio.
+ * The artifact key travels in a header, so it must never be sent anywhere but this machine's AIB.
  */
 export function loopbackUrl(value: unknown): string {
   let text = pyStrip(loose(value));
@@ -369,7 +369,7 @@ function baseUrl(): string {
   return loopbackUrl(env('STUDIO_ARTIFACT_URL'));
 }
 
-/** The loopback URL in Studio's URL file ({"url": ...}), or ''. */
+/** The loopback URL in AIB's URL file ({"url": ...}), or ''. */
 export function urlFromFile(file: string): string {
   const path = pyStrip(file);
   if (!path) return '';
@@ -526,7 +526,7 @@ export async function rawRequest(
   return { status: Number(status[1]), reason: status[2] ?? '', body: payload } as RawResponse;
 }
 
-/** soft: an HTTP error that carries Studio's own reason (not a refused key) comes back as {error, status}, not as a ToolError. */
+/** soft: an HTTP error that carries AIB's own reason (not a refused key) comes back as {error, status}, not as a ToolError. */
 async function http(
   ctx: ToolContext,
   method: string,
@@ -542,7 +542,7 @@ async function http(
   }
   let last = '';
   const roots: string[] = [];
-  for (const root of ctx.roots().map(loopbackUrl)) { // the file wins on retry: Studio may have restarted on another port
+  for (const root of ctx.roots().map(loopbackUrl)) { // the file wins on retry: AIB may have restarted on another port
     if (root && !roots.includes(root)) roots.push(root);
   }
   if (!roots.length) throw new ToolError('AIB did not tell the artifact tool where it is running.');
@@ -758,7 +758,7 @@ const WORKTREE_HANDLERS: Record<string, Handler> = {
   resolve_edit_clash: toolResolveClash,
 };
 
-/** The doc tools run in Studio (POST /api/live/docs/tool, with this conversation's key); a refusal is the agent's to act on. */
+/** The doc tools run in AIB (POST /api/live/docs/tool, with this conversation's key); a refusal is the agent's to act on. */
 async function docTool(ctx: ToolContext, name: string, args: Json): Promise<Json> {
   const reply = await http(ctx, 'POST', '/api/live/docs/tool', null, { conversationId: ctx.conversation, tool: name, args }, true);
   if (isDict(reply) && Object.hasOwn(reply, 'error') && Object.hasOwn(reply, 'status')) throw new ToolError(`AIB: ${pyStr(reply.error)}`);
@@ -777,7 +777,7 @@ const DOC_HANDLERS: Record<string, Handler> = Object.fromEntries(
  *   - artifacts: publish, update, list, archive. A `path` is a Linux path inside the chat's or project's folder, read (never
  *     written) through the distro's helper as a snapshot (wsl/artifact_read.ts).
  *   - merge: merge_into_project and resolve_edit_clash, for a chat in its own worktree (run in the distro's helper: wsl/merge.ts).
- *   - swarm: the helper tools (start_helper, ...). Off: helper chats are not made in WSL projects yet (Studio gives a WSL chat no
+ *   - swarm: the helper tools (start_helper, ...). Off: helper chats are not made in WSL projects yet (AIB gives a WSL chat no
  *     main role while this is off).
  *   - docs: the doc and drawing tools. On: the open doc lives in AIB as for a Windows project, its files in the project folder in the
  *     distro, read and written by the helper (docs/doc_fs.ts, wsl/docs.ts); the answers name Linux paths.

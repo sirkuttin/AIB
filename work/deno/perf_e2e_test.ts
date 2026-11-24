@@ -1,5 +1,5 @@
 /**
- * The chat page under load, end to end: a real Studio (temp state folder, free port, in-process agent host), the scripted agent
+ * The chat page under load, end to end: a real AIB (temp state folder, free port, in-process agent host), the scripted agent
  * work/scroll-fixture/agent.py, and a headless Chrome/Edge (no window) on chat.html. One long live chat (2,500 agent messages
  * with markdown and code, finished steps with long outputs and diffs: ~5,000 rows, the newest 150 drawn) and 15 helpers, then
  * the chat streams for a few minutes: a message growing, steps starting and finishing, a helper message every tick.

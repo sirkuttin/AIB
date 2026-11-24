@@ -629,7 +629,7 @@
   padding: 5px 10px;
   font-size: 12px;
 }
-/* Stage E2: buttons in Studio's note after a clash, and the amber clash line (reuses the ownership bar) */
+/* Stage E2: buttons in AIB's note after a clash, and the amber clash line (reuses the ownership bar) */
 .note-actions {
   display: flex;
   flex-wrap: wrap;

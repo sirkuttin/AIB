@@ -1,6 +1,6 @@
 /**
- * server/desktop/folders.ts: the cases of work/test_new_project.py that exercise folders.py, plus parity with Python. No real dialog
- * is opened: pickFolder always gets an injected runner (the Python picker tests' fake subprocess.run), and the platform plans are
+ * server/desktop/folders.ts: the cases of work/test_new_project.py that exercise folders.py, plus the frozen answers. No real dialog
+ * is opened: pickFolder always gets an injected runner (a fake subprocess.run), and the platform plans are
  * checked as data. Skipped: RouteTests and KindsRouteTests (HTTP routes, not ported here).
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
@@ -88,7 +88,7 @@ Deno.test('normalised parts', () => {
   assertEquals(validatePath('C:\\app', true).slice(0, 3), ['C:\\app', 'C:\\', 'app']);
 });
 
-Deno.test('validatePath matches Python, messages included', async () => {
+Deno.test('validatePath matches the frozen answers, messages included', async () => {
   const py = new Frozen();
   const extra = [
     'C:\\a\\<b>?',
@@ -219,7 +219,7 @@ Deno.test({ name: 'start folder: home until a project is opened, then its parent
     assertEquals(memory.rememberProject(child), dir + '\\sub');
     const again = startFolder(new FolderMemory(dir), 'C:\\Users\\me'); // survives a restart
     assertEquals([again.start, again.source], [dir + '\\sub', 'last']);
-    // the same bytes Python's json.dump writes
+    // the same bytes json.dump writes
     assertEquals(
       Deno.readTextFileSync(osp.join(dir, 'studio-folders.json')),
       pyJsonDumps({ version: 1, lastParent: osp.join(dir, 'sub') }),
@@ -398,7 +398,7 @@ Deno.test('worktree by path, by .git file, but not a submodule or a main checkou
   }
 });
 
-Deno.test('kinds are bounded and ignore junk; match Python', async () => {
+Deno.test('kinds are bounded and ignore junk; match the frozen answers', async () => {
   const kinds = folderKinds(['C:\\a\\scratch-1', 5, null, '', 'x'.repeat(1000)]);
   assertEquals(Object.keys(kinds), ['C:\\a\\scratch-1']);
   assertEquals(kinds['C:\\a\\scratch-1'], { worktree: false, scratch: true });

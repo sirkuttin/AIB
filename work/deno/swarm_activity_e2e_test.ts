@@ -7,7 +7,7 @@
  *     width stay as they are;
  *   - the helper chat is not a section of its own, working or idle.
  *
- * A real Studio (the scroll lab: temp state folder, free port; never the live ports), scripted live chats, the helper registry written
+ * A real AIB (the scroll lab: temp state folder, free port; never the live ports), scripted live chats, the helper registry written
  * into the lab's state folder (as /api/live/swarm reads it), headless Chrome or Edge.
  *
  * Run (from app): deno test -A ../../work/deno/swarm_activity_e2e_test.ts   (ignored without Chrome or Edge)

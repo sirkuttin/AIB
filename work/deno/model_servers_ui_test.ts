@@ -22,7 +22,7 @@ import '../../app/page/agent-choice.js';
 import { Connection } from '../../app/server/acp/connection.ts';
 import { Aib } from '../../app/server/host/aib.ts';
 import { SettingsStore } from '../../app/server/state/settings.ts';
-import { describeAgents, modelServersView, settingsView, type StudioContext } from '../../app/server/web/shared.ts';
+import { describeAgents, modelServersView, settingsView, type AibContext } from '../../app/server/web/shared.ts';
 import { aibRoutes } from '../../app/server/web/aib_routes.ts';
 import { eligibleAgents, MODEL_SERVERS_GROUP, reasonWords } from '../../app/server/agents/eligibility.ts';
 import { HEALTH_MS, inspectModelServer, notAnsweringLine, ServerHealth, USE_WITH, useWithProblem } from '../../app/server/agents/model_servers.ts';
@@ -49,7 +49,7 @@ class Lab {
   /** Fake qwen and maki programs (empty files): found on PATH while a test puts this folder in front. */
   readonly bin = this.dir + SEP + 'bin';
   readonly servers: Deno.HttpServer[] = [];
-  readonly studios: Aib[] = [];
+  readonly aibs: Aib[] = [];
   constructor() {
     Deno.mkdirSync(this.state, { recursive: true });
     Deno.writeTextFileSync(this.launcher, '');
@@ -117,39 +117,39 @@ class Lab {
       settings: store,
       agentOptions: this.options(),
       conversations: { public: () => ({ entries: {} }) },
-      host: { liveList: () => ({ connections: [] }), liveCall: () => [200, {}], studioOwns: () => false, hostInfo: null, waitingChats: 0 },
+      host: { liveList: () => ({ connections: [] }), liveCall: () => [200, {}], aibOwns: () => false, hostInfo: null, waitingChats: 0 },
     } as never;
   }
 
-  view(store: SettingsStore): StudioContext {
-    const c = this.ctx(store) as unknown as { agentOptions: StudioContext['options']; host: Json };
+  view(store: SettingsStore): AibContext {
+    const c = this.ctx(store) as unknown as { agentOptions: AibContext['options']; host: Json };
     return {
       options: c.agentOptions,
       settings: store,
       conversations: {} as never,
       liveList: () => ({ connections: [] }),
       liveCall: () => [200, {}],
-      studioOwns: () => false,
+      aibOwns: () => false,
     };
   }
 
-  studio(launched: { provider: string; env: Record<string, string> | null }[], flags: string[] = []): Aib {
-    const studio = new Aib(
+  aib(launched: { provider: string; env: Record<string, string> | null }[], flags: string[] = []): Aib {
+    const aib = new Aib(
       { stateDir: this.state, port: 0, ownersDir: null, noArtifactTool: true, claudeLauncher: this.launcher, codexLauncher: this.codexLauncher, nodeCommand: Deno.execPath() },
       { keeper: null },
     );
-    studio.ownerProbe = () => null;
-    studio.connectionFactory = (_command, cwd, provider, options) => {
+    aib.ownerProbe = () => null;
+    aib.connectionFactory = (_command, cwd, provider, options) => {
       launched.push({ provider, env: options?.env ?? null });
       return new Connection(fake(...flags), cwd, provider);
     };
-    this.studios.push(studio);
-    return studio;
+    this.aibs.push(aib);
+    return aib;
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
     Deno.env.set('PATH', this.pathBefore);
-    for (const s of this.studios.reverse()) await s.close().catch(() => {});
+    for (const s of this.aibs.reverse()) await s.close().catch(() => {});
     for (const s of this.servers) await s.shutdown().catch(() => {});
     for (let i = 0; i < 20; i++) {
       try {
@@ -416,33 +416,33 @@ Deno.test('Maki and Qwen Code entries launch with the server\u2019s address, key
   await using lab = new Lab();
   const up = lab.serve({ chat: true, anthropic: true, models: ['qwen3-x', 'other'] });
   const launched: { provider: string; env: Record<string, string> | null }[] = [];
-  const studio = lab.studio(launched);
-  const store = studio.settings;
-  assertEquals(studio.betaEnv('qwen'), {});
+  const aib = lab.aib(launched);
+  const store = aib.settings;
+  assertEquals(aib.betaEnv('qwen'), {});
   await store.update({ agents: { betaUrl: { qwen: 'https://old.example.invalid/v1' }, betaKey: { qwen: 'card-key-1' } } });
   const own = { OPENAI_API_KEY: 'card-key-1', OPENAI_BASE_URL: 'https://old.example.invalid/v1' };
-  assertEquals(studio.betaEnv('qwen'), own);
+  assertEquals(aib.betaEnv('qwen'), own);
   await store.update({ agents: { modelServer: { upsert: { name: 'local', url: up.url, model: 'qwen3-x', useWith: ['qwen', 'maki'], key: KEY } } } });
   // the normal entries are exactly as before: a server never changes them
-  assertEquals(studio.betaEnv('qwen'), own);
-  assertEquals(studio.betaEnv('maki'), {});
+  assertEquals(aib.betaEnv('qwen'), own);
+  assertEquals(aib.betaEnv('maki'), {});
   // the entries: the normal adapter (same argv) with the server's address, key and model in the agent's own variables
-  const [qwenArgv] = await lab.withPrograms(() => studio.agentLaunch('qwen'));
-  const [qArgv, qEnv] = await lab.withPrograms(() => studio.agentLaunch('qwen@local'));
+  const [qwenArgv] = await lab.withPrograms(() => aib.agentLaunch('qwen'));
+  const [qArgv, qEnv] = await lab.withPrograms(() => aib.agentLaunch('qwen@local'));
   assertEquals(qArgv, [...qwenArgv, '--auth-type', 'openai'], 'the same adapter command as normal Qwen Code, plus the auth type that makes it read the server�s variables');
   assertEquals(qEnv, { OPENAI_BASE_URL: up.url, OPENAI_API_KEY: KEY, OPENAI_MODEL: 'qwen3-x' });
-  const [makiArgv] = await lab.withPrograms(() => studio.agentLaunch('maki'));
-  const [mArgv, mEnv] = await lab.withPrograms(() => studio.agentLaunch('maki@local'));
+  const [makiArgv] = await lab.withPrograms(() => aib.agentLaunch('maki'));
+  const [mArgv, mEnv] = await lab.withPrograms(() => aib.agentLaunch('maki@local'));
   assertEquals(mArgv, makiArgv);
   assertEquals(mEnv, { ANTHROPIC_BASE_URL: up.url, ANTHROPIC_API_KEY: KEY });
   // the card key is not used by an entry; a server with no key gives the dummy; the normal entry still has its card key
   await store.update({ agents: { modelServer: { upsert: { id: 'local', key: null } } } });
-  assertEquals((await lab.withPrograms(() => studio.agentLaunch('qwen@local')))[1].OPENAI_API_KEY, 'aib-model-server');
-  assertEquals((await lab.withPrograms(() => studio.agentLaunch('maki@local')))[1].ANTHROPIC_API_KEY, 'aib-model-server');
-  assertEquals((await lab.withPrograms(() => studio.agentLaunch('qwen')))[1], own);
+  assertEquals((await lab.withPrograms(() => aib.agentLaunch('qwen@local')))[1].OPENAI_API_KEY, 'aib-model-server');
+  assertEquals((await lab.withPrograms(() => aib.agentLaunch('maki@local')))[1].ANTHROPIC_API_KEY, 'aib-model-server');
+  assertEquals((await lab.withPrograms(() => aib.agentLaunch('qwen')))[1], own);
   // switched off: the entry is gone, the normal entry is as before
   await store.update({ agents: { modelServer: { upsert: { id: 'local', useWith: [] } } } });
-  assertEquals(studio.betaEnv('qwen'), own);
+  assertEquals(aib.betaEnv('qwen'), own);
 });
 
 Deno.test('the migration script: a dry run changes nothing, --apply moves the Maki and Qwen Code addresses into model servers', async () => {
@@ -506,16 +506,16 @@ Deno.test('saved-chat discovery launches with the server env; the WSL listing as
   await using lab = new Lab();
   const up = lab.serve({ anthropic: true });
   const launched: { provider: string; env: Record<string, string> | null }[] = [];
-  const studio = lab.studio(launched, ['--list-sessions']);
-  await studio.settings.update({ agents: { modelServer: { upsert: { name: 'strata', url: up.url, model: 'm-two', key: KEY } } } });
+  const aib = lab.aib(launched, ['--list-sessions']);
+  await aib.settings.update({ agents: { modelServer: { upsert: { name: 'strata', url: up.url, model: 'm-two', key: KEY } } } });
   // Windows: no chat is running, so a short-lived adapter lists the sessions: with the server's address, key and model
-  const found = await studio.listAgentSessions('claude@strata', null);
+  const found = await aib.listAgentSessions('claude@strata', null);
   assertEquals(found.via, 'temporary-process');
   assertEquals(launched.length, 1);
   assertEquals([launched[0].provider, launched[0].env?.ANTHROPIC_BASE_URL, launched[0].env?.ANTHROPIC_API_KEY, launched[0].env?.ANTHROPIC_MODEL], ['claude@strata', up.url, KEY, 'm-two']);
   // plain Claude is asked the way it was: no server env
   launched.length = 0;
-  await studio.listAgentSessions('claude', null);
+  await aib.listAgentSessions('claude', null);
   assertEquals(launched[0].env, null);
   // WSL: the chat that answers may be Claude Code or any server entry of the same distro (they share the saved-chat folder)
   const live = (provider: string, distro: string) => ({
@@ -525,19 +525,19 @@ Deno.test('saved-chat discovery launches with the server env; the WSL listing as
     wsl: { distro },
     listSessions: (cwd: string | null) => Promise.resolve({ sessions: [{ id: 's1', cwd, title: provider }], nextCursor: null }),
   });
-  const conns = (studio as unknown as { connections: Map<string, unknown> }).connections;
+  const conns = (aib as unknown as { connections: Map<string, unknown> }).connections;
   const ref = 'wsl://ubuntu/home/u/app';
-  const none = await studio.listAgentSessions('claude@strata', ref);
+  const none = await aib.listAgentSessions('claude@strata', ref);
   assertEquals([none.via, none.sessions], ['none', []]);
   conns.set('c1', live('claude', 'ubuntu'));
-  const viaClaude = await studio.listAgentSessions('claude@strata', ref) as Json;
+  const viaClaude = await aib.listAgentSessions('claude@strata', ref) as Json;
   assertEquals([viaClaude.via, (viaClaude.sessions as Json[]).map((s) => [s.title, s.cwd])], ['studio-connection', [['claude', ref]]]);
   conns.clear();
   conns.set('c2', live('claude@strata', 'ubuntu'));
-  const viaServer = await studio.listAgentSessions('claude', ref) as Json;
+  const viaServer = await aib.listAgentSessions('claude', ref) as Json;
   assertEquals([viaServer.via, (viaServer.sessions as Json[]).length], ['studio-connection', 1]);
   conns.clear();
   conns.set('c3', live('claude@strata', 'debian'));
-  assertEquals((await studio.listAgentSessions('claude', ref) as Json).via, 'none', 'another distro does not answer');
+  assertEquals((await aib.listAgentSessions('claude', ref) as Json).via, 'none', 'another distro does not answer');
   conns.clear();
 });

@@ -19,7 +19,7 @@
  */
 import { assert, assertEquals } from "./_assert.ts";
 import { PAGE_KEY } from "./_page_key.ts";
-import { Browser, browserPath, studio } from "./_doc_browser.ts";
+import { Browser, browserPath, aib } from "./_doc_browser.ts";
 import {
   KEY_TTL_MS,
   LINK_TTL_MS,
@@ -217,7 +217,7 @@ Deno.test("AIB_PAGE_KEY is taken out of the environment outside a test run, so a
 });
 
 Deno.test("bootstrap: no token for an outside caller; the token for the launch key or a page session", async () => {
-  const s = await studio();
+  const s = await aib();
   try {
     const port = s.port;
     // an agent's shell command: loopback Host, no Origin, no fetch metadata
@@ -324,7 +324,7 @@ Deno.test("bootstrap: no token for an outside caller; the token for the launch k
 });
 
 Deno.test("what an outside caller can get (no token, a chat key) cannot approve, answer, merge, pair a phone or stop AIB", async () => {
-  const s = await studio();
+  const s = await aib();
   try {
     const port = s.port;
     assert(configureKeys(s.state), "artifact keys");
@@ -405,7 +405,7 @@ Deno.test("what an outside caller can get (no token, a chat key) cannot approve,
 });
 
 Deno.test("the merge tool route: a chat's key reaches the merge for its own chat only", async () => {
-  const s = await studio();
+  const s = await aib();
   try {
     const port = s.port;
     assert(configureKeys(s.state), "artifact keys");
@@ -452,7 +452,7 @@ Deno.test("the merge tool route: a chat's key reaches the merge for its own chat
 });
 
 Deno.test("GET /api/live/idle answers without the token: per chat its agent, folder and state only", async () => {
-  const s = await studio();
+  const s = await aib();
   try {
     s.connections.push({
       id: "claude:x",
@@ -510,7 +510,7 @@ Deno.test({
   sanitizeOps: false,
   sanitizeResources: false,
   fn: async () => {
-    const s = await studio();
+    const s = await aib();
     const browser = await Browser.launch();
     browser.fakeApp = false; // a plain browser: no app window to hand the page a key
     try {
@@ -618,7 +618,7 @@ Deno.test({
   sanitizeOps: false,
   sanitizeResources: false,
   fn: async () => {
-    const s = await studio();
+    const s = await aib();
     const browser = await Browser.launch(); // fakeApp: bindings.aibPageKey answers through AIBPageAuth.accept, as window.ts does
     try {
       const page = await browser.open("about:blank");

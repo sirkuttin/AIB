@@ -807,7 +807,7 @@ export interface UpdateServiceOptions {
   busyChats?: () => number | Promise<number>;
   /**
    * Ends this web server so the helper can run the installer. The route answers first; the caller defers the real shutdown. `release`
-   * true: the chats run in the keeper and the new version takes them over, so this app leaves them running (Studio.release) instead
+   * true: the chats run in the keeper and the new version takes them over, so this app leaves them running (Aib.release) instead
    * of stopping them.
    */
   quit?: ((release?: boolean) => void) | null;
@@ -1040,7 +1040,7 @@ function emptyState(): UpdateState {
   return { lastCheck: 0, found: null, downloaded: null, error: '', code: '', installWhenIdle: false, notified: '' };
 }
 
-/** Owns the update state for one Studio web server (updater.UpdateService). */
+/** Owns the update state for one AIB web server (updater.UpdateService). */
 export class UpdateService {
   readonly root: string;
   autoCheck: () => boolean;

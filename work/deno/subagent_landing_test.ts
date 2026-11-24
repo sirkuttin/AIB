@@ -1,5 +1,5 @@
 /**
- * Subagent worktrees P2 (landing), without a real agent: a real Studio with the fake agent as the parent chat, subagent records and
+ * Subagent worktrees P2 (landing), without a real agent: a real AIB with the fake agent as the parent chat, subagent records and
  * worktrees made the way subagents/service.ts makes them, and the web process's swarm landing (swarm/service.ts). The real Claude
  * adapter end to end is work/test_subagent_landing_e2e.py.
  *   a done subagent lands when its parent is idle: one "AIB: subagent <description>" commit on the folder's branch, its file only
@@ -28,7 +28,7 @@ class Box {
   readonly dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-sub-landing-' }));
   readonly state = pathOf(this.dir, 'state');
   readonly project = makeRepo(pathOf(this.dir, 'proj'));
-  readonly studio: Aib;
+  readonly aib: Aib;
   swarm: Swarm;
   n = 0;
 
@@ -36,17 +36,17 @@ class Box {
     runGit(this.project, 'config', 'user.name', 't');
     runGit(this.project, 'config', 'user.email', 't@t');
     runGit(this.project, 'config', 'core.autocrlf', 'false');
-    const studio = new Aib({ stateDir: this.state, port: 0 }, { keeper: null });
-    studio.ownerProbe = () => null;
-    studio.agentLaunch = () => Promise.resolve([['unused'], {}]);
-    studio.connectionFactory = (_command, cwd, provider, options) =>
+    const aib = new Aib({ stateDir: this.state, port: 0 }, { keeper: null });
+    aib.ownerProbe = () => null;
+    aib.agentLaunch = () => Promise.resolve([['unused'], {}]);
+    aib.connectionFactory = (_command, cwd, provider, options) =>
       new Connection([PYTHON, UNIQUE, '--models'], cwd, provider, { ...(options ?? {}), env: { ...(options?.env ?? {}), PYTHONUTF8: '1' } });
-    this.studio = studio;
+    this.aib = aib;
     this.swarm = this.newSwarm();
   }
 
   newSwarm(): Swarm {
-    return new Swarm({ stateDir: this.state, host: this.studio, settings: this.studio.settings });
+    return new Swarm({ stateDir: this.state, host: this.aib, settings: this.aib.settings });
   }
 
   /** A subagent's worktree and record as subagents/service.ts makes them (S = the folder's HEAD here), with `file` changed in it. */
@@ -58,7 +58,7 @@ class Box {
     more: Partial<SubagentRecord> & { files?: Record<string, string>; commit?: boolean; seed?: boolean } = {},
   ): { id: string; path: string } {
     const n = ++this.n;
-    const root = this.studio.subagents!.root;
+    const root = this.aib.subagents!.root;
     const hash = wt.repoHash(this.project);
     const slug = `sub-test${n}`;
     const path = pathOf(root, hash, slug);
@@ -129,7 +129,7 @@ class Box {
 
   async [Symbol.asyncDispose](): Promise<void> {
     await this.swarm.stopWatching();
-    await this.studio.close().catch(() => {});
+    await this.aib.close().catch(() => {});
     for (let i = 0; i < 20; i++) {
       try {
         Deno.removeSync(this.dir, { recursive: true });
@@ -177,7 +177,7 @@ Deno.test({
   name: 'a done subagent lands as one commit when its parent is idle; its worktree goes, a junction target inside survives',
   async fn() {
     await using box = new Box();
-    const main = await box.studio.connect('claude', box.project, null, {});
+    const main = await box.aib.connect('claude', box.project, null, {});
     await settle(main);
     write(box.project, 'dirty.txt', 'main-edit\n'); // the main agent's uncommitted edit
     const target = pathOf(box.dir, 'linked-pkg');
@@ -209,7 +209,7 @@ Deno.test({
   name: 'B8: a subagent landing cut off by a crash is finished (branch moved) or queued again and landed (not moved)',
   async fn() {
     await using box = new Box();
-    const main = await box.studio.connect('claude', box.project, null, {});
+    const main = await box.aib.connect('claude', box.project, null, {});
     await settle(main);
     // the parent works: the landing is taken up (queued) but cannot run yet
     let release = await holdTurn(box, main, 'one');
@@ -253,7 +253,7 @@ Deno.test({
   name: 'a stopped subagent never lands by itself; merge_helper with its id lands it',
   async fn() {
     await using box = new Box();
-    const main = await box.studio.connect('claude', box.project, null, {});
+    const main = await box.aib.connect('claude', box.project, null, {});
     await settle(main);
     const { id } = box.subagent(main.id, 'stopped.txt', 'half\n', 'stopped');
     await box.swarm.poll();
@@ -268,11 +268,11 @@ Deno.test({
   },
 });
 
-/** The parent's next-prompt lines (prompt-context), as the Studio collects them. */
+/** The parent's next-prompt lines (prompt-context), as AIB collects them. */
 function contextLines(box: Box): string[] {
   const lines: string[] = [];
-  const own = box.studio.addPromptContext.bind(box.studio);
-  box.studio.addPromptContext = (c, line, replace) => {
+  const own = box.aib.addPromptContext.bind(box.aib);
+  box.aib.addPromptContext = (c, line, replace) => {
     lines.push(line);
     own(c, line, replace);
   };
@@ -282,8 +282,8 @@ function contextLines(box: Box): string[] {
 /** The turns that wake the parent (swarm reports and failed landings go in through steer, or queue when the user stopped it). */
 function wakes(box: Box): { op: string; text: string; id: string }[] {
   const out: { op: string; text: string; id: string }[] = [];
-  const own = box.studio.liveCall.bind(box.studio);
-  box.studio.liveCall = (name, body) => {
+  const own = box.aib.liveCall.bind(box.aib);
+  box.aib.liveCall = (name, body) => {
     if (name === 'steer' || name === 'queue') out.push({ op: name, text: String((body as Json).text), id: String((body as Json).clientMessageId) });
     return own(name, body);
   };
@@ -295,7 +295,7 @@ Deno.test({
   name: 'scratch: a subagent that only left a page and a note at its worktree top lands nothing, keeps them and tells the parent; merge_helper lands them',
   async fn() {
     await using box = new Box();
-    const main = await box.studio.connect('claude', box.project, null, {});
+    const main = await box.aib.connect('claude', box.project, null, {});
     await settle(main);
     const told = contextLines(box);
     const { id, path } = box.subagent(main.id, 'inbox-v31-design.html', '<p>mockup</p>\n', 'done', {
@@ -328,7 +328,7 @@ Deno.test({
   name: 'scratch: real changes land without the root note (kept in the worktree, parent told); a committed root note and a .txt land as work',
   async fn() {
     await using box = new Box();
-    const main = await box.studio.connect('claude', box.project, null, {});
+    const main = await box.aib.connect('claude', box.project, null, {});
     await settle(main);
     const told = contextLines(box);
     const mixed = box.subagent(main.id, 'src/editor.js', 'export const x = 1;\n', 'done', {
@@ -369,7 +369,7 @@ Deno.test({
     await using box = new Box();
     write(box.project, '.gitignore', 'ignored.log\nbuild/\nnode_modules/\nprivate/\n');
     runGit(box.project, 'commit', '-q', '-am', 'ignore private');
-    const main = await box.studio.connect('claude', box.project, null, {});
+    const main = await box.aib.connect('claude', box.project, null, {});
     await settle(main);
     const told = contextLines(box);
     const { id, path } = box.subagent(main.id, 'private/release/beta12-release-notes-draft.md', '# Beta 12\n', 'done', {
@@ -396,13 +396,13 @@ Deno.test({
   name: 'names: a queued landing takes the name its record was fixed to (parallel calls swapped back) before it lands',
   async fn() {
     await using box = new Box();
-    const main = await box.studio.connect('claude', box.project, null, {});
+    const main = await box.aib.connect('claude', box.project, null, {});
     await settle(main);
     const release = await holdTurn(box, main, 'names');
     const { id } = box.subagent(main.id, 'spike.js', 'x\n', 'done', { description: 'Inbox v3.1: design + toast research' });
     await box.swarm.poll();
     assertEquals(box.swarm.registry.get(id)?.landing?.stage, 'queued');
-    const all = readSubagents(box.state); // the Studio fixed the pairing (subagents/service.ts swapCalls)
+    const all = readSubagents(box.state); // AIB fixed the pairing (subagents/service.ts swapCalls)
     all[id] = { ...all[id], description: 'File editor: update design + spike' };
     Deno.writeTextFileSync(pathOf(box.state, 'subagent-worktrees.json'), JSON.stringify({ version: 1, subagents: all }));
     await box.swarm.poll();
@@ -422,7 +422,7 @@ Deno.test({
     const was = Deno.env.get('CLAUDE_CONFIG_DIR');
     Deno.env.set('CLAUDE_CONFIG_DIR', config);
     try {
-      const main = await box.studio.connect('claude', box.project, null, {});
+      const main = await box.aib.connect('claude', box.project, null, {});
       await settle(main);
       assert(main.sessionId, 'the fake agent gives a session id');
       const lasting = `claude:${main.sessionId}`;
@@ -457,7 +457,7 @@ Deno.test({
   name: 'a branch the main agent merged by hand is already landed: no conflict line, worktree and branch removed',
   async fn() {
     await using box = new Box();
-    const main = await box.studio.connect('claude', box.project, null, {});
+    const main = await box.aib.connect('claude', box.project, null, {});
     await settle(main);
     const told = contextLines(box);
     // committed in its worktree, then merged into main by hand, and main changed the same file again afterwards
@@ -482,7 +482,7 @@ Deno.test({
   name: 'a real conflict with main wakes the parent at once with a visible line, keeps the worktree and offers a clean branch',
   async fn() {
     await using box = new Box();
-    const main = await box.studio.connect('claude', box.project, null, {});
+    const main = await box.aib.connect('claude', box.project, null, {});
     await settle(main);
     const told = contextLines(box);
     const woke = wakes(box);
@@ -513,7 +513,7 @@ for (const shape of ['fast-forward', 'merge commit']) {
     name: `a builder that took in an already landed builder's branch (${shape}) lands only its own changes, with no conflict`,
     async fn() {
       await using box = new Box();
-      const main = await box.studio.connect('claude', box.project, null, {});
+      const main = await box.aib.connect('claude', box.project, null, {});
       await settle(main);
       const woke = wakes(box);
       const a = box.subagent(main.id, 'a.txt', 'from A\n', 'running', { commit: true, description: 'builder A' });
@@ -547,7 +547,7 @@ Deno.test({
   name: "a snapshot never lands the main folder's uncommitted files (untracked or edited) nor aib-shared content",
   async fn() {
     await using box = new Box();
-    const main = await box.studio.connect('claude', box.project, null, {});
+    const main = await box.aib.connect('claude', box.project, null, {});
     await settle(main);
     // B starts clean; then the owner writes a doc (untracked) and edits a tracked file; A starts from a snapshot that holds them
     const b = box.subagent(main.id, '', '', 'running', { description: 'builder B' });
@@ -574,7 +574,7 @@ Deno.test({
   name: "landing never overwrites an uncommitted main-folder file: the builder's change to it is refused, the file stays as it is",
   async fn() {
     await using box = new Box();
-    const main = await box.studio.connect('claude', box.project, null, {});
+    const main = await box.aib.connect('claude', box.project, null, {});
     await settle(main);
     const woke = wakes(box);
     const a = box.subagent(main.id, 'notes.txt', 'builder version\n', 'done', { files: { 'other.txt': 'x\n' } });
@@ -607,7 +607,7 @@ Deno.test({
   name: '2026-11-23: a parent that stays busy keeps the landing queued: it says why, wakes the parent once, and lands when the parent is idle',
   async fn() {
     await using box = new Box();
-    const main = await box.studio.connect('claude', box.project, null, {});
+    const main = await box.aib.connect('claude', box.project, null, {});
     await settle(main);
     const woke = wakes(box);
     const release = await holdTurn(box, main, 'busy');
@@ -645,7 +645,7 @@ Deno.test({
   ...T,
   name: 'a folder that is not on a branch: the subagent is not landed and the parent is woken with the reason',  async fn() {
     await using box = new Box();
-    const main = await box.studio.connect('claude', box.project, null, {});
+    const main = await box.aib.connect('claude', box.project, null, {});
     await settle(main);
     const woke = wakes(box);
     box.subagent(main.id, 'a.txt', 'a\n');
@@ -662,7 +662,7 @@ Deno.test({
   name: '2026-11-23: a builder the main agent already landed by hand (same patch, file changed since) says so, not a conflict',
   async fn() {
     await using box = new Box();
-    const main = await box.studio.connect('claude', box.project, null, {});
+    const main = await box.aib.connect('claude', box.project, null, {});
     await settle(main);
     const woke = wakes(box);
     const a = box.subagent(main.id, 'hand.txt', 'builder text\n');

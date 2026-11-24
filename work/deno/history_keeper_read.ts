@@ -1,11 +1,11 @@
 /**
  * History loading, Phase 0B (not a test; run by hand): the keeper side of a take-over. Starts the repo's keeper on a COPY of a
  * state folder (<copy>/keeper/channels/*, channels.json; never the owner's folder), then for each of the biggest channels times
- *   firstNote   what Studio reads first (link.ts firstNote: attach from 0 until the chat note, then detach)
+ *   firstNote   what AIB reads first (link.ts firstNote: attach from 0 until the chat note, then detach)
  *   attach      attach from 0 until `live` (what adopt() does): records, bytes, time; JS-side handling is only counting
  * A copied channel that was live gets the keeper's `keeper_lost` exit record in the copy (the copy only). Stops the keeper after.
  *
- *   takeover    with --takeover: Studio's take-over loop replayed in one process, in keeper list order: firstNote, then a real
+ *   takeover    with --takeover: AIB's take-over loop replayed in one process, in keeper list order: firstNote, then a real
  *               Connection rebuild through the real KeeperLink.adopt (attach from 0, buffer, restore, raw replay) until `rebuilt`
  *               settles. The copied channels have ended (keeper_lost), so the final claim fails after all the work: the time is
  *               the take-over's history cost, without the session lease, live sync and the other per-chat work.

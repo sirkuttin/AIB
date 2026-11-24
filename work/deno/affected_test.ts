@@ -46,7 +46,7 @@ Deno.test('affected: Go keeper changes run the Go tests and the Deno tests that 
   assert(!t.has('worktree_sync_test.ts'));
 });
 
-Deno.test('affected: a Python helper in work/ reaches the tests that name it', () => {
+Deno.test('affected: a helper script in work/ reaches the tests that name it', () => {
   const t = tests(['work/lock_helper.py']).out;
   assert(t.has('platform_test.ts'), 'platform_test.ts starts lock_helper.py');
   assert(t.has('ownership_test.ts'), 'ownership_test.ts starts lock_helper.py');

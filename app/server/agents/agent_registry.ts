@@ -64,7 +64,7 @@ export function isBuiltin(value: unknown): boolean {
   return isStr(value) && (BUILTIN_IDS as readonly string[]).includes(value);
 }
 
-/** A provider id Studio can store (a saved chat's, so a retired agent's too): a built-in or a well-formed user-agent id. */
+/** A provider id AIB can store (a saved chat's, so a retired agent's too): a built-in or a well-formed user-agent id. */
 export function isProvider(value: unknown): value is string {
   return isStr(value) && (isBuiltin(value) || isRetired(value) || isBeta(value) || isModelServerId(value) || (pyLen(value) <= 48 && ID_RE.test(value)));
 }

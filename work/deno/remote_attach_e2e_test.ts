@@ -1,5 +1,5 @@
 /**
- * Attachments from the phone, end to end (owner: "we need to allow sending attachments from the phone app"): a real Studio (web
+ * Attachments from the phone, end to end (owner: "we need to allow sending attachments from the phone app"): a real AIB (web
  * server and a separate agent host), phone access on with a fake Tailscale CLI, a phone paired through the HTTP routes, the fake
  * agents of work/fake_acp.py (Claude Code with steering, image input and embedded context; Codex without either), and the phone
  * page in a headless Chrome at 375 px (no window) where this test plays Tailscale Serve. Files are picked through the page's own
@@ -17,7 +17,7 @@ import { DENO, httpJson, type Json, nativePath, SEP, until } from './_host_fixtu
 import { WORK } from './_work.ts';
 import { pickPort } from './_ports.ts';
 import { Browser, browserPath, type Page } from './_doc_browser.ts';
-import { nonce, phoneHeaders, raw, type RemoteStudio, serveStatus, tailscaleStatus } from './_remote_fixture.ts';
+import { nonce, phoneHeaders, raw, type RemoteAib, serveStatus, tailscaleStatus } from './_remote_fixture.ts';
 import { phonePage } from './_remote_phone_page.ts';
 import { type LabOptions, type SteerChat, SteerLab, TEST_OPTIONS } from './_steer_lab.ts';
 import { DEVICE_HEADER } from '../../app/server/remote/server.ts';
@@ -85,7 +85,7 @@ async function started(options: LabOptions) {
 
 /** The phone page, with the browser's file chooser handed to the test: `choose` sets what the next chooser gets. */
 async function openPhone(browser: Browser, lab: PhoneAttachLab, phone: { token: string; id: string }) {
-  const page = await phonePage(browser, { phonePort: () => lab.phonePort } as unknown as RemoteStudio, phone, undefined, 375, false);
+  const page = await phonePage(browser, { phonePort: () => lab.phonePort } as unknown as RemoteAib, phone, undefined, 375, false);
   await page.send('Page.setInterceptFileChooserDialog', { enabled: true });
   let next: string[] = [];
   let opened = 0;

@@ -1,7 +1,7 @@
 /**
  * Multi-window Phase 1B (store-merge.js): two AIB windows share one localStorage (Phase 0 spike: one WebView2 profile). Two headless
  * pages of one browser stand in for two windows: A is the main window (/chat.html), B a project window (/chat.html?w=w2&kind=project&
- * project=<its project>), C another project window. A real Studio (the scroll lab: temp state folder, free port, never the live
+ * project=<its project>), C another project window. A real AIB (the scroll lab: temp state folder, free port, never the live
  * ports), headless Chrome/Edge, no window on screen.
  *
  *   1. Drafts typed in A (chat X) and B (chat Y) both survive, also after both pages reload; the workspace keeps both windows' tabs.

@@ -1,7 +1,7 @@
 /**
- * Studio's artifact tool (test_artifact_mcp.py, test_artifact_prompt.py): the Deno stdio MCP server (`main.ts mcp-artifact`) driven
- * over stdio against a fake Studio, a differential run of the same JSON-RPC lines through artifact_mcp.py and the Deno server (the
- * reply lines and the requests Studio receives must be byte-identical), and the mcpServers entry the Deno Studio gives agents.
+ * AIB's artifact tool (test_artifact_mcp.py, test_artifact_prompt.py): the Deno stdio MCP server (`main.ts mcp-artifact`) driven
+ * over stdio against a fake AIB, a differential run of the same JSON-RPC lines through artifact_mcp.py and the Deno server (the
+ * reply lines and the requests AIB receives must be byte-identical), and the mcpServers entry the Deno AIB gives agents.
  */
 import { assert, assertEquals } from './_assert.ts';
 import { Frozen } from './_frozen.ts';
@@ -24,19 +24,19 @@ const MAIN = `${APP_ROOT}${SEP}server${SEP}main.ts`;
 const DENO_TOOL = [Deno.execPath(), 'run', '-A', '--quiet', MAIN, 'mcp-artifact'];
 const frozenPy = new Frozen();
 Deno.env.set('AGENT_STUDIO_TEST', '1');
-/** A Deno reply line with the Deno-only part taken out: the bundled-libraries sentence of publish's description (no /_lib/ in Python). */
+/** A Deno reply line with the Deno-only part taken out: the bundled-libraries sentence of publish's description (no /_lib/ in the frozen line). */
 const masked = (line: string) => line.replace(JSON.stringify(OFFLINE_LIBS_NOTE).slice(1, -1), '');
 
 type Json = Record<string, unknown>;
 
-/** The doc tools (doc_*) and drawing tools (drawing_*) are Deno only: the Python reference has none. */
+/** The doc tools (doc_*) and drawing tools (drawing_*) are Deno only. */
 const DOCS = [...DOC_TOOL_NAMES, ...DRAWING_TOOL_NAMES];
 /** archive (archive / unarchive this chat's artifacts) is Deno only too. */
 const DENO_ONLY_TOOLS = new Set(['archive', ...DOCS]);
 
 /**
  * A Deno reply line with the Deno-only tools taken out of a tools/list result, re-dumped the way the server dumps it, so it can be
- * compared byte for byte with the Python reference's line.
+ * compared byte for byte with the frozen line.
  */
 function maskDenoOnly(line: string): string {
   let reply: Json;
@@ -60,7 +60,7 @@ interface Recorded {
 }
 
 /** Records requests and answers like the artifact routes would (test_artifact_mcp.FakeStudio). */
-class FakeStudio {
+class FakeAib {
   requests: Recorded[] = [];
   /** [status, body (JSON value, or a raw string when `raw`), extra headers] override for every request. */
   reply: [number, unknown, Record<string, string>?] | null = null;
@@ -212,7 +212,7 @@ class Shim {
 
 class Lab {
   readonly dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-mcp-test-' }));
-  readonly fake = new FakeStudio();
+  readonly fake = new FakeAib();
   readonly cleanups: (() => unknown)[] = [];
 
   shim(url = this.fake.url, extraEnv: Record<string, string> = {}, key = 'k1', conversation = 'conv1', command = DENO_TOOL): Shim {
@@ -379,7 +379,7 @@ Deno.test('argument errors become tool errors and send nothing', async () => {
   assert(firstText(await shim.call('publish', { title: 'x', path: 'missing.html' })).includes('File not found'));
 });
 
-Deno.test('Studio HTTP errors become tool errors', async () => {
+Deno.test('AIB HTTP errors become tool errors', async () => {
   await using lab = new Lab();
   const shim = lab.shim();
   lab.fake.reply = [403, { error: 'Artifact key not valid for this conversation' }];
@@ -394,7 +394,7 @@ Deno.test('Studio HTTP errors become tool errors', async () => {
   assertEquals((await shim.request('ping')).result, {});
 });
 
-Deno.test('unreachable Studio and missing configuration', async () => {
+Deno.test('unreachable AIB and missing configuration', async () => {
   await using lab = new Lab();
   const dead = lab.shim(lab.hangUp().url);
   const result = await dead.call('list', {});
@@ -467,10 +467,10 @@ Deno.test('worktree tools are offered only to a worktree chat', async () => {
   assert((await shim.call('resolve_edit_clash', { action: 'nope' })).isError);
 });
 
-// ---- differential: the Python server and the Deno server answer the same lines identically ------------------------------------
+// ---- frozen answers: the server answers the same lines as the recorded ones ------------------------------------
 
 /** One script of raw stdin lines; `before` runs before a line is sent (e.g. to change the fake's reply). */
-type Step = { line: string; before?: (fake: FakeStudio) => void; noReply?: boolean };
+type Step = { line: string; before?: (fake: FakeAib) => void; noReply?: boolean };
 
 function rpc(id: unknown, method: unknown, params?: unknown): string {
   return JSON.stringify(params === undefined ? { jsonrpc: '2.0', id, method } : { jsonrpc: '2.0', id, method, params });
@@ -586,7 +586,7 @@ function script(): Step[] {
 async function runScript(
   command: string[],
   dir: string,
-  fake: FakeStudio,
+  fake: FakeAib,
   extraEnv: Record<string, string>,
 ): Promise<[string[], Recorded[]]> {
   fake.requests = [];
@@ -611,7 +611,7 @@ Deno.test('differential: artifact_mcp.py and the Deno server give the same repli
   Deno.mkdirSync(`${lab.dir}${SEP}outputs`);
   Deno.writeTextFileSync(`${lab.dir}${SEP}outputs${SEP}page.html`, '<p>hi</p>');
   const env = { STUDIO_WORKTREE: '1' };
-  // The reply lines and requests of the retired Python tool on the same script, kept as answers (fixtures/frozen/artifact_mcp.json).
+  // The reply lines and requests of the retired tool on the same script, kept as answers (fixtures/frozen/artifact_mcp.json).
   const pyLines = await frozenPy.frozenList('script-lines') as string[];
   const pyRequests = await frozenPy.frozenList('script-requests') as Recorded[];
   const [denoLines, denoRequests] = await runScript(DENO_TOOL, lab.dir, lab.fake, env);
@@ -619,10 +619,10 @@ Deno.test('differential: artifact_mcp.py and the Deno server give the same repli
   for (let i = 0; i < pyLines.length; i++) assertEquals(maskDenoOnly(masked(denoLines[i])), pyLines[i], `reply ${i + 1}`);
   assertEquals(denoRequests.length, pyRequests.length);
   denoRequests.forEach((request, i) => assertEquals(request, pyRequests[i], `request ${i + 1}`));
-  assert(pyRequests.length > 30, 'the script reached the fake Studio');
+  assert(pyRequests.length > 30, 'the script reached the fake AIB');
 });
 
-Deno.test('differential: tools/list without a worktree, unreachable Studio, URL file, missing configuration', async () => {
+Deno.test('differential: tools/list without a worktree, unreachable AIB, URL file, missing configuration', async () => {
   await using lab = new Lab();
   const hangUp = lab.hangUp();
   const refused = (() => { // a port nothing listens on
@@ -662,25 +662,25 @@ Deno.test('differential: tools/list without a worktree, unreachable Studio, URL 
     // The OS reason for a hang-up is a race (the close lands before or after the request is sent: "Remote end closed connection
     // without response" or WinError 10053), in either tool; the sentence around it must match.
     const reason = (l: string) => l.replace(/Could not reach AIB \((?:Remote end closed connection without response|\[WinError 1005[34]\][^)]*)\)/, 'Could not reach AIB (hang-up)');
-    // what the retired Python tool answered, with the hang-up reason normalised (fixtures/frozen/artifact_mcp.json)
+    // what the retired tool answered, with the hang-up reason normalised (fixtures/frozen/artifact_mcp.json)
     const theirs = await frozenPy.frozenList(`unreachable-${i}`);
     const mine = await twoLines(DENO_TOOL);
     assertEquals(mine.map((l) => reason(maskDenoOnly(masked(l)))), theirs, JSON.stringify([url, extra, key, conversation]));
   }
 });
 
-// ---- InjectionTests: the mcpServers entry the Deno Studio gives agents -------------------------------------------------------
+// ---- InjectionTests: the mcpServers entry the Deno AIB gives agents -------------------------------------------------------
 
-class StudioLab {
+class AibLab {
   readonly dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-mcp-studio-' }));
-  readonly studios: Aib[] = [];
+  readonly aibs: Aib[] = [];
   make(extra: Record<string, unknown> = {}): Aib {
-    const studio = new Aib({ ompCommand: 'unused', stateDir: `${this.dir}${SEP}state`, port: 8123, ...extra } as never);
-    this.studios.push(studio);
-    return studio;
+    const aib = new Aib({ ompCommand: 'unused', stateDir: `${this.dir}${SEP}state`, port: 8123, ...extra } as never);
+    this.aibs.push(aib);
+    return aib;
   }
   async [Symbol.asyncDispose]() {
-    for (const s of this.studios) await s.close().catch(() => {});
+    for (const s of this.aibs) await s.close().catch(() => {});
     artifactKeys.configure(null);
     for (let i = 0; i < 20; i++) {
       try {
@@ -695,10 +695,10 @@ class StudioLab {
 
 const envOf = (entry: Json) => Object.fromEntries((entry.env as { name: string; value: string }[]).map((e) => [e.name, e.value]));
 
-Deno.test('the Deno Studio gives agents the Deno tool: entry shape and key', async () => {
-  await using lab = new StudioLab();
-  const studio = lab.make();
-  const servers = studio.artifactMcpServers('conv-1') as unknown as Json[];
+Deno.test('the Deno AIB gives agents the Deno tool: entry shape and key', async () => {
+  await using lab = new AibLab();
+  const aib = lab.make();
+  const servers = aib.artifactMcpServers('conv-1') as unknown as Json[];
   assertEquals(servers.length, 1);
   const entry = servers[0];
   assertEquals(Object.keys(entry), ['name', 'command', 'args', 'env']);
@@ -716,13 +716,13 @@ Deno.test('the Deno Studio gives agents the Deno tool: entry shape and key', asy
   assert(artifactKeys.check(openText('artifact-key', env.STUDIO_ARTIFACT_KEY), 'conv-1'));
   assert(!artifactKeys.check(openText('artifact-key', env.STUDIO_ARTIFACT_KEY), 'conv-2'));
   assertEquals(validateMcpServers([entry])[0].name, 'studio_artifact'); // same shape --mcp-config entries have
-  assertEquals(envOf((studio.artifactMcpServers('c', true) as unknown as Json[])[0]).STUDIO_WORKTREE, '1');
+  assertEquals(envOf((aib.artifactMcpServers('c', true) as unknown as Json[])[0]).STUDIO_WORKTREE, '1');
 });
 
 Deno.test('the injected entry runs: an agent starting it gets the studio_artifact server', async () => {
   await using lab = new Lab();
-  await using studios = new StudioLab();
-  const entry = (studios.make().artifactMcpServers('conv-1') as unknown as Json[])[0];
+  await using aibs = new AibLab();
+  const entry = (aibs.make().artifactMcpServers('conv-1') as unknown as Json[])[0];
   const env = envOf(entry);
   const shim = lab.shim(lab.fake.url, {}, env.STUDIO_ARTIFACT_KEY, 'conv-1', [entry.command as string, ...(entry.args as string[])]);
   const result = (await shim.request('initialize', { protocolVersion: '2025-06-18' })).result as Json;
@@ -732,18 +732,18 @@ Deno.test('the injected entry runs: an agent starting it gets the studio_artifac
 });
 
 Deno.test('host URL provider wins and can fail; the tool can be turned off', async () => {
-  await using lab = new StudioLab();
-  const studio = lab.make();
-  studio.artifactUrlProvider = () => 'http://127.0.0.1:9999';
-  assertEquals(envOf((studio.artifactMcpServers('c') as unknown as Json[])[0]).STUDIO_ARTIFACT_URL, 'http://127.0.0.1:9999');
-  studio.artifactUrlProvider = () => {
+  await using lab = new AibLab();
+  const aib = lab.make();
+  aib.artifactUrlProvider = () => 'http://127.0.0.1:9999';
+  assertEquals(envOf((aib.artifactMcpServers('c') as unknown as Json[])[0]).STUDIO_ARTIFACT_URL, 'http://127.0.0.1:9999');
+  aib.artifactUrlProvider = () => {
     throw new Error('boom');
   };
-  assertEquals(envOf((studio.artifactMcpServers('c') as unknown as Json[])[0]).STUDIO_ARTIFACT_URL, 'http://127.0.0.1:8123');
+  assertEquals(envOf((aib.artifactMcpServers('c') as unknown as Json[])[0]).STUDIO_ARTIFACT_URL, 'http://127.0.0.1:8123');
   assertEquals(lab.make({ noArtifactTool: true }).artifactMcpServers('c'), []);
 });
 
-// ---- test_artifact_prompt.py: the system prompt goes only with Studio's own tool ----------------------------------------------
+// ---- test_artifact_prompt.py: the system prompt goes only with AIB's own tool ----------------------------------------------
 
 const ADVERTISED = { agentCapabilities: { sessionCapabilities: { systemPrompt: { mode: { override: {} } } } } };
 
@@ -753,7 +753,7 @@ function connection(initial: unknown): Connection {
   return c;
 }
 
-Deno.test("artifact prompt: sent when Studio's own tool is given and the agent advertises system prompts", () => {
+Deno.test("artifact prompt: sent when AIB's own tool is given and the agent advertises system prompts", () => {
   const own = [{ name: 'studio_artifact', ...artifactToolCommand() }];
   const out = connection(ADVERTISED).artifactPrompt(own) as Json;
   assertEquals((out.systemPrompt as Json).mode, 'append');
@@ -787,7 +787,7 @@ Deno.test('artifact prompt: not sent otherwise', () => {
   ) assertEquals(connection(ADVERTISED).artifactPrompt([impostor]), {}, JSON.stringify(impostor));
 });
 
-Deno.test("own studio_artifact permission requests: the Deno entry counts as Studio's own", () => {
+Deno.test("own studio_artifact permission requests: the Deno entry counts as AIB's own", () => {
   const c = connection(ADVERTISED);
   const ask = (name: string) => ({ toolCall: { toolCallId: 't', _meta: { claudeCode: { toolName: name } } } });
   c.mcpServers = [{ name: 'studio_artifact', ...artifactToolCommand(), env: [] }] as never;
@@ -799,7 +799,7 @@ Deno.test("own studio_artifact permission requests: the Deno entry counts as Stu
 
 // ---- the HTTP artifact tool (artifacts/mcp_http.ts): same replies as the stdio tool, and who may call it ---------------------------
 
-/** An HTTP artifact server over the lab's fake Studio, keyed k1 / conv1, its conversation open in lab.dir (a worktree chat). */
+/** An HTTP artifact server over the lab's fake AIB, keyed k1 / conv1, its conversation open in lab.dir (a worktree chat). */
 function httpTool(lab: Lab, open: { cwd: string; worktree: boolean } | null = { cwd: lab.dir, worktree: true }): ArtifactMcpHttp {
   const server = new ArtifactMcpHttp({
     conversation: (id) => (id === 'conv1' ? open : null),
@@ -832,7 +832,7 @@ async function statusOf(response: Promise<Response>): Promise<number> {
   return r.status;
 }
 
-Deno.test('HTTP tool: the stdio script gets the same replies and Studio gets the same requests', async () => {
+Deno.test('HTTP tool: the stdio script gets the same replies and AIB gets the same requests', async () => {
   await using lab = new Lab();
   Deno.mkdirSync(`${lab.dir}${SEP}outputs`);
   Deno.writeTextFileSync(`${lab.dir}${SEP}outputs${SEP}page.html`, '<p>hi</p>');
@@ -912,15 +912,15 @@ Deno.test('HTTP tool: refuses callers without the key, browsers, other hosts, ot
   const accepted = await server.handle(make(`localhost:${server.port}`), loopback);
   await accepted.body?.cancel();
   assertEquals(accepted.status, 200);
-  assertEquals(lab.fake.requests.length, 1); // only the accepted call reached Studio
+  assertEquals(lab.fake.requests.length, 1); // only the accepted call reached AIB
 });
 
 Deno.test('HTTP tool: the real per-conversation key from artifacts/keys.ts is required', async () => {
   await using lab = new Lab();
-  await using studios = new StudioLab();
-  const studio = studios.make({ artifactTransport: 'http' });
-  studio.artifactUrlProvider = () => lab.fake.url;
-  const [entry, fallback] = studio.artifactMcpServers('conv-1') as unknown as Json[];
+  await using aibs = new AibLab();
+  const aib = aibs.make({ artifactTransport: 'http' });
+  aib.artifactUrlProvider = () => lab.fake.url;
+  const [entry, fallback] = aib.artifactMcpServers('conv-1') as unknown as Json[];
   const headers = Object.fromEntries((entry.headers as { name: string; value: string }[]).map((h) => [h.name, h.value]));
   const ok = await post(entry.url as string, call(1, 'list', {}), headers);
   assertEquals(ok.status, 200);
@@ -931,12 +931,12 @@ Deno.test('HTTP tool: the real per-conversation key from artifacts/keys.ts is re
   assertEquals(fallback.command, artifactToolCommand().command);
 });
 
-Deno.test('built-binary Studio: an http entry first, the stdio entry as fallback; agents get the one they support', async () => {
-  await using studios = new StudioLab();
-  const studio = studios.make({ artifactTransport: 'http' });
-  assertEquals(studio.artifactTransport(), 'http');
-  assertEquals(studios.make().artifactTransport(), 'stdio'); // deno run (these tests): stdio, like the Python Studio
-  const servers = studio.artifactMcpServers('conv-1', true) as unknown as Json[];
+Deno.test('built-binary AIB: an http entry first, the stdio entry as fallback; agents get the one they support', async () => {
+  await using aibs = new AibLab();
+  const aib = aibs.make({ artifactTransport: 'http' });
+  assertEquals(aib.artifactTransport(), 'http');
+  assertEquals(aibs.make().artifactTransport(), 'stdio'); // deno run (these tests): stdio, as in an older AIB
+  const servers = aib.artifactMcpServers('conv-1', true) as unknown as Json[];
   assertEquals(servers.map((s) => s.type ?? 'stdio'), ['http', 'stdio']);
   const entry = servers[0];
   assertEquals(Object.keys(entry), ['type', 'name', 'url', 'headers']);
@@ -946,7 +946,7 @@ Deno.test('built-binary Studio: an http entry first, the stdio entry as fallback
   assertEquals(headers[CONVERSATION_HEADER], 'conv-1');
   assert(artifactKeys.check(headers[KEY_HEADER], 'conv-1'));
   assertEquals(envOf(servers[1]).STUDIO_WORKTREE, '1');
-  assertEquals((studio.artifactMcpServers('conv-2') as unknown as Json[])[0].url, entry.url); // one server per Studio
+  assertEquals((aib.artifactMcpServers('conv-2') as unknown as Json[])[0].url, entry.url); // one server per AIB
   const kinds = (list: unknown) => (list as Json[]).map((s) => s.type ?? 'stdio');
   let [given, skipped] = selectMcpServers(servers as never, { agentCapabilities: { mcpCapabilities: { http: true } } });
   assertEquals([kinds(given), skipped], [['http'], []]);
@@ -955,18 +955,18 @@ Deno.test('built-binary Studio: an http entry first, the stdio entry as fallback
   const user = { type: 'http', name: 'remote', url: 'https://example.com/mcp', headers: [] };
   [, skipped] = selectMcpServers([user, ...servers] as never, { agentCapabilities: {} });
   assertEquals(skipped, ['remote']);
-  // Studio's own http entry gets the artifact prompt and the own-tool permission rule; another http server of that name does not.
+  // AIB's own http entry gets the artifact prompt and the own-tool permission rule; another http server of that name does not.
   assert('systemPrompt' in (connection(ADVERTISED).artifactPrompt([entry]) as Json));
   assertEquals(connection(ADVERTISED).artifactPrompt([{ ...entry, url: 'http://127.0.0.1:1/mcp' }]), {});
   const c = connection(ADVERTISED);
   c.mcpServers = [entry] as never;
   assert(c.ownArtifactTool({ toolCall: { toolCallId: 't', _meta: { claudeCode: { toolName: 'mcp__studio_artifact__publish' } } } }));
-  await studio.close();
+  await aib.close();
   const after = await fetch(entry.url as string, { method: 'POST', body: '{}' }).then(async (r) => {
     await r.body?.cancel();
     return 'answered';
   }, () => 'closed');
-  assertEquals(after, 'closed'); // the listener stops with the Studio
+  assertEquals(after, 'closed'); // the listener stops with AIB
 });
 
 // ---- archive (Deno only): the agent archives / unarchives its own chat's artifacts ------------------------------------------
@@ -991,7 +991,7 @@ Deno.test('archive: sends the ids for this chat, says what was done, and list ma
   assert(firstText(refused).includes('That artifact belongs to another chat'), firstText(refused));
   assertEquals(lab.fake.requests.at(-1)!.body, { conversationId: 'conv1', ids: ['b2'], archived: false });
   assertEquals((await shim.call('archive', { ids: [] })).isError, true, 'no ids: refused before any request');
-  // list: archived ones carry archived: true, others no extra key (the reply stays Python's for them)
+  // list: archived ones carry archived: true, others no extra key (the reply is unchanged for them)
   lab.fake.reply = [200, { artifacts: [
     { id: 'a1', title: 'Old', kind: 'html', version: 1, link: 'studio-artifact://a1', archivedAt: 5.0 },
     { id: 'c3', title: 'New', kind: 'md', version: 2, link: 'studio-artifact://c3' },

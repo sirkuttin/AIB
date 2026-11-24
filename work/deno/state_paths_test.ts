@@ -1,6 +1,6 @@
 /**
- * server/state/paths.ts: the state_paths cases of work/test_state_migration.py and work/test_package_context.py, parity with Python
- * through the retired state_paths_shim.py, and interop (an owner-only folder made by one side passes the other's check; Python's
+ * server/state/paths.ts: the state_paths cases of work/test_state_migration.py and work/test_package_context.py, the frozen answers
+ * through the retired state_paths_shim.py, and interop (an owner-only folder made by one side passes the other's check; the
  * migrate does the move inside Deno's prepare). Temp folders and fake environments only: the real per-user folder is never resolved
  * except to prove the hard block refuses it.
  */
@@ -35,7 +35,7 @@ const WIN = Deno.build.os === 'windows';
 const FAMILY = 'Claude_pzs8sxrjxfjjc';
 const APP_PARTS = ['app'];
 const SHIM = 'state_paths_shim';
-/** The frozen Python answers were recorded for a code folder in the old app location (outputs, then agent-studio); the answers do not depend on that name. */
+/** The frozen answers were recorded for a code folder in the old app location (outputs, then agent-studio); the answers do not depend on that name. */
 const legacy = (code: string) => code.includes('installed') ? code : code.replace(/([\\/])app$/, '$1outputs$1agent-studio');
 
 function tempRoot(): { root: string; [Symbol.dispose](): void } {
@@ -93,7 +93,7 @@ const exists = (path: string) => {
 };
 
 // ---- locations ---------------------------------------------------------------------------------
-Deno.test('per-user folder per platform, same as Python', async () => {
+Deno.test('per-user folder per platform, as the frozen answers', async () => {
   const py = new Frozen();
   const env = { LOCALAPPDATA: 'C:/Users/x/AppData/Local', XDG_STATE_HOME: '/state' };
   assertEquals(userStateDir(env, 'win32', 'C:/Users/x'), pathOf('C:/Users/x/AppData/Local', 'AgentStudio'));
@@ -114,7 +114,7 @@ Deno.test('per-user folder per platform, same as Python', async () => {
   }
 });
 
-Deno.test('worktree detection, same as Python', async () => {
+Deno.test('worktree detection, as the frozen answers', async () => {
   const py = new Frozen();
   using tmp = tempRoot();
   const wt = checkout(tmp.root, 'wt', true);
@@ -134,7 +134,7 @@ Deno.test('worktree detection, same as Python', async () => {
   assertEquals(oldDefaultDir(wt), pathOf(tmp.root, 'wt', 'work', 'agent-studio-state'));
 });
 
-Deno.test('precedence: --state-dir, then the environment, then the default; same as Python', async () => {
+Deno.test('precedence: --state-dir, then the environment, then the default; as the frozen answers', async () => {
   const py = new Frozen();
   using tmp = tempRoot();
   const main = checkout(tmp.root, 'main', false);
@@ -168,7 +168,7 @@ Deno.test('precedence: --state-dir, then the environment, then the default; same
   }
 });
 
-Deno.test('hard block: the real per-user folder is refused under test, with the message Python gave', () => {
+Deno.test('hard block: the real per-user folder is refused under test, with the message the frozen answers hold', () => {
   using tmp = tempRoot();
   const main = checkout(tmp.root, 'main', false);
   const env = realEnv();
@@ -253,7 +253,7 @@ Deno.test('package detection: a child of a packaged app is found by its redirect
 });
 
 Deno.test({
-  name: 'package detection: the real GetCurrentPackageFullName binding agrees with Python',
+  name: 'package detection: the real GetCurrentPackageFullName binding agrees with the frozen answers',
   ignore: !WIN,
   async fn() {
     const py = new Frozen();
@@ -264,7 +264,7 @@ Deno.test({
 });
 
 // ---- prepare -----------------------------------------------------------------------------------
-Deno.test('prepare: a worktree keeps its own folder, an explicit folder is used as given, and nothing is created or moved; as Python answered', async () => {
+Deno.test('prepare: a worktree keeps its own folder, an explicit folder is used as given, and nothing is created or moved; as the frozen answers say', async () => {
   const py = new Frozen();
   using tmp = tempRoot();
   const wt = checkout(tmp.root, 'wt', true);
@@ -276,7 +276,7 @@ Deno.test('prepare: a worktree keeps its own folder, an explicit folder is used 
   const chosen = pathOf(tmp.root, 'chosen');
   const explicit = await prepare({ cliStateDir: chosen, env, codeRoot: main });
   assertEquals(explicit.stateDir, chosen);
-  assert(!exists(chosen), 'a --state-dir that does not exist yet is left for Studio to create');
+  assert(!exists(chosen), 'a --state-dir that does not exist yet is left for AIB to create');
   assert(!exists(pathOf(tmp.root, 'local')));
   for (const [cli, code] of [[null, wt], [chosen, main]] as const) {
     const mine = await prepare({ cliStateDir: cli, env, codeRoot: code });
@@ -299,7 +299,7 @@ Deno.test('a fresh private folder passes the check, existing or newly made, with
 });
 
 Deno.test({
-  name: 'Windows: Everyone, Users or Authenticated Users with write access fail, same as Python',
+  name: 'Windows: Everyone, Users or Authenticated Users with write access fail, as the frozen answers',
   ignore: !WIN,
   fn() {
     using tmp = tempRoot();

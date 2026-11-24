@@ -1,13 +1,13 @@
 /**
  * server/artifacts/keys.ts: the artifact_keys cases of work/test_state_migration.py, test_auth_gate.py and test_log_setup.py, and
- * interop with Python both ways (the two servers share the state folder, so a key issued by either must check in the other).
+ * interop with older files both ways (two servers share the state folder, so a key issued by either must check in the other).
  */
 import { assert, assertEquals } from './_assert.ts';
 import { check, configure, issue, SECRET_FILE, secretOfFile } from '../../app/server/artifacts/keys.ts';
 import { join } from '../../app/server/platform/path.ts';
 import { sealingOn } from '../../app/server/state/sealed.ts';
 
-/** The Python interop cases share the plain file format; the retired Python server cannot open a DPAPI-sealed secret. */
+/** The interop cases share the plain file format; an older server cannot open a DPAPI-sealed secret. */
 function plainSecrets(): { [Symbol.dispose](): void } {
   const before = Deno.env.get('AIB_SEAL');
   Deno.env.set('AIB_SEAL', 'off');
@@ -100,7 +100,7 @@ Deno.test('a secret file that never reaches 32 bytes means no keys', () => {
 });
 
 Deno.test('the plain secret file is 32 random bytes and keys are the HMAC every other program computes from it', async () => {
-  // The formula is the contract with any other reader of the file (the retired Python server computed the same): HMAC-SHA256 of the
+  // The formula is the contract with any other reader of the file (an older server computed the same): HMAC-SHA256 of the
   // conversation id, hex, with the 32 raw bytes of artifact-key-secret.
   using _plain = plainSecrets();
   using tmp = temp();

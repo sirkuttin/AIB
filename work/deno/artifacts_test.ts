@@ -1,9 +1,9 @@
 /**
  * server/artifacts/artifacts.ts (artifacts.py): the cases of work/test_artifacts.py (StoreTests, the RouteTests that only need the
- * Service, WatcherTests, WriteTrackerTests) and work/test_artifacts_followups.py (ChatKeyed), parity with Python through
- * the retired artifacts_shim.py, and interop both ways on one store folder (Python and Deno share the state folder).
+ * Service, WatcherTests, WriteTrackerTests) and work/test_artifacts_followups.py (ChatKeyed), the frozen answers through
+ * the retired artifacts_shim.py, and interop both ways on one store folder (older files and Deno share the state folder).
  *
- * Not ported here (they need a whole Studio): bootstrap's artifactOrigin, the Studio page CSP framing the origin, the Origin-header
+ * Not ported here (they need a whole AIB): bootstrap's artifactOrigin, AIB page CSP framing the origin, the Origin-header
  * gate on the routes (security.authorize, covered by security_test.ts), events reaching the conversation event list and
  * /api/live/state, SplitModeTests / InProcessModeTests (real web server + agent host), OwnToolApproval (studio.Connection).
  */
@@ -304,7 +304,7 @@ Deno.test('store: kind derivation', () => {
   for (const [name, kind] of cases) assertEquals(kindFor(name), kind, name);
 });
 
-// ---- Service routes (RouteTests without a whole Studio) ----------------------------------------------
+// ---- Service routes (RouteTests without a whole AIB) ----------------------------------------------
 
 function serviceFixture(live: Record<string, string> = {}) {
   const tmp = temp();
@@ -701,7 +701,7 @@ Deno.test("tracker: Claude Code's tool names, and later updates without a kind",
   assertEquals(tracker.written(), ['', '2', '3'].map((s) => target + s));
 });
 
-// ---- parity with Python ------------------------------------------------------------------------------
+// ---- frozen answers ------------------------------------------------------------------------------
 
 type Step = { call?: string; args?: unknown[]; kwargs?: Record<string, unknown>; clock?: number; limits?: Record<string, number> };
 type Result = { ok?: unknown; error?: string; message?: string; status?: number | null; code?: string | null };
@@ -792,7 +792,7 @@ function untie(value: unknown): unknown {
   return value;
 }
 
-/** Python's results normalized like ours (Python errors are ArtifactError / FileNotFoundError...). */
+/** The frozen results normalized like ours (errors are ArtifactError / FileNotFoundError...). */
 function errorKinds(results: Result[]): Result[] {
   return results.map((
     r,
@@ -801,7 +801,7 @@ function errorKinds(results: Result[]): Result[] {
 
 let storeRuns = 0;
 
-/** The same steps on a fresh store: what Deno gives must be what Python gave (results, error messages, manifests on disk, ids aside). */
+/** The same steps on a fresh store: what Deno gives must be what the frozen answers hold (results, error messages, manifests on disk, ids aside). */
 async function sameStoreRun(steps: Step[]): Promise<{ deno: string }> {
   using a = temp();
   const denoRoot = join(a.dir, 'artifacts');
@@ -983,7 +983,7 @@ function serviceRun(root: string, project: string, steps: Record<string, unknown
   return { results, events };
 }
 
-Deno.test('parity: the routes answer as Python does', async () => {
+Deno.test('parity: the routes answer as the frozen answers say', async () => {
   using a = temp();
   using c = temp();
   const steps: Record<string, unknown>[] = [
@@ -1082,7 +1082,7 @@ function watcherRun(root: string, project: string, steps: Record<string, unknown
   return { events, store: JSON.parse(JSON.stringify(manifests.map((m) => ({ ...store.summary(m), byes: m.versions.map((v) => v.by) })))) };
 }
 
-Deno.test('parity: the watcher does what Python does for the same writes', async () => {
+Deno.test('parity: the watcher does what the frozen answers say for the same writes', async () => {
   using a = temp();
   using c = temp();
   const base = 1_700_000_000_000_000_000;
@@ -1122,7 +1122,7 @@ Deno.test('parity: the watcher does what Python does for the same writes', async
 });
 
 Deno.test('parity: the write tracker records the same paths', async () => {
-  // the frozen Python answer was recorded for a project folder under the old app folder (<repo>/outputs/agent-studio/proj)
+  // the frozen answer was recorded for a project folder under the old app folder (<repo>/outputs/agent-studio/proj)
   const cwd = join(Deno.cwd().replace(/[\\/][^\\/]*$/, ''), 'outputs', 'agent-studio', 'proj');
   const updates = [
     update({ kind: 'edit', content: [{ type: 'diff', path: join(cwd, 'outputs', 'a.html') }] }),
@@ -1259,7 +1259,7 @@ Deno.test('interop: archivedAt, deletedAt and deletedSource (Deno only) survive 
   store.setArchived(m.id, true);
   const deletedSource = { path: 'P/r.html', rel: 'r.html', bin: 'deleted-source/r.html', hash: 'ab', size: 10, mtime: 1700000000000 };
   store.save({ ...store.get(m.id), deletedAt: 1003.0, deletedSource });
-  assert(/"archivedAt": 1000\.0/.test(Deno.readTextFileSync(join(root, m.id, 'manifest.json'))), 'times are Python floats');
+  assert(/"archivedAt": 1000\.0/.test(Deno.readTextFileSync(join(root, m.id, 'manifest.json'))), 'times are floats with .0');
   storeRun(root, [{ call: 'set_pinned', args: [m.id, true] }], 1006.0);
   const after = store.get(m.id);
   assertEquals(after.pinned, true, 'the other store did write it');

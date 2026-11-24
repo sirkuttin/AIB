@@ -17,15 +17,15 @@ import { pidAlive } from '../../app/server/host/host_client.ts';
 
 type Json = Record<string, unknown>;
 
-function studioIn(state: string, keeper: KeeperLink | null = null): Aib {
-  const studio = new Aib({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper });
-  studio.ownerProbe = () => null;
-  studio.connectionFactory = (_command, cwd, provider, options) =>
+function aibIn(state: string, keeper: KeeperLink | null = null): Aib {
+  const aib = new Aib({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper });
+  aib.ownerProbe = () => null;
+  aib.connectionFactory = (_command, cwd, provider, options) =>
     new Connection(['python3', `${ROOT}/fake_acp.py`, '--cancel-aware'], cwd, provider, {
       ...options,
       wsl: options?.wsl ? { ...options.wsl, program: '/usr/bin/python3' } : options?.wsl,
     });
-  return studio;
+  return aib;
 }
 
 const said = (c: Connection) =>
@@ -40,12 +40,12 @@ Deno.test({
   async fn() {
     const state = Deno.makeTempDirSync({ prefix: 'aib-wsl-agent-e2e-' });
     await prepareRoot();
-    const studios: Aib[] = [];
+    const aibs: Aib[] = [];
     try {
       const host = await readyHost();
       const ref = refOf({ kind: 'wsl', distro: KEY, linuxPath: `${ROOT}/repo` });
-      const a = studioIn(state);
-      studios.push(a);
+      const a = aibIn(state);
+      aibs.push(a);
       const c = await a.connect('claude', ref, null, { ownCopy: true });
       // the repo is git: the chat works in its own worktree in the distro (wsl_worktrees_e2e checks it in detail)
       assert(c.agentCwd.startsWith(`${ROOT}/data-`) && c.agentCwd.includes('/worktrees/'), c.agentCwd);
@@ -62,9 +62,9 @@ Deno.test({
       for (const conn of a.connections.values()) conn.sessionLease?.release();
       // a crashed AIB's files are closed by the OS (Windows cannot delete a file a live handle holds): its history stores too
       await a.historyClient()?.shutdown().catch(() => {});
-      studios.pop();
-      const b = studioIn(state);
-      studios.push(b);
+      aibs.pop();
+      const b = aibIn(state);
+      aibs.push(b);
       assertEquals(await b.adoptKeeper(), 1);
       const r = b.connections.get(c.id)!;
       assert(r?.ready && !r.closed, 'adopted from the distro keeper');
@@ -72,7 +72,7 @@ Deno.test({
       const client = (await linkOf(await readyHost()).client(false))!;
       assertEquals(liveUserChannels(await client.list()).length, 1, 'one agent in the distro, never a second');
     } finally {
-      for (const s of studios) await s.close().catch(() => {});
+      for (const s of aibs) await s.close().catch(() => {});
       await cleanRoot();
       Deno.removeSync(state, { recursive: true });
     }
@@ -85,21 +85,21 @@ Deno.test({
   async fn() {
     const state = Deno.makeTempDirSync({ prefix: 'aib-wsl-continue-e2e-' });
     await prepareRoot();
-    const studios: Aib[] = [];
+    const aibs: Aib[] = [];
     try {
       await readyHost();
       const ref = refOf({ kind: 'wsl', distro: KEY, linuxPath: `${ROOT}/repo` });
-      const a = studioIn(state);
-      studios.push(a);
+      const a = aibIn(state);
+      aibs.push(a);
       const c = await a.connect('claude', ref);
       const pid = c.process?.pid;
       newAib(); // a crash: the Linux keeper keeps the agent
       a.reconnectStop.set();
       for (const conn of a.connections.values()) conn.sessionLease?.release();
       await a.historyClient()?.shutdown().catch(() => {}); // the OS closes a crashed AIB's files (its history stores)
-      studios.pop();
-      const b = studioIn(state);
-      studios.push(b);
+      aibs.pop();
+      const b = aibIn(state);
+      aibs.push(b);
       b.store!.forgetConversation('claude', c.sessionId!); // not on the recovery list: the start never asks the distro
       assertEquals(await b.adoptKeeper(), 0);
       const r = await b.connect('claude', ref, c.sessionId);
@@ -109,7 +109,7 @@ Deno.test({
       const client = (await linkOf(await readyHost()).client(false))!;
       assertEquals(liveUserChannels(await client.list()).length, 1, 'one agent in the distro, never a second');
     } finally {
-      for (const s of studios) await s.close().catch(() => {});
+      for (const s of aibs) await s.close().catch(() => {});
       await cleanRoot();
       Deno.removeSync(state, { recursive: true });
     }
@@ -145,7 +145,7 @@ Deno.test({
     const marker = `${state}\\orphan-ran.txt`;
     const info = `${state}\\keeper\\keeper.json`;
     await prepareRoot();
-    const studios: Aib[] = [];
+    const aibs: Aib[] = [];
     const links: KeeperLink[] = [];
     try {
       const linkA = windowsKeeper(state, marker);
@@ -153,8 +153,8 @@ Deno.test({
       newAib(withWindowsKeeper(linkA));
       const host = (await readyHost()) as WslHostImpl;
       const ref = refOf({ kind: 'wsl', distro: KEY, linuxPath: `${ROOT}/repo` });
-      const a = studioIn(state, linkA);
-      studios.push(a);
+      const a = aibIn(state, linkA);
+      aibs.push(a);
       const c = await a.connect('claude', ref);
       await a.liveCall('prompt', { id: c.id, text: 'stream:4:20', clientMessageId: 'm1' });
       await until(() => c.permissions.size === 1, 'the question', 30);
@@ -164,7 +164,7 @@ Deno.test({
 
       // Quit AIB with work running (main.ts close(..., release, hold)): the chat stays, the keep-alive stays, the keeper holds.
       await a.release({ hold: true });
-      studios.pop();
+      aibs.pop();
       await pause(6000); // past exit-after (3 s) and orphan-after + 2 tries (3 s)
       assert(pidAlive(winPid), 'the Windows keeper kept running for the keep-alive');
       assertEquals(readOr(marker), '', 'no AIB was started again in the tray');
@@ -174,8 +174,8 @@ Deno.test({
       const linkB = windowsKeeper(state, marker);
       links.push(linkB);
       newAib(withWindowsKeeper(linkB));
-      const b = studioIn(state, linkB);
-      studios.push(b);
+      const b = aibIn(state, linkB);
+      aibs.push(b);
       // the recovery list lost the chat (an AIB without WSL support forgot it): the live keep-alive alone names the distro to ask
       assert(b.store!.forgetConversation('claude', c.sessionId!), 'it was on the recovery list');
       assertEquals(await b.adoptKeeper(), 1);
@@ -195,12 +195,12 @@ Deno.test({
       // A plain quit stops the chat; with nothing left in the distro the keep-alive goes at once and the Windows keeper idles out
       // (3 s here). A keep-alive left running would end only after its own 10 s grace.
       await b.close();
-      studios.pop();
+      aibs.pop();
       assert(!readOr(info).includes('"held": true'), 'a plain quit with nothing running does not hold');
       await until(() => !pidAlive(winPid), 'the Windows keeper left once nothing ran', 9);
       assertEquals(readOr(marker), '', 'still no restart in the tray');
     } finally {
-      for (const s of studios) await s.close().catch(() => {});
+      for (const s of aibs) await s.close().catch(() => {});
       for (const link of links) {
         try {
           const client = await link.client(false);

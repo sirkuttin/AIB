@@ -18,7 +18,7 @@
     branches.set(cwd, hit);
     if (!hit.busy && Date.now() - hit.at > BRANCH_TTL) {
       hit.busy = true;
-      // The page's own GET helper sends the Studio token; plain fetch is the fallback for pages without it.
+      // The page's own GET helper sends AIB token; plain fetch is the fallback for pages without it.
       Promise.resolve()
         .then(() =>
           typeof root.AgentStudioGet === 'function'

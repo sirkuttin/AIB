@@ -40,7 +40,7 @@ export class WslClientCaps extends ClientCaps {
     super(linuxPath, { ...options, fs: null });
   }
 
-  /** Client terminals as Studio says; fs is always off for a WSL chat. */
+  /** Client terminals as AIB says; fs is always off for a WSL chat. */
   override configure(terminal = false, _fs: FsMode = null): void {
     super.configure(terminal, null);
   }

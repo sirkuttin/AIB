@@ -1,5 +1,5 @@
 /**
- * Allow rules in a WSL chat through Studio, Connection and the keeper (FakeWslHost lab, fake ACP agent; audit F1, F3, F6): the agent
+ * Allow rules in a WSL chat through AIB, Connection and the keeper (FakeWslHost lab, fake ACP agent; audit F1, F3, F6): the agent
  * asks to edit files with absolute Linux paths, AIB fetches the distro facts (the fake helper's `allow.facts` over the mapped temp
  * folder), offers "Always allow", saves an edit rule keyed by the project's ref, answers the next edit itself, asks for an edit
  * outside the project, answers `git status` with the built-in Safe reads, and the sweep answers another WSL chat's waiting card.
@@ -26,7 +26,7 @@ class Lab {
   readonly state = this.dir + SEP + 'state';
   readonly work = this.dir + SEP + 'app';
   readonly host: FakeWslHost;
-  readonly studios: Aib[] = [];
+  readonly aibs: Aib[] = [];
   constructor() {
     Deno.mkdirSync(this.work + SEP + 'src', { recursive: true });
     Deno.mkdirSync(this.dir + SEP + 'other', { recursive: true });
@@ -35,11 +35,11 @@ class Lab {
     this.host.folders.set('/home/u/other', this.dir + SEP + 'other');
     setWslHostResolver((d) => (d === 'ubuntu' ? this.host : null));
   }
-  studio(): Aib {
+  aib(): Aib {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
-    const studio = new Aib({ stateDir: this.state, port: 0, ownersDir: null }, { keeper });
-    studio.ownerProbe = () => null;
-    studio.connectionFactory = (_command, cwd, provider, options) => {
+    const aib = new Aib({ stateDir: this.state, port: 0, ownersDir: null }, { keeper });
+    aib.ownerProbe = () => null;
+    aib.connectionFactory = (_command, cwd, provider, options) => {
       const wsl = options?.wsl ? { ...options.wsl, program: undefined } : options?.wsl;
       // every agent names its session differently (two chats of one project at once)
       return new Connection([PYTHON, FAKE.replace(/fake_acp\.py$/, 'fake_acp_unique.py'), '--cancel-aware'], cwd, provider, {
@@ -47,11 +47,11 @@ class Lab {
         wsl,
       });
     };
-    this.studios.push(studio);
-    return studio;
+    this.aibs.push(aib);
+    return aib;
   }
   async [Symbol.asyncDispose](): Promise<void> {
-    for (const s of this.studios.reverse()) await s.close().catch(() => {});
+    for (const s of this.aibs.reverse()) await s.close().catch(() => {});
     setWslHostResolver(null);
     await this.host.stopKeeper();
     const info = readKeeperInfo(this.state);
@@ -88,35 +88,35 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new Lab();
-    const studio = lab.studio();
-    studio.allow!.store.setEnabled(true);
-    const c = await studio.connect('claude', REF);
+    const aib = lab.aib();
+    aib.allow!.store.setEnabled(true);
+    const c = await aib.connect('claude', REF);
     assertEquals([c.cwd, c.agentCwd], [REF, '/home/u/app']);
 
-    await studio.liveCall('prompt', { id: c.id, text: 'allowedit:/home/u/app/src/main.ts', clientMessageId: 'm1' });
+    await aib.liveCall('prompt', { id: c.id, text: 'allowedit:/home/u/app/src/main.ts', clientMessageId: 'm1' });
     await until(() => c.permissions.size === 1, 'the edit card', 10);
     const first = card(c);
     const project = (first.allow as Json).project as Json;
     assertEquals([project.available, project.hideAgentAlways], [true, true], JSON.stringify(project));
-    const [status, saved] = await studio.liveCall('allow-answer', { id: c.id, key: first.key, option: 'yes', scope: 'project' });
+    const [status, saved] = await aib.liveCall('allow-answer', { id: c.id, key: first.key, option: 'yes', scope: 'project' });
     assertEquals(status, 200, JSON.stringify(saved));
     assertEquals(((saved as Json).rules as Json[])[0].project, REF, 'keyed by the ref (F3)');
     await until(() => !c.busy, 'turn end', 10);
 
-    await studio.liveCall('prompt', { id: c.id, text: 'allowedit:/home/u/app/src/b.ts', clientMessageId: 'm2' });
+    await aib.liveCall('prompt', { id: c.id, text: 'allowedit:/home/u/app/src/b.ts', clientMessageId: 'm2' });
     await until(() => said(c).includes('allow outcome=yes;allow outcome=yes;'), 'answered by the rule', 10);
     await until(() => !c.busy, 'turn end', 10);
     assertEquals(c.permissions.size, 0);
     assertEquals(autos(c), ['Edits in src/']);
 
-    await studio.liveCall('prompt', { id: c.id, text: 'allowedit:/home/u/other/x.ts', clientMessageId: 'm3' });
+    await aib.liveCall('prompt', { id: c.id, text: 'allowedit:/home/u/other/x.ts', clientMessageId: 'm3' });
     await until(() => c.permissions.size === 1, 'outside the project asks', 10);
     const out = (card(c).allow as Json).project as Json;
     assertEquals(out.reason, 'Not available: AIB never auto-allows files outside the project.');
-    await studio.liveCall('permission', { id: c.id, key: card(c).key, option: 'no' });
+    await aib.liveCall('permission', { id: c.id, key: card(c).key, option: 'no' });
     await until(() => !c.busy, 'turn end', 10);
 
-    await studio.liveCall('prompt', { id: c.id, text: 'allow:git status', clientMessageId: 'm4' });
+    await aib.liveCall('prompt', { id: c.id, text: 'allow:git status', clientMessageId: 'm4' });
     await until(() => autos(c).length === 2, 'Safe reads', 10);
     assertEquals(autos(c)[1], 'Safe reads');
     assert(lab.host.calls.some(([m]) => m === 'allow.facts'), 'the facts came from the helper');
@@ -129,15 +129,15 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new Lab();
-    const studio = lab.studio();
-    studio.allow!.store.setEnabled(true);
-    const a = await studio.connect('claude', REF);
-    const b = await studio.connect('claude', REF);
-    await studio.liveCall('prompt', { id: b.id, text: 'allowedit:/home/u/app/src/deep/y.ts', clientMessageId: 'b1' });
+    const aib = lab.aib();
+    aib.allow!.store.setEnabled(true);
+    const a = await aib.connect('claude', REF);
+    const b = await aib.connect('claude', REF);
+    await aib.liveCall('prompt', { id: b.id, text: 'allowedit:/home/u/app/src/deep/y.ts', clientMessageId: 'b1' });
     await until(() => b.permissions.size === 1, 'b waits', 10);
-    await studio.liveCall('prompt', { id: a.id, text: 'allowedit:/home/u/app/x.ts', clientMessageId: 'a1' });
+    await aib.liveCall('prompt', { id: a.id, text: 'allowedit:/home/u/app/x.ts', clientMessageId: 'a1' });
     await until(() => a.permissions.size === 1, 'a waits', 10);
-    const [status, saved] = await studio.liveCall('allow-answer', { id: a.id, key: card(a).key, option: 'yes', scope: 'project' });
+    const [status, saved] = await aib.liveCall('allow-answer', { id: a.id, key: card(a).key, option: 'yes', scope: 'project' });
     assertEquals(status, 200, JSON.stringify(saved));
     assertEquals((saved as Json).alsoAllowed, 1);
     await until(() => said(b).includes('allow outcome=yes;'), 'b answered by the new rule', 10);

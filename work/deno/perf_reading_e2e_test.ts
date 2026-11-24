@@ -1,5 +1,5 @@
 /**
- * A long chat read far up, end to end (the perf lab: a real Studio, the scripted agent, headless Chrome, no window): 2,500 agent
+ * A long chat read far up, end to end (the perf lab: a real AIB, the scripted agent, headless Chrome, no window): 2,500 agent
  * messages with steps (~5,000 rows) and 15 helpers, turn open. You wheel up through the history, then sit there, then wheel back
  * down to the end. Before the fix the drawn window only ever grew while you read: 3,000 rows, ~190k DOM nodes and ~6,000 listeners,
  * and the page used ~4.6% of a core doing nothing (style recalcs and layouts over all of it; over 5% on a slower PC).

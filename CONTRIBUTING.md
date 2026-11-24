@@ -79,7 +79,7 @@ deno task test:prerelease   # the full suite (all three attention modes), then p
   one-line summary last. Add `.test-logs/` to `.git/info/exclude`. `--no-log` turns it off.
 - `SHARDS` in `tools/test.ts` runs the longest files whose tests are independent (scroll and layout e2e, the worktree sync and clash
   files) as several processes, each with every N-th test (`--no-shard` runs whole files). A browser e2e file starts one headless
-  Chrome per process and gives each scenario its own tab and its own Studio (`AIB_LAB_FRESH_BROWSER=1`: one Chrome per scenario).
+  Chrome per process and gives each scenario its own tab and its own AIB (`AIB_LAB_FRESH_BROWSER=1`: one Chrome per scenario).
 - `--jobs 12` is faster on an idle 24-core machine, but browser e2e tests then miss deadlines; the default (3) passes.
 - Ports: a test never names a port. Everything it starts binds port 0 and the test reads the port back (`work/deno/_ports.ts`);
   `port_guard_test.ts` fails on a fixed or guessed port. Each test gets its own temp data folder.

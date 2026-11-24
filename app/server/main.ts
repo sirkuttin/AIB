@@ -25,7 +25,7 @@ import { keeperBinary, keeperRunning, PROTOCOL as KEEPER_PROTOCOL } from './keep
 import { attachHost, HostProxy } from './host/host_proxy.ts';
 import type { LiveBackend } from './host/backend.ts';
 import { holdKeeper, orphanCommand, Aib } from './host/aib.ts';
-import { hostMain, loadMcp, studioOptions } from './host/agent_host.ts';
+import { hostMain, loadMcp, aibOptions } from './host/agent_host.ts';
 import { UpdateService } from './desktop/updater.ts';
 import { notifyUpdateReady } from './desktop/notify.ts';
 import { makeContext, WebServer } from './web/server.ts';
@@ -259,7 +259,7 @@ export async function main(argv: string[]): Promise<void> {
     // and updates; else the first free pair from 8777, like the Tauri app.
     if (!portGiven(args)) options.port = lastPortPair(stateDir, portFree) ?? choosePortPair(portFree);
   }
-  let studio: Aib | null = null;
+  let aib: Aib | null = null;
   let host: LiveBackend;
   let webInstanceId: string;
   // One process with the keeper (owner decisions D3 and "the keeper is always on", docs/agent-host.md "The keeper"): the agents run
@@ -279,10 +279,10 @@ export async function main(argv: string[]): Promise<void> {
   if (options.inProcess || merged) {
     // Agents run inside this process (studio.py --in-process): restarting it ends every conversation, unless they run in the keeper.
     // The one-process app keeps the agent host's recovery and queue files (studio-*-host.json), so switching modes keeps the list.
-    studio = new Aib(studioOptions(options, mcpServers), merged ? { port: 'host' } : {});
-    host = studio;
-    webInstanceId = studio.instanceId;
-    void studio.adoptKeeper(); // chats whose agents still run in the keeper: taken over now, while the server starts (state waits)
+    aib = new Aib(aibOptions(options, mcpServers), merged ? { port: 'host' } : {});
+    host = aib;
+    webInstanceId = aib.instanceId;
+    void aib.adoptKeeper(); // chats whose agents still run in the keeper: taken over now, while the server starts (state waits)
     if (merged) log.announce('studio', 'one process: agents run in the keeper, no separate agent host');
   } else {
     webInstanceId = crypto.randomUUID().replaceAll('-', '');
@@ -309,7 +309,7 @@ export async function main(argv: string[]): Promise<void> {
   // The chats' terminal shells run in the keeper too (keeper 1.2.0+), so they outlive a restart, crash or update of AIB. With the
   // keeper off but one still running for the folder, its shells are taken over and new ones start inside AIB.
   const terminalKeeper = keeperOn || keeperRunning(stateDir)
-    ? new KeeperLink({ dataDir: stateDir, ...(studio ? { orphan: orphanCommand() } : {}) })
+    ? new KeeperLink({ dataDir: stateDir, ...(aib ? { orphan: orphanCommand() } : {}) })
     : null;
   let closing = false;
   let desktopApp: DesktopApp | null = null; // the window and tray (desktop app only), made once the server listens
@@ -326,8 +326,8 @@ export async function main(argv: string[]): Promise<void> {
     shutdown: () => void close('shutdown requested'),
     agentOptions: options as never,
     terminalKeeper,
-    stores: studio
-      ? { conversations: studio.conversations, projectPrefs: studio.projectPrefs, readState: studio.readState, settings: studio.settings }
+    stores: aib
+      ? { conversations: aib.conversations, projectPrefs: aib.projectPrefs, readState: aib.readState, settings: aib.settings }
       : undefined,
     pageKey: launchKey,
   });
@@ -345,7 +345,7 @@ export async function main(argv: string[]): Promise<void> {
     getTestBuilds: () => ctx.settings.getTestBuilds(),
     busyChats: async () => (await host.busyConnections()).length,
     quit: (release) => void setTimeout(() => void close('installing an update', release), 50),
-    chatsKeepRunning: !studio, // the agent host outlives this app: an update never stops a working chat
+    chatsKeepRunning: !aib, // the agent host outlives this app: an update never stops a working chat
     // AIB only in the tray (the keeper's restart after a crash, or a quit the keeper could not hold): "Install when chats finish"
     // waits for the next launch, so an update never opens a window after the person quit.
     holdInstall: () => desktopApp?.background ?? false,
@@ -353,12 +353,12 @@ export async function main(argv: string[]): Promise<void> {
     // also comes while the window is closed to the tray. A server run has no desktop notifications.
     onReady: (version) => void notifyUpdateReady(ctx.desktopNotify, ctx.viewPrefs.public().prefs, version),
     // One process with the keeper: Install now leaves the chats in the keeper and the new version takes them over.
-    keeper: studio?.keeper
+    keeper: aib?.keeper
       ? async () => {
-        const client = await studio!.keeper!.client(false);
+        const client = await aib!.keeper!.client(false);
         if (!client) return null; // no keeper runs, so no chat runs in one
         return {
-          reason: studio!.keeperHandover(),
+          reason: aib!.keeperHandover(),
           protocol: KEEPER_PROTOCOL,
           features: client.features,
           version: client.keeperVersion,
@@ -405,11 +405,11 @@ export async function main(argv: string[]): Promise<void> {
   const wslBackups = startWslLocalBackups(() =>
     Object.values(ctx.addedProjects.public().added).map((a) => String((a as { path?: unknown }).path ?? '')).filter(Boolean)
   );
-  if (studio) {
+  if (aib) {
     // The take-over started above (chats whose agents still run in the keeper go on where they are) runs on in the background: the
     // window opens now, with those chats Reconnecting… until theirs is done (liveState waits for it). The automatic reconnect of
-    // the rest starts once the Windows keeper's chats are taken over; a WSL chat's waits for its distro's take-over (studio.ts).
-    const s = studio;
+    // the rest starts once the Windows keeper's chats are taken over; a WSL chat's waits for its distro's take-over (aib.ts).
+    const s = aib;
     void s.adoptKeeperWindows().then((n) => {
       startup.mark(`take-over done (${n} chat(s) from the keeper)`);
       if (!closing) {
@@ -425,10 +425,10 @@ export async function main(argv: string[]): Promise<void> {
   } else {
     void retireAtStart(ctx); // the split agent host took its chats over before it answered
   }
-  try { // artifact tool: agents re-read this when Studio restarts on another port (json.dumps spacing, like studio.py)
+  try { // artifact tool: agents re-read this when AIB restarts on another port (json.dumps spacing, like studio.py)
     await Deno.writeTextFile(`${stateDir}${sep}artifact-web.json`, `{"url": ${JSON.stringify(url)}, "pid": ${Deno.pid}}`);
   } catch { /* as Python: not fatal */ }
-  if (studio) {
+  if (aib) {
     console.log(`AIB: ${url}\nIn-process mode: keep this process running while agents work. Ctrl+C stops owned ACP connections.`);
   } else {
     console.log(
@@ -444,10 +444,10 @@ export async function main(argv: string[]): Promise<void> {
       'studio',
       'closing (%s)%s',
       why,
-      release && studio ? (hold ? '; the keeper holds the chats until AIB is started again' : '; leaving the chats in the keeper') : '',
+      release && aib ? (hold ? '; the keeper holds the chats until AIB is started again' : '; leaving the chats in the keeper') : '',
     );
     // hold (Quit AIB with work running): the keeper restarts no AIB in the tray and keeps every chat and terminal shell until the next
-    // AIB takes them over. Told through each link before it closes (terminal shells alone may be what works); Studio.release repeats
+    // AIB takes them over. Told through each link before it closes (terminal shells alone may be what works); Aib.release repeats
     // it last.
     // The page's last view-preference saves (a project picked just before the window closed) are on disk before AIB exits: the
     // page sends them with keepalive, so they still arrive after its window is gone, as long as this process waits for them.
@@ -456,7 +456,7 @@ export async function main(argv: string[]): Promise<void> {
       const settled = await ctx.viewPrefs.settle(1500, 250).catch(() => false);
       log.announce('studio', 'closing: view preferences %s after %s ms', settled ? 'saved' : 'still on their way', Date.now() - t0);
     }
-    for (const link of hold ? [studio?.keeper, terminalKeeper] : []) await holdKeeper(link);
+    for (const link of hold ? [aib?.keeper, terminalKeeper] : []) await holdKeeper(link);
     ctx.updates.stop();
     backups.stop();
     wslBackups.stop();
@@ -467,7 +467,7 @@ export async function main(argv: string[]): Promise<void> {
     await ctx.phone.close().catch(() => {});
     await server.close(release).catch(() => {}); // release (an update): terminal shells in the keeper keep running
     // split: detach only; in-process: stops every agent; release (an update with the keeper): the chats stay in the keeper.
-    if (release && studio) await studio.release({ hold }).catch(() => {});
+    if (release && aib) await aib.release({ hold }).catch(() => {});
     else await host.close().catch(() => {});
     folderLock?.release();
     Deno.exit(0);
@@ -477,7 +477,7 @@ export async function main(argv: string[]): Promise<void> {
       // The desktop app ended by a signal (a kill, a session ending on macOS/Linux) is not "Stop all chats": working chats stay in the
       // keeper, which starts AIB again in the tray (rule V1), as after a crash. A source run or `serve` stops them as before (Ctrl+C).
       Deno.addSignalListener(signal, () => {
-        const keep = desktop && !!studio?.keeper && studio.workingList().length > 0;
+        const keep = desktop && !!aib?.keeper && aib.workingList().length > 0;
         void close(`signal ${signal}`, keep);
       });
     } catch { /* not supported here */ }
@@ -496,16 +496,16 @@ export async function main(argv: string[]): Promise<void> {
       // Closing the window or Quit AIB never stops a chat: with something working AIB leaves it to the keeper and exits, as Install
       // now does (window.ts decide; canLeave). Split (an older version's host, being drained): the app quits at once and the host is
       // asked to stop unforced (an idle host goes, a busy one keeps its chats under its own icon); Stop all chats and quit forces it.
-      stopHost: studio ? undefined : async (force) => {
+      stopHost: aib ? undefined : async (force) => {
         const result = await stopHost(stateDir, force, 5, `the app quitting (pid ${Deno.pid}${force ? ', OK: stop them' : ''})`);
         log.announce('studio', 'quit: agent host %s', result.stopped ? 'stopped' : `kept (${result.message})`);
         return result;
       },
       quit: (_stop, leave) => leave ? close('the app was quit with work running', true, true) : close('the app was quit'),
       // Quit AIB with work running exits only when the keeper can hold all of it; else AIB stays in the tray until nothing works.
-      canLeave: studio?.keeper
+      canLeave: aib?.keeper
         ? async () => {
-          const why = await studio!.quitHandover();
+          const why = await aib!.quitHandover();
           if (why) return why;
           const outside = ctx.terminals.busyOutsideKeeper();
           if (outside) return `${outside} terminal command(s) run outside the keeper`;
@@ -526,17 +526,17 @@ export async function main(argv: string[]): Promise<void> {
       phoneOn: () => ctx.phone.on,
       terminalsBusy: () => ctx.terminals.busyCount(), // a command running in a terminal is work: left to the keeper, never cut off
       mergesRunning: () => mergesRunning() + wslMergesRunning(), // Quit AIB lets a running merge (a WSL chat's too) finish before AIB exits
-      trayCounts: studio
+      trayCounts: aib
         ? () => {
           // needs you: the inbox's one number (inbox-rules.js), the same as the page's badge and the phone's
           // and the blocked chats themselves for the tray menu's chat slots (the attention watcher's last look, with their titles)
           // The chat open in the AIB window is left out (inbox-rules.js isOpen): it is in front of the owner already.
           const open = ctx.presence.openOnPc();
           return Promise.resolve({
-            working: studio!.workingList().length,
+            working: aib!.workingList().length,
             // the server-built inbox's count (attention/inbox.ts), as the page and the phone show it; before its first look, the
             // agent host's own reading of the same rules
-            needsYou: ctx.inbox.latest() ? ctx.inbox.desktopCount() : studio!.blockedChats(open),
+            needsYou: ctx.inbox.latest() ? ctx.inbox.desktopCount() : aib!.blockedChats(open),
             blocked: attention.blocked().filter((b) => !INBOX.isOpen(b.key, open)),
           });
         }

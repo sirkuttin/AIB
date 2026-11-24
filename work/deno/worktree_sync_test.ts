@@ -1,11 +1,11 @@
 /**
  * server/worktrees/sync.ts: the cases of work/test_worktree_sync.py, test_worktree_g3.py and test_worktree_e2.py that exercise
- * worktree_sync.py directly (over a fake studio instead of a whole Studio). three_way against Python, the real loop, the
- * cross-process locks and parity with Python on identical repos are in worktree_sync_interop_test.ts (split so both run in parallel).
+ * worktree_sync.py directly (over a fake studio instead of a whole AIB). three_way against the frozen answers, the real loop, the
+ * cross-process locks and the frozen answers on identical repos are in worktree_sync_interop_test.ts (split so both run in parallel).
  *
  * These cases drive ProjectSync.scan() by hand (two scans in a row make a change "stable"), so they do not wait on timers.
  * Turns are the turnStarted / turnEnded hooks called directly.
- * Skipped (they need a whole Studio, a live agent connection or HTTP): the prompt-note delivery through session/prompt, cancel during
+ * Skipped (they need a whole AIB, a live agent connection or HTTP): the prompt-note delivery through session/prompt, cancel during
  * catch-up, history normalisation (monitor.py), the resume-sync route, and the E2 stash-clash flows (covered by
  * worktree_merge_clash_test.ts).
  */
@@ -129,7 +129,7 @@ Deno.test('editor temp files are never synced and a temp-rename save is', async 
   assertEquals(ctx.record().syncedPaths, ['f.txt']);
 });
 
-Deno.test('temp names and env names match Python', async () => {
+Deno.test('temp names and env names match the frozen answers', async () => {
   const py = new Frozen();
   for (const name of ['a/.b.swp', 'b.swx', 'c~', '.#d', '4913', 'e.tmp', 'f.tmp.123', '#g#']) assert(sync.isTemp(name), name);
   for (const name of ['swp.py', 'a.txt', 'tmp/x.py', 'f4913.txt', '.env']) assert(!sync.isTemp(name), name);
@@ -174,7 +174,7 @@ Deno.test('symlinks are skipped', async () => {
   try {
     Deno.symlinkSync(pathOf(box.project, 'f.txt'), pathOf(box.project, 'link.txt'));
   } catch {
-    return; // no symlinks here (Python: skipTest)
+    return; // no symlinks here (skipTest)
   }
   await ctx.settle();
   assert(!exists(pathOf(ctx.wts[0], 'link.txt')));
@@ -330,7 +330,7 @@ Deno.test('the note lists the synced files once, then context_sent clears it', a
 Deno.test('the old worktreePerChat flag no longer turns live sync off (build plan 1b); a closed live sync is off', async () => {
   using box = new Sandbox();
   const ctx = await setup(box);
-  ctx.studio.flag.on = false;
+  ctx.aib.flag.on = false;
   assertEquals(ctx.live.enabled(), true, 'Own-copy chats and helpers keep live sync whatever the hidden flag says');
   ctx.live.closed = true;
   assertEquals(ctx.live.enabled(), false);
@@ -426,7 +426,7 @@ Deno.test('a user save after the clash is merged again once resolved', async () 
   write(ctx.wts[0], 'f.txt', 'a\nb\nc\nd\ne\nf-both\n');
   await ctx.live.turnStarted(ctx.conns[0]); // the clash is cleared, f.txt goes back to pendingSync and is merged again
   const record = ctx.record();
-  assertEquals(record.syncConflicts, ['f.txt'], 'f-both against f-user2: a new clash (Python only polls the moment it is clear)');
+  assertEquals(record.syncConflicts, ['f.txt'], 'f-both against f-user2: a new clash (the retired code only polled the moment it was clear)');
   assert(text(ctx.wts[0], 'f.txt')!.includes('f-user2'));
   assert(show(ctx, `${record.user}:f.txt`) !== 'a\nb\nc\nd\ne\nf-user2\n', 'U does not claim the newer edit the copy lacks');
   assert(list(record.pendingSync).length || text(ctx.wts[0], 'f.txt') !== 'a\nb\nc\nd\ne\nf-both\n', 'queued again, not lost');

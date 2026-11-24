@@ -151,7 +151,7 @@ export function holderOf(records: SessionRecord[], sessionId: string, own: Set<n
   return null;
 }
 
-/** A message to a chat another app still holds: nothing was sent; the chat shows Open here anyway (Studio answers 409). */
+/** A message to a chat another app still holds: nothing was sent; the chat shows Open here anyway (AIB answers 409). */
 export class HeldElsewhere extends OwnershipConflict {
   override name = 'HeldElsewhere';
   readonly code = 'held_elsewhere';

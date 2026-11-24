@@ -1,8 +1,8 @@
 /**
- * Transcript fixtures for the monitor tests: the record shapes the Python tests build (test_history_paging, test_history_cache,
+ * Transcript fixtures for the monitor tests: the record shapes the old tests built (test_history_paging, test_history_cache,
  * test_plan_context, test_transcript_images, test_tool_images, test_monitor_processes, test_subagent_history, test_subagent_roster,
  * test_titles, test_project_cwd), an edge-case transcript, the work/*-fixture generators, and a large synthetic chat. No real data.
- * Every file's mtime is set to a whole millisecond so Python (100 ns) and Deno (1 ms) read the same st_mtime.
+ * Every file's mtime is set to a whole millisecond so the recorded runs (100 ns) and Deno (1 ms) read the same st_mtime.
  */
 import { join } from '../../app/server/transcripts/purepath.ts';
 import { python, WORK } from './_work.ts';
@@ -299,7 +299,7 @@ const mnotice = (job: string, cid: string, status: string, summary: string, ago:
   attachment: { type: 'queued_command', prompt: noticeText(job, cid, status, summary, event), commandMode: 'task-notification' },
 });
 
-/** One chat family per Python process test case: claude/<case>/sess.jsonl with subagent agent-a1. */
+/** One chat family per process test case: claude/<case>/sess.jsonl with subagent agent-a1. */
 export function processFixtures(claude: string): string[] {
   const read = [muse('m0', 'Read', 900, { file_path: 'C:\\x\\a.py' })];
   const launch = [

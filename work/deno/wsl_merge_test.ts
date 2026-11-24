@@ -111,7 +111,7 @@ class MergeLab {
     return 'wsl://ubuntu' + LINUX_BASE + windows.slice(this.box.base.length).replaceAll('\\', '/');
   }
 
-  readonly studio: m.MergeStudio = {
+  readonly aib: m.MergeHost = {
     stateDir: '',
     liveState: (id) => (this.states.has(id) ? { ...this.states.get(id) } : null),
     liveCall: (op, payload) => {
@@ -122,7 +122,7 @@ class MergeLab {
 
   async chat(id: string, wtPath: string, extra: Json = {}): Promise<wm.WslMergeChat> {
     this.states.set(id, ready(this.ref(wtPath), extra));
-    return (await wm.wslMergeChat(this.studio, id))!;
+    return (await wm.wslMergeChat(this.aib, id))!;
   }
 
   ops(): string[] {
@@ -143,13 +143,13 @@ Deno.test({ name: 'wsl merge: a clean merge runs in the helper and posts the "Me
   write(box.project, '.gitignore', 'ignored.log\nbuild/\nnode_modules/\nlocal.env\n');
   const chat = await lab.chat('c1', c.wt);
   assertEquals([chat.distro, chat.linuxPath], ['ubuntu', lab.ref(c.wt).slice('wsl://ubuntu'.length)]);
-  assertEquals(await wm.wslMergeChat(lab.studio, 'nope'), null);
+  assertEquals(await wm.wslMergeChat(lab.aib, 'nope'), null);
   lab.states.set('win', ready(box.project));
-  assertEquals(await wm.wslMergeChat(lab.studio, 'win'), null, 'a Windows chat stays with merge.ts');
+  assertEquals(await wm.wslMergeChat(lab.aib, 'win'), null, 'a Windows chat stays with merge.ts');
 
   const status = await wm.wslMergeStatus(chat);
   assertEquals([status.enabled, status.state, status.base], [true, 'ready', 'main']);
-  const result = await wm.wslMerge(lab.studio, chat, '', true);
+  const result = await wm.wslMerge(lab.aib, chat, '', true);
   assertEquals([result.state, result.message, result.commits], ['merged', 'Merged into main (1 commit)', 1]);
   assertEquals(lab.calls, [['worktree-note', { message: 'Merged into main (1 commit)', id: 'c1' }]]);
   assertEquals(runGit(box.project, 'show', 'main:chat.txt'), 'chat\n');
@@ -171,7 +171,7 @@ Deno.test({ name: 'wsl merge: a conflict prompts the chat; a prompt it does not 
   commit(box.project, 'tracked.txt', 'main line\n', 'main edit');
   lab.answer = [409, { error: 'The chat is closed' }];
   const chat = await lab.chat('c1', c.wt, { queue: { items: [] }, clientCaps: { terminals: [] }, subagents: {} });
-  const refused = await assertRejects(() => wm.wslMerge(lab.studio, chat, 'T'), m.Refused) as m.Refused;
+  const refused = await assertRejects(() => wm.wslMerge(lab.aib, chat, 'T'), m.Refused) as m.Refused;
   assertEquals([refused.code, refused.message], ['prompt_failed', 'Could not ask the chat to resolve the conflicts: The chat is closed']);
   // the button's state while the conflict is open
   const waiting = await wm.wslMergeStatus(chat);
@@ -179,7 +179,7 @@ Deno.test({ name: 'wsl merge: a conflict prompts the chat; a prompt it does not 
   // the agent's tool sees the conflict line, not a prompt
   lab.answer = [200, {}];
   lab.calls.length = 0;
-  const tool = await assertRejects(() => wm.wslMerge(lab.studio, chat, '', true), m.Refused) as m.Refused;
+  const tool = await assertRejects(() => wm.wslMerge(lab.aib, chat, '', true), m.Refused) as m.Refused;
   assertEquals([tool.code, tool.extra.target], ['conflicts', 'main']);
   assert(tool.message.startsWith('Bringing main into this branch left merge conflicts in: tracked.txt'));
   assertEquals(lab.calls, []);
@@ -187,7 +187,7 @@ Deno.test({ name: 'wsl merge: a conflict prompts the chat; a prompt it does not 
   write(c.wt, 'tracked.txt', 'main line\nchat line\n');
   runGit(c.wt, 'add', '-A');
   runGit(c.wt, 'commit', '--no-edit', '-q');
-  const done = await wm.wslMerge(lab.studio, chat, '', true);
+  const done = await wm.wslMerge(lab.aib, chat, '', true);
   assertEquals(done.state, 'merged');
   assertEquals(runGit(box.project, 'show', 'main:tracked.txt'), 'main line\nchat line\n');
 } });
@@ -199,7 +199,7 @@ Deno.test({ name: 'wsl merge: a clash with the user\'s unsaved edits keeps them 
   commit(c.wt, 'tracked.txt', 'one\nchat\n', 'chat edit');
   write(box.project, 'tracked.txt', 'one\nuser\n'); // the user's unsaved edit in the main checkout, on the same line
   const chat = await lab.chat('c1', c.wt);
-  const result = await wm.wslMerge(lab.studio, chat, '', false);
+  const result = await wm.wslMerge(lab.aib, chat, '', false);
   assertEquals([result.state, result.clash], ['merged', ['tracked.txt']]);
   const stash = String(result.stash);
   assert(stash.startsWith('studio-merge-chat-'), stash);
@@ -211,7 +211,7 @@ Deno.test({ name: 'wsl merge: a clash with the user\'s unsaved edits keeps them 
   const line = await wm.wslClashStatus(lab.ref(box.project));
   assertEquals([line.unresolved, line.files, line.stash], [true, ['tracked.txt'], stash]);
   assertEquals(await wm.wslClashStatus('wsl://debian/home/u/app'), { unresolved: false }, 'a distro AIB does not use is not started');
-  const kept = await wm.wslResolveClash(lab.studio, chat, 'keep-mine');
+  const kept = await wm.wslResolveClash(lab.aib, chat, 'keep-mine');
   assertEquals([kept.dropped, kept.files], [true, ['tracked.txt']]);
   assertEquals(read(box.project, 'tracked.txt'), 'one\nuser\n');
   assertEquals(lab.calls.at(-1)![0], 'worktree-note');
@@ -227,7 +227,7 @@ Deno.test({ name: 'wsl merge: a merge in progress in the main checkout is refuse
   Deno.writeTextFileSync(pathOf(box.project, '.git', 'MERGE_HEAD'), before + '\n');
   try {
     const chat = await lab.chat('c1', c.wt);
-    const refused = await assertRejects(() => wm.wslMerge(lab.studio, chat, '', true), m.Refused) as m.Refused;
+    const refused = await assertRejects(() => wm.wslMerge(lab.aib, chat, '', true), m.Refused) as m.Refused;
     assertEquals([refused.code, refused.message], ['locked', 'A merge is in progress in the folder that has the base branch']);
     assertEquals(runGit(box.project, 'rev-parse', 'main').trim(), before);
     assertEquals(lab.calls, []);
@@ -256,7 +256,7 @@ Deno.test({ name: 'wsl merge: a distro that is not ready or a helper without mer
     throw new WslHelperError('no', 'unknown_method');
   };
   assertEquals(await wm.wslMergeStatus(chat), { worktree: false });
-  const none = await assertRejects(() => wm.wslMerge(lab.studio, chat), m.Refused) as m.Refused;
+  const none = await assertRejects(() => wm.wslMerge(lab.aib, chat), m.Refused) as m.Refused;
   assertEquals([none.code, none.status], ['no_worktree', 404]);
 } });
 
@@ -269,7 +269,7 @@ Deno.test({ name: 'wsl merge routes: a WSL chat goes to its helper, a Windows ch
   lab.states.set('win', ready(box.project));
   const ctx = {
     stateDir: box.state,
-    host: { liveState: (id: string) => lab.studio.liveState(id), liveCall: (op: string, p: Json) => lab.studio.liveCall(op, p) },
+    host: { liveState: (id: string) => lab.aib.liveState(id), liveCall: (op: string, p: Json) => lab.aib.liveCall(op, p) },
     conversations: { public: () => ({ entries: {} }) },
   } as never;
   const routes = aibRoutes();

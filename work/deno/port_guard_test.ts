@@ -1,5 +1,5 @@
 /**
- * No test or helper uses a fixed port. Fixed ports collide: two builders run the same test at once, a demo Studio sits on the number,
+ * No test or helper uses a fixed port. Fixed ports collide: two builders run the same test at once, a demo AIB sits on the number,
  * the live AIB owns 8767/8768/8777/8778. Every port a test binds comes from the OS (port 0, read back; _ports.ts says how).
  *
  * Scans every Deno test and helper, the node page tests, the Python e2e and contract tests, the keeper's Go tests and tools/build.ts,

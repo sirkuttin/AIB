@@ -1,4 +1,4 @@
-/** server/platform: locks (also against the Python server's locks), process trees, process facts, console, paths. */
+/** server/platform: locks (also against the python lock helper), process trees, process facts, console, paths. */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
 import { python } from './_work.ts';
 import { FileLock, LockHeld, LockTimeout, tryLockNow } from '../../app/server/platform/lock.ts';
@@ -19,7 +19,7 @@ const win = Deno.build.os === 'windows';
 const LOCK_HELPER = decodeURIComponent(new URL('../lock_helper.py', import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1');
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** A Python process holds an advisory lock on `path` (work/lock_helper.py) until its stdin closes; resolves once it holds it. */
+/** A python process holds an advisory lock on `path` (work/lock_helper.py) until its stdin closes; resolves once it holds it. */
 async function pythonHolds(path: string) {
   const child = new Deno.Command(python(), { args: ['-I', LOCK_HELPER, 'hold', path], stdin: 'piped', stdout: 'piped' }).spawn();
   const reader = child.stdout.pipeThrough(new TextDecoderStream()).getReader();
@@ -35,13 +35,13 @@ async function pythonHolds(path: string) {
   };
 }
 
-/** Python tries the lock with a short timeout; returns true if it got it. */
+/** A python process tries the lock with a short timeout; returns true if it got it. */
 async function pythonCanLock(path: string): Promise<boolean> {
   const out = await new Deno.Command(python(), { args: ['-I', LOCK_HELPER, 'try', path] }).output();
   return new TextDecoder().decode(out.stdout).trim() === 'yes';
 }
 
-Deno.test('FileLock and a Python FileLock exclude each other, both ways', async () => {
+Deno.test('FileLock and a python-held lock exclude each other, both ways', async () => {
   const dir = await Deno.makeTempDir();
   const path = join(dir, 'state.json.lock');
   const lock = await new FileLock(path, 2000).acquire();
@@ -62,7 +62,7 @@ Deno.test('FileLock: two Deno holders wait for each other; run() releases on err
   const dir = await Deno.makeTempDir();
   const path = join(dir, 'nested', 'x.lock');
   const first = await new FileLock(path).acquire();
-  if (win) assertEquals((await Deno.stat(path)).size, 1, 'Windows lock file gets one NUL byte, like Python');
+  if (win) assertEquals((await Deno.stat(path)).size, 1, 'Windows lock file gets one NUL byte, as before');
   const waiting = new FileLock(path, 3000).acquire();
   await sleep(150);
   first.release();

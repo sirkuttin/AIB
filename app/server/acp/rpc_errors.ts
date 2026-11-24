@@ -54,7 +54,7 @@ const text = (value: unknown, limit = 500) => (isStr(value) ? clip(value, limit)
 
 /**
  * Normalize initialize.authMethods. kind 'agent' = the client can call authenticate;
- * anything else is shown as instructions and never executed by Studio.
+ * anything else is shown as instructions and never executed by AIB.
  */
 export function describeAuthMethods(methods: unknown, provider = ''): AuthMethod[] {
   const out: AuthMethod[] = [];

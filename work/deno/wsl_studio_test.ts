@@ -42,7 +42,7 @@ class WslLab {
   readonly work = this.dir + SEP + 'app';
   readonly agentLog = this.dir + SEP + 'agent-received.log';
   readonly host: FakeWslHost;
-  readonly studios: Aib[] = [];
+  readonly aibs: Aib[] = [];
   readonly made: { command: string[]; cwd: string; options: Json }[] = [];
 
   constructor() {
@@ -54,26 +54,26 @@ class WslLab {
     setWslHostResolver((d) => (d === 'ubuntu' ? this.host : null));
   }
 
-  studio(flags: string[] = []): Aib {
+  aib(flags: string[] = []): Aib {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
-    const studio = new Aib({ claudeLauncher: import.meta.filename!, codexLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper });
-    studio.ownerProbe = () => null;
-    studio.connectionFactory = (command, cwd, provider, options) => {
+    const aib = new Aib({ claudeLauncher: import.meta.filename!, codexLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper });
+    aib.ownerProbe = () => null;
+    aib.connectionFactory = (command, cwd, provider, options) => {
       this.made.push({ command, cwd, options: { ...(options ?? {}) } as Json });
       // The distro's agent is a Linux program; under test the fake agent stands in (the guard allows a work/ fixture).
       const wsl = options?.wsl ? { ...options.wsl, program: undefined } : options?.wsl;
       return new Connection(fake('--cancel-aware', '--breadth', ...flags), cwd, provider, { ...options, wsl });
     };
-    this.studios.push(studio);
-    return studio;
+    this.aibs.push(aib);
+    return aib;
   }
 
-  crash(studio: Aib): void {
-    studio.keeper!.disconnect();
+  crash(aib: Aib): void {
+    aib.keeper!.disconnect();
     this.host.link.disconnect();
-    for (const c of studio.connections.values()) c.sessionLease?.release();
-    studio.reconnectStop.set();
-    this.studios.splice(this.studios.indexOf(studio), 1);
+    for (const c of aib.connections.values()) c.sessionLease?.release();
+    aib.reconnectStop.set();
+    this.aibs.splice(this.aibs.indexOf(aib), 1);
     this.host.renewLink();
   }
 
@@ -86,7 +86,7 @@ class WslLab {
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
-    for (const s of this.studios.reverse()) await s.close().catch(() => {});
+    for (const s of this.aibs.reverse()) await s.close().catch(() => {});
     setWslHostResolver(null);
     await this.host.stopKeeper();
     const info = readKeeperInfo(this.state);
@@ -117,10 +117,10 @@ function said(c: Connection): string {
 }
 
 /** One turn of the fake agent: it streams, asks a question halfway, and ends after the answer. */
-async function turn(studio: Aib, c: Connection): Promise<void> {
-  assertEquals((await studio.liveCall('prompt', { id: c.id, text: 'stream:4:20', clientMessageId: 'm1' }))[0], 200);
+async function turn(aib: Aib, c: Connection): Promise<void> {
+  assertEquals((await aib.liveCall('prompt', { id: c.id, text: 'stream:4:20', clientMessageId: 'm1' }))[0], 200);
   await until(() => c.permissions.size === 1, 'the question', 15);
-  await studio.liveCall('permission', { id: c.id, key: [...c.permissions.keys()][0], option: 'yes' });
+  await aib.liveCall('permission', { id: c.id, key: [...c.permissions.keys()][0], option: 'yes' });
   await until(() => !c.busy, 'turn end', 15);
   assertEquals(said(c), 'chunk0 chunk1 answer=yes chunk2 chunk3 ');
 }
@@ -133,12 +133,12 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new WslLab();
-    const studio = lab.studio();
-    const c = await studio.connect('claude', 'wsl://Ubuntu/home/u/app');
+    const aib = lab.aib();
+    const c = await aib.connect('claude', 'wsl://Ubuntu/home/u/app');
     assertEquals([c.cwd, c.agentCwd, c.projectRoot], [REF, '/home/u/app', REF]);
     assert(c.keeper === lab.host.link, 'the distro keeper, not the Windows one');
     assert(c.channel !== null);
-    // what Studio resolved through the WSL host
+    // what AIB resolved through the WSL host
     const made = lab.made.at(-1)!;
     assertEquals(made.command, ['node', '/usr/lib/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js']);
     assertEquals((made.options.wsl as Json).program, '/usr/bin/node'); // the helper's which
@@ -156,9 +156,9 @@ Deno.test({
     const sessionNew = lab.received().find((m) => m.method === 'session/new')!;
     assertEquals((sessionNew.params as Json).cwd, '/home/u/app');
     // no Windows scratch folder for an agent in a distro (Claude refused it: "additionalDirectories entries must be absolute paths")
-    assert(studio.allow !== null, 'the allow gate is on (it gives Windows chats their scratch folder)');
+    assert(aib.allow !== null, 'the allow gate is on (it gives Windows chats their scratch folder)');
     assertEquals(c.scratchDir, null);
-    assert(!JSON.stringify(sessionNew.params).includes(JSON.stringify(studio.allow!.scratchFor(c.id)).slice(1, -1)),'the scratch folder is not sent');
+    assert(!JSON.stringify(sessionNew.params).includes(JSON.stringify(aib.allow!.scratchFor(c.id)).slice(1, -1)),'the scratch folder is not sent');
     const servers = (sessionNew.params as Json).mcpServers as Json[];
     if (servers.length) {
       const entry = servers[0];
@@ -182,9 +182,9 @@ Deno.test({
     // the page sees the distro
     assertEquals(c.public().wsl, { distro: 'ubuntu', name: 'Ubuntu', linuxPath: '/home/u/app' });
     // a turn goes through
-    await turn(studio, c);
+    await turn(aib, c);
     // the Windows keeper holds nothing of it
-    const windows = await studio.keeper!.client(false);
+    const windows = await aib.keeper!.client(false);
     if (windows) assertEquals((await windows.list()).filter((ch) => ch.channel === `chat-${c.id}`), []);
   },
 });
@@ -196,8 +196,8 @@ Deno.test({
     await keeperBinary();
     await using lab = new WslLab();
     lab.host.mcpTunnel = { forwarder: '/tmp/aib-wsl-test-fake/1.0.0-abcdef12/AIB-keeper', socket: '/tmp/aib-wsl-test-fake/data-x/helper/mcp.sock' };
-    const studio = lab.studio();
-    const c = await studio.connect('claude', REF);
+    const aib = lab.aib();
+    const c = await aib.connect('claude', REF);
     const sessionNew = lab.received().find((m) => m.method === 'session/new')!;
     const servers = (sessionNew.params as Json).mcpServers as Json[];
     assertEquals(servers.length, 1);
@@ -227,7 +227,7 @@ Deno.test({
     await until(() => replies.length === 2, 'the refusal', 10);
     assertEquals([replies[1].rid, replies[1].status], ['r2', 401]);
     assert(String(replies[1].body).includes('refused the artifact key'));
-    const other = await studio.wslToolCall({ distro: 'Debian', key: headers['X-Studio-Artifact-Key'], conversation: c.id, body });
+    const other = await aib.wslToolCall({ distro: 'Debian', key: headers['X-Studio-Artifact-Key'], conversation: c.id, body });
     assertEquals(other.status, 401);
 
     // A request the helper already gave up on (accept says no) never runs.
@@ -238,9 +238,9 @@ Deno.test({
 
     // A closed AIB answers 503 with a message (the forwarder says "AIB is closed" at once).
     lab.host.handlers['mcp.accept'] = () => ({ ok: true });
-    await studio.close();
-    lab.studios.splice(lab.studios.indexOf(studio), 1);
-    const closed = await studio.wslToolCall({ distro: 'Ubuntu', key: headers['X-Studio-Artifact-Key'], conversation: c.id, body });
+    await aib.close();
+    lab.aibs.splice(lab.aibs.indexOf(aib), 1);
+    const closed = await aib.wslToolCall({ distro: 'Ubuntu', key: headers['X-Studio-Artifact-Key'], conversation: c.id, body });
     assertEquals(closed.status, 503);
     assert(String(closed.error).includes('AIB is closed'));
     void mcpTunnelGate;
@@ -253,12 +253,12 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new WslLab();
-    const a = lab.studio();
+    const a = lab.aib();
     const c = await a.connect('claude', REF);
     await turn(a, c);
     const pid = c.process!.pid;
     lab.crash(a);
-    const b = lab.studio();
+    const b = lab.aib();
     assertEquals(await b.adoptKeeper(), 1);
     const r = b.connections.get(c.id)!;
     assert(r && !r.closed && r.ready, 'rebuilt under the same id');
@@ -276,7 +276,7 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new WslLab();
-    const a = lab.studio();
+    const a = lab.aib();
     const hold = a.keeper!.spawn(
       {
         channel: 'wsl-hold-ubuntu',
@@ -288,7 +288,7 @@ Deno.test({
     );
     await hold.ready;
     lab.crash(a);
-    const b = lab.studio();
+    const b = lab.aib();
     assertEquals(await b.adoptKeeper(), 0);
     const client = (await b.keeper!.client(false))!;
     const listed = (await client.list()).find((ch) => ch.channel === 'wsl-hold-ubuntu');
@@ -298,8 +298,8 @@ Deno.test({
 });
 
 /** A keep-alive in the Windows keeper as wsl/hosts.ts makes it (a sleeping stand-in for `wsl.exe ... bridge --hold`). */
-async function holdFor(studio: Aib): Promise<void> {
-  const hold = studio.keeper!.spawn(
+async function holdFor(aib: Aib): Promise<void> {
+  const hold = aib.keeper!.spawn(
     {
       channel: 'wsl-hold-ubuntu',
       command: PYTHON,
@@ -311,9 +311,9 @@ async function holdFor(studio: Aib): Promise<void> {
   await hold.ready;
 }
 
-async function stopHold(studio: Aib): Promise<void> {
-  const client = await studio.keeper!.client(false);
-  if (client) await studio.keeper!.stopUnknown(client, 'wsl-hold-ubuntu').catch(() => {});
+async function stopHold(aib: Aib): Promise<void> {
+  const client = await aib.keeper!.client(false);
+  if (client) await aib.keeper!.stopUnknown(client, 'wsl-hold-ubuntu').catch(() => {});
 }
 
 const chatChannels = (lab: WslLab) => lab.host.link.spawned.filter((s) => String(s.channel).startsWith('chat-')).length;
@@ -326,12 +326,12 @@ Deno.test({
     // next AIB never asked the distro's keeper and the chats stayed Ready while their agents ran on.
     await keeperBinary();
     await using lab = new WslLab();
-    const a = lab.studio();
+    const a = lab.aib();
     const c = await a.connect('claude', REF);
     await holdFor(a);
     const pid = c.process!.pid;
     lab.crash(a);
-    const b = lab.studio();
+    const b = lab.aib();
     assert(b.store!.forgetConversation('claude', c.sessionId!), 'it was on the list');
     try {
       assertEquals(await b.adoptKeeper(), 1);
@@ -351,13 +351,13 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new WslLab();
-    const a = lab.studio();
+    const a = lab.aib();
     const c = await a.connect('claude', REF);
     const pid = c.process!.pid;
     lab.crash(a);
     const spawned = chatChannels(lab);
     // the next AIB does not know the chat (not on its recovery list, no keep-alive): its take-over at start never asks the distro
-    const b = lab.studio();
+    const b = lab.aib();
     b.store!.forgetConversation('claude', c.sessionId!);
     assertEquals(await b.adoptKeeper(), 0);
     const opened = await b.connect('claude', REF, c.sessionId);
@@ -376,12 +376,12 @@ Deno.test({
     // auto-reconnect started a second agent for every chat (claude: duplicates; codex: "session is in use by another Codex client").
     await keeperBinary();
     await using lab = new WslLab();
-    const a = lab.studio();
+    const a = lab.aib();
     const c = await a.connect('claude', REF);
     const pid = c.process!.pid;
     lab.crash(a);
     const spawned = chatChannels(lab);
-    const b = lab.studio();
+    const b = lab.aib();
     lab.host.state = 'unavailable';
     lab.host.note = 'the running helper was too old to take over';
     assertEquals(await b.adoptKeeper(), 0);
@@ -402,15 +402,15 @@ Deno.test({
   ...T,
   async fn() {
     await using lab = new WslLab();
-    const studio = lab.studio();
+    const aib = lab.aib();
     lab.host.state = 'starting';
     let message = '';
-    await studio.connect('claude', REF).catch((e) => (message = e.message));
+    await aib.connect('claude', REF).catch((e) => (message = e.message));
     assertEquals(message, 'Starting Ubuntu…');
     lab.host.state = 'ready';
-    await studio.connect('codex', REF).catch((e) => (message = e.message));
+    await aib.connect('codex', REF).catch((e) => (message = e.message));
     assertEquals(message, 'Codex is not installed in Ubuntu');
-    await studio.connect('claude', 'wsl://ubuntu/home/u/nowhere').catch((e) => (message = e.message));
+    await aib.connect('claude', 'wsl://ubuntu/home/u/nowhere').catch((e) => (message = e.message));
     assertEquals(message, 'Choose an existing workspace folder');
     assertEquals(lab.host.link.spawned, []);
   },
@@ -519,7 +519,7 @@ async function liveChats(lab: WslLab): Promise<string[]> {
   }
 }
 
-const openFor = (studio: Aib, sessionId: string) => [...studio.connections.values()].filter((c) => !c.closed && c.sessionId === sessionId);
+const openFor = (aib: Aib, sessionId: string) => [...aib.connections.values()].filter((c) => !c.closed && c.sessionId === sessionId);
 
 Deno.test({
   name: 'wsl keeper take-over: a session that runs twice in the distro keeper becomes one chat; the busy agent is kept, the idle one stopped',
@@ -527,7 +527,7 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new WslLab();
-    const a = lab.studio();
+    const a = lab.aib();
     const first = await a.connect('claude', REF);
     const session = first.sessionId!;
     // An OLDER AIB build that could not see the running agent started a second one for the same session. This build's connect()
@@ -543,7 +543,7 @@ Deno.test({
     assertEquals((await second.prompt('stream:4:20', 'm1', [])).duplicate, false);
     await until(() => second.permissions.size === 1, 'the question', 15);
     lab.crash(a);
-    const c = lab.studio();
+    const c = lab.aib();
     await c.adoptKeeper();
     const open = openFor(c, session);
     assertEquals(open.map((o) => o.id), [second.id]); // listed once: the working one
@@ -559,13 +559,13 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new WslLab();
-    const a = lab.studio();
+    const a = lab.aib();
     const c = await a.connect('claude', REF);
     await turn(a, c);
     const [session, pid] = [c.sessionId!, c.process!.pid];
     lab.crash(a);
     // The next AIB starts while the distro is slow: its take-over gives up and the chat stays on the recovery list.
-    const b = lab.studio();
+    const b = lab.aib();
     lab.host.state = 'starting';
     assertEquals(await b.adoptKeeper(), 0);
     assertEquals(openFor(b, session), []);
@@ -593,14 +593,14 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new WslLab();
-    const studio = lab.studio();
-    const c = await studio.connect('claude', REF);
+    const aib = lab.aib();
+    const c = await aib.connect('claude', REF);
     const [session, pid] = [c.sessionId!, c.process!.pid];
     // the keeper connection ends (the bridge broke and was not restored in time), the Linux keeper and the agent go on
     (await lab.host.link.client(false))!.close();
     await until(() => c.closed, 'the chat interrupted', 10);
-    await until(() => openFor(studio, session).some((o) => o.ready), 'the chat back', 30);
-    const open = openFor(studio, session);
+    await until(() => openFor(aib, session).some((o) => o.ready), 'the chat back', 30);
+    const open = openFor(aib, session);
     assertEquals([open.length, open[0].id, open[0].process!.pid], [1, c.id, pid]);
     assertEquals(await liveChats(lab), [`chat-${c.id}`]);
     assertEquals(lab.received().filter((m) => m.method === 'session/load').length, 0);
@@ -613,9 +613,9 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new WslLab();
-    const studio = lab.studio(['--extra-dirs']); // the agent takes additionalDirectories and a system prompt (as Claude's adapter does)
-    assert(studio.allow, 'allow rules are on');
-    const c = await studio.connect('claude', REF);
+    const aib = lab.aib(['--extra-dirs']); // the agent takes additionalDirectories and a system prompt (as Claude's adapter does)
+    assert(aib.allow, 'allow rules are on');
+    const c = await aib.connect('claude', REF);
     assertEquals(c.scratchDir, null);
     assertEquals(c.extraFolders(), {});
     const sessionNew = lab.received().find((m) => m.method === 'session/new')!;
@@ -625,7 +625,7 @@ Deno.test({
     const text = JSON.stringify(rest);
     assert(!text.includes(JSON.stringify(lab.state).slice(1, -1)) && !text.includes('scratch'), text.slice(0, 400));
     // a Windows chat of the same AIB still gets its scratch folder
-    const win = await studio.connect('codex', lab.work);
+    const win = await aib.connect('codex', lab.work);
     assert(win.scratchDir && win.scratchDir.startsWith(lab.state), String(win.scratchDir));
   },
 });
@@ -638,7 +638,7 @@ Deno.test({
     // the window waited with it. Now the distro's part runs after the Windows keeper's, in the background (main.ts opens the window).
     await keeperBinary();
     await using lab = new WslLab();
-    const a = lab.studio();
+    const a = lab.aib();
     const w = await a.connect('codex', lab.work);
     const c = await a.connect('claude', REF);
     assert(w.channel && c.channel && w.keeper !== lab.host.link, 'one chat in each keeper');
@@ -651,7 +651,7 @@ Deno.test({
       await gate;
       lab.host.state = 'ready';
     };
-    const b = lab.studio();
+    const b = lab.aib();
     let allDone = false;
     const all = b.adoptKeeper().then((n) => {
       allDone = true;
@@ -689,7 +689,7 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new WslLab();
-    const a = lab.studio();
+    const a = lab.aib();
     const c = await a.connect('claude', REF);
     const phase = (s: Aib, conn: Connection) =>
       INBOX.phaseOf(conn.attention(), s.conversations.public().entries[`claude:${conn.sessionId}`] ?? null, Date.now() / 1000);
@@ -700,7 +700,7 @@ Deno.test({
     assertEquals(phase(a, c), 'idle', 'handled live');
     // the chat rebuilt from the distro keeper's record (its times are the keeper's) stays handled
     lab.crash(a);
-    const b = lab.studio();
+    const b = lab.aib();
     assertEquals(await b.adoptKeeper(), 1);
     const r = b.connections.get(c.id)!;
     assert(INBOX.secondsOf(r.attention().asksAt) > 0, 'the question is rebuilt too');

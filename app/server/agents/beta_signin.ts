@@ -1,7 +1,7 @@
 /**
  * Sign-in of the Beta agents (beta_catalog.ts). AIB never reads, copies or stores an agent's credential; the one exception is an API key
  * the person types in Settings, stored with the settings (like an added agent's environment values) and passed to the agent as its
- * environment variable (studio.ts betaEnv), never logged.
+ * environment variable (aib.ts betaEnv), never logged.
  *
  *   Check     The agent itself, hidden, once: `initialize` (clientCapabilities.auth.terminal: true), then `session/new` in an empty folder
  *             of its own (<state>/agents/<id>/probe) with no MCP servers. A session = Ready; ACP auth_required (-32000) = Needs sign-in;

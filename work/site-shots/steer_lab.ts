@@ -1,4 +1,4 @@
-/** Steering shots: the steer lab of work/deno/_steer_lab.ts (a real Studio + separate agent host + work/fake_acp.py --steer claude).
+/** Steering shots: the steer lab of work/deno/_steer_lab.ts (a real AIB + separate agent host + work/fake_acp.py --steer claude).
  *  Run with TEMP=C:\aib-demo\tmp so the lab's folders are not under a user profile. */
 import { backgroundOf, openPage, sharedBrowser, SteerLab, until } from '../deno/_steer_lab.ts';
 import { shot, sleep, THEMES } from './lib.ts';

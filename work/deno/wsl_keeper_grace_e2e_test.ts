@@ -21,15 +21,15 @@ import { aibInternalKind, KeeperLink, liveUserChannels } from '../../app/server/
 const GRACE_S = 50;
 Deno.env.set('AIB_WSL_ORPHAN_GRACE', `${GRACE_S}s`); // before any host starts (they start on first use)
 
-function studioIn(state: string, keeper: KeeperLink): Aib {
-  const studio = new Aib({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper });
-  studio.ownerProbe = () => null;
-  studio.connectionFactory = (_command, cwd, provider, options) =>
+function aibIn(state: string, keeper: KeeperLink): Aib {
+  const aib = new Aib({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper });
+  aib.ownerProbe = () => null;
+  aib.connectionFactory = (_command, cwd, provider, options) =>
     new Connection(['python3', `${ROOT}/fake_acp.py`, '--cancel-aware'], cwd, provider, {
       ...options,
       wsl: options?.wsl ? { ...options.wsl, program: '/usr/bin/python3' } : options?.wsl,
     });
-  return studio;
+  return aib;
 }
 
 /** A Windows keeper for this test's data folder with fast idle rules and an orphan command that does nothing visible. */
@@ -61,14 +61,14 @@ async function alive(pid: number): Promise<boolean> {
 }
 
 /**
- * AIB crashes and an older build stops the keep-alive: the WSL hosts go without a word (their transports end), the Studio stops
+ * AIB crashes and an older build stops the keep-alive: the WSL hosts go without a word (their transports end), AIB stops
  * reconnecting, then another AIB (the older build) claims and kills the wsl-hold channel in the Windows keeper.
  */
-async function crashAndDropTheKeepAlive(studio: Aib, state: string, link: KeeperLink): Promise<void> {
+async function crashAndDropTheKeepAlive(aib: Aib, state: string, link: KeeperLink): Promise<void> {
   newAib(); // first: a running host would start the keep-alive again
-  studio.reconnectStop.set();
-  for (const conn of studio.connections.values()) conn.sessionLease?.release();
-  await studio.historyClient()?.shutdown().catch(() => {});
+  aib.reconnectStop.set();
+  for (const conn of aib.connections.values()) conn.sessionLease?.release();
+  await aib.historyClient()?.shutdown().catch(() => {});
   const client = (await link.client(false))!;
   const holds = (await client.list()).filter((c) => c.live && aibInternalKind(c.label) === 'wsl-hold');
   assertEquals(holds.length, 1, 'the keep-alive ran');
@@ -84,7 +84,7 @@ Deno.test({
   async fn() {
     const state = Deno.makeTempDirSync({ prefix: 'aib-wsl-grace-e2e-' });
     await prepareRoot();
-    const studios: Aib[] = [];
+    const aibs: Aib[] = [];
     const links: KeeperLink[] = [];
     try {
       const linkA = windowsKeeper(state);
@@ -92,8 +92,8 @@ Deno.test({
       newAib(withWindowsKeeper(linkA));
       const host = (await readyHost()) as WslHostImpl;
       const ref = refOf({ kind: 'wsl', distro: KEY, linuxPath: `${ROOT}/repo` });
-      const a = studioIn(state, linkA);
-      studios.push(a);
+      const a = aibIn(state, linkA);
+      aibs.push(a);
       const c = await a.connect('claude', ref);
       await until(() => host.holding, 'the keep-alive runs in the Windows keeper', 30);
       const before = await linuxKeeper();
@@ -105,7 +105,7 @@ Deno.test({
 
       // 1. Away past the old 35 s: the agent still runs, and nothing was a client meanwhile.
       await crashAndDropTheKeepAlive(a, state, linkA);
-      studios.pop();
+      aibs.pop();
       const dropped = Date.now();
       await pause(40_000);
       const away = await linuxKeeper();
@@ -119,8 +119,8 @@ Deno.test({
       const linkB = windowsKeeper(state);
       links.push(linkB);
       newAib(withWindowsKeeper(linkB));
-      const b = studioIn(state, linkB);
-      studios.push(b);
+      const b = aibIn(state, linkB);
+      aibs.push(b);
       assertEquals(await b.adoptKeeper(), 1);
       const r = b.connections.get(c.id)!;
       assert(r?.ready && !r.closed, 'the chat was taken over');
@@ -135,7 +135,7 @@ Deno.test({
       // 3. The same again, and nobody comes: after the whole grace the agent stops and the keeper exits, saying so.
       const logAgain = back.log.length;
       await crashAndDropTheKeepAlive(b, state, linkB);
-      studios.pop();
+      aibs.pop();
       const left = Date.now();
       let end = await linuxKeeper();
       for (let i = 0; i < 60 && !end.log.slice(logAgain).includes('stopped'); i++) {
@@ -151,7 +151,7 @@ Deno.test({
       const ended = agentsIn(end.channels);
       assertEquals(ended.map((ch) => [ch.live, ch.reason]), [[false, 'orphaned']]);
     } finally {
-      for (const s of studios) await s.close().catch(() => {});
+      for (const s of aibs) await s.close().catch(() => {});
       for (const link of links) {
         try {
           const client = await new KeeperLink({ dataDir: link.options.dataDir }).client(false);

@@ -4,7 +4,7 @@
  * hands each message to the distro's helper (helper/mcp_tunnel.ts), which sends it here over the helper channel (`mcp.request`).
  *
  * Here: take it with `mcp.accept` (the helper says no when it already told the forwarder AIB was away: then it never runs), hand it
- * to the Studio's server (Studio.wslToolCall: the conversation must be a live chat in that same distro, then the HTTP endpoint's own
+ * to AIB's server (Aib.wslToolCall: the conversation must be a live chat in that same distro, then the HTTP endpoint's own
  * key check and reply: artifacts/mcp_http.ts tunneled), and answer with `mcp.reply`. The page token never enters Linux, and no port
  * is opened: the key travels in the request, as it does in the HTTP header.
  */
@@ -14,7 +14,7 @@ import type { HelperMcpRequest, WslHost } from './contract.ts';
 
 const log = getLogger('wsl');
 
-/** What the Studio does with one tunneled message: an HTTP-like status and body. */
+/** What AIB does with one tunneled message: an HTTP-like status and body. */
 export type TunnelServe = (
   request: { distro: string; key: string; conversation: string; body: string; headers: Record<string, string> },
 ) => Promise<TunnelAnswer>;
@@ -38,7 +38,7 @@ type TunnelHost = Pick<WslHost, 'distro' | 'call'>;
 export class McpTunnelGate {
   #serve: TunnelServe | null = null;
 
-  /** The Studio that answers tool calls from the distros (the last one set; the returned function unsets it if still its own). */
+  /** AIB that answers tool calls from the distros (the last one set; the returned function unsets it if still its own). */
   set(serve: TunnelServe): () => void {
     this.#serve = serve;
     return () => {
@@ -110,5 +110,5 @@ function idOf(body: string): unknown {
   }
 }
 
-/** This AIB's gate: Studio sets its server, wsl/access.ts watches every host it hands out. */
+/** This AIB's gate: AIB sets its server, wsl/access.ts watches every host it hands out. */
 export const mcpTunnelGate = new McpTunnelGate();

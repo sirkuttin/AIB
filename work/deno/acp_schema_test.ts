@@ -1,4 +1,4 @@
-/** server/acp/acp_schema.ts: the cases of work/test_conformance.py that cover acp_schema.py, plus parity with Python. */
+/** server/acp/acp_schema.ts: the cases of work/test_conformance.py that cover acp_schema.py, plus the frozen answers. */
 import { assert, assertEquals } from './_assert.ts';
 import { Frozen } from './_frozen.ts';
 import {
@@ -160,7 +160,7 @@ Deno.test('required fields and types are enforced', () => {
   throwsProtocol(() => validateSessionUpdate({ update: { sessionUpdate: 'plan', entries: [] } }));
 });
 
-Deno.test('validateSessionUpdate matches Python', async () => {
+Deno.test('validateSessionUpdate matches the frozen answers', async () => {
   const py = new Frozen();
   const params: unknown[] = [
     ...[...validUpdates, ...invalidUpdates, ...extraUpdates].map((update) => ({ sessionId: 's', update })),
@@ -258,7 +258,7 @@ const results: [string, unknown][] = [
   ['unknown/method', 'x'],
 ];
 
-Deno.test('request, notification and result validators match Python', async () => {
+Deno.test('request, notification and result validators match the frozen answers', async () => {
   const py = new Frozen();
   for (const [method, params] of requests) {
     assertEquals(outcome(() => validateRequest(method, params)), await py.raw('acp_schema', 'validate_request', [method, params]), method);
@@ -322,7 +322,7 @@ const envelopes: unknown[] = [
   null,
 ];
 
-Deno.test('envelope classification matches Python', async () => {
+Deno.test('envelope classification matches the frozen answers', async () => {
   const py = new Frozen();
   assertEquals(messageKind({ jsonrpc: '2.0', id: 1, method: 'm' }), 'request');
   assertEquals(messageKind({ jsonrpc: '2.0', method: 'm', params: {} }), 'notification');
@@ -388,7 +388,7 @@ Deno.test('elicitation request envelope gets an error reply', () => {
   assert(screen(connection, wellFormed) !== null);
 });
 
-Deno.test('screen() matches Python: events, replies, waiters and results', async () => {
+Deno.test('screen() matches the frozen answers: events, replies, waiters and results', async () => {
   const py = new Frozen();
   const update = (body: Json, extra: Json = {}) => line({ method: 'session/update', params: { sessionId: 's1', update: body, ...extra } });
   const sessions: unknown[][] = [

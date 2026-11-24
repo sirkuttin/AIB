@@ -1,7 +1,7 @@
 /**
- * Validators for the ACP v1 messages Agent Studio receives from an agent (acp_schema.py).
+ * Validators for the ACP v1 messages AIB receives from an agent (acp_schema.py).
  *
- * Only the shapes Studio relies on are checked; unknown future extensions are tolerated: unknown session/update kinds
+ * Only the shapes AIB relies on are checked; unknown future extensions are tolerated: unknown session/update kinds
  * pass through and are logged once, unknown ContentBlock types, extra fields and `_meta` are ignored, optional fields
  * with the wrong type are ignored; only REQUIRED fields are enforced.
  *
@@ -17,7 +17,7 @@ export const TOOL_STATUSES = ['pending', 'in_progress', 'completed', 'failed'] a
 export const PERMISSION_KINDS = ['allow_once', 'allow_always', 'reject_once', 'reject_always'] as const;
 /** Per connection, so a hostile agent cannot flood history. */
 export const MAX_PROTOCOL_EVENTS = 25;
-/** Adapter extensions Studio already understands (Claude ACP adapter subagent announcements and delegation messages). */
+/** Adapter extensions AIB already understands (Claude ACP adapter subagent announcements and delegation messages). */
 export const KNOWN_EXTENSION_UPDATES = ['subagent_update', 'session_message'] as const;
 
 export const INVALID_REQUEST = -32600;
@@ -234,7 +234,7 @@ export function validateNotification(method: string, params: unknown): string | 
   return null;
 }
 
-// ---- agent -> client responses (results of requests Studio sent) -----------
+// ---- agent -> client responses (results of requests AIB sent) -----------
 
 export function validateInitializeResult(result: unknown): void {
   const value = obj(result, 'result');
@@ -292,7 +292,7 @@ export function validateResult(method: unknown, result: unknown): void {
 
 // ---- connection integration ------------------------------------------------
 
-/** A request Studio sent and is waiting on. `done` works like threading.Event. */
+/** A request AIB sent and is waiting on. `done` works like threading.Event. */
 export interface PendingRequest {
   method?: unknown;
   done: { isSet(): boolean; set(): void };

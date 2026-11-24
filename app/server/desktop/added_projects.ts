@@ -1,6 +1,6 @@
 /**
  * The projects the user added to AIB (studio-added-projects.json in the data folder). A project exists in AIB only when the user
- * adds it: with New project, or by starting a chat in a folder through AIB (Studio.connect, so auto-reconnect, a keeper take-over
+ * adds it: with New project, or by starting a chat in a folder through AIB (Aib.connect, so auto-reconnect, a keeper take-over
  * and agent-started chats count too). Every data folder starts with an empty list. Saved chats the agents keep on disk (Claude
  * Code's ~/.claude/projects, OMP's sessions, a session/list answer) are shown only when they belong to an added project; the rest
  * is never listed, and never changed or deleted on disk either.

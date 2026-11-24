@@ -15,9 +15,9 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { Browser, browserPath, type Page } from './_doc_browser.ts';
-import { LOGIN, NAME, pairPhone, pc, type Raw, raw, type RemoteStudio } from './_remote_fixture.ts';
+import { LOGIN, NAME, pairPhone, pc, type Raw, raw, type RemoteAib } from './_remote_fixture.ts';
 import { NewChats, setAgentRows } from '../../app/server/remote/newchat.ts';
-import { liveChat, v2Studio } from './_remote_v2b.ts';
+import { liveChat, v2Aib } from './_remote_v2b.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
 type Json = Record<string, unknown>;
@@ -28,7 +28,7 @@ const WIDTHS = `(() => { const d = document.documentElement; return [d.scrollWid
 
 /** This test is Tailscale Serve: every request to https://<name>/ goes to the phone port with the headers Serve adds. `drop`: a
  * request it says yes to reaches AIB, but its answer is lost on the way back (the phone sees no answer: the network dropped). */
-async function serveFor(page: Page, s: RemoteStudio, drop: (method: string, path: string) => boolean = () => false): Promise<void> {
+async function serveFor(page: Page, s: RemoteAib, drop: (method: string, path: string) => boolean = () => false): Promise<void> {
   await page.send('Network.enable');
   await page.send('Fetch.enable', { patterns: [{ urlPattern: `https://${NAME}/*`, requestStage: 'Request' }] });
   page.listeners.set('Fetch.requestPaused', (p) => {
@@ -75,7 +75,7 @@ async function serveFor(page: Page, s: RemoteStudio, drop: (method: string, path
 
 async function phonePage(
   browser: Browser,
-  s: RemoteStudio,
+  s: RemoteAib,
   phone: { token: string; id: string },
   ua?: string,
   drop?: (method: string, path: string) => boolean,
@@ -143,7 +143,7 @@ Deno.test({
     'phone page at 375 px: card menu (⋯ and long press): rename, mark unread, archive keep / end, delete with confirmation, Undo; Theme; Install AIB; no sideways scroll',
   ignore: !browserPath,
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     const browser = await Browser.launch();
     try {
       s.chats.push(liveChat('c1', s.project, { attention: { state: 'idle', needs: 0, turnEndedAt: null, busySince: null } }));
@@ -316,7 +316,7 @@ Deno.test({
   name: 'phone page at 375 px: Install AIB on an iPhone is the Share steps, on Firefox its menu steps; standalone hides it',
   ignore: !browserPath,
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     const browser = await Browser.launch();
     try {
       s.chats.push(liveChat('c1', s.project));
@@ -357,7 +357,7 @@ Deno.test({
     'phone page at 375 px: New chat (greyed agent with reason, model, mode, first message), the message reaches the agent; a mode that fails holds it; Artifacts page and the version menu',
   ignore: !browserPath,
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     const browser = await Browser.launch();
     try {
       s.chats.push(liveChat('c1', s.project));
@@ -502,7 +502,7 @@ Deno.test({
     'phone page at 375 px (review 1, 2): the network drops during Start: no second chat; AIB restarts while it opens: the message comes back in the box and goes once',
   ignore: !browserPath,
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     const browser = await Browser.launch();
     try {
       s.chats.push(liveChat('c1', s.project));

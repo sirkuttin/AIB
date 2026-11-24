@@ -1,5 +1,5 @@
 /**
- * Where docs and files open, end to end (beta.8): a real Studio (Deno web server + in-process agent host, temp state folder, free
+ * Where docs and files open, end to end (beta.8): a real AIB (Deno web server + in-process agent host, temp state folder, free
  * port; never the live ports), the scripted agent work/scroll-fixture/agent.py, and a headless Chrome/Edge on chat.html (no window).
  *
  *  - An agent making a doc while you type: the doc shows in the right column's Docs tab in the background (its row is marked

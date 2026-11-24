@@ -21,7 +21,7 @@ import { assert, assertEquals } from './_assert.ts';
 import { NewChats, setAgentRows } from '../../app/server/remote/newchat.ts';
 import { RemoteServer } from '../../app/server/remote/server.ts';
 import { pairPhone, pc } from './_remote_fixture.ts';
-import { AGENT_ROWS, liveChat, phoneCall, v2Studio } from './_remote_v2b.ts';
+import { AGENT_ROWS, liveChat, phoneCall, v2Aib } from './_remote_v2b.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
 type Json = Record<string, unknown>;
@@ -44,7 +44,7 @@ Deno.test({
   ...OPTS,
   name: 'fake agent host: like Connection.prompt (not ready and busy refused, a repeated id is a duplicate, other text refused)',
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     try {
       s.chats.push(liveChat('c1', s.project), liveChat('c2', s.project, { ready: false }), liveChat('c3', s.project, { busy: true }));
       const call = (id: string, text: string, mid: string) => s.ctx.host.liveCall('prompt', { id, text, clientMessageId: mid });
@@ -67,7 +67,7 @@ Deno.test({
   ...OPTS,
   name: 'review 1: AIB restarts while a new chat opens: the start is forgotten (404), the first message is found by its id once it went',
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     try {
       const phone = await pairPhone(s);
       s.pick.ready = false;
@@ -117,7 +117,7 @@ Deno.test({
   ...OPTS,
   name: 'review 2: Start sent again with the same id (the network dropped) is the same chat, never a second one; also two at once',
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     try {
       const phone = await pairPhone(s);
       const body = { project: s.projectId, agent: 'claude', text: 'Write the docs', clientMessageId: 'phone-drop1' };
@@ -148,7 +148,7 @@ Deno.test({
   name:
     'review 3: a PC rename saves only its chat (a phone rename the PC page has not read stays); the list answer gives names to an old copy',
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     try {
       s.chats.push(liveChat('c1', s.project), liveChat('c2', s.project));
       const phone = await pairPhone(s);
@@ -195,7 +195,7 @@ Deno.test({
   ...OPTS,
   name: 'review 5: /new/options refuses an agent that is turned off or not installed, and never asks it for its lists',
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     try {
       setAgentRows(() => Promise.resolve([...AGENT_ROWS, { id: 'custom-gone', name: 'Gone', enabled: true, found: false }]));
       const phone = await pairPhone(s);
@@ -220,7 +220,7 @@ Deno.test({
   ...OPTS,
   name: "review 6: a chat's Artifacts page lists its own live id only; another chat's id is refused",
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     try {
       s.chats.push(liveChat('c1', s.project), liveChat('c2', s.project));
       const phone = await pairPhone(s);
@@ -245,7 +245,7 @@ Deno.test({
   ...OPTS,
   name: 'review 7: Undo is only the inverse of this phone’s own archive or delete, and only while the PC has not changed the chat since',
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     try {
       s.chats.push(liveChat('c1', s.project));
       s.saveChat({ sessionId: 'old-1', prompt: 'Old work' });
@@ -291,7 +291,7 @@ Deno.test({
   ...OPTS,
   name: 'review 8: no folder path or agent host words in what a phone sees when a new chat cannot start or its first message fails',
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     try {
       const phone = await pairPhone(s);
       const secret = 'C:\\Users\\owner\\Secret Project\\agent.exe';
@@ -330,7 +330,7 @@ Deno.test({
   ...OPTS,
   name: 'review 9: a saved model and mode with no agent go when the default agent changes to another than the global default',
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     try {
       const key = folderKeyOf(s.project);
       const get = () =>
@@ -356,7 +356,7 @@ Deno.test({
   ...OPTS,
   name: 'review 10: Start new chats turned off while the chat opens: the first message does not go',
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     try {
       const phone = await pairPhone(s);
       s.pick.ready = false;
@@ -383,7 +383,7 @@ Deno.test({
   ...OPTS,
   name: "review 11: the phone's unread dots count from the PC page's epoch (studio-sidebar-epoch), as the PC's do",
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     try {
       // finished an hour ago (before this process started), never read; the PC page first ran two hours ago: unread there
       s.chats.push(
@@ -410,7 +410,7 @@ Deno.test({
   ...OPTS,
   name: 'review 12: deleting a running chat whose session ends slowly says "delete it again"; once it ended, Delete goes through',
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     const wait = RemoteServer.END_WAIT_MS;
     try {
       RemoteServer.END_WAIT_MS = 300;
@@ -438,7 +438,7 @@ Deno.test({
   ...OPTS,
   name: "review 13: nothing saved: the lists' default is '' (the agent's own is `current`); a pick not on the list is refused",
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     try {
       const phone = await pairPhone(s);
       let r = await phoneCall(s, phone.token, 'GET', `/api/remote/new/options?project=${s.projectId}&agent=claude`);

@@ -1,8 +1,8 @@
 /**
- * server/state (state_store.py): the cases of the Python tests that exercise the stores directly
+ * server/state (state_store.py): the cases of the old tests that exercise the stores directly
  * (test_conversation_state, test_project_prefs, test_read_state, test_settings, test_state_files_safety, test_unknown_receipts,
  * test_runtime StateStoreTests, test_project_root, test_editors / test_prompts / test_updater / test_adapters store cases),
- * plus the JSON reader and the agent registry. Parity with Python and Python<->Deno interop are in state_store_parity_test.ts.
+ * plus the JSON reader and the agent registry. The frozen answers and the old-file interop are in state_store_parity_test.ts.
  */
 import { assert, assertEquals, assertRejects, assertThrows } from './_assert.ts';
 import {
@@ -24,7 +24,7 @@ import * as registry from '../../app/server/agents/agent_registry.ts';
 import { ValueError } from '../../app/server/core/py.ts';
 import { QueueStore } from '../../app/server/acp/msgqueue.ts';
 
-timing.readBackoffMs = 0; // as the Python tests patch READ_BACKOFF
+timing.readBackoffMs = 0; // READ_BACKOFF is patched to 0
 const WIN = Deno.build.os === 'windows';
 const SEP = WIN ? '\\' : '/';
 const PY = (() => {
@@ -118,7 +118,7 @@ Deno.test('parseJson reads what json.loads reads and keeps file key order', () =
   assertEquals(({} as Record<string, unknown>).polluted, undefined);
 });
 
-Deno.test('dumpJson is compact, keeps Map order and writes NaN / Infinity like Python', () => {
+Deno.test('dumpJson is compact, keeps Map order and writes NaN / Infinity as before', () => {
   assertEquals(dumpJson({ a: [1, 'é'], b: new Map([['2', 1], ['1', 2]]) }), '{"a":[1,"é"],"b":{"2":1,"1":2}}');
   assertEquals(dumpJson([NaN, Infinity, -Infinity, null]), '[NaN,Infinity,-Infinity,null]');
   assertEquals(dumpJson(parseJson('{"x":1,"3":2}')), '{"x":1,"3":2}');
@@ -210,7 +210,7 @@ Deno.test('conversations: revision changes only on change, other writers are see
   assert(changed !== rev);
   await a.apply('pin', 'claude', 's1');
   assertEquals(a.revision(), changed, 'a no-op does not bump the revision');
-  assert('claude:s1' in b.public().entries, 'a second Studio on the same state dir sees the change');
+  assert('claude:s1' in b.public().entries, 'a second AIB on the same state dir sees the change');
   await b.apply('archive', 'omp', 's2');
   assert('omp:s2' in a.public().entries);
   assert('claude:s1' in a.public().entries, "a stale writer does not lose the other writer's marks");
@@ -609,7 +609,7 @@ Deno.test('registry: ids are slugs and unique', () => {
   for (const bad of ['custom-', 'custom-A', 'custom-a_b', 'custom--a', 'custom-a:b', 'nonesuch', '', null, 5, 'custom-' + 'a'.repeat(60)]) {
     assert(!registry.isProvider(bad), String(bad));
   }
-  assert(registry.isProvider('custom-a\n'), "Python's re '$' matches before a final newline");
+  assert(registry.isProvider('custom-a\n'), "a re-style '$' matches before a final newline");
 });
 
 Deno.test('registry: the command must exist', () => {

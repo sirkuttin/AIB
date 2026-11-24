@@ -9,7 +9,7 @@
 import { assert, assertEquals } from './_assert.ts';
 import { Browser, browserPath } from './_doc_browser.ts';
 import { pairPhone, pc } from './_remote_fixture.ts';
-import { liveChat, phoneCall, v2Studio } from './_remote_v2b.ts';
+import { liveChat, phoneCall, v2Aib } from './_remote_v2b.ts';
 import { phonePage, tap } from './_remote_phone_page.ts';
 import { lastUserText } from '../../app/server/attention/inbox_act.ts';
 
@@ -38,7 +38,7 @@ Deno.test({
   name: 'phone inbox: a failed chat has Retry (one row, 44 px); Retry sends your last message again; without Send it is refused',
   ignore: !browserPath,
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     const browser = await Browser.launch();
     try {
       const failed = liveChat('c-fail', s.project, {

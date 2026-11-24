@@ -171,13 +171,13 @@ Key facts that shape the table:
 
 | file:line | what it does | cat | note |
 |---|---|---|---|
-| studio.ts:645-690 | artifactMcpServers/#artifactStdioEntry (Windows forwarder exe, 127.0.0.1 URL, stateDir URL file) | A | a Linux agent cannot reach these: needs a Linux forwarder in the helper plus a tunnel |
-| studio.ts:690-722 | listAgentSessions (cwd filter) | C | |
-| studio.ts:724-780 | agent-options #probe (isdir/realpath cwd, spawns the agent there) | A | |
-| studio.ts:786-870 | connect (realpath/expandUser/isdir workspace, worktree plan/ensure) | A | also C |
-| studio.ts:994-1060 | rebuild chats from keeper notes (cwd) | C | must also know which keeper (Windows or WSL) |
-| studio.ts:1336-1346 | ownershipQuery (isNetworkPath gate) | A | |
-| studio.ts:1354-1400 | worktree record / connections by same(cwd) / worktree routes | C | |
+| aib.ts:645-690 | artifactMcpServers/#artifactStdioEntry (Windows forwarder exe, 127.0.0.1 URL, stateDir URL file) | A | a Linux agent cannot reach these: needs a Linux forwarder in the helper plus a tunnel |
+| aib.ts:690-722 | listAgentSessions (cwd filter) | C | |
+| aib.ts:724-780 | agent-options #probe (isdir/realpath cwd, spawns the agent there) | A | |
+| aib.ts:786-870 | connect (realpath/expandUser/isdir workspace, worktree plan/ensure) | A | also C |
+| aib.ts:994-1060 | rebuild chats from keeper notes (cwd) | C | must also know which keeper (Windows or WSL) |
+| aib.ts:1336-1346 | ownershipQuery (isNetworkPath gate) | A | |
+| aib.ts:1354-1400 | worktree record / connections by same(cwd) / worktree routes | C | |
 | connection.ts:433-458 | resolvePath/resolveProgram (realPath, PATH+PATHEXT stat) | A | resolves the Windows agent binary |
 | connection.ts:785-823 | constructor (projectOfWorktree, WriteTracker, caps) / retarget | A | |
 | connection.ts:825-850 | startProcess: Deno.Command(agent, cwd) | A | |
@@ -282,7 +282,7 @@ Key facts that shape the table:
 
 ## Gates that refuse WSL paths today (all C, listed so none is missed)
 
-security.ts:247; added_projects.ts:113; editors.ts:352; folders.ts:68,95,112,115,203,277; folder_presence.ts:40; project_delete.ts:286,346; studio.ts:1345; terminal/sessions.ts:82; transcripts/store.ts:153; files_routes.ts:46,52; chat_folders.ts:11; files.ts:39,60,67,83; outside_files.ts:26,53,70; client_caps.ts:123-126.
+security.ts:247; added_projects.ts:113; editors.ts:352; folders.ts:68,95,112,115,203,277; folder_presence.ts:40; project_delete.ts:286,346; aib.ts:1345; terminal/sessions.ts:82; transcripts/store.ts:153; files_routes.ts:46,52; chat_folders.ts:11; files.ts:39,60,67,83; outside_files.ts:26,53,70; client_caps.ts:123-126.
 
 ## (1) Proposed minimal ProjectFs / ProjectExec interface
 
@@ -338,7 +338,7 @@ Raw volume behind the rows: the server has about 485 direct `Deno.*` fs/Command 
 1. **worktrees/sync.ts:668-720 DirWatcher + LiveSync 946-1600.** `Deno.watchFs` over `\\wsl.localhost` gets no events (ReadDirectoryChangesW over 9P), and the engine makes about 60 sync fs calls plus git per turn. Run it file-by-file over RPC and it is slow and racy. Run it from Windows over UNC and edits are silently missed. It has to move into the helper as a whole.
 2. **The three git spawn paths: worktrees.ts:121-186, changes.ts:65-131, files.ts:119 (plus folders.ts:328).** Windows git on a WSL repo hits "dubious ownership", is slow, and `encodeInput` (worktrees.ts:114-118) rewrites `\n` to `\r\n` on stdin. Missing one path means a mixed setup that can corrupt the index (update-index/hash-object input) or show wrong diffs.
 3. **Worktree location and removal: worktrees.ts:1016-1150, merge.ts:610-620 resetTo.** The worktree root is `stateDir/worktrees` on Windows, and the "only delete inside AIB's root" guard (realpath + normcase) depends on it. A WSL repo needs a root inside the distro, and the guard must compare Linux paths case-sensitively. A mistake here deletes the wrong folder or creates a cross-filesystem `git worktree`.
-4. **Agent spawn + AIB tools wiring: connection.ts:446-458, 852-862; studio.ts:645-690; mcp.ts:315-330.** Today the agent gets the whole Windows env, a Windows binary path, a Windows forwarder exe and a 127.0.0.1 URL. Under WSL2 NAT the Linux agent cannot reach Windows loopback, so it would start without AIB's doc/artifact/merge tools and without any error.
+4. **Agent spawn + AIB tools wiring: connection.ts:446-458, 852-862; aib.ts:645-690; mcp.ts:315-330.** Today the agent gets the whole Windows env, a Windows binary path, a Windows forwarder exe and a 127.0.0.1 URL. Under WSL2 NAT the Linux agent cannot reach Windows loopback, so it would start without AIB's doc/artifact/merge tools and without any error.
 5. **Path identity and safety gates: ospath.ts:37 normcase, the isNetworkPath gates, project_delete.ts:262-310 refusal.** Lowercased keys merge `Foo` and `foo` (projectKey in sync/merge, artifacts pathKey, repoLock). Loosening isNetworkPath too broadly re-opens the UNC credential leak it guards against. The delete guard was written for drive letters. All need a "registered WSL project" exception, not a general relaxation.
 
 ## (4) Revised effort estimate

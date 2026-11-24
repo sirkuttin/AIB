@@ -1,6 +1,6 @@
 /**
  * Where the owner is looking (attention/presence.ts): a phone page that is on screen tells the PC through its polls, through the
- * phone port with forged Tailscale Serve headers, as a real phone would; the AttentionWatcher (startAttention, in-process Studio,
+ * phone port with forged Tailscale Serve headers, as a real phone would; the AttentionWatcher (startAttention, in-process AIB,
  * fake agent host) then decides:
  *   - the phone shows chat X and X finishes: no push, no desktop notification, X is marked read on the PC (the owner's report:
  *     "I had the chat open on my phone yet the desktop app sent a notification");
@@ -23,7 +23,7 @@ import {
   pc,
   phoneHeaders,
   raw,
-  remoteStudio,
+  remoteAib,
   serveStatus,
 } from "./_remote_fixture.ts";
 
@@ -93,10 +93,10 @@ const needYou = (c: FakeChat, key: string) => {
   };
 };
 
-/** A Studio with phone access on, one paired phone, the watcher running, desktop notifications and pushes recorded. */
+/** An AIB with phone access on, one paired phone, the watcher running, desktop notifications and pushes recorded. */
 async function lab() {
   const fake = fakeTailscale();
-  const s = await remoteStudio({ runner: fake.runner });
+  const s = await remoteAib({ runner: fake.runner });
   fake.state.serve = serveStatus(readRemotePort(s.state)!);
   assertEquals(
     (await pc(s, "POST", "/api/live/devices/access", { on: true }))[0],

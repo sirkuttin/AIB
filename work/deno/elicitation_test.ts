@@ -1,4 +1,4 @@
-/** server/acp/elicitation.ts: the cases of work/test_elicitation.py, plus parity with Python's elicitation.py. */
+/** server/acp/elicitation.ts: the cases of work/test_elicitation.py, plus the frozen answers */
 import { assertEquals, AssertionError } from './_assert.ts';
 import { Frozen } from './_frozen.ts';
 import {
@@ -12,9 +12,9 @@ import {
 type Json = Record<string, unknown>;
 
 /**
- * What `outcome` gives, unless the oracle is Python 3.13 or newer, whose urlparse refuses more than the older ones did (an unbalanced
+ * What `outcome` gives, unless the frozen answers come from a 3.13 or newer runtime, whose urlparse refuses more than the older ones did (an unbalanced
  * bracket, a signed port). AIB's check stays as lenient as before, so a 3.13 error where AIB accepts is not a difference; the other
- * way round (AIB refuses what Python accepts) still is.
+ * way round (AIB refuses what the frozen answers accept) still is.
  */
 function sameAsOracle(ours: unknown, theirs: unknown): boolean {
   if (JSON.stringify(ours) === JSON.stringify(theirs)) return true;
@@ -271,7 +271,7 @@ const schemas: unknown[] = [
   ]),
 ];
 
-Deno.test('validateSchema matches Python', async () => {
+Deno.test('validateSchema matches the frozen answers', async () => {
   const py = new Frozen();
   for (const schema of schemas) {
     assertEquals(
@@ -319,7 +319,7 @@ const contents: unknown[] = [
   null,
 ];
 
-Deno.test('validateContent matches Python', async () => {
+Deno.test('validateContent matches the frozen answers', async () => {
   const py = new Frozen();
   for (const content of contents) {
     const expected = await py.raw('elicitation', 'validate_content', [contentSchema, content]);
@@ -328,7 +328,7 @@ Deno.test('validateContent matches Python', async () => {
   assertEquals(outcome(() => validateContent(null, {})), await py.raw('elicitation', 'validate_content', [null, {}]));
 });
 
-/** Deterministic pseudo-random strings, for fuzzing the format checks against Python. */
+/** Deterministic pseudo-random strings, for fuzzing the format checks against the frozen answers. */
 function* fuzz(seed: number, count: number, templates: string[], alphabet: string[]): Generator<string> {
   let state = seed;
   const rand = (n: number) => {
@@ -435,7 +435,7 @@ const emailTemplates = [
 ];
 const alphabet = [...'0123456789-:T+Z.,W @/?#[]Ze\u0000\t', 'é', '😀', '\u3000', '\ud800', '\u0661'];
 
-Deno.test('string formats match Python (fuzzed)', async () => {
+Deno.test('string formats match the frozen answers (fuzzed)', async () => {
   const py = new Frozen();
   const cases: [string, string[]][] = [
     ['date', [...dateTemplates, ...fuzz(1, 600, dateTemplates, alphabet)]],
@@ -488,7 +488,7 @@ const urlTemplates = [
   'https://x\u007f/',
 ];
 
-Deno.test('validateUrl and validateUrlRequest match Python', async () => {
+Deno.test('validateUrl and validateUrlRequest match the frozen answers', async () => {
   const py = new Frozen();
   const urls: unknown[] = [...urlTemplates, ...badUrls, ...fuzz(5, 400, urlTemplates, [...alphabet, ':', '%', 'é'])];
   for (const url of urls) {

@@ -1,5 +1,5 @@
 /**
- * Helper chats in the page (owner decision 2026-11-23). A real Studio (the scroll lab: temp state folder, free port; never the live
+ * Helper chats in the page (owner decision 2026-11-23). A real AIB (the scroll lab: temp state folder, free port; never the live
  * ports), scripted live chats, the helper registry written into the lab's state folder, headless Chrome or Edge:
  *  - a helper chat (working, waiting, or done and merged) is not in the left chat list, but Ctrl+K finds it, named after its job
  *    ("Fix login (Codex)") and labelled "helper of <main chat>"; an owner's rename wins;

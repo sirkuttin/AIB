@@ -98,30 +98,30 @@ Deno.test({
   ...T,
   async fn() {
     using t = tempDir();
-    const studio = new Aib({ stateDir: t.dir + SEP + 'state', port: 0, claudeLauncher: import.meta.filename!, nodeCommand: 'node' });
-    studio.ownerProbe = () => null;
+    const aib = new Aib({ stateDir: t.dir + SEP + 'state', port: 0, claudeLauncher: import.meta.filename!, nodeCommand: 'node' });
+    aib.ownerProbe = () => null;
     let started = 0;
-    studio.connectionFactory = () => {
+    aib.connectionFactory = () => {
       started++;
       throw new Error('an adapter must never start for OMP');
     };
     try {
       for (const resume of [null, 'old-session']) {
-        const error = await assertRejects(() => studio.connect('omp', t.dir, resume, { background: true }));
+        const error = await assertRejects(() => aib.connect('omp', t.dir, resume, { background: true }));
         assertEquals((error as Error).message, NOTE);
       }
-      assertEquals(((await assertRejects(() => studio.agentLaunch('omp', false))) as Error).message, NOTE);
-      assertEquals(((await assertRejects(() => studio.agentLaunch('omp', true))) as Error).message, NOTE);
+      assertEquals(((await assertRejects(() => aib.agentLaunch('omp', false))) as Error).message, NOTE);
+      assertEquals(((await assertRejects(() => aib.agentLaunch('omp', true))) as Error).message, NOTE);
       // the route: a refusal the page shows, never a start
-      const [status, body] = await studio.liveCall('connect', { provider: 'omp', cwd: t.dir, resume: 'old-session', background: true });
+      const [status, body] = await aib.liveCall('connect', { provider: 'omp', cwd: t.dir, resume: 'old-session', background: true });
       assert(status >= 400 && status < 500, String(status));
       assertEquals((body as Json).error, NOTE);
       // no model lists are asked of it either
-      await assertRejects(() => studio.agentOptionsFor({ agent: 'omp', cwd: t.dir, probe: true }));
+      await assertRejects(() => aib.agentOptionsFor({ agent: 'omp', cwd: t.dir, probe: true }));
       assertEquals(started, 0, 'no adapter was started');
-      assertEquals([...studio.connections.values()].length, 0);
+      assertEquals([...aib.connections.values()].length, 0);
     } finally {
-      await studio.close().catch(() => {});
+      await aib.close().catch(() => {});
     }
   },
 });

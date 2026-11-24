@@ -1,19 +1,19 @@
 /**
- * A Studio's link to the keeper: one keeper connection per Studio, started on first use, and one KeeperChannel per agent the
- * Studio runs through it. A channel queues its operations until the keeper has spawned it, so a Connection can write right away,
+ * An AIB's link to the keeper: one keeper connection per AIB, started on first use, and one KeeperChannel per agent the
+ * AIB runs through it. A channel queues its operations until the keeper has spawned it, so a Connection can write right away,
  * exactly as it writes to a child's stdin.
  *
  * The keeper is always on (owner decision): main.ts decides once at start (decideKeeper()) whether it can run: the program is there
  * (next to the app, or built from keeper/ with Go in a source run) and answers `version`. When it cannot, AIB falls back to the split
  * agent host (or plain in-process agents), logs why and Settings > About shows one quiet line (keeperProblem()). AIB_KEEPER=0 in the
- * environment turns it off: an internal escape hatch for tests and debugging, shown nowhere. A Studio built without a decision (unit
+ * environment turns it off: an internal escape hatch for tests and debugging, shown nowhere. An AIB built without a decision (unit
  * tests, the split agent host) starts no new chat in the keeper, but still takes over chats a keeper already holds (keeperWanted()).
  *
  * A link can also reach its keeper through a `connector` instead of a data folder: the Linux keeper of a WSL distro, over the
  * stdio of a `wsl.exe … bridge` child (wsl/hosts.ts). With `reconnect`, the end of that transport is not the end of the keeper
  * (docs/wsl/design.md section 11 item 2): the channels are suspended (operations wait), the connector is called again with backoff,
  * and each channel is attached again from the last record it had (claimed again when it was ours). A channel is told `lost` (and
- * onLost fires, so Studio may start the chat again) only when the keeper's `list` shows it ended or gone, or the keeper cannot be
+ * onLost fires, so AIB may start the chat again) only when the keeper's `list` shows it ended or gone, or the keeper cannot be
  * reached again: a transport hiccup never starts a second copy of a running agent.
  *
  * AIB's own channels (the WSL keep-alive `wsl-hold` in the Windows keeper, the `wsl-helper` in a Linux keeper; contract.ts labels)
@@ -58,7 +58,7 @@ export function aibInternalKind(label: unknown): string {
 }
 
 /**
- * Is this spawn label one of AIB's own channels (the WSL keep-alive or the WSL helper)? Studio's rebuild, orphan-terminal cleanup
+ * Is this spawn label one of AIB's own channels (the WSL keep-alive or the WSL helper)? AIB's rebuild, orphan-terminal cleanup
  * and live counts skip these: they are neither chats nor terminals, and must never be stopped as unknown or counted as work.
  */
 export function isAibInternalLabel(label: unknown): boolean {
@@ -205,11 +205,11 @@ export class KeeperLink {
   readonly channels = new Map<string, KeeperChannel>();
   /** Called after the keeper connection ended, with the channels that were attached (each already told `lost`). */
   onLost: ((channels: KeeperChannel[]) => void) | null = null;
-  /** Called each time a keeper connection is made (Studio remembers which keeper its instance id belongs to). */
+  /** Called each time a keeper connection is made (AIB remembers which keeper its instance id belongs to). */
   onClient: ((client: KeeperClient) => void) | null = null;
   /** A reconnecting link's transport changed (wsl/hosts.ts shows "reconnecting" / "stopped"). */
   onTransport: ((state: TransportState, error: Error | null) => void) | null = null;
-  /** Why the running keeper cannot take new chats ('' = it can); new chats then run as children of AIB (Studio checks it). */
+  /** Why the running keeper cannot take new chats ('' = it can); new chats then run as children of AIB (AIB checks it). */
   problem = '';
   #client: KeeperClient | null = null;
   #connecting: Promise<KeeperClient | null> | null = null;
@@ -569,7 +569,7 @@ export class KeeperLink {
    * truncated after a checkpoint starts at a segment boundary, so the notes written before the snapshot (steer, piped, released,
    * receipts, events ...) come first: none of them means "not a chat" (2026-11-17: a `steer` note before the snapshot made the
    * take-over stop the owner's lead chat). `foreign`: the first note that is not AIB's at all (no string `t`). `sessionId`: the
-   * session the agent's own lines name, for a chat whose note is gone (studio.ts rebuilds its record from it).
+   * session the agent's own lines name, for a chat whose note is gone (aib.ts rebuilds its record from it).
    */
   async channelFacts(
     client: KeeperClient,

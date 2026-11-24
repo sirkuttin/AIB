@@ -4,7 +4,7 @@
  */
 import { pathOf } from '../../app/server/state/paths.ts';
 import { dirname } from '../../app/server/platform/ospath.ts';
-import type { MergeStudio } from '../../app/server/worktrees/merge.ts';
+import type { MergeHost } from '../../app/server/worktrees/merge.ts';
 import { python, WORK } from './_work.ts';
 import * as wt from '../../app/server/worktrees/worktrees.ts';
 
@@ -17,7 +17,7 @@ export function setFixedDates(on: boolean): void {
   }
 }
 
-/** run_git of the Python tests: identity t, autocrlf off; throws on failure; stdout with universal newlines. */
+/** run_git as the old tests did: identity t, autocrlf off; throws on failure; stdout with universal newlines. */
 export function runGit(cwd: string, ...args: string[]): string {
   const done = new Deno.Command('git', {
     args: ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'core.autocrlf=false', ...args],
@@ -51,7 +51,7 @@ export function write(folder: string, name: string, text: string | Uint8Array): 
   typeof text === 'string' ? Deno.writeTextFileSync(path, text) : Deno.writeFileSync(path, text);
 }
 
-/** Path.read_text(): universal newlines, as the Python tests read files. */
+/** Path.read_text(): universal newlines, as the old tests read files. */
 export function read(folder: string, name: string): string {
   return Deno.readTextFileSync(pathOf(folder, name)).replace(/\r\n?/g, '\n');
 }
@@ -81,7 +81,7 @@ export function makeRepo(folder: string): string {
   return folder;
 }
 
-/** A temp folder (resolved, as the Python tests' .resolve()) with state/ and a repo proj/; removed by dispose. */
+/** A temp folder (resolved) with state/ and a repo proj/; removed by dispose. */
 export class Sandbox {
   readonly base: string;
   readonly state: string;
@@ -121,7 +121,7 @@ export class Sandbox {
 }
 
 /** A studio for Merge: one or more chats with a public state (ready unless set otherwise); records every live call. */
-export class FakeStudio implements MergeStudio {
+export class FakeAib implements MergeHost {
   readonly calls: [string, Record<string, unknown>][] = [];
   readonly states = new Map<string, Record<string, unknown>>();
   answer: [number, unknown] = [200, {}];
@@ -162,7 +162,7 @@ function lockPaths(state: string, project: string, record: Record<string, unknow
   };
 }
 
-/** Another process (work/lock_helper.py, no Studio code) takes the lock on `path` and keeps it until stdin closes. */
+/** Another process (work/lock_helper.py, no AIB code) takes the lock on `path` and keeps it until stdin closes. */
 async function holdOne(path: string): Promise<() => Promise<void>> {
   const child = new Deno.Command(python(), { args: ['-I', LOCK_HELPER, 'hold', path], stdin: 'piped', stdout: 'piped' }).spawn();
   const reader = child.stdout.pipeThrough(new TextDecoderStream()).getReader();

@@ -121,8 +121,8 @@
   }
   let live = null;
   /* This window's changes the server has not confirmed yet ({key: value, null for a removal}), in sessionStorage: it outlives a
-     reload of the same window. A reload right after a change could be answered before that change's request reached Studio, and
-     chat.html then seeded Studio's older value over the newer one in localStorage (the change was lost). At start, a key still in
+     reload of the same window. A reload right after a change could be answered before that change's request reached AIB, and
+     chat.html then seeded AIB's older value over the newer one in localStorage (the change was lost). At start, a key still in
      here keeps its local value and is sent again. */
   const UNSENT_KEY = 'aib-view-prefs-unsent';
   /* opts (tests): storage, session (this window's sessionStorage), proto (the Storage prototype to hook), fetch, setTimeout,
@@ -170,7 +170,7 @@
       }
     } catch (e) {}
     const { seed, upload } = plan(saved, local, !!saved[MISSING_ONLY]);
-    // this window's change that Studio never confirmed (a reload overtook its request): the local value stays and goes again
+    // this window's change that AIB never confirmed (a reload overtook its request): the local value stays and goes again
     for (const k of Object.keys(unsent)) {
       const v = unsent[k];
       const here = Object.prototype.hasOwnProperty.call(local, k) ? local[k] : null;
@@ -196,7 +196,7 @@
       timer = 0,
       token = '',
       seq = 0;
-    /* Every batch goes out at once, without waiting for the one before it: AIB quits at once, and Studio can take ~30 ms to
+    /* Every batch goes out at once, without waiting for the one before it: AIB quits at once, and AIB can take ~30 ms to
        answer while it lists chats, so a project picked behind another save was lost (remember_ui_e2e_test, about one start in
        three). The server keeps the newest batch of this page per key (page id + batch number). */
     const pageId = Math.random().toString(36).slice(2, 12) + Date.now().toString(36);
@@ -226,7 +226,7 @@
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Studio-Token': t },
         body,
-        // keepalive: a save sent just before the window closes still reaches Studio, which waits for it before AIB exits
+        // keepalive: a save sent just before the window closes still reaches AIB, which waits for it before AIB exits
         // (ViewPrefs.settle). The browser allows 64 KB of keepalive bodies on their way; a bigger one goes without.
         keepalive: !!keepalive || body.length < 32000,
       });
@@ -241,7 +241,7 @@
         lastBatch.set(k, n);
       }
       let retry = false;
-      // Studio answered for this batch: its keys need no resend after a reload (unless a newer change of the key is on its way)
+      // AIB answered for this batch: its keys need no resend after a reload (unless a newer change of the key is on its way)
       const answered = () => {
         let any = false;
         for (const k of Object.keys(batch)) {
@@ -255,7 +255,7 @@
       try {
         const body = JSON.stringify({ set: batch, page: pageId, seq: n });
         let r = await post(body, keepalive, false);
-        if (r.status === 403) r = await post(body, keepalive, true); // Studio restarted: a new token
+        if (r.status === 403) r = await post(body, keepalive, true); // AIB restarted: a new token
         if (r.status === 400) {
           answered();
           return false; // a malformed batch: the same body would fail again

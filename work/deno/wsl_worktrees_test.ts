@@ -2,7 +2,7 @@
  * The worktree per chat of WSL projects without a distro (docs/wsl/design.md section 4 phase 2, section 5 item 3):
  *   - the helper's worktree.* methods (wsl/helper/worktrees.ts) over the real Manager, run natively here on a temp repo: plan,
  *     create, find, setSession, hasChanges, remove, isRemoved, ensure; a plan that points anywhere but the root is refused;
- *   - Studio with a FakeWslHost (work/deno/_wsl_fake.ts): a new WSL chat gets its worktree from the helper (cwd = the worktree's
+ *   - AIB with a FakeWslHost (work/deno/_wsl_fake.ts): a new WSL chat gets its worktree from the helper (cwd = the worktree's
  *     ref, the agent's cwd its Linux folder, projectRoot the project's ref, `loc` in its chat note), a crashed AIB rebuilds it there,
  *     Discard removes it through the helper; a fallback, and a helper without worktrees, keep the chat in the project folder;
  *   - the Changes view of a WSL worktree chat: the branch view against its diff base, Discard and Merge (wsl_merge_test.ts).
@@ -93,7 +93,7 @@ Deno.test({ name: 'wsl helper worktree.*: ensure remakes a deleted folder from i
   await assertRejects(() => Promise.resolve(m['worktree.plan']({ project: 'relative/path' })), RpcError);
 } });
 
-// ---- Studio with a FakeWslHost -------------------------------------------------------------------------------------------
+// ---- AIB with a FakeWslHost -------------------------------------------------------------------------------------------
 const REF = 'wsl://ubuntu/home/u/app';
 const DATA = '/home/u/.aib-server/data-000000000000';
 
@@ -102,7 +102,7 @@ class WorktreeLab {
   readonly dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-wsl-wt-' }));
   readonly state = this.dir + SEP + 'state';
   readonly host: FakeWslHost;
-  readonly studios: Aib[] = [];
+  readonly aibs: Aib[] = [];
   readonly records = new Map<string, Json>();
   fallback = '';
 
@@ -148,24 +148,24 @@ class WorktreeLab {
     h['worktree.hasChanges'] = () => ({ changes: false });
   }
 
-  studio(): Aib {
+  aib(): Aib {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
-    const studio = new Aib({ stateDir: this.state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper });
-    studio.ownerProbe = () => null;
-    studio.connectionFactory = (_command, cwd, provider, options) => {
+    const aib = new Aib({ stateDir: this.state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper });
+    aib.ownerProbe = () => null;
+    aib.connectionFactory = (_command, cwd, provider, options) => {
       const wsl = options?.wsl ? { ...options.wsl, program: undefined } : options?.wsl;
       return new Connection(fake('--cancel-aware'), cwd, provider, { ...options, wsl });
     };
-    this.studios.push(studio);
-    return studio;
+    this.aibs.push(aib);
+    return aib;
   }
 
-  crash(studio: Aib): void {
-    studio.keeper!.disconnect();
+  crash(aib: Aib): void {
+    aib.keeper!.disconnect();
     this.host.link.disconnect();
-    for (const c of studio.connections.values()) c.sessionLease?.release();
-    studio.reconnectStop.set();
-    this.studios.splice(this.studios.indexOf(studio), 1);
+    for (const c of aib.connections.values()) c.sessionLease?.release();
+    aib.reconnectStop.set();
+    this.aibs.splice(this.aibs.indexOf(aib), 1);
     this.host.renewLink();
   }
 
@@ -174,7 +174,7 @@ class WorktreeLab {
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
-    for (const s of this.studios.reverse()) await s.close().catch(() => {});
+    for (const s of this.aibs.reverse()) await s.close().catch(() => {});
     setWslHostResolver(null);
     await this.host.stopKeeper();
     const info = readKeeperInfo(this.state);
@@ -205,7 +205,7 @@ const WT_REF = `wsl://ubuntu${WT_LINUX}`;
 Deno.test({ name: 'wsl studio: a WSL chat in its own worktree made by the helper; a restarted AIB rebuilds it there; Discard removes it', ...T, async fn() {
   await keeperBinary();
   await using lab = new WorktreeLab();
-  const a = lab.studio();
+  const a = lab.aib();
   const c = await a.connect('claude', REF, null, { ownCopy: true });
   assertEquals([c.cwd, c.agentCwd, c.projectRoot], [WT_REF, WT_LINUX, REF]);
   assertEquals(c.worktree, { branch: 'studio/chat-abcd1234', base: 'main' });
@@ -226,7 +226,7 @@ Deno.test({ name: 'wsl studio: a WSL chat in its own worktree made by the helper
   }
   // a crashed AIB: the next one rebuilds the chat in its worktree, under its project
   lab.crash(a);
-  const b = lab.studio();
+  const b = lab.aib();
   assertEquals(await b.adoptKeeper(), 1);
   const r = b.connections.get(c.id)!;
   assert(r && r.ready && !r.closed);
@@ -252,14 +252,14 @@ Deno.test({ name: 'wsl studio: a worktree that cannot be made, or a helper witho
   {
     await using lab = new WorktreeLab();
     lab.fallback = 'too much uncommitted work to copy (6000 untracked files, 1 MB)';
-    const c = await lab.studio().connect('claude', REF);
+    const c = await lab.aib().connect('claude', REF);
     assertEquals([c.cwd, c.agentCwd, c.projectRoot, c.worktree], [REF, '/home/u/app', REF, null]);
     assertEquals(lab.host.link.spawned.find((s) => String(s.channel).startsWith('chat-'))!.cwd, '/home/u/app');
     assertEquals(lab.called('worktree.setSession'), []);
   }
   {
     await using lab = new WorktreeLab(false); // the fake helper answers worktree.* with no_method
-    const c = await lab.studio().connect('claude', REF);
+    const c = await lab.aib().connect('claude', REF);
     assertEquals([c.cwd, c.agentCwd, c.worktree], [REF, '/home/u/app', null]);
   }
 } });
@@ -270,15 +270,15 @@ Deno.test({ name: 'wsl changes: a worktree chat gets the branch view against its
   host.handlers['changes.get'] = (p) => ({ git: true, root: p.folder, scope: p.base ? 'branch' : 'uncommitted', files: [] });
   setWslHostResolver(() => host);
   try {
-    const studio = { token: 't', liveState: (id: string) => ({ cwd: id === 'wt' ? WT_REF : REF }) };
-    const [s1, own] = await changesResponse(studio, '/api/live/changes', { id: ['wt'] }, { 'X-Studio-Token': 't' }) as [number, Json];
+    const aib = { token: 't', liveState: (id: string) => ({ cwd: id === 'wt' ? WT_REF : REF }) };
+    const [s1, own] = await changesResponse(aib, '/api/live/changes', { id: ['wt'] }, { 'X-Studio-Token': 't' }) as [number, Json];
     assertEquals(s1, 200);
     assertEquals(own.scope, 'branch');
     assertEquals(own.worktree, { branch: 'studio/chat-abcd1234' }); // Discard and Merge, as on Windows
     assertEquals(host.calls.find(([m]) => m === 'changes.get')![1].base, 'u0');
-    const [, plain] = await changesResponse(studio, '/api/live/changes', { id: ['main'] }, { 'X-Studio-Token': 't' }) as [number, Json];
+    const [, plain] = await changesResponse(aib, '/api/live/changes', { id: ['main'] }, { 'X-Studio-Token': 't' }) as [number, Json];
     assertEquals([plain.scope, plain.worktree], ['uncommitted', undefined]);
-    const [s3] = await changesResponse(studio, '/api/live/changes', { id: ['main'], scope: ['branch'] }, { 'X-Studio-Token': 't' });
+    const [s3] = await changesResponse(aib, '/api/live/changes', { id: ['main'], scope: ['branch'] }, { 'X-Studio-Token': 't' });
     assertEquals(s3, 400);
   } finally {
     setWslHostResolver(null);

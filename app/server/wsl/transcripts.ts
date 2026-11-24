@@ -1,6 +1,6 @@
 /**
  * Saved chats of WSL projects (docs/wsl/design.md section 11, item 5): a chat that ended in a distro must still be listed after an AIB
- * restart, and reopening it resumes it there (Studio.connect with the ref and the session id: session/load runs in the distro).
+ * restart, and reopening it resumes it there (Aib.connect with the ref and the session id: session/load runs in the distro).
  *
  * The transcripts are inside the distro (`~/.claude/projects`), so the helper reads them with transcripts/store.ts natively and answers
  * the same items Store.sessions() gives on Windows (`transcripts.sessions`); opening one reads its pages there too (`transcripts.read`,

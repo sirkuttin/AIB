@@ -29,17 +29,17 @@ export type Event = Record<string, unknown> & { kind: unknown; id?: string };
 
 export const TEXT_LIMIT = 32000;
 
-// Studio's note to the agent in front of a prompt (worktree live sync). The agent's saved history keeps it; no view shows it.
+// AIB's note to the agent in front of a prompt (worktree live sync). The agent's saved history keeps it; no view shows it.
 const STUDIO_CONTEXT = new RegExp(`<studio-context>[\\s\\S]*?</studio-context>[${S}]*`, 'gu');
 
-export function stripStudioContext<T>(text: T): T | string {
+export function stripAibContext<T>(text: T): T | string {
   return typeof text === 'string' && text.includes('<studio-context>') ? text.replace(STUDIO_CONTEXT, '') : text;
 }
 
 export function contentText(content: Json): string {
-  if (typeof content === 'string') return stripStudioContext(content) as string;
+  if (typeof content === 'string') return stripAibContext(content) as string;
   if (!Array.isArray(content)) return '';
-  return content.filter((b) => isDict(b) && b.type === 'text').map((b) => stripStudioContext(pyStr(dget(b as Dict, 'text', '')))).join(
+  return content.filter((b) => isDict(b) && b.type === 'text').map((b) => stripAibContext(pyStr(dget(b as Dict, 'text', '')))).join(
     '\n',
   );
 }
@@ -263,7 +263,7 @@ export function normalize(row: Dict, number: number): Event[] {
       time: stamp,
     });
   } else if (typeof content === 'string') {
-    const shown = role === 'user' ? stripStudioContext(content) as string : content;
+    const shown = role === 'user' ? stripAibContext(content) as string : content;
     if (shown || !content) events.push({ kind: role, label: pyTitle(role), text: clipped(shown), time: stamp });
   } else if (Array.isArray(content)) {
     content.forEach((block, index) => {
@@ -299,7 +299,7 @@ export function normalize(row: Dict, number: number): Event[] {
         events.push(event);
       } else if (kind === 'text' || kind === 'thinking') {
         let text = dget(block, kind === 'text' ? 'text' : 'thinking', '');
-        if (kind === 'text' && role === 'user') text = stripStudioContext(text);
+        if (kind === 'text' && role === 'user') text = stripAibContext(text);
         if (kind === 'text' && role === 'user' && IMAGE_REF.test(needStr(text))) return;
         if (truthy(text)) {
           events.push({

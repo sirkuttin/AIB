@@ -1,4 +1,4 @@
-/** server/transcripts/prompts.ts: the cases of work/test_prompts.py that exercise prompts.py directly, plus parity with Python. */
+/** server/transcripts/prompts.ts: the cases of work/test_prompts.py that exercise prompts.py directly, plus the frozen answers. */
 import { assert, assertEquals } from './_assert.ts';
 import { WORK } from './_work.ts';
 import { Frozen } from './_frozen.ts';
@@ -126,14 +126,14 @@ const EXTRA_EVENTS: unknown[] = [
   ...EXTRA_TEXTS.map((text) => ({ kind: 'user', text })),
 ];
 
-Deno.test('isPrompt matches Python on fixtures and odd events', async () => {
+Deno.test('isPrompt matches the frozen answers on fixtures and odd events', async () => {
   const py = new Frozen();
   for (const event of [...FIXTURES.map(eventOf), ...EXTRA_EVENTS]) {
     assertEquals(isPrompt(event), await py.call('prompts', 'is_prompt', [event]), JSON.stringify(event).slice(0, 80));
   }
 });
 
-Deno.test('isWrapper and stripViewContext match Python', async () => {
+Deno.test('isWrapper and stripViewContext match the frozen answers', async () => {
   const py = new Frozen();
   for (const text of [...EXTRA_TEXTS, ...FIXTURES.map(fixtureText)]) {
     const label = JSON.stringify(text).slice(0, 80);
@@ -144,7 +144,7 @@ Deno.test('isWrapper and stripViewContext match Python', async () => {
   for (const odd of [null, 5, ['x']]) assertEquals(stripViewContext(odd), await py.call('prompts', 'strip_view_context', [odd]));
 });
 
-Deno.test('findPrompts matches Python for queries and limits', async () => {
+Deno.test('findPrompts matches the frozen answers for queries and limits', async () => {
   const py = new Frozen();
   const events = [
     ...EVENTS,

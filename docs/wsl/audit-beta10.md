@@ -31,10 +31,10 @@ Nothing found that breaks START, CONTINUE, rebuild after a crash, or the automat
 
 | Path | Status | Evidence |
 |---|---|---|
-| Allow rules' scratch folder (the earlier `additionalDirectories` failure) | OK (fixed before this audit) | `studio.ts:1287` gives no scratch folder to a WSL chat; `audit wsl allow: what a WSL chat's allow context is` (scratch `null`); `wsl_studio_test.ts` checks `session/new` has no Windows path |
+| Allow rules' scratch folder (the earlier `additionalDirectories` failure) | OK (fixed before this audit) | `aib.ts:1287` gives no scratch folder to a WSL chat; `audit wsl allow: what a WSL chat's allow context is` (scratch `null`); `wsl_studio_test.ts` checks `session/new` has no Windows path |
 | House-rules text (literal scratch path in the system prompt) | OK | `connection.ts:5162`: no scratch folder, no brief |
-| Local-only `additionalDirectories` and prompt text | OK | `studio.ts:1222` (`local = wsl ? null : ...`): a WSL chat gets no Windows local-only folders |
-| MCP servers handed to the Linux agent | OK | `studio.ts:1206`: a WSL chat gets the tunnel/interop servers only, never `options.mcpServers` |
+| Local-only `additionalDirectories` and prompt text | OK | `aib.ts:1222` (`local = wsl ? null : ...`): a WSL chat gets no Windows local-only folders |
+| MCP servers handed to the Linux agent | OK | `aib.ts:1206`: a WSL chat gets the tunnel/interop servers only, never `options.mcpServers` |
 | History store, rebuild after crash, older pages | OK | `audit wsl history: a WSL chat writes its store by chat id; ...` |
 | Recovery list and auto-reconnect (agent gone) | OK | `audit wsl recovery: ...` (`session/load` with cwd `/home/u/app`, no Windows `additionalDirectories`) |
 | Window-first startup take-over | OK | `audit wsl startup: window-first order ...` (same pid, no second agent) |
@@ -47,7 +47,7 @@ Nothing found that breaks START, CONTINUE, rebuild after a crash, or the automat
 | 1 | Allow rules: edit requests in a WSL chat (`feat/allow-rules-1`) | **BROKEN** | F1; `KNOWN-BROKEN: audit wsl allow: an edit inside the WSL project offers Always allow ...` |
 | 2 | Allow rules: commands and built-in Safe reads in a WSL chat | **BROKEN** | F1; `KNOWN-BROKEN: audit wsl allow: the built-in Safe reads answer \`git status\` ...` |
 | 3 | Allow rules: project-scoped MCP / fetch rules from a WSL chat | **BROKEN** | F3; `KNOWN-BROKEN: ... keyed by the ref ...`, `... still applies after AIB starts from another working folder` |
-| 4 | Allow rules: project match and the "also answer waiting cards" sweep fold case | **BROKEN** (minor) | F6; `KNOWN-BROKEN: ... /home/u/App do not apply in /home/u/app`; `studio.ts:2209` |
+| 4 | Allow rules: project match and the "also answer waiting cards" sweep fold case | **BROKEN** (minor) | F6; `KNOWN-BROKEN: ... /home/u/App do not apply in /home/u/app`; `aib.ts:2209` |
 | 5 | Allow rules: Claude settings facts (ask rules, risky env) for a WSL chat | SUSPECT (low) | F9 |
 | 6 | Allow rules: scratch folder, house rules | OK | see Start and Continue |
 | 7 | History store 1a/1b/2a/2b (per-chat sqlite, checkpoint, take-over, scroll-loading) | OK | `audit wsl history: ...` (store is `<state>/history/<id>.sqlite`, never named after the ref) |
@@ -55,10 +55,10 @@ Nothing found that breaks START, CONTINUE, rebuild after a crash, or the automat
 | 9 | Startup fast-open / window-first / keeper fast start (`fix/window-first`, `fix/startup-and-timeouts`) | OK | `audit wsl startup: ...` |
 | 10 | Saved chats list and transcript (`/api/sessions`, `/api/transcript`) | OK | `monitor.ts:316-321`, `wsl/transcripts.ts:205` send WSL keys to the helper; `wsl_sessions_e2e_test.ts` |
 | 11 | "Find more chats via agent" (session/list discovery) | **BROKEN** | F4; `KNOWN-BROKEN: audit wsl discover: ...` |
-| 12 | Swarm: helper tools and main role in a WSL chat (`feat/swarm-phase1`, `fix/swarm-off-default`) | OK | `studio.ts:1202`, `:1642`: no main role; `wsl_studio_test.ts`: no `start_helper` in the tool list |
+| 12 | Swarm: helper tools and main role in a WSL chat (`feat/swarm-phase1`, `fix/swarm-off-default`) | OK | `aib.ts:1202`, `:1642`: no main role; `wsl_studio_test.ts`: no `start_helper` in the tool list |
 | 13 | Swarm: the service's own role check | **BROKEN** (latent: not reachable from the app today) | F7; `KNOWN-BROKEN: audit wsl swarm: ...` |
 | 14 | Usage limits | OK (read) | `usage_limits_feed.ts:97`, `:150`: per-distro account key, the distro's `~/.codex` read through the helper |
-| 15 | Ownership probe (another builder is changing it) | OK / N/A | `studio.ts:1168-1179`: WSL resumes go to `#wslCheckOwnership` |
+| 15 | Ownership probe (another builder is changing it) | OK / N/A | `aib.ts:1168-1179`: WSL resumes go to `#wslCheckOwnership` |
 | 16 | Worktree status batching, Merge button state (`fix/slow-requests`) | OK (read) | `studio_routes.ts:307-313`: WSL chats go to `wslMerge`; the batched git runs only for Windows chats |
 | 17 | Agent options memory (per folder) | OK | `agent_options.ts:50` turns the ref into `p:wsl:/...` |
 | 18 | Version in tag (`feat/version-in-tag`) | N/A | no folder |
@@ -149,7 +149,7 @@ Counts (49 rows): BROKEN 10 (3 minor, 1 latent; findings F1-F7), SUSPECT 5 (F8-F
 - **What happens:** the reply is `{"supported":true,"sessions":[...],"via":"studio-connection"}` from the agent in the distro (its log
   shows 1 `session/list`, expected 0). Real distro sessions have Linux cwds, which `filterSessions` (`project_routes.ts:194`) drops: the
   user sees "0 listed" and never gets the Windows sessions.
-- **Cause:** `studio.ts:991` picks any live, ready chat of that provider.
+- **Cause:** `aib.ts:991` picks any live, ready chat of that provider.
 - **Fix:** skip chats with `c.wsl` there (or use the temporary Windows probe). Effort S.
 - **Test:** `KNOWN-BROKEN: audit wsl discover: "Find more chats via agent" is never answered by a WSL chat's Linux agent`.
 
@@ -165,7 +165,7 @@ Counts (49 rows): BROKEN 10 (3 minor, 1 latent; findings F1-F7), SUSPECT 5 (F8-F
 
 ### F6 BROKEN (minor): allow-rule project matching folds case for WSL projects
 
-- `matcher.ts:194-196` (`sameFolder`) lowercases on Windows, and the sweep after "Always allow" (`studio.ts:2209`) compares
+- `matcher.ts:194-196` (`sameFolder`) lowercases on Windows, and the sweep after "Always allow" (`aib.ts:2209`) compares
   `projectRoot.toLowerCase()`. For WSL, `/home/u/App` and `/home/u/app` are different projects but share project rules, and saving a
   rule in one auto-answers waiting cards in the other. Fix: compare with `locKey()`. Effort S. Test: `KNOWN-BROKEN: audit wsl allow:
   project rules of /home/u/App do not apply in /home/u/app ...`.
@@ -184,9 +184,9 @@ Counts (49 rows): BROKEN 10 (3 minor, 1 latent; findings F1-F7), SUSPECT 5 (F8-F
 
 - `desktop/added_projects.ts:126` (`parentOf`) and `desktop/folders.ts:76`, `:105` still say a WSL ref is never a worktree (phase 1);
   phase 2 added worktrees in the distro. Today live, rebuilt and saved WSL worktree chats all carry `projectRoot` = the project ref
-  (`studio.ts:1196`, `:1635`, `wsl/transcripts.ts:66`), so nothing breaks.
+  (`aib.ts:1196`, `:1635`, `wsl/transcripts.ts:66`), so nothing breaks.
 - Would break: a chat note or session item without `projectRoot` (an older note). It is then filed as its own project in the inbox,
-  phone and sidebar, its notifications are not held back, and `addOpened` (`studio.ts:1218`) adds the worktree as a project.
+  phone and sidebar, its notifications are not held back, and `addOpened` (`aib.ts:1218`) adds the worktree as a project.
 - Reproduce: rebuild a WSL worktree chat from a chat note with no `projectRoot`. Fix: teach `parentOf`/`folderKinds` the WSL worktree
   layout or ask the helper. Effort S-M.
 

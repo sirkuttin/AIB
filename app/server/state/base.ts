@@ -53,7 +53,7 @@ export abstract class JsonFileStore {
 
   protected abstract reload(): void;
 
-  /** Pick up changes written by another Studio (Python or Deno); costs one stat() when nothing changed. */
+  /** Pick up changes written by another AIB (Python or Deno); costs one stat() when nothing changed. */
   protected sync(): void {
     if (this.path !== null && fileStamp(this.path) !== this.seen) this.reload();
   }
@@ -79,7 +79,7 @@ export abstract class JsonFileStore {
 
   /**
    * Run `work` (synchronous) holding this store's in-process queue and the cross-process file lock. A lock that cannot be had
-   * in time becomes ValueError('Studio could not save: ...'), which every caller already reports.
+   * in time becomes ValueError('AIB could not save: ...'), which every caller already reports.
    */
   protected locked<T>(work: () => T): Promise<T> {
     const run = this.#queue.then(async () => {

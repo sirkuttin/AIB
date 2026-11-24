@@ -214,13 +214,13 @@ Deno.test({
     withHost(host);
     try {
       const ref = 'wsl://ubuntu/home/u/app';
-      const studio = { liveState: () => ({ cwd: ref }), token: 't', stateDir: null };
-      assertEquals(await changesFolder(studio, 'chat1'), ref); // never statted on Windows
-      const [s, body] = await changesResponse(studio, '/api/live/changes', { id: ['chat1'] }, { 'X-Studio-Token': 't' });
+      const aib = { liveState: () => ({ cwd: ref }), token: 't', stateDir: null };
+      assertEquals(await changesFolder(aib, 'chat1'), ref); // never statted on Windows
+      const [s, body] = await changesResponse(aib, '/api/live/changes', { id: ['chat1'] }, { 'X-Studio-Token': 't' });
       assertEquals([s, (body as Json).root], [200, '/home/u/app']);
-      const [, diff] = await changesResponse(studio, '/api/live/changes/file', { id: ['chat1'], path: ['a.sh'] }, { 'X-Studio-Token': 't' });
+      const [, diff] = await changesResponse(aib, '/api/live/changes/file', { id: ['chat1'], path: ['a.sh'] }, { 'X-Studio-Token': 't' });
       assertEquals(diff, { path: 'a.sh', diff: '+x' });
-      const [s3] = await changesResponse(studio, '/api/live/changes', { id: ['chat1'], scope: ['branch'] }, { 'X-Studio-Token': 't' });
+      const [s3] = await changesResponse(aib, '/api/live/changes', { id: ['chat1'], scope: ['branch'] }, { 'X-Studio-Token': 't' });
       assertEquals(s3, 400);
       assertEquals(repoBranch(ref), '');
       assertEquals(await branchOf(ref), 'main');

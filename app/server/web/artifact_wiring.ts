@@ -1,6 +1,6 @@
 /**
  * The web server's artifacts (studio.create_server's artifact block): the store under <state-dir>/artifacts, the separate artifact
- * origin (Studio port + 1), the Service behind /api/live/artifacts* and the Watcher that turns files a chat's agent wrote into its
+ * origin (AIB port + 1), the Service behind /api/live/artifacts* and the Watcher that turns files a chat's agent wrote into its
  * artifacts. A chat's artifacts are keyed by its lasting id ("provider:sessionId"), not the live connection id.
  *
  * Python asks the agent host for the connection list synchronously inside chat_of/connection_of; the Service and Watcher here are
@@ -11,7 +11,7 @@ import { ArtifactStore, Service, type WatchedConversation, Watcher } from '../ar
 import { OriginServer } from '../artifacts/origin.ts';
 import { HostUnavailable } from '../host/host_client.ts';
 import type { LiveBackend } from '../host/backend.ts';
-import { artifactFolder, type ChatStudio } from '../worktrees/chat_folders.ts';
+import { artifactFolder, type ChatHost } from '../worktrees/chat_folders.ts';
 import { localRootsSync } from '../worktrees/local_only.ts';
 import { recordForPath } from '../worktrees/worktrees.ts';
 import { isdir } from '../platform/ospath.ts';
@@ -44,7 +44,7 @@ export class Artifacts {
     stateDir: string,
     readonly host: LiveBackend,
     tokenGetter: () => string,
-    readonly chatStudio: (chat: string) => ChatStudio | Promise<ChatStudio>,
+    readonly chatAib: (chat: string) => ChatHost | Promise<ChatHost>,
   ) {
     this.store = new ArtifactStore(stateDir + sep + 'artifacts');
     this.service = new Service(this.store, tokenGetter, (ident) => this.#cwd.get(ident) ?? null, {
@@ -62,8 +62,8 @@ export class Artifacts {
   }
 
   /** Open the artifact origin next to the web server's port and start the watcher. Returns the origin's port. */
-  start(studioPort: number): number {
-    this.origin = OriginServer.start(this.store.root, studioPort);
+  start(aibPort: number): number {
+    this.origin = OriginServer.start(this.store.root, aibPort);
     this.store.origin = this.origin.url;
     this.#timer = setInterval(() => void this.refresh(true).catch(() => {}), 2000);
     Deno.unrefTimer(this.#timer);
@@ -199,7 +199,7 @@ export class Artifacts {
       const chat = this.service.chat(conversationId);
       // chatStudio(chat) also knows the folder a saved chat's transcript is filed under, so a chat that is not running right now
       // (Files view, "Open in Artifacts") still has its folder, as it does for the Changes and Files routes.
-      this.#cwd.set(chat, await artifactFolder(await this.chatStudio(chat), this.connectionOf(chat) || chat));
+      this.#cwd.set(chat, await artifactFolder(await this.chatAib(chat), this.connectionOf(chat) || chat));
       if (this.#cwd.size > 200) this.#cwd.delete(this.#cwd.keys().next().value!);
     }
   }

@@ -1,6 +1,6 @@
 /**
  * Multi-window Phase 1C (design section 4 K2/K5/K6, section 9, review D1–D3, A1): two chat.html pages in one headless Chrome
- * (one shared storage, as the app's windows share one profile), each its own AIB window by its ?w= id, against a Studio in this
+ * (one shared storage, as the app's windows share one profile), each its own AIB window by its ?w= id, against an AIB in this
  * process. The desktop app's page (its bridge function bound); nothing is shown on screen. Focus and visibility are set by the
  * test (window.__focus), so which window is "in front" is exact.
  *
@@ -13,7 +13,7 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { Browser, browserPath, type Page } from './_doc_browser.ts';
-import { remoteStudio } from './_remote_fixture.ts';
+import { remoteAib } from './_remote_fixture.ts';
 import { FakeDesktopWindows } from './_fake_desktop_windows.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
@@ -30,7 +30,7 @@ const APP_PAGE = [
 ].join('\n');
 
 async function lab() {
-  const s = await remoteStudio();
+  const s = await remoteAib();
   s.ctx.transcripts = {
     root: s.state,
     sessions: () => Promise.resolve([]),

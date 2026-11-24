@@ -102,7 +102,7 @@ export interface HelperMethods {
   /**
    * AIB-managed agent installs in the distro (helper/agent_install.ts: agents/installer.ts run natively into <root>/agents/<id>/<version>,
    * `npm ci` from AIB's lockfile, never `npm i -g`). Offered by a helper that knows its root. `entry` and `lock` are AIB's
-   * agent_versions.json entry and lockfile text. installCheck: what is missing to install (code '' | 'node_missing' | 'node_broken' |
+   * agents/versions.json entry and lockfile text. installCheck: what is missing to install (code '' | 'node_missing' | 'node_broken' |
    * 'node_old' | 'npm_missing'); `force` reads the login PATH again first. install refuses with error code 'install_refused' (one plain
    * line) or a node code. Each saved job state also arrives as the notification `agents.installProgress` (WslInstallView).
    */

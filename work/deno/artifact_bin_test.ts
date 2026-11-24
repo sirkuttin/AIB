@@ -554,5 +554,5 @@ Deno.test('the manifest of a deleted artifact keeps where the file went (hash, s
   const ds = m.deletedSource as Json;
   assertEquals([ds.rel, ds.bin, ds.size], ['outputs/m.html', BIN_FOLDER + '/m.html', 8]);
   assertEquals(typeof ds.hash, 'string');
-  assert(/"deletedAt": \d+\.0/.test(f.manifestBytes(id)), 'written as a Python float');
+  assert(/"deletedAt": \d+\.0/.test(f.manifestBytes(id)), 'written as a float with .0');
 });

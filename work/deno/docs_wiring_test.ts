@@ -1,6 +1,6 @@
 /**
  * Local docs, wired into AIB: the doc tools in the studio_artifact MCP server (always offered), the tool call going
- * to Studio's /api/live/docs/tool route, and the editor's WebSocket on the real web server (both HTTP implementations): the page's
+ * to AIB's /api/live/docs/tool route, and the editor's WebSocket on the real web server (both HTTP implementations): the page's
  * y-protocols client syncs, sees an agent's edit live, and its own typing reaches the server.
  */
 import { assert, assertEquals } from './_assert.ts';
@@ -28,12 +28,12 @@ function ctxFor(url: string, worktree = false): ToolContext {
   return { key: 'k', conversation: 'claude:s1', worktree, cwd: null, roots: () => [url] };
 }
 
-Deno.test("the doc tools are always offered, and a call goes to Studio's doc route", async () => {
+Deno.test("the doc tools are always offered, and a call goes to AIB's doc route", async () => {
   const project = await temp('aib-docs-proj-');
   const state = await temp('aib-docs-state-');
   const store = new DocStore(state, { idleMs: 60_000 });
   const seen: Json[] = [];
-  // Studio's side of /api/live/docs/tool (the key and the folder come from the real route; here the folder is fixed).
+  // AIB's side of /api/live/docs/tool (the key and the folder come from the real route; here the folder is fixed).
   const server = Deno.serve({ hostname: '127.0.0.1', port: 0, onListen() {} }, async (request) => {
     const body = await request.json();
     seen.push({ path: new URL(request.url).pathname, key: request.headers.get('X-Studio-Artifact-Key'), body });

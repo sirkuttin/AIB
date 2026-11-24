@@ -1,6 +1,6 @@
 /**
  * server/ownership/ownership.ts: the cases of work/test_ownership.py, parity with ownership.py (find_external_owner, shlex, lease
- * file names), and interop: a lease held by Python blocks Deno and one held by Deno blocks Python (same file, same lock).
+ * file names), and interop: a lease held by the python lock helper blocks Deno and one held by Deno blocks it (same file, same lock).
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
 import { python } from './_work.ts';
@@ -30,7 +30,7 @@ Deno.test('acquire, conflict, release and reacquire', () =>
       first.release();
     }
     (await new SessionLease(dir, 'claude', 's-1').acquire()).release();
-    if (WINDOWS) assertEquals(Deno.statSync(first.path).size, 1, 'an empty lease file gets one NUL byte, like Python');
+    if (WINDOWS) assertEquals(Deno.statSync(first.path).size, 1, 'an empty lease file gets one NUL byte, as before');
   }));
 
 Deno.test('providers are separate', () =>
@@ -52,7 +52,7 @@ Deno.test('atPath with create=false never creates the file and reports a missing
     (await SessionLease.atPath(held.path).acquire(false)).release();
   }));
 
-Deno.test('lease file names match Python for every kind of id', async () => {
+Deno.test('lease file names match the frozen answers for every kind of id', async () => {
   const py = new Frozen();
   const dir = Deno.makeTempDirSync({ prefix: 'lease-names-' });
   try {
@@ -150,7 +150,7 @@ Deno.test('exact session matching, provider, exclusions (test_ownership.py)', ()
   assertEquals(findExternalOwner(quoted, 'claude', 'full-session'), null);
 });
 
-Deno.test('findExternalOwner and shlex.split match Python', async () => {
+Deno.test('findExternalOwner and shlex.split match the frozen answers', async () => {
   const py = new Frozen();
   const lists: unknown[][] = [
     processes,

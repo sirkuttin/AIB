@@ -1,5 +1,5 @@
 /**
- * Allow rules: what a Connection asks of them. One per host (Studio), shared by every chat: the rule store, the decision log and
+ * Allow rules: what a Connection asks of them. One per host (AIB), shared by every chat: the rule store, the decision log and
  * the matcher. Connection.ts calls `decide` for a live request, `log.find` on a keeper replay (never the matcher), and `drafts`
  * for the card's "Always allow" choice.
  */

@@ -14,7 +14,7 @@
 import { assert, assertEquals } from './_assert.ts';
 import { Browser, browserPath, type Page } from './_doc_browser.ts';
 import { NAME, pairPhone } from './_remote_fixture.ts';
-import { phoneCall, v2Studio } from './_remote_v2b.ts';
+import { phoneCall, v2Aib } from './_remote_v2b.ts';
 import { phonePage, serveFor, tap } from './_remote_phone_page.ts';
 import { PLACEHOLDER_REPO, UpdateService } from '../../app/server/desktop/updater.ts';
 import type { HelperArgs } from '../../app/server/desktop/update_helper.ts';
@@ -23,10 +23,10 @@ import { writeFeed } from '../../tools/build.ts';
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
 const CURRENT = '0.1.0-beta.12.test.1', NEXT = '0.1.0-beta.12.test.2';
 type Json = Record<string, unknown>;
-type Studio = Awaited<ReturnType<typeof v2Studio>>;
+type Aib = Awaited<ReturnType<typeof v2Aib>>;
 
 /** The studio's updater: a desktop test build on Windows reading `feed`; install records instead of swapping and quitting. */
-async function withUpdates(s: Studio) {
+async function withUpdates(s: Aib) {
   const feed = await Deno.makeTempDir({ prefix: 'aib-remote-feed-' });
   const named = `${feed}/AIB-${NEXT}-windows-x64.zip`;
   Deno.writeTextFileSync(named, 'not a real AIB '.repeat(200));
@@ -63,7 +63,7 @@ Deno.test({
   ...OPTS,
   name: 'remote update routes: home shows the ready feed version, notes, check, Send required, install runs the PC install path',
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     const u = await withUpdates(s);
     try {
       const phone = await pairPhone(s, 'Pixel 9');
@@ -109,7 +109,7 @@ Deno.test({
   name: 'phone page: Update ready line, notes on tap, confirm row, Updating across the restart, then Updated to the new version',
   ignore: !browserPath,
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     const u = await withUpdates(s);
     const browser = await Browser.launch();
     const gate = { down: false };
@@ -158,7 +158,7 @@ Deno.test({
   name: 'computer page: Update ready in the strip, row with notes and confirm, Updating across the restart, reload, Updated to',
   ignore: !browserPath,
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     const u = await withUpdates(s);
     const browser = await Browser.launch();
     const gate = { down: false };

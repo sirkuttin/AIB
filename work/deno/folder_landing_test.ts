@@ -1,6 +1,6 @@
 /**
  * Build plan 1b, phase P3 (aib-shared/designs/worktree-model/build-plan-1b.md section 2, e2e 7-11b, 13b, 25): a helper of a chat that works
- * in the project folder lands when the main chat's turn has ended (owner decision 2b). Through a real Studio with fake agents and real git
+ * in the project folder lands when the main chat's turn has ended (owner decision 2b). Through a real AIB with fake agents and real git
  * in temp folders:
  * - 7   merge_helper from a busy folder parent is queued, and lands on landOn (the folder's branch) after the turn: the visible line, the
  *       parent's next-prompt line, and no automatic turn.
@@ -49,7 +49,7 @@ class Box {
   readonly dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-folder-landing-' }));
   readonly state = pathOf(this.dir, 'state');
   readonly project = makeRepo(pathOf(this.dir, 'proj'));
-  readonly studio: Aib;
+  readonly aib: Aib;
   swarm: Swarm;
   readonly logs: string[] = [];
   readonly #agentOf = new Map<Connection, number>();
@@ -58,29 +58,29 @@ class Box {
     setSwarmEnabled(this.state, true);
     runGit(this.project, 'config', 'user.name', 't');
     runGit(this.project, 'config', 'user.email', 't@t');
-    const studio = new Aib({ stateDir: this.state, port: 0 }, { keeper: null });
-    studio.ownerProbe = () => null;
-    studio.agentLaunch = () => Promise.resolve([['unused'], {}]);
-    studio.connectionFactory = (_command, cwd, provider, options) => {
+    const aib = new Aib({ stateDir: this.state, port: 0 }, { keeper: null });
+    aib.ownerProbe = () => null;
+    aib.agentLaunch = () => Promise.resolve([['unused'], {}]);
+    aib.connectionFactory = (_command, cwd, provider, options) => {
       const log = pathOf(this.dir, `agent-${this.logs.length + 1}.log`);
       this.logs.push(log);
       // PYTHONUTF8: the fake agent logs what it reads; the landing lines have curly quotes (a real agent reads UTF-8 anyway)
       const env = { ...(options?.env ?? {}), FAKE_ACP_LOG: log, PYTHONUTF8: '1' };
       return new Connection([PYTHON, UNIQUE, '--models'], cwd, provider, { ...(options ?? {}), env });
     };
-    this.studio = studio;
+    this.aib = aib;
     this.swarm = this.newSwarm();
   }
 
   newSwarm(): Swarm {
-    const swarm = new Swarm({ stateDir: this.state, host: this.studio, settings: this.studio.settings });
+    const swarm = new Swarm({ stateDir: this.state, host: this.aib, settings: this.aib.settings });
     swarm.openMs = 30_000;
     return swarm;
   }
 
   async connect(cwd: string, options: Json = {}, provider = 'claude'): Promise<Connection> {
     const before = this.logs.length;
-    const c = await this.studio.connect(provider, cwd, null, options);
+    const c = await this.aib.connect(provider, cwd, null, options);
     this.#agentOf.set(c, before);
     return c;
   }
@@ -96,13 +96,13 @@ class Box {
     }
   }
 
-  mergeStudio(): merge.MergeStudio {
-    return merge.liveMergeStudio(this.state, this.studio); // what the web routes use
+  mergeAib(): merge.MergeHost {
+    return merge.liveMergeAib(this.state, this.aib); // what the web routes use
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
     await this.swarm.stopWatching();
-    await this.studio.close().catch(() => {});
+    await this.aib.close().catch(() => {});
     for (let i = 0; i < 20; i++) {
       try {
         Deno.removeSync(this.dir, { recursive: true });
@@ -161,7 +161,7 @@ async function helperWithWork(
   const id = String((started[1] as Json).helper);
   await until(() => box.swarm.registry.get(id)?.state === 'working', 'the helper working', 30);
   const h = box.swarm.registry.get(id)!;
-  const helper = box.studio.connections.get(h.chat.live)!;
+  const helper = box.aib.connections.get(h.chat.live)!;
   await settle(helper);
   // the helper commits its own file; `more` may change and stage more (the line-ending test stages everything, as `git add -A`)
   write(h.worktree.path, file, body);
@@ -365,7 +365,7 @@ Deno.test({
   async fn() {
     await using box = new Box();
     const c = await box.connect(box.project);
-    const call = (op: string, body: Json) => box.studio.liveCall(op, { id: c.id, ...body });
+    const call = (op: string, body: Json) => box.aib.liveCall(op, { id: c.id, ...body });
 
     // refused while a turn runs
     const release = await holdTurn(box, c, 'busy');
@@ -459,7 +459,7 @@ Deno.test({
     runGit(box.project, 'add', 'test/login/b.test.txt');
     runGit(box.project, 'commit', '-q', '-m', 'landed before the stop');
     const landed = runGit(box.project, 'rev-parse', 'main').trim();
-    await box.studio.liveCall('landing-lock', { id: main.id, lock: 'land_cutoff', title: 'Login tests' });
+    await box.aib.liveCall('landing-lock', { id: main.id, lock: 'land_cutoff', title: 'Login tests' });
     await box.swarm.registry.patch(id, {
       state: 'done',
       landing: { ...cutOff('moved', landed, tip), lockId: 'land_cutoff' },
@@ -532,7 +532,7 @@ Deno.test({
 
     // the helper's copy and branch are removed: Merge again still works (it needs only the commits)
     const branch = box.swarm.registry.get(id)!.worktree.branch;
-    const helperChat = box.studio.connections.get(box.swarm.registry.get(id)!.chat.live);
+    const helperChat = box.aib.connections.get(box.swarm.registry.get(id)!.chat.live);
     await helperChat?.close();
     runGit(box.project, 'worktree', 'remove', '--force', copy);
     runGit(box.project, 'branch', '-D', branch);
@@ -561,7 +561,7 @@ Deno.test({
     const tip = runGit(box.project, 'rev-parse', 'main').trim();
     let refused: merge.Refused | null = null;
     try {
-      await merge.merge(box.mergeStudio(), copyChat.id, 'Copy work');
+      await merge.merge(box.mergeAib(), copyChat.id, 'Copy work');
     } catch (error) {
       refused = error as merge.Refused;
     }
@@ -572,7 +572,7 @@ Deno.test({
     await release();
 
     // idle: it lands; the folder chat's next prompt says which files changed under it
-    const out = await merge.merge(box.mergeStudio(), copyChat.id, 'Copy work');
+    const out = await merge.merge(box.mergeAib(), copyChat.id, 'Copy work');
     assertEquals(out.state, 'merged');
     assertEquals(read(box.project, 'feature.txt'), 'from the copy\n');
     assertEquals(read(box.project, 'dirty.txt'), 'the folder agent is mid-edit\n');
@@ -599,13 +599,13 @@ Deno.test({
     const tip = runGit(box.project, 'rev-parse', 'main').trim();
 
     // the tool: queued, with the line; nothing lands, nothing is stashed; the Merge status says it waits; calling again says the same
-    const studio = box.mergeStudio();
-    const queued = await mergeQueue.mergeFromToolQueued(studio, copyChat.id);
+    const aib = box.mergeAib();
+    const queued = await mergeQueue.mergeFromToolQueued(aib, copyChat.id);
     assertEquals(queued.state, 'queued', JSON.stringify(queued));
     assert(String(queued.message).startsWith('Your work merges into main when “'), String(queued.message));
     assert(notes(copyChat).some((n) => n.startsWith('Merge into main waits for “')), notes(copyChat).join('\n'));
-    assertEquals((await merge.status(studio, copyChat.id)).state, 'queued');
-    assertEquals((await mergeQueue.mergeFromToolQueued(studio, copyChat.id)).state, 'queued', 'asked again: still queued, once');
+    assertEquals((await merge.status(aib, copyChat.id)).state, 'queued');
+    assertEquals((await mergeQueue.mergeFromToolQueued(aib, copyChat.id)).state, 'queued', 'asked again: still queued, once');
     assertEquals(mergeQueue.readQueue(box.state).size, 1);
     await box.swarm.copyMerges.poll();
     assertEquals(runGit(box.project, 'rev-parse', 'main').trim(), tip, 'nothing lands while the folder chat works');
@@ -668,9 +668,9 @@ Deno.test({
     await using box = new Box();
     const main = await box.connect(box.project);
     const [id, copy] = await helperWithWork(box, main, 'tracked.txt', 'helper line\n');
-    const helper = box.studio.connections.get(box.swarm.registry.get(id)!.chat.live)!;
+    const helper = box.aib.connections.get(box.swarm.registry.get(id)!.chat.live)!;
     write(box.project, 'tracked.txt', 'main agent mid-edit\n'); // the main agent's unsaved-to-git edit of the same file
-    await box.studio.liveSync!.turnStarted(helper); // the helper's next turn boundary: live sync brings the folder's edits in
+    await box.aib.liveSync!.turnStarted(helper); // the helper's next turn boundary: live sync brings the folder's edits in
     assert(read(copy, 'tracked.txt').includes('helper line'), `the helper's change is not overwritten: ${read(copy, 'tracked.txt')}`);
     await box.swarm.tool(main.id, 'merge_helper', { helper: id });
     await box.swarm.poll();
@@ -736,12 +736,12 @@ Deno.test({
     Object.assign(landingTiming, { renewMs: 40, ttlMs: 150 });
     let during: Json = {};
     merge.HOOKS.before_ff = async () => {
-      await box.studio.liveCall('prompt', { id: folderChat.id, text: 'sent mid-landing', clientMessageId: 'mid' });
+      await box.aib.liveCall('prompt', { id: folderChat.id, text: 'sent mid-landing', clientMessageId: 'mid' });
       await pause(600); // four lifetimes
       during = { held: !!folderChat.landing, busy: folderChat.busy, queued: folderChat.queue.items.length };
     };
     try {
-      const out = await merge.merge(box.mergeStudio(), copyChat.id, 'Slow work');
+      const out = await merge.merge(box.mergeAib(), copyChat.id, 'Slow work');
       assertEquals(out.state, 'merged');
     } finally {
       delete merge.HOOKS.before_ff;

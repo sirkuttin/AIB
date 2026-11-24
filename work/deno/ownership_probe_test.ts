@@ -1,6 +1,6 @@
 /**
  * server/ownership/probe.ts: the cases of work/test_ownership_probe.py (and the ps cases of test_portability.py) that exercise
- * ownership_probe.py directly, each run against the Python probe too (the retired ownership_shim.py run_probe) and compared field by
+ * ownership_probe.py directly, each run against the frozen probe answers (from the retired ownership_shim.py run_probe) and compared field by
  * field; plus interop: announcements written by one side are read by the other, and a real process holding a transcript open and
  * naming the session on its command line is reported the same by both probes. Temp folders only; never the real owners folder.
  */
@@ -45,11 +45,11 @@ const proc = (pid: number, name: string, cmdline: string | null = '', cwd: strin
 
 let current: Frozen | null = null;
 function py(): Frozen {
-  if (!current) throw new Error('no Python parity process: use pyTest/probeTest');
+  if (!current) throw new Error('no frozen-answer process: use pyTest/probeTest');
   return current;
 }
 
-/** A test with its own Python parity process (a process shared across tests would trip Deno's resource sanitizer). */
+/** A test with its own frozen-answer process (a process shared across tests would trip Deno's resource sanitizer). */
 function pyTest(name: string, fn: () => Promise<void> | void) {
   Deno.test(name, async () => {
     current = new Frozen();
@@ -181,7 +181,7 @@ function runDeno(tree: Tree, fixture: Fixture) {
     claudeRoot: tree.claude,
     registry: fixture.owners === false ? null : new OwnerRegistry(tree.owners, { instanceId: 'mine', clock }),
     processes: source,
-    ownedByStudio: (p, s) => owned.has(JSON.stringify([p, s])),
+    ownedByAib: (p, s) => owned.has(JSON.stringify([p, s])),
     ownPids: () => fixture.own_pids ?? [],
     lockProbe: holders === 'real' ? lockHolders : () => (holders === null ? null : holders.map((h) => [h[0], h[1]] as [number, string])),
     clock,
@@ -199,7 +199,7 @@ function runDeno(tree: Tree, fixture: Fixture) {
         projectRoot: (step.project_root as string) ?? null,
       });
       delete result.elapsedMs;
-      // Deno-only additions for the folder-only rule (folderOnlyEvidence): the Python probe has none of them
+      // Deno-only additions for the folder-only rule (folderOnlyEvidence): the frozen answers have none of them
       delete result.transcriptQuiet;
       for (const reason of result.reasons) {
         delete reason.label;
@@ -231,7 +231,7 @@ const pidless = (value: unknown): unknown => JSON.parse(JSON.stringify(value ?? 
 
 let probeRuns = 0;
 
-/** Run the fixture on the port; the answer must be the one Python gave for it (kept as a fingerprint). Returns the Deno step results. */
+/** Run the fixture on the port; the answer must be the one the frozen answers hold for it (kept as a fingerprint). Returns the Deno step results. */
 async function both(tree: Tree, fixture: Fixture): Promise<Record<string, unknown>[]> {
   tree.reset();
   const expected = await py().frozen(`probe-${probeRuns++}`);
@@ -262,7 +262,7 @@ async function deadPidAsync(): Promise<number> {
 
 // --- pure helpers ------------------------------------------------------------------------------------------------------------------
 
-pyTest('cleanText, humanizeAge, iso, parseIso and announcementPrefix match Python', async () => {
+pyTest('cleanText, humanizeAge, iso, parseIso and announcementPrefix match the frozen answers', async () => {
   const texts = [
     'a\x00b\n c',
     'x'.repeat(500),
@@ -303,7 +303,7 @@ pyTest('cleanText, humanizeAge, iso, parseIso and announcementPrefix match Pytho
   await py().same('ownership_probe', 'announcement_prefix', [['omp', 'sess-1'], ['claude', 'ü😀'], ['', '']], announcementPrefix);
 });
 
-pyTest('classify matches Python for agents, helpers and other processes', async () => {
+pyTest('classify matches the frozen answers for agents, helpers and other processes', async () => {
   const procs = [
     proc(1, exe('claude'), `"${binpath('Claude')}" --type=renderer`),
     proc(2, exe('node'), `${exe('node')} tool.mjs mcp`),
@@ -319,7 +319,7 @@ pyTest('classify matches Python for agents, helpers and other processes', async 
   await py().same('ownership_probe', 'classify', procs.map((p) => [p]), classify);
 });
 
-pyTest('validateAnnouncement accepts and refuses what Python does', async () => {
+pyTest('validateAnnouncement accepts and refuses what the frozen answers do', async () => {
   const good = {
     format: 'agent-session-owner',
     version: 1,
@@ -407,7 +407,7 @@ probeTest('a Studio-owned conversation is never second-guessed', async (tree) =>
   assertEquals([verdict.verdict, verdict.reasons], ['owned_by_studio', []]);
 });
 
-probeTest('writes just before Studio released it are not blamed on another app', async (tree) => {
+probeTest('writes just before AIB released it are not blamed on another app', async (tree) => {
   const path = tree.transcript('claude', 's1', 2);
   const steps = await both(tree, {
     steps: [{ released: ['claude', 's1'] }, assess('claude', 's1'), { advance: 30 }, { touch: [path, 4, 5] }, assess('claude', 's1')],
@@ -630,7 +630,7 @@ probeTest('helpers and unrelated processes are ignored', async (tree) => {
   assertEquals(steps.map((s) => s.verdict), ['no_evidence', 'no_evidence']);
 });
 
-probeTest("Studio's own agents and their children are not evidence", async (tree) => {
+probeTest("AIB's own agents and their children are not evidence", async (tree) => {
   const processes = [
     proc(700, exe('omp'), `${exe('omp')} acp`, tree.project, 77),
     proc(701, exe('node'), `node ${BIN}claude-agent-acp${SEP}index.js`, tree.project, 700),
@@ -645,7 +645,7 @@ probeTest("Studio's own agents and their children are not evidence", async (tree
     (await both(tree, { processes: single, own_pids: [800], steps: [assess('omp', 'x', { cwd: tree.project })] }))[0].verdict,
     'no_evidence',
   );
-  // This process (Deno.pid) counts as Studio too, with everything below it.
+  // This process (Deno.pid) counts as AIB too, with everything below it.
   const mine = [proc(900, exe('omp'), `${exe('omp')} acp --resume=s-1`, tree.project, Deno.pid)];
   const probe = new OwnershipProbe({ processes: new ProcessSource(() => mine), lockProbe: () => [] });
   assertEquals(probe.assess('omp', 's-1', { cwd: tree.project }).verdict, 'no_evidence');
@@ -830,7 +830,7 @@ function psRunner(names: string, commands: string, failFirst: string | null = nu
   return Object.assign(run, { seen });
 }
 
-pyTest('ps output becomes process entries, as in Python', async () => {
+pyTest('ps output becomes process entries, as in the frozen answers', async () => {
   const run = psRunner(NAMES, COMMANDS);
   const found = new Map(fetchProcessesPs(run).map((p) => [p.pid, p]));
   assertEquals(found.get(411)!.name, 'claude');
@@ -849,7 +849,7 @@ pyTest('ps output becomes process entries, as in Python', async () => {
     ['', '', null, null, 0],
   ];
   for (const [i, [names, commands, f1, f2, code]] of cases.entries()) {
-    // what Python's reader gave; an error that says ps is not available is kept as that sentence only (the cause's text differs)
+    // what the retired reader gave; an error that says ps is not available is kept as that sentence only (the cause's text differs)
     const expected = await py().frozen(`fetch-ps-${i}`) as Record<string, unknown>;
     let actual: unknown;
     try {
@@ -954,7 +954,7 @@ probeTest('a real agent-named process holding the transcript open is reported th
       notes: (r.notes as string[]).filter((n) => !n.includes('could not be inspected')), // other users' processes may come and go
     });
     const unpid = (value: unknown) => JSON.parse(JSON.stringify(value).replaceAll(String(pid), '0'));
-    // what Python's probe made of the same process (its id, which differs on every run, written as 0)
+    // what the retired probe made of the same process (its id, which differs on every run, written as 0)
     const wanted = await py().frozen('real-process');
     assertEquals(unpid(pick(actual)), wanted);
     const reasons = actual.reasons as Record<string, unknown>[];
@@ -1043,7 +1043,7 @@ Deno.test('folder only: a process naming the session, holding the transcript ope
   try {
     tree.transcript('claude', 's1', 3 * 3600);
     const ask = { cwd: tree.project, skipCmdline: true };
-    // named session: refused (the command-line check; Studio runs it before assess as ownerProbe)
+    // named session: refused (the command-line check; AIB runs it before assess as ownerProbe)
     const named = folderProbe(tree, panel(tree.project, ' --resume s1')).assess('claude', 's1', { cwd: tree.project });
     assertEquals([named.verdict, folderOnlyEvidence(named)], ['owned_elsewhere', null]);
     // held-open transcript

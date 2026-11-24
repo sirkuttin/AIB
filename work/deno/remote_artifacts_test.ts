@@ -1,5 +1,5 @@
 /**
- * Phase D: artifacts on the phone. A Studio in this process with a fake agent host and a fake Tailscale CLI, its artifact store and
+ * Phase D: artifacts on the phone. An AIB in this process with a fake agent host and a fake Tailscale CLI, its artifact store and
  * PC artifact origin started, phone access on:
  *  - the phone's artifact port (remote/artifact_server.ts) serves an artifact by a link the phone port minted, with a CSP built for
  *    the phone (frame-ancestors https://<name>, /_lib/ of https://<name>:8443, the PC's sandbox flags, never allow-same-origin);
@@ -37,8 +37,8 @@ import {
   phoneHeaders,
   type Raw,
   raw,
-  type RemoteStudio,
-  remoteStudio,
+  type RemoteAib,
+  remoteAib,
   serveStatus,
   tempDir,
 } from './_remote_fixture.ts';
@@ -50,12 +50,12 @@ const ORIGIN = `https://${NAME}:8443`;
 const SANDBOX = 'sandbox allow-scripts allow-forms allow-popups allow-downloads';
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 
-type Studio = RemoteStudio & { fake: ReturnType<typeof fakeTailscale> };
+type Aib = RemoteAib & { fake: ReturnType<typeof fakeTailscale> };
 
 /** Phone access on, with the PC's artifact origin started and Serve sending both 443 and 8443 to AIB. */
-async function artifactsOn(over: Parameters<typeof remoteStudio>[0] = {}, root?: string): Promise<Studio> {
+async function artifactsOn(over: Parameters<typeof remoteAib>[0] = {}, root?: string): Promise<Aib> {
   const fake = fakeTailscale();
-  const s = await remoteStudio({ runner: fake.runner, ...over }, root);
+  const s = await remoteAib({ runner: fake.runner, ...over }, root);
   s.ctx.artifacts.start(s.port);
   fake.state.serve = serveStatus(readRemotePort(s.state)!, false, readRemoteArtifactPort(s.state)!);
   const [status] = await pc(s, 'POST', '/api/live/devices/access', { on: true });
@@ -79,7 +79,7 @@ function frameHeaders(extra: Record<string, string | null> = {}): Record<string,
   return out;
 }
 
-async function mint(s: RemoteStudio, token: string, id: string, v = 0): Promise<Raw> {
+async function mint(s: RemoteAib, token: string, id: string, v = 0): Promise<Raw> {
   return await raw(s.phonePort(), 'GET', `/api/remote/artifact?id=${id}${v ? `&v=${v}` : ''}`, phoneHeaders({ [DEVICE_HEADER]: token }));
 }
 
@@ -458,7 +458,7 @@ Deno.test({
     const held = Deno.listen({ hostname: '127.0.0.1', port: 0 });
     const busy = (held.addr as Deno.NetAddr).port;
     const fake = fakeTailscale();
-    let s = await remoteStudio({ runner: fake.runner, bindRetryMs: 1000 });
+    let s = await remoteAib({ runner: fake.runner, bindRetryMs: 1000 });
     const root = s.root;
     try {
       s.ctx.artifacts.start(s.port);
@@ -482,7 +482,7 @@ Deno.test({
       await s.ctx.phone.close();
       await s.ctx.artifacts.stop();
       await s.web.close();
-      s = await remoteStudio({ runner: fake.runner, bindRetryMs: 1000 }, root);
+      s = await remoteAib({ runner: fake.runner, bindRetryMs: 1000 }, root);
       s.ctx.artifacts.start(s.port);
       await s.ctx.phone.start();
       assertEquals([readRemoteArtifactPort(s.state), s.artifactPort()], [busy, busy]);
@@ -503,7 +503,7 @@ Deno.test({
  * This test plays Tailscale Serve for https://<NAME> (the phone port) and https://<NAME>:8443 (the artifact port), and serves a
  * page of its own at https://<NAME>:9443 (another program shared on the same name: same site, another origin).
  */
-async function serveFor(page: Page, s: Studio, other: { html: string }): Promise<void> {
+async function serveFor(page: Page, s: Aib, other: { html: string }): Promise<void> {
   await page.send('Network.enable');
   await page.send('Fetch.enable', { patterns: [{ urlPattern: `https://${NAME}*`, requestStage: 'Request' }] });
   page.listeners.set('Fetch.requestPaused', (p) => {

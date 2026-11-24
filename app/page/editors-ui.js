@@ -1,7 +1,7 @@
 (function (root) {
   'use strict';
   // "Open in editor": which editors the PC has, the default one, and the menu items that open a project folder, a workspace
-  // file or one file at a line. Studio only ever sends the server a path and which program to use; the server checks that the
+  // file or one file at a line. AIB only ever sends the server a path and which program to use; the server checks that the
   // path is inside a known project and starts the program itself. Names and paths here are set with textContent by the callers.
   let host = null,
     info = { editors: [], default: '', loaded: false },
@@ -15,7 +15,7 @@
   function defaultEditor() {
     return byId(info.default) || editorsOnly()[0] || null;
   }
-  // Change the default: shown at once, saved in Studio's settings file for every browser.
+  // Change the default: shown at once, saved in AIB's settings file for every browser.
   function setDefault(id) {
     const e = byId(id);
     if (!e || e.kind !== 'editor') return Promise.resolve(false);

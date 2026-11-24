@@ -1,6 +1,6 @@
 /**
- * Frozen answers of the retired Python reference server (2026-11-23). Tests that used to compare the Deno port with Python
- * (`py.call(module, func, args)`) compare it with the answer Python gave then, kept in work/deno/fixtures/frozen/<test file>.json.
+ * Frozen answers recorded from the retired reference server (2026-11-23). Tests that used to compare the Deno port with a live run
+ * (`py.call(module, func, args)`) compare it with the recorded answer, kept in work/deno/fixtures/frozen/<test file>.json.
  *
  *   const py = new Frozen();
  *   assertEquals(port(input), await py.call('rpc_errors', 'describe_auth_methods', [input]));
@@ -10,7 +10,7 @@
  * compares with the fingerprint of the value it is given. So the fixtures hold the answers the tests assert, never whole transcripts or
  * trees, and stay small. Where the checkout the tests run from, the home folder or a temp folder shows in a request, it is written as
  * a token (<REPO>, <HOME>, <ROOT:..><SEG#n>: numbered in order of first appearance in the arguments), so a worktree, the main checkout
- * and a new random folder name all find the same answer. A key whose answers differ between calls (state kept by Python) keeps them
+ * and a new random folder name all find the same answer. A key whose answers differ between calls (state kept by the recorded program) keeps them
  * in order.
  *
  * The fixtures are no longer recorded: to change an answer, edit the fixture (or turn the check into a plain assertion).
@@ -112,7 +112,7 @@ export class Frozen {
     const folders = new Map<string, number>();
     const key = keyOf({ module, func, args, kwargs }, folders);
     const answers = Frozen.#stored()[key];
-    if (!answers) throw new Error(`No frozen Python answer for ${key} ${JSON.stringify(args).slice(0, 200)} in fixtures/frozen/${fixtureName()}`);
+    if (!answers) throw new Error(`No frozen answer for ${key} ${JSON.stringify(args).slice(0, 200)} in fixtures/frozen/${fixtureName()}`);
     const counterKey = `${fixtureName()}\n${key}`;
     const at = Frozen.#counters.get(counterKey) ?? 0;
     Frozen.#counters.set(counterKey, at + 1);
@@ -121,18 +121,18 @@ export class Frozen {
     return Promise.resolve(JSON.parse(restore(JSON.stringify(answer), folders)) as PyReply);
   }
 
-  /** The stored result; throws if Python raised then. A big answer comes back as a FrozenDigest. */
+  /** The stored result; throws if the recorded call raised. A big answer comes back as a FrozenDigest. */
   async call(module: string, func: string, args: unknown[] = [], kwargs: Record<string, unknown> = {}): Promise<unknown> {
     const reply = await this.raw(module, func, args, kwargs);
-    if ('error' in reply) throw new Error(`Python ${module}.${func} raised ${reply.error}: ${reply.message}`);
+    if ('error' in reply) throw new Error(`The frozen answer for ${module}.${func} is an error: ${reply.error}: ${reply.message}`);
     return reply.ok;
   }
 
-  /** What a Python run gave, found by `label`, for a test that drove Python some other way than through the bridge (a script, a tool over stdio). */
+  /** What the recorded run gave, found by `label`, for a test that was driven some other way than through the bridge (a script, a tool over stdio). */
   frozen<T>(label: string): Promise<T> {
     const key = createHash('sha1').update('frozen:' + label).digest('hex').slice(0, 8);
     const answers = Frozen.#stored()[key];
-    if (!answers) throw new Error(`No frozen Python answer for ${label} in fixtures/frozen/${fixtureName()}`);
+    if (!answers) throw new Error(`No frozen answer for ${label} in fixtures/frozen/${fixtureName()}`);
     const counterKey = `${fixtureName()}\n${key}`;
     const at = Frozen.#counters.get(counterKey) ?? 0;
     Frozen.#counters.set(counterKey, at + 1);
@@ -151,7 +151,7 @@ export class Frozen {
   frozenWhole<T>(label: string): Promise<T> {
     const key = createHash('sha1').update('frozenwhole:' + label).digest('hex').slice(0, 8);
     const answers = Frozen.#stored()[key];
-    if (!answers) throw new Error(`No frozen Python answer for ${label} in fixtures/frozen/${fixtureName()}`);
+    if (!answers) throw new Error(`No frozen answer for ${label} in fixtures/frozen/${fixtureName()}`);
     return Promise.resolve((answers[0] as { ok: T }).ok);
   }
 
@@ -160,7 +160,7 @@ export class Frozen {
     const folders = new Map<string, number>();
     const key = keyOf({ module, func, args, kwargs }, folders);
     const answers = Frozen.#stored()[key];
-    if (!answers) throw new Error(`No frozen Python answer for ${key} ${JSON.stringify(args).slice(0, 200)} in fixtures/frozen/${fixtureName()}`);
+    if (!answers) throw new Error(`No frozen answer for ${key} ${JSON.stringify(args).slice(0, 200)} in fixtures/frozen/${fixtureName()}`);
     return Promise.resolve(fromItems(answers[0], folders) as unknown[]);
   }
 
@@ -169,11 +169,11 @@ export class Frozen {
     const folders = new Map<string, number>();
     const key = createHash('sha1').update('frozenlist:' + label).digest('hex').slice(0, 8);
     const answers = Frozen.#stored()[key];
-    if (!answers) throw new Error(`No frozen Python answer for ${label} in fixtures/frozen/${fixtureName()}`);
+    if (!answers) throw new Error(`No frozen answer for ${label} in fixtures/frozen/${fixtureName()}`);
     return Promise.resolve(fromItems(answers[0], folders) as T[]);
   }
 
-  /** Assert the port gives what Python gave for each input. `port` returns the same plain JSON shape. */
+  /** Assert the port give what the frozen answers hold for each input. `port` returns the same plain JSON shape. */
   async same(module: string, func: string, inputs: unknown[][], port: (...args: never[]) => unknown): Promise<void> {
     for (const args of inputs) {
       const expected = await this.call(module, func, args);

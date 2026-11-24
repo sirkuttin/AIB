@@ -1,7 +1,7 @@
 /**
  * Contract (ported from work/contract/test_contract_agent.py): a fake ACP agent (work/combined-fixture/agent.py, run as "Claude
  * Code") driven over HTTP through the real server, step for step: connect, state polling, a prompt that asks for approval, the
- * approval, a long turn that is retried (receipt) and cancelled, the live list, a settings change, disconnect. The Python version
+ * approval, a long turn that is retried (receipt) and cancelled, the live list, a settings change, disconnect. The old version
  * compared every reply with the reference; here each reply is asserted. The fake agent is a fixture, not the reference server.
  */
 import { assertEquals } from './_assert.ts';

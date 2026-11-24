@@ -323,10 +323,10 @@ Deno.test({
         ),
       );
       assertEquals((await bootstrapWithSession(sessionB))[1].token, tokenB, "B's window gets the token");
-      const studioLog = Deno.readTextFileSync(`${fx.state}\\studio.log`);
-      assert(studioLog.includes('closing (installing an update); leaving the chats in the keeper'), studioLog.slice(-3000));
-      assert(studioLog.includes('released 1 chat(s) to the keeper'), studioLog.slice(-3000));
-      assert(studioLog.includes('keeper: 1 chat(s) taken over from the keeper'), studioLog.slice(-3000));
+      const aibLog = Deno.readTextFileSync(`${fx.state}\\studio.log`);
+      assert(aibLog.includes('closing (installing an update); leaving the chats in the keeper'), aibLog.slice(-3000));
+      assert(aibLog.includes('released 1 chat(s) to the keeper'), aibLog.slice(-3000));
+      assert(aibLog.includes('keeper: 1 chat(s) taken over from the keeper'), aibLog.slice(-3000));
 
       // ---- the artifact tool is the keeper's forwarder, so B removed the update's leftovers although the chat runs
       const [mcpLine] = Deno.readTextFileSync(mcpPids).split('\n').filter((l) => l.trim());

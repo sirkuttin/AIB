@@ -3,7 +3,7 @@
  * with a worktree over a fake studio, and the small helpers both use. Only temp folders.
  */
 import { assertEquals, assertRejects } from "./_assert.ts";
-import { FakeStudio, runGit, Sandbox } from "./_worktree_fixtures.ts";
+import { FakeAib, runGit, Sandbox } from "./_worktree_fixtures.ts";
 import * as wt from "../../app/server/worktrees/worktrees.ts";
 import * as m from "../../app/server/worktrees/merge.ts";
 
@@ -11,7 +11,7 @@ export const { merge, Refused, WAITING } = m;
 
 export interface Ctx {
   box: Sandbox;
-  studio: FakeStudio;
+  aib: FakeAib;
   manager: wt.Manager;
   wt: string;
   id: string;
@@ -22,15 +22,15 @@ export async function chat(
   box: Sandbox,
   id = "c1",
   key = "a".repeat(32),
-  studio?: FakeStudio,
+  aib?: FakeAib,
 ): Promise<Ctx> {
   runGit(box.project, "config", "core.autocrlf", "false"); // the helpers commit with autocrlf off: keep checkouts byte for byte
   const manager = new wt.Manager(box.state);
   const plan = (await manager.plan(box.project, key))!;
   await manager.create(plan);
-  studio ??= new FakeStudio(box.state);
-  studio.add(id, plan.path);
-  return { box, studio, manager, wt: plan.path, id, key };
+  aib ??= new FakeAib(box.state);
+  aib.add(id, plan.path);
+  return { box, aib, manager, wt: plan.path, id, key };
 }
 
 export async function refused(
@@ -39,7 +39,7 @@ export async function refused(
   fromTool = false,
 ): Promise<string> {
   const error = await assertRejects(
-    () => merge(ctx.studio, ctx.id, "T", fromTool),
+    () => merge(ctx.aib, ctx.id, "T", fromTool),
     Refused,
   ) as m.Refused;
   assertEquals(error.code, code, error.message);

@@ -85,7 +85,7 @@ Deno.test('a valid agent key is the tool principal for its conversation only', (
   assertEquals((authorize(req, gate, 'artifacts.tool', 'chat-1', throws) as { reason: string }).reason, 'bad_key');
 });
 
-Deno.test('Gate hosts and origins match Python, including configured names and the artifact port', async () => {
+Deno.test('Gate hosts and origins match the frozen answers, including configured names and the artifact port', async () => {
   const py = new Frozen();
   const variants: [string[] | null, string[], number[]][] = [
     [null, [], []],
@@ -125,12 +125,12 @@ Deno.test('loopbackName matches ipaddress', async () => {
     '0::1',
     '1::',
   ];
-  // Python 3.13's ipaddress calls ::ffff:127.0.0.1 loopback; AIB keeps the stricter older answer (an IPv4-mapped name is not a host name
+  // A newer ipaddress module calls ::ffff:127.0.0.1 loopback; AIB keeps the stricter older answer (an IPv4-mapped name is not a host name
   // AIB's own page uses), so that one name is not compared against a 3.13 oracle.
   for (const name of names) assertEquals(loopbackName(name), await py.call('security', 'loopback_name', [name]), name);
 });
 
-Deno.test('RouteTable.scopeFor matches Python', async () => {
+Deno.test('RouteTable.scopeFor matches the frozen answers', async () => {
   const py = new Frozen();
   const entries: [string, string, string][] = [['GET', '/api/a', 'read'], ['post', '/api/b', 'write'], ['GET', '/x.html', 'bootstrap']];
   const table = new RouteTable();

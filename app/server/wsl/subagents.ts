@@ -13,7 +13,7 @@
 import { isDict } from '../core/py.ts';
 import { getLogger } from '../core/log.ts';
 import { refOf } from '../platform/location.ts';
-import type { MergeStudio } from '../worktrees/merge.ts';
+import type { MergeHost } from '../worktrees/merge.ts';
 import { helperState, wslMergeChat } from './merge.ts';
 import { isCodexFamily } from '../agents/claude_family.ts';
 import type { HookAnswer, RemoteSubagents, SubagentChat, SubagentRecord } from '../subagents/service.ts';
@@ -294,7 +294,7 @@ export async function wslFolderBranch(rec: { id: string; wsl?: { distro: string 
  * back for AIB's crash recovery (`onStage`). The outcome is the swarm's: a refusal, a conflict, a dirty file, "merged".
  */
 export async function wslLandSubagent(
-  studio: MergeStudio,
+  aib: MergeHost,
   rec: { id: string; wsl?: { distro: string } },
   args: { parent: string; target: string; title: string; held: string[]; landKept?: string[] | null; landScratch?: boolean },
   onStage: (stage: string, data: Json) => Promise<void> | void,
@@ -302,7 +302,7 @@ export async function wslLandSubagent(
   if (!rec.wsl) return { state: 'refused', code: 'gone', message: 'its worktree is gone' };
   const states: Record<string, Json> = {};
   for (const id of args.held) {
-    const chat = await wslMergeChat(studio, id);
+    const chat = await wslMergeChat(aib, id);
     if (chat) states[id] = helperState(chat);
   }
   const out = await wslSubagentLand(rec.wsl.distro, { id: rec.id, ...args, states });

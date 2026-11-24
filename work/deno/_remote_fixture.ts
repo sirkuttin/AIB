@@ -1,6 +1,6 @@
 /**
  * Phone access test helpers: a raw HTTP/1.1 client (fetch cannot set Host, which Tailscale Serve passes on), "Serve" headers for a
- * phone request, a fake Tailscale CLI (status / serve status answers from a JSON file the test edits), and an in-process Studio
+ * phone request, a fake Tailscale CLI (status / serve status answers from a JSON file the test edits), and an in-process AIB
  * whose agent host the test fills (chats, events, subagents).
  */
 import { PAGE_KEY } from './_page_key.ts';
@@ -238,9 +238,9 @@ export function writeSavedChat(claudeDir: string, project: string, spec: SavedCh
   return file;
 }
 
-/** An in-process Studio (page port 0) with a fake agent host the test fills; phone access options come from the test.
+/** An in-process AIB (page port 0) with a fake agent host the test fills; phone access options come from the test.
  * `saved`: real saved transcripts (a Claude Code folder under the root) and one added project, `project`, they belong to. */
-export async function remoteStudio(phone: AccessOptions = {}, root?: string, extra: { saved?: boolean; pcsync?: PcSyncOptions } = {}) {
+export async function remoteAib(phone: AccessOptions = {}, root?: string, extra: { saved?: boolean; pcsync?: PcSyncOptions } = {}) {
   root ??= await tempDir('aib-remote-');
   const state = `${root}${sep}state`;
   await Deno.mkdir(state, { recursive: true });
@@ -324,7 +324,7 @@ export async function remoteStudio(phone: AccessOptions = {}, root?: string, ext
     },
     emitArtifact: () => Promise.resolve(true),
     // conversation marks: a delete is refused while the chat is live (web/shared.ts conversationAction)
-    studioOwns: (provider: unknown, sessionId: unknown) =>
+    aibOwns: (provider: unknown, sessionId: unknown) =>
       Promise.resolve(chats.some((c) => !c.closed && c.provider === provider && c.sessionId === sessionId)),
     busyConnections: () => Promise.resolve([]),
     close: () => Promise.resolve(),
@@ -383,10 +383,10 @@ export async function remoteStudio(phone: AccessOptions = {}, root?: string, ext
     },
   };
 }
-export type RemoteStudio = Awaited<ReturnType<typeof remoteStudio>>;
+export type RemoteAib = Awaited<ReturnType<typeof remoteAib>>;
 
 /** Page-port call with the page token (the PC side: Settings > Devices). */
-export async function pc(s: RemoteStudio, method: string, path: string, body?: Json): Promise<[number, Json]> {
+export async function pc(s: RemoteAib, method: string, path: string, body?: Json): Promise<[number, Json]> {
   const headers: Record<string, string> = { 'X-Studio-Token': s.token, Origin: `http://127.0.0.1:${s.port}` };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   const r = await fetch(`http://127.0.0.1:${s.port}${path}`, {
@@ -410,7 +410,7 @@ export function nonce(): string {
  * computer is given a session instead: pairComputer.) Scopes, when given, are set after the switch.
  */
 export async function pairPhone(
-  s: RemoteStudio,
+  s: RemoteAib,
   name = 'Pixel 9',
   scopes?: string[],
   kind?: 'phone' | 'computer' | 'computer-session',
@@ -455,6 +455,6 @@ export async function pairPhone(
 }
 
 /** A computer approved as a computer on the PC: the pairing gives it a short session token (and the HttpOnly cookie), no long-lived key. */
-export function pairComputer(s: RemoteStudio, name = 'Laptop (Edge)', scopes?: string[]) {
+export function pairComputer(s: RemoteAib, name = 'Laptop (Edge)', scopes?: string[]) {
   return pairPhone(s, name, scopes, 'computer-session');
 }

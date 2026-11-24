@@ -1,5 +1,5 @@
 /**
- * The scroll e2e harness (scroll_e2e_test.ts): a real Studio web server (Deno, in-process agent host, its own temp state folder,
+ * The scroll e2e harness (scroll_e2e_test.ts): a real AIB web server (Deno, in-process agent host, its own temp state folder,
  * a free port; never 8767/8768/8777/8778), the scripted agent work/scroll-fixture/agent.py as "Claude Code", and a headless
  * Chrome or Edge (no window) on chat.html. A test appends one line per step to a chat's script file and the agent sends it at
  * once, so what arrives and when is decided by the test, not a timer.
@@ -80,7 +80,7 @@ export interface Saved {
 }
 
 /**
- * One headless Chrome per test process, a new tab per Lab (Chrome starts once, not once per test). Each Lab's Studio is on its own
+ * One headless Chrome per test process, a new tab per Lab (Chrome starts once, not once per test). Each Lab's AIB is on its own
  * OS-picked port, so its page is its own origin; the OS may hand a later Lab the same port, so a Lab clears its origin's storage
  * when it closes and the next one starts clean, as with a fresh browser. AIB_LAB_FRESH_BROWSER=1: a new Chrome per Lab, as before.
  */

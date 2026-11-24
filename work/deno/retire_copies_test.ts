@@ -5,8 +5,8 @@
  * the owner's one-off migration script (work/migrate/folder_chats_migrate.ts, tested in folder_chats_migrate_test.ts) moves those
  * chats to the project folder. The app only reads the script's moved-chat mapping (server/state/moved_chats.ts).
  *
- * Through a real Studio with fake agents and real git in temp folders. "Old copy chats" are made the way they exist after the
- * update: a worktree record with a saved session, continued through Studio.connect.
+ * Through a real AIB with fake agents and real git in temp folders. "Old copy chats" are made the way they exist after the
+ * update: a worktree record with a saved session, continued through Aib.connect.
  */
 import { assert, assertEquals } from './_assert.ts';
 import { PYTHON, pause } from './_connection.ts';
@@ -38,21 +38,21 @@ class Box {
   readonly state = pathOf(this.dir, 'state');
   readonly claude = pathOf(this.dir, 'claude-config', 'projects');
   readonly project = makeRepo(pathOf(this.dir, 'proj'));
-  readonly studio: Aib;
+  readonly aib: Aib;
   #n = 0;
 
   constructor() {
     Deno.mkdirSync(this.claude, { recursive: true });
     runGit(this.project, 'config', 'user.name', 't');
     runGit(this.project, 'config', 'user.email', 't@t');
-    const studio = new Aib({ stateDir: this.state, port: 0 }, { keeper: null });
-    studio.ownerProbe = () => null;
-    studio.agentLaunch = () => Promise.resolve([['unused'], {}]);
-    studio.connectionFactory = (_command, cwd, provider, options) => {
+    const aib = new Aib({ stateDir: this.state, port: 0 }, { keeper: null });
+    aib.ownerProbe = () => null;
+    aib.agentLaunch = () => Promise.resolve([['unused'], {}]);
+    aib.connectionFactory = (_command, cwd, provider, options) => {
       const env = { ...(options?.env ?? {}), FAKE_ACP_LOG: pathOf(this.dir, `agent-${++this.#n}.log`) };
       return new Connection([PYTHON, UNIQUE, '--models'], cwd, provider, { ...(options ?? {}), env });
     };
-    this.studio = studio;
+    this.aib = aib;
   }
 
   /** An existing worktree chat (made before the update): its copy, record and saved session. */
@@ -76,13 +76,13 @@ class Box {
     return file;
   }
 
-  mergeStudio(): merge.MergeStudio {
-    const studio = this.studio;
-    return { stateDir: this.state, liveState: (id) => studio.liveState(id, 0), liveCall: (op, body) => studio.liveCall(op, body as Json) };
+  mergeAib(): merge.MergeHost {
+    const aib = this.aib;
+    return { stateDir: this.state, liveState: (id) => aib.liveState(id, 0), liveCall: (op, body) => aib.liveCall(op, body as Json) };
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
-    await this.studio.close().catch(() => {});
+    await this.aib.close().catch(() => {});
     for (let i = 0; i < 20; i++) {
       try {
         Deno.removeSync(this.dir, { recursive: true });
@@ -94,10 +94,10 @@ class Box {
   }
 }
 
-const studioRefs = (project: string, branch: string) =>
+const aibRefs = (project: string, branch: string) =>
   runGit(project, 'for-each-ref', '--format=%(refname)', `refs/studio/${branch.slice('studio/'.length)}/`).trim();
 
-// ---- through Studio --------------------------------------------------------------------------------------------------------
+// ---- through AIB --------------------------------------------------------------------------------------------------------
 Deno.test({
   ...T,
   name: "an old copy chat, merged and closed, keeps its copy (the migration script's job, not the app's); its transcript is not " +
@@ -106,19 +106,19 @@ Deno.test({
     await using box = new Box();
     const made = await box.existing('sess-merge');
     const original = box.transcript('sess-merge', made.path, 'merged');
-    const c = await box.studio.connect('claude', made.path, 'sess-merge');
+    const c = await box.aib.connect('claude', made.path, 'sess-merge');
     assert(c.worktree, 'an existing worktree chat keeps its copy');
     write(c.cwd, 'from-copy.txt', 'copy work\n');
-    const result = await merge.merge(box.mergeStudio(), c.id, 'copy work');
+    const result = await merge.merge(box.mergeAib(), c.id, 'copy work');
     assertEquals(result.state, 'merged', JSON.stringify(result));
     assertEquals(read(box.project, 'from-copy.txt'), 'copy work\n');
-    await box.studio.liveCall('disconnect', { id: c.id });
-    assertEquals(await box.studio.retireMerged(), [], 'a main chat copy is never retired by the app');
+    await box.aib.liveCall('disconnect', { id: c.id });
+    assertEquals(await box.aib.retireMerged(), [], 'a main chat copy is never retired by the app');
     assert(exists(made.path) && exists(original), 'the copy and the transcript stay');
     assertEquals(runGit(box.project, 'branch', '--list', made.branch).trim().replace(/^[*+ ]+/, ''), made.branch, 'its branch stays');
     assertEquals(readMoved(box.state), {}, 'the app writes no moved-chat mapping');
     assert(!exists(pathOf(box.state, MOVED_FILE)));
-    const again = await box.studio.connect('claude', made.path, 'sess-merge');
+    const again = await box.aib.connect('claude', made.path, 'sess-merge');
     assertEquals(lower(again.cwd), lower(made.path), 'continues in its copy');
   },
 });
@@ -129,12 +129,12 @@ Deno.test({
   async fn() {
     await using box = new Box();
     const made = await box.existing('sess-more');
-    const c = await box.studio.connect('claude', made.path, 'sess-more');
+    const c = await box.aib.connect('claude', made.path, 'sess-more');
     write(c.cwd, 'a.txt', 'a\n');
-    assertEquals((await merge.merge(box.mergeStudio(), c.id, 'a')).state, 'merged');
+    assertEquals((await merge.merge(box.mergeAib(), c.id, 'a')).state, 'merged');
     write(c.cwd, 'b.txt', 'later work\n');
-    await box.studio.liveCall('disconnect', { id: c.id });
-    assertEquals(await box.studio.retireMerged(), []);
+    await box.aib.liveCall('disconnect', { id: c.id });
+    assertEquals(await box.aib.retireMerged(), []);
     assert(exists(made.path) && read(made.path, 'b.txt') === 'later work\n', 'the copy and its new work stay');
   },
 });
@@ -147,16 +147,16 @@ Deno.test({
     const made = await box.existing('sess-helper', 'helper');
     assert(made.branch.startsWith('studio/helper-'));
     const original = box.transcript('sess-helper', made.path);
-    const c = await box.studio.connect('claude', made.path, 'sess-helper');
+    const c = await box.aib.connect('claude', made.path, 'sess-helper');
     write(c.cwd, 'h.txt', 'helper work\n');
-    assertEquals((await merge.merge(box.mergeStudio(), c.id, 'helper work')).state, 'merged');
-    assertEquals(await box.studio.retireMerged(), [], 'open: kept (MF 5)');
+    assertEquals((await merge.merge(box.mergeAib(), c.id, 'helper work')).state, 'merged');
+    assertEquals(await box.aib.retireMerged(), [], 'open: kept (MF 5)');
     assert(exists(made.path));
-    await box.studio.liveCall('disconnect', { id: c.id });
-    await box.studio.retireMerged();
+    await box.aib.liveCall('disconnect', { id: c.id });
+    await box.aib.retireMerged();
     assert(!exists(made.path), 'removed after close');
     assertEquals(runGit(box.project, 'branch', '--list', made.branch).trim(), '');
-    assertEquals(studioRefs(box.project, made.branch), '');
+    assertEquals(aibRefs(box.project, made.branch), '');
     assert(exists(original), 'a helper transcript is never moved');
   },
 });
@@ -171,19 +171,19 @@ Deno.test({
     const made = await box.existing('sess-discard');
     const original = box.transcript('sess-discard', made.path);
     const before = Deno.readTextFileSync(original);
-    const c = await box.studio.connect('claude', made.path, 'sess-discard');
+    const c = await box.aib.connect('claude', made.path, 'sess-discard');
     write(c.cwd, 'unwanted.txt', 'thrown away\n');
     // the app has no Discard any more (owner, 2026-11-16): the copy goes the way the migration script's --discard removes it
-    await box.studio.liveCall('disconnect', { id: c.id });
+    await box.aib.liveCall('disconnect', { id: c.id });
     assertEquals(await new wt.Manager(box.state).remove(made.key, true), 'removed');
     assert(!exists(made.path));
-    assertEquals(studioRefs(box.project, made.branch), '');
+    assertEquals(aibRefs(box.project, made.branch), '');
     assert(!exists(pathOf(box.project, 'unwanted.txt')), 'discarded work does not land');
     assertEquals(Deno.readTextFileSync(original), before, 'the transcript is not touched');
     assert(!exists(pathOf(box.state, 'refiled')), 'no backups made by the app');
     let gone = false;
     try {
-      await box.studio.connect('claude', made.path, 'sess-discard');
+      await box.aib.connect('claude', made.path, 'sess-discard');
     } catch (error) {
       gone = error instanceof wt.WorktreeGone;
     }
@@ -194,7 +194,7 @@ Deno.test({
       version: 1,
       chats: { 'claude:sess-discard': { project: box.project, from: made.path, why: 'migrated', at: 1, refiled: '', backup: '' } },
     }));
-    const again = await box.studio.connect('claude', made.path, 'sess-discard');
+    const again = await box.aib.connect('claude', made.path, 'sess-discard');
     assertEquals(lower(again.cwd), lower(box.project), 'continues in the project folder');
     assertEquals(again.worktree, null);
   },
@@ -236,9 +236,9 @@ Deno.test({
     const legacy = await helper('h_legacy', 'sess-legacy', 'stopped'); // stopped before this build: no stop time yet
     const done = await helper('h_done', 'sess-done', 'done', now - 20 * day); // not stopped: never by this rule
     const open = await helper('h_open', 'sess-open', 'stopped', now - 8 * day); // its chat is open: kept
-    const c = await box.studio.connect('claude', open.path, 'sess-open');
+    const c = await box.aib.connect('claude', open.path, 'sess-open');
 
-    const removed = await box.studio.retireStoppedHelpers(now);
+    const removed = await box.aib.retireStoppedHelpers(now);
     assertEquals(removed.sort(), ['h_fail', 'h_old']);
     assert(!exists(old.path) && !exists(failed.path));
     assertEquals(runGit(box.project, 'branch', '--list', old.branch).trim(), '', 'its branch went with it');
@@ -249,11 +249,11 @@ Deno.test({
     assert(exists(pathOf(box.state, 'cleanup.log')));
 
     // closing its chat runs the rule: the copy goes
-    await box.studio.liveCall('disconnect', { id: c.id });
+    await box.aib.liveCall('disconnect', { id: c.id });
     for (let i = 0; i < 50 && exists(open.path); i++) await pause(200);
     assert(!exists(open.path), 'removed once its chat closed');
     // 8 days on: the legacy one goes too; the one with commits never does silently
-    const later = await box.studio.retireStoppedHelpers(now + 8 * day);
+    const later = await box.aib.retireStoppedHelpers(now + 8 * day);
     assertEquals(later.sort(), ['h_legacy', 'h_new']);
     assert(exists(busy.path) && exists(done.path));
   },

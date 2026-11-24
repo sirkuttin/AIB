@@ -1,8 +1,8 @@
 /**
  * server/worktrees/sync.ts, second half of worktree_sync_test.ts (split so the two halves run in parallel): three_way against
- * the answers the retired Python gave, the real loop with the folder watcher, the cross-process locks in both directions (the other
+ * the answers the retired the frozen answers hold, the real loop with the folder watcher, the cross-process locks in both directions (the other
  * process is work/lock_helper.py), and the same sequence of user and chat edits on identical repos giving the worktree files,
- * commits, records, notes and pause state the retired Python gave at every step (kept as fingerprints, fixtures/frozen).
+ * commits, records, notes and pause state the retired the frozen answers hold at every step (kept as fingerprints, fixtures/frozen).
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
 import { python } from './_work.ts';
@@ -13,7 +13,7 @@ import * as wt from '../../app/server/worktrees/worktrees.ts';
 import * as sync from '../../app/server/worktrees/sync.ts';
 import { pathOf } from '../../app/server/state/paths.ts';
 
-Deno.test('three_way gives what Python gave on every kind', async () => {
+Deno.test('three_way give what the frozen answers hold on every kind', async () => {
   const py = new Frozen();
   const scratch = Deno.makeTempDirSync({ prefix: 'studio-3way-' });
   try {
@@ -52,7 +52,7 @@ Deno.test({
   fn: async () => {
     using box = new Sandbox();
     const ctx = await setup(box);
-    const live = new LiveSync(ctx.studio, 0.1, 0.3, true);
+    const live = new LiveSync(ctx.aib, 0.1, 0.3, true);
     live.maxSettle = 30;
     try {
       await live.chatOpened(ctx.conns[0]);
@@ -91,7 +91,7 @@ Deno.test({
 Deno.test('the project folder is free right after stopAll', async () => {
   using box = new Sandbox();
   const ctx = await setup(box);
-  const live = new LiveSync(ctx.studio, 0.1, 60, true); // a 60 s poll: on Windows only the folder watcher can be this quick
+  const live = new LiveSync(ctx.aib, 0.1, 60, true); // a 60 s poll: on Windows only the folder watcher can be this quick
   await live.chatOpened(ctx.conns[0]);
   const running = [...live.projects.values()][0];
   await until(() => running.baselined.isSet(), 'baseline');
@@ -195,7 +195,7 @@ Deno.test('the pause-flag lock (sync-state.lock) excludes another process and th
 });
 
 // ---- parity: the same edits on identical repos ----------------------------------------------------------------------------
-Deno.test('the same user and chat edits give the worktrees, commits, records, notes and pause state Python gave at every step', async () => {
+Deno.test('the same user and chat edits give the worktrees, commits, records, notes and pause state the frozen answers hold at every step', async () => {
   const py = new Frozen();
   using box = new Sandbox(false);
   setFixedDates(true);
@@ -215,7 +215,7 @@ Deno.test('the same user and chat edits give the worktrees, commits, records, no
       return { name, project, state: pathOf(box.base, name, 'state'), wt: '' };
     });
     const [pySide, denoSide] = sides;
-    // Python's side is made lazily, only while freezing (the first step that asks it)
+    // The frozen side is made lazily, only while freezing (the first step that asks it)
     let pyReady: Promise<void> | null = null;
     const ensurePy = () =>
       pyReady ??= (async () => {
@@ -229,13 +229,13 @@ Deno.test('the same user and chat edits give the worktrees, commits, records, no
     await manager.create(plan);
     denoSide.wt = plan.path;
     const conn = new Conn(denoSide.wt);
-    const studio = {
+    const aib = {
       stateDir: denoSide.state,
       worktrees: manager,
       settings: { worktreePerChat: () => true },
       connections: new Map([['c1', conn]]),
     };
-    const live = new LiveSync(studio, sync.settings.SETTLE, sync.settings.POLL, false);
+    const live = new LiveSync(aib, sync.settings.SETTLE, sync.settings.POLL, false);
     const ps = new ProjectSync(live, denoSide.project);
 
     const files = (root: string): Record<string, string> => {
@@ -266,7 +266,7 @@ Deno.test('the same user and chat edits give the worktrees, commits, records, no
       commits: runGit(project, 'log', '--format=%H %s', '--all'),
     });
 
-    /** One step: the edits, then the live-sync calls; everything observable must be what Python gave (one fingerprint per step). */
+    /** One step: the edits, then the live-sync calls; everything observable must be what the frozen answers hold (one fingerprint per step). */
     const both = async (label: string, edit: (side: typeof pySide) => void, calls: [string, ...unknown[]][]) => {
       edit(denoSide);
       const fromDeno: unknown[] = [];

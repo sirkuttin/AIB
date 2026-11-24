@@ -1,5 +1,5 @@
 /**
- * Studio settings (state_store.SettingsStore): the agent list (built-in switches + user-added ACP agents), New chat defaults,
+ * AIB settings (state_store.SettingsStore): the agent list (built-in switches + user-added ACP agents), New chat defaults,
  * editor, appearance, launchers and server options.
  *
  * One small validated JSON file in the state folder, shared by the web server and the agent host (either may be Python or Deno

@@ -1,6 +1,6 @@
 /**
- * View tickets for the Files view's Page view and images (Deno only). The Studio route that reads a file issues a random ticket for
- * that one file; the artifact origin (a separate, sandboxed origin that never sees the Studio token) serves /f/<ticket>/<name> from
+ * View tickets for the Files view's Page view and images (Deno only). AIB route that reads a file issues a random ticket for
+ * that one file; the artifact origin (a separate, sandboxed origin that never sees AIB token) serves /f/<ticket>/<name> from
  * it, read only, with the artifact CSP. Nothing is copied and no artifact is registered. Tickets expire after TICKET_TTL_MS.
  */
 export const TICKET_TTL_MS = 15 * 60_000;

@@ -1,5 +1,5 @@
 /**
- * Attachments from the phone (owner: "we need to allow sending attachments from the phone app"), server side, in a Studio in this
+ * Attachments from the phone (owner: "we need to allow sending attachments from the phone app"), server side, in an AIB in this
  * process with a fake agent host and forged Tailscale Serve headers:
  *  - phoneAttachments (remote/actions.ts): bytes only (never a path, a link or another field), the PC composer's limits (4 pictures
  *    of PNG, JPEG, GIF or WebP up to 5 MiB, 15 MiB of pictures; 8 files, text up to 2 MiB, others up to 10 MiB; 20 MiB in all) and
@@ -25,11 +25,11 @@ import {
   pc,
   phoneHeaders,
   raw,
-  type RemoteStudio,
-  remoteStudio,
+  type RemoteAib,
+  remoteAib,
   serveStatus,
 } from './_remote_fixture.ts';
-import { phoneCall, v2Studio } from './_remote_v2b.ts';
+import { phoneCall, v2Aib } from './_remote_v2b.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
 type Json = Record<string, unknown>;
@@ -154,9 +154,9 @@ Deno.test('phoneAttachments: bytes only, the PC composer limits and types, and w
   assertEquals(MAX_ATTACH_BODY, 30 * MiB);
 });
 
-async function phoneOn(): Promise<RemoteStudio> {
+async function phoneOn(): Promise<RemoteAib> {
   const fake = fakeTailscale();
-  const s = await remoteStudio({ runner: fake.runner });
+  const s = await remoteAib({ runner: fake.runner });
   fake.state.serve = serveStatus(readRemotePort(s.state)!);
   assertEquals((await pc(s, 'POST', '/api/live/devices/access', { on: true }))[0], 200);
   return s;
@@ -180,7 +180,7 @@ function chat(id: string, caps: Json, over: Partial<FakeChat> = {}): FakeChat {
   };
 }
 
-const post = (s: RemoteStudio, token: string, path: string, body: Json | string) =>
+const post = (s: RemoteAib, token: string, path: string, body: Json | string) =>
   raw(
     s.phonePort(),
     'POST',
@@ -188,7 +188,7 @@ const post = (s: RemoteStudio, token: string, path: string, body: Json | string)
     phoneHeaders({ [DEVICE_HEADER]: token }, 'POST'),
     typeof body === 'string' ? body : JSON.stringify(body),
   );
-const auditLines = (s: RemoteStudio) =>
+const auditLines = (s: RemoteAib) =>
   (s.ctx.phone.audit.tail(500) as unknown as Json[]).slice().reverse().filter((l) => ['send', 'queue'].includes(String(l.action))).map((
     l,
   ) => [l.action, l.chat, l.result]);
@@ -346,7 +346,7 @@ Deno.test({
   name:
     'New chat: the first message carries its attachments once ready; an agent that cannot take pictures holds it with the reason; /new/first sends it',
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     try {
       const phone = await pairPhone(s);
       const until = async (fn: () => Promise<boolean> | boolean, what: string) => {

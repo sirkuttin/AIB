@@ -108,7 +108,7 @@ export class Handoff {
     this.host = host;
   }
 
-  /** Start or stop the watchers for the chats open now. Studio calls it when a chat opens or closes; cheap to call often. */
+  /** Start or stop the watchers for the chats open now. AIB calls it when a chat opens or closes; cheap to call often. */
   refresh(): void {
     if (this.#closed) return;
     const dirs = new Set<string>();

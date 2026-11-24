@@ -1,7 +1,7 @@
 /**
  * Contract (ported from work/contract/test_contract_live.py): the live routes answered by the agent host (state, ownership, live ops,
  * agent install and sign-in status) refuse bad requests with the documented status and error, and POST /api/live/shutdown stops the
- * web server. The Python version compared every answer with the reference; here the values are asserted. Exact error texts of the
+ * web server. The old version compared every answer with the reference; here the values are asserted. Exact error texts of the
  * install/sign-in routes are covered by installer_test.ts and signin_test.ts.
  */
 import { assert, assertEquals } from './_assert.ts';

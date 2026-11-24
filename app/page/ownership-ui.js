@@ -29,7 +29,7 @@
     box.append(make('span', ' ', ''), badge);
   }
 
-  // One line under the conversation title. Hidden while the conversation is live in this Studio.
+  // One line under the conversation title. Hidden while the conversation is live in this AIB.
   const dismissed = new Set();
   const hintKey = (conversation, verdict) =>
     (conversation && conversation.provider + ':' + conversation.id) + '|' + verdict;

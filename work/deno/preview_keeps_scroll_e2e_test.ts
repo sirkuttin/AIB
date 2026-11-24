@@ -5,7 +5,7 @@
  * across redraws, and it loads again only when the file changed on disk, then at the scroll the reader was at.
  * The Artifacts viewer is held to the same: unrelated redraws never load its frame again; a new version does, at the same scroll.
  *
- * A real Studio (temp state folder and workspace, free port; never the live ports), the scripted agent, and a headless Chrome/Edge.
+ * A real AIB (temp state folder and workspace, free port; never the live ports), the scripted agent, and a headless Chrome/Edge.
  * Run (from app): deno test -A ../../work/deno/preview_keeps_scroll_e2e_test.ts
  */
 import { assert, assertEquals } from './_assert.ts';

@@ -22,33 +22,33 @@ class KeeperLab {
   readonly dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-steer-keeper-' }));
   readonly state = this.dir + SEP + 'state';
   readonly work = this.dir + SEP + 'work';
-  readonly studios: Aib[] = [];
+  readonly aibs: Aib[] = [];
   readonly puppet = new Puppet('claude');
 
   constructor() {
     Deno.mkdirSync(this.work, { recursive: true });
   }
 
-  studio(): Aib {
+  aib(): Aib {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
-    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper, keeperForNew: true });
-    studio.ownerProbe = () => null;
-    studio.connectionFactory = (_command, cwd, provider, options) =>
+    const aib = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper, keeperForNew: true });
+    aib.ownerProbe = () => null;
+    aib.connectionFactory = (_command, cwd, provider, options) =>
       new Connection(puppetCommand(this.puppet.port), cwd, provider, options);
-    this.studios.push(studio);
-    return studio;
+    this.aibs.push(aib);
+    return aib;
   }
 
   /** This AIB stops without a word (its chats run on in the keeper). */
-  crash(studio: Aib): void {
-    studio.keeper!.disconnect();
-    for (const c of studio.connections.values()) c.sessionLease?.release();
-    studio.reconnectStop.set();
-    this.studios.splice(this.studios.indexOf(studio), 1);
+  crash(aib: Aib): void {
+    aib.keeper!.disconnect();
+    for (const c of aib.connections.values()) c.sessionLease?.release();
+    aib.reconnectStop.set();
+    this.aibs.splice(this.aibs.indexOf(aib), 1);
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
-    for (const s of this.studios.reverse()) await s.close().catch(() => {});
+    for (const s of this.aibs.reverse()) await s.close().catch(() => {});
     const info = readKeeperInfo(this.state);
     if (info && pidAlive(info.pid)) {
       try {
@@ -77,7 +77,7 @@ Deno.test({
     await keeperBinary();
     await using lab = new KeeperLab();
     const p = lab.puppet;
-    const a = lab.studio();
+    const a = lab.aib();
     const c = await a.connect('claude', lab.work);
     assertEquals((await a.liveCall('prompt', { id: c.id, text: 'go', clientMessageId: 'm1' }))[0], 200);
     const prompt = await p.take('session/prompt');
@@ -86,7 +86,7 @@ Deno.test({
     await pause(400); // the lane reached the queue store, the steer note and request the record
     lab.crash(a);
 
-    const b = lab.studio();
+    const b = lab.aib();
     assertEquals(await b.adoptKeeper(), 1);
     const r = b.connections.get(c.id)!;
     assertEquals(r.rebuildError, '');
@@ -105,7 +105,7 @@ Deno.test({
     await pause(400);
     lab.crash(b);
 
-    const d = lab.studio();
+    const d = lab.aib();
     assertEquals(await d.adoptKeeper(), 1);
     const r2 = d.connections.get(c.id)!;
     assertEquals((r2.public().steerLane as Json[]).map((i) => [i.text, i.state]), [['second', 'fallback']], 'not lost (B4)');

@@ -1,4 +1,4 @@
-/** Desktop shots from the demo Studio (work/demo-studio/start.py --port 8840 --dir C:\aib-demo, AIB_DEMO_MODELS=1). */
+/** Desktop shots from the demo AIB (work/demo-studio/start.py --port 8840 --dir C:\aib-demo, AIB_DEMO_MODELS=1). */
 import { neutralPaths, Browser, clickExact, clickText, eachTheme, shot, sleep } from './lib.ts';
 const URL = 'http://127.0.0.1:8840/chat.html';
 const only = Deno.args[0];

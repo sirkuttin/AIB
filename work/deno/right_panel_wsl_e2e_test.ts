@@ -1,6 +1,6 @@
 /**
  * The project right panel's Activity for a WSL project (owner rule: WSL parity; design project-right-panel S1). chat.html in a real
- * headless Chrome against a Studio in this process whose fake agent host lists WSL chats (cwd `wsl://ubuntu/home/u/app`, listed with
+ * headless Chrome against an AIB in this process whose fake agent host lists WSL chats (cwd `wsl://ubuntu/home/u/app`, listed with
  * their distro, as the real agent host does) and a Windows chat of another project: three working WSL chats, one waiting on an
  * approval, two idle (one finished two helpers). Activity lists the three working ones in the order their turns started; the
  * project's other chats are collapsed head lines below them (a caret and "N finished" only for the one that finished helpers;
@@ -12,7 +12,7 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { Browser, browserPath, type Page } from './_doc_browser.ts';
-import { remoteStudio } from './_remote_fixture.ts';
+import { remoteAib } from './_remote_fixture.ts';
 
 type Json = Record<string, unknown>;
 const REF = 'wsl://ubuntu/home/u/app';
@@ -44,7 +44,7 @@ Deno.test({
   name: 'right panel, WSL project: Activity lists the working WSL chats in join order, focus moves only the accent, a finished chat leaves',
   ignore: !browserPath,
   async fn() {
-    const s = await remoteStudio();
+    const s = await remoteAib();
     // no saved transcripts: the chats are live only (the page lists them from the agent host)
     s.ctx.transcripts = {
       root: s.state,

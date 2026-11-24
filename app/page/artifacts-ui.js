@@ -1,7 +1,7 @@
 'use strict';
 /* Artifacts (UI half): the third tab of the right column ("Activity | Changes N | Artifacts N"), a one-row viewer (picker, version chip,
    open-in-browser, a menu), stream cards for studio_artifact tool calls, the Preview button on file-write rows and the
-   studio-artifact:// / source-path links in replies. Data comes from the Studio artifact routes (server/artifacts/). Pages run in a sandboxed iframe on the separate artifact origin and are view-only.
+   studio-artifact:// / source-path links in replies. Data comes from AIB artifact routes (server/artifacts/). Pages run in a sandboxed iframe on the separate artifact origin and are view-only.
    The pure helpers at the top have node tests (work/test_artifacts_ui.js); the page part below mounts from changes-ui.js. */
 (function (root) {
   const SANDBOX = 'allow-scripts allow-forms allow-popups allow-downloads';

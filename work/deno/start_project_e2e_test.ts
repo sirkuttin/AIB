@@ -1,5 +1,5 @@
 /**
- * Real Studio server + headless Chrome/Edge (its own temp profile, so localStorage starts empty, as in a new build folder): AIB opens
+ * Real AIB server + headless Chrome/Edge (its own temp profile, so localStorage starts empty, as in a new build folder): AIB opens
  * on the project you had, with last session's chat, when that chat runs in an AIB worktree made from a Claude worktree.
  *
  * beta.8-test6 (owner's data, trimmed and anonymised): the saved project was the main checkout; its only open chat ran in an AIB

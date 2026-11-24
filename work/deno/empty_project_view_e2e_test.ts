@@ -1,5 +1,5 @@
 /**
- * Real Studio server + headless Chrome/Edge (own temp profile and data folder, free ports, no agent runs). The owner added a new
+ * Real AIB server + headless Chrome/Edge (own temp profile and data folder, free ports, no agent runs). The owner added a new
  * project with "New project" and started no chat in it, then switched to it from a project whose chat was open:
  *   1. the main pane kept showing the OTHER project's chat (its title, branch chip, changes and transcript) next to the strip's
  *      "No open chats in <project>". A project with no open chat shows the new-chat view in that project, never another's chat.

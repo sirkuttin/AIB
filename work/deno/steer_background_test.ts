@@ -1,6 +1,6 @@
 /**
  * Background commands after a steer (server/acp/connection.ts toolBackground / stopBackgroundTool, platform/kill_verified.ts):
- * the row is marked from each agent's own signal (Claude Code's meta and text, a details.async result, a Codex command still open at
+ * the row is marked from each agent's own signal (Claude Code's meta and text, a Codex command still open at
  * its turn's end), and Stop kills only processes AIB can prove are that command's: noted as (pid, start time) when it moved, still
  * the agent's descendants with the same start time at the kill, and what they started since; leaf first. T19, T20, T21 (B5, B6).
  * The commands are real processes the puppet agent starts (_steer_puppet.ts #spawn).
@@ -229,47 +229,6 @@ Deno.test({
   },
 });
 
-Deno.test({
-  name: 'Details.async: a command backgrounded for a steer runs on; a later completed without it ends it',
-  ...T,
-  async fn() {
-    await using lab = new SteerLab();
-    const { c, p } = await lab.chat('plain');
-    await c.prompt('run it', 'm1');
-    const prompt = await p.take('session/prompt');
-    await p.update({ sessionUpdate: 'tool_call', toolCallId: 'toolu_1', kind: 'execute', title: '$ for i in ...', status: 'pending' });
-    await pause(100);
-    await p.spawn('loop');
-    const text = 'tick 1\n\nBackgrounded early to handle an incoming message; the command keeps running.\n\nBackgrounded as job bg_1 ' +
-      '(killed once it has run 120s in total; `timeout: 0` disables the deadline); its output is injected into the conversation.';
-    await p.update({
-      sessionUpdate: 'tool_call_update',
-      toolCallId: 'toolu_1',
-      status: 'completed',
-      rawOutput: { content: [{ type: 'text', text }], details: { async: { state: 'running', jobId: 'bg_1', type: 'bash' } } },
-    });
-    await until(() => bg(c).toolu_1 !== undefined, 'marked');
-    assertEquals(bg(c).toolu_1, { state: 'running', stoppable: true });
-    await p.update({
-      sessionUpdate: 'tool_call_update',
-      toolCallId: 'toolu_1',
-      status: 'in_progress',
-      rawOutput: { content: [{ type: 'text', text: 'tick 2' }], details: { async: { state: 'running', jobId: 'bg_1' } } },
-    });
-    await pause(100);
-    assertEquals(bg(c).toolu_1.state, 'running', 'its streaming keeps it running');
-    await p.update({
-      sessionUpdate: 'tool_call_update',
-      toolCallId: 'toolu_1',
-      status: 'completed',
-      rawOutput: { content: [{ type: 'text', text: 'finished' }], details: {} },
-    });
-    await until(() => bg(c).toolu_1.state === 'done', 'ended');
-    await p.reply(prompt.id, { stopReason: 'end_turn' });
-    await until(() => !c.busy, 'done');
-  },
-});
-
 Deno.test('T21 (B6): every background signal is read, each from its own agent', () => {
   const claudeText = (rawOutput: string) => backgroundTask({ toolCallId: 't', rawOutput }, true);
   assertEquals(claudeText('Command running in background with ID: b7. Output is being written to: x'), 'b7');
@@ -288,12 +247,6 @@ Deno.test('T21 (B6): every background signal is read, each from its own agent', 
     backgroundTask({ _meta: { claudeCode: { toolResponse: { backgroundTaskId: 'b12' } } } }, false),
     null,
     "Claude Code's meta is Claude Code's",
-  );
-  assertEquals(backgroundTask({ rawOutput: { content: [], details: { async: { state: 'running', jobId: 'bg_3' } } } }, false), 'bg_3');
-  assertEquals(backgroundTask({ rawOutput: { content: [], details: { async: { state: 'completed', jobId: 'bg_3' } } } }, false), null);
-  assertEquals(
-    backgroundTask({ rawOutput: { content: [{ type: 'text', text: 'x\n\nBackgrounded as job bg_4 (killed once...)' }] } }, false),
-    'bg_4',
   );
   assertEquals(backgroundTask({ rawOutput: 'Command running in background with ID: b7.' }, false), null);
   assertEquals(backgroundTask({ rawOutput: 'all tests passed' }, true), null);

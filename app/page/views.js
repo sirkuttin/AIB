@@ -265,7 +265,7 @@
   /* events: the live event log ({kind:'user'|'update', data, time}) or a saved transcript's events ({kind, label, text, time, ...}).
      -> {step: {kind:'tool', label, text, title} | {kind:'thinking'}, n, since} for the newest prompt, or null when there is none.
      step: the newest tool call or thinking chunk after that prompt. n: the step number (tool calls so far, plus the thinking now).
-     since: the prompt's time in ms, so the clock survives a Studio restart. */
+     since: the prompt's time in ms, so the clock survives an AIB restart. */
   function liveStatus(events, source, sessionId) {
     if (!Array.isArray(events)) return null;
     const live = source !== 'saved',

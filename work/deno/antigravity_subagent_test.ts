@@ -23,17 +23,17 @@ const T = { sanitizeResources: false, sanitizeOps: false };
 class Host {
   readonly box = new Sandbox();
   readonly log = join(this.box.base, 'agent.log');
-  readonly studios: Aib[] = [];
+  readonly aibs: Aib[] = [];
   readonly #restore = withEnv({ FAKE_ACP_LOG: this.log });
 
-  studio(flags: string[]): Aib {
-    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.box.state, port: 0 });
-    studio.ownerProbe = () => null;
-    studio.settings.worktreePerChat = () => false; // in the project folder: what an Antigravity chat does
-    studio.agentLaunch = () => Promise.resolve([['fixture'], {}]);
-    studio.connectionFactory = (_command, cwd, provider, options) => new Connection(fake(...flags), cwd, provider, options);
-    this.studios.push(studio);
-    return studio;
+  aib(flags: string[]): Aib {
+    const aib = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.box.state, port: 0 });
+    aib.ownerProbe = () => null;
+    aib.settings.worktreePerChat = () => false; // in the project folder: what an Antigravity chat does
+    aib.agentLaunch = () => Promise.resolve([['fixture'], {}]);
+    aib.connectionFactory = (_command, cwd, provider, options) => new Connection(fake(...flags), cwd, provider, options);
+    this.aibs.push(aib);
+    return aib;
   }
 
   /** The params of every `method` call the agent received, in order. */
@@ -46,7 +46,7 @@ class Host {
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
-    for (const s of this.studios.reverse()) await s.close().catch(() => {});
+    for (const s of this.aibs.reverse()) await s.close().catch(() => {});
     this.#restore();
     this.box[Symbol.dispose]();
   }
@@ -63,8 +63,8 @@ Deno.test({
   async fn() {
     await using host = new Host();
     const p = host.box.project;
-    const studio = host.studio(['--extra-dirs', '--rich']);
-    const c = await studio.connect('antigravity', p, null, {});
+    const aib = host.aib(['--extra-dirs', '--rich']);
+    const c = await aib.connect('antigravity', p, null, {});
     await until(() => c.ready, 'the chat is ready', 30);
     assertEquals(c.worktree, null, 'no worktree is made: AIB cannot hold its subagents in one');
     const made = host.received('session/new');
@@ -77,9 +77,9 @@ Deno.test({
     await until(() => !c.busy && host.received('session/prompt').length === 1, 'the prompt');
     assertEquals(promptTexts(host.received('session/prompt')[0]), ['hello there']);
     const sessionId = c.sessionId!;
-    await studio.close();
+    await aib.close();
 
-    const again = host.studio(['--extra-dirs', '--rich']);
+    const again = host.aib(['--extra-dirs', '--rich']);
     const reopened = await again.connect('antigravity', p, sessionId);
     await until(() => reopened.ready, 'the chat is reopened', 30);
     const loaded = host.received('session/load');
@@ -95,8 +95,8 @@ Deno.test({
   async fn() {
     await using host = new Host();
     const p = host.box.project;
-    const studio = host.studio(['--rich']);
-    const c = await studio.connect('antigravity', p, null, {});
+    const aib = host.aib(['--rich']);
+    const c = await aib.connect('antigravity', p, null, {});
     await until(() => c.ready, 'the chat is ready', 30);
     assert(!('systemPrompt' in host.received('session/new')[0]), 'nothing to carry a system prompt');
     await c.prompt('first question');
@@ -120,8 +120,8 @@ Deno.test({
   ...T,
   async fn() {
     await using host = new Host();
-    const studio = host.studio(['--extra-dirs', '--rich']);
-    const c = await studio.connect('claude', host.box.project, null, {});
+    const aib = host.aib(['--extra-dirs', '--rich']);
+    const c = await aib.connect('claude', host.box.project, null, {});
     await until(() => c.ready, 'the chat is ready', 30);
     assert(!systemTexts(host.received('session/new')[0]).includes(ANTIGRAVITY_SUBAGENT_PROMPT));
     assert(!notes(c).includes(ANTIGRAVITY_SUBAGENT_NOTE));

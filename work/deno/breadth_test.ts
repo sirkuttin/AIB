@@ -1,4 +1,4 @@
-/** server/acp/breadth.ts: the pure cases of work/test_breadth.py, test_pending_settings.py and test_adapters.py, plus parity with Python. */
+/** server/acp/breadth.ts: the pure cases of work/test_breadth.py, test_pending_settings.py and test_adapters.py, plus the frozen answers. */
 import { assert, assertEquals, assertRejects, assertThrows } from './_assert.ts';
 import { labelOf, Frozen } from './_frozen.ts';
 import {
@@ -35,9 +35,9 @@ function outcome(fn: () => unknown): unknown {
   }
 }
 
-/** The Python snippets below only name the frozen answers (their text is part of the label); nothing runs them any more. */
+/** The snippets below only name the frozen answers (their text is part of the label); nothing runs them any more. */
 const frozenPy = new Frozen();
-/** The answers Python gave to these snippets (list of one result per scenario), kept in fixtures/frozen/breadth.json. */
+/** The frozen answers to these snippets (list of one result per scenario), kept in fixtures/frozen/breadth.json. */
 const pyRun = (code: string, data: unknown): Promise<unknown[]> => frozenPy.frozenList(`breadth-${labelOf(code, data)}`);
 
 const plainState = (state: BreadthState) => ({ ...state, compaction: Object.fromEntries(state.compaction) });
@@ -241,7 +241,7 @@ Deno.test('session operations: list, confirmation, busy, close (test_http_config
   await assertRejects(() => sessionOp(plain, { op: 'list' }), ValueError);
 });
 
-// ---- parity with Python -----------------------------------------------------------------------
+// ---- frozen answers -----------------------------------------------------------------------
 
 const WEIRD = [
   '',
@@ -345,7 +345,7 @@ const INITIALS: unknown[] = [
   { agentCapabilities: 'x' },
 ];
 
-Deno.test('applyUpdate and publicState match Python over update sequences', async () => {
+Deno.test('applyUpdate and publicState match the frozen answers over update sequences', async () => {
   const expected = await pyRun(
     `import types, breadth
 OUT = []
@@ -366,7 +366,7 @@ for updates in DATA['scenarios']:
   assertEquals(MAX_COMPACTIONS, 50);
 });
 
-Deno.test('cleanCommands, sessionCapabilities and augmentInitialize match Python', async () => {
+Deno.test('cleanCommands, sessionCapabilities and augmentInitialize match the frozen answers', async () => {
   const py = new Frozen();
   await py.same(
     'breadth',
@@ -383,7 +383,7 @@ Deno.test('cleanCommands, sessionCapabilities and augmentInitialize match Python
   ], augmentInitialize);
 });
 
-Deno.test('config helpers match Python, errors included', async () => {
+Deno.test('config helpers match the frozen answers, errors included', async () => {
   const py = new Frozen();
   const settingsList: unknown[] = [
     SETTINGS,
@@ -439,7 +439,7 @@ Deno.test('config helpers match Python, errors included', async () => {
   }
 });
 
-Deno.test('validateMcpServers and selectMcpServers match Python, messages included', async () => {
+Deno.test('validateMcpServers and selectMcpServers match the frozen answers, messages included', async () => {
   const py = new Frozen();
   const cases: unknown[] = [
     SERVERS,
@@ -476,7 +476,7 @@ Deno.test('validateMcpServers and selectMcpServers match Python, messages includ
       'http:h',
       '//h',
       'h',
-      // newer Pythons' urlsplit drops a leading space and any tab or newline, so a 3.13+ oracle accepts these three; AIB refuses them
+      // newer urlsplit versions drop a leading space and any tab or newline, so a 3.13+ oracle accepts these three; AIB refuses them
       ...[' http://h', 'ht\ttp://h', 'http://h\n/x'],
       'http://[::1]/x',
       'http://[::1/x',
@@ -504,7 +504,7 @@ Deno.test('validateMcpServers and selectMcpServers match Python, messages includ
   await py.same('breadth', 'select_mcp_servers', INITIALS.map((i) => [servers, i]), selectMcpServers);
 });
 
-Deno.test('sessionOp matches Python with the same fake connection', async () => {
+Deno.test('sessionOp matches the frozen answers with the same fake connection', async () => {
   const replies: unknown[] = [
     LISTED,
     null,

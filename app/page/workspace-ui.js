@@ -2341,7 +2341,7 @@
   }
 
   // ---- project preferences (shared via the server) --------------------------------------------
-  // order, display name, colour and hidden live in studio-projects.json next to the other Studio state, so every window sees
+  // order, display name, colour and hidden live in studio-projects.json next to the other AIB state, so every window sees
   // the same rail. localStorage only keeps edits whose save failed, and pushes them when the server answers again.
   const PREFS_LOCAL = 'studio-project-prefs-v1';
   let prefs = null,

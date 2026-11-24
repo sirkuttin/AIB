@@ -536,7 +536,7 @@ export function loadMcpConfig(path: string): McpServer[] {
 
 /**
  * stdio always; http/sse only when the agent advertises them. Returns [usable, skipped names]. Several entries may share a name
- * (only Studio's own artifact tool does: an HTTP entry with a stdio fallback, see Studio.artifactMcpServers; --mcp-config refuses
+ * (only AIB's own artifact tool does: an HTTP entry with a stdio fallback, see Aib.artifactMcpServers; --mcp-config refuses
  * duplicates): the first usable one is given, and the name counts as skipped only when none of them is usable.
  */
 export function selectMcpServers(servers: McpServer[], initial: unknown): [McpServer[], string[]] {

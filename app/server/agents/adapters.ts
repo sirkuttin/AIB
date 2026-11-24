@@ -5,10 +5,10 @@
  *   Codex         the installed `@zed-industries/codex-acp` or `@agentclientprotocol/codex-acp` package (run with node) or `codex-acp`
  *                 on PATH (on macOS / Linux an asdf / mise shim or npm bin link of the package is run as [node, entry])
  *
- * Lookup order for Claude Code and Codex: the command-line flag, then a launcher saved in Settings, then Studio's own install
+ * Lookup order for Claude Code and Codex: the command-line flag, then a launcher saved in Settings, then AIB's own install
  * (`<state_dir>/agents/<id>/<version>/`, only a version folder that has a `.complete` marker, newest first), then the globally
  * installed adapter, then missing. A launcher from the flag or Settings is a script file that node runs. The adapter is never
- * started through the npm `.cmd` shim. Studio's own install is read fresh on every lookup, so a new install is seen by the next
+ * started through the npm `.cmd` shim. AIB's own install is read fresh on every lookup, so a new install is seen by the next
  * call in any process (Python or Deno).
  *
  * On macOS and Linux, apps started from the desktop have a short PATH. initEnvironment() asks the user's login shell for the real
@@ -32,7 +32,7 @@ export const CODEX_PACKAGE: Package = ['@zed-industries/codex-acp', 'bin/codex-a
 export const CODEX_ACP_PACKAGE: Package = ['@agentclientprotocol/codex-acp', 'dist/index.js'];
 /** The global npm installs of Codex's adapter AIB looks for: the old name first (as it always did), then the current one. */
 export const CODEX_GLOBAL_PACKAGES: readonly Package[] = [CODEX_PACKAGE, CODEX_ACP_PACKAGE];
-/** Studio's own installs: the package names that may sit in <version>/node_modules/, current name first, each with the known entry
+/** AIB's own installs: the package names that may sit in <version>/node_modules/, current name first, each with the known entry
  * file that is used only when its package.json has no usable `bin`. */
 export const STUDIO_PACKAGES: Readonly<Record<string, readonly Package[]>> = {
   claude: [CLAUDE_PACKAGE],
@@ -428,7 +428,7 @@ export async function findPackageFile(pkg: Package, node?: string, npmRoot?: Npm
   return '';
 }
 
-// ---- Studio's own installs --------------------------------------------------------------------------------------------
+// ---- AIB's own installs --------------------------------------------------------------------------------------------
 
 /** <state_dir>/agents: one folder per agent id, one subfolder per version. */
 export function agentsRoot(stateDir: string): string {
@@ -525,15 +525,15 @@ export function packageEntryIn(folder: string, within: string, pkg: Package): st
   return isFile(candidate) ? realpath(candidate) : '';
 }
 
-export interface StudioInstall {
+export interface AibInstall {
   entry: string;
   version: string;
   dir: string;
   package: string;
 }
 
-/** Studio's own install of an agent: the newest complete version that has a usable entry file, or null. Reads the disk every call. */
-export function findStudioInstall(agentId: string, stateDir: string | null | undefined): StudioInstall | null {
+/** AIB's own install of an agent: the newest complete version that has a usable entry file, or null. Reads the disk every call. */
+export function findAibInstall(agentId: string, stateDir: string | null | undefined): AibInstall | null {
   const packages = installPackages(agentId);
   if (!stateDir || !packages) return null;
   for (const folder of completeVersions(stateDir, agentId)) {
@@ -545,8 +545,8 @@ export function findStudioInstall(agentId: string, stateDir: string | null | und
   return null;
 }
 
-function studioLaunch(agentId: string, nodeCommand: string, stateDir: string | null | undefined): LaunchRow | null {
-  const found = findStudioInstall(agentId, stateDir);
+function aibLaunch(agentId: string, nodeCommand: string, stateDir: string | null | undefined): LaunchRow | null {
+  const found = findAibInstall(agentId, stateDir);
   if (!found) return null;
   const node = findNode(nodeCommand);
   if (!node) return row([], 'studio', found.entry, NODE_MISSING, `AIB's own install: ${found.entry}`);
@@ -593,7 +593,7 @@ export async function resolveClaude(options: ResolveOptions = {}): Promise<Launc
   const { flag = '', saved = '', nodeCommand = '', npmRoot, stateDir } = options;
   if (flag) return scriptLaunch('flag', flag, nodeCommand);
   if (saved) return scriptLaunch('settings', saved, nodeCommand);
-  const found = studioLaunch('claude', nodeCommand, stateDir) ?? await installedLaunch(CLAUDE_PACKAGE, nodeCommand, npmRoot);
+  const found = aibLaunch('claude', nodeCommand, stateDir) ?? await installedLaunch(CLAUDE_PACKAGE, nodeCommand, npmRoot);
   if (found) return found;
   // macOS / Linux: `claude-agent-acp` on PATH, a standalone binary or an npm bin link (run with the node found on PATH)
   const path = WIN ? '' : (options.onPath ?? adapterHooks.claudeOnPath ?? (() => which('claude-agent-acp') ?? ''))();
@@ -676,7 +676,7 @@ export async function resolveCodex(options: ResolveCodexOptions = {}): Promise<L
   const { flag = '', saved = '', nodeCommand = '', npmRoot, stateDir } = options;
   if (flag) return scriptLaunch('flag', flag, nodeCommand);
   if (saved) return scriptLaunch('settings', saved, nodeCommand);
-  let found = studioLaunch('codex', nodeCommand, stateDir);
+  let found = aibLaunch('codex', nodeCommand, stateDir);
   for (const pkg of CODEX_GLOBAL_PACKAGES) found ??= await installedLaunch(pkg, nodeCommand, npmRoot);
   if (found) return found;
   const path = (options.onPath ?? codexOnPath)();

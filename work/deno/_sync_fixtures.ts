@@ -28,7 +28,7 @@ export interface Ctx {
   box: Sandbox;
   manager: wt.Manager;
   live: sync.LiveSync;
-  studio: sync.SyncStudio & { flag: { on: boolean }; connections: Map<string, Conn> };
+  aib: sync.SyncHost & { flag: { on: boolean }; connections: Map<string, Conn> };
   conns: Conn[];
   wts: string[];
   keys: string[];
@@ -72,21 +72,21 @@ export async function setup(box: Sandbox, chats = 1, g3 = false, setupProject?: 
     wts.push(plan.path);
     keys.push(key);
   }
-  const studio = {
+  const aib = {
     stateDir: box.state,
     worktrees: manager,
     flag: { on: true },
-    settings: { worktreePerChat: () => studio.flag.on },
+    settings: { worktreePerChat: () => aib.flag.on },
     connections: new Map(conns.map((c, i) => [`c${i}`, c])),
   };
-  const live = new LiveSync(studio, 0.05, 0.2, false);
+  const live = new LiveSync(aib, 0.05, 0.2, false);
   const ps = new ProjectSync(live, box.project);
   const scan = () => ps.lock.run(() => ps.scan());
   const ctx: Ctx = {
     box,
     manager,
     live,
-    studio,
+    aib,
     conns,
     wts,
     keys,

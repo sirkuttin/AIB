@@ -9,14 +9,14 @@
  * An artifact of another project never shows.
  *
  * Two variants: a Windows project (a git repository with a real worktree) and a WSL project (fake chats at wsl://ubuntu/home/u/app,
- * as in right_panel_wsl_e2e_test.ts; no distro is needed). A real Studio in this process (temp state folder, free port; never the
+ * as in right_panel_wsl_e2e_test.ts; no distro is needed). A real AIB in this process (temp state folder, free port; never the
  * live ports), headless Chrome or Edge.
  *
  * Run (from app): deno test -A ../../work/deno/project_artifacts_e2e_test.ts   (ignored without Chrome or Edge)
  */
 import { assert, assertEquals } from './_assert.ts';
 import { Browser, browserPath, type Page } from './_doc_browser.ts';
-import { remoteStudio } from './_remote_fixture.ts';
+import { remoteAib } from './_remote_fixture.ts';
 import { git, HAVE_GIT, write } from './_git_repo.ts';
 
 type Json = Record<string, unknown>;
@@ -44,7 +44,7 @@ function scenario(name: string, wsl: boolean) {
     name,
     ignore: !browserPath || (!wsl && !HAVE_GIT),
     async fn() {
-      const s = await remoteStudio();
+      const s = await remoteAib();
       s.ctx.transcripts = {
         root: s.state,
         sessions: () => Promise.resolve([]),

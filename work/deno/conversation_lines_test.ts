@@ -24,28 +24,28 @@ class Lab {
   readonly state = this.dir + SEP + 'state';
   readonly work = this.dir + SEP + 'work';
   readonly transcript = this.dir + SEP + 'transcript.json';
-  readonly studios: Aib[] = [];
+  readonly aibs: Aib[] = [];
   constructor() {
     Deno.mkdirSync(this.work, { recursive: true });
     Deno.writeTextFileSync(this.transcript, '[]');
   }
-  studio(): Aib {
+  aib(): Aib {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
-    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper, keeperForNew: true });
-    studio.ownerProbe = () => null;
-    studio.connectionFactory = (_command, cwd, provider, options) =>
+    const aib = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper, keeperForNew: true });
+    aib.ownerProbe = () => null;
+    aib.connectionFactory = (_command, cwd, provider, options) =>
       new Connection(fake('--replay-file', this.transcript), cwd, provider, options ?? {});
-    this.studios.push(studio);
-    return studio;
+    this.aibs.push(aib);
+    return aib;
   }
-  async leave(studio: Aib): Promise<void> {
-    studio.keeper!.disconnect();
-    for (const c of studio.connections.values()) c.sessionLease?.release();
-    studio.reconnectStop.set();
-    await studio.historyClient()?.shutdown().catch(() => {});
+  async leave(aib: Aib): Promise<void> {
+    aib.keeper!.disconnect();
+    for (const c of aib.connections.values()) c.sessionLease?.release();
+    aib.reconnectStop.set();
+    await aib.historyClient()?.shutdown().catch(() => {});
   }
   async [Symbol.asyncDispose](): Promise<void> {
-    for (const s of this.studios.reverse()) await s.close().catch(() => {});
+    for (const s of this.aibs.reverse()) await s.close().catch(() => {});
     const info = readKeeperInfo(this.state);
     if (info && pidAlive(info.pid)) {
       try {
@@ -66,8 +66,8 @@ class Lab {
   }
 }
 
-async function say(studio: Aib, c: Connection, text: string, id: string): Promise<void> {
-  assertEquals((await studio.liveCall('prompt', { id: c.id, text: `say:${text}`, clientMessageId: id }))[0], 200);
+async function say(aib: Aib, c: Connection, text: string, id: string): Promise<void> {
+  assertEquals((await aib.liveCall('prompt', { id: c.id, text: `say:${text}`, clientMessageId: id }))[0], 200);
   await until(() => !c.busy && c.events.some((e) => e.kind === 'turn_end' && (e.time as number) >= 0) &&
     c.events.filter((e) => e.kind === 'turn_end').length >= Number(id.slice(1)), `the end of ${id}`, 10);
 }
@@ -110,7 +110,7 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new Lab();
-    const a = lab.studio();
+    const a = lab.aib();
     const c = await a.connect('claude', lab.work);
     await say(a, c, 'one', 'm1');
     c.recordedEvent('studio_note', { message: 'Merged subagent “Docs” into main', kind: 'swarm-merge', sessionId: c.sessionId });
@@ -150,7 +150,7 @@ Deno.test({
     const shape = (events: Json[]) => events.map((e) => JSON.stringify([e.seq, e.kind, e.time]));
     const kept = shape(r.events);
     await lab.leave(a);
-    const b = lab.studio();
+    const b = lab.aib();
     assertEquals(await b.adoptKeeper(), 1);
     const back = b.connections.get(r.id)!;
     await until(() => back.historyState === 'claimed' || back.historyState === 'dead', 'the store claimed', 10);

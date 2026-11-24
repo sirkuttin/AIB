@@ -35,12 +35,12 @@ Deno.test({
       assertEquals((read as Json).text, 'F\n');
       const [, found] = await wslFiles('search', ref, wsl, { q: ['untracked'] });
       assert(JSON.stringify(found).includes('untracked.txt'));
-      const studio = { liveState: () => ({ cwd: ref }), token: 't', stateDir: null };
-      const [s2, changes] = await changesResponse(studio, '/api/live/changes', { id: ['c'] }, { 'X-Studio-Token': 't' });
+      const aib = { liveState: () => ({ cwd: ref }), token: 't', stateDir: null };
+      const [s2, changes] = await changesResponse(aib, '/api/live/changes', { id: ['c'] }, { 'X-Studio-Token': 't' });
       assertEquals(s2, 200);
       const text = JSON.stringify(changes);
       assert(text.includes('a.txt') && text.includes('untracked.txt') && text.includes('run.sh'), text);
-      const [s3, diff] = await changesResponse(studio, '/api/live/changes/file', { id: ['c'], path: ['a.txt'] }, { 'X-Studio-Token': 't' });
+      const [s3, diff] = await changesResponse(aib, '/api/live/changes/file', { id: ['c'], path: ['a.txt'] }, { 'X-Studio-Token': 't' });
       assertEquals(s3, 200);
       assert(JSON.stringify(diff).includes('two'));
     } finally {

@@ -11,7 +11,7 @@ import {
   folderState,
   gitc,
   holdFolderChats,
-  type MergeStudio,
+  type MergeHost,
   porcelainPaths,
   Refused,
   repoLock,
@@ -40,7 +40,7 @@ export type Outcome =
  */
 export interface ApplyOptions {
   noStash?: boolean;
-  host?: MergeStudio;
+  host?: MergeHost;
   held?: string[];
   title?: string;
 }

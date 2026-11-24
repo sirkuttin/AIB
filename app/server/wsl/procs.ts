@@ -1,7 +1,7 @@
 /**
  * The processes below a WSL chat's agent, for its busy-children detection (acp/connection.ts backgroundShellsRunning, #markBackground):
  * the agent runs in the distro, so its pid is a Linux pid and Windows' process list knows nothing of it. The distro's helper lists
- * them (`proc.tree`, platform/descendants.ts run natively). Connection asks synchronously (Studio.busyList asks every chat each
+ * them (`proc.tree`, platform/descendants.ts run natively). Connection asks synchronously (Aib.busyList asks every chat each
  * second), so this keeps the last answer per distro and fetches a new one in the background: a call answers from a snapshot at most
  * FRESH_MS old and otherwise asks for a new one and answers null, which Connection already reads as "cannot be listed" (a shell
  * then keeps counting as running). So a helper that is away, slow or too old never makes a chat look idle while its command runs.

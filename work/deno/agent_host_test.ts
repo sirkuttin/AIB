@@ -309,7 +309,7 @@ t('host: the RPC needs the token, a loopback Host and no browser headers; GET is
   } catch (error) {
     assert(error instanceof HostUnavailable && error.code === 'host_auth', String(error));
   }
-  // Request errors carry Python's error type; unknown ops are 404.
+  // Request errors carry the error type name; unknown ops are 404.
   const client = new HostClient(info);
   for (const [op, args, text] of [['state', {}, "'id'"], ['live', { name: 'prompt', body: { id: 'nope' } }, null]] as const) {
     try {
@@ -344,7 +344,7 @@ t('a host speaking another protocol is reported, left running, and the web serve
       token: 't'.repeat(20),
       hostId: 'stub',
       startedAt: Date.now() / 1000,
-      runtime: 'deno', // a Deno host of another protocol (a host without runtime is a Python host: the takeover path, tested apart)
+      runtime: 'deno', // a Deno host of another protocol (a host without runtime is an older host: the takeover path, tested apart)
     });
     try {
       await findOrStart(fx.state, ['nothing'], { waitSeconds: 3 });

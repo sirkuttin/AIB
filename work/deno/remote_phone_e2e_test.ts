@@ -47,8 +47,8 @@ import {
   phoneHeaders,
   type Raw,
   raw,
-  type RemoteStudio,
-  remoteStudio,
+  type RemoteAib,
+  remoteAib,
   serveStatus,
   tailscaleStatus,
   writeSavedChat,
@@ -759,7 +759,7 @@ Deno.test({
 /** This test plays Tailscale Serve: every request to https://<NAME>/ is answered from the phone port with Serve's headers. */
 async function serveFor(
   page: Page,
-  s: RemoteStudio,
+  s: RemoteAib,
   down: { on: boolean },
 ): Promise<void> {
   await page.send("Network.enable");
@@ -937,7 +937,7 @@ Deno.test({
   ignore: !browserPath,
   async fn() {
     const fake = fakeTailscale();
-    const s = await remoteStudio({ runner: fake.runner });
+    const s = await remoteAib({ runner: fake.runner });
     const browser = await Browser.launch();
     try {
       fake.state.serve = serveStatus(readRemotePort(s.state)!);
@@ -1228,7 +1228,7 @@ Deno.test({
   ignore: !browserPath,
   async fn() {
     const fake = fakeTailscale();
-    const s = await remoteStudio({ runner: fake.runner });
+    const s = await remoteAib({ runner: fake.runner });
     const browser = await Browser.launch();
     try {
       fake.state.serve = serveStatus(readRemotePort(s.state)!);
@@ -1315,7 +1315,7 @@ Deno.test({
   ignore: !browserPath,
   async fn() {
     const fake = fakeTailscale();
-    const s = await remoteStudio({ runner: fake.runner }, undefined, { saved: true });
+    const s = await remoteAib({ runner: fake.runner }, undefined, { saved: true });
     const browser = await Browser.launch();
     try {
       fake.state.serve = serveStatus(readRemotePort(s.state)!);
@@ -1426,7 +1426,7 @@ Deno.test({
   ignore: !browserPath,
   async fn() {
     const fake = fakeTailscale();
-    const s = await remoteStudio({ runner: fake.runner });
+    const s = await remoteAib({ runner: fake.runner });
     const browser = await Browser.launch();
     try {
       fake.state.serve = serveStatus(readRemotePort(s.state)!);
@@ -1836,7 +1836,7 @@ Deno.test({
   ignore: !browserPath,
   async fn() {
     const fake = fakeTailscale();
-    const s = await remoteStudio({ runner: fake.runner });
+    const s = await remoteAib({ runner: fake.runner });
     const browser = await Browser.launch();
     try {
       fake.state.serve = serveStatus(readRemotePort(s.state)!);
@@ -1987,7 +1987,7 @@ Deno.test({
     "chat.html at 375 px is unchanged: same layout, and no phone page file is loaded",
   ignore: !browserPath,
   async fn() {
-    const s = await remoteStudio();
+    const s = await remoteAib();
     const browser = await Browser.launch();
     try {
       const page = await browser.open("about:blank", 375, 812);
@@ -2071,7 +2071,7 @@ Deno.test({
   ignore: !browserPath,
   async fn() {
     const fake = fakeTailscale();
-    const s = await remoteStudio({ runner: fake.runner });
+    const s = await remoteAib({ runner: fake.runner });
     const browser = await Browser.launch();
     try {
       fake.state.serve = serveStatus(readRemotePort(s.state)!);
@@ -2239,7 +2239,7 @@ Deno.test({
   ignore: !browserPath,
   async fn() {
     const fake = fakeTailscale();
-    const s = await remoteStudio({ runner: fake.runner });
+    const s = await remoteAib({ runner: fake.runner });
     const browser = await Browser.launch();
     const pushes: Json[] = [];
     const push = s.ctx.phone.push as unknown as {

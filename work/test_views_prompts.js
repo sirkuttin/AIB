@@ -44,7 +44,7 @@ function promptsPage() {
   };
 }
 
-/* ---- the shared isPrompt fixtures: the same file the Python test runs against prompts.is_prompt ---- */
+/* ---- the shared isPrompt fixtures: the same file the old test ran against prompts.is_prompt ---- */
 test('isPrompt agrees with the shared fixtures (work/prompt_fixtures.json, also run by test_prompts.py)', () => {
   const { ChatViews } = makePage({ scripts: SCRIPTS }).context.window;
   const fixtures = JSON.parse(fs.readFileSync(path.join(__dirname, 'prompt_fixtures.json'), 'utf8'));

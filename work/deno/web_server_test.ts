@@ -1,4 +1,4 @@
-/** server/web: the route table equals Python's, page-file mapping equals web_handler.studio_asset, CLI parsing matches studio.py. */
+/** server/web: the route table equals the frozen list, page-file mapping equals web_handler.studio_asset, CLI parsing matches the frozen answers. */
 import { assert, assertEquals, assertThrows } from './_assert.ts';
 import { Frozen } from './_frozen.ts';
 import { DENO_ONLY, ROUTE_LIST } from '../../app/server/web/routes.ts';
@@ -8,10 +8,10 @@ import { LIVE_POST_OPS } from '../../app/server/web/live_routes.ts';
 import { REMOTE_ROUTES, REMOTE_STATIC } from '../../app/server/remote/server.ts';
 import { LOADER } from '../../app/server/remote/pc_page.ts';
 
-Deno.test('the route table is exactly the Python web server\'s (paths, scopes and kinds)', async () => {
+Deno.test('the route table is exactly the frozen list (paths, scopes and kinds)', async () => {
   const py = new Frozen();
   const routes = await py.callItems('shims', 'studio_routes') as [string, string, string][];
-  // The one documented exception: routes the Python server does not have (routes.ts DENO_ONLY). Kept to exactly this list.
+  // The one documented exception: routes the frozen list does not have (routes.ts DENO_ONLY). Kept to exactly this list.
   assertEquals(DENO_ONLY.map(([m, p]) => `${m} ${p}`), [
     'GET /api/live/project/changes', 'GET /api/live/project/changes/file', 'GET /api/live/project/artifacts', // the project right panel
     'GET /api/live/events', 'GET /api/live/event',
@@ -145,7 +145,7 @@ Deno.test('the route table is exactly the Python web server\'s (paths, scopes an
     'POST /api/live/inbox/act',
   ]);
   const denoOnly = new Set(DENO_ONLY.map(([m, p]) => `${m} ${p}`));
-  // The other exception: the monitor page (its files, /api/bootstrap and /api/activity) the app removed; the frozen Python
+  // The other exception: the monitor page (its files, /api/bootstrap and /api/activity) the app removed; the frozen
   // reference still has them.
   const removed = new Set(['/', '/index.html', '/conversation.html', '/app.js', '/style.css', '/sidebar.js', '/sidebar.css']
     .filter((p) => p !== '/').concat(['/api/bootstrap', '/api/activity']).map((p) => `GET ${p}`));
@@ -177,9 +177,9 @@ Deno.test('CLI flags parse like studio.py', () => {
   assertThrows(() => parseOptions(['--state-dir']), UsageError);
 });
 
-Deno.test('LIVE_POST_OPS equals Studio.LIVE_POST_OPS', async () => {
+Deno.test('LIVE_POST_OPS equals Aib.LIVE_POST_OPS', async () => {
   const py = new Frozen();
-  // Steer-on-send's two calls are Deno only (routes.ts DENO_ONLY lists their routes); everything else is Python's set.
+  // Steer-on-send's two calls are Deno only (routes.ts DENO_ONLY lists their routes); everything else is the frozen set.
   const denoOnly = ['steer', 'tool-stop', 'schedule', 'schedule-edit', 'schedule-cancel', 'schedule-send-now']; // Send later too
   assert(denoOnly.every((op) => (LIVE_POST_OPS as readonly string[]).includes(op)));
   assertEquals([...LIVE_POST_OPS].filter((op) => !denoOnly.includes(op)).sort(), await py.call('shims', 'live_post_ops'));

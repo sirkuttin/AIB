@@ -1,6 +1,6 @@
 /**
  * Real WSL (AIB_WSL_E2E=<distro>; see _wsl_e2e.ts): live sync of a WSL chat's worktree, run by the distro's helper
- * (wsl/helper/sync.ts) and driven by Studio's own hooks (wsl/sync.ts):
+ * (wsl/helper/sync.ts) and driven by AIB's own hooks (wsl/sync.ts):
  *   - the helper's poll is stretched to 5 minutes (AIB_WSL_SYNC_POLL), so only inotify can wake a scan: the project is watched, the
  *     watcher counts events, and a user edit and a new file in the main checkout reach the chat's copy within seconds;
  *   - the chat's next prompt carries the <studio-context> note naming them (the fake agent's `context` turn answers with it);
@@ -25,22 +25,22 @@ import type { WslHost } from '../../app/server/wsl/contract.ts';
 
 type Json = Record<string, unknown>;
 
-function studioIn(state: string): Aib {
-  const studio = new Aib({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
-  studio.ownerProbe = () => null;
-  studio.connectionFactory = (_command, cwd, provider, options) =>
+function aibIn(state: string): Aib {
+  const aib = new Aib({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
+  aib.ownerProbe = () => null;
+  aib.connectionFactory = (_command, cwd, provider, options) =>
     new Connection(['python3', `${ROOT}/fake_acp.py`, '--cancel-aware'], cwd, provider, {
       ...options,
       wsl: options?.wsl ? { ...options.wsl, program: '/usr/bin/python3' } : options?.wsl,
     });
-  return studio;
+  return aib;
 }
 
 const sh = async (script: string, ...args: string[]) => (await inDistro(script, args)).out.trim();
 const NL = '\\n'; // the fake agent's edit: turns write a literal \n as a newline
 
-async function turn(studio: Aib, c: Connection, text: string): Promise<void> {
-  await studio.liveCall('prompt', { id: c.id, text, clientMessageId: crypto.randomUUID() });
+async function turn(aib: Aib, c: Connection, text: string): Promise<void> {
+  await aib.liveCall('prompt', { id: c.id, text, clientMessageId: crypto.randomUUID() });
   await until(() => !c.busy, `the turn "${text}"`, 60);
 }
 
@@ -72,17 +72,17 @@ Deno.test({
     await prepareRoot();
     const keep = wslSyncSettings.KEEP_SECONDS;
     wslSyncSettings.KEEP_SECONDS = 1;
-    let studio: Aib | null = null;
+    let aib: Aib | null = null;
     try {
       const host: WslHost = await readyHost();
       const repo = `${ROOT}/repo`;
       const ref = refOf({ kind: 'wsl', distro: KEY, linuxPath: repo });
       await sh('cd "$1" && git branch -M main && printf "a\\nb\\nc\\nd\\ne\\nf\\n" > m.txt && git add m.txt && git commit -qm m', repo);
-      studio = studioIn(state);
-      const c = await studio.connect('claude', ref, null, { ownCopy: true });
+      aib = aibIn(state);
+      const c = await aib.connect('claude', ref, null, { ownCopy: true });
       const linux = c.agentCwd;
       assert(c.worktree?.branch.startsWith('studio/chat-'), 'the chat works in its own copy');
-      const ctx = { stateDir: studio.stateDir, host: studio, conversations: { public: () => ({ entries: {} }) } } as never;
+      const ctx = { stateDir: aib.stateDir, host: aib, conversations: { public: () => ({ entries: {} }) } } as never;
       const routes = aibRoutes();
       const status = async () =>
         (await routes.get('GET /api/live/worktree')!(ctx, new URL(`http://127.0.0.1/api/live/worktree?id=${c.id}`), null, new Request('http://127.0.0.1/')))[1] as Json;
@@ -100,7 +100,7 @@ Deno.test({
       assertEquals(await sh('cat "$1/a.txt"', repo), 'user one', "the user's file is untouched");
 
       // ---- the next prompt carries the note naming them
-      await turn(studio, c, 'context');
+      await turn(aib, c, 'context');
       const said = JSON.stringify(c.events);
       assert(said.includes('CONTEXT <studio-context>The user changed these files since your last turn: '), said.slice(-2000));
       assert(/since your last turn: [^<]*a\.txt/.test(said) && /since your last turn: [^<]*u\.txt/.test(said), 'both files named');
@@ -119,8 +119,8 @@ Deno.test({
       await waitFor(async () => (await sh('cat "$1/again.txt" 2>/dev/null || true', linux)) === 'after the restart', 'inotify again', 20);
 
       // ---- Merge after sync: only the chat's own change lands; the user's synced, uncommitted files stay the user's
-      await turn(studio, c, `edit:chat.txt|from the chat${NL}`);
-      await turn(studio, c, 'commit:chat work');
+      await turn(aib, c, `edit:chat.txt|from the chat${NL}`);
+      await turn(aib, c, 'commit:chat work');
       const [code, merged] = await routes.get('POST /api/live/worktree/merge')!(ctx, new URL('http://127.0.0.1/api/live/worktree/merge'), { id: c.id }, new Request('http://127.0.0.1/')) as [number, Json];
       assertEquals([code, merged.state], [200, 'merged']);
       assertEquals(await sh('git -C "$1" show main:chat.txt', repo), 'from the chat');
@@ -128,18 +128,18 @@ Deno.test({
       assertEquals(await sh('cat "$1/u.txt" "$1/down.txt"', repo), 'new from the user\nwhile the helper was down', "the user's files are still there");
 
       // ---- both edited m.txt (different lines): pending, then merged into the copy at the next turn
-      await turn(studio, c, `edit:m.txt|a${NL}b${NL}c${NL}d${NL}e${NL}f-chat${NL}`);
+      await turn(aib, c, `edit:m.txt|a${NL}b${NL}c${NL}d${NL}e${NL}f-chat${NL}`);
       await sh('printf "A-user\\nb\\nc\\nd\\ne\\nf\\n" > "$1/m.txt"', repo);
       await waitFor(async () => ((await record(linux)).pendingSync as string[] | undefined)?.includes('m.txt') === true, 'm.txt pending');
       assertEquals(await sh('cat "$1/m.txt"', linux), 'a\nb\nc\nd\ne\nf-chat', "the chat's edit is never overwritten");
-      await turn(studio, c, 'say:next');
+      await turn(aib, c, 'say:next');
       assertEquals(await sh('cat "$1/m.txt"', linux), 'A-user\nb\nc\nd\ne\nf-chat', 'both edits, merged in the copy');
 
       // ---- the same line on both sides: markers in the copy, the user's file untouched, the clash line; resolved, Merge is ready
-      await turn(studio, c, `edit:m.txt|A-chat${NL}b${NL}c${NL}d${NL}e${NL}f-chat${NL}`);
+      await turn(aib, c, `edit:m.txt|A-chat${NL}b${NL}c${NL}d${NL}e${NL}f-chat${NL}`);
       await sh('printf "A-user2\\nb\\nc\\nd\\ne\\nf\\n" > "$1/m.txt"', repo);
       await waitFor(async () => ((await record(linux)).pendingSync as string[] | undefined)?.includes('m.txt') === true, 'm.txt pending again');
-      await turn(studio, c, 'say:clash');
+      await turn(aib, c, 'say:clash');
       const clashed = await sh('cat "$1/m.txt"', linux);
       assert(clashed.includes('<<<<<<< chat (your copy)') && clashed.includes('A-user2') && clashed.includes('A-chat'), clashed);
       assertEquals(await sh('cat "$1/m.txt"', repo), 'A-user2\nb\nc\nd\ne\nf', "the user's edit is untouched");
@@ -147,13 +147,13 @@ Deno.test({
       const waiting = await status();
       assertEquals([waiting.state, waiting.files], ['conflicts', ['m.txt']]);
       assert(String(waiting.message).startsWith('Waiting for the chat to resolve a clash with your edits in m.txt'), String(waiting.message));
-      await turn(studio, c, `edit:m.txt|A-user2 and A-chat${NL}b${NL}c${NL}d${NL}e${NL}f-chat${NL}`);
-      await turn(studio, c, 'say:resolved'); // the turn start settles the clash
+      await turn(aib, c, `edit:m.txt|A-user2 and A-chat${NL}b${NL}c${NL}d${NL}e${NL}f-chat${NL}`);
+      await turn(aib, c, 'say:resolved'); // the turn start settles the clash
       assertEquals((await record(linux)).syncConflicts, []);
       assertEquals((await status()).state, 'ready', 'Merge is offered again');
     } finally {
       wslSyncSettings.KEEP_SECONDS = keep;
-      await studio?.close().catch(() => {});
+      await aib?.close().catch(() => {});
       await cleanRoot();
       Deno.removeSync(state, { recursive: true });
     }

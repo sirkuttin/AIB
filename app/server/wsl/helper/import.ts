@@ -11,7 +11,7 @@
  *   `--no-optional-locks`, so not even the index is refreshed) and writes nothing.
  * - `--apply` (refused while the dry run has a project-level blocker) makes, per eligible chat and independently: the worktree and
  *   branch with the helper's own Manager (same naming, same record, same lock), the record's session `provider:id` (what
- *   Studio.connect's wslRecord finds), and for Claude Code the move of `<id>.jsonl` (and its `<id>/` folder) from the project's
+ *   Aib.connect's wslRecord finds), and for Claude Code the move of `<id>.jsonl` (and its `<id>/` folder) from the project's
  *   folder under `~/.claude/projects` to the worktree's, after a backup copy under `<root>/import-backup/<stamp>/`.
  * - `--undo <stamp>` puts back what that run did for every chat that has no work of its own in its copy since.
  *

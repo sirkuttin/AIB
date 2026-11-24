@@ -234,14 +234,14 @@ Deno.test('request-scoped form and close cleanup', async () => {
 });
 
 Deno.test('close releases the session lease and calls the release hook', async () => {
-  // test_owned_connection_releases_lease_on_close, with a stand-in lease (SessionLease is the Studio's).
+  // test_owned_connection_releases_lease_on_close, with a stand-in lease (SessionLease is AIB's).
   await using lab = new Lab();
   const c = await lab.open();
   const released: string[] = [];
   c.sessionLease = { release: () => void released.push('lease') };
   c.onRelease = () => void released.push('hook');
   await c.close();
-  // As in Python: the reader's exit releases the lease (and runs the hook), then close() runs the hook again.
+  // The reader's exit releases the lease (and runs the hook), then close() runs the hook again.
   assertEquals(released, ['lease', 'hook', 'hook']);
   assertEquals(c.sessionLease, null);
 });
@@ -706,7 +706,7 @@ Deno.test('close removes children even after the adapter already exited', async 
   await until(async () => !(await pidAlive(child)), 'orphaned child gone after close()');
 });
 
-// ---- pieces with no Python test of their own ---------------------------------------------------------------------------------
+// ---- pieces with no frozen test of their own ---------------------------------------------------------------------------------
 
 Deno.test('PyTextLines: universal newlines, split chunks, invalid UTF-8, BOM kept', () => {
   const enc = (s: string) => new TextEncoder().encode(s);
@@ -751,7 +751,7 @@ Deno.test('own studio_artifact permission requests are approved without asking',
   c.mcpServers = [{ name: 'studio_artifact', ...artifactToolCommand(), env: [] }];
   const call = (name: string) => ({ toolCall: { toolCallId: 't', _meta: { claudeCode: { toolName: name } } } });
   assert(c.ownArtifactTool(call('mcp__studio_artifact__publish')));
-  assert(c.ownArtifactTool(call('mcp__studio_artifact__publish\n')), "Python's re.match $ allows one trailing newline");
+  assert(c.ownArtifactTool(call('mcp__studio_artifact__publish\n')), "a re.match-style $ allows one trailing newline");
   assert(!c.ownArtifactTool(call('mcp__studio_artifact__delete')));
   assert(!c.ownArtifactTool({ toolCall: 'x' }));
   c.mcpServers = [];

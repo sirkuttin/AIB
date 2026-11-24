@@ -212,7 +212,7 @@ export async function projectAdd(
     throw new ValueError('Choose a project folder');
   }
   await added.add(...paths);
-  // the default local-only /aib-shared (idempotent, never throws; not a git folder: nothing). A test Studio (temp or no state folder)
+  // the default local-only /aib-shared (idempotent, never throws; not a git folder: nothing). A test AIB (temp or no state folder)
   // writes it only for projects in the temp folder, never into a real repo's .git/info/exclude (local_only.defaultsAllowed).
   await Promise.all(paths.filter((p) => defaultsAllowed(stateDir, String(p))).map((p) => ensureDefault(String(p))));
   // a WSL project: the same in its distro, by the helper (wsl/local_only.ts; never throws), without holding the reply up

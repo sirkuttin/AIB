@@ -1,4 +1,4 @@
-/** server/core/log.ts: the cases of work/test_log_setup.py that exercise log_setup.py directly, plus parity and same-file interop with Python. */
+/** server/core/log.ts: the cases of work/test_log_setup.py that exercise log_setup.py directly, plus the frozen answers and same-file interop with older files. */
 import { assert, assertEquals } from './_assert.ts';
 import { Frozen } from './_frozen.ts';
 import {
@@ -89,14 +89,14 @@ Deno.test('setup respects the level, and setting up again replaces the handlers'
     getLogger('m').debug('debug one');
     text = Deno.readTextFileSync(path);
     assert(text.includes('debug one'));
-    assert(text.includes(`log_setup: studio logging at DEBUG, file ${path}`), 'the setup line, as Python writes it');
+    assert(text.includes(`log_setup: studio logging at DEBUG, file ${path}`), 'the setup line, as the retired logger wrote it');
   } finally {
     reset();
     Deno.removeSync(folder, { recursive: true });
   }
 });
 
-Deno.test('level parsing, default and environment; same as Python', async () => {
+Deno.test('level parsing, default and environment; as the frozen answers', async () => {
   const py = new Frozen();
   assertEquals(parseLevel(null), WARNING);
   assertEquals(parseLevel('info'), INFO);
@@ -168,7 +168,7 @@ Deno.test('header and field patterns are redacted without registration; ordinary
   assert(out.text.includes('Auto-reconnect of claude in C:\\work failed (try 1 of 3)'));
 });
 
-Deno.test('redact matches Python', async () => {
+Deno.test('redact matches the frozen answers', async () => {
   const py = new Frozen();
   const samples = [
     'X-Studio-Token: abcDEF123456 and X-Studio-Artifact-Key=kkkkkkkkkkkkkkkkkkkk',
@@ -236,14 +236,14 @@ Deno.test('rotation keeps two old files, like RotatingFileHandler', () => {
   Deno.removeSync(folder, { recursive: true });
 });
 
-Deno.test('a Deno line in studio.log looks like the line Python wrote (format and line ends)', async () => {
+Deno.test('a Deno line in studio.log looks like the line the retired logger wrote (format and line ends)', async () => {
   const py = new Frozen();
   const folder = Deno.makeTempDirSync();
   try {
     const path = `${folder}${Deno.build.os === 'windows' ? '\\' : '/'}studio.log`;
     const shape = (text: string) =>
       text.split('\n').filter(Boolean).map((line) => line.replace(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d{3} /, 'T ')).filter((l) => !l.includes('log_setup'));
-    // the line (time aside) Python's logger wrote for the same record
+    // the line (time aside) the retired logger wrote for the same record
     const pythonLines = await py.frozen('studio-log-line');
     setup('studio', { level: 'WARNING', stateDir: folder, filename: 'studio.log', stream: false });
     getLogger('artifacts').warning('watcher failed for %s', 'conv-1');
@@ -251,7 +251,7 @@ Deno.test('a Deno line in studio.log looks like the line Python wrote (format an
     const raw = Deno.readTextFileSync(path);
     const expected = 'T WARNING artifacts: watcher failed for conv-1' + (Deno.build.os === 'windows' ? '\r' : '');
     assertEquals(shape(raw), [expected]);
-    assertEquals(pythonLines, [expected], "Python's line: identical apart from the time");
+    assertEquals(pythonLines, [expected], "the recorded line: identical apart from the time");
   } finally {
     reset();
     Deno.removeSync(folder, { recursive: true });

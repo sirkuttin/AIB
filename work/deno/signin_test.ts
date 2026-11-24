@@ -110,7 +110,7 @@ const STATUS_TABLE: [string, string][] = [
   ['{"kind": 5, "loggedIn": true}', 'ready'],
 ];
 
-Deno.test('signed in, signed out and unknown, as Python reads them', async () => {
+Deno.test('signed in, signed out and unknown, as the frozen answers read them', async () => {
   const py = new Frozen();
   for (const [text, expected] of STATUS_TABLE) {
     assertEquals(signin.parseStatus(text), expected, text);
@@ -362,7 +362,7 @@ Deno.test({
     assertEquals(t.consoles, [[PY, FAKE_SIGNIN, '--cli', 'auth', 'login', '--claudeai', '--custom-flag']]);
     const inits = t.events('initialize');
     assertEquals(inits.length, 1);
-    assert((inits[0].caps as { auth: { terminal: boolean } }).auth.terminal, 'Studio says it can run terminal sign-ins');
+    assert((inits[0].caps as { auth: { terminal: boolean } }).auth.terminal, 'AIB says it can run terminal sign-ins');
     assertEquals(t.events('authenticate'), [], 'ACP authenticate is never sent for a terminal method');
     assertEquals(t.events('session'), [], 'and no session is created');
   },
@@ -521,7 +521,7 @@ Deno.test({
   },
 });
 
-Deno.test('advertised methods are normalised and hostile args dropped, as Python does', async () => {
+Deno.test('advertised methods are normalised and hostile args dropped, as the frozen answers say', async () => {
   const raw = [
     { id: 'a', type: 'terminal', args: ['--cli', 'x'] },
     { id: 'b', type: 'terminal', args: ['ok', 'bad\nline'] },
@@ -603,13 +603,13 @@ function writeRecords(state: string, agent: string, cache: string | null, job: [
 }
 
 Deno.test({
-  name: 'the cache and job files keep the format and give the answers the Python signer gave',
+  name: 'the cache and job files keep the format and give the answers the frozen answers hold',
   ...sanitize,
   fn: async () => {
     const py = new Frozen();
     await using t = base();
     const noTime = (cache: unknown) => ({ ...(cache as Record<string, unknown>), checkedAt: 0 });
-    // Deno writes (a check, a manual job); what Python's readers made of those files
+    // Deno writes (a check, a manual job); what the retired readers made of those files
     await t.signer.check('claude');
     const made = t.make(true, { systemIsWindows: false });
     await made.start('claude');
@@ -620,7 +620,7 @@ Deno.test({
       cache: Deno.readTextFileSync(join(t.state, 'agents', 'claude', signin.CACHE_NAME)),
       job: Deno.readTextFileSync(join(t.state, 'agents', 'claude', signin.JOB_NAME)),
     };
-    // the bytes Python wrote for the same records match apart from the times and the pid
+    // the bytes the frozen answers hold for the same records match apart from the times and the pid
     const strip = (text: string) => text.replace(/"(checkedAt|updatedAt)": [0-9.e+-]+/g, '"$1": 0').replace(/"pid": \d+/, '"pid": 0');
     const theirs = await py.frozen('signer-files');
     assertEquals({ cache: strip(ours.cache), job: strip(ours.job) }, theirs);

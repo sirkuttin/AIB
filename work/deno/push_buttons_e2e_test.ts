@@ -23,8 +23,8 @@ import {
   pc,
   phoneHeaders,
   raw,
-  type RemoteStudio,
-  remoteStudio,
+  type RemoteAib,
+  remoteAib,
   serveStatus,
 } from "./_remote_fixture.ts";
 import { liveChat } from "./_remote_v2b.ts";
@@ -213,7 +213,7 @@ async function setup() {
   const svc = pushService();
   const clock = { skew: 0 };
   const fake = fakeTailscale();
-  const s = await remoteStudio(
+  const s = await remoteAib(
     {
       runner: fake.runner,
       pushFetch: svc.fetcher,
@@ -257,7 +257,7 @@ async function setup() {
 }
 
 async function phoneWithPush(
-  s: RemoteStudio,
+  s: RemoteAib,
   svc: ReturnType<typeof pushService>,
   name: string,
   path: string,
@@ -277,7 +277,7 @@ async function phoneWithPush(
 
 /** Sends the push the watcher would for one chat, and returns what that phone got (decrypted). */
 async function pushFor(
-  s: RemoteStudio,
+  s: RemoteAib,
   svc: ReturnType<typeof pushService>,
   phone: { keys: Keys; path: string },
   id: string,
@@ -304,7 +304,7 @@ async function pushFor(
   return mine[0];
 }
 
-const act = (s: RemoteStudio, token: string, body: Json) =>
+const act = (s: RemoteAib, token: string, body: Json) =>
   raw(
     s.phonePort(),
     "POST",
@@ -520,7 +520,7 @@ Deno.test({
 });
 
 /** This test plays Tailscale Serve on a loopback origin (a secure context, so the real service worker runs there). */
-function serveProxy(s: RemoteStudio) {
+function serveProxy(s: RemoteAib) {
   const server = Deno.serve({
     hostname: "127.0.0.1",
     port: 0,

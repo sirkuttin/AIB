@@ -1,6 +1,6 @@
 /**
  * Contract (ported from work/contract/test_contract_transcripts.py): the transcript viewer routes (/api/sessions, /api/agents,
- * /api/commands, /api/transcript) of the real server over the generated subagents fixture. The Python version compared every
+ * /api/commands, /api/transcript) of the real server over the generated subagents fixture. The old version compared every
  * reply with the reference over every session and agent; here the replies are checked against the fixture and against each other
  * (windows are slices of the full list, kind filters and the search select from it). The monitor's own parsing and ordering is
  * covered by monitor_test.ts and monitor_golden_test.ts.

@@ -1,5 +1,5 @@
 /**
- * Real Studio server + headless Chrome/Edge (own temp profile and data folder, free port, no agent runs). Two owner reports on a
+ * Real AIB server + headless Chrome/Edge (own temp profile and data folder, free port, no agent runs). Two owner reports on a
  * ~1700 px window:
  *   1. A file open beside the chat squeezed the Activity column to a sliver: the chat-column cap (resize-ui.js MAX_CHAT, the
  *      conversation stops at 1250 px) widened Activity as if the chat had the whole middle, then the file pane took its share of

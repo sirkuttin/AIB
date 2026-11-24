@@ -9,7 +9,7 @@
  *   - an MCP / fetch project rule: saved under the AIB process's working folder joined with the ref
  *     (`<Deno.cwd()>\wsl:\ubuntu\home\u\app`), so it stops applying when AIB starts from another folder, and the Settings list shows
  *     that odd path;
- *   - the project-rule sweep (studio.ts allowAnswer) and rulesHere fold case, so /home/u/App and /home/u/app share project rules.
+ *   - the project-rule sweep (aib.ts allowAnswer) and rulesHere fold case, so /home/u/App and /home/u/app share project rules.
  * The context comes from a real WSL Connection (FakeWslHost lab): no assumption about what allowContext gives.
  * Fixed on wsl/fix-allow (allow/linux.ts): a WSL chat's context is its Linux folder, the project's ref and a LinuxView over facts from
  * its distro's helper (`allow.facts`); the probes below that were KNOWN-BROKEN pass now and run always (names kept).
@@ -37,7 +37,7 @@ class WslLab {
   readonly state = this.dir + SEP + 'state';
   readonly work = this.dir + SEP + 'app';
   readonly host: FakeWslHost;
-  readonly studios: Aib[] = [];
+  readonly aibs: Aib[] = [];
 
   constructor() {
     Deno.mkdirSync(this.work, { recursive: true });
@@ -47,20 +47,20 @@ class WslLab {
     setWslHostResolver((d) => (d === 'ubuntu' ? this.host : null));
   }
 
-  studio(): Aib {
+  aib(): Aib {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
-    const studio = new Aib({ stateDir: this.state, port: 0, ownersDir: null }, { keeper });
-    studio.ownerProbe = () => null;
-    studio.connectionFactory = (_command, cwd, provider, options) => {
+    const aib = new Aib({ stateDir: this.state, port: 0, ownersDir: null }, { keeper });
+    aib.ownerProbe = () => null;
+    aib.connectionFactory = (_command, cwd, provider, options) => {
       const wsl = options?.wsl ? { ...options.wsl, program: undefined } : options?.wsl;
       return new Connection(fake('--cancel-aware', '--breadth'), cwd, provider, { ...options, wsl });
     };
-    this.studios.push(studio);
-    return studio;
+    this.aibs.push(aib);
+    return aib;
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
-    for (const s of this.studios.reverse()) await s.close().catch(() => {});
+    for (const s of this.aibs.reverse()) await s.close().catch(() => {});
     setWslHostResolver(null);
     await this.host.stopKeeper();
     const info = readKeeperInfo(this.state);
@@ -102,14 +102,14 @@ const MCP = claudeCall('mcp__context7__search', {});
 type Drafts = { project: Json; global: Json; off: string };
 
 /** One WSL chat with allow rules on; `fn` gets its live allow context. */
-async function withWslChat(fn: (studio: Aib, c: Connection, ctx: (p: unknown) => MatchContext) => Promise<void> | void) {
+async function withWslChat(fn: (aib: Aib, c: Connection, ctx: (p: unknown) => MatchContext) => Promise<void> | void) {
   await keeperBinary();
   await using lab = new WslLab();
-  const studio = lab.studio();
-  studio.allow!.store.setEnabled(true);
-  const c = await studio.connect('claude', REF);
+  const aib = lab.aib();
+  aib.allow!.store.setEnabled(true);
+  const c = await aib.connect('claude', REF);
   assertEquals([c.cwd, c.agentCwd], [REF, '/home/u/app']);
-  await fn(studio, c, (p) => c.allowContext(p));
+  await fn(aib, c, (p) => c.allowContext(p));
 }
 
 Deno.test({
@@ -128,14 +128,14 @@ Deno.test({
   name: 'audit wsl allow (after the fix): with the distro facts an edit inside the WSL project offers Always allow (an edit rule)',
   ...T,
   async fn() {
-    await withWslChat(async (studio, c, ctx) => {
+    await withWslChat(async (aib, c, ctx) => {
       for (const p of [EDIT_ABS, EDIT_REL]) {
         await c.allowPrefetch(p, factsNow());
-        const d = studio.allow!.drafts(p, ctx(p)) as unknown as Drafts;
+        const d = aib.allow!.drafts(p, ctx(p)) as unknown as Drafts;
         assertEquals([d.project.available, d.project.hideAgentAlways], [true, true], JSON.stringify(d.project));
         assertEquals((d.project.rules as Json[])[0], { scope: 'project', project: REF, kind: 'edit', folder: 'src', label: 'Edits in src/' });
       }
-      assertEquals(studio.allow!.decide(SAFE_READ, ctx(SAFE_READ)).allow, true);
+      assertEquals(aib.allow!.decide(SAFE_READ, ctx(SAFE_READ)).allow, true);
     });
   },
 });
@@ -144,8 +144,8 @@ Deno.test({
   name: 'KNOWN-BROKEN: audit wsl allow: an edit inside the WSL project offers Always allow (or keeps the agent\'s own Always)',
   ...T,
   async fn() {
-    await withWslChat((studio, _c, ctx) => {
-      const d = studio.allow!.drafts(EDIT_ABS, ctx(EDIT_ABS)) as unknown as Drafts;
+    await withWslChat((aib, _c, ctx) => {
+      const d = aib.allow!.drafts(EDIT_ABS, ctx(EDIT_ABS)) as unknown as Drafts;
       assert(d.project.available === true || d.project.hideAgentAlways === false, `the user has no Always choice: ${JSON.stringify(d.project)}`);
     });
   },
@@ -155,8 +155,8 @@ Deno.test({
   name: 'KNOWN-BROKEN: audit wsl allow: the built-in Safe reads answer `git status` in a WSL chat as they do in a Windows chat',
   ...T,
   async fn() {
-    await withWslChat((studio, _c, ctx) => {
-      const r = studio.allow!.decide(SAFE_READ, ctx(SAFE_READ));
+    await withWslChat((aib, _c, ctx) => {
+      const r = aib.allow!.decide(SAFE_READ, ctx(SAFE_READ));
       assert(r.allow, JSON.stringify(r));
     });
   },
@@ -166,8 +166,8 @@ Deno.test({
   name: 'KNOWN-BROKEN: audit wsl allow: a project MCP rule from a WSL chat is keyed by the ref, not by AIB\'s working folder',
   ...T,
   async fn() {
-    await withWslChat((studio, _c, ctx) => {
-      const d = studio.allow!.drafts(MCP, ctx(MCP)) as unknown as Drafts;
+    await withWslChat((aib, _c, ctx) => {
+      const d = aib.allow!.drafts(MCP, ctx(MCP)) as unknown as Drafts;
       assertEquals(d.project.available, true);
       const rule = (d.project.rules as Json[])[0];
       // today: `${Deno.cwd()}\wsl:\ubuntu\home\u\app`
@@ -180,8 +180,8 @@ Deno.test({
   name: 'KNOWN-BROKEN: audit wsl allow: a WSL project rule still applies after AIB starts from another working folder',
   ...T,
   async fn() {
-    await withWslChat((studio, _c, ctx) => {
-      const d = studio.allow!.drafts(MCP, ctx(MCP)) as unknown as Drafts;
+    await withWslChat((aib, _c, ctx) => {
+      const d = aib.allow!.drafts(MCP, ctx(MCP)) as unknown as Drafts;
       const rules = (d.project.rules as Json[]).map((r, i) => ({ ...r, id: `r${i}`, added: 1 })) as unknown as AllowRule[];
       assert(match(MCP, { ...ctx(MCP), limitMs: 2000 }, rules, { safeReads: true, syntax: true, scratch: true }).allow, 'applies now');
       const before = Deno.cwd();

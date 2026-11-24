@@ -71,7 +71,7 @@ const TITLE_KINDS = ['title', 'ai-title', 'custom-title', 'summary'];
 
 export const now = () => Date.now() / 1000;
 
-/** {project, branch, base} for a cwd inside a worktree Studio made (set by Studio), or null. */
+/** {project, branch, base} for a cwd inside a worktree AIB made (set by AIB), or null. */
 export type ProjectResolver = (cwd: string) => { project: string; branch?: string; base?: string } | null | undefined;
 
 export interface Resolved {

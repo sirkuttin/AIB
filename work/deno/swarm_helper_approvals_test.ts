@@ -12,7 +12,7 @@
 import { assert, assertEquals } from './_assert.ts';
 import { Browser, browserPath } from './_doc_browser.ts';
 import { pairPhone, pc } from './_remote_fixture.ts';
-import { liveChat, v2Studio } from './_remote_v2b.ts';
+import { liveChat, v2Aib } from './_remote_v2b.ts';
 import { phonePage, tap } from './_remote_phone_page.ts';
 import { homePayload } from '../../app/server/remote/payloads.ts';
 import { SavedChats } from '../../app/server/remote/saved.ts';
@@ -66,7 +66,7 @@ Deno.test({
   ...OPTS,
   name: 'swarm lists: a helper chat is not in the phone list or the saved list; it is named once, an owner name wins; /api/live/swarm carries its request',
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     try {
       const main = liveChat('c-main', s.project, { breadth: { sessionInfo: { title: 'Lead chat' } } });
       const helper = liveChat('c-help', s.project, {
@@ -131,7 +131,7 @@ Deno.test({
   ...OPTS,
   name: 'swarm approvals: a waiting helper is an inbox row; its toast has Allow / Deny and answers the helper; answered, every surface clears',
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     const dir = await Deno.makeTempDir({ prefix: 'aib-swarm-toast-' });
     let stop = () => {};
     try {
@@ -239,7 +239,7 @@ Deno.test({
   name: 'swarm approvals: the phone shows a waiting helper in its inbox with Allow (not in its chat list); a tap answers the helper',
   ignore: !browserPath,
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     const browser = await Browser.launch();
     try {
       const main = liveChat('c-main', s.project, { breadth: { sessionInfo: { title: 'Lead chat' } } });

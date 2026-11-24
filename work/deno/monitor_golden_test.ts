@@ -1,10 +1,10 @@
 /**
  * Golden parity for server/transcripts/monitor.ts: every GET the viewer answers (sessions, agents, commands, command,
  * transcript pages with before/after/limit/kind/q/thinking, plan context, meta, revision, images, errors) is asked of the port over
- * the fixture folders, in the same order (so the cache sees the same history), and the JSON must be what the retired Python handler
+ * the fixture folders, in the same order (so the cache sees the same history), and the JSON must be what the retired handler
  * answered then. Each answer is kept as a fingerprint of the JSON (fixtures/frozen/monitor_golden.json) with the times that come
  * from files (created, idle seconds, revision stamps) and the Deno-only keys taken out. Fixtures: work/subagents-fixture and work/design-fixture (generated in temp
- * copies), the record shapes of the Python tests, an edge-case transcript, file growth and replacement, and a large synthetic chat.
+ * copies), the record shapes of the old tests, an edge-case transcript, file growth and replacement, and a large synthetic chat.
  */
 import { assert, assertEquals } from './_assert.ts';
 import { Frozen } from './_frozen.ts';
@@ -17,7 +17,7 @@ const py = new Frozen();
 const TMP = Deno.makeTempDirSync({ prefix: 'aib-monitor-golden-' });
 const TMP_SLASH = TMP.replaceAll('\\', '/').toLowerCase();
 const TMP_RE = new RegExp(TMP_SLASH.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
-// steered: a message Claude Code saved as sent while it worked (normalize.ts, B15, beta.9) is Deno only; the Python reference never had it
+// steered: a message Claude Code saved as sent while it worked (normalize.ts, B15, beta.9) is Deno only; not in the frozen answers
 const IGNORED = new Set(['now', 'steered']);
 
 /**
@@ -70,11 +70,11 @@ let compared = 0;
 const tally = new Map<string, number>();
 const count = (what: string) => tally.set(what, (tally.get(what) ?? 0) + 1);
 
-/** The answers Python gave, in the order they were asked: 5 hex characters of the fingerprint of each (3,900 of them fit in 40 KB). */
+/** The answers the frozen answers hold, in the order they were asked: 5 hex characters of the fingerprint of each (3,900 of them fit in 40 KB). */
 const golden: string[] = (await py.frozenWhole<string>('golden-answers')).split(' ');
 const short = (value: unknown) => digestOf(value).slice(0, 5);
 
-/** Ask the port; the answer must be the one Python gave (a fingerprint). Returns the (plain JSON) body, or null when both raised. */
+/** Ask the port; the answer must be the one the frozen answers hold (a fingerprint). Returns the (plain JSON) body, or null when both raised. */
 async function same(r: Root, path: string, query = ''): Promise<unknown> {
   let ts: { status: number; body: unknown };
   try {
@@ -84,13 +84,13 @@ async function same(r: Root, path: string, query = ''): Promise<unknown> {
       : JSON.parse(JSON.stringify(got.body));
     ts = { status: got.status, body };
   } catch (error) {
-    // Python raised too: its answer was the name of the error
+    // the frozen answer raised too: its answer was the name of the error
     assertEquals(short({ error: (error as Error).name }), golden[compared], `${path}?${query}: both raise (answer ${compared})`);
     compared++;
     count('raised ' + (error as Error).name);
     return null;
   }
-  assertEquals(short(norm(ts)), golden[compared], `${path}?${query} (answer ${compared}) is not what Python answered: ${JSON.stringify(ts).slice(0, 300)}`);
+  assertEquals(short(norm(ts)), golden[compared], `${path}?${query} (answer ${compared}) is not what the frozen answers hold: ${JSON.stringify(ts).slice(0, 300)}`);
   compared++;
   const status = ts.status;
   count(`${status} ${path}`);
@@ -203,7 +203,7 @@ Deno.test('golden: the generated work/*-fixture folders (subagents, design)', as
   await refusals(b, 'omp');
 });
 
-Deno.test('golden: record shapes from the Python tests', async () => {
+Deno.test('golden: record shapes from the old tests', async () => {
   const base = join(TMP, 'shapes');
   const claude = join(base, 'claude');
   const omp = join(base, 'omp');
@@ -235,7 +235,7 @@ Deno.test('golden: record shapes from the Python tests', async () => {
   await refusals(r, 'claude');
 });
 
-Deno.test('golden: a record Python cannot read fails the same way', async () => {
+Deno.test('golden: a record the frozen answers could not read fails the same way', async () => {
   const claude = join(TMP, 'crash', 'claude');
   fx.write(join(claude, 'p', 'list.jsonl'), '[1, 2]\n' + fx.lines([{ type: 'user', message: { role: 'user', content: 'x' } }]));
   fx.write(
@@ -250,7 +250,7 @@ Deno.test('golden: a record Python cannot read fails the same way', async () => 
   const r = await root(null, claude);
   await same(r, '/api/sessions');
   for (const key of ['p/list.jsonl', 'q/role.jsonl', 'r/text.jsonl', 's/hash.jsonl']) {
-    for (let n = 0; n < 3; n++) await same(r, '/api/transcript', 'key=claude/' + key); // Python fails once, then reads past the record
+    for (let n = 0; n < 3; n++) await same(r, '/api/transcript', 'key=claude/' + key); // the frozen answers fail once, then read past the record
   }
 });
 
@@ -322,7 +322,7 @@ Deno.test('golden: a large synthetic chat (and parse time)', async () => {
 });
 
 Deno.test('golden: summary', () => {
-  assertEquals(golden.length, compared, 'every answer Python gave was compared');
+  assertEquals(golden.length, compared, 'every answer the frozen answers hold was compared');
   console.log(`golden replies compared: ${compared}`);
   console.log([...tally].sort().map(([k, v]) => `  ${v}  ${k}`).join('\n'));
   try {

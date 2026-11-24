@@ -1,5 +1,5 @@
 /**
- * Logging for the Agent Studio programs (log_setup.py).
+ * Logging for the AIB programs (log_setup.py).
  *
  * Library modules only do `const log = getLogger('module_name')`; nothing is configured at import, so tests and anyone importing a
  * module stay quiet. A program calls setup() once from main():

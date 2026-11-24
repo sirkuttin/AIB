@@ -1,13 +1,13 @@
 /** Helpers for the phone page tests at phone widths: this test plays Tailscale Serve (DevTools Fetch interception with forged Serve
  * headers) in front of the phone port, signs a paired phone in and opens the list. (Same as remote_phone_v2b_e2e_test.ts.) */
 import { type Page, type Browser } from './_doc_browser.ts';
-import { LOGIN, NAME, raw, type Raw, type RemoteStudio } from './_remote_fixture.ts';
+import { LOGIN, NAME, raw, type Raw, type RemoteAib } from './_remote_fixture.ts';
 
 type Json = Record<string, unknown>;
 
 /** This test is Tailscale Serve: every request to https://<name>/ goes to the phone port with the headers Serve adds.
  * `gate.down`: the PC can't be reached now (Serve answers 502 to the API; the page's own files still come, as from the service worker). */
-export async function serveFor(page: Page, s: RemoteStudio, gate?: { down: boolean }): Promise<void> {
+export async function serveFor(page: Page, s: RemoteAib, gate?: { down: boolean }): Promise<void> {
   await page.send('Network.enable');
   await page.send('Fetch.enable', { patterns: [{ urlPattern: `https://${NAME}/*`, requestStage: 'Request' }] });
   page.listeners.set('Fetch.requestPaused', (p) => {
@@ -50,7 +50,7 @@ export async function serveFor(page: Page, s: RemoteStudio, gate?: { down: boole
   });
 }
 
-export async function phonePage(browser: Browser, s: RemoteStudio, phone: { token: string; id: string }, ua?: string, width = 375, cards = true, gate?: { down: boolean }): Promise<Page> {
+export async function phonePage(browser: Browser, s: RemoteAib, phone: { token: string; id: string }, ua?: string, width = 375, cards = true, gate?: { down: boolean }): Promise<Page> {
   const page = await browser.open('about:blank', width, 812);
   await page.send('Emulation.setDeviceMetricsOverride', { width, height: 812, deviceScaleFactor: 2, mobile: true });
   if (ua) await page.send('Emulation.setUserAgentOverride', { userAgent: ua });

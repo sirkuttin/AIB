@@ -4,7 +4,7 @@
  * temp folder; kills only what it started.
  *
  * Why it exists: studio.log of the owner's data folder looked frozen at 2026-11-09. It was not: sessions of the Claude desktop app are
- * MSIX-virtualized, so from inside one, a file under %LOCALAPPDATA% that was once written there (the Python-era studio.log) is
+ * MSIX-virtualized, so from inside one, a file under %LOCALAPPDATA% that was once written there (the studio.log of old builds) is
  * shadowed by that old copy in Packages\Claude_*\LocalCache\Local. AIB writes the real file; read it from outside the package.
  */
 import { assert } from './_assert.ts';

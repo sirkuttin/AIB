@@ -1,5 +1,5 @@
 /**
- * Harness of the steer-on-send end-to-end tests (steer_e2e_test.ts, steer_layout_e2e_test.ts): a real Studio web server and a real,
+ * Harness of the steer-on-send end-to-end tests (steer_e2e_test.ts, steer_layout_e2e_test.ts): a real AIB web server and a real,
  * separate agent host (so the routes go through the host proxy and its allow list), a temp state folder, a free port (never 8767,
  * 8768, 8777, 8778) and, for the page tests, a headless Chrome/Edge (no window).
  *

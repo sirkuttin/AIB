@@ -37,11 +37,11 @@ export function wslMergesRunning(): number {
 }
 
 /** The chat behind `chatId` when it is a live chat working in a WSL folder, else null (merge.ts handles it). */
-export async function wslMergeChat(studio: merge.MergeStudio, chatId: unknown): Promise<WslMergeChat | null> {
+export async function wslMergeChat(aib: merge.MergeHost, chatId: unknown): Promise<WslMergeChat | null> {
   if (typeof chatId !== 'string' || !chatId) return null;
   let state: unknown;
   try {
-    state = await studio.liveState(chatId);
+    state = await aib.liveState(chatId);
   } catch {
     return null;
   }
@@ -98,19 +98,19 @@ async function mustCall<M extends keyof HelperMethods>(
 }
 
 /** Makes the helper's recorded live calls in order (each for this chat only); a `must` call that is not accepted is a refusal. */
-async function post(studio: merge.MergeStudio, chat: WslMergeChat, answer: WslMergeAnswer): Promise<void> {
+async function post(aib: merge.MergeHost, chat: WslMergeChat, answer: WslMergeAnswer): Promise<void> {
   for (const action of Array.isArray(answer.actions) ? answer.actions : []) {
     if (!isDict(action) || !OPS.has(String(action.op)) || action.op === 'queue') continue; // AIB queues no message for a merge
     const payload = { ...(isDict(action.payload) ? action.payload : {}), id: chat.id };
     if (action.must) {
-      const [status, reply] = await studio.liveCall(String(action.op), payload);
+      const [status, reply] = await aib.liveCall(String(action.op), payload);
       if (status !== 200) {
         throw new merge.Refused(pyStr(action.fail || 'Could not ask the chat: ') + merge.payloadError(reply, 'it did not accept the message'), 'prompt_failed');
       }
       continue;
     }
     try {
-      await studio.liveCall(String(action.op), payload);
+      await aib.liveCall(String(action.op), payload);
     } catch (error) {
       log.exception(error, 'Could not post the merge note');
     }
@@ -118,8 +118,8 @@ async function post(studio: merge.MergeStudio, chat: WslMergeChat, answer: WslMe
 }
 
 /** The result, after its live calls are made; a refusal (with any calls made before it) is thrown as merge.ts's Refused. */
-async function settle(studio: merge.MergeStudio, chat: WslMergeChat, answer: WslMergeAnswer): Promise<merge.MergeResult> {
-  await post(studio, chat, answer);
+async function settle(aib: merge.MergeHost, chat: WslMergeChat, answer: WslMergeAnswer): Promise<merge.MergeResult> {
+  await post(aib, chat, answer);
   const r = answer.refused;
   if (r) throw new merge.Refused(String(r.message), String(r.code || 'refused'), Number(r.status) || 409, isDict(r.extra) ? r.extra : {});
   return isDict(answer.result) ? answer.result : {};
@@ -140,20 +140,20 @@ export async function wslMergeStatus(chat: WslMergeChat): Promise<Record<string,
 }
 
 /** Merge a WSL chat's worktree: the agent's merge_into_project (`fromTool`) or the page's direct merge route. */
-export async function wslMerge(studio: merge.MergeStudio, chat: WslMergeChat, title = '', fromTool = false): Promise<merge.MergeResult> {
+export async function wslMerge(aib: merge.MergeHost, chat: WslMergeChat, title = '', fromTool = false): Promise<merge.MergeResult> {
   running++;
   try {
     const answer = await mustCall(chat, 'merge.run', { chat: chat.id, state: helperState(chat), title: String(title || ''), fromTool });
-    return await settle(studio, chat, answer);
+    return await settle(aib, chat, answer);
   } finally {
     running--;
   }
 }
 
 /** A clash action (Keep my version, I'll sort it myself, check) for a WSL chat's project. */
-export async function wslResolveClash(studio: merge.MergeStudio, chat: WslMergeChat, action: string, fromTool = false): Promise<merge.MergeResult> {
+export async function wslResolveClash(aib: merge.MergeHost, chat: WslMergeChat, action: string, fromTool = false): Promise<merge.MergeResult> {
   const answer = await mustCall(chat, 'merge.resolveClash', { chat: chat.id, state: helperState(chat), action, fromTool });
-  return await settle(studio, chat, answer);
+  return await settle(aib, chat, answer);
 }
 
 /**

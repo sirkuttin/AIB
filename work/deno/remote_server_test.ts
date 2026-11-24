@@ -1,5 +1,5 @@
 /**
- * The phone port (server/remote/server.ts) in a Studio in this process with a fake agent host and a fake Tailscale CLI:
+ * The phone port (server/remote/server.ts) in an AIB in this process with a fake agent host and a fake Tailscale CLI:
  *  - default deny: every page route (ROUTE_LIST), both WebSockets and the own-gate POSTs answer 403/404 here; REMOTE_ROUTES are not in
  *    the page's table;
  *  - RemoteGate refusals (Host, Origin, Fetch Metadata, page credentials, login header, device token, cookie, removed phone);
@@ -24,8 +24,8 @@ import {
   pc,
   phoneHeaders,
   raw,
-  type RemoteStudio,
-  remoteStudio,
+  type RemoteAib,
+  remoteAib,
   serveStatus,
 } from './_remote_fixture.ts';
 
@@ -33,12 +33,12 @@ const OPTS = { sanitizeResources: false, sanitizeOps: false };
 type Json = Record<string, unknown>;
 
 async function phoneOn(
-  over: Parameters<typeof remoteStudio>[0] = {},
+  over: Parameters<typeof remoteAib>[0] = {},
   root?: string,
   extra: { saved?: boolean } = {},
-): Promise<RemoteStudio & { fake: ReturnType<typeof fakeTailscale> }> {
+): Promise<RemoteAib & { fake: ReturnType<typeof fakeTailscale> }> {
   const fake = fakeTailscale();
-  const s = await remoteStudio({ runner: fake.runner, ...over }, root, extra);
+  const s = await remoteAib({ runner: fake.runner, ...over }, root, extra);
   fake.state.serve = serveStatus(readRemotePort(s.state)!);
   const [status] = await pc(s, 'POST', '/api/live/devices/access', { on: true });
   assertEquals(status, 200);
@@ -629,7 +629,7 @@ Deno.test({
   name: "Funnel on for this PC's name: the phone port does not start, and says why",
   async fn() {
     const fake = fakeTailscale();
-    const s = await remoteStudio({ runner: fake.runner });
+    const s = await remoteAib({ runner: fake.runner });
     try {
       fake.state.serve = serveStatus(readRemotePort(s.state)!, true);
       await pc(s, 'POST', '/api/live/devices/access', { on: true });
@@ -657,7 +657,7 @@ Deno.test({
     const held = Deno.listen({ hostname: '127.0.0.1', port: 0 });
     const port = (held.addr as Deno.NetAddr).port;
     const fake = fakeTailscale();
-    const s = await remoteStudio({ runner: fake.runner, bindRetryMs: 1000 });
+    const s = await remoteAib({ runner: fake.runner, bindRetryMs: 1000 });
     try {
       saveRemotePort(s.state, port);
       fake.state.serve = serveStatus(port);
@@ -688,7 +688,7 @@ Deno.test({
   name: 'phone access is off by default; Add a phone needs it on; the PC routes need the page token',
   async fn() {
     const fake = fakeTailscale();
-    const s = await remoteStudio({ runner: fake.runner });
+    const s = await remoteAib({ runner: fake.runner });
     try {
       const [, view] = await pc(s, 'GET', '/api/live/devices');
       assertEquals([view.on, view.listening, view.devices], [false, false, []]);

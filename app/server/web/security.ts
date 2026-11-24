@@ -2,7 +2,7 @@
  * The one auth gate for every web request (security.py). Every route is declared in a RouteTable with the scope it needs;
  * authorize() decides who is asking (a Principal) and refuses the request when that principal lacks the scope.
  *
- *   page        the Studio page in a browser (or the desktop window): X-Studio-Token, Host and Origin of this server, Fetch Metadata
+ *   page        AIB page in a browser (or the desktop window): X-Studio-Token, Host and Origin of this server, Fetch Metadata
  *               same-origin or absent, no navigation on /api/, POSTs only with an Origin or same-origin. Bootstrap needs no token
  *               but hands one out only to a caller with a page session (or a launcher's fixed key) (page_access.ts).
  *   agent_tool  the artifact MCP shim (no browser): X-Studio-Artifact-Key valid for one conversation, and no Origin or Sec-Fetch-*
@@ -313,7 +313,7 @@ export function drawingHeaders(artifactOrigin: string): Record<string, string> {
   };
 }
 
-/** The headers every Studio response carries (monitor.py Handler.respond); frame-src/img-src also allow the artifact origin. */
+/** The headers every AIB response carries (monitor.py Handler.respond); frame-src/img-src also allow the artifact origin. */
 export function securityHeaders(artifactOrigin: string): Record<string, string> {
   return {
     'Cache-Control': 'no-store',

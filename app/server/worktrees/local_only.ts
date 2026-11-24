@@ -431,12 +431,12 @@ export function chatLocalOnly(lo: LocalOnly, worktree: boolean, warn: (dir: stri
 }
 
 /**
- * True when AIB may write local-only defaults (the `/aib-shared` exclude line, an empty aib-shared/) for `project`. A Studio whose
+ * True when AIB may write local-only defaults (the `/aib-shared` exclude line, an empty aib-shared/) for `project`. An AIB whose
  * state folder is under the temp folder (or that has none) is a test or a demo: it only touches projects under the temp folder, so a
  * test that opens a chat in a fixture folder inside a real repository never writes that repository's exclude file.
  */
 export function defaultsAllowed(stateDir: string, project: string): boolean {
-  // '' = a Studio made without a state folder (tests): treated like a temp one
+  // '' = an AIB made without a state folder (tests): treated like a temp one
   const temp = (() => {
     try {
       return osp.normcase(osp.realpath(Deno.env.get('TMPDIR') || Deno.env.get('TEMP') || Deno.env.get('TMP') || '/tmp'));

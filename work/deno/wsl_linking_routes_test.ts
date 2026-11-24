@@ -1,7 +1,7 @@
 /**
  * Settings > AIB Linking (WSL), phase 2, the Windows server side (docs/wsl/linking-design.md section 12, "Routes"), with no distro:
  *   1. The per-distro On/Off switch: settings `agentsByDistro` (on when unset, kept apart from the Windows switch, public), POST
- *      /api/live/wsl/agents/enabled, and Studio's WSL launch reading only it (the matrix: Windows off + Ubuntu on starts in Ubuntu;
+ *      /api/live/wsl/agents/enabled, and AIB's WSL launch reading only it (the matrix: Windows off + Ubuntu on starts in Ubuntu;
  *      Windows on + Ubuntu off refuses only the WSL chat, for a new chat and a Continue, never the automatic reconnect).
  *   2. GET /api/live/wsl/agents rows: enabled, signin (helper agents.signinStatus, 'unknown' when it cannot say), canUninstall (AIB's
  *      own install only), the Codex row's limits (the chip's snapshot from the distro's ~/.codex; null when none).
@@ -207,37 +207,37 @@ Deno.test({
       agents: ((p.ids as string[]) ?? []).map((id) => ({ id, found: true, command: [id === 'claude' ? '/usr/bin/claude-acp' : 'node', 'acp'] })),
     });
     withHost(host);
-    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: dir + SEP + 'state', port: 0, ownersDir: null });
+    const aib = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: dir + SEP + 'state', port: 0, ownersDir: null });
     const wsl = { distro: 'ubuntu', linuxPath: '/home/u/app' };
     try {
       // Windows off, Ubuntu on (unset): the Windows chat is refused, the WSL chat starts in Ubuntu
-      await studio.settings.update({ agents: { builtin: { claude: false } } });
+      await aib.settings.update({ agents: { builtin: { claude: false } } });
       let windows = '';
-      await studio.agentLaunch('claude', true).catch((e) => (windows = e.message));
+      await aib.agentLaunch('claude', true).catch((e) => (windows = e.message));
       assertEquals(windows, 'Claude Code is turned off in Settings');
-      const launched = await studio.wslLaunch('claude', wsl, true);
+      const launched = await aib.wslLaunch('claude', wsl, true);
       assertEquals(launched.command, ['/usr/bin/claude-acp', 'acp']);
       // Windows on, Ubuntu off: Windows starts, the WSL chat is refused with the distro's line, before the distro is even asked
-      await studio.settings.update({ agents: { builtin: { claude: true } }, agentsByDistro: { ubuntu: { claude: false } } });
-      assertEquals((await studio.agentLaunch('claude', true))[0].at(-1), Deno.realPathSync(import.meta.filename!));
+      await aib.settings.update({ agents: { builtin: { claude: true } }, agentsByDistro: { ubuntu: { claude: false } } });
+      assertEquals((await aib.agentLaunch('claude', true))[0].at(-1), Deno.realPathSync(import.meta.filename!));
       const line = 'Claude Code is turned off for Ubuntu in Settings > AIB Linking (WSL)';
       host.calls.length = 0;
       for (const [fresh, continued] of [[true, false], [false, true]]) {
         let refused = '';
-        await studio.wslLaunch('claude', wsl, fresh, continued).catch((e) => (refused = e.message));
+        await aib.wslLaunch('claude', wsl, fresh, continued).catch((e) => (refused = e.message));
         assertEquals(refused, line, `fresh ${fresh}, continued ${continued}`);
       }
       assertEquals(host.calls.length, 0, 'refused before the distro was asked anything');
       // the automatic reconnect at start (neither) is not refused: a running chat is never cut off by the switch
-      assertEquals((await studio.wslLaunch('claude', wsl, false, false)).command, ['/usr/bin/claude-acp', 'acp']);
+      assertEquals((await aib.wslLaunch('claude', wsl, false, false)).command, ['/usr/bin/claude-acp', 'acp']);
       // connect() itself: a new WSL chat and the person's Continue are refused with the same line
       for (const resume of [null, 'sess-1']) {
         let refused = '';
-        await studio.connect('claude', 'wsl://ubuntu/home/u/app', resume).catch((e) => (refused = e.message));
+        await aib.connect('claude', 'wsl://ubuntu/home/u/app', resume).catch((e) => (refused = e.message));
         assertEquals(refused, line, `connect resume=${resume}`);
       }
       // another distro with no saved value is on
-      assertEquals(studio.settings.distroAgentEnabled('debian', 'claude'), true);
+      assertEquals(aib.settings.distroAgentEnabled('debian', 'claude'), true);
       // a custom agent's own name in the line
       assertEquals(
         wslAgentOffLine('custom-x', 'Ubuntu', { customAgent: () => ({ name: 'My agent' }) }),
@@ -248,7 +248,7 @@ Deno.test({
         'Gemini CLI is turned off for Debian in Settings > AIB Linking (WSL)',
       );
     } finally {
-      await studio.close().catch(() => {});
+      await aib.close().catch(() => {});
       setWslHostResolver(null);
       setDistroSource(null);
       try {

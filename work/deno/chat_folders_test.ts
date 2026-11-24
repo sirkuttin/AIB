@@ -1,7 +1,7 @@
 /**
- * server/worktrees/chat_folders.ts: the folder lookup of work/test_project_cwd.py (a saved chat Studio does not run), the response
+ * server/worktrees/chat_folders.ts: the folder lookup of work/test_project_cwd.py (a saved chat AIB does not run), the response
  * cases of work/test_changes.py ChangesRouteTests, and the branch view of work/test_worktree_changes.py, driven through
- * changesResponse with a fake Studio and a real git worktree plus registry record (no manager, agent or live sync).
+ * changesResponse with a fake AIB and a real git worktree plus registry record (no manager, agent or live sync).
  * Skipped: test_worktree_changes SavedChatTests and test_main_moving_on's live-sync part (monitor.Store / ProjectResolver / Manager,
  * other modules); test_project_root.py (state_store, monitor and artifacts only, nothing of these modules).
  */
@@ -12,7 +12,7 @@ import {
   artifactFolder,
   changesFolder,
   changesResponse,
-  type ChatStudio,
+  type ChatHost,
   defaults,
   repoBranch,
 } from '../../app/server/worktrees/chat_folders.ts';
@@ -24,20 +24,20 @@ import * as osp from '../../app/server/platform/ospath.ts';
 const test = (name: string, fn: () => Promise<void> | void) => Deno.test({ name, ignore: !HAVE_GIT, fn });
 const TOKEN = 'tok';
 
-function studio(live: Record<string, string> = {}, extra: Partial<ChatStudio> = {}): ChatStudio {
+function aib(live: Record<string, string> = {}, extra: Partial<ChatHost> = {}): ChatHost {
   return { liveState: (ident) => (live[ident] ? { cwd: live[ident] } : {}), token: TOKEN, ...extra };
 }
 
 type Body = Record<string, unknown>;
 
-async function api(s: ChatStudio, ident: string, route = '/api/live/changes', args: Record<string, string> = {}, token = TOKEN) {
+async function api(s: ChatHost, ident: string, route = '/api/live/changes', args: Record<string, string> = {}, token = TOKEN) {
   const query: Record<string, string[]> = { id: [ident] };
   for (const [k, v] of Object.entries(args)) query[k] = [v];
   const [status, body] = await changesResponse(s, route, query, { 'x-studio-token': token });
   return [status, body as Body] as const;
 }
 
-async function files(s: ChatStudio, ident: string, args: Record<string, string> = {}) {
+async function files(s: ChatHost, ident: string, args: Record<string, string> = {}) {
   const [status, data] = await api(s, ident, '/api/live/changes', args);
   assertEquals(status, 200, JSON.stringify(data));
   const list = (data.files ?? []) as Body[];
@@ -48,7 +48,7 @@ async function files(s: ChatStudio, ident: string, args: Record<string, string> 
 
 test('a live chat, a saved mark and the store give the folder; nothing from the request does', async () => {
   using r = new TempRepo();
-  const s = studio({ live1: r.repo }, {
+  const s = aib({ live1: r.repo }, {
     conversations: { entries: { 'claude:a': { cwd: r.p('sub') } } },
     store: { conversations: new Map([['codex:b', { cwd: r.root }]]) },
   });
@@ -56,30 +56,30 @@ test('a live chat, a saved mark and the store give the folder; nothing from the 
   assertEquals(await changesFolder(s, 'claude:a'), r.p('sub'));
   assertEquals(await changesFolder(s, 'codex:b'), r.root);
   assertEquals(await changesFolder(s, r.repo), null, 'a path as the id is never used as a folder');
-  assertEquals(await changesFolder(studio({ x: osp.join(r.root, 'gone') }), 'x'), null);
+  assertEquals(await changesFolder(aib({ x: osp.join(r.root, 'gone') }), 'x'), null);
   for (const bad of ['', 5, null, 'x'.repeat(601)]) await assertRejects(() => changesFolder(s, bad), ValueError);
   assertEquals(await artifactFolder(s, ''), null);
   assertEquals(await artifactFolder(s, 'live1'), r.repo);
 });
 
-test('a saved chat Studio does not run still has a folder (module default and a Studio lookup)', async () => {
+test('a saved chat AIB does not run still has a folder (module default and an AIB lookup)', async () => {
   using r = new TempRepo();
   const sid = '11111111-2222-4333-8444-555555555555';
   const lookup = (provider: string, session: string) => (provider === 'claude' && session === sid ? r.repo : '');
   const old = defaults.savedCwd;
   defaults.savedCwd = lookup;
   try {
-    const bare = studio();
+    const bare = aib();
     assertEquals(await changesFolder(bare, 'claude:' + sid), r.repo);
     assertEquals(await changesFolder(bare, 'claude:ffffffff-0000-0000-0000-000000000000'), null);
     assertEquals(await changesFolder(bare, 'Claude:' + sid), null, 'only provider:session keys are looked up');
   } finally {
     defaults.savedCwd = old;
   }
-  assertEquals(await changesFolder(studio({}, { savedCwd: lookup }), 'claude:' + sid), r.repo);
+  assertEquals(await changesFolder(aib({}, { savedCwd: lookup }), 'claude:' + sid), r.repo);
 });
 
-test('repoBranch reads HEAD: a branch, a detached commit, a linked worktree; gives what Python gave', async () => {
+test('repoBranch reads HEAD: a branch, a detached commit, a linked worktree; give what the frozen answers hold', async () => {
   using r = new TempRepo();
   git(r.repo, 'checkout', '-q', '-b', 'feature/x');
   assertEquals(repoBranch(r.p('sub')), 'feature/x');
@@ -105,7 +105,7 @@ test('changes and one file for a known chat', async () => {
   using r = new TempRepo();
   write(r.p('mod.txt'), 'a\nB\nc\nd\n');
   write(r.p('loose.txt'), 'l\n');
-  const s = studio({ c1: r.repo });
+  const s = aib({ c1: r.repo });
   const [data, found] = await files(s, 'c1', { scope: 'uncommitted' });
   assertEquals(Object.keys(found).sort(), ['loose.txt', 'mod.txt']);
   assertEquals(data.scope, 'uncommitted');
@@ -118,14 +118,14 @@ test('a non-git chat', async () => {
   using r = new TempRepo();
   const plain = osp.join(r.root, 'plain');
   Deno.mkdirSync(plain);
-  const [status, body] = await api(studio({ c: plain }), 'c');
+  const [status, body] = await api(aib({ c: plain }), 'c');
   if (body.git !== false) return; // the temp folder sits inside another repository on this machine
   assertEquals([status, body], [200, { git: false }]);
 });
 
 test('unknown chats, tokens, scopes and paths are refused', async () => {
   using r = new TempRepo();
-  const s = studio({ c: r.repo });
+  const s = aib({ c: r.repo });
   assertEquals((await api(s, 'nope'))[0], 404);
   assertEquals((await api(s, 'nope'))[1], { error: 'This chat has no known project folder.', code: 'unknown_folder' });
   await assertRejects(() => api(s, ''), ValueError); // the route answers 400
@@ -154,7 +154,7 @@ class WorktreeChat implements Disposable {
   readonly wt: string;
   readonly base: string;
   readonly registry: Registry;
-  readonly studio: ChatStudio;
+  readonly aib: ChatHost;
 
   constructor() {
     write(this.r.p('tracked.txt'), 'one\n');
@@ -167,7 +167,7 @@ class WorktreeChat implements Disposable {
     git(this.r.repo, 'worktree', 'add', '-q', '-b', 'studio/chat-1', this.wt);
     this.base = git(this.wt, 'rev-parse', 'HEAD').trim();
     this.registry = new Registry(this.state);
-    this.studio = studio({ chat: this.wt, plain: this.r.repo }, { stateDir: this.state });
+    this.aib = aib({ chat: this.wt, plain: this.r.repo }, { stateDir: this.state });
   }
 
   async record(fields: Record<string, unknown> = {}): Promise<void> {
@@ -190,7 +190,7 @@ test('agent commits, edits and untracked files all show, and their diffs open', 
   using w = new WorktreeChat();
   await w.record();
   write(w.r.p('mine.txt'), 'my own work\n'); // uncommitted in the main checkout: not the chat's change
-  let [data, found] = await files(w.studio, 'chat', { scope: 'uncommitted' });
+  let [data, found] = await files(w.aib, 'chat', { scope: 'uncommitted' });
   assertEquals([data.scope, found, (data.totals as Body).files, data.worktree], ['branch', {}, 0, { branch: 'studio/chat-1' }]);
   write(osp.join(w.wt, 'committed.txt'), 'a\nb\n');
   git(w.wt, 'add', 'committed.txt');
@@ -198,18 +198,18 @@ test('agent commits, edits and untracked files all show, and their diffs open', 
   write(osp.join(w.wt, 'tracked.txt'), 'one\nagent edit\n');
   write(osp.join(w.wt, 'fresh.txt'), 'x\ny\nz\n');
   write(osp.join(w.wt, 'ignored.log'), 'nope\n');
-  [data, found] = await files(w.studio, 'chat', { scope: 'uncommitted' });
+  [data, found] = await files(w.aib, 'chat', { scope: 'uncommitted' });
   assertEquals(Object.keys(found).sort(), ['committed.txt', 'fresh.txt', 'tracked.txt']);
   assertEquals([found['committed.txt'].status, found['committed.txt'].added], ['A', 2]);
   assertEquals([found['fresh.txt'].status, found['fresh.txt'].added], ['U', 3]);
   assertEquals([found['tracked.txt'].added, found['tracked.txt'].removed], [1, 0]);
   assertEquals([(data.totals as Body).files, (data.totals as Body).added], [3, 6]);
   for (const name of Object.keys(found)) {
-    const [status, diff] = await api(w.studio, 'chat', '/api/live/changes/file', { path: name, scope: 'uncommitted' });
+    const [status, diff] = await api(w.aib, 'chat', '/api/live/changes/file', { path: name, scope: 'uncommitted' });
     assertEquals(status, 200, name);
     assert((diff.hunks as unknown[]).length, name);
   }
-  const [status, diff] = await api(w.studio, 'chat', '/api/live/changes/file', { path: 'mine.txt' });
+  const [status, diff] = await api(w.aib, 'chat', '/api/live/changes/file', { path: 'mine.txt' });
   assertEquals([status, diff.code], [400, 'not_changed']);
 });
 
@@ -218,12 +218,12 @@ test('a rename and the file cap in the branch view', async () => {
   await w.record();
   git(w.wt, 'mv', 'tracked.txt', 'moved.txt');
   git(w.wt, 'commit', '-q', '-m', 'rename');
-  let [data, found] = await files(w.studio, 'chat');
+  let [data, found] = await files(w.aib, 'chat');
   assertEquals([found['moved.txt'].status, found['moved.txt'].oldPath], ['R', 'tracked.txt']);
-  const [status, diff] = await api(w.studio, 'chat', '/api/live/changes/file', { path: 'moved.txt' });
+  const [status, diff] = await api(w.aib, 'chat', '/api/live/changes/file', { path: 'moved.txt' });
   assertEquals([status, diff.oldPath], [200, 'tracked.txt']);
   for (let i = 0; i < MAX_FILES + 5; i++) write(osp.join(w.wt, `many${String(i).padStart(3, '0')}.txt`), 'x\n');
-  [data, found] = await files(w.studio, 'chat');
+  [data, found] = await files(w.aib, 'chat');
   assertEquals((data.files as unknown[]).length, MAX_FILES);
   assert(data.truncated);
   assertEquals(data.filesTotal, MAX_FILES + 5 + 1);
@@ -238,10 +238,10 @@ test('main moving on does not change the view, and a later diffBase is used', as
   write(w.r.p('elsewhere.txt'), 'e\n');
   git(w.r.repo, 'add', '-A');
   git(w.r.repo, 'commit', '-q', '-m', 'main moves on');
-  let [, found] = await files(w.studio, 'chat');
+  let [, found] = await files(w.aib, 'chat');
   assertEquals(Object.keys(found), ['a.txt'], 'never diffed against the current tip of main');
   await w.registry.update('omp:chat', { diffBase: git(w.wt, 'rev-parse', 'HEAD').trim() });
-  [, found] = await files(w.studio, 'chat');
+  [, found] = await files(w.aib, 'chat');
   assertEquals(found, {});
 });
 
@@ -250,12 +250,12 @@ test('a chat without its own worktree keeps the uncommitted view', async () => {
   await w.record();
   write(w.r.p('tracked.txt'), 'one\ntwo\n');
   write(w.r.p('new.txt'), 'n\n');
-  let [data, found] = await files(w.studio, 'plain', { scope: 'uncommitted' });
+  let [data, found] = await files(w.aib, 'plain', { scope: 'uncommitted' });
   assertEquals([data.scope, Object.keys(found).sort()], ['uncommitted', ['new.txt', 'tracked.txt']]);
   git(w.r.repo, 'commit', '-q', '-am', 'c');
-  [data, found] = await files(w.studio, 'plain');
+  [data, found] = await files(w.aib, 'plain');
   assertEquals(Object.keys(found), ['new.txt'], 'committed work is not shown');
-  assertEquals((await api(w.studio, 'plain', '/api/live/changes/file', { path: 'tracked.txt' }))[1].code, 'not_changed');
-  assertEquals((await api(w.studio, 'plain', '/api/live/changes', { scope: 'branch' }))[1].code, 'bad_scope');
-  assertEquals((await api(w.studio, 'plain', '/api/live/changes', { scope: 'other' }))[1].code, 'bad_scope');
+  assertEquals((await api(w.aib, 'plain', '/api/live/changes/file', { path: 'tracked.txt' }))[1].code, 'not_changed');
+  assertEquals((await api(w.aib, 'plain', '/api/live/changes', { scope: 'branch' }))[1].code, 'bad_scope');
+  assertEquals((await api(w.aib, 'plain', '/api/live/changes', { scope: 'other' }))[1].code, 'bad_scope');
 });

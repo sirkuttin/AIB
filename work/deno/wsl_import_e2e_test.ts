@@ -5,7 +5,7 @@
  *     whose command line names its id), Claude in another tool's worktree of the repo, Codex in the project;
  *   - blockers: a dirty main checkout refuses --apply and writes nothing; the dry run leaves every file as it was;
  *   - apply of one chat (--sessions), then of all: copies, records, moved history; a re-run changes nothing; the saved-chat list
- *     has one row per chat; Studio.connect resumes the imported chats in their copies (agent cwd = the copy), the Changes view shows
+ *     has one row per chat; Aib.connect resumes the imported chats in their copies (agent cwd = the copy), the Changes view shows
  *     the branch, Merge lands; the run through --helper-bin (/mnt) works; the test guard refuses a project outside the test root;
  *   - undo: a chat with work of its own is refused, the others go back exactly (history, no copy, no branch, no record).
  * Everything is inside AIB_WSL_ROOT=/tmp/aib-wsl-test-<random>; the fake agent is work/fake_acp.py.
@@ -57,19 +57,19 @@ async function tool(...args: string[]): Promise<{ code: number; report: Report |
   return { code: out.code, report, err: new TextDecoder().decode(out.stderr) + text.slice(0, 2000) };
 }
 
-function studioIn(state: string): Aib {
-  const studio = new Aib({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
-  studio.ownerProbe = () => null;
-  studio.connectionFactory = (_command, cwd, provider, options) =>
+function aibIn(state: string): Aib {
+  const aib = new Aib({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
+  aib.ownerProbe = () => null;
+  aib.connectionFactory = (_command, cwd, provider, options) =>
     new Connection(['python3', `${ROOT}/fake_acp.py`, '--cancel-aware'], cwd, provider, {
       ...options,
       wsl: options?.wsl ? { ...options.wsl, program: '/usr/bin/python3' } : options?.wsl,
     });
-  return studio;
+  return aib;
 }
 
-async function turn(studio: Aib, c: Connection, text: string): Promise<void> {
-  await studio.liveCall('prompt', { id: c.id, text, clientMessageId: crypto.randomUUID() });
+async function turn(aib: Aib, c: Connection, text: string): Promise<void> {
+  await aib.liveCall('prompt', { id: c.id, text, clientMessageId: crypto.randomUUID() });
   await until(() => !c.busy, `the turn "${text}"`, 60);
 }
 
@@ -98,7 +98,7 @@ Deno.test({
   async fn() {
     const state = STATE;
     await prepareRoot();
-    const studios: Aib[] = [];
+    const aibs: Aib[] = [];
     try {
       await readyHost();
       const repo = `${ROOT}/repo`;
@@ -201,8 +201,8 @@ Deno.test({
       assertEquals(listed.find((s) => s.id === ID.plain)!.projectRoot, ref);
 
       // ---- Continue: AIB finds the copy by the session on its record and the agent works there
-      const a = studioIn(state);
-      studios.push(a);
+      const a = aibIn(state);
+      aibs.push(a);
       const c = await a.connect('claude', ref, ID.plain);
       assert(c.ready && !c.closed, 'continued');
       assertEquals([c.sessionId, c.agentCwd, c.cwd, c.projectRoot, c.worktree?.branch], [
@@ -242,8 +242,8 @@ Deno.test({
           await (await host.link.client(false))?.shutdown(true);
         } catch { /* not running */ }
       }
-      for (const s of studios) await s.close().catch(() => {});
-      studios.length = 0;
+      for (const s of aibs) await s.close().catch(() => {});
+      aibs.length = 0;
       await new Promise((r) => setTimeout(r, 2000));
       const undo = await tool('--project', repo, '--undo', stamp);
       const by = Object.fromEntries(undo.report!.applied.map((r) => [r.id, r]));
@@ -269,7 +269,7 @@ Deno.test({
       assertEquals(await sh('test -f "$1/home/.claude/projects/$2/$3.jsonl" && echo back', ROOT, encoded(repo), ID.first), 'back');
       assertEquals(await sh('git -C "$1" status --porcelain', repo), '', 'the main checkout still clean');
     } finally {
-      for (const s of studios) await s.close().catch(() => {});
+      for (const s of aibs) await s.close().catch(() => {});
       await sh('pkill -f -- "$1" || true', ID.running); // only the test's own sleeper names this id
       await cleanRoot();
     }

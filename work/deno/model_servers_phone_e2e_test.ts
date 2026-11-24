@@ -12,7 +12,7 @@ import { Browser, browserPath } from './_doc_browser.ts';
 import { pairPhone, phoneHeaders } from './_remote_fixture.ts';
 import { phonePage, tap } from './_remote_phone_page.ts';
 import { setAgentRows } from '../../app/server/remote/newchat.ts';
-import { AGENT_ROWS, liveChat, phoneCall, v2Studio } from './_remote_v2b.ts';
+import { AGENT_ROWS, liveChat, phoneCall, v2Aib } from './_remote_v2b.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
 const LABELS: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', maki: 'Maki', qwen: 'Qwen Code' };
@@ -33,7 +33,7 @@ Deno.test({
   ...OPTS,
   name: 'the options list the entries of a server under Model servers; a server that does not answer is not ok, with the reason in the phone’s words',
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     try {
       setAgentRows(() => Promise.resolve(ROWS));
       const phone = await pairPhone(s);
@@ -67,7 +67,7 @@ Deno.test({
   ...OPTS,
   name: 'every agent works the same: Claude Code, Codex, Maki and Qwen Code entries are listed under Model servers, and all grey when the server is down',
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     try {
       setAgentRows(() =>
         Promise.resolve([
@@ -102,7 +102,7 @@ Deno.test({
   name: 'phone page at 375 px: New chat shows a Model servers label, the working entry is pickable and starts a chat, the dead one is greyed with the reason',
   ignore: !browserPath,
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     const browser = await Browser.launch();
     try {
       setAgentRows(() => Promise.resolve(ROWS));

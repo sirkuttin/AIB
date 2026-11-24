@@ -112,30 +112,30 @@ export function queuedLine(base: string, busy: string): string {
  * merge_into_project for a copy chat: as merge.mergeFromTool, but while a chat that works in the project folder is busy the merge is
  * queued ({state: 'queued', message}) instead of refused, and the watcher runs it once that chat and this one are idle.
  */
-export async function mergeFromToolQueued(studio: merge.MergeStudio, chatId: unknown): Promise<merge.MergeResult> {
+export async function mergeFromToolQueued(aib: merge.MergeHost, chatId: unknown): Promise<merge.MergeResult> {
   const id = typeof chatId === 'string' ? chatId : '';
-  const state = id ? obj(await Promise.resolve(studio.liveState(id)).catch(() => null)) : {};
+  const state = id ? obj(await Promise.resolve(aib.liveState(id)).catch(() => null)) : {};
   const lasting = lastingOf(state);
-  const already = id ? queuedFor(studio.stateDir, id, lasting) : null;
+  const already = id ? queuedFor(aib.stateDir, id, lasting) : null;
   if (already) {
     const [, item] = already;
     return { ok: true, state: 'queued', message: queuedLine(item.base, item.waitsFor), target: item.base };
   }
   try {
-    return await merge.mergeFromTool(studio, chatId);
+    return await merge.mergeFromTool(aib, chatId);
   } catch (error) {
     if (!(error instanceof merge.Refused) || error.code !== 'folder_busy') throw error;
-    const record = wt.recordForPath(studio.stateDir, state.cwd);
+    const record = wt.recordForPath(aib.stateDir, state.cwd);
     const key = record?.key;
     if (!key) throw error;
     const base = s(error.extra.target) || 'main';
     const busy = s(error.extra.busy);
     const title = pyStrip(pyStr(state.title || ''));
-    await change(studio.stateDir, (items) => {
+    await change(aib.stateDir, (items) => {
       items.set(key, newEntry(id, lasting, title, base, busy));
     });
     try {
-      await studio.liveCall(merge.NOTE_OP, { id, message: `Merge into ${base} waits for “${busy || 'the chat in the project folder'}” to pause.` });
+      await aib.liveCall(merge.NOTE_OP, { id, message: `Merge into ${base} waits for “${busy || 'the chat in the project folder'}” to pause.` });
     } catch (e) {
       log.exception(e, 'Could not post the queued-merge line');
     }
@@ -172,8 +172,8 @@ export class CopyMergeQueue {
 
   constructor(readonly stateDir: string, readonly host: QueueHost, readonly clock: () => number = () => Date.now()) {}
 
-  #studio(): merge.MergeStudio {
-    return merge.liveMergeStudio(this.stateDir, {
+  #aib(): merge.MergeHost {
+    return merge.liveMergeAib(this.stateDir, {
       liveState: (id, after) => this.host.liveState(id, after),
       liveCall: async (name, body) => await this.host.liveCall(name, body),
     });
@@ -235,7 +235,7 @@ export class CopyMergeQueue {
     let out: merge.MergeResult;
     try {
       await patch(this.stateDir, key, { stage: 'landing' });
-      out = await merge.merge(this.#studio(), live, item.title, false, {
+      out = await merge.merge(this.#aib(), live, item.title, false, {
         journal: (stage, data) =>
           patch(this.stateDir, key, {
             stage: stage as QueuedMerge['stage'],

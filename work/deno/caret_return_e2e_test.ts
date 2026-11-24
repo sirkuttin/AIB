@@ -3,7 +3,7 @@
  * and come back, my cursor loses its focus in the text box"). focus-return.js notes the text box and its selection when the
  * window loses focus and restores both when it gets it back, unless you came back by clicking or typing somewhere else.
  *
- * A real Studio (the scroll lab: temp state folder, free port, never the live ports), one scripted chat, headless Chrome/Edge.
+ * A real AIB (the scroll lab: temp state folder, free port, never the live ports), one scripted chat, headless Chrome/Edge.
  * Headless Chrome has no other app to switch to, so the window's blur and focus are dispatched on the page, and the focus is
  * dropped to the page in between (what the desktop window does on Alt+Tab / the taskbar).
  *

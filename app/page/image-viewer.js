@@ -4,7 +4,7 @@
 (function (root) {
   'use strict';
   const SAFE_SOURCE = /^(blob:|data:image\/(png|jpeg|gif|webp);base64,)/i;
-  /* Pictures from saved transcripts are served by Studio itself: same origin, one fixed path. */
+  /* Pictures from saved transcripts are served by AIB itself: same origin, one fixed path. */
   const isSafe = (src) => {
     if (typeof src !== 'string') return false;
     if (SAFE_SOURCE.test(src)) return true;

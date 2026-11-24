@@ -82,7 +82,7 @@ export function updateTexts(c: Connection): string[] {
   );
 }
 
-/** A Python ValueError from any ported module (msgqueue.ts and core/py.ts each have their own class). */
+/** A ValueError from any ported module (msgqueue.ts and core/py.ts each have their own class). */
 export async function rejectsValue(fn: () => Promise<unknown>): Promise<Error> {
   try {
     await fn();

@@ -333,7 +333,7 @@ export class HostProxy implements LiveBackend {
     return this.call('ownership', { provider, id: sessionId, cwd }, 30);
   }
 
-  async studioOwns(provider: unknown, sessionId: unknown): Promise<boolean> {
+  async aibOwns(provider: unknown, sessionId: unknown): Promise<boolean> {
     const connections = (await this.liveList()).connections;
     return Array.isArray(connections) &&
       connections.some((c) => c && typeof c === 'object' && c.provider === provider && c.sessionId === sessionId && !c.closed);

@@ -1,7 +1,7 @@
 /**
  * Where start-up and request time goes (history-loading phase 0 found ~7 of 10 s of a real restart outside the history path).
  *
- * - PhaseTimer: one chat's take-over phases (studio.ts #adoptFromNow / #rebuildChat), logged as one INFO line per chat:
+ * - PhaseTimer: one chat's take-over phases (aib.ts #adoptFromNow / #rebuildChat), logged as one INFO line per chat:
  *     keeper: take-over timing claude abc in C:\p: note 12 ms, attach/read 30 ms, replay 4 ms, rebuild 2 ms, lease 1 ms, ... total 60 ms
  * - slowRequestLine / SLOW_REQUEST_MS: any HTTP request whose handler takes 1 s or more (http_serve.ts), path only (a query can
  *   carry a token).

@@ -2,7 +2,7 @@
  * Rail preferences per project (state_store.ProjectPrefs): display name, colour, hidden / muted / useWorkspace flags and the
  * order of the rail.
  *
- * One small JSON file shared by every browser and every Studio on the state folder. Projects are identified by the page's own
+ * One small JSON file shared by every browser and every AIB on the state folder. Projects are identified by the page's own
  * project key (a normalised folder path). A display name never renames a folder. Only projects that carry a preference are
  * stored, and every string is validated and size limited.
  */

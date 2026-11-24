@@ -1131,7 +1131,7 @@ export interface RequestLike {
 
 /**
  * True when the request carries a valid X-Studio-Artifact-Key for exactly this conversation. The publish and list routes accept
- * either the Studio page token or this returning true. Keys come from keys.ts (an HMAC of the conversation id, shared by the web
+ * either AIB page token or this returning true. Keys come from keys.ts (an HMAC of the conversation id, shared by the web
  * server and the agent host through the state folder).
  */
 export function authorizeToolKey(handler: RequestLike, conversationId: string): boolean {

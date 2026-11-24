@@ -2,7 +2,7 @@
  * AIB-managed agent installs in a distro, the Windows side (phase 2; docs/wsl/design.md section 11, decision 5). The job itself runs in
  * the distro's helper (helper/agent_install.ts: agents/installer.ts natively, into ~/.aib-server/agents/<id>/<version>), where it
  * outlives AIB and the web server just as a Windows install job outlives the web server in the agent host. This module gives the
- * helper what may be installed (AIB's agent_versions.json entry and the reviewed lockfile text, the same ones the Windows installer
+ * helper what may be installed (AIB's agents/versions.json entry and the reviewed lockfile text, the same ones the Windows installer
  * uses), adds what the agent panel shows (the pinned version, whether an update is due, why an install cannot run yet and the command
  * that fixes it), and turns helper errors into the routes' replies. AIB never installs Node.js or any other system package.
  */
@@ -38,7 +38,7 @@ export function nodeBlockLine(code: string, agent: string, distro: string, nodeV
   return `${name} cannot be installed in ${distro} yet.`;
 }
 
-/** Tests: where the allow-list and the lockfiles are read from (default: agent_versions.json and agent_locks/ in APP_ROOT). */
+/** Tests: where the allow-list and the lockfiles are read from (default: agents/versions.json and agents/locks/ in APP_ROOT). */
 export const installSource: { allowList: () => Record<string, unknown>; readLock: (relative: string) => string } = {
   allowList: () => loadAllowList(ALLOW_LIST),
   readLock: (relative) => Deno.readTextFileSync(pathOf(APP_ROOT, relative)),

@@ -1,9 +1,9 @@
 /**
  * Contract (ported from work/contract/test_contract_artifacts.py): the artifact routes (/api/live/artifacts*) and the artifact origin
- * of the real server, over HTTP. The Python version compared each answer with the reference over a store the Python module had filled;
+ * of the real server, over HTTP. The old version compared each answer with the reference over a store the old module had filled;
  * here artifacts are made through the publish route and every status and payload is asserted. The sealed key file is covered by
  * artifact_keys_test.ts and secret_files_test.ts (AIB_SEAL=off here: the test issues an agent key from the plain secret file).
- * The Python test "watcher versions a changed source file" is covered by artifacts_test.ts: 'watcher: an existing artifact source is tracked,
+ * The old test "watcher versions a changed source file" is covered by artifacts_test.ts: 'watcher: an existing artifact source is tracked,
  * with the missing flag' and 'watcher: an agent-written file becomes an artifact after settling, and changes add versions' (the watcher follows
  * agent writes and tracked sources of chats; this server runs no chat).
  */
@@ -117,7 +117,7 @@ Deno.test('contract: artifact routes and the artifact origin', async (t) => {
     assertEquals((await s.agent('GET', `/api/live/artifacts/item?id=${page}`, key)).json, refuse);
   });
 
-  await t.step('the artifact origin serves the files, on the Studio port + 1, and is not a Studio address', async () => {
+  await t.step('the artifact origin serves the files, on AIB port + 1, and is not an AIB address', async () => {
     const boot = (await s.bootstrap()).json;
     const originPort = Number(boot.artifactOrigin.split(':').pop());
     assertEquals(originPort, s.port + 1);
@@ -140,7 +140,7 @@ Deno.test('contract: artifact routes and the artifact origin', async (t) => {
     for (const path of [`/a/${page}/v9/page.html`, `/a/${page}/v1/other.html`, '/a/zz/v1/x.html', '/', '/a/..%2F/x']) {
       assertEquals((await get(path)).status, 404, path);
     }
-    assertEquals((await get(`/a/${page}/v1/page.html`, `127.0.0.1:${s.port}`)).status, 403); // the Studio's own Host is refused here
+    assertEquals((await get(`/a/${page}/v1/page.html`, `127.0.0.1:${s.port}`)).status, 403); // AIB's own Host is refused here
     const asHost = await s.request('GET', '/api/live/list', s.pageHeaders(true, { Host: boot.artifactOrigin.slice('http://'.length) }));
     assertEquals([asHost.status, asHost.json], [403, { error: 'Not an AIB address' }]);
     const asOrigin = await s.request('GET', '/api/live/list', s.pageHeaders(true, { Origin: boot.artifactOrigin }));

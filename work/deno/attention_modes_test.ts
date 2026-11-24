@@ -1,8 +1,8 @@
 /**
  * The AttentionWatcher through the real agent hosts, in all three modes, with the same fake agent (work/fake_acp.py --held-turn)
  * and the same steps; every mode must give the same announcements:
- *   in-process  a Studio in this process, agents as its children;
- *   keeper      a Studio whose agents run in the real keeper (built from keeper/ with Go); AIB "crashes" (its keeper link drops)
+ *   in-process  an AIB in this process, agents as its children;
+ *   keeper      an AIB whose agents run in the real keeper (built from keeper/ with Go); AIB "crashes" (its keeper link drops)
  *               and a new Aib takes the chats over;
  *   split       the separate agent host process (main.ts host) behind a HostProxy, as an older version's host is used.
  * Steps: a question -> one "needs you" (looked at many times); a restart of the watcher -> nothing again; the answer -> one
@@ -254,28 +254,28 @@ async function scenario(mode: Mode): Promise<string[]> {
   }
 }
 
-function studioMode(name: string, withKeeper: boolean): Mode & { studios: Aib[]; dir: string; state: string } {
+function aibMode(name: string, withKeeper: boolean): Mode & { aibs: Aib[]; dir: string; state: string } {
   const dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: `aib-attn-${name}-` }));
   const state = dir + SEP + 'state';
   const work = dir + SEP + 'work';
   Deno.mkdirSync(work, { recursive: true });
-  const studios: Aib[] = [];
+  const aibs: Aib[] = [];
   const make = () => {
     const keeper = withKeeper
       ? new KeeperLink({ dataDir: state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '60s'] })
       : undefined;
-    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: state, port: 0, ownersDir: null }, keeper ? { keeper } : {});
-    studio.ownerProbe = () => null;
-    studio.connectionFactory = (_command, cwd, provider, options) => new Connection(fake('--held-turn'), cwd, provider, options);
-    studios.push(studio);
-    return studio;
+    const aib = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: state, port: 0, ownersDir: null }, keeper ? { keeper } : {});
+    aib.ownerProbe = () => null;
+    aib.connectionFactory = (_command, cwd, provider, options) => new Connection(fake('--held-turn'), cwd, provider, options);
+    aibs.push(aib);
+    return aib;
   };
   const mode = {
     name,
     dir,
     state,
     work,
-    studios,
+    aibs,
     host: make() as LiveBackend,
     async connect(cwd = work) {
       const c = await (mode.host as unknown as Aib).connect('claude', cwd);
@@ -288,7 +288,7 @@ function studioMode(name: string, withKeeper: boolean): Mode & { studios: Aib[];
         a.keeper!.disconnect();
         for (const c of a.connections.values()) c.sessionLease?.release();
         a.reconnectStop.set();
-        studios.splice(studios.indexOf(a), 1);
+        aibs.splice(aibs.indexOf(a), 1);
         await meanwhile();
         const b = make();
         assert((await b.adoptKeeper()) >= 1, 'the new AIB takes the chats over');
@@ -297,7 +297,7 @@ function studioMode(name: string, withKeeper: boolean): Mode & { studios: Aib[];
       }
       : undefined,
     async close() {
-      for (const s of studios.reverse()) await s.close().catch(() => {});
+      for (const s of aibs.reverse()) await s.close().catch(() => {});
       if (withKeeper) {
         const info = readKeeperInfo(state);
         if (info && pidAlive(info.pid)) {
@@ -328,7 +328,7 @@ Deno.test({
   name: 'attention watcher, in-process: the same announcements as every mode',
   ...T,
   async fn() {
-    const mode = studioMode('inproc', false);
+    const mode = aibMode('inproc', false);
     try {
       await scenario(mode);
     } finally {
@@ -342,7 +342,7 @@ Deno.test({
   ...T,
   async fn() {
     await keeperBinary();
-    const mode = studioMode('keeper', true);
+    const mode = aibMode('keeper', true);
     try {
       assertEquals(await scenario(mode), ['restarted around the question']);
     } finally {

@@ -29,17 +29,17 @@ notifications through the web API, updates as "open the installer" instructions)
   ("AIB is already running for this data folder ... Quit it first, or use --state-dir for a separate copy.") and exits with code 2;
   a second `serve` prints that line and exits with code 2. Another `--state-dir` is another lock (`single_instance.ts`).
 - **Window and tray:** quitting never stops a chat (the owner's decisions, 2026-11-10 and 2026-11-11). Closing the window or the
-  tray's "Quit AIB" quits at once when nothing works. When something works (a chat in `Studio.workingList`: a turn, an agent opening,
+  tray's "Quit AIB" quits at once when nothing works. When something works (a chat in `Aib.workingList`: a turn, an agent opening,
   a question waiting, queued messages, background helpers, a Claude background shell (`'background'`), an install or sign-in job; or a terminal command; or a merge running in
   AIB) there is no question, and AIB exits the way Install now does, minus starting a new version (`DesktopApp.decide` 'leave'): the
   window goes, a running merge is let finish (up to 2 min), then main.ts `close(…, release, hold)` tells the keeper `hold` (keeper
   1.3.0: no orphan restart and no "orphaned" stop until a client claims or spawns a channel), leaves terminal shells and chats in it
-  (`Studio.release({ hold })`) and writes `{"closed": true}` to the forwarder's address file, so an agent's artifact/docs tool
+  (`Aib.release({ hold })`) and writes `{"closed": true}` to the forwarder's address file, so an agent's artifact/docs tool
   answers at once "AIB is closed; try again later" (a tool result with `isError`). Queued messages, questions and merges wait for
   the next AIB: whichever AIB.exe is started next on that data folder (the same build or a newer one unzipped elsewhere) takes the
-  chats over from the keeper's record (`Studio.adoptKeeper`, the update's code) when the running keeper has what it needs
+  chats over from the keeper's record (`Aib.adoptKeeper`, the update's code) when the running keeper has what it needs
   (`KEEPER_NEEDS`, the same list as release.json's `keeper.needs`); otherwise the page's banner says the chats keep running in the
-  keeper and nothing is stopped. Leaving needs `canLeave` (`Studio.quitHandover`: every working chat runs in the keeper, which
+  keeper and nothing is stopped. Leaving needs `canLeave` (`Aib.quitHandover`: every working chat runs in the keeper, which
   offers `hold`; no busy terminal outside it). When it cannot, AIB stays in the tray "in the background" as before and quits by
   itself once nothing has worked for 10 s; Open AIB, a click on the icon or a second launch brings the window back. The tray icon
   (`tray_icon.ts`, embedded PNGs; see Icons below) has one menu, window or not: "Open AIB", a greyed status line ("2 chats
@@ -200,7 +200,7 @@ deno task build                                  # every target, into dist/ at t
 deno run -A ../../tools/build.ts --targets windows-x64,macos-arm64 --out dist/
 ```
 
-`tools/build.ts` stages a clean copy of the app (`server/`, `agent_locks/`, the page files and `agent_versions.json`) with its own
+`tools/build.ts` stages a clean copy of the app (`server/`, `agents/`, the page files and `agents/versions.json`) with its own
 `deno.json`, builds each target and writes:
 
 | Asset | What it is |

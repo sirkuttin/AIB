@@ -500,8 +500,8 @@ export async function buildWslBinaries(t: Target, outDir: string): Promise<{ kee
  * manifest names (icons/, served on the phone port only).
  */
 export function stagedName(name: string, isDir: boolean): boolean {
-  if (isDir) return ['server', 'page', 'agent_locks', 'vendor', 'pwa', 'icons'].includes(name);
-  return name === 'agent_versions.json';
+  if (isDir) return ['server', 'page', 'agents', 'vendor', 'pwa', 'icons'].includes(name);
+  return false;
 }
 
 /** Files that live in the source tree for development and tests only; no build ships them (paths relative to the app folder). */

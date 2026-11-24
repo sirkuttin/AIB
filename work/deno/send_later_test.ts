@@ -247,29 +247,29 @@ Deno.test('send later: a missed time with a message already waiting in the pause
   lab.release(g);
 });
 
-Deno.test('send later: Studio routes schedule, schedule-edit, schedule-send-now and schedule-cancel', async () => {
+Deno.test('send later: AIB routes schedule, schedule-edit, schedule-send-now and schedule-cancel', async () => {
   assert(['schedule', 'schedule-edit', 'schedule-cancel', 'schedule-send-now'].every((op) => LIVE_POST_OPS.has(op)));
   const dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-later-studio-' }));
   const state = dir + (Deno.build.os === 'windows' ? '\\' : '/') + 'state';
-  const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: state, port: 0, ownersDir: null, noArtifactTool: true });
-  studio.ownerProbe = () => null;
-  studio.connectionFactory = (_command, cwd, provider) => new Connection(fake(), cwd, provider);
+  const aib = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: state, port: 0, ownersDir: null, noArtifactTool: true });
+  aib.ownerProbe = () => null;
+  aib.connectionFactory = (_command, cwd, provider) => new Connection(fake(), cwd, provider);
   try {
-    const c = await studio.connect('claude', dir);
+    const c = await aib.connect('claude', dir);
     const at = Date.now() + 3_600_000;
-    const [status, body] = await studio.liveCall('schedule', { id: c.id, text: 'via route', clientMessageId: 'r1', at });
+    const [status, body] = await aib.liveCall('schedule', { id: c.id, text: 'via route', clientMessageId: 'r1', at });
     assertEquals([status, (body as Json).ok], [200, true]);
     assertEquals(scheduled(c).map((i) => [i.id, i.at]), [['r1', at]]);
-    assertEquals((await studio.liveCall('schedule-edit', { id: c.id, messageId: 'r1', text: 'mcp', at: at + MIN }))[0], 200);
+    assertEquals((await aib.liveCall('schedule-edit', { id: c.id, messageId: 'r1', text: 'mcp', at: at + MIN }))[0], 200);
     assertEquals(scheduled(c).map((i) => [i.text, i.at]), [['mcp', at + MIN]]);
-    assertEquals((await studio.liveCall('schedule', { id: c.id, text: 'cancel me', clientMessageId: 'r2', at }))[0], 200);
-    assertEquals((await studio.liveCall('schedule-cancel', { id: c.id, messageId: 'r2' }))[0], 200);
+    assertEquals((await aib.liveCall('schedule', { id: c.id, text: 'cancel me', clientMessageId: 'r2', at }))[0], 200);
+    assertEquals((await aib.liveCall('schedule-cancel', { id: c.id, messageId: 'r2' }))[0], 200);
     assertEquals(scheduled(c).map((i) => i.id), ['r1']);
-    assertEquals((await studio.liveCall('schedule-send-now', { id: c.id, messageId: 'r1' }))[0], 200);
+    assertEquals((await aib.liveCall('schedule-send-now', { id: c.id, messageId: 'r1' }))[0], 200);
     await until(() => texts(c).join() === 'mcp', 'sent now', LONG);
     assertEquals(scheduled(c), []);
   } finally {
-    await studio.close().catch(() => {});
+    await aib.close().catch(() => {});
     for (let i = 0; i < 20; i++) {
       try {
         Deno.removeSync(dir, { recursive: true });
@@ -307,11 +307,11 @@ const SEP = Deno.build.os === 'windows' ? '\\' : '/';
 function tempDir(): string {
   return Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-later-scan-' }));
 }
-function studioAt(dir: string, factory?: () => Connection): Aib {
-  const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: dir + SEP + 'state', port: 0, ownersDir: null, noArtifactTool: true });
-  studio.ownerProbe = () => null;
-  studio.connectionFactory = factory ? () => factory() : (_command, cwd, provider) => new Connection(fake(), cwd, provider);
-  return studio;
+function aibAt(dir: string, factory?: () => Connection): Aib {
+  const aib = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: dir + SEP + 'state', port: 0, ownersDir: null, noArtifactTool: true });
+  aib.ownerProbe = () => null;
+  aib.connectionFactory = factory ? () => factory() : (_command, cwd, provider) => new Connection(fake(), cwd, provider);
+  return aib;
 }
 async function cleanup(dir: string): Promise<void> {
   for (let i = 0; i < 20; i++) {
@@ -325,7 +325,7 @@ async function cleanup(dir: string): Promise<void> {
 }
 /** A previous AIB run: one chat with a message scheduled `inMs` from now; it ends with the chat closed (saved, not open). */
 async function previousRunWithSchedule(dir: string, inMs: number): Promise<string> {
-  const first = studioAt(dir);
+  const first = aibAt(dir);
   const c = await first.connect('claude', dir);
   await c.scheduleAdd('mcp', Date.now() + inMs, 's1');
   const path = first.recovery!.queues!.path;
@@ -344,7 +344,7 @@ Deno.test('send later: a time missed while AIB was off goes at the next start ev
   try {
     const path = await previousRunWithSchedule(dir, 5 * MIN);
     moveScheduleBack(path, 3 * 60 * MIN);
-    const second = studioAt(dir);
+    const second = aibAt(dir);
     assertEquals(opened(second), [], 'nothing is open');
     second.startScheduleScan();
     await until(() => opened(second).some((c) => texts(c).join() === 'mcp'), 'sent without anyone opening the chat', LONG);
@@ -363,7 +363,7 @@ Deno.test('send later: a future schedule in an unopened chat fires at its time, 
   const dir = tempDir();
   try {
     await previousRunWithSchedule(dir, 2500);
-    const second = studioAt(dir);
+    const second = aibAt(dir);
     second.startScheduleScan();
     await pause(500);
     assertEquals(opened(second), [], 'not opened before its time');
@@ -381,7 +381,7 @@ Deno.test('send later: a chat that cannot be reopened keeps the scheduled card w
   try {
     const path = await previousRunWithSchedule(dir, 5 * MIN);
     moveScheduleBack(path, 3 * 60 * MIN);
-    const second = studioAt(dir, () => {
+    const second = aibAt(dir, () => {
       throw new Error('the agent is not installed');
     });
     await second.scheduleScan();
@@ -390,7 +390,7 @@ Deno.test('send later: a chat that cannot be reopened keeps the scheduled card w
     assertEquals(saved.length, 1, 'the message is not lost');
     assert(String(saved[0].error).includes('could not reopen'), String(saved[0].error));
     // later the agent is back: opening the chat sends it
-    const third = studioAt(dir);
+    const third = aibAt(dir);
     const c = await third.connect('claude', dir, 'fake-session');
     await until(() => texts(c).join() === 'mcp', 'sent once the chat opens', LONG);
     await third.close();

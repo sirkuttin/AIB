@@ -66,7 +66,7 @@ class Lab {
   readonly state = this.dir + SEP + 'state';
   readonly launcher = this.dir + SEP + 'claude-launcher.js';
   readonly codexLauncher = this.dir + SEP + 'codex-launcher.js';
-  readonly studios: Aib[] = [];
+  readonly aibs: Aib[] = [];
   readonly servers: Deno.HttpServer[] = [];
   constructor() {
     Deno.writeTextFileSync(this.launcher, '');
@@ -107,22 +107,22 @@ class Lab {
     return `http://127.0.0.1:${port}`;
   }
 
-  studio(flags: string[] = []): Aib {
-    const studio = new Aib(
+  aib(flags: string[] = []): Aib {
+    const aib = new Aib(
       { stateDir: this.state, port: 0, ownersDir: null, noArtifactTool: true, claudeLauncher: this.launcher, codexLauncher: this.codexLauncher, nodeCommand: Deno.execPath() },
       { keeper: null },
     );
-    studio.ownerProbe = () => null;
-    studio.connectionFactory = (_command, cwd, provider, options) => {
+    aib.ownerProbe = () => null;
+    aib.connectionFactory = (_command, cwd, provider, options) => {
       launched.push({ provider, env: options?.env ?? null });
       return new Connection(fake(...flags), cwd, provider);
     };
-    this.studios.push(studio);
-    return studio;
+    this.aibs.push(aib);
+    return aib;
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
-    for (const s of this.studios.reverse()) await s.close().catch(() => {});
+    for (const s of this.aibs.reverse()) await s.close().catch(() => {});
     for (const s of this.servers) await s.shutdown().catch(() => {});
     for (let i = 0; i < 20; i++) {
       try {
@@ -152,7 +152,7 @@ Deno.test('the family is Claude where AIB keys behaviour on it: the allow matche
   const b = match(params, { ...base, provider: 'claude@strata' }, [], {} as never);
   assertEquals(JSON.stringify(b), JSON.stringify(a));
   // ownership: the same session is one claim whichever Claude entry opened it
-  const probe = new OwnershipProbe({ registry: null, ownedByStudio: () => false, inspectProcesses: false, lockProbe: () => [] });
+  const probe = new OwnershipProbe({ registry: null, ownedByAib: () => false, inspectProcesses: false, lockProbe: () => [] });
   probe.noteReleased('claude@strata', 's1');
   assert(probe.releasedAt('claude', 's1') !== null, 'a release by a model-server chat is the Claude session released');
   // subagent tracking: the same hooks, stream settling and turn cancel as claude
@@ -293,49 +293,49 @@ Deno.test('the agent row, New chat on the PC and New chat on the phone list "Cla
 Deno.test('the launch env: the same adapter as claude, with the server address, key (or a dummy) and model', async () => {
   await using lab = new Lab();
   const up = lab.serve(['fake-model-a', 'fake-model-b']);
-  const studio = lab.studio();
-  await studio.settings.update({ agents: { modelServer: { upsert: { name: 'strata', url: up.url, model: 'fake-model-b', key: KEY } } } });
-  await studio.settings.update({ agents: { modelServer: { upsert: { name: 'plain', url: up.url } } } });
-  const [claudeArgv] = await studio.agentLaunch('claude');
-  const [argv, env] = await studio.agentLaunch('claude@strata');
+  const aib = lab.aib();
+  await aib.settings.update({ agents: { modelServer: { upsert: { name: 'strata', url: up.url, model: 'fake-model-b', key: KEY } } } });
+  await aib.settings.update({ agents: { modelServer: { upsert: { name: 'plain', url: up.url } } } });
+  const [claudeArgv] = await aib.agentLaunch('claude');
+  const [argv, env] = await aib.agentLaunch('claude@strata');
   assertEquals(argv, claudeArgv, 'the same adapter command');
   assertEquals(env.ANTHROPIC_BASE_URL, up.url);
   assertEquals([env.ANTHROPIC_AUTH_TOKEN, env.ANTHROPIC_API_KEY], [KEY, KEY]);
   assertEquals([env.ANTHROPIC_MODEL, env.ANTHROPIC_SMALL_FAST_MODEL, env.ANTHROPIC_DEFAULT_HAIKU_MODEL], ['fake-model-b', 'fake-model-b', 'fake-model-b']);
   assert(!('CLAUDE_CONFIG_DIR' in env), 'nothing else is set differently');
   // what claude itself gets is not changed, and a server with no key gets a dummy
-  assert(!('ANTHROPIC_BASE_URL' in (await studio.agentLaunch('claude'))[1]));
-  const [, plainEnv] = await studio.agentLaunch('claude@plain');
+  assert(!('ANTHROPIC_BASE_URL' in (await aib.agentLaunch('claude'))[1]));
+  const [, plainEnv] = await aib.agentLaunch('claude@plain');
   assertEquals([plainEnv.ANTHROPIC_AUTH_TOKEN, plainEnv.ANTHROPIC_API_KEY, 'ANTHROPIC_MODEL' in plainEnv], [DUMMY_KEY, DUMMY_KEY, false]);
   assertEquals(modelServerEnv({ id: 'x', name: 'x', url: 'http://h', model: '', useWith: ['claude'] }, ''), { ANTHROPIC_BASE_URL: 'http://h', ANTHROPIC_AUTH_TOKEN: DUMMY_KEY, ANTHROPIC_API_KEY: DUMMY_KEY });
   // a removed server is a plain error, not a launch
-  await studio.settings.update({ agents: { modelServer: { remove: 'plain' } } });
-  await assertRejects(() => studio.agentLaunch('claude@plain'));
+  await aib.settings.update({ agents: { modelServer: { remove: 'plain' } } });
+  await assertRejects(() => aib.agentLaunch('claude@plain'));
 });
 
 Deno.test('a chat on an unreachable model server says so with the address; nothing hangs, no agent is started', async () => {
   await using lab = new Lab();
   const dead = lab.deadAddress();
-  const studio = lab.studio();
-  await studio.settings.update({ agents: { modelServer: { upsert: { name: 'down', url: dead } } } });
+  const aib = lab.aib();
+  await aib.settings.update({ agents: { modelServer: { upsert: { name: 'down', url: dead } } } });
   launched.length = 0;
   const started = Date.now();
-  const error = await assertRejects(() => studio.connect('claude@down', lab.dir));
+  const error = await assertRejects(() => aib.connect('claude@down', lab.dir));
   assert(error.message.includes(dead) && error.message.startsWith('Cannot reach the model server'), error.message);
   assert(Date.now() - started < 8000, 'answered quickly');
   assertEquals(launched.length, 0, 'the adapter was never started');
   // the new chat's model lists (the quiet probe) say the same
-  const probe = await studio.agentOptionsFor({ agent: 'claude@down', cwd: lab.dir, probe: true });
+  const probe = await aib.agentOptionsFor({ agent: 'claude@down', cwd: lab.dir, probe: true });
   assert(String(probe.probeError ?? '').includes(dead), JSON.stringify(probe));
 });
 
 Deno.test('a chat of a model server is a Claude chat: its env, its Claude wiring, and the server\'s models in the picker', async () => {
   await using lab = new Lab();
   const up = lab.serve(['srv-one', 'srv-two']);
-  const studio = lab.studio(['--breadth']);
-  await studio.settings.update({ agents: { modelServer: { upsert: { name: 'strata', url: up.url, model: 'srv-two', key: KEY } } } });
+  const aib = lab.aib(['--breadth']);
+  await aib.settings.update({ agents: { modelServer: { upsert: { name: 'strata', url: up.url, model: 'srv-two', key: KEY } } } });
   launched.length = 0;
-  const chat = await studio.connect('claude@strata', lab.dir);
+  const chat = await aib.connect('claude@strata', lab.dir);
   assertEquals(launched.length, 1);
   assertEquals(launched[0].provider, 'claude@strata');
   assertEquals([launched[0].env!.ANTHROPIC_BASE_URL, launched[0].env!.ANTHROPIC_MODEL, launched[0].env!.ANTHROPIC_API_KEY], [up.url, 'srv-two', KEY]);
@@ -368,12 +368,12 @@ Deno.test({
     });
     setWslHostResolver((d) => (d === 'ubuntu' ? host : null));
     setDistroSource(() => Promise.resolve([{ name: 'Ubuntu', version: 2, isDefault: true }]));
-    const studio = lab.studio();
-    await studio.settings.update({ agents: { modelServer: { upsert: { name: 'strata', url: up.url, model: 'srv-two', key: KEY } } } });
+    const aib = lab.aib();
+    await aib.settings.update({ agents: { modelServer: { upsert: { name: 'strata', url: up.url, model: 'srv-two', key: KEY } } } });
     const wsl = { distro: 'ubuntu', linuxPath: '/home/u/app' };
-    const launch = await studio.wslLaunch('claude@strata', wsl, true);
+    const launch = await aib.wslLaunch('claude@strata', wsl, true);
     assertEquals(launch.command, ['/usr/bin/claude-agent-acp'], 'the distro\u2019s own Claude adapter');
-    for (const [name, value] of Object.entries(modelServerEnv(studio.settings.modelServer('strata')!, KEY))) assertEquals(launch.extra[name], value, name);
+    for (const [name, value] of Object.entries(modelServerEnv(aib.settings.modelServer('strata')!, KEY))) assertEquals(launch.extra[name], value, name);
     assertEquals(host.calls.find(([m]) => m === 'agents.detect')![1], { ids: ['claude'] }, 'detects claude, not a made-up agent');
     // the plain note for an address that points at this PC
     assert(isLoopbackAddress('http://127.0.0.1:8080') && isLoopbackAddress('http://localhost:1') && !isLoopbackAddress('http://192.168.1.5:8080'));
@@ -422,7 +422,7 @@ Deno.test('parity: the allow matcher, ownership and the subagent service treat c
     const b = match(params, { ...base, mode, provider: 'codex@strata' }, [], {} as never);
     assertEquals(JSON.stringify(b), JSON.stringify(a), mode);
   }
-  const probe = new OwnershipProbe({ registry: null, ownedByStudio: () => false, inspectProcesses: false, lockProbe: () => [] });
+  const probe = new OwnershipProbe({ registry: null, ownedByAib: () => false, inspectProcesses: false, lockProbe: () => [] });
   probe.noteReleased('codex@strata', 's9');
   assert(probe.releasedAt('codex', 's9') !== null, 'a release by a codex@ chat is the Codex session released');
 });
@@ -431,11 +431,11 @@ Deno.test('the Codex entry launches with its OWN CODEX_HOME and a generated conf
   await using lab = new Lab();
   const both = lab.serveKinds(['responses', 'chat'], ['gpt-local', 'other']);
   const chatOnly = lab.serveKinds(['chat']);
-  const studio = lab.studio();
-  await studio.settings.update({ agents: { modelServer: { upsert: { name: 'strata', url: both.url + '/', model: 'gpt-local', key: KEY, useWith: ['codex'] } } } });
-  await studio.settings.update({ agents: { modelServer: { upsert: { name: 'plain chat', url: chatOnly.url, useWith: ['codex'] } } } });
-  const [normalArgv, normalEnv] = await studio.agentLaunch('codex');
-  const [argv, env] = await studio.agentLaunch('codex@strata');
+  const aib = lab.aib();
+  await aib.settings.update({ agents: { modelServer: { upsert: { name: 'strata', url: both.url + '/', model: 'gpt-local', key: KEY, useWith: ['codex'] } } } });
+  await aib.settings.update({ agents: { modelServer: { upsert: { name: 'plain chat', url: chatOnly.url, useWith: ['codex'] } } } });
+  const [normalArgv, normalEnv] = await aib.agentLaunch('codex');
+  const [argv, env] = await aib.agentLaunch('codex@strata');
   assertEquals(argv, normalArgv, 'the same Codex adapter command as normal Codex');
   assert(!('CODEX_HOME' in normalEnv) && !(CODEX_KEY_ENV in normalEnv), 'normal Codex is not changed');
   const home = lab.state + SEP + 'codex-home' + SEP + 'strata';
@@ -457,7 +457,7 @@ Deno.test('the Codex entry launches with its OWN CODEX_HOME and a generated conf
   assert(!toml.includes(KEY), 'the key is never written to the file');
   assert(!home.includes(SEP + '.codex'), 'never the owner\u2019s ~/.codex');
   // a server that speaks only Chat Completions: wire_api = "chat"; no key: a dummy
-  const [, chatEnv] = await studio.agentLaunch('codex@plain-chat');
+  const [, chatEnv] = await aib.agentLaunch('codex@plain-chat');
   assertEquals(chatEnv[CODEX_KEY_ENV], DUMMY_KEY);
   const chatToml = Deno.readTextFileSync(lab.state + SEP + 'codex-home' + SEP + 'plain-chat' + SEP + 'config.toml');
   assert(chatToml.includes('wire_api = "chat"') && !chatToml.includes('model = '), chatToml);
@@ -467,18 +467,18 @@ Deno.test('the Codex entry launches with its OWN CODEX_HOME and a generated conf
   assert(text.includes('model_provider = "aib-ollama"') && text.includes('[model_providers.aib-ollama]') && text.includes('base_url = "http://h:1/v1"'), text);
   // the unreachable server: a plain error naming the address, nothing written, no adapter started
   const dead = lab.deadAddress();
-  await studio.settings.update({ agents: { modelServer: { upsert: { name: 'down', url: dead, useWith: ['codex'] } } } });
-  const error = await assertRejects(() => studio.agentLaunch('codex@down'));
+  await aib.settings.update({ agents: { modelServer: { upsert: { name: 'down', url: dead, useWith: ['codex'] } } } });
+  const error = await assertRejects(() => aib.agentLaunch('codex@down'));
   assert(error.message.includes(dead), error.message);
 });
 
 Deno.test('a Codex entry chat starts the Codex adapter with CODEX_HOME and the key, and is wired like a Codex chat', async () => {
   await using lab = new Lab();
   const up = lab.serveKinds(['responses'], ['srv-one', 'srv-two']);
-  const studio = lab.studio(['--breadth']);
-  await studio.settings.update({ agents: { modelServer: { upsert: { name: 'strata', url: up.url, model: 'srv-two', key: KEY, useWith: ['codex'] } } } });
+  const aib = lab.aib(['--breadth']);
+  await aib.settings.update({ agents: { modelServer: { upsert: { name: 'strata', url: up.url, model: 'srv-two', key: KEY, useWith: ['codex'] } } } });
   launched.length = 0;
-  const chat = await studio.connect('codex@strata', lab.dir);
+  const chat = await aib.connect('codex@strata', lab.dir);
   assertEquals(launched.length, 1);
   assertEquals(launched[0].provider, 'codex@strata');
   assertEquals([launched[0].env!.CODEX_HOME, launched[0].env![CODEX_KEY_ENV]], [lab.state + SEP + 'codex-home' + SEP + 'strata', KEY]);
@@ -497,18 +497,18 @@ Deno.test('Maki and Qwen Code entries start their normal adapter with the server
   Deno.env.set('PATH', bin + (WIN ? ';' : ':') + before);
   try {
     const up = lab.serve(['m-a', 'm-b']);
-    const studio = lab.studio();
-    await studio.settings.update({ agents: { modelServer: { upsert: { name: 'strata', url: up.url, model: 'm-b', key: KEY, useWith: ['maki', 'qwen'] } } } });
+    const aib = lab.aib();
+    await aib.settings.update({ agents: { modelServer: { upsert: { name: 'strata', url: up.url, model: 'm-b', key: KEY, useWith: ['maki', 'qwen'] } } } });
     launched.length = 0;
-    await studio.connect('qwen@strata', lab.dir);
-    await studio.connect('maki@strata', lab.dir);
+    await aib.connect('qwen@strata', lab.dir);
+    await aib.connect('maki@strata', lab.dir);
     assertEquals(launched.map((l) => l.provider), ['qwen@strata', 'maki@strata']);
     assertEquals(launched[0].env, { OPENAI_BASE_URL: up.url, OPENAI_API_KEY: KEY, OPENAI_MODEL: 'm-b' });
     assertEquals(launched[1].env, { ANTHROPIC_BASE_URL: up.url, ANTHROPIC_API_KEY: KEY });
-    const [qwenArgv] = await studio.agentLaunch('qwen@strata');
+    const [qwenArgv] = await aib.agentLaunch('qwen@strata');
     assertEquals(qwenArgv.slice(-2), ['--auth-type', 'openai'], 'Qwen Code is told to use OpenAI auth (a stale selectedType in its settings cannot win)');
-    assert(!(await studio.agentLaunch('qwen').then(([a]) => a.includes('--auth-type'), () => false)), 'the normal Qwen entry is unchanged');
-    assertEquals(betaServerEnv('qwen', studio.settings.modelServer('strata')!, ''), { OPENAI_BASE_URL: up.url, OPENAI_API_KEY: DUMMY_KEY, OPENAI_MODEL: 'm-b' });
+    assert(!(await aib.agentLaunch('qwen').then(([a]) => a.includes('--auth-type'), () => false)), 'the normal Qwen entry is unchanged');
+    assertEquals(betaServerEnv('qwen', aib.settings.modelServer('strata')!, ''), { OPENAI_BASE_URL: up.url, OPENAI_API_KEY: DUMMY_KEY, OPENAI_MODEL: 'm-b' });
   } finally {
     Deno.env.set('PATH', before);
   }
@@ -531,24 +531,24 @@ Deno.test({
     };
     setWslHostResolver((d) => (d === 'ubuntu' ? host : null));
     setDistroSource(() => Promise.resolve([{ name: 'Ubuntu', version: 2, isDefault: true }]));
-    const studio = lab.studio();
-    await studio.settings.update({ agents: { modelServer: { upsert: { name: 'strata', url: up.url, model: 'srv-two', key: KEY, useWith: ['claude', 'codex', 'maki', 'qwen'] } } } });
-    const server = studio.settings.modelServer('strata')!;
+    const aib = lab.aib();
+    await aib.settings.update({ agents: { modelServer: { upsert: { name: 'strata', url: up.url, model: 'srv-two', key: KEY, useWith: ['claude', 'codex', 'maki', 'qwen'] } } } });
+    const server = aib.settings.modelServer('strata')!;
     const wsl = { distro: 'ubuntu', linuxPath: '/home/u/app' };
-    const codex = await studio.wslLaunch('codex@strata', wsl, true);
+    const codex = await aib.wslLaunch('codex@strata', wsl, true);
     assertEquals(codex.command, ['/usr/bin/codex-acp'], 'the distro\u2019s own Codex adapter');
     assertEquals(codex.extra.CODEX_HOME, '/home/u/.aib-server/codex-home/strata', 'its own folder inside the distro');
     assertEquals(codex.extra[CODEX_KEY_ENV], KEY);
     assertEquals(written, [{ id: 'strata', toml: codexConfigToml(server, 'responses') }], 'the same generated config.toml as on Windows');
-    const qwen = await studio.wslLaunch('qwen@strata', wsl, true);
+    const qwen = await aib.wslLaunch('qwen@strata', wsl, true);
     assertEquals(qwen.command, ['/usr/bin/qwen-acp', '--auth-type', 'openai'], 'OpenAI auth by flag, whatever the distro settings say');
     for (const [name, value] of Object.entries(betaServerEnv('qwen', server, KEY))) assertEquals(qwen.extra[name], value, name);
-    const maki = await studio.wslLaunch('maki@strata', wsl, true);
+    const maki = await aib.wslLaunch('maki@strata', wsl, true);
     for (const [name, value] of Object.entries(betaServerEnv('maki', server, KEY))) assertEquals(maki.extra[name], value, name);
     assert(!('CODEX_HOME' in maki.extra) && !('CODEX_HOME' in qwen.extra));
     assertEquals(host.calls.filter(([m]) => m === 'agents.detect').map(([, p]) => (p.ids as string[])[0]), ['codex', 'qwen', 'maki']);
     // normal Codex in the distro: no server env, no CODEX_HOME of ours
-    const plain = await studio.wslLaunch('codex', wsl, true);
+    const plain = await aib.wslLaunch('codex', wsl, true);
     assert(!('CODEX_HOME' in plain.extra) && !(CODEX_KEY_ENV in plain.extra));
   },
 });

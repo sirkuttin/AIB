@@ -1,5 +1,5 @@
 /**
- * Per-conversation keys for Studio's artifact tool (artifact_keys.py).
+ * Per-conversation keys for AIB's artifact tool (artifact_keys.py).
  *
  * The agent's MCP shim authenticates to the artifact routes with the header X-Studio-Artifact-Key instead of the page token; a key
  * only works for the conversation it was issued to. A key is HMAC-SHA256(secret, 'studio-artifact-key/v1\0' + conversation id as

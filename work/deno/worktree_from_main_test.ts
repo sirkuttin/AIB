@@ -5,7 +5,7 @@
  * they did. Real git in temp repos and temp state folders only.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { commit, FakeStudio, read, runGit, Sandbox, write } from './_worktree_fixtures.ts';
+import { commit, FakeAib, read, runGit, Sandbox, write } from './_worktree_fixtures.ts';
 import { list, setup, text } from './_sync_fixtures.ts';
 import * as wt from '../../app/server/worktrees/worktrees.ts';
 import * as m from '../../app/server/worktrees/merge.ts';
@@ -45,20 +45,20 @@ Deno.test('folder on another branch: the chat starts at main, and its merge into
   assert(!wt.lexists(pathOf(plan.path, 'side.txt')), "the folder's branch is not in the chat");
   assertEquals(runGit(box.project, 'symbolic-ref', '--short', 'HEAD').trim(), 'claude/side', 'the folder stays where it was');
 
-  const studio = new FakeStudio(box.state);
-  studio.add('c1', plan.path);
+  const aib = new FakeAib(box.state);
+  aib.add('c1', plan.path);
   commit(plan.path, 'work.txt', 'chat work\n', 'agent work one');
   commit(plan.path, 'more.txt', 'more chat work\n', 'agent work two');
-  const state = await m.status(studio, 'c1');
+  const state = await m.status(aib, 'c1');
   assertEquals([state.base, state.label], ['main', 'Merge into main']);
-  const result = await m.mergeFromTool(studio, 'c1');
+  const result = await m.mergeFromTool(aib, 'c1');
   assertEquals([result.state, result.target, result.started, result.commits], ['merged', 'main', 'main', 2]);
   assertEquals(names(box.project, mainBefore, 'main'), ['more.txt', 'work.txt'], "only the chat's own changes reach main");
   assertEquals(runGit(box.project, 'log', '--format=%s', `${mainBefore}..main`).trim().split('\n'), [
     'agent work two',
     'agent work one',
   ]);
-  assertEquals(studio.notes(), ['Merged into main (2 commits)']);
+  assertEquals(aib.notes(), ['Merged into main (2 commits)']);
 });
 
 Deno.test("folder on main with uncommitted edits: they are copied into the chat's copy, as before", async () => {
@@ -150,11 +150,11 @@ Deno.test('a chat made before (started from another branch) still merges as it d
   await manager.registry.put(KEY, old);
   assertEquals(manager.registry.get(KEY)!.base, 'claude/side');
   assert(wt.lexists(pathOf(p.path, 'side.txt')));
-  const studio = new FakeStudio(box.state);
-  studio.add('c1', p.path);
+  const aib = new FakeAib(box.state);
+  aib.add('c1', p.path);
   commit(p.path, 'work.txt', 'chat work\n', 'agent work');
   const mainBefore = rev(box.project, 'main');
-  const result = await m.mergeFromTool(studio, 'c1');
+  const result = await m.mergeFromTool(aib, 'c1');
   assertEquals([result.state, result.target, result.started], ['merged', 'main', 'claude/side']);
   assertEquals(names(box.project, mainBefore, 'main'), ['work.txt'], "only the chat's own work, as before");
   assertEquals(rev(box.project, 'claude/side'), rev(box.project, 'HEAD'), 'the start branch is untouched');

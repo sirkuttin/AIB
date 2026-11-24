@@ -1,5 +1,5 @@
 /**
- * server/state: the same update sequences give the public() output and the error messages Python's state_store.py gave (kept as
+ * server/state: the same update sequences give the public() output and the error messages the retired state_store.py gave (kept as
  * fingerprints, fixtures/frozen), and the stores work across stores and processes (a running store picks up another store's writes,
  * and a second process writing under the shared file lock loses nothing). Only temp folders are used.
  */
@@ -48,10 +48,10 @@ function norm(value: unknown, key = ''): unknown {
   if (typeof value === 'object' && value !== null) {
     const out: Record<string, unknown> = {};
     // server.getTestBuilds and server.commitIdentity (updater test-feed switch, Settings commit identity) are Deno-only by design:
-    // the Python reference has no such keys. Nothing else is dropped.
+    // the frozen answers have no such keys. Nothing else is dropped.
     const server = 'autoReconnect' in value;
     for (const [k, v] of Object.entries(value)) {
-      if (k === 'omp' && typeof v === 'boolean') continue; // OMP is retired in Deno (2026-11-23): the Python reference still has its switch
+      if (k === 'omp' && typeof v === 'boolean') continue; // OMP is retired in Deno (2026-11-23): the frozen answers still have its switch
       if (k === 'savedAt' || (server && (k === 'getTestBuilds' || k === 'commitIdentity'))) continue;
       out[k] = norm(v, k);
     }
@@ -95,7 +95,7 @@ function final(store: Store): unknown {
   return store instanceof StateStore ? recoveryDump(store) : store.public();
 }
 
-/** Python method name + kwargs -> the port's call. */
+/** Recorded method name + kwargs -> the port's call. */
 function call(store: Store, step: Step): unknown {
   const args = step.args ?? [];
   const kw = step.kwargs ?? {};
@@ -455,15 +455,15 @@ const WRITES: Record<Exclude<Kind, 'recovery'>, Step[]> = {
   })],
 };
 
-Deno.test('every store reads back what a fresh store wrote, as Python read the same files', async () => {
+Deno.test('every store reads back what a fresh store wrote, as the frozen answers read the same files', async () => {
   const py = new Frozen();
   for (const [kind, steps] of Object.entries(WRITES) as [Kind, Step[]][]) {
-    // a Deno store writes; Python's reader gave the same public view of that folder
+    // a Deno store writes; the retired reader gave the same public view of that folder
     const dir = tempDir();
     const written = await runDeno(kind, dir, steps);
     const pythonRead = await py.frozen(`read-${kind}`);
-    assertEquals(content(written.public), pythonRead, `${kind}: what Python read of the Deno file`);
-    // another store reads the folder fresh and gets what the writer saw (and what Python's own writes gave)
+    assertEquals(content(written.public), pythonRead, `${kind}: what the frozen answers read of the Deno file`);
+    // another store reads the folder fresh and gets what the writer saw (and what the retired writes gave)
     const other = tempDir();
     await runDeno(kind, other, steps);
     const pythonWrote = await py.frozen(`wrote-${kind}`);

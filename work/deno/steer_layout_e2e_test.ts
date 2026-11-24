@@ -1,5 +1,5 @@
 /**
- * Steer-on-send layout, end to end (beta.9): the composer while the agent works, with the hint under "Send now" and the ▾ send menu, at the narrowest composer widths, in the light and the dark theme. Real Studio, fake agents of
+ * Steer-on-send layout, end to end (beta.9): the composer while the agent works, with the hint under "Send now" and the ▾ send menu, at the narrowest composer widths, in the light and the dark theme. Real AIB, fake agents of
  * work/fake_acp.py --steer (_steer_lab.ts), headless Chrome/Edge (no window). Needs [B] the page side (feat/steer-page); it fails
  * until that has landed. No selectors beyond the shared ones are assumed: the ▾ is the element with aria-haspopup inside #promptForm,
  * the hints are found by their copy (build-brief-beta9.md, one copy table).

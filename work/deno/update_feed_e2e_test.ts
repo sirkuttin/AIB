@@ -1,5 +1,5 @@
 /**
- * The local test feed, end to end: a real Studio server (source run, own temp data folder, a port the OS picked) that takes itself
+ * The local test feed, end to end: a real AIB server (source run, own temp data folder, a port the OS picked) that takes itself
  * to be a test build (AIB_UPDATE_CURRENT, honoured with AIB_TEST_FEED_DIR) and a temp feed folder written by tools/build.ts's
  * writeFeed. No GitHub (the source run's placeholder repository), no network, nothing installed, no window.
  *

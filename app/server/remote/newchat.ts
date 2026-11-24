@@ -28,7 +28,7 @@
 import type { WebContext } from '../web/server.ts';
 import { afterConnect } from '../web/project_routes.ts';
 import { settingsView } from '../web/shared.ts';
-import { studioOf } from '../web/aib_routes.ts';
+import { aibOf } from '../web/aib_routes.ts';
 import { folderKey } from '../state/agent_options.ts';
 import { type Eligible, eligibleAgents, reasonWords } from '../agents/eligibility.ts';
 import { projectId, projectsFor } from './projects.ts';
@@ -83,9 +83,9 @@ export interface PickList {
 }
 
 /** Settings' agent rows (what Settings shows: found, signed in, on). Tests in this process swap it (setAgentRows). */
-let agentRows = async (ctx: WebContext): Promise<unknown> => (await settingsView(studioOf(ctx), false, { offThread: true, health: true })).agents;
+let agentRows = async (ctx: WebContext): Promise<unknown> => (await settingsView(aibOf(ctx), false, { offThread: true, health: true })).agents;
 export function setAgentRows(fn: ((ctx: WebContext) => Promise<unknown>) | null): void {
-  agentRows = fn ?? (async (ctx: WebContext) => (await settingsView(studioOf(ctx), false, { offThread: true, health: true })).agents);
+  agentRows = fn ?? (async (ctx: WebContext) => (await settingsView(aibOf(ctx), false, { offThread: true, health: true })).agents);
   agentCache = new WeakMap();
 }
 

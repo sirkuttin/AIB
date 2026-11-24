@@ -11,7 +11,7 @@
 import { assert, assertEquals } from './_assert.ts';
 import { Browser, browserPath, type Page } from './_doc_browser.ts';
 import { pairPhone, pc } from './_remote_fixture.ts';
-import { liveChat, v2Studio } from './_remote_v2b.ts';
+import { liveChat, v2Aib } from './_remote_v2b.ts';
 import { phonePage, tap } from './_remote_phone_page.ts';
 import { NAME } from './_remote_fixture.ts';
 
@@ -87,7 +87,7 @@ Deno.test({
   name: 'phone saved copies: fill online, survive a reload, open while the PC is unreachable; Load earlier from the copy, then the PC',
   ignore: !browserPath,
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     const browser = await Browser.launch();
     const gate = { down: false };
     try {
@@ -194,7 +194,7 @@ Deno.test({
   name: 'phone saved copies: the 5 most recently active stay; whole turns under the byte cap; another phone’s copies go',
   ignore: !browserPath,
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     const browser = await Browser.launch();
     try {
       for (let i = 1; i <= 7; i++) {
@@ -256,7 +256,7 @@ Deno.test({
   name: 'phone saved copies go: Forget cached chats, the PC turns the switch off (and on), the PC removes the phone',
   ignore: !browserPath,
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     const browser = await Browser.launch();
     try {
       s.chats.push(

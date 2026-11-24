@@ -15,7 +15,7 @@ import { readRemotePort } from '../../app/server/remote/port.ts';
 import { DEVICE_HEADER, RateLimit } from '../../app/server/remote/pc_bridge.ts';
 import { ChatFolderCache, projectArtifacts } from '../../app/server/artifacts/project_list.ts';
 import { leftCounted, leftSignature, projectChanges } from '../../app/server/worktrees/project_changes.ts';
-import { fakeTailscale, type FakeChat, pairPhone, pc, phoneHeaders, raw, type RemoteStudio, remoteStudio, serveStatus } from './_remote_fixture.ts';
+import { fakeTailscale, type FakeChat, pairPhone, pc, phoneHeaders, raw, type RemoteAib, remoteAib, serveStatus } from './_remote_fixture.ts';
 import { git, HAVE_GIT, write } from './_git_repo.ts';
 
 type Json = Record<string, unknown>;
@@ -31,7 +31,7 @@ function chat(id: string, cwd: string): FakeChat {
 
 /** A repository `app` with one commit, an uncommitted edit in it, and a real git worktree `app-wt` with an edit of its own. */
 async function repoWithWorktree() {
-  const s = await remoteStudio();
+  const s = await remoteAib();
   const repo = `${s.root}${SEP}projects${SEP}app`;
   const wt = `${s.root}${SEP}projects${SEP}app-wt`;
   Deno.mkdirSync(repo, { recursive: true });
@@ -168,7 +168,7 @@ Deno.test({
   name: 'S6: a remote computer\'s project Changes leaves out rows inside blocked folders (main and a worktree section) and refuses a diff that resolves into one',
   async fn() {
     const fake = fakeTailscale();
-    const s: RemoteStudio = await remoteStudio({ runner: fake.runner }, undefined, { saved: true });
+    const s: RemoteAib = await remoteAib({ runner: fake.runner }, undefined, { saved: true });
     try {
       fake.state.serve = serveStatus(readRemotePort(s.state)!);
       assertEquals((await pc(s, 'POST', '/api/live/devices/access', { on: true }))[0], 200);

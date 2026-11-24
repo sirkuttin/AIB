@@ -5,14 +5,14 @@
  * the body is read). Payloads and messages are Python's.
  */
 import { isDict, ValueError } from '../core/py.ts';
-import { conversationAction, modelServersView, settingsView, type StudioContext } from './shared.ts';
+import { conversationAction, modelServersView, settingsView, type AibContext } from './shared.ts';
 import { cleanServerUrl, inspectModelServer, isLoopbackAddress, serverHealth, WSL_LOOPBACK_NOTE } from '../agents/model_servers.ts';
 import { EditorError, knownRoots, Launcher } from '../desktop/editors.ts';
 import * as folders from '../desktop/folders.ts';
 import { presence } from '../desktop/folder_presence.ts';
 import { pyInt } from '../transcripts/pycompat.ts';
 import { findPrompts } from '../transcripts/prompts.ts';
-import { branchOf, changesFolder, changesResponse, type ChatStudio } from '../worktrees/chat_folders.ts';
+import { branchOf, changesFolder, changesResponse, type ChatHost } from '../worktrees/chat_folders.ts';
 import * as merge from '../worktrees/merge.ts';
 import * as mergeQueue from '../worktrees/merge_queue.ts';
 import { ArtifactError, FROM_DOC_RESOLVED, MAX_BODY_BYTES, type RequestLike, WSL_FILE_RESOLVED } from '../artifacts/artifacts.ts';
@@ -57,24 +57,24 @@ const obj = (v: unknown): Record<string, unknown> => (isDict(v) ? v as Record<st
 const one = (args: Record<string, string[]>, name: string, fallback = '') => Object.hasOwn(args, name) ? args[name][0] : fallback;
 
 /** The StudioContext the shared helpers read (RemoteStudio's attributes: options, stores, host calls, host info). */
-export function studioOf(ctx: WebContext): StudioContext {
+export function aibOf(ctx: WebContext): AibContext {
   return {
     options: ctx.agentOptions,
     settings: ctx.settings,
     conversations: ctx.conversations,
     liveList: () => ctx.host.liveList(),
     liveCall: (name, body) => ctx.host.liveCall(name, body),
-    studioOwns: (provider, sessionId) => ctx.host.studioOwns(provider, sessionId),
+    aibOwns: (provider, sessionId) => ctx.host.aibOwns(provider, sessionId),
     hostInfo: ctx.host.hostInfo,
     waitingChats: ctx.host.waitingChats,
   };
 }
 
-/** What chat_folders reads from a Studio. savedCwd: the saved-transcript folder looked up before the call (it is synchronous). */
-export function chatStudioOf(ctx: WebContext, saved: Map<string, string> = new Map()): ChatStudio {
+/** What chat_folders reads from an AIB. savedCwd: the saved-transcript folder looked up before the call (it is synchronous). */
+export function chatAibOf(ctx: WebContext, saved: Map<string, string> = new Map()): ChatHost {
   return {
     liveState: (ident, limit) => ctx.host.liveState(ident, limit),
-    conversations: ctx.conversations as unknown as ChatStudio['conversations'],
+    conversations: ctx.conversations as unknown as ChatHost['conversations'],
     store: null,
     savedCwd: (provider, sessionId) => saved.get(`${provider}:${sessionId}`) ?? '',
     token: ctx.token,
@@ -145,11 +145,11 @@ export function shared<T>(runs: Map<string, Promise<T>>, key: string, run: () =>
   return pending;
 }
 
-function mergeStudio(ctx: WebContext): merge.MergeStudio {
-  return merge.liveMergeStudio(ctx.stateDir, ctx.host); // with the folder chats: a merge holds their landing lock (build plan 2.3)
+function mergeAib(ctx: WebContext): merge.MergeHost {
+  return merge.liveMergeAib(ctx.stateDir, ctx.host); // with the folder chats: a merge holds their landing lock (build plan 2.3)
 }
 
-/** The editor launcher, as studio.create_server builds it: roots are the folders Studio knows, preferred the Settings default. */
+/** The editor launcher, as studio.create_server builds it: roots are the folders AIB knows, preferred the Settings default. */
 export function makeLauncher(ctx: () => WebContext, listing: () => Json): Launcher {
   return new Launcher(
     () => knownRoots({ liveList: () => listing(), conversations: ctx().conversations as never, projectPrefs: ctx().projectPrefs }),
@@ -181,7 +181,7 @@ export function aibRoutes(): Map<string, AibHandler> {
   const routes = new Map<string, AibHandler>();
   // ---- settings and conversation marks ----
   routes.set('GET /api/live/settings', async (ctx, url) => [200, {
-    ...(await settingsView(studioOf(ctx), one(argsOf(url), 'recheck') === '1', { offThread: true })),
+    ...(await settingsView(aibOf(ctx), one(argsOf(url), 'recheck') === '1', { offThread: true })),
     keepAwake: ctx.keepAwake.status(),
     swarm: { enabled: swarmEnabled(ctx.stateDir) },
   }]);
@@ -197,7 +197,7 @@ export function aibRoutes(): Map<string, AibHandler> {
     // only a body that held nothing but swarm skips the Settings patch; anything else (an empty body too) goes through it as before
     if (!(rest !== body && isDict(rest) && !Object.keys(rest).length)) await ctx.settings.update(rest);
     ctx.keepAwake.apply(ctx.settings.keepAwake()); // on or off takes effect now; a refusal comes back as keepAwake.error
-    return [200, { ...(await settingsView(studioOf(ctx), false, { offThread: true })), keepAwake: ctx.keepAwake.status(), swarm: { enabled: swarmEnabled(ctx.stateDir) }, ok: true }];
+    return [200, { ...(await settingsView(aibOf(ctx), false, { offThread: true })), keepAwake: ctx.keepAwake.status(), swarm: { enabled: swarmEnabled(ctx.stateDir) }, ok: true }];
   });
   // Model servers (agents/model_servers.ts): the list and its edits go through POST /api/live/settings {agents: {modelServer: {upsert |
   // remove}}} and GET /api/live/settings (settings.agents.modelServers, no keys; agents[] rows with modelServer: true and
@@ -233,11 +233,11 @@ export function aibRoutes(): Map<string, AibHandler> {
   });
   // The Model servers section's list with each server's health (asked now, or kept up to 30 s: the same cache New chat reads).
   routes.set('GET /api/live/model-servers', async (ctx, url) => [200, {
-    servers: await modelServersView(studioOf(ctx), { health: true, fresh: one(argsOf(url), 'fresh') === '1' }),
+    servers: await modelServersView(aibOf(ctx), { health: true, fresh: one(argsOf(url), 'fresh') === '1' }),
   }]);
   routes.set('POST /api/live/conversation-state', async (ctx, _url, body) => {
     const folders = restoreFolders(ctx.conversations, body);
-    const reply = await conversationAction(studioOf(ctx), body);
+    const reply = await conversationAction(aibOf(ctx), body);
     if (reply[0] === 200) await bringBack(ctx.removedProjects, folders, ctx.addedProjects); // restoring a chat brings its removed project back
     return reply;
   });
@@ -336,7 +336,7 @@ export function aibRoutes(): Map<string, AibHandler> {
       return shared(changesRuns, key, async () => {
         const args = argsOf(url);
         const reply = await changesResponse(
-          chatStudioOf(ctx, await savedFolders(ctx, one(args, 'id'))),
+          chatAibOf(ctx, await savedFolders(ctx, one(args, 'id'))),
           path,
           args,
           request.headers,
@@ -354,11 +354,11 @@ export function aibRoutes(): Map<string, AibHandler> {
       const who = principal?.kind === REMOTE_PC ? `pc:${principal.device}` : request.headers.get('X-Studio-Token') ?? '';
       return shared(changesRuns, `${who}|${path}|${url.search}`, async () => {
         const args = argsOf(url);
-        const studio = chatStudioOf(ctx, await savedFolders(ctx, one(args, 'id')));
-        if (!pageAllowed(principal ?? null, request.headers, studio.token ?? '')) {
+        const aib = chatAibOf(ctx, await savedFolders(ctx, one(args, 'id')));
+        if (!pageAllowed(principal ?? null, request.headers, aib.token ?? '')) {
           return [403, { error: 'Invalid local session token' }] as Reply;
         }
-        const chatFolder = await changesFolder(studio, one(args, 'id'));
+        const chatFolder = await changesFolder(aib, one(args, 'id'));
         if (chatFolder === null) return [404, { error: 'This chat has no known project folder.', code: 'unknown_folder' }] as Reply;
         // the PROJECT's folder, never the open chat's worktree: another chat of the project must change nothing
         const folder = projectFolderOf(ctx.stateDir ?? '', chatFolder);
@@ -393,10 +393,10 @@ export function aibRoutes(): Map<string, AibHandler> {
   routes.set('GET /api/live/branch', async (_ctx, url) => [200, { branch: await branchOf(one(argsOf(url), 'cwd')) }]); // a WSL ref: its helper
   // A WSL chat's merge runs in its distro's helper (wsl/merge.ts); every other chat's here (merge.ts).
   routes.set('GET /api/live/worktree', async (ctx, url) => {
-    const studio = mergeStudio(ctx), id = one(argsOf(url), 'id');
+    const aib = mergeAib(ctx), id = one(argsOf(url), 'id');
     return [200, await worktreeStatus(id, async () => {
-      const wsl = await wslMerge.wslMergeChat(studio, id);
-      return wsl ? await wslMerge.wslMergeStatus(wsl) : await merge.status(studio, id);
+      const wsl = await wslMerge.wslMergeChat(aib, id);
+      return wsl ? await wslMerge.wslMergeStatus(wsl) : await merge.status(aib, id);
     })];
   });
   routes.set('GET /api/live/worktree/clash', async (ctx, url) => {
@@ -405,9 +405,9 @@ export function aibRoutes(): Map<string, AibHandler> {
   });
   routes.set('POST /api/live/worktree/merge', async (ctx, _url, body) => {
     const title = typeof body?.title === 'string' ? body.title : '';
-    const studio = mergeStudio(ctx), wsl = await wslMerge.wslMergeChat(studio, body?.id);
+    const aib = mergeAib(ctx), wsl = await wslMerge.wslMergeChat(aib, body?.id);
     try {
-      return await refusedReply(() => wsl ? wslMerge.wslMerge(studio, wsl, title) : merge.merge(studio, body?.id, title));
+      return await refusedReply(() => wsl ? wslMerge.wslMerge(aib, wsl, title) : merge.merge(aib, body?.id, title));
     } finally {
       forgetWorktreeStatus(body?.id);
     }
@@ -418,9 +418,9 @@ export function aibRoutes(): Map<string, AibHandler> {
       return [200, { ok: true, resumed: await merge.resumeSync(ctx.stateDir, body.project) }];
     }
     const action = typeof body?.action === 'string' ? body.action : '';
-    const studio = mergeStudio(ctx), wsl = await wslMerge.wslMergeChat(studio, body?.id);
+    const aib = mergeAib(ctx), wsl = await wslMerge.wslMergeChat(aib, body?.id);
     try {
-      return await refusedReply(() => wsl ? wslMerge.wslResolveClash(studio, wsl, action) : merge.resolveClash(studio, body?.id, action));
+      return await refusedReply(() => wsl ? wslMerge.wslResolveClash(aib, wsl, action) : merge.resolveClash(aib, body?.id, action));
     } finally {
       forgetWorktreeStatus(body?.id);
     }
@@ -495,12 +495,12 @@ export function aibRoutes(): Map<string, AibHandler> {
   // folder comes from it, as for Changes); `deleted=1` adds Recently deleted. The project of each artifact is computed here.
   routes.set('GET /api/live/project/artifacts', async (ctx, url, _body, request, principal) => {
     const args = argsOf(url), id = one(args, 'id');
-    const studio = chatStudioOf(ctx, await savedFolders(ctx, id));
-    if (!pageAllowed(principal ?? null, request.headers, studio.token ?? '')) return [403, { error: 'Invalid local session token' }] as Reply;
+    const aib = chatAibOf(ctx, await savedFolders(ctx, id));
+    if (!pageAllowed(principal ?? null, request.headers, aib.token ?? '')) return [403, { error: 'Invalid local session token' }] as Reply;
     await ctx.artifacts.prepare(false, null);
     let folder: string | null;
     try {
-      folder = await changesFolder(studio, id);
+      folder = await changesFolder(aib, id);
     } catch (error) {
       if (error instanceof ValueError) return [400, { error: error.message, code: 'invalid' }] as Reply;
       throw error;
@@ -514,7 +514,7 @@ export function aibRoutes(): Map<string, AibHandler> {
       mainOf: (path) => resolver.resolve(path)?.project ?? path,
       // a chat that is running is asked by its connection id, as the artifact routes do (artifactFolder); a saved one by its lasting id
       chatFolder: (chat) =>
-        cache.get(chat, async () => changesFolder(chatStudioOf(ctx, await savedFolders(ctx, chat)), ctx.artifacts.connectionOf(chat) || chat)),
+        cache.get(chat, async () => changesFolder(chatAibOf(ctx, await savedFolders(ctx, chat)), ctx.artifacts.connectionOf(chat) || chat)),
     }, { deleted: one(args, 'deleted') === '1' });
     return [200, reply] as Reply;
   });
@@ -669,10 +669,10 @@ export async function ownGatePost(ctx: WebContext, request: Request, url: URL): 
     if (action === 'merge' && swarmOf(ctx).isHelper(conversation)) {
       return [403, { error: 'Helpers are merged by their main chat: report back instead', code: 'helper' }];
     }
-    const studio = mergeStudio(ctx), wsl = await wslMerge.wslMergeChat(studio, conversation); // a WSL chat: its distro's helper merges
+    const aib = mergeAib(ctx), wsl = await wslMerge.wslMergeChat(aib, conversation); // a WSL chat: its distro's helper merges
     try {
-      if (action === 'merge') return await refusedReply(() => wsl ? wslMerge.wslMerge(studio, wsl, '', true) : mergeQueue.mergeFromToolQueued(studio, conversation));
-      return await refusedReply(() => wsl ? wslMerge.wslResolveClash(studio, wsl, action, true) : merge.resolveClash(studio, conversation, action, true));
+      if (action === 'merge') return await refusedReply(() => wsl ? wslMerge.wslMerge(aib, wsl, '', true) : mergeQueue.mergeFromToolQueued(aib, conversation));
+      return await refusedReply(() => wsl ? wslMerge.wslResolveClash(aib, wsl, action, true) : merge.resolveClash(aib, conversation, action, true));
     } finally {
       forgetWorktreeStatus(conversation);
     }
@@ -787,7 +787,7 @@ export async function attachWslFile(ctx: WebContext, body: Json): Promise<Reply 
   if (artifacts.service.cwdFor(chat)) return null; // a Windows folder (prepare() found it): artifacts.ts resolves the path
   let folder: string | null;
   try {
-    folder = await changesFolder(await artifacts.chatStudio(chat), artifacts.connectionOf(chat) || chat);
+    folder = await changesFolder(await artifacts.chatAib(chat), artifacts.connectionOf(chat) || chat);
   } catch (error) {
     if (error instanceof ValueError) return null;
     throw error;

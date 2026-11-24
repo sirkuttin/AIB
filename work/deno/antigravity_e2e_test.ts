@@ -5,7 +5,7 @@
  *   sign-in check   no sign-in and no key: agy answers session/new with -32000 "Authentication required" = Needs sign-in
  *   API key         a dummy GEMINI_API_KEY saved in Settings: AIB starts agy with --gemini-dir <its own folder> holding
  *                   settings.json {"modelProvider": "gemini"}, and the check reads Ready (agy checks the key only when a prompt is sent)
- *   chat            session/new through Studio: its models (the model config option), its modes (default, accept-edits, plan);
+ *   chat            session/new through AIB: its models (the model config option), its modes (default, accept-edits, plan);
  *                   no prompt is ever sent (that would reach Google with the dummy key)
  *
  * Isolation: HOME, USERPROFILE, APPDATA, LOCALAPPDATA, XDG_* and TEMP point into the temp folder for this whole test process, so agy's
@@ -139,22 +139,22 @@ Deno.test({
     const project = pathOf(root, "proj");
     Deno.mkdirSync(project);
     Deno.writeTextFileSync(pathOf(project, "README.md"), "a test project\n");
-    const studio = new Aib({
+    const aib = new Aib({
             stateDir: state,
       port: 0,
       ownersDir: null,
     });
-    studio.ownerProbe = () => null;
+    aib.ownerProbe = () => null;
     try {
       // ---- 1. Install: Google's real build, checked against the pinned SHA-512 ----
-      const [status, started] = await studio.installCall(
+      const [status, started] = await aib.installCall(
         "start",
         "antigravity",
       );
       assertEquals(status, 200, JSON.stringify(started));
-      await studio.installer!.jobs.get("antigravity")?.done;
+      await aib.installer!.jobs.get("antigravity")?.done;
       const view =
-        (await studio.installCall("status", "antigravity"))[1] as Json;
+        (await aib.installCall("status", "antigravity"))[1] as Json;
       if (
         view.state === "failed" &&
         /reach storage|answered \d+|part way/.test(String(view.message))
@@ -186,7 +186,7 @@ Deno.test({
 
       // ---- 2. Sign-in check with no sign-in and no key: -32000 = Needs sign-in ----
       let check =
-        (await studio.signinCall("check", "antigravity", true))[1] as Json;
+        (await aib.signinCall("check", "antigravity", true))[1] as Json;
       // With an OS-level sign-in (see osSignIn) agy is ready even in a temp HOME; only without one is it -32000 = Needs sign-in.
       assertEquals(
         check.state,
@@ -196,16 +196,16 @@ Deno.test({
       assert(exists(pathOf(home, ".gemini")), "agy used the temp home");
 
       // ---- 3. A dummy Gemini key: AIB's own folder with modelProvider "gemini", Ready ----
-      await studio.settings.update({
+      await aib.settings.update({
         agents: {
           betaKey: { antigravity: "AIza-dummy-not-a-real-key-000000000000" },
         },
       });
-      assertEquals(studio.betaEnv("antigravity"), {
+      assertEquals(aib.betaEnv("antigravity"), {
         GEMINI_API_KEY: "AIza-dummy-not-a-real-key-000000000000",
       });
       check =
-        (await studio.signinCall("check", "antigravity", true))[1] as Json;
+        (await aib.signinCall("check", "antigravity", true))[1] as Json;
       assertEquals(check.state, "ready", JSON.stringify(check));
       const keyHome = keyHomeDir("antigravity", state);
       assertEquals(
@@ -223,7 +223,7 @@ Deno.test({
       );
 
       // ---- 4. A chat opens (session/new): models and modes; no prompt is sent ----
-      const c = await studio.connect("antigravity", project);
+      const c = await aib.connect("antigravity", project);
       assert(c.sessionId, "session/new answered");
       const pub = JSON.stringify(c.public());
       assert(
@@ -235,7 +235,7 @@ Deno.test({
       }
       await c.close();
     } finally {
-      await studio.close().catch(() => {});
+      await aib.close().catch(() => {});
       for (const [k, v] of Object.entries(saved)) {
         v === undefined ? Deno.env.delete(k) : Deno.env.set(k, v);
       }

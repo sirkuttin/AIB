@@ -1,5 +1,5 @@
 /**
- * Differential test of server/acp/connection.ts: each script runs once through Python's acp_connection.Connection
+ * Differential test of server/acp/connection.ts: each script ran once through the retired acp_connection.Connection
  * (the retired connection_shim.py) and once through the port, against the same fake agent, and both must give the same
  * results (replies and refusals with their messages), the same event list, the same messages written to the agent, the same
  * stderr tail and the same written-file list. Times, random keys and the temp folder are scrubbed from both.
@@ -240,18 +240,18 @@ const DROP = new Set([
   'turnEndedAt',
   'busySince',
   'leaseExpiresAt',
-  // Steer-on-send's snapshot keys: Deno only (the Python reference never had them); work/deno/steer_*_test.ts covers them.
+  // Steer-on-send's snapshot keys: Deno only (not in the frozen answers); work/deno/steer_*_test.ts covers them.
   'steerable',
   'autonomous',
   'steerAgent',
   'steerLane',
   'toolBackground',
-  // set when the owner typed into a chat (the end-of-helper sweep leaves such a helper alone): Deno only, Python never had it
+  // set when the owner typed into a chat (the end-of-helper sweep leaves such a helper alone): Deno only, not in the frozen answers
   'ownerTouched',
 ]);
 
 /**
- * The inbox's facts in attention() (feat/inbox-phase1): Deno only. The Python reference keeps the old attention ({state, needs,
+ * The inbox's facts in attention() (feat/inbox-phase1): Deno only. The frozen answers keep the old attention ({state, needs,
  * turnEndedAt, busySince}); the rules behind these live in one file (inbox-rules.js), covered by work/test_inbox_rules.js and
  * work/deno/inbox_facts_test.ts. Dropped only from attention objects ('error' is also a snapshot key).
  */
@@ -260,7 +260,7 @@ const isAttention = (o: Json) => 'needs' in o && 'state' in o && 'phase' in o;
 
 /**
  * A subagent's model and when it started and ended (the phone's row line 2, "model · time": server/acp/connection.ts
- * #trackSubagent): Deno only, the Python reference never had them. Dropped only from the entries of a snapshot's subagents map;
+ * #trackSubagent): Deno only, not in the frozen answers. Dropped only from the entries of a snapshot's subagents map;
  * work/test_phone_list.js and work/test_subagent_cards.js cover them.
  */
 const SUBAGENT_FACTS = new Set(['model', 'startedAt', 'endedAt']);
@@ -308,9 +308,9 @@ function scrub(run: Json): Json {
 }
 
 /**
- * Event lists without seq, sorted: for scripts whose agent writes faster than a turn ends. Python's order there is a race, and so
+ * Event lists without seq, sorted: for scripts whose agent writes faster than a turn ends. the recorded order there is a race, and so
  * is whether a repeated reply still finds its request (a "Duplicate response") or finds it already gone ("unknown request id").
- * Also for agents that announce things right after answering session/new or session/load: in Python those updates race the
+ * Also for agents that announce things right after answering session/new or session/load: in the recorded run those updates raced the
  * setup thread, so they may come before 'connected' and be marked replay. The port always finishes setup first (not replay).
  */
 function unordered(events: unknown): string[] {
@@ -551,7 +551,7 @@ const SCRIPTS: Script[] = [
       { op: 'public' },
       { op: 'prompt', text: 'wait' },
       { op: 'wait', for: 'busy' },
-      { op: 'wait', for: 'wrote:session/prompt' }, // busy comes before Python's turn thread sends the prompt
+      { op: 'wait', for: 'wrote:session/prompt' }, // busy comes before the turn thread sends the prompt
       { op: 'change', kind: 'config', configId: 'model', value: 'deep' },
       { op: 'change', kind: 'config', configId: 'effort', value: 'high' },
       { op: 'change', kind: 'config', configId: 'verbose', value: true },
@@ -582,10 +582,10 @@ const SCRIPTS: Script[] = [
     ordered: false,
     steps: [
       { op: 'setup' },
-      { op: 'wait', for: 'events:update:4' }, // the announcements that follow session/new (when they arrive is a race in Python)
+      { op: 'wait', for: 'events:update:4' }, // the announcements that follow session/new (when they arrive is a race)
       { op: 'prompt', text: 'wait' },
       { op: 'wait', for: 'busy' },
-      { op: 'wait', for: 'wrote:session/prompt' }, // busy comes before Python's turn thread sends the prompt
+      { op: 'wait', for: 'wrote:session/prompt' }, // busy comes before the turn thread sends the prompt
       { op: 'change', kind: 'config', configId: 'model', value: 'deep' },
       { op: 'cancel' },
       { op: 'wait', for: 'idle' },
@@ -601,7 +601,7 @@ const SCRIPTS: Script[] = [
       { op: 'setup' },
       { op: 'prompt', text: 'wait' },
       { op: 'wait', for: 'busy' },
-      { op: 'wait', for: 'wrote:session/prompt' }, // busy comes before Python's turn thread sends the prompt
+      { op: 'wait', for: 'wrote:session/prompt' }, // busy comes before the turn thread sends the prompt
       { op: 'queue_add', text: 'mcp', id: 'a' },
       { op: 'queue_add', text: 'mcp', id: 'b' },
       { op: 'queue_add', text: 'mcp', id: 'c' },
@@ -636,10 +636,10 @@ const SCRIPTS: Script[] = [
       { op: 'setup' },
       { op: 'prompt', text: 'wait' },
       { op: 'wait', for: 'busy' },
-      { op: 'wait', for: 'wrote:session/prompt' }, // busy comes before Python's turn thread sends the prompt
+      { op: 'wait', for: 'wrote:session/prompt' }, // busy comes before the turn thread sends the prompt
       { op: 'queue_add', text: 'mcp', id: 'a' },
       { op: 'queue_add', text: 'mcp', id: 'b' },
-      // the Python reference's send_now interrupts; the port's Send now never does (2026-11-23), its "Interrupt and send" is the flag
+      // the old send_now interrupted; the port's Send now never does (2026-11-23), its "Interrupt and send" is the flag
       { op: 'queue', action: 'send_now', args: ['b'], portArgs: ['b', true] },
       { op: 'wait', for: 'events:user:3' },
       { op: 'wait', for: 'idle' },
@@ -733,7 +733,7 @@ const SCRIPTS: Script[] = [
       { op: 'wait', for: 'idle' },
       { op: 'prompt', text: 'die' },
       { op: 'wait', for: 'closed' },
-      // closed comes first in Python (its reader thread, at the agent's exit); the turn's own failure follows from the turn's thread
+      // closed comes first (the reader thread, at the agent's exit); the turn's own failure follows from the turn's thread
       { op: 'wait', for: 'error_text:ACP connection closed' },
       { op: 'cancel' },
       { op: 'public' },
@@ -752,7 +752,7 @@ const SCRIPTS: Script[] = [
   {
     // An agent AIB does not run terminal sign-ins for: ACP authenticate is still refused for a terminal method (the page runs it, or
     // the person does). Claude Code is Deno only since the sign-in card (it is sent auth.terminal and its terminal methods run in an
-    // AIB terminal; the Python reference never had that): work/deno/chat_signin_test.ts.
+    // AIB terminal; not in the frozen answers): work/deno/chat_signin_test.ts.
     name: 'sign-in: terminal method refused, in-app method, retry',
     flags: ['--auth-required'],
     provider: 'gemini',
@@ -790,7 +790,7 @@ const SCRIPTS: Script[] = [
     steps: [
       { op: 'setup_bg', resume: 'resumed-id' },
       { op: 'wait', for: 'elicitations' },
-      // the question comes with the initialize answer: answered before setup sent session/load, the load is never sent (Python's
+      // the question comes with the initialize answer: answered before setup sent session/load, the load is never sent (the recorded
       // setup thread can lag that far behind), and the messages to the agent go in another order
       { op: 'wait', for: 'wrote:session/load' },
       { op: 'public' },
@@ -879,7 +879,7 @@ const SCRIPTS: Script[] = [
       { op: 'wait', for: 'permissions' },
       { op: 'kill' },
       { op: 'wait', for: 'closed' },
-      { op: 'wait', for: 'error_text:ACP connection closed' }, // the turn's failure, after closed in Python (see above)
+      { op: 'wait', for: 'error_text:ACP connection closed' }, // the turn's failure, after closed (see above)
       { op: 'public' },
       { op: 'close' },
     ],
@@ -940,13 +940,13 @@ const SCRIPTS: Script[] = [
 ];
 
 for (const script of SCRIPTS) {
-  Deno.test(`${script.name}: the events, results, writes, stderr and files give what Python gave`, async () => {
+  Deno.test(`${script.name}: the events, results, writes, stderr and files give what the frozen answers hold`, async () => {
     const py = new Frozen();
     const agent = script.agent ?? 'fake';
     const flags = script.flags ?? [];
     const provider = script.provider ?? 'gemini';
     const options = script.options ?? {};
-    // what Python's Connection did with the same script: events (any order when the script says so), results, writes, stderr, files
+    // what the retired Connection did with the same script: events (any order when the script says so), results, writes, stderr, files
     const [events, results, writes, stderr, written] = await py.frozenList(`script-${script.name}`);
     const actual = scrub(await runPort(agent, flags, script.steps, provider, options));
     assertEquals(script.ordered === false ? unordered(actual.events) : actual.events, events, script.ordered === false ? 'events (any order)' : 'events');

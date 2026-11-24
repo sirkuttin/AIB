@@ -11,7 +11,7 @@
  * panel's tab is remembered per project and window; a layout with no saved width starts at 320 px; below 320 px of panel the four tabs (Activity, Changes, Artifacts, Docs)
  * are icon + count (also at 125 % display scaling and a bigger interface size). Split view adds Left / Right tags on the pane chats' heads.
  *
- * A real Studio (the scroll lab: temp state folder, free port; never the live ports), scripted live chats with scripted
+ * A real AIB (the scroll lab: temp state folder, free port; never the live ports), scripted live chats with scripted
  * subagent_update events, headless Chrome or Edge. The WSL variant of these rules is right_panel_wsl_e2e_test.ts.
  *
  * Run (from app): deno test -A ../../work/deno/right_panel_e2e_test.ts   (ignored without Chrome or Edge)

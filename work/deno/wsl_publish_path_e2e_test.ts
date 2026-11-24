@@ -3,7 +3,7 @@
  * from the distro").
  *   - An agent inside the distro calls `publish` with a relative Linux path through its real `studio_artifact` entry (the tunnel:
  *     forwarder, relay, helper channel, AIB's MCP endpoint, the tool's HTTP call). The HTTP call lands on a small stand-in for AIB's
- *     /api/live/artifacts/publish that runs the route's real WSL step (attachWslFile: the chat's folder from the live Studio, its
+ *     /api/live/artifacts/publish that runs the route's real WSL step (attachWslFile: the chat's folder from the live AIB, its
  *     project folder from the helper's worktree registry, the bytes through the real helper's files.readBytes) and the real
  *     artifacts Service. A real 3 MB PNG (uncompressed, so over three helper pieces) arrives byte-identical, as an image.
  *   - Publishing it again makes no new version; after the file changes in the distro, `update` with the path makes version 2.
@@ -27,15 +27,15 @@ type Entry = { command: string; args: string[]; env: { name: string; value: stri
 const PROJECT = `${ROOT}/repo`;
 const REF = WSL_E2E ? refOf({ kind: 'wsl', distro: KEY, linuxPath: PROJECT }) : '';
 
-function studioIn(state: string): Aib {
-  const studio = new Aib({ stateDir: state, port: 0, ownersDir: null }, { keeper: null });
-  studio.ownerProbe = () => null;
-  studio.connectionFactory = (_command, cwd, provider, options) =>
+function aibIn(state: string): Aib {
+  const aib = new Aib({ stateDir: state, port: 0, ownersDir: null }, { keeper: null });
+  aib.ownerProbe = () => null;
+  aib.connectionFactory = (_command, cwd, provider, options) =>
     new Connection(['python3', `${ROOT}/fake_acp.py`, '--cancel-aware'], cwd, provider, {
       ...options,
       wsl: options?.wsl ? { ...options.wsl, program: '/usr/bin/python3' } : options?.wsl,
     });
-  return studio;
+  return aib;
 }
 
 // ---- a real PNG ---------------------------------------------------------------------------------------------------------------
@@ -122,8 +122,8 @@ Deno.test({
     await prepareRoot();
     const store = new ArtifactStore(`${state}\\artifacts`);
     const service = new Service(store, () => 't', () => null, { rootFor: () => REF });
-    const studios: Aib[] = [];
-    let studio: Aib | null = null;
+    const aibs: Aib[] = [];
+    let aib: Aib | null = null;
     const seen: Json[] = [];
     // AIB's /api/live/artifacts/publish for this test: the route's WSL step and the real Service (key checks are tested elsewhere)
     const server = Deno.serve({ hostname: '127.0.0.1', port: 0, onListen() {} }, async (request) => {
@@ -132,7 +132,7 @@ Deno.test({
       const ctx = {
         artifacts: {
           service,
-          chatStudio: () => studio!,
+          chatAib: () => aib!,
           connectionOf: (id: string) => id,
           projectRootOf: () => null,
         },
@@ -144,10 +144,10 @@ Deno.test({
     try {
       const host = await readyHost();
       assert(host.mcpTunnel, 'the helper runs the tunnel');
-      studio = studioIn(state);
-      studios.push(studio);
-      studio.artifactUrlProvider = () => `http://127.0.0.1:${server.addr.port}`;
-      const c = await studio.connect('claude', REF);
+      aib = aibIn(state);
+      aibs.push(aib);
+      aib.artifactUrlProvider = () => `http://127.0.0.1:${server.addr.port}`;
+      const c = await aib.connect('claude', REF);
       const entry = c.mcpServers[0] as unknown as Entry;
       const headers = entry.env.find((e) => e.name === 'MCP_FORWARD_HEADERS')!.value;
 
@@ -202,7 +202,7 @@ Deno.test({
       const leaked = store.all().filter((m) => m.title === 'x');
       assertEquals(leaked.length, 0, 'nothing published by a refusal');
     } finally {
-      for (const s of studios) await s.close().catch(() => {});
+      for (const s of aibs) await s.close().catch(() => {});
       await server.shutdown();
       await cleanRoot();
       Deno.removeSync(state, { recursive: true });

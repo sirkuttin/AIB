@@ -1,7 +1,7 @@
 /**
  * server/acp/client_caps.ts: the unit cases of work/test_client_caps.py (FilesystemTests, TerminalTests), plus parity with
  * client_caps.py for path checks and fs requests. The EndToEnd cases there go through studio.Connection and belong to the
- * connection port. Child processes are the test's own Python one-liners; every terminal is released or shut down.
+ * connection port. Child processes are the test's own one-liners; every terminal is released or shut down.
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
 import { python } from './_work.ts';
@@ -244,7 +244,7 @@ capsTest('dispatch answers in JSON-RPC and checks the session', async (t) => {
   assertEquals((c.public().writes as Record<string, unknown>[])[0].path, target);
 });
 
-capsTest('path checks and fs requests match Python', async (t) => {
+capsTest('path checks and fs requests match the frozen answers', async (t) => {
   const py = new Frozen();
   const secret = join(t.out, 'secret.txt');
   Deno.writeTextFileSync(secret, 'top secret');

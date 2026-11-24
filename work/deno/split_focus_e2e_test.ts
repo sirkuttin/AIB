@@ -1,5 +1,5 @@
 /**
- * Split view, focus moving between panes: no blank, white frame. A real Studio (the scroll lab: Deno web server + in-process
+ * Split view, focus moving between panes: no blank, white frame. A real AIB (the scroll lab: Deno web server + in-process
  * agent host, temp state folder, free port; never the live ports), two scripted live chats side by side, headless Chrome/Edge.
  *
  * The bug (owner, 2026-11-14): with two chats side by side, clicking into the other pane flashed the screen white. Focusing a pane

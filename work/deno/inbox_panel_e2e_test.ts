@@ -1,5 +1,5 @@
 /**
- * The inbox panel (approved prototype v3, 2026-11-13) in a real headless Chrome: chat.html against a Studio in this process with
+ * The inbox panel (approved prototype v3, 2026-11-13) in a real headless Chrome: chat.html against an AIB in this process with
  * fake chats. Two section headers alike ("Needs you", and "To review" when something finished), no title line of its own, no
  * key-hint row; each row is the request itself on line 1 and "chat title · project" on line 2; at most ONE row of neutral
  * actions (the default outlined in teal, nothing filled green or red); a risky command (force push) shows Review first, then the
@@ -8,7 +8,7 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { Browser, browserPath } from './_doc_browser.ts';
-import { remoteStudio } from './_remote_fixture.ts';
+import { remoteAib } from './_remote_fixture.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
 type Json = Record<string, unknown>;
@@ -18,7 +18,7 @@ Deno.test({
   name: 'inbox panel v3: headers, one action row per card, neutral buttons, risky commands reviewed first, one foot line',
   ignore: !browserPath,
   async fn() {
-    const s = await remoteStudio();
+    const s = await remoteAib();
     s.ctx.transcripts = {
       root: s.state,
       sessions: () => Promise.resolve([]),

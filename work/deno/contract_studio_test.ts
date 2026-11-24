@@ -1,7 +1,7 @@
 /**
- * Contract (ported from work/contract/test_contract_studio.py): the Studio routes beyond the live and transcript ones (settings,
+ * Contract (ported from work/contract/test_contract_studio.py): AIB routes beyond the live and transcript ones (settings,
  * conversation marks, editors, folders, prompts, Changes, branch, worktree Merge and clash, update, the worktree tool route) answer
- * the documented status and payload, for good and bad input. The Python version compared every answer with the reference; here the
+ * the documented status and payload, for good and bad input. The old version compared every answer with the reference; here the
  * values are asserted. Nothing opens a real dialog or program: folders/pick and open only get requests refused before a picker or a
  * program would start. Temp folders and a temp git repository stand in for projects.
  *
@@ -42,7 +42,7 @@ function makeRepo(root: string): string {
   return repo;
 }
 
-Deno.test('contract: Studio routes', async (t) => {
+Deno.test('contract: AIB routes', async (t) => {
   const fixture = await generateFixture('subagents-fixture');
   Deno.mkdirSync(`${fixture}/empty-omp`, { recursive: true });
   await using s = await ContractServer.start({ claudeDir: `${fixture}/claude`, ompDir: `${fixture}/empty-omp`, env: { AIB_SEAL: 'off' } });

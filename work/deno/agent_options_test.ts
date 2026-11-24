@@ -1,6 +1,6 @@
 /**
  * The model / mode / effort lists a new chat can offer before its session exists (server/state/agent_options.ts), the quiet probe and
- * the picks applied before the first prompt (Studio.connect picks -> Connection.applyStartPicks). Fake ACP agent only (fake_acp.py
+ * the picks applied before the first prompt (Aib.connect picks -> Connection.applyStartPicks). Fake ACP agent only (fake_acp.py
  * --models), temp state folders.
  */
 import { assert, assertEquals } from './_assert.ts';
@@ -17,22 +17,22 @@ class Lab {
   readonly dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-options-test-' }));
   readonly state = this.dir + SEP + 'state';
   readonly work = this.dir + SEP + 'project';
-  readonly studios: Aib[] = [];
+  readonly aibs: Aib[] = [];
   made = 0;
   constructor() {
     Deno.mkdirSync(this.work, { recursive: true });
   }
 
   manager(flags: string[] = ['--models']): Aib {
-    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, autoReconnect: false });
-    studio.ownerProbe = () => null;
-    studio.connectionFactory = (_command, cwd, provider) => (this.made++, new Connection(fake(...flags), cwd, provider));
-    this.studios.push(studio);
-    return studio;
+    const aib = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, autoReconnect: false });
+    aib.ownerProbe = () => null;
+    aib.connectionFactory = (_command, cwd, provider) => (this.made++, new Connection(fake(...flags), cwd, provider));
+    this.aibs.push(aib);
+    return aib;
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
-    for (const s of this.studios.reverse()) await s.close().catch(() => {});
+    for (const s of this.aibs.reverse()) await s.close().catch(() => {});
     for (let i = 0; i < 20; i++) {
       try {
         Deno.removeSync(this.dir, { recursive: true });
@@ -119,8 +119,8 @@ Deno.test({
   ...T,
   async fn() {
     await using lab = new Lab();
-    const studio = lab.manager();
-    const c = await studio.connect('claude', lab.work, null, { picks: { model: 'luna-4', mode: 'full', effort: 'high' } });
+    const aib = lab.manager();
+    const c = await aib.connect('claude', lab.work, null, { picks: { model: 'luna-4', mode: 'full', effort: 'high' } });
     assert(c.ready);
     assertEquals([modelOf(c), modeOf(c), effortOf(c)], ['luna-4', 'full', 'high']);
     assertEquals(c.pickResults.map((r) => [r.kind, r.ok]), [['model', true], ['mode', true], ['effort', true]]);
@@ -129,7 +129,7 @@ Deno.test({
     await until(() => !c.busy && texts(c).includes('Fixture settings'));
     assert(texts(c).includes('model=luna-4 mode=full effort=high sessions=1'), texts(c));
     // The lists were remembered, with the agent's own defaults (from the reply before the picks) as "current".
-    const hit = studio.agentOptions.lookup('claude', lab.work)!;
+    const hit = aib.agentOptions.lookup('claude', lab.work)!;
     assertEquals(hit.source, 'folder');
     assertEquals([hit.model!.current, hit.mode!.current, hit.effort!.current], ['sol-6-1', 'auto', 'medium']);
     assertEquals(hit.model!.choices.length, 16);
@@ -184,13 +184,13 @@ Deno.test({
   ...T,
   async fn() {
     await using lab = new Lab();
-    const studio = lab.manager();
-    const [status0, none] = await studio.liveCall('agent-options', { agent: 'claude', cwd: lab.work });
+    const aib = lab.manager();
+    const [status0, none] = await aib.liveCall('agent-options', { agent: 'claude', cwd: lab.work });
     assertEquals([status0, (none as Json).options, (none as Json).probed], [200, null, false]);
     assertEquals(lab.made, 0, 'no probe unless asked');
     const both = await Promise.all([
-      studio.liveCall('agent-options', { agent: 'claude', cwd: lab.work, probe: true }),
-      studio.liveCall('agent-options', { agent: 'claude', cwd: lab.work, probe: true }),
+      aib.liveCall('agent-options', { agent: 'claude', cwd: lab.work, probe: true }),
+      aib.liveCall('agent-options', { agent: 'claude', cwd: lab.work, probe: true }),
     ]);
     assertEquals(lab.made, 1, 'two pages asking at once share one probe');
     const [status, body] = both[0] as [number, Json];
@@ -198,14 +198,14 @@ Deno.test({
     const options = body.options as Json;
     assertEquals(((options.model as Json).choices as unknown[]).length, 16);
     assertEquals((options.model as Json).current, 'sol-6-1');
-    assertEquals(studio.connections.size, 0, 'the probe is not a chat');
-    const [, cached] = await studio.liveCall('agent-options', { agent: 'claude', cwd: lab.work, probe: true });
+    assertEquals(aib.connections.size, 0, 'the probe is not a chat');
+    const [, cached] = await aib.liveCall('agent-options', { agent: 'claude', cwd: lab.work, probe: true });
     assertEquals([(cached as Json).probed, lab.made], [false, 1], 'from memory now');
-    // A later Studio (an app restart) reads the same memory.
+    // A later AIB (an app restart) reads the same memory.
     const later = lab.manager();
     const [, after] = await later.liveCall('agent-options', { agent: 'claude', cwd: 'C:\\elsewhere', probe: true });
     assertEquals([(after as Json).probed, ((after as Json).options as Json).source, lab.made], [false, 'agent', 1]);
-    const [bad] = await studio.liveCall('agent-options', { agent: 'nope' });
+    const [bad] = await aib.liveCall('agent-options', { agent: 'nope' });
     assertEquals(bad, 400);
   },
 });
@@ -215,14 +215,14 @@ Deno.test({
   ...T,
   async fn() {
     await using lab = new Lab();
-    const studio = lab.manager(['--auth-required']);
-    const [, first] = await studio.liveCall('agent-options', { agent: 'claude', cwd: lab.work, probe: true });
+    const aib = lab.manager(['--auth-required']);
+    const [, first] = await aib.liveCall('agent-options', { agent: 'claude', cwd: lab.work, probe: true });
     assertEquals([(first as Json).options, (first as Json).probed], [null, true]);
     assert(String((first as Json).probeError).length > 0);
-    const [, second] = await studio.liveCall('agent-options', { agent: 'claude', cwd: lab.work, probe: true });
+    const [, second] = await aib.liveCall('agent-options', { agent: 'claude', cwd: lab.work, probe: true });
     assertEquals([(second as Json).probed, (second as Json).probeError, lab.made], [false, 'tried recently', 1]);
-    studio.clock = () => Date.now() / 1000 + 3600;
-    await studio.liveCall('agent-options', { agent: 'claude', cwd: lab.work, probe: true });
+    aib.clock = () => Date.now() / 1000 + 3600;
+    await aib.liveCall('agent-options', { agent: 'claude', cwd: lab.work, probe: true });
     assertEquals(lab.made, 2, 'tried again after the cool-down');
   },
 });
@@ -232,11 +232,11 @@ Deno.test({
   ...T,
   async fn() {
     await using lab = new Lab();
-    const studio = lab.manager();
-    const c = await studio.connect('claude', lab.work, null, {});
-    const [, body] = await studio.liveCall('config', { id: c.id, configId: 'model', value: 'terra-5' });
+    const aib = lab.manager();
+    const c = await aib.connect('claude', lab.work, null, {});
+    const [, body] = await aib.liveCall('config', { id: c.id, configId: 'model', value: 'terra-5' });
     assertEquals((body as Json).ok, true);
-    const hit = studio.agentOptions.lookup('claude', lab.work)!;
+    const hit = aib.agentOptions.lookup('claude', lab.work)!;
     assertEquals(hit.model!.current, 'sol-6-1', '"Default" stays the session/new value');
     const text = Deno.readTextFileSync(lab.state + SEP + FILE);
     assert(text.includes('terra-5') && text.includes('"version":1'));

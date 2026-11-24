@@ -1,7 +1,7 @@
 /**
  * Background tasks, the ownership check and busy-children detection of WSL chats (docs/WSL.md "Background tasks and ownership"),
  * without a distro: the helper's methods (wsl/helper/bgtasks.ts) on temp folders with a stand-in process list, and the Windows side
- * (wsl/transcripts.ts, wsl/procs.ts, wsl/ownership.ts, Studio.connect, Connection) through a FakeWslHost (a real keeper standing in
+ * (wsl/transcripts.ts, wsl/procs.ts, wsl/ownership.ts, Aib.connect, Connection) through a FakeWslHost (a real keeper standing in
  * for the distro's). The real distro: wsl_bgtasks_e2e_test.ts.
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
@@ -234,14 +234,14 @@ Deno.test({
   },
 });
 
-// ---- Studio and Connection over a FakeWslHost -----------------------------------------------------------------------------------
+// ---- AIB and Connection over a FakeWslHost -----------------------------------------------------------------------------------
 
 class Lab {
   readonly dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-wsl-bgstudio-' }));
   readonly state = join(this.dir, 'state');
   readonly work = join(this.dir, 'app');
   readonly host: FakeWslHost;
-  readonly studios: Aib[] = [];
+  readonly aibs: Aib[] = [];
 
   constructor() {
     Deno.mkdirSync(this.work, { recursive: true });
@@ -267,22 +267,22 @@ class Lab {
     resetWslProcs();
   }
 
-  studio(flags: string[] = []): Aib {
+  aib(flags: string[] = []): Aib {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
-    const studio = new Aib({ stateDir: this.state, port: 0, ownersDir: null }, { keeper });
-    studio.ownerProbe = () => {
+    const aib = new Aib({ stateDir: this.state, port: 0, ownersDir: null }, { keeper });
+    aib.ownerProbe = () => {
       throw new Error('a WSL chat never asks Windows for its owner');
     };
-    studio.connectionFactory = (_command, cwd, provider, options) => {
+    aib.connectionFactory = (_command, cwd, provider, options) => {
       const wsl = options?.wsl ? { ...options.wsl, program: undefined } : options?.wsl;
       return new Connection(fake('--cancel-aware', ...flags), cwd, provider, { ...options, wsl });
     };
-    this.studios.push(studio);
-    return studio;
+    this.aibs.push(aib);
+    return aib;
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
-    for (const s of this.studios.reverse()) await s.close().catch(() => {});
+    for (const s of this.aibs.reverse()) await s.close().catch(() => {});
     setWslHostResolver(null);
     resetWslProcs();
     await this.host.stopKeeper();
@@ -316,14 +316,14 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new Lab();
-    const studio = lab.studio();
-    const other = await studio.connect('claude', REF); // another chat of this AIB, still open: its agent must be excluded
+    const aib = lab.aib();
+    const other = await aib.connect('claude', REF); // another chat of this AIB, still open: its agent must be excluded
     const sessionId = 'saved-1'; // a saved chat of the distro (the fake agent loads any id)
 
     const asked: Json[] = [];
     let answer: Json = { owner: 4321, assessment: assessment(sessionId, 'no_evidence') };
     lab.host.handlers['ownership.check'] = (p) => (asked.push(p), answer);
-    const refused = await assertRejects(() => studio.connect('claude', REF, sessionId), OwnershipConflict);
+    const refused = await assertRejects(() => aib.connect('claude', REF, sessionId), OwnershipConflict);
     assertEquals(
       refused.message,
       'This claude conversation is already open in another agent process (PID 4321). Stop it in its current client before continuing here.',
@@ -337,13 +337,13 @@ Deno.test({
       owner: null,
       assessment: assessment(sessionId, 'possibly_active', [{ signal: 'transcript', strength: 'weak', text: 'Transcript was written 3 seconds ago, and AIB is not the app writing it.' }]),
     };
-    const asks = await assertRejects(() => studio.connect('claude', REF, sessionId), OwnershipEvidence) as OwnershipEvidence;
+    const asks = await assertRejects(() => aib.connect('claude', REF, sessionId), OwnershipEvidence) as OwnershipEvidence;
     assertEquals(asks.code, 'possibly_active');
     assert(asks.message.startsWith('Another app may be using this conversation: Transcript was written'), asks.message);
-    const going = await studio.connect('claude', REF, sessionId, { continueAnyway: true });
+    const going = await aib.connect('claude', REF, sessionId, { continueAnyway: true });
     assert(going.ready && !going.closed);
     await going.close();
-    studio.evictClosed();
+    aib.evictClosed();
     // folder-only evidence (a Claude Code panel in the folder, transcript quiet 30 minutes): continues with one note, as on Windows
     const panelReason = {
       signal: 'process-folder',
@@ -354,31 +354,31 @@ Deno.test({
       text: 'Claude Code (PID 777, started by VS Code) is running in this project folder. Agent processes do not reveal which conversation they hold, so AIB cannot tell whether it is this one.',
     };
     answer = { owner: null, assessment: { ...assessment(sessionId, 'possibly_active', [panelReason]), transcriptQuiet: true } };
-    const noted = await studio.connect('claude', REF, sessionId);
+    const noted = await aib.connect('claude', REF, sessionId);
     assert(noted.ready && !noted.closed);
     assertEquals(
       (noted.public().events as Json[]).filter((e) => e.kind === 'studio_note').map((e) => (e.data as Json).message),
       ['Claude Code is also running in this folder (PID 777, started by VS Code). AIB found nothing that says it holds this conversation.'],
     );
     await noted.close();
-    studio.evictClosed();
+    aib.evictClosed();
     // the same reason without a quiet transcript (or from an older helper without the field): asks
     answer = { owner: null, assessment: assessment(sessionId, 'possibly_active', [panelReason]) };
-    const unsure = await assertRejects(() => studio.connect('claude', REF, sessionId), OwnershipEvidence) as OwnershipEvidence;
+    const unsure = await assertRejects(() => aib.connect('claude', REF, sessionId), OwnershipEvidence) as OwnershipEvidence;
     assertEquals(unsure.code, 'possibly_active');
 
     answer = { owner: null, assessment: assessment(sessionId, 'no_evidence') };
-    const again = await studio.connect('claude', REF, sessionId);
+    const again = await aib.connect('claude', REF, sessionId);
     assertEquals(typeof asked.at(-1)!.releasedAgo, 'number', 'AIB just released it: its own transcript writes are not evidence');
     await again.close();
-    studio.evictClosed();
+    aib.evictClosed();
 
     // a helper without the method (an older one): the check falls back to the registry, never a refusal it cannot explain
     delete lab.host.handlers['ownership.check'];
-    const opened = await studio.connect('claude', REF, sessionId);
+    const opened = await aib.connect('claude', REF, sessionId);
     assert(opened.ready && !opened.closed);
     // the detail query of a WSL folder goes to the distro too (here: AIB itself holds it)
-    assertEquals(((await studio.ownershipQuery('claude', sessionId, REF)) as Json).verdict, 'owned_by_studio');
+    assertEquals(((await aib.ownershipQuery('claude', sessionId, REF)) as Json).verdict, 'owned_by_studio');
   },
 });
 
@@ -388,14 +388,14 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new Lab();
-    const studio = lab.studio(['--held-turn']);
-    const c = await studio.connect('claude', REF);
+    const aib = lab.aib(['--held-turn']);
+    const c = await aib.connect('claude', REF);
     const gate = join(lab.dir, 'gate');
-    assertEquals((await studio.liveCall('prompt', { id: c.id, text: `bgshell:${gate}`, clientMessageId: 'm1' }))[0], 200);
+    assertEquals((await aib.liveCall('prompt', { id: c.id, text: `bgshell:${gate}`, clientMessageId: 'm1' }))[0], 200);
     await until(() => !c.busy && c.events.some((e) => e.kind === 'turn_end'), 'the reply ended', 30);
     await until(() => c.backgroundShells().length === 1, 'the shell counts', 15);
     await until(() => lab.host.calls.some(([m]) => m === 'proc.tree'), 'asked the distro', 10);
-    assertEquals(studio.busyList().map((b) => b.state), ['background']);
+    assertEquals(aib.busyList().map((b) => b.state), ['background']);
     // Stop is offered once the distro's snapshot named the command's processes
     await until(() => Object.values(c.toolBackground())[0]?.stoppable, 'Stop offered', 10);
     assertEquals(Object.values(c.toolBackground())[0].state, 'running');
@@ -404,11 +404,11 @@ Deno.test({
     lab.host.state = 'stopped';
     await pause(FRESH_MS + 500);
     assertEquals(c.backgroundShells(), ['bfake1']);
-    assertEquals(studio.busyList().map((b) => b.state), ['background']);
+    assertEquals(aib.busyList().map((b) => b.state), ['background']);
     lab.host.state = 'ready';
 
     Deno.writeTextFileSync(gate, 'go'); // the command ends
-    await until(() => studio.busyList().length === 0, 'the chat dropped out of the busy list', 30);
+    await until(() => aib.busyList().length === 0, 'the chat dropped out of the busy list', 30);
     assertEquals(c.backgroundShells(), []);
     assertEquals(Object.values(c.toolBackground())[0].state, 'done');
   },
@@ -442,10 +442,10 @@ Deno.test({
     await keeperBinary();
     await using lab = new Lab();
     const pidFile = join(lab.dir, 'child');
-    const studio = lab.studio(['--held-turn', '--child-pid-file', pidFile]);
-    const c = await studio.connect('claude', REF);
+    const aib = lab.aib(['--held-turn', '--child-pid-file', pidFile]);
+    const c = await aib.connect('claude', REF);
     const gate = join(lab.dir, 'gate');
-    assertEquals((await studio.liveCall('prompt', { id: c.id, text: `bgshell:${gate}`, clientMessageId: 'm1' }))[0], 200);
+    assertEquals((await aib.liveCall('prompt', { id: c.id, text: `bgshell:${gate}`, clientMessageId: 'm1' }))[0], 200);
     await until(() => Object.values(c.toolBackground())[0]?.stoppable, 'Stop offered', 30);
     const shell = Number(Deno.readTextFileSync(pidFile + '.shell'));
     const agentChild = Number(Deno.readTextFileSync(pidFile)); // started with the agent, before the turn: never the command's
@@ -457,15 +457,15 @@ Deno.test({
     assertEquals([reused.listed, reused.killed, reused.skipped], [true, [], [shell]]);
     assert(pidAlive(shell));
 
-    const [status, body] = await studio.liveCall('tool-stop', { id: c.id, toolCallId: toolId }) as [number, Json];
+    const [status, body] = await aib.liveCall('tool-stop', { id: c.id, toolCallId: toolId }) as [number, Json];
     assertEquals([status, body.state, body.killed], [200, 'stopped', 1], JSON.stringify(body));
     const stops = lab.host.calls.filter(([m]) => m === 'proc.stop');
     assertEquals(((stops.at(-1)![1] as Json).targets as [number, number][]).map(([pid]) => pid), [shell], 'only the noted process');
     await until(() => !pidAlive(shell), 'the shell ended', 10);
     assert(pidAlive(agentChild), "the agent's own child is untouched");
     assertEquals(Object.values(c.toolBackground())[0], { state: 'stopped', stoppable: false });
-    await until(() => studio.busyList().length === 0, 'the chat dropped out of the busy list', 15);
-    const again = await studio.liveCall('tool-stop', { id: c.id, toolCallId: toolId });
+    await until(() => aib.busyList().length === 0, 'the chat dropped out of the busy list', 15);
+    const again = await aib.liveCall('tool-stop', { id: c.id, toolCallId: toolId });
     assertEquals(again[0], 409);
   },
 });

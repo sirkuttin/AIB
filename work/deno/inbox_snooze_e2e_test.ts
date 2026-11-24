@@ -12,7 +12,7 @@
 import { assert, assertEquals } from './_assert.ts';
 import { Browser, browserPath } from './_doc_browser.ts';
 import { pairPhone, pc } from './_remote_fixture.ts';
-import { liveChat, v2Studio } from './_remote_v2b.ts';
+import { liveChat, v2Aib } from './_remote_v2b.ts';
 import { phonePage, tap } from './_remote_phone_page.ts';
 import { AttentionWatcher, type Fire } from '../../app/server/attention/watcher.ts';
 import { InboxService } from '../../app/server/attention/inbox.ts';
@@ -31,7 +31,7 @@ Deno.test({
   name: 'inbox v3.1 phase 3: a visible snooze icon, the row leaves and comes back on time and on a change, PC and phone alike',
   ignore: !browserPath,
   async fn() {
-    const s = await v2Studio();
+    const s = await v2Aib();
     const browser = await Browser.launch();
     try {
       const fired: Fire[] = [];

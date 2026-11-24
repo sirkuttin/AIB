@@ -262,7 +262,7 @@ export interface RefusalFacts {
   /** The folded distro and its name. */
   key: string;
   name: string;
-  /** Studio's busy chats ({cwd, state}: LiveBackend busyConnections). */
+  /** AIB's busy chats ({cwd, state}: LiveBackend busyConnections). */
   busy: { cwd?: unknown }[];
   /** The terminals open now ({key}: TerminalSessions list). */
   terminals: { key?: unknown }[];

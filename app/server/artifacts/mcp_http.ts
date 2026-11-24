@@ -1,20 +1,20 @@
 /**
- * Studio's artifact tool over HTTP: the same `studio_artifact` MCP server as `aib mcp-artifact` (mcp.ts), served by the Studio
+ * AIB's artifact tool over HTTP: the same `studio_artifact` MCP server as `aib mcp-artifact` (mcp.ts), served by AIB
  * process itself as an MCP Streamable HTTP endpoint (JSON-RPC in a POST body, the reply as application/json, 202 for a
  * notification; no SSE stream, so GET is 405 as the spec allows).
  *
  * Why: a built binary cannot be a stdio MCP server. The `deno desktop` launcher prints "Runtime loaded successfully ..." and
- * "Runtime started" to stdout before our code runs, which corrupts the JSON-RPC stream. So when Studio runs from a built binary it
+ * "Runtime started" to stdout before our code runs, which corrupts the JSON-RPC stream. So when AIB runs from a built binary it
  * gives agents that advertise `mcpCapabilities.http` this entry instead (ACP McpServerHttp: {type: 'http', name, url, headers}),
  * keeping the stdio entry as the fallback for agents that do not (see artifactMcpEntries). Under `deno run` agents keep getting the
- * stdio entry, exactly as the Python Studio gives them artifact_mcp.py.
+ * stdio entry, exactly as the Python AIB gives them artifact_mcp.py.
  *
  * Access: a listener of its own on 127.0.0.1 (random port), never the page's or the artifact origin's port. Every request must
  *   - come from a loopback address with Host exactly 127.0.0.1:<port> or localhost:<port> (no DNS rebinding),
  *   - carry no Origin and no Sec-Fetch-Site header (so no browser page, whatever its origin, can call it),
  *   - carry X-Studio-Conversation-Id and that conversation's key in X-Studio-Artifact-Key (artifacts/keys.ts, the same key the stdio
  *     tool gets), checked before the body is read.
- * The tool then calls Studio's artifact routes with that key exactly as the stdio tool does, so the web server checks it again.
+ * The tool then calls AIB's artifact routes with that key exactly as the stdio tool does, so the web server checks it again.
  *
  * WSL (phase 2 tunnel, wsl/mcp_tunnel.ts): a message from an agent in a distro arrives over the helper channel instead of a socket;
  * `tunneled` answers it with the same key check, size limit and reply as a POST (only the loopback, Host and Origin checks, which are
@@ -50,8 +50,8 @@ const MAX_HOOK_BYTES = 4 * 1024 * 1024;
 
 type Json = Record<string, unknown>;
 
-/** What the server needs from the Studio that runs it. */
-export interface McpHttpStudio {
+/** What the server needs from AIB that runs it. */
+export interface McpHttpHost {
   /** The conversation's session folder and whether it works in its own worktree; null for a conversation not open here. */
   conversation(id: string): { cwd: string; worktree: boolean; restricted?: boolean; main?: boolean } | null;
   /** The web server's base URL ('' when unknown). */
@@ -72,15 +72,15 @@ export interface McpHttpStudio {
 
 /** The address file's name in the state folder (FORWARD_FILE): {"url": ..., "pid": ...}. */
 export const FORWARD_FILE = 'artifact-mcp.json';
-/** Address files this process publishes: an `mcp-forward <file>` entry naming one of them is Studio's own tool (connection.ts). */
+/** Address files this process publishes: an `mcp-forward <file>` entry naming one of them is AIB's own tool (connection.ts). */
 const OWN_FORWARD_FILES = new Set<string>();
 
-/** Register an address file as Studio's own (a Studio that gives agents the forwarder, before its server has started). */
+/** Register an address file as AIB's own (an AIB that gives agents the forwarder, before its server has started). */
 export function ownForwardFile(path: string): void {
   OWN_FORWARD_FILES.add(path);
 }
 
-/** Tunnel sockets (in WSL distros) this process gave chats: an `mcp-forward --helper-socket <socket>` entry naming one is Studio's own. */
+/** Tunnel sockets (in WSL distros) this process gave chats: an `mcp-forward --helper-socket <socket>` entry naming one is AIB's own. */
 const OWN_TUNNEL_SOCKETS = new Set<string>();
 
 /**
@@ -95,7 +95,7 @@ export function isOwnForwardEntry(command: unknown, args: string[]): boolean {
 
 /**
  * The stdio entry an agent in the keeper gets for the artifact tool: the keeper's forwarder (its program lives outside every AIB
- * version folder), posting to this Studio's HTTP endpoint with the conversation's key, whichever AIB version serves it now.
+ * version folder), posting to this AIB's HTTP endpoint with the conversation's key, whichever AIB version serves it now.
  * On Windows, with a keeper program that opens them (keeper 1.7.0), the headers are sealed with DPAPI (keyForForwarder): this entry
  * is in the agent's keeper journal and its chat note, which any other agent of this user can read. `program` is the forwarder as
  * this process ran its --check (a WSL chat's entry names the same program by its /mnt/c path).
@@ -124,7 +124,7 @@ export function tunnelEntry(forwarder: string, socket: string, key: string, conv
   };
 }
 
-/** A WSL chat taken over from its keeper: its recorded tunnel entry (AIB wrote it) is Studio's own again. */
+/** A WSL chat taken over from its keeper: its recorded tunnel entry (AIB wrote it) is AIB's own again. */
 export function ownTunnelEntry(entry: unknown): void {
   const e = entry as { name?: unknown; args?: unknown };
   const args = Array.isArray(e?.args) ? e.args : [];
@@ -134,7 +134,7 @@ export function ownTunnelEntry(entry: unknown): void {
 }
 
 const LOOPBACK_PEERS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
-/** Every URL a server in this process serves: an http entry naming one of them is Studio's own (connection.ts). */
+/** Every URL a server in this process serves: an http entry naming one of them is AIB's own (connection.ts). */
 const OWN_URLS = new Set<string>();
 
 /** True when url is the endpoint of an HTTP artifact server running in this process. */
@@ -186,7 +186,7 @@ export class ArtifactMcpHttp {
   #server: HttpServer | null = null;
   #url = '';
 
-  constructor(readonly studio: McpHttpStudio) {}
+  constructor(readonly aib: McpHttpHost) {}
 
   /** Start listening (once) and return the endpoint URL, http://127.0.0.1:<port>/mcp. */
   start(): string {
@@ -197,7 +197,7 @@ export class ArtifactMcpHttp {
     );
     this.#url = `http://127.0.0.1:${this.#server.addr.port}${MCP_PATH}`;
     OWN_URLS.add(this.#url);
-    const file = this.studio.addressFile;
+    const file = this.aib.addressFile;
     if (file) {
       OWN_FORWARD_FILES.add(file);
       try {
@@ -228,7 +228,7 @@ export class ArtifactMcpHttp {
     if (!server) return;
     this.#server = null;
     OWN_URLS.delete(this.#url);
-    const file = this.studio.addressFile;
+    const file = this.aib.addressFile;
     if (file) {
       try {
         if (JSON.parse(Deno.readTextFileSync(file)).pid === Deno.pid) {
@@ -313,7 +313,7 @@ export class ArtifactMcpHttp {
       return plain(401, 'AIB refused the hook key for this conversation');
     }
     key = request.headers.get(HOOK_KEY_HEADER) ?? '';
-    if (!this.studio.hook) {
+    if (!this.aib.hook) {
       await drain(request);
       return plain(503, 'AIB has no subagent hooks');
     }
@@ -325,12 +325,12 @@ export class ArtifactMcpHttp {
     } catch {
       return plain(400, 'The hook input is not JSON');
     }
-    const result = await this.studio.hook(event, conversation, body);
+    const result = await this.aib.hook(event, conversation, body);
     return answer(result.status, result.body, result.type);
   }
 
   #keyOk(key: string, conversation: string): boolean {
-    const check = this.studio.check ?? artifactKeys.check;
+    const check = this.aib.check ?? artifactKeys.check;
     return !!key && !!conversation && check(key, conversation);
   }
 
@@ -353,8 +353,8 @@ export class ArtifactMcpHttp {
     // Decoded as the stdio server decodes a line (replacement characters, a BOM kept), so the same bytes get the same reply.
     const text = pyStrip(new TextDecoder('utf-8', { ignoreBOM: true }).decode(raw));
     if (!text) return refused(400, 'Empty request');
-    const open = this.studio.conversation(conversation);
-    const studio = this.studio;
+    const open = this.aib.conversation(conversation);
+    const aib = this.aib;
     const ctx: ToolContext = {
       key,
       conversation,
@@ -362,12 +362,12 @@ export class ArtifactMcpHttp {
       restricted: !!open?.restricted, // a WSL chat: the tool groups of mcp.ts WSL_TOOL_GROUPS
       main: !!open?.main, // swarm helper tools (a WSL chat: only while mcp.ts WSL_TOOL_GROUPS.swarm is on)
       cwd: open && !open.restricted ? open.cwd : null,
-      roots: () => [studio.baseUrl(), urlFromFile(studio.urlFile)],
+      roots: () => [aib.baseUrl(), urlFromFile(aib.urlFile)],
     };
     let answer: Json | null;
     try {
       answer = await reply(text, ctx);
-    } catch (error) { // reply never throws; a bug here must not take the Studio down
+    } catch (error) { // reply never throws; a bug here must not take AIB down
       log.exception(error, 'The HTTP artifact tool failed');
       return refused(500, 'Internal error');
     }

@@ -1,12 +1,12 @@
 /**
  * Quitting AIB never stops a chat, and AIB exits (owner's decisions 2026-11-10 and 2026-11-11: "the whole point of this keeper is
  * to not have anything break when we quit"; quitting with chats working does exactly what Install now does). End to end with the
- * real pieces main.ts wires together: the real keeper (built from keeper/ with Go), a real Studio whose agents run in it, fake ACP
+ * real pieces main.ts wires together: the real keeper (built from keeper/ with Go), a real AIB whose agents run in it, fake ACP
  * agents (work/fake_acp.py), and the desktop window/tray logic (DesktopApp) on a fake Shell, so no window, tray icon or dialog is
  * ever shown. Temp state folders only. The keeper runs with an orphan command that only leaves a marker and short orphan timers, so
  * a restart of AIB by the keeper (rule V1) would show at once, and so would the keeper giving up on the chats.
  *
- *   - Quit AIB mid-turn with a streaming chat and a queued message: nothing is stopped, AIB (the Studio) is gone, the keeper holds
+ *   - Quit AIB mid-turn with a streaming chat and a queued message: nothing is stopped, AIB (AIB) is gone, the keeper holds
  *     the chat (held) and never runs its orphan command; the agent goes on and the question arrives with no AIB. The next AIB takes
  *     the chat over: every chunk once and in order, the question once, the answer and the queued message reach the agent once.
  *   - A chat whose only work is a background helper: the same; the agent's helper process lives on until it is done.
@@ -88,7 +88,7 @@ class Lab {
   readonly state = this.dir + SEP + 'state';
   readonly work = this.dir + SEP + 'work';
   readonly agentLog = this.dir + SEP + 'agent-received.log';
-  readonly studios: Aib[] = [];
+  readonly aibs: Aib[] = [];
   #gates = 0;
 
   constructor() {
@@ -111,10 +111,10 @@ class Lab {
   readonly orphanMarker = this.dir + SEP + 'orphan-ran.txt';
 
   /**
-   * A Studio over the real keeper. quickOrphan: the keeper is started with an orphan command that only writes orphanMarker and
+   * An AIB over the real keeper. quickOrphan: the keeper is started with an orphan command that only writes orphanMarker and
    * QUICK_ORPHAN timers (a restart of AIB, or the keeper giving up on the chats, shows within a second); else no orphan restart.
    */
-  studio(flags: string[], quickOrphan = false): Aib {
+  aib(flags: string[], quickOrphan = false): Aib {
     // The keeper as the app starts it, but quicker to go once it is empty (the real one waits longer).
     const orphan = quickOrphan
       ? {
@@ -134,28 +134,28 @@ class Lab {
         ...(quickOrphan ? QUICK_ORPHAN : ['--orphan-after', '60s']),
       ],
     });
-    const studio = new Aib({
+    const aib = new Aib({
       claudeLauncher: import.meta.filename!, nodeCommand: 'node',
       stateDir: this.state,
       port: 0,
       ownersDir: null,
     }, { keeper });
-    studio.ownerProbe = () => null;
-    studio.connectionFactory = (_command, cwd, provider, options) =>
+    aib.ownerProbe = () => null;
+    aib.connectionFactory = (_command, cwd, provider, options) =>
       new Connection(fake(...flags), cwd, provider, {
         ...options,
         env: { FAKE_ACP_LOG: this.agentLog },
       });
-    this.studios.push(studio);
-    return studio;
+    this.aibs.push(aib);
+    return aib;
   }
 
   /**
-   * The desktop app over a Studio, wired as main.ts does it: the status line and the quit rule from Studio.workingList, canLeave
-   * from Studio.quitHandover, quitting through the normal close path (main.ts close: Studio.close, or with work running hold +
-   * Studio.release({ hold })). A fake Shell: nothing on screen.
+   * The desktop app over an AIB, wired as main.ts does it: the status line and the quit rule from Aib.workingList, canLeave
+   * from Aib.quitHandover, quitting through the normal close path (main.ts close: Aib.close, or with work running hold +
+   * Aib.release({ hold })). A fake Shell: nothing on screen.
    */
-  app(studio: Aib) {
+  app(aib: Aib) {
     const windows: Win[] = [];
     const updates: [string, number, string][] = [];
     const quits: boolean[] = [];
@@ -179,9 +179,9 @@ class Lab {
       url: 'http://127.0.0.1:8890/',
       stateDir: this.state,
       trayIcon: trayIconPng(),
-      busyCount: () => Promise.resolve(studio.busyList().length),
+      busyCount: () => Promise.resolve(aib.busyList().length),
       trayCounts: () => {
-        const working = studio.workingList();
+        const working = aib.workingList();
         return Promise.resolve({
           working: working.length,
           needsYou: working.filter((w) => w.state === 'needs_you').length,
@@ -191,12 +191,12 @@ class Lab {
         quits.push(stop);
         leaves.push(!!leave);
         closed = leave
-          ? holdKeeper(studio.keeper).then(() => studio.release({ hold: true }))
+          ? holdKeeper(aib.keeper).then(() => aib.release({ hold: true }))
             .then(() => {})
-          : studio.close();
+          : aib.close();
         return closed;
       },
-      canLeave: () => studio.quitHandover(),
+      canLeave: () => aib.quitHandover(),
       saveDelayMs: 0,
       watchdogMs: 0,
       trayPollMs: 0,
@@ -237,7 +237,7 @@ class Lab {
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
-    for (const s of this.studios.reverse()) await s.close().catch(() => {});
+    for (const s of this.aibs.reverse()) await s.close().catch(() => {});
     const info = readKeeperInfo(this.state);
     if (info && pidAlive(info.pid)) {
       try {
@@ -296,7 +296,7 @@ Deno.test({
     await keeperBinary();
     await using lab = new Lab();
     const childFile = lab.path('child-1');
-    const a = lab.studio(
+    const a = lab.aib(
       ['--cancel-aware', '--child-pid-file', childFile],
       true,
     );
@@ -340,7 +340,7 @@ Deno.test({
       'the question comes later, with no AIB',
     );
 
-    // Quit AIB from the tray mid-turn: nothing is stopped, AIB exits (the Studio is released), the keeper holds the chat.
+    // Quit AIB from the tray mid-turn: nothing is stopped, AIB exits (AIB is released), the keeper holds the chat.
     const keeperPid = lab.keeperPid();
     await app.onTrayMenu('quit');
     assertEquals(
@@ -351,7 +351,7 @@ Deno.test({
     await closed();
     assert(!app.background, 'AIB does not stay in the tray');
     assertEquals(windows[0].visible, false);
-    lab.studios.splice(lab.studios.indexOf(a), 1);
+    lab.aibs.splice(lab.aibs.indexOf(a), 1);
     await noRestart(lab, [agentPid, childPid, keeperPid]);
     assertEquals(
       prompts(lab.received()).length,
@@ -360,7 +360,7 @@ Deno.test({
     );
 
     // The next AIB (same data folder) takes the chat over from the keeper's record.
-    const b = lab.studio(['--cancel-aware'], true);
+    const b = lab.aib(['--cancel-aware'], true);
     assertEquals(await b.adoptKeeper(), 1);
     assert(!lab.held(), 'an AIB is back: the hold ended');
     const r = b.connections.get(c.id)!;
@@ -447,7 +447,7 @@ Deno.test({
     await keeperBinary();
     await using lab = new Lab();
     const childFile = lab.path('child-2');
-    const a = lab.studio(['--held-turn', '--child-pid-file', childFile], true);
+    const a = lab.aib(['--held-turn', '--child-pid-file', childFile], true);
     const { app, windows, quits, leaves, closed } = lab.app(a);
     await app.start();
     const c = await a.connect('claude', lab.work);
@@ -471,10 +471,10 @@ Deno.test({
     await until(() => quits.length === 1, 'quit', 5);
     assertEquals(leaves, [true]);
     await closed();
-    lab.studios.splice(lab.studios.indexOf(a), 1);
+    lab.aibs.splice(lab.aibs.indexOf(a), 1);
     await noRestart(lab, [agentPid, childPid]);
 
-    const b = lab.studio(['--held-turn'], true);
+    const b = lab.aib(['--held-turn'], true);
     assertEquals(await b.adoptKeeper(), 1);
     const r = b.connections.get(c.id)!;
     assertEquals(r.process!.pid, agentPid);
@@ -497,7 +497,7 @@ Deno.test({
     await keeperBinary();
     await using lab = new Lab();
     const childFile = lab.path('child-3');
-    const a = lab.studio(['--held-turn', '--child-pid-file', childFile], true);
+    const a = lab.aib(['--held-turn', '--child-pid-file', childFile], true);
     const { app, quits, leaves, closed } = lab.app(a);
     await app.start();
     const c = await a.connect('claude', lab.work);
@@ -515,10 +515,10 @@ Deno.test({
     await until(() => quits.length === 1, 'quit', 5);
     assertEquals(leaves, [true], 'left to the keeper, not quit as idle');
     await closed();
-    lab.studios.splice(lab.studios.indexOf(a), 1);
+    lab.aibs.splice(lab.aibs.indexOf(a), 1);
     await noRestart(lab, [agentPid, shellPid]);
 
-    const b = lab.studio(['--held-turn'], true);
+    const b = lab.aib(['--held-turn'], true);
     assertEquals(await b.adoptKeeper(), 1);
     const r = b.connections.get(c.id)!;
     assertEquals(r.process!.pid, agentPid);
@@ -540,11 +540,11 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new Lab();
-    const studio = lab.studio(['--cancel-aware']);
-    const { app, quits, closed } = lab.app(studio);
+    const aib = lab.aib(['--cancel-aware']);
+    const { app, quits, closed } = lab.app(aib);
     await app.start();
-    const c = await studio.connect('claude', lab.work);
-    await studio.liveCall('prompt', {
+    const c = await aib.connect('claude', lab.work);
+    await aib.liveCall('prompt', {
       id: c.id,
       text: 'stream:4:200',
       clientMessageId: 'm1',
@@ -552,7 +552,7 @@ Deno.test({
     await until(() => c.busy, 'working', 10);
     const channel = c.channel!;
     channel.lost = true; // as if it ran outside the keeper (only quitHandover reads it before it is put back)
-    assert((await studio.quitHandover()).includes('outside the keeper'));
+    assert((await aib.quitHandover()).includes('outside the keeper'));
     await app.onTrayMenu('quit');
     assertEquals(quits, [], 'nothing stopped, AIB does not exit');
     assert(app.background);
@@ -574,10 +574,10 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new Lab();
-    const studio = lab.studio(['--cancel-aware'], true);
-    const { app, quits, leaves, closed } = lab.app(studio);
+    const aib = lab.aib(['--cancel-aware'], true);
+    const { app, quits, leaves, closed } = lab.app(aib);
     await app.start();
-    const c = await studio.connect('claude', lab.work);
+    const c = await aib.connect('claude', lab.work);
     const agentPid = c.process!.pid;
     const keeperPid = lab.keeperPid();
     assert(pidAlive(keeperPid));
@@ -597,19 +597,19 @@ Deno.test({
     await keeperBinary();
     await using lab = new Lab();
     const childFile = lab.path('child-3');
-    const studio = lab.studio([
+    const aib = lab.aib([
       '--cancel-aware',
       '--child-pid-file',
       childFile,
     ]);
-    const { app, updates, quits, closed } = lab.app(studio);
+    const { app, updates, quits, closed } = lab.app(aib);
     await app.start();
-    const c = await studio.connect('claude', lab.work);
+    const c = await aib.connect('claude', lab.work);
     await until(() => Deno.statSync(childFile).size > 0, 'the agent child', 10);
     const childPid = Number(Deno.readTextFileSync(childFile));
     const agentPid = c.process!.pid;
     const keeperPid = lab.keeperPid();
-    await studio.liveCall('prompt', {
+    await aib.liveCall('prompt', {
       id: c.id,
       text: 'stream:6:250',
       clientMessageId: 'm1',
@@ -640,7 +640,7 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new Lab();
-    const a = lab.studio(['--cancel-aware']);
+    const a = lab.aib(['--cancel-aware']);
     const c = await a.connect('claude', lab.work);
     const agentPid = c.process!.pid;
     await a.liveCall('prompt', {
@@ -663,11 +663,11 @@ Deno.test({
       !lab.held(),
       'a kill is not a quit: no hold (the keeper restarts AIB in the tray, rule V1)',
     );
-    lab.studios.splice(lab.studios.indexOf(a), 1);
+    lab.aibs.splice(lab.aibs.indexOf(a), 1);
     await pause(1500); // the agent goes on into the keeper: the question arrives while no AIB runs
     assert(pidAlive(agentPid));
 
-    const b = lab.studio(['--cancel-aware']);
+    const b = lab.aib(['--cancel-aware']);
     assertEquals(await b.adoptKeeper(), 1);
     const r = b.connections.get(c.id)!;
     assertEquals(r.process!.pid, agentPid, 'the same agent process');
@@ -712,7 +712,7 @@ Deno.test({
       ),
       'AIB publishes its address',
     );
-    await server.close(true); // what Studio.release({ hold: true }) does: AIB quit with its chats left in the keeper
+    await server.close(true); // what Aib.release({ hold: true }) does: AIB quit with its chats left in the keeper
     assertEquals(JSON.parse(Deno.readTextFileSync(file)), {
       closed: true,
       pid: Deno.pid,
@@ -780,12 +780,12 @@ Deno.test({
   async fn() {
     await keeperBinary();
     await using lab = new Lab();
-    const a = lab.studio(['--cancel-aware']);
+    const a = lab.aib(['--cancel-aware']);
     const c = await a.connect('claude', lab.work);
     const agentPid = c.process!.pid;
     assertEquals(await a.release({ hold: true }), 1);
-    lab.studios.splice(lab.studios.indexOf(a), 1);
-    const b = lab.studio(['--cancel-aware']);
+    lab.aibs.splice(lab.aibs.indexOf(a), 1);
+    const b = lab.aib(['--cancel-aware']);
     const real = await b.keeper!.client(false);
     // The running keeper as an older one would answer: without what this AIB needs (release.json keeper.needs).
     Object.defineProperty(real!, 'features', {

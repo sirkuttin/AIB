@@ -1,7 +1,7 @@
 /**
  * Subscription usage limits for the composer's Limits chip: the parsers (samples from outputs/usage-limits/usage-limits-research.md),
  * the per-account store and its persistence, the Codex session-file reader and its app-server fallback, the once-a-minute throttle,
- * and the Studio end to end with fake agents (Claude's rateLimit meta, Qwen's quota error, Vibe's _account/read).
+ * and AIB end to end with fake agents (Claude's rateLimit meta, Qwen's quota error, Vibe's _account/read).
  * Never reads the owner's ~/.codex: every Codex home here is a temp folder.
  */
 import { assert, assertEquals } from './_assert.ts';
@@ -302,25 +302,25 @@ Deno.test({
   },
 });
 
-// ---- the Studio end to end with fake agents -----------------------------------------------------------------------------
+// ---- AIB end to end with fake agents -----------------------------------------------------------------------------
 class Lab {
   readonly dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-limits-test-' }));
   readonly state = this.dir + SEP + 'state';
   readonly work = this.dir + SEP + 'project';
-  readonly studios: Aib[] = [];
+  readonly aibs: Aib[] = [];
   constructor() {
     Deno.mkdirSync(this.work, { recursive: true });
   }
   manager(): Aib {
-    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, autoReconnect: false });
-    studio.ownerProbe = () => null;
-    studio.agentLaunch = () => Promise.resolve([['fixture'], {}]);
-    studio.connectionFactory = (_command, cwd, provider) => new Connection([PYTHON, FAKE_UNIQUE, '--limits'], cwd, provider);
-    this.studios.push(studio);
-    return studio;
+    const aib = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, autoReconnect: false });
+    aib.ownerProbe = () => null;
+    aib.agentLaunch = () => Promise.resolve([['fixture'], {}]);
+    aib.connectionFactory = (_command, cwd, provider) => new Connection([PYTHON, FAKE_UNIQUE, '--limits'], cwd, provider);
+    this.aibs.push(aib);
+    return aib;
   }
   async [Symbol.asyncDispose](): Promise<void> {
-    for (const s of this.studios.reverse()) await s.close().catch(() => {});
+    for (const s of this.aibs.reverse()) await s.close().catch(() => {});
     for (let i = 0; i < 20; i++) {
       try {
         Deno.removeSync(this.dir, { recursive: true });
@@ -332,23 +332,23 @@ class Lab {
   }
 }
 
-const limitsOf = async (studio: Aib, c: Connection) => ((await studio.liveState(c.id, 0)) as Json).limits as LimitsSnapshot | null;
+const limitsOf = async (aib: Aib, c: Connection) => ((await aib.liveState(c.id, 0)) as Json).limits as LimitsSnapshot | null;
 
 Deno.test({
-  name: "Studio: Claude's rateLimit reaches every chat on the account and survives a restart",
+  name: "AIB: Claude's rateLimit reaches every chat on the account and survives a restart",
   ...T,
   async fn() {
     await using lab = new Lab();
-    const studio = lab.manager();
-    const first = await studio.connect('claude', lab.work, null, {});
-    assertEquals(await limitsOf(studio, first), null); // nothing known yet: no chip
+    const aib = lab.manager();
+    const first = await aib.connect('claude', lab.work, null, {});
+    assertEquals(await limitsOf(aib, first), null); // nothing known yet: no chip
     await first.prompt('ratelimit:' + JSON.stringify(CLAUDE_META));
-    await until(async () => !first.busy && (await limitsOf(studio, first)) !== null, 'the limits to arrive');
-    assertEquals(brief(await limitsOf(studio, first)), [['seven_day', 'wk', 23, 1794708000, 'allowed']]);
+    await until(async () => !first.busy && (await limitsOf(aib, first)) !== null, 'the limits to arrive');
+    assertEquals(brief(await limitsOf(aib, first)), [['seven_day', 'wk', 23, 1794708000, 'allowed']]);
     // A second chat on the same account shows them before it ever got an event.
-    const second = await studio.connect('claude', lab.work, null, {});
-    assertEquals((await limitsOf(studio, second))!.windows[0].usedPercent, 23);
-    await studio.close();
+    const second = await aib.connect('claude', lab.work, null, {});
+    assertEquals((await limitsOf(aib, second))!.windows[0].usedPercent, 23);
+    await aib.close();
     // After a restart the account's last numbers are still there.
     const later = lab.manager();
     const third = await later.connect('claude', lab.work, null, {});
@@ -357,18 +357,18 @@ Deno.test({
 });
 
 Deno.test({
-  name: "Studio: Qwen's quota error marks the cap reached; Vibe's _account/read fills its chip when the chat opens",
+  name: "AIB: Qwen's quota error marks the cap reached; Vibe's _account/read fills its chip when the chat opens",
   ...T,
   async fn() {
     await using lab = new Lab();
-    const studio = lab.manager();
-    const qwen = await studio.connect('qwen', lab.work, null, {});
+    const aib = lab.manager();
+    const qwen = await aib.connect('qwen', lab.work, null, {});
     await qwen.prompt('quota:4000000000');
-    await until(async () => !qwen.busy && (await limitsOf(studio, qwen)) !== null, 'the quota notice');
-    const q = (await limitsOf(studio, qwen))!;
+    await until(async () => !qwen.busy && (await limitsOf(aib, qwen)) !== null, 'the quota notice');
+    const q = (await limitsOf(aib, qwen))!;
     assertEquals([q.blocked, q.plan], [{ resetsAt: 4000000000 }, 'Qwen Plus']);
-    const vibe = await studio.connect('vibe', lab.work, null, {});
-    await until(async () => (await limitsOf(studio, vibe)) !== null, 'the Vibe account read');
-    assertEquals(brief(await limitsOf(studio, vibe)), [['month', 'mo', 37.5, Date.parse('2099-12-01T00:00:00Z') / 1000, 'allowed']]);
+    const vibe = await aib.connect('vibe', lab.work, null, {});
+    await until(async () => (await limitsOf(aib, vibe)) !== null, 'the Vibe account read');
+    assertEquals(brief(await limitsOf(aib, vibe)), [['month', 'mo', 37.5, Date.parse('2099-12-01T00:00:00Z') / 1000, 'allowed']]);
   },
 });

@@ -882,8 +882,8 @@ export interface SyncConnection {
   public(since?: number): unknown;
 }
 
-/** What live sync needs from the Studio of the agent host. */
-export interface SyncStudio {
+/** What live sync needs from AIB of the agent host. */
+export interface SyncHost {
   stateDir: string;
   worktrees: { registry: wt.Registry } | null;
   settings: { worktreePerChat(): boolean };
@@ -918,7 +918,7 @@ export class LiveSync {
   /** Whether the folder watcher is used on this OS: Windows only (as in Python), unless told (the WSL helper: inotify). */
   readonly watchHere: boolean;
 
-  constructor(readonly studio: SyncStudio, settle = settings.SETTLE, poll = settings.POLL, watchFolders = true, watchHere = WIN) {
+  constructor(readonly aib: SyncHost, settle = settings.SETTLE, poll = settings.POLL, watchFolders = true, watchHere = WIN) {
     this.settle = settle;
     this.poll = poll;
     this.watchFolders = watchFolders;
@@ -927,24 +927,24 @@ export class LiveSync {
 
   // -- who is watched
   get stateDir(): string {
-    return this.studio.stateDir;
+    return this.aib.stateDir;
   }
 
   get registry(): wt.Registry {
-    return this.studio.worktrees!.registry;
+    return this.aib.worktrees!.registry;
   }
 
   /** On for every chat in its own copy (a helper, or a chat made before 2026-11-16); not gated on the hidden worktreePerChat flag. */
   enabled(): boolean {
-    return !!(this.studio.worktrees && !this.closed);
+    return !!(this.aib.worktrees && !this.closed);
   }
 
   /** [key, record] of the open, Studio-owned worktree chats (of one project). */
   chats(project: string | null = null): [string, WorktreeRecord & { key: string }][] {
     const found: [string, WorktreeRecord & { key: string }][] = [];
     const seen = new Set<string>();
-    if (!this.studio.worktrees) return found;
-    const connections = [...this.studio.connections.values()].filter((c) => !c.closed && pyTruthy(c.worktree ?? null));
+    if (!this.aib.worktrees) return found;
+    const connections = [...this.aib.connections.values()].filter((c) => !c.closed && pyTruthy(c.worktree ?? null));
     for (const connection of connections) {
       const record = this.registry.find(connection.cwd);
       if (!record || seen.has(record.key) || (project !== null && !wt.same(str(record.project), project))) continue;
@@ -1006,7 +1006,7 @@ export class LiveSync {
     return await sync.lock.run(work);
   }
 
-  // -- hooks from Studio
+  // -- hooks from AIB
   /**
    * A worktree chat is ready (new, resumed or reconnected at host start): watch its project and catch it up on what the user saved
    * while it was closed (in the background: opening a chat never waits for this).
@@ -1326,7 +1326,7 @@ export class LiveSync {
   }
 
   async contextSent(connection: SyncConnection, tokenIn: unknown): Promise<void> {
-    const record = this.studio.worktrees ? this.registry.find(connection.cwd) : null;
+    const record = this.aib.worktrees ? this.registry.find(connection.cwd) : null;
     if (!record) return;
     const token = isDict(tokenIn) ? tokenIn : { paths: tokenIn, notes: [] };
     const sent = new Set(strings(token.paths));

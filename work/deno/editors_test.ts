@@ -1,5 +1,5 @@
 /**
- * server/desktop/editors.ts: the cases of work/test_editors.py that exercise editors.py, plus parity with Python. Nothing is
+ * server/desktop/editors.ts: the cases of work/test_editors.py that exercise editors.py, plus the frozen answers. Nothing is
  * launched: every Launcher gets a recording popen. Skipped: SettingsAndPrefsTests (state_store, covered by the settings port tests).
  */
 import { assert, assertEquals, assertThrows } from './_assert.ts';
@@ -160,7 +160,7 @@ Deno.test('default order and public entry; settings uses the same ids', () => {
   assertEquals([...EDITOR_IDS], ['code', 'cursor', 'windsurf', 'devin']);
 });
 
-Deno.test('detection matches Python', async () => {
+Deno.test('detection matches the frozen answers', async () => {
   const py = new Frozen();
   const local = osp.join(LOCAL, 'Programs');
   const cases: [string[], Record<string, string>, boolean, string, string[]][] = [
@@ -303,7 +303,7 @@ Deno.test('a linked worktree of a project is allowed, a fake one is not', () => 
   refused(() => resolveInside(other, [f.project]));
 });
 
-Deno.test('resolveInside matches Python', async () => {
+Deno.test('resolveInside matches the frozen answers', async () => {
   using f = new Fixture();
   const py = new Frozen();
   const roots = [f.project];
@@ -334,17 +334,17 @@ Deno.test('resolveInside matches Python', async () => {
 
 Deno.test('knownRoots collects every source and survives a host problem', () => {
   using f = new Fixture();
-  const studio = {
+  const aib = {
     liveList: () => ({ connections: [{ cwd: f.project }], recovered: [{ cwd: f.outside }, { cwd: 'relative' }] }),
     conversations: { entries: { 'omp:1': { cwd: f.p('c') } } },
     projectPrefs: { projects: { 'w:c:/repos/app': {}, 'p:/x': {} } },
   };
-  const got = knownRoots(studio);
+  const got = knownRoots(aib);
   for (const want of [f.project, f.outside, f.p('c')]) assert(got.includes(want), want);
   assert(!got.includes('relative'));
   assert(
     knownRoots({
-      ...studio,
+      ...aib,
       liveList: () =>
         (() => {
           throw new Error('host down');
@@ -494,7 +494,7 @@ Deno.test('the listing default prefers the saved setting', () => {
   assertEquals([listing.project, listing.workspaces, listing.detectedDefault], [f.project, [], 'code']);
 });
 
-Deno.test('buildCommand matches Python for every program and kind', async () => {
+Deno.test('buildCommand matches the frozen answers for every program and kind', async () => {
   const py = new Frozen();
   const entries: Entry[] = [
     ...fakeEntries('code', 'devin', 'cmdcode', 'explorer', 'wt', 'ps'),

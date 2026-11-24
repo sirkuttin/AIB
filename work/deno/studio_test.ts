@@ -16,18 +16,18 @@ const T = { sanitizeResources: false, sanitizeOps: false };
 class Lab {
   readonly dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-studio-test-' }));
   readonly state = this.dir + (Deno.build.os === 'windows' ? '\\' : '/') + 'state';
-  readonly studios: Aib[] = [];
+  readonly aibs: Aib[] = [];
 
   manager(flags: string[] = [], options: Partial<AibOptions> = {}): Aib {
-    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ...options });
-    studio.ownerProbe = () => null;
-    studio.connectionFactory = (_command, cwd, provider) => new Connection(fake(...flags), cwd, provider);
-    this.studios.push(studio);
-    return studio;
+    const aib = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ...options });
+    aib.ownerProbe = () => null;
+    aib.connectionFactory = (_command, cwd, provider) => new Connection(fake(...flags), cwd, provider);
+    this.aibs.push(aib);
+    return aib;
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
-    for (const s of this.studios.reverse()) await s.close().catch(() => {});
+    for (const s of this.aibs.reverse()) await s.close().catch(() => {});
     for (let i = 0; i < 20; i++) {
       try {
         Deno.removeSync(this.dir, { recursive: true });
@@ -39,7 +39,7 @@ class Lab {
   }
 }
 
-/** Just enough of a Connection for the lease tests (Python used a Mock). */
+/** Just enough of a Connection for the lease tests (a mock). */
 class FakeConnection {
   id: string;
   provider = 'claude';
@@ -71,7 +71,7 @@ class FakeConnection {
 }
 
 Deno.test({
-  name: 'manager: a resumed chat is opened once, a second Studio is refused by the lease, an external owner by its PID',
+  name: 'manager: a resumed chat is opened once, a second AIB is refused by the lease, an external owner by its PID',
   ...T,
   async fn() {
     await using lab = new Lab();
@@ -375,12 +375,12 @@ Deno.test({
     };
     const exe = Deno.build.os === 'windows' ? '.exe' : '';
     let procs: ProcInfo[] = [];
-    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: lab.state, port: 0, claudeProjects: claude, ownersDir: owners });
-    lab.studios.push(studio); // its own ownerProbe: the real command-line check over the stand-in process list
-    studio.connectionFactory = (_command, cwd, provider) => new Connection(fake(), cwd, provider);
-    studio.probe.processes = new ProcessSource(() => procs.map((p) => ({ ...p })), 0);
+    const aib = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: lab.state, port: 0, claudeProjects: claude, ownersDir: owners });
+    lab.aibs.push(aib); // its own ownerProbe: the real command-line check over the stand-in process list
+    aib.connectionFactory = (_command, cwd, provider) => new Connection(fake(), cwd, provider);
+    aib.probe.processes = new ProcessSource(() => procs.map((p) => ({ ...p })), 0);
     let holders: [number, string][] = [];
-    studio.probe.lockProbe = () => holders;
+    aib.probe.lockProbe = () => holders;
     const panel = (extra = '') => [
       { pid: 910, ppid: 1, name: `Code${exe}`, cmdline: null, cwd: null },
       { pid: 4242, ppid: 910, name: `claude${exe}`, cmdline: `claude${exe} --output-format stream-json --verbose${extra}`, cwd: lab.dir },
@@ -391,26 +391,26 @@ Deno.test({
     // weak only, transcript quiet 31 minutes: proceeds, one note
     procs = panel();
     transcript('quiet-31', 31);
-    const quiet = await studio.connect('claude', lab.dir, 'quiet-31');
+    const quiet = await aib.connect('claude', lab.dir, 'quiet-31');
     assert(quiet.ready && !quiet.closed);
     assertEquals(notes(quiet), [NOTE]);
     await quiet.close();
-    studio.evictClosed();
+    aib.evictClosed();
 
     // the same panel, transcript written by another app 29 minutes ago: asks, with the words it always had
     transcript('quiet-29', 29);
-    const asks = await assertRejects(() => studio.connect('claude', lab.dir, 'quiet-29'), OwnershipEvidence) as OwnershipEvidence;
+    const asks = await assertRejects(() => aib.connect('claude', lab.dir, 'quiet-29'), OwnershipEvidence) as OwnershipEvidence;
     assertEquals(asks.code, 'possibly_active');
     assert(asks.message.startsWith('Another app may be using this conversation: Claude Code (PID 4242, started by VS Code) is running'), asks.message);
-    const anyway = await studio.connect('claude', lab.dir, 'quiet-29', { continueAnyway: true });
+    const anyway = await aib.connect('claude', lab.dir, 'quiet-29', { continueAnyway: true });
     assertEquals(notes(anyway), [], 'continued after asking: no note');
     await anyway.close();
-    studio.evictClosed();
+    aib.evictClosed();
 
     // the panel holds the transcript open: asks
     transcript('held', 120);
     holders = [[4242, `claude${exe}`]];
-    const held = await assertRejects(() => studio.connect('claude', lab.dir, 'held'), OwnershipEvidence) as OwnershipEvidence;
+    const held = await assertRejects(() => aib.connect('claude', lab.dir, 'held'), OwnershipEvidence) as OwnershipEvidence;
     assertEquals(held.code, 'possibly_active');
     assert(held.message.includes('has the transcript file open'), held.message);
     holders = [];
@@ -418,7 +418,7 @@ Deno.test({
     // the panel's command line names the session: refused with its PID, as before
     procs = panel(' --resume named');
     transcript('named', 120);
-    const named = await assertRejects(() => studio.connect('claude', lab.dir, 'named'), OwnershipConflict);
+    const named = await assertRejects(() => aib.connect('claude', lab.dir, 'named'), OwnershipConflict);
     assert(named.message.includes('already open in another agent process (PID 4242)'), named.message);
     procs = panel();
 
@@ -426,22 +426,22 @@ Deno.test({
     transcript('announced', 120);
     const theirs = new OwnerRegistry(owners, { instanceId: 'theirs', clientName: 'other-app' });
     theirs.announce('claude', 'announced', lab.dir, 'working');
-    const announced = await assertRejects(() => studio.connect('claude', lab.dir, 'announced'), OwnershipEvidence) as OwnershipEvidence;
+    const announced = await assertRejects(() => aib.connect('claude', lab.dir, 'announced'), OwnershipEvidence) as OwnershipEvidence;
     assertEquals(announced.code, 'session_in_use');
     assert(announced.message.includes('other-app'), announced.message);
     theirs.withdrawAll();
 
     // the session lease still keeps a second AIB out, whatever the evidence
-    const open = await studio.connect('claude', lab.dir, 'quiet-31');
+    const open = await aib.connect('claude', lab.dir, 'quiet-31');
     const second = lab.manager();
     await assertRejects(() => second.connect('claude', lab.dir, 'quiet-31'), OwnershipConflict);
     await open.close();
   },
 });
 
-// ---- the live operations through the Studio (attention, breadth, attachments) -------------------------------------------------
+// ---- the live operations through AIB (attention, breadth, attachments) -------------------------------------------------
 Deno.test({
-  name: 'liveCall: attention in the list, config and session ops, attachments, and Python error texts',
+  name: 'liveCall: attention in the list, config and session ops, attachments, and the recorded error texts',
   ...T,
   async fn() {
     await using lab = new Lab();
@@ -506,7 +506,7 @@ Deno.test({
     assertEquals((await manager.liveCall('cancel', { id: c.id }))[0], 200);
     await until(() => !c.busy, 'cancelled');
 
-    // Python's messages for missing keys and unknown things.
+    // The recorded messages for missing keys and unknown things.
     assertEquals(await manager.liveCall('prompt', { id: 'nope' }), [400, { error: "'nope'" }]);
     assertEquals(await manager.liveCall('permission', {}), [400, { error: "'id'" }]);
     assertEquals(await manager.liveCall('nonsense', {}), [404, { error: 'Not found' }]);
@@ -517,7 +517,7 @@ Deno.test({
     assertEquals(await manager.liveCall('dismiss-unknown', {}), [400, { error: 'provider, sessionId and clientMessageId are required' }]);
     assertEquals(await manager.liveCall('forget', { provider: 'claude', sessionId: 'never' }), [200, { ok: true, forgotten: false }]);
 
-    // The internal worktree note: only Studio's two buttons, clipped labels.
+    // The internal worktree note: only AIB's two buttons, clipped labels.
     await manager.liveCall('worktree-note', {
       id: c.id,
       message: 'Merged',

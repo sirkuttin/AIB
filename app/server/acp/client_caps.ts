@@ -1,8 +1,8 @@
 /**
- * Opt-in ACP client capabilities for Agent Studio: terminals and text-file access (client_caps.py).
+ * Opt-in ACP client capabilities for AIB: terminals and text-file access (client_caps.py).
  *
  * Everything here is OFF by default. A ClientCaps object only answers the methods whose capability was switched on with
- * --enable-client-terminal / --enable-client-fs; any other method is left to Studio's normal "capability not advertised" error.
+ * --enable-client-terminal / --enable-client-fs; any other method is left to AIB's normal "capability not advertised" error.
  *
  * Boundaries (see docs/client-capabilities.md):
  *   * file paths must be absolute and, after realpath (symlinks/junctions followed), inside the connection's workspace folder;

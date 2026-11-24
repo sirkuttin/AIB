@@ -44,7 +44,7 @@ import { bindWithRetry } from './port.ts';
 import { agentsNow, folderOfProject, newChatOptions, NewChats, pickLists } from './newchat.ts';
 import { reasonWords } from '../agents/eligibility.ts';
 import { conversationAction, settingsView } from '../web/shared.ts';
-import { studioOf, swarmOf } from '../web/aib_routes.ts';
+import { aibOf, swarmOf } from '../web/aib_routes.ts';
 import { bringBack, restoreFolders } from '../web/project_routes.ts';
 import { isDeleted, isDocHistory } from '../artifacts/artifacts.ts';
 import { SAVED_KEY } from './saved.ts';
@@ -808,7 +808,7 @@ export class RemoteServer {
     if (path === '/api/remote/pc/settings') {
       // never `recheck=1` from a computer: it re-detects the agents, which runs programs on the PC (security review SF9); the
       // computer's Settings shows Appearance and This computer only, the PC's own detection is enough
-      return this.json(200, remoteSettingsView(await settingsView(studioOf(ctx), false, { offThread: true })));
+      return this.json(200, remoteSettingsView(await settingsView(aibOf(ctx), false, { offThread: true })));
     }
     if (path === '/api/remote/pc/wsl-status') return this.json(200, remoteWslStatus(await wslStatus(ctx)));
     if (path === '/api/remote/pc/presence') {
@@ -1427,7 +1427,7 @@ export class RemoteServer {
     const [provider, ...rest] = key.split(':');
     const sessionId = rest.join(':');
     const mark = (action: string) =>
-      conversationAction(studioOf(ctx), {
+      conversationAction(aibOf(ctx), {
         action,
         provider,
         sessionId,
@@ -1499,7 +1499,7 @@ export class RemoteServer {
           // than that is said: it has ended or is ending, and Delete again goes through
           const until = Date.now() + RemoteServer.END_WAIT_MS;
           const stillLive = async () =>
-            !!(await this.#liveByKey(key)) || (op === 'delete' && await ctx.host.studioOwns(provider, sessionId).catch(() => false));
+            !!(await this.#liveByKey(key)) || (op === 'delete' && await ctx.host.aibOwns(provider, sessionId).catch(() => false));
           while ((await stillLive()) && Date.now() < until) await new Promise((r) => setTimeout(r, 100));
           if (op === 'delete' && (await stillLive())) {
             this.host.saved.invalidate();
@@ -1540,7 +1540,7 @@ export class RemoteServer {
       default: {
         // unarchive / restore: the Undo of this phone's own archive or delete
         const folders = op === 'restore' ? restoreFolders(ctx.conversations, { action: 'restore', provider, sessionId }) : [];
-        const [status, answer] = await conversationAction(studioOf(ctx), { action: op, provider, sessionId });
+        const [status, answer] = await conversationAction(aibOf(ctx), { action: op, provider, sessionId });
         if (status !== 200) {
           plog.error(
             '%s',

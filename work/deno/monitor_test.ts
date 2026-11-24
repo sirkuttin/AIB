@@ -1,8 +1,8 @@
 /**
- * server/transcripts/monitor.ts: the cases of the Python tests that exercise monitor.py (test_history_paging, test_history_cache,
+ * server/transcripts/monitor.ts: the cases of the old tests that exercise monitor.py (test_history_paging, test_history_cache,
  * test_subagent_history, test_subagent_roster, test_transcript_images, test_tool_images, test_plan_context, test_monitor_processes,
  * test_titles, test_project_cwd, test_portability, test_pending_settings, test_worktree_sync), plus parity of the pure functions
- * with Python over a corpus. The HTTP-level golden comparison is monitor_golden_test.ts.
+ * with the frozen answers over a corpus. The HTTP-level golden comparison is monitor_golden_test.ts.
  */
 import { assert, assertEquals, assertRejects } from "./_assert.ts";
 import { Frozen } from "./_frozen.ts";
@@ -309,7 +309,7 @@ function untimed(value: unknown, key = ""): unknown {
   return key === "created" && typeof value === "number" ? 0 : value;
 }
 
-Deno.test("skipped rows: a notice inside a snapshot still completes its command (as Python read it)", async () => {
+Deno.test("skipped rows: a notice inside a snapshot still completes its command (as the frozen answers read it)", async () => {
   const root = tmp("skip");
   const path = join(root, "a.jsonl");
   const notice =
@@ -330,7 +330,7 @@ Deno.test("skipped rows: a notice inside a snapshot still completes its command 
     1,
   );
   assert(t.events.some((e) => String(e.text).startsWith("quote")));
-  // what Python's parser made of the same file: events, commands, meta, number, offset (one fingerprint each)
+  // what the retired parser made of the same file: events, commands, meta, number, offset (one fingerprint each)
   const [events, commands, meta, number, offset] = await py.frozenList("skipped-rows-snapshot");
   const mine = plain({
     events: t.events,
@@ -421,7 +421,7 @@ Deno.test("subagents: names, first-prompt fallback, failure and completion marke
   assertEquals(
     by.eee.name,
     "With a BOM sidecar",
-    "a sidecar with a BOM is not JSON to Python either",
+    "a sidecar with a BOM is not JSON to the frozen answers either",
   );
 });
 
@@ -676,7 +676,7 @@ Deno.test("plan context: background launches and finishes, earlier turns, thinki
   assert(ctx.length > 0);
 });
 
-Deno.test("plan context: parity with Python at every page start", async () => {
+Deno.test("plan context: the frozen answers at every page start", async () => {
   const { out, paths } = await planned();
   for (const [name, t] of Object.entries(out)) {
     for (const hidden of [false, true]) {
@@ -1214,7 +1214,7 @@ Deno.test("model in use: session files by provider and id; hostile ids refused",
   void omp;
 });
 
-// ---- test_worktree_sync: Studio's note never shows ----
+// ---- test_worktree_sync: AIB's note never shows ----
 
 Deno.test("studio context is hidden in history and titles", () => {
   const note =
@@ -1365,7 +1365,7 @@ Deno.test("parity: normalize and update_metadata over every fixture record", asy
       }
       assertEquals(name, expected.error, JSON.stringify(row).slice(0, 80));
     } else {assertEquals(
-        // `steered` (a message sent while the agent worked) is Deno only; the Python reference never had it.
+        // `steered` (a message sent while the agent worked) is Deno only; not in the frozen answers.
         plain(m.normalize(row as m.Dict, i).map(({ steered: _, ...e }) => e)),
         expected.ok,
         JSON.stringify(row).slice(0, 80),
@@ -1581,7 +1581,7 @@ Deno.test("parity: project_match and project folders of summaries", async () => 
   }
 });
 
-Deno.test("parity: close the Python bridge and remove the temp folders", async () => {
+Deno.test("parity: close the frozen-answer bridge and remove the temp folders", async () => {
   for (const dir of made) {
     try {
       Deno.removeSync(dir, { recursive: true });

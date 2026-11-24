@@ -1,5 +1,5 @@
 /**
- * Chats that are not running, on the phone (owner decisions 2b, 3b, 4), in a Studio in this process with real saved transcripts (a
+ * Chats that are not running, on the phone (owner decisions 2b, 3b, 4), in an AIB in this process with real saved transcripts (a
  * Claude Code folder), a fake agent host and a fake Tailscale CLI:
  *  - home lists the saved chats of added projects that are not running (title, agent, folder, when last active; never the path),
  *    not the running one, not an archived one; GET /api/remote/saved shows one read only, as live events, without picture bytes,
@@ -16,22 +16,22 @@ import { DEVICE_HEADER, READ_GAP_MS, REMOTE_ROUTES } from '../../app/server/remo
 import { DeviceStore } from '../../app/server/remote/devices.ts';
 import { liveShaped, MAX_HISTORY_BYTES } from '../../app/server/remote/saved.ts';
 import { readRemotePort } from '../../app/server/remote/port.ts';
-import { type FakeChat, fakeTailscale, pairPhone, pc, phoneHeaders, raw, type RemoteStudio, remoteStudio } from './_remote_fixture.ts';
+import { type FakeChat, fakeTailscale, pairPhone, pc, phoneHeaders, raw, type RemoteAib, remoteAib } from './_remote_fixture.ts';
 import { serveStatus } from './_remote_fixture.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
 type Json = Record<string, unknown>;
 const SEP = Deno.build.os === 'windows' ? '\\' : '/';
 
-async function phoneOn(): Promise<RemoteStudio> {
+async function phoneOn(): Promise<RemoteAib> {
   const fake = fakeTailscale();
-  const s = await remoteStudio({ runner: fake.runner }, undefined, { saved: true });
+  const s = await remoteAib({ runner: fake.runner }, undefined, { saved: true });
   fake.state.serve = serveStatus(readRemotePort(s.state)!);
   assertEquals((await pc(s, 'POST', '/api/live/devices/access', { on: true }))[0], 200);
   return s;
 }
 
-function live(s: RemoteStudio, id: string, sessionId: string, over: Partial<FakeChat> = {}): FakeChat {
+function live(s: RemoteAib, id: string, sessionId: string, over: Partial<FakeChat> = {}): FakeChat {
   return {
     id,
     provider: 'claude',
@@ -48,10 +48,10 @@ function live(s: RemoteStudio, id: string, sessionId: string, over: Partial<Fake
   };
 }
 
-const get = (s: RemoteStudio, token: string, path: string) => raw(s.phonePort(), 'GET', path, phoneHeaders({ [DEVICE_HEADER]: token }));
-const post = (s: RemoteStudio, token: string, path: string, body: Json) =>
+const get = (s: RemoteAib, token: string, path: string) => raw(s.phonePort(), 'GET', path, phoneHeaders({ [DEVICE_HEADER]: token }));
+const post = (s: RemoteAib, token: string, path: string, body: Json) =>
   raw(s.phonePort(), 'POST', path, phoneHeaders({ [DEVICE_HEADER]: token }, 'POST'), JSON.stringify(body));
-const audit = (s: RemoteStudio) =>
+const audit = (s: RemoteAib) =>
   (() => {
     try {
       return Deno.readTextFileSync(s.state + SEP + 'remote-audit.jsonl');

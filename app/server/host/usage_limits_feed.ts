@@ -1,5 +1,5 @@
 /**
- * Feeds the per-account usage limits (state/usage_limits.ts) from the Studio's connections, and gives each chat its account's
+ * Feeds the per-account usage limits (state/usage_limits.ts) from AIB's connections, and gives each chat its account's
  * latest snapshot for the composer's Limits chip.
  *
  *   Claude Code  pushed: fromAgent('claude-rate-limit') on each usage_update that carries _claude/rateLimit. Never asked for.

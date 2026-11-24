@@ -62,7 +62,7 @@ Deno.test('app constants, code root and source hash', async () => {
   assertEquals(await codeWarning({}), '');
 });
 
-Deno.test('restart hints name the Deno app, never the Python programs', async () => {
+Deno.test('restart hints name the Deno app, never the old programs', async () => {
   assertEquals(restartHostHint(true), 'quit AIB and start it again, or run "AIB --stop-host"');
   assertEquals(restartHostHint(false), 'run "deno run -A app/server/main.ts --stop-host"');
   assertEquals(replaceHostHint(true), 'quit AIB and start it again (or run "AIB --stop-host", then start AIB)');

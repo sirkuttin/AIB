@@ -254,7 +254,7 @@ Deno.test({
       assertEquals(k.worktree, true);
       assertEquals(osp.normcase(k.worktreeOf!), osp.normcase(r.repo));
       assertEquals(k.branch, 'claude/feat');
-      assertEquals(folderKinds([wt])[wt], { worktree: true, scratch: false }, 'unchanged without parents (Python parity)');
+      assertEquals(folderKinds([wt])[wt], { worktree: true, scratch: false }, 'unchanged without parents');
       // the 'main' root of a worktree chat is its main checkout
       assertEquals(osp.normcase(files.mainFolderOf(wt, mainCheckoutOf)), osp.normcase(r.repo));
     } finally {

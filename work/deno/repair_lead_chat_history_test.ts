@@ -25,28 +25,28 @@ class Lab {
   readonly state = this.dir + SEP + 'state';
   readonly work = this.dir + SEP + 'work';
   readonly transcript = this.dir + SEP + 'transcript.json';
-  readonly studios: Aib[] = [];
+  readonly aibs: Aib[] = [];
   constructor() {
     Deno.mkdirSync(this.work, { recursive: true });
     Deno.writeTextFileSync(this.transcript, '[]');
   }
-  studio(): Aib {
+  aib(): Aib {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
-    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper, keeperForNew: true });
-    studio.ownerProbe = () => null;
-    studio.connectionFactory = (_command, cwd, provider, options) =>
+    const aib = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper, keeperForNew: true });
+    aib.ownerProbe = () => null;
+    aib.connectionFactory = (_command, cwd, provider, options) =>
       new Connection(fake('--replay-file', this.transcript), cwd, provider, options ?? {});
-    this.studios.push(studio);
-    return studio;
+    this.aibs.push(aib);
+    return aib;
   }
-  async leave(studio: Aib): Promise<void> {
-    studio.keeper!.disconnect();
-    for (const c of studio.connections.values()) c.sessionLease?.release();
-    studio.reconnectStop.set();
-    await studio.historyClient()?.shutdown().catch(() => {});
+  async leave(aib: Aib): Promise<void> {
+    aib.keeper!.disconnect();
+    for (const c of aib.connections.values()) c.sessionLease?.release();
+    aib.reconnectStop.set();
+    await aib.historyClient()?.shutdown().catch(() => {});
   }
   async [Symbol.asyncDispose](): Promise<void> {
-    for (const s of this.studios.reverse()) await s.close().catch(() => {});
+    for (const s of this.aibs.reverse()) await s.close().catch(() => {});
     const info = readKeeperInfo(this.state);
     if (info && pidAlive(info.pid)) {
       try {
@@ -67,9 +67,9 @@ class Lab {
   }
 }
 
-async function say(studio: Aib, c: Connection, text: string): Promise<void> {
+async function say(aib: Aib, c: Connection, text: string): Promise<void> {
   const ends = c.events.filter((e) => e.kind === 'turn_end').length;
-  assertEquals((await studio.liveCall('prompt', { id: c.id, text: `say:${text}`, clientMessageId: crypto.randomUUID() }))[0], 200);
+  assertEquals((await aib.liveCall('prompt', { id: c.id, text: `say:${text}`, clientMessageId: crypto.randomUUID() }))[0], 200);
   await until(() => !c.busy && c.events.filter((e) => e.kind === 'turn_end').length > ends, `the end of ${text}`, 10);
 }
 
@@ -107,7 +107,7 @@ Deno.test({
     await keeperBinary();
     await using lab = new Lab();
     // The old chat: two turns and an AIB note; then a take-over stops its agent (the bug), leaving its store behind.
-    const a = lab.studio();
+    const a = lab.aib();
     const old = await a.connect('claude', lab.work);
     await say(a, old, 'one');
     old.recordedEvent('studio_note', { message: 'Merged subagent “Docs” into main', kind: 'swarm-merge' });
@@ -131,7 +131,7 @@ Deno.test({
     ]));
     // (an older build: the earlier store was not found, so it came back under a new id; hidden here, put back after)
     const hidden = hide(lab, old.id);
-    const b = lab.studio();
+    const b = lab.aib();
     const now = await b.connect('claude', lab.work, session);
     hidden();
     assert(now.id !== old.id, 'a new chat id (the bug)');
@@ -153,7 +153,7 @@ Deno.test({
     assert(again.out.includes('Already repaired'), again.out);
 
     // AIB starts: the running chat is taken over with the whole history.
-    const c = lab.studio();
+    const c = lab.aib();
     assertEquals(await c.adoptKeeper(), 1);
     const r = c.connections.get(now.id)!;
     await until(() => r.historyState === 'claimed' || r.historyState === 'dead', 'the store claimed', 10);
@@ -199,7 +199,7 @@ Deno.test({
     const transcript = () =>
       Deno.writeTextFileSync(lab.transcript, JSON.stringify(turns.flatMap((t) => [{ role: 'user', text: `say:${t}` }, { role: 'agent', text: t }])));
     // A: the first chat, with an AIB note; AIB quits (idle)
-    const a = lab.studio();
+    const a = lab.aib();
     const first = await a.connect('claude', lab.work);
     await say(a, first, 'one');
     first.recordedEvent('studio_note', { message: 'Merged subagent “Docs” into main', kind: 'swarm-merge', sessionId: first.sessionId });
@@ -209,7 +209,7 @@ Deno.test({
     // B: an older build brought it back under a new id (A's store not found); one turn; quit
     const backFirst = hide(lab, first.id);
     transcript();
-    const b = lab.studio();
+    const b = lab.aib();
     const middle = await b.connect('claude', lab.work, session);
     assert(middle.id !== first.id);
     await say(b, middle, 'two');
@@ -218,7 +218,7 @@ Deno.test({
     // C: a new id again; one turn; then an idle quit of that older build deleted its store (the bug): its turn is only in the transcript
     const backMiddle = hide(lab, middle.id);
     transcript();
-    const c = lab.studio();
+    const c = lab.aib();
     const gone = await c.connect('claude', lab.work, session);
     await say(c, gone, 'three');
     turns.push('three');
@@ -226,7 +226,7 @@ Deno.test({
     Deno.removeSync(lab.state + SEP + 'history' + SEP + `${gone.id}.sqlite`);
     // T: the chat in use now (a new id once more): its replay holds C's turn; one turn of its own; AIB quits idle (the fix: kept)
     transcript();
-    const d = lab.studio();
+    const d = lab.aib();
     const target = await d.connect('claude', lab.work, session);
     assert(target.id !== gone.id && target.id !== middle.id && target.id !== first.id);
     await say(d, target, 'four');
@@ -253,7 +253,7 @@ Deno.test({
     assertEquals(applied.code, 0, applied.out);
 
     // AIB starts: the conversation reopens as the target chat (the newest store of it), with the whole history, once
-    const e = lab.studio();
+    const e = lab.aib();
     const r = await e.connect('claude', lab.work, session);
     assertEquals(r.id, target.id, 'the chat in use, same id');
     const page = await e.liveEvents(r.id, { before: r.sequence + 1, bytes: 50_000_000 }) as Json;

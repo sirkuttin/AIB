@@ -1,6 +1,6 @@
 /**
  * The Deno web server (studio.py's web side, web_handler.py's dispatch). One gate for every request (security.ts), then the route:
- * the live routes answered by the agent host (live_routes.ts), the Studio routes (studio_routes.ts), the transcript viewer
+ * the live routes answered by the agent host (live_routes.ts), AIB routes (studio_routes.ts), the transcript viewer
  * (transcripts/monitor.ts), the page files and bootstrap below. Every route is served here; stage B's private Python web server is gone.
  * The HTTP API is the Python server's (retired 2026-11-23); work/deno/contract_*_test.ts check it over HTTP.
  */
@@ -19,7 +19,7 @@ import { keptLinesIn } from '../history/lines.ts';
 import { stoppedWhyIn } from '../swarm/registry.ts';
 import { reapedWhyIn } from '../subagents/reap.ts';
 import { liveRoutes } from './live_routes.ts';
-import { chatStudioOf, makeLauncher, ownGatePost, savedFolders, type AibHandler, studioOf, aibRoutes } from './aib_routes.ts';
+import { chatAibOf, makeLauncher, ownGatePost, savedFolders, type AibHandler, aibOf, aibRoutes } from './aib_routes.ts';
 import { type AgentOptions, notices } from './shared.ts';
 import { check as checkArtifactKey } from '../artifacts/keys.ts';
 import { Artifacts } from './artifact_wiring.ts';
@@ -547,7 +547,7 @@ export class WebServer {
         conversationOrganize: true,
       },
       connections: info.connections,
-      ...(await notices(studioOf(c))),
+      ...(await notices(aibOf(c))),
       ...(info.unavailable ? { hostProblem: info.unavailable } : {}),
     };
   }
@@ -814,7 +814,7 @@ export function makeContext(
     agentOptions?: AgentOptions;
     /** Run the chats' terminal shells in the keeper (null or absent: as children of this process). */
     terminalKeeper?: KeeperLink | null;
-    /** Stores to share (an --in-process Studio passes its own, so one instance of each file is read and written). */
+    /** Stores to share (an --in-process AIB passes its own, so one instance of each file is read and written). */
     stores?: { conversations?: ConversationState; projectPrefs?: ProjectPrefs; readState?: ReadState; settings?: SettingsStore };
     /** Phone access options (tests: a fake Tailscale CLI, a short bind retry). */
     phone?: AccessOptions;
@@ -898,7 +898,7 @@ export function makeContext(
     options.stateDir,
     options.host,
     () => ctx.token,
-    async (chat) => chatStudioOf(ctx, await savedFolders(ctx, chat)),
+    async (chat) => chatAibOf(ctx, await savedFolders(ctx, chat)),
   );
   ctx.liveFiles = new LiveFiles({
     stateDir: options.stateDir,

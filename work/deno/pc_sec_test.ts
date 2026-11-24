@@ -31,8 +31,8 @@ import {
   pc,
   phoneHeaders,
   raw,
-  type RemoteStudio,
-  remoteStudio,
+  type RemoteAib,
+  remoteAib,
   serveStatus,
   tempDir,
   writeSavedChat,
@@ -46,9 +46,9 @@ const sep = WIN ? '\\' : '/';
 const inHome = (...parts: string[]) => [HOME, ...parts].join(sep);
 const q = encodeURIComponent;
 
-async function remoteOn(): Promise<RemoteStudio> {
+async function remoteOn(): Promise<RemoteAib> {
   const fake = fakeTailscale();
-  const s = await remoteStudio({ runner: fake.runner }, undefined, { saved: true });
+  const s = await remoteAib({ runner: fake.runner }, undefined, { saved: true });
   fake.state.serve = serveStatus(readRemotePort(s.state)!);
   const [status] = await pc(s, 'POST', '/api/live/devices/access', { on: true });
   assertEquals(status, 200);
@@ -72,7 +72,7 @@ function chat(id: string, cwd: string): FakeChat {
   };
 }
 
-function call(s: RemoteStudio, token: string, method: string, path: string, body?: Json) {
+function call(s: RemoteAib, token: string, method: string, path: string, body?: Json) {
   return raw(
     s.phonePort(),
     method,
