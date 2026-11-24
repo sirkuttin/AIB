@@ -64,6 +64,19 @@ long it ran, and Failed or Stopped when it didn't finish normally.
 The **Activity** tab in the right column lists the subagents and processes each chat started, with their run time, and how
 many subagents are working right now.
 
+## Helpers from other agents: start Codex, Gemini or a local model from any chat
+
+A main chat can start helpers on other agents, or on a model-server entry. Each helper works in its own worktree and branch.
+**Settings → Helpers from other agents** is on by default.
+
+- A helper is named `<title> (<agent>)` and stays out of the left chat list. It shows in its main chat's **Activity**.
+- Its approvals show on its Activity row (**Allow**, **Deny**), as a card in the main chat, in the inbox, in the desktop notification and
+  on the phone.
+- Routine edits and test runs inside the helper's own worktree are allowed automatically. Anything else asks.
+- A finished helper shuts down with everything it started. A finished Claude Code or Codex subagent does the same: its rows read
+  "stopped: subagent finished", and the main chat gets one line.
+- Helpers are not available in WSL projects yet. Subagents are, in their own copy inside the distro.
+
 ## Scrolling: the chat moves only when you do
 
 Whatever you're reading stays put while replies stream, steps finish, pictures load or panes resize. At the bottom, the chat
@@ -72,7 +85,7 @@ where you were reading, also after a restart, and opens there with a **New** lin
 
 ## Saved chats from outside AIB
 
-Your saved Claude Code and OMP conversations from outside AIB are listed too. A chat another app has open shows
+Your saved Claude Code conversations from outside AIB are listed too. A chat another app has open shows
 **Elsewhere · Working** or **Elsewhere · Idle** and is read-only in AIB.
 
 ## Continue with another agent

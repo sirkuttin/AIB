@@ -43,3 +43,16 @@ it can't apply, the menu item is greyed out with the reason, for example **Alrea
 
 Git holds no copy of local-only files, so AIB does. Once a day, when they changed, AIB zips each project's local-only files
 into one zip in its data folder, under `local-only-backups`. Only the newest zip is kept.
+
+## PC to PC sync: aib-shared/ and AIB docs on every PC you own
+
+**Settings → Sync** pairs your own PCs over your Tailscale. No cloud, no account. Start a sync chain on one PC, type its six words on
+the other, check the two words on both and approve.
+
+A project syncs when both PCs have its switch on: one for AIB docs and one for `aib-shared/`. AIB matches projects by their git
+remote and suggests matches by name. Files and docs come across whichever agent wrote them. Doc edits merge block by block, and text
+files merge line by line.
+
+When both PCs changed the same file, **Files** shows a conflict pill with **Compare**, **Keep this** and **Keep other**. Both versions
+are kept until you choose. A sync mark in the sidebar shows when a project is up to date, syncing, waiting or in conflict. Changes
+wait while the other PC is off. WSL projects sync too.

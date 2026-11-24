@@ -7,7 +7,7 @@ import { Aside } from '@astrojs/starlight/components';
 import Shot from '../../components/Shot.astro';
 
 You see the agent heading the wrong way. Your correction used to sit in a queue while the agent finished the wrong job. Now
-Claude Code, Codex and OMP read your message mid-turn and answer right away. New in 0.1.0-beta.9.
+Claude Code and Codex read your message mid-turn and answer right away. New in 0.1.0-beta.9.
 
 ## Press Enter while the agent works: it answers right away
 
@@ -33,7 +33,6 @@ Under **Send now**, one grey line says what that agent does with the message:
 
 - Claude Code answers right away. A command or subagent it is running keeps going in the background.
 - Codex answers right away. A command it is running keeps going in the background, and Codex isn't told when it ends.
-- OMP answers right away. A command it is running moves to the background, and OMP stops it after 2 minutes in total.
 
 Shift+Enter still makes a new line.
 
@@ -46,6 +45,15 @@ Messages sent with **Send after this turn** wait above the message box. Edit one
 **Send now** (the ↑ on a waiting message) works like Send now in the menu: the agent reads it right away and nothing stops.
 A running command or helper keeps going in the background, and so do your background subagents. An agent that can't read
 messages mid-turn is interrupted instead, then gets the message.
+
+## Send later: schedule a prompt
+
+Open **Send ▾** and choose **Send later…**. Pick a quick time or a date. The message waits as a **Scheduled for …** card above the
+box, with edit, send now and remove. AIB sends it at the time even when the chat or the window is closed. A time missed while AIB
+was off fires when AIB starts. The phone shows scheduled messages and can cancel them.
+
+**Interrupt and send** and **Send now** never cancel running work. For an agent that can't take a message mid-turn, your message
+goes the moment the turn ends.
 
 ## Stop one runaway command without stopping the agent
 
@@ -70,7 +78,7 @@ Code confirming what it stopped.
 
 | Agent | Enter while it works |
 | --- | --- |
-| Claude Code, Codex, OMP | Goes into the running turn |
+| Claude Code, Codex | Goes into the running turn |
 | Any other agent whose adapter says it can take messages mid-turn | Goes into the running turn |
 | Every other agent | Sends when the turn ends; the box says "Enter sends when it ends" |
 

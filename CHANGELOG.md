@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.14.0 beta (2026-11-23)
+
+- Model servers: Settings > Model servers adds a local model server (name, address, optional key, model). Each agent switched on under Use with (Claude Code, Codex, Maki, Qwen Code) gets its own New chat entry, such as "Claude Code · strata"; a server that does not answer is greyed out. Helpers can use these entries.
+- Helpers from other agents are on by default and out of Experimental. Approvals show on the Activity row, as a card in the main chat, in the inbox, the toast and on the phone. A helper's routine edits and tests in its own worktree are allowed automatically. Helpers are hidden from the left chat list and named "<title> (<agent>)". A finished helper shuts down with everything it started.
+- A finished Claude Code or Codex subagent shuts down the processes it started, on Windows and in WSL. Rows read "stopped: subagent finished" and the main chat gets one line. Subagents in WSL projects work in their own worktree inside the distro.
+- PC to PC sync: Settings > Sync pairs your own PCs over your Tailscale, with no cloud and no account. A project syncs when both PCs have its switch on; its aib-shared files and AIB docs come too. Conflicts can be kept on both sides.
+- Send later: schedule a prompt from the Send menu. It is sent even if the chat is not open, and missed times fire when AIB starts. Interrupt and send waits for the turn to stop.
+- The right panel is project-level: Activity, Changes, Artifacts and Docs. Activity heads read like "2 subagents · 1 process"; process dots are small squares, subagent dots stay round.
+- Gemini CLI and Antigravity CLI approvals are read correctly. Codex helpers work with codex-acp 2.6's renamed modes. Closing a chat whose keeper connection died takes under a second.
+
 - OMP is no longer an AIB agent. It is gone from New chat (PC and phone) and from Settings, and AIB never starts it. Your saved OMP
   chats stay in the list as read-only history: you can read them, rename, archive and delete them, and the message box is replaced by
   one line, "OMP is no longer supported in AIB. This chat is read-only." The phone and a paired PC show the same line instead of

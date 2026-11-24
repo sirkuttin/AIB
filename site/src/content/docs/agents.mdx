@@ -1,5 +1,5 @@
 ---
-title: 'Agents: run Claude Code, Codex, OMP and ten more in AIB'
+title: 'Agents: run Claude Code, Codex and ten more in AIB'
 description: Which coding agents work in AIB, how to set each one up, and what each costs. Each agent signs in with its own login, so your existing plan works as it is.
 ---
 
@@ -12,15 +12,26 @@ agent signs in with its own login, so your Claude, ChatGPT or Copilot plan works
 
 AIB talks to each agent through ACP, the Agent Client Protocol. Find all agents under **Settings → AIB Linking**.
 
-## Tested agents: Claude Code, Codex and OMP
+## Tested agents: Claude Code and Codex
 
 | Agent | How AIB sets it up |
 | --- | --- |
 | Claude Code | Click **Install**: AIB installs the pinned Claude Code ACP adapter. Click **Sign in**: Claude's own sign-in runs. |
 | Codex | The same, with the Codex ACP adapter and Codex's own sign-in. |
-| OMP | AIB uses `omp` from your PATH (on Windows also `%LOCALAPPDATA%\omp\omp.exe`). |
 
 AIB never asks for a password or an API key for these three, and never reads or stores their credentials.
+
+## Model servers: a local model behind the agent you already use
+
+**Settings → Model servers** adds a model server that runs on your own machine or network, such as a llama-server. Give it a name
+and an address; a key is optional and AIB never shows it back. AIB reads the model from the server's `/v1/models`.
+
+Under **Use with**, switch on Claude Code, Codex, Maki or Qwen Code. Each switch adds its own entry to **New chat**, such as
+"Claude Code · strata", beside the normal one. The normal entry and its sign-in stay as they were. The chat is the same chat, with
+the same inbox, docs and phone remote; only the model comes from your server. Helpers can use these entries too.
+
+A server that does not answer is greyed out in New chat, on the PC and the phone. AIB checks when New chat opens and keeps the
+answer for 30 seconds. Nothing goes through an AIB server: AIB talks to yours directly.
 
 ## Beta agents: ten more, off until you turn them on
 
@@ -90,7 +101,7 @@ The **Limits** chip under the message box shows how much of your plan you've use
 | Codex | Yes |
 | Mistral Vibe | Yes (monthly allowance) |
 | Qwen Code | Shows "limit reached" once the cap is hit |
-| Every other agent, OMP included | No chip |
+| Every other agent | No chip |
 
 See [Limits chip](/limits/).
 

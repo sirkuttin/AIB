@@ -1,8 +1,8 @@
 # AIB — Agent Integration Bay
 
-**One local app for Claude Code, Codex, OMP and ten more agents, side by side in the same project. Every agent, subagent and process across all your projects is visible in one place.**
+**One local app for Claude Code, Codex and ten more agents, side by side in the same project. Every agent, subagent and process across all your projects is visible in one place.**
 
-AIB runs Claude Code, Codex, OMP and ten more agent providers (via ACP) side by side in the same project, on your computer, with the sign-ins you already have. Artifacts and Docs are local and shared between all your agents. If details are your thing, visibility into every tool call, subagent, and running process is easy to access. Nothing goes through an AIB server.
+AIB runs Claude Code, Codex and ten more agent providers (via ACP) side by side in the same project, on your computer, with the sign-ins you already have. Artifacts and Docs are local and shared between all your agents. If details are your thing, visibility into every tool call, subagent, and running process is easy to access. Nothing goes through an AIB server.
 
 <p align="center">
   <a href="https://aib.softsirkut.com"><b>🌐 Website: aib.softsirkut.com</b></a> &nbsp;·&nbsp;
@@ -13,7 +13,7 @@ AIB runs Claude Code, Codex, OMP and ten more agent providers (via ACP) side by 
 
 **[Download the latest release](https://github.com/sirkuttin/AIB/releases/latest)** for Windows, macOS or Linux (x64, arm64), or get it from the **[website](https://aib.softsirkut.com/download/)**, which also has the full guides, every release's notes and screenshots of each feature.
 
-> **Beta: 0.12.0 beta.** Tested daily on Windows; macOS and Linux are lightly tested. Builds are not code-signed.
+> **Beta: 0.14.0 beta.** Tested daily on Windows; macOS and Linux are lightly tested. Builds are not code-signed.
 > Not affiliated with Anthropic, OpenAI or any other agent vendor.
 
 **_Codex and Claude Code working side by side in the same project_**
@@ -22,7 +22,8 @@ AIB runs Claude Code, Codex, OMP and ten more agent providers (via ACP) side by 
 ## Why AIB
 
 **1. All your agents, one app, your existing sign-ins.**
-- Claude Code, Codex and OMP are tested. Ten more ACP agents are in Beta. Any other ACP agent can be added in Settings.
+- Claude Code and Codex are tested. Ten more ACP agents are in Beta. Any other ACP agent can be added in Settings.
+- A local model server can run behind Claude Code, Codex, Maki or Qwen Code (Settings > Model servers), as entries like "Claude Code · strata".
 - Each agent signs in with its own login, so your Claude, ChatGPT or Copilot plan works as it is. No AIB account.
 - Run several agents in the same repository at once and switch between them with Ctrl+K.
 
@@ -37,18 +38,19 @@ AIB runs Claude Code, Codex, OMP and ten more agent providers (via ACP) side by 
 **3. See everything every agent does.**
 - Tool calls with inputs and diffs, thinking, plans, approvals and questions appear in the chat.
 - The Activity column lists subagents and the processes each chat started, with running time.
-- The Prompts view lists each prompt you sent with the work it caused. Saved Claude Code and OMP chats from outside AIB are
+- The Prompts view lists each prompt you sent with the work it caused. Saved Claude Code chats from outside AIB are
   listed too, marked "In use elsewhere" when another app has them open.
 
 **4. Chats work in your folder; helpers get their own worktree.**
 - Every chat works in your project folder, so it also shows up in `claude --resume`, the VS Code extension and the agent's other tools.
-- Helpers, and the subagents an agent starts itself, each work in their own worktree and branch, started from your folder's branch.
-  Your saved edits are synced into the helpers' worktrees.
+- Helpers from other agents are on by default. Helpers, and the subagents an agent starts itself, each work in their own worktree and branch, started from your folder's branch.
+  Your saved edits are synced into the helpers' worktrees. A finished helper or subagent shuts down the processes it started.
 - A helper's work lands in your folder when the main chat's turn ends, with **Undo** on the line that says so.
   There are no Merge or Discard buttons. Conflicts go to the helper to resolve.
 - `aib-shared/` in your project folder holds notes, plans and drafts that every chat, helper and subagent reads and writes, on
   every agent. Git never commits it. It lives only in your project folder; each worktree gets a link named `aib-shared` to it
   (a directory junction on Windows, a symlink in WSL), so nothing is copied or lost when a worktree goes.
+- Pair your own PCs in Settings > Sync to keep a project's `aib-shared/` files and AIB docs in step. It runs PC to PC over your Tailscale: no cloud, no account.
 - AIB cleans up the worktrees, branches and stashes it made. Work that was never merged is never deleted without asking.
 
 ![A helper's work landed in the project folder at the end of the turn, with Undo](docs/screenshots/06-helper-landed-with-undo.png)
@@ -92,7 +94,7 @@ The README is the short version. **[aib.softsirkut.com](https://aib.softsirkut.c
 ![The same chat in four themes](docs/screenshots/12-themes-grid.png)
 
 - Tabs and split panes; Full, Chat and Prompts views.
-- Queue messages while the agent works; edit, remove or send one now.
+- Queue messages while the agent works; edit, remove or send one now, or schedule one with Send later.
 - Model, mode and effort pickers; slash commands; image and file attachments.
 - Files sidebar (Ctrl+Shift+E) with change badges. File paths in replies and in write rows open the file.
 - A terminal per chat (Ctrl+\`). **Run in terminal** on shell code blocks pastes the command and never presses Enter.
@@ -107,7 +109,6 @@ The README is the short version. **[aib.softsirkut.com](https://aib.softsirkut.c
 | --- | --- | --- |
 | Claude Code | Tested | AIB installs the pinned ACP adapter and runs Claude's own sign-in |
 | Codex | Tested | Same, with the Codex ACP adapter |
-| OMP | Tested | Uses `omp` from your PATH |
 | GitHub Copilot CLI, OpenCode, Gemini CLI, Qwen Code, Cursor CLI, Goose, Mistral Vibe, Cline, Kimi Code, Kilo Code | **Beta, not tested by us** | Off by default; turn on in Settings > AIB Linking. Login runs in an AIB terminal, or you enter an API key |
 | Any ACP agent | Supported | Settings > AIB Linking: command, arguments, environment |
 
@@ -139,7 +140,7 @@ Some Beta agents need their own paid plan or API key; Settings says which.
 - The server and keeper listen on `127.0.0.1` (or a user-only socket). No telemetry.
 - AIB's own network calls: the daily update check to `api.github.com` (can be turned off) and npm installs of agent
   adapters when you click Install.
-- AIB never reads or stores Claude Code, Codex or OMP credentials. API keys you enter for Beta agents are stored in the
+- AIB never reads or stores Claude Code or Codex credentials. API keys you enter for Beta agents are stored in the
   data folder and passed to that agent as an environment variable.
 - Every change needs a per-process page token plus same-origin checks, so other websites can't drive AIB.
 - AIB refuses agents' ACP terminal and file requests unless started with `--enable-client-terminal` / `--enable-client-fs`.
@@ -150,7 +151,7 @@ Some Beta agents need their own paid plan or API key; Settings says which.
 - macOS and Linux are lightly tested; the chat terminal has not run on a real Mac or Linux machine.
 - The ten Beta agents are untested by us; some of their login commands are unconfirmed.
 - Builds are unsigned, so SmartScreen and Gatekeeper warn on first run.
-- Saved conversations from outside AIB are read for Claude Code and OMP only.
+- Saved conversations from outside AIB are read for Claude Code only.
 - The `.deb` and source runs don't update in place.
 
 ## Known issues
@@ -159,8 +160,8 @@ Bugs we know about and are fixing. Report new ones in [issues](https://github.co
 
 - **Send ▾ while working:** when a turn starts from the phone, the queue or an approval card, **Interrupt** and **Send ▾**
   can take up to 1.5 seconds to appear. Messages you send in that moment still go the right way.
-- **Background commands after a steer:** Codex isn't told when a command it moved to the background finishes. OMP stops
-  a background command after 2 minutes in total. Use **Stop** on the row to end one sooner.
+- **Background commands after a steer:** Codex isn't told when a command it moved to the background finishes.
+  Use **Stop** on the row to end one.
 - **Phone remote control:** tested on Android only. iPhone, and the Tailscale install on macOS and Linux, are untested.
 - **Artifact link labels:** a link to another chat's artifact shows **· archived** or **· deleted** only after you switch
   chats.
