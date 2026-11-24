@@ -435,7 +435,9 @@
     (root.AgentSendMenu && root.AgentSendMenu.COPY && root.AgentSendMenu.COPY.bgRunning) || 'Still running in the background';
   /* The outcome a finished line names; '' for a normal finish (Done) so only the exceptions show. */
   const OUTCOME = { failed: 'Failed', stopped: 'Stopped' };
-  function model(rows, now, chatModel) {
+  /* Work a row still has to land: a "Didn't land" / conflict / waiting landing. "No changes", "Merged" and the like are settled. */
+  const unlanded = (i) => /didn.?t land|not landed|conflict|unmerged|waiting|held|pending/i.test(str(i.a && i.a.worktree && i.a.worktree.landing));
+  function model(rows, now, chatModel, idle) {
     const items = rows.map((a) => {
       const c = classify(a),
         n = names(a);
@@ -509,13 +511,16 @@
       .filter((i) => i.group === 'finished')
       .sort((x, y) => (y.kind === 'failed') - (x.kind === 'failed') || y.end - x.end || x.key.localeCompare(y.key));
     /* top = working then failed (the always-visible list); done = the other finished rows (collapsed by default). */
+    /* A failure of an idle chat with nothing left to land (no changes, merged...) is not news: it folds with the finished rows,
+       keeping its red dot and "Failed". While the chat works a fresh failure stays above the fold so it is noticed. */
+    const above = (i) => i.kind === 'failed' && !(idle && !unlanded(i));
     const top = nest(
       items
         .filter((i) => i.group === 'working')
         .sort(by)
-        .concat(fin.filter((i) => i.kind === 'failed')),
+        .concat(fin.filter(above)),
     );
-    const done = nest(fin.filter((i) => i.kind !== 'failed'));
+    const done = nest(fin.filter((i) => !above(i)));
     const working = top.filter((i) => i.group === 'working'),
       failedRows = top.filter((i) => i.kind === 'failed');
     return {
@@ -675,7 +680,7 @@
      Every section, working or idle, folds its finished rows the same way; ctx.openDefault: open until the owner closes it (an idle
      chat's section, whose own head already says "N finished"). */
   function render(ctx) {
-    const m = model(ctx.rows, ctx.now, ctx.chatModel),
+    const m = model(ctx.rows, ctx.now, ctx.chatModel, !!ctx.idle),
       open = expanded(ctx.convKey, ctx.openDefault);
     if (ctx.onModel) ctx.onModel(m);
     const sig = JSON.stringify([

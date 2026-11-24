@@ -245,3 +245,55 @@ Deno.test({
     }
   },
 });
+
+/* Owner, 2026-11-24: "the error agent is chilling in the in progress section". A failed subagent with nothing left to land folds into
+   "N finished" once its chat is idle (red dot and Failed kept); a fresh failure of a working chat stays above the fold. No ended
+   process is ever listed in Activity, idle or working. */
+Deno.test({
+  name: 'swarm activity: a failed no-changes subagent is above the fold while its chat works and inside the finished fold once idle; no ended processes listed',
+  ignore: !browserPath,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const lab = await Lab.open(1600, 900, undefined, { fastList: true });
+    try {
+      const page = lab.page;
+      const busy = await lab.chat();
+      await busy.start();
+      busy.say('FAILEND');
+      busy.step({ u: { sessionUpdate: 'subagent_update', subagent: { sessionId: 'f-sub', description: 'Broken job', state: 'failed' } } });
+      busy.step({ u: { sessionUpdate: 'subagent_update', subagent: { sessionId: 'd-sub', description: 'Good job', state: 'completed' } } });
+      await lab.select(busy);
+      const BOX = `${SEC(busy.key)} .sp-subs`;
+      const order = (box: string) => `(() => { const l = document.querySelector(${JSON.stringify(box + ' .sa-scroll')}); if (!l) return null;
+        return [...l.children].map((c) => c.classList.contains('sa-toggle') ? 'FOLD ' + c.innerText.replace(/\\s+/g, ' ').trim() : (c.querySelector('.sa-title')?.textContent || '') + (/sa-failed/.test(c.className) ? ' [failed]' : '')); })()`;
+      await page.waitFor(`JSON.stringify(${order(BOX)}) === ${JSON.stringify(JSON.stringify(['Broken job [failed]', 'FOLD ▸ 1 finished']))}`, 25000, 'working: the failure above its fold')
+        .catch(async (e) => {
+          throw new Error(`${e.message}: ${await page.eval<string>(`JSON.stringify(${order(BOX)})`)}`);
+        });
+      const procs = () => page.eval<string>(`JSON.stringify([document.querySelectorAll(${JSON.stringify(SEC(busy.key) + ' .command-card')}).length,
+        [...document.querySelectorAll(${JSON.stringify(SEC(busy.key) + ' .sp-label')})].filter((n) => n.offsetParent).map((n) => n.textContent)])`);
+      assertEquals(await procs(), '[0,["Subagents0 working"]]', 'working: no process rows or heading');
+      busy.end();
+      const IDLE_HEAD = `${IDLE(busy.key)} > .sp-ihead`;
+      await page.waitFor(`!!document.querySelector(${JSON.stringify(IDLE_HEAD)})`, 25000, 'the chat went idle');
+      await page.click(IDLE_HEAD);
+      const IBOX = `${IDLE(busy.key)} .sp-subs`;
+      await page.waitFor(`(${order(IBOX)})?.[0]?.startsWith('FOLD')`, 20000, 'idle: the fold comes first, no row above it').catch(async (e) => {
+        throw new Error(`${e.message}: ${await page.eval<string>(`JSON.stringify(${order(IBOX)})`)}`);
+      });
+      const idleOrder = await page.eval<string[]>(order(IBOX));
+      assertEquals(idleOrder.length, 3, `idle: fold then two rows: ${idleOrder}`);
+      assert(idleOrder.includes('Broken job [failed]'), 'idle: the failed row keeps its red state inside the fold');
+      const outcome = await page.eval<string>(`[...document.querySelectorAll(${JSON.stringify(IBOX + ' .sa-failed .sa-outcome')})].map((n) => n.textContent).join()`);
+      assertEquals(outcome, 'Failed');
+      assertEquals(await page.eval<number>(`document.querySelectorAll(${JSON.stringify(IDLE(busy.key) + ' .command-card')}).length`), 0);
+      assertEquals(await page.eval<boolean>(`[...document.querySelectorAll(${JSON.stringify(IDLE(busy.key) + ' .sp-label')})].some((n) => n.offsetParent && /Processes/.test(n.textContent))`), false);
+      assert(page.errors.length === 0, `console errors: ${page.errors.join(' | ')}`);
+      const owner = await ownerProblems(page);
+      assert(!owner, owner);
+    } finally {
+      await lab.close();
+    }
+  },
+});

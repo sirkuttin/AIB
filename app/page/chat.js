@@ -6419,8 +6419,7 @@
         a = paneAct.get(key),
         conv = conversations.find((x) => aliasKey(x) === key) || null,
         rows = withHelpers(key, a?.rows || []),
-        done = (a?.commands || []).filter((t) => !isRunningCommand(t)),
-        n = rows.length + done.length,
+        n = rows.length,
         open = n > 0 && idleOpen(projAct.pk, key);
       // owner decision: no needs-you styling in Activity. Every idle chat gets the same neutral hollow dot (never the sidebar's amber one)
       const d = (sec.dot ||= text('i', '', 'status-dot st-idle sp-dot sp-idle-dot'));
@@ -6448,6 +6447,7 @@
           now: nowS,
           convKey: key,
           openDefault: true,
+          idle: true,
           selectedKey: key === subOwner ? subSelection?.key : undefined,
           chatModel: '',
           empty: '',
@@ -6459,27 +6459,8 @@
         sec.subLabel.hidden = sec.subBox.hidden = !rows.length;
         // the same heading as a working chat's section; the finished rows fold into "N finished" below it, as there
         sec.subLabel.replaceChildren('Subagents', text('span', working + ' working'));
-        sec.procLabel.hidden = sec.procBox.hidden = !done.length;
-        sec.procLabel.replaceChildren('Processes', text('span', String(done.length)));
-        const seen = new Set();
-        done.forEach((task, i) => {
-          let b = sec.cards.get(task.id);
-          if (!b) {
-            b = text('button', '', 'command-card');
-            b.type = 'button';
-            b.dataset.key = task.id;
-            b.onclick = () => toggleCommand(task.id, key);
-            sec.cards.set(task.id, b);
-          }
-          seen.add(task.id);
-          paintCommandCard(b, task, key === subOwner && selectedCommand?.id === task.id);
-          if (sec.procBox.children[i] !== b) sec.procBox.insertBefore(b, sec.procBox.children[i] || null);
-        });
-        for (const [id, b] of sec.cards)
-          if (!seen.has(id)) {
-            b.remove();
-            sec.cards.delete(id);
-          }
+        // an idle chat has no running process; ended ones are not listed in Activity at all
+        sec.procLabel.hidden = sec.procBox.hidden = true;
       }
       want.push(sec.root);
     }
