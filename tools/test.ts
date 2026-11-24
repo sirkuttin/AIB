@@ -107,6 +107,20 @@ export const SLOW: Record<string, number> = {
   'deb_update_e2e_test.ts': 10, // the .deb self-update in the Ubuntu WSL distro: a throwaway user, test packages installed with apt, then purged
   'remote_setup_page_test.ts': 55, // Settings > Remote control's setup steps in a headless Chrome with a fake Tailscale
   'attention_modes_test.ts': 60, // the attention watcher through the real agent hosts: in-process, the keeper (Go) and a split host
+  'e2e_worktree_test.ts': 100, // worktree-per-chat end to end (port of work/test_worktree_e2e.py): real web servers and agent hosts, real git, the fake agent
+  // the ports of work/test_*_e2e.py that run a REAL adapter (Claude Code, Codex, Gemini) against a stub model API: ignored without the adapter, Go (keeper) or the CLI
+  'e2e_folder_chat_listing_test.ts': 40,
+  'e2e_agent_title_test.ts': 40,
+  'e2e_refile_test.ts': 40,
+  'e2e_codex_mcp_tools_test.ts': 20,
+  'e2e_open_elsewhere_test.ts': 120,
+  'e2e_codex_open_elsewhere_test.ts': 150,
+  'e2e_subagent_cancel_test.ts': 90,
+  'e2e_subagent_cleanup_test.ts': 150,
+  'e2e_subagent_codex_test.ts': 90,
+  'e2e_subagent_landing_test.ts': 150,
+  'e2e_subagent_worktree_test.ts': 100,
+  'e2e_gemini_subagent_test.ts': 60,
 };
 /** Fallback only (when there are no logs and no tools/test-timings.json): rough serial seconds of the slower fast-tier files. Unlisted files count as 3 s. */
 const HINT: Record<string, number> = {
@@ -139,6 +153,7 @@ export const SHARDS: Record<string, number> = {
   'worktree_sync_interop_test.ts': 3,
   'worktree_sync_test.ts': 3,
   'worktree_merge_clash_test.ts': 2,
+  'e2e_worktree_test.ts': 3, // 11 tests (the classes of test_worktree_e2e.py), each with its own host and web server
 };
 /** The perf files: long soaks that measure CPU and memory, so they need a quiet machine. They run alone, in test:prerelease. */
 export const PERF = ['perf_e2e_test.ts', 'perf_reading_e2e_test.ts'];

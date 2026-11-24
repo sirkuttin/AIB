@@ -13,3 +13,26 @@ export function agentTempRoot(): string {
 export function agentTempDirSync(prefix = 'aib-'): string {
   return Deno.makeTempDirSync({ dir: agentTempRoot(), prefix });
 }
+
+/** True when `path` is the user's home folder or inside it (HOME / USERPROFILE, resolved). */
+export function insideHome(path: string): boolean {
+  const win = Deno.build.os === 'windows';
+  const sep = win ? '\\' : '/';
+  const real = (p: string) => {
+    try {
+      return Deno.realPathSync(p);
+    } catch {
+      return p;
+    }
+  };
+  const norm = (p: string) => (win ? real(p).replaceAll('/', '\\').toLowerCase() : real(p));
+  const homes = new Set<string>();
+  for (const name of ['USERPROFILE', 'HOME']) if (Deno.env.get(name)) homes.add(norm(Deno.env.get(name)!));
+  const target = norm(path);
+  for (const home of homes) {
+    let trimmed = home;
+    while (trimmed.length > 1 && (trimmed.endsWith('/') || trimmed.endsWith('\\'))) trimmed = trimmed.slice(0, -1);
+    if (target === home || target.startsWith(trimmed + sep)) return true;
+  }
+  return false;
+}

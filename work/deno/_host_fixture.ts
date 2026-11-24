@@ -141,15 +141,22 @@ export class Web {
 }
 
 export class Fixture {
-  readonly root = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-host-test-' }));
-  readonly state = this.root + SEP + 'state';
-  readonly owners = this.root + SEP + 'owners';
-  readonly workspace = this.root + SEP + 'workspace';
+  readonly root: string;
+  readonly state: string;
+  readonly owners: string;
+  readonly workspace: string;
   readonly processes: Deno.ChildProcess[] = [];
   readonly hostPids = new Set<number>();
+  /** Variables of this process's environment that the programs a fixture starts must NOT inherit (a real-agent test's credentials). */
+  scrub: string[] = [];
   #logs = 0;
 
-  constructor() {
+  /** parent: the folder to make the fixture's folder in (a real-agent test passes one outside the home folder: _agent_tmp.ts). */
+  constructor(parent?: string) {
+    this.root = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-host-test-', ...(parent ? { dir: parent } : {}) }));
+    this.state = this.root + SEP + 'state';
+    this.owners = this.root + SEP + 'owners';
+    this.workspace = this.root + SEP + 'workspace';
     for (const name of ['state', 'owners', 'workspace', 'omp', 'claude']) Deno.mkdirSync(this.root + SEP + name);
     // The workspace is a project the user added: AIB lists a data folder's saved agent chats only for added projects
     // (desktop/added_projects.ts), and the scroll / layout labs write saved chats there.
@@ -197,7 +204,7 @@ export class Fixture {
     const child = new Deno.Command(command[0], {
       args: command.slice(1),
       cwd: APP_ROOT,
-      env: { ...this.env, ...env },
+      ...this.#envOptions(env),
       stdin: 'null',
       stdout: 'piped',
       stderr: 'piped',
@@ -208,6 +215,13 @@ export class Fixture {
     Promise.all([pump(child.stdout), pump(child.stderr)]).finally(() => file.close()).catch(() => {});
     this.processes.push(child);
     return [child, log];
+  }
+
+  #envOptions(extra: Record<string, string>): { env: Record<string, string>; clearEnv?: boolean } {
+    if (!this.scrub.length) return { env: { ...this.env, ...extra } };
+    const all: Record<string, string> = { ...Deno.env.toObject(), ...this.env, ...extra };
+    for (const name of Object.keys(all)) if (this.scrub.some((s) => s.toLowerCase() === name.toLowerCase())) delete all[name];
+    return { env: all, clearEnv: true };
   }
 
   /**
@@ -256,7 +270,7 @@ export class Fixture {
     const out = await new Deno.Command(DENO, {
       args: ['run', '-A', '--quiet', MAIN, ...this.agentFlags(), ...args],
       cwd: APP_ROOT,
-      env: this.env,
+      ...this.#envOptions({}),
       stdout: 'piped',
       stderr: 'piped',
     }).output();
