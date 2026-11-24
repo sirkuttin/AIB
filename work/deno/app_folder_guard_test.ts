@@ -54,7 +54,7 @@ Deno.test('the phone port and the computer page name only files that exist', () 
 });
 
 /** Tracked text files where the old folder name may still appear: history (aib-shared, changelog, release texts) and these scripts. */
-const ALLOWED = [/^aib-shared\//, /^CHANGELOG\.md$/, /^release-bodies\//, /^work\/migrate\/(app_folder_move|rename_studio_class)\.ts$/, /^work\/deno\/app_folder_guard_test\.ts$/];
+const ALLOWED = [/^aib-shared\//, /^CHANGELOG\.md$/, /^release-bodies\//, /^work\/migrate\/(app_folder_move|rename_studio_class)\.ts$/, /^work\/deno\/app_folder_guard_test\.ts$/, /^work\/deno\/artifacts_test\.ts$/];
 
 Deno.test('outputs/agent-studio does not come back in code, scripts, tests or docs', () => {
   const root = norm(REPO_ROOT);

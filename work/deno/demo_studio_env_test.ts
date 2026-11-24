@@ -48,7 +48,7 @@ Deno.test({
     try {
       const out = await new Deno.Command(PYTHON, {
         args: ["-c", SCRIPT, parent, String(port)],
-        cwd: "../..",
+        cwd: "..",
         env: { PYTHONDONTWRITEBYTECODE: "1" },
         stdout: "piped",
         stderr: "piped",

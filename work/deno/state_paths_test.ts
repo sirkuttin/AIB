@@ -35,6 +35,8 @@ const WIN = Deno.build.os === 'windows';
 const FAMILY = 'Claude_pzs8sxrjxfjjc';
 const APP_PARTS = ['app'];
 const SHIM = 'state_paths_shim';
+/** The frozen Python answers were recorded for a code folder in the old app location (outputs, then agent-studio); the answers do not depend on that name. */
+const legacy = (code: string) => code.includes('installed') ? code : code.replace(/([\\/])app$/, '$1outputs$1agent-studio');
 
 function tempRoot(): { root: string; [Symbol.dispose](): void } {
   const root = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-state-paths-' })).replace(/^\\\\\?\\/, '');
@@ -126,9 +128,9 @@ Deno.test('worktree detection, same as Python', async () => {
   assertEquals(isWorktreeCheckout(main), false);
   assertEquals(isWorktreeCheckout(nested), true, 'a .claude/worktrees path counts as a worktree even with a .git folder');
   for (const code of [wt, main, nested, installed, pathOf(tmp.root, 'missing', 'deep')]) {
-    assertEquals(isWorktreeCheckout(code), await py.call('state_paths', 'is_worktree_checkout', [code]), code);
+    assertEquals(isWorktreeCheckout(code), await py.call('state_paths', 'is_worktree_checkout', [legacy(code)]), code);
   }
-  assertEquals(oldDefaultDir(wt), await py.call(SHIM, 'old_default_dir', [wt]));
+  assertEquals(oldDefaultDir(wt), await py.call(SHIM, 'old_default_dir', [legacy(wt)]));
   assertEquals(oldDefaultDir(wt), pathOf(tmp.root, 'wt', 'work', 'agent-studio-state'));
 });
 
@@ -159,8 +161,8 @@ Deno.test('precedence: --state-dir, then the environment, then the default; same
   for (const [cli, e, code] of cases) {
     const mine = resolve(cli, e, code);
     assertEquals(
-      { path: mine.path, source: mine.source, isUserFolder: mine.isUserFolder },
-      await py.call(SHIM, 'resolve', [cli, e, code]),
+      { path: mine.path.replace(Deno.cwd(), legacy(Deno.cwd())), source: mine.source, isUserFolder: mine.isUserFolder }, // a relative folder resolves under the cwd
+      await py.call(SHIM, 'resolve', [cli, e, legacy(code)]),
       JSON.stringify([cli, e[ENV_STATE_DIR], code]),
     );
   }
@@ -278,7 +280,7 @@ Deno.test('prepare: a worktree keeps its own folder, an explicit folder is used 
   assert(!exists(pathOf(tmp.root, 'local')));
   for (const [cli, code] of [[null, wt], [chosen, main]] as const) {
     const mine = await prepare({ cliStateDir: cli, env, codeRoot: code });
-    const theirs = await py.callFields(SHIM, 'prepare', [cli, null, code, env]);
+    const theirs = await py.callFields(SHIM, 'prepare', [cli, null, legacy(code), env]);
     assertEquals({ stateDir: mine.stateDir, warnings: mine.warnings }, { stateDir: theirs.stateDir, warnings: theirs.warnings }, String(cli));
   }
 });

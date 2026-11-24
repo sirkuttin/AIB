@@ -103,7 +103,7 @@ Deno.test('contract: the auth gate, page files and bootstrap', async (t) => {
     for (const name of [...scripts, ...styles]) {
       const reply = await s.request('GET', '/' + name, { 'Host': `127.0.0.1:${s.port}`, 'Sec-Fetch-Site': 'same-origin' });
       assertEquals(reply.status, 200, name);
-      assertEquals(reply.text, Deno.readTextFileSync(`${APP_DIR}/${name}`), name);
+      assertEquals(reply.text, Deno.readTextFileSync(`${APP_DIR}/page/${name}`), name);
       assertEquals(reply.headers['content-type'], (name.endsWith('.js') ? 'text/javascript' : 'text/css') + '; charset=utf-8', name);
     }
   });

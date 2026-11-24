@@ -16,7 +16,7 @@ Deno.test({
     const demo = Deno.makeTempDirSync({ prefix: 'aib-demo-gen-' });
     try {
       const script = `import pathlib, sys\nsys.path.insert(0, 'work/demo-studio')\nimport start\nstart.generate(pathlib.Path(sys.argv[1]))\n`;
-      const out = await new Deno.Command(PYTHON, { args: ['-c', script, demo], cwd: '../..', env: { PYTHONDONTWRITEBYTECODE: '1' }, stdout: 'piped', stderr: 'piped' }).output();
+      const out = await new Deno.Command(PYTHON, { args: ['-c', script, demo], cwd: '..', env: { PYTHONDONTWRITEBYTECODE: '1' }, stdout: 'piped', stderr: 'piped' }).output();
       assert(out.success, new TextDecoder().decode(out.stderr));
       const file = JSON.parse(Deno.readTextFileSync(`${demo}/state/studio-added-projects.json`));
       assertEquals(file.version, 1);

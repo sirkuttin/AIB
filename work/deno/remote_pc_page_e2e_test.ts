@@ -43,7 +43,9 @@ import {
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
 type Json = Record<string, unknown>;
 const APP = new URL('../../app/', import.meta.url);
-const read = (name: string) => Deno.readTextFileSync(new URL(name, APP));
+/** A served name's file: pwa/ vendor/ icons/ are in app/, every other name is a page file in app/page/. */
+const servedUrl = (name: string) => new URL(/^(pwa|vendor|icons)[\\/]/.test(name) ? name.replaceAll('\\', '/') : 'page/' + name, APP);
+const read = (name: string) => Deno.readTextFileSync(servedUrl(name));
 
 async function remoteOn(): Promise<RemoteStudio> {
   const fake = fakeTailscale();
@@ -122,7 +124,7 @@ Deno.test('computer page: the static list is explicit and covers every file chat
   // every listed file exists, none is a credential script, none is outside the app's page files
   for (const [path, file] of Object.entries(PC_STATIC)) {
     assert(
-      Deno.statSync(new URL(file.replaceAll('\\', '/'), APP)).isFile,
+      Deno.statSync(servedUrl(file)).isFile,
       `${path} exists`,
     );
     assert(!['/page-auth.js', '/desktop-bridge.js'].includes(path), path);

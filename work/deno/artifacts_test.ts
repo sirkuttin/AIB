@@ -1122,7 +1122,8 @@ Deno.test('parity: the watcher does what Python does for the same writes', async
 });
 
 Deno.test('parity: the write tracker records the same paths', async () => {
-  const cwd = abs('proj');
+  // the frozen Python answer was recorded for a project folder under the old app folder (<repo>/outputs/agent-studio/proj)
+  const cwd = join(Deno.cwd().replace(/[\\/][^\\/]*$/, ''), 'outputs', 'agent-studio', 'proj');
   const updates = [
     update({ kind: 'edit', content: [{ type: 'diff', path: join(cwd, 'outputs', 'a.html') }] }),
     update({

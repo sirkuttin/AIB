@@ -288,7 +288,7 @@ Deno.test({
       const queued = s.liveCalls.filter(([n]) => n === 'queue').map(([, body]) => body.clientMessageId);
       assertEquals(queued, ['m-lap-1', 'm-ph-1']);
       // drafts: chat.js keeps them in the page's own localStorage ('studio-drafts-v1'), which view-prefs.js never syncs to the PC
-      const root = new URL('../../app/', import.meta.url);
+      const root = new URL('../../app/page/', import.meta.url);
       const prefs = await Deno.readTextFile(new URL('view-prefs.js', root));
       const chatJs = await Deno.readTextFile(new URL('chat.js', root));
       assert(chatJs.includes("new DraftStore(localStorage, 'studio-drafts-v1'"), 'drafts live in localStorage');

@@ -30,7 +30,7 @@ class HelperLab extends Lab {
   readonly gate: AllowGate;
   constructor() {
     super();
-    Deno.mkdirSync(this.copy + SEP + 'app', { recursive: true });
+    Deno.mkdirSync(this.copy + SEP + 'app' + SEP + 'page', { recursive: true });
     Deno.mkdirSync(this.copy + SEP + '.git' + SEP + 'hooks', { recursive: true });
     Deno.mkdirSync(this.copy + SEP + '.claude', { recursive: true });
     Deno.mkdirSync(this.state, { recursive: true });
