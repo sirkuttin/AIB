@@ -15,17 +15,17 @@
  * opens the viewer; and a page on another origin of the same site cannot frame the artifact.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { ROUTE_LIST } from '../../outputs/agent-studio/server/web/routes.ts';
-import { DEVICE_HEADER } from '../../outputs/agent-studio/server/remote/server.ts';
-import { ArtifactTickets, remoteCsp } from '../../outputs/agent-studio/server/remote/artifact_server.ts';
+import { ROUTE_LIST } from '../../app/server/web/routes.ts';
+import { DEVICE_HEADER } from '../../app/server/remote/server.ts';
+import { ArtifactTickets, remoteCsp } from '../../app/server/remote/artifact_server.ts';
 import {
   readRemoteArtifactPort,
   readRemotePort,
   remoteArtifactPort,
   saveRemotePort,
-} from '../../outputs/agent-studio/server/remote/port.ts';
-import { readServe } from '../../outputs/agent-studio/server/remote/tailscale.ts';
-import { withArtifactOrigin } from '../../outputs/agent-studio/server/remote/payloads.ts';
+} from '../../app/server/remote/port.ts';
+import { readServe } from '../../app/server/remote/tailscale.ts';
+import { withArtifactOrigin } from '../../app/server/remote/payloads.ts';
 import { Browser, browserPath, type Page } from './_doc_browser.ts';
 import {
   type FakeChat,

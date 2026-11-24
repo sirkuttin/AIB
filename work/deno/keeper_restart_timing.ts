@@ -16,8 +16,8 @@
  */
 import { DENO, Fixture, MAIN, nativePath, openConversation, SEP, sleep, until, Web } from './_host_fixture.ts';
 import { WORK } from './_work.ts';
-import { keeperBinary, readKeeperInfo } from '../../outputs/agent-studio/server/keeper/client.ts';
-import { pidAlive, readInfo } from '../../outputs/agent-studio/server/host/host_client.ts';
+import { keeperBinary, readKeeperInfo } from '../../app/server/keeper/client.ts';
+import { pidAlive, readInfo } from '../../app/server/host/host_client.ts';
 
 type Json = Record<string, unknown>;
 const KEEPER_AGENT = nativePath(new URL('keeper-fixture/agent.py', WORK));

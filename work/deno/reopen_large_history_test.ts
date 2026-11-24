@@ -13,12 +13,12 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { fake, pause, until } from './_connection.ts';
-import { Connection, outsideTurns, ReplayWindow } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { KeeperLink } from '../../outputs/agent-studio/server/keeper/link.ts';
-import { keeperBinary, KeeperClient, readKeeperInfo } from '../../outputs/agent-studio/server/keeper/client.ts';
-import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
-import { HistoryStore } from '../../outputs/agent-studio/server/history/store.ts';
+import { Connection, outsideTurns, ReplayWindow } from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { KeeperLink } from '../../app/server/keeper/link.ts';
+import { keeperBinary, KeeperClient, readKeeperInfo } from '../../app/server/keeper/client.ts';
+import { pidAlive } from '../../app/server/host/host_client.ts';
+import { HistoryStore } from '../../app/server/history/store.ts';
 
 type Json = Record<string, unknown>;
 Deno.env.set('AIB_HISTORY_V2', '1');
@@ -34,20 +34,20 @@ class Lab {
   );
   readonly state = this.dir + SEP + 'state';
   readonly work = this.dir + SEP + 'work';
-  readonly studios: Studio[] = [];
+  readonly studios: Aib[] = [];
   constructor() {
     Deno.mkdirSync(this.work, { recursive: true });
   }
   transcript(name: string): string {
     return this.dir + SEP + name + '.json';
   }
-  studio(transcripts: Map<string, string>): Studio {
+  studio(transcripts: Map<string, string>): Aib {
     const keeper = new KeeperLink({
       dataDir: this.state,
       orphan: null,
       extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'],
     });
-    const studio = new Studio({
+    const studio = new Aib({
       claudeLauncher: import.meta.filename!, nodeCommand: 'node',
       stateDir: this.state,
       port: 0,
@@ -126,7 +126,7 @@ async function peakDuring<T>(
 }
 
 async function send(
-  studio: Studio,
+  studio: Aib,
   c: Connection,
   text: string,
   id: string,

@@ -1,9 +1,9 @@
 /**
- * The inbox rules the page uses (outputs/agent-studio/inbox-rules.js), loaded into the server as they are: one file decides what
+ * The inbox rules the page uses (app/page/inbox-rules.js), loaded into the server as they are: one file decides what
  * a chat's phase is (needs you, failed, asks, working, your turn) and what counts toward the one number, for the page, the
  * server's notifications, the phone's home, both trays and the agent connection's own facts. work/test_inbox_rules.js pins it.
  */
-import '../../inbox-rules.js';
+import '../../page/inbox-rules.js';
 
 export type Phase = 'needs_you' | 'failed' | 'asks' | 'stalled' | 'working' | 'your_turn' | 'idle' | 'opening' | 'closed';
 

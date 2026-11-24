@@ -18,14 +18,14 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { fake, pause, until } from './_connection.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { holdKeeper, Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { KeeperLink, keeperTakeoverProblem, noteKeeperTakeoverProblem } from '../../outputs/agent-studio/server/keeper/link.ts';
-import { ArtifactMcpHttp, FORWARD_FILE } from '../../outputs/agent-studio/server/artifacts/mcp_http.ts';
-import { keeperBinary, KeeperClient, readKeeperInfo } from '../../outputs/agent-studio/server/keeper/client.ts';
-import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
-import { DesktopApp, type Shell, STOP_INDEX, type WindowHandle } from '../../outputs/agent-studio/server/desktop/window.ts';
-import { trayIconPng } from '../../outputs/agent-studio/server/desktop/tray_icon.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { holdKeeper, Aib } from '../../app/server/host/aib.ts';
+import { KeeperLink, keeperTakeoverProblem, noteKeeperTakeoverProblem } from '../../app/server/keeper/link.ts';
+import { ArtifactMcpHttp, FORWARD_FILE } from '../../app/server/artifacts/mcp_http.ts';
+import { keeperBinary, KeeperClient, readKeeperInfo } from '../../app/server/keeper/client.ts';
+import { pidAlive } from '../../app/server/host/host_client.ts';
+import { DesktopApp, type Shell, STOP_INDEX, type WindowHandle } from '../../app/server/desktop/window.ts';
+import { trayIconPng } from '../../app/server/desktop/tray_icon.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -88,7 +88,7 @@ class Lab {
   readonly state = this.dir + SEP + 'state';
   readonly work = this.dir + SEP + 'work';
   readonly agentLog = this.dir + SEP + 'agent-received.log';
-  readonly studios: Studio[] = [];
+  readonly studios: Aib[] = [];
   #gates = 0;
 
   constructor() {
@@ -114,7 +114,7 @@ class Lab {
    * A Studio over the real keeper. quickOrphan: the keeper is started with an orphan command that only writes orphanMarker and
    * QUICK_ORPHAN timers (a restart of AIB, or the keeper giving up on the chats, shows within a second); else no orphan restart.
    */
-  studio(flags: string[], quickOrphan = false): Studio {
+  studio(flags: string[], quickOrphan = false): Aib {
     // The keeper as the app starts it, but quicker to go once it is empty (the real one waits longer).
     const orphan = quickOrphan
       ? {
@@ -134,7 +134,7 @@ class Lab {
         ...(quickOrphan ? QUICK_ORPHAN : ['--orphan-after', '60s']),
       ],
     });
-    const studio = new Studio({
+    const studio = new Aib({
       claudeLauncher: import.meta.filename!, nodeCommand: 'node',
       stateDir: this.state,
       port: 0,
@@ -155,7 +155,7 @@ class Lab {
    * from Studio.quitHandover, quitting through the normal close path (main.ts close: Studio.close, or with work running hold +
    * Studio.release({ hold })). A fake Shell: nothing on screen.
    */
-  app(studio: Studio) {
+  app(studio: Aib) {
     const windows: Win[] = [];
     const updates: [string, number, string][] = [];
     const quits: boolean[] = [];

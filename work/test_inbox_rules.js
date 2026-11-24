@@ -6,7 +6,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
-const { APP } = require('./_paths');
+const { PAGE: APP } = require('./_paths');
 const R = require(path.join(APP, 'inbox-rules.js'));
 
 // A status paragraph with no question in it, so a sample's reply is as long as the real ones were (over 160 characters).

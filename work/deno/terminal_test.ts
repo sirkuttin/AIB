@@ -3,7 +3,7 @@
  * routes behind the page gate (both listener kinds: Deno.serve and the desktop binary's node:http path).
  */
 import { assert, assertEquals } from './_assert.ts';
-import { clampSize, defaultShell, type Pty, type PtyOptions, spawnPty } from '../../outputs/agent-studio/server/platform/pty.ts';
+import { clampSize, defaultShell, type Pty, type PtyOptions, spawnPty } from '../../app/server/platform/pty.ts';
 import {
   checkCwd,
   endsWithPrompt,
@@ -11,12 +11,12 @@ import {
   PromptWatch,
   TerminalError,
   TerminalSessions,
-} from '../../outputs/agent-studio/server/terminal/sessions.ts';
-import { acceptKey, encodeFrame, FrameReader, type WsLink } from '../../outputs/agent-studio/server/platform/websocket.ts';
-import { makeContext, WebServer } from '../../outputs/agent-studio/server/web/server.ts';
-import type { LiveBackend } from '../../outputs/agent-studio/server/host/backend.ts';
-import type { UpdateService } from '../../outputs/agent-studio/server/desktop/updater.ts';
-import type { Source } from '../../outputs/agent-studio/server/transcripts/monitor.ts';
+} from '../../app/server/terminal/sessions.ts';
+import { acceptKey, encodeFrame, FrameReader, type WsLink } from '../../app/server/platform/websocket.ts';
+import { makeContext, WebServer } from '../../app/server/web/server.ts';
+import type { LiveBackend } from '../../app/server/host/backend.ts';
+import type { UpdateService } from '../../app/server/desktop/updater.ts';
+import type { Source } from '../../app/server/transcripts/monitor.ts';
 
 const win = Deno.build.os === 'windows';
 if (!win && Deno.build.os !== 'darwin') {

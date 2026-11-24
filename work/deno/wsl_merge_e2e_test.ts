@@ -1,6 +1,6 @@
 /**
  * Real WSL (AIB_WSL_E2E=<distro>; see _wsl_e2e.ts): Merge for a WSL chat's worktree, run by the distro's helper (wsl/helper/merge.ts)
- * and reached through AIB's own merge routes (web/studio_routes.ts -> wsl/merge.ts):
+ * and reached through AIB's own merge routes (web/aib_routes.ts -> wsl/merge.ts):
  *   - the chat's agent edits and commits in its copy; the Merge button's state; a clean merge lands its commit on main with the
  *     "Merged into main (1 commit)" note in the chat;
  *   - main moved with a conflicting change: the merge stops with the conflict line, nothing lands; resolved and committed in the copy,
@@ -14,15 +14,15 @@
 import { assert, assertEquals } from './_assert.ts';
 import { until } from './_connection.ts';
 import { cleanRoot, inDistro, KEY, newAib, prepareRoot, readyHost, ROOT, T } from './_wsl_e2e.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { refOf } from '../../outputs/agent-studio/server/platform/location.ts';
-import { studioRoutes } from '../../outputs/agent-studio/server/web/studio_routes.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { refOf } from '../../app/server/platform/location.ts';
+import { aibRoutes } from '../../app/server/web/aib_routes.ts';
 
 type Json = Record<string, unknown>;
 
-function studioIn(state: string): Studio {
-  const studio = new Studio({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
+function studioIn(state: string): Aib {
+  const studio = new Aib({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
   studio.ownerProbe = () => null;
   studio.connectionFactory = (_command, cwd, provider, options) =>
     new Connection(['python3', `${ROOT}/fake_acp.py`, '--cancel-aware'], cwd, provider, {
@@ -37,9 +37,9 @@ const notes = (c: Connection) => c.events.filter((e) => e.kind === 'studio_note'
 const NL = '\\n'; // the fake agent's edit: turns write a literal \n as a newline
 
 /** AIB's merge routes over a Studio (the web server's context, the parts the routes read). */
-function routesOf(studio: Studio) {
+function routesOf(studio: Aib) {
   const ctx = { stateDir: studio.stateDir, host: studio, conversations: { public: () => ({ entries: {} }) } } as never;
-  const routes = studioRoutes();
+  const routes = aibRoutes();
   const request = new Request('http://127.0.0.1/');
   const url = (path: string) => new URL(`http://127.0.0.1${path}`);
   return {
@@ -54,14 +54,14 @@ function routesOf(studio: Studio) {
  * The turn merge.ts's own prompt started (a conflict to resolve, a clash to explain): the fake agent does not act on such text, so
  * the test answers its question or stops the turn, and the chat is idle again.
  */
-async function quiet(studio: Studio, c: Connection): Promise<void> {
+async function quiet(studio: Aib, c: Connection): Promise<void> {
   await until(() => !c.busy || c.permissions.size > 0, 'the prompt turn', 60);
   if (c.busy) await studio.liveCall('cancel', { id: c.id });
   await until(() => !c.busy, 'the prompt turn to end', 60);
 }
 
 /** One turn of the fake agent (edit:<path>|<text>, commit:<message>), answered when it ends. */
-async function turn(studio: Studio, c: Connection, text: string): Promise<void> {
+async function turn(studio: Aib, c: Connection, text: string): Promise<void> {
   await studio.liveCall('prompt', { id: c.id, text, clientMessageId: crypto.randomUUID() });
   await until(() => !c.busy, `the turn "${text}"`, 60);
 }
@@ -72,7 +72,7 @@ Deno.test({
   async fn() {
     const state = Deno.makeTempDirSync({ prefix: 'aib-wsl-merge-e2e-' });
     await prepareRoot();
-    const studios: Studio[] = [];
+    const studios: Aib[] = [];
     try {
       await readyHost();
       const repo = `${ROOT}/repo`;

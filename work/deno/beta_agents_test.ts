@@ -6,7 +6,7 @@
 import { assert, assertEquals } from './_assert.ts';
 import { exists, join, PY, tempDir, touch, waitFor, withEnv } from './_agents.ts';
 import { FAKE, Lab } from './_connection.ts';
-import { BETA_AGENTS, BETA_IDS, betaAgent } from '../../outputs/agent-studio/server/agents/beta_catalog.ts';
+import { BETA_AGENTS, BETA_IDS, betaAgent } from '../../app/server/agents/beta_catalog.ts';
 import {
   type BetaLaunch,
   isVsCodeCopilotShim,
@@ -15,17 +15,17 @@ import {
   shimArgv,
   signinArgv,
   signinShown,
-} from '../../outputs/agent-studio/server/agents/beta_agents.ts';
-import { BetaSigner, readTerminalArgs, readTerminalMethod } from '../../outputs/agent-studio/server/agents/beta_signin.ts';
-import { normalizeMethodEnv, normalizeMethods, readJob } from '../../outputs/agent-studio/server/agents/signin.ts';
-import { isProvider } from '../../outputs/agent-studio/server/agents/agent_registry.ts';
-import { SettingsStore } from '../../outputs/agent-studio/server/state/settings.ts';
-import { describeBeta } from '../../outputs/agent-studio/server/web/shared.ts';
-import { TerminalSessions } from '../../outputs/agent-studio/server/terminal/sessions.ts';
-import * as installer from '../../outputs/agent-studio/server/agents/installer.ts';
-import { MODELS_SOURCE, withModelsOption } from '../../outputs/agent-studio/server/acp/breadth.ts';
-import { AgentOptionsCache } from '../../outputs/agent-studio/server/state/agent_options.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
+} from '../../app/server/agents/beta_agents.ts';
+import { BetaSigner, readTerminalArgs, readTerminalMethod } from '../../app/server/agents/beta_signin.ts';
+import { normalizeMethodEnv, normalizeMethods, readJob } from '../../app/server/agents/signin.ts';
+import { isProvider } from '../../app/server/agents/agent_registry.ts';
+import { SettingsStore } from '../../app/server/state/settings.ts';
+import { describeBeta } from '../../app/server/web/shared.ts';
+import { TerminalSessions } from '../../app/server/terminal/sessions.ts';
+import * as installer from '../../app/server/agents/installer.ts';
+import { MODELS_SOURCE, withModelsOption } from '../../app/server/acp/breadth.ts';
+import { AgentOptionsCache } from '../../app/server/state/agent_options.ts';
+import { Aib } from '../../app/server/host/aib.ts';
 
 const WIN = Deno.build.os === 'windows';
 const sanitize = { sanitizeOps: false, sanitizeResources: false }; // sign-in jobs run in the background between awaits
@@ -700,7 +700,7 @@ Deno.test("Qwen's optional API address: stored like the key, checked, passed as 
     'OPENAI_BASE_URL',
     'https://<workspace ID>.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1',
   ]);
-  const env = () => Studio.prototype.betaEnv.call({ settings: store } as unknown as Studio, 'qwen');
+  const env = () => Aib.prototype.betaEnv.call({ settings: store } as unknown as Aib, 'qwen');
   await store.update({ agents: { betaKey: { qwen: 'test-key-not-real' } } });
   assertEquals(env(), { OPENAI_API_KEY: 'test-key-not-real' }, 'no address: Qwen uses its own default (OpenAI)');
   const address = 'https://ws-test.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1';

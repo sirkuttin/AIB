@@ -7,11 +7,11 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { FakeDesktopWindows } from './_fake_desktop_windows.ts';
-import { ViewPrefs } from '../../outputs/agent-studio/server/state/view_prefs.ts';
-import { makeContext, WebServer } from '../../outputs/agent-studio/server/web/server.ts';
-import type { LiveBackend } from '../../outputs/agent-studio/server/host/backend.ts';
-import type { UpdateService } from '../../outputs/agent-studio/server/desktop/updater.ts';
-import type { Source } from '../../outputs/agent-studio/server/transcripts/monitor.ts';
+import { ViewPrefs } from '../../app/server/state/view_prefs.ts';
+import { makeContext, WebServer } from '../../app/server/web/server.ts';
+import type { LiveBackend } from '../../app/server/host/backend.ts';
+import type { UpdateService } from '../../app/server/desktop/updater.ts';
+import type { Source } from '../../app/server/transcripts/monitor.ts';
 
 const block = (page: string) => {
   const m = page.match(/<script type="application\/json" id="aibViewPrefs">([\s\S]*?)<\/script>/);

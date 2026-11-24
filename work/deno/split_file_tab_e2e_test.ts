@@ -5,7 +5,7 @@
  * strips stay, and the first pane's chat tab brings the chat back.
  *
  * A real Studio (temp state and workspace, free port; never the live ports), the scripted agent, a headless Chrome/Edge.
- * Run (from outputs/agent-studio): deno task test --jobs 1 split_file_tab
+ * Run (from app): deno task test --jobs 1 split_file_tab
  */
 import { assert, assertEquals } from './_assert.ts';
 import { browserPath, Lab, type Page, settle, shown } from './_scroll_lab.ts';

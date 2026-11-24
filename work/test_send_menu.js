@@ -1,5 +1,5 @@
 'use strict';
-const { APP: APP_DIR } = require('./_paths');
+const { PAGE: APP_DIR } = require('./_paths');
 // The composer while the agent works (send-menu-ui.js): what Enter / Alt+Enter / Shift+Enter do, the words per agent, the keyboard
 // menu, the background pill, the held rows (queue-ui.js) and the inbox quick reply. Snapshots are shaped per the steer contract
 // (steerable, steerLane, tool.background); the server side lands separately.

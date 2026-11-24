@@ -8,8 +8,8 @@
  * the PC's project order (your saved order first, the rest by name) never share a colour while the palette has room. The order is
  * made from the added projects plus the projects of the chats listed, so it is the PC's list.
  */
-import '../../notify-rules.js';
-import '../../workspace-state.js';
+import '../../page/notify-rules.js';
+import '../../page/workspace-state.js';
 import { createHash } from 'node:crypto';
 import type { WebContext } from '../web/server.ts';
 import { projectKey } from '../desktop/project_delete.ts';

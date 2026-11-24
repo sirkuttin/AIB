@@ -3,7 +3,7 @@
    state first with the chats that are not running mixed in by time, the All projects filter, the project on each card, approvals
    and questions as cards in the stream (open when newest, closed once newer activity follows, open when a notification brought
    you there) and the one-line record after acting. The page itself runs in work/deno/remote_phone_e2e_test.ts. */
-const { APP } = require('./_paths');
+const { PAGE: APP } = require('./_paths');
 const test = require('node:test'),
   assert = require('node:assert/strict'),
   path = require('node:path');

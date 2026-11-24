@@ -9,8 +9,8 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { Fixture, httpJson, sleep, TEST_OPTIONS, until } from './_host_fixture.ts';
-import { keeperBinary, KeeperClient, readKeeperInfo } from '../../outputs/agent-studio/server/keeper/client.ts';
-import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
+import { keeperBinary, KeeperClient, readKeeperInfo } from '../../app/server/keeper/client.ts';
+import { pidAlive } from '../../app/server/host/host_client.ts';
 
 const SLOW = Deno.build.os === 'windows' && Deno.env.get('AIB_SLOW_TESTS') === '1';
 const KEY = 'claude:k9-e2e';

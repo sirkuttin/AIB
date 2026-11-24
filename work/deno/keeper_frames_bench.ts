@@ -3,7 +3,7 @@
  * KeeperClient.#readLoop reads. The sizes are the 11 history records of a real 6,181-event chat (44.6 MB).
  * Run: deno run -A work/deno/keeper_frames_bench.ts      (before the fix: ~380 ms; after: ~30 ms)
  */
-import { encodeFrame, FrameReader } from '../../outputs/agent-studio/server/keeper/client.ts';
+import { encodeFrame, FrameReader } from '../../app/server/keeper/client.ts';
 
 const sizes = Deno.args.length ? Deno.args.map(Number) : [
   4193266, 4180358, 3607877, 4193174, 4017482, 4050855, 4022490, 4178057, 4121620, 4104611, 3887178,

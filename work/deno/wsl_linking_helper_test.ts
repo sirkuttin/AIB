@@ -6,9 +6,9 @@
  * in its answer). wsl_linking_helper_e2e_test.ts runs the same in a real distro.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { makeMethods } from '../../outputs/agent-studio/server/wsl/helper/methods.ts';
-import { installMethods, type ProcRow, procsUsing } from '../../outputs/agent-studio/server/wsl/helper/agent_install.ts';
-import { handleLine, type Handlers } from '../../outputs/agent-studio/server/wsl/helper/rpc.ts';
+import { makeMethods } from '../../app/server/wsl/helper/methods.ts';
+import { installMethods, type ProcRow, procsUsing } from '../../app/server/wsl/helper/agent_install.ts';
+import { handleLine, type Handlers } from '../../app/server/wsl/helper/rpc.ts';
 import {
   asdfIsModern,
   atLeast,
@@ -24,8 +24,8 @@ import {
   type RunResult,
   versionParts,
   whichOn,
-} from '../../outputs/agent-studio/server/wsl/helper/prereqs.ts';
-import { displayAccount, signinStatus } from '../../outputs/agent-studio/server/wsl/helper/signin_status.ts';
+} from '../../app/server/wsl/helper/prereqs.ts';
+import { displayAccount, signinStatus } from '../../app/server/wsl/helper/signin_status.ts';
 
 const T = { sanitizeOps: false, sanitizeResources: false };
 type Json = Record<string, unknown>;

@@ -7,7 +7,7 @@
  *      folder (read only, ignored rows dimmed, aib-docs first), and the Folder menu offers it.
  * The server half: the project route shows only a folder the user added.
  */
-import { projectKey } from '../../outputs/agent-studio/server/desktop/project_delete.ts';
+import { projectKey } from '../../app/server/desktop/project_delete.ts';
 import { assert, assertEquals } from './_assert.ts';
 import { Fixture, SEP, TEST_OPTIONS } from './_host_fixture.ts';
 import { Browser, browserPath } from './_doc_browser.ts';

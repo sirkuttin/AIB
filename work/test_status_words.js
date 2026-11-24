@@ -1,5 +1,5 @@
 'use strict';
-const { APP: APP_DIR } = require('./_paths');
+const { PAGE: APP_DIR } = require('./_paths');
 // The shared status vocabulary: Working · <time>, Your turn, Needs you, Ready, Elsewhere · Working / Ready, Reconnecting….
 const assert = require('node:assert/strict');
 const test = require('node:test');

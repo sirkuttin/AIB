@@ -4,14 +4,14 @@ Thanks for looking. AIB (Agent Integration Bay) is beta software and the first r
 
 ## Layout
 
-- `outputs/agent-studio/server/` the app: TypeScript on Deno (`main.ts` is the entry point). All OS-specific code lives in `server/platform/`.
-- `outputs/agent-studio/*.js, *.css, *.html` the page: plain browser JavaScript and CSS, served as they are.
+- `app/server/` the app: TypeScript on Deno (`main.ts` is the entry point). All OS-specific code lives in `server/platform/`.
+- `app/page/*.js, *.css, *.html` the page: plain browser JavaScript and CSS, served as they are.
 - `tools/build.ts` builds the desktop app for all six targets.
 - `work/` the tests and the fixtures that generate their own data (fake agents, demo data). The old Python server and its parity and contract tests are retired (2026-11-23): Python is only for the fake agents and a few end-to-end helpers.
 
 ## No build step for the page
 
-The page is plain classic scripts. There is no bundler or transpiler for it. See `outputs/agent-studio/docs/FRONTEND.md`.
+The page is plain classic scripts. There is no bundler or transpiler for it. See `app/docs/FRONTEND.md`.
 
 ## Tests
 
@@ -22,7 +22,7 @@ There are four levels besides `test:affected`. Times are for a 24-core Windows m
 **Affected: while you work. Run this, not a guess at which files matter.**
 
 ```text
-cd outputs/agent-studio
+cd app
 deno task test:affected            # only the tests that cover what you changed since your base branch, in every suite
 deno task test:affected --list     # what would run, and which changed file pulls each test in
 deno task test:affected --why server/web/server.ts   # the chain of imports and mentions from each test to that file
@@ -40,7 +40,7 @@ a broad rule reaches is listed, not run (`--all-slow` runs it). A change to `den
 **Smoke: after every step (about 2 minutes).**
 
 ```text
-cd outputs/agent-studio
+cd app
 deno task test:smoke   # every Deno file that takes under 5 s in the recent logs (about 230 files, ~1,600 tests, ~100 s) + the node page tests (~1,700 tests, ~8 s)
 deno task check        # type check
 deno task lint
@@ -51,7 +51,7 @@ The files are chosen from data, not a list: `tools/test.ts` reads per-file secon
 **Full: before a merge or a test build (about 30 minutes, ~2,900 tests).**
 
 ```text
-cd outputs/agent-studio
+cd app
 deno task test        # every Deno file except the two perf files (~30 min at --jobs 3)
 cd ../..
 python work/run_parallel.py contract   # HTTP contract tests (~15 s)
@@ -61,7 +61,7 @@ python work/run_parallel.py e2e        # worktree end-to-end suite (~2 min)
 **Pre-release: before a feed build or a release (the full suite plus about 8 minutes).**
 
 ```text
-cd outputs/agent-studio
+cd app
 deno task test:prerelease   # the full suite (all three attention modes), then perf_e2e and perf_reading_e2e alone, then test:update-e2e
 ```
 
@@ -95,7 +95,7 @@ npm run lint      # ESLint on the page
 npm run format    # Prettier on the page and its tests (120 columns, single quotes)
 ```
 
-Deno code follows `deno fmt` settings in `outputs/agent-studio/deno.json` (140 columns, single quotes).
+Deno code follows `deno fmt` settings in `app/deno.json` (140 columns, single quotes).
 
 ## Pull requests
 

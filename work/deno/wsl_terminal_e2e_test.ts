@@ -5,9 +5,9 @@
 import { assert, assertEquals } from './_assert.ts';
 import { until } from './_connection.ts';
 import { cleanRoot, KEY, prepareRoot, readyHost, ROOT, T } from './_wsl_e2e.ts';
-import { refOf } from '../../outputs/agent-studio/server/platform/location.ts';
-import { TerminalSessions } from '../../outputs/agent-studio/server/terminal/sessions.ts';
-import type { WsLink } from '../../outputs/agent-studio/server/platform/websocket.ts';
+import { refOf } from '../../app/server/platform/location.ts';
+import { TerminalSessions } from '../../app/server/terminal/sessions.ts';
+import type { WsLink } from '../../app/server/platform/websocket.ts';
 
 class Link implements WsLink {
   sent: (string | Uint8Array)[] = [];

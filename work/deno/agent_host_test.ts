@@ -18,9 +18,9 @@ import {
   replaceHostHint,
   TOKEN_HEADER,
   writeInfo,
-} from '../../outputs/agent-studio/server/host/host_client.ts';
-import { migrateInProcessRecovery } from '../../outputs/agent-studio/server/host/agent_host.ts';
-import { StateStore } from '../../outputs/agent-studio/server/state/recovery.ts';
+} from '../../app/server/host/host_client.ts';
+import { migrateInProcessRecovery } from '../../app/server/host/agent_host.ts';
+import { StateStore } from '../../app/server/state/recovery.ts';
 
 type Json = Record<string, unknown>;
 const t = (name: string, fn: () => Promise<void> | void) => Deno.test({ name, ...TEST_OPTIONS, fn });

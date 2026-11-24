@@ -5,7 +5,7 @@
    the active and inactive chat tab. The page is chat.html with its own stylesheets and no scripts; the card and tab markup is
    what sidebar-ui.js / organize-ui.js / workspace-ui.js build.
    Runs headless Chrome or Edge (no window). Set CHROME_PATH to choose one; with none installed the tests are skipped. */
-const { APP } = require('./_paths');
+const { PAGE: APP } = require('./_paths');
 const test = require('node:test'),
   assert = require('node:assert/strict'),
   fs = require('node:fs'),

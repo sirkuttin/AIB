@@ -10,14 +10,14 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { FakeWslHost } from './_wsl_fake.ts';
-import { setDistroSource, setWslHostResolver, WSL_INSTALL, wslOverview } from '../../outputs/agent-studio/server/wsl/access.ts';
-import { wslRoutes, wslStatus } from '../../outputs/agent-studio/server/web/wsl_routes.ts';
-import { wslSigninCommand } from '../../outputs/agent-studio/server/web/terminal_routes.ts';
-import { urlGate } from '../../outputs/agent-studio/server/wsl/open_urls.ts';
-import type { WebContext } from '../../outputs/agent-studio/server/web/server.ts';
-import * as adapters from '../../outputs/agent-studio/server/agents/adapters.ts';
-import { bundledClaudeCli, bundledCodexCli, findCodexCli } from '../../outputs/agent-studio/server/agents/signin.ts';
-import { makeMethods } from '../../outputs/agent-studio/server/wsl/helper/methods.ts';
+import { setDistroSource, setWslHostResolver, WSL_INSTALL, wslOverview } from '../../app/server/wsl/access.ts';
+import { wslRoutes, wslStatus } from '../../app/server/web/wsl_routes.ts';
+import { wslSigninCommand } from '../../app/server/web/terminal_routes.ts';
+import { urlGate } from '../../app/server/wsl/open_urls.ts';
+import type { WebContext } from '../../app/server/web/server.ts';
+import * as adapters from '../../app/server/agents/adapters.ts';
+import { bundledClaudeCli, bundledCodexCli, findCodexCli } from '../../app/server/agents/signin.ts';
+import { makeMethods } from '../../app/server/wsl/helper/methods.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };

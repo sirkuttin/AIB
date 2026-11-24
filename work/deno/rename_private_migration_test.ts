@@ -9,9 +9,9 @@ import { assert, assertEquals } from './_assert.ts';
 import { commit, runGit, write } from './_worktree_fixtures.ts';
 import { HAVE_GIT } from './_git_repo.ts';
 import * as mig from '../../work/migrate/rename_private_to_aib_shared.ts';
-import { linksTo } from '../../outputs/agent-studio/server/worktrees/shared_link.ts';
-import { tryLockNow } from '../../outputs/agent-studio/server/platform/lock.ts';
-import { join } from '../../outputs/agent-studio/server/platform/ospath.ts';
+import { linksTo } from '../../app/server/worktrees/shared_link.ts';
+import { tryLockNow } from '../../app/server/platform/lock.ts';
+import { join } from '../../app/server/platform/ospath.ts';
 
 const WIN = Deno.build.os === 'windows';
 const BLOCK = (line: string) => `# AIB: local only (shown in every chat; never committed)\r\n${line}\r\n# AIB: end\r\n`;

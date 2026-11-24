@@ -1,7 +1,7 @@
 'use strict';
 /* The phone page's pure parts (phone.js) and Settings > Remote control's (devices-ui.js): the condensed chat rows, status words, the live
    line, and a few setup words. The pages themselves run in work/deno/remote_phone_e2e_test.ts. */
-const { APP } = require('./_paths');
+const { PAGE: APP } = require('./_paths');
 const test = require('node:test'),
   assert = require('node:assert/strict'),
   path = require('node:path');

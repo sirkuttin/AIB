@@ -14,7 +14,7 @@
  * A real Studio (the scroll lab: temp state folder, free port; never the live ports), scripted live chats, headless Chrome or
  * Edge, Git.
  *
- * Run (from outputs/agent-studio): deno test -A ../../work/deno/changes_panel_e2e_test.ts   (ignored without Chrome or Edge)
+ * Run (from app): deno test -A ../../work/deno/changes_panel_e2e_test.ts   (ignored without Chrome or Edge)
  */
 import { assert, assertEquals } from './_assert.ts';
 import { browserPath, type Chat, Lab, ownerProblems, type Page, settle, shown } from './_scroll_lab.ts';

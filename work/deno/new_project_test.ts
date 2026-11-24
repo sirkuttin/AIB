@@ -1,6 +1,6 @@
 /**
  * New project with a name: GET /api/live/folders/check?path=&name= and POST /api/live/folders/create {path, name} make or use
- * <folder>\<name> inside an existing folder. The real route handlers from studioRoutes() are called with a minimal context; every
+ * <folder>\<name> inside an existing folder. The real route handlers from aibRoutes() are called with a minimal context; every
  * folder is a temp folder, git is never run (gitInit false, or a fake runner).
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
@@ -11,10 +11,10 @@ import {
   FolderMemory,
   normalizeFolder,
   validateName,
-} from '../../outputs/agent-studio/server/desktop/folders.ts';
-import { studioRoutes } from '../../outputs/agent-studio/server/web/studio_routes.ts';
-import type { WebContext } from '../../outputs/agent-studio/server/web/server.ts';
-import * as osp from '../../outputs/agent-studio/server/platform/ospath.ts';
+} from '../../app/server/desktop/folders.ts';
+import { aibRoutes } from '../../app/server/web/aib_routes.ts';
+import type { WebContext } from '../../app/server/web/server.ts';
+import * as osp from '../../app/server/platform/ospath.ts';
 
 const WIN = Deno.build.os === 'windows';
 
@@ -166,7 +166,7 @@ function routeCtx(): WebContext {
 }
 
 async function getCheck(ctx: WebContext, path: string, name?: string): Promise<Reply> {
-  const handler = studioRoutes().get('GET /api/live/folders/check')!;
+  const handler = aibRoutes().get('GET /api/live/folders/check')!;
   const url = new URL('http://127.0.0.1/api/live/folders/check');
   url.searchParams.set('path', path);
   if (name !== undefined) url.searchParams.set('name', name);
@@ -174,7 +174,7 @@ async function getCheck(ctx: WebContext, path: string, name?: string): Promise<R
 }
 
 async function postCreate(ctx: WebContext, body: Record<string, unknown>): Promise<Reply> {
-  const handler = studioRoutes().get('POST /api/live/folders/create')!;
+  const handler = aibRoutes().get('POST /api/live/folders/create')!;
   const url = new URL('http://127.0.0.1/api/live/folders/create');
   return await handler(ctx, url, body, new Request(url, { method: 'POST' })) as Reply;
 }

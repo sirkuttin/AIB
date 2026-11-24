@@ -2,7 +2,7 @@
 /* A small fake layout for scroll-controller.js tests: a list of rows with heights, a scrollTop the "browser" clamps, and observers
    the test fires by hand (the ResizeObserver after layout, the MutationObserver on child changes). */
 const path = require('node:path');
-const { APP } = require('./_paths');
+const { PAGE: APP } = require('./_paths');
 const SC = require(path.join(APP, 'scroll-controller.js'));
 
 /* ---- a fake list: rows stacked from the top, each with a height; the list is clientHeight tall at y = TOP on the page ---- */

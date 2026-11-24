@@ -27,13 +27,13 @@ import {
   StateDirInsecure,
   underTest,
   userStateDir,
-} from '../../outputs/agent-studio/server/state/paths.ts';
-import { windowsCurrentUserSid, windowsDacl } from '../../outputs/agent-studio/server/platform/acl.ts';
-import type { PackageKernel } from '../../outputs/agent-studio/server/platform/acl.ts';
+} from '../../app/server/state/paths.ts';
+import { windowsCurrentUserSid, windowsDacl } from '../../app/server/platform/acl.ts';
+import type { PackageKernel } from '../../app/server/platform/acl.ts';
 
 const WIN = Deno.build.os === 'windows';
 const FAMILY = 'Claude_pzs8sxrjxfjjc';
-const APP_PARTS = ['outputs', 'agent-studio'];
+const APP_PARTS = ['app'];
 const SHIM = 'state_paths_shim';
 
 function tempRoot(): { root: string; [Symbol.dispose](): void } {

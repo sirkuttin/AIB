@@ -1,5 +1,5 @@
 'use strict';
-const { APP: APP_DIR } = require('./_paths');
+const { PAGE: APP_DIR } = require('./_paths');
 // Header pill text, chip order (Agent, Model, Mode, Effort, Project, Branch, Ctx), ownership bar dismissal and branch lookup.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');

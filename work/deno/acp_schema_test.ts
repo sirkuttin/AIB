@@ -18,7 +18,7 @@ import {
   validateRequest,
   validateResult,
   validateSessionUpdate,
-} from '../../outputs/agent-studio/server/acp/acp_schema.ts';
+} from '../../app/server/acp/acp_schema.ts';
 
 type Json = Record<string, unknown>;
 

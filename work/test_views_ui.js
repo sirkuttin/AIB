@@ -291,7 +291,7 @@ test('a fold with a failed step stands out: a ✗ and "N failed" in the error co
     page.hook.showRows(box, [user('go', 1), tool('Read', 2), asst('done', 4)], 'main');
     assert.doesNotMatch(byClass(box, 'steps-toggle')[0].className, /has-failed/);
   }
-  const css = fs.readFileSync(path.join(__dirname, '../outputs/agent-studio/views.css'), 'utf8');
+  const css = fs.readFileSync(path.join(__dirname, '../app/page/views.css'), 'utf8');
   assert.match(css, /\.sf-failed\s*\{[^}]*var\(--danger-text\)/);
 });
 

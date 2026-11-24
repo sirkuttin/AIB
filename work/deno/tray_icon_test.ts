@@ -6,9 +6,9 @@ import {
   trayIconBytes,
   trayIconPng,
   windowsSmallIconPx,
-} from '../../outputs/agent-studio/server/desktop/tray_icon.ts';
-import { iconFromPng, iconPixels } from '../../outputs/agent-studio/server/desktop/window_icon_win.ts';
-import { withAttentionDot } from '../../outputs/agent-studio/server/desktop/png_badge.ts';
+} from '../../app/server/desktop/tray_icon.ts';
+import { iconFromPng, iconPixels } from '../../app/server/desktop/window_icon_win.ts';
+import { withAttentionDot } from '../../app/server/desktop/png_badge.ts';
 import { decodePng, pngSize } from '../../tools/build.ts';
 
 const WINDOWS = Deno.build.os === 'windows';

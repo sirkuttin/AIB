@@ -16,21 +16,21 @@
  *      `aib-shared` link (a directory junction on Windows, a symlink in WSL).
  *
  * Usage (from the repo folder; AIB and its keeper must be quit):
- *   deno run -A --config outputs/agent-studio/deno.json work/migrate/rename_private_to_aib_shared.ts           dry run: prints the plan
- *   deno run -A --config outputs/agent-studio/deno.json work/migrate/rename_private_to_aib_shared.ts --apply   does it
+ *   deno run -A --config app/deno.json work/migrate/rename_private_to_aib_shared.ts           dry run: prints the plan
+ *   deno run -A --config app/deno.json work/migrate/rename_private_to_aib_shared.ts --apply   does it
  * Options: --data <AIB data folder> (default %LOCALAPPDATA%\AgentStudio; another folder leaves out the AIB repo below, so a test never
  * touches it), --project <folder> (repeatable: also this project), --no-wsl (skip WSL projects).
  * Safe to run again: whatever is done is skipped. Exit code 1 when anything was refused.
  */
-import { tryLockNow } from '../../outputs/agent-studio/server/platform/lock.ts';
-import { LOCK_FILE } from '../../outputs/agent-studio/server/desktop/single_instance.ts';
-import { keeperRunning } from '../../outputs/agent-studio/server/keeper/client.ts';
-import { pathOf, userStateDir } from '../../outputs/agent-studio/server/state/paths.ts';
-import { wslLocOf } from '../../outputs/agent-studio/server/platform/location.ts';
-import { gitPath } from '../../outputs/agent-studio/server/worktrees/changes.ts';
-import { BLOCK_END, BLOCK_START, escapeLine, moveInto } from '../../outputs/agent-studio/server/worktrees/local_only.ts';
-import { linksTo } from '../../outputs/agent-studio/server/worktrees/shared_link.ts';
-import * as osp from '../../outputs/agent-studio/server/platform/ospath.ts';
+import { tryLockNow } from '../../app/server/platform/lock.ts';
+import { LOCK_FILE } from '../../app/server/desktop/single_instance.ts';
+import { keeperRunning } from '../../app/server/keeper/client.ts';
+import { pathOf, userStateDir } from '../../app/server/state/paths.ts';
+import { wslLocOf } from '../../app/server/platform/location.ts';
+import { gitPath } from '../../app/server/worktrees/changes.ts';
+import { BLOCK_END, BLOCK_START, escapeLine, moveInto } from '../../app/server/worktrees/local_only.ts';
+import { linksTo } from '../../app/server/worktrees/shared_link.ts';
+import * as osp from '../../app/server/platform/ospath.ts';
 
 const WIN = Deno.build.os === 'windows';
 export const AIB_REPO = 'C:\\Users\\sirku\\Documents\\Codex\\AIB';

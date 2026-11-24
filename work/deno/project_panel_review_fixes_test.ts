@@ -11,10 +11,10 @@
  * Test servers on random ports, temp state (never the owner's), no browser. Needs git on PATH.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { readRemotePort } from '../../outputs/agent-studio/server/remote/port.ts';
-import { DEVICE_HEADER, RateLimit } from '../../outputs/agent-studio/server/remote/pc_bridge.ts';
-import { ChatFolderCache, projectArtifacts } from '../../outputs/agent-studio/server/artifacts/project_list.ts';
-import { leftCounted, leftSignature, projectChanges } from '../../outputs/agent-studio/server/worktrees/project_changes.ts';
+import { readRemotePort } from '../../app/server/remote/port.ts';
+import { DEVICE_HEADER, RateLimit } from '../../app/server/remote/pc_bridge.ts';
+import { ChatFolderCache, projectArtifacts } from '../../app/server/artifacts/project_list.ts';
+import { leftCounted, leftSignature, projectChanges } from '../../app/server/worktrees/project_changes.ts';
 import { fakeTailscale, type FakeChat, pairPhone, pc, phoneHeaders, raw, type RemoteStudio, remoteStudio, serveStatus } from './_remote_fixture.ts';
 import { git, HAVE_GIT, write } from './_git_repo.ts';
 

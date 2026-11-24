@@ -95,7 +95,7 @@ Deno.test('contract: the auth gate, page files and bootstrap', async (t) => {
     let served = page.text.replace(/<script type="application\/json" id="aibViewPrefs">[^<]*<\/script>/, '');
     let removed = 0;
     served = served.replace(/ data-(?:theme|status-glyphs)-pref="[a-z0-9-]+"/g, (m) => removed++ < 2 ? '' : m);
-    assertEquals(served, Deno.readTextFileSync(`${APP_DIR}/chat.html`));
+    assertEquals(served, Deno.readTextFileSync(`${APP_DIR}/page/chat.html`));
     assert(page.text.includes('<script type="application/json" id="aibViewPrefs">{"prefs":{'));
     const scripts = [...page.text.matchAll(/<script[^>]+src="\/?([a-z0-9-]+\.js)"/g)].map((m) => m[1]);
     const styles = [...page.text.matchAll(/<link[^>]+href="\/?([a-z0-9-]+\.css)"/g)].map((m) => m[1]);

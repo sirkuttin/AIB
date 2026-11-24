@@ -11,18 +11,18 @@
 import { assert, assertEquals } from './_assert.ts';
 import { pause, until } from './_connection.ts';
 import { cleanRoot, inDistro, KEY, newAib, prepareRoot, readyHost, ROOT, T, withWindowsKeeper } from './_wsl_e2e.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { refOf } from '../../outputs/agent-studio/server/platform/location.ts';
-import { linkOf } from '../../outputs/agent-studio/server/wsl/access.ts';
-import { type WslHostImpl, wslHostsInUse } from '../../outputs/agent-studio/server/wsl/hosts.ts';
-import { aibInternalKind, KeeperLink, liveUserChannels } from '../../outputs/agent-studio/server/keeper/link.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { refOf } from '../../app/server/platform/location.ts';
+import { linkOf } from '../../app/server/wsl/access.ts';
+import { type WslHostImpl, wslHostsInUse } from '../../app/server/wsl/hosts.ts';
+import { aibInternalKind, KeeperLink, liveUserChannels } from '../../app/server/keeper/link.ts';
 
 const GRACE_S = 50;
 Deno.env.set('AIB_WSL_ORPHAN_GRACE', `${GRACE_S}s`); // before any host starts (they start on first use)
 
-function studioIn(state: string, keeper: KeeperLink): Studio {
-  const studio = new Studio({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper });
+function studioIn(state: string, keeper: KeeperLink): Aib {
+  const studio = new Aib({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper });
   studio.ownerProbe = () => null;
   studio.connectionFactory = (_command, cwd, provider, options) =>
     new Connection(['python3', `${ROOT}/fake_acp.py`, '--cancel-aware'], cwd, provider, {
@@ -64,7 +64,7 @@ async function alive(pid: number): Promise<boolean> {
  * AIB crashes and an older build stops the keep-alive: the WSL hosts go without a word (their transports end), the Studio stops
  * reconnecting, then another AIB (the older build) claims and kills the wsl-hold channel in the Windows keeper.
  */
-async function crashAndDropTheKeepAlive(studio: Studio, state: string, link: KeeperLink): Promise<void> {
+async function crashAndDropTheKeepAlive(studio: Aib, state: string, link: KeeperLink): Promise<void> {
   newAib(); // first: a running host would start the keep-alive again
   studio.reconnectStop.set();
   for (const conn of studio.connections.values()) conn.sessionLease?.release();
@@ -84,7 +84,7 @@ Deno.test({
   async fn() {
     const state = Deno.makeTempDirSync({ prefix: 'aib-wsl-grace-e2e-' });
     await prepareRoot();
-    const studios: Studio[] = [];
+    const studios: Aib[] = [];
     const links: KeeperLink[] = [];
     try {
       const linkA = windowsKeeper(state);

@@ -17,8 +17,8 @@ import { assert, assertEquals } from './_assert.ts';
 import { Browser, browserPath } from './_doc_browser.ts';
 import { pairPhone, type RemoteStudio } from './_remote_fixture.ts';
 import { phonePage, tap } from './_remote_phone_page.ts';
-import { AGENTS_MS, agentsNow, setAgentRows } from '../../outputs/agent-studio/server/remote/newchat.ts';
-import { HostUnavailable } from '../../outputs/agent-studio/server/host/host_client.ts';
+import { AGENTS_MS, agentsNow, setAgentRows } from '../../app/server/remote/newchat.ts';
+import { HostUnavailable } from '../../app/server/host/host_client.ts';
 import { AGENT_ROWS, liveChat, phoneCall, v2Studio } from './_remote_v2b.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };

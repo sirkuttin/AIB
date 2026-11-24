@@ -10,24 +10,24 @@
  *   - push endpoints limited to the known push services
  */
 import { assert, assertEquals } from "./_assert.ts";
-import { setWslHostResolver } from "../../outputs/agent-studio/server/wsl/access.ts";
+import { setWslHostResolver } from "../../app/server/wsl/access.ts";
 import {
   WslHelperError,
   type WslHost,
-} from "../../outputs/agent-studio/server/wsl/contract.ts";
+} from "../../app/server/wsl/contract.ts";
 import {
   readRemoteArtifactPort,
   readRemotePort,
-} from "../../outputs/agent-studio/server/remote/port.ts";
+} from "../../app/server/remote/port.ts";
 import {
   DEVICE_HEADER,
   DEVICE_PROTOCOL_PREFIX,
   RateLimit,
-} from "../../outputs/agent-studio/server/remote/pc_bridge.ts";
+} from "../../app/server/remote/pc_bridge.ts";
 import {
   CLOSE_REMOVED,
   DeviceSockets,
-} from "../../outputs/agent-studio/server/remote/pc_sockets.ts";
+} from "../../app/server/remote/pc_sockets.ts";
 import {
   CACHE_FLAG,
   cleanPushSub,
@@ -35,8 +35,8 @@ import {
   type Device,
   pushEndpointAllowed,
   scopesForPhone,
-} from "../../outputs/agent-studio/server/remote/devices.ts";
-import type { WsLink } from "../../outputs/agent-studio/server/platform/websocket.ts";
+} from "../../app/server/remote/devices.ts";
+import type { WsLink } from "../../app/server/platform/websocket.ts";
 import {
   type FakeChat,
   fakeTailscale,

@@ -3,7 +3,7 @@
  * and the same steps; every mode must give the same announcements:
  *   in-process  a Studio in this process, agents as its children;
  *   keeper      a Studio whose agents run in the real keeper (built from keeper/ with Go); AIB "crashes" (its keeper link drops)
- *               and a new Studio takes the chats over;
+ *               and a new Aib takes the chats over;
  *   split       the separate agent host process (main.ts host) behind a HostProxy, as an older version's host is used.
  * Steps: a question -> one "needs you" (looked at many times); a restart of the watcher -> nothing again; the answer -> one
  * "finished"; a queued message sent right after a turn -> one "finished" for the last turn only; a turn whose helper still runs ->
@@ -13,18 +13,18 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { fake, pause } from './_connection.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { KeeperLink } from '../../outputs/agent-studio/server/keeper/link.ts';
-import { keeperBinary, KeeperClient, readKeeperInfo } from '../../outputs/agent-studio/server/keeper/client.ts';
-import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
-import { attachHost, type HostProxy } from '../../outputs/agent-studio/server/host/host_proxy.ts';
-import type { LiveBackend } from '../../outputs/agent-studio/server/host/backend.ts';
-import { ConversationState } from '../../outputs/agent-studio/server/state/conversations.ts';
-import { ProjectPrefs } from '../../outputs/agent-studio/server/state/projects.ts';
-import { ViewPrefs } from '../../outputs/agent-studio/server/state/view_prefs.ts';
-import { AttentionWatcher, type Fire } from '../../outputs/agent-studio/server/attention/watcher.ts';
-import { RULES } from '../../outputs/agent-studio/server/attention/rules.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { KeeperLink } from '../../app/server/keeper/link.ts';
+import { keeperBinary, KeeperClient, readKeeperInfo } from '../../app/server/keeper/client.ts';
+import { pidAlive } from '../../app/server/host/host_client.ts';
+import { attachHost, type HostProxy } from '../../app/server/host/host_proxy.ts';
+import type { LiveBackend } from '../../app/server/host/backend.ts';
+import { ConversationState } from '../../app/server/state/conversations.ts';
+import { ProjectPrefs } from '../../app/server/state/projects.ts';
+import { ViewPrefs } from '../../app/server/state/view_prefs.ts';
+import { AttentionWatcher, type Fire } from '../../app/server/attention/watcher.ts';
+import { RULES } from '../../app/server/attention/rules.ts';
 import { DENO, Fixture, MAIN, nativePath } from './_host_fixture.ts';
 import { WORK } from './_work.ts';
 
@@ -254,17 +254,17 @@ async function scenario(mode: Mode): Promise<string[]> {
   }
 }
 
-function studioMode(name: string, withKeeper: boolean): Mode & { studios: Studio[]; dir: string; state: string } {
+function studioMode(name: string, withKeeper: boolean): Mode & { studios: Aib[]; dir: string; state: string } {
   const dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: `aib-attn-${name}-` }));
   const state = dir + SEP + 'state';
   const work = dir + SEP + 'work';
   Deno.mkdirSync(work, { recursive: true });
-  const studios: Studio[] = [];
+  const studios: Aib[] = [];
   const make = () => {
     const keeper = withKeeper
       ? new KeeperLink({ dataDir: state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '60s'] })
       : undefined;
-    const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: state, port: 0, ownersDir: null }, keeper ? { keeper } : {});
+    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: state, port: 0, ownersDir: null }, keeper ? { keeper } : {});
     studio.ownerProbe = () => null;
     studio.connectionFactory = (_command, cwd, provider, options) => new Connection(fake('--held-turn'), cwd, provider, options);
     studios.push(studio);
@@ -278,12 +278,12 @@ function studioMode(name: string, withKeeper: boolean): Mode & { studios: Studio
     studios,
     host: make() as LiveBackend,
     async connect(cwd = work) {
-      const c = await (mode.host as unknown as Studio).connect('claude', cwd);
+      const c = await (mode.host as unknown as Aib).connect('claude', cwd);
       return { id: c.id, key: `claude:${c.sessionId || c.id}` };
     },
     restartAround: withKeeper
       ? async (meanwhile: () => Promise<void>) => {
-        const a = mode.host as unknown as Studio;
+        const a = mode.host as unknown as Aib;
         // what a crashed AIB leaves: its keeper connection gone, its agents untouched (keeper_studio_test.ts crash)
         a.keeper!.disconnect();
         for (const c of a.connections.values()) c.sessionLease?.release();

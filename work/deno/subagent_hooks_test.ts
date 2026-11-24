@@ -9,7 +9,7 @@
  *        never touched; spares and unused prepared worktrees go at chat close, a bound one never
  */
 import { assert, assertEquals } from './_assert.ts';
-import { checkHookKey, configure, hookProof, issue, issueHookKey } from '../../outputs/agent-studio/server/artifacts/keys.ts';
+import { checkHookKey, configure, hookProof, issue, issueHookKey } from '../../app/server/artifacts/keys.ts';
 import {
   gitBashPath,
   hookSettings,
@@ -17,13 +17,13 @@ import {
   readClaudeSetup,
   setPolicyReader,
   subagentsOffSettings,
-} from '../../outputs/agent-studio/server/subagents/claude_config.ts';
-import { ArtifactMcpHttp, CONVERSATION_HEADER, HOOK_KEY_HEADER, HOOK_NONCE_HEADER, HOOK_PROOF_HEADER } from '../../outputs/agent-studio/server/artifacts/mcp_http.ts';
-import { landingWords, MAX_PER_CHAT, readSubagents, type SubagentChat, SubagentWorktrees, TEXTS, unlinkLinks } from '../../outputs/agent-studio/server/subagents/service.ts';
-import { ensureDefault } from '../../outputs/agent-studio/server/worktrees/local_only.ts';
-import { ignoredFiles } from '../../outputs/agent-studio/server/swarm/service.ts';
-import { subagentEnd } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { join } from '../../outputs/agent-studio/server/platform/path.ts';
+} from '../../app/server/subagents/claude_config.ts';
+import { ArtifactMcpHttp, CONVERSATION_HEADER, HOOK_KEY_HEADER, HOOK_NONCE_HEADER, HOOK_PROOF_HEADER } from '../../app/server/artifacts/mcp_http.ts';
+import { landingWords, MAX_PER_CHAT, readSubagents, type SubagentChat, SubagentWorktrees, TEXTS, unlinkLinks } from '../../app/server/subagents/service.ts';
+import { ensureDefault } from '../../app/server/worktrees/local_only.ts';
+import { ignoredFiles } from '../../app/server/swarm/service.ts';
+import { subagentEnd } from '../../app/server/acp/connection.ts';
+import { join } from '../../app/server/platform/path.ts';
 
 function git(cwd: string, ...args: string[]): string {
   const out = new Deno.Command('git', { args: ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'core.autocrlf=false', ...args], cwd, stdout: 'piped', stderr: 'piped' })

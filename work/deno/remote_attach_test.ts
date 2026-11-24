@@ -14,10 +14,10 @@
  * The page side (📎, chips, the photo scaled, the e2e path to a real agent) is in remote_attach_e2e_test.ts and test_phone_attach.js.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { ATTACH_ROUTES, DEVICE_HEADER, MAX_ATTACH_BODY, MAX_BODY } from '../../outputs/agent-studio/server/remote/server.ts';
-import { attachedWords, phoneAttachments, Refusal, type Takes } from '../../outputs/agent-studio/server/remote/actions.ts';
-import { firstText, setAgentRows } from '../../outputs/agent-studio/server/remote/newchat.ts';
-import { readRemotePort } from '../../outputs/agent-studio/server/remote/port.ts';
+import { ATTACH_ROUTES, DEVICE_HEADER, MAX_ATTACH_BODY, MAX_BODY } from '../../app/server/remote/server.ts';
+import { attachedWords, phoneAttachments, Refusal, type Takes } from '../../app/server/remote/actions.ts';
+import { firstText, setAgentRows } from '../../app/server/remote/newchat.ts';
+import { readRemotePort } from '../../app/server/remote/port.ts';
 import {
   type FakeChat,
   fakeTailscale,

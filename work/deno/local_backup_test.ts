@@ -6,10 +6,10 @@
 import { assert, assertEquals } from './_assert.ts';
 import { PYTHON } from './_connection.ts';
 import { runGit, Sandbox, write } from './_worktree_fixtures.ts';
-import * as backup from '../../outputs/agent-studio/server/worktrees/local_backup.ts';
-import { addEntry, ensureDefault } from '../../outputs/agent-studio/server/worktrees/local_only.ts';
-import { repoHash } from '../../outputs/agent-studio/server/worktrees/worktrees.ts';
-import { join } from '../../outputs/agent-studio/server/platform/ospath.ts';
+import * as backup from '../../app/server/worktrees/local_backup.ts';
+import { addEntry, ensureDefault } from '../../app/server/worktrees/local_only.ts';
+import { repoHash } from '../../app/server/worktrees/worktrees.ts';
+import { join } from '../../app/server/platform/ospath.ts';
 
 const DAY = backup.DAY_MS;
 const T0 = Date.UTC(2026, 10, 12, 9, 0, 0);

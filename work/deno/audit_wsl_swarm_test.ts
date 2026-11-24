@@ -6,8 +6,8 @@
  * No agent and no distro: the host is a stub giving the live state a WSL worktree chat has (Connection.public()).
  */
 import { assert, assertEquals } from './_assert.ts';
-import { Refusal, Swarm } from '../../outputs/agent-studio/server/swarm/service.ts';
-import { setSwarmEnabled } from '../../outputs/agent-studio/server/swarm/settings.ts';
+import { Refusal, Swarm } from '../../app/server/swarm/service.ts';
+import { setSwarmEnabled } from '../../app/server/swarm/settings.ts';
 
 type Json = Record<string, unknown>;
 

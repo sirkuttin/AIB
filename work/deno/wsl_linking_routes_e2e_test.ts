@@ -13,12 +13,12 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { cleanRoot, DISTRO, inDistro, KEY, newAib, readyHost, ROOT, T } from './_wsl_e2e.ts';
-import { helperEnv, wslHostsInUse } from '../../outputs/agent-studio/server/wsl/hosts.ts';
-import { wslRoutes } from '../../outputs/agent-studio/server/web/wsl_routes.ts';
-import { wslNodeSetupCommand } from '../../outputs/agent-studio/server/web/terminal_routes.ts';
-import type { WebContext } from '../../outputs/agent-studio/server/web/server.ts';
-import { SettingsStore } from '../../outputs/agent-studio/server/state/settings.ts';
-import { wslNodeScript, wslNodeSteps } from '../../outputs/agent-studio/server/wsl/node_setup.ts';
+import { helperEnv, wslHostsInUse } from '../../app/server/wsl/hosts.ts';
+import { wslRoutes } from '../../app/server/web/wsl_routes.ts';
+import { wslNodeSetupCommand } from '../../app/server/web/terminal_routes.ts';
+import type { WebContext } from '../../app/server/web/server.ts';
+import { SettingsStore } from '../../app/server/state/settings.ts';
+import { wslNodeScript, wslNodeSteps } from '../../app/server/wsl/node_setup.ts';
 
 type Json = Record<string, unknown>;
 const enc = (s: string) => new TextEncoder().encode(s);

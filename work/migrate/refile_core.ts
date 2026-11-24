@@ -19,12 +19,12 @@ efiled\<provider>\<id>.jsonl` and that backup is never deleted;
  * The mapping `studio-moved-chats.json` (provider:sessionId -> project folder) is written here and only read by the app
  * (server/state/moved_chats.ts): Continue opens the chat in the project folder even when a page still sends the copy path.
  */
-import { FileLock } from '../../outputs/agent-studio/server/platform/lock.ts';
-import { readJsonFile, saveJson } from '../../outputs/agent-studio/server/state/json.ts';
-import { pathOf } from '../../outputs/agent-studio/server/state/paths.ts';
-import { isDict } from '../../outputs/agent-studio/server/core/py.ts';
-import { basename, isdir, isfile, join, normcase, normpath, SEP } from '../../outputs/agent-studio/server/platform/ospath.ts';
-import { MOVED_FILE } from '../../outputs/agent-studio/server/state/moved_chats.ts';
+import { FileLock } from '../../app/server/platform/lock.ts';
+import { readJsonFile, saveJson } from '../../app/server/state/json.ts';
+import { pathOf } from '../../app/server/state/paths.ts';
+import { isDict } from '../../app/server/core/py.ts';
+import { basename, isdir, isfile, join, normcase, normpath, SEP } from '../../app/server/platform/ospath.ts';
+import { MOVED_FILE } from '../../app/server/state/moved_chats.ts';
 
 export { MOVED_FILE };
 

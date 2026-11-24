@@ -24,8 +24,8 @@
  *     project folder like the others (transcript backed up first), so it carries on there.
  *
  * Usage (from the repo folder; AIB and its keeper must be quit):
- *   deno run -A --config outputs/agent-studio/deno.json work/migrate/folder_chats_migrate.ts           dry run: prints the plan
- *   deno run -A --config outputs/agent-studio/deno.json work/migrate/folder_chats_migrate.ts --apply   does it
+ *   deno run -A --config app/deno.json work/migrate/folder_chats_migrate.ts           dry run: prints the plan
+ *   deno run -A --config app/deno.json work/migrate/folder_chats_migrate.ts --apply   does it
  *   ... --discard "Fix the login page" --discard claude:1234abcd [--apply]   also discards those chats' unmerged work
  * Safe to run again: whatever is done is skipped.
  *
@@ -38,18 +38,18 @@
  * WSL projects: their copies, registry and transcripts live in the distro. The Windows run prints the command to run inside each
  * distro (it needs deno there); the script then does the same work natively in the distro.
  */
-import * as wt from '../../outputs/agent-studio/server/worktrees/worktrees.ts';
-import * as cleanup from '../../outputs/agent-studio/server/worktrees/cleanup.ts';
-import { tryLockNow } from '../../outputs/agent-studio/server/platform/lock.ts';
-import { LOCK_FILE } from '../../outputs/agent-studio/server/desktop/single_instance.ts';
-import { keeperRunning } from '../../outputs/agent-studio/server/keeper/client.ts';
-import { AddedProjects } from '../../outputs/agent-studio/server/desktop/added_projects.ts';
-import { pathOf, userStateDir } from '../../outputs/agent-studio/server/state/paths.ts';
-import { wslLocOf } from '../../outputs/agent-studio/server/platform/location.ts';
-import { dataDirName } from '../../outputs/agent-studio/server/wsl/install.ts';
-import { WSL_ROOT_DIR } from '../../outputs/agent-studio/server/wsl/contract.ts';
-import { resolveCodex } from '../../outputs/agent-studio/server/agents/adapters.ts';
-import { home, isdir, join } from '../../outputs/agent-studio/server/platform/ospath.ts';
+import * as wt from '../../app/server/worktrees/worktrees.ts';
+import * as cleanup from '../../app/server/worktrees/cleanup.ts';
+import { tryLockNow } from '../../app/server/platform/lock.ts';
+import { LOCK_FILE } from '../../app/server/desktop/single_instance.ts';
+import { keeperRunning } from '../../app/server/keeper/client.ts';
+import { AddedProjects } from '../../app/server/desktop/added_projects.ts';
+import { pathOf, userStateDir } from '../../app/server/state/paths.ts';
+import { wslLocOf } from '../../app/server/platform/location.ts';
+import { dataDirName } from '../../app/server/wsl/install.ts';
+import { WSL_ROOT_DIR } from '../../app/server/wsl/contract.ts';
+import { resolveCodex } from '../../app/server/agents/adapters.ts';
+import { home, isdir, join } from '../../app/server/platform/ospath.ts';
 import * as core from './refile_core.ts';
 
 const WIN = Deno.build.os === 'windows';
@@ -547,7 +547,7 @@ export async function main(args: string[]): Promise<number> {
     if (totals.failed) say(`   left for the next run (see LEFT above): ${totals.failed}`);
     if (wsl.size && WIN) {
       const script = linuxPathOf(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
-      const config = linuxPathOf(join(new URL('../../outputs/agent-studio/deno.json', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')));
+      const config = linuxPathOf(join(new URL('../../app/deno.json', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')));
       say('\n== WSL projects: run this inside each distro too (needs deno there: curl -fsSL https://deno.land/install.sh | sh)');
       for (const [distro, paths] of wsl) {
         say(`   ${distro}: ${paths.join(', ')}`);

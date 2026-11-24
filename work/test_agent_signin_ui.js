@@ -5,7 +5,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { page, load } = require('./fake_dom.js');
-const AC = require(path.join(__dirname, '..', 'outputs', 'agent-studio', 'agent-choice.js'));
+const AC = require(path.join(__dirname, '..', 'app', 'page', 'agent-choice.js'));
 
 function setup(agents) {
   const shell = page();

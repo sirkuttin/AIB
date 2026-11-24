@@ -666,7 +666,7 @@ Design: `docs/wsl/linking-design.md` section 12 (it overrides the rest). Helper 
   `studio-settings.json` (the folded distro name; present only when not empty; an agent with no value in a distro is on; exposed as is
   by `GET /api/live/settings`). `POST /api/live/wsl/agents/enabled {distro, id, enabled}` -> `{ok, enabled}` (id: a built-in, Beta or
   existing custom agent; the page token as every WSL route). A WSL chat reads only this switch, never the Windows one, and a Windows
-  chat never reads it (`host/studio.ts wslLaunch`): an agent turned off for the distro is refused for a new chat, the agent options
+  chat never reads it (`host/aib.ts wslLaunch`): an agent turned off for the distro is refused for a new chat, the agent options
   probe and the person's Continue with "Claude Code is turned off for Ubuntu in Settings > AIB Linking (WSL)", before the distro is
   asked anything; the automatic reconnect at start is never refused (a running chat is not cut off by the switch).
 - `GET /api/live/wsl/agents` rows (with or without `peek`) add `enabled` (that switch), `signin: {state: 'signed_in' | 'signed_out' |
@@ -976,7 +976,7 @@ A Windows package carries both in `AIB/wsl/`. A source run finds them through `A
 The real-WSL tests run only with `AIB_WSL_E2E=<distro>` (a WSL2 distro of the PC), otherwise they are ignored:
 
 ```
-cd outputs/agent-studio
+cd app
 for f in ../../work/deno/wsl_*_e2e_test.ts; do AIB_WSL_E2E=Ubuntu deno test -A "$f"; done   # one process per file
 ```
 

@@ -14,9 +14,9 @@ import { Browser, browserPath } from './_doc_browser.ts';
 import { pairPhone, pc } from './_remote_fixture.ts';
 import { liveChat, v2Studio } from './_remote_v2b.ts';
 import { phonePage, tap } from './_remote_phone_page.ts';
-import { AttentionWatcher, type Fire } from '../../outputs/agent-studio/server/attention/watcher.ts';
-import { InboxService } from '../../outputs/agent-studio/server/attention/inbox.ts';
-import { ConversationState } from '../../outputs/agent-studio/server/state/conversations.ts';
+import { AttentionWatcher, type Fire } from '../../app/server/attention/watcher.ts';
+import { InboxService } from '../../app/server/attention/inbox.ts';
+import { ConversationState } from '../../app/server/state/conversations.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
 type Json = Record<string, unknown>;

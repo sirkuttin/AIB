@@ -11,9 +11,9 @@
 import { assert, assertEquals } from './_assert.ts';
 import { Fixture, nativePath, openConversation, SEP, sleep, TEST_OPTIONS, until, type Web } from './_host_fixture.ts';
 import { WORK } from './_work.ts';
-import { keeperBinary, KeeperClient, type KeeperRecord, readKeeperInfo } from '../../outputs/agent-studio/server/keeper/client.ts';
-import { pidAlive, readInfo } from '../../outputs/agent-studio/server/host/host_client.ts';
-import { KEEPER_LOST } from '../../outputs/agent-studio/server/acp/connection.ts';
+import { keeperBinary, KeeperClient, type KeeperRecord, readKeeperInfo } from '../../app/server/keeper/client.ts';
+import { pidAlive, readInfo } from '../../app/server/host/host_client.ts';
+import { KEEPER_LOST } from '../../app/server/acp/connection.ts';
 
 type Json = Record<string, unknown>;
 const KEEPER_AGENT = nativePath(new URL('keeper-fixture/agent.py', WORK));

@@ -1,5 +1,5 @@
 'use strict';
-const { APP: APP_DIR } = require('./_paths');
+const { PAGE: APP_DIR } = require('./_paths');
 /* Agent messages are plain text on the page (no box, no visible title bar); the time always shows. User bubbles keep their box. */
 const test = require('node:test');
 const assert = require('node:assert/strict');

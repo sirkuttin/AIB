@@ -13,12 +13,12 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { fake, pause, until } from './_connection.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { KeeperLink } from '../../outputs/agent-studio/server/keeper/link.ts';
-import { KeeperClient, keeperBinary, readKeeperInfo } from '../../outputs/agent-studio/server/keeper/client.ts';
-import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
-import { parseNote } from '../../outputs/agent-studio/server/keeper/link.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { KeeperLink } from '../../app/server/keeper/link.ts';
+import { KeeperClient, keeperBinary, readKeeperInfo } from '../../app/server/keeper/client.ts';
+import { pidAlive } from '../../app/server/host/host_client.ts';
+import { parseNote } from '../../app/server/keeper/link.ts';
 
 type Json = Record<string, unknown>;
 Deno.env.set('AIB_HISTORY_V2', '1');
@@ -29,24 +29,24 @@ class Lab {
   readonly dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-lost-record-' }));
   readonly state = this.dir + SEP + 'state';
   readonly work = this.dir + SEP + 'work';
-  readonly studios: Studio[] = [];
+  readonly studios: Aib[] = [];
   constructor() {
     Deno.mkdirSync(this.work, { recursive: true });
   }
-  studio(): Studio {
+  studio(): Aib {
     const keeper = new KeeperLink({
       dataDir: this.state,
       orphan: null,
       extraArgs: ['--exit-after', '2s', '--orphan-after', '30s', '--segment-bytes', '65536'],
     });
-    const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper, keeperForNew: true });
+    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper, keeperForNew: true });
     studio.ownerProbe = () => null;
     studio.connectionFactory = (_command, cwd, provider, options) => new Connection(fake('--cancel-aware'), cwd, provider, options ?? {});
     this.studios.push(studio);
     return studio;
   }
   /** The AIB goes away the way an update leaves it: its chats keep running in the keeper. */
-  async leave(studio: Studio): Promise<void> {
+  async leave(studio: Aib): Promise<void> {
     studio.keeper!.disconnect();
     for (const c of studio.connections.values()) c.sessionLease?.release();
     studio.reconnectStop.set();
@@ -77,7 +77,7 @@ class Lab {
   }
 }
 
-async function turn(studio: Studio, c: Connection, n: number, messageId: string): Promise<void> {
+async function turn(studio: Aib, c: Connection, n: number, messageId: string): Promise<void> {
   assertEquals((await studio.liveCall('prompt', { id: c.id, text: `stream:${n}:10`, clientMessageId: messageId }))[0], 200);
   await until(() => c.permissions.size === 1, `the question of ${messageId}`, 10);
   assertEquals((await studio.liveCall('permission', { id: c.id, key: [...c.permissions.keys()][0], option: 'yes' }))[0], 200);

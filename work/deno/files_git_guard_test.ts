@@ -1,8 +1,8 @@
 /** Files path guard: every spelling or link that reaches .git (or leaves the root) is refused; normal and git-ignored files still open. */
 import { assert, assertEquals, assertThrows } from './_assert.ts';
 import { git, HAVE_GIT, write } from './_git_repo.ts';
-import * as osp from '../../outputs/agent-studio/server/platform/ospath.ts';
-import * as files from '../../outputs/agent-studio/server/worktrees/files.ts';
+import * as osp from '../../app/server/platform/ospath.ts';
+import * as files from '../../app/server/worktrees/files.ts';
 
 const WIN = Deno.build.os === 'windows';
 

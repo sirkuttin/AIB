@@ -11,19 +11,19 @@
 import { assert, assertEquals } from './_assert.ts';
 import { until } from './_connection.ts';
 import { cleanRoot, inDistro, KEY, newAib, prepareRoot, readyHost, ROOT, T } from './_wsl_e2e.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { refOf } from '../../outputs/agent-studio/server/platform/location.ts';
-import { linkOf } from '../../outputs/agent-studio/server/wsl/access.ts';
-import { liveUserChannels } from '../../outputs/agent-studio/server/keeper/link.ts';
-import { changesResponse } from '../../outputs/agent-studio/server/worktrees/chat_folders.ts';
-import { wslRecord } from '../../outputs/agent-studio/server/wsl/worktrees.ts';
-import { WslHelperError } from '../../outputs/agent-studio/server/wsl/contract.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { refOf } from '../../app/server/platform/location.ts';
+import { linkOf } from '../../app/server/wsl/access.ts';
+import { liveUserChannels } from '../../app/server/keeper/link.ts';
+import { changesResponse } from '../../app/server/worktrees/chat_folders.ts';
+import { wslRecord } from '../../app/server/wsl/worktrees.ts';
+import { WslHelperError } from '../../app/server/wsl/contract.ts';
 
 type Json = Record<string, unknown>;
 
-function studioIn(state: string): Studio {
-  const studio = new Studio({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
+function studioIn(state: string): Aib {
+  const studio = new Aib({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
   studio.ownerProbe = () => null;
   studio.connectionFactory = (_command, cwd, provider, options) =>
     new Connection(['python3', `${ROOT}/fake_acp.py`, '--cancel-aware'], cwd, provider, {
@@ -44,7 +44,7 @@ Deno.test({
   async fn() {
     const state = Deno.makeTempDirSync({ prefix: 'aib-wsl-wt-e2e-' });
     await prepareRoot();
-    const studios: Studio[] = [];
+    const studios: Aib[] = [];
     try {
       const host = await readyHost();
       const repo = `${ROOT}/repo`;
@@ -124,7 +124,7 @@ Deno.test({
   async fn() {
     const state = Deno.makeTempDirSync({ prefix: 'aib-wsl-wt-e2e-' });
     await prepareRoot();
-    const studios: Studio[] = [];
+    const studios: Aib[] = [];
     try {
       await readyHost();
       await sh('mkdir -p "$1/plain"', ROOT);

@@ -1,4 +1,4 @@
-// The doc editor for AIB's doc page (outputs/agent-studio/doc.html): TipTap bound to a Y.Doc with @tiptap/y-tiptap, with the schema
+// The doc editor for AIB's doc page (app/page/doc.html): TipTap bound to a Y.Doc with @tiptap/y-tiptap, with the schema
 // of server/docs/schema.ts, synced to AIB's server over a WebSocket (y-protocols sync + awareness as binary frames, AIB's control
 // messages as JSON text frames).
 //
@@ -39,7 +39,7 @@ import { NodeSelection, Plugin, PluginKey, TextSelection } from '@tiptap/pm/stat
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
 import { DOMSerializer, Node as PMNode } from '@tiptap/pm/model';
 import { CellSelection } from '@tiptap/pm/tables';
-import { docExtensions, SCHEMA_VERSION, schemaSummary } from '../../outputs/agent-studio/server/docs/schema.ts';
+import { docExtensions, SCHEMA_VERSION, schemaSummary } from '../../app/server/docs/schema.ts';
 
 const MSG_SYNC = 0, MSG_AWARENESS = 1;
 const FIELD = 'doc';

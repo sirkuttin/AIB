@@ -6,19 +6,19 @@
 import { assert, assertEquals } from './_assert.ts';
 import { pause, until } from './_connection.ts';
 import { cleanRoot, KEY, newAib, prepareRoot, readyHost, ROOT, T, withWindowsKeeper } from './_wsl_e2e.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { refOf } from '../../outputs/agent-studio/server/platform/location.ts';
-import { linkOf } from '../../outputs/agent-studio/server/wsl/access.ts';
-import { type WslHostImpl, wslHostsInUse } from '../../outputs/agent-studio/server/wsl/hosts.ts';
-import { aibInternalKind, KeeperLink, liveUserChannels } from '../../outputs/agent-studio/server/keeper/link.ts';
-import { readKeeperInfo } from '../../outputs/agent-studio/server/keeper/client.ts';
-import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { refOf } from '../../app/server/platform/location.ts';
+import { linkOf } from '../../app/server/wsl/access.ts';
+import { type WslHostImpl, wslHostsInUse } from '../../app/server/wsl/hosts.ts';
+import { aibInternalKind, KeeperLink, liveUserChannels } from '../../app/server/keeper/link.ts';
+import { readKeeperInfo } from '../../app/server/keeper/client.ts';
+import { pidAlive } from '../../app/server/host/host_client.ts';
 
 type Json = Record<string, unknown>;
 
-function studioIn(state: string, keeper: KeeperLink | null = null): Studio {
-  const studio = new Studio({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper });
+function studioIn(state: string, keeper: KeeperLink | null = null): Aib {
+  const studio = new Aib({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper });
   studio.ownerProbe = () => null;
   studio.connectionFactory = (_command, cwd, provider, options) =>
     new Connection(['python3', `${ROOT}/fake_acp.py`, '--cancel-aware'], cwd, provider, {
@@ -40,7 +40,7 @@ Deno.test({
   async fn() {
     const state = Deno.makeTempDirSync({ prefix: 'aib-wsl-agent-e2e-' });
     await prepareRoot();
-    const studios: Studio[] = [];
+    const studios: Aib[] = [];
     try {
       const host = await readyHost();
       const ref = refOf({ kind: 'wsl', distro: KEY, linuxPath: `${ROOT}/repo` });
@@ -85,7 +85,7 @@ Deno.test({
   async fn() {
     const state = Deno.makeTempDirSync({ prefix: 'aib-wsl-continue-e2e-' });
     await prepareRoot();
-    const studios: Studio[] = [];
+    const studios: Aib[] = [];
     try {
       await readyHost();
       const ref = refOf({ kind: 'wsl', distro: KEY, linuxPath: `${ROOT}/repo` });
@@ -145,7 +145,7 @@ Deno.test({
     const marker = `${state}\\orphan-ran.txt`;
     const info = `${state}\\keeper\\keeper.json`;
     await prepareRoot();
-    const studios: Studio[] = [];
+    const studios: Aib[] = [];
     const links: KeeperLink[] = [];
     try {
       const linkA = windowsKeeper(state, marker);

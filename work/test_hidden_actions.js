@@ -4,7 +4,7 @@
    a real box, on every ancestor), has a tooltip, and hovering a chat card changes no layout and shows or hides nothing in it.
    The header menu button opening the chat menu is covered by test_conversation_state.js ("header menu offers the same actions").
    Run: node work/test_hidden_actions.js (headless Chrome or Edge; CHROME_PATH chooses one; none installed = skipped). */
-const { APP } = require('./_paths');
+const { PAGE: APP } = require('./_paths');
 const test = require('node:test'),
   assert = require('node:assert/strict'),
   fs = require('node:fs'),

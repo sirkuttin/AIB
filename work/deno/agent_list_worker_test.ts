@@ -4,8 +4,8 @@
  * synchronous file checks: 0.4-2 s during which nothing else ran). A temp state folder and this PC's real PATH; reads only.
  */
 import { assert, assertEquals } from './_assert.ts';
-import * as shared from '../../outputs/agent-studio/server/web/shared.ts';
-import { SettingsStore } from '../../outputs/agent-studio/server/state/store.ts';
+import * as shared from '../../app/server/web/shared.ts';
+import { SettingsStore } from '../../app/server/state/store.ts';
 
 /** Run fn while a 5 ms timer measures the event loop: the worst lateness of that timer (ms). */
 async function stallDuring<T>(fn: () => Promise<T>): Promise<[T, number]> {

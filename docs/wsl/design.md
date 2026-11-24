@@ -125,7 +125,7 @@ Off for WSL projects in phase 1:
 - worktrees run whole inside the helper, rooted at `~/.aib-server/data-HASH/worktrees` (4)
 - LiveSync + DirWatcher (Linux `Deno.watchFs` = inotify) and merge with clash flow in the helper (6-8)
 - docs store, charts and drawings (3). Built: the open doc (Y.Doc, editor socket, tools, cache, history) stays in AIB on Windows and
-  only its files' reads and writes go to the helper (`docs.fs`); see outputs/agent-studio/docs/WSL.md "Docs" for why
+  only its files' reads and writes go to the helper (`docs.fs`); see app/docs/WSL.md "Docs" for why
 - transcripts, monitor, ownership (the `/proc` variant), Codex limits with per-environment roots (3-4)
 - artifact publish and watcher, file tickets, outside files (2)
 - delete via `gio trash` in the helper, AIB-managed agent install in the distro, busy detection (2-3)
@@ -214,7 +214,7 @@ Off for WSL projects in phase 1:
 
 - **Track A, Linux side:** `keeper/bridge.go` (new), `keeper/main.go` (flags), `keeper/PROTOCOL.md`, `keeper/bridge_test.go`; `server/wsl/helper_main.ts` and `server/wsl/helper/*` (new); the `aib-open` shim; `tools/build.ts`.
 - **Track B, Windows plumbing and path model:** `server/platform/location.ts` (new); `server/wsl/detect.ts`, `install.ts`, `hosts.ts` (new); `server/keeper/client.ts` (KeeperStream); `server/keeper/link.ts` (connector, reconnect); `platform/ospath.ts`, `pypath.ts` (guards); `desktop/added_projects.ts`, `folders.ts`, `folder_presence.ts`, `project_delete.ts`, `editors.ts`; `web/security.ts` (comments and tests only).
-- **Track C, features, UI and e2e:** `acp/connection.ts`, `host/studio.ts`, `worktrees/worktrees.ts` (`planWithReason` only), `terminal/sessions.ts`, `web/terminal_routes.ts`, `web/files_routes.ts`, `worktrees/chat_folders.ts`; the page files `new-project-ui.js`, `sidebar-ui.js`, `files-ui.js`, `changes-ui.js`, `merge-ui.js`, `editors-ui.js`, `delete-project-ui.js`, `settings-ui.js`, `terminal-ui.js`, `docs` tab; `work/deno/wsl_*_e2e_test.ts`.
+- **Track C, features, UI and e2e:** `acp/connection.ts`, `host/aib.ts`, `worktrees/worktrees.ts` (`planWithReason` only), `terminal/sessions.ts`, `web/terminal_routes.ts`, `web/files_routes.ts`, `worktrees/chat_folders.ts`; the page files `new-project-ui.js`, `sidebar-ui.js`, `files-ui.js`, `changes-ui.js`, `merge-ui.js`, `editors-ui.js`, `delete-project-ui.js`, `settings-ui.js`, `terminal-ui.js`, `docs` tab; `work/deno/wsl_*_e2e_test.ts`.
 - **Contracts frozen on day 1:**
   - Track B: the `Loc` type, the canonical ref, and `WslHost {state, link, call(method, params), env(), onOpenUrl}`.
   - Track A: the helper method list and JSON shapes, and the bridge preamble.
@@ -223,7 +223,7 @@ Off for WSL projects in phase 1:
 ## 11. Architect review addendum (required changes; these override sections above)
 
 Required before building (from the Opus architect review):
-1. **Hold/helper lifecycle spec.** Studio rebuild (`host/studio.ts:984-997`, `link.stopUnknown`), `#dropOrphanTerminals` and `terminal/sessions.ts:430-446` must skip labels `wsl-hold` and `wsl-helper`. AIB kills the hold channel on quit unless a WSL agent is live (then sends Windows `hold`); hold channels are excluded from live counts (else V2 idle exit never runs, V1 relaunches AIB in the tray, keeper upgrade blocks forever). `bridge --hold` polls `list` and exits when only the helper is live; AIB kills the helper before a Linux-keeper `shutdown` (`server.go:207-211`).
+1. **Hold/helper lifecycle spec.** Studio rebuild (`host/aib.ts:984-997`, `link.stopUnknown`), `#dropOrphanTerminals` and `terminal/sessions.ts:430-446` must skip labels `wsl-hold` and `wsl-helper`. AIB kills the hold channel on quit unless a WSL agent is live (then sends Windows `hold`); hold channels are excluded from live counts (else V2 idle exit never runs, V1 relaunches AIB in the tray, keeper upgrade blocks forever). `bridge --hold` polls `list` and exits when only the helper is live; AIB kills the helper before a Linux-keeper `shutdown` (`server.go:207-211`).
 2. **Transport-loss semantics in KeeperLink.** `#lost` (`link.ts:266-283`) + `#keeperLost` → `reconnectOne` (`studio.ts:1145-1162`) would start duplicate agents. Add a "transport lost" state: suspend, re-attach from `last` seq, fire `onLost` only when `list` shows the channel ended (~2 days).
 3. **Guards at the 26 `isNetworkPath` gates**, not throwing in ospath. Add `isForeignPath` (`wsl:` prefix, or drive-less absolute on Windows); predicates return false; throw only in spawn/write/delete. `folder_presence.ts`, `editors.ts:507,532`, `connection.ts:435,530,1301` use raw `Deno.*` and need explicit handling. The guard is a no-op when `!WIN` (the helper imports the same modules).
 4. **`Connection.cwd` split** into `cwd` (the ref) and `agentCwd` (Linux path); WriteTracker off for WSL chats (`connection.ts:785-823,852-861`).

@@ -10,16 +10,16 @@ import { assert, assertEquals } from './_assert.ts';
 import { FAKE, pause, PYTHON, until } from './_connection.ts';
 const UNIQUE = FAKE.replace(/fake_acp.py$/, 'fake_acp_unique.py'); // every chat its own session id
 import { commit, makeRepo, read, runGit, write } from './_worktree_fixtures.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { ownToolName } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { handle, type ToolContext } from '../../outputs/agent-studio/server/artifacts/mcp.ts';
-import { BriefError, overlaps, readBrief, wrapReport } from '../../outputs/agent-studio/server/swarm/brief.ts';
-import { pickProvider } from '../../outputs/agent-studio/server/swarm/rules.ts';
-import { Registry } from '../../outputs/agent-studio/server/swarm/registry.ts';
-import { Swarm } from '../../outputs/agent-studio/server/swarm/service.ts';
-import { CLAUDE_HELPERS_DEFAULT, SWARM_ENABLED_DEFAULT, claudeHelpers, setClaudeHelpers, setSwarmEnabled, swarmEnabled } from '../../outputs/agent-studio/server/swarm/settings.ts';
-import { pathOf } from '../../outputs/agent-studio/server/state/paths.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { ownToolName } from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { handle, type ToolContext } from '../../app/server/artifacts/mcp.ts';
+import { BriefError, overlaps, readBrief, wrapReport } from '../../app/server/swarm/brief.ts';
+import { pickProvider } from '../../app/server/swarm/rules.ts';
+import { Registry } from '../../app/server/swarm/registry.ts';
+import { Swarm } from '../../app/server/swarm/service.ts';
+import { CLAUDE_HELPERS_DEFAULT, SWARM_ENABLED_DEFAULT, claudeHelpers, setClaudeHelpers, setSwarmEnabled, swarmEnabled } from '../../app/server/swarm/settings.ts';
+import { pathOf } from '../../app/server/state/paths.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -181,14 +181,14 @@ class Box {
   readonly dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-swarm-test-' }));
   readonly state = pathOf(this.dir, 'state');
   readonly project = makeRepo(pathOf(this.dir, 'proj'));
-  readonly studio: Studio;
+  readonly studio: Aib;
   readonly swarm: Swarm;
 
   constructor(swarmOn = true) {
     setSwarmEnabled(this.state, swarmOn); // on by default (swarm/settings.ts); Box(false) saves the owner's explicit off
     runGit(this.project, 'config', 'user.name', 't');
     runGit(this.project, 'config', 'user.email', 't@t');
-    const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0 }, { keeper: null });
+    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0 }, { keeper: null });
     studio.ownerProbe = () => null;
     studio.agentLaunch = () => Promise.resolve([['unused'], {}]);
     studio.connectionFactory = (_command, cwd, provider, options) =>
@@ -430,7 +430,7 @@ Deno.test({
   ...T,
   name: 'agentProblem: signed out is refused with the Settings pointer; ready and unknown pass; a model-server entry needs no sign-in',
   async fn() {
-    const { agentProblem } = await import('../../outputs/agent-studio/server/swarm/ready.ts');
+    const { agentProblem } = await import('../../app/server/swarm/ready.ts');
     const dir = Deno.makeTempDirSync({ prefix: 'aib-swarm-ready-' });
     try {
       let state = 'signin';
@@ -456,7 +456,7 @@ Deno.test({
   ...T,
   name: 'helpers off: the main chat\'s AIB prompt says the owner switched them off (only then); on, it says nothing of it',
   async fn() {
-    const { HELPERS_OFF_PROMPT } = await import('../../outputs/agent-studio/server/acp/connection.ts');
+    const { HELPERS_OFF_PROMPT } = await import('../../app/server/acp/connection.ts');
     const promptOf = (c: Connection) => {
       c.initial = { agentCapabilities: { sessionCapabilities: { systemPrompt: {} } } } as never; // an agent that takes a client system prompt
       return JSON.stringify(c.artifactPrompt(c.mcpServers as never));

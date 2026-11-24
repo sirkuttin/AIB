@@ -1,8 +1,8 @@
 /** Local-only folders: AIB's block in .git/info/exclude (read, write, escape, refuse, Undo), the default /aib-shared, and the Q3 move. */
 import { assert, assertEquals } from './_assert.ts';
 import { git, HAVE_GIT, write } from './_git_repo.ts';
-import * as osp from '../../outputs/agent-studio/server/platform/ospath.ts';
-import * as lo from '../../outputs/agent-studio/server/worktrees/local_only.ts';
+import * as osp from '../../app/server/platform/ospath.ts';
+import * as lo from '../../app/server/worktrees/local_only.ts';
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();

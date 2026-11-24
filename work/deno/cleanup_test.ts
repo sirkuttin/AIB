@@ -5,9 +5,9 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { commit, exists, runGit, Sandbox, write } from './_worktree_fixtures.ts';
-import * as wt from '../../outputs/agent-studio/server/worktrees/worktrees.ts';
-import * as cleanup from '../../outputs/agent-studio/server/worktrees/cleanup.ts';
-import { pathOf } from '../../outputs/agent-studio/server/state/paths.ts';
+import * as wt from '../../app/server/worktrees/worktrees.ts';
+import * as cleanup from '../../app/server/worktrees/cleanup.ts';
+import { pathOf } from '../../app/server/state/paths.ts';
 
 async function copy(state: string, project: string, key: string, session = ''): Promise<{ manager: wt.Manager; plan: wt.Plan }> {
   const manager = new wt.Manager(state);
@@ -206,9 +206,9 @@ Deno.test("a running chat's copy is never touched; a subfolder or busy repo is s
 });
 
 Deno.test('16: project removal: one confirm lists the unmerged copy; the clean one goes silently; ticked ids go; aib-shared/ stays', async () => {
-  const { projectRemove } = await import('../../outputs/agent-studio/server/web/project_routes.ts');
-  const { RemovedProjects } = await import('../../outputs/agent-studio/server/desktop/project_delete.ts');
-  const { ConversationState } = await import('../../outputs/agent-studio/server/state/store.ts');
+  const { projectRemove } = await import('../../app/server/web/project_routes.ts');
+  const { RemovedProjects } = await import('../../app/server/desktop/project_delete.ts');
+  const { ConversationState } = await import('../../app/server/state/store.ts');
   using box = new Sandbox();
   write(box.project, 'aib-shared/notes.md', 'mine\n'); // the local-only folder (excluded by AIB's default line)
   Deno.writeTextFileSync(pathOf(box.project, '.git', 'info', 'exclude'), '/aib-shared\n');
@@ -258,7 +258,7 @@ Deno.test('16: project removal: one confirm lists the unmerged copy; the clean o
 });
 
 Deno.test('18b: "Remove AIB\'s data from my repos" runs project removal\'s cleanup for every added project and leaves aib-shared/', async () => {
-  const { allRoute } = await import('../../outputs/agent-studio/server/web/cleanup_routes.ts');
+  const { allRoute } = await import('../../app/server/web/cleanup_routes.ts');
   using box = new Sandbox();
   const second = pathOf(box.base, 'proj2');
   makeRepoAt(second);
@@ -294,8 +294,8 @@ function makeRepoAt(folder: string): void {
 }
 
 Deno.test('WSL helper (protocol 2): worktree.cleanupScan changes nothing; worktree.cleanupApply removes the silent items and the ticked ones', async () => {
-  const { worktreeMethods } = await import('../../outputs/agent-studio/server/wsl/helper/worktrees.ts');
-  const { HELPER_PROTOCOL } = await import('../../outputs/agent-studio/server/wsl/contract.ts');
+  const { worktreeMethods } = await import('../../app/server/wsl/helper/worktrees.ts');
+  const { HELPER_PROTOCOL } = await import('../../app/server/wsl/contract.ts');
   assertEquals(HELPER_PROTOCOL, 3);
   using box = new Sandbox();
   const m = worktreeMethods(box.state);

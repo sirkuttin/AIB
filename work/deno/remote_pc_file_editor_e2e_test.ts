@@ -13,10 +13,10 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { Browser, browserPath, type Page } from './_doc_browser.ts';
-import { readRemotePort } from '../../outputs/agent-studio/server/remote/port.ts';
-import { DEVICE_HEADER, DEVICE_PROTOCOL_PREFIX } from '../../outputs/agent-studio/server/remote/pc_bridge.ts';
-import { Audit } from '../../outputs/agent-studio/server/remote/audit.ts';
-import { COMPUTER_SCOPES } from '../../outputs/agent-studio/server/remote/devices.ts';
+import { readRemotePort } from '../../app/server/remote/port.ts';
+import { DEVICE_HEADER, DEVICE_PROTOCOL_PREFIX } from '../../app/server/remote/pc_bridge.ts';
+import { Audit } from '../../app/server/remote/audit.ts';
+import { COMPUTER_SCOPES } from '../../app/server/remote/devices.ts';
 import {
   fakeTailscale,
   LOGIN,

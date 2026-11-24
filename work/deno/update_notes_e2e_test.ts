@@ -14,8 +14,8 @@
 import { assert, assertEquals } from './_assert.ts';
 import { Fixture, SEP, TEST_OPTIONS } from './_host_fixture.ts';
 import { Browser, browserPath } from './_doc_browser.ts';
-import { APP_VERSION } from '../../outputs/agent-studio/server/core/app.ts';
-import { compare, parseVersion } from '../../outputs/agent-studio/server/desktop/updater.ts';
+import { APP_VERSION } from '../../app/server/core/app.ts';
+import { compare, parseVersion } from '../../app/server/desktop/updater.ts';
 
 /** The version before APP_VERSION in the fake list, and the one before that (0.1.0-beta.8 -> beta.7, beta.6). */
 function older(version: string, by: number): string {

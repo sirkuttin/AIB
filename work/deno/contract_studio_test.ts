@@ -10,8 +10,8 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { ContractServer, generateFixture } from './_contract_server.ts';
-import { pauseInfo, setPaused, syncFlagLock } from '../../outputs/agent-studio/server/worktrees/sync.ts';
-import * as keys from '../../outputs/agent-studio/server/artifacts/keys.ts';
+import { pauseInfo, setPaused, syncFlagLock } from '../../app/server/worktrees/sync.ts';
+import * as keys from '../../app/server/artifacts/keys.ts';
 
 const WIN = Deno.build.os === 'windows';
 const q = encodeURIComponent;

@@ -7,15 +7,15 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { Fixture, MAIN, openConversation, sleep, TEST_OPTIONS, until } from './_host_fixture.ts';
-import { AgentHost } from '../../outputs/agent-studio/server/host/agent_host.ts';
-import { HOST_TRAY_ITEMS, hostTrayView, stopQuestion } from '../../outputs/agent-studio/server/desktop/host_tray.ts';
-import type { HostTray, HostTrayView } from '../../outputs/agent-studio/server/desktop/host_tray.ts';
-import { decodeRgba, withAttentionDot } from '../../outputs/agent-studio/server/desktop/png_badge.ts';
-import { trayIconBytes } from '../../outputs/agent-studio/server/desktop/tray_icon.ts';
-import { HostClient, pidAlive, readInfo } from '../../outputs/agent-studio/server/host/host_client.ts';
-import { APP_HOST_EXIT_SECONDS, hostCommand } from '../../outputs/agent-studio/server/main.ts';
-import { parseOptions } from '../../outputs/agent-studio/server/core/options.ts';
-import * as log from '../../outputs/agent-studio/server/core/log.ts';
+import { AgentHost } from '../../app/server/host/agent_host.ts';
+import { HOST_TRAY_ITEMS, hostTrayView, stopQuestion } from '../../app/server/desktop/host_tray.ts';
+import type { HostTray, HostTrayView } from '../../app/server/desktop/host_tray.ts';
+import { decodeRgba, withAttentionDot } from '../../app/server/desktop/png_badge.ts';
+import { trayIconBytes } from '../../app/server/desktop/tray_icon.ts';
+import { HostClient, pidAlive, readInfo } from '../../app/server/host/host_client.ts';
+import { APP_HOST_EXIT_SECONDS, hostCommand } from '../../app/server/main.ts';
+import { parseOptions } from '../../app/server/core/options.ts';
+import * as log from '../../app/server/core/log.ts';
 
 type Json = Record<string, unknown>;
 const t = (name: string, fn: () => Promise<void> | void) => Deno.test({ name, ...TEST_OPTIONS, fn });

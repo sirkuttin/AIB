@@ -18,21 +18,21 @@
 import { assert, assertEquals } from './_assert.ts';
 import { until } from './_connection.ts';
 import { cleanRoot, inDistro, KEY, prepareRoot, readyHost, ROOT, T } from './_wsl_e2e.ts';
-import { Connection, SHARED_FOLDER_PROMPT } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { wslEnsure, wslRecord, wslRemove } from '../../outputs/agent-studio/server/wsl/worktrees.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { refOf } from '../../outputs/agent-studio/server/platform/location.ts';
-import { studioRoutes } from '../../outputs/agent-studio/server/web/studio_routes.ts';
-import { filesRoutes } from '../../outputs/agent-studio/server/web/files_routes.ts';
-import { BLOCK_START } from '../../outputs/agent-studio/server/worktrees/local_only.ts';
-import { WslHelperError } from '../../outputs/agent-studio/server/wsl/contract.ts';
-import type { WebContext } from '../../outputs/agent-studio/server/web/server.ts';
+import { Connection, SHARED_FOLDER_PROMPT } from '../../app/server/acp/connection.ts';
+import { wslEnsure, wslRecord, wslRemove } from '../../app/server/wsl/worktrees.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { refOf } from '../../app/server/platform/location.ts';
+import { aibRoutes } from '../../app/server/web/aib_routes.ts';
+import { filesRoutes } from '../../app/server/web/files_routes.ts';
+import { BLOCK_START } from '../../app/server/worktrees/local_only.ts';
+import { WslHelperError } from '../../app/server/wsl/contract.ts';
+import type { WebContext } from '../../app/server/web/server.ts';
 
 type Json = Record<string, unknown>;
 const NL = '\\n';
 
-function studioIn(state: string): Studio {
-  const studio = new Studio({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
+function studioIn(state: string): Aib {
+  const studio = new Aib({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
   studio.ownerProbe = () => null;
   // env sets FAKE_ACP_LOG for the fake agent: every line it receives goes there (session/new's params)
   studio.connectionFactory = (_command, cwd, provider, options) =>
@@ -45,7 +45,7 @@ function studioIn(state: string): Studio {
 
 const sh = async (script: string, ...args: string[]) => (await inDistro(script, args)).out.trim();
 
-async function turn(studio: Studio, c: Connection, text: string): Promise<void> {
+async function turn(studio: Aib, c: Connection, text: string): Promise<void> {
   await studio.liveCall('prompt', { id: c.id, text, clientMessageId: crypto.randomUUID() });
   await until(() => !c.busy, `the turn "${text}"`, 60);
 }
@@ -65,7 +65,7 @@ Deno.test({
   async fn() {
     const state = Deno.makeTempDirSync({ prefix: 'aib-wsl-lo-e2e-' });
     await prepareRoot();
-    let studio: Studio | null = null;
+    let studio: Aib | null = null;
     try {
       const host = await readyHost();
       const repo = `${ROOT}/repo`;
@@ -174,7 +174,7 @@ Deno.test({
       await turn(studio, c, 'commit:chat work');
       assertEquals(await sh('git -C "$1" ls-files aib-shared', linux), '', 'git never adds aib-shared/ in the copy');
       const ctx2 = { stateDir: studio.stateDir, host: studio, conversations: { public: () => ({ entries: {} }) } } as never;
-      const [code, merged] = await studioRoutes().get('POST /api/live/worktree/merge')!(ctx2, new URL('http://127.0.0.1/api/live/worktree/merge'), { id: c.id }, new Request('http://127.0.0.1/')) as [number, Json];
+      const [code, merged] = await aibRoutes().get('POST /api/live/worktree/merge')!(ctx2, new URL('http://127.0.0.1/api/live/worktree/merge'), { id: c.id }, new Request('http://127.0.0.1/')) as [number, Json];
       assertEquals([code, merged.state], [200, 'merged'], JSON.stringify(merged));
       assertEquals(await sh('git -C "$1" show main:chat.txt', repo), 'from the chat');
       assertEquals(await sh('git -C "$1" ls-tree -r --name-only main -- aib-shared game/review', repo), '', 'nothing under aib-shared/ or game/review/ landed');

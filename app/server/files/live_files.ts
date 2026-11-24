@@ -508,7 +508,7 @@ export class LiveFiles {
     }
   }
 
-  /** The agent host's finished write calls since the last look (host/studio.ts files-changed). */
+  /** The agent host's finished write calls since the last look (host/aib.ts files-changed). */
   async #pollFeed(): Promise<void> {
     if (this.#feeding) return;
     this.#feeding = true;

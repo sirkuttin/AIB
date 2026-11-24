@@ -1,7 +1,7 @@
 'use strict';
 const path = require('path');
 const fs = require('fs');
-const { APP: APP_DIR } = require('./_paths');
+const { PAGE: APP_DIR } = require('./_paths');
 // Browser-level failure scenarios for chat.js using a small fake DOM and a scripted fetch.
 const test = require('node:test');
 const assert = require('node:assert/strict');

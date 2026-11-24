@@ -67,11 +67,11 @@ Flow (diagram):
 
 ## 2. What AIB already has (from the code)
 
-Checked in `C:\Users\sirku\Documents\Codex\AIB-beta10`, branch `integration/beta10` (d4fe53b), under `outputs/agent-studio/`. The hard parts exist. What's missing is a way for one agent to start another one.
+Checked in `C:\Users\sirku\Documents\Codex\AIB-beta10`, branch `integration/beta10` (d4fe53b), under `app/`. The hard parts exist. What's missing is a way for one agent to start another one.
 
 | Piece today | Where | What the swarm does with it |
 | --- | --- | --- |
-| Every chat gets the `studio_artifact` MCP server with a **per-conversation key**; worktree chats also get the merge tools (`STUDIO_WORKTREE=1`) | `server/artifacts/mcp.ts`, `server/host/studio.ts` `artifactMcpServers()`, `mcp_http.ts` | Add the swarm tools to the same server, offered only to main chats (`STUDIO_MAIN=1`). The key tells AIB who is calling, so caps are checked per caller. |
+| Every chat gets the `studio_artifact` MCP server with a **per-conversation key**; worktree chats also get the merge tools (`STUDIO_WORKTREE=1`) | `server/artifacts/mcp.ts`, `server/host/aib.ts` `artifactMcpServers()`, `mcp_http.ts` | Add the swarm tools to the same server, offered only to main chats (`STUDIO_MAIN=1`). The key tells AIB who is calling, so caps are checked per caller. |
 | AIB's own tools are auto-approved (`OWN_ARTIFACT_TOOL`) | `server/acp/connection.ts` ~l.594, `ownArtifactTool()` | Swarm tools join that list: starting a helper never shows a permission prompt. The caps do the protecting. |
 | `merge_into_project`: a worktree chat merges *its own* work into main; posts "Merged into main (n commits)" | `server/worktrees/merge.ts` (`NOTE_OP`, l.1024) | `merge_helper` runs the same pipeline on the helper's worktree record, called by the parent. The line names the helper and provider and adds **Undo**. Undo does not exist today and has to be built. |
 | Native subagents tracked from ACP `subagent_update` (running / requires_action / idle) | `connection.ts` `subagents` map, `subagents-ui.js` | Same state words for helpers. Claude/Codex *internal* subagents still show under their own chat. The ACP subagent RFD can't start other providers (clients can't create children), so AIB needs its own tool. |
@@ -520,7 +520,7 @@ From `private/designs/swarm/swarm-prior-art-2026-11-13.md` and the market notes.
 
 ## 17. Build plan: smallest useful first
 
-At most 3 builders per phase. Builders run targeted tests, with one full suite per phase (in the background). All tests use fake agents only. Paths are under `outputs/agent-studio/` unless they start with `work/`.
+At most 3 builders per phase. Builders run targeted tests, with one full suite per phase (in the background). All tests use fake agents only. Paths are under `app/` unless they start with `work/`.
 
 ### Phase 1: one helper from another provider, report back, merge
 
@@ -528,7 +528,7 @@ Outcome: in a Claude main chat, you ask for something; the main agent starts a C
 
 | Builder | Scope | Files |
 | --- | --- | --- |
-| **B1 Swarm core** (Opus) | Helper registry; `start_helper`, `helper_status`, `stop_helper`, `merge_helper`, `helper_providers`; main-chat detection; brief check; owns clash; caps (3, depth 1); helper worktree from main's tip; start the helper chat with provider, model and edit-in-workspace mode; auto-approve the swarm tools | new `server/swarm/registry.ts`, `server/swarm/routes.ts`, `server/swarm/brief.ts`, `server/swarm/rules.ts` (built-in defaults); `server/artifacts/mcp.ts` + `mcp_http.ts` (SWARM_TOOLS, `ctx.main`); `server/host/studio.ts` (`STUDIO_MAIN`, start helper conversation); `server/worktrees/worktrees.ts`; `server/acp/connection.ts` (`OWN_ARTIFACT_TOOL`) |
+| **B1 Swarm core** (Opus) | Helper registry; `start_helper`, `helper_status`, `stop_helper`, `merge_helper`, `helper_providers`; main-chat detection; brief check; owns clash; caps (3, depth 1); helper worktree from main's tip; start the helper chat with provider, model and edit-in-workspace mode; auto-approve the swarm tools | new `server/swarm/registry.ts`, `server/swarm/routes.ts`, `server/swarm/brief.ts`, `server/swarm/rules.ts` (built-in defaults); `server/artifacts/mcp.ts` + `mcp_http.ts` (SWARM_TOOLS, `ctx.main`); `server/host/aib.ts` (`STUDIO_MAIN`, start helper conversation); `server/worktrees/worktrees.ts`; `server/acp/connection.ts` (`OWN_ARTIFACT_TOOL`) |
 | **B2 Report and merge** (Opus) | Helper turn end becomes a report (AIB-computed facts + clipped reply) delivered through the steer lane or the next prompt; `merge_helper` on the helper's record targeting main, with tests run before landing; merge line naming helper and provider; record the landed range; Undo (revert commits) with the "can't undo cleanly" path; keeper persistence of helpers and queued reports | new `server/swarm/report.ts`, `server/worktrees/undo.ts`; `server/worktrees/merge.ts` (merge on behalf of the parent, range record, note text); `server/acp/connection.ts` (report delivery) |
 | **B3 Visible pieces + fakes** (Sonnet) | Helper tool row with brief; helper cards; report card; merge line with Undo; Helpers strip (counts only); sidebar nesting; inbox roll-up under the main chat (notify rules let helper chats through); phone labels; fake agents | new `swarm-ui.js`, `swarm.css`; `stream-ui.js`, `sidebar-ui.js`, `attention-ui.js`, `notify-rules.js`, `server/attention/watcher.ts`, `phone.js`; `work/fake_acp.py` (`--swarm-main`: on scripted prompts calls the swarm tools through the HTTP MCP entry; `--helper-edit`: edits and commits a file, then ends its turn) |
 
@@ -595,4 +595,4 @@ Internal notes for builders. The design above already applies all of these; noth
 
 - Sidebar nesting; rule edits by chat with an Undo line; "Switch back" link; merge line, Undo and Add-time on the phone; 7-day cleanup of unmerged worktrees; `AIB_HELPER_PORT`; per-project "never send to"; start-churn limit; `state/swarm-log.jsonl`; native subagents under helpers (phase 4).
 
-Sources: `C:\Users\sirku\Documents\Codex\AIB\private\designs\swarm\swarm-prior-art-2026-11-13.md`; `C:\Users\sirku\Documents\Codex\AIB\private\designs\site\competitive-analysis-2026-11-13.md`; main-agent map (2026-11-11, checked against beta10: it still holds, plus the owner decision that the main chat edits main); code at `C:\Users\sirku\Documents\Codex\AIB-beta10\outputs\agent-studio\` (d4fe53b). No code was changed.
+Sources: `C:\Users\sirku\Documents\Codex\AIB\private\designs\swarm\swarm-prior-art-2026-11-13.md`; `C:\Users\sirku\Documents\Codex\AIB\private\designs\site\competitive-analysis-2026-11-13.md`; main-agent map (2026-11-11, checked against beta10: it still holds, plus the owner decision that the main chat edits main); code at `C:\Users\sirku\Documents\Codex\AIB-beta10\app\` (d4fe53b). No code was changed.

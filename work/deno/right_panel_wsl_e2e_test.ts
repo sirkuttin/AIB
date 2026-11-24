@@ -8,7 +8,7 @@
  * goes to the top of the idle group and back to the end of the working ones when it starts again. The same rules as
  * right_panel_e2e_test.ts, on WSL paths.
  *
- * Run (from outputs/agent-studio): deno test -A ../../work/deno/right_panel_wsl_e2e_test.ts   (ignored without Chrome or Edge)
+ * Run (from app): deno test -A ../../work/deno/right_panel_wsl_e2e_test.ts   (ignored without Chrome or Edge)
  */
 import { assert, assertEquals } from './_assert.ts';
 import { Browser, browserPath, type Page } from './_doc_browser.ts';

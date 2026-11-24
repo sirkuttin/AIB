@@ -88,7 +88,7 @@ Checked by `work/test_themes.js` (tokens, no stray colours, WCAG contrast in eve
 - `npm test` runs `node --test work/test_*.js` (from the repo root). Every test locates the page files through `__dirname`, so the working directory does not matter.
 - `chat.js` is one IIFE. Tests load it into a fake page (`work/chat_harness.js`: `loadChat`, `makePage`) and reach it only through `window.StudioChat`: the functions it lists, and `state`, getters and setters for the few variables a test sets up. Add to that list only what a test needs.
 - Tests do not look for text in source files. They run the code, or read `chat.html`'s tags (`pageAssets()`), not its spelling.
-- The Python suite (`python -m unittest discover -s ../../work -p "test_*.py"`, from `outputs/agent-studio`) covers the server and `work/test_page_structure.py` (page structure and accessibility).
+- The Python suite (`python -m unittest discover -s ../../work -p "test_*.py"`, from `app`) covers the server and `work/test_page_structure.py` (page structure and accessibility).
 
 ## Lint
 

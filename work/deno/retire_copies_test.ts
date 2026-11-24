@@ -12,12 +12,12 @@ import { assert, assertEquals } from './_assert.ts';
 import { PYTHON, pause } from './_connection.ts';
 import { FAKE } from './_connection.ts';
 import { makeRepo, read, runGit, write } from './_worktree_fixtures.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { pathOf } from '../../outputs/agent-studio/server/state/paths.ts';
-import * as merge from '../../outputs/agent-studio/server/worktrees/merge.ts';
-import * as wt from '../../outputs/agent-studio/server/worktrees/worktrees.ts';
-import { MOVED_FILE, readMoved } from '../../outputs/agent-studio/server/state/moved_chats.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { pathOf } from '../../app/server/state/paths.ts';
+import * as merge from '../../app/server/worktrees/merge.ts';
+import * as wt from '../../app/server/worktrees/worktrees.ts';
+import { MOVED_FILE, readMoved } from '../../app/server/state/moved_chats.ts';
 import { claudeEncode } from '../migrate/refile_core.ts';
 
 type Json = Record<string, unknown>;
@@ -38,14 +38,14 @@ class Box {
   readonly state = pathOf(this.dir, 'state');
   readonly claude = pathOf(this.dir, 'claude-config', 'projects');
   readonly project = makeRepo(pathOf(this.dir, 'proj'));
-  readonly studio: Studio;
+  readonly studio: Aib;
   #n = 0;
 
   constructor() {
     Deno.mkdirSync(this.claude, { recursive: true });
     runGit(this.project, 'config', 'user.name', 't');
     runGit(this.project, 'config', 'user.email', 't@t');
-    const studio = new Studio({ stateDir: this.state, port: 0 }, { keeper: null });
+    const studio = new Aib({ stateDir: this.state, port: 0 }, { keeper: null });
     studio.ownerProbe = () => null;
     studio.agentLaunch = () => Promise.resolve([['unused'], {}]);
     studio.connectionFactory = (_command, cwd, provider, options) => {
@@ -204,8 +204,8 @@ Deno.test({
   ...T,
   name: "MF 5: a stopped or failed helper's copy goes 7 days after it stopped, only when closed and with nothing unmerged",
   async fn() {
-    const { Registry } = await import('../../outputs/agent-studio/server/swarm/registry.ts');
-    const { STOPPED_HELPER_DAYS } = await import('../../outputs/agent-studio/server/host/studio.ts');
+    const { Registry } = await import('../../app/server/swarm/registry.ts');
+    const { STOPPED_HELPER_DAYS } = await import('../../app/server/host/aib.ts');
     assertEquals(STOPPED_HELPER_DAYS, 7);
     await using box = new Box();
     const registry = new Registry(box.state);

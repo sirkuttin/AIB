@@ -1,12 +1,12 @@
 // Builds the page's doc editor (run once after npm install; the output is committed, the app has no build step):
-//   outputs/agent-studio/vendor/docs/editor.js   TipTap + @tiptap/y-tiptap + Yjs + y-protocols, as an IIFE (window.AIBDocEditor)
-// The editor's schema comes from outputs/agent-studio/server/docs/schema.ts, the very file the Deno server builds its schema from.
-// The server itself loads the same packages (same versions) as npm: imports through outputs/agent-studio/deno.json + deno.lock.
+//   app/vendor/docs/editor.js   TipTap + @tiptap/y-tiptap + Yjs + y-protocols, as an IIFE (window.AIBDocEditor)
+// The editor's schema comes from app/server/docs/schema.ts, the very file the Deno server builds its schema from.
+// The server itself loads the same packages (same versions) as npm: imports through app/deno.json + deno.lock.
 import { build } from 'esbuild';
 import { statSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-const app = '../../outputs/agent-studio';
+const app = '../../app';
 const page = `${app}/vendor/docs/editor.js`;
 await build({
   entryPoints: ['editor.entry.js'],

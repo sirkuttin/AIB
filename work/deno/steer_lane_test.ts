@@ -7,7 +7,7 @@
 import { assert, assertEquals } from './_assert.ts';
 import { pause, until } from './_connection.ts';
 import { type Json, promptText, SteerLab, turnEnds, userEvents } from './_steer.ts';
-import { CODEX_UNREAD_NOTE, STEER_FAILED_NOTE, steerTiming } from '../../outputs/agent-studio/server/acp/connection.ts';
+import { CODEX_UNREAD_NOTE, STEER_FAILED_NOTE, steerTiming } from '../../app/server/acp/connection.ts';
 
 const lane = (c: { public(): Json }) => (c.public().steerLane as Json[]).map((i) => [i.text, i.state, i.heldReason ?? '']);
 const queued = (c: { queuePublic(): Json }) => (c.queuePublic().items as Json[]).map((i) => [i.text, i.note]);

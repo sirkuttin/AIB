@@ -5,7 +5,7 @@
    2. At <=1100 px the open chat-list drawer drew under the Activity strip and the scrim: the plain `body > aside` rule
       (z-index 5) came after the narrow-width block and beat its z-index 40.
    3. A saved tool call with no result (read from another app's transcript) had no status mark at all. */
-const { APP } = require('./_paths');
+const { PAGE: APP } = require('./_paths');
 const test = require('node:test'),
   assert = require('node:assert/strict'),
   fs = require('node:fs'),

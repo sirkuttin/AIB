@@ -13,7 +13,7 @@
  * an open history stays open when focus moves; the × that hides Activity is where it is with one chat and never moves;
  * the one picker also lists the docs the chats wrote.
  *
- * Run (from outputs/agent-studio): deno test -A ../../work/deno/split_panel_e2e_test.ts   (ignored without Chrome or Edge)
+ * Run (from app): deno test -A ../../work/deno/split_panel_e2e_test.ts   (ignored without Chrome or Edge)
  */
 import { assert, assertEquals } from './_assert.ts';
 import { browserPath, type Chat, Lab, ownerProblems, type Page, settle, shown } from './_scroll_lab.ts';

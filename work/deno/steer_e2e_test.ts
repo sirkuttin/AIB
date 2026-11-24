@@ -14,7 +14,7 @@
  * T27 S13/P8, T25 S14 (with the unit tests of merge.ts / docs_routes.ts). Not end to end here: T21 (steer_background_test.ts,
  * steer_transcript_test.ts), T28 (the <studio-context> note: needs a worktree sync; steer_lane_test.ts).
  *
- * Run (from outputs/agent-studio): deno test -A ../../work/deno/steer_e2e_test.ts   (--filter "S6" for one)
+ * Run (from app): deno test -A ../../work/deno/steer_e2e_test.ts   (--filter "S6" for one)
  */
 import {
   answerCard,

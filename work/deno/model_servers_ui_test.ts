@@ -18,14 +18,14 @@
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
 import { fake } from './_connection.ts';
-import '../../outputs/agent-studio/agent-choice.js';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { SettingsStore } from '../../outputs/agent-studio/server/state/settings.ts';
-import { describeAgents, modelServersView, settingsView, type StudioContext } from '../../outputs/agent-studio/server/web/shared.ts';
-import { studioRoutes } from '../../outputs/agent-studio/server/web/studio_routes.ts';
-import { eligibleAgents, MODEL_SERVERS_GROUP, reasonWords } from '../../outputs/agent-studio/server/agents/eligibility.ts';
-import { HEALTH_MS, inspectModelServer, notAnsweringLine, ServerHealth, USE_WITH, useWithProblem } from '../../outputs/agent-studio/server/agents/model_servers.ts';
+import '../../app/page/agent-choice.js';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { SettingsStore } from '../../app/server/state/settings.ts';
+import { describeAgents, modelServersView, settingsView, type StudioContext } from '../../app/server/web/shared.ts';
+import { aibRoutes } from '../../app/server/web/aib_routes.ts';
+import { eligibleAgents, MODEL_SERVERS_GROUP, reasonWords } from '../../app/server/agents/eligibility.ts';
+import { HEALTH_MS, inspectModelServer, notAnsweringLine, ServerHealth, USE_WITH, useWithProblem } from '../../app/server/agents/model_servers.ts';
 import { main as migrate } from '../migrate/beta_addresses_to_model_servers.ts';
 
 type Json = Record<string, unknown>;
@@ -49,7 +49,7 @@ class Lab {
   /** Fake qwen and maki programs (empty files): found on PATH while a test puts this folder in front. */
   readonly bin = this.dir + SEP + 'bin';
   readonly servers: Deno.HttpServer[] = [];
-  readonly studios: Studio[] = [];
+  readonly studios: Aib[] = [];
   constructor() {
     Deno.mkdirSync(this.state, { recursive: true });
     Deno.writeTextFileSync(this.launcher, '');
@@ -133,8 +133,8 @@ class Lab {
     };
   }
 
-  studio(launched: { provider: string; env: Record<string, string> | null }[], flags: string[] = []): Studio {
-    const studio = new Studio(
+  studio(launched: { provider: string; env: Record<string, string> | null }[], flags: string[] = []): Aib {
+    const studio = new Aib(
       { stateDir: this.state, port: 0, ownersDir: null, noArtifactTool: true, claudeLauncher: this.launcher, codexLauncher: this.codexLauncher, nodeCommand: Deno.execPath() },
       { keeper: null },
     );
@@ -170,7 +170,7 @@ const AC = (globalThis as unknown as {
   };
 }).AgentChoice;
 
-const get = (name: string) => studioRoutes().get(name)!;
+const get = (name: string) => aibRoutes().get(name)!;
 
 Deno.test('adding a server: the API kinds are found with empty POSTs, and nothing a model could answer is ever sent', async () => {
   await using lab = new Lab();
@@ -288,7 +288,7 @@ Deno.test('every switch is greyed the same way, with the reason, when the server
   assertEquals(useWithProblem('qwen', kinds('anthropic')), 'Qwen Code needs a server that speaks Chat Completions.');
   assertEquals([USE_WITH.map((u) => u.agent), USE_WITH.every((u) => u.kinds.length > 0)], [['claude', 'codex', 'maki', 'qwen'], true]);
   // the page's own table (settings-ui.js) holds the same agents and kinds
-  const page = Deno.readTextFileSync(new URL('../../outputs/agent-studio/settings-ui.js', import.meta.url));
+  const page = Deno.readTextFileSync(new URL('../../app/page/settings-ui.js', import.meta.url));
   for (const u of USE_WITH) {
     const list = u.kinds.map((k) => `'${k}'`).join(', ');
     assert(page.includes(`{ agent: '${u.agent}', label: '${u.label}', kinds: [${list}] }`), `${u.agent} in settings-ui.js`);
@@ -429,7 +429,7 @@ Deno.test('Maki and Qwen Code entries launch with the server\u2019s address, key
   // the entries: the normal adapter (same argv) with the server's address, key and model in the agent's own variables
   const [qwenArgv] = await lab.withPrograms(() => studio.agentLaunch('qwen'));
   const [qArgv, qEnv] = await lab.withPrograms(() => studio.agentLaunch('qwen@local'));
-  assertEquals(qArgv, [...qwenArgv, '--auth-type', 'openai'], 'the same adapter command as normal Qwen Code, plus the auth type that makes it read the server’s variables');
+  assertEquals(qArgv, [...qwenArgv, '--auth-type', 'openai'], 'the same adapter command as normal Qwen Code, plus the auth type that makes it read the serverï¿½s variables');
   assertEquals(qEnv, { OPENAI_BASE_URL: up.url, OPENAI_API_KEY: KEY, OPENAI_MODEL: 'qwen3-x' });
   const [makiArgv] = await lab.withPrograms(() => studio.agentLaunch('maki'));
   const [mArgv, mEnv] = await lab.withPrograms(() => studio.agentLaunch('maki@local'));

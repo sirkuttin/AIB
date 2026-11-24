@@ -1,7 +1,7 @@
 /**
  * Local-only folders and agents (architect review breaks 5, 8 and 9; owner decisions 2a, 5a, Q4 a): what a chat is told about
  * aib-shared/ (Connection.localOnlyText, appended to the ACP system prompt), the extra writable folders a worktree chat gets
- * (ACP `additionalDirectories`, only for agents that advertise it), and the host side (host/studio.ts): the default `/aib-shared`
+ * (ACP `additionalDirectories`, only for agents that advertise it), and the host side (host/aib.ts): the default `/aib-shared`
  * exclude before the chat's copy is made, the main folder's aib-shared/ and the copy's link to it for a worktree chat, and nothing
  * at all for a project that commits aib-shared/. Fake ACP agent only; temp repos and temp state folders only.
  */
@@ -14,12 +14,12 @@ import {
   Connection,
   LOCAL_ONLY_WORKTREE_PROMPT,
   SHARED_FOLDER_PROMPT,
-} from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { TESTS_DIR } from '../../outputs/agent-studio/server/core/app.ts';
-import { artifactToolCommand } from '../../outputs/agent-studio/server/artifacts/mcp.ts';
-import { BLOCK_START } from '../../outputs/agent-studio/server/worktrees/local_only.ts';
-import { join, SEP } from '../../outputs/agent-studio/server/platform/ospath.ts';
+} from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { TESTS_DIR } from '../../app/server/core/app.ts';
+import { artifactToolCommand } from '../../app/server/artifacts/mcp.ts';
+import { BLOCK_START } from '../../app/server/worktrees/local_only.ts';
+import { join, SEP } from '../../app/server/platform/ospath.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -90,11 +90,11 @@ Deno.test('local only: agents that advertise neither capability get no note and 
 class Host {
   readonly box = new Sandbox();
   readonly log = join(this.box.base, 'agent.log');
-  readonly studios: Studio[] = [];
+  readonly studios: Aib[] = [];
   readonly #restore = withEnv({ FAKE_ACP_LOG: this.log });
 
-  studio(flags: string[]): Studio {
-    const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.box.state, port: 0 });
+  studio(flags: string[]): Aib {
+    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.box.state, port: 0 });
     studio.ownerProbe = () => null;
     studio.settings.worktreePerChat = () => true;
     studio.connectionFactory = (_command, cwd, provider, options) => new Connection(fake(...flags), cwd, provider, options);

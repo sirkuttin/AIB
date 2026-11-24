@@ -13,9 +13,9 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { fake, Lab, until } from './_connection.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { AllowGate } from '../../outputs/agent-studio/server/allow/gate.ts';
-import { type AllowRule, BUILTIN, type Builtins, match, type MatchContext, ruleFor } from '../../outputs/agent-studio/server/allow/matcher.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { AllowGate } from '../../app/server/allow/gate.ts';
+import { type AllowRule, BUILTIN, type Builtins, match, type MatchContext, ruleFor } from '../../app/server/allow/matcher.ts';
 import { join } from 'node:path';
 
 type Json = Record<string, unknown>;

@@ -17,7 +17,7 @@ import {
   type WindowInfo,
   type WindowSpec,
   windowUrl,
-} from '../../outputs/agent-studio/server/desktop/windows_contract.ts';
+} from '../../app/server/desktop/windows_contract.ts';
 
 export interface FakeWindow extends WindowInfo {
   url: string;

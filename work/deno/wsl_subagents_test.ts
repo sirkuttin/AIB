@@ -14,11 +14,11 @@ import { assert, assertEquals, assertRejects } from './_assert.ts';
 import { commit, read, runGit, Sandbox, write } from './_worktree_fixtures.ts';
 import { HAVE_GIT } from './_git_repo.ts';
 import { FakeWslHost } from './_wsl_fake.ts';
-import { subagentMethods } from '../../outputs/agent-studio/server/wsl/helper/subagents.ts';
-import { RpcError } from '../../outputs/agent-studio/server/wsl/helper/rpc.ts';
-import * as ws from '../../outputs/agent-studio/server/wsl/subagents.ts';
-import { setWslHostResolver } from '../../outputs/agent-studio/server/wsl/access.ts';
-import { WslHelperError } from '../../outputs/agent-studio/server/wsl/contract.ts';
+import { subagentMethods } from '../../app/server/wsl/helper/subagents.ts';
+import { RpcError } from '../../app/server/wsl/helper/rpc.ts';
+import * as ws from '../../app/server/wsl/subagents.ts';
+import { setWslHostResolver } from '../../app/server/wsl/access.ts';
+import { WslHelperError } from '../../app/server/wsl/contract.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false, ignore: !HAVE_GIT };

@@ -7,13 +7,13 @@
 import { assert, assertEquals } from './_assert.ts';
 import { pause, until } from './_connection.ts';
 import { type Json, promptText, Puppet, puppetCommand, userEvents } from './_steer.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { MessageQueue, QueueStore, STEER_RESTART_NOTE } from '../../outputs/agent-studio/server/acp/msgqueue.ts';
-import { StateStore } from '../../outputs/agent-studio/server/state/recovery.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { KeeperLink } from '../../outputs/agent-studio/server/keeper/link.ts';
-import { keeperBinary, KeeperClient, readKeeperInfo } from '../../outputs/agent-studio/server/keeper/client.ts';
-import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { MessageQueue, QueueStore, STEER_RESTART_NOTE } from '../../app/server/acp/msgqueue.ts';
+import { StateStore } from '../../app/server/state/recovery.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { KeeperLink } from '../../app/server/keeper/link.ts';
+import { keeperBinary, KeeperClient, readKeeperInfo } from '../../app/server/keeper/client.ts';
+import { pidAlive } from '../../app/server/host/host_client.ts';
 
 const T = { sanitizeResources: false, sanitizeOps: false };
 const SEP = Deno.build.os === 'windows' ? '\\' : '/';
@@ -22,16 +22,16 @@ class KeeperLab {
   readonly dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-steer-keeper-' }));
   readonly state = this.dir + SEP + 'state';
   readonly work = this.dir + SEP + 'work';
-  readonly studios: Studio[] = [];
+  readonly studios: Aib[] = [];
   readonly puppet = new Puppet('claude');
 
   constructor() {
     Deno.mkdirSync(this.work, { recursive: true });
   }
 
-  studio(): Studio {
+  studio(): Aib {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
-    const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper, keeperForNew: true });
+    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper, keeperForNew: true });
     studio.ownerProbe = () => null;
     studio.connectionFactory = (_command, cwd, provider, options) =>
       new Connection(puppetCommand(this.puppet.port), cwd, provider, options);
@@ -40,7 +40,7 @@ class KeeperLab {
   }
 
   /** This AIB stops without a word (its chats run on in the keeper). */
-  crash(studio: Studio): void {
+  crash(studio: Aib): void {
     studio.keeper!.disconnect();
     for (const c of studio.connections.values()) c.sessionLease?.release();
     studio.reconnectStop.set();

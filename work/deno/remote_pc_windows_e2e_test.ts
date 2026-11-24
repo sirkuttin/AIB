@@ -12,7 +12,7 @@
  */
 import { assert, assertEquals } from "./_assert.ts";
 import { Browser, browserPath, sleep } from "./_doc_browser.ts";
-import { readRemotePort } from "../../outputs/agent-studio/server/remote/port.ts";
+import { readRemotePort } from "../../app/server/remote/port.ts";
 import {
   fakeTailscale,
   LOGIN,

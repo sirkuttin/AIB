@@ -7,9 +7,9 @@
 import { assert, assertEquals } from './_assert.ts';
 import { pause, PYTHON, until } from './_connection.ts';
 import { WORK } from './_work.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { type LimitsConnection, LimitsFeed } from '../../outputs/agent-studio/server/host/usage_limits_feed.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { type LimitsConnection, LimitsFeed } from '../../app/server/host/usage_limits_feed.ts';
 import {
   accountKey,
   claudeWindowType,
@@ -22,8 +22,8 @@ import {
   parseQwenQuota,
   parseVibeAccount,
   UsageLimitsStore,
-} from '../../outputs/agent-studio/server/state/usage_limits.ts';
-import { appServerCommand, appServerLimits, latestRolloutLimits } from '../../outputs/agent-studio/server/agents/codex_limits.ts';
+} from '../../app/server/state/usage_limits.ts';
+import { appServerCommand, appServerLimits, latestRolloutLimits } from '../../app/server/agents/codex_limits.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -307,12 +307,12 @@ class Lab {
   readonly dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-limits-test-' }));
   readonly state = this.dir + SEP + 'state';
   readonly work = this.dir + SEP + 'project';
-  readonly studios: Studio[] = [];
+  readonly studios: Aib[] = [];
   constructor() {
     Deno.mkdirSync(this.work, { recursive: true });
   }
-  manager(): Studio {
-    const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, autoReconnect: false });
+  manager(): Aib {
+    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, autoReconnect: false });
     studio.ownerProbe = () => null;
     studio.agentLaunch = () => Promise.resolve([['fixture'], {}]);
     studio.connectionFactory = (_command, cwd, provider) => new Connection([PYTHON, FAKE_UNIQUE, '--limits'], cwd, provider);
@@ -332,7 +332,7 @@ class Lab {
   }
 }
 
-const limitsOf = async (studio: Studio, c: Connection) => ((await studio.liveState(c.id, 0)) as Json).limits as LimitsSnapshot | null;
+const limitsOf = async (studio: Aib, c: Connection) => ((await studio.liveState(c.id, 0)) as Json).limits as LimitsSnapshot | null;
 
 Deno.test({
   name: "Studio: Claude's rateLimit reaches every chat on the account and survives a restart",

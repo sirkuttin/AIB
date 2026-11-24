@@ -5,9 +5,9 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { fake, pause, until } from './_connection.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { readPicks, Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { AgentOptionsCache, extract, FILE, folderKey } from '../../outputs/agent-studio/server/state/agent_options.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { readPicks, Aib } from '../../app/server/host/aib.ts';
+import { AgentOptionsCache, extract, FILE, folderKey } from '../../app/server/state/agent_options.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -17,14 +17,14 @@ class Lab {
   readonly dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-options-test-' }));
   readonly state = this.dir + SEP + 'state';
   readonly work = this.dir + SEP + 'project';
-  readonly studios: Studio[] = [];
+  readonly studios: Aib[] = [];
   made = 0;
   constructor() {
     Deno.mkdirSync(this.work, { recursive: true });
   }
 
-  manager(flags: string[] = ['--models']): Studio {
-    const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, autoReconnect: false });
+  manager(flags: string[] = ['--models']): Aib {
+    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, autoReconnect: false });
     studio.ownerProbe = () => null;
     studio.connectionFactory = (_command, cwd, provider) => (this.made++, new Connection(fake(...flags), cwd, provider));
     this.studios.push(studio);

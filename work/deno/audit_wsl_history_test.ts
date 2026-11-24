@@ -11,12 +11,12 @@
 import { assert, assertEquals } from './_assert.ts';
 import { fake, pause, until } from './_connection.ts';
 import { FakeWslHost } from './_wsl_fake.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { KeeperLink } from '../../outputs/agent-studio/server/keeper/link.ts';
-import { KeeperClient, keeperBinary, readKeeperInfo } from '../../outputs/agent-studio/server/keeper/client.ts';
-import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
-import { setWslHostResolver } from '../../outputs/agent-studio/server/wsl/access.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { KeeperLink } from '../../app/server/keeper/link.ts';
+import { KeeperClient, keeperBinary, readKeeperInfo } from '../../app/server/keeper/client.ts';
+import { pidAlive } from '../../app/server/host/host_client.ts';
+import { setWslHostResolver } from '../../app/server/wsl/access.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -30,7 +30,7 @@ class WslLab {
   readonly work = this.dir + SEP + 'app';
   readonly agentLog = this.dir + SEP + 'agent-received.log';
   readonly host: FakeWslHost;
-  readonly studios: Studio[] = [];
+  readonly studios: Aib[] = [];
 
   constructor() {
     Deno.mkdirSync(this.work, { recursive: true });
@@ -40,9 +40,9 @@ class WslLab {
     setWslHostResolver((d) => (d === 'ubuntu' ? this.host : null));
   }
 
-  studio(): Studio {
+  studio(): Aib {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
-    const studio = new Studio({ stateDir: this.state, port: 0, ownersDir: null }, { keeper });
+    const studio = new Aib({ stateDir: this.state, port: 0, ownersDir: null }, { keeper });
     studio.ownerProbe = () => null;
     studio.connectionFactory = (_command, cwd, provider, options) => {
       const wsl = options?.wsl ? { ...options.wsl, program: undefined } : options?.wsl;
@@ -52,7 +52,7 @@ class WslLab {
     return studio;
   }
 
-  crash(studio: Studio): void {
+  crash(studio: Aib): void {
     studio.keeper!.disconnect();
     this.host.link.disconnect();
     for (const c of studio.connections.values()) c.sessionLease?.release();
@@ -100,7 +100,7 @@ function said(c: Connection): string {
   }).join('');
 }
 
-async function turn(studio: Studio, c: Connection, id = 'm1'): Promise<void> {
+async function turn(studio: Aib, c: Connection, id = 'm1'): Promise<void> {
   assertEquals((await studio.liveCall('prompt', { id: c.id, text: 'stream:4:20', clientMessageId: id }))[0], 200);
   await until(() => c.permissions.size === 1, 'the question', 15);
   await studio.liveCall('permission', { id: c.id, key: [...c.permissions.keys()][0], option: 'yes' });

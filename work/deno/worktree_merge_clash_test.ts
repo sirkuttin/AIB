@@ -6,12 +6,12 @@
  */
 import { assert, assertEquals, assertRejects } from "./_assert.ts";
 import { Frozen } from "./_frozen.ts";
-import * as sync from "../../outputs/agent-studio/server/worktrees/sync.ts";
+import * as sync from "../../app/server/worktrees/sync.ts";
 import { commit, FakeStudio, FIXED_DATES, makeRepo, foreignHolds, foreignProbe, read, runGit, Sandbox, setFixedDates, write } from "./_worktree_fixtures.ts";
 import { chat, type Ctx, main, merge, record, refused, Refused, show, tree, WAITING } from "./_merge_fixtures.ts";
-import * as wt from "../../outputs/agent-studio/server/worktrees/worktrees.ts";
-import * as m from "../../outputs/agent-studio/server/worktrees/merge.ts";
-import { pathOf } from "../../outputs/agent-studio/server/state/paths.ts";
+import * as wt from "../../app/server/worktrees/worktrees.ts";
+import * as m from "../../app/server/worktrees/merge.ts";
+import { pathOf } from "../../app/server/state/paths.ts";
 
 // ---- clashes when re-applying the user's edits (test_worktree_e2.py) ---------------------------------------------------
 async function clashed(box: Sandbox, provider = "claude") {

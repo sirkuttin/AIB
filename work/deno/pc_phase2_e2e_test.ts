@@ -10,9 +10,9 @@
  *   - drafts stay per device (the page's localStorage, never a key synced to the PC)
  */
 import { assert, assertEquals } from './_assert.ts';
-import { readRemotePort } from '../../outputs/agent-studio/server/remote/port.ts';
-import { DEVICE_HEADER, RateLimit } from '../../outputs/agent-studio/server/remote/pc_bridge.ts';
-import { startAttention } from '../../outputs/agent-studio/server/attention/watcher.ts';
+import { readRemotePort } from '../../app/server/remote/port.ts';
+import { DEVICE_HEADER, RateLimit } from '../../app/server/remote/pc_bridge.ts';
+import { startAttention } from '../../app/server/attention/watcher.ts';
 import { Browser, browserPath } from './_doc_browser.ts';
 import { type FakeChat, fakeTailscale, pairPhone, pc, phoneHeaders, raw, type RemoteStudio, remoteStudio, serveStatus } from './_remote_fixture.ts';
 
@@ -288,7 +288,7 @@ Deno.test({
       const queued = s.liveCalls.filter(([n]) => n === 'queue').map(([, body]) => body.clientMessageId);
       assertEquals(queued, ['m-lap-1', 'm-ph-1']);
       // drafts: chat.js keeps them in the page's own localStorage ('studio-drafts-v1'), which view-prefs.js never syncs to the PC
-      const root = new URL('../../outputs/agent-studio/', import.meta.url);
+      const root = new URL('../../app/', import.meta.url);
       const prefs = await Deno.readTextFile(new URL('view-prefs.js', root));
       const chatJs = await Deno.readTextFile(new URL('chat.js', root));
       assert(chatJs.includes("new DraftStore(localStorage, 'studio-drafts-v1'"), 'drafts live in localStorage');

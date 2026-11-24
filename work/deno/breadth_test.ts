@@ -20,8 +20,8 @@ import {
   sessionOp,
   type SessionOpConnection,
   validateMcpServers,
-} from '../../outputs/agent-studio/server/acp/breadth.ts';
-import { ValueError } from '../../outputs/agent-studio/server/core/py.ts';
+} from '../../app/server/acp/breadth.ts';
+import { ValueError } from '../../app/server/core/py.ts';
 
 type Dict = Record<string, unknown>;
 

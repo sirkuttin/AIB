@@ -342,7 +342,7 @@ exec sudo -n "$@"
             current,
             feed: feedDir,
             state: STATE,
-            helper: here('../../outputs/agent-studio/server/desktop/update_helper.ts'),
+            helper: here('../../app/server/desktop/update_helper.ts'),
             tmp: `${ROOT}/tmp`,
             pkexec: o.pkexec ?? PKEXEC,
             mode: o.mode ?? 'click',

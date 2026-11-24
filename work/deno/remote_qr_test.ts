@@ -3,7 +3,7 @@
  * by a decoder written here from the spec (its own function-pattern map, zigzag reading, de-interleaving and syndrome check).
  */
 import { assert, assertEquals } from './_assert.ts';
-import { formatWord, maskBit, qrMatrix, qrSvg, rsRemainder } from '../../outputs/agent-studio/server/remote/qr.ts';
+import { formatWord, maskBit, qrMatrix, qrSvg, rsRemainder } from '../../app/server/remote/qr.ts';
 
 Deno.test('Reed-Solomon codewords match the worked examples (1-M "01234567" and "HELLO WORLD")', () => {
   assertEquals(

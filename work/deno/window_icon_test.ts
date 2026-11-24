@@ -13,13 +13,13 @@ import {
   loadIconPair,
   readWindowIcons,
   windowsOf,
-} from '../../outputs/agent-studio/server/desktop/window_icon_win.ts';
+} from '../../app/server/desktop/window_icon_win.ts';
 import { decodePng, embedWindowsIcon, parseIco } from '../../tools/build.ts';
-import { withAttentionDot } from '../../outputs/agent-studio/server/desktop/png_badge.ts';
-import { trayIconBytes } from '../../outputs/agent-studio/server/desktop/tray_icon.ts';
+import { withAttentionDot } from '../../app/server/desktop/png_badge.ts';
+import { trayIconBytes } from '../../app/server/desktop/tray_icon.ts';
 
 const WINDOWS = Deno.build.os === 'windows';
-const ICO = new URL('../../outputs/agent-studio/icons/icon.ico', import.meta.url);
+const ICO = new URL('../../app/icons/icon.ico', import.meta.url);
 
 Deno.test('windowsOf: only this process\'s windows of the class, class names compared as Windows does', () => {
   const all = [

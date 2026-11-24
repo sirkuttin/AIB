@@ -12,8 +12,8 @@ import {
   type StoreEvent,
   storePath,
   Stores,
-} from '../../outputs/agent-studio/server/history/store.ts';
-import { HistoryClient, HistoryError } from '../../outputs/agent-studio/server/history/client.ts';
+} from '../../app/server/history/store.ts';
+import { HistoryClient, HistoryError } from '../../app/server/history/client.ts';
 import { existsSync } from 'node:fs';
 
 const MAIN = 'main-session';

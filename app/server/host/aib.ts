@@ -166,7 +166,7 @@ const SWARM_NOTE_KINDS = ['swarm-start', 'swarm-report', 'swarm-merge', 'swarm-u
 const SWARM_NOTE_ACTIONS = ['swarm-undo', 'swarm-merge-again', 'swarm-open'];
 const SWARM_ACTION_LABELS: Record<string, string> = { 'swarm-undo': 'Undo', 'swarm-merge-again': 'Merge again', 'swarm-open': 'Open chat' };
 
-/** Studio.LIVE_POST_OPS: the generic POST /api/live/<name> calls (web/live_routes.ts keeps the same list). */
+/** Aib.LIVE_POST_OPS: the generic POST /api/live/<name> calls (web/live_routes.ts keeps the same list). */
 export const LIVE_POST_OPS: ReadonlySet<string> = new Set([
   'connect',
   'discover',
@@ -267,7 +267,7 @@ export function pythonErrorType(error: Error): string {
 }
 
 /** The agent options a Studio reads (the command-line flags of studio.py / agent_host.py; server/core/options.ts has them all). */
-export interface StudioOptions {
+export interface AibOptions {
   /** undefined/null: no state folder was configured (Python: the namespace has no state_dir), so nothing durable is kept. */
   stateDir?: string | null;
   port?: number | null;
@@ -360,7 +360,7 @@ export function readPicks(value: unknown): ConnectOptions['picks'] {
   return Object.keys(out).length ? out : null;
 }
 
-export interface StudioConstruct {
+export interface AibConstruct {
   /** The recovery file's name part (studio-recovery-<port>.json): the agent host passes 'host'. Default: options.port, else 0. */
   port?: number | string | null;
   connectionFactory?: ConnectionFactory | null;
@@ -380,8 +380,8 @@ export interface StudioConstruct {
 const defaultFactory: ConnectionFactory = (command, cwd, provider, options) => new Connection(command, cwd, provider, options ?? {});
 const pairKey = (provider: unknown, sessionId: unknown) => JSON.stringify([provider, sessionId]);
 
-export class Studio {
-  readonly options: StudioOptions;
+export class Aib {
+  readonly options: AibOptions;
   connectionFactory: ConnectionFactory;
   /** (provider, sessionId) -> folder of a saved transcript; null means chat_folders' own lookup. */
   savedCwd: ((provider: string, sessionId: string) => string) | null = null;
@@ -467,7 +467,7 @@ export class Studio {
   /** Stops this Studio answering WSL agents' tool calls (wsl/mcp_tunnel.ts); null when it never did. */
   #untunnel: (() => void) | null = null;
 
-  constructor(options: StudioOptions, construct: StudioConstruct = {}) {
+  constructor(options: AibOptions, construct: AibConstruct = {}) {
     this.options = options;
     this.connectionFactory = construct.connectionFactory ?? defaultFactory;
     this.token = newToken();
@@ -874,7 +874,7 @@ export class Studio {
         const key = pairKey(chat.provider, chat.sessionId);
         if (open.has(key) || this.reconnectPending.has(key) || chat.at > now) continue; // an open chat sends its own
         const failedAt = this.#scanFailed.get(key);
-        if (failedAt !== undefined && now - failedAt < Studio.SCAN_RETRY_MS) continue;
+        if (failedAt !== undefined && now - failedAt < Aib.SCAN_RETRY_MS) continue;
         try {
           await this.connect(chat.provider, chat.cwd, chat.sessionId, { background: false, continueAnyway: false, auto: true });
           this.#scanFailed.delete(key);

@@ -412,7 +412,7 @@ export interface ChatLocalOnly {
 /**
  * What a chat is told about local-only files. aib-shared/ only when git really ignores it (state 'on'); the main folder's aib-shared/
  * is made (empty) for a worktree chat, so its link (shared_link.ts) and the extra writable folder it is granted lead somewhere from
- * the first message. Shared by host/studio.ts (Windows) and the WSL helper (wsl/helper/local_only.ts, Linux paths).
+ * the first message. Shared by host/aib.ts (Windows) and the WSL helper (wsl/helper/local_only.ts, Linux paths).
  */
 export function chatLocalOnly(lo: LocalOnly, worktree: boolean, warn: (dir: string, error: unknown) => void = () => {}): ChatLocalOnly | null {
   const on = lo.defaultState === 'on';

@@ -9,9 +9,9 @@
 import { assert, assertEquals } from './_assert.ts';
 import { LOGIN, pc, tempDir } from './_remote_fixture.ts';
 import { UserClient } from './_docs.ts';
-import { runDocTool } from '../../outputs/agent-studio/server/docs/tools.ts';
-import { readModels } from '../../outputs/agent-studio/server/docs/drawing/model.ts';
-import { stamp } from '../../outputs/agent-studio/server/pcsync/rules.ts';
+import { runDocTool } from '../../app/server/docs/tools.ts';
+import { readModels } from '../../app/server/docs/drawing/model.ts';
+import { stamp } from '../../app/server/pcsync/rules.ts';
 import { closeAll, type Json, listener, type Node, paired, serveHeaders, TEST_FILES, tokenToA, until } from './_pcsync_fixture.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };

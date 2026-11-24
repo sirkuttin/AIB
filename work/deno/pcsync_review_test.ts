@@ -4,11 +4,11 @@
  * autostash setting (only on a repo that tracks aib-docs, never over a value the owner set).
  */
 import { assert, assertEquals } from './_assert.ts';
-import { isSecretPath } from '../../outputs/agent-studio/server/pcsync/rules.ts';
-import { parseFrame } from '../../outputs/agent-studio/server/pcsync/frames.ts';
-import { branchOf, ensureAutoStash, gitBusy } from '../../outputs/agent-studio/server/pcsync/gitstate.ts';
+import { isSecretPath } from '../../app/server/pcsync/rules.ts';
+import { parseFrame } from '../../app/server/pcsync/frames.ts';
+import { branchOf, ensureAutoStash, gitBusy } from '../../app/server/pcsync/gitstate.ts';
 import { tempDir } from './_remote_fixture.ts';
-import { DocStore } from '../../outputs/agent-studio/server/docs/store.ts';
+import { DocStore } from '../../app/server/docs/store.ts';
 
 const sep = Deno.build.os === 'windows' ? '\\' : '/';
 async function git(cwd: string, ...args: string[]) {

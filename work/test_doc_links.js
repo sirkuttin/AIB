@@ -6,10 +6,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const D = require('./fake_dom.js');
-const FS = require('../outputs/agent-studio/files-state.js');
-const L = require('../outputs/agent-studio/doc-links.js');
-const A = require('../outputs/agent-studio/artifacts-ui.js');
-const R = require('../outputs/agent-studio/commands-registry.js');
+const FS = require('../app/page/files-state.js');
+const L = require('../app/page/doc-links.js');
+const A = require('../app/page/artifacts-ui.js');
+const R = require('../app/page/commands-registry.js');
 
 const SCRIPTS = [
   'status-words.js',

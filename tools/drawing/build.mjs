@@ -1,5 +1,5 @@
 // Bundles the drawing page (Excalidraw + React + Yjs + server/docs/drawing/binding.ts) and the headless Mermaid converter into
-// outputs/agent-studio/vendor/excalidraw/, copies Excalidraw's fonts (all but the 13 MB CJK Xiaolai set) and writes VERSIONS.txt
+// app/vendor/excalidraw/, copies Excalidraw's fonts (all but the 13 MB CJK Xiaolai set) and writes VERSIONS.txt
 // with sizes and SHA-256. Build-time only:  cd tools/drawing && npm install && node build.mjs
 import * as esbuild from 'esbuild';
 import { createHash } from 'node:crypto';
@@ -9,10 +9,10 @@ import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const OUT = process.env.AIB_DRAWING_OUT || join(HERE, '../../outputs/agent-studio/vendor/excalidraw'); // the env var: a trial build elsewhere
+const OUT = process.env.AIB_DRAWING_OUT || join(HERE, '../../app/vendor/excalidraw'); // the env var: a trial build elsewhere
 const pkg = (name) => JSON.parse(readFileSync(join(HERE, 'node_modules', name, 'package.json'), 'utf8')).version;
 
-// server/docs/drawing/*.ts import Yjs by its bare name (outputs/agent-studio/deno.json maps it for Deno); nodePaths below points it
+// server/docs/drawing/*.ts import Yjs by its bare name (app/deno.json maps it for Deno); nodePaths below points it
 // at this folder's node_modules, so the page and the binding share one Yjs. npm: specifiers are mapped the same way, just in case.
 const npmSpecifiers = {
   name: 'npm-specifiers',

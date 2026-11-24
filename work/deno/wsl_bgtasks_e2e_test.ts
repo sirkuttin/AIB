@@ -13,14 +13,14 @@
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
 import { cleanRoot, DISTRO, inDistro, KEY, prepareRoot, readyHost, ROOT, T } from './_wsl_e2e.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { refOf } from '../../outputs/agent-studio/server/platform/location.ts';
-import { OwnershipConflict } from '../../outputs/agent-studio/server/ownership/ownership.ts';
-import { wslTranscriptGet } from '../../outputs/agent-studio/server/wsl/transcripts.ts';
-import { wslOwnerCheck, wslOwnPids } from '../../outputs/agent-studio/server/wsl/ownership.ts';
-import { FRESH_MS } from '../../outputs/agent-studio/server/wsl/procs.ts';
-import { parseQs } from '../../outputs/agent-studio/server/transcripts/pycompat.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { refOf } from '../../app/server/platform/location.ts';
+import { OwnershipConflict } from '../../app/server/ownership/ownership.ts';
+import { wslTranscriptGet } from '../../app/server/wsl/transcripts.ts';
+import { wslOwnerCheck, wslOwnPids } from '../../app/server/wsl/ownership.ts';
+import { FRESH_MS } from '../../app/server/wsl/procs.ts';
+import { parseQs } from '../../app/server/transcripts/pycompat.ts';
 
 type Json = Record<string, unknown>;
 const SYSTEM_ROOT = Deno.env.get('SystemRoot') ?? 'C:\\Windows';
@@ -45,8 +45,8 @@ async function transcript(id: string, rows: Json[], age = 0): Promise<string> {
   return folder;
 }
 
-function studioWith(state: string, command: (ref: string) => string[], program: string): Studio {
-  const studio = new Studio({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
+function studioWith(state: string, command: (ref: string) => string[], program: string): Aib {
+  const studio = new Aib({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
   studio.ownerProbe = () => {
     throw new Error('a WSL chat never asks Windows for its owner');
   };
@@ -62,7 +62,7 @@ Deno.test({
     const state = Deno.makeTempDirSync({ prefix: 'aib-wsl-own-e2e-' });
     await prepareRoot();
     let other: Deno.ChildProcess | null = null;
-    let studio: Studio | null = null;
+    let studio: Aib | null = null;
     try {
       const repo = `${ROOT}/repo`;
       const ref = refOf({ kind: 'wsl', distro: KEY, linuxPath: repo });
@@ -155,7 +155,7 @@ Deno.test({
     const state = Deno.makeTempDirSync({ prefix: 'aib-wsl-folder-e2e-' });
     await prepareRoot();
     const running: [string, Deno.ChildProcess][] = [];
-    let studio: Studio | null = null;
+    let studio: Aib | null = null;
     try {
       const repo = `${ROOT}/repo`;
       const ref = refOf({ kind: 'wsl', distro: KEY, linuxPath: repo });
@@ -249,7 +249,7 @@ Deno.test({
   async fn() {
     const state = Deno.makeTempDirSync({ prefix: 'aib-wsl-bgshell-e2e-' });
     await prepareRoot();
-    let studio: Studio | null = null;
+    let studio: Aib | null = null;
     try {
       const repo = `${ROOT}/repo`;
       const ref = refOf({ kind: 'wsl', distro: KEY, linuxPath: repo });
@@ -281,7 +281,7 @@ Deno.test({
   async fn() {
     const state = Deno.makeTempDirSync({ prefix: 'aib-wsl-bgstop-e2e-' });
     await prepareRoot();
-    let studio: Studio | null = null;
+    let studio: Aib | null = null;
     let unrelated = 0;
     let sleeper: Deno.ChildProcess | null = null;
     const alive = async (pid: number) => (await inDistro('kill -0 "$1" 2>/dev/null', [String(pid)])).code === 0;

@@ -7,10 +7,10 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { exists, FAKE_NPM, join, makeInstall, PY, tempDir, waitFor, withEnv } from './_agents.ts';
-import { checkLock, checkRequest, installMethods, type InstallContext } from '../../outputs/agent-studio/server/wsl/helper/agent_install.ts';
-import { makeMethods } from '../../outputs/agent-studio/server/wsl/helper/methods.ts';
-import { handleLine, type Handlers } from '../../outputs/agent-studio/server/wsl/helper/rpc.ts';
-import { adapterHooks } from '../../outputs/agent-studio/server/agents/adapters.ts';
+import { checkLock, checkRequest, installMethods, type InstallContext } from '../../app/server/wsl/helper/agent_install.ts';
+import { makeMethods } from '../../app/server/wsl/helper/methods.ts';
+import { handleLine, type Handlers } from '../../app/server/wsl/helper/rpc.ts';
+import { adapterHooks } from '../../app/server/agents/adapters.ts';
 import {
   installFacts,
   installParams,
@@ -20,9 +20,9 @@ import {
   pinnedVersion,
   resetInstallProgress,
   wslInstallCall,
-} from '../../outputs/agent-studio/server/wsl/agent_install.ts';
-import { type HelperMethods, WslHelperError, type WslHost } from '../../outputs/agent-studio/server/wsl/contract.ts';
-import { APP_ROOT } from '../../outputs/agent-studio/server/core/app.ts';
+} from '../../app/server/wsl/agent_install.ts';
+import { type HelperMethods, WslHelperError, type WslHost } from '../../app/server/wsl/contract.ts';
+import { APP_ROOT } from '../../app/server/core/app.ts';
 
 const T = { sanitizeOps: false, sanitizeResources: false }; // install jobs run in the background between awaits
 const ALLOW = JSON.parse(Deno.readTextFileSync(`${APP_ROOT}/agent_versions.json`)).agents;

@@ -16,7 +16,7 @@ The build fails on a broken link between pages. The site loads nothing from othe
 - Site address: `SITE` in `astro.config.mjs` (one place).
 - Screenshots: `src/assets/shots/<name>`. A page names its picture with `<Shot name="…" alt="…" />`; until the file exists,
   the README copy in `docs/screenshots/` is used, or a "Picture coming" box.
-- Keyboard shortcuts are read from `outputs/agent-studio/commands-registry.js` at build time.
+- Keyboard shortcuts are read from `app/page/commands-registry.js` at build time.
 - Release notes: `src/content/docs/releases.mdx` is made by `scripts/make-releases.py` (see the usage line at its top).
 
 ## Deploy

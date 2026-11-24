@@ -11,7 +11,7 @@ import { assert, assertEquals } from './_assert.ts';
 import { Browser, browserPath } from './_doc_browser.ts';
 import { pairPhone, phoneHeaders } from './_remote_fixture.ts';
 import { phonePage, tap } from './_remote_phone_page.ts';
-import { setAgentRows } from '../../outputs/agent-studio/server/remote/newchat.ts';
+import { setAgentRows } from '../../app/server/remote/newchat.ts';
 import { AGENT_ROWS, liveChat, phoneCall, v2Studio } from './_remote_v2b.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };

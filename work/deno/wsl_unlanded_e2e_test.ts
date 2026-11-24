@@ -7,8 +7,8 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { cleanRoot, inDistro, KEY, newAib, prepareRoot, ROOT, T } from './_wsl_e2e.ts';
-import { refOf } from '../../outputs/agent-studio/server/platform/location.ts';
-import * as ws from '../../outputs/agent-studio/server/wsl/subagents.ts';
+import { refOf } from '../../app/server/platform/location.ts';
+import * as ws from '../../app/server/wsl/subagents.ts';
 
 const sh = async (script: string, ...args: string[]) => (await inDistro(script, args)).out.trim();
 

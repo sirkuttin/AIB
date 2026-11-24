@@ -15,11 +15,11 @@
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
 import { FakeWslHost } from './_wsl_fake.ts';
-import { hostWhenReady, peekWslHost, removedLine, setDistroSource, setWslHostResolver, wslHost } from '../../outputs/agent-studio/server/wsl/access.ts';
-import { wslRoutes } from '../../outputs/agent-studio/server/web/wsl_routes.ts';
-import type { WebContext } from '../../outputs/agent-studio/server/web/server.ts';
-import type { AibRemoveResult, WslHost } from '../../outputs/agent-studio/server/wsl/contract.ts';
-import { WslHelperError } from '../../outputs/agent-studio/server/wsl/contract.ts';
+import { hostWhenReady, peekWslHost, removedLine, setDistroSource, setWslHostResolver, wslHost } from '../../app/server/wsl/access.ts';
+import { wslRoutes } from '../../app/server/web/wsl_routes.ts';
+import type { WebContext } from '../../app/server/web/server.ts';
+import type { AibRemoveResult, WslHost } from '../../app/server/wsl/contract.ts';
+import { WslHelperError } from '../../app/server/wsl/contract.ts';
 import {
   FINAL_CLEANUP_SCRIPT,
   finalArgs,
@@ -29,7 +29,7 @@ import {
   setFinalRunnerForTests,
   testGuard,
   windowsRefusals,
-} from '../../outputs/agent-studio/server/wsl/remove.ts';
+} from '../../app/server/wsl/remove.ts';
 import {
   addRemovedWorktrees,
   clearDistroRemoved,
@@ -37,10 +37,10 @@ import {
   isDistroRemoved,
   markDistroRemoved,
   setRemovedDir,
-} from '../../outputs/agent-studio/server/wsl/removed.ts';
-import { wslIsRemoved } from '../../outputs/agent-studio/server/wsl/worktrees.ts';
-import { followInstalls, resetInstallProgress } from '../../outputs/agent-studio/server/wsl/agent_install.ts';
-import type { WslInstall } from '../../outputs/agent-studio/server/wsl/install.ts';
+} from '../../app/server/wsl/removed.ts';
+import { wslIsRemoved } from '../../app/server/wsl/worktrees.ts';
+import { followInstalls, resetInstallProgress } from '../../app/server/wsl/agent_install.ts';
+import type { WslInstall } from '../../app/server/wsl/install.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };

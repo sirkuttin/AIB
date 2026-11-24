@@ -2,7 +2,7 @@
 /* The phone's saved copies of chats (phone.js cacheMerge and friends; owner decision Q6, 2026-11-16): joining the screen's events to
    the copy only where they meet, the per-chat byte cap by whole turns, keeping the 5 most recently active, another phone's copies
    going, and Load earlier from the copy. The page itself runs in work/deno/remote_phone_cache_e2e_test.ts. */
-const { APP } = require('./_paths');
+const { PAGE: APP } = require('./_paths');
 const test = require('node:test'),
   assert = require('node:assert/strict'),
   path = require('node:path');

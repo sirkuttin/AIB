@@ -6,11 +6,11 @@
 import { assert, assertEquals, assertRejects, assertThrows } from './_assert.ts';
 import { Frozen } from './_frozen.ts';
 import { deadPid, exists, FAKE_SIGNIN, join, PY, tempDir, touch, waitFor, withEnv } from './_agents.ts';
-import * as signin from '../../outputs/agent-studio/server/agents/signin.ts';
-import { Signer, type SignerOptions, SignInRefused, type Spawned } from '../../outputs/agent-studio/server/agents/signin.ts';
-import { signinView } from '../../outputs/agent-studio/server/web/shared.ts';
-import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
-import { treeSpawnOptions } from '../../outputs/agent-studio/server/platform/process_tree.ts';
+import * as signin from '../../app/server/agents/signin.ts';
+import { Signer, type SignerOptions, SignInRefused, type Spawned } from '../../app/server/agents/signin.ts';
+import { signinView } from '../../app/server/web/shared.ts';
+import { pidAlive } from '../../app/server/host/host_client.ts';
+import { treeSpawnOptions } from '../../app/server/platform/process_tree.ts';
 
 const SIGNED_IN = '{"loggedIn": true, "authMethod": "claude.ai", "email": "placeholder-account", "subscriptionType": "max"}';
 const SIGNED_OUT = '{"loggedIn": false}';

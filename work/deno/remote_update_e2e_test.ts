@@ -16,8 +16,8 @@ import { Browser, browserPath, type Page } from './_doc_browser.ts';
 import { NAME, pairPhone } from './_remote_fixture.ts';
 import { phoneCall, v2Studio } from './_remote_v2b.ts';
 import { phonePage, serveFor, tap } from './_remote_phone_page.ts';
-import { PLACEHOLDER_REPO, UpdateService } from '../../outputs/agent-studio/server/desktop/updater.ts';
-import type { HelperArgs } from '../../outputs/agent-studio/server/desktop/update_helper.ts';
+import { PLACEHOLDER_REPO, UpdateService } from '../../app/server/desktop/updater.ts';
+import type { HelperArgs } from '../../app/server/desktop/update_helper.ts';
 import { writeFeed } from '../../tools/build.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };

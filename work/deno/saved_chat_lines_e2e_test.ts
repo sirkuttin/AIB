@@ -12,8 +12,8 @@ import { Browser, browserPath } from './_doc_browser.ts';
 import { pairPhone, pc } from './_remote_fixture.ts';
 import { phoneCall, v2Studio } from './_remote_v2b.ts';
 import { phonePage, tap } from './_remote_phone_page.ts';
-import { placeLines } from '../../outputs/agent-studio/server/history/lines.ts';
-import { withKeptLines } from '../../outputs/agent-studio/server/remote/saved.ts';
+import { placeLines } from '../../app/server/history/lines.ts';
+import { withKeptLines } from '../../app/server/remote/saved.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
 type Json = Record<string, unknown>;

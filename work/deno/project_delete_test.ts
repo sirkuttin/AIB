@@ -15,9 +15,9 @@ import {
   type TrashKind,
   type TrashLayer,
   worktreeOf,
-} from '../../outputs/agent-studio/server/desktop/project_delete.ts';
-import { afterConnect, bringBack, projectRemove, restoreFolders } from '../../outputs/agent-studio/server/web/project_routes.ts';
-import { ConversationState } from '../../outputs/agent-studio/server/state/store.ts';
+} from '../../app/server/desktop/project_delete.ts';
+import { afterConnect, bringBack, projectRemove, restoreFolders } from '../../app/server/web/project_routes.ts';
+import { ConversationState } from '../../app/server/state/store.ts';
 
 const WINDOWS = Deno.build.os === 'windows';
 const SEP = WINDOWS ? '\\' : '/';
@@ -261,7 +261,7 @@ Deno.test({
       assertEquals(await osTrash.kind(t.project), 'recycle', 'the temp drive has a Recycle Bin');
       const out = `${t.root}${SEP}result.txt`;
       const child = `${t.root}${SEP}child.ts`;
-      const mod = new URL('../../outputs/agent-studio/server/desktop/project_delete.ts', import.meta.url).href;
+      const mod = new URL('../../app/server/desktop/project_delete.ts', import.meta.url).href;
       await Deno.writeTextFile(
         child,
         `import { osTrash } from ${JSON.stringify(mod)};\n` +

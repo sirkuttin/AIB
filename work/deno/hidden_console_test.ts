@@ -7,11 +7,11 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { DENO, Fixture, MAIN, TEST_OPTIONS, until } from './_host_fixture.ts';
-import { spawnDetached } from '../../outputs/agent-studio/server/platform/spawn_detached.ts';
-import { pidAlive, readInfo, stopHost } from '../../outputs/agent-studio/server/host/host_client.ts';
+import { spawnDetached } from '../../app/server/platform/spawn_detached.ts';
+import { pidAlive, readInfo, stopHost } from '../../app/server/host/host_client.ts';
 
 const WIN = Deno.build.os === 'windows';
-const CONSOLE_TS = new URL('../../outputs/agent-studio/server/platform/console.ts', import.meta.url).href;
+const CONSOLE_TS = new URL('../../app/server/platform/console.ts', import.meta.url).href;
 
 /** Code that reports this process's console: {cp, window, visible, pids}. Run with `deno eval`. */
 const REPORT = `

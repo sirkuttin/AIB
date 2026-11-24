@@ -13,8 +13,8 @@
  *     answered notification away.
  */
 import { assert, assertEquals } from "./_assert.ts";
-import { DEVICE_HEADER } from "../../outputs/agent-studio/server/remote/server.ts";
-import { readRemotePort } from "../../outputs/agent-studio/server/remote/port.ts";
+import { DEVICE_HEADER } from "../../app/server/remote/server.ts";
+import { readRemotePort } from "../../app/server/remote/port.ts";
 import {
   fakeTailscale,
   LOGIN,

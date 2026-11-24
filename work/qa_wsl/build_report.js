@@ -8,7 +8,7 @@ const { launch } = require('./browser');
 
 const ROOT = path.join(__dirname, '..', '..');
 const OUT = path.join(ROOT, 'outputs', 'qa-wsl');
-const APP = path.join(ROOT, 'outputs', 'agent-studio');
+const APP = path.join(ROOT, 'app', 'page');
 const SCRATCH = path.join(ROOT, 'dist', '.scratch', 'qa-wsl');
 const data = JSON.parse(fs.readFileSync(path.join(OUT, 'data.json'), 'utf8'));
 const F = JSON.parse(fs.readFileSync(path.join(__dirname, 'findings.json'), 'utf8'));
@@ -155,7 +155,7 @@ function stringTable() {
 function md(diffs, strings) {
   const L = [];
   L.push('# AIB WSL screens: measuring QA (looks)', '');
-  L.push(`Run ${data.when}. Real page code (outputs/agent-studio/*.js + *.css) against fake routes of the contract shapes, headless Chrome, 1280 x 860 (the desktop window's default size, server/desktop/window.ts:29), device scale 1. Themes: teal-dark (AIB's default, THEMES.md) and teal-light. Reference: outputs/wsl-linking-mockup.html (embeds its own copy of theme.css/settings.css). Numbers are computed styles of the first visible matching element; colours as #rrggbb.`, '');
+  L.push(`Run ${data.when}. Real page code (app/page/*.js + *.css) against fake routes of the contract shapes, headless Chrome, 1280 x 860 (the desktop window's default size, server/desktop/window.ts:29), device scale 1. Themes: teal-dark (AIB's default, THEMES.md) and teal-light. Reference: outputs/wsl-linking-mockup.html (embeds its own copy of theme.css/settings.css). Numbers are computed styles of the first visible matching element; colours as #rrggbb.`, '');
   L.push('## Findings (ranked)', '');
   for (const sev of ['broken', 'wrong vs reference', 'polish']) {
     const list = F.findings.filter((x) => x.sev === sev);

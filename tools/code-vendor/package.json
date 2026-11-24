@@ -1,7 +1,7 @@
 {
   "name": "aib-code-vendor",
   "private": true,
-  "description": "Builds the file tab's code editor bundle (outputs/agent-studio/vendor/code/editor.js): CodeMirror 6 with AIB's language set. Run: npm install && node build.mjs",
+  "description": "Builds the file tab's code editor bundle (app/vendor/code/editor.js): CodeMirror 6 with AIB's language set. Run: npm install && node build.mjs",
   "type": "module",
   "dependencies": {
     "@codemirror/autocomplete": "6.20.4",

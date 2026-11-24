@@ -12,10 +12,10 @@ import { assert, assertEquals } from './_assert.ts';
 import { fake, until } from './_connection.ts';
 import { withEnv } from './_agents.ts';
 import { Sandbox } from './_worktree_fixtures.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { ANTIGRAVITY_SUBAGENT_NOTE, ANTIGRAVITY_SUBAGENT_PROMPT } from '../../outputs/agent-studio/server/subagents/antigravity.ts';
-import { join } from '../../outputs/agent-studio/server/platform/ospath.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { ANTIGRAVITY_SUBAGENT_NOTE, ANTIGRAVITY_SUBAGENT_PROMPT } from '../../app/server/subagents/antigravity.ts';
+import { join } from '../../app/server/platform/ospath.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -23,11 +23,11 @@ const T = { sanitizeResources: false, sanitizeOps: false };
 class Host {
   readonly box = new Sandbox();
   readonly log = join(this.box.base, 'agent.log');
-  readonly studios: Studio[] = [];
+  readonly studios: Aib[] = [];
   readonly #restore = withEnv({ FAKE_ACP_LOG: this.log });
 
-  studio(flags: string[]): Studio {
-    const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.box.state, port: 0 });
+  studio(flags: string[]): Aib {
+    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.box.state, port: 0 });
     studio.ownerProbe = () => null;
     studio.settings.worktreePerChat = () => false; // in the project folder: what an Antigravity chat does
     studio.agentLaunch = () => Promise.resolve([['fixture'], {}]);

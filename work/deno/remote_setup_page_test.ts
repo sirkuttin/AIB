@@ -14,7 +14,7 @@ import {
   tempDir,
 } from "./_remote_fixture.ts";
 import { assertSafe, LOGIN_URL, tailscaleSim } from "./_tailscale_sim.ts";
-import { LINUX_INSTALL } from "../../outputs/agent-studio/server/remote/install.ts";
+import { LINUX_INSTALL } from "../../app/server/remote/install.ts";
 
 const FAKE_SHELL = new URL("./_fake_setup_shell.ts", import.meta.url).pathname
   .replace(/^\/([A-Za-z]:)/, "$1");

@@ -6,9 +6,9 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { git, HAVE_GIT, TempRepo, write } from './_git_repo.ts';
-import * as osp from '../../outputs/agent-studio/server/platform/ospath.ts';
-import { safeParts } from '../../outputs/agent-studio/server/worktrees/files.ts';
-import { safeRelpath } from '../../outputs/agent-studio/server/worktrees/changes.ts';
+import * as osp from '../../app/server/platform/ospath.ts';
+import { safeParts } from '../../app/server/worktrees/files.ts';
+import { safeRelpath } from '../../app/server/worktrees/changes.ts';
 import {
   agentEnv,
   captureLoginEnv,
@@ -16,7 +16,7 @@ import {
   ENV_MARK,
   loginShell,
   parseEnvDump,
-} from '../../outputs/agent-studio/server/wsl/helper/env.ts';
+} from '../../app/server/wsl/helper/env.ts';
 import {
   BAD_PARAMS,
   handleLine,
@@ -25,7 +25,7 @@ import {
   NO_METHOD,
   PARSE_ERROR,
   serveLines,
-} from '../../outputs/agent-studio/server/wsl/helper/rpc.ts';
+} from '../../app/server/wsl/helper/rpc.ts';
 import {
   checkUrl,
   LineSplitter,
@@ -34,10 +34,10 @@ import {
   serveOpenFifo,
   shimScript,
   takeLine,
-} from '../../outputs/agent-studio/server/wsl/helper/browser.ts';
-import { encodeBase64, makeMethods } from '../../outputs/agent-studio/server/wsl/helper/methods.ts';
-import { cleanOldVersions, refusal, wslRoot } from '../../outputs/agent-studio/server/wsl/helper_main.ts';
-import type { HelperMethods } from '../../outputs/agent-studio/server/wsl/contract.ts';
+} from '../../app/server/wsl/helper/browser.ts';
+import { encodeBase64, makeMethods } from '../../app/server/wsl/helper/methods.ts';
+import { cleanOldVersions, refusal, wslRoot } from '../../app/server/wsl/helper_main.ts';
+import type { HelperMethods } from '../../app/server/wsl/contract.ts';
 import { helperCompileArgs, modeFor, TARGETS, WSL_HELPER_ENTRY, wslTarget } from '../../tools/build.ts';
 
 const enc = (s: string) => new TextEncoder().encode(s);

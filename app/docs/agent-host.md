@@ -4,10 +4,10 @@ Agent Studio runs as two processes so that deploying a code change does not cut 
 
 | Process | Module | Changes | Owns |
 | --- | --- | --- | --- |
-| **Agent host** | `server/host/agent_host.ts` (+ `Connection`, `Studio` in `server/host/studio.ts`), run as `AIB host` | rarely | every ACP adapter subprocess and its stdio pipes; event buffers and cursors; prompt receipts; settings changes queued during a turn (see models-and-settings.md); pending approvals, questions and sign-ins; client capabilities (terminal / fs); session leases; owner announcements and their heartbeat; the recovery list ("Was open in Studio before restart"); the ownership probe |
+| **Agent host** | `server/host/agent_host.ts` (+ `Connection`, `Studio` in `server/host/aib.ts`), run as `AIB host` | rarely | every ACP adapter subprocess and its stdio pipes; event buffers and cursors; prompt receipts; settings changes queued during a turn (see models-and-settings.md); pending approvals, questions and sign-ins; client capabilities (terminal / fs); session leases; owner announcements and their heartbeat; the recovery list ("Was open in Studio before restart"); the ownership probe |
 | **Web server** | `server/web/server.ts`, `server/transcripts/monitor.ts`, page files | often | the UI and the transcript/monitor APIs; the page token and same-origin checks; pin / archive / delete marks (`studio-conversations.json`); a thin `RemoteStudio` that forwards live-connection calls to the host |
 
-The web server (`AIB` / `AIB serve` in a built app, `deno run -A server/main.ts [serve]` from the source folder) finds or starts the host for its `--state-dir` and serves the HTTP API on `--port`. `--in-process` keeps the single-process behaviour (agents are children of the web server; restarting it ends them). Tests and debugging use that mode; `Connection` and `Studio` (`server/host/studio.ts`) are the same classes in both modes, the host simply runs a `Studio`.
+The web server (`AIB` / `AIB serve` in a built app, `deno run -A server/main.ts [serve]` from the source folder) finds or starts the host for its `--state-dir` and serves the HTTP API on `--port`. `--in-process` keeps the single-process behaviour (agents are children of the web server; restarting it ends them). Tests and debugging use that mode; `Connection` and `Studio` (`server/host/aib.ts`) are the same classes in both modes, the host simply runs a `Studio`.
 
 ## Why the ownership probe lives in the host
 

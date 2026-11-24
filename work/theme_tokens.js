@@ -11,7 +11,7 @@
      isColour(name)        false for the few tokens that are not colours (status symbols, the scrollbar pair) */
 const fs = require('node:fs');
 const path = require('node:path');
-const { APP } = require('./_paths');
+const { PAGE: APP } = require('./_paths');
 const { cssRules } = require('./css_rules.js');
 
 const THEME_CSS = path.join(APP, 'theme.css');

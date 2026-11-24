@@ -8,10 +8,10 @@
  *     PC apply to the phone and the desktop notifications.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { AttentionWatcher, type Fire } from '../../outputs/agent-studio/server/attention/watcher.ts';
-import { RULES } from '../../outputs/agent-studio/server/attention/rules.ts';
-import { projectKey } from '../../outputs/agent-studio/server/desktop/project_delete.ts';
-import { folderKinds } from '../../outputs/agent-studio/server/desktop/folders.ts';
+import { AttentionWatcher, type Fire } from '../../app/server/attention/watcher.ts';
+import { RULES } from '../../app/server/attention/rules.ts';
+import { projectKey } from '../../app/server/desktop/project_delete.ts';
+import { folderKinds } from '../../app/server/desktop/folders.ts';
 
 type Json = Record<string, unknown>;
 const REF = 'wsl://ubuntu/home/u/app';

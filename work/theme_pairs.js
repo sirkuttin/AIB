@@ -8,7 +8,7 @@
    Not a test file. */
 const fs = require('node:fs');
 const path = require('node:path');
-const { APP } = require('./_paths');
+const { PAGE: APP } = require('./_paths');
 const { cssRules } = require('./css_rules.js');
 
 const TEXT = 4.5,

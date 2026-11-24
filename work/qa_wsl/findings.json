@@ -1,5 +1,5 @@
 {
- "summary": "Measuring QA of the new WSL screens. Real page code (outputs/agent-studio) against fake routes of the contract shapes, headless Chrome, 1280 x 860, teal-dark (AIB's default and the mockup's theme) and teal-light. Nothing is broken. The Settings page matches the mockup closely: 31 to 37 elements per state have identical computed styles. The differences are listed below with both values. The biggest issues are the new-chat WSL box, which does not line up with the form above it; raw wsl:// refs in the New project dialog; three chat states that all read 'Ready'; low contrast in teal-light; and parts of the mockup that were never built.",
+ "summary": "Measuring QA of the new WSL screens. Real page code (app) against fake routes of the contract shapes, headless Chrome, 1280 x 860, teal-dark (AIB's default and the mockup's theme) and teal-light. Nothing is broken. The Settings page matches the mockup closely: 31 to 37 elements per state have identical computed styles. The differences are listed below with both values. The biggest issues are the new-chat WSL box, which does not line up with the form above it; raw wsl:// refs in the New project dialog; three chat states that all read 'Ready'; low contrast in teal-light; and parts of the mockup that were never built.",
  "findings": [
   {
    "sev": "wrong vs reference",

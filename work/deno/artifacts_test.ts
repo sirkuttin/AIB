@@ -28,9 +28,9 @@ import {
   Service,
   Watcher,
   WriteTracker,
-} from '../../outputs/agent-studio/server/artifacts/artifacts.ts';
-import { configure as configureKeys, issue } from '../../outputs/agent-studio/server/artifacts/keys.ts';
-import { ArtifactHistory } from '../../outputs/agent-studio/server/docs/history.ts';
+} from '../../app/server/artifacts/artifacts.ts';
+import { configure as configureKeys, issue } from '../../app/server/artifacts/keys.ts';
+import { ArtifactHistory } from '../../app/server/docs/history.ts';
 
 const WIN = Deno.build.os === 'windows';
 const SEP = WIN ? '\\' : '/';
@@ -1273,7 +1273,7 @@ Deno.test('parity teardown', async () => {
 // ---- the web server's wiring (web/artifact_wiring.ts) ----------------------------------------------------------------------
 
 Deno.test('wiring: "Open in Artifacts" registers a file for a saved chat that is not running (its transcript folder is its folder)', async () => {
-  const { Artifacts } = await import('../../outputs/agent-studio/server/web/artifact_wiring.ts');
+  const { Artifacts } = await import('../../app/server/web/artifact_wiring.ts');
   const tmp = temp();
   using _ = tmp;
   const project = join(tmp.dir, 'proj');

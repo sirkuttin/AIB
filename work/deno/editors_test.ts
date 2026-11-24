@@ -18,9 +18,9 @@ import {
   publicEntry,
   resolveInside,
   stripJsonc,
-} from '../../outputs/agent-studio/server/desktop/editors.ts';
-import { EDITOR_IDS } from '../../outputs/agent-studio/server/state/settings.ts';
-import * as osp from '../../outputs/agent-studio/server/platform/ospath.ts';
+} from '../../app/server/desktop/editors.ts';
+import { EDITOR_IDS } from '../../app/server/state/settings.ts';
+import * as osp from '../../app/server/platform/ospath.ts';
 
 const CAPS_ALL = { folder: true, file: true, fileAtLine: true, workspace: true };
 const CAPS_FOLDER = { folder: true, file: false, fileAtLine: false, workspace: false };

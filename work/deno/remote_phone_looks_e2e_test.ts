@@ -8,7 +8,7 @@
 import { assert, assertEquals } from './_assert.ts';
 import { Browser, browserPath, type Page } from './_doc_browser.ts';
 import { pairPhone } from './_remote_fixture.ts';
-import { setAgentRows } from '../../outputs/agent-studio/server/remote/newchat.ts';
+import { setAgentRows } from '../../app/server/remote/newchat.ts';
 import { liveChat, v2Studio } from './_remote_v2b.ts';
 import { phonePage, tap } from './_remote_phone_page.ts';
 

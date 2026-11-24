@@ -8,11 +8,11 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { cleanRoot, DISTRO, inDistro, KEY, prepareRoot, readyHost, ROOT, T } from './_wsl_e2e.ts';
-import { PROBE_SCRIPT, runWsl } from '../../outputs/agent-studio/server/wsl/install.ts';
-import { WSL_ROOT_DIR } from '../../outputs/agent-studio/server/wsl/contract.ts';
-import { refOf } from '../../outputs/agent-studio/server/platform/location.ts';
-import { studioRoutes } from '../../outputs/agent-studio/server/web/studio_routes.ts';
-import type { WebContext } from '../../outputs/agent-studio/server/web/server.ts';
+import { PROBE_SCRIPT, runWsl } from '../../app/server/wsl/install.ts';
+import { WSL_ROOT_DIR } from '../../app/server/wsl/contract.ts';
+import { refOf } from '../../app/server/platform/location.ts';
+import { aibRoutes } from '../../app/server/web/aib_routes.ts';
+import type { WebContext } from '../../app/server/web/server.ts';
 
 type Json = Record<string, unknown>;
 const DEC = new TextDecoder();
@@ -51,7 +51,7 @@ Deno.test({
     await prepareRoot();
     try {
       await readyHost();
-      const routes = studioRoutes();
+      const routes = aibRoutes();
       const ctx = {} as WebContext;
       const check = async (query: Record<string, string>) => {
         const url = new URL('http://127.0.0.1/api/live/folders/check?' + new URLSearchParams(query));

@@ -9,9 +9,9 @@ import { python } from './_work.ts';
 import { Frozen } from './_frozen.ts';
 import { FIXED_DATES, foreignHolds, foreignProbe, makeRepo, runGit, Sandbox, setFixedDates, write } from './_worktree_fixtures.ts';
 import { BOTH, CHAT_EDIT, Conn, list, LiveSync, LINES, ProjectSync, setup, text, until, USER_EDIT, WIN } from './_sync_fixtures.ts';
-import * as wt from '../../outputs/agent-studio/server/worktrees/worktrees.ts';
-import * as sync from '../../outputs/agent-studio/server/worktrees/sync.ts';
-import { pathOf } from '../../outputs/agent-studio/server/state/paths.ts';
+import * as wt from '../../app/server/worktrees/worktrees.ts';
+import * as sync from '../../app/server/worktrees/sync.ts';
+import { pathOf } from '../../app/server/state/paths.ts';
 
 Deno.test('three_way gives what Python gave on every kind', async () => {
   const py = new Frozen();

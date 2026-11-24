@@ -14,18 +14,18 @@
  * An agent whose address is already a model server with "Use with" on for it is skipped (its saved address is left as it is, and said so).
  *
  * Usage (from the repo folder; AIB and its keeper must be quit):
- *   deno run -A --config outputs/agent-studio/deno.json work/migrate/beta_addresses_to_model_servers.ts           dry run: prints the plan
- *   deno run -A --config outputs/agent-studio/deno.json work/migrate/beta_addresses_to_model_servers.ts --apply   does it
+ *   deno run -A --config app/deno.json work/migrate/beta_addresses_to_model_servers.ts           dry run: prints the plan
+ *   deno run -A --config app/deno.json work/migrate/beta_addresses_to_model_servers.ts --apply   does it
  * Option: --data <AIB data folder> (default: the per-user AIB data folder, %LOCALAPPDATA%\AgentStudio on Windows).
  * Safe to run again: an address that is already moved is no longer saved on the card, so there is nothing left to do.
  */
-import { SettingsStore } from '../../outputs/agent-studio/server/state/settings.ts';
-import { pathOf, userStateDir } from '../../outputs/agent-studio/server/state/paths.ts';
-import { tryLockNow } from '../../outputs/agent-studio/server/platform/lock.ts';
-import { LOCK_FILE } from '../../outputs/agent-studio/server/desktop/single_instance.ts';
-import { keeperRunning } from '../../outputs/agent-studio/server/keeper/client.ts';
-import { defaultServerName, USE_WITH } from '../../outputs/agent-studio/server/agents/model_servers.ts';
-import { betaAgent } from '../../outputs/agent-studio/server/agents/beta_catalog.ts';
+import { SettingsStore } from '../../app/server/state/settings.ts';
+import { pathOf, userStateDir } from '../../app/server/state/paths.ts';
+import { tryLockNow } from '../../app/server/platform/lock.ts';
+import { LOCK_FILE } from '../../app/server/desktop/single_instance.ts';
+import { keeperRunning } from '../../app/server/keeper/client.ts';
+import { defaultServerName, USE_WITH } from '../../app/server/agents/model_servers.ts';
+import { betaAgent } from '../../app/server/agents/beta_catalog.ts';
 
 const say = (text = '') => console.log(text);
 const held: Deno.FsFile[] = [];

@@ -16,15 +16,15 @@
 import { assert, assertEquals } from './_assert.ts';
 import { FAKE, pause, PYTHON, until } from './_connection.ts';
 import { makeRepo, runGit, write } from './_worktree_fixtures.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { Swarm } from '../../outputs/agent-studio/server/swarm/service.ts';
-import { readHandoffs } from '../../outputs/agent-studio/server/swarm/handoff.ts';
-import { pathOf } from '../../outputs/agent-studio/server/state/paths.ts';
-import { readSubagents, type SubagentRecord } from '../../outputs/agent-studio/server/subagents/service.ts';
-import { projectChanges } from '../../outputs/agent-studio/server/worktrees/project_changes.ts';
-import { UNLANDED_TOOLS } from '../../outputs/agent-studio/server/artifacts/mcp.ts';
-import * as wt from '../../outputs/agent-studio/server/worktrees/worktrees.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { Swarm } from '../../app/server/swarm/service.ts';
+import { readHandoffs } from '../../app/server/swarm/handoff.ts';
+import { pathOf } from '../../app/server/state/paths.ts';
+import { readSubagents, type SubagentRecord } from '../../app/server/subagents/service.ts';
+import { projectChanges } from '../../app/server/worktrees/project_changes.ts';
+import { UNLANDED_TOOLS } from '../../app/server/artifacts/mcp.ts';
+import * as wt from '../../app/server/worktrees/worktrees.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -34,7 +34,7 @@ class Box {
   readonly dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-unlanded-' }));
   readonly state = pathOf(this.dir, 'state');
   readonly project = makeRepo(pathOf(this.dir, 'proj'));
-  readonly studio: Studio;
+  readonly studio: Aib;
   swarm: Swarm;
   n = 0;
 
@@ -42,7 +42,7 @@ class Box {
     runGit(this.project, 'config', 'user.name', 't');
     runGit(this.project, 'config', 'user.email', 't@t');
     runGit(this.project, 'config', 'core.autocrlf', 'false');
-    const studio = new Studio({ stateDir: this.state, port: 0 }, { keeper: null });
+    const studio = new Aib({ stateDir: this.state, port: 0 }, { keeper: null });
     studio.ownerProbe = () => null;
     studio.agentLaunch = () => Promise.resolve([['unused'], {}]);
     studio.connectionFactory = (_command, cwd, provider, options) =>

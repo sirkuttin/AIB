@@ -8,9 +8,9 @@
 import { assert, assertEquals } from './_assert.ts';
 import { Browser, browserPath } from './_doc_browser.ts';
 import { remoteStudio } from './_remote_fixture.ts';
-import { DesktopNotifications } from '../../outputs/agent-studio/server/desktop/notify.ts';
-import { startAttention } from '../../outputs/agent-studio/server/attention/watcher.ts';
-import { blockedCount } from '../../outputs/agent-studio/server/attention/inbox_rules.ts';
+import { DesktopNotifications } from '../../app/server/desktop/notify.ts';
+import { startAttention } from '../../app/server/attention/watcher.ts';
+import { blockedCount } from '../../app/server/attention/inbox_rules.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
 type Json = Record<string, unknown>;

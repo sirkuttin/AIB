@@ -4,10 +4,10 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import * as Y from 'yjs';
-import { DocStore, mdBody } from '../../outputs/agent-studio/server/docs/store.ts';
-import { ArtifactHistory } from '../../outputs/agent-studio/server/docs/history.ts';
-import { ArtifactStore } from '../../outputs/agent-studio/server/artifacts/artifacts.ts';
-import { DocRefusal } from '../../outputs/agent-studio/server/docs/live_doc.ts';
+import { DocStore, mdBody } from '../../app/server/docs/store.ts';
+import { ArtifactHistory } from '../../app/server/docs/history.ts';
+import { ArtifactStore } from '../../app/server/artifacts/artifacts.ts';
+import { DocRefusal } from '../../app/server/docs/live_doc.ts';
 import { legacyMd, UserClient } from './_docs.ts';
 
 const sep = Deno.build.os === 'windows' ? '\\' : '/';

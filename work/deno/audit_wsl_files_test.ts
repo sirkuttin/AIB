@@ -4,16 +4,16 @@
  * read on the Windows disk); the messages are what the user sees.
  */
 import { assert, assertEquals, assertThrows } from './_assert.ts';
-import * as osp from '../../outputs/agent-studio/server/platform/ospath.ts';
+import * as osp from '../../app/server/platform/ospath.ts';
 import { FakeWslHost } from './_wsl_fake.ts';
-import { setDistroSource, setWslHostResolver } from '../../outputs/agent-studio/server/wsl/access.ts';
-import { _mentioned, filesRoutes } from '../../outputs/agent-studio/server/web/files_routes.ts';
-import type { WebContext } from '../../outputs/agent-studio/server/web/server.ts';
-import { makeMethods } from '../../outputs/agent-studio/server/wsl/helper/methods.ts';
-import { handleLine } from '../../outputs/agent-studio/server/wsl/helper/rpc.ts';
-import { cleanPathText, EditorError, resolveWslInside } from '../../outputs/agent-studio/server/desktop/editors.ts';
-import { checkShape } from '../../outputs/agent-studio/server/worktrees/outside_files.ts';
-import { FilesError } from '../../outputs/agent-studio/server/worktrees/files.ts';
+import { setDistroSource, setWslHostResolver } from '../../app/server/wsl/access.ts';
+import { _mentioned, filesRoutes } from '../../app/server/web/files_routes.ts';
+import type { WebContext } from '../../app/server/web/server.ts';
+import { makeMethods } from '../../app/server/wsl/helper/methods.ts';
+import { handleLine } from '../../app/server/wsl/helper/rpc.ts';
+import { cleanPathText, EditorError, resolveWslInside } from '../../app/server/desktop/editors.ts';
+import { checkShape } from '../../app/server/worktrees/outside_files.ts';
+import { FilesError } from '../../app/server/worktrees/files.ts';
 
 const WIN = Deno.build.os === 'windows';
 const REF = 'wsl://ubuntu/home/u/app';

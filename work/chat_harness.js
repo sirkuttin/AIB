@@ -1,5 +1,5 @@
 'use strict';
-const { APP: APP_DIR } = require('./_paths');
+const { PAGE: APP_DIR } = require('./_paths');
 /* Shared by the tests that run chat.js. chat.js is one IIFE, so a test reaches it only through window.StudioChat (its test hook):
    loadChat() runs the file in a vm context that has a fake page, and run() evaluates a short expression against the hook, where
    functions and the `state` accessors read like plain names, e.g. run("current='conn-1';refresh()").

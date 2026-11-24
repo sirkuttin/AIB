@@ -13,10 +13,10 @@ import { assert, assertEquals } from './_assert.ts';
 import { Frozen } from './_frozen.ts';
 import { commit, runGit, Sandbox, write } from './_worktree_fixtures.ts';
 import { BOTH, CHAT_EDIT, type Ctx, exists, list, LINES, note, setup, show, text, touched, USER_EDIT } from './_sync_fixtures.ts';
-import * as wt from '../../outputs/agent-studio/server/worktrees/worktrees.ts';
-import * as sync from '../../outputs/agent-studio/server/worktrees/sync.ts';
-import * as m from '../../outputs/agent-studio/server/worktrees/merge.ts';
-import { pathOf } from '../../outputs/agent-studio/server/state/paths.ts';
+import * as wt from '../../app/server/worktrees/worktrees.ts';
+import * as sync from '../../app/server/worktrees/sync.ts';
+import * as m from '../../app/server/worktrees/merge.ts';
+import { pathOf } from '../../app/server/state/paths.ts';
 
 
 // ---- live sync (test_worktree_sync.py) --------------------------------------------------------------------------------

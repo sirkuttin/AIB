@@ -13,12 +13,12 @@
 import { assert, assertEquals } from './_assert.ts';
 import { FAKE, pause, PYTHON, until } from './_connection.ts';
 import { makeRepo, read, runGit, write } from './_worktree_fixtures.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { LANDING_BUSY_WAKE_S, LANDING_DIRTY_RETRY_S, LANDING_REMIND_S, Swarm } from '../../outputs/agent-studio/server/swarm/service.ts';
-import { pathOf } from '../../outputs/agent-studio/server/state/paths.ts';
-import { landingWords, ownSubagentPath, readSubagents, type SubagentRecord } from '../../outputs/agent-studio/server/subagents/service.ts';
-import * as wt from '../../outputs/agent-studio/server/worktrees/worktrees.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { LANDING_BUSY_WAKE_S, LANDING_DIRTY_RETRY_S, LANDING_REMIND_S, Swarm } from '../../app/server/swarm/service.ts';
+import { pathOf } from '../../app/server/state/paths.ts';
+import { landingWords, ownSubagentPath, readSubagents, type SubagentRecord } from '../../app/server/subagents/service.ts';
+import * as wt from '../../app/server/worktrees/worktrees.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -28,7 +28,7 @@ class Box {
   readonly dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-sub-landing-' }));
   readonly state = pathOf(this.dir, 'state');
   readonly project = makeRepo(pathOf(this.dir, 'proj'));
-  readonly studio: Studio;
+  readonly studio: Aib;
   swarm: Swarm;
   n = 0;
 
@@ -36,7 +36,7 @@ class Box {
     runGit(this.project, 'config', 'user.name', 't');
     runGit(this.project, 'config', 'user.email', 't@t');
     runGit(this.project, 'config', 'core.autocrlf', 'false');
-    const studio = new Studio({ stateDir: this.state, port: 0 }, { keeper: null });
+    const studio = new Aib({ stateDir: this.state, port: 0 }, { keeper: null });
     studio.ownerProbe = () => null;
     studio.agentLaunch = () => Promise.resolve([['unused'], {}]);
     studio.connectionFactory = (_command, cwd, provider, options) =>
@@ -435,7 +435,7 @@ Deno.test({
       Deno.writeTextFileSync(pathOf(dir, 'agent-agentOld1.jsonl'), JSON.stringify({ type: 'assistant', message: { stop_reason: 'end_turn', content: [] } }) + '\n');
       Deno.writeTextFileSync(pathOf(dir, 'agent-agentOld2.meta.json'), JSON.stringify({ description: 'still at work' }));
       Deno.writeTextFileSync(pathOf(dir, 'agent-agentOld2.jsonl'), '{}\n');
-      await main.prompt('next'); // the chat's next turn end adopts them (host/studio.ts turnEnded -> reconcileEnded)
+      await main.prompt('next'); // the chat's next turn end adopts them (host/aib.ts turnEnded -> reconcileEnded)
       await settle(main);
       await until(() => readSubagents(box.state)[a.id]?.chat === main.id, 'adopted by the new chat', 15);
       assertEquals(readSubagents(box.state)[a.id].state, 'done');

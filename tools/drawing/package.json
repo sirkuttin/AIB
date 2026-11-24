@@ -1,7 +1,7 @@
 {
   "name": "aib-drawing-build",
   "private": true,
-  "description": "Build-time only: bundles Excalidraw + the AIB drawing binding into outputs/agent-studio/vendor/excalidraw/. node_modules stays here, gitignored.",
+  "description": "Build-time only: bundles Excalidraw + the AIB drawing binding into app/vendor/excalidraw/. node_modules stays here, gitignored.",
   "type": "module",
   "dependencies": {
     "@excalidraw/excalidraw": "0.18.1",

@@ -5,16 +5,16 @@
  * OMP sessions folder; never the real ones.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { AddedProjects, NO_PARENT_TTL_MS, STORE_VERSION } from '../../outputs/agent-studio/server/desktop/added_projects.ts';
-import { FolderPresence } from '../../outputs/agent-studio/server/desktop/folder_presence.ts';
-import { projectKey } from '../../outputs/agent-studio/server/desktop/project_delete.ts';
-import { worktreeParent } from '../../outputs/agent-studio/server/desktop/folders.ts';
-import { makeContext, WebServer } from '../../outputs/agent-studio/server/web/server.ts';
-import { openSource } from '../../outputs/agent-studio/server/transcripts/monitor.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import type { LiveBackend } from '../../outputs/agent-studio/server/host/backend.ts';
-import type { UpdateService } from '../../outputs/agent-studio/server/desktop/updater.ts';
+import { AddedProjects, NO_PARENT_TTL_MS, STORE_VERSION } from '../../app/server/desktop/added_projects.ts';
+import { FolderPresence } from '../../app/server/desktop/folder_presence.ts';
+import { projectKey } from '../../app/server/desktop/project_delete.ts';
+import { worktreeParent } from '../../app/server/desktop/folders.ts';
+import { makeContext, WebServer } from '../../app/server/web/server.ts';
+import { openSource } from '../../app/server/transcripts/monitor.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import type { LiveBackend } from '../../app/server/host/backend.ts';
+import type { UpdateService } from '../../app/server/desktop/updater.ts';
 import { git, HAVE_GIT } from './_git_repo.ts';
 import { fake, pause } from './_connection.ts';
 
@@ -211,7 +211,7 @@ Deno.test({
     const root = await tempRoot();
     const state = j(root, 'state'), folder = j(root, 'work', 'Delta');
     Deno.mkdirSync(folder, { recursive: true });
-    const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: state, port: 0 });
+    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: state, port: 0 });
     studio.ownerProbe = () => null;
     studio.connectionFactory = (_command, cwd, provider) => new Connection(fake(), cwd, provider);
     try {

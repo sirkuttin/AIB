@@ -20,7 +20,7 @@ import { Browser, browserPath, type Page } from './_doc_browser.ts';
 import { nonce, phoneHeaders, raw, type RemoteStudio, serveStatus, tailscaleStatus } from './_remote_fixture.ts';
 import { phonePage } from './_remote_phone_page.ts';
 import { type LabOptions, type SteerChat, SteerLab, TEST_OPTIONS } from './_steer_lab.ts';
-import { DEVICE_HEADER } from '../../outputs/agent-studio/server/remote/server.ts';
+import { DEVICE_HEADER } from '../../app/server/remote/server.ts';
 
 const LONG = 45;
 const FAKE_TAILSCALE = nativePath(new URL('deno/_fake_tailscale.ts', WORK));

@@ -31,12 +31,12 @@ import {
   PageAccess,
   SESSIONS_FILE,
   takeLaunchKeyFromEnv,
-} from "../../outputs/agent-studio/server/web/page_access.ts";
+} from "../../app/server/web/page_access.ts";
 import { createHash } from "node:crypto";
 import {
   configure as configureKeys,
   issue as issueKey,
-} from "../../outputs/agent-studio/server/artifacts/keys.ts";
+} from "../../app/server/artifacts/keys.ts";
 
 type Json = Record<string, unknown>;
 const sep = Deno.build.os === "windows" ? "\\" : "/";

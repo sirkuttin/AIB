@@ -1,7 +1,7 @@
 'use strict';
 /* Turning notifications on: every failure has one plain line with the fix (push-enable.js), the Brave line, the PC's refusal
    naming the push service, and the pairing page's computer / phone guess (phone.js guessKind). Browser objects are mocks. */
-const { APP } = require('./_paths');
+const { PAGE: APP } = require('./_paths');
 const test = require('node:test'),
   assert = require('node:assert/strict'),
   path = require('node:path');

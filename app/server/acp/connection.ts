@@ -736,7 +736,7 @@ export const WORKTREE_PROMPT =
   'conflicts there, commit, and call it again.';
 
 /**
- * Local-only files (AIB's block of .git/info/exclude; host/studio.ts fills Connection.localOnly). Every chat whose project keeps
+ * Local-only files (AIB's block of .git/info/exclude; host/aib.ts fills Connection.localOnly). Every chat whose project keeps
  * aib-shared/ local only is told SHARED_FOLDER_PROMPT (owner 2026-11-17); a chat in its own copy reaches the main folder's
  * aib-shared/ through the copy's `aib-shared` link (worktrees/shared_link.ts). A chat in its own copy is also told where the main
  * folder's other local-only paths are ({paths}).
@@ -1107,7 +1107,7 @@ export class Connection {
   /** The project this chat belongs to; a worktree chat's cwd differs from it. */
   projectRoot: string;
   /**
-   * Local-only files this chat is told about (host/studio.ts, before setup): absolute `entries` (the main folder's), the existing
+   * Local-only files this chat is told about (host/aib.ts, before setup): absolute `entries` (the main folder's), the existing
    * folders among them (`dirs`, granted to a worktree chat as extra writable folders) and the main folder's aib-shared/ when git
    * really ignores it (`shared`, '' otherwise). null: nothing to tell (not git, or nothing is local only).
    */
@@ -1150,7 +1150,7 @@ export class Connection {
   /**
    * Antigravity (subagents/antigravity.ts): the rule its subagents are asked to follow (their own workspace). It can only be asked
    * for, never enforced: it goes in the ACP system prompt when the agent advertises one, else in front of the chat's next prompt
-   * (host/studio.ts). '' for every other agent.
+   * (host/aib.ts). '' for every other agent.
    */
   subagentRule = '';
 
@@ -1352,7 +1352,7 @@ export class Connection {
    * (usage_update._meta._claude/rateLimit) or 'qwen-quota' (a prompt error's data.subscriptionQuota); at = when, in seconds.
    */
   onLimits: ((connection: Connection, kind: string, raw: unknown, at: number) => void) | null = null;
-  /** A write tool call of this chat finished (its files are on disk): the absolute paths it named (host/studio.ts filesChanged). */
+  /** A write tool call of this chat finished (its files are on disk): the absolute paths it named (host/aib.ts filesChanged). */
   onWritesDone: ((connection: Connection, paths: string[]) => void) | null = null;
   /** Number of the latest prompt() accepted. */
   promptSeq = 0;

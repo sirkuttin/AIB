@@ -4,9 +4,9 @@
  * same block. AIB_DOCS_CORPUS=<folder> adds a folder of .md files (the editor evaluation's 27 files).
  */
 import { assert, assertEquals } from './_assert.ts';
-import { DocStore, mdBody } from '../../outputs/agent-studio/server/docs/store.ts';
+import { DocStore, mdBody } from '../../app/server/docs/store.ts';
 import { legacyMd } from './_docs.ts';
-import { blockMarkdown, normalize, parseDoc, parseInline, type PMJson } from '../../outputs/agent-studio/server/docs/markdown.ts';
+import { blockMarkdown, normalize, parseDoc, parseInline, type PMJson } from '../../app/server/docs/markdown.ts';
 
 const sep = Deno.build.os === 'windows' ? '\\' : '/';
 const ROOT = new URL('../../', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
@@ -18,16 +18,16 @@ const REPO_FILES = [
   '.github/ISSUE_TEMPLATE/bug_report.md',
   '.github/ISSUE_TEMPLATE/feature_request.md',
   'keeper/PROTOCOL.md',
-  'outputs/agent-studio/README.md',
-  'outputs/agent-studio/docs/CAPABILITIES.md',
-  'outputs/agent-studio/docs/DESKTOP.md',
-  'outputs/agent-studio/docs/FRONTEND.md',
-  'outputs/agent-studio/docs/THEMES.md',
-  'outputs/agent-studio/docs/acp-v2-evaluation.md',
-  'outputs/agent-studio/docs/agent-host.md',
-  'outputs/agent-studio/docs/client-capabilities.md',
-  'outputs/agent-studio/docs/models-and-settings.md',
-  'outputs/agent-studio/docs/ownership-design.md',
+  'app/README.md',
+  'app/docs/CAPABILITIES.md',
+  'app/docs/DESKTOP.md',
+  'app/docs/FRONTEND.md',
+  'app/docs/THEMES.md',
+  'app/docs/acp-v2-evaluation.md',
+  'app/docs/agent-host.md',
+  'app/docs/client-capabilities.md',
+  'app/docs/models-and-settings.md',
+  'app/docs/ownership-design.md',
   'work/demo-studio/README.md',
   'work/files-fixture/notes.md',
   'work/deno/docs_fixtures/constructs.md',

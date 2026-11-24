@@ -7,14 +7,14 @@
 import { assert, assertEquals, assertRejects } from './_assert.ts';
 import { Frozen } from './_frozen.ts';
 import { FAKE_SIGNIN, join, makeInstall, PY, PY_REAL, tempDir, touch } from './_agents.ts';
-import * as adapters from '../../outputs/agent-studio/server/agents/adapters.ts';
-import * as installer from '../../outputs/agent-studio/server/agents/installer.ts';
-import * as signin from '../../outputs/agent-studio/server/agents/signin.ts';
-import { BETA_IDS } from '../../outputs/agent-studio/server/agents/beta_catalog.ts';
-import * as shared from '../../outputs/agent-studio/server/web/shared.ts';
-import { ConversationState, SettingsStore } from '../../outputs/agent-studio/server/state/store.ts';
-import { HostUnavailable } from '../../outputs/agent-studio/server/host/host_client.ts';
-import { ValueError } from '../../outputs/agent-studio/server/core/py.ts';
+import * as adapters from '../../app/server/agents/adapters.ts';
+import * as installer from '../../app/server/agents/installer.ts';
+import * as signin from '../../app/server/agents/signin.ts';
+import { BETA_IDS } from '../../app/server/agents/beta_catalog.ts';
+import * as shared from '../../app/server/web/shared.ts';
+import { ConversationState, SettingsStore } from '../../app/server/state/store.ts';
+import { HostUnavailable } from '../../app/server/host/host_client.ts';
+import { ValueError } from '../../app/server/core/py.ts';
 
 const CLAUDE = '@agentclientprotocol/claude-agent-acp';
 const agent = (name = 'Fake agent', extra: Record<string, unknown> = {}) => ({

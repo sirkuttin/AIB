@@ -13,10 +13,10 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { cleanRoot, DISTRO, inDistro, KEY, newAib, readyHost, ROOT, T } from './_wsl_e2e.ts';
-import { helperEnv } from '../../outputs/agent-studio/server/wsl/hosts.ts';
-import { installFacts, lastProgress, NODE_INSTALL, wslInstallCall } from '../../outputs/agent-studio/server/wsl/agent_install.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { APP_ROOT } from '../../outputs/agent-studio/server/core/app.ts';
+import { helperEnv } from '../../app/server/wsl/hosts.ts';
+import { installFacts, lastProgress, NODE_INSTALL, wslInstallCall } from '../../app/server/wsl/agent_install.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { APP_ROOT } from '../../app/server/core/app.ts';
 
 type Json = Record<string, unknown>;
 const ALLOW = JSON.parse(Deno.readTextFileSync(`${APP_ROOT}/agent_versions.json`)).agents;
@@ -121,7 +121,7 @@ Deno.test({
   ...T,
   async fn() {
     const state = Deno.makeTempDirSync({ prefix: 'aib-wsl-install-e2e-' });
-    let studio: Studio | null = null;
+    let studio: Aib | null = null;
     try {
       await prepareStubs();
       newAib({ helperEnv: (install) => ({ ...helperEnv(install), SHELL: `${ROOT}/bin/loginsh` }) });
@@ -178,7 +178,7 @@ Deno.test({
       await sh('rm -f "$1/slow"', [ROOT]);
       await wslInstallCall(host, KEY, DISTRO, 'start', 'claude');
       await until('the reinstall', async () => ((await wslInstallCall(host, KEY, DISTRO, 'status', 'claude'))[1] as Json).state === 'done');
-      studio = new Studio({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
+      studio = new Aib({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
       const launch = await studio.wslLaunch('claude', { distro: KEY, linuxPath: ROOT });
       assertEquals(launch.command, row.command);
     } finally {

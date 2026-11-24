@@ -11,10 +11,10 @@
  * the password step. mode 'scheduled': Install when chats finish, the phone's Install and a few ticks (none may run pkexec).
  * Prints one JSON line: {status, result, after, launched, quit}.
  */
-import { DEB_EXE, runPkexec, UpdateService } from '../../outputs/agent-studio/server/desktop/updater.ts';
-import { remoteInstall } from '../../outputs/agent-studio/server/remote/update.ts';
-import { cleanEnv } from '../../outputs/agent-studio/server/desktop/update_helper.ts';
-import { spawnDetached } from '../../outputs/agent-studio/server/platform/spawn_detached.ts';
+import { DEB_EXE, runPkexec, UpdateService } from '../../app/server/desktop/updater.ts';
+import { remoteInstall } from '../../app/server/remote/update.ts';
+import { cleanEnv } from '../../app/server/desktop/update_helper.ts';
+import { spawnDetached } from '../../app/server/platform/spawn_detached.ts';
 
 const o = JSON.parse(Deno.args[0]) as {
   current: string;

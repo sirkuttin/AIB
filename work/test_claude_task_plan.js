@@ -1,5 +1,5 @@
 'use strict';
-const { APP: APP_DIR } = require('./_paths');
+const { PAGE: APP_DIR } = require('./_paths');
 /* Claude Code's to-do list reaches the chat as its plan. The fixture is a real claude-agent-acp 0.97.0 stream (Claude Code 2.1.310,
    claude-haiku-5-5, CLAUDE_CODE_ENABLE_TODO_TOOLS=1, prompt "make a 3-item to-do list for boiling an egg, then mark each item
    done"), trimmed to its plan, tool and message updates: the agent loads TaskCreate/TaskUpdate through ToolSearch and the adapter

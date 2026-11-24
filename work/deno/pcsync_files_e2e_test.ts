@@ -9,8 +9,8 @@
 import process from 'node:process';
 import { assert, assertEquals } from './_assert.ts';
 import { pc, tempDir } from './_remote_fixture.ts';
-import { ensureDefault } from '../../outputs/agent-studio/server/worktrees/local_only.ts';
-import { conflictName, isSecretPath, stamp } from '../../outputs/agent-studio/server/pcsync/rules.ts';
+import { ensureDefault } from '../../app/server/worktrees/local_only.ts';
+import { conflictName, isSecretPath, stamp } from '../../app/server/pcsync/rules.ts';
 import { closeAll, type Json, type Node, paired, TEST_FILES, until } from './_pcsync_fixture.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };

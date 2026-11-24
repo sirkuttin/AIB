@@ -19,8 +19,8 @@ import {
   parseStatus,
   safeRelpath,
   statusLetter,
-} from '../../outputs/agent-studio/server/worktrees/changes.ts';
-import * as osp from '../../outputs/agent-studio/server/platform/ospath.ts';
+} from '../../app/server/worktrees/changes.ts';
+import * as osp from '../../app/server/platform/ospath.ts';
 
 const enc = (text: string) => new TextEncoder().encode(text);
 const test = (name: string, fn: () => Promise<void> | void) => Deno.test({ name, ignore: !HAVE_GIT, fn });

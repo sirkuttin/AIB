@@ -7,7 +7,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const D = require('./fake_dom.js');
-const { APP } = require('./_paths');
+const { PAGE: APP } = require('./_paths');
 
 const U = require(path.join(APP, 'updates-ui.js'));
 

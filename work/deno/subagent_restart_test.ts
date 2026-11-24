@@ -21,8 +21,8 @@ import {
   type SubagentRecord,
   SubagentWorktrees,
   TEXTS,
-} from '../../outputs/agent-studio/server/subagents/service.ts';
-import { join } from '../../outputs/agent-studio/server/platform/path.ts';
+} from '../../app/server/subagents/service.ts';
+import { join } from '../../app/server/platform/path.ts';
 
 function git(cwd: string, ...args: string[]): string {
   const out = new Deno.Command('git', { args: ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'core.autocrlf=false', ...args], cwd, stdout: 'piped', stderr: 'piped' })

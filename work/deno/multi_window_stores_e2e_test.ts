@@ -10,7 +10,7 @@
  *   3. Per-window keys: B starts from A's values, then B's sidebar switch and column widths are its own (A's stay exactly as
  *      they were, pixel check on --side-w); a theme or text size change in A shows in B without a reload.
  *
- * Run (from outputs/agent-studio): deno test -A ../../work/deno/multi_window_stores_e2e_test.ts   (ignored without Chrome or Edge)
+ * Run (from app): deno test -A ../../work/deno/multi_window_stores_e2e_test.ts   (ignored without Chrome or Edge)
  */
 import { assert, assertEquals } from "./_assert.ts";
 import {

@@ -4,9 +4,9 @@
  */
 import { assert, assertEquals, assertRejects, assertThrows } from './_assert.ts';
 import { events, FAKE, type Json, Lab, pause, PYTHON, until, updateTexts } from './_connection.ts';
-import { Connection, PyTextLines, ThreadEvent } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { MAX_EVENT_IMAGE_BYTES, MAX_IMAGE_BYTES } from '../../outputs/agent-studio/server/acp/attachments.ts';
-import { ValueError } from '../../outputs/agent-studio/server/core/py.ts';
+import { Connection, PyTextLines, ThreadEvent } from '../../app/server/acp/connection.ts';
+import { MAX_EVENT_IMAGE_BYTES, MAX_IMAGE_BYTES } from '../../app/server/acp/attachments.ts';
+import { ValueError } from '../../app/server/core/py.ts';
 
 const b64 = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes));
 const PNG_HEAD = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
@@ -747,7 +747,7 @@ Deno.test('a connection started later can be retargeted, and not after it starte
 Deno.test('own studio_artifact permission requests are approved without asking', async () => {
   await using lab = new Lab();
   const c = await lab.open(['--breadth'], { setup: false });
-  const { artifactToolCommand } = await import('../../outputs/agent-studio/server/artifacts/mcp.ts');
+  const { artifactToolCommand } = await import('../../app/server/artifacts/mcp.ts');
   c.mcpServers = [{ name: 'studio_artifact', ...artifactToolCommand(), env: [] }];
   const call = (name: string) => ({ toolCall: { toolCallId: 't', _meta: { claudeCode: { toolName: name } } } });
   assert(c.ownArtifactTool(call('mcp__studio_artifact__publish')));
@@ -759,7 +759,7 @@ Deno.test('own studio_artifact permission requests are approved without asking',
 });
 
 Deno.test('a WSL chat: the ref is its folder, the Linux path is where its agent works; no fs capabilities, no artifact writes, no Windows child', () => {
-  const keeper = {} as unknown as import('../../outputs/agent-studio/server/keeper/link.ts').KeeperLink; // never used: start false
+  const keeper = {} as unknown as import('../../app/server/keeper/link.ts').KeeperLink; // never used: start false
   const c = new Connection([PYTHON, FAKE], 'wsl://ubuntu/home/u/app', 'claude', {
     keeper,
     start: false,

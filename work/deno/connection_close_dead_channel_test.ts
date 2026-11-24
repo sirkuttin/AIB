@@ -4,7 +4,7 @@
  */
 import { assert } from './_assert.ts';
 import { Lab, pause } from './_connection.ts';
-import type { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
+import type { Connection } from '../../app/server/acp/connection.ts';
 
 type Json = Record<string, unknown>;
 

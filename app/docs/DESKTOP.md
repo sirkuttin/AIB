@@ -9,7 +9,7 @@ a tray icon. Name AIB, identifier `dev.aib.app` (`deno.json` `desktop.app`), ver
 There is no separate dev shell: run the server and open the page in a browser.
 
 ```
-cd outputs/agent-studio
+cd app
 deno run -A server/main.ts --open
 ```
 
@@ -195,7 +195,7 @@ Code: `server/desktop/updater.ts` (check, download, verify, install), `server/de
 All six targets are built from one machine with `deno desktop` (no Rust, no runners):
 
 ```
-cd outputs/agent-studio
+cd app
 deno task build                                  # every target, into dist/ at the repo root
 deno run -A ../../tools/build.ts --targets windows-x64,macos-arm64 --out dist/
 ```

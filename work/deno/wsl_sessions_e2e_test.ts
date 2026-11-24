@@ -6,13 +6,13 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { cleanRoot, inDistro, KEY, newAib, prepareRoot, readyHost, ROOT, T } from './_wsl_e2e.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { refOf } from '../../outputs/agent-studio/server/platform/location.ts';
-import { wslSavedSessions, wslTranscriptGet } from '../../outputs/agent-studio/server/wsl/transcripts.ts';
-import { parseQs } from '../../outputs/agent-studio/server/transcripts/pycompat.ts';
-import { _mentioned, filesRoutes } from '../../outputs/agent-studio/server/web/files_routes.ts';
-import type { WebContext } from '../../outputs/agent-studio/server/web/server.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { refOf } from '../../app/server/platform/location.ts';
+import { wslSavedSessions, wslTranscriptGet } from '../../app/server/wsl/transcripts.ts';
+import { parseQs } from '../../app/server/transcripts/pycompat.ts';
+import { _mentioned, filesRoutes } from '../../app/server/web/files_routes.ts';
+import type { WebContext } from '../../app/server/web/server.ts';
 
 type Json = Record<string, unknown>;
 
@@ -22,7 +22,7 @@ Deno.test({
   async fn() {
     const state = Deno.makeTempDirSync({ prefix: 'aib-wsl-sessions-e2e-' });
     await prepareRoot();
-    let studio: Studio | null = null;
+    let studio: Aib | null = null;
     try {
       const repo = `${ROOT}/repo`;
       const id = crypto.randomUUID();
@@ -64,7 +64,7 @@ Deno.test({
       assertEquals(await wslTranscriptGet('/api/transcript', parseQs('key=claude/x.jsonl')), null, 'Windows keys are not WSL ones');
 
       // Continue: the agent starts in the distro with session/load of that id (the fake agent stands in for Claude).
-      studio = new Studio({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
+      studio = new Aib({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
       studio.ownerProbe = () => null;
       studio.connectionFactory = (_command, cwd, provider, options) =>
         new Connection(['python3', `${ROOT}/fake_acp.py`], cwd, provider, {

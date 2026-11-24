@@ -2,7 +2,7 @@
 /* Subagent cards in the Activity tab: working helpers are cards (name + run time; model · type + tokens; what it is doing now),
    finished ones one line (outcome when not Done, short model, run time); the inspector subtitle; where model, tokens and the
    activity line come from in a live chat's recorded adapter updates. */
-const { APP: APP_DIR } = require('./_paths');
+const { PAGE: APP_DIR } = require('./_paths');
 const test = require('node:test'),
   assert = require('node:assert/strict'),
   fs = require('node:fs'),

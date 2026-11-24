@@ -1,5 +1,5 @@
 'use strict';
-const { APP: APP_DIR } = require('./_paths');
+const { PAGE: APP_DIR } = require('./_paths');
 // Settings > AIB Linking (WSL) (wsl-settings-ui.js, docs/wsl/linking-design.md section 11), in the fake DOM with fake routes of
 // the frozen contract: GET /api/live/wsl/status (wsl, skipped, isDefault), GET /api/live/wsl/agents?distro&peek=1[&start=1], and
 // the install routes. Every state of the mockup that phase 1 draws, the Windows rows unchanged, the section only on Windows, no

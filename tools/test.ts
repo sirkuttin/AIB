@@ -10,7 +10,7 @@
  * processes and sockets and can miss a deadline when every core is busy; such a file passing alone is listed as
  * "timing-sensitive" in the summary (look at it, it is a latent race), and a file failing alone too fails the run.
  */
-import { ensureHiddenConsole } from '../outputs/agent-studio/server/platform/console.ts';
+import { ensureHiddenConsole } from '../app/server/platform/console.ts';
 import { type Affected, affected, buildGraph, changedFiles, defaultBase, ROOT, why } from './affected.ts';
 
 // No console (a runner started by an agent, a service or a hidden launcher): give it a windowless one, so git, python, taskkill, deno
@@ -19,10 +19,10 @@ if (import.meta.main) ensureHiddenConsole({ visibleFallback: false });
 
 const HERE = new URL('.', import.meta.url);
 const TESTS = new URL('../work/deno/', HERE);
-const APP = new URL('../outputs/agent-studio/', HERE);
+const APP = new URL('../app/', HERE);
 const native = (url: URL) => decodeURIComponent(url.pathname).replace(/^\/([A-Za-z]:)/, '$1');
 
-const HELP = `Usage (from outputs/agent-studio):
+const HELP = `Usage (from app):
   deno task test                every Deno test file: the full suite, for a merge or a release batch
   deno task test:fast           without the slow tier (SLOW in tools/test.ts)
   deno task test:slow           only the slow tier
@@ -51,7 +51,7 @@ Affected tests (--affected):
   deno task test:affected                       changes since the base branch: committed, staged, unstaged and untracked
   deno task test:affected --base main           another base (default: of main and the local integration/* branches,
                                                 the one this branch has the fewest commits since)
-  deno task test:affected server/web/x.ts ...   these files instead (paths from the repo root or from outputs/agent-studio)
+  deno task test:affected server/web/x.ts ...   these files instead (paths from the repo root or from app)
   --list          print what would run, and why, without running it
   --why FILE      the chain of imports and mentions by which FILE reaches each test it runs
   --all-slow      also run slow-tier files that only the broad rules reach (see below)
@@ -149,7 +149,7 @@ const ATTENTION_MODES = ['in-process', 'keeper', 'split agent host'];
 const SMOKE_SECONDS = 5;
 /** Files rerun at a time after the pool. */
 const RERUN_JOBS = 2;
-const TESTS_FROM_APP = '../../work/deno/';
+const TESTS_FROM_APP = '../work/deno/';
 /** Windows refuses a command line over 32,000 characters; the type check is split before this many. */
 const CHECK_COMMAND_CHARS = 20000;
 const TIMINGS_JSON = new URL('./test-timings.json', HERE);
@@ -693,7 +693,7 @@ async function runDeno(
   }
   // Type-check every file once, in one process, then run each with --no-check: after an edit, the first files in the pool used to
   // check the same server modules side by side (up to 5 s each). Same checks, done once. If it fails, each file checks itself as
-  // before, so only the files with the type error fail. The paths are relative to outputs/agent-studio and the list is split when it
+  // before, so only the files with the type error fail. The paths are relative to app and the list is split when it
   // would pass Windows' 32,000 character command line limit (os error 206).
   let extra = options.extra;
   if (!extra.some((a) => /^--(?:no-)?check\b/.test(a))) {
@@ -889,9 +889,9 @@ async function runCommand(
 }
 
 const python = () => Deno.build.os === 'windows' ? 'python' : 'python3';
-const relApp = (f: string) => f.startsWith('outputs/agent-studio/') ? f.slice('outputs/agent-studio/'.length) : f;
+const relApp = (f: string) => f.startsWith('app/') ? f.slice('app/'.length) : f;
 
-/** Repo-relative paths for the files named on the command line (from the repo root, from outputs/agent-studio, or absolute). */
+/** Repo-relative paths for the files named on the command line (from the repo root, from app, or absolute). */
 function repoPaths(names: string[]): string[] {
   const root = Deno.realPathSync(ROOT).replaceAll('\\', '/');
   const inRepo = (abs: string) => {
@@ -904,7 +904,7 @@ function repoPaths(names: string[]): string[] {
         n,
         `${Deno.cwd()}/${n}`,
         `${ROOT}/${n}`,
-        `${ROOT}/outputs/agent-studio/${n}`,
+        `${ROOT}/app/${n}`,
       ]
     ) {
       try {

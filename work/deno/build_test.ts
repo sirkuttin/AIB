@@ -9,7 +9,7 @@ import { createHash } from "node:crypto";
 import { assert, assertEquals, assertRejects, assertThrows } from "./_assert.ts";
 import {
   APP_VERSION,
-} from "../../outputs/agent-studio/server/core/app.ts";
+} from "../../app/server/core/app.ts";
 import {
   assetNames,
   buildKeeper,
@@ -57,11 +57,11 @@ import {
   RIM,
   TRAY,
 } from "../../tools/make_icons.ts";
-import { TRAY_PNG_BASE64 } from "../../outputs/agent-studio/server/desktop/tray_icon_data.ts";
+import { TRAY_PNG_BASE64 } from "../../app/server/desktop/tray_icon_data.ts";
 import {
   checksumFor,
   pickAsset,
-} from "../../outputs/agent-studio/server/desktop/updater.ts";
+} from "../../app/server/desktop/updater.ts";
 import {
   addTarFile,
   addToAppImage,
@@ -214,9 +214,8 @@ Deno.test("icns, what is staged, and the staged deno.json", () => {
     ["docs", true, false],
     ["public", true, false],
     ["__pycache__", true, false],
-    ["chat.html", false, true],
-    ["chat.js", false, true],
-    ["style.css", false, true],
+    ["page", true, true], // the browser files (app/page/): served at the top level, staged as page/
+    ["chat.html", false, false], // page files sit in page/, never at the top of app
     ["agent_versions.json", false, true],
     ["studio.py", false, false],
     ["deno.json", false, false],
@@ -232,7 +231,7 @@ Deno.test("icns, what is staged, and the staged deno.json", () => {
   assertEquals(stagedConfig({ imports: { yjs: "npm:yjs@13.6.33" } }, "1.0.0").imports, { yjs: "npm:yjs@13.6.33" });
 });
 
-const ICONS_DIR = new URL("../../outputs/agent-studio/icons/", import.meta.url);
+const ICONS_DIR = new URL("../../app/icons/", import.meta.url);
 const AMBER: [number, number, number] = [0xff, 0xc2, 0x47];
 const CORAL: [number, number, number] = [0xff, 0x7a, 0x59];
 
@@ -265,7 +264,7 @@ Deno.test("the app icon files: masters, .ico entries and art, PNG sizes, colour 
   // The favicon: icon.svg as a data: URL in each page; the old tile icon is gone.
   const link = faviconLink(await Deno.readTextFile(`${ICON_SRC}/icon.svg`));
   for (const page of FAVICON_PAGES) {
-    const html = await Deno.readTextFile(new URL(`../../outputs/agent-studio/${page}`, import.meta.url));
+    const html = await Deno.readTextFile(new URL(`../../app/page/${page}`, import.meta.url));
     assertEquals(html.split('<link rel="icon"').length, 2, page);
     assert(html.includes(link), page);
     assert(!html.includes("rx='22' fill='%2313867A'"), `${page}: no old tile favicon`);
@@ -405,7 +404,7 @@ Deno.test("the .ico parser and the RT_GROUP_ICON bytes", async () => {
   assertEquals([v.getUint16(10, true), v.getUint16(12, true), v.getUint32(14, true), v.getUint16(18, true)], [1, 32, 33, 1]);
   assertEquals([v.getUint16(20 + 4, true), v.getUint32(20 + 8, true), v.getUint16(20 + 12, true)], [1, images[1].data.length, 2]);
   // The real app icon: nine PNG images, 256 written as 0.
-  const app = parseIco(await Deno.readFile(new URL("../../outputs/agent-studio/icons/icon.ico", import.meta.url)));
+  const app = parseIco(await Deno.readFile(new URL("../../app/icons/icon.ico", import.meta.url)));
   assertEquals(app.map((i) => i.width), [16, 20, 24, 32, 40, 48, 64, 128, 0]);
   assertThrows(() => parseIco(new Uint8Array([0, 0, 2, 0, 1, 0])));
   assertThrows(() => parseIco(new Uint8Array([0, 0, 1, 0, 1, 0])));
@@ -419,7 +418,7 @@ Deno.test({
     try {
       const exe = `${dir}/where.exe`;
       Deno.copyFileSync(`${Deno.env.get("SystemRoot") ?? "C:/Windows"}/System32/where.exe`, exe);
-      for (const ico of [tinyIco(), await Deno.readFile(new URL("../../outputs/agent-studio/icons/icon.ico", import.meta.url))]) {
+      for (const ico of [tinyIco(), await Deno.readFile(new URL("../../app/icons/icon.ico", import.meta.url))]) {
         embedWindowsIcon(exe, ico);
         const images = parseIco(ico);
         const { groups, icons } = readIconResources(exe);
@@ -723,7 +722,7 @@ Deno.test("ELF programs get 0755 and ELF shared libraries 0644, in the .deb and 
 
 Deno.test("release.json names the version, the agent-host protocol and what it needs of a keeper; --version rewrites only the staged app.ts", async () => {
   const { releaseInfo, setStagedVersion } = await import("../../tools/build.ts");
-  const { PROTOCOL_VERSION } = await import("../../outputs/agent-studio/server/host/host_client.ts");
+  const { PROTOCOL_VERSION } = await import("../../app/server/host/host_client.ts");
   assertEquals(JSON.parse(releaseInfo("0.1.0-beta.2")), {
     version: "0.1.0-beta.2",
     protocol: PROTOCOL_VERSION,

@@ -5,11 +5,11 @@
  */
 import { python, WORK } from './_work.ts';
 import { PAGE_KEY } from './_page_key.ts';
-import { HostClient, pidAlive, readInfo, stopHost } from '../../outputs/agent-studio/server/host/host_client.ts';
-import { APP_ROOT } from '../../outputs/agent-studio/server/core/app.ts';
+import { HostClient, pidAlive, readInfo, stopHost } from '../../app/server/host/host_client.ts';
+import { APP_ROOT } from '../../app/server/core/app.ts';
 import { refusedPort, waitListenedPort } from './_ports.ts';
-import { projectKey } from '../../outputs/agent-studio/server/desktop/project_delete.ts';
-import { ensureHiddenConsole } from '../../outputs/agent-studio/server/platform/console.ts';
+import { projectKey } from '../../app/server/desktop/project_delete.ts';
+import { ensureHiddenConsole } from '../../app/server/platform/console.ts';
 
 // A test process with no console must not flash one when the fixture starts its helper programs: windowless, never visible.
 ensureHiddenConsole({ visibleFallback: false });

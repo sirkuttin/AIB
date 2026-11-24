@@ -7,9 +7,9 @@ import { assert, assertEquals } from './_assert.ts';
 import { Frozen } from './_frozen.ts';
 import { DENO, Fixture, MAIN, SEP, until } from './_host_fixture.ts';
 import { refusedPort } from './_ports.ts';
-import { pidAlive, readInfo } from '../../outputs/agent-studio/server/host/host_client.ts';
-import * as deploy from '../../outputs/agent-studio/server/host/deploy.ts';
-import { packageContext } from '../../outputs/agent-studio/server/state/paths.ts';
+import { pidAlive, readInfo } from '../../app/server/host/host_client.ts';
+import * as deploy from '../../app/server/host/deploy.ts';
+import { packageContext } from '../../app/server/state/paths.ts';
 
 const WIN = Deno.build.os === 'windows';
 

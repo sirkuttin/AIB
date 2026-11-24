@@ -1,5 +1,5 @@
 'use strict';
-const { APP: APP_DIR } = require('./_paths');
+const { PAGE: APP_DIR } = require('./_paths');
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const path = require('node:path');

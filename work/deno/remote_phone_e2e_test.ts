@@ -53,23 +53,23 @@ import {
   tailscaleStatus,
   writeSavedChat,
 } from "./_remote_fixture.ts";
-import { openText } from "../../outputs/agent-studio/server/state/sealed.ts";
-import { readKeeperInfo } from "../../outputs/agent-studio/server/keeper/client.ts";
-import { secretOfFile } from "../../outputs/agent-studio/server/artifacts/keys.ts";
-import { OwnerRegistry } from "../../outputs/agent-studio/server/ownership/probe.ts";
-import { startAttention } from "../../outputs/agent-studio/server/attention/watcher.ts";
+import { openText } from "../../app/server/state/sealed.ts";
+import { readKeeperInfo } from "../../app/server/keeper/client.ts";
+import { secretOfFile } from "../../app/server/artifacts/keys.ts";
+import { OwnerRegistry } from "../../app/server/ownership/probe.ts";
+import { startAttention } from "../../app/server/attention/watcher.ts";
 
 import {
   readRemoteArtifactPort,
   readRemotePort,
-} from "../../outputs/agent-studio/server/remote/port.ts";
+} from "../../app/server/remote/port.ts";
 
 // The watcher's settle before "finished" is 20 s (usage study); these whole-AIB runs keep the old 3 s (watcher.ts).
 Deno.env.set('AIB_TEST_SETTLE_MS', '3000');
 import {
   COOKIE_NAME,
   DEVICE_HEADER,
-} from "../../outputs/agent-studio/server/remote/server.ts";
+} from "../../app/server/remote/server.ts";
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
 const FAKE_TAILSCALE = nativePath(new URL("deno/_fake_tailscale.ts", WORK));

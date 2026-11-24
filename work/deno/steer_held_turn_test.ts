@@ -7,7 +7,7 @@
 import { assert, assertEquals } from './_assert.ts';
 import { pause, until } from './_connection.ts';
 import { SteerLab, turnEnds, userEvents } from './_steer.ts';
-import { steerTiming } from '../../outputs/agent-studio/server/acp/connection.ts';
+import { steerTiming } from '../../app/server/acp/connection.ts';
 
 steerTiming.settleMs = 400;
 

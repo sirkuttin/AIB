@@ -4,12 +4,12 @@
  * within 60 s; the test checks the click came back through the COM activator, then removes the toast and every registry key it
  * made (HKCU\Software\Classes\AppUserModelId\<test id>, CLSID\<test clsid>, Windows' own Notifications\Settings\<test id>).
  *
- *   AIB_TOAST_LIVE=1 deno test -A ../../work/deno/toast_live_test.ts      (from outputs/agent-studio)
+ *   AIB_TOAST_LIVE=1 deno test -A ../../work/deno/toast_live_test.ts      (from app)
  */
 import { assert } from './_assert.ts';
-import { keeperBinary } from '../../outputs/agent-studio/server/keeper/client.ts';
-import { keeperToastSpawner, toastSpec, toastXml } from '../../outputs/agent-studio/server/desktop/toast.ts';
-import type { InboxRow } from '../../outputs/agent-studio/server/attention/inbox_rules.ts';
+import { keeperBinary } from '../../app/server/keeper/client.ts';
+import { keeperToastSpawner, toastSpec, toastXml } from '../../app/server/desktop/toast.ts';
+import type { InboxRow } from '../../app/server/attention/inbox_rules.ts';
 
 const LIVE = Deno.env.get('AIB_TOAST_LIVE') === '1' &&
   Deno.build.os === 'windows';

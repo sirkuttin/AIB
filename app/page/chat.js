@@ -810,7 +810,7 @@
   const NOT_CONNECTED =
     'This page is not connected to AIB. Open AIB from its app window, or start it with --open (or use the one-time link it prints in its console); a browser tab needs a new link after a reload.';
   /* How long a GET may take. Longer than the server's own wait for a chat it is still taking over from the keeper (ADOPT_WAIT_MS in
-     server/host/studio.ts, 20 s) plus the body of a long chat (6,000 events can be 45 MB): a GET that would have answered never shows
+     server/host/aib.ts, 20 s) plus the body of a long chat (6,000 events can be 45 MB): a GET that would have answered never shows
      "Request timed out". Bootstrap keeps 15 s (it never waits on chats). */
   const GET_TIMEOUT_MS = 30000;
   async function get(path, params = {}) {

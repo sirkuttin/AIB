@@ -15,16 +15,16 @@
 import { assert, assertEquals } from './_assert.ts';
 import { cleanRoot, inDistro, KEY, newAib, prepareRoot, readyHost, ROOT, T, WSL_E2E } from './_wsl_e2e.ts';
 import { UserClient } from './_docs.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { refOf } from '../../outputs/agent-studio/server/platform/location.ts';
-import { DocStore, mdBody } from '../../outputs/agent-studio/server/docs/store.ts';
-import { runDocTool } from '../../outputs/agent-studio/server/docs/tools.ts';
-import { ArtifactHistory } from '../../outputs/agent-studio/server/docs/history.ts';
-import { ArtifactStore } from '../../outputs/agent-studio/server/artifacts/artifacts.ts';
-import { installWslDocFs, linuxPaths } from '../../outputs/agent-studio/server/wsl/docs.ts';
-import { docsRoutes } from '../../outputs/agent-studio/server/web/docs_routes.ts';
-import type { WebContext } from '../../outputs/agent-studio/server/web/server.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { refOf } from '../../app/server/platform/location.ts';
+import { DocStore, mdBody } from '../../app/server/docs/store.ts';
+import { runDocTool } from '../../app/server/docs/tools.ts';
+import { ArtifactHistory } from '../../app/server/docs/history.ts';
+import { ArtifactStore } from '../../app/server/artifacts/artifacts.ts';
+import { installWslDocFs, linuxPaths } from '../../app/server/wsl/docs.ts';
+import { docsRoutes } from '../../app/server/web/docs_routes.ts';
+import type { WebContext } from '../../app/server/web/server.ts';
 
 type Json = Record<string, unknown>;
 type Entry = { command: string; args: string[]; env: { name: string; value: string }[] };
@@ -33,8 +33,8 @@ const PROJECT = `${ROOT}/repo`;
 // Only built when the distro is there: refOf throws on the empty name the ignored run has.
 const REF = WSL_E2E ? refOf({ kind: 'wsl', distro: KEY, linuxPath: PROJECT }) : '';
 
-function studioIn(state: string): Studio {
-  const studio = new Studio({ stateDir: state, port: 0, ownersDir: null }, { keeper: null });
+function studioIn(state: string): Aib {
+  const studio = new Aib({ stateDir: state, port: 0, ownersDir: null }, { keeper: null });
   studio.ownerProbe = () => null;
   studio.connectionFactory = (_command, cwd, provider, options) =>
     new Connection(['python3', `${ROOT}/fake_acp.py`, '--cancel-aware'], cwd, provider, {
@@ -85,7 +85,7 @@ Deno.test({
     const artifacts = new ArtifactStore(`${state}\\artifacts`);
     const newStore = () => new DocStore(`${state}\\docs-state`, { idleMs: 60_000, snapshotIdleMs: 60_000, history: new ArtifactHistory(() => artifacts) });
     let store = newStore();
-    const studios: Studio[] = [];
+    const studios: Aib[] = [];
     const seen: Json[] = [];
     // AIB's /api/live/docs/tool for this test: the real doc tools on the real store, the answer as the route gives it (Linux paths)
     const server = Deno.serve({ hostname: '127.0.0.1', port: 0, onListen() {} }, async (request) => {

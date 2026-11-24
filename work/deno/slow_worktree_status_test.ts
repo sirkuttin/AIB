@@ -5,8 +5,8 @@
  * run past the wait is answered "still checking" at once. Temp repos only, under work/slowreq-fixture/state/ (git-ignored).
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
-import * as wt from '../../outputs/agent-studio/server/worktrees/worktrees.ts';
-import { forgetWorktreeStatus, worktreeStatus } from '../../outputs/agent-studio/server/web/studio_routes.ts';
+import * as wt from '../../app/server/worktrees/worktrees.ts';
+import { forgetWorktreeStatus, worktreeStatus } from '../../app/server/web/aib_routes.ts';
 import { runGit } from './_worktree_fixtures.ts';
 
 const ROOT = new URL('../slowreq-fixture/state/', import.meta.url);
@@ -138,7 +138,7 @@ Deno.test('worktree status: a finished answer is not reused; a merge action drop
 });
 
 Deno.test('changes route: identical concurrent requests share one run', async () => {
-  const { shared } = await import('../../outputs/agent-studio/server/web/studio_routes.ts');
+  const { shared } = await import('../../app/server/web/aib_routes.ts');
   const runs = new Map<string, Promise<number>>();
   let started = 0;
   const run = () => (started++, new Promise<number>((r) => setTimeout(() => r(started), 50)));

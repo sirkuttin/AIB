@@ -36,7 +36,7 @@ import {
   trayChatSlots,
   trayOnlyView,
   type WindowHandle,
-} from '../../outputs/agent-studio/server/desktop/window.ts';
+} from '../../app/server/desktop/window.ts';
 import {
   canPlaceWindows,
   chooseOrder,
@@ -45,15 +45,15 @@ import {
   openAnswer,
   restorePlan,
   WINDOWS_FILE,
-} from '../../outputs/agent-studio/server/desktop/windows.ts';
-import { withPopFrom } from '../../outputs/agent-studio/server/web/server.ts';
+} from '../../app/server/desktop/windows.ts';
+import { withPopFrom } from '../../app/server/web/server.ts';
 
 type Json = Record<string, unknown>;
-import { findOwnWindow } from '../../outputs/agent-studio/server/desktop/foreground_win.ts';
-import { presence as folderPresence } from '../../outputs/agent-studio/server/desktop/folder_presence.ts';
-import { orphanCommand } from '../../outputs/agent-studio/server/host/studio.ts';
-import { PageAccess } from '../../outputs/agent-studio/server/web/page_access.ts';
-import { UpdateService } from '../../outputs/agent-studio/server/desktop/updater.ts';
+import { findOwnWindow } from '../../app/server/desktop/foreground_win.ts';
+import { presence as folderPresence } from '../../app/server/desktop/folder_presence.ts';
+import { orphanCommand } from '../../app/server/host/aib.ts';
+import { PageAccess } from '../../app/server/web/page_access.ts';
+import { UpdateService } from '../../app/server/desktop/updater.ts';
 import {
   alreadyRunning,
   claim,
@@ -62,15 +62,15 @@ import {
   SIGNAL_FILE,
   takeSignal,
   watchSignal,
-} from '../../outputs/agent-studio/server/desktop/single_instance.ts';
+} from '../../app/server/desktop/single_instance.ts';
 import {
   ensureStartMenuShortcut,
   lnkMentions,
   shortcutArgs,
   shortcutScript,
   startMenuDir,
-} from '../../outputs/agent-studio/server/desktop/shortcut.ts';
-import { trayIconPng } from '../../outputs/agent-studio/server/desktop/tray_icon.ts';
+} from '../../app/server/desktop/shortcut.ts';
+import { trayIconPng } from '../../app/server/desktop/tray_icon.ts';
 import {
   chosenItem,
   menuCommand,
@@ -80,8 +80,8 @@ import {
   slotMenuOps,
   TRAY_CALLBACK,
   trayEvent,
-} from '../../outputs/agent-studio/server/desktop/tray_win.ts';
-import { pidAlive, readInfo, stopHost } from '../../outputs/agent-studio/server/host/host_client.ts';
+} from '../../app/server/desktop/tray_win.ts';
+import { pidAlive, readInfo, stopHost } from '../../app/server/host/host_client.ts';
 import { DENO, FAKE_HOST, Fixture, TEST_OPTIONS, until } from './_host_fixture.ts';
 
 const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));

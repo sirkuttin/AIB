@@ -110,7 +110,7 @@ _fast_shutdown()
 
 # ---- Where things are. ----
 REPO = pathlib.Path(__file__).resolve().parents[1]
-APP_PARTS = ('outputs', 'agent-studio')   # the app folder under the repo root (the Deno server, the page files)
+APP_PARTS = ('app',)   # the app folder under the repo root (the Deno server, the page files)
 TESTS_NAME = 'work'                       # the folder holding the tests and fixtures
 APP_REL = pathlib.Path(*APP_PARTS)   # for building a fake checkout in a temp folder: base / _isolation.APP_REL
 APP = REPO.joinpath(*APP_PARTS)

@@ -4,7 +4,7 @@
 const fs = require('node:fs'),
   path = require('node:path');
 const { pathToFileURL } = require('node:url');
-const APP = path.join(__dirname, '..', '..', 'outputs', 'agent-studio');
+const APP = path.join(__dirname, '..', '..', 'app', 'page');
 const MOCKUP = path.join(__dirname, '..', '..', 'outputs', 'wsl-linking-mockup.html');
 
 const SETTINGS_SCRIPTS = ['wsl-ui.js', 'terminal-ui.js', 'composer-chips.js', 'settings-ui.js', 'wsl-settings-ui.js', 'delete-project-ui.js'];

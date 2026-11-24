@@ -657,7 +657,7 @@ test('the Beta card CSS: the key link is a teal st-link, line-start links sit on
   const fs = require('node:fs');
   const path = require('node:path');
   const { cssRules, declarationsFor } = require('./css_rules.js');
-  const rules = cssRules(fs.readFileSync(path.join(__dirname, '../outputs/agent-studio/settings.css'), 'utf8'));
+  const rules = cssRules(fs.readFileSync(path.join(__dirname, '../app/page/settings.css'), 'utf8'));
   const link = declarationsFor(rules, '.st-beta-key .st-link');
   assert.deepEqual([link.color, link['text-decoration']], ['var(--link)', 'underline'], 'same as every other st-link');
   assert.deepEqual(

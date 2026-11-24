@@ -1,7 +1,6 @@
 /**
- * Where the app lives and which version it is. APP_ROOT is the app folder: outputs/agent-studio in the private repo, aib/ in the
- * public one. APP_VERSION is the one version number; the Python reference server (retired 2026-11-23) matched it,
- * which host_client_test.ts checks, so a Python host reports the same version.
+ * Where the app lives and which version it is. APP_ROOT is the app folder (app/ in the repo). APP_VERSION is the one version
+ * number.
  */
 
 function folderOf(url: URL): string {
@@ -13,30 +12,38 @@ function folderOf(url: URL): string {
 /** The app folder (two levels above this file: server/core/ -> app root). */
 export const APP_ROOT = folderOf(new URL('../../', import.meta.url));
 
+/** The browser's files (JS, CSS, HTML): app/page/. They are served at the top level (/chat.js), not under /page/. */
+export const PAGE_ROOT = APP_ROOT + (Deno.build.os === 'windows' ? '\\' : '/') + 'page';
+
+/** Folders of APP_ROOT whose files are served from there; every other served name is a page file in PAGE_ROOT. */
+const APP_FOLDERS = new Set(['pwa', 'icons', 'vendor']);
+
+/** The file on disk for a served name: vendor/xterm/x.js, pwa/sw.js and icons/x.png are under APP_ROOT; any other name (chat.js) is a page file under PAGE_ROOT. */
+export function servedFile(name: string): string {
+  const sep = Deno.build.os === 'windows' ? '\\' : '/';
+  const parts = name.split(/[\\/]+/);
+  return (APP_FOLDERS.has(parts[0]) ? APP_ROOT : PAGE_ROOT) + sep + parts.join(sep);
+}
+
 export const APP_VERSION = '0.1.0-beta.11';
 const [core, pre] = APP_VERSION.split(/-(.*)/s);
 /** What people see: "AIB 0.1.0 beta". */
 export const VERSION_LABEL = 'AIB ' + core + (pre ? ' ' + pre.split('.')[0] : '');
 export const ABOUT_LINE = 'All your agents. One place. Nothing hidden.';
 
-function parentName(path: string): string {
-  const parts = path.split(/[\\/]+/);
-  return parts[parts.length - 2] ?? '';
-}
-
 function parent(path: string): string {
   return path.replace(/[\\/][^\\/]*$/, '');
 }
 
-/** The repository root: two levels above outputs/agent-studio (private repo), one level above aib/ (public repo). */
+/** The repository root: the folder above app/. */
 export function repoRoot(codeRoot: string): string {
-  return parentName(codeRoot) === 'outputs' ? parent(parent(codeRoot)) : parent(codeRoot);
+  return parent(codeRoot);
 }
 
-/** The folder with the tests and their fixtures: work/ in the private repo, tests/ in the public one. */
+/** The folder with the tests and their fixtures: work/ in the repo root. */
 export function testsDir(codeRoot: string): string {
   const sep = Deno.build.os === 'windows' ? '\\' : '/';
-  return repoRoot(codeRoot) + sep + (parentName(codeRoot) === 'outputs' ? 'work' : 'tests');
+  return repoRoot(codeRoot) + sep + 'work';
 }
 
 export const REPO_ROOT = repoRoot(APP_ROOT);

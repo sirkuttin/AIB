@@ -8,12 +8,12 @@
 import { assert, assertEquals } from './_assert.ts';
 import { FAKE, pause, PYTHON, until } from './_connection.ts';
 import { FakeWslHost } from './_wsl_fake.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { KeeperLink } from '../../outputs/agent-studio/server/keeper/link.ts';
-import { keeperBinary, KeeperClient, readKeeperInfo } from '../../outputs/agent-studio/server/keeper/client.ts';
-import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
-import { setWslHostResolver } from '../../outputs/agent-studio/server/wsl/access.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { KeeperLink } from '../../app/server/keeper/link.ts';
+import { keeperBinary, KeeperClient, readKeeperInfo } from '../../app/server/keeper/client.ts';
+import { pidAlive } from '../../app/server/host/host_client.ts';
+import { setWslHostResolver } from '../../app/server/wsl/access.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -26,7 +26,7 @@ class Lab {
   readonly state = this.dir + SEP + 'state';
   readonly work = this.dir + SEP + 'app';
   readonly host: FakeWslHost;
-  readonly studios: Studio[] = [];
+  readonly studios: Aib[] = [];
   constructor() {
     Deno.mkdirSync(this.work + SEP + 'src', { recursive: true });
     Deno.mkdirSync(this.dir + SEP + 'other', { recursive: true });
@@ -35,9 +35,9 @@ class Lab {
     this.host.folders.set('/home/u/other', this.dir + SEP + 'other');
     setWslHostResolver((d) => (d === 'ubuntu' ? this.host : null));
   }
-  studio(): Studio {
+  studio(): Aib {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
-    const studio = new Studio({ stateDir: this.state, port: 0, ownersDir: null }, { keeper });
+    const studio = new Aib({ stateDir: this.state, port: 0, ownersDir: null }, { keeper });
     studio.ownerProbe = () => null;
     studio.connectionFactory = (_command, cwd, provider, options) => {
       const wsl = options?.wsl ? { ...options.wsl, program: undefined } : options?.wsl;

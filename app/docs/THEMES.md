@@ -1,6 +1,6 @@
 # AIB colour themes
 
-Every colour the chat page paints is a token in `outputs/agent-studio/theme.css`; the other stylesheets only say
+Every colour the chat page paints is a token in `app/page/theme.css`; the other stylesheets only say
 `var(--token)`. A theme is a set of token values selected with `data-theme` on `<html>`. This file lists every token and
 what it is for. It is generated from theme.css (the comments there are the source); keep both in step.
 

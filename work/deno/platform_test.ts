@@ -1,19 +1,19 @@
 /** server/platform: locks (also against the Python server's locks), process trees, process facts, console, paths. */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
 import { python } from './_work.ts';
-import { FileLock, LockHeld, LockTimeout, tryLockNow } from '../../outputs/agent-studio/server/platform/lock.ts';
-import { ProcessTree, treeSpawnOptions } from '../../outputs/agent-studio/server/platform/process_tree.ts';
+import { FileLock, LockHeld, LockTimeout, tryLockNow } from '../../app/server/platform/lock.ts';
+import { ProcessTree, treeSpawnOptions } from '../../app/server/platform/process_tree.ts';
 import {
   processAlive,
   processList,
   processStartTime,
   processStrings,
   restartManagerHolders,
-} from '../../outputs/agent-studio/server/platform/process_info.ts';
-import { ensureHiddenConsole } from '../../outputs/agent-studio/server/platform/console.ts';
+} from '../../app/server/platform/process_info.ts';
+import { ensureHiddenConsole } from '../../app/server/platform/console.ts';
 import { consoleSetup } from './_no_console.ts';
-import { basename, dirname, join } from '../../outputs/agent-studio/server/platform/path.ts';
-import { hkcuSubkeys, hkcuValue } from '../../outputs/agent-studio/server/platform/registry.ts';
+import { basename, dirname, join } from '../../app/server/platform/path.ts';
+import { hkcuSubkeys, hkcuValue } from '../../app/server/platform/registry.ts';
 
 const win = Deno.build.os === 'windows';
 const LOCK_HELPER = decodeURIComponent(new URL('../lock_helper.py', import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1');
@@ -190,7 +190,7 @@ Deno.test({
   ignore: !win,
   async fn() {
     // A stand-in "host": it starts an "agent" (with a child of its own) through ProcessTree, prints the pids, and waits to be killed.
-    const tree = new URL('../../outputs/agent-studio/server/platform/process_tree.ts', import.meta.url).href;
+    const tree = new URL('../../app/server/platform/process_tree.ts', import.meta.url).href;
     const code = `import { ProcessTree } from ${JSON.stringify(tree)};
 const grand = "setTimeout(() => {}, 60000) // kill-on-close-grandchild";
 const agentCode = "const g = new Deno.Command(Deno.execPath(), { args: ['eval', " + JSON.stringify(grand) + "], stdout: 'null', stderr: 'null' }).spawn(); console.log(g.pid); setTimeout(() => {}, 60000)";

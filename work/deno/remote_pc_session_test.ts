@@ -10,9 +10,9 @@
  *   - a computer's notification button goes with its cookie; a phone's still needs its key.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { DEVICE_HEADER, COOKIE_NAME } from '../../outputs/agent-studio/server/remote/server.ts';
-import { DeviceStore, SESSION_SECONDS } from '../../outputs/agent-studio/server/remote/devices.ts';
-import { readRemotePort } from '../../outputs/agent-studio/server/remote/port.ts';
+import { DEVICE_HEADER, COOKIE_NAME } from '../../app/server/remote/server.ts';
+import { DeviceStore, SESSION_SECONDS } from '../../app/server/remote/devices.ts';
+import { readRemotePort } from '../../app/server/remote/port.ts';
 import { fakeTailscale, pairComputer, pairPhone, pc, phoneHeaders, raw, type RemoteStudio, remoteStudio, serveStatus } from './_remote_fixture.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };

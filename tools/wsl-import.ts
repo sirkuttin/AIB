@@ -1,6 +1,6 @@
 /**
  * One-off, run by the owner from the repository: move the existing chats of a WSL project into their own worktree copies (the way a
- * new WSL chat gets one), with a dry run first. See outputs/agent-studio/docs/WSL.md "Moving existing chats into their own copies".
+ * new WSL chat gets one), with a dry run first. See app/docs/WSL.md "Moving existing chats into their own copies".
  *
  *   deno run -A tools/wsl-import.ts --distro Ubuntu --project /home/u/app                         dry run (changes nothing)
  *   deno run -A tools/wsl-import.ts --distro Ubuntu --project /home/u/app --apply --confirm-project /home/u/app
@@ -15,10 +15,10 @@
  * Every wsl.exe is hidden, with a minimal environment (WSL_UTF8=1) and never an empty argument. Under test (AGENT_STUDIO_TEST=1 or
  * AIB_WSL_TEST=1) the helper gets AIB_WSL_TEST=1, so --apply and --undo only work under /tmp/aib-wsl-test-* (helper/import.ts).
  */
-import { dataDirName, HELPER_FILE, rootOverride, runWsl, type WslRunner } from '../outputs/agent-studio/server/wsl/install.ts';
-import { formatReport, IMPORT_MARKER, type Report } from '../outputs/agent-studio/server/wsl/helper/import.ts';
-import { validDistro } from '../outputs/agent-studio/server/platform/location.ts';
-import { WSL_ROOT_DIR } from '../outputs/agent-studio/server/wsl/contract.ts';
+import { dataDirName, HELPER_FILE, rootOverride, runWsl, type WslRunner } from '../app/server/wsl/install.ts';
+import { formatReport, IMPORT_MARKER, type Report } from '../app/server/wsl/helper/import.ts';
+import { validDistro } from '../app/server/platform/location.ts';
+import { WSL_ROOT_DIR } from '../app/server/wsl/contract.ts';
 
 const DEC = new TextDecoder();
 const REPO = decodeURIComponent(new URL('..', import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1').replace(/[\\/]+$/, '');

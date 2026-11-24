@@ -12,21 +12,21 @@
  *     shuts its processes down over /proc, AIB posts the line once; another subagent's cookie is left alone
  */
 import { assert, assertEquals } from './_assert.ts';
-import { configure, issueHookKey } from '../../outputs/agent-studio/server/artifacts/keys.ts';
-import { ArtifactMcpHttp } from '../../outputs/agent-studio/server/artifacts/mcp_http.ts';
-import { keeperBinary } from '../../outputs/agent-studio/server/keeper/client.ts';
-import { gitBashPath } from '../../outputs/agent-studio/server/subagents/claude_config.ts';
-import { codexHook } from '../../outputs/agent-studio/server/subagents/codex.ts';
-import { FILE, type SubagentChat, SubagentWorktrees } from '../../outputs/agent-studio/server/subagents/service.ts';
-import { ProcessReaper, reapedWhyIn, recordReaped } from '../../outputs/agent-studio/server/subagents/reap.ts';
-import { type ProcSource, realProcesses, type Seen, type Tagged, taggedSince } from '../../outputs/agent-studio/server/platform/proc_env.ts';
-import { processStrings } from '../../outputs/agent-studio/server/platform/process_info.ts';
-import { killProcesses } from '../../outputs/agent-studio/server/platform/kill_verified.ts';
-import { cookieIn } from '../../outputs/agent-studio/server/platform/proc_env.ts';
-import { cookieOf, stripAibPrefix, stripAibPrefixes, tagPrefix } from '../../outputs/agent-studio/server/allow/aib_prefix.ts';
-import { parseCookie } from '../../outputs/agent-studio/server/subagents/shell_tag.ts';
-import { join } from '../../outputs/agent-studio/server/platform/path.ts';
-import * as m from '../../outputs/agent-studio/server/transcripts/monitor.ts';
+import { configure, issueHookKey } from '../../app/server/artifacts/keys.ts';
+import { ArtifactMcpHttp } from '../../app/server/artifacts/mcp_http.ts';
+import { keeperBinary } from '../../app/server/keeper/client.ts';
+import { gitBashPath } from '../../app/server/subagents/claude_config.ts';
+import { codexHook } from '../../app/server/subagents/codex.ts';
+import { FILE, type SubagentChat, SubagentWorktrees } from '../../app/server/subagents/service.ts';
+import { ProcessReaper, reapedWhyIn, recordReaped } from '../../app/server/subagents/reap.ts';
+import { type ProcSource, realProcesses, type Seen, type Tagged, taggedSince } from '../../app/server/platform/proc_env.ts';
+import { processStrings } from '../../app/server/platform/process_info.ts';
+import { killProcesses } from '../../app/server/platform/kill_verified.ts';
+import { cookieIn } from '../../app/server/platform/proc_env.ts';
+import { cookieOf, stripAibPrefix, stripAibPrefixes, tagPrefix } from '../../app/server/allow/aib_prefix.ts';
+import { parseCookie } from '../../app/server/subagents/shell_tag.ts';
+import { join } from '../../app/server/platform/path.ts';
+import * as m from '../../app/server/transcripts/monitor.ts';
 import * as fx from './_monitor_fixtures.ts';
 
 type Json = Record<string, unknown>;
@@ -461,15 +461,15 @@ async function wslReap(provider: 'claude' | 'codex') {
       console.log('(no WSL 2 distro named by AIB_WSL_E2E here: nothing to check)');
       return;
     }
-    const { Connection } = await import('../../outputs/agent-studio/server/acp/connection.ts');
-    const { Studio } = await import('../../outputs/agent-studio/server/host/studio.ts');
-    const { refOf } = await import('../../outputs/agent-studio/server/platform/location.ts');
+    const { Connection } = await import('../../app/server/acp/connection.ts');
+    const { Aib } = await import('../../app/server/host/aib.ts');
+    const { refOf } = await import('../../app/server/platform/location.ts');
     const { inDistro, ROOT, KEY } = e;
     const sh = async (script: string, ...args: string[]) => (await inDistro(script, args)).out.trim();
     await e.prepareRoot();
     const state = Deno.makeTempDirSync({ prefix: 'aib-wsl-reap-e2e-' });
     Deno.env.set('AGENT_STUDIO_ALLOW_REAL_AGENT', '1'); // hooks are set up for a non-fixture agent (the factory below runs the fake agent)
-    const studio = new Studio({ stateDir: state, port: 0, ownersDir: null }, { keeper: null });
+    const studio = new Aib({ stateDir: state, port: 0, ownersDir: null }, { keeper: null });
     studio.ownerProbe = () => null;
     studio.connectionFactory = (_command, cwd, provider, options) =>
       new Connection(['python3', `${ROOT}/fake_acp.py`, '--cancel-aware'], cwd, provider, {

@@ -3,7 +3,7 @@
  * no window, dialog or tray icon of the app ever shows on the person's screen; everything it starts inherits that desktop. Also lists
  * and messages the windows there (WM_CLOSE for "the person closed the window"). The caller kills the processes it started.
  */
-import { ensureHiddenConsole } from '../../outputs/agent-studio/server/platform/console.ts';
+import { ensureHiddenConsole } from '../../app/server/platform/console.ts';
 
 // No console must not mean a flashed window when this file's helpers start programs: windowless, never visible.
 ensureHiddenConsole({ visibleFallback: false });

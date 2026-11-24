@@ -5,8 +5,8 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import * as Y from 'yjs';
-import { DocRefusal, LiveDoc } from '../../outputs/agent-studio/server/docs/live_doc.ts';
-import { diffText } from '../../outputs/agent-studio/server/docs/blocks.ts';
+import { DocRefusal, LiveDoc } from '../../app/server/docs/live_doc.ts';
+import { diffText } from '../../app/server/docs/blocks.ts';
 import { markdown, seeded, UserClient } from './_docs.ts';
 
 type Json = Record<string, unknown>;

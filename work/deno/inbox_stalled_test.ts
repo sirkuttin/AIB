@@ -10,8 +10,8 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { events, Lab, until } from './_connection.ts';
-import type { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { INBOX } from '../../outputs/agent-studio/server/attention/inbox_rules.ts';
+import type { Connection } from '../../app/server/acp/connection.ts';
+import { INBOX } from '../../app/server/attention/inbox_rules.ts';
 
 Deno.env.set('AGENT_STUDIO_TEST', '1');
 Deno.env.set('AIB_TEST_QUIET_SECONDS', '2');

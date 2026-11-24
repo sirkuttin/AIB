@@ -5,7 +5,7 @@
  * Only the result's own first line counts: a command that printed the words is a finished command.
  */
 import { assertEquals } from './_assert.ts';
-import { Transcript } from '../../outputs/agent-studio/server/transcripts/transcript.ts';
+import { Transcript } from '../../app/server/transcripts/transcript.ts';
 
 type Row = Record<string, unknown>;
 

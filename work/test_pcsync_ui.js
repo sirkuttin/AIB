@@ -4,7 +4,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
-const { APP } = require('./_paths');
+const { PAGE: APP } = require('./_paths');
 const UI = require(path.join(APP, 'pcsync-ui.js'));
 const SET = require(path.join(APP, 'settings-ui.js'));
 

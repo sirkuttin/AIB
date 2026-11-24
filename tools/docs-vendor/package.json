@@ -1,7 +1,7 @@
 {
   "name": "aib-docs-vendor",
   "private": true,
-  "description": "Builds the page's doc editor bundle (outputs/agent-studio/vendor/docs/editor.js) from the same schema the Deno server uses (server/docs/schema.ts). Versions match outputs/agent-studio/deno.json's imports (a test checks). Run: npm install && node build.mjs",
+  "description": "Builds the page's doc editor bundle (app/vendor/docs/editor.js) from the same schema the Deno server uses (server/docs/schema.ts). Versions match app/deno.json's imports (a test checks). Run: npm install && node build.mjs",
   "type": "module",
   "dependencies": {
     "@tiptap/core": "3.33.1",

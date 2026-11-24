@@ -7,13 +7,13 @@
 import { assert, assertEquals } from './_assert.ts';
 import { FAKE, PYTHON, until } from './_connection.ts';
 import { makeRepo, runGit } from './_worktree_fixtures.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { offeredModeIds, resolveMode } from '../../outputs/agent-studio/server/agents/mode_ids.ts';
-import { workspaceModeOf, workspaceModesOf } from '../../outputs/agent-studio/server/swarm/rules.ts';
-import { Swarm } from '../../outputs/agent-studio/server/swarm/service.ts';
-import { setSwarmEnabled } from '../../outputs/agent-studio/server/swarm/settings.ts';
-import { pathOf } from '../../outputs/agent-studio/server/state/paths.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { offeredModeIds, resolveMode } from '../../app/server/agents/mode_ids.ts';
+import { workspaceModeOf, workspaceModesOf } from '../../app/server/swarm/rules.ts';
+import { Swarm } from '../../app/server/swarm/service.ts';
+import { setSwarmEnabled } from '../../app/server/swarm/settings.ts';
+import { pathOf } from '../../app/server/state/paths.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -33,7 +33,7 @@ class Box {
   readonly dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-codexmodes-test-' }));
   readonly state = pathOf(this.dir, 'state');
   readonly project = makeRepo(pathOf(this.dir, 'proj'));
-  readonly studio: Studio;
+  readonly studio: Aib;
   readonly swarm: Swarm;
   readonly connections: Connection[] = [];
 
@@ -41,7 +41,7 @@ class Box {
     setSwarmEnabled(this.state, true);
     runGit(this.project, 'config', 'user.name', 't');
     runGit(this.project, 'config', 'user.email', 't@t');
-    const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0 }, { keeper: null });
+    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0 }, { keeper: null });
     studio.ownerProbe = () => null;
     studio.agentLaunch = () => Promise.resolve([['unused'], {}]);
     studio.connectionFactory = (_command, cwd, provider, options) =>

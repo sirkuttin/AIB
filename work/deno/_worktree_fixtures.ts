@@ -2,11 +2,11 @@
  * Temp git repos and a fake studio for the worktree tests (work/deno/worktrees_test.ts, worktree_merge*_test.ts, worktree_sync*_test.ts), as
  * work/test_worktree_chat.py builds them: a repo with tracked.txt and a .gitignore, a temp state folder. Only temp folders.
  */
-import { pathOf } from '../../outputs/agent-studio/server/state/paths.ts';
-import { dirname } from '../../outputs/agent-studio/server/platform/ospath.ts';
-import type { MergeStudio } from '../../outputs/agent-studio/server/worktrees/merge.ts';
+import { pathOf } from '../../app/server/state/paths.ts';
+import { dirname } from '../../app/server/platform/ospath.ts';
+import type { MergeStudio } from '../../app/server/worktrees/merge.ts';
 import { python, WORK } from './_work.ts';
-import * as wt from '../../outputs/agent-studio/server/worktrees/worktrees.ts';
+import * as wt from '../../app/server/worktrees/worktrees.ts';
 
 /** Fixed git dates: identical repos give byte-identical commits. */
 export const FIXED_DATES = { GIT_AUTHOR_DATE: '2026-01-02T03:04:05Z', GIT_COMMITTER_DATE: '2026-01-02T03:04:05Z' };

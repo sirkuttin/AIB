@@ -13,13 +13,13 @@ import { assert, assertEquals } from './_assert.ts';
 import { FAKE, pause, PYTHON, until } from './_connection.ts';
 const UNIQUE = FAKE.replace(/fake_acp.py$/, 'fake_acp_unique.py'); // every chat its own session id
 import { commit, makeRepo, read, runGit, tryGit, write } from './_worktree_fixtures.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { escapeReply, REPORT_CLIP, wrapReport } from '../../outputs/agent-studio/server/swarm/brief.ts';
-import { Swarm } from '../../outputs/agent-studio/server/swarm/service.ts';
-import { setSwarmEnabled } from '../../outputs/agent-studio/server/swarm/settings.ts';
-import { HOOKS } from '../../outputs/agent-studio/server/worktrees/merge.ts';
-import { pathOf } from '../../outputs/agent-studio/server/state/paths.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { escapeReply, REPORT_CLIP, wrapReport } from '../../app/server/swarm/brief.ts';
+import { Swarm } from '../../app/server/swarm/service.ts';
+import { setSwarmEnabled } from '../../app/server/swarm/settings.ts';
+import { HOOKS } from '../../app/server/worktrees/merge.ts';
+import { pathOf } from '../../app/server/state/paths.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -205,7 +205,7 @@ class Box {
   readonly dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-swarm-bugs-' }));
   readonly state = pathOf(this.dir, 'state');
   readonly project = makeRepo(pathOf(this.dir, 'proj'));
-  readonly studio: Studio;
+  readonly studio: Aib;
   readonly swarm: Swarm;
   readonly calls: [string, Json][] = [];
 
@@ -213,7 +213,7 @@ class Box {
     setSwarmEnabled(this.state, true);
     runGit(this.project, 'config', 'user.name', 't');
     runGit(this.project, 'config', 'user.email', 't@t');
-    const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0 }, { keeper: null });
+    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0 }, { keeper: null });
     studio.ownerProbe = () => null;
     studio.agentLaunch = () => Promise.resolve([['unused'], {}]);
     studio.connectionFactory = (_command, cwd, provider, options) => new Connection([PYTHON, UNIQUE, '--models'], cwd, provider, options ?? {});
@@ -338,7 +338,7 @@ Deno.test({
     assert(text.includes('Login tests') && text.includes('test/login/a.test.txt'), 'the main agent was told: ' + JSON.stringify(box.calls.map((c) => c[0])));
     assertEquals(box.swarm.registry.get(id)!.merge!.undo !== null, true, 'still undone: Merge again can be tried later');
     // the page: the button comes back (chat.js re-enables it for this answer)
-    const page = Deno.readTextFileSync(new URL('../../outputs/agent-studio/chat.js', import.meta.url));
+    const page = Deno.readTextFileSync(new URL('../../app/page/chat.js', import.meta.url));
     assert(/done\?\.state === 'dirty' \|\| done\?\.state === 'cannot_merge'\) for \(const b of box\.querySelectorAll\('button'\)\) b\.disabled = false/.test(page));
   },
 });

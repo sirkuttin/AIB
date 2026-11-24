@@ -1,7 +1,7 @@
 'use strict';
-/* Lint for the page code (outputs/agent-studio/*.js). Run: npm run lint. There is no build step; this only reads the files.
+/* Lint for the page code (app/page/*.js). Run: npm run lint. There is no build step; this only reads the files.
    Rules: ESLint's recommended set, plus no assignment to innerHTML / outerHTML (the page builds its DOM from nodes and textContent).
-   Relaxed rules are listed in outputs/agent-studio/docs/FRONTEND.md as later cleanups. */
+   Relaxed rules are listed in app/docs/FRONTEND.md as later cleanups. */
 const js = require('@eslint/js');
 
 const read = names => Object.fromEntries(names.map(name => [name, 'readonly']));
@@ -18,9 +18,9 @@ const browser = read([
 
 
 module.exports = [
-  { ignores: ['node_modules/**', '**/*.min.js', 'outputs/agent-studio/docs/**', 'outputs/agent-studio/vendor/**'] },   // vendor/: third-party files, unmodified
+  { ignores: ['node_modules/**', '**/*.min.js', 'app/docs/**', 'app/vendor/**'] },   // vendor/: third-party files, unmodified
   {
-    files: ['outputs/agent-studio/**/*.js'],
+    files: ['app/**/*.js'],
     languageOptions: { ecmaVersion: 2022, sourceType: 'script', globals: { ...browser, ...read(['module']) } },   // module: the "also usable from node" line at the end of most scripts
     rules: {
       ...js.configs.recommended.rules,
@@ -40,10 +40,10 @@ module.exports = [
     },
   },
   // chat.js is the last script: it uses AgentChoice (agent-choice.js) by its bare name, and exports only window.AgentStudioGet, window.AgentChatView and the test hook window.StudioChat.
-  { files: ['outputs/agent-studio/chat.js'], languageOptions: { globals: { AgentChoice: 'readonly' } } },
+  { files: ['app/page/chat.js'], languageOptions: { globals: { AgentChoice: 'readonly' } } },
   // These two pull a sibling module with require() when the tests load them in node.
-  { files: ['outputs/agent-studio/artifacts-ui.js', 'outputs/agent-studio/attention-ui.js', 'outputs/agent-studio/notify-ui.js', 'outputs/agent-studio/sidebar-ui.js', 'outputs/agent-studio/workspace-state.js'], languageOptions: { globals: { require: 'readonly' } } },
+  { files: ['app/page/artifacts-ui.js', 'app/page/attention-ui.js', 'app/page/notify-ui.js', 'app/page/sidebar-ui.js', 'app/page/workspace-state.js'], languageOptions: { globals: { require: 'readonly' } } },
   // The phone page's service worker (served at /sw.js on the phone port): the worker global, not a window.
-  { files: ['outputs/agent-studio/pwa/sw.js'], languageOptions: { globals: { self: 'readonly' } } },
+  { files: ['app/pwa/sw.js'], languageOptions: { globals: { self: 'readonly' } } },
   { files: ['eslint.config.js'], languageOptions: { ecmaVersion: 2022, sourceType: 'commonjs', globals: { require: 'readonly', module: 'writable' } }, rules: js.configs.recommended.rules },
 ];

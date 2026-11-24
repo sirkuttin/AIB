@@ -6,11 +6,11 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import * as Y from 'yjs';
-import { DocRefusal, FIELD, LiveDoc } from '../../outputs/agent-studio/server/docs/live_doc.ts';
-import { DocStore, docId, mdBody, MD_NOTE, type OpenDoc } from '../../outputs/agent-studio/server/docs/store.ts';
-import { buildFromAib, exportAib, parseAib, stringifyAib } from '../../outputs/agent-studio/server/docs/aibdoc.ts';
-import { runDocTool } from '../../outputs/agent-studio/server/docs/tools.ts';
-import { parseDoc } from '../../outputs/agent-studio/server/docs/markdown.ts';
+import { DocRefusal, FIELD, LiveDoc } from '../../app/server/docs/live_doc.ts';
+import { DocStore, docId, mdBody, MD_NOTE, type OpenDoc } from '../../app/server/docs/store.ts';
+import { buildFromAib, exportAib, parseAib, stringifyAib } from '../../app/server/docs/aibdoc.ts';
+import { runDocTool } from '../../app/server/docs/tools.ts';
+import { parseDoc } from '../../app/server/docs/markdown.ts';
 import { UserClient } from './_docs.ts';
 
 const sep = Deno.build.os === 'windows' ? '\\' : '/';
@@ -318,7 +318,7 @@ Deno.test('a doc of the old layout (docs/<name>.md + state) moves to aib-docs/<n
     const oldState = `${dirs.state}${sep}docs${sep}${await docId(dirs.project, 'Plan')}`;
     await Deno.mkdir(oldState, { recursive: true });
     await Deno.writeFile(`${oldState}${sep}doc.bin`, old.encode());
-    const { adopt } = await import('../../outputs/agent-studio/server/docs/markdown.ts');
+    const { adopt } = await import('../../app/server/docs/markdown.ts');
     await Deno.writeTextFile(
       `${oldState}${sep}meta.json`,
       JSON.stringify({
@@ -431,8 +431,8 @@ Deno.test('a client that adds a page on its own (the editor) is picked up: its b
 
 Deno.test('history with pages: a version keeps every page (marked); restore brings back their titles, order and words', async () => {
   const dirs = await tempDirs();
-  const { ArtifactStore } = await import('../../outputs/agent-studio/server/artifacts/artifacts.ts');
-  const { ArtifactHistory } = await import('../../outputs/agent-studio/server/docs/history.ts');
+  const { ArtifactStore } = await import('../../app/server/artifacts/artifacts.ts');
+  const { ArtifactHistory } = await import('../../app/server/docs/history.ts');
   const artifacts = new ArtifactStore(`${dirs.root}${sep}artifacts`);
   const store = new DocStore(dirs.state, { idleMs: 60_000, snapshotIdleMs: 60_000, history: new ArtifactHistory(() => artifacts) });
   try {

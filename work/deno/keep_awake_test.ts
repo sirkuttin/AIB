@@ -12,14 +12,14 @@ import {
   realBackend,
   recordingBackend,
   windowsBackend,
-} from "../../outputs/agent-studio/server/platform/keep_awake.ts";
+} from "../../app/server/platform/keep_awake.ts";
 import {
   makeContext,
   WebServer,
-} from "../../outputs/agent-studio/server/web/server.ts";
-import type { LiveBackend } from "../../outputs/agent-studio/server/host/backend.ts";
-import type { UpdateService } from "../../outputs/agent-studio/server/desktop/updater.ts";
-import type { Source } from "../../outputs/agent-studio/server/transcripts/monitor.ts";
+} from "../../app/server/web/server.ts";
+import type { LiveBackend } from "../../app/server/host/backend.ts";
+import type { UpdateService } from "../../app/server/desktop/updater.ts";
+import type { Source } from "../../app/server/transcripts/monitor.ts";
 
 Deno.test("backend selection per OS", () => {
   assertEquals(backendFor("windows")?.name, "windows-power-request");

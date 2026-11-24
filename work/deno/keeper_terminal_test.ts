@@ -7,12 +7,12 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { pause, until } from './_connection.ts';
-import { TerminalSessions } from '../../outputs/agent-studio/server/terminal/sessions.ts';
-import { KeeperPty, TERMINAL_PREFIX } from '../../outputs/agent-studio/server/terminal/keeper_pty.ts';
-import { KeeperLink } from '../../outputs/agent-studio/server/keeper/link.ts';
-import { keeperBinary, KeeperClient, keeperSourceDir, readKeeperInfo } from '../../outputs/agent-studio/server/keeper/client.ts';
-import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
-import type { WsLink } from '../../outputs/agent-studio/server/platform/websocket.ts';
+import { TerminalSessions } from '../../app/server/terminal/sessions.ts';
+import { KeeperPty, TERMINAL_PREFIX } from '../../app/server/terminal/keeper_pty.ts';
+import { KeeperLink } from '../../app/server/keeper/link.ts';
+import { keeperBinary, KeeperClient, keeperSourceDir, readKeeperInfo } from '../../app/server/keeper/client.ts';
+import { pidAlive } from '../../app/server/host/host_client.ts';
+import type { WsLink } from '../../app/server/platform/websocket.ts';
 
 const WIN = Deno.build.os === 'windows';
 const T = { sanitizeResources: false, sanitizeOps: false, ignore: !WIN };

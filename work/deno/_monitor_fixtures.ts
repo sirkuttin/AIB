@@ -4,7 +4,7 @@
  * test_titles, test_project_cwd), an edge-case transcript, the work/*-fixture generators, and a large synthetic chat. No real data.
  * Every file's mtime is set to a whole millisecond so Python (100 ns) and Deno (1 ms) read the same st_mtime.
  */
-import { join } from '../../outputs/agent-studio/server/transcripts/purepath.ts';
+import { join } from '../../app/server/transcripts/purepath.ts';
 import { python, WORK } from './_work.ts';
 
 type Row = Record<string, unknown>;

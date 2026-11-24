@@ -27,9 +27,9 @@
  *      still deletes an idle chat's store when it quits, and the target is the lead chat's store.
  *   2. Quit AIB: tray icon > Quit AIB. (The idle lead chat closes and keeps its store.)
  *   3. Dry run, from the repo folder (C:\Users\sirku\Documents\Codex\AIB), and read the plan it prints:
- *        deno run -A --config outputs/agent-studio/deno.json work/migrate/repair_lead_chat_history.ts
+ *        deno run -A --config app/deno.json work/migrate/repair_lead_chat_history.ts
  *   4. The same with --apply:
- *        deno run -A --config outputs/agent-studio/deno.json work/migrate/repair_lead_chat_history.ts --apply
+ *        deno run -A --config app/deno.json work/migrate/repair_lead_chat_history.ts --apply
  *   5. Start AIB. The lead chat reopens as chat 24c0ee2a... with the whole history.
  *
  * Safety:
@@ -50,10 +50,10 @@
 import { DatabaseSync } from 'node:sqlite';
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { tryLockNow } from '../../outputs/agent-studio/server/platform/lock.ts';
-import { LOCK_FILE } from '../../outputs/agent-studio/server/desktop/single_instance.ts';
-import { HistoryStore } from '../../outputs/agent-studio/server/history/store.ts';
-import { anchorOf, ConversationLines, KEPT_KINDS, type KeptLine } from '../../outputs/agent-studio/server/history/lines.ts';
+import { tryLockNow } from '../../app/server/platform/lock.ts';
+import { LOCK_FILE } from '../../app/server/desktop/single_instance.ts';
+import { HistoryStore } from '../../app/server/history/store.ts';
+import { anchorOf, ConversationLines, KEPT_KINDS, type KeptLine } from '../../app/server/history/lines.ts';
 
 type Json = Record<string, unknown>;
 

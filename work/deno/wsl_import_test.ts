@@ -5,10 +5,10 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { git, HAVE_GIT } from './_git_repo.ts';
-import * as osp from '../../outputs/agent-studio/server/platform/ospath.ts';
-import * as wt from '../../outputs/agent-studio/server/worktrees/worktrees.ts';
-import { encoded } from '../../outputs/agent-studio/server/transcripts/normalize.ts';
-import { Store } from '../../outputs/agent-studio/server/transcripts/store.ts';
+import * as osp from '../../app/server/platform/ospath.ts';
+import * as wt from '../../app/server/worktrees/worktrees.ts';
+import { encoded } from '../../app/server/transcripts/normalize.ts';
+import { Store } from '../../app/server/transcripts/store.ts';
 import {
   ACTIVE_MS,
   applyImport,
@@ -23,7 +23,7 @@ import {
   stampOf,
   testGuard,
   undoImport,
-} from '../../outputs/agent-studio/server/wsl/helper/import.ts';
+} from '../../app/server/wsl/helper/import.ts';
 import { mntPath, parseArgs, stateDirOf } from '../../tools/wsl-import.ts';
 
 const env = (extra: Record<string, string>) => (n: string) => extra[n] ?? Deno.env.get(n);

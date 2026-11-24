@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const fs = require('node:fs');
 const path = require('node:path');
-const { APP } = require('./_paths');
+const { PAGE: APP } = require('./_paths');
 const ChatCache = require(path.join(APP, 'chat-cache.js'));
 
 const ev = (seq, kind = 'update', sid = 's') => ({ seq, kind, time: seq, data: { sessionId: sid } });

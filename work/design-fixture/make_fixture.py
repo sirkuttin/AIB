@@ -1,7 +1,7 @@
 """Design-review fixture: several projects, both vendors, pinned/on-hold/archived, one chat with subagents. No model, no real data.
 
   python work/design-fixture/make_fixture.py
-  deno run -A outputs/agent-studio/server/main.ts --port 8807 --state-dir work/design-fixture/data/state \
+  deno run -A app/server/main.ts --port 8807 --state-dir work/design-fixture/data/state \
     --omp-sessions work/design-fixture/data/omp --claude-projects work/design-fixture/data/claude \
     --owners-dir work/design-fixture/data/owners --no-owner-announcements \
     --node-command python --claude-launcher work/combined-fixture/agent.py

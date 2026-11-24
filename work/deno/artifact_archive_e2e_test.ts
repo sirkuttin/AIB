@@ -16,7 +16,7 @@
  * AIB_ARCHIVE_SHOTS=<folder> keeps screenshots (light and dark) of the picker groups, the row menu, Recently deleted with the inline
  * confirm and the link labels.
  *
- * Run (from outputs/agent-studio): deno test -A ../../work/deno/artifact_archive_e2e_test.ts
+ * Run (from app): deno test -A ../../work/deno/artifact_archive_e2e_test.ts
  */
 import { assert } from "./_assert.ts";
 import {
@@ -28,7 +28,7 @@ import {
   shown,
   sleep,
 } from "./_scroll_lab.ts";
-import { DENO_ONLY } from "../../outputs/agent-studio/server/web/routes.ts";
+import { DENO_ONLY } from "../../app/server/web/routes.ts";
 
 const SEP = Deno.build.os === "windows" ? "\\" : "/";
 /** The server half (feat/artifact-bin-server) registers these routes; on a tree without it there is nothing to test end to end. */

@@ -12,7 +12,7 @@
  *     window on each poll -> ~25% of a core, tasks up to 100 ms
  *   - typing: each key laid out the whole history (composer autosize + an unconstrained #messages) -> p90 ~190 ms while streaming
  *
- * Run (from outputs/agent-studio):  deno test -A ../../work/deno/perf_e2e_test.ts
+ * Run (from app):  deno test -A ../../work/deno/perf_e2e_test.ts
  *   AIB_PERF_MINUTES=10 for the long run (default 3). Without Chrome or Edge the test is ignored. Gives up after 15 minutes.
  */
 import { assert } from "./_assert.ts";

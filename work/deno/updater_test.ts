@@ -39,7 +39,7 @@ import {
   UpdateService,
   type KeeperState,
   type UpdateServiceOptions,
-} from "../../outputs/agent-studio/server/desktop/updater.ts";
+} from "../../app/server/desktop/updater.ts";
 import {
   cleanEnv,
   defaultStart,
@@ -55,12 +55,12 @@ import {
   run as runHelper,
   type StartResult,
   swapFolder,
-} from "../../outputs/agent-studio/server/desktop/update_helper.ts";
+} from "../../app/server/desktop/update_helper.ts";
 import { writeZip } from "../../tools/build.ts";
-import { kernel32, wide } from "../../outputs/agent-studio/server/platform/win32.ts";
-import { ValueError } from "../../outputs/agent-studio/server/core/py.ts";
-import { PROTOCOL_VERSION } from "../../outputs/agent-studio/server/host/host_client.ts";
-import { claimFolder } from "../../outputs/agent-studio/server/desktop/single_instance.ts";
+import { kernel32, wide } from "../../app/server/platform/win32.ts";
+import { ValueError } from "../../app/server/core/py.ts";
+import { PROTOCOL_VERSION } from "../../app/server/host/host_client.ts";
+import { claimFolder } from "../../app/server/desktop/single_instance.ts";
 
 const INSTALLER = "AIB-0.1.0-beta.2-windows-x64.zip";
 const PAYLOAD = new TextEncoder().encode("MZ fake installer bytes".repeat(50));
@@ -1340,7 +1340,7 @@ Deno.test("helper: the old app holds the data folder lock until it exits; the ne
   const c = await windowsCase();
   const data = Deno.makeTempDirSync({ prefix: "aib-helper-data-" });
   // The old app: a real process holding <data>/desktop.lock that quits 1.5 s after it took it.
-  const module = new URL("../../outputs/agent-studio/server/desktop/single_instance.ts", import.meta.url).href;
+  const module = new URL("../../app/server/desktop/single_instance.ts", import.meta.url).href;
   const script = `const m = await import(${JSON.stringify(module)});
     const h = await m.claimFolder(${JSON.stringify(data)}, { mode: "desktop" });
     console.log(h.primary ? "locked" : "refused");
@@ -1927,14 +1927,14 @@ function isFileSync(p: string): boolean {
 }
 
 // ---- the "update ready" desktop notification and the release notes (the Update button, owner 2026-11-12) -----------------
-import { getUpdateNotes, MAX_NOTES_RELEASES, postUpdateNotes, releaseNotes } from '../../outputs/agent-studio/server/desktop/updater.ts';
+import { getUpdateNotes, MAX_NOTES_RELEASES, postUpdateNotes, releaseNotes } from '../../app/server/desktop/updater.ts';
 import {
   APP_PREF_KEY,
   desktopNotificationsOn,
   type NotifyRequest,
   notifyUpdateReady,
   type ShowResult,
-} from '../../outputs/agent-studio/server/desktop/notify.ts';
+} from '../../app/server/desktop/notify.ts';
 
 /** A stand-in for DesktopNotifications: records what would be shown; nothing reaches the screen. */
 function fakeNotifier() {
@@ -2068,7 +2068,7 @@ import {
   isTestBuild,
   mergeNotes,
   pickFeed,
-} from '../../outputs/agent-studio/server/desktop/updater.ts';
+} from '../../app/server/desktop/updater.ts';
 import { feedArg, feedNotes, feedVersions, previousFeedCommit, pruneFeed, writeFeed } from '../../tools/build.ts';
 
 Deno.test('test builds: X.test.M is older than X, newer than X.test.M-1 and than everything before X', () => {

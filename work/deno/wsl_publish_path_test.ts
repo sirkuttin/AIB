@@ -5,10 +5,10 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { FakeWslHost } from './_wsl_fake.ts';
-import { makeMethods } from '../../outputs/agent-studio/server/wsl/helper/methods.ts';
-import { handleLine } from '../../outputs/agent-studio/server/wsl/helper/rpc.ts';
-import { WslHelperError } from '../../outputs/agent-studio/server/wsl/contract.ts';
-import { setWslHostResolver } from '../../outputs/agent-studio/server/wsl/access.ts';
+import { makeMethods } from '../../app/server/wsl/helper/methods.ts';
+import { handleLine } from '../../app/server/wsl/helper/rpc.ts';
+import { WslHelperError } from '../../app/server/wsl/contract.ts';
+import { setWslHostResolver } from '../../app/server/wsl/access.ts';
 import {
   absoluteLinux,
   publishRoots,
@@ -17,10 +17,10 @@ import {
   type WslReadTarget,
   WslReadError,
   wslPublishFile,
-} from '../../outputs/agent-studio/server/wsl/artifact_read.ts';
-import { ArtifactStore, kindFor, MAX_FILE_BYTES, Service, WSL_FILE_RESOLVED } from '../../outputs/agent-studio/server/artifacts/artifacts.ts';
-import { attachWslFile } from '../../outputs/agent-studio/server/web/studio_routes.ts';
-import type { WebContext } from '../../outputs/agent-studio/server/web/server.ts';
+} from '../../app/server/wsl/artifact_read.ts';
+import { ArtifactStore, kindFor, MAX_FILE_BYTES, Service, WSL_FILE_RESOLVED } from '../../app/server/artifacts/artifacts.ts';
+import { attachWslFile } from '../../app/server/web/aib_routes.ts';
+import type { WebContext } from '../../app/server/web/server.ts';
 
 type Json = Record<string, unknown>;
 const SEP = Deno.build.os === 'windows' ? '\\' : '/';

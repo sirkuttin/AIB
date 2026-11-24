@@ -2,7 +2,7 @@
 /* Structural checks on chat.html (ported from test_page_structure.py): tags balance, every served front-end module is actually
    loaded, the one-pane page structure, and the screen-reader structure. A dropped closing tag once turned a <script> tag into
    inert text, which no behaviour test noticed. */
-const { APP } = require('./_paths');
+const { APP, PAGE } = require('./_paths');
 const test = require('node:test'),
   assert = require('node:assert/strict'),
   fs = require('node:fs'),
@@ -10,15 +10,15 @@ const test = require('node:test'),
 const { servedAsset } = require('./_served_assets');
 const { cssRules, declarationsFor } = require('./css_rules');
 
-const HTML = fs.readFileSync(path.join(APP, 'chat.html'), 'utf8');
+const HTML = fs.readFileSync(path.join(PAGE, 'chat.html'), 'utf8');
 const VOID = new Set(['meta', 'link', 'input', 'br', 'img', 'hr', 'source', 'wbr']);
 const SCRIPT_SRC = /<script\b[^>]*\bsrc="\/([a-z0-9-]+\.js)"/g; // reads the tag, not its exact spelling
 const LOADED_ON_DEMAND = new Set(['elicitation-ui.js']); // fetched by chat.js only when the server supports questions
-const DOC_HTML = fs.readFileSync(path.join(APP, 'doc.html'), 'utf8'); // the doc page loads its own scripts
-const PHONE_HTML = fs.readFileSync(path.join(APP, 'phone.html'), 'utf8'); // the phone page (phone port only) loads its own
+const DOC_HTML = fs.readFileSync(path.join(PAGE, 'doc.html'), 'utf8'); // the doc page loads its own scripts
+const PHONE_HTML = fs.readFileSync(path.join(PAGE, 'phone.html'), 'utf8'); // the phone page (phone port only) loads its own
 // Remote PC (phone port only): the loader at / loads its own script, and the computer page (/pc.html, chat.html rewritten by
 // server/remote/pc_page.ts pcShell) adds remote-auth.js and remote-windows.js to it.
-const REMOTE_LOADER_HTML = fs.readFileSync(path.join(APP, 'remote-loader.html'), 'utf8');
+const REMOTE_LOADER_HTML = fs.readFileSync(path.join(PAGE, 'remote-loader.html'), 'utf8');
 const PC_SHELL_TS = fs.readFileSync(path.join(APP, 'server', 'remote', 'pc_page.ts'), 'utf8');
 const scripts = () => [...HTML.matchAll(SCRIPT_SRC)].map((m) => m[1]);
 
@@ -84,9 +84,9 @@ test('the content security policy allows local attachment previews', () => {
 });
 
 test('every served module is loaded', () => {
-  // The server serves any plainly named .js/.css in the app folder (studioAsset); every such script except the monitor
+  // The server serves any plainly named .js/.css in the app folder (pageAsset); every such script except the monitor
   // dashboard's own must be loaded by chat.html, or it is dead code.
-  const served = fs.readdirSync(APP).filter((n) => n.endsWith('.js') && servedAsset('/' + n));
+  const served = fs.readdirSync(PAGE).filter((n) => n.endsWith('.js') && servedAsset('/' + n));
   const loaded = new Set([
     ...scripts(),
     ...[DOC_HTML, PHONE_HTML, REMOTE_LOADER_HTML, PC_SHELL_TS].flatMap((text) => [...text.matchAll(SCRIPT_SRC)].map((m) => m[1])),
@@ -196,7 +196,7 @@ test('one visually hidden polite live region sits outside main', () => {
     ['html', 'body'],
     'a direct child of <body>, so every split pane shares it',
   );
-  const rule = declarationsFor(cssRules(fs.readFileSync(path.join(APP, 'chat.css'), 'utf8')), '.sr-only');
+  const rule = declarationsFor(cssRules(fs.readFileSync(path.join(PAGE, 'chat.css'), 'utf8')), '.sr-only');
   assert.ok(Object.keys(rule).length, 'chat.css has no .sr-only rule');
   for (const [name, value] of [
     ['position', 'absolute'],
@@ -217,7 +217,7 @@ test('the info button has an accessible name', () => {
 test('the page is called AIB: its title, and the chat title suffix (QA 4 #6)', () => {
   const fsx = require('node:fs');
   const pathx = require('node:path');
-  const { APP: dirx } = require('./_paths');
+  const { PAGE: dirx } = require('./_paths');
   const html = fsx.readFileSync(pathx.join(dirx, 'chat.html'), 'utf8');
   assert.match(html, /<title>AIB<\/title>/);
   assert.doesNotMatch(html, /Agent Studio|End Studio session/);

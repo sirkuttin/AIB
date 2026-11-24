@@ -5,12 +5,12 @@
  * the kernel walks them. The real distro is covered by wsl_allow_e2e_test.ts. Temp state folders only.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { AllowGate } from '../../outputs/agent-studio/server/allow/gate.ts';
-import { factsNow, type LinkFs, LinuxFacts, LinuxView, physicalRealish } from '../../outputs/agent-studio/server/allow/linux.ts';
-import { type MatchContext, projectKey, rulesHere, sameProject } from '../../outputs/agent-studio/server/allow/matcher.ts';
-import { COLLECT_FACTS, prefetch, type WslFactsSource } from '../../outputs/agent-studio/server/allow/wsl_facts.ts';
-import type { AllowRule } from '../../outputs/agent-studio/server/allow/matcher.ts';
-import type { WslHost } from '../../outputs/agent-studio/server/wsl/contract.ts';
+import { AllowGate } from '../../app/server/allow/gate.ts';
+import { factsNow, type LinkFs, LinuxFacts, LinuxView, physicalRealish } from '../../app/server/allow/linux.ts';
+import { type MatchContext, projectKey, rulesHere, sameProject } from '../../app/server/allow/matcher.ts';
+import { COLLECT_FACTS, prefetch, type WslFactsSource } from '../../app/server/allow/wsl_facts.ts';
+import type { AllowRule } from '../../app/server/allow/matcher.ts';
+import type { WslHost } from '../../app/server/wsl/contract.ts';
 
 type Json = Record<string, unknown>;
 const REF = 'wsl://ubuntu/home/u/app';

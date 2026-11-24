@@ -1,5 +1,5 @@
 'use strict';
-const { APP: APP_DIR } = require('./_paths');
+const { PAGE: APP_DIR } = require('./_paths');
 /* The desktop app's <artifact-view-context> block is hidden from user bubbles (display only). */
 const test = require('node:test');
 const assert = require('node:assert/strict');

@@ -18,8 +18,8 @@
  *
  * Prints one JSON line per chat and run, then a table (medians).
  */
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import type { ChannelInfo, KeeperRecord } from '../../outputs/agent-studio/server/keeper/client.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import type { ChannelInfo, KeeperRecord } from '../../app/server/keeper/client.ts';
 
 type Json = Record<string, unknown>;
 const KINDS = ['', 'out', 'err', 'in', 'note', 'exit', 'resize'] as const;

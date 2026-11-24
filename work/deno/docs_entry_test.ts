@@ -4,11 +4,11 @@
  * with their ids (chips resolve by id) and its linked chat, which opening the doc from another chat never moves.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { docsRoutes, docsTool } from '../../outputs/agent-studio/server/web/docs_routes.ts';
-import { makeContext } from '../../outputs/agent-studio/server/web/server.ts';
-import type { LiveBackend } from '../../outputs/agent-studio/server/host/backend.ts';
-import type { UpdateService } from '../../outputs/agent-studio/server/desktop/updater.ts';
-import type { Source } from '../../outputs/agent-studio/server/transcripts/monitor.ts';
+import { docsRoutes, docsTool } from '../../app/server/web/docs_routes.ts';
+import { makeContext } from '../../app/server/web/server.ts';
+import type { LiveBackend } from '../../app/server/host/backend.ts';
+import type { UpdateService } from '../../app/server/desktop/updater.ts';
+import type { Source } from '../../app/server/transcripts/monitor.ts';
 
 type Json = Record<string, unknown>;
 const sep = Deno.build.os === 'windows' ? '\\' : '/';

@@ -1,11 +1,11 @@
 /** Files outside a chat's folder: the transcript-mention guard, every refusal, the folder label, and discovered (non-AIB) chats. */
 import { assert, assertEquals, assertThrows } from './_assert.ts';
 import { git, HAVE_GIT, write } from './_git_repo.ts';
-import * as osp from '../../outputs/agent-studio/server/platform/ospath.ts';
-import * as outside from '../../outputs/agent-studio/server/worktrees/outside_files.ts';
-import { FilesError } from '../../outputs/agent-studio/server/worktrees/files.ts';
-import { _mentioned, filesRoutes } from '../../outputs/agent-studio/server/web/files_routes.ts';
-import type { WebContext } from '../../outputs/agent-studio/server/web/server.ts';
+import * as osp from '../../app/server/platform/ospath.ts';
+import * as outside from '../../app/server/worktrees/outside_files.ts';
+import { FilesError } from '../../app/server/worktrees/files.ts';
+import { _mentioned, filesRoutes } from '../../app/server/web/files_routes.ts';
+import type { WebContext } from '../../app/server/web/server.ts';
 
 const WIN = Deno.build.os === 'windows';
 const SID = '0d6a1f2e-1111-4222-8333-944455556666';

@@ -1,5 +1,5 @@
 /**
- * Docs of WSL projects without a distro (docs/wsl/design.md section 4 phase 2; outputs/agent-studio/docs/WSL.md "Docs"):
+ * Docs of WSL projects without a distro (docs/wsl/design.md section 4 phase 2; app/docs/WSL.md "Docs"):
  *   1. The helper's docs.fs (wsl/helper/docs.ts) on a temp folder: reads, atomic writes (also in chunks), only <project>/aib-docs/…,
  *      no `..`, no recursive remove of aib-docs/ itself.
  *   2. The whole docs store on a WSL ref (wsl://ubuntu/home/u/app) through a FakeWslHost whose docs.fs is that helper method: the
@@ -12,19 +12,19 @@
 import { assert, assertEquals } from './_assert.ts';
 import { FakeWslHost } from './_wsl_fake.ts';
 import { UserClient } from './_docs.ts';
-import { setWslHostResolver } from '../../outputs/agent-studio/server/wsl/access.ts';
-import { installWslDocFs, linuxPath, linuxPaths, wslDocFs } from '../../outputs/agent-studio/server/wsl/docs.ts';
-import { docsMethods } from '../../outputs/agent-studio/server/wsl/helper/docs.ts';
-import { handleLine } from '../../outputs/agent-studio/server/wsl/helper/rpc.ts';
-import { DocStore, mdBody } from '../../outputs/agent-studio/server/docs/store.ts';
-import { runDocTool } from '../../outputs/agent-studio/server/docs/tools.ts';
-import { ArtifactHistory } from '../../outputs/agent-studio/server/docs/history.ts';
-import { ArtifactStore } from '../../outputs/agent-studio/server/artifacts/artifacts.ts';
-import { parseAib } from '../../outputs/agent-studio/server/docs/aibdoc.ts';
-import { DocRefusal } from '../../outputs/agent-studio/server/docs/live_doc.ts';
-import { fsOf, localFs, pathKey, sepOf } from '../../outputs/agent-studio/server/docs/doc_fs.ts';
-import { docsRoutes } from '../../outputs/agent-studio/server/web/docs_routes.ts';
-import type { WebContext } from '../../outputs/agent-studio/server/web/server.ts';
+import { setWslHostResolver } from '../../app/server/wsl/access.ts';
+import { installWslDocFs, linuxPath, linuxPaths, wslDocFs } from '../../app/server/wsl/docs.ts';
+import { docsMethods } from '../../app/server/wsl/helper/docs.ts';
+import { handleLine } from '../../app/server/wsl/helper/rpc.ts';
+import { DocStore, mdBody } from '../../app/server/docs/store.ts';
+import { runDocTool } from '../../app/server/docs/tools.ts';
+import { ArtifactHistory } from '../../app/server/docs/history.ts';
+import { ArtifactStore } from '../../app/server/artifacts/artifacts.ts';
+import { parseAib } from '../../app/server/docs/aibdoc.ts';
+import { DocRefusal } from '../../app/server/docs/live_doc.ts';
+import { fsOf, localFs, pathKey, sepOf } from '../../app/server/docs/doc_fs.ts';
+import { docsRoutes } from '../../app/server/web/docs_routes.ts';
+import type { WebContext } from '../../app/server/web/server.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };

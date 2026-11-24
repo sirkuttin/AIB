@@ -11,7 +11,7 @@
  *  - no list scrolls on its own because a sibling changed;
  *  - no double scrollbars, no sideways scroll; handles respect their minimums; sizes persist.
  *
- * Run (from outputs/agent-studio):
+ * Run (from app):
  *   deno test -A ../../work/deno/layout_e2e_test.ts                     passing tests; KNOWN_FAILING ones are listed as ignored
  *   AIB_LAYOUT_ALL=1 deno test -A ../../work/deno/layout_e2e_test.ts    also the known-failing ones (they fail until fixed)
  *   ... --filter "L3"                                                   one test by its number

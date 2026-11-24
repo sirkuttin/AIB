@@ -166,7 +166,7 @@ function viewsHidden(env) {
 }
 
 test('pure parts: socket address, token subprotocol, theme tokens, short folder, idle time, toggle keys', () => {
-  const T = require('../outputs/agent-studio/terminal-ui.js');
+  const T = require('../app/page/terminal-ui.js');
   const url = new URL(
     T.socketUrl({ protocol: 'http:', host: '127.0.0.1:8850' }, 'claude:x y', 'C:\\a b', 120, 33, 'windows-powershell'),
   );

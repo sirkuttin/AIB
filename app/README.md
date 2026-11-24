@@ -17,7 +17,7 @@ Connected in Studio and Working in Studio are confirmed connection states. Saved
 
 ## Launch options
 
-Unknown flags fail with usage. Run from `outputs/agent-studio`:
+Unknown flags fail with usage. Run from `app`:
 
 ```text
 deno run -A server/main.ts --port 8767 --open                      the web server (it starts the agent host)
@@ -114,7 +114,7 @@ This remains partial protocol coverage. Questions during connection setup, URL e
 ## Tests
 
 The Deno server is the app. The old Python reference server was retired on 2026-11-23: the tests that compared the Deno server with it
-now compare with the answers it gave then (small fixtures in `work/deno/fixtures/frozen/`, see `work/deno/_frozen.ts`). From `outputs/agent-studio`:
+now compare with the answers it gave then (small fixtures in `work/deno/fixtures/frozen/`, see `work/deno/_frozen.ts`). From `app`:
 
 ```text
 deno task test        the Deno tests (work/deno/)

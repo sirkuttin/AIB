@@ -14,4 +14,4 @@ Out of scope: what an agent does with the permissions you gave it, and problems 
 
 ## Design in short
 
-Loopback only; a random per-process page token and same-origin checks on every write; the agent host has its own token and peer check; agents keep their own sign-in; one git worktree per chat. Details are in `outputs/agent-studio/docs/agent-host.md`.
+Loopback only; a random per-process page token and same-origin checks on every write; the agent host has its own token and peer check; agents keep their own sign-in; one git worktree per chat. Details are in `app/docs/agent-host.md`.

@@ -1,5 +1,5 @@
 'use strict';
-const { APP: APP_DIR } = require('./_paths');
+const { PAGE: APP_DIR } = require('./_paths');
 // Settings page logic: search/filter across sections, the page's agent registry merge, defaults for new chats, and the load/save wiring.
 const assert = require('node:assert/strict');
 const test = require('node:test');
@@ -418,7 +418,7 @@ test('restart note: the app says quit and start again; a source run names the de
   const app = S.serverRestartText(true);
   const source = S.serverRestartText(false);
   assert.match(app, /quit AIB \(tray icon > Quit AIB\) and start it again/);
-  assert.match(source, /deno run -A outputs\/agent-studio\/server\/main\.ts deploy/);
+  assert.match(source, /deno run -A app\/server\/main\.ts deploy/);
   for (const text of [app, source]) assert.doesNotMatch(text, /\.py\b|python/i);
 });
 

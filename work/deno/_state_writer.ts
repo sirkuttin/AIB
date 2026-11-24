@@ -10,7 +10,7 @@ import {
   ProjectPrefs,
   ReadState,
   SettingsStore,
-} from '../../outputs/agent-studio/server/state/store.ts';
+} from '../../app/server/state/store.ts';
 
 Deno.env.set('AGENT_STUDIO_TEST', '1');
 const [kind, dir, tag, countText, pauseText] = Deno.args;

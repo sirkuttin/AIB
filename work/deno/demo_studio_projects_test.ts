@@ -3,7 +3,7 @@
  * fresh demo used to open with "No project yet" although its README promises chats. The demo writes studio-added-projects.json for
  * alpha, alpha/docs and beta (the folders its chats work in), under the keys Studio itself files them under.
  */
-import { projectKey } from '../../outputs/agent-studio/server/desktop/project_delete.ts';
+import { projectKey } from '../../app/server/desktop/project_delete.ts';
 import { assert, assertEquals } from './_assert.ts';
 import { HAVE_GIT } from './_git_repo.ts';
 import { PYTHON } from './_connection.ts';

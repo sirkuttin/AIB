@@ -1,4 +1,4 @@
-const { APP: APP_DIR } = require('./_paths');
+const { PAGE: APP_DIR } = require('./_paths');
 // Quick reply from the inbox: row action sets, choice detection, context clamping and the keyboard state machine.
 const assert = require('node:assert/strict');
 const path = require('node:path');

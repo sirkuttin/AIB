@@ -6,7 +6,7 @@
  *   Q6  At 860 px the sidebar drawer stays open after "Git exclude" so the "Excluded x" foot with Undo shows.
  * AIB_DOCPAGE_SHOTS=<folder> keeps a screenshot per step.
  */
-import { projectKey } from '../../outputs/agent-studio/server/desktop/project_delete.ts';
+import { projectKey } from '../../app/server/desktop/project_delete.ts';
 import { assert, assertEquals } from './_assert.ts';
 import { git, HAVE_GIT } from './_git_repo.ts';
 import { Fixture, SEP, TEST_OPTIONS } from './_host_fixture.ts';

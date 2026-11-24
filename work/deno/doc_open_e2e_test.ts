@@ -11,7 +11,7 @@
  *    column. Its divider drags within the minimums (pane 360 px, chat 420 px), the width survives a reload, double-click resets it,
  *    and the arrow keys move it.
  *
- * Run (from outputs/agent-studio): deno test -A ../../work/deno/doc_open_e2e_test.ts
+ * Run (from app): deno test -A ../../work/deno/doc_open_e2e_test.ts
  */
 import { assert } from './_assert.ts';
 import { browserPath, type Chat, Lab, type Page, settle, shown, sleep } from './_scroll_lab.ts';

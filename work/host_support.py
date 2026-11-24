@@ -17,7 +17,7 @@ PROTOCOL_VERSION = 4   # server/host/host_client.ts
 HOST_FORMAT = 'agent-studio-host'
 INFO_NAME = 'agent-host.json'
 TOKEN_HEADER = 'X-Agent-Host-Token'
-CODE_ROOT = os.path.normcase(str(pathlib.Path(__file__).resolve().parents[1] / 'outputs' / 'agent-studio'))   # what a host started from this checkout publishes as codeRoot
+CODE_ROOT = os.path.normcase(str(pathlib.Path(__file__).resolve().parents[1] / 'app'))   # what a host started from this checkout publishes as codeRoot
 
 
 class HostUnavailable(RuntimeError):

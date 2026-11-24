@@ -9,17 +9,17 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { cleanRoot, DISTRO, inDistro, KEY, prepareRoot, readyHost, ROOT, T } from './_wsl_e2e.ts';
-import { refOf } from '../../outputs/agent-studio/server/platform/location.ts';
-import { wslLoc } from '../../outputs/agent-studio/server/wsl/access.ts';
-import { wslFiles } from '../../outputs/agent-studio/server/web/wsl_routes.ts';
-import { artifactAnswer } from '../../outputs/agent-studio/server/artifacts/origin.ts';
-import { _mentioned, filesRoutes } from '../../outputs/agent-studio/server/web/files_routes.ts';
-import { projectRemove } from '../../outputs/agent-studio/server/web/project_routes.ts';
-import { RemovedProjects } from '../../outputs/agent-studio/server/desktop/project_delete.ts';
-import { LimitsFeed } from '../../outputs/agent-studio/server/host/usage_limits_feed.ts';
-import { UsageLimitsStore } from '../../outputs/agent-studio/server/state/usage_limits.ts';
-import type { WebContext } from '../../outputs/agent-studio/server/web/server.ts';
-import { wslHostsInUse } from '../../outputs/agent-studio/server/wsl/hosts.ts';
+import { refOf } from '../../app/server/platform/location.ts';
+import { wslLoc } from '../../app/server/wsl/access.ts';
+import { wslFiles } from '../../app/server/web/wsl_routes.ts';
+import { artifactAnswer } from '../../app/server/artifacts/origin.ts';
+import { _mentioned, filesRoutes } from '../../app/server/web/files_routes.ts';
+import { projectRemove } from '../../app/server/web/project_routes.ts';
+import { RemovedProjects } from '../../app/server/desktop/project_delete.ts';
+import { LimitsFeed } from '../../app/server/host/usage_limits_feed.ts';
+import { UsageLimitsStore } from '../../app/server/state/usage_limits.ts';
+import type { WebContext } from '../../app/server/web/server.ts';
+import { wslHostsInUse } from '../../app/server/wsl/hosts.ts';
 
 type Json = Record<string, unknown>;
 const OUT = `${ROOT}-outside`;

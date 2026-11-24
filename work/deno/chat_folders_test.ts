@@ -15,11 +15,11 @@ import {
   type ChatStudio,
   defaults,
   repoBranch,
-} from '../../outputs/agent-studio/server/worktrees/chat_folders.ts';
-import { MAX_FILES } from '../../outputs/agent-studio/server/worktrees/changes.ts';
-import { Registry } from '../../outputs/agent-studio/server/worktrees/worktrees.ts';
-import { ValueError } from '../../outputs/agent-studio/server/core/py.ts';
-import * as osp from '../../outputs/agent-studio/server/platform/ospath.ts';
+} from '../../app/server/worktrees/chat_folders.ts';
+import { MAX_FILES } from '../../app/server/worktrees/changes.ts';
+import { Registry } from '../../app/server/worktrees/worktrees.ts';
+import { ValueError } from '../../app/server/core/py.ts';
+import * as osp from '../../app/server/platform/ospath.ts';
 
 const test = (name: string, fn: () => Promise<void> | void) => Deno.test({ name, ignore: !HAVE_GIT, fn });
 const TOKEN = 'tok';

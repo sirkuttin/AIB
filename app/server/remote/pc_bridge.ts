@@ -25,7 +25,7 @@
  */
 import { Principal, REMOTE_PC } from '../web/security.ts';
 import type { WebContext } from '../web/server.ts';
-import { artifactPost } from '../web/studio_routes.ts';
+import { artifactPost } from '../web/aib_routes.ts';
 import { TERMINAL_SOCKET, terminalSocket } from '../web/terminal_routes.ts';
 import type { WsLink } from '../platform/websocket.ts';
 import { DOCS_SOCKET, docsSocket } from '../web/docs_routes.ts';

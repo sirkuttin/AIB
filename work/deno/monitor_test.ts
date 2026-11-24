@@ -6,11 +6,11 @@
  */
 import { assert, assertEquals, assertRejects } from "./_assert.ts";
 import { Frozen } from "./_frozen.ts";
-import * as m from "../../outputs/agent-studio/server/transcripts/monitor.ts";
+import * as m from "../../app/server/transcripts/monitor.ts";
 import {
   join,
   WINDOWS,
-} from "../../outputs/agent-studio/server/transcripts/purepath.ts";
+} from "../../app/server/transcripts/purepath.ts";
 import {
   b64decodeStrict,
   isoTimestamp,
@@ -18,9 +18,9 @@ import {
   pyInt,
   pyTitle,
   splitlines,
-} from "../../outputs/agent-studio/server/transcripts/pycompat.ts";
-import { parseNotice } from "../../outputs/agent-studio/server/transcripts/xml_notice.ts";
-import { ValueError } from "../../outputs/agent-studio/server/core/py.ts";
+} from "../../app/server/transcripts/pycompat.ts";
+import { parseNotice } from "../../app/server/transcripts/xml_notice.ts";
+import { ValueError } from "../../app/server/core/py.ts";
 import * as fx from "./_monitor_fixtures.ts";
 
 const py = new Frozen();

@@ -47,7 +47,7 @@ import { wslResumeSync } from '../wsl/sync.ts';
 type Json = Record<string, unknown>;
 export type Reply = [number, unknown];
 /** A native route: [status, payload]. */
-export type StudioHandler = (ctx: WebContext, url: URL, body: Json | null, request: Request, principal?: Principal) => Promise<Reply>;
+export type AibHandler = (ctx: WebContext, url: URL, body: Json | null, request: Request, principal?: Principal) => Promise<Reply>;
 
 /** parse_qs(query) and args.get(name, [fallback])[0]. */
 function argsOf(url: URL): Record<string, string[]> {
@@ -177,8 +177,8 @@ async function refreshList(ctx: WebContext): Promise<void> {
   }
 }
 
-export function studioRoutes(): Map<string, StudioHandler> {
-  const routes = new Map<string, StudioHandler>();
+export function aibRoutes(): Map<string, AibHandler> {
+  const routes = new Map<string, AibHandler>();
   // ---- settings and conversation marks ----
   routes.set('GET /api/live/settings', async (ctx, url) => [200, {
     ...(await settingsView(studioOf(ctx), one(argsOf(url), 'recheck') === '1', { offThread: true })),

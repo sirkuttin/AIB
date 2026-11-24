@@ -3,7 +3,7 @@
  * or aib-docs/ and nothing else: no absolute path, no root, no way out of the folder, no name Windows would turn into another file.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { checkPath, MAX_FRAME_BYTES, MAX_HELLO_BYTES, MAX_ITEMS, parseFrame } from '../../outputs/agent-studio/server/pcsync/frames.ts';
+import { checkPath, MAX_FRAME_BYTES, MAX_HELLO_BYTES, MAX_ITEMS, parseFrame } from '../../app/server/pcsync/frames.ts';
 
 const ok = (path: string, area: 'shared' | 'docs' = 'shared') => checkPath(path, area).ok;
 

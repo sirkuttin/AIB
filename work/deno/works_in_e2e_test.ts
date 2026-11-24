@@ -11,7 +11,7 @@
  * 24. The project's Changes tab (right panel slice S2): the fixed header, no Merge or Discard, the footer line. Another chat of the
  *     project (even one that was made in its own copy, stood in for by a stubbed reply) changes nothing in the tab.
  *
- * Run (from outputs/agent-studio): deno test -A ../../work/deno/works_in_e2e_test.ts   (ignored without Chrome or Edge)
+ * Run (from app): deno test -A ../../work/deno/works_in_e2e_test.ts   (ignored without Chrome or Edge)
  * AIB_WORKS_IN_SHOTS=<folder> saves a screenshot of each state there.
  */
 import { assert, assertEquals } from './_assert.ts';

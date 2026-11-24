@@ -10,8 +10,8 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { Fixture, SEP, TEST_OPTIONS } from './_host_fixture.ts';
-import { APP_VERSION } from '../../outputs/agent-studio/server/core/app.ts';
-import { parseVersion } from '../../outputs/agent-studio/server/desktop/updater.ts';
+import { APP_VERSION } from '../../app/server/core/app.ts';
+import { parseVersion } from '../../app/server/desktop/updater.ts';
 import { writeFeed } from '../../tools/build.ts';
 
 const base = APP_VERSION.replace(/\.test\..*$/, '');

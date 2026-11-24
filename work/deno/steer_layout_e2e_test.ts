@@ -16,7 +16,7 @@
  *    inside the window); LY3 clicks "Send now" and "Interrupt and send" with the mouse at such a point;
  *  - the hint text keeps a contrast of at least 4.5:1 against what is behind it (light and dark).
  *
- * Run (from outputs/agent-studio): deno test -A ../../work/deno/steer_layout_e2e_test.ts
+ * Run (from app): deno test -A ../../work/deno/steer_layout_e2e_test.ts
  */
 import { assert, assertEquals, hasBrowser, type Json, openPage, type Page, SteerLab, TEST_OPTIONS, until, type Who } from './_steer_lab.ts';
 import type { SteerChat } from './_steer_lab.ts';

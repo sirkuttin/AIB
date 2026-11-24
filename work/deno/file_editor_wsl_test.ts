@@ -11,12 +11,12 @@
  *   - the helper alone: expect null on an existing file, leftover temp files swept, the save temp name refused
  */
 import { assert, assertEquals } from './_assert.ts';
-import { LiveFiles } from '../../outputs/agent-studio/server/files/live_files.ts';
-import { setWslHostResolver } from '../../outputs/agent-studio/server/wsl/access.ts';
-import { type HelperMethods, WslHelperError, type WslHost } from '../../outputs/agent-studio/server/wsl/contract.ts';
-import { editorMethods } from '../../outputs/agent-studio/server/wsl/helper/editor.ts';
-import { RpcError } from '../../outputs/agent-studio/server/wsl/helper/rpc.ts';
-import type { HelperContext } from '../../outputs/agent-studio/server/wsl/helper/methods.ts';
+import { LiveFiles } from '../../app/server/files/live_files.ts';
+import { setWslHostResolver } from '../../app/server/wsl/access.ts';
+import { type HelperMethods, WslHelperError, type WslHost } from '../../app/server/wsl/contract.ts';
+import { editorMethods } from '../../app/server/wsl/helper/editor.ts';
+import { RpcError } from '../../app/server/wsl/helper/rpc.ts';
+import type { HelperContext } from '../../app/server/wsl/helper/methods.ts';
 
 type Json = Record<string, unknown>;
 const enc = (s: string) => new TextEncoder().encode(s);

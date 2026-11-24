@@ -7,7 +7,7 @@
 Never touches work/agent-studio-state or the owner's agent folders (~/.claude, ~/.codex ...): everything lives in one temp folder,
 agent-studio-demo-<port>, and the server's home folder and agent folders (HOME, USERPROFILE, CODEX_HOME, CLAUDE_CONFIG_DIR, VIBE_HOME,
 XDG_*) point at empty fixture folders in <port folder>/home.
-Starts the Deno server (deno run -A outputs/agent-studio/server/main.ts serve --in-process ...) with no console window. Deno is
+Starts the Deno server (deno run -A app/server/main.ts serve --in-process ...) with no console window. Deno is
 found as AIB_DENO, else `deno` on PATH. See work/demo-studio/README.md.
 """
 import argparse
@@ -30,7 +30,7 @@ import zlib
 
 HERE = pathlib.Path(__file__).resolve().parent
 REPO = HERE.parents[1]
-APP = REPO / 'outputs' / 'agent-studio'
+APP = REPO / 'app'
 MAIN = APP / 'server' / 'main.ts'   # the Deno server
 AGENT = HERE / 'agent.py'
 OWNER_PORTS = (8767, 8768, 8777, 8778)   # the owner's live Studio and the AIB desktop app (each: web server, artifact server)

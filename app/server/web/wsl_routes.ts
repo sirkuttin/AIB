@@ -28,7 +28,7 @@
  *                                                   canUninstall (AIB's own install: source 'studio'); the Codex row limits (the
  *                                                   Limits chip's snapshot from that distro's ~/.codex, null when none)
  *   POST /api/live/wsl/agents/enabled {distro, id, enabled}  the distro's On/Off switch of an agent -> {ok, enabled}; a WSL chat reads
- *                                                   only this switch, never the Windows one (host/studio.ts wslLaunch)
+ *                                                   only this switch, never the Windows one (host/aib.ts wslLaunch)
  *   POST /api/live/wsl/agents/uninstall {distro, id}  remove AIB's own install of Claude Code / Codex in the distro (helper
  *                                                   agents.uninstall) -> {ok, removed, message?, blocked?}; refused (ok false, blocked:
  *                                                   the reason, verbatim) while its install job or its sign-in runs, or when the helper

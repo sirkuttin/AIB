@@ -12,7 +12,7 @@ import {
   SettingsStore,
   StateStore,
   timing,
-} from '../../outputs/agent-studio/server/state/store.ts';
+} from '../../app/server/state/store.ts';
 
 Deno.env.set('AGENT_STUDIO_TEST', '1'); // inherited by the Python children
 timing.readBackoffMs = 0;

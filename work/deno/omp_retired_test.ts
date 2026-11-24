@@ -6,14 +6,14 @@
  * Temp folders only; never the real OMP install or ~/.omp.
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { SettingsStore } from '../../outputs/agent-studio/server/state/settings.ts';
-import { ConversationState } from '../../outputs/agent-studio/server/state/conversations.ts';
-import * as agentRegistry from '../../outputs/agent-studio/server/agents/agent_registry.ts';
-import { BUILTIN_AGENTS, eligibleAgents } from '../../outputs/agent-studio/server/agents/eligibility.ts';
-import { describeAgents } from '../../outputs/agent-studio/server/web/shared.ts';
-import { continueSaved, publicSaved } from '../../outputs/agent-studio/server/remote/saved.ts';
-import { defaultAgent } from '../../outputs/agent-studio/server/remote/newchat.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { SettingsStore } from '../../app/server/state/settings.ts';
+import { ConversationState } from '../../app/server/state/conversations.ts';
+import * as agentRegistry from '../../app/server/agents/agent_registry.ts';
+import { BUILTIN_AGENTS, eligibleAgents } from '../../app/server/agents/eligibility.ts';
+import { describeAgents } from '../../app/server/web/shared.ts';
+import { continueSaved, publicSaved } from '../../app/server/remote/saved.ts';
+import { defaultAgent } from '../../app/server/remote/newchat.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -98,7 +98,7 @@ Deno.test({
   ...T,
   async fn() {
     using t = tempDir();
-    const studio = new Studio({ stateDir: t.dir + SEP + 'state', port: 0, claudeLauncher: import.meta.filename!, nodeCommand: 'node' });
+    const studio = new Aib({ stateDir: t.dir + SEP + 'state', port: 0, claudeLauncher: import.meta.filename!, nodeCommand: 'node' });
     studio.ownerProbe = () => null;
     let started = 0;
     studio.connectionFactory = () => {

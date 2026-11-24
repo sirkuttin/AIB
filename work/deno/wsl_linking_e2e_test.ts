@@ -12,10 +12,10 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { cleanRoot, DISTRO, inDistro, KEY, newAib, readyHost, ROOT, T } from './_wsl_e2e.ts';
-import { helperEnv, wslHostsInUse } from '../../outputs/agent-studio/server/wsl/hosts.ts';
-import { wslRoutes, wslStatus } from '../../outputs/agent-studio/server/web/wsl_routes.ts';
-import { wslSigninCommand } from '../../outputs/agent-studio/server/web/terminal_routes.ts';
-import type { WebContext } from '../../outputs/agent-studio/server/web/server.ts';
+import { helperEnv, wslHostsInUse } from '../../app/server/wsl/hosts.ts';
+import { wslRoutes, wslStatus } from '../../app/server/web/wsl_routes.ts';
+import { wslSigninCommand } from '../../app/server/web/terminal_routes.ts';
+import type { WebContext } from '../../app/server/web/server.ts';
 
 type Json = Record<string, unknown>;
 const enc = (s: string) => new TextEncoder().encode(s);

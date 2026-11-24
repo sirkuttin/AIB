@@ -10,7 +10,7 @@
  *
  * Throwaway data folder, temp HOME/APPDATA/LOCALAPPDATA, free ports, no agent runs (--no-auto-reconnect). Gives up after 15 minutes.
  */
-import { projectKey } from '../../outputs/agent-studio/server/desktop/project_delete.ts';
+import { projectKey } from '../../app/server/desktop/project_delete.ts';
 import { assert, assertEquals } from './_assert.ts';
 import { Fixture, SEP, TEST_OPTIONS, until } from './_host_fixture.ts';
 import { Browser, browserPath } from './_doc_browser.ts';

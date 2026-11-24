@@ -3,7 +3,7 @@
    belongs to the Activity tab: hidden (but kept open, same subagent, same scroll) on the other two tabs, at every width, and
    shown again on Activity. Also: switching tabs while it is open must not be undone by later class changes on <body>, and
    Escape or a click in the chat must not close a history you cannot see. */
-const { APP: APP_DIR } = require('./_paths');
+const { PAGE: APP_DIR } = require('./_paths');
 const test = require('node:test'),
   assert = require('node:assert/strict'),
   fs = require('node:fs'),

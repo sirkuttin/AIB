@@ -8,7 +8,7 @@
  * that adds both to PATH for interactive shells only. AIB starts with PATH=/usr/bin:/bin and SHELL=zsh, like the app menu.
  */
 import { assert, assertEquals } from './_assert.ts';
-import * as adapters from '../../outputs/agent-studio/server/agents/adapters.ts';
+import * as adapters from '../../app/server/agents/adapters.ts';
 
 const DISTRO = 'Ubuntu';
 

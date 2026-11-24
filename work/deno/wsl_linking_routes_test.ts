@@ -14,24 +14,24 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { FakeWslHost } from './_wsl_fake.ts';
-import { setDistroSource, setWslHostResolver } from '../../outputs/agent-studio/server/wsl/access.ts';
-import { wslRoutes } from '../../outputs/agent-studio/server/web/wsl_routes.ts';
-import { wslNodeSetupCommand } from '../../outputs/agent-studio/server/web/terminal_routes.ts';
-import type { WebContext } from '../../outputs/agent-studio/server/web/server.ts';
-import { SettingsStore } from '../../outputs/agent-studio/server/state/settings.ts';
-import { Studio, wslAgentOffLine } from '../../outputs/agent-studio/server/host/studio.ts';
-import type { EnvPrereqs } from '../../outputs/agent-studio/server/wsl/contract.ts';
-import { WslHelperError } from '../../outputs/agent-studio/server/wsl/contract.ts';
-import { NODE_INSTALL, resetInstallProgress } from '../../outputs/agent-studio/server/wsl/agent_install.ts';
-import { PREREQS } from '../../outputs/agent-studio/server/agents/beta_setup.ts';
+import { setDistroSource, setWslHostResolver } from '../../app/server/wsl/access.ts';
+import { wslRoutes } from '../../app/server/web/wsl_routes.ts';
+import { wslNodeSetupCommand } from '../../app/server/web/terminal_routes.ts';
+import type { WebContext } from '../../app/server/web/server.ts';
+import { SettingsStore } from '../../app/server/state/settings.ts';
+import { Aib, wslAgentOffLine } from '../../app/server/host/aib.ts';
+import type { EnvPrereqs } from '../../app/server/wsl/contract.ts';
+import { WslHelperError } from '../../app/server/wsl/contract.ts';
+import { NODE_INSTALL, resetInstallProgress } from '../../app/server/wsl/agent_install.ts';
+import { PREREQS } from '../../app/server/agents/beta_setup.ts';
 import {
   NVM_INSTALL_SHA256,
   NVM_INSTALL_URL,
   NVM_NOT_PINNED,
   NVM_VERSION,
   nvmInstallLine,
-} from '../../outputs/agent-studio/server/agents/nvm.ts';
-import { profileFor, wslNodeCommand, wslNodeScript, wslNodeSteps } from '../../outputs/agent-studio/server/wsl/node_setup.ts';
+} from '../../app/server/agents/nvm.ts';
+import { profileFor, wslNodeCommand, wslNodeScript, wslNodeSteps } from '../../app/server/wsl/node_setup.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -207,7 +207,7 @@ Deno.test({
       agents: ((p.ids as string[]) ?? []).map((id) => ({ id, found: true, command: [id === 'claude' ? '/usr/bin/claude-acp' : 'node', 'acp'] })),
     });
     withHost(host);
-    const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: dir + SEP + 'state', port: 0, ownersDir: null });
+    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: dir + SEP + 'state', port: 0, ownersDir: null });
     const wsl = { distro: 'ubuntu', linuxPath: '/home/u/app' };
     try {
       // Windows off, Ubuntu on (unset): the Windows chat is refused, the WSL chat starts in Ubuntu
@@ -537,7 +537,7 @@ Deno.test('the nvm tag and checksum live only in agents/nvm.ts; the Beta card, t
   }
   assert(PREREQS.node.install('darwin', false).step!.command.includes('shasum -a 256 -c -'), 'macOS: shasum where sha256sum is missing');
   // no other server file names an nvm tag
-  const root = new URL('../../outputs/agent-studio/server/', import.meta.url);
+  const root = new URL('../../app/server/', import.meta.url);
   const hits: string[] = [];
   const walk = (dir: URL) => {
     for (const entry of Deno.readDirSync(dir)) {

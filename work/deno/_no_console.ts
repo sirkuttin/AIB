@@ -3,6 +3,6 @@
  * main.ts and the agent host do at start. A `deno test` started without a console (a background job, an IDE, an agent) would
  * otherwise give every console program a test starts (icacls, git, python, agents) a visible window of its own.
  */
-import { ensureHiddenConsole } from '../../outputs/agent-studio/server/platform/console.ts';
+import { ensureHiddenConsole } from '../../app/server/platform/console.ts';
 
 export const consoleSetup = ensureHiddenConsole();

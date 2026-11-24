@@ -20,17 +20,17 @@ import { assert, assertEquals } from './_assert.ts';
 import { fake, pause, until } from './_connection.ts';
 import { commit, exists, makeRepo, read, runGit, write } from './_worktree_fixtures.ts';
 import { FakeWslHost } from './_wsl_fake.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { KeeperLink } from '../../outputs/agent-studio/server/keeper/link.ts';
-import { keeperBinary } from '../../outputs/agent-studio/server/keeper/client.ts';
-import { CONVERSATION_HEADER, HOOK_EVENT_HEADER, HOOK_KEY_HEADER, HOOK_NONCE_HEADER } from '../../outputs/agent-studio/server/artifacts/mcp_http.ts';
-import { hookProof } from '../../outputs/agent-studio/server/artifacts/keys.ts';
-import { setWslHostResolver } from '../../outputs/agent-studio/server/wsl/access.ts';
-import { WslHelperError } from '../../outputs/agent-studio/server/wsl/contract.ts';
-import { subagentMethods } from '../../outputs/agent-studio/server/wsl/helper/subagents.ts';
-import { Swarm } from '../../outputs/agent-studio/server/swarm/service.ts';
-import { readSubagents } from '../../outputs/agent-studio/server/subagents/service.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { KeeperLink } from '../../app/server/keeper/link.ts';
+import { keeperBinary } from '../../app/server/keeper/client.ts';
+import { CONVERSATION_HEADER, HOOK_EVENT_HEADER, HOOK_KEY_HEADER, HOOK_NONCE_HEADER } from '../../app/server/artifacts/mcp_http.ts';
+import { hookProof } from '../../app/server/artifacts/keys.ts';
+import { setWslHostResolver } from '../../app/server/wsl/access.ts';
+import { WslHelperError } from '../../app/server/wsl/contract.ts';
+import { subagentMethods } from '../../app/server/wsl/helper/subagents.ts';
+import { Swarm } from '../../app/server/swarm/service.ts';
+import { readSubagents } from '../../app/server/subagents/service.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -49,7 +49,7 @@ class Lab {
   readonly work = makeRepo(this.dir + SEP + 'app');
   readonly host: FakeWslHost;
   readonly helper = subagentMethods(this.data);
-  readonly studios: Studio[] = [];
+  readonly studios: Aib[] = [];
   readonly swarms: Swarm[] = [];
 
   constructor(tunnel = true) {
@@ -96,9 +96,9 @@ class Lab {
     return this.host.windowsFor(linux);
   }
 
-  studio(): Studio {
+  studio(): Aib {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
-    const studio = new Studio({ claudeLauncher: import.meta.filename!, codexLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper });
+    const studio = new Aib({ claudeLauncher: import.meta.filename!, codexLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper });
     studio.ownerProbe = () => null;
     studio.connectionFactory = (_command, cwd, provider, options) => {
       const wsl = options?.wsl ? { ...options.wsl, program: undefined } : options?.wsl;

@@ -9,8 +9,8 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { cleanRoot, inDistro, KEY, prepareRoot, readyHost, ROOT, T, WSL_E2E } from './_wsl_e2e.ts';
-import { refOf } from '../../outputs/agent-studio/server/platform/location.ts';
-import { wslDisk } from '../../outputs/agent-studio/server/wsl/pcsync.ts';
+import { refOf } from '../../app/server/platform/location.ts';
+import { wslDisk } from '../../app/server/wsl/pcsync.ts';
 
 const PROJECT = `${ROOT}/repo`;
 const REF = WSL_E2E ? refOf({ kind: 'wsl', distro: KEY, linuxPath: PROJECT }) : '';

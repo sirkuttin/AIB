@@ -7,22 +7,22 @@
 import { assert, assertEquals, assertRejects } from './_assert.ts';
 import { fake, pause, until } from './_connection.ts';
 import { FakeWslHost } from './_wsl_fake.ts';
-import { agentNamed, bgtaskMethods } from '../../outputs/agent-studio/server/wsl/helper/bgtasks.ts';
-import { Store } from '../../outputs/agent-studio/server/transcripts/store.ts';
-import type { ProcInfo } from '../../outputs/agent-studio/server/ownership/probe.ts';
-import { OwnershipConflict } from '../../outputs/agent-studio/server/ownership/ownership.ts';
-import { folderOnlyNote, OwnershipEvidence } from '../../outputs/agent-studio/server/ownership/probe.ts';
-import { wslTranscriptGet } from '../../outputs/agent-studio/server/wsl/transcripts.ts';
-import { parseQs } from '../../outputs/agent-studio/server/transcripts/pycompat.ts';
-import { FRESH_MS, refreshWslDescendants, resetWslProcs, wslDescendants } from '../../outputs/agent-studio/server/wsl/procs.ts';
-import { descendants, refreshDescendants } from '../../outputs/agent-studio/server/platform/descendants.ts';
-import { processList } from '../../outputs/agent-studio/server/platform/process_info.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { KeeperLink } from '../../outputs/agent-studio/server/keeper/link.ts';
-import { KeeperClient, keeperBinary, readKeeperInfo } from '../../outputs/agent-studio/server/keeper/client.ts';
-import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
-import { setWslHostResolver } from '../../outputs/agent-studio/server/wsl/access.ts';
+import { agentNamed, bgtaskMethods } from '../../app/server/wsl/helper/bgtasks.ts';
+import { Store } from '../../app/server/transcripts/store.ts';
+import type { ProcInfo } from '../../app/server/ownership/probe.ts';
+import { OwnershipConflict } from '../../app/server/ownership/ownership.ts';
+import { folderOnlyNote, OwnershipEvidence } from '../../app/server/ownership/probe.ts';
+import { wslTranscriptGet } from '../../app/server/wsl/transcripts.ts';
+import { parseQs } from '../../app/server/transcripts/pycompat.ts';
+import { FRESH_MS, refreshWslDescendants, resetWslProcs, wslDescendants } from '../../app/server/wsl/procs.ts';
+import { descendants, refreshDescendants } from '../../app/server/platform/descendants.ts';
+import { processList } from '../../app/server/platform/process_info.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { KeeperLink } from '../../app/server/keeper/link.ts';
+import { KeeperClient, keeperBinary, readKeeperInfo } from '../../app/server/keeper/client.ts';
+import { pidAlive } from '../../app/server/host/host_client.ts';
+import { setWslHostResolver } from '../../app/server/wsl/access.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -241,7 +241,7 @@ class Lab {
   readonly state = join(this.dir, 'state');
   readonly work = join(this.dir, 'app');
   readonly host: FakeWslHost;
-  readonly studios: Studio[] = [];
+  readonly studios: Aib[] = [];
 
   constructor() {
     Deno.mkdirSync(this.work, { recursive: true });
@@ -267,9 +267,9 @@ class Lab {
     resetWslProcs();
   }
 
-  studio(flags: string[] = []): Studio {
+  studio(flags: string[] = []): Aib {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
-    const studio = new Studio({ stateDir: this.state, port: 0, ownersDir: null }, { keeper });
+    const studio = new Aib({ stateDir: this.state, port: 0, ownersDir: null }, { keeper });
     studio.ownerProbe = () => {
       throw new Error('a WSL chat never asks Windows for its owner');
     };

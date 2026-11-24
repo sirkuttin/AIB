@@ -1,5 +1,5 @@
 'use strict';
-const { APP: APP_DIR } = require('./_paths');
+const { PAGE: APP_DIR } = require('./_paths');
 /* Condensed views, QA fixes: Chat's never-fold rule, the working spinner, and the header switch in a narrow split pane. */
 const assert = require('node:assert/strict');
 const fs = require('node:fs');

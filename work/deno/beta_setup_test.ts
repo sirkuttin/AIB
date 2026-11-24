@@ -5,8 +5,8 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { join, tempDir, touch } from './_agents.ts';
-import { betaAgent, type OsName } from '../../outputs/agent-studio/server/agents/beta_catalog.ts';
-import { nativeProgram, resolveBeta } from '../../outputs/agent-studio/server/agents/beta_agents.ts';
+import { betaAgent, type OsName } from '../../app/server/agents/beta_catalog.ts';
+import { nativeProgram, resolveBeta } from '../../app/server/agents/beta_agents.ts';
 import {
   builtinSetup,
   checkPrereq,
@@ -23,10 +23,10 @@ import {
   setupView,
   stepShell,
   versionBelow,
-} from '../../outputs/agent-studio/server/agents/beta_setup.ts';
-import { Installer } from '../../outputs/agent-studio/server/agents/installer.ts';
-import type { ShellSpec } from '../../outputs/agent-studio/server/platform/pty.ts';
-import { nvmInstallLine } from '../../outputs/agent-studio/server/agents/nvm.ts';
+} from '../../app/server/agents/beta_setup.ts';
+import { Installer } from '../../app/server/agents/installer.ts';
+import type { ShellSpec } from '../../app/server/platform/pty.ts';
+import { nvmInstallLine } from '../../app/server/agents/nvm.ts';
 
 // the one pinned nvm command (nvm.ts): install.sh checked by its SHA-256 before it runs
 const NVM = nvmInstallLine({ portable: true });

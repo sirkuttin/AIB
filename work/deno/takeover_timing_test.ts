@@ -4,20 +4,20 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { fake, pause, until } from './_connection.ts';
-import { addHandler, type Handler, removeHandler } from '../../outputs/agent-studio/server/core/log.ts';
+import { addHandler, type Handler, removeHandler } from '../../app/server/core/log.ts';
 import {
   noteRequestTime,
   PhaseTimer,
   rebuildPhases,
   SLOW_REQUEST_MS,
   slowRequestLine,
-} from '../../outputs/agent-studio/server/core/timing.ts';
-import { timedHandler } from '../../outputs/agent-studio/server/platform/http_serve.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { KeeperLink } from '../../outputs/agent-studio/server/keeper/link.ts';
-import { keeperBinary, KeeperClient, readKeeperInfo } from '../../outputs/agent-studio/server/keeper/client.ts';
-import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
+} from '../../app/server/core/timing.ts';
+import { timedHandler } from '../../app/server/platform/http_serve.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { KeeperLink } from '../../app/server/keeper/link.ts';
+import { keeperBinary, KeeperClient, readKeeperInfo } from '../../app/server/keeper/client.ts';
+import { pidAlive } from '../../app/server/host/host_client.ts';
 
 const SEP = Deno.build.os === 'windows' ? '\\' : '/';
 
@@ -100,10 +100,10 @@ Deno.test({
     const state = dir + SEP + 'state';
     const work = dir + SEP + 'work';
     Deno.mkdirSync(work, { recursive: true });
-    const studios: Studio[] = [];
+    const studios: Aib[] = [];
     const studio = () => {
       const keeper = new KeeperLink({ dataDir: state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
-      const s = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: state, port: 0, ownersDir: null }, { keeper });
+      const s = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: state, port: 0, ownersDir: null }, { keeper });
       s.ownerProbe = () => null;
       s.connectionFactory = (_command, cwd, provider, options) =>
         new Connection(fake('--cancel-aware'), cwd, provider, { ...options, env: { FAKE_ACP_LOG: dir + SEP + 'agent.log' } });

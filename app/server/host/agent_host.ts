@@ -7,8 +7,8 @@
  * server of either language can drive it (docs/agent-host.md). The host file also carries `runtime: "deno"`: see host_client.ts
  * findHost for how a web server treats a host of the other language.
  */
-import { Studio, type StudioOptions } from './studio.ts';
-import { isRequestError, need, pythonErrorType } from './studio.ts';
+import { Aib, type AibOptions } from './aib.ts';
+import { isRequestError, need, pythonErrorType } from './aib.ts';
 import {
   APP_ID,
   APP_VERSION,
@@ -110,7 +110,7 @@ type Op = (args: Json) => unknown;
 export class AgentHost {
   static ATTACH_FRESH_SECONDS = 25; // a web server that has not called in this long is not "attached" (it heartbeats every 10 s)
   static STOP_DEADLINE_SECONDS = 20;
-  readonly studio: Studio;
+  readonly studio: Aib;
   readonly token: string;
   readonly startedAt = Date.now() / 1000;
   readonly idleExitSeconds: number;
@@ -131,8 +131,8 @@ export class AgentHost {
   port = 0;
   readonly ops: Record<string, Op>;
 
-  constructor(readonly options: StudioOptions, idleExitMinutes = 30, readonly hostPort = 0, readonly lifecycle: HostLifecycle = {}) {
-    this.studio = new Studio(options, { port: 'host' });
+  constructor(readonly options: AibOptions, idleExitMinutes = 30, readonly hostPort = 0, readonly lifecycle: HostLifecycle = {}) {
+    this.studio = new Aib(options, { port: 'host' });
     this.exitUnattachedSeconds = Math.max(0, Number(lifecycle.exitUnattachedSeconds ?? 0)) || 0;
     this.appLaunch = lifecycle.launch?.length ? [...lifecycle.launch] : null;
     migrateInProcessRecovery(this.studio.store);
@@ -515,7 +515,7 @@ function newToken(): string {
 }
 
 /** The agent options of a parsed command line, as the Studio reads them (the --mcp-config file loaded). */
-export function studioOptions(o: Options, mcpServers: StudioOptions['mcpServers'] = []): StudioOptions {
+export function studioOptions(o: Options, mcpServers: AibOptions['mcpServers'] = []): AibOptions {
   return {
     stateDir: o.stateDir,
     port: o.port,
@@ -534,7 +534,7 @@ export function studioOptions(o: Options, mcpServers: StudioOptions['mcpServers'
 }
 
 /** studio.finish_agent_options: load --mcp-config (a usage error when it is invalid). */
-export function loadMcp(o: Options, usage: (message: string) => never): StudioOptions['mcpServers'] {
+export function loadMcp(o: Options, usage: (message: string) => never): AibOptions['mcpServers'] {
   if (!o.mcpConfig) return [];
   try {
     return loadMcpConfig(o.mcpConfig);

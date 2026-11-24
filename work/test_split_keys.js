@@ -1,5 +1,5 @@
 'use strict';
-const { APP: APP_DIR } = require('./_paths');
+const { PAGE: APP_DIR } = require('./_paths');
 /* Split view keys and the narrow-window rule, through split-ui.js's own API with a very small fake page.
    (These used to be checked by looking for text in the source files.) */
 const test = require('node:test');

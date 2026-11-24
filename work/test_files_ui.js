@@ -5,7 +5,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const D = require('./fake_dom.js');
-const FS = require('../outputs/agent-studio/files-state.js');
+const FS = require('../app/page/files-state.js');
 
 const SCRIPTS = [
   'status-words.js',
@@ -654,7 +654,7 @@ test("an error notice raised while a file tab shows is visible: files.css's file
   const fs = require('node:fs');
   const path = require('node:path');
   const { cssRules, declarationsFor } = require('./css_rules.js');
-  const rules = cssRules(fs.readFileSync(path.join(__dirname, '../outputs/agent-studio/files.css'), 'utf8'));
+  const rules = cssRules(fs.readFileSync(path.join(__dirname, '../app/page/files.css'), 'utf8'));
   // Every "body.sf-file-on main > :not(#a):not(#b)…" rule that hides: the ids it spares.
   const hiders = rules
     .filter((r) => r.context === '' && /^body\.sf-file-on main > :not\(/.test(r.selector) && /^none/.test(r.declarations.display || ''))
@@ -904,7 +904,7 @@ test('no duplicate actions: one open-file icon however often the row is checked,
   expand(line);
   await t.FU.toolFile(line, ROOT + '/README.md');
   assert.equal(line.querySelector('.tool-detail').querySelectorAll('a.fx-path').length, 1, 'the path is linked once');
-  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../outputs/agent-studio/artifacts-ui.js'), 'utf8');
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../app/page/artifacts-ui.js'), 'utf8');
   assert.ok(!/Show file|art-preview/.test(src), 'the old "Show file" button (same action as the icon) is removed');
 });
 

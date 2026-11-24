@@ -6,12 +6,12 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import * as Y from 'yjs';
-import { DocRefusal, type LiveDoc } from '../../outputs/agent-studio/server/docs/live_doc.ts';
-import { DocStore, mdBody } from '../../outputs/agent-studio/server/docs/store.ts';
-import { runDocTool } from '../../outputs/agent-studio/server/docs/tools.ts';
-import type { ThreadView } from '../../outputs/agent-studio/server/docs/comments.ts';
-import { sendComment } from '../../outputs/agent-studio/server/web/docs_routes.ts';
-import type { WebContext } from '../../outputs/agent-studio/server/web/server.ts';
+import { DocRefusal, type LiveDoc } from '../../app/server/docs/live_doc.ts';
+import { DocStore, mdBody } from '../../app/server/docs/store.ts';
+import { runDocTool } from '../../app/server/docs/tools.ts';
+import type { ThreadView } from '../../app/server/docs/comments.ts';
+import { sendComment } from '../../app/server/web/docs_routes.ts';
+import type { WebContext } from '../../app/server/web/server.ts';
 import { seeded, UserClient } from './_docs.ts';
 
 type Json = Record<string, unknown>;

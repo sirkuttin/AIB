@@ -1,7 +1,7 @@
 'use strict';
 /* view-prefs.js: view and appearance preferences follow the data folder (studio-view.json) instead of the browser profile.
    The server half (the store, the route, the data block in chat.html) is tested in work/deno/view_prefs_test.ts. */
-const { APP } = require('./_paths');
+const { PAGE: APP } = require('./_paths');
 const test = require('node:test'),
   assert = require('node:assert/strict'),
   fs = require('node:fs'),

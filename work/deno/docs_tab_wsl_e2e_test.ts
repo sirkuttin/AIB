@@ -5,16 +5,16 @@
  * wsl.exe). The same rules as docs_tab_e2e_test.ts: the project's docs are listed newest edited first, a doc opens in the Docs tab
  * (never as a middle tab), in the full editor with the text the distro holds, and ⤢ moves it to a middle tab.
  *
- * Run (from outputs/agent-studio): deno test -A ../../work/deno/docs_tab_wsl_e2e_test.ts   (ignored without Chrome or Edge)
+ * Run (from app): deno test -A ../../work/deno/docs_tab_wsl_e2e_test.ts   (ignored without Chrome or Edge)
  */
 import { assert, assertEquals } from './_assert.ts';
 import { Browser, browserPath, type Page } from './_doc_browser.ts';
 import { remoteStudio } from './_remote_fixture.ts';
 import { FakeWslHost } from './_wsl_fake.ts';
-import { setWslHostResolver } from '../../outputs/agent-studio/server/wsl/access.ts';
-import { installWslDocFs } from '../../outputs/agent-studio/server/wsl/docs.ts';
-import { docsMethods } from '../../outputs/agent-studio/server/wsl/helper/docs.ts';
-import { runDocTool } from '../../outputs/agent-studio/server/docs/tools.ts';
+import { setWslHostResolver } from '../../app/server/wsl/access.ts';
+import { installWslDocFs } from '../../app/server/wsl/docs.ts';
+import { docsMethods } from '../../app/server/wsl/helper/docs.ts';
+import { runDocTool } from '../../app/server/docs/tools.ts';
 
 Deno.env.set('AIB_WSL_ROOT', '/tmp/aib-wsl-test-docs-tab');
 const REF = 'wsl://ubuntu/home/u/app';

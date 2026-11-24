@@ -19,17 +19,17 @@
 import { assert, assertEquals } from './_assert.ts';
 import { FAKE, pause, PYTHON, until } from './_connection.ts';
 import { makeRepo, read, runGit, write } from './_worktree_fixtures.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { landingMessage } from '../../outputs/agent-studio/server/acp/msgqueue.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { Swarm } from '../../outputs/agent-studio/server/swarm/service.ts';
-import { setSwarmEnabled } from '../../outputs/agent-studio/server/swarm/settings.ts';
-import { pathOf } from '../../outputs/agent-studio/server/state/paths.ts';
-import * as merge from '../../outputs/agent-studio/server/worktrees/merge.ts';
-import * as mergeQueue from '../../outputs/agent-studio/server/worktrees/merge_queue.ts';
-import { timing as landingTiming } from '../../outputs/agent-studio/server/worktrees/landing_lock.ts';
-import * as wt from '../../outputs/agent-studio/server/worktrees/worktrees.ts';
-import '../../outputs/agent-studio/queue-ui.js';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { landingMessage } from '../../app/server/acp/msgqueue.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { Swarm } from '../../app/server/swarm/service.ts';
+import { setSwarmEnabled } from '../../app/server/swarm/settings.ts';
+import { pathOf } from '../../app/server/state/paths.ts';
+import * as merge from '../../app/server/worktrees/merge.ts';
+import * as mergeQueue from '../../app/server/worktrees/merge_queue.ts';
+import { timing as landingTiming } from '../../app/server/worktrees/landing_lock.ts';
+import * as wt from '../../app/server/worktrees/worktrees.ts';
+import '../../app/page/queue-ui.js';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -49,7 +49,7 @@ class Box {
   readonly dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-folder-landing-' }));
   readonly state = pathOf(this.dir, 'state');
   readonly project = makeRepo(pathOf(this.dir, 'proj'));
-  readonly studio: Studio;
+  readonly studio: Aib;
   swarm: Swarm;
   readonly logs: string[] = [];
   readonly #agentOf = new Map<Connection, number>();
@@ -58,7 +58,7 @@ class Box {
     setSwarmEnabled(this.state, true);
     runGit(this.project, 'config', 'user.name', 't');
     runGit(this.project, 'config', 'user.email', 't@t');
-    const studio = new Studio({ stateDir: this.state, port: 0 }, { keeper: null });
+    const studio = new Aib({ stateDir: this.state, port: 0 }, { keeper: null });
     studio.ownerProbe = () => null;
     studio.agentLaunch = () => Promise.resolve([['unused'], {}]);
     studio.connectionFactory = (_command, cwd, provider, options) => {

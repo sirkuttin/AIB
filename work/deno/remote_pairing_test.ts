@@ -9,26 +9,26 @@ import {
   hex,
   parseCode,
   WORDS,
-} from "../../outputs/agent-studio/server/remote/words.ts";
+} from "../../app/server/remote/words.ts";
 import {
   MAX_WRONG,
   Pairing,
   PairingError,
-} from "../../outputs/agent-studio/server/remote/pairing.ts";
-import { DeviceStore } from "../../outputs/agent-studio/server/remote/devices.ts";
-import { Audit } from "../../outputs/agent-studio/server/remote/audit.ts";
+} from "../../app/server/remote/pairing.ts";
+import { DeviceStore } from "../../app/server/remote/devices.ts";
+import { Audit } from "../../app/server/remote/audit.ts";
 import {
   bindWithRetry,
   PortBusy,
   readRemotePort,
   remotePort,
-} from "../../outputs/agent-studio/server/remote/port.ts";
+} from "../../app/server/remote/port.ts";
 import {
   cleanName,
   readServe,
   readTailscale,
-} from "../../outputs/agent-studio/server/remote/tailscale.ts";
-import { APP_ROOT } from "../../outputs/agent-studio/server/core/app.ts";
+} from "../../app/server/remote/tailscale.ts";
+import { APP_ROOT } from "../../app/server/core/app.ts";
 import {
   fakeTailscale,
   LOGIN,
@@ -45,7 +45,7 @@ Deno.test("the word list has 256 different words and equals the phone page's cop
   assertEquals(WORDS.length, 256);
   assertEquals(new Set(WORDS).size, 256);
   assert(WORDS.every((w) => /^[a-z]{3,8}$/.test(w)));
-  const js = Deno.readTextFileSync(`${APP_ROOT}${sep}phone-words.js`);
+  const js = Deno.readTextFileSync(`${APP_ROOT}${sep}page${sep}phone-words.js`);
   const list = js.slice(js.indexOf("const WORDS = ["), js.indexOf("];"));
   assertEquals([...list.matchAll(/'([a-z]+)'/g)].map((m) => m[1]), [...WORDS]);
 });

@@ -4,9 +4,9 @@
  * reading one tail page (no helper events, tool output clipped). The page rules themselves: work/test_history_pages.js.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { HostProxy, olderHost } from '../../outputs/agent-studio/server/host/host_proxy.ts';
-import { HostUnavailable } from '../../outputs/agent-studio/server/host/host_client.ts';
-import { chatPayload, TitleCache } from '../../outputs/agent-studio/server/remote/payloads.ts';
+import { HostProxy, olderHost } from '../../app/server/host/host_proxy.ts';
+import { HostUnavailable } from '../../app/server/host/host_client.ts';
+import { chatPayload, TitleCache } from '../../app/server/remote/payloads.ts';
 import { type FakeChat, pc, remoteStudio } from './_remote_fixture.ts';
 
 type Json = Record<string, any>;

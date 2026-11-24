@@ -1,7 +1,7 @@
 /** Push subscriptions: which push services are allowed (the browsers' own: Chrome, Brave and Edge by FCM or WNS, Firefox, Safari), and
  * why a subscription is refused (named host and reason, for the page's line). Pure: no server. */
 import { assert, assertEquals } from './_assert.ts';
-import { cleanPushSub, PUSH_HOST_SUFFIXES, PUSH_HOSTS, pushSubProblem } from '../../outputs/agent-studio/server/remote/devices.ts';
+import { cleanPushSub, PUSH_HOST_SUFFIXES, PUSH_HOSTS, pushSubProblem } from '../../app/server/remote/devices.ts';
 
 const keys = { p256dh: 'B' + 'a'.repeat(86), auth: 'a'.repeat(22) };
 const sub = (endpoint: string) => ({ endpoint, keys });

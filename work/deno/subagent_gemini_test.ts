@@ -19,9 +19,9 @@ import {
   policyToml,
   relativeInside,
   removeHome,
-} from '../../outputs/agent-studio/server/subagents/gemini.ts';
-import { ownSubagentPath } from '../../outputs/agent-studio/server/subagents/service.ts';
-import { join } from '../../outputs/agent-studio/server/platform/path.ts';
+} from '../../app/server/subagents/gemini.ts';
+import { ownSubagentPath } from '../../app/server/subagents/service.ts';
+import { join } from '../../app/server/platform/path.ts';
 
 const WIN = Deno.build.os === 'windows';
 
@@ -153,12 +153,12 @@ Deno.test('a Gemini chat’s worktree is AIB’s own path; other nestings are no
 });
 
 Deno.test('a taken-over chat gets its setup back; the start sweep removes only folders no chat uses', async () => {
-  const { restore, sweep, idsInArgs, policyToml: _p } = await import('../../outputs/agent-studio/server/subagents/gemini.ts');
+  const { restore, sweep, idsInArgs, policyToml: _p } = await import('../../app/server/subagents/gemini.ts');
   const temp = Deno.makeTempDirSync({ prefix: 'aib-gem-sweep-', dir: Deno.env.get('TEMP') ?? undefined });
   try {
     const state = join(temp, 'state'), root = join(state, 'worktrees'), project = join(temp, 'proj');
     Deno.mkdirSync(project, { recursive: true });
-    const { repoHash } = await import('../../outputs/agent-studio/server/worktrees/worktrees.ts');
+    const { repoHash } = await import('../../app/server/worktrees/worktrees.ts');
     const make = (id: string, redirect: boolean) => {
       Deno.mkdirSync(join(state, 'gemini', id, 'policy'), { recursive: true });
       Deno.writeTextFileSync(join(state, 'gemini', id, 'policy', 'aib-subagents.toml'), '');

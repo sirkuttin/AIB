@@ -3,8 +3,8 @@
  * cached (a poll inside the TTL makes no stat), and a folder that comes back is seen again.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { defaultHooks, FolderPresence } from '../../outputs/agent-studio/server/desktop/folder_presence.ts';
-import { ROUTES } from '../../outputs/agent-studio/server/web/routes.ts';
+import { defaultHooks, FolderPresence } from '../../app/server/desktop/folder_presence.ts';
+import { ROUTES } from '../../app/server/web/routes.ts';
 
 function clock() {
   const c = { t: 1000 };

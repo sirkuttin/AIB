@@ -15,17 +15,17 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { Browser, browserPath, type Page } from './_doc_browser.ts';
-import { readRemoteArtifactPort, readRemotePort } from '../../outputs/agent-studio/server/remote/port.ts';
-import { REMOTE_STATIC } from '../../outputs/agent-studio/server/remote/server.ts';
-import { openTarget } from '../../outputs/agent-studio/server/remote/push.ts';
+import { readRemoteArtifactPort, readRemotePort } from '../../app/server/remote/port.ts';
+import { REMOTE_STATIC } from '../../app/server/remote/server.ts';
+import { openTarget } from '../../app/server/remote/push.ts';
 import {
   PC_BOOTSTRAP_KEYS,
   PC_STATIC,
   pcShell,
   remoteArtifactLinks,
   shellAssets,
-} from '../../outputs/agent-studio/server/remote/pc_page.ts';
-import { DEVICE_HEADER } from '../../outputs/agent-studio/server/remote/pc_bridge.ts';
+} from '../../app/server/remote/pc_page.ts';
+import { DEVICE_HEADER } from '../../app/server/remote/pc_bridge.ts';
 import {
   fakeTailscale,
   LOGIN,
@@ -42,7 +42,7 @@ import {
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
 type Json = Record<string, unknown>;
-const APP = new URL('../../outputs/agent-studio/', import.meta.url);
+const APP = new URL('../../app/', import.meta.url);
 const read = (name: string) => Deno.readTextFileSync(new URL(name, APP));
 
 async function remoteOn(): Promise<RemoteStudio> {

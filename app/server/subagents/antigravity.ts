@@ -10,7 +10,7 @@
  * What AIB does (the same instruction channel the other agents' rule uses):
  *   - the rule below goes into the chat's ACP system prompt (acp/connection.ts artifactPrompt) when `agy` advertises the client
  *     system prompt capability, on session/new and session/load; when it does not, the rule goes in front of the chat's next prompt
- *     as a one-time <studio-context> line (host/studio.ts addPromptContext), once per opening of the chat;
+ *     as a one-time <studio-context> line (host/aib.ts addPromptContext), once per opening of the chat;
  *   - the chat says so up front (a note): the rule is asked for, not enforced.
  *
  * Enforced: nothing. Asked for: subagents that change files use their own workspace, and the main agent brings their changes back.

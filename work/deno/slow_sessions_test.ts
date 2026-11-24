@@ -6,7 +6,7 @@
  * counted, and that a just-built command list is reused without walking its family again.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { Catalog, commandList, commandListQuick, handleGet, setCommandQuickMs, Store } from '../../outputs/agent-studio/server/transcripts/monitor.ts';
+import { Catalog, commandList, commandListQuick, handleGet, setCommandQuickMs, Store } from '../../app/server/transcripts/monitor.ts';
 
 const ROOT = new URL('../slowreq-fixture/state/', import.meta.url);
 const rootPath = () => decodeURIComponent(ROOT.pathname).replace(/^\/([A-Za-z]:)/, '$1');
@@ -152,8 +152,8 @@ Deno.test({
   sanitizeResources: false,
   sanitizeOps: false,
   fn: async () => {
-    const { setDistroSource, setWslHostResolver } = await import('../../outputs/agent-studio/server/wsl/access.ts');
-    const { wslSavedSessionsQuick, WSL_SESSIONS_FRESH_MS } = await import('../../outputs/agent-studio/server/wsl/transcripts.ts');
+    const { setDistroSource, setWslHostResolver } = await import('../../app/server/wsl/access.ts');
+    const { wslSavedSessionsQuick, WSL_SESSIONS_FRESH_MS } = await import('../../app/server/wsl/transcripts.ts');
     const saved = { test: Deno.env.get('AGENT_STUDIO_TEST'), root: Deno.env.get('AIB_WSL_ROOT') };
     Deno.env.set('AGENT_STUDIO_TEST', '1');
     Deno.env.set('AIB_WSL_ROOT', '/tmp/aib-slowreq-test');

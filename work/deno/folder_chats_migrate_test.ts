@@ -13,14 +13,14 @@ import { assert, assertEquals } from './_assert.ts';
 import { FAKE } from './_connection.ts';
 import { PY } from './_agents.ts'; // the interpreter's real path: a version-manager shim (asdf, pyenv) breaks once HOME is a temp folder
 import { exists, makeRepo, runGit, write } from './_worktree_fixtures.ts';
-import { pathOf } from '../../outputs/agent-studio/server/state/paths.ts';
-import * as wt from '../../outputs/agent-studio/server/worktrees/worktrees.ts';
-import { tryLockNow } from '../../outputs/agent-studio/server/platform/lock.ts';
-import { readMoved } from '../../outputs/agent-studio/server/state/moved_chats.ts';
+import { pathOf } from '../../app/server/state/paths.ts';
+import * as wt from '../../app/server/worktrees/worktrees.ts';
+import { tryLockNow } from '../../app/server/platform/lock.ts';
+import { readMoved } from '../../app/server/state/moved_chats.ts';
 import { claudeEncode } from '../migrate/refile_core.ts';
 
 const SCRIPT = new URL('../migrate/folder_chats_migrate.ts', import.meta.url);
-const CONFIG = new URL('../../outputs/agent-studio/deno.json', import.meta.url);
+const CONFIG = new URL('../../app/deno.json', import.meta.url);
 const native = (u: URL) => {
   const p = decodeURIComponent(u.pathname);
   return Deno.build.os === 'windows' ? p.replace(/^\/([A-Za-z]:)/, '$1').replaceAll('/', '\\') : p;

@@ -11,10 +11,10 @@
  * Desktop notifications and pushes are recorded (no real notification is shown, nothing is sent).
  */
 import { assert, assertEquals } from "./_assert.ts";
-import { DEVICE_HEADER } from "../../outputs/agent-studio/server/remote/server.ts";
-import { readRemotePort } from "../../outputs/agent-studio/server/remote/port.ts";
-import { PHONE_TTL_MS } from "../../outputs/agent-studio/server/attention/presence.ts";
-import { startAttention } from "../../outputs/agent-studio/server/attention/watcher.ts";
+import { DEVICE_HEADER } from "../../app/server/remote/server.ts";
+import { readRemotePort } from "../../app/server/remote/port.ts";
+import { PHONE_TTL_MS } from "../../app/server/attention/presence.ts";
+import { startAttention } from "../../app/server/attention/watcher.ts";
 
 import {
   type FakeChat,

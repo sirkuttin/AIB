@@ -12,10 +12,10 @@
  *  - paired phones never expire: a phone last seen years ago (and a device store clock years ahead) still works.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { DEVICE_HEADER, READ_GAP_MS, REMOTE_ROUTES } from '../../outputs/agent-studio/server/remote/server.ts';
-import { DeviceStore } from '../../outputs/agent-studio/server/remote/devices.ts';
-import { liveShaped, MAX_HISTORY_BYTES } from '../../outputs/agent-studio/server/remote/saved.ts';
-import { readRemotePort } from '../../outputs/agent-studio/server/remote/port.ts';
+import { DEVICE_HEADER, READ_GAP_MS, REMOTE_ROUTES } from '../../app/server/remote/server.ts';
+import { DeviceStore } from '../../app/server/remote/devices.ts';
+import { liveShaped, MAX_HISTORY_BYTES } from '../../app/server/remote/saved.ts';
+import { readRemotePort } from '../../app/server/remote/port.ts';
 import { type FakeChat, fakeTailscale, pairPhone, pc, phoneHeaders, raw, type RemoteStudio, remoteStudio } from './_remote_fixture.ts';
 import { serveStatus } from './_remote_fixture.ts';
 

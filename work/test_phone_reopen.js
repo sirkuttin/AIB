@@ -2,7 +2,7 @@
 /* The phone page's pure parts for chats that are not running (owner decisions 3b, 4): the words under a not-running chat, when a
    chat is marked read on the PC (visible, its end on screen, something newer, at most every READ_MS), and that saved history in
    live-event shape draws as rows. The page itself runs in work/deno/remote_phone_e2e_test.ts. */
-const { APP } = require('./_paths');
+const { PAGE: APP } = require('./_paths');
 const test = require('node:test'),
   assert = require('node:assert/strict'),
   path = require('node:path');

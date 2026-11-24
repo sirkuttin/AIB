@@ -1,5 +1,5 @@
 'use strict';
-const { APP: APP_DIR } = require('./_paths');
+const { PAGE: APP_DIR } = require('./_paths');
 // Model chip (in-use model, mismatch warning), queued settings changes (pending label + cancel) and the settings panel marks.
 const assert = require('node:assert/strict');
 const test = require('node:test');

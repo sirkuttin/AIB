@@ -1,10 +1,10 @@
 /**
- * The notification rules the page uses (outputs/agent-studio/notify-rules.js), loaded into the server as they are: one file, so a
+ * The notification rules the page uses (app/page/notify-rules.js), loaded into the server as they are: one file, so a
  * chat that would not notify on the page (archived, deleted, hidden or muted project, worktree or scratch folder, on hold for
  * "finished") does not notify from the server either. work/deno/attention_rules_test.ts checks the page's and the server's
  * reading of the same chats against each other.
  */
-import '../../notify-rules.js';
+import '../../page/notify-rules.js';
 
 export interface Flags {
   eligible: boolean;

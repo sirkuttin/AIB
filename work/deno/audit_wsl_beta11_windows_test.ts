@@ -1,11 +1,11 @@
 /**
  * WSL audit (docs/wsl/audit-beta10.md), multi-window (integration/beta11, feat/mw-*): a WSL project's window request, URL and saved
  * restore. The modules exist only once integration/beta11 is merged: on this branch every test is skipped (the import is dynamic).
- * Run on the merged tree: deno test -A ../../work/deno/audit_wsl_beta11_windows_test.ts (from outputs/agent-studio).
+ * Run on the merged tree: deno test -A ../../work/deno/audit_wsl_beta11_windows_test.ts (from app).
  */
 import { assert, assertEquals } from './_assert.ts';
 
-const base = new URL('../../outputs/agent-studio/server/desktop/', import.meta.url);
+const base = new URL('../../app/server/desktop/', import.meta.url);
 const has = (() => {
   try {
     Deno.statSync(new URL('windows_contract.ts', base));

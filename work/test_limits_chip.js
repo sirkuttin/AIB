@@ -3,7 +3,7 @@
 // (server/state/usage_limits.ts), the Ctx colour rules (high at 85% or more, red when blocked), the hover lines (reset times local
 // and "in 2h 10m", plan, freshness), no chip without data, and the in-place update while the chip row stays.
 process.env.TZ = 'UTC'; // local times in the hover are checked as UTC
-const { APP: APP_DIR } = require('./_paths');
+const { PAGE: APP_DIR } = require('./_paths');
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const path = require('node:path');

@@ -11,10 +11,10 @@
 import { assert, assertEquals, assertRejects } from "./_assert.ts";
 import { commit, foreignProbe, read, runGit, Sandbox, write } from "./_worktree_fixtures.ts";
 import { chat, main, merge, record, refused, Refused, show, tree, WAITING } from "./_merge_fixtures.ts";
-import * as wt from "../../outputs/agent-studio/server/worktrees/worktrees.ts";
-import * as m from "../../outputs/agent-studio/server/worktrees/merge.ts";
-import { pathOf } from "../../outputs/agent-studio/server/state/paths.ts";
-import * as localOnly from "../../outputs/agent-studio/server/worktrees/local_only.ts";
+import * as wt from "../../app/server/worktrees/worktrees.ts";
+import * as m from "../../app/server/worktrees/merge.ts";
+import { pathOf } from "../../app/server/state/paths.ts";
+import * as localOnly from "../../app/server/worktrees/local_only.ts";
 
 
 /**

@@ -11,11 +11,11 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { pause, until } from './_connection.ts';
-import { findDistro } from '../../outputs/agent-studio/server/wsl/detect.ts';
-import { installWsl, runWsl, type WslInstall } from '../../outputs/agent-studio/server/wsl/install.ts';
-import { spawnWslTransport, type TransportProcess, WslHostImpl } from '../../outputs/agent-studio/server/wsl/hosts.ts';
-import { type KeeperRecord, keeperSourceDir } from '../../outputs/agent-studio/server/keeper/client.ts';
-import { liveUserChannels } from '../../outputs/agent-studio/server/keeper/link.ts';
+import { findDistro } from '../../app/server/wsl/detect.ts';
+import { installWsl, runWsl, type WslInstall } from '../../app/server/wsl/install.ts';
+import { spawnWslTransport, type TransportProcess, WslHostImpl } from '../../app/server/wsl/hosts.ts';
+import { type KeeperRecord, keeperSourceDir } from '../../app/server/keeper/client.ts';
+import { liveUserChannels } from '../../app/server/keeper/link.ts';
 import { buildWslBinaries, REPO, TARGETS, WSL_HELPER, WSL_KEEPER, wslTarget } from '../../tools/build.ts';
 
 const WANTED = Deno.env.get('AIB_WSL_E2E') ?? '';

@@ -6,13 +6,13 @@
  * a temp Windows folder at the very last step (MappedKeeperLink.spawn). Helper calls answer from a small table the test can change.
  * Never a real distro, never the owner's homes: temp folders only.
  */
-import { KeeperLink } from '../../outputs/agent-studio/server/keeper/link.ts';
-import type { AibUsage, HelperMethods, WslHost } from '../../outputs/agent-studio/server/wsl/contract.ts';
-import { WslHelperError } from '../../outputs/agent-studio/server/wsl/contract.ts';
-import { readKeeperInfo, KeeperClient } from '../../outputs/agent-studio/server/keeper/client.ts';
-import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
-import { type LinkFs, physicalRealish } from '../../outputs/agent-studio/server/allow/linux.ts';
-import { pinHash } from '../../outputs/agent-studio/server/allow/pin.ts';
+import { KeeperLink } from '../../app/server/keeper/link.ts';
+import type { AibUsage, HelperMethods, WslHost } from '../../app/server/wsl/contract.ts';
+import { WslHelperError } from '../../app/server/wsl/contract.ts';
+import { readKeeperInfo, KeeperClient } from '../../app/server/keeper/client.ts';
+import { pidAlive } from '../../app/server/host/host_client.ts';
+import { type LinkFs, physicalRealish } from '../../app/server/allow/linux.ts';
+import { pinHash } from '../../app/server/allow/pin.ts';
 
 type Json = Record<string, unknown>;
 const SEP = Deno.build.os === 'windows' ? '\\' : '/';

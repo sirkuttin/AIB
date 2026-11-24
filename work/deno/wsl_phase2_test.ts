@@ -1,5 +1,5 @@
 /**
- * WSL phase 2, the small pieces (docs/wsl/design.md section 11; outputs/agent-studio/docs/WSL.md), without a distro:
+ * WSL phase 2, the small pieces (docs/wsl/design.md section 11; app/docs/WSL.md), without a distro:
  *   1. Files view previews (images, pages) of a WSL project: the helper's bytes become a read-only ticket the artifact origin serves.
  *   2. Files outside a WSL chat's folder: the helper method files.outside and the route's "the chat named it" guard (Linux rules).
  *   3. Project delete in a distro: the helper's refusals and trash (gio, the freedesktop trash by hand, never a permanent delete) and
@@ -9,16 +9,16 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { FakeWslHost } from './_wsl_fake.ts';
-import { WslHelperError } from '../../outputs/agent-studio/server/wsl/contract.ts';
-import { setWslHostResolver } from '../../outputs/agent-studio/server/wsl/access.ts';
-import { wslFiles } from '../../outputs/agent-studio/server/web/wsl_routes.ts';
-import { _tickets, issueBytes, lookupBytes, MAX_WSL_BYTES, TICKET_TTL_MS } from '../../outputs/agent-studio/server/web/file_tickets.ts';
-import { artifactAnswer } from '../../outputs/agent-studio/server/artifacts/origin.ts';
-import { _mentioned, filesRoutes } from '../../outputs/agent-studio/server/web/files_routes.ts';
-import type { WebContext } from '../../outputs/agent-studio/server/web/server.ts';
-import { makeMethods } from '../../outputs/agent-studio/server/wsl/helper/methods.ts';
-import { handleLine } from '../../outputs/agent-studio/server/wsl/helper/rpc.ts';
-import { mentions } from '../../outputs/agent-studio/server/worktrees/outside_files.ts';
+import { WslHelperError } from '../../app/server/wsl/contract.ts';
+import { setWslHostResolver } from '../../app/server/wsl/access.ts';
+import { wslFiles } from '../../app/server/web/wsl_routes.ts';
+import { _tickets, issueBytes, lookupBytes, MAX_WSL_BYTES, TICKET_TTL_MS } from '../../app/server/web/file_tickets.ts';
+import { artifactAnswer } from '../../app/server/artifacts/origin.ts';
+import { _mentioned, filesRoutes } from '../../app/server/web/files_routes.ts';
+import type { WebContext } from '../../app/server/web/server.ts';
+import { makeMethods } from '../../app/server/wsl/helper/methods.ts';
+import { handleLine } from '../../app/server/wsl/helper/rpc.ts';
+import { mentions } from '../../app/server/worktrees/outside_files.ts';
 import {
   distroRefusal,
   distroTrash,
@@ -29,12 +29,12 @@ import {
   trashInfo,
   trashRoot,
   xdgTrash,
-} from '../../outputs/agent-studio/server/wsl/helper/trash.ts';
-import { Refused, RemovedProjects } from '../../outputs/agent-studio/server/desktop/project_delete.ts';
-import { projectRemove } from '../../outputs/agent-studio/server/web/project_routes.ts';
-import { LimitsFeed, type LimitsConnection } from '../../outputs/agent-studio/server/host/usage_limits_feed.ts';
-import { UsageLimitsStore } from '../../outputs/agent-studio/server/state/usage_limits.ts';
-import * as osp from '../../outputs/agent-studio/server/platform/ospath.ts';
+} from '../../app/server/wsl/helper/trash.ts';
+import { Refused, RemovedProjects } from '../../app/server/desktop/project_delete.ts';
+import { projectRemove } from '../../app/server/web/project_routes.ts';
+import { LimitsFeed, type LimitsConnection } from '../../app/server/host/usage_limits_feed.ts';
+import { UsageLimitsStore } from '../../app/server/state/usage_limits.ts';
+import * as osp from '../../app/server/platform/ospath.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };

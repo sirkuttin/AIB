@@ -8,7 +8,7 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { pairPhone, pc, raw } from './_remote_fixture.ts';
-import { PcSync } from '../../outputs/agent-studio/server/pcsync/service.ts';
+import { PcSync } from '../../app/server/pcsync/service.ts';
 import {
   approveAndWait,
   closeAll,

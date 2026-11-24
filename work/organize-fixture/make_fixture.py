@@ -1,7 +1,7 @@
 """Fake saved Claude transcripts for checking pin / archive / delete by hand. No model, no real transcripts.
 
   python work/organize-fixture/make_fixture.py
-  deno run -A outputs/agent-studio/server/main.ts --port 8800 --state-dir work/organize-fixture/state \
+  deno run -A app/server/main.ts --port 8800 --state-dir work/organize-fixture/state \
     --omp-sessions work/organize-fixture/omp --claude-projects work/organize-fixture/claude \
     --no-owner-announcements --node-command python --claude-launcher work/combined-fixture/agent.py
 """

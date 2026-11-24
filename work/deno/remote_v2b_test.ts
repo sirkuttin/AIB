@@ -11,11 +11,11 @@
  *  - the contract gate: every REMOTE_ROUTES entry needs a paired phone with its switch, swept automatically;
  *  - one activity line per action, never the message text or the name.
  */
-import { folderKey } from '../../outputs/agent-studio/server/state/agent_options.ts';
+import { folderKey } from '../../app/server/state/agent_options.ts';
 import { assert, assertEquals } from './_assert.ts';
-import { DEVICE_HEADER, MAX_BODY, REMOTE_ROUTES, ROUTE_SCOPE } from '../../outputs/agent-studio/server/remote/server.ts';
-import { setAgentRows } from '../../outputs/agent-studio/server/remote/newchat.ts';
-import { DeviceStore } from '../../outputs/agent-studio/server/remote/devices.ts';
+import { DEVICE_HEADER, MAX_BODY, REMOTE_ROUTES, ROUTE_SCOPE } from '../../app/server/remote/server.ts';
+import { setAgentRows } from '../../app/server/remote/newchat.ts';
+import { DeviceStore } from '../../app/server/remote/devices.ts';
 import { NAME, pairPhone, pc, phoneHeaders, raw } from './_remote_fixture.ts';
 import { liveChat, phoneCall, v2Studio } from './_remote_v2b.ts';
 

@@ -3,7 +3,7 @@
    The colours live in theme.css; this test resolves them and computes WCAG contrast, so a later value change that makes a
    pair unreadable fails here: 4.5:1 for text, 3:1 for focus rings and borders. It also checks that the status chips and
    dots actually paint with these tokens. */
-const { APP } = require('./_paths');
+const { PAGE: APP } = require('./_paths');
 const test = require('node:test'),
   assert = require('node:assert/strict'),
   fs = require('node:fs'),

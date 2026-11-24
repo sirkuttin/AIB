@@ -14,9 +14,9 @@ import {
   readOwner,
   SIGNAL_FILE,
   takeSignal,
-} from '../../outputs/agent-studio/server/desktop/single_instance.ts';
+} from '../../app/server/desktop/single_instance.ts';
 
-const MODULE = new URL('../../outputs/agent-studio/server/desktop/single_instance.ts', import.meta.url).href;
+const MODULE = new URL('../../app/server/desktop/single_instance.ts', import.meta.url).href;
 const exists = (p: string) => {
   try {
     Deno.statSync(p);

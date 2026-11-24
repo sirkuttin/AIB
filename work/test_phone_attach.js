@@ -7,7 +7,7 @@
    - New chat and its checks take a message with attachments and no text;
    - a sent message shows its files' names.
    The browser part (📎 sheet, chips, scaling a real photo, the agent receiving it) is in work/deno/remote_attach_e2e_test.ts. */
-const { APP } = require('./_paths');
+const { PAGE: APP } = require('./_paths');
 const test = require('node:test'),
   assert = require('node:assert/strict'),
   path = require('node:path');

@@ -1,6 +1,6 @@
 'use strict';
 const path = require('path');
-const { APP: APP_DIR } = require('./_paths');
+const { PAGE: APP_DIR } = require('./_paths');
 // Saved-history paging in chat.js (pollHistory / fetchEarlier / loadEarlier) against a scripted transcript API.
 const test = require('node:test');
 const assert = require('node:assert/strict');

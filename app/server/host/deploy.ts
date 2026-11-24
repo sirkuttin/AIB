@@ -16,7 +16,7 @@ type Json = Record<string, unknown>;
 const SEP = Deno.build.os === 'windows' ? '\\' : '/';
 const parent = (path: string) => path.replace(/[\\/][^\\/]*$/, '');
 export const HERE = APP_ROOT;
-export const LOGS = parent(parent(APP_ROOT)) + SEP + 'work';
+export const LOGS = parent(APP_ROOT) + SEP + 'work';
 
 export const DOC = `Restart a running AIB server (and optionally its agent host) without cutting off a turn.
 

@@ -14,7 +14,7 @@ Probe files (all pass in a normal run; the `KNOWN-BROKEN:` tests are skipped unl
 
 | File | Run |
 |---|---|
-| `work/deno/audit_wsl_allow_test.ts` | `deno test -A ../../work/deno/audit_wsl_allow_test.ts` (from `outputs/agent-studio`) |
+| `work/deno/audit_wsl_allow_test.ts` | `deno test -A ../../work/deno/audit_wsl_allow_test.ts` (from `app`) |
 | `work/deno/audit_wsl_history_test.ts` | same pattern |
 | `work/deno/audit_wsl_swarm_test.ts` | same pattern |
 | `work/deno/audit_wsl_remote_test.ts` | same pattern |
@@ -135,7 +135,7 @@ Counts (49 rows): BROKEN 10 (3 minor, 1 latent; findings F1-F7), SUSPECT 5 (F8-F
 
 - **Entry point:** in a WSL chat, tick "Always allow (this project)" on an MCP tool or web-fetch card.
 - **What happens:** the rule's `project` is `resolve(ref)` = `<AIB's working folder>\wsl:\ubuntu\home\u\app` (in the probe:
-  `C:\Users\...\outputs\agent-studio\wsl:\ubuntu\home\u\app`). It works while AIB runs from that folder; after AIB starts from another
+  `C:\Users\...\app\wsl:\ubuntu\home\u\app`). It works while AIB runs from that folder; after AIB starts from another
   folder (installed AIB.exe vs a dev run, a different shortcut "Start in") `rulesHere` no longer finds it, and the Settings list shows
   that odd path. Command rules' project pins (`matcher.ts:339`, `:611`) use the same `resolve(ctx.project)`.
 - **Cause:** `matcher.ts:472`, `:492` (`resolve(ctx.project)`), `:194-196` (`sameFolder` with `resolve`).

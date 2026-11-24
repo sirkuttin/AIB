@@ -1,6 +1,6 @@
 // The desktop bridge (the deno desktop app's window binding and its notify route) with the binding and the network mocked: no real
 // dialog or notification is shown.
-const { APP: APP_DIR } = require('./_paths');
+const { PAGE: APP_DIR } = require('./_paths');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const test = require('node:test');

@@ -6,10 +6,10 @@
  */
 import { SANDBOX_OFF } from './_doc_browser.ts';
 import { assert, assertEquals } from './_assert.ts';
-import { readModels } from '../../outputs/agent-studio/server/docs/drawing/model.ts';
-import { drawing_edit } from '../../outputs/agent-studio/server/docs/drawing/tools.ts';
-import { LiveDoc } from '../../outputs/agent-studio/server/docs/live_doc.ts';
-import { startDemo } from '../../outputs/agent-studio/server/docs/drawing/demo_server.ts';
+import { readModels } from '../../app/server/docs/drawing/model.ts';
+import { drawing_edit } from '../../app/server/docs/drawing/tools.ts';
+import { LiveDoc } from '../../app/server/docs/live_doc.ts';
+import { startDemo } from '../../app/server/docs/drawing/demo_server.ts';
 
 const BROWSERS = [
   Deno.env.get('CHROME_PATH') ?? '', // as _doc_browser.ts does

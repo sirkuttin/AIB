@@ -1,6 +1,6 @@
 /**
  * Decision 6: AIB cleans up its own git leftovers (build plan 1b, section 5). Used by project removal (web/project_routes.ts),
- * "Remove AIB's data from my repos" (Settings; what an uninstaller calls), the stopped-helper removal (host/studio.ts), natively
+ * "Remove AIB's data from my repos" (Settings; what an uninstaller calls), the stopped-helper removal (host/aib.ts), natively
  * inside a distro by the WSL helper (helper/worktrees.ts worktree.cleanup*), and by the owner's one-off migration script
  * (work/migrate/folder_chats_migrate.ts; old copy chats are migrated there, not in the app).
  *

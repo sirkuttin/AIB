@@ -7,14 +7,14 @@
 import { assert, assertEquals } from './_assert.ts';
 import * as encoding from 'lib0/encoding';
 import { Awareness, encodeAwarenessUpdate } from 'y-protocols/awareness';
-import { DocStore, mdBody, type OpenDoc } from '../../outputs/agent-studio/server/docs/store.ts';
-import { runDocTool } from '../../outputs/agent-studio/server/docs/tools.ts';
-import { parseBlockMarkdown, serializeBlock } from '../../outputs/agent-studio/server/docs/markdown.ts';
-import { readModels, USER } from '../../outputs/agent-studio/server/docs/drawing/model.ts';
-import { Binding } from '../../outputs/agent-studio/server/docs/drawing/binding.ts';
-import type { XEl } from '../../outputs/agent-studio/server/docs/drawing/scene.ts';
+import { DocStore, mdBody, type OpenDoc } from '../../app/server/docs/store.ts';
+import { runDocTool } from '../../app/server/docs/tools.ts';
+import { parseBlockMarkdown, serializeBlock } from '../../app/server/docs/markdown.ts';
+import { readModels, USER } from '../../app/server/docs/drawing/model.ts';
+import { Binding } from '../../app/server/docs/drawing/binding.ts';
+import type { XEl } from '../../app/server/docs/drawing/scene.ts';
 import { UserClient } from './_docs.ts';
-import { studioAsset } from '../../outputs/agent-studio/server/web/server.ts';
+import { pageAsset } from '../../app/server/web/server.ts';
 
 const sep = Deno.build.os === 'windows' ? '\\' : '/';
 type Json = Record<string, unknown>;
@@ -330,8 +330,8 @@ Deno.test('Studio serves the Excalidraw bundle (code, chunks, CSS, fonts), not t
       'assets/Assistant-Bold-ZDZZ6JHA.woff2',
       'fonts/Excalifont/Excalifont-Regular-349fac6ca4700ffec595a7150a0d1e1d.woff2',
     ]
-  ) assertEquals(studioAsset(`/vendor/excalidraw/${path}`), `vendor/excalidraw/${path}`, path);
+  ) assertEquals(pageAsset(`/vendor/excalidraw/${path}`), `vendor/excalidraw/${path}`, path);
   for (
     const path of ['mermaid_headless.js', 'VERSIONS.txt', 'LICENSE-yjs', 'chunks/../drawing.js', 'fonts/../../docs/editor.js', 'missing.js']
-  ) assertEquals(studioAsset(`/vendor/excalidraw/${path}`), null, path);
+  ) assertEquals(pageAsset(`/vendor/excalidraw/${path}`), null, path);
 });

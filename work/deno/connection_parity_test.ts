@@ -13,7 +13,7 @@
 import { assertEquals } from './_assert.ts';
 import { Frozen } from './_frozen.ts';
 import { FAKE, type Json, PYTHON, STREAM_AGENT, until } from './_connection.ts';
-import { Connection, errorName } from '../../outputs/agent-studio/server/acp/connection.ts';
+import { Connection, errorName } from '../../app/server/acp/connection.ts';
 
 type Step = Json & { op: string };
 const AGENTS: Record<string, string> = { fake: FAKE, stream: STREAM_AGENT };

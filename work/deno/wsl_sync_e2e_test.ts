@@ -15,18 +15,18 @@
 import { assert, assertEquals } from './_assert.ts';
 import { until } from './_connection.ts';
 import { cleanRoot, inDistro, KEY, newAib, prepareRoot, readyHost, ROOT, T } from './_wsl_e2e.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { refOf } from '../../outputs/agent-studio/server/platform/location.ts';
-import { studioRoutes } from '../../outputs/agent-studio/server/web/studio_routes.ts';
-import { helperEnv } from '../../outputs/agent-studio/server/wsl/hosts.ts';
-import { wslSyncSettings } from '../../outputs/agent-studio/server/wsl/sync.ts';
-import type { WslHost } from '../../outputs/agent-studio/server/wsl/contract.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { refOf } from '../../app/server/platform/location.ts';
+import { aibRoutes } from '../../app/server/web/aib_routes.ts';
+import { helperEnv } from '../../app/server/wsl/hosts.ts';
+import { wslSyncSettings } from '../../app/server/wsl/sync.ts';
+import type { WslHost } from '../../app/server/wsl/contract.ts';
 
 type Json = Record<string, unknown>;
 
-function studioIn(state: string): Studio {
-  const studio = new Studio({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
+function studioIn(state: string): Aib {
+  const studio = new Aib({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
   studio.ownerProbe = () => null;
   studio.connectionFactory = (_command, cwd, provider, options) =>
     new Connection(['python3', `${ROOT}/fake_acp.py`, '--cancel-aware'], cwd, provider, {
@@ -39,7 +39,7 @@ function studioIn(state: string): Studio {
 const sh = async (script: string, ...args: string[]) => (await inDistro(script, args)).out.trim();
 const NL = '\\n'; // the fake agent's edit: turns write a literal \n as a newline
 
-async function turn(studio: Studio, c: Connection, text: string): Promise<void> {
+async function turn(studio: Aib, c: Connection, text: string): Promise<void> {
   await studio.liveCall('prompt', { id: c.id, text, clientMessageId: crypto.randomUUID() });
   await until(() => !c.busy, `the turn "${text}"`, 60);
 }
@@ -72,7 +72,7 @@ Deno.test({
     await prepareRoot();
     const keep = wslSyncSettings.KEEP_SECONDS;
     wslSyncSettings.KEEP_SECONDS = 1;
-    let studio: Studio | null = null;
+    let studio: Aib | null = null;
     try {
       const host: WslHost = await readyHost();
       const repo = `${ROOT}/repo`;
@@ -83,7 +83,7 @@ Deno.test({
       const linux = c.agentCwd;
       assert(c.worktree?.branch.startsWith('studio/chat-'), 'the chat works in its own copy');
       const ctx = { stateDir: studio.stateDir, host: studio, conversations: { public: () => ({ entries: {} }) } } as never;
-      const routes = studioRoutes();
+      const routes = aibRoutes();
       const status = async () =>
         (await routes.get('GET /api/live/worktree')!(ctx, new URL(`http://127.0.0.1/api/live/worktree?id=${c.id}`), null, new Request('http://127.0.0.1/')))[1] as Json;
 

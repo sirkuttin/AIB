@@ -16,10 +16,10 @@
  *  13 New chat sends no model or mode unless one is picked or saved; a pick not on the agent's list is refused.
  *  And the fake agent host itself: not ready / busy refused, a repeated id de-duplicated, the same id with other text refused.
  */
-import { folderKey } from '../../outputs/agent-studio/server/state/agent_options.ts';
+import { folderKey } from '../../app/server/state/agent_options.ts';
 import { assert, assertEquals } from './_assert.ts';
-import { NewChats, setAgentRows } from '../../outputs/agent-studio/server/remote/newchat.ts';
-import { RemoteServer } from '../../outputs/agent-studio/server/remote/server.ts';
+import { NewChats, setAgentRows } from '../../app/server/remote/newchat.ts';
+import { RemoteServer } from '../../app/server/remote/server.ts';
 import { pairPhone, pc } from './_remote_fixture.ts';
 import { AGENT_ROWS, liveChat, phoneCall, v2Studio } from './_remote_v2b.ts';
 

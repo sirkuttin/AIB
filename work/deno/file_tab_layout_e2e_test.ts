@@ -8,7 +8,7 @@
  *   2. A file tab opened in one project stayed (partly) on screen after switching to another project. Switching projects shows
  *      only that project's file tabs and file pane; coming back restores the first project's file as it was.
  */
-import { projectKey } from '../../outputs/agent-studio/server/desktop/project_delete.ts';
+import { projectKey } from '../../app/server/desktop/project_delete.ts';
 import { assert, assertEquals } from './_assert.ts';
 import { Fixture, SEP, TEST_OPTIONS } from './_host_fixture.ts';
 import { Browser, browserPath, type Page } from './_doc_browser.ts';

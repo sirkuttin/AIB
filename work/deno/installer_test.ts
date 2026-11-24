@@ -6,13 +6,13 @@
 import { assert, assertEquals, assertRejects } from './_assert.ts';
 import { Frozen } from './_frozen.ts';
 import { deadPid, exists, FAKE_NPM, join, makeInstall, PY, tempDir, waitFor, withEnv } from './_agents.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import * as adapters from '../../outputs/agent-studio/server/agents/adapters.ts';
-import * as installer from '../../outputs/agent-studio/server/agents/installer.ts';
-import { Installer, type InstallerOptions, InstallRefused } from '../../outputs/agent-studio/server/agents/installer.ts';
-import { installState } from '../../outputs/agent-studio/server/web/shared.ts';
-import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
-import { APP_ROOT } from '../../outputs/agent-studio/server/core/app.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import * as adapters from '../../app/server/agents/adapters.ts';
+import * as installer from '../../app/server/agents/installer.ts';
+import { Installer, type InstallerOptions, InstallRefused } from '../../app/server/agents/installer.ts';
+import { installState } from '../../app/server/web/shared.ts';
+import { pidAlive } from '../../app/server/host/host_client.ts';
+import { APP_ROOT } from '../../app/server/core/app.ts';
 
 const ALLOW = {
   claude: { package: '@agentclientprotocol/claude-agent-acp', version: '0.102.0', packageBytes: 1000, minFreeBytes: 0 },
@@ -672,7 +672,7 @@ Deno.test({
     using dir = tempDir();
     const state = join(dir.root, 'state');
     const [folder] = makeInstall(state, 'codex', '2.6.0', CODEX_PKG);
-    const studio = new Studio({ ompCommand: 'unused', stateDir: state, port: 0 } as never);
+    const studio = new Aib({ ompCommand: 'unused', stateDir: state, port: 0 } as never);
     try {
       const chat = { id: 'c1', provider: 'codex', closed: false };
       studio.connections.set('c1', chat as never);
@@ -704,7 +704,7 @@ Deno.test({
     for (const deliberate of [true, false]) {
       using dir = tempDir();
       const state = join(dir.root, 'state');
-      const studio = new Studio({ ompCommand: 'unused', stateDir: state, port: 0 } as never);
+      const studio = new Aib({ ompCommand: 'unused', stateDir: state, port: 0 } as never);
       const receipts = new Map([
         ['sent-1', { fingerprint: 'f1', state: 'working', sent: true }],
         ['queued-2', { fingerprint: 'f2', state: 'working' }], // still before session/prompt: the agent never had it

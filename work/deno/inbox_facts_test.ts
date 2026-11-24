@@ -9,9 +9,9 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { events, type Json, Lab, until } from './_connection.ts';
-import type { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { AgentHost } from '../../outputs/agent-studio/server/host/agent_host.ts';
-import { INBOX } from '../../outputs/agent-studio/server/attention/inbox_rules.ts';
+import type { Connection } from '../../app/server/acp/connection.ts';
+import { AgentHost } from '../../app/server/host/agent_host.ts';
+import { INBOX } from '../../app/server/attention/inbox_rules.ts';
 
 const LONG = 60; // a deadline, not a delay
 const turnEnds = (c: Connection) => events(c, 'turn_end').length;

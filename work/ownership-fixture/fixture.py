@@ -5,7 +5,7 @@
   python work/ownership-fixture/fixture.py announce SESSION # pretend another client announced SESSION, until killed
 
 Start Studio against it with (agent.py is the fake launcher for the Claude provider):
-  deno run -A outputs/agent-studio/server/main.ts --port 8799 --state-dir work/ownership-fixture/data/state \
+  deno run -A app/server/main.ts --port 8799 --state-dir work/ownership-fixture/data/state \
     --omp-sessions work/ownership-fixture/data/omp --claude-projects work/ownership-fixture/data/claude \
     --owners-dir work/ownership-fixture/data/owners --node-command python --claude-launcher work/ownership-fixture/agent.py
 """

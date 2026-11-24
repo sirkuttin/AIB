@@ -3,10 +3,10 @@
  * (changes.ts getCounts). Pure: records and helpers are plain objects, no repository except for getCounts.
  */
 import { assertEquals } from './_assert.ts';
-import { worktreeTargets } from '../../outputs/agent-studio/server/worktrees/project_changes.ts';
-import { getCounts } from '../../outputs/agent-studio/server/worktrees/changes.ts';
-import type { Helper } from '../../outputs/agent-studio/server/swarm/registry.ts';
-import type { SubagentRecord } from '../../outputs/agent-studio/server/subagents/service.ts';
+import { worktreeTargets } from '../../app/server/worktrees/project_changes.ts';
+import { getCounts } from '../../app/server/worktrees/changes.ts';
+import type { Helper } from '../../app/server/swarm/registry.ts';
+import type { SubagentRecord } from '../../app/server/subagents/service.ts';
 
 type Json = Record<string, unknown>;
 const P = Deno.build.os === 'windows' ? 'C:\\work\\app' : '/work/app';

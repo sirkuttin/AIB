@@ -4,8 +4,8 @@
  * the built-ins get reasons too.
  */
 import { assertEquals } from './_assert.ts';
-import '../../outputs/agent-studio/agent-choice.js';
-import { BETA_IDS, eligibleAgents, reasonWords, verdict } from '../../outputs/agent-studio/server/agents/eligibility.ts';
+import '../../app/page/agent-choice.js';
+import { BETA_IDS, eligibleAgents, reasonWords, verdict } from '../../app/server/agents/eligibility.ts';
 
 type Json = Record<string, unknown>;
 interface Choice {

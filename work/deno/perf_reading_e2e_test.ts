@@ -8,7 +8,7 @@
  * way back down the row at the top moves by exactly your wheel while rows are drawn in below it (no jumps); reaching the end
  * follows again; nothing writes the list's scrollTop outside scroll-controller.js.
  *
- * Run (from outputs/agent-studio):  deno test -A ../../work/deno/perf_reading_e2e_test.ts   (ignored without Chrome or Edge)
+ * Run (from app):  deno test -A ../../work/deno/perf_reading_e2e_test.ts   (ignored without Chrome or Edge)
  */
 import { assert } from './_assert.ts';
 import { anchor, browserPath, Lab, m, ownerProblems, sleep, wheel, whereIs } from './_scroll_lab.ts';

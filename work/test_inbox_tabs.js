@@ -1,4 +1,4 @@
-const { APP: APP_DIR } = require('./_paths');
+const { PAGE: APP_DIR } = require('./_paths');
 // Inbox list building, project dropdown filtering, and tab math (pure functions from workspace-state.js).
 const assert = require('node:assert/strict');
 const path = require('node:path');

@@ -12,7 +12,7 @@
  * as in right_panel_wsl_e2e_test.ts; no distro is needed). A real Studio in this process (temp state folder, free port; never the
  * live ports), headless Chrome or Edge.
  *
- * Run (from outputs/agent-studio): deno test -A ../../work/deno/project_artifacts_e2e_test.ts   (ignored without Chrome or Edge)
+ * Run (from app): deno test -A ../../work/deno/project_artifacts_e2e_test.ts   (ignored without Chrome or Edge)
  */
 import { assert, assertEquals } from './_assert.ts';
 import { Browser, browserPath, type Page } from './_doc_browser.ts';

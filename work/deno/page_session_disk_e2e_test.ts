@@ -22,7 +22,7 @@ import { Fixture, until } from "./_host_fixture.ts";
 import { type DeskWindow, HiddenDesktop } from "./_hidden_desktop.ts";
 import { builtDist } from "./_build_cache.ts";
 import { devToolsPortNow, ownerPort, pickPort, refusedPort } from "./_ports.ts";
-import { projectKey } from "../../outputs/agent-studio/server/desktop/project_delete.ts";
+import { projectKey } from "../../app/server/desktop/project_delete.ts";
 
 const SLOW = Deno.build.os === "windows" &&
   Deno.env.get("AIB_SLOW_TESTS") === "1";

@@ -6,7 +6,7 @@
  *
  *   deno run -A _fake_host.ts STATE CODE_ROOT APP_ID VERSION RUNTIME(or "none") PROTOCOL [SOURCE_HASH]
  */
-import { HOST_FORMAT, removeInfo, writeInfo } from '../../outputs/agent-studio/server/host/host_client.ts';
+import { HOST_FORMAT, removeInfo, writeInfo } from '../../app/server/host/host_client.ts';
 
 const [state, codeRoot, appId, version, runtime, protocol, hash = 'x'] = Deno.args;
 const sep = Deno.build.os === 'windows' ? '\\' : '/';

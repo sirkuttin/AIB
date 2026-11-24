@@ -8,7 +8,7 @@
  * - An outside path that arrives split over two streamed chunks links: the server checks the chat's assembled reply text.
  * - A longer name (`notes.md.bak`) still does not count as naming `notes.md`.
  *
- * Run (from outputs/agent-studio): deno task test path_links_punct_e2e
+ * Run (from app): deno task test path_links_punct_e2e
  */
 import { assert, assertEquals } from './_assert.ts';
 import { browserPath, Lab, settle, shown } from './_scroll_lab.ts';

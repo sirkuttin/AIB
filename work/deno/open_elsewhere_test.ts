@@ -11,11 +11,11 @@ import {
   liveOnWindows,
   parseRecord,
   readRecords,
-} from '../../outputs/agent-studio/server/ownership/claude_sessions.ts';
-import { outsideTurns } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { bgtaskMethods } from '../../outputs/agent-studio/server/wsl/helper/bgtasks.ts';
-import { Store } from '../../outputs/agent-studio/server/transcripts/store.ts';
-import { OwnershipProbe, type ProcInfo } from '../../outputs/agent-studio/server/ownership/probe.ts';
+} from '../../app/server/ownership/claude_sessions.ts';
+import { outsideTurns } from '../../app/server/acp/connection.ts';
+import { bgtaskMethods } from '../../app/server/wsl/helper/bgtasks.ts';
+import { Store } from '../../app/server/transcripts/store.ts';
+import { OwnershipProbe, type ProcInfo } from '../../app/server/ownership/probe.ts';
 
 const SEP = Deno.build.os === 'windows' ? '\\' : '/';
 const join = (...parts: string[]) => parts.join(SEP);

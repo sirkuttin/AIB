@@ -14,9 +14,9 @@ import {
   KeeperError,
   type KeeperRecord,
   readKeeperInfo,
-} from '../../outputs/agent-studio/server/keeper/client.ts';
-import { aibInternalKind, isAibInternalLabel, KeeperLink, liveUserChannels } from '../../outputs/agent-studio/server/keeper/link.ts';
-import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
+} from '../../app/server/keeper/client.ts';
+import { aibInternalKind, isAibInternalLabel, KeeperLink, liveUserChannels } from '../../app/server/keeper/link.ts';
+import { pidAlive } from '../../app/server/host/host_client.ts';
 import {
   acceptableUrl,
   bridgeServeArgs,
@@ -25,9 +25,9 @@ import {
   WslHostImpl,
   type WslHostOptions,
   WslHosts,
-} from '../../outputs/agent-studio/server/wsl/hosts.ts';
-import type { WslInstall } from '../../outputs/agent-studio/server/wsl/install.ts';
-import { BRIDGE_MAGIC, WslHelperError } from '../../outputs/agent-studio/server/wsl/contract.ts';
+} from '../../app/server/wsl/hosts.ts';
+import type { WslInstall } from '../../app/server/wsl/install.ts';
+import { BRIDGE_MAGIC, WslHelperError } from '../../app/server/wsl/contract.ts';
 
 const T = { sanitizeResources: false, sanitizeOps: false };
 const ENC = new TextEncoder();

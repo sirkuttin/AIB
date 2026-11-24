@@ -10,7 +10,7 @@
  * A real Studio (the scroll lab: temp state folder, free port; never the live ports), the scripted agent, headless Chrome or Edge.
  * The WSL variant (a fake distro helper; skips without Chrome or Edge) is docs_tab_wsl_e2e_test.ts.
  *
- * Run (from outputs/agent-studio): deno test -A ../../work/deno/docs_tab_e2e_test.ts   (ignored without Chrome or Edge)
+ * Run (from app): deno test -A ../../work/deno/docs_tab_e2e_test.ts   (ignored without Chrome or Edge)
  */
 import { assert, assertEquals } from './_assert.ts';
 import { browserPath, type Chat, Lab, type Page, settle, shown, sleep } from './_scroll_lab.ts';

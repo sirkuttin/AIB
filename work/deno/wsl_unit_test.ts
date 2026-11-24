@@ -18,18 +18,18 @@ import {
   wslHost,
   wslLoc,
   wslTestHomeEnv,
-} from '../../outputs/agent-studio/server/wsl/access.ts';
-import { cleanUrl, RATE_PER_MINUTE, SIGNIN_WINDOW_MS, urlGate } from '../../outputs/agent-studio/server/wsl/open_urls.ts';
-import { heldDistro, isAibInternalLabel } from '../../outputs/agent-studio/server/keeper/link.ts';
-import { WslHelperError } from '../../outputs/agent-studio/server/wsl/contract.ts';
-import { insideLinux } from '../../outputs/agent-studio/server/acp/wsl_caps.ts';
-import { fileReadOf, wslFiles, wslStatus } from '../../outputs/agent-studio/server/web/wsl_routes.ts';
-import { handle, TOOLS, WSL_PATH_NOTE } from '../../outputs/agent-studio/server/artifacts/mcp.ts';
-import { DOC_TOOL_NAMES } from '../../outputs/agent-studio/server/docs/tool_defs.ts';
-import { DRAWING_TOOL_NAMES } from '../../outputs/agent-studio/server/docs/drawing/tool_defs.ts';
-import { branchOf, changesFolder, changesResponse, repoBranch } from '../../outputs/agent-studio/server/worktrees/chat_folders.ts';
-import { distroSessions, wslSessionKey } from '../../outputs/agent-studio/server/wsl/transcripts.ts';
-import { wslSigninCommand } from '../../outputs/agent-studio/server/web/terminal_routes.ts';
+} from '../../app/server/wsl/access.ts';
+import { cleanUrl, RATE_PER_MINUTE, SIGNIN_WINDOW_MS, urlGate } from '../../app/server/wsl/open_urls.ts';
+import { heldDistro, isAibInternalLabel } from '../../app/server/keeper/link.ts';
+import { WslHelperError } from '../../app/server/wsl/contract.ts';
+import { insideLinux } from '../../app/server/acp/wsl_caps.ts';
+import { fileReadOf, wslFiles, wslStatus } from '../../app/server/web/wsl_routes.ts';
+import { handle, TOOLS, WSL_PATH_NOTE } from '../../app/server/artifacts/mcp.ts';
+import { DOC_TOOL_NAMES } from '../../app/server/docs/tool_defs.ts';
+import { DRAWING_TOOL_NAMES } from '../../app/server/docs/drawing/tool_defs.ts';
+import { branchOf, changesFolder, changesResponse, repoBranch } from '../../app/server/worktrees/chat_folders.ts';
+import { distroSessions, wslSessionKey } from '../../app/server/wsl/transcripts.ts';
+import { wslSigninCommand } from '../../app/server/web/terminal_routes.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };

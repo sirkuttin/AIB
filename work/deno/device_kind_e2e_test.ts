@@ -11,12 +11,12 @@
  * saved by "Make it a computer" / "Make it a phone" in that device's own row. The approve box's kind goes to the new device only.
  * The activity line says who changed the kind ("by": the PC page, Settings > Remote control, and the browser).
  *
- * Run (from outputs/agent-studio): deno test -A ../../work/deno/device_kind_e2e_test.ts   (ignored without Chrome or Edge)
+ * Run (from app): deno test -A ../../work/deno/device_kind_e2e_test.ts   (ignored without Chrome or Edge)
  */
 import { assert, assertEquals } from './_assert.ts';
 import { Browser, browserPath, type Page } from './_doc_browser.ts';
 import { until } from './_host_fixture.ts';
-import { readRemotePort } from '../../outputs/agent-studio/server/remote/port.ts';
+import { readRemotePort } from '../../app/server/remote/port.ts';
 import { fakeTailscale, nonce, pairPhone, pc, phoneHeaders, raw, remoteStudio, serveStatus } from './_remote_fixture.ts';
 
 type Json = Record<string, unknown>;

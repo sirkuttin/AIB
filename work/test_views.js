@@ -1,5 +1,5 @@
 'use strict';
-const { APP: APP_DIR } = require('./_paths');
+const { PAGE: APP_DIR } = require('./_paths');
 /* views.js: the pure projection behind the Chat and Prompts views. Live and saved row shapes come from chat.js itself
    (liveRows and normalized), so the two are compared the way the page builds them. */
 const assert = require('node:assert/strict');

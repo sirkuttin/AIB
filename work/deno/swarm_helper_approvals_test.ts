@@ -14,12 +14,12 @@ import { Browser, browserPath } from './_doc_browser.ts';
 import { pairPhone, pc } from './_remote_fixture.ts';
 import { liveChat, v2Studio } from './_remote_v2b.ts';
 import { phonePage, tap } from './_remote_phone_page.ts';
-import { homePayload } from '../../outputs/agent-studio/server/remote/payloads.ts';
-import { SavedChats } from '../../outputs/agent-studio/server/remote/saved.ts';
-import { Registry, hiddenChats, hiddenFromLists, readHelpers } from '../../outputs/agent-studio/server/swarm/registry.ts';
-import { DesktopNotifications, type NotifyTarget, type OsNotify } from '../../outputs/agent-studio/server/desktop/notify.ts';
-import { type SpawnToastHelper, toastTag } from '../../outputs/agent-studio/server/desktop/toast.ts';
-import { startWindowsToasts } from '../../outputs/agent-studio/server/desktop/toast_act.ts';
+import { homePayload } from '../../app/server/remote/payloads.ts';
+import { SavedChats } from '../../app/server/remote/saved.ts';
+import { Registry, hiddenChats, hiddenFromLists, readHelpers } from '../../app/server/swarm/registry.ts';
+import { DesktopNotifications, type NotifyTarget, type OsNotify } from '../../app/server/desktop/notify.ts';
+import { type SpawnToastHelper, toastTag } from '../../app/server/desktop/toast.ts';
+import { startWindowsToasts } from '../../app/server/desktop/toast_act.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
 type Json = Record<string, unknown>;

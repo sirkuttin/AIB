@@ -21,14 +21,14 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { DISTRO, inDistro, KEY, newAib, readyHost, ROOT, STATE, T } from './_wsl_e2e.ts';
-import { helperEnv, WslHostImpl, wslHostsInUse } from '../../outputs/agent-studio/server/wsl/hosts.ts';
-import { wslRoutes } from '../../outputs/agent-studio/server/web/wsl_routes.ts';
-import type { WebContext } from '../../outputs/agent-studio/server/web/server.ts';
-import { wslHost } from '../../outputs/agent-studio/server/wsl/access.ts';
-import { FINAL_CLEANUP_SCRIPT } from '../../outputs/agent-studio/server/wsl/remove.ts';
-import { clearDistroRemoved } from '../../outputs/agent-studio/server/wsl/removed.ts';
-import { wslIsRemoved } from '../../outputs/agent-studio/server/wsl/worktrees.ts';
-import { refOf } from '../../outputs/agent-studio/server/platform/location.ts';
+import { helperEnv, WslHostImpl, wslHostsInUse } from '../../app/server/wsl/hosts.ts';
+import { wslRoutes } from '../../app/server/web/wsl_routes.ts';
+import type { WebContext } from '../../app/server/web/server.ts';
+import { wslHost } from '../../app/server/wsl/access.ts';
+import { FINAL_CLEANUP_SCRIPT } from '../../app/server/wsl/remove.ts';
+import { clearDistroRemoved } from '../../app/server/wsl/removed.ts';
+import { wslIsRemoved } from '../../app/server/wsl/worktrees.ts';
+import { refOf } from '../../app/server/platform/location.ts';
 
 type Json = Record<string, unknown>;
 const OUT = `${ROOT}-out`;

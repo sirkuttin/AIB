@@ -53,7 +53,7 @@ func tunnelServer(t *testing.T, handle func(req map[string]any) (int, string)) (
 	return socket, seen
 }
 
-// envelope: AIB's signed hook answer inside the tunnel's body (server/host/studio.ts wslHookCall).
+// envelope: AIB's signed hook answer inside the tunnel's body (server/host/aib.ts wslHookCall).
 func envelope(req map[string]any, status int, body string) (int, string) {
 	headers, _ := req["headers"].(map[string]any)
 	nonce, _ := headers[hookNonceHeader].(string)

@@ -1,7 +1,7 @@
 /** Update button and "What's new" tab shots. A fake GitHub release server (as work/deno/update_notes_e2e_test.ts) with readable notes;
  *  the demo Studio (work/demo-studio/start.py, port 8860) runs as 0.1.0-beta.8 (AIB_UPDATE_CURRENT), finds beta.9, shows the Update button;
  *  then restarts as beta.9 on the same data (--keep) and opens the notes tab. No real update, nothing installed. */
-import { APP_VERSION } from '../../outputs/agent-studio/server/core/app.ts';
+import { APP_VERSION } from '../../app/server/core/app.ts';
 import { Browser, clickText, desk, shot, sleep, THEMES } from './lib.ts';
 
 const PORT = 8860, DIR = 'C:/aib-demo', PY = 'python';

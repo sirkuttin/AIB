@@ -12,9 +12,9 @@
  *
  *   deno run -A work/deno/history_keeper_read.ts <copied state dir> [--top N] [--runs R] [--takeover]
  */
-import { ensureKeeper, type KeeperClient, type KeeperRecord } from '../../outputs/agent-studio/server/keeper/client.ts';
-import { KeeperLink } from '../../outputs/agent-studio/server/keeper/link.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
+import { ensureKeeper, type KeeperClient, type KeeperRecord } from '../../app/server/keeper/client.ts';
+import { KeeperLink } from '../../app/server/keeper/link.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
 
 const argv = [...Deno.args];
 const flag = (name: string, fallback: string) => {

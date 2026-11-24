@@ -16,7 +16,7 @@
  */
 const HERE = new URL('.', import.meta.url);
 export const ROOT = decodeURIComponent(new URL('..', HERE).pathname).replace(/^\/([A-Za-z]:)/, '$1').replace(/\/$/, '');
-const APP = 'outputs/agent-studio';
+const APP = 'app';
 
 /** Links that no import shows. */
 const EXTRA_EDGES: Record<string, string[]> = {
@@ -61,11 +61,11 @@ function join(dir: string, rel: string): string {
   return parts.join('/');
 }
 
-/** Page files a browser test may load: the app's root files, its vendor/ and icons/ folders. */
+/** Page files a browser test may load: the files of app/page/, and app's vendor/ and icons/ folders. */
 export function isUiFile(f: string): boolean {
   if (!f.startsWith(`${APP}/`)) return false;
   const rest = f.slice(APP.length + 1);
-  return (!rest.includes('/') && /\.(?:js|css|html|json|svg|png|ico)$/.test(rest)) || rest.startsWith('vendor/') ||
+  return (rest.startsWith('page/') && !rest.slice(5).includes('/') && /\.(?:js|css|html|json|svg|png|ico)$/.test(rest)) || rest.startsWith('vendor/') ||
     rest.startsWith('icons/');
 }
 
@@ -77,14 +77,14 @@ export function buildGraph(files = allFiles()): Graph {
     map.get(from)!.add(to);
   };
   // Name indexes for mentions.
-  const byName = new Map<string, string[]>(); // 'chat.js' -> [outputs/agent-studio/chat.js]
+  const byName = new Map<string, string[]>(); // 'chat.js' -> [app/page/chat.js]
   const index = (name: string, file: string) => byName.set(name, [...(byName.get(name) ?? []), file]);
   const workDirs = new Map<string, string>(); // 'combined-fixture' -> 'work/combined-fixture/'
   const ui: string[] = [];
   for (const f of files) {
     const base = f.slice(f.lastIndexOf('/') + 1);
     if (isUiFile(f)) ui.push(f);
-    if (f.startsWith(`${APP}/`) && !f.slice(APP.length + 1).includes('/')) index(base, f);
+    if (f.startsWith(`${APP}/page/`) && !f.slice(APP.length + 6).includes('/')) index(base, f);
     if (/^work\/[^/]+$/.test(f)) index(base, f);
     if (/^work\/deno\/_[^/]+\.ts$/.test(f)) index(base, f);
     if (/^tools\/[^/]+\.ts$/.test(f)) index(base, f);
@@ -101,7 +101,8 @@ export function buildGraph(files = allFiles()): Graph {
     const dir = dirOf(f);
     const resolve = (spec: string): string | null => {
       if (!spec.startsWith('.') && !spec.startsWith('/')) return null;
-      const base = spec.startsWith('/') && f.endsWith('.html') ? `${APP}${spec}` : join(dir, spec);
+      const served = /^\/(?:vendor|icons|pwa)\//.test(spec) ? `${APP}${spec}` : `${APP}/page${spec}`; // URLs: vendor/ icons/ pwa/ beside page/
+      const base = spec.startsWith('/') && f.endsWith('.html') ? served : join(dir, spec);
       for (const c of [base, `${base}.js`, `${base}.ts`, `${base}/index.js`]) if (files.has(c)) return c;
       return null;
     };

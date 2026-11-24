@@ -18,7 +18,7 @@ function setup(stored = {}, server = { chats: {}, revision: 'r1' }) {
   };
   const posts = [];
   const window = { localStorage, setTimeout: () => 1 };
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../outputs/agent-studio/read-state.js'), 'utf8'), {
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../app/page/read-state.js'), 'utf8'), {
     window,
     Object,
     Array,

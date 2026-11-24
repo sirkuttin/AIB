@@ -8,15 +8,15 @@
 import { assert, assertEquals } from './_assert.ts';
 import { FAKE, pause, PYTHON, until } from './_connection.ts';
 import { commit, makeRepo, runGit } from './_worktree_fixtures.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { KeeperLink } from '../../outputs/agent-studio/server/keeper/link.ts';
-import { keeperBinary, KeeperClient, readKeeperInfo } from '../../outputs/agent-studio/server/keeper/client.ts';
-import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
-import { Swarm } from '../../outputs/agent-studio/server/swarm/service.ts';
-import { setSwarmEnabled } from '../../outputs/agent-studio/server/swarm/settings.ts';
-import { pathOf } from '../../outputs/agent-studio/server/state/paths.ts';
-import { processList } from '../../outputs/agent-studio/server/platform/process_info.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { KeeperLink } from '../../app/server/keeper/link.ts';
+import { keeperBinary, KeeperClient, readKeeperInfo } from '../../app/server/keeper/client.ts';
+import { pidAlive } from '../../app/server/host/host_client.ts';
+import { Swarm } from '../../app/server/swarm/service.ts';
+import { setSwarmEnabled } from '../../app/server/swarm/settings.ts';
+import { pathOf } from '../../app/server/state/paths.ts';
+import { processList } from '../../app/server/platform/process_info.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -53,7 +53,7 @@ class Lab {
   readonly project = makeRepo(pathOf(this.dir, 'proj'));
   readonly childFile = pathOf(this.dir, 'child.pid');
   readonly gate = pathOf(this.dir, 'bg.gate');
-  readonly studios: Studio[] = [];
+  readonly studios: Aib[] = [];
   readonly swarms: Swarm[] = [];
 
   constructor() {
@@ -62,9 +62,9 @@ class Lab {
     runGit(this.project, 'config', 'user.email', 't@t');
   }
 
-  studio(): Studio {
+  studio(): Aib {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
-    const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper });
+    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper });
     studio.ownerProbe = () => null;
     studio.agentLaunch = () => Promise.resolve([['unused'], {}]);
     studio.connectionFactory = (_command, cwd, provider, options) =>
@@ -78,7 +78,7 @@ class Lab {
     return studio;
   }
 
-  swarm(studio: Studio): Swarm {
+  swarm(studio: Aib): Swarm {
     const swarm = new Swarm({ stateDir: this.state, host: studio, settings: studio.settings });
     swarm.openMs = 30_000;
     this.swarms.push(swarm);
@@ -112,7 +112,7 @@ class Lab {
 }
 
 /** A main chat starts a helper; its brief turn ends. */
-async function start(studio: Studio, swarm: Swarm, lab: Lab) {
+async function start(studio: Aib, swarm: Swarm, lab: Lab) {
   const main = await studio.connect('claude', lab.project, null, { ownCopy: true });
   const [, out] = await swarm.tool(main.id, 'start_helper', BRIEF);
   const id = String((out as Json).helper);

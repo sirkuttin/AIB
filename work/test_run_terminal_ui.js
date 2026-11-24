@@ -3,7 +3,7 @@
 const test = require('node:test'),
   assert = require('node:assert/strict'),
   path = require('node:path');
-const { APP } = require('./_paths');
+const { PAGE: APP } = require('./_paths');
 const { Node, page, load } = require('./fake_dom');
 /* copy-ui.js walks up with parentElement; the shared fake DOM only has parentNode. */
 if (!Object.getOwnPropertyDescriptor(Node.prototype, 'parentElement'))

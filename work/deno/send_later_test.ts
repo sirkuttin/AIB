@@ -7,10 +7,10 @@
 import { assert, assertEquals } from './_assert.ts';
 import { events, Lab, type Json, pause, rejectsValue, until } from './_connection.ts';
 import { fake } from './_connection.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { QueueStore } from '../../outputs/agent-studio/server/acp/msgqueue.ts';
-import { LIVE_POST_OPS, Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { Recovery, StateStore } from '../../outputs/agent-studio/server/state/recovery.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { QueueStore } from '../../app/server/acp/msgqueue.ts';
+import { LIVE_POST_OPS, Aib } from '../../app/server/host/aib.ts';
+import { Recovery, StateStore } from '../../app/server/state/recovery.ts';
 
 const LONG = 60; // a deadline, not a delay
 
@@ -251,7 +251,7 @@ Deno.test('send later: Studio routes schedule, schedule-edit, schedule-send-now 
   assert(['schedule', 'schedule-edit', 'schedule-cancel', 'schedule-send-now'].every((op) => LIVE_POST_OPS.has(op)));
   const dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-later-studio-' }));
   const state = dir + (Deno.build.os === 'windows' ? '\\' : '/') + 'state';
-  const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: state, port: 0, ownersDir: null, noArtifactTool: true });
+  const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: state, port: 0, ownersDir: null, noArtifactTool: true });
   studio.ownerProbe = () => null;
   studio.connectionFactory = (_command, cwd, provider) => new Connection(fake(), cwd, provider);
   try {
@@ -307,8 +307,8 @@ const SEP = Deno.build.os === 'windows' ? '\\' : '/';
 function tempDir(): string {
   return Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-later-scan-' }));
 }
-function studioAt(dir: string, factory?: () => Connection): Studio {
-  const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: dir + SEP + 'state', port: 0, ownersDir: null, noArtifactTool: true });
+function studioAt(dir: string, factory?: () => Connection): Aib {
+  const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: dir + SEP + 'state', port: 0, ownersDir: null, noArtifactTool: true });
   studio.ownerProbe = () => null;
   studio.connectionFactory = factory ? () => factory() : (_command, cwd, provider) => new Connection(fake(), cwd, provider);
   return studio;
@@ -337,7 +337,7 @@ function moveScheduleBack(path: string, ms: number): void {
   for (const items of Object.values(file.sessions) as Json[][]) for (const i of items) if (i.lane === 'scheduled') i.at = (i.at as number) - ms;
   Deno.writeTextFileSync(path, JSON.stringify(file));
 }
-const opened = (s: Studio) => [...s.connections.values()].filter((c) => !c.closed);
+const opened = (s: Aib) => [...s.connections.values()].filter((c) => !c.closed);
 
 Deno.test('send later: a time missed while AIB was off goes at the next start even when nobody opens the chat', async () => {
   const dir = tempDir();

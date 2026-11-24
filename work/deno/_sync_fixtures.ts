@@ -3,8 +3,8 @@
  * project with worktree chats over a fake studio, and the small helpers both use. Only temp folders.
  */
 import { commit, read, runGit, Sandbox, write } from './_worktree_fixtures.ts';
-import * as wt from '../../outputs/agent-studio/server/worktrees/worktrees.ts';
-import * as sync from '../../outputs/agent-studio/server/worktrees/sync.ts';
+import * as wt from '../../app/server/worktrees/worktrees.ts';
+import * as sync from '../../app/server/worktrees/sync.ts';
 
 export const { LiveSync, ProjectSync } = sync;
 

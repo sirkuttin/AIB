@@ -15,8 +15,8 @@ import {
   KeeperError,
   type KeeperRecord,
   readKeeperInfo,
-} from '../../outputs/agent-studio/server/keeper/client.ts';
-import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
+} from '../../app/server/keeper/client.ts';
+import { pidAlive } from '../../app/server/host/host_client.ts';
 
 const T = { sanitizeResources: false, sanitizeOps: false };
 const ENC = new TextEncoder();

@@ -7,7 +7,7 @@ import {
   validateUrl,
   validateUrlRequest,
   ValueError,
-} from '../../outputs/agent-studio/server/acp/elicitation.ts';
+} from '../../app/server/acp/elicitation.ts';
 
 type Json = Record<string, unknown>;
 

@@ -11,16 +11,16 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { fake, Lab, until } from './_connection.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { AllowGate } from '../../outputs/agent-studio/server/allow/gate.ts';
-import { BUILTIN, match, type MatchContext } from '../../outputs/agent-studio/server/allow/matcher.ts';
-import { unwrapCodexPowershell } from '../../outputs/agent-studio/server/allow/shell.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { AllowGate } from '../../app/server/allow/gate.ts';
+import { BUILTIN, match, type MatchContext } from '../../app/server/allow/matcher.ts';
+import { unwrapCodexPowershell } from '../../app/server/allow/shell.ts';
 import { join } from 'node:path';
 
 type Json = Record<string, unknown>;
 const SEP = Deno.build.os === 'windows' ? '\\' : '/';
 const PWSH = '"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -Command';
-const TEST_CMD = 'node --test work/test_model_servers_ui.js work/test_settings_ui.js ; then, from outputs/agent-studio: deno task test --jobs 2 model_servers_ui_test';
+const TEST_CMD = 'node --test work/test_model_servers_ui.js work/test_settings_ui.js ; then, from app: deno task test --jobs 2 model_servers_ui_test';
 
 const kinds = (c: Connection, kind: string) => c.events.filter((e) => e.kind === kind);
 
@@ -30,11 +30,11 @@ class HelperLab extends Lab {
   readonly gate: AllowGate;
   constructor() {
     super();
-    Deno.mkdirSync(this.copy + SEP + 'outputs' + SEP + 'agent-studio', { recursive: true });
+    Deno.mkdirSync(this.copy + SEP + 'app', { recursive: true });
     Deno.mkdirSync(this.copy + SEP + '.git' + SEP + 'hooks', { recursive: true });
     Deno.mkdirSync(this.copy + SEP + '.claude', { recursive: true });
     Deno.mkdirSync(this.state, { recursive: true });
-    Deno.writeTextFileSync(this.copy + SEP + 'outputs' + SEP + 'agent-studio' + SEP + 'settings-ui.js', 'x\n');
+    Deno.writeTextFileSync(this.copy + SEP + 'app' + SEP + 'page' + SEP + 'settings-ui.js', 'x\n');
     this.gate = new AllowGate(this.state);
   }
 
@@ -75,7 +75,7 @@ async function ask(c: Connection, text: string): Promise<{ answer: 'auto' | 'car
 Deno.test('a Codex helper: edits in its own worktree are answered, with a line in its chat', async () => {
   await using lab = new HelperLab();
   const c = await lab.chat('codex', true);
-  const inside = lab.copy + SEP + 'outputs' + SEP + 'agent-studio' + SEP + 'settings-ui.js';
+  const inside = lab.copy + SEP + 'app' + SEP + 'page' + SEP + 'settings-ui.js';
   const got = await ask(c, 'allowcodexedit:' + inside);
   assertEquals(got.answer, 'auto');
   assertEquals(got.ruleId, BUILTIN.helperCopy.id);
@@ -114,7 +114,7 @@ Deno.test('a Codex helper: the brief\'s tests and common runners are answered; p
       'deno test --jobs 2 work/deno/allow_helper_test.ts',
       'python -I -m pytest work/test_x.py',
       'git status --short', // safe read (already allowed)
-      'git diff --check\nGet-Content outputs/agent-studio/chat.css | Select-Object -Skip 154 -First 13\ngit status --short', // the recorded one
+      'git diff --check\nGet-Content app/page/chat.css | Select-Object -Skip 154 -First 13\ngit status --short', // the recorded one
     ]
   ) {
     const got = await run(script);
@@ -144,7 +144,7 @@ Deno.test('a Codex helper: the brief\'s tests and common runners are answered; p
 Deno.test('a normal chat in a worktree is unchanged: edits and test runs still ask', async () => {
   await using lab = new HelperLab();
   const c = await lab.chat('codex', false);
-  const inside = lab.copy + SEP + 'outputs' + SEP + 'agent-studio' + SEP + 'settings-ui.js';
+  const inside = lab.copy + SEP + 'app' + SEP + 'page' + SEP + 'settings-ui.js';
   assertEquals((await ask(c, 'allowcodexedit:' + inside)).answer, 'card');
   assertEquals((await ask(c, `allowcodex:${PWSH} 'npm test'`)).answer, 'card');
   assertEquals((await ask(c, `allowcodex:${PWSH} 'deno task test --jobs 2 x'`)).answer, 'card');
@@ -154,7 +154,7 @@ Deno.test('a normal chat in a worktree is unchanged: edits and test runs still a
 Deno.test('a Claude helper (acceptEdits): Edit and Bash requests in its worktree get the same answers', async () => {
   await using lab = new HelperLab();
   const c = await lab.chat('claude', true);
-  const inside = lab.copy + SEP + 'outputs' + SEP + 'agent-studio' + SEP + 'settings-ui.js';
+  const inside = lab.copy + SEP + 'app' + SEP + 'page' + SEP + 'settings-ui.js';
   assertEquals((await ask(c, 'allowedit:' + inside)).answer, 'auto');
   assertEquals((await ask(c, 'allowedit:' + lab.copy + SEP + '.claude' + SEP + 'x.json')).answer, 'card');
   assertEquals((await ask(c, 'allow:deno task test --jobs 2 model_servers_ui_test')).answer, 'auto');

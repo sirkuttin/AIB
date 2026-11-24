@@ -19,8 +19,8 @@ import {
   refOf,
   validDistro,
   validLinuxPath,
-} from '../../outputs/agent-studio/server/platform/location.ts';
-import { WSL_REF_PREFIX } from '../../outputs/agent-studio/server/wsl/contract.ts';
+} from '../../app/server/platform/location.ts';
+import { WSL_REF_PREFIX } from '../../app/server/wsl/contract.ts';
 
 const WIN = Deno.build.os === 'windows';
 
@@ -184,7 +184,7 @@ Deno.test('Linux joins and inside checks follow POSIX rules and refuse climbing 
 
 /** Every server file that mentions WSL refs; `new URL(` must never get one (it lowercases the host and encodes spaces). */
 Deno.test('lint: a WSL ref is never URL-parsed in the server', () => {
-  const root = new URL('../../outputs/agent-studio/server/', import.meta.url);
+  const root = new URL('../../app/server/', import.meta.url);
   const offenders: string[] = [];
   const walk = (dir: URL) => {
     for (const entry of Deno.readDirSync(dir)) {

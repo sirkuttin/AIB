@@ -1,7 +1,7 @@
 'use strict';
 /* Back steps on the phone page: navPlan, from the chain the history holds to the chain on screen. The page itself (the browser's
    Back through list, chat, Artifacts, an artifact, sheets, a notification link) runs in work/deno/remote_phone_back_e2e_test.ts. */
-const { APP } = require('./_paths');
+const { PAGE: APP } = require('./_paths');
 const test = require('node:test'),
   assert = require('node:assert/strict'),
   path = require('node:path');

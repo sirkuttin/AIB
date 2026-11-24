@@ -70,7 +70,7 @@
             },
             {
               "type": "text",
-              "text": "outputs/agent-studio/",
+              "text": "app/",
               "marks": [
                 {
                   "type": "code"
@@ -2618,7 +2618,7 @@
                     },
                     {
                       "type": "text",
-                      "text": "server/host/studio.ts:876-881",
+                      "text": "server/host/aib.ts:876-881",
                       "marks": [
                         {
                           "type": "code"
@@ -3253,7 +3253,7 @@
             },
             {
               "type": "text",
-              "text": "server/web/studio_routes.ts:371-377",
+              "text": "server/web/aib_routes.ts:371-377",
               "marks": [
                 {
                   "type": "code"
@@ -14990,7 +14990,7 @@
                       "content": [
                         {
                           "type": "text",
-                          "text": "server/host/studio.ts",
+                          "text": "server/host/aib.ts",
                           "marks": [
                             {
                               "type": "code"
@@ -15287,7 +15287,7 @@
                       "content": [
                         {
                           "type": "text",
-                          "text": "server/web/studio_routes.ts",
+                          "text": "server/web/aib_routes.ts",
                           "marks": [
                             {
                               "type": "code"
@@ -18964,7 +18964,7 @@
             },
             {
               "type": "text",
-              "text": "outputs/agent-studio/",
+              "text": "app/",
               "marks": [
                 {
                   "type": "code"
@@ -19277,7 +19277,7 @@
                         },
                         {
                           "type": "text",
-                          "text": "server/host/studio.ts",
+                          "text": "server/host/aib.ts",
                           "marks": [
                             {
                               "type": "code"
@@ -36134,7 +36134,7 @@
             },
             {
               "type": "text",
-              "text": "outputs/agent-studio/",
+              "text": "app/",
               "marks": [
                 {
                   "type": "code"
@@ -36797,7 +36797,7 @@
                         },
                         {
                           "type": "text",
-                          "text": "server/host/studio.ts",
+                          "text": "server/host/aib.ts",
                           "marks": [
                             {
                               "type": "code"
@@ -42191,7 +42191,7 @@
             },
             {
               "type": "text",
-              "text": "C:\\Users\\sirku\\Documents\\Codex\\AIB-beta10\\outputs\\agent-studio\\",
+              "text": "C:\\Users\\sirku\\Documents\\Codex\\AIB-beta10\\app\\",
               "marks": [
                 {
                   "type": "code"

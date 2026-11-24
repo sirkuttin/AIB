@@ -5,18 +5,18 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { Frozen } from './_frozen.ts';
-import { APP_ROOT, TESTS_DIR } from '../../outputs/agent-studio/server/core/app.ts';
-import * as artifactKeys from '../../outputs/agent-studio/server/artifacts/keys.ts';
-import { artifactToolCommand, INSTRUCTIONS, OFFLINE_LIBS_NOTE } from '../../outputs/agent-studio/server/artifacts/mcp.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { ARTIFACT_URL_FILE } from '../../outputs/agent-studio/server/host/studio.ts';
-import { ARTIFACT_PROMPT, COMMANDS_RULE, Connection, WSL_ARTIFACT_PROMPT } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { selectMcpServers, validateMcpServers } from '../../outputs/agent-studio/server/acp/breadth.ts';
-import { ArtifactMcpHttp, CONVERSATION_HEADER, KEY_HEADER } from '../../outputs/agent-studio/server/artifacts/mcp_http.ts';
-import { DOC_TOOL_NAMES, DOCS_RULE } from '../../outputs/agent-studio/server/docs/tool_defs.ts';
-import { DRAWING_TOOL_NAMES } from '../../outputs/agent-studio/server/docs/drawing/tool_defs.ts';
-import { pyJsonDumps } from '../../outputs/agent-studio/server/core/py.ts';
-import { openText, sealingOn } from '../../outputs/agent-studio/server/state/sealed.ts';
+import { APP_ROOT, TESTS_DIR } from '../../app/server/core/app.ts';
+import * as artifactKeys from '../../app/server/artifacts/keys.ts';
+import { artifactToolCommand, INSTRUCTIONS, OFFLINE_LIBS_NOTE } from '../../app/server/artifacts/mcp.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { ARTIFACT_URL_FILE } from '../../app/server/host/aib.ts';
+import { ARTIFACT_PROMPT, COMMANDS_RULE, Connection, WSL_ARTIFACT_PROMPT } from '../../app/server/acp/connection.ts';
+import { selectMcpServers, validateMcpServers } from '../../app/server/acp/breadth.ts';
+import { ArtifactMcpHttp, CONVERSATION_HEADER, KEY_HEADER } from '../../app/server/artifacts/mcp_http.ts';
+import { DOC_TOOL_NAMES, DOCS_RULE } from '../../app/server/docs/tool_defs.ts';
+import { DRAWING_TOOL_NAMES } from '../../app/server/docs/drawing/tool_defs.ts';
+import { pyJsonDumps } from '../../app/server/core/py.ts';
+import { openText, sealingOn } from '../../app/server/state/sealed.ts';
 
 const WIN = Deno.build.os === 'windows';
 const SEP = WIN ? '\\' : '/';
@@ -105,7 +105,7 @@ class FakeStudio {
   }
 }
 
-/** A port that accepts and immediately hangs up: Studio "not reachable" without Windows' two-second wait on a closed port. */
+/** A port that accepts and immediately hangs up: Aib "not reachable" without Windows' two-second wait on a closed port. */
 class HangUp {
   readonly listener = Deno.listen({ hostname: '127.0.0.1', port: 0 });
   readonly url = `http://127.0.0.1:${(this.listener.addr as Deno.NetAddr).port}`;
@@ -673,9 +673,9 @@ Deno.test('differential: tools/list without a worktree, unreachable Studio, URL 
 
 class StudioLab {
   readonly dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-mcp-studio-' }));
-  readonly studios: Studio[] = [];
-  make(extra: Record<string, unknown> = {}): Studio {
-    const studio = new Studio({ ompCommand: 'unused', stateDir: `${this.dir}${SEP}state`, port: 8123, ...extra } as never);
+  readonly studios: Aib[] = [];
+  make(extra: Record<string, unknown> = {}): Aib {
+    const studio = new Aib({ ompCommand: 'unused', stateDir: `${this.dir}${SEP}state`, port: 8123, ...extra } as never);
     this.studios.push(studio);
     return studio;
   }

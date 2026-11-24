@@ -27,9 +27,9 @@ import {
   tomlTurnsHooksOff,
   withCodexHooks,
   withSubagentsOff,
-} from '../../outputs/agent-studio/server/subagents/codex.ts';
-import { ownSubagentPath, readSubagents, type SubagentChat, SubagentWorktrees } from '../../outputs/agent-studio/server/subagents/service.ts';
-import { join } from '../../outputs/agent-studio/server/platform/path.ts';
+} from '../../app/server/subagents/codex.ts';
+import { ownSubagentPath, readSubagents, type SubagentChat, SubagentWorktrees } from '../../app/server/subagents/service.ts';
+import { join } from '../../app/server/platform/path.ts';
 
 const WIN = Deno.build.os === 'windows';
 
@@ -280,7 +280,7 @@ Deno.test('Codex routes: spawn prepares, start binds and names it, Bash runs the
 });
 
 Deno.test("a Codex chat's own subagent folder: <root>/<repo hash>/.cx-<chat>; its worktrees are AIB's own paths; removed only empty", async () => {
-  const { repoHash } = await import('../../outputs/agent-studio/server/worktrees/worktrees.ts');
+  const { repoHash } = await import('../../app/server/worktrees/worktrees.ts');
   const temp = Deno.makeTempDirSync({ prefix: 'aib-cx-own-', dir: Deno.env.get('TEMP') ?? undefined });
   try {
     const root = join(temp, 'worktrees'), project = join(temp, 'proj');

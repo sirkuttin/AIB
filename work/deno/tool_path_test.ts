@@ -4,7 +4,7 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { join, tempDir, touch } from './_agents.ts';
-import * as adapters from '../../outputs/agent-studio/server/agents/adapters.ts';
+import * as adapters from '../../app/server/agents/adapters.ts';
 
 const S = adapters.PATH_START, E = adapters.PATH_END;
 const SHELL = Deno.execPath(); // any real absolute file: the shell is never really run here

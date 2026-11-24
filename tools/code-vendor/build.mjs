@@ -1,5 +1,5 @@
 // Builds the file tab's code editor (run once after npm install; the output is committed, the app has no build step):
-//   outputs/agent-studio/vendor/code/editor.js   CodeMirror 6 + AIB's language set, as an IIFE (window.AIBCodeEditor)
+//   app/vendor/code/editor.js   CodeMirror 6 + AIB's language set, as an IIFE (window.AIBCodeEditor)
 // The page loads it lazily, on the first file tab that needs it (never in chat.html's head). Same build style as
 // tools/docs-vendor/build.mjs. `node build.mjs --sizes` also prints the biggest inputs (minified bytes per package).
 import { build } from 'esbuild';
@@ -7,7 +7,7 @@ import { statSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
 import { readFileSync } from 'node:fs';
 
-const page = '../../outputs/agent-studio/vendor/code/editor.js';
+const page = '../../app/vendor/code/editor.js';
 const result = await build({
   entryPoints: ['editor.entry.js'],
   bundle: true,

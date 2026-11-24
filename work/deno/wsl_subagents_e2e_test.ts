@@ -11,11 +11,11 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { cleanRoot, inDistro, KEY, newAib, prepareRoot, readyHost, ROOT, T } from './_wsl_e2e.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { Swarm } from '../../outputs/agent-studio/server/swarm/service.ts';
-import { refOf } from '../../outputs/agent-studio/server/platform/location.ts';
-import * as ws from '../../outputs/agent-studio/server/wsl/subagents.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { Swarm } from '../../app/server/swarm/service.ts';
+import { refOf } from '../../app/server/platform/location.ts';
+import * as ws from '../../app/server/wsl/subagents.ts';
 
 const sh = async (script: string, ...args: string[]) => (await inDistro(script, args)).out.trim();
 
@@ -83,7 +83,7 @@ Deno.test({
     await prepareRoot();
     const state = Deno.makeTempDirSync({ prefix: 'aib-wsl-subagent-hooks-e2e-' });
     Deno.env.set('AGENT_STUDIO_ALLOW_REAL_AGENT', '1'); // hooks are set up for a non-fixture agent (the factory below runs the fake agent)
-    const studio = new Studio({ stateDir: state, port: 0, ownersDir: null }, { keeper: null });
+    const studio = new Aib({ stateDir: state, port: 0, ownersDir: null }, { keeper: null });
     studio.ownerProbe = () => null;
     studio.connectionFactory = (_command, cwd, provider, options) =>
       new Connection(['python3', `${ROOT}/fake_acp.py`, '--cancel-aware'], cwd, provider, {

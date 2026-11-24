@@ -9,8 +9,8 @@
 import { assert, assertEquals } from './_assert.ts';
 import { Frozen } from './_frozen.ts';
 import { digestOf } from './_digest.ts';
-import { handleGet, openSource, type Source, Transcript } from '../../outputs/agent-studio/server/transcripts/monitor.ts';
-import { join } from '../../outputs/agent-studio/server/transcripts/purepath.ts';
+import { handleGet, openSource, type Source, Transcript } from '../../app/server/transcripts/monitor.ts';
+import { join } from '../../app/server/transcripts/purepath.ts';
 import * as fx from './_monitor_fixtures.ts';
 
 const py = new Frozen();

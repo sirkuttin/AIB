@@ -3,12 +3,12 @@
  * POST /api/live/view-prefs behind the page gate. The page half (view-prefs.js) is tested in work/test_view_prefs.js.
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
-import { ViewPrefs, ViewPrefsBusy } from '../../outputs/agent-studio/server/state/view_prefs.ts';
-import { makeContext, WebServer, withViewPrefs } from '../../outputs/agent-studio/server/web/server.ts';
-import { ValueError } from '../../outputs/agent-studio/server/core/py.ts';
-import type { LiveBackend } from '../../outputs/agent-studio/server/host/backend.ts';
-import type { UpdateService } from '../../outputs/agent-studio/server/desktop/updater.ts';
-import type { Source } from '../../outputs/agent-studio/server/transcripts/monitor.ts';
+import { ViewPrefs, ViewPrefsBusy } from '../../app/server/state/view_prefs.ts';
+import { makeContext, WebServer, withViewPrefs } from '../../app/server/web/server.ts';
+import { ValueError } from '../../app/server/core/py.ts';
+import type { LiveBackend } from '../../app/server/host/backend.ts';
+import type { UpdateService } from '../../app/server/desktop/updater.ts';
+import type { Source } from '../../app/server/transcripts/monitor.ts';
 
 const sep = Deno.build.os === 'windows' ? '\\' : '/';
 

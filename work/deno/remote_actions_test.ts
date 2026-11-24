@@ -13,8 +13,8 @@
  *  - the phone activity log: one line per action with the chat, never the message text or the command.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { DEVICE_HEADER, REMOTE_ROUTES } from '../../outputs/agent-studio/server/remote/server.ts';
-import { readRemotePort } from '../../outputs/agent-studio/server/remote/port.ts';
+import { DEVICE_HEADER, REMOTE_ROUTES } from '../../app/server/remote/server.ts';
+import { readRemotePort } from '../../app/server/remote/port.ts';
 import {
   type FakeChat,
   fakeTailscale,

@@ -9,7 +9,7 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { ContractServer, rawRequest } from './_contract_server.ts';
-import * as keys from '../../outputs/agent-studio/server/artifacts/keys.ts';
+import * as keys from '../../app/server/artifacts/keys.ts';
 
 const CHAT = 'claude:art';
 const OTHER = 'claude:other';

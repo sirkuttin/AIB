@@ -14,15 +14,15 @@ import { assert, assertEquals, assertRejects } from './_assert.ts';
 import { commit, read, runGit, Sandbox, write } from './_worktree_fixtures.ts';
 import { HAVE_GIT } from './_git_repo.ts';
 import { FakeWslHost } from './_wsl_fake.ts';
-import * as wt from '../../outputs/agent-studio/server/worktrees/worktrees.ts';
-import * as m from '../../outputs/agent-studio/server/worktrees/merge.ts';
-import { mergeMethods } from '../../outputs/agent-studio/server/wsl/helper/merge.ts';
-import { RpcError } from '../../outputs/agent-studio/server/wsl/helper/rpc.ts';
-import * as wm from '../../outputs/agent-studio/server/wsl/merge.ts';
-import { setWslHostResolver } from '../../outputs/agent-studio/server/wsl/access.ts';
-import { WslHelperError } from '../../outputs/agent-studio/server/wsl/contract.ts';
-import { studioRoutes } from '../../outputs/agent-studio/server/web/studio_routes.ts';
-import { pathOf } from '../../outputs/agent-studio/server/state/paths.ts';
+import * as wt from '../../app/server/worktrees/worktrees.ts';
+import * as m from '../../app/server/worktrees/merge.ts';
+import { mergeMethods } from '../../app/server/wsl/helper/merge.ts';
+import { RpcError } from '../../app/server/wsl/helper/rpc.ts';
+import * as wm from '../../app/server/wsl/merge.ts';
+import { setWslHostResolver } from '../../app/server/wsl/access.ts';
+import { WslHelperError } from '../../app/server/wsl/contract.ts';
+import { aibRoutes } from '../../app/server/web/aib_routes.ts';
+import { pathOf } from '../../app/server/state/paths.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false, ignore: !HAVE_GIT };
@@ -272,7 +272,7 @@ Deno.test({ name: 'wsl merge routes: a WSL chat goes to its helper, a Windows ch
     host: { liveState: (id: string) => lab.studio.liveState(id), liveCall: (op: string, p: Json) => lab.studio.liveCall(op, p) },
     conversations: { public: () => ({ entries: {} }) },
   } as never;
-  const routes = studioRoutes();
+  const routes = aibRoutes();
   const get = (path: string) => routes.get(`GET ${path.split('?')[0]}`)!(ctx, new URL('http://127.0.0.1' + path), null, new Request('http://127.0.0.1'));
   const post = (path: string, body: Json) => routes.get(`POST ${path}`)!(ctx, new URL('http://127.0.0.1' + path), body, new Request('http://127.0.0.1'));
   const [s1, status] = await get('/api/live/worktree?id=c1');

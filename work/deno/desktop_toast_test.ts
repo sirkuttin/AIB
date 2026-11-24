@@ -11,8 +11,8 @@
  *    Continue and Retry send; clicks made while AIB was closed are read from toast-inbox.jsonl once.
  */
 import { assert, assertEquals } from './_assert.ts';
-import type { InboxRow } from '../../outputs/agent-studio/server/attention/inbox_rules.ts';
-import type { NotifyRequest, NotifyTarget, OsNotify } from '../../outputs/agent-studio/server/desktop/notify.ts';
+import type { InboxRow } from '../../app/server/attention/inbox_rules.ts';
+import type { NotifyRequest, NotifyTarget, OsNotify } from '../../app/server/desktop/notify.ts';
 import {
   parseToastArgs,
   type SpawnToastHelper,
@@ -22,8 +22,8 @@ import {
   toastTag,
   toastXml,
   WindowsToasts,
-} from '../../outputs/agent-studio/server/desktop/toast.ts';
-import { applyToastClick, pendingFile, takePending, type ToastActDeps } from '../../outputs/agent-studio/server/desktop/toast_act.ts';
+} from '../../app/server/desktop/toast.ts';
+import { applyToastClick, pendingFile, takePending, type ToastActDeps } from '../../app/server/desktop/toast_act.ts';
 
 type Json = Record<string, unknown>;
 const ONCE = [

@@ -5,7 +5,7 @@
  * the bottom, the follow flag (data-paused), the newest row's box against the list's box, and the row at the top of the view.
  * Where an update could flash, it also records the same numbers on every animation frame.
  *
- * Run (from outputs/agent-studio):
+ * Run (from app):
  *   deno test -A ../../work/deno/scroll_e2e_test.ts                      the passing tests; KNOWN_FAILING ones are listed as ignored
  *   AIB_SCROLL_ALL=1 deno test -A ../../work/deno/scroll_e2e_test.ts     also the known-failing ones (they fail until fixed)
  *   AIB_SCROLL_PENDING=1 deno test -A ../../work/deno/scroll_e2e_test.ts also the PENDING ones: bugs the scroll design found

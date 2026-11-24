@@ -1,14 +1,14 @@
 /**
- * server/host/studio.ts, the connection manager (test_studio.py's manager tests, the in-process half of test_auto_reconnect.py, and
+ * server/host/aib.ts, the connection manager (test_studio.py's manager tests, the in-process half of test_auto_reconnect.py, and
  * the Connection-through-Studio parts of test_attention.py, test_breadth.py and test_attachments.py). Fake ACP agent only, temp
  * state folders.
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
 import { fake, pause, until } from './_connection.ts';
-import { Connection, ThreadEvent } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { reconnectKey, Studio, type StudioOptions } from '../../outputs/agent-studio/server/host/studio.ts';
-import { OwnershipConflict, SessionLease } from '../../outputs/agent-studio/server/ownership/ownership.ts';
-import { OwnerRegistry, OwnershipEvidence, ProcessSource, type ProcInfo } from '../../outputs/agent-studio/server/ownership/probe.ts';
+import { Connection, ThreadEvent } from '../../app/server/acp/connection.ts';
+import { reconnectKey, Aib, type AibOptions } from '../../app/server/host/aib.ts';
+import { OwnershipConflict, SessionLease } from '../../app/server/ownership/ownership.ts';
+import { OwnerRegistry, OwnershipEvidence, ProcessSource, type ProcInfo } from '../../app/server/ownership/probe.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -16,10 +16,10 @@ const T = { sanitizeResources: false, sanitizeOps: false };
 class Lab {
   readonly dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-studio-test-' }));
   readonly state = this.dir + (Deno.build.os === 'windows' ? '\\' : '/') + 'state';
-  readonly studios: Studio[] = [];
+  readonly studios: Aib[] = [];
 
-  manager(flags: string[] = [], options: Partial<StudioOptions> = {}): Studio {
-    const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ...options });
+  manager(flags: string[] = [], options: Partial<AibOptions> = {}): Aib {
+    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ...options });
     studio.ownerProbe = () => null;
     studio.connectionFactory = (_command, cwd, provider) => new Connection(fake(...flags), cwd, provider);
     this.studios.push(studio);
@@ -184,7 +184,7 @@ async function previousRun(lab: Lab): Promise<void> {
   await first.close();
 }
 
-const live = (s: Studio) => [...s.connections.values()].filter((c) => !c.closed && c.ready);
+const live = (s: Aib) => [...s.connections.values()].filter((c) => !c.closed && c.ready);
 
 Deno.test({
   name: 'auto-reconnect: a chat that was live reconnects without sending anything',
@@ -323,7 +323,7 @@ Deno.test({
     assertEquals(off.recovered().length, 1);
     assertEquals((await off.liveList()).autoReconnect, false);
 
-    const bare = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node' });
+    const bare = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node' });
     assertEquals(bare.startAutoReconnect(), 0);
     await bare.close();
 
@@ -375,7 +375,7 @@ Deno.test({
     };
     const exe = Deno.build.os === 'windows' ? '.exe' : '';
     let procs: ProcInfo[] = [];
-    const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: lab.state, port: 0, claudeProjects: claude, ownersDir: owners });
+    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: lab.state, port: 0, claudeProjects: claude, ownersDir: owners });
     lab.studios.push(studio); // its own ownerProbe: the real command-line check over the stand-in process list
     studio.connectionFactory = (_command, cwd, provider) => new Connection(fake(), cwd, provider);
     studio.probe.processes = new ProcessSource(() => procs.map((p) => ({ ...p })), 0);
@@ -555,10 +555,10 @@ Deno.test({
 });
 
 Deno.test('the host command starts the Deno host; host flags parse like agent_host.py', async () => {
-  const { hostCommand } = await import('../../outputs/agent-studio/server/main.ts');
-  const { parseOptions, HOST_FLAGS, UsageError } = await import('../../outputs/agent-studio/server/core/options.ts');
-  const { LIVE_POST_OPS: routes } = await import('../../outputs/agent-studio/server/web/live_routes.ts');
-  const { LIVE_POST_OPS } = await import('../../outputs/agent-studio/server/host/studio.ts');
+  const { hostCommand } = await import('../../app/server/main.ts');
+  const { parseOptions, HOST_FLAGS, UsageError } = await import('../../app/server/core/options.ts');
+  const { LIVE_POST_OPS: routes } = await import('../../app/server/web/live_routes.ts');
+  const { LIVE_POST_OPS } = await import('../../app/server/host/aib.ts');
   const o = parseOptions(['--state-dir', 'S', '--no-owner-announcements', '--host-idle-minutes', '2']);
   const deno = hostCommand(o);
   assertEquals(deno[0], Deno.execPath());

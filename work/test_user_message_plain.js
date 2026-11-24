@@ -1,5 +1,5 @@
 'use strict';
-const { APP: APP_DIR } = require('./_paths');
+const { PAGE: APP_DIR } = require('./_paths');
 /* Your own messages keep their own box (a neutral raised fill since the Bay teal styling) but have no visible title bar: the "You"
    label stays for screen readers. The time always shows; Copy shows on hover or keyboard focus (always on touch). */
 const test = require('node:test');

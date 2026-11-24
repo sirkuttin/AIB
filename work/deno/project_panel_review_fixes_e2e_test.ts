@@ -9,7 +9,7 @@
  *       narrows it or drags the edge.
  *   M2  The Docs tab of a project's New chat page lists that project's docs, and "+ New doc" makes the doc in that project.
  *
- * Run (from outputs/agent-studio): deno test -A ../../work/deno/project_panel_review_fixes_e2e_test.ts   (ignored without Chrome or Edge)
+ * Run (from app): deno test -A ../../work/deno/project_panel_review_fixes_e2e_test.ts   (ignored without Chrome or Edge)
  */
 import { assert, assertEquals } from './_assert.ts';
 import { browserPath, type Chat, Lab, type Page, settle, shown, sleep } from './_scroll_lab.ts';

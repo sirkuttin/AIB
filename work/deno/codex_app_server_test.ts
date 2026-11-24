@@ -11,11 +11,11 @@ import {
   isAppServer,
   ownClosure,
   parsePsTable,
-} from '../../outputs/agent-studio/server/ownership/codex_apps.ts';
-import { type CodexProcess, procLocksHolder } from '../../outputs/agent-studio/server/ownership/codex_threads.ts';
-import { Handoff, type WslCodexScan } from '../../outputs/agent-studio/server/ownership/handoff.ts';
-import { bgtaskMethods, LOCK_SCRIPT, parseLockOutput, PS_SCRIPT } from '../../outputs/agent-studio/server/wsl/helper/bgtasks.ts';
-import type { Holder } from '../../outputs/agent-studio/server/ownership/claude_sessions.ts';
+} from '../../app/server/ownership/codex_apps.ts';
+import { type CodexProcess, procLocksHolder } from '../../app/server/ownership/codex_threads.ts';
+import { Handoff, type WslCodexScan } from '../../app/server/ownership/handoff.ts';
+import { bgtaskMethods, LOCK_SCRIPT, parseLockOutput, PS_SCRIPT } from '../../app/server/wsl/helper/bgtasks.ts';
+import type { Holder } from '../../app/server/ownership/claude_sessions.ts';
 
 const TID = '01a1ecea-c79b-7323-90b9-9bdf77fa9bf4';
 const TID2 = '01a1ecea-c79b-7323-90b9-9bdf77fa9bf5';

@@ -16,10 +16,10 @@ import {
   Service,
   sourceFileGoesWithDelete,
   Watcher,
-} from '../../outputs/agent-studio/server/artifacts/artifacts.ts';
-import { configure as configureKeys, issue } from '../../outputs/agent-studio/server/artifacts/keys.ts';
-import { authorize, Gate, Refusal } from '../../outputs/agent-studio/server/web/security.ts';
-import { ROUTES } from '../../outputs/agent-studio/server/web/routes.ts';
+} from '../../app/server/artifacts/artifacts.ts';
+import { configure as configureKeys, issue } from '../../app/server/artifacts/keys.ts';
+import { authorize, Gate, Refusal } from '../../app/server/web/security.ts';
+import { ROUTES } from '../../app/server/web/routes.ts';
 
 type Json = Record<string, unknown>;
 const WIN = Deno.build.os === 'windows';

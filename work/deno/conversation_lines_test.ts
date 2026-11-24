@@ -7,12 +7,12 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { fake, pause, until } from './_connection.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { KeeperLink } from '../../outputs/agent-studio/server/keeper/link.ts';
-import { KeeperClient, keeperBinary, readKeeperInfo } from '../../outputs/agent-studio/server/keeper/client.ts';
-import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
-import { anchorOf, LineMerger } from '../../outputs/agent-studio/server/history/lines.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { KeeperLink } from '../../app/server/keeper/link.ts';
+import { KeeperClient, keeperBinary, readKeeperInfo } from '../../app/server/keeper/client.ts';
+import { pidAlive } from '../../app/server/host/host_client.ts';
+import { anchorOf, LineMerger } from '../../app/server/history/lines.ts';
 
 type Json = Record<string, unknown>;
 Deno.env.set('AIB_HISTORY_V2', '1');
@@ -24,21 +24,21 @@ class Lab {
   readonly state = this.dir + SEP + 'state';
   readonly work = this.dir + SEP + 'work';
   readonly transcript = this.dir + SEP + 'transcript.json';
-  readonly studios: Studio[] = [];
+  readonly studios: Aib[] = [];
   constructor() {
     Deno.mkdirSync(this.work, { recursive: true });
     Deno.writeTextFileSync(this.transcript, '[]');
   }
-  studio(): Studio {
+  studio(): Aib {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
-    const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper, keeperForNew: true });
+    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper, keeperForNew: true });
     studio.ownerProbe = () => null;
     studio.connectionFactory = (_command, cwd, provider, options) =>
       new Connection(fake('--replay-file', this.transcript), cwd, provider, options ?? {});
     this.studios.push(studio);
     return studio;
   }
-  async leave(studio: Studio): Promise<void> {
+  async leave(studio: Aib): Promise<void> {
     studio.keeper!.disconnect();
     for (const c of studio.connections.values()) c.sessionLease?.release();
     studio.reconnectStop.set();
@@ -66,7 +66,7 @@ class Lab {
   }
 }
 
-async function say(studio: Studio, c: Connection, text: string, id: string): Promise<void> {
+async function say(studio: Aib, c: Connection, text: string, id: string): Promise<void> {
   assertEquals((await studio.liveCall('prompt', { id: c.id, text: `say:${text}`, clientMessageId: id }))[0], 200);
   await until(() => !c.busy && c.events.some((e) => e.kind === 'turn_end' && (e.time as number) >= 0) &&
     c.events.filter((e) => e.kind === 'turn_end').length >= Number(id.slice(1)), `the end of ${id}`, 10);

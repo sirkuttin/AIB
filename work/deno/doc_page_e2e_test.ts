@@ -5,7 +5,7 @@
  * Skipped when no Chrome or Edge is installed. AIB_DOCPAGE_SHOTS=<folder> keeps a screenshot per step.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { docId } from '../../outputs/agent-studio/server/docs/store.ts';
+import { docId } from '../../app/server/docs/store.ts';
 import { Browser, browserPath, type Page, sleep, type Studio, studio, temp } from './_doc_browser.ts';
 
 type Json = Record<string, unknown>;

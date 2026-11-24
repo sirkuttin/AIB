@@ -15,12 +15,12 @@
  * step was not shared state but a live sync bug (a save right after a HEAD move went into the new baseline unseen), fixed in
  * worktrees/sync.ts with a regression test in worktree_sync_test.ts.
  */
-import { detectWsl } from '../../outputs/agent-studio/server/wsl/detect.ts';
-import type { WslHost } from '../../outputs/agent-studio/server/wsl/contract.ts';
-import { wslHost } from '../../outputs/agent-studio/server/wsl/access.ts';
-import { configureWslHosts, type WslHostsOptions, wslHostsInUse } from '../../outputs/agent-studio/server/wsl/hosts.ts';
-import { urlGate } from '../../outputs/agent-studio/server/wsl/open_urls.ts';
-import type { KeeperLink } from '../../outputs/agent-studio/server/keeper/link.ts';
+import { detectWsl } from '../../app/server/wsl/detect.ts';
+import type { WslHost } from '../../app/server/wsl/contract.ts';
+import { wslHost } from '../../app/server/wsl/access.ts';
+import { configureWslHosts, type WslHostsOptions, wslHostsInUse } from '../../app/server/wsl/hosts.ts';
+import { urlGate } from '../../app/server/wsl/open_urls.ts';
+import type { KeeperLink } from '../../app/server/keeper/link.ts';
 
 export const DISTRO = Deno.env.get('AIB_WSL_E2E') ?? '';
 const found = DISTRO ? detectWsl(true).distros : [];

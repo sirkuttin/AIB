@@ -5,13 +5,13 @@
  * line worded from it. wsl_tunnel_e2e_test.ts runs the same chain inside a real distro.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { ACK_MS, McpTunnel, type RelayProcess, spawnKeeperRelay } from '../../outputs/agent-studio/server/wsl/helper/mcp_tunnel.ts';
-import { McpTunnelGate, MAX_REPLY } from '../../outputs/agent-studio/server/wsl/mcp_tunnel.ts';
-import { ArtifactMcpHttp, isOwnForwardEntry, tunnelEntry } from '../../outputs/agent-studio/server/artifacts/mcp_http.ts';
-import { WSL_TOOL_GROUPS } from '../../outputs/agent-studio/server/artifacts/mcp.ts';
-import { WSL_TOOLS_NOTICE, wslToolsNotice } from '../../outputs/agent-studio/server/wsl/access.ts';
-import { tunnelSocket } from '../../outputs/agent-studio/server/wsl/hosts.ts';
-import { keeperBinary } from '../../outputs/agent-studio/server/keeper/client.ts';
+import { ACK_MS, McpTunnel, type RelayProcess, spawnKeeperRelay } from '../../app/server/wsl/helper/mcp_tunnel.ts';
+import { McpTunnelGate, MAX_REPLY } from '../../app/server/wsl/mcp_tunnel.ts';
+import { ArtifactMcpHttp, isOwnForwardEntry, tunnelEntry } from '../../app/server/artifacts/mcp_http.ts';
+import { WSL_TOOL_GROUPS } from '../../app/server/artifacts/mcp.ts';
+import { WSL_TOOLS_NOTICE, wslToolsNotice } from '../../app/server/wsl/access.ts';
+import { tunnelSocket } from '../../app/server/wsl/hosts.ts';
+import { keeperBinary } from '../../app/server/keeper/client.ts';
 
 type Json = Record<string, unknown>;
 

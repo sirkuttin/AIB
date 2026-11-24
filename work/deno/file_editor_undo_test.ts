@@ -14,12 +14,12 @@ import * as Y from 'yjs';
 import * as syncProtocol from 'y-protocols/sync';
 import * as encoding from 'lib0/encoding';
 import * as decoding from 'lib0/decoding';
-import { LiveFiles } from '../../outputs/agent-studio/server/files/live_files.ts';
-import { type LiveFile, TEST_PAGE_ORIGIN, UNDO_LIMIT } from '../../outputs/agent-studio/server/files/live_file.ts';
-import { makeContext, WebServer } from '../../outputs/agent-studio/server/web/server.ts';
-import type { LiveBackend } from '../../outputs/agent-studio/server/host/backend.ts';
-import type { UpdateService } from '../../outputs/agent-studio/server/desktop/updater.ts';
-import type { Source } from '../../outputs/agent-studio/server/transcripts/monitor.ts';
+import { LiveFiles } from '../../app/server/files/live_files.ts';
+import { type LiveFile, TEST_PAGE_ORIGIN, UNDO_LIMIT } from '../../app/server/files/live_file.ts';
+import { makeContext, WebServer } from '../../app/server/web/server.ts';
+import type { LiveBackend } from '../../app/server/host/backend.ts';
+import type { UpdateService } from '../../app/server/desktop/updater.ts';
+import type { Source } from '../../app/server/transcripts/monitor.ts';
 
 type Json = Record<string, unknown>;
 const sep = Deno.build.os === 'windows' ? '\\' : '/';

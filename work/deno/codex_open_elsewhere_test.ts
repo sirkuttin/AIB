@@ -12,9 +12,9 @@ import {
   procLocksHolder,
   writerLockPath,
   writerLockState,
-} from '../../outputs/agent-studio/server/ownership/codex_threads.ts';
-import { withUnloadNow } from '../../outputs/agent-studio/server/subagents/codex.ts';
-import { OwnershipProbe } from '../../outputs/agent-studio/server/ownership/probe.ts';
+} from '../../app/server/ownership/codex_threads.ts';
+import { withUnloadNow } from '../../app/server/subagents/codex.ts';
+import { OwnershipProbe } from '../../app/server/ownership/probe.ts';
 
 const TID = '01a1ecea-c79b-7323-90b9-9bdf77fa9bf4';
 const SEP = Deno.build.os === 'windows' ? '\\' : '/';
@@ -122,7 +122,7 @@ Deno.test('probe: a saved Codex thread another app holds is a strong codex-write
 
 Deno.test('a model-server Codex entry (codex@strata) is checked in its own CODEX_HOME, never the default Codex home', async () => {
   if (Deno.build.os !== 'windows' && Deno.build.os !== 'linux') return;
-  const { Handoff } = await import('../../outputs/agent-studio/server/ownership/handoff.ts');
+  const { Handoff } = await import('../../app/server/ownership/handoff.ts');
   const entryHome = home();
   const path = writerLockPath(entryHome, TID);
   Deno.writeFileSync(path, new Uint8Array());

@@ -12,11 +12,11 @@ import { assert, assertEquals } from './_assert.ts';
 import { pc, tempDir } from './_remote_fixture.ts';
 import { UserClient } from './_docs.ts';
 import { FakeWslHost } from './_wsl_fake.ts';
-import { ensureDefault } from '../../outputs/agent-studio/server/worktrees/local_only.ts';
-import { setWslHostResolver } from '../../outputs/agent-studio/server/wsl/access.ts';
-import { installWslDocFs } from '../../outputs/agent-studio/server/wsl/docs.ts';
-import { docsMethods } from '../../outputs/agent-studio/server/wsl/helper/docs.ts';
-import { pcsyncMethods } from '../../outputs/agent-studio/server/wsl/helper/pcsync.ts';
+import { ensureDefault } from '../../app/server/worktrees/local_only.ts';
+import { setWslHostResolver } from '../../app/server/wsl/access.ts';
+import { installWslDocFs } from '../../app/server/wsl/docs.ts';
+import { docsMethods } from '../../app/server/wsl/helper/docs.ts';
+import { pcsyncMethods } from '../../app/server/wsl/helper/pcsync.ts';
 import { closeAll, type Json, type Node, paired, TEST_FILES, until } from './_pcsync_fixture.ts';
 
 Deno.env.set('AIB_WSL_ROOT', '/tmp/aib-wsl-test-pcsync');

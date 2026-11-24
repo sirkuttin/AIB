@@ -8,7 +8,7 @@
 
    Pinned to those commits on purpose, so later CSS changes never break it. Skipped, not failed, when the history is too
    shallow to contain them. */
-const { APP } = require('./_paths');
+const { PAGE: APP } = require('./_paths');
 const test = require('node:test'),
   assert = require('node:assert/strict'),
   fs = require('node:fs'),
@@ -167,7 +167,7 @@ function compare(beforeByFile, afterByFile) {
 // ---------------------------------------------------------------- inputs
 
 const git = (args) => execFileSync('git', ['-C', REPO, ...args], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
-const gitShow = (file, commit = BASE_COMMIT) => git(['show', `${commit}:outputs/agent-studio/${file}`]).toString('utf8');
+const gitShow = (file, commit = BASE_COMMIT) => git(['show', `${commit}:app/${file}`]).toString('utf8');
 
 function baseAvailable() {
   try {

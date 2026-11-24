@@ -15,12 +15,12 @@ import { assert, assertEquals } from './_assert.ts';
 import { agentTempDirSync } from './_agent_tmp.ts';
 import { pause, until } from './_connection.ts';
 import { WORK } from './_work.ts';
-import type { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { pathOf } from '../../outputs/agent-studio/server/state/paths.ts';
-import { releaseAsset } from '../../outputs/agent-studio/server/agents/release_install.ts';
-import { betaAgent } from '../../outputs/agent-studio/server/agents/beta_catalog.ts';
-import { resolveBeta } from '../../outputs/agent-studio/server/agents/beta_agents.ts';
+import type { Connection } from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { pathOf } from '../../app/server/state/paths.ts';
+import { releaseAsset } from '../../app/server/agents/release_install.ts';
+import { betaAgent } from '../../app/server/agents/beta_catalog.ts';
+import { resolveBeta } from '../../app/server/agents/beta_agents.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -190,7 +190,7 @@ Deno.test({
       }),
     );
     const stub = new StubApi(pathOf(root, 'stub.log'), script);
-    const studio = new Studio({
+    const studio = new Aib({
             stateDir: state,
       port: 0,
       ownersDir: null,

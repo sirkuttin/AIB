@@ -8,7 +8,7 @@
  * scripted agent work/scroll-fixture/agent.py, and a headless Chrome/Edge on chat.html (no window).
  * AIB_TOOLBAR_LOG=1 prints every measurement.
  *
- * Run (from outputs/agent-studio): deno test -A ../../work/deno/artifact_toolbar_e2e_test.ts
+ * Run (from app): deno test -A ../../work/deno/artifact_toolbar_e2e_test.ts
  */
 import { assert } from "./_assert.ts";
 import { browserPath, type Chat, Lab, type Page, settle, shown } from "./_scroll_lab.ts";

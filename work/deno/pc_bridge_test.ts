@@ -8,10 +8,10 @@
  * plus the blocked folders on every route that takes a path, the phone token refused, the rate limit, and the device kind.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { ROUTE_LIST } from '../../outputs/agent-studio/server/web/routes.ts';
-import { readRemotePort } from '../../outputs/agent-studio/server/remote/port.ts';
-import { entryFor, PC_ROUTES, SAFE_MODES } from '../../outputs/agent-studio/server/remote/pc_routes.ts';
-import { DEVICE_HEADER, DEVICE_PROTOCOL_PREFIX, RateLimit, REFUSED_HEADERS } from '../../outputs/agent-studio/server/remote/pc_bridge.ts';
+import { ROUTE_LIST } from '../../app/server/web/routes.ts';
+import { readRemotePort } from '../../app/server/remote/port.ts';
+import { entryFor, PC_ROUTES, SAFE_MODES } from '../../app/server/remote/pc_routes.ts';
+import { DEVICE_HEADER, DEVICE_PROTOCOL_PREFIX, RateLimit, REFUSED_HEADERS } from '../../app/server/remote/pc_bridge.ts';
 import {
   guardNewProject,
   insideProjects,
@@ -19,8 +19,8 @@ import {
   isHomeOrRoot,
   linuxBlocked,
   normal,
-} from '../../outputs/agent-studio/server/remote/path_guard.ts';
-import { cleanScopes, COMPUTER_SCOPES, DeviceStore, PHONE_SCOPES } from '../../outputs/agent-studio/server/remote/devices.ts';
+} from '../../app/server/remote/path_guard.ts';
+import { cleanScopes, COMPUTER_SCOPES, DeviceStore, PHONE_SCOPES } from '../../app/server/remote/devices.ts';
 import {
   type FakeChat,
   fakeTailscale,

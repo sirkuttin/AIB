@@ -13,18 +13,18 @@ import { fake, pause, until } from './_connection.ts';
 import { FakeWslHost } from './_wsl_fake.ts';
 import { commit, runGit, Sandbox, write } from './_worktree_fixtures.ts';
 import { HAVE_GIT } from './_git_repo.ts';
-import { onWindowsDrive, worktreeMethods } from '../../outputs/agent-studio/server/wsl/helper/worktrees.ts';
-import { RpcError } from '../../outputs/agent-studio/server/wsl/helper/rpc.ts';
-import * as wt from '../../outputs/agent-studio/server/worktrees/worktrees.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { KeeperLink } from '../../outputs/agent-studio/server/keeper/link.ts';
-import { KeeperClient, keeperBinary, readKeeperInfo } from '../../outputs/agent-studio/server/keeper/client.ts';
-import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
-import { setWslHostResolver } from '../../outputs/agent-studio/server/wsl/access.ts';
-import { WslHelperError } from '../../outputs/agent-studio/server/wsl/contract.ts';
-import { changesResponse } from '../../outputs/agent-studio/server/worktrees/chat_folders.ts';
-import { MOVED_FILE } from '../../outputs/agent-studio/server/state/moved_chats.ts';
+import { onWindowsDrive, worktreeMethods } from '../../app/server/wsl/helper/worktrees.ts';
+import { RpcError } from '../../app/server/wsl/helper/rpc.ts';
+import * as wt from '../../app/server/worktrees/worktrees.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { KeeperLink } from '../../app/server/keeper/link.ts';
+import { KeeperClient, keeperBinary, readKeeperInfo } from '../../app/server/keeper/client.ts';
+import { pidAlive } from '../../app/server/host/host_client.ts';
+import { setWslHostResolver } from '../../app/server/wsl/access.ts';
+import { WslHelperError } from '../../app/server/wsl/contract.ts';
+import { changesResponse } from '../../app/server/worktrees/chat_folders.ts';
+import { MOVED_FILE } from '../../app/server/state/moved_chats.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -102,7 +102,7 @@ class WorktreeLab {
   readonly dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-wsl-wt-' }));
   readonly state = this.dir + SEP + 'state';
   readonly host: FakeWslHost;
-  readonly studios: Studio[] = [];
+  readonly studios: Aib[] = [];
   readonly records = new Map<string, Json>();
   fallback = '';
 
@@ -148,9 +148,9 @@ class WorktreeLab {
     h['worktree.hasChanges'] = () => ({ changes: false });
   }
 
-  studio(): Studio {
+  studio(): Aib {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
-    const studio = new Studio({ stateDir: this.state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper });
+    const studio = new Aib({ stateDir: this.state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper });
     studio.ownerProbe = () => null;
     studio.connectionFactory = (_command, cwd, provider, options) => {
       const wsl = options?.wsl ? { ...options.wsl, program: undefined } : options?.wsl;
@@ -160,7 +160,7 @@ class WorktreeLab {
     return studio;
   }
 
-  crash(studio: Studio): void {
+  crash(studio: Aib): void {
     studio.keeper!.disconnect();
     this.host.link.disconnect();
     for (const c of studio.connections.values()) c.sessionLease?.release();

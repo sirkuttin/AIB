@@ -9,9 +9,9 @@
 import { assert, assertEquals } from './_assert.ts';
 import { Frozen } from './_frozen.ts';
 import { heldPort } from './_ports.ts';
-import { ArtifactStore } from '../../outputs/agent-studio/server/artifacts/artifacts.ts';
-import { injectScroll, markdownPage, OriginServer, renderMarkdown } from '../../outputs/agent-studio/server/artifacts/origin.ts';
-import { LIB_DIR, localLibUrl, rewriteLibUrls } from '../../outputs/agent-studio/server/artifacts/libs.ts';
+import { ArtifactStore } from '../../app/server/artifacts/artifacts.ts';
+import { injectScroll, markdownPage, OriginServer, renderMarkdown } from '../../app/server/artifacts/origin.ts';
+import { LIB_DIR, localLibUrl, rewriteLibUrls } from '../../app/server/artifacts/libs.ts';
 
 const WIN = Deno.build.os === 'windows';
 const SEP = WIN ? '\\' : '/';

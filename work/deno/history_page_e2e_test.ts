@@ -4,7 +4,7 @@
  * chat.html (no window). The page's requests are recorded (a fetch wrapper: URL, response size, and the events of
  * /api/live/events pages), so the gates are bytes and request counts; the scroll checks are frame by frame (_scroll_lab.ts).
  *
- * Run (from outputs/agent-studio): deno test -A ../../work/deno/history_page_e2e_test.ts
+ * Run (from app): deno test -A ../../work/deno/history_page_e2e_test.ts
  * Without Chrome or Edge (CHROME_PATH chooses one) every test is ignored.
  */
 import { assert } from './_assert.ts';

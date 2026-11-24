@@ -2420,7 +2420,7 @@
   function serverRestartText(desktopApp) {
     return desktopApp
       ? 'Restarting is not done from this page, so that a running turn is never cut off by accident: quit AIB (tray icon > Quit AIB) and start it again. AIB asks before it stops chats that are working.'
-      : 'Restarting is done from a terminal, not from this page, so that a running turn is never cut off by accident: run "deno run -A outputs/agent-studio/server/main.ts deploy" (web server only; agents keep working), or add --host to also restart the agent host once nothing is working. See docs/agent-host.md.';
+      : 'Restarting is done from a terminal, not from this page, so that a running turn is never cut off by accident: run "deno run -A app/server/main.ts deploy" (web server only; agents keep working), or add --host to also restart the agent host once nothing is working. See docs/agent-host.md.';
   }
   function flash(text) {
     S.flash = text;

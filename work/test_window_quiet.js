@@ -3,7 +3,7 @@
 'use strict';
 const assert = require('assert');
 const path = require('path');
-const W = require(path.join(__dirname, '..', 'outputs', 'agent-studio', 'window-context.js'));
+const W = require(path.join(__dirname, '..', 'app', 'page', 'window-context.js'));
 
 const realNow = Date.now;
 let now = 1_000_000;

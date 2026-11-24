@@ -26,8 +26,8 @@ import {
   type ProcInfo,
   QUIET_TRANSCRIPT_SECONDS,
   validateAnnouncement,
-} from '../../outputs/agent-studio/server/ownership/probe.ts';
-import { dirname, join } from '../../outputs/agent-studio/server/platform/ospath.ts';
+} from '../../app/server/ownership/probe.ts';
+import { dirname, join } from '../../app/server/platform/ospath.ts';
 
 const WINDOWS = Deno.build.os === 'windows';
 const NOW = 1_800_000_000.0;

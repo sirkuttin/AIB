@@ -3,7 +3,7 @@
  * other worktrees with the same code. app_update, keeper_update, keeper_quit and remember_ui each built AIB once or twice per run
  * (seven `deno desktop` builds for the four); now a build happens only when its inputs changed.
  *
- * The key is a SHA-256 of every file the build reads (outputs/agent-studio, keeper/, tools/: tracked and untracked, by content),
+ * The key is a SHA-256 of every file the build reads (app, keeper/, tools/: tracked and untracked, by content),
  * the Deno version and the version string, so an edit anywhere in them builds again. The builds live in %TEMP%/aib-test-builds/<key>
  * (the newest few are kept). The tests only read a build's folder: they unzip it into their own temp folders.
  *
@@ -11,7 +11,7 @@
  * place; the other waits for the folder (up to 20 minutes) and takes over a lock left by a run that died (older than 20 minutes).
  */
 import { createHash } from 'node:crypto';
-import { REPO_ROOT } from '../../outputs/agent-studio/server/core/app.ts';
+import { REPO_ROOT } from '../../app/server/core/app.ts';
 
 /** The newer version the update tests build as "B". One string for all of them, so they share that build too. */
 export const NEXT_VERSION = '0.1.0-beta.99';
@@ -23,7 +23,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function sourceKey(version: string): string {
   const r = new Deno.Command('git', {
-    args: ['-C', REPO_ROOT, 'ls-files', '-co', '--exclude-standard', '--', 'outputs/agent-studio', 'keeper', 'tools'],
+    args: ['-C', REPO_ROOT, 'ls-files', '-co', '--exclude-standard', '--', 'app', 'keeper', 'tools'],
     stdout: 'piped',
     stderr: 'piped',
   }).outputSync();

@@ -9,11 +9,11 @@
  *  - no answer here ever carries the page token.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { ROUTE_LIST } from '../../outputs/agent-studio/server/web/routes.ts';
-import { addHandler, removeHandler, rootState, setLevel, WARNING } from '../../outputs/agent-studio/server/core/log.ts';
-import { COOKIE_NAME, DEVICE_HEADER, REMOTE_ROUTES } from '../../outputs/agent-studio/server/remote/server.ts';
-import { readRemotePort, saveRemotePort } from '../../outputs/agent-studio/server/remote/port.ts';
-import { askOf, helpersOf, HELPERS_MAX, HOME_BUDGET, lineOf, plainLine, plainTitle, StateTimes } from '../../outputs/agent-studio/server/remote/payloads.ts';
+import { ROUTE_LIST } from '../../app/server/web/routes.ts';
+import { addHandler, removeHandler, rootState, setLevel, WARNING } from '../../app/server/core/log.ts';
+import { COOKIE_NAME, DEVICE_HEADER, REMOTE_ROUTES } from '../../app/server/remote/server.ts';
+import { readRemotePort, saveRemotePort } from '../../app/server/remote/port.ts';
+import { askOf, helpersOf, HELPERS_MAX, HOME_BUDGET, lineOf, plainLine, plainTitle, StateTimes } from '../../app/server/remote/payloads.ts';
 import {
   type FakeChat,
   fakeTailscale,

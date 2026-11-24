@@ -512,7 +512,7 @@ test('New project preview shows a WSL folder as "Ubuntu: /home/u/app", never the
 test('WSL CSS: the focus ring on the Remove dialog buttons, right-aligned usage sizes, wrapped failed-publish reason', () => {
   const fs = require('node:fs'),
     path = require('node:path');
-  const dir = path.join(__dirname, '..', 'outputs', 'agent-studio');
+  const dir = path.join(__dirname, '..', 'app', 'page');
   const settings = fs.readFileSync(path.join(dir, 'settings.css'), 'utf8');
   assert.match(settings, /\.wl-remove button:focus \{\s*outline: 2px solid var\(--focus-ring\);/);
   assert.match(settings, /\.wl-usage dd \{\s*text-align: right;/);

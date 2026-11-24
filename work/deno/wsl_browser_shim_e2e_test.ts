@@ -6,7 +6,7 @@
 import { assert, assertEquals } from './_assert.ts';
 import { until } from './_connection.ts';
 import { cleanRoot, inDistro, KEY, prepareRoot, readyHost, recordUrls, ROOT, T } from './_wsl_e2e.ts';
-import { urlGate } from '../../outputs/agent-studio/server/wsl/open_urls.ts';
+import { urlGate } from '../../app/server/wsl/open_urls.ts';
 
 Deno.test({
   name: 'wsl e2e: the BROWSER shim reaches the gate: asked first, opened in a sign-in window, file: refused',

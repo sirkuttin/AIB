@@ -24,7 +24,7 @@ import { decideKeeper, KeeperLink } from './keeper/link.ts';
 import { keeperBinary, keeperRunning, PROTOCOL as KEEPER_PROTOCOL } from './keeper/client.ts';
 import { attachHost, HostProxy } from './host/host_proxy.ts';
 import type { LiveBackend } from './host/backend.ts';
-import { holdKeeper, orphanCommand, Studio } from './host/studio.ts';
+import { holdKeeper, orphanCommand, Aib } from './host/aib.ts';
 import { hostMain, loadMcp, studioOptions } from './host/agent_host.ts';
 import { UpdateService } from './desktop/updater.ts';
 import { notifyUpdateReady } from './desktop/notify.ts';
@@ -51,7 +51,7 @@ import { userNotificationState } from './desktop/tray_win.ts';
 import { servePort, startBlank, startRedirect } from './desktop/serve_address.ts';
 import { startAttention } from './attention/watcher.ts';
 import { INBOX } from './attention/inbox_rules.ts';
-import { swarmOf } from './web/studio_routes.ts';
+import { swarmOf } from './web/aib_routes.ts';
 import { takeLaunchKeyFromEnv } from './web/page_access.ts';
 
 const sep = Deno.build.os === 'windows' ? '\\' : '/';
@@ -259,7 +259,7 @@ export async function main(argv: string[]): Promise<void> {
     // and updates; else the first free pair from 8777, like the Tauri app.
     if (!portGiven(args)) options.port = lastPortPair(stateDir, portFree) ?? choosePortPair(portFree);
   }
-  let studio: Studio | null = null;
+  let studio: Aib | null = null;
   let host: LiveBackend;
   let webInstanceId: string;
   // One process with the keeper (owner decisions D3 and "the keeper is always on", docs/agent-host.md "The keeper"): the agents run
@@ -279,7 +279,7 @@ export async function main(argv: string[]): Promise<void> {
   if (options.inProcess || merged) {
     // Agents run inside this process (studio.py --in-process): restarting it ends every conversation, unless they run in the keeper.
     // The one-process app keeps the agent host's recovery and queue files (studio-*-host.json), so switching modes keeps the list.
-    studio = new Studio(studioOptions(options, mcpServers), merged ? { port: 'host' } : {});
+    studio = new Aib(studioOptions(options, mcpServers), merged ? { port: 'host' } : {});
     host = studio;
     webInstanceId = studio.instanceId;
     void studio.adoptKeeper(); // chats whose agents still run in the keeper: taken over now, while the server starts (state waits)

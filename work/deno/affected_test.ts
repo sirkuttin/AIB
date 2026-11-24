@@ -26,16 +26,16 @@ Deno.test('affected: a test file runs itself; a helper runs the tests that impor
 });
 
 Deno.test('affected: a server module reaches the tests that import it, through the import graph', () => {
-  const t = tests(['outputs/agent-studio/server/worktrees/sync.ts']).out;
+  const t = tests(['app/server/worktrees/sync.ts']).out;
   for (const name of ['worktree_sync_test.ts', 'worktree_sync_interop_test.ts']) assert(t.has(name), name);
-  assert(closure(graph, 'work/deno/worktree_sync_test.ts').has('outputs/agent-studio/server/worktrees/sync.ts'));
+  assert(closure(graph, 'work/deno/worktree_sync_test.ts').has('app/server/worktrees/sync.ts'));
 });
 
 Deno.test('affected: a page file reaches node tests that load it by name or through chat.html, and the browser e2e', () => {
-  const t = tests(['outputs/agent-studio/stream-ui.js']).out;
+  const t = tests(['app/page/stream-ui.js']).out;
   for (const name of ['test_stream_ui.js', 'test_chat_page.js', 'scroll_e2e_test.ts']) assert(t.has(name), name);
-  assert(graph.precise.get('outputs/agent-studio/chat.html')?.has('outputs/agent-studio/stream-ui.js'), 'chat.html loads it');
-  assert(why(graph, 'work/deno/scroll_e2e_test.ts', 'outputs/agent-studio/stream-ui.js'), 'the scroll e2e reaches it');
+  assert(graph.precise.get('app/page/chat.html')?.has('app/page/stream-ui.js'), 'chat.html loads it');
+  assert(why(graph, 'work/deno/scroll_e2e_test.ts', 'app/page/stream-ui.js'), 'the scroll e2e reaches it');
   assert(!t.has('security_test.ts'));
 });
 
@@ -53,17 +53,17 @@ Deno.test('affected: a Python helper in work/ reaches the tests that name it', (
 });
 
 Deno.test('affected: a slow file reached only through a broad rule is listed, not run, unless --all-slow', () => {
-  const { a } = tests(['outputs/agent-studio/server/web/security.ts']);
+  const { a } = tests(['app/server/web/security.ts']);
   const listed = [...a.broadOnly.keys()];
   for (const name of listed) assert(slow.has(name), name);
   if (listed.length) {
-    const all = tests(['outputs/agent-studio/server/web/security.ts'], true).out;
+    const all = tests(['app/server/web/security.ts'], true).out;
     for (const name of listed) assert(all.has(name), name);
   }
 });
 
 Deno.test('affected: a dependency file change runs everything', () => {
-  const { a } = tests(['outputs/agent-studio/deno.lock']);
+  const { a } = tests(['app/deno.lock']);
   assert(a.everything);
   assertEquals(a.run.get('deno')?.size, [...graph.files].filter((f) => /^work\/deno\/[^/]+_test\.ts$/.test(f)).length);
 });

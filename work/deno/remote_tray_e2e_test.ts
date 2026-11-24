@@ -18,10 +18,10 @@ import { builtDist } from './_build_cache.ts';
 import { ownerPort, pickPort, refusedPort } from './_ports.ts';
 import { WORK } from './_work.ts';
 import { phoneHeaders, raw, serveStatus, tailscaleStatus } from './_remote_fixture.ts';
-import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
-import { APP_VERSION } from '../../outputs/agent-studio/server/core/app.ts';
-import { menuCommand, TRAY_COMMAND } from '../../outputs/agent-studio/server/desktop/tray_win.ts';
-import { TRAY_ITEMS } from '../../outputs/agent-studio/server/desktop/window.ts';
+import { pidAlive } from '../../app/server/host/host_client.ts';
+import { APP_VERSION } from '../../app/server/core/app.ts';
+import { menuCommand, TRAY_COMMAND } from '../../app/server/desktop/tray_win.ts';
+import { TRAY_ITEMS } from '../../app/server/desktop/window.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
 const SLOW = Deno.build.os === 'windows' && Deno.env.get('AIB_SLOW_TESTS') === '1';

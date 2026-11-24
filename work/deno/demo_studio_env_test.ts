@@ -8,7 +8,7 @@ import { assert, assertEquals } from "./_assert.ts";
 import { HAVE_GIT } from "./_git_repo.ts";
 import { PYTHON } from "./_connection.ts";
 import { pickPort } from "./_ports.ts";
-import { codexHome } from "../../outputs/agent-studio/server/agents/codex_limits.ts";
+import { codexHome } from "../../app/server/agents/codex_limits.ts";
 
 const SCRIPT = `
 import json, pathlib, sys

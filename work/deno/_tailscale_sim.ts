@@ -4,13 +4,13 @@
  * up / serve / funnel, winget, msiexec, PowerShell, pkgutil, spctl, open, tailscale-ipn), the downloads and the browser. Every call
  * is recorded in `calls`, every opened URL in `opened`. Nothing real is ever run.
  */
-import type { Runner } from "../../outputs/agent-studio/server/remote/tailscale.ts";
-import type { SetupEnv } from "../../outputs/agent-studio/server/remote/setup.ts";
+import type { Runner } from "../../app/server/remote/tailscale.ts";
+import type { SetupEnv } from "../../app/server/remote/setup.ts";
 import type {
   Proc,
   SpawnOptions,
   Tool,
-} from "../../outputs/agent-studio/server/remote/setup_cli.ts";
+} from "../../app/server/remote/setup_cli.ts";
 import { LOGIN, NAME } from "./_remote_fixture.ts";
 
 type Json = Record<string, unknown>;

@@ -23,7 +23,7 @@ import {
 import {
   readRemoteArtifactPort,
   readRemotePort,
-} from "../../outputs/agent-studio/server/remote/port.ts";
+} from "../../app/server/remote/port.ts";
 import {
   hex,
   LINUX_INSTALL,
@@ -40,23 +40,23 @@ import {
   windowsArch,
   WINGET_ARGS,
   wingetOutcome,
-} from "../../outputs/agent-studio/server/remote/install.ts";
+} from "../../app/server/remote/install.ts";
 import {
   readServe,
   readTailscale,
-} from "../../outputs/agent-studio/server/remote/tailscale.ts";
+} from "../../app/server/remote/tailscale.ts";
 import {
   defaultOpenUrl,
   safeLink,
   scrub,
-} from "../../outputs/agent-studio/server/remote/setup.ts";
+} from "../../app/server/remote/setup.ts";
 import {
   RefusedInTest,
   resolveTool,
   type Tool,
-} from "../../outputs/agent-studio/server/remote/setup_cli.ts";
-import { defaultRunner } from "../../outputs/agent-studio/server/remote/tailscale.ts";
-import { DeviceStore, scopesForPhone } from "../../outputs/agent-studio/server/remote/devices.ts";
+} from "../../app/server/remote/setup_cli.ts";
+import { defaultRunner } from "../../app/server/remote/tailscale.ts";
+import { DeviceStore, scopesForPhone } from "../../app/server/remote/devices.ts";
 
 type Json = Record<string, unknown>;
 const OPTS = { sanitizeResources: false, sanitizeOps: false };

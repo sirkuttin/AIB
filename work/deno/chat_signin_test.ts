@@ -6,9 +6,9 @@
  */
 import { assert, assertEquals, assertThrows } from './_assert.ts';
 import { events, FAKE, type Json, Lab, PYTHON, until, updateTexts } from './_connection.ts';
-import { ValueError } from '../../outputs/agent-studio/server/core/py.ts';
-import { builtinSigninCommand } from '../../outputs/agent-studio/server/web/terminal_routes.ts';
-import type { AgentOptions } from '../../outputs/agent-studio/server/web/shared.ts';
+import { ValueError } from '../../app/server/core/py.ts';
+import { builtinSigninCommand } from '../../app/server/web/terminal_routes.ts';
+import type { AgentOptions } from '../../app/server/web/shared.ts';
 
 const replies = (c: { events: Json[] }) => updateTexts(c as never).filter((t) => t.startsWith('Fixture reply'));
 

@@ -6,11 +6,11 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { FAKE, fake, pause, PYTHON, until } from './_connection.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { KeeperLink } from '../../outputs/agent-studio/server/keeper/link.ts';
-import { keeperBinary, KeeperClient, readKeeperInfo } from '../../outputs/agent-studio/server/keeper/client.ts';
-import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { KeeperLink } from '../../app/server/keeper/link.ts';
+import { keeperBinary, KeeperClient, readKeeperInfo } from '../../app/server/keeper/client.ts';
+import { pidAlive } from '../../app/server/host/host_client.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -21,16 +21,16 @@ class AllowLab {
   readonly state = this.dir + SEP + 'state';
   readonly work = this.dir + SEP + 'work';
   readonly agentLog = this.dir + SEP + 'agent-received.log';
-  readonly studios: Studio[] = [];
+  readonly studios: Aib[] = [];
 
   constructor() {
     Deno.mkdirSync(this.work + SEP + 'src', { recursive: true });
     Deno.writeTextFileSync(this.work + SEP + 'src' + SEP + 'a.js', 'x\n');
   }
 
-  studio(unique = false): Studio {
+  studio(unique = false): Aib {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
-    const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper });
+    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper });
     studio.ownerProbe = () => null;
     studio.connectionFactory = (_command, cwd, provider, options) =>
       new Connection(
@@ -43,7 +43,7 @@ class AllowLab {
     return studio;
   }
 
-  crash(studio: Studio): void {
+  crash(studio: Aib): void {
     studio.keeper!.disconnect();
     for (const c of studio.connections.values()) c.sessionLease?.release();
     studio.reconnectStop.set();
@@ -142,7 +142,7 @@ Deno.test({
     await until(() => !c.busy, 'turn end', 10);
     const before = c.events.map((e) => e.kind).join(',');
 
-    // 5. Keeper replay on a new Studio: the same lines and events, and no request is answered twice.
+    // 5. Keeper replay on a new Aib: the same lines and events, and no request is answered twice.
     lab.crash(a);
     await pause(300);
     const b = lab.studio();

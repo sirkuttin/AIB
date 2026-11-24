@@ -13,7 +13,7 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { cleanRoot, DISTRO, inDistro, newAib, readyHost, ROOT, T } from './_wsl_e2e.ts';
-import { helperEnv } from '../../outputs/agent-studio/server/wsl/hosts.ts';
+import { helperEnv } from '../../app/server/wsl/hosts.ts';
 
 const enc = (s: string) => new TextEncoder().encode(s);
 const SECRET = 'sk-ant-oat01-E2E-FAKE-SECRET-9f8e7d';

@@ -10,13 +10,13 @@
  *    tab closes in the project window, the Files row shows ↗, opening the doc again brings the pop-out forward, and closing the
  *    pop-out puts the tab back as a background tab.
  *
- * Run (from outputs/agent-studio): deno test -A ../../work/deno/doc_popout_e2e_test.ts
+ * Run (from app): deno test -A ../../work/deno/doc_popout_e2e_test.ts
  */
 import { assert, assertEquals } from './_assert.ts';
 import { Browser, browserPath, type Page } from './_doc_browser.ts';
 import { remoteStudio } from './_remote_fixture.ts';
 import { FakeDesktopWindows } from './_fake_desktop_windows.ts';
-import { projectKey } from '../../outputs/agent-studio/server/desktop/project_delete.ts';
+import { projectKey } from '../../app/server/desktop/project_delete.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
 type Json = Record<string, unknown>;

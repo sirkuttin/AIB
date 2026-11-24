@@ -1,5 +1,5 @@
 'use strict';
-const { APP: APP_DIR } = require('./_paths');
+const { PAGE: APP_DIR } = require('./_paths');
 // Settings -> Agents: the Install / Cancel / Retry row of Claude Code and Codex (the installer job itself runs in the agent host).
 const test = require('node:test');
 const assert = require('node:assert/strict');

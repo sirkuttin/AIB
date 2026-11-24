@@ -1,6 +1,6 @@
 /** Temp git repositories for the changes / chat_folders tests (work/test_changes.py make_repo). Needs git on PATH. */
-import { which } from '../../outputs/agent-studio/server/platform/pypath.ts';
-import * as osp from '../../outputs/agent-studio/server/platform/ospath.ts';
+import { which } from '../../app/server/platform/pypath.ts';
+import * as osp from '../../app/server/platform/ospath.ts';
 
 export const HAVE_GIT = which('git') !== null;
 

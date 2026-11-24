@@ -14,18 +14,18 @@
 import { assert, assertEquals } from './_assert.ts';
 import { fake, PYTHON, until, pause } from './_connection.ts';
 import { FakeWslHost } from './_wsl_fake.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { KeeperLink } from '../../outputs/agent-studio/server/keeper/link.ts';
-import { KeeperClient, keeperBinary, readKeeperInfo } from '../../outputs/agent-studio/server/keeper/client.ts';
-import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
-import { setWslHostResolver, WSL_TOOLS_NOTICE } from '../../outputs/agent-studio/server/wsl/access.ts';
-import { mcpTunnelGate } from '../../outputs/agent-studio/server/wsl/mcp_tunnel.ts';
-import { TerminalSessions } from '../../outputs/agent-studio/server/terminal/sessions.ts';
-import type { WsLink } from '../../outputs/agent-studio/server/platform/websocket.ts';
-import { terminalRoutes } from '../../outputs/agent-studio/server/web/terminal_routes.ts';
-import type { WebContext } from '../../outputs/agent-studio/server/web/server.ts';
-import { INBOX } from '../../outputs/agent-studio/server/attention/inbox_rules.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { KeeperLink } from '../../app/server/keeper/link.ts';
+import { KeeperClient, keeperBinary, readKeeperInfo } from '../../app/server/keeper/client.ts';
+import { pidAlive } from '../../app/server/host/host_client.ts';
+import { setWslHostResolver, WSL_TOOLS_NOTICE } from '../../app/server/wsl/access.ts';
+import { mcpTunnelGate } from '../../app/server/wsl/mcp_tunnel.ts';
+import { TerminalSessions } from '../../app/server/terminal/sessions.ts';
+import type { WsLink } from '../../app/server/platform/websocket.ts';
+import { terminalRoutes } from '../../app/server/web/terminal_routes.ts';
+import type { WebContext } from '../../app/server/web/server.ts';
+import { INBOX } from '../../app/server/attention/inbox_rules.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -42,7 +42,7 @@ class WslLab {
   readonly work = this.dir + SEP + 'app';
   readonly agentLog = this.dir + SEP + 'agent-received.log';
   readonly host: FakeWslHost;
-  readonly studios: Studio[] = [];
+  readonly studios: Aib[] = [];
   readonly made: { command: string[]; cwd: string; options: Json }[] = [];
 
   constructor() {
@@ -54,9 +54,9 @@ class WslLab {
     setWslHostResolver((d) => (d === 'ubuntu' ? this.host : null));
   }
 
-  studio(flags: string[] = []): Studio {
+  studio(flags: string[] = []): Aib {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
-    const studio = new Studio({ claudeLauncher: import.meta.filename!, codexLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper });
+    const studio = new Aib({ claudeLauncher: import.meta.filename!, codexLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper });
     studio.ownerProbe = () => null;
     studio.connectionFactory = (command, cwd, provider, options) => {
       this.made.push({ command, cwd, options: { ...(options ?? {}) } as Json });
@@ -68,7 +68,7 @@ class WslLab {
     return studio;
   }
 
-  crash(studio: Studio): void {
+  crash(studio: Aib): void {
     studio.keeper!.disconnect();
     this.host.link.disconnect();
     for (const c of studio.connections.values()) c.sessionLease?.release();
@@ -117,7 +117,7 @@ function said(c: Connection): string {
 }
 
 /** One turn of the fake agent: it streams, asks a question halfway, and ends after the answer. */
-async function turn(studio: Studio, c: Connection): Promise<void> {
+async function turn(studio: Aib, c: Connection): Promise<void> {
   assertEquals((await studio.liveCall('prompt', { id: c.id, text: 'stream:4:20', clientMessageId: 'm1' }))[0], 200);
   await until(() => c.permissions.size === 1, 'the question', 15);
   await studio.liveCall('permission', { id: c.id, key: [...c.permissions.keys()][0], option: 'yes' });
@@ -298,7 +298,7 @@ Deno.test({
 });
 
 /** A keep-alive in the Windows keeper as wsl/hosts.ts makes it (a sleeping stand-in for `wsl.exe ... bridge --hold`). */
-async function holdFor(studio: Studio): Promise<void> {
+async function holdFor(studio: Aib): Promise<void> {
   const hold = studio.keeper!.spawn(
     {
       channel: 'wsl-hold-ubuntu',
@@ -311,7 +311,7 @@ async function holdFor(studio: Studio): Promise<void> {
   await hold.ready;
 }
 
-async function stopHold(studio: Studio): Promise<void> {
+async function stopHold(studio: Aib): Promise<void> {
   const client = await studio.keeper!.client(false);
   if (client) await studio.keeper!.stopUnknown(client, 'wsl-hold-ubuntu').catch(() => {});
 }
@@ -519,7 +519,7 @@ async function liveChats(lab: WslLab): Promise<string[]> {
   }
 }
 
-const openFor = (studio: Studio, sessionId: string) => [...studio.connections.values()].filter((c) => !c.closed && c.sessionId === sessionId);
+const openFor = (studio: Aib, sessionId: string) => [...studio.connections.values()].filter((c) => !c.closed && c.sessionId === sessionId);
 
 Deno.test({
   name: 'wsl keeper take-over: a session that runs twice in the distro keeper becomes one chat; the busy agent is kept, the idle one stopped',
@@ -691,7 +691,7 @@ Deno.test({
     await using lab = new WslLab();
     const a = lab.studio();
     const c = await a.connect('claude', REF);
-    const phase = (s: Studio, conn: Connection) =>
+    const phase = (s: Aib, conn: Connection) =>
       INBOX.phaseOf(conn.attention(), s.conversations.public().entries[`claude:${conn.sessionId}`] ?? null, Date.now() / 1000);
     assertEquals((await a.liveCall('prompt', { id: c.id, text: ASKS, clientMessageId: 'm1' }))[0], 200);
     await until(() => !c.busy && c.turnEndedAt !== null, 'the turn end', 15);

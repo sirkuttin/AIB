@@ -8,11 +8,11 @@
  *    both; the open chat, the accent and the panel width do not move;
  *  - a question, and a risky request, have an Open button on the row instead of Allow / Deny.
  *
- * Run (from outputs/agent-studio): deno task test --jobs 2 swarm_approvals_e2e   (ignored without Chrome or Edge)
+ * Run (from app): deno task test --jobs 2 swarm_approvals_e2e   (ignored without Chrome or Edge)
  */
 import { assert, assertEquals } from './_assert.ts';
 import { browserPath, type Chat, Lab, ownerProblems, type Page } from './_scroll_lab.ts';
-import { Registry } from '../../outputs/agent-studio/server/swarm/registry.ts';
+import { Registry } from '../../app/server/swarm/registry.ts';
 
 type Json = Record<string, unknown>;
 

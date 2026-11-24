@@ -39,7 +39,7 @@ import { isNetworkPath, pageAllowed, type Principal, REMOTE_PC } from './securit
 import { BLOCKED_MESSAGE, isBlocked, linuxBlocked } from '../remote/path_guard.ts';
 import { isForeignPath } from '../platform/location.ts';
 import { issue } from './file_tickets.ts';
-import { chatStudioOf, savedFolders } from './studio_routes.ts';
+import { chatStudioOf, savedFolders } from './aib_routes.ts';
 import * as outside from '../worktrees/outside_files.ts';
 import { findSessionFile } from '../transcripts/store.ts';
 import type { WebContext } from './server.ts';

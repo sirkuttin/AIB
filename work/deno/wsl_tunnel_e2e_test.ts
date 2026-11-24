@@ -13,17 +13,17 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { cleanRoot, inDistro, KEY, newAib, prepareRoot, readyHost, ROOT, T } from './_wsl_e2e.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { refOf } from '../../outputs/agent-studio/server/platform/location.ts';
-import type { WslInstall } from '../../outputs/agent-studio/server/wsl/install.ts';
-import { KeeperLink } from '../../outputs/agent-studio/server/keeper/link.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { refOf } from '../../app/server/platform/location.ts';
+import type { WslInstall } from '../../app/server/wsl/install.ts';
+import { KeeperLink } from '../../app/server/keeper/link.ts';
 
 type Json = Record<string, unknown>;
 
-function studioIn(state: string, keeper: KeeperLink | null = null): Studio {
+function studioIn(state: string, keeper: KeeperLink | null = null): Aib {
   // the artifact tool is on (no noArtifactTool): the chat gets its studio_artifact entry
-  const studio = new Studio({ stateDir: state, port: 0, ownersDir: null }, { keeper });
+  const studio = new Aib({ stateDir: state, port: 0, ownersDir: null }, { keeper });
   studio.ownerProbe = () => null;
   studio.connectionFactory = (_command, cwd, provider, options) =>
     new Connection(['python3', `${ROOT}/fake_acp.py`, '--cancel-aware'], cwd, provider, {
@@ -78,7 +78,7 @@ Deno.test({
   async fn() {
     const state = Deno.makeTempDirSync({ prefix: 'aib-wsl-tunnel-e2e-' });
     await prepareRoot();
-    const studios: Studio[] = [];
+    const studios: Aib[] = [];
     try {
       const host = await readyHost();
       const tunnel = host.mcpTunnel;
@@ -135,7 +135,7 @@ Deno.test({
     // the helper is told a keeper program that is not there: it starts without the tunnel (as an older helper would)
     newAib({ helperCommand: (install: WslInstall) => ({ command: install.helper, args: ['--data', install.data, '--keeper', `${ROOT}/none/AIB-keeper`] }) });
     await prepareRoot();
-    const studios: Studio[] = [];
+    const studios: Aib[] = [];
     // a Windows keeper, as AIB always has: the interop forwarder finds AIB through the address file it publishes for the keeper
     const windows = new KeeperLink({ dataDir: state, orphan: null, extraArgs: ['--exit-after', '2s'] });
     try {

@@ -5,10 +5,10 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { cleanRoot, inDistro, KEY, prepareRoot, readyHost, ROOT, T } from './_wsl_e2e.ts';
-import { refOf } from '../../outputs/agent-studio/server/platform/location.ts';
-import { wslLoc } from '../../outputs/agent-studio/server/wsl/access.ts';
-import { wslFiles } from '../../outputs/agent-studio/server/web/wsl_routes.ts';
-import { changesResponse } from '../../outputs/agent-studio/server/worktrees/chat_folders.ts';
+import { refOf } from '../../app/server/platform/location.ts';
+import { wslLoc } from '../../app/server/wsl/access.ts';
+import { wslFiles } from '../../app/server/web/wsl_routes.ts';
+import { changesResponse } from '../../app/server/worktrees/chat_folders.ts';
 
 type Json = Record<string, unknown>;
 

@@ -25,9 +25,9 @@ import {
   startFolder,
   TimeoutExpired,
   validatePath,
-} from '../../outputs/agent-studio/server/desktop/folders.ts';
-import * as osp from '../../outputs/agent-studio/server/platform/ospath.ts';
-import { pyJsonDumps } from '../../outputs/agent-studio/server/core/py.ts';
+} from '../../app/server/desktop/folders.ts';
+import * as osp from '../../app/server/platform/ospath.ts';
+import { pyJsonDumps } from '../../app/server/core/py.ts';
 
 const WIN = Deno.build.os === 'windows';
 

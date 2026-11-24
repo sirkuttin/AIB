@@ -21,8 +21,8 @@ import {
   validateAttachmentName,
   validateFileAttachments,
   validateImageAttachments,
-} from '../../outputs/agent-studio/server/acp/attachments.ts';
-import { pyB64Decode, ValueError } from '../../outputs/agent-studio/server/core/py.ts';
+} from '../../app/server/acp/attachments.ts';
+import { pyB64Decode, ValueError } from '../../app/server/core/py.ts';
 
 type Dict = Record<string, unknown>;
 

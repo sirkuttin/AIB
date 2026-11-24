@@ -2,7 +2,7 @@
 import { assert, assertEquals } from './_assert.ts';
 import { WORK } from './_work.ts';
 import { Frozen } from './_frozen.ts';
-import { findPrompts, isPrompt, isWrapper, stripInjected, stripViewContext } from '../../outputs/agent-studio/server/transcripts/prompts.ts';
+import { findPrompts, isPrompt, isWrapper, stripInjected, stripViewContext } from '../../app/server/transcripts/prompts.ts';
 
 interface Fixture {
   name: string;

@@ -9,8 +9,8 @@
 import { assert, assertEquals } from './_assert.ts';
 import { pc, tempDir } from './_remote_fixture.ts';
 import { FakeWslHost } from './_wsl_fake.ts';
-import { setWslHostResolver } from '../../outputs/agent-studio/server/wsl/access.ts';
-import { normalizeRemote, readRepoIdentity } from '../../outputs/agent-studio/server/pcsync/repo_id.ts';
+import { setWslHostResolver } from '../../app/server/wsl/access.ts';
+import { normalizeRemote, readRepoIdentity } from '../../app/server/pcsync/repo_id.ts';
 import { closeAll, type Json, type Node, paired, until } from './_pcsync_fixture.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };

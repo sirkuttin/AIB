@@ -6,7 +6,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { page, load } = require('./fake_dom.js');
-const { APP } = require('./_paths');
+const { PAGE: APP } = require('./_paths');
 
 const row = (id, extra = {}) => ({
   id,

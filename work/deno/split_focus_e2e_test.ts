@@ -11,7 +11,7 @@
  * and no "Loading conversation…" shows. Both panes keep updating live; both chats count as open (no inbox row, toast or desktop
  * notification: AgentWorkspaceUI.openKeys and the presence report the server reads); the place you read is kept.
  *
- * Run (from outputs/agent-studio): deno test -A ../../work/deno/split_focus_e2e_test.ts   (ignored without Chrome or Edge)
+ * Run (from app): deno test -A ../../work/deno/split_focus_e2e_test.ts   (ignored without Chrome or Edge)
  */
 import { assert } from './_assert.ts';
 import { browserPath, type Chat, clickHere, Lab, ownerProblems, type Page, settle, shown, wheel } from './_scroll_lab.ts';

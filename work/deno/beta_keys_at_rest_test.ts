@@ -6,7 +6,7 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { join, tempDir, withEnv } from './_agents.ts';
-import { SettingsStore } from '../../outputs/agent-studio/server/state/settings.ts';
+import { SettingsStore } from '../../app/server/state/settings.ts';
 import {
   DPAPI_PREFIX,
   dpapiProtect,
@@ -15,8 +15,8 @@ import {
   isSealed,
   KEY_FILE,
   keyStoreFor,
-} from '../../outputs/agent-studio/server/state/secrets.ts';
-import { describeBeta } from '../../outputs/agent-studio/server/web/shared.ts';
+} from '../../app/server/state/secrets.ts';
+import { describeBeta } from '../../app/server/web/shared.ts';
 
 const KEY = 'test-key-not-real-5f2a9c'; // a made-up value: never a real key
 const settingsText = (root: string) => Deno.readTextFileSync(join(root, 'studio-settings.json'));

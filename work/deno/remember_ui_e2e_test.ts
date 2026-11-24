@@ -20,8 +20,8 @@ import { Fixture, until } from './_host_fixture.ts';
 import { HiddenDesktop } from './_hidden_desktop.ts';
 import { builtDist } from './_build_cache.ts';
 import { devToolsPortNow, ownerPort, pickPort, refusedPort } from './_ports.ts';
-import { APP_VERSION } from '../../outputs/agent-studio/server/core/app.ts';
-import { projectKey } from '../../outputs/agent-studio/server/desktop/project_delete.ts';
+import { APP_VERSION } from '../../app/server/core/app.ts';
+import { projectKey } from '../../app/server/desktop/project_delete.ts';
 
 const SLOW = Deno.build.os === 'windows' && Deno.env.get('AIB_SLOW_TESTS') === '1';
 /** OS-chosen (after the build), port + 1 free: B must open on the port A used last (desktop-port.json). */

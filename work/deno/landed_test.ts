@@ -3,7 +3,7 @@
  * Every builder branch starts with an "AIB snapshot" commit that never lands, so ancestry cannot say; content can.
  */
 import { assertEquals } from './_assert.ts';
-import { branchLanded } from '../../outputs/agent-studio/server/worktrees/landed.ts';
+import { branchLanded } from '../../app/server/worktrees/landed.ts';
 
 function git(cwd: string, ...args: string[]): string {
   const o = new Deno.Command('git', { args: ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'core.autocrlf=false', ...args], cwd, stdout: 'piped', stderr: 'piped' })

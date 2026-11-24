@@ -9,7 +9,7 @@
  *          file shows the item greyed with its reason.
  * AIB_DOCPAGE_SHOTS=<folder> keeps a screenshot per step, light and dark (AIB teal).
  */
-import { projectKey } from '../../outputs/agent-studio/server/desktop/project_delete.ts';
+import { projectKey } from '../../app/server/desktop/project_delete.ts';
 import { assert, assertEquals } from './_assert.ts';
 import { git, HAVE_GIT } from './_git_repo.ts';
 import { Fixture, SEP, TEST_OPTIONS, until } from './_host_fixture.ts';

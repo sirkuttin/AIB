@@ -1,16 +1,16 @@
 /** The Files view's server side: path safety, .gitignore handling, listing, search, read, the three routes, view tickets and the worktree parent. */
 import { assert, assertEquals, assertThrows } from './_assert.ts';
 import { git, HAVE_GIT, write } from './_git_repo.ts';
-import * as osp from '../../outputs/agent-studio/server/platform/ospath.ts';
-import * as files from '../../outputs/agent-studio/server/worktrees/files.ts';
-import { filesRoutes } from '../../outputs/agent-studio/server/web/files_routes.ts';
-import { issue, lookup, TICKET_TTL_MS } from '../../outputs/agent-studio/server/web/file_tickets.ts';
-import { makeHandler } from '../../outputs/agent-studio/server/artifacts/origin.ts';
-import { folderKinds } from '../../outputs/agent-studio/server/desktop/folders.ts';
-import { mainCheckoutOf } from '../../outputs/agent-studio/server/worktrees/worktrees.ts';
-import { localOnlyOf } from '../../outputs/agent-studio/server/worktrees/local_only.ts';
-import { linkShared, unlinkShared } from '../../outputs/agent-studio/server/worktrees/shared_link.ts';
-import type { WebContext } from '../../outputs/agent-studio/server/web/server.ts';
+import * as osp from '../../app/server/platform/ospath.ts';
+import * as files from '../../app/server/worktrees/files.ts';
+import { filesRoutes } from '../../app/server/web/files_routes.ts';
+import { issue, lookup, TICKET_TTL_MS } from '../../app/server/web/file_tickets.ts';
+import { makeHandler } from '../../app/server/artifacts/origin.ts';
+import { folderKinds } from '../../app/server/desktop/folders.ts';
+import { mainCheckoutOf } from '../../app/server/worktrees/worktrees.ts';
+import { localOnlyOf } from '../../app/server/worktrees/local_only.ts';
+import { linkShared, unlinkShared } from '../../app/server/worktrees/shared_link.ts';
+import type { WebContext } from '../../app/server/web/server.ts';
 
 const WIN = Deno.build.os === 'windows';
 

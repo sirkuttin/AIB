@@ -7,10 +7,10 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { events, type Json, Lab, until, updateTexts } from './_connection.ts';
-import type { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { AgentHost } from '../../outputs/agent-studio/server/host/agent_host.ts';
-import { descendants, elapsed, setTableReader, statRow } from '../../outputs/agent-studio/server/platform/descendants.ts';
-import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
+import type { Connection } from '../../app/server/acp/connection.ts';
+import { AgentHost } from '../../app/server/host/agent_host.ts';
+import { descendants, elapsed, setTableReader, statRow } from '../../app/server/platform/descendants.ts';
+import { pidAlive } from '../../app/server/host/host_client.ts';
 
 const LONG = 60; // a deadline, not a delay
 

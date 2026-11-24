@@ -1,15 +1,15 @@
 /**
- * One set of notification rules for the page and the server (outputs/agent-studio/notify-rules.js; review break 10). The page reads
+ * One set of notification rules for the page and the server (app/page/notify-rules.js; review break 10). The page reads
  * a chat with its own code (sidebar-ui.js rootOf / pathKey with the folder kinds the server reports, workspace-state.js folder rules,
  * the conversation marks, the project preferences) and asks notify-rules.js flags; the server's AttentionWatcher reads the same
  * stores and asks the same function. For a table of chats both must say the same: may it notify, is it muted, is it held.
  * Real folders on disk (a git worktree whose .git is a file, a Claude scratch folder, a .claude/worktrees folder).
  */
 import { assert, assertEquals } from './_assert.ts';
-import { APP_ROOT } from '../../outputs/agent-studio/server/core/app.ts';
-import { folderKinds } from '../../outputs/agent-studio/server/desktop/folders.ts';
-import { RULES } from '../../outputs/agent-studio/server/attention/rules.ts';
-import { AttentionWatcher } from '../../outputs/agent-studio/server/attention/watcher.ts';
+import { APP_ROOT } from '../../app/server/core/app.ts';
+import { folderKinds } from '../../app/server/desktop/folders.ts';
+import { RULES } from '../../app/server/attention/rules.ts';
+import { AttentionWatcher } from '../../app/server/attention/watcher.ts';
 
 type Json = Record<string, unknown>;
 const SEP = Deno.build.os === 'windows' ? '\\' : '/';
@@ -19,7 +19,7 @@ const g = globalThis as unknown as Json;
  * there: the server's rules.ts imported the very file, and the page's scripts find it on the global object as in the browser. */
 function loadPage(): { S: Json; W: Json; R: Json } {
   for (const name of ['workspace-state.js', 'sidebar-ui.js']) {
-    (0, eval)(Deno.readTextFileSync(APP_ROOT + SEP + name));
+    (0, eval)(Deno.readTextFileSync(APP_ROOT + SEP + 'page' + SEP + name));
   }
   return { S: g.AgentSidebarUI as Json, W: g.AgentWorkspaceState as Json, R: g.AgentNotifyRules as Json };
 }
@@ -59,7 +59,7 @@ function pageFlags(page: any, c: Json, marks: Json, prefs: Json): Json {
 Deno.test('notification rules: the page and the server read the same chats the same way (one shared module)', () => {
   const page = loadPage();
   assertEquals(page.R === (RULES as unknown as Json), true, 'the server uses the very module the page loads');
-  const source = Deno.readTextFileSync(APP_ROOT + SEP + 'notify-rules.js');
+  const source = Deno.readTextFileSync(APP_ROOT + SEP + 'page' + SEP + 'notify-rules.js');
   assertEquals(source.includes('root.AgentNotifyRules = api;'), true);
   const root = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-rules-' }));
   try {

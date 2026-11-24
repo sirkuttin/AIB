@@ -5,7 +5,7 @@
  * work/slowreq-fixture/state/ (git-ignored).
  */
 import { assert, assertEquals } from './_assert.ts';
-import * as outside from '../../outputs/agent-studio/server/worktrees/outside_files.ts';
+import * as outside from '../../app/server/worktrees/outside_files.ts';
 
 const ROOT = new URL('../slowreq-fixture/state/', import.meta.url);
 const rootPath = () => decodeURIComponent(ROOT.pathname).replace(/^\/([A-Za-z]:)/, '$1');

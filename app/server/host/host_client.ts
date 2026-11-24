@@ -79,7 +79,7 @@ export function sourceHash(root = APP_ROOT): Promise<string> {
 }
 
 /**
- * The same digest over the .ts files under <app>/server/ (names like "server/host/studio.ts"): identifies the code a Deno host
+ * The same digest over the .ts files under <app>/server/ (names like "server/host/aib.ts"): identifies the code a Deno host
  * loaded. A Deno web server and a Deno host started from the same folder compute the same value.
  */
 export function denoSourceHash(root = APP_ROOT): Promise<string> {
@@ -178,7 +178,7 @@ export class HostOSError extends Error {}
 export type HostInfo = Record<string, unknown> & { port: number; token: string; pid?: number };
 
 /** The source-run command line (from the repository root), for messages that tell the person what to run. */
-export const SOURCE_COMMAND = 'deno run -A outputs/agent-studio/server/main.ts';
+export const SOURCE_COMMAND = 'deno run -A app/server/main.ts';
 
 /** How to restart the agent host: in the app (a built binary), quit and start it again; from source, `--stop-host`. */
 export function restartHostHint(compiled = isCompiled()): string {

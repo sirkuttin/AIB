@@ -12,7 +12,7 @@ welcome. Discuss new features in an [issue](https://github.com/sirkuttin/AIB/iss
 AIB is TypeScript on [Deno](https://deno.com), pinned to 2.9.8, with a plain-JavaScript page and no build step for the page.
 
 ```sh
-cd outputs/agent-studio
+cd app
 deno run -A server/main.ts --open
 ```
 
@@ -35,14 +35,14 @@ tests. Tests use temporary data folders and fake agents; they never touch your r
 **While you work:** run only the tests that cover what you changed.
 
 ```sh
-cd outputs/agent-studio
+cd app
 deno task test:affected
 ```
 
 **Before you hand a branch over** (about a minute):
 
 ```sh
-cd outputs/agent-studio
+cd app
 deno task test:fast
 deno task check
 deno task lint
@@ -54,7 +54,7 @@ npm test
 **Before a merge or a release** (about four minutes):
 
 ```sh
-cd outputs/agent-studio
+cd app
 deno task test
 cd ../..
 python work/run_parallel.py e2e
@@ -75,9 +75,9 @@ serves the page. Releases are built this way and uploaded by hand.
 
 | Path | What's there |
 | --- | --- |
-| `outputs/agent-studio/server/` | The app. `main.ts` is the entry point. All OS-specific code lives in `server/platform/`. |
-| `outputs/agent-studio/*.js, *.css, *.html` | The page: plain browser JavaScript and CSS, served as they are. |
-| `outputs/agent-studio/docs/` | Design notes: desktop app, agent host and keeper, themes, ACP capabilities. |
+| `app/server/` | The app. `main.ts` is the entry point. All OS-specific code lives in `server/platform/`. |
+| `app/page/*.js, *.css, *.html` | The page: plain browser JavaScript and CSS, served as they are. |
+| `app/docs/` | Design notes: desktop app, agent host and keeper, themes, ACP capabilities. |
 | `keeper/` | The keeper (Go) and its protocol. |
 | `tools/` | `build.ts` (the six-target build) and the test runner. |
 | `work/` | Page tests, the worktree end-to-end suite and the fake ACP agents the tests use. |

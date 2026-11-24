@@ -10,13 +10,13 @@ import { assert, assertEquals } from './_assert.ts';
 import { FAKE, PYTHON, pause, until } from './_connection.ts';
 import { FakeWslHost } from './_wsl_fake.ts';
 import { makeRepo, runGit } from './_worktree_fixtures.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { modelServerEnv } from '../../outputs/agent-studio/server/agents/model_servers.ts';
-import { Swarm } from '../../outputs/agent-studio/server/swarm/service.ts';
-import { setSwarmEnabled } from '../../outputs/agent-studio/server/swarm/settings.ts';
-import { setDistroSource, setWslHostResolver } from '../../outputs/agent-studio/server/wsl/access.ts';
-import { pathOf } from '../../outputs/agent-studio/server/state/paths.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { modelServerEnv } from '../../app/server/agents/model_servers.ts';
+import { Swarm } from '../../app/server/swarm/service.ts';
+import { setSwarmEnabled } from '../../app/server/swarm/settings.ts';
+import { setDistroSource, setWslHostResolver } from '../../app/server/wsl/access.ts';
+import { pathOf } from '../../app/server/state/paths.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -41,7 +41,7 @@ class Box {
   readonly state = pathOf(this.dir, 'state');
   readonly project = makeRepo(pathOf(this.dir, 'proj'));
   readonly launcher = pathOf(this.dir, 'launcher.js');
-  readonly studio: Studio;
+  readonly studio: Aib;
   readonly swarm: Swarm;
   readonly launched: { provider: string; command: string[]; cwd: string; env: Record<string, string> | null }[] = [];
   readonly servers: Deno.HttpServer[] = [];
@@ -51,7 +51,7 @@ class Box {
     Deno.writeTextFileSync(this.launcher, '');
     runGit(this.project, 'config', 'user.name', 't');
     runGit(this.project, 'config', 'user.email', 't@t');
-    const studio = new Studio(
+    const studio = new Aib(
       { stateDir: this.state, port: 0, ownersDir: null, noArtifactTool: false, claudeLauncher: this.launcher, codexLauncher: this.launcher, nodeCommand: Deno.execPath() },
       { keeper: null },
     );

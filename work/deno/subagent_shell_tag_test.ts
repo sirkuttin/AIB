@@ -11,18 +11,18 @@
  *   the prefix is stripped where a command is matched or shown (the allow reader, the transcript); only the exact prefix
  */
 import { assert, assertEquals } from './_assert.ts';
-import { configure, issueHookKey } from '../../outputs/agent-studio/server/artifacts/keys.ts';
-import { ArtifactMcpHttp } from '../../outputs/agent-studio/server/artifacts/mcp_http.ts';
+import { configure, issueHookKey } from '../../app/server/artifacts/keys.ts';
+import { ArtifactMcpHttp } from '../../app/server/artifacts/mcp_http.ts';
 import {
   hookForwarderOf,
   hookForwarderTagsShells,
   hookForwarderVersion,
   keeperBinary,
-} from '../../outputs/agent-studio/server/keeper/client.ts';
-import { gitBashPath, hookSettings } from '../../outputs/agent-studio/server/subagents/claude_config.ts';
-import { codexHook } from '../../outputs/agent-studio/server/subagents/codex.ts';
-import { codexTagPrefix, parseCookie, preShell } from '../../outputs/agent-studio/server/subagents/shell_tag.ts';
-import { readSubagents, type SubagentChat, SubagentWorktrees } from '../../outputs/agent-studio/server/subagents/service.ts';
+} from '../../app/server/keeper/client.ts';
+import { gitBashPath, hookSettings } from '../../app/server/subagents/claude_config.ts';
+import { codexHook } from '../../app/server/subagents/codex.ts';
+import { codexTagPrefix, parseCookie, preShell } from '../../app/server/subagents/shell_tag.ts';
+import { readSubagents, type SubagentChat, SubagentWorktrees } from '../../app/server/subagents/service.ts';
 import {
   cookieOf,
   stripAibInput,
@@ -32,11 +32,11 @@ import {
   tagPrefix,
   taggable,
   tagged,
-} from '../../outputs/agent-studio/server/allow/aib_prefix.ts';
-import { parseBash, parsePwsh } from '../../outputs/agent-studio/server/allow/shell.ts';
-import { join } from '../../outputs/agent-studio/server/platform/path.ts';
-import { Transcript } from '../../outputs/agent-studio/server/transcripts/transcript.ts';
-import { normalize } from '../../outputs/agent-studio/server/transcripts/normalize.ts';
+} from '../../app/server/allow/aib_prefix.ts';
+import { parseBash, parsePwsh } from '../../app/server/allow/shell.ts';
+import { join } from '../../app/server/platform/path.ts';
+import { Transcript } from '../../app/server/transcripts/transcript.ts';
+import { normalize } from '../../app/server/transcripts/normalize.ts';
 
 type Json = Record<string, unknown>;
 const WIN = Deno.build.os === 'windows';

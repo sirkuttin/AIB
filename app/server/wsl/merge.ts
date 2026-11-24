@@ -5,7 +5,7 @@
  * then makes, in order, the live calls merge.ts made there (conflict prompts, the "Merged into" note, a clash note and prompt, the
  * Merge button's queued message), so the chat sees exactly what a Windows chat sees. A refusal comes back as merge.ts's Refused.
  *
- * The routes (web/studio_routes.ts) ask wslMergeChat first: a live chat whose cwd is a WSL ref goes here, every other chat to
+ * The routes (web/aib_routes.ts) ask wslMergeChat first: a live chat whose cwd is a WSL ref goes here, every other chat to
  * merge.ts as before. Nothing here reads or writes a Windows file for a WSL path.
  */
 import * as merge from '../worktrees/merge.ts';

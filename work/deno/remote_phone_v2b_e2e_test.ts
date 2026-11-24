@@ -16,7 +16,7 @@
 import { assert, assertEquals } from './_assert.ts';
 import { Browser, browserPath, type Page } from './_doc_browser.ts';
 import { LOGIN, NAME, pairPhone, pc, type Raw, raw, type RemoteStudio } from './_remote_fixture.ts';
-import { NewChats, setAgentRows } from '../../outputs/agent-studio/server/remote/newchat.ts';
+import { NewChats, setAgentRows } from '../../app/server/remote/newchat.ts';
 import { liveChat, v2Studio } from './_remote_v2b.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };

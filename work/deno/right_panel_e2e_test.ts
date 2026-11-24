@@ -14,7 +14,7 @@
  * A real Studio (the scroll lab: temp state folder, free port; never the live ports), scripted live chats with scripted
  * subagent_update events, headless Chrome or Edge. The WSL variant of these rules is right_panel_wsl_e2e_test.ts.
  *
- * Run (from outputs/agent-studio): deno test -A ../../work/deno/right_panel_e2e_test.ts   (ignored without Chrome or Edge)
+ * Run (from app): deno test -A ../../work/deno/right_panel_e2e_test.ts   (ignored without Chrome or Edge)
  */
 import { assert, assertEquals } from './_assert.ts';
 import { browserPath, type Chat, Lab, ownerProblems, type Page, settle, shown, sleep } from './_scroll_lab.ts';

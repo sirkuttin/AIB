@@ -39,7 +39,7 @@ Without a flag, the matching requests receive the same JSON-RPC error as before 
 Use a spare port and a throwaway state folder, for example:
 
 ```
-python outputs/agent-studio/studio.py --port 8796 --state-dir work/caps-fixture/state --enable-client-fs=read
+python app/studio.py --port 8796 --state-dir work/caps-fixture/state --enable-client-fs=read
 ```
 
 Do not restart a server you are using for a live conversation just to try this.

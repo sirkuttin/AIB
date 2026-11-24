@@ -1,19 +1,19 @@
 /**
  * ACP client terminals in the keeper (keeper phase 3): with the chat's agent in the keeper, `terminal/create` writes its
- * `clientTerminal` note in the chat's record first, then the keeper starts the command. A "crashed" AIB is replaced by a new Studio
+ * `clientTerminal` note in the chat's record first, then the keeper starts the command. A "crashed" AIB is replaced by a new Aib
  * that rebuilds the chat; the agent's pending `terminal/wait_for_exit` is answered from the surviving terminal when it exits, and
  * `terminal/output` and `terminal/release` after it are answered from the same process and its recorded output: nothing is started
  * twice, nothing is "lost". Real keeper (built from keeper/ with Go), fake ACP agent (work/fake_acp.py --client-caps), temp folders.
  */
 import { assert, assertEquals } from './_assert.ts';
 import { fake, pause, until } from './_connection.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { KeeperLink, parseNote } from '../../outputs/agent-studio/server/keeper/link.ts';
-import { keeperBinary, KeeperClient, type KeeperRecord, readKeeperInfo } from '../../outputs/agent-studio/server/keeper/client.ts';
-import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
-import { CLIENT_TERMINAL_PREFIX, KeeperClientTerminal } from '../../outputs/agent-studio/server/acp/keeper_terminal.ts';
-import { ClientCaps } from '../../outputs/agent-studio/server/acp/client_caps.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { KeeperLink, parseNote } from '../../app/server/keeper/link.ts';
+import { keeperBinary, KeeperClient, type KeeperRecord, readKeeperInfo } from '../../app/server/keeper/client.ts';
+import { pidAlive } from '../../app/server/host/host_client.ts';
+import { CLIENT_TERMINAL_PREFIX, KeeperClientTerminal } from '../../app/server/acp/keeper_terminal.ts';
+import { ClientCaps } from '../../app/server/acp/client_caps.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -24,13 +24,13 @@ class Lab {
   readonly state = this.dir + SEP + 'state';
   readonly work = this.dir + SEP + 'work';
   readonly pids = this.dir + SEP + 'terminal-pids.txt';
-  readonly studios: Studio[] = [];
+  readonly studios: Aib[] = [];
   constructor() {
     Deno.mkdirSync(this.work, { recursive: true });
   }
-  studio(): Studio {
+  studio(): Aib {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '60s'] });
-    const studio = new Studio(
+    const studio = new Aib(
       { claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null, enableClientTerminal: true } as never,
       { keeper },
     );
@@ -39,7 +39,7 @@ class Lab {
     this.studios.push(studio);
     return studio;
   }
-  crash(studio: Studio): void {
+  crash(studio: Aib): void {
     studio.keeper!.disconnect();
     for (const c of studio.connections.values()) c.sessionLease?.release();
     studio.reconnectStop.set();

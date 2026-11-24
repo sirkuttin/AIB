@@ -6,14 +6,14 @@
      tells it which chat, or opens /phone.html#chat=...&sheet=1; a page load falls back to the cached copy on Serve's 502 only;
    - phone.js: "Reconnecting…" first, then "AIB is closed on <PC>" (Serve: 502) or "Can't reach <PC>" (no answer), never that
      the chats still run; Finish setup's steps (the Home Screen step on an iPhone only); the #chat link a push opens. */
-const { APP } = require('./_paths');
+const { APP, PAGE } = require('./_paths');
 const test = require('node:test'),
   assert = require('node:assert/strict'),
   fs = require('node:fs'),
   path = require('node:path'),
   vm = require('node:vm');
 const SW = require(path.join(APP, 'pwa', 'sw.js'));
-const P = require(path.join(APP, 'phone.js'));
+const P = require(path.join(PAGE, 'phone.js'));
 
 const ORIGIN = 'https://studio-pc.tail-a1b2.ts.net';
 

@@ -14,8 +14,8 @@
  * The binaries come from tools/build.ts buildWslBinaries (cached by source hash).
  */
 import { assert, assertEquals } from './_assert.ts';
-import { encodeFrame, FrameReader } from '../../outputs/agent-studio/server/keeper/client.ts';
-import { BRIDGE_MAGIC, type BridgePreamble, WSL_HELPER_LABEL } from '../../outputs/agent-studio/server/wsl/contract.ts';
+import { encodeFrame, FrameReader } from '../../app/server/keeper/client.ts';
+import { BRIDGE_MAGIC, type BridgePreamble, WSL_HELPER_LABEL } from '../../app/server/wsl/contract.ts';
 import { buildWslBinaries, REPO, TARGETS, WSL_HELPER, WSL_KEEPER, wslTarget } from '../../tools/build.ts';
 
 const DISTRO = Deno.env.get('AIB_WSL_E2E') ?? '';

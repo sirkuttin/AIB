@@ -1,14 +1,14 @@
 // The drawing page: Excalidraw bound to the field-level Y.Map through server/docs/drawing/binding.ts, synced with AIB's
 // server over one WebSocket (byte 0 = Yjs update, byte 1 = awareness update). Bundled by tools/drawing/build.mjs into
-// outputs/agent-studio/vendor/excalidraw/drawing.js. Query: ?drawing=<id>&ws=<ws url>[&selftest=1]
+// app/vendor/excalidraw/drawing.js. Query: ?drawing=<id>&ws=<ws url>[&selftest=1]
 import React, { useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { CaptureUpdateAction, Excalidraw, restoreElements } from '@excalidraw/excalidraw';
 import '@excalidraw/excalidraw/index.css';
 import * as Y from 'yjs';
 import { applyAwarenessUpdate, Awareness, encodeAwarenessUpdate } from 'y-protocols/awareness';
-import { Binding, presence } from '../../../outputs/agent-studio/server/docs/drawing/binding.ts';
-import { USER } from '../../../outputs/agent-studio/server/docs/drawing/model.ts';
+import { Binding, presence } from '../../../app/server/docs/drawing/binding.ts';
+import { USER } from '../../../app/server/docs/drawing/model.ts';
 
 const params = new URLSearchParams(location.search);
 const drawingId = params.get('drawing') || 'd1';

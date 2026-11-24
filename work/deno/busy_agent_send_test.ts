@@ -6,7 +6,7 @@
 import { assert, assertEquals } from './_assert.ts';
 import { until } from './_connection.ts';
 import { promptText, SteerLab, turnEnds, userEvents } from './_steer.ts';
-import { busyRetry, isAgentBusyError } from '../../outputs/agent-studio/server/acp/connection.ts';
+import { busyRetry, isAgentBusyError } from '../../app/server/acp/connection.ts';
 
 const BUSY = 'Agent is already processing. Use steer() or followUp() to queue messages, or wait for completion.';
 const errors = (c: { events: Record<string, unknown>[] }) => c.events.filter((e) => e.kind === 'error');

@@ -14,9 +14,9 @@
 import { assert, assertEquals, assertRejects } from './_assert.ts';
 import { fake } from './_connection.ts';
 import { FakeWslHost } from './_wsl_fake.ts';
-import '../../outputs/agent-studio/agent-choice.js';
-import { baseAgent, claudeBase, isClaudeFamily, isCodexFamily, isModelServerId, isServerEntry, modelServerAgentId, sameAgent, serverIdOf } from '../../outputs/agent-studio/server/agents/claude_family.ts';
-import { isProvider } from '../../outputs/agent-studio/server/agents/agent_registry.ts';
+import '../../app/page/agent-choice.js';
+import { baseAgent, claudeBase, isClaudeFamily, isCodexFamily, isModelServerId, isServerEntry, modelServerAgentId, sameAgent, serverIdOf } from '../../app/server/agents/claude_family.ts';
+import { isProvider } from '../../app/server/agents/agent_registry.ts';
 import {
   betaServerEnv,
   checkModelServer,
@@ -28,20 +28,20 @@ import {
   modelServerEnv,
   modelServerLabel,
   WSL_LOOPBACK_NOTE,
-} from '../../outputs/agent-studio/server/agents/model_servers.ts';
-import { isSealed, DPAPI_PREFIX } from '../../outputs/agent-studio/server/state/secrets.ts';
-import { SettingsStore } from '../../outputs/agent-studio/server/state/settings.ts';
-import { describeAgents } from '../../outputs/agent-studio/server/web/shared.ts';
-import { eligibleAgents } from '../../outputs/agent-studio/server/agents/eligibility.ts';
-import { studioRoutes } from '../../outputs/agent-studio/server/web/studio_routes.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { setDistroSource, setWslHostResolver } from '../../outputs/agent-studio/server/wsl/access.ts';
-import { match, type MatchContext } from '../../outputs/agent-studio/server/allow/matcher.ts';
-import { readSubagents, type SubagentChat, SubagentWorktrees } from '../../outputs/agent-studio/server/subagents/service.ts';
-import { OwnershipProbe } from '../../outputs/agent-studio/server/ownership/probe.ts';
-import { withServerModels } from '../../outputs/agent-studio/server/acp/breadth.ts';
-import { makeMethods } from '../../outputs/agent-studio/server/wsl/helper/methods.ts';
+} from '../../app/server/agents/model_servers.ts';
+import { isSealed, DPAPI_PREFIX } from '../../app/server/state/secrets.ts';
+import { SettingsStore } from '../../app/server/state/settings.ts';
+import { describeAgents } from '../../app/server/web/shared.ts';
+import { eligibleAgents } from '../../app/server/agents/eligibility.ts';
+import { aibRoutes } from '../../app/server/web/aib_routes.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { setDistroSource, setWslHostResolver } from '../../app/server/wsl/access.ts';
+import { match, type MatchContext } from '../../app/server/allow/matcher.ts';
+import { readSubagents, type SubagentChat, SubagentWorktrees } from '../../app/server/subagents/service.ts';
+import { OwnershipProbe } from '../../app/server/ownership/probe.ts';
+import { withServerModels } from '../../app/server/acp/breadth.ts';
+import { makeMethods } from '../../app/server/wsl/helper/methods.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -66,7 +66,7 @@ class Lab {
   readonly state = this.dir + SEP + 'state';
   readonly launcher = this.dir + SEP + 'claude-launcher.js';
   readonly codexLauncher = this.dir + SEP + 'codex-launcher.js';
-  readonly studios: Studio[] = [];
+  readonly studios: Aib[] = [];
   readonly servers: Deno.HttpServer[] = [];
   constructor() {
     Deno.writeTextFileSync(this.launcher, '');
@@ -107,8 +107,8 @@ class Lab {
     return `http://127.0.0.1:${port}`;
   }
 
-  studio(flags: string[] = []): Studio {
-    const studio = new Studio(
+  studio(flags: string[] = []): Aib {
+    const studio = new Aib(
       { stateDir: this.state, port: 0, ownersDir: null, noArtifactTool: true, claudeLauncher: this.launcher, codexLauncher: this.codexLauncher, nodeCommand: Deno.execPath() },
       { keeper: null },
     );
@@ -250,7 +250,7 @@ Deno.test('the server answers: reachable with its models, refused key, and an un
   hung.close();
   assert(!silent.reachable && silent.error.includes(hungUrl) && silent.error.includes('no answer'), silent.error);
   // the route the page calls (a saved id, or an address being typed)
-  const check = studioRoutes().get('POST /api/live/model-servers/check')!;
+  const check = aibRoutes().get('POST /api/live/model-servers/check')!;
   const store = new SettingsStore(lab.state);
   Deno.mkdirSync(lab.state, { recursive: true });
   await store.update({ agents: { modelServer: { upsert: { name: 'fake', url: up.url, key: KEY } } } });

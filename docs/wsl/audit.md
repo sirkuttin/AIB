@@ -1,6 +1,6 @@
 # WSL projects: audit of project-path sites in the server
 
-Scope: `outputs/agent-studio/server` (Deno/TS) plus the Go keeper where it matters. The server uses no root-level scripts for project work (none found).
+Scope: `app/server` (Deno/TS) plus the Go keeper where it matters. The server uses no root-level scripts for project work (none found).
 Categories: **A** = must run in the WSL helper for WSL projects; **B** = fine on Windows (AIB state, app assets); **C** = path translation / path model only; **D** = Windows-only feature to turn off for WSL projects.
 A row may name a main category plus a second one in the note. Line ranges are approximate function bounds.
 
@@ -167,7 +167,7 @@ Key facts that shape the table:
 | editors.ts:797-815 | knownRoots | B | |
 | native.ts, notify.ts, tray*, window*, updater.ts, update_helper.ts, single_instance.ts, shortcut.ts | app shell | B | |
 
-## host/studio.ts, acp/
+## host/aib.ts, acp/
 
 | file:line | what it does | cat | note |
 |---|---|---|---|

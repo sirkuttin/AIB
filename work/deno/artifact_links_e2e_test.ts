@@ -9,7 +9,7 @@
  * A real Studio (Deno web server + in-process agent host, temp state folder and workspace, free port; never the live ports), the
  * scripted agent work/scroll-fixture/agent.py, and a headless Chrome/Edge on chat.html (no window).
  *
- * Run (from outputs/agent-studio): deno test -A ../../work/deno/artifact_links_e2e_test.ts
+ * Run (from app): deno test -A ../../work/deno/artifact_links_e2e_test.ts
  */
 import { assert, assertEquals } from './_assert.ts';
 import { browserPath, type Chat, Lab, type Page, settle, shown } from './_scroll_lab.ts';

@@ -4,8 +4,8 @@
  * endings, BOM, what AIB can't edit, and the bytes a save writes).
  */
 import { assert, assertEquals } from './_assert.ts';
-import { changedRanges, diffLines, merge3, narrowEdit, rangesText, splitLines } from '../../outputs/agent-studio/server/files/line_merge.ts';
-import { decodeDisk, EDIT_LIMIT, encodeText, sha256 } from '../../outputs/agent-studio/server/files/file_text.ts';
+import { changedRanges, diffLines, merge3, narrowEdit, rangesText, splitLines } from '../../app/server/files/line_merge.ts';
+import { decodeDisk, EDIT_LIMIT, encodeText, sha256 } from '../../app/server/files/file_text.ts';
 
 const enc = (s: string) => new TextEncoder().encode(s);
 const apply = (text: string, edits: { from: number; to: number; insert: string }[]) => {

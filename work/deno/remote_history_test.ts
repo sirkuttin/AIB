@@ -10,9 +10,9 @@
  *  - a saved chat pages back with before=<seq> (seq = place in the transcript + 1), and a message over the limit is cut and marked.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { DEVICE_HEADER, REMOTE_ROUTES, ROUTE_SCOPE } from '../../outputs/agent-studio/server/remote/server.ts';
-import { MAX_EVENT_TEXT } from '../../outputs/agent-studio/server/remote/saved.ts';
-import { readRemotePort } from '../../outputs/agent-studio/server/remote/port.ts';
+import { DEVICE_HEADER, REMOTE_ROUTES, ROUTE_SCOPE } from '../../app/server/remote/server.ts';
+import { MAX_EVENT_TEXT } from '../../app/server/remote/saved.ts';
+import { readRemotePort } from '../../app/server/remote/port.ts';
 import { type FakeChat, fakeTailscale, pairPhone, pc, phoneHeaders, raw, type RemoteStudio, remoteStudio } from './_remote_fixture.ts';
 import { serveStatus } from './_remote_fixture.ts';
 

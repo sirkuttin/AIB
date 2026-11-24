@@ -7,10 +7,10 @@ import * as Y from 'yjs';
 import * as syncProtocol from 'y-protocols/sync';
 import * as encoding from 'lib0/encoding';
 import * as decoding from 'lib0/decoding';
-import { FIELD, LiveDoc } from '../../outputs/agent-studio/server/docs/live_doc.ts';
-import { parseDoc, writeDoc } from '../../outputs/agent-studio/server/docs/markdown.ts';
-import { MD_NOTE } from '../../outputs/agent-studio/server/docs/store.ts';
-import type { WsLink } from '../../outputs/agent-studio/server/platform/websocket.ts';
+import { FIELD, LiveDoc } from '../../app/server/docs/live_doc.ts';
+import { parseDoc, writeDoc } from '../../app/server/docs/markdown.ts';
+import { MD_NOTE } from '../../app/server/docs/store.ts';
+import type { WsLink } from '../../app/server/platform/websocket.ts';
 
 /** The page's side: a Y.Doc synced with the server through y-protocols over a socket whose up direction can be held. */
 export class UserClient {

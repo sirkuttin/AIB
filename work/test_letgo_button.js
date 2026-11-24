@@ -7,7 +7,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { makePage, El } = require('./chat_harness.js');
-const { APP } = require('./_paths');
+const { PAGE: APP } = require('./_paths');
 
 function page() {
   const posts = [];

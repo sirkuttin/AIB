@@ -6,11 +6,11 @@
  */
 import { assert } from './_assert.ts';
 import { PAGE_KEY, withPageKey } from './_page_key.ts';
-import { makeContext, type WebContext, WebServer } from '../../outputs/agent-studio/server/web/server.ts';
-import { docsTool } from '../../outputs/agent-studio/server/web/docs_routes.ts';
-import type { LiveBackend } from '../../outputs/agent-studio/server/host/backend.ts';
-import type { UpdateService } from '../../outputs/agent-studio/server/desktop/updater.ts';
-import type { Source } from '../../outputs/agent-studio/server/transcripts/monitor.ts';
+import { makeContext, type WebContext, WebServer } from '../../app/server/web/server.ts';
+import { docsTool } from '../../app/server/web/docs_routes.ts';
+import type { LiveBackend } from '../../app/server/host/backend.ts';
+import type { UpdateService } from '../../app/server/desktop/updater.ts';
+import type { Source } from '../../app/server/transcripts/monitor.ts';
 
 type Json = Record<string, unknown>;
 const sep = Deno.build.os === 'windows' ? '\\' : '/';

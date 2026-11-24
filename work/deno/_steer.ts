@@ -3,7 +3,7 @@
  * driven line by line by the test, so each test sends exactly the shapes the real adapters sent in work/steer-recordings.
  */
 import { Lab as BaseLab, until } from './_connection.ts';
-import type { Connection, ConnectionOptions } from '../../outputs/agent-studio/server/acp/connection.ts';
+import type { Connection, ConnectionOptions } from '../../app/server/acp/connection.ts';
 
 export type Json = Record<string, unknown>;
 export type Kind = 'claude' | 'codex' | 'plain';

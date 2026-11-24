@@ -9,10 +9,10 @@
  *   - /manifest.webmanifest, /sw.js and the icons on the phone port with their types; never on the page port.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { DEVICE_HEADER } from '../../outputs/agent-studio/server/remote/server.ts';
-import { readRemotePort } from '../../outputs/agent-studio/server/remote/port.ts';
-import { PUSH_KEYS_FILE, TOPIC, TTL_FINISHED, TTL_NEEDS, VapidKeys } from '../../outputs/agent-studio/server/remote/push.ts';
-import { startAttention } from '../../outputs/agent-studio/server/attention/watcher.ts';
+import { DEVICE_HEADER } from '../../app/server/remote/server.ts';
+import { readRemotePort } from '../../app/server/remote/port.ts';
+import { PUSH_KEYS_FILE, TOPIC, TTL_FINISHED, TTL_NEEDS, VapidKeys } from '../../app/server/remote/push.ts';
+import { startAttention } from '../../app/server/attention/watcher.ts';
 import { fakeTailscale, pairPhone, pc, phoneHeaders, raw, type RemoteStudio, remoteStudio, serveStatus } from './_remote_fixture.ts';
 
 // the fake push service below listens on https://127.0.0.1 (only known push services are taken otherwise: devices.ts PUSH_HOSTS)

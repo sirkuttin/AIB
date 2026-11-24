@@ -19,7 +19,7 @@ Everything lives in `<temp>/agent-studio-demo-<port>` (use `--dir` to choose ano
 `studio.log` are in it). Ports 8766-8768 and 8776-8778 are refused: 8767/8768 are the live Studio, 8777/8778 the AIB
 desktop app, and Studio uses port+1 for its artifact server. The demo needs `<port>` and `<port>+1` free.
 
-The server is the Deno app: `deno run -A outputs/agent-studio/server/main.ts serve`, started in the background with no
+The server is the Deno app: `deno run -A app/server/main.ts serve`, started in the background with no
 console window. `start.py` finds Deno as `AIB_DENO`, else `deno` on PATH, and stops with a message when there is none.
 Studio runs in-process (`--in-process --no-auto-reconnect --no-owner-announcements`). The fixture agent
 (`work/demo-studio/agent.py`) is the Claude launcher (`--node-command` is the current Python),

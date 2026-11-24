@@ -1,5 +1,5 @@
 /**
- * Tests for WSL fixes that shipped without one (outputs/agent-studio/docs/WSL.md), each without a distro (a FakeWslHost answers):
+ * Tests for WSL fixes that shipped without one (app/docs/WSL.md), each without a distro (a FakeWslHost answers):
  *   1. wsl.exe fails with E_INVALIDARG on an empty argument: runWsl refuses one, and the first set-up's probe passes '-' for "no
  *      AIB_WSL_ROOT" (the real probe in a distro: wsl_fixes_e2e_test.ts).
  *   2. New project dialog: the folder check and create of a WSL path go to the distro's helper (folder.project /
@@ -12,8 +12,8 @@
 import { assert, assertEquals, assertRejects } from './_assert.ts';
 import { FakeWslHost } from './_wsl_fake.ts';
 import { pause } from './_connection.ts';
-import { WslHelperError } from '../../outputs/agent-studio/server/wsl/contract.ts';
-import { setDistroSource, setWslHostResolver, wslLoc } from '../../outputs/agent-studio/server/wsl/access.ts';
+import { WslHelperError } from '../../app/server/wsl/contract.ts';
+import { setDistroSource, setWslHostResolver, wslLoc } from '../../app/server/wsl/access.ts';
 import {
   CLEANUP_SCRIPT,
   COPY_SCRIPT,
@@ -24,17 +24,17 @@ import {
   REUSE_SCRIPT,
   runWsl,
   type WslRunner,
-} from '../../outputs/agent-studio/server/wsl/install.ts';
+} from '../../app/server/wsl/install.ts';
 import { createHash } from 'node:crypto';
-import { wslExePath } from '../../outputs/agent-studio/server/wsl/detect.ts';
-import { studioRoutes } from '../../outputs/agent-studio/server/web/studio_routes.ts';
-import { rootFor } from '../../outputs/agent-studio/server/web/files_routes.ts';
-import { wslFiles } from '../../outputs/agent-studio/server/web/wsl_routes.ts';
-import { changesFolder } from '../../outputs/agent-studio/server/worktrees/chat_folders.ts';
-import { projectKey } from '../../outputs/agent-studio/server/desktop/project_delete.ts';
-import type { WebContext } from '../../outputs/agent-studio/server/web/server.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { REFRESH_SECONDS } from '../../outputs/agent-studio/server/host/usage_limits_feed.ts';
+import { wslExePath } from '../../app/server/wsl/detect.ts';
+import { aibRoutes } from '../../app/server/web/aib_routes.ts';
+import { rootFor } from '../../app/server/web/files_routes.ts';
+import { wslFiles } from '../../app/server/web/wsl_routes.ts';
+import { changesFolder } from '../../app/server/worktrees/chat_folders.ts';
+import { projectKey } from '../../app/server/desktop/project_delete.ts';
+import type { WebContext } from '../../app/server/web/server.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { REFRESH_SECONDS } from '../../app/server/host/usage_limits_feed.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -181,7 +181,7 @@ Deno.test({
       return { path: p.name ? `${p.path}/${p.name}` : p.path, git: p.gitInit === true };
     };
     withHost(host);
-    const routes = studioRoutes();
+    const routes = aibRoutes();
     const ctx = {} as WebContext;
     const check = async (query: Record<string, string>) => {
       const url = new URL('http://127.0.0.1/api/live/folders/check?' + new URLSearchParams(query));
@@ -324,10 +324,10 @@ Deno.test({
   async fn() {
     assertEquals(REFRESH_SECONDS, 60);
     const dir = Deno.makeTempDirSync({ prefix: 'aib-limits-timer-' });
-    const studio = new Studio({ stateDir: dir, port: 0, ownersDir: null }, { keeper: null, limitsEveryMs: 40 });
+    const studio = new Aib({ stateDir: dir, port: 0, ownersDir: null }, { keeper: null, limitsEveryMs: 40 });
     try {
       const refreshed: string[] = [];
-      studio.limits = { refresh: (c: { id: string }) => (refreshed.push(c.id), Promise.resolve()) } as unknown as Studio['limits'];
+      studio.limits = { refresh: (c: { id: string }) => (refreshed.push(c.id), Promise.resolve()) } as unknown as Aib['limits'];
       const fakes = [{ id: 'open', closed: false }, { id: 'ended', closed: true }];
       for (const f of fakes) studio.connections.set(f.id, f as never);
       await pause(400);

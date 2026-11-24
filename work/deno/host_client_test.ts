@@ -27,7 +27,7 @@ import {
   sourceHash,
   stopHost,
   writeInfo,
-} from '../../outputs/agent-studio/server/host/host_client.ts';
+} from '../../app/server/host/host_client.ts';
 import {
   ABOUT_LINE,
   APP_ROOT,
@@ -38,9 +38,9 @@ import {
   selfCommand,
   TESTS_DIR,
   VERSION_LABEL,
-} from '../../outputs/agent-studio/server/core/app.ts';
-import { quoteWindowsArg, spawnDetached } from '../../outputs/agent-studio/server/platform/spawn_detached.ts';
-import { join } from '../../outputs/agent-studio/server/platform/path.ts';
+} from '../../app/server/core/app.ts';
+import { quoteWindowsArg, spawnDetached } from '../../app/server/platform/spawn_detached.ts';
+import { join } from '../../app/server/platform/path.ts';
 
 const win = Deno.build.os === 'windows';
 const appDir = APP.pathname.replace(/^\/([A-Za-z]:)/, '$1').replace(/\/$/, '');
@@ -51,7 +51,7 @@ Deno.test('app constants, code root and source hash', async () => {
   assert(VERSION_LABEL.startsWith(`AIB ${APP_VERSION.split('-')[0]}`), VERSION_LABEL);
   assertEquals(ABOUT_LINE, 'All your agents. One place. Nothing hidden.');
   assertEquals(CODE_ROOT, normcase(APP_ROOT));
-  assertEquals(normcase(join(REPO_ROOT, 'outputs', 'agent-studio')), normcase(APP_ROOT));
+  assertEquals(normcase(join(REPO_ROOT, 'app')), normcase(APP_ROOT));
   assertEquals(normcase(TESTS_DIR), normcase(join(REPO_ROOT, 'work')));
   const hash = await sourceHash();
   assert(/^[0-9a-f]{16,64}$/.test(hash), `a hex digest of the app folder: ${hash}`);
@@ -64,11 +64,11 @@ Deno.test('app constants, code root and source hash', async () => {
 
 Deno.test('restart hints name the Deno app, never the Python programs', async () => {
   assertEquals(restartHostHint(true), 'quit AIB and start it again, or run "AIB --stop-host"');
-  assertEquals(restartHostHint(false), 'run "deno run -A outputs/agent-studio/server/main.ts --stop-host"');
+  assertEquals(restartHostHint(false), 'run "deno run -A app/server/main.ts --stop-host"');
   assertEquals(replaceHostHint(true), 'quit AIB and start it again (or run "AIB --stop-host", then start AIB)');
   assertEquals(
     replaceHostHint(false),
-    'run "deno run -A outputs/agent-studio/server/main.ts --stop-host" (or "deno run -A outputs/agent-studio/server/main.ts deploy --host") and restart the web server',
+    'run "deno run -A app/server/main.ts --stop-host" (or "deno run -A app/server/main.ts deploy --host") and restart the web server',
   );
   const source = restartHostHint(); // these tests run from source
   assertEquals(

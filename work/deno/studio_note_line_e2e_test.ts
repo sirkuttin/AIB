@@ -13,7 +13,7 @@ import { liveChat, v2Studio } from './_remote_v2b.ts';
 import { phonePage, tap } from './_remote_phone_page.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
-const APP = new URL('../../outputs/agent-studio/', import.meta.url);
+const APP = new URL('../../app/', import.meta.url);
 const file = (name: string) => new URL(name, APP).href;
 const LONG = 'Fix: ' + 'already-merged subagents conflict with a very long name '.repeat(6);
 

@@ -8,10 +8,10 @@
 import { assert, assertEquals } from './_assert.ts';
 import { pause, until } from './_connection.ts';
 import { type Json, type Puppet, SteerLab } from './_steer.ts';
-import { backgroundTask, type Connection, NotStoppable } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { descendants, setTableReader } from '../../outputs/agent-studio/server/platform/descendants.ts';
-import { killVerified } from '../../outputs/agent-studio/server/platform/kill_verified.ts';
-import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
+import { backgroundTask, type Connection, NotStoppable } from '../../app/server/acp/connection.ts';
+import { descendants, setTableReader } from '../../app/server/platform/descendants.ts';
+import { killVerified } from '../../app/server/platform/kill_verified.ts';
+import { pidAlive } from '../../app/server/host/host_client.ts';
 
 const T = { sanitizeResources: false, sanitizeOps: false };
 const bg = (c: Connection) => c.public().toolBackground as Record<string, { state: string; stoppable: boolean }>;

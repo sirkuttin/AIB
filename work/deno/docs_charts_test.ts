@@ -6,14 +6,14 @@
  * edits to other cells land, marked as the agent's (the page tints them).
  */
 import { assert, assertEquals } from './_assert.ts';
-import { DocRefusal, LiveDoc } from '../../outputs/agent-studio/server/docs/live_doc.ts';
-import { normalize, parseDoc, type PMJson, writeDoc } from '../../outputs/agent-studio/server/docs/markdown.ts';
-import { buildFromAib, contentOf, exportAib, IdMap, parseAib, stringifyAib } from '../../outputs/agent-studio/server/docs/aibdoc.ts';
-import { chartData, chartSvg, parseNumber } from '../../outputs/agent-studio/server/docs/charts.ts';
-import { jsonOf } from '../../outputs/agent-studio/server/docs/blocks.ts';
-import { ArtifactHistory } from '../../outputs/agent-studio/server/docs/history.ts';
-import { ArtifactStore } from '../../outputs/agent-studio/server/artifacts/artifacts.ts';
-import { DocStore, mdBody, RICH_NOTE } from '../../outputs/agent-studio/server/docs/store.ts';
+import { DocRefusal, LiveDoc } from '../../app/server/docs/live_doc.ts';
+import { normalize, parseDoc, type PMJson, writeDoc } from '../../app/server/docs/markdown.ts';
+import { buildFromAib, contentOf, exportAib, IdMap, parseAib, stringifyAib } from '../../app/server/docs/aibdoc.ts';
+import { chartData, chartSvg, parseNumber } from '../../app/server/docs/charts.ts';
+import { jsonOf } from '../../app/server/docs/blocks.ts';
+import { ArtifactHistory } from '../../app/server/docs/history.ts';
+import { ArtifactStore } from '../../app/server/artifacts/artifacts.ts';
+import { DocStore, mdBody, RICH_NOTE } from '../../app/server/docs/store.ts';
 import { UserClient } from './_docs.ts';
 
 type Json = Record<string, unknown>;
@@ -101,7 +101,7 @@ Deno.test('doc.aibdoc round-trips a chart exactly (cells with ids), and the page
   };
   assertEquals(chart.attrs, { chart: 'conv', chartType: 'bar', title: 'Conversion by week', caption: 'Staff test, %' });
   assert(chart.id && chart.content![0].id && chart.content![0].content![1].id, 'the chart, its table and its rows carry ids');
-  await import(new URL('../../outputs/agent-studio/vendor/docs/editor.js', import.meta.url).href);
+  await import(new URL('../../app/vendor/docs/editor.js', import.meta.url).href);
   const page = (globalThis as unknown as { AIBDocEditor: { docJSON(u: Uint8Array): PMJson; encode(j: PMJson): Uint8Array } }).AIBDocEditor;
   const server = { type: 'doc', content: contentOf(live, live.firstPage) };
   assertEquals(page.docJSON(live.encode()), server);

@@ -171,7 +171,7 @@ Bugs we know about and are fixing. Report new ones in [issues](https://github.co
 AIB is TypeScript on [Deno](https://deno.com) (pinned to 2.9.8), with a plain-JavaScript page.
 
 ```text
-cd outputs/agent-studio
+cd app
 deno run -A server/main.ts --open
 ```
 
@@ -201,10 +201,10 @@ serves the page. Releases are built this way and uploaded by hand; no CI.
 
 | Path | What's there |
 | --- | --- |
-| `outputs/agent-studio/server/` | The app. `main.ts` is the entry point; `web/` routes and security, `host/` the agent host, `acp/` the ACP connection, `keeper/` the keeper client, `state/` the data files, `transcripts/` saved chats, `worktrees/` helpers' worktrees, Changes and landing, `artifacts/`, `agents/`, `ownership/`, `terminal/`, `desktop/` (window, tray, updater), `platform/` all OS-specific code. |
-| `outputs/agent-studio/*.js, *.css, *.html` | The page. |
-| `outputs/agent-studio/docs/` | Design notes: desktop app, agent host and keeper, themes, ACP capabilities. |
-| `outputs/agent-studio/icons/` | The app icon in every size the packages need, made by `tools/make_icons.ts` from the masters in `icons/src/` (hand-drawn pixel grids for 16-32 px, an SVG for the rest). |
+| `app/server/` | The app. `main.ts` is the entry point; `web/` routes and security, `host/` the agent host, `acp/` the ACP connection, `keeper/` the keeper client, `state/` the data files, `transcripts/` saved chats, `worktrees/` helpers' worktrees, Changes and landing, `artifacts/`, `agents/`, `ownership/`, `terminal/`, `desktop/` (window, tray, updater), `platform/` all OS-specific code. |
+| `app/page/*.js, *.css, *.html` | The page. |
+| `app/docs/` | Design notes: desktop app, agent host and keeper, themes, ACP capabilities. |
+| `app/icons/` | The app icon in every size the packages need, made by `tools/make_icons.ts` from the masters in `icons/src/` (hand-drawn pixel grids for 16-32 px, an SVG for the rest). |
 | `keeper/` | The keeper (Go) and its protocol. |
 | `tools/` | `build.ts` (the six-target build) and `linux_package.ts`. |
 | `work/deno/` | Deno tests, including the HTTP contract tests (`contract_*_test.ts`) and tests that check the answers the retired Python reference server gave (`fixtures/frozen/`). |
@@ -213,7 +213,7 @@ serves the page. Releases are built this way and uploaded by hand; no CI.
 ## Develop
 
 ```text
-cd outputs/agent-studio
+cd app
 deno task test        # the Deno tests (some start small Python fake agents)
 deno task check       # type check
 deno task lint

@@ -10,11 +10,11 @@
  * A real Studio (the scroll lab: temp state folder, free port; never the live ports), scripted live chats, the helper registry written
  * into the lab's state folder (as /api/live/swarm reads it), headless Chrome or Edge.
  *
- * Run (from outputs/agent-studio): deno test -A ../../work/deno/swarm_activity_e2e_test.ts   (ignored without Chrome or Edge)
+ * Run (from app): deno test -A ../../work/deno/swarm_activity_e2e_test.ts   (ignored without Chrome or Edge)
  */
 import { assert, assertEquals } from './_assert.ts';
 import { browserPath, type Chat, Lab, ownerProblems, settle, sleep } from './_scroll_lab.ts';
-import { Registry } from '../../outputs/agent-studio/server/swarm/registry.ts';
+import { Registry } from '../../app/server/swarm/registry.ts';
 
 type Json = Record<string, unknown>;
 

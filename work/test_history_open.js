@@ -90,7 +90,7 @@ test('a turn longer than one page: the live line and the working clock come from
   assert.equal(s.since, (1000 + 3) * 1000, "the clock runs from your message's time");
   assert.equal(s.n, 3000, 'every tool call of the turn counts, not only the loaded ones');
   assert.equal(s.step.kind, 'tool');
-  const A = require(path.join(APP, 'attention-ui.js'));
+  const A = require(path.join(APP, 'page', 'attention-ui.js'));
   assert.equal(A.turnStart(entry.loaded(), 9e15, null, entry.turn), (1000 + 3) * 1000, '"working (m:ss)" starts at the prompt');
 });
 

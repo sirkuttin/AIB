@@ -1,5 +1,5 @@
 'use strict';
-const { APP: APP_DIR } = require('./_paths');
+const { PAGE: APP_DIR } = require('./_paths');
 // Send later (owner, 2026-11-23): the page side. The Send menu's "Send later…" panel (quick picks, a date and time field, keyboard),
 // the "Scheduled for …" cards in the queue box with their always-visible ✎ ↑ ✕, and chat.js posting the schedule and clearing the box.
 // The server side (timer, restart, late) is work/deno/send_later_test.ts.

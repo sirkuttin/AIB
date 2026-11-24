@@ -6,7 +6,7 @@
      fall back to AIB teal), its own pick wins;
    - devices-ui.js: "Start new chats" is a child of Send (goes with it, comes back as it was);
    - read-state.js: a phone's "Mark as unread" shows on the PC until the chat is looked at again. */
-const { APP } = require('./_paths');
+const { PAGE: APP } = require('./_paths');
 const test = require('node:test'),
   assert = require('node:assert/strict'),
   fs = require('node:fs'),

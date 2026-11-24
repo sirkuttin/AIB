@@ -1,7 +1,7 @@
 'use strict';
 /* The selected chat card's marker is its own straight pill, not an inset box-shadow: an inset shadow follows the card's rounded
    corners and bends like a bracket. The card's size, padding, radius and the marker colour are unchanged. */
-const { APP } = require('./_paths');
+const { PAGE: APP } = require('./_paths');
 const test = require('node:test'),
   assert = require('node:assert/strict'),
   fs = require('node:fs'),

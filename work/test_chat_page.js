@@ -1,5 +1,5 @@
 'use strict';
-const { APP: APP_DIR } = require('./_paths');
+const { PAGE: APP_DIR } = require('./_paths');
 /* chat.js behaviour that used to be checked by looking for text in its source: side panes, the split hand-off, the change signature,
    the hidden-tab poll and the screen-reader announcements. chat.js runs in a fake page and is reached through window.StudioChat. */
 const test = require('node:test');

@@ -28,7 +28,7 @@
 import type { WebContext } from '../web/server.ts';
 import { afterConnect } from '../web/project_routes.ts';
 import { settingsView } from '../web/shared.ts';
-import { studioOf } from '../web/studio_routes.ts';
+import { studioOf } from '../web/aib_routes.ts';
 import { folderKey } from '../state/agent_options.ts';
 import { type Eligible, eligibleAgents, reasonWords } from '../agents/eligibility.ts';
 import { projectId, projectsFor } from './projects.ts';
@@ -168,7 +168,7 @@ export function folderOfProject(ctx: WebContext, id: unknown): string | null {
 /**
  * The agents a new chat in this folder can start with: the PC's list for a Windows folder; for a WSL project the same agents, each
  * on or off by that distro's own switch (docs/wsl/linking-design.md section 12: a WSL chat reads only its distro's switch, as
- * host/studio.ts wslLaunch does; whether the distro has the agent is said when the chat starts). `why` is the phone's words.
+ * host/aib.ts wslLaunch does; whether the distro has the agent is said when the chat starts). `why` is the phone's words.
  */
 export function agentsFor(ctx: WebContext, folder: string, agents: Eligible[]): (Eligible & { why: string })[] {
   const wsl = wslLocOf(folder);

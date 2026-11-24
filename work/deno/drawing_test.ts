@@ -6,19 +6,19 @@
 import { assert, assertEquals } from './_assert.ts';
 import * as Y from 'yjs';
 import { applyAwarenessUpdate, Awareness, encodeAwarenessUpdate } from 'y-protocols/awareness';
-import { readModels, USER } from '../../outputs/agent-studio/server/docs/drawing/model.ts';
-import { LiveDoc } from '../../outputs/agent-studio/server/docs/live_doc.ts';
-import { Binding, type Presence } from '../../outputs/agent-studio/server/docs/drawing/binding.ts';
+import { readModels, USER } from '../../app/server/docs/drawing/model.ts';
+import { LiveDoc } from '../../app/server/docs/live_doc.ts';
+import { Binding, type Presence } from '../../app/server/docs/drawing/binding.ts';
 import {
   drawing_edit,
   drawing_from_mermaid,
   drawing_read,
   type EditResult,
   type Op,
-} from '../../outputs/agent-studio/server/docs/drawing/tools.ts';
-import { exportJson, exportSvg, importJson, sceneFromSvg } from '../../outputs/agent-studio/server/docs/drawing/files.ts';
-import { boxOf, overlaps } from '../../outputs/agent-studio/server/docs/drawing/geometry.ts';
-import type { XEl } from '../../outputs/agent-studio/server/docs/drawing/scene.ts';
+} from '../../app/server/docs/drawing/tools.ts';
+import { exportJson, exportSvg, importJson, sceneFromSvg } from '../../app/server/docs/drawing/files.ts';
+import { boxOf, overlaps } from '../../app/server/docs/drawing/geometry.ts';
+import type { XEl } from '../../app/server/docs/drawing/scene.ts';
 
 const D = 'd1';
 

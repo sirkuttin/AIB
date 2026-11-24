@@ -1,9 +1,9 @@
 /** server/host/host_proxy.ts against the real Deno agent host: attach, list, a clean stop (host_stopped), and a crash (restart). */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
-import { APP_ROOT } from '../../outputs/agent-studio/server/core/app.ts';
-import { attachHost, HostProxy } from '../../outputs/agent-studio/server/host/host_proxy.ts';
-import { HostUnavailable, readInfo, stopHost } from '../../outputs/agent-studio/server/host/host_client.ts';
-import { join } from '../../outputs/agent-studio/server/platform/path.ts';
+import { APP_ROOT } from '../../app/server/core/app.ts';
+import { attachHost, HostProxy } from '../../app/server/host/host_proxy.ts';
+import { HostUnavailable, readInfo, stopHost } from '../../app/server/host/host_client.ts';
+import { join } from '../../app/server/platform/path.ts';
 
 async function setup() {
   const root = await Deno.makeTempDir({ prefix: 'aib-proxy-' });

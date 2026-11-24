@@ -36,8 +36,8 @@ import {
   rootFsProblem,
   rootProblem,
   uses,
-} from '../../outputs/agent-studio/server/wsl/helper/aib_remove.ts';
-import { handleLine } from '../../outputs/agent-studio/server/wsl/helper/rpc.ts';
+} from '../../app/server/wsl/helper/aib_remove.ts';
+import { handleLine } from '../../app/server/wsl/helper/rpc.ts';
 
 const T = { sanitizeOps: false, sanitizeResources: false };
 
@@ -541,7 +541,7 @@ Deno.test("remove: the test guard and the <ver> come from the helper's start env
 });
 
 Deno.test('remove: the helper offers aib.* only with both its root and its data folder', T, async () => {
-  const { makeMethods } = await import('../../outputs/agent-studio/server/wsl/helper/methods.ts');
+  const { makeMethods } = await import('../../app/server/wsl/helper/methods.ts');
   const env = () => Promise.resolve({ env: {}, shell: '/bin/sh', home: HOME, arch: 'amd64' });
   assert('aib.remove' in makeMethods({ env, root: ROOT, data: DATA }) && 'aib.usage' in makeMethods({ env, root: ROOT, data: DATA }));
   assert(!('aib.remove' in makeMethods({ env, root: ROOT })) && !('aib.remove' in makeMethods({ env, data: DATA })));

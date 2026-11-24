@@ -7,11 +7,11 @@
  * wsl/detect.ts on a scripted registry. Temp folders only; no program is started (editors use a recording popen).
  */
 import { assert, assertEquals } from './_assert.ts';
-import * as osp from '../../outputs/agent-studio/server/platform/ospath.ts';
-import { executable, isFile, pyStat, resolvePath, which } from '../../outputs/agent-studio/server/platform/pypath.ts';
-import { assertWindowsLocal } from '../../outputs/agent-studio/server/platform/location.ts';
-import { isNetworkPath, refuseNetworkPath } from '../../outputs/agent-studio/server/web/security.ts';
-import { FolderPresence } from '../../outputs/agent-studio/server/desktop/folder_presence.ts';
+import * as osp from '../../app/server/platform/ospath.ts';
+import { executable, isFile, pyStat, resolvePath, which } from '../../app/server/platform/pypath.ts';
+import { assertWindowsLocal } from '../../app/server/platform/location.ts';
+import { isNetworkPath, refuseNetworkPath } from '../../app/server/web/security.ts';
+import { FolderPresence } from '../../app/server/desktop/folder_presence.ts';
 import {
   deleteFolder,
   inspect,
@@ -20,8 +20,8 @@ import {
   Refused,
   type TrashLayer,
   WSL_REFUSAL,
-} from '../../outputs/agent-studio/server/desktop/project_delete.ts';
-import { AddedProjects } from '../../outputs/agent-studio/server/desktop/added_projects.ts';
+} from '../../app/server/desktop/project_delete.ts';
+import { AddedProjects } from '../../app/server/desktop/added_projects.ts';
 import {
   checkPath,
   checkProject,
@@ -32,7 +32,7 @@ import {
   runCommand,
   startDir,
   worktreeParent,
-} from '../../outputs/agent-studio/server/desktop/folders.ts';
+} from '../../app/server/desktop/folders.ts';
 import {
   buildWslCommand,
   cleanPathText,
@@ -40,13 +40,13 @@ import {
   knownRoots,
   Launcher,
   type PopenOptions,
-} from '../../outputs/agent-studio/server/desktop/editors.ts';
-import { type DetectHooks, detectNow, wslExePath } from '../../outputs/agent-studio/server/wsl/detect.ts';
-import { realRoot, resolveInside, safeParts } from '../../outputs/agent-studio/server/worktrees/files.ts';
-import { checkShape } from '../../outputs/agent-studio/server/worktrees/outside_files.ts';
-import { repoBranch } from '../../outputs/agent-studio/server/worktrees/chat_folders.ts';
-import { checkCwd } from '../../outputs/agent-studio/server/terminal/sessions.ts';
-import { runGit } from '../../outputs/agent-studio/server/worktrees/changes.ts';
+} from '../../app/server/desktop/editors.ts';
+import { type DetectHooks, detectNow, wslExePath } from '../../app/server/wsl/detect.ts';
+import { realRoot, resolveInside, safeParts } from '../../app/server/worktrees/files.ts';
+import { checkShape } from '../../app/server/worktrees/outside_files.ts';
+import { repoBranch } from '../../app/server/worktrees/chat_folders.ts';
+import { checkCwd } from '../../app/server/terminal/sessions.ts';
+import { runGit } from '../../app/server/worktrees/changes.ts';
 
 const WIN = Deno.build.os === 'windows';
 const REF = 'wsl://ubuntu/home/u/app';

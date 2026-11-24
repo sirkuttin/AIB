@@ -25,16 +25,16 @@
  * The version is APP_VERSION (server/core/app.ts). For the target this machine runs, the build starts the app headless (`AIB serve
  * --in-process`, temp state folder, a free port from 8920, no window) and checks that it serves the page.
  *
- * The app is built from a clean staging copy of outputs/agent-studio (the code and page files only) with its own deno.json (version
+ * The app is built from a clean staging copy of app (the code and page files only) with its own deno.json (version
  * from APP_VERSION, desktop.app name and identifier, nodeModulesDir none), so a stray package.json or node_modules in a parent folder
  * cannot be pulled in. Every asset over SIZE_LIMIT fails the build. Updates (server/desktop/updater.ts) pick assets by these names.
  */
 import { createHash } from 'node:crypto';
-import { APP_VERSION } from '../outputs/agent-studio/server/core/app.ts';
-import { PROTOCOL_VERSION } from '../outputs/agent-studio/server/host/host_client.ts';
-import { KEEPER_NEEDS, PROTOCOL as KEEPER_PROTOCOL } from '../outputs/agent-studio/server/keeper/client.ts';
+import { APP_VERSION } from '../app/server/core/app.ts';
+import { PROTOCOL_VERSION } from '../app/server/host/host_client.ts';
+import { KEEPER_NEEDS, PROTOCOL as KEEPER_PROTOCOL } from '../app/server/keeper/client.ts';
 import { addDebUpdater, addToAppImage, addToDeb, fixAppImage, fixDeb } from './linux_package.ts';
-import { compare, FEED_ENV, feedDir, isTestBuild, parseVersion } from '../outputs/agent-studio/server/desktop/updater.ts';
+import { compare, FEED_ENV, feedDir, isTestBuild, parseVersion } from '../app/server/desktop/updater.ts';
 
 export const SIZE_LIMIT = 160 * 1024 * 1024;
 export const APP_NAME = 'AIB';
@@ -307,7 +307,7 @@ export function makeIcns(pngs: [type: string, data: Uint8Array][]): Uint8Array {
 // ---- staging and building ------------------------------------------------------------------------------------------------
 const HERE = decodeURIComponent(new URL('.', import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1').replace(/\/$/, '');
 export const REPO = HERE.replace(/\/tools$/, '');
-export const APP_DIR = `${REPO}/outputs/agent-studio`;
+export const APP_DIR = `${REPO}/app`;
 export const ICONS = `${APP_DIR}/icons`; // the app icon in every size the packages need
 
 // ---- the keeper (keeper/, Go): built for each target and placed next to the app's program ---------------------------------
@@ -495,13 +495,13 @@ export async function buildWslBinaries(t: Target, outDir: string): Promise<{ kee
 }
 
 /**
- * The top-level names of outputs/agent-studio that go into the app: code, page files, vendored page libraries (vendor/: xterm.js and
+ * The top-level names of app that go into the app: code, page files (page/), vendored page libraries (vendor/: xterm.js and
  * its licenses), the agent allow-list and its lockfiles, the phone page's service worker (pwa/) and the app icons the phone page's
  * manifest names (icons/, served on the phone port only).
  */
 export function stagedName(name: string, isDir: boolean): boolean {
-  if (isDir) return ['server', 'agent_locks', 'vendor', 'pwa', 'icons'].includes(name);
-  return /\.(js|css|html)$/.test(name) || name === 'agent_versions.json';
+  if (isDir) return ['server', 'page', 'agent_locks', 'vendor', 'pwa', 'icons'].includes(name);
+  return name === 'agent_versions.json';
 }
 
 /** Files that live in the source tree for development and tests only; no build ships them (paths relative to the app folder). */

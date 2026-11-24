@@ -8,8 +8,8 @@
  */
 import { createHash } from 'node:crypto';
 import { assert, assertEquals } from './_assert.ts';
-import { findDistro } from '../../outputs/agent-studio/server/wsl/detect.ts';
-import { dataDirName, HELPER_FILE, installWsl, KEEPER_FILE, runWsl, versionOf } from '../../outputs/agent-studio/server/wsl/install.ts';
+import { findDistro } from '../../app/server/wsl/detect.ts';
+import { dataDirName, HELPER_FILE, installWsl, KEEPER_FILE, runWsl, versionOf } from '../../app/server/wsl/install.ts';
 
 const WANTED = Deno.env.get('AIB_WSL_E2E') ?? '';
 const DISTRO = WANTED ? findDistro(WANTED)?.name ?? '' : '';

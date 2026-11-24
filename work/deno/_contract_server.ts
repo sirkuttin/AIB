@@ -9,7 +9,7 @@ import { PAGE_KEY } from './_page_key.ts';
 import { waitListenedPort } from './_ports.ts';
 
 export const WORK = new URL('../', import.meta.url);
-export const APP = new URL('../outputs/agent-studio/', WORK);
+export const APP = new URL('../app/', WORK);
 const native = (url: URL) => decodeURIComponent(url.pathname).replace(/^\/([A-Za-z]:)/, '$1');
 export const APP_DIR = native(APP).replace(/\/$/, '');
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));

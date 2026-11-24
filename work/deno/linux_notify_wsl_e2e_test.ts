@@ -15,17 +15,17 @@
  *  - the next AIB's helper SIGTERMs a lingering one, which closes its notifications and leaves the pid file to the new one.
  */
 import { assert, assertEquals } from './_assert.ts';
-import type { InboxRow } from '../../outputs/agent-studio/server/attention/inbox_rules.ts';
-import { INBOX } from '../../outputs/agent-studio/server/attention/inbox_rules.ts';
-import type { NotifyTarget, OsNotify } from '../../outputs/agent-studio/server/desktop/notify.ts';
+import type { InboxRow } from '../../app/server/attention/inbox_rules.ts';
+import { INBOX } from '../../app/server/attention/inbox_rules.ts';
+import type { NotifyTarget, OsNotify } from '../../app/server/desktop/notify.ts';
 import {
   keeperToastSpawner,
   type SpawnToastHelper,
   ToastCodes,
   type WindowsToasts,
-} from '../../outputs/agent-studio/server/desktop/toast.ts';
-import { takePending, type ToastActDeps } from '../../outputs/agent-studio/server/desktop/toast_act.ts';
-import { applyLinuxClick, DESKTOP_ENTRY, linuxRoute } from '../../outputs/agent-studio/server/desktop/toast_linux.ts';
+} from '../../app/server/desktop/toast.ts';
+import { takePending, type ToastActDeps } from '../../app/server/desktop/toast_act.ts';
+import { applyLinuxClick, DESKTOP_ENTRY, linuxRoute } from '../../app/server/desktop/toast_linux.ts';
 
 const DISTRO = 'Ubuntu';
 const OPTS = { sanitizeResources: false, sanitizeOps: false };

@@ -5,7 +5,7 @@
  * The HTTP API is the Python server's (retired 2026-11-23); work/deno/contract_*_test.ts check it over HTTP.
  */
 import { type Backend, KeepAwake, realBackend } from '../platform/keep_awake.ts';
-import { ABOUT_LINE, APP_ROOT, APP_VERSION, VERSION_LABEL } from '../core/app.ts';
+import { ABOUT_LINE, APP_ROOT, APP_VERSION, servedFile, VERSION_LABEL } from '../core/app.ts';
 import type { LiveBackend } from '../host/backend.ts';
 import { HostUnavailable } from '../host/host_client.ts';
 import { keeperProblem } from '../keeper/link.ts';
@@ -19,7 +19,7 @@ import { keptLinesIn } from '../history/lines.ts';
 import { stoppedWhyIn } from '../swarm/registry.ts';
 import { reapedWhyIn } from '../subagents/reap.ts';
 import { liveRoutes } from './live_routes.ts';
-import { chatStudioOf, makeLauncher, ownGatePost, savedFolders, type StudioHandler, studioOf, studioRoutes } from './studio_routes.ts';
+import { chatStudioOf, makeLauncher, ownGatePost, savedFolders, type AibHandler, studioOf, aibRoutes } from './aib_routes.ts';
 import { type AgentOptions, notices } from './shared.ts';
 import { check as checkArtifactKey } from '../artifacts/keys.ts';
 import { Artifacts } from './artifact_wiring.ts';
@@ -80,8 +80,8 @@ const EXCALIDRAW_ASSET = /^\/vendor\/excalidraw\/((?:chunks\/|assets\/|fonts\/[A
 /** The drawing editor page and its boot script: served with their own CSP (security.ts drawingHeaders). */
 const DRAWING_PAGE: Record<string, string> = { '/doc-drawing.html': 'drawing.html', '/doc-drawing-boot.js': 'drawing-boot.js' };
 
-/** web_handler.studio_asset: map a request path to a Studio page file name, or null if Studio does not serve it. */
-export function studioAsset(path: string): string | null {
+/** Map a request path to a served file name (a page file of app/page/ at the top level, or vendor/...), or null when AIB does not serve it. Read it with servedFile(). */
+export function pageAsset(path: string): string | null {
   if (path === '/' || path === '/chat.html') return 'chat.html';
   if (path === '/doc.html') return 'doc.html'; // the local docs' editor page (a test page until the UI lands)
   const excalidraw = path.match(EXCALIDRAW_ASSET);
@@ -107,7 +107,7 @@ export function studioAsset(path: string): string | null {
   const match = path.match(ASSET_NAME);
   if (!match) return null;
   try {
-    return Deno.statSync(APP_ROOT + sep + match[1]).isFile ? match[1] : null;
+    return Deno.statSync(servedFile(match[1])).isFile ? match[1] : null;
   } catch {
     return null;
   }
@@ -416,9 +416,9 @@ export class WebServer {
         return this.json(status, payload);
       });
     }
-    for (const [key, handler] of studioRoutes()) {
+    for (const [key, handler] of aibRoutes()) {
       this.native.set(key, async (c, url, body, request, principal) => {
-        const [status, payload] = await (handler as StudioHandler)(c, url, body, request, principal);
+        const [status, payload] = await (handler as AibHandler)(c, url, body, request, principal);
         return this.json(status, payload);
       });
     }
@@ -627,7 +627,7 @@ export class WebServer {
             headers: { 'Content-Type': contentType(drawing), ...drawingHeaders(this.artifactOrigin) },
           });
         }
-        const asset = studioAsset(path);
+        const asset = pageAsset(path);
         if (asset === 'chat.html') {
           // N1: with another app window open, the page seeds only the keys its (shared) localStorage lacks: the other window's
           // newer value may still be on its way to the server. ?w= missing or bad counts as the main window (K0, S6).
@@ -640,13 +640,13 @@ export class WebServer {
             ? this.ctx.desktopWindows.othersAlive(self)
             : this.ctx.presence.windows().some((v) => WINDOW_ID.test(v.w) && v.w !== self);
           const page = withViewPrefs(
-            await Deno.readTextFile(APP_ROOT + sep + asset),
+            await Deno.readTextFile(servedFile(asset)),
             this.ctx.viewPrefs.public().prefs,
             others ? 'missing-only' : undefined,
           );
           return this.bytes(200, new TextEncoder().encode(page), contentType(asset));
         }
-        if (asset) return this.bytes(200, await Deno.readFile(APP_ROOT + sep + asset), contentType(asset));
+        if (asset) return this.bytes(200, await Deno.readFile(servedFile(asset)), contentType(asset));
         if (routeKind('GET', path) === 'monitor') return await this.#monitor(path, url);
         return this.json(404, { error: 'Not found' });
       }

@@ -14,14 +14,14 @@ import { assert, assertEquals } from './_assert.ts';
 import { FAKE, pause, PYTHON, until } from './_connection.ts';
 import { commit, makeRepo, runGit } from './_worktree_fixtures.ts';
 import * as fx from './_monitor_fixtures.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { Registry, stoppedWhyIn } from '../../outputs/agent-studio/server/swarm/registry.ts';
-import { END_IDLE_MS, Swarm } from '../../outputs/agent-studio/server/swarm/service.ts';
-import { setSwarmEnabled } from '../../outputs/agent-studio/server/swarm/settings.ts';
-import { pathOf } from '../../outputs/agent-studio/server/state/paths.ts';
-import { processList } from '../../outputs/agent-studio/server/platform/process_info.ts';
-import * as m from '../../outputs/agent-studio/server/transcripts/monitor.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { Registry, stoppedWhyIn } from '../../app/server/swarm/registry.ts';
+import { END_IDLE_MS, Swarm } from '../../app/server/swarm/service.ts';
+import { setSwarmEnabled } from '../../app/server/swarm/settings.ts';
+import { pathOf } from '../../app/server/state/paths.ts';
+import { processList } from '../../app/server/platform/process_info.ts';
+import * as m from '../../app/server/transcripts/monitor.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -69,7 +69,7 @@ class Box {
   readonly project = makeRepo(pathOf(this.dir, 'proj'));
   readonly childFile = pathOf(this.dir, 'child.pid');
   readonly gate = pathOf(this.dir, 'bg.gate');
-  readonly studio: Studio;
+  readonly studio: Aib;
   swarm: Swarm;
   /** What the poll's list says about the take-over at start (a restart test turns it on). */
   takingOver = false;
@@ -78,7 +78,7 @@ class Box {
     setSwarmEnabled(this.state, true);
     runGit(this.project, 'config', 'user.name', 't');
     runGit(this.project, 'config', 'user.email', 't@t');
-    const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0 }, { keeper: null });
+    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0 }, { keeper: null });
     studio.ownerProbe = () => null;
     studio.agentLaunch = () => Promise.resolve([['unused'], {}]);
     studio.connectionFactory = (_command, cwd, provider, options) =>

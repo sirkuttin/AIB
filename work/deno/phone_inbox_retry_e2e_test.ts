@@ -11,7 +11,7 @@ import { Browser, browserPath } from './_doc_browser.ts';
 import { pairPhone, pc } from './_remote_fixture.ts';
 import { liveChat, phoneCall, v2Studio } from './_remote_v2b.ts';
 import { phonePage, tap } from './_remote_phone_page.ts';
-import { lastUserText } from '../../outputs/agent-studio/server/attention/inbox_act.ts';
+import { lastUserText } from '../../app/server/attention/inbox_act.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
 type Json = Record<string, unknown>;

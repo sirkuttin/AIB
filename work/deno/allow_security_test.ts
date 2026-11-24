@@ -5,10 +5,10 @@
 import { assert, assertEquals } from './_assert.ts';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
-import { type AllowRule, type Builtins, match, type MatchContext, ruleFor } from '../../outputs/agent-studio/server/allow/matcher.ts';
-import { parseBash } from '../../outputs/agent-studio/server/allow/shell.ts';
-import { AllowStore } from '../../outputs/agent-studio/server/allow/store.ts';
-import { claudeFacts } from '../../outputs/agent-studio/server/allow/agent_config.ts';
+import { type AllowRule, type Builtins, match, type MatchContext, ruleFor } from '../../app/server/allow/matcher.ts';
+import { parseBash } from '../../app/server/allow/shell.ts';
+import { AllowStore } from '../../app/server/allow/store.ts';
+import { claudeFacts } from '../../app/server/allow/agent_config.ts';
 
 const ALL: Builtins = { safeReads: true, syntax: true, scratch: true };
 const WINDOWS = Deno.build.os === 'windows';

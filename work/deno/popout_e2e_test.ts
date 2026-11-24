@@ -17,14 +17,14 @@
  *  - Routed opens from the desktop app (K3 route, K6): {type:'project'} switches the main window to it, {type:'doc'} opens the
  *    doc there; a project window says 'no' to another project.
  *
- * Run (from outputs/agent-studio): deno test -A ../../work/deno/popout_e2e_test.ts
+ * Run (from app): deno test -A ../../work/deno/popout_e2e_test.ts
  */
 import { assert, assertEquals } from './_assert.ts';
 import { Browser, browserPath, type Page } from './_doc_browser.ts';
 import { remoteStudio } from './_remote_fixture.ts';
 import { FakeDesktopWindows } from './_fake_desktop_windows.ts';
-import { projectKey } from '../../outputs/agent-studio/server/desktop/project_delete.ts';
-import { windowPath } from '../../outputs/agent-studio/server/desktop/windows_contract.ts';
+import { projectKey } from '../../app/server/desktop/project_delete.ts';
+import { windowPath } from '../../app/server/desktop/windows_contract.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
 type Json = Record<string, unknown>;

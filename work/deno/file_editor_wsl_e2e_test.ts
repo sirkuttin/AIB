@@ -13,8 +13,8 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { cleanRoot, inDistro, KEY, prepareRoot, readyHost, ROOT, T, WSL_E2E } from './_wsl_e2e.ts';
-import { LiveFiles } from '../../outputs/agent-studio/server/files/live_files.ts';
-import { refOf } from '../../outputs/agent-studio/server/platform/location.ts';
+import { LiveFiles } from '../../app/server/files/live_files.ts';
+import { refOf } from '../../app/server/platform/location.ts';
 
 const FAST = { pollMs: 200, tickMs: 100, settleMs: 60, storeMs: 50, closeGraceMs: 300, saveWaitMs: 1500 };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

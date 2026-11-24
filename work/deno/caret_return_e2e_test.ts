@@ -7,7 +7,7 @@
  * Headless Chrome has no other app to switch to, so the window's blur and focus are dispatched on the page, and the focus is
  * dropped to the page in between (what the desktop window does on Alt+Tab / the taskbar).
  *
- * Run (from outputs/agent-studio): deno test -A ../../work/deno/caret_return_e2e_test.ts   (ignored without Chrome or Edge)
+ * Run (from app): deno test -A ../../work/deno/caret_return_e2e_test.ts   (ignored without Chrome or Edge)
  */
 import { assert } from './_assert.ts';
 import { browserPath, Lab, settle, shown } from './_scroll_lab.ts';

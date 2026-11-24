@@ -26,13 +26,13 @@ import {
   tryGit,
   write,
 } from './_worktree_fixtures.ts';
-import * as wt from '../../outputs/agent-studio/server/worktrees/worktrees.ts';
-import * as localOnly from '../../outputs/agent-studio/server/worktrees/local_only.ts';
-import * as sharedLinkMod from '../../outputs/agent-studio/server/worktrees/shared_link.ts';
-import { ignoredFiles } from '../../outputs/agent-studio/server/swarm/service.ts';
-import { envFiles } from '../../outputs/agent-studio/server/worktrees/sync.ts';
-import { pathOf } from '../../outputs/agent-studio/server/state/paths.ts';
-import { dirname } from '../../outputs/agent-studio/server/platform/ospath.ts';
+import * as wt from '../../app/server/worktrees/worktrees.ts';
+import * as localOnly from '../../app/server/worktrees/local_only.ts';
+import * as sharedLinkMod from '../../app/server/worktrees/shared_link.ts';
+import { ignoredFiles } from '../../app/server/swarm/service.ts';
+import { envFiles } from '../../app/server/worktrees/sync.ts';
+import { pathOf } from '../../app/server/state/paths.ts';
+import { dirname } from '../../app/server/platform/ospath.ts';
 
 const WIN = Deno.build.os === 'windows';
 

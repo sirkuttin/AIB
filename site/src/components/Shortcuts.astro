@@ -1,12 +1,12 @@
 ---
-// The keyboard shortcut sheet, read at build time from the app's own registry (outputs/agent-studio/commands-registry.js), the
+// The keyboard shortcut sheet, read at build time from the app's own registry (app/page/commands-registry.js), the
 // same list AIB shows under Keyboard shortcuts. A key changed in the app changes here on the next build.
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const registryPath = path.resolve(process.cwd(), '..', 'outputs', 'agent-studio', 'commands-registry.js');
+const registryPath = path.resolve(process.cwd(), '..', 'app', 'page', 'commands-registry.js');
 const require = createRequire(path.join(here, 'x.js'));
 const registry = require(registryPath) as {
   sheetModel: (ctx: Record<string, unknown>) => { name: string; rows: { keys: string; label: string }[] }[];

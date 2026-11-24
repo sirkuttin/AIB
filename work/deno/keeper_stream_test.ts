@@ -15,9 +15,9 @@ import {
   pipeStream,
   readBridgePreamble,
   readKeeperInfo,
-} from '../../outputs/agent-studio/server/keeper/client.ts';
-import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
-import { BRIDGE_MAGIC } from '../../outputs/agent-studio/server/wsl/contract.ts';
+} from '../../app/server/keeper/client.ts';
+import { pidAlive } from '../../app/server/host/host_client.ts';
+import { BRIDGE_MAGIC } from '../../app/server/wsl/contract.ts';
 
 const T = { sanitizeResources: false, sanitizeOps: false };
 const ENC = new TextEncoder();

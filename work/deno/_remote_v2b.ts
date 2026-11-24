@@ -4,11 +4,11 @@
  * same text is a duplicate (accepted, nothing sent again), the same id with other text is refused; a prompt it takes adds the
  * user event (with its clientMessageId) to the chat. */
 import { assertEquals } from './_assert.ts';
-import { projectKey } from '../../outputs/agent-studio/server/desktop/project_delete.ts';
-import { projectId } from '../../outputs/agent-studio/server/remote/projects.ts';
-import { DEVICE_HEADER } from '../../outputs/agent-studio/server/remote/server.ts';
-import { setAgentRows } from '../../outputs/agent-studio/server/remote/newchat.ts';
-import { readRemotePort } from '../../outputs/agent-studio/server/remote/port.ts';
+import { projectKey } from '../../app/server/desktop/project_delete.ts';
+import { projectId } from '../../app/server/remote/projects.ts';
+import { DEVICE_HEADER } from '../../app/server/remote/server.ts';
+import { setAgentRows } from '../../app/server/remote/newchat.ts';
+import { readRemotePort } from '../../app/server/remote/port.ts';
 import { type FakeChat, fakeTailscale, pc, phoneHeaders, raw, type RemoteStudio, remoteStudio, serveStatus } from './_remote_fixture.ts';
 
 type Json = Record<string, unknown>;

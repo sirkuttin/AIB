@@ -8,10 +8,10 @@
 import { assert, assertEquals, assertRejects } from './_assert.ts';
 import { commit, read, runGit, Sandbox, write } from './_worktree_fixtures.ts';
 import { chat, type Ctx, main, record, show } from './_merge_fixtures.ts';
-import * as wt from '../../outputs/agent-studio/server/worktrees/worktrees.ts';
-import * as m from '../../outputs/agent-studio/server/worktrees/merge.ts';
-import { pathOf } from '../../outputs/agent-studio/server/state/paths.ts';
-import { LiveSync } from '../../outputs/agent-studio/server/worktrees/sync.ts';
+import * as wt from '../../app/server/worktrees/worktrees.ts';
+import * as m from '../../app/server/worktrees/merge.ts';
+import { pathOf } from '../../app/server/state/paths.ts';
+import { LiveSync } from '../../app/server/worktrees/sync.ts';
 
 async function toolRefused(ctx: Ctx, code: string): Promise<m.Refused> {
   const error = await assertRejects(() => m.mergeFromTool(ctx.studio, ctx.id), m.Refused) as m.Refused;

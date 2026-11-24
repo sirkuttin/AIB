@@ -15,9 +15,9 @@ import {
   pidAlive,
   PROTOCOL_VERSION,
   readInfo,
-} from '../../outputs/agent-studio/server/host/host_client.ts';
-import { attachHost } from '../../outputs/agent-studio/server/host/host_proxy.ts';
-import { codeWarning, DENO_SOURCE_HASH } from '../../outputs/agent-studio/server/host/host_client.ts';
+} from '../../app/server/host/host_client.ts';
+import { attachHost } from '../../app/server/host/host_proxy.ts';
+import { codeWarning, DENO_SOURCE_HASH } from '../../app/server/host/host_client.ts';
 import { WORK } from './_work.ts';
 
 const WORK_DIR = decodeURIComponent(WORK.pathname).replace(/^\/([A-Za-z]:)/, '$1').replace(/\/$/, '');

@@ -8,7 +8,7 @@
  * never named the files is refused by the server.
  *
  * AIB_DOCPAGE_SHOTS=<folder> keeps screenshots (the reply with the links, the opened tab).
- * Run (from outputs/agent-studio): deno task test outside_links_e2e
+ * Run (from app): deno task test outside_links_e2e
  */
 import { assert, assertEquals } from "./_assert.ts";
 import { browserPath, Lab, settle, shown } from "./_scroll_lab.ts";

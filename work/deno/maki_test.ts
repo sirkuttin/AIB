@@ -5,8 +5,8 @@
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
 import { join, PY, tempDir, touch } from './_agents.ts';
-import { BETA_AGENTS, type BetaAgent, betaAgent } from '../../outputs/agent-studio/server/agents/beta_catalog.ts';
-import { resolveBeta, signinArgv } from '../../outputs/agent-studio/server/agents/beta_agents.ts';
+import { BETA_AGENTS, type BetaAgent, betaAgent } from '../../app/server/agents/beta_catalog.ts';
+import { resolveBeta, signinArgv } from '../../app/server/agents/beta_agents.ts';
 import {
   allowedDownload,
   downloadAsset,
@@ -19,11 +19,11 @@ import {
   ReleaseError,
   releaseUrl,
   sha256Hex,
-} from '../../outputs/agent-studio/server/agents/release_install.ts';
-import { Installer, InstallRefused } from '../../outputs/agent-studio/server/agents/installer.ts';
-import { installPlan } from '../../outputs/agent-studio/server/agents/beta_setup.ts';
-import { BetaSigner } from '../../outputs/agent-studio/server/agents/beta_signin.ts';
-import { BETA_IDS as ELIGIBLE_BETA } from '../../outputs/agent-studio/server/agents/eligibility.ts';
+} from '../../app/server/agents/release_install.ts';
+import { Installer, InstallRefused } from '../../app/server/agents/installer.ts';
+import { installPlan } from '../../app/server/agents/beta_setup.ts';
+import { BetaSigner } from '../../app/server/agents/beta_signin.ts';
+import { BETA_IDS as ELIGIBLE_BETA } from '../../app/server/agents/eligibility.ts';
 
 const WIN = Deno.build.os === 'windows';
 const sanitize = { sanitizeOps: false, sanitizeResources: false };

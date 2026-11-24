@@ -3,9 +3,9 @@
 These tests speak only HTTP (and files), so they do not care how the server is started.
 Which server: the AIB_SERVER environment variable.
 
-    AIB_SERVER=deno-split (default)  deno run -A outputs/agent-studio/server/main.ts serve ...   (Deno web server + Deno agent host;
+    AIB_SERVER=deno-split (default)  deno run -A app/server/main.ts serve ...   (Deno web server + Deno agent host;
                                      AIB_KEEPER=0 is set for it: the split host is the fallback when the keeper cannot run)
-    AIB_SERVER=deno                  deno run -A outputs/agent-studio/server/main.ts serve --in-process ...   (agents in the keeper,
+    AIB_SERVER=deno                  deno run -A app/server/main.ts serve --in-process ...   (agents in the keeper,
                                      always on; AIB_KEEPER=0 in the environment gives the plain in-process path)
     AIB_SERVER_CMD='["prog", "arg"]'  any other command (JSON list); the standard flags below are appended
 
@@ -32,7 +32,7 @@ import threading
 import time
 
 WORK = pathlib.Path(__file__).resolve().parent
-APP = WORK.parent / 'outputs' / 'agent-studio'
+APP = WORK.parent / 'app'
 READY = re.compile(r'AIB: http://127\.0\.0\.1:(\d+)')
 FORBIDDEN_PORTS = {8767, 8768}
 TOKEN_HEADER = 'X-Studio-Token'

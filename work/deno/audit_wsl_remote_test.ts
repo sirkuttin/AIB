@@ -12,12 +12,12 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { FakeWslHost } from './_wsl_fake.ts';
-import { projectKey } from '../../outputs/agent-studio/server/desktop/project_delete.ts';
-import { projectId } from '../../outputs/agent-studio/server/remote/projects.ts';
-import { setAgentRows } from '../../outputs/agent-studio/server/remote/newchat.ts';
-import { folderKey } from '../../outputs/agent-studio/server/state/agent_options.ts';
-import { permissionDetail } from '../../outputs/agent-studio/server/remote/actions.ts';
-import { setDistroSource, setWslHostResolver } from '../../outputs/agent-studio/server/wsl/access.ts';
+import { projectKey } from '../../app/server/desktop/project_delete.ts';
+import { projectId } from '../../app/server/remote/projects.ts';
+import { setAgentRows } from '../../app/server/remote/newchat.ts';
+import { folderKey } from '../../app/server/state/agent_options.ts';
+import { permissionDetail } from '../../app/server/remote/actions.ts';
+import { setDistroSource, setWslHostResolver } from '../../app/server/wsl/access.ts';
 import { pairPhone } from './_remote_fixture.ts';
 import { liveChat, phoneCall, v2Studio } from './_remote_v2b.ts';
 

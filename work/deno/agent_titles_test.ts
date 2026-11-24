@@ -1,6 +1,6 @@
 /** server/host/agent_titles.ts: a name given in AIB goes to the agent when the chat is idle, waits while a turn runs, newest wins. */
 import { assertEquals } from './_assert.ts';
-import { AgentTitles, type TitleChat } from '../../outputs/agent-studio/server/host/agent_titles.ts';
+import { AgentTitles, type TitleChat } from '../../app/server/host/agent_titles.ts';
 
 function setup() {
   const chat: TitleChat & {

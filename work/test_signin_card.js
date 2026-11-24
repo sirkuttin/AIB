@@ -1,7 +1,7 @@
 /* The chat's sign-in card (elicitation-ui.js signinCard): a mid-session "needs you to sign in again" card with one Sign in button,
    a choice only when there are several ways, the agent's words under Details; Sign in runs the terminal command (fake runner) and
    nothing before the click; exit 0 asks the server to retry; a failure says so and offers Try again. */
-const { APP: APP_DIR } = require('./_paths');
+const { PAGE: APP_DIR } = require('./_paths');
 const test = require('node:test');
 const path = require('node:path');
 const assert = require('node:assert/strict');

@@ -6,8 +6,8 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { join, tempDir, waitFor } from './_agents.ts';
-import { Signer } from '../../outputs/agent-studio/server/agents/signin.ts';
-import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
+import { Signer } from '../../app/server/agents/signin.ts';
+import { pidAlive } from '../../app/server/host/host_client.ts';
 
 const sanitize = { sanitizeOps: false, sanitizeResources: false };
 const SIGNED_IN = '{"loggedIn": true, "authMethod": "claude.ai"}';

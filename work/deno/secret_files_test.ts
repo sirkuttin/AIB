@@ -23,11 +23,11 @@ import {
   KeeperClient as Client,
   keyForForwarder,
   readKeeperInfo,
-} from '../../outputs/agent-studio/server/keeper/client.ts';
-import * as artifactKeys from '../../outputs/agent-studio/server/artifacts/keys.ts';
-import { FORWARD_FILE, forwardEntry } from '../../outputs/agent-studio/server/artifacts/mcp_http.ts';
-import { HOST_FORMAT, pidAlive, readInfo, writeInfo } from '../../outputs/agent-studio/server/host/host_client.ts';
-import { isSealedText, openText, SEALED_PREFIX, sealingOn, sealText } from '../../outputs/agent-studio/server/state/sealed.ts';
+} from '../../app/server/keeper/client.ts';
+import * as artifactKeys from '../../app/server/artifacts/keys.ts';
+import { FORWARD_FILE, forwardEntry } from '../../app/server/artifacts/mcp_http.ts';
+import { HOST_FORMAT, pidAlive, readInfo, writeInfo } from '../../app/server/host/host_client.ts';
+import { isSealedText, openText, SEALED_PREFIX, sealingOn, sealText } from '../../app/server/state/sealed.ts';
 
 const T = { sanitizeResources: false, sanitizeOps: false };
 const ENC = new TextEncoder();

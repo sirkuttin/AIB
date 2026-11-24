@@ -13,15 +13,15 @@
 import { assert, assertEquals } from './_assert.ts';
 import { until } from './_connection.ts';
 import { cleanRoot, inDistro, KEY, prepareRoot, readyHost, ROOT, STATE, T } from './_wsl_e2e.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { refOf } from '../../outputs/agent-studio/server/platform/location.ts';
-import { wslSavedSessions } from '../../outputs/agent-studio/server/wsl/transcripts.ts';
-import { wslHostsInUse } from '../../outputs/agent-studio/server/wsl/hosts.ts';
-import { changesResponse } from '../../outputs/agent-studio/server/worktrees/chat_folders.ts';
-import { studioRoutes } from '../../outputs/agent-studio/server/web/studio_routes.ts';
-import { encoded } from '../../outputs/agent-studio/server/transcripts/normalize.ts';
-import type { Report } from '../../outputs/agent-studio/server/wsl/helper/import.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { refOf } from '../../app/server/platform/location.ts';
+import { wslSavedSessions } from '../../app/server/wsl/transcripts.ts';
+import { wslHostsInUse } from '../../app/server/wsl/hosts.ts';
+import { changesResponse } from '../../app/server/worktrees/chat_folders.ts';
+import { aibRoutes } from '../../app/server/web/aib_routes.ts';
+import { encoded } from '../../app/server/transcripts/normalize.ts';
+import type { Report } from '../../app/server/wsl/helper/import.ts';
 
 type Json = Record<string, unknown>;
 const TOOL = new URL('../../tools/wsl-import.ts', import.meta.url);
@@ -57,8 +57,8 @@ async function tool(...args: string[]): Promise<{ code: number; report: Report |
   return { code: out.code, report, err: new TextDecoder().decode(out.stderr) + text.slice(0, 2000) };
 }
 
-function studioIn(state: string): Studio {
-  const studio = new Studio({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
+function studioIn(state: string): Aib {
+  const studio = new Aib({ stateDir: state, port: 0, ownersDir: null, noArtifactTool: true }, { keeper: null });
   studio.ownerProbe = () => null;
   studio.connectionFactory = (_command, cwd, provider, options) =>
     new Connection(['python3', `${ROOT}/fake_acp.py`, '--cancel-aware'], cwd, provider, {
@@ -68,7 +68,7 @@ function studioIn(state: string): Studio {
   return studio;
 }
 
-async function turn(studio: Studio, c: Connection, text: string): Promise<void> {
+async function turn(studio: Aib, c: Connection, text: string): Promise<void> {
   await studio.liveCall('prompt', { id: c.id, text, clientMessageId: crypto.randomUUID() });
   await until(() => !c.busy, `the turn "${text}"`, 60);
 }
@@ -98,7 +98,7 @@ Deno.test({
   async fn() {
     const state = STATE;
     await prepareRoot();
-    const studios: Studio[] = [];
+    const studios: Aib[] = [];
     try {
       await readyHost();
       const repo = `${ROOT}/repo`;
@@ -224,7 +224,7 @@ Deno.test({
       }, ['new.txt']]);
       await turn(a, c, 'commit:chat work');
       const ctx = { stateDir: a.stateDir, host: a, conversations: { public: () => ({ entries: {} }) } } as never;
-      const merge = studioRoutes().get('POST /api/live/worktree/merge')!;
+      const merge = aibRoutes().get('POST /api/live/worktree/merge')!;
       const [s1, merged] = await merge(
         ctx,
         new URL('http://127.0.0.1/api/live/worktree/merge'),

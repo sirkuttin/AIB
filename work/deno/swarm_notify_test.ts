@@ -4,9 +4,9 @@
  * that never got to run (failed to open) is announced once through the main chat. One notification per helper event.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { AttentionWatcher, type Fire } from '../../outputs/agent-studio/server/attention/watcher.ts';
-import { RULES } from '../../outputs/agent-studio/server/attention/rules.ts';
-import { Registry } from '../../outputs/agent-studio/server/swarm/registry.ts';
+import { AttentionWatcher, type Fire } from '../../app/server/attention/watcher.ts';
+import { RULES } from '../../app/server/attention/rules.ts';
+import { Registry } from '../../app/server/swarm/registry.ts';
 
 type Json = Record<string, unknown>;
 interface Chat {

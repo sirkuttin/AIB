@@ -4,7 +4,7 @@
    gone), the card's line 1 (the row's own words), its wait time, and its ONE action row (once-only options only; a stalled row:
    Continue / Reply / ×). The rows here come from inbox-rules.js rowsOf, the same builder the server runs. The pure parts of
    phone.js; the page itself runs in work/deno/remote_phone_inbox_e2e_test.ts and inbox_server_rows_e2e_test.ts. */
-const { APP } = require('./_paths');
+const { PAGE: APP } = require('./_paths');
 const test = require('node:test'),
   assert = require('node:assert/strict'),
   path = require('node:path');

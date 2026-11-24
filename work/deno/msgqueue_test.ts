@@ -14,8 +14,8 @@ import {
   MessageQueue,
   QueueStore,
   ValueError,
-} from '../../outputs/agent-studio/server/acp/msgqueue.ts';
-import { writeJsonAtomic } from '../../outputs/agent-studio/server/core/fs.ts';
+} from '../../app/server/acp/msgqueue.ts';
+import { writeJsonAtomic } from '../../app/server/core/fs.ts';
 
 class FakeClock {
   constructor(public now = 1000.0) {}

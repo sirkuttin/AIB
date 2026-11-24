@@ -5,13 +5,13 @@
  * their own ids and edit them with the same guards: the user typing in a callout, or in a cell, wins over an agent's stale call.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { DocRefusal, LiveDoc } from '../../outputs/agent-studio/server/docs/live_doc.ts';
-import { normalize, type PMJson, richOf, writeDoc } from '../../outputs/agent-studio/server/docs/markdown.ts';
-import { buildFromAib, contentOf, exportAib, IdMap, parseAib, stringifyAib, versionAib } from '../../outputs/agent-studio/server/docs/aibdoc.ts';
-import { ArtifactHistory } from '../../outputs/agent-studio/server/docs/history.ts';
-import { ArtifactStore } from '../../outputs/agent-studio/server/artifacts/artifacts.ts';
-import { DocStore, mdBody, RICH_NOTE } from '../../outputs/agent-studio/server/docs/store.ts';
-import { runDocTool } from '../../outputs/agent-studio/server/docs/tools.ts';
+import { DocRefusal, LiveDoc } from '../../app/server/docs/live_doc.ts';
+import { normalize, type PMJson, richOf, writeDoc } from '../../app/server/docs/markdown.ts';
+import { buildFromAib, contentOf, exportAib, IdMap, parseAib, stringifyAib, versionAib } from '../../app/server/docs/aibdoc.ts';
+import { ArtifactHistory } from '../../app/server/docs/history.ts';
+import { ArtifactStore } from '../../app/server/artifacts/artifacts.ts';
+import { DocStore, mdBody, RICH_NOTE } from '../../app/server/docs/store.ts';
+import { runDocTool } from '../../app/server/docs/tools.ts';
 import { UserClient } from './_docs.ts';
 
 type Json = Record<string, unknown>;
@@ -144,13 +144,13 @@ Deno.test('underline: doc.aibdoc keeps it, the page bundle has it (Ctrl+U), the 
   assertEquals(w.text, 'Ship only behind the **flag**\n');
   assertEquals(w.lossy, live.topIds());
   assert(richOf(content[0]));
-  await import(new URL('../../outputs/agent-studio/vendor/docs/editor.js', import.meta.url).href);
+  await import(new URL('../../app/vendor/docs/editor.js', import.meta.url).href);
   const page = (globalThis as unknown as { AIBDocEditor: { docJSON(u: Uint8Array): PMJson } }).AIBDocEditor;
   assertEquals(page.docJSON(live.encode()), { type: 'doc', content: contentOf(live, live.firstPage) });
 });
 
 Deno.test('the page bundle reads a rich doc exactly as the server has it', async () => {
-  await import(new URL('../../outputs/agent-studio/vendor/docs/editor.js', import.meta.url).href);
+  await import(new URL('../../app/vendor/docs/editor.js', import.meta.url).href);
   const page = (globalThis as unknown as { AIBDocEditor: { docJSON(u: Uint8Array): PMJson; encode(j: PMJson): Uint8Array } }).AIBDocEditor;
   const live = richDoc();
   const server = { type: 'doc', content: contentOf(live, live.firstPage) };

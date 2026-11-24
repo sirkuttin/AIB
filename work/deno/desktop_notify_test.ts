@@ -13,7 +13,7 @@ import {
   quietReason,
   QUNS,
   windowsNotify,
-} from "../../outputs/agent-studio/server/desktop/notify.ts";
+} from "../../app/server/desktop/notify.ts";
 import {
   balloonData,
   NIF_INFO,
@@ -26,22 +26,22 @@ import {
   TRAY_UID,
   trayEvent,
   trayMessageText,
-} from "../../outputs/agent-studio/server/desktop/tray_win.ts";
-import { pickMainWindow } from "../../outputs/agent-studio/server/desktop/foreground_win.ts";
+} from "../../app/server/desktop/tray_win.ts";
+import { pickMainWindow } from "../../app/server/desktop/foreground_win.ts";
 import {
   DesktopApp,
   openTargetScript,
   type Shell,
   type WindowHandle,
-} from "../../outputs/agent-studio/server/desktop/window.ts";
+} from "../../app/server/desktop/window.ts";
 import {
   makeContext,
   WebServer,
-} from "../../outputs/agent-studio/server/web/server.ts";
-import { ValueError } from "../../outputs/agent-studio/server/core/py.ts";
-import type { LiveBackend } from "../../outputs/agent-studio/server/host/backend.ts";
-import type { UpdateService } from "../../outputs/agent-studio/server/desktop/updater.ts";
-import type { Source } from "../../outputs/agent-studio/server/transcripts/monitor.ts";
+} from "../../app/server/web/server.ts";
+import { ValueError } from "../../app/server/core/py.ts";
+import type { LiveBackend } from "../../app/server/host/backend.ts";
+import type { UpdateService } from "../../app/server/desktop/updater.ts";
+import type { Source } from "../../app/server/transcripts/monitor.ts";
 
 Deno.test("notify request: cut, cleaned, target checked", () => {
   const r = cleanNotifyRequest({

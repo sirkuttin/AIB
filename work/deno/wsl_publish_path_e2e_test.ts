@@ -14,12 +14,12 @@
 import { deflateSync } from 'node:zlib';
 import { assert, assertEquals } from './_assert.ts';
 import { cleanRoot, inDistro, KEY, prepareRoot, readyHost, ROOT, T, WSL_E2E } from './_wsl_e2e.ts';
-import { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { refOf } from '../../outputs/agent-studio/server/platform/location.ts';
-import { ArtifactStore, Service } from '../../outputs/agent-studio/server/artifacts/artifacts.ts';
-import { attachWslFile } from '../../outputs/agent-studio/server/web/studio_routes.ts';
-import type { WebContext } from '../../outputs/agent-studio/server/web/server.ts';
+import { Connection } from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { refOf } from '../../app/server/platform/location.ts';
+import { ArtifactStore, Service } from '../../app/server/artifacts/artifacts.ts';
+import { attachWslFile } from '../../app/server/web/aib_routes.ts';
+import type { WebContext } from '../../app/server/web/server.ts';
 
 type Json = Record<string, unknown>;
 type Entry = { command: string; args: string[]; env: { name: string; value: string }[] };
@@ -27,8 +27,8 @@ type Entry = { command: string; args: string[]; env: { name: string; value: stri
 const PROJECT = `${ROOT}/repo`;
 const REF = WSL_E2E ? refOf({ kind: 'wsl', distro: KEY, linuxPath: PROJECT }) : '';
 
-function studioIn(state: string): Studio {
-  const studio = new Studio({ stateDir: state, port: 0, ownersDir: null }, { keeper: null });
+function studioIn(state: string): Aib {
+  const studio = new Aib({ stateDir: state, port: 0, ownersDir: null }, { keeper: null });
   studio.ownerProbe = () => null;
   studio.connectionFactory = (_command, cwd, provider, options) =>
     new Connection(['python3', `${ROOT}/fake_acp.py`, '--cancel-aware'], cwd, provider, {
@@ -122,8 +122,8 @@ Deno.test({
     await prepareRoot();
     const store = new ArtifactStore(`${state}\\artifacts`);
     const service = new Service(store, () => 't', () => null, { rootFor: () => REF });
-    const studios: Studio[] = [];
-    let studio: Studio | null = null;
+    const studios: Aib[] = [];
+    let studio: Aib | null = null;
     const seen: Json[] = [];
     // AIB's /api/live/artifacts/publish for this test: the route's WSL step and the real Service (key checks are tested elsewhere)
     const server = Deno.serve({ hostname: '127.0.0.1', port: 0, onListen() {} }, async (request) => {

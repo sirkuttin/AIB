@@ -20,9 +20,9 @@ import {
   TERMINAL_METHODS,
   type Terminal,
   trimToLimit,
-} from '../../outputs/agent-studio/server/acp/client_caps.ts';
-import { basename, exists, join, normcase, realpath } from '../../outputs/agent-studio/server/platform/ospath.ts';
-import { processAlive } from '../../outputs/agent-studio/server/platform/process_info.ts';
+} from '../../app/server/acp/client_caps.ts';
+import { basename, exists, join, normcase, realpath } from '../../app/server/platform/ospath.ts';
+import { processAlive } from '../../app/server/platform/process_info.ts';
 
 const WINDOWS = Deno.build.os === 'windows';
 const PY = (() => {

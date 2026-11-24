@@ -4,7 +4,7 @@
 const test = require('node:test'),
   assert = require('node:assert/strict'),
   path = require('node:path');
-const { APP } = require('./_paths.js');
+const { PAGE: APP } = require('./_paths.js');
 const M = require(path.join(APP, 'store-merge.js'));
 
 function fakeStorage() {

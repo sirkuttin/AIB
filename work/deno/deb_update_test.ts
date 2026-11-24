@@ -22,8 +22,8 @@ import {
   UpdateError,
   UpdateService,
   type UpdateServiceOptions,
-} from '../../outputs/agent-studio/server/desktop/updater.ts';
-import { remoteInstall, remoteUpdate } from '../../outputs/agent-studio/server/remote/update.ts';
+} from '../../app/server/desktop/updater.ts';
+import { remoteInstall, remoteUpdate } from '../../app/server/remote/update.ts';
 import {
   DEB_EXE,
   dpkgOwns,
@@ -32,7 +32,7 @@ import {
   removeUpdateLeftovers,
   run as runHelper,
   type StartResult,
-} from '../../outputs/agent-studio/server/desktop/update_helper.ts';
+} from '../../app/server/desktop/update_helper.ts';
 import {
   addDebUpdater,
   DEB_INSTALLER_PATH,
@@ -154,7 +154,7 @@ Deno.test('pkexec: only by its absolute system path (/usr/bin/pkexec, then /bin/
     Deno.removeSync(dir, { recursive: true });
   }
   // the source: Deno.Command gets the found absolute path, never the bare name 'pkexec'
-  const src = Deno.readTextFileSync(new URL('../../outputs/agent-studio/server/desktop/updater.ts', import.meta.url));
+  const src = Deno.readTextFileSync(new URL('../../app/server/desktop/updater.ts', import.meta.url));
   assert(!/new Deno\.Command\(\s*['"]pkexec['"]/.test(src), 'no Deno.Command("pkexec")');
 });
 

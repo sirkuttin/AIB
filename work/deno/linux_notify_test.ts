@@ -10,17 +10,17 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { liveChat, v2Studio } from './_remote_v2b.ts';
-import type { InboxRow } from '../../outputs/agent-studio/server/attention/inbox_rules.ts';
-import { answersOf } from '../../outputs/agent-studio/server/attention/answers.ts';
-import { DesktopNotifications, type NotifyTarget, type OsNotify } from '../../outputs/agent-studio/server/desktop/notify.ts';
+import type { InboxRow } from '../../app/server/attention/inbox_rules.ts';
+import { answersOf } from '../../app/server/attention/answers.ts';
+import { DesktopNotifications, type NotifyTarget, type OsNotify } from '../../app/server/desktop/notify.ts';
 import {
   type SpawnToastHelper,
   type ToastClick,
   ToastCodes,
   toastSpec,
   toastTag,
-} from '../../outputs/agent-studio/server/desktop/toast.ts';
-import { type ToastActDeps } from '../../outputs/agent-studio/server/desktop/toast_act.ts';
+} from '../../app/server/desktop/toast.ts';
+import { type ToastActDeps } from '../../app/server/desktop/toast_act.ts';
 import {
   applyLinuxClick,
   DESKTOP_ENTRY,
@@ -28,7 +28,7 @@ import {
   LINUX_ANSWER_NAME,
   linuxRoute,
   startLinuxToasts,
-} from '../../outputs/agent-studio/server/desktop/toast_linux.ts';
+} from '../../app/server/desktop/toast_linux.ts';
 
 type Json = Record<string, unknown>;
 const OPTS = { sanitizeResources: false, sanitizeOps: false };

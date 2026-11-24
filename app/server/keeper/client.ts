@@ -727,7 +727,7 @@ function exists(path: string): boolean {
 
 /** The repository's keeper/ folder (a source run), or null. */
 export function keeperSourceDir(): string | null {
-  const dir = `${APP_ROOT}${SEP}..${SEP}..${SEP}keeper`;
+  const dir = `${APP_ROOT}${SEP}..${SEP}keeper`;
   return exists(`${dir}${SEP}go.mod`) ? dir : null;
 }
 

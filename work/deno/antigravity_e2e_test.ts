@@ -13,14 +13,14 @@
  * skips (passes with a note) when Google's download cannot be reached. Downloads about 235 MB (Windows), so it is in the SLOW list.
  */
 import { assert, assertEquals } from "./_assert.ts";
-import { Studio } from "../../outputs/agent-studio/server/host/studio.ts";
-import { pathOf } from "../../outputs/agent-studio/server/state/paths.ts";
-import { releaseAsset } from "../../outputs/agent-studio/server/agents/release_install.ts";
-import { betaAgent } from "../../outputs/agent-studio/server/agents/beta_catalog.ts";
+import { Aib } from "../../app/server/host/aib.ts";
+import { pathOf } from "../../app/server/state/paths.ts";
+import { releaseAsset } from "../../app/server/agents/release_install.ts";
+import { betaAgent } from "../../app/server/agents/beta_catalog.ts";
 import {
   keyHomeDir,
   resolveBeta,
-} from "../../outputs/agent-studio/server/agents/beta_agents.ts";
+} from "../../app/server/agents/beta_agents.ts";
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -139,7 +139,7 @@ Deno.test({
     const project = pathOf(root, "proj");
     Deno.mkdirSync(project);
     Deno.writeTextFileSync(pathOf(project, "README.md"), "a test project\n");
-    const studio = new Studio({
+    const studio = new Aib({
             stateDir: state,
       port: 0,
       ownersDir: null,

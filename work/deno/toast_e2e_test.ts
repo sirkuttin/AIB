@@ -11,9 +11,9 @@
 import { assert, assertEquals } from './_assert.ts';
 import { pc } from './_remote_fixture.ts';
 import { liveChat, v2Studio } from './_remote_v2b.ts';
-import { DesktopNotifications, type NotifyTarget, type OsNotify } from '../../outputs/agent-studio/server/desktop/notify.ts';
-import { type SpawnToastHelper, toastTag } from '../../outputs/agent-studio/server/desktop/toast.ts';
-import { startWindowsToasts } from '../../outputs/agent-studio/server/desktop/toast_act.ts';
+import { DesktopNotifications, type NotifyTarget, type OsNotify } from '../../app/server/desktop/notify.ts';
+import { type SpawnToastHelper, toastTag } from '../../app/server/desktop/toast.ts';
+import { startWindowsToasts } from '../../app/server/desktop/toast_act.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
 type Json = Record<string, unknown>;

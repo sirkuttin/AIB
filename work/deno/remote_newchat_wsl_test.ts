@@ -5,10 +5,10 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { FakeWslHost } from './_wsl_fake.ts';
-import { agentsFor, newChatOptions, setAgentRows } from '../../outputs/agent-studio/server/remote/newchat.ts';
-import { SettingsStore } from '../../outputs/agent-studio/server/state/settings.ts';
-import { setWslHostResolver } from '../../outputs/agent-studio/server/wsl/access.ts';
-import type { WebContext } from '../../outputs/agent-studio/server/web/server.ts';
+import { agentsFor, newChatOptions, setAgentRows } from '../../app/server/remote/newchat.ts';
+import { SettingsStore } from '../../app/server/state/settings.ts';
+import { setWslHostResolver } from '../../app/server/wsl/access.ts';
+import type { WebContext } from '../../app/server/web/server.ts';
 
 type Json = Record<string, unknown>;
 const WIN = 'C:\\projects\\shop';

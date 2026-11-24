@@ -8,7 +8,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { APP } = require('./_paths');
+const { PAGE: APP } = require('./_paths');
 
 const WRITE = /\.scrollTop\s*(=(?!=)|\+=|-=)/;
 const OK = /not a managed list|old main-list scroll code/;

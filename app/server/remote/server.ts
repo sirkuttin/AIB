@@ -23,7 +23,7 @@
  * pictures and files as bytes (remote/actions.ts phoneAttachments: never a path, the PC composer's limits, what the agent takes).
  * Their bodies may be up to MAX_ATTACH_BODY, read only after the phone's key and its Send (or Start new chats) switch are checked.
  */
-import { APP_ROOT, APP_VERSION } from '../core/app.ts';
+import { APP_VERSION, servedFile } from '../core/app.ts';
 import { HostUnavailable } from '../host/host_client.ts';
 import { serve, type Server as HttpServer } from '../platform/http_serve.ts';
 import { agentTitle, type WebContext, withThemePref } from '../web/server.ts';
@@ -44,7 +44,7 @@ import { bindWithRetry } from './port.ts';
 import { agentsNow, folderOfProject, newChatOptions, NewChats, pickLists } from './newchat.ts';
 import { reasonWords } from '../agents/eligibility.ts';
 import { conversationAction, settingsView } from '../web/shared.ts';
-import { studioOf, swarmOf } from '../web/studio_routes.ts';
+import { studioOf, swarmOf } from '../web/aib_routes.ts';
 import { bringBack, restoreFolders } from '../web/project_routes.ts';
 import { isDeleted, isDocHistory } from '../artifacts/artifacts.ts';
 import { SAVED_KEY } from './saved.ts';
@@ -667,7 +667,7 @@ export class RemoteServer {
       // the computer page: chat.html (or doc.html) with no view preferences inside (remote/pc_page.ts pcShell); static files hold
       // no secrets, every API call still needs the device token
       const file = path === PC_PAGE ? 'chat.html' : 'doc.html';
-      const page = pcShell(await Deno.readTextFile(APP_ROOT + sep + file), path === PC_PAGE);
+      const page = pcShell(await Deno.readTextFile(servedFile(file)), path === PC_PAGE);
       return new Response(page, {
         status: 200,
         headers: { 'Content-Type': 'text/html; charset=utf-8', ...securityHeadersPc(this.host.artifactOrigin()) },
@@ -675,12 +675,12 @@ export class RemoteServer {
     }
     if (path === LOADER || Object.hasOwn(PC_STATIC, path)) {
       const file = path === LOADER ? 'remote-loader.html' : PC_STATIC[path];
-      const body = await Deno.readFile(APP_ROOT + sep + file);
+      const body = await Deno.readFile(servedFile(file));
       const headers = { 'Content-Type': contentType(file), ...securityHeadersPc(this.host.artifactOrigin()) };
       return new Response(body, { status: 200, headers });
     }
     const name = REMOTE_STATIC[path];
-    let body: Uint8Array<ArrayBuffer> = await Deno.readFile(APP_ROOT + sep + name);
+    let body: Uint8Array<ArrayBuffer> = await Deno.readFile(servedFile(name));
     const headers: Record<string, string> = { 'Content-Type': contentType(name), ...securityHeadersRemote(this.host.artifactOrigin()) };
     if (path === '/sw.js') {
       headers['Cache-Control'] = 'no-cache'; // the browser looks for a newer service worker on every page load

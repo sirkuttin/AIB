@@ -1,15 +1,15 @@
 /**
  * T26 (B11) and B15: the steer and tool-stop calls through the Studio (POST /api/live/steer, /api/live/tool-stop: flat like the
- * queue-* calls, in Studio.LIVE_POST_OPS and the web route table), and the history's "Sent while working" flag.
+ * queue-* calls, in Aib.LIVE_POST_OPS and the web route table), and the history's "Sent while working" flag.
  */
 import { assert, assertEquals } from './_assert.ts';
 import { until } from './_connection.ts';
 import { promptText, SteerLab } from './_steer.ts';
-import { AgentHost } from '../../outputs/agent-studio/server/host/agent_host.ts';
-import { LIVE_POST_OPS } from '../../outputs/agent-studio/server/host/studio.ts';
-import { LIVE_POST_OPS as WEB_OPS } from '../../outputs/agent-studio/server/web/live_routes.ts';
-import { ROUTE_LIST } from '../../outputs/agent-studio/server/web/routes.ts';
-import { normalize } from '../../outputs/agent-studio/server/transcripts/normalize.ts';
+import { AgentHost } from '../../app/server/host/agent_host.ts';
+import { LIVE_POST_OPS } from '../../app/server/host/aib.ts';
+import { LIVE_POST_OPS as WEB_OPS } from '../../app/server/web/live_routes.ts';
+import { ROUTE_LIST } from '../../app/server/web/routes.ts';
+import { normalize } from '../../app/server/transcripts/normalize.ts';
 
 type Json = Record<string, unknown>;
 

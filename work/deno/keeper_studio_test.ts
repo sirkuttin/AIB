@@ -1,15 +1,15 @@
 /**
  * Studio with agents in the keeper (always on), in one process: a chat runs through the keeper; a Studio that
- * "crashes" (drops its keeper connection without touching the agent) is replaced by a new Studio that rebuilds the chat from the
+ * "crashes" (drops its keeper connection without touching the agent) is replaced by a new Aib that rebuilds the chat from the
  * keeper's record at several points of a turn (streaming, a question waiting, after the answer, idle) and goes on live; the keeper
  * dying ends the agent and the chat comes back "Interrupted" without anything sent twice. Real keeper (built from keeper/ with
  * Go), fake ACP agent (work/fake_acp.py), temp state folders.
  */
 import { assert, assertEquals } from './_assert.ts';
 import { fake, pause, until } from './_connection.ts';
-import { Connection, KEEPER_LOST } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { KeeperLink } from '../../outputs/agent-studio/server/keeper/link.ts';
+import { Connection, KEEPER_LOST } from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
+import { KeeperLink } from '../../app/server/keeper/link.ts';
 import {
   compareKeeperVersions,
   KEEPER_NEEDS,
@@ -19,8 +19,8 @@ import {
   missingFeatures,
   programVersion,
   readKeeperInfo,
-} from '../../outputs/agent-studio/server/keeper/client.ts';
-import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
+} from '../../app/server/keeper/client.ts';
+import { pidAlive } from '../../app/server/host/host_client.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -31,15 +31,15 @@ class KeeperStudioLab {
   readonly state = this.dir + SEP + 'state';
   readonly work = this.dir + SEP + 'work';
   readonly agentLog = this.dir + SEP + 'agent-received.log';
-  readonly studios: Studio[] = [];
+  readonly studios: Aib[] = [];
 
   constructor() {
     Deno.mkdirSync(this.work, { recursive: true });
   }
 
-  studio(flags: string[] = ['--cancel-aware']): Studio {
+  studio(flags: string[] = ['--cancel-aware']): Aib {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
-    const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper });
+    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper });
     studio.ownerProbe = () => null;
     studio.connectionFactory = (_command, cwd, provider, options) =>
       new Connection(fake(...flags), cwd, provider, { ...options, env: { FAKE_ACP_LOG: this.agentLog } });
@@ -48,7 +48,7 @@ class KeeperStudioLab {
   }
 
   /** What a crashed AIB leaves: its keeper connection gone, its agents untouched, its session leases released by the OS. */
-  crash(studio: Studio): void {
+  crash(studio: Aib): void {
     studio.keeper!.disconnect();
     for (const c of studio.connections.values()) c.sessionLease?.release();
     studio.reconnectStop.set();

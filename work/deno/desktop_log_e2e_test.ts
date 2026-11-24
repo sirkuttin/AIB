@@ -12,8 +12,8 @@ import { until } from './_host_fixture.ts';
 import { HiddenDesktop } from './_hidden_desktop.ts';
 import { builtDist } from './_build_cache.ts';
 import { ownerPort, pickPort, refusedPort } from './_ports.ts';
-import { pidAlive } from '../../outputs/agent-studio/server/host/host_client.ts';
-import { APP_VERSION } from '../../outputs/agent-studio/server/core/app.ts';
+import { pidAlive } from '../../app/server/host/host_client.ts';
+import { APP_VERSION } from '../../app/server/core/app.ts';
 
 const SLOW = Deno.build.os === 'windows' && Deno.env.get('AIB_SLOW_TESTS') === '1';
 

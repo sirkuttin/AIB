@@ -1,7 +1,7 @@
 'use strict';
-/* Which page files the Deno server serves, for the Node tests: the same rule as studioAsset() in
-   outputs/agent-studio/server/web/server.ts. The pattern is read from that file, so this cannot drift from the server. Not a test file: node --test work/test_*.js does not pick it up. */
-const { APP } = require('./_paths');
+/* Which page files the Deno server serves, for the Node tests: the same rule as pageAsset() in
+   app/server/web/server.ts. The pattern is read from that file, so this cannot drift from the server. Not a test file: node --test work/test_*.js does not pick it up. */
+const { APP, PAGE } = require('./_paths');
 const fs = require('node:fs'),
   path = require('node:path');
 
@@ -21,7 +21,7 @@ function servedAsset(requestPath) {
   const match = typeof requestPath === 'string' ? requestPath.match(ASSET_NAME) : null;
   if (!match) return null;
   try {
-    return fs.statSync(path.join(APP, match[1])).isFile() ? match[1] : null;
+    return fs.statSync(path.join(PAGE, match[1])).isFile() ? match[1] : null;
   } catch {
     return null;
   }

@@ -23,9 +23,9 @@ import {
   setLevel,
   setup,
   WARNING,
-} from '../../outputs/agent-studio/server/core/log.ts';
-import { configure, issue } from '../../outputs/agent-studio/server/artifacts/keys.ts';
-import { join } from '../../outputs/agent-studio/server/platform/path.ts';
+} from '../../app/server/core/log.ts';
+import { configure, issue } from '../../app/server/artifacts/keys.ts';
+import { join } from '../../app/server/platform/path.ts';
 
 const TOKEN = 'tok_AbCdEf0123456789-_xyzXYZ0123456789abcdefg';
 const LINE = /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d{3} (DEBUG|INFO|WARNING|ERROR|CRITICAL) [\w.]+: /;

@@ -2,7 +2,7 @@
  * crash_trail_test.ts's child: installs the crash trail in the folder given, then ends the way asked: throw (an uncaught exception),
  * reject (an unhandled rejection: it must keep running, then exits 0), exit (Deno.exit(3)), oom (V8 runs out of heap), done.
  */
-import { installCrashTrail } from '../../outputs/agent-studio/server/core/crash_trail.ts';
+import { installCrashTrail } from '../../app/server/core/crash_trail.ts';
 
 const [dir, how] = Deno.args;
 const trail = await installCrashTrail({ stateDir: dir, version: 'test', captureStderr: true, heartbeatMs: 50 });

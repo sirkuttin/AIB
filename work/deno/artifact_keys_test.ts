@@ -3,9 +3,9 @@
  * interop with Python both ways (the two servers share the state folder, so a key issued by either must check in the other).
  */
 import { assert, assertEquals } from './_assert.ts';
-import { check, configure, issue, SECRET_FILE, secretOfFile } from '../../outputs/agent-studio/server/artifacts/keys.ts';
-import { join } from '../../outputs/agent-studio/server/platform/path.ts';
-import { sealingOn } from '../../outputs/agent-studio/server/state/sealed.ts';
+import { check, configure, issue, SECRET_FILE, secretOfFile } from '../../app/server/artifacts/keys.ts';
+import { join } from '../../app/server/platform/path.ts';
+import { sealingOn } from '../../app/server/state/sealed.ts';
 
 /** The Python interop cases share the plain file format; the retired Python server cannot open a DPAPI-sealed secret. */
 function plainSecrets(): { [Symbol.dispose](): void } {

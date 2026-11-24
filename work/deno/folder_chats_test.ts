@@ -16,12 +16,12 @@ import { assert, assertEquals } from './_assert.ts';
 import { PYTHON, pause, until } from './_connection.ts';
 import { FAKE } from './_connection.ts';
 import { makeRepo, read, runGit, write } from './_worktree_fixtures.ts';
-import { Connection, SHARED_FOLDER_CONTEXT, sharedFolderNote } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { readOwnCopy, Studio } from '../../outputs/agent-studio/server/host/studio.ts';
-import { Swarm } from '../../outputs/agent-studio/server/swarm/service.ts';
-import { setSwarmEnabled } from '../../outputs/agent-studio/server/swarm/settings.ts';
-import { pathOf } from '../../outputs/agent-studio/server/state/paths.ts';
-import * as merge from '../../outputs/agent-studio/server/worktrees/merge.ts';
+import { Connection, SHARED_FOLDER_CONTEXT, sharedFolderNote } from '../../app/server/acp/connection.ts';
+import { readOwnCopy, Aib } from '../../app/server/host/aib.ts';
+import { Swarm } from '../../app/server/swarm/service.ts';
+import { setSwarmEnabled } from '../../app/server/swarm/settings.ts';
+import { pathOf } from '../../app/server/state/paths.ts';
+import * as merge from '../../app/server/worktrees/merge.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -31,7 +31,7 @@ class Box {
   readonly dir = Deno.realPathSync(Deno.makeTempDirSync({ prefix: 'aib-folder-chats-' }));
   readonly state = pathOf(this.dir, 'state');
   readonly project = makeRepo(pathOf(this.dir, 'proj'));
-  readonly studio: Studio;
+  readonly studio: Aib;
   readonly swarm: Swarm;
   /** FAKE_ACP_LOG of the n-th agent started (1-based): every line it received. */
   readonly logs: string[] = [];
@@ -40,7 +40,7 @@ class Box {
     setSwarmEnabled(this.state, true);
     runGit(this.project, 'config', 'user.name', 't');
     runGit(this.project, 'config', 'user.email', 't@t');
-    const studio = new Studio({ stateDir: this.state, port: 0 }, { keeper: null });
+    const studio = new Aib({ stateDir: this.state, port: 0 }, { keeper: null });
     studio.ownerProbe = () => null;
     studio.agentLaunch = () => Promise.resolve([['unused'], {}]);
     studio.connectionFactory = (_command, cwd, provider, options) => {

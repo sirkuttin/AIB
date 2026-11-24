@@ -11,8 +11,8 @@
  * Test servers on random ports, temp state (never the owner's), no browser.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { readRemotePort } from '../../outputs/agent-studio/server/remote/port.ts';
-import { DEVICE_HEADER, RateLimit } from '../../outputs/agent-studio/server/remote/pc_bridge.ts';
+import { readRemotePort } from '../../app/server/remote/port.ts';
+import { DEVICE_HEADER, RateLimit } from '../../app/server/remote/pc_bridge.ts';
 import {
   BLOCKED_HOME_DIRS,
   isAbsolute,
@@ -20,10 +20,10 @@ import {
   isHomeOrRoot,
   linuxBlocked,
   movedSigninDirs,
-} from '../../outputs/agent-studio/server/remote/path_guard.ts';
-import { remoteArtifactLinks } from '../../outputs/agent-studio/server/remote/pc_page.ts';
-import { artifactPost } from '../../outputs/agent-studio/server/web/studio_routes.ts';
-import { Principal, REMOTE_PC } from '../../outputs/agent-studio/server/web/security.ts';
+} from '../../app/server/remote/path_guard.ts';
+import { remoteArtifactLinks } from '../../app/server/remote/pc_page.ts';
+import { artifactPost } from '../../app/server/web/aib_routes.ts';
+import { Principal, REMOTE_PC } from '../../app/server/web/security.ts';
 import {
   type FakeChat,
   fakeTailscale,

@@ -11,9 +11,9 @@
  * The same decisions through the real agent hosts (in-process, keeper, split) are in attention_modes_test.ts.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { AttentionWatcher, type Fire, Notifier, requestText, SETTLE_MS } from '../../outputs/agent-studio/server/attention/watcher.ts';
-import { Presence } from '../../outputs/agent-studio/server/attention/presence.ts';
-import { RULES } from '../../outputs/agent-studio/server/attention/rules.ts';
+import { AttentionWatcher, type Fire, Notifier, requestText, SETTLE_MS } from '../../app/server/attention/watcher.ts';
+import { Presence } from '../../app/server/attention/presence.ts';
+import { RULES } from '../../app/server/attention/rules.ts';
 
 type Json = Record<string, unknown>;
 const SEP = Deno.build.os === 'windows' ? '\\' : '/';

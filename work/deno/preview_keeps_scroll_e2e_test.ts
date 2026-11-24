@@ -6,7 +6,7 @@
  * The Artifacts viewer is held to the same: unrelated redraws never load its frame again; a new version does, at the same scroll.
  *
  * A real Studio (temp state folder and workspace, free port; never the live ports), the scripted agent, and a headless Chrome/Edge.
- * Run (from outputs/agent-studio): deno test -A ../../work/deno/preview_keeps_scroll_e2e_test.ts
+ * Run (from app): deno test -A ../../work/deno/preview_keeps_scroll_e2e_test.ts
  */
 import { assert, assertEquals } from './_assert.ts';
 import { browserPath, type Chat, Lab, type Page, settle, shown } from './_scroll_lab.ts';

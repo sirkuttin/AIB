@@ -6,7 +6,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { APP } = require('./_paths');
+const { PAGE: APP } = require('./_paths');
 const D = require('./fake_dom.js');
 
 /* tool-views.js + inbox-reply.js in one context (the inbox asks ToolViews how to name an approval, as the page does). */

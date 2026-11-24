@@ -5,12 +5,12 @@
  * unfocused but visible window gets no desktop notification (watcher.ts Notifier, unchanged).
  */
 import { assert, assertEquals } from './_assert.ts';
-import { MAX_SLOTS, Presence, STALE_MS } from '../../outputs/agent-studio/server/attention/presence.ts';
-import { type Fire, Notifier } from '../../outputs/agent-studio/server/attention/watcher.ts';
-import { makeContext, WebServer } from '../../outputs/agent-studio/server/web/server.ts';
-import type { LiveBackend } from '../../outputs/agent-studio/server/host/backend.ts';
-import type { UpdateService } from '../../outputs/agent-studio/server/desktop/updater.ts';
-import type { Source } from '../../outputs/agent-studio/server/transcripts/monitor.ts';
+import { MAX_SLOTS, Presence, STALE_MS } from '../../app/server/attention/presence.ts';
+import { type Fire, Notifier } from '../../app/server/attention/watcher.ts';
+import { makeContext, WebServer } from '../../app/server/web/server.ts';
+import type { LiveBackend } from '../../app/server/host/backend.ts';
+import type { UpdateService } from '../../app/server/desktop/updater.ts';
+import type { Source } from '../../app/server/transcripts/monitor.ts';
 
 type Json = Record<string, unknown>;
 

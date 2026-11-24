@@ -5,7 +5,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const D = require('./fake_dom.js');
-const FS = require('../outputs/agent-studio/files-state.js');
+const FS = require('../app/page/files-state.js');
 
 // wsl-ui.js gives the page its WSL ref helpers (AIBWsl.parse/refOf), as in chat.html
 const SCRIPTS = ['wsl-ui.js', 'status-words.js', 'ownership-ui.js', 'notify-rules.js', 'sidebar-ui.js', 'workspace-state.js', 'split-tree.js', 'workspace-ui.js', 'tool-views.js', 'files-state.js', 'files-ui.js'];

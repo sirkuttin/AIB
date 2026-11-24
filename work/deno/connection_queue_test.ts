@@ -5,12 +5,12 @@
  */
 import { assert, assertEquals, assertRejects } from './_assert.ts';
 import { events, fake, type Json, Lab, pause, rejectsValue, until } from './_connection.ts';
-import type { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { currentValue } from '../../outputs/agent-studio/server/acp/breadth.ts';
-import { QueueStore } from '../../outputs/agent-studio/server/acp/msgqueue.ts';
-import { PromptStateUnknown } from '../../outputs/agent-studio/server/acp/rpc_errors.ts';
-import { Recovery, StateStore } from '../../outputs/agent-studio/server/state/recovery.ts';
-import { ValueError } from '../../outputs/agent-studio/server/core/py.ts';
+import type { Connection } from '../../app/server/acp/connection.ts';
+import { currentValue } from '../../app/server/acp/breadth.ts';
+import { QueueStore } from '../../app/server/acp/msgqueue.ts';
+import { PromptStateUnknown } from '../../app/server/acp/rpc_errors.ts';
+import { Recovery, StateStore } from '../../app/server/state/recovery.ts';
+import { ValueError } from '../../app/server/core/py.ts';
 import { createHash } from 'node:crypto';
 
 const LONG = 60; // a deadline, not a delay: generous so a loaded machine still passes

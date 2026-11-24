@@ -4,11 +4,11 @@
  * a headless `serve`. No window is ever opened: everything here is plain HTTP on 127.0.0.1.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { implementation, serve } from '../../outputs/agent-studio/server/platform/http_serve.ts';
-import { redirectTarget, servePort, startBlank, startRedirect } from '../../outputs/agent-studio/server/desktop/serve_address.ts';
+import { implementation, serve } from '../../app/server/platform/http_serve.ts';
+import { redirectTarget, servePort, startBlank, startRedirect } from '../../app/server/desktop/serve_address.ts';
 import { DENO, Fixture, MAIN, PAGE_KEY, TEST_OPTIONS, until } from './_host_fixture.ts';
 import { waitListenedPort } from './_ports.ts';
-import { PageAccess } from '../../outputs/agent-studio/server/web/page_access.ts';
+import { PageAccess } from '../../app/server/web/page_access.ts';
 
 /** node binds a moment after serve() returns (http_serve.ts says so): wait until the port takes a connection, as a client that retries. */
 async function listening(port: number): Promise<void> {
@@ -252,7 +252,7 @@ Deno.test({
     assertEquals((await web.status).code, 0);
     await closed;
     await until(() => !running(pids[0]), 'the shell ended with the server', 10);
-    const { claimFolder } = await import('../../outputs/agent-studio/server/desktop/single_instance.ts');
+    const { claimFolder } = await import('../../app/server/desktop/single_instance.ts');
     const claim = await claimFolder(fx.state, { mode: 'server', port: 8813 });
     try {
       assert(claim.primary, 'the folder lock was released');

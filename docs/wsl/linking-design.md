@@ -1,7 +1,7 @@
 # AIB Linking (WSL): design
 
 Status: design only, 2026-11-14 (branch `wsl/linking`). Mockup: `outputs/wsl-linking-mockup.html`. Builds on `docs/wsl/design.md`
-(sections 11-12 override it) and `outputs/agent-studio/docs/WSL.md` ("Agent installs in the distro").
+(sections 11-12 override it) and `app/docs/WSL.md` ("Agent installs in the distro").
 
 ## 1. Decisions
 
@@ -232,7 +232,7 @@ listed first in New project (no new setting).
 
 **Routes (server builder implements; page builder uses fakes of exactly these shapes):**
 - `GET /api/live/wsl/agents?distro=&peek=1[&start=1][&force=1]` rows gain: `enabled: boolean` (the per-distro switch), `signin: {state: 'signed_in'|'signed_out'|'unknown', account?: string, note?: string}` (ready distros only; from `agents.signinStatus`), `canUninstall: boolean`, `limits?: <same shape the Windows Codex limits chip uses>|null` (Codex row only, read from that distro's ~/.codex, never merged with Windows).
-- `POST /api/live/wsl/agents/enabled {distro, id, enabled}` -> `{ok, enabled}`; stored per distro in the Studio settings store (e.g. `agentsByDistro: {"<distro key>": {"<agent id>": boolean}}`); default for an agent in a distro with no saved value = ON (as today). Studio's WSL chat start/agent picker for a WSL project MUST read the per-distro value, not the Windows one (host/studio.ts ~867-870).
+- `POST /api/live/wsl/agents/enabled {distro, id, enabled}` -> `{ok, enabled}`; stored per distro in the Studio settings store (e.g. `agentsByDistro: {"<distro key>": {"<agent id>": boolean}}`); default for an agent in a distro with no saved value = ON (as today). Studio's WSL chat start/agent picker for a WSL project MUST read the per-distro value, not the Windows one (host/aib.ts ~867-870).
 - `POST /api/live/wsl/agents/uninstall {distro, id}` -> `{ok, removed, message?, blocked?}` (helper `agents.uninstall`; refused while a chat of ANY AIB data folder runs from that agent's folder: /proc/*/cmdline check; never touches the user's own installs).
 - `GET /api/live/wsl/prereqs?distro=&peek=1[&start=1][&force=1]` -> not ready: `{distro, name, state, line, prereqs: null}`; ready: `{distro, name, state: 'ready', line: '', prereqs: EnvPrereqs}` (helper `env.prereqs`).
 - Node install button: terminal route `/api/live/terminal?setup=wsl-node&distro=<d>` through `ctx.terminals.attachWsl`: runs nvm's official installer pinned by the install.sh SHA-256 with `PROFILE=` set explicitly to the file for the distro user's login shell, then `nvm install --lts` (minimum Node 22.19); never when `canInstallNode` is false; after exit 0 the page calls `prereqs?force=1` (helper refreshPath).

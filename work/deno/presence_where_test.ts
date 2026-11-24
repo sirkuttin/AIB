@@ -8,8 +8,8 @@
  *     nobody anywhere; and who a push goes to
  */
 import { assert, assertEquals } from './_assert.ts';
-import { ACTIVE_MS, DEVICE_SLOTS, MAX_SLOTS, Presence } from '../../outputs/agent-studio/server/attention/presence.ts';
-import { type Fire, Notifier, type PushPick } from '../../outputs/agent-studio/server/attention/watcher.ts';
+import { ACTIVE_MS, DEVICE_SLOTS, MAX_SLOTS, Presence } from '../../app/server/attention/presence.ts';
+import { type Fire, Notifier, type PushPick } from '../../app/server/attention/watcher.ts';
 
 type Json = Record<string, unknown>;
 

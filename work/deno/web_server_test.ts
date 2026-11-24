@@ -1,12 +1,12 @@
 /** server/web: the route table equals Python's, page-file mapping equals web_handler.studio_asset, CLI parsing matches studio.py. */
 import { assert, assertEquals, assertThrows } from './_assert.ts';
 import { Frozen } from './_frozen.ts';
-import { DENO_ONLY, ROUTE_LIST } from '../../outputs/agent-studio/server/web/routes.ts';
-import { studioAsset } from '../../outputs/agent-studio/server/web/server.ts';
-import { parseOptions, UsageError } from '../../outputs/agent-studio/server/core/options.ts';
-import { LIVE_POST_OPS } from '../../outputs/agent-studio/server/web/live_routes.ts';
-import { REMOTE_ROUTES, REMOTE_STATIC } from '../../outputs/agent-studio/server/remote/server.ts';
-import { LOADER } from '../../outputs/agent-studio/server/remote/pc_page.ts';
+import { DENO_ONLY, ROUTE_LIST } from '../../app/server/web/routes.ts';
+import { pageAsset } from '../../app/server/web/server.ts';
+import { parseOptions, UsageError } from '../../app/server/core/options.ts';
+import { LIVE_POST_OPS } from '../../app/server/web/live_routes.ts';
+import { REMOTE_ROUTES, REMOTE_STATIC } from '../../app/server/remote/server.ts';
+import { LOADER } from '../../app/server/remote/pc_page.ts';
 
 Deno.test('the route table is exactly the Python web server\'s (paths, scopes and kinds)', async () => {
   const py = new Frozen();
@@ -158,11 +158,11 @@ Deno.test('the route table is exactly the Python web server\'s (paths, scopes an
   for (const [m, p, , kind] of ROUTE_LIST) if (!denoOnly.has(`${m} ${p}`)) assertEquals(kind, kinds.get(`${m} ${p}`) ?? 'monitor', `${m} ${p}`);
 });
 
-Deno.test('studioAsset maps the same paths as web_handler.studio_asset', async () => {
+Deno.test('pageAsset maps the same paths as web_handler.studio_asset', async () => {
   const py = new Frozen();
   const paths = ['/', '/chat.html', '/chat.js', '/style.css', '/app.js', '/sidebar.js', '/theme.css', '/missing.js', '/Chat.js', '/../x.js', '/a/b.js',
     '/.hidden.js', '/chat.py', '/index.html', '/conversation.html', '/-x.js', '/chat.js?x=1'];
-  for (const path of paths) assertEquals(studioAsset(path), await py.call('web_handler', 'studio_asset', [path]), path);
+  for (const path of paths) assertEquals(pageAsset(path), await py.call('web_handler', 'studio_asset', [path]), path);
 });
 
 Deno.test('CLI flags parse like studio.py', () => {
@@ -195,7 +195,7 @@ Deno.test('the phone port routes are not page routes, and the page port does not
   // phone API are only on the phone port
   // The service worker and the app icons are on the phone port only (pwa/ and icons/ are not page files).
   const phoneOnly = (path: string) => path === '/phone.html' || path === '/sw.js' || path.startsWith('/icons/');
-  for (const path of Object.keys(REMOTE_STATIC)) assertEquals(studioAsset(path), phoneOnly(path) ? null : path.slice(1), path);
-  assertEquals(studioAsset('/manifest.webmanifest'), null);
+  for (const path of Object.keys(REMOTE_STATIC)) assertEquals(pageAsset(path), phoneOnly(path) ? null : path.slice(1), path);
+  assertEquals(pageAsset('/manifest.webmanifest'), null);
   for (const path of ['/', '/chat.html']) assertEquals(Object.keys(REMOTE_STATIC).includes(path), false, path);
 });

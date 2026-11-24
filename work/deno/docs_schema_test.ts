@@ -4,12 +4,12 @@
  * through Yjs updates (the server's y-tiptap and the bundle's y-tiptap, two copies of the libraries) unchanged.
  */
 import { assertEquals } from './_assert.ts';
-import { LiveDoc } from '../../outputs/agent-studio/server/docs/live_doc.ts';
-import { parseDoc, type PMJson, schema } from '../../outputs/agent-studio/server/docs/markdown.ts';
-import { SCHEMA_VERSION, schemaSummary } from '../../outputs/agent-studio/server/docs/schema.ts';
+import { LiveDoc } from '../../app/server/docs/live_doc.ts';
+import { parseDoc, type PMJson, schema } from '../../app/server/docs/markdown.ts';
+import { SCHEMA_VERSION, schemaSummary } from '../../app/server/docs/schema.ts';
 
 const ROOT = new URL('../../', import.meta.url);
-await import(new URL('outputs/agent-studio/vendor/docs/editor.js', ROOT).href);
+await import(new URL('app/vendor/docs/editor.js', ROOT).href);
 const page = (globalThis as unknown as {
   AIBDocEditor: {
     schemaVersion: number;
@@ -25,7 +25,7 @@ Deno.test('the page bundle has the server schema', () => {
 });
 
 Deno.test('the page bundle and the Deno server pin the same versions of the shared packages', () => {
-  const deno = JSON.parse(Deno.readTextFileSync(new URL('outputs/agent-studio/deno.json', ROOT))).imports as Record<string, string>;
+  const deno = JSON.parse(Deno.readTextFileSync(new URL('app/deno.json', ROOT))).imports as Record<string, string>;
   const pkg = JSON.parse(Deno.readTextFileSync(new URL('tools/docs-vendor/package.json', ROOT))).dependencies as Record<string, string>;
   let shared = 0;
   for (const [name, spec] of Object.entries(deno)) {

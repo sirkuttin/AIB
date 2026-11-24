@@ -7,7 +7,7 @@
  *       (it used to keep the previous project's chat: wrong list, and the new doc landed in the previous project).
  *
  * A real Studio in this process (fake agent host, temp state folder, free port; never the live ports), headless Chrome or Edge.
- * Project A is a git repository with a real worktree; project B is an added folder. Run (from outputs/agent-studio):
+ * Project A is a git repository with a real worktree; project B is an added folder. Run (from app):
  *   deno test -A ../../work/deno/project_panel_docs_e2e_test.ts   (ignored without Chrome or Edge or git)
  */
 import { assert, assertEquals } from './_assert.ts';

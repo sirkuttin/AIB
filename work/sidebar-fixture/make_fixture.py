@@ -1,7 +1,7 @@
 """Fake saved transcripts for several projects and both vendors, with messy first messages. No model, no real transcripts.
 
   python work/sidebar-fixture/make_fixture.py
-  deno run -A outputs/agent-studio/server/main.ts --port 8802 --state-dir work/sidebar-fixture/data/state \
+  deno run -A app/server/main.ts --port 8802 --state-dir work/sidebar-fixture/data/state \
     --omp-sessions work/sidebar-fixture/data/omp --claude-projects work/sidebar-fixture/data/claude \
     --owners-dir work/sidebar-fixture/data/owners --no-owner-announcements \
     --node-command python --claude-launcher work/combined-fixture/agent.py

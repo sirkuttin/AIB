@@ -114,7 +114,7 @@ Deno.test({
       const [, home] = await pc(s, 'GET', '/api/live/inbox');
       assertEquals(home.count, 3);
       assertEquals(s.ctx.inbox.desktopCount(), 3, 'the trays');
-      const homePayload = (await import('../../outputs/agent-studio/server/remote/payloads.ts')).homePayload;
+      const homePayload = (await import('../../app/server/remote/payloads.ts')).homePayload;
       const h = await homePayload(s.ctx, 'pc', s.ctx.phone.titles);
       assertEquals(h.waiting, 3, 'the phone home');
       assertEquals((h.inbox as unknown as Json).count, 3);

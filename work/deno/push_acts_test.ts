@@ -4,8 +4,8 @@
  * to the phone (ToastCodes with a device: refused for another phone, used, expired, or once the request changed).
  */
 import { assert, assertEquals } from "./_assert.ts";
-import type { InboxRow } from "../../outputs/agent-studio/server/attention/inbox_rules.ts";
-import { ToastCodes } from "../../outputs/agent-studio/server/desktop/toast.ts";
+import type { InboxRow } from "../../app/server/attention/inbox_rules.ts";
+import { ToastCodes } from "../../app/server/desktop/toast.ts";
 import {
   CODED_ACTS,
   MAX_PUSH_ACTIONS,
@@ -14,7 +14,7 @@ import {
   pushButtons,
   rowSig,
   scopeOfAct,
-} from "../../outputs/agent-studio/server/remote/push_acts.ts";
+} from "../../app/server/remote/push_acts.ts";
 
 const ONCE = [
   { optionId: "yes", name: "Allow once", kind: "allow_once" },

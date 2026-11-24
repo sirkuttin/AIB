@@ -7,8 +7,8 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { events, type Json, Lab, pause, until, updateTexts } from './_connection.ts';
-import type { Connection } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { AgentHost } from '../../outputs/agent-studio/server/host/agent_host.ts';
+import type { Connection } from '../../app/server/acp/connection.ts';
+import { AgentHost } from '../../app/server/host/agent_host.ts';
 
 const LONG = 60; // a deadline, not a delay
 

@@ -9,10 +9,10 @@
  *   - Remove revokes the token at once, on both sides when reachable
  */
 import { assert, assertEquals } from './_assert.ts';
-import { ROUTE_LIST } from '../../outputs/agent-studio/server/web/routes.ts';
-import { ROUTE_SCOPE } from '../../outputs/agent-studio/server/remote/server.ts';
-import { DEVICE_HEADER, DEVICE_PROTOCOL_PREFIX, RateLimit } from '../../outputs/agent-studio/server/remote/pc_bridge.ts';
-import { PeerStore } from '../../outputs/agent-studio/server/pcsync/peers.ts';
+import { ROUTE_LIST } from '../../app/server/web/routes.ts';
+import { ROUTE_SCOPE } from '../../app/server/remote/server.ts';
+import { DEVICE_HEADER, DEVICE_PROTOCOL_PREFIX, RateLimit } from '../../app/server/remote/pc_bridge.ts';
+import { PeerStore } from '../../app/server/pcsync/peers.ts';
 import { nonce, pairPhone, pc, phoneHeaders, raw } from './_remote_fixture.ts';
 import {
   approveAndWait,

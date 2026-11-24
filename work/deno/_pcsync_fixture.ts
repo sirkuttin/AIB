@@ -6,10 +6,10 @@
  * state folder, and show as offline in the other's `tailscale status --json`.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { readRemotePort } from '../../outputs/agent-studio/server/remote/port.ts';
-import type { Runner } from '../../outputs/agent-studio/server/remote/tailscale.ts';
-import type { LinkTimings } from '../../outputs/agent-studio/server/pcsync/link.ts';
-import type { FileTimings } from '../../outputs/agent-studio/server/pcsync/files.ts';
+import { readRemotePort } from '../../app/server/remote/port.ts';
+import type { Runner } from '../../app/server/remote/tailscale.ts';
+import type { LinkTimings } from '../../app/server/pcsync/link.ts';
+import type { FileTimings } from '../../app/server/pcsync/files.ts';
 import { LOGIN, pc, raw, type RemoteStudio, remoteStudio, tailscaleStatus, tempDir } from './_remote_fixture.ts';
 
 export type Json = Record<string, unknown>;

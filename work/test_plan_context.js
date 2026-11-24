@@ -1,5 +1,5 @@
 'use strict';
-const { APP: APP_DIR } = require('./_paths');
+const { PAGE: APP_DIR } = require('./_paths');
 /* The pinned plan and "N running tasks" survive when the update_plan call that set the plan is older than the loaded page:
    the saved-history API hands back those older events as `context`, and chat.js folds them without drawing them. */
 const test = require('node:test');

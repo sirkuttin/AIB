@@ -4,17 +4,17 @@
  * whose agent host the test fills (chats, events, subagents).
  */
 import { PAGE_KEY } from './_page_key.ts';
-import { makeContext, type WebContext, WebServer } from '../../outputs/agent-studio/server/web/server.ts';
-import type { LiveBackend } from '../../outputs/agent-studio/server/host/backend.ts';
-import { stateSource } from '../../outputs/agent-studio/server/host/host_proxy.ts';
-import { fullEvent, page, pageQuery } from '../../outputs/agent-studio/server/acp/event_pages.ts';
-import type { UpdateService } from '../../outputs/agent-studio/server/desktop/updater.ts';
-import { openSource, type Source } from '../../outputs/agent-studio/server/transcripts/monitor.ts';
-import { projectKey } from '../../outputs/agent-studio/server/desktop/project_delete.ts';
-import type { Runner } from '../../outputs/agent-studio/server/remote/tailscale.ts';
-import type { AccessOptions } from '../../outputs/agent-studio/server/remote/access.ts';
-import type { PcSyncOptions } from '../../outputs/agent-studio/server/pcsync/service.ts';
-import { readRemotePort, saveRemotePort } from '../../outputs/agent-studio/server/remote/port.ts';
+import { makeContext, type WebContext, WebServer } from '../../app/server/web/server.ts';
+import type { LiveBackend } from '../../app/server/host/backend.ts';
+import { stateSource } from '../../app/server/host/host_proxy.ts';
+import { fullEvent, page, pageQuery } from '../../app/server/acp/event_pages.ts';
+import type { UpdateService } from '../../app/server/desktop/updater.ts';
+import { openSource, type Source } from '../../app/server/transcripts/monitor.ts';
+import { projectKey } from '../../app/server/desktop/project_delete.ts';
+import type { Runner } from '../../app/server/remote/tailscale.ts';
+import type { AccessOptions } from '../../app/server/remote/access.ts';
+import type { PcSyncOptions } from '../../app/server/pcsync/service.ts';
+import { readRemotePort, saveRemotePort } from '../../app/server/remote/port.ts';
 
 // test mode: the Tailscale and setup fakes are read, and no real Tailscale, winget, msiexec or browser can be reached
 Deno.env.set('AGENT_STUDIO_TEST', '1');

@@ -10,11 +10,11 @@
 import process from 'node:process';
 import { assert, assertEquals } from './_assert.ts';
 import { pc, tempDir } from './_remote_fixture.ts';
-import { ensureDefault } from '../../outputs/agent-studio/server/worktrees/local_only.ts';
+import { ensureDefault } from '../../app/server/worktrees/local_only.ts';
 import { closeAll, type Json, type Node, paired, TEST_FILES, until } from './_pcsync_fixture.ts';
 import { Browser, browserPath, type Page } from './_doc_browser.ts';
-import { stamp } from '../../outputs/agent-studio/server/pcsync/rules.ts';
-import { projectKey } from '../../outputs/agent-studio/server/desktop/project_delete.ts';
+import { stamp } from '../../app/server/pcsync/rules.ts';
+import { projectKey } from '../../app/server/desktop/project_delete.ts';
 
 const OPTS = { sanitizeResources: false, sanitizeOps: false };
 const sep = Deno.build.os === 'windows' ? '\\' : '/';

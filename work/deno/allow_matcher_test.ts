@@ -4,10 +4,10 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { join } from 'node:path';
-import { type AllowRule, type Builtins, match, type MatchContext, ruleFor } from '../../outputs/agent-studio/server/allow/matcher.ts';
-import { parseBash, parsePwsh, unwrapCodexPowershell } from '../../outputs/agent-studio/server/allow/shell.ts';
-import { pathFormProblem } from '../../outputs/agent-studio/server/allow/paths.ts';
-import { AllowStore, DecisionLog } from '../../outputs/agent-studio/server/allow/store.ts';
+import { type AllowRule, type Builtins, match, type MatchContext, ruleFor } from '../../app/server/allow/matcher.ts';
+import { parseBash, parsePwsh, unwrapCodexPowershell } from '../../app/server/allow/shell.ts';
+import { pathFormProblem } from '../../app/server/allow/paths.ts';
+import { AllowStore, DecisionLog } from '../../app/server/allow/store.ts';
 
 const ALL: Builtins = { safeReads: true, syntax: true, scratch: true };
 
@@ -422,7 +422,7 @@ Deno.test('allow: the decision log survives a restart', () => {
 
 Deno.test('allow: Claude ask rules and a risky env block (review 4.2, 2.7)', async () => {
   using l = lab();
-  const { claudeFacts } = await import('../../outputs/agent-studio/server/allow/agent_config.ts');
+  const { claudeFacts } = await import('../../app/server/allow/agent_config.ts');
   const home = join(l.base, 'claude-home');
   Deno.mkdirSync(home);
   Deno.writeTextFileSync(join(home, 'settings.json'), JSON.stringify({ permissions: { ask: ['Bash(git log:*)', 'Read(x)'] } }));

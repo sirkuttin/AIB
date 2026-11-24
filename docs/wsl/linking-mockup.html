@@ -5,7 +5,7 @@
 <title>Mockup: Settings > AIB Linking (WSL)</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-/* ---- theme.css (derived tokens + AIB teal dark), copied from outputs/agent-studio/theme.css ---- */
+/* ---- theme.css (derived tokens + AIB teal dark), copied from app/page/theme.css ---- */
 :root,
 [data-theme] {
   --text-2: color-mix(in srgb, var(--text) 87%, var(--text-faint)); /* Chip, tab and vendor-label text */
@@ -449,7 +449,7 @@
 }
 
 /* AIB teal (light): the same direction on warm paper. Teal stays saturated; status colours keep 3:1 as dots and 4.5:1 as text. */
-/* ---- base element rules, copied from outputs/agent-studio/chat.css ---- */
+/* ---- base element rules, copied from app/page/chat.css ---- */
 :root { font-family: Segoe UI, system-ui, sans-serif; background: var(--bg); color: var(--text); font-size: 14px; }
 * { box-sizing: border-box; }
 button, input, textarea, select { font: inherit; }
@@ -463,7 +463,7 @@ input::placeholder { color: var(--text-faint); }
 button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 [hidden] { display: none !important; }
 aside { background: var(--panel); border-right: 1px solid var(--line); overflow: auto; }
-/* ---- settings.css, copied from outputs/agent-studio/settings.css ---- */
+/* ---- settings.css, copied from app/page/settings.css ---- */
 /* Settings page: covers the chat area only (the chat list stays visible). */
 main {
   position: relative;

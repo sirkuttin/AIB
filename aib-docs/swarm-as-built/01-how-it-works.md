@@ -2,7 +2,7 @@
 
 # Swarm phase 1: how it works (as built)
 
-Written from the code on `integration/beta10` (swarm merge 9a6d433), not from the design. Where they differ, the code wins (see section 9). Paths are relative to `outputs/agent-studio/` unless marked.
+Written from the code on `integration/beta10` (swarm merge 9a6d433), not from the design. Where they differ, the code wins (see section 9). Paths are relative to `app/` unless marked.
 
 > **Warning:** Six problems found while reading the code (details in section 9): a Merge again conflict shows nothing; long reports lose their summary (clipping keeps the start); a closed helper can't be merged; Undo can take back someone else's merge in a rare race; "waiting" is never used, so a helper's question reads as "done"; a helper with a shell can compute its main chat's key from a readable file and call `merge_helper` itself. All are on the task list.
 
@@ -40,7 +40,7 @@ The owner has a React + Express project in `C:\code\shopfront`. They open a Clau
 
 **When the role is decided:**
 
-- **At creation:** `start_helper` calls `connect` with `helperOf: {helperId, parent}` (`server/swarm/service.ts:198-204`). The Studio sets `c.swarm` before building the agent's MCP servers (`server/host/studio.ts:876-881`), so the tools are right from the first moment.
+- **At creation:** `start_helper` calls `connect` with `helperOf: {helperId, parent}` (`server/swarm/service.ts:198-204`). The Studio sets `c.swarm` before building the agent's MCP servers (`server/host/aib.ts:876-881`), so the tools are right from the first moment.
 - **On reopen** (Continue, auto-reconnect): `connect` looks up the registry by `provider:resume` or the worktree path (`studio.ts:836-840, 877`).
 - **On keeper take-over:** `#rebuildChat` looks the registry up again (`studio.ts:1095-1098`).
 - **On every tool call:** `#isMain` re-checks the registry (`studio.ts:1268-1272`), and the service checks the caller again (`service.ts:81-93`).
@@ -49,7 +49,7 @@ After a restart, live ids can change: the 2-second watcher finds the parent and 
 
 ## 3. The five MCP tools
 
-Offered only to a main chat (`STUDIO_MAIN=1` for stdio, `studio.ts:704`; `main` in the HTTP server's context, `server/artifacts/mcp_http.ts:38, 236`). Definitions: `server/artifacts/mcp.ts:193-261`. Every call goes to `POST /api/live/swarm/tool` with the chat's own key (`server/web/studio_routes.ts:371-377`). Refusals for all five (`service.ts:81-93`): `not_main` (chat not open), `nested` (caller is a helper), `no_worktree` (chat works in the project folder).
+Offered only to a main chat (`STUDIO_MAIN=1` for stdio, `studio.ts:704`; `main` in the HTTP server's context, `server/artifacts/mcp_http.ts:38, 236`). Definitions: `server/artifacts/mcp.ts:193-261`. Every call goes to `POST /api/live/swarm/tool` with the chat's own key (`server/web/aib_routes.ts:371-377`). Refusals for all five (`service.ts:81-93`): `not_main` (chat not open), `nested` (caller is a helper), `no_worktree` (chat works in the project folder).
 
 | Tool | Input | What it does | Its own refusals |
 | --- | --- | --- | --- |
@@ -246,10 +246,10 @@ flowchart TD
 | `server/swarm/rules.ts` | Job rules, workspace modes, `pickProvider` |
 | `server/swarm/settings.ts` | `CLAUDE_HELPERS_DEFAULT`, `swarm-settings.json` |
 | `server/swarm/undo.ts` | Revert and re-apply commits with `merge-tree`; moving main safely |
-| `server/host/studio.ts` | Role at connect/reopen/keeper rebuild; helper worktree rules; `#isMain` |
+| `server/host/aib.ts` | Role at connect/reopen/keeper rebuild; helper worktree rules; `#isMain` |
 | `server/acp/connection.ts` | `swarm` field, auto-approval by adapter shape |
 | `server/artifacts/mcp.ts`, `mcp_http.ts` | Tool schemas and handlers, main chats only |
-| `server/web/studio_routes.ts`, `routes.ts` | Swarm tool route, Undo / Merge again / list, helper self-merge refusal |
+| `server/web/aib_routes.ts`, `routes.ts` | Swarm tool route, Undo / Merge again / list, helper self-merge refusal |
 | `server/worktrees/merge.ts` | Existing Merge pipeline, reused |
 | `chat.js` | Undo, Merge again and Open chat buttons |
 | `work/deno/swarm_test.ts` | Unit tests and end-to-end slices with fake agents and real git |

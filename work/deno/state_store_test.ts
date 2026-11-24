@@ -18,11 +18,11 @@ import {
   StateStore,
   timing,
   VERSION,
-} from '../../outputs/agent-studio/server/state/store.ts';
-import { dumpJson, entriesOf, keysOf, parseJson, readJsonFile } from '../../outputs/agent-studio/server/state/json.ts';
-import * as registry from '../../outputs/agent-studio/server/agents/agent_registry.ts';
-import { ValueError } from '../../outputs/agent-studio/server/core/py.ts';
-import { QueueStore } from '../../outputs/agent-studio/server/acp/msgqueue.ts';
+} from '../../app/server/state/store.ts';
+import { dumpJson, entriesOf, keysOf, parseJson, readJsonFile } from '../../app/server/state/json.ts';
+import * as registry from '../../app/server/agents/agent_registry.ts';
+import { ValueError } from '../../app/server/core/py.ts';
+import { QueueStore } from '../../app/server/acp/msgqueue.ts';
 
 timing.readBackoffMs = 0; // as the Python tests patch READ_BACKOFF
 const WIN = Deno.build.os === 'windows';

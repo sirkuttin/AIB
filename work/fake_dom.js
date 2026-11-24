@@ -1,5 +1,5 @@
 'use strict';
-const { APP: APP_DIR } = require('./_paths');
+const { PAGE: APP_DIR } = require('./_paths');
 // A minimal fake DOM for the smoke tests of page modules that draw a lot (workspace-ui.js, split-ui.js).
 // It is not a browser: just enough tree, class, attribute, event and selector support to run the code and look at what it drew.
 const fs = require('node:fs');

@@ -10,14 +10,14 @@ import {
   BETA_AGENTS,
   type BetaAgent,
   betaAgent,
-} from "../../outputs/agent-studio/server/agents/beta_catalog.ts";
+} from "../../app/server/agents/beta_catalog.ts";
 import {
   keyHomeDir,
   prepareKeyHome,
   resolveBeta,
   signinArgv,
   withKeyHome,
-} from "../../outputs/agent-studio/server/agents/beta_agents.ts";
+} from "../../app/server/agents/beta_agents.ts";
 import {
   allowedDownload,
   checksumMatches,
@@ -29,12 +29,12 @@ import {
   ReleaseError,
   releaseUrl,
   sha512Hex,
-} from "../../outputs/agent-studio/server/agents/release_install.ts";
-import { Installer } from "../../outputs/agent-studio/server/agents/installer.ts";
-import { installPlan } from "../../outputs/agent-studio/server/agents/beta_setup.ts";
-import { BetaSigner } from "../../outputs/agent-studio/server/agents/beta_signin.ts";
-import { BETA_IDS as ELIGIBLE_BETA } from "../../outputs/agent-studio/server/agents/eligibility.ts";
-import { resolveAntigravity } from "../../outputs/agent-studio/server/wsl/helper/methods.ts";
+} from "../../app/server/agents/release_install.ts";
+import { Installer } from "../../app/server/agents/installer.ts";
+import { installPlan } from "../../app/server/agents/beta_setup.ts";
+import { BetaSigner } from "../../app/server/agents/beta_signin.ts";
+import { BETA_IDS as ELIGIBLE_BETA } from "../../app/server/agents/eligibility.ts";
+import { resolveAntigravity } from "../../app/server/wsl/helper/methods.ts";
 
 const WIN = Deno.build.os === "windows";
 const sanitize = { sanitizeOps: false, sanitizeResources: false };

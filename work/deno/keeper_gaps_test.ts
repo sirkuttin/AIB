@@ -18,8 +18,8 @@
  */
 import { assert, assertEquals } from './_assert.ts';
 import { fake, pause, until } from './_connection.ts';
-import { Connection, MAX_EVENTS, MAX_SNAPSHOT_BYTES } from '../../outputs/agent-studio/server/acp/connection.ts';
-import { Studio } from '../../outputs/agent-studio/server/host/studio.ts';
+import { Connection, MAX_EVENTS, MAX_SNAPSHOT_BYTES } from '../../app/server/acp/connection.ts';
+import { Aib } from '../../app/server/host/aib.ts';
 import {
   decideKeeper,
   KeeperLink,
@@ -27,13 +27,13 @@ import {
   keeperSetting,
   keeperWanted,
   setKeeperDecision,
-} from '../../outputs/agent-studio/server/keeper/link.ts';
-import { keeperBinary, KeeperClient, readKeeperInfo } from '../../outputs/agent-studio/server/keeper/client.ts';
-import { codeWarning, leaveSplitHost, pidAlive, readInfo, setDrainToKeeper } from '../../outputs/agent-studio/server/host/host_client.ts';
-import { SettingsStore } from '../../outputs/agent-studio/server/state/settings.ts';
-import { FORWARD_FILE } from '../../outputs/agent-studio/server/artifacts/mcp_http.ts';
+} from '../../app/server/keeper/link.ts';
+import { keeperBinary, KeeperClient, readKeeperInfo } from '../../app/server/keeper/client.ts';
+import { codeWarning, leaveSplitHost, pidAlive, readInfo, setDrainToKeeper } from '../../app/server/host/host_client.ts';
+import { SettingsStore } from '../../app/server/state/settings.ts';
+import { FORWARD_FILE } from '../../app/server/artifacts/mcp_http.ts';
 import { DENO, FAKE_HOST, Fixture } from './_host_fixture.ts';
-import { APP_ID, CODE_ROOT, PROTOCOL_VERSION } from '../../outputs/agent-studio/server/host/host_client.ts';
+import { APP_ID, CODE_ROOT, PROTOCOL_VERSION } from '../../app/server/host/host_client.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -46,7 +46,7 @@ class Lab {
   readonly state = this.dir + SEP + 'state';
   readonly work = this.dir + SEP + 'work';
   readonly agentLog = this.dir + SEP + 'agent-received.log';
-  readonly studios: Studio[] = [];
+  readonly studios: Aib[] = [];
   readonly children: Deno.ChildProcess[] = [];
 
   constructor(readonly keeperArgs: string[] = []) {
@@ -54,13 +54,13 @@ class Lab {
   }
 
   /** A Studio with its own keeper link (no orphan command: a test never starts AIB again). */
-  studio(keeperForNew = true): Studio {
+  studio(keeperForNew = true): Aib {
     const keeper = new KeeperLink({
       dataDir: this.state,
       orphan: null,
       extraArgs: ['--exit-after', '2s', '--orphan-after', '30s', ...this.keeperArgs],
     });
-    const studio = new Studio({ claudeLauncher: import.meta.filename!, codexLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper, keeperForNew });
+    const studio = new Aib({ claudeLauncher: import.meta.filename!, codexLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper, keeperForNew });
     studio.ownerProbe = () => null;
     studio.connectionFactory = (_command, cwd, provider, options) =>
       new Connection(fake('--cancel-aware'), cwd, provider, { ...options, env: { FAKE_ACP_LOG: this.agentLog } });
@@ -68,7 +68,7 @@ class Lab {
     return studio;
   }
 
-  crash(studio: Studio): void {
+  crash(studio: Aib): void {
     studio.keeper!.disconnect();
     for (const c of studio.connections.values()) c.sessionLease?.release();
     studio.reconnectStop.set();
@@ -121,7 +121,7 @@ const answers = (lines: Json[], id: string) => lines.filter((m) => m.id === id &
 const shape = (events: Json[]) => events.map((e) => JSON.stringify([e.seq, e.kind, e.data]));
 
 /** One whole turn: `stream:<n>:10`, the question halfway answered yes, until the turn ends. */
-async function turn(studio: Studio, c: Connection, n: number, messageId: string): Promise<void> {
+async function turn(studio: Aib, c: Connection, n: number, messageId: string): Promise<void> {
   assertEquals((await studio.liveCall('prompt', { id: c.id, text: `stream:${n}:10`, clientMessageId: messageId }))[0], 200);
   await until(() => c.permissions.size === 1, `the question of ${messageId}`, 10);
   assertEquals((await studio.liveCall('permission', { id: c.id, key: [...c.permissions.keys()][0], option: 'yes' }))[0], 200);
@@ -168,7 +168,7 @@ Deno.test('keeper decision: a keeper that cannot run falls back (off) and says w
     assertEquals(await decideKeeper(dir, { env, binary: () => Promise.resolve(`${dir}${SEP}no-such-keeper.exe`) }), false);
     assert(keeperProblem().includes('could not be run'), keeperProblem());
     // A Studio built after the fallback: no keeper link, agents are its children.
-    const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: dir, port: 0, ownersDir: null });
+    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: dir, port: 0, ownersDir: null });
     assertEquals([studio.keeper, studio.keeperForNew, studio.hostMode], [null, false, 'in-process']);
     await studio.close();
   } finally {
@@ -183,7 +183,7 @@ Deno.test({
   async fn() {
     await using lab = new Lab();
     const keeper = new KeeperLink({ dataDir: lab.state, orphan: null, binary: `${lab.dir}${SEP}no-such-keeper.exe`, waitSeconds: 2 });
-    const studio = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: lab.state, port: 0, ownersDir: null }, { keeper });
+    const studio = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: lab.state, port: 0, ownersDir: null }, { keeper });
     studio.ownerProbe = () => null;
     studio.connectionFactory = (_command, cwd, provider, options) => new Connection(fake(), cwd, provider, options);
     lab.studios.push(studio);
@@ -209,12 +209,12 @@ Deno.test({
     lab.crash(a);
 
     // What a fallback start (the keeper not decided on) builds while a keeper still runs (no link passed: the Studio decides).
-    const plain = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: lab.state, port: 0, ownersDir: null });
+    const plain = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: lab.state, port: 0, ownersDir: null });
     assert(plain.keeper !== null, 'a keeper runs: a link to take its chats over');
     assertEquals([plain.keeperForNew, plain.hostMode], [false, 'in-process']);
     await plain.close();
     setKeeperDecision(true); // what main.ts decides when the keeper can run
-    const on = new Studio({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: lab.state, port: 0, ownersDir: null });
+    const on = new Aib({ claudeLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: lab.state, port: 0, ownersDir: null });
     setKeeperDecision(null);
     assertEquals([on.keeper !== null, on.keeperForNew, on.hostMode], [true, true, 'keeper']);
     await on.close();

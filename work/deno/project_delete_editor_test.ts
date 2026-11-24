@@ -3,10 +3,10 @@
  * called by server/web/project_routes.ts), never another project's, never the project folder or its aib-shared/ folder. Temp folders only.
  */
 import { assert, assertEquals } from './_assert.ts';
-import { RemovedProjects } from '../../outputs/agent-studio/server/desktop/project_delete.ts';
-import { projectRemove } from '../../outputs/agent-studio/server/web/project_routes.ts';
-import { ConversationState } from '../../outputs/agent-studio/server/state/store.ts';
-import { LiveFiles } from '../../outputs/agent-studio/server/files/live_files.ts';
+import { RemovedProjects } from '../../app/server/desktop/project_delete.ts';
+import { projectRemove } from '../../app/server/web/project_routes.ts';
+import { ConversationState } from '../../app/server/state/store.ts';
+import { LiveFiles } from '../../app/server/files/live_files.ts';
 
 const SEP = Deno.build.os === 'windows' ? '\\' : '/';
 const exists = async (p: string) => {
