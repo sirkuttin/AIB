@@ -15,14 +15,26 @@
  * Every wsl.exe is hidden, with a minimal environment (WSL_UTF8=1) and never an empty argument. Under test (AGENT_STUDIO_TEST=1 or
  * AIB_WSL_TEST=1) the helper gets AIB_WSL_TEST=1, so --apply and --undo only work under /tmp/aib-wsl-test-* (helper/import.ts).
  */
-import { dataDirName, HELPER_FILE, rootOverride, runWsl, type WslRunner } from '../app/server/wsl/install.ts';
-import { formatReport, IMPORT_MARKER, type Report } from '../app/server/wsl/helper/import.ts';
-import { validDistro } from '../app/server/platform/location.ts';
-import { WSL_ROOT_DIR } from '../app/server/wsl/contract.ts';
+import {
+  dataDirName,
+  HELPER_FILE,
+  rootOverride,
+  runWsl,
+  type WslRunner,
+} from "../app/server/wsl/install.ts";
+import {
+  formatReport,
+  IMPORT_MARKER,
+  type Report,
+} from "../app/server/wsl/helper/import.ts";
+import { userStateDir } from "../app/server/state/paths.ts";
+import { validDistro } from "../app/server/platform/location.ts";
+import { WSL_ROOT_DIR } from "../app/server/wsl/contract.ts";
 
 const DEC = new TextDecoder();
-const REPO = decodeURIComponent(new URL('..', import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1').replace(/[\\/]+$/, '');
-const ARCH = Deno.build.arch === 'aarch64' ? 'arm64' : 'x64';
+const REPO = decodeURIComponent(new URL("..", import.meta.url).pathname)
+  .replace(/^\/([A-Za-z]:)/, "$1").replace(/[\\/]+$/, "");
+const ARCH = Deno.build.arch === "aarch64" ? "arm64" : "x64";
 const APPLY_TIMEOUT_MS = 60 * 60_000;
 
 export interface WrapperArgs {
@@ -44,46 +56,55 @@ export interface WrapperArgs {
 export function parseArgs(argv: string[]): WrapperArgs | string {
   const value = (name: string) => {
     const i = argv.indexOf(name);
-    return i >= 0 && i + 1 < argv.length && !argv[i + 1].startsWith('--') ? argv[i + 1] : '';
+    return i >= 0 && i + 1 < argv.length && !argv[i + 1].startsWith("--")
+      ? argv[i + 1]
+      : "";
   };
   const known = new Set([
-    '--distro',
-    '--project',
-    '--apply',
-    '--undo',
-    '--confirm-project',
-    '--sessions',
-    '--json',
-    '--state-dir',
-    '--data',
-    '--root',
-    '--helper-bin',
-    '--claude-dir',
-    '--codex-dir',
+    "--distro",
+    "--project",
+    "--apply",
+    "--undo",
+    "--confirm-project",
+    "--sessions",
+    "--json",
+    "--state-dir",
+    "--data",
+    "--root",
+    "--helper-bin",
+    "--claude-dir",
+    "--codex-dir",
   ]);
-  for (const a of argv) if (a.startsWith('--') && !known.has(a)) return `Unknown option ${a}`;
+  for (const a of argv) {
+    if (a.startsWith("--") && !known.has(a)) return `Unknown option ${a}`;
+  }
   const args: WrapperArgs = {
-    distro: value('--distro'),
-    project: value('--project'),
-    apply: argv.includes('--apply'),
-    undo: value('--undo'),
-    confirm: value('--confirm-project'),
-    sessions: value('--sessions'),
-    json: argv.includes('--json'),
-    stateDir: value('--state-dir'),
-    data: value('--data'),
-    root: value('--root'),
-    helperBin: value('--helper-bin'),
-    claudeDir: value('--claude-dir'),
-    codexDir: value('--codex-dir'),
+    distro: value("--distro"),
+    project: value("--project"),
+    apply: argv.includes("--apply"),
+    undo: value("--undo"),
+    confirm: value("--confirm-project"),
+    sessions: value("--sessions"),
+    json: argv.includes("--json"),
+    stateDir: value("--state-dir"),
+    data: value("--data"),
+    root: value("--root"),
+    helperBin: value("--helper-bin"),
+    claudeDir: value("--claude-dir"),
+    codexDir: value("--codex-dir"),
   };
-  if (!validDistro(args.distro)) return 'Give the distro: --distro Ubuntu';
-  if (!args.project.startsWith('/')) return 'Give the project as a Linux path: --project /home/<you>/<repo>';
-  if (args.apply && args.undo) return 'Use --apply or --undo, not both';
+  if (!validDistro(args.distro)) return "Give the distro: --distro Ubuntu";
+  if (!args.project.startsWith("/")) {
+    return "Give the project as a Linux path: --project /home/<you>/<repo>";
+  }
+  if (args.apply && args.undo) return "Use --apply or --undo, not both";
   for (
-    const [name, v] of [['--data', args.data], ['--root', args.root], ['--claude-dir', args.claudeDir], ['--codex-dir', args.codexDir]]
+    const [name, v] of [["--data", args.data], ["--root", args.root], [
+      "--claude-dir",
+      args.claudeDir,
+    ], ["--codex-dir", args.codexDir]]
   ) {
-    if (v && !v.startsWith('/')) return `${name} must be a Linux path`;
+    if (v && !v.startsWith("/")) return `${name} must be a Linux path`;
   }
   return args;
 }
@@ -92,21 +113,33 @@ export function parseArgs(argv: string[]): WrapperArgs | string {
 export function mntPath(windowsPath: string): string {
   const m = /^([A-Za-z]):[\\/](.*)$/.exec(windowsPath);
   if (!m) throw new Error(`${windowsPath} is not a Windows path with a drive`);
-  return `/mnt/${m[1].toLowerCase()}/${m[2].replaceAll('\\', '/')}`;
+  return `/mnt/${m[1].toLowerCase()}/${m[2].replaceAll("\\", "/")}`;
 }
 
 /** The Windows data folder of the AIB in use: --state-dir, AGENT_STUDIO_STATE_DIR, else %LOCALAPPDATA%\AgentStudio (never under test). */
-export function stateDirOf(args: WrapperArgs, env: (n: string) => string | undefined): string {
+export function stateDirOf(
+  args: WrapperArgs,
+  env: (n: string) => string | undefined,
+): string {
   if (args.stateDir) return args.stateDir;
-  const own = env('AGENT_STUDIO_STATE_DIR');
+  const own = env("AGENT_STUDIO_STATE_DIR");
   if (own) return own;
-  if (env('AGENT_STUDIO_TEST') === '1' || env('AIB_WSL_TEST') === '1') throw new Error('Under test, give --state-dir or --data');
-  const local = env('LOCALAPPDATA');
-  if (!local) throw new Error('LOCALAPPDATA is not set: give --state-dir or --data');
-  return `${local.replace(/[\\/]+$/, '')}\\AgentStudio`;
+  if (env("AGENT_STUDIO_TEST") === "1" || env("AIB_WSL_TEST") === "1") {
+    throw new Error("Under test, give --state-dir or --data");
+  }
+  const local = env("LOCALAPPDATA");
+  if (!local) {
+    throw new Error("LOCALAPPDATA is not set: give --state-dir or --data");
+  }
+  // the same choice as the app (state/paths.ts): AIB, or AgentStudio on a PC that has not run work/migrate/rename_data_folder.ts
+  const base = local.replace(/[\\/]+$/, "");
+  return userStateDir({ LOCALAPPDATA: base }, "win32");
 }
 
-const sh = (script: string, ...args: string[]) => ['/bin/sh', '-c', script, 'sh', ...args];
+const sh = (
+  script: string,
+  ...args: string[]
+) => ["/bin/sh", "-c", script, "sh", ...args];
 
 /** $1 = root, $2 = marker: installed helpers that know `import`, newest first ("<mtime> <path>" lines). Read-only. */
 export const FIND_SCRIPT = `set -u
@@ -119,26 +152,33 @@ done | sort -rn
 
 async function main(argv: string[], run: WslRunner = runWsl): Promise<number> {
   const parsed = parseArgs(argv);
-  if (typeof parsed === 'string') {
+  if (typeof parsed === "string") {
     console.error(parsed);
     console.error(
-      'usage: deno run -A tools/wsl-import.ts --distro Ubuntu --project /home/<you>/<repo> [--apply|--undo <stamp>] [--confirm-project <same path>]',
+      "usage: deno run -A tools/wsl-import.ts --distro Ubuntu --project /home/<you>/<repo> [--apply|--undo <stamp>] [--confirm-project <same path>]",
     );
     return 1;
   }
   const args = parsed;
   const env = (n: string) => Deno.env.get(n);
-  const testing = env('AGENT_STUDIO_TEST') === '1' || env('AIB_WSL_TEST') === '1';
-  let root = args.root || rootOverride() || '';
+  const testing = env("AGENT_STUDIO_TEST") === "1" ||
+    env("AIB_WSL_TEST") === "1";
+  let root = args.root || rootOverride() || "";
   if (testing && !/^\/tmp\/aib-wsl-test-[A-Za-z0-9._-]+$/.test(root)) {
-    console.error('Under test, AIB_WSL_ROOT (or --root) must be /tmp/aib-wsl-test-<random>');
+    console.error(
+      "Under test, AIB_WSL_ROOT (or --root) must be /tmp/aib-wsl-test-<random>",
+    );
     return 2;
   }
   if (!root) {
     const home = await run(args.distro, sh('printf "%s" "$HOME"'));
     const h = DEC.decode(home.stdout).trim();
-    if (home.code !== 0 || !h.startsWith('/')) {
-      console.error(`${args.distro} gave no home folder (${home.stderr.trim() || `exit ${home.code}`})`);
+    if (home.code !== 0 || !h.startsWith("/")) {
+      console.error(
+        `${args.distro} gave no home folder (${
+          home.stderr.trim() || `exit ${home.code}`
+        })`,
+      );
       return 1;
     }
     root = `${h}/${WSL_ROOT_DIR}`;
@@ -148,11 +188,15 @@ async function main(argv: string[], run: WslRunner = runWsl): Promise<number> {
     args.codexDir ||= `${root}/home/.codex`;
   }
   const data = args.data || `${root}/${dataDirName(stateDirOf(args, env))}`;
-  let helper = '';
+  let helper = "";
   if (args.helperBin) helper = mntPath(args.helperBin);
   else {
     const found = await run(args.distro, sh(FIND_SCRIPT, root, IMPORT_MARKER));
-    helper = DEC.decode(found.stdout).split('\n').map((l) => l.slice(l.indexOf(' ') + 1)).find((p) => p.startsWith('/')) ?? '';
+    helper = DEC.decode(found.stdout).split("\n").map((l) =>
+      l.slice(l.indexOf(" ") + 1)
+    ).find((p) =>
+      p.startsWith("/")
+    ) ?? "";
     if (!helper) {
       const built = `${REPO}\\dist\\wsl\\linux-${ARCH}\\AIB-wsl-helper-linux`;
       try {
@@ -167,37 +211,45 @@ async function main(argv: string[], run: WslRunner = runWsl): Promise<number> {
     }
   }
   const cmd = [
-    ...(testing ? ['/usr/bin/env', 'AIB_WSL_TEST=1'] : []),
+    ...(testing ? ["/usr/bin/env", "AIB_WSL_TEST=1"] : []),
     helper,
-    'import',
-    '--json',
-    '--data',
+    "import",
+    "--json",
+    "--data",
     data,
-    '--root',
+    "--root",
     root,
-    '--project',
+    "--project",
     args.project,
   ];
-  if (args.apply) cmd.push('--apply');
-  if (args.undo) cmd.push('--undo', args.undo);
-  if (args.confirm) cmd.push('--confirm-project', args.confirm);
-  if (args.sessions) cmd.push('--sessions', args.sessions);
-  if (args.claudeDir) cmd.push('--claude-dir', args.claudeDir);
-  if (args.codexDir) cmd.push('--codex-dir', args.codexDir);
-  const done = await run(args.distro, cmd, { timeoutMs: args.apply || args.undo ? APPLY_TIMEOUT_MS : 10 * 60_000 });
+  if (args.apply) cmd.push("--apply");
+  if (args.undo) cmd.push("--undo", args.undo);
+  if (args.confirm) cmd.push("--confirm-project", args.confirm);
+  if (args.sessions) cmd.push("--sessions", args.sessions);
+  if (args.claudeDir) cmd.push("--claude-dir", args.claudeDir);
+  if (args.codexDir) cmd.push("--codex-dir", args.codexDir);
+  const done = await run(args.distro, cmd, {
+    timeoutMs: args.apply || args.undo ? APPLY_TIMEOUT_MS : 10 * 60_000,
+  });
   const out = DEC.decode(done.stdout).trim();
   let report: Report | null = null;
   try {
-    report = JSON.parse(out.split('\n').pop() ?? '') as Report;
+    report = JSON.parse(out.split("\n").pop() ?? "") as Report;
   } catch {
     report = null;
   }
   if (!report) {
-    console.error(`The helper (${helper}) gave no report (exit ${done.code}):\n${out.slice(-2000)}\n${done.stderr.slice(-2000)}`);
+    console.error(
+      `The helper (${helper}) gave no report (exit ${done.code}):\n${
+        out.slice(-2000)
+      }\n${done.stderr.slice(-2000)}`,
+    );
     return done.code || 1;
   }
   const self = `deno run -A tools/wsl-import.ts --distro ${args.distro}`;
-  console.log(args.json ? JSON.stringify(report, null, 1) : formatReport(report, self));
+  console.log(
+    args.json ? JSON.stringify(report, null, 1) : formatReport(report, self),
+  );
   if (!args.json) console.log(`(helper ${helper}, data ${data})`);
   return done.code;
 }

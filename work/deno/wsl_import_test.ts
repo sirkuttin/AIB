@@ -65,7 +65,7 @@ Deno.test('import: test guard, confirmation-free pure helpers, argument parsing'
   const plain = parseArgs(['--distro', 'Ubuntu', '--project', '/x']) as Exclude<ReturnType<typeof parseArgs>, string>;
   assertEquals(
     stateDirOf(plain, (n) => ({ LOCALAPPDATA: 'C:\\Users\\me\\AppData\\Local' } as Record<string, string>)[n]),
-    'C:\\Users\\me\\AppData\\Local\\AgentStudio',
+    'C:\\Users\\me\\AppData\\Local\\AIB', // 2026-11-24: the data folder is AIB (AgentStudio only while it still exists alone)
   );
   let threw = false;
   try {

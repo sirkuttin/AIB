@@ -130,8 +130,9 @@ Some Beta agents need their own paid plan or API key; Settings says which.
 - **ACP.** Each agent is a separate process speaking JSON-RPC over stdio. AIB validates every message.
 - **Keeper.** A small Go program (`keeper/`) owns the agent processes and terminals and journals each chat. A restarted AIB
   replays the journal and continues each chat without sending anything twice.
-- **Data.** Chats, settings, artifacts and worktrees live in one folder: `%LOCALAPPDATA%\AgentStudio` (Windows),
-  `~/Library/Application Support/AgentStudio` (macOS), `~/.local/state/agent-studio` (Linux). Worktrees are never made
+- **Data.** Chats, settings, artifacts and worktrees live in one folder: `%LOCALAPPDATA%\AIB` (Windows),
+  `~/Library/Application Support/AIB` (macOS), `~/.local/state/aib` (Linux). An existing `AgentStudio` / `agent-studio` folder
+  keeps being used until `deno run -A work/migrate/rename_data_folder.ts` renames it. Worktrees are never made
   inside your repository.
 - **App.** A Deno web server with a native window and tray icon. Artifacts are served on the next port, a separate origin.
 

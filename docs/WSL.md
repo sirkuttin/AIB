@@ -196,7 +196,7 @@ deno run -A tools/wsl-import.ts --distro Ubuntu --project /home/<you>/<repo> --u
 Run it from PowerShell or cmd. From Git Bash, set `MSYS_NO_PATHCONV=1` first, or Git Bash turns `/home/...` into a Windows path.
 
 **What it finds.** AIB's folder in the distro (`AIB_WSL_ROOT`, else `$HOME/.aib-server`), and the Linux data folder of the AIB in use:
-`data-<hash>` of its Windows data folder (`--state-dir`, else `AGENT_STUDIO_STATE_DIR`, else `%LOCALAPPDATA%\AgentStudio`). The
+`data-<hash>` of its Windows data folder (`--state-dir`, else `AGENT_STUDIO_STATE_DIR`, else `%LOCALAPPDATA%\AIB`, or `AgentStudio` before the rename script ran; the hash changes with the name, so the script renames each distro's `data-<hash>` too). The
 helper is the first of these: `--helper-bin` (a Linux build on Windows, run through `/mnt/c`); an installed `<root>/<ver>/AIB-wsl-helper`
 that contains the `import` marker (a read-only `grep`; newest first); this checkout's `dist/wsl/linux-x64/AIB-wsl-helper-linux`
 (`deno run -A tools/build.ts --wsl-only`). An AIB build without this code has a helper without `import`, so the tool then runs the

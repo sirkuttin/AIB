@@ -100,8 +100,9 @@ notifications through the web API, updates as "open the installer" instructions)
 - **No console windows:** on Windows the app and every child it starts share one hidden console (`platform/console.ts`).
 - **Start menu (Windows):** on first run the app adds `AIB.lnk` to the per-user Start menu, pointing at the running `AIB.exe`
   (`shortcut.ts`). Not on macOS or Linux.
-- **One data folder for both ways of running:** the app uses the normal default, `%LOCALAPPDATA%\AgentStudio` (macOS
-  `~/Library/Application Support/AgentStudio`, Linux `$XDG_STATE_HOME/agent-studio` or `~/.local/state/agent-studio`), the same as
+- **One data folder for both ways of running:** the app uses the normal default, `%LOCALAPPDATA%\AIB` (macOS
+  `~/Library/Application Support/AIB`, Linux `$XDG_STATE_HOME/aib` or `~/.local/state/aib`; a PC that has not run
+  `work/migrate/rename_data_folder.ts` still uses the old `AgentStudio` / `agent-studio` folder), the same as
   `deno run -A server/main.ts`, so there is one set of chats. `AGENT_STUDIO_STATE_DIR` (a test run) wins for both.
 
 ## Chat terminals
