@@ -523,7 +523,7 @@ Deno.test('receipts: a restart never replays an unconfirmed prompt, and the page
   assertEquals(events(again, 'user').length, 0);
   const accepted = await again.prompt('wait', 'attempt-2'); // "Send again" uses a new id and gets its own receipt
   assert(!accepted.duplicate);
-  assertEquals(again.recovery!.store!.unknownReceipts('omp', 'fake-session').length, 1);
+  assertEquals(again.recovery!.store!.unknownReceipts(again.provider, 'fake-session').length, 1);
   again.cancel();
   await until(() => !again.busy);
 });
