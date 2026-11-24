@@ -21,6 +21,10 @@ import {
   readKeeperInfo,
 } from '../../app/server/keeper/client.ts';
 import { pidAlive } from '../../app/server/host/host_client.ts';
+import * as artifactKeys from '../../app/server/artifacts/keys.ts';
+import { ServedRecord, toolsHash } from '../../app/server/artifacts/served.ts';
+import { setSwarmEnabled } from '../../app/server/swarm/settings.ts';
+import { APP_VERSION } from '../../app/server/core/app.ts';
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -406,4 +410,71 @@ Deno.test('keeper versions: a keeper that lacks a needed feature is reported (mi
   assertEquals(KEEPER_NEEDS, ['notes', 'once', 'channel-ids']);
   assertEquals(missingFeatures(['pty', 'notes', 'once', 'channel-ids']), []);
   assertEquals(missingFeatures(['pty', 'notes']), ['once', 'channel-ids']);
+});
+
+// ---- 0.15 slices 1: take-over keeps "main", and the per-chat served record --------------------------------------------------
+
+/** One tools/list for a chat, asked of this AIB's artifact server the way the keeper forwarder asks (key, conversation, body). */
+async function toolNames(aib: Aib, id: string): Promise<string[]> {
+  const key = artifactKeys.issue(id)!;
+  const answer = await aib.artifactMcpHttp().tunneled(key, id, JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }));
+  assertEquals(answer.status, 200);
+  return (((JSON.parse(answer.body).result as Json).tools) as Json[]).map((t) => String(t.name));
+}
+
+Deno.test({
+  name: 'keeper studio: a lead chat in the project folder (no worktree) keeps main status and its helper tools through a take-over, helpers on or off',
+  ...T,
+  async fn() {
+    await keeperBinary();
+    await using lab = new KeeperAibLab();
+    const a = lab.aib();
+    const c = await a.connect('claude', lab.work); // the project folder itself: no worktree
+    assert(!c.worktree, 'a project-folder chat');
+    assertEquals(c.swarm?.role, 'main', 'a new chat is main');
+    lab.crash(a);
+
+    const b = lab.aib();
+    assertEquals(await b.adoptKeeper(), 1);
+    const r = b.connections.get(c.id)!;
+    assert(r && r.ready && !r.worktree);
+    assertEquals(r.swarm?.role, 'main', 'the taken-over chat is main again (it was not, outside a worktree)');
+    let names = await toolNames(b, r.id);
+    for (const tool of ['start_helper', 'helper_status', 'stop_helper', 'merge_helper', 'unlanded_work']) assert(names.includes(tool), `${tool} listed`);
+    assert(!names.includes('merge_into_project'), 'no worktree: no merge tool, as before');
+
+    // Owner rule: helpers are never turned off. A main chat lists the tools whatever the setting; the route refuses the call.
+    setSwarmEnabled(lab.state, false);
+    names = await toolNames(b, r.id);
+    assert(names.includes('start_helper'), 'listed with the setting off: the list never changes under a chat');
+  },
+});
+
+Deno.test({
+  name: 'keeper studio: the per-chat served record (tool names, prompt) is written, and a later AIB that takes the chat over reads it',
+  ...T,
+  async fn() {
+    await keeperBinary();
+    await using lab = new KeeperAibLab();
+    const a = lab.aib();
+    const c = await a.connect('claude', lab.work);
+    const names = await toolNames(a, c.id);
+    const served = a.served!.get(c.id)!;
+    assertEquals(served.tools!.hash, toolsHash(names));
+    assertEquals(served.tools!.names, [...names].sort());
+    assert(served.prompt && /^[0-9a-f]{16}$/.test(served.prompt.hash), 'the prompt AIB sent at session/new is recorded');
+    assertEquals(served.app, APP_VERSION);
+    const before = JSON.stringify(served);
+    lab.crash(a);
+
+    const b = lab.aib(); // a newer AIB in the same state folder
+    assertEquals(await b.adoptKeeper(), 1);
+    assertEquals(JSON.stringify(b.served!.get(c.id)), before, 'the take-over replays the session: nothing is sent again, the record stands');
+    assertEquals(JSON.stringify(new ServedRecord(lab.state, APP_VERSION).get(c.id)), before, 'it is on disk, not in memory');
+    // The same list again changes nothing; another list is noticed (this is how a later slice knows a chat is stale).
+    await toolNames(b, c.id);
+    assertEquals(JSON.stringify(b.served!.get(c.id)), before);
+    b.served!.tools(c.id, ['publish']);
+    assert(b.served!.get(c.id)!.tools!.hash !== served.tools!.hash);
+  },
 });

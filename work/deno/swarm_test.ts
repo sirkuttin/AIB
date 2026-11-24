@@ -129,17 +129,18 @@ Deno.test('swarm.enabled: on by default, a saved false stays off, kept next to c
 
 Deno.test({
   ...T,
-  name: 'swarm.enabled saved off: a main chat is not offered the helper tools and the route refuses; on: offered',
+  name: 'swarm.enabled saved off: a main chat is still offered the helper tools (the list never changes) and the route refuses the call',
   async fn() {
     await using box = new Box(false);
     const off = await box.aib.connect('claude', box.project);
-    assertEquals(env(off).STUDIO_MAIN, undefined, 'off: no helper tools');
+    assertEquals(env(off).STUDIO_MAIN, '1', 'off: still listed (owner rule: helpers are never turned off)');
     const refused = await box.swarm.tool(off.id, 'start_helper', BRIEF);
     assertEquals(refused[0], 403);
     assert(String((refused[1] as Json).error).includes('turned off'));
+    assert(String((refused[1] as Json).error).includes('Settings'), 'the refusal says where the switch is');
     setSwarmEnabled(box.state, true);
     const on = await box.aib.connect('claude', box.project);
-    assertEquals(env(on).STUDIO_MAIN, '1', 'on: a chat started after is offered the tools');
+    assertEquals(env(on).STUDIO_MAIN, '1', 'on: offered, as before');
   },
 });
 
@@ -454,25 +455,16 @@ Deno.test({
 
 Deno.test({
   ...T,
-  name: 'helpers off: the main chat\'s AIB prompt says the owner switched them off (only then); on, it says nothing of it',
+  name: "helpers off: the main chat's AIB prompt never says helpers are off (its tools are listed; the refusal names the switch)",
   async fn() {
-    const { HELPERS_OFF_PROMPT } = await import('../../app/server/acp/connection.ts');
     const promptOf = (c: Connection) => {
       c.initial = { agentCapabilities: { sessionCapabilities: { systemPrompt: {} } } } as never; // an agent that takes a client system prompt
       return JSON.stringify(c.artifactPrompt(c.mcpServers as never));
     };
-    {
-      await using off = new Box(false);
-      const main = await off.aib.connect('claude', off.project);
-      assert(main.helpersOffHint);
-      assert(promptOf(main).includes(HELPERS_OFF_PROMPT.slice(0, 60)), 'off: told');
-      assert(HELPERS_OFF_PROMPT.includes('Settings › AIB Linking') && !HELPERS_OFF_PROMPT.includes('Experimental') && HELPERS_OFF_PROMPT.includes('Codex, Gemini, Claude Code on a model server'));
-    }
-    {
-      await using on = new Box(true);
-      const main = await on.aib.connect('claude', on.project);
-      assert(!main.helpersOffHint);
-      assert(!promptOf(main).includes('switched off'), 'on: not told');
+    for (const swarmOn of [false, true]) {
+      await using box = new Box(swarmOn);
+      const main = await box.aib.connect('claude', box.project);
+      assert(!promptOf(main).includes('switched off'), `swarm ${swarmOn}: not told`);
     }
   },
 });

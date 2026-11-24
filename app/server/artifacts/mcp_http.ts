@@ -22,7 +22,7 @@
  */
 import * as artifactKeys from './keys.ts';
 import { reply, SERVER_NAME, type ToolContext, urlFromFile } from './mcp.ts';
-import { pyJsonDumps, pyStrip } from '../core/py.ts';
+import { isDict, pyJsonDumps, pyStrip } from '../core/py.ts';
 import { getLogger } from '../core/log.ts';
 import { serve, type Server as HttpServer } from '../platform/http_serve.ts';
 import { keyForForwarder } from '../keeper/client.ts';
@@ -66,6 +66,8 @@ export interface McpHttpHost {
    * whichever AIB runs now (after a restart or an update, on another port).
    */
   addressFile?: string;
+  /** A tools/list answered a chat these tool names (artifacts/served.ts keeps them per chat); absent: not recorded. */
+  servedTools?(conversation: string, names: string[]): void;
   /** A Claude chat's command hook (key already checked for `conversation`); absent: the hook routes answer 503. */
   hook?(event: string, conversation: string, body: unknown): Promise<{ status: number; body: string; type: string }>;
 }
@@ -372,7 +374,21 @@ export class ArtifactMcpHttp {
       return refused(500, 'Internal error');
     }
     if (answer === null) return new Response(null, { status: 202 }); // a notification or a response
+    this.#recordServed(conversation, text, answer);
     return json(200, answer);
+  }
+
+  /** A tools/list reply: tell AIB which tool names this chat was just served (never fails the call). */
+  #recordServed(conversation: string, text: string, answer: Json): void {
+    if (!this.aib.servedTools || !text.includes('tools/list')) return;
+    try {
+      const result = answer.result;
+      const message = JSON.parse(text);
+      if (!isDict(result) || !Array.isArray(result.tools) || !isDict(message) || message.method !== 'tools/list') return;
+      this.aib.servedTools(conversation, result.tools.map((t) => String(isDict(t) ? t.name : '')));
+    } catch (error) {
+      log.exception(error, 'Recording the served tools failed');
+    }
   }
 }
 

@@ -719,13 +719,8 @@ export const WSL_ARTIFACT_PROMPT =
   'a file when you publish it: after changing the file, call update with the same path (or the new content) to publish the new ' +
   'version. AIB helper tools are not available in WSL projects. ' + TOOLS_LOADING + ' ' + COMMANDS_RULE.replace(' (powershell on Windows)', '');
 
-/**
- * Said only to a main chat while "Helpers from other agents" is off (Settings › AIB Linking): it has no helper tools, and without
- * this line it would quietly do the work itself. It tells the owner instead.
- */
-export const HELPERS_OFF_PROMPT =
-  'AIB can start helper agents (Codex, Gemini, Claude Code on a model server), but the owner has them switched off in Settings › ' +
-  'AIB Linking (Helpers from other agents). If the owner asks for a helper, say so and tell them where the switch is; do not work around it.';
+/** How long codex-acp waits for AIB's tool server before the first turn (architect review S5: 10 s, the forwarder retries 15 s itself). */
+export const CODEX_MCP_STARTUP_WAIT_MS = 10_000;
 
 export const WORKTREE_PROMPT =
   'In this chat you work in your own copy of the project, on the git branch {branch} (it started from {base}). ' +
@@ -1167,8 +1162,11 @@ export class Connection {
   turnEndedAt: number | null = null;
   /** Swarm: this chat's role, set by AIB when it is made (a helper's own record says whose); null outside a worktree. */
   swarm: { role: 'main' | 'helper'; helperId?: string; parent?: string } | null = null;
-  /** True: this main chat started while "Helpers from other agents" was off, so its AIB prompt says so (HELPERS_OFF_PROMPT). */
-  helpersOffHint = false;
+  /**
+   * Set by AIB: told the text of the AIB system prompt each time it is sent to the agent (session/new, session/load), so AIB keeps
+   * per chat which prompt it served (artifacts/served.ts). Never called for a keeper replay: nothing is sent then.
+   */
+  promptServed: ((prompt: string) => void) | null = null;
   /** Swarm: this helper's brief test command (allow rules: the built-in "helper copy" rule answers its runs); set by AIB. */
   helperTestCmd: () => string = () => '';
   /** Wall-clock time the current prompt turn started (attention.busySince, so a reloaded page keeps "Working · 12m"). */
@@ -4473,6 +4471,7 @@ export class Connection {
             ...this.artifactPrompt(mcpServers),
             ...this.extraFolders(),
             ...this.claudeMeta(),
+            ...this.codexMeta(),
           },
         );
       } finally {
@@ -4489,6 +4488,7 @@ export class Connection {
         ...this.artifactPrompt(mcpServers),
         ...this.extraFolders(),
         ...this.claudeMeta(),
+        ...this.codexMeta(),
       });
     }
     this.#takeSession(result, resume);
@@ -4784,6 +4784,7 @@ export class Connection {
         ...this.artifactPrompt(this.#sessionMcp),
         ...this.extraFolders(),
         ...this.claudeMeta(),
+        ...this.codexMeta(),
       }, 180);
     } finally {
       replay = this.#reload?.window ?? replay;
@@ -6572,6 +6573,16 @@ export class Connection {
     return settings ? { _meta: { claudeCode: { options: { settings: structuredClone(settings) } } } } : {};
   }
 
+  /**
+   * Codex (codex-acp 2.6, docs/mcp-startup-await-timeout.md): session/new, session/load and session/resume carry
+   * `_meta.mcpStartupAwaitTimeoutMs`; without it codex-acp does not wait for the MCP servers, and Codex builds the first turn's tool
+   * catalog after 1 s, which AIB's forwarder can miss. Not `required`: with AIB closed a required server would fail the chat
+   * (architect review, must-fix 5). A server that does not come up in time ends the wait; its startup-failed card shows as before.
+   */
+  codexMeta(): Json {
+    return isCodexFamily(this.provider) ? { _meta: { mcpStartupAwaitTimeoutMs: CODEX_MCP_STARTUP_WAIT_MS } } : {};
+  }
+
   artifactPrompt(servers: unknown[] | null): Json {
     const own = (servers ?? []).some(isOwnArtifactEntry);
     const local = this.localOnlyText();
@@ -6581,8 +6592,10 @@ export class Connection {
     const subagents = this.subagentHooks?.prompt ? this.subagentHooks.prompt : isDict(this.subagentHooks?.settings?.hooks) ? SUBAGENT_PROMPT : this.subagentHooks?.deny
       ? (this.subagentHooks.off === 'Git Bash not found' ? SUBAGENTS_OFF_NO_BASH_PROMPT : SUBAGENTS_OFF_PROMPT)
       : this.subagentRule; // Antigravity: asked for, not enforced
-    const helpersOff = own && this.helpersOffHint && this.swarm?.role === 'main';
-    if (!own && !local && !brief && !subagents) return {};
+    if (!own && !local && !brief && !subagents) {
+      this.promptServed?.('');
+      return {};
+    }
     const out: Json = {};
     // Presence is support (ACP capability objects): codex-acp advertises `systemPrompt: {}`, which a truthiness test missed.
     if (isDict(this.#sessionCaps()?.systemPrompt)) {
@@ -6595,12 +6608,12 @@ export class Connection {
             .replaceAll('{base}', worktree.base || 'the project branch'),
         });
       }
-      if (helpersOff) content.push({ type: 'text', text: HELPERS_OFF_PROMPT });
       if (brief) content.push({ type: 'text', text: brief });
       if (local) content.push({ type: 'text', text: local });
       if (subagents) content.push({ type: 'text', text: subagents });
       out.systemPrompt = { mode: 'append', content };
     }
+    this.promptServed?.(JSON.stringify(out.systemPrompt ?? null));
     return out;
   }
 

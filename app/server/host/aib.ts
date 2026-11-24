@@ -63,6 +63,7 @@ import { sealOrPlain } from '../state/sealed.ts';
 import { artifactToolCommand } from '../artifacts/mcp.ts';
 import { ArtifactMcpHttp, FORWARD_FILE, forwardEntry, HOOK_EVENT_HEADER, HOOK_KEY_HEADER, HOOK_NONCE_HEADER, httpEntry, ownForwardFile, ownTunnelEntry, tunnelEntry } from '../artifacts/mcp_http.ts';
 import { WSL_TOOL_GROUPS } from '../artifacts/mcp.ts';
+import { ServedRecord } from '../artifacts/served.ts';
 import { headerOf, mcpTunnelGate, type TunnelAnswer } from '../wsl/mcp_tunnel.ts';
 import { wslRemote, wslSubagentChatClosed } from '../wsl/subagents.ts';
 import { forwarderOf, hookForwarderOf, hookForwarderTagsShells, keeperBinary, keyForForwarder, programVersion } from '../keeper/client.ts';
@@ -72,7 +73,7 @@ import * as codexSub from '../subagents/codex.ts';
 import * as gemini from '../subagents/gemini.ts';
 import { ANTIGRAVITY_SUBAGENT_NOTE, ANTIGRAVITY_SUBAGENT_PROMPT, isAntigravity } from '../subagents/antigravity.ts';
 import { ProcessReaper } from '../subagents/reap.ts';
-import { isCompiled, isDesktopApp, selfCommand, TESTS_DIR } from '../core/app.ts';
+import { APP_VERSION, isCompiled, isDesktopApp, selfCommand, TESTS_DIR } from '../core/app.ts';
 import { type ChannelInfo, type KeeperClient, KeeperError, missingFeatures, type OrphanCommand, readKeeperInfo } from '../keeper/client.ts';
 import { pidAlive } from './host_client.ts';
 import {
@@ -115,7 +116,6 @@ import { LiveSync, Mutex } from '../worktrees/sync.ts';
 import { chatLocalOnly, defaultsAllowed, ensureDefault, type LocalOnly } from '../worktrees/local_only.ts';
 import { wslChatLocalOnly, wslDefaultsAllowed, wslEnsureLocalOnly } from '../wsl/local_only.ts';
 import { helperOf, readHelpers, Registry as HelperRegistry } from '../swarm/registry.ts';
-import { swarmEnabled } from '../swarm/settings.ts';
 import { isFixture, testHomeEnv, type WslSpawn } from '../acp/connection.ts';
 import { normLinuxPath, refOf, type WslLoc, wslLocOf } from '../platform/location.ts';
 import { heldDistro, isAibInternalLabel } from '../keeper/link.ts';
@@ -400,6 +400,8 @@ export class Aib {
   /** Allow rules (server/allow): one gate for every chat of this host; null without a state folder. */
   readonly allow: AllowGate | null;
   readonly hasStateDir: boolean;
+  /** What each chat was served (tool names, AIB prompt), kept in the state folder across take-overs (artifacts/served.ts); null without one. */
+  readonly served: ServedRecord | null;
   ownerProbe: OwnerProbe;
   readonly owners: OwnerRegistry | null;
   readonly probe: OwnershipProbe;
@@ -474,6 +476,7 @@ export class Aib {
     registerSecret(this.token);
     this.hasStateDir = options.stateDir !== undefined && options.stateDir !== null;
     this.stateDir = this.hasStateDir ? String(options.stateDir) : join(TESTS_DIR, 'agent-studio-state');
+    this.served = this.hasStateDir ? new ServedRecord(this.stateDir, APP_VERSION) : null;
     const withKeeper = construct.keeper !== undefined ? !!construct.keeper : this.hasStateDir && keeperWanted(this.stateDir);
     this.instanceId = withKeeper && this.hasStateDir ? keeperInstanceId(this.stateDir) : crypto.randomUUID().replaceAll('-', '');
     this.ownerProbe = (provider, sessionId, excluded) => this.#cmdlineOwner(provider, sessionId, excluded);
@@ -1156,6 +1159,7 @@ export class Aib {
             ? { cwd: c.cwd, worktree: !!c.worktree && c.swarm?.role !== 'helper', restricted: !!c.wsl, main: this.#isMain(c) }
             : null;
         },
+        servedTools: (id, names) => this.served?.tools(id, names),
         baseUrl: () => this.artifactBaseUrl(),
         urlFile: join(this.stateDir, ARTIFACT_URL_FILE),
         // the keeper's MCP forwarder reads it, and every Claude chat's hook forwarder (subagent worktrees), in the keeper or not
@@ -1717,7 +1721,6 @@ export class Aib {
       else if (known) c.swarm = { role: 'helper', helperId: known.id, parent: known.parent.live };
       // every other chat can lead helpers, in its own copy or in the project folder (MF 1); WSL: only once its swarm tools are on
       else if (!wsl || WSL_TOOL_GROUPS.swarm) c.swarm = { role: 'main' };
-      c.helpersOffHint = c.swarm?.role === 'main' && this.hasStateDir && !swarmEnabled(this.stateDir); // its prompt says helpers are off
       let toolsNotice = '';
       if (launch) {
         const tools = await this.wslMcpServers(c.id, wsl!.distro); // the tunnel, else interop, else a notice (WSL_TOOL_GROUPS)
@@ -1837,6 +1840,7 @@ export class Aib {
   /** AIB's hooks on one connection (turn start and end, live sync, release) and its client capabilities. */
   #wire(c: Connection): void {
     c.lines = this.conversationLines;
+    c.promptServed = (prompt) => this.served?.prompt(c.id, prompt);
     if (this.allow) {
       c.allowGate = this.allow;
       // a helper's test command from its brief (the allow rules answer it; read when asked, the registry lists the helper by then)
@@ -2430,10 +2434,9 @@ export class Aib {
       : null;
     c.swarm = helper
       ? { role: 'helper', helperId: helper.id, parent: helper.parent.live }
-      : c.worktree && (!wsl || WSL_TOOL_GROUPS.swarm)
+      : !wsl || WSL_TOOL_GROUPS.swarm // the same rule as a new chat: every non-helper chat is main, in a worktree or the project folder
       ? { role: 'main' }
       : null;
-    c.helpersOffHint = c.swarm?.role === 'main' && this.hasStateDir && !swarmEnabled(this.stateDir);
     c.mcpServers = Array.isArray(note.mcpServers) ? note.mcpServers as McpServer[] : [];
     if (wsl) for (const entry of c.mcpServers) ownTunnelEntry(entry); // its tunnel entry is still AIB's own tool after a restart
     c.sessionId = isStr(note.resume) && note.resume ? note.resume : null;
@@ -3121,7 +3124,8 @@ export class Aib {
   #isMain(c: Connection): boolean {
     if (c.swarm?.role !== 'main') return false;
     if (!this.hasStateDir) return true;
-    if (!swarmEnabled(this.stateDir)) return false; // swarm phase 1 is opt-in (swarm/settings.ts): no helper tools while it is off
+    // A main chat ALWAYS lists the helper tools (owner rule: helpers are never turned off). With the setting off, the swarm route
+    // refuses each call and says where the switch is (swarm/service.ts 'swarm-off'), so the list never changes under a chat.
     return !helperOf(readHelpers(this.stateDir), { live: c.id, lasting: c.sessionId ? `${c.provider}:${c.sessionId}` : null, path: c.cwd });
   }
 
