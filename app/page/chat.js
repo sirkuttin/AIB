@@ -159,7 +159,6 @@
   const newOptions = new Map(), // agent|folder -> the lists a new chat can offer (wantNewOptions)
     attachmentStore = new Map(),
     MAX_IMAGES = 4,
-    MAX_IMAGE_BYTES = 5 * 1024 * 1024,
     MAX_TOTAL_IMAGE_BYTES = 15 * 1024 * 1024,
     IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
   const attemptStoreKey = 'studio-prompt-attempts-v1';
@@ -641,9 +640,17 @@
       remove.title = 'Remove ' + item.file.name;
       remove.disabled = !!sendingKey;
       remove.onclick = () => removeAttachment(curKey(), item.id);
-      card.append(image, text('span', item.file.name), remove);
+      card.append(image, text('span', item.file.name));
+      if (item.resized) {
+        const resized = text('span', item.resized, 'attachment-resized');
+        resized.dataset.resized = item.id;
+        card.classList.add('has-note');
+        card.append(resized);
+      }
+      card.append(remove);
       box.append(card);
     }
+    showAttachError();
     const hasItems = items.length > 0;
     box.hidden = !hasItems;
     $('attachmentNote').textContent =
@@ -657,6 +664,7 @@
     const items = selectedAttachments(key),
       removed = items.find((item) => item.id === id);
     if (!removed) return;
+    setAttachError(key, '');
     attachmentStore.set(
       key,
       items.filter((item) => item.id !== id),
@@ -668,6 +676,7 @@
     }
   }
   function clearSentAttachments(key, sent) {
+    setAttachError(key, '');
     const ids = new Set(sent.map((item) => item.id));
     const remaining = selectedAttachments(key).filter((item) => !ids.has(item.id));
     for (const item of selectedAttachments(key)) if (ids.has(item.id)) releaseAttachment(item);
@@ -678,10 +687,27 @@
       refreshComposer();
     }
   }
-  function addImageFiles(files, key = curKey()) {
+  /* Pictures: one over 5 MiB, over what is left of the 15 MiB, or longer than 2576 px is shrunk in the page before it is attached
+     (image-fit.js; the phone does the same) and its chip says what changed. What still cannot go shows in the composer, under the
+     chips (attachErrors), not as the page-wide red banner. */
+  const attachErrors = new Map(); // key -> the message under that chat's chips
+  function setAttachError(key, message, add = false) {
+    const before = add ? attachErrors.get(key) || '' : '';
+    if (message) attachErrors.set(key, [...new Set([...before.split(' · '), message].filter(Boolean))].join(' · '));
+    else attachErrors.delete(key);
+    if (key && key === curKey()) showAttachError();
+  }
+  function showAttachError() {
+    const box = $('attachError');
+    if (!box) return;
+    const message = attachErrors.get(curKey()) || '';
+    box.textContent = message;
+    box.hidden = !message;
+  }
+  const imageItems = (key) => selectedAttachments(key).filter((item) => item.kind !== 'file');
+  async function addImageFiles(files, key = curKey()) {
     if (!key || !(selected || newDraft)) return;
-    const items = selectedAttachments(key).slice();
-    let rejected = [];
+    const rejected = [];
     for (const file of files) {
       if (!IMAGE_TYPES.has(file.type)) {
         rejected.push(file.name + ': unsupported image type');
@@ -691,35 +717,48 @@
         rejected.push(file.name + ': image is empty');
         continue;
       }
-      if (file.size > MAX_IMAGE_BYTES) {
-        rejected.push(file.name + ': larger than 5 MiB');
-        continue;
-      }
-      if (items.filter((item) => item.kind !== 'file').length >= MAX_IMAGES) {
+      if (imageItems(key).length >= MAX_IMAGES) {
         rejected.push(file.name + ': maximum 4 images');
         continue;
       }
-      if (
-        items.filter((item) => item.kind !== 'file').reduce((sum, item) => sum + item.file.size, 0) + file.size >
-        MAX_TOTAL_IMAGE_BYTES
-      ) {
+      const others = () => imageItems(key).reduce((sum, item) => sum + item.file.size, 0);
+      let fit;
+      try {
+        fit = await window.ImageFit.shrink(file, { others: others() });
+      } catch {
+        fit = { error: 'the browser could not read this image' };
+      }
+      if (fit.error) {
+        rejected.push(file.name + ': ' + fit.error);
+        continue;
+      }
+      // the chat may have changed while the picture was being shrunk: check the room again
+      if (imageItems(key).length >= MAX_IMAGES) {
+        rejected.push(file.name + ': maximum 4 images');
+        continue;
+      }
+      if (others() + fit.file.size > MAX_TOTAL_IMAGE_BYTES) {
         rejected.push(file.name + ': total image size would exceed 15 MiB');
         continue;
       }
-      const preview = URL.createObjectURL(file);
-      items.push({
+      const item = {
         id: 'image-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2),
-        file,
-        preview,
+        file: fit.file,
+        preview: URL.createObjectURL(fit.file),
         ownedPreview: true,
-      });
+      };
+      if (fit.changed) item.resized = fit.note;
+      attachmentStore.set(key, [...selectedAttachments(key), item]);
+      if (key === curKey()) {
+        renderAttachments();
+        refreshComposer();
+      }
     }
-    if (items.length) attachmentStore.set(key, items);
-    if (key && key === curKey()) {
+    if (key === curKey()) {
       renderAttachments();
       refreshComposer();
-      if (rejected.length) fail(Error(rejected.join(' · ')));
     }
+    if (rejected.length) setAttachError(key, rejected.join(' · '), true);
   }
   function imageFingerprint(items) {
     return items.length ? window.AttachmentsUI.fingerprint(items) : Promise.resolve('');
@@ -744,7 +783,8 @@
         refreshComposer();
       }
     },
-    note: (message) => fail(Error(message)),
+    note: (message) => setAttachError(curKey(), message, true),
+    clearNote: (key) => setAttachError(key, ''),
   };
   const titleOf = (c) =>
     aliases[aliasKey(c)] ||

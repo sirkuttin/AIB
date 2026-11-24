@@ -3867,3 +3867,23 @@ span.chip-static:hover {
 /* An agent AIB no longer runs (OMP): its saved chats are read-only history, one plain line instead of the composer. */
 .retired-note { max-width: 1250px; margin: 8px auto; padding: 10px 14px; color: var(--muted); text-align: center; }
 .chat-retired #promptForm, .chat-retired .composer-row, .chat-retired #queueBox { display: none; }
+
+/* A picture AIB shrank before attaching it: what changed, always visible under its name */
+.attachment-card.has-note {
+  width: 112px;
+}
+.attachment-card > .attachment-resized {
+  margin: 2px 0 0;
+  overflow: visible;
+  white-space: normal;
+  text-overflow: clip;
+  line-height: 1.25;
+  color: var(--muted);
+}
+/* What could not be attached, in the composer under the chips (not the page-wide error banner) */
+.attach-error {
+  margin: 6px 15px 0;
+  color: var(--danger-bright);
+  font-size: 11px;
+  line-height: 1.4;
+}

@@ -3,7 +3,7 @@
    - the PC composer's limits on the phone (4 pictures, 5 MB each, 15 MB of pictures; 8 files, text 2 MB, others 10 MB; 20 MB in all)
      and what the chat's agent can take (no pictures without image input; text files only without embedded context);
    - what goes to the PC: bytes, a picture's type, a file's name and type (never a path or anything else);
-   - a big photo fits 2000 px on its long edge (never made bigger); phone file names are cleaned, never refused;
+   - a big photo fits 2576 px on its long edge (never made bigger); phone file names are cleaned, never refused;
    - New chat and its checks take a message with attachments and no text;
    - a sent message shows its files' names.
    The browser part (📎 sheet, chips, scaling a real photo, the agent receiving it) is in work/deno/remote_attach_e2e_test.ts. */
@@ -20,8 +20,8 @@ const ALL = { pictures: true, binary: true };
 
 test('limits: the PC composer’s, in short phone words', () => {
   assert.deepEqual(
-    { ...P.ATTACH, longEdge: undefined, jpegQuality: undefined },
-    { images: 4, files: 8, imageBytes: 5 * MB, imageTotal: 15 * MB, textBytes: 2 * MB, binaryBytes: 10 * MB, total: 20 * MB, nameChars: 200, longEdge: undefined, jpegQuality: undefined },
+    { ...P.ATTACH, longEdge: undefined },
+    { images: 4, files: 8, imageBytes: 5 * MB, imageTotal: 15 * MB, textBytes: 2 * MB, binaryBytes: 10 * MB, total: 20 * MB, nameChars: 200, longEdge: undefined },
   );
   assert.equal(P.attachProblem([], pic(1000), ALL, 'Claude Code'), '');
   assert.equal(P.attachProblem([pic(1), pic(1), pic(1), pic(1)], pic(1), ALL), 'Up to 4 pictures per message.');
@@ -59,8 +59,9 @@ test('what goes to the PC: bytes, the picture type, the file name and type; neve
   ]);
 });
 
-test('a big photo fits 2000 px on its long edge (never larger); file names are cleaned, never refused', () => {
-  assert.equal(P.ATTACH.longEdge, 2000);
+test('a big photo fits 2576 px on its long edge (never larger), by the PC page’s helper (image-fit.js); file names are cleaned, never refused', () => {
+  assert.equal(P.ATTACH.longEdge, 2576);
+  assert.equal(P.fitInside, require(path.join(APP, 'image-fit.js')).fitInside, 'the phone uses the shared helper');
   assert.deepEqual(P.fitInside(4032, 3024, 2000), { width: 2000, height: 1500, scaled: true });
   assert.deepEqual(P.fitInside(3024, 4032, 2000), { width: 1500, height: 2000, scaled: true });
   assert.deepEqual(P.fitInside(1200, 900, 2000), { width: 1200, height: 900, scaled: false });

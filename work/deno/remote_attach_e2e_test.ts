@@ -4,7 +4,7 @@
  * agents of work/fake_acp.py (Claude Code with steering, image input and embedded context; Codex without either), and the phone
  * page in a headless Chrome at 375 px (no window) where this test plays Tailscale Serve. Files are picked through the page's own
  * 📎 sheet: the browser's file chooser is intercepted (Page.setInterceptFileChooserDialog) and given files from the test folder.
- *  PA1 a photo (3000 x 2000, scaled to 2000 on its long edge, JPEG) and a text file reach the agent with the message as an image
+ *  PA1 a photo (3000 x 2000, scaled to 2576 on its long edge, JPEG) and a text file reach the agent with the message as an image
  *      block and an embedded resource; a removed chip does not go; the sent message shows the picture and the file's name; while
  *      the agent works, Send steers the message with its file in.
  *  PA2 refused with a clear message: a fifth picture, a file over 10 MB, a PDF to an agent that takes text files only (its photo
@@ -200,9 +200,10 @@ Deno.test({
         'the photo chip has a thumbnail',
       );
       const scaled = await page.eval<Json>(
-        `(() => { const x = window.__aibPhone.attach.chat[0]; return { mime: x.mime, scaled: x.scaled, size: x.size }; })()`,
+        `(() => { const x = window.__aibPhone.attach.chat[0]; return { mime: x.mime, note: x.note, size: x.size }; })()`,
       );
-      assertEquals([scaled.mime, scaled.scaled], ['image/jpeg', true]);
+      assertEquals([scaled.mime, scaled.note], ['image/jpeg', 'resized 3000×2000 → 2576×1717']);
+      assertEquals(await page.eval('document.querySelector("#phChips .ph-chip-resized").textContent'), 'resized 3000×2000 → 2576×1717');
       assert(Number(scaled.size) < Deno.statSync(f['photo.jpg']).size, 'smaller than the original');
       await page.shot('phone-attach-chips-light');
       await page.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] });
@@ -224,7 +225,7 @@ Deno.test({
       const blocks = await until(() => promptsOf(chat).find((b) => b.some((x) => x.type === 'image')), 'the prompt with the photo', LONG);
       const image = blocks.find((b) => b.type === 'image')!;
       assertEquals(image.mimeType, 'image/jpeg');
-      assertEquals(jpegSize(unb64(String(image.data))), [2000, 1333], 'scaled to 2000 px on its long edge');
+      assertEquals(jpegSize(unb64(String(image.data))), [2576, 1717], 'scaled to 2576 px on its long edge');
       const resource = blocks.find((b) => b.type === 'resource')!.resource as Json;
       assert(String(resource.uri).endsWith('/notes.txt'), String(resource.uri));
       assertEquals(resource.text, 'Steps to reproduce:\n1. open checkout\n2. pay\n');

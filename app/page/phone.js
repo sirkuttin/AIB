@@ -1206,6 +1206,7 @@
 
   // ---- attachments: the PC composer's types and limits (attachments-ui.js; the server checks the same, acp/attachments.ts) ----
   const MiB = 1048576;
+  const Fit = root.ImageFit || (typeof module === 'object' && typeof require === 'function' ? require('./image-fit.js') : null);
   const ATTACH = {
     images: 4,
     files: 8,
@@ -1215,8 +1216,7 @@
     binaryBytes: 10 * MiB,
     total: 20 * MiB,
     nameChars: 200,
-    longEdge: 2000, // a phone photo bigger than this is scaled down (long edge) and sent as JPEG: less mobile data, less context
-    jpegQuality: 0.85,
+    longEdge: 2576, // a picture bigger than this is shrunk before it is attached (image-fit.js, the PC composer's rule)
   };
   const PICTURE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
   const TEXT_TYPES = new Set([
@@ -1252,12 +1252,7 @@
     return m.startsWith('text/') || TEXT_TYPES.has(m) || m.endsWith('+json') || m.endsWith('+xml') || TEXT_EXTS.has(extOf(name));
   }
   /* The size of a picture that fits inside `max` on its long edge (never larger than it is). */
-  function fitInside(width, height, max) {
-    const w = Math.max(1, Math.round(width) || 1);
-    const h = Math.max(1, Math.round(height) || 1);
-    const s = Math.min(1, max / Math.max(w, h));
-    return { width: Math.max(1, Math.round(w * s)), height: Math.max(1, Math.round(h * s)), scaled: s < 1 };
-  }
+  const fitInside = Fit.fitInside;
   function sizeWords(n) {
     const v = Number(n) || 0;
     if (v < 1024) return v + ' B';
@@ -4885,9 +4880,9 @@
     }
   }
   const pickId = () => 'att-' + randomHex(6);
-  /* A picked picture as it will be sent: a PNG, JPEG, GIF or WebP that fits (long edge ATTACH.longEdge, 5 MB) goes as it is; a
-     bigger one, or another type the phone can read (HEIC), is scaled and sent as JPEG (a PNG screenshot stays PNG while that fits).
-     GIFs go as they are (scaling would stop them moving). */
+  /* A picked picture as it will be sent (image-fit.js, the PC composer's rule): a PNG, JPEG, GIF or WebP that fits (long edge
+     ATTACH.longEdge, 5 MB) goes as it is; a bigger one is shrunk (a PNG stays PNG while that fits, else WebP or JPEG) and its chip says
+     "resized W×H → w×h"; another type the phone can read (HEIC) is written as JPEG. GIFs go as they are (scaling would stop them moving). */
   async function preparePicture(file, name, mime) {
     let bitmap = null;
     try {
@@ -4902,27 +4897,14 @@
       return { id: pickId(), kind: 'image', name, mime, size: bytes.length, data: base64Of(bytes), thumb: '' };
     }
     try {
-      const fit = fitInside(bitmap.width, bitmap.height, ATTACH.longEdge);
       const thumb = thumbOf(bitmap);
-      if (known && (mime === 'image/gif' || (!fit.scaled && file.size <= ATTACH.imageBytes))) {
-        const bytes = await bytesOf(file);
-        return { id: pickId(), kind: 'image', name, mime, size: bytes.length, data: base64Of(bytes), thumb };
-      }
-      const canvas = canvasOf(bitmap, fit.width, fit.height);
-      let type = 'image/jpeg';
-      let blob = null;
-      if (mime === 'image/png') {
-        const png = await blobOf(canvas, 'image/png');
-        if (png && png.size <= ATTACH.imageBytes) {
-          blob = png;
-          type = 'image/png';
-        }
-      }
-      if (!blob) blob = await blobOf(canvas, 'image/jpeg', ATTACH.jpegQuality);
-      if (!blob) throw Error(name + ': this picture could not be read.');
-      const bytes = await bytesOf(blob);
-      const shown = type === 'image/jpeg' ? name.replace(/\.[^.]{1,8}$/, '') + '.jpg' : name;
-      return { id: pickId(), kind: 'image', name: shown, mime: type, size: bytes.length, data: base64Of(bytes), thumb, scaled: fit.scaled };
+      const fit = await Fit.shrink(file, { bitmap, name });
+      if (fit.error) throw Error(name + ': ' + fit.error);
+      const bytes = await bytesOf(fit.file);
+      const type = fit.changed ? fit.file.type : mime;
+      const item = { id: pickId(), kind: 'image', name: fit.changed ? fit.file.name : name, mime: type, size: bytes.length, data: base64Of(bytes), thumb };
+      if (fit.changed) item.note = fit.note;
+      return item;
     } finally {
       bitmap.close();
     }
@@ -4993,6 +4975,11 @@
         } else chip.append(el('span', 'ph-chip-ext', (extOf(item.name) || (item.kind === 'image' ? 'img' : 'file')).slice(0, 4).toUpperCase()));
         const t = el('span', 'ph-chip-t');
         t.append(el('span', 'ph-chip-name', item.name), el('small', '', sizeWords(item.size)));
+        if (item.note) {
+          const n = el('small', 'ph-chip-resized', item.note);
+          n.dataset.resized = item.id;
+          t.append(n);
+        }
         chip.append(t);
         const x = button('ph-chip-x', '×', () => removeChip(target, item.id));
         x.setAttribute('aria-label', 'Remove ' + item.name);

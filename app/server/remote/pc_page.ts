@@ -75,6 +75,7 @@ export const PC_STATIC: Readonly<Record<string, string>> = (() => {
     'stream-ui.js',
     'unknown-send.js',
     'image-viewer.js',
+    'image-fit.js', // fitting a picture before it is attached (chat.js and phone.js)
     'attachments-ui.js',
     'commands-ui.js',
     'config-ui.js',

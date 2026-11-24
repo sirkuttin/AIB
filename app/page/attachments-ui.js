@@ -227,6 +227,7 @@
   /* host: {store: Map, caps(), key(), features, addImage(files,key), refresh(key), note(text)} */
   async function addFiles(files, key, host) {
     if (!key || !host) return;
+    if (host.clearNote) host.clearNote(key); // the last problem is old news once you add something again
     const rejected = [],
       feature = features.fileAttachments === true;
     const prepared = [];
@@ -237,13 +238,14 @@
         rejected.push((name || 'file') + ': ' + bad);
         continue;
       }
-      if (file.size > LIMITS.binaryBytes) {
-        rejected.push(name + ': file is larger than 10 MiB');
-        continue;
-      }
       const mime = normalMime(file.type);
       if (IMAGE_TYPES.has(mime)) {
+        // a big picture is shrunk by host.addImage (image-fit.js), so the file caps below do not apply to it
         prepared.push({ file, kind: 'image', mime });
+        continue;
+      }
+      if (file.size > LIMITS.binaryBytes) {
+        rejected.push(name + ': file is larger than 10 MiB');
         continue;
       }
       if (!feature) {
@@ -273,8 +275,11 @@
         name = file.name;
       const problem =
         capabilityProblem(kind, mime, name, caps) ||
-        sizeProblem(kind, file.size, name) ||
-        limitProblem(host.store.get(key) || [], kind, file.size, name);
+        (kind === 'image'
+          ? file.size < 1
+            ? name + ': file is empty'
+            : ''
+          : sizeProblem(kind, file.size, name) || limitProblem(host.store.get(key) || [], kind, file.size, name));
       if (problem) {
         rejected.push(problem);
         continue;

@@ -20,6 +20,7 @@
   const SHELL_FILES = [
     '/phone.html',
     '/phone.js',
+    '/image-fit.js', // fitting a picture before it is attached (phone.js and the PC page)
     '/phone.css',
     '/phone-words.js',
     '/push-enable.js',
