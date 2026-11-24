@@ -6,22 +6,29 @@ import { createHash } from 'node:crypto';
 import { NODE } from './_fakes.ts';
 
 /**
- * The answers in fixtures/frozen were recorded with the interpreter that ran the fake agents at this path (the owner's Python). The
- * tests now start node, so wherever a request is fingerprinted, the node program's path stands for the recorded one: a request with
- * [node] gets the key and digest it got with [that Python]. (The fixtures are no longer recorded; see _frozen.ts.)
+ * The fake agents are started as [runtime, script]: node today, the owner's Python when the fixtures were first recorded. A fingerprint
+ * writes the runtime program as <RUNTIME> and a fake agent's script as <FAKE:name> (no folder, no extension), so it does not depend
+ * on the interpreter or the file type of the fake agent a test started.
  */
 const RECORDED_INTERPRETER = 'C:\\Program Files\\Python311\\python.exe';
 const asJson = (path: string) => JSON.stringify(path).slice(1, -1);
 const nodeForms = [NODE, Deno.realPathSync(NODE)]; // the name it is started by and the program it resolves to (a version manager's alias)
-const nodeJson = [...new Set(nodeForms.flatMap((p) => [asJson(p), asJson(p.replaceAll('\\', '/'))]))];
+const runtimeJson = [...new Set([...nodeForms, RECORDED_INTERPRETER].flatMap((p) => [asJson(p), asJson(p.replaceAll('\\', '/'))]))];
 /** True when the JSON text names the node program (a request or a value that came from a test that passed node where Python was). */
-export const namesNode = (jsonText: string): boolean => nodeJson.some((form) => jsonText.includes(form));
-/** The text as the recording had it: the interpreter, and the fake agents' file names (work/fakes/x.mjs was work/x.py). */
-function recordedForm(jsonText: string): string {
+export const namesNode = (jsonText: string): boolean => runtimeJson.some((form) => jsonText.includes(form));
+// in JSON text a backslash is two, so a separator is two backslashes or a slash; a folder is a whole path up to the script
+const SEP = String.raw`(?:\\\\|/)`;
+const FOLDER = String.raw`(?:[A-Za-z]:)?${SEP}(?:[^\\/"]+${SEP})*`;
+const FAKE_RES = [
+  new RegExp(FOLDER + String.raw`work${SEP}(?:fakes${SEP})?(\w+)\.(?:mjs|py)`, 'g'),
+  new RegExp(FOLDER + String.raw`[\w-]*-fixture${SEP}(agent)\.(?:mjs|py)`, 'g'),
+];
+/** The runtime program written as <RUNTIME> and a fake agent script (work/fakes/x.mjs, work/x.py, -fixture/agent.mjs) as <FAKE:x>. */
+export function hideRuntime(jsonText: string): string {
   let text = jsonText;
-  for (const form of nodeJson) text = text.replaceAll(form, asJson(RECORDED_INTERPRETER));
-  // in JSON text a backslash is two, so a separator is two backslashes or a slash
-  return text.replace(/(work(?:\\\\|\/))fakes(?:\\\\|\/)(\w+)\.mjs/g, '$1$2.py').replace(/(-fixture(?:\\\\|\/)agent)\.mjs/g, '$1.py');
+  for (const form of runtimeJson) text = text.replaceAll(form, '<RUNTIME>');
+  for (const re of FAKE_RES) text = text.replace(re, '<FAKE:$1>');
+  return text;
 }
 
 let tmpRe: RegExp | null = null;
@@ -66,8 +73,8 @@ function localPatterns(): [RegExp, string][] {
  * The checkout the tests run from and the home folder written as <REPO> and <HOME> (what follows them in the path with slashes), so
  * a fingerprint is the same in a worktree, in the main checkout and on another machine. Temp folders are hidden first (they sit under home).
  */
-export const hideLocal = (jsonText: string, recorded = false): string => {
-  let text = hideTemp(recorded ? recordedForm(jsonText) : jsonText);
+export const hideLocal = (jsonText: string, _recorded = false): string => {
+  let text = hideTemp(hideRuntime(jsonText));
   for (const [re, token] of localPatterns()) text = text.replace(re, (_whole, rest: string) => token + rest.replace(/(?:\\\\|\/)+/g, '/'));
   return text;
 };
