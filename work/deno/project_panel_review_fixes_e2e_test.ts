@@ -12,18 +12,19 @@
  * Run (from outputs/agent-studio): deno test -A ../../work/deno/project_panel_review_fixes_e2e_test.ts   (ignored without Chrome or Edge)
  */
 import { assert, assertEquals } from './_assert.ts';
-import { browserPath, type Chat, Lab, type Page, settle, shown } from './_scroll_lab.ts';
+import { browserPath, type Chat, Lab, type Page, settle, shown, sleep } from './_scroll_lab.ts';
 
 type Json = Record<string, unknown>;
 
-function panelTest(name: string, fn: (lab: Lab) => Promise<void>) {
+/** fastPoll false: a test that counts reads against the page's real poll and retry periods (the 1.5 s idle-chat retry is not scaled). */
+function panelTest(name: string, fn: (lab: Lab) => Promise<void>, fastPoll = true) {
   Deno.test({
     name,
     ignore: !browserPath,
     sanitizeResources: false,
     sanitizeOps: false,
     async fn() {
-      const lab = await Lab.open(1600, 900);
+      const lab = await Lab.open(1600, 900, undefined, { fastPoll });
       try {
         await fn(lab);
         assert(lab.page.errors.length === 0, `console errors: ${lab.page.errors.join(' | ')}`);
@@ -48,7 +49,19 @@ async function working(lab: Lab, end: string, list: [string, string][] = []) {
 async function idleChat(lab: Lab, end: string, list: [string, string][] = []) {
   const c = await working(lab, end, list);
   c.end();
+  await turnWritten(lab, c, [`Here ${end}`, ...list.map(([desc]) => desc)]);
   return c;
+}
+/** Wait until the host has the whole finished turn (the agent writes its script line by line), so the page's first read of this
+ *  chat sees all of it however soon its poll finds the chat. */
+async function turnWritten(lab: Lab, c: Chat, texts: string[]) {
+  for (let i = 0; i < 300; i++) {
+    const s = await lab.web.state(c.id);
+    const all = JSON.stringify(s.events || []);
+    if (!s.busy && texts.every((t) => all.includes(t))) return;
+    await sleep(50);
+  }
+  throw new Error(`the finished turn did not reach the host: ${texts.join(' | ')}`);
 }
 async function joined(page: Page, c: Chat) {
   await page.waitFor(`!!document.querySelector(${JSON.stringify(`#projectActivity > .sp-grp[data-key=${JSON.stringify(c.key)}]`)})`, 20000, `${c.key} joined`);
@@ -103,11 +116,11 @@ panelTest('S1: an expanded idle chat is read once, not at the poll pace', async 
   await waitIdle(page, `i.heads[0] === '▸|2 finished|Claude Code|on'`, 'done: caret and "2 finished"');
   await page.click(`${IDLE_SEC(done.key)} .sp-ihead`);
   await waitIdle(page, `i.open.length === 1 && i.titles[0].length === 2`, 'expanded');
-  await settle(3500); // its read on expanding is done
+  await settle(800); // its read on expanding is done (the page polls 5x faster here: POLL_SCALE)
   const mine = `(n.includes(${JSON.stringify(done.id)}) || n.includes(${JSON.stringify(done.sid)}))`;
   const base = await requests(page, mine);
   assert(base > 0, 'it was read at least once');
-  await settle(14000); // longer than several poll periods (1.5 s to 5 s)
+  await settle(2800); // longer than several poll periods (0.3 s to 1 s at POLL_SCALE: the same 9 and 2.8 periods as 14 s of 1.5 s and 5 s)
   assertEquals(await requests(page, mine), base, 'an expanded idle chat is not re-read while it stays idle');
   w.end();
 });
@@ -133,7 +146,7 @@ panelTest('S1: every idle chat is listed (owner 2026-11-21: no "Show N more"), r
   await settle(12000);
   assertEquals(await requests(page, all), counted, 'idle chats already counted are not read again');
   w.end();
-});
+}, false);
 
 panelTest('M3: the Artifacts list is not polled while another tab shows; it is read at a turn end and on window focus, and polled (10 s) only while its tab shows', async (lab) => {
   const page = lab.page;
@@ -148,8 +161,8 @@ panelTest('M3: the Artifacts list is not polled while another tab shows; it is r
   await page.waitFor(`performance.getEntriesByType('resource').some((e) => e.name.includes('/api/live/project/artifacts'))`, 20000, 'the first read');
   await settle(1500);
   const idle = await requests(page, list);
-  await settle(26000); // 2.5 periods of the 10 s poll, 8 of the old 3 s one
-  assertEquals(await requests(page, list), idle, 'no read in 26 s while the Activity tab shows');
+  await settle(5200); // 2.6 periods of the 2 s poll (10 s at POLL_SCALE), 8 of the old 3 s one
+  assertEquals(await requests(page, list), idle, 'no read in 5.2 s (26 s at 1x) while the Activity tab shows');
   // a turn that ends in any chat of the project: one read
   b.end();
   await page.waitFor(`(${`performance.getEntriesByType('resource').filter((e) => e.name.includes('/api/live/project/artifacts')).length`}) > ${idle}`, 20000, 'a read at the turn end');
@@ -163,14 +176,14 @@ panelTest('M3: the Artifacts list is not polled while another tab shows; it is r
   await settle(1500);
   const shownAt = await requests(page, list);
   assert(shownAt > afterTurn, 'a read on showing the tab');
-  await settle(11500);
+  await settle(2300);
   const polled = await requests(page, list);
-  assert(polled > shownAt && polled - shownAt <= 2, `polled about every 10 s while it shows: ${polled - shownAt} in 11.5 s`);
+  assert(polled > shownAt && polled - shownAt <= 2, `polled about every 10 s while it shows: ${polled - shownAt} in 2.3 s (11.5 s at 1x)`);
   // leaving the tab stops it again
   await page.click('#paneTab-activity');
   await settle(1500);
   const left = await requests(page, list);
-  await settle(12000);
+  await settle(2400);
   assertEquals(await requests(page, list), left, 'no read after leaving the tab');
   a.end();
 });

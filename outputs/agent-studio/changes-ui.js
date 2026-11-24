@@ -320,7 +320,7 @@
       if (txt != null) n.textContent = txt;
       return n;
     };
-    const POLL_MS = 10000,
+    const POLL_MS = 10000 / Math.max(1, Number(root.__aibTestPollScale) || 1), // tests only: see chat.js
       MIN_GAP = 1200;
     let state = { tab: 'activity', expanded: false };
     let chat = { id: '', busy: false, titleFor: null };

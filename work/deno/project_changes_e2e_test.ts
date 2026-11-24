@@ -111,7 +111,8 @@ const reads = (page: Page, what = '/api/live/project/changes?') =>
   page.eval<number>(`performance.getEntriesByType('resource').filter((e) => e.name.includes(${JSON.stringify(what)})).length`);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function withPanel(fn: (page: Page, fx: Fixture) => Promise<void>) {
+/** pollScale: the page's poll periods are divided by it (window.__aibTestPollScale, read by changes-ui.js; the app default is 1). */
+async function withPanel(fn: (page: Page, fx: Fixture) => Promise<void>, pollScale = 1) {
   const fx = await project();
   // no saved transcripts: the chats are live only (the page lists them from the agent host)
   fx.s.ctx.transcripts = {
@@ -125,6 +126,7 @@ async function withPanel(fn: (page: Page, fx: Fixture) => Promise<void>) {
   const browser = await Browser.launch();
   try {
     const page = await browser.open('about:blank', 1600, 900);
+    if (pollScale > 1) await page.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__aibTestPollScale = ${pollScale};` });
     await page.goto(`http://127.0.0.1:${fx.s.port}/chat.html`);
     await page.eval('performance.setResourceTimingBufferSize(20000)');
     await openChat(page, 'claude:sess-1');
@@ -277,8 +279,8 @@ Deno.test({
       await page.waitFor(`(${`performance.getEntriesByType('resource').filter((e) => e.name.includes('/api/live/project/changes?')).length`}) >= 1`, 30000, 'the first read');
       await sleep(1500);
       const hidden = await reads(page);
-      await sleep(12500);
-      assertEquals(await reads(page), hidden, 'no read in 12 s while the Changes tab is hidden');
+      await sleep(2500); // longer than the poll: 2 s here (10 s at 1x), as 12.5 s is at 1x
+      assertEquals(await reads(page), hidden, 'no read in 2.5 s (12.5 s at 1x) while the Changes tab is hidden');
       // showing the tab reads at once, then every 10 s
       await page.eval(`document.getElementById('paneTab-changes').click()`);
       await page.waitFor(`(${`performance.getEntriesByType('resource').filter((e) => e.name.includes('/api/live/project/changes?')).length`}) > ${hidden}`, 15000, 'a read on showing');
@@ -289,14 +291,14 @@ Deno.test({
       await page.eval(`document.getElementById('paneTab-activity').click()`);
       await sleep(1500);
       const stopped = await reads(page);
-      await sleep(11500);
+      await sleep(2300);
       assertEquals(await reads(page), stopped, 'no read after leaving the tab');
       // another chat of the project ends its turn: the numbers are read at once, on whichever tab
       const other = fx.s.chats.find((c) => c.id === 'c2')!;
       other.busy = false;
       other.attention = attention('idle', null, new Date().toISOString());
       await page.waitFor(`(${`performance.getEntriesByType('resource').filter((e) => e.name.includes('/api/live/project/changes?')).length`}) > ${stopped}`, 20000, 'a read at the turn end');
-    });
+    }, 5);
   },
 });
 

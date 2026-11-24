@@ -4835,12 +4835,18 @@
    moment it gets focus. */
   const CHAT_POLL_MS = 1500,
     CHAT_POLL_BACKGROUND_MS = 5000;
+  // Tests only: a page that sets window.__aibTestPollScale (a number > 1) before this script runs polls that many times faster
+  // (every poll period divided by it). Nothing sets it in the app, so the defaults are unchanged.
+  const TEST_POLL_SCALE = Math.max(1, Number(window.__aibTestPollScale) || 1);
+  const POLL_TICK_MS = Math.max(50, 500 / TEST_POLL_SCALE);
   const pollEvery = (fast, slow) => {
+    let ms = fast;
     try {
-      return window.AibWindow?.pollMs ? window.AibWindow.pollMs(fast, slow) : fast;
+      ms = window.AibWindow?.pollMs ? window.AibWindow.pollMs(fast, slow) : fast;
     } catch {
-      return fast;
+      ms = fast;
     }
+    return ms / TEST_POLL_SCALE;
   };
   let chatPolledAt = 0;
   setInterval(() => {
@@ -4849,13 +4855,14 @@
     if (now - chatPolledAt < pollEvery(CHAT_POLL_MS, CHAT_POLL_BACKGROUND_MS) - 100) return;
     chatPolledAt = now;
     refresh({ poll: true });
-  }, 500);
+  }, POLL_TICK_MS);
   window.addEventListener?.('focus', () => {
     if (document.hidden || Date.now() - chatPolledAt < 400) return;
     chatPolledAt = Date.now();
     refresh({ poll: true });
   });
-  setInterval(() => listConversations().catch(fail), 5000);
+  // tests only: window.__aibTestListScale (or the poll scale) divides the conversation list's 5 s poll; 1 in the app
+  setInterval(() => listConversations().catch(fail), 5000 / Math.max(TEST_POLL_SCALE, Number(window.__aibTestListScale) || 1));
   document.addEventListener?.('visibilitychange', () => {
     if (!document.hidden) refresh();
   });
@@ -5845,7 +5852,7 @@
     if (now - mirrorsAt < pollEvery(1500, 5000) - 100) return;
     mirrorsAt = now;
     tickMirrors();
-  }, 500);
+  }, POLL_TICK_MS);
   // ---- The right panel's Activity: the project's working chats (owner, 2026-11-18: the right panel is project level) ----
   // One section per chat of the project on screen that is working (mid-turn, or its subagents or a command it started still run),
   // in the order they started working; a chat that stops working leaves the working list and joins the collapsed Idle group below it. Nothing here
@@ -6447,7 +6454,7 @@
     if (now - projActAt < pollEvery(1500, 5000) - 100) return;
     projActAt = now;
     tickProjectActivity();
-  }, 500);
+  }, POLL_TICK_MS);
   // split view: a pane showing another chat changes the pane tags
   window.addEventListener('aib-split-chats', () => renderProjectActivity());
   window.AgentSplitUI?.init({

@@ -86,6 +86,8 @@ export interface Saved {
  */
 let shared: Promise<Browser> | null = null;
 const FRESH = Deno.env.get('AIB_LAB_FRESH_BROWSER') === '1';
+/** fastPoll divides every poll period of the page by this (chat 1.5 s -> 0.3 s, the 10 s lists -> 2 s). */
+export const POLL_SCALE = 5;
 function sharedBrowser(): Promise<Browser> {
   if (!shared) {
     shared = Browser.launch();
@@ -103,7 +105,7 @@ export class Lab {
   #scripts = 0;
 
   /** env: extra for the web server (AIB_TEST_COPY_CHATS=1 lets chat(..., {ownCopy: true}) make a chat in its own copy). */
-  static async open(width = 1600, height = 900, env?: Record<string, string>): Promise<Lab> {
+  static async open(width = 1600, height = 900, env?: Record<string, string>, opts: { fastPoll?: boolean; fastList?: boolean } = {}): Promise<Lab> {
     const lab = new Lab();
     try {
       lab.web = await lab.fx.startWeb(['--in-process', '--no-auto-reconnect', '--no-owner-announcements'], env ? { env } : {});
@@ -111,6 +113,16 @@ export class Lab {
       lab.browser = FRESH ? await Browser.launch() : await sharedBrowser();
       lab.page = await lab.browser.open('about:blank', width, height);
       await lab.page.send('Page.addScriptToEvaluateOnNewDocument', { source: OWNER_GUARD });
+      // fastPoll: the page polls the chat, side panes and Activity every FAST_POLL_MS instead of every 1.5 s (chat.js reads
+      // window.__aibTestPollMs; the app default is unchanged), so a test waits for an update ~1 s less. AIB_FAST_POLL=0 turns it off.
+      // fastList: only the conversation list's 5 s poll (how the page learns of a chat the test made through the server) runs
+      // POLL_SCALE times faster; the chat's own poll keeps its 1.5 s, so tests that depend on its cadence are unchanged.
+      if (opts.fastList && !opts.fastPoll && Deno.env.get('AIB_FAST_POLL') !== '0') {
+        await lab.page.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__aibTestListScale = ${POLL_SCALE};` });
+      }
+      if (opts.fastPoll && Deno.env.get('AIB_FAST_POLL') !== '0') {
+        await lab.page.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__aibTestPollScale = ${POLL_SCALE};` });
+      }
       await lab.page.goto(`http://127.0.0.1:${lab.web.port}/chat.html`);
       await lab.page.waitFor('!!document.getElementById("messages")', 15000, 'chat page');
       if (Deno.env.get('AIB_SCROLL_V2') === '0') {

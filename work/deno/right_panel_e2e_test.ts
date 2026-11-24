@@ -17,7 +17,7 @@
  * Run (from outputs/agent-studio): deno test -A ../../work/deno/right_panel_e2e_test.ts   (ignored without Chrome or Edge)
  */
 import { assert, assertEquals } from './_assert.ts';
-import { browserPath, type Chat, Lab, ownerProblems, type Page, settle, shown } from './_scroll_lab.ts';
+import { browserPath, type Chat, Lab, ownerProblems, type Page, settle, shown, sleep } from './_scroll_lab.ts';
 
 function panelTest(name: string, fn: (lab: Lab) => Promise<void>) {
   Deno.test({
@@ -26,7 +26,7 @@ function panelTest(name: string, fn: (lab: Lab) => Promise<void>) {
     sanitizeResources: false,
     sanitizeOps: false,
     async fn() {
-      const lab = await Lab.open(1600, 900);
+      const lab = await Lab.open(1600, 900, undefined, { fastList: true });
       try {
         await fn(lab);
         assert(lab.page.errors.length === 0, `console errors: ${lab.page.errors.join(' | ')}`);
@@ -63,7 +63,19 @@ async function idleChat(lab: Lab, end: string, list: [string, string][] = []) {
   c.say(`Here ${end}`);
   helpers(c, end.toLowerCase(), list);
   c.end();
+  await turnWritten(lab, c, [`Here ${end}`, ...list.map(([desc]) => desc)]);
   return c;
+}
+/** Wait until the host has the whole finished turn (the agent writes its script line by line), so the page's first read of this
+ *  chat sees all of it however soon its list poll finds the chat. */
+async function turnWritten(lab: Lab, c: Chat, texts: string[]) {
+  for (let i = 0; i < 300; i++) {
+    const s = await lab.web.state(c.id);
+    const all = JSON.stringify(s.events || []);
+    if (!s.busy && texts.every((t) => all.includes(t))) return;
+    await sleep(50);
+  }
+  throw new Error(`the finished turn did not reach the host: ${texts.join(' | ')}`);
 }
 /** A: one running, one failed and `done` finished helpers. B: one running and two finished. Both working, A open. */
 async function twoChats(lab: Lab, done = 12) {

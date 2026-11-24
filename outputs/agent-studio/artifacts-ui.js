@@ -1118,7 +1118,7 @@
      tab is showing. With another tab showing it is read when any chat of the project ends a turn (changes-ui turns() ->
      refresh()), when the tab is shown, when an artifact event hints at one, and when the window gets focus again: the badge stays
      right without a timer (a read can look up many chats, so never a fast poll; architect review issue 5). */
-  const POLL_MS = 10000;
+  const POLL_MS = 10000 / Math.max(1, Number(root.__aibTestPollScale) || 1); // tests only: see chat.js
   function schedule() {
     const want = S.mounted && !!S.chat.id && !!S.project;
     if (want && !S.listTimer)
