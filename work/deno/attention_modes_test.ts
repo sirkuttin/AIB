@@ -30,6 +30,8 @@ import { WORK } from './_work.ts';
 
 // The watcher's settle before "finished" is 20 s (usage study); these whole-AIB runs use 1.5 s (watcher.ts).
 Deno.env.set('AIB_TEST_SETTLE_MS', '1500');
+// The inbox's follow-up window after a helper's end is 20 s (inbox-rules.js FOLLOW_UP_SECONDS): 2 s here (connection.ts followUpSeconds).
+Deno.env.set('AIB_TEST_FOLLOW_UP_SECONDS', '2');
 
 type Json = Record<string, unknown>;
 const T = { sanitizeResources: false, sanitizeOps: false };
@@ -180,7 +182,7 @@ async function scenario(mode: Mode): Promise<string[]> {
     assertEquals(w.count('turn'), 2, `${mode.name}: not while the helper runs`);
     open('g2');
     open('g2.end');
-    // the inbox's follow-up window (20 s after the helper's end, inbox-rules.js) comes before the settle
+    // the inbox's follow-up window (20 s after the helper's end, inbox-rules.js; 2 s here) comes before the settle
     await w.until(() => w.count('turn') === 3, 'finished after the helper', 45);
     await w.idle();
     assertEquals(w.count('turn'), 3, `${mode.name}: once after the helper`);

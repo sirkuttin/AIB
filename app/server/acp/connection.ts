@@ -1122,6 +1122,18 @@ function quietSeconds(): number {
   return (quietCache = v);
 }
 
+/** The follow-up window after a helper or shell ends (inbox-rules.js FOLLOW_UP_SECONDS, 20 s); test runs (AGENT_STUDIO_TEST=1) may shorten it with AIB_TEST_FOLLOW_UP_SECONDS. */
+let followCache: number | null = null;
+function followUpSeconds(): number {
+  if (followCache !== null) return followCache;
+  let v = INBOX.FOLLOW_UP_SECONDS;
+  try {
+    const test = Deno.env.get('AGENT_STUDIO_TEST') === '1' ? Number(Deno.env.get('AIB_TEST_FOLLOW_UP_SECONDS')) : NaN;
+    if (Number.isFinite(test) && test > 0) v = test;
+  } catch { /* no env access */ }
+  return (followCache = v);
+}
+
 export class Connection {
   readonly id: string;
   provider: string;
@@ -7522,7 +7534,7 @@ export class Connection {
     if (work) this.#workEndedAt = null;
     this.#hadWork = work;
     const ended = this.#workEndedAt;
-    const followUntil = ended && ended >= (this.turnEndedAt ?? 0) ? ended + INBOX.FOLLOW_UP_SECONDS : null;
+    const followUntil = ended && ended >= (this.turnEndedAt ?? 0) ? ended + followUpSeconds() : null;
     const facts = {
       helpers,
       shells,

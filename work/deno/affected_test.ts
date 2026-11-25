@@ -7,7 +7,8 @@ import { assert, assertEquals } from './_assert.ts';
 import { affected, buildGraph, closure, why } from '../../tools/affected.ts';
 import { SLOW } from '../../tools/test.ts';
 
-const slow = new Set(Object.keys(SLOW));
+// slow = the SLOW table plus the 5 s files the table lacks (tools/test.ts adds the measured ones the same way)
+const slow = new Set([...Object.keys(SLOW), 'scroll_e2e_test.ts', 'preview_keeps_scroll_e2e_test.ts']);
 const graph = buildGraph();
 const tests = (changed: string[], allSlow = false) => {
   const a = affected(changed, slow, '', allSlow);
@@ -32,8 +33,14 @@ Deno.test('affected: a server module reaches the tests that import it, through t
 });
 
 Deno.test('affected: a page file reaches node tests that load it by name or through chat.html, and the browser e2e', () => {
-  const t = tests(['app/page/stream-ui.js']).out;
-  for (const name of ['test_stream_ui.js', 'test_chat_page.js', 'scroll_e2e_test.ts']) assert(t.has(name), name);
+  const { out: t, a } = tests(['app/page/stream-ui.js']);
+  for (const name of ['test_stream_ui.js', 'test_chat_page.js']) assert(t.has(name), name);
+  // the scroll e2e loads chat.html (which loads every script) but does not drive stream-ui.js itself: a slow file that far from the
+  // change is left to the batch run (listed), not run for every page edit; --all-slow runs it
+  assert(!t.has('scroll_e2e_test.ts') && a.broadOnly.has('scroll_e2e_test.ts'), 'scroll_e2e is listed, not run');
+  assert(tests(['app/page/stream-ui.js'], true).out.has('scroll_e2e_test.ts'), '--all-slow runs it');
+  // a browser test that names the page module's global (page.eval('AgentFilesUI.openFile(...)')) is near the file and runs
+  assert(tests(['app/page/files-ui.js']).out.has('preview_keeps_scroll_e2e_test.ts'), 'a slow browser test that drives AgentFilesUI runs');
   assert(graph.precise.get('app/page/chat.html')?.has('app/page/stream-ui.js'), 'chat.html loads it');
   assert(why(graph, 'work/deno/scroll_e2e_test.ts', 'app/page/stream-ui.js'), 'the scroll e2e reaches it');
   assert(!t.has('security_test.ts'));

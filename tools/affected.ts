@@ -8,9 +8,10 @@
  *     'fakes/fake_acp.mjs'), tools ('build.ts');
  *   - for an HTML page: every script and stylesheet its tags load (the node harness loads chat.html's scripts that way);
  *   - EXTRA_EDGES: links no import shows (keeper/client.ts builds the Go keeper; build.ts bundles the whole app).
- * Two edges are BROAD: a test that starts the whole server (names main.ts) depends on everything main.ts imports, and a test that
+ * A slow file is run only when a change is NEAR it (NEAR_DEPTH steps); a slow file reached only farther away, or through a broad edge, is listed and left to the batch run. Two edges are BROAD: a test that starts the whole server (names main.ts) depends on everything main.ts imports, and a test that
  * drives a headless browser (_doc_browser.ts, --headless) depends on every page file. Through broad edges almost any change reaches
  * them, so a slow-tier file reached only that way is listed, not run, unless --all-slow is given. Fast files run either way.
+ * "Slow" is measured: the files that took 5 s or more in the newest full runs (tools/test.ts), plus its SLOW table.
  *
  * A test is affected when a changed file is in its dependency closure, or is the test itself.
  */
@@ -84,10 +85,15 @@ export function buildGraph(files = allFiles()): Graph {
   for (const f of files) {
     const base = f.slice(f.lastIndexOf('/') + 1);
     if (isUiFile(f)) ui.push(f);
-    if (f.startsWith(`${APP}/page/`) && !f.slice(APP.length + 6).includes('/')) index(base, f);
+    if (f.startsWith(`${APP}/page/`) && !f.slice(APP.length + 6).includes('/')) {
+      index(base, f);
+      // a page module's global (root.AIBDevicesUI = api): a browser test that drives it names it in a page.eval string
+      if (f.endsWith('.js')) for (const g of read(f).matchAll(/(?:window|root|globalThis)\.([A-Z][A-Za-z0-9]{3,})\s*=[^=]/g)) index(g[1], f);
+    }
     if (/^work\/(?:fakes\/)?[^/]+$/.test(f)) index(base, f); // the fake agents live in work/fakes/
     if (/^work\/deno\/_[^/]+\.ts$/.test(f)) index(base, f);
     if (/^tools\/[^/]+\.ts$/.test(f)) index(base, f);
+    if (/^tools\/(?:linux|code-vendor)\/[^/]+$/.test(f)) index(base, f); // scripts and bundles a test names (aib-install-deb.sh, editor.entry.js)
     const m = f.match(/^work\/([^/]+)\//);
     if (m && m[1].endsWith('-fixture')) workDirs.set(m[1], `work/${m[1]}/`); // a fixture folder: named, it is used whole
   }
@@ -132,14 +138,14 @@ export function buildGraph(files = allFiles()): Graph {
     // Mentions: names inside string literals of tests, helpers and tools (not the app's own modules: their imports say it all).
     const isTestSide = f.startsWith('work/') || f.startsWith('tools/');
     if (!isTestSide) continue;
-    // keeperBinary() builds the Go keeper from keeper/ when no built one is next to the app: only files that call it run it.
-    if (/\bkeeperBinary\(/.test(text)) for (const to of prefixed('keeper/')) if (!to.endsWith('_test.go')) add(precise, f, to);
+    // keeperBinary() / keeperProgram() build the Go keeper from keeper/ when no built one is next to the app (AIB_KEEPER_BIN names one): only files that use it run it.
+    if (/\bkeeper(?:Binary|Program)\(|\bKeeper(?:Link|Client)\b|\bAIB_KEEPER\w*|HAVE_KEEPER_BIN/.test(text)) for (const to of prefixed('keeper/')) if (!to.endsWith('_test.go')) add(precise, f, to);
     for (const lit of text.matchAll(/'([^'\n]{1,300})'|"([^"\n]{1,300})"|`([^`]{1,600})`/g)) {
       const s = lit[1] ?? lit[2] ?? lit[3];
       for (const token of s.split(/[^\w.\-]+/)) {
         if (!token) continue;
         if (token === 'main.ts') continue; // starting the whole server: decided below
-        for (const to of byName.get(token) ?? []) add(precise, f, to);
+        for (const t of new Set([token, token.split('.')[0]])) for (const to of byName.get(t) ?? []) add(precise, f, to); // 'AgentFilesUI.paint' also names AgentFilesUI
         if (workDirs.has(token)) for (const to of prefixed(workDirs.get(token)!)) add(precise, f, to);
       }
     }
@@ -159,6 +165,29 @@ export function buildGraph(files = allFiles()): Graph {
     }
   }
   return { files, precise, broad };
+}
+
+/** A slow file counts as covering a change only when the change is this many import or mention steps from it (the test itself is 0). */
+export const NEAR_DEPTH = 2;
+
+/** `start` and what it reaches in at most `depth` import or mention steps (the broad edges are not followed). */
+export function nearby(graph: Graph, start: string, depth = NEAR_DEPTH): Set<string> {
+  const seen = new Set<string>([start]);
+  let frontier = [start];
+  for (let d = 0; d < depth; d++) {
+    const next: string[] = [];
+    for (const f of frontier) {
+      if (f.endsWith('.html')) continue; // a page lists every script it loads: that is not a test driving each of them
+      for (const to of graph.precise.get(f) ?? []) {
+        if (!seen.has(to)) {
+          seen.add(to);
+          next.push(to);
+        }
+      }
+    }
+    frontier = next;
+  }
+  return seen;
 }
 
 /** Everything `start` depends on. preciseOnly: follow import and mention edges only, not the two broad ones. */
@@ -252,7 +281,8 @@ export function affected(changed: string[], slow: Set<string>, base = '', allSlo
       if (!hit) continue;
       for (const c of changed) if (full.has(c)) reached.add(c);
       if (suite.kind === 'deno' && slow.has(name) && !allSlow) {
-        const exact = closure(graph, test, true);
+        // a slow file runs when the change is near it; a change only far away (deep in the imports, or through a broad rule) is listed
+        const exact = nearby(graph, test);
         const direct = changed.find((c) => exact.has(c));
         if (!direct) {
           result.broadOnly.set(name, hit);

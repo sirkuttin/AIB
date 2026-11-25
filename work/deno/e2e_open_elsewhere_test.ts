@@ -45,6 +45,9 @@ import {
   uuid,
 } from './_e2e_real.ts';
 
+// The ownership beat is 10 s in the app; 1 s in these runs (handoff.ts RESCAN_MS), inherited by the servers and hosts they start.
+Deno.env.set('AIB_TEST_RESCAN_MS', '1000');
+
 const RELEASED_LINE = 'Continued in a terminal. AIB let go of this chat. Open it here to take it back.';
 const WIN = Deno.build.os === 'windows';
 
@@ -209,7 +212,7 @@ function register(prefix: string, keeper: boolean) {
     const session = await chat.session();
     const mine = w.ownRecords(session);
     assertEquals(mine.length, 1, `AIB's own Claude process has the registry record: ${mine}`);
-    await sleep(11000); // a watcher event and the 10 s backup scan have both run: AIB's own process is never "elsewhere"
+    await sleep(3500); // a watcher event and the backup scan (1 s here, 10 s in the app: handoff.ts RESCAN_MS) have both run: AIB's own process is never "elsewhere"
     assert(!('elsewhere' in (await chat.state())), 'AIB counted its own Claude process as another app');
 
     const other = w.other(session);

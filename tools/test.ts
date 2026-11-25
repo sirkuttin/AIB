@@ -56,9 +56,12 @@ Affected tests (--affected):
   --why FILE      the chain of imports and mentions by which FILE reaches each test it runs
   --all-slow      also run slow-tier files that only the broad rules reach (see below)
   The map is built from the code on every run (tools/affected.ts): imports and requires, files a test names in a string
-  (page files, fixtures, parity modules), the scripts and styles an HTML page loads, and two broad rules: a test that starts
-  the whole server depends on all of server/, and a test that drives a headless browser depends on every page file. A slow
-  file reached only through a broad rule is listed, not run, unless --all-slow. A change to deno.json, deno.lock,
+  (page files, a page module's global like AgentFilesUI, fixtures, parity modules), the scripts and styles an HTML page loads,
+  and two broad rules: a test that starts the whole server depends on all of server/, and a test that drives a headless
+  browser depends on every page file. A slow file (5 s or more in the newest full runs) runs only when the change is within two
+  import or mention steps of it; one that is farther, or reached only through a broad rule, is listed with its seconds and left
+  to the batch run, unless --all-slow. deno run -A ../tools/affected_measure.ts measures what the map misses (the tests a
+  commit changed along with its code, against what the map selects for that code). A change to deno.json, deno.lock,
   package-lock.json or go.mod/go.sum runs everything. Full runs stay for release batches.
 
 Timings, reruns, quarantine, tiers:
@@ -935,14 +938,17 @@ function describe(a: Affected, log: RunLog): void {
   for (const f of a.changed) log.say(`  ${f}`);
   if (a.everything) log.say('a runner or config file changed: everything runs');
   for (const [kind, tests] of a.run) {
-    log.say(`${kind}: ${tests.size} to run`);
+    const est = kind === 'deno' ? ` (about ${Math.round([...tests.keys()].reduce((n, t) => n + seconds(t.split('/').pop()!), 0))} s of test time, summed)` : '';
+    log.say(`${kind}: ${tests.size} to run${est}`);
     for (const [test, hit] of tests) {
       log.say(`  ${test.split('/').pop()}  <- ${relApp(hit)}`);
     }
   }
   if (a.broadOnly.size) {
     log.say(
-      `slow files reached only through a broad rule (not run; --all-slow runs them):`,
+      `slow files (5 s or more) whose link to the change is far or broad (not run, left to the batch run; --all-slow runs them): ${
+        Math.round([...a.broadOnly.keys()].reduce((n, t) => n + seconds(t), 0))
+      } s`,
     );
     for (const [test, hit] of a.broadOnly) {
       log.say(`  ${test}  <- ${relApp(hit)}`);
@@ -964,9 +970,12 @@ async function mainAffected(options: Options): Promise<number> {
     'affected',
     options.log && !options.list && !options.why,
   );
+  // slow = the hand table plus every file that took 5 s or more in the newest full runs (the table alone had gone stale)
+  const slow = new Set(Object.keys(SLOW));
+  for (const [file, sec] of Object.entries(times().seconds)) if (sec >= SMOKE_SECONDS) slow.add(file);
   const a = affected(
     changed,
-    new Set(Object.keys(SLOW)),
+    slow,
     base,
     options.allSlow,
   );

@@ -41,7 +41,14 @@ import { codexHome } from '../subagents/codex.ts';
 
 const log = getLogger('handoff');
 
-export const RESCAN_MS = 10_000;
+/** The backup beat (10 s). Test runs (AGENT_STUDIO_TEST=1) may shorten it with AIB_TEST_RESCAN_MS. */
+export const RESCAN_MS = (() => {
+  try {
+    const test = Deno.env.get('AGENT_STUDIO_TEST') === '1' ? Number(Deno.env.get('AIB_TEST_RESCAN_MS')) : NaN;
+    if (Number.isFinite(test) && test >= 200) return test;
+  } catch { /* no env access */ }
+  return 10_000;
+})();
 export const DEBOUNCE_MS = 300;
 /** While a chat waits for its turn (or helpers) to end before it lets go: how often it looks again. */
 export const PENDING_MS = 1_000;

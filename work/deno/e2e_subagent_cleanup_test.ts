@@ -25,6 +25,7 @@
  * Needs node, the Claude Code ACP adapter (AIB_CLAUDE_ACP or a global npm install) and Go (keeper program; AIB_TEST_KEEPER_BIN names
  * a built one). Run with TEMP/TMP pointed at a scratch folder.
  */
+import { agentTempDirSync } from './_agent_tmp.ts';
 import { assert, assertEquals, git, isDir, isFile, Json, normcase, repoHash, sleep } from './_e2e.ts';
 import {
   agentCall,
@@ -62,6 +63,9 @@ Deno.test({
   ignore: !ok,
   ...T,
   async fn() {
+    // "sc long" runs until this test opens its gate (after the others landed beside it), not for a fixed 75 s; 150 s at most
+    const gateDir = agentTempDirSync('aib-sc-gate-');
+    const gate = `${gateDir.replaceAll('\\', '/')}/go`;
     const rules = [
       {
         when: 'SC-GO',
@@ -73,7 +77,7 @@ Deno.test({
           ],
         },
       },
-      { when: 'SUBTASK-LONG', reply: { tools: [bash('toolu_sL1', 'ping -n 76 127.0.0.1 > /dev/null; echo from-long > long.txt')] } },
+      { when: 'SUBTASK-LONG', reply: { tools: [bash('toolu_sL1', `for i in $(seq 1 150); do [ -f "${gate}" ] && break; sleep 1; done; echo from-long > long.txt`)] } },
       { when: 'toolu_sL1', reply: { text: 'SUB-LONG-DONE' } },
       { when: 'SUBTASK-EMPTY', reply: { tools: [bash('toolu_sE1', 'sleep 8 && echo nothing-changed')] } },
       { when: 'toolu_sE1', reply: { text: 'SUB-EMPTY-DONE' } },
@@ -105,6 +109,7 @@ Deno.test({
     assert(!gitLog(p).includes('AIB: subagent sc empty'), 'a subagent with no changes lands no commit');
     await aib.wait('"sc change" to go after landing', () => !byDescription(aib, 'sc change').length);
 
+    Deno.writeTextFileSync(gate, 'go'); // "sc long" may end now
     await aib.wait('"sc long" to land after it ends', () => gitLog(p).includes('AIB: subagent sc long'), 150);
     assertEquals(Deno.readTextFileSync(join(p, 'long.txt')).trim(), 'from-long');
     await aib.wait('"sc long" to go after landing', () => !byDescription(aib, 'sc long').length);
