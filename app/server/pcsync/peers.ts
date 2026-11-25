@@ -10,7 +10,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { inDir } from '../state/base.ts';
 import { readJsonFile, saveJson } from '../state/json.ts';
-import { openText, sealOrPlain } from '../state/sealed.ts';
+import { forgetSealed, openText, sealOrPlain, wantsServiceMove } from '../state/sealed.ts';
 import { randomToken, sha256Hex } from '../remote/words.ts';
 
 export const PEERS_DIR = 'pcsync';
@@ -72,6 +72,18 @@ export class PeerStore {
         lastSeen: Number(r.lastSeen) || 0,
       });
     }
+    // Linux with a Secret Service: a token an older AIB left plain moves into it, and the file is rewritten without it. A store
+    // that refuses leaves the token as it was (sealOrPlain hands back the plain text).
+    let moved = false;
+    for (const p of this.peers.values()) {
+      if (!wantsServiceMove('pcsync-peer-token', p.out)) continue;
+      const sealed = sealOrPlain('pcsync-peer-token', p.out);
+      if (sealed !== p.out) {
+        p.out = sealed;
+        moved = true;
+      }
+    }
+    if (moved) this.#save();
   }
 
   #save(): void {
@@ -93,7 +105,11 @@ export class PeerStore {
   add(options: { name: string; host: string; login: string; inToken: string; outToken: string }): Peer {
     if (this.peers.size >= MAX_PEERS) throw new RangeError(`At most ${MAX_PEERS} PCs can be paired for sync`);
     // the same PC paired again replaces its old record (its old tokens stop working)
-    for (const p of [...this.peers.values()]) if (p.host === options.host) this.peers.delete(p.id);
+    for (const p of [...this.peers.values()]) {
+      if (p.host !== options.host) continue;
+      forgetSealed(p.out);
+      this.peers.delete(p.id);
+    }
     const peer: Peer = {
       id: randomToken(9),
       name: options.name,
@@ -137,6 +153,7 @@ export class PeerStore {
   remove(id: string): Peer | null {
     const p = this.peers.get(id);
     if (!p) return null;
+    forgetSealed(this.peers.get(id)?.out);
     this.peers.delete(id);
     this.#save();
     return p;

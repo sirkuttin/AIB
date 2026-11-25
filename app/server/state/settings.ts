@@ -32,14 +32,23 @@ import {
   hiddenEnv,
   isBeta,
   isBuiltin,
-  isCustom,
   isChoosable,
+  isCustom,
   MAX_AGENTS,
   MAX_COMMAND,
   MAX_ENV_VALUE,
 } from '../agents/agent_registry.ts';
 import { betaAgent } from '../agents/beta_catalog.ts';
-import { cleanModelServer, cleanServerUrl, cleanUseWith, defaultServerName, makeModelServerId, MAX_MODEL, MAX_MODEL_SERVERS, type ModelServer } from '../agents/model_servers.ts';
+import {
+  cleanModelServer,
+  cleanServerUrl,
+  cleanUseWith,
+  defaultServerName,
+  makeModelServerId,
+  MAX_MODEL,
+  MAX_MODEL_SERVERS,
+  type ModelServer,
+} from '../agents/model_servers.ts';
 import { isServerId, MODEL_SERVER_AGENTS, modelServerAgentId } from '../agents/claude_family.ts';
 import { expandUser, isAbsolute, isFile, pathStr } from '../platform/pypath.ts';
 import { deepCopy, errorText, inDir, isOSError, JsonFileStore, sameJson, VERSION } from './base.ts';
@@ -80,7 +89,14 @@ export interface Settings {
     modelServers?: ModelServer[];
   };
   defaults: { agent: string; byAgent: Record<string, Choice>; projects: Record<string, Choice>; migrated: boolean };
-  server: { autoReconnect: boolean; worktreePerChat: boolean; autoUpdateCheck: boolean; keepAwake: boolean; getTestBuilds: boolean; commitIdentity: string };
+  server: {
+    autoReconnect: boolean;
+    worktreePerChat: boolean;
+    autoUpdateCheck: boolean;
+    keepAwake: boolean;
+    getTestBuilds: boolean;
+    commitIdentity: string;
+  };
   editors: { default: string };
   appearance: { defaultView: string };
   launchers: Record<string, string>;
@@ -152,7 +168,7 @@ export class SettingsStore extends JsonFileStore {
       const open: Dict = {};
       for (const [agentId, stored] of Object.entries(agents[field] as Dict)) {
         if (!isStr(stored) || !stored) continue;
-        if (!isSealed(stored)) this.#plainOnDisk = true;
+        if (!isSealed(stored) || this.keys?.wantsMove?.(stored)) this.#plainOnDisk = true; // plain, or left in beta-keys.json: move it into the store
         const plain = this.keys ? this.keys.open(agentId + suffix, stored) : (isSealed(stored) ? null : stored);
         if (plain) open[agentId] = plain;
       }
@@ -199,7 +215,14 @@ export class SettingsStore extends JsonFileStore {
       // worktreePerChat: on by default; hidden, never shown by public(), and no longer read: every new chat works in the project
       // folder (owner decision 2026-11-16, no per-chat Own copy; only helpers get copies). Kept so old settings files load. The keeper has no setting (it is always on): an old saved
       // `server.keeper` is dropped on read.
-      server: { autoReconnect: true, worktreePerChat: true, autoUpdateCheck: true, keepAwake: false, getTestBuilds: false, commitIdentity: '' },
+      server: {
+        autoReconnect: true,
+        worktreePerChat: true,
+        autoUpdateCheck: true,
+        keepAwake: false,
+        getTestBuilds: false,
+        commitIdentity: '',
+      },
       editors: { default: '' },
       appearance: { defaultView: 'full' },
       launchers: { claude: '', codex: '' },
@@ -291,7 +314,9 @@ export class SettingsStore extends JsonFileStore {
     if (typeof server.autoUpdateCheck === 'boolean') doc.server.autoUpdateCheck = server.autoUpdateCheck;
     if (typeof server.keepAwake === 'boolean') doc.server.keepAwake = server.keepAwake;
     if (typeof server.getTestBuilds === 'boolean') doc.server.getTestBuilds = server.getTestBuilds;
-    if (isStr(server.commitIdentity) && parseCommitIdentity(server.commitIdentity)) doc.server.commitIdentity = server.commitIdentity.trim();
+    if (isStr(server.commitIdentity) && parseCommitIdentity(server.commitIdentity)) {
+      doc.server.commitIdentity = server.commitIdentity.trim();
+    }
     const editor = isDict(raw.editors) ? raw.editors : {};
     doc.editors.default = isStr(editor.default) && EDITOR_IDS.includes(editor.default) ? editor.default : '';
     const appearance = isDict(raw.appearance) ? raw.appearance : {};
@@ -833,7 +858,9 @@ export class SettingsStore extends JsonFileStore {
         if (on === null) {
           if (map[distro]) delete map[distro][agentId];
         } else {
-          if (!map[distro] && Object.keys(map).length >= this.#cls().MAX_DISTROS) throw new ValueError('Too many distros with saved switches');
+          if (!map[distro] && Object.keys(map).length >= this.#cls().MAX_DISTROS) {
+            throw new ValueError('Too many distros with saved switches');
+          }
           (map[distro] ??= {})[agentId] = on;
         }
         if (map[distro] && !Object.keys(map[distro]).length) delete map[distro];

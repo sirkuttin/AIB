@@ -313,6 +313,12 @@ func (k *keeper) accept() {
 			nc.Close()
 			continue
 		}
+		// Unix sockets: only a process of the same user, checked before any request is read (peer.go).
+		if why := connRefusal(nc); why != "" {
+			k.logf("connection refused before any request: %s", why)
+			nc.Close()
+			continue
+		}
 		go k.serve(nc)
 	}
 }

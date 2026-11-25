@@ -7,9 +7,11 @@
  * ApplicationServer (a fresh ECDH key) is made for every message, as RFC 8291 asks.
  *
  * The VAPID key pair (push-keys.json in the data folder) is AIB's own, kept apart from the agents' keys (secrets.ts sealAll forgets
- * keys it is not given): on Windows the private key is sealed with DPAPI for this Windows account (never a prompt); on macOS and
- * Linux it is in the file, readable by your user only (0600). Never the Keychain or a keyring: AIB can be restarted by the keeper
- * with nobody at the PC, and a prompt then would hang it. Remove all phones makes a new pair, so any old subscription dies.
+ * keys it is not given): on Windows the private key is sealed with DPAPI for this Windows account (never a prompt); on Linux it is
+ * in the Secret Service when one answers (secret_service.ts: every call is bounded, so a locked keyring at a restart with nobody at
+ * the PC falls back instead of hanging); otherwise, and on macOS, it is in the file, readable by your user only (0600). A key an
+ * older AIB left in the file moves into the Secret Service when it is next read. Remove all phones makes a new pair, so any old
+ * subscription dies.
  *
  * What a push says: "A chat needs you" / "Chat finished" and the chat's title (notify-rules.js pushText), encrypted to the phone
  * (RFC 8291, aes128gcm). Needs you goes with Urgency high and a short time to live; every push has the same Topic, so the push
@@ -25,6 +27,7 @@ import { getLogger } from '../core/log.ts';
 import { inDir } from '../state/base.ts';
 import { quarantine, readJsonFile, saveJson } from '../state/json.ts';
 import { dpapiProtect, dpapiUnprotect } from '../state/secrets.ts';
+import { forgetMarked, isMarker, openMarked, storeMarked, useSecretService } from '../state/secret_service.ts';
 import { ApplicationServer, PushMessageError, Urgency } from '../vendor/webpush/mod.ts';
 import type { DeviceStore, PushSub } from './devices.ts';
 import type { InboxRow } from '../attention/inbox_rules.ts';
@@ -53,11 +56,12 @@ const fromB64url = (text: string): Uint8Array<ArrayBuffer> => {
   return Uint8Array.from(bin, (c) => c.charCodeAt(0));
 };
 
-/** How the private key is kept: 'dpapi' (Windows) or 'file' (0600). AIB_PUSH_KEY_STORE=file forces the file (tests of it). */
-export function pushKeyStore(): 'dpapi' | 'file' {
+/** How the private key is kept: 'dpapi' (Windows), 'secret-service' (Linux keyring) or 'file' (0600). AIB_PUSH_KEY_STORE=file forces the file (tests of it). */
+export function pushKeyStore(): 'dpapi' | 'secret-service' | 'file' {
   const want = (Deno.env.get('AIB_PUSH_KEY_STORE') ?? '').trim().toLowerCase();
   if (want === 'file') return 'file';
-  return Deno.build.os === 'windows' ? 'dpapi' : 'file';
+  if (Deno.build.os === 'windows') return 'dpapi';
+  return useSecretService() ? 'secret-service' : 'file';
 }
 
 interface Pair {
@@ -115,6 +119,10 @@ export class VapidKeys {
       const plain = dpapiUnprotect(fromB64url(priv.slice(9)));
       if (!plain) return null;
       dKey = new TextDecoder().decode(plain);
+    } else if (isMarker(priv)) {
+      const plain = openMarked(priv);
+      if (plain === null) return null;
+      dKey = plain;
     } else if (priv.startsWith('file:v1:')) dKey = priv.slice(8);
     else return null;
     try {
@@ -124,10 +132,22 @@ export class VapidKeys {
       const privateKey = await crypto.subtle.importKey('jwk', jwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
       const { d: _d, ...pubJwk } = jwk;
       const publicKey = await crypto.subtle.importKey('jwk', pubJwk, { name: 'ECDSA', namedCurve: 'P-256' }, true, ['verify']);
+      // A key an older AIB left in the file moves into the Secret Service (the file keeps only the marker; a refusing store
+      // leaves the file as it was).
+      if (priv.startsWith('file:v1:') && pushKeyStore() === 'secret-service') {
+        const marker = storeMarked('push-vapid-private-key', dKey);
+        if (marker) saveJson(this.path, { version: 1, store: 'secret-service', publicKey: pub, privateKey: marker }, 'push-keys-');
+      }
       return { publicKey: pub, keys: { privateKey, publicKey } };
     } catch {
       return null;
     }
+  }
+
+  #previousMarker(): string | null {
+    const [status, data] = readJsonFile(this.path);
+    const priv = status === 'ok' && data && typeof data === 'object' ? (data as Record<string, unknown>).privateKey : null;
+    return typeof priv === 'string' && isMarker(priv) ? priv : null;
   }
 
   async #make(): Promise<Pair> {
@@ -136,8 +156,16 @@ export class VapidKeys {
     const jwk = await crypto.subtle.exportKey('jwk', keys.privateKey);
     const publicKey = b64url(raw);
     const store = pushKeyStore();
-    const privateKey = store === 'dpapi' ? 'dpapi:v1:' + b64url(dpapiProtect(new TextEncoder().encode(jwk.d!))) : 'file:v1:' + jwk.d;
-    saveJson(this.path, { version: 1, store, publicKey, privateKey }, 'push-keys-'); // written 0600 (core/fs.ts writeJsonAtomic)
+    let privateKey = store === 'dpapi' ? 'dpapi:v1:' + b64url(dpapiProtect(new TextEncoder().encode(jwk.d!))) : 'file:v1:' + jwk.d;
+    let kept = store;
+    if (store === 'secret-service') {
+      const marker = storeMarked('push-vapid-private-key', jwk.d!);
+      if (marker) privateKey = marker;
+      else kept = 'file'; // the keyring refused: the 0600 file, not a lost key
+    }
+    const old = this.#previousMarker();
+    saveJson(this.path, { version: 1, store: kept, publicKey, privateKey }, 'push-keys-'); // written 0600 (core/fs.ts writeJsonAtomic)
+    forgetMarked(old); // a rotated pair: the old private key leaves the keyring
     // The pair in use keeps an unextractable private key.
     const sign = await crypto.subtle.importKey('jwk', jwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
     return { publicKey, keys: { privateKey: sign, publicKey: keys.publicKey } };

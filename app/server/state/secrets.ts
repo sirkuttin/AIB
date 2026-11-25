@@ -8,10 +8,13 @@
  *                                   written through `security -i` on stdin, so it never shows in a process list.
  *   Linux    "secret-service:v1"    the key is in the Secret Service (GNOME Keyring, KWallet...) through `secret-tool`, which
  *                                   reads it from stdin.
+ *                                   Used only when a service answers (secret_service.ts probes it, not just the binary).
  *            "file:v1"              no Secret Service: the key is in beta-keys.json next to the settings, mode 0600 (owner only),
  *                                   and Settings says so. Also the fallback when the Keychain or keyring refused the key.
  *
- * A key with no prefix is a plain key from an older AIB: SettingsStore reads it and seals it at once (migration on load).
+ * A key with no prefix is a plain key from an older AIB: SettingsStore reads it and seals it at once (migration on load). A "file:v1"
+ * key moves into the Keychain or keyring the same way when one answers, and beta-keys.json is deleted once it is empty; a store
+ * that refuses the key leaves it in the file (nothing is lost).
  * Keys are never logged: messages name the agent and the store, never a value.
  *
  * Writing to the Keychain or keyring needs stdin, which Deno only offers asynchronously, while the settings file is written
@@ -23,7 +26,7 @@
  */
 import { getLogger } from '../core/log.ts';
 import { writeJsonAtomic } from '../core/fs.ts';
-import { which } from '../platform/pypath.ts';
+import { noteFileFallback, secretServiceAvailable, ssClear, ssLookup, ssStore } from './secret_service.ts';
 
 const log = getLogger('secrets');
 
@@ -39,6 +42,8 @@ export interface KeyStore {
   sealAll(keys: Record<string, string>): Record<string, string>;
   /** The plain key from a stored form; null when it cannot be opened. A plain (unsealed) value is returned as it is. */
   open(agentId: string, stored: string): string | null;
+  /** True for a stored form that should move into this store on the next save (a key left in beta-keys.json, now that a keyring answers). */
+  wantsMove?(stored: string): boolean;
 }
 
 export const DPAPI_PREFIX = 'dpapi:v1:';
@@ -62,7 +67,10 @@ export function keyStoreFor(stateDir: string): KeyStore {
   if (!want && os !== 'windows' && Deno.env.get('AGENT_STUDIO_TEST') === '1') return new FileStore(stateDir);
   if (want === 'dpapi' || (!want && os === 'windows')) return new DpapiStore(stateDir);
   if (want === 'keychain' || (!want && os === 'darwin')) return new OutsideStore(stateDir, 'keychain');
-  if (want === 'secret-service' || (!want && which('secret-tool'))) return new OutsideStore(stateDir, 'secret-service');
+  if (want === 'secret-service' || (!want && os === 'linux' && secretServiceAvailable())) {
+    return new OutsideStore(stateDir, 'secret-service');
+  }
+  if (!want && os === 'linux') noteFileFallback(); // one line in the log: no keyring here, keys stay in the 0600 file
   return new FileStore(stateDir);
 }
 
@@ -208,7 +216,10 @@ export function dpapiProtect(plain: Uint8Array<ArrayBuffer>, entropy: Uint8Array
 }
 
 /** CryptUnprotectData; null when it cannot be opened (another Windows account, a damaged value). */
-export function dpapiUnprotect(sealed: Uint8Array<ArrayBuffer>, entropy: Uint8Array<ArrayBuffer> = ENTROPY): Uint8Array<ArrayBuffer> | null {
+export function dpapiUnprotect(
+  sealed: Uint8Array<ArrayBuffer>,
+  entropy: Uint8Array<ArrayBuffer> = ENTROPY,
+): Uint8Array<ArrayBuffer> | null {
   const { crypt } = libs();
   const out = new Uint8Array(16);
   const ok = crypt.symbols.CryptUnprotectData(blobOf(sealed), null, blobOf(entropy), null, null, CRYPTPROTECT_UI_FORBIDDEN, out);
@@ -310,6 +321,9 @@ class OutsideStore implements KeyStore {
       ? 'Saved in your macOS Keychain (login keychain, "AIB beta agent keys")'
       : 'Saved in your keyring (Secret Service, e.g. GNOME Keyring or KWallet)';
   }
+  wantsMove(stored: string): boolean {
+    return stored === FILE_MARK;
+  }
   #account(agentId: string): string {
     return `${agentId}@${this.#tag}`;
   }
@@ -331,7 +345,7 @@ class OutsideStore implements KeyStore {
           securityArg(plain),
         ].join(' ') + '\n',
       )
-      : await feed('secret-tool', ['store', '--label', `AIB: ${agentId} API key`, 'service', SERVICE, 'account', account], plain);
+      : ssStore(SERVICE, account, `AIB: ${agentId} API key`, plain);
     if (ok) this.#held.set(agentId, plain);
     else log.warning(`The ${this.kind} did not take the API key for ${agentId}; it is kept in ${KEY_FILE} instead.`);
   }
@@ -357,7 +371,7 @@ class OutsideStore implements KeyStore {
     const account = this.#account(agentId);
     return this.kind === 'keychain'
       ? feed('security', ['-i'], `delete-generic-password -s ${securityArg(SERVICE)} -a ${securityArg(account)}\n`)
-      : feed('secret-tool', ['clear', 'service', SERVICE, 'account', account], '');
+      : Promise.resolve(ssClear(SERVICE, account));
   }
   open(agentId: string, stored: string): string | null {
     if (!isSealed(stored)) return stored;
@@ -368,7 +382,7 @@ class OutsideStore implements KeyStore {
     const account = this.#account(agentId);
     const plain = this.kind === 'keychain'
       ? lookup('security', ['find-generic-password', '-s', SERVICE, '-a', account, '-w'])
-      : lookup('secret-tool', ['lookup', 'service', SERVICE, 'account', account]);
+      : ssLookup(SERVICE, account);
     if (plain === null || plain === '') {
       log.warning(`The saved API key for ${agentId} is not in the ${this.kind} any more; type it again in Settings.`);
       return null;

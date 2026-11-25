@@ -11,6 +11,7 @@
 import { createHash, createHmac } from 'node:crypto';
 import { DPAPI_PREFIX, dpapiProtect, dpapiUnprotect } from '../state/secrets.ts';
 import { join } from 'node:path';
+import { isMarker, openMarked, storeMarked, useSecretService } from '../state/secret_service.ts';
 import { writeJsonAtomic } from '../core/fs.ts';
 import type { AllowRule, Builtins } from './matcher.ts';
 
@@ -75,7 +76,19 @@ export class AllowStore {
     try {
       const stored = Deno.readTextFileSync(file).trim();
       const opened = openKey(stored);
-      if (opened) return (this.#keyBytes = opened);
+      if (opened) {
+        // Linux with a Secret Service: a plain key from an older AIB moves in; the file keeps only the marker (a refusing store
+        // leaves the file as it was).
+        if (stored.startsWith('file:v1:') && useSecretService()) {
+          const sealed = sealKey(opened);
+          if (isMarker(sealed)) {
+            try {
+              writeJsonAtomic(file, null, { text: sealed, prefix: '.allow-key-' });
+            } catch { /* the plain file stays */ }
+          }
+        }
+        return (this.#keyBytes = opened);
+      }
     } catch { /* none yet */ }
     if (!create) return null;
     const fresh = crypto.getRandomValues(new Uint8Array(32));
@@ -141,7 +154,8 @@ export class AllowStore {
     const same = this.#data.rules.find((r) =>
       r.kind === rule.kind && r.scope === rule.scope && (r.project ?? '') === (rule.project ?? '') &&
       JSON.stringify(r.words ?? null) === JSON.stringify(rule.words ?? null) && (r.folder ?? null) === (rule.folder ?? null) &&
-      (r.server ?? null) === (rule.server ?? null) && (r.tool ?? null) === (rule.tool ?? null) && (r.action ?? null) === (rule.action ?? null) && (r.host ?? null) === (rule.host ?? null)
+      (r.server ?? null) === (rule.server ?? null) && (r.tool ?? null) === (rule.tool ?? null) &&
+      (r.action ?? null) === (rule.action ?? null) && (r.host ?? null) === (rule.host ?? null)
     );
     if (same) {
       if (rule.pins) same.pins = { ...same.pins, ...rule.pins };
@@ -214,11 +228,20 @@ const unb64 = (text: string) => Uint8Array.from(atob(text), (c) => c.charCodeAt(
 
 function sealKey(key: Uint8Array): string {
   if (Deno.build.os === 'windows') return DPAPI_PREFIX + b64(dpapiProtect(new Uint8Array(key)));
+  if (useSecretService()) {
+    const marker = storeMarked('allow-rules-key', b64(key));
+    if (marker) return marker;
+  }
   return 'file:v1:' + b64(key);
 }
 
 function openKey(stored: string): Uint8Array | null {
   try {
+    if (isMarker(stored)) {
+      const text = openMarked(stored);
+      const key = text === null ? null : unb64(text);
+      return key && key.length === 32 ? key : null;
+    }
     if (stored.startsWith(DPAPI_PREFIX)) {
       if (Deno.build.os !== 'windows') return null;
       const plain = dpapiUnprotect(unb64(stored.slice(DPAPI_PREFIX.length)));

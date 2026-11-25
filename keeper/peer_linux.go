@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"net"
 	"os"
 
@@ -59,23 +60,53 @@ func marked(pid int) bool {
 	return lim.Max < own.Max
 }
 
-// peerRefusal: why this connection may not say hello ("" = it may).
-func (k *keeper) peerRefusal(nc net.Conn) string {
+// peerCred: the peer's credentials from SO_PEERCRED.
+func peerCred(nc net.Conn) (*unix.Ucred, error) {
 	uc, ok := nc.(*net.UnixConn)
 	if !ok {
-		return ""
+		return nil, nil
 	}
 	raw, err := uc.SyscallConn()
 	if err != nil {
-		return "the peer of the connection cannot be read"
+		return nil, err
 	}
 	var cred *unix.Ucred
 	var credErr error
-	if err := raw.Control(func(fd uintptr) { cred, credErr = unix.GetsockoptUcred(int(fd), unix.SOL_SOCKET, unix.SO_PEERCRED) }); err != nil || credErr != nil || cred == nil {
+	if err := raw.Control(func(fd uintptr) { cred, credErr = unix.GetsockoptUcred(int(fd), unix.SOL_SOCKET, unix.SO_PEERCRED) }); err != nil {
+		return nil, err
+	}
+	if credErr != nil {
+		return nil, credErr
+	}
+	if cred == nil {
+		return nil, errors.New("no credentials")
+	}
+	return cred, nil
+}
+
+// peerUID: the peer's user id (checked at accept time, peer.go).
+func peerUID(nc net.Conn) (uint32, bool, error) {
+	if _, ok := nc.(*net.UnixConn); !ok {
+		return 0, false, nil
+	}
+	cred, err := peerCred(nc)
+	if err != nil {
+		return 0, true, err
+	}
+	return cred.Uid, true, nil
+}
+
+// peerRefusal: why this connection may not say hello ("" = it may).
+func (k *keeper) peerRefusal(nc net.Conn) string {
+	if _, ok := nc.(*net.UnixConn); !ok {
+		return ""
+	}
+	cred, err := peerCred(nc)
+	if err != nil {
 		return "the peer of the connection cannot be read"
 	}
-	if int(cred.Uid) != os.Getuid() {
-		return "another user"
+	if why := peerUIDRefusal(cred.Uid, nil, uint32(os.Getuid())); why != "" {
+		return why
 	}
 	if marked(int(cred.Pid)) {
 		return "the process runs under one of the keeper's channels"
