@@ -29,6 +29,8 @@ const PORT = Number(opt('--port', '0'));
 const LOG = opt('--log', null);
 const SCRIPT = opt('--script', null);
 const DUMP_TOOLS = opt('--dump-tools', null); // write the first request's tool declarations (names and schemas) to this file
+const DUMP_DIR = opt('--dump', null); // write every model request's raw body to <dir>/req-<n>.json (tests read what the model was sent)
+let dumped = 0;
 const rules = SCRIPT ? (JSON.parse(fs.readFileSync(SCRIPT, 'utf8')).rules || []) : [];
 const used = new Set();
 
@@ -49,7 +51,20 @@ function pick(body, raw) {
     if (r.when && !hay.includes(r.when)) continue;
     if ((r.tools || []).some((t) => !tools.includes(t))) continue;
     used.add(i);
-    return { index: i, reply: r.reply };
+    let reply = r.reply;
+    // capture: a regex over the whole request (its first group) replaces every @CAP@ in the reply, so a rule can name a path the
+    // agent was only told at run time (a subagent's worktree)
+    if (r.capture) {
+      const m = new RegExp(r.capture).exec(raw);
+      if (m) {
+        let value = m[1];
+        try {
+          value = JSON.parse(`"${value}"`); // the request is JSON text: the match is still escaped
+        } catch { /* as it is */ }
+        reply = JSON.parse(JSON.stringify(reply).split('@CAP@').join(JSON.stringify(value).slice(1, -1)));
+      }
+    }
+    return { index: i, reply };
   }
   return { index: null, reply: { text: 'STUB-END' } };
 }
@@ -85,6 +100,12 @@ const server = http.createServer((req, res) => {
       return;
     }
     if (DUMP_TOOLS && offered(body).length && !fs.existsSync(DUMP_TOOLS)) fs.writeFileSync(DUMP_TOOLS, JSON.stringify(body.tools, null, 1));
+    if (DUMP_DIR && offered(body).length) {
+      try {
+        fs.mkdirSync(DUMP_DIR, { recursive: true });
+        fs.writeFileSync(`${DUMP_DIR}/req-${String(++dumped).padStart(3, '0')}.json`, raw);
+      } catch { /* a test's own folder is gone */ }
+    }
     const { index, reply } = pick(body, raw);
     const contents = body.contents || [];
     if (LOG) {

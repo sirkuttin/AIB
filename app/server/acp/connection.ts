@@ -6895,7 +6895,11 @@ export class Connection {
     const own = this.worktree ? [...(this.localOnly?.dirs ?? []), ...(this.localOnly?.ignored?.dirs ?? [])] : [];
     // a Codex chat's subagent folder: only its own subagents' worktrees go there (never the folder's parent or other chats' copies)
     const sub = isCodexFamily(this.provider) && this.subagentHooks?.subFolder ? [this.subagentHooks.subFolder] : [];
-    const dirs = [...own, ...(this.scratchDir ? [this.scratchDir] : []), ...sub];
+    // Antigravity with subagent isolation: the project is its only workspace (the scratch folder is left out). With more, agy makes a
+    // folder per workspace for each subagent and starts the subagent in the copy of the FIRST one (the scratch folder), not in its git
+    // worktree (subagents/antigravity.ts). Its writes to the scratch folder still go through AIB's allow rules as permission requests.
+    const onlyProject = this.provider === 'antigravity' && !!this.subagentHooks?.agyDir;
+    const dirs = [...own, ...(this.scratchDir && !onlyProject ? [this.scratchDir] : []), ...sub];
     if (!dirs.length || !isDict(this.#sessionCaps()?.additionalDirectories)) return {};
     return { additionalDirectories: [...dirs] };
   }

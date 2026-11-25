@@ -121,7 +121,15 @@ export interface SubagentRecord {
    * "branch": <gemini dir>/antigravity-cli/worktrees/<parent conversation>/subagent-<role>-<type>-<hash>, branch of the same name);
    * AIB adopted them. `root` is that worktrees folder. Landed and removed like AIB's own (ownSubagentPath knows this shape).
    */
-  agy?: { root: string };
+  agy?: { root: string; also?: string[] };
+}
+
+/**
+ * Antigravity: the part of a subagent's worktree folder name that all the folders agy makes for ONE subagent share:
+ * subagent-<Role>-<Type>-<8 hex>; agy adds -<workspace name> when the chat has more than one workspace.
+ */
+export function agyGroupOf(leaf: string): string {
+  return /^(subagent-.*?-[0-9a-f]{8})(?=-|$)/.exec(leaf)?.[1] ?? leaf;
 }
 
 /** Seconds a tagged call is given before its missing process counts as gone (the shell takes a moment to start). */
@@ -759,24 +767,53 @@ export class SubagentWorktrees {
         return await this.#patch(own.id, { state: 'running', continuedAt: now() });
       }
       if (mine.filter((r) => SLOT_STATES.has(r.state)).length >= MAX_PER_CHAT * 2) return null;
-      const why = await this.#agyAdoptable(ext.path, ext.root, chat);
-      if (why) {
+      // `path` is the folder the subagent's calls run in (its cwd). With one workspace that is its git worktree. With more (the chat was
+      // given extra workspaces) agy makes one folder per workspace, all with the same name up to the hash (subagent-<Role>-<Type>-<hash>-
+      // <workspace>), and the subagent's cwd is the copy of the FIRST workspace: the git worktree is one of its siblings.
+      const key = (p: string) => {
+        try {
+          return normcase(realpath(p)).replace(/[\\/]+$/, '');
+        } catch {
+          return normcase(p).replace(/[\\/]+$/, '');
+        }
+      };
+      const group = agyGroupOf(ext.path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? '');
+      const parent = ext.path.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]*$/, '');
+      const folders = [ext.path];
+      try {
+        for (const e of Deno.readDirSync(parent)) {
+          const p = pathOf(parent, e.name);
+          if (e.isDirectory && agyGroupOf(e.name) === group && key(p) !== key(ext.path)) folders.push(p);
+        }
+      } catch { /* the folder is gone */ }
+      let chosen = '', why = '';
+      for (const folder of folders) {
+        why = await this.#agyAdoptable(folder, ext.root, chat);
+        if (!why) {
+          chosen = folder;
+          break;
+        }
+      }
+      if (!chosen) {
         log.warning('Antigravity subagent worktree %s was not adopted: %s', ext.path, why);
         return null;
       }
-      const branch = pyStrip((await wt.git(['rev-parse', '--abbrev-ref', 'HEAD'], ext.path, { check: false })).stdout);
+      const at = (...args: string[]) => wt.git(['-c', 'core.longpaths=true', '-C', chosen, ...args], chat.folder, { check: false }); // cwd = the folder: a long path can't be a process's cwd
+      const branch = pyStrip((await at('rev-parse', '--abbrev-ref', 'HEAD')).stdout);
       if (!/^subagent-[\w.-]+$/.test(branch)) return null;
-      const tip = pyStrip((await wt.git(['rev-parse', 'HEAD'], ext.path, { check: false })).stdout);
+      const tip = pyStrip((await at('rev-parse', 'HEAD')).stdout);
       const base = pyStrip((await wt.git(['merge-base', 'HEAD', tip], chat.folder, { check: false })).stdout);
       if (!tip || !base) return null;
       const tree = pyStrip((await wt.git(['rev-parse', `${base}^{tree}`], chat.folder, { check: false })).stdout);
       const id = this.#newId();
-      const leaf = ext.path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? '';
+      const leaf = chosen.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? '';
+      // the other folders of the group (copies of the extra workspaces, no git): agy's own scratch for this subagent; removed with it
+      const also = folders.filter((f) => f !== chosen && !this.all().some((r) => r.path === f));
       return await this.#update(id, () =>
         this.#record(id, chat, {
           slug: leaf,
           branch,
-          path: ext.path,
+          path: chosen,
           snapshot: base,
           tree,
           state: 'running',
@@ -785,7 +822,7 @@ export class SubagentWorktrees {
           agentType: ext.agentType.slice(0, 200),
           description: ext.description.slice(0, 300),
           boundAt: now(),
-          agy: { root: ext.root },
+          agy: { root: ext.root, ...(also.length ? { also } : {}) },
         }));
     });
   }
@@ -808,8 +845,13 @@ export class SubagentWorktrees {
     if (rel.length !== 2 || !/^subagent-[\w.-]+$/.test(leaf) || !/^[A-Za-z0-9_-]{8,64}$/.test(conv ?? '')) return "it is not named as Antigravity names a subagent's worktree";
     if (key(path) !== key(pathOf(realpath(root), conv, leaf))) return 'a link lies on its way';
     if (key(path) === key(chat.folder) || key(path) === key(chat.project)) return 'it is the project folder';
-    if (!(await sameRepository(path, chat.folder))) return 'it is not a worktree of this repository';
-    const gitdir = pyStrip((await wt.git(['rev-parse', '--path-format=absolute', '--git-dir'], path, { check: false })).stdout);
+    // git runs in the chat's folder and is pointed at the worktree (-C): its path can be longer than a process's cwd may be
+    const at = (...args: string[]) => wt.git(['-c', 'core.longpaths=true', '-C', path, ...args], chat.folder, { check: false });
+    const [theirs, ours, gitDir] = [await at('rev-parse', '--path-format=absolute', '--git-common-dir'), await wt.git(['rev-parse', '--path-format=absolute', '--git-common-dir'], chat.folder, { check: false }), await at('rev-parse', '--path-format=absolute', '--git-dir')];
+    if (theirs.returncode !== 0 || ours.returncode !== 0 || normcase(realpath(pyStrip(theirs.stdout))) !== normcase(realpath(pyStrip(ours.stdout)))) {
+      return 'it is not a worktree of this repository';
+    }
+    const gitdir = pyStrip(gitDir.stdout);
     if (!gitdir || !/[\/]worktrees[\/]/.test(gitdir)) return 'it is not a linked worktree';
     const taken = [
       ...this.all().map((r) => r.path),
@@ -1487,8 +1529,19 @@ export class SubagentWorktrees {
       } catch { /* in use: the start sweep tries again */ }
     }
     if (own && rec.agy && !wt.lexists(rec.path)) {
+      const parent = rec.path.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]+$/, '');
+      for (const folder of rec.agy.also ?? []) { // agy's copies of the chat's extra workspaces for this subagent (no git, nothing to land)
+        const name = folder.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? '';
+        const here = folder.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]+$/, '');
+        if (normcase(here) !== normcase(parent) || !/^subagent-[\w.-]+$/.test(name) || !wt.lexists(folder)) continue;
+        try {
+          if (Deno.lstatSync(folder).isSymlink) continue;
+          unlinkLinks(folder);
+          wt.rmtree(folder);
+        } catch { /* in use: left */ }
+      }
       try {
-        Deno.removeSync(rec.path.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]+$/, '')); // agy's <parent conversation> folder, when empty
+        Deno.removeSync(parent); // agy's <parent conversation> folder, when empty
       } catch { /* not empty, or gone */ }
     }
     if (!own || !wt.lexists(rec.path)) await this.#update(rec.id, () => null);

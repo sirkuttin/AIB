@@ -1,6 +1,6 @@
 /**
- * Antigravity subagents (subagents/antigravity.ts). Owner rule: an agent's own subagent that edits files works in its own worktree.
- * `agy acp` gives AIB no hook or fence for its subagents, so AIB cannot enforce it: the rule is ASKED for in the chat's instructions
+ * Antigravity subagents with a Google sign-in (subagents/antigravity.ts). Owner rule: an agent's own subagent that edits files works in its own worktree.
+ * Without an API key agy uses the person's own ~/.gemini and AIB writes no hooks file there or in the project, so it cannot enforce it: the rule (do not start editing subagents) is ASKED for in the chat's instructions
  * (the ACP system prompt when `agy` advertises one, else a one-time <studio-context> line in front of the next prompt) and the chat
  * says so up front. Fake ACP agent only (work/fake_acp.py, with and without the system prompt capability); temp repos and temp state.
  *
@@ -14,7 +14,10 @@ import { withEnv } from './_agents.ts';
 import { Sandbox } from './_worktree_fixtures.ts';
 import { Connection } from '../../app/server/acp/connection.ts';
 import { Aib } from '../../app/server/host/aib.ts';
-import { ANTIGRAVITY_SUBAGENT_NOTE, ANTIGRAVITY_SUBAGENT_PROMPT } from '../../app/server/subagents/antigravity.ts';
+import { ANTIGRAVITY_SUBAGENT_PROMPT, antigravityAskedNote, SIGNIN_WHY } from '../../app/server/subagents/antigravity.ts';
+
+/** A chat that signs in with Google (no --gemini-dir): AIB can only ask (subagents/antigravity.ts). */
+const ANTIGRAVITY_SUBAGENT_NOTE = antigravityAskedNote(SIGNIN_WHY);
 import { join } from '../../app/server/platform/ospath.ts';
 
 type Json = Record<string, unknown>;

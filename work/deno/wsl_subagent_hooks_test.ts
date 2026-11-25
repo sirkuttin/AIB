@@ -51,6 +51,8 @@ class Lab {
   readonly helper = subagentMethods(this.data);
   readonly aibs: Aib[] = [];
   readonly swarms: Swarm[] = [];
+  /** The launch command of every agent AIB started (the factory runs the fake agent whatever it is). */
+  readonly commands: string[][] = [];
 
   constructor(tunnel = true) {
     runGit(this.work, 'config', 'core.autocrlf', 'false');
@@ -100,7 +102,8 @@ class Lab {
     const keeper = new KeeperLink({ dataDir: this.state, orphan: null, extraArgs: ['--exit-after', '2s', '--orphan-after', '30s'] });
     const aib = new Aib({ claudeLauncher: import.meta.filename!, codexLauncher: import.meta.filename!, nodeCommand: 'node', stateDir: this.state, port: 0, ownersDir: null }, { keeper });
     aib.ownerProbe = () => null;
-    aib.connectionFactory = (_command, cwd, provider, options) => {
+    aib.connectionFactory = (command, cwd, provider, options) => {
+      this.commands.push([...command]);
       const wsl = options?.wsl ? { ...options.wsl, program: undefined } : options?.wsl;
       return new Connection(fake('--cancel-aware'), cwd, provider, { ...options, wsl });
     };
@@ -138,8 +141,9 @@ async function idle(c: Connection): Promise<void> {
 }
 
 /** A chat in the lab's WSL project, with a way to call its hooks as the distro's forwarder does (through the tunnel). */
-async function openChat(lab: Lab, provider = 'claude') {
+async function openChat(lab: Lab, provider = 'claude', before?: (aib: Aib) => Promise<void> | void) {
   const aib = lab.aib();
+  await before?.(aib);
   const c = await aib.connect(provider, REF);
   await idle(c);
   const spec = lab.host.link.spawned.find((s) => String(s.channel).startsWith('chat-'))!;
@@ -619,6 +623,134 @@ Deno.test({
         throw new WslHelperError('the distro stopped', 'stopped');
       };
       const { c } = await openChat(lab, 'qwen');
+      assertEquals(c.subagentHooks!.off, 'WSL hooks unavailable');
+      assert(c.subagentHooks!.detail!.includes('the distro stopped'));
+    }
+  },
+});
+
+const AGY_DETECT = { agents: [{ id: 'antigravity', found: true, command: ['/usr/local/bin/agy', 'acp', '--disable-telemetry'], version: '1.5.11' }] };
+const withKey = async (aib: Aib): Promise<void> => {
+  await aib.settings.update({ agents: { betaKey: { antigravity: 'AIza-dummy-not-a-real-key-000000000000' } } });
+};
+
+Deno.test({
+  name: "wsl subagent hooks: a WSL Antigravity chat with a key gets its own gemini folder in the distro (hooks on the helper socket); its subagent's worktree is adopted there and lands",
+  ...T,
+  async fn() {
+    await keeperBinary();
+    await using lab = new Lab();
+    lab.host.handlers['agents.detect'] = () => AGY_DETECT;
+    const { c, env, hook } = await openChat(lab, 'antigravity', withKey);
+    const GD = '/home/u/aibdata/antigravity/gemini-home';
+    // agy is started with --gemini-dir <the distro's own folder> (never the user's ~/.gemini)
+    assertEquals(lab.commands.at(-1)!.slice(-2), ['--gemini-dir', GD], JSON.stringify(lab.commands));
+    assertEquals(c.subagentHooks!.off, '');
+    assert(c.subagentHooks!.adopted === true && c.subagentIsolationOn());
+    assertEquals(c.subagentHooks!.agyDir, GD);
+    assert(c.subagentHooks!.prompt!.includes('own git worktree'));
+    assertEquals([env.AIB_HOOK_CHAT, env.AIB_HOOK_SUBROOT], [c.id, `${GD}/antigravity-cli/worktrees`]);
+    assert(!('AIB_HOOK_PASS' in env));
+    // the folder is written in the distro: settings.json for the key, config/hooks.json with the hooks on the helper's socket
+    const gd = lab.win(GD);
+    assertEquals(JSON.parse(Deno.readTextFileSync(`${gd}${SEP}antigravity-cli${SEP}settings.json`)).modelProvider, 'gemini');
+    const hooks = JSON.parse(Deno.readTextFileSync(`${gd}${SEP}config${SEP}hooks.json`))['aib-subagents'] as Record<string, unknown>;
+    assertEquals(
+      (hooks.PreToolUse as { hooks: { command: string }[] }[])[0].hooks[0].command,
+      `'${KEEPER}' hook agy-pre-tool --helper-socket '${SOCKET}'`,
+    );
+    assertEquals((hooks.Stop as { command: string }[])[0].command, `'${KEEPER}' hook agy-stop --helper-socket '${SOCKET}'`);
+    assert(!Deno.readTextFileSync(`${gd}${SEP}config${SEP}hooks.json`).includes(env.AIB_HOOK_KEY), 'no key in the file');
+
+    const tool = (name: string, args: Json, cwd = '/home/u/app', conversationId = 'conv-parent-0001') => ({
+      hookEventName: 'PreToolUse',
+      conversationId,
+      cwd,
+      toolCall: { id: 't1', name, args },
+    });
+    // the main agent starts a subagent: Workspace "branch", through the tunnel, signed
+    const pre = await hook('agy-pre-tool', tool('invoke_subagent', { TypeName: 'builder', Role: 'Builder Agent', Prompt: 'write the docs', Workspace: 'inherit' }));
+    assertEquals([pre.tunnel, pre.status, pre.proofOk], [200, 200, true]);
+    assertEquals(JSON.parse(pre.body), { decision: 'allow', overwrite: { Workspace: 'branch' } });
+    for (const [name, args] of [['run_workflow', { Script: 'x' }], ['swarm', { action: 'add' }]] as const) {
+      const refused = await hook('agy-pre-tool', tool(name, args));
+      assertEquals([refused.status, refused.proofOk, JSON.parse(refused.body).decision], [200, true, 'deny'], name);
+    }
+    // agy makes the worktree in the distro; the subagent's SessionStart adopts it (a mirror record AIB shows)
+    const sub = 'aaaaaaaa-1111-2222-3333-444444444444';
+    const leaf = 'subagent-Builder-Agent-builder-57eaaf6f';
+    const worktree = `${gd}${SEP}antigravity-cli${SEP}worktrees${SEP}conv-parent-0001${SEP}${leaf}`;
+    Deno.mkdirSync(`${gd}${SEP}antigravity-cli${SEP}worktrees${SEP}conv-parent-0001`, { recursive: true });
+    runGit(lab.work, 'worktree', 'add', '-q', '-b', leaf, worktree);
+    const linux = `${GD}/antigravity-cli/worktrees/conv-parent-0001/${leaf}`;
+    const start = await hook('agy-session-start', { hookEventName: 'SessionStart', conversationId: sub, cwd: linux });
+    assertEquals([start.status, start.proofOk, start.body], [200, true, '{}']);
+    const rec = mirrors(lab)[0];
+    assertEquals([rec.state, rec.description, rec.agentId, rec.branch], ['running', 'Builder Agent: write the docs', sub, leaf]);
+    assertEquals(rec.wsl?.linux.path, linux);
+    // its calls: inside its worktree only
+    const inside = await hook('agy-pre-tool', tool('write_file', { Path: `${linux}/a.txt` }, linux, sub));
+    assertEquals([inside.status, inside.body], [200, '{"decision":"allow"}']);
+    const outside = await hook('agy-pre-tool', tool('write_file', { Path: '/home/u/app/a.txt' }, linux, sub));
+    assertEquals(JSON.parse(outside.body).decision, 'deny');
+    const nested = await hook('agy-pre-tool', tool('invoke_subagent', { TypeName: 'x' }, linux, sub));
+    assertEquals(JSON.parse(nested.body).decision, 'deny');
+    // another chat's event does not answer an Antigravity chat, and the other way round
+    assertEquals((await hook('qwen-pre-tool', { tool_name: 'agent', tool_call_id: 'c1', tool_input: {} })).status, 503);
+    assertEquals((await hook('pre-tool', agentCall('toolu_9'))).status, 503);
+    // its edits stay in its worktree; Stop ends it; the parent is idle, so the swarm lands it in the distro's project folder
+    commit(worktree, 'sub.txt', 'from the subagent\n', 'subagent edit');
+    write(worktree, 'extra.txt', 'uncommitted in the worktree\n');
+    assertEquals(runGit(lab.work, 'status', '--porcelain').trim(), '', 'the project folder has none of it');
+    assertEquals((await hook('agy-stop', { hookEventName: 'Stop', conversationId: sub, cwd: linux, terminationReason: 'NO_TOOL_CALL' })).status, 200);
+    assertEquals(mirrors(lab)[0].state, 'done');
+    write(lab.work, 'mine.txt', 'my own unsaved work\n');
+    await lab.swarm.poll();
+    await until(() => log(lab.work).includes('AIB: subagent Builder Agent: write the docs'), 'landed', 20);
+    assertEquals(runGit(lab.work, 'show', '--name-only', '--format=', 'HEAD').split('\n').filter(Boolean).sort(), ['extra.txt', 'sub.txt']);
+    assertEquals(read(lab.work, 'mine.txt'), 'my own unsaved work\n');
+    assert(notes(c).some((n) => n.startsWith('Merged subagent “Builder Agent: write the docs” into main')), notes(c).join('\n'));
+    await until(() => mirrors(lab).filter((r) => r.id === rec.id).length === 0, 'its mirror record released', 20);
+    assert(!exists(worktree), 'its worktree is gone');
+    assertEquals(runGit(lab.work, 'branch', '--list', 'subagent-*').trim(), '', "agy's branch is gone");
+    assert(notes(c).some((n) => n.startsWith('Antigravity subagents that edit files work in their own git worktree')), notes(c).join('\n'));
+  },
+});
+
+Deno.test({
+  name: "wsl subagent hooks: a WSL Antigravity chat without a key, or whose hooks can't be given, is not isolated and says so (nothing is written)",
+  ...T,
+  async fn() {
+    await keeperBinary();
+    // 1. no API key (a Google sign-in uses the distro's own ~/.gemini): nothing is written, the agent is asked not to edit with subagents
+    {
+      await using lab = new Lab();
+      lab.host.handlers['agents.detect'] = () => AGY_DETECT;
+      const { c, env } = await openChat(lab, 'antigravity');
+      assert(!lab.commands.at(-1)!.includes('--gemini-dir'));
+      assertEquals(c.subagentHooks!.off, 'Google sign-in');
+      assert(!c.subagentIsolationOn());
+      assertEquals(env.AIB_HOOK_KEY, undefined);
+      assert(c.subagentRule.includes('Do not start subagents'));
+      assert(notes(c).some((n) => n.includes("can't be held in their own worktree") && n.includes('signed in with Google')), notes(c).join('\n'));
+      assert(!exists(lab.win('/home/u/aibdata/antigravity')), 'no gemini folder was made');
+    }
+    // 2. a helper without the hook tunnel, or one that cannot be asked: said up front
+    {
+      await using lab = new Lab(true);
+      lab.host.handlers['agents.detect'] = () => AGY_DETECT;
+      lab.host.hookTunnel = null;
+      const { c } = await openChat(lab, 'antigravity', withKey);
+      assertEquals(c.subagentHooks!.off, 'WSL hooks unavailable');
+      assert(notes(c).some((n) => n.includes("can't be held in their own worktree")), notes(c).join('\n'));
+    }
+    {
+      await using lab = new Lab();
+      lab.host.handlers['agents.detect'] = () => AGY_DETECT;
+      lab.host.handlers['subagent.setup'] = () => {
+        throw new WslHelperError('the distro stopped', 'stopped');
+      };
+      const { c } = await openChat(lab, 'antigravity', withKey);
       assertEquals(c.subagentHooks!.off, 'WSL hooks unavailable');
       assert(c.subagentHooks!.detail!.includes('the distro stopped'));
     }

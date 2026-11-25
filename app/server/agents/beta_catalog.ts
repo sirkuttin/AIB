@@ -572,8 +572,9 @@ export const BETA_AGENTS: readonly BetaAgent[] = [
     //     (keyHome) and never writes the person's ~/.gemini.
     //   session/new: models (21, e.g. gemini-3.1-pro-low), modes default / accept-edits / plan, config options model, thought_level
     //     and mode, slash commands (available_commands_update), usage_update.
-    // Subagents: yes (its subagent tool, /swarm and run_workflow). They work in the chat's own folder unless the model asks for
-    // workspace "share" (its own working copy) or "branch" (an isolated clone); AIB cannot require that over ACP.
+    // Subagents: yes (invoke_subagent, define_subagent, swarm, run_workflow). No setting turns them off; a PreToolUse hook (hooks.json in
+    // the --gemini-dir folder) can force Workspace "branch" (a real git worktree and branch) or deny: AIB does (subagents/antigravity.ts,
+    // aib-shared/research/provider-builder-probe-2026-11-25.md). With a Google sign-in there is no folder of AIB's own: it only asks.
     // It updates itself in the background (install.sh: "automatically self-updates"); no switch to turn that off is documented.
     signinDirs: ['.gemini'],
     name: 'Antigravity CLI',

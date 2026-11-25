@@ -88,8 +88,10 @@ export function geminiDirOf(command: readonly string[]): string {
   return at >= 0 && at + 1 < command.length ? command[at + 1] : '';
 }
 
+/** `join` for a path that may be the distro's (a WSL chat's gemini folder is a Linux path: slashes, whatever the host). */
+const joinAs = (base: string, ...parts: string[]): string => (base.startsWith('/') ? [base.replace(/\/+$/, ''), ...parts].join('/') : join(base, ...parts));
 /** agy's folder for its subagent worktrees under a gemini dir. */
-export const worktreesRootOf = (geminiDir: string): string => join(geminiDir, 'antigravity-cli', 'worktrees');
+export const worktreesRootOf = (geminiDir: string): string => joinAs(geminiDir, 'antigravity-cli', 'worktrees');
 
 /**
  * The command line of one hook. Program first and bare (a line that starts with a quote is silently skipped by cmd /c), forward
@@ -134,7 +136,7 @@ export function mergeHooksJson(existing: Json | null, entry: Json | null): Json 
   return out;
 }
 
-export const hooksFileOf = (geminiDir: string): string => join(geminiDir, 'config', 'hooks.json');
+export const hooksFileOf = (geminiDir: string): string => joinAs(geminiDir, 'config', 'hooks.json');
 
 /**
  * Writes (or removes) AIB's entry in <gemini dir>/config/hooks.json: only AIB's own folder, written only when it changes. Returns ''
@@ -369,7 +371,9 @@ async function subagentCall(service: SubagentWorktrees, chat: SubagentChat, root
   const field = WRITE_TOOLS[name];
   if (field) {
     const path = typeof args[field] === 'string' ? args[field] as string : '';
-    return insideFolder(path, rec.path) ? allow() : denyAgy(AGY_TEXTS.write(rec.path, name));
+    // its worktree; or agy's own copy of a workspace the chat has besides the project (its cwd then: nothing there lands)
+    const ok = insideFolder(path, rec.path) || (rec.agy?.also ?? []).some((f) => insideFolder(path, f));
+    return ok ? allow() : denyAgy(AGY_TEXTS.write(rec.path, name));
   }
   if (name === 'run_command') {
     const command = typeof args.CommandLine === 'string' ? args.CommandLine : '';
