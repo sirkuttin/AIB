@@ -17,7 +17,7 @@ The build fails on a broken link between pages. The site loads nothing from othe
 - Screenshots: `src/assets/shots/<name>`. A page names its picture with `<Shot name="…" alt="…" />`; until the file exists,
   the README copy in `docs/screenshots/` is used, or a "Picture coming" box.
 - Keyboard shortcuts are read from `app/page/commands-registry.js` at build time.
-- Release notes: `src/content/docs/releases.mdx` is made by `scripts/make-releases.py` (see the usage line at its top).
+- Release notes: `src/content/docs/releases.mdx` is made by `scripts/make-releases.mjs` from the GitHub releases (run `node scripts/make-releases.mjs`; needs `gh`). Betas 1-9 are frozen in `scripts/releases-archive-beta1-9.mdx`.
 
 ## Deploy
 
