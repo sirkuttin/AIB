@@ -89,7 +89,7 @@ export interface SteerItem {
 
 /** An open approval or question a message sent now waits for: what kind, its title, and whose (the session, main or a subagent's). */
 export interface HeldCard {
-  card: 'approval' | 'question';
+  card: 'approval' | 'question' | 'command';
   title: string;
   sessionId: string | null;
   route: string;

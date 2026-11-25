@@ -52,6 +52,8 @@ const userEvents = async (chat: SteerChat, text: string) => (await chat.events('
 const lane = (st: Json) => (st.steerLane as Json[] | undefined) ?? [];
 const waitText = (chat: SteerChat, text: string, seconds = LONG) =>
   until(async () => (await chat.agentText()).includes(text), `the agent text "${text}"`, seconds);
+/** Claude Code's Ctrl+B on the running command (the fake watches for this file). */
+const ctrlB = (gate: string) => Deno.writeTextFileSync(gate + '.bg', 'bg');
 const none = async (ms: number, what: string, check: () => boolean | Promise<boolean>) => {
   const end = Date.now() + ms;
   while (Date.now() < end) {
@@ -214,7 +216,7 @@ Deno.test({
 // ---- S6: Claude, a command in the background, Stop kills exactly its processes (T19, T20) -------------------------------------------------
 
 Deno.test({
-  name: 'S6 [A] Claude C1: steering during a command backgrounds it; Stop kills that command and its child and nothing else; Claude answers after Stop',
+  name: 'S6 [A] Claude C1: a command moved to the background (Ctrl+B); Stop kills that command and its child and nothing else; Claude answers after Stop',
   ...TEST_OPTIONS,
   async fn() {
     const bystander = `${Deno.makeTempDirSync({ prefix: 'aib-steer-by-' })}${Deno.build.os === 'windows' ? '\\' : '/'}child.pid`;
@@ -226,8 +228,7 @@ Deno.test({
     const other = Number(Deno.readTextFileSync(bystander));
     await working(chat);
     assertEquals(await backgroundOf(chat, 'toolu_steer_bash'), null, 'a foreground command is not a background one');
-    await chat.steer('what is 2+2?', 'b-1');
-    await waitText(chat, 'Steered reply: what is 2+2?');
+    ctrlB(gate);
     await until(async () => (await backgroundOf(chat, 'toolu_steer_bash'))?.state === 'running', 'the command is marked as running in the background', LONG);
     assertEquals((await backgroundOf(chat, 'toolu_steer_bash'))?.stoppable, true);
     await idle(chat); // the turn ended; the command did not
@@ -249,6 +250,31 @@ Deno.test({
 });
 
 Deno.test({
+  name: 'S6c [A] Claude: Send now during a running command never touches it: the message is held "until the command finishes" and goes in when it ends',
+  ...TEST_OPTIONS,
+  async fn() {
+    await using lab = await started();
+    const chat = await lab.chat('claude');
+    const gate = lab.gate();
+    await chat.prompt(`steer-bash:${gate}`, 'first');
+    const [parent, leaf] = await chat.pids(gate);
+    await working(chat);
+    const [status, body] = await chat.steer('what is 2+2?', 'hold-1');
+    assertEquals(status, 200, JSON.stringify(body));
+    assertEquals(body.state, 'held', JSON.stringify(body));
+    await until(async () => lane(await chat.state()).some((l) => l.text === 'what is 2+2?' && l.state === 'held' && (l.heldFor as Json)?.card === 'command'), 'held for the command', LONG);
+    await none(1500, 'nothing reaches the agent while the command runs', () => lab.promptsReceived(chat).includes('what is 2+2?'));
+    assert(!chat.received().some((m) => m.method === 'session/cancel') && !chat.received().some((m) => m.method === '_session/steering'), 'no steer, no cancel');
+    assert(pidAlive(parent) && pidAlive(leaf), 'the command still runs');
+    chat.open(gate); // the command ends
+    // the command's end ends this fake turn too, so the message goes in as a steer or as the next prompt; either way the agent answers it
+    await until(async () => /(Steered|Fixture) reply: what is 2\+2\?/.test(await chat.agentText()), 'the agent answered the held message', LONG);
+    await until(async () => !lane(await chat.state()).length, 'the held message went in', LONG);
+    assert(!chat.received().some((m) => m.method === 'session/cancel'), 'never cancelled');
+  },
+});
+
+Deno.test({
   name: 'S6b [A] Claude C1: a backgrounded command that ends by itself is marked done (no Stop left), the autonomous cycle follows',
   ...TEST_OPTIONS,
   async fn() {
@@ -257,7 +283,7 @@ Deno.test({
     const gate = lab.gate();
     await chat.prompt(`steer-bash:${gate}`, 'first');
     await working(chat);
-    await chat.steer('what is 2+2?', 'b-2');
+    ctrlB(gate);
     await until(async () => (await backgroundOf(chat, 'toolu_steer_bash'))?.state === 'running', 'running in the background', LONG);
     chat.open(gate); // the command ends on its own: Claude Code sends no update for the card, only its own cycle (task-notification)
     await waitText(chat, 'The command finished.');
@@ -501,7 +527,7 @@ async function ownCycle(lab: SteerLab, chat: SteerChat): Promise<string> {
   Deno.writeTextFileSync(gate + '.cycle-hold', 'hold'); // the cycle waits for <gate>.cycle-end so the test can look at it
   await chat.prompt(`steer-bash:${gate}`, 'first');
   await working(chat);
-  await chat.steer('what is 2+2?', 'own-0');
+  ctrlB(gate);
   await idle(chat);
   chat.open(gate); // the command ends: Claude Code starts its own cycle
   await until(async () => (await chat.state()).autonomous === true, 'the autonomous cycle is working', LONG);
@@ -558,7 +584,7 @@ Deno.test({
     await chat.prompt(`steer-bash:${gate}`, 'first');
     await working(chat);
     assertEquals((await chat.state()).steerable, true);
-    await chat.steer('what is 2+2?', 's13c');
+    ctrlB(gate);
     await idle(chat);
     assertEquals((await chat.state()).steerable, false);
     chat.open(gate); // the command ends: Claude Code starts its own cycle
@@ -744,7 +770,8 @@ for (const who of WHO) {
       const [parent, leaf] = await chat.pids(gate);
       await working(chat);
       await page.waitFor(`[...document.querySelectorAll('#promptForm [aria-haspopup]')].some((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; })`, 8000, '▾');
-      await typeAndSend(page, 'what is 2+2?');
+      if (who === 'claude') ctrlB(gate); // Claude Code would abort a steered command, so AIB holds the message: the command is backgrounded the way Ctrl+B does
+      else await typeAndSend(page, 'what is 2+2?');
       await page.waitFor(`/Still running in the background/i.test(document.getElementById('messages').innerText)`, 15000, 'the background pill');
       assert(!(await page.eval<boolean>(`/Stopped by your message/i.test(document.body.innerText)`)), 'the same wording for all three agents');
       await clickByText(page, '^Stop$', `document.getElementById('messages')`);
@@ -815,7 +842,7 @@ pageTest("P8 [A+B] in Claude's own follow-up cycle the composer offers Send now 
     Deno.writeTextFileSync(gate + '.cycle-hold', 'hold');
     await chat.prompt(`steer-bash:${gate}`, 'first');
     await working(chat);
-    await chat.steer('what is 2+2?', 'p8');
+    ctrlB(gate);
     await idle(chat);
     chat.open(gate);
     await until(async () => (await chat.state()).busy === true, 'the autonomous cycle', LONG);

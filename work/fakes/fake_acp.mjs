@@ -757,13 +757,16 @@ print("hello")
         await sleep(500);
       }
     });
-    const state = await steerWait(turn, () => child.poll() !== null);
+    // Claude Code's Ctrl+B: a test creates <gate>.bg and the running command moves to the background (AIB never sends a steer into a
+    // running Claude command, which Claude Code would abort, so a steer no longer moves it).
+    const state = await steerWait(turn, () => child.poll() !== null || (who === 'claude' && exists(gate + '.bg')));
+    const ctrlB = who === 'claude' && child.poll() === null && exists(gate + '.bg');
     if (state === 'cancel') { // Interrupt: a foreground command dies with it
       if (child.poll() === null) child.kill();
       steerEnd(turn, 'cancelled');
       return;
     }
-    if (state !== 'steer') { // nobody steered: the command ends, the reply follows
+    if (state !== 'steer' && !ctrlB) { // nobody steered: the command ends, the reply follows
       if (who === 'claude') update({ sessionUpdate: 'tool_call_update', toolCallId: tool, status: 'completed', rawOutput: 'tick 60\nfinished', _meta: claude });
       else if (who === 'codex') update({ sessionUpdate: 'tool_call_update', toolCallId: tool, name: 'exec_command', status: 'completed', _meta: { terminal_exit: { exit_code: child.returncode, signal: null, terminal_id: tool } } });
       else if (who === 'omp') update({ sessionUpdate: 'tool_call_update', toolCallId: tool, status: 'completed', rawOutput: { content: [{ type: 'text', text: 'finished' }], details: {} } });

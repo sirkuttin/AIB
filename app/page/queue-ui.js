@@ -277,6 +277,9 @@
     const C = root.AgentSendMenu && root.AgentSendMenu.COPY;
     const f = item && item.heldFor;
     if (!C || !f) return { note: C ? C.held : T.held, why: '' };
+    if (f.card === 'command') {
+      return { note: C.heldCommand(String(f.title || '').slice(0, 80)), why: 'Claude Code would stop the command if the message went in now.' };
+    }
     const sub = f.route !== 'main' && f.sessionId;
     const who = sub ? (ctx.names && ctx.names[f.sessionId]) || 'a subagent' : '';
     const title = String(f.title || '').slice(0, 80);
@@ -357,7 +360,7 @@
     const head = el(doc, 'div', 'q-head' + (s.tone ? ' q-paused' : ''));
     const SMC = root.AgentSendMenu && root.AgentSendMenu.COPY;
     head.append(
-      el(doc, 'span', '', s.show ? s.head : held.length ? W.laneHead : SMC ? SMC.scheduledHead(sched.length) : sched.length + ' scheduled'),
+      el(doc, 'span', '', s.show ? s.head : held.length ? (held.some((i) => i.heldFor && i.heldFor.card === 'command') ? 'Waiting for the running command' : W.laneHead) : SMC ? SMC.scheduledHead(sched.length) : sched.length + ' scheduled'),
     );
     if (s.resume) {
       const resume = el(doc, 'button', 'q-text-btn', 'Resume');

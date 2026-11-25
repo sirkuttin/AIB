@@ -9,8 +9,8 @@
  *   test_stop_keeps_background_subagent      the lead launches a background editing subagent (run_in_background, its own AIB worktree),
  *                                            then runs a long foreground command; the user presses Stop. The lead's turn ends
  *                                            cancelled; the subagent goes on, finishes and lands as one "AIB: subagent ..." commit.
- *   test_send_now_steers_and_backgrounds     same start; the user queues a message and presses Send now on it. No cancel: Claude Code
- *                                            moves the running command to the background (it finishes and writes its file), the lead
+ *   test_send_now_steers_and_backgrounds     same start; the user queues a message and presses Send now on it. No cancel: AIB holds the
+ *                                            message until the running command finishes (Claude Code would abort it), then the lead
  *                                            reads the message in the same turn, and the subagent lands.
  *
  * Needs node, the Claude Code ACP adapter (AIB_CLAUDE_ACP or a global npm install) and Go (keeper program; AIB_TEST_KEEPER_BIN names
@@ -149,9 +149,10 @@ Deno.test({
     await aib.wait('the lead to read the message mid-turn', async () => (await updates(chat)).includes('LEAD-READ-IT'), 120);
     assert(!(await turnEnds(chat)).includes('cancelled'), 'Send now must not stop the turn');
     const sentToModel = dumped(aib.stub);
-    assert(sentToModel.includes('moved to the background'), 'Claude Code moves the running command to the background');
-    assert(sentToModel.includes('it was not interrupted'));
-    await aib.wait('the backgrounded command to finish', () => isFile(join(p, 'fg.txt')), 60);
+    // Claude Code aborts the running command a steer meets (it does not background it), so AIB holds the message until the command
+    // ends: the command finishes and writes its file BEFORE the lead reads the message; nothing is cancelled.
+    assert(isFile(join(p, 'fg.txt')), 'the message waited for the running command; it did not interrupt it');
+    assert(!sentToModel.includes('interrupted by user'), 'the command was not interrupted');
     assertEquals(Deno.readTextFileSync(join(p, 'fg.txt')).trim(), 'fg-finished');
     await landed(aib, 'sn background');
     assertEquals(Deno.readTextFileSync(join(p, 'sub-n.txt')).trim(), 'from-bg');

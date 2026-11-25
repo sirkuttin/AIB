@@ -922,6 +922,8 @@ interface ToolSeen {
   since: number;
   main: boolean;
   turn: number;
+  /** The call's title (a shell command's text), for the row of a message waiting for it. */
+  title?: string;
   /** Claude Code: the Agent call this one runs under (_meta.claudeCode.parentToolUseId), or null for the main agent's own. */
   parent?: string | null;
   /** An MCP call (Codex: the tool_call's rawInput {server, tool, arguments}); its permission request names none of it. */
@@ -3433,6 +3435,7 @@ export class Connection {
         shell,
         toolName: isStr(toolName) ? toolName : null,
         status: '',
+        title: isStr(get(update, 'title')) ? get(update, 'title') as string : '',
         since: this.#now(),
         main,
         turn: this.promptSeq,
@@ -3481,6 +3484,7 @@ export class Connection {
     }
     const task = backgroundTask(update, this.#claudeHolds());
     if (task) this.#markBackground(id, task);
+    if (seen?.shell && this.queue.steer.length && (task || toolEnded(update, this.#claudeHolds()))) void this.#steerPump();
   }
 
   /**
@@ -6050,6 +6054,23 @@ export class Connection {
     return out;
   }
 
+  /**
+   * Claude Code aborts the foreground shell command a steer meets instead of moving it to the background (recordings with
+   * claude-agent-acp 0.97 and 0.102; the adapter always steers at priority `now`). Owner rule: Send now never cancels running work.
+   * So while the main agent's own foreground command runs, a message waits (held, "Sends when the running command finishes") and goes
+   * in at the command's end (tool update completed/failed or moved to the background). Codex's steer queues input without touching
+   * a running command, so it is not held.
+   */
+  #runningCommand(): HeldCard | null {
+    if (!this.#claudeHolds()) return null;
+    for (const [id, seen] of this.#tools) {
+      if (!seen.shell || !seen.main || seen.parent || seen.turn !== this.promptSeq || this.#bgTools.has(id)) continue;
+      if (seen.status === 'completed' || seen.status === 'failed') continue;
+      return { card: 'command', title: (seen.title ?? '').replace(/\s+/g, ' ').trim().slice(0, 120), sessionId: null, route: 'main' };
+    }
+    return null;
+  }
+
   /** A slash command the agent offers (or /doc): never sent into a running turn, it waits for the turn to end (B17). */
   #isAgentCommand(text: unknown): boolean {
     if (!isStr(text)) return false;
@@ -6176,6 +6197,8 @@ export class Connection {
       }
       if (head.state === 'fallback') return; // B2: the agent's turn is over; it goes as a prompt once AIB has finished that turn
       const holds = this.#steerHolds();
+      const running = holds.length ? null : this.#runningCommand();
+      if (running) holds.push(running);
       if (holds.length) {
         // Owner decision 5 (B8): never steered while an approval or question is open except a Claude
         // Code subagent's (#steerHolds). The row names the card it waits for. Released by any close of the last card that holds it

@@ -42,6 +42,8 @@
     held: 'Waits for your answer above · then goes in at once',
     // A held row names the card it waits for (owner, 2026-11-17: the plain note was not noticed). what = heldWhat(...).
     heldOn: (what) => 'Held until you answer ' + what + ' above · then it goes in at once',
+    // Claude Code stops a running command when a message is sent into it, so Send now waits for the command (never cancels it).
+    heldCommand: (title) => 'Sends when the running command finishes' + (title ? ': ' + title : '') + ' · nothing is stopped',
     heldWhat: (card, who, title) =>
       (who ? who + '’s ' : 'the ') + (card === 'question' ? 'question' : 'approval') + (title ? ' “' + title + '”' : ''),
     heldWhy: {},
