@@ -192,6 +192,16 @@ class Lab {
     return { code: out.code, out: DEC.decode(out.stdout), err: DEC.decode(out.stderr) };
   }
 
+  /**
+   * A Claude subagent finishes: its SubagentStop hook through the forwarder, then the parent's stream says it ended. The hook alone is only
+   * noted (owner 2026-11-25: another matching SubagentStop hook may block the stop, so the hook is not the end); the end is the stream's.
+   */
+  async finish(agent: string): Promise<Run> {
+    const run = await this.forward('subagent-stop', { agent_id: agent, agent_type: 'general-purpose' });
+    await this.svc.acpEnded(CHAT, agent, 'end_turn');
+    return run;
+  }
+
   /** A subagent's shell call through the forwarder: the command AIB rewrote it to. */
   async tag(agent: string, call: string, command: string): Promise<string> {
     const run = await this.forward('pre-shell', {
@@ -264,7 +274,7 @@ Deno.test({
     const kept = [...carrying(CHAT, 'agent8'), ...carrying(CHAT, 'main'), ...carrying(OTHER_CHAT, 'agent7')];
 
     // the subagent finishes (the real forwarder's SubagentStop)
-    const stop = await lab.forward('subagent-stop', { agent_id: 'agent7', agent_type: 'general-purpose' });
+    const stop = await lab.finish('agent7');
     assertEquals(stop.code, 0, stop.err);
     await until('its processes are gone', () => carrying(CHAT, 'agent7').length === 0);
     for (const p of mine) assert(!alive(p.pid, p.started), `process ${p.pid} was shut down`);
@@ -305,7 +315,7 @@ Deno.test({
     await sleep(800);
     for (const p of b) assert(alive(p.pid, p.started), 'an unknown task id kills nothing');
     // the subagent finishes: call b goes now
-    await lab.forward('subagent-stop', { agent_id: 'agent7', agent_type: 'general-purpose' });
+    await lab.finish('agent7');
     await until('call b is gone', () => carrying(CHAT, 'agent7').length === 0);
   },
 });
@@ -324,7 +334,7 @@ Deno.test({
     lab.spawn(await lab.tag('agent7', 'toolu_old', DETACHED)); // the call is tagged now, later than that process
     lab.spawn(await lab.tag('agent7', 'toolu_new', DETACHED));
     await until('the new call runs', () => carrying(CHAT, 'agent7', 'toolu_new').length >= 2);
-    await lab.forward('subagent-stop', { agent_id: 'agent7', agent_type: 'general-purpose' });
+    await lab.finish('agent7');
     await until('the new call is gone', () => carrying(CHAT, 'agent7', 'toolu_new').length === 0);
     for (const p of old) assert(alive(p.pid, p.started), `process ${p.pid}, older than its call, was left alone`);
   },
