@@ -127,6 +127,7 @@ Deno.test({
       AIB_UPDATE_API_BASE: `http://127.0.0.1:${refusedPort()}`, // no update check reaches anything
       FAKE_ACP_LOG: agentLog,
       AGENT_STUDIO_ALLOW_REAL_AGENT: '1', // the built app cannot see work/, so its test guard is told the agent is the fake one
+      AIB_TEST_FIXTURE_ROOT: nativePath(new URL('keeper-fixture/', WORK)), // and its test auth guard: only programs in this folder are fakes
     };
     for (const d of [env.APPDATA, env.LOCALAPPDATA]) {
       Deno.mkdirSync(d, { recursive: true });

@@ -666,8 +666,22 @@ export function testHomeEnv(command: string[]): Record<string, string> {
  * Throws before the process exists. Checked at every launch path (direct, keeper, WSL) and for the Codex limits probe.
  */
 export function guardRealAgentAuth(provider: string, command: string[], env: Record<string, string>, base: Record<string, string> = Deno.env.toObject()): void {
-  if (Deno.env.get('AGENT_STUDIO_TEST') !== '1' || isFixture(command)) return;
+  if (Deno.env.get('AGENT_STUDIO_TEST') !== '1' || isFixture(command) || inTestFixtureRoot(command)) return;
   assertTestAuth(provider, command, { ...base, ...env });
+}
+
+/**
+ * A built app under test cannot see work/, so isFixture misses its fake agent: the test names the folder that holds its fakes in
+ * AIB_TEST_FIXTURE_ROOT, and only a program inside that folder passes. Not a switch that lets any agent through.
+ */
+function inTestFixtureRoot(command: string[]): boolean {
+  const root = (Deno.env.get('AIB_TEST_FIXTURE_ROOT') ?? '').trim();
+  if (!root) return false;
+  const dir = normcase(resolvePath(root)).replace(/[\\/]+$/, '');
+  return command.some((part) => {
+    const p = normcase(resolvePath(String(part)));
+    return p.startsWith(dir + SEP) && p.length > dir.length + 1;
+  });
 }
 
 /**

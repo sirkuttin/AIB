@@ -208,6 +208,7 @@ Deno.test({
       AIB_TEST_TRAY_STATE: trays,
       WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: '--remote-debugging-port=0',
       AGENT_STUDIO_ALLOW_REAL_AGENT: '1', // the built app cannot see work/, so its test guard is told the agent is the fake one
+      AIB_TEST_FIXTURE_ROOT: nativePath(new URL('keeper-fixture/', WORK)), // and its test auth guard: only programs in this folder are fakes
     };
     for (const d of [env.APPDATA, env.LOCALAPPDATA]) Deno.mkdirSync(d, { recursive: true });
     cdpRoot = app;

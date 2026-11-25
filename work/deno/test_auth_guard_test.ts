@@ -151,3 +151,16 @@ Deno.test('test_auth_credential_fallbacks_are_closed_by_env_in_windows_and_wsl_t
     for (const name of ['GH_TOKEN', 'GITHUB_TOKEN', 'GOOGLE_APPLICATION_CREDENTIALS']) assertEquals(wsl[name], '');
   });
 });
+
+Deno.test('a built app under test passes only programs inside AIB_TEST_FIXTURE_ROOT; one outside it is still refused', async () => {
+  const root = agentTempDirSync('aib-fixture-root-');
+  try {
+    await withEnv({ AGENT_STUDIO_TEST: '1', AIB_TEST_FIXTURE_ROOT: root, ANTHROPIC_BASE_URL: null, ANTHROPIC_API_KEY: null }, () => {
+      guardRealAgentAuth('claude', ['node', `${root}/agent.mjs`], {}, {}); // a fake inside the named folder: passes
+      assertThrows(() => guardRealAgentAuth('claude', ['C:/no-such/claude.exe', '--acp'], {}, {}));
+      assertThrows(() => guardRealAgentAuth('claude', ['node', `${root}-other/agent.mjs`], {}, {}));
+    });
+  } finally {
+    Deno.removeSync(root, { recursive: true });
+  }
+});
