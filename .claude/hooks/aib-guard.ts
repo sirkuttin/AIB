@@ -44,7 +44,7 @@ async function pre(input: Json): Promise<void> {
   // Text inside quotes or a heredoc (a commit message, an echo) is data, not a command: only the port rule reads it.
   const code = cmd.replace(/<<-?\s*'?(\w+)'?[\s\S]*?\n\1\b/g, '').replace(/'[^']*'|"(?:\\.|[^"\\])*"/g, "''");
   for (const [re, why] of RULES) if ((re === OWNER_PORTS ? cmd : code).match(re)) return deny(why);
-  const loop = /\b(while|until)\b[\s\S]*\b(do|sleep|start-sleep)\b/i.test(cmd);
+  const loop = /\b(while|until)\b[\s\S]*\b(sleep|start-sleep)\b/i.test(cmd);
   if (ti.run_in_background === true && loop && !boundedWait(cmd)) {
     return deny('a background wait loop needs a time limit (`timeout 900 bash -c "until ...; do sleep 5; done"` or a counter); one ran 3.5 h after its test died.');
   }
