@@ -3,8 +3,11 @@
  * notification is ever shown. The shortcut test writes only into a temp folder.
  */
 import { assert, assertEquals } from './_assert.ts';
+import { saveRemotePort } from '../../app/server/remote/port.ts';
 import {
   choosePortPair,
+  desktopPort,
+  moveDesktopPort,
   cleanGeometry,
   closeDecision,
   DEFAULT_SIZE,
@@ -1215,6 +1218,26 @@ Deno.test('the last port is reused when free (same origin, so localStorage draft
     assertEquals(lastPortPair(dir, (p) => p !== 8782), null, 'its artifact port is taken: choose again');
     Deno.writeTextFileSync(`${dir}/desktop-port.json`, '{"port": "x"}');
     assertEquals(lastPortPair(dir, () => true), null);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test('the window port never takes the saved phone port or its artifact port; moveDesktopPort frees a held one', async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    // fake "free" checks only: nothing is bound
+    saveRemotePort(dir, 8779, 8782);
+    saveLastPort(dir, 8779); // the clash from the owner's PC: the window's saved port is the phone port
+    assertEquals(desktopPort(dir, () => true), 8777, 'the saved window port is the phone port: choose another pair');
+    saveLastPort(dir, 8778); // pair 8778/8779 overlaps the phone port too
+    assertEquals(desktopPort(dir, () => true), 8777);
+    saveRemotePort(dir, 8777, 8780);
+    assertEquals(desktopPort(dir, () => true), 8778, 'neither 8777 nor 8780 nor a pair that contains them');
+    saveLastPort(dir, 8785);
+    assertEquals(desktopPort(dir, () => true), 8785, 'a saved port that clashes with nothing is kept');
+    assertEquals(moveDesktopPort(dir, () => true, 8785), 8778, 'moves to the first free pair, not the current one or a reserved port');
+    assertEquals(lastPortPair(dir, () => true), 8778, 'saved for the next start');
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

@@ -42,6 +42,8 @@ import { allRoute } from './cleanup_routes.ts';
 import { filterSessions, folderOfSession, projectAdd, projectRemove } from './project_routes.ts';
 import { FolderPresence, presence } from '../desktop/folder_presence.ts';
 import { AddedProjects } from '../desktop/added_projects.ts';
+import { moveDesktopPort } from '../desktop/window.ts';
+import { portFree } from '../remote/port.ts';
 import { filesRoutes } from './files_routes.ts';
 import { DOCS_SOCKET, docsRoutes, docsSocket } from './docs_routes.ts';
 import { FILES_SOCKET, filesSocket, liveFilesRoutes } from './live_files_routes.ts';
@@ -896,6 +898,9 @@ export function makeContext(
   };
   ctx.phone = new PhoneAccess(ctx, options.stateDir, {
     avoid: () => (ctx.port ? [ctx.port, ctx.port + 1] : []),
+    moveOwn: () => {
+      if (ctx.port) moveDesktopPort(options.stateDir, portFree, ctx.port);
+    },
     ...options.phone,
   });
   ctx.devices = ctx.phone.devices;

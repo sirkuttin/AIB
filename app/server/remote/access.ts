@@ -56,8 +56,10 @@ function testBindRetryMs(): number | undefined {
   return ms > 0 ? ms : undefined;
 }
 
+const OWN_PORT_TEXT = 'AIB is moving its window to another port. Phone access comes up by itself the next time AIB starts; nothing to do.';
+
 export interface AccessProblem {
-  code: 'port_busy' | 'artifact_port_busy' | 'funnel' | 'tailscale' | 'failed';
+  code: 'port_busy' | 'port_moving' | 'artifact_port_busy' | 'funnel' | 'tailscale' | 'failed';
   message: string;
 }
 
@@ -67,6 +69,8 @@ export interface AccessOptions {
   isFree?: (port: number) => boolean;
   /** Ports AIB itself uses (the page and artifact ports): never chosen as the phone port. */
   avoid?: () => number[];
+  /** AIB's own window holds the phone port `port`: save another window port for the next start (desktop/window.ts moveDesktopPort). */
+  moveOwn?: (port: number) => void;
   /** Tests: the fetch pushes go out with (a fake push service). */
   pushFetch?: typeof fetch;
   /** Tests: the clock and lifetime of the one-time codes on notification buttons (push-codes.json). */
@@ -286,6 +290,10 @@ export class PhoneAccess implements SetupHost {
       return;
     }
     if (!this.server?.listening) {
+      if (this.#ownPort(port)) {
+        this.problem = { code: 'port_moving', message: OWN_PORT_TEXT };
+        return;
+      }
       const server = new RemoteServer(this);
       try {
         if (quick && !(this.options.isFree ?? portFree)(port)) throw new PortBusy(port);
@@ -310,6 +318,22 @@ export class PhoneAccess implements SetupHost {
     await this.#artifactsUp(quick);
   }
 
+  /** AIB's own window holds this port (the page or artifact port): not a foreign program. Save a new window port for the next start. */
+  #ownPort(port: number): boolean {
+    if (!(this.options.avoid?.() ?? []).includes(port)) return false;
+    if (!this.#movedOwn) {
+      this.#movedOwn = true;
+      try {
+        this.options.moveOwn?.(port);
+      } catch (error) {
+        this.#log(`could not move the window port: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      this.#log(`port ${port} is held by AIB's own window; it moves to another port on the next start`);
+    }
+    return true;
+  }
+  #movedOwn = false;
+
   #retryMs(): number {
     return this.options.bindRetryMs ?? testBindRetryMs() ?? BIND_RETRY_MS;
   }
@@ -319,6 +343,10 @@ export class PhoneAccess implements SetupHost {
     this.artifactProblem = null;
     if (this.artifactServer?.listening || this.artifactPort === null) return;
     const port = this.artifactPort;
+    if (this.#ownPort(port)) {
+      this.artifactProblem = { code: 'artifact_port_busy', message: OWN_PORT_TEXT };
+      return;
+    }
     const server = new RemoteArtifactServer(this);
     try {
       if (quick && !(this.options.isFree ?? portFree)(port)) throw new PortBusy(port);

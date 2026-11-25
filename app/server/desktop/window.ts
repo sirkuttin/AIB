@@ -37,6 +37,7 @@ import {
   windowTitle,
 } from './windows.ts';
 import { windowUrl } from './windows_contract.ts';
+import { readRemoteArtifactPort, readRemotePort } from '../remote/port.ts';
 
 const log = getLogger('desktop');
 
@@ -122,8 +123,9 @@ export function trayOnlyView(working: number, needsYou: number, phoneOn = false)
 // ---------- pure rules ----------
 
 /** The Tauri app's rule: the first port P from `start` where P and P + 1 (the artifact origin) are both free. */
-export function choosePortPair(isFree: (port: number) => boolean, start = FIRST_PORT, tries = 200): number {
+export function choosePortPair(isFree: (port: number) => boolean, start = FIRST_PORT, tries = 200, reserved: number[] = []): number {
   for (let port = start; port < start + tries && port + 1 <= 65535; port++) {
+    if (reserved.includes(port) || reserved.includes(port + 1)) continue;
     if (isFree(port) && isFree(port + 1)) return port;
   }
   throw new Error(`No two free ports in a row between ${start} and ${start + tries}`);
@@ -131,13 +133,41 @@ export function choosePortPair(isFree: (port: number) => boolean, start = FIRST_
 
 export const LAST_PORT_FILE = 'desktop-port.json';
 
-/** The port pair the app used last time (desktop-port.json), when both ports are free now; else null. */
-export function lastPortPair(stateDir: string, isFree: (port: number) => boolean): number | null {
+/**
+ * The port pair the app used last time (desktop-port.json), when both ports are free now and neither is reserved (the ports other AIB
+ * features saved, such as the phone port and its artifact port); else null.
+ */
+export function lastPortPair(stateDir: string, isFree: (port: number) => boolean, reserved: number[] = []): number | null {
   try {
     const port = JSON.parse(Deno.readTextFileSync(`${stateDir}${SEP}${LAST_PORT_FILE}`)).port;
+    if (reserved.includes(port) || reserved.includes(port + 1)) return null;
     if (Number.isInteger(port) && port > 0 && port < 65535 && isFree(port) && isFree(port + 1)) return port;
   } catch { /* none yet */ }
   return null;
+}
+
+/** The ports other AIB features saved in <state> (phone port, phone artifact port): the window never takes them. */
+export function reservedPorts(stateDir: string): number[] {
+  const out: number[] = [];
+  const port = readRemotePort(stateDir);
+  const artifact = readRemoteArtifactPort(stateDir);
+  if (port !== null) out.push(port);
+  if (artifact !== null) out.push(artifact);
+  return out;
+}
+
+/** The window's port pair for this start: last time's when usable, else the first free pair, never a reserved port. */
+export function desktopPort(stateDir: string, isFree: (port: number) => boolean): number {
+  const reserved = reservedPorts(stateDir);
+  return lastPortPair(stateDir, isFree, reserved) ?? choosePortPair(isFree, FIRST_PORT, 200, reserved);
+}
+
+/** Next start: save a window port pair that avoids `reserved`, so a port the window holds now is freed. Returns the pair. */
+export function moveDesktopPort(stateDir: string, isFree: (port: number) => boolean, current: number): number {
+  const reserved = reservedPorts(stateDir);
+  const port = choosePortPair((p) => p !== current && p !== current + 1 && isFree(p), FIRST_PORT, 200, reserved);
+  saveLastPort(stateDir, port);
+  return port;
 }
 
 export function saveLastPort(stateDir: string, port: number): void {

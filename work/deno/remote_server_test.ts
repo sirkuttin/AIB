@@ -685,6 +685,39 @@ Deno.test({
 
 Deno.test({
   ...OPTS,
+  name: 'the phone port held by AIB\'s own window is not "busy": no foreign-program message, and the window moves off it next start',
+  async fn() {
+    const held = Deno.listen({ hostname: '127.0.0.1', port: 0 });
+    const port = (held.addr as Deno.NetAddr).port;
+    const fake = fakeTailscale();
+    const moved: number[] = [];
+    const s = await remoteAib({ runner: fake.runner, bindRetryMs: 1000, avoid: () => [port, port + 1], moveOwn: (p) => moved.push(p) });
+    try {
+      saveRemotePort(s.state, port);
+      fake.state.serve = serveStatus(port);
+      await pc(s, 'POST', '/api/live/devices/access', { on: true });
+      const [, view] = await pc(s, 'GET', '/api/live/devices');
+      assertEquals((view.problem as Json).code, 'port_moving');
+      assert(!String((view.problem as Json).message).includes('Close that program'));
+      assertEquals(moved, [port], 'asked once to free the port');
+      assertEquals(readRemotePort(s.state), port, 'the phone port is unchanged');
+      // the window is gone (next start): the same port comes up
+      held.close();
+      s.ctx.phone.options.avoid = () => [];
+      await pc(s, 'POST', '/api/live/devices/check', {});
+      const [, again] = await pc(s, 'GET', '/api/live/devices');
+      assertEquals([again.listening, again.problem], [true, null]);
+    } finally {
+      try {
+        held.close();
+      } catch { /* closed */ }
+      await s.close();
+    }
+  },
+});
+
+Deno.test({
+  ...OPTS,
   name: 'phone access is off by default; Add a phone needs it on; the PC routes need the page token',
   async fn() {
     const fake = fakeTailscale();

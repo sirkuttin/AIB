@@ -38,7 +38,7 @@ import { mergesRunning } from './worktrees/merge.ts';
 import { wslMergesRunning } from './wsl/merge.ts';
 import { startLocalBackups } from './worktrees/local_backup.ts';
 import { startWslLocalBackups } from './wsl/local_only.ts';
-import { choosePortPair, DesktopApp, lastPortPair, portFree, portGiven, saveLastPort } from './desktop/window.ts';
+import { DesktopApp, desktopPort, portFree, portGiven, saveLastPort } from './desktop/window.ts';
 import { startedMarker } from './desktop/updater.ts';
 import { guardDataFolder, nativeNotice, watchSignal } from './desktop/single_instance.ts';
 import { presence as folderPresence } from './desktop/folder_presence.ts';
@@ -256,7 +256,7 @@ export async function main(argv: string[]): Promise<void> {
   if (desktop) {
     // The same port as last time when it is free, so the page's origin (and its localStorage drafts) stays the same across restarts
     // and updates; else the first free pair from 8777, like the Tauri app.
-    if (!portGiven(args)) options.port = lastPortPair(stateDir, portFree) ?? choosePortPair(portFree);
+    if (!portGiven(args)) options.port = desktopPort(stateDir, portFree);
   }
   let aib: Aib | null = null;
   let host: LiveBackend;
