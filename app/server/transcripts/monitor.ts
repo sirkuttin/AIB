@@ -117,6 +117,9 @@ function startedAt(task: Task): number {
   return isoTimestamp(pyStr(task.started).replaceAll('Z', '+00:00'));
 }
 
+/** A distro's helper of an older build does not flag these rows: the words are the flag. */
+const ENDED_WITH_AGENT = 'Ended with the agent that started it.';
+
 async function buildCommandList(source: Source, session: Json): Promise<Task[]> {
   const tasks: Task[] = [];
   const t0 = now();
@@ -161,7 +164,8 @@ async function buildCommandList(source: Source, session: Json): Promise<Task[]> 
             }
             if (ownerDone) {
               task.status = 'completed';
-              task.completionSummary = truthy(task.completionSummary) ? task.completionSummary : 'Ended with the agent that started it.';
+              task.endedWithAgent = true; // Activity asks whether its process still runs (withAlive)
+              task.completionSummary = truthy(task.completionSummary) ? task.completionSummary : ENDED_WITH_AGENT;
             } else if (monitor && truthy(expiry) && age > (expiry as number)) {
               task.status = 'completed';
               task.completionSummary = truthy(task.completionSummary) ? task.completionSummary : 'Ended: its watch time ran out.';
@@ -309,10 +313,13 @@ export interface HandlerOptions {
    * own report still says running. Those rows read "Ended (process gone)". Never guesses: absent, slow or failing leaves every row alone.
    */
   gone?: GoneCheck;
+  /** Which rows that read "ended with the agent" still have a process (transcripts/gone.ts makeAliveCheck): they run again, the agent waits on them. */
+  alive?: GoneCheck;
 }
 
 /** The running rows whose process is gone become ended (status completed, as a row the agent ended itself), with the reason. */
 async function withGone(tasks: Task[], session: string, options: HandlerOptions): Promise<Task[]> {
+  tasks = await withAlive(tasks, session, options);
   if (!options.gone) return tasks;
   const running = tasks.filter((t) => RUNNING.includes(t.status as string) && typeof t.callId === 'string' && t.callId);
   if (!running.length) return tasks;
@@ -326,6 +333,28 @@ async function withGone(tasks: Task[], session: string, options: HandlerOptions)
   return tasks.map((t) =>
     gone.has(t.id as string) ? { ...t, status: 'completed', completionSummary: 'Ended (process gone).', endedBecause: 'process gone' } : t
   );
+}
+
+/**
+ * A subagent's turn ended but a command it started in the background still has a process: its row runs again ("Still running: its agent is
+ * waiting for it"), and the agent shows as waiting on it, not finished. Only rows that read "ended with the agent" are asked about.
+ */
+async function withAlive(tasks: Task[], session: string, options: HandlerOptions): Promise<Task[]> {
+  if (!options.alive) return tasks;
+  const ended = tasks.filter((t) => (t.endedWithAgent === true || t.completionSummary === ENDED_WITH_AGENT) && typeof t.callId === 'string' && t.callId);
+  if (!ended.length) return tasks;
+  let alive: Set<string>;
+  try {
+    alive = await options.alive(session, ended);
+  } catch {
+    return tasks;
+  }
+  if (!alive.size) return tasks;
+  return tasks.map((t) => {
+    if (!alive.has(t.id as string)) return t;
+    const { completionSummary: _, ...rest } = t;
+    return { ...rest, status: 'running', waitingOwner: true, completionSummary: 'Still running: its agent finished its turn and waits for it.' };
+  });
 }
 
 /** The commands of a chat AIB stopped (HandlerOptions.stoppedWhy): running or unknown ones become `killed` with the reason. */

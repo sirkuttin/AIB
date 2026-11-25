@@ -267,6 +267,32 @@ export const wslRemote: RemoteSubagents = {
     return rec.wsl ? wslSubagentRelease(rec.wsl.distro, rec.id) : Promise.resolve('gone');
   },
   records: recordsOrNull,
+  async ownWaiting(chat: SubagentChat): Promise<number> {
+    const target = factsOfServiceChat(chat);
+    if (!target) return 0;
+    const host = peekWslHost(target.distro);
+    if (!host || host.state !== 'ready') return 0;
+    try {
+      return (await host.call('subagent.ownWaiting', { chat: target.facts }, { timeoutMs: CALL_MS })).waiting;
+    } catch (error) {
+      if (!missing(error)) throw error;
+      return 0; // a helper without it: never judged
+    }
+  },
+  async callsStatus(chat: SubagentChat, calls: string[]): Promise<{ gone: string[]; alive: string[] }> {
+    const target = factsOfServiceChat(chat);
+    const none = { gone: [] as string[], alive: [] as string[] };
+    if (!target) return none;
+    const host = peekWslHost(target.distro);
+    if (!host || host.state !== 'ready') return none;
+    try {
+      const r = await host.call('subagent.callsGone', { chat: target.facts, calls: calls.slice(0, 200) }, { timeoutMs: CALL_MS });
+      return { gone: r.gone, alive: r.alive ?? [] };
+    } catch (error) {
+      if (!missing(error)) throw error;
+      return none;
+    }
+  },
   async callsGone(chat: SubagentChat, calls: string[]): Promise<string[]> {
     const target = factsOfServiceChat(chat);
     if (!target) return [];

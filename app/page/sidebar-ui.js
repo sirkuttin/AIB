@@ -153,7 +153,10 @@
     if (!live) return null;
     const a = live.attention;
     if (a && typeof a === 'object' && typeof a.state === 'string') {
-      return { state: a.state, needs: Math.max(0, Number(a.needs) || 0), endedAt: parseTime(a.turnEndedAt) };
+      // working = its own turn, a subagent or helper, or background processes (inbox-rules.js workingOf: one rule for every dot)
+      const IR = root.AgentInboxRules;
+      const state = a.state === 'idle' && IR && IR.workingOf(a) ? 'working' : a.state;
+      return { state, needs: Math.max(0, Number(a.needs) || 0), endedAt: parseTime(a.turnEndedAt) };
     }
     const pending = (Array.isArray(live.elicitations) ? live.elicitations.length : 0) + (live.auth ? 1 : 0);
     const state =

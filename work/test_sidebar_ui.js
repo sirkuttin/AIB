@@ -802,3 +802,23 @@ test('QA c2: the hold line keeps "· held 2h" as its own item and shows the whol
   assert.equal(line.find('hold-age')[0].textContent, ' \u00B7 held 2h');
   assert.equal(line.title, note + ' \u00B7 held 2h');
 });
+
+test('one working rule: an idle chat whose subagent waits on background runs (or whose helpers or shells run) is working, project row included', () => {
+  const ctx = setup();
+  init(ctx);
+  const W = require(path.join(APP_DIR, 'workspace-state.js'));
+  const s = (attention) => ctx.ui.statusOf(conv('a', 'C:\\x', { live: live({ attention: { needs: 0, ...attention } }) }));
+  assert.equal(s({ state: 'idle' }).state, 'idle');
+  // the server's `shells` also covers a finished subagent's own runs (connection.ts ownRuns): main chat idle, subagent waiting
+  assert.equal(s({ state: 'idle', shells: true }).state, 'working');
+  assert.equal(s({ state: 'idle', helpers: 2 }).state, 'working');
+  assert.equal(s({ state: 'working' }).state, 'working');
+  assert.equal(s({ state: 'needs_you', needs: 1, shells: true }).state, 'needs_you', 'a question still wins');
+  assert.equal(s({ state: 'closed', shells: true }).state, 'saved');
+  // the project dropdown counts from the same state
+  const item = (key, attention) => ({ key, projectKey: 'p', projectName: 'P', state: s(attention).state });
+  const idle = W.buildProjects([item('a', { state: 'idle' })])[0];
+  assert.equal(idle.working, 0);
+  const waiting = W.buildProjects([item('a', { state: 'idle', shells: true }), item('b', { state: 'idle' })])[0];
+  assert.equal(waiting.working, 1, 'main chat idle, one subagent waiting on background runs: the project row shows the working dot');
+});

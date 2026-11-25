@@ -177,6 +177,14 @@
     return 'idle';
   }
 
+  // Is the chat working, for every dot and spinner (the project dropdown, the sidebar, the tabs, the header, Activity)? Its own turn
+  // runs, OR a subagent or helper works, OR background processes run: its own commands, and a finished subagent's runs it still waits on
+  // (the connection's `shells`). One rule, so the chat reads Working while Activity lists work. a: the connection's attention().
+  function workingOf(a) {
+    const x = a && typeof a === 'object' ? a : {};
+    return x.state === 'working' || Number(x.helpers) > 0 || !!x.shells;
+  }
+
   // The phase every surface shows. attention: the connection's attention() (an older agent host without the new facts reads as
   // before: needs_you / working / opening / idle). mark: the chat's marks entry ({yourTurnAt, handledAt, holdAt, archivedAt,
   // deletedAt}, seconds) or nothing. now: epoch seconds. Mark handled and putting a chat on hold clear a failure or a question
@@ -587,6 +595,7 @@
     asksOf,
     classifyError,
     basePhase,
+    workingOf,
     phaseOf,
     blocked,
     waitingSince,

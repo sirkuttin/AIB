@@ -134,6 +134,10 @@ export interface RemoteSubagents {
   reaps?(distro: string): Promise<WslReap[]>;
   /** Which of a WSL chat's background calls have no process left in the distro (a helper without it: none known gone). */
   callsGone?(chat: SubagentChat, calls: string[]): Promise<string[]>;
+  /** Both answers at once: the calls with no process left and the calls with one (a helper without it: neither known). */
+  callsStatus?(chat: SubagentChat, calls: string[]): Promise<{ gone: string[]; alive: string[] }>;
+  /** How many of a WSL chat's finished subagents still have processes of their own in the distro (a helper without it: 0). */
+  ownWaiting?(chat: SubagentChat): Promise<number>;
 }
 
 /** The fields that describe one Agent call (not the worktree): they move together when AIB fixes which worktree runs which call. */
@@ -344,6 +348,36 @@ export class SubagentWorktrees {
     return true;
   }
 
+  readonly #ownMemo = new Map<string, { at: number; n: number; run: Promise<void> | null }>();
+
+  /**
+   * How many of the chat's finished subagents still have processes of their own running (own_work.ts): the chat's background work, so
+   * the chat reads Working while Activity lists them. Cheap: a look at most every 5 s per chat (a process scan is not free); a WSL
+   * chat's is the distro's, the last answer until the next arrives.
+   */
+  ownWaiting(chatId: string): number {
+    const chat = this.chat(chatId);
+    if (!chat) return 0;
+    const t = Date.now();
+    const memo = this.#ownMemo.get(chatId) ?? { at: 0, n: 0, run: null };
+    this.#ownMemo.set(chatId, memo);
+    if (t - memo.at < 5000 || memo.run) return memo.n;
+    memo.at = t;
+    if (chat.wsl) {
+      const ask = this.remote?.ownWaiting;
+      if (ask) {
+        memo.run = ask.call(this.remote, chat).then((n) => {
+          memo.n = n;
+        }).catch(() => {}).finally(() => {
+          memo.run = null;
+        });
+      }
+      return memo.n;
+    }
+    memo.n = this.ofChat(chatId).filter((r) => r.state === 'done' && !r.wsl && ownWorkReason(r) !== '').length;
+    return memo.n;
+  }
+
   ofChat(chatId: string): SubagentRecord[] {
     return this.all().filter((r) => r.chat === chatId);
   }
@@ -441,26 +475,37 @@ export class SubagentWorktrees {
    * everything while the process list can't be read. One snapshot for all calls. A WSL chat's is the distro's (helper `subagent.callsGone`).
    */
   async callsGone(chatId: string, calls: string[]): Promise<string[]> {
+    return (await this.callsStatus(chatId, calls)).gone;
+  }
+
+  /**
+   * Gone and alive in one look (Activity): `alive` are the calls AIB tagged that still have a process, so a subagent whose turn ended
+   * with background work of its own (Claude Code lets it end with runs still going) is shown waiting on it, not finished. A call AIB
+   * cannot tell about is in neither list.
+   */
+  async callsStatus(chatId: string, calls: string[]): Promise<{ gone: string[]; alive: string[] }> {
+    const none = { gone: [] as string[], alive: [] as string[] };
     const chat = this.chat(chatId);
-    if (!chat || !calls.length) return [];
+    if (!chat || !calls.length) return none;
     if (chat.wsl) {
       try {
-        return (await this.remote?.callsGone?.(chat, calls)) ?? [];
+        if (this.remote?.callsStatus) return await this.remote.callsStatus(chat, calls);
+        return { gone: (await this.remote?.callsGone?.(chat, calls)) ?? [], alive: [] };
       } catch (error) {
         log.warning('subagent calls in the distro could not be checked: %s', error instanceof Error ? error.message : error);
-        return [];
+        return none;
       }
     }
-    if (!this.reaper) return [];
+    if (!this.reaper) return none;
     const t = now();
     const known = calls.filter((c) => {
       const at = callTimeOf(chatId, c);
       return at !== undefined && t - at > GONE_GRACE_S;
     });
-    if (!known.length) return [];
+    if (!known.length) return none;
     const since = Math.min(...known.map((c) => callTimeOf(chatId, c)!));
     const live = this.reaper.live(chatId, known, since, (c) => callTimeOf(chatId, c));
-    return live ? known.filter((c) => !live.has(c)) : [];
+    return live ? { gone: known.filter((c) => !live.has(c)), alive: known.filter((c) => live.has(c)) } : none;
   }
 
   /** A TaskStop of one background call: only that call's processes (the call field), whoever started it. */

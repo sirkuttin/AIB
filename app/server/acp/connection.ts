@@ -926,6 +926,28 @@ interface ToolSeen {
   parent?: string | null;
   /** An MCP call (Codex: the tool_call's rawInput {server, tool, arguments}); its permission request names none of it. */
   mcp?: { server: string; tool: string; action: string } | null;
+  /**
+   * A subagent's call: the tool_call lives in the subagent's own session, but AIB's background notes go to the main session (the page
+   * draws them as rows of their own there). This is what the call was, so such a row is titled by its command and not by `toolu_...`.
+   */
+  echo?: Json | null;
+}
+
+/** What a tool call was (title, kind, input, tool name), to repeat on a row that would otherwise carry only its id. */
+function toolEcho(update: Json): Json | null {
+  const out: Json = {};
+  for (const key of ['title', 'kind', 'rawInput', 'name']) {
+    const value = get(update, key);
+    if (value !== undefined && value !== null) out[key] = value;
+  }
+  const meta = get(update, '_meta');
+  const code = isDict(meta) ? get(meta, 'claudeCode') : null;
+  if (isDict(code)) {
+    const keep: Json = {};
+    for (const key of ['toolName', 'parentToolUseId']) if (get(code, key) !== undefined) keep[key] = get(code, key);
+    out._meta = { claudeCode: keep };
+  }
+  return Object.keys(out).length ? out : null;
 }
 
 /** A tool call that moved to the background (any of the three signals): what the page shows and what Stop may kill. */
@@ -1338,6 +1360,8 @@ export class Connection {
   onClaudeTool: ((c: Connection, tool: string, toolUseId: string, input: Json, status: string, agentId: string) => void) | null = null;
   /** Claude Code: the tool call `callId` went on running in the background as `task` (a TaskStop names the task; the cookie names the call). */
   onBackgroundTask: ((c: Connection, task: string, callId: string) => void) | null = null;
+  /** How many of this chat's finished subagents still have processes of their own running (subagents/own_work.ts): background work of the chat. */
+  ownRuns: ((c: Connection) => number) | null = null;
   /** Gemini: the main session's invoke_agent tool calls (a subagent starts and ends), from the stream the agent can't forge. */
   onGeminiTool: ((c: Connection, toolCallId: string, title: string, status: string) => void) | null = null;
   #geminiCalls = new Set<string>();
@@ -3414,6 +3438,7 @@ export class Connection {
         turn: this.promptSeq,
         parent: isStr(parent) ? parent : null,
         mcp: mcpOf(get(update, 'rawInput')),
+        echo: !main || isStr(parent) ? toolEcho(update) : null,
       };
       this.#tools.set(id, seen);
       while (this.#tools.size > 300) this.#tools.delete(this.#tools.keys().next().value!);
@@ -3589,6 +3614,7 @@ export class Connection {
       update: {
         sessionUpdate: 'tool_call_update',
         toolCallId: id,
+        ...(this.#tools.get(id)?.echo ?? {}),
         background: {
           state: t.state,
           stoppable: t.state === 'running' && t.stoppable && !this.closed,
@@ -7466,7 +7492,8 @@ export class Connection {
     const helpers = this.closed
       ? 0
       : [...this.#liveHelpers].filter((h) => at - (this.#helperSince.get(h) ?? at) < INBOX.HELPER_CAP_SECONDS).length;
-    const shells = !this.closed && this.#shellsRunning(at);
+    // a finished subagent's own runs count as the chat's background processes: the chat is working while they go on
+    const shells = !this.closed && (this.#shellsRunning(at) || this.#ownRuns() > 0);
     const work = helpers > 0 || shells;
     if (this.#hadWork && !work && !this.#workEndedAt) this.#workEndedAt = at; // a shell's end is seen by looking
     if (work) this.#workEndedAt = null;
@@ -7512,6 +7539,15 @@ export class Connection {
   }
 
   /** A background shell started within the inbox's cap still runs (the OS is asked at most every 2 s). */
+  #ownRuns(): number {
+    try {
+      return this.ownRuns?.(this) ?? 0;
+    } catch (error) {
+      log.exception(error, 'ownRuns failed');
+      return 0;
+    }
+  }
+
   #shellsRunning(at: number): boolean {
     if (!this.#bgShells.size) return false;
     const seen = this.#shellsSeen;

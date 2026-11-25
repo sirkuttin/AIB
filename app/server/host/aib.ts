@@ -1940,6 +1940,7 @@ export class Aib {
       };
       c.subagentActivity = () => subagents.activity(c.id);
       c.onBackgroundTask = (conn, task, callId) => subagents.noteTask(conn.id, task, callId);
+      c.ownRuns = (conn) => subagents.ownWaiting(conn.id);
       c.onSubagentEnded = (conn, agentId, how) => {
         void subagents.acpEnded(conn.id, agentId, how).catch((error) => log.exception(error, 'Subagent end failed'));
       };
@@ -3891,15 +3892,28 @@ export class Aib {
    * listed. Read-only and cheap: the caller asks at most every ten seconds.
    */
   async backgroundGone(sessionId: string, raw: unknown): Promise<string[]> {
+    return (await this.backgroundStatus(sessionId, raw)).gone;
+  }
+
+  /**
+   * backgroundGone, and the calls of subagents that still have a process (`alive`): a subagent whose turn ended with background work of
+   * its own is waiting on it, and Activity says so instead of "ended with the agent" (transcripts/monitor.ts withGone).
+   */
+  async backgroundStatus(sessionId: string, raw: unknown): Promise<{ gone: string[]; alive: string[] }> {
     const connection = [...this.connections.values()].find((c) => !c.closed && c.sessionId === sessionId);
-    if (!connection || !Array.isArray(raw)) return [];
+    if (!connection || !Array.isArray(raw)) return { gone: [], alive: [] };
     const calls = raw.filter((c): c is { call: string; main: boolean } => isDict(c) && isStr(c.call) && c.call.length <= 200).slice(0, 200);
     const gone = new Set<string>();
     const state = calls.some((c) => c.main) ? connection.toolBackground() : {};
     for (const c of calls) if (c.main === true && state[c.call]?.state === 'done') gone.add(c.call);
     const subs = calls.filter((c) => c.main !== true).map((c) => c.call);
-    if (this.subagents && subs.length) for (const call of await this.subagents.callsGone(connection.id, subs)) gone.add(call);
-    return [...gone];
+    const alive = new Set<string>();
+    if (this.subagents && subs.length) {
+      const status = await this.subagents.callsStatus(connection.id, subs);
+      for (const call of status.gone) gone.add(call);
+      for (const call of status.alive) alive.add(call);
+    }
+    return { gone: [...gone], alive: [...alive] };
   }
 
   async #liveCall(name: string, body: unknown): Promise<[number, unknown]> {
@@ -3928,7 +3942,7 @@ export class Aib {
       return [200, { ok: true, queued }];
     }
     if (name === 'agent-title-state') return [200, { waiting: this.agentTitles.waiting(), done: this.agentTitles.done }]; // internal: tests
-    if (name === 'bg-gone') return [200, { gone: await this.backgroundGone(String(need(body, 'sessionId')), body.calls) }]; // internal: web/server.ts
+    if (name === 'bg-gone') return [200, await this.backgroundStatus(String(need(body, 'sessionId')), body.calls)]; // internal: web/server.ts
     if (name === 'forget') return [200, { ok: true, forgotten: this.forgetRecovered(body.provider, body.sessionId) }];
     if (name === 'worktree-note') { // internal (worktrees/merge.ts): not in LIVE_POST_OPS, so no page route reaches it
       const connection = this.#connection(body);

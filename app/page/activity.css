@@ -142,7 +142,8 @@ body {
   border: 1.5px solid var(--status-working);
   animation: none;
 }
-.sa-waiting .sa-dot {
+.sa-waiting .sa-dot,
+.sa-waiting-runs .sa-dot {
   background: var(--status-needs);
   animation: none;
 }

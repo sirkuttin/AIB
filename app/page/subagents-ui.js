@@ -37,7 +37,16 @@
     interrupted: 'Interrupted',
   };
   /* kind: working | probable | failed | completed | idle | stopped. group: working | finished. */
+  /* A subagent whose turn ended while the background runs it started still have processes (Activity's runningCommands counts only
+     those with a live process) is waiting on them, not finished: it stays above the fold, "Waiting on 29 background runs". */
   function classify(a) {
+    const c = classifyBase(a),
+      runs = Math.max(0, Number(a.runningCommands) || 0);
+    if (runs && c.group === 'finished' && (c.kind === 'completed' || c.kind === 'idle'))
+      return { group: 'working', kind: 'waiting-runs', label: 'Waiting on ' + runs + ' background run' + (runs === 1 ? '' : 's') };
+    return c;
+  }
+  function classifyBase(a) {
     if (a.live) {
       const s = stateText(a.state),
         l = s.toLowerCase();

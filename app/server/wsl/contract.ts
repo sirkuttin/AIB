@@ -308,7 +308,9 @@ export interface HelperMethods {
   /** What the helper shut down (subagents/reap.ts, run natively over the distro's /proc), oldest first, at most 100. Its presence = shell tagging. */
   'subagent.reaps': { params: Record<string, never>; result: { reaps: WslReap[] } };
   /** Which of these background calls (tool_use_ids) of a chat have no tagged process left in the distro (Activity's "ended (process gone)"). */
-  'subagent.callsGone': { params: { chat: WslSubagentChat; calls: string[] }; result: { gone: string[] } };
+  /** How many of the chat's finished subagents still have processes of their own in the distro (the chat reads Working meanwhile). */
+  'subagent.ownWaiting': { params: { chat: WslSubagentChat }; result: { waiting: number } };
+  'subagent.callsGone': { params: { chat: WslSubagentChat; calls: string[] }; result: { gone: string[]; alive?: string[] } };
   /**
    * Live sync of WSL chats' worktrees (helper/sync.ts: worktrees/sync.ts run natively over the same `<data>`, its folder watcher
    * inotify). Offered with worktree.*. `sync.chats` is the whole set of open WSL chats in their own copy (cwd: the worktree's Linux

@@ -285,10 +285,13 @@ export function subagentMethods(data: string): Handlers {
     },
 
     /** Which of the chat's background calls have no tagged process left (subagents/service.ts callsGone, over the distro's /proc). */
+    'subagent.ownWaiting': (p) => ({ waiting: service.ownWaiting(remember(p.chat).id) }),
+
     'subagent.callsGone': async (p) => {
       const chat = remember(p.chat);
       const calls = (Array.isArray(p.calls) ? p.calls : []).slice(0, 200).filter((c): c is string => typeof c === 'string' && ID.test(c));
-      return { gone: await service.callsGone(chat.id, calls) };
+      const status = await service.callsStatus(chat.id, calls);
+      return { gone: status.gone, alive: status.alive };
     },
 
     /** What this helper shut down (a finished subagent's processes, a stopped call's), oldest first. */

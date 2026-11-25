@@ -2337,6 +2337,20 @@
       }
     }
     const gone = new Set((edge && edge.withdrawn) || []);
+    /* AIB's background note for a subagent's command is a row of the main chat, while the command's own tool_call is in the subagent's
+       session: older notes carry only the id, so the row takes its title and input from that call (never "toolu_..." as a title). */
+    let called = null;
+    const calledAs = (id) => {
+      if (!called) {
+        called = new Map();
+        for (const e of evs) {
+          const x = e.kind === 'update' ? e.data?.update : null;
+          if (x && x.sessionUpdate === 'tool_call' && x.title && (e.data?.sessionId || snap?.sessionId) !== session)
+            called.set(x.toolCallId, { title: x.title, kind: x.kind, rawInput: x.rawInput, name: x.name, _meta: x._meta });
+        }
+      }
+      return called.get(id) || null;
+    };
     for (const event of evs) {
       at++;
       /* every row carries a stable id: 'L:' + the event number of its first event (a merged message keeps its first chunk's,
@@ -2379,6 +2393,10 @@
             old.value = JSON.stringify(old.raw, null, 2).slice(0, 40000);
             old.rev = (old.rev || 0) + 1;
             continue;
+          }
+          if (kind === 'tool_call_update' && !u.title) {
+            const known = calledAs(key);
+            if (known) Object.assign(u, Object.fromEntries(Object.entries(known).filter(([, v]) => v !== undefined)));
           }
           role = 'tool';
           label = (u.title || key) + ' · ' + (u.status || 'started');
