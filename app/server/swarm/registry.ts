@@ -64,7 +64,7 @@ export interface Helper {
   rule: string;
   why: string;
   /** landOn (build plan 2.4): the folder branch a folder chat's helper lands on, from its worktree record; missing for a copy parent. */
-  worktree: { path: string; branch: string; base: string; start: string; landOn?: string };
+  worktree: { path: string; branch: string; base: string; start: string; landOn?: string; key?: string };
   /** The landing queue and its journal (build plan 2.2, SF 3); null or missing when nothing waits or runs. */
   landing?: Landing | null;
   state: HelperState;

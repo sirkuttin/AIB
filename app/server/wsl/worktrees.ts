@@ -26,6 +26,7 @@ export class WslPlan extends wt.Plan {
       raw.folderBranch,
       raw.note,
     );
+    if (raw.landOn) this.landOn = raw.landOn; // a folder chat's helper lands on the folder's branch
   }
 
   get linuxPath(): string {
@@ -53,11 +54,11 @@ async function host(distro: string): Promise<WslHost> {
 }
 
 /** The plan of a new chat in the WSL project `projectRef`, or null with the reason it works in the project folder. */
-export async function wslPlanWithReason(projectRef: string, kind: 'chat' | 'helper' = 'chat'): Promise<{ plan: WslPlan | null; reason: string }> {
+export async function wslPlanWithReason(projectRef: string, kind: 'chat' | 'helper' = 'chat', onFolderBranch = false): Promise<{ plan: WslPlan | null; reason: string }> {
   const wsl = wslLoc(projectRef);
   if (!wsl) return { plan: null, reason: 'not a WSL project' };
   try {
-    const answer = await (await host(wsl.distro)).call('worktree.plan', { project: wsl.linuxPath, kind });
+    const answer = await (await host(wsl.distro)).call('worktree.plan', { project: wsl.linuxPath, kind, ...(onFolderBranch ? { onFolderBranch: true } : {}) });
     return answer.plan ? { plan: new WslPlan(wsl.distro, answer.plan), reason: '' } : { plan: null, reason: answer.reason || 'unknown reason' };
   } catch (error) {
     const reason = noWorktrees(error)

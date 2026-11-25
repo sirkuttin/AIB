@@ -227,7 +227,7 @@ const HELPER_TEXT = 'Helpers: other agents (often another provider), each in its
   'of helpers.';
 const HELPER_TEXT_WORK = 'Unlanded work: what a subagent or helper left that never reached the project folder (AIB tells you in this ' +
   'chat; you handle it, not the user). work_list; work_land (lands when your turn ends); work_diff (a patch file to apply by hand with ' +
-  'git apply --3way, then commit); work_discard (with reason; the work is kept on a branch). Helpers cannot be started in WSL projects.';
+  'git apply --3way, then commit); work_discard (with reason; the work is kept on a branch).';
 
 const MERGE_TEXT = "This chat works in its own worktree. action \"merge\": land its work on the project's main branch when it is done " +
   'and tested (the user allowed it; no need to ask). If it clashes with the user\'s unsaved edits: "check" after you combined the files, ' +

@@ -555,7 +555,7 @@ export function swarmOf(ctx: WebContext): Swarm {
       stateDir: ctx.stateDir,
       host: ctx.host,
       settings: ctx.settings,
-      agentProblem: (provider) => agentProblem(ctx, provider),
+      agentProblem: (provider, distro) => agentProblem(ctx, provider, distro),
       nameChat: async (key, name) => {
         if (ctx.viewPrefs.chatNames()[key]) return true; // the owner's name (or an earlier one) wins
         await ctx.viewPrefs.setChatName(key, name);

@@ -90,7 +90,15 @@ export function mergeMethods(data: string): Handlers {
     'merge.run': async (p) => {
       const id = chatId(p), s = aib(p);
       const title = str(p, 'title', true).slice(0, 500);
-      return await answer(s, () => p.fromTool === true ? merge.mergeFromTool(s, id) : merge.merge(s, id, title, false));
+      // A helper's landing (swarm/service.ts #landMerge): `held` are the chats AIB already holds the landing lock of, `builder` the
+      // builder gate; each stage the merge journals (stashed, built, moved) comes back in `journal` for AIB's crash recovery.
+      const held = Array.isArray(p.held) ? p.held.filter((x): x is string => typeof x === 'string' && x.length <= 200).slice(0, 50) : [];
+      const journal: { stage: string; data: Record<string, unknown> }[] = [];
+      const options: merge.MergeOptions | null = held.length || p.builder === true || p.journal === true
+        ? { held, builder: p.builder === true, journal: (stage, data) => void journal.push({ stage, data: { ...data } }) }
+        : null;
+      const out = await answer(s, () => p.fromTool === true ? merge.mergeFromTool(s, id) : merge.merge(s, id, title, false, options ?? {}));
+      return options ? { ...out, journal } : out;
     },
 
     'merge.resolveClash': async (p) => {

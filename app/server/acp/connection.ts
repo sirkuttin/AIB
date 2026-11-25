@@ -708,7 +708,7 @@ export const ARTIFACT_PROMPT =
 
 /**
  * The same for a chat in a WSL project (design section 11). publish takes the content or a Linux `path` inside the project (AIB
- * reads the file through the distro's helper, as a snapshot: wsl/artifact_read.ts); no helper tools. A chat in its own copy also
+ * reads the file through the distro's helper, as a snapshot: wsl/artifact_read.ts). A chat in its own copy also
  * gets the merge tools (WORKTREE_PROMPT says so; the merge runs in the distro).
  */
 export const WSL_ARTIFACT_PROMPT =
@@ -718,7 +718,7 @@ export const WSL_ARTIFACT_PROMPT =
   'tool, by its content or by its Linux `path` (relative to the chat folder, or absolute inside the chat or project folder; any ' +
   'kind up to 25 MB, PNG and other images included), and mention it in your reply as the Markdown link the tool returns. AIB copies ' +
   'a file when you publish it: after changing the file, call `publish` with its `id` and the same path (or the new content) to publish the new ' +
-  'version. AIB helper tools are not available in WSL projects. ' + TOOLS_LOADING + ' ' + COMMANDS_RULE.replace(' (powershell on Windows)', '');
+  'version. ' + TOOLS_LOADING + ' ' + COMMANDS_RULE.replace(' (powershell on Windows)', '');
 
 /** How long codex-acp waits for AIB's tool server before the first turn (architect review S5: 10 s, the forwarder retries 15 s itself). */
 export const CODEX_MCP_STARTUP_WAIT_MS = 10_000;

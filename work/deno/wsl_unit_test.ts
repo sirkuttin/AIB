@@ -324,7 +324,7 @@ Deno.test('mcp restricted: a WSL chat path goes to AIB as given (never resolved 
 });
 
 Deno.test('mcp restricted: a WSL chat in its own worktree also gets the merge tools (the merge runs in the distro)', async () => {
-  const ctx = { key: 'k', conversation: 'c', worktree: true, restricted: true, main: true, cwd: null, roots: () => [] };
+  const ctx = { key: 'k', conversation: 'c', worktree: true, restricted: true, main: false, cwd: null, roots: () => [] }; // not a main chat (a helper): no helper aliases
   const listed = await handle({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, ctx) as Json;
   assertEquals(((listed.result as Json).tools as Json[]).map((t) => t.name), [
     'publish',
@@ -342,17 +342,20 @@ Deno.test('mcp restricted: a WSL chat in its own worktree also gets the merge to
   }
 });
 
-Deno.test('mcp restricted: a WSL chat never gets the swarm helper tools (only unlanded_work), even marked main; a Windows main chat does', async () => {
-  const ctx = { key: 'k', conversation: 'c', worktree: false, restricted: true, main: true, cwd: null, roots: () => [] };
+Deno.test('mcp restricted: a WSL main chat gets the swarm helper tools (2026-11-25), a WSL chat that is not main only the work_* actions; a Windows main chat has them too', async () => {
+  const ctx = { key: 'k', conversation: 'c', worktree: false, restricted: true, main: false, cwd: null, roots: () => [] };
+  const wslMain = await handle({ jsonrpc: '2.0', id: 5, method: 'tools/list' }, { ...ctx, main: true }) as Json;
+  const mainHelper = ((wslMain.result as Json).tools as Json[]).find((t) => t.name === 'helper')!;
+  assertEquals((((mainHelper.inputSchema as Json).properties as Json).action as Json).enum, ['providers', 'start', 'status', 'stop', 'merge', 'work_list', 'work_land', 'work_diff', 'work_discard']);
   const listed = await handle({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, ctx) as Json;
   assertEquals(((listed.result as Json).tools as Json[]).map((t) => t.name), ['publish', 'artifacts', 'doc', 'drawing', 'helper']);
   const helper = ((listed.result as Json).tools as Json[]).find((t) => t.name === 'helper')!;
   assertEquals((((helper.inputSchema as Json).properties as Json).action as Json).enum, ['work_list', 'work_land', 'work_diff', 'work_discard']);
   const start = await handle({ jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'helper', arguments: { action: 'start' } } }, ctx) as Json;
-  assert(((start.result as Json).isError), 'a WSL chat cannot start a helper');
+  assert(((start.result as Json).isError), 'a WSL chat that is not a main one cannot start a helper');
   const call = await handle({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'start_helper', arguments: {} } }, ctx) as Json;
   assertEquals((call.error as Json).code, -32602);
-  const main = await handle({ jsonrpc: '2.0', id: 3, method: 'tools/list' }, { ...ctx, restricted: false, worktree: true }) as Json;
+  const main = await handle({ jsonrpc: '2.0', id: 3, method: 'tools/list' }, { ...ctx, restricted: false, worktree: true, main: true }) as Json;
   assert(((main.result as Json).tools as Json[]).some((t) => t.name === 'helper' && ((t.inputSchema as Json).properties as Json).action !== undefined && ((((t.inputSchema as Json).properties as Json).action as Json).enum as string[]).includes('start')), 'a Windows main chat keeps the swarm tools');
 });
 

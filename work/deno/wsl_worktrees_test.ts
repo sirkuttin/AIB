@@ -210,7 +210,7 @@ Deno.test({ name: 'wsl studio: a WSL chat in its own worktree made by the helper
   assertEquals([c.cwd, c.agentCwd, c.projectRoot], [WT_REF, WT_LINUX, REF]);
   assertEquals(c.worktree, { branch: 'studio/chat-abcd1234', base: 'main' });
   assertEquals(c.wsl?.linuxPath, WT_LINUX);
-  assertEquals(c.swarm, null); // no swarm tools in a WSL chat
+  assertEquals(c.swarm, { role: 'main' }); // a WSL chat leads helpers (2026-11-25)
   assertEquals(lab.called('worktree.plan'), [{ project: '/home/u/app', kind: 'chat' }]);
   const spec = lab.host.link.spawned.find((s) => String(s.channel).startsWith('chat-'))!;
   assertEquals(spec.cwd, WT_LINUX);

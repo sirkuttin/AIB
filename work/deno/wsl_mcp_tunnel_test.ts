@@ -226,15 +226,18 @@ Deno.test({
 Deno.test('wsl tools: the chat line is worded from WSL_TOOL_GROUPS; the ready line\'s socket must be a plain absolute path', () => {
   assertEquals(
     wslToolsNotice(),
+    "In WSL projects, AIB tools cover artifacts (publish and update by content or by a file path inside the project, images included; list, archive), docs, merging a chat's own copy and helper chats.",
+  );
+  assertEquals(
+    wslToolsNotice({ ...WSL_TOOL_GROUPS, swarm: false }),
     "In WSL projects, AIB tools cover artifacts (publish and update by content or by a file path inside the project, images included; list, archive), docs and merging a chat's own copy; helper chats are not available yet.",
   );
-  assertEquals(wslToolsNotice({ ...WSL_TOOL_GROUPS, swarm: true }).endsWith("merging a chat's own copy and helper chats."), true);
   assertEquals(
     wslToolsNotice({ ...WSL_TOOL_GROUPS, merge: false, swarm: true }),
     "In WSL projects, AIB tools cover artifacts (publish and update by content or by a file path inside the project, images included; list, archive), docs and helper chats; merging a chat's own copy is not available yet.",
   );
   assertEquals(wslToolsNotice({ artifacts: false, merge: false, swarm: false, docs: false }), WSL_TOOLS_NOTICE);
-  assertEquals([WSL_TOOL_GROUPS.docs, WSL_TOOL_GROUPS.swarm], [true, false], 'docs work in WSL projects; helper chats stay off until they do');
+  assertEquals([WSL_TOOL_GROUPS.docs, WSL_TOOL_GROUPS.swarm], [true, true], 'docs and helper chats work in WSL projects');
   assertEquals(tunnelSocket({ socket: '/home/u/.aib-server/data-1/helper/mcp.sock' }), '/home/u/.aib-server/data-1/helper/mcp.sock');
   for (const bad of [null, {}, { socket: 'rel/mcp.sock' }, { socket: '/a\nb' }, { socket: '/' + 'x'.repeat(120) }, { socket: 3 }]) {
     assertEquals(tunnelSocket(bad), '', JSON.stringify(bad));

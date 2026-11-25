@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Helpers work in WSL projects: a lead chat in a WSL project starts helper agents (Claude, Codex or Gemini) that work in their own copy inside the distro and land into the project when they finish, with the same conflict handling, stop, Undo and unlanded-work actions as on Windows.
+
 ## 0.15.0 beta (2026-11-24)
 
 - AIB's 30 tools are 6: publish, artifacts, doc, drawing, helper and merge_into_project, each with a short description. Old names still work. Approvals work per action (a doc read runs automatically, a restore asks) and existing rules map over.

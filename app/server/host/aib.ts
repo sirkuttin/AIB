@@ -1671,11 +1671,11 @@ export class Aib {
     if (wantsCopy) {
       const kind = asHelper ? 'helper' : 'chat';
       // Build plan 2.4 (MF 7): a helper of a chat that works in the project folder starts from the folder's branch, with the folder's
-      // uncommitted edits (the main agent's too), and lands there (landOn in its worktree record). No WSL part: WSL has no swarm.
+      // uncommitted edits (the main agent's too), and lands there (landOn in its worktree record). A WSL project's helper too: the distro plans it (wsl/worktrees.ts).
       const parentChat = asHelper ? this.connections.get(asHelper.parent) : undefined;
       const folderParent = !!parentChat && !parentChat.closed && !parentChat.worktree && parentChat.swarm?.role !== 'helper';
       const planned = wsl
-        ? await wslPlanWithReason(workspace, kind)
+        ? await wslPlanWithReason(workspace, kind, folderParent)
         : await this.worktrees!.planWithReason(workspace, null, kind, folderParent ? { onFolderBranch: true } : {}); // no plan: works in place
       plan = planned.plan;
       startNote = wt.inPlaceNote(planned.reason);

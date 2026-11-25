@@ -225,7 +225,7 @@ export interface HelperMethods {
    * `<data>/worktrees`, registry `<data>/studio-worktrees.json`). Linux paths only. Offered only by a helper started with `--data`.
    * Errors: 'fallback' (create: the chat works in place, the message says why), 'gone' (ensure: folder and branch are both gone).
    */
-  'worktree.plan': { params: { project: string; kind?: 'chat' | 'helper'; key?: string }; result: { plan: WorktreePlanJson | null; reason: string } };
+  'worktree.plan': { params: { project: string; kind?: 'chat' | 'helper'; key?: string; onFolderBranch?: boolean }; result: { plan: WorktreePlanJson | null; reason: string } };
   'worktree.create': { params: { plan: WorktreePlanJson }; result: { note: string } };
   'worktree.discard': { params: { key: string }; result: { ok: boolean } };
   'worktree.setSession': { params: { key: string; provider: string; sessionId: string }; result: { ok: boolean } };
@@ -253,7 +253,34 @@ export interface HelperMethods {
    * A refusal is an answer, not an error: `refused` {message, code, status, extra} is merge.ts's Refused.
    */
   'merge.status': { params: { chat: string; state: Record<string, unknown> }; result: { result: Record<string, unknown> } };
-  'merge.run': { params: { chat: string; state: Record<string, unknown>; title?: string; fromTool?: boolean }; result: WslMergeAnswer };
+  /** `held` / `builder` / `journal`: a helper's landing (swarm/service.ts #landMerge); the answer then carries the `journal`. */
+  'merge.run': {
+    params: { chat: string; state: Record<string, unknown>; title?: string; fromTool?: boolean; held?: string[]; builder?: boolean; journal?: boolean };
+    result: WslMergeAnswer & { journal?: { stage: string; data: Record<string, unknown> }[] };
+  };
+  /**
+   * Helpers (swarm builders) of WSL projects (helper/helpers.ts): what the swarm does to a helper's worktree with git, run in the
+   * distro. `key` is the worktree record's key (a studio/helper- record). Offered with worktree.*; an older helper lacks them
+   * (AIB then refuses to start a helper there, never lands one by guessing).
+   */
+  'helper.keep': { params: { key: string; message?: string }; result: { commits: number } };
+  'helper.land': {
+    params: { key: string; id: string; target: string; parent: string; title?: string; held?: string[]; states?: Record<string, unknown> };
+    result: { outcome: Record<string, unknown>; journal: { stage: string; data: Record<string, unknown> }[]; actions: WslMergeAnswer['actions']; counted: number; branchTip: string };
+  };
+  'helper.facts': {
+    params: { key?: string; project?: string; branch?: string; path?: string; start?: string; base?: string; target?: string; landed?: string; tipBefore?: string; commits?: number };
+    result: Record<string, unknown>;
+  };
+  'helper.work': {
+    params: { key: string; op: 'status' | 'diff' | 'keep'; id?: string; name?: string; title?: string };
+    result: { files: string[]; landed: boolean; target: string; landable?: string; stat?: string; patch?: string; truncated?: boolean; patchFile?: string; branch?: string };
+  };
+  'helper.branch': { params: { project: string; branch: string }; result: { dropped: boolean } };
+  'helper.apply': {
+    params: { project: string; branch: string; from: string; to: string; message?: string; noStash?: boolean; held?: string[]; states?: Record<string, unknown>; title?: string };
+    result: { outcome: Record<string, unknown>; actions: WslMergeAnswer['actions'] };
+  };
   'merge.resolveClash': { params: { chat: string; state: Record<string, unknown>; action: string; fromTool?: boolean }; result: WslMergeAnswer };
   'merge.clashStatus': { params: { project: string }; result: { result: Record<string, unknown> } };
   /**
@@ -515,6 +542,8 @@ export interface WorktreePlanJson {
   path: string;
   folderBranch: string;
   note: string;
+  /** A folder chat's helper lands on the folder's branch (the same as folderBranch); absent for every other copy. */
+  landOn?: string;
 }
 
 /** A chat's facts for subagent.* (Linux paths: `folder` where it works, `project` the project folder). */

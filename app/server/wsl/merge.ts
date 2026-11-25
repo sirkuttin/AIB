@@ -150,6 +150,36 @@ export async function wslMerge(aib: merge.MergeHost, chat: WslMergeChat, title =
   }
 }
 
+/**
+ * A helper's landing in the distro (swarm/service.ts #landMerge for a WSL helper): the same merge as `wslMerge`, with the chats AIB
+ * already holds the landing lock of (`held`) and the builder gate, and the stages the merge journals (stashed, built, moved) handed
+ * back to `onStage` for AIB's crash recovery. A refusal is thrown as merge.ts's Refused, a conflict is the result's state.
+ */
+export async function wslMergeHeld(
+  aib: merge.MergeHost,
+  chat: WslMergeChat,
+  title: string,
+  options: { held: string[]; builder: boolean },
+  onStage: (stage: string, data: Record<string, unknown>) => Promise<void> | void,
+): Promise<merge.MergeResult> {
+  running++;
+  try {
+    const answer = await mustCall(chat, 'merge.run', {
+      chat: chat.id,
+      state: helperState(chat),
+      title: String(title || ''),
+      fromTool: false,
+      held: options.held,
+      builder: options.builder,
+      journal: true,
+    });
+    for (const j of Array.isArray(answer.journal) ? answer.journal : []) await onStage(String(j.stage), isDict(j.data) ? j.data : {});
+    return await settle(aib, chat, answer);
+  } finally {
+    running--;
+  }
+}
+
 /** A clash action (Keep my version, I'll sort it myself, check) for a WSL chat's project. */
 export async function wslResolveClash(aib: merge.MergeHost, chat: WslMergeChat, action: string, fromTool = false): Promise<merge.MergeResult> {
   const answer = await mustCall(chat, 'merge.resolveClash', { chat: chat.id, state: helperState(chat), action, fromTool });

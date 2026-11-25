@@ -13,6 +13,7 @@ import { resolveBeta } from '../agents/beta_agents.ts';
 import { isDict } from '../core/py.ts';
 import { builtinLaunch, type AgentOptions, type SettingsLike } from '../web/shared.ts';
 import type { LiveBackend } from '../host/backend.ts';
+import { hostWhenReady } from '../wsl/access.ts';
 
 export interface ReadyContext {
   agentOptions: AgentOptions;
@@ -22,9 +23,29 @@ export interface ReadyContext {
 
 const nameOf = (id: string) => agentRegistry.BUILTIN_NAMES[id] ?? (agentRegistry.BETA_NAMES as Record<string, string>)[id] ?? id;
 
-export async function agentProblem(ctx: ReadyContext, provider: string): Promise<string> {
+/**
+ * A WSL project's helper runs its agent inside the distro: installed there (agents.detect) and signed in there (agents.signinStatus),
+ * asked of the distro's helper. Only a clear "not found" or "signed out" refuses; a distro that cannot answer is let through (the
+ * open step still checks), as an agent whose sign-in cannot be checked is on Windows.
+ */
+async function wslAgentProblem(distro: string, base: string, name: string, serverEntry: boolean): Promise<string> {
+  try {
+    const host = await hostWhenReady(distro);
+    const found = (await host.call('agents.detect', { ids: [base] })).agents.find((a) => a.id === base);
+    if (found && !found.found) return `${name} isn't installed in ${distro}: install it from Settings › AIB Linking`;
+    if (serverEntry) return '';
+    const sign = (await host.call('agents.signinStatus', { ids: [base] })).agents.find((a) => a.id === base);
+    if (sign?.state === 'signed_out') return `${name} isn't signed in in ${distro}: sign in from Settings › AIB Linking`;
+  } catch {
+    return '';
+  }
+  return '';
+}
+
+export async function agentProblem(ctx: ReadyContext, provider: string, distro = ''): Promise<string> {
   const base = baseAgent(provider);
   const name = nameOf(base);
+  if (distro) return await wslAgentProblem(distro, base, name, isServerEntry(provider));
   const builtin = (agentRegistry.BUILTIN_IDS as readonly string[]).includes(base);
   const found = builtin
     ? (await builtinLaunch(ctx.agentOptions, ctx.settings as SettingsLike, base)).found

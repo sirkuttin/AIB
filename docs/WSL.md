@@ -18,7 +18,7 @@ Design and decisions: `docs/wsl/design.md` (section 11 overrides the rest). Code
   A chat's "needs you to sign in again" card (mid-session login expiry) runs the advertised login in the chat's distro too.
 - AIB tools in a WSL chat are the artifact tools (publish, list, update, archive; see "Publish a file from the distro" below), the doc and drawing tools and, for a
   chat in its own copy, the merge tools (merge_into_project, resolve_edit_clash), reached through AIB's own tunnel inside the distro
-  (see AIB tools below; WSL interop is only the fallback); the swarm helper tools are not available yet, and the chat says so.
+  (see AIB tools below; WSL interop is only the fallback); a main chat also gets the helper tools (helper chats of a WSL project work in their own worktree in the distro and land there: see "Helpers" below).
 - A new chat works in the project folder, as for a Windows project (owner decision 2026-11-16: no per-chat own copy). A WSL
   chat made before then in its own copy (a git worktree on branch `studio/chat-…`, made inside the distro) keeps it. The Files tab
   shows the chat's copy or the main folder; Changes shows the chat's branch, read only (no Merge or Discard button for any chat:
@@ -310,10 +310,10 @@ WSL chat's `studio_artifact` MCP entry is the distro's own keeper program:
   minutes is answered with an error. When AIB is quit with WSL agents running, the helper is told (`mcp.closed`) and answers "AIB is
   closed; try again later" at once; any call from the next AIB clears it.
 - **Limits.** A message is at most 8 MB (the relay refuses lines over 16 MB) and an answer at most 3 MB.
-- **Which tools.** One switchboard, `artifacts/mcp.ts WSL_TOOL_GROUPS`: `artifacts`, `docs` and `merge` on; `swarm` (no helper chats
-  in WSL projects yet) off. Switching a group on there changes the tool list, AIB's
-  main-chat role (swarm), the swarm service's own role check (`swarm/service.ts mainChat` refuses a WSL chat with code `wsl`,
-  "Helpers are not available in WSL projects yet") and the chat's note (`wsl/access.ts wslToolsNotice`). Publish and update take
+- **Which tools.** One switchboard, `artifacts/mcp.ts WSL_TOOL_GROUPS`: `artifacts`, `docs`, `merge` and `swarm` (helper
+  chats) on (2026-11-25). Switching a group on or off there changes the tool list, AIB's
+  main-chat role (swarm), the swarm service's own role check (`swarm/service.ts mainChat` refuses a WSL chat with code `wsl` only while `swarm` is off;
+  a start in a project whose distro helper predates `helper.*` is refused up front) and the chat's note (`wsl/access.ts wslToolsNotice`). Publish and update take
   `content` or a Linux `path` (see the next section).
 - **Fallback.** A helper without the tunnel (an older one, or a keeper program without `mcp-relay`) gets the phase 1 interop entry
   (the Windows keeper's forwarder as `/mnt/c/.../AIB-keeper.exe mcp-forward <Windows address file>`, `WSLENV=MCP_FORWARD_HEADERS`);
@@ -344,6 +344,30 @@ An agent in a WSL chat publishes a file (a PNG, a PDF, an HTML page, any kind a 
   helper without `files.readBytes` (reconnect the distro).
 - **Tests.** `wsl_publish_path_test` (fake helper: the PNG, versioning, every refusal, the helper method on a real temp folder),
   real WSL: `wsl_publish_path_e2e` (a 3 MB PNG published through the real tunnel arrives byte-identical).
+
+## Helpers (swarm builders, 2026-11-25)
+
+A main chat of a WSL project starts helpers with the `helper` tool exactly as on Windows (`WSL_TOOL_GROUPS.swarm` on). The helper's chat
+is an ordinary WSL chat (its agent runs in the distro). AIB keeps what it keeps for every helper (who started it, the cap of 3, the
+owns clash, the brief, the report, when it lands, what the parent is told) and the distro's helper does the git, in
+`wsl/helper/helpers.ts` (asked for by `wsl/helpers.ts`):
+
+- **Start.** `worktree.plan` with `kind: 'helper'` and `onFolderBranch` for a chat that works in the project folder (the helper starts on the
+  folder's branch with the folder's uncommitted edits and lands there: `landOn`), `worktree.create`, as for any WSL chat. The swarm records
+  the worktree as a ref plus the distro's record key (`worktree.key`). The agent and its sign-in are checked in the distro
+  (`agents.detect`, `agents.signinStatus`, swarm/ready.ts). A distro whose helper has no `helper.*` is refused up front.
+- **Stop** (`helper.keep`): the uncommitted work is committed on the helper's branch. **Status** and the report counts: `helper.facts`.
+- **Land on end.** An open helper chat lands through `merge.run` with `held`/`builder`/`journal` (the same merge.ts as everywhere, its journal
+  handed back for crash recovery); a closed one lands from its record by `helper.land` (the subagent landing steps). A conflict asks the open
+  helper to resolve it; a closed one leaves a clean `-landable` branch of its own changes for the main agent.
+- **Unlanded work** (work_list, work_land, work_diff, work_discard): `helper.work` (status, a patch file in the distro's data folder, keep on
+  `studio/discarded/<name>`), `worktree.remove`. **Cleanup** of a merged helper's worktree and branch: `helper.facts`, `worktree.remove`,
+  `helper.branch`. **Undo / Merge again**: `helper.apply` (swarm/undo.ts applyChange in the distro).
+- **One landing at a time per project folder.** The swarm holds a folder key (`#folderKey`: the folder's ref, lower case) for every builder
+  landing, Windows or WSL, subagent or helper. The distro runs every landing (merge, helper, subagent) in one process under one repository
+  lock (`worktrees/merge.ts repoLock`). A landing cut off by a restart: the stash of the user's edits is named in the chat, never touched from Windows.
+- Tests: `wsl_helpers_test.ts` (the helper methods natively over real git, and the Swarm over a FakeWslHost), `wsl_helpers_e2e_test.ts`
+  (the same flows, `_wsl_helpers_scenarios.ts`, in a real distro; `AIB_WSL_E2E`), `audit_wsl_swarm_test.ts`.
 
 ## Merge
 

@@ -27,7 +27,7 @@ import { DEFAULT_RULES, pickProvider, WORKSPACE_MODE, workspaceModeOf, workspace
 import { baseAgent, isServerEntry, serverIdOf } from '../agents/claude_family.ts';
 import { type ModelServer, modelServerLabel } from '../agents/model_servers.ts';
 import { MODEL_SERVER_AGENTS } from '../agents/claude_family.ts';
-import { applyChange, changedFiles } from './undo.ts';
+import { type ApplyOptions, applyChange, changedFiles, type Outcome } from './undo.ts';
 import { ownWorkReason } from '../subagents/own_work.ts';
 import { ignoredFiles, landSubagentWork, protectedPath, SCRATCH_EXT, scratchFiles } from '../worktrees/subagent_land.ts';
 export { ignoredFiles, protectedPath, SCRATCH_EXT, scratchFiles };
@@ -41,6 +41,19 @@ import * as osp from '../platform/ospath.ts';
 import { canonicalName } from '../allow/paths.ts';
 import { WSL_TOOL_GROUPS } from '../artifacts/mcp.ts';
 import { isWslRef } from '../platform/location.ts';
+import { wslLoc } from '../wsl/access.ts';
+import { wslMergeChat, wslMergeHeld } from '../wsl/merge.ts';
+import { wslRecord } from '../wsl/worktrees.ts';
+import {
+  wslHelperApply,
+  wslHelperBranchDrop,
+  wslHelperFacts,
+  wslHelperKeep,
+  wslHelperLand,
+  wslHelperRemove,
+  wslHelpersAvailable,
+  wslHelperWork,
+} from '../wsl/helpers.ts';
 import { pathOf } from '../state/paths.ts';
 import { toolRef } from '../artifacts/tool_ref.ts';
 
@@ -75,7 +88,7 @@ export interface SwarmHost {
    * Installed and signed in (the sign-in cache, refreshed when older than a minute); a model-server entry needs no sign-in. Without it
    * (tests) nothing is checked up front and a missing sign-in shows while the helper opens, as before.
    */
-  agentProblem?(provider: string): Promise<string>;
+  agentProblem?(provider: string, distro?: string): Promise<string>;
   /**
    * Helper news that goes where a chat's news goes (desktop notification, phone push; attention/watcher.ts announce): the web server
    * sets it. Never called with a chat's own turn end or request: those are announced by the chat's own watcher look.
@@ -222,6 +235,8 @@ interface Work {
   start: string;
   branch: string;
   wsl: { distro: string } | null;
+  /** A WSL helper's worktree record key in its distro (helper.work asks by it); empty for a subagent. */
+  wslKey?: string;
   slug: string;
   endedAt: number;
   rec: SubagentRecord | null;
@@ -365,9 +380,9 @@ export class Swarm {
   }
 
   /** '' when the agent is installed and signed in (ctx.agentProblem); a check that cannot run says nothing. */
-  async #agentProblem(provider: string): Promise<string> {
+  async #agentProblem(provider: string, distro = ''): Promise<string> {
     if (!this.ctx.agentProblem) return '';
-    return await this.ctx.agentProblem(provider).catch(() => '');
+    return await this.ctx.agentProblem(provider, distro).catch(() => '');
   }
 
   /** '' when the entry's server answers (the kept 30 s health check); else the plain line naming it and its address. */
@@ -390,15 +405,16 @@ export class Swarm {
   }
 
   async providers(caller: Json): Promise<Json> {
+    const distro = wslLoc(s(caller.projectRoot))?.distro ?? ''; // a WSL project: its agents are the distro's
     const ids = [...agentRegistry.BUILTIN_IDS, ...agentRegistry.BETA_IDS];
     const claude = claudeHelpers(this.ctx.stateDir);
     const builtins = await Promise.all(ids.filter((id) => WORKSPACE_MODE[id]).map(async (id) => {
       const why = (id === 'claude' && !claude ? 'Claude helpers are turned off in Settings' : this.#usable(id)) ||
-        await this.#agentProblem(id);
+        await this.#agentProblem(id, distro);
       return { id, name: providerName(id), ok: !why, reason: why, workspaceMode: WORKSPACE_MODE[id][0] };
     }));
     const entries = await Promise.all(this.#serverEntries().map(async (e) => {
-      const why = this.#usable(e.id) || await this.#serverDown(e.id) || await this.#agentProblem(e.id);
+      const why = this.#usable(e.id) || await this.#serverDown(e.id) || await this.#agentProblem(e.id, distro);
       return { id: e.id, name: e.label, ok: !why, reason: why, workspaceMode: workspaceModeOf(e.id), modelServer: true };
     }));
     return {
@@ -415,6 +431,7 @@ export class Swarm {
   async startHelper(caller: Json, args: Json): Promise<Json> {
     const { title, job, brief, provider: named, model, why } = readBrief(args);
     const project = s(caller.projectRoot);
+    const distro = wslLoc(project)?.distro ?? ''; // a WSL project: the helper's worktree, landing and agent are the distro's
     const running = this.#runningIn(project);
     if (running.length >= MAX_RUNNING) {
       const unmerged = running.filter((h) => h.state === 'done').length;
@@ -424,6 +441,10 @@ export class Swarm {
           (unmerged ? `${unmerged} finished but not merged yet: merge it with merge_helper (or stop it) to free a place. ` : '') +
           'Wait for one to finish.',
       );
+    }
+    if (distro) { // never a helper whose landing the distro's AIB helper cannot do (an older one has no helper.*)
+      const unavailable = await wslHelpersAvailable(distro);
+      if (unavailable) throw new Refusal('wsl', `Helpers cannot be started in this WSL project: ${unavailable}`);
     }
     if (!brief.read_only) {
       for (const h of running) { // running, waiting and done-but-unmerged helpers: their files are theirs until merged or discarded
@@ -442,7 +463,7 @@ export class Swarm {
     const rule = DEFAULT_RULES.find((r) => r.job === job) ?? DEFAULT_RULES[DEFAULT_RULES.length - 1];
     const ready = new Map<string, string>();
     for (const p of named ? [named] : [rule.provider, ...rule.fallback]) {
-      if (!this.#usable(p) && WORKSPACE_MODE[baseAgent(p)]) ready.set(p, await this.#agentProblem(p));
+      if (!this.#usable(p) && WORKSPACE_MODE[baseAgent(p)]) ready.set(p, await this.#agentProblem(p, distro));
     }
     const picked = pickProvider(job, (p) => this.#usable(p) || (named ? '' : ready.get(p) ?? ''), claudeHelpers(this.ctx.stateDir), named, model);
     if ('error' in picked) throw new Refusal('provider_unavailable', picked.error);
@@ -537,7 +558,8 @@ export class Swarm {
         await this.ctx.host.liveCall('disconnect', { id: h.chat.live });
         return await this.#fail(id, 'The helper did not open in time');
       }
-      const record = wt.recordForPath(this.ctx.stateDir, state.cwd);
+      // a WSL project's helper: its worktree record is the distro's (wsl/worktrees.ts), its path a ref
+      const record = wslLoc(h.project) ? await wslRecord(s(state.cwd)) : wt.recordForPath(this.ctx.stateDir, state.cwd);
       if (!isDict(state.worktree) || !record) { // never in the project folder (review break 5)
         await this.ctx.host.liveCall('disconnect', { id: h.chat.live });
         return await this.#fail(id, 'The helper could not get its own worktree');
@@ -560,6 +582,7 @@ export class Swarm {
         base: s(record.base),
         start: s(record.snapshot),
         ...(s(record.landOn) ? { landOn: s(record.landOn) } : {}), // a folder chat's helper (build plan 2.4)
+        ...(wslLoc(h.project) && s((record as { key?: unknown }).key) ? { key: s((record as { key?: unknown }).key) } : {}), // the distro's record
       };
       const patched = await this.registry.patch(id, { chat: { ...h.chat, mode: usedMode, lasting: lasting(state) }, worktree, cursor: Number(state.cursor) || 0 });
       if (patched) await this.#ensureName(patched);
@@ -662,6 +685,8 @@ export class Swarm {
     if (!h.worktree.path) return 0;
     try {
       if (settle) await new Promise((r) => setTimeout(r, 300)); // the cancelled turn's last writes
+      const wsl = this.#wslOf(h);
+      if (wsl) return wsl.key ? await wslHelperKeep(wsl.distro, wsl.key, message) : 0; // the distro commits it (helper.keep)
       if ((await merge.porcelainPaths(h.worktree.path)).size) {
         await wt.git(['add', '-A'], h.worktree.path);
         await wt.unstageLineEndingOnly(h.worktree.path, 'HEAD'); // line-ending churn is not the helper's work
@@ -705,7 +730,7 @@ export class Swarm {
     }
     // A closed helper chat is merged from its recorded worktree and branch (#landByRecord), as a subagent is; only a worktree that is
     // gone leaves nothing to land.
-    if (!(await this.#chatOpen(h)) && !(h.worktree.path && wt.lexists(h.worktree.path))) {
+    if (!(await this.#chatOpen(h)) && !(h.worktree.path && (await this.#copyExists(h)))) {
       throw new Refusal('gone', `“${h.title}” has no open chat and its worktree is gone; nothing to land`);
     }
     if (folderParent(h)) {
@@ -726,7 +751,71 @@ export class Swarm {
   /** Where a helper lands: its folder branch (landOn), else the project's main branch (build plan 2.4, MF 7). */
   async #target(h: Helper): Promise<string> {
     if (h.worktree.landOn) return h.worktree.landOn;
+    if (this.#wslOf(h)) return s((await this.#facts(h))?.target) || h.worktree.base || 'main'; // the distro's main branch rule
     return await merge.targetBranch(h.project, h.worktree.base || 'main', wt.recordForPath(this.ctx.stateDir, h.worktree.path));
+  }
+
+  // ---- helpers of WSL projects: the git on their worktrees runs in the distro (wsl/helpers.ts, wsl/helper/helpers.ts) ----------
+  /** The distro and Linux folders of a WSL helper (its project is a ref), else null: a Windows helper, whose git runs here. */
+  #wslOf(h: Pick<Helper, 'project' | 'worktree' | 'kind'>): { distro: string; project: string; path: string; key: string } | null {
+    if (h.kind === 'subagent') return null; // a subagent record is the distro's own (wsl/subagents.ts)
+    const project = wslLoc(h.project);
+    if (!project) return null;
+    return { distro: project.distro, project: project.linuxPath, path: wslLoc(h.worktree.path)?.linuxPath ?? '', key: h.worktree.key ?? '' };
+  }
+
+  /**
+   * What the distro's helper reads of a WSL helper's repository (helper/helpers.ts helper.facts), null for a Windows helper or when
+   * the distro can't answer now (never taken for "nothing there"). `extra`: the landing's commits to look at.
+   */
+  async #facts(h: Pick<Helper, 'project' | 'worktree' | 'kind'>, extra: { landed?: string; tipBefore?: string; commits?: number } = {}): Promise<Json | null> {
+    const w = this.#wslOf(h);
+    if (!w || !h.worktree.branch) return null;
+    return await wslHelperFacts(w.distro, {
+      ...(w.key ? { key: w.key } : {}),
+      project: w.project,
+      branch: h.worktree.branch,
+      ...(w.path ? { path: w.path } : {}),
+      ...(h.worktree.start ? { start: h.worktree.start } : {}),
+      ...(h.worktree.base ? { base: h.worktree.base } : {}),
+      ...(h.worktree.landOn ? { target: h.worktree.landOn } : {}),
+      ...extra,
+    });
+  }
+
+  /** True when the helper's worktree folder exists (a WSL helper's: asked of the distro; one that can't answer is taken as there). */
+  async #copyExists(h: Helper): Promise<boolean> {
+    if (!this.#wslOf(h)) return wt.lexists(h.worktree.path);
+    const facts = await this.#facts(h);
+    return facts ? facts.worktreeExists === true : true;
+  }
+
+  /** The files a landing changed: `tipBefore..landed` in the helper's project (a WSL helper's: read in the distro). */
+  async #changedFiles(h: Pick<Helper, 'project' | 'worktree' | 'kind'>, tipBefore: string, landed: string): Promise<string[]> {
+    if (!this.#wslOf(h)) return await changedFiles(h.project, tipBefore, landed);
+    const facts = await this.#facts(h, { tipBefore, landed });
+    return Array.isArray(facts?.changed) ? facts.changed.map(String) : [];
+  }
+
+  /** Undo / Merge again (undo.ts applyChange); a WSL helper's runs in the distro, under the same repository lock as its landings. */
+  async #apply(h: Helper, branch: string, from: string, to: string, message: string, options: ApplyOptions): Promise<Outcome> {
+    const w = this.#wslOf(h);
+    if (!w) return await applyChange(this.ctx.stateDir, h.project, branch, from, to, message, options);
+    return await wslHelperApply(this.#mergeAib(), w.distro, {
+      project: w.project,
+      branch,
+      from,
+      to,
+      message,
+      noStash: !!options.noStash,
+      held: options.held ?? [],
+      title: options.title ?? '',
+    }) as Outcome;
+  }
+
+  /** The key one landing at a time per project folder is held under: the same for Windows and WSL helpers and subagents of a folder. */
+  #folderKey(folder: string): string {
+    return folder.startsWith('wsl://') ? folder.replace(/[\\/]+$/, '').toLowerCase() : folder;
   }
 
   /** True when the helper's chat is open here; a closed one is landed from its recorded worktree (#landByRecord). */
@@ -748,19 +837,26 @@ export class Swarm {
     if (!(await this.#chatOpen(h))) return await this.#landByRecord(h, held, target);
     let lockedTip = '';
     let result: Json;
-    try {
-      result = await merge.merge(this.#mergeAib(), h.chat.live, h.title, false, { // fromTool=false: the helper must be idle
-        held,
-        builder: folderParent(h),
-        journal: (stage, data) => {
-          if (typeof data.tipBefore === 'string' && data.tipBefore) lockedTip = data.tipBefore;
-          return this.#patchLanding(id, {
-            stage: stage as 'stashed' | 'built' | 'moved',
-            ...(typeof data.stashSha === 'string' ? { stashSha: data.stashSha, stashName: s(data.stashName), stashFolder: s(data.folder) } : {}),
-            ...(typeof data.landed === 'string' ? { landed: data.landed, tipBefore: s(data.tipBefore) } : {}),
-          });
-        },
+    const journal = (stage: string, data: Json) => {
+      if (typeof data.tipBefore === 'string' && data.tipBefore) lockedTip = data.tipBefore;
+      return this.#patchLanding(id, {
+        stage: stage as 'stashed' | 'built' | 'moved',
+        ...(typeof data.stashSha === 'string' ? { stashSha: data.stashSha, stashName: s(data.stashName), stashFolder: s(data.folder) } : {}),
+        ...(typeof data.landed === 'string' ? { landed: data.landed, tipBefore: s(data.tipBefore) } : {}),
       });
+    };
+    try {
+      if (this.#wslOf(h)) { // a WSL helper's chat is open: the distro runs the same merge (helper/merge.ts merge.run with held/builder)
+        const chat = await wslMergeChat(this.#mergeAib(), h.chat.live);
+        if (!chat) return { state: 'refused', code: 'wsl_unavailable', message: "the helper's chat could not be found in its distro" };
+        result = await wslMergeHeld(this.#mergeAib(), chat, h.title, { held, builder: folderParent(h) }, journal);
+      } else {
+        result = await merge.merge(this.#mergeAib(), h.chat.live, h.title, false, { // fromTool=false: the helper must be idle
+          held,
+          builder: folderParent(h),
+          journal,
+        });
+      }
     } catch (error) {
       if (error instanceof merge.Refused) {
         if (error.code === 'empty' && h.brief.read_only) return await this.#readOnlyDone(h, target);
@@ -779,7 +875,7 @@ export class Swarm {
     }
     const landed = s(result.tip);
     const commits = Number(result.commits) || 0;
-    return await this.#merged(h, target, lockedTip || (await this.#parentOf(h.project, landed, commits)), landed, commits);
+    return await this.#merged(h, target, lockedTip || (await this.#parentOf(h, landed, commits)), landed, commits);
   }
 
   /** A read-only helper with nothing to land: merged, report only. */
@@ -790,14 +886,19 @@ export class Swarm {
   }
 
   /** The tip a landing of `commits` commits was built on (the commits are consecutive): only when the journal did not tell it. */
-  async #parentOf(project: string, landed: string, commits: number): Promise<string> {
+  async #parentOf(h: Helper, landed: string, commits: number): Promise<string> {
     if (!landed) return '';
-    return await merge.rev(project, `${landed}~${Math.max(1, commits)}`);
+    if (this.#wslOf(h)) return s((await this.#facts(h, { landed, commits }))?.parentOfLanded);
+    return await merge.rev(h.project, `${landed}~${Math.max(1, commits)}`);
   }
 
   /** A landing is done: the record (with the helper's branch tip, for the cleanup), the line with Undo, and the tool's answer. */
   async #merged(h: Helper, target: string, tipBefore: string, landed: string, commits: number): Promise<Json> {
-    const branchTip = h.worktree.path && wt.lexists(h.worktree.path) ? await merge.rev(h.worktree.path, 'HEAD').catch(() => '') : '';
+    const wsl = this.#wslOf(h);
+    const facts = wsl ? await this.#facts(h, { landed, tipBefore }) : null; // a WSL helper: read in the distro
+    const branchTip = wsl
+      ? (facts?.worktreeExists === true ? s(facts.headTip) : '')
+      : h.worktree.path && wt.lexists(h.worktree.path) ? await merge.rev(h.worktree.path, 'HEAD').catch(() => '') : '';
     await this.registry.patch(h.id, {
       state: 'merged',
       merge: { tipBefore, landed, commits, at: this.clock() / 1000, ...(branchTip ? { branchTip } : {}), undo: null, again: null },
@@ -808,7 +909,9 @@ export class Swarm {
       `Merged “${h.title}” (${chatName(h)}) into ${target} · ${commits} commit${commits === 1 ? '' : 's'}`,
       ['swarm-undo'],
     );
-    const files = tipBefore && landed ? await changedFiles(h.project, tipBefore, landed) : [];
+    const files = tipBefore && landed
+      ? wsl ? (Array.isArray(facts?.changed) ? facts.changed.map(String) : []) : await changedFiles(h.project, tipBefore, landed)
+      : [];
     return { state: 'merged', commits, range: [tipBefore, landed], target, files };
   }
 
@@ -821,33 +924,52 @@ export class Swarm {
    */
   async #landByRecord(h: Helper, held: string[], target: string): Promise<Json> {
     const path = h.worktree.path;
-    if (!path || !wt.lexists(path)) return { state: 'refused', code: 'gone', message: 'its worktree is gone' };
-    await this.#keepWork(h, 'AIB: helper work kept', false);
+    const wsl = this.#wslOf(h);
+    if (!path || (!wsl && !wt.lexists(path))) return { state: 'refused', code: 'gone', message: 'its worktree is gone' };
     let lockedTip = '';
-    const out = await landSubagentWork(this.#mergeAib(), {
-      scratchDir: this.ctx.stateDir,
-      path,
-      folder: h.project,
-      target,
-      branch: h.worktree.branch,
-      parent: held[0] ?? h.parent.live,
-      key: `helper:${h.id}`,
-      title: h.title,
-      start: h.worktree.start,
-      held,
-      landKept: null,
-      landScratch: true,
-    }, async (stage, data) => {
+    const onStage = async (stage: string, data: Json) => {
       if (typeof data.tipBefore === 'string' && data.tipBefore) lockedTip = data.tipBefore;
       await this.#patchLanding(h.id, {
         stage: stage as 'built' | 'moved',
         ...(typeof data.landed === 'string' ? { landed: data.landed, tipBefore: s(data.tipBefore) } : {}),
       });
-    });
+    };
+    let out: Json;
+    let counted = 0;
+    if (wsl) { // the distro lands it by the same steps (helper/helpers.ts helper.land: keep its work, then landSubagentWork)
+      if (!wsl.key) return { state: 'refused', code: 'gone', message: 'its worktree is gone' };
+      const done = await wslHelperLand(this.#mergeAib(), {
+        distro: wsl.distro,
+        key: wsl.key,
+        id: h.id,
+        target,
+        parent: held[0] ?? h.parent.live,
+        title: h.title,
+        held,
+      }, onStage);
+      out = done.outcome;
+      counted = done.counted;
+    } else {
+      await this.#keepWork(h, 'AIB: helper work kept', false);
+      out = await landSubagentWork(this.#mergeAib(), {
+        scratchDir: this.ctx.stateDir,
+        path,
+        folder: h.project,
+        target,
+        branch: h.worktree.branch,
+        parent: held[0] ?? h.parent.live,
+        key: `helper:${h.id}`,
+        title: h.title,
+        start: h.worktree.start,
+        held,
+        landKept: null,
+        landScratch: true,
+      }, onStage);
+    }
     const state = s(out.state);
     if (state === 'merged') {
       const landed = s(out.landed);
-      const counted = Number((await wt.git(['rev-list', '--count', `${h.worktree.start}..HEAD`], path, { check: false })).stdout.trim()) || 0;
+      if (!wsl) counted = Number((await wt.git(['rev-list', '--count', `${h.worktree.start}..HEAD`], path, { check: false })).stdout.trim()) || 0;
       return await this.#merged(h, target, lockedTip || s(out.tipBefore), landed, Math.max(1, counted));
     }
     if (state === 'empty' || state === 'scratch') {
@@ -955,7 +1077,7 @@ export class Swarm {
     // a builder's work lands while the parent's turn runs; only an open edit or shell call, or a background shell, holds it back
     const builder = L.what === 'merge' && folderParent(h);
     // one landing at a time per project folder (Windows or WSL: the key is the folder or its WSL reference)
-    const folderKey = builder ? (h.sub?.folder || h.project) : '';
+    const folderKey = builder ? this.#folderKey(h.sub?.folder || h.project) : '';
     if (folderKey && this.#folderLanding.has(folderKey)) {
       await this.#landingBusy(h, parentId, 'another builder is landing in this folder').catch((e) => log.exception(e, 'Telling a waiting landing failed'));
       return null;
@@ -1052,16 +1174,21 @@ export class Swarm {
       if (L.lockId && parentLive) await this.ctx.host.liveCall('landing-release', { id: parentLive, lock: L.lockId }).catch(() => {});
       if (L.stashSha && L.stashFolder) await this.#putBackStash(h, L);
       const target = await this.#target(h).catch(() => '');
-      const tip = target ? await merge.rev(h.project, `refs/heads/${target}`) : '';
-      const landed = L.what === 'merge' && L.landed && tip && (await merge.isAncestor(h.project, L.landed, tip));
+      // a WSL helper's repository is read in the distro (helper.facts); the rest is the same
+      const wslFacts = this.#wslOf(h) && L.what === 'merge' && L.landed ? await this.#facts(h, { landed: L.landed, tipBefore: L.tipBefore }) : null;
+      const tip = this.#wslOf(h) ? s(wslFacts?.targetTip) : target ? await merge.rev(h.project, `refs/heads/${target}`) : '';
+      const landed = L.what === 'merge' && L.landed && tip &&
+        (this.#wslOf(h) ? wslFacts?.landedInTarget === true : await merge.isAncestor(h.project, L.landed, tip));
       if (landed) {
-        const commits = Number((await wt.git(['rev-list', '--count', `${L.tipBefore}..${L.landed}`], h.project, { check: false })).stdout.trim()) || 1;
+        const commits = this.#wslOf(h)
+          ? Number(wslFacts?.commitsBetween) || 1
+          : Number((await wt.git(['rev-list', '--count', `${L.tipBefore}..${L.landed}`], h.project, { check: false })).stdout.trim()) || 1;
         await this.registry.update(h.id, (cur) =>
           cur
             ? { ...cur, state: 'merged', landing: null, merge: { tipBefore: L.tipBefore, landed: L.landed, commits, at: this.clock() / 1000, undo: null, again: null } }
             : null
         );
-        const files = await changedFiles(h.project, L.tipBefore, L.landed);
+        const files = await this.#changedFiles(h, L.tipBefore, L.landed);
         await this.note(
           h.id,
           'swarm-merge',
@@ -1086,6 +1213,16 @@ export class Swarm {
   }
 
   async #putBackStash(h: Helper, L: Landing): Promise<void> {
+    if (this.#wslOf(h)) { // the stash is in the distro's repository: named to the owner, never touched from here (nothing is lost)
+      await this.note(
+        h.id,
+        'swarm-merge',
+        `AIB stopped while landing “${h.title}”. Your uncommitted edits were set aside in the stash “${L.stashName}” (${L.stashSha.slice(0, 8)}) ` +
+          `in ${L.stashFolder}; run git stash apply ${L.stashSha.slice(0, 8)} there to get them back.`,
+      );
+      await this.#patchLanding(h.id, { stashSha: '', stashName: '', stashFolder: '' });
+      return;
+    }
     const listed = (await wt.git(['stash', 'list', '--format=%H %gd'], L.stashFolder, { check: false })).stdout.split(/\r?\n/);
     const entry = listed.map((line) => line.split(' ')).find(([sha]) => sha === L.stashSha);
     if (!entry) return; // put back before the stop
@@ -1151,9 +1288,8 @@ export class Swarm {
     const options = { noStash: folderParent(h), host: this.#mergeAib(), held, title: h.title };
     if (what === 'undo') {
       if (h.merge.undo && !h.merge.again) return { state: 'refused', code: 'done', message: 'Already undone' };
-      const done = await applyChange(
-        this.ctx.stateDir,
-        h.project,
+      const done = await this.#apply(
+        h,
         target,
         h.merge.again ? h.merge.again.commit : h.merge.landed,
         h.merge.again ? `${h.merge.again.commit}^` : h.merge.tipBefore,
@@ -1161,7 +1297,7 @@ export class Swarm {
         options,
       );
       if (done.state === 'conflicts') {
-        const files = done.files.length ? done.files : await changedFiles(h.project, h.merge.tipBefore, h.merge.landed);
+        const files = done.files.length ? done.files : await this.#changedFiles(h, h.merge.tipBefore, h.merge.landed);
         await this.note(
           h.id,
           'swarm-undo',
@@ -1190,7 +1326,7 @@ export class Swarm {
     }
     if (!h.merge.undo) return { state: 'refused', code: 'done', message: 'That helper has no undone merge' };
     const revert = h.merge.undo.revert;
-    const done = await applyChange(this.ctx.stateDir, h.project, target, revert, `${revert}^`, `AIB: merge ${h.kind === 'subagent' ? label(h) : `helper “${h.title}”`} again`, options);
+    const done = await this.#apply(h, target, revert, `${revert}^`, `AIB: merge ${h.kind === 'subagent' ? label(h) : `helper “${h.title}”`} again`, options);
     if (done.state === 'conflicts') {
       // Bug fix (owner 2026-11-23): this used to say nothing and the button stayed disabled. A line in the chat, the main agent woken the
       // way a failed landing wakes it, and the page (chat.js) re-enables the button.
@@ -1715,7 +1851,8 @@ export class Swarm {
       path: h.worktree.path,
       start: h.worktree.start,
       branch: h.worktree.branch,
-      wsl: null,
+      wsl: wslLoc(h.project) ? { distro: wslLoc(h.project)!.distro } : null,
+      wslKey: h.worktree.key ?? '',
       slug: h.id,
       endedAt: h.endedAt ?? h.createdAt,
       rec: null,
@@ -1774,8 +1911,16 @@ export class Swarm {
     return { path: w.path, folder: w.folder, start: w.start, branch: w.branch, title: w.title, scratchDir: this.ctx.stateDir };
   }
 
+  /** A WSL copy's unlanded work, asked of its distro: a helper's by its worktree record, a subagent's by its record id. */
+  async #wslWork(w: Work, op: 'status' | 'diff' | 'keep', name = '') {
+    if (!w.wsl) return null;
+    if (w.kind !== 'helper') return await wslSubagentWork(w.wsl.distro, w.id, op, name);
+    if (!w.wslKey) return null;
+    return await wslHelperWork(w.wsl.distro, { key: w.wslKey, op, id: w.id, ...(name ? { name } : {}), title: w.title });
+  }
+
   async #workStatus(w: Work): Promise<{ files: string[]; landed: boolean } | null> {
-    if (w.wsl) return await wslSubagentWork(w.wsl.distro, w.id, 'status');
+    if (w.wsl) return await this.#wslWork(w, 'status');
     if (!wt.lexists(w.path)) return null;
     return await workStatus(this.#spec(w));
   }
@@ -1897,13 +2042,13 @@ export class Swarm {
   async #diffWork(w: Work): Promise<Json> {
     const patchFile = pathOf(this.ctx.stateDir, 'handoff', `${w.id}.patch`);
     let out: { files: string[]; stat?: string; patch?: string; truncated?: boolean; patchFile?: string; target?: string } | null;
-    if (w.wsl) out = await wslSubagentWork(w.wsl.distro, w.id, 'diff');
+    if (w.wsl) out = await this.#wslWork(w, 'diff');
     else {
       if (!wt.lexists(w.path)) throw new Refusal('gone', `${w.label}'s worktree is gone; nothing to show`, 404);
       out = await workDiff(this.#spec(w), patchFile);
     }
     if (!out) throw new Refusal('wsl_unavailable', "This distro's AIB helper cannot show that work now", 409);
-    const landable = w.wsl ? '' : (await merge.rev(w.folder, `refs/heads/${w.branch}-landable`)) ? `${w.branch}-landable` : '';
+    const landable = w.wsl ? s((out as { landable?: unknown }).landable) : (await merge.rev(w.folder, `refs/heads/${w.branch}-landable`)) ? `${w.branch}-landable` : '';
     const file = out.patchFile || patchFile;
     return {
       work: w.id,
@@ -1925,7 +2070,7 @@ export class Swarm {
     if (!reason) throw new Refusal('bad_request', 'Say why in `reason` (a few words): it is kept with the work', 400);
     if (w.h && RUNNING_STATES.has(w.h.state)) throw new Refusal('busy', `${w.label} is still running`);
     let branch = '';
-    if (w.wsl) branch = (await wslSubagentWork(w.wsl.distro, w.id, 'keep', w.slug))?.branch ?? '';
+    if (w.wsl) branch = (await this.#wslWork(w, 'keep', w.slug))?.branch ?? '';
     else if (wt.lexists(w.path)) branch = (await keepWork(this.#spec(w), w.slug)).branch;
     if (!branch && (w.wsl || wt.lexists(w.path))) throw new Refusal('keep_failed', 'The work could not be kept on a branch, so nothing was discarded', 409);
     const at = this.clock() / 1000;
@@ -1941,7 +2086,9 @@ export class Swarm {
     }
     log.info('swarm: %s discarded (%s); its work is kept on %s', w.id, reason, branch || '(no copy)');
     if (w.kind === 'subagent') await this.#release({ id: w.id, sub: { record: w.id } } as unknown as Helper);
-    else await this.ctx.host.liveCall('helper-release', { path: w.path, branch: w.branch }).catch(() => [500, null]);
+    else if (w.wsl) { // a WSL helper's copy: the distro removes it (unconfirmed: git refuses a worktree with edits)
+      if (w.wslKey) await wslHelperRemove(w.wsl.distro, w.wslKey);
+    } else await this.ctx.host.liveCall('helper-release', { path: w.path, branch: w.branch }).catch(() => [500, null]);
     return {
       ok: true,
       state: 'discarded',
@@ -1965,6 +2112,7 @@ export class Swarm {
       if (!h || h.kind === 'subagent' || this.#working.has(id) || h.landing) return;
       const path = h.worktree.path, branch = h.worktree.branch;
       if (!path || !branch.startsWith('studio/helper-') || !h.project) return;
+      if (this.#wslOf(h)) return await this.#cleanupWsl(h, chats);
       if (!wt.lexists(h.project)) return; // the project folder is not here: git can't say anything
       await this.#dropLandable(h);
       const tip = await merge.rev(h.project, `refs/heads/${branch}`);
@@ -1994,6 +2142,36 @@ export class Swarm {
     } catch (error) {
       log.exception(error, 'Cleaning up helper %s failed', id);
     }
+  }
+
+  /** #cleanup for a WSL helper: the same rules, the git facts read in the distro and the removal done there. */
+  async #cleanupWsl(h: Helper, chats?: Json[]): Promise<void> {
+    const w = this.#wslOf(h)!;
+    const id = h.id, branch = h.worktree.branch;
+    const facts = await this.#facts(h, { ...(h.merge?.landed ? { landed: h.merge.landed } : {}) });
+    if (!facts || facts.projectExists !== true) return; // the distro can't answer, or the folder is gone: nothing can be said
+    if (s(facts.landableTip) && facts.landableInTarget === true) await wslHelperBranchDrop(w.distro, w.project, `${branch}-landable`);
+    const tip = s(facts.branchTip);
+    const exists = facts.worktreeExists === true;
+    if (!exists && !tip && !h.merge && ['done', 'waiting', 'stopped'].includes(h.state)) {
+      await this.registry.patch(id, { state: 'discarded', reason: 'its worktree and branch were removed', endedAt: this.clock() / 1000 });
+      return;
+    }
+    if (h.state !== 'merged' || !h.merge || h.merge.undo || h.cleanedAt) return;
+    const open = chats
+      ? chats.some((c) => (!!h.chat.live && c.id === h.chat.live) || (!!h.chat.lasting && lasting(c) === h.chat.lasting))
+      : await this.#chatOpen(h);
+    if (open) return;
+    const nothing = (!!h.merge.branchTip && tip === h.merge.branchTip) || facts.branchInTarget === true || facts.sameTreeAsLanded === true;
+    if (tip && !nothing) return; // new work since the merge: kept until merged or discarded
+    if (exists && Number(facts.dirty) > 0) return; // edits in its worktree: kept
+    if (!w.key) return;
+    const result = await wslHelperRemove(w.distro, w.key);
+    if (result === 'pending') return;
+    if (result === 'gone' && exists) return; // a folder AIB has no record of: not removed
+    if (tip) await wslHelperBranchDrop(w.distro, w.project, branch); // the branch alone is left when the removal did not take it
+    await this.registry.patch(id, { cleanedAt: this.clock() / 1000 });
+    log.info('swarm: removed the worktree and branch of merged WSL helper %s (%s)', id, branch);
   }
 
   /** True when nothing of the helper's branch is missing from the target: still where the merge left it, in the target, or the same tree as landed. */
@@ -2305,7 +2483,15 @@ export class Swarm {
     const reply = events.map((e) => obj(obj(e.data).update)).filter((u) => u.sessionUpdate === 'agent_message_chunk')
       .map((u) => s(obj(u.content).text)).join('');
     let files: string[] = [], insertions = 0, deletions = 0, commits = 0;
-    if (h.worktree.path && h.worktree.start) {
+    if (this.#wslOf(h) && h.worktree.path && h.worktree.start) { // a WSL helper's counts are read in its distro (helper.facts)
+      const facts = await this.#facts(h);
+      if (facts) {
+        files = Array.isArray(facts.files) ? facts.files.map(String) : [];
+        insertions = Number(facts.insertions) || 0;
+        deletions = Number(facts.deletions) || 0;
+        commits = Number(facts.commits) || 0;
+      }
+    } else if (h.worktree.path && h.worktree.start) {
       try {
         files = await wt.touchedPaths(h.worktree.path, h.worktree.start);
         for (

@@ -26,10 +26,10 @@ const FROZEN: [string, Ctx, [string, string[] | null][]][] = [
   ['worktree', { worktree: true }, [['publish', null], ['artifacts', ['list', 'archive']], ['doc', DOC_ACTIONS], ['drawing', DRAWING_ACTIONS], ['merge_into_project', MERGE_ACTIONS]]],
   ['main', { main: true }, [['publish', null], ['artifacts', ['list', 'archive']], ['doc', DOC_ACTIONS], ['drawing', DRAWING_ACTIONS], ['helper', HELPER_ALL]]],
   ['main + worktree', { main: true, worktree: true }, [['publish', null], ['artifacts', ['list', 'archive']], ['doc', DOC_ACTIONS], ['drawing', DRAWING_ACTIONS], ['helper', HELPER_ALL], ['merge_into_project', MERGE_ACTIONS]]],
-  // a WSL chat: no helper tools, but the work_* actions (a WSL chat is a main chat for unlanded work), whether or not it is "main"
+  // a WSL chat: the work_* actions only unless it is "main" (a WSL chat is a main chat for unlanded work); a main one has the helper tools too (2026-11-25)
   ['wsl', { restricted: true }, [['publish', null], ['artifacts', ['list', 'archive']], ['doc', DOC_ACTIONS], ['drawing', DRAWING_ACTIONS], ['helper', HELPER_WORK]]],
   ['wsl worktree', { restricted: true, worktree: true }, [['publish', null], ['artifacts', ['list', 'archive']], ['doc', DOC_ACTIONS], ['drawing', DRAWING_ACTIONS], ['helper', HELPER_WORK], ['merge_into_project', MERGE_ACTIONS]]],
-  ['wsl main', { restricted: true, main: true }, [['publish', null], ['artifacts', ['list', 'archive']], ['doc', DOC_ACTIONS], ['drawing', DRAWING_ACTIONS], ['helper', HELPER_WORK]]],
+  ['wsl main', { restricted: true, main: true }, [['publish', null], ['artifacts', ['list', 'archive']], ['doc', DOC_ACTIONS], ['drawing', DRAWING_ACTIONS], ['helper', HELPER_ALL]]],
 ];
 
 const actionsOf = (tool: Json): string[] | null => {
@@ -211,8 +211,8 @@ Deno.test('the six tools run the handler they always had: doc, drawing, helper, 
       assert(isError(await aib.call(main, name, args)), `${name} ${JSON.stringify(args)}`);
       assertEquals(aib.seen.length, 0, 'a refused call sends nothing');
     }
-    // an action the context does not list is refused as unknown, never sent: WSL chats cannot start helpers; a plain chat has no helper
-    const wsl = aib.ctx({ restricted: true, main: true });
+    // an action the context does not list is refused as unknown, never sent: a WSL chat that is not a main one cannot start helpers; a plain chat has no helper
+    const wsl = aib.ctx({ restricted: true }); // a WSL chat that is not a main one (a helper): the work_* actions only
     const refused = await aib.call(wsl, 'helper', { action: 'start', title: 't' });
     assert(isError(refused) && textOf(refused).includes('work_list'), textOf(refused));
     assertEquals(((await aib.call(aib.ctx(), 'helper', { action: 'work_list' })).error as Json).code, -32602);
@@ -297,9 +297,10 @@ Deno.test('doc help: the long rules on demand, and a malformed edit comes back w
 Deno.test('the served-tools hash sees an action list change under the same tool name (review M6)', () => {
   const names = (ctx: Ctx) => servedToolList(ctx).map((t) => String(t.name));
   assertEquals(names({ restricted: true, main: true }), names({ restricted: true }), 'same names, different contexts below');
-  const off = toolSignatures({ restricted: true, main: true });
+  assert(toolSignatures({ restricted: true, main: true }).some((s) => s.startsWith('helper:merge,providers,start')), 'a WSL main chat is offered the helper tools (2026-11-25)');
+  const off = consolidatedTools({ restricted: true, main: true }, { ...WSL_TOOL_GROUPS, swarm: false }).map(toolSignature);
   assert(off.includes(`helper:${[...HELPER_WORK].sort().join(',')}`), off.join(' '));
-  // the WSL swarm group switched on: the same names, a longer helper action list
+  // the WSL swarm group switched off: the same names, a shorter helper action list
   const on = consolidatedTools({ restricted: true, main: true }, { ...WSL_TOOL_GROUPS, swarm: true }).map(toolSignature);
   assertEquals(on.map((s) => s.split(':')[0]), off.map((s) => s.split(':')[0]));
   assert(toolsHash(on) !== toolsHash(off), 'the hash changes when only an action list changes');

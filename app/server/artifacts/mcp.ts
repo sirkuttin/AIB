@@ -584,7 +584,7 @@ const LEGACY_SWARM_HANDLERS: Record<string, Handler> = Object.fromEntries(
  *   - artifacts: publish and artifacts (list, archive). A `path` is a Linux path inside the chat's or project's folder, read (never
  *     written) through the distro's helper as a snapshot (wsl/artifact_read.ts).
  *   - merge: merge_into_project, for a chat in its own worktree (run in the distro's helper: wsl/merge.ts).
- *   - swarm: the helper actions providers, start, status, stop, merge. Off: helper chats are not made in WSL projects yet (AIB gives
+ *   - swarm: the helper actions providers, start, status, stop, merge. On (2026-11-25): a helper of a WSL project works in its own worktree in the distro and lands there (wsl/helpers.ts). Off: helper chats are not made in WSL projects (AIB gives
  *     a WSL chat no main role while this is off). `helper` is still listed there with the work_* actions only: they are not helper
  *     tools, a WSL chat is a main chat for unlanded work.
  *   - docs: doc and drawing. On: the open doc lives in AIB as for a Windows project, its files in the project folder in the
@@ -593,7 +593,7 @@ const LEGACY_SWARM_HANDLERS: Record<string, Handler> = Object.fromEntries(
 export const WSL_TOOL_GROUPS: Readonly<Record<'artifacts' | 'merge' | 'swarm' | 'docs', boolean>> = {
   artifacts: true,
   merge: true,
-  swarm: false,
+  swarm: true,
   docs: true,
 };
 
