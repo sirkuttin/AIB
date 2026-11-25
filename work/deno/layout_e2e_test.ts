@@ -20,6 +20,7 @@
 import { assert } from './_assert.ts';
 import {
   browserPath,
+  calm,
   type Chat,
   clickHere,
   following,
@@ -84,14 +85,14 @@ async function openSeeded(lab: Lab, n = 30): Promise<Chat> {
   chat.say('Seed done SEEDEND');
   await lab.select(chat);
   await shown(lab.page, 'SEEDEND');
-  await settle();
+  await calm();
   return chat;
 }
 
 /** Scroll the chat up by real wheel input until the reading row is well inside the history (paused, far from both ends). */
 async function readMidway(page: Page, box = 'messages', notches = 12) {
   for (let i = 0; i < notches; i++) await wheel(page, -150, box);
-  await settle(900);
+  await calm(900);
   const x = await m(page, box);
   assert(x.paused && x.gap > 600, `reading midway: paused ${x.paused}, gap ${x.gap}`);
 }
@@ -169,7 +170,7 @@ async function agentPublishes(lab: Lab, chat: Chat, title: string, marker: strin
   chat.say(`\n\nHere is the page: [${title}](studio-artifact://${id}) ${marker}`);
   await shown(lab.page, marker);
   await lab.page.waitFor(`!!document.querySelector('#messages a.artifact-link[data-artifact-id="${id}"]')`, 15000, 'the artifact link');
-  await settle(600);
+  await calm(600);
   return id;
 }
 
@@ -178,7 +179,7 @@ const viewing = (page: Page) => page.eval<boolean>(`document.body.classList.cont
 
 async function waitViewing(page: Page, on: boolean) {
   await page.waitFor(`(document.body.classList.contains('ar-viewing') || document.body.classList.contains('dt-viewing')) === ${on}`, 10000, on ? 'the right column widens for the viewer' : 'the viewer closes');
-  await settle(1200);
+  await calm(1200);
 }
 
 // ---- L1. the owner's bug: opening a doc or artifact widens the right column, the chat must keep its place -------------------------
@@ -194,7 +195,7 @@ layoutTest('L1a following, click "Open doc" on a doc card: the right column keep
   const page = lab.page;
   const chat = await openSeeded(lab);
   await agentMakesDoc(lab, chat, 'Release plan');
-  await settle();
+  await calm();
   const before = await m(page);
   assert(!following(before), `following before: ${following(before)}`);
   const w0 = await css(page, '--activity-w');
@@ -207,7 +208,7 @@ layoutTest('L1a following, click "Open doc" on a doc card: the right column keep
   // and it keeps following: the next update stays in view
   chat.say('\n\nA reply after opening AFTEROPEN');
   await shown(page, 'AFTEROPEN');
-  await settle();
+  await calm();
   const later = await m(page);
   assert(!following(later), `next update: ${following(later)}`);
   chat.end();
@@ -333,7 +334,7 @@ async function reload(lab: Lab, chat: { key: string }) {
   await lab.page.goto(`http://127.0.0.1:${lab.web.port}/chat.html`);
   await lab.page.waitFor('!!document.getElementById("messages")', 15000, 'chat page');
   await lab.select(chat);
-  await settle(1200);
+  await calm(1200);
 }
 
 /** Reading midway, run `act`, then the row must still be at the top and the list still paused. */
@@ -341,7 +342,7 @@ async function keepsReadingRow(page: Page, act: () => Promise<unknown>, what: st
   if (scrollFirst) await readMidway(page, box);
   const { a, x } = await readingState(page, box);
   await act();
-  await settle(1200);
+  await calm(1200);
   const moved = await rowMoved(page, a, box);
   const y = await m(page, box);
   assert(!moved, `${what}: ${moved} (scrollTop ${x.top} -> ${y.top}, scrollHeight ${x.height} -> ${y.height}, clientHeight ${x.client} -> ${y.client})`);
@@ -366,7 +367,7 @@ async function keepsFollowing(page: Page, act: () => Promise<unknown>, what: str
   assert(!before.bad, `${what}: following before: ${before.bad}`);
   const x = before.x;
   await act();
-  await settle(1200);
+  await calm(1200);
   const { bad, x: y } = await followIssues(page, box);
   assert(!bad, `${what}: ${bad} (scrollTop ${x.top} -> ${y.top}, scrollHeight ${x.height} -> ${y.height}, clientHeight ${x.client} -> ${y.client})`);
 }
@@ -376,7 +377,7 @@ async function fileLinkInReply(lab: Lab, chat: Chat) {
   chat.say('\n\nI wrote notes.txt FILEREADY');
   await shown(lab.page, 'FILEREADY');
   await lab.page.waitFor(`!!document.querySelector('#messages a.fx-path')`, 15000, 'the file link');
-  await settle();
+  await calm();
 }
 
 // ---- L2. chat history (#messages) against every event that changes its size ------------------------------------------------------
@@ -393,7 +394,7 @@ layoutTest('L2a reading midway, the window gets narrower then wider: the row you
   const { a } = await readingState(page);
   await startRowFrames(page, a!.text);
   await page.viewport(1600, 900);
-  await settle(1200);
+  await calm(1200);
   const wider = rowFramesProblems(await stopRowFrames(page), a!, 24);
   const moved = await rowMoved(page, a);
   assert(!moved, `window 1200 -> 1600: ${moved}`);
@@ -486,7 +487,7 @@ layoutTest('L2g following, chat text size and interface size change: the chat st
 layoutTest('L2q at 150 % interface size: reading keeps its row through a chat text change; following stays at the bottom through size changes', async (lab) => {
   const page = lab.page;
   await page.eval('AgentTextSize.setUi(150)');
-  await settle(800);
+  await calm(800);
   await openSeeded(lab, 40);
   await keepsFollowing(page, () => page.eval('AgentTextSize.setChat(130)'), 'chat text 130 % at 150 %');
   await keepsFollowing(page, () => page.eval('AgentTextSize.setUi(125)'), 'interface 150 -> 125 %');
@@ -512,7 +513,7 @@ layoutTest('L2i reading midway, the theme changes (dark -> light -> high contras
   await openSeeded(lab, 40);
   await keepsReadingRow(page, async () => {
     await page.eval('AibThemes.choose("teal-light")');
-    await settle(500);
+    await calm(500);
     await page.eval('AibThemes.choose("hc-dark")');
   }, 'theme changes');
 });
@@ -523,7 +524,7 @@ layoutTest('L2j reading midway, switching the right column between Activity, Cha
   await keepsReadingRow(page, async () => {
     for (const t of ['changes', 'artifacts', 'activity']) {
       await clickHere(page, `#paneTab-${t}`);
-      await settle(400);
+      await calm(400);
     }
   }, 'right column tabs');
 });
@@ -555,9 +556,9 @@ layoutTest('L2m a window resize across a layout bucket (1600 -> 1300 -> 1600) gi
   await openSeeded(lab);
   const before = { prompt: await heightOf(page, '#prompt'), list: await heightOf(page, '#messages') };
   await page.viewport(1300, 900);
-  await settle(800);
+  await calm(800);
   await page.viewport(1600, 900);
-  await settle(1000);
+  await calm(1000);
   const after = { prompt: await heightOf(page, '#prompt'), list: await heightOf(page, '#messages') };
   assert(after.prompt === before.prompt && after.list === before.list, `before ${JSON.stringify(before)}, after ${JSON.stringify(after)}`);
 });
@@ -568,11 +569,11 @@ layoutTest('L2n a long unbroken line (URL, path, word) and a wide table in a rep
   chat.say('\n\nA long one: https://example.com/' + 'a'.repeat(400) + ' and C:\\' + 'folder\\'.repeat(60) + 'file.txt and ' + 'f'.repeat(300) + ' LONGLINE');
   chat.say('\n\n| a | b | c | d | e | f | g |\n|---|---|---|---|---|---|---|\n' + ('| ' + 'cell text '.repeat(6) + ' ').repeat(7) + '|\n\nTABLEEND');
   await shown(page, 'TABLEEND');
-  await settle();
+  await calm();
   const problems: string[] = [];
   for (const w of [1600, 860]) {
     await page.viewport(w, 800);
-    await settle(1000);
+    await calm(1000);
     const bad = sweepProblems(await sweep(page), ['pre', 'code', 'table', 'div.md-table', 'div.table']);
     const msgs = await page.eval<{ sw: number; cw: number }>(`(() => { const b = document.getElementById('messages'); return { sw: b.scrollWidth, cw: b.clientWidth }; })()`);
     if (msgs.sw > msgs.cw + 1 || bad.length) problems.push(`at ${w} px: #messages ${msgs.sw}/${msgs.cw}; ${bad.join('; ')}`);
@@ -587,13 +588,13 @@ layoutTest('L2o following, Settings opens over the chat and closes: the chat is 
   await keepsFollowing(page, async () => {
     await clickHere(page, '#openSettings');
     await page.waitFor(`document.body.classList.contains('settings-open')`, 8000, 'settings open');
-    await settle(500);
+    await calm(500);
     await page.key('Escape');
     await page.waitFor(`!document.body.classList.contains('settings-open')`, 8000, 'settings closed');
   }, 'settings open and closed');
   chat.say('\n\nAfter settings AFTERSET');
   await shown(page, 'AFTERSET');
-  await settle();
+  await calm();
   const y = await m(page);
   assert(!following(y), `next update after settings: ${following(y)}`);
 });
@@ -622,7 +623,7 @@ async function openSubagent(lab: Lab) {
   await page.waitFor(`!!document.querySelector('#projectActivity button[data-key="child-1"]')`, 15000, 'subagent card');
   await clickHere(page, '#projectActivity button[data-key="child-1"]');
   await shown(page, 'Child read 39', 'submessages');
-  await settle();
+  await calm();
   return { chat, child };
 }
 
@@ -650,7 +651,7 @@ layoutTest('L3c the main chat, reading: opening a subagent (in the right column,
   await lab.select(chat);
   await shown(page, 'SEEDEND');
   await page.waitFor(`!!document.querySelector('#projectActivity button[data-key="child-1"]')`, 15000, 'subagent card');
-  await settle();
+  await calm();
   const w0 = await page.eval<number>(`document.getElementById('subagentsPane').getBoundingClientRect().width`);
   await keepsReadingRow(page, () => clickHere(page, '#projectActivity button[data-key="child-1"]'), 'subagent opened');
   const w1 = await page.eval<number>(`document.getElementById('subagentsPane').getBoundingClientRect().width`);
@@ -689,7 +690,7 @@ layoutTest('L4b right column handle: the chat keeps 420 px; one width for Activi
   assert(1600 - side - act >= 419, `the chat column keeps 420 px: side ${side}, right ${act}`);
   await dragHandle(page, 'rs-activity', 3000);
   await page.key('b', 3); // a drag far past the minimum collapses it: show it again
-  await settle(600);
+  await calm(600);
   const normal = await css(page, '--activity-w');
   assert(normal >= 220, `shown again at a real width: ${normal}`);
   const id = await agentPublishes(lab, chat, 'Width page', 'WIDTHPAGE');
@@ -721,11 +722,11 @@ layoutTest('L4e switching from a chat showing an artifact to another chat of the
   const widths: number[] = [];
   await page.eval(`(() => { const w = (window.__actW = []); const t = () => { w.push(parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--activity-w')) || 0); if (w.length < 2000 && !window.__actStop) requestAnimationFrame(t); }; requestAnimationFrame(t); })()`);
   await lab.select(b);
-  await settle(1500);
+  await calm(1500);
   assert(await viewing(page), "another chat of the project keeps the tab: the panel is the project's (owner, 2026-11-18)");
   widths.push(await css(page, '--activity-w'));
   await lab.select(a);
-  await settle(1500);
+  await calm(1500);
   widths.push(await css(page, '--activity-w'));
   const frames = await page.eval<number[]>(`(() => { window.__actStop = true; return window.__actW; })()`);
   assert(widths.every((w) => Math.abs(w - w0) <= 1), `the width after each switch: ${w0} -> ${widths.join(', ')}`);
@@ -771,7 +772,7 @@ async function manyHelpers(lab: Lab, n: number) {
   await lab.select(chat);
   await shown(page, 'HELPERS');
   await page.waitFor(`document.querySelectorAll('#projectActivity button[data-key]').length >= ${n}`, 15000, `${n} subagent cards`);
-  await settle(800);
+  await calm(800);
   return chat;
 }
 
@@ -796,10 +797,10 @@ layoutTest('L5a the page never scrolls and no list has a second scrollbar, from 
   const problems: string[] = [];
   for (const [w, h] of [[1920, 1080], [1600, 900], [1280, 720], [1100, 700], [1000, 640], [860, 600], [700, 500]]) {
     await page.viewport(w, h);
-    await settle(700);
+    await calm(700);
     for (const ui of [100, 150]) {
       await page.eval(`AgentTextSize.setUi(${ui})`);
-      await settle(500);
+      await calm(500);
       const bad = sweepProblems(await sweep(page), ['pre', 'code', 'table']);
       if (bad.length) problems.push(`${w}x${h} at ${ui} %: ${bad.join('; ')}`);
     }
@@ -823,7 +824,7 @@ layoutTest('L5b the doc viewer dragged to its narrowest and widest: no sideways 
   const problems: string[] = [];
   for (const dx of [640, -2000]) {
     await dragHandle(page, 'rs-activity', dx);
-    await settle(900);
+    await calm(900);
     const r = await page.eval<Record<string, number>>(`(() => {
       const f = document.querySelector('iframe.dt-frame'), d = f.contentDocument, e = d.scrollingElement;
       return { col: Math.round(f.getBoundingClientRect().width), sw: e.scrollWidth, cw: e.clientWidth };
@@ -847,9 +848,9 @@ layoutTest('L6a sidebar chat list: scrolled down, opening a chat in it does not 
   }
   await page.goto(`http://127.0.0.1:${lab.web.port}/chat.html`);
   await page.waitFor(`document.querySelectorAll('#connections button.connection').length >= 40`, 20000, '40 chats in the sidebar');
-  await settle(800);
+  await calm(800);
   await page.eval(`document.getElementById('connections').scrollTop = 600`);
-  await settle(300);
+  await calm(300);
   const before = await page.eval<number>(`document.getElementById('connections').scrollTop`);
   const target = await page.eval<string>(`(() => { const c = document.getElementById('connections'), t = c.getBoundingClientRect();
     const b = [...c.querySelectorAll('button.connection')].find((x) => { const r = x.getBoundingClientRect(); return r.top > t.top + 40 && r.bottom < t.bottom - 40; });
@@ -857,7 +858,7 @@ layoutTest('L6a sidebar chat list: scrolled down, opening a chat in it does not 
   assert(target, 'a visible chat row');
   await clickHere(page, `button.connection[data-key="${target}"]`);
   await page.waitFor(`document.querySelector('button.connection[data-key="${target}"]')?.classList.contains('selected')`, 10000, 'chat selected');
-  await settle(1500);
+  await calm(1500);
   const after = await page.eval<number>(`document.getElementById('connections').scrollTop`);
   assert(Math.abs(after - before) <= 2, `the chat list scrolled by itself: ${before} -> ${after}`);
 });
@@ -869,12 +870,12 @@ layoutTest('L6b right column: the Activity list keeps its scroll position across
   const box = await page.eval<{ sh: number; ch: number }>(`(() => { const b = ${SA}; return { sh: b.scrollHeight, ch: b.clientHeight }; })()`);
   assert(box.sh > box.ch + 50, `the Activity list scrolls: ${JSON.stringify(box)}`);
   await page.eval(`${SA}.scrollTop = 120`);
-  await settle(300);
+  await calm(300);
   const before = await page.eval<number>(`${SA}.scrollTop`);
   await clickHere(page, '#paneTab-changes');
-  await settle(600);
+  await calm(600);
   await clickHere(page, '#paneTab-activity');
-  await settle(800);
+  await calm(800);
   const after = await page.eval<number>(`${SA}.scrollTop`);
   assert(Math.abs(after - before) <= 2, `Activity list scroll lost on a tab switch: ${before} -> ${after}`);
   chat.end();
@@ -888,13 +889,13 @@ layoutTest('L6c inbox popover in a short window: it stays inside the window, als
   await page.waitFor(`!!document.querySelector('.ws-inbox-btn')`, 8000, 'inbox button');
   await clickHere(page, '.ws-inbox-btn');
   await page.waitFor(`!document.getElementById('wsInbox').hidden`, 8000, 'inbox open');
-  await settle(500);
+  await calm(500);
   const fit = () => page.eval<Record<string, number>>(`(() => { const p = document.getElementById('wsInbox'), r = p.getBoundingClientRect();
     return { top: Math.round(r.top), bottom: Math.round(r.bottom), left: Math.round(r.left), right: Math.round(r.right), ih: innerHeight, iw: innerWidth }; })()`);
   const a = await fit();
   assert(a.bottom <= a.ih && a.right <= a.iw && a.left >= 0, `inside the window: ${JSON.stringify(a)}`);
   await page.viewport(900, 420);
-  await settle(800);
+  await calm(800);
   if (await page.eval<boolean>(`!document.getElementById('wsInbox').hidden`)) {
     const b = await fit();
     assert(b.bottom <= b.ih && b.right <= b.iw && b.left >= 0, `after the window shrank to 900x420: ${JSON.stringify(b)}`);
@@ -908,10 +909,10 @@ layoutTest('L6d Settings: each section opens at its top, no double scrollbars, n
   const page = lab.page;
   await openSeeded(lab, 4);
   await page.viewport(1400, 600);
-  await settle(500);
+  await calm(500);
   await clickHere(page, '#openSettings');
   await page.waitFor(`document.body.classList.contains('settings-open') && !!document.querySelector('.st-content')`, 8000, 'settings open');
-  await settle(1200);
+  await calm(1200);
   const problems: string[] = [];
   const s0 = sweepProblems(await sweep(page), ['pre', 'code', 'table']);
   if (s0.length) problems.push(`first section: ${s0.join('; ')}`);
@@ -920,7 +921,7 @@ layoutTest('L6d Settings: each section opens at its top, no double scrollbars, n
   await page.eval(`document.querySelector('.st-content').scrollTop = 99999`);
   for (let i = 1; i < Math.min(n, 7); i++) {
     await page.eval(`document.querySelectorAll('.st-nav button')[${i}].click()`);
-    await settle(700);
+    await calm(700);
     const r = await page.eval<{ top: number; sh: number; ch: number; label: string }>(`(() => { const c = document.querySelector('.st-content');
       return { top: Math.round(c.scrollTop), sh: c.scrollHeight, ch: c.clientHeight, label: document.querySelectorAll('.st-nav button')[${i}].textContent.trim().slice(0, 30) }; })()`);
     if (r.top > 2) problems.push(`"${r.label}" opened scrolled down ${r.top} px (of ${r.sh - r.ch})`);
@@ -947,10 +948,10 @@ async function openSplit(lab: Lab) {
   await shown(page, 'ALPHAEND');
   await lab.select(b);
   await shown(page, 'BETAEND');
-  await settle(800);
+  await calm(800);
   await page.eval(`AgentSplitUI.splitTab(${JSON.stringify(a.key)}, 'row')`);
   await page.waitFor(`document.querySelectorAll('.mirror-msgs').length === 1 && document.querySelector('.mirror-msgs').children.length > 5`, 15000, 'a side pane with a copy of a chat');
-  await settle(1500);
+  await calm(1500);
   const key = await page.eval<string>(`document.querySelector('.mirror-msgs').dataset.mirror`);
   return { a, b, side: key === a.key ? a : b };
 }
@@ -970,11 +971,11 @@ layoutTest('L7a split view: the side pane at the bottom stays at the bottom when
   const m0 = await mirrorM(page);
   assert(m0.gap <= 1, `the side pane starts at the bottom: ${JSON.stringify(m0)}`);
   await page.viewport(1250, 900);
-  await settle(1200);
+  await calm(1200);
   const m1 = await mirrorM(page);
   side.say('\n\nNew in the side pane SIDENEW');
   await page.waitFor(`document.querySelector('.mirror-msgs').textContent.includes('SIDENEW')`, 15000, 'the update in the side pane');
-  await settle(1200);
+  await calm(1200);
   const m2 = await mirrorM(page);
   assert(m1.gap <= 1 && m2.gap <= 1, `after narrowing: ${JSON.stringify(m1)}; after the next update: ${JSON.stringify(m2)}`);
 });
@@ -985,7 +986,7 @@ layoutTest('L7b split view: no double scrollbars and no sideways scroll with two
   const problems: string[] = [];
   for (const w of [1600, 1250]) {
     await page.viewport(w, 900);
-    await settle(1000);
+    await calm(1000);
     const bad = sweepProblems(await sweep(page), ['pre', 'code', 'table', 'div.ws-tabs']);
     if (bad.length) problems.push(`${w} px: ${bad.join('; ')}`);
     // the panes reach the right panel: its room is kept once, not twice (split-ui.js mirrorCss once raised the page's body rules
@@ -1003,7 +1004,7 @@ layoutTest('L8 terminal dock open, window resized: the chat above still follows;
   const chat = await openSeeded(lab);
   await clickHere(page, '.aib-term-toggle');
   await page.waitFor('!!document.getElementById("terminalDock") && document.getElementById("terminalDock").getBoundingClientRect().height > 50', 15000, 'terminal dock');
-  await settle(1500);
+  await calm(1500);
   await keepsFollowing(page, () => page.viewport(1300, 800), 'window 1300x800 with the dock open');
   const bad = sweepProblems(await sweep(page), ['pre', 'code', 'table', 'div.xterm']);
   assert(!bad.length, bad.join('; '));

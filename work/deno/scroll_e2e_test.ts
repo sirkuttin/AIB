@@ -18,6 +18,7 @@ import {
   anchor,
   BOX,
   browserPath,
+  calm,
   type Chat,
   clickHere,
   following,
@@ -97,7 +98,7 @@ async function openSeeded(lab: Lab, n = 30): Promise<Chat> {
   chat.say('Seed done SEEDEND');
   await lab.select(chat);
   await shown(lab.page, 'SEEDEND');
-  await settle();
+  await calm();
   return chat;
 }
 
@@ -105,17 +106,17 @@ async function openSeeded(lab: Lab, n = 30): Promise<Chat> {
 async function typeAndClear(page: Page) {
   await page.eval('document.getElementById("prompt").focus()');
   await page.type('line one\nline two\nline three\nline four');
-  await settle(400);
+  await calm(400);
   await page.key('a', 2);
   await page.key('Backspace');
-  await settle(600);
+  await calm(600);
   assert((await page.eval('document.getElementById("prompt").value')) === '', 'composer cleared');
 }
 
 async function setView(page: Page, view: 'full' | 'chat' | 'prompts') {
   await clickHere(page, `#viewSwitch button[data-view="${view}"]`);
   await page.waitFor(`document.querySelector('#viewSwitch button[data-view="${view}"]').getAttribute('aria-checked') === 'true'`);
-  await settle(1200);
+  await calm(1200);
 }
 
 /** Run one update while recording frames; returns the problems (empty: fine). */
@@ -123,7 +124,7 @@ async function update(page: Page, send: () => void, until: string, box = 'messag
   await startFrames(page, box);
   send();
   await shown(page, until, box);
-  await settle(wait);
+  await calm(wait);
   const frames = await stopFrames(page);
   const end = await m(page, box);
   return [following(end) && `after: ${following(end)} ${JSON.stringify(end)}`, framesProblems(frames)].filter(Boolean).join('; ');
@@ -171,7 +172,7 @@ async function followEverything(lab: Lab, box = 'messages') {
   }, 'SHOTDONE');
   for (let i = 0; i < 5; i++) chat.tool(`fold${i}`, `Check part ${i} FOLDSTEP${i}`, 'completed');
   await shown(page, 'FOLDSTEP4', box);
-  await settle();
+  await calm();
   await check('a run of 5 steps folds into "5 steps" when a message arrives', () => chat.say('All parts checked FOLDED'), 'FOLDED');
   await check('the turn ends', () => chat.end(), 'FOLDED');
   assert(!problems.length, problems.join('\n'));
@@ -201,7 +202,7 @@ scrollTest('1c narrow window (860 px), following: updates keep the newest row fu
   const page = lab.page;
   const chat = await openSeeded(lab);
   await page.viewport(860, 800); // the sidebar folds away under 900 px, so the chat is opened first at full width
-  await settle(800);
+  await calm(800);
   await assertFollowing(page, 'at 860 px');
   const p1 = await update(page, () => chat.say('\n\nNarrow reply NARROW1 ' + 'words '.repeat(120)), 'NARROW1');
   const p2 = await update(page, () => chat.tool('n2', 'Narrow step NARROW2', 'in_progress'), 'NARROW2');
@@ -215,7 +216,7 @@ scrollTest('2a composer grows to 4 lines: a following list stays at the bottom a
   const chat = await openSeeded(lab);
   await page.eval('document.getElementById("prompt").focus()');
   await page.type('line one\nline two\nline three\nline four');
-  await settle(500);
+  await calm(500);
   await assertFollowing(page, 'composer with 4 lines');
   const p = await update(page, () => chat.say('\n\nReply while typing TYPING'), 'TYPING');
   assert(!p, p);
@@ -233,7 +234,7 @@ scrollTest('2b approval card pinned under a following list: it stays at the bott
   await assertFollowing(page, 'composer typed in and cleared');
   chat.step({ ask: 'Run rm -rf build' });
   await page.waitFor('(document.getElementById("approvals").textContent || "").includes("rm -rf build")', 15000, 'approval card');
-  await settle();
+  await calm();
   await assertFollowing(page, 'approval card shown');
   const p = await update(page, () => chat.say('\n\nReply after the card CARDREPLY'), 'CARDREPLY');
   assert(!p, p);
@@ -246,10 +247,10 @@ scrollTest('2c two queued messages: the queue box appears and a following list s
   for (const text of ['queued one', 'queued two']) {
     await page.type(text);
     await page.key('Enter');
-    await settle(1200);
+    await calm(1200);
   }
   await page.waitFor('!document.getElementById("queueBox").hidden && /2 queued/.test(document.getElementById("queueBox").textContent)', 15000, '"2 queued"');
-  await settle();
+  await calm();
   await assertFollowing(page, 'queue box with 2 queued');
   const p = await update(page, () => chat.say('\n\nReply with a queue QUEUEREPLY'), 'QUEUEREPLY');
   assert(!p, p);
@@ -263,11 +264,11 @@ scrollTest('2d terminal dock opened and resized under a following list: it stays
   await typeAndClear(page);
   await clickHere(page, '.aib-term-toggle');
   await page.waitFor('!!document.getElementById("terminalDock") && document.getElementById("terminalDock").getBoundingClientRect().height > 50', 15000, 'terminal dock');
-  await settle(1500);
+  await calm(1500);
   await assertFollowing(page, 'terminal dock open');
   await page.eval('document.querySelector("#terminalDock .aib-term-divider").focus()');
   for (let i = 0; i < 3; i++) await page.key('ArrowUp');
-  await settle(800);
+  await calm(800);
   await assertFollowing(page, 'terminal dock made 72 px taller');
   const p = await update(page, () => chat.say('\n\nReply with the terminal open TERMREPLY'), 'TERMREPLY');
   assert(!p, p);
@@ -278,7 +279,7 @@ scrollTest('2e window resized (shorter, then narrower, then back): a following l
   const chat = await openSeeded(lab);
   for (const [w, h] of [[1600, 650], [1000, 650], [1600, 900]]) {
     await page.viewport(w, h);
-    await settle(800);
+    await calm(800);
     await assertFollowing(page, `window ${w}x${h}`);
   }
   const p = await update(page, () => chat.say('\n\nReply after resizing RESIZED'), 'RESIZED');
@@ -304,10 +305,10 @@ scrollTest('2f a 5-line draft in the composer while the agent works on a plan: k
   chat.tool('pl-0', 'Read the design PLANSTEP0', 'completed');
   chat.step(plan(tasks, 0));
   await page.waitFor(`[...document.querySelectorAll('#messages .plan')].some((e) => e.textContent.includes('0/4 done'))`, 15000, 'plan card');
-  await settle(600);
+  await calm(600);
   await page.eval('document.getElementById("prompt").focus()');
   await page.type(['Steer note one', 'line two', 'line three', 'line four', 'line five'].join('\n'));
-  await settle(600);
+  await calm(600);
   const tall = await page.eval<number>('document.getElementById("prompt").getBoundingClientRect().height');
   assert(tall > 100, `the draft makes the composer taller than its 2 lines (${tall} px)`);
   await assertFollowing(page, '5-line draft typed');
@@ -320,7 +321,7 @@ scrollTest('2f a 5-line draft in the composer while the agent works on a plan: k
   // keys that do not change the composer's height (each ran the autosize)
   for (const k of ['a', 'b', 'c']) {
     await page.type(k);
-    await settle(250);
+    await calm(250);
     await check(`typed "${k}" on the last line`);
   }
   // the plan card at the end updates in place: it shrinks (steps fold into "N done") and grows (a step's text wraps), tool rows before it
@@ -329,18 +330,18 @@ scrollTest('2f a 5-line draft in the composer while the agent works on a plan: k
     chat.tool(`pl-${n + 1}`, `Step ${n + 1}`, 'completed');
     chat.step(plan(texts.map((t, i) => (i === done ? `${t} PLANSTEP${n + 1}` : t)), done)); // the step in progress carries the marker
     await shown(page, `PLANSTEP${n + 1}`);
-    await settle(300);
+    await calm(300);
     await page.type('d');
-    await settle(300);
+    await calm(300);
     await check(`plan update ${n + 1} and a key`);
   }
   assert(!checks.length, checks.join('; '));
   // you really scroll up: follow stops and the next update lights the button
   await wheel(page, -400);
-  await settle(300);
+  await calm(300);
   chat.say('\n\nWhile you read AFTERDRAFT');
   await shown(page, 'AFTERDRAFT');
-  await settle(500);
+  await calm(500);
   const x = await m(page);
   assert(x.paused && x.jump !== null, `scrolled up: paused ${x.paused}, button ${JSON.stringify(x.jump)}`);
 });
@@ -351,7 +352,7 @@ scrollTest('3a scrolled up: updates do not move what you read, the jump button c
   const page = lab.page;
   const chat = await openSeeded(lab);
   await wheel(page, -700);
-  await settle(400);
+  await calm(400);
   const before = await anchor(page);
   assert(before, 'a row at the top');
   const x0 = await m(page);
@@ -362,7 +363,7 @@ scrollTest('3a scrolled up: updates do not move what you read, the jump button c
     chat.say(`While you read ${i} READ${i} ` + 'more words '.repeat(20));
   }
   await shown(page, 'READ2');
-  await settle(1500);
+  await calm(1500);
   const frames = await stopFrames(page);
   const moved = frames.filter((f) => Math.abs(f.top - x0.top) > 1);
   assert(!moved.length, `scrollTop moved in ${moved.length} frames: ${[...new Set(moved.map((f) => f.top))].slice(0, 6)} (was ${x0.top})`);
@@ -371,7 +372,7 @@ scrollTest('3a scrolled up: updates do not move what you read, the jump button c
   const x1 = await m(page);
   assert(x1.jump === '3 new messages ↓', `jump button says ${JSON.stringify(x1.jump)}`);
   await clickHere(page, '#jumpNew');
-  await settle(800);
+  await calm(800);
   await assertFollowing(page, 'after the jump button');
   const p = await update(page, () => chat.say('\n\nAfter the jump AFTERJUMP'), 'AFTERJUMP');
   assert(!p, p);
@@ -384,10 +385,10 @@ scrollTest('3b scrolled up, then back to the end by hand: following resumes', as
   await settle(300);
   chat.say('\n\nArrives while up WHILEUP');
   await shown(page, 'WHILEUP');
-  await settle();
+  await calm();
   assert((await m(page)).paused, 'paused while up');
   await wheel(page, 5000);
-  await settle(500);
+  await calm(500);
   await assertFollowing(page, 'scrolled back to the end');
   const p = await update(page, () => chat.say('\n\nAfter coming back BACKREPLY'), 'BACKREPLY');
   assert(!p, p);
@@ -399,18 +400,18 @@ scrollTest('3c keyboard only: PageUp pauses and holds the view, End resumes foll
   await page.eval('const b = document.getElementById("messages"); if (!b.hasAttribute("tabindex")) b.tabIndex = -1; b.focus()');
   await page.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'PageUp', code: 'PageUp', windowsVirtualKeyCode: 33 });
   await page.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'PageUp', code: 'PageUp', windowsVirtualKeyCode: 33 });
-  await settle(800);
+  await calm(800);
   const x0 = await m(page);
   assert(x0.paused && x0.gap > 300, `PageUp scrolled up and paused: ${JSON.stringify(x0)}`);
   const before = await anchor(page);
   chat.say('\n\nKey reader update KEYUP');
   await shown(page, 'KEYUP');
-  await settle(1200);
+  await calm(1200);
   const now = await whereIs(page, before!.text);
   assert(now !== null && Math.abs(now - before!.off) <= 1, `the row you read moved from ${before!.off} to ${now}`);
   await page.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'End', code: 'End', windowsVirtualKeyCode: 35 });
   await page.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'End', code: 'End', windowsVirtualKeyCode: 35 });
-  await settle(800);
+  await calm(800);
   await assertFollowing(page, 'after End');
   const p = await update(page, () => chat.say('\n\nAfter End KEYEND'), 'KEYEND');
   assert(!p, p);
@@ -440,7 +441,7 @@ async function openStep(lab: Lab, big: boolean) {
     });
   } else chat.tool('run-open', 'Run the build OPENME', 'completed', { rawOutput: Array.from({ length: 80 }, (_, i) => `out ${i}`).join('\n') });
   await shown(page, 'OPENME');
-  await settle();
+  await calm();
   await assertFollowing(page, 'before opening');
   const sel = '#messages .tool-line .tool-toggle';
   const t0 = await topOf(page, sel);
@@ -454,7 +455,7 @@ async function openStep(lab: Lab, big: boolean) {
   // the opened detail is below; the list is not at the bottom any more. The next update must not pull the step out of view.
   chat.say('\n\nThe next update NEXTUPDATE');
   await shown(page, 'NEXTUPDATE');
-  await settle();
+  await calm();
   const t3 = await topOf(page, sel);
   const x3 = await m(page);
   assert(
@@ -478,7 +479,7 @@ scrollTest('4c "Show all" on a long block at the bottom: the block stays where i
   chat.say('Long output:\n\n```\n' + Array.from({ length: 60 }, (_, i) => `row ${i}`).join('\n') + '\n```\n');
   chat.tool('after-block', 'Short step after the block LASTSTEP', 'completed');
   await shown(page, 'LASTSTEP');
-  await settle();
+  await calm();
   // bring the "Show all" button into view by hand (a small wheel, under the 48 px pause rule is not enough: scroll so it shows)
   const btn = '#messages .clamp-toggle';
   const pre = '#messages pre.clamp-block';
@@ -486,7 +487,7 @@ scrollTest('4c "Show all" on a long block at the bottom: the block stays where i
   const client = (await m(page)).client;
   if (bt !== null && bt > client - 30) {
     await wheel(page, -(bt - client + 80));
-    await settle(400);
+    await calm(400);
     bt = await topOf(page, btn);
   }
   const p0 = await topOf(page, pre);
@@ -502,7 +503,7 @@ scrollTest('4c "Show all" on a long block at the bottom: the block stays where i
   assert(p1 === p0 && p2 === p0, `the block you opened moved: ${p0} -> ${p1} (150 ms) -> ${p2} (1.6 s)`);
   chat.say('\n\nThe next update NEXTAFTERSHOW');
   await shown(page, 'NEXTAFTERSHOW');
-  await settle();
+  await calm();
   const p3 = await topOf(page, pre);
   const x3 = await m(page);
   assert(p3 !== null && p3 > -x3.client && p3 < x3.client, `after the next update the opened block starts at ${p3} px`);
@@ -526,7 +527,7 @@ scrollTest('4d "Show steps" in the Chat view at the bottom: the fold stays where
   assert(t1 === t0 && t2 === t0, `the fold you opened moved: ${t0} -> ${t1} (150 ms) -> ${t2} (1.6 s)`);
   chat.say('\n\nNext update SHOWSTEPSNEXT');
   await shown(page, 'SHOWSTEPSNEXT');
-  await settle();
+  await calm();
   const t3 = await topOf(page, sel);
   const x3 = await m(page);
   assert(t3 !== null && t3 >= 0 && t3 < x3.client - 20, `after the next update the fold is at ${t3} px (list ${x3.client} px)`);
@@ -546,24 +547,24 @@ scrollTest('5 "Show earlier" adds older rows above without moving the row you ar
   chat.say('EARLYEND');
   await lab.select(chat);
   await shown(page, 'EARLYEND');
-  await settle();
+  await calm();
   await page.waitFor('!!document.querySelector("#messages .show-earlier")', 5000, 'Show earlier button');
   await page.eval('document.getElementById("messages").scrollTop = 0');
-  await settle(400);
+  await calm(400);
   const row = await page.eval<{ text: string; off: number }>(`(() => {
     const b = document.getElementById('messages'), e = b.querySelector('.show-earlier').nextElementSibling;
     return { text: e.textContent.replace(/\\s+/g, ' ').slice(0, 80), off: Math.round(e.getBoundingClientRect().top - b.getBoundingClientRect().top) };
   })()`);
   await startRowFrames(page, row.text);
   await clickHere(page, '#messages .show-earlier');
-  await settle(1000);
+  await calm(1000);
   const drawn = rowFramesProblems(await stopRowFrames(page), row, 1);
   assert(!drawn, `while the earlier rows were drawn: ${drawn}`);
   const now = await whereIs(page, row.text);
   assert(now !== null && Math.abs(now - row.off) <= 1, `the row under the button moved from ${row.off} to ${now}`);
   chat.say('\n\nUpdate after earlier EARLYNEXT');
   await shown(page, 'EARLYNEXT');
-  await settle(1200);
+  await calm(1200);
   const again = await whereIs(page, row.text);
   assert(again !== null && Math.abs(again - row.off) <= 1, `after the next update it moved from ${row.off} to ${again}`);
 });
@@ -581,7 +582,7 @@ scrollTest('6a opening a chat with unread messages lands on the "New" line', asy
   b.say('The other chat OTHER');
   await lab.select(b);
   await shown(page, 'OTHER');
-  await settle();
+  await calm();
   a.tool('away1', 'Step while away', 'completed');
   a.say('Unread one UNREAD1 ' + 'words '.repeat(60));
   a.tool('away2', 'Second step while away', 'completed');
@@ -591,7 +592,7 @@ scrollTest('6a opening a chat with unread messages lands on the "New" line', asy
   await settle(3500); // two polls of the conversation list
   await lab.select(a);
   await shown(page, 'UNREAD2');
-  await settle();
+  await calm();
   const line = await page.eval<number | null>(
     '(() => { const l = document.querySelector("#messages > .new-line"); return l ? Math.round(l.getBoundingClientRect().top - document.getElementById("messages").getBoundingClientRect().top) : null; })()',
   );
@@ -610,10 +611,10 @@ scrollTest('6b switching to another chat and back: a following chat is still at 
   b.say('Other chat end OTHEREND');
   await lab.select(b);
   await shown(page, 'OTHEREND');
-  await settle();
+  await calm();
   await assertFollowing(page, 'the other chat');
   await lab.select(a);
-  await settle();
+  await calm();
   await assertFollowing(page, 'back in the first chat');
   const p = await update(page, () => a.say('\n\nBack in the first chat FIRSTBACK'), 'FIRSTBACK');
   assert(!p, p);
@@ -641,7 +642,7 @@ scrollTest('6d scrolled up mid-turn, Full -> Chat -> Full brings you back to the
   const page = lab.page;
   await openSeeded(lab, 60);
   await wheel(page, -900);
-  await settle(400);
+  await calm(400);
   const before = await anchor(page);
   const x0 = await m(page);
   await setView(page, 'chat');
@@ -663,7 +664,7 @@ scrollTest('6e reload at the bottom: the chat comes back at the bottom and follo
   const chat = await openSeeded(lab, 20);
   await page.goto(`http://127.0.0.1:${lab.web.port}/chat.html`);
   await shown(page, 'SEEDEND', 'messages', 20000);
-  await settle(1500);
+  await calm(1500);
   await assertFollowing(page, 'after reload');
   const p = await update(page, () => chat.say('\n\nAfter reload RELOADREPLY'), 'RELOADREPLY');
   assert(!p, p);
@@ -687,7 +688,7 @@ async function openSubagent(lab: Lab): Promise<(step: Record<string, unknown>) =
   await page.waitFor(`!!document.querySelector('#projectActivity button[data-key="child-1"]')`, 15000, 'subagent card');
   await clickHere(page, '#projectActivity button[data-key="child-1"]');
   await shown(page, 'Child read 24', 'submessages');
-  await settle();
+  await calm();
   return child;
 }
 
@@ -712,17 +713,17 @@ scrollTest('7b subagent view, scrolled up: updates do not move what you read; ba
   const page = lab.page;
   const child = await openSubagent(lab);
   await wheel(page, -600, 'submessages');
-  await settle(300);
+  await calm(300);
   const before = await anchor(page, 'submessages');
   const x0 = await m(page, 'submessages');
   assert(x0.paused, 'paused');
   child({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '\n\nWhile up SUBWHILEUP' } });
   await shown(page, 'SUBWHILEUP', 'submessages');
-  await settle(1200);
+  await calm(1200);
   const now = await whereIs(page, before!.text, 'submessages');
   assert(now !== null && Math.abs(now - before!.off) <= 1, `the row you read moved from ${before!.off} to ${now}`);
   await wheel(page, 5000, 'submessages');
-  await settle(400);
+  await calm(400);
   await assertFollowing(page, 'back at the end', 'submessages');
   const p = await update(page, () => child({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '\n\nAfter coming back SUBBACK' } }), 'SUBBACK', 'submessages');
   assert(!p, p);
@@ -740,9 +741,9 @@ async function streamWhileReading(page: Page, chat: Chat, n: number, tag: string
       chat.say(`Reply ${tag}${i} ` + 'words '.repeat(20));
     }
     await shown(page, `${tag}${i}`);
-    await settle(700);
+    await calm(700);
   }
-  await settle(800);
+  await calm(800);
   const frames = await stopFrames(page);
   return { tops: [...new Set(frames.map((f) => f.top))], resumed: frames.filter((f) => !f.paused).length, end: await m(page) };
 }
@@ -751,7 +752,7 @@ scrollTest('8a one wheel notch up while updates stream: follow stops at once and
   const page = lab.page;
   const chat = await openSeeded(lab);
   await wheel(page, -100);
-  await settle(300);
+  await calm(300);
   const x0 = await m(page);
   assert(x0.paused && x0.gap >= 90, `one notch up pauses: ${JSON.stringify(x0)}`);
   const r = await streamWhileReading(page, chat, 3, 'NOTCH');
@@ -768,7 +769,7 @@ scrollTest('8b small smooth-scroll ticks up (15 px each, 45 px total) stop follo
   const page = lab.page;
   const chat = await openSeeded(lab);
   for (let i = 0; i < 3; i++) await wheel(page, -15);
-  await settle(300);
+  await calm(300);
   const x0 = await m(page);
   assert(x0.paused && x0.gap >= 40 && x0.gap <= 48, `three 15 px ticks up: paused, 40-48 px from the bottom: ${JSON.stringify(x0)}`);
   const r = await streamWhileReading(page, chat, 3, 'TICK', true);
@@ -857,10 +858,10 @@ scrollTest('8c scrolling back down partway (not to the bottom) stays paused; upd
   const page = lab.page;
   const chat = await openSeeded(lab);
   await wheel(page, -600);
-  await settle(300);
+  await calm(300);
   await wheel(page, 300);
   await wheel(page, 280);
-  await settle(300);
+  await calm(300);
   const x0 = await m(page);
   assert(x0.paused && x0.gap >= 10, `partway back down: still paused, ${x0.gap} px from the bottom: ${JSON.stringify(x0)}`);
   const r = await streamWhileReading(page, chat, 2, 'PART');
@@ -871,14 +872,14 @@ scrollTest('8d wheeling down to the very bottom resumes following', async (lab) 
   const page = lab.page;
   const chat = await openSeeded(lab);
   await wheel(page, -600);
-  await settle(300);
+  await calm(300);
   chat.tool('wd', 'Arrives while up', 'completed');
   chat.say('Arrives while up WHEELUP');
   await shown(page, 'WHEELUP');
-  await settle();
+  await calm();
   assert((await m(page)).paused, 'paused while up');
   for (let i = 0; i < 8; i++) await wheel(page, 120);
-  await settle(500);
+  await calm(500);
   await assertFollowing(page, 'wheeled down to the bottom');
   const p = await update(page, () => chat.say('\n\nAfter wheeling down WHEELDOWN'), 'WHEELDOWN');
   assert(!p, p);
@@ -894,10 +895,10 @@ async function jumpButton(lab: Lab, words: number) {
     chat.say(`Jump reply ${i} JUMP${i} ` + 'words '.repeat(words));
   }
   await shown(page, 'JUMP1');
-  await settle();
+  await calm();
   assert((await m(page)).jump === '2 new messages ↓', `button: ${(await m(page)).jump}`);
   await clickHere(page, '#jumpNew');
-  await settle(600);
+  await calm(600);
   return chat;
 }
 
@@ -909,7 +910,7 @@ scrollTest('8e jump button, long unread part: "2 new messages ↓" puts the New 
   assert(line !== null && line >= 0 && line <= 20, `first click puts the New line at the top: ${line} (${JSON.stringify(x1)})`);
   assert(x1.paused && x1.jump === '↓ Latest', `then the button reads "↓ Latest": ${JSON.stringify(x1)}`);
   await clickHere(page, '#jumpNew');
-  await settle(600);
+  await calm(600);
   await assertFollowing(page, 'after "↓ Latest"');
   const p = await update(page, () => chat.say('\n\nAfter Latest AFTERLATEST'), 'AFTERLATEST');
   assert(!p, p);
@@ -961,7 +962,7 @@ scrollTest('9b saved chat being written, scrolled up: new rows do not move what 
   const page = lab.page;
   const s = await openSavedGrowing(lab);
   await wheel(page, -800);
-  await settle(400);
+  await calm(400);
   const before = await anchor(page);
   const x0 = await m(page);
   await startFrames(page);
@@ -999,10 +1000,10 @@ async function openSplit(lab: Lab) {
   await shown(page, 'ALPHAEND');
   await lab.select(b);
   await shown(page, 'BETAEND');
-  await settle(800);
+  await calm(800);
   await page.eval(`AgentSplitUI.splitTab(${JSON.stringify(a.key)}, 'row')`);
   await page.waitFor(`document.querySelectorAll('.mirror-msgs').length === 1 && document.querySelector('.mirror-msgs').children.length > 5`, 15000, 'a side pane with a copy of a chat');
-  await settle(1500);
+  await calm(1500);
   const key = await page.eval<string>(`document.querySelector('.mirror-msgs').dataset.mirror`);
   return { a, b, side: key === a.key ? a : b, main: key === a.key ? b : a };
 }
@@ -1034,16 +1035,16 @@ scrollTest('B1 two subagents: scrolled up in one, the next one opens at its bott
   await page.waitFor(`document.querySelectorAll('#projectActivity button[data-key^="child-"]').length >= 2`, 15000, 'two subagent cards');
   await clickHere(page, '#projectActivity button[data-key="child-1"]');
   await shown(page, 'Helper 1 read 24', 'submessages');
-  await settle();
+  await calm();
   await wheel(page, -600, 'submessages');
-  await settle(400);
+  await calm(400);
   const before = await anchor(page, 'submessages');
   assert(before && (await m(page, 'submessages')).paused, 'reading in the first helper');
   await clickHere(page, '#subchatBack');
   await page.waitFor(`!document.body.classList.contains('subchat-open')`, 8000, 'the history closed');
   await clickHere(page, '#projectActivity button[data-key="child-2"]');
   await shown(page, 'Helper 2 read 24', 'submessages');
-  await settle();
+  await calm();
   await assertFollowing(page, 'the second helper opened', 'submessages');
   const p = await update(page, () => child(2, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '\n\nSecond helper goes on SECONDHELPER' } }), 'SECONDHELPER', 'submessages');
   assert(!p, `the second helper does not follow: ${p}`);
@@ -1052,7 +1053,7 @@ scrollTest('B1 two subagents: scrolled up in one, the next one opens at its bott
   await startRowFrames(page, before!.text, 'submessages');
   await clickHere(page, '#projectActivity button[data-key="child-1"]');
   await shown(page, 'Helper 1 read 24', 'submessages');
-  await settle();
+  await calm();
   const drawn = rowFramesProblems(await stopRowFrames(page), before!, 2);
   const now = await whereIs(page, before!.text, 'submessages');
   assert(now !== null && Math.abs(now - before!.off) <= 2, `back in the first helper the row you read is at ${now}, was ${before!.off}`);
@@ -1067,7 +1068,7 @@ scrollTest("B2 split view: clicking into the other pane keeps both panes' places
   await openSplit(lab);
   for (let i = 0; i < 6; i++) await wheel(page, -150, 'messages');
   for (let i = 0; i < 6; i++) await wheel(page, -150, MIRROR);
-  await settle(600);
+  await calm(600);
   const mainBefore = await anchor(page, 'messages'), sideBefore = await anchor(page, MIRROR);
   assert(mainBefore && sideBefore, 'a row at the top of each pane');
   await clickHere(page, OTHER_HEAD);
@@ -1087,7 +1088,7 @@ scrollTest('B3 split side pane read 30 px above the bottom: the next update does
   const page = lab.page;
   const { side } = await openSplit(lab);
   await wheel(page, -30, MIRROR);
-  await settle(400);
+  await calm(400);
   const x0 = await m(page, MIRROR);
   assert(x0.gap >= 20, `the side pane is a little above its end: ${JSON.stringify(x0)}`);
   await startFrames(page, MIRROR);
@@ -1118,17 +1119,17 @@ scrollTest('B4a "Show earlier" over long code blocks: the row under the button n
   chat.say('CODEEARLYEND');
   await lab.select(chat);
   await shown(page, 'CODEEARLYEND');
-  await settle();
+  await calm();
   await page.waitFor('!!document.querySelector("#messages .show-earlier")', 5000, 'Show earlier button');
   await scrollBy(page, -1e6);
-  await settle(400);
+  await calm(400);
   const row = await page.eval<{ text: string; off: number }>(`(() => {
     const b = document.getElementById('messages'), e = b.querySelector('.show-earlier').nextElementSibling;
     return { text: e.textContent.replace(/\\s+/g, ' ').slice(0, 80), off: Math.round(e.getBoundingClientRect().top - b.getBoundingClientRect().top) };
   })()`);
   await startRowFrames(page, row.text);
   await clickHere(page, '#messages .show-earlier');
-  await settle(1200);
+  await calm(1200);
   const drawn = rowFramesProblems(await stopRowFrames(page), row, 1);
   assert(!drawn, drawn);
 });
@@ -1143,16 +1144,16 @@ scrollTest('B4b scrolled up over long code blocks, Full -> Chat: the row you rea
   chat.say('CODEVIEWEND');
   await lab.select(chat);
   await shown(page, 'CODEVIEWEND');
-  await settle();
+  await calm();
   for (let i = 0; i < 8; i++) await wheel(page, -150);
-  await settle(400);
+  await calm(400);
   // put a message (drawn in both views) exactly at the top of the view
   await page.eval(`(() => {
     const b = document.getElementById('messages'), top = b.getBoundingClientRect().top;
     const e = [...b.children].find((x) => x.matches('.bubble.assistant') && x.getBoundingClientRect().top >= top);
     b.scrollTop += e.getBoundingClientRect().top - top;
   })()`);
-  await settle(400);
+  await calm(400);
   const before = await anchor(page);
   assert(before && Math.abs(before.off) <= 1, `a message at the top: ${JSON.stringify(before)}`);
   await startRowFrames(page, before!.text);
@@ -1176,7 +1177,7 @@ scrollTest('B5 pictures in steps above you load as you scroll up: the row you re
   chat.say('PICTURESEND');
   await lab.select(chat);
   await shown(page, 'PICTURESEND');
-  await settle(1500);
+  await calm(1500);
   const problems: string[] = [];
   for (let n = 0; n < 12; n++) {
     // move up the way a scrollbar drag does, and take the row at the top at once (before any picture above has loaded)
@@ -1220,7 +1221,7 @@ scrollTest('B6 saved chat with older pages: a redraw while you read never dips t
   assert(!(await page.eval<boolean>('!!document.querySelector("#messages .load-history")')), 'no Load earlier button');
   await settle(2000);
   await wheel(page, -800);
-  await settle(400);
+  await calm(400);
   const before = await anchor(page);
   await startRowFrames(page, before!.text);
   s.say('While you read SAVEDDIP');
@@ -1235,7 +1236,7 @@ scrollTest('B6 saved chat with older pages: a redraw while you read never dips t
   const top = await anchor(page);
   await startRowFrames(page, top!.text);
   await page.waitFor(`Math.min(...[...window.StudioChat.state.historyWindows.values()].map((w) => w.start)) < ${start0}`, 8000, 'the older page');
-  await settle(1000);
+  await calm(1000);
   const loaded = rowFramesProblems(await stopRowFrames(page), top!, 1);
   assert(!loaded, `older page: ${loaded}`);
   assert((await startOf()) < start0, 'the older page loaded');
@@ -1255,11 +1256,11 @@ scrollTest('B7 an opened "Thoughts" stays the only one open when the window slid
   chat.say('THOUGHTSEND');
   await lab.select(chat);
   await shown(page, 'THOUGHTSEND');
-  await settle();
+  await calm();
   await clickHere(page, '#messages > details.thoughts > summary');
-  await settle(400);
+  await calm(400);
   await page.key('End');
-  await settle(600);
+  await calm(600);
   const open0 = await page.eval<number>(`document.querySelectorAll('#messages details.thoughts[open]').length`);
   assert(open0 === 1, `one Thoughts open after the click: ${open0}`);
   for (let k = 0; k < 2; k++) {
@@ -1267,7 +1268,7 @@ scrollTest('B7 an opened "Thoughts" stays the only one open when the window slid
     chat.step({ u: { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: `Sliding thought ${k}.` } } });
     chat.say(`Slide reply SLIDE${k}`);
     await shown(page, `SLIDE${k}`);
-    await settle(800);
+    await calm(800);
   }
   const open = await page.eval<string[]>(`[...document.querySelectorAll('#messages details.thoughts[open]')].map((d) => d.textContent.slice(0, 40))`);
   assert(open.length === 1, `Thoughts open after the window slid: ${open.length} (${open.join(' | ')})`);
@@ -1279,14 +1280,14 @@ scrollTest('B8 subagent view and split panes: no browser scroll anchoring, the r
   const page = lab.page;
   const child = await openSubagent(lab);
   await wheel(page, -600, 'submessages');
-  await settle(400);
+  await calm(400);
   const before = await anchor(page, 'submessages');
   await startRowFrames(page, before!.text, 'submessages');
   for (let k = 0; k < 3; k++) {
     child({ sessionUpdate: 'tool_call', toolCallId: `b8-${k}`, title: `Anchor step ${k}`, kind: 'execute', status: 'completed', rawOutput: 'o\n'.repeat(30) });
     child({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `\n\nAnchor reply B8REPLY${k} ` + 'words '.repeat(60) } });
     await shown(page, `B8REPLY${k}`, 'submessages');
-    await settle(700);
+    await calm(700);
   }
   const drawn = rowFramesProblems(await stopRowFrames(page), before!, 1);
   const anchoring = await page.eval<string>(`getComputedStyle(document.getElementById('submessages')).overflowAnchor`);
@@ -1303,12 +1304,12 @@ scrollTest('B9a a scroll right after a view switch counts: following stops and s
   const chat = await openSeeded(lab);
   await clickHere(page, '#viewSwitch button[data-view="chat"]');
   const top = await scrollBy(page, -400);
-  await settle(1500);
+  await calm(1500);
   const x0 = await m(page);
   assert(x0.paused && x0.gap >= 350, `scrolled up right after the switch: ${JSON.stringify(x0)} (moved to ${top})`);
   chat.say('\n\nAfter the switch B9AREPLY');
   await shown(page, 'B9AREPLY');
-  await settle(1200);
+  await calm(1200);
   const x1 = await m(page);
   assert(x1.paused && x1.top === x0.top, `the update pulled the list: ${JSON.stringify(x0)} -> ${JSON.stringify(x1)}`);
 });
@@ -1321,12 +1322,12 @@ scrollTest('B9b a scroll while the right column slides open counts: following st
   chat.say(`\n\nHere is the page: [Slide page](studio-artifact://${made.id}) SLIDEPAGE`);
   await shown(page, 'SLIDEPAGE');
   await page.waitFor(`!!document.querySelector('#messages a.artifact-link')`, 15000, 'the artifact link');
-  await settle(800);
+  await calm(800);
   await clickHere(page, '#messages a.artifact-link');
   await sleep(60);
   await scrollBy(page, -500);
   await page.waitFor(`document.body.classList.contains('ar-viewing')`, 10000, 'the viewer open');
-  await settle(1500);
+  await calm(1500);
   const x = await m(page);
   assert(x.paused && x.gap >= 300, `scrolled up while the column slid: ${JSON.stringify(x)}`);
   chat.end();
@@ -1351,7 +1352,7 @@ scrollTest('Q6 back to a chat you were reading: it opens where you were, with th
   const page = lab.page;
   const a = await openSeeded(lab, 30);
   for (let i = 0; i < 6; i++) await wheel(page, -150);
-  await settle(500);
+  await calm(500);
   const before = await anchor(page);
   assert(before && (await m(page)).paused, 'reading the first chat');
   const b = await lab.chat();
@@ -1359,7 +1360,7 @@ scrollTest('Q6 back to a chat you were reading: it opens where you were, with th
   b.say('The other chat OTHERQ6');
   await lab.select(b);
   await shown(page, 'OTHERQ6');
-  await settle();
+  await calm();
   for (let i = 0; i < 2; i++) {
     a.tool(`q6-${i}`, `Step while away ${i}`, 'completed');
     a.say(`While away ${i} AWAYQ6${i} ` + 'words '.repeat(40));
@@ -1368,7 +1369,7 @@ scrollTest('Q6 back to a chat you were reading: it opens where you were, with th
   await startRowFrames(page, before!.text);
   await lab.select(a);
   await shown(page, 'AWAYQ61');
-  await settle(1200);
+  await calm(1200);
   const drawn = rowFramesProblems(await stopRowFrames(page), before!, 2);
   const now = await whereIs(page, before!.text);
   const x = await m(page);
@@ -1387,7 +1388,7 @@ scrollTest('Q7 reading midway, AIB restarts (a fresh browser profile): the chat 
   const page = lab.page;
   const chat = await openSeeded(lab, 30);
   for (let i = 0; i < 6; i++) await wheel(page, -150);
-  await settle(1500);
+  await calm(1500);
   const before = await anchor(page);
   assert(before && (await m(page)).paused, 'reading');
   await page.eval('localStorage.clear(); sessionStorage.clear()');
@@ -1395,7 +1396,7 @@ scrollTest('Q7 reading midway, AIB restarts (a fresh browser profile): the chat 
   await page.waitFor('!!document.getElementById("messages")', 15000, 'chat page');
   await lab.select(chat);
   await shown(page, 'SEEDEND', 'messages', 20000);
-  await settle(1500);
+  await calm(1500);
   const now = await whereIs(page, before!.text);
   const x = await m(page);
   assert(now !== null && Math.abs(now - before!.off) <= 2 && x.paused, `after the restart the row you read is at ${now} (was ${before!.off}), paused ${x.paused}`);
@@ -1454,7 +1455,7 @@ scrollTest('R1 a saved place whose ids were given again opens on the same text; 
   await page.waitFor('!!document.getElementById("messages")', 15000, 'chat page');
   await lab.select(chat);
   await shown(page, 'SEEDEND');
-  await settle(1500);
+  await calm(1500);
   const now = await whereIs(page, before!.text);
   assert(now !== null && Math.abs(now - before!.off) <= 2, `opened on the same text: at ${now}, was ${before!.off}`);
   // a place that matches no row at all: the opening rule (nothing unread: the end, following)
@@ -1463,7 +1464,7 @@ scrollTest('R1 a saved place whose ids were given again opens on the same text; 
   await page.waitFor('!!document.getElementById("messages")', 15000, 'chat page');
   await lab.select(chat);
   await shown(page, 'SEEDEND');
-  await settle(1500);
+  await calm(1500);
   await assertFollowing(page, 'a place that is gone');
 });
 
@@ -1476,13 +1477,13 @@ scrollTest('R2 a saved place near the top of a long chat: the list draws a cappe
   chat.say('LONGEND');
   await lab.select(chat);
   await shown(page, 'LONGEND');
-  await settle();
+  await calm();
   await putPlace(page, chat.key, `p[k] = { mode: 'anchor', rid: 'L:4', off: 0, h: 50, w: 900 }`);
   await page.goto(`http://127.0.0.1:${lab.web.port}/chat.html`);
   await page.waitFor('!!document.getElementById("messages")', 15000, 'chat page');
   await lab.select(chat);
   await shown(page, 'LONGEND');
-  await settle(1500);
+  await calm(1500);
   const drawn = await page.eval<number>(`document.getElementById('messages').children.length`);
   assert(drawn <= 320, `drew ${drawn} rows for a place 450 rows up`);
 });
@@ -1496,21 +1497,21 @@ scrollTest('R3 reading a short chat, then back to a long one you were reading: t
   long.say('LONGCHATEND');
   await lab.select(long);
   await shown(page, 'LONGCHATEND');
-  await settle();
+  await calm();
   for (let i = 0; i < 4; i++) await wheel(page, -150);
-  await settle(500);
+  await calm(500);
   const short = await lab.chat();
   await short.start();
   seed(short, 8, 'Short');
   short.say('SHORTEND');
   await lab.select(short);
   await shown(page, 'SHORTEND');
-  await settle();
+  await calm();
   await wheel(page, -300);
-  await settle(500);
+  await calm(500);
   await lab.select(long);
   await shown(page, 'LONGCHATEND');
-  await settle(1200);
+  await calm(1200);
   const drawn = await page.eval<number>(`document.getElementById('messages').children.length`);
   assert(drawn <= 170, `the long chat drew ${drawn} rows (its window is 150)`);
   assert((await m(page)).paused, 'still where you were reading');
@@ -1521,7 +1522,7 @@ scrollTest('R4 reading, Full -> Chat -> Full with nothing new: no "↓ Latest" b
   const page = lab.page;
   await openSeeded(lab, 30);
   for (let i = 0; i < 6; i++) await wheel(page, -150);
-  await settle(500);
+  await calm(500);
   assert((await m(page)).jump === null, 'no button after scrolling up');
   await setView(page, 'chat');
   await setView(page, 'full');
@@ -1535,11 +1536,11 @@ scrollTest('R5 Ctrl+wheel over a following chat keeps it following', async (lab)
   const chat = await openSeeded(lab, 30);
   const [x, y] = await page.eval<[number, number]>(`(() => { const r = document.getElementById('messages').getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
   await page.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x, y, deltaX: 0, deltaY: -100, modifiers: 2 });
-  await settle(800);
+  await calm(800);
   const x0 = await m(page);
   assert(!x0.paused && x0.gap <= 1, `still following after Ctrl+wheel: ${JSON.stringify(x0)}`);
   await page.eval('AgentTextSize.setChat(100)'); // (the probe's row boxes are not comparable under the chat zoom)
-  await settle(800);
+  await calm(800);
   await assertFollowing(page, 'after Ctrl+wheel');
   const p = await update(page, () => chat.say('\n\nAfter the zoom CTRLWHEEL'), 'CTRLWHEEL');
   assert(!p, p);
@@ -1551,12 +1552,12 @@ scrollTest('R6 reading midway, the chat text size changes: the place is still th
   const page = lab.page;
   await openSeeded(lab, 30);
   for (let i = 0; i < 6; i++) await wheel(page, -150);
-  await settle(500);
+  await calm(500);
   const s0 = await page.eval<string>(`document.getElementById('messages')._scrollCtl.state.rid`);
   await page.eval('AgentTextSize.setChat(130)');
-  await settle(1000);
+  await calm(1000);
   await page.eval('AgentTextSize.setChat(100)');
-  await settle(1000);
+  await calm(1000);
   const s1 = await page.eval<string>(`document.getElementById('messages')._scrollCtl.state.rid`);
   assert(s0 && s1 === s0, `the place moved from ${s0} to ${s1}`);
 });
@@ -1567,13 +1568,13 @@ scrollTest('R7 split view: click into the other pane three times, both keep thei
   await openSplit(lab);
   for (let i = 0; i < 6; i++) await wheel(page, -150, 'messages');
   for (let i = 0; i < 4; i++) await wheel(page, -150, MIRROR);
-  await settle(600);
+  await calm(600);
   let mainA = await anchor(page, 'messages'), sideA = await anchor(page, MIRROR);
   const problems: string[] = [];
   for (let k = 0; k < 3; k++) {
     await clickHere(page, OTHER_HEAD);
     await page.waitFor(`document.getElementById('messages').textContent.includes(${JSON.stringify(sideA!.text.slice(0, 30))})`, 15000, 'the panes swapped');
-    await settle(1500);
+    await calm(1500);
     // the copy held over the pane that took focus goes as soon as the real view shows the same (split-ui.js hold), not after 2 s
     if (await page.eval<boolean>(`!!document.querySelector('.mirror-hold')`)) problems.push(`switch ${k + 1}: the held copy still lies over the real view`);
     const nowMain = await whereIs(page, sideA!.text, 'messages'), nowSide = await whereIs(page, mainA!.text, MIRROR);
@@ -1596,7 +1597,7 @@ scrollTest('R8 "Show earlier" while a reply streams stops following; "↓ Latest
   chat.say('EARLIERSTREAM');
   await lab.select(chat);
   await shown(page, 'EARLIERSTREAM');
-  await settle();
+  await calm();
   const stop = pump(chat, 'EARLYPUMP');
   try {
   await settle(600);
@@ -1619,7 +1620,7 @@ scrollTest('R8 "Show earlier" while a reply streams stops following; "↓ Latest
   } finally {
     await stop(); // a failed check must not leave updates going into the next test
   }
-  await settle(800);
+  await calm(800);
   await assertFollowing(page, 'after ↓ Latest');
 });
 
@@ -1676,7 +1677,7 @@ scrollTest('G2 a smooth scroll down to the end of a fast stream follows again, t
   const page = lab.page;
   const chat = await openSeeded(lab);
   await wheel(page, -800);
-  await settle(400);
+  await calm(400);
   assert((await m(page)).paused, 'reading above');
   const stop = pump(chat, 'CATCHUP');
   await settle(500);
@@ -1711,7 +1712,7 @@ async function readThroughTrim(lab: Lab, burst: (chat: Chat, b: number) => void,
   const page = lab.page;
   const chat = await openSeeded(lab);
   await wheel(page, -600);
-  await settle(600);
+  await calm(600);
   const before = await anchor(page);
   const x0 = await m(page);
   assert(before && x0.paused && x0.top > 1000, `reading above the end: ${JSON.stringify(x0)}`);
@@ -1723,7 +1724,7 @@ async function readThroughTrim(lab: Lab, burst: (chat: Chat, b: number) => void,
     chat.say(`\n\nBatch ${b} done BATCH${b}`);
     // arrived in the chat's rows: while you read far up, rows far below your place are not drawn (chat.js showRows)
     await page.waitFor(`!!window.StudioChat?.mainRowsHave(${JSON.stringify(`BATCH${b}`)})`, 30000, `BATCH${b} in the chat's rows`);
-    await settle(1200);
+    await calm(1200);
     const rows = rowFramesProblems(await stopRowFrames(page), before!, 2);
     const low = (await stopFrames(page)).filter((f) => f.top < x0.top - 50);
     const x = await m(page);

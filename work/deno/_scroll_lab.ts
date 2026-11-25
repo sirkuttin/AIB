@@ -114,6 +114,8 @@ export class Lab {
       lab.browser = FRESH ? await Browser.launch() : await sharedBrowser();
       lab.page = await lab.browser.open('about:blank', width, height);
       await lab.page.send('Page.addScriptToEvaluateOnNewDocument', { source: OWNER_GUARD });
+      await lab.page.send('Page.addScriptToEvaluateOnNewDocument', { source: CALM_SCRIPT });
+      calmPage = lab.page;
       // fastPoll: the page polls the chat, side panes and Activity every FAST_POLL_MS instead of every 1.5 s (chat.js reads
       // window.__aibTestPollMs; the app default is unchanged), so a test waits for an update ~1 s less. AIB_FAST_POLL=0 turns it off.
       // fastList: only the conversation list's 5 s poll (how the page learns of a chat the test made through the server) runs
@@ -244,6 +246,7 @@ export class Lab {
         await this.page.send('Storage.clearDataForOrigin', { origin: `http://127.0.0.1:${this.web.port}`, storageTypes: 'all' });
       } catch { /* the tab is gone */ }
     }
+    if (calmPage === this.page) calmPage = null;
     try {
       await this.page?.close();
     } catch { /* gone */ }
@@ -370,6 +373,70 @@ export function rowFramesProblems(frames: ({ off: number; h: number } | null)[],
 
 /** Let pending timers (holdAnchor 60/250/800 ms, the 600 ms touch window) and a poll or two run out. */
 export const settle = (ms = 1000) => sleep(ms);
+
+/** Injected into every Lab page (test only; the app has none of it): counts the page's pending short timers (setTimeout, 1 s or
+ *  less: holdAnchor 60/250/800, the touch window, 0 ms wakes), unfinished fetches and running finite animations, and marks the
+ *  last time anything changed (DOM mutation, scroll in any element, size of the page or the list). `__calmWait` resolves when
+ *  none is pending and nothing changed for `still` ms. */
+export const CALM_SCRIPT = `(() => {
+  if (window.__calm) return;
+  const c = (window.__calm = { timers: 0, fetches: 0, last: performance.now() });
+  const live = new Set();
+  const st = window.setTimeout.bind(window), ct = window.clearTimeout.bind(window);
+  window.setTimeout = (fn, ms, ...a) => {
+    if (typeof fn !== 'function' || !(Number(ms) <= 1000 || ms == null)) return st(fn, ms, ...a);
+    const id = st(() => { if (live.delete(id)) c.timers--; fn(...a); }, ms);
+    live.add(id); c.timers++;
+    return id;
+  };
+  window.clearTimeout = (id) => { if (live.delete(id)) c.timers--; ct(id); };
+  const f0 = window.fetch.bind(window);
+  window.fetch = (...a) => { c.fetches++; const p = f0(...a); const d = () => { c.fetches--; }; p.then(d, d); return p; };
+  const bump = () => { c.last = performance.now(); };
+  addEventListener('scroll', bump, true);
+  addEventListener('DOMContentLoaded', () => {
+    new MutationObserver(bump).observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+    const ro = new ResizeObserver(bump);
+    ro.observe(document.documentElement); ro.observe(document.body);
+    const box = document.getElementById('messages'); if (box) ro.observe(box);
+  });
+  const busy = () => c.timers > 0 || c.fetches > 0 || document.getAnimations().some((x) => x.playState === 'running' && x.effect && x.effect.getComputedTiming().iterations !== Infinity);
+  window.__calmWait = (min, cap, still) => new Promise((done) => {
+    const t0 = performance.now();
+    const tick = () => {
+      const now = performance.now();
+      let quiet = false;
+      try { quiet = now - t0 >= min && !busy() && now - c.last >= still; } catch { quiet = true; }
+      if (now - t0 >= cap || quiet) return done(now - t0);
+      st(tick, 16);
+    };
+    tick();
+  });
+})()`;
+
+/** The page of the Lab that is open (a test file runs its tests one after another, one Lab at a time). */
+let calmPage: Page | null = null;
+
+/** Like settle(ms), but ends as soon as the page is quiet: no short timer, fetch or animation pending and nothing changed (DOM,
+ *  scroll, sizes) for 120 ms, never before 150 ms and never after `ms`. For waits that follow something the test did to the
+ *  page; a wait for work the agent or the server is still delivering stays a settle(). */
+export async function calm(ms = 1000): Promise<void> {
+  const page = calmPage;
+  if (!page || ms <= 150) {
+    await sleep(ms);
+    return;
+  }
+  const t0 = Date.now();
+  try {
+    // never longer than the old fixed wait plus a margin: a page that cannot answer ends the wait, it does not hang the test
+    await Promise.race([
+      page.eval(`window.__calmWait ? window.__calmWait(150, ${ms}, 120) : new Promise((r) => setTimeout(r, ${ms}))`),
+      sleep(ms + 3000),
+    ]);
+  } catch {
+    await sleep(Math.max(0, ms - (Date.now() - t0))); // the page navigated while waiting: the old fixed wait
+  }
+}
 
 /** Scroll the list by a wheel gesture at its centre (a real input event, so the page sees you reading). */
 export async function wheel(page: Page, dy: number, box = 'messages'): Promise<void> {
