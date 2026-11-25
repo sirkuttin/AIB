@@ -503,6 +503,10 @@ export class Aib {
       if (s.error) throw new Error(String(s.error));
       return s.ready;
     }, 'chat ready');
+    // Claude Code adapters from 0.102 start a session in Auto mode, whose safety check the stub cannot answer (every Bash call is
+    // refused). The tests run in the default mode (approval cards, which approveAll answers), as the 0.97 adapter did.
+    const [modeCode, modeBody] = await aib.web.post('mode', { id: aib.chat.id, modeId: 'default' });
+    assertEquals(modeCode, 200, JSON.stringify(modeBody));
     return aib;
   }
 

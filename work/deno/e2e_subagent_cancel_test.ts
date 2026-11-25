@@ -138,10 +138,14 @@ Deno.test({
     const msg = uuid();
     let [code, queued] = await aib.web.post('queue', { id: chat.id, text: 'SN-NOW read this', clientMessageId: msg });
     assertEquals(code, 200, JSON.stringify(queued));
-    let sent: Json;
-    [code, sent] = await aib.web.post('queue-send-now', { id: chat.id, messageId: msg });
-    assertEquals(code, 200, JSON.stringify(sent));
-    assert(sent.steered, JSON.stringify(sent));
+    // Where the agent can steer, the queue route already sent the message mid-turn (queued: false); only a message that still waits
+    // in the queue needs Send now.
+    if (queued.queued !== false) {
+      let sent: Json;
+      [code, sent] = await aib.web.post('queue-send-now', { id: chat.id, messageId: msg });
+      assertEquals(code, 200, JSON.stringify(sent));
+      assert(sent.steered, JSON.stringify(sent));
+    }
     await aib.wait('the lead to read the message mid-turn', async () => (await updates(chat)).includes('LEAD-READ-IT'), 120);
     assert(!(await turnEnds(chat)).includes('cancelled'), 'Send now must not stop the turn');
     const sentToModel = dumped(aib.stub);
