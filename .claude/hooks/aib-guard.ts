@@ -103,7 +103,9 @@ async function stop(input: Json): Promise<void> {
     return block('dirty', `you have uncommitted changes in ${cwd}. Commit them or remove scratch files, then finish.`);
   }
   const head = (await git(cwd, 'rev-parse', 'HEAD'))?.trim() ?? '';
-  const own = Number((await git(cwd, 'rev-list', '--count', 'main..HEAD'))?.trim() ?? '0');
+  // AIB's own "AIB snapshot" commit (the main folder's uncommitted files at the start) is not the builder's work
+  const subjects = (await git(cwd, 'log', '--format=%s', 'main..HEAD')) ?? '';
+  const own = subjects.split('\n').filter((s) => s.trim() && s.trim() !== 'AIB snapshot').length;
   if (!head || !own) return; // no commits of its own: a research or read-only run
   let logged = false;
   try {
