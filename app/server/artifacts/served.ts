@@ -44,9 +44,24 @@ export function promptHash(prompt: string): string {
 export class ServedRecord {
   readonly #path: string;
   #all: Record<string, Served> | null = null;
+  #sig = '';
 
   constructor(stateDir: string, private readonly app: string, private readonly clock: () => number = Date.now) {
     this.#path = pathOf(stateDir, SERVED_FILE);
+  }
+
+  /** The file's size and time: the record is re-read only when another writer changed it (a stat per call, not a read and parse). */
+  #stat(): string {
+    try {
+      const info = Deno.statSync(this.#path);
+      return `${info.size}:${info.mtime?.getTime() ?? 0}`;
+    } catch {
+      return '';
+    }
+  }
+
+  #refresh(): void {
+    if (this.#all && this.#stat() !== this.#sig) this.#all = null;
   }
 
   #load(): Record<string, Served> {
@@ -58,6 +73,7 @@ export class ServedRecord {
         for (const [id, value] of Object.entries(raw)) if (isDict(value)) all[id] = value as unknown as Served;
       }
     } catch { /* unreadable: start clean */ }
+    this.#sig = this.#stat();
     return (this.#all = all);
   }
 
@@ -69,18 +85,19 @@ export class ServedRecord {
     }
     try {
       saveJson(this.#path, all, '.served-tools-');
+      this.#sig = this.#stat();
     } catch { /* the record is a hint: a failed write never fails a tool call */ }
   }
 
   /** The record of one chat, or null. Re-read from the file, so a record another AIB wrote shows. */
   get(id: string): Served | null {
-    this.#all = null;
+    this.#refresh();
     return this.#load()[id] ?? null;
   }
 
   /** A tools/list answered these tool names to the chat. */
   tools(id: string, names: string[]): void {
-    this.#all = null; // another AIB (an update's) may have written since
+    this.#refresh(); // another AIB (an update's) may have written since
     const all = this.#load();
     const hash = toolsHash(names);
     const entry = all[id] ?? (all[id] = { app: this.app });
@@ -92,7 +109,7 @@ export class ServedRecord {
 
   /** The chat was sent this AIB system prompt text ('' = none). */
   prompt(id: string, text: string, base?: string): void {
-    this.#all = null;
+    this.#refresh();
     const all = this.#load();
     const hash = promptHash(text);
     const entry = all[id] ?? (all[id] = { app: this.app });
@@ -109,7 +126,7 @@ export class ServedRecord {
 
   /** Note a restart attempt (written before it starts, so a crash in it counts as the one try). */
   restartNoted(id: string, ok: boolean, error?: string): void {
-    this.#all = null;
+    this.#refresh();
     const all = this.#load();
     const entry = all[id] ?? (all[id] = { app: this.app });
     entry.restart = { app: this.app, at: this.clock(), ok, ...(error ? { error: error.slice(0, 300) } : {}) };

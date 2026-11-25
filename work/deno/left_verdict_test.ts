@@ -4,7 +4,7 @@
  * unknown, errored, timed-out and missing-branch cases are 'unknown' (not listed). Real git repositories in a temp folder.
  */
 import { assertEquals } from './_assert.ts';
-import { leftVerdict, projectChanges, type Target } from '../../app/server/worktrees/project_changes.ts';
+import { leftVerdict, projectChanges, settleChecks, type Target } from '../../app/server/worktrees/project_changes.ts';
 
 function git(cwd: string, ...args: string[]): string {
   const o = new Deno.Command('git', { args: ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'core.autocrlf=false', ...args], cwd, stdout: 'piped', stderr: 'piped' })
@@ -31,7 +31,11 @@ function fixture() {
     git(path, 'commit', '-q', '-m', 'work of ' + name);
     return { id: name, kind: 'subagent', name: title, parent: { live: '', lasting: '' }, provider: '', branch: `studio/${name}`, path, base: '', state: 'left', why, working: false };
   };
-  return { root, repo, builder, done: () => Deno.removeSync(root, { recursive: true }) };
+  // (the numbers of an unlanded builder are counted in the background: let them end before the folders go)
+  return { root, repo, builder, done: async () => {
+    await settleChecks();
+    Deno.removeSync(root, { recursive: true });
+  } };
 }
 
 Deno.test('leftVerdict: a squashed "AIB: subagent <title>" landing is landed, even when the files were edited since', async () => {
@@ -46,7 +50,7 @@ Deno.test('leftVerdict: a squashed "AIB: subagent <title>" landing is landed, ev
     git(f.repo, 'commit', '-q', '-am', 'later edit');
     assertEquals(await leftVerdict(t, f.repo), 'landed');
   } finally {
-    f.done();
+    await f.done();
   }
 });
 
@@ -63,7 +67,7 @@ Deno.test('leftVerdict: work that is not in main is unlanded (listed); a dirty f
     Deno.writeTextFileSync(`${u.path}/.git-touch`, 'x');
     assertEquals(await leftVerdict({ ...u, path: u.path }, f.repo), 'unlanded');
   } finally {
-    f.done();
+    await f.done();
   }
 });
 
@@ -77,7 +81,7 @@ Deno.test('leftVerdict: unknown is not unlanded: a missing branch, a gone folder
     assertEquals(await leftVerdict({ ...t, branch: '' }, f.repo), 'unknown', 'no branch on the record');
     assertEquals(await leftVerdict(t, f.repo), 'unlanded', 'with time, the same one is a positive verdict');
   } finally {
-    f.done();
+    await f.done();
   }
 });
 
@@ -90,7 +94,7 @@ Deno.test('leftVerdict: real-data shape: landed work whose worktree kept only te
     Deno.writeTextFileSync(`${t.path}/.test-logs/20261117-103855-deno-all.log`, 'log\n'); // the kept scratch file
     assertEquals(await leftVerdict(t, f.repo), 'landed');
   } finally {
-    f.done();
+    await f.done();
   }
 });
 
@@ -110,6 +114,6 @@ Deno.test('projectChanges: a left-over list holds only positively unlanded work'
     const out = await projectChanges({ folder: f.repo, stateDir: null, subs, helpers: [], fold: new Set(), unfold: new Set() });
     assertEquals((out.left as { id: string }[]).map((x) => x.id), ['sub-7']);
   } finally {
-    f.done();
+    await f.done();
   }
 });

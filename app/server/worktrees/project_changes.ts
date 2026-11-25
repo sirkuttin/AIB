@@ -210,8 +210,76 @@ const LANDED = new Map<string, { sig: string; tip: string; verdict: LeftVerdict 
 export const landedChecked = { n: 0 };
 /** One check may take this long; a slower one is unknown (and so not listed) until a later poll. */
 export const LANDED_CHECK_MS = 20_000;
-/** One listing may spend this long on NEW checks; the rest stay unlisted until the next poll (cached verdicts cost nothing). */
-export const LISTING_BUDGET_MS = 8_000;
+/**
+ * One listing waits this long for NEW checks (a request never waits for git: the checks go on in the background, a few at a time, and
+ * are kept, on disk too, so the next poll has them); cached verdicts cost nothing.
+ */
+export const LISTING_BUDGET_MS = 700;
+/** Checks that run at once (each one is a handful of git processes). */
+const CHECKS_AT_ONCE = 2;
+const FLIGHT = new Map<string, Promise<LeftVerdict>>();
+let running = 0;
+const waiting: (() => void)[] = [];
+
+async function slot<T>(run: () => Promise<T>): Promise<T> {
+  if (running >= CHECKS_AT_ONCE) await new Promise<void>((resolve) => waiting.push(resolve));
+  running++;
+  try {
+    return await run();
+  } finally {
+    running--;
+    waiting.shift()?.();
+  }
+}
+
+/** Every local branch's commit id, by ONE git call (a listing of 90 builders asked 3 calls each). */
+export async function headTips(top: string): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const done = await wt.git(['for-each-ref', '--format=%(refname:short)%09%(objectname)', 'refs/heads'], top, { check: false });
+  if (done.returncode !== 0) return out;
+  for (const line of done.stdout.split('\n')) {
+    const tab = line.lastIndexOf('\t');
+    if (tab > 0) out.set(line.slice(0, tab), line.slice(tab + 1).trim());
+  }
+  return out;
+}
+
+// ---- the left-over cache on disk: a restart does not decide 90 builders again --------------------------------------------
+let leftFile: string | null = null;
+let leftTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Keep the left-over verdicts and counts in `file` (loaded now); null: memory only. */
+export function useLeftCache(file: string | null): void {
+  leftFile = file;
+  LANDED.clear();
+  LEFT.clear();
+  if (!file) return;
+  try {
+    const raw = JSON.parse(Deno.readTextFileSync(file));
+    if (raw?.v !== 1) return;
+    for (const [k, v] of Object.entries(raw.verdicts ?? {}) as [string, { sig: string; tip: string; verdict: LeftVerdict }][]) {
+      if (v && typeof v.sig === 'string' && typeof v.tip === 'string' && (v.verdict === 'landed' || v.verdict === 'unlanded')) LANDED.set(k, v);
+    }
+    for (const [k, v] of Object.entries(raw.counts ?? {}) as [string, { sig: string; base: string; result: never }][]) {
+      if (v && typeof v.sig === 'string' && typeof v.base === 'string') LEFT.set(k, v);
+    }
+  } catch { /* none yet, or unreadable: start empty */ }
+}
+
+function saveLeft(): void {
+  if (!leftFile || leftTimer) return;
+  leftTimer = setTimeout(() => {
+    leftTimer = null;
+    try {
+      const file = leftFile;
+      if (!file) return;
+      const tmp = `${file}.${Deno.pid}.tmp`;
+      Deno.writeTextFileSync(tmp, JSON.stringify({ v: 1, verdicts: Object.fromEntries(LANDED), counts: Object.fromEntries(LEFT) }));
+      Deno.renameSync(tmp, file);
+    } catch { /* a hint */ }
+  }, 1500);
+  Deno.unrefTimer(leftTimer as unknown as number);
+}
 
 /**
  * landed    its work is in main (a "AIB: subagent <title>" commit, or landed.ts says so): never listed.
@@ -237,51 +305,89 @@ async function squashedInMain(top: string, target: string, title: string): Promi
  * 'unlanded' even when its commits landed, except a 'kept' one, whose untracked scratch files are what AIB kept. `top`: the
  * repository's top folder. `deadline`: no new check starts after this time (unknown).
  */
-export async function leftVerdict(t: Target, top: string, deadline = Infinity): Promise<LeftVerdict> {
+export async function leftVerdict(
+  t: Target,
+  top: string,
+  deadline = Infinity,
+  heads?: Map<string, string>,
+  waitMs = LANDED_CHECK_MS,
+): Promise<LeftVerdict> {
   try {
     if (!top || !t.branch) return 'unknown';
-    const target = await wt.mainBranch(top, '');
+    const refs = heads ?? await headTips(top);
+    const target = refs.has('main') ? 'main' : refs.has('master') ? 'master' : '';
     if (!target) return 'unknown';
-    const rev = async (ref: string) => ((await wt.git(['rev-parse', '--verify', '-q', ref], top, { check: false })).stdout || '').trim();
-    const tip = await rev(`refs/heads/${target}`);
-    if (!tip || !(await rev(`refs/heads/${t.branch}^{commit}`))) return 'unknown'; // main or the branch is gone: nothing to show
+    const tip = refs.get(target)!;
+    if (!refs.get(t.branch)) return 'unknown'; // the branch is gone: nothing to show
     const sig = leftSignature(t.path);
     const hit = LANDED.get(t.path);
     if (sig && hit && hit.sig === sig && hit.tip === tip) return hit.verdict;
-    if (Date.now() > deadline) return 'unknown';
-    landedChecked.n++;
-    const decide = async (): Promise<LeftVerdict> => {
-      if (await squashedInMain(top, target, t.name)) return 'landed';
-      const verdict = await branchLanded(top, t.branch, target, { title: t.name });
-      if (verdict.why === 'unknown') return 'unknown';
-      if (!verdict.landed) return 'unlanded';
-      if (t.why === 'kept') return 'landed';
-      return (await porcelainPaths(t.path)).size === 0 ? 'landed' : 'unlanded';
-    };
+    // landed work stays landed while main grows; an unlanded verdict of an older main is only shown while the new one is being decided
+    if (sig && hit && hit.sig === sig && hit.verdict === 'landed') return 'landed';
+    const stale: LeftVerdict = sig && hit && hit.sig === sig ? hit.verdict : 'unknown';
+    const key = `${t.path}\0${sig}\0${tip}`;
+    let run = FLIGHT.get(key);
+    if (!run && Date.now() > deadline) return stale; // no new check starts after the deadline
+    if (!run) {
+      landedChecked.n++;
+      run = slot(async () => {
+        const squashed = await squashedInMain(top, target, t.name);
+        if (squashed) return 'landed' as LeftVerdict;
+        const verdict = await branchLanded(top, t.branch, target, { title: t.name });
+        if (verdict.why === 'unknown') return 'unknown' as LeftVerdict;
+        if (!verdict.landed) return 'unlanded' as LeftVerdict;
+        if (t.why === 'kept') return 'landed' as LeftVerdict;
+        return (await porcelainPaths(t.path)).size === 0 ? 'landed' as LeftVerdict : 'unlanded' as LeftVerdict;
+      }).catch((): LeftVerdict => 'unknown').then((verdict) => {
+        // the answer is kept even when the request that asked has given up: the next poll finds it
+        if (verdict === 'unlanded') void leftCounts(t, 0); // its numbers are what the listing shows next: counted in the background too
+        if (verdict !== 'unknown' && sig) {
+          LANDED.set(t.path, { sig, tip, verdict });
+          while (LANDED.size > 400) LANDED.delete(LANDED.keys().next().value as string);
+          saveLeft();
+        }
+        return verdict;
+      }).finally(() => FLIGHT.delete(key));
+      FLIGHT.set(key, run);
+    }
+    const wait = Date.now() > deadline ? 0 : Math.min(waitMs, deadline - Date.now());
     let timer: ReturnType<typeof setTimeout> | undefined;
     const verdict = await Promise.race([
-      decide(),
+      run,
       new Promise<LeftVerdict>((resolve) => {
-        timer = setTimeout(() => resolve('unknown'), LANDED_CHECK_MS);
+        timer = setTimeout(() => resolve(stale), wait);
       }),
     ]).finally(() => clearTimeout(timer));
-    if (verdict !== 'unknown' && sig) LANDED.set(t.path, { sig, tip, verdict });
-    while (LANDED.size > 400) LANDED.delete(LANDED.keys().next().value as string);
     return verdict;
   } catch {
     return 'unknown'; // cannot tell: not listed
   }
 }
 
-async function leftCounts(t: Target) {
+const COUNTING = new Map<string, Promise<unknown>>();
+
+/** A left-over worktree's numbers: kept by its signature; a new count runs in the background (a few at a time) and is waited for until `deadline`. */
+async function leftCounts(t: Target, deadline = Infinity) {
   const sig = leftSignature(t.path);
   const hit = LEFT.get(t.path);
   if (sig && hit && hit.sig === sig && hit.base === t.base) return hit.result;
-  leftCounted.n++;
-  const result = await changes.getCounts(t.path, t.base || null).catch(() => null);
-  if (sig) LEFT.set(t.path, { sig, base: t.base, result });
-  while (LEFT.size > 200) LEFT.delete(LEFT.keys().next().value as string);
-  return result;
+  const key = `${t.path}|${sig}|${t.base}`;
+  let run = COUNTING.get(key) as Promise<Awaited<ReturnType<typeof changes.getCounts>> | null> | undefined;
+  if (!run) {
+    leftCounted.n++;
+    run = slot(() => changes.getCounts(t.path, t.base || null)).catch(() => null).then((result) => {
+      if (sig && result) { // a failed count is asked again, never kept
+        LEFT.set(t.path, { sig, base: t.base, result });
+        while (LEFT.size > 400) LEFT.delete(LEFT.keys().next().value as string);
+        saveLeft();
+      }
+      return result;
+    }).finally(() => COUNTING.delete(key));
+    COUNTING.set(key, run);
+  }
+  const wait = Math.max(0, Math.min(LANDED_CHECK_MS, deadline - Date.now()));
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return await Promise.race([run, new Promise<null>((resolve) => timer = setTimeout(() => resolve(null), wait))]).finally(() => clearTimeout(timer));
 }
 
 /** The answer of GET /api/live/project/changes. `offset`: the first file of main's page (the page's "Show the next 300"). */
@@ -303,15 +409,17 @@ export async function projectChanges(args: Args, offset = 0): Promise<Json> {
   if (args.onlyMain) return { git: !!main.git, main: mainSection, sections: [], left: [] };
   const sections: Json[] = [], left: Json[] = [];
   const deadline = Date.now() + LISTING_BUDGET_MS;
+  let headsOf: Promise<Map<string, string>> | null = null;
+  const heads = () => (headsOf ??= headTips(top));
   for (const t of worktreeTargets([args.folder, top], args.subs, args.helpers)) {
     // only a positive "this work is not in main" is listed: landed, unknown, errored or timed out are not
-    if (t.state === 'left' && (await leftVerdict(t, top, deadline)) !== 'unlanded') continue;
+    if (t.state === 'left' && (await leftVerdict(t, top, Infinity, await heads(), Math.max(0, deadline - Date.now()))) !== 'unlanded') continue;
     const open = t.state === 'active' ? !args.fold.has(t.id) : args.unfold.has(t.id);
     // one at a time: the git runs of a project never overlap
     const result = open
       ? await changes.getChanges(t.path, t.base || null, 0).catch(() => null)
       : t.state === 'left'
-      ? await leftCounts(t) // a left-over worktree rarely changes: counted again only when its HEAD or files' times move
+      ? await leftCounts(t, deadline) // a left-over worktree rarely changes: counted again only when its HEAD or files' times move
       : await changes.getCounts(t.path, t.base || null).catch(() => null);
     const sec = section(t, open, result as unknown as Json | null);
     if (t.state === 'left') {
@@ -361,3 +469,23 @@ export async function sectionDiff(args: Args, id: string, path: string): Promise
   return await changes.getFileDiff(t.path, path, t.base || null) as unknown as Json;
 }
 
+
+/** Resolves when the checks running in the background now are done (tests, shutdown). */
+export async function settleChecks(): Promise<void> {
+  while (FLIGHT.size || COUNTING.size) await Promise.allSettled([...FLIGHT.values(), ...COUNTING.values()]);
+}
+
+/** Write the left-over cache to its file now (tests; a restart reads it). */
+export function flushLeftCache(): void {
+  if (leftTimer) {
+    clearTimeout(leftTimer);
+    leftTimer = null;
+  }
+  const file = leftFile;
+  if (!file) return;
+  try {
+    const tmp = `${file}.${Deno.pid}.tmp`;
+    Deno.writeTextFileSync(tmp, JSON.stringify({ v: 1, verdicts: Object.fromEntries(LANDED), counts: Object.fromEntries(LEFT) }));
+    Deno.renameSync(tmp, file);
+  } catch { /* a hint */ }
+}

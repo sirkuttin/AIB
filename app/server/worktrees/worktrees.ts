@@ -659,6 +659,7 @@ export class ProjectResolver {
   readonly registry: Registry;
   #sig: string | null | undefined = undefined;
   #records: WorktreeRecord[] = [];
+  #removed: Record<string, WorktreeRecord> = {};
 
   constructor(readonly stateDir: string) {
     this.registry = new Registry(stateDir);
@@ -673,7 +674,10 @@ export class ProjectResolver {
       sig = null;
     }
     if (sig !== this.#sig) {
-      this.#records = Object.values(this.registry.all());
+      // one read and parse of the file per change (a saved chat's card asked for it on every poll: with hundreds of removed notes, a second)
+      const [items, removed] = this.registry.read();
+      this.#records = Object.values(toObject(items));
+      this.#removed = toObject(removed);
       this.#sig = sig;
     }
     return this.#records;
@@ -687,7 +691,8 @@ export class ProjectResolver {
       }
     }
     const here = normcase(realpath(cwd));
-    const removed = this.registry.removed();
+    this.#all(); // (reloads the notes when the file changed)
+    const removed = this.#removed;
     const gone = Object.hasOwn(removed, here) ? removed[here] : undefined; // a worktree AIB removed: the chat stays under its project
     if (gone && gone.project) {
       return { project: str(gone.project), branch: str(gone.branch), base: str(gone.base) };

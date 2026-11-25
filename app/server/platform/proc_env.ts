@@ -131,8 +131,44 @@ function readCwds(pids: number[]): Map<number, string> {
 
 export const realProcesses: ProcSource = { list: listProcesses, cookies: readCookies, cwds: readCwds };
 
-/** The processes that started at or after `since` and carry a cookie, from one snapshot; null when the processes can't be listed. */
-export function taggedSince(since: number, source: ProcSource = realProcesses): { all: Seen[]; tagged: Tagged[] } | null {
+/** How long one process-list snapshot is shared (every chat's liveness check of one tick, whatever their number). */
+export const SNAPSHOT_MS = 2000;
+let snapshot: { at: number; since: number; all: Seen[]; tagged: Tagged[] } | null = null;
+/** A process's cookie never changes (its environment is fixed at start): read once per pid and start time. */
+const COOKIES = new Map<string, string | null>();
+export const snapshotReads = { lists: 0, cookieReads: 0 };
+
+function sharedTagged(since: number, fresh: boolean): { all: Seen[]; tagged: Tagged[] } | null {
+  const t = Date.now();
+  if (!fresh && snapshot && t - snapshot.at < SNAPSHOT_MS && snapshot.since <= since) {
+    return { all: snapshot.all.filter((p) => p.started >= since), tagged: snapshot.tagged.filter((p) => p.started >= since) };
+  }
+  snapshotReads.lists++;
+  const all = realProcesses.list(since);
+  if (!all) return null;
+  const keyOf = (p: Seen) => `${p.pid}:${Math.round(p.started)}`;
+  const need = all.filter((p) => !COOKIES.has(keyOf(p)));
+  if (need.length) {
+    snapshotReads.cookieReads += need.length;
+    const read = realProcesses.cookies(need.map((p) => p.pid));
+    for (const p of need) COOKIES.set(keyOf(p), read.get(p.pid) ?? null);
+    while (COOKIES.size > 20000) COOKIES.delete(COOKIES.keys().next().value!);
+  }
+  const tagged = all.flatMap((p) => {
+    const cookie = COOKIES.get(keyOf(p));
+    return cookie ? [{ ...p, cookie }] : [];
+  });
+  snapshot = { at: t, since, all, tagged };
+  return { all, tagged };
+}
+
+/**
+ * The processes that started at or after `since` and carry a cookie, from one snapshot; null when the processes can't be listed.
+ * With the real processes the snapshot is shared for SNAPSHOT_MS and a process's environment is read once (`fresh`: the kill paths always list anew; a replaceable `source`
+ * is read fresh every time: tests, and callers that must see the processes as they are).
+ */
+export function taggedSince(since: number, source: ProcSource = realProcesses, fresh = false): { all: Seen[]; tagged: Tagged[] } | null {
+  if (source === realProcesses) return sharedTagged(since, fresh);
   const all = source.list(since);
   if (!all) return null;
   const cookies = source.cookies(all.map((p) => p.pid));

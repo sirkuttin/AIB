@@ -52,7 +52,7 @@ export class ProcessReaper {
     const calls = new Set<string>();
     if (!req.owner && !req.call) return { killed: 0, calls: [] }; // never "everything of the chat"
     for (let pass = 0; pass < MAX_PASSES; pass++) {
-      const found = taggedSince(Math.max(0, req.since - this.slack), this.source);
+      const found = taggedSince(Math.max(0, req.since - this.slack), this.source, true);
       if (!found) break;
       const matched = found.tagged.filter((p) => this.#mine(p.cookie, p.started, req) && !killedPids.has(p.pid));
       if (!matched.length) break;

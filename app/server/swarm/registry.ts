@@ -170,13 +170,27 @@ const same = (a: string, b: string) => !!a && !!b && normcase(realpath(a)) === n
 /** The file read fresh (AIB side reads it this way; small, and read only when a chat opens). Never throws. */
 export function readHelpers(stateDir: string): Record<string, Helper> {
   try {
-    const [status, raw] = readJsonFile(pathOf(stateDir, FILE));
+    const file = pathOf(stateDir, FILE);
+    // the file is 350 KB with the owner's ~90 helpers and every chat's stale check, hand-over and list asked for it: parsed again only
+    // when its size or time changed. Callers only read what comes back.
+    let sig = '';
+    try {
+      const info = Deno.statSync(file);
+      sig = `${info.size}:${info.mtime?.getTime() ?? 0}`;
+    } catch { /* missing: read as empty below */ }
+    const kept = HELPERS_READ.get(file);
+    if (sig && kept && kept.sig === sig && Date.now() - kept.at < 5000) return kept.helpers;
+    const [status, raw] = readJsonFile(file);
     if (status !== 'ok' || !isDict(raw) || !isDict(raw.helpers)) return {};
-    return raw.helpers as Record<string, Helper>;
+    const helpers = raw.helpers as Record<string, Helper>;
+    if (sig) HELPERS_READ.set(file, { sig, at: Date.now(), helpers });
+    return helpers;
   } catch {
     return {};
   }
 }
+
+const HELPERS_READ = new Map<string, { sig: string; at: number; helpers: Record<string, Helper> }>();
 
 /** The helper a chat is, by its live id, lasting name (provider:sessionId) or worktree folder; null for a non-helper chat. */
 export function helperOf(

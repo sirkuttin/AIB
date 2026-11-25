@@ -145,7 +145,7 @@ async function linesStillIn(repo: string, base: string, shas: string[], paths: s
  * `repo`: any folder of the repository. `title`: the builder's title, for the squashed-landing subject ('' when not known).
  * `landedByRecord`: AIB's own landing record says it landed (then nothing is read).
  */
-export async function branchLanded(
+async function computeLanded(
   repo: string,
   branch: string,
   target: string,
@@ -246,4 +246,121 @@ export async function branchLanded(
     }
   }
   return { landed: false, why: 'unlanded', own: open.length, files: missing };
+}
+
+// ---- the memo ---------------------------------------------------------------------------------------------------------------
+// A verdict reads the repository for seconds (115 branches of the AIB repo: 62 s in all), and the project panel, the swarm's sweeps and
+// the hand-off all ask again and again. So a verdict is kept by the branch's tip and main's tip, on disk too (a restart asks nothing
+// again): it holds while both tips stay; a LANDED one also holds when main moves on (landed work does not come back unlanded by main
+// growing). 'unknown' (it could not be decided) is never kept.
+
+interface Memo {
+  tip: string;
+  main: string;
+  verdict: Verdict;
+}
+
+const MEMO = new Map<string, Memo>();
+const MEMO_MAX = 2000;
+let memoFile: string | null = null;
+let memoTimer: ReturnType<typeof setTimeout> | null = null;
+export const landedReads = { computed: 0, memo: 0 };
+
+/** Keep verdicts in `file` (loaded now, written a moment after a change); null: memory only. */
+export function useLandedMemo(file: string | null): void {
+  memoFile = file;
+  MEMO.clear();
+  if (!file) return;
+  try {
+    const raw = JSON.parse(Deno.readTextFileSync(file));
+    if (raw && typeof raw === 'object' && raw.v === 1 && raw.items && typeof raw.items === 'object') {
+      for (const [k, m] of Object.entries(raw.items as Record<string, Memo>)) {
+        if (m && typeof m.tip === 'string' && typeof m.main === 'string' && m.verdict && typeof m.verdict.landed === 'boolean') MEMO.set(k, m);
+      }
+    }
+  } catch { /* none yet, or unreadable: start empty */ }
+}
+
+/** Forget every kept verdict (tests). */
+export function clearLandedMemo(): void {
+  MEMO.clear();
+}
+
+function saveMemo(): void {
+  if (!memoFile || memoTimer) return;
+  memoTimer = setTimeout(() => {
+    memoTimer = null;
+    try {
+      const file = memoFile;
+      if (!file) return;
+      const tmp = `${file}.${Deno.pid}.tmp`;
+      Deno.writeTextFileSync(tmp, JSON.stringify({ v: 1, items: Object.fromEntries(MEMO) }));
+      Deno.renameSync(tmp, file);
+    } catch { /* a hint: the next verdict is computed again */ }
+  }, 1500);
+  Deno.unrefTimer(memoTimer as unknown as number);
+}
+
+/** The commit ids of `branch` and `target` (empty when gone), by ONE call. */
+export async function refTips(repo: string, branch: string, target: string): Promise<{ tip: string; main: string }> {
+  const text = await out(repo, ['for-each-ref', '--format=%(refname) %(objectname)', `refs/heads/${branch}`, `refs/heads/${target}`]);
+  const ids = new Map<string, string>();
+  for (const line of (text ?? '').split('\n')) {
+    const [ref, id] = line.trim().split(' ');
+    if (ref && id) ids.set(ref, id);
+  }
+  return { tip: ids.get(`refs/heads/${branch}`) ?? '', main: ids.get(`refs/heads/${target}`) ?? '' };
+}
+
+const memoKey = (repo: string, branch: string, target: string, title: string) => `${repo}\0${branch}\0${target}\0${title}`;
+const squashTitle = (t: string | undefined) => (t ?? '').replace(/\s+/g, ' ').trim();
+
+/** The kept verdict for these tips, if it still holds. */
+export function memoOf(repo: string, branch: string, target: string, title: string | undefined, tips: { tip: string; main: string }): Verdict | null {
+  const m = MEMO.get(memoKey(repo, branch, target, squashTitle(title)));
+  if (!m || !tips.tip || m.tip !== tips.tip) return null;
+  return m.main === tips.main || m.verdict.landed ? m.verdict : null;
+}
+
+/**
+ * `repo`: any folder of the repository. `title`: the builder's title, for the squashed-landing subject ('' when not known).
+ * `landedByRecord`: AIB's own landing record says it landed (then nothing is read).
+ */
+export async function branchLanded(
+  repo: string,
+  branch: string,
+  target: string,
+  options: { title?: string; landedByRecord?: boolean } = {},
+): Promise<Verdict> {
+  if (options.landedByRecord) return { landed: true, why: 'ancestor', own: 0, files: [] };
+  const tips = await refTips(repo, branch, target);
+  if (!tips.tip || !tips.main) return { landed: false, why: 'unknown', own: 0, files: [] };
+  const kept = memoOf(repo, branch, target, options.title, tips);
+  if (kept) {
+    landedReads.memo++;
+    return kept;
+  }
+  landedReads.computed++;
+  const verdict = await computeLanded(repo, branch, target, options);
+  if (verdict.why !== 'unknown') {
+    MEMO.set(memoKey(repo, branch, target, squashTitle(options.title)), { tip: tips.tip, main: tips.main, verdict });
+    while (MEMO.size > MEMO_MAX) MEMO.delete(MEMO.keys().next().value as string);
+    saveMemo();
+  }
+  return verdict;
+}
+
+/** Write the kept verdicts to their file now (tests; a restart reads it). */
+export function flushLandedMemo(): void {
+  if (memoTimer) {
+    clearTimeout(memoTimer);
+    memoTimer = null;
+  }
+  const file = memoFile;
+  if (!file) return;
+  try {
+    const tmp = `${file}.${Deno.pid}.tmp`;
+    Deno.writeTextFileSync(tmp, JSON.stringify({ v: 1, items: Object.fromEntries(MEMO) }));
+    Deno.renameSync(tmp, file);
+  } catch { /* a hint */ }
 }
