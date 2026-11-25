@@ -49,6 +49,8 @@ const CODEX_HOOK_PATH = /^\/hooks\/codex\/(pre-tool|subagent-start|subagent-stop
 const GEMINI_HOOK_PATH = /^\/hooks\/gemini\/before-tool$/;
 /** Qwen Code command hooks (subagents/qwen.ts): POST /hooks/qwen/<event>, handed on as event `qwen-<event>`. */
 const QWEN_HOOK_PATH = /^\/hooks\/qwen\/(pre-tool|subagent-start|subagent-stop)$/;
+/** Antigravity CLI command hooks (subagents/antigravity.ts): POST /hooks/agy/<event>, handed on as event `agy-<event>`. */
+const AGY_HOOK_PATH = /^\/hooks\/agy\/(pre-tool|session-start|stop)$/;
 const MAX_HOOK_BYTES = 4 * 1024 * 1024;
 
 type Json = Record<string, unknown>;
@@ -264,6 +266,8 @@ export class ArtifactMcpHttp {
     if (codexHook) return await this.#hook(request, `codex-${codexHook[1]}`);
     const qwenHook = QWEN_HOOK_PATH.exec(new URL(request.url).pathname);
     if (qwenHook) return await this.#hook(request, `qwen-${qwenHook[1]}`);
+    const agyHook = AGY_HOOK_PATH.exec(new URL(request.url).pathname);
+    if (agyHook) return await this.#hook(request, `agy-${agyHook[1]}`);
     if (GEMINI_HOOK_PATH.test(new URL(request.url).pathname)) return await this.#hook(request, 'gemini-before-tool');
     if (new URL(request.url).pathname !== MCP_PATH) {
       await drain(request);

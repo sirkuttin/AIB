@@ -802,7 +802,7 @@ export async function forwarderOf(binary: string | null, dataDir: string): Promi
  */
 export async function hookForwarderOf(binary: string | null, dataDir: string): Promise<string | null> {
   const program = binary ?? await keeperBinary(dataDir);
-  return /^hook [1234]\b/.test(await checkLine(program, 'hook')) ? program : null; // hook 4 (qwen-* events), 3 (kill-by-name refusal) and 2 do everything hook 1 does, and more
+  return /^hook [12345]\b/.test(await checkLine(program, 'hook')) ? program : null; // hook 5 (agy-* events), 4 (qwen-* events), 3 (kill-by-name refusal) and 2 do everything hook 1 does, and more
 }
 
 /**
@@ -812,6 +812,14 @@ export async function hookForwarderOf(binary: string | null, dataDir: string): P
  */
 export function hookForwarderKnowsQwen(program: string): boolean {
   return hookForwarderVersion(program) >= 4;
+}
+
+/**
+ * True when this forwarder knows hook 5: the agy-pre-tool, agy-session-start and agy-stop events (keeper/hookforward_agy.go). An
+ * older program refuses them, so an Antigravity chat given one is not isolated (said in the chat).
+ */
+export function hookForwarderKnowsAgy(program: string): boolean {
+  return hookForwarderVersion(program) >= 5;
 }
 
 /** The `hook` version a forwarder program answered (`hook <n>`): 0 when it was not asked, or answers nothing AIB knows. */

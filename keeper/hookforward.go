@@ -79,11 +79,12 @@ var hookEvents = map[string]bool{"pre-tool": true, "worktree-create": true, "pos
 	"codex-pre-tool": true, "codex-subagent-start": true, "codex-subagent-stop": true, // codex-*: hookforward_codex.go
 	"gemini-before-tool": true, // Gemini CLI's BeforeTool (hookgemini.go)
 	"qwen-pre-tool":      true, "qwen-subagent-start": true, "qwen-subagent-stop": true, // qwen-*: hookforward_qwen.go
+	"agy-pre-tool":       true, "agy-session-start": true, "agy-stop": true, // agy-*: hookforward_agy.go
 	"pre-shell": true} // hook 2: a subagent's Bash/PowerShell call, never blocking (hookshell.go)
 
 // blocking: the events whose failure must block the call (exit 2).
 func hookBlocking(event string) bool {
-	return event == "pre-tool" || event == "worktree-create" || event == "codex-pre-tool" || event == "qwen-pre-tool"
+	return event == "pre-tool" || event == "worktree-create" || event == "codex-pre-tool" || event == "qwen-pre-tool" || event == "agy-pre-tool"
 }
 
 // errAIBGone: the address file names a process that no longer runs (AIB crashed; its port may be anyone's now).
@@ -91,8 +92,8 @@ var errAIBGone = errors.New("the AIB named in the address file is not running")
 
 func hookMain(args []string) int {
 	if len(args) == 1 && args[0] == "--check" {
-		// hook 4 adds the qwen-* events (hookforward_qwen.go); hook 3 added the local kill-by-name refusal (hookkill.go); hook 2 (no-stuck-processes) added the non-blocking pre-shell event; everything hook 1 does is unchanged, so AIB runs both.
-		fmt.Println(checkLine("hook 4"))
+		// hook 5 adds the agy-* events (hookforward_agy.go); hook 4 added the qwen-* events (hookforward_qwen.go); hook 3 added the local kill-by-name refusal (hookkill.go); hook 2 (no-stuck-processes) added the non-blocking pre-shell event; everything hook 1 does is unchanged, so AIB runs both.
+		fmt.Println(checkLine("hook 5"))
 		return 0
 	}
 	socket := ""
@@ -102,7 +103,7 @@ func hookMain(args []string) int {
 		args = []string{args[0], socket}
 	}
 	if len(args) != 2 || !hookEvents[args[0]] || args[1] == "" {
-		fmt.Fprintln(os.Stderr, "usage: AIB-keeper hook pre-tool|pre-shell|worktree-create|post-agent|subagent-stop|codex-pre-tool|codex-subagent-start|codex-subagent-stop|gemini-before-tool|qwen-pre-tool|qwen-subagent-start|qwen-subagent-stop <address file> | hook <event> --helper-socket <unix socket>")
+		fmt.Fprintln(os.Stderr, "usage: AIB-keeper hook pre-tool|pre-shell|worktree-create|post-agent|subagent-stop|codex-pre-tool|codex-subagent-start|codex-subagent-stop|gemini-before-tool|qwen-pre-tool|qwen-subagent-start|qwen-subagent-stop|agy-pre-tool|agy-session-start|agy-stop <address file> | hook <event> --helper-socket <unix socket>")
 		return 2
 	}
 	deadline := hookDeadline
@@ -117,6 +118,8 @@ func hookMain(args []string) int {
 		chat:        os.Getenv("AIB_HOOK_CHAT"),
 		readOnly:    splitList(os.Getenv("AIB_HOOK_READONLY")),
 		deadline:    deadline,
+		subRoot:     os.Getenv("AIB_HOOK_SUBROOT"),
+		pass:        os.Getenv("AIB_HOOK_PASS") == "1",
 	}
 	return h.run(os.Stdin, os.Stdout, os.Stderr)
 }
@@ -128,6 +131,8 @@ type hookForwarder struct {
 	key, chat   string
 	readOnly    map[string]bool
 	deadline    time.Duration
+	subRoot     string // agy-*: the folder agy keeps its subagent worktrees in (AIB_HOOK_SUBROOT)
+	pass        bool   // agy-*: a chat AIB gave no isolation (AIB_HOOK_PASS=1): everything passes
 }
 
 func splitList(text string) map[string]bool {
@@ -146,9 +151,16 @@ func (h *hookForwarder) run(in io.Reader, stdout, stderr io.Writer) int {
 	defer cancel()
 	fail := func(message string) int {
 		if !hookBlocking(h.event) {
+			if strings.HasPrefix(h.event, "agy-") {
+				stdout.Write([]byte("{}")) // agy reads a JSON object from every hook
+			}
 			return 0
 		}
 		fmt.Fprintln(stderr, message)
+		if h.event == "agy-pre-tool" {
+			stdout.Write(agyDeny(message)) // agy reads a JSON deny; a non-JSON reply or a non-zero exit would fail the call anyway
+			return 0
+		}
 		if h.event == "qwen-pre-tool" {
 			stdout.Write(codexDeny(message)) // the same PreToolUse deny object; Qwen reads it whatever the exit code
 			return 0
@@ -179,6 +191,12 @@ func (h *hookForwarder) run(in io.Reader, stdout, stderr io.Writer) int {
 		}
 		if h.qwenPassesLocally(input) {
 			return 0 // the main agent's own call (not agent): nothing to ask AIB
+		}
+	}
+	if strings.HasPrefix(h.event, "agy-") {
+		if out, done := h.agyLocal(input); done {
+			stdout.Write(out)
+			return 0
 		}
 	}
 	if h.event == "gemini-before-tool" {
@@ -222,6 +240,9 @@ func (h *hookForwarder) run(in io.Reader, stdout, stderr io.Writer) int {
 	}
 	if strings.HasPrefix(h.event, "qwen-") {
 		return h.qwenAnswer(input, status, body, stdout, stderr)
+	}
+	if strings.HasPrefix(h.event, "agy-") {
+		return h.agyAnswer(input, status, body, stdout, stderr)
 	}
 	if h.event == "gemini-before-tool" {
 		if status != http.StatusOK {
@@ -476,6 +497,9 @@ func (h *hookForwarder) endpoint() (string, error) {
 	}
 	if rest, ok := strings.CutPrefix(h.event, "qwen-"); ok {
 		u.Path = "/hooks/qwen/" + rest
+	}
+	if _, ok := strings.CutPrefix(h.event, "agy-"); ok {
+		u.Path = "/hooks/agy/" + agyEventPaths[h.event]
 	}
 	if h.event == "gemini-before-tool" {
 		u.Path = "/hooks/gemini/before-tool"

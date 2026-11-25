@@ -60,7 +60,7 @@ func TestForwardersOpenSealedEnv(t *testing.T) {
 			t.Fatalf("a key sealed for another purpose must be dropped, got %q", got)
 		}
 	}
-	if line := checkLine("hook 4"); !strings.HasPrefix(line, "hook 4") || strings.HasSuffix(line, " sealed") != canSeal {
+	if line := checkLine("hook 5"); !strings.HasPrefix(line, "hook 5") || strings.HasSuffix(line, " sealed") != canSeal {
 		t.Fatalf("check line %q", line)
 	}
 }

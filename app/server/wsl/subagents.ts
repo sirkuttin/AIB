@@ -38,6 +38,7 @@ export function wslSubagentChat(chat: {
   userWorktreeHook?: boolean;
   configDir?: string;
   codexFolder?: boolean;
+  agyDir?: string;
   shellTag?: boolean;
 }): { distro: string; facts: WslSubagentChat } | null {
   const folder = wslLoc(chat.folder);
@@ -55,6 +56,7 @@ export function wslSubagentChat(chat: {
       ...(chat.userWorktreeHook ? { userWorktreeHook: true } : {}),
       ...(chat.configDir ? { configDir: chat.configDir } : {}),
       ...(chat.codexFolder ? { codexFolder: true } : {}),
+      ...(chat.agyDir ? { agyDir: chat.agyDir } : {}),
       ...(chat.shellTag ? { shellTag: true } : {}),
     },
   };
@@ -77,6 +79,7 @@ export function factsOfServiceChat(chat: SubagentChat) {
       }
       : {}),
     codexFolder: !!chat.subFolder && isCodexFamily(chat.provider),
+    ...(chat.agyDir ? { agyDir: chat.agyDir } : {}),
   });
 }
 

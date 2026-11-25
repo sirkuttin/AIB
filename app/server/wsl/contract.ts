@@ -317,7 +317,7 @@ export interface HelperMethods {
    */
   'subagent.setup': {
     params: {
-      agent: 'claude' | 'codex' | 'qwen';
+      agent: 'claude' | 'codex' | 'qwen' | 'antigravity';
       project: string;
       folder?: string;
       aibWorktree?: boolean;
@@ -325,8 +325,12 @@ export interface HelperMethods {
       chatId?: string;
       /** A Qwen chat: what AIB adds to Qwen's system settings with hooks on / off (subagents/qwen.ts QwenFragment); the helper merges it into the distro's own and writes the file. */
       qwen?: { on: { hooks: Record<string, unknown> | null; deny: string[] }; off: { hooks: Record<string, unknown> | null; deny: string[] } };
+      /** An Antigravity chat (API key): AIB's entry for the distro's gemini folder's config/hooks.json (subagents/antigravity.ts agyHooksEntry), null when it can't be written. */
+      antigravity?: { hooks: Record<string, unknown> | null };
     };
     result: {
+      /** An Antigravity chat's gemini folder in the distro (made by the helper: settings.json, config/hooks.json), '' when none. */
+      geminiDir: string;
       /** A Qwen chat's settings file in the distro (QWEN_CODE_SYSTEM_SETTINGS_PATH), '' when none was written. */
       settingsFile: string;
       /** A Codex chat's own folder for its subagents' worktrees (made by the helper), '' otherwise. */
@@ -569,6 +573,8 @@ export interface WslSubagentChat {
   userWorktreeHook?: boolean;
   configDir?: string;
   codexFolder?: boolean;
+  /** An Antigravity chat: its --gemini-dir in the distro (its subagent worktrees are under <dir>/antigravity-cli/worktrees). */
+  agyDir?: string;
   /** The distro's keeper forwards hook 2's `pre-shell`: this chat's subagent shell calls are tagged (subagents/shell_tag.ts). */
   shellTag?: boolean;
 }

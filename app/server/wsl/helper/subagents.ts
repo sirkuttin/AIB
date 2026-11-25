@@ -16,10 +16,11 @@ import * as wt from '../../worktrees/worktrees.ts';
 import * as merge from '../../worktrees/merge.ts';
 import { landSubagentWork } from '../../worktrees/subagent_land.ts';
 import { keepWork, workDiff, workStatus } from '../../worktrees/subagent_work.ts';
-import { deny, ownSubagentPath, type SubagentChat, SubagentWorktrees } from '../../subagents/service.ts';
+import { deny, denyAgy, ownSubagentPath, type SubagentChat, SubagentWorktrees } from '../../subagents/service.ts';
 import { claudeConfigDir, readClaudeSetup, subagentsOffSettings } from '../../subagents/claude_config.ts';
 import * as codexSub from '../../subagents/codex.ts';
 import * as qwenSub from '../../subagents/qwen.ts';
+import * as agySub from '../../subagents/antigravity.ts';
 import { isCodexFamily, isQwenFamily } from '../../agents/claude_family.ts';
 import { isDict } from '../../core/py.ts';
 import { onWindowsDrive } from './worktrees.ts';
@@ -33,6 +34,7 @@ const ID = /^[A-Za-z0-9_-]{1,200}$/;
 const CLAUDE_EVENTS = ['pre-tool', 'pre-shell', 'worktree-create', 'post-agent', 'subagent-stop'];
 const CODEX_EVENTS = ['codex-pre-tool', 'codex-subagent-start', 'codex-subagent-stop'];
 const QWEN_EVENTS = qwenSub.QWEN_HOOK_EVENTS;
+const AGY_EVENTS = agySub.AGY_HOOK_EVENTS;
 
 function absPath(value: unknown, name: string): string {
   if (typeof value !== 'string' || !value || value.length > 4096 || value.includes('\0') || !osp.isabs(value)) {
@@ -60,12 +62,18 @@ function chatOf(raw: unknown): SubagentChat {
   const configDir = typeof raw.configDir === 'string' && raw.configDir && osp.isabs(raw.configDir) && raw.configDir.length < 4096 && !raw.configDir.includes('\0')
     ? osp.normpath(raw.configDir)
     : '';
+  // an Antigravity chat's gemini folder: a Linux path on the distro's own disk, never a Windows drive
+  const agyDir = typeof raw.agyDir === 'string' && raw.agyDir && osp.isabs(raw.agyDir) && raw.agyDir.length < 4096 && !raw.agyDir.includes('\0') &&
+      !onWindowsDrive(raw.agyDir)
+    ? osp.normpath(raw.agyDir)
+    : '';
   const chat: SubagentChat = {
     id,
     provider: text(raw.provider, 40),
     lasting: text(raw.lasting, 600),
     folder,
     project,
+    ...(agyDir ? { agyDir } : {}),
     hooks: {
       readOnly: new Set(Array.isArray(raw.readOnly) ? raw.readOnly.filter((x): x is string => typeof x === 'string').slice(0, 200) : []),
       userWorktreeHook: raw.userWorktreeHook === true,
@@ -180,6 +188,16 @@ export function subagentMethods(data: string): Handlers {
             : { status: 500, body: 'AIB could not answer this hook', type: 'text/plain' };
         }
       }
+      if (AGY_EVENTS.includes(event)) {
+        if (!agySub.isAntigravity(chat.provider)) return { status: 503, body: 'This chat is not open in AIB', type: 'text/plain' };
+        try {
+          return { ...(await agySub.agyHook(service, event, chat, body)) };
+        } catch (error) {
+          return event === 'agy-pre-tool'
+            ? { ...denyAgy(`AIB couldn't check this call against the subagent's worktree: ${error instanceof Error ? error.message : error}`) }
+            : { status: 500, body: 'AIB could not answer this hook', type: 'text/plain' };
+        }
+      }
       if (!CLAUDE_EVENTS.includes(event)) throw new RpcError('event is not a hook event', BAD_PARAMS);
       return { ...(await service.hook(event, chat.id, body)) };
     },
@@ -192,7 +210,9 @@ export function subagentMethods(data: string): Handlers {
      */
     'subagent.setup': async (p) => {
       const agent = str(p, 'agent');
-      if (agent !== 'claude' && agent !== 'codex' && agent !== 'qwen') throw new RpcError('agent must be claude, codex or qwen', BAD_PARAMS);
+      if (agent !== 'claude' && agent !== 'codex' && agent !== 'qwen' && agent !== 'antigravity') {
+        throw new RpcError('agent must be claude, codex, qwen or antigravity', BAD_PARAMS);
+      }
       const project = absPath(p.project, 'project');
       const folder = absPath(p.folder ?? p.project, 'folder');
       for (const [path, why] of [[project, 'the project'], [folder, 'the chat']]) {
@@ -210,6 +230,41 @@ export function subagentMethods(data: string): Handlers {
         const top = await wt.git(['rev-parse', '--show-toplevel'], folder, { check: false });
         if (top.returncode !== 0 || !wt.same(top.stdout.trim(), folder)) git = 'not a git project';
         else if ((await wt.git(['rev-parse', '--verify', '-q', 'HEAD'], folder, { check: false })).returncode !== 0) git = 'the repository has no commits yet';
+      }
+      if (agent === 'antigravity') {
+        // The chat's own gemini folder in the distro (the API key's, as AIB's on Windows): settings.json says modelProvider "gemini",
+        // config/hooks.json holds AIB's entry. One folder for every chat of the distro (agy keeps its sessions there). Never ~/.gemini.
+        let geminiDir = '';
+        if (!git) {
+          geminiDir = osp.normpath(`${data}/antigravity/gemini-home`);
+          const hooks = isDict(p.antigravity) && isDict((p.antigravity as Json).hooks) ? (p.antigravity as Json).hooks as Json : null;
+          try {
+            const settings = `${geminiDir}/antigravity-cli/settings.json`;
+            Deno.mkdirSync(`${geminiDir}/antigravity-cli`, { recursive: true });
+            let current: Json = {};
+            try {
+              const read = JSON.parse(Deno.readTextFileSync(settings));
+              if (isDict(read)) current = read as Json;
+            } catch { /* new */ }
+            if (current.modelProvider !== 'gemini') Deno.writeTextFileSync(settings, JSON.stringify({ ...current, modelProvider: 'gemini' }, null, 2) + '\n');
+            if (agySub.writeHooksFile(geminiDir, hooks)) geminiDir = '';
+          } catch {
+            geminiDir = '';
+          }
+        }
+        return {
+          git,
+          readOnly: [],
+          userWorktreeHook: '',
+          hooksOff: '',
+          configError: '',
+          configDir: '',
+          deny: null,
+          config: null,
+          subFolder: '',
+          settingsFile: '',
+          geminiDir,
+        };
       }
       if (agent === 'qwen') {
         // The distro's own Qwen setup: its settings tiers say whether hooks are off, and its system settings file (if any) is merged
@@ -237,6 +292,7 @@ export function subagentMethods(data: string): Handlers {
           config: null,
           subFolder: '',
           settingsFile,
+          geminiDir: '',
         };
       }
       if (agent === 'codex') {
@@ -258,6 +314,7 @@ export function subagentMethods(data: string): Handlers {
           config: setup.config,
           subFolder,
           settingsFile: '',
+          geminiDir: '',
         };
       }
       const setup = readClaudeSetup(project, env);
@@ -272,6 +329,7 @@ export function subagentMethods(data: string): Handlers {
         config: null,
         subFolder: '',
         settingsFile: '',
+        geminiDir: '',
       };
     },
 

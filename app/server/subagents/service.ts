@@ -116,6 +116,12 @@ export interface SubagentRecord {
    * are refs of the distro (wsl://...), `linux` the Linux paths. Nothing on the Windows side ever touches such a path.
    */
   wsl?: { distro: string; linux: { path: string; folder: string } };
+  /**
+   * Antigravity (subagents/antigravity.ts): the worktree and branch are the ones `agy` made itself (invoke_subagent with Workspace
+   * "branch": <gemini dir>/antigravity-cli/worktrees/<parent conversation>/subagent-<role>-<type>-<hash>, branch of the same name);
+   * AIB adopted them. `root` is that worktrees folder. Landed and removed like AIB's own (ownSubagentPath knows this shape).
+   */
+  agy?: { root: string };
 }
 
 /** Seconds a tagged call is given before its missing process counts as gone (the shell takes a moment to start). */
@@ -168,6 +174,8 @@ export interface SubagentChat {
    * of its sandbox (subagents/codex.ts subagentFolder).
    */
   subFolder?: string;
+  /** An Antigravity chat with hooks: its --gemini-dir (agy keeps its subagent worktrees under <dir>/antigravity-cli/worktrees). */
+  agyDir?: string;
   /** A chat in a WSL folder: its distro. Its folder and project are refs; the service hands every call to the distro (RemoteSubagents). */
   wsl?: { distro: string };
 }
@@ -186,6 +194,9 @@ const text = (body: string, status: number): HookAnswer => ({ status, body, type
 const pass = (): HookAnswer => json({});
 export const deny = (reason: string): HookAnswer =>
   json({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } });
+
+/** Antigravity's PreToolUse refusal (its hook output: decision and reason). */
+export const denyAgy = (reason: string): HookAnswer => json({ decision: 'deny', reason });
 
 export const TEXTS = {
   enterWorktree: 'In AIB, chats work in the project folder. Use a subagent instead; AIB gives it its own worktree.',
@@ -560,6 +571,7 @@ export class SubagentWorktrees {
       } catch (error) {
         const why = error instanceof Error ? error.message : String(error);
         log.warning('wsl: subagent hook %s failed: %s', event, why);
+        if (event === 'agy-pre-tool') return denyAgy(`AIB couldn't check this call in the distro: ${why.slice(0, 300)}`);
         return event === 'pre-tool' || event === 'codex-pre-tool' || event === 'qwen-pre-tool'
           ? deny(`AIB couldn't make a worktree for this subagent in the distro: ${why.slice(0, 300)}`)
           : text('AIB could not answer this hook', 500);
@@ -718,6 +730,102 @@ export class SubagentWorktrees {
       if (!rec) return;
       const hints = { ...rec.hints, stops: (rec.hints?.stops ?? 0) + 1, lastStopAt: now() };
       await this.#patch(rec.id, { hints, ...(rec.state === 'running' ? { state: 'done' as const, doneAt: now() } : {}) });
+    });
+  }
+
+  /** Antigravity (subagents/antigravity.ts): the chat's slots in use (the cap), for a spawn that has no record yet. */
+  slotsInUse(chatId: string): number {
+    return this.ofChat(chatId).filter((r) => SLOT_STATES.has(r.state)).length;
+  }
+
+  /**
+   * Antigravity (subagents/antigravity.ts): the subagent `agentId` (its conversation id) works in `path`, a worktree `agy` made itself
+   * under `root` (<gemini dir>/antigravity-cli/worktrees). AIB adopts it: its own record when it has one (a done one runs again: the
+   * subagent was woken by a message, and lands at its next end), else a new record in state running, branch and start read from git.
+   * Adopted only when it is exactly what agy makes: <root>/<id>/subagent-<...>, no link on the way, a linked worktree of the chat's
+   * own repository, on a branch of the same name, and nobody else's. Null: not adoptable (its calls are limited).
+   */
+  async adoptExternal(
+    chat: SubagentChat,
+    ext: { agentId: string; path: string; root: string; agentType: string; description: string; toolUseId: string },
+  ): Promise<SubagentRecord | null> {
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(ext.agentId)) return null;
+    return await this.#lockOf(chat.id).run(async () => {
+      const mine = this.ofChat(chat.id);
+      const own = mine.find((r) => r.agentId === ext.agentId && !!r.agy);
+      if (own) {
+        if (own.state === 'running') return own;
+        if (own.state !== 'done') return null;
+        return await this.#patch(own.id, { state: 'running', continuedAt: now() });
+      }
+      if (mine.filter((r) => SLOT_STATES.has(r.state)).length >= MAX_PER_CHAT * 2) return null;
+      const why = await this.#agyAdoptable(ext.path, ext.root, chat);
+      if (why) {
+        log.warning('Antigravity subagent worktree %s was not adopted: %s', ext.path, why);
+        return null;
+      }
+      const branch = pyStrip((await wt.git(['rev-parse', '--abbrev-ref', 'HEAD'], ext.path, { check: false })).stdout);
+      if (!/^subagent-[\w.-]+$/.test(branch)) return null;
+      const tip = pyStrip((await wt.git(['rev-parse', 'HEAD'], ext.path, { check: false })).stdout);
+      const base = pyStrip((await wt.git(['merge-base', 'HEAD', tip], chat.folder, { check: false })).stdout);
+      if (!tip || !base) return null;
+      const tree = pyStrip((await wt.git(['rev-parse', `${base}^{tree}`], chat.folder, { check: false })).stdout);
+      const id = this.#newId();
+      const leaf = ext.path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? '';
+      return await this.#update(id, () =>
+        this.#record(id, chat, {
+          slug: leaf,
+          branch,
+          path: ext.path,
+          snapshot: base,
+          tree,
+          state: 'running',
+          toolUseId: ext.toolUseId.slice(0, 200),
+          agentId: ext.agentId,
+          agentType: ext.agentType.slice(0, 200),
+          description: ext.description.slice(0, 300),
+          boundAt: now(),
+          agy: { root: ext.root },
+        }));
+    });
+  }
+
+  /** '' when `path` is a worktree AIB may adopt as an Antigravity subagent's (see adoptExternal), else why not. */
+  async #agyAdoptable(path: string, root: string, chat: SubagentChat): Promise<string> {
+    if (!path || !root || pathFormProblem(path) || pathFormProblem(root) || !/^([A-Za-z]:[\\/]|\/)/.test(path)) return 'its path is not plain';
+    if (!wt.lexists(path) || !wt.lexists(root)) return 'it does not exist';
+    const key = (p: string) => normcase(realpath(p)).replace(/[\\/]+$/, '');
+    let rel: string[];
+    try {
+      const here = key(path), top = key(root);
+      if (!here.startsWith(top + SEP)) return 'it is not under the folder Antigravity keeps its subagent worktrees in';
+      rel = here.slice(top.length + 1).split(/[\\/]/);
+    } catch {
+      return 'it could not be resolved';
+    }
+    const parts = path.replace(/[\\/]+$/, '').split(/[\\/]/);
+    const leaf = parts[parts.length - 1], conv = parts[parts.length - 2];
+    if (rel.length !== 2 || !/^subagent-[\w.-]+$/.test(leaf) || !/^[A-Za-z0-9_-]{8,64}$/.test(conv ?? '')) return "it is not named as Antigravity names a subagent's worktree";
+    if (key(path) !== key(pathOf(realpath(root), conv, leaf))) return 'a link lies on its way';
+    if (key(path) === key(chat.folder) || key(path) === key(chat.project)) return 'it is the project folder';
+    if (!(await sameRepository(path, chat.folder))) return 'it is not a worktree of this repository';
+    const gitdir = pyStrip((await wt.git(['rev-parse', '--path-format=absolute', '--git-dir'], path, { check: false })).stdout);
+    if (!gitdir || !/[\/]worktrees[\/]/.test(gitdir)) return 'it is not a linked worktree';
+    const taken = [
+      ...this.all().map((r) => r.path),
+      ...Object.values(readHelpers(this.stateDir)).map((h) => String(h.worktree?.path ?? '')),
+      ...Object.values(new wt.Registry(this.stateDir).all()).map((r) => String(r.path ?? '')),
+    ].filter((p) => !!p);
+    if (taken.some((p) => key(p) === key(path))) return 'it belongs to another chat, helper or subagent';
+    return '';
+  }
+
+  /** Antigravity: the subagent `agentId` ended other than at its natural stop (an error, a cancel): stopped, never landed by itself. */
+  async agentStopped(chatId: string, agentId: string, why: string): Promise<void> {
+    if (!agentId) return;
+    await this.#lockOf(chatId).run(async () => {
+      const rec = this.ofChat(chatId).find((r) => r.agentId === agentId && r.state === 'running');
+      if (rec) await this.#stop(rec, why);
     });
   }
 
@@ -1365,16 +1473,23 @@ export class SubagentWorktrees {
     if (rec.state === 'running') return; // never from under a running subagent
     if ((rec.state === 'done' || rec.state === 'stopped') && !released) return; // landing's (P2); never lose work
     const own = ownSubagentPath(this.root, rec);
+    // AIB's own branches are studio/sub-*; an Antigravity subagent's is the one agy made, named like its worktree folder
+    const ownBranch = rec.agy ? /^subagent-[\w.-]+$/.test(rec.branch) : /^studio\/sub-[\w.-]+$/.test(rec.branch);
     if (own && rec.folder && wt.lexists(rec.folder)) {
       await removeSubagentWorktree(rec.path, rec.folder);
-      if (/^studio\/sub-[\w.-]+$/.test(rec.branch)) await wt.git(['branch', '-D', rec.branch], rec.folder, { check: false });
-      if (/^studio\/sub-[\w.-]+$/.test(rec.branch)) await wt.git(['branch', '-D', `${rec.branch}-landable`], rec.folder, { check: false }); // the clean branch made when its landing conflicted
+      if (ownBranch) await wt.git(['branch', '-D', rec.branch], rec.folder, { check: false });
+      if (ownBranch) await wt.git(['branch', '-D', `${rec.branch}-landable`], rec.folder, { check: false }); // the clean branch made when its landing conflicted
     }
     if (own && wt.lexists(rec.path)) {
       try {
         unlinkLinks(rec.path);
         wt.rmtree(rec.path);
       } catch { /* in use: the start sweep tries again */ }
+    }
+    if (own && rec.agy && !wt.lexists(rec.path)) {
+      try {
+        Deno.removeSync(rec.path.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]+$/, '')); // agy's <parent conversation> folder, when empty
+      } catch { /* not empty, or gone */ }
     }
     if (!own || !wt.lexists(rec.path)) await this.#update(rec.id, () => null);
   }
@@ -1424,9 +1539,21 @@ export function landingWords(h: { state: string; reason?: string; merge?: { undo
  * Security review SF 9: `rec.path` is exactly <root>\<repo hash>\sub-<...> (its project's hash when the record names it), with no
  * link or junction anywhere on the way (its real path is its own path). Anything else is never removed by AIB.
  */
-export function ownSubagentPath(root: string, rec: { path: string; project?: string }): boolean {
+export function ownSubagentPath(root: string, rec: { path: string; project?: string; agy?: { root: string } }): boolean {
   const path = rec.path;
   if (!path || pathFormProblem(path)) return false;
+  if (rec.agy) { // an Antigravity subagent's: <agy.root>/<parent conversation>/subagent-<...> (adoptExternal checked it when it was adopted)
+    const parts = path.replace(/[\\/]+$/, '').split(/[\\/]/);
+    const leaf = parts[parts.length - 1], conv = parts[parts.length - 2] ?? '';
+    if (!rec.agy.root || !/^subagent-[\w.-]+$/.test(leaf) || !/^[A-Za-z0-9_-]{8,64}$/.test(conv)) return false;
+    if (normcase(parts.slice(0, -2).join(SEP)) !== normcase(rec.agy.root).replace(/[\\/]+$/, '')) return false;
+    if (!wt.lexists(path)) return true;
+    try {
+      return normcase(realpath(path)) === normcase(pathOf(realpath(rec.agy.root), conv, leaf));
+    } catch {
+      return false;
+    }
+  }
   const parts = path.replace(/[\\/]+$/, '').split(/[\\/]/);
   // a Gemini or Codex chat's: <root>\<repo hash>\.gem-<chat>\sub-<...> (subagents/gemini.ts), .cx-<chat> (subagents/codex.ts)
   const chatFolder = /^\.(gem|cx)-[A-Za-z0-9_-]{1,64}$/.test(parts[parts.length - 2] ?? '') ? parts.splice(parts.length - 2, 1)[0] : '';

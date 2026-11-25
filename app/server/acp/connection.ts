@@ -1189,6 +1189,8 @@ export class Connection {
      * (subagents/shell_tag.ts). Absent: an older forwarder, which would refuse the answer, or a chat taken over from an older note: untagged.
      */
     shellTag?: boolean;
+    /** Antigravity (subagents/antigravity.ts) with hooks on: its --gemini-dir (agy keeps its subagent worktrees under <dir>/antigravity-cli/worktrees). */
+    agyDir?: string;
   } | null = null;
 
   /**
@@ -1773,6 +1775,7 @@ export class Connection {
       ...(h.deny ? { deny: h.deny } : {}), // the editing-subagent deny rules a reopen must send again
       ...(h.prompt ? { prompt: h.prompt } : {}),
       ...(h.shellTag ? { shellTag: true } : {}),
+      ...(h.agyDir ? { agyDir: h.agyDir } : {}),
     };
   }
 
