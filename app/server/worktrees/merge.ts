@@ -1275,6 +1275,14 @@ async function land(chat: Chat, tip: string, title: unknown): Promise<MergeResul
   if (byTree) {
     // a subagent's head is a snapshot commit of its worktree: its message is not the subagent's, so its log starts below it
     const built = await treeLanding(chat, tip, head, title, chat.detached ? `${own}^` : own);
+    if (built[0] === 'conflicts' && chat.detached && folder) {
+      // A subagent's snapshot holds the folder's uncommitted files, so a file the builder changed on top of one of them can look like a
+      // conflict (the folder's branch does not have it, or has the older text). It is the folder's own uncommitted edit that is in the way:
+      // nothing lands and nothing is stashed (design 3.5, touched-dirty), and it is tried again once the edit is committed.
+      const mine = new Set([...(await porcelainPaths(folder))].map((p) => (Deno.build.os === 'windows' ? p.toLowerCase() : p)));
+      const hit = built[1].filter((f) => mine.has(Deno.build.os === 'windows' ? f.toLowerCase() : f));
+      if (hit.length) throw new TouchedDirty(hit, chat.base);
+    }
     if (built[0] === 'conflicts') {
       const line = treeConflictLine(chat, built[1]);
       if (!chat.detached) await chat.registry.update(chat.key, { mergeConflicts: built[1] }); // as the base-merge path: live sync waits for the fix

@@ -507,6 +507,11 @@ export class Aib {
   }
 
   async turn(text: string): Promise<void> {
+    // AIB may have woken the chat itself (a landing that needs the main agent steers it): that turn ends first
+    await waitFor(async () => {
+      await approveAll(this.chat);
+      return !(await this.chat.state()).busy;
+    }, 'the chat to be idle', 120);
     const before = (await this.chat.state()).events.filter((e) => e.kind === 'turn_end').length;
     const [code] = await this.web.post('prompt', { id: this.chat.id, text, clientMessageId: uuid() });
     assertEquals(code, 200);

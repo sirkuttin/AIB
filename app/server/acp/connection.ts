@@ -698,7 +698,7 @@ export const COMMANDS_RULE =
 
 export const ARTIFACT_PROMPT =
   'You are running inside AIB, which shows artifacts beside the chat; when the user says "artifact" they ' +
-  'mean this viewer and its studio_artifact tool. ' + DOCS_RULE + ' When you make something else the user ' +
+  'mean this viewer and its studio_artifact tool (the doc tool is mcp__studio_artifact__doc where MCP tool names are prefixed). ' + DOCS_RULE + ' When you make something else the user ' +
   'should look at rather than source code (an HTML page, one-off report, chart, diagram, SVG or image), ' +
   "save its file under the project's outputs/ folder (for example outputs/report.html), never in the project root " +
   'or among source files, then publish it with the `publish` tool (pass a file path or the content) and mention it in your reply ' +

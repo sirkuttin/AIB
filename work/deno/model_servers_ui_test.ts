@@ -418,9 +418,10 @@ Deno.test('Maki and Qwen Code entries launch with the server\u2019s address, key
   const launched: { provider: string; env: Record<string, string> | null }[] = [];
   const aib = lab.aib(launched);
   const store = aib.settings;
-  assertEquals(aib.betaEnv('qwen'), {});
+  const QWEN_MCP = { QWEN_CODE_LEGACY_MCP_BLOCKING: '1' }; // Qwen needs it for AIB's MCP tools to reach the model (0.15 slice 3)
+  assertEquals(aib.betaEnv('qwen'), QWEN_MCP);
   await store.update({ agents: { betaUrl: { qwen: 'https://old.example.invalid/v1' }, betaKey: { qwen: 'card-key-1' } } });
-  const own = { OPENAI_API_KEY: 'card-key-1', OPENAI_BASE_URL: 'https://old.example.invalid/v1' };
+  const own = { ...QWEN_MCP, OPENAI_API_KEY: 'card-key-1', OPENAI_BASE_URL: 'https://old.example.invalid/v1' };
   assertEquals(aib.betaEnv('qwen'), own);
   await store.update({ agents: { modelServer: { upsert: { name: 'local', url: up.url, model: 'qwen3-x', useWith: ['qwen', 'maki'], key: KEY } } } });
   // the normal entries are exactly as before: a server never changes them
@@ -430,7 +431,7 @@ Deno.test('Maki and Qwen Code entries launch with the server\u2019s address, key
   const [qwenArgv] = await lab.withPrograms(() => aib.agentLaunch('qwen'));
   const [qArgv, qEnv] = await lab.withPrograms(() => aib.agentLaunch('qwen@local'));
   assertEquals(qArgv, [...qwenArgv, '--auth-type', 'openai'], 'the same adapter command as normal Qwen Code, plus the auth type that makes it read the server�s variables');
-  assertEquals(qEnv, { OPENAI_BASE_URL: up.url, OPENAI_API_KEY: KEY, OPENAI_MODEL: 'qwen3-x' });
+  assertEquals(qEnv, { ...QWEN_MCP, OPENAI_BASE_URL: up.url, OPENAI_API_KEY: KEY, OPENAI_MODEL: 'qwen3-x' });
   const [makiArgv] = await lab.withPrograms(() => aib.agentLaunch('maki'));
   const [mArgv, mEnv] = await lab.withPrograms(() => aib.agentLaunch('maki@local'));
   assertEquals(mArgv, makiArgv);

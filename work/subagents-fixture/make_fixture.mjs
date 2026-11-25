@@ -23,7 +23,7 @@ const now = Date.now() / 1000;
 const iso = (ago) => new Date((now - ago) * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z');
 
 function write(file, rows, mtimeAgo) {
-  fs.writeFileSync(file, rows.map((r) => dumps(r)).join('\n') + '\n', 'utf8');
+  fs.writeFileSync(file, rows.map((r) => dumps(r)).join(NL) + NL, 'utf8');
   fs.utimesSync(file, now - mtimeAgo, now - mtimeAgo);
 }
 

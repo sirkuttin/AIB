@@ -18,7 +18,8 @@ const TMP = Deno.makeTempDirSync({ prefix: 'aib-monitor-golden-' });
 const TMP_SLASH = TMP.replaceAll('\\', '/').toLowerCase();
 const TMP_RE = new RegExp(TMP_SLASH.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
 // steered: a message Claude Code saved as sent while it worked (normalize.ts, B15, beta.9) is Deno only; not in the frozen answers
-const IGNORED = new Set(['now', 'steered']);
+// endedWithAgent: 7d633bbf's flag on a row that reads "ended with the agent" (Activity asks whether its process still runs); Deno only
+const IGNORED = new Set(['now', 'steered', 'endedWithAgent']);
 
 /**
  * The JSON with the Deno-only keys out and what comes from the clock or from file times written as 0 / 'T': a number within three

@@ -51,7 +51,7 @@
     '/queue.css', '/textsize.css', '/settings.css', '/changes.css', '/artifacts.css', '/plan.css', '/split.css', '/views.css',
     '/start-page.css', '/terminal.css', '/files.css', '/typing.js', '/view-prefs.js', '/store-merge.js', '/window-context.js',
     '/terminal-ui.js', '/run-terminal-ui.js', '/wsl-ui.js', '/tool-views.js', '/editors-ui.js', '/copy-ui.js', '/stream-ui.js', '/unknown-send.js',
-    '/image-viewer.js', '/attachments-ui.js', '/commands-ui.js', '/config-ui.js', '/session-ops.js', '/terminals-ui.js',
+    '/image-fit.js', '/image-viewer.js', '/attachments-ui.js', '/commands-ui.js', '/config-ui.js', '/session-ops.js', '/terminals-ui.js',
     '/ownership-ui.js', '/organize-ui.js', '/status-words.js', '/attention-ui.js', '/agent-choice.js', '/composer-chips.js',
     '/inbox-rules.js', '/notify-rules.js', '/notify-ui.js', '/read-state.js', '/sidebar-ui.js', '/commands-registry.js',
     '/switcher-ui.js', '/textsize-ui.js', '/resize-ui.js', '/workspace-state.js', '/new-project-ui.js', '/inbox-reply.js',

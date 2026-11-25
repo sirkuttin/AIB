@@ -1058,6 +1058,7 @@ export class Aib {
     // Qwen Code reads OPENAI_* only when its auth type is openai: a stale selectedType in the owner's ~/.qwen/settings.json (the ended
     // qwen-oauth) would answer "Authentication required" (tested 0.27.2). The flag wins over settings and touches no file.
     const argv = base === 'qwen' ? [...row.argv, ...QWEN_AUTH_ARGS] : row.argv;
+    if (base === 'qwen') env.QWEN_CODE_LEGACY_MCP_BLOCKING = '1'; // as in betaEnv: without it AIB's MCP tools never reach the model
     return [argv, { ...(base === 'claude' ? adapters.claudeEnv(Deno.env.toObject()) : {}), ...env }];
   }
 

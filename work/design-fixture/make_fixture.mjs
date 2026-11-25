@@ -45,7 +45,7 @@ const S = [
   ['omp', 'o-gw-1', 'gamma', 'Add structured logging', 'Structured logging', 700],
   ['claude', 'c-dot-1', 'notes', 'Set up the PowerShell profile', 'PowerShell profile', 3000],
 ];
-const lines = (rows) => rows.map((r) => dumps(r) + '\n').join('');
+const lines = (rows) => rows.map((r) => dumps(r) + NL).join('');
 const stamp = (file, ago) => fs.utimesSync(file, now - ago, now - ago);
 for (const [prov, sid, proj, msg, title, age] of S) {
   const cwd = P[proj];
@@ -82,7 +82,7 @@ function srow(kind, text, ago, x = {}) {
 
 function w(name, rows, ago, meta) {
   const p = path.join(subs, `${name}.jsonl`);
-  fs.writeFileSync(p, rows.map((r) => dumps(r)).join('\n') + '\n', 'utf8');
+  fs.writeFileSync(p, rows.map((r) => dumps(r)).join(NL) + NL, 'utf8');
   stamp(p, ago);
   fs.writeFileSync(path.join(subs, `${name}.meta.json`), dumps(meta), 'utf8');
 }

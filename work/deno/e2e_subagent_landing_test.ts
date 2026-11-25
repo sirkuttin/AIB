@@ -198,7 +198,7 @@ Deno.test({
     git(p, 'commit', '-q', '-m', 'user: dirty');
     await aib.turn('SR-NEXT go');
     assert(dumped(aib.stub).includes('changed files with uncommitted edits'), 'the main agent was not told');
-    assert(dumped(aib.stub).includes('AIB tries again when your next turn ends')); // swarm off: no merge_helper offered
+    assert(dumped(aib.stub).includes('tries again when your next turn ends')); // helper tools are on by default: the line also offers the merge action
     await aib.wait('the clash to land after the commit', () => subjects(p).includes('AIB: subagent sr clash'));
     assertEquals(Deno.readTextFileSync(join(p, 'dirty.txt')), 'main-edit\nfrom-clash\n');
 
