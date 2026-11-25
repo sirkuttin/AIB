@@ -78,6 +78,7 @@ import * as qwenSub from '../subagents/qwen.ts';
 import * as gemini from '../subagents/gemini.ts';
 import * as agySub from '../subagents/antigravity.ts';
 import { isAntigravity } from '../subagents/antigravity.ts';
+import * as nativeOff from '../subagents/native_off.ts';
 import { ProcessReaper } from '../subagents/reap.ts';
 import { APP_VERSION, isCompiled, isDesktopApp, selfCommand, TESTS_DIR } from '../core/app.ts';
 import { type ChannelInfo, type KeeperClient, KeeperError, missingFeatures, type OrphanCommand, readKeeperInfo } from '../keeper/client.ts';
@@ -1744,6 +1745,8 @@ export class Aib {
           chatId,
           wsl ? wsl.distro : null,
         )
+        : nativeOff.nativeOffAgent(provider)
+        ? this.#nativeOffSubagents(provider, command, chatId)
         : null;
       // Gemini (subagents/gemini.ts): every chat gets the fence (an admin policy); an API-key chat in a git project also the redirect
       const gem = provider === 'gemini'
@@ -1756,7 +1759,13 @@ export class Aib {
       if (gem?.id) connectionOptions.id = gem.id;
       if (chatId) connectionOptions.id = chatId;
       const subArgs: string[] = subagent && 'args' in subagent && Array.isArray(subagent.args) ? subagent.args : []; // a WSL Antigravity chat's --gemini-dir
-      const launchCommand = gem ? [...command, ...gem.args] : subArgs.length ? [...command, ...subArgs] : command;
+      const launchCommand = subagent && 'command' in subagent && Array.isArray(subagent.command)
+        ? subagent.command // Maki and Copilot (subagents/native_off.ts): the flag that turns their subagents off, in its place
+        : gem
+        ? [...command, ...gem.args]
+        : subArgs.length
+        ? [...command, ...subArgs]
+        : command;
       if (launch) {
         connectionOptions.keeper = launch.link; // the distro's Linux keeper, whatever the Windows keeper's state
         // a new worktree chat's agent works in the worktree's Linux folder (cwd: its ref)
@@ -1840,7 +1849,7 @@ export class Aib {
             });
           } else if (c.subagentHooks?.off === NO_GIT_BASH) {
             c.recordedEvent('studio_note', { message: SUBAGENTS_OFF_NO_BASH, sessionId: c.sessionId });
-          } else if (subagent && 'note' in subagent && subagent.note) { // Codex: its subagents are off (hooks off or unavailable)
+          } else if (subagent && 'note' in subagent && subagent.note && !(resume && nativeOff.nativeOffAgent(provider))) { // Codex, Maki, Copilot: its subagents are off (Maki and Copilot: said once, in a new chat)
             c.recordedEvent('studio_note', { message: subagent.note, sessionId: c.sessionId });
           }
           if (isQwenFamily(provider) && c.subagentHooks?.prompt) {
@@ -1849,6 +1858,10 @@ export class Aib {
             if (!resume && c.subagentHooks.adopted === true && !c.subagentHooks.off) {
               c.recordedEvent('studio_note', { message: qwenSub.QWEN_SUBAGENT_NOTE, sessionId: c.sessionId });
             }
+          }
+          if (nativeOff.nativeOffAgent(provider) && c.subagentHooks?.prompt) {
+            // neither Maki nor Copilot advertises a system prompt capability: the rule goes in front of the next prompt, once per opening
+            if (!c.supportsSystemPrompt()) this.addPromptContext(c, c.subagentHooks.prompt);
           }
           if (isAntigravity(provider)) {
             // hooks given (an API key: AIB's own settings folder): its subagents work in their own worktree; else only asked for
@@ -2520,7 +2533,7 @@ export class Aib {
     c.adopted = true;
     if (isDict(note.worktree)) c.worktree = { branch: String(note.worktree.branch ?? ''), base: String(note.worktree.base ?? '') };
     c.projectRoot = isStr(note.projectRoot) && note.projectRoot ? note.projectRoot : cwd;
-    if (isClaudeFamily(provider) || isCodexFamily(provider) || isQwenFamily(provider) || isAntigravity(provider)) c.subagentHooks = hooksFromNote(note.subagentHooks); // as the chat started (should-fix 6)
+    if (isClaudeFamily(provider) || isCodexFamily(provider) || isQwenFamily(provider) || isAntigravity(provider) || nativeOff.nativeOffAgent(provider)) c.subagentHooks = hooksFromNote(note.subagentHooks); // as the chat started (should-fix 6)
     if (provider === 'gemini' && this.hasStateDir && this.worktrees) { // its fence and redirect as launched (subagents/gemini.ts)
       c.geminiSubagents = gemini.restore(this.stateDir, this.worktrees.registry.root, c.id, c.projectRoot || cwd);
     }
@@ -3013,6 +3026,25 @@ export class Aib {
       log.exception(error, 'Could not set up Antigravity subagent hooks in the distro');
       return unavailable(`the distro could not be asked (${errorText(error)})`);
     }
+  }
+
+  /**
+   * Maki and Copilot (subagents/native_off.ts): neither can give a subagent its own worktree, so their subagents are turned off with a
+   * launch flag (no file is written, no sign-in moves) and the chat says so; a launch command the flag can't be placed in is only asked
+   * for. The same for a WSL chat: the flag is part of the command the distro's keeper starts. Null: under test, a fixture or a run that
+   * allows no real agent (left as it is).
+   */
+  #nativeOffSubagents(
+    provider: string,
+    command: string[],
+    chatId: string | null,
+  ): { id?: string; env?: Record<string, string>; hooks: NonNullable<Connection['subagentHooks']>; command: string[]; note: string } | null {
+    const agent = nativeOff.nativeOffAgent(provider);
+    if (!agent) return null;
+    const realAllowed = Deno.env.get('STUDIO_REAL_ADAPTER_TESTS') === '1' || Deno.env.get('AGENT_STUDIO_ALLOW_REAL_AGENT') === '1';
+    if (Deno.env.get('AGENT_STUDIO_TEST') === '1' && (isFixture(command) || !realAllowed)) return null;
+    const r = nativeOff.nativeOffRecord(agent, command);
+    return { ...(chatId ? { id: chatId } : {}), hooks: { ...offHooks(r.off, r.detail), prompt: r.prompt }, command: r.command, note: r.note };
   }
 
   /**
