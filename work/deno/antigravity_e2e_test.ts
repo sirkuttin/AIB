@@ -111,6 +111,7 @@ Deno.test({
         "TMPDIR",
         "AGENT_STUDIO_TEST",
         "AGENT_STUDIO_ALLOW_REAL_AGENT",
+        "GOOGLE_GEMINI_BASE_URL",
       ].map((k) => [k, Deno.env.get(k)]),
     );
     const root = Deno.realPathSync(
@@ -223,6 +224,8 @@ Deno.test({
       );
 
       // ---- 4. A chat opens (session/new): models and modes; no prompt is sent ----
+      // the test auth guard (acp/test_auth_guard.ts) wants a loopback endpoint: a closed local port, so nothing can reach Google
+      Deno.env.set("GOOGLE_GEMINI_BASE_URL", "http://127.0.0.1:9");
       const c = await aib.connect("antigravity", project);
       assert(c.sessionId, "session/new answered");
       const pub = JSON.stringify(c.public());

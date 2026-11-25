@@ -8,7 +8,7 @@
  *    (initialize, then account/rateLimits/read) and ended. It costs one backend read and no quota; no thread or turn is started.
  */
 import { getLogger } from '../core/log.ts';
-import { guardRealAgent } from '../acp/connection.ts';
+import { guardRealAgent, guardRealAgentAuth } from '../acp/connection.ts';
 
 const log = getLogger('codex-limits');
 
@@ -152,6 +152,7 @@ export async function appServerLimits(
 ): Promise<unknown> {
   try {
     guardRealAgent(command);
+    guardRealAgentAuth('codex', command, env ?? {});
   } catch (error) {
     log.warning(String(error));
     return null;

@@ -72,6 +72,7 @@ import type { ChannelInfo, KeeperRecord } from '../keeper/client.ts';
 import { type KeeperChannel, type KeeperChannelListener, type KeeperLink, parseNote } from '../keeper/link.ts';
 import { projectOfWorktree } from '../worktrees/worktrees.ts';
 import { WslClientCaps } from './wsl_caps.ts';
+import { assertTestAuth, testCredentialEnv } from './test_auth_guard.ts';
 import { distroName, guardRealWslAgent, peekWslHost, wslTestHomeEnv } from '../wsl/access.ts';
 import { APP_VERSION, TESTS_DIR } from '../core/app.ts';
 import { getLogger } from '../core/log.ts';
@@ -652,7 +653,21 @@ export function testHomeEnv(command: string[]): Record<string, string> {
   try {
     Deno.mkdirSync(tmp, { recursive: true });
   } catch { /* made */ }
-  return Object.fromEntries([...HOME_VARS.map((name) => [name, testHome!]), ...TEMP_VARS.map((name) => [name, tmp])]);
+  return Object.fromEntries([
+    ...Object.entries(testCredentialEnv(testHome)),
+    ...HOME_VARS.map((name) => [name, testHome!]),
+    ...TEMP_VARS.map((name) => [name, tmp]),
+  ]);
+}
+
+/**
+ * Under test a real (non-fixture) agent may only start on an explicit test auth setup: a loopback stub endpoint and a key, never a
+ * sign-in (acp/test_auth_guard.ts; incident 2026-11-25). `env`: what the process will see beyond this process's own environment.
+ * Throws before the process exists. Checked at every launch path (direct, keeper, WSL) and for the Codex limits probe.
+ */
+export function guardRealAgentAuth(provider: string, command: string[], env: Record<string, string>, base: Record<string, string> = Deno.env.toObject()): void {
+  if (Deno.env.get('AGENT_STUDIO_TEST') !== '1' || isFixture(command)) return;
+  assertTestAuth(provider, command, { ...base, ...env });
 }
 
 /**
@@ -1678,6 +1693,7 @@ export class Connection {
     if (this.keeper) return this.#startInKeeper();
     const [program, ...args] = this.command;
     const extra = this.#withMcpConfig({ ...testHomeEnv(this.command), ...(this.env ?? {}) }, Deno.env.get('CODEX_CONFIG'));
+    guardRealAgentAuth(this.provider, this.command, extra);
     const child = new Deno.Command(program, {
       args,
       cwd: this.cwd,
@@ -1705,6 +1721,7 @@ export class Connection {
     const [program, ...args] = this.command;
     const env: Record<string, string> = this.#withMcpConfig({ ...Deno.env.toObject(), ...testHomeEnv(this.command), ...(this.env ?? {}) }, undefined);
     delete env.DENO_SERVE_ADDRESS;
+    guardRealAgentAuth(this.provider, this.command, env, {});
     const channel = this.keeper!.spawn(
       { channel: `chat-${this.id}`, command: resolveProgram(program, env), args, cwd: this.cwd, env },
       this.#keeperListener(),
@@ -1721,6 +1738,10 @@ export class Connection {
     const wsl = this.wsl!;
     const [program, ...args] = this.command;
     const env: Record<string, string> = this.#withMcpConfig({ ...(wsl.env ?? {}), ...wslTestHomeEnv(), ...(this.env ?? {}) }, undefined);
+    // a fixture copied into the test's AIB_WSL_ROOT is not a real agent; the distro's keyring and ~/.config are no test auth either
+    const root = (Deno.env.get('AIB_WSL_ROOT') ?? '').replace(/\/+$/, '');
+    const wslFixture = isFixture(this.command) || (root.startsWith('/') && this.command.some((part) => String(part).startsWith(root + '/')));
+    if (!wslFixture) guardRealAgentAuth(this.provider, this.command, env, {});
     const channel = this.keeper!.spawn(
       { channel: `chat-${this.id}`, command: wsl.program || program, args, cwd: this.agentCwd, env },
       this.#keeperListener(),

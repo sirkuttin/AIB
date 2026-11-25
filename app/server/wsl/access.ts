@@ -298,6 +298,14 @@ export function wslTestHomeEnv(env: (name: string) => string | undefined = (n) =
     XDG_DATA_HOME: home + '/.local/share',
     XDG_STATE_HOME: home + '/.local/state',
     XDG_CACHE_HOME: home + '/.cache',
+    // the distro's gh, gcloud and token fallbacks miss too (a keyring needs a session bus the keeper's agent has no access to; the
+    // endpoint check in acp/test_auth_guard.ts is what holds)
+    GH_CONFIG_DIR: home + '/.config/gh',
+    CLOUDSDK_CONFIG: home + '/.config/gcloud',
+    GH_TOKEN: '',
+    GITHUB_TOKEN: '',
+    GOOGLE_APPLICATION_CREDENTIALS: '',
+    DBUS_SESSION_BUS_ADDRESS: '',
   };
 }
 
