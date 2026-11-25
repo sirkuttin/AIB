@@ -2092,7 +2092,7 @@
     placeNewLine(box, flat, rows);
     if (ctl) {
       markRepeatedTimes(box);
-      ctl.afterRedraw();
+      ctl.afterRedraw(true); // beforeRedraw took your scrolls at the top of this draw: a move since is the layout's (rows taken out)
       if (box.id === 'messages') {
         if (UNREAD.scrollLine) {
           /* opening a chat with unread messages: the New line near the top (the end, following, when what is new fits) */

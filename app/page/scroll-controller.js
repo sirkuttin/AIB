@@ -26,7 +26,7 @@
                                                moreBelow()})   moreBelow: newer rows are left out below the drawn ones
      ctl.state / ctl.following / ctl.key
      ctl.beforeRedraw()             a scroll you made that the browser has not reported yet is taken first
-     ctl.afterRedraw()              end of every draw into box (clamps long blocks first when opts.clamp)
+     ctl.afterRedraw(ours)          end of every draw (ours: true from a draw that began with beforeRedraw) into box (clamps long blocks first when opts.clamp)
      ctl.follow(cause)              ↓ Latest, End, send
      ctl.anchorTo(el, off, cause)   the New line, a find hit (off: px from the top; null keeps it where it is); follows when that
                                     place is past the end
@@ -260,7 +260,10 @@
       return placeOf(el, r.top - top, r.height);
     }
 
-    function apply() {
+    /* ours: the call comes from the drawing code's own redraw (beforeRedraw took your scrolls first). Rows taken out of the list
+       made the browser clamp scrollTop; that is the layout's move, never a scroll of yours (else reaching the end, following, and
+       the rows above going at once would end up as 'you scrolled' and drop you off the end). */
+    function apply(ours) {
       if (detached) return;
       if (box.isConnected === false) return;
       if (!box.clientHeight) {
@@ -272,7 +275,8 @@
       if (lostLayout) {
         lostLayout = false;
         markSettled();
-      } else takePending(true);
+      } else if (ours === true) markSettled();
+      else takePending(true);
       const max = box.scrollHeight - box.clientHeight;
       let target;
       if (state.mode === 'follow') target = max;
@@ -528,10 +532,10 @@
         set(next, 'switch');
         apply();
       },
-      afterRedraw() {
+      afterRedraw(ours) {
         if (detached) return;
         if (opts.clamp && root.ClampUI && root.ClampUI.apply) root.ClampUI.apply(box);
-        apply();
+        apply(ours === true);
       },
       follow,
       anchorTo,
