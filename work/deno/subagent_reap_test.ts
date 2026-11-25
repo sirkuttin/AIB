@@ -34,6 +34,14 @@ type Json = Record<string, unknown>;
 const WIN = Deno.build.os === 'windows';
 const T = { sanitizeResources: false, sanitizeOps: false };
 const DEC = new TextDecoder();
+// These tests run real shells and read their cookies. When the suite itself runs inside an AIB-tagged shell (an AIB agent running tests), every
+// child inherits that shell's AIB_PROC and PATH marker, so a process given another cookie reads as ambiguous (untagged) and is never found.
+// Start from an untagged environment.
+Deno.env.delete('AIB_PROC');
+{
+  const sep = Deno.build.os === 'windows' ? ';' : ':';
+  Deno.env.set('PATH', (Deno.env.get('PATH') ?? '').split(sep).filter((e) => !/[\\/]aibproc[\\/]/.test(e)).join(sep));
+}
 const BASH = gitBashPath(Deno.env.toObject()) ?? 'bash';
 const CHAT = '5ea9c0de00aa11bb22cc33dd44ee5501';
 const OTHER_CHAT = 'deadbeef00112233445566778899aabb';
